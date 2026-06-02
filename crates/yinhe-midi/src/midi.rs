@@ -4,7 +4,7 @@ use crate::parser::MidiParser;
 use crate::time::{DEFAULT_BPM, DEFAULT_MPQ, bpm_from_mpq, seconds_to_ticks};
 use std::path::Path;
 
-pub use yinhe_types::{MidiControlEvent, Note};
+pub use yinhe_types::{MidiControlEvent, Note, TimeSigEvent};
 
 #[derive(Clone, Debug)]
 pub struct MidiFile {
@@ -25,6 +25,8 @@ pub struct MidiFile {
     pub track_ports: Vec<u8>,
     /// Track names parsed from MetaMessage::TrackName.
     pub track_names: Vec<String>,
+    /// All time signature events sorted by tick.
+    pub time_sig_events: Vec<TimeSigEvent>,
     /// Non-note MIDI events (CC, Program Change, Pitch Bend).
     pub control_events: Vec<MidiControlEvent>,
 }
@@ -102,6 +104,20 @@ impl MidiFile {
             return DEFAULT_BPM as f32;
         };
         bpm_from_mpq(seg.micros_per_quarter) as f32
+    }
+
+    /// Get the time signature active at a given tick.
+    pub fn time_sig_at_tick(&self, tick: u32) -> (u8, u8) {
+        if self.time_sig_events.is_empty() {
+            return (self.time_sig_numerator, self.time_sig_denominator);
+        }
+        let idx = self
+            .time_sig_events
+            .iter()
+            .rposition(|e| e.tick <= tick)
+            .unwrap_or(0);
+        let ev = &self.time_sig_events[idx];
+        (ev.numerator, ev.denominator)
     }
 
     /// Calculate ticks per measure (bar divide).

@@ -2,6 +2,7 @@ use eframe::egui;
 use std::collections::HashSet;
 
 use crate::piano_view;
+use crate::playback::PlaybackState;
 use crate::render_context::RenderContext;
 
 pub struct App {
@@ -16,6 +17,8 @@ pub struct App {
     track_visible: Vec<bool>,
     /// Currently selected track (for future editing).
     track_selected: Option<u16>,
+    /// Playback state.
+    playback: PlaybackState,
 }
 
 impl App {
@@ -38,6 +41,7 @@ impl App {
             cursor_tick: None,
             track_visible: Vec::new(),
             track_selected: None,
+            playback: PlaybackState::default(),
         }
     }
 
@@ -66,6 +70,7 @@ impl App {
                         self.selected.clear();
                         self.view = yinhe_pianoroll::PianoRollView::default();
                         self.cursor_tick = None;
+                        self.playback = PlaybackState::default();
                     }
                     Err(e) => {
                         tracing::error!("Failed to parse MIDI: {}", e);
@@ -100,11 +105,39 @@ const TRACK_PALETTE: [[f32; 3]; 16] = [
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        // Top panel: Open button + file info
+        // ── Keyboard shortcuts ──
+        let mut toggle_play = false;
+        let mut stop_play = false;
+        ui.input(|i| {
+            if i.key_pressed(egui::Key::Space) {
+                toggle_play = true;
+            }
+            if i.key_pressed(egui::Key::Escape) {
+                stop_play = true;
+            }
+        });
+
+        // ── Top panel ──
         egui::Panel::top("top_panel").show_inside(ui, |ui| {
             ui.horizontal(|ui| {
                 if ui.button("Open MIDI").clicked() {
                     self.open_midi_file();
+                }
+
+                // Playback controls
+                if self.midi.is_some() {
+                    ui.separator();
+                    let play_label = if self.playback.is_playing() {
+                        "Pause"
+                    } else {
+                        "Play"
+                    };
+                    if ui.button(play_label).clicked() {
+                        toggle_play = true;
+                    }
+                    if ui.button("Stop").clicked() {
+                        stop_play = true;
+                    }
                 }
 
                 ui.separator();
@@ -124,7 +157,27 @@ impl eframe::App for App {
             });
         });
 
-        // Left panel: track list
+        // ── Handle playback actions ──
+        if let Some(ref midi) = self.midi {
+            if toggle_play {
+                let tick = self.cursor_tick.unwrap_or(0.0);
+                self.playback.toggle_play(tick, midi);
+            }
+            if stop_play {
+                self.playback.stop();
+                self.cursor_tick = Some(0.0);
+            }
+
+            // Advance cursor during playback
+            if let Some((tick, reached_end)) = self.playback.current_tick(midi) {
+                self.cursor_tick = Some(tick);
+                if reached_end {
+                    self.playback.stop();
+                }
+            }
+        }
+
+        // ── Left panel: track list ──
         if self.midi.is_some() {
             egui::Panel::left("track_panel")
                 .resizable(true)
@@ -188,11 +241,13 @@ impl eframe::App for App {
                 });
         }
 
-        // Central panel: piano roll canvas
+        // ── Central panel: piano roll canvas ──
         egui::CentralPanel::default().show_inside(ui, |ui| {
             let available = ui.available_size();
             let midi_source: Option<&dyn yinhe_pianoroll::NoteSource> =
                 self.midi.as_ref().map(|m| m as &dyn yinhe_pianoroll::NoteSource);
+
+            let is_playing = self.playback.is_playing();
 
             piano_view::show(
                 ui,
@@ -204,9 +259,13 @@ impl eframe::App for App {
                 &self.selected,
                 &self.track_visible,
                 &mut self.cursor_tick,
+                is_playing,
             );
         });
 
-        // No continuous repaint — only repaint on interaction (handled in piano_view).
+        // Request repaint during playback for smooth animation
+        if self.playback.is_playing() {
+            ui.ctx().request_repaint();
+        }
     }
 }

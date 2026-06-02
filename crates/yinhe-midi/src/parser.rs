@@ -50,8 +50,11 @@ impl MidiParser {
         let tempo_events = Self::collect_tempo_events(&smf.tracks);
         let tempo_segments = Self::build_tempo_segments(tempo_events, ticks_per_beat);
 
-        let (time_sig_numerator, time_sig_denominator) =
-            Self::collect_time_signature(&smf.tracks).unwrap_or((4, 4));
+        let time_sig_events = Self::collect_time_sig_events(&smf.tracks);
+        let (time_sig_numerator, time_sig_denominator) = time_sig_events
+            .first()
+            .map(|e| (e.numerator, e.denominator))
+            .unwrap_or((4, 4));
 
         let mut key_notes: [Vec<Note>; 128] = std::array::from_fn(|_| Vec::new());
         let mut global_duration = 0.0f64;
@@ -112,6 +115,7 @@ impl MidiParser {
             tick_length,
             time_sig_numerator,
             time_sig_denominator,
+            time_sig_events,
             track_names,
             track_ports,
             control_events,
@@ -137,9 +141,12 @@ impl MidiParser {
         events
     }
 
-    fn collect_time_signature(tracks: &[midly::Track]) -> Option<(u8, u8)> {
+    fn collect_time_sig_events(tracks: &[midly::Track]) -> Vec<crate::midi::TimeSigEvent> {
+        let mut events = Vec::new();
         for track in tracks {
+            let mut tick: u32 = 0;
             for event in track {
+                tick += event.delta.as_int();
                 if let midly::TrackEventKind::Meta(midly::MetaMessage::TimeSignature(
                     numerator,
                     denominator,
@@ -147,11 +154,17 @@ impl MidiParser {
                     _,
                 )) = event.kind
                 {
-                    return Some((numerator, denominator));
+                    events.push(crate::midi::TimeSigEvent {
+                        tick,
+                        numerator,
+                        denominator,
+                    });
                 }
             }
         }
-        None
+        events.sort_by_key(|e| e.tick);
+        events.dedup_by_key(|e| e.tick);
+        events
     }
 
     fn build_tempo_segments(
@@ -423,6 +436,7 @@ mod tests {
             time_sig_numerator: 4,
             time_sig_denominator: 2,
             track_names: Vec::new(),
+            time_sig_events: Vec::new(),
             track_ports: Vec::new(),
             control_events: Vec::new(),
         };
@@ -453,6 +467,7 @@ mod tests {
             time_sig_numerator: 4,
             time_sig_denominator: 2,
             track_names: Vec::new(),
+            time_sig_events: Vec::new(),
             track_ports: Vec::new(),
             control_events: Vec::new(),
         };

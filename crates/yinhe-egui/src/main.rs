@@ -1,5 +1,6 @@
 mod app;
 mod piano_view;
+mod playback;
 mod render_context;
 
 fn main() {

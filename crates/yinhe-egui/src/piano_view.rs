@@ -11,6 +11,7 @@ pub fn show(
     selected: &std::collections::HashSet<(u16, u32)>,
     track_visible: &[bool],
     cursor_tick: &mut Option<f64>,
+    is_playing: bool,
 ) {
     let (resp, painter) = ui.allocate_painter(available, egui::Sense::click_and_drag());
     let rect = resp.rect;
@@ -31,6 +32,20 @@ pub fn show(
         .map(|tl| tl as f64 * 1.2)
         .unwrap_or(10000.0);
     view.clamp_scroll(w as f32, h as f32, total_ticks);
+
+    // Auto-follow: during playback, scroll so cursor stays visible
+    if is_playing {
+        if let Some(ct) = *cursor_tick {
+            let cursor_x = view.tick_to_x(ct);
+            let right_edge = w as f32;
+            let margin = (right_edge - view.keyboard_width) * 0.2;
+            if cursor_x > right_edge - margin || cursor_x < view.keyboard_width {
+                view.scroll_x = (ct as f32 * view.pixels_per_tick)
+                    - (right_edge - view.keyboard_width) * 0.5;
+                view.clamp_scroll(w as f32, h as f32, total_ticks);
+            }
+        }
+    }
 
     // Prepare and render to offscreen texture
     pianoroll.prepare(w, h, midi, view, selected, track_visible, *cursor_tick);

@@ -1,3 +1,12 @@
+/// A time signature event at a specific tick position.
+#[derive(Clone, Debug)]
+pub struct TimeSigEvent {
+    pub tick: u32,
+    pub numerator: u8,
+    /// Denominator as power of 2: 2 means 4 (2^2).
+    pub denominator: u8,
+}
+
 /// Non-note MIDI events (CC, Program Change, Pitch Bend) stored for audio synthesis.
 #[derive(Clone, Debug)]
 pub enum MidiControlEvent {
