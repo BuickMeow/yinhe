@@ -101,7 +101,6 @@ impl eframe::App for App {
 
             piano_view::show(
                 ui,
-                self.render_ctx.preview_texture_id(),
                 available,
                 &mut self.pianoroll,
                 &mut self.render_ctx,

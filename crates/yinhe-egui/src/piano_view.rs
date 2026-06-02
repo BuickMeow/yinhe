@@ -3,7 +3,6 @@ use eframe::egui;
 /// Display the pianoroll texture with zoom/pan interaction.
 pub fn show(
     ui: &mut egui::Ui,
-    texture_id: egui::TextureId,
     available: egui::Vec2,
     pianoroll: &mut yinhe_pianoroll::PianorollRenderer,
     render_ctx: &mut super::render_context::RenderContext,
@@ -20,8 +19,9 @@ pub fn show(
         return;
     }
 
-    // Resize render target if needed
+    // Resize render target if needed — texture_id may change after this
     render_ctx.ensure_size(w, h);
+    let texture_id = render_ctx.preview_texture_id();
 
     // Clamp scroll — add some extra space beyond the last note
     let total_ticks = midi
@@ -55,10 +55,14 @@ pub fn show(
         let pointer_x = pointer_pos.x - rect.min.x;
         let pointer_y = pointer_pos.y - rect.min.y;
 
-        // Trackpad pinch gesture → horizontal zoom
+        // Trackpad pinch gesture → horizontal zoom, or vertical zoom when over keyboard
         let zoom_delta = ui.input(|i| i.zoom_delta());
         if (zoom_delta - 1.0).abs() > 0.001 {
-            view.zoom_around_x(pointer_x, zoom_delta);
+            if pointer_x < view.keyboard_width {
+                view.zoom_around_y(pointer_y, zoom_delta, rect.height());
+            } else {
+                view.zoom_around_x(pointer_x, zoom_delta);
+            }
         }
 
         // Cmd+scroll: scroll.y → horizontal zoom, scroll.x → vertical zoom
@@ -73,7 +77,7 @@ pub fn show(
                 }
                 if scroll.x.abs() > 0.5 {
                     let factor = if scroll.x > 0.0 { 1.1 } else { 1.0 / 1.1 };
-                    view.zoom_around_y(pointer_y, factor);
+                    view.zoom_around_y(pointer_y, factor, rect.height());
                 }
             } else {
                 // Pan: horizontal with scroll.x, vertical with scroll.y

@@ -93,9 +93,11 @@ impl PianoRollView {
     }
 
     /// Zoom around a pointer position (vertical).
-    pub fn zoom_around_y(&mut self, pointer_y: f32, zoom_factor: f32) {
+    /// viewport_height is used to compute the minimum key_height so all 128 keys fill the viewport.
+    pub fn zoom_around_y(&mut self, pointer_y: f32, zoom_factor: f32, viewport_height: f32) {
+        let min_kh = viewport_height / 128.0;
         let old = self.key_height;
-        self.key_height = (self.key_height * zoom_factor).clamp(4.0, 60.0);
+        self.key_height = (self.key_height * zoom_factor).clamp(min_kh, 60.0);
 
         // Keep the key row under the pointer stationary
         self.scroll_y = (self.scroll_y + pointer_y) / old * self.key_height - pointer_y;

@@ -167,8 +167,11 @@ pub fn build_instances(
                 tick += ticks_per_measure;
             }
 
-            // 3. Notes
+            // 3. Notes — use padded tick range so long notes aren't culled at viewport edge
             let (tick_start, tick_end) = view.visible_tick_range(w);
+            let tick_pad = (w - kb_w) / ppu; // one viewport width in ticks
+            let pad_start = (tick_start - tick_pad as f64).max(0.0);
+            let pad_end = tick_end + tick_pad as f64;
             let (key_lo, key_hi) = view.visible_key_range(h);
 
             for key in key_lo..=key_hi {
@@ -177,11 +180,11 @@ pub fn build_instances(
                     continue;
                 }
 
-                // Binary search for first visible note
-                let start_idx = notes.partition_point(|n| (n.end_tick as f64) < tick_start);
+                // Binary search for first note that could overlap the visible range
+                let start_idx = notes.partition_point(|n| (n.end_tick as f64) < pad_start);
 
                 for note in &notes[start_idx..] {
-                    if note.start_tick as f64 > tick_end {
+                    if note.start_tick as f64 > pad_end {
                         break;
                     }
 
