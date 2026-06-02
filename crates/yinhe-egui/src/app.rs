@@ -1,5 +1,8 @@
 use eframe::egui;
 use std::collections::HashSet;
+use std::sync::mpsc;
+
+use crate::loading::{MidiLoadEvent, MidiLoader};
 
 use crate::arrangement_view_ui;
 use crate::piano_view;
@@ -47,10 +50,36 @@ pub struct App {
     track_selected: Option<u16>,
     track_panel_width: f32,
     playback: PlaybackState,
+    file_loader: FileLoader,
 }
 
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        // ── Load MiSans font ──
+        {
+            let mut fonts = egui::FontDefinitions::default();
+            fonts.font_data.insert(
+                "MiSans".to_owned(),
+                egui::FontData::from_static(include_bytes!(
+                    "../../../assets/MiSans-Regular.otf"
+                ))
+                .into(),
+            );
+            // Set MiSans as the default proportional font
+            let props = fonts
+                .families
+                .entry(egui::FontFamily::Proportional)
+                .or_default();
+            props.insert(0, "MiSans".to_owned());
+            // Also set for monospace
+            let mono = fonts
+                .families
+                .entry(egui::FontFamily::Monospace)
+                .or_default();
+            mono.insert(0, "MiSans".to_owned());
+            cc.egui_ctx.set_fonts(fonts);
+        }
+
         let default_w = 1920u32;
         let default_h = 1080u32;
 
@@ -80,47 +109,32 @@ impl App {
             track_selected: None,
             track_panel_width: 200.0,
             playback: PlaybackState::default(),
+            file_loader: FileLoader::new(),
         }
     }
 
-    fn open_midi_file(&mut self) {
-        if let Some(path) = rfd::FileDialog::new()
-            .add_filter("MIDI", &["mid", "midi"])
-            .pick_file()
-        {
-            match std::fs::read(&path) {
-                Ok(data) => match yinhe_midi::MidiFile::load_from_bytes(&data) {
-                    Ok(midi) => {
-                        tracing::info!(
-                            "Loaded MIDI: {} notes, {} tracks, tpb={}",
-                            midi.note_count,
-                            midi.track_ports.len(),
-                            midi.ticks_per_beat,
-                        );
-                        let num_tracks = midi.track_ports.len();
-                        self.file_name = path
-                            .file_stem()
-                            .and_then(|n| n.to_str())
-                            .map(|s| s.to_string());
-                        self.track_visible = vec![true; num_tracks];
-                        self.track_selected = None;
-                        self.midi = Some(midi);
-                        self.selected.clear();
-                        self.view = yinhe_pianoroll::PianoRollView::default();
-                        self.arr_view = yinhe_pianoroll::ArrangementView::default();
-                        self.arr_instances.clear();
-                        self.cursor_tick = None;
-                        self.playback = PlaybackState::default();
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to parse MIDI: {}", e);
-                    }
-                },
-                Err(e) => {
-                    tracing::error!("Failed to read file: {}", e);
-                }
-            }
-        }
+    /// Called when async loading completes.
+    fn on_midi_loaded(&mut self, path: String, midi: yinhe_midi::MidiFile) {
+        tracing::info!(
+            "Loaded MIDI: {} notes, {} tracks, tpb={}",
+            midi.note_count,
+            midi.track_ports.len(),
+            midi.ticks_per_beat,
+        );
+        let num_tracks = midi.track_ports.len();
+        self.file_name = std::path::Path::new(&path)
+            .file_stem()
+            .and_then(|n| n.to_str())
+            .map(|s| s.to_string());
+        self.track_visible = vec![true; num_tracks];
+        self.track_selected = None;
+        self.midi = Some(midi);
+        self.selected.clear();
+        self.view = yinhe_pianoroll::PianoRollView::default();
+        self.arr_view = yinhe_pianoroll::ArrangementView::default();
+        self.arr_instances.clear();
+        self.cursor_tick = None;
+        self.playback = PlaybackState::default();
     }
 
     /// Build track colors from palette + track count.
@@ -137,6 +151,136 @@ impl App {
             .as_ref()
             .map(|m| m.track_names.clone())
             .unwrap_or_default()
+    }
+}
+
+// ── Async MIDI file loading ──
+
+pub(crate) enum MidiLoadResult {
+    Loaded {
+        path: String,
+        midi: yinhe_midi::MidiFile,
+    },
+    NotReady,
+}
+
+pub(crate) struct FileLoader {
+    midi_loader: Option<MidiLoader>,
+}
+
+impl FileLoader {
+    pub fn new() -> Self {
+        Self { midi_loader: None }
+    }
+
+    pub fn is_loading(&self) -> bool {
+        self.midi_loader.is_some()
+    }
+
+    /// Show file dialog and start loading MIDI in a background thread.
+    pub fn pick_midi_file(&mut self) {
+        if self.is_loading() {
+            return;
+        }
+
+        if let Some(path) = rfd::FileDialog::new()
+            .add_filter("MIDI", &["mid", "midi"])
+            .pick_file()
+        {
+            let (tx, rx) = mpsc::channel();
+            let path_str = path.to_string_lossy().to_string();
+            let path_for_thread = path_str.clone();
+
+            std::thread::spawn(move || {
+                let data = match std::fs::read(&path_for_thread) {
+                    Ok(d) => d,
+                    Err(e) => {
+                        let _ = tx.send(MidiLoadEvent::Complete(Box::new(Err(
+                            yinhe_midi::MidiError::Io(e),
+                        ))));
+                        return;
+                    }
+                };
+                let result = yinhe_midi::MidiFile::load_from_bytes_with_progress(
+                    &data,
+                    |progress| {
+                        let _ = tx.send(MidiLoadEvent::Progress(progress));
+                    },
+                );
+                let _ = tx.send(MidiLoadEvent::Complete(Box::new(result)));
+            });
+
+            self.midi_loader = Some(MidiLoader {
+                path: path_str,
+                rx,
+                current_progress: None,
+            });
+        }
+    }
+
+    /// Poll the background thread for loading progress/completion.
+    pub fn poll_midi_loading(&mut self) -> MidiLoadResult {
+        if let Some(mut loader) = self.midi_loader.take() {
+            while let Ok(event) = loader.rx.try_recv() {
+                match event {
+                    MidiLoadEvent::Progress(progress) => {
+                        loader.current_progress = Some(progress);
+                    }
+                    MidiLoadEvent::Complete(result) => {
+                        match *result {
+                            Ok(midi) => {
+                                let path = loader.path.clone();
+                                return MidiLoadResult::Loaded { path, midi };
+                            }
+                            Err(e) => {
+                                tracing::error!("Failed to load MIDI: {}", e);
+                            }
+                        }
+                        return MidiLoadResult::NotReady;
+                    }
+                }
+            }
+            self.midi_loader = Some(loader);
+        }
+        MidiLoadResult::NotReady
+    }
+
+    /// Draw a dark overlay + centered window with loading progress.
+    pub fn show_midi_loading_overlay(&self, ui: &mut egui::Ui) {
+        if let Some(loader) = &self.midi_loader {
+            let screen_rect = ui.ctx().content_rect();
+            ui.ctx()
+                .layer_painter(egui::LayerId::new(
+                    egui::Order::Foreground,
+                    "midi_loading_overlay".into(),
+                ))
+                .rect_filled(
+                    screen_rect,
+                    0.0,
+                    egui::Color32::from_rgba_premultiplied(0, 0, 0, 160),
+                );
+
+            egui::Window::new("Loading MIDI")
+                .order(egui::Order::Tooltip)
+                .collapsible(false)
+                .resizable(false)
+                .movable(false)
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                .show(ui.ctx(), |ui| {
+                    if let Some(progress) = &loader.current_progress {
+                        ui.label(format!(
+                            "Parsing track {} / {}...",
+                            progress.current_track, progress.total_tracks
+                        ));
+                        let ratio =
+                            progress.current_track as f32 / progress.total_tracks.max(1) as f32;
+                        ui.add(egui::ProgressBar::new(ratio).show_percentage());
+                    } else {
+                        ui.label("Reading MIDI file...");
+                        ui.add(egui::Spinner::new());
+                    }
+                });
+        }
     }
 }
 
@@ -160,8 +304,12 @@ impl eframe::App for App {
         // ── Top panel ──
         egui::Panel::top("top_panel").show_inside(ui, |ui| {
             ui.horizontal(|ui| {
-                if ui.button("Open MIDI").clicked() {
-                    self.open_midi_file();
+                let open_btn = ui.add_enabled(
+                    !self.file_loader.is_loading(),
+                    egui::Button::new("Open MIDI"),
+                );
+                if open_btn.clicked() {
+                    self.file_loader.pick_midi_file();
                 }
 
                 if self.midi.is_some() {
@@ -196,6 +344,14 @@ impl eframe::App for App {
             });
         });
 
+        // ── Poll async MIDI loading ──
+        match self.file_loader.poll_midi_loading() {
+            MidiLoadResult::Loaded { path, midi } => {
+                self.on_midi_loaded(path, midi);
+            }
+            MidiLoadResult::NotReady => {}
+        }
+
         // ── Handle playback actions ──
         if let Some(ref midi) = self.midi {
             if toggle_play {
@@ -229,13 +385,27 @@ impl eframe::App for App {
                 egui::pos2(remaining.min.x + sidebar_w, remaining.max.y),
             );
             ui.allocate_ui_at_rect(sidebar_rect, |ui| {
+                // Fill panel background
+                ui.painter().rect_filled(ui.max_rect(), 0.0, ui.visuals().panel_fill);
+
                 egui::ScrollArea::vertical().show(ui, |ui| {
-                    ui.heading("Tracks");
-                    ui.separator();
                     if let Some(ref midi) = self.midi {
                         let info = midi.track_info();
-                        let avail_w = ui.available_width();
-                        let name_max_w = (avail_w - 160.0).max(40.0);
+
+                        // Build PC map: first ProgramChange event per channel
+                        let mut pc_map: [Option<u8>; 16] = [None; 16];
+                        for ev in &midi.control_events {
+                            if let yinhe_midi::MidiControlEvent::ProgramChange {
+                                channel,
+                                program,
+                                ..
+                            } = ev
+                            {
+                            if *channel < 16 && pc_map[*channel as usize].is_none() {
+                                pc_map[*channel as usize] = Some(*program);
+                            }
+                            }
+                        }
 
                         for ti in &info {
                             let idx = ti.index as usize;
@@ -247,21 +417,18 @@ impl eframe::App for App {
                             );
 
                             let selected = self.track_selected == Some(ti.index);
+                            let bg = if selected {
+                                ui.visuals().selection.bg_fill
+                            } else {
+                                egui::Color32::TRANSPARENT
+                            };
                             let frame = egui::Frame::default()
-                                .fill(if selected {
-                                    ui.visuals().selection.bg_fill
-                                } else {
-                                    egui::Color32::TRANSPARENT
-                                })
-                                .inner_margin(4.0);
+                                .fill(bg)
+                                .inner_margin(egui::Margin::symmetric(6, 3));
                             frame.show(ui, |ui| {
+                                // ── Line 1: channel badge + track name ──
                                 ui.horizontal(|ui| {
-                                    let (rect, _) = ui.allocate_exact_size(
-                                        egui::vec2(12.0, 12.0),
-                                        egui::Sense::hover(),
-                                    );
-                                    ui.painter().rect_filled(rect, 2.0, color32);
-
+                                    // Visibility checkbox
                                     let mut vis =
                                         self.track_visible.get(idx).copied().unwrap_or(true);
                                     if ui.checkbox(&mut vis, "").changed() {
@@ -270,17 +437,58 @@ impl eframe::App for App {
                                         }
                                     }
 
-                                    let name = egui::RichText::new(&ti.name).strong();
+                                    // Channel badge: small rounded rect
+                                    let channel = (ti.port & 0x0F) + 1;
+                                    let port_letter = match ti.port >> 4 {
+                                        0 => 'A', 1 => 'B', 2 => 'C', 3 => 'D',
+                                        4 => 'E', 5 => 'F', 6 => 'G', 7 => 'H',
+                                        _ => '?',
+                                    };
+                                    let badge_text = format!("{}{:02}", port_letter, channel);
+                                    let (_badge, _) = ui.allocate_exact_size(
+                                        egui::vec2(28.0, 16.0),
+                                        egui::Sense::hover(),
+                                    );
+                                    let badge_rect = ui.min_rect();
+                                    let badge_rect = egui::Rect::from_min_size(
+                                        egui::pos2(badge_rect.min.x, badge_rect.min.y + 2.0),
+                                        egui::vec2(28.0, 14.0),
+                                    );
+                                    ui.painter().rect_filled(badge_rect, 3.0, color32);
+                                    ui.painter().text(
+                                        badge_rect.center(),
+                                        egui::Align2::CENTER_CENTER,
+                                        badge_text,
+                                        egui::FontId::monospace(10.0),
+                                        egui::Color32::WHITE,
+                                    );
+
+                                    // Track name with ellipsis truncation
+                                    let name_w = ui.available_width().max(10.0);
+                                    let name = egui::RichText::new(&ti.name).size(13.0);
                                     let label = ui.add_sized(
-                                        [name_max_w, ui.spacing().interact_size.y],
+                                        [name_w, 16.0],
                                         egui::Label::new(name),
                                     );
                                     if label.clicked() {
                                         self.track_selected = Some(ti.index);
                                     }
-                                    ui.label(format!("{} notes", ti.note_count));
-                                    if ti.port > 0 {
-                                        ui.label(format!("P{}", ti.port));
+                                });
+
+                                // ── Line 2: note count + optional PC ──
+                                ui.horizontal(|ui| {
+                                    let channel_idx = (ti.port & 0x0F) as usize;
+                                    ui.label(
+                                        egui::RichText::new(format!("{} notes", ti.note_count))
+                                            .size(11.0)
+                                            .color(egui::Color32::GRAY),
+                                    );
+                                    if let Some(pc) = pc_map[channel_idx] {
+                                        ui.label(
+                                            egui::RichText::new(format!("PC:{}", pc))
+                                                .size(11.0)
+                                                .color(egui::Color32::GRAY),
+                                        );
                                     }
                                 });
                             });
@@ -403,6 +611,12 @@ impl eframe::App for App {
 
         // Request repaint during playback
         if self.playback.is_playing() {
+            ui.ctx().request_repaint();
+        }
+
+        // ── Loading overlay (drawn last, on top) ──
+        self.file_loader.show_midi_loading_overlay(ui);
+        if self.file_loader.is_loading() {
             ui.ctx().request_repaint();
         }
     }
