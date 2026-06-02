@@ -371,21 +371,21 @@ impl eframe::App for App {
             }
         }
 
-        // ── Main area: manual sidebar + central ──
+        // ── Main area: sidebar (left) + central (right), manual positions ──
         if self.midi.is_some() {
             let remaining = ui.available_rect_before_wrap();
             let sidebar_w = self.track_panel_width
-                .min(remaining.width() - 150.0)
-                .max(60.0);
+                .clamp(60.0, (remaining.width() - 60.0).max(60.0));
             self.track_panel_width = sidebar_w;
 
-            // ── Sidebar ──
+            // ── Sidebar (allocated at fixed rect, not consuming layout space) ──
             let sidebar_rect = egui::Rect::from_min_max(
                 remaining.min,
                 egui::pos2(remaining.min.x + sidebar_w, remaining.max.y),
             );
             ui.allocate_ui_at_rect(sidebar_rect, |ui| {
-                // Fill panel background
+                // Clamp rendering to sidebar bounds only
+                ui.set_clip_rect(ui.max_rect());
                 ui.painter().rect_filled(ui.max_rect(), 0.0, ui.visuals().panel_fill);
 
                 egui::ScrollArea::vertical().show(ui, |ui| {
@@ -468,7 +468,7 @@ impl eframe::App for App {
                                     let name = egui::RichText::new(&ti.name).size(13.0);
                                     let label = ui.add_sized(
                                         [name_w, 16.0],
-                                        egui::Label::new(name),
+                                        egui::Label::new(name).truncate(),
                                     );
                                     if label.clicked() {
                                         self.track_selected = Some(ti.index);
@@ -476,21 +476,23 @@ impl eframe::App for App {
                                 });
 
                                 // ── Line 2: note count + optional PC ──
-                                ui.horizontal(|ui| {
+                                {
                                     let channel_idx = (ti.port & 0x0F) as usize;
-                                    ui.label(
-                                        egui::RichText::new(format!("{} notes", ti.note_count))
-                                            .size(11.0)
-                                            .color(egui::Color32::GRAY),
-                                    );
+                                    let mut line2 = format!("{} notes", ti.note_count);
                                     if let Some(pc) = pc_map[channel_idx] {
-                                        ui.label(
-                                            egui::RichText::new(format!("PC:{}", pc))
+                                        line2.push_str(&format!(" | PC:{}", pc));
+                                    }
+                                    let w2 = ui.available_width().max(10.0);
+                                    ui.add_sized(
+                                        [w2, 14.0],
+                                        egui::Label::new(
+                                            egui::RichText::new(line2)
                                                 .size(11.0)
                                                 .color(egui::Color32::GRAY),
-                                        );
-                                    }
-                                });
+                                        )
+                                        .truncate(),
+                                    );
+                                }
                             });
                         }
                     }
@@ -514,7 +516,8 @@ impl eframe::App for App {
                 },
             );
             if handle_resp.dragged() {
-                self.track_panel_width += handle_resp.drag_delta().x;
+                let new_w = self.track_panel_width + handle_resp.drag_delta().x;
+                self.track_panel_width = new_w.clamp(60.0, remaining.width() - 60.0);
             }
             if hovered {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
