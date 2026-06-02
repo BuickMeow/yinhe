@@ -43,6 +43,8 @@ pub fn build_instances(
     midi: Option<&dyn NoteSource>,
     view: &PianoRollView,
     selected: &std::collections::HashSet<(u16, u32)>,
+    track_visible: &[bool],
+    cursor_tick: Option<f64>,
 ) -> ([bool; 128], [[f32; 3]; 128]) {
     let mut active_keys = [false; 128];
     let mut active_colors = [[0.0f32; 3]; 128];
@@ -52,60 +54,72 @@ pub fn build_instances(
     let kb_w = view.keyboard_width;
     let kh = view.key_height;
     let bottom = 128.0 * kh - view.scroll_y;
+    let ppu = view.pixels_per_tick;
 
-    // 1. Background rows (alternating for black/white keys)
+    // 1. Background: single full-area quad, then overlay black-key rows only.
+    //    This reduces 128 instances → 1 + (visible black keys).
+    instances.push(NoteInstance {
+        x: kb_w,
+        y: 0.0,
+        w: w - kb_w,
+        h,
+        rgba_packed: pack_rgba(BG_COLOR.0, BG_COLOR.1, BG_COLOR.2, 1.0),
+        props_packed: pack_props(0.0, 0.0),
+        velocity: 0,
+        flags: 0,
+    });
     for key in 0u8..128 {
+        if !is_black_key(key) {
+            continue;
+        }
         let y = bottom - (key as f32 + 1.0) * kh;
         if y + kh < 0.0 || y > h {
             continue;
         }
-        let (r, g, b) = if is_black_key(key) {
-            BLACK_KEY_ROW_COLOR
-        } else {
-            BG_COLOR
-        };
         instances.push(NoteInstance {
             x: kb_w,
             y,
             w: w - kb_w,
             h: kh,
-            rgba_packed: pack_rgba(r, g, b, 1.0),
+            rgba_packed: pack_rgba(BLACK_KEY_ROW_COLOR.0, BLACK_KEY_ROW_COLOR.1, BLACK_KEY_ROW_COLOR.2, 1.0),
             props_packed: pack_props(0.0, 0.0),
             velocity: 0,
             flags: 0,
         });
     }
 
-    // 2. Grid lines (vertical: measures, beats, sub-beats)
     if let Some(midi) = midi {
         if let Some(tpb) = midi.ticks_per_beat() {
             let (tick_start, tick_end) = view.visible_tick_range(w);
-            let ppu = view.pixels_per_tick;
 
-            // Assume 4/4 time: 4 beats per measure, each beat = tpb ticks
-            let ticks_per_measure = tpb * 4;
-            let sub_beat_div = 4; // 16th notes
-            let ticks_per_sub = tpb / sub_beat_div;
+            // 2. Grid lines — single pass at sub-beat granularity, with
+            //    measure/beat/sub-beat color+width determined by tick alignment.
+            if ppu > 0.01 {
+                let ticks_per_measure = tpb * 4;
+                let sub_beat_div = 4u32;
+                let ticks_per_sub = tpb / sub_beat_div;
 
-            // Sub-beat lines
-            if ppu > 0.02 {
                 let start = ((tick_start / ticks_per_sub as f64).floor() as u32)
                     .saturating_mul(ticks_per_sub);
                 let mut tick = start;
                 while (tick as f64) <= tick_end {
                     let x = view.tick_to_x(tick as f64);
                     if x >= kb_w && x <= w {
+                        let is_measure = tick % ticks_per_measure == 0;
+                        let is_beat = tick % tpb == 0;
+                        let (lw, col) = if is_measure {
+                            (2.0, MEASURE_LINE_COLOR)
+                        } else if is_beat {
+                            (1.0, BEAT_LINE_COLOR)
+                        } else {
+                            (1.0, SUB_BEAT_LINE_COLOR)
+                        };
                         instances.push(NoteInstance {
                             x,
                             y: 0.0,
-                            w: 1.0,
+                            w: lw,
                             h,
-                            rgba_packed: pack_rgba(
-                                SUB_BEAT_LINE_COLOR.0,
-                                SUB_BEAT_LINE_COLOR.1,
-                                SUB_BEAT_LINE_COLOR.2,
-                                SUB_BEAT_LINE_COLOR.3,
-                            ),
+                            rgba_packed: pack_rgba(col.0, col.1, col.2, col.3),
                             props_packed: pack_props(0.0, 0.0),
                             velocity: 0,
                             flags: 0,
@@ -115,64 +129,12 @@ pub fn build_instances(
                 }
             }
 
-            // Beat lines
-            let start = ((tick_start / tpb as f64).floor() as u32)
-                .saturating_mul(tpb);
-            let mut tick = start;
-            while (tick as f64) <= tick_end {
-                let x = view.tick_to_x(tick as f64);
-                if x >= kb_w && x <= w {
-                    instances.push(NoteInstance {
-                        x,
-                        y: 0.0,
-                        w: 1.0,
-                        h,
-                        rgba_packed: pack_rgba(
-                            BEAT_LINE_COLOR.0,
-                            BEAT_LINE_COLOR.1,
-                            BEAT_LINE_COLOR.2,
-                            BEAT_LINE_COLOR.3,
-                        ),
-                        props_packed: pack_props(0.0, 0.0),
-                        velocity: 0,
-                        flags: 0,
-                    });
-                }
-                tick += tpb;
-            }
-
-            // Measure lines
-            let start = ((tick_start / ticks_per_measure as f64).floor() as u32)
-                .saturating_mul(ticks_per_measure);
-            let mut tick = start;
-            while (tick as f64) <= tick_end {
-                let x = view.tick_to_x(tick as f64);
-                if x >= kb_w && x <= w {
-                    instances.push(NoteInstance {
-                        x,
-                        y: 0.0,
-                        w: 2.0,
-                        h,
-                        rgba_packed: pack_rgba(
-                            MEASURE_LINE_COLOR.0,
-                            MEASURE_LINE_COLOR.1,
-                            MEASURE_LINE_COLOR.2,
-                            MEASURE_LINE_COLOR.3,
-                        ),
-                        props_packed: pack_props(0.0, 0.0),
-                        velocity: 0,
-                        flags: 0,
-                    });
-                }
-                tick += ticks_per_measure;
-            }
-
-            // 3. Notes — use padded tick range so long notes aren't culled at viewport edge
-            let (tick_start, tick_end) = view.visible_tick_range(w);
-            let tick_pad = (w - kb_w) / ppu; // one viewport width in ticks
+            // 3. Notes — padded tick range, linear scan, track_visible filter
+            let tick_pad = (w - kb_w) / ppu;
             let pad_start = (tick_start - tick_pad as f64).max(0.0);
             let pad_end = tick_end + tick_pad as f64;
             let (key_lo, key_hi) = view.visible_key_range(h);
+            let has_selection = !selected.is_empty();
 
             for key in key_lo..=key_hi {
                 let notes = midi.key_notes(key);
@@ -180,12 +142,16 @@ pub fn build_instances(
                     continue;
                 }
 
-                // Binary search for first note that could overlap the visible range
-                let start_idx = notes.partition_point(|n| (n.end_tick as f64) < pad_start);
-
-                for note in &notes[start_idx..] {
+                for note in notes.iter() {
                     if note.start_tick as f64 > pad_end {
                         break;
+                    }
+                    if (note.end_tick as f64) < pad_start {
+                        continue;
+                    }
+                    // Track visibility filter
+                    if !track_visible.get(note.track as usize).copied().unwrap_or(true) {
+                        continue;
                     }
 
                     let nx = view.tick_to_x(note.start_tick as f64);
@@ -193,12 +159,10 @@ pub fn build_instances(
                     let ny = view.key_to_y(note.key);
                     let nh = kh;
 
-                    // Track color
                     let trk = note.track as usize % TRACK_PALETTE.len();
                     let color = TRACK_PALETTE[trk];
 
-                    // Check if selected
-                    let is_selected = selected.contains(&(note.track, note.start_tick));
+                    let is_selected = has_selection && selected.contains(&(note.track, note.start_tick));
                     let border_w = if is_selected {
                         SELECTED_BORDER_WIDTH
                     } else {
@@ -217,9 +181,30 @@ pub fn build_instances(
                         flags: if is_selected { 1 } else { 0 },
                     });
 
-                    // Mark active key if note is currently "playing" (for visual feedback)
-                    active_keys[key as usize] = true;
-                    active_colors[key as usize] = color;
+                    // Mark active key if cursor is within this note's time range
+                    if let Some(ct) = cursor_tick {
+                        if note.start_tick as f64 <= ct && ct < note.end_tick as f64 {
+                            active_keys[key as usize] = true;
+                            active_colors[key as usize] = color;
+                        }
+                    }
+                }
+            }
+
+            // 3b. Cursor line
+            if let Some(ct) = cursor_tick {
+                let cx = view.tick_to_x(ct);
+                if cx >= kb_w && cx <= w {
+                    instances.push(NoteInstance {
+                        x: cx,
+                        y: 0.0,
+                        w: 2.0,
+                        h,
+                        rgba_packed: pack_rgba(1.0, 1.0, 1.0, 0.8),
+                        props_packed: pack_props(0.0, 0.0),
+                        velocity: 0,
+                        flags: 0,
+                    });
                 }
             }
         }

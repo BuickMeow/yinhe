@@ -11,6 +11,11 @@ pub struct App {
     view: yinhe_pianoroll::PianoRollView,
     selected: HashSet<(u16, u32)>,
     file_name: Option<String>,
+    cursor_tick: Option<f64>,
+    /// Per-track visibility (index = track number).
+    track_visible: Vec<bool>,
+    /// Currently selected track (for future editing).
+    track_selected: Option<u16>,
 }
 
 impl App {
@@ -30,6 +35,9 @@ impl App {
             view: yinhe_pianoroll::PianoRollView::default(),
             selected: HashSet::new(),
             file_name: None,
+            cursor_tick: None,
+            track_visible: Vec::new(),
+            track_selected: None,
         }
     }
 
@@ -47,13 +55,17 @@ impl App {
                             midi.track_ports.len(),
                             midi.ticks_per_beat,
                         );
+                        let num_tracks = midi.track_ports.len();
                         self.file_name = path
                             .file_stem()
                             .and_then(|n| n.to_str())
                             .map(|s| s.to_string());
+                        self.track_visible = vec![true; num_tracks];
+                        self.track_selected = None;
                         self.midi = Some(midi);
                         self.selected.clear();
                         self.view = yinhe_pianoroll::PianoRollView::default();
+                        self.cursor_tick = None;
                     }
                     Err(e) => {
                         tracing::error!("Failed to parse MIDI: {}", e);
@@ -66,6 +78,25 @@ impl App {
         }
     }
 }
+
+const TRACK_PALETTE: [[f32; 3]; 16] = [
+    [0.29, 0.56, 0.89],
+    [0.89, 0.35, 0.35],
+    [0.30, 0.78, 0.30],
+    [0.95, 0.65, 0.20],
+    [0.65, 0.40, 0.85],
+    [0.20, 0.80, 0.80],
+    [0.95, 0.75, 0.20],
+    [0.90, 0.45, 0.70],
+    [0.40, 0.65, 0.35],
+    [0.70, 0.50, 0.30],
+    [0.35, 0.55, 0.75],
+    [0.85, 0.55, 0.35],
+    [0.45, 0.80, 0.55],
+    [0.75, 0.35, 0.55],
+    [0.55, 0.55, 0.80],
+    [0.60, 0.75, 0.30],
+];
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -93,6 +124,70 @@ impl eframe::App for App {
             });
         });
 
+        // Left panel: track list
+        if self.midi.is_some() {
+            egui::Panel::left("track_panel")
+                .resizable(true)
+                .default_size(200.0)
+                .show_inside(ui, |ui| {
+                    ui.heading("Tracks");
+                    ui.separator();
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        if let Some(ref midi) = self.midi {
+                            let info = midi.track_info();
+                            for ti in &info {
+                                let idx = ti.index as usize;
+                                let color = TRACK_PALETTE[idx % TRACK_PALETTE.len()];
+                                let color32 = egui::Color32::from_rgb(
+                                    (color[0] * 255.0) as u8,
+                                    (color[1] * 255.0) as u8,
+                                    (color[2] * 255.0) as u8,
+                                );
+
+                                let selected = self.track_selected == Some(ti.index);
+                                let frame = egui::Frame::default()
+                                    .fill(if selected {
+                                        ui.visuals().selection.bg_fill
+                                    } else {
+                                        egui::Color32::TRANSPARENT
+                                    })
+                                    .inner_margin(4.0);
+                                frame.show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        // Color swatch
+                                        let (rect, _) = ui.allocate_exact_size(
+                                            egui::vec2(12.0, 12.0),
+                                            egui::Sense::hover(),
+                                        );
+                                        ui.painter().rect_filled(rect, 2.0, color32);
+
+                                        // Visibility checkbox
+                                        let mut vis = self.track_visible.get(idx).copied().unwrap_or(true);
+                                        if ui.checkbox(&mut vis, "").changed() {
+                                            if idx < self.track_visible.len() {
+                                                self.track_visible[idx] = vis;
+                                            }
+                                        }
+
+                                        // Track name + info
+                                        let label = ui.label(
+                                            egui::RichText::new(&ti.name).strong(),
+                                        );
+                                        if label.clicked() {
+                                            self.track_selected = Some(ti.index);
+                                        }
+                                        ui.label(format!("{} notes", ti.note_count));
+                                        if ti.port > 0 {
+                                            ui.label(format!("P{}", ti.port));
+                                        }
+                                    });
+                                });
+                            }
+                        }
+                    });
+                });
+        }
+
         // Central panel: piano roll canvas
         egui::CentralPanel::default().show_inside(ui, |ui| {
             let available = ui.available_size();
@@ -107,9 +202,11 @@ impl eframe::App for App {
                 &mut self.view,
                 midi_source,
                 &self.selected,
+                &self.track_visible,
+                &mut self.cursor_tick,
             );
         });
 
-        ui.ctx().request_repaint();
+        // No continuous repaint — only repaint on interaction (handled in piano_view).
     }
 }

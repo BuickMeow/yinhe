@@ -9,24 +9,6 @@ const WHITE_KEY_CORNER_RADIUS: f32 = 2.0;
 const BLACK_KEY_CORNER_RADIUS: f32 = 1.5;
 const KEY_BORDER_WIDTH: f32 = 0.5;
 
-/// Compute screen-space y-offset and height for each of the 128 keys.
-/// Returns Vec of (y, height) for each key.
-pub fn compute_key_rects(
-    _keyboard_width: f32,
-    key_height: f32,
-    scroll_y: f32,
-    _total_height: f32,
-) -> Vec<(f32, f32, f32)> {
-    let mut rects = Vec::with_capacity(128);
-    let bottom = 128.0 * key_height - scroll_y;
-
-    for key in 0u8..128 {
-        let y = bottom - (key as f32 + 1.0) * key_height;
-        rects.push((0.0, y, key_height));
-    }
-    rects
-}
-
 /// Append keyboard instances to the output buffer.
 pub fn append_keyboard_instances(
     out: &mut Vec<NoteInstance>,

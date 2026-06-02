@@ -56,6 +56,7 @@ impl MidiParser {
         let mut key_notes: [Vec<Note>; 128] = std::array::from_fn(|_| Vec::new());
         let mut global_duration = 0.0f64;
         let mut track_ports: Vec<u8> = Vec::with_capacity(smf.tracks.len());
+        let mut track_names: Vec<String> = Vec::with_capacity(smf.tracks.len());
         let mut control_events: Vec<MidiControlEvent> = Vec::new();
         let total_tracks = smf.tracks.len();
 
@@ -64,6 +65,16 @@ impl MidiParser {
                 current_track: track_idx + 1,
                 total_tracks,
             });
+            // Extract track name from MetaMessage::TrackName
+            let track_name = track.iter().find_map(|ev| {
+                if let midly::TrackEventKind::Meta(midly::MetaMessage::TrackName(name)) = ev.kind {
+                    Some(String::from_utf8_lossy(name).into_owned())
+                } else {
+                    None
+                }
+            }).unwrap_or_else(|| format!("Track {}", track_idx + 1));
+            track_names.push(track_name);
+
             let port = Self::parse_track(
                 track,
                 &tempo_segments,
@@ -101,6 +112,7 @@ impl MidiParser {
             tick_length,
             time_sig_numerator,
             time_sig_denominator,
+            track_names,
             track_ports,
             control_events,
         })
@@ -410,6 +422,7 @@ mod tests {
             tick_length: 0,
             time_sig_numerator: 4,
             time_sig_denominator: 2,
+            track_names: Vec::new(),
             track_ports: Vec::new(),
             control_events: Vec::new(),
         };
@@ -439,6 +452,7 @@ mod tests {
             tick_length: 1440,
             time_sig_numerator: 4,
             time_sig_denominator: 2,
+            track_names: Vec::new(),
             track_ports: Vec::new(),
             control_events: Vec::new(),
         };

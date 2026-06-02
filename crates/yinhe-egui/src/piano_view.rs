@@ -9,6 +9,8 @@ pub fn show(
     view: &mut yinhe_pianoroll::PianoRollView,
     midi: Option<&dyn yinhe_pianoroll::NoteSource>,
     selected: &std::collections::HashSet<(u16, u32)>,
+    track_visible: &[bool],
+    cursor_tick: &mut Option<f64>,
 ) {
     let (resp, painter) = ui.allocate_painter(available, egui::Sense::click_and_drag());
     let rect = resp.rect;
@@ -31,7 +33,7 @@ pub fn show(
     view.clamp_scroll(w as f32, h as f32, total_ticks);
 
     // Prepare and render to offscreen texture
-    pianoroll.prepare(w, h, midi, view, selected);
+    pianoroll.prepare(w, h, midi, view, selected, track_visible, *cursor_tick);
 
     let mut encoder = render_ctx
         .device()
@@ -50,6 +52,7 @@ pub fn show(
     );
 
     // Handle input
+    let mut changed = false;
     if resp.hovered() {
         let pointer_pos = ui.input(|i| i.pointer.hover_pos().unwrap_or_default());
         let pointer_x = pointer_pos.x - rect.min.x;
@@ -63,6 +66,7 @@ pub fn show(
             } else {
                 view.zoom_around_x(pointer_x, zoom_delta);
             }
+            changed = true;
         }
 
         // Cmd+scroll: scroll.y → horizontal zoom, scroll.x → vertical zoom
@@ -84,6 +88,22 @@ pub fn show(
                 view.scroll_x -= scroll.x;
                 view.scroll_y -= scroll.y;
             }
+            changed = true;
+        }
+    }
+
+    // Set cursor on click — use pointer release + small drag distance instead of
+    // resp.clicked() which fails on trackpads due to micro-movement.
+    let released = ui.input(|i| i.pointer.primary_released());
+    let drag_dist = resp.drag_delta().length();
+    if released && resp.hovered() && drag_dist < 3.0 {
+        if let Some(pos) = resp.interact_pointer_pos() {
+            let pointer_x = pos.x - rect.min.x;
+            if pointer_x >= view.keyboard_width {
+                let tick = view.x_to_tick(pointer_x);
+                *cursor_tick = Some(tick.max(0.0));
+                changed = true;
+            }
         }
     }
 
@@ -92,10 +112,16 @@ pub fn show(
         let delta = resp.drag_delta();
         view.scroll_x -= delta.x;
         view.scroll_y -= delta.y;
+        changed = true;
     }
 
     // Double-click to reset view
     if resp.double_clicked() {
         *view = yinhe_pianoroll::PianoRollView::default();
+        changed = true;
+    }
+
+    if changed {
+        ui.ctx().request_repaint();
     }
 }

@@ -94,8 +94,4 @@ impl RenderContext {
     pub fn preview_view(&self) -> &wgpu::TextureView {
         &self.view
     }
-
-    pub fn preview_size(&self) -> (u32, u32) {
-        (self.width, self.height)
-    }
 }

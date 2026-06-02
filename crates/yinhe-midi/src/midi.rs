@@ -23,6 +23,8 @@ pub struct MidiFile {
     pub time_sig_denominator: u8,
     /// MIDI port per track for channel mapping (port * 16 + channel).
     pub track_ports: Vec<u8>,
+    /// Track names parsed from MetaMessage::TrackName.
+    pub track_names: Vec<String>,
     /// Non-note MIDI events (CC, Program Change, Pitch Bend).
     pub control_events: Vec<MidiControlEvent>,
 }
@@ -140,4 +142,39 @@ impl MidiFile {
     pub fn track_port(&self, track_idx: usize) -> u8 {
         self.track_ports.get(track_idx).copied().unwrap_or(0)
     }
+
+    /// Get info for all tracks (name, note count, port).
+    pub fn track_info(&self) -> Vec<TrackInfo> {
+        let num_tracks = self.track_ports.len();
+        let mut note_counts = vec![0u64; num_tracks];
+        for notes in &self.key_notes {
+            for note in notes {
+                let idx = note.track as usize;
+                if idx < num_tracks {
+                    note_counts[idx] += 1;
+                }
+            }
+        }
+        (0..num_tracks)
+            .map(|i| TrackInfo {
+                index: i as u16,
+                name: self
+                    .track_names
+                    .get(i)
+                    .cloned()
+                    .unwrap_or_else(|| format!("Track {}", i + 1)),
+                note_count: note_counts[i],
+                port: self.track_ports.get(i).copied().unwrap_or(0),
+            })
+            .collect()
+    }
+}
+
+/// Info about a single MIDI track.
+#[derive(Clone, Debug)]
+pub struct TrackInfo {
+    pub index: u16,
+    pub name: String,
+    pub note_count: u64,
+    pub port: u8,
 }

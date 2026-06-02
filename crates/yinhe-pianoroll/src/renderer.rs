@@ -75,6 +75,8 @@ impl PianorollRenderer {
         midi: Option<&dyn yinhe_types::NoteSource>,
         view: &PianoRollView,
         selected: &HashSet<(u16, u32)>,
+        track_visible: &[bool],
+        cursor_tick: Option<f64>,
     ) {
         let uniforms = Uniforms {
             width: width as f32,
@@ -92,7 +94,7 @@ impl PianorollRenderer {
         let mut instances = std::mem::take(&mut self.instance_scratch);
         instances.clear();
 
-        instances::build_instances(&mut instances, width, height, midi, view, selected);
+        instances::build_instances(&mut instances, width, height, midi, view, selected, track_visible, cursor_tick);
 
         let instance_size = std::mem::size_of::<NoteInstance>() as u64;
         let batches: Vec<&[NoteInstance]> = if instances.is_empty() {
