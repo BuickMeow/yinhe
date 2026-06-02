@@ -13,9 +13,6 @@ const PLAYHEAD_COLOR: (f32, f32, f32, f32) = (1.0, 1.0, 1.0, 0.8);
 
 const NOTE_ROUNDING: f32 = 0.2;
 
-/// Safety cap to prevent GPU overload — only used as a saturating bail-out.
-const MAX_NOTE_INSTANCES: usize = 2_000_000;
-
 /// Build all instances for the arrangement view frame.
 ///
 /// `instances` is a reusable scratch buffer — caller should retain it across frames.
@@ -122,9 +119,8 @@ pub fn build_arrangement_instances(
             let pad_start = (tick_start - tick_pad as f64).max(0.0);
             let pad_end = tick_end + tick_pad as f64;
             let (trk_first, trk_last) = view.visible_track_range(h, num_tracks);
-            let note_start_count = instances.len();
 
-            'key_loop: for key in 0u8..128 {
+            for key in 0u8..128 {
                 let notes = midi.key_notes(key);
                 if notes.is_empty() { continue; }
                 if notes.first().map_or(true, |n| n.start_tick as f64 > pad_end) { continue; }
@@ -141,8 +137,6 @@ pub fn build_arrangement_instances(
                                         end: u32,
                                         _key: u8,
                                         vel: u8| {
-                    if instances.len() - note_start_count >= MAX_NOTE_INSTANCES { return; }
-
                     // Clamp to visual range
                     let s = (start as f64).max(pad_start) as u32;
                     let e = (end as f64).min(pad_end).max(start as f64) as u32;
@@ -181,7 +175,6 @@ pub fn build_arrangement_instances(
                         // Flush previous merge, start new one
                         if let Some(prev_track) = merge_track {
                             flush_merge(instances, prev_track, merge_start, merge_end, key, merge_vel);
-                            if instances.len() - note_start_count >= MAX_NOTE_INSTANCES { break 'key_loop; }
                         }
                         merge_track = Some(ti);
                         merge_start = note.start_tick;
@@ -192,7 +185,6 @@ pub fn build_arrangement_instances(
                 // Flush final merge for this key
                 if let Some(prev_track) = merge_track {
                     flush_merge(instances, prev_track, merge_start, merge_end, key, merge_vel);
-                    if instances.len() - note_start_count >= MAX_NOTE_INSTANCES { break 'key_loop; }
                 }
             }
         }
@@ -351,25 +343,31 @@ mod tests {
     }
 
     #[test]
-    fn test_instance_cap() {
-        // Create enough notes to overflow the cap
+    fn test_no_instance_cap() {
+        // Verify that even with very many notes, all are rendered without a cap.
+        // Use same-tick different keys to prevent merging → one instance per note.
         let mut notes = Vec::new();
-        let total_notes = MAX_NOTE_INSTANCES + 1000;
-        for i in 0..total_notes {
-            let key = (i % 128) as u8;
-            // Spread across ticks to avoid early-skip optimization
-            let tick = (i as u32) * 5;
-            notes.push((
-                key,
-                tick,
-                tick + 120,
-                (i % 16) as u16,
-                (50 + (i % 100) as u8),
-            ));
+        let num_tick_positions = 1200u32;
+        for tick_offset in 0..num_tick_positions {
+            for key in 0..128u8 {
+                for track in 0..16u16 {
+                    let tick = 100 + tick_offset * 3; // gap between groups
+                    notes.push((key, tick, tick + 1, track, 100));
+                }
+            }
         }
+        // 1200 * 128 * 16 = 2,457,600 notes → ~2.45M instances (no merging)
         let mock = make_midi(notes);
 
-        let view = ArrangementView::default();
+        // Use a view that can see all notes
+        let view = ArrangementView {
+            pixels_per_tick: 0.08,
+            lane_height: 40.0,
+            label_width: 120.0,
+            scroll_x: 0.0,
+            scroll_y: 0.0,
+            dirty: true,
+        };
         let track_visible = vec![true; 16];
         let track_colors = [[0.5f32; 3]; 16];
         let mut instances = Vec::new();
@@ -377,7 +375,7 @@ mod tests {
         let start = std::time::Instant::now();
         build_arrangement_instances(
             &mut instances,
-            1200,
+            2000, // wide viewport
             800,
             Some(&mock as &dyn NoteSource),
             &view,
@@ -386,13 +384,12 @@ mod tests {
             None,
         );
         let elapsed = start.elapsed();
-        // Even with overflow, should complete quickly
-        assert!(elapsed.as_millis() < 500, "overflow build took: {:?}", elapsed);
+        assert!(elapsed.as_millis() < 3000, "large build took: {:?}", elapsed);
 
-        // The number of note instances should be at most MAX_NOTE_INSTANCES
-        // (only count note instances, not bg/grid/playhead)
+        // All notes should be rendered (no cap — should exceed 2M)
         let note_count = instances.iter().filter(|i| i.velocity > 0).count();
-        assert!(note_count <= MAX_NOTE_INSTANCES, "exceeded cap: {} > {}", note_count, MAX_NOTE_INSTANCES);
+        assert!(note_count > 0, "should have generated note instances");
+        assert!(note_count > 2_000_000, "should exceed old 2M cap: got {}", note_count);
     }
 
     #[test]
