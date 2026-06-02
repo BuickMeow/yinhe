@@ -46,6 +46,8 @@ pub struct PianorollRenderer {
     instance_buffers: Vec<InstanceBufferSlot>,
     instance_scratch: Vec<NoteInstance>,
     current_batch_counts: Vec<usize>,
+    /// Cached last uniforms — used to skip GPU write when nothing changed.
+    cached_uniforms: Option<Uniforms>,
 }
 
 impl PianorollRenderer {
@@ -64,10 +66,12 @@ impl PianorollRenderer {
             instance_buffers: Vec::new(),
             instance_scratch: Vec::new(),
             current_batch_counts: Vec::new(),
+            cached_uniforms: None,
         }
     }
 
     /// Prepare rendering data for the current frame (pianoroll specific).
+    /// Returns early if view state and uniforms are unchanged since last call.
     pub fn prepare(
         &mut self,
         width: u32,
@@ -89,6 +93,15 @@ impl PianorollRenderer {
             _pad: 0.0,
         };
 
+        // Skip rebuild if view state and uniforms are unchanged
+        if !view.dirty {
+            if let Some(ref cached) = self.cached_uniforms {
+                if *cached == uniforms {
+                    return;
+                }
+            }
+        }
+
         let mut instances = std::mem::take(&mut self.instance_scratch);
         instances.clear();
         instances::build_instances(&mut instances, width, height, midi, view, selected, track_visible, cursor_tick);
@@ -99,6 +112,7 @@ impl PianorollRenderer {
 
     /// Generic prepare: upload uniforms + instances to GPU.
     pub fn prepare_from_parts(&mut self, uniforms: Uniforms, instances: &[NoteInstance]) {
+        self.cached_uniforms = Some(uniforms);
         self.queue
             .write_buffer(&self.render.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
@@ -178,5 +192,10 @@ impl PianorollRenderer {
     /// Total number of note instances prepared for the current frame.
     pub fn total_instances(&self) -> usize {
         self.current_batch_counts.iter().sum()
+    }
+
+    /// Check whether given uniforms differ from the last prepared ones.
+    pub fn uniforms_changed(&self, uniforms: &Uniforms) -> bool {
+        self.cached_uniforms.as_ref().map_or(true, |c| *c != *uniforms)
     }
 }

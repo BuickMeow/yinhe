@@ -47,8 +47,14 @@ pub fn show(
         }
     }
 
+    // Mark dirty during playback — cursor line needs to move each frame
+    if is_playing && cursor_tick.is_some() {
+        view.dirty = true;
+    }
+
     // Prepare and render to offscreen texture
     pianoroll.prepare(w, h, midi, view, selected, track_visible, *cursor_tick);
+    view.dirty = false;
 
     let mut encoder = render_ctx
         .device()
@@ -102,6 +108,7 @@ pub fn show(
                 // Pan: horizontal with scroll.x, vertical with scroll.y
                 view.scroll_x -= scroll.x;
                 view.scroll_y -= scroll.y;
+                view.dirty = true;
             }
             changed = true;
         }
@@ -127,6 +134,7 @@ pub fn show(
         let delta = resp.drag_delta();
         view.scroll_x -= delta.x;
         view.scroll_y -= delta.y;
+        view.dirty = true;
         changed = true;
     }
 

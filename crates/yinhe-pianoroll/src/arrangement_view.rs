@@ -12,6 +12,8 @@ pub struct ArrangementView {
     pub scroll_x: f32,
     /// Vertical scroll offset in pixels (for track lanes).
     pub scroll_y: f32,
+    /// Whether view state has changed since last render — set to false after prepare.
+    pub dirty: bool,
 }
 
 impl Default for ArrangementView {
@@ -22,6 +24,7 @@ impl Default for ArrangementView {
             label_width: 120.0,
             scroll_x: 0.0,
             scroll_y: 0.0,
+            dirty: true,
         }
     }
 }
@@ -59,6 +62,9 @@ impl ArrangementView {
 
     /// Clamp scroll so the view doesn't go out of bounds.
     pub fn clamp_scroll(&mut self, width: f32, height: f32, total_ticks: f64, num_tracks: usize) {
+        let old_x = self.scroll_x;
+        let old_y = self.scroll_y;
+
         let min_scroll_x = 0.0;
         let max_scroll_x =
             (total_ticks as f32 * self.pixels_per_tick - (width - self.label_width)).max(0.0);
@@ -66,6 +72,10 @@ impl ArrangementView {
 
         let max_scroll_y = (num_tracks as f32 * self.lane_height - height).max(0.0);
         self.scroll_y = self.scroll_y.clamp(0.0, max_scroll_y);
+
+        if old_x != self.scroll_x || old_y != self.scroll_y {
+            self.dirty = true;
+        }
     }
 
     /// Zoom around a pointer position (horizontal).
@@ -75,5 +85,6 @@ impl ArrangementView {
 
         let tick = (pointer_x - self.label_width + self.scroll_x) / old;
         self.scroll_x = tick * self.pixels_per_tick - (pointer_x - self.label_width);
+        self.dirty = true;
     }
 }

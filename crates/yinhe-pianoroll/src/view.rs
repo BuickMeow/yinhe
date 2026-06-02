@@ -12,6 +12,8 @@ pub struct PianoRollView {
     pub scroll_y: f32,
     /// Width of the piano keyboard on the left side (pixels).
     pub keyboard_width: f32,
+    /// Whether view state has changed since last render — set to false after prepare.
+    pub dirty: bool,
 }
 
 impl Default for PianoRollView {
@@ -22,6 +24,7 @@ impl Default for PianoRollView {
             scroll_x: 0.0,
             scroll_y: 0.0,
             keyboard_width: 80.0,
+            dirty: true,
         }
     }
 }
@@ -72,6 +75,9 @@ impl PianoRollView {
 
     /// Clamp scroll so the view doesn't go out of bounds.
     pub fn clamp_scroll(&mut self, width: f32, height: f32, total_ticks: f64) {
+        let old_x = self.scroll_x;
+        let old_y = self.scroll_y;
+
         // Horizontal: don't scroll before tick 0
         let min_scroll_x = 0.0;
         let max_scroll_x = (total_ticks as f32 * self.pixels_per_tick - (width - self.keyboard_width)).max(0.0);
@@ -80,6 +86,10 @@ impl PianoRollView {
         // Vertical: don't scroll beyond key range
         let max_scroll_y = (self.total_key_height() - height).max(0.0);
         self.scroll_y = self.scroll_y.clamp(0.0, max_scroll_y);
+
+        if old_x != self.scroll_x || old_y != self.scroll_y {
+            self.dirty = true;
+        }
     }
 
     /// Zoom around a pointer position (horizontal).
@@ -90,6 +100,7 @@ impl PianoRollView {
         // Keep the tick under the pointer stationary
         let tick = (pointer_x - self.keyboard_width + self.scroll_x) / old;
         self.scroll_x = tick * self.pixels_per_tick - (pointer_x - self.keyboard_width);
+        self.dirty = true;
     }
 
     /// Zoom around a pointer position (vertical).
@@ -101,5 +112,6 @@ impl PianoRollView {
 
         // Keep the key row under the pointer stationary
         self.scroll_y = (self.scroll_y + pointer_y) / old * self.key_height - pointer_y;
+        self.dirty = true;
     }
 }

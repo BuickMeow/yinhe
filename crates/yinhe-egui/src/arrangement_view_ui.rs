@@ -57,21 +57,12 @@ pub fn show(
         }
     }
 
-    // ── Build instances using scratch buffer ──
-    let mut scratch = std::mem::take(instances);
-    scratch.clear();
-    arrangement_instances::build_arrangement_instances(
-        &mut scratch,
-        w,
-        h,
-        midi,
-        view,
-        track_visible,
-        track_colors,
-        *cursor_tick,
-    );
+    // Mark dirty during playback — cursor line needs to move each frame
+    if is_playing && cursor_tick.is_some() {
+        view.dirty = true;
+    }
 
-    // ── Prepare uniforms and upload to GPU ──
+    // ── Compute uniforms ──
     let uniforms = Uniforms {
         width: w as f32,
         height: h as f32,
@@ -82,11 +73,33 @@ pub fn show(
         keyboard_width: view.label_width,
         _pad: 0.0,
     };
-    renderer.prepare_from_parts(uniforms, &scratch);
 
-    // Return scratch buffer to caller
-    scratch.clear();
-    *instances = scratch;
+    // Only rebuild instances if view state or uniforms changed
+    let need_rebuild = view.dirty || renderer.uniforms_changed(&uniforms);
+
+    if need_rebuild {
+        // ── Build instances using scratch buffer ──
+        let mut scratch = std::mem::take(instances);
+        scratch.clear();
+        arrangement_instances::build_arrangement_instances(
+            &mut scratch,
+            w,
+            h,
+            midi,
+            view,
+            track_visible,
+            track_colors,
+            *cursor_tick,
+        );
+
+        // ── Upload to GPU ──
+        renderer.prepare_from_parts(uniforms, &scratch);
+
+        // Return scratch buffer to caller
+        scratch.clear();
+        *instances = scratch;
+    }
+    view.dirty = false;
 
     // ── Render to offscreen texture ──
     let mut encoder = render_ctx
@@ -177,6 +190,7 @@ pub fn show(
             } else {
                 view.scroll_x -= scroll.x;
                 view.scroll_y -= scroll.y;
+                view.dirty = true;
             }
             changed = true;
         }
@@ -201,6 +215,7 @@ pub fn show(
         let delta = resp.drag_delta();
         view.scroll_x -= delta.x;
         view.scroll_y -= delta.y;
+        view.dirty = true;
         changed = true;
     }
 

@@ -54,6 +54,7 @@ pub struct App {
 
     // ── Visibility toggles ──
     show_track_panel: bool,
+    was_track_panel_on: bool,
     show_transport: bool,
     show_pianoroll: bool,
 }
@@ -117,6 +118,7 @@ impl App {
             file_loader: FileLoader::new(),
 
             show_track_panel: true,
+            was_track_panel_on: true,
             show_transport: true,
             show_pianoroll: true,
         }
@@ -512,10 +514,18 @@ impl eframe::App for App {
                 }
                 ui.separator();
                 let was_pianoroll = self.show_pianoroll;
-                if ui.checkbox(&mut self.show_pianoroll, "卷帘").changed()
-                    && !self.show_transport && !self.show_pianoroll
-                {
-                    self.show_pianoroll = was_pianoroll;
+                if ui.checkbox(&mut self.show_pianoroll, "卷帘").changed() {
+                    if !self.show_pianoroll {
+                        // Turning off pianoroll: auto-close track panel
+                        self.was_track_panel_on = self.show_track_panel;
+                        self.show_track_panel = false;
+                    } else {
+                        // Turning on pianoroll: restore track panel
+                        self.show_track_panel = self.was_track_panel_on;
+                    }
+                    if !self.show_transport && !self.show_pianoroll {
+                        self.show_pianoroll = was_pianoroll;
+                    }
                 }
             });
         });
@@ -527,13 +537,18 @@ impl eframe::App for App {
             let total = remaining.size();
             let is_playing = self.playback.is_playing();
 
-            // ── Vertical split: arrangement on top, bottom area below ──
+            // ── Vertical split: arrangement on top, bottom area below (only when pianoroll visible) ──
             let arr_h = if self.show_transport {
-                (total.y * self.arr_split).max(60.0)
+                if self.show_pianoroll {
+                    (total.y * self.arr_split).max(60.0)
+                } else {
+                    total.y // fill entire remaining when pianoroll hidden
+                }
             } else {
                 0.0
             };
-            let bottom_y = remaining.min.y + arr_h + if self.show_transport { 4.0 } else { 0.0 };
+            let bottom_y = remaining.min.y + arr_h
+                + if self.show_transport && self.show_pianoroll { 4.0 } else { 0.0 };
 
             // ── Arrangement view (走带) ──
             if self.show_transport {
@@ -545,7 +560,7 @@ impl eframe::App for App {
                     remaining.min,
                     egui::pos2(remaining.max.x, remaining.min.y + arr_h),
                 );
-                ui.allocate_ui_at_rect(arr_rect, |ui| {
+                ui.allocate_new_ui(egui::UiBuilder::new().max_rect(arr_rect), |ui| {
                     arrangement_view_ui::show(
                         ui,
                         ui.available_size(),
@@ -562,24 +577,26 @@ impl eframe::App for App {
                     );
                 });
 
-                // Horizontal splitter
-                let h_split_rect = egui::Rect::from_min_max(
-                    egui::pos2(remaining.min.x, remaining.min.y + arr_h),
-                    egui::pos2(remaining.max.x, remaining.min.y + arr_h + 4.0),
-                );
-                let h_split_resp = ui.interact(h_split_rect, ui.next_auto_id(), egui::Sense::click_and_drag());
-                ui.painter().rect_filled(
-                    h_split_rect,
-                    0.0,
-                    if h_split_resp.hovered() || h_split_resp.dragged() {
-                        egui::Color32::from_gray(100)
-                    } else {
-                        egui::Color32::from_gray(60)
-                    },
-                );
-                if h_split_resp.dragged() {
-                    let delta = h_split_resp.drag_delta().y;
-                    self.arr_split = ((arr_h + delta) / total.y).clamp(0.1, 0.7);
+                // Horizontal splitter (only when bottom area exists)
+                if self.show_pianoroll {
+                    let h_split_rect = egui::Rect::from_min_max(
+                        egui::pos2(remaining.min.x, remaining.min.y + arr_h),
+                        egui::pos2(remaining.max.x, remaining.min.y + arr_h + 4.0),
+                    );
+                    let h_split_resp = ui.interact(h_split_rect, ui.next_auto_id(), egui::Sense::click_and_drag());
+                    ui.painter().rect_filled(
+                        h_split_rect,
+                        0.0,
+                        if h_split_resp.hovered() || h_split_resp.dragged() {
+                            egui::Color32::from_gray(100)
+                        } else {
+                            egui::Color32::from_gray(60)
+                        },
+                    );
+                    if h_split_resp.dragged() {
+                        let delta = h_split_resp.drag_delta().y;
+                        self.arr_split = ((arr_h + delta) / total.y).clamp(0.1, 0.7);
+                    }
                 }
             }
 
@@ -594,7 +611,7 @@ impl eframe::App for App {
                     egui::pos2(remaining.min.x, bottom_y),
                     egui::pos2(remaining.min.x + sidebar_w, remaining.max.y),
                 );
-                ui.allocate_ui_at_rect(track_rect, |ui| {
+                ui.allocate_new_ui(egui::UiBuilder::new().max_rect(track_rect), |ui| {
                     ui.set_clip_rect(ui.max_rect());
                     ui.painter().rect_filled(ui.max_rect(), 0.0, ui.visuals().panel_fill);
                     self.show_track_list(ui);
@@ -626,7 +643,7 @@ impl eframe::App for App {
                     egui::pos2(remaining.min.x + sidebar_w + 4.0, bottom_y),
                     remaining.max,
                 );
-                ui.allocate_ui_at_rect(piano_rect, |ui| {
+                ui.allocate_new_ui(egui::UiBuilder::new().max_rect(piano_rect), |ui| {
                     piano_view::show(
                         ui, ui.available_size(),
                         &mut self.pianoroll, &mut self.render_ctx, &mut self.view,
@@ -640,7 +657,7 @@ impl eframe::App for App {
                     egui::pos2(remaining.min.x, bottom_y),
                     remaining.max,
                 );
-                ui.allocate_ui_at_rect(track_rect, |ui| {
+                ui.allocate_new_ui(egui::UiBuilder::new().max_rect(track_rect), |ui| {
                     ui.set_clip_rect(ui.max_rect());
                     ui.painter().rect_filled(ui.max_rect(), 0.0, ui.visuals().panel_fill);
                     self.show_track_list(ui);
@@ -653,7 +670,7 @@ impl eframe::App for App {
                     egui::pos2(remaining.min.x, bottom_y),
                     remaining.max,
                 );
-                ui.allocate_ui_at_rect(piano_rect, |ui| {
+                ui.allocate_new_ui(egui::UiBuilder::new().max_rect(piano_rect), |ui| {
                     piano_view::show(
                         ui, ui.available_size(),
                         &mut self.pianoroll, &mut self.render_ctx, &mut self.view,

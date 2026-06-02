@@ -1,6 +1,6 @@
 /// Uniforms passed to the vertex / fragment shader.
 #[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Clone, Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct Uniforms {
     pub width: f32,
     pub height: f32,

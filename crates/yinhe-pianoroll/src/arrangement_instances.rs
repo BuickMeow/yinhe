@@ -13,8 +13,8 @@ const PLAYHEAD_COLOR: (f32, f32, f32, f32) = (1.0, 1.0, 1.0, 0.8);
 
 const NOTE_ROUNDING: f32 = 0.2;
 
-/// Safety cap to prevent GPU overload with extremely large MIDI files.
-const MAX_NOTE_INSTANCES: usize = 500_000;
+/// Safety cap to prevent GPU overload — only used as a saturating bail-out.
+const MAX_NOTE_INSTANCES: usize = 2_000_000;
 
 /// Build all instances for the arrangement view frame.
 ///
@@ -117,68 +117,82 @@ pub fn build_arrangement_instances(
                 }
             }
 
-            // Note rectangles — iterate all keys, draw each note in its track lane
+            // Note rectangles — merge consecutive same-track same-key notes into longer rects
             let tick_pad = (w - lb_w) / ppu;
             let pad_start = (tick_start - tick_pad as f64).max(0.0);
             let pad_end = tick_end + tick_pad as f64;
             let (trk_first, trk_last) = view.visible_track_range(h, num_tracks);
             let note_start_count = instances.len();
 
-            for key in 0u8..128 {
-                // Safety: stop adding notes if we hit the cap
-                if instances.len() - note_start_count >= MAX_NOTE_INSTANCES {
-                    break;
-                }
-
+            'key_loop: for key in 0u8..128 {
                 let notes = midi.key_notes(key);
-                if notes.is_empty() {
-                    continue;
-                }
+                if notes.is_empty() { continue; }
+                if notes.first().map_or(true, |n| n.start_tick as f64 > pad_end) { continue; }
 
-                // Quick skip: if the first note starts after pad_end, all do (sorted by start_tick)
-                if notes.first().map_or(true, |n| n.start_tick as f64 > pad_end) {
-                    continue;
-                }
+                // Merge state for consecutive same-track notes on this key
+                let mut merge_track: Option<usize> = None;
+                let mut merge_start: u32 = 0;
+                let mut merge_end: u32 = 0;
+                let mut merge_vel: u8 = 0;
 
-                for note in notes.iter() {
-                    // Tick filter — notes are sorted by start_tick per key
-                    if note.start_tick as f64 > pad_end {
-                        break;
-                    }
-                    if (note.end_tick as f64) < pad_start {
-                        continue;
-                    }
-                    // Track filter
-                    let ti = note.track as usize;
-                    if ti < trk_first || ti >= trk_last {
-                        continue;
-                    }
-                    if !track_visible.get(ti).copied().unwrap_or(true) {
-                        continue;
-                    }
+                let flush_merge = |instances: &mut Vec<NoteInstance>,
+                                        ti: usize,
+                                        start: u32,
+                                        end: u32,
+                                        _key: u8,
+                                        vel: u8| {
+                    if instances.len() - note_start_count >= MAX_NOTE_INSTANCES { return; }
 
-                    let nx = view.tick_to_x(note.start_tick as f64);
-                    let nw = ((note.end_tick - note.start_tick) as f32 * ppu).max(2.0);
+                    // Clamp to visual range
+                    let s = (start as f64).max(pad_start) as u32;
+                    let e = (end as f64).min(pad_end).max(start as f64) as u32;
+                    if s >= e { return; }
+
+                    if ti < trk_first || ti >= trk_last { return; }
+                    if !track_visible.get(ti).copied().unwrap_or(true) { return; }
+
+                    let nx = view.tick_to_x(s as f64);
+                    let nw = ((e - s) as f32 * ppu).max(2.0);
                     let ny = view.lane_y(ti);
-
-                    // Map MIDI key (0-127) to vertical position within lane
-                    // Higher keys at top of lane
-                    let note_y = ny + lh - (note.key as f32 + 1.0) * (lh / 128.0);
+                    let note_y = ny + lh - (_key as f32 + 1.0) * (lh / 128.0);
                     let note_h = (lh / 128.0).max(1.0);
-
                     let color = track_colors.get(ti).copied().unwrap_or([0.5, 0.5, 0.5]);
                     let rounding = NOTE_ROUNDING * nw.min(note_h);
 
                     instances.push(NoteInstance {
-                        x: nx,
-                        y: note_y,
-                        w: nw,
-                        h: note_h,
+                        x: nx, y: note_y, w: nw, h: note_h,
                         rgba_packed: pack_rgba(color[0], color[1], color[2], 0.85),
                         props_packed: pack_props(rounding, 0.0),
-                        velocity: note.velocity as u32,
+                        velocity: vel as u32,
                         flags: 0,
                     });
+                };
+
+                for note in notes.iter() {
+                    if note.start_tick as f64 > pad_end { break; }
+                    if (note.end_tick as f64) < pad_start { continue; }
+
+                    let ti = note.track as usize;
+                    if merge_track == Some(ti) && merge_end >= note.start_tick {
+                        // Overlapping or adjacent (same track) → merge
+                        merge_end = merge_end.max(note.end_tick);
+                        merge_vel = merge_vel.max(note.velocity);
+                    } else {
+                        // Flush previous merge, start new one
+                        if let Some(prev_track) = merge_track {
+                            flush_merge(instances, prev_track, merge_start, merge_end, key, merge_vel);
+                            if instances.len() - note_start_count >= MAX_NOTE_INSTANCES { break 'key_loop; }
+                        }
+                        merge_track = Some(ti);
+                        merge_start = note.start_tick;
+                        merge_end = note.end_tick;
+                        merge_vel = note.velocity;
+                    }
+                }
+                // Flush final merge for this key
+                if let Some(prev_track) = merge_track {
+                    flush_merge(instances, prev_track, merge_start, merge_end, key, merge_vel);
+                    if instances.len() - note_start_count >= MAX_NOTE_INSTANCES { break 'key_loop; }
                 }
             }
         }
@@ -291,8 +305,10 @@ mod tests {
         assert!(!instances.is_empty(), "should have generated instances");
 
         // Count note instances (velocity > 0 => actual note rectangle)
+        // Key 60: two consecutive notes merged into one rectangle
+        // Key 64: one note → total 2 note instances after merge
         let note_count = instances.iter().filter(|i| i.velocity > 0).count();
-        assert_eq!(note_count, 3, "should have 3 note instances");
+        assert_eq!(note_count, 2, "should have 2 note instances after merge");
 
         // Verify note positions are reasonable
         for inst in &instances {
