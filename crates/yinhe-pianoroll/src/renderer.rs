@@ -67,7 +67,7 @@ impl PianorollRenderer {
         }
     }
 
-    /// Prepare rendering data for the current frame.
+    /// Prepare rendering data for the current frame (pianoroll specific).
     pub fn prepare(
         &mut self,
         width: u32,
@@ -88,13 +88,19 @@ impl PianorollRenderer {
             keyboard_width: view.keyboard_width,
             _pad: 0.0,
         };
-        self.queue
-            .write_buffer(&self.render.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
         let mut instances = std::mem::take(&mut self.instance_scratch);
         instances.clear();
-
         instances::build_instances(&mut instances, width, height, midi, view, selected, track_visible, cursor_tick);
+        self.prepare_from_parts(uniforms, &instances);
+        instances.clear();
+        self.instance_scratch = instances;
+    }
+
+    /// Generic prepare: upload uniforms + instances to GPU.
+    pub fn prepare_from_parts(&mut self, uniforms: Uniforms, instances: &[NoteInstance]) {
+        self.queue
+            .write_buffer(&self.render.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
         let instance_size = std::mem::size_of::<NoteInstance>() as u64;
         let batches: Vec<&[NoteInstance]> = if instances.is_empty() {
@@ -127,9 +133,6 @@ impl PianorollRenderer {
             self.queue
                 .write_buffer(&self.instance_buffers[i].buffer, 0, bytemuck::cast_slice(batch));
         }
-
-        instances.clear();
-        self.instance_scratch = instances;
     }
 
     /// Draw the prepared instances into the given render target.

@@ -1,23 +1,50 @@
 use eframe::egui;
 use std::collections::HashSet;
 
+use crate::arrangement_view_ui;
 use crate::piano_view;
 use crate::playback::PlaybackState;
 use crate::render_context::RenderContext;
 
+const TRACK_PALETTE: [[f32; 3]; 16] = [
+    [0.29, 0.56, 0.89],
+    [0.89, 0.35, 0.35],
+    [0.30, 0.78, 0.30],
+    [0.95, 0.65, 0.20],
+    [0.65, 0.40, 0.85],
+    [0.20, 0.80, 0.80],
+    [0.95, 0.75, 0.20],
+    [0.90, 0.45, 0.70],
+    [0.40, 0.65, 0.35],
+    [0.70, 0.50, 0.30],
+    [0.35, 0.55, 0.75],
+    [0.85, 0.55, 0.35],
+    [0.45, 0.80, 0.55],
+    [0.75, 0.35, 0.55],
+    [0.55, 0.55, 0.80],
+    [0.60, 0.75, 0.30],
+];
+
 pub struct App {
+    // ── Pianoroll ──
     render_ctx: RenderContext,
     pianoroll: yinhe_pianoroll::PianorollRenderer,
-    midi: Option<yinhe_midi::MidiFile>,
     view: yinhe_pianoroll::PianoRollView,
+
+    // ── Arrangement ──
+    arr_render_ctx: RenderContext,
+    arr_renderer: yinhe_pianoroll::PianorollRenderer,
+    arr_view: yinhe_pianoroll::ArrangementView,
+    arr_split: f32, // fraction of central area for arrangement (0.0-1.0)
+    arr_instances: Vec<yinhe_pianoroll::NoteInstance>, // reusable scratch buffer
+
+    // ── Shared state ──
+    midi: Option<yinhe_midi::MidiFile>,
     selected: HashSet<(u16, u32)>,
     file_name: Option<String>,
     cursor_tick: Option<f64>,
-    /// Per-track visibility (index = track number).
     track_visible: Vec<bool>,
-    /// Currently selected track (for future editing).
     track_selected: Option<u16>,
-    /// Playback state.
     playback: PlaybackState,
 }
 
@@ -27,15 +54,24 @@ impl App {
         let default_h = 1080u32;
 
         let render_ctx = RenderContext::new(cc, default_w, default_h);
+        let arr_render_ctx = RenderContext::new(cc, default_w, default_h / 3);
+
         let device = render_ctx.device().clone();
         let queue = render_ctx.queue().clone();
         let format = render_ctx.target_format();
 
         Self {
             render_ctx,
-            pianoroll: yinhe_pianoroll::PianorollRenderer::new(device, queue, format),
-            midi: None,
+            pianoroll: yinhe_pianoroll::PianorollRenderer::new(device.clone(), queue.clone(), format),
             view: yinhe_pianoroll::PianoRollView::default(),
+
+            arr_render_ctx,
+            arr_renderer: yinhe_pianoroll::PianorollRenderer::new(device, queue, format),
+            arr_view: yinhe_pianoroll::ArrangementView::default(),
+            arr_split: 0.3,
+            arr_instances: Vec::new(),
+
+            midi: None,
             selected: HashSet::new(),
             file_name: None,
             cursor_tick: None,
@@ -69,6 +105,8 @@ impl App {
                         self.midi = Some(midi);
                         self.selected.clear();
                         self.view = yinhe_pianoroll::PianoRollView::default();
+                        self.arr_view = yinhe_pianoroll::ArrangementView::default();
+                        self.arr_instances.clear();
                         self.cursor_tick = None;
                         self.playback = PlaybackState::default();
                     }
@@ -82,26 +120,23 @@ impl App {
             }
         }
     }
-}
 
-const TRACK_PALETTE: [[f32; 3]; 16] = [
-    [0.29, 0.56, 0.89],
-    [0.89, 0.35, 0.35],
-    [0.30, 0.78, 0.30],
-    [0.95, 0.65, 0.20],
-    [0.65, 0.40, 0.85],
-    [0.20, 0.80, 0.80],
-    [0.95, 0.75, 0.20],
-    [0.90, 0.45, 0.70],
-    [0.40, 0.65, 0.35],
-    [0.70, 0.50, 0.30],
-    [0.35, 0.55, 0.75],
-    [0.85, 0.55, 0.35],
-    [0.45, 0.80, 0.55],
-    [0.75, 0.35, 0.55],
-    [0.55, 0.55, 0.80],
-    [0.60, 0.75, 0.30],
-];
+    /// Build track colors from palette + track count.
+    fn track_colors(&self) -> Vec<[f32; 3]> {
+        let n = self.track_visible.len();
+        (0..n)
+            .map(|i| TRACK_PALETTE[i % TRACK_PALETTE.len()])
+            .collect()
+    }
+
+    /// Collect track names for the arrangement view.
+    fn track_names(&self) -> Vec<String> {
+        self.midi
+            .as_ref()
+            .map(|m| m.track_names.clone())
+            .unwrap_or_default()
+    }
+}
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -124,7 +159,6 @@ impl eframe::App for App {
                     self.open_midi_file();
                 }
 
-                // Playback controls
                 if self.midi.is_some() {
                     ui.separator();
                     let play_label = if self.playback.is_playing() {
@@ -168,7 +202,6 @@ impl eframe::App for App {
                 self.cursor_tick = Some(0.0);
             }
 
-            // Advance cursor during playback
             if let Some((tick, reached_end)) = self.playback.current_tick(midi) {
                 self.cursor_tick = Some(tick);
                 if reached_end {
@@ -207,25 +240,22 @@ impl eframe::App for App {
                                     .inner_margin(4.0);
                                 frame.show(ui, |ui| {
                                     ui.horizontal(|ui| {
-                                        // Color swatch
                                         let (rect, _) = ui.allocate_exact_size(
                                             egui::vec2(12.0, 12.0),
                                             egui::Sense::hover(),
                                         );
                                         ui.painter().rect_filled(rect, 2.0, color32);
 
-                                        // Visibility checkbox
-                                        let mut vis = self.track_visible.get(idx).copied().unwrap_or(true);
+                                        let mut vis =
+                                            self.track_visible.get(idx).copied().unwrap_or(true);
                                         if ui.checkbox(&mut vis, "").changed() {
                                             if idx < self.track_visible.len() {
                                                 self.track_visible[idx] = vis;
                                             }
                                         }
 
-                                        // Track name + info
-                                        let label = ui.label(
-                                            egui::RichText::new(&ti.name).strong(),
-                                        );
+                                        let label =
+                                            ui.label(egui::RichText::new(&ti.name).strong());
                                         if label.clicked() {
                                             self.track_selected = Some(ti.index);
                                         }
@@ -241,29 +271,89 @@ impl eframe::App for App {
                 });
         }
 
-        // ── Central panel: piano roll canvas ──
+        // ── Central panel: arrangement (top) + pianoroll (bottom) ──
         egui::CentralPanel::default().show_inside(ui, |ui| {
-            let available = ui.available_size();
+            let total = ui.available_size();
+            let is_playing = self.playback.is_playing();
             let midi_source: Option<&dyn yinhe_pianoroll::NoteSource> =
                 self.midi.as_ref().map(|m| m as &dyn yinhe_pianoroll::NoteSource);
+            let track_colors = self.track_colors();
+            let track_names = self.track_names();
 
-            let is_playing = self.playback.is_playing();
+            if self.midi.is_some() {
+                // Split: arrangement on top, pianoroll on bottom
+                let arr_h = (total.y * self.arr_split).max(60.0);
+                let piano_h = (total.y - arr_h - 4.0).max(60.0);
 
-            piano_view::show(
-                ui,
-                available,
-                &mut self.pianoroll,
-                &mut self.render_ctx,
-                &mut self.view,
-                midi_source,
-                &self.selected,
-                &self.track_visible,
-                &mut self.cursor_tick,
-                is_playing,
-            );
+                // Arrangement view
+                arrangement_view_ui::show(
+                    ui,
+                    egui::vec2(total.x, arr_h),
+                    &mut self.arr_renderer,
+                    &mut self.arr_render_ctx,
+                    &mut self.arr_view,
+                    midi_source,
+                    &self.track_visible,
+                    &track_colors,
+                    &mut self.cursor_tick,
+                    is_playing,
+                    &track_names,
+                    &mut self.arr_instances,
+                );
+
+                // Draggable split handle
+                ui.horizontal(|ui| {
+                    let (_, resp) = ui.allocate_exact_size(
+                        egui::vec2(total.x, 4.0),
+                        egui::Sense::click_and_drag(),
+                    );
+                    ui.painter().rect_filled(
+                        resp.rect,
+                        0.0,
+                        if resp.hovered() || resp.dragged() {
+                            egui::Color32::from_gray(100)
+                        } else {
+                            egui::Color32::from_gray(60)
+                        },
+                    );
+                    if resp.dragged() {
+                        let delta = resp.drag_delta().y;
+                        self.arr_split =
+                            ((arr_h + delta) / total.y).clamp(0.1, 0.7);
+                    }
+                });
+
+                // Pianoroll view
+                piano_view::show(
+                    ui,
+                    egui::vec2(total.x, piano_h),
+                    &mut self.pianoroll,
+                    &mut self.render_ctx,
+                    &mut self.view,
+                    midi_source,
+                    &self.selected,
+                    &self.track_visible,
+                    &mut self.cursor_tick,
+                    is_playing,
+                );
+            } else {
+                // No MIDI loaded — show pianoroll only
+                piano_view::show(
+                    ui,
+                    total,
+                    &mut self.pianoroll,
+                    &mut self.render_ctx,
+                    &mut self.view,
+                    midi_source,
+                    &self.selected,
+                    &self.track_visible,
+                    &mut self.cursor_tick,
+                    is_playing,
+                );
+            }
         });
 
-        // Request repaint during playback for smooth animation
+        // Request repaint during playback
         if self.playback.is_playing() {
             ui.ctx().request_repaint();
         }

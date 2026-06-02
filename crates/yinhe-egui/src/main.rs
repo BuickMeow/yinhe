@@ -1,4 +1,5 @@
 mod app;
+mod arrangement_view_ui;
 mod piano_view;
 mod playback;
 mod render_context;

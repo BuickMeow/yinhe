@@ -1,15 +1,15 @@
 /// Uniforms passed to the vertex / fragment shader.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-pub(crate) struct Uniforms {
-    pub(crate) width: f32,
-    pub(crate) height: f32,
-    pub(crate) scroll_x: f32,
-    pub(crate) scroll_y: f32,
-    pub(crate) pixels_per_tick: f32,
-    pub(crate) key_height: f32,
-    pub(crate) keyboard_width: f32,
-    pub(crate) _pad: f32,
+pub struct Uniforms {
+    pub width: f32,
+    pub height: f32,
+    pub scroll_x: f32,
+    pub scroll_y: f32,
+    pub pixels_per_tick: f32,
+    pub key_height: f32,
+    pub keyboard_width: f32,
+    pub _pad: f32,
 }
 
 /// Packed instance: 32 bytes.
