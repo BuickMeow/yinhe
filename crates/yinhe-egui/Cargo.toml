@@ -1,0 +1,18 @@
+[package]
+name = "yinhe-egui"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+yinhe-types = { path = "../yinhe-types" }
+yinhe-midi = { path = "../yinhe-midi" }
+yinhe-dms = { path = "../yinhe-dms" }
+yinhe-archive = { path = "../yinhe-archive" }
+yinhe-pianoroll = { path = "../yinhe-pianoroll" }
+eframe = { workspace = true }
+egui = { workspace = true }
+wgpu = { workspace = true }
+rfd = { workspace = true }
+pollster = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }

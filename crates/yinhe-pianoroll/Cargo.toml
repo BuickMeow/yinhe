@@ -1,0 +1,11 @@
+[package]
+name = "yinhe-pianoroll"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+yinhe-types = { path = "../yinhe-types" }
+wgpu = { workspace = true }
+bytemuck = { workspace = true }
+half = { workspace = true }
+rayon = { workspace = true }

@@ -1,0 +1,7 @@
+[package]
+name = "yinhe-archive"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+yinhe-midi = { path = "../yinhe-midi" }
