@@ -9,4 +9,8 @@ pub trait NoteSource: Sync {
     fn tick_at_time(&self, _time: f64) -> Option<f64> {
         None
     }
+    /// Total tick length (position of the last note end).
+    fn tick_length(&self) -> Option<u64> {
+        None
+    }
 }

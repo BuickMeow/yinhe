@@ -91,4 +91,13 @@ impl PianoRollView {
         let tick = (pointer_x - self.keyboard_width + self.scroll_x) / old;
         self.scroll_x = tick * self.pixels_per_tick - (pointer_x - self.keyboard_width);
     }
+
+    /// Zoom around a pointer position (vertical).
+    pub fn zoom_around_y(&mut self, pointer_y: f32, zoom_factor: f32) {
+        let old = self.key_height;
+        self.key_height = (self.key_height * zoom_factor).clamp(4.0, 60.0);
+
+        // Keep the key row under the pointer stationary
+        self.scroll_y = (self.scroll_y + pointer_y) / old * self.key_height - pointer_y;
+    }
 }

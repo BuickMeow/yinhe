@@ -40,6 +40,9 @@ impl yinhe_types::NoteSource for MidiFile {
     fn tick_at_time(&self, time: f64) -> Option<f64> {
         Some(MidiFile::tick_at_time(self, time))
     }
+    fn tick_length(&self) -> Option<u64> {
+        Some(self.tick_length)
+    }
 }
 
 #[derive(Clone, Copy, Debug)]

@@ -5,7 +5,6 @@ use crate::vertex::{NoteInstance, pack_props, pack_rgba};
 /// Keyboard appearance constants.
 const WHITE_KEY_COLOR: (f32, f32, f32) = (0.94, 0.94, 0.94);
 const BLACK_KEY_COLOR: (f32, f32, f32) = (0.16, 0.16, 0.17);
-const BLACK_KEY_HEIGHT_RATIO: f32 = 0.6;
 const WHITE_KEY_CORNER_RADIUS: f32 = 2.0;
 const BLACK_KEY_CORNER_RADIUS: f32 = 1.5;
 const KEY_BORDER_WIDTH: f32 = 0.5;
@@ -23,12 +22,7 @@ pub fn compute_key_rects(
 
     for key in 0u8..128 {
         let y = bottom - (key as f32 + 1.0) * key_height;
-        let h = if is_black_key(key) {
-            key_height * BLACK_KEY_HEIGHT_RATIO
-        } else {
-            key_height
-        };
-        rects.push((0.0, y, h));
+        rects.push((0.0, y, key_height));
     }
     rects
 }
@@ -81,8 +75,7 @@ pub fn append_keyboard_instances(
             continue;
         }
         let y = bottom - (key as f32 + 1.0) * key_height;
-        let bh = key_height * BLACK_KEY_HEIGHT_RATIO;
-        if y + bh < 0.0 || y > canvas_height {
+        if y + key_height < 0.0 || y > canvas_height {
             continue;
         }
 
@@ -97,7 +90,7 @@ pub fn append_keyboard_instances(
             x: 0.0,
             y,
             w: keyboard_width,
-            h: bh,
+            h: key_height,
             rgba_packed: pack_rgba(r, g, b, 1.0),
             props_packed: pack_props(BLACK_KEY_CORNER_RADIUS, KEY_BORDER_WIDTH),
             velocity: 0,

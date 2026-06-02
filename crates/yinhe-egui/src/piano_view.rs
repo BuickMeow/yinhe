@@ -23,8 +23,11 @@ pub fn show(
     // Resize render target if needed
     render_ctx.ensure_size(w, h);
 
-    // Clamp scroll
-    let total_ticks = midi.map(|m| m.duration() * 200.0).unwrap_or(10000.0);
+    // Clamp scroll — add some extra space beyond the last note
+    let total_ticks = midi
+        .and_then(|m| m.tick_length())
+        .map(|tl| tl as f64 * 1.2)
+        .unwrap_or(10000.0);
     view.clamp_scroll(w as f32, h as f32, total_ticks);
 
     // Prepare and render to offscreen texture
@@ -48,17 +51,30 @@ pub fn show(
 
     // Handle input
     if resp.hovered() {
-        let pointer_x = ui.input(|i| i.pointer.hover_pos().map(|p| p.x).unwrap_or(0.0));
+        let pointer_pos = ui.input(|i| i.pointer.hover_pos().unwrap_or_default());
+        let pointer_x = pointer_pos.x - rect.min.x;
+        let pointer_y = pointer_pos.y - rect.min.y;
 
-        // Cmd+scroll: horizontal zoom
+        // Trackpad pinch gesture → horizontal zoom
+        let zoom_delta = ui.input(|i| i.zoom_delta());
+        if (zoom_delta - 1.0).abs() > 0.001 {
+            view.zoom_around_x(pointer_x, zoom_delta);
+        }
+
+        // Cmd+scroll: scroll.y → horizontal zoom, scroll.x → vertical zoom
         let cmd = ui.input(|i| i.modifiers.command || i.modifiers.ctrl);
         let scroll = ui.input(|i| i.smooth_scroll_delta);
 
         if scroll != egui::Vec2::ZERO {
             if cmd {
-                // Zoom
-                let factor = if scroll.y > 0.0 { 1.1 } else { 1.0 / 1.1 };
-                view.zoom_around_x(pointer_x - rect.min.x, factor);
+                if scroll.y.abs() > 0.5 {
+                    let factor = if scroll.y > 0.0 { 1.1 } else { 1.0 / 1.1 };
+                    view.zoom_around_x(pointer_x, factor);
+                }
+                if scroll.x.abs() > 0.5 {
+                    let factor = if scroll.x > 0.0 { 1.1 } else { 1.0 / 1.1 };
+                    view.zoom_around_y(pointer_y, factor);
+                }
             } else {
                 // Pan: horizontal with scroll.x, vertical with scroll.y
                 view.scroll_x -= scroll.x;
