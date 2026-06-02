@@ -1,3 +1,5 @@
+use crate::NoteSource;
+
 /// A time signature event at a specific tick position.
 #[derive(Clone, Debug)]
 pub struct TimeSigEvent {
@@ -38,4 +40,109 @@ pub struct Note {
     pub velocity: u8,
     pub channel: u8,
     pub track: u16,
+}
+
+// ── Scan index for fast seeking ────────────────────────────────────
+
+/// Default scan index block size in ticks.
+const DEFAULT_BLOCK_SIZE: u32 = 256;
+
+/// One block in the scan index.
+#[derive(Clone, Debug)]
+pub struct ScanBlock {
+    /// Index into `key_notes[key]` where notes whose `start_tick` falls
+    /// in this block begin.
+    pub block_start_note: usize,
+    /// Maximum `end_tick` among all notes whose `start_tick` falls in
+    /// blocks 0 ..= current_block (cumulative).
+    pub cumulative_max_end: u32,
+}
+
+/// Block-based scan index that accelerates searching for notes visible
+/// within a tick range.  Built once when a MIDI file is loaded and reused
+/// every frame.
+#[derive(Clone, Debug)]
+pub struct NoteScanIndex {
+    pub block_size: u32,
+    /// Per key 0..127: one `ScanBlock` per tick-block.  Empty Vec if the
+    /// key has no notes.
+    pub key_blocks: [Vec<ScanBlock>; 128],
+}
+
+impl NoteScanIndex {
+    /// Build a scan index from the per-key note lists.
+    ///
+    /// `key_notes` must be sorted by `start_tick` within each key.
+    /// `max_tick` is the last tick of any note (used to size the index).
+    pub fn build(key_notes: &[Vec<Note>; 128], max_tick: u64) -> Self {
+        let block_size = DEFAULT_BLOCK_SIZE;
+        let num_blocks = ((max_tick + block_size as u64 - 1) / block_size as u64).max(1) as usize;
+
+        let mut key_blocks: [Vec<ScanBlock>; 128] = core::array::from_fn(|_| Vec::new());
+
+        // Build per-key block indices in one pass
+        for key in 0..128u8 {
+            let notes = &key_notes[key as usize];
+            if notes.is_empty() {
+                continue;
+            }
+            let blocks = &mut key_blocks[key as usize];
+            blocks.reserve_exact(num_blocks);
+
+            let mut note_idx = 0usize;
+            let mut cumulative_max = 0u32;
+            for block in 0..num_blocks {
+                let block_tick = (block as u32) * block_size;
+                // Record the first note index for this block
+                let block_start_note = note_idx;
+
+                // Include all notes whose start_tick falls in this block
+                while note_idx < notes.len() && notes[note_idx].start_tick < block_tick + block_size {
+                    cumulative_max = cumulative_max.max(notes[note_idx].end_tick);
+                    note_idx += 1;
+                }
+
+                blocks.push(ScanBlock {
+                    block_start_note,
+                    cumulative_max_end: cumulative_max,
+                });
+            }
+        }
+
+        Self {
+            block_size,
+            key_blocks,
+        }
+    }
+}
+
+/// Find the index of the first note whose `end_tick >= min_tick` for a
+/// given key, using the scan index when available.
+///
+/// Falls back to 0 when no scan index is available (backwards-compatible).
+pub fn seek_first_note(key: u8, source: &dyn NoteSource, min_tick: u32) -> usize {
+    let notes = source.key_notes(key);
+    if notes.is_empty() {
+        return 0;
+    }
+    let Some(idx) = source.scan_index() else {
+        return 0; // no index → scan from start
+    };
+    let blocks = &idx.key_blocks[key as usize];
+    if blocks.is_empty() {
+        return 0;
+    }
+
+    let block_idx = ((min_tick / idx.block_size) as usize).min(blocks.len() - 1);
+
+    // Walk forward from block_idx to find the first block whose
+    // cumulative_max_end covers min_tick.
+    for i in block_idx..blocks.len() {
+        if blocks[i].cumulative_max_end >= min_tick {
+            return blocks[i].block_start_note;
+        }
+    }
+
+    // All notes end before min_tick → jump to end
+    notes.len()
 }

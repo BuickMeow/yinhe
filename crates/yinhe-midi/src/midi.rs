@@ -29,6 +29,8 @@ pub struct MidiFile {
     pub time_sig_events: Vec<TimeSigEvent>,
     /// Non-note MIDI events (CC, Program Change, Pitch Bend).
     pub control_events: Vec<MidiControlEvent>,
+    /// Scan index for fast visible-note seeking.  Built at load time.
+    pub scan_index: Option<yinhe_types::NoteScanIndex>,
 }
 
 impl yinhe_types::NoteSource for MidiFile {
@@ -46,6 +48,9 @@ impl yinhe_types::NoteSource for MidiFile {
     }
     fn tick_length(&self) -> Option<u64> {
         Some(self.tick_length)
+    }
+    fn scan_index(&self) -> Option<&yinhe_types::NoteScanIndex> {
+        self.scan_index.as_ref()
     }
 }
 

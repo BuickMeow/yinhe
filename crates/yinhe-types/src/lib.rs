@@ -3,7 +3,7 @@
 mod note;
 mod source;
 
-pub use note::{MidiControlEvent, Note, TimeSigEvent};
+pub use note::{MidiControlEvent, Note, NoteScanIndex, ScanBlock, TimeSigEvent, seek_first_note};
 pub use source::NoteSource;
 
 /// Returns true if the given MIDI key (0–127) is a black key on a piano.

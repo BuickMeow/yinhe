@@ -1,4 +1,4 @@
-use yinhe_types::{NoteSource, is_black_key};
+use yinhe_types::{NoteSource, is_black_key, seek_first_note};
 
 use crate::keyboard;
 use crate::vertex::{NoteInstance, pack_props, pack_rgba};
@@ -142,7 +142,8 @@ pub fn build_instances(
                     continue;
                 }
 
-                for note in notes.iter() {
+                let start_idx = seek_first_note(key, midi, pad_start as u32);
+                for note in &notes[start_idx..] {
                     if note.start_tick as f64 > pad_end {
                         break;
                     }

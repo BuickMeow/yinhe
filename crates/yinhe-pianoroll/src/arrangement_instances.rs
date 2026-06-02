@@ -1,4 +1,4 @@
-use yinhe_types::NoteSource;
+use yinhe_types::{NoteSource, seek_first_note};
 
 use crate::arrangement_view::ArrangementView;
 use crate::vertex::{NoteInstance, pack_props, pack_rgba};
@@ -123,6 +123,9 @@ pub fn build_arrangement_instances(
             for key in 0u8..128 {
                 let notes = midi.key_notes(key);
                 if notes.is_empty() { continue; }
+
+                let start_idx = seek_first_note(key, midi, pad_start as u32);
+                if start_idx >= notes.len() { continue; }
                 if notes.first().map_or(true, |n| n.start_tick as f64 > pad_end) { continue; }
 
                 // Merge state for consecutive same-track notes on this key
@@ -162,7 +165,7 @@ pub fn build_arrangement_instances(
                     });
                 };
 
-                for note in notes.iter() {
+                for note in &notes[start_idx..] {
                     if note.start_tick as f64 > pad_end { break; }
                     if (note.end_tick as f64) < pad_start { continue; }
 

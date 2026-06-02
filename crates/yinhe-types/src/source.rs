@@ -1,4 +1,4 @@
-use crate::Note;
+use crate::{Note, NoteScanIndex};
 
 pub trait NoteSource: Sync {
     fn key_notes(&self, key: u8) -> &[Note];
@@ -11,6 +11,10 @@ pub trait NoteSource: Sync {
     }
     /// Total tick length (position of the last note end).
     fn tick_length(&self) -> Option<u64> {
+        None
+    }
+    /// Optional scan index for fast seeking to visible notes.
+    fn scan_index(&self) -> Option<&NoteScanIndex> {
         None
     }
 }

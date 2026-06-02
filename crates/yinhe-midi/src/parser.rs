@@ -2,6 +2,7 @@ use crate::MidiError;
 use crate::midi::{LoadProgress, MidiControlEvent, MidiFile, Note};
 use crate::time::{DEFAULT_MPQ, TIMECODE_FALLBACK_TPB, ticks_to_seconds};
 use std::path::Path;
+use yinhe_types::NoteScanIndex;
 
 /// Global tempo event, sorted by tick.
 #[derive(Clone, Debug)]
@@ -106,6 +107,9 @@ impl MidiParser {
             .max()
             .unwrap_or(0);
 
+        // Build scan index for fast note seeking at render time.
+        let scan_index = NoteScanIndex::build(&key_notes, tick_length);
+
         Ok(MidiFile {
             key_notes,
             duration: global_duration,
@@ -119,6 +123,7 @@ impl MidiParser {
             track_names,
             track_ports,
             control_events,
+            scan_index: Some(scan_index),
         })
     }
 
@@ -439,6 +444,7 @@ mod tests {
             time_sig_events: Vec::new(),
             track_ports: Vec::new(),
             control_events: Vec::new(),
+            scan_index: None,
         };
         assert!((midi.tick_at_time(1.0) - 960.0).abs() < 1e-6);
         assert!((midi.tick_at_time(0.5) - 480.0).abs() < 1e-6);
@@ -470,6 +476,7 @@ mod tests {
             time_sig_events: Vec::new(),
             track_ports: Vec::new(),
             control_events: Vec::new(),
+            scan_index: None,
         };
         assert!((midi.tick_at_time(0.5) - 480.0).abs() < 1e-6);
         assert!((midi.tick_at_time(1.0) - 1440.0).abs() < 1e-6);
