@@ -45,6 +45,7 @@ pub struct App {
     cursor_tick: Option<f64>,
     track_visible: Vec<bool>,
     track_selected: Option<u16>,
+    track_panel_width: f32,
     playback: PlaybackState,
 }
 
@@ -77,6 +78,7 @@ impl App {
             cursor_tick: None,
             track_visible: Vec::new(),
             track_selected: None,
+            track_panel_width: 200.0,
             playback: PlaybackState::default(),
         }
     }
@@ -140,6 +142,9 @@ impl App {
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        // ── Force dark mode ──
+        ui.ctx().set_visuals(egui::Visuals::dark());
+
         // ── Keyboard shortcuts ──
         let mut toggle_play = false;
         let mut stop_play = false;
@@ -210,77 +215,116 @@ impl eframe::App for App {
             }
         }
 
-        // ── Left panel: track list ──
+        // ── Main area: manual sidebar + central ──
         if self.midi.is_some() {
-            egui::Panel::left("track_panel")
-                .resizable(true)
-                .default_size(200.0)
-                .show_inside(ui, |ui| {
+            let remaining = ui.available_rect_before_wrap();
+            let sidebar_w = self.track_panel_width
+                .min(remaining.width() - 150.0)
+                .max(60.0);
+            self.track_panel_width = sidebar_w;
+
+            // ── Sidebar ──
+            let sidebar_rect = egui::Rect::from_min_max(
+                remaining.min,
+                egui::pos2(remaining.min.x + sidebar_w, remaining.max.y),
+            );
+            ui.allocate_ui_at_rect(sidebar_rect, |ui| {
+                egui::ScrollArea::vertical().show(ui, |ui| {
                     ui.heading("Tracks");
                     ui.separator();
-                    egui::ScrollArea::vertical().show(ui, |ui| {
-                        if let Some(ref midi) = self.midi {
-                            let info = midi.track_info();
-                            for ti in &info {
-                                let idx = ti.index as usize;
-                                let color = TRACK_PALETTE[idx % TRACK_PALETTE.len()];
-                                let color32 = egui::Color32::from_rgb(
-                                    (color[0] * 255.0) as u8,
-                                    (color[1] * 255.0) as u8,
-                                    (color[2] * 255.0) as u8,
-                                );
+                    if let Some(ref midi) = self.midi {
+                        let info = midi.track_info();
+                        let avail_w = ui.available_width();
+                        let name_max_w = (avail_w - 160.0).max(40.0);
 
-                                let selected = self.track_selected == Some(ti.index);
-                                let frame = egui::Frame::default()
-                                    .fill(if selected {
-                                        ui.visuals().selection.bg_fill
-                                    } else {
-                                        egui::Color32::TRANSPARENT
-                                    })
-                                    .inner_margin(4.0);
-                                frame.show(ui, |ui| {
-                                    ui.horizontal(|ui| {
-                                        let (rect, _) = ui.allocate_exact_size(
-                                            egui::vec2(12.0, 12.0),
-                                            egui::Sense::hover(),
-                                        );
-                                        ui.painter().rect_filled(rect, 2.0, color32);
+                        for ti in &info {
+                            let idx = ti.index as usize;
+                            let color = TRACK_PALETTE[idx % TRACK_PALETTE.len()];
+                            let color32 = egui::Color32::from_rgb(
+                                (color[0] * 255.0) as u8,
+                                (color[1] * 255.0) as u8,
+                                (color[2] * 255.0) as u8,
+                            );
 
-                                        let mut vis =
-                                            self.track_visible.get(idx).copied().unwrap_or(true);
-                                        if ui.checkbox(&mut vis, "").changed() {
-                                            if idx < self.track_visible.len() {
-                                                self.track_visible[idx] = vis;
-                                            }
-                                        }
+                            let selected = self.track_selected == Some(ti.index);
+                            let frame = egui::Frame::default()
+                                .fill(if selected {
+                                    ui.visuals().selection.bg_fill
+                                } else {
+                                    egui::Color32::TRANSPARENT
+                                })
+                                .inner_margin(4.0);
+                            frame.show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    let (rect, _) = ui.allocate_exact_size(
+                                        egui::vec2(12.0, 12.0),
+                                        egui::Sense::hover(),
+                                    );
+                                    ui.painter().rect_filled(rect, 2.0, color32);
 
-                                        let label =
-                                            ui.label(egui::RichText::new(&ti.name).strong());
-                                        if label.clicked() {
-                                            self.track_selected = Some(ti.index);
+                                    let mut vis =
+                                        self.track_visible.get(idx).copied().unwrap_or(true);
+                                    if ui.checkbox(&mut vis, "").changed() {
+                                        if idx < self.track_visible.len() {
+                                            self.track_visible[idx] = vis;
                                         }
-                                        ui.label(format!("{} notes", ti.note_count));
-                                        if ti.port > 0 {
-                                            ui.label(format!("P{}", ti.port));
-                                        }
-                                    });
+                                    }
+
+                                    let name = egui::RichText::new(&ti.name).strong();
+                                    let label = ui.add_sized(
+                                        [name_max_w, ui.spacing().interact_size.y],
+                                        egui::Label::new(name),
+                                    );
+                                    if label.clicked() {
+                                        self.track_selected = Some(ti.index);
+                                    }
+                                    ui.label(format!("{} notes", ti.note_count));
+                                    if ti.port > 0 {
+                                        ui.label(format!("P{}", ti.port));
+                                    }
                                 });
-                            }
+                            });
                         }
-                    });
+                    }
                 });
-        }
+            });
 
-        // ── Central panel: arrangement (top) + pianoroll (bottom) ──
-        egui::CentralPanel::default().show_inside(ui, |ui| {
-            let total = ui.available_size();
-            let is_playing = self.playback.is_playing();
-            let midi_source: Option<&dyn yinhe_pianoroll::NoteSource> =
-                self.midi.as_ref().map(|m| m as &dyn yinhe_pianoroll::NoteSource);
-            let track_colors = self.track_colors();
-            let track_names = self.track_names();
+            // ── Vertical resize handle ──
+            let handle_rect = egui::Rect::from_min_max(
+                egui::pos2(remaining.min.x + sidebar_w, remaining.min.y),
+                egui::pos2(remaining.min.x + sidebar_w + 4.0, remaining.max.y),
+            );
+            let handle_resp = ui.interact(handle_rect, ui.next_auto_id(), egui::Sense::click_and_drag());
+            let hovered = handle_resp.hovered() || handle_resp.dragged();
+            ui.painter().rect_filled(
+                handle_rect,
+                0.0,
+                if hovered {
+                    egui::Color32::from_gray(160)
+                } else {
+                    egui::Color32::from_gray(80)
+                },
+            );
+            if handle_resp.dragged() {
+                self.track_panel_width += handle_resp.drag_delta().x;
+            }
+            if hovered {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+            }
 
-            if self.midi.is_some() {
+            // ── Central area ──
+            let central_rect = egui::Rect::from_min_max(
+                egui::pos2(remaining.min.x + sidebar_w + 4.0, remaining.min.y),
+                remaining.max,
+            );
+            ui.allocate_ui_at_rect(central_rect, |ui| {
+                let total = ui.available_size();
+                let is_playing = self.playback.is_playing();
+                let midi_source: Option<&dyn yinhe_pianoroll::NoteSource> =
+                    self.midi.as_ref().map(|m| m as &dyn yinhe_pianoroll::NoteSource);
+                let track_colors = self.track_colors();
+                let track_names = self.track_names();
+
                 // Split: arrangement on top, pianoroll on bottom
                 let arr_h = (total.y * self.arr_split).max(60.0);
                 let piano_h = (total.y - arr_h - 4.0).max(60.0);
@@ -301,7 +345,7 @@ impl eframe::App for App {
                     &mut self.arr_instances,
                 );
 
-                // Draggable split handle
+                // Draggable horizontal split handle
                 ui.horizontal(|ui| {
                     let (_, resp) = ui.allocate_exact_size(
                         egui::vec2(total.x, 4.0),
@@ -336,22 +380,26 @@ impl eframe::App for App {
                     &mut self.cursor_tick,
                     is_playing,
                 );
-            } else {
-                // No MIDI loaded — show pianoroll only
-                piano_view::show(
-                    ui,
-                    total,
-                    &mut self.pianoroll,
-                    &mut self.render_ctx,
-                    &mut self.view,
-                    midi_source,
-                    &self.selected,
-                    &self.track_visible,
-                    &mut self.cursor_tick,
-                    is_playing,
-                );
-            }
-        });
+            });
+        } else {
+            // No MIDI loaded — show pianoroll only
+            let total = ui.available_size();
+            let is_playing = self.playback.is_playing();
+            let midi_source: Option<&dyn yinhe_pianoroll::NoteSource> =
+                self.midi.as_ref().map(|m| m as &dyn yinhe_pianoroll::NoteSource);
+            piano_view::show(
+                ui,
+                total,
+                &mut self.pianoroll,
+                &mut self.render_ctx,
+                &mut self.view,
+                midi_source,
+                &self.selected,
+                &self.track_visible,
+                &mut self.cursor_tick,
+                is_playing,
+            );
+        }
 
         // Request repaint during playback
         if self.playback.is_playing() {
