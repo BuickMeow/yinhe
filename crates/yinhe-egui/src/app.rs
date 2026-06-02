@@ -529,6 +529,7 @@ impl eframe::App for App {
                 remaining.max,
             );
             ui.allocate_ui_at_rect(central_rect, |ui| {
+                let origin = ui.min_rect().min;
                 let total = ui.available_size();
                 let is_playing = self.playback.is_playing();
                 let midi_source: Option<&dyn yinhe_pianoroll::NoteSource> =
@@ -540,56 +541,68 @@ impl eframe::App for App {
                 let arr_h = (total.y * self.arr_split).max(60.0);
                 let piano_h = (total.y - arr_h - 4.0).max(60.0);
 
-                // Arrangement view
-                arrangement_view_ui::show(
-                    ui,
-                    egui::vec2(total.x, arr_h),
-                    &mut self.arr_renderer,
-                    &mut self.arr_render_ctx,
-                    &mut self.arr_view,
-                    midi_source,
-                    &self.track_visible,
-                    &track_colors,
-                    &mut self.cursor_tick,
-                    is_playing,
-                    &track_names,
-                    &mut self.arr_instances,
+                // Arrangement view (absolute position to avoid item_spacing)
+                ui.allocate_ui_at_rect(
+                    egui::Rect::from_min_size(origin, egui::vec2(total.x, arr_h)),
+                    |ui| {
+                        arrangement_view_ui::show(
+                            ui,
+                            egui::vec2(total.x, arr_h),
+                            &mut self.arr_renderer,
+                            &mut self.arr_render_ctx,
+                            &mut self.arr_view,
+                            midi_source,
+                            &self.track_visible,
+                            &track_colors,
+                            &mut self.cursor_tick,
+                            is_playing,
+                            &track_names,
+                            &mut self.arr_instances,
+                        );
+                    },
                 );
 
-                // Draggable horizontal split handle
-                ui.horizontal(|ui| {
-                    let (_, resp) = ui.allocate_exact_size(
-                        egui::vec2(total.x, 4.0),
-                        egui::Sense::click_and_drag(),
-                    );
-                    ui.painter().rect_filled(
-                        resp.rect,
-                        0.0,
-                        if resp.hovered() || resp.dragged() {
-                            egui::Color32::from_gray(100)
-                        } else {
-                            egui::Color32::from_gray(60)
-                        },
-                    );
-                    if resp.dragged() {
-                        let delta = resp.drag_delta().y;
-                        self.arr_split =
-                            ((arr_h + delta) / total.y).clamp(0.1, 0.7);
-                    }
-                });
+                // Draggable horizontal split handle (absolute position, no layout allocation)
+                let split_rect = egui::Rect::from_min_size(
+                    egui::pos2(origin.x, origin.y + arr_h),
+                    egui::vec2(total.x, 4.0),
+                );
+                let split_resp = ui.interact(split_rect, ui.next_auto_id(), egui::Sense::click_and_drag());
+                ui.painter().rect_filled(
+                    split_resp.rect,
+                    0.0,
+                    if split_resp.hovered() || split_resp.dragged() {
+                        egui::Color32::from_gray(100)
+                    } else {
+                        egui::Color32::from_gray(60)
+                    },
+                );
+                if split_resp.dragged() {
+                    let delta = split_resp.drag_delta().y;
+                    self.arr_split =
+                        ((arr_h + delta) / total.y).clamp(0.1, 0.7);
+                }
 
-                // Pianoroll view
-                piano_view::show(
-                    ui,
-                    egui::vec2(total.x, piano_h),
-                    &mut self.pianoroll,
-                    &mut self.render_ctx,
-                    &mut self.view,
-                    midi_source,
-                    &self.selected,
-                    &self.track_visible,
-                    &mut self.cursor_tick,
-                    is_playing,
+                // Pianoroll view (absolute position to avoid item_spacing)
+                ui.allocate_ui_at_rect(
+                    egui::Rect::from_min_size(
+                        egui::pos2(origin.x, origin.y + arr_h + 4.0),
+                        egui::vec2(total.x, piano_h),
+                    ),
+                    |ui| {
+                        piano_view::show(
+                            ui,
+                            egui::vec2(total.x, piano_h),
+                            &mut self.pianoroll,
+                            &mut self.render_ctx,
+                            &mut self.view,
+                            midi_source,
+                            &self.selected,
+                            &self.track_visible,
+                            &mut self.cursor_tick,
+                            is_playing,
+                        );
+                    },
                 );
             });
         } else {
