@@ -119,6 +119,10 @@ impl NoteScanIndex {
 /// Find the index of the first note whose `end_tick >= min_tick` for a
 /// given key, using the scan index when available.
 ///
+/// Uses binary search on the monotonically non-decreasing
+/// `cumulative_max_end` field to correctly handle "crossing" notes —
+/// notes that start before `min_tick` but extend far enough to be visible.
+///
 /// Falls back to 0 when no scan index is available (backwards-compatible).
 pub fn seek_first_note(key: u8, source: &dyn NoteSource, min_tick: u32) -> usize {
     let notes = source.key_notes(key);
@@ -133,16 +137,22 @@ pub fn seek_first_note(key: u8, source: &dyn NoteSource, min_tick: u32) -> usize
         return 0;
     }
 
-    let block_idx = ((min_tick / idx.block_size) as usize).min(blocks.len() - 1);
+    // Quick check: if no note reaches min_tick, skip entirely.
+    if blocks.last().unwrap().cumulative_max_end < min_tick {
+        return notes.len();
+    }
 
-    // Walk forward from block_idx to find the first block whose
-    // cumulative_max_end covers min_tick.
-    for i in block_idx..blocks.len() {
-        if blocks[i].cumulative_max_end >= min_tick {
-            return blocks[i].block_start_note;
+    // Binary search for the first block where cumulative_max_end >= min_tick.
+    let mut lo = 0usize;
+    let mut hi = blocks.len();
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2;
+        if blocks[mid].cumulative_max_end < min_tick {
+            lo = mid + 1;
+        } else {
+            hi = mid;
         }
     }
 
-    // All notes end before min_tick → jump to end
-    notes.len()
+    blocks[lo].block_start_note
 }

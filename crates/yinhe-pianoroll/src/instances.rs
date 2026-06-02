@@ -1,3 +1,4 @@
+use rayon::prelude::*;
 use yinhe_types::{NoteSource, is_black_key, seek_first_note};
 
 use crate::keyboard;
@@ -129,66 +130,104 @@ pub fn build_instances(
                 }
             }
 
-            // 3. Notes — padded tick range, linear scan, track_visible filter
+            // 3. Notes — padded tick range, with seek and parallel key processing
             let tick_pad = (w - kb_w) / ppu;
             let pad_start = (tick_start - tick_pad as f64).max(0.0);
             let pad_end = tick_end + tick_pad as f64;
             let (key_lo, key_hi) = view.visible_key_range(h);
             let has_selection = !selected.is_empty();
 
-            for key in key_lo..=key_hi {
-                let notes = midi.key_notes(key);
-                if notes.is_empty() {
-                    continue;
-                }
+            // Precompute hot-path constants to avoid function calls per note.
+            let x_offset = kb_w - view.scroll_x; // tick_to_x(t) = x_offset + t * ppu
 
-                let start_idx = seek_first_note(key, midi, pad_start as u32);
-                for note in &notes[start_idx..] {
-                    if note.start_tick as f64 > pad_end {
-                        break;
+            let results: Vec<(Vec<NoteInstance>, u8, bool, [f32; 3])> = (0u8..128)
+                .into_par_iter()
+                .filter_map(|key| {
+                    if key < key_lo || key > key_hi {
+                        return None;
                     }
-                    if (note.end_tick as f64) < pad_start {
-                        continue;
+                    let notes = midi.key_notes(key);
+                    if notes.is_empty() {
+                        return None;
                     }
-                    // Track visibility filter
-                    if !track_visible.get(note.track as usize).copied().unwrap_or(true) {
-                        continue;
-                    }
+                    let start_idx = seek_first_note(key, midi, pad_start as u32);
 
-                    let nx = view.tick_to_x(note.start_tick as f64);
-                    let nw = ((note.end_tick - note.start_tick) as f32 * ppu).max(2.0);
-                    let ny = view.key_to_y(note.key);
-                    let nh = kh;
+                    // key_to_y(key) is constant for all notes of this key.
+                    let key_y = bottom - (key as f32 + 1.0) * kh;
 
-                    let trk = note.track as usize % TRACK_PALETTE.len();
-                    let color = TRACK_PALETTE[trk];
+                    let mut local = Vec::new();
+                    let mut key_active = false;
+                    let mut key_color = [0.0f32; 3];
 
-                    let is_selected = has_selection && selected.contains(&(note.track, note.start_tick));
-                    let border_w = if is_selected {
-                        SELECTED_BORDER_WIDTH
-                    } else {
-                        NOTE_BORDER_WIDTH
-                    };
-                    let rounding = NOTE_ROUNDING * nw.min(nh);
+                    for note in &notes[start_idx..] {
+                        if note.start_tick as f64 > pad_end {
+                            break;
+                        }
+                        if (note.end_tick as f64) < pad_start {
+                            continue;
+                        }
+                        if !track_visible
+                            .get(note.track as usize)
+                            .copied()
+                            .unwrap_or(true)
+                        {
+                            continue;
+                        }
 
-                    instances.push(NoteInstance {
-                        x: nx,
-                        y: ny,
-                        w: nw,
-                        h: nh,
-                        rgba_packed: pack_rgba(color[0], color[1], color[2], 1.0),
-                        props_packed: pack_props(rounding, border_w),
-                        velocity: note.velocity as u32,
-                        flags: if is_selected { 1 } else { 0 },
-                    });
+                        let nx = x_offset + note.start_tick as f32 * ppu;
+                        let nw =
+                            ((note.end_tick - note.start_tick) as f32 * ppu).max(2.0);
+                        let ny = key_y;
+                        let nh = kh;
 
-                    // Mark active key if cursor is within this note's time range
-                    if let Some(ct) = cursor_tick {
-                        if note.start_tick as f64 <= ct && ct < note.end_tick as f64 {
-                            active_keys[key as usize] = true;
-                            active_colors[key as usize] = color;
+                        let trk = note.track as usize % TRACK_PALETTE.len();
+                        let color = TRACK_PALETTE[trk];
+
+                        let is_selected = has_selection
+                            && selected.contains(&(note.track, note.start_tick));
+                        let border_w = if is_selected {
+                            SELECTED_BORDER_WIDTH
+                        } else {
+                            NOTE_BORDER_WIDTH
+                        };
+                        let rounding = NOTE_ROUNDING * nw.min(nh);
+
+                        local.push(NoteInstance {
+                            x: nx,
+                            y: ny,
+                            w: nw,
+                            h: nh,
+                            rgba_packed: pack_rgba(
+                                color[0], color[1], color[2], 1.0,
+                            ),
+                            props_packed: pack_props(rounding, border_w),
+                            velocity: note.velocity as u32,
+                            flags: if is_selected { 1 } else { 0 },
+                        });
+
+                        if let Some(ct) = cursor_tick {
+                            if note.start_tick as f64 <= ct
+                                && ct < note.end_tick as f64
+                            {
+                                key_active = true;
+                                key_color = color;
+                            }
                         }
                     }
+
+                    if local.is_empty() {
+                        None
+                    } else {
+                        Some((local, key, key_active, key_color))
+                    }
+                })
+                .collect();
+
+            for (mut local, key, active, color) in results {
+                instances.append(&mut local);
+                if active {
+                    active_keys[key as usize] = true;
+                    active_colors[key as usize] = color;
                 }
             }
 

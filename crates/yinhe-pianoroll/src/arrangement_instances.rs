@@ -1,3 +1,4 @@
+use rayon::prelude::*;
 use yinhe_types::{NoteSource, seek_first_note};
 
 use crate::arrangement_view::ArrangementView;
@@ -114,81 +115,113 @@ pub fn build_arrangement_instances(
                 }
             }
 
-            // Note rectangles — merge consecutive same-track same-key notes into longer rects
+            // Note rectangles — merge consecutive same-track same-key notes into longer rects.
+            // Process each key in parallel with rayon.
             let tick_pad = (w - lb_w) / ppu;
             let pad_start = (tick_start - tick_pad as f64).max(0.0);
             let pad_end = tick_end + tick_pad as f64;
             let (trk_first, trk_last) = view.visible_track_range(h, num_tracks);
 
-            for key in 0u8..128 {
-                let notes = midi.key_notes(key);
-                if notes.is_empty() { continue; }
+            // Precompute hot-path constants to avoid function calls inside the closure.
+            let x_offset = lb_w - view.scroll_x; // tick_to_x(t) = x_offset + t * ppu
+            let y_offset = -view.scroll_y;        // lane_y(ti)   = y_offset + ti * lh
+            let lh_per_key = lh / 128.0;
+            let note_h = lh_per_key.max(1.0);
 
-                let start_idx = seek_first_note(key, midi, pad_start as u32);
-                if start_idx >= notes.len() { continue; }
-                if notes.first().map_or(true, |n| n.start_tick as f64 > pad_end) { continue; }
-
-                // Merge state for consecutive same-track notes on this key
-                let mut merge_track: Option<usize> = None;
-                let mut merge_start: u32 = 0;
-                let mut merge_end: u32 = 0;
-                let mut merge_vel: u8 = 0;
-
-                let flush_merge = |instances: &mut Vec<NoteInstance>,
-                                        ti: usize,
-                                        start: u32,
-                                        end: u32,
-                                        _key: u8,
-                                        vel: u8| {
-                    // Clamp to visual range
-                    let s = (start as f64).max(pad_start) as u32;
-                    let e = (end as f64).min(pad_end).max(start as f64) as u32;
-                    if s >= e { return; }
-
-                    if ti < trk_first || ti >= trk_last { return; }
-                    if !track_visible.get(ti).copied().unwrap_or(true) { return; }
-
-                    let nx = view.tick_to_x(s as f64);
-                    let nw = ((e - s) as f32 * ppu).max(2.0);
-                    let ny = view.lane_y(ti);
-                    let note_y = ny + lh - (_key as f32 + 1.0) * (lh / 128.0);
-                    let note_h = (lh / 128.0).max(1.0);
-                    let color = track_colors.get(ti).copied().unwrap_or([0.5, 0.5, 0.5]);
-                    let rounding = NOTE_ROUNDING * nw.min(note_h);
-
-                    instances.push(NoteInstance {
-                        x: nx, y: note_y, w: nw, h: note_h,
-                        rgba_packed: pack_rgba(color[0], color[1], color[2], 0.85),
-                        props_packed: pack_props(rounding, 0.0),
-                        velocity: vel as u32,
-                        flags: 0,
-                    });
-                };
-
-                for note in &notes[start_idx..] {
-                    if note.start_tick as f64 > pad_end { break; }
-                    if (note.end_tick as f64) < pad_start { continue; }
-
-                    let ti = note.track as usize;
-                    if merge_track == Some(ti) && merge_end >= note.start_tick {
-                        // Overlapping or adjacent (same track) → merge
-                        merge_end = merge_end.max(note.end_tick);
-                        merge_vel = merge_vel.max(note.velocity);
-                    } else {
-                        // Flush previous merge, start new one
-                        if let Some(prev_track) = merge_track {
-                            flush_merge(instances, prev_track, merge_start, merge_end, key, merge_vel);
-                        }
-                        merge_track = Some(ti);
-                        merge_start = note.start_tick;
-                        merge_end = note.end_tick;
-                        merge_vel = note.velocity;
+            let note_instances: Vec<Vec<NoteInstance>> = (0u8..128)
+                .into_par_iter()
+                .filter_map(|key| {
+                    let notes = midi.key_notes(key);
+                    if notes.is_empty() {
+                        return None;
                     }
-                }
-                // Flush final merge for this key
-                if let Some(prev_track) = merge_track {
-                    flush_merge(instances, prev_track, merge_start, merge_end, key, merge_vel);
-                }
+                    let start_idx = seek_first_note(key, midi, pad_start as u32);
+                    if start_idx >= notes.len() {
+                        return None;
+                    }
+                    if notes.first().map_or(true, |n| n.start_tick as f64 > pad_end) {
+                        return None;
+                    }
+
+                    let key_y_base = y_offset + lh - (key as f32 + 1.0) * lh_per_key;
+
+                    let mut local = Vec::new();
+                    let mut merge_track: Option<usize> = None;
+                    let mut merge_start: u32 = 0;
+                    let mut merge_end: u32 = 0;
+                    let mut merge_vel: u8 = 0;
+
+                    let flush_merge = |local: &mut Vec<NoteInstance>,
+                                       ti: usize,
+                                       start: u32,
+                                       end: u32,
+                                       vel: u8| {
+                        let s = (start as f64).max(pad_start) as u32;
+                        let e = (end as f64).min(pad_end).max(start as f64) as u32;
+                        if s >= e {
+                            return;
+                        }
+                        if ti < trk_first || ti >= trk_last {
+                            return;
+                        }
+                        if !track_visible.get(ti).copied().unwrap_or(true) {
+                            return;
+                        }
+                        let nx = x_offset + s as f32 * ppu;
+                        let nw = ((e - s) as f32 * ppu).max(2.0);
+                        let note_y = key_y_base + ti as f32 * lh;
+                        let color =
+                            track_colors.get(ti).copied().unwrap_or([0.5, 0.5, 0.5]);
+                        let rounding = NOTE_ROUNDING * nw.min(note_h);
+                        local.push(NoteInstance {
+                            x: nx,
+                            y: note_y,
+                            w: nw,
+                            h: note_h,
+                            rgba_packed: pack_rgba(color[0], color[1], color[2], 0.85),
+                            props_packed: pack_props(rounding, 0.0),
+                            velocity: vel as u32,
+                            flags: 0,
+                        });
+                    };
+
+                    for note in &notes[start_idx..] {
+                        if note.start_tick as f64 > pad_end {
+                            break;
+                        }
+                        if (note.end_tick as f64) < pad_start {
+                            continue;
+                        }
+                        let ti = note.track as usize;
+                        if merge_track == Some(ti) && merge_end >= note.start_tick {
+                            merge_end = merge_end.max(note.end_tick);
+                            merge_vel = merge_vel.max(note.velocity);
+                        } else {
+                            if let Some(prev_track) = merge_track {
+                                flush_merge(
+                                    &mut local, prev_track, merge_start, merge_end,
+                                    merge_vel,
+                                );
+                            }
+                            merge_track = Some(ti);
+                            merge_start = note.start_tick;
+                            merge_end = note.end_tick;
+                            merge_vel = note.velocity;
+                        }
+                    }
+                    if let Some(prev_track) = merge_track {
+                        flush_merge(
+                            &mut local, prev_track, merge_start, merge_end,
+                            merge_vel,
+                        );
+                    }
+
+                    if local.is_empty() { None } else { Some(local) }
+                })
+                .collect();
+
+            for mut local in note_instances {
+                instances.append(&mut local);
             }
         }
     }
