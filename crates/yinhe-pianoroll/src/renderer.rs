@@ -72,6 +72,8 @@ impl PianorollRenderer {
 
     /// Prepare rendering data for the current frame (pianoroll specific).
     /// Returns early if view state and uniforms are unchanged since last call.
+    ///
+    /// When `grid` is `Some`, grid lines are taken from the cached slice.
     pub fn prepare(
         &mut self,
         width: u32,
@@ -81,6 +83,7 @@ impl PianorollRenderer {
         selected: &HashSet<(u16, u32)>,
         track_visible: &[bool],
         cursor_tick: Option<f64>,
+        grid: Option<&[NoteInstance]>,
     ) {
         let uniforms = Uniforms {
             width: width as f32,
@@ -104,7 +107,7 @@ impl PianorollRenderer {
 
         let mut instances = std::mem::take(&mut self.instance_scratch);
         instances.clear();
-        instances::build_instances(&mut instances, width, height, midi, view, selected, track_visible, cursor_tick);
+        instances::build_instances(&mut instances, width, height, midi, view, selected, track_visible, cursor_tick, grid);
         self.prepare_from_parts(uniforms, &instances);
         instances.clear();
         self.instance_scratch = instances;

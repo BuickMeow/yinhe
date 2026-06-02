@@ -1,6 +1,17 @@
 use eframe::egui;
 
+/// Grid-line cache for the piano roll view.
+pub struct PianoGridCache {
+    pub instances: Vec<yinhe_pianoroll::NoteInstance>,
+    pub ppu: f32,
+    pub kb_w: f32,
+    pub width: u32,
+    pub scroll_x: f32,
+}
+
 /// Display the pianoroll texture with zoom/pan interaction.
+///
+/// `grid_cache` holds cached grid-line instances — caller retains across frames.
 pub fn show(
     ui: &mut egui::Ui,
     available: egui::Vec2,
@@ -12,6 +23,7 @@ pub fn show(
     track_visible: &[bool],
     cursor_tick: &mut Option<f64>,
     is_playing: bool,
+    grid_cache: &mut PianoGridCache,
 ) {
     let (resp, painter) = ui.allocate_painter(available, egui::Sense::click_and_drag());
     let rect = resp.rect;
@@ -52,8 +64,51 @@ pub fn show(
         view.dirty = true;
     }
 
+    // ── Grid cache management ──
+    let grid_invalid = grid_cache.instances.is_empty()
+        || grid_cache.ppu != view.pixels_per_tick
+        || grid_cache.kb_w != view.keyboard_width
+        || grid_cache.width != w;
+
+    if view.dirty {
+        if grid_invalid {
+            // Full grid rebuild: ppu, keyboard_width, or width changed
+            grid_cache.instances.clear();
+            if let Some(m) = midi {
+                if let Some(tpb) = m.ticks_per_beat() {
+                    yinhe_pianoroll::instances::build_pianoroll_grid(
+                        &mut grid_cache.instances,
+                        w as f32, h as f32, view, tpb,
+                    );
+                }
+            }
+            grid_cache.ppu = view.pixels_per_tick;
+            grid_cache.kb_w = view.keyboard_width;
+            grid_cache.width = w;
+            grid_cache.scroll_x = view.scroll_x;
+        } else {
+            // Only scroll changed: update cached grid x-positions by delta
+            let dx = view.scroll_x - grid_cache.scroll_x;
+            if dx.abs() > 0.001 {
+                for inst in &mut grid_cache.instances {
+                    inst.x -= dx;
+                }
+                let kb_w = view.keyboard_width;
+                grid_cache.instances.retain(|inst| {
+                    inst.x >= kb_w - 200.0 && inst.x <= w as f32 + 200.0
+                });
+                grid_cache.scroll_x = view.scroll_x;
+            }
+        }
+    }
+
     // Prepare and render to offscreen texture
-    pianoroll.prepare(w, h, midi, view, selected, track_visible, *cursor_tick);
+    let grid = if grid_cache.instances.is_empty() {
+        None
+    } else {
+        Some(&grid_cache.instances[..])
+    };
+    pianoroll.prepare(w, h, midi, view, selected, track_visible, *cursor_tick, grid);
     view.dirty = false;
 
     let mut encoder = render_ctx

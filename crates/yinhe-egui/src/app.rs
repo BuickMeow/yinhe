@@ -33,6 +33,7 @@ pub struct App {
     render_ctx: RenderContext,
     pianoroll: yinhe_pianoroll::PianorollRenderer,
     view: yinhe_pianoroll::PianoRollView,
+    piano_grid_cache: piano_view::PianoGridCache,
 
     // ── Arrangement ──
     arr_render_ctx: RenderContext,
@@ -40,6 +41,7 @@ pub struct App {
     arr_view: yinhe_pianoroll::ArrangementView,
     arr_split: f32, // fraction of central area for arrangement (0.0-1.0)
     arr_instances: Vec<yinhe_pianoroll::NoteInstance>, // reusable scratch buffer
+    arr_grid_cache: arrangement_view_ui::ArrangementGridCache, // grid line cache
 
     // ── Shared state ──
     midi: Option<yinhe_midi::MidiFile>,
@@ -100,12 +102,26 @@ impl App {
             render_ctx,
             pianoroll: yinhe_pianoroll::PianorollRenderer::new(device.clone(), queue.clone(), format),
             view: yinhe_pianoroll::PianoRollView::default(),
+            piano_grid_cache: piano_view::PianoGridCache {
+                instances: Vec::new(),
+                ppu: 0.0,
+                kb_w: 0.0,
+                width: 0,
+                scroll_x: 0.0,
+            },
 
             arr_render_ctx,
             arr_renderer: yinhe_pianoroll::PianorollRenderer::new(device, queue, format),
             arr_view: yinhe_pianoroll::ArrangementView::default(),
             arr_split: 0.3,
             arr_instances: Vec::new(),
+            arr_grid_cache: arrangement_view_ui::ArrangementGridCache {
+                instances: Vec::new(),
+                ppu: 0.0,
+                lb_w: 0.0,
+                width: 0,
+                scroll_x: 0.0,
+            },
 
             midi: None,
             selected: HashSet::new(),
@@ -144,6 +160,8 @@ impl App {
         self.view = yinhe_pianoroll::PianoRollView::default();
         self.arr_view = yinhe_pianoroll::ArrangementView::default();
         self.arr_instances.clear();
+        self.arr_grid_cache.instances.clear();
+        self.piano_grid_cache.instances.clear();
         self.cursor_tick = None;
         self.playback = PlaybackState::default();
     }
@@ -574,6 +592,7 @@ impl eframe::App for App {
                         is_playing,
                         &track_names,
                         &mut self.arr_instances,
+                        &mut self.arr_grid_cache,
                     );
                 });
 
@@ -649,6 +668,7 @@ impl eframe::App for App {
                         &mut self.pianoroll, &mut self.render_ctx, &mut self.view,
                         midi_source, &self.selected, &self.track_visible,
                         &mut self.cursor_tick, is_playing,
+                        &mut self.piano_grid_cache,
                     );
                 });
             } else if self.show_track_panel {
@@ -676,6 +696,7 @@ impl eframe::App for App {
                         &mut self.pianoroll, &mut self.render_ctx, &mut self.view,
                         midi_source, &self.selected, &self.track_visible,
                         &mut self.cursor_tick, is_playing,
+                        &mut self.piano_grid_cache,
                     );
                 });
             }
@@ -689,6 +710,7 @@ impl eframe::App for App {
                 &mut self.pianoroll, &mut self.render_ctx, &mut self.view,
                 midi_source, &self.selected, &self.track_visible,
                 &mut self.cursor_tick, is_playing,
+                &mut self.piano_grid_cache,
             );
         }
 

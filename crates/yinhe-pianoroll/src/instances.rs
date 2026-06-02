@@ -36,7 +36,60 @@ const NOTE_ROUNDING: f32 = 0.15;
 const NOTE_BORDER_WIDTH: f32 = 0.5;
 const SELECTED_BORDER_WIDTH: f32 = 1.5;
 
+/// Build piano roll grid line instances into `out`.
+pub fn build_pianoroll_grid(
+    out: &mut Vec<NoteInstance>,
+    w: f32,
+    h: f32,
+    view: &PianoRollView,
+    tpb: u32,
+) {
+    let ppu = view.pixels_per_tick;
+    if ppu <= 0.01 {
+        return;
+    }
+    let (tick_start, tick_end) = view.visible_tick_range(w);
+    let kb_w = view.keyboard_width;
+    let x_origin = kb_w - view.scroll_x;
+
+    let ticks_per_measure = tpb * 4;
+    let sub_beat_div = 4u32;
+    let ticks_per_sub = tpb / sub_beat_div;
+
+    let start = ((tick_start / ticks_per_sub as f64).floor() as u32)
+        .saturating_mul(ticks_per_sub);
+    let mut tick = start;
+    while (tick as f64) <= tick_end {
+        let x = x_origin + tick as f32 * ppu;
+        if x >= kb_w && x <= w {
+            let is_measure = tick % ticks_per_measure == 0;
+            let is_beat = tick % tpb == 0;
+            let (lw, col) = if is_measure {
+                (2.0, MEASURE_LINE_COLOR)
+            } else if is_beat {
+                (1.0, BEAT_LINE_COLOR)
+            } else {
+                (1.0, SUB_BEAT_LINE_COLOR)
+            };
+            out.push(NoteInstance {
+                x,
+                y: 0.0,
+                w: lw,
+                h,
+                rgba_packed: pack_rgba(col.0, col.1, col.2, col.3),
+                props_packed: pack_props(0.0, 0.0),
+                velocity: 0,
+                flags: tick,
+            });
+        }
+        tick += ticks_per_sub;
+    }
+}
+
 /// Build all instances for the piano roll frame.
+///
+/// When `grid` is `Some`, grid lines are taken from the cached slice instead of
+/// being rebuilt — used by the egui layer for grid-line caching.
 pub fn build_instances(
     instances: &mut Vec<NoteInstance>,
     width: u32,
@@ -46,6 +99,7 @@ pub fn build_instances(
     selected: &std::collections::HashSet<(u16, u32)>,
     track_visible: &[bool],
     cursor_tick: Option<f64>,
+    grid: Option<&[NoteInstance]>,
 ) -> ([bool; 128], [[f32; 3]; 128]) {
     let mut active_keys = [false; 128];
     let mut active_colors = [[0.0f32; 3]; 128];
@@ -93,41 +147,11 @@ pub fn build_instances(
         if let Some(tpb) = midi.ticks_per_beat() {
             let (tick_start, tick_end) = view.visible_tick_range(w);
 
-            // 2. Grid lines — single pass at sub-beat granularity, with
-            //    measure/beat/sub-beat color+width determined by tick alignment.
-            if ppu > 0.01 {
-                let ticks_per_measure = tpb * 4;
-                let sub_beat_div = 4u32;
-                let ticks_per_sub = tpb / sub_beat_div;
-
-                let start = ((tick_start / ticks_per_sub as f64).floor() as u32)
-                    .saturating_mul(ticks_per_sub);
-                let mut tick = start;
-                while (tick as f64) <= tick_end {
-                    let x = view.tick_to_x(tick as f64);
-                    if x >= kb_w && x <= w {
-                        let is_measure = tick % ticks_per_measure == 0;
-                        let is_beat = tick % tpb == 0;
-                        let (lw, col) = if is_measure {
-                            (2.0, MEASURE_LINE_COLOR)
-                        } else if is_beat {
-                            (1.0, BEAT_LINE_COLOR)
-                        } else {
-                            (1.0, SUB_BEAT_LINE_COLOR)
-                        };
-                        instances.push(NoteInstance {
-                            x,
-                            y: 0.0,
-                            w: lw,
-                            h,
-                            rgba_packed: pack_rgba(col.0, col.1, col.2, col.3),
-                            props_packed: pack_props(0.0, 0.0),
-                            velocity: 0,
-                            flags: 0,
-                        });
-                    }
-                    tick += ticks_per_sub;
-                }
+            // 2. Grid lines — from cache or rebuild
+            if let Some(cached) = grid {
+                instances.extend_from_slice(cached);
+            } else {
+                build_pianoroll_grid(instances, w, h, view, tpb);
             }
 
             // 3. Notes — padded tick range, with seek and parallel key processing

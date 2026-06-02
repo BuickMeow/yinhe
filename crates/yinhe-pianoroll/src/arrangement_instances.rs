@@ -14,9 +14,74 @@ const PLAYHEAD_COLOR: (f32, f32, f32, f32) = (1.0, 1.0, 1.0, 0.8);
 
 const NOTE_ROUNDING: f32 = 0.2;
 
+/// Build grid line instances into `out`.
+pub fn build_arrangement_grid(
+    out: &mut Vec<NoteInstance>,
+    w: f32,
+    h: f32,
+    view: &ArrangementView,
+    tpb: u32,
+) {
+    let ppu = view.pixels_per_tick;
+    if ppu <= 0.01 {
+        return;
+    }
+
+    let (tick_start, tick_end) = view.visible_tick_range(w);
+    let ticks_per_measure = tpb * 4;
+    let sub_beat_div = 4u32;
+    let ticks_per_sub = (tpb / sub_beat_div).max(1);
+    let lb_w = view.label_width;
+    let x_origin = lb_w - view.scroll_x;
+
+    let start = ((tick_start / ticks_per_sub as f64).floor() as u32)
+        .saturating_mul(ticks_per_sub);
+    let mut tick = start;
+    while (tick as f64) <= tick_end {
+        let x = x_origin + tick as f32 * ppu;
+        if x >= lb_w && x <= w {
+            let is_measure = tick % ticks_per_measure == 0;
+            let is_beat = tick % tpb == 0;
+            if is_measure {
+                out.push(NoteInstance {
+                    x,
+                    y: 0.0,
+                    w: 2.0,
+                    h,
+                    rgba_packed: pack_rgba(
+                        MEASURE_LINE_COLOR.0, MEASURE_LINE_COLOR.1,
+                        MEASURE_LINE_COLOR.2, MEASURE_LINE_COLOR.3,
+                    ),
+                    props_packed: pack_props(0.0, 0.0),
+                    velocity: 0,
+                    flags: 0,
+                });
+            } else if is_beat {
+                out.push(NoteInstance {
+                    x,
+                    y: 0.0,
+                    w: 1.0,
+                    h,
+                    rgba_packed: pack_rgba(
+                        BEAT_LINE_COLOR.0, BEAT_LINE_COLOR.1,
+                        BEAT_LINE_COLOR.2, BEAT_LINE_COLOR.3,
+                    ),
+                    props_packed: pack_props(0.0, 0.0),
+                    velocity: 0,
+                    flags: 0,
+                });
+            }
+        }
+        tick += ticks_per_sub;
+    }
+}
+
 /// Build all instances for the arrangement view frame.
 ///
 /// `instances` is a reusable scratch buffer — caller should retain it across frames.
+///
+/// When `grid` is `Some`, grid lines are taken from the cached slice instead of
+/// being rebuilt — used by the egui layer for grid-line caching.
 pub fn build_arrangement_instances(
     instances: &mut Vec<NoteInstance>,
     width: u32,
@@ -26,6 +91,7 @@ pub fn build_arrangement_instances(
     track_visible: &[bool],
     track_colors: &[[f32; 3]],
     cursor_tick: Option<f64>,
+    grid: Option<&[NoteInstance]>,
 ) {
     let w = width as f32;
     let h = height as f32;
@@ -73,46 +139,11 @@ pub fn build_arrangement_instances(
         if let Some(tpb) = midi.ticks_per_beat() {
             let (tick_start, tick_end) = view.visible_tick_range(w);
 
-            // Grid lines
-            if ppu > 0.01 {
-                let ticks_per_measure = tpb * 4;
-                let sub_beat_div = 4u32;
-                let ticks_per_sub = (tpb / sub_beat_div).max(1);
-
-                let start = ((tick_start / ticks_per_sub as f64).floor() as u32)
-                    .saturating_mul(ticks_per_sub);
-                let mut tick = start;
-                while (tick as f64) <= tick_end {
-                    let x = view.tick_to_x(tick as f64);
-                    if x >= lb_w && x <= w {
-                        let is_measure = tick % ticks_per_measure == 0;
-                        let is_beat = tick % tpb == 0;
-                        if is_measure {
-                            instances.push(NoteInstance {
-                                x,
-                                y: 0.0,
-                                w: 2.0,
-                                h,
-                                rgba_packed: pack_rgba(MEASURE_LINE_COLOR.0, MEASURE_LINE_COLOR.1, MEASURE_LINE_COLOR.2, MEASURE_LINE_COLOR.3),
-                                props_packed: pack_props(0.0, 0.0),
-                                velocity: 0,
-                                flags: 0,
-                            });
-                        } else if is_beat {
-                            instances.push(NoteInstance {
-                                x,
-                                y: 0.0,
-                                w: 1.0,
-                                h,
-                                rgba_packed: pack_rgba(BEAT_LINE_COLOR.0, BEAT_LINE_COLOR.1, BEAT_LINE_COLOR.2, BEAT_LINE_COLOR.3),
-                                props_packed: pack_props(0.0, 0.0),
-                                velocity: 0,
-                                flags: 0,
-                            });
-                        }
-                    }
-                    tick += ticks_per_sub;
-                }
+            // Grid lines — from cache or rebuild
+            if let Some(cached) = grid {
+                instances.extend_from_slice(cached);
+            } else {
+                build_arrangement_grid(instances, w, h, view, tpb);
             }
 
             // Note rectangles — merge consecutive same-track same-key notes into longer rects.
@@ -184,6 +215,51 @@ pub fn build_arrangement_instances(
                             flags: 0,
                         });
                     };
+
+                    // Fast path for black piano roll: all visible notes on the
+                    // same track are fully consecutive — use binary search to
+                    // find the boundary and produce one merged rectangle,
+                    // skipping the O(n) per-note iteration.
+                    if let Some(first) = notes[start_idx..].first() {
+                        let t0 = first.track as usize;
+                        if t0 >= trk_first
+                            && t0 < trk_last
+                            && track_visible.get(t0).copied().unwrap_or(true)
+                        {
+                            let mut fast_cont = true;
+                            let mut fast_prev = first.end_tick;
+                            let mut fast_max_vel = first.velocity;
+                            for n in &notes[start_idx..] {
+                                if n.track as usize != t0 || n.start_tick > fast_prev {
+                                    fast_cont = false;
+                                    break;
+                                }
+                                fast_prev = fast_prev.max(n.end_tick);
+                                if n.velocity > fast_max_vel {
+                                    fast_max_vel = n.velocity;
+                                }
+                            }
+                            if fast_cont {
+                                let count = notes[start_idx..]
+                                    .partition_point(|n| (n.start_tick as f64) <= pad_end);
+                                if count > 0 {
+                                    let last = &notes[start_idx + count - 1];
+                                    flush_merge(
+                                        &mut local,
+                                        t0,
+                                        first.start_tick,
+                                        last.end_tick.max(fast_prev),
+                                        fast_max_vel,
+                                    );
+                                    return if local.is_empty() {
+                                        None
+                                    } else {
+                                        Some(local)
+                                    };
+                                }
+                            }
+                        }
+                    }
 
                     for note in &notes[start_idx..] {
                         if note.start_tick as f64 > pad_end {
@@ -327,6 +403,7 @@ mod tests {
             &track_visible,
             &track_colors,
             None,
+            None,
         );
         let elapsed = start.elapsed();
         assert!(elapsed.as_millis() < 100, "build took too long: {:?}", elapsed);
@@ -370,6 +447,7 @@ mod tests {
             &view,
             &track_visible,
             &track_colors,
+            None,
             None,
         );
         let elapsed = start.elapsed();
@@ -418,6 +496,7 @@ mod tests {
             &track_visible,
             &track_colors,
             None,
+            None,
         );
         let elapsed = start.elapsed();
         assert!(elapsed.as_millis() < 3000, "large build took: {:?}", elapsed);
@@ -449,6 +528,7 @@ mod tests {
             &view,
             &track_visible,
             &track_colors,
+            None,
             None,
         );
         let elapsed = start.elapsed();
