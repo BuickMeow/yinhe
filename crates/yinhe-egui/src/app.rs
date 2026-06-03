@@ -3,12 +3,12 @@ use eframe::egui;
 use crate::document::Document;
 use crate::file_loader::{FileLoader, MidiLoadResult};
 use crate::title_bar::{self, TitleBarAnim};
-use crate::track_panel;
 
-use crate::arrangement_view_ui;
+use crate::arrange;
 use crate::mode_bar::{self, ViewMode};
 use crate::piano_view;
 use crate::render_context::RenderContext;
+use crate::transport_bar;
 
 pub struct App {
     // ── Pianoroll (shared GPU resources) ──
@@ -196,50 +196,15 @@ impl eframe::App for App {
             }
         });
 
-        let has_active = self.active_doc.is_some();
-
         // ── Transport bar ──
-        egui::Panel::top("transport_bar").show_inside(ui, |ui| {
-            ui.horizontal(|ui| {
-                let open_btn = ui.add_enabled(
-                    !self.file_loader.is_loading(),
-                    egui::Button::new("Open MIDI"),
-                );
-                if open_btn.clicked() {
-                    self.file_loader.pick_midi_file();
-                }
-
-                if has_active {
-                    ui.separator();
-                    let is_playing = self
-                        .active_doc()
-                        .map(|d| d.playback.is_playing())
-                        .unwrap_or(false);
-                    let play_label = if is_playing { "Pause" } else { "Play" };
-                    if ui.button(play_label).clicked() {
-                        toggle_play = true;
-                    }
-                    if ui.button("Stop").clicked() {
-                        stop_play = true;
-                    }
-                }
-
-                ui.separator();
-
-                if let Some(doc) = self.active_doc() {
-                    ui.label(egui::RichText::new(&doc.file_name).strong());
-                }
-
-                if let Some(doc) = self.active_doc() {
-                    ui.separator();
-                    ui.label(format!("Notes: {}", doc.midi.note_count));
-                    ui.separator();
-                    ui.label(format!("Tracks: {}", doc.midi.track_ports.len()));
-                    ui.separator();
-                    ui.label(format!("TPB: {}", doc.midi.ticks_per_beat));
-                }
-            });
-        });
+        let active_doc = self.active_doc.and_then(|idx| self.documents.get(idx));
+        transport_bar::show(
+            ui,
+            &mut self.file_loader,
+            &mut toggle_play,
+            &mut stop_play,
+            active_doc,
+        );
 
         // ── Poll async MIDI loading ──
         match self.file_loader.poll_midi_loading() {
@@ -305,135 +270,18 @@ impl eframe::App for App {
 
             // ── Arrangement view (transport track panel + arrangement GPU) ──
             if self.show_transport {
-                // mem::take to work around borrow checker: move doc out, operate, move back
                 let mut doc = std::mem::take(&mut self.documents[idx]);
-
-                // Cross-view cursor sync: if pianoroll updated cursor_tick, force arrangement rebuild
-                if doc.cursor_tick != self.last_cursor_tick {
-                    doc.arr_view.dirty = true;
-                }
-                self.last_cursor_tick = doc.cursor_tick;
-
-                let arr_total_w = remaining.width();
-                let tp_w = self
-                    .transport_panel_width
-                    .clamp(60.0, (arr_total_w - 60.0).max(60.0));
-                self.transport_panel_width = tp_w;
-
-                let arr_rect = egui::Rect::from_min_max(
-                    remaining.min,
-                    egui::pos2(remaining.max.x, remaining.min.y + arr_h),
+                arrange::show(
+                    ui,
+                    &mut doc,
+                    remaining,
+                    arr_h,
+                    &mut self.transport_panel_width,
+                    &mut self.arr_renderer,
+                    &mut self.arr_render_ctx,
+                    &mut self.last_cursor_tick,
+                    is_playing,
                 );
-
-                // Transport track panel (left)
-                let tp_rect = egui::Rect::from_min_max(
-                    arr_rect.min,
-                    egui::pos2(arr_rect.min.x + tp_w, arr_rect.max.y),
-                );
-                let gpu_rect = egui::Rect::from_min_max(
-                    egui::pos2(arr_rect.min.x + tp_w + 4.0, arr_rect.min.y),
-                    arr_rect.max,
-                );
-
-                // Allocate space for transport track panel
-                let _tp_child = ui.allocate_ui_with_layout(
-                    egui::vec2(tp_w, arr_h),
-                    egui::Layout::top_down(egui::Align::LEFT),
-                    |ui| {
-                        ui.set_clip_rect(tp_rect);
-                        ui.painter()
-                            .rect_filled(ui.max_rect(), 0.0, ui.visuals().panel_fill);
-
-                        // Sync track_panel_scroll_y with arrangement scroll_y
-                        doc.arr_view.track_panel_scroll_y = doc.arr_view.scroll_y;
-
-                        // Pinch-to-zoom on transport track panel
-                        let zoom_delta = ui.input(|i| i.zoom_delta());
-                        if (zoom_delta - 1.0).abs() > 0.001 {
-                            if let Some(hover) = ui.input(|i| i.pointer.hover_pos()) {
-                                if tp_rect.contains(hover) {
-                                    let pointer_y = hover.y - tp_rect.min.y;
-                                    let old = doc.arr_view.track_panel_row_height;
-                                    doc.arr_view.track_panel_row_height =
-                                        (doc.arr_view.track_panel_row_height * zoom_delta)
-                                            .clamp(16.0, 120.0);
-                                    doc.arr_view.lane_height = doc.arr_view.track_panel_row_height;
-                                    let track_frac =
-                                        (pointer_y + doc.arr_view.track_panel_scroll_y) / old;
-                                    doc.arr_view.track_panel_scroll_y = (track_frac
-                                        * doc.arr_view.track_panel_row_height
-                                        - pointer_y)
-                                        .max(0.0);
-                                    doc.arr_view.dirty = true;
-                                }
-                            }
-                        }
-
-                        track_panel::show(
-                            ui,
-                            &doc.track_info_cache,
-                            &mut doc.track_visible,
-                            &mut doc.track_selected,
-                            &doc.pc_map_cache,
-                            &mut doc.arr_view.track_panel_row_height,
-                            &mut doc.arr_view.track_panel_scroll_y,
-                        );
-
-                        // Write back scroll_y if changed by track panel interaction
-                        doc.arr_view.scroll_y = doc.arr_view.track_panel_scroll_y;
-                    },
-                );
-
-                // Vertical splitter between track panel and arrangement
-                let v_handle = egui::Rect::from_min_max(
-                    egui::pos2(arr_rect.min.x + tp_w, arr_rect.min.y),
-                    egui::pos2(arr_rect.min.x + tp_w + 4.0, arr_rect.max.y),
-                );
-                let v_resp =
-                    ui.interact(v_handle, ui.next_auto_id(), egui::Sense::click_and_drag());
-                let v_hovered = v_resp.hovered() || v_resp.dragged();
-                ui.painter().rect_filled(
-                    v_handle,
-                    0.0,
-                    if v_hovered {
-                        egui::Color32::from_gray(160)
-                    } else {
-                        egui::Color32::from_gray(80)
-                    },
-                );
-                if v_resp.dragged() {
-                    self.transport_panel_width = (self.transport_panel_width
-                        + v_resp.drag_delta().x)
-                        .clamp(60.0, arr_total_w - 60.0);
-                }
-                if v_hovered {
-                    ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
-                }
-
-                // Arrangement GPU view
-                let arr_midi: Option<&dyn yinhe_arrangement::NoteSource> =
-                    Some(&doc.midi as &dyn yinhe_arrangement::NoteSource);
-                let track_colors = doc.track_colors();
-                let track_names = doc.track_names();
-                let gpu_size = gpu_rect.size();
-                ui.allocate_new_ui(egui::UiBuilder::new().max_rect(gpu_rect), |ui| {
-                    arrangement_view_ui::show(
-                        ui,
-                        gpu_size,
-                        &mut self.arr_renderer,
-                        &mut self.arr_render_ctx,
-                        &mut doc.arr_view,
-                        arr_midi,
-                        &doc.track_visible,
-                        &track_colors,
-                        &mut doc.cursor_tick,
-                        is_playing,
-                        &track_names,
-                        &mut doc.arr_instances,
-                    );
-                });
-
-                // Put doc back
                 self.documents[idx] = doc;
             }
 

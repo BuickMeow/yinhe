@@ -1,4 +1,5 @@
 mod app;
+mod arrange;
 mod arrangement_view_ui;
 mod document;
 mod file_loader;
@@ -9,6 +10,7 @@ mod playback;
 mod render_context;
 mod title_bar;
 mod track_panel;
+mod transport_bar;
 mod view_interaction;
 
 fn main() {

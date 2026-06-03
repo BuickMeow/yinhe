@@ -80,6 +80,7 @@ pub(crate) fn show(
 ) -> Option<TitleBarAction> {
     let mut action = None;
     egui::Panel::top("title_bar")
+        .show_separator_line(false)
         .frame(egui::Frame {
             fill: egui::Color32::from_rgb(25, 25, 28),
             inner_margin: egui::Margin::ZERO,
@@ -89,16 +90,6 @@ pub(crate) fn show(
         .show_inside(ui, |ui| {
             let bar_rect = ui.max_rect();
             let painter = ui.painter();
-
-            // Bottom 1px separator line
-            painter.rect_filled(
-                egui::Rect::from_min_max(
-                    egui::pos2(bar_rect.min.x, bar_rect.max.y - 1.0),
-                    bar_rect.max,
-                ),
-                0.0,
-                egui::Color32::from_gray(50),
-            );
 
             // macOS: leave ~80px on the left for traffic lights
             let left_padding = if cfg!(target_os = "macos") {
