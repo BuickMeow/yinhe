@@ -1,11 +1,11 @@
+use std::collections::HashMap;
+
 use rayon::prelude::*;
 use yinhe_types::{NoteSource, TimeSigEvent, seek_first_note};
 
 use crate::view::ArrangementView;
 use yinhe_wgpu::grid::{self, push_grid_line};
 use yinhe_wgpu::vertex::{NoteInstance, pack_props, pack_rgba};
-
-const NOTE_ROUNDING: f32 = 0.2;
 
 /// Build grid line instances into `out`, respecting time signature changes.
 pub fn build_arrangement_grid(
@@ -165,10 +165,6 @@ pub fn build_arrangement_instances(
                     let key_y_base = y_offset + lh - (key as f32 + 1.0) * lh_per_key;
 
                     let mut local = Vec::new();
-                    let mut merge_track: Option<usize> = None;
-                    let mut merge_start: u32 = 0;
-                    let mut merge_end: u32 = 0;
-                    let mut merge_vel: u8 = 0;
 
                     let flush_merge = |local: &mut Vec<NoteInstance>,
                                        ti: usize,
@@ -191,64 +187,24 @@ pub fn build_arrangement_instances(
                         let note_y = key_y_base + ti as f32 * lh;
                         let color =
                             track_colors.get(ti).copied().unwrap_or([0.5, 0.5, 0.5]);
-                        let rounding = NOTE_ROUNDING * nw.min(note_h);
                         local.push(NoteInstance {
                             x: nx,
                             y: note_y,
                             w: nw,
                             h: note_h,
                             rgba_packed: pack_rgba(color[0], color[1], color[2], 0.85),
-                            props_packed: pack_props(rounding, 0.0),
+                            props_packed: pack_props(0.0, 0.0),
                             velocity: vel as u32,
                             flags: 0,
                         });
                     };
 
-                    // Fast path: all visible notes on same track fully consecutive
-                    if let Some(first) = notes[start_idx..].first() {
-                        let t0 = first.track as usize;
-                        if t0 >= trk_first
-                            && t0 < trk_last
-                            && track_visible.get(t0).copied().unwrap_or(true)
-                        {
-                            let mut fast_cont = true;
-                            let mut fast_prev = first.end_tick;
-                            let mut fast_max_vel = first.velocity;
-                            for n in &notes[start_idx..] {
-                                if (n.start_tick as f64) > pad_end {
-                                    break;
-                                }
-                                if n.track as usize != t0 || n.start_tick > fast_prev {
-                                    fast_cont = false;
-                                    break;
-                                }
-                                fast_prev = fast_prev.max(n.end_tick);
-                                if n.velocity > fast_max_vel {
-                                    fast_max_vel = n.velocity;
-                                }
-                            }
-                            if fast_cont {
-                                let count = notes[start_idx..]
-                                    .partition_point(|n| (n.start_tick as f64) <= pad_end);
-                                if count > 0 {
-                                    let last = &notes[start_idx + count - 1];
-                                    flush_merge(
-                                        &mut local,
-                                        t0,
-                                        first.start_tick,
-                                        last.end_tick.max(fast_prev),
-                                        fast_max_vel,
-                                    );
-                                    return if local.is_empty() {
-                                        None
-                                    } else {
-                                        Some(local)
-                                    };
-                                }
-                            }
-                        }
-                    }
+                    // Sub-pixel merge: gaps < 1 pixel are invisible.
+                    let merge_gap_ticks = (1.0 / ppu).ceil() as u32;
 
+                    // Bucket notes by track, then merge within each bucket.
+                    let mut track_buckets: HashMap<usize, Vec<(u32, u32, u8)>> =
+                        HashMap::new();
                     for note in &notes[start_idx..] {
                         if note.start_tick as f64 > pad_end {
                             break;
@@ -257,27 +213,41 @@ pub fn build_arrangement_instances(
                             continue;
                         }
                         let ti = note.track as usize;
-                        if merge_track == Some(ti) && merge_end >= note.start_tick {
-                            merge_end = merge_end.max(note.end_tick);
-                            merge_vel = merge_vel.max(note.velocity);
-                        } else {
-                            if let Some(prev_track) = merge_track {
+                        if ti < trk_first || ti >= trk_last {
+                            continue;
+                        }
+                        if !track_visible.get(ti).copied().unwrap_or(true) {
+                            continue;
+                        }
+                        track_buckets
+                            .entry(ti)
+                            .or_default()
+                            .push((note.start_tick, note.end_tick, note.velocity));
+                    }
+
+                    for (ti, notes_in_track) in &track_buckets {
+                        let mut merge_start = notes_in_track[0].0;
+                        let mut merge_end = notes_in_track[0].1;
+                        let mut merge_vel = notes_in_track[0].2;
+
+                        for &(s, e, v) in &notes_in_track[1..] {
+                            if s <= merge_end + merge_gap_ticks {
+                                merge_end = merge_end.max(e);
+                                merge_vel = merge_vel.max(v);
+                            } else {
                                 flush_merge(
-                                    &mut local, prev_track, merge_start, merge_end,
+                                    &mut local,
+                                    *ti,
+                                    merge_start,
+                                    merge_end,
                                     merge_vel,
                                 );
+                                merge_start = s;
+                                merge_end = e;
+                                merge_vel = v;
                             }
-                            merge_track = Some(ti);
-                            merge_start = note.start_tick;
-                            merge_end = note.end_tick;
-                            merge_vel = note.velocity;
                         }
-                    }
-                    if let Some(prev_track) = merge_track {
-                        flush_merge(
-                            &mut local, prev_track, merge_start, merge_end,
-                            merge_vel,
-                        );
+                        flush_merge(&mut local, *ti, merge_start, merge_end, merge_vel);
                     }
 
                     if local.is_empty() { None } else { Some(local) }
@@ -462,7 +432,7 @@ mod tests {
 
         let note_count = instances.iter().filter(|i| i.velocity > 0).count();
         assert!(note_count > 0, "should have generated note instances");
-        assert!(note_count > 2_000_000, "should exceed old 2M cap: got {}", note_count);
+        assert!(note_count > 2000, "should have many merged instances: got {}", note_count);
     }
 
     #[test]
