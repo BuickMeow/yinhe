@@ -63,10 +63,8 @@ impl App {
             let mut fonts = egui::FontDefinitions::default();
             fonts.font_data.insert(
                 "MiSans".to_owned(),
-                egui::FontData::from_static(include_bytes!(
-                    "../../../assets/MiSans-Regular.otf"
-                ))
-                .into(),
+                egui::FontData::from_static(include_bytes!("../../../assets/MiSans-Medium.otf"))
+                    .into(),
             );
             let props = fonts
                 .families
@@ -93,7 +91,11 @@ impl App {
 
         Self {
             render_ctx,
-            pianoroll: yinhe_pianoroll::PianorollRenderer::new(device.clone(), queue.clone(), format),
+            pianoroll: yinhe_pianoroll::PianorollRenderer::new(
+                device.clone(),
+                queue.clone(),
+                format,
+            ),
 
             arr_render_ctx,
             arr_renderer: yinhe_arrangement::PianorollRenderer::new(device, queue, format),
@@ -263,66 +265,101 @@ impl eframe::App for App {
         }
 
         // ── Bottom mode bar ──
-        egui::Panel::bottom("bottom_bar").show_inside(ui, |ui| {
-            ui.horizontal(|ui| {
-                let active_color = egui::Color32::from_rgb(100, 180, 255);
-                let inactive_color = egui::Color32::GRAY;
+        egui::Panel::bottom("bottom_bar")
+            .frame(egui::Frame {
+                inner_margin: egui::Margin::symmetric(8, 6),
+                fill: egui::Color32::from_rgb(30, 30, 30),
+                ..Default::default()
+            })
+            .show_inside(ui, |ui| {
+                ui.horizontal(|ui| {
+                    let active_color = egui::Color32::from_rgb(100, 180, 255);
+                    let inactive_color = egui::Color32::GRAY;
+                    let font_size = 9.5;
 
-                // ARRANGE mode button
-                let arrange_btn = egui::Button::new(
-                    egui::RichText::new("ARRANGE")
-                        .color(if self.view_mode == ViewMode::Arrange { active_color } else { inactive_color })
-                );
-                if ui.add(arrange_btn).clicked() {
-                    self.view_mode = ViewMode::Arrange;
-                    self.show_transport = true;
-                    self.show_pianoroll = self.show_pianoroll_in_arrange;
-                }
+                    ui.add_space(2.0);
 
-                // 🎹 toggle (only in ARRANGE mode)
-                if self.view_mode == ViewMode::Arrange {
-                    let emoji_color = if self.show_pianoroll_in_arrange {
-                        egui::Color32::WHITE
-                    } else {
-                        egui::Color32::from_gray(80)
-                    };
-                    let emoji = egui::Label::new(
-                        egui::RichText::new("🎹")
-                            .color(emoji_color)
-                    ).sense(egui::Sense::click());
-                    if ui.add(emoji).clicked() {
-                        self.show_pianoroll_in_arrange = !self.show_pianoroll_in_arrange;
+                    // ARRANGE mode button
+                    let arrange_label = egui::Label::new(
+                        egui::RichText::new("ARRANGE")
+                            .size(font_size)
+                            .strong()
+                            .color(if self.view_mode == ViewMode::Arrange {
+                                active_color
+                            } else {
+                                inactive_color
+                            }),
+                    )
+                    .sense(egui::Sense::click())
+                    .selectable(false);
+                    if ui.add(arrange_label).clicked() {
+                        self.view_mode = ViewMode::Arrange;
+                        self.show_transport = true;
                         self.show_pianoroll = self.show_pianoroll_in_arrange;
                     }
-                }
 
-                ui.separator();
+                    ui.add_space(2.0);
 
-                // MIX mode button
-                let mix_btn = egui::Button::new(
-                    egui::RichText::new("MIX")
-                        .color(if self.view_mode == ViewMode::Mix { active_color } else { inactive_color })
-                );
-                if ui.add(mix_btn).clicked() {
-                    self.view_mode = ViewMode::Mix;
-                    self.show_transport = false;
-                    self.show_pianoroll = false;
-                }
+                    // MIX mode button
+                    let mix_label = egui::Label::new(
+                        egui::RichText::new("MIX").size(font_size).strong().color(
+                            if self.view_mode == ViewMode::Mix {
+                                active_color
+                            } else {
+                                inactive_color
+                            },
+                        ),
+                    )
+                    .sense(egui::Sense::click())
+                    .selectable(false);
+                    if ui.add(mix_label).clicked() {
+                        self.view_mode = ViewMode::Mix;
+                        self.show_transport = false;
+                        self.show_pianoroll = false;
+                    }
 
-                ui.separator();
+                    ui.add_space(2.0);
 
-                // EDIT mode button
-                let edit_btn = egui::Button::new(
-                    egui::RichText::new("EDIT")
-                        .color(if self.view_mode == ViewMode::Edit { active_color } else { inactive_color })
-                );
-                if ui.add(edit_btn).clicked() {
-                    self.view_mode = ViewMode::Edit;
-                    self.show_transport = false;
-                    self.show_pianoroll = true;
-                }
+                    // EDIT mode button
+                    let edit_label = egui::Label::new(
+                        egui::RichText::new("EDIT").size(font_size).strong().color(
+                            if self.view_mode == ViewMode::Edit {
+                                active_color
+                            } else {
+                                inactive_color
+                            },
+                        ),
+                    )
+                    .sense(egui::Sense::click())
+                    .selectable(false);
+                    if ui.add(edit_label).clicked() {
+                        self.view_mode = ViewMode::Edit;
+                        self.show_transport = false;
+                        self.show_pianoroll = true;
+                    }
+
+                    // 🎹 toggle (only in ARRANGE mode)
+                    if self.view_mode == ViewMode::Arrange {
+                        ui.add_space(6.0);
+                        ui.separator();
+                        ui.add_space(6.0);
+                        let emoji_color = if self.show_pianoroll_in_arrange {
+                            egui::Color32::WHITE
+                        } else {
+                            egui::Color32::from_gray(80)
+                        };
+                        let emoji = egui::Label::new(
+                            egui::RichText::new("🎹").size(font_size).color(emoji_color),
+                        )
+                        .sense(egui::Sense::click())
+                        .selectable(false);
+                        if ui.add(emoji).clicked() {
+                            self.show_pianoroll_in_arrange = !self.show_pianoroll_in_arrange;
+                            self.show_pianoroll = self.show_pianoroll_in_arrange;
+                        }
+                    }
+                });
             });
-        });
 
         // ── Main area: arrangement (top) + pianoroll (bottom) ──
         let remaining = ui.available_rect_before_wrap();
@@ -340,8 +377,13 @@ impl eframe::App for App {
             } else {
                 0.0
             };
-            let bottom_y = remaining.min.y + arr_h
-                + if self.show_transport && self.show_pianoroll { 4.0 } else { 0.0 };
+            let bottom_y = remaining.min.y
+                + arr_h
+                + if self.show_transport && self.show_pianoroll {
+                    4.0
+                } else {
+                    0.0
+                };
 
             // ── Arrangement view (transport track panel + arrangement GPU) ──
             if self.show_transport {
@@ -355,7 +397,8 @@ impl eframe::App for App {
                 self.last_cursor_tick = doc.cursor_tick;
 
                 let arr_total_w = remaining.width();
-                let tp_w = self.transport_panel_width
+                let tp_w = self
+                    .transport_panel_width
                     .clamp(60.0, (arr_total_w - 60.0).max(60.0));
                 self.transport_panel_width = tp_w;
 
@@ -380,7 +423,8 @@ impl eframe::App for App {
                     egui::Layout::top_down(egui::Align::LEFT),
                     |ui| {
                         ui.set_clip_rect(tp_rect);
-                        ui.painter().rect_filled(ui.max_rect(), 0.0, ui.visuals().panel_fill);
+                        ui.painter()
+                            .rect_filled(ui.max_rect(), 0.0, ui.visuals().panel_fill);
 
                         // Sync track_panel_scroll_y with arrangement scroll_y
                         doc.arr_view.track_panel_scroll_y = doc.arr_view.scroll_y;
@@ -396,10 +440,12 @@ impl eframe::App for App {
                                         (doc.arr_view.track_panel_row_height * zoom_delta)
                                             .clamp(16.0, 120.0);
                                     doc.arr_view.lane_height = doc.arr_view.track_panel_row_height;
-                                    let track_frac = (pointer_y + doc.arr_view.track_panel_scroll_y) / old;
-                                    doc.arr_view.track_panel_scroll_y =
-                                        (track_frac * doc.arr_view.track_panel_row_height - pointer_y)
-                                            .max(0.0);
+                                    let track_frac =
+                                        (pointer_y + doc.arr_view.track_panel_scroll_y) / old;
+                                    doc.arr_view.track_panel_scroll_y = (track_frac
+                                        * doc.arr_view.track_panel_row_height
+                                        - pointer_y)
+                                        .max(0.0);
                                     doc.arr_view.dirty = true;
                                 }
                             }
@@ -425,14 +471,21 @@ impl eframe::App for App {
                     egui::pos2(arr_rect.min.x + tp_w, arr_rect.min.y),
                     egui::pos2(arr_rect.min.x + tp_w + 4.0, arr_rect.max.y),
                 );
-                let v_resp = ui.interact(v_handle, ui.next_auto_id(), egui::Sense::click_and_drag());
+                let v_resp =
+                    ui.interact(v_handle, ui.next_auto_id(), egui::Sense::click_and_drag());
                 let v_hovered = v_resp.hovered() || v_resp.dragged();
                 ui.painter().rect_filled(
-                    v_handle, 0.0,
-                    if v_hovered { egui::Color32::from_gray(160) } else { egui::Color32::from_gray(80) },
+                    v_handle,
+                    0.0,
+                    if v_hovered {
+                        egui::Color32::from_gray(160)
+                    } else {
+                        egui::Color32::from_gray(80)
+                    },
                 );
                 if v_resp.dragged() {
-                    self.transport_panel_width = (self.transport_panel_width + v_resp.drag_delta().x)
+                    self.transport_panel_width = (self.transport_panel_width
+                        + v_resp.drag_delta().x)
                         .clamp(60.0, arr_total_w - 60.0);
                 }
                 if v_hovered {
@@ -476,9 +529,14 @@ impl eframe::App for App {
                         egui::pos2(remaining.min.x, remaining.min.y + arr_h),
                         egui::pos2(remaining.max.x, remaining.min.y + arr_h + 4.0),
                     );
-                    let h_split_resp = ui.interact(h_split_rect, ui.next_auto_id(), egui::Sense::click_and_drag());
+                    let h_split_resp = ui.interact(
+                        h_split_rect,
+                        ui.next_auto_id(),
+                        egui::Sense::click_and_drag(),
+                    );
                     ui.painter().rect_filled(
-                        h_split_rect, 0.0,
+                        h_split_rect,
+                        0.0,
                         if h_split_resp.hovered() || h_split_resp.dragged() {
                             egui::Color32::from_gray(100)
                         } else {
@@ -497,16 +555,20 @@ impl eframe::App for App {
                 // Pianoroll GPU view (full width, no track panel)
                 let midi_source: Option<&dyn yinhe_pianoroll::NoteSource> =
                     Some(&doc.midi as &dyn yinhe_pianoroll::NoteSource);
-                let piano_rect = egui::Rect::from_min_max(
-                    egui::pos2(remaining.min.x, bottom_y),
-                    remaining.max,
-                );
+                let piano_rect =
+                    egui::Rect::from_min_max(egui::pos2(remaining.min.x, bottom_y), remaining.max);
                 ui.allocate_new_ui(egui::UiBuilder::new().max_rect(piano_rect), |ui| {
                     piano_view::show(
-                        ui, ui.available_size(),
-                        &mut self.pianoroll, &mut self.render_ctx, &mut doc.view,
-                        midi_source, &doc.selected, &doc.track_visible,
-                        &mut doc.cursor_tick, is_playing,
+                        ui,
+                        ui.available_size(),
+                        &mut self.pianoroll,
+                        &mut self.render_ctx,
+                        &mut doc.view,
+                        midi_source,
+                        &doc.selected,
+                        &doc.track_visible,
+                        &mut doc.cursor_tick,
+                        is_playing,
                     );
                 });
 
@@ -516,7 +578,8 @@ impl eframe::App for App {
         }
 
         // ── Request repaint during playback ──
-        if self.active_doc()
+        if self
+            .active_doc()
             .map(|d| d.playback.is_playing())
             .unwrap_or(false)
         {
