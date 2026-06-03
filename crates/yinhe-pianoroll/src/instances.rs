@@ -85,7 +85,9 @@ pub fn build_pianoroll_grid(
 
     let sub_f = ticks_per_sub as f64;
 
-    for &(seg_start, num, den) in &segments {
+    for i in 0..segments.len() {
+        let (seg_start, num, den) = segments[i];
+        let seg_end = segments.get(i + 1).map_or(u32::MAX, |&(t, _, _)| t);
         let seg_start_f = seg_start as f64;
         if seg_start_f > tick_end {
             break;
@@ -101,7 +103,7 @@ pub fn build_pianoroll_grid(
             .max(seg_start);
 
         let mut tick = first;
-        while (tick as f64) <= tick_end {
+        while (tick as f64) <= tick_end && tick < seg_end {
             let local = tick - seg_start;
 
             let x = x_origin + tick as f32 * ppu;

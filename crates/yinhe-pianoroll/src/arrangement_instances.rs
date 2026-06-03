@@ -61,7 +61,9 @@ pub fn build_arrangement_grid(
     }
     segments.push((prev_tick, prev_num, prev_den));
 
-    for &(seg_start, num, den) in &segments {
+    for i in 0..segments.len() {
+        let (seg_start, num, den) = segments[i];
+        let seg_end = segments.get(i + 1).map_or(u32::MAX, |&(t, _, _)| t);
         let seg_start_f = seg_start as f64;
         if seg_start_f > tick_end {
             break;
@@ -78,7 +80,7 @@ pub fn build_arrangement_grid(
             .max(seg_start);
 
         let mut tick = first;
-        while (tick as f64) <= tick_end {
+        while (tick as f64) <= tick_end && tick < seg_end {
             let local = tick - seg_start; // ticks since segment start
 
             let x = x_origin + tick as f32 * ppu;
@@ -577,5 +579,61 @@ mod tests {
         );
         let elapsed = start.elapsed();
         assert!(elapsed.as_millis() < 200, "extreme zoom build took: {:?}", elapsed);
+    }
+
+    #[test]
+    fn test_no_duplicate_grid_lines_at_time_sig_boundary() {
+        // Verify that adjacent time-signature segments do not both emit
+        // a grid line at the boundary tick.
+        let _mock = make_midi(vec![(60, 0, 480, 0, 100)]);
+        let tpb = 480;
+        let view = ArrangementView {
+            pixels_per_tick: 0.5, // tick_end = 2000 / 0.5 = 4000 — wide enough for tick 1920
+            label_width: 0.0,
+            scroll_x: 0.0,
+            dirty: true,
+            ..Default::default()
+        };
+
+        // Two segments: 0..1920 (4/4) and 1920.. (7/4)
+        let events = vec![
+            TimeSigEvent { tick: 0, numerator: 4, denominator: 2 },
+            TimeSigEvent { tick: 1920, numerator: 7, denominator: 2 },
+        ];
+
+        let mut grid = Vec::new();
+        build_arrangement_grid(
+            &mut grid,
+            2000.0,
+            400.0,
+            &view,
+            tpb,
+            4,  // default numerator
+            2,  // default denominator
+            &events,
+        );
+
+        // Collect all ticks with grid lines
+        let ticks: Vec<u32> = grid.iter().map(|i| i.flags).collect();
+
+        // Verify no duplicates
+        let mut sorted = ticks.clone();
+        sorted.sort();
+        let deduped = {
+            let mut d = sorted.clone();
+            d.dedup();
+            d
+        };
+        assert_eq!(
+            sorted.len(),
+            deduped.len(),
+            "Duplicate grid lines at same tick!\n  ticks: {:?}\n  sorted: {:?}",
+            ticks,
+            sorted,
+        );
+
+        // Sanity: boundary tick 1920 must appear exactly once
+        let count_1920 = ticks.iter().filter(|&&t| t == 1920).count();
+        assert_eq!(count_1920, 1, "Boundary tick 1920 must appear exactly once, got {}", count_1920);
     }
 }
