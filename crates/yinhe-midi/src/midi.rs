@@ -165,18 +165,27 @@ impl MidiFile {
     }
 
     /// Get info for all tracks (name, note count, port, channel).
+    ///
+    /// Port and channel are both derived from `note.channel` which encodes
+    /// `port * 16 + midi_channel`.  Fallback to `track_ports` when a track
+    /// has no notes.
     pub fn track_info(&self) -> Vec<TrackInfo> {
         let num_tracks = self.track_ports.len();
         let mut note_counts = vec![0u64; num_tracks];
         let mut track_channels = vec![0u8; num_tracks];
+        let mut track_ports_from_notes = vec![0u8; num_tracks];
+        let mut note_port_set = vec![false; num_tracks];
         for notes in &self.key_notes {
             for note in notes {
                 let idx = note.track as usize;
                 if idx < num_tracks {
                     note_counts[idx] += 1;
-                    // Record first channel found for this track
                     if track_channels[idx] == 0 {
                         track_channels[idx] = (note.channel & 0x0F) + 1;
+                    }
+                    if !note_port_set[idx] {
+                        note_port_set[idx] = true;
+                        track_ports_from_notes[idx] = (note.channel >> 4) & 0x07;
                     }
                 }
             }
@@ -190,7 +199,11 @@ impl MidiFile {
                     .cloned()
                     .unwrap_or_else(|| format!("Track {}", i + 1)),
                 note_count: note_counts[i],
-                port: self.track_ports.get(i).copied().unwrap_or(0),
+                port: if note_port_set[i] {
+                    track_ports_from_notes[i]
+                } else {
+                    self.track_ports.get(i).copied().unwrap_or(0)
+                },
                 channel: track_channels[i].max(1).min(16),
             })
             .collect()

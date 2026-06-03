@@ -170,8 +170,8 @@ impl App {
             if let Some(ref midi) = self.midi {
                 let info = midi.track_info();
 
-                // Build PC map: first ProgramChange event per channel
-                let mut pc_map: [Option<u8>; 16] = [None; 16];
+                // Build PC map: first ProgramChange event per (port,channel)
+                let mut pc_map: std::collections::HashMap<u8, u8> = std::collections::HashMap::new();
                 for ev in &midi.control_events {
                     if let yinhe_midi::MidiControlEvent::ProgramChange {
                         channel,
@@ -179,9 +179,7 @@ impl App {
                         ..
                     } = ev
                     {
-                        if *channel < 16 && pc_map[*channel as usize].is_none() {
-                            pc_map[*channel as usize] = Some(*program);
-                        }
+                        pc_map.entry(*channel).or_insert(*program);
                     }
                 }
 
@@ -261,9 +259,9 @@ impl App {
 
                         // ── Line 2: note count + optional PC ──
                         {
-                            let channel_idx = (ti.port & 0x0F) as usize;
+                            let global_ch = ti.port * 16 + (ti.channel - 1);
                             let mut line2 = format!("{} notes", ti.note_count);
-                            if let Some(pc) = pc_map[channel_idx] {
+                            if let Some(pc) = pc_map.get(&global_ch) {
                                 line2.push_str(&format!(" | PC:{}", pc));
                             }
                             let w2 = ui.available_width().max(10.0);
