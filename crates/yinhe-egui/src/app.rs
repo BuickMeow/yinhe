@@ -1,8 +1,11 @@
+use std::time::Instant;
+
 use eframe::egui;
 
 use crate::document::Document;
 use crate::file_loader::{FileLoader, MidiLoadResult};
 use crate::title_bar::{self, TitleBarAnim};
+use sysinfo::{Pid, ProcessesToUpdate, System};
 
 use crate::arrange;
 use crate::mode_bar::{self, ViewMode};
@@ -48,6 +51,13 @@ pub struct App {
 
     // ── Cursor tick tracking for cross-view sync ──
     last_cursor_tick: Option<f64>,
+
+    // ── System resource monitoring ──
+    sysinfo: System,
+    self_pid: Option<Pid>,
+    last_sys_refresh: Instant,
+    cpu_usage: f32,
+    mem_mb: f64,
 }
 
 impl App {
@@ -124,6 +134,12 @@ impl App {
             title_bar_press_pos: None,
 
             last_cursor_tick: None,
+
+            sysinfo: System::new(),
+            self_pid: sysinfo::get_current_pid().ok(),
+            last_sys_refresh: Instant::now(),
+            cpu_usage: 0.0,
+            mem_mb: 0.0,
         }
     }
 
@@ -196,6 +212,20 @@ impl eframe::App for App {
             }
         });
 
+        // ── System resource monitoring ──
+        if self.last_sys_refresh.elapsed().as_secs_f32() >= 0.5 {
+            if let Some(pid) = self.self_pid {
+                let _ = self
+                    .sysinfo
+                    .refresh_processes(ProcessesToUpdate::Some(&[pid]), false);
+                if let Some(p) = self.sysinfo.process(pid) {
+                    self.cpu_usage = p.cpu_usage();
+                    self.mem_mb = p.memory() as f64 / 1_048_576.0;
+                }
+            }
+            self.last_sys_refresh = Instant::now();
+        }
+
         // ── Transport bar ──
         let active_doc = self.active_doc.and_then(|idx| self.documents.get(idx));
         transport_bar::show(
@@ -204,6 +234,8 @@ impl eframe::App for App {
             &mut toggle_play,
             &mut stop_play,
             active_doc,
+            self.cpu_usage,
+            self.mem_mb,
         );
 
         // ── Poll async MIDI loading ──

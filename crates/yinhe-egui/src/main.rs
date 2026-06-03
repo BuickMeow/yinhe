@@ -8,6 +8,7 @@ mod mode_bar;
 mod piano_view;
 mod playback;
 mod render_context;
+mod time_format;
 mod title_bar;
 mod track_panel;
 mod transport_bar;
