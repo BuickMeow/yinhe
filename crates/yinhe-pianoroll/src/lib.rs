@@ -1,5 +1,6 @@
 pub mod arrangement_instances;
 mod arrangement_view;
+pub mod grid;
 pub mod instances;
 pub mod keyboard;
 pub mod pipeline;

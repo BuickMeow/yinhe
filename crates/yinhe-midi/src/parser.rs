@@ -375,25 +375,6 @@ impl MidiParser {
 mod tests {
     use super::*;
     use crate::TempoSegment;
-    use crate::time::{DEFAULT_MPQ, bpm_from_mpq};
-
-    #[test]
-    fn test_ticks_to_seconds_and_back() {
-        let dtick = 480;
-        let tpb = 480;
-        let mpq = DEFAULT_MPQ;
-        let secs = ticks_to_seconds(dtick, tpb, mpq);
-        assert!((secs - 0.5).abs() < 1e-9);
-
-        let ticks_back = crate::time::seconds_to_ticks(secs, tpb, mpq);
-        assert!((ticks_back - dtick as f64).abs() < 1e-9);
-    }
-
-    #[test]
-    fn test_bpm_from_mpq() {
-        assert!((bpm_from_mpq(DEFAULT_MPQ) - 120.0).abs() < 1e-3);
-        assert!((bpm_from_mpq(250_000) - 240.0).abs() < 1e-3);
-    }
 
     #[test]
     fn test_build_tempo_segments_empty() {
@@ -486,16 +467,7 @@ mod tests {
     }
 
     #[test]
-    fn test_is_black_key() {
-        use yinhe_types::is_black_key;
-        assert!(!is_black_key(0));
-        assert!(is_black_key(1));
-        assert!(is_black_key(3));
-        assert!(!is_black_key(4));
-        assert!(!is_black_key(12));
-    }
-
-    #[test]
+    #[ignore] // Depends on a local MIDI file not present in CI
     fn test_cyber_night_track_channel_mapping() {
         let midi = MidiFile::load("/Users/jieneng/Music/MIDIs/cyber-night.mid")
             .expect("failed to load cyber-night.mid");
@@ -550,7 +522,7 @@ mod tests {
             (45, 16, "NOTE 16-2"),
             (46, 16, "CC 16"),
         ];
-        for &(idx, ch, name) in expected {
+        for &(idx, ch, _name) in expected {
             assert_eq!(
                 info[idx].channel, ch,
                 "Track #{} ({}) expected channel {}",

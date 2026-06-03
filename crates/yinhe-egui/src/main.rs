@@ -1,9 +1,14 @@
 mod app;
 mod arrangement_view_ui;
+mod document;
+mod file_loader;
 mod loading;
 mod piano_view;
 mod playback;
 mod render_context;
+mod title_bar;
+mod track_panel;
+mod view_interaction;
 
 fn main() {
     tracing_subscriber::fmt()

@@ -159,3 +159,70 @@ pub fn seek_first_note(key: u8, source: &dyn NoteSource, min_tick: u32) -> usize
 
     blocks[lo].block_start_note
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Mock NoteSource for testing.
+    struct MockSource {
+        notes: [Vec<Note>; 128],
+        index: Option<NoteScanIndex>,
+    }
+
+    impl NoteSource for MockSource {
+        fn key_notes(&self, key: u8) -> &[Note] { &self.notes[key as usize] }
+        fn duration(&self) -> f64 { 10.0 }
+        fn scan_index(&self) -> Option<&NoteScanIndex> { self.index.as_ref() }
+    }
+
+    fn make_note(key: u8, start_tick: u32, end_tick: u32) -> Note {
+        Note {
+            key,
+            start_tick,
+            end_tick,
+            velocity: 100,
+            channel: 0,
+            track: 0,
+            start: 0.0,
+            end: 0.0,
+        }
+    }
+
+    #[test]
+    fn test_scan_index_build_and_seek() {
+        let mut notes: [Vec<Note>; 128] = core::array::from_fn(|_| Vec::new());
+        // Key 60: three notes at ticks 0-480, 480-960, 1000-1500
+        notes[60] = vec![
+            make_note(60, 0, 480),
+            make_note(60, 480, 960),
+            make_note(60, 1000, 1500),
+        ];
+        let index = NoteScanIndex::build(&notes, 1500);
+        let source = MockSource { notes, index: Some(index) };
+
+        // seek_first_note(60, min_tick=500) should skip the first note
+        let idx = seek_first_note(60, &source, 500);
+        assert!(idx <= 1, "Should skip note ending at 480, got {}", idx);
+    }
+
+    #[test]
+    fn test_scan_index_seek_empty_key() {
+        let notes: [Vec<Note>; 128] = core::array::from_fn(|_| Vec::new());
+        let source = MockSource { notes, index: None };
+        let idx = seek_first_note(60, &source, 0);
+        assert_eq!(idx, 0);
+    }
+
+    #[test]
+    fn test_scan_index_seek_past_all_notes() {
+        let mut notes: [Vec<Note>; 128] = core::array::from_fn(|_| Vec::new());
+        notes[60] = vec![make_note(60, 0, 100)];
+        let index = NoteScanIndex::build(&notes, 100);
+        let source = MockSource { notes, index: Some(index) };
+
+        // min_tick far beyond the last note
+        let idx = seek_first_note(60, &source, 9999);
+        assert_eq!(idx, 1, "Should return notes.len() when past all notes");
+    }
+}

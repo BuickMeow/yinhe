@@ -2,27 +2,10 @@ use rayon::prelude::*;
 use yinhe_types::{NoteSource, TimeSigEvent, seek_first_note};
 
 use crate::arrangement_view::ArrangementView;
+use crate::grid::{self, push_grid_line};
 use crate::vertex::{NoteInstance, pack_props, pack_rgba};
 
-/// Colors
-const BG_COLOR: (f32, f32, f32) = (0.14, 0.14, 0.16);
-const LANE_EVEN_COLOR: (f32, f32, f32) = (0.16, 0.16, 0.18);
-const LANE_ODD_COLOR: (f32, f32, f32) = (0.13, 0.13, 0.15);
-const MEASURE_LINE_COLOR: (f32, f32, f32, f32) = (0.30, 0.30, 0.35, 1.0);
-const BEAT_LINE_COLOR: (f32, f32, f32, f32) = (0.20, 0.20, 0.23, 1.0);
-const PLAYHEAD_COLOR: (f32, f32, f32, f32) = (1.0, 1.0, 1.0, 0.8);
-
 const NOTE_ROUNDING: f32 = 0.2;
-
-/// Compute ticks per measure from time signature.
-fn measure_ticks(tpb: u32, numerator: u8, denominator_power: u8) -> u32 {
-    if numerator == 0 {
-        return (tpb * 4).max(1); // fallback 4/4
-    }
-    let num = numerator as f64;
-    let den = (1u32 << denominator_power) as f64;
-    ((tpb as f64 * num / den * 4.0).round() as u32).max(1)
-}
 
 /// Build grid line instances into `out`, respecting time signature changes.
 pub fn build_arrangement_grid(
@@ -46,20 +29,7 @@ pub fn build_arrangement_grid(
     let lb_w = view.label_width;
     let x_origin = lb_w - view.scroll_x;
 
-    // Build sorted time-signature segments from tick 0
-    let mut segments: Vec<(u32, u8, u8)> = Vec::new();
-    let mut prev_tick = 0u32;
-    let mut prev_num = default_num;
-    let mut prev_den = default_den;
-    for ev in time_sig_events {
-        if ev.tick > prev_tick {
-            segments.push((prev_tick, prev_num, prev_den));
-        }
-        prev_tick = ev.tick;
-        prev_num = ev.numerator;
-        prev_den = ev.denominator;
-    }
-    segments.push((prev_tick, prev_num, prev_den));
+    let segments = grid::build_time_sig_segments(time_sig_events, default_num, default_den);
 
     for i in 0..segments.len() {
         let (seg_start, num, den) = segments[i];
@@ -69,10 +39,9 @@ pub fn build_arrangement_grid(
             break;
         }
 
-        let ticks_per_measure = measure_ticks(tpb, num, den);
+        let ticks_per_measure = grid::measure_ticks(tpb, num, den);
         let ticks_per_beat = ticks_per_measure / num as u32;
 
-        // First sub-beat position in this segment, aligned to grid
         let sub_f = ticks_per_sub as f64;
         let first_tick = seg_start_f.max(tick_start);
         let first = ((first_tick / sub_f).floor() as u32)
@@ -81,7 +50,7 @@ pub fn build_arrangement_grid(
 
         let mut tick = first;
         while (tick as f64) <= tick_end && tick < seg_end {
-            let local = tick - seg_start; // ticks since segment start
+            let local = tick - seg_start;
 
             let x = x_origin + tick as f32 * ppu;
             if x >= lb_w && x <= w {
@@ -93,33 +62,9 @@ pub fn build_arrangement_grid(
                     false
                 };
                 if is_measure {
-                    out.push(NoteInstance {
-                        x,
-                        y: 0.0,
-                        w: 2.0,
-                        h,
-                        rgba_packed: pack_rgba(
-                            MEASURE_LINE_COLOR.0, MEASURE_LINE_COLOR.1,
-                            MEASURE_LINE_COLOR.2, MEASURE_LINE_COLOR.3,
-                        ),
-                        props_packed: pack_props(0.0, 0.0),
-                        velocity: 0,
-                        flags: tick,
-                    });
+                    push_grid_line(out, x, h, 2.0, grid::AR_MEASURE_LINE_COLOR, tick);
                 } else if is_beat {
-                    out.push(NoteInstance {
-                        x,
-                        y: 0.0,
-                        w: 1.0,
-                        h,
-                        rgba_packed: pack_rgba(
-                            BEAT_LINE_COLOR.0, BEAT_LINE_COLOR.1,
-                            BEAT_LINE_COLOR.2, BEAT_LINE_COLOR.3,
-                        ),
-                        props_packed: pack_props(0.0, 0.0),
-                        velocity: 0,
-                        flags: tick,
-                    });
+                    push_grid_line(out, x, h, 1.0, grid::AR_BEAT_LINE_COLOR, tick);
                 }
             }
             tick += ticks_per_sub;
@@ -153,7 +98,7 @@ pub fn build_arrangement_instances(
         y: 0.0,
         w: w - lb_w,
         h,
-        rgba_packed: pack_rgba(BG_COLOR.0, BG_COLOR.1, BG_COLOR.2, 1.0),
+        rgba_packed: pack_rgba(grid::AR_BG_COLOR.0, grid::AR_BG_COLOR.1, grid::AR_BG_COLOR.2, 1.0),
         props_packed: pack_props(0.0, 0.0),
         velocity: 0,
         flags: 0,
@@ -167,7 +112,7 @@ pub fn build_arrangement_instances(
                 continue;
             }
             let y = view.lane_y(idx);
-            let col = if idx % 2 == 0 { LANE_EVEN_COLOR } else { LANE_ODD_COLOR };
+            let col = if idx % 2 == 0 { grid::AR_LANE_EVEN_COLOR } else { grid::AR_LANE_ODD_COLOR };
             instances.push(NoteInstance {
                 x: lb_w,
                 y,
@@ -192,15 +137,13 @@ pub fn build_arrangement_instances(
             build_arrangement_grid(instances, w, h, view, tpb, def_num, def_den, sig_events);
 
             // Note rectangles — merge consecutive same-track same-key notes into longer rects.
-            // Process each key in parallel with rayon.
             let tick_pad = (w - lb_w) / ppu;
             let pad_start = (tick_start - tick_pad as f64).max(0.0);
             let pad_end = tick_end + tick_pad as f64;
             let (trk_first, trk_last) = view.visible_track_range(h, num_tracks);
 
-            // Precompute hot-path constants to avoid function calls inside the closure.
-            let x_offset = lb_w - view.scroll_x; // tick_to_x(t) = x_offset + t * ppu
-            let y_offset = -view.scroll_y;        // lane_y(ti)   = y_offset + ti * lh
+            let x_offset = lb_w - view.scroll_x;
+            let y_offset = -view.scroll_y;
             let lh_per_key = lh / 128.0;
             let note_h = lh_per_key.max(1.0);
 
@@ -261,10 +204,7 @@ pub fn build_arrangement_instances(
                         });
                     };
 
-                    // Fast path for black piano roll: all visible notes on the
-                    // same track are fully consecutive — use binary search to
-                    // find the boundary and produce one merged rectangle,
-                    // skipping the O(n) per-note iteration.
+                    // Fast path: all visible notes on same track fully consecutive
                     if let Some(first) = notes[start_idx..].first() {
                         let t0 = first.track as usize;
                         if t0 >= trk_first
@@ -275,8 +215,6 @@ pub fn build_arrangement_instances(
                             let mut fast_prev = first.end_tick;
                             let mut fast_max_vel = first.velocity;
                             for n in &notes[start_idx..] {
-                                // Only check continuity within the visible range —
-                                // notes past pad_end don't affect the merge result.
                                 if (n.start_tick as f64) > pad_end {
                                     break;
                                 }
@@ -356,21 +294,7 @@ pub fn build_arrangement_instances(
     if let Some(ct) = cursor_tick {
         let cx = view.tick_to_x(ct);
         if cx >= lb_w && cx <= w {
-            instances.push(NoteInstance {
-                x: cx,
-                y: 0.0,
-                w: 2.0,
-                h,
-                rgba_packed: pack_rgba(
-                    PLAYHEAD_COLOR.0,
-                    PLAYHEAD_COLOR.1,
-                    PLAYHEAD_COLOR.2,
-                    PLAYHEAD_COLOR.3,
-                ),
-                props_packed: pack_props(0.0, 0.0),
-                velocity: 0,
-                flags: 0,
-            });
+            push_grid_line(instances, cx, h, 2.0, grid::AR_PLAYHEAD_COLOR, 0);
         }
     }
 }
@@ -431,23 +355,21 @@ mod tests {
     #[test]
     fn test_basic_note_instances() {
         let mock = make_midi(vec![
-            (60, 0, 480, 0, 100),   // Track 0, key 60
-            (60, 480, 960, 0, 100), // Track 0, second note
-            (64, 240, 720, 1, 80),  // Track 1, key 64
+            (60, 0, 480, 0, 100),
+            (60, 480, 960, 0, 100),
+            (64, 240, 720, 1, 80),
         ]);
 
         let view = ArrangementView::default();
         let track_visible = vec![true; 2];
         let track_colors = [[0.3, 0.6, 0.9], [0.9, 0.3, 0.3]];
         let mut instances = Vec::new();
-        let w = 1200u32;
-        let h = 400u32;
 
         let start = std::time::Instant::now();
         build_arrangement_instances(
             &mut instances,
-            w,
-            h,
+            1200,
+            400,
             Some(&mock as &dyn NoteSource),
             &view,
             &track_visible,
@@ -458,13 +380,9 @@ mod tests {
         assert!(elapsed.as_millis() < 100, "build took too long: {:?}", elapsed);
         assert!(!instances.is_empty(), "should have generated instances");
 
-        // Count note instances (velocity > 0 => actual note rectangle)
-        // Key 60: two consecutive notes merged into one rectangle
-        // Key 64: one note → total 2 note instances after merge
         let note_count = instances.iter().filter(|i| i.velocity > 0).count();
         assert_eq!(note_count, 2, "should have 2 note instances after merge");
 
-        // Verify note positions are reasonable
         for inst in &instances {
             if inst.velocity > 0 {
                 assert!(inst.x >= view.label_width, "note x should be >= label_width");
@@ -475,7 +393,6 @@ mod tests {
 
     #[test]
     fn test_all_keys_performance() {
-        // Simulate a dense MIDI: 1 note on each of the 128 keys for track 0
         let mut notes = Vec::with_capacity(128);
         for key in 0..128u8 {
             notes.push((key, key as u32 * 10, key as u32 * 10 + 120, 0, 90));
@@ -499,29 +416,24 @@ mod tests {
             None,
         );
         let elapsed = start.elapsed();
-        // Should be very fast for 128 notes
         assert!(elapsed.as_millis() < 100, "128-key build took: {:?}", elapsed);
         assert!(instances.len() > 128, "should have many instances");
     }
 
     #[test]
     fn test_no_instance_cap() {
-        // Verify that even with very many notes, all are rendered without a cap.
-        // Use same-tick different keys to prevent merging → one instance per note.
         let mut notes = Vec::new();
         let num_tick_positions = 1200u32;
         for tick_offset in 0..num_tick_positions {
             for key in 0..128u8 {
                 for track in 0..16u16 {
-                    let tick = 100 + tick_offset * 3; // gap between groups
+                    let tick = 100 + tick_offset * 3;
                     notes.push((key, tick, tick + 1, track, 100));
                 }
             }
         }
-        // 1200 * 128 * 16 = 2,457,600 notes → ~2.45M instances (no merging)
         let mock = make_midi(notes);
 
-        // Use a view that can see all notes
         let view = ArrangementView {
             pixels_per_tick: 0.08,
             lane_height: 40.0,
@@ -537,7 +449,7 @@ mod tests {
         let start = std::time::Instant::now();
         build_arrangement_instances(
             &mut instances,
-            2000, // wide viewport
+            2000,
             800,
             Some(&mock as &dyn NoteSource),
             &view,
@@ -548,7 +460,6 @@ mod tests {
         let elapsed = start.elapsed();
         assert!(elapsed.as_millis() < 3000, "large build took: {:?}", elapsed);
 
-        // All notes should be rendered (no cap — should exceed 2M)
         let note_count = instances.iter().filter(|i| i.velocity > 0).count();
         assert!(note_count > 0, "should have generated note instances");
         assert!(note_count > 2_000_000, "should exceed old 2M cap: got {}", note_count);
@@ -556,10 +467,9 @@ mod tests {
 
     #[test]
     fn test_grid_lines_dont_hang() {
-        // Wide viewport should generate many grid lines
         let mock = make_midi(vec![(60, 0, 480, 0, 100)]);
         let view = ArrangementView {
-            pixels_per_tick: 10.0, // Extreme zoom — lots of grid lines
+            pixels_per_tick: 10.0,
             ..Default::default()
         };
         let track_visible = vec![true; 1];
@@ -583,40 +493,35 @@ mod tests {
 
     #[test]
     fn test_no_duplicate_grid_lines_at_time_sig_boundary() {
-        // Verify that adjacent time-signature segments do not both emit
-        // a grid line at the boundary tick.
         let _mock = make_midi(vec![(60, 0, 480, 0, 100)]);
         let tpb = 480;
         let view = ArrangementView {
-            pixels_per_tick: 0.5, // tick_end = 2000 / 0.5 = 4000 — wide enough for tick 1920
+            pixels_per_tick: 0.5,
             label_width: 0.0,
             scroll_x: 0.0,
             dirty: true,
             ..Default::default()
         };
 
-        // Two segments: 0..1920 (4/4) and 1920.. (7/4)
         let events = vec![
             TimeSigEvent { tick: 0, numerator: 4, denominator: 2 },
             TimeSigEvent { tick: 1920, numerator: 7, denominator: 2 },
         ];
 
-        let mut grid = Vec::new();
+        let mut grid_lines = Vec::new();
         build_arrangement_grid(
-            &mut grid,
+            &mut grid_lines,
             2000.0,
             400.0,
             &view,
             tpb,
-            4,  // default numerator
-            2,  // default denominator
+            4,
+            2,
             &events,
         );
 
-        // Collect all ticks with grid lines
-        let ticks: Vec<u32> = grid.iter().map(|i| i.flags).collect();
+        let ticks: Vec<u32> = grid_lines.iter().map(|i| i.flags).collect();
 
-        // Verify no duplicates
         let mut sorted = ticks.clone();
         sorted.sort();
         let deduped = {
@@ -632,7 +537,6 @@ mod tests {
             sorted,
         );
 
-        // Sanity: boundary tick 1920 must appear exactly once
         let count_1920 = ticks.iter().filter(|&&t| t == 1920).count();
         assert_eq!(count_1920, 1, "Boundary tick 1920 must appear exactly once, got {}", count_1920);
     }
