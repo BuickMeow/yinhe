@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use yinhe_types::TRACK_PALETTE;
 
@@ -16,6 +16,10 @@ pub(crate) struct Document {
     pub arr_instances: Vec<yinhe_arrangement::NoteInstance>,
     pub cursor_tick: Option<f64>,
     pub playback: PlaybackState,
+    /// Cached track metadata (computed once at load time).
+    pub track_info_cache: Vec<yinhe_midi::TrackInfo>,
+    /// Cached first ProgramChange per channel (computed once at load time).
+    pub pc_map_cache: HashMap<u8, u8>,
 }
 
 impl Document {
@@ -38,6 +42,15 @@ impl Document {
             .and_then(|n| n.to_str())
             .map(|s| s.to_string())
             .unwrap_or_default();
+
+        let track_info_cache = midi.track_info();
+        let mut pc_map_cache = HashMap::new();
+        for ev in &midi.control_events {
+            if let yinhe_midi::MidiControlEvent::ProgramChange { channel, program, .. } = ev {
+                pc_map_cache.entry(*channel).or_insert(*program);
+            }
+        }
+
         Document {
             midi,
             file_name,
@@ -49,6 +62,8 @@ impl Document {
             arr_instances: Vec::new(),
             cursor_tick: None,
             playback: PlaybackState::default(),
+            track_info_cache,
+            pc_map_cache,
         }
     }
 }

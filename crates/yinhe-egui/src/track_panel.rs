@@ -10,27 +10,13 @@ pub(crate) fn show(
     ui: &mut egui::Ui,
     doc: &mut Document,
 ) {
-    let midi = &doc.midi;
+    let info = &doc.track_info_cache;
+    let pc_map = &doc.pc_map_cache;
     let track_visible = &mut doc.track_visible;
     let track_selected = &mut doc.track_selected;
 
     egui::ScrollArea::vertical().show(ui, |ui| {
-        let info = midi.track_info();
-
-        // Build PC map: first ProgramChange event per (port,channel)
-        let mut pc_map: std::collections::HashMap<u8, u8> = std::collections::HashMap::new();
-        for ev in &midi.control_events {
-            if let yinhe_midi::MidiControlEvent::ProgramChange {
-                channel,
-                program,
-                ..
-            } = ev
-            {
-                pc_map.entry(*channel).or_insert(*program);
-            }
-        }
-
-        for ti in &info {
+        for ti in info {
             let idx = ti.index as usize;
             let color = TRACK_PALETTE[idx % TRACK_PALETTE.len()];
             let color32 = egui::Color32::from_rgb(
