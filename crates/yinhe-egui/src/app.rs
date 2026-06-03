@@ -24,7 +24,6 @@ pub struct App {
     active_doc: Option<usize>,
 
     // ── Shared state ──
-    track_panel_width: f32,
     transport_panel_width: f32,
     file_loader: FileLoader,
 
@@ -103,7 +102,6 @@ impl App {
             documents: Vec::new(),
             active_doc: None,
 
-            track_panel_width: 200.0,
             transport_panel_width: 200.0,
             file_loader: FileLoader::new(),
 
@@ -326,7 +324,7 @@ impl eframe::App for App {
             });
         });
 
-        // ── Main area: arrangement (top) + track panel + pianoroll (bottom) ──
+        // ── Main area: arrangement (top) + pianoroll (bottom) ──
         let remaining = ui.available_rect_before_wrap();
 
         if let Some(idx) = self.active_doc {
@@ -423,10 +421,9 @@ impl eframe::App for App {
                 );
 
                 // Vertical splitter between track panel and arrangement
-                let v_bottom = if self.show_pianoroll { arr_rect.max.y - 4.0 } else { arr_rect.max.y };
                 let v_handle = egui::Rect::from_min_max(
                     egui::pos2(arr_rect.min.x + tp_w, arr_rect.min.y),
-                    egui::pos2(arr_rect.min.x + tp_w + 4.0, v_bottom),
+                    egui::pos2(arr_rect.min.x + tp_w + 4.0, arr_rect.max.y),
                 );
                 let v_resp = ui.interact(v_handle, ui.next_auto_id(), egui::Sense::click_and_drag());
                 let v_hovered = v_resp.hovered() || v_resp.dragged();
@@ -440,31 +437,6 @@ impl eframe::App for App {
                 }
                 if v_hovered {
                     ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
-                }
-
-                // Horizontal splitter (allocate space)
-                if self.show_pianoroll {
-                    let h_split_rect = egui::Rect::from_min_max(
-                        egui::pos2(remaining.min.x, remaining.min.y + arr_h),
-                        egui::pos2(remaining.max.x, remaining.min.y + arr_h + 4.0),
-                    );
-                    let h_split_resp = ui.interact(h_split_rect, ui.next_auto_id(), egui::Sense::click_and_drag());
-                    ui.painter().rect_filled(
-                        h_split_rect,
-                        0.0,
-                        if h_split_resp.hovered() || h_split_resp.dragged() {
-                            egui::Color32::from_gray(100)
-                        } else {
-                            egui::Color32::from_gray(60)
-                        },
-                    );
-                    if h_split_resp.dragged() {
-                        let delta = h_split_resp.drag_delta().y;
-                        self.arr_split = ((arr_h + delta) / total.y).clamp(0.1, 0.7);
-                    }
-                    if h_split_resp.hovered() || h_split_resp.dragged() {
-                        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
-                    }
                 }
 
                 // Arrangement GPU view
@@ -494,76 +466,39 @@ impl eframe::App for App {
                 self.documents[idx] = doc;
             }
 
-            // ── Bottom area: track panel (left) + pianoroll (right) ──
+            // ── Pianoroll area ──
             if self.show_pianoroll {
-                // mem::take to work around borrow checker
                 let mut doc = std::mem::take(&mut self.documents[idx]);
 
-                let sidebar_w = self.track_panel_width
-                    .clamp(60.0, (remaining.width() - 60.0).max(60.0));
-                self.track_panel_width = sidebar_w;
-
-                let track_rect = egui::Rect::from_min_max(
-                    egui::pos2(remaining.min.x, bottom_y),
-                    egui::pos2(remaining.min.x + sidebar_w, remaining.max.y),
-                );
-                ui.allocate_new_ui(egui::UiBuilder::new().max_rect(track_rect), |ui| {
-                    ui.set_clip_rect(ui.max_rect());
-                    ui.painter().rect_filled(ui.max_rect(), 0.0, ui.visuals().panel_fill);
-
-                    // Pinch-to-zoom on pianoroll track panel
-                    let zoom_delta = ui.input(|i| i.zoom_delta());
-                    if (zoom_delta - 1.0).abs() > 0.001 {
-                        if let Some(hover) = ui.input(|i| i.pointer.hover_pos()) {
-                            if track_rect.contains(hover) {
-                                let pointer_y = hover.y - track_rect.min.y;
-                                let old = doc.view.track_panel_row_height;
-                                doc.view.track_panel_row_height =
-                                    (doc.view.track_panel_row_height * zoom_delta)
-                                        .clamp(16.0, 120.0);
-                                let track_frac = (pointer_y + doc.view.track_panel_scroll_y) / old;
-                                doc.view.track_panel_scroll_y =
-                                    (track_frac * doc.view.track_panel_row_height - pointer_y)
-                                        .max(0.0);
-                            }
-                        }
-                    }
-
-                    track_panel::show(
-                        ui,
-                        &doc.track_info_cache,
-                        &mut doc.track_visible,
-                        &mut doc.track_selected,
-                        &doc.pc_map_cache,
-                        &mut doc.view.track_panel_row_height,
-                        &mut doc.view.track_panel_scroll_y,
+                // Horizontal splitter (between arrangement and pianoroll)
+                if self.show_transport {
+                    let h_split_rect = egui::Rect::from_min_max(
+                        egui::pos2(remaining.min.x, remaining.min.y + arr_h),
+                        egui::pos2(remaining.max.x, remaining.min.y + arr_h + 4.0),
                     );
-                });
-
-                // Vertical handle
-                let v_handle = egui::Rect::from_min_max(
-                    egui::pos2(remaining.min.x + sidebar_w, bottom_y),
-                    egui::pos2(remaining.min.x + sidebar_w + 4.0, remaining.max.y),
-                );
-                let v_resp = ui.interact(v_handle, ui.next_auto_id(), egui::Sense::click_and_drag());
-                let v_hovered = v_resp.hovered() || v_resp.dragged();
-                ui.painter().rect_filled(
-                    v_handle, 0.0,
-                    if v_hovered { egui::Color32::from_gray(160) } else { egui::Color32::from_gray(80) },
-                );
-                if v_resp.dragged() {
-                    self.track_panel_width = (self.track_panel_width + v_resp.drag_delta().x)
-                        .clamp(60.0, remaining.width() - 60.0);
-                }
-                if v_hovered {
-                    ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+                    let h_split_resp = ui.interact(h_split_rect, ui.next_auto_id(), egui::Sense::click_and_drag());
+                    ui.painter().rect_filled(
+                        h_split_rect, 0.0,
+                        if h_split_resp.hovered() || h_split_resp.dragged() {
+                            egui::Color32::from_gray(100)
+                        } else {
+                            egui::Color32::from_gray(60)
+                        },
+                    );
+                    if h_split_resp.dragged() {
+                        let delta = h_split_resp.drag_delta().y;
+                        self.arr_split = ((arr_h + delta) / total.y).clamp(0.1, 0.7);
+                    }
+                    if h_split_resp.hovered() || h_split_resp.dragged() {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+                    }
                 }
 
-                // Pianoroll
+                // Pianoroll GPU view (full width, no track panel)
                 let midi_source: Option<&dyn yinhe_pianoroll::NoteSource> =
                     Some(&doc.midi as &dyn yinhe_pianoroll::NoteSource);
                 let piano_rect = egui::Rect::from_min_max(
-                    egui::pos2(remaining.min.x + sidebar_w + 4.0, bottom_y),
+                    egui::pos2(remaining.min.x, bottom_y),
                     remaining.max,
                 );
                 ui.allocate_new_ui(egui::UiBuilder::new().max_rect(piano_rect), |ui| {
