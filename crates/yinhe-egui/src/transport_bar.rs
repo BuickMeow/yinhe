@@ -8,6 +8,7 @@ pub fn show(
     ui: &mut egui::Ui,
     file_loader: &mut FileLoader,
     toggle_play: &mut bool,
+    pause_return: &mut bool,
     stop_play: &mut bool,
     doc: Option<&Document>,
     cpu_usage: f32,
@@ -18,7 +19,12 @@ pub fn show(
     egui::Panel::top("transport_bar")
         .frame(egui::Frame {
             fill: egui::Color32::from_rgb(25, 25, 28),
-            inner_margin: egui::Margin::symmetric(8, 4),
+            inner_margin: egui::Margin {
+                left: 8,
+                right: 8,
+                top: 0,
+                bottom: 8,
+            },
             stroke: egui::Stroke::NONE,
             ..Default::default()
         })
@@ -31,26 +37,20 @@ pub fn show(
                 }
 
                 if has_active {
-                    ui.separator();
                     let is_playing = doc.map(|d| d.playback.is_playing()).unwrap_or(false);
-                    let play_label = if is_playing { "Pause" } else { "Play" };
-                    if ui.button(play_label).clicked() {
-                        *toggle_play = true;
+                    if ui.button(if is_playing { "⏸" } else { "▶" }).clicked() {
+                        if is_playing {
+                            *pause_return = true;
+                        } else {
+                            *toggle_play = true;
+                        }
                     }
-                    if ui.button("Stop").clicked() {
+                    if ui.button("⏹").clicked() {
                         *stop_play = true;
                     }
                 }
 
-                ui.separator();
-
                 if let Some(doc) = doc {
-                    ui.label(egui::RichText::new(&doc.file_name).strong());
-                }
-
-                if let Some(doc) = doc {
-                    ui.separator();
-
                     let tick = doc.cursor_tick.unwrap_or(0.0);
                     let tick_u = tick as u32;
                     let seconds = doc.midi.tick_to_seconds(tick_u);
@@ -63,12 +63,12 @@ pub fn show(
                     let time_str = time_format::format_time(seconds);
                     let pos_str = time_format::format_tick_bar_beat(tick, ppq, num);
 
+                    let col_widths = [70.0, 76.0, 90.0];
                     let rect_h = 36.0;
-                    let rect_w = ui.available_width().min(380.0);
+                    let rect_w = col_widths.iter().sum::<f32>();
                     let bar_cx = ui.max_rect().center().x;
                     let cursor_x = ui.cursor().min.x;
-                    let rect_cx = bar_cx;
-                    let rect_l = rect_cx - rect_w * 0.5;
+                    let rect_l = bar_cx - rect_w * 0.5;
                     let pad = (rect_l - cursor_x).max(0.0);
                     ui.add_space(pad);
                     let (rect, _) =
@@ -78,63 +78,49 @@ pub fn show(
                     let font = egui::FontId::proportional(12.0);
                     let grid = egui::Stroke::new(1.0, egui::Color32::from_gray(60));
 
-                    ui.painter().rect_filled(rect, egui::CornerRadius::same(8), egui::Color32::BLACK);
+                    ui.painter().rect_filled(
+                        rect,
+                        egui::CornerRadius::same(8),
+                        egui::Color32::BLACK,
+                    );
 
-                    let col_w = rect.width() / 3.0;
-                    for i in 1..3 {
-                        let x = rect.min.x + col_w * i as f32;
-                        ui.painter().line_segment(
-                            [egui::pos2(x, rect.min.y), egui::pos2(x, rect.max.y)],
-                            grid,
+                    let mut col_x = rect.min.x;
+                    for i in 0..3 {
+                        let cx = col_x + col_widths[i] * 0.5;
+                        if i > 0 {
+                            ui.painter().line_segment(
+                                [egui::pos2(col_x, rect.min.y), egui::pos2(col_x, rect.max.y)],
+                                grid,
+                            );
+                        }
+                        let text = match i {
+                            0 => format!("{:.1}%", cpu_usage),
+                            1 => bpm_str.clone(),
+                            2 => pos_str.clone(),
+                            _ => unreachable!(),
+                        };
+                        ui.painter().text(
+                            egui::pos2(cx, rect.min.y + rect_h * 0.25),
+                            egui::Align2::CENTER_CENTER,
+                            text,
+                            font.clone(),
+                            c,
                         );
+                        let text2 = match i {
+                            0 => format!("{:.1} MB", mem_mb),
+                            1 => ts_str.clone(),
+                            2 => time_str.clone(),
+                            _ => unreachable!(),
+                        };
+                        ui.painter().text(
+                            egui::pos2(cx, rect.min.y + rect_h * 0.75),
+                            egui::Align2::CENTER_CENTER,
+                            text2,
+                            font.clone(),
+                            c,
+                        );
+                        col_x += col_widths[i];
                     }
-
-                    let cpu_str = format!("{:.1}%", cpu_usage);
-                    let mem_str = format!("{:.1} MB", mem_mb);
-
-                    ui.painter().text(
-                        egui::pos2(rect.min.x + col_w * 0.5, rect.min.y + rect_h * 0.25),
-                        egui::Align2::CENTER_CENTER,
-                        cpu_str,
-                        font.clone(),
-                        c,
-                    );
-                    ui.painter().text(
-                        egui::pos2(rect.min.x + col_w * 1.5, rect.min.y + rect_h * 0.25),
-                        egui::Align2::CENTER_CENTER,
-                        bpm_str,
-                        font.clone(),
-                        c,
-                    );
-                    ui.painter().text(
-                        egui::pos2(rect.min.x + col_w * 2.5, rect.min.y + rect_h * 0.25),
-                        egui::Align2::CENTER_CENTER,
-                        pos_str,
-                        font.clone(),
-                        c,
-                    );
-
-                    ui.painter().text(
-                        egui::pos2(rect.min.x + col_w * 0.5, rect.min.y + rect_h * 0.75),
-                        egui::Align2::CENTER_CENTER,
-                        mem_str,
-                        font.clone(),
-                        c,
-                    );
-                    ui.painter().text(
-                        egui::pos2(rect.min.x + col_w * 1.5, rect.min.y + rect_h * 0.75),
-                        egui::Align2::CENTER_CENTER,
-                        ts_str,
-                        font.clone(),
-                        c,
-                    );
-                    ui.painter().text(
-                        egui::pos2(rect.min.x + col_w * 2.5, rect.min.y + rect_h * 0.75),
-                        egui::Align2::CENTER_CENTER,
-                        time_str,
-                        font.clone(),
-                        c,
-                    );
                 }
             });
         });

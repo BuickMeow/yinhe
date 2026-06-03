@@ -52,6 +52,9 @@ pub struct App {
     // ── Cursor tick tracking for cross-view sync ──
     last_cursor_tick: Option<f64>,
 
+    // ── Playback start position (pause returns here) ──
+    play_start_tick: f64,
+
     // ── System resource monitoring ──
     sysinfo: System,
     self_pid: Option<Pid>,
@@ -137,6 +140,8 @@ impl App {
 
             sysinfo: System::new(),
             self_pid: sysinfo::get_current_pid().ok(),
+            play_start_tick: 0.0,
+
             last_sys_refresh: Instant::now(),
             cpu_usage: 0.0,
             mem_mb: 0.0,
@@ -202,10 +207,19 @@ impl eframe::App for App {
 
         // ── Keyboard shortcuts ──
         let mut toggle_play = false;
+        let mut pause_return = false;
         let mut stop_play = false;
+        let is_playing_any = self
+            .active_doc()
+            .map(|d| d.playback.is_playing())
+            .unwrap_or(false);
         ui.input(|i| {
             if i.key_pressed(egui::Key::Space) {
-                toggle_play = true;
+                if is_playing_any {
+                    pause_return = true;
+                } else {
+                    toggle_play = true;
+                }
             }
             if i.key_pressed(egui::Key::Escape) {
                 stop_play = true;
@@ -232,6 +246,7 @@ impl eframe::App for App {
             ui,
             &mut self.file_loader,
             &mut toggle_play,
+            &mut pause_return,
             &mut stop_play,
             active_doc,
             self.cpu_usage,
@@ -253,7 +268,12 @@ impl eframe::App for App {
             let doc = &mut self.documents[idx];
             if toggle_play {
                 let tick = doc.cursor_tick.unwrap_or(0.0);
+                self.play_start_tick = tick;
                 doc.playback.toggle_play(tick, &doc.midi);
+            }
+            if pause_return {
+                doc.playback.stop();
+                doc.cursor_tick = Some(self.play_start_tick);
             }
             if stop_play {
                 doc.playback.stop();
