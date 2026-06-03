@@ -3,6 +3,7 @@ mod arrangement_view_ui;
 mod document;
 mod file_loader;
 mod loading;
+mod mode_bar;
 mod piano_view;
 mod playback;
 mod render_context;

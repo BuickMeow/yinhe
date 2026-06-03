@@ -6,6 +6,7 @@ use crate::title_bar::{self, TitleBarAnim};
 use crate::track_panel;
 
 use crate::arrangement_view_ui;
+use crate::mode_bar::{self, ViewMode};
 use crate::piano_view;
 use crate::render_context::RenderContext;
 
@@ -47,13 +48,6 @@ pub struct App {
 
     // ── Cursor tick tracking for cross-view sync ──
     last_cursor_tick: Option<f64>,
-}
-
-#[derive(PartialEq)]
-enum ViewMode {
-    Arrange,
-    Mix,
-    Edit,
 }
 
 impl App {
@@ -101,8 +95,20 @@ impl App {
             arr_renderer: yinhe_arrangement::PianorollRenderer::new(device, queue, format),
             arr_split: 0.3,
 
-            documents: Vec::new(),
-            active_doc: None,
+            documents: {
+                let mut midi = yinhe_midi::MidiFile::default();
+                midi.track_ports = vec![0];
+                midi.track_names = vec!["Track 1".to_string()];
+                let track_info_cache = midi.track_info();
+                vec![Document {
+                    midi,
+                    file_name: "Untitled".into(),
+                    track_visible: vec![true],
+                    track_info_cache,
+                    ..Default::default()
+                }]
+            },
+            active_doc: Some(0),
 
             transport_panel_width: 200.0,
             file_loader: FileLoader::new(),
@@ -265,101 +271,13 @@ impl eframe::App for App {
         }
 
         // ── Bottom mode bar ──
-        egui::Panel::bottom("bottom_bar")
-            .frame(egui::Frame {
-                inner_margin: egui::Margin::symmetric(8, 6),
-                fill: egui::Color32::from_rgb(30, 30, 30),
-                ..Default::default()
-            })
-            .show_inside(ui, |ui| {
-                ui.horizontal(|ui| {
-                    let active_color = egui::Color32::from_rgb(100, 180, 255);
-                    let inactive_color = egui::Color32::GRAY;
-                    let font_size = 9.5;
-
-                    ui.add_space(2.0);
-
-                    // ARRANGE mode button
-                    let arrange_label = egui::Label::new(
-                        egui::RichText::new("ARRANGE")
-                            .size(font_size)
-                            .strong()
-                            .color(if self.view_mode == ViewMode::Arrange {
-                                active_color
-                            } else {
-                                inactive_color
-                            }),
-                    )
-                    .sense(egui::Sense::click())
-                    .selectable(false);
-                    if ui.add(arrange_label).clicked() {
-                        self.view_mode = ViewMode::Arrange;
-                        self.show_transport = true;
-                        self.show_pianoroll = self.show_pianoroll_in_arrange;
-                    }
-
-                    ui.add_space(2.0);
-
-                    // MIX mode button
-                    let mix_label = egui::Label::new(
-                        egui::RichText::new("MIX").size(font_size).strong().color(
-                            if self.view_mode == ViewMode::Mix {
-                                active_color
-                            } else {
-                                inactive_color
-                            },
-                        ),
-                    )
-                    .sense(egui::Sense::click())
-                    .selectable(false);
-                    if ui.add(mix_label).clicked() {
-                        self.view_mode = ViewMode::Mix;
-                        self.show_transport = false;
-                        self.show_pianoroll = false;
-                    }
-
-                    ui.add_space(2.0);
-
-                    // EDIT mode button
-                    let edit_label = egui::Label::new(
-                        egui::RichText::new("EDIT").size(font_size).strong().color(
-                            if self.view_mode == ViewMode::Edit {
-                                active_color
-                            } else {
-                                inactive_color
-                            },
-                        ),
-                    )
-                    .sense(egui::Sense::click())
-                    .selectable(false);
-                    if ui.add(edit_label).clicked() {
-                        self.view_mode = ViewMode::Edit;
-                        self.show_transport = false;
-                        self.show_pianoroll = true;
-                    }
-
-                    // 🎹 toggle (only in ARRANGE mode)
-                    if self.view_mode == ViewMode::Arrange {
-                        ui.add_space(6.0);
-                        ui.separator();
-                        ui.add_space(6.0);
-                        let emoji_color = if self.show_pianoroll_in_arrange {
-                            egui::Color32::WHITE
-                        } else {
-                            egui::Color32::from_gray(80)
-                        };
-                        let emoji = egui::Label::new(
-                            egui::RichText::new("🎹").size(font_size).color(emoji_color),
-                        )
-                        .sense(egui::Sense::click())
-                        .selectable(false);
-                        if ui.add(emoji).clicked() {
-                            self.show_pianoroll_in_arrange = !self.show_pianoroll_in_arrange;
-                            self.show_pianoroll = self.show_pianoroll_in_arrange;
-                        }
-                    }
-                });
-            });
+        mode_bar::show(
+            ui,
+            &mut self.view_mode,
+            &mut self.show_pianoroll_in_arrange,
+            &mut self.show_transport,
+            &mut self.show_pianoroll,
+        );
 
         // ── Main area: arrangement (top) + pianoroll (bottom) ──
         let remaining = ui.available_rect_before_wrap();
