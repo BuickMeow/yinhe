@@ -387,9 +387,9 @@ impl App {
                     egui::Color32::from_gray(50),
                 );
 
-                // macOS: leave ~70px on the left for traffic lights
+                // macOS: leave ~80px on the left for traffic lights
                 let left_padding = if cfg!(target_os = "macos") {
-                    70.0
+                    80.0
                 } else {
                     10.0
                 };
@@ -409,15 +409,26 @@ impl App {
                 // Collect tab_rects and close_rects for manual click detection
                 let mut click_targets: Vec<(usize, egui::Rect, egui::Rect)> = Vec::new();
 
+                let font_id = egui::FontId::proportional(12.0);
+                let close_w = 20.0;
+                let padding = 8.0;
+
+                // Compute uniform tab width: text area capped at 160px, min 40px
+                let max_text_w = tmp_docs
+                    .iter()
+                    .map(|(_, name)| {
+                        painter
+                            .layout_no_wrap(name.clone(), font_id.clone(), egui::Color32::WHITE)
+                            .size()
+                            .x
+                    })
+                    .fold(0.0f32, f32::max)
+                    .max(40.0)
+                    .min(160.0);
+                let tab_w = max_text_w + padding * 2.0 + close_w;
+                let text_max_w = tab_w - close_w - padding * 2.0;
+
                 for (i, (is_active, file_name)) in tmp_docs.iter().enumerate() {
-                    let font_id = egui::FontId::proportional(12.0);
-                    let galley = painter.layout_no_wrap(file_name.clone(), font_id.clone(), egui::Color32::WHITE);
-                    let text_w = galley.size().x;
-
-                    let close_w = 20.0;
-                    let padding = 8.0;
-                    let tab_w = text_w + padding * 2.0 + close_w;
-
                     let tab_rect = egui::Rect::from_min_max(
                         egui::pos2(tab_x, tab_y),
                         egui::pos2(tab_x + tab_w, tab_y + tab_h),
@@ -431,14 +442,43 @@ impl App {
                     };
                     painter.rect_filled(tab_rect, 4.0, bg);
 
-                    // Tab text
+                    // Tab text with ellipsis truncation
+                    let text_color = egui::Color32::from_gray(200);
+                    let text_to_draw = {
+                        let full_w = painter
+                            .layout_no_wrap(file_name.clone(), font_id.clone(), text_color)
+                            .size()
+                            .x;
+                        if full_w <= text_max_w {
+                            file_name.clone()
+                        } else {
+                            // Truncate with "…" suffix
+                            let ellipsis = "…";
+                            let mut truncated = String::new();
+                            for c in file_name.chars() {
+                                let test_w = painter
+                                    .layout_no_wrap(
+                                        format!("{}{}{}", truncated, c, ellipsis),
+                                        font_id.clone(),
+                                        text_color,
+                                    )
+                                    .size()
+                                    .x;
+                                if test_w > text_max_w {
+                                    break;
+                                }
+                                truncated.push(c);
+                            }
+                            format!("{}{}", truncated, ellipsis)
+                        }
+                    };
                     let text_pos = egui::pos2(tab_rect.min.x + padding, tab_rect.center().y);
                     painter.text(
                         text_pos,
                         egui::Align2::LEFT_CENTER,
-                        file_name.as_str(),
-                        font_id,
-                        egui::Color32::from_gray(200),
+                        text_to_draw,
+                        font_id.clone(),
+                        text_color,
                     );
 
                     // Close button (×)
@@ -450,7 +490,7 @@ impl App {
                         ui.input(|i| i.pointer.hover_pos().unwrap_or_default()),
                     );
                     if close_hover {
-                        painter.rect_filled(close_rect, 0.0, egui::Color32::from_rgb(200, 50, 50));
+                        painter.rect_filled(close_rect, 4.0, egui::Color32::from_rgb(200, 50, 50));
                     }
                     painter.text(
                         close_rect.center(),
