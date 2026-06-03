@@ -52,6 +52,12 @@ impl yinhe_types::NoteSource for MidiFile {
     fn scan_index(&self) -> Option<&yinhe_types::NoteScanIndex> {
         self.scan_index.as_ref()
     }
+    fn time_sig_default(&self) -> (u8, u8) {
+        (self.time_sig_numerator, self.time_sig_denominator)
+    }
+    fn time_sig_events(&self) -> &[TimeSigEvent] {
+        &self.time_sig_events
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
