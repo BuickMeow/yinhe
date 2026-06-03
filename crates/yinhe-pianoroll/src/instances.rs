@@ -23,7 +23,7 @@ pub fn build_pianoroll_grid(
     time_sig_events: &[TimeSigEvent],
 ) {
     let ppu = view.pixels_per_tick;
-    if ppu <= 0.01 {
+    if ppu <= 0.001 {
         return;
     }
     let (tick_start, tick_end) = view.visible_tick_range(w);
@@ -47,6 +47,11 @@ pub fn build_pianoroll_grid(
         let ticks_per_measure = grid::measure_ticks(tpb, num, den);
         let ticks_per_beat = ticks_per_measure / num as u32;
 
+        // Density thresholds: hide fine lines when zoomed out
+        let pixels_per_sub = ticks_per_sub as f32 * ppu;
+        let show_sub_beat = pixels_per_sub >= 2.0;
+        let show_beat = pixels_per_sub >= 1.0;
+
         let first_tick = seg_start_f.max(tick_start);
         let first = ((first_tick / sub_f).floor() as u32)
             .saturating_mul(ticks_per_sub)
@@ -67,9 +72,9 @@ pub fn build_pianoroll_grid(
                 };
                 if is_measure {
                     push_grid_line(out, x, h, 2.0, grid::PR_MEASURE_LINE_COLOR, tick);
-                } else if is_beat {
+                } else if is_beat && show_beat {
                     push_grid_line(out, x, h, 1.0, grid::PR_BEAT_LINE_COLOR, tick);
-                } else {
+                } else if show_sub_beat {
                     push_grid_line(out, x, h, 1.0, grid::PR_SUB_BEAT_LINE_COLOR, tick);
                 }
             }

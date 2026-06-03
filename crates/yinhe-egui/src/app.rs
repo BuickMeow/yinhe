@@ -43,6 +43,9 @@ pub struct App {
 
     // ── Manual click tracking for title bar tabs ──
     title_bar_press_pos: Option<egui::Pos2>,
+
+    // ── Cursor tick tracking for cross-view sync ──
+    last_cursor_tick: Option<f64>,
 }
 
 impl App {
@@ -92,7 +95,7 @@ impl App {
             active_doc: None,
 
             track_panel_width: 200.0,
-            transport_panel_width: 180.0,
+            transport_panel_width: 200.0,
             file_loader: FileLoader::new(),
 
             show_track_panel: true,
@@ -104,6 +107,8 @@ impl App {
             anim: None,
 
             title_bar_press_pos: None,
+
+            last_cursor_tick: None,
         }
     }
 
@@ -301,6 +306,12 @@ impl eframe::App for App {
                 // mem::take to work around borrow checker: move doc out, operate, move back
                 let mut doc = std::mem::take(&mut self.documents[idx]);
 
+                // Cross-view cursor sync: if pianoroll updated cursor_tick, force arrangement rebuild
+                if doc.cursor_tick != self.last_cursor_tick {
+                    doc.arr_view.dirty = true;
+                }
+                self.last_cursor_tick = doc.cursor_tick;
+
                 let arr_total_w = remaining.width();
                 let tp_w = self.transport_panel_width
                     .clamp(60.0, (arr_total_w - 60.0).max(60.0));
@@ -316,46 +327,56 @@ impl eframe::App for App {
                     arr_rect.min,
                     egui::pos2(arr_rect.min.x + tp_w, arr_rect.max.y),
                 );
-                ui.allocate_new_ui(egui::UiBuilder::new().max_rect(tp_rect), |ui| {
-                    ui.set_clip_rect(ui.max_rect());
-                    ui.painter().rect_filled(ui.max_rect(), 0.0, ui.visuals().panel_fill);
+                let gpu_rect = egui::Rect::from_min_max(
+                    egui::pos2(arr_rect.min.x + tp_w + 4.0, arr_rect.min.y),
+                    arr_rect.max,
+                );
 
-                    // Sync track_panel_scroll_y with arrangement scroll_y
-                    doc.arr_view.track_panel_scroll_y = doc.arr_view.scroll_y;
+                // Allocate space for transport track panel
+                let _tp_child = ui.allocate_ui_with_layout(
+                    egui::vec2(tp_w, arr_h),
+                    egui::Layout::top_down(egui::Align::LEFT),
+                    |ui| {
+                        ui.set_clip_rect(tp_rect);
+                        ui.painter().rect_filled(ui.max_rect(), 0.0, ui.visuals().panel_fill);
 
-                    // Pinch-to-zoom on transport track panel
-                    let zoom_delta = ui.input(|i| i.zoom_delta());
-                    if (zoom_delta - 1.0).abs() > 0.001 {
-                        if let Some(hover) = ui.input(|i| i.pointer.hover_pos()) {
-                            if tp_rect.contains(hover) {
-                                let pointer_y = hover.y - tp_rect.min.y;
-                                let old = doc.arr_view.track_panel_row_height;
-                                doc.arr_view.track_panel_row_height =
-                                    (doc.arr_view.track_panel_row_height * zoom_delta)
-                                        .clamp(16.0, 120.0);
-                                doc.arr_view.lane_height = doc.arr_view.track_panel_row_height;
-                                let track_frac = (pointer_y + doc.arr_view.track_panel_scroll_y) / old;
-                                doc.arr_view.track_panel_scroll_y =
-                                    (track_frac * doc.arr_view.track_panel_row_height - pointer_y)
-                                        .max(0.0);
-                                doc.arr_view.dirty = true;
+                        // Sync track_panel_scroll_y with arrangement scroll_y
+                        doc.arr_view.track_panel_scroll_y = doc.arr_view.scroll_y;
+
+                        // Pinch-to-zoom on transport track panel
+                        let zoom_delta = ui.input(|i| i.zoom_delta());
+                        if (zoom_delta - 1.0).abs() > 0.001 {
+                            if let Some(hover) = ui.input(|i| i.pointer.hover_pos()) {
+                                if tp_rect.contains(hover) {
+                                    let pointer_y = hover.y - tp_rect.min.y;
+                                    let old = doc.arr_view.track_panel_row_height;
+                                    doc.arr_view.track_panel_row_height =
+                                        (doc.arr_view.track_panel_row_height * zoom_delta)
+                                            .clamp(16.0, 120.0);
+                                    doc.arr_view.lane_height = doc.arr_view.track_panel_row_height;
+                                    let track_frac = (pointer_y + doc.arr_view.track_panel_scroll_y) / old;
+                                    doc.arr_view.track_panel_scroll_y =
+                                        (track_frac * doc.arr_view.track_panel_row_height - pointer_y)
+                                            .max(0.0);
+                                    doc.arr_view.dirty = true;
+                                }
                             }
                         }
-                    }
 
-                    track_panel::show(
-                        ui,
-                        &doc.track_info_cache,
-                        &mut doc.track_visible,
-                        &mut doc.track_selected,
-                        &doc.pc_map_cache,
-                        &mut doc.arr_view.track_panel_row_height,
-                        &mut doc.arr_view.track_panel_scroll_y,
-                    );
+                        track_panel::show(
+                            ui,
+                            &doc.track_info_cache,
+                            &mut doc.track_visible,
+                            &mut doc.track_selected,
+                            &doc.pc_map_cache,
+                            &mut doc.arr_view.track_panel_row_height,
+                            &mut doc.arr_view.track_panel_scroll_y,
+                        );
 
-                    // Write back scroll_y if changed by track panel interaction
-                    doc.arr_view.scroll_y = doc.arr_view.track_panel_scroll_y;
-                });
+                        // Write back scroll_y if changed by track panel interaction
+                        doc.arr_view.scroll_y = doc.arr_view.track_panel_scroll_y;
+                    },
+                );
 
                 // Vertical splitter between track panel and arrangement
                 let v_handle = egui::Rect::from_min_max(
@@ -376,36 +397,7 @@ impl eframe::App for App {
                     ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
                 }
 
-                // Arrangement GPU view (right)
-                let midi_source: Option<&dyn yinhe_arrangement::NoteSource> =
-                    Some(&doc.midi as &dyn yinhe_arrangement::NoteSource);
-                let track_colors = doc.track_colors();
-                let track_names = doc.track_names();
-                let gpu_rect = egui::Rect::from_min_max(
-                    egui::pos2(arr_rect.min.x + tp_w + 4.0, arr_rect.min.y),
-                    arr_rect.max,
-                );
-                ui.allocate_new_ui(egui::UiBuilder::new().max_rect(gpu_rect), |ui| {
-                    arrangement_view_ui::show(
-                        ui,
-                        ui.available_size(),
-                        &mut self.arr_renderer,
-                        &mut self.arr_render_ctx,
-                        &mut doc.arr_view,
-                        midi_source,
-                        &doc.track_visible,
-                        &track_colors,
-                        &mut doc.cursor_tick,
-                        is_playing,
-                        &track_names,
-                        &mut doc.arr_instances,
-                    );
-                });
-
-                // Put doc back
-                self.documents[idx] = doc;
-
-                // Horizontal splitter
+                // Horizontal splitter (allocate space)
                 if self.show_pianoroll {
                     let h_split_rect = egui::Rect::from_min_max(
                         egui::pos2(remaining.min.x, remaining.min.y + arr_h),
@@ -426,6 +418,32 @@ impl eframe::App for App {
                         self.arr_split = ((arr_h + delta) / total.y).clamp(0.1, 0.7);
                     }
                 }
+
+                // Arrangement GPU view
+                let arr_midi: Option<&dyn yinhe_arrangement::NoteSource> =
+                    Some(&doc.midi as &dyn yinhe_arrangement::NoteSource);
+                let track_colors = doc.track_colors();
+                let track_names = doc.track_names();
+                let gpu_size = gpu_rect.size();
+                ui.allocate_new_ui(egui::UiBuilder::new().max_rect(gpu_rect), |ui| {
+                    arrangement_view_ui::show(
+                        ui,
+                        gpu_size,
+                        &mut self.arr_renderer,
+                        &mut self.arr_render_ctx,
+                        &mut doc.arr_view,
+                        arr_midi,
+                        &doc.track_visible,
+                        &track_colors,
+                        &mut doc.cursor_tick,
+                        is_playing,
+                        &track_names,
+                        &mut doc.arr_instances,
+                    );
+                });
+
+                // Put doc back
+                self.documents[idx] = doc;
             }
 
             // ── Bottom area: track panel (left) + pianoroll (right) ──

@@ -19,7 +19,7 @@ pub fn build_arrangement_grid(
     time_sig_events: &[TimeSigEvent],
 ) {
     let ppu = view.pixels_per_tick;
-    if ppu <= 0.01 {
+    if ppu <= 0.001 {
         return;
     }
 
@@ -42,6 +42,10 @@ pub fn build_arrangement_grid(
         let ticks_per_measure = grid::measure_ticks(tpb, num, den);
         let ticks_per_beat = ticks_per_measure / num as u32;
 
+        // When zoomed out too far, sub-beat spacing < 1px → only render measure lines
+        let pixels_per_sub = ticks_per_sub as f32 * ppu;
+        let show_beat_lines = pixels_per_sub >= 1.0;
+
         let sub_f = ticks_per_sub as f64;
         let first_tick = seg_start_f.max(tick_start);
         let first = ((first_tick / sub_f).floor() as u32)
@@ -63,7 +67,7 @@ pub fn build_arrangement_grid(
                 };
                 if is_measure {
                     push_grid_line(out, x, h, 2.0, grid::AR_MEASURE_LINE_COLOR, tick);
-                } else if is_beat {
+                } else if is_beat && show_beat_lines {
                     push_grid_line(out, x, h, 1.0, grid::AR_BEAT_LINE_COLOR, tick);
                 }
             }
