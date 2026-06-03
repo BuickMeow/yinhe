@@ -31,6 +31,34 @@ const TRACK_PALETTE: [[f32; 3]; 16] = [
 /// Height of the custom title bar.
 const TITLE_BAR_HEIGHT: f32 = 32.0;
 
+// ── Per-document state ──
+
+struct Document {
+    midi: yinhe_midi::MidiFile,
+    file_name: String,
+    selected: HashSet<(u16, u32)>,
+    track_visible: Vec<bool>,
+    track_selected: Option<u16>,
+    view: yinhe_pianoroll::PianoRollView,
+    arr_view: yinhe_pianoroll::ArrangementView,
+    arr_instances: Vec<yinhe_pianoroll::NoteInstance>,
+    cursor_tick: Option<f64>,
+    playback: PlaybackState,
+}
+
+impl Document {
+    fn track_colors(&self) -> Vec<[f32; 3]> {
+        let n = self.track_visible.len();
+        (0..n)
+            .map(|i| TRACK_PALETTE[i % TRACK_PALETTE.len()])
+            .collect()
+    }
+
+    fn track_names(&self) -> Vec<String> {
+        self.midi.track_names.clone()
+    }
+}
+
 // ── macOS custom title bar animation ──
 
 /// State for a smooth maximize/restore animation.
@@ -56,27 +84,21 @@ fn ease_in_out_cubic(t: f64) -> f64 {
 }
 
 pub struct App {
-    // ── Pianoroll ──
+    // ── Pianoroll (shared GPU resources) ──
     render_ctx: RenderContext,
     pianoroll: yinhe_pianoroll::PianorollRenderer,
-    view: yinhe_pianoroll::PianoRollView,
 
-    // ── Arrangement ──
+    // ── Arrangement (shared GPU resources) ──
     arr_render_ctx: RenderContext,
     arr_renderer: yinhe_pianoroll::PianorollRenderer,
-    arr_view: yinhe_pianoroll::ArrangementView,
-    arr_split: f32, // fraction of central area for arrangement (0.0-1.0)
-    arr_instances: Vec<yinhe_pianoroll::NoteInstance>, // reusable scratch buffer
+    arr_split: f32,
+
+    // ── Multi-document state ──
+    documents: Vec<Document>,
+    active_doc: Option<usize>,
 
     // ── Shared state ──
-    midi: Option<yinhe_midi::MidiFile>,
-    selected: HashSet<(u16, u32)>,
-    file_name: Option<String>,
-    cursor_tick: Option<f64>,
-    track_visible: Vec<bool>,
-    track_selected: Option<u16>,
     track_panel_width: f32,
-    playback: PlaybackState,
     file_loader: FileLoader,
 
     // ── Visibility toggles ──
@@ -91,6 +113,9 @@ pub struct App {
 
     #[cfg(target_os = "macos")]
     anim: Option<TitleBarAnim>,
+
+    // ── Manual click tracking for title bar tabs ──
+    title_bar_press_pos: Option<egui::Pos2>,
 }
 
 impl App {
@@ -130,25 +155,21 @@ impl App {
         let queue = render_ctx.queue().clone();
         let format = render_ctx.target_format();
 
+        let documents = Vec::new();
+        let active_doc = None;
+
         Self {
             render_ctx,
             pianoroll: yinhe_pianoroll::PianorollRenderer::new(device.clone(), queue.clone(), format),
-            view: yinhe_pianoroll::PianoRollView::default(),
 
             arr_render_ctx,
             arr_renderer: yinhe_pianoroll::PianorollRenderer::new(device, queue, format),
-            arr_view: yinhe_pianoroll::ArrangementView::default(),
             arr_split: 0.3,
-            arr_instances: Vec::new(),
 
-            midi: None,
-            selected: HashSet::new(),
-            file_name: None,
-            cursor_tick: None,
-            track_visible: Vec::new(),
-            track_selected: None,
+            documents,
+            active_doc,
+
             track_panel_width: 200.0,
-            playback: PlaybackState::default(),
             file_loader: FileLoader::new(),
 
             show_track_panel: true,
@@ -158,10 +179,12 @@ impl App {
 
             restore_rect: None,
             anim: None,
+
+            title_bar_press_pos: None,
         }
     }
 
-    /// Called when async loading completes.
+    /// Called when async loading completes. Creates a new Document and adds it.
     fn on_midi_loaded(&mut self, path: String, midi: yinhe_midi::MidiFile) {
         tracing::info!(
             "Loaded MIDI: {} notes, {} tracks, tpb={}",
@@ -170,155 +193,178 @@ impl App {
             midi.ticks_per_beat,
         );
         let num_tracks = midi.track_ports.len();
-        self.file_name = std::path::Path::new(&path)
+        let file_name = std::path::Path::new(&path)
             .file_stem()
             .and_then(|n| n.to_str())
-            .map(|s| s.to_string());
-        self.track_visible = vec![true; num_tracks];
-        self.track_selected = None;
-        self.midi = Some(midi);
-        self.selected.clear();
-        self.view = yinhe_pianoroll::PianoRollView::default();
-        self.arr_view = yinhe_pianoroll::ArrangementView::default();
-        self.arr_instances.clear();
-        self.cursor_tick = None;
-        self.playback = PlaybackState::default();
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+        let doc = Document {
+            midi,
+            file_name,
+            track_visible: vec![true; num_tracks],
+            track_selected: None,
+            selected: HashSet::new(),
+            view: yinhe_pianoroll::PianoRollView::default(),
+            arr_view: yinhe_pianoroll::ArrangementView::default(),
+            arr_instances: Vec::new(),
+            cursor_tick: None,
+            playback: PlaybackState::default(),
+        };
+        self.documents.push(doc);
+        self.active_doc = Some(self.documents.len() - 1);
     }
 
-    /// Build track colors from palette + track count.
-    fn track_colors(&self) -> Vec<[f32; 3]> {
-        let n = self.track_visible.len();
-        (0..n)
-            .map(|i| TRACK_PALETTE[i % TRACK_PALETTE.len()])
-            .collect()
+    /// Get a reference to the active document, if any.
+    fn active_doc(&self) -> Option<&Document> {
+        self.active_doc.and_then(|idx| self.documents.get(idx))
     }
 
-    /// Collect track names for the arrangement view.
-    fn track_names(&self) -> Vec<String> {
-        self.midi
-            .as_ref()
-            .map(|m| m.track_names.clone())
-            .unwrap_or_default()
+    /// Get a mutable reference to the active document, if any.
+    fn active_doc_mut(&mut self) -> Option<&mut Document> {
+        self.active_doc.and_then(|idx| self.documents.get_mut(idx))
+    }
+
+    /// Close the document at `index`. Switches active doc to a neighbour if needed.
+    fn close_document(&mut self, index: usize) {
+        if index >= self.documents.len() {
+            return;
+        }
+        self.documents.remove(index);
+        if self.documents.is_empty() {
+            self.active_doc = None;
+        } else if let Some(active) = self.active_doc {
+            if index < active {
+                self.active_doc = Some(active - 1);
+            } else if index == active {
+                self.active_doc = Some(active.min(self.documents.len() - 1));
+            }
+        }
     }
 
     /// Render the track list inside a Ui that is already clipped and positioned.
     fn show_track_list(&mut self, ui: &mut egui::Ui) {
+        let Some(doc) = self.active_doc_mut() else {
+            return;
+        };
+        let midi = &doc.midi;
+        let track_visible = &mut doc.track_visible;
+        let track_selected = &mut doc.track_selected;
+
         egui::ScrollArea::vertical().show(ui, |ui| {
-            if let Some(ref midi) = self.midi {
-                let info = midi.track_info();
+            let info = midi.track_info();
 
-                // Build PC map: first ProgramChange event per (port,channel)
-                let mut pc_map: std::collections::HashMap<u8, u8> = std::collections::HashMap::new();
-                for ev in &midi.control_events {
-                    if let yinhe_midi::MidiControlEvent::ProgramChange {
-                        channel,
-                        program,
-                        ..
-                    } = ev
-                    {
-                        pc_map.entry(*channel).or_insert(*program);
-                    }
+            // Build PC map: first ProgramChange event per (port,channel)
+            let mut pc_map: std::collections::HashMap<u8, u8> = std::collections::HashMap::new();
+            for ev in &midi.control_events {
+                if let yinhe_midi::MidiControlEvent::ProgramChange {
+                    channel,
+                    program,
+                    ..
+                } = ev
+                {
+                    pc_map.entry(*channel).or_insert(*program);
                 }
+            }
 
-                for ti in &info {
-                    let idx = ti.index as usize;
-                    let color = TRACK_PALETTE[idx % TRACK_PALETTE.len()];
-                    let color32 = egui::Color32::from_rgb(
-                        (color[0] * 255.0) as u8,
-                        (color[1] * 255.0) as u8,
-                        (color[2] * 255.0) as u8,
-                    );
+            for ti in &info {
+                let idx = ti.index as usize;
+                let color = TRACK_PALETTE[idx % TRACK_PALETTE.len()];
+                let color32 = egui::Color32::from_rgb(
+                    (color[0] * 255.0) as u8,
+                    (color[1] * 255.0) as u8,
+                    (color[2] * 255.0) as u8,
+                );
 
-                    let selected = self.track_selected == Some(ti.index);
-                    let bg = if selected {
-                        ui.visuals().selection.bg_fill
-                    } else {
-                        egui::Color32::TRANSPARENT
-                    };
-                    let frame = egui::Frame::default()
-                        .fill(bg)
-                        .inner_margin(egui::Margin::symmetric(6, 3));
-                    frame.show(ui, |ui| {
-                        // ── Line 1: channel badge + track name ──
-                        ui.horizontal(|ui| {
-                            // Visibility checkbox
-                            let mut vis =
-                                self.track_visible.get(idx).copied().unwrap_or(true);
-                            if ui.checkbox(&mut vis, "").changed() {
-                                if idx < self.track_visible.len() {
-                                    self.track_visible[idx] = vis;
-                                }
+                let selected = *track_selected == Some(ti.index);
+                let bg = if selected {
+                    ui.visuals().selection.bg_fill
+                } else {
+                    egui::Color32::TRANSPARENT
+                };
+                let frame = egui::Frame::default()
+                    .fill(bg)
+                    .inner_margin(egui::Margin::symmetric(6, 3));
+                frame.show(ui, |ui| {
+                    // ── Line 1: channel badge + track name ──
+                    ui.horizontal(|ui| {
+                        // Visibility checkbox
+                        let mut vis =
+                            track_visible.get(idx).copied().unwrap_or(true);
+                        if ui.checkbox(&mut vis, "").changed() {
+                            if idx < track_visible.len() {
+                                track_visible[idx] = vis;
                             }
+                        }
 
-                            // Channel badge: small rounded rect
-                            let channel = ti.channel;
-                            let port_letter = match ti.port {
-                                0 => 'A',
-                                1 => 'B',
-                                2 => 'C',
-                                3 => 'D',
-                                4 => 'E',
-                                5 => 'F',
-                                6 => 'G',
-                                7 => 'H',
-                                _ => '?',
-                            };
-                            let badge_text = format!("{}{:02}", port_letter, channel);
-                            let (_badge, _) = ui.allocate_exact_size(
-                                egui::vec2(28.0, 16.0),
-                                egui::Sense::hover(),
-                            );
-                            let badge_rect = ui.min_rect();
-                            let badge_rect = egui::Rect::from_min_size(
-                                egui::pos2(badge_rect.min.x, badge_rect.min.y + 2.0),
-                                egui::vec2(28.0, 14.0),
-                            );
-                            ui.painter().rect_filled(badge_rect, 3.0, color32);
-                            ui.painter().text(
-                                badge_rect.center(),
-                                egui::Align2::CENTER_CENTER,
-                                badge_text,
-                                egui::FontId::monospace(10.0),
-                                egui::Color32::WHITE,
-                            );
+                        // Channel badge: small rounded rect
+                        let channel = ti.channel;
+                        let port_letter = match ti.port {
+                            0 => 'A',
+                            1 => 'B',
+                            2 => 'C',
+                            3 => 'D',
+                            4 => 'E',
+                            5 => 'F',
+                            6 => 'G',
+                            7 => 'H',
+                            _ => '?',
+                        };
+                        let badge_text = format!("{}{:02}", port_letter, channel);
+                        let (_badge, _) = ui.allocate_exact_size(
+                            egui::vec2(28.0, 16.0),
+                            egui::Sense::hover(),
+                        );
+                        let badge_rect = ui.min_rect();
+                        let badge_rect = egui::Rect::from_min_size(
+                            egui::pos2(badge_rect.min.x, badge_rect.min.y + 2.0),
+                            egui::vec2(28.0, 14.0),
+                        );
+                        ui.painter().rect_filled(badge_rect, 3.0, color32);
+                        ui.painter().text(
+                            badge_rect.center(),
+                            egui::Align2::CENTER_CENTER,
+                            badge_text,
+                            egui::FontId::monospace(10.0),
+                            egui::Color32::WHITE,
+                        );
 
-                            // Track name with ellipsis truncation
-                            let name_w = ui.available_width().max(10.0);
-                            let name = egui::RichText::new(&ti.name).size(13.0);
-                            let label = ui.add_sized(
-                                [name_w, 16.0],
-                                egui::Label::new(name).truncate(),
-                            );
-                            if label.clicked() {
-                                self.track_selected = Some(ti.index);
-                            }
-                        });
-
-                        // ── Line 2: note count + optional PC ──
-                        {
-                            let global_ch = ti.port * 16 + (ti.channel - 1);
-                            let mut line2 = format!("{} notes", ti.note_count);
-                            if let Some(pc) = pc_map.get(&global_ch) {
-                                line2.push_str(&format!(" | PC:{}", pc));
-                            }
-                            let w2 = ui.available_width().max(10.0);
-                            ui.add_sized(
-                                [w2, 14.0],
-                                egui::Label::new(
-                                    egui::RichText::new(line2)
-                                        .size(11.0)
-                                        .color(egui::Color32::GRAY),
-                                )
-                                .truncate(),
-                            );
+                        // Track name with ellipsis truncation
+                        let name_w = ui.available_width().max(10.0);
+                        let name = egui::RichText::new(&ti.name).size(13.0);
+                        let label = ui.add_sized(
+                            [name_w, 16.0],
+                            egui::Label::new(name).truncate(),
+                        );
+                        if label.clicked() {
+                            *track_selected = Some(ti.index);
                         }
                     });
-                }
+
+                    // ── Line 2: note count + optional PC ──
+                    {
+                        let global_ch = ti.port * 16 + (ti.channel - 1);
+                        let mut line2 = format!("{} notes", ti.note_count);
+                        if let Some(pc) = pc_map.get(&global_ch) {
+                            line2.push_str(&format!(" | PC:{}", pc));
+                        }
+                        let w2 = ui.available_width().max(10.0);
+                        ui.add_sized(
+                            [w2, 14.0],
+                            egui::Label::new(
+                                egui::RichText::new(line2)
+                                    .size(11.0)
+                                    .color(egui::Color32::GRAY),
+                            )
+                            .truncate(),
+                        );
+                    }
+                });
             }
         });
     }
 
     /// Draw the custom title bar at the top of the window.
+    /// Layout: [macOS traffic lights / 70px] [Tab1][Tab2]… [Centered title] …[-口x / non-macOS]
     fn show_title_bar(&mut self, ui: &mut egui::Ui) {
         egui::Panel::top("title_bar")
             .frame(egui::Frame {
@@ -329,9 +375,10 @@ impl App {
             })
             .show_inside(ui, |ui| {
                 let bar_rect = ui.max_rect();
+                let painter = ui.painter();
 
                 // Bottom 1px separator line
-                ui.painter().rect_filled(
+                painter.rect_filled(
                     egui::Rect::from_min_max(
                         egui::pos2(bar_rect.min.x, bar_rect.max.y - 1.0),
                         bar_rect.max,
@@ -347,10 +394,122 @@ impl App {
                     10.0
                 };
 
-                // App name
-                ui.painter().text(
-                    egui::pos2(bar_rect.min.x + left_padding, bar_rect.center().y),
-                    egui::Align2::LEFT_CENTER,
+                // ── Draw tabs (left side) ──
+                let tab_h = 24.0;
+                let tab_y = bar_rect.center().y - tab_h / 2.0;
+                let mut tab_x = bar_rect.min.x + left_padding;
+
+                let tmp_docs: Vec<(bool, String)> = self
+                    .documents
+                    .iter()
+                    .enumerate()
+                    .map(|(i, d)| (self.active_doc == Some(i), d.file_name.clone()))
+                    .collect();
+
+                // Collect tab_rects and close_rects for manual click detection
+                let mut click_targets: Vec<(usize, egui::Rect, egui::Rect)> = Vec::new();
+
+                for (i, (is_active, file_name)) in tmp_docs.iter().enumerate() {
+                    let font_id = egui::FontId::proportional(12.0);
+                    let galley = painter.layout_no_wrap(file_name.clone(), font_id.clone(), egui::Color32::WHITE);
+                    let text_w = galley.size().x;
+
+                    let close_w = 20.0;
+                    let padding = 8.0;
+                    let tab_w = text_w + padding * 2.0 + close_w;
+
+                    let tab_rect = egui::Rect::from_min_max(
+                        egui::pos2(tab_x, tab_y),
+                        egui::pos2(tab_x + tab_w, tab_y + tab_h),
+                    );
+
+                    // Tab background
+                    let bg = if *is_active {
+                        egui::Color32::from_rgb(55, 55, 60)
+                    } else {
+                        egui::Color32::from_rgb(35, 35, 38)
+                    };
+                    painter.rect_filled(tab_rect, 4.0, bg);
+
+                    // Tab text
+                    let text_pos = egui::pos2(tab_rect.min.x + padding, tab_rect.center().y);
+                    painter.text(
+                        text_pos,
+                        egui::Align2::LEFT_CENTER,
+                        file_name.as_str(),
+                        font_id,
+                        egui::Color32::from_gray(200),
+                    );
+
+                    // Close button (×)
+                    let close_rect = egui::Rect::from_min_size(
+                        egui::pos2(tab_rect.max.x - close_w, tab_rect.min.y),
+                        egui::vec2(close_w, tab_h),
+                    );
+                    let close_hover = close_rect.contains(
+                        ui.input(|i| i.pointer.hover_pos().unwrap_or_default()),
+                    );
+                    if close_hover {
+                        painter.rect_filled(close_rect, 0.0, egui::Color32::from_rgb(200, 50, 50));
+                    }
+                    painter.text(
+                        close_rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        "×",
+                        egui::FontId::proportional(14.0),
+                        if close_hover {
+                            egui::Color32::WHITE
+                        } else {
+                            egui::Color32::from_gray(160)
+                        },
+                    );
+
+                    click_targets.push((i, tab_rect, close_rect));
+
+                    tab_x += tab_w + 4.0;
+                }
+
+                // ── Manual click detection (avoid egui interaction system quirks in Panel::top) ──
+                // Track press position on button down
+                if ui.input(|i| i.pointer.button_pressed(egui::PointerButton::Primary)) {
+                    self.title_bar_press_pos = ui.input(|i| i.pointer.interact_pos());
+                }
+
+                // On button release, detect which tab/close rect was clicked
+                let pointer_released = ui.input(|i| {
+                    i.pointer.button_released(egui::PointerButton::Primary)
+                });
+                if pointer_released {
+                    if let Some(press) = self.title_bar_press_pos.take() {
+                        if let Some(release) = ui.input(|i| i.pointer.interact_pos()) {
+                            let dist = (release - press).length();
+                            // Only treat as click if the pointer barely moved
+                            if dist < 8.0 {
+                                for &(idx, tab_rect, close_rect) in click_targets.iter().rev() {
+                                    if close_rect.contains(press) && close_rect.contains(release) {
+                                        self.close_document(idx);
+                                        break;
+                                    }
+                                    if tab_rect.contains(press) && tab_rect.contains(release) {
+                                        self.active_doc = Some(idx);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // ── Draw centered title ──
+                let right_limit = if cfg!(target_os = "macos") {
+                    bar_rect.max.x
+                } else {
+                    bar_rect.max.x - 138.0
+                };
+                let title_x = (bar_rect.min.x + right_limit) / 2.0;
+                painter.text(
+                    egui::pos2(title_x, bar_rect.center().y),
+                    egui::Align2::CENTER_CENTER,
                     "Yinhe MIDI Editor",
                     egui::FontId::proportional(13.0),
                     egui::Color32::from_gray(180),
@@ -360,79 +519,81 @@ impl App {
                 #[cfg(not(target_os = "macos"))]
                 self.draw_window_buttons(ui, bar_rect);
 
-                // Window drag region
-                // macOS: exclude traffic light zone on the left
-                // non-macOS: exclude window buttons on the right
-                let drag_rect = if cfg!(target_os = "macos") {
-                    egui::Rect::from_min_max(
-                        egui::pos2(bar_rect.min.x + 70.0, bar_rect.min.y),
-                        bar_rect.max,
-                    )
+                // ── Window drag region (after the tabs, excluding window buttons) ──
+                let drag_rect_left = tab_x.max(bar_rect.min.x + left_padding);
+                let drag_right = if cfg!(target_os = "macos") {
+                    bar_rect.max.x
                 } else {
-                    egui::Rect::from_min_max(
-                        egui::pos2(bar_rect.min.x + 10.0, bar_rect.min.y),
-                        egui::pos2(bar_rect.max.x - 138.0, bar_rect.max.y),
-                    )
+                    bar_rect.max.x - 138.0
                 };
+                let drag_rect = egui::Rect::from_min_max(
+                    egui::pos2(drag_rect_left, bar_rect.min.y),
+                    egui::pos2(drag_right, bar_rect.max.y),
+                );
 
                 let drag_resp = ui.interact(
                     drag_rect,
                     ui.next_auto_id(),
-                    egui::Sense::click_and_drag(),
+                    egui::Sense::drag(),
                 );
+
                 if drag_resp.dragged_by(egui::PointerButton::Primary) {
                     ui.ctx()
                         .send_viewport_cmd(egui::ViewportCommand::StartDrag);
                 }
 
                 // Double-click title bar to toggle maximize/restore
-                if drag_resp.double_clicked_by(egui::PointerButton::Primary) {
-                    #[cfg(not(target_os = "macos"))]
-                    {
-                        // Non-macOS: Maximized has smooth animation naturally
-                        let maximized = ui
-                            .input(|i| i.viewport().maximized.unwrap_or(false));
-                        ui.ctx()
-                            .send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
-                    }
+                // Detect via ui.input() to avoid click-and-drag leaking clicks to other widgets
+                let pointer_double_clicked = ui.input(|i| {
+                    i.pointer.button_double_clicked(egui::PointerButton::Primary)
+                });
+                if pointer_double_clicked {
+                    let pos_in_drag = ui.input(|i| i.pointer.interact_pos())
+                        .map(|p| drag_rect.contains(p))
+                        .unwrap_or(false);
+                    if pos_in_drag {
+                        #[cfg(not(target_os = "macos"))]
+                        {
+                            let maximized = ui
+                                .input(|i| i.viewport().maximized.unwrap_or(false));
+                            ui.ctx()
+                                .send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+                        }
 
-                    #[cfg(target_os = "macos")]
-                    {
-                        // macOS: start a smooth 200ms animation
-                        // that interpolates OuterPosition + InnerSize per frame.
-                        if self.anim.is_some() {
-                            // Already animating; ignore extra double-click.
-                        } else if let Some(restore) = self.restore_rect.take() {
-                            // Start restore animation
-                            let current = ui.input(|i| i.viewport().outer_rect);
-                            if let Some(cur) = current {
-                                self.anim = Some(TitleBarAnim {
-                                    start: std::time::Instant::now(),
-                                    duration: std::time::Duration::from_millis(350),
-                                    from_pos: cur.min,
-                                    from_size: cur.size(),
-                                    to_pos: restore.min,
-                                    to_size: restore.size(),
-                                });
-                                ui.ctx().request_repaint();
+                        #[cfg(target_os = "macos")]
+                        {
+                            if self.anim.is_some() {
+                                // Already animating
+                            } else if let Some(restore) = self.restore_rect.take() {
+                                let current = ui.input(|i| i.viewport().outer_rect);
+                                if let Some(cur) = current {
+                                    self.anim = Some(TitleBarAnim {
+                                        start: std::time::Instant::now(),
+                                        duration: std::time::Duration::from_millis(350),
+                                        from_pos: cur.min,
+                                        from_size: cur.size(),
+                                        to_pos: restore.min,
+                                        to_size: restore.size(),
+                                    });
+                                    ui.ctx().request_repaint();
+                                } else {
+                                    self.restore_rect = Some(restore);
+                                }
                             } else {
-                                self.restore_rect = Some(restore);
-                            }
-                        } else {
-                            // Start maximize animation
-                            let outer = ui.input(|i| i.viewport().outer_rect);
-                            let mon = ui.input(|i| i.viewport().monitor_size);
-                            if let (Some(cur), Some(mon_size)) = (outer, mon) {
-                                self.restore_rect = Some(cur);
-                                self.anim = Some(TitleBarAnim {
-                                    start: std::time::Instant::now(),
-                                    duration: std::time::Duration::from_millis(350),
-                                    from_pos: cur.min,
-                                    from_size: cur.size(),
-                                    to_pos: egui::Pos2::new(0.0, 0.0),
-                                    to_size: mon_size,
-                                });
-                                ui.ctx().request_repaint();
+                                let outer = ui.input(|i| i.viewport().outer_rect);
+                                let mon = ui.input(|i| i.viewport().monitor_size);
+                                if let (Some(cur), Some(mon_size)) = (outer, mon) {
+                                    self.restore_rect = Some(cur);
+                                    self.anim = Some(TitleBarAnim {
+                                        start: std::time::Instant::now(),
+                                        duration: std::time::Duration::from_millis(350),
+                                        from_pos: cur.min,
+                                        from_size: cur.size(),
+                                        to_pos: egui::Pos2::new(0.0, 0.0),
+                                        to_size: mon_size,
+                                    });
+                                    ui.ctx().request_repaint();
+                                }
                             }
                         }
                     }
@@ -509,7 +670,8 @@ impl App {
         let _min_resp = ui.interact(min_rect, ui.next_auto_id(), egui::Sense::click());
 
         if close_resp.clicked() {
-            frame.close();
+            ui.ctx()
+                .send_viewport_cmd(egui::ViewportCommand::Close);
         }
     }
 
@@ -538,6 +700,7 @@ impl App {
         ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(w, h)));
 
         if raw_t >= 1.0 {
+            tracing::info!("Anim complete: documents={}, active_doc={:?}", self.documents.len(), self.active_doc);
             // Snap to final position (ensures exact pixel alignment)
             ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(anim.to_pos));
             ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(anim.to_size));
@@ -690,6 +853,17 @@ impl eframe::App for App {
         // ── Custom title bar ──
         self.show_title_bar(ui);
 
+        // ── Defensive: ensure active_doc is always in bounds ──
+        if let Some(idx) = self.active_doc {
+            if idx >= self.documents.len() {
+                self.active_doc = if self.documents.is_empty() {
+                    None
+                } else {
+                    Some(self.documents.len() - 1)
+                };
+            }
+        }
+
         // ── Keyboard shortcuts ──
         let mut toggle_play = false;
         let mut stop_play = false;
@@ -702,6 +876,8 @@ impl eframe::App for App {
             }
         });
 
+        let has_active = self.active_doc.is_some();
+
         // ── Transport bar (top, always visible) ──
         egui::Panel::top("transport_bar").show_inside(ui, |ui| {
             ui.horizontal(|ui| {
@@ -713,13 +889,13 @@ impl eframe::App for App {
                     self.file_loader.pick_midi_file();
                 }
 
-                if self.midi.is_some() {
+                if has_active {
                     ui.separator();
-                    let play_label = if self.playback.is_playing() {
-                        "Pause"
-                    } else {
-                        "Play"
-                    };
+                    let is_playing = self
+                        .active_doc()
+                        .map(|d| d.playback.is_playing())
+                        .unwrap_or(false);
+                    let play_label = if is_playing { "Pause" } else { "Play" };
                     if ui.button(play_label).clicked() {
                         toggle_play = true;
                     }
@@ -730,17 +906,17 @@ impl eframe::App for App {
 
                 ui.separator();
 
-                if let Some(ref name) = self.file_name {
-                    ui.label(egui::RichText::new(name).strong());
+                if let Some(doc) = self.active_doc() {
+                    ui.label(egui::RichText::new(&doc.file_name).strong());
                 }
 
-                if let Some(ref midi) = self.midi {
+                if let Some(doc) = self.active_doc() {
                     ui.separator();
-                    ui.label(format!("Notes: {}", midi.note_count));
+                    ui.label(format!("Notes: {}", doc.midi.note_count));
                     ui.separator();
-                    ui.label(format!("Tracks: {}", midi.track_ports.len()));
+                    ui.label(format!("Tracks: {}", doc.midi.track_ports.len()));
                     ui.separator();
-                    ui.label(format!("TPB: {}", midi.ticks_per_beat));
+                    ui.label(format!("TPB: {}", doc.midi.ticks_per_beat));
                 }
             });
         });
@@ -754,20 +930,20 @@ impl eframe::App for App {
         }
 
         // ── Handle playback actions ──
-        if let Some(ref midi) = self.midi {
+        if let Some(idx) = self.active_doc {
+            let doc = &mut self.documents[idx];
             if toggle_play {
-                let tick = self.cursor_tick.unwrap_or(0.0);
-                self.playback.toggle_play(tick, midi);
+                let tick = doc.cursor_tick.unwrap_or(0.0);
+                doc.playback.toggle_play(tick, &doc.midi);
             }
             if stop_play {
-                self.playback.stop();
-                self.cursor_tick = Some(0.0);
+                doc.playback.stop();
+                doc.cursor_tick = Some(0.0);
             }
-
-            if let Some((tick, reached_end)) = self.playback.current_tick(midi) {
-                self.cursor_tick = Some(tick);
+            if let Some((tick, reached_end)) = doc.playback.current_tick(&doc.midi) {
+                doc.cursor_tick = Some(tick);
                 if reached_end {
-                    self.playback.stop();
+                    doc.playback.stop();
                 }
             }
         }
@@ -787,11 +963,9 @@ impl eframe::App for App {
                 let was_pianoroll = self.show_pianoroll;
                 if ui.checkbox(&mut self.show_pianoroll, "卷帘").changed() {
                     if !self.show_pianoroll {
-                        // Turning off pianoroll: auto-close track panel
                         self.was_track_panel_on = self.show_track_panel;
                         self.show_track_panel = false;
                     } else {
-                        // Turning on pianoroll: restore track panel
                         self.show_track_panel = self.was_track_panel_on;
                     }
                     if !self.show_transport && !self.show_pianoroll {
@@ -804,16 +978,16 @@ impl eframe::App for App {
         // ── Main area: arrangement (上) + 品字形 bottom (左下音轨 + 右下卷帘) ──
         let remaining = ui.available_rect_before_wrap();
 
-        if self.midi.is_some() {
+        if let Some(idx) = self.active_doc {
             let total = remaining.size();
-            let is_playing = self.playback.is_playing();
+            let is_playing = self.documents[idx].playback.is_playing();
 
-            // ── Vertical split: arrangement on top, bottom area below (only when pianoroll visible) ──
+            // ── Vertical split ──
             let arr_h = if self.show_transport {
                 if self.show_pianoroll {
                     (total.y * self.arr_split).max(60.0)
                 } else {
-                    total.y // fill entire remaining when pianoroll hidden
+                    total.y
                 }
             } else {
                 0.0
@@ -821,12 +995,13 @@ impl eframe::App for App {
             let bottom_y = remaining.min.y + arr_h
                 + if self.show_transport && self.show_pianoroll { 4.0 } else { 0.0 };
 
-            // ── Arrangement view (走带) ──
+            // ── Arrangement view ──
             if self.show_transport {
+                let doc = &mut self.documents[idx];
                 let midi_source: Option<&dyn yinhe_pianoroll::NoteSource> =
-                    self.midi.as_ref().map(|m| m as &dyn yinhe_pianoroll::NoteSource);
-                let track_colors = self.track_colors();
-                let track_names = self.track_names();
+                    Some(&doc.midi as &dyn yinhe_pianoroll::NoteSource);
+                let track_colors = doc.track_colors();
+                let track_names = doc.track_names();
                 let arr_rect = egui::Rect::from_min_max(
                     remaining.min,
                     egui::pos2(remaining.max.x, remaining.min.y + arr_h),
@@ -837,18 +1012,18 @@ impl eframe::App for App {
                         ui.available_size(),
                         &mut self.arr_renderer,
                         &mut self.arr_render_ctx,
-                        &mut self.arr_view,
+                        &mut doc.arr_view,
                         midi_source,
-                        &self.track_visible,
+                        &doc.track_visible,
                         &track_colors,
-                        &mut self.cursor_tick,
+                        &mut doc.cursor_tick,
                         is_playing,
                         &track_names,
-                        &mut self.arr_instances,
+                        &mut doc.arr_instances,
                     );
                 });
 
-                // Horizontal splitter (only when bottom area exists)
+                // Horizontal splitter
                 if self.show_pianoroll {
                     let h_split_rect = egui::Rect::from_min_max(
                         egui::pos2(remaining.min.x, remaining.min.y + arr_h),
@@ -873,7 +1048,6 @@ impl eframe::App for App {
 
             // ── Bottom area: track panel (left) + pianoroll (right) ──
             if self.show_track_panel && self.show_pianoroll {
-                // Full 品字形 bottom
                 let sidebar_w = self.track_panel_width
                     .clamp(60.0, (remaining.width() - 60.0).max(60.0));
                 self.track_panel_width = sidebar_w;
@@ -888,7 +1062,7 @@ impl eframe::App for App {
                     self.show_track_list(ui);
                 });
 
-                // Vertical handle between track panel and pianoroll
+                // Vertical handle
                 let v_handle = egui::Rect::from_min_max(
                     egui::pos2(remaining.min.x + sidebar_w, bottom_y),
                     egui::pos2(remaining.min.x + sidebar_w + 4.0, remaining.max.y),
@@ -907,9 +1081,10 @@ impl eframe::App for App {
                     ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
                 }
 
-                // Pianoroll (right)
+                // Pianoroll
+                let doc = &mut self.documents[idx];
                 let midi_source: Option<&dyn yinhe_pianoroll::NoteSource> =
-                    self.midi.as_ref().map(|m| m as &dyn yinhe_pianoroll::NoteSource);
+                    Some(&doc.midi as &dyn yinhe_pianoroll::NoteSource);
                 let piano_rect = egui::Rect::from_min_max(
                     egui::pos2(remaining.min.x + sidebar_w + 4.0, bottom_y),
                     remaining.max,
@@ -917,9 +1092,9 @@ impl eframe::App for App {
                 ui.allocate_new_ui(egui::UiBuilder::new().max_rect(piano_rect), |ui| {
                     piano_view::show(
                         ui, ui.available_size(),
-                        &mut self.pianoroll, &mut self.render_ctx, &mut self.view,
-                        midi_source, &self.selected, &self.track_visible,
-                        &mut self.cursor_tick, is_playing,
+                        &mut self.pianoroll, &mut self.render_ctx, &mut doc.view,
+                        midi_source, &doc.selected, &doc.track_visible,
+                        &mut doc.cursor_tick, is_playing,
                     );
                 });
             } else if self.show_track_panel {
@@ -935,8 +1110,9 @@ impl eframe::App for App {
                 });
             } else if self.show_pianoroll {
                 // Only pianoroll
+                let doc = &mut self.documents[idx];
                 let midi_source: Option<&dyn yinhe_pianoroll::NoteSource> =
-                    self.midi.as_ref().map(|m| m as &dyn yinhe_pianoroll::NoteSource);
+                    Some(&doc.midi as &dyn yinhe_pianoroll::NoteSource);
                 let piano_rect = egui::Rect::from_min_max(
                     egui::pos2(remaining.min.x, bottom_y),
                     remaining.max,
@@ -944,27 +1120,19 @@ impl eframe::App for App {
                 ui.allocate_new_ui(egui::UiBuilder::new().max_rect(piano_rect), |ui| {
                     piano_view::show(
                         ui, ui.available_size(),
-                        &mut self.pianoroll, &mut self.render_ctx, &mut self.view,
-                        midi_source, &self.selected, &self.track_visible,
-                        &mut self.cursor_tick, is_playing,
+                        &mut self.pianoroll, &mut self.render_ctx, &mut doc.view,
+                        midi_source, &doc.selected, &doc.track_visible,
+                        &mut doc.cursor_tick, is_playing,
                     );
                 });
             }
-        } else if self.show_pianoroll {
-            // ── No MIDI loaded — show pianoroll only ──
-            let midi_source: Option<&dyn yinhe_pianoroll::NoteSource> =
-                self.midi.as_ref().map(|m| m as &dyn yinhe_pianoroll::NoteSource);
-            let is_playing = self.playback.is_playing();
-            piano_view::show(
-                ui, remaining.size(),
-                &mut self.pianoroll, &mut self.render_ctx, &mut self.view,
-                midi_source, &self.selected, &self.track_visible,
-                &mut self.cursor_tick, is_playing,
-            );
         }
 
         // ── Request repaint during playback ──
-        if self.playback.is_playing() {
+        if self.active_doc()
+            .map(|d| d.playback.is_playing())
+            .unwrap_or(false)
+        {
             ui.ctx().request_repaint();
         }
 
