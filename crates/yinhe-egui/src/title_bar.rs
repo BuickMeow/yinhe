@@ -41,9 +41,9 @@ fn ease_in_out_cubic(t: f64) -> f64 {
 pub(crate) fn process_title_bar_anim(
     anim: &mut Option<TitleBarAnim>,
     ctx: &egui::Context,
-) {
+) -> bool {
     let Some(a) = anim.as_ref() else {
-        return;
+        return false;
     };
 
     let elapsed = a.start.elapsed().as_secs_f64();
@@ -63,8 +63,10 @@ pub(crate) fn process_title_bar_anim(
         let a = anim.take().unwrap();
         ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(a.to_pos));
         ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(a.to_size));
+        true
     } else {
         ctx.request_repaint_after(std::time::Duration::from_secs_f64(1.0 / 60.0));
+        false
     }
 }
 

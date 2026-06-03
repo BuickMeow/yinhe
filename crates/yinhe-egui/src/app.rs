@@ -152,6 +152,54 @@ impl App {
         self.active_doc.and_then(|idx| self.documents.get(idx))
     }
 
+    #[cfg(target_os = "macos")]
+    fn reserve_render_targets_for_window_anim(
+        &mut self,
+        ui: &egui::Ui,
+        remaining: egui::Rect,
+    ) {
+        let Some(anim) = self.anim.as_ref() else {
+            return;
+        };
+
+        let current_window_size = ui
+            .input(|i| i.viewport().outer_rect)
+            .map(|rect| rect.size())
+            .unwrap_or(remaining.size());
+        let reserved_h = (current_window_size.y - remaining.height()).max(0.0);
+        let target_w = anim.to_size.x.max(0.0);
+        let target_h = (anim.to_size.y - reserved_h).max(0.0);
+
+        let arr_h = if self.show_transport {
+            if self.show_pianoroll {
+                (target_h * self.arr_split).max(60.0).min(target_h)
+            } else {
+                target_h
+            }
+        } else {
+            0.0
+        };
+
+        if self.show_transport {
+            let arr_total_w = target_w;
+            let tp_w = self
+                .transport_panel_width
+                .clamp(60.0, (arr_total_w - 60.0).max(60.0));
+            let gpu_w = (arr_total_w - tp_w - 4.0).max(1.0);
+            let gpu_h = arr_h.max(1.0);
+            self.arr_render_ctx
+                .reserve_size(gpu_w.ceil() as u32, gpu_h.ceil() as u32);
+        }
+
+        if self.show_pianoroll {
+            let gap = if self.show_transport { 4.0 } else { 0.0 };
+            let piano_w = target_w.max(1.0);
+            let piano_h = (target_h - arr_h - gap).max(1.0);
+            self.render_ctx
+                .reserve_size(piano_w.ceil() as u32, piano_h.ceil() as u32);
+        }
+    }
+
     fn close_document(&mut self, index: usize) {
         if index >= self.documents.len() {
             return;
@@ -173,7 +221,18 @@ impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         // ── macOS: drive title-bar maximize/restore animation ──
         #[cfg(target_os = "macos")]
-        title_bar::process_title_bar_anim(&mut self.anim, ui.ctx());
+        let anim_was_shrinking = self
+            .anim
+            .as_ref()
+            .map(|a| a.to_size.x * a.to_size.y < a.from_size.x * a.from_size.y)
+            .unwrap_or(false);
+        #[cfg(target_os = "macos")]
+        let anim_finished = title_bar::process_title_bar_anim(&mut self.anim, ui.ctx());
+        #[cfg(target_os = "macos")]
+        if anim_finished && anim_was_shrinking {
+            self.render_ctx.request_shrink_to_fit();
+            self.arr_render_ctx.request_shrink_to_fit();
+        }
 
         // ── Force dark mode ──
         ui.ctx().set_visuals(egui::Visuals::dark());
@@ -298,6 +357,9 @@ impl eframe::App for App {
 
         // ── Main area: arrangement (top) + pianoroll (bottom) ──
         let remaining = ui.available_rect_before_wrap();
+
+        #[cfg(target_os = "macos")]
+        self.reserve_render_targets_for_window_anim(ui, remaining);
 
         if let Some(idx) = self.active_doc {
             let total = remaining.size();

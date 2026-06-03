@@ -9,6 +9,7 @@ pub struct RenderContext {
     texture_id: egui::TextureId,
     width: u32,
     height: u32,
+    shrink_to_fit_on_next_size: bool,
 }
 
 impl RenderContext {
@@ -29,6 +30,7 @@ impl RenderContext {
             texture_id,
             width,
             height,
+            shrink_to_fit_on_next_size: false,
         }
     }
 
@@ -58,21 +60,51 @@ impl RenderContext {
         (texture, view, texture_id)
     }
 
-    /// Resize the offscreen texture if needed.
-    pub fn ensure_size(&mut self, width: u32, height: u32) {
-        if self.width == width && self.height == height {
-            return;
-        }
+    fn recreate_target(&mut self, width: u32, height: u32) {
         let format = self.wgpu_state.target_format;
         let device = &self.wgpu_state.device;
         let mut egui_renderer = self.wgpu_state.renderer.write();
         egui_renderer.free_texture(&self.texture_id);
-        let (texture, view, texture_id) = Self::create_target(device, &mut egui_renderer, format, width, height);
+        let (texture, view, texture_id) =
+            Self::create_target(device, &mut egui_renderer, format, width, height);
         self.texture = texture;
         self.view = view;
         self.texture_id = texture_id;
         self.width = width;
         self.height = height;
+    }
+
+    /// Resize the offscreen texture if needed.
+    pub fn ensure_size(&mut self, width: u32, height: u32) {
+        if width == 0 || height == 0 {
+            return;
+        }
+
+        let should_shrink = self.shrink_to_fit_on_next_size
+            && (self.width != width || self.height != height);
+        let should_grow = width > self.width || height > self.height;
+
+        if should_shrink || should_grow {
+            self.recreate_target(width, height);
+        }
+
+        self.shrink_to_fit_on_next_size = false;
+    }
+
+    /// Grow the offscreen texture to the requested capacity, but never shrink.
+    pub fn reserve_size(&mut self, width: u32, height: u32) {
+        if width == 0 || height == 0 {
+            return;
+        }
+
+        if width > self.width || height > self.height {
+            self.recreate_target(width, height);
+        }
+    }
+
+    /// Shrink to the next requested logical size after a temporary oversize allocation.
+    pub fn request_shrink_to_fit(&mut self) {
+        self.shrink_to_fit_on_next_size = true;
     }
 
     pub fn preview_texture_id(&self) -> egui::TextureId {
@@ -114,10 +146,15 @@ impl RenderContext {
         renderer.draw(&mut encoder, self.preview_view(), width, height);
         self.queue().submit(std::iter::once(encoder.finish()));
 
+        let uv_max = egui::pos2(
+            width as f32 / self.width as f32,
+            height as f32 / self.height as f32,
+        );
+
         painter.image(
             texture_id,
             rect,
-            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), uv_max),
             egui::Color32::WHITE,
         );
     }
