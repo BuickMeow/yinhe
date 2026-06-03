@@ -22,6 +22,25 @@ pub(crate) struct Document {
     pub pc_map_cache: HashMap<u8, u8>,
 }
 
+impl Default for Document {
+    fn default() -> Self {
+        Self {
+            midi: yinhe_midi::MidiFile::default(),
+            file_name: String::new(),
+            selected: HashSet::new(),
+            track_visible: Vec::new(),
+            track_selected: None,
+            view: yinhe_pianoroll::PianoRollView::default(),
+            arr_view: yinhe_arrangement::ArrangementView::default(),
+            arr_instances: Vec::new(),
+            cursor_tick: None,
+            playback: PlaybackState::default(),
+            track_info_cache: Vec::new(),
+            pc_map_cache: HashMap::new(),
+        }
+    }
+}
+
 impl Document {
     pub fn track_colors(&self) -> Vec<[f32; 3]> {
         let n = self.track_visible.len();

@@ -14,6 +14,10 @@ pub struct ArrangementView {
     pub scroll_y: f32,
     /// Whether view state has changed since last render — set to false after prepare.
     pub dirty: bool,
+    /// Row height for the transport track panel (synced with lane_height).
+    pub track_panel_row_height: f32,
+    /// Vertical scroll offset for the transport track panel (synced with scroll_y).
+    pub track_panel_scroll_y: f32,
 }
 
 impl Default for ArrangementView {
@@ -21,10 +25,12 @@ impl Default for ArrangementView {
         Self {
             pixels_per_tick: 0.08,
             lane_height: 40.0,
-            label_width: 120.0,
+            label_width: 0.0,
             scroll_x: 0.0,
             scroll_y: 0.0,
             dirty: true,
+            track_panel_row_height: 40.0,
+            track_panel_scroll_y: 0.0,
         }
     }
 }
@@ -85,6 +91,21 @@ impl ArrangementView {
 
         let tick = (pointer_x - self.label_width + self.scroll_x) / old;
         self.scroll_x = tick * self.pixels_per_tick - (pointer_x - self.label_width);
+        self.dirty = true;
+    }
+
+    /// Zoom lane height around a pointer y position (vertical).
+    /// Keeps the track lane under the pointer at the same screen position.
+    pub fn zoom_lane_height(&mut self, pointer_y: f32, factor: f32) {
+        let old = self.lane_height;
+        self.lane_height = (self.lane_height * factor).clamp(16.0, 120.0);
+        self.track_panel_row_height = self.lane_height;
+
+        // Fractional track index under the pointer
+        let track_frac = (pointer_y + self.scroll_y) / old;
+        // Re-adjust scroll_y so the same track stays under the pointer
+        self.scroll_y = track_frac * self.lane_height - pointer_y;
+        self.scroll_y = self.scroll_y.max(0.0);
         self.dirty = true;
     }
 }

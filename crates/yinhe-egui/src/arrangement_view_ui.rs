@@ -19,7 +19,7 @@ pub fn show(
     track_colors: &[[f32; 3]],
     cursor_tick: &mut Option<f64>,
     is_playing: bool,
-    track_names: &[String],
+    _track_names: &[String],
     instances: &mut Vec<NoteInstance>,
 ) {
     let (resp, painter) = ui.allocate_painter(available, egui::Sense::click_and_drag());
@@ -48,10 +48,9 @@ pub fn show(
         if let Some(ct) = *cursor_tick {
             let cursor_x = view.tick_to_x(ct);
             let right_edge = w as f32;
-            let margin = (right_edge - view.label_width) * 0.2;
-            if cursor_x > right_edge - margin || cursor_x < view.label_width {
-                view.scroll_x = (ct as f32 * view.pixels_per_tick)
-                    - (right_edge - view.label_width) * 0.5;
+            let margin = right_edge * 0.2;
+            if cursor_x > right_edge - margin || cursor_x < 0.0 {
+                view.scroll_x = (ct as f32 * view.pixels_per_tick) - right_edge * 0.5;
                 view.clamp_scroll(w as f32, h as f32, total_ticks, num_tracks);
             }
         }
@@ -70,7 +69,7 @@ pub fn show(
         scroll_y: view.scroll_y,
         pixels_per_tick: view.pixels_per_tick,
         key_height: view.lane_height,
-        keyboard_width: view.label_width,
+        keyboard_width: 0.0,
         _pad: 0.0,
     };
 
@@ -105,53 +104,6 @@ pub fn show(
     // ── Render to offscreen texture and display ──
     render_ctx.render_and_display(renderer, w, h, "arrangement_frame", &painter, rect, texture_id);
 
-    // ── Draw track label overlays ──
-    let (trk_first, trk_last) = view.visible_track_range(h as f32, num_tracks);
-    for idx in trk_first..trk_last {
-        if !track_visible.get(idx).copied().unwrap_or(true) {
-            continue;
-        }
-
-        let name = track_names.get(idx).map(|s| s.as_str()).unwrap_or("");
-        let y = view.lane_y(idx) + rect.min.y;
-        let lh = view.lane_height;
-        let lw = view.label_width;
-
-        // Background strip for label area
-        let label_bg = egui::Rect::from_min_size(
-            egui::pos2(rect.min.x, y),
-            egui::vec2(lw, lh),
-        );
-        let bg_alpha = if idx % 2 == 0 { 0.08 } else { 0.04 };
-        painter.rect_filled(
-            label_bg,
-            0.0,
-            egui::Color32::BLACK.gamma_multiply(bg_alpha),
-        );
-
-        // Color indicator
-        let color = track_colors.get(idx).copied().unwrap_or([0.5, 0.5, 0.5]);
-        let color32 = egui::Color32::from_rgb(
-            (color[0] * 255.0) as u8,
-            (color[1] * 255.0) as u8,
-            (color[2] * 255.0) as u8,
-        );
-        let indicator_rect = egui::Rect::from_min_size(
-            egui::pos2(rect.min.x + 4.0, y + 4.0),
-            egui::vec2(6.0, lh - 8.0),
-        );
-        painter.rect_filled(indicator_rect, 2.0, color32);
-
-        // Track name
-        painter.text(
-            egui::pos2(rect.min.x + 14.0, y + lh * 0.5),
-            egui::Align2::LEFT_CENTER,
-            name,
-            egui::FontId::proportional(12.0),
-            egui::Color32::WHITE.gamma_multiply(0.85),
-        );
-    }
-
     // ── Handle input (zoom/pan/cursor/drag/reset) ──
-    crate::view_interaction::handle_input(ui, &resp, rect, view, cursor_tick, view.label_width);
+    crate::view_interaction::handle_input(ui, &resp, rect, view, cursor_tick, 0.0);
 }

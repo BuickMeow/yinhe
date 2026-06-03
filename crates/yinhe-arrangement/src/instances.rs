@@ -407,10 +407,12 @@ mod tests {
         let view = ArrangementView {
             pixels_per_tick: 0.08,
             lane_height: 40.0,
-            label_width: 120.0,
+            label_width: 0.0,
             scroll_x: 0.0,
             scroll_y: 0.0,
             dirty: true,
+            track_panel_row_height: 40.0,
+            track_panel_scroll_y: 0.0,
         };
         let track_visible = vec![true; 16];
         let track_colors = [[0.5f32; 3]; 16];

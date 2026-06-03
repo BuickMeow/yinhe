@@ -27,7 +27,9 @@ impl ViewInteraction for yinhe_arrangement::ArrangementView {
     fn dirty(&mut self) -> &mut bool { &mut self.dirty }
     fn x_to_tick(&self, x: f32) -> f64 { self.x_to_tick(x) }
     fn zoom_around_x(&mut self, pointer_x: f32, factor: f32) { self.zoom_around_x(pointer_x, factor); }
-    fn zoom_around_y(&mut self, _pointer_y: f32, _factor: f32, _height: f32) { /* no-op for arrangement */ }
+    fn zoom_around_y(&mut self, pointer_y: f32, factor: f32, _height: f32) {
+        self.zoom_lane_height(pointer_y, factor);
+    }
     fn reset_to_default(&mut self) { *self = Self::default(); }
 }
 

@@ -14,6 +14,10 @@ pub struct PianoRollView {
     pub keyboard_width: f32,
     /// Whether view state has changed since last render — set to false after prepare.
     pub dirty: bool,
+    /// Row height for the track panel (left side).
+    pub track_panel_row_height: f32,
+    /// Vertical scroll offset for the track panel.
+    pub track_panel_scroll_y: f32,
 }
 
 impl Default for PianoRollView {
@@ -25,6 +29,8 @@ impl Default for PianoRollView {
             scroll_y: 0.0,
             keyboard_width: 80.0,
             dirty: true,
+            track_panel_row_height: 40.0,
+            track_panel_scroll_y: 0.0,
         }
     }
 }

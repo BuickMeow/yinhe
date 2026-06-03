@@ -33,6 +33,26 @@ pub struct MidiFile {
     pub scan_index: Option<yinhe_types::NoteScanIndex>,
 }
 
+impl Default for MidiFile {
+    fn default() -> Self {
+        Self {
+            key_notes: core::array::from_fn(|_| Vec::new()),
+            duration: 0.0,
+            ticks_per_beat: 480,
+            tempo_segments: Vec::new(),
+            note_count: 0,
+            tick_length: 0,
+            time_sig_numerator: 4,
+            time_sig_denominator: 2,
+            track_ports: Vec::new(),
+            track_names: Vec::new(),
+            time_sig_events: Vec::new(),
+            control_events: Vec::new(),
+            scan_index: None,
+        }
+    }
+}
+
 impl yinhe_types::NoteSource for MidiFile {
     fn key_notes(&self, key: u8) -> &[Note] {
         &self.key_notes[key as usize]
