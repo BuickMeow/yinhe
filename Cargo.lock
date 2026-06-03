@@ -4383,6 +4383,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "yinhe-arrangement"
+version = "0.1.0"
+dependencies = [
+ "rayon",
+ "yinhe-types",
+ "yinhe-wgpu",
+]
+
+[[package]]
 name = "yinhe-dms"
 version = "0.1.0"
 dependencies = [
@@ -4401,10 +4410,12 @@ dependencies = [
  "tracing-subscriber",
  "wgpu",
  "yinhe-archive",
+ "yinhe-arrangement",
  "yinhe-dms",
  "yinhe-midi",
  "yinhe-pianoroll",
  "yinhe-types",
+ "yinhe-wgpu",
 ]
 
 [[package]]
@@ -4420,16 +4431,24 @@ dependencies = [
 name = "yinhe-pianoroll"
 version = "0.1.0"
 dependencies = [
- "bytemuck",
- "half",
  "rayon",
- "wgpu",
  "yinhe-types",
+ "yinhe-wgpu",
 ]
 
 [[package]]
 name = "yinhe-types"
 version = "0.1.0"
+
+[[package]]
+name = "yinhe-wgpu"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "half",
+ "wgpu",
+ "yinhe-types",
+]
 
 [[package]]
 name = "yoke"

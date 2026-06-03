@@ -53,24 +53,11 @@ pub fn show(
     }
 
     // Prepare and render to offscreen texture
-    pianoroll.prepare(w, h, midi, view, selected, track_visible, *cursor_tick);
+    yinhe_pianoroll::prepare(pianoroll, w, h, midi, view, selected, track_visible, *cursor_tick);
     view.dirty = false;
 
-    let mut encoder = render_ctx
-        .device()
-        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("pianoroll_frame"),
-        });
-    pianoroll.draw(&mut encoder, render_ctx.preview_view(), w, h);
-    render_ctx.queue().submit(std::iter::once(encoder.finish()));
-
-    // Display the texture in egui
-    painter.image(
-        texture_id,
-        rect,
-        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-        egui::Color32::WHITE,
-    );
+    // Render to offscreen texture and display in egui
+    render_ctx.render_and_display(pianoroll, w, h, "pianoroll_frame", &painter, rect, texture_id);
 
     // Handle input (zoom/pan/cursor/drag/reset)
     crate::view_interaction::handle_input(ui, &resp, rect, view, cursor_tick, view.keyboard_width);

@@ -21,7 +21,7 @@ impl ViewInteraction for yinhe_pianoroll::PianoRollView {
     fn reset_to_default(&mut self) { *self = Self::default(); }
 }
 
-impl ViewInteraction for yinhe_pianoroll::ArrangementView {
+impl ViewInteraction for yinhe_arrangement::ArrangementView {
     fn scroll_x(&mut self) -> &mut f32 { &mut self.scroll_x }
     fn scroll_y(&mut self) -> &mut f32 { &mut self.scroll_y }
     fn dirty(&mut self) -> &mut bool { &mut self.dirty }

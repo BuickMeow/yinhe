@@ -9,6 +9,8 @@ yinhe-midi = { path = "../yinhe-midi" }
 yinhe-dms = { path = "../yinhe-dms" }
 yinhe-archive = { path = "../yinhe-archive" }
 yinhe-pianoroll = { path = "../yinhe-pianoroll" }
+yinhe-arrangement = { path = "../yinhe-arrangement" }
+yinhe-wgpu = { path = "../yinhe-wgpu" }
 eframe = { workspace = true }
 egui = { workspace = true }
 wgpu = { workspace = true }

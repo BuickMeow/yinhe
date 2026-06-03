@@ -1,9 +1,9 @@
 use rayon::prelude::*;
 use yinhe_types::{NoteSource, TimeSigEvent, seek_first_note};
 
-use crate::arrangement_view::ArrangementView;
-use crate::grid::{self, push_grid_line};
-use crate::vertex::{NoteInstance, pack_props, pack_rgba};
+use crate::view::ArrangementView;
+use yinhe_wgpu::grid::{self, push_grid_line};
+use yinhe_wgpu::vertex::{NoteInstance, pack_props, pack_rgba};
 
 const NOTE_ROUNDING: f32 = 0.2;
 

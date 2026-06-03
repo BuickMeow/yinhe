@@ -1,26 +1,9 @@
 use crate::MidiError;
+use crate::event_collector::TempoEvent;
 use crate::midi::{LoadProgress, MidiControlEvent, MidiFile, Note};
 use crate::time::{DEFAULT_MPQ, TIMECODE_FALLBACK_TPB, ticks_to_seconds};
 use std::path::Path;
 use yinhe_types::NoteScanIndex;
-
-/// Global tempo event, sorted by tick.
-#[derive(Clone, Debug)]
-struct TempoEvent {
-    tick: u32,
-    micros_per_quarter: u64,
-}
-
-/// A note currently being played (waiting for NoteOff).
-#[derive(Clone, Copy, Debug)]
-struct ActiveNote {
-    key: u8,
-    start_time: f64,
-    velocity: u8,
-    channel: u8,
-    start_tick: u32,
-    track: u16,
-}
 
 pub struct MidiParser;
 
@@ -48,10 +31,10 @@ impl MidiParser {
             midly::Timing::Timecode(_, _) => TIMECODE_FALLBACK_TPB,
         };
 
-        let tempo_events = Self::collect_tempo_events(&smf.tracks);
+        let tempo_events = crate::event_collector::collect_tempo_events(&smf.tracks);
         let tempo_segments = Self::build_tempo_segments(tempo_events, ticks_per_beat);
 
-        let time_sig_events = Self::collect_time_sig_events(&smf.tracks);
+        let time_sig_events = crate::event_collector::collect_time_sig_events(&smf.tracks);
         let (time_sig_numerator, time_sig_denominator) = time_sig_events
             .first()
             .map(|e| (e.numerator, e.denominator))
@@ -79,7 +62,7 @@ impl MidiParser {
             }).unwrap_or_else(|| format!("Track {}", track_idx + 1));
             track_names.push(track_name);
 
-            let port = Self::parse_track(
+            let port = crate::track_parser::parse_track(
                 track,
                 &tempo_segments,
                 ticks_per_beat,
@@ -127,51 +110,6 @@ impl MidiParser {
         })
     }
 
-    fn collect_tempo_events(tracks: &[midly::Track]) -> Vec<TempoEvent> {
-        let mut events = Vec::new();
-        for track in tracks {
-            let mut tick: u32 = 0;
-            for event in track {
-                tick += event.delta.as_int();
-                if let midly::TrackEventKind::Meta(midly::MetaMessage::Tempo(us)) = event.kind {
-                    events.push(TempoEvent {
-                        tick,
-                        micros_per_quarter: us.as_int() as u64,
-                    });
-                }
-            }
-        }
-        events.sort_by_key(|e| e.tick);
-        events.dedup_by_key(|e| e.tick);
-        events
-    }
-
-    fn collect_time_sig_events(tracks: &[midly::Track]) -> Vec<crate::midi::TimeSigEvent> {
-        let mut events = Vec::new();
-        for track in tracks {
-            let mut tick: u32 = 0;
-            for event in track {
-                tick += event.delta.as_int();
-                if let midly::TrackEventKind::Meta(midly::MetaMessage::TimeSignature(
-                    numerator,
-                    denominator,
-                    _,
-                    _,
-                )) = event.kind
-                {
-                    events.push(crate::midi::TimeSigEvent {
-                        tick,
-                        numerator,
-                        denominator,
-                    });
-                }
-            }
-        }
-        events.sort_by_key(|e| e.tick);
-        events.dedup_by_key(|e| e.tick);
-        events
-    }
-
     fn build_tempo_segments(
         events: Vec<TempoEvent>,
         ticks_per_beat: u32,
@@ -203,171 +141,6 @@ impl MidiParser {
             last_mpq = ev.micros_per_quarter;
         }
         segments
-    }
-
-    fn parse_track(
-        track: &midly::Track,
-        segments: &[crate::TempoSegment],
-        ticks_per_beat: u32,
-        track_idx: u16,
-        key_notes: &mut [Vec<Note>; 128],
-        global_duration: &mut f64,
-        control_events: &mut Vec<MidiControlEvent>,
-    ) -> u8 {
-        let mut active_notes: Vec<ActiveNote> = Vec::new();
-        let mut current_tick: u32 = 0;
-        let mut current_seconds: f64 = 0.0;
-        let mut seg_idx: usize = 0;
-        let mut current_port: u8 = 0;
-
-        for event in track {
-            let new_tick = current_tick + event.delta.as_int();
-            let delta = new_tick - current_tick;
-
-            if delta > 0 {
-                let (new_seconds, new_seg_idx) = Self::advance_time(
-                    current_tick,
-                    current_seconds,
-                    new_tick,
-                    seg_idx,
-                    segments,
-                    ticks_per_beat,
-                );
-                current_tick = new_tick;
-                current_seconds = new_seconds;
-                seg_idx = new_seg_idx;
-            } else {
-                current_tick = new_tick;
-            }
-
-            match event.kind {
-                midly::TrackEventKind::Meta(midly::MetaMessage::MidiPort(port)) => {
-                    current_port = port.as_int();
-                }
-                midly::TrackEventKind::Midi { channel, message } => {
-                    let ch = channel.as_int();
-                    let global_ch = current_port * 16 + ch;
-                    match message {
-                        midly::MidiMessage::NoteOn { key, vel } => {
-                            let k = key.as_int();
-                            if vel.as_int() > 0 {
-                                active_notes.push(ActiveNote {
-                                    key: k,
-                                    start_time: current_seconds,
-                                    velocity: vel.as_int(),
-                                    channel: global_ch,
-                                    start_tick: current_tick,
-                                    track: track_idx,
-                                });
-                            } else {
-                                Self::resolve_note_off(
-                                    k,
-                                    global_ch,
-                                    current_seconds,
-                                    current_tick,
-                                    &mut active_notes,
-                                    key_notes,
-                                    global_duration,
-                                );
-                            }
-                        }
-                        midly::MidiMessage::NoteOff { key, .. } => {
-                            let k = key.as_int();
-                            Self::resolve_note_off(
-                                k,
-                                global_ch,
-                                current_seconds,
-                                current_tick,
-                                &mut active_notes,
-                                key_notes,
-                                global_duration,
-                            );
-                        }
-                        midly::MidiMessage::Controller { controller, value } => {
-                            control_events.push(MidiControlEvent::ControlChange {
-                                tick: current_tick,
-                                channel: global_ch,
-                                controller: controller.as_int(),
-                                value: value.as_int(),
-                                track: track_idx,
-                            });
-                        }
-                        midly::MidiMessage::ProgramChange { program } => {
-                            control_events.push(MidiControlEvent::ProgramChange {
-                                tick: current_tick,
-                                channel: global_ch,
-                                program: program.as_int(),
-                                track: track_idx,
-                            });
-                        }
-                        midly::MidiMessage::PitchBend { bend } => {
-                            control_events.push(MidiControlEvent::PitchBend {
-                                tick: current_tick,
-                                channel: global_ch,
-                                value: bend.as_int(),
-                                track: track_idx,
-                            });
-                        }
-                        _ => {}
-                    }
-                }
-                _ => {}
-            }
-        }
-        current_port
-    }
-
-    fn advance_time(
-        current_tick: u32,
-        current_seconds: f64,
-        target_tick: u32,
-        mut seg_idx: usize,
-        segments: &[crate::TempoSegment],
-        ticks_per_beat: u32,
-    ) -> (f64, usize) {
-        let mut tick_cursor = current_tick;
-        let mut sec_cursor = current_seconds;
-
-        while seg_idx + 1 < segments.len() && segments[seg_idx + 1].start_tick <= target_tick {
-            let boundary = segments[seg_idx + 1].start_tick;
-            let d = boundary - tick_cursor;
-            sec_cursor += ticks_to_seconds(d, ticks_per_beat, segments[seg_idx].micros_per_quarter);
-            tick_cursor = boundary;
-            seg_idx += 1;
-        }
-
-        let d = target_tick - tick_cursor;
-        sec_cursor += ticks_to_seconds(d, ticks_per_beat, segments[seg_idx].micros_per_quarter);
-
-        (sec_cursor, seg_idx)
-    }
-
-    fn resolve_note_off(
-        key: u8,
-        channel: u8,
-        end_time: f64,
-        end_tick: u32,
-        active_notes: &mut Vec<ActiveNote>,
-        key_notes: &mut [Vec<Note>; 128],
-        global_duration: &mut f64,
-    ) {
-        if let Some(idx) = active_notes
-            .iter()
-            .rposition(|n| n.key == key && n.channel == channel)
-        {
-            let n = active_notes.swap_remove(idx);
-            *global_duration = global_duration.max(end_time);
-            key_notes[n.key as usize].push(Note {
-                key: n.key,
-                start: n.start_time,
-                end: end_time,
-                start_tick: n.start_tick,
-                end_tick,
-                velocity: n.velocity,
-                channel: n.channel,
-                track: n.track,
-            });
-        }
     }
 }
 
@@ -473,8 +246,6 @@ mod tests {
             .expect("failed to load cyber-night.mid");
         let info = midi.track_info();
 
-        // Verify each NOTE and CC track's channel matches its name number
-        // e.g. NOTE 1 → A01, NOTE 12 → A12, CC 2-1 → A02, etc.
         let expected: &[(usize, u8, &str)] = &[
             (2, 1, "NOTE 1"),
             (3, 1, "CC 1-1"),
@@ -529,10 +300,43 @@ mod tests {
                 idx, info[idx].name, ch,
             );
         }
-        // Verify all tracks on port A for this file
         assert!(info.iter().all(|ti| ti.port == 0));
-        // Track #0 (Cyber Night) and #1 (Eye) have no events at all
         assert_eq!(info[0].channel, 1);
         assert_eq!(info[1].channel, 1);
+    }
+
+    #[test]
+    fn test_load_from_bytes_minimal_midi() {
+        let data = minimal_midi_bytes();
+        let midi = MidiFile::load_from_bytes(&data).expect("failed to parse minimal MIDI");
+
+        assert_eq!(midi.ticks_per_beat, 480);
+        assert_eq!(midi.note_count, 1);
+        assert_eq!(midi.key_notes[60].len(), 1);
+
+        let note = &midi.key_notes[60][0];
+        assert_eq!(note.key, 60);
+        assert_eq!(note.velocity, 100);
+        assert_eq!(note.start_tick, 0);
+        assert_eq!(note.end_tick, 320);
+    }
+
+    fn minimal_midi_bytes() -> Vec<u8> {
+        let mut data = Vec::new();
+        // MThd: format 0, 1 track, 480 tpb
+        data.extend_from_slice(b"MThd");
+        data.extend_from_slice(&6u32.to_be_bytes());
+        data.extend_from_slice(&[0, 0, 0, 1, 1, 0xE0]);
+        // MTrk: tempo + NoteOn C4 + NoteOff C4
+        data.extend_from_slice(b"MTrk");
+        let track: &[u8] = &[
+            0x00, 0xFF, 0x51, 0x03, 0x07, 0xA1, 0x20, // 120 BPM
+            0x00, 0x90, 60, 100, // NoteOn
+            0x82, 0x40, 0x80, 60, 0, // NoteOff (delta=320 ticks: 0x82=2<<7, 0x40=64, total=320)
+            0x00, 0xFF, 0x2F, 0x00, // End
+        ];
+        data.extend_from_slice(&(track.len() as u32).to_be_bytes());
+        data.extend_from_slice(track);
+        data
     }
 }

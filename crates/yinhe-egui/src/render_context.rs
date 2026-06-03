@@ -94,4 +94,31 @@ impl RenderContext {
     pub fn preview_view(&self) -> &wgpu::TextureView {
         &self.view
     }
+
+    /// Encode a draw call, submit to GPU, and paint the resulting texture into egui.
+    pub fn render_and_display(
+        &mut self,
+        renderer: &yinhe_wgpu::PianorollRenderer,
+        width: u32,
+        height: u32,
+        label: &str,
+        painter: &egui::Painter,
+        rect: egui::Rect,
+        texture_id: egui::TextureId,
+    ) {
+        let mut encoder = self
+            .device()
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some(label),
+            });
+        renderer.draw(&mut encoder, self.preview_view(), width, height);
+        self.queue().submit(std::iter::once(encoder.finish()));
+
+        painter.image(
+            texture_id,
+            rect,
+            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            egui::Color32::WHITE,
+        );
+    }
 }

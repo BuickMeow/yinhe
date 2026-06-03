@@ -1,7 +1,7 @@
 use eframe::egui;
 
-use yinhe_pianoroll::arrangement_instances;
-use yinhe_pianoroll::{ArrangementView, NoteInstance, NoteSource, Uniforms};
+use yinhe_arrangement::instances as arrangement_instances;
+use yinhe_arrangement::{ArrangementView, NoteInstance, NoteSource, Uniforms, PianorollRenderer};
 
 use super::render_context::RenderContext;
 
@@ -11,7 +11,7 @@ use super::render_context::RenderContext;
 pub fn show(
     ui: &mut egui::Ui,
     available: egui::Vec2,
-    renderer: &mut yinhe_pianoroll::PianorollRenderer,
+    renderer: &mut PianorollRenderer,
     render_ctx: &mut RenderContext,
     view: &mut ArrangementView,
     midi: Option<&dyn NoteSource>,
@@ -102,22 +102,8 @@ pub fn show(
     }
     view.dirty = false;
 
-    // ── Render to offscreen texture ──
-    let mut encoder = render_ctx
-        .device()
-        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("arrangement_frame"),
-        });
-    renderer.draw(&mut encoder, render_ctx.preview_view(), w, h);
-    render_ctx.queue().submit(std::iter::once(encoder.finish()));
-
-    // ── Display the texture in egui ──
-    painter.image(
-        texture_id,
-        rect,
-        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-        egui::Color32::WHITE,
-    );
+    // ── Render to offscreen texture and display ──
+    render_ctx.render_and_display(renderer, w, h, "arrangement_frame", &painter, rect, texture_id);
 
     // ── Draw track label overlays ──
     let (trk_first, trk_last) = view.visible_track_range(h as f32, num_tracks);

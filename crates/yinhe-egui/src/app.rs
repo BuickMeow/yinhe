@@ -16,7 +16,7 @@ pub struct App {
 
     // ── Arrangement (shared GPU resources) ──
     arr_render_ctx: RenderContext,
-    arr_renderer: yinhe_pianoroll::PianorollRenderer,
+    arr_renderer: yinhe_arrangement::PianorollRenderer,
     arr_split: f32,
 
     // ── Multi-document state ──
@@ -84,7 +84,7 @@ impl App {
             pianoroll: yinhe_pianoroll::PianorollRenderer::new(device.clone(), queue.clone(), format),
 
             arr_render_ctx,
-            arr_renderer: yinhe_pianoroll::PianorollRenderer::new(device, queue, format),
+            arr_renderer: yinhe_arrangement::PianorollRenderer::new(device, queue, format),
             arr_split: 0.3,
 
             documents: Vec::new(),
@@ -297,8 +297,8 @@ impl eframe::App for App {
             // ── Arrangement view ──
             if self.show_transport {
                 let doc = &mut self.documents[idx];
-                let midi_source: Option<&dyn yinhe_pianoroll::NoteSource> =
-                    Some(&doc.midi as &dyn yinhe_pianoroll::NoteSource);
+                let midi_source: Option<&dyn yinhe_arrangement::NoteSource> =
+                    Some(&doc.midi as &dyn yinhe_arrangement::NoteSource);
                 let track_colors = doc.track_colors();
                 let track_names = doc.track_names();
                 let arr_rect = egui::Rect::from_min_max(

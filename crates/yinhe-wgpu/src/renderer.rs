@@ -1,10 +1,7 @@
-use std::collections::HashSet;
 use wgpu::*;
 
-use crate::instances;
 use crate::pipeline::RenderPipelineState;
 use crate::vertex::{NoteInstance, Uniforms};
-use crate::view::PianoRollView;
 
 /// Maximum instances per draw call.
 const MAX_INSTANCE_COUNT: usize = 6_000_000;
@@ -38,7 +35,11 @@ fn next_instance_capacity(required: usize) -> usize {
     cap
 }
 
-/// Piano roll wgpu renderer.
+/// Generic wgpu renderer for instanced rectangle drawing.
+///
+/// Manages GPU buffers and provides `prepare_from_parts()` + `draw()` for
+/// rendering NoteInstance data.  View-specific convenience methods (like
+/// pianoroll's `prepare()`) belong in the calling crate.
 pub struct PianorollRenderer {
     device: Device,
     queue: Queue,
@@ -70,31 +71,17 @@ impl PianorollRenderer {
         }
     }
 
-    /// Prepare rendering data for the current frame (pianoroll specific).
-    /// Returns early if view state and uniforms are unchanged since last call.
-    pub fn prepare(
+    /// Generic prepare with scratch buffer reuse and dirty-check.
+    ///
+    /// Skips rebuild when `dirty` is false and `uniforms` are unchanged.
+    /// The `build` closure receives a mutable scratch buffer to populate.
+    pub fn prepare_with_builder(
         &mut self,
-        width: u32,
-        height: u32,
-        midi: Option<&dyn yinhe_types::NoteSource>,
-        view: &PianoRollView,
-        selected: &HashSet<(u16, u32)>,
-        track_visible: &[bool],
-        cursor_tick: Option<f64>,
+        uniforms: Uniforms,
+        dirty: bool,
+        build: impl FnOnce(&mut Vec<NoteInstance>),
     ) {
-        let uniforms = Uniforms {
-            width: width as f32,
-            height: height as f32,
-            scroll_x: view.scroll_x,
-            scroll_y: view.scroll_y,
-            pixels_per_tick: view.pixels_per_tick,
-            key_height: view.key_height,
-            keyboard_width: view.keyboard_width,
-            _pad: 0.0,
-        };
-
-        // Skip rebuild if view state and uniforms are unchanged
-        if !view.dirty {
+        if !dirty {
             if let Some(ref cached) = self.cached_uniforms {
                 if *cached == uniforms {
                     return;
@@ -102,15 +89,15 @@ impl PianorollRenderer {
             }
         }
 
-        let mut instances = std::mem::take(&mut self.instance_scratch);
-        instances.clear();
-        instances::build_instances(&mut instances, width, height, midi, view, selected, track_visible, cursor_tick);
-        self.prepare_from_parts(uniforms, &instances);
-        instances.clear();
-        self.instance_scratch = instances;
+        let mut scratch = std::mem::take(&mut self.instance_scratch);
+        scratch.clear();
+        build(&mut scratch);
+        self.prepare_from_parts(uniforms, &scratch);
+        scratch.clear();
+        self.instance_scratch = scratch;
     }
 
-    /// Generic prepare: upload uniforms + instances to GPU.
+    /// Upload uniforms + instances to GPU.
     pub fn prepare_from_parts(&mut self, uniforms: Uniforms, instances: &[NoteInstance]) {
         self.cached_uniforms = Some(uniforms);
         self.queue
@@ -197,5 +184,10 @@ impl PianorollRenderer {
     /// Check whether given uniforms differ from the last prepared ones.
     pub fn uniforms_changed(&self, uniforms: &Uniforms) -> bool {
         self.cached_uniforms.as_ref().map_or(true, |c| *c != *uniforms)
+    }
+
+    /// Get a reference to the cached uniforms (if any).
+    pub fn cached_uniforms(&self) -> Option<&Uniforms> {
+        self.cached_uniforms.as_ref()
     }
 }
