@@ -53,10 +53,13 @@ impl PianoRollView {
     }
 
     /// Convert screen y to MIDI key.
+    ///
+    /// Key k's row occupies y ∈ [key_to_y(k), key_to_y(k) + key_height).
+    /// The correct key for a given y is ceil((bottom - y) / key_height) - 1.
     pub fn y_to_key(&self, y: f32) -> u8 {
         let bottom = self.total_key_height() - self.scroll_y;
-        let key_f = (bottom - y) / self.key_height - 1.0;
-        key_f.clamp(0.0, 127.0) as u8
+        let key_f = ((bottom - y) / self.key_height).clamp(0.0, 128.0);
+        (key_f.ceil() as u8).saturating_sub(1)
     }
 
     /// The tick range visible on screen.
@@ -77,17 +80,27 @@ impl PianoRollView {
     pub fn clamp_scroll(&mut self, width: f32, height: f32, total_ticks: f64) {
         let old_x = self.scroll_x;
         let old_y = self.scroll_y;
+        let old_kh = self.key_height;
 
         // Horizontal: don't scroll before tick 0
         let min_scroll_x = 0.0;
         let max_scroll_x = (total_ticks as f32 * self.pixels_per_tick - (width - self.keyboard_width)).max(0.0);
         self.scroll_x = self.scroll_x.clamp(min_scroll_x, max_scroll_x);
 
+        // When total height exceeds viewport by only a few pixels, it means the
+        // viewport shrunk after a minimum-zoom was set.  Re-snap key_height so
+        // that all 128 keys exactly fill the viewport, eliminating the tiny
+        // scroll margin.
+        let total = self.total_key_height();
+        if total > height && total - height < 5.0 {
+            self.key_height = height / 128.0;
+        }
+
         // Vertical: don't scroll beyond key range
         let max_scroll_y = (self.total_key_height() - height).max(0.0);
         self.scroll_y = self.scroll_y.clamp(0.0, max_scroll_y);
 
-        if old_x != self.scroll_x || old_y != self.scroll_y {
+        if old_x != self.scroll_x || old_y != self.scroll_y || old_kh != self.key_height {
             self.dirty = true;
         }
     }

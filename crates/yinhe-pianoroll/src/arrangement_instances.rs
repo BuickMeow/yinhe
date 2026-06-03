@@ -230,6 +230,11 @@ pub fn build_arrangement_instances(
                             let mut fast_prev = first.end_tick;
                             let mut fast_max_vel = first.velocity;
                             for n in &notes[start_idx..] {
+                                // Only check continuity within the visible range —
+                                // notes past pad_end don't affect the merge result.
+                                if (n.start_tick as f64) > pad_end {
+                                    break;
+                                }
                                 if n.track as usize != t0 || n.start_tick > fast_prev {
                                     fast_cont = false;
                                     break;
