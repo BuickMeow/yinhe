@@ -49,6 +49,10 @@ pub struct PianorollRenderer {
     current_batch_counts: Vec<usize>,
     /// Cached last uniforms — used to skip GPU write when nothing changed.
     cached_uniforms: Option<Uniforms>,
+    /// CPU-side cache of static instances (background, grid, notes, keyboard).
+    static_instance_cache: Vec<NoteInstance>,
+    /// Viewport hash when the static cache was last built.
+    cached_viewport_hash: Option<u64>,
 }
 
 impl PianorollRenderer {
@@ -68,6 +72,8 @@ impl PianorollRenderer {
             instance_scratch: Vec::new(),
             current_batch_counts: Vec::new(),
             cached_uniforms: None,
+            static_instance_cache: Vec::new(),
+            cached_viewport_hash: None,
         }
     }
 
@@ -97,12 +103,57 @@ impl PianorollRenderer {
         self.instance_scratch = scratch;
     }
 
+    /// Two-phase prepare: static instances (cached) + dynamic cursor (every frame).
+    ///
+    /// `viewport_hash` captures all view properties that affect static instances
+    /// (scroll, zoom, window size). Static layer is rebuilt only when this hash
+    /// changes — NOT on every frame during playback.
+    ///
+    /// `build_static` populates background, grid, notes, and keyboard instances.
+    /// `build_cursor` appends the cursor line (O(1) work, called every frame).
+    pub fn prepare_with_static_cache(
+        &mut self,
+        uniforms: Uniforms,
+        viewport_hash: u64,
+        build_static: impl FnOnce(&mut Vec<NoteInstance>),
+        build_cursor: impl FnOnce(&mut Vec<NoteInstance>),
+    ) {
+        let need_static = self.cached_viewport_hash != Some(viewport_hash);
+
+        if need_static {
+            let mut scratch = std::mem::take(&mut self.instance_scratch);
+            scratch.clear();
+            build_static(&mut scratch);
+            self.static_instance_cache = std::mem::take(&mut scratch);
+            self.instance_scratch = scratch;
+            self.cached_viewport_hash = Some(viewport_hash);
+        }
+
+        // Always write uniforms (cheap, needed for cursor position changes).
+        self.queue
+            .write_buffer(&self.render.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+        self.cached_uniforms = Some(uniforms);
+
+        // Combine static cache + dynamic cursor, then upload to GPU.
+        let mut combined = std::mem::take(&mut self.instance_scratch);
+        combined.clear();
+        combined.extend_from_slice(&self.static_instance_cache);
+        build_cursor(&mut combined);
+        self.upload_instances(&combined);
+        combined.clear();
+        self.instance_scratch = combined;
+    }
+
     /// Upload uniforms + instances to GPU.
     pub fn prepare_from_parts(&mut self, uniforms: Uniforms, instances: &[NoteInstance]) {
         self.cached_uniforms = Some(uniforms);
         self.queue
             .write_buffer(&self.render.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+        self.upload_instances(instances);
+    }
 
+    /// Upload instance data to GPU buffers (no uniform write).
+    fn upload_instances(&mut self, instances: &[NoteInstance]) {
         let instance_size = std::mem::size_of::<NoteInstance>() as u64;
         let batches: Vec<&[NoteInstance]> = if instances.is_empty() {
             Vec::new()

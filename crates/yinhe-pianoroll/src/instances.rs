@@ -78,8 +78,27 @@ pub fn build_pianoroll_grid(
     }
 }
 
-/// Build all instances for the piano roll frame.
+/// Build all instances for the piano roll frame (backward-compatible wrapper).
 pub fn build_instances(
+    instances: &mut Vec<NoteInstance>,
+    width: u32,
+    height: u32,
+    midi: Option<&dyn NoteSource>,
+    view: &PianoRollView,
+    selected: &std::collections::HashSet<(u16, u32)>,
+    track_visible: &[bool],
+    cursor_tick: Option<f64>,
+) -> ([bool; 128], [[f32; 3]; 128]) {
+    let result = build_static_instances(instances, width, height, midi, view, selected, track_visible, cursor_tick);
+    build_cursor_instance(instances, cursor_tick, view, width, height);
+    result
+}
+
+/// Build static instances: background, black-key rows, grid lines, notes, keyboard.
+///
+/// Uses `cursor_tick` only for active-key detection (keyboard highlighting),
+/// NOT for drawing the cursor line — that is handled by `build_cursor_instance`.
+pub fn build_static_instances(
     instances: &mut Vec<NoteInstance>,
     width: u32,
     height: u32,
@@ -237,23 +256,6 @@ pub fn build_instances(
                     active_colors[key as usize] = color;
                 }
             }
-
-            // 3b. Cursor line
-            if let Some(ct) = cursor_tick {
-                let cx = view.tick_to_x(ct);
-                if cx >= kb_w && cx <= w {
-                    instances.push(NoteInstance {
-                        x: cx,
-                        y: 0.0,
-                        w: 2.0,
-                        h,
-                        rgba_packed: pack_rgba(1.0, 1.0, 1.0, 0.8),
-                        props_packed: pack_props(0.0, 0.0),
-                        velocity: 0,
-                        flags: 0,
-                    });
-                }
-            }
         }
     }
 
@@ -269,4 +271,32 @@ pub fn build_instances(
     );
 
     (active_keys, active_colors)
+}
+
+/// Build only the cursor line instance (O(1) work).
+pub fn build_cursor_instance(
+    instances: &mut Vec<NoteInstance>,
+    cursor_tick: Option<f64>,
+    view: &PianoRollView,
+    width: u32,
+    height: u32,
+) {
+    if let Some(ct) = cursor_tick {
+        let kb_w = view.keyboard_width;
+        let w = width as f32;
+        let h = height as f32;
+        let cx = view.tick_to_x(ct);
+        if cx >= kb_w && cx <= w {
+            instances.push(NoteInstance {
+                x: cx,
+                y: 0.0,
+                w: 2.0,
+                h,
+                rgba_packed: pack_rgba(1.0, 1.0, 1.0, 0.8),
+                props_packed: pack_props(0.0, 0.0),
+                velocity: 0,
+                flags: 0,
+            });
+        }
+    }
 }
