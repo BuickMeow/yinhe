@@ -164,15 +164,20 @@ impl MidiFile {
         self.track_ports.get(track_idx).copied().unwrap_or(0)
     }
 
-    /// Get info for all tracks (name, note count, port).
+    /// Get info for all tracks (name, note count, port, channel).
     pub fn track_info(&self) -> Vec<TrackInfo> {
         let num_tracks = self.track_ports.len();
         let mut note_counts = vec![0u64; num_tracks];
+        let mut track_channels = vec![0u8; num_tracks];
         for notes in &self.key_notes {
             for note in notes {
                 let idx = note.track as usize;
                 if idx < num_tracks {
                     note_counts[idx] += 1;
+                    // Record first channel found for this track
+                    if track_channels[idx] == 0 {
+                        track_channels[idx] = (note.channel & 0x0F) + 1;
+                    }
                 }
             }
         }
@@ -186,6 +191,7 @@ impl MidiFile {
                     .unwrap_or_else(|| format!("Track {}", i + 1)),
                 note_count: note_counts[i],
                 port: self.track_ports.get(i).copied().unwrap_or(0),
+                channel: track_channels[i].max(1).min(16),
             })
             .collect()
     }
@@ -198,4 +204,5 @@ pub struct TrackInfo {
     pub name: String,
     pub note_count: u64,
     pub port: u8,
+    pub channel: u8,
 }

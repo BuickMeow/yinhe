@@ -87,9 +87,6 @@ pub fn build_pianoroll_grid(
 }
 
 /// Build all instances for the piano roll frame.
-///
-/// When `grid` is `Some`, grid lines are taken from the cached slice instead of
-/// being rebuilt — used by the egui layer for grid-line caching.
 pub fn build_instances(
     instances: &mut Vec<NoteInstance>,
     width: u32,
@@ -99,7 +96,6 @@ pub fn build_instances(
     selected: &std::collections::HashSet<(u16, u32)>,
     track_visible: &[bool],
     cursor_tick: Option<f64>,
-    grid: Option<&[NoteInstance]>,
 ) -> ([bool; 128], [[f32; 3]; 128]) {
     let mut active_keys = [false; 128];
     let mut active_colors = [[0.0f32; 3]; 128];
@@ -147,12 +143,8 @@ pub fn build_instances(
         if let Some(tpb) = midi.ticks_per_beat() {
             let (tick_start, tick_end) = view.visible_tick_range(w);
 
-            // 2. Grid lines — from cache or rebuild
-            if let Some(cached) = grid {
-                instances.extend_from_slice(cached);
-            } else {
-                build_pianoroll_grid(instances, w, h, view, tpb);
-            }
+            // 2. Grid lines
+            build_pianoroll_grid(instances, w, h, view, tpb);
 
             // 3. Notes — padded tick range, with seek and parallel key processing
             let tick_pad = (w - kb_w) / ppu;

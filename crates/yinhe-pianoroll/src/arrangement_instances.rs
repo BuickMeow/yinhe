@@ -54,7 +54,7 @@ pub fn build_arrangement_grid(
                     ),
                     props_packed: pack_props(0.0, 0.0),
                     velocity: 0,
-                    flags: 0,
+                    flags: tick,
                 });
             } else if is_beat {
                 out.push(NoteInstance {
@@ -68,7 +68,7 @@ pub fn build_arrangement_grid(
                     ),
                     props_packed: pack_props(0.0, 0.0),
                     velocity: 0,
-                    flags: 0,
+                    flags: tick,
                 });
             }
         }
@@ -79,9 +79,6 @@ pub fn build_arrangement_grid(
 /// Build all instances for the arrangement view frame.
 ///
 /// `instances` is a reusable scratch buffer — caller should retain it across frames.
-///
-/// When `grid` is `Some`, grid lines are taken from the cached slice instead of
-/// being rebuilt — used by the egui layer for grid-line caching.
 pub fn build_arrangement_instances(
     instances: &mut Vec<NoteInstance>,
     width: u32,
@@ -91,7 +88,6 @@ pub fn build_arrangement_instances(
     track_visible: &[bool],
     track_colors: &[[f32; 3]],
     cursor_tick: Option<f64>,
-    grid: Option<&[NoteInstance]>,
 ) {
     let w = width as f32;
     let h = height as f32;
@@ -139,12 +135,8 @@ pub fn build_arrangement_instances(
         if let Some(tpb) = midi.ticks_per_beat() {
             let (tick_start, tick_end) = view.visible_tick_range(w);
 
-            // Grid lines — from cache or rebuild
-            if let Some(cached) = grid {
-                instances.extend_from_slice(cached);
-            } else {
-                build_arrangement_grid(instances, w, h, view, tpb);
-            }
+            // Grid lines
+            build_arrangement_grid(instances, w, h, view, tpb);
 
             // Note rectangles — merge consecutive same-track same-key notes into longer rects.
             // Process each key in parallel with rayon.
@@ -408,7 +400,6 @@ mod tests {
             &track_visible,
             &track_colors,
             None,
-            None,
         );
         let elapsed = start.elapsed();
         assert!(elapsed.as_millis() < 100, "build took too long: {:?}", elapsed);
@@ -452,7 +443,6 @@ mod tests {
             &view,
             &track_visible,
             &track_colors,
-            None,
             None,
         );
         let elapsed = start.elapsed();
@@ -501,7 +491,6 @@ mod tests {
             &track_visible,
             &track_colors,
             None,
-            None,
         );
         let elapsed = start.elapsed();
         assert!(elapsed.as_millis() < 3000, "large build took: {:?}", elapsed);
@@ -533,7 +522,6 @@ mod tests {
             &view,
             &track_visible,
             &track_colors,
-            None,
             None,
         );
         let elapsed = start.elapsed();
