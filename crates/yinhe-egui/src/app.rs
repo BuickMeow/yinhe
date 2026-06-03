@@ -28,9 +28,11 @@ pub struct App {
     transport_panel_width: f32,
     file_loader: FileLoader,
 
-    // ── Visibility toggles ──
-    show_track_panel: bool,
-    was_track_panel_on: bool,
+    // ── View mode ──
+    view_mode: ViewMode,
+    show_pianoroll_in_arrange: bool,
+
+    // ── Visibility toggles (derived from view_mode) ──
     show_transport: bool,
     show_pianoroll: bool,
 
@@ -46,6 +48,13 @@ pub struct App {
 
     // ── Cursor tick tracking for cross-view sync ──
     last_cursor_tick: Option<f64>,
+}
+
+#[derive(PartialEq)]
+enum ViewMode {
+    Arrange,
+    Mix,
+    Edit,
 }
 
 impl App {
@@ -98,8 +107,8 @@ impl App {
             transport_panel_width: 200.0,
             file_loader: FileLoader::new(),
 
-            show_track_panel: true,
-            was_track_panel_on: true,
+            view_mode: ViewMode::Arrange,
+            show_pianoroll_in_arrange: true,
             show_transport: true,
             show_pianoroll: true,
 
@@ -255,34 +264,69 @@ impl eframe::App for App {
             }
         }
 
-        // ── Bottom toggle bar ──
+        // ── Bottom mode bar ──
         egui::Panel::bottom("bottom_bar").show_inside(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.checkbox(&mut self.show_track_panel, "音轨面板");
-                ui.separator();
-                let was_transport = self.show_transport;
-                if ui.checkbox(&mut self.show_transport, "走带").changed()
-                    && !self.show_transport && !self.show_pianoroll
-                {
-                    self.show_transport = was_transport;
+                let active_color = egui::Color32::from_rgb(100, 180, 255);
+                let inactive_color = egui::Color32::GRAY;
+
+                // ARRANGE mode button
+                let arrange_btn = egui::Button::new(
+                    egui::RichText::new("ARRANGE")
+                        .color(if self.view_mode == ViewMode::Arrange { active_color } else { inactive_color })
+                );
+                if ui.add(arrange_btn).clicked() {
+                    self.view_mode = ViewMode::Arrange;
+                    self.show_transport = true;
+                    self.show_pianoroll = self.show_pianoroll_in_arrange;
                 }
-                ui.separator();
-                let was_pianoroll = self.show_pianoroll;
-                if ui.checkbox(&mut self.show_pianoroll, "卷帘").changed() {
-                    if !self.show_pianoroll {
-                        self.was_track_panel_on = self.show_track_panel;
-                        self.show_track_panel = false;
+
+                // 🎹 toggle (only in ARRANGE mode)
+                if self.view_mode == ViewMode::Arrange {
+                    let emoji_color = if self.show_pianoroll_in_arrange {
+                        egui::Color32::WHITE
                     } else {
-                        self.show_track_panel = self.was_track_panel_on;
+                        egui::Color32::from_gray(80)
+                    };
+                    let emoji = egui::Label::new(
+                        egui::RichText::new("🎹")
+                            .color(emoji_color)
+                    ).sense(egui::Sense::click());
+                    if ui.add(emoji).clicked() {
+                        self.show_pianoroll_in_arrange = !self.show_pianoroll_in_arrange;
+                        self.show_pianoroll = self.show_pianoroll_in_arrange;
                     }
-                    if !self.show_transport && !self.show_pianoroll {
-                        self.show_pianoroll = was_pianoroll;
-                    }
+                }
+
+                ui.separator();
+
+                // MIX mode button
+                let mix_btn = egui::Button::new(
+                    egui::RichText::new("MIX")
+                        .color(if self.view_mode == ViewMode::Mix { active_color } else { inactive_color })
+                );
+                if ui.add(mix_btn).clicked() {
+                    self.view_mode = ViewMode::Mix;
+                    self.show_transport = false;
+                    self.show_pianoroll = false;
+                }
+
+                ui.separator();
+
+                // EDIT mode button
+                let edit_btn = egui::Button::new(
+                    egui::RichText::new("EDIT")
+                        .color(if self.view_mode == ViewMode::Edit { active_color } else { inactive_color })
+                );
+                if ui.add(edit_btn).clicked() {
+                    self.view_mode = ViewMode::Edit;
+                    self.show_transport = false;
+                    self.show_pianoroll = true;
                 }
             });
         });
 
-        // ── Main area: arrangement (上) + 品字形 bottom (左下音轨 + 右下卷帘) ──
+        // ── Main area: arrangement (top) + track panel + pianoroll (bottom) ──
         let remaining = ui.available_rect_before_wrap();
 
         if let Some(idx) = self.active_doc {
@@ -379,9 +423,10 @@ impl eframe::App for App {
                 );
 
                 // Vertical splitter between track panel and arrangement
+                let v_bottom = if self.show_pianoroll { arr_rect.max.y - 4.0 } else { arr_rect.max.y };
                 let v_handle = egui::Rect::from_min_max(
                     egui::pos2(arr_rect.min.x + tp_w, arr_rect.min.y),
-                    egui::pos2(arr_rect.min.x + tp_w + 4.0, arr_rect.max.y),
+                    egui::pos2(arr_rect.min.x + tp_w + 4.0, v_bottom),
                 );
                 let v_resp = ui.interact(v_handle, ui.next_auto_id(), egui::Sense::click_and_drag());
                 let v_hovered = v_resp.hovered() || v_resp.dragged();
@@ -417,6 +462,9 @@ impl eframe::App for App {
                         let delta = h_split_resp.drag_delta().y;
                         self.arr_split = ((arr_h + delta) / total.y).clamp(0.1, 0.7);
                     }
+                    if h_split_resp.hovered() || h_split_resp.dragged() {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+                    }
                 }
 
                 // Arrangement GPU view
@@ -447,7 +495,7 @@ impl eframe::App for App {
             }
 
             // ── Bottom area: track panel (left) + pianoroll (right) ──
-            if self.show_track_panel && self.show_pianoroll {
+            if self.show_pianoroll {
                 // mem::take to work around borrow checker
                 let mut doc = std::mem::take(&mut self.documents[idx]);
 
@@ -529,42 +577,6 @@ impl eframe::App for App {
 
                 // Put doc back
                 self.documents[idx] = doc;
-            } else if self.show_track_panel {
-                let mut doc = std::mem::take(&mut self.documents[idx]);
-                let track_rect = egui::Rect::from_min_max(
-                    egui::pos2(remaining.min.x, bottom_y),
-                    remaining.max,
-                );
-                ui.allocate_new_ui(egui::UiBuilder::new().max_rect(track_rect), |ui| {
-                    ui.set_clip_rect(ui.max_rect());
-                    ui.painter().rect_filled(ui.max_rect(), 0.0, ui.visuals().panel_fill);
-                    track_panel::show(
-                        ui,
-                        &doc.track_info_cache,
-                        &mut doc.track_visible,
-                        &mut doc.track_selected,
-                        &doc.pc_map_cache,
-                        &mut doc.view.track_panel_row_height,
-                        &mut doc.view.track_panel_scroll_y,
-                    );
-                });
-                self.documents[idx] = doc;
-            } else if self.show_pianoroll {
-                let doc = &mut self.documents[idx];
-                let midi_source: Option<&dyn yinhe_pianoroll::NoteSource> =
-                    Some(&doc.midi as &dyn yinhe_pianoroll::NoteSource);
-                let piano_rect = egui::Rect::from_min_max(
-                    egui::pos2(remaining.min.x, bottom_y),
-                    remaining.max,
-                );
-                ui.allocate_new_ui(egui::UiBuilder::new().max_rect(piano_rect), |ui| {
-                    piano_view::show(
-                        ui, ui.available_size(),
-                        &mut self.pianoroll, &mut self.render_ctx, &mut doc.view,
-                        midi_source, &doc.selected, &doc.track_visible,
-                        &mut doc.cursor_tick, is_playing,
-                    );
-                });
             }
         }
 
