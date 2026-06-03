@@ -17,16 +17,19 @@ pub enum MidiControlEvent {
         channel: u8,
         controller: u8,
         value: u8,
+        track: u16,
     },
     ProgramChange {
         tick: u32,
         channel: u8,
         program: u8,
+        track: u16,
     },
     PitchBend {
         tick: u32,
         channel: u8,
         value: i16,
+        track: u16,
     },
 }
 

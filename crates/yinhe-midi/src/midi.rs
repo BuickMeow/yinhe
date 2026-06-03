@@ -167,8 +167,9 @@ impl MidiFile {
     /// Get info for all tracks (name, note count, port, channel).
     ///
     /// Port and channel are both derived from `note.channel` which encodes
-    /// `port * 16 + midi_channel`.  Fallback to `track_ports` when a track
-    /// has no notes.
+    /// `port * 16 + midi_channel`.  For tracks with no notes, falls back to
+    /// `control_events` (CC, PC, PitchBend) which also carry a `track` field.
+    /// Final fallback to `track_ports` when nothing is found.
     pub fn track_info(&self) -> Vec<TrackInfo> {
         let num_tracks = self.track_ports.len();
         let mut note_counts = vec![0u64; num_tracks];
@@ -187,6 +188,22 @@ impl MidiFile {
                         note_port_set[idx] = true;
                         track_ports_from_notes[idx] = (note.channel >> 4) & 0x07;
                     }
+                }
+            }
+        }
+        // Second pass: for tracks with no notes, scan control events
+        for ev in &self.control_events {
+            let (track, ch) = match ev {
+                MidiControlEvent::ControlChange { track, channel, .. }
+                | MidiControlEvent::ProgramChange { track, channel, .. }
+                | MidiControlEvent::PitchBend { track, channel, .. } => (*track, *channel),
+            };
+            let idx = track as usize;
+            if idx < num_tracks && track_channels[idx] == 0 {
+                track_channels[idx] = (ch & 0x0F) + 1;
+                if !note_port_set[idx] {
+                    note_port_set[idx] = true;
+                    track_ports_from_notes[idx] = (ch >> 4) & 0x07;
                 }
             }
         }

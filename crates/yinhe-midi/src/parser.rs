@@ -289,6 +289,7 @@ impl MidiParser {
                                 channel: global_ch,
                                 controller: controller.as_int(),
                                 value: value.as_int(),
+                                track: track_idx,
                             });
                         }
                         midly::MidiMessage::ProgramChange { program } => {
@@ -296,6 +297,7 @@ impl MidiParser {
                                 tick: current_tick,
                                 channel: global_ch,
                                 program: program.as_int(),
+                                track: track_idx,
                             });
                         }
                         midly::MidiMessage::PitchBend { bend } => {
@@ -303,6 +305,7 @@ impl MidiParser {
                                 tick: current_tick,
                                 channel: global_ch,
                                 value: bend.as_int(),
+                                track: track_idx,
                             });
                         }
                         _ => {}
@@ -490,5 +493,74 @@ mod tests {
         assert!(is_black_key(3));
         assert!(!is_black_key(4));
         assert!(!is_black_key(12));
+    }
+
+    #[test]
+    fn test_cyber_night_track_channel_mapping() {
+        let midi = MidiFile::load("/Users/jieneng/Music/MIDIs/cyber-night.mid")
+            .expect("failed to load cyber-night.mid");
+        let info = midi.track_info();
+
+        // Verify each NOTE and CC track's channel matches its name number
+        // e.g. NOTE 1 → A01, NOTE 12 → A12, CC 2-1 → A02, etc.
+        let expected: &[(usize, u8, &str)] = &[
+            (2, 1, "NOTE 1"),
+            (3, 1, "CC 1-1"),
+            (4, 1, "CC 1-2"),
+            (5, 2, "NOTE 2"),
+            (6, 2, "CC 2-1"),
+            (7, 2, "CC 2-2"),
+            (8, 3, "NOTE 3"),
+            (9, 3, "CC 3"),
+            (10, 4, "NOTE 4"),
+            (11, 4, "CC 4"),
+            (12, 5, "NOTE 5"),
+            (13, 5, "CC 5"),
+            (14, 6, "NOTE 6"),
+            (15, 6, "CC 6"),
+            (16, 7, "NOTE 7"),
+            (17, 7, "CC 7-1"),
+            (18, 7, "CC 7-2"),
+            (19, 8, "NOTE 8"),
+            (20, 8, "CC 8"),
+            (21, 9, "NOTE 9-1"),
+            (22, 9, "NOTE 9-2"),
+            (23, 9, "CC 9-1"),
+            (24, 9, "CC 9-2"),
+            (25, 10, "NOTE 10-1"),
+            (26, 10, "NOTE 10-2"),
+            (27, 10, "CC 10"),
+            (28, 11, "NOTE 11"),
+            (29, 11, "CC 11"),
+            (30, 12, "NOTE 12"),
+            (31, 12, "CC 12-1"),
+            (32, 12, "CC 12-2"),
+            (33, 13, "NOTE 13-1"),
+            (34, 13, "NOTE 13-2"),
+            (35, 13, "NOTE 13-3"),
+            (36, 13, "NOTE 13-4"),
+            (37, 13, "NOTE 13-5"),
+            (38, 13, "NOTE 13-6"),
+            (39, 13, "CC 13"),
+            (40, 14, "NOTE 14"),
+            (41, 14, "CC 14"),
+            (42, 15, "NOTE 15"),
+            (43, 15, "CC 15"),
+            (44, 16, "NOTE 16-1"),
+            (45, 16, "NOTE 16-2"),
+            (46, 16, "CC 16"),
+        ];
+        for &(idx, ch, name) in expected {
+            assert_eq!(
+                info[idx].channel, ch,
+                "Track #{} ({}) expected channel {}",
+                idx, info[idx].name, ch,
+            );
+        }
+        // Verify all tracks on port A for this file
+        assert!(info.iter().all(|ti| ti.port == 0));
+        // Track #0 (Cyber Night) and #1 (Eye) have no events at all
+        assert_eq!(info[0].channel, 1);
+        assert_eq!(info[1].channel, 1);
     }
 }
