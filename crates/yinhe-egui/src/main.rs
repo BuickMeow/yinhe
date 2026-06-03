@@ -14,8 +14,24 @@ fn main() {
         )
         .init();
 
+    let mut viewport = eframe::egui::ViewportBuilder::default()
+        .with_inner_size([1400.0, 900.0]);
+
+    #[cfg(target_os = "macos")]
+    {
+        viewport = viewport
+            .with_fullsize_content_view(true)
+            .with_titlebar_shown(false)
+            .with_title_shown(false);
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        viewport = viewport.with_decorations(false);
+    }
+
     let options = eframe::NativeOptions {
-        viewport: eframe::egui::ViewportBuilder::default().with_inner_size([1400.0, 900.0]),
+        viewport,
         renderer: eframe::Renderer::Wgpu,
         ..Default::default()
     };

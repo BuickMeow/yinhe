@@ -28,6 +28,33 @@ const TRACK_PALETTE: [[f32; 3]; 16] = [
     [0.60, 0.75, 0.30],
 ];
 
+/// Height of the custom title bar.
+const TITLE_BAR_HEIGHT: f32 = 32.0;
+
+// ── macOS custom title bar animation ──
+
+/// State for a smooth maximize/restore animation.
+/// Each frame we send slightly different OuterPosition + InnerSize
+/// to drive a smooth transition.
+#[cfg(target_os = "macos")]
+struct TitleBarAnim {
+    start: std::time::Instant,
+    duration: std::time::Duration,
+    from_pos: egui::Pos2,
+    from_size: egui::Vec2,
+    to_pos: egui::Pos2,
+    to_size: egui::Vec2,
+}
+
+#[cfg(target_os = "macos")]
+fn ease_in_out_cubic(t: f64) -> f64 {
+    if t < 0.5 {
+        4.0 * t * t * t
+    } else {
+        1.0 - f64::powi(-2.0 * t + 2.0, 3) / 2.0
+    }
+}
+
 pub struct App {
     // ── Pianoroll ──
     render_ctx: RenderContext,
@@ -57,6 +84,13 @@ pub struct App {
     was_track_panel_on: bool,
     show_transport: bool,
     show_pianoroll: bool,
+
+    // ── Window state (for manual maximize/restore on macOS) ──
+    #[cfg(target_os = "macos")]
+    restore_rect: Option<egui::Rect>,
+
+    #[cfg(target_os = "macos")]
+    anim: Option<TitleBarAnim>,
 }
 
 impl App {
@@ -121,6 +155,9 @@ impl App {
             was_track_panel_on: true,
             show_transport: true,
             show_pianoroll: true,
+
+            restore_rect: None,
+            anim: None,
         }
     }
 
@@ -280,6 +317,235 @@ impl App {
             }
         });
     }
+
+    /// Draw the custom title bar at the top of the window.
+    fn show_title_bar(&mut self, ui: &mut egui::Ui) {
+        egui::Panel::top("title_bar")
+            .frame(egui::Frame {
+                fill: egui::Color32::from_rgb(25, 25, 28),
+                inner_margin: egui::Margin::ZERO,
+                outer_margin: egui::Margin::ZERO,
+                ..Default::default()
+            })
+            .show_inside(ui, |ui| {
+                let bar_rect = ui.max_rect();
+
+                // Bottom 1px separator line
+                ui.painter().rect_filled(
+                    egui::Rect::from_min_max(
+                        egui::pos2(bar_rect.min.x, bar_rect.max.y - 1.0),
+                        bar_rect.max,
+                    ),
+                    0.0,
+                    egui::Color32::from_gray(50),
+                );
+
+                // macOS: leave ~70px on the left for traffic lights
+                let left_padding = if cfg!(target_os = "macos") {
+                    70.0
+                } else {
+                    10.0
+                };
+
+                // App name
+                ui.painter().text(
+                    egui::pos2(bar_rect.min.x + left_padding, bar_rect.center().y),
+                    egui::Align2::LEFT_CENTER,
+                    "Yinhe MIDI Editor",
+                    egui::FontId::proportional(13.0),
+                    egui::Color32::from_gray(180),
+                );
+
+                // Non-macOS: draw -口x buttons
+                #[cfg(not(target_os = "macos"))]
+                self.draw_window_buttons(ui, bar_rect);
+
+                // Window drag region
+                // macOS: exclude traffic light zone on the left
+                // non-macOS: exclude window buttons on the right
+                let drag_rect = if cfg!(target_os = "macos") {
+                    egui::Rect::from_min_max(
+                        egui::pos2(bar_rect.min.x + 70.0, bar_rect.min.y),
+                        bar_rect.max,
+                    )
+                } else {
+                    egui::Rect::from_min_max(
+                        egui::pos2(bar_rect.min.x + 10.0, bar_rect.min.y),
+                        egui::pos2(bar_rect.max.x - 138.0, bar_rect.max.y),
+                    )
+                };
+
+                let drag_resp = ui.interact(
+                    drag_rect,
+                    ui.next_auto_id(),
+                    egui::Sense::click_and_drag(),
+                );
+                if drag_resp.dragged_by(egui::PointerButton::Primary) {
+                    ui.ctx()
+                        .send_viewport_cmd(egui::ViewportCommand::StartDrag);
+                }
+
+                // Double-click title bar to toggle maximize/restore
+                if drag_resp.double_clicked_by(egui::PointerButton::Primary) {
+                    #[cfg(not(target_os = "macos"))]
+                    {
+                        // Non-macOS: Maximized has smooth animation naturally
+                        let maximized = ui
+                            .input(|i| i.viewport().maximized.unwrap_or(false));
+                        ui.ctx()
+                            .send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+                    }
+
+                    #[cfg(target_os = "macos")]
+                    {
+                        // macOS: start a smooth 200ms animation
+                        // that interpolates OuterPosition + InnerSize per frame.
+                        if self.anim.is_some() {
+                            // Already animating; ignore extra double-click.
+                        } else if let Some(restore) = self.restore_rect.take() {
+                            // Start restore animation
+                            let current = ui.input(|i| i.viewport().outer_rect);
+                            if let Some(cur) = current {
+                                self.anim = Some(TitleBarAnim {
+                                    start: std::time::Instant::now(),
+                                    duration: std::time::Duration::from_millis(350),
+                                    from_pos: cur.min,
+                                    from_size: cur.size(),
+                                    to_pos: restore.min,
+                                    to_size: restore.size(),
+                                });
+                                ui.ctx().request_repaint();
+                            } else {
+                                self.restore_rect = Some(restore);
+                            }
+                        } else {
+                            // Start maximize animation
+                            let outer = ui.input(|i| i.viewport().outer_rect);
+                            let mon = ui.input(|i| i.viewport().monitor_size);
+                            if let (Some(cur), Some(mon_size)) = (outer, mon) {
+                                self.restore_rect = Some(cur);
+                                self.anim = Some(TitleBarAnim {
+                                    start: std::time::Instant::now(),
+                                    duration: std::time::Duration::from_millis(350),
+                                    from_pos: cur.min,
+                                    from_size: cur.size(),
+                                    to_pos: egui::Pos2::new(0.0, 0.0),
+                                    to_size: mon_size,
+                                });
+                                ui.ctx().request_repaint();
+                            }
+                        }
+                    }
+                }
+
+                // Reserve space for title bar height
+                ui.allocate_space(egui::vec2(0.0, TITLE_BAR_HEIGHT));
+            });
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    fn draw_window_buttons(
+        &mut self,
+        ui: &mut egui::Ui,
+        bar_rect: egui::Rect,
+    ) {
+        let btn_w = 46.0;
+        let btn_h = TITLE_BAR_HEIGHT;
+        let btn_y = bar_rect.min.y;
+
+        let close_rect = egui::Rect::from_min_size(
+            egui::pos2(bar_rect.max.x - btn_w, btn_y),
+            egui::vec2(btn_w, btn_h),
+        );
+        let max_rect = egui::Rect::from_min_size(
+            egui::pos2(close_rect.min.x - btn_w, btn_y),
+            egui::vec2(btn_w, btn_h),
+        );
+        let min_rect = egui::Rect::from_min_size(
+            egui::pos2(max_rect.min.x - btn_w, btn_y),
+            egui::vec2(btn_w, btn_h),
+        );
+
+        // Close button (✕)
+        let close_hover = close_rect
+            .contains(ui.input(|i| i.pointer.hover_pos().unwrap_or_default()));
+        if close_hover {
+            ui.painter()
+                .rect_filled(close_rect, 0.0, egui::Color32::from_rgb(200, 50, 50));
+        }
+        ui.painter().text(
+            close_rect.center(),
+            egui::Align2::CENTER_CENTER,
+            "✕",
+            egui::FontId::proportional(14.0),
+            if close_hover {
+                egui::Color32::WHITE
+            } else {
+                egui::Color32::from_gray(180)
+            },
+        );
+
+        // Maximize (□)
+        ui.painter().text(
+            max_rect.center(),
+            egui::Align2::CENTER_CENTER,
+            "□",
+            egui::FontId::proportional(16.0),
+            egui::Color32::from_gray(180),
+        );
+
+        // Minimize (─)
+        ui.painter().text(
+            min_rect.center(),
+            egui::Align2::CENTER_CENTER,
+            "─",
+            egui::FontId::proportional(16.0),
+            egui::Color32::from_gray(180),
+        );
+
+        // Interaction
+        let close_resp = ui.interact(close_rect, ui.next_auto_id(), egui::Sense::click());
+        let _max_resp = ui.interact(max_rect, ui.next_auto_id(), egui::Sense::click());
+        let _min_resp = ui.interact(min_rect, ui.next_auto_id(), egui::Sense::click());
+
+        if close_resp.clicked() {
+            frame.close();
+        }
+    }
+
+    // ── macOS: per-frame title bar animation driver ──
+
+    /// Called at the start of each `ui()` frame. If a title-bar animation
+    /// is in progress, interpolates the window position/size and sends
+    /// `OuterPosition` + `InnerSize` commands for this frame.
+    #[cfg(target_os = "macos")]
+    fn process_title_bar_anim(&mut self, ctx: &egui::Context) {
+        let Some(anim) = &self.anim else {
+            return;
+        };
+
+        let elapsed = anim.start.elapsed().as_secs_f64();
+        let duration = anim.duration.as_secs_f64();
+        let raw_t = (elapsed / duration).min(1.0);
+        let eased = ease_in_out_cubic(raw_t) as f32;
+
+        let x = anim.from_pos.x + (anim.to_pos.x - anim.from_pos.x) * eased;
+        let y = anim.from_pos.y + (anim.to_pos.y - anim.from_pos.y) * eased;
+        let w = anim.from_size.x + (anim.to_size.x - anim.from_size.x) * eased;
+        let h = anim.from_size.y + (anim.to_size.y - anim.from_size.y) * eased;
+
+        ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(x, y)));
+        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(w, h)));
+
+        if raw_t >= 1.0 {
+            // Snap to final position (ensures exact pixel alignment)
+            ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(anim.to_pos));
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(anim.to_size));
+            self.anim = None;
+        } else {
+            ctx.request_repaint();
+        }
+    }
 }
 
 // ── Async MIDI file loading ──
@@ -414,8 +680,15 @@ impl FileLoader {
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        // ── macOS: drive title-bar maximize/restore animation (per-frame) ──
+        #[cfg(target_os = "macos")]
+        self.process_title_bar_anim(ui.ctx());
+
         // ── Force dark mode ──
         ui.ctx().set_visuals(egui::Visuals::dark());
+
+        // ── Custom title bar ──
+        self.show_title_bar(ui);
 
         // ── Keyboard shortcuts ──
         let mut toggle_play = false;
