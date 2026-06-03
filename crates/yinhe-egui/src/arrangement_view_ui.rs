@@ -206,6 +206,7 @@ pub fn show(
             if pointer_x >= view.label_width {
                 let tick = view.x_to_tick(pointer_x);
                 *cursor_tick = Some(tick.max(0.0));
+                view.dirty = true;
                 changed = true;
             }
         }
