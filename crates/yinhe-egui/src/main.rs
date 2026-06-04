@@ -10,6 +10,7 @@ mod playback;
 mod quantize;
 mod render_context;
 mod time_format;
+mod time_ruler;
 mod title_bar;
 mod track_panel;
 mod transport_bar;

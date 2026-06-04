@@ -4,6 +4,9 @@ use yinhe_types::TimeSigEvent;
 
 use crate::quantize::QuantizePreset;
 
+/// Height of the time ruler band at the top of the pianoroll view.
+const RULER_H: f32 = 24.0;
+
 /// Display the pianoroll texture with zoom/pan interaction.
 pub fn show(
     ui: &mut egui::Ui,
@@ -23,8 +26,17 @@ pub fn show(
 ) {
     let (resp, painter) = ui.allocate_painter(available, egui::Sense::click_and_drag());
     let rect = resp.rect;
-    let w = rect.width() as u32;
-    let h = rect.height() as u32;
+
+    // Split: ruler band at top (24 px), wgpu content below
+    let ruler_band_y = rect.min.y;
+    let content_y = rect.min.y + RULER_H;
+    let content_h = (rect.height() - RULER_H).max(0.0);
+    let content_rect = egui::Rect::from_min_max(
+        egui::pos2(rect.min.x, content_y),
+        egui::pos2(rect.max.x, content_y + content_h),
+    );
+    let w = content_rect.width() as u32;
+    let h = content_rect.height() as u32;
 
     if w == 0 || h == 0 {
         return;
@@ -89,24 +101,38 @@ pub fn show(
     let content_changed = view.dirty || gpu_dirty;
     view.dirty = false;
 
-    // Paint: RenderContext internally decides whether a full GPU render pass is
-    // needed (fresh texture or content_changed) or just a display of the existing
-    // texture — avoiding command-buffer back-pressure when nothing moved.
+    // Paint wgpu content into the content_rect (below the ruler)
     render_ctx.paint(
         pianoroll,
         w,
         h,
         "pianoroll_frame",
         &painter,
-        rect,
+        content_rect,
         content_changed,
     );
 
-    // Handle input (zoom/pan/cursor/drag/reset)
+    // ── Time ruler (top band, right of keyboard) ──
+    if let Some(midi) = midi {
+        if let Some(tpb) = midi.ticks_per_beat() {
+            let ruler_rect = egui::Rect::from_min_max(
+                egui::pos2(rect.min.x + view.keyboard_width, ruler_band_y),
+                egui::pos2(rect.max.x, ruler_band_y + RULER_H),
+            );
+            let (def_num, def_den) = midi.time_sig_default();
+            let sig_events = midi.time_sig_events();
+            crate::time_ruler::paint(
+                &painter, ruler_rect, view, tpb, def_num, def_den, sig_events,
+            );
+        }
+    }
+
+    // Handle input (zoom/pan/cursor/drag/reset) — uses content_rect so that
+    // viewport_height for vertical zoom excludes the ruler band.
     crate::view_interaction::handle_input(
         ui,
         &resp,
-        rect,
+        content_rect,
         view,
         cursor_tick,
         view.keyboard_width,

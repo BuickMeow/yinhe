@@ -5,6 +5,9 @@ use crate::document::Document;
 use crate::render_context::RenderContext;
 use crate::track_panel;
 
+/// Height of the time ruler band at the top of the arrangement view.
+const RULER_H: f32 = 24.0;
+
 pub fn show(
     ui: &mut egui::Ui,
     doc: &mut Document,
@@ -30,15 +33,43 @@ pub fn show(
         egui::pos2(remaining.max.x, remaining.min.y + arr_h),
     );
 
+    // ── Track panel: full height, left side ──
     let tp_rect = egui::Rect::from_min_max(
         arr_rect.min,
         egui::pos2(arr_rect.min.x + tp_w, arr_rect.max.y),
     );
+
+    // ── GPU area: shifted down by RULER_H to leave room for the ruler ──
     let gpu_rect = egui::Rect::from_min_max(
-        egui::pos2(arr_rect.min.x + tp_w + 4.0, arr_rect.min.y),
+        egui::pos2(arr_rect.min.x + tp_w + 4.0, arr_rect.min.y + RULER_H),
         arr_rect.max,
     );
 
+    // ── Ruler: top-right band, drawn with parent painter ──
+    {
+        let ruler_rect = egui::Rect::from_min_max(
+            egui::pos2(arr_rect.min.x + tp_w + 4.0, arr_rect.min.y),
+            egui::pos2(arr_rect.max.x, arr_rect.min.y + RULER_H),
+        );
+        let tpb = doc.midi.ticks_per_beat;
+        let def_num = doc.midi.time_sig_numerator;
+        let def_den = doc.midi.time_sig_denominator;
+        let sig_events = doc.midi.time_sig_events.as_slice();
+        // Parent painter works in screen coordinates; paint_labels applies
+        // offset_x = rect.min.x - view.content_left() internally.
+        let ruler_painter = ui.painter();
+        crate::time_ruler::paint(
+            &ruler_painter,
+            ruler_rect,
+            &doc.arr_view,
+            tpb,
+            def_num,
+            def_den,
+            sig_events,
+        );
+    }
+
+    // ── Track panel content ──
     let _tp_child = ui.allocate_ui_with_layout(
         egui::vec2(tp_w, arr_h),
         egui::Layout::top_down(egui::Align::LEFT),
@@ -80,6 +111,7 @@ pub fn show(
         },
     );
 
+    // ── Vertical splitter handle ──
     let v_handle = egui::Rect::from_min_max(
         egui::pos2(arr_rect.min.x + tp_w, arr_rect.min.y),
         egui::pos2(arr_rect.min.x + tp_w + 4.0, arr_rect.max.y),
@@ -103,6 +135,7 @@ pub fn show(
         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
     }
 
+    // ── Arrangement GPU view (below ruler) ──
     let arr_midi: Option<&dyn yinhe_arrangement::NoteSource> =
         Some(&doc.midi as &dyn yinhe_arrangement::NoteSource);
     let track_colors = doc.track_colors();
