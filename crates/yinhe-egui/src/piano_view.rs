@@ -1,5 +1,7 @@
 use eframe::egui;
 
+use crate::quantize::QuantizePreset;
+
 /// Display the pianoroll texture with zoom/pan interaction.
 pub fn show(
     ui: &mut egui::Ui,
@@ -12,6 +14,9 @@ pub fn show(
     track_visible: &[bool],
     cursor_tick: &mut Option<f64>,
     is_playing: bool,
+    quantize: QuantizePreset,
+    ppq: u32,
+    last_cursor_tick: &mut Option<f64>,
 ) {
     let (resp, painter) = ui.allocate_painter(available, egui::Sense::click_and_drag());
     let rect = resp.rect;
@@ -51,10 +56,13 @@ pub fn show(
     // selection changed, scroll/zoom from previous frame).
     let force_rebuild = view.dirty;
 
-    // Mark dirty during playback — cursor line needs to move each frame
-    if is_playing && cursor_tick.is_some() {
+    // Mark dirty when cursor position changes (playback or click).
+    // Without this, the GPU texture won't re-render and the cursor line
+    // stays at its old position — especially after playback stops.
+    if *cursor_tick != *last_cursor_tick {
         view.dirty = true;
     }
+    *last_cursor_tick = *cursor_tick;
 
     // Prepare GPU data. force_rebuild forces static instances to be rebuilt
     // (for data changes), but NOT during playback cursor movement.
@@ -91,5 +99,13 @@ pub fn show(
     );
 
     // Handle input (zoom/pan/cursor/drag/reset)
-    crate::view_interaction::handle_input(ui, &resp, rect, view, cursor_tick, view.keyboard_width);
+    crate::view_interaction::handle_input(
+        ui,
+        &resp,
+        rect,
+        view,
+        cursor_tick,
+        view.keyboard_width,
+        Some((quantize, ppq)),
+    );
 }

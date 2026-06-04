@@ -73,7 +73,9 @@ impl PlaybackState {
         let current_time = self.play_start_time + elapsed;
 
         let tick = midi.tick_at_time(current_time);
-        let end_tick = midi.tick_length as f64;
+        // Always provide at least one bar of playable range
+        let min_end = midi.bar_divide();
+        let end_tick = (midi.tick_length as f64).max(min_end);
 
         if tick >= end_tick {
             Some((end_tick, true))

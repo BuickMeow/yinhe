@@ -22,8 +22,7 @@ pub fn show(
     *last_cursor_tick = doc.cursor_tick;
 
     let arr_total_w = remaining.width();
-    let tp_w = transport_panel_width
-        .clamp(60.0, (arr_total_w - 60.0).max(60.0));
+    let tp_w = transport_panel_width.clamp(60.0, (arr_total_w - 60.0).max(60.0));
     *transport_panel_width = tp_w;
 
     let arr_rect = egui::Rect::from_min_max(
@@ -57,15 +56,11 @@ pub fn show(
                         let pointer_y = hover.y - tp_rect.min.y;
                         let old = doc.arr_view.track_panel_row_height;
                         doc.arr_view.track_panel_row_height =
-                            (doc.arr_view.track_panel_row_height * zoom_delta)
-                                .clamp(16.0, 120.0);
+                            (doc.arr_view.track_panel_row_height * zoom_delta).clamp(16.0, 120.0);
                         doc.arr_view.lane_height = doc.arr_view.track_panel_row_height;
-                        let track_frac =
-                            (pointer_y + doc.arr_view.track_panel_scroll_y) / old;
-                        doc.arr_view.track_panel_scroll_y = (track_frac
-                            * doc.arr_view.track_panel_row_height
-                            - pointer_y)
-                            .max(0.0);
+                        let track_frac = (pointer_y + doc.arr_view.track_panel_scroll_y) / old;
+                        doc.arr_view.track_panel_scroll_y =
+                            (track_frac * doc.arr_view.track_panel_row_height - pointer_y).max(0.0);
                         doc.arr_view.dirty = true;
                     }
                 }
@@ -89,8 +84,7 @@ pub fn show(
         egui::pos2(arr_rect.min.x + tp_w, arr_rect.min.y),
         egui::pos2(arr_rect.min.x + tp_w + 4.0, arr_rect.max.y),
     );
-    let v_resp =
-        ui.interact(v_handle, ui.next_auto_id(), egui::Sense::click_and_drag());
+    let v_resp = ui.interact(v_handle, ui.next_auto_id(), egui::Sense::click_and_drag());
     let v_hovered = v_resp.hovered() || v_resp.dragged();
     ui.painter().rect_filled(
         v_handle,
@@ -102,8 +96,8 @@ pub fn show(
         },
     );
     if v_resp.dragged() {
-        *transport_panel_width = (*transport_panel_width + v_resp.drag_delta().x)
-            .clamp(60.0, arr_total_w - 60.0);
+        *transport_panel_width =
+            (*transport_panel_width + v_resp.drag_delta().x).clamp(60.0, arr_total_w - 60.0);
     }
     if v_hovered {
         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
@@ -125,6 +119,8 @@ pub fn show(
             &doc.track_visible,
             &track_colors,
             &mut doc.cursor_tick,
+            doc.quantize,
+            doc.midi.ticks_per_beat,
             is_playing,
             &track_names,
             &mut doc.arr_instances,

@@ -1,5 +1,7 @@
 use eframe::egui;
 
+use crate::quantize::QuantizePreset;
+
 /// Trait unifying the zoom/pan/cursor interface of PianoRollView and ArrangementView.
 pub(crate) trait ViewInteraction {
     fn scroll_x(&mut self) -> &mut f32;
@@ -12,31 +14,58 @@ pub(crate) trait ViewInteraction {
 }
 
 impl ViewInteraction for yinhe_pianoroll::PianoRollView {
-    fn scroll_x(&mut self) -> &mut f32 { &mut self.scroll_x }
-    fn scroll_y(&mut self) -> &mut f32 { &mut self.scroll_y }
-    fn dirty(&mut self) -> &mut bool { &mut self.dirty }
-    fn x_to_tick(&self, x: f32) -> f64 { self.x_to_tick(x) }
-    fn zoom_around_x(&mut self, pointer_x: f32, factor: f32) { self.zoom_around_x(pointer_x, factor); }
-    fn zoom_around_y(&mut self, pointer_y: f32, factor: f32, height: f32) { self.zoom_around_y(pointer_y, factor, height); }
-    fn reset_to_default(&mut self) { *self = Self::default(); }
+    fn scroll_x(&mut self) -> &mut f32 {
+        &mut self.scroll_x
+    }
+    fn scroll_y(&mut self) -> &mut f32 {
+        &mut self.scroll_y
+    }
+    fn dirty(&mut self) -> &mut bool {
+        &mut self.dirty
+    }
+    fn x_to_tick(&self, x: f32) -> f64 {
+        self.x_to_tick(x)
+    }
+    fn zoom_around_x(&mut self, pointer_x: f32, factor: f32) {
+        self.zoom_around_x(pointer_x, factor);
+    }
+    fn zoom_around_y(&mut self, pointer_y: f32, factor: f32, height: f32) {
+        self.zoom_around_y(pointer_y, factor, height);
+    }
+    fn reset_to_default(&mut self) {
+        *self = Self::default();
+    }
 }
 
 impl ViewInteraction for yinhe_arrangement::ArrangementView {
-    fn scroll_x(&mut self) -> &mut f32 { &mut self.scroll_x }
-    fn scroll_y(&mut self) -> &mut f32 { &mut self.scroll_y }
-    fn dirty(&mut self) -> &mut bool { &mut self.dirty }
-    fn x_to_tick(&self, x: f32) -> f64 { self.x_to_tick(x) }
-    fn zoom_around_x(&mut self, pointer_x: f32, factor: f32) { self.zoom_around_x(pointer_x, factor); }
+    fn scroll_x(&mut self) -> &mut f32 {
+        &mut self.scroll_x
+    }
+    fn scroll_y(&mut self) -> &mut f32 {
+        &mut self.scroll_y
+    }
+    fn dirty(&mut self) -> &mut bool {
+        &mut self.dirty
+    }
+    fn x_to_tick(&self, x: f32) -> f64 {
+        self.x_to_tick(x)
+    }
+    fn zoom_around_x(&mut self, pointer_x: f32, factor: f32) {
+        self.zoom_around_x(pointer_x, factor);
+    }
     fn zoom_around_y(&mut self, pointer_y: f32, factor: f32, _height: f32) {
         self.zoom_lane_height(pointer_y, factor);
     }
-    fn reset_to_default(&mut self) { *self = Self::default(); }
+    fn reset_to_default(&mut self) {
+        *self = Self::default();
+    }
 }
 
 /// Handle zoom/pan/cursor input for a view that implements ViewInteraction.
 ///
 /// `left_zone_width`: pixels from the left edge where vertical zoom is allowed
 ///   (piano_view uses `keyboard_width`, arrangement uses `0.0` to disable).
+/// If `quantize` and `ppq` are provided, cursor placement snaps to the grid.
 /// Returns `true` if the view state changed and needs a repaint.
 pub(crate) fn handle_input(
     ui: &mut egui::Ui,
@@ -45,6 +74,7 @@ pub(crate) fn handle_input(
     view: &mut impl ViewInteraction,
     cursor_tick: &mut Option<f64>,
     left_zone_width: f32,
+    quantize: Option<(QuantizePreset, u32)>,
 ) -> bool {
     let mut changed = false;
 
@@ -95,7 +125,11 @@ pub(crate) fn handle_input(
         if let Some(pos) = resp.interact_pointer_pos() {
             let pointer_x = pos.x - rect.min.x;
             if pointer_x >= left_zone_width {
-                let tick = view.x_to_tick(pointer_x);
+                let mut tick = view.x_to_tick(pointer_x);
+                // Snap to quantization grid if set
+                if let Some((q, ppq)) = &quantize {
+                    tick = q.snap_tick(tick, *ppq);
+                }
                 *cursor_tick = Some(tick.max(0.0));
                 *view.dirty() = true;
                 changed = true;

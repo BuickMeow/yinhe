@@ -4,6 +4,7 @@ use yinhe_arrangement::instances as arrangement_instances;
 use yinhe_arrangement::{ArrangementView, NoteInstance, NoteSource, PianorollRenderer, Uniforms};
 
 use super::render_context::RenderContext;
+use crate::quantize::QuantizePreset;
 
 /// Display the arrangement view texture with zoom/pan interaction.
 ///
@@ -18,6 +19,8 @@ pub fn show(
     track_visible: &[bool],
     track_colors: &[[f32; 3]],
     cursor_tick: &mut Option<f64>,
+    quantize: QuantizePreset,
+    ppq: u32,
     is_playing: bool,
     _track_names: &[String],
     instances: &mut Vec<NoteInstance>,
@@ -114,5 +117,13 @@ pub fn show(
     );
 
     // ── Handle input (zoom/pan/cursor/drag/reset) ──
-    crate::view_interaction::handle_input(ui, &resp, rect, view, cursor_tick, 0.0);
+    crate::view_interaction::handle_input(
+        ui,
+        &resp,
+        rect,
+        view,
+        cursor_tick,
+        0.0,
+        Some((quantize, ppq)),
+    );
 }

@@ -44,6 +44,7 @@ pub struct App {
 
     // ── Cursor tick tracking for cross-view sync ──
     last_cursor_tick: Option<f64>,
+    piano_last_cursor_tick: Option<f64>,
 
     // ── Playback start position (pause returns here) ──
     play_start_tick: f64,
@@ -127,6 +128,7 @@ impl App {
             title_bar_press_pos: None,
 
             last_cursor_tick: None,
+            piano_last_cursor_tick: None,
 
             sysinfo: System::new(),
             self_pid: sysinfo::get_current_pid().ok(),
@@ -224,28 +226,6 @@ impl eframe::App for App {
             self.last_sys_refresh = Instant::now();
         }
 
-        // ── Transport bar ──
-        let active_doc = self.active_doc.and_then(|idx| self.documents.get(idx));
-        let mut pending_quantize = None;
-        transport_bar::show(
-            ui,
-            &mut self.file_loader,
-            &mut toggle_play,
-            &mut pause_return,
-            &mut stop_play,
-            active_doc,
-            self.cpu_usage,
-            self.mem_mb,
-            &mut pending_quantize,
-        );
-
-        // ── Apply quantization preset change ──
-        if let (Some(idx), Some(new_preset)) = (self.active_doc, pending_quantize) {
-            if let Some(doc) = self.documents.get_mut(idx) {
-                doc.quantize = new_preset;
-            }
-        }
-
         // ── Poll async MIDI loading ──
         match self.file_loader.poll_midi_loading() {
             MidiLoadResult::Loaded { path, midi } => {
@@ -256,7 +236,8 @@ impl eframe::App for App {
             MidiLoadResult::NotReady => {}
         }
 
-        // ── Handle playback actions ──
+        // ── Handle playback actions (before transport bar so cursor_tick
+        //     is settled before any view reads it) ──
         if let Some(idx) = self.active_doc {
             let doc = &mut self.documents[idx];
             if toggle_play {
@@ -276,7 +257,29 @@ impl eframe::App for App {
                 doc.cursor_tick = Some(tick);
                 if reached_end {
                     doc.playback.stop();
+                    doc.cursor_tick = Some(self.play_start_tick);
                 }
+            }
+        }
+
+        // ── Transport bar ──
+        let mut pending_quantize = None;
+        let active_doc = self.active_doc.and_then(|idx| self.documents.get(idx));
+        transport_bar::show(
+            ui,
+            &mut self.file_loader,
+            &mut toggle_play,
+            &mut pause_return,
+            &mut stop_play,
+            active_doc,
+            self.cpu_usage,
+            self.mem_mb,
+            &mut pending_quantize,
+        );
+
+        if let (Some(idx), Some(new_preset)) = (self.active_doc, pending_quantize) {
+            if let Some(doc) = self.documents.get_mut(idx) {
+                doc.quantize = new_preset;
             }
         }
 
@@ -380,6 +383,9 @@ impl eframe::App for App {
                         &doc.track_visible,
                         &mut doc.cursor_tick,
                         is_playing,
+                        doc.quantize,
+                        doc.midi.ticks_per_beat,
+                        &mut self.piano_last_cursor_tick,
                     );
                 });
 
