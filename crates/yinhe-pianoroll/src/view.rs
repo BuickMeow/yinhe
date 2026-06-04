@@ -27,7 +27,7 @@ impl Default for PianoRollView {
             key_height: 12.0,
             scroll_x: 0.0,
             scroll_y: 0.0,
-            keyboard_width: 80.0,
+            keyboard_width: 60.0,
             dirty: true,
             track_panel_row_height: 40.0,
             track_panel_scroll_y: 0.0,
@@ -90,7 +90,8 @@ impl PianoRollView {
 
         // Horizontal: don't scroll before tick 0
         let min_scroll_x = 0.0;
-        let max_scroll_x = (total_ticks as f32 * self.pixels_per_tick - (width - self.keyboard_width)).max(0.0);
+        let max_scroll_x =
+            (total_ticks as f32 * self.pixels_per_tick - (width - self.keyboard_width)).max(0.0);
         self.scroll_x = self.scroll_x.clamp(min_scroll_x, max_scroll_x);
 
         // When total height exceeds viewport by only a few pixels, it means the

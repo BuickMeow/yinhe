@@ -3,7 +3,7 @@ use yinhe_types::is_black_key;
 use crate::vertex::{NoteInstance, pack_props, pack_rgba};
 
 /// Keyboard appearance constants.
-const WHITE_KEY_COLOR: (f32, f32, f32) = (0.94, 0.94, 0.94);
+const WHITE_KEY_COLOR: (f32, f32, f32) = (0.70, 0.70, 0.70); // #B2B2B2
 const BLACK_KEY_COLOR: (f32, f32, f32) = (0.16, 0.16, 0.17);
 const WHITE_KEY_CORNER_RADIUS: f32 = 2.0;
 const BLACK_KEY_CORNER_RADIUS: f32 = 1.5;

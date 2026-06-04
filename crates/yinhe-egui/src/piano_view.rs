@@ -55,17 +55,15 @@ pub fn show(
     }
 
     // ── Dirty detection ──
-    // Capture before playback logic: true when data changed (new MIDI loaded,
-    // selection changed, scroll/zoom from previous frame).
-    let force_rebuild = view.dirty;
-
     // Mark dirty when cursor position changes (playback or click).
-    // Without this, the GPU texture won't re-render and the cursor line
-    // stays at its old position — especially after playback stops.
+    // Must happen before force_rebuild capture so static instances
+    // (including keyboard highlighting) are updated each frame.
     if *cursor_tick != *last_cursor_tick {
         view.dirty = true;
     }
     *last_cursor_tick = *cursor_tick;
+
+    let force_rebuild = view.dirty;
 
     // Prepare GPU data. force_rebuild forces static instances to be rebuilt
     // (for data changes), but NOT during playback cursor movement.
