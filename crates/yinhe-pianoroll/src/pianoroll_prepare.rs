@@ -35,8 +35,8 @@ fn viewport_hash(width: u32, height: u32, view: &PianoRollView) -> u64 {
 /// Prepare the pianoroll for rendering.
 ///
 /// Uses two-phase caching: static instances (background, grid, notes, keyboard)
-/// are only rebuilt when the view changes. During playback, only the cursor line
-/// is updated each frame (O(1) work).
+/// are only rebuilt when the view changes or `force_rebuild` is set. During
+/// playback, only the cursor line is updated each frame (O(1) work).
 ///
 /// Returns `true` if GPU data (uniforms or instances) was actually updated,
 /// `false` if everything was already up-to-date and a re-render can be skipped.
@@ -49,6 +49,7 @@ pub fn prepare(
     selected: &HashSet<(u16, u32)>,
     track_visible: &[bool],
     cursor_tick: Option<f64>,
+    force_rebuild: bool,
 ) -> bool {
     let uniforms = Uniforms {
         width: width as f32,
@@ -61,7 +62,14 @@ pub fn prepare(
         _pad: 0.0,
     };
 
-    let vhash = viewport_hash(width, height, view);
+    let mut vhash = viewport_hash(width, height, view);
+
+    // force_rebuild is set by the caller when the underlying data changed
+    // (new MIDI loaded, selection changed, scroll/zoom) — NOT during
+    // playback cursor movement. Flip the hash to guarantee a mismatch.
+    if force_rebuild {
+        vhash = !vhash;
+    }
 
     renderer.prepare_with_static_cache(
         uniforms,

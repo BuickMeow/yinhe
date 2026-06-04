@@ -46,12 +46,18 @@ pub fn show(
         }
     }
 
+    // ── Dirty detection ──
+    // Capture before playback logic: true when data changed (new MIDI loaded,
+    // selection changed, scroll/zoom from previous frame).
+    let force_rebuild = view.dirty;
+
     // Mark dirty during playback — cursor line needs to move each frame
     if is_playing && cursor_tick.is_some() {
         view.dirty = true;
     }
 
-    // Prepare GPU data. Returns true if uniforms or instances actually changed.
+    // Prepare GPU data. force_rebuild forces static instances to be rebuilt
+    // (for data changes), but NOT during playback cursor movement.
     let gpu_dirty = yinhe_pianoroll::prepare(
         pianoroll,
         w,
@@ -61,7 +67,14 @@ pub fn show(
         selected,
         track_visible,
         *cursor_tick,
+        force_rebuild,
     );
+
+    // content_changed: true if data/playback changed this frame OR prepare
+    // detected a GPU-side change. During playback, view.dirty is true (cursor
+    // moved), so paint() will re-render even if prepare()'s static cache
+    // was still valid.
+    let content_changed = view.dirty || gpu_dirty;
     view.dirty = false;
 
     // Paint: RenderContext internally decides whether a full GPU render pass is
@@ -74,7 +87,7 @@ pub fn show(
         "pianoroll_frame",
         &painter,
         rect,
-        gpu_dirty,
+        content_changed,
     );
 
     // Handle input (zoom/pan/cursor/drag/reset)
