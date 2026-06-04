@@ -14,7 +14,11 @@ struct InstanceBufferSlot {
     capacity_instances: usize,
 }
 
-fn create_instance_buffer_slot(device: &Device, instance_size: u64, capacity: usize) -> InstanceBufferSlot {
+fn create_instance_buffer_slot(
+    device: &Device,
+    instance_size: u64,
+    capacity: usize,
+) -> InstanceBufferSlot {
     let buffer = device.create_buffer(&BufferDescriptor {
         label: Some("instance_buffer"),
         size: instance_size * capacity as u64,
@@ -111,14 +115,21 @@ impl PianorollRenderer {
     ///
     /// `build_static` populates background, grid, notes, and keyboard instances.
     /// `build_cursor` appends the cursor line (O(1) work, called every frame).
+    ///
+    /// Returns `true` if any GPU data was actually updated (new uniforms or
+    /// instances), `false` if everything was already up-to-date.
     pub fn prepare_with_static_cache(
         &mut self,
         uniforms: Uniforms,
         viewport_hash: u64,
         build_static: impl FnOnce(&mut Vec<NoteInstance>),
         build_cursor: impl FnOnce(&mut Vec<NoteInstance>),
-    ) {
+    ) -> bool {
         let need_static = self.cached_viewport_hash != Some(viewport_hash);
+        let uniforms_changed = self
+            .cached_uniforms
+            .as_ref()
+            .map_or(true, |c| *c != uniforms);
 
         if need_static {
             let mut scratch = std::mem::take(&mut self.instance_scratch);
@@ -130,9 +141,14 @@ impl PianorollRenderer {
         }
 
         // Always write uniforms (cheap, needed for cursor position changes).
-        self.queue
-            .write_buffer(&self.render.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
-        self.cached_uniforms = Some(uniforms);
+        if uniforms_changed {
+            self.queue.write_buffer(
+                &self.render.uniform_buffer,
+                0,
+                bytemuck::bytes_of(&uniforms),
+            );
+            self.cached_uniforms = Some(uniforms);
+        }
 
         // Combine static cache + dynamic cursor, then upload to GPU.
         let mut combined = std::mem::take(&mut self.instance_scratch);
@@ -142,13 +158,18 @@ impl PianorollRenderer {
         self.upload_instances(&combined);
         combined.clear();
         self.instance_scratch = combined;
+
+        need_static || uniforms_changed
     }
 
     /// Upload uniforms + instances to GPU.
     pub fn prepare_from_parts(&mut self, uniforms: Uniforms, instances: &[NoteInstance]) {
         self.cached_uniforms = Some(uniforms);
-        self.queue
-            .write_buffer(&self.render.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
+        self.queue.write_buffer(
+            &self.render.uniform_buffer,
+            0,
+            bytemuck::bytes_of(&uniforms),
+        );
         self.upload_instances(instances);
     }
 
@@ -170,8 +191,11 @@ impl PianorollRenderer {
             self.instance_buffers.pop();
         }
         while self.instance_buffers.len() < batches.len() {
-            self.instance_buffers
-                .push(create_instance_buffer_slot(&self.device, instance_size, MIN_INSTANCE_BUFFER_CAPACITY));
+            self.instance_buffers.push(create_instance_buffer_slot(
+                &self.device,
+                instance_size,
+                MIN_INSTANCE_BUFFER_CAPACITY,
+            ));
         }
         for (i, batch) in batches.iter().enumerate() {
             let required_instances = batch.len().max(1);
@@ -182,8 +206,11 @@ impl PianorollRenderer {
                     next_instance_capacity(required_instances),
                 );
             }
-            self.queue
-                .write_buffer(&self.instance_buffers[i].buffer, 0, bytemuck::cast_slice(batch));
+            self.queue.write_buffer(
+                &self.instance_buffers[i].buffer,
+                0,
+                bytemuck::cast_slice(batch),
+            );
         }
     }
 
@@ -234,7 +261,9 @@ impl PianorollRenderer {
 
     /// Check whether given uniforms differ from the last prepared ones.
     pub fn uniforms_changed(&self, uniforms: &Uniforms) -> bool {
-        self.cached_uniforms.as_ref().map_or(true, |c| *c != *uniforms)
+        self.cached_uniforms
+            .as_ref()
+            .map_or(true, |c| *c != *uniforms)
     }
 
     /// Get a reference to the cached uniforms (if any).

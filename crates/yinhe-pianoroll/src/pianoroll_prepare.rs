@@ -2,10 +2,10 @@ use std::collections::HashSet;
 
 use yinhe_types::NoteSource;
 
+use crate::PianorollRenderer;
 use crate::instances;
 use crate::vertex::Uniforms;
 use crate::view::PianoRollView;
-use crate::PianorollRenderer;
 
 /// Hash viewport properties that affect static instances.
 /// Changes only when scroll, zoom, or window size actually change — NOT on every
@@ -14,11 +14,21 @@ fn viewport_hash(width: u32, height: u32, view: &PianoRollView) -> u64 {
     let mut h: u64 = 0;
     h ^= width as u64;
     h = h.wrapping_mul(31).wrapping_add(height as u64);
-    h = h.wrapping_mul(31).wrapping_add(view.scroll_x.to_bits() as u64);
-    h = h.wrapping_mul(31).wrapping_add(view.scroll_y.to_bits() as u64);
-    h = h.wrapping_mul(31).wrapping_add(view.pixels_per_tick.to_bits() as u64);
-    h = h.wrapping_mul(31).wrapping_add(view.key_height.to_bits() as u64);
-    h = h.wrapping_mul(31).wrapping_add(view.keyboard_width.to_bits() as u64);
+    h = h
+        .wrapping_mul(31)
+        .wrapping_add(view.scroll_x.to_bits() as u64);
+    h = h
+        .wrapping_mul(31)
+        .wrapping_add(view.scroll_y.to_bits() as u64);
+    h = h
+        .wrapping_mul(31)
+        .wrapping_add(view.pixels_per_tick.to_bits() as u64);
+    h = h
+        .wrapping_mul(31)
+        .wrapping_add(view.key_height.to_bits() as u64);
+    h = h
+        .wrapping_mul(31)
+        .wrapping_add(view.keyboard_width.to_bits() as u64);
     h
 }
 
@@ -27,6 +37,9 @@ fn viewport_hash(width: u32, height: u32, view: &PianoRollView) -> u64 {
 /// Uses two-phase caching: static instances (background, grid, notes, keyboard)
 /// are only rebuilt when the view changes. During playback, only the cursor line
 /// is updated each frame (O(1) work).
+///
+/// Returns `true` if GPU data (uniforms or instances) was actually updated,
+/// `false` if everything was already up-to-date and a re-render can be skipped.
 pub fn prepare(
     renderer: &mut PianorollRenderer,
     width: u32,
@@ -36,7 +49,7 @@ pub fn prepare(
     selected: &HashSet<(u16, u32)>,
     track_visible: &[bool],
     cursor_tick: Option<f64>,
-) {
+) -> bool {
     let uniforms = Uniforms {
         width: width as f32,
         height: height as f32,
@@ -66,13 +79,7 @@ pub fn prepare(
             );
         },
         |cursor_instances| {
-            instances::build_cursor_instance(
-                cursor_instances,
-                cursor_tick,
-                view,
-                width,
-                height,
-            );
+            instances::build_cursor_instance(cursor_instances, cursor_tick, view, width, height);
         },
-    );
+    )
 }

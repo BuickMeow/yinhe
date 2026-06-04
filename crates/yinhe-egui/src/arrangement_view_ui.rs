@@ -1,7 +1,7 @@
 use eframe::egui;
 
 use yinhe_arrangement::instances as arrangement_instances;
-use yinhe_arrangement::{ArrangementView, NoteInstance, NoteSource, Uniforms, PianorollRenderer};
+use yinhe_arrangement::{ArrangementView, NoteInstance, NoteSource, PianorollRenderer, Uniforms};
 
 use super::render_context::RenderContext;
 
@@ -74,9 +74,9 @@ pub fn show(
     };
 
     // Only rebuild instances if view state or uniforms changed
-    let need_rebuild = view.dirty || renderer.uniforms_changed(&uniforms);
+    let gpu_dirty = view.dirty || renderer.uniforms_changed(&uniforms);
 
-    if need_rebuild {
+    if gpu_dirty {
         // ── Build instances using scratch buffer ──
         let mut scratch = std::mem::take(instances);
         scratch.clear();
@@ -101,8 +101,22 @@ pub fn show(
     }
     view.dirty = false;
 
-    // ── Render to offscreen texture and display ──
-    render_ctx.render_and_display(renderer, w, h, "arrangement_frame", &painter, rect, texture_id);
+    // Render to offscreen texture and display in egui, or just display the
+    // existing texture if nothing changed — avoiding unnecessary GPU command
+    // buffer submissions that cause back-pressure on large textures.
+    if gpu_dirty {
+        render_ctx.render_and_display(
+            renderer,
+            w,
+            h,
+            "arrangement_frame",
+            &painter,
+            rect,
+            texture_id,
+        );
+    } else {
+        render_ctx.display_texture(w, h, &painter, rect, texture_id);
+    }
 
     // ── Handle input (zoom/pan/cursor/drag/reset) ──
     crate::view_interaction::handle_input(ui, &resp, rect, view, cursor_tick, 0.0);

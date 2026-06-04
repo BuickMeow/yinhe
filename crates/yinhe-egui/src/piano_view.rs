@@ -40,8 +40,8 @@ pub fn show(
             let right_edge = w as f32;
             let margin = (right_edge - view.keyboard_width) * 0.2;
             if cursor_x > right_edge - margin || cursor_x < view.keyboard_width {
-                view.scroll_x = (ct as f32 * view.pixels_per_tick)
-                    - (right_edge - view.keyboard_width) * 0.5;
+                view.scroll_x =
+                    (ct as f32 * view.pixels_per_tick) - (right_edge - view.keyboard_width) * 0.5;
                 view.clamp_scroll(w as f32, h as f32, total_ticks);
             }
         }
@@ -52,12 +52,35 @@ pub fn show(
         view.dirty = true;
     }
 
-    // Prepare and render to offscreen texture
-    yinhe_pianoroll::prepare(pianoroll, w, h, midi, view, selected, track_visible, *cursor_tick);
+    // Prepare GPU data. Returns true if uniforms or instances actually changed.
+    let gpu_dirty = yinhe_pianoroll::prepare(
+        pianoroll,
+        w,
+        h,
+        midi,
+        view,
+        selected,
+        track_visible,
+        *cursor_tick,
+    );
     view.dirty = false;
 
-    // Render to offscreen texture and display in egui
-    render_ctx.render_and_display(pianoroll, w, h, "pianoroll_frame", &painter, rect, texture_id);
+    // Render to offscreen texture and display in egui, or just display the
+    // existing texture if nothing changed — avoiding unnecessary GPU command
+    // buffer submissions that cause back-pressure on large textures.
+    if gpu_dirty {
+        render_ctx.render_and_display(
+            pianoroll,
+            w,
+            h,
+            "pianoroll_frame",
+            &painter,
+            rect,
+            texture_id,
+        );
+    } else {
+        render_ctx.display_texture(w, h, &painter, rect, texture_id);
+    }
 
     // Handle input (zoom/pan/cursor/drag/reset)
     crate::view_interaction::handle_input(ui, &resp, rect, view, cursor_tick, view.keyboard_width);
