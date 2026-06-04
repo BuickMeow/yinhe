@@ -10,65 +10,7 @@ pub(crate) enum TitleBarAction {
     CloseDocument(usize),
 }
 
-// ── macOS custom title bar animation ──
 
-/// State for a smooth maximize/restore animation.
-/// Each frame we send slightly different OuterPosition + InnerSize
-/// to drive a smooth transition.
-#[cfg(target_os = "macos")]
-pub(crate) struct TitleBarAnim {
-    pub start: std::time::Instant,
-    pub duration: std::time::Duration,
-    pub from_pos: egui::Pos2,
-    pub from_size: egui::Vec2,
-    pub to_pos: egui::Pos2,
-    pub to_size: egui::Vec2,
-}
-
-#[cfg(target_os = "macos")]
-fn ease_in_out_cubic(t: f64) -> f64 {
-    if t < 0.5 {
-        4.0 * t * t * t
-    } else {
-        1.0 - f64::powi(-2.0 * t + 2.0, 3) / 2.0
-    }
-}
-
-/// Called at the start of each `ui()` frame. If a title-bar animation
-/// is in progress, interpolates the window position/size and sends
-/// `OuterPosition` + `InnerSize` commands for this frame.
-#[cfg(target_os = "macos")]
-pub(crate) fn process_title_bar_anim(
-    anim: &mut Option<TitleBarAnim>,
-    ctx: &egui::Context,
-) -> bool {
-    let Some(a) = anim.as_ref() else {
-        return false;
-    };
-
-    let elapsed = a.start.elapsed().as_secs_f64();
-    let duration = a.duration.as_secs_f64();
-    let raw_t = (elapsed / duration).min(1.0);
-    let eased = ease_in_out_cubic(raw_t) as f32;
-
-    let x = a.from_pos.x + (a.to_pos.x - a.from_pos.x) * eased;
-    let y = a.from_pos.y + (a.to_pos.y - a.from_pos.y) * eased;
-    let w = a.from_size.x + (a.to_size.x - a.from_size.x) * eased;
-    let h = a.from_size.y + (a.to_size.y - a.from_size.y) * eased;
-
-    ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(x, y)));
-    ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(w, h)));
-
-    if raw_t >= 1.0 {
-        let a = anim.take().unwrap();
-        ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(a.to_pos));
-        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(a.to_size));
-        true
-    } else {
-        ctx.request_repaint_after(std::time::Duration::from_secs_f64(1.0 / 60.0));
-        false
-    }
-}
 
 /// Draw the custom title bar at the top of the window.
 /// Returns an optional action for the caller to perform (e.g. close a document).
@@ -77,8 +19,6 @@ pub(crate) fn show(
     documents: &[Document],
     active_doc: &mut Option<usize>,
     title_bar_press_pos: &mut Option<egui::Pos2>,
-    #[cfg(target_os = "macos")] restore_rect: &mut Option<egui::Rect>,
-    #[cfg(target_os = "macos")] anim: &mut Option<TitleBarAnim>,
 ) -> Option<TitleBarAction> {
     let mut action = None;
     egui::Panel::top("title_bar")
@@ -290,50 +230,10 @@ pub(crate) fn show(
                     .map(|p| drag_rect.contains(p))
                     .unwrap_or(false);
                 if pos_in_drag {
-                    #[cfg(not(target_os = "macos"))]
-                    {
-                        let maximized = ui
-                            .input(|i| i.viewport().maximized.unwrap_or(false));
-                        ui.ctx()
-                            .send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
-                    }
-
-                    #[cfg(target_os = "macos")]
-                    {
-                        if anim.is_some() {
-                            // Already animating
-                        } else if let Some(restore) = restore_rect.take() {
-                            let current = ui.input(|i| i.viewport().outer_rect);
-                            if let Some(cur) = current {
-                                *anim = Some(TitleBarAnim {
-                                    start: std::time::Instant::now(),
-                                    duration: std::time::Duration::from_millis(350),
-                                    from_pos: cur.min,
-                                    from_size: cur.size(),
-                                    to_pos: restore.min,
-                                    to_size: restore.size(),
-                                });
-                                ui.ctx().request_repaint();
-                            } else {
-                                *restore_rect = Some(restore);
-                            }
-                        } else {
-                            let outer = ui.input(|i| i.viewport().outer_rect);
-                            let mon = ui.input(|i| i.viewport().monitor_size);
-                            if let (Some(cur), Some(mon_size)) = (outer, mon) {
-                                *restore_rect = Some(cur);
-                                *anim = Some(TitleBarAnim {
-                                    start: std::time::Instant::now(),
-                                    duration: std::time::Duration::from_millis(350),
-                                    from_pos: cur.min,
-                                    from_size: cur.size(),
-                                    to_pos: egui::Pos2::new(0.0, 0.0),
-                                    to_size: mon_size,
-                                });
-                                ui.ctx().request_repaint();
-                            }
-                        }
-                    }
+                    let maximized = ui
+                        .input(|i| i.viewport().maximized.unwrap_or(false));
+                    ui.ctx()
+                        .send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
                 }
             }
 
