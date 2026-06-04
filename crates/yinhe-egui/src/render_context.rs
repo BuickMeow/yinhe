@@ -11,10 +11,10 @@ pub struct RenderContext {
     width: u32,
     height: u32,
     shrink_to_fit_on_next_size: bool,
-    /// Force a full texture recreate on the next ensure_size call, regardless
-    /// of whether the size changed. Used after window maximize to "refresh"
-    /// the GPU pipeline (mirrors the restore-path behavior that always recovers).
-    force_recreate: bool,
+    /// True when the offscreen texture has been recreated and needs a full
+    /// GPU render pass before it can be displayed. Set by `recreate_target`
+    /// and cleared by `paint()` when it performs a render.
+    needs_render: bool,
     /// Set to true by the device-lost callback. When true, GPU operations are
     /// skipped to avoid blocking the main thread on a lost device.
     device_lost: Arc<AtomicBool>,
@@ -57,7 +57,7 @@ impl RenderContext {
             width,
             height,
             shrink_to_fit_on_next_size: false,
-            force_recreate: false,
+            needs_render: true, // fresh texture, needs first render
             device_lost,
         }
     }
@@ -122,6 +122,7 @@ impl RenderContext {
         self.texture_id = texture_id;
         self.width = width;
         self.height = height;
+        self.needs_render = true; // fresh texture, must re-render
     }
 
     /// Resize the offscreen texture if needed.
@@ -134,12 +135,11 @@ impl RenderContext {
             self.shrink_to_fit_on_next_size && (self.width != width || self.height != height);
         let should_grow = width > self.width || height > self.height;
 
-        if self.force_recreate || should_shrink || should_grow {
+        if should_shrink || should_grow {
             self.recreate_target(width, height);
         }
 
         self.shrink_to_fit_on_next_size = false;
-        self.force_recreate = false;
     }
 
     /// Grow the offscreen texture to the requested capacity, but never shrink.
@@ -156,13 +156,6 @@ impl RenderContext {
     /// Shrink to the next requested logical size after a temporary oversize allocation.
     pub fn request_shrink_to_fit(&mut self) {
         self.shrink_to_fit_on_next_size = true;
-    }
-
-    /// Force a full texture recreate on the next ensure_size call, regardless
-    /// of size changes. Used to "refresh" the GPU pipeline after window maximize,
-    /// mirroring the restore-path behavior that always recovers from GPU stalls.
-    pub fn request_recreate(&mut self) {
-        self.force_recreate = true;
     }
 
     pub fn preview_texture_id(&self) -> egui::TextureId {
@@ -185,36 +178,16 @@ impl RenderContext {
         &self.view
     }
 
-    /// Paint the existing texture into egui without re-rendering to it.
-    /// Use this when the offscreen content hasn't changed and we just need
-    /// to display the previous frame's result. Avoids submitting unnecessary
-    /// GPU command buffers that would create back-pressure on large textures.
-    pub fn display_texture(
-        &self,
-        width: u32,
-        height: u32,
-        painter: &egui::Painter,
-        rect: egui::Rect,
-        texture_id: egui::TextureId,
-    ) {
-        let uv_max = egui::pos2(
-            width as f32 / self.width as f32,
-            height as f32 / self.height as f32,
-        );
-        painter.image(
-            texture_id,
-            rect,
-            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), uv_max),
-            egui::Color32::WHITE,
-        );
-    }
-
-    /// Encode a draw call, submit to GPU, and paint the resulting texture into egui.
+    /// Render to the offscreen texture (if needed) and paint it into egui.
     ///
-    /// Returns early if the GPU device has been lost (e.g. after a large window
-    /// resize triggered a TDR). This prevents the main thread from blocking
-    /// indefinitely on a lost device.
-    pub fn render_and_display(
+    /// `content_changed`: caller signals whether CPU-side data (instances,
+    /// uniforms, viewport) has changed since the last frame. If false AND the
+    /// texture was already rendered (not freshly created), GPU work is skipped
+    /// entirely — only `painter.image()` is called to display the existing
+    /// texture. This avoids accumulating GPU command buffers when nothing moved.
+    ///
+    /// Returns early if the GPU device has been lost.
+    pub fn paint(
         &mut self,
         renderer: &yinhe_wgpu::PianorollRenderer,
         width: u32,
@@ -222,30 +195,31 @@ impl RenderContext {
         label: &str,
         painter: &egui::Painter,
         rect: egui::Rect,
-        texture_id: egui::TextureId,
+        content_changed: bool,
     ) {
-        // Guard against operations on a lost device (can happen on macOS after
-        // large window resizes when the Metal driver resets). The flag is set
-        // by the device-lost callback registered in RenderContext::new().
+        // Guard against operations on a lost device.
         if self.device_lost.load(Ordering::Relaxed) {
-            tracing::warn!(
-                "wgpu device lost — skipping render_and_display for '{}'",
-                label
-            );
+            tracing::warn!("wgpu device lost — skipping paint '{}'", label);
             return;
         }
-
-        let mut encoder = self
-            .device()
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some(label) });
-        renderer.draw(&mut encoder, self.preview_view(), width, height);
-        self.queue().submit(std::iter::once(encoder.finish()));
 
         let uv_max = egui::pos2(
             width as f32 / self.width as f32,
             height as f32 / self.height as f32,
         );
 
+        let do_render = self.needs_render || content_changed;
+
+        if do_render {
+            let mut encoder = self
+                .device()
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some(label) });
+            renderer.draw(&mut encoder, self.preview_view(), width, height);
+            self.queue().submit(std::iter::once(encoder.finish()));
+            self.needs_render = false;
+        }
+
+        let texture_id = self.preview_texture_id();
         painter.image(
             texture_id,
             rect,

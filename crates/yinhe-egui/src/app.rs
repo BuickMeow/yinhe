@@ -225,20 +225,10 @@ impl eframe::App for App {
         #[cfg(target_os = "macos")]
         let anim_finished = title_bar::process_title_bar_anim(&mut self.anim, ui.ctx());
         #[cfg(target_os = "macos")]
-        if anim_finished {
-            if anim_was_shrinking {
-                // Restore: shrink textures to match the smaller window
-                self.render_ctx.request_shrink_to_fit();
-                self.arr_render_ctx.request_shrink_to_fit();
-            } else {
-                // Maximize: force a full texture recreate to refresh the GPU
-                // pipeline. Without this, the large textures created during the
-                // animation can cause GPU command-buffer back-pressure that
-                // stalls the compositor for up to ~10 seconds.
-                // This mirrors the restore-path behavior which always recovers.
-                self.render_ctx.request_recreate();
-                self.arr_render_ctx.request_recreate();
-            }
+        if anim_finished && anim_was_shrinking {
+            // Restore (shrink): reclaim GPU memory by resizing textures down
+            self.render_ctx.request_shrink_to_fit();
+            self.arr_render_ctx.request_shrink_to_fit();
         }
 
         // ── Force dark mode ──

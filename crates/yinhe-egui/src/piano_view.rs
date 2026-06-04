@@ -24,7 +24,6 @@ pub fn show(
 
     // Resize render target if needed — texture_id may change after this
     render_ctx.ensure_size(w, h);
-    let texture_id = render_ctx.preview_texture_id();
 
     // Clamp scroll — add some extra space beyond the last note
     let total_ticks = midi
@@ -65,22 +64,18 @@ pub fn show(
     );
     view.dirty = false;
 
-    // Render to offscreen texture and display in egui, or just display the
-    // existing texture if nothing changed — avoiding unnecessary GPU command
-    // buffer submissions that cause back-pressure on large textures.
-    if gpu_dirty {
-        render_ctx.render_and_display(
-            pianoroll,
-            w,
-            h,
-            "pianoroll_frame",
-            &painter,
-            rect,
-            texture_id,
-        );
-    } else {
-        render_ctx.display_texture(w, h, &painter, rect, texture_id);
-    }
+    // Paint: RenderContext internally decides whether a full GPU render pass is
+    // needed (fresh texture or content_changed) or just a display of the existing
+    // texture — avoiding command-buffer back-pressure when nothing moved.
+    render_ctx.paint(
+        pianoroll,
+        w,
+        h,
+        "pianoroll_frame",
+        &painter,
+        rect,
+        gpu_dirty,
+    );
 
     // Handle input (zoom/pan/cursor/drag/reset)
     crate::view_interaction::handle_input(ui, &resp, rect, view, cursor_tick, view.keyboard_width);
