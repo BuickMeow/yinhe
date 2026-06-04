@@ -29,23 +29,29 @@ pub fn show(
 
                 ui.add_space(2.0);
 
-                if ui
-                    .add(
-                        egui::Label::new(
-                            egui::RichText::new("ARRANGE")
-                                .size(font_size)
-                                .strong()
-                                .color(if *view_mode == ViewMode::Arrange {
-                                    active_color
-                                } else {
-                                    inactive_color
-                                }),
-                        )
-                        .sense(egui::Sense::click())
-                        .selectable(false),
-                    )
-                    .clicked()
-                {
+                // ── ARRANGE ──
+                let arrange_sel = *view_mode == ViewMode::Arrange;
+                let arrange_resp = ui.add(
+                    egui::Label::new(egui::RichText::new("ARRANGE").size(font_size).color(
+                        if arrange_sel {
+                            active_color
+                        } else {
+                            inactive_color
+                        },
+                    ))
+                    .sense(egui::Sense::click())
+                    .selectable(false),
+                );
+                if !arrange_sel && arrange_resp.hovered() {
+                    ui.painter().text(
+                        arrange_resp.rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        "ARRANGE",
+                        egui::FontId::proportional(font_size),
+                        egui::Color32::WHITE,
+                    );
+                }
+                if arrange_resp.clicked() {
                     *view_mode = ViewMode::Arrange;
                     *show_transport = true;
                     *show_pianoroll = *show_pianoroll_in_arrange;
@@ -53,22 +59,29 @@ pub fn show(
 
                 ui.add_space(2.0);
 
-                if ui
-                    .add(
-                        egui::Label::new(
-                            egui::RichText::new("MIX").size(font_size).strong().color(
-                                if *view_mode == ViewMode::Mix {
-                                    active_color
-                                } else {
-                                    inactive_color
-                                },
-                            ),
-                        )
-                        .sense(egui::Sense::click())
-                        .selectable(false),
-                    )
-                    .clicked()
-                {
+                // ── MIX ──
+                let mix_sel = *view_mode == ViewMode::Mix;
+                let mix_resp = ui.add(
+                    egui::Label::new(egui::RichText::new("MIX").size(font_size).color(
+                        if mix_sel {
+                            active_color
+                        } else {
+                            inactive_color
+                        },
+                    ))
+                    .sense(egui::Sense::click())
+                    .selectable(false),
+                );
+                if !mix_sel && mix_resp.hovered() {
+                    ui.painter().text(
+                        mix_resp.rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        "MIX",
+                        egui::FontId::proportional(font_size),
+                        egui::Color32::WHITE,
+                    );
+                }
+                if mix_resp.clicked() {
                     *view_mode = ViewMode::Mix;
                     *show_transport = false;
                     *show_pianoroll = false;
@@ -76,44 +89,60 @@ pub fn show(
 
                 ui.add_space(2.0);
 
-                if ui
-                    .add(
-                        egui::Label::new(
-                            egui::RichText::new("EDIT").size(font_size).strong().color(
-                                if *view_mode == ViewMode::Edit {
-                                    active_color
-                                } else {
-                                    inactive_color
-                                },
-                            ),
-                        )
-                        .sense(egui::Sense::click())
-                        .selectable(false),
-                    )
-                    .clicked()
-                {
+                // ── EDIT ──
+                let edit_sel = *view_mode == ViewMode::Edit;
+                let edit_resp = ui.add(
+                    egui::Label::new(egui::RichText::new("EDIT").size(font_size).color(
+                        if edit_sel {
+                            active_color
+                        } else {
+                            inactive_color
+                        },
+                    ))
+                    .sense(egui::Sense::click())
+                    .selectable(false),
+                );
+                if !edit_sel && edit_resp.hovered() {
+                    ui.painter().text(
+                        edit_resp.rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        "EDIT",
+                        egui::FontId::proportional(font_size),
+                        egui::Color32::WHITE,
+                    );
+                }
+                if edit_resp.clicked() {
                     *view_mode = ViewMode::Edit;
                     *show_transport = false;
                     *show_pianoroll = true;
                 }
 
+                // ── Piano roll toggle ──
                 if *view_mode == ViewMode::Arrange {
                     ui.add_space(6.0);
                     ui.separator();
                     ui.add_space(6.0);
-                    let emoji_color = if *show_pianoroll_in_arrange {
-                        egui::Color32::WHITE
+
+                    let piano_color = if *show_pianoroll_in_arrange {
+                        active_color
                     } else {
-                        egui::Color32::from_gray(80)
+                        inactive_color
                     };
-                    if ui
-                        .add(
-                            egui::Label::new(ICON_PIANO.rich_text().size(14.0).color(emoji_color))
-                                .sense(egui::Sense::click())
-                                .selectable(false),
-                        )
-                        .clicked()
-                    {
+                    let piano_resp = ui.add(
+                        egui::Label::new(ICON_PIANO.rich_text().size(14.0).color(piano_color))
+                            .sense(egui::Sense::click())
+                            .selectable(false),
+                    );
+                    if !*show_pianoroll_in_arrange && piano_resp.hovered() {
+                        ui.painter().text(
+                            piano_resp.rect.center(),
+                            egui::Align2::CENTER_CENTER,
+                            ICON_PIANO.codepoint,
+                            egui::FontId::new(14.0, ICON_PIANO.font_family()),
+                            egui::Color32::WHITE,
+                        );
+                    }
+                    if piano_resp.clicked() {
                         *show_pianoroll_in_arrange = !*show_pianoroll_in_arrange;
                         *show_pianoroll = *show_pianoroll_in_arrange;
                     }
