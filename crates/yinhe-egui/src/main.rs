@@ -7,6 +7,7 @@ mod loading;
 mod mode_bar;
 mod piano_view;
 mod playback;
+mod quantize;
 mod render_context;
 mod time_format;
 mod title_bar;
@@ -23,8 +24,7 @@ fn main() {
         )
         .init();
 
-    let mut viewport = eframe::egui::ViewportBuilder::default()
-        .with_inner_size([1400.0, 900.0]);
+    let mut viewport = eframe::egui::ViewportBuilder::default().with_inner_size([1400.0, 900.0]);
 
     #[cfg(target_os = "macos")]
     {

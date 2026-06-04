@@ -2,6 +2,7 @@ use eframe::egui;
 
 use crate::document::Document;
 use crate::file_loader::FileLoader;
+use crate::quantize::QuantizePreset;
 use crate::time_format;
 
 pub fn show(
@@ -13,6 +14,7 @@ pub fn show(
     doc: Option<&Document>,
     cpu_usage: f32,
     mem_mb: f64,
+    pending_quantize: &mut Option<QuantizePreset>,
 ) {
     let has_active = doc.is_some();
 
@@ -29,6 +31,9 @@ pub fn show(
             ..Default::default()
         })
         .show_inside(ui, |ui| {
+            // Taller buttons for the transport bar
+            ui.spacing_mut().interact_size.y = 32.0;
+
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 let open_btn =
                     ui.add_enabled(!file_loader.is_loading(), egui::Button::new("Open MIDI"));
@@ -38,15 +43,105 @@ pub fn show(
 
                 if has_active {
                     let is_playing = doc.map(|d| d.playback.is_playing()).unwrap_or(false);
-                    if ui.button(if is_playing { "⏸" } else { "▶" }).clicked() {
+
+                    let btn_size = egui::vec2(32.0, 32.0);
+                    let btn_rounding = egui::CornerRadius::same(2);
+
+                    if ui
+                        .add(
+                            egui::Button::new(if is_playing { "⏸" } else { "▶" })
+                                .min_size(btn_size)
+                                .corner_radius(btn_rounding),
+                        )
+                        .clicked()
+                    {
                         if is_playing {
                             *pause_return = true;
                         } else {
                             *toggle_play = true;
                         }
                     }
-                    if ui.button("⏹").clicked() {
+
+                    if ui
+                        .add(
+                            egui::Button::new("⏹")
+                                .min_size(btn_size)
+                                .corner_radius(btn_rounding),
+                        )
+                        .clicked()
+                    {
                         *stop_play = true;
+                    }
+
+                    // ── Quantization preset button + popup ──
+                    let ppq = doc.map(|d| d.midi.ticks_per_beat).unwrap_or(480);
+                    let q_label = doc.map(|d| d.quantize.button_text()).unwrap_or_default();
+                    let q_resp = ui.add(
+                        egui::Button::new(q_label.as_str())
+                            .min_size(egui::vec2(44.0, 32.0))
+                            .corner_radius(btn_rounding),
+                    );
+
+                    egui::Popup::menu(&q_resp).show(|ui| {
+                        ui.set_min_width(120.0);
+                        for preset in QuantizePreset::ALL {
+                            let active = doc.map(|d| *preset == d.quantize).unwrap_or(false);
+                            if ui
+                                .selectable_label(active, preset.display_item(ppq))
+                                .clicked()
+                            {
+                                *pending_quantize = Some(*preset);
+                                ui.close();
+                            }
+                        }
+
+                        ui.separator();
+
+                        let is_custom = doc
+                            .map(|d| matches!(d.quantize, QuantizePreset::Custom(_, _)))
+                            .unwrap_or(false);
+                        if ui.selectable_label(is_custom, "Custom").clicked() {
+                            *pending_quantize = Some(QuantizePreset::Custom(1, 4));
+                            ui.close();
+                        }
+                    });
+
+                    // ── Custom fraction editor (visible only when Custom is selected) ──
+                    if let Some(doc) = doc {
+                        if let QuantizePreset::Custom(ref num, ref den) = doc.quantize {
+                            let mut edit_num = *num;
+                            let mut edit_den = *den;
+
+                            ui.add_space(2.0);
+                            ui.label("n:");
+                            let num_resp = ui.add(
+                                egui::DragValue::new(&mut edit_num)
+                                    .range(1..=9999)
+                                    .speed(0.5)
+                                    .prefix("")
+                                    .max_decimals(0)
+                                    .fixed_decimals(0),
+                            );
+                            ui.label("d:");
+                            let den_resp = ui.add(
+                                egui::DragValue::new(&mut edit_den)
+                                    .range(1..=9999)
+                                    .speed(0.5)
+                                    .prefix("")
+                                    .max_decimals(0)
+                                    .fixed_decimals(0),
+                            );
+
+                            if num_resp.dragged()
+                                || den_resp.dragged()
+                                || num_resp.changed()
+                                || den_resp.changed()
+                            {
+                                let edit_den = edit_den.max(1);
+                                *pending_quantize =
+                                    Some(QuantizePreset::Custom(edit_num, edit_den));
+                            }
+                        }
                     }
                 }
 

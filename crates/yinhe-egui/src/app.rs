@@ -39,8 +39,6 @@ pub struct App {
     show_transport: bool,
     show_pianoroll: bool,
 
-
-
     // ── Manual click tracking for title bar tabs ──
     title_bar_press_pos: Option<egui::Pos2>,
 
@@ -228,6 +226,7 @@ impl eframe::App for App {
 
         // ── Transport bar ──
         let active_doc = self.active_doc.and_then(|idx| self.documents.get(idx));
+        let mut pending_quantize = None;
         transport_bar::show(
             ui,
             &mut self.file_loader,
@@ -237,7 +236,15 @@ impl eframe::App for App {
             active_doc,
             self.cpu_usage,
             self.mem_mb,
+            &mut pending_quantize,
         );
+
+        // ── Apply quantization preset change ──
+        if let (Some(idx), Some(new_preset)) = (self.active_doc, pending_quantize) {
+            if let Some(doc) = self.documents.get_mut(idx) {
+                doc.quantize = new_preset;
+            }
+        }
 
         // ── Poll async MIDI loading ──
         match self.file_loader.poll_midi_loading() {
