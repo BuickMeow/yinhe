@@ -6,6 +6,27 @@ use crate::file_loader::FileLoader;
 use crate::quantize::QuantizePreset;
 use crate::time_format;
 
+/// Actions triggered from the file menu dropdown.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FileAction {
+    NewProject,
+    Open,
+    Save,
+    SaveAs,
+    CloseDocument,
+    ExportAudio,
+    ExportMidi,
+    Settings,
+    Exit,
+}
+
+struct MenuItem {
+    icon: egui_material_icons::MaterialIcon,
+    label: &'static str,
+    action: FileAction,
+    enabled: bool,
+}
+
 pub fn show(
     ui: &mut egui::Ui,
     file_loader: &mut FileLoader,
@@ -16,6 +37,7 @@ pub fn show(
     cpu_usage: f32,
     mem_mb: f64,
     pending_quantize: &mut Option<QuantizePreset>,
+    pending_file_action: &mut Option<FileAction>,
 ) {
     let has_active = doc.is_some();
 
@@ -39,17 +61,124 @@ pub fn show(
             let mut button_right: Option<f32> = None;
 
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                let open_btn =
-                    ui.add_enabled(!file_loader.is_loading(), egui::Button::new("Open MIDI"));
-                if open_btn.clicked() {
-                    file_loader.pick_midi_file();
-                }
+                let btn_size = egui::vec2(32.0, 32.0);
+                let btn_rounding = egui::CornerRadius::same(2);
+
+                let file_btn = ui.add(
+                    egui::Button::new(ICON_DESCRIPTION.rich_text().size(18.0))
+                        .min_size(btn_size)
+                        .corner_radius(btn_rounding),
+                );
+                egui::Popup::menu(&file_btn).show(|ui| {
+                    ui.set_min_width(180.0);
+
+                    fn menu_items(
+                        ui: &mut egui::Ui,
+                        items: &[MenuItem],
+                        pending_action: &mut Option<FileAction>,
+                    ) {
+                        for item in items {
+                            let icon_color = if item.enabled {
+                                egui::Color32::WHITE
+                            } else {
+                                egui::Color32::from_gray(80)
+                            };
+                            let resp = ui.add_enabled(
+                                item.enabled,
+                                egui::Button::selectable(
+                                    false,
+                                    egui::RichText::new(format!("      {}", item.label)).size(14.0),
+                                ),
+                            );
+                            if resp.clicked() {
+                                *pending_action = Some(item.action);
+                                ui.close();
+                            }
+                            // Paint icon relative to the item's rect
+                            let icon_pos = egui::pos2(resp.rect.min.x + 4.0, resp.rect.center().y);
+                            ui.painter().text(
+                                icon_pos,
+                                egui::Align2::LEFT_CENTER,
+                                item.icon.codepoint,
+                                egui::FontId::new(16.0, item.icon.font_family()),
+                                icon_color,
+                            );
+                        }
+                    }
+
+                    let items = [
+                        MenuItem {
+                            icon: ICON_NOTE_ADD,
+                            label: "新建工程",
+                            action: FileAction::NewProject,
+                            enabled: !file_loader.is_loading(),
+                        },
+                        MenuItem {
+                            icon: ICON_FOLDER_OPEN,
+                            label: "打开",
+                            action: FileAction::Open,
+                            enabled: !file_loader.is_loading(),
+                        },
+                        MenuItem {
+                            icon: ICON_SAVE,
+                            label: "保存",
+                            action: FileAction::Save,
+                            enabled: has_active,
+                        },
+                        MenuItem {
+                            icon: ICON_SAVE_ALT,
+                            label: "另存为",
+                            action: FileAction::SaveAs,
+                            enabled: has_active,
+                        },
+                        MenuItem {
+                            icon: ICON_CLOSE,
+                            label: "关闭",
+                            action: FileAction::CloseDocument,
+                            enabled: has_active,
+                        },
+                    ];
+                    menu_items(ui, &items, pending_file_action);
+
+                    ui.separator();
+
+                    let export_items = [
+                        MenuItem {
+                            icon: ICON_AUDIO_FILE,
+                            label: "导出音频",
+                            action: FileAction::ExportAudio,
+                            enabled: has_active,
+                        },
+                        MenuItem {
+                            icon: ICON_MUSIC_NOTE,
+                            label: "导出MIDI",
+                            action: FileAction::ExportMidi,
+                            enabled: has_active,
+                        },
+                    ];
+                    menu_items(ui, &export_items, pending_file_action);
+
+                    ui.separator();
+
+                    let misc_items = [
+                        MenuItem {
+                            icon: ICON_SETTINGS,
+                            label: "设置",
+                            action: FileAction::Settings,
+                            enabled: true,
+                        },
+                        MenuItem {
+                            icon: ICON_EXIT_TO_APP,
+                            label: "退出",
+                            action: FileAction::Exit,
+                            enabled: true,
+                        },
+                    ];
+                    menu_items(ui, &misc_items, pending_file_action);
+                });
 
                 if has_active {
                     let is_playing = doc.map(|d| d.playback.is_playing()).unwrap_or(false);
-
-                    let btn_size = egui::vec2(32.0, 32.0);
-                    let btn_rounding = egui::CornerRadius::same(2);
 
                     if ui
                         .add(
@@ -99,7 +228,7 @@ pub fn show(
                         for preset in QuantizePreset::ALL {
                             let active = doc.map(|d| *preset == d.quantize).unwrap_or(false);
                             if ui
-                                .selectable_label(active, preset.display_item(ppq))
+                                .add(egui::Button::selectable(active, preset.display_item(ppq)))
                                 .clicked()
                             {
                                 *pending_quantize = Some(*preset);
@@ -112,7 +241,10 @@ pub fn show(
                         let is_custom = doc
                             .map(|d| matches!(d.quantize, QuantizePreset::Custom(_, _)))
                             .unwrap_or(false);
-                        if ui.selectable_label(is_custom, "Custom").clicked() {
+                        if ui
+                            .add(egui::Button::selectable(is_custom, "Custom"))
+                            .clicked()
+                        {
                             *pending_quantize = Some(QuantizePreset::Custom(1, 4));
                             ui.close();
                         }

@@ -108,7 +108,7 @@ pub fn show(
                     };
                     if ui
                         .add(
-                            egui::Label::new(ICON_PIANO.rich_text().size(16.0).color(emoji_color))
+                            egui::Label::new(ICON_PIANO.rich_text().size(14.0).color(emoji_color))
                                 .sense(egui::Sense::click())
                                 .selectable(false),
                         )

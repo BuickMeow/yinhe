@@ -273,6 +273,7 @@ impl eframe::App for App {
 
         // ── Transport bar ──
         let mut pending_quantize = None;
+        let mut pending_file_action = None;
         let active_doc = self.active_doc.and_then(|idx| self.documents.get(idx));
         transport_bar::show(
             ui,
@@ -284,11 +285,43 @@ impl eframe::App for App {
             self.cpu_usage,
             self.mem_mb,
             &mut pending_quantize,
+            &mut pending_file_action,
         );
 
         if let (Some(idx), Some(new_preset)) = (self.active_doc, pending_quantize) {
             if let Some(doc) = self.documents.get_mut(idx) {
                 doc.quantize = new_preset;
+            }
+        }
+
+        // ── Handle file menu actions ──
+        if let Some(action) = pending_file_action {
+            match action {
+                transport_bar::FileAction::NewProject => {
+                    let mut doc = Document::default();
+                    doc.file_name = "Untitled".into();
+                    doc.midi.track_ports = vec![0];
+                    doc.midi.track_names = vec!["Track 1".to_string()];
+                    doc.track_info_cache = doc.midi.track_info();
+                    doc.track_visible = vec![true];
+                    self.documents.push(doc);
+                    self.active_doc = Some(self.documents.len() - 1);
+                }
+                transport_bar::FileAction::Open => {
+                    self.file_loader.pick_midi_file();
+                }
+                transport_bar::FileAction::CloseDocument => {
+                    if let Some(idx) = self.active_doc {
+                        self.close_document(idx);
+                    }
+                }
+                transport_bar::FileAction::Exit => {
+                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+                _ => {
+                    // Save, SaveAs, ExportAudio, ExportMidi, Settings
+                    // not yet implemented
+                }
             }
         }
 
