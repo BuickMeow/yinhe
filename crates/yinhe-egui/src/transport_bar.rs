@@ -34,6 +34,9 @@ pub fn show(
             // Taller buttons for the transport bar
             ui.spacing_mut().interact_size.y = 32.0;
 
+            let mut timecode_rect: Option<egui::Rect> = None;
+            let mut button_right: Option<f32> = None;
+
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 let open_btn =
                     ui.add_enabled(!file_loader.is_loading(), egui::Button::new("Open MIDI"));
@@ -154,7 +157,11 @@ pub fn show(
                     let ppq = doc.midi.ticks_per_beat;
 
                     let bpm_str = time_format::format_bpm(bpm);
-                    let ts_str = time_format::format_time_sig(num, _denom_power);
+                    let ts_str = format!(
+                        "{}  {}",
+                        time_format::format_time_sig(num, _denom_power),
+                        ppq
+                    );
                     let time_str = time_format::format_time(seconds);
                     let pos_str = time_format::format_tick_bar_beat(tick, ppq, num);
 
@@ -163,11 +170,13 @@ pub fn show(
                     let rect_w = col_widths.iter().sum::<f32>();
                     let bar_cx = ui.max_rect().center().x;
                     let cursor_x = ui.cursor().min.x;
+                    button_right = Some(cursor_x);
                     let rect_l = bar_cx - rect_w * 0.5;
                     let pad = (rect_l - cursor_x).max(0.0);
                     ui.add_space(pad);
                     let (rect, _) =
                         ui.allocate_exact_size(egui::vec2(rect_w, rect_h), egui::Sense::hover());
+                    timecode_rect = Some(rect);
 
                     let c = egui::Color32::from_rgb(100, 180, 255);
                     let font = egui::FontId::proportional(12.0);
@@ -218,5 +227,30 @@ pub fn show(
                     }
                 }
             });
+
+            // ── Double-click transport bar blank area to toggle maximize/restore ──
+            // Only triggers on the background gaps (between buttons and timecode,
+            // and after timecode to the right edge), NOT on buttons or timecode.
+            let double_clicked = ui.input(|i| {
+                i.pointer
+                    .button_double_clicked(egui::PointerButton::Primary)
+            });
+            if double_clicked {
+                let bar_rect = ui.max_rect();
+                if let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
+                    let in_bar = bar_rect.contains(pos);
+                    let in_timecode = timecode_rect
+                        .map(|r: egui::Rect| r.contains(pos))
+                        .unwrap_or(false);
+                    let in_buttons = button_right
+                        .map(|r: f32| pos.x >= bar_rect.min.x && pos.x < r)
+                        .unwrap_or(false);
+                    if in_bar && !in_timecode && !in_buttons {
+                        let maximized = ui.input(|i| i.viewport().maximized.unwrap_or(false));
+                        ui.ctx()
+                            .send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+                    }
+                }
+            }
         });
 }
