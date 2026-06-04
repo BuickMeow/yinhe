@@ -1,5 +1,7 @@
 use eframe::egui;
 
+use yinhe_types::TimeSigEvent;
+
 use crate::quantize::QuantizePreset;
 
 /// Trait unifying the zoom/pan/cursor interface of PianoRollView and ArrangementView.
@@ -65,7 +67,10 @@ impl ViewInteraction for yinhe_arrangement::ArrangementView {
 ///
 /// `left_zone_width`: pixels from the left edge where vertical zoom is allowed
 ///   (piano_view uses `keyboard_width`, arrangement uses `0.0` to disable).
-/// If `quantize` and `ppq` are provided, cursor placement snaps to the grid.
+/// If `quantize` is provided, cursor placement snaps to the grid.
+/// If `bar_line_data` is also provided, the nearest bar line is also
+/// considered — the cursor lands on whichever is closer to the pointer.
+/// `bar_line_data: (ticks_per_beat, default_num, default_den_power, &[TimeSigEvent])`
 /// Returns `true` if the view state changed and needs a repaint.
 pub(crate) fn handle_input(
     ui: &mut egui::Ui,
@@ -75,6 +80,7 @@ pub(crate) fn handle_input(
     cursor_tick: &mut Option<f64>,
     left_zone_width: f32,
     quantize: Option<(QuantizePreset, u32)>,
+    bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
 ) -> bool {
     let mut changed = false;
 
@@ -125,12 +131,31 @@ pub(crate) fn handle_input(
         if let Some(pos) = resp.interact_pointer_pos() {
             let pointer_x = pos.x - rect.min.x;
             if pointer_x >= left_zone_width {
-                let mut tick = view.x_to_tick(pointer_x);
-                // Snap to quantization grid if set
-                if let Some((q, ppq)) = &quantize {
-                    tick = q.snap_tick(tick, *ppq);
-                }
-                *cursor_tick = Some(tick.max(0.0));
+                let tick = view.x_to_tick(pointer_x);
+                // Snap relative to bar start so grid is always phase-aligned
+                // with the current measure, regardless of earlier time sig changes.
+                // Final candidate is the nearest among {grid point, next bar line}.
+                let snapped = if let Some((q, ppq)) = &quantize {
+                    if let Some((tpb, num, den, events)) = &bar_line_data {
+                        let (bar_start, next_bar) = yinhe_wgpu::grid::measure_bounds_at_tick(
+                            tick, *tpb, *num, *den, events,
+                        );
+                        let offset = tick - bar_start;
+                        let snapped_offset = q.snap_tick(offset, *ppq);
+                        let grid_tick = bar_start + snapped_offset;
+                        // Pick nearest among {grid point, next bar line}
+                        if (tick - next_bar).abs() < (tick - grid_tick).abs() {
+                            next_bar
+                        } else {
+                            grid_tick
+                        }
+                    } else {
+                        q.snap_tick(tick, *ppq)
+                    }
+                } else {
+                    tick
+                };
+                *cursor_tick = Some(snapped.max(0.0));
                 *view.dirty() = true;
                 changed = true;
             }

@@ -1,5 +1,7 @@
 use eframe::egui;
 
+use yinhe_types::TimeSigEvent;
+
 use crate::quantize::QuantizePreset;
 
 /// Display the pianoroll texture with zoom/pan interaction.
@@ -16,6 +18,7 @@ pub fn show(
     is_playing: bool,
     quantize: QuantizePreset,
     ppq: u32,
+    bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
     last_cursor_tick: &mut Option<f64>,
 ) {
     let (resp, painter) = ui.allocate_painter(available, egui::Sense::click_and_drag());
@@ -107,5 +110,6 @@ pub fn show(
         cursor_tick,
         view.keyboard_width,
         Some((quantize, ppq)),
+        bar_line_data,
     );
 }

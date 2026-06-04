@@ -385,6 +385,12 @@ impl eframe::App for App {
                         is_playing,
                         doc.quantize,
                         doc.midi.ticks_per_beat,
+                        Some((
+                            doc.midi.ticks_per_beat,
+                            doc.midi.time_sig_numerator,
+                            doc.midi.time_sig_denominator,
+                            doc.midi.time_sig_events.as_slice(),
+                        )),
                         &mut self.piano_last_cursor_tick,
                     );
                 });

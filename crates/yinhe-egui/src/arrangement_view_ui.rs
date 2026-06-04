@@ -2,6 +2,7 @@ use eframe::egui;
 
 use yinhe_arrangement::instances as arrangement_instances;
 use yinhe_arrangement::{ArrangementView, NoteInstance, NoteSource, PianorollRenderer, Uniforms};
+use yinhe_types::TimeSigEvent;
 
 use super::render_context::RenderContext;
 use crate::quantize::QuantizePreset;
@@ -21,6 +22,7 @@ pub fn show(
     cursor_tick: &mut Option<f64>,
     quantize: QuantizePreset,
     ppq: u32,
+    bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
     is_playing: bool,
     _track_names: &[String],
     instances: &mut Vec<NoteInstance>,
@@ -125,5 +127,6 @@ pub fn show(
         cursor_tick,
         0.0,
         Some((quantize, ppq)),
+        bar_line_data,
     );
 }

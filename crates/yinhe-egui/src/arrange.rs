@@ -121,6 +121,12 @@ pub fn show(
             &mut doc.cursor_tick,
             doc.quantize,
             doc.midi.ticks_per_beat,
+            Some((
+                doc.midi.ticks_per_beat,
+                doc.midi.time_sig_numerator,
+                doc.midi.time_sig_denominator,
+                doc.midi.time_sig_events.as_slice(),
+            )),
             is_playing,
             &track_names,
             &mut doc.arr_instances,

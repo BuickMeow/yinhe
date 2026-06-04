@@ -1,5 +1,4 @@
 /// Shared grid-building utilities used by both pianoroll and arrangement instances.
-
 use yinhe_types::TimeSigEvent;
 
 use crate::vertex::{NoteInstance, pack_props, pack_rgba};
@@ -53,6 +52,36 @@ pub fn build_time_sig_segments(
     }
     segments.push((prev_tick, prev_num, prev_den));
     segments
+}
+
+/// Given a tick and time signature info, return the previous and next
+/// bar-line positions.  Respects time-signature changes.
+pub fn measure_bounds_at_tick(
+    tick: f64,
+    ticks_per_beat: u32,
+    default_num: u8,
+    default_den: u8,
+    time_sig_events: &[TimeSigEvent],
+) -> (f64, f64) {
+    let tick_u = tick.max(0.0) as u32;
+    let segments = build_time_sig_segments(time_sig_events, default_num, default_den);
+
+    let seg_idx = segments
+        .iter()
+        .rposition(|&(start, _, _)| start <= tick_u)
+        .unwrap_or(0);
+    let (seg_start, num, den) = segments[seg_idx];
+    let seg_end = segments
+        .get(seg_idx + 1)
+        .map_or(u32::MAX, |&(end, _, _)| end);
+
+    let measure = measure_ticks(ticks_per_beat, num, den);
+    let offset = tick_u.saturating_sub(seg_start);
+    let bars_past = offset / measure;
+    let prev_bar = seg_start + bars_past * measure;
+    let next_bar = (prev_bar + measure).min(seg_end);
+
+    (prev_bar as f64, next_bar as f64)
 }
 
 /// Push a grid line instance into `out`.
@@ -121,8 +150,16 @@ mod tests {
     #[test]
     fn test_build_time_sig_segments_with_change() {
         let events = vec![
-            TimeSigEvent { tick: 0, numerator: 4, denominator: 2 },
-            TimeSigEvent { tick: 1920, numerator: 3, denominator: 2 },
+            TimeSigEvent {
+                tick: 0,
+                numerator: 4,
+                denominator: 2,
+            },
+            TimeSigEvent {
+                tick: 1920,
+                numerator: 3,
+                denominator: 2,
+            },
         ];
         let segs = build_time_sig_segments(&events, 4, 2);
         assert_eq!(segs.len(), 2);
