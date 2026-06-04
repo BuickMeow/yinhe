@@ -8,9 +8,9 @@ use crate::vertex::Uniforms;
 use crate::view::PianoRollView;
 
 /// Hash viewport properties that affect static instances.
-/// Changes only when scroll, zoom, or window size actually change — NOT on every
-/// playback frame.  This avoids expensive static rebuilds during steady playback.
-fn viewport_hash(width: u32, height: u32, view: &PianoRollView) -> u64 {
+/// Includes cursor_tick so that keyboard highlighting updates every frame
+/// during playback without needing the force_rebuild kludge.
+fn viewport_hash(width: u32, height: u32, view: &PianoRollView, cursor_tick: Option<f64>) -> u64 {
     let mut h: u64 = 0;
     h ^= width as u64;
     h = h.wrapping_mul(31).wrapping_add(height as u64);
@@ -29,6 +29,10 @@ fn viewport_hash(width: u32, height: u32, view: &PianoRollView) -> u64 {
     h = h
         .wrapping_mul(31)
         .wrapping_add(view.keyboard_width.to_bits() as u64);
+    // Include cursor_tick so keyboard highlights update during playback
+    h = h
+        .wrapping_mul(31)
+        .wrapping_add(cursor_tick.map_or(0, |t| t.to_bits()) as u64);
     h
 }
 
@@ -62,11 +66,10 @@ pub fn prepare(
         _pad: 0.0,
     };
 
-    let mut vhash = viewport_hash(width, height, view);
+    let mut vhash = viewport_hash(width, height, view, cursor_tick);
 
-    // force_rebuild is set by the caller when the underlying data changed
-    // (new MIDI loaded, selection changed, scroll/zoom) — NOT during
-    // playback cursor movement. Flip the hash to guarantee a mismatch.
+    // force_rebuild: for data changes that don't affect the hash (selection,
+    // track visibility), still flip to guarantee a mismatch.
     if force_rebuild {
         vhash = !vhash;
     }

@@ -1,4 +1,5 @@
 use eframe::egui;
+use egui_material_icons::icons::*;
 
 #[derive(PartialEq)]
 pub enum ViewMode {
@@ -55,14 +56,13 @@ pub fn show(
                 if ui
                     .add(
                         egui::Label::new(
-                            egui::RichText::new("MIX")
-                                .size(font_size)
-                                .strong()
-                                .color(if *view_mode == ViewMode::Mix {
+                            egui::RichText::new("MIX").size(font_size).strong().color(
+                                if *view_mode == ViewMode::Mix {
                                     active_color
                                 } else {
                                     inactive_color
-                                }),
+                                },
+                            ),
                         )
                         .sense(egui::Sense::click())
                         .selectable(false),
@@ -79,14 +79,13 @@ pub fn show(
                 if ui
                     .add(
                         egui::Label::new(
-                            egui::RichText::new("EDIT")
-                                .size(font_size)
-                                .strong()
-                                .color(if *view_mode == ViewMode::Edit {
+                            egui::RichText::new("EDIT").size(font_size).strong().color(
+                                if *view_mode == ViewMode::Edit {
                                     active_color
                                 } else {
                                     inactive_color
-                                }),
+                                },
+                            ),
                         )
                         .sense(egui::Sense::click())
                         .selectable(false),
@@ -109,13 +108,9 @@ pub fn show(
                     };
                     if ui
                         .add(
-                            egui::Label::new(
-                                egui::RichText::new("🎹")
-                                    .size(font_size)
-                                    .color(emoji_color),
-                            )
-                            .sense(egui::Sense::click())
-                            .selectable(false),
+                            egui::Label::new(ICON_PIANO.rich_text().size(16.0).color(emoji_color))
+                                .sense(egui::Sense::click())
+                                .selectable(false),
                         )
                         .clicked()
                     {

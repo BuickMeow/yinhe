@@ -40,15 +40,18 @@ pub fn show(
         .unwrap_or(10000.0);
     view.clamp_scroll(w as f32, h as f32, total_ticks);
 
-    // Auto-follow: during playback, scroll so cursor stays visible
-    if is_playing {
-        if let Some(ct) = *cursor_tick {
-            let cursor_x = view.tick_to_x(ct);
-            let right_edge = w as f32;
-            let margin = (right_edge - view.keyboard_width) * 0.2;
-            if cursor_x > right_edge - margin || cursor_x < view.keyboard_width {
-                view.scroll_x =
-                    (ct as f32 * view.pixels_per_tick) - (right_edge - view.keyboard_width) * 0.5;
+    // Auto-follow: scroll so cursor stays visible.
+    // Always active during playback; also triggers after playback stops
+    // when cursor was snapped back to start (off-screen).
+    if let Some(ct) = *cursor_tick {
+        let cursor_x = view.tick_to_x(ct);
+        let right_edge = w as f32;
+        let kb_w = view.keyboard_width;
+        let margin = (right_edge - kb_w) * 0.2;
+        let cursor_off_screen = cursor_x < kb_w || cursor_x > right_edge;
+        if is_playing || cursor_off_screen {
+            if cursor_x > right_edge - margin || cursor_x < kb_w {
+                view.scroll_x = (ct as f32 * view.pixels_per_tick) - (right_edge - kb_w) * 0.5;
                 view.clamp_scroll(w as f32, h as f32, total_ticks);
             }
         }

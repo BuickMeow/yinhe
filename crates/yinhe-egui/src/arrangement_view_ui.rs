@@ -47,12 +47,15 @@ pub fn show(
     let num_tracks = track_visible.len();
     view.clamp_scroll(w as f32, h as f32, total_ticks, num_tracks);
 
-    // Auto-follow: during playback, scroll so cursor stays visible
-    if is_playing {
-        if let Some(ct) = *cursor_tick {
-            let cursor_x = view.tick_to_x(ct);
-            let right_edge = w as f32;
-            let margin = right_edge * 0.2;
+    // Auto-follow: scroll so cursor stays visible.
+    // Always active during playback; also triggers after playback stops
+    // when cursor was snapped back to start (off-screen).
+    if let Some(ct) = *cursor_tick {
+        let cursor_x = view.tick_to_x(ct);
+        let right_edge = w as f32;
+        let margin = right_edge * 0.2;
+        let cursor_off_screen = cursor_x < 0.0 || cursor_x > right_edge;
+        if is_playing || cursor_off_screen {
             if cursor_x > right_edge - margin || cursor_x < 0.0 {
                 view.scroll_x = (ct as f32 * view.pixels_per_tick) - right_edge * 0.5;
                 view.clamp_scroll(w as f32, h as f32, total_ticks, num_tracks);

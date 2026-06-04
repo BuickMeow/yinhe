@@ -1,4 +1,5 @@
 use eframe::egui;
+use egui_material_icons::icons::*;
 
 use crate::document::Document;
 
@@ -9,8 +10,6 @@ pub(crate) const TITLE_BAR_HEIGHT: f32 = 32.0;
 pub(crate) enum TitleBarAction {
     CloseDocument(usize),
 }
-
-
 
 /// Draw the custom title bar at the top of the window.
 /// Returns an optional action for the caller to perform (e.g. close a document).
@@ -131,16 +130,16 @@ pub(crate) fn show(
                     egui::pos2(tab_rect.max.x - close_w, tab_rect.min.y),
                     egui::vec2(close_w, tab_h),
                 );
-                let close_hover = close_rect
-                    .contains(ui.input(|i| i.pointer.hover_pos().unwrap_or_default()));
+                let close_hover =
+                    close_rect.contains(ui.input(|i| i.pointer.hover_pos().unwrap_or_default()));
                 if close_hover {
                     painter.rect_filled(close_rect, 4.0, egui::Color32::from_rgb(200, 50, 50));
                 }
                 painter.text(
                     close_rect.center(),
                     egui::Align2::CENTER_CENTER,
-                    "\u{00d7}",
-                    egui::FontId::proportional(14.0),
+                    ICON_CLOSE.codepoint,
+                    egui::FontId::new(14.0, ICON_CLOSE.font_family()),
                     if close_hover {
                         egui::Color32::WHITE
                     } else {
@@ -159,8 +158,8 @@ pub(crate) fn show(
             }
 
             // On button release, detect which tab/close rect was clicked
-            let pointer_released = ui
-                .input(|i| i.pointer.button_released(egui::PointerButton::Primary));
+            let pointer_released =
+                ui.input(|i| i.pointer.button_released(egui::PointerButton::Primary));
             if pointer_released {
                 if let Some(press) = title_bar_press_pos.take() {
                     if let Some(release) = ui.input(|i| i.pointer.interact_pos()) {
@@ -216,13 +215,13 @@ pub(crate) fn show(
             let drag_resp = ui.interact(drag_rect, ui.next_auto_id(), egui::Sense::drag());
 
             if drag_resp.dragged_by(egui::PointerButton::Primary) {
-                ui.ctx()
-                    .send_viewport_cmd(egui::ViewportCommand::StartDrag);
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
             }
 
             // Double-click title bar to toggle maximize/restore
             let pointer_double_clicked = ui.input(|i| {
-                i.pointer.button_double_clicked(egui::PointerButton::Primary)
+                i.pointer
+                    .button_double_clicked(egui::PointerButton::Primary)
             });
             if pointer_double_clicked {
                 let pos_in_drag = ui
@@ -230,8 +229,7 @@ pub(crate) fn show(
                     .map(|p| drag_rect.contains(p))
                     .unwrap_or(false);
                 if pos_in_drag {
-                    let maximized = ui
-                        .input(|i| i.viewport().maximized.unwrap_or(false));
+                    let maximized = ui.input(|i| i.viewport().maximized.unwrap_or(false));
                     ui.ctx()
                         .send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
                 }
@@ -263,8 +261,7 @@ fn draw_window_buttons(ui: &mut egui::Ui, bar_rect: egui::Rect) {
     );
 
     // Close button
-    let close_hover = close_rect
-        .contains(ui.input(|i| i.pointer.hover_pos().unwrap_or_default()));
+    let close_hover = close_rect.contains(ui.input(|i| i.pointer.hover_pos().unwrap_or_default()));
     if close_hover {
         ui.painter()
             .rect_filled(close_rect, 0.0, egui::Color32::from_rgb(200, 50, 50));
@@ -272,8 +269,8 @@ fn draw_window_buttons(ui: &mut egui::Ui, bar_rect: egui::Rect) {
     ui.painter().text(
         close_rect.center(),
         egui::Align2::CENTER_CENTER,
-        "\u{2715}",
-        egui::FontId::proportional(14.0),
+        ICON_CLOSE.codepoint,
+        egui::FontId::new(14.0, ICON_CLOSE.font_family()),
         if close_hover {
             egui::Color32::WHITE
         } else {
@@ -285,8 +282,8 @@ fn draw_window_buttons(ui: &mut egui::Ui, bar_rect: egui::Rect) {
     ui.painter().text(
         max_rect.center(),
         egui::Align2::CENTER_CENTER,
-        "\u{25a1}",
-        egui::FontId::proportional(16.0),
+        ICON_MAXIMIZE.codepoint,
+        egui::FontId::new(16.0, ICON_MAXIMIZE.font_family()),
         egui::Color32::from_gray(180),
     );
 
@@ -294,8 +291,8 @@ fn draw_window_buttons(ui: &mut egui::Ui, bar_rect: egui::Rect) {
     ui.painter().text(
         min_rect.center(),
         egui::Align2::CENTER_CENTER,
-        "\u{2500}",
-        egui::FontId::proportional(16.0),
+        ICON_MINIMIZE.codepoint,
+        egui::FontId::new(16.0, ICON_MINIMIZE.font_family()),
         egui::Color32::from_gray(180),
     );
 
@@ -305,7 +302,6 @@ fn draw_window_buttons(ui: &mut egui::Ui, bar_rect: egui::Rect) {
     let _min_resp = ui.interact(min_rect, ui.next_auto_id(), egui::Sense::click());
 
     if close_resp.clicked() {
-        ui.ctx()
-            .send_viewport_cmd(egui::ViewportCommand::Close);
+        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
     }
 }

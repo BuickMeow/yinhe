@@ -80,6 +80,15 @@ impl App {
             cc.egui_ctx.set_fonts(fonts);
         }
 
+        // ── Initialize Material Icons font with adjusted metrics ──
+        {
+            let mut font_insert = egui_material_icons::font_insert();
+            // Default y_offset_factor=0.05 shifts glyphs down, causing them to
+            // appear off-center toward bottom-right. Set to 0 for proper centering.
+            font_insert.data.tweak.y_offset_factor = 0.0;
+            cc.egui_ctx.add_font(font_insert);
+        }
+
         let default_w = 1920u32;
         let default_h = 1080u32;
 

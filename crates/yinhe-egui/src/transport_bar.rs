@@ -1,4 +1,5 @@
 use eframe::egui;
+use egui_material_icons::icons::*;
 
 use crate::document::Document;
 use crate::file_loader::FileLoader;
@@ -52,9 +53,17 @@ pub fn show(
 
                     if ui
                         .add(
-                            egui::Button::new(if is_playing { "⏸" } else { "▶" })
-                                .min_size(btn_size)
-                                .corner_radius(btn_rounding),
+                            egui::Button::new(
+                                (if is_playing {
+                                    ICON_PAUSE
+                                } else {
+                                    ICON_PLAY_ARROW
+                                })
+                                .rich_text()
+                                .size(18.0),
+                            )
+                            .min_size(btn_size)
+                            .corner_radius(btn_rounding),
                         )
                         .clicked()
                     {
@@ -67,7 +76,7 @@ pub fn show(
 
                     if ui
                         .add(
-                            egui::Button::new("⏹")
+                            egui::Button::new(ICON_STOP.rich_text().size(18.0))
                                 .min_size(btn_size)
                                 .corner_radius(btn_rounding),
                         )
