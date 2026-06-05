@@ -126,17 +126,17 @@ pub(crate) fn show(
                 );
 
                 // Close button
-                let close_rect = egui::Rect::from_min_size(
+                let tab_close_rect = egui::Rect::from_min_size(
                     egui::pos2(tab_rect.max.x - close_w, tab_rect.min.y),
                     egui::vec2(close_w, tab_h),
                 );
                 let close_hover =
-                    close_rect.contains(ui.input(|i| i.pointer.hover_pos().unwrap_or_default()));
+                    tab_close_rect.contains(ui.input(|i| i.pointer.hover_pos().unwrap_or_default()));
                 if close_hover {
-                    painter.rect_filled(close_rect, 4.0, egui::Color32::from_rgb(200, 50, 50));
+                    painter.rect_filled(tab_close_rect, 4.0, egui::Color32::from_rgb(200, 50, 50));
                 }
                 painter.text(
-                    close_rect.center(),
+                    tab_close_rect.center(),
                     egui::Align2::CENTER_CENTER,
                     ICON_CLOSE.codepoint,
                     egui::FontId::new(14.0, ICON_CLOSE.font_family()),
@@ -147,27 +147,49 @@ pub(crate) fn show(
                     },
                 );
 
-                click_targets.push((i, tab_rect, close_rect));
+                click_targets.push((i, tab_rect, tab_close_rect));
 
                 tab_x += tab_w + 4.0;
             }
+
+            // ── Window button rects (non-macOS) for manual click detection ──
+            #[cfg(not(target_os = "macos"))]
+            let win_btn_rects = {
+                let btn_w = 46.0;
+                let btn_h = TITLE_BAR_HEIGHT;
+                let btn_y = bar_rect.min.y;
+
+                let c = egui::Rect::from_min_size(
+                    egui::pos2(bar_rect.max.x - btn_w, btn_y),
+                    egui::vec2(btn_w, btn_h),
+                );
+                let mx = egui::Rect::from_min_size(
+                    egui::pos2(c.min.x - btn_w, btn_y),
+                    egui::vec2(btn_w, btn_h),
+                );
+                let mn = egui::Rect::from_min_size(
+                    egui::pos2(mx.min.x - btn_w, btn_y),
+                    egui::vec2(btn_w, btn_h),
+                );
+                (c, mx, mn)
+            };
 
             // ── Manual click detection (avoid egui interaction system quirks in Panel::top) ──
             if ui.input(|i| i.pointer.button_pressed(egui::PointerButton::Primary)) {
                 *title_bar_press_pos = ui.input(|i| i.pointer.interact_pos());
             }
 
-            // On button release, detect which tab/close rect was clicked
+            // On button release, detect which tab/close rect or window button was clicked
             let pointer_released =
                 ui.input(|i| i.pointer.button_released(egui::PointerButton::Primary));
             if pointer_released {
                 if let Some(press) = title_bar_press_pos.take() {
                     if let Some(release) = ui.input(|i| i.pointer.interact_pos()) {
                         let dist = (release - press).length();
-                        // Only treat as click if the pointer barely moved
                         if dist < 8.0 {
-                            for &(idx, tab_rect, close_rect) in click_targets.iter().rev() {
-                                if close_rect.contains(press) && close_rect.contains(release) {
+                            // Check document tab buttons
+                            for &(idx, tab_rect, tab_close_rect) in click_targets.iter().rev() {
+                                if tab_close_rect.contains(press) && tab_close_rect.contains(release) {
                                     action = Some(TitleBarAction::CloseDocument(idx));
                                     break;
                                 }
@@ -176,18 +198,32 @@ pub(crate) fn show(
                                     break;
                                 }
                             }
+
+                            // Check window title bar buttons (non-macOS only)
+                            #[cfg(not(target_os = "macos"))]
+                            {
+                                if win_btn_rects.0.contains(press) && win_btn_rects.0.contains(release) {
+                                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                                } else if win_btn_rects.1.contains(press) && win_btn_rects.1.contains(release) {
+                                    let maximized = ui.input(|i| i.viewport().maximized.unwrap_or(false));
+                                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+                                } else if win_btn_rects.2.contains(press) && win_btn_rects.2.contains(release) {
+                                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+                                }
+                            }
                         }
                     }
                 }
             }
 
             // ── Draw centered title ──
+            let left_boundary = bar_rect.min.x + left_padding;
             let right_limit = if cfg!(target_os = "macos") {
                 bar_rect.max.x
             } else {
                 bar_rect.max.x - 138.0
             };
-            let title_x = (bar_rect.min.x + right_limit) / 2.0;
+            let title_x = (left_boundary + right_limit) / 2.0;
             painter.text(
                 egui::pos2(title_x, bar_rect.center().y),
                 egui::Align2::CENTER_CENTER,
@@ -196,9 +232,9 @@ pub(crate) fn show(
                 egui::Color32::from_gray(180),
             );
 
-            // Non-macOS: draw -口x buttons
+            // ── Paint window buttons (non-macOS, visual only) ──
             #[cfg(not(target_os = "macos"))]
-            draw_window_buttons(ui, bar_rect);
+            paint_window_buttons(ui, win_btn_rects);
 
             // ── Window drag region (after the tabs, excluding window buttons) ──
             let drag_rect_left = tab_x.max(bar_rect.min.x + left_padding);
@@ -218,20 +254,15 @@ pub(crate) fn show(
                 ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
             }
 
-            // Double-click title bar to toggle maximize/restore
-            let pointer_double_clicked = ui.input(|i| {
-                i.pointer
-                    .button_double_clicked(egui::PointerButton::Primary)
-            });
-            if pointer_double_clicked {
-                let pos_in_drag = ui
-                    .input(|i| i.pointer.interact_pos())
-                    .map(|p| drag_rect.contains(p))
-                    .unwrap_or(false);
-                if pos_in_drag {
-                    let maximized = ui.input(|i| i.viewport().maximized.unwrap_or(false));
-                    ui.ctx()
-                        .send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+            // Double-click title bar drag area to toggle maximize/restore
+            // (same pattern as transport_bar's working implementation)
+            if ui.input(|i| i.pointer.button_double_clicked(egui::PointerButton::Primary)) {
+                if let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
+                    if drag_rect.contains(pos) {
+                        let maximized = ui.input(|i| i.viewport().maximized.unwrap_or(false));
+                        ui.ctx()
+                            .send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+                    }
                 }
             }
 
@@ -241,27 +272,15 @@ pub(crate) fn show(
     action
 }
 
+/// Paint window buttons (close/maximize/minimize) on non-macOS platforms.
+/// Visual only — interactions are handled via manual click detection.
 #[cfg(not(target_os = "macos"))]
-fn draw_window_buttons(ui: &mut egui::Ui, bar_rect: egui::Rect) {
-    let btn_w = 46.0;
-    let btn_h = TITLE_BAR_HEIGHT;
-    let btn_y = bar_rect.min.y;
-
-    let close_rect = egui::Rect::from_min_size(
-        egui::pos2(bar_rect.max.x - btn_w, btn_y),
-        egui::vec2(btn_w, btn_h),
-    );
-    let max_rect = egui::Rect::from_min_size(
-        egui::pos2(close_rect.min.x - btn_w, btn_y),
-        egui::vec2(btn_w, btn_h),
-    );
-    let min_rect = egui::Rect::from_min_size(
-        egui::pos2(max_rect.min.x - btn_w, btn_y),
-        egui::vec2(btn_w, btn_h),
-    );
+fn paint_window_buttons(ui: &mut egui::Ui, rects: (egui::Rect, egui::Rect, egui::Rect)) {
+    let (close_rect, max_rect, min_rect) = rects;
+    let hover_pos = ui.input(|i| i.pointer.hover_pos()).unwrap_or_default();
 
     // Close button
-    let close_hover = close_rect.contains(ui.input(|i| i.pointer.hover_pos().unwrap_or_default()));
+    let close_hover = close_rect.contains(hover_pos);
     if close_hover {
         ui.painter()
             .rect_filled(close_rect, 0.0, egui::Color32::from_rgb(200, 50, 50));
@@ -279,29 +298,36 @@ fn draw_window_buttons(ui: &mut egui::Ui, bar_rect: egui::Rect) {
     );
 
     // Maximize
+    let max_hover = max_rect.contains(hover_pos);
+    if max_hover {
+        ui.painter().rect_filled(max_rect, 0.0, egui::Color32::from_rgb(80, 80, 85));
+    }
     ui.painter().text(
         max_rect.center(),
         egui::Align2::CENTER_CENTER,
         ICON_MAXIMIZE.codepoint,
         egui::FontId::new(16.0, ICON_MAXIMIZE.font_family()),
-        egui::Color32::from_gray(180),
+        if max_hover {
+            egui::Color32::WHITE
+        } else {
+            egui::Color32::from_gray(180)
+        },
     );
 
     // Minimize
+    let min_hover = min_rect.contains(hover_pos);
+    if min_hover {
+        ui.painter().rect_filled(min_rect, 0.0, egui::Color32::from_rgb(80, 80, 85));
+    }
     ui.painter().text(
         min_rect.center(),
         egui::Align2::CENTER_CENTER,
         ICON_MINIMIZE.codepoint,
         egui::FontId::new(16.0, ICON_MINIMIZE.font_family()),
-        egui::Color32::from_gray(180),
+        if min_hover {
+            egui::Color32::WHITE
+        } else {
+            egui::Color32::from_gray(180)
+        },
     );
-
-    // Interaction
-    let close_resp = ui.interact(close_rect, ui.next_auto_id(), egui::Sense::click());
-    let _max_resp = ui.interact(max_rect, ui.next_auto_id(), egui::Sense::click());
-    let _min_resp = ui.interact(min_rect, ui.next_auto_id(), egui::Sense::click());
-
-    if close_resp.clicked() {
-        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-    }
 }
