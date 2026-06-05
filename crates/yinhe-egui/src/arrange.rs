@@ -18,6 +18,7 @@ pub fn show(
     arr_render_ctx: &mut RenderContext,
     last_cursor_tick: &mut Option<f64>,
     is_playing: bool,
+    follow_mode: &mut crate::view_interaction::FollowMode,
 ) {
     if doc.cursor_tick != *last_cursor_tick {
         doc.arr_view.dirty = true;
@@ -178,6 +179,7 @@ pub fn show(
             is_playing,
             &track_names,
             &mut doc.arr_instances,
+            follow_mode,
         );
     });
 

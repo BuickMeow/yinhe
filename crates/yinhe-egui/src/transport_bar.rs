@@ -5,6 +5,7 @@ use crate::document::Document;
 use crate::file_loader::FileLoader;
 use crate::quantize::QuantizePreset;
 use crate::time_format;
+use crate::view_interaction::FollowMode;
 
 /// Actions triggered from the file menu dropdown.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -38,6 +39,7 @@ pub fn show(
     mem_mb: f64,
     pending_quantize: &mut Option<QuantizePreset>,
     pending_file_action: &mut Option<FileAction>,
+    follow_mode: &mut FollowMode,
 ) {
     let has_active = doc.is_some();
 
@@ -213,6 +215,17 @@ pub fn show(
                     {
                         *stop_play = true;
                     }
+
+                    // ── Follow-mode button (cycle: None → Page → Continuous) ──
+                    let follow_resp = ui.add(
+                        egui::Button::new(follow_mode.icon().rich_text().size(18.0))
+                            .min_size(btn_size)
+                            .corner_radius(btn_rounding),
+                    );
+                    if follow_resp.clicked() {
+                        *follow_mode = follow_mode.next();
+                    }
+                    follow_resp.on_hover_text(follow_mode.tooltip());
 
                     // ── Quantization preset button + popup ──
                     let ppq = doc.map(|d| d.midi.ticks_per_beat).unwrap_or(480);

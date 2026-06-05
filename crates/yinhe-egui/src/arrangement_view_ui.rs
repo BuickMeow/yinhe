@@ -26,6 +26,7 @@ pub fn show(
     is_playing: bool,
     _track_names: &[String],
     instances: &mut Vec<NoteInstance>,
+    follow_mode: &mut crate::view_interaction::FollowMode,
 ) {
     // Sense::click_and_drag() so that the response passed to handle_input
     // provides hover/drag/click/double-click state.  Unlike the piano roll,
@@ -51,16 +52,26 @@ pub fn show(
     let num_tracks = track_visible.len();
     view.clamp_scroll(w as f32, h as f32, total_ticks, num_tracks);
 
-    // Auto-follow: scroll so cursor stays visible.
+    // Auto-follow: scroll based on follow mode (playback only).
+    // Never auto-follow when paused, so the user can freely scroll around.
     if let Some(ct) = *cursor_tick {
-        let cursor_x = view.tick_to_x(ct);
-        let right_edge = w as f32;
-        let margin = right_edge * 0.2;
-        let cursor_off_screen = cursor_x < 0.0 || cursor_x > right_edge;
-        if is_playing || cursor_off_screen {
-            if cursor_x > right_edge - margin || cursor_x < 0.0 {
-                view.scroll_x = (ct as f32 * view.pixels_per_tick) - right_edge * 0.5;
-                view.clamp_scroll(w as f32, h as f32, total_ticks, num_tracks);
+        if is_playing && *follow_mode != crate::view_interaction::FollowMode::None {
+            let cursor_x = view.tick_to_x(ct);
+            let right_edge = w as f32;
+            match *follow_mode {
+                crate::view_interaction::FollowMode::Page => {
+                    let margin = right_edge * 0.2;
+                    if cursor_x > right_edge - margin || cursor_x < 0.0 {
+                        view.scroll_x = (ct as f32 * view.pixels_per_tick) - right_edge * 0.5;
+                        view.clamp_scroll(w as f32, h as f32, total_ticks, num_tracks);
+                    }
+                }
+                crate::view_interaction::FollowMode::Continuous => {
+                    // Cursor glued to the leftmost edge (track-panel edge).
+                    view.scroll_x = ct as f32 * view.pixels_per_tick;
+                    view.clamp_scroll(w as f32, h as f32, total_ticks, num_tracks);
+                }
+                crate::view_interaction::FollowMode::None => unreachable!(),
             }
         }
     }
@@ -125,5 +136,7 @@ pub fn show(
         Some((quantize, ppq)),
         bar_line_data,
         Some(&resp),
+        is_playing,
+        follow_mode,
     );
 }

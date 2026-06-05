@@ -49,6 +49,9 @@ pub struct App {
     // ── Playback start position (pause returns here) ──
     play_start_tick: f64,
 
+    // ── Cursor-follow mode (shared across arrangement & piano roll) ──
+    follow_mode: crate::view_interaction::FollowMode,
+
     // ── System resource monitoring ──
     sysinfo: System,
     self_pid: Option<Pid>,
@@ -142,6 +145,7 @@ impl App {
             sysinfo: System::new(),
             self_pid: sysinfo::get_current_pid().ok(),
             play_start_tick: 0.0,
+            follow_mode: crate::view_interaction::FollowMode::Page,
 
             last_sys_refresh: Instant::now(),
             cpu_usage: 0.0,
@@ -286,6 +290,7 @@ impl eframe::App for App {
             self.mem_mb,
             &mut pending_quantize,
             &mut pending_file_action,
+            &mut self.follow_mode,
         );
 
         if let (Some(idx), Some(new_preset)) = (self.active_doc, pending_quantize) {
@@ -340,6 +345,7 @@ impl eframe::App for App {
         if let Some(idx) = self.active_doc {
             let total = remaining.size();
             let is_playing = self.documents[idx].playback.is_playing();
+            let mut follow_mode = self.follow_mode;
 
             let arr_h = if self.show_transport {
                 if self.show_pianoroll {
@@ -371,6 +377,7 @@ impl eframe::App for App {
                     &mut self.arr_render_ctx,
                     &mut self.last_cursor_tick,
                     is_playing,
+                    &mut follow_mode,
                 );
                 self.documents[idx] = doc;
             }
@@ -440,12 +447,15 @@ impl eframe::App for App {
                             doc.midi.time_sig_events.as_slice(),
                         )),
                         &mut self.piano_last_cursor_tick,
+                        &mut follow_mode,
                     );
                 });
 
                 // Put doc back
                 self.documents[idx] = doc;
             }
+
+            self.follow_mode = follow_mode;
         }
 
         // ── Request repaint during playback ──

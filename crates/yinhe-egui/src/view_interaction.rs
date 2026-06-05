@@ -4,6 +4,44 @@ use yinhe_types::TimeSigEvent;
 
 use crate::quantize::QuantizePreset;
 
+/// Cursor-follow mode for auto-scrolling during playback.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FollowMode {
+    /// Never auto-scroll — user has full manual control.
+    None,
+    /// Scroll when cursor reaches the viewport edge (current behavior).
+    Page,
+    /// Cursor stays glued to the leftmost edge of the content area.
+    Continuous,
+}
+
+impl FollowMode {
+    pub fn next(self) -> Self {
+        match self {
+            FollowMode::None => FollowMode::Page,
+            FollowMode::Page => FollowMode::Continuous,
+            FollowMode::Continuous => FollowMode::None,
+        }
+    }
+
+    pub fn icon(self) -> egui_material_icons::MaterialIcon {
+        use egui_material_icons::icons::*;
+        match self {
+            FollowMode::None => ICON_LOCK,
+            FollowMode::Page => ICON_AUTO_STORIES,
+            FollowMode::Continuous => ICON_CENTER_FOCUS_STRONG,
+        }
+    }
+
+    pub fn tooltip(self) -> &'static str {
+        match self {
+            FollowMode::None => "不滚动",
+            FollowMode::Page => "翻页跟随",
+            FollowMode::Continuous => "实时跟随",
+        }
+    }
+}
+
 /// Trait unifying the zoom/pan/cursor interface of PianoRollView and ArrangementView.
 pub(crate) trait ViewInteraction {
     fn scroll_x(&mut self) -> &mut f32;
@@ -101,6 +139,8 @@ pub(crate) fn handle_input(
     quantize: Option<(QuantizePreset, u32)>,
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
     existing_resp: Option<&egui::Response>,
+    is_playing: bool,
+    follow_mode: &mut FollowMode,
 ) {
     // Use caller-supplied response when painter and interact rect are the
     // same; otherwise create a dedicated click_and_drag interact.
@@ -157,6 +197,10 @@ pub(crate) fn handle_input(
                 *view.scroll_x() -= scroll.x;
                 *view.scroll_y() -= scroll.y;
                 *view.dirty() = true;
+                // Manual scroll during playback escapes follow mode.
+                if is_playing && *follow_mode != FollowMode::None {
+                    *follow_mode = FollowMode::None;
+                }
             }
             ui.ctx().request_repaint();
         }
@@ -203,6 +247,10 @@ pub(crate) fn handle_input(
         *view.scroll_x() -= delta.x;
         *view.scroll_y() -= delta.y;
         *view.dirty() = true;
+        // Manual drag during playback escapes follow mode.
+        if is_playing && *follow_mode != FollowMode::None {
+            *follow_mode = FollowMode::None;
+        }
         ui.ctx().request_repaint();
     }
 
