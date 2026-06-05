@@ -63,28 +63,48 @@ impl ViewInteraction for yinhe_arrangement::ArrangementView {
     }
 }
 
+// ── Shared helpers ──
+
+/// Total timeline length in ticks with 20% padding, or a sensible default
+/// when the source has no notes.
+pub(crate) fn total_ticks_padded(tick_length: u64) -> f64 {
+    if tick_length > 0 {
+        tick_length as f64 * 1.2
+    } else {
+        10000.0
+    }
+}
+
+// ── Input handling ──
+
 /// Handle zoom/pan/cursor input for a view that implements ViewInteraction.
 ///
-/// `left_zone_width`: pixels from the left edge where vertical zoom is allowed
-///   (piano_view uses `keyboard_width`, arrangement uses `0.0` to disable).
+/// Internally creates its own `click_and_drag` interact on `rect` so that
+/// drag ownership never leaks to parent `allocate_painter` responses or
+/// sibling widgets.
+///
+/// `left_zone_width`: pixels from the left edge where vertical zoom is
+///   allowed (piano_view uses `keyboard_width`, arrangement uses `0.0`).
 /// If `quantize` is provided, cursor placement snaps to the grid.
-/// If `bar_line_data` is also provided, the nearest bar line is also
-/// considered — the cursor lands on whichever is closer to the pointer.
-/// `bar_line_data: (ticks_per_beat, default_num, default_den_power, &[TimeSigEvent])`
-/// Returns `true` if the view state changed and needs a repaint.
+/// `bar_line_data: (ticks_per_beat, default_num, default_den, &[TimeSigEvent])`
 pub(crate) fn handle_input(
     ui: &mut egui::Ui,
-    resp: &egui::Response,
     rect: egui::Rect,
     view: &mut impl ViewInteraction,
     cursor_tick: &mut Option<f64>,
     left_zone_width: f32,
     quantize: Option<(QuantizePreset, u32)>,
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
-) -> bool {
-    let mut changed = false;
+) {
+    // Own interact so drag is independent of parent painter / sibling widgets.
+    // Explicit deterministic ID avoids collisions with other interacts on the same Ui.
+    let content_resp = ui.interact(
+        rect,
+        ui.id().with("__content_drag__"),
+        egui::Sense::click_and_drag(),
+    );
 
-    if resp.hovered() {
+    if content_resp.hovered() {
         let pointer_pos = ui.input(|i| i.pointer.hover_pos().unwrap_or_default());
         let pointer_x = pointer_pos.x - rect.min.x;
         let pointer_y = pointer_pos.y - rect.min.y;
@@ -97,7 +117,7 @@ pub(crate) fn handle_input(
             } else {
                 view.zoom_around_x(pointer_x, zoom_delta);
             }
-            changed = true;
+            ui.ctx().request_repaint();
         }
 
         // Cmd+scroll: horizontal zoom; plain scroll: pan
@@ -119,22 +139,21 @@ pub(crate) fn handle_input(
                 *view.scroll_y() -= scroll.y;
                 *view.dirty() = true;
             }
-            changed = true;
+            ui.ctx().request_repaint();
         }
     }
 
     // Click to set cursor — pointer release + small drag distance instead of
     // resp.clicked() which fails on trackpads due to micro-movement.
     let released = ui.input(|i| i.pointer.primary_released());
-    let drag_dist = resp.drag_delta().length();
-    if released && resp.hovered() && drag_dist < 3.0 {
-        if let Some(pos) = resp.interact_pointer_pos() {
+    let drag_dist = content_resp.drag_delta().length();
+    if released && content_resp.hovered() && drag_dist < 3.0 {
+        if let Some(pos) = content_resp.interact_pointer_pos() {
             let pointer_x = pos.x - rect.min.x;
             if pointer_x >= left_zone_width {
                 let tick = view.x_to_tick(pointer_x);
                 // Snap relative to bar start so grid is always phase-aligned
                 // with the current measure, regardless of earlier time sig changes.
-                // Final candidate is the nearest among {grid point, next bar line}.
                 let snapped = if let Some((q, ppq)) = &quantize {
                     if let Some((tpb, num, den, events)) = &bar_line_data {
                         let (bar_start, next_bar) = yinhe_wgpu::grid::measure_bounds_at_tick(
@@ -157,29 +176,23 @@ pub(crate) fn handle_input(
                 };
                 *cursor_tick = Some(snapped.max(0.0));
                 *view.dirty() = true;
-                changed = true;
+                ui.ctx().request_repaint();
             }
         }
     }
 
     // Drag to pan
-    if resp.dragged() {
-        let delta = resp.drag_delta();
+    if content_resp.dragged() {
+        let delta = content_resp.drag_delta();
         *view.scroll_x() -= delta.x;
         *view.scroll_y() -= delta.y;
         *view.dirty() = true;
-        changed = true;
-    }
-
-    // Double-click to reset view
-    if resp.double_clicked() {
-        view.reset_to_default();
-        changed = true;
-    }
-
-    if changed {
         ui.ctx().request_repaint();
     }
 
-    changed
+    // Double-click to reset view
+    if content_resp.double_clicked() {
+        view.reset_to_default();
+        ui.ctx().request_repaint();
+    }
 }

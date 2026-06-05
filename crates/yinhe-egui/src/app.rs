@@ -380,14 +380,20 @@ impl eframe::App for App {
                 let mut doc = std::mem::take(&mut self.documents[idx]);
 
                 // Horizontal splitter (between arrangement and pianoroll)
+                // Interact rect inset 0.5px at top so it never shares a
+                // boundary with the arrangement scrollbar above.
                 if self.show_transport {
                     let h_split_rect = egui::Rect::from_min_max(
                         egui::pos2(remaining.min.x, remaining.min.y + arr_h),
                         egui::pos2(remaining.max.x, remaining.min.y + arr_h + 4.0),
                     );
+                    let h_int_rect = egui::Rect::from_min_max(
+                        egui::pos2(remaining.min.x, remaining.min.y + arr_h + 0.5),
+                        egui::pos2(remaining.max.x, remaining.min.y + arr_h + 4.0),
+                    );
                     let h_split_resp = ui.interact(
-                        h_split_rect,
-                        ui.next_auto_id(),
+                        h_int_rect,
+                        ui.id().with("__h_split__"),
                         egui::Sense::click_and_drag(),
                     );
                     ui.painter().rect_filled(

@@ -9,6 +9,7 @@ mod piano_view;
 mod playback;
 mod quantize;
 mod render_context;
+mod scrollbar;
 mod time_format;
 mod time_ruler;
 mod title_bar;

@@ -27,7 +27,9 @@ pub fn show(
     _track_names: &[String],
     instances: &mut Vec<NoteInstance>,
 ) {
-    let (resp, painter) = ui.allocate_painter(available, egui::Sense::click_and_drag());
+    // Sense::hover() so that drag ownership is handled exclusively by the
+    // dedicated ui.interact calls (content area, scrollbar).
+    let (resp, painter) = ui.allocate_painter(available, egui::Sense::hover());
     let rect = resp.rect;
     let w = rect.width() as u32;
     let h = rect.height() as u32;
@@ -40,16 +42,13 @@ pub fn show(
     render_ctx.ensure_size(w, h);
 
     // Clamp scroll
-    let total_ticks = midi
-        .and_then(|m| m.tick_length())
-        .map(|tl| tl as f64 * 1.2)
-        .unwrap_or(10000.0);
+    let total_ticks = crate::view_interaction::total_ticks_padded(
+        midi.and_then(|m| m.tick_length()).unwrap_or(0),
+    );
     let num_tracks = track_visible.len();
     view.clamp_scroll(w as f32, h as f32, total_ticks, num_tracks);
 
     // Auto-follow: scroll so cursor stays visible.
-    // Always active during playback; also triggers after playback stops
-    // when cursor was snapped back to start (off-screen).
     if let Some(ct) = *cursor_tick {
         let cursor_x = view.tick_to_x(ct);
         let right_edge = w as f32;
@@ -61,11 +60,6 @@ pub fn show(
                 view.clamp_scroll(w as f32, h as f32, total_ticks, num_tracks);
             }
         }
-    }
-
-    // Mark dirty during playback — cursor line needs to move each frame
-    if is_playing && cursor_tick.is_some() {
-        view.dirty = true;
     }
 
     // ── Compute uniforms ──
@@ -84,7 +78,6 @@ pub fn show(
     let gpu_dirty = view.dirty || renderer.uniforms_changed(&uniforms);
 
     if gpu_dirty {
-        // ── Build instances using scratch buffer ──
         let mut scratch = std::mem::take(instances);
         scratch.clear();
 
@@ -99,18 +92,14 @@ pub fn show(
             *cursor_tick,
         );
 
-        // ── Upload to GPU ──
         renderer.prepare_from_parts(uniforms, &scratch);
 
-        // Return scratch buffer to caller
         scratch.clear();
         *instances = scratch;
     }
     view.dirty = false;
 
-    // Paint: RenderContext internally decides whether a full GPU render pass is
-    // needed (fresh texture or content_changed) or just a display of the existing
-    // texture — avoiding command-buffer back-pressure when nothing moved.
+    // Paint
     render_ctx.paint(
         renderer,
         w,
@@ -121,10 +110,9 @@ pub fn show(
         gpu_dirty,
     );
 
-    // ── Handle input (zoom/pan/cursor/drag/reset) ──
+    // Handle input (zoom/pan/cursor/drag/reset)
     crate::view_interaction::handle_input(
         ui,
-        &resp,
         rect,
         view,
         cursor_tick,

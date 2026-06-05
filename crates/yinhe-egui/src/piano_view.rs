@@ -24,13 +24,15 @@ pub fn show(
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
     last_cursor_tick: &mut Option<f64>,
 ) {
-    let (resp, painter) = ui.allocate_painter(available, egui::Sense::click_and_drag());
+    // Sense::hover() — no drag ownership. All drag is handled by dedicated
+    // ui.interact calls below, each inside its own push_id scope.
+    let (resp, painter) = ui.allocate_painter(available, egui::Sense::hover());
     let rect = resp.rect;
 
-    // Split: ruler band at top (24 px), wgpu content below
+    // Split: ruler band at top (24 px), wgpu content below, scrollbar at bottom
     let ruler_band_y = rect.min.y;
     let content_y = rect.min.y + RULER_H;
-    let content_h = (rect.height() - RULER_H).max(0.0);
+    let content_h = (rect.height() - RULER_H - super::scrollbar::SCROLLBAR_H).max(0.0);
     let content_rect = egui::Rect::from_min_max(
         egui::pos2(rect.min.x, content_y),
         egui::pos2(rect.max.x, content_y + content_h),
@@ -46,15 +48,12 @@ pub fn show(
     render_ctx.ensure_size(w, h);
 
     // Clamp scroll — add some extra space beyond the last note
-    let total_ticks = midi
-        .and_then(|m| m.tick_length())
-        .map(|tl| tl as f64 * 1.2)
-        .unwrap_or(10000.0);
+    let total_ticks = super::view_interaction::total_ticks_padded(
+        midi.and_then(|m| m.tick_length()).unwrap_or(0),
+    );
     view.clamp_scroll(w as f32, h as f32, total_ticks);
 
     // Auto-follow: scroll so cursor stays visible.
-    // Always active during playback; also triggers after playback stops
-    // when cursor was snapped back to start (off-screen).
     if let Some(ct) = *cursor_tick {
         let cursor_x = view.tick_to_x(ct);
         let right_edge = w as f32;
@@ -70,9 +69,6 @@ pub fn show(
     }
 
     // ── Dirty detection ──
-    // Mark dirty when cursor position changes (playback or click).
-    // Must happen before force_rebuild capture so static instances
-    // (including keyboard highlighting) are updated each frame.
     if *cursor_tick != *last_cursor_tick {
         view.dirty = true;
     }
@@ -80,8 +76,7 @@ pub fn show(
 
     let force_rebuild = view.dirty;
 
-    // Prepare GPU data. force_rebuild forces static instances to be rebuilt
-    // (for data changes), but NOT during playback cursor movement.
+    // Prepare GPU data
     let gpu_dirty = yinhe_pianoroll::prepare(
         pianoroll,
         w,
@@ -94,10 +89,6 @@ pub fn show(
         force_rebuild,
     );
 
-    // content_changed: true if data/playback changed this frame OR prepare
-    // detected a GPU-side change. During playback, view.dirty is true (cursor
-    // moved), so paint() will re-render even if prepare()'s static cache
-    // was still valid.
     let content_changed = view.dirty || gpu_dirty;
     view.dirty = false;
 
@@ -127,19 +118,29 @@ pub fn show(
         }
     }
 
-    // ── Keyboard resize handle (invisible, cursor-only) ──
-    // Placed at the boundary between keyboard and content, full height.
-    {
+    // ── Content interaction (zoom/pan/cursor/drag/reset) ──
+    // Created FIRST so that the keyboard handle (below) wins in the 4px
+    // overlap zone where they intersect.
+    crate::view_interaction::handle_input(
+        ui,
+        content_rect,
+        view,
+        cursor_tick,
+        view.keyboard_width,
+        Some((quantize, ppq)),
+        bar_line_data,
+    );
+
+    // ── Keyboard resize handle ──
+    // Created AFTER content interact so it wins the 4px overlap at the edge.
+    // Covers ruler + content area, not the scrollbar below.
+    ui.push_id("kb_handle", |ui| {
         let handle_x = rect.min.x + view.keyboard_width;
         let handle_rect = egui::Rect::from_min_max(
             egui::pos2(handle_x - 2.0, rect.min.y),
-            egui::pos2(handle_x + 2.0, rect.max.y),
+            egui::pos2(handle_x + 2.0, content_rect.max.y),
         );
-        let handle_resp = ui.interact(
-            handle_rect,
-            ui.next_auto_id(),
-            egui::Sense::click_and_drag(),
-        );
+        let handle_resp = ui.interact(handle_rect, ui.id(), egui::Sense::click_and_drag());
         if handle_resp.hovered() || handle_resp.dragged() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
         }
@@ -149,18 +150,27 @@ pub fn show(
             view.dirty = true;
             ui.ctx().request_repaint();
         }
-    }
+    });
 
-    // Handle input (zoom/pan/cursor/drag/reset) — uses content_rect so that
-    // viewport_height for vertical zoom excludes the ruler band.
-    crate::view_interaction::handle_input(
-        ui,
-        &resp,
-        content_rect,
-        view,
-        cursor_tick,
-        view.keyboard_width,
-        Some((quantize, ppq)),
-        bar_line_data,
-    );
+    // ── Horizontal scrollbar (right of keyboard, below content) ──
+    if midi.is_some() {
+        let sb_rect = egui::Rect::from_min_max(
+            egui::pos2(rect.min.x + view.keyboard_width, content_rect.max.y),
+            egui::pos2(
+                rect.max.x,
+                content_rect.max.y + super::scrollbar::SCROLLBAR_H,
+            ),
+        );
+        ui.push_id("piano_scrollbar", |ui| {
+            super::scrollbar::show(
+                ui,
+                sb_rect,
+                w as f32 - view.keyboard_width,
+                &mut view.scroll_x,
+                &mut view.pixels_per_tick,
+                total_ticks,
+                &mut view.dirty,
+            );
+        });
+    }
 }
