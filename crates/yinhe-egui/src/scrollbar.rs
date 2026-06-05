@@ -39,6 +39,15 @@ pub(crate) fn show(
         return;
     }
 
+    // Clamp scroll_x BEFORE computing the rectangle visual, so the
+    // scrollbar never renders an out-of-bounds position.  Without this,
+    // momentum/inertia scrolling from `handle_input` can push scroll_x
+    // past [0, max] after the caller's clamp_scroll, producing a visible
+    // one-frame bounce-back effect (same root cause as the ruler bounce
+    // fixed in arrange.rs).
+    let max_scroll_x = |ppt: f32| (total_ticks as f32 * ppt - view_width).max(0.0);
+    *scroll_x = scroll_x.clamp(0.0, max_scroll_x(*pixels_per_tick));
+
     // Scale: scrollbar pixels per MIDI tick.
     let scale = sb_w as f64 / total_ticks;
 
@@ -122,20 +131,22 @@ pub(crate) fn show(
         let delta = middle_resp.drag_delta().x;
         let delta_ticks = delta as f64 / scale;
         *scroll_x = (*scroll_x as f64 + delta_ticks * *pixels_per_tick as f64) as f32;
-        *scroll_x = scroll_x.max(0.0);
+        *scroll_x = scroll_x.clamp(0.0, max_scroll_x(*pixels_per_tick));
         *dirty = true;
         ui.ctx().request_repaint();
         return;
     }
 
-    // Helper: apply zoom so that `anchor_tick` stays at its current screen position.
+    // Apply zoom, clamping both ppt and scroll_x so the rectangle never
+    // overshoots; this avoids a one-frame bounce when the caller's
+    // clamp_scroll runs on the next frame.
     let mut apply_zoom =
         |scroll_x: &mut f32, ppt: &mut f32, new_start_tick: f64, new_viewport_ticks: f64| {
             let new_ppt = (view_width as f64 / new_viewport_ticks)
                 .clamp(PPT_MIN as f64, PPT_MAX as f64) as f32;
             let new_scroll_x = (new_start_tick * new_ppt as f64) as f32;
             *ppt = new_ppt;
-            *scroll_x = new_scroll_x.max(0.0);
+            *scroll_x = new_scroll_x.clamp(0.0, max_scroll_x(new_ppt));
             *dirty = true;
         };
 
