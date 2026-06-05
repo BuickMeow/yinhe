@@ -26,7 +26,9 @@ fn main() {
         )
         .init();
 
-    let mut viewport = eframe::egui::ViewportBuilder::default().with_inner_size([1400.0, 900.0]);
+    let mut viewport = eframe::egui::ViewportBuilder::default()
+        .with_inner_size([1400.0, 900.0])
+        .with_transparent(true); // Avoid white flash before first frame
 
     #[cfg(target_os = "macos")]
     {

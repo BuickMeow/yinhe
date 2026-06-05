@@ -18,7 +18,7 @@ pub fn show(
     egui::Panel::bottom("bottom_bar")
         .frame(egui::Frame {
             inner_margin: egui::Margin::symmetric(8, 6),
-            fill: egui::Color32::from_rgb(30, 30, 30),
+            fill: egui::Color32::from_rgb(25, 25, 28),
             ..Default::default()
         })
         .show_inside(ui, |ui| {

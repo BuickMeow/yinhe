@@ -178,6 +178,10 @@ impl App {
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        // ── Full-viewport background (matching title bar / transport bar) ──
+        let bg = egui::Color32::from_rgb(25, 25, 28);
+        ui.painter().rect_filled(ui.ctx().screen_rect(), 0.0, bg);
+
         // ── Force dark mode ──
         ui.ctx().set_visuals(egui::Visuals::dark());
 

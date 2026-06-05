@@ -91,7 +91,7 @@ pub fn show(
     ui.allocate_new_ui(egui::UiBuilder::new().max_rect(tp_rect), |ui| {
         ui.set_clip_rect(tp_rect);
         ui.painter()
-            .rect_filled(ui.max_rect(), 0.0, ui.visuals().panel_fill);
+            .rect_filled(ui.max_rect(), 0.0, egui::Color32::from_rgb(25, 25, 28));
 
         doc.arr_view.track_panel_scroll_y = doc.arr_view.scroll_y;
 
