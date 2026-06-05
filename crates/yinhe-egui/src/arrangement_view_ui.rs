@@ -62,7 +62,7 @@ pub fn show(
                 crate::view_interaction::FollowMode::Page => {
                     let margin = right_edge * 0.2;
                     if cursor_x > right_edge - margin || cursor_x < 0.0 {
-                        view.scroll_x = (ct as f32 * view.pixels_per_tick) - right_edge * 0.5;
+                        view.base.scroll_x = (ct as f32 * view.base.pixels_per_tick) - right_edge * 0.5;
                         view.clamp_scroll(w as f32, h as f32, total_ticks, num_tracks);
                     }
                 }
@@ -70,8 +70,8 @@ pub fn show(
                     // Cursor glued just inside the leftmost edge (1px inset
                     // avoids GPU clip-boundary flicker).  Use f32 arithmetic
                     // to match the GPU rendering path exactly.
-                    let target = ct as f32 * view.pixels_per_tick;
-                    view.scroll_x = target - 0.01;
+                    let target = ct as f32 * view.base.pixels_per_tick;
+                    view.base.scroll_x = target - 0.01;
                     view.clamp_scroll(w as f32, h as f32, total_ticks, num_tracks);
                 }
                 crate::view_interaction::FollowMode::None => unreachable!(),
@@ -83,16 +83,16 @@ pub fn show(
     let uniforms = Uniforms {
         width: w as f32,
         height: h as f32,
-        scroll_x: view.scroll_x,
-        scroll_y: view.scroll_y,
-        pixels_per_tick: view.pixels_per_tick,
+        scroll_x: view.base.scroll_x,
+        scroll_y: view.base.scroll_y,
+        pixels_per_tick: view.base.pixels_per_tick,
         key_height: view.lane_height,
         keyboard_width: 0.0,
         _pad: 0.0,
     };
 
     // Only rebuild instances if view state or uniforms changed
-    let gpu_dirty = view.dirty || renderer.uniforms_changed(&uniforms);
+    let gpu_dirty = view.base.dirty || renderer.uniforms_changed(&uniforms);
 
     if gpu_dirty {
         let mut scratch = std::mem::take(instances);
@@ -114,7 +114,7 @@ pub fn show(
         scratch.clear();
         *instances = scratch;
     }
-    view.dirty = false;
+    view.base.dirty = false;
 
     // Paint
     render_ctx.paint(

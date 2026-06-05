@@ -16,19 +16,19 @@ fn viewport_hash(width: u32, height: u32, view: &PianoRollView, cursor_tick: Opt
     h = h.wrapping_mul(31).wrapping_add(height as u64);
     h = h
         .wrapping_mul(31)
-        .wrapping_add(view.scroll_x.to_bits() as u64);
+        .wrapping_add(view.base.scroll_x.to_bits() as u64);
     h = h
         .wrapping_mul(31)
-        .wrapping_add(view.scroll_y.to_bits() as u64);
+        .wrapping_add(view.base.scroll_y.to_bits() as u64);
     h = h
         .wrapping_mul(31)
-        .wrapping_add(view.pixels_per_tick.to_bits() as u64);
+        .wrapping_add(view.base.pixels_per_tick.to_bits() as u64);
     h = h
         .wrapping_mul(31)
         .wrapping_add(view.key_height.to_bits() as u64);
     h = h
         .wrapping_mul(31)
-        .wrapping_add(view.keyboard_width.to_bits() as u64);
+        .wrapping_add(view.base.left_panel_width.to_bits() as u64);
     // Include cursor_tick so keyboard highlights update during playback
     h = h
         .wrapping_mul(31)
@@ -58,11 +58,11 @@ pub fn prepare(
     let uniforms = Uniforms {
         width: width as f32,
         height: height as f32,
-        scroll_x: view.scroll_x,
-        scroll_y: view.scroll_y,
-        pixels_per_tick: view.pixels_per_tick,
+        scroll_x: view.base.scroll_x,
+        scroll_y: view.base.scroll_y,
+        pixels_per_tick: view.base.pixels_per_tick,
         key_height: view.key_height,
-        keyboard_width: view.keyboard_width,
+        keyboard_width: view.base.left_panel_width,
         _pad: 0.0,
     };
 

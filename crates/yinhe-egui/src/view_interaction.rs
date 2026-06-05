@@ -55,13 +55,13 @@ pub(crate) trait ViewInteraction {
 
 impl ViewInteraction for yinhe_pianoroll::PianoRollView {
     fn scroll_x(&mut self) -> &mut f32 {
-        &mut self.scroll_x
+        &mut self.base.scroll_x
     }
     fn scroll_y(&mut self) -> &mut f32 {
-        &mut self.scroll_y
+        &mut self.base.scroll_y
     }
     fn dirty(&mut self) -> &mut bool {
-        &mut self.dirty
+        &mut self.base.dirty
     }
     fn x_to_tick(&self, x: f32) -> f64 {
         self.x_to_tick(x)
@@ -79,13 +79,13 @@ impl ViewInteraction for yinhe_pianoroll::PianoRollView {
 
 impl ViewInteraction for yinhe_arrangement::ArrangementView {
     fn scroll_x(&mut self) -> &mut f32 {
-        &mut self.scroll_x
+        &mut self.base.scroll_x
     }
     fn scroll_y(&mut self) -> &mut f32 {
-        &mut self.scroll_y
+        &mut self.base.scroll_y
     }
     fn dirty(&mut self) -> &mut bool {
-        &mut self.dirty
+        &mut self.base.dirty
     }
     fn x_to_tick(&self, x: f32) -> f64 {
         self.x_to_tick(x)

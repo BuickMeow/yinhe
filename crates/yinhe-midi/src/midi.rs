@@ -114,10 +114,11 @@ impl MidiFile {
         if self.tempo_segments.is_empty() {
             return None;
         }
-        self.tempo_segments
-            .iter()
-            .rposition(|s| s.start_time <= time)
-            .map(|idx| &self.tempo_segments[idx])
+        let idx = self.tempo_segments.partition_point(|s| s.start_time <= time);
+        if idx == 0 {
+            return None;
+        }
+        Some(&self.tempo_segments[idx - 1])
     }
 
     /// Convert seconds to MIDI tick (considering tempo changes).
@@ -142,11 +143,8 @@ impl MidiFile {
         if self.time_sig_events.is_empty() {
             return (self.time_sig_numerator, self.time_sig_denominator);
         }
-        let idx = self
-            .time_sig_events
-            .iter()
-            .rposition(|e| e.tick <= tick)
-            .unwrap_or(0);
+        let count = self.time_sig_events.partition_point(|e| e.tick <= tick);
+        let idx = count.saturating_sub(1);
         let ev = &self.time_sig_events[idx];
         (ev.numerator, ev.denominator)
     }
@@ -172,14 +170,11 @@ impl MidiFile {
 
     /// Convert absolute tick to seconds (considering tempo changes).
     pub fn tick_to_seconds(&self, tick: u32) -> f64 {
-        let seg_idx = self
-            .tempo_segments
-            .iter()
-            .rposition(|s| s.start_tick <= tick);
-        let Some(seg_idx) = seg_idx else {
+        let count = self.tempo_segments.partition_point(|s| s.start_tick <= tick);
+        if count == 0 {
             return crate::time::ticks_to_seconds(tick, self.ticks_per_beat, DEFAULT_MPQ);
-        };
-        let seg = &self.tempo_segments[seg_idx];
+        }
+        let seg = &self.tempo_segments[count - 1];
         let dtick = tick - seg.start_tick;
         seg.start_time
             + crate::time::ticks_to_seconds(dtick, self.ticks_per_beat, seg.micros_per_quarter)

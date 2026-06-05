@@ -3,10 +3,12 @@
 mod note;
 pub mod palette;
 mod source;
+pub mod view_base;
 
 pub use note::{MidiControlEvent, Note, NoteScanIndex, ScanBlock, TimeSigEvent, seek_first_note};
 pub use palette::TRACK_PALETTE;
 pub use source::NoteSource;
+pub use view_base::TimelineViewBase;
 
 /// Returns true if the given MIDI key (0–127) is a black key on a piano.
 pub fn is_black_key(key: u8) -> bool {

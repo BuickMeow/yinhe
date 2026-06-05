@@ -147,3 +147,58 @@ impl QuantizePreset {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_quarter_at_480ppq() {
+        // 1/4: 480*4/4 = 480
+        assert_eq!(QuantizePreset::Quarter.tick_interval(480), 480);
+    }
+
+    #[test]
+    fn test_eighth_at_480ppq() {
+        // 1/8: 480*4/8 = 240
+        assert_eq!(QuantizePreset::Eighth.tick_interval(480), 240);
+    }
+
+    #[test]
+    fn test_whole_at_480ppq() {
+        // 1/1: 480*4/1 = 1920
+        assert_eq!(QuantizePreset::Whole.tick_interval(480), 1920);
+    }
+
+    #[test]
+    fn test_custom_half() {
+        // Custom(1,2): 480*4*1/2 = 960
+        assert_eq!(QuantizePreset::Custom(1, 2).tick_interval(480), 960);
+    }
+
+    #[test]
+    fn test_snap_tick_rounds() {
+        // Quarter at 480ppq → interval=480
+        assert_eq!(QuantizePreset::Quarter.snap_tick(100.0, 480), 0.0);
+        assert_eq!(QuantizePreset::Quarter.snap_tick(240.0, 480), 480.0);
+        assert_eq!(QuantizePreset::Quarter.snap_tick(480.0, 480), 480.0);
+    }
+
+    #[test]
+    fn test_default_is_quarter() {
+        assert_eq!(QuantizePreset::default(), QuantizePreset::Quarter);
+    }
+
+    #[test]
+    fn test_denominator_value() {
+        assert_eq!(QuantizePreset::Sixteenth.denominator_value(), 16);
+        assert_eq!(QuantizePreset::EighthTriplet.denominator_value(), 12);
+        assert_eq!(QuantizePreset::Custom(1, 4).denominator_value(), 0);
+    }
+
+    #[test]
+    fn test_as_fraction() {
+        assert_eq!(QuantizePreset::Quarter.as_fraction(), (1, 4));
+        assert_eq!(QuantizePreset::Custom(3, 8).as_fraction(), (3, 8));
+    }
+}

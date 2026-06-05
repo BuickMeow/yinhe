@@ -1,14 +1,16 @@
 use eframe::egui;
 
+use crate::theme;
+
 // ── Constants ──
 
 /// Height of the scrollbar band.
-pub(crate) const SCROLLBAR_H: f32 = 24.0;
+pub(crate) const SCROLLBAR_H: f32 = theme::SCROLLBAR_H;
 
-const BG_COLOR: egui::Color32 = egui::Color32::from_rgb(0x14, 0x14, 0x18);
-const RECT_COLOR: egui::Color32 = egui::Color32::from_rgb(0x50, 0x50, 0x58);
-const RECT_HOVER_COLOR: egui::Color32 = egui::Color32::from_rgb(0x70, 0x70, 0x78);
-const RECT_DRAG_COLOR: egui::Color32 = egui::Color32::from_rgb(0x90, 0x90, 0x98);
+const BG_COLOR: egui::Color32 = theme::SCROLLBAR_BG;
+const RECT_COLOR: egui::Color32 = theme::SCROLLBAR_RECT;
+const RECT_HOVER_COLOR: egui::Color32 = theme::SCROLLBAR_HOVER;
+const RECT_DRAG_COLOR: egui::Color32 = theme::SCROLLBAR_DRAG;
 const EDGE_WIDTH: f32 = 4.0;
 
 /// Pixel-range allowed for `pixels_per_tick`.

@@ -47,7 +47,7 @@ pub fn append_keyboard_instances(
             rgba_packed: pack_rgba(r, g, b, 1.0),
             props_packed: pack_props(WHITE_KEY_CORNER_RADIUS, KEY_BORDER_WIDTH),
             velocity: 0,
-            flags: 0,
+            tag: 0,
         });
     }
 
@@ -76,7 +76,7 @@ pub fn append_keyboard_instances(
             rgba_packed: pack_rgba(r, g, b, 1.0),
             props_packed: pack_props(BLACK_KEY_CORNER_RADIUS, KEY_BORDER_WIDTH),
             velocity: 0,
-            flags: 0,
+            tag: 0,
         });
     }
 }

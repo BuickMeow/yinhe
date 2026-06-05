@@ -1,5 +1,5 @@
 /// Shared grid-building utilities used by both pianoroll and arrangement instances.
-use yinhe_types::TimeSigEvent;
+use yinhe_types::{TimeSigEvent, TimelineViewBase};
 
 use crate::vertex::{NoteInstance, pack_props, pack_rgba};
 
@@ -67,9 +67,8 @@ pub fn measure_bounds_at_tick(
     let segments = build_time_sig_segments(time_sig_events, default_num, default_den);
 
     let seg_idx = segments
-        .iter()
-        .rposition(|&(start, _, _)| start <= tick_u)
-        .unwrap_or(0);
+        .partition_point(|&(start, _, _)| start <= tick_u)
+        .saturating_sub(1);
     let (seg_start, num, den) = segments[seg_idx];
     let seg_end = segments
         .get(seg_idx + 1)
@@ -82,6 +81,81 @@ pub fn measure_bounds_at_tick(
     let next_bar = (prev_bar + measure).min(seg_end);
 
     (prev_bar as f64, next_bar as f64)
+}
+
+/// Build timeline grid lines shared by pianoroll and arrangement views.
+///
+/// `sub_beat_color`: if Some, render sub-beat lines when `pixels_per_sub >= 2.0`.
+pub fn build_timeline_grid(
+    out: &mut Vec<NoteInstance>,
+    w: f32,
+    h: f32,
+    base: &TimelineViewBase,
+    tpb: u32,
+    default_num: u8,
+    default_den: u8,
+    time_sig_events: &[TimeSigEvent],
+    measure_color: (f32, f32, f32, f32),
+    beat_color: (f32, f32, f32, f32),
+    sub_beat_color: Option<(f32, f32, f32, f32)>,
+) {
+    let ppu = base.pixels_per_tick;
+    if ppu <= 0.001 {
+        return;
+    }
+    let (tick_start, tick_end) = base.visible_tick_range(w);
+    let left_w = base.left_panel_width;
+    let x_origin = left_w - base.scroll_x;
+
+    let sub_beat_div = 4u32;
+    let ticks_per_sub = (tpb / sub_beat_div).max(1);
+    let segments = build_time_sig_segments(time_sig_events, default_num, default_den);
+    let sub_f = ticks_per_sub as f64;
+
+    for i in 0..segments.len() {
+        let (seg_start, num, den) = segments[i];
+        let seg_end = segments.get(i + 1).map_or(u32::MAX, |&(t, _, _)| t);
+        let seg_start_f = seg_start as f64;
+        if seg_start_f > tick_end {
+            break;
+        }
+
+        let ticks_per_measure = measure_ticks(tpb, num, den);
+        let ticks_per_beat = ticks_per_measure / num as u32;
+
+        let pixels_per_sub = ticks_per_sub as f32 * ppu;
+        let show_sub_beat = sub_beat_color.is_some() && pixels_per_sub >= 2.0;
+        let show_beat = pixels_per_sub >= 1.0;
+
+        let first_tick = seg_start_f.max(tick_start);
+        let first = ((first_tick / sub_f).floor() as u32)
+            .saturating_mul(ticks_per_sub)
+            .max(seg_start);
+
+        let mut tick = first;
+        while (tick as f64) <= tick_end && tick < seg_end {
+            let local = tick - seg_start;
+
+            let x = x_origin + tick as f32 * ppu;
+            if x >= left_w && x <= w {
+                let is_measure = local % ticks_per_measure == 0;
+                let is_beat = if !is_measure {
+                    let beat_local = local % ticks_per_measure;
+                    beat_local % ticks_per_beat == 0 && beat_local > 0
+                } else {
+                    false
+                };
+                if is_measure {
+                    push_grid_line(out, x, h, 2.0, measure_color, tick);
+                } else if is_beat && show_beat {
+                    push_grid_line(out, x, h, 1.0, beat_color, tick);
+                } else if show_sub_beat {
+                    push_grid_line(out, x, h, 1.0, sub_beat_color.unwrap(), tick);
+                }
+            }
+            tick += ticks_per_sub;
+        }
+    }
 }
 
 /// Push a grid line instance into `out`.
@@ -101,7 +175,7 @@ pub fn push_grid_line(
         rgba_packed: pack_rgba(color.0, color.1, color.2, color.3),
         props_packed: pack_props(0.0, 0.0),
         velocity: 0,
-        flags: tick,
+        tag: tick,
     });
 }
 
@@ -175,6 +249,6 @@ mod tests {
         assert_eq!(out[0].x, 100.0);
         assert_eq!(out[0].h, 500.0);
         assert_eq!(out[0].w, 1.0);
-        assert_eq!(out[0].flags, 42);
+        assert_eq!(out[0].tag, 42);
     }
 }

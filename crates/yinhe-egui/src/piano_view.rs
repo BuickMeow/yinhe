@@ -60,13 +60,13 @@ pub fn show(
         if is_playing && *follow_mode != super::view_interaction::FollowMode::None {
             let cursor_x = view.tick_to_x(ct);
             let right_edge = w as f32;
-            let kb_w = view.keyboard_width;
+            let kb_w = view.keyboard_width();
             match *follow_mode {
                 super::view_interaction::FollowMode::Page => {
                     let margin = (right_edge - kb_w) * 0.2;
                     if cursor_x > right_edge - margin || cursor_x < kb_w {
-                        view.scroll_x =
-                            (ct as f32 * view.pixels_per_tick) - (right_edge - kb_w) * 0.5;
+                        view.base.scroll_x =
+                            (ct as f32 * view.base.pixels_per_tick) - (right_edge - kb_w) * 0.5;
                         view.clamp_scroll(w as f32, h as f32, total_ticks);
                     }
                 }
@@ -74,8 +74,8 @@ pub fn show(
                     // Cursor glued just inside the leftmost edge (1px inset
                     // avoids GPU clip-boundary flicker).  Use f32 arithmetic
                     // to match the GPU rendering path exactly.
-                    let target = ct as f32 * view.pixels_per_tick;
-                    view.scroll_x = target - 1.0;
+                    let target = ct as f32 * view.base.pixels_per_tick;
+                    view.base.scroll_x = target - 1.0;
                     view.clamp_scroll(w as f32, h as f32, total_ticks);
                 }
                 super::view_interaction::FollowMode::None => unreachable!(),
@@ -85,11 +85,11 @@ pub fn show(
 
     // ── Dirty detection ──
     if *cursor_tick != *last_cursor_tick {
-        view.dirty = true;
+        view.base.dirty = true;
     }
     *last_cursor_tick = *cursor_tick;
 
-    let force_rebuild = view.dirty;
+    let force_rebuild = view.base.dirty;
 
     // Prepare GPU data
     let gpu_dirty = yinhe_pianoroll::prepare(
@@ -104,8 +104,8 @@ pub fn show(
         force_rebuild,
     );
 
-    let content_changed = view.dirty || gpu_dirty;
-    view.dirty = false;
+    let content_changed = view.base.dirty || gpu_dirty;
+    view.base.dirty = false;
 
     // Paint wgpu content into the content_rect (below the ruler)
     render_ctx.paint(
@@ -122,7 +122,7 @@ pub fn show(
     if let Some(midi) = midi {
         if let Some(tpb) = midi.ticks_per_beat() {
             let ruler_rect = egui::Rect::from_min_max(
-                egui::pos2(rect.min.x + view.keyboard_width, ruler_band_y),
+                egui::pos2(rect.min.x + view.keyboard_width(), ruler_band_y),
                 egui::pos2(rect.max.x, ruler_band_y + RULER_H),
             );
             let (def_num, def_den) = midi.time_sig_default();
@@ -141,7 +141,7 @@ pub fn show(
         content_rect,
         view,
         cursor_tick,
-        view.keyboard_width,
+        view.keyboard_width(),
         Some((quantize, ppq)),
         bar_line_data,
         None,
@@ -153,7 +153,7 @@ pub fn show(
     // Created AFTER content interact so it wins the 4px overlap at the edge.
     // Covers ruler + content area, not the scrollbar below.
     ui.push_id("kb_handle", |ui| {
-        let handle_x = rect.min.x + view.keyboard_width;
+        let handle_x = rect.min.x + view.keyboard_width();
         let handle_rect = egui::Rect::from_min_max(
             egui::pos2(handle_x - 2.0, rect.min.y),
             egui::pos2(handle_x + 2.0, content_rect.max.y),
@@ -163,9 +163,9 @@ pub fn show(
             ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
         }
         if handle_resp.dragged() {
-            view.keyboard_width =
-                (view.keyboard_width + handle_resp.drag_delta().x).clamp(30.0, rect.width() * 0.4);
-            view.dirty = true;
+            view.base.left_panel_width =
+                (view.keyboard_width() + handle_resp.drag_delta().x).clamp(30.0, rect.width() * 0.4);
+            view.base.dirty = true;
             ui.ctx().request_repaint();
         }
     });
@@ -173,7 +173,7 @@ pub fn show(
     // ── Horizontal scrollbar (right of keyboard, below content) ──
     if midi.is_some() {
         let sb_rect = egui::Rect::from_min_max(
-            egui::pos2(rect.min.x + view.keyboard_width, content_rect.max.y),
+            egui::pos2(rect.min.x + view.keyboard_width(), content_rect.max.y),
             egui::pos2(
                 rect.max.x,
                 content_rect.max.y + super::scrollbar::SCROLLBAR_H,
@@ -183,11 +183,11 @@ pub fn show(
             super::scrollbar::show(
                 ui,
                 sb_rect,
-                w as f32 - view.keyboard_width,
-                &mut view.scroll_x,
-                &mut view.pixels_per_tick,
+                w as f32 - view.keyboard_width(),
+                &mut view.base.scroll_x,
+                &mut view.base.pixels_per_tick,
                 total_ticks,
-                &mut view.dirty,
+                &mut view.base.dirty,
             );
         });
     }

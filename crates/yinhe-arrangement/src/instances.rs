@@ -1,10 +1,8 @@
-use std::collections::HashMap;
-
 use rayon::prelude::*;
 use yinhe_types::{NoteSource, TimeSigEvent, seek_first_note};
 
 use crate::view::ArrangementView;
-use yinhe_wgpu::grid::{self, push_grid_line};
+use yinhe_wgpu::grid;
 use yinhe_wgpu::vertex::{NoteInstance, pack_props, pack_rgba};
 
 /// Build grid line instances into `out`, respecting time signature changes.
@@ -18,62 +16,12 @@ pub fn build_arrangement_grid(
     default_den: u8,
     time_sig_events: &[TimeSigEvent],
 ) {
-    let ppu = view.pixels_per_tick;
-    if ppu <= 0.001 {
-        return;
-    }
-
-    let (tick_start, tick_end) = view.visible_tick_range(w);
-    let sub_beat_div = 4u32;
-    let ticks_per_sub = (tpb / sub_beat_div).max(1);
-    let lb_w = view.label_width;
-    let x_origin = lb_w - view.scroll_x;
-
-    let segments = grid::build_time_sig_segments(time_sig_events, default_num, default_den);
-
-    for i in 0..segments.len() {
-        let (seg_start, num, den) = segments[i];
-        let seg_end = segments.get(i + 1).map_or(u32::MAX, |&(t, _, _)| t);
-        let seg_start_f = seg_start as f64;
-        if seg_start_f > tick_end {
-            break;
-        }
-
-        let ticks_per_measure = grid::measure_ticks(tpb, num, den);
-        let ticks_per_beat = ticks_per_measure / num as u32;
-
-        // When zoomed out too far, sub-beat spacing < 1px → only render measure lines
-        let pixels_per_sub = ticks_per_sub as f32 * ppu;
-        let show_beat_lines = pixels_per_sub >= 1.0;
-
-        let sub_f = ticks_per_sub as f64;
-        let first_tick = seg_start_f.max(tick_start);
-        let first = ((first_tick / sub_f).floor() as u32)
-            .saturating_mul(ticks_per_sub)
-            .max(seg_start);
-
-        let mut tick = first;
-        while (tick as f64) <= tick_end && tick < seg_end {
-            let local = tick - seg_start;
-
-            let x = x_origin + tick as f32 * ppu;
-            if x >= lb_w && x <= w {
-                let is_measure = local % ticks_per_measure == 0;
-                let is_beat = if !is_measure {
-                    let beat_local = local % ticks_per_measure;
-                    beat_local % ticks_per_beat == 0 && beat_local > 0
-                } else {
-                    false
-                };
-                if is_measure {
-                    push_grid_line(out, x, h, 2.0, grid::AR_MEASURE_LINE_COLOR, tick);
-                } else if is_beat && show_beat_lines {
-                    push_grid_line(out, x, h, 1.0, grid::AR_BEAT_LINE_COLOR, tick);
-                }
-            }
-            tick += ticks_per_sub;
-        }
-    }
+    grid::build_timeline_grid(
+        out, w, h, &view.base, tpb, default_num, default_den, time_sig_events,
+        grid::AR_MEASURE_LINE_COLOR,
+        grid::AR_BEAT_LINE_COLOR,
+        None,
+    );
 }
 
 /// Build all instances for the arrangement view frame.
@@ -92,8 +40,8 @@ pub fn build_arrangement_instances(
     let w = width as f32;
     let h = height as f32;
     let lh = view.lane_height;
-    let lb_w = view.label_width;
-    let ppu = view.pixels_per_tick;
+    let lb_w = view.base.left_panel_width;
+    let ppu = view.base.pixels_per_tick;
     let num_tracks = track_visible.len();
 
     // 1. Background quad
@@ -105,7 +53,7 @@ pub fn build_arrangement_instances(
         rgba_packed: pack_rgba(grid::AR_BG_COLOR.0, grid::AR_BG_COLOR.1, grid::AR_BG_COLOR.2, 1.0),
         props_packed: pack_props(0.0, 0.0),
         velocity: 0,
-        flags: 0,
+        tag: 0,
     });
 
     // 2. Track lane backgrounds (alternating colors)
@@ -125,7 +73,7 @@ pub fn build_arrangement_instances(
                 rgba_packed: pack_rgba(col.0, col.1, col.2, 1.0),
                 props_packed: pack_props(0.0, 0.0),
                 velocity: 0,
-                flags: 0,
+                tag: 0,
             });
         }
     }
@@ -146,8 +94,8 @@ pub fn build_arrangement_instances(
             let pad_end = tick_end + tick_pad as f64;
             let (trk_first, trk_last) = view.visible_track_range(h, num_tracks);
 
-            let x_offset = lb_w - view.scroll_x;
-            let y_offset = -view.scroll_y;
+            let x_offset = lb_w - view.base.scroll_x;
+            let y_offset = -view.base.scroll_y;
             let lh_per_key = lh / 128.0;
             let note_h = lh_per_key.max(1.0);
 
@@ -199,16 +147,16 @@ pub fn build_arrangement_instances(
                             rgba_packed: pack_rgba(color[0], color[1], color[2], 0.85),
                             props_packed: pack_props(0.0, 0.0),
                             velocity: vel as u32,
-                            flags: 0,
+                            tag: 0,
                         });
                     };
 
                     // Sub-pixel merge: gaps < 1 pixel are invisible.
                     let merge_gap_ticks = (1.0 / ppu).ceil() as u32;
 
-                    // Bucket notes by track, then merge within each bucket.
-                    let mut track_buckets: HashMap<usize, Vec<(u32, u32, u8)>> =
-                        HashMap::new();
+                    // Bucket notes by track using Vec (avoids per-frame HashMap allocation).
+                    let mut track_buckets: Vec<Vec<(u32, u32, u8)>> =
+                        vec![Vec::new(); num_tracks];
                     for note in &notes[start_idx..] {
                         if note.start_tick as f64 > pad_end {
                             break;
@@ -223,13 +171,13 @@ pub fn build_arrangement_instances(
                         if !track_visible.get(ti).copied().unwrap_or(true) {
                             continue;
                         }
-                        track_buckets
-                            .entry(ti)
-                            .or_default()
-                            .push((note.start_tick, note.end_tick, note.velocity));
+                        track_buckets[ti].push((note.start_tick, note.end_tick, note.velocity));
                     }
 
-                    for (ti, notes_in_track) in &track_buckets {
+                    for (ti, notes_in_track) in track_buckets.iter().enumerate() {
+                        if notes_in_track.is_empty() {
+                            continue;
+                        }
                         let mut merge_start = notes_in_track[0].0;
                         let mut merge_end = notes_in_track[0].1;
                         let mut merge_vel = notes_in_track[0].2;
@@ -241,7 +189,7 @@ pub fn build_arrangement_instances(
                             } else {
                                 flush_merge(
                                     &mut local,
-                                    *ti,
+                                    ti,
                                     merge_start,
                                     merge_end,
                                     merge_vel,
@@ -251,7 +199,7 @@ pub fn build_arrangement_instances(
                                 merge_vel = v;
                             }
                         }
-                        flush_merge(&mut local, *ti, merge_start, merge_end, merge_vel);
+                        flush_merge(&mut local, ti, merge_start, merge_end, merge_vel);
                     }
 
                     if local.is_empty() { None } else { Some(local) }
@@ -268,7 +216,7 @@ pub fn build_arrangement_instances(
     if let Some(ct) = cursor_tick {
         let cx = view.tick_to_x(ct);
         if cx >= lb_w && cx <= w {
-            push_grid_line(instances, cx, h, 2.0, grid::AR_PLAYHEAD_COLOR, 0);
+            grid::push_grid_line(instances, cx, h, 2.0, grid::AR_PLAYHEAD_COLOR, 0);
         }
     }
 }
@@ -359,7 +307,7 @@ mod tests {
 
         for inst in &instances {
             if inst.velocity > 0 {
-                assert!(inst.x >= view.label_width, "note x should be >= label_width");
+                assert!(inst.x >= view.base.left_panel_width, "note x should be >= label_width");
                 assert!(inst.w > 0.0, "note width should be positive");
             }
         }
@@ -409,14 +357,16 @@ mod tests {
         let mock = make_midi(notes);
 
         let view = ArrangementView {
-            pixels_per_tick: 0.08,
+            base: yinhe_types::TimelineViewBase {
+                pixels_per_tick: 0.08,
+                scroll_x: 0.0,
+                scroll_y: 0.0,
+                left_panel_width: 0.0,
+                dirty: true,
+                track_panel_row_height: 40.0,
+                track_panel_scroll_y: 0.0,
+            },
             lane_height: 40.0,
-            label_width: 0.0,
-            scroll_x: 0.0,
-            scroll_y: 0.0,
-            dirty: true,
-            track_panel_row_height: 40.0,
-            track_panel_scroll_y: 0.0,
         };
         let track_visible = vec![true; 16];
         let track_colors = [[0.5f32; 3]; 16];
@@ -444,10 +394,8 @@ mod tests {
     #[test]
     fn test_grid_lines_dont_hang() {
         let mock = make_midi(vec![(60, 0, 480, 0, 100)]);
-        let view = ArrangementView {
-            pixels_per_tick: 10.0,
-            ..Default::default()
-        };
+        let mut view = ArrangementView::default();
+        view.base.pixels_per_tick = 10.0;
         let track_visible = vec![true; 1];
         let track_colors = [[0.3, 0.6, 0.9]];
         let mut instances = Vec::new();
@@ -471,13 +419,11 @@ mod tests {
     fn test_no_duplicate_grid_lines_at_time_sig_boundary() {
         let _mock = make_midi(vec![(60, 0, 480, 0, 100)]);
         let tpb = 480;
-        let view = ArrangementView {
-            pixels_per_tick: 0.5,
-            label_width: 0.0,
-            scroll_x: 0.0,
-            dirty: true,
-            ..Default::default()
-        };
+        let mut view = ArrangementView::default();
+        view.base.pixels_per_tick = 0.5;
+        view.base.left_panel_width = 0.0;
+        view.base.scroll_x = 0.0;
+        view.base.dirty = true;
 
         let events = vec![
             TimeSigEvent { tick: 0, numerator: 4, denominator: 2 },
@@ -496,7 +442,7 @@ mod tests {
             &events,
         );
 
-        let ticks: Vec<u32> = grid_lines.iter().map(|i| i.flags).collect();
+        let ticks: Vec<u32> = grid_lines.iter().map(|i| i.tag).collect();
 
         let mut sorted = ticks.clone();
         sorted.sort();

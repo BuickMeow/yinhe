@@ -18,12 +18,12 @@ pub fn show(
     egui::Panel::bottom("bottom_bar")
         .frame(egui::Frame {
             inner_margin: egui::Margin::symmetric(8, 6),
-            fill: egui::Color32::from_rgb(25, 25, 28),
+            fill: crate::theme::APP_BG,
             ..Default::default()
         })
         .show_inside(ui, |ui| {
             ui.horizontal(|ui| {
-                let active_color = egui::Color32::from_rgb(100, 180, 255);
+                let active_color = crate::theme::ACCENT_ACTIVE;
                 let inactive_color = egui::Color32::GRAY;
                 let font_size = 9.5;
 

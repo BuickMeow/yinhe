@@ -179,7 +179,7 @@ impl App {
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         // ── Full-viewport background (matching title bar / transport bar) ──
-        let bg = egui::Color32::from_rgb(25, 25, 28);
+        let bg = crate::theme::APP_BG;
         ui.painter().rect_filled(ui.ctx().screen_rect(), 0.0, bg);
 
         // ── Force dark mode ──
@@ -411,9 +411,9 @@ impl eframe::App for App {
                         h_split_rect,
                         0.0,
                         if h_split_resp.hovered() || h_split_resp.dragged() {
-                            egui::Color32::from_gray(100)
+                            crate::theme::SPLIT_HOVER
                         } else {
-                            egui::Color32::from_gray(60)
+                            crate::theme::SPLIT_DEFAULT
                         },
                     );
                     if h_split_resp.dragged() {

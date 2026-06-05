@@ -71,113 +71,7 @@ pub fn show(
                         .min_size(btn_size)
                         .corner_radius(btn_rounding),
                 );
-                egui::Popup::menu(&file_btn).show(|ui| {
-                    ui.set_min_width(180.0);
-
-                    fn menu_items(
-                        ui: &mut egui::Ui,
-                        items: &[MenuItem],
-                        pending_action: &mut Option<FileAction>,
-                    ) {
-                        for item in items {
-                            let icon_color = if item.enabled {
-                                egui::Color32::WHITE
-                            } else {
-                                egui::Color32::from_gray(80)
-                            };
-                            let resp = ui.add_enabled(
-                                item.enabled,
-                                egui::Button::selectable(
-                                    false,
-                                    egui::RichText::new(format!("      {}", item.label)).size(14.0),
-                                ),
-                            );
-                            if resp.clicked() {
-                                *pending_action = Some(item.action);
-                                ui.close();
-                            }
-                            // Paint icon relative to the item's rect
-                            let icon_pos = egui::pos2(resp.rect.min.x + 4.0, resp.rect.center().y);
-                            ui.painter().text(
-                                icon_pos,
-                                egui::Align2::LEFT_CENTER,
-                                item.icon.codepoint,
-                                egui::FontId::new(16.0, item.icon.font_family()),
-                                icon_color,
-                            );
-                        }
-                    }
-
-                    let items = [
-                        MenuItem {
-                            icon: ICON_NOTE_ADD,
-                            label: "新建工程",
-                            action: FileAction::NewProject,
-                            enabled: !file_loader.is_loading(),
-                        },
-                        MenuItem {
-                            icon: ICON_FOLDER_OPEN,
-                            label: "打开",
-                            action: FileAction::Open,
-                            enabled: !file_loader.is_loading(),
-                        },
-                        MenuItem {
-                            icon: ICON_SAVE,
-                            label: "保存",
-                            action: FileAction::Save,
-                            enabled: has_active,
-                        },
-                        MenuItem {
-                            icon: ICON_SAVE_ALT,
-                            label: "另存为",
-                            action: FileAction::SaveAs,
-                            enabled: has_active,
-                        },
-                        MenuItem {
-                            icon: ICON_CLOSE,
-                            label: "关闭",
-                            action: FileAction::CloseDocument,
-                            enabled: has_active,
-                        },
-                    ];
-                    menu_items(ui, &items, pending_file_action);
-
-                    ui.separator();
-
-                    let export_items = [
-                        MenuItem {
-                            icon: ICON_AUDIO_FILE,
-                            label: "导出音频",
-                            action: FileAction::ExportAudio,
-                            enabled: has_active,
-                        },
-                        MenuItem {
-                            icon: ICON_MUSIC_NOTE,
-                            label: "导出MIDI",
-                            action: FileAction::ExportMidi,
-                            enabled: has_active,
-                        },
-                    ];
-                    menu_items(ui, &export_items, pending_file_action);
-
-                    ui.separator();
-
-                    let misc_items = [
-                        MenuItem {
-                            icon: ICON_SETTINGS,
-                            label: "设置",
-                            action: FileAction::Settings,
-                            enabled: true,
-                        },
-                        MenuItem {
-                            icon: ICON_EXIT_TO_APP,
-                            label: "退出",
-                            action: FileAction::Exit,
-                            enabled: true,
-                        },
-                    ];
-                    menu_items(ui, &misc_items, pending_file_action);
-                });
+                show_file_menu(&file_btn, file_loader, has_active, pending_file_action);
 
                 if has_active {
                     let is_playing = doc.map(|d| d.playback.is_playing()).unwrap_or(false);
@@ -303,82 +197,8 @@ pub fn show(
                 }
 
                 if let Some(doc) = doc {
-                    let tick = doc.cursor_tick.unwrap_or(0.0);
-                    let tick_u = tick as u32;
-                    let seconds = doc.midi.tick_to_seconds(tick_u);
-                    let bpm = doc.midi.bpm_at_time(seconds);
-                    let (num, _denom_power) = doc.midi.time_sig_at_tick(tick_u);
-                    let ppq = doc.midi.ticks_per_beat;
-
-                    let bpm_str = time_format::format_bpm(bpm);
-                    let ts_str = format!(
-                        "{}  {}",
-                        time_format::format_time_sig(num, _denom_power),
-                        ppq
-                    );
-                    let time_str = time_format::format_time(seconds);
-                    let pos_str = time_format::format_tick_bar_beat(tick, ppq, num);
-
-                    let col_widths = [70.0, 76.0, 90.0];
-                    let rect_h = 36.0;
-                    let rect_w = col_widths.iter().sum::<f32>();
-                    let bar_cx = ui.max_rect().center().x;
-                    let cursor_x = ui.cursor().min.x;
-                    button_right = Some(cursor_x);
-                    let rect_l = bar_cx - rect_w * 0.5;
-                    let pad = (rect_l - cursor_x).max(0.0);
-                    ui.add_space(pad);
-                    let (rect, _) =
-                        ui.allocate_exact_size(egui::vec2(rect_w, rect_h), egui::Sense::hover());
-                    timecode_rect = Some(rect);
-
-                    let c = egui::Color32::from_rgb(100, 180, 255);
-                    let font = egui::FontId::proportional(12.0);
-                    let grid = egui::Stroke::new(1.0, egui::Color32::from_gray(60));
-
-                    ui.painter().rect_filled(
-                        rect,
-                        egui::CornerRadius::same(8),
-                        egui::Color32::BLACK,
-                    );
-
-                    let mut col_x = rect.min.x;
-                    for i in 0..3 {
-                        let cx = col_x + col_widths[i] * 0.5;
-                        if i > 0 {
-                            ui.painter().line_segment(
-                                [egui::pos2(col_x, rect.min.y), egui::pos2(col_x, rect.max.y)],
-                                grid,
-                            );
-                        }
-                        let text = match i {
-                            0 => format!("{:.1}%", cpu_usage),
-                            1 => bpm_str.clone(),
-                            2 => pos_str.clone(),
-                            _ => unreachable!(),
-                        };
-                        ui.painter().text(
-                            egui::pos2(cx, rect.min.y + rect_h * 0.25),
-                            egui::Align2::CENTER_CENTER,
-                            text,
-                            font.clone(),
-                            c,
-                        );
-                        let text2 = match i {
-                            0 => format!("{:.1} MB", mem_mb),
-                            1 => ts_str.clone(),
-                            2 => time_str.clone(),
-                            _ => unreachable!(),
-                        };
-                        ui.painter().text(
-                            egui::pos2(cx, rect.min.y + rect_h * 0.75),
-                            egui::Align2::CENTER_CENTER,
-                            text2,
-                            font.clone(),
-                            c,
-                        );
-                        col_x += col_widths[i];
-                    }
+                    button_right = Some(ui.cursor().min.x);
+                    timecode_rect = Some(show_timecode_display(ui, doc, cpu_usage, mem_mb));
                 }
             });
 
@@ -407,4 +227,149 @@ pub fn show(
                 }
             }
         });
+}
+
+/// Show the file menu popup. Extracted from `show` for readability.
+fn show_file_menu(
+    button: &egui::Response,
+    file_loader: &FileLoader,
+    has_active: bool,
+    pending_action: &mut Option<FileAction>,
+) {
+    egui::Popup::menu(button).show(|ui| {
+        ui.set_min_width(180.0);
+
+        fn menu_items(
+            ui: &mut egui::Ui,
+            items: &[MenuItem],
+            pending_action: &mut Option<FileAction>,
+        ) {
+            for item in items {
+                let icon_color = if item.enabled {
+                    egui::Color32::WHITE
+                } else {
+                    egui::Color32::from_gray(80)
+                };
+                let resp = ui.add_enabled(
+                    item.enabled,
+                    egui::Button::selectable(
+                        false,
+                        egui::RichText::new(format!("      {}", item.label)).size(14.0),
+                    ),
+                );
+                if resp.clicked() {
+                    *pending_action = Some(item.action);
+                    ui.close();
+                }
+                let icon_pos = egui::pos2(resp.rect.min.x + 4.0, resp.rect.center().y);
+                ui.painter().text(
+                    icon_pos,
+                    egui::Align2::LEFT_CENTER,
+                    item.icon.codepoint,
+                    egui::FontId::new(16.0, item.icon.font_family()),
+                    icon_color,
+                );
+            }
+        }
+
+        let items = [
+            MenuItem { icon: ICON_NOTE_ADD, label: "新建工程", action: FileAction::NewProject, enabled: !file_loader.is_loading() },
+            MenuItem { icon: ICON_FOLDER_OPEN, label: "打开", action: FileAction::Open, enabled: !file_loader.is_loading() },
+            MenuItem { icon: ICON_SAVE, label: "保存", action: FileAction::Save, enabled: has_active },
+            MenuItem { icon: ICON_SAVE_ALT, label: "另存为", action: FileAction::SaveAs, enabled: has_active },
+            MenuItem { icon: ICON_CLOSE, label: "关闭", action: FileAction::CloseDocument, enabled: has_active },
+        ];
+        menu_items(ui, &items, pending_action);
+
+        ui.separator();
+
+        let export_items = [
+            MenuItem { icon: ICON_AUDIO_FILE, label: "导出音频", action: FileAction::ExportAudio, enabled: has_active },
+            MenuItem { icon: ICON_MUSIC_NOTE, label: "导出MIDI", action: FileAction::ExportMidi, enabled: has_active },
+        ];
+        menu_items(ui, &export_items, pending_action);
+
+        ui.separator();
+
+        let misc_items = [
+            MenuItem { icon: ICON_SETTINGS, label: "设置", action: FileAction::Settings, enabled: true },
+            MenuItem { icon: ICON_EXIT_TO_APP, label: "退出", action: FileAction::Exit, enabled: true },
+        ];
+        menu_items(ui, &misc_items, pending_action);
+    });
+}
+
+/// Show the timecode display panel. Returns the allocated rect.
+fn show_timecode_display(
+    ui: &mut egui::Ui,
+    doc: &Document,
+    cpu_usage: f32,
+    mem_mb: f64,
+) -> egui::Rect {
+    let tick = doc.cursor_tick.unwrap_or(0.0);
+    let tick_u = tick as u32;
+    let seconds = doc.midi.tick_to_seconds(tick_u);
+    let bpm = doc.midi.bpm_at_time(seconds);
+    let (num, _denom_power) = doc.midi.time_sig_at_tick(tick_u);
+    let ppq = doc.midi.ticks_per_beat;
+
+    let bpm_str = time_format::format_bpm(bpm);
+    let ts_str = format!("{}  {}", time_format::format_time_sig(num, _denom_power), ppq);
+    let time_str = time_format::format_time(seconds);
+    let pos_str = time_format::format_tick_bar_beat(tick, ppq, num);
+
+    let col_widths = [70.0, 76.0, 90.0];
+    let rect_h = 36.0;
+    let rect_w = col_widths.iter().sum::<f32>();
+    let bar_cx = ui.max_rect().center().x;
+    let cursor_x = ui.cursor().min.x;
+    let rect_l = bar_cx - rect_w * 0.5;
+    let pad = (rect_l - cursor_x).max(0.0);
+    ui.add_space(pad);
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(rect_w, rect_h), egui::Sense::hover());
+
+    let c = crate::theme::ACCENT_ACTIVE;
+    let font = egui::FontId::proportional(12.0);
+    let grid = egui::Stroke::new(1.0, egui::Color32::from_gray(60));
+
+    ui.painter().rect_filled(rect, egui::CornerRadius::same(8), egui::Color32::BLACK);
+
+    let texts_top = [
+        format!("{:.1}%", cpu_usage),
+        bpm_str,
+        pos_str,
+    ];
+    let texts_bot = [
+        format!("{:.1} MB", mem_mb),
+        ts_str,
+        time_str,
+    ];
+
+    let mut col_x = rect.min.x;
+    for i in 0..3 {
+        let cx = col_x + col_widths[i] * 0.5;
+        if i > 0 {
+            ui.painter().line_segment(
+                [egui::pos2(col_x, rect.min.y), egui::pos2(col_x, rect.max.y)],
+                grid,
+            );
+        }
+        ui.painter().text(
+            egui::pos2(cx, rect.min.y + rect_h * 0.25),
+            egui::Align2::CENTER_CENTER,
+            &texts_top[i],
+            font.clone(),
+            c,
+        );
+        ui.painter().text(
+            egui::pos2(cx, rect.min.y + rect_h * 0.75),
+            egui::Align2::CENTER_CENTER,
+            &texts_bot[i],
+            font.clone(),
+            c,
+        );
+        col_x += col_widths[i];
+    }
+
+    rect
 }

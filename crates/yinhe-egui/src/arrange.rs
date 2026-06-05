@@ -6,7 +6,8 @@ use crate::render_context::RenderContext;
 use crate::track_panel;
 
 /// Height of the time ruler band at the top of the arrangement view.
-const RULER_H: f32 = 24.0;
+use crate::theme;
+const RULER_H: f32 = theme::RULER_H;
 
 pub fn show(
     ui: &mut egui::Ui,
@@ -21,7 +22,7 @@ pub fn show(
     follow_mode: &mut crate::view_interaction::FollowMode,
 ) {
     if doc.cursor_tick != *last_cursor_tick {
-        doc.arr_view.dirty = true;
+        doc.arr_view.base.dirty = true;
     }
     *last_cursor_tick = doc.cursor_tick;
 
@@ -93,21 +94,21 @@ pub fn show(
         ui.painter()
             .rect_filled(ui.max_rect(), 0.0, egui::Color32::from_rgb(25, 25, 28));
 
-        doc.arr_view.track_panel_scroll_y = doc.arr_view.scroll_y;
+        doc.arr_view.base.track_panel_scroll_y = doc.arr_view.base.scroll_y;
 
         let zoom_delta = ui.input(|i| i.zoom_delta());
         if (zoom_delta - 1.0).abs() > 0.001 {
             if let Some(hover) = ui.input(|i| i.pointer.hover_pos()) {
                 if tp_rect.contains(hover) {
                     let pointer_y = hover.y - tp_rect.min.y;
-                    let old = doc.arr_view.track_panel_row_height;
-                    doc.arr_view.track_panel_row_height =
-                        (doc.arr_view.track_panel_row_height * zoom_delta).clamp(16.0, 120.0);
-                    doc.arr_view.lane_height = doc.arr_view.track_panel_row_height;
-                    let track_frac = (pointer_y + doc.arr_view.track_panel_scroll_y) / old;
-                    doc.arr_view.track_panel_scroll_y =
-                        (track_frac * doc.arr_view.track_panel_row_height - pointer_y).max(0.0);
-                    doc.arr_view.dirty = true;
+                    let old = doc.arr_view.base.track_panel_row_height;
+                    doc.arr_view.base.track_panel_row_height =
+                        (doc.arr_view.base.track_panel_row_height * zoom_delta).clamp(16.0, 120.0);
+                    doc.arr_view.lane_height = doc.arr_view.base.track_panel_row_height;
+                    let track_frac = (pointer_y + doc.arr_view.base.track_panel_scroll_y) / old;
+                    doc.arr_view.base.track_panel_scroll_y =
+                        (track_frac * doc.arr_view.base.track_panel_row_height - pointer_y).max(0.0);
+                    doc.arr_view.base.dirty = true;
                 }
             }
         }
@@ -118,11 +119,11 @@ pub fn show(
             &mut doc.track_visible,
             &mut doc.track_selected,
             &doc.pc_map_cache,
-            &mut doc.arr_view.track_panel_row_height,
-            &mut doc.arr_view.track_panel_scroll_y,
+            &mut doc.arr_view.base.track_panel_row_height,
+            &mut doc.arr_view.base.track_panel_scroll_y,
         );
 
-        doc.arr_view.scroll_y = doc.arr_view.track_panel_scroll_y;
+        doc.arr_view.base.scroll_y = doc.arr_view.base.track_panel_scroll_y;
     });
 
     // ── Vertical splitter handle ──
@@ -142,9 +143,9 @@ pub fn show(
         v_handle,
         0.0,
         if v_hovered {
-            egui::Color32::from_gray(160)
+            crate::theme::V_SPLIT_HOVER
         } else {
-            egui::Color32::from_gray(80)
+            crate::theme::V_SPLIT_DEFAULT
         },
     );
     if v_resp.dragged() {
@@ -197,10 +198,10 @@ pub fn show(
             ui,
             sb_rect,
             gpu_rect.width(),
-            &mut doc.arr_view.scroll_x,
-            &mut doc.arr_view.pixels_per_tick,
+            &mut doc.arr_view.base.scroll_x,
+            &mut doc.arr_view.base.pixels_per_tick,
             total_ticks,
-            &mut doc.arr_view.dirty,
+            &mut doc.arr_view.base.dirty,
         );
     }
 }

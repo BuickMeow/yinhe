@@ -12,6 +12,7 @@ mod render_context;
 mod scrollbar;
 mod time_format;
 mod time_ruler;
+mod theme;
 mod title_bar;
 mod track_panel;
 mod transport_bar;

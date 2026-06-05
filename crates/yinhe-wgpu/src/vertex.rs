@@ -27,8 +27,8 @@ pub struct NoteInstance {
     pub props_packed: u32,
     /// Reserved
     pub velocity: u32,
-    /// Bit flags (reserved)
-    pub flags: u32,
+    /// Semantic tag: grid lines store tick, notes store selection state
+    pub tag: u32,
 }
 
 /// Pack RGBA floats (0.0-1.0) into a single u32 (UNORM8 x 4).

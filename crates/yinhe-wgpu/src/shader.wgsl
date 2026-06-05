@@ -14,7 +14,7 @@ struct Uniforms {
 
 struct NoteInstance {
     @location(0) xywh: vec4<f32>,
-    @location(1) packed: vec4<u32>,  // x=rgba(UNORM8), y=props(2xf16), z=velocity, w=flags
+    @location(1) packed: vec4<u32>,  // x=rgba(UNORM8), y=props(2xf16), z=velocity, w=tag
 }
 
 struct VertexOutput {

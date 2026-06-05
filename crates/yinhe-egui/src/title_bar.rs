@@ -4,7 +4,7 @@ use egui_material_icons::icons::*;
 use crate::document::Document;
 
 /// Height of the custom title bar.
-pub(crate) const TITLE_BAR_HEIGHT: f32 = 32.0;
+pub(crate) const TITLE_BAR_HEIGHT: f32 = crate::theme::TITLE_BAR_H;
 
 /// Action to be performed by the caller after title bar rendering.
 pub(crate) enum TitleBarAction {
@@ -23,7 +23,7 @@ pub(crate) fn show(
     egui::Panel::top("title_bar")
         .show_separator_line(false)
         .frame(egui::Frame {
-            fill: egui::Color32::from_rgb(25, 25, 28),
+            fill: crate::theme::APP_BG,
             inner_margin: egui::Margin::ZERO,
             outer_margin: egui::Margin::ZERO,
             ..Default::default()
@@ -80,9 +80,9 @@ pub(crate) fn show(
 
                 // Tab background
                 let bg = if *is_active {
-                    egui::Color32::from_rgb(55, 55, 60)
+                    crate::theme::TAB_ACTIVE_BG
                 } else {
-                    egui::Color32::from_rgb(35, 35, 38)
+                    crate::theme::TAB_INACTIVE_BG
                 };
                 painter.rect_filled(tab_rect, 4.0, bg);
 
@@ -133,7 +133,7 @@ pub(crate) fn show(
                 let close_hover =
                     tab_close_rect.contains(ui.input(|i| i.pointer.hover_pos().unwrap_or_default()));
                 if close_hover {
-                    painter.rect_filled(tab_close_rect, 4.0, egui::Color32::from_rgb(200, 50, 50));
+                    painter.rect_filled(tab_close_rect, 4.0, crate::theme::DANGER_HOVER);
                 }
                 painter.text(
                     tab_close_rect.center(),
@@ -297,7 +297,7 @@ fn paint_window_buttons(ui: &mut egui::Ui, rects: (egui::Rect, egui::Rect, egui:
     let max_icon = if maximized { ICON_FILTER_NONE } else { ICON_CHECK_BOX_OUTLINE_BLANK };
     let max_hover = max_rect.contains(hover_pos);
     if max_hover {
-        ui.painter().rect_filled(max_rect, 0.0, egui::Color32::from_rgb(80, 80, 85));
+        ui.painter().rect_filled(max_rect, 0.0, crate::theme::WIN_BTN_HOVER);
     }
     ui.painter().text(
         max_rect.center(),
@@ -314,7 +314,7 @@ fn paint_window_buttons(ui: &mut egui::Ui, rects: (egui::Rect, egui::Rect, egui:
     // Minimize
     let min_hover = min_rect.contains(hover_pos);
     if min_hover {
-        ui.painter().rect_filled(min_rect, 0.0, egui::Color32::from_rgb(80, 80, 85));
+        ui.painter().rect_filled(min_rect, 0.0, crate::theme::WIN_BTN_HOVER);
     }
     ui.painter().text(
         min_rect.center(),

@@ -1,66 +1,60 @@
+use yinhe_types::TimelineViewBase;
+
 /// Arrangement view state: manages coordinate transforms between
 /// tick/track-space and screen pixel space.
 #[derive(Clone, Debug)]
 pub struct ArrangementView {
-    /// Pixels per MIDI tick (horizontal zoom).
-    pub pixels_per_tick: f32,
+    /// Shared horizontal timeline state.
+    pub base: TimelineViewBase,
     /// Height of each track lane in pixels.
     pub lane_height: f32,
-    /// Width of the left-side label area in pixels.
-    pub label_width: f32,
-    /// Horizontal scroll offset in pixels.
-    pub scroll_x: f32,
-    /// Vertical scroll offset in pixels (for track lanes).
-    pub scroll_y: f32,
-    /// Whether view state has changed since last render — set to false after prepare.
-    pub dirty: bool,
-    /// Row height for the transport track panel (synced with lane_height).
-    pub track_panel_row_height: f32,
-    /// Vertical scroll offset for the transport track panel (synced with scroll_y).
-    pub track_panel_scroll_y: f32,
 }
 
 impl Default for ArrangementView {
     fn default() -> Self {
         Self {
-            pixels_per_tick: 0.08,
+            base: TimelineViewBase {
+                pixels_per_tick: 0.08,
+                scroll_x: 0.0,
+                scroll_y: 0.0,
+                left_panel_width: 0.0,
+                dirty: true,
+                track_panel_row_height: 40.0,
+                track_panel_scroll_y: 0.0,
+            },
             lane_height: 40.0,
-            label_width: 0.0,
-            scroll_x: 0.0,
-            scroll_y: 0.0,
-            dirty: true,
-            track_panel_row_height: 40.0,
-            track_panel_scroll_y: 0.0,
         }
     }
 }
 
 impl ArrangementView {
     /// Convert a MIDI tick to screen x coordinate.
+    #[inline]
     pub fn tick_to_x(&self, tick: f64) -> f32 {
-        self.label_width + (tick as f32 * self.pixels_per_tick) - self.scroll_x
+        self.base.tick_to_x(tick)
     }
 
     /// Convert screen x to MIDI tick.
+    #[inline]
     pub fn x_to_tick(&self, x: f32) -> f64 {
-        ((x - self.label_width + self.scroll_x) / self.pixels_per_tick) as f64
+        self.base.x_to_tick(x)
     }
 
     /// Get the screen y coordinate for a track lane.
     pub fn lane_y(&self, track_idx: usize) -> f32 {
-        track_idx as f32 * self.lane_height - self.scroll_y
+        track_idx as f32 * self.lane_height - self.base.scroll_y
     }
 
     /// The tick range visible on screen.
+    #[inline]
     pub fn visible_tick_range(&self, width: f32) -> (f64, f64) {
-        let start = self.x_to_tick(self.label_width).max(0.0);
-        let end = self.x_to_tick(width);
-        (start, end)
+        self.base.visible_tick_range(width)
     }
 
     /// The track range visible on screen.
     pub fn visible_track_range(&self, height: f32, num_tracks: usize) -> (usize, usize) {
-        let first = ((self.scroll_y / self.lane_height).floor() as usize).min(num_tracks.saturating_sub(1));
+        let first = ((self.base.scroll_y / self.lane_height).floor() as usize)
+            .min(num_tracks.saturating_sub(1));
         let visible_count = (height / self.lane_height).ceil() as usize + 1;
         let last = (first + visible_count).min(num_tracks);
         (first, last)
@@ -68,44 +62,36 @@ impl ArrangementView {
 
     /// Clamp scroll so the view doesn't go out of bounds.
     pub fn clamp_scroll(&mut self, width: f32, height: f32, total_ticks: f64, num_tracks: usize) {
-        let old_x = self.scroll_x;
-        let old_y = self.scroll_y;
+        let old_x = self.base.scroll_x;
+        let old_y = self.base.scroll_y;
 
-        let min_scroll_x = 0.0;
-        let max_scroll_x =
-            (total_ticks as f32 * self.pixels_per_tick - (width - self.label_width)).max(0.0);
-        self.scroll_x = self.scroll_x.clamp(min_scroll_x, max_scroll_x);
+        // Horizontal
+        self.base.clamp_scroll_x(width, total_ticks);
 
+        // Vertical
         let max_scroll_y = (num_tracks as f32 * self.lane_height - height).max(0.0);
-        self.scroll_y = self.scroll_y.clamp(0.0, max_scroll_y);
+        self.base.scroll_y = self.base.scroll_y.clamp(0.0, max_scroll_y);
 
-        if old_x != self.scroll_x || old_y != self.scroll_y {
-            self.dirty = true;
+        if old_x != self.base.scroll_x || old_y != self.base.scroll_y {
+            self.base.dirty = true;
         }
     }
 
     /// Zoom around a pointer position (horizontal).
+    #[inline]
     pub fn zoom_around_x(&mut self, pointer_x: f32, zoom_factor: f32) {
-        let old = self.pixels_per_tick;
-        self.pixels_per_tick = (self.pixels_per_tick * zoom_factor).clamp(0.001, 10.0);
-
-        let tick = (pointer_x - self.label_width + self.scroll_x) / old;
-        self.scroll_x = tick * self.pixels_per_tick - (pointer_x - self.label_width);
-        self.dirty = true;
+        self.base.zoom_around_x(pointer_x, zoom_factor);
     }
 
     /// Zoom lane height around a pointer y position (vertical).
-    /// Keeps the track lane under the pointer at the same screen position.
     pub fn zoom_lane_height(&mut self, pointer_y: f32, factor: f32) {
         let old = self.lane_height;
         self.lane_height = (self.lane_height * factor).clamp(16.0, 120.0);
-        self.track_panel_row_height = self.lane_height;
+        self.base.track_panel_row_height = self.lane_height;
 
-        // Fractional track index under the pointer
-        let track_frac = (pointer_y + self.scroll_y) / old;
-        // Re-adjust scroll_y so the same track stays under the pointer
-        self.scroll_y = track_frac * self.lane_height - pointer_y;
-        self.scroll_y = self.scroll_y.max(0.0);
-        self.dirty = true;
+        let track_frac = (pointer_y + self.base.scroll_y) / old;
+        self.base.scroll_y = track_frac * self.lane_height - pointer_y;
+        self.base.scroll_y = self.base.scroll_y.max(0.0);
+        self.base.dirty = true;
     }
 }

@@ -27,3 +27,52 @@ pub fn format_tick_bar_beat(tick: f64, ppq: u32, numerator: u8) -> String {
     format!("{}.{}.{:03}", bar, beat, tick_in_beat)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_time_zero() {
+        assert_eq!(format_time(0.0), "0:00.000");
+    }
+
+    #[test]
+    fn test_format_time_seconds() {
+        assert_eq!(format_time(65.123), "1:05.123");
+    }
+
+    #[test]
+    fn test_format_bpm() {
+        assert_eq!(format_bpm(120.0), "120.00");
+        assert_eq!(format_bpm(140.5), "140.50");
+    }
+
+    #[test]
+    fn test_format_time_sig_4_4() {
+        assert_eq!(format_time_sig(4, 2), "4/4");
+    }
+
+    #[test]
+    fn test_format_time_sig_6_8() {
+        assert_eq!(format_time_sig(6, 3), "6/8");
+    }
+
+    #[test]
+    fn test_format_tick_bar_beat_start() {
+        // tick=0, ppq=480, num=4 → 1.1.000
+        assert_eq!(format_tick_bar_beat(0.0, 480, 4), "1.1.000");
+    }
+
+    #[test]
+    fn test_format_tick_bar_beat_second_beat() {
+        // tick=480, ppq=480, num=4 → beat 2 of bar 1
+        assert_eq!(format_tick_bar_beat(480.0, 480, 4), "1.2.000");
+    }
+
+    #[test]
+    fn test_format_tick_bar_beat_second_bar() {
+        // tick=1920 (480*4), ppq=480, num=4 → bar 2
+        assert_eq!(format_tick_bar_beat(1920.0, 480, 4), "2.1.000");
+    }
+}
+

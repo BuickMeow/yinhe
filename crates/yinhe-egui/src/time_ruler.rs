@@ -4,12 +4,7 @@ use yinhe_wgpu::grid;
 
 // ── Constants ──
 
-const RULER_BG_COLOR: egui::Color32 = egui::Color32::from_rgb(0x14, 0x14, 0x18);
-const DIVIDER_COLOR: egui::Color32 = egui::Color32::from_rgb(0x3A, 0x3A, 0x3F);
-const MEASURE_LABEL_COLOR: egui::Color32 = egui::Color32::from_rgb(0xAA, 0xAA, 0xAF);
-const BEAT_LABEL_COLOR: egui::Color32 = egui::Color32::from_rgb(0x77, 0x77, 0x7C);
-const SUB_BEAT_LABEL_COLOR: egui::Color32 = egui::Color32::from_rgb(0x55, 0x55, 0x5A);
-const TICK_LABEL_COLOR: egui::Color32 = egui::Color32::from_rgb(0x44, 0x44, 0x49);
+use crate::theme;
 const MIN_LABEL_SPACING: f32 = 38.0;
 const SUB_BEAT_DIV: u32 = 4;
 
@@ -33,10 +28,10 @@ impl TimeRulerView for yinhe_pianoroll::PianoRollView {
         self.x_to_tick(x)
     }
     fn pixels_per_tick(&self) -> f32 {
-        self.pixels_per_tick
+        self.base.pixels_per_tick
     }
     fn content_left(&self) -> f32 {
-        self.keyboard_width
+        self.base.left_panel_width
     }
 }
 
@@ -48,10 +43,10 @@ impl TimeRulerView for yinhe_arrangement::ArrangementView {
         self.x_to_tick(x)
     }
     fn pixels_per_tick(&self) -> f32 {
-        self.pixels_per_tick
+        self.base.pixels_per_tick
     }
     fn content_left(&self) -> f32 {
-        self.label_width
+        self.base.left_panel_width
     }
 }
 
@@ -79,10 +74,10 @@ pub(crate) fn paint(
     let painter = &clipped_painter;
 
     // Background
-    painter.rect_filled(rect, 0.0, RULER_BG_COLOR);
+    painter.rect_filled(rect, 0.0, theme::RULER_BG);
 
     // Bottom divider
-    let stroke = egui::Stroke::new(1.0, DIVIDER_COLOR);
+    let stroke = egui::Stroke::new(1.0, theme::RULER_DIVIDER);
     painter.line_segment(
         [
             egui::pos2(rect.min.x, rect.max.y),
@@ -191,11 +186,11 @@ fn paint_labels(
 
                 let (label, color) = if is_measure {
                     let bar = bar_offset + (local / ticks_per_measure) + 1;
-                    (format!("{}", bar), MEASURE_LABEL_COLOR)
+                    (format!("{}", bar), theme::MEASURE_LABEL)
                 } else if is_beat && show_beat {
                     let bar = bar_offset + (local / ticks_per_measure) + 1;
                     let beat = (local % ticks_per_measure) / ticks_per_beat + 1;
-                    (format!("{}.{}", bar, beat), BEAT_LABEL_COLOR)
+                    (format!("{}.{}", bar, beat), theme::BEAT_LABEL)
                 } else if show_sub {
                     let bar = bar_offset + (local / ticks_per_measure) + 1;
                     let beat = (local % ticks_per_measure) / ticks_per_beat + 1;
@@ -203,11 +198,11 @@ fn paint_labels(
                         let tick_in_beat = (tick as f64 % tpb as f64) as u32;
                         (
                             format!("{}.{}.{:03}", bar, beat, tick_in_beat),
-                            TICK_LABEL_COLOR,
+                            theme::TICK_LABEL,
                         )
                     } else {
                         let sub = (local % ticks_per_beat) / ticks_per_sub;
-                        (format!("{}.{}.{}", bar, beat, sub), SUB_BEAT_LABEL_COLOR)
+                        (format!("{}.{}.{}", bar, beat, sub), theme::SUB_BEAT_LABEL)
                     }
                 } else {
                     tick += ticks_per_sub;
@@ -250,7 +245,7 @@ fn paint_labels(
                             x,
                             text_y_center,
                             &label,
-                            TICK_LABEL_COLOR,
+                            theme::TICK_LABEL,
                         );
                     }
                 }

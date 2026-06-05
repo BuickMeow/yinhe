@@ -1,7 +1,7 @@
 use rayon::prelude::*;
 use yinhe_types::{NoteSource, TimeSigEvent, TRACK_PALETTE, is_black_key, seek_first_note};
 
-use crate::grid::{self, push_grid_line};
+use crate::grid;
 use crate::keyboard;
 use crate::vertex::{NoteInstance, pack_props, pack_rgba};
 use crate::view::PianoRollView;
@@ -22,65 +22,12 @@ pub fn build_pianoroll_grid(
     default_den: u8,
     time_sig_events: &[TimeSigEvent],
 ) {
-    let ppu = view.pixels_per_tick;
-    if ppu <= 0.001 {
-        return;
-    }
-    let (tick_start, tick_end) = view.visible_tick_range(w);
-    let kb_w = view.keyboard_width;
-    let x_origin = kb_w - view.scroll_x;
-
-    let sub_beat_div = 4u32;
-    let ticks_per_sub = (tpb / sub_beat_div).max(1);
-    let segments = grid::build_time_sig_segments(time_sig_events, default_num, default_den);
-
-    let sub_f = ticks_per_sub as f64;
-
-    for i in 0..segments.len() {
-        let (seg_start, num, den) = segments[i];
-        let seg_end = segments.get(i + 1).map_or(u32::MAX, |&(t, _, _)| t);
-        let seg_start_f = seg_start as f64;
-        if seg_start_f > tick_end {
-            break;
-        }
-
-        let ticks_per_measure = grid::measure_ticks(tpb, num, den);
-        let ticks_per_beat = ticks_per_measure / num as u32;
-
-        // Density thresholds: hide fine lines when zoomed out
-        let pixels_per_sub = ticks_per_sub as f32 * ppu;
-        let show_sub_beat = pixels_per_sub >= 2.0;
-        let show_beat = pixels_per_sub >= 1.0;
-
-        let first_tick = seg_start_f.max(tick_start);
-        let first = ((first_tick / sub_f).floor() as u32)
-            .saturating_mul(ticks_per_sub)
-            .max(seg_start);
-
-        let mut tick = first;
-        while (tick as f64) <= tick_end && tick < seg_end {
-            let local = tick - seg_start;
-
-            let x = x_origin + tick as f32 * ppu;
-            if x >= kb_w && x <= w {
-                let is_measure = local % ticks_per_measure == 0;
-                let is_beat = if !is_measure {
-                    let beat_local = local % ticks_per_measure;
-                    beat_local % ticks_per_beat == 0 && beat_local > 0
-                } else {
-                    false
-                };
-                if is_measure {
-                    push_grid_line(out, x, h, 2.0, grid::PR_MEASURE_LINE_COLOR, tick);
-                } else if is_beat && show_beat {
-                    push_grid_line(out, x, h, 1.0, grid::PR_BEAT_LINE_COLOR, tick);
-                } else if show_sub_beat {
-                    push_grid_line(out, x, h, 1.0, grid::PR_SUB_BEAT_LINE_COLOR, tick);
-                }
-            }
-            tick += ticks_per_sub;
-        }
-    }
+    grid::build_timeline_grid(
+        out, w, h, &view.base, tpb, default_num, default_den, time_sig_events,
+        grid::PR_MEASURE_LINE_COLOR,
+        grid::PR_BEAT_LINE_COLOR,
+        Some(grid::PR_SUB_BEAT_LINE_COLOR),
+    );
 }
 
 /// Build all instances for the piano roll frame (backward-compatible wrapper).
@@ -118,10 +65,10 @@ pub fn build_static_instances(
 
     let w = width as f32;
     let h = height as f32;
-    let kb_w = view.keyboard_width;
+    let kb_w = view.keyboard_width();
     let kh = view.key_height;
-    let bottom = 128.0 * kh - view.scroll_y;
-    let ppu = view.pixels_per_tick;
+    let bottom = 128.0 * kh - view.base.scroll_y;
+    let ppu = view.base.pixels_per_tick;
 
     // 1. Background: single full-area quad, then overlay black-key rows only.
     instances.push(NoteInstance {
@@ -132,7 +79,7 @@ pub fn build_static_instances(
         rgba_packed: pack_rgba(grid::PR_BG_COLOR.0, grid::PR_BG_COLOR.1, grid::PR_BG_COLOR.2, 1.0),
         props_packed: pack_props(0.0, 0.0),
         velocity: 0,
-        flags: 0,
+        tag: 0,
     });
     for key in 0u8..128 {
         if !is_black_key(key) {
@@ -150,7 +97,7 @@ pub fn build_static_instances(
             rgba_packed: pack_rgba(BLACK_KEY_ROW_COLOR.0, BLACK_KEY_ROW_COLOR.1, BLACK_KEY_ROW_COLOR.2, 1.0),
             props_packed: pack_props(0.0, 0.0),
             velocity: 0,
-            flags: 0,
+            tag: 0,
         });
     }
 
@@ -170,7 +117,7 @@ pub fn build_static_instances(
             let (key_lo, key_hi) = view.visible_key_range(h);
             let has_selection = !selected.is_empty();
 
-            let x_offset = kb_w - view.scroll_x;
+            let x_offset = kb_w - view.base.scroll_x;
 
             let results: Vec<(Vec<NoteInstance>, u8, bool, [f32; 3])> = (0u8..128)
                 .into_par_iter()
@@ -233,7 +180,7 @@ pub fn build_static_instances(
                             ),
                             props_packed: pack_props(rounding, border_w),
                             velocity: note.velocity as u32,
-                            flags: if is_selected { 1 } else { 0 },
+                            tag: if is_selected { 1 } else { 0 },
                         });
 
                         if let Some(ct) = cursor_tick {
@@ -269,7 +216,7 @@ pub fn build_static_instances(
         instances,
         kb_w,
         kh,
-        view.scroll_y,
+        view.base.scroll_y,
         h,
         &active_keys,
         &active_colors,
@@ -287,7 +234,7 @@ pub fn build_cursor_instance(
     height: u32,
 ) {
     if let Some(ct) = cursor_tick {
-        let kb_w = view.keyboard_width;
+        let kb_w = view.keyboard_width();
         let w = width as f32;
         let h = height as f32;
         let cx = view.tick_to_x(ct);
@@ -300,7 +247,7 @@ pub fn build_cursor_instance(
                 rgba_packed: pack_rgba(1.0, 1.0, 1.0, 0.8),
                 props_packed: pack_props(0.0, 0.0),
                 velocity: 0,
-                flags: 0,
+                tag: 0,
             });
         }
     }
