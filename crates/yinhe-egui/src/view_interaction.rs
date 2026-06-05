@@ -96,15 +96,21 @@ pub(crate) fn handle_input(
     quantize: Option<(QuantizePreset, u32)>,
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
 ) {
-    // Own interact so drag is independent of parent painter / sibling widgets.
-    // Explicit deterministic ID avoids collisions with other interacts on the same Ui.
+    // Own interact for drag / click / double-click.
     let content_resp = ui.interact(
         rect,
         ui.id().with("__content_drag__"),
         egui::Sense::click_and_drag(),
     );
 
-    if content_resp.hovered() {
+    // Hover, zoom, and scroll use a raw pointer-in-rect check instead of
+    // content_resp.hovered().  The enclosing allocate_painter(Sense::hover())
+    // blocks egui-level hover for child interacts, so we test containment
+    // directly.  Drag/click/double-click go through content_resp and are
+    // unaffected.
+    let pointer_in_rect = ui.input(|i| i.pointer.hover_pos().map_or(false, |p| rect.contains(p)));
+
+    if pointer_in_rect {
         let pointer_pos = ui.input(|i| i.pointer.hover_pos().unwrap_or_default());
         let pointer_x = pointer_pos.x - rect.min.x;
         let pointer_y = pointer_pos.y - rect.min.y;
@@ -143,17 +149,15 @@ pub(crate) fn handle_input(
         }
     }
 
-    // Click to set cursor — pointer release + small drag distance instead of
-    // resp.clicked() which fails on trackpads due to micro-movement.
+    // Click to set cursor — pointer release + small drag distance.
+    // Hover check here also uses raw rect containment for the same reason.
     let released = ui.input(|i| i.pointer.primary_released());
     let drag_dist = content_resp.drag_delta().length();
-    if released && content_resp.hovered() && drag_dist < 3.0 {
+    if released && pointer_in_rect && drag_dist < 3.0 {
         if let Some(pos) = content_resp.interact_pointer_pos() {
             let pointer_x = pos.x - rect.min.x;
             if pointer_x >= left_zone_width {
                 let tick = view.x_to_tick(pointer_x);
-                // Snap relative to bar start so grid is always phase-aligned
-                // with the current measure, regardless of earlier time sig changes.
                 let snapped = if let Some((q, ppq)) = &quantize {
                     if let Some((tpb, num, den, events)) = &bar_line_data {
                         let (bar_start, next_bar) = yinhe_wgpu::grid::measure_bounds_at_tick(
@@ -162,7 +166,6 @@ pub(crate) fn handle_input(
                         let offset = tick - bar_start;
                         let snapped_offset = q.snap_tick(offset, *ppq);
                         let grid_tick = bar_start + snapped_offset;
-                        // Pick nearest among {grid point, next bar line}
                         if (tick - next_bar).abs() < (tick - grid_tick).abs() {
                             next_bar
                         } else {
