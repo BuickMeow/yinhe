@@ -127,6 +127,30 @@ pub fn show(
         }
     }
 
+    // ── Keyboard resize handle (invisible, cursor-only) ──
+    // Placed at the boundary between keyboard and content, full height.
+    {
+        let handle_x = rect.min.x + view.keyboard_width;
+        let handle_rect = egui::Rect::from_min_max(
+            egui::pos2(handle_x - 2.0, rect.min.y),
+            egui::pos2(handle_x + 2.0, rect.max.y),
+        );
+        let handle_resp = ui.interact(
+            handle_rect,
+            ui.next_auto_id(),
+            egui::Sense::click_and_drag(),
+        );
+        if handle_resp.hovered() || handle_resp.dragged() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+        }
+        if handle_resp.dragged() {
+            view.keyboard_width =
+                (view.keyboard_width + handle_resp.drag_delta().x).clamp(30.0, rect.width() * 0.4);
+            view.dirty = true;
+            ui.ctx().request_repaint();
+        }
+    }
+
     // Handle input (zoom/pan/cursor/drag/reset) — uses content_rect so that
     // viewport_height for vertical zoom excludes the ruler band.
     crate::view_interaction::handle_input(
