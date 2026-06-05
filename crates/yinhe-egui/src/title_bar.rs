@@ -139,7 +139,7 @@ pub(crate) fn show(
                     tab_close_rect.center(),
                     egui::Align2::CENTER_CENTER,
                     ICON_CLOSE.codepoint,
-                    egui::FontId::new(14.0, ICON_CLOSE.font_family()),
+                    egui::FontId::new(12.0, ICON_CLOSE.font_family()),
                     if close_hover {
                         egui::Color32::WHITE
                     } else {
@@ -217,15 +217,8 @@ pub(crate) fn show(
             }
 
             // ── Draw centered title ──
-            let left_boundary = bar_rect.min.x + left_padding;
-            let right_limit = if cfg!(target_os = "macos") {
-                bar_rect.max.x
-            } else {
-                bar_rect.max.x - 138.0
-            };
-            let title_x = (left_boundary + right_limit) / 2.0;
             painter.text(
-                egui::pos2(title_x, bar_rect.center().y),
+                egui::pos2(bar_rect.center().x, bar_rect.center().y),
                 egui::Align2::CENTER_CENTER,
                 "Yinhe MIDI Editor",
                 egui::FontId::proportional(13.0),
@@ -234,7 +227,10 @@ pub(crate) fn show(
 
             // ── Paint window buttons (non-macOS, visual only) ──
             #[cfg(not(target_os = "macos"))]
-            paint_window_buttons(ui, win_btn_rects);
+            {
+                let maximized = ui.input(|i| i.viewport().maximized.unwrap_or(false));
+                paint_window_buttons(ui, win_btn_rects, maximized);
+            }
 
             // ── Window drag region (after the tabs, excluding window buttons) ──
             let drag_rect_left = tab_x.max(bar_rect.min.x + left_padding);
@@ -275,7 +271,7 @@ pub(crate) fn show(
 /// Paint window buttons (close/maximize/minimize) on non-macOS platforms.
 /// Visual only — interactions are handled via manual click detection.
 #[cfg(not(target_os = "macos"))]
-fn paint_window_buttons(ui: &mut egui::Ui, rects: (egui::Rect, egui::Rect, egui::Rect)) {
+fn paint_window_buttons(ui: &mut egui::Ui, rects: (egui::Rect, egui::Rect, egui::Rect), maximized: bool) {
     let (close_rect, max_rect, min_rect) = rects;
     let hover_pos = ui.input(|i| i.pointer.hover_pos()).unwrap_or_default();
 
@@ -289,7 +285,7 @@ fn paint_window_buttons(ui: &mut egui::Ui, rects: (egui::Rect, egui::Rect, egui:
         close_rect.center(),
         egui::Align2::CENTER_CENTER,
         ICON_CLOSE.codepoint,
-        egui::FontId::new(14.0, ICON_CLOSE.font_family()),
+        egui::FontId::new(12.0, ICON_CLOSE.font_family()),
         if close_hover {
             egui::Color32::WHITE
         } else {
@@ -297,7 +293,8 @@ fn paint_window_buttons(ui: &mut egui::Ui, rects: (egui::Rect, egui::Rect, egui:
         },
     );
 
-    // Maximize
+    // Maximize / Restore (show restore icon when window is maximized)
+    let max_icon = if maximized { ICON_FILTER_NONE } else { ICON_CHECK_BOX_OUTLINE_BLANK };
     let max_hover = max_rect.contains(hover_pos);
     if max_hover {
         ui.painter().rect_filled(max_rect, 0.0, egui::Color32::from_rgb(80, 80, 85));
@@ -305,8 +302,8 @@ fn paint_window_buttons(ui: &mut egui::Ui, rects: (egui::Rect, egui::Rect, egui:
     ui.painter().text(
         max_rect.center(),
         egui::Align2::CENTER_CENTER,
-        ICON_MAXIMIZE.codepoint,
-        egui::FontId::new(16.0, ICON_MAXIMIZE.font_family()),
+        max_icon.codepoint,
+        egui::FontId::new(12.0, max_icon.font_family()),
         if max_hover {
             egui::Color32::WHITE
         } else {
@@ -322,8 +319,8 @@ fn paint_window_buttons(ui: &mut egui::Ui, rects: (egui::Rect, egui::Rect, egui:
     ui.painter().text(
         min_rect.center(),
         egui::Align2::CENTER_CENTER,
-        ICON_MINIMIZE.codepoint,
-        egui::FontId::new(16.0, ICON_MINIMIZE.font_family()),
+        ICON_HORIZONTAL_RULE.codepoint,
+        egui::FontId::new(12.0, ICON_HORIZONTAL_RULE.font_family()),
         if min_hover {
             egui::Color32::WHITE
         } else {
