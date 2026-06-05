@@ -67,8 +67,11 @@ pub fn show(
                     }
                 }
                 crate::view_interaction::FollowMode::Continuous => {
-                    // Cursor glued to the leftmost edge (track-panel edge).
-                    view.scroll_x = ct as f32 * view.pixels_per_tick;
+                    // Cursor glued just inside the leftmost edge (1px inset
+                    // avoids GPU clip-boundary flicker).  Use f32 arithmetic
+                    // to match the GPU rendering path exactly.
+                    let target = ct as f32 * view.pixels_per_tick;
+                    view.scroll_x = target - 0.01;
                     view.clamp_scroll(w as f32, h as f32, total_ticks, num_tracks);
                 }
                 crate::view_interaction::FollowMode::None => unreachable!(),

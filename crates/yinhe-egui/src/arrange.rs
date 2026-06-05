@@ -34,10 +34,13 @@ pub fn show(
         egui::pos2(remaining.max.x, remaining.min.y + arr_h),
     );
 
-    // ── Track panel: starts at RULER_H so rows align with GPU lanes below the ruler ──
+    // ── Track panel: starts at RULER_H, ends at scrollbar top so rows align with GPU lanes ──
     let tp_rect = egui::Rect::from_min_max(
         egui::pos2(arr_rect.min.x, arr_rect.min.y + RULER_H),
-        egui::pos2(arr_rect.min.x + tp_w, arr_rect.max.y),
+        egui::pos2(
+            arr_rect.min.x + tp_w,
+            arr_rect.max.y - crate::scrollbar::SCROLLBAR_H,
+        ),
     );
 
     // ── GPU area: shifted down by RULER_H, shifted up by SCROLLBAR_H to leave room for the scrollbar ──
@@ -123,10 +126,11 @@ pub fn show(
     });
 
     // ── Vertical splitter handle ──
-    // Stops at gpu_rect.max.y so it never overlaps the scrollbar below.
+    // Full height: covers ruler area above and scrollbar area below
+    // so the handle is always reachable regardless of cursor position.
     let v_handle = egui::Rect::from_min_max(
-        egui::pos2(arr_rect.min.x + tp_w, arr_rect.min.y + RULER_H),
-        egui::pos2(arr_rect.min.x + tp_w + 4.0, gpu_rect.max.y),
+        egui::pos2(arr_rect.min.x + tp_w, arr_rect.min.y),
+        egui::pos2(arr_rect.min.x + tp_w + 4.0, arr_rect.max.y),
     );
     let v_resp = ui.interact(
         v_handle,
