@@ -45,6 +45,21 @@ pub fn show(
         arr_rect.max,
     );
 
+    // Clamp scroll BEFORE drawing the ruler, so the ruler and GPU content
+    // always see the same (clamped) scroll_x.  Otherwise when scroll_x is
+    // pushed past a boundary by momentum/inertia scrolling, the ruler would
+    // show unclamped positions while the GPU content (clamped inside
+    // arrangement_view_ui::show) stays at the boundary — producing a visible
+    // "bounce-back" effect on the ruler labels.
+    let total_ticks = if doc.midi.tick_length > 0 {
+        doc.midi.tick_length as f64 * 1.2
+    } else {
+        10000.0
+    };
+    let num_tracks = doc.track_visible.len();
+    doc.arr_view
+        .clamp_scroll(gpu_rect.width(), gpu_rect.height(), total_ticks, num_tracks);
+
     // ── Ruler: top-right band, drawn with parent painter ──
     {
         let ruler_rect = egui::Rect::from_min_max(
