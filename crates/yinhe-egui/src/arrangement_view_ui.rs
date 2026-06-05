@@ -27,9 +27,12 @@ pub fn show(
     _track_names: &[String],
     instances: &mut Vec<NoteInstance>,
 ) {
-    // Sense::hover() so that drag ownership is handled exclusively by the
-    // dedicated ui.interact calls (content area, scrollbar).
-    let (resp, painter) = ui.allocate_painter(available, egui::Sense::hover());
+    // Sense::click_and_drag() so that the response passed to handle_input
+    // provides hover/drag/click/double-click state.  Unlike the piano roll,
+    // the arrangement view's painter rect *is* the interaction rect (there
+    // is no ruler/kb sub-division inside this child UI), so decoupling them
+    // would be artificial.
+    let (resp, painter) = ui.allocate_painter(available, egui::Sense::click_and_drag());
     let rect = resp.rect;
     let w = rect.width() as u32;
     let h = rect.height() as u32;
@@ -110,7 +113,9 @@ pub fn show(
         gpu_dirty,
     );
 
-    // Handle input (zoom/pan/cursor/drag/reset)
+    // Handle input (zoom/pan/cursor/drag/reset).
+    // Pass the painter response directly — the painter rect and interaction
+    // rect are the same here, so there is no need for a dedicated interact.
     crate::view_interaction::handle_input(
         ui,
         rect,
@@ -119,5 +124,6 @@ pub fn show(
         0.0,
         Some((quantize, ppq)),
         bar_line_data,
+        Some(&resp),
     );
 }

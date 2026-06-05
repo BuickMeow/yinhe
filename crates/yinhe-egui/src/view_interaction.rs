@@ -79,9 +79,14 @@ pub(crate) fn total_ticks_padded(tick_length: u64) -> f64 {
 
 /// Handle zoom/pan/cursor input for a view that implements ViewInteraction.
 ///
-/// Internally creates its own `click_and_drag` interact on `rect` so that
-/// drag ownership never leaks to parent `allocate_painter` responses or
-/// sibling widgets.
+/// When `existing_resp` is `Some`, it is used directly for click/drag/double-click
+/// detection instead of creating a new `click_and_drag` interact.  This avoids
+/// egui interaction conflicts when the caller's `allocate_painter` already owns
+/// the same rect (e.g. arrangement view inside a child UI).
+///
+/// When `existing_resp` is `None` (e.g. piano roll, where the interaction rect
+/// differs from the painter rect), a dedicated `click_and_drag` interact is
+/// created internally.
 ///
 /// `left_zone_width`: pixels from the left edge where vertical zoom is
 ///   allowed (piano_view uses `keyboard_width`, arrangement uses `0.0`).
@@ -95,13 +100,21 @@ pub(crate) fn handle_input(
     left_zone_width: f32,
     quantize: Option<(QuantizePreset, u32)>,
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
+    existing_resp: Option<&egui::Response>,
 ) {
-    // Own interact for drag / click / double-click.
-    let content_resp = ui.interact(
-        rect,
-        ui.id().with("__content_drag__"),
-        egui::Sense::click_and_drag(),
-    );
+    // Use caller-supplied response when painter and interact rect are the
+    // same; otherwise create a dedicated click_and_drag interact.
+    let owned_resp;
+    let content_resp: &egui::Response = if let Some(resp) = existing_resp {
+        resp
+    } else {
+        owned_resp = ui.interact(
+            rect,
+            ui.id().with("__content_drag__"),
+            egui::Sense::click_and_drag(),
+        );
+        &owned_resp
+    };
 
     // Hover, zoom, and scroll use a raw pointer-in-rect check instead of
     // content_resp.hovered().  The enclosing allocate_painter(Sense::hover())

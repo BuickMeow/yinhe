@@ -129,6 +129,7 @@ pub fn show(
         view.keyboard_width,
         Some((quantize, ppq)),
         bar_line_data,
+        None,
     );
 
     // ── Keyboard resize handle ──
