@@ -272,8 +272,8 @@ fn draw_label(
     color: egui::Color32,
 ) {
     painter.text(
-        egui::pos2(x, y_center),
-        egui::Align2::CENTER_CENTER,
+        egui::pos2(x + 2.0, y_center),
+        egui::Align2::LEFT_CENTER,
         text,
         font_id.clone(),
         color,

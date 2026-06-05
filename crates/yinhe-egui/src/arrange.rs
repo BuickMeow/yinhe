@@ -33,9 +33,9 @@ pub fn show(
         egui::pos2(remaining.max.x, remaining.min.y + arr_h),
     );
 
-    // ── Track panel: full height, left side ──
+    // ── Track panel: starts at RULER_H so rows align with GPU lanes below the ruler ──
     let tp_rect = egui::Rect::from_min_max(
-        arr_rect.min,
+        egui::pos2(arr_rect.min.x, arr_rect.min.y + RULER_H),
         egui::pos2(arr_rect.min.x + tp_w, arr_rect.max.y),
     );
 
@@ -85,50 +85,46 @@ pub fn show(
     }
 
     // ── Track panel content ──
-    let _tp_child = ui.allocate_ui_with_layout(
-        egui::vec2(tp_w, arr_h),
-        egui::Layout::top_down(egui::Align::LEFT),
-        |ui| {
-            ui.set_clip_rect(tp_rect);
-            ui.painter()
-                .rect_filled(ui.max_rect(), 0.0, ui.visuals().panel_fill);
+    ui.allocate_new_ui(egui::UiBuilder::new().max_rect(tp_rect), |ui| {
+        ui.set_clip_rect(tp_rect);
+        ui.painter()
+            .rect_filled(ui.max_rect(), 0.0, ui.visuals().panel_fill);
 
-            doc.arr_view.track_panel_scroll_y = doc.arr_view.scroll_y;
+        doc.arr_view.track_panel_scroll_y = doc.arr_view.scroll_y;
 
-            let zoom_delta = ui.input(|i| i.zoom_delta());
-            if (zoom_delta - 1.0).abs() > 0.001 {
-                if let Some(hover) = ui.input(|i| i.pointer.hover_pos()) {
-                    if tp_rect.contains(hover) {
-                        let pointer_y = hover.y - tp_rect.min.y;
-                        let old = doc.arr_view.track_panel_row_height;
-                        doc.arr_view.track_panel_row_height =
-                            (doc.arr_view.track_panel_row_height * zoom_delta).clamp(16.0, 120.0);
-                        doc.arr_view.lane_height = doc.arr_view.track_panel_row_height;
-                        let track_frac = (pointer_y + doc.arr_view.track_panel_scroll_y) / old;
-                        doc.arr_view.track_panel_scroll_y =
-                            (track_frac * doc.arr_view.track_panel_row_height - pointer_y).max(0.0);
-                        doc.arr_view.dirty = true;
-                    }
+        let zoom_delta = ui.input(|i| i.zoom_delta());
+        if (zoom_delta - 1.0).abs() > 0.001 {
+            if let Some(hover) = ui.input(|i| i.pointer.hover_pos()) {
+                if tp_rect.contains(hover) {
+                    let pointer_y = hover.y - tp_rect.min.y;
+                    let old = doc.arr_view.track_panel_row_height;
+                    doc.arr_view.track_panel_row_height =
+                        (doc.arr_view.track_panel_row_height * zoom_delta).clamp(16.0, 120.0);
+                    doc.arr_view.lane_height = doc.arr_view.track_panel_row_height;
+                    let track_frac = (pointer_y + doc.arr_view.track_panel_scroll_y) / old;
+                    doc.arr_view.track_panel_scroll_y =
+                        (track_frac * doc.arr_view.track_panel_row_height - pointer_y).max(0.0);
+                    doc.arr_view.dirty = true;
                 }
             }
+        }
 
-            track_panel::show(
-                ui,
-                &doc.track_info_cache,
-                &mut doc.track_visible,
-                &mut doc.track_selected,
-                &doc.pc_map_cache,
-                &mut doc.arr_view.track_panel_row_height,
-                &mut doc.arr_view.track_panel_scroll_y,
-            );
+        track_panel::show(
+            ui,
+            &doc.track_info_cache,
+            &mut doc.track_visible,
+            &mut doc.track_selected,
+            &doc.pc_map_cache,
+            &mut doc.arr_view.track_panel_row_height,
+            &mut doc.arr_view.track_panel_scroll_y,
+        );
 
-            doc.arr_view.scroll_y = doc.arr_view.track_panel_scroll_y;
-        },
-    );
+        doc.arr_view.scroll_y = doc.arr_view.track_panel_scroll_y;
+    });
 
     // ── Vertical splitter handle ──
     let v_handle = egui::Rect::from_min_max(
-        egui::pos2(arr_rect.min.x + tp_w, arr_rect.min.y),
+        egui::pos2(arr_rect.min.x + tp_w, arr_rect.min.y + RULER_H),
         egui::pos2(arr_rect.min.x + tp_w + 4.0, arr_rect.max.y),
     );
     let v_resp = ui.interact(v_handle, ui.next_auto_id(), egui::Sense::click_and_drag());
