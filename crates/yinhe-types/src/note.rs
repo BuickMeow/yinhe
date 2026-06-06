@@ -79,7 +79,7 @@ impl NoteScanIndex {
     /// `max_tick` is the last tick of any note (used to size the index).
     pub fn build(key_notes: &[Vec<Note>; 128], max_tick: u64) -> Self {
         let block_size = DEFAULT_BLOCK_SIZE;
-        let num_blocks = ((max_tick + block_size as u64 - 1) / block_size as u64).max(1) as usize;
+        let num_blocks = max_tick.div_ceil(block_size as u64).max(1) as usize;
 
         let mut key_blocks: [Vec<ScanBlock>; 128] = core::array::from_fn(|_| Vec::new());
 

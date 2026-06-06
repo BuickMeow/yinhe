@@ -20,7 +20,7 @@ pub fn format_time_sig(numerator: u8, denominator_power: u8) -> String {
 
 /// Convert tick to `bar.beat.tick_in_beat` format (all 1-indexed).
 pub fn format_tick_bar_beat(tick: f64, ppq: u32, numerator: u8) -> String {
-    let ticks_per_bar = ppq as u32 * numerator as u32;
+    let ticks_per_bar = ppq * numerator as u32;
     let bar = (tick / ticks_per_bar as f64).floor() as u32 + 1;
     let beat = ((tick % ticks_per_bar as f64) / ppq as f64).floor() as u32 + 1;
     let tick_in_beat = (tick % ppq as f64) as u32;

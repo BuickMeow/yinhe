@@ -14,6 +14,7 @@ pub const TAB_INACTIVE_BG: egui::Color32 = egui::Color32::from_rgb(35, 35, 38);
 pub const DANGER_HOVER: egui::Color32 = egui::Color32::from_rgb(200, 50, 50);
 
 // ── Window button hover (non-macOS) ──
+#[cfg(not(target_os = "macos"))]
 pub const WIN_BTN_HOVER: egui::Color32 = egui::Color32::from_rgb(80, 80, 85);
 
 // ── Time ruler colors ──

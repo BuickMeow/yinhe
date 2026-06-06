@@ -91,13 +91,11 @@ impl PianorollRenderer {
         dirty: bool,
         build: impl FnOnce(&mut Vec<NoteInstance>),
     ) {
-        if !dirty {
-            if let Some(ref cached) = self.cached_uniforms {
-                if *cached == uniforms {
+        if !dirty
+            && let Some(ref cached) = self.cached_uniforms
+                && *cached == uniforms {
                     return;
                 }
-            }
-        }
 
         let mut scratch = std::mem::take(&mut self.instance_scratch);
         scratch.clear();
@@ -129,7 +127,7 @@ impl PianorollRenderer {
         let uniforms_changed = self
             .cached_uniforms
             .as_ref()
-            .map_or(true, |c| *c != uniforms);
+            .is_none_or(|c| *c != uniforms);
 
         if need_static {
             let mut scratch = std::mem::take(&mut self.instance_scratch);
@@ -263,7 +261,7 @@ impl PianorollRenderer {
     pub fn uniforms_changed(&self, uniforms: &Uniforms) -> bool {
         self.cached_uniforms
             .as_ref()
-            .map_or(true, |c| *c != *uniforms)
+            .is_none_or(|c| *c != *uniforms)
     }
 
     /// Get a reference to the cached uniforms (if any).

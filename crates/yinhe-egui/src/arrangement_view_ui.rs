@@ -54,8 +54,8 @@ pub fn show(
 
     // Auto-follow: scroll based on follow mode (playback only).
     // Never auto-follow when paused, so the user can freely scroll around.
-    if let Some(ct) = *cursor_tick {
-        if is_playing && *follow_mode != crate::view_interaction::FollowMode::None {
+    if let Some(ct) = *cursor_tick
+        && is_playing && *follow_mode != crate::view_interaction::FollowMode::None {
             let cursor_x = view.tick_to_x(ct);
             let right_edge = w as f32;
             match *follow_mode {
@@ -77,7 +77,6 @@ pub fn show(
                 crate::view_interaction::FollowMode::None => unreachable!(),
             }
         }
-    }
 
     // ── Compute uniforms ──
     let uniforms = Uniforms {

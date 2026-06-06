@@ -32,7 +32,7 @@ fn viewport_hash(width: u32, height: u32, view: &PianoRollView, cursor_tick: Opt
     // Include cursor_tick so keyboard highlights update during playback
     h = h
         .wrapping_mul(31)
-        .wrapping_add(cursor_tick.map_or(0, |t| t.to_bits()) as u64);
+        .wrapping_add(cursor_tick.map_or(0, |t| t.to_bits()));
     h
 }
 

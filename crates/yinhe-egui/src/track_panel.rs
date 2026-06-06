@@ -169,15 +169,14 @@ pub(crate) fn show(
     // ── Interaction: click to select, scroll, wheel ──
 
     // Click on a row → select track
-    if resp.clicked() {
-        if let Some(pos) = resp.interact_pointer_pos() {
+    if resp.clicked()
+        && let Some(pos) = resp.interact_pointer_pos() {
             let rel_y = pos.y - panel_rect.min.y + *scroll_y;
             let clicked_idx = (rel_y / *row_height).floor() as usize;
             if clicked_idx < num_tracks {
                 *track_selected = Some(track_info[clicked_idx].index);
             }
         }
-    }
 
     // Mouse wheel → scroll
     if resp.hovered() {

@@ -180,11 +180,11 @@ pub fn show(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
                         let path_text = if settings.default_sf2_path.is_empty() {
                             "未设置".to_string()
                         } else {
-                            let display = std::path::Path::new(&settings.default_sf2_path)
+                            
+                            std::path::Path::new(&settings.default_sf2_path)
                                 .file_name()
                                 .map(|n| n.to_string_lossy().to_string())
-                                .unwrap_or_else(|| settings.default_sf2_path.clone());
-                            display
+                                .unwrap_or_else(|| settings.default_sf2_path.clone())
                         };
                         ui.label(
                             egui::RichText::new(&path_text).color(
@@ -195,15 +195,14 @@ pub fn show(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
                                 },
                             ),
                         );
-                        if ui.button("选择...").clicked() {
-                            if let Some(path) = rfd::FileDialog::new()
+                        if ui.button("选择...").clicked()
+                            && let Some(path) = rfd::FileDialog::new()
                                 .add_filter("SoundFont", &["sf2", "sf3", "sfz"])
                                 .pick_file()
                             {
                                 settings.default_sf2_path = path.to_string_lossy().to_string();
                                 changed = true;
                             }
-                        }
                         if !settings.default_sf2_path.is_empty()
                             && ui
                                 .button(ICON_DELETE.rich_text().size(14.0))
@@ -231,7 +230,7 @@ pub fn show(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
             });
         });
 
-    if should_close || resp.as_ref().map_or(false, |r| r.response.should_close()) {
+    if should_close || resp.as_ref().is_some_and(|r| r.response.should_close()) {
         settings.show_settings = false;
     }
 

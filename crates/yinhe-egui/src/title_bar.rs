@@ -182,9 +182,9 @@ pub(crate) fn show(
             // On button release, detect which tab/close rect or window button was clicked
             let pointer_released =
                 ui.input(|i| i.pointer.button_released(egui::PointerButton::Primary));
-            if pointer_released {
-                if let Some(press) = title_bar_press_pos.take() {
-                    if let Some(release) = ui.input(|i| i.pointer.interact_pos()) {
+            if pointer_released
+                && let Some(press) = title_bar_press_pos.take()
+                    && let Some(release) = ui.input(|i| i.pointer.interact_pos()) {
                         let dist = (release - press).length();
                         if dist < 8.0 {
                             // Check document tab buttons
@@ -213,8 +213,6 @@ pub(crate) fn show(
                             }
                         }
                     }
-                }
-            }
 
             // ── Draw centered title ──
             painter.text(
@@ -252,15 +250,13 @@ pub(crate) fn show(
 
             // Double-click title bar drag area to toggle maximize/restore
             // (same pattern as transport_bar's working implementation)
-            if ui.input(|i| i.pointer.button_double_clicked(egui::PointerButton::Primary)) {
-                if let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
-                    if drag_rect.contains(pos) {
+            if ui.input(|i| i.pointer.button_double_clicked(egui::PointerButton::Primary))
+                && let Some(pos) = ui.input(|i| i.pointer.interact_pos())
+                    && drag_rect.contains(pos) {
                         let maximized = ui.input(|i| i.viewport().maximized.unwrap_or(false));
                         ui.ctx()
                             .send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
                     }
-                }
-            }
 
             // Reserve space for title bar height
             ui.allocate_space(egui::vec2(0.0, TITLE_BAR_HEIGHT));

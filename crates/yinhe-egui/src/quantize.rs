@@ -4,9 +4,11 @@
 /// grid divisions per whole note.  `Custom` stores an arbitrary
 /// fraction `numerator / denominator`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Default)]
 pub enum QuantizePreset {
     Whole,           // 1/1
     Half,            // 1/2
+    #[default]
     Quarter,         // 1/4
     Eighth,          // 1/8
     Sixteenth,       // 1/16
@@ -25,11 +27,6 @@ pub enum QuantizePreset {
     Custom(u32, u32),
 }
 
-impl Default for QuantizePreset {
-    fn default() -> Self {
-        QuantizePreset::Quarter
-    }
-}
 
 impl QuantizePreset {
     /// Standard named presets (excluding `Custom`) in display order.
@@ -98,12 +95,12 @@ impl QuantizePreset {
             QuantizePreset::Custom(num, den) => {
                 let d = (*den).max(1);
                 let total = ppq.saturating_mul(4).saturating_mul(*num);
-                (total + d - 1) / d
+                total.div_ceil(d)
             }
             named => {
                 let d = named.denominator_value();
                 let total = ppq.saturating_mul(4);
-                (total + d - 1) / d
+                total.div_ceil(d)
             }
         }
     }

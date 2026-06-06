@@ -101,8 +101,8 @@ pub fn build_static_instances(
         });
     }
 
-    if let Some(midi) = midi {
-        if let Some(tpb) = midi.ticks_per_beat() {
+    if let Some(midi) = midi
+        && let Some(tpb) = midi.ticks_per_beat() {
             let (tick_start, tick_end) = view.visible_tick_range(w);
 
             // 2. Grid lines
@@ -183,14 +183,13 @@ pub fn build_static_instances(
                             tag: if is_selected { 1 } else { 0 },
                         });
 
-                        if let Some(ct) = cursor_tick {
-                            if note.start_tick as f64 <= ct
+                        if let Some(ct) = cursor_tick
+                            && note.start_tick as f64 <= ct
                                 && ct < note.end_tick as f64
                             {
                                 key_active = true;
                                 key_color = color;
                             }
-                        }
                     }
 
                     if local.is_empty() {
@@ -209,7 +208,6 @@ pub fn build_static_instances(
                 }
             }
         }
-    }
 
     // 4. Keyboard
     keyboard::append_keyboard_instances(

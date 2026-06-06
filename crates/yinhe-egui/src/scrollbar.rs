@@ -108,9 +108,7 @@ pub(crate) fn show(
     let middle_hovered = middle_resp.hovered() || middle_resp.dragged();
 
     // Paint rectangle with appropriate color
-    let rect_color = if left_resp.dragged() || right_resp.dragged() {
-        RECT_DRAG_COLOR
-    } else if middle_resp.dragged() {
+    let rect_color = if left_resp.dragged() || right_resp.dragged() || middle_resp.dragged() {
         RECT_DRAG_COLOR
     } else if middle_hovered || left_hovered || right_hovered {
         RECT_HOVER_COLOR

@@ -141,7 +141,7 @@ pub fn build_timeline_grid(
                 let is_measure = local % ticks_per_measure == 0;
                 let is_beat = if !is_measure {
                     let beat_local = local % ticks_per_measure;
-                    beat_local % ticks_per_beat == 0 && beat_local > 0
+                    beat_local.is_multiple_of(ticks_per_beat) && beat_local > 0
                 } else {
                     false
                 };

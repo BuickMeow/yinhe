@@ -299,7 +299,7 @@ impl AudioEngine {
         // Push CC events
         while self.cc_cursor < self.cc_events.len() && self.cc_events[self.cc_cursor].sample < end {
             let cc = &self.cc_events[self.cc_cursor];
-            self.channel_group.send_event(SynthEvent::Channel(cc.channel, ChannelEvent::Audio(cc.event.clone())));
+            self.channel_group.send_event(SynthEvent::Channel(cc.channel, ChannelEvent::Audio(cc.event)));
             self.cc_cursor += 1;
         }
 

@@ -179,7 +179,7 @@ fn paint_labels(
             if x >= left && x <= right {
                 let is_measure = local % ticks_per_measure == 0;
                 let is_beat = if !is_measure {
-                    (local % ticks_per_measure) % ticks_per_beat == 0
+                    (local % ticks_per_measure).is_multiple_of(ticks_per_beat)
                 } else {
                     false
                 };
@@ -218,7 +218,7 @@ fn paint_labels(
         // ── Fine-tick loop: label individual ticks between sub-beat lines ──
         if tick_step > 0 && tick_step < ticks_per_sub {
             let first_tick_u = seg_start.max(tick_start as u32);
-            let first_aligned = ((first_tick_u + tick_step - 1) / tick_step) * tick_step;
+            let first_aligned = first_tick_u.div_ceil(tick_step) * tick_step;
 
             let mut ft = first_aligned;
             while (ft as f64) <= tick_end && ft < seg_end {
@@ -226,7 +226,7 @@ fn paint_labels(
 
                 let is_measure = local % ticks_per_measure == 0;
                 let is_beat_line = if !is_measure {
-                    (local % ticks_per_measure) % ticks_per_beat == 0
+                    (local % ticks_per_measure).is_multiple_of(ticks_per_beat)
                 } else {
                     false
                 };

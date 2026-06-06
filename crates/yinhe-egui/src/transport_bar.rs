@@ -158,8 +158,8 @@ pub fn show(
                     });
 
                     // ── Custom fraction editor (visible only when Custom is selected) ──
-                    if let Some(doc) = doc {
-                        if let QuantizePreset::Custom(ref num, ref den) = doc.quantize {
+                    if let Some(doc) = doc
+                        && let QuantizePreset::Custom(ref num, ref den) = doc.quantize {
                             let mut edit_num = *num;
                             let mut edit_den = *den;
 
@@ -193,7 +193,6 @@ pub fn show(
                                     Some(QuantizePreset::Custom(edit_num, edit_den));
                             }
                         }
-                    }
                 }
 
                 if let Some(doc) = doc {

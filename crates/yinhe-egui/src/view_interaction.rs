@@ -161,7 +161,7 @@ pub(crate) fn handle_input(
     // blocks egui-level hover for child interacts, so we test containment
     // directly.  Drag/click/double-click go through content_resp and are
     // unaffected.
-    let pointer_in_rect = ui.input(|i| i.pointer.hover_pos().map_or(false, |p| rect.contains(p)));
+    let pointer_in_rect = ui.input(|i| i.pointer.hover_pos().is_some_and(|p| rect.contains(p)));
 
     if pointer_in_rect {
         let pointer_pos = ui.input(|i| i.pointer.hover_pos().unwrap_or_default());
@@ -210,8 +210,8 @@ pub(crate) fn handle_input(
     // Hover check here also uses raw rect containment for the same reason.
     let released = ui.input(|i| i.pointer.primary_released());
     let drag_dist = content_resp.drag_delta().length();
-    if released && pointer_in_rect && drag_dist < 3.0 {
-        if let Some(pos) = content_resp.interact_pointer_pos() {
+    if released && pointer_in_rect && drag_dist < 3.0
+        && let Some(pos) = content_resp.interact_pointer_pos() {
             let pointer_x = pos.x - rect.min.x;
             if pointer_x >= left_zone_width {
                 let tick = view.x_to_tick(pointer_x);
@@ -239,7 +239,6 @@ pub(crate) fn handle_input(
                 ui.ctx().request_repaint();
             }
         }
-    }
 
     // Drag to pan
     if content_resp.dragged() {

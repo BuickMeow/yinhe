@@ -56,8 +56,8 @@ pub fn show(
 
     // Auto-follow: scroll based on follow mode (playback only).
     // Never auto-follow when paused, so the user can freely scroll around.
-    if let Some(ct) = *cursor_tick {
-        if is_playing && *follow_mode != super::view_interaction::FollowMode::None {
+    if let Some(ct) = *cursor_tick
+        && is_playing && *follow_mode != super::view_interaction::FollowMode::None {
             let cursor_x = view.tick_to_x(ct);
             let right_edge = w as f32;
             let kb_w = view.keyboard_width();
@@ -81,7 +81,6 @@ pub fn show(
                 super::view_interaction::FollowMode::None => unreachable!(),
             }
         }
-    }
 
     // ── Content interaction (zoom/pan/cursor/drag/reset) ──
     // Created FIRST so that the keyboard handle (below) wins in the 4px
@@ -177,8 +176,8 @@ pub fn show(
     );
 
     // ── Time ruler (top band, right of keyboard) ──
-    if let Some(midi) = midi {
-        if let Some(tpb) = midi.ticks_per_beat() {
+    if let Some(midi) = midi
+        && let Some(tpb) = midi.ticks_per_beat() {
             let ruler_rect = egui::Rect::from_min_max(
                 egui::pos2(rect.min.x + view.keyboard_width(), ruler_band_y),
                 egui::pos2(rect.max.x, ruler_band_y + RULER_H),
@@ -189,7 +188,6 @@ pub fn show(
                 &painter, ruler_rect, view, tpb, def_num, def_den, sig_events,
             );
         }
-    }
 
     // ── Horizontal scrollbar (right of keyboard, below content) ──
     if midi.is_some() {

@@ -78,7 +78,7 @@ pub fn show(
         // offset_x = rect.min.x - view.content_left() internally.
         let ruler_painter = ui.painter();
         crate::time_ruler::paint(
-            &ruler_painter,
+            ruler_painter,
             ruler_rect,
             &doc.arr_view,
             tpb,
@@ -97,9 +97,9 @@ pub fn show(
         doc.arr_view.base.track_panel_scroll_y = doc.arr_view.base.scroll_y;
 
         let zoom_delta = ui.input(|i| i.zoom_delta());
-        if (zoom_delta - 1.0).abs() > 0.001 {
-            if let Some(hover) = ui.input(|i| i.pointer.hover_pos()) {
-                if tp_rect.contains(hover) {
+        if (zoom_delta - 1.0).abs() > 0.001
+            && let Some(hover) = ui.input(|i| i.pointer.hover_pos())
+                && tp_rect.contains(hover) {
                     let pointer_y = hover.y - tp_rect.min.y;
                     let old = doc.arr_view.base.track_panel_row_height;
                     doc.arr_view.base.track_panel_row_height =
@@ -110,8 +110,6 @@ pub fn show(
                         (track_frac * doc.arr_view.base.track_panel_row_height - pointer_y).max(0.0);
                     doc.arr_view.base.dirty = true;
                 }
-            }
-        }
 
         track_panel::show(
             ui,

@@ -77,9 +77,6 @@ pub struct App {
     last_cursor_tick: Option<f64>,
     piano_last_cursor_tick: Option<f64>,
 
-    // ── Playback start position (pause returns here) ──
-    play_start_tick: f64,
-
     // ── Cursor-follow mode (shared across arrangement & piano roll) ──
     follow_mode: crate::view_interaction::FollowMode,
 
@@ -153,9 +150,12 @@ impl App {
             arr_split: 0.3,
 
             documents: {
-                let mut midi = yinhe_midi::MidiFile::default();
-                midi.track_ports = vec![0];
-                midi.track_names = vec!["Track 1".to_string()];
+                let midi = {
+                    let mut m = yinhe_midi::MidiFile::default();
+                    m.track_ports = vec![0];
+                    m.track_names = vec!["Track 1".to_string()];
+                    m
+                };
                 let track_info_cache = midi.track_info();
                 vec![Document {
                     midi: Arc::new(midi),
@@ -182,7 +182,6 @@ impl App {
 
             sysinfo: System::new(),
             self_pid: sysinfo::get_current_pid().ok(),
-            play_start_tick: 0.0,
             follow_mode: crate::view_interaction::FollowMode::Page,
 
             audio: None,
@@ -194,10 +193,6 @@ impl App {
             cpu_usage: 0.0,
             mem_mb: 0.0,
         }
-    }
-
-    fn active_doc(&self) -> Option<&Document> {
-        self.active_doc.and_then(|idx| self.documents.get(idx))
     }
 
     // ── macOS: reserve_render_targets_for_window_anim has been removed ──
@@ -241,15 +236,14 @@ impl eframe::App for App {
         }
 
         // ── Defensive: ensure active_doc is always in bounds ──
-        if let Some(idx) = self.active_doc {
-            if idx >= self.documents.len() {
+        if let Some(idx) = self.active_doc
+            && idx >= self.documents.len() {
                 self.active_doc = if self.documents.is_empty() {
                     None
                 } else {
                     Some(self.documents.len() - 1)
                 };
             }
-        }
 
         // ── Keyboard shortcuts ──
         let mut toggle_play = false;
@@ -417,19 +411,21 @@ impl eframe::App for App {
             &mut self.follow_mode,
         );
 
-        if let (Some(idx), Some(new_preset)) = (self.active_doc, pending_quantize) {
-            if let Some(doc) = self.documents.get_mut(idx) {
+        if let (Some(idx), Some(new_preset)) = (self.active_doc, pending_quantize)
+            && let Some(doc) = self.documents.get_mut(idx) {
                 doc.quantize = new_preset;
             }
-        }
 
         // ── Handle file menu actions ──
         if let Some(action) = pending_file_action {
             match action {
                 transport_bar::FileAction::NewProject => {
-                    let mut midi = yinhe_midi::MidiFile::default();
-                    midi.track_ports = vec![0];
-                    midi.track_names = vec!["Track 1".to_string()];
+                    let midi = {
+                        let mut m = yinhe_midi::MidiFile::default();
+                        m.track_ports = vec![0];
+                        m.track_names = vec!["Track 1".to_string()];
+                        m
+                    };
                     let track_info_cache = midi.track_info();
                     let doc = Document {
                         midi: Arc::new(midi),
@@ -498,7 +494,7 @@ impl eframe::App for App {
             let bottom_y = remaining.min.y
                 + arr_h
                 + if self.show_transport && self.show_pianoroll {
-                    4.0
+                    crate::theme::SPLIT_GAP
                 } else {
                     0.0
                 };
@@ -531,11 +527,11 @@ impl eframe::App for App {
                 if self.show_transport {
                     let h_split_rect = egui::Rect::from_min_max(
                         egui::pos2(remaining.min.x, remaining.min.y + arr_h),
-                        egui::pos2(remaining.max.x, remaining.min.y + arr_h + 4.0),
+                        egui::pos2(remaining.max.x, remaining.min.y + arr_h + crate::theme::SPLIT_GAP),
                     );
                     let h_int_rect = egui::Rect::from_min_max(
                         egui::pos2(remaining.min.x, remaining.min.y + arr_h + 0.5),
-                        egui::pos2(remaining.max.x, remaining.min.y + arr_h + 4.0),
+                        egui::pos2(remaining.max.x, remaining.min.y + arr_h + crate::theme::SPLIT_GAP),
                     );
                     let h_split_resp = ui.interact(
                         h_int_rect,

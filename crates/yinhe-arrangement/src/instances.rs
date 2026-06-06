@@ -79,8 +79,8 @@ pub fn build_arrangement_instances(
     }
 
     // 3. Grid lines + 4. Note rectangles
-    if let Some(midi) = midi {
-        if let Some(tpb) = midi.ticks_per_beat() {
+    if let Some(midi) = midi
+        && let Some(tpb) = midi.ticks_per_beat() {
             let (tick_start, tick_end) = view.visible_tick_range(w);
 
             // Grid lines
@@ -110,7 +110,7 @@ pub fn build_arrangement_instances(
                     if start_idx >= notes.len() {
                         return None;
                     }
-                    if notes.first().map_or(true, |n| n.start_tick as f64 > pad_end) {
+                    if notes.first().is_none_or(|n| n.start_tick as f64 > pad_end) {
                         return None;
                     }
 
@@ -210,7 +210,6 @@ pub fn build_arrangement_instances(
                 instances.append(&mut local);
             }
         }
-    }
 
     // 5. Playhead
     if let Some(ct) = cursor_tick {

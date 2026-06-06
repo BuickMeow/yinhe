@@ -242,7 +242,7 @@ impl MidiFile {
                 } else {
                     self.track_ports.get(i).copied().unwrap_or(0)
                 },
-                channel: track_channels[i].max(1).min(16),
+                channel: track_channels[i].clamp(1, 16),
             })
             .collect()
     }
