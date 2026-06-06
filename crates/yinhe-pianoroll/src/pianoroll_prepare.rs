@@ -8,9 +8,7 @@ use crate::vertex::Uniforms;
 use crate::view::PianoRollView;
 
 /// Hash viewport properties that affect static instances.
-/// Includes cursor_tick so that keyboard highlighting updates every frame
-/// during playback without needing the force_rebuild kludge.
-fn viewport_hash(width: u32, height: u32, view: &PianoRollView, cursor_tick: Option<f64>) -> u64 {
+fn viewport_hash(width: u32, height: u32, view: &PianoRollView) -> u64 {
     let mut h: u64 = 0;
     h ^= width as u64;
     h = h.wrapping_mul(31).wrapping_add(height as u64);
@@ -29,10 +27,6 @@ fn viewport_hash(width: u32, height: u32, view: &PianoRollView, cursor_tick: Opt
     h = h
         .wrapping_mul(31)
         .wrapping_add(view.base.left_panel_width.to_bits() as u64);
-    // Include cursor_tick so keyboard highlights update during playback
-    h = h
-        .wrapping_mul(31)
-        .wrapping_add(cursor_tick.map_or(0, |t| t.to_bits()));
     h
 }
 
@@ -66,7 +60,7 @@ pub fn prepare(
         _pad: 0.0,
     };
 
-    let mut vhash = viewport_hash(width, height, view, cursor_tick);
+    let mut vhash = viewport_hash(width, height, view);
 
     // force_rebuild: for data changes that don't affect the hash (selection,
     // track visibility), still flip to guarantee a mismatch.
