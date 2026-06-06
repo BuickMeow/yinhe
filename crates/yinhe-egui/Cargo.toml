@@ -20,6 +20,7 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 sysinfo = { workspace = true }
 egui_material_icons = { workspace = true }
+image = { workspace = true }
 
 [package.metadata.bundle]
 name = "Yinhe"
