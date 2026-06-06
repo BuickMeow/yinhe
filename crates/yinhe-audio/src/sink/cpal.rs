@@ -24,6 +24,7 @@ impl CpalSink {
             .map_err(|e| format!("Failed to get output config: {}", e))?;
 
         let channels = supported.channels() as usize;
+        let device_sample_rate = supported.sample_rate();
 
         let config = cpal::StreamConfig {
             channels: channels as u16,

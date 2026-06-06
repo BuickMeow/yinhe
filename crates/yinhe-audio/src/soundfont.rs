@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock, RwLock};
 
 use xsynth_core::channel::{ChannelConfigEvent, ChannelEvent};
 use xsynth_core::channel_group::{ChannelGroup, SynthEvent};
@@ -8,8 +8,10 @@ use xsynth_core::soundfont::{SampleSoundfont, SoundfontBase, SoundfontInitOption
 use xsynth_core::{AudioStreamParams, ChannelCount};
 use yinhe_midi::MidiFile;
 
+static GLOBAL_SF_CACHE: LazyLock<RwLock<HashMap<PathBuf, Arc<dyn SoundfontBase>>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
+
 pub struct SoundFontManager {
-    cache: HashMap<PathBuf, Arc<dyn SoundfontBase>>,
     port_sfs: [Vec<Arc<dyn SoundfontBase>>; 16],
     stream_params: AudioStreamParams,
 }
@@ -17,7 +19,6 @@ pub struct SoundFontManager {
 impl SoundFontManager {
     pub fn new(sample_rate: u32) -> Self {
         Self {
-            cache: HashMap::new(),
             port_sfs: std::array::from_fn(|_| Vec::new()),
             stream_params: AudioStreamParams {
                 sample_rate,
@@ -26,20 +27,20 @@ impl SoundFontManager {
         }
     }
 
-    pub fn load_soundfont(&mut self, path: &Path) -> Result<Arc<dyn SoundfontBase>, String> {
-        if let Some(sf) = self.cache.get(path) {
-            return Ok(Arc::clone(sf));
+    pub fn load_soundfont(&self, path: &Path) -> Result<Arc<dyn SoundfontBase>, String> {
+        {
+            let cache = GLOBAL_SF_CACHE.read().unwrap();
+            if let Some(sf) = cache.get(path) {
+                return Ok(Arc::clone(sf));
+            }
         }
 
-        let sf = SampleSoundfont::new(
-            path,
-            self.stream_params,
-            SoundfontInitOptions::default(),
-        )
-        .map_err(|e| format!("Failed to load SoundFont {:?}: {}", path, e))?;
+        let sf = SampleSoundfont::new(path, self.stream_params, SoundfontInitOptions::default())
+            .map_err(|e| format!("Failed to load SoundFont {:?}: {}", path, e))?;
 
         let arc: Arc<dyn SoundfontBase> = Arc::new(sf);
-        self.cache.insert(path.to_path_buf(), Arc::clone(&arc));
+        let mut cache = GLOBAL_SF_CACHE.write().unwrap();
+        cache.insert(path.to_path_buf(), Arc::clone(&arc));
         Ok(arc)
     }
 

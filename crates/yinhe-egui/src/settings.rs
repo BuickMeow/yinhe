@@ -1,14 +1,22 @@
+use std::path::PathBuf;
+
 use eframe::egui;
 use egui_material_icons::icons::*;
+use serde::{Deserialize, Serialize};
 
 use cpal::traits::{DeviceTrait, HostTrait};
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct AudioSettings {
     pub output_device_name: Option<String>,
     pub sample_rate: u32,
     pub default_sf2_path: String,
+    #[serde(skip)]
     pub show_settings: bool,
+    #[serde(skip)]
     available_devices: Vec<String>,
+    #[serde(skip)]
     available_sample_rates: Vec<u32>,
 }
 
@@ -31,6 +39,56 @@ impl Default for AudioSettings {
             show_settings: false,
             available_devices,
             available_sample_rates: sample_rates,
+        }
+    }
+}
+
+fn config_path() -> PathBuf {
+    let dir = dirs::config_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("yinhe");
+    std::fs::create_dir_all(&dir).ok();
+    dir.join("settings.json")
+}
+
+impl AudioSettings {
+    pub fn load() -> Self {
+        let path = config_path();
+        if path.exists() {
+            match std::fs::read_to_string(&path) {
+                Ok(json) => match serde_json::from_str::<AudioSettings>(&json) {
+                    Ok(mut s) => {
+                        s.available_devices = list_output_devices();
+                        s.available_sample_rates = cpal::default_host()
+                            .default_output_device()
+                            .and_then(|d| d.default_output_config().ok())
+                            .map(|cfg| vec![cfg.sample_rate()])
+                            .unwrap_or_else(|| vec![44100, 48000, 96000]);
+                        return s;
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to parse settings: {}", e);
+                    }
+                },
+                Err(e) => {
+                    eprintln!("Failed to read settings file: {}", e);
+                }
+            }
+        }
+        Self::default()
+    }
+
+    pub fn save(&self) {
+        let path = config_path();
+        match serde_json::to_string_pretty(self) {
+            Ok(json) => {
+                if let Err(e) = std::fs::write(&path, json) {
+                    eprintln!("Failed to save settings: {}", e);
+                }
+            }
+            Err(e) => {
+                eprintln!("Failed to serialize settings: {}", e);
+            }
         }
     }
 }
@@ -175,6 +233,10 @@ pub fn show(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
 
     if should_close || resp.as_ref().map_or(false, |r| r.response.should_close()) {
         settings.show_settings = false;
+    }
+
+    if changed {
+        settings.save();
     }
 
     changed

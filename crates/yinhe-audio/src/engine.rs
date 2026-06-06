@@ -12,10 +12,31 @@ use yinhe_midi::MidiFile;
 use crate::scheduler::MidiEventScheduler;
 use crate::soundfont::SoundFontManager;
 
-const NUM_CHANNELS: u32 = 256;
+pub fn channels_for_midi(midi: &MidiFile) -> u32 {
+    let max_port = midi.track_ports.iter().copied().max().unwrap_or(0);
+    // Also check actual note/control event channels
+    let max_ch_from_notes: u8 = midi.key_notes.iter()
+        .flatten()
+        .map(|n| n.channel)
+        .max()
+        .unwrap_or(0);
+    let max_ch_from_cc: u8 = midi.control_events.iter()
+        .map(|e| match e {
+            yinhe_midi::MidiControlEvent::ControlChange { channel, .. }
+            | yinhe_midi::MidiControlEvent::ProgramChange { channel, .. }
+            | yinhe_midi::MidiControlEvent::PitchBend { channel, .. } => *channel,
+        })
+        .max()
+        .unwrap_or(0);
+    let max_global_ch = max_ch_from_notes.max(max_ch_from_cc);
+    let max_port_from_data = max_global_ch / 16;
+    let max_port = max_port.max(max_port_from_data);
+    ((max_port as u32) + 1) * 16
+}
 
 pub struct AudioEngine {
     channel_group: ChannelGroup,
+    num_channels: u32,
     scheduler: MidiEventScheduler,
     pub sf_manager: SoundFontManager,
     sample_rate: u32,
@@ -26,13 +47,14 @@ pub struct AudioEngine {
 }
 
 impl AudioEngine {
-    pub fn new(sample_rate: u32) -> Self {
+    pub fn new(sample_rate: u32, num_channels: u32) -> Self {
+        let num_channels = num_channels.max(16);
         let config = ChannelGroupConfig {
             channel_init_options: ChannelInitOptions {
                 fade_out_killing: true,
             },
             format: SynthFormat::Custom {
-                channels: NUM_CHANNELS,
+                channels: num_channels,
             },
             audio_params: AudioStreamParams {
                 sample_rate,
@@ -45,6 +67,7 @@ impl AudioEngine {
 
         Self {
             channel_group,
+            num_channels,
             scheduler: MidiEventScheduler::new(),
             sf_manager: SoundFontManager::new(sample_rate),
             sample_rate,
@@ -55,6 +78,10 @@ impl AudioEngine {
         }
     }
 
+    pub fn num_channels(&self) -> u32 {
+        self.num_channels
+    }
+
     pub fn load_midi(&mut self, midi: &MidiFile) {
         self.setup_percussion(midi);
         self.scheduler.build(midi, self.sample_rate);
@@ -63,12 +90,15 @@ impl AudioEngine {
     }
 
     fn setup_percussion(&mut self, midi: &MidiFile) {
-        for port in 0..16u32 {
+        let num_ports = self.num_channels / 16;
+        for port in 0..num_ports {
             let ch = port * 16 + 9;
-            self.channel_group.send_event(SynthEvent::Channel(
-                ch,
-                ChannelEvent::Config(ChannelConfigEvent::SetPercussionMode(true)),
-            ));
+            if ch < self.num_channels {
+                self.channel_group.send_event(SynthEvent::Channel(
+                    ch,
+                    ChannelEvent::Config(ChannelConfigEvent::SetPercussionMode(true)),
+                ));
+            }
         }
 
         for evt in &midi.control_events {
@@ -79,11 +109,13 @@ impl AudioEngine {
                 ..
             } = evt
             {
-                let is_drum = *value >= 120;
-                self.channel_group.send_event(SynthEvent::Channel(
-                    *channel as u32,
-                    ChannelEvent::Config(ChannelConfigEvent::SetPercussionMode(is_drum)),
-                ));
+                if (*channel as u32) < self.num_channels {
+                    let is_drum = *value >= 120;
+                    self.channel_group.send_event(SynthEvent::Channel(
+                        *channel as u32,
+                        ChannelEvent::Config(ChannelConfigEvent::SetPercussionMode(is_drum)),
+                    ));
+                }
             }
         }
     }
@@ -98,6 +130,9 @@ impl AudioEngine {
     }
 
     pub fn load_soundfont_for_port(&mut self, port: u8, paths: &[String]) -> Result<(), String> {
+        if (port as u32) * 16 >= self.num_channels {
+            return Ok(());
+        }
         self.sf_manager
             .load_for_port(port, paths, &mut self.channel_group)
     }
@@ -118,10 +153,7 @@ impl AudioEngine {
         interleaved.fill(0.0);
         self.channel_group.read_samples(interleaved);
 
-        for i in 0..frames {
-            output[i] = interleaved[i * 2];
-            output[i + frames] = interleaved[i * 2 + 1];
-        }
+        output[..frames * 2].copy_from_slice(interleaved);
 
         self.sample_position.store(end, Ordering::Relaxed);
     }

@@ -235,6 +235,9 @@ impl MidiEventScheduler {
     }
 
     pub fn inject_chase(&mut self, sample: u64, cg: &mut ChannelGroup) {
+        if self.checkpoints.is_empty() {
+            return;
+        }
         let tick = self.estimate_tick_for_sample(sample);
 
         let cp_idx = match self.checkpoints.binary_search_by(|cp| cp.tick.cmp(&tick)) {

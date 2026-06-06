@@ -160,7 +160,7 @@ impl App {
             audio_sink: None,
             audio_active_doc: None,
 
-            audio_settings: crate::settings::AudioSettings::default(),
+            audio_settings: crate::settings::AudioSettings::load(),
 
             last_sys_refresh: Instant::now(),
             cpu_usage: 0.0,
@@ -266,6 +266,7 @@ impl eframe::App for App {
                 let doc = Document::from_midi(&path, midi);
                 self.documents.push(doc);
                 self.active_doc = Some(self.documents.len() - 1);
+                // Force engine rebuild for new document
                 self.audio_engine = None;
                 self.audio_sink = None;
                 self.audio_active_doc = None;
@@ -274,11 +275,25 @@ impl eframe::App for App {
         }
 
         // ── Ensure audio engine is loaded for the active document ──
+        // Only rebuild when switching to a different document, not every frame
         if let Some(idx) = self.active_doc {
-            if self.audio_active_doc != Some(idx) || self.audio_engine.is_none() {
+            let needs_rebuild = self.audio_active_doc != Some(idx)
+                || self.audio_engine.is_none();
+
+            if needs_rebuild {
+                // 1. Stop existing playback
+                if let Some(ref engine_arc) = self.audio_engine {
+                    engine_arc.lock().unwrap().stop();
+                }
+                // 2. Drop old sink (releases cpal stream → releases engine Arc ref)
+                self.audio_sink = None;
+                // 3. Drop old engine (frees ~1600MB before allocating new one)
+                self.audio_engine = None;
+
                 let doc = &self.documents[idx];
                 let sr = self.audio_settings.sample_rate;
-                let mut engine = yinhe_audio::AudioEngine::new(sr);
+                let num_ch = yinhe_audio::channels_for_midi(&doc.midi);
+                let mut engine = yinhe_audio::AudioEngine::new(sr, num_ch);
                 engine.load_midi(&doc.midi);
                 let sf_path = if !self.audio_settings.default_sf2_path.is_empty() {
                     self.audio_settings.default_sf2_path.clone()
@@ -289,7 +304,8 @@ impl eframe::App for App {
                 };
                 let sf = std::path::Path::new(&sf_path);
                 if sf.exists() {
-                    for port in 0..16u8 {
+                    let num_ports = (num_ch / 16) as u8;
+                    for port in 0..num_ports {
                         let _ = engine.load_soundfont_for_port(port, &[sf_path.clone()]);
                     }
                 }

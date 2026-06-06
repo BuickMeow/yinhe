@@ -3,4 +3,4 @@ pub mod scheduler;
 pub mod sink;
 pub mod soundfont;
 
-pub use engine::AudioEngine;
+pub use engine::{AudioEngine, channels_for_midi};

@@ -13,6 +13,9 @@ yinhe-arrangement = { path = "../yinhe-arrangement" }
 yinhe-wgpu = { path = "../yinhe-wgpu" }
 yinhe-audio = { path = "../yinhe-audio" }
 cpal = "0.17"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+dirs = "6"
 eframe = { workspace = true }
 egui = { workspace = true }
 wgpu = { workspace = true }

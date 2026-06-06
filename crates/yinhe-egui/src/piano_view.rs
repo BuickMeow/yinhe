@@ -134,6 +134,12 @@ pub fn show(
         }
     });
 
+    // ── Clamp scroll after all interactions ──
+    // handle_input() and keyboard drag may have set scroll_x/scroll_y out of bounds.
+    // Clamp before rendering to prevent 1-frame out-of-bounds visual.
+    let total_ticks = midi.map(|m| m.tick_length().unwrap_or(0) as f64).unwrap_or(0.0);
+    view.clamp_scroll(w as f32, h as f32, total_ticks);
+
     // ── Dirty detection ──
     // Run AFTER all interactions so handle_input/keyboard changes are caught.
     if *cursor_tick != *last_cursor_tick {
