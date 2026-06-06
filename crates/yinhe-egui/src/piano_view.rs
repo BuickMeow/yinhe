@@ -83,7 +83,59 @@ pub fn show(
         }
     }
 
+    // ── Content interaction (zoom/pan/cursor/drag/reset) ──
+    // Created FIRST so that the keyboard handle (below) wins in the 4px
+    // overlap zone where they intersect.
+    crate::view_interaction::handle_input(
+        ui,
+        content_rect,
+        view,
+        cursor_tick,
+        view.keyboard_width(),
+        Some((quantize, ppq)),
+        bar_line_data,
+        None,
+        is_playing,
+        follow_mode,
+    );
+
+    // ── Keyboard resize handle ──
+    // Created AFTER content interact so it wins the 4px overlap at the edge.
+    // Covers ruler + content area, not the scrollbar below.
+    ui.push_id("kb_handle", |ui| {
+        let handle_x = rect.min.x + view.keyboard_width();
+        let handle_rect = egui::Rect::from_min_max(
+            egui::pos2(handle_x - 2.0, rect.min.y),
+            egui::pos2(handle_x + 2.0, content_rect.max.y),
+        );
+        let handle_resp = ui.interact(handle_rect, ui.id(), egui::Sense::click_and_drag());
+        if handle_resp.hovered() || handle_resp.dragged() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+        }
+        if handle_resp.dragged() {
+            let delta = handle_resp.drag_delta().x;
+            let old_kb = view.keyboard_width();
+            let new_kb = (old_kb + delta).clamp(30.0, rect.width() * 0.4);
+
+            // Keep scrollbar thumb visually in sync with the content area by
+            // adjusting scroll_x so that the thumb's pixel offset within the
+            // scrollbar track stays constant as the track width changes.
+            let old_sb_w = w as f32 - old_kb;
+            let new_sb_w = w as f32 - new_kb;
+            if old_sb_w > 0.0 && new_sb_w > 0.0 {
+                let start_tick = view.base.scroll_x / view.base.pixels_per_tick;
+                let new_start_tick = start_tick * old_sb_w / new_sb_w;
+                view.base.scroll_x = new_start_tick * view.base.pixels_per_tick;
+            }
+
+            view.base.left_panel_width = new_kb;
+            view.base.dirty = true;
+            ui.ctx().request_repaint();
+        }
+    });
+
     // ── Dirty detection ──
+    // Run AFTER all interactions so handle_input/keyboard changes are caught.
     if *cursor_tick != *last_cursor_tick {
         view.base.dirty = true;
     }
@@ -91,7 +143,7 @@ pub fn show(
 
     let force_rebuild = view.base.dirty;
 
-    // Prepare GPU data
+    // Prepare GPU data — uses the latest view state (keyboard_width, scroll, etc.)
     let gpu_dirty = yinhe_pianoroll::prepare(
         pianoroll,
         w,
@@ -132,43 +184,6 @@ pub fn show(
             );
         }
     }
-
-    // ── Content interaction (zoom/pan/cursor/drag/reset) ──
-    // Created FIRST so that the keyboard handle (below) wins in the 4px
-    // overlap zone where they intersect.
-    crate::view_interaction::handle_input(
-        ui,
-        content_rect,
-        view,
-        cursor_tick,
-        view.keyboard_width(),
-        Some((quantize, ppq)),
-        bar_line_data,
-        None,
-        is_playing,
-        follow_mode,
-    );
-
-    // ── Keyboard resize handle ──
-    // Created AFTER content interact so it wins the 4px overlap at the edge.
-    // Covers ruler + content area, not the scrollbar below.
-    ui.push_id("kb_handle", |ui| {
-        let handle_x = rect.min.x + view.keyboard_width();
-        let handle_rect = egui::Rect::from_min_max(
-            egui::pos2(handle_x - 2.0, rect.min.y),
-            egui::pos2(handle_x + 2.0, content_rect.max.y),
-        );
-        let handle_resp = ui.interact(handle_rect, ui.id(), egui::Sense::click_and_drag());
-        if handle_resp.hovered() || handle_resp.dragged() {
-            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
-        }
-        if handle_resp.dragged() {
-            view.base.left_panel_width =
-                (view.keyboard_width() + handle_resp.drag_delta().x).clamp(30.0, rect.width() * 0.4);
-            view.base.dirty = true;
-            ui.ctx().request_repaint();
-        }
-    });
 
     // ── Horizontal scrollbar (right of keyboard, below content) ──
     if midi.is_some() {
