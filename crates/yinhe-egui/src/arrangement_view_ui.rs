@@ -1,15 +1,41 @@
 use eframe::egui;
 
 use yinhe_arrangement::instances as arrangement_instances;
-use yinhe_arrangement::{ArrangementView, NoteInstance, NoteSource, PianorollRenderer, Uniforms};
+use yinhe_arrangement::{ArrangementView, NoteSource, PianorollRenderer, Uniforms};
 use yinhe_types::TimeSigEvent;
 
 use super::render_context::RenderContext;
 use crate::quantize::QuantizePreset;
 
+/// Hash viewport properties that affect static arrangement instances.
+fn viewport_hash(width: u32, height: u32, view: &ArrangementView) -> u64 {
+    let mut h: u64 = 0;
+    h ^= width as u64;
+    h = h.wrapping_mul(31).wrapping_add(height as u64);
+    h = h
+        .wrapping_mul(31)
+        .wrapping_add(view.base.scroll_x.to_bits() as u64);
+    h = h
+        .wrapping_mul(31)
+        .wrapping_add(view.base.scroll_y.to_bits() as u64);
+    h = h
+        .wrapping_mul(31)
+        .wrapping_add(view.base.pixels_per_tick.to_bits() as u64);
+    h = h
+        .wrapping_mul(31)
+        .wrapping_add(view.lane_height.to_bits() as u64);
+    h = h
+        .wrapping_mul(31)
+        .wrapping_add(view.base.left_panel_width.to_bits() as u64);
+    h
+}
+
 /// Display the arrangement view texture with zoom/pan interaction.
 ///
-/// `instances` is a reusable scratch buffer — caller should retain it across frames.
+/// Uses `PianorollRenderer::prepare_with_static_cache` so that the expensive
+/// note-instance build only runs when the viewport actually changes (scroll,
+/// zoom, resize).  During playback, only the cheap playhead-cursor update
+/// runs every frame, leaving the audio thread enough CPU time.
 pub fn show(
     ui: &mut egui::Ui,
     available: egui::Vec2,
@@ -25,7 +51,6 @@ pub fn show(
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
     is_playing: bool,
     _track_names: &[String],
-    instances: &mut Vec<NoteInstance>,
     follow_mode: &mut crate::view_interaction::FollowMode,
 ) {
     // Sense::click_and_drag() so that the response passed to handle_input
@@ -55,28 +80,30 @@ pub fn show(
     // Auto-follow: scroll based on follow mode (playback only).
     // Never auto-follow when paused, so the user can freely scroll around.
     if let Some(ct) = *cursor_tick
-        && is_playing && *follow_mode != crate::view_interaction::FollowMode::None {
-            let cursor_x = view.tick_to_x(ct);
-            let right_edge = w as f32;
-            match *follow_mode {
-                crate::view_interaction::FollowMode::Page => {
-                    let margin = right_edge * 0.2;
-                    if cursor_x > right_edge - margin || cursor_x < 0.0 {
-                        view.base.scroll_x = (ct as f32 * view.base.pixels_per_tick) - right_edge * 0.5;
-                        view.clamp_scroll(w as f32, h as f32, total_ticks, num_tracks);
-                    }
-                }
-                crate::view_interaction::FollowMode::Continuous => {
-                    // Cursor glued just inside the leftmost edge (1px inset
-                    // avoids GPU clip-boundary flicker).  Use f32 arithmetic
-                    // to match the GPU rendering path exactly.
-                    let target = ct as f32 * view.base.pixels_per_tick;
-                    view.base.scroll_x = target - 0.01;
+        && is_playing
+        && *follow_mode != crate::view_interaction::FollowMode::None
+    {
+        let cursor_x = view.tick_to_x(ct);
+        let right_edge = w as f32;
+        match *follow_mode {
+            crate::view_interaction::FollowMode::Page => {
+                let margin = right_edge * 0.2;
+                if cursor_x > right_edge - margin || cursor_x < 0.0 {
+                    view.base.scroll_x = (ct as f32 * view.base.pixels_per_tick) - right_edge * 0.5;
                     view.clamp_scroll(w as f32, h as f32, total_ticks, num_tracks);
                 }
-                crate::view_interaction::FollowMode::None => unreachable!(),
             }
+            crate::view_interaction::FollowMode::Continuous => {
+                // Cursor glued just inside the leftmost edge (1px inset
+                // avoids GPU clip-boundary flicker).  Use f32 arithmetic
+                // to match the GPU rendering path exactly.
+                let target = ct as f32 * view.base.pixels_per_tick;
+                view.base.scroll_x = target - 0.01;
+                view.clamp_scroll(w as f32, h as f32, total_ticks, num_tracks);
+            }
+            crate::view_interaction::FollowMode::None => unreachable!(),
         }
+    }
 
     // ── Compute uniforms ──
     let uniforms = Uniforms {
@@ -90,30 +117,41 @@ pub fn show(
         _pad: 0.0,
     };
 
-    // Only rebuild instances if view state or uniforms changed
-    let gpu_dirty = view.base.dirty || renderer.uniforms_changed(&uniforms);
-
-    if gpu_dirty {
-        let mut scratch = std::mem::take(instances);
-        scratch.clear();
-
-        arrangement_instances::build_arrangement_instances(
-            &mut scratch,
-            w,
-            h,
-            midi,
-            view,
-            track_visible,
-            track_colors,
-            *cursor_tick,
-        );
-
-        renderer.prepare_from_parts(uniforms, &scratch);
-
-        scratch.clear();
-        *instances = scratch;
+    // ── Prepare GPU data with static caching ──
+    // The viewport hash captures all view properties that affect static
+    // instances.  When the hash matches the cached value, the expensive
+    // note-instance build is skipped entirely — only the cheap cursor
+    // update runs every frame.
+    let mut vhash = viewport_hash(w, h, view);
+    if view.base.dirty {
+        vhash = !vhash; // force rebuild for non-viewport changes (e.g. track visibility)
     }
     view.base.dirty = false;
+
+    let _gpu_updated = renderer.prepare_with_static_cache(
+        uniforms,
+        vhash,
+        |static_instances| {
+            arrangement_instances::build_arrangement_static(
+                static_instances,
+                w,
+                h,
+                midi,
+                view,
+                track_visible,
+                track_colors,
+            );
+        },
+        |cursor_instances| {
+            arrangement_instances::build_arrangement_cursor(
+                cursor_instances,
+                *cursor_tick,
+                view,
+                w,
+                h,
+            );
+        },
+    );
 
     // Paint
     render_ctx.paint(
@@ -123,7 +161,7 @@ pub fn show(
         "arrangement_frame",
         &painter,
         rect,
-        gpu_dirty,
+        true, // always paint while playing (cursor moves every frame)
     );
 
     // Handle input (zoom/pan/cursor/drag/reset).

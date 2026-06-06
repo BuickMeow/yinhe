@@ -21,9 +21,6 @@ pub fn show(
     is_playing: bool,
     follow_mode: &mut crate::view_interaction::FollowMode,
 ) {
-    if doc.cursor_tick != *last_cursor_tick {
-        doc.arr_view.base.dirty = true;
-    }
     *last_cursor_tick = doc.cursor_tick;
 
     let arr_total_w = remaining.width();
@@ -99,17 +96,18 @@ pub fn show(
         let zoom_delta = ui.input(|i| i.zoom_delta());
         if (zoom_delta - 1.0).abs() > 0.001
             && let Some(hover) = ui.input(|i| i.pointer.hover_pos())
-                && tp_rect.contains(hover) {
-                    let pointer_y = hover.y - tp_rect.min.y;
-                    let old = doc.arr_view.base.track_panel_row_height;
-                    doc.arr_view.base.track_panel_row_height =
-                        (doc.arr_view.base.track_panel_row_height * zoom_delta).clamp(16.0, 120.0);
-                    doc.arr_view.lane_height = doc.arr_view.base.track_panel_row_height;
-                    let track_frac = (pointer_y + doc.arr_view.base.track_panel_scroll_y) / old;
-                    doc.arr_view.base.track_panel_scroll_y =
-                        (track_frac * doc.arr_view.base.track_panel_row_height - pointer_y).max(0.0);
-                    doc.arr_view.base.dirty = true;
-                }
+            && tp_rect.contains(hover)
+        {
+            let pointer_y = hover.y - tp_rect.min.y;
+            let old = doc.arr_view.base.track_panel_row_height;
+            doc.arr_view.base.track_panel_row_height =
+                (doc.arr_view.base.track_panel_row_height * zoom_delta).clamp(16.0, 120.0);
+            doc.arr_view.lane_height = doc.arr_view.base.track_panel_row_height;
+            let track_frac = (pointer_y + doc.arr_view.base.track_panel_scroll_y) / old;
+            doc.arr_view.base.track_panel_scroll_y =
+                (track_frac * doc.arr_view.base.track_panel_row_height - pointer_y).max(0.0);
+            doc.arr_view.base.dirty = true;
+        }
 
         track_panel::show(
             ui,
@@ -179,7 +177,6 @@ pub fn show(
             )),
             is_playing,
             &doc.midi.track_names,
-            &mut doc.arr_instances,
             follow_mode,
         );
     });

@@ -15,7 +15,6 @@ pub(crate) struct Document {
     pub track_selected: Option<u16>,
     pub view: yinhe_pianoroll::PianoRollView,
     pub arr_view: yinhe_arrangement::ArrangementView,
-    pub arr_instances: Vec<yinhe_arrangement::NoteInstance>,
     pub cursor_tick: Option<f64>,
     pub quantize: QuantizePreset,
     pub playback: PlaybackState,
@@ -37,7 +36,6 @@ impl Default for Document {
             track_selected: None,
             view: yinhe_pianoroll::PianoRollView::default(),
             arr_view: yinhe_arrangement::ArrangementView::default(),
-            arr_instances: Vec::new(),
             cursor_tick: None,
             quantize: QuantizePreset::default(),
             playback: PlaybackState::default(),
@@ -60,46 +58,45 @@ impl Document {
     /// Create a new Document from a loaded MIDI file.
     pub fn from_midi(path: &str, midi: yinhe_midi::MidiFile) -> Self {
         yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Ui, || {
-        let num_tracks = midi.track_ports.len();
-        let file_name = std::path::Path::new(path)
-            .file_stem()
-            .and_then(|n| n.to_str())
-            .map(|s| s.to_string())
-            .unwrap_or_default();
+            let num_tracks = midi.track_ports.len();
+            let file_name = std::path::Path::new(path)
+                .file_stem()
+                .and_then(|n| n.to_str())
+                .map(|s| s.to_string())
+                .unwrap_or_default();
 
-        let track_info_cache = midi.track_info();
-        let mut pc_map_cache = HashMap::new();
-        for ev in &midi.control_events {
-            if let yinhe_midi::MidiControlEvent::ProgramChange {
-                channel, program, ..
-            } = ev
-            {
-                pc_map_cache.entry(*channel).or_insert(*program);
+            let track_info_cache = midi.track_info();
+            let mut pc_map_cache = HashMap::new();
+            for ev in &midi.control_events {
+                if let yinhe_midi::MidiControlEvent::ProgramChange {
+                    channel, program, ..
+                } = ev
+                {
+                    pc_map_cache.entry(*channel).or_insert(*program);
+                }
             }
-        }
 
-        let midi = Arc::new(midi);
+            let midi = Arc::new(midi);
 
-        let track_colors_cache = (0..num_tracks)
-            .map(|i| TRACK_PALETTE[i % TRACK_PALETTE.len()])
-            .collect();
+            let track_colors_cache = (0..num_tracks)
+                .map(|i| TRACK_PALETTE[i % TRACK_PALETTE.len()])
+                .collect();
 
-        Document {
-            midi,
-            file_name,
-            track_visible: vec![true; num_tracks],
-            track_selected: None,
-            selected: HashSet::new(),
-            view: yinhe_pianoroll::PianoRollView::default(),
-            arr_view: yinhe_arrangement::ArrangementView::default(),
-            arr_instances: Vec::new(),
-            cursor_tick: None,
-            quantize: QuantizePreset::default(),
-            playback: PlaybackState::default(),
-            track_info_cache,
-            pc_map_cache,
-            track_colors_cache,
-        }
+            Document {
+                midi,
+                file_name,
+                track_visible: vec![true; num_tracks],
+                track_selected: None,
+                selected: HashSet::new(),
+                view: yinhe_pianoroll::PianoRollView::default(),
+                arr_view: yinhe_arrangement::ArrangementView::default(),
+                cursor_tick: None,
+                quantize: QuantizePreset::default(),
+                playback: PlaybackState::default(),
+                track_info_cache,
+                pc_map_cache,
+                track_colors_cache,
+            }
         })
     }
 }

@@ -17,17 +17,25 @@ pub fn build_arrangement_grid(
     time_sig_events: &[TimeSigEvent],
 ) {
     grid::build_timeline_grid(
-        out, w, h, &view.base, tpb, default_num, default_den, time_sig_events,
+        out,
+        w,
+        h,
+        &view.base,
+        tpb,
+        default_num,
+        default_den,
+        time_sig_events,
         grid::AR_MEASURE_LINE_COLOR,
         grid::AR_BEAT_LINE_COLOR,
         None,
     );
 }
 
-/// Build all instances for the arrangement view frame.
-///
-/// `instances` is a reusable scratch buffer — caller should retain it across frames.
-pub fn build_arrangement_instances(
+/// Build static arrangement instances (background, track lanes, grid, note
+/// rectangles).  Does NOT include the playhead cursor — call
+/// `build_arrangement_cursor` separately so the cursor can be updated every
+/// frame without rebuilding expensive note geometry.
+pub fn build_arrangement_static(
     instances: &mut Vec<NoteInstance>,
     width: u32,
     height: u32,
@@ -35,7 +43,6 @@ pub fn build_arrangement_instances(
     view: &ArrangementView,
     track_visible: &[bool],
     track_colors: &[[f32; 3]],
-    cursor_tick: Option<f64>,
 ) {
     let w = width as f32;
     let h = height as f32;
@@ -50,7 +57,12 @@ pub fn build_arrangement_instances(
         y: 0.0,
         w: w - lb_w,
         h,
-        rgba_packed: pack_rgba(grid::AR_BG_COLOR.0, grid::AR_BG_COLOR.1, grid::AR_BG_COLOR.2, 1.0),
+        rgba_packed: pack_rgba(
+            grid::AR_BG_COLOR.0,
+            grid::AR_BG_COLOR.1,
+            grid::AR_BG_COLOR.2,
+            1.0,
+        ),
         props_packed: pack_props(0.0, 0.0),
         velocity: 0,
         tag: 0,
@@ -64,7 +76,11 @@ pub fn build_arrangement_instances(
                 continue;
             }
             let y = view.lane_y(idx);
-            let col = if idx % 2 == 0 { grid::AR_LANE_EVEN_COLOR } else { grid::AR_LANE_ODD_COLOR };
+            let col = if idx % 2 == 0 {
+                grid::AR_LANE_EVEN_COLOR
+            } else {
+                grid::AR_LANE_ODD_COLOR
+            };
             instances.push(NoteInstance {
                 x: lb_w,
                 y,
@@ -80,49 +96,47 @@ pub fn build_arrangement_instances(
 
     // 3. Grid lines + 4. Note rectangles
     if let Some(midi) = midi
-        && let Some(tpb) = midi.ticks_per_beat() {
-            let (tick_start, tick_end) = view.visible_tick_range(w);
+        && let Some(tpb) = midi.ticks_per_beat()
+    {
+        let (tick_start, tick_end) = view.visible_tick_range(w);
 
-            // Grid lines
-            let (def_num, def_den) = midi.time_sig_default();
-            let sig_events = midi.time_sig_events();
-            build_arrangement_grid(instances, w, h, view, tpb, def_num, def_den, sig_events);
+        // Grid lines
+        let (def_num, def_den) = midi.time_sig_default();
+        let sig_events = midi.time_sig_events();
+        build_arrangement_grid(instances, w, h, view, tpb, def_num, def_den, sig_events);
 
-            // Note rectangles — merge consecutive same-track same-key notes into longer rects.
-            let tick_pad = (w - lb_w) / ppu;
-            let pad_start = (tick_start - tick_pad as f64).max(0.0);
-            let pad_end = tick_end + tick_pad as f64;
-            let (trk_first, trk_last) = view.visible_track_range(h, num_tracks);
+        // Note rectangles — merge consecutive same-track same-key notes into longer rects.
+        let tick_pad = (w - lb_w) / ppu;
+        let pad_start = (tick_start - tick_pad as f64).max(0.0);
+        let pad_end = tick_end + tick_pad as f64;
+        let (trk_first, trk_last) = view.visible_track_range(h, num_tracks);
 
-            let x_offset = lb_w - view.base.scroll_x;
-            let y_offset = -view.base.scroll_y;
-            let lh_per_key = lh / 128.0;
-            let note_h = lh_per_key.max(1.0);
+        let x_offset = lb_w - view.base.scroll_x;
+        let y_offset = -view.base.scroll_y;
+        let lh_per_key = lh / 128.0;
+        let note_h = lh_per_key.max(1.0);
 
-            let note_instances: Vec<Vec<NoteInstance>> = (0u8..128)
-                .into_par_iter()
-                .filter_map(|key| {
-                    let notes = midi.key_notes(key);
-                    if notes.is_empty() {
-                        return None;
-                    }
-                    let start_idx = seek_first_note(key, midi, pad_start as u32);
-                    if start_idx >= notes.len() {
-                        return None;
-                    }
-                    if notes.first().is_none_or(|n| n.start_tick as f64 > pad_end) {
-                        return None;
-                    }
+        let note_instances: Vec<Vec<NoteInstance>> = (0u8..128)
+            .into_par_iter()
+            .filter_map(|key| {
+                let notes = midi.key_notes(key);
+                if notes.is_empty() {
+                    return None;
+                }
+                let start_idx = seek_first_note(key, midi, pad_start as u32);
+                if start_idx >= notes.len() {
+                    return None;
+                }
+                if notes.first().is_none_or(|n| n.start_tick as f64 > pad_end) {
+                    return None;
+                }
 
-                    let key_y_base = y_offset + lh - (key as f32 + 1.0) * lh_per_key;
+                let key_y_base = y_offset + lh - (key as f32 + 1.0) * lh_per_key;
 
-                    let mut local = Vec::new();
+                let mut local = Vec::new();
 
-                    let flush_merge = |local: &mut Vec<NoteInstance>,
-                                       ti: usize,
-                                       start: u32,
-                                       end: u32,
-                                       vel: u8| {
+                let flush_merge =
+                    |local: &mut Vec<NoteInstance>, ti: usize, start: u32, end: u32, vel: u8| {
                         let s = (start as f64).max(pad_start) as u32;
                         let e = (end as f64).min(pad_end).max(start as f64) as u32;
                         if s >= e {
@@ -137,8 +151,7 @@ pub fn build_arrangement_instances(
                         let nx = x_offset + s as f32 * ppu;
                         let nw = ((e - s) as f32 * ppu).max(2.0);
                         let note_y = key_y_base + ti as f32 * lh;
-                        let color =
-                            track_colors.get(ti).copied().unwrap_or([0.5, 0.5, 0.5]);
+                        let color = track_colors.get(ti).copied().unwrap_or([0.5, 0.5, 0.5]);
                         local.push(NoteInstance {
                             x: nx,
                             y: note_y,
@@ -151,65 +164,73 @@ pub fn build_arrangement_instances(
                         });
                     };
 
-                    // Sub-pixel merge: gaps < 1 pixel are invisible.
-                    let merge_gap_ticks = (1.0 / ppu).ceil() as u32;
+                // Sub-pixel merge: gaps < 1 pixel are invisible.
+                let merge_gap_ticks = (1.0 / ppu).ceil() as u32;
 
-                    // Bucket notes by track using Vec (avoids per-frame HashMap allocation).
-                    let mut track_buckets: Vec<Vec<(u32, u32, u8)>> =
-                        vec![Vec::new(); num_tracks];
-                    for note in &notes[start_idx..] {
-                        if note.start_tick as f64 > pad_end {
-                            break;
-                        }
-                        if (note.end_tick as f64) < pad_start {
-                            continue;
-                        }
-                        let ti = note.track as usize;
-                        if ti < trk_first || ti >= trk_last {
-                            continue;
-                        }
-                        if !track_visible.get(ti).copied().unwrap_or(true) {
-                            continue;
-                        }
-                        track_buckets[ti].push((note.start_tick, note.end_tick, note.velocity));
+                // Bucket notes by track using Vec (avoids per-frame HashMap allocation).
+                let mut track_buckets: Vec<Vec<(u32, u32, u8)>> = vec![Vec::new(); num_tracks];
+                for note in &notes[start_idx..] {
+                    if note.start_tick as f64 > pad_end {
+                        break;
                     }
-
-                    for (ti, notes_in_track) in track_buckets.iter().enumerate() {
-                        if notes_in_track.is_empty() {
-                            continue;
-                        }
-                        let mut merge_start = notes_in_track[0].0;
-                        let mut merge_end = notes_in_track[0].1;
-                        let mut merge_vel = notes_in_track[0].2;
-
-                        for &(s, e, v) in &notes_in_track[1..] {
-                            if s <= merge_end + merge_gap_ticks {
-                                merge_end = merge_end.max(e);
-                                merge_vel = merge_vel.max(v);
-                            } else {
-                                flush_merge(
-                                    &mut local,
-                                    ti,
-                                    merge_start,
-                                    merge_end,
-                                    merge_vel,
-                                );
-                                merge_start = s;
-                                merge_end = e;
-                                merge_vel = v;
-                            }
-                        }
-                        flush_merge(&mut local, ti, merge_start, merge_end, merge_vel);
+                    if (note.end_tick as f64) < pad_start {
+                        continue;
                     }
+                    let ti = note.track as usize;
+                    if ti < trk_first || ti >= trk_last {
+                        continue;
+                    }
+                    if !track_visible.get(ti).copied().unwrap_or(true) {
+                        continue;
+                    }
+                    track_buckets[ti].push((note.start_tick, note.end_tick, note.velocity));
+                }
 
-                    if local.is_empty() { None } else { Some(local) }
-                })
-                .collect();
+                for (ti, notes_in_track) in track_buckets.iter().enumerate() {
+                    if notes_in_track.is_empty() {
+                        continue;
+                    }
+                    let mut merge_start = notes_in_track[0].0;
+                    let mut merge_end = notes_in_track[0].1;
+                    let mut merge_vel = notes_in_track[0].2;
 
-            for mut local in note_instances {
-                instances.append(&mut local);
-            }
+                    for &(s, e, v) in &notes_in_track[1..] {
+                        if s <= merge_end + merge_gap_ticks {
+                            merge_end = merge_end.max(e);
+                            merge_vel = merge_vel.max(v);
+                        } else {
+                            flush_merge(&mut local, ti, merge_start, merge_end, merge_vel);
+                            merge_start = s;
+                            merge_end = e;
+                            merge_vel = v;
+                        }
+                    }
+                    flush_merge(&mut local, ti, merge_start, merge_end, merge_vel);
+                }
+
+                if local.is_empty() { None } else { Some(local) }
+            })
+            .collect();
+
+        for mut local in note_instances {
+            instances.append(&mut local);
         }
+    }
+}
+
+/// Build the playhead cursor instance (a single vertical line).
+/// Call this every frame — it is cheap (O(1)) and independent of the static
+/// note geometry built by `build_arrangement_static`.
+pub fn build_arrangement_cursor(
+    instances: &mut Vec<NoteInstance>,
+    cursor_tick: Option<f64>,
+    view: &ArrangementView,
+    width: u32,
+    height: u32,
+) {
+    let w = width as f32;
+    let h = height as f32;
+    let lb_w = view.base.left_panel_width;
 
     // 5. Playhead
     if let Some(ct) = cursor_tick {
@@ -218,6 +239,33 @@ pub fn build_arrangement_instances(
             grid::push_grid_line(instances, cx, h, 2.0, grid::AR_PLAYHEAD_COLOR, 0);
         }
     }
+}
+
+/// Build all instances for the arrangement view frame (convenience wrapper
+/// around `build_arrangement_static` + `build_arrangement_cursor`).
+///
+/// Prefer calling the two functions separately with `prepare_with_static_cache`
+/// so the static geometry is cached across frames during playback.
+pub fn build_arrangement_instances(
+    instances: &mut Vec<NoteInstance>,
+    width: u32,
+    height: u32,
+    midi: Option<&dyn NoteSource>,
+    view: &ArrangementView,
+    track_visible: &[bool],
+    track_colors: &[[f32; 3]],
+    cursor_tick: Option<f64>,
+) {
+    build_arrangement_static(
+        instances,
+        width,
+        height,
+        midi,
+        view,
+        track_visible,
+        track_colors,
+    );
+    build_arrangement_cursor(instances, cursor_tick, view, width, height);
 }
 
 #[cfg(test)]
@@ -296,7 +344,11 @@ mod tests {
             None,
         );
         let elapsed = start.elapsed();
-        assert!(elapsed.as_millis() < 100, "build took too long: {:?}", elapsed);
+        assert!(
+            elapsed.as_millis() < 100,
+            "build took too long: {:?}",
+            elapsed
+        );
         assert!(!instances.is_empty(), "should have generated instances");
 
         let note_count = instances.iter().filter(|i| i.velocity > 0).count();
@@ -304,7 +356,10 @@ mod tests {
 
         for inst in &instances {
             if inst.velocity > 0 {
-                assert!(inst.x >= view.base.left_panel_width, "note x should be >= label_width");
+                assert!(
+                    inst.x >= view.base.left_panel_width,
+                    "note x should be >= label_width"
+                );
                 assert!(inst.w > 0.0, "note width should be positive");
             }
         }
@@ -335,7 +390,11 @@ mod tests {
             None,
         );
         let elapsed = start.elapsed();
-        assert!(elapsed.as_millis() < 100, "128-key build took: {:?}", elapsed);
+        assert!(
+            elapsed.as_millis() < 100,
+            "128-key build took: {:?}",
+            elapsed
+        );
         assert!(instances.len() > 128, "should have many instances");
     }
 
@@ -381,11 +440,19 @@ mod tests {
             None,
         );
         let elapsed = start.elapsed();
-        assert!(elapsed.as_millis() < 3000, "large build took: {:?}", elapsed);
+        assert!(
+            elapsed.as_millis() < 3000,
+            "large build took: {:?}",
+            elapsed
+        );
 
         let note_count = instances.iter().filter(|i| i.velocity > 0).count();
         assert!(note_count > 0, "should have generated note instances");
-        assert!(note_count > 2000, "should have many merged instances: got {}", note_count);
+        assert!(
+            note_count > 2000,
+            "should have many merged instances: got {}",
+            note_count
+        );
     }
 
     #[test]
@@ -409,7 +476,11 @@ mod tests {
             None,
         );
         let elapsed = start.elapsed();
-        assert!(elapsed.as_millis() < 200, "extreme zoom build took: {:?}", elapsed);
+        assert!(
+            elapsed.as_millis() < 200,
+            "extreme zoom build took: {:?}",
+            elapsed
+        );
     }
 
     #[test]
@@ -423,21 +494,20 @@ mod tests {
         view.base.dirty = true;
 
         let events = vec![
-            TimeSigEvent { tick: 0, numerator: 4, denominator: 2 },
-            TimeSigEvent { tick: 1920, numerator: 7, denominator: 2 },
+            TimeSigEvent {
+                tick: 0,
+                numerator: 4,
+                denominator: 2,
+            },
+            TimeSigEvent {
+                tick: 1920,
+                numerator: 7,
+                denominator: 2,
+            },
         ];
 
         let mut grid_lines = Vec::new();
-        build_arrangement_grid(
-            &mut grid_lines,
-            2000.0,
-            400.0,
-            &view,
-            tpb,
-            4,
-            2,
-            &events,
-        );
+        build_arrangement_grid(&mut grid_lines, 2000.0, 400.0, &view, tpb, 4, 2, &events);
 
         let ticks: Vec<u32> = grid_lines.iter().map(|i| i.tag).collect();
 
@@ -457,6 +527,10 @@ mod tests {
         );
 
         let count_1920 = ticks.iter().filter(|&&t| t == 1920).count();
-        assert_eq!(count_1920, 1, "Boundary tick 1920 must appear exactly once, got {}", count_1920);
+        assert_eq!(
+            count_1920, 1,
+            "Boundary tick 1920 must appear exactly once, got {}",
+            count_1920
+        );
     }
 }
