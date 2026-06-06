@@ -13,6 +13,7 @@ use crate::mode_bar::{self, ViewMode};
 use crate::piano_view;
 use crate::render_context::RenderContext;
 use crate::transport_bar;
+use yinhe_memtrace::{AllocTag, Snapshot};
 
 // ── Panic-safe take guard ──
 /// Restores a taken value back into its slot on drop, preventing data loss
@@ -93,6 +94,9 @@ pub struct App {
     last_sys_refresh: Instant,
     cpu_usage: f32,
     mem_mb: f64,
+
+    // ── Memory breakdown popup state ──
+    show_mem_breakdown: bool,
 }
 
 impl App {
@@ -192,6 +196,8 @@ impl App {
             last_sys_refresh: Instant::now(),
             cpu_usage: 0.0,
             mem_mb: 0.0,
+
+            show_mem_breakdown: false,
         }
     }
 
@@ -409,12 +415,59 @@ impl eframe::App for App {
             &mut pending_quantize,
             &mut pending_file_action,
             &mut self.follow_mode,
+            &mut self.show_mem_breakdown,
         );
 
         if let (Some(idx), Some(new_preset)) = (self.active_doc, pending_quantize)
             && let Some(doc) = self.documents.get_mut(idx) {
                 doc.quantize = new_preset;
             }
+
+        // ── Memory breakdown popup ──
+        if self.show_mem_breakdown {
+            let snapshot = Snapshot::capture();
+            egui::Window::new("内存占用详情")
+                .id(egui::Id::new("memory_breakdown_window"))
+                .default_size([360.0, 260.0])
+                .collapsible(false)
+                .resizable(false)
+                .show(ui.ctx(), |ui| {
+                    ui.label(format!(
+                        "系统统计总内存: {:.1} MB",
+                        self.mem_mb
+                    ));
+                    ui.label(format!(
+                        "分配器追踪内存: {:.1} MB",
+                        snapshot.total_mb()
+                    ));
+                    ui.separator();
+
+                    ui.heading("按子系统分类");
+                    egui::Grid::new("mem_breakdown_grid")
+                        .num_columns(2)
+                        .spacing([12.0, 8.0])
+                        .show(ui, |ui| {
+                            for tag in AllocTag::ALL {
+                                if tag == AllocTag::Unknown && snapshot.get(tag) <= 0 {
+                                    continue;
+                                }
+                                ui.label(tag.name());
+                                ui.label(format!("{:.1} MB", snapshot.mb(tag)));
+                                ui.end_row();
+                            }
+                        });
+
+                    ui.separator();
+                    ui.small(
+                        "注：GPU 显存由驱动直接分配，通常不走 Rust 分配器，\
+                         因此此处 GPU 数字主要反映 CPU 侧 staging / 缓冲开销。",
+                    );
+
+                    if ui.button("关闭").clicked() {
+                        self.show_mem_breakdown = false;
+                    }
+                });
+        }
 
         // ── Handle file menu actions ──
         if let Some(action) = pending_file_action {

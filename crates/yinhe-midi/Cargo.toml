@@ -5,5 +5,6 @@ edition = "2024"
 
 [dependencies]
 yinhe-types = { path = "../yinhe-types" }
+yinhe-memtrace = { path = "../yinhe-memtrace" }
 midly = { workspace = true }
 thiserror = { workspace = true }

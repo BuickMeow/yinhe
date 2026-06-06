@@ -41,8 +41,10 @@ impl SoundFontManager {
             }
         }
 
-        let sf = SampleSoundfont::new(path, self.stream_params, SoundfontInitOptions::default())
-            .map_err(|e| format!("Failed to load SoundFont {:?}: {}", path, e))?;
+        let sf = yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::SoundFont, || {
+            SampleSoundfont::new(path, self.stream_params, SoundfontInitOptions::default())
+                .map_err(|e| format!("Failed to load SoundFont {:?}: {}", path, e))
+        })?;
 
         let arc: Arc<dyn SoundfontBase> = Arc::new(sf);
         let mut cache = GLOBAL_SF_CACHE.write().unwrap();

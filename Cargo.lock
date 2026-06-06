@@ -5712,6 +5712,7 @@ dependencies = [
  "hound",
  "xsynth-core",
  "xsynth-soundfonts",
+ "yinhe-memtrace",
  "yinhe-midi",
  "yinhe-types",
 ]
@@ -5745,6 +5746,7 @@ dependencies = [
  "yinhe-arrangement",
  "yinhe-audio",
  "yinhe-dms",
+ "yinhe-memtrace",
  "yinhe-midi",
  "yinhe-pianoroll",
  "yinhe-types",
@@ -5752,11 +5754,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "yinhe-memtrace"
+version = "0.1.0"
+
+[[package]]
 name = "yinhe-midi"
 version = "0.1.0"
 dependencies = [
  "midly",
  "thiserror 2.0.18",
+ "yinhe-memtrace",
  "yinhe-types",
 ]
 
@@ -5780,6 +5787,7 @@ dependencies = [
  "bytemuck",
  "half",
  "wgpu",
+ "yinhe-memtrace",
  "yinhe-types",
 ]
 

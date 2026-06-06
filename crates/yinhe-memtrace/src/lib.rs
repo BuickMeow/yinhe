@@ -1,0 +1,213 @@
+use std::alloc::{GlobalAlloc, Layout, System};
+use std::cell::Cell;
+use std::sync::atomic::{AtomicIsize, Ordering};
+
+/// Allocation tag used to attribute heap memory to a subsystem.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum AllocTag {
+    Unknown = 0,
+    Midi = 1,
+    SoundFont = 2,
+    Audio = 3,
+    Gpu = 4,
+    Ui = 5,
+    Other = 6,
+}
+
+impl AllocTag {
+    const COUNT: usize = 7;
+
+    pub const ALL: [AllocTag; Self::COUNT] = [
+        AllocTag::Unknown,
+        AllocTag::Midi,
+        AllocTag::SoundFont,
+        AllocTag::Audio,
+        AllocTag::Gpu,
+        AllocTag::Ui,
+        AllocTag::Other,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            AllocTag::Unknown => "未分类",
+            AllocTag::Midi => "MIDI 数据",
+            AllocTag::SoundFont => "音色库采样",
+            AllocTag::Audio => "音频引擎",
+            AllocTag::Gpu => "GPU 显存/缓冲",
+            AllocTag::Ui => "UI / 状态",
+            AllocTag::Other => "其他",
+        }
+    }
+}
+
+#[repr(C, align(16))]
+struct Header {
+    tag: u8,
+    _pad: [u8; 7],
+    user_size: usize,
+    user_align: usize,
+}
+
+const HEADER_SIZE: usize = std::mem::size_of::<Header>();
+const OFFSET_BACKUP_SIZE: usize = std::mem::size_of::<usize>();
+
+/// Round `n` up to the next multiple of `align`.
+/// `align` must be a power of two and non-zero.
+const fn round_up(n: usize, align: usize) -> usize {
+    debug_assert!(align > 0 && align.is_power_of_two());
+    (n + align - 1) & !(align - 1)
+}
+
+/// Compute the offset from the base allocation pointer to the user pointer.
+/// The user pointer will satisfy the requested `user_align`, and there is
+/// room for both the `Header` at the base and an offset-backup word just
+/// before the user pointer.
+const fn user_offset(user_align: usize) -> usize {
+    round_up(HEADER_SIZE + OFFSET_BACKUP_SIZE, user_align)
+}
+
+static COUNTERS: [AtomicIsize; AllocTag::COUNT] = [
+    AtomicIsize::new(0),
+    AtomicIsize::new(0),
+    AtomicIsize::new(0),
+    AtomicIsize::new(0),
+    AtomicIsize::new(0),
+    AtomicIsize::new(0),
+    AtomicIsize::new(0),
+];
+
+thread_local! {
+    static CURRENT_TAG: Cell<AllocTag> = const { Cell::new(AllocTag::Unknown) };
+}
+
+fn current_tag() -> AllocTag {
+    CURRENT_TAG.with(|c| c.get())
+}
+
+/// Run `f` with the current thread's allocation tag set to `tag`.
+/// The previous tag is restored when `f` returns.
+pub fn with_tag<T>(tag: AllocTag, f: impl FnOnce() -> T) -> T {
+    CURRENT_TAG.with(|c| {
+        let old = c.get();
+        c.set(tag);
+        let result = f();
+        c.set(old);
+        result
+    })
+}
+
+/// Snapshot of memory attributed to each tag.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Snapshot {
+    pub bytes: [isize; AllocTag::COUNT],
+}
+
+impl Snapshot {
+    pub fn capture() -> Self {
+        let mut bytes = [0; AllocTag::COUNT];
+        for (i, counter) in COUNTERS.iter().enumerate() {
+            bytes[i] = counter.load(Ordering::Relaxed);
+        }
+        Self { bytes }
+    }
+
+    pub fn get(&self, tag: AllocTag) -> isize {
+        self.bytes[tag as usize]
+    }
+
+    pub fn total_tracked(&self) -> isize {
+        self.bytes.iter().sum()
+    }
+
+    pub fn mb(&self, tag: AllocTag) -> f64 {
+        self.get(tag) as f64 / 1_048_576.0
+    }
+
+    pub fn total_mb(&self) -> f64 {
+        self.total_tracked() as f64 / 1_048_576.0
+    }
+}
+
+/// Global allocator that attributes every allocation to the current thread's tag.
+pub struct TaggedAlloc;
+
+unsafe impl GlobalAlloc for TaggedAlloc {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        let tag = current_tag() as u8;
+        let user_size = layout.size();
+        let user_align = layout.align();
+        let offset = user_offset(user_align);
+
+        let combined_size = offset.saturating_add(user_size);
+        let header_align = std::mem::align_of::<Header>();
+        let combined_align = header_align.max(user_align);
+
+        let combined = match Layout::from_size_align(combined_size, combined_align) {
+            Ok(l) => l,
+            Err(_) => return std::ptr::null_mut(),
+        };
+
+        let ptr = unsafe { System.alloc(combined) };
+        if ptr.is_null() {
+            return std::ptr::null_mut();
+        }
+
+        let header = ptr as *mut Header;
+        unsafe {
+            (*header).tag = tag;
+            (*header).user_size = user_size;
+            (*header).user_align = user_align;
+        }
+
+        // Store the offset just before the user pointer so dealloc can locate
+        // the header without needing to know the original alignment.
+        let offset_backup_ptr = unsafe { ptr.add(offset - OFFSET_BACKUP_SIZE) as *mut usize };
+        unsafe { *offset_backup_ptr = offset; }
+
+        COUNTERS[tag as usize].fetch_add(user_size as isize, Ordering::Relaxed);
+
+        unsafe { ptr.add(offset) }
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, _layout: Layout) {
+        let offset = unsafe { *(ptr.sub(OFFSET_BACKUP_SIZE) as *const usize) };
+        let header_ptr = unsafe { ptr.sub(offset) as *mut Header };
+        let header = unsafe { &*header_ptr };
+        let tag = header.tag as usize;
+        let user_size = header.user_size;
+        let user_align = header.user_align;
+
+        COUNTERS[tag].fetch_sub(user_size as isize, Ordering::Relaxed);
+
+        let combined_size = offset.saturating_add(user_size);
+        let header_align = std::mem::align_of::<Header>();
+        let combined_align = header_align.max(user_align);
+        let combined = unsafe { Layout::from_size_align_unchecked(combined_size, combined_align) };
+        unsafe { System.dealloc(header_ptr as *mut u8, combined) };
+    }
+
+    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        let new_layout = match Layout::from_size_align(new_size, layout.align()) {
+            Ok(l) => l,
+            Err(_) => return std::ptr::null_mut(),
+        };
+        let new_ptr = unsafe { self.alloc(new_layout) };
+        if !new_ptr.is_null() {
+            let copy_size = layout.size().min(new_size);
+            unsafe {
+                std::ptr::copy_nonoverlapping(ptr, new_ptr, copy_size);
+                self.dealloc(ptr, layout);
+            }
+        }
+        new_ptr
+    }
+
+    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+        let ptr = unsafe { self.alloc(layout) };
+        if !ptr.is_null() {
+            unsafe { std::ptr::write_bytes(ptr, 0, layout.size()) };
+        }
+        ptr
+    }
+}

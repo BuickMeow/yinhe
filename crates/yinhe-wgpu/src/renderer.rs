@@ -19,11 +19,13 @@ fn create_instance_buffer_slot(
     instance_size: u64,
     capacity: usize,
 ) -> InstanceBufferSlot {
-    let buffer = device.create_buffer(&BufferDescriptor {
-        label: Some("instance_buffer"),
-        size: instance_size * capacity as u64,
-        usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
-        mapped_at_creation: false,
+    let buffer = yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Gpu, || {
+        device.create_buffer(&BufferDescriptor {
+            label: Some("instance_buffer"),
+            size: instance_size * capacity as u64,
+            usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        })
     });
     InstanceBufferSlot {
         buffer,
@@ -61,24 +63,26 @@ pub struct PianorollRenderer {
 
 impl PianorollRenderer {
     pub fn new(device: Device, queue: Queue, format: TextureFormat) -> Self {
-        let render_shader = device.create_shader_module(ShaderModuleDescriptor {
-            label: Some("pianoroll_shader"),
-            source: ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
-        });
+        yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Gpu, || {
+            let render_shader = device.create_shader_module(ShaderModuleDescriptor {
+                label: Some("pianoroll_shader"),
+                source: ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
+            });
 
-        let render = RenderPipelineState::new(&device, format, &render_shader);
+            let render = RenderPipelineState::new(&device, format, &render_shader);
 
-        Self {
-            device,
-            queue,
-            render,
-            instance_buffers: Vec::new(),
-            instance_scratch: Vec::new(),
-            current_batch_counts: Vec::new(),
-            cached_uniforms: None,
-            static_instance_cache: Vec::new(),
-            cached_viewport_hash: None,
-        }
+            Self {
+                device,
+                queue,
+                render,
+                instance_buffers: Vec::new(),
+                instance_scratch: Vec::new(),
+                current_batch_counts: Vec::new(),
+                cached_uniforms: None,
+                static_instance_cache: Vec::new(),
+                cached_viewport_hash: None,
+            }
+        })
     }
 
     /// Generic prepare with scratch buffer reuse and dirty-check.
@@ -123,6 +127,7 @@ impl PianorollRenderer {
         build_static: impl FnOnce(&mut Vec<NoteInstance>),
         build_cursor: impl FnOnce(&mut Vec<NoteInstance>),
     ) -> bool {
+        yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Gpu, || {
         let need_static = self.cached_viewport_hash != Some(viewport_hash);
         let uniforms_changed = self
             .cached_uniforms
@@ -158,6 +163,7 @@ impl PianorollRenderer {
         self.instance_scratch = combined;
 
         need_static || uniforms_changed
+        })
     }
 
     /// Upload uniforms + instances to GPU.

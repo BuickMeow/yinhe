@@ -40,6 +40,7 @@ pub fn show(
     pending_quantize: &mut Option<QuantizePreset>,
     pending_file_action: &mut Option<FileAction>,
     follow_mode: &mut FollowMode,
+    show_mem_breakdown: &mut bool,
 ) {
     let has_active = doc.is_some();
 
@@ -197,7 +198,7 @@ pub fn show(
 
                 if let Some(doc) = doc {
                     button_right = Some(ui.cursor().min.x);
-                    timecode_rect = Some(show_timecode_display(ui, doc, cpu_usage, mem_mb));
+                    timecode_rect = Some(show_timecode_display(ui, doc, cpu_usage, mem_mb, show_mem_breakdown));
                 }
             });
 
@@ -304,6 +305,7 @@ fn show_timecode_display(
     doc: &Document,
     cpu_usage: f32,
     mem_mb: f64,
+    show_mem_breakdown: &mut bool,
 ) -> egui::Rect {
     let tick = doc.cursor_tick.unwrap_or(0.0);
     let tick_u = tick as u32;
@@ -353,20 +355,33 @@ fn show_timecode_display(
                 grid,
             );
         }
+        let top_pos = egui::pos2(cx, rect.min.y + rect_h * 0.25);
+        let bot_pos = egui::pos2(cx, rect.min.y + rect_h * 0.75);
         ui.painter().text(
-            egui::pos2(cx, rect.min.y + rect_h * 0.25),
+            top_pos,
             egui::Align2::CENTER_CENTER,
             &texts_top[i],
             font.clone(),
             c,
         );
         ui.painter().text(
-            egui::pos2(cx, rect.min.y + rect_h * 0.75),
+            bot_pos,
             egui::Align2::CENTER_CENTER,
             &texts_bot[i],
             font.clone(),
             c,
         );
+        if i == 0 {
+            let click_rect = egui::Rect::from_center_size(
+                bot_pos,
+                egui::vec2(col_widths[i] - 4.0, rect_h * 0.45),
+            );
+            let resp = ui.interact(click_rect, ui.id().with("mem_text"), egui::Sense::click());
+            if resp.clicked() {
+                *show_mem_breakdown = true;
+            }
+            resp.on_hover_text("点击打开内存占用详情");
+        }
         col_x += col_widths[i];
     }
 

@@ -16,14 +16,17 @@ impl MidiParser {
         path: impl AsRef<Path>,
         progress: impl FnMut(LoadProgress),
     ) -> Result<MidiFile, MidiError> {
-        let data = std::fs::read(path.as_ref())?;
-        Self::parse_bytes_with_progress(&data, progress)
+        yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Midi, || {
+            let data = std::fs::read(path.as_ref())?;
+            Self::parse_bytes_with_progress(&data, progress)
+        })
     }
 
     pub fn parse_bytes_with_progress(
         data: &[u8],
         mut progress: impl FnMut(LoadProgress),
     ) -> Result<MidiFile, MidiError> {
+        yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Midi, || {
         let smf = midly::Smf::parse(data)?;
 
         let ticks_per_beat = match smf.header.timing {
@@ -107,6 +110,7 @@ impl MidiParser {
             track_ports,
             control_events,
             scan_index: Some(scan_index),
+        })
         })
     }
 

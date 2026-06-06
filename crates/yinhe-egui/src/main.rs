@@ -1,3 +1,8 @@
+use yinhe_memtrace::TaggedAlloc;
+
+#[global_allocator]
+static GLOBAL_ALLOC: TaggedAlloc = TaggedAlloc;
+
 mod app;
 mod arrange;
 mod arrangement_view_ui;
