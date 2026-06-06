@@ -158,7 +158,7 @@ pub fn show(
 
     // ── Arrangement GPU view (below ruler) ──
     let arr_midi: Option<&dyn yinhe_arrangement::NoteSource> =
-        Some(&doc.midi as &dyn yinhe_arrangement::NoteSource);
+        Some(&*doc.midi as &dyn yinhe_arrangement::NoteSource);
     let track_colors = doc.track_colors();
     let track_names = doc.track_names();
     let gpu_size = gpu_rect.size();

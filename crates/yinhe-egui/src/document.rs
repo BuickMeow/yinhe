@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use yinhe_types::TRACK_PALETTE;
 
@@ -7,7 +8,7 @@ use crate::quantize::QuantizePreset;
 
 /// Per-document state: holds one MIDI file and all UI/GPU state for it.
 pub(crate) struct Document {
-    pub midi: yinhe_midi::MidiFile,
+    pub midi: Arc<yinhe_midi::MidiFile>,
     pub file_name: String,
     pub selected: HashSet<(u16, u32)>,
     pub track_visible: Vec<bool>,
@@ -27,7 +28,7 @@ pub(crate) struct Document {
 impl Default for Document {
     fn default() -> Self {
         Self {
-            midi: yinhe_midi::MidiFile::default(),
+            midi: Arc::new(yinhe_midi::MidiFile::default()),
             file_name: String::new(),
             selected: HashSet::new(),
             track_visible: Vec::new(),
@@ -75,6 +76,8 @@ impl Document {
                 pc_map_cache.entry(*channel).or_insert(*program);
             }
         }
+
+        let midi = Arc::new(midi);
 
         Document {
             midi,

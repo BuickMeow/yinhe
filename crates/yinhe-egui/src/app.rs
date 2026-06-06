@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::time::Instant;
 
 use eframe::egui;
@@ -127,7 +128,7 @@ impl App {
                 midi.track_names = vec!["Track 1".to_string()];
                 let track_info_cache = midi.track_info();
                 vec![Document {
-                    midi,
+                    midi: Arc::new(midi),
                     file_name: "Untitled".into(),
                     track_visible: vec![true],
                     track_info_cache,
@@ -284,7 +285,7 @@ impl eframe::App for App {
                     Ok(audio) => {
                         // Load MIDI
                         audio.handle.send(yinhe_audio::AudioCommand::LoadMidi {
-                            midi: doc.midi.clone(),
+                            midi: Arc::clone(&doc.midi),
                         });
                         // Load SoundFont
                         let sf_path = if !self.audio_settings.default_sf2_path.is_empty() {
@@ -396,12 +397,17 @@ impl eframe::App for App {
         if let Some(action) = pending_file_action {
             match action {
                 transport_bar::FileAction::NewProject => {
-                    let mut doc = Document::default();
-                    doc.file_name = "Untitled".into();
-                    doc.midi.track_ports = vec![0];
-                    doc.midi.track_names = vec!["Track 1".to_string()];
-                    doc.track_info_cache = doc.midi.track_info();
-                    doc.track_visible = vec![true];
+                    let mut midi = yinhe_midi::MidiFile::default();
+                    midi.track_ports = vec![0];
+                    midi.track_names = vec!["Track 1".to_string()];
+                    let track_info_cache = midi.track_info();
+                    let doc = Document {
+                        midi: Arc::new(midi),
+                        file_name: "Untitled".into(),
+                        track_info_cache,
+                        track_visible: vec![true],
+                        ..Default::default()
+                    };
                     self.documents.push(doc);
                     self.active_doc = Some(self.documents.len() - 1);
                 }
@@ -526,7 +532,7 @@ impl eframe::App for App {
 
                 // Pianoroll GPU view (full width, no track panel)
                 let midi_source: Option<&dyn yinhe_pianoroll::NoteSource> =
-                    Some(&doc.midi as &dyn yinhe_pianoroll::NoteSource);
+                    Some(&*doc.midi as &dyn yinhe_pianoroll::NoteSource);
                 let piano_rect =
                     egui::Rect::from_min_max(egui::pos2(remaining.min.x, bottom_y), remaining.max);
                 ui.allocate_new_ui(egui::UiBuilder::new().max_rect(piano_rect), |ui| {

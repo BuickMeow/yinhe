@@ -22,7 +22,7 @@ pub enum AudioCommand {
     Pause,
     Stop,
     Seek { sample: u64 },
-    LoadMidi { midi: MidiFile },
+    LoadMidi { midi: Arc<MidiFile> },
     LoadSoundFont { port: u8, paths: Vec<String> },
 }
 
@@ -100,6 +100,12 @@ struct SortedCC {
     event: ChannelAudioEvent,
 }
 
+struct ActiveNote {
+    key: u8,
+    channel: u8,
+    end_sample: u64,
+}
+
 struct AudioEngine {
     channel_group: ChannelGroup,
     num_channels: u32,
@@ -114,7 +120,8 @@ struct AudioEngine {
     note_cursors: [usize; 128],
     cc_events: Vec<SortedCC>,
     cc_cursor: usize,
-    midi: Option<MidiFile>,
+    active_notes: Vec<ActiveNote>,
+    midi: Option<Arc<MidiFile>>,
 }
 
 impl AudioEngine {
@@ -143,6 +150,7 @@ impl AudioEngine {
             note_cursors: [0; 128],
             cc_events: Vec::new(),
             cc_cursor: 0,
+            active_notes: Vec::new(),
             midi: None,
         }
     }
@@ -152,6 +160,7 @@ impl AudioEngine {
 
         self.cc_events.clear();
         self.cc_cursor = 0;
+        self.active_notes.clear();
         let sr = self.sample_rate as f64;
 
         for evt in &midi.control_events {
@@ -217,11 +226,10 @@ impl AudioEngine {
         self.sample_position = sample;
         self.note_cursors = [0; 128];
         self.cc_cursor = 0;
+        self.active_notes.clear();
 
-        // Advance CC cursor
         self.cc_cursor = self.cc_events.partition_point(|cc| cc.sample < sample);
 
-        // Advance note cursors — skip notes that started before seek position
         if let Some(ref midi) = self.midi {
             for key in 0..128usize {
                 let notes = &midi.key_notes[key];
@@ -232,12 +240,10 @@ impl AudioEngine {
             }
         }
 
-        // Inject chase: replay CC state up to sample position
         self.inject_chase(sample);
     }
 
     fn inject_chase(&mut self, target_sample: u64) {
-        // Collect latest state per channel from CC events before target
         let mut state = [ChannelState::default(); 256];
         for cc in &self.cc_events {
             if cc.sample >= target_sample { break; }
@@ -246,11 +252,9 @@ impl AudioEngine {
             state[ch].apply(&cc.event);
         }
 
-        // Send chase events for active channels
         for ch in 0..256u32 {
             if !self.active_mask.get(ch as usize).copied().unwrap_or(false) { continue; }
-            let s = &state[ch as usize];
-            s.send_to(ch, &mut self.channel_group);
+            state[ch as usize].send_to(ch, &mut self.channel_group);
         }
     }
 
@@ -261,9 +265,7 @@ impl AudioEngine {
                     self.seek_to(from_sample);
                     self.playing = true;
                 }
-                AudioCommand::Resume => {
-                    self.playing = true;
-                }
+                AudioCommand::Resume => self.playing = true,
                 AudioCommand::Pause => self.playing = false,
                 AudioCommand::Stop => {
                     self.playing = false;
@@ -300,8 +302,8 @@ impl AudioEngine {
             self.cc_cursor += 1;
         }
 
-        // Push NoteOn events
         if let Some(ref midi) = self.midi {
+            // NoteOn + track active notes (single pass over 128 keys)
             for key in 0..128usize {
                 let notes = &midi.key_notes[key];
                 while self.note_cursors[key] < notes.len() {
@@ -315,32 +317,37 @@ impl AudioEngine {
 
                     self.channel_group.send_event(SynthEvent::Channel(
                         note.channel as u32,
-                        ChannelEvent::Audio(ChannelAudioEvent::NoteOn { key: note.key, vel: note.velocity }),
+                        ChannelEvent::Audio(ChannelAudioEvent::NoteOn {
+                            key: note.key, vel: note.velocity,
+                        }),
                     ));
+
+                    self.active_notes.push(ActiveNote {
+                        key: note.key,
+                        channel: note.channel,
+                        end_sample: (note.end * sr) as u64,
+                    });
+
                     self.note_cursors[key] += 1;
                 }
             }
 
-            // Push NoteOff events: scan recent notes for end times in this window
-            for key in 0..128usize {
-                let notes = &midi.key_notes[key];
-                let from = self.note_cursors[key].saturating_sub(1024);
-                let to = self.note_cursors[key].min(notes.len());
-                for i in from..to {
-                    let note = &notes[i];
-                    if note.velocity <= 1 { continue; }
-                    let note_end = (note.end * sr) as u64;
-                    if note_end >= start && note_end < end {
-                        self.channel_group.send_event(SynthEvent::Channel(
-                            note.channel as u32,
-                            ChannelEvent::Audio(ChannelAudioEvent::NoteOff { key: note.key }),
-                        ));
-                    }
+            // NoteOff: only check active notes (O(active) not O(128 * 1024))
+            self.active_notes.retain(|an| {
+                if an.end_sample >= start && an.end_sample < end {
+                    self.channel_group.send_event(SynthEvent::Channel(
+                        an.channel as u32,
+                        ChannelEvent::Audio(ChannelAudioEvent::NoteOff { key: an.key }),
+                    ));
+                    false // remove from active list
+                } else if an.end_sample < start {
+                    false // already past, clean up
+                } else {
+                    true // still active
                 }
-            }
+            });
         }
 
-        // Render
         let interleaved = &mut self.interleaved_buffer[..frames * 2];
         interleaved.fill(0.0);
         self.channel_group.read_samples(interleaved);
@@ -391,7 +398,6 @@ impl ChannelState {
         let mut send = |event: ChannelAudioEvent| {
             cg.send_event(SynthEvent::Channel(ch, ChannelEvent::Audio(event)));
         };
-        // RPN order: MSB → LSB → Data Entry
         send(ChannelAudioEvent::Control(ControlEvent::Raw(101, self.rpn_msb)));
         send(ChannelAudioEvent::Control(ControlEvent::Raw(100, self.rpn_lsb)));
         send(ChannelAudioEvent::Control(ControlEvent::Raw(6, self.data_entry_msb)));
@@ -444,35 +450,24 @@ pub fn spawn_cpal_audio(
         buffer_size: cpal::BufferSize::Default,
     };
 
-    // Engine lives inside the cpal callback — no Mutex, no contention
     let mut engine = AudioEngine::new(sample_rate, num_channels, active_mask);
     let mut initialized = false;
 
     let stream = device.build_output_stream(
         &config,
         move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-            // Process commands (non-blocking)
             loop {
                 match cmd_rx.try_recv() {
                     Ok(cmd) => {
-                        match &cmd {
-                            AudioCommand::LoadMidi { midi } => {
-                                dur.store((midi.duration * engine.sample_rate as f64) as u64, Ordering::Relaxed);
-                            }
-                            AudioCommand::Play { .. } | AudioCommand::Pause | AudioCommand::Stop => {
-                                // Sync playing state to atomics
-                            }
-                            _ => {}
+                        if let AudioCommand::LoadMidi { ref midi } = cmd {
+                            dur.store((midi.duration * engine.sample_rate as f64) as u64, Ordering::Relaxed);
                         }
-                        // Apply command directly — we own the engine
                         match cmd {
                             AudioCommand::Play { from_sample } => {
                                 engine.seek_to(from_sample);
                                 engine.playing = true;
                             }
-                            AudioCommand::Resume => {
-                                engine.playing = true;
-                            }
+                            AudioCommand::Resume => engine.playing = true,
                             AudioCommand::Pause => engine.playing = false,
                             AudioCommand::Stop => {
                                 engine.playing = false;
@@ -498,11 +493,9 @@ pub fn spawn_cpal_audio(
                 }
             }
 
-            // Sync state to atomics for UI to read
             sp.store(engine.sample_position, Ordering::Relaxed);
             pl.store(engine.playing, Ordering::Relaxed);
 
-            // Render
             if initialized {
                 engine.render(data);
             } else {
@@ -520,4 +513,158 @@ pub fn spawn_cpal_audio(
         sample_rate,
         _stream: stream,
     })
+}
+
+// ── Unit tests ──
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use yinhe_midi::MidiFile;
+
+    fn make_midi_with_notes(notes: Vec<(u8, u32, u32, u8, u8)>) -> MidiFile {
+        let mut midi = MidiFile::default();
+        midi.ticks_per_beat = 480;
+        midi.tempo_segments = vec![
+            yinhe_midi::TempoSegment {
+                start_tick: 0,
+                start_time: 0.0,
+                micros_per_quarter: 500_000, // 120 BPM
+            }
+        ];
+        for (key, start_tick, end_tick, velocity, channel) in notes {
+            let start = start_tick as f64 * 500_000.0 / (480.0 * 1_000_000.0);
+            let end = end_tick as f64 * 500_000.0 / (480.0 * 1_000_000.0);
+            midi.key_notes[key as usize].push(yinhe_midi::Note {
+                key,
+                start,
+                end,
+                start_tick,
+                end_tick,
+                velocity,
+                channel,
+                track: 0,
+            });
+            midi.duration = midi.duration.max(end);
+            midi.tick_length = midi.tick_length.max(end_tick as u64);
+        }
+        midi
+    }
+
+    #[test]
+    fn test_channels_for_midi_basic() {
+        let midi = make_midi_with_notes(vec![
+            (60, 0, 480, 100, 0),  // ch0
+            (64, 0, 480, 100, 1),  // ch1
+            (67, 0, 480, 100, 9),  // ch9 (drum)
+        ]);
+        let (num_ch, mask) = channels_for_midi(&midi);
+        assert_eq!(num_ch, 16);
+        assert!(mask[0]);  // ch0 active
+        assert!(mask[1]);  // ch1 active
+        assert!(mask[9]);  // ch9 active
+        assert!(!mask[2]); // ch2 inactive
+    }
+
+    #[test]
+    fn test_channels_for_midi_multi_port() {
+        let midi = make_midi_with_notes(vec![
+            (60, 0, 480, 100, 0),   // port 0, ch0
+            (60, 0, 480, 100, 16),  // port 1, ch0
+        ]);
+        let (num_ch, mask) = channels_for_midi(&midi);
+        assert_eq!(num_ch, 32);
+        assert!(mask[0]);
+        assert!(mask[16]);
+        assert!(!mask[15]);
+    }
+
+    #[test]
+    fn test_channels_for_midi_skips_velocity_0_1() {
+        let midi = make_midi_with_notes(vec![
+            (60, 0, 480, 0, 0),   // vel 0 — should be skipped
+            (61, 0, 480, 1, 0),   // vel 1 — should be skipped
+            (62, 0, 480, 2, 0),   // vel 2 — active
+        ]);
+        let (num_ch, mask) = channels_for_midi(&midi);
+        assert!(mask[0]);
+        // ch0 has 1 active note (vel 2)
+    }
+
+    #[test]
+    fn test_channels_for_midi_cc_activates_channel() {
+        let mut midi = MidiFile::default();
+        midi.control_events.push(MidiControlEvent::ControlChange {
+            tick: 0, channel: 5, controller: 7, value: 100, track: 0,
+        });
+        let (num_ch, mask) = channels_for_midi(&midi);
+        assert!(num_ch >= 16);
+        assert!(mask[5]);
+    }
+
+    #[test]
+    fn test_channels_for_midi_empty() {
+        let midi = MidiFile::default();
+        let (num_ch, mask) = channels_for_midi(&midi);
+        assert_eq!(num_ch, 16); // minimum 16
+        assert!(mask.iter().all(|&b| !b)); // no active channels
+    }
+
+    #[test]
+    fn test_channel_state_apply() {
+        let mut state = ChannelState::default();
+        state.apply(&ChannelAudioEvent::Control(ControlEvent::Raw(7, 100)));
+        assert_eq!(state.volume, 100);
+
+        state.apply(&ChannelAudioEvent::Control(ControlEvent::Raw(10, 64)));
+        assert_eq!(state.pan, 64);
+
+        state.apply(&ChannelAudioEvent::Control(ControlEvent::Raw(101, 0)));
+        assert_eq!(state.rpn_msb, 0);
+
+        state.apply(&ChannelAudioEvent::Control(ControlEvent::Raw(100, 0)));
+        assert_eq!(state.rpn_lsb, 0);
+
+        state.apply(&ChannelAudioEvent::Control(ControlEvent::Raw(6, 12)));
+        assert_eq!(state.data_entry_msb, 12);
+
+        state.apply(&ChannelAudioEvent::ProgramChange(42));
+        assert_eq!(state.program, 42);
+
+        state.apply(&ChannelAudioEvent::Control(ControlEvent::PitchBendValue(0.5)));
+        assert!((state.pitch_bend - 0.5).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_channel_state_default() {
+        let state = ChannelState::default();
+        assert_eq!(state.volume, 0);
+        assert_eq!(state.pan, 0);
+        assert_eq!(state.program, 0);
+        assert!((state.pitch_bend).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_sorted_cc_ordering() {
+        let mut cc = vec![
+            SortedCC { sample: 100, channel: 0, event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 80)) },
+            SortedCC { sample: 50, channel: 0, event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 100)) },
+            SortedCC { sample: 200, channel: 0, event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 60)) },
+        ];
+        cc.sort_by_key(|e| e.sample);
+        assert_eq!(cc[0].sample, 50);
+        assert_eq!(cc[1].sample, 100);
+        assert_eq!(cc[2].sample, 200);
+    }
+
+    #[test]
+    fn test_active_mask_length() {
+        let midi = make_midi_with_notes(vec![
+            (60, 0, 480, 100, 0),
+            (60, 0, 480, 100, 31), // port 1, ch15
+        ]);
+        let (num_ch, mask) = channels_for_midi(&midi);
+        assert_eq!(num_ch, 32);
+        assert_eq!(mask.len(), 32);
+    }
 }
