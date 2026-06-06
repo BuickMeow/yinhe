@@ -11,6 +11,8 @@ yinhe-archive = { path = "../yinhe-archive" }
 yinhe-pianoroll = { path = "../yinhe-pianoroll" }
 yinhe-arrangement = { path = "../yinhe-arrangement" }
 yinhe-wgpu = { path = "../yinhe-wgpu" }
+yinhe-audio = { path = "../yinhe-audio" }
+cpal = "0.17"
 eframe = { workspace = true }
 egui = { workspace = true }
 wgpu = { workspace = true }

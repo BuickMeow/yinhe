@@ -207,7 +207,7 @@ impl MidiFile {
                     }
                     if !note_port_set[idx] {
                         note_port_set[idx] = true;
-                        track_ports_from_notes[idx] = (note.channel >> 4) & 0x07;
+                        track_ports_from_notes[idx] = (note.channel >> 4) & 0x0F;
                     }
                 }
             }
@@ -224,7 +224,7 @@ impl MidiFile {
                 track_channels[idx] = (ch & 0x0F) + 1;
                 if !note_port_set[idx] {
                     note_port_set[idx] = true;
-                    track_ports_from_notes[idx] = (ch >> 4) & 0x07;
+                    track_ports_from_notes[idx] = (ch >> 4) & 0x0F;
                 }
             }
         }

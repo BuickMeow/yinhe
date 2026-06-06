@@ -1,0 +1,13 @@
+[package]
+name = "yinhe-audio"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+xsynth-core = "0.4"
+xsynth-soundfonts = "0.4"
+cpal = "0.17"
+hound = "3.5"
+
+yinhe-types = { path = "../yinhe-types" }
+yinhe-midi = { path = "../yinhe-midi" }

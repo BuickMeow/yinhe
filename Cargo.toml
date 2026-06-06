@@ -8,6 +8,7 @@ members = [
     "crates/yinhe-wgpu",
     "crates/yinhe-pianoroll",
     "crates/yinhe-arrangement",
+    "crates/yinhe-audio",
     "crates/yinhe-egui",
 ]
 resolver = "2"

@@ -10,6 +10,7 @@ mod playback;
 mod quantize;
 mod render_context;
 mod scrollbar;
+mod settings;
 mod time_format;
 mod time_ruler;
 mod theme;
