@@ -109,6 +109,15 @@ impl MidiFile {
         MidiParser::parse_bytes_with_progress(data, progress)
     }
 
+    /// Same as `load_from_bytes_with_progress` but takes ownership of the byte
+    /// vector so the raw file data can be dropped immediately after parsing.
+    pub fn load_from_bytes_with_progress_owned(
+        data: Vec<u8>,
+        progress: impl FnMut(LoadProgress),
+    ) -> Result<Self, MidiError> {
+        MidiParser::parse_bytes_with_progress_owned(data, progress)
+    }
+
     /// Find the tempo segment containing the given time.
     fn find_segment_at(&self, time: f64) -> Option<&TempoSegment> {
         if self.tempo_segments.is_empty() {

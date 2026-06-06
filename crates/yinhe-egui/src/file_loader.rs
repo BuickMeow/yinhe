@@ -47,8 +47,8 @@ impl FileLoader {
                             return Err(yinhe_midi::MidiError::Io(e));
                         }
                     };
-                    yinhe_midi::MidiFile::load_from_bytes_with_progress(
-                        &data,
+                    yinhe_midi::MidiFile::load_from_bytes_with_progress_owned(
+                        data,
                         |progress| {
                             let _ = tx.send(MidiLoadEvent::Progress(progress));
                         },

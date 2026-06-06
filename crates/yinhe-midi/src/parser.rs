@@ -18,16 +18,23 @@ impl MidiParser {
     ) -> Result<MidiFile, MidiError> {
         yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Midi, || {
             let data = std::fs::read(path.as_ref())?;
-            Self::parse_bytes_with_progress(&data, progress)
+            Self::parse_bytes_with_progress_owned(data, progress)
         })
     }
 
     pub fn parse_bytes_with_progress(
         data: &[u8],
+        progress: impl FnMut(LoadProgress),
+    ) -> Result<MidiFile, MidiError> {
+        Self::parse_bytes_with_progress_owned(data.to_vec(), progress)
+    }
+
+    pub fn parse_bytes_with_progress_owned(
+        data: Vec<u8>,
         mut progress: impl FnMut(LoadProgress),
     ) -> Result<MidiFile, MidiError> {
         yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Midi, || {
-        let smf = midly::Smf::parse(data)?;
+        let mut smf = midly::Smf::parse(&data)?;
 
         let ticks_per_beat = match smf.header.timing {
             midly::Timing::Metrical(t) => t.as_int() as u32,
@@ -48,14 +55,22 @@ impl MidiParser {
         let mut track_ports: Vec<u8> = Vec::with_capacity(smf.tracks.len());
         let mut track_names: Vec<String> = Vec::with_capacity(smf.tracks.len());
         let mut control_events: Vec<MidiControlEvent> = Vec::new();
-        let total_tracks = smf.tracks.len();
 
-        for (track_idx, track) in smf.tracks.iter().enumerate() {
+        // Take ownership of the parsed tracks so we can consume them one by one
+        // and free each track's event vector immediately after parsing. The raw
+        // file bytes (`data`) are kept alive because the events may borrow them,
+        // but only one track's events live in memory at a time, which prevents
+        // the entire midly representation plus our MidiFile from coexisting.
+        let mut tracks = std::mem::take(&mut smf.tracks);
+        drop(smf);
+
+        let total_tracks = tracks.len();
+        for (track_idx, track) in tracks.iter_mut().enumerate() {
             progress(LoadProgress {
                 current_track: track_idx + 1,
                 total_tracks,
             });
-            // Extract track name from MetaMessage::TrackName
+            // Extract track name from MetaMessage::TrackName before clearing.
             let track_name = track.iter().find_map(|ev| {
                 if let midly::TrackEventKind::Meta(midly::MetaMessage::TrackName(name)) = ev.kind {
                     Some(String::from_utf8_lossy(name).into_owned())
@@ -75,7 +90,14 @@ impl MidiParser {
                 &mut control_events,
             );
             track_ports.push(port);
+
+            // Free this track's event vector now that we've extracted everything
+            // we need from it.
+            track.clear();
+            track.shrink_to_fit();
         }
+        drop(tracks);
+        drop(data);
 
         // Sort each key's notes by start time.
         for notes in &mut key_notes {

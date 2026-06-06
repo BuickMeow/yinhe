@@ -288,11 +288,22 @@ impl eframe::App for App {
         // ── Poll async MIDI loading ──
         match self.file_loader.poll_midi_loading() {
             MidiLoadResult::Loaded { path, midi } => {
-                let doc = Document::from_midi(&path, midi);
-                self.documents.push(doc);
-                self.active_doc = Some(self.documents.len() - 1);
+                // Drop the currently active document *before* taking the new MIDI
+                // data so we don't briefly hold the old MIDI + new MIDI in memory,
+                // which can roughly double peak memory during "File > Open".
+                if let Some(idx) = self.active_doc {
+                    if idx < self.documents.len() {
+                        self.documents.remove(idx);
+                    }
+                }
+                self.active_doc = None;
                 self.audio = None;
                 self.audio_active_doc = None;
+
+                let doc = Document::from_midi(&path, midi);
+                let insert_idx = self.documents.len();
+                self.documents.push(doc);
+                self.active_doc = Some(insert_idx);
             }
             MidiLoadResult::NotReady => {}
         }
