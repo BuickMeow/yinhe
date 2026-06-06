@@ -159,8 +159,6 @@ pub fn show(
     // ── Arrangement GPU view (below ruler) ──
     let arr_midi: Option<&dyn yinhe_arrangement::NoteSource> =
         Some(&*doc.midi as &dyn yinhe_arrangement::NoteSource);
-    let track_colors = doc.track_colors();
-    let track_names = doc.track_names();
     let gpu_size = gpu_rect.size();
     ui.allocate_new_ui(egui::UiBuilder::new().max_rect(gpu_rect), |ui| {
         arrangement_view_ui::show(
@@ -171,7 +169,7 @@ pub fn show(
             &mut doc.arr_view,
             arr_midi,
             &doc.track_visible,
-            &track_colors,
+            &doc.track_colors_cache,
             &mut doc.cursor_tick,
             doc.quantize,
             doc.midi.ticks_per_beat,
@@ -182,7 +180,7 @@ pub fn show(
                 doc.midi.time_sig_events.as_slice(),
             )),
             is_playing,
-            &track_names,
+            &doc.midi.track_names,
             &mut doc.arr_instances,
             follow_mode,
         );

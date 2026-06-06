@@ -14,6 +14,36 @@ use crate::piano_view;
 use crate::render_context::RenderContext;
 use crate::transport_bar;
 
+// ── Panic-safe take guard ──
+/// Restores a taken value back into its slot on drop, preventing data loss
+/// if a panic occurs between `std::mem::take` and the manual put-back.
+struct ReplaceGuard<'a, T> {
+    slot: &'a mut T,
+    value: Option<T>,
+}
+
+impl<'a, T> ReplaceGuard<'a, T> {
+    fn new(slot: &'a mut T) -> Self
+    where
+        T: Default,
+    {
+        let value = std::mem::take(slot);
+        ReplaceGuard { slot, value: Some(value) }
+    }
+
+    fn as_mut(&mut self) -> &mut T {
+        self.value.as_mut().expect("ReplaceGuard already consumed")
+    }
+}
+
+impl<'a, T> Drop for ReplaceGuard<'a, T> {
+    fn drop(&mut self) {
+        if let Some(value) = self.value.take() {
+            *self.slot = value;
+        }
+    }
+}
+
 pub struct App {
     // ── Pianoroll (shared GPU resources) ──
     render_ctx: RenderContext,
@@ -475,10 +505,10 @@ impl eframe::App for App {
 
             // ── Arrangement view (transport track panel + arrangement GPU) ──
             if self.show_transport {
-                let mut doc = std::mem::take(&mut self.documents[idx]);
+                let mut guard = ReplaceGuard::new(&mut self.documents[idx]);
                 arrange::show(
                     ui,
-                    &mut doc,
+                    guard.as_mut(),
                     remaining,
                     arr_h,
                     &mut self.transport_panel_width,
@@ -488,12 +518,12 @@ impl eframe::App for App {
                     is_playing,
                     &mut follow_mode,
                 );
-                self.documents[idx] = doc;
+                // guard drops here → document restored even on panic
             }
 
             // ── Pianoroll area ──
             if self.show_pianoroll {
-                let mut doc = std::mem::take(&mut self.documents[idx]);
+                let mut guard = ReplaceGuard::new(&mut self.documents[idx]);
 
                 // Horizontal splitter (between arrangement and pianoroll)
                 // Interact rect inset 0.5px at top so it never shares a
@@ -531,6 +561,7 @@ impl eframe::App for App {
                 }
 
                 // Pianoroll GPU view (full width, no track panel)
+                let doc = guard.as_mut();
                 let midi_source: Option<&dyn yinhe_pianoroll::NoteSource> =
                     Some(&*doc.midi as &dyn yinhe_pianoroll::NoteSource);
                 let piano_rect =
@@ -559,9 +590,7 @@ impl eframe::App for App {
                         &mut follow_mode,
                     );
                 });
-
-                // Put doc back
-                self.documents[idx] = doc;
+                // guard drops here → document restored even on panic
             }
 
             self.follow_mode = follow_mode;

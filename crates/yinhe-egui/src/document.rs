@@ -23,6 +23,8 @@ pub(crate) struct Document {
     pub track_info_cache: Vec<yinhe_midi::TrackInfo>,
     /// Cached first ProgramChange per channel (computed once at load time).
     pub pc_map_cache: HashMap<u8, u8>,
+    /// Cached track colors (computed once at load time, avoids per-frame allocation).
+    pub track_colors_cache: Vec<[f32; 3]>,
 }
 
 impl Default for Document {
@@ -41,20 +43,18 @@ impl Default for Document {
             playback: PlaybackState::default(),
             track_info_cache: Vec::new(),
             pc_map_cache: HashMap::new(),
+            track_colors_cache: Vec::new(),
         }
     }
 }
 
 impl Document {
-    pub fn track_colors(&self) -> Vec<[f32; 3]> {
-        let n = self.track_visible.len();
-        (0..n)
-            .map(|i| TRACK_PALETTE[i % TRACK_PALETTE.len()])
-            .collect()
+    pub fn track_colors(&self) -> &[[f32; 3]] {
+        &self.track_colors_cache
     }
 
-    pub fn track_names(&self) -> Vec<String> {
-        self.midi.track_names.clone()
+    pub fn track_names(&self) -> &[String] {
+        &self.midi.track_names
     }
 
     /// Create a new Document from a loaded MIDI file.
@@ -79,6 +79,10 @@ impl Document {
 
         let midi = Arc::new(midi);
 
+        let track_colors_cache = (0..num_tracks)
+            .map(|i| TRACK_PALETTE[i % TRACK_PALETTE.len()])
+            .collect();
+
         Document {
             midi,
             file_name,
@@ -93,6 +97,7 @@ impl Document {
             playback: PlaybackState::default(),
             track_info_cache,
             pc_map_cache,
+            track_colors_cache,
         }
     }
 }

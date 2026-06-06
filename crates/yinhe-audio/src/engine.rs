@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-use crossbeam_channel::{Receiver, Sender, TryRecvError, unbounded};
+use crossbeam_channel::{Sender, TryRecvError, unbounded};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use xsynth_core::channel::{ChannelAudioEvent, ChannelConfigEvent, ChannelEvent, ControlEvent};
 use xsynth_core::channel_group::{ChannelGroup, ChannelGroupConfig, SynthEvent, SynthFormat};
@@ -94,6 +94,9 @@ pub fn channels_for_midi(midi: &MidiFile) -> (u32, Vec<bool>) {
 
 // ── Internal engine ──
 
+/// Number of output channels (stereo).
+const STEREO_CHANNELS: usize = 2;
+
 struct SortedCC {
     sample: u64,
     channel: u32,
@@ -145,7 +148,7 @@ impl AudioEngine {
             sample_rate,
             sample_position: 0,
             playing: false,
-            interleaved_buffer: vec![0.0f32; sample_rate as usize * 2],
+            interleaved_buffer: vec![0.0f32; sample_rate as usize * STEREO_CHANNELS],
             duration_samples: 0,
             note_cursors: [0; 128],
             cc_events: Vec::new(),
@@ -258,34 +261,32 @@ impl AudioEngine {
         }
     }
 
-    fn process_commands(&mut self, rx: &Receiver<AudioCommand>) {
-        while let Ok(cmd) = rx.try_recv() {
-            match cmd {
-                AudioCommand::Play { from_sample } => {
-                    self.seek_to(from_sample);
-                    self.playing = true;
-                }
-                AudioCommand::Resume => self.playing = true,
-                AudioCommand::Pause => self.playing = false,
-                AudioCommand::Stop => {
-                    self.playing = false;
-                    self.seek_to(0);
-                }
-                AudioCommand::Seek { sample } => self.seek_to(sample),
-                AudioCommand::LoadMidi { midi } => {
-                    self.playing = false;
-                    self.load_midi(&midi);
-                    self.midi = Some(midi);
-                }
-                AudioCommand::LoadSoundFont { port, paths } => {
-                    self.load_soundfont_for_port(port, &paths);
-                }
+    fn handle_command(&mut self, cmd: AudioCommand) {
+        match cmd {
+            AudioCommand::Play { from_sample } => {
+                self.seek_to(from_sample);
+                self.playing = true;
+            }
+            AudioCommand::Resume => self.playing = true,
+            AudioCommand::Pause => self.playing = false,
+            AudioCommand::Stop => {
+                self.playing = false;
+                self.seek_to(0);
+            }
+            AudioCommand::Seek { sample } => self.seek_to(sample),
+            AudioCommand::LoadMidi { midi } => {
+                self.playing = false;
+                self.load_midi(&midi);
+                self.midi = Some(midi);
+            }
+            AudioCommand::LoadSoundFont { port, paths } => {
+                self.load_soundfont_for_port(port, &paths);
             }
         }
     }
 
     fn render(&mut self, output: &mut [f32]) {
-        let frames = output.len() / 2;
+        let frames = output.len() / STEREO_CHANNELS;
         if frames == 0 || !self.playing {
             output.fill(0.0);
             return;
@@ -348,10 +349,10 @@ impl AudioEngine {
             });
         }
 
-        let interleaved = &mut self.interleaved_buffer[..frames * 2];
+        let interleaved = &mut self.interleaved_buffer[..frames * STEREO_CHANNELS];
         interleaved.fill(0.0);
         self.channel_group.read_samples(interleaved);
-        output[..frames * 2].copy_from_slice(interleaved);
+        output[..frames * STEREO_CHANNELS].copy_from_slice(interleaved);
 
         self.sample_position = end;
     }
@@ -422,6 +423,7 @@ impl ChannelState {
 pub struct CpalAudioHandle {
     pub handle: AudioHandle,
     pub sample_rate: u32,
+    pub num_channels: u32,
     _stream: cpal::Stream,
 }
 
@@ -459,30 +461,14 @@ pub fn spawn_cpal_audio(
             loop {
                 match cmd_rx.try_recv() {
                     Ok(cmd) => {
+                        // Extract duration before moving cmd into handle_command
+                        let is_load_midi = matches!(&cmd, AudioCommand::LoadMidi { .. });
                         if let AudioCommand::LoadMidi { ref midi } = cmd {
                             dur.store((midi.duration * engine.sample_rate as f64) as u64, Ordering::Relaxed);
                         }
-                        match cmd {
-                            AudioCommand::Play { from_sample } => {
-                                engine.seek_to(from_sample);
-                                engine.playing = true;
-                            }
-                            AudioCommand::Resume => engine.playing = true,
-                            AudioCommand::Pause => engine.playing = false,
-                            AudioCommand::Stop => {
-                                engine.playing = false;
-                                engine.seek_to(0);
-                            }
-                            AudioCommand::Seek { sample } => engine.seek_to(sample),
-                            AudioCommand::LoadMidi { midi } => {
-                                engine.playing = false;
-                                engine.load_midi(&midi);
-                                engine.midi = Some(midi);
-                                initialized = true;
-                            }
-                            AudioCommand::LoadSoundFont { port, paths } => {
-                                engine.load_soundfont_for_port(port, &paths);
-                            }
+                        engine.handle_command(cmd);
+                        if is_load_midi {
+                            initialized = true;
                         }
                     }
                     Err(TryRecvError::Empty) => break,
@@ -511,6 +497,7 @@ pub fn spawn_cpal_audio(
     Ok(CpalAudioHandle {
         handle: AudioHandle { cmd_tx, sample_position, playing, duration_samples },
         sample_rate,
+        num_channels,
         _stream: stream,
     })
 }
@@ -586,7 +573,7 @@ mod tests {
             (61, 0, 480, 1, 0),   // vel 1 — should be skipped
             (62, 0, 480, 2, 0),   // vel 2 — active
         ]);
-        let (num_ch, mask) = channels_for_midi(&midi);
+        let (_num_ch, mask) = channels_for_midi(&midi);
         assert!(mask[0]);
         // ch0 has 1 active note (vel 2)
     }

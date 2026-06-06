@@ -11,6 +11,12 @@ use yinhe_midi::MidiFile;
 static GLOBAL_SF_CACHE: LazyLock<RwLock<HashMap<PathBuf, Arc<dyn SoundfontBase>>>> =
     LazyLock::new(|| RwLock::new(HashMap::new()));
 
+/// Remove cache entries that are no longer referenced outside the cache.
+fn sweep_unused() {
+    let mut cache = GLOBAL_SF_CACHE.write().unwrap();
+    cache.retain(|_, sf| Arc::strong_count(sf) > 1);
+}
+
 pub struct SoundFontManager {
     port_sfs: [Vec<Arc<dyn SoundfontBase>>; 16],
     stream_params: AudioStreamParams,
@@ -58,14 +64,18 @@ impl SoundFontManager {
             soundfonts.push(sf);
         }
 
-        self.port_sfs[port as usize] = soundfonts.clone();
+        // Move into port_sfs (no clone) — clone from stored reference for channels
+        self.port_sfs[port as usize] = soundfonts;
+        // Clean up cache entries no longer referenced by any port
+        sweep_unused();
 
         let base_ch = (port as u32) * 16;
         for ch in base_ch..base_ch + 16 {
             if active_mask.get(ch as usize).copied().unwrap_or(false) {
+                let sfs = self.port_sfs[port as usize].clone();
                 cg.send_event(SynthEvent::Channel(
                     ch,
-                    ChannelEvent::Config(ChannelConfigEvent::SetSoundfonts(soundfonts.clone())),
+                    ChannelEvent::Config(ChannelConfigEvent::SetSoundfonts(sfs)),
                 ));
             }
         }

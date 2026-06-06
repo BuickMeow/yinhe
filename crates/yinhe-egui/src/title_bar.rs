@@ -44,10 +44,10 @@ pub(crate) fn show(
             let tab_y = bar_rect.center().y - tab_h / 2.0;
             let mut tab_x = bar_rect.min.x + left_padding;
 
-            let tmp_docs: Vec<(bool, String)> = documents
+            let tmp_docs: Vec<(bool, &str)> = documents
                 .iter()
                 .enumerate()
-                .map(|(i, d)| (*active_doc == Some(i), d.file_name.clone()))
+                .map(|(i, d)| (*active_doc == Some(i), d.file_name.as_str()))
                 .collect();
 
             // Collect tab_rects and close_rects for manual click detection
@@ -62,7 +62,7 @@ pub(crate) fn show(
                 .iter()
                 .map(|(_, name)| {
                     painter
-                        .layout_no_wrap(name.clone(), font_id.clone(), egui::Color32::WHITE)
+                        .layout_no_wrap((*name).to_string(), font_id.clone(), egui::Color32::WHITE)
                         .size()
                         .x
                 })
@@ -90,11 +90,11 @@ pub(crate) fn show(
                 let text_color = egui::Color32::from_gray(200);
                 let text_to_draw = {
                     let full_w = painter
-                        .layout_no_wrap(file_name.clone(), font_id.clone(), text_color)
+                        .layout_no_wrap((*file_name).to_string(), font_id.clone(), text_color)
                         .size()
                         .x;
                     if full_w <= text_max_w {
-                        file_name.clone()
+                        file_name.to_string()
                     } else {
                         // Truncate with "..." suffix
                         let ellipsis = "\u{2026}";
