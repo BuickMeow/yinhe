@@ -49,6 +49,7 @@ impl SoundFontManager {
         port: u8,
         paths: &[String],
         cg: &mut ChannelGroup,
+        active_mask: &[bool],
     ) -> Result<(), String> {
         let mut soundfonts = Vec::new();
         for p in paths {
@@ -61,10 +62,12 @@ impl SoundFontManager {
 
         let base_ch = (port as u32) * 16;
         for ch in base_ch..base_ch + 16 {
-            cg.send_event(SynthEvent::Channel(
-                ch,
-                ChannelEvent::Config(ChannelConfigEvent::SetSoundfonts(soundfonts.clone())),
-            ));
+            if active_mask.get(ch as usize).copied().unwrap_or(false) {
+                cg.send_event(SynthEvent::Channel(
+                    ch,
+                    ChannelEvent::Config(ChannelConfigEvent::SetSoundfonts(soundfonts.clone())),
+                ));
+            }
         }
 
         Ok(())

@@ -12,31 +12,41 @@ use yinhe_midi::MidiFile;
 use crate::scheduler::MidiEventScheduler;
 use crate::soundfont::SoundFontManager;
 
-pub fn channels_for_midi(midi: &MidiFile) -> u32 {
-    let max_port = midi.track_ports.iter().copied().max().unwrap_or(0);
-    // Also check actual note/control event channels
-    let max_ch_from_notes: u8 = midi.key_notes.iter()
-        .flatten()
-        .map(|n| n.channel)
-        .max()
-        .unwrap_or(0);
-    let max_ch_from_cc: u8 = midi.control_events.iter()
-        .map(|e| match e {
+pub fn channels_for_midi(midi: &MidiFile) -> (u32, Vec<bool>) {
+    let mut ch_active = [0u32; 256];
+    for notes in &midi.key_notes {
+        for note in notes {
+            if note.velocity > 1 {
+                ch_active[note.channel as usize] += 1;
+            }
+        }
+    }
+    for evt in &midi.control_events {
+        let ch = match evt {
             yinhe_midi::MidiControlEvent::ControlChange { channel, .. }
             | yinhe_midi::MidiControlEvent::ProgramChange { channel, .. }
-            | yinhe_midi::MidiControlEvent::PitchBend { channel, .. } => *channel,
-        })
-        .max()
-        .unwrap_or(0);
-    let max_global_ch = max_ch_from_notes.max(max_ch_from_cc);
-    let max_port_from_data = max_global_ch / 16;
-    let max_port = max_port.max(max_port_from_data);
-    ((max_port as u32) + 1) * 16
+            | yinhe_midi::MidiControlEvent::PitchBend { channel, .. } => *channel as usize,
+        };
+        if ch < 256 {
+            ch_active[ch] = ch_active[ch].max(1);
+        }
+    }
+
+    let max_active_ch = ch_active.iter().rposition(|&c| c > 0).unwrap_or(0);
+    let num_ports = ((max_active_ch / 16) + 1).max(1);
+    let num_channels = (num_ports as u32) * 16;
+
+    let active_mask: Vec<bool> = ch_active[..num_channels as usize]
+        .iter()
+        .map(|&c| c > 0)
+        .collect();
+    (num_channels, active_mask)
 }
 
 pub struct AudioEngine {
     channel_group: ChannelGroup,
     num_channels: u32,
+    active_mask: Vec<bool>,
     scheduler: MidiEventScheduler,
     pub sf_manager: SoundFontManager,
     sample_rate: u32,
@@ -47,7 +57,7 @@ pub struct AudioEngine {
 }
 
 impl AudioEngine {
-    pub fn new(sample_rate: u32, num_channels: u32) -> Self {
+    pub fn new(sample_rate: u32, num_channels: u32, active_mask: Vec<bool>) -> Self {
         let num_channels = num_channels.max(16);
         let config = ChannelGroupConfig {
             channel_init_options: ChannelInitOptions {
@@ -68,6 +78,7 @@ impl AudioEngine {
         Self {
             channel_group,
             num_channels,
+            active_mask,
             scheduler: MidiEventScheduler::new(),
             sf_manager: SoundFontManager::new(sample_rate),
             sample_rate,
@@ -92,10 +103,10 @@ impl AudioEngine {
     fn setup_percussion(&mut self, midi: &MidiFile) {
         let num_ports = self.num_channels / 16;
         for port in 0..num_ports {
-            let ch = port * 16 + 9;
-            if ch < self.num_channels {
+            let ch = (port * 16 + 9) as usize;
+            if ch < self.num_channels as usize && self.active_mask.get(ch).copied().unwrap_or(false) {
                 self.channel_group.send_event(SynthEvent::Channel(
-                    ch,
+                    ch as u32,
                     ChannelEvent::Config(ChannelConfigEvent::SetPercussionMode(true)),
                 ));
             }
@@ -109,10 +120,11 @@ impl AudioEngine {
                 ..
             } = evt
             {
-                if (*channel as u32) < self.num_channels {
+                let ch = *channel as usize;
+                if ch < self.num_channels as usize && self.active_mask.get(ch).copied().unwrap_or(false) {
                     let is_drum = *value >= 120;
                     self.channel_group.send_event(SynthEvent::Channel(
-                        *channel as u32,
+                        ch as u32,
                         ChannelEvent::Config(ChannelConfigEvent::SetPercussionMode(is_drum)),
                     ));
                 }
@@ -130,11 +142,19 @@ impl AudioEngine {
     }
 
     pub fn load_soundfont_for_port(&mut self, port: u8, paths: &[String]) -> Result<(), String> {
-        if (port as u32) * 16 >= self.num_channels {
+        let base_ch = (port as u32) * 16;
+        if base_ch >= self.num_channels {
+            return Ok(());
+        }
+        let end_ch = (base_ch + 16).min(self.num_channels);
+        let has_active = (base_ch..end_ch).any(|ch| {
+            self.active_mask.get(ch as usize).copied().unwrap_or(false)
+        });
+        if !has_active {
             return Ok(());
         }
         self.sf_manager
-            .load_for_port(port, paths, &mut self.channel_group)
+            .load_for_port(port, paths, &mut self.channel_group, &self.active_mask)
     }
 
     pub fn read_samples(&mut self, output: &mut [f32]) {

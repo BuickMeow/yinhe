@@ -62,6 +62,9 @@ impl MidiEventScheduler {
 
         for key in 0..128u8 {
             for note in &midi.key_notes[key as usize] {
+                if note.velocity <= 1 {
+                    continue;
+                }
                 let start_sample = (note.start * sr) as u64;
                 let end_sample = (note.end * sr) as u64;
                 let ch = note.channel as u32;

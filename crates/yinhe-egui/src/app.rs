@@ -292,8 +292,8 @@ impl eframe::App for App {
 
                 let doc = &self.documents[idx];
                 let sr = self.audio_settings.sample_rate;
-                let num_ch = yinhe_audio::channels_for_midi(&doc.midi);
-                let mut engine = yinhe_audio::AudioEngine::new(sr, num_ch);
+                let (num_ch, active_mask) = yinhe_audio::channels_for_midi(&doc.midi);
+                let mut engine = yinhe_audio::AudioEngine::new(sr, num_ch, active_mask);
                 engine.load_midi(&doc.midi);
                 let sf_path = if !self.audio_settings.default_sf2_path.is_empty() {
                     self.audio_settings.default_sf2_path.clone()
