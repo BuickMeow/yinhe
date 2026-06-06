@@ -102,7 +102,7 @@ pub struct App {
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         // ── Load MiSans font ──
-        {
+        yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Ui, || {
             let mut fonts = egui::FontDefinitions::default();
             fonts.font_data.insert(
                 "MiSans".to_owned(),
@@ -120,16 +120,14 @@ impl App {
                 .or_default();
             mono.insert(0, "MiSans".to_owned());
             cc.egui_ctx.set_fonts(fonts);
-        }
 
-        // ── Initialize Material Icons font with adjusted metrics ──
-        {
+            // Initialize Material Icons font with adjusted metrics
             let mut font_insert = egui_material_icons::font_insert();
             // Default y_offset_factor=0.05 shifts glyphs down, causing them to
             // appear off-center toward bottom-right. Set to 0 for proper centering.
             font_insert.data.tweak.y_offset_factor = 0.0;
             cc.egui_ctx.add_font(font_insert);
-        }
+        });
 
         let default_w = 1920u32;
         let default_h = 1080u32;
@@ -440,6 +438,28 @@ impl eframe::App for App {
                         "分配器追踪内存: {:.1} MB",
                         snapshot.total_mb()
                     ));
+                    ui.label(format!(
+                        "wgpu 显式 GPU 资源: {:.1} MB",
+                        snapshot.gpu_mb()
+                    ));
+
+                    #[cfg(target_os = "macos")]
+                    {
+                        let metal_size = self
+                            .render_ctx
+                            .metal_allocated_size()
+                            .unwrap_or(0)
+                            .saturating_add(
+                                self.arr_render_ctx
+                                    .metal_allocated_size()
+                                    .unwrap_or(0),
+                            );
+                        ui.label(format!(
+                            "Metal 驱动真实显存: {:.1} MB",
+                            metal_size as f64 / 1_048_576.0
+                        ));
+                    }
+
                     ui.separator();
 
                     ui.heading("按子系统分类");
@@ -459,8 +479,9 @@ impl eframe::App for App {
 
                     ui.separator();
                     ui.small(
-                        "注：GPU 显存由驱动直接分配，通常不走 Rust 分配器，\
-                         因此此处 GPU 数字主要反映 CPU 侧 staging / 缓冲开销。",
+                        "注：GPU 资源计数反映应用显式创建的 wgpu Texture/Buffer 大小；\
+                         驱动层额外开销（swapchain、depth、pipeline cache 等）\
+                         不纳入此项统计。",
                     );
 
                     if ui.button("关闭").clicked() {

@@ -8,10 +8,17 @@ const MAX_INSTANCE_COUNT: usize = 6_000_000;
 /// Minimum instance buffer capacity (in number of instances).
 const MIN_INSTANCE_BUFFER_CAPACITY: usize = 4096;
 
-/// Instance buffer with tracking of capacity.
+/// Instance buffer with tracking of capacity and GPU bytes.
 struct InstanceBufferSlot {
     buffer: Buffer,
     capacity_instances: usize,
+    size_bytes: u64,
+}
+
+impl Drop for InstanceBufferSlot {
+    fn drop(&mut self) {
+        yinhe_memtrace::sub_gpu_resource(self.size_bytes);
+    }
 }
 
 fn create_instance_buffer_slot(
@@ -19,17 +26,20 @@ fn create_instance_buffer_slot(
     instance_size: u64,
     capacity: usize,
 ) -> InstanceBufferSlot {
+    let size_bytes = instance_size * capacity as u64;
     let buffer = yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Gpu, || {
         device.create_buffer(&BufferDescriptor {
             label: Some("instance_buffer"),
-            size: instance_size * capacity as u64,
+            size: size_bytes,
             usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         })
     });
+    yinhe_memtrace::add_gpu_resource(size_bytes);
     InstanceBufferSlot {
         buffer,
         capacity_instances: capacity,
+        size_bytes,
     }
 }
 

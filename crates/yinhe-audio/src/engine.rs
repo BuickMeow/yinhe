@@ -129,33 +129,35 @@ struct AudioEngine {
 
 impl AudioEngine {
     fn new(sample_rate: u32, num_channels: u32, active_mask: Vec<bool>) -> Self {
-        let num_channels = num_channels.max(16);
-        let config = ChannelGroupConfig {
-            channel_init_options: ChannelInitOptions { fade_out_killing: true },
-            format: SynthFormat::Custom { channels: num_channels },
-            audio_params: AudioStreamParams {
-                sample_rate,
-                channels: ChannelCount::Stereo,
-            },
-            parallelism: ParallelismOptions::AUTO_PER_CHANNEL,
-        };
+        yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Audio, || {
+            let num_channels = num_channels.max(16);
+            let config = ChannelGroupConfig {
+                channel_init_options: ChannelInitOptions { fade_out_killing: true },
+                format: SynthFormat::Custom { channels: num_channels },
+                audio_params: AudioStreamParams {
+                    sample_rate,
+                    channels: ChannelCount::Stereo,
+                },
+                parallelism: ParallelismOptions::AUTO_PER_CHANNEL,
+            };
 
-        Self {
-            channel_group: ChannelGroup::new(config),
-            num_channels,
-            active_mask,
-            sf_manager: SoundFontManager::new(sample_rate),
-            sample_rate,
-            sample_position: 0,
-            playing: false,
-            interleaved_buffer: vec![0.0f32; sample_rate as usize * STEREO_CHANNELS],
-            duration_samples: 0,
-            note_cursors: [0; 128],
-            cc_events: Vec::new(),
-            cc_cursor: 0,
-            active_notes: Vec::new(),
-            midi: None,
-        }
+            Self {
+                channel_group: ChannelGroup::new(config),
+                num_channels,
+                active_mask,
+                sf_manager: SoundFontManager::new(sample_rate),
+                sample_rate,
+                sample_position: 0,
+                playing: false,
+                interleaved_buffer: vec![0.0f32; sample_rate as usize * STEREO_CHANNELS],
+                duration_samples: 0,
+                note_cursors: [0; 128],
+                cc_events: Vec::new(),
+                cc_cursor: 0,
+                active_notes: Vec::new(),
+                midi: None,
+            }
+        })
     }
 
     fn load_midi(&mut self, midi: &MidiFile) {
@@ -458,35 +460,37 @@ pub fn spawn_cpal_audio(
     let stream = device.build_output_stream(
         &config,
         move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-            loop {
-                match cmd_rx.try_recv() {
-                    Ok(cmd) => {
-                        // Extract duration before moving cmd into handle_command
-                        let is_load_midi = matches!(&cmd, AudioCommand::LoadMidi { .. });
-                        if let AudioCommand::LoadMidi { ref midi } = cmd {
-                            dur.store((midi.duration * engine.sample_rate as f64) as u64, Ordering::Relaxed);
+            yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Audio, || {
+                loop {
+                    match cmd_rx.try_recv() {
+                        Ok(cmd) => {
+                            // Extract duration before moving cmd into handle_command
+                            let is_load_midi = matches!(&cmd, AudioCommand::LoadMidi { .. });
+                            if let AudioCommand::LoadMidi { ref midi } = cmd {
+                                dur.store((midi.duration * engine.sample_rate as f64) as u64, Ordering::Relaxed);
+                            }
+                            engine.handle_command(cmd);
+                            if is_load_midi {
+                                initialized = true;
+                            }
                         }
-                        engine.handle_command(cmd);
-                        if is_load_midi {
-                            initialized = true;
+                        Err(TryRecvError::Empty) => break,
+                        Err(TryRecvError::Disconnected) => {
+                            data.fill(0.0);
+                            return;
                         }
-                    }
-                    Err(TryRecvError::Empty) => break,
-                    Err(TryRecvError::Disconnected) => {
-                        data.fill(0.0);
-                        return;
                     }
                 }
-            }
 
-            sp.store(engine.sample_position, Ordering::Relaxed);
-            pl.store(engine.playing, Ordering::Relaxed);
+                sp.store(engine.sample_position, Ordering::Relaxed);
+                pl.store(engine.playing, Ordering::Relaxed);
 
-            if initialized {
-                engine.render(data);
-            } else {
-                data.fill(0.0);
-            }
+                if initialized {
+                    engine.render(data);
+                } else {
+                    data.fill(0.0);
+                }
+            });
         },
         |err| eprintln!("Audio stream error: {}", err),
         None,

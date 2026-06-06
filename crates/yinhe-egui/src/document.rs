@@ -59,6 +59,7 @@ impl Document {
 
     /// Create a new Document from a loaded MIDI file.
     pub fn from_midi(path: &str, midi: yinhe_midi::MidiFile) -> Self {
+        yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Ui, || {
         let num_tracks = midi.track_ports.len();
         let file_name = std::path::Path::new(path)
             .file_stem()
@@ -99,5 +100,6 @@ impl Document {
             pc_map_cache,
             track_colors_cache,
         }
+        })
     }
 }

@@ -2,6 +2,50 @@ use eframe::egui;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+/// Calculate the byte size of a 2D texture with the given format and dimensions.
+fn texture_byte_size(format: wgpu::TextureFormat, width: u32, height: u32, samples: u32) -> u64 {
+    let bpp = match format {
+        wgpu::TextureFormat::R8Unorm
+        | wgpu::TextureFormat::R8Snorm
+        | wgpu::TextureFormat::R8Uint
+        | wgpu::TextureFormat::R8Sint => 1,
+        wgpu::TextureFormat::R16Uint
+        | wgpu::TextureFormat::R16Sint
+        | wgpu::TextureFormat::R16Float
+        | wgpu::TextureFormat::Rg8Unorm
+        | wgpu::TextureFormat::Rg8Snorm
+        | wgpu::TextureFormat::Rg8Uint
+        | wgpu::TextureFormat::Rg8Sint => 2,
+        wgpu::TextureFormat::R32Uint
+        | wgpu::TextureFormat::R32Sint
+        | wgpu::TextureFormat::R32Float
+        | wgpu::TextureFormat::Rg16Uint
+        | wgpu::TextureFormat::Rg16Sint
+        | wgpu::TextureFormat::Rg16Float
+        | wgpu::TextureFormat::Rgba8Unorm
+        | wgpu::TextureFormat::Rgba8UnormSrgb
+        | wgpu::TextureFormat::Rgba8Snorm
+        | wgpu::TextureFormat::Rgba8Uint
+        | wgpu::TextureFormat::Rgba8Sint
+        | wgpu::TextureFormat::Bgra8Unorm
+        | wgpu::TextureFormat::Bgra8UnormSrgb => 4,
+        wgpu::TextureFormat::Rg32Uint
+        | wgpu::TextureFormat::Rg32Sint
+        | wgpu::TextureFormat::Rg32Float
+        | wgpu::TextureFormat::Rgba16Uint
+        | wgpu::TextureFormat::Rgba16Sint
+        | wgpu::TextureFormat::Rgba16Float => 8,
+        wgpu::TextureFormat::Rgba32Uint
+        | wgpu::TextureFormat::Rgba32Sint
+        | wgpu::TextureFormat::Rgba32Float => 16,
+        _ => 4, // conservative fallback
+    };
+    (width as u64)
+        .saturating_mul(height as u64)
+        .saturating_mul(bpp)
+        .saturating_mul(samples.max(1) as u64)
+}
+
 /// Manages the wgpu device/queue shared with eframe, and an offscreen render target.
 pub struct RenderContext {
     wgpu_state: Arc<eframe::egui_wgpu::RenderState>,
@@ -18,6 +62,8 @@ pub struct RenderContext {
     /// Set to true by the device-lost callback. When true, GPU operations are
     /// skipped to avoid blocking the main thread on a lost device.
     device_lost: Arc<AtomicBool>,
+    /// Tracked GPU byte size for `texture` so it can be subtracted on recreate.
+    texture_size_bytes: u64,
 }
 
 impl RenderContext {
@@ -41,7 +87,7 @@ impl RenderContext {
             });
         }
 
-        let (texture, view, texture_id) = Self::create_target(
+        let (texture, view, texture_id, texture_size_bytes) = Self::create_target(
             device,
             &mut wgpu_state.renderer.write(),
             format,
@@ -59,6 +105,7 @@ impl RenderContext {
             shrink_to_fit_on_next_size: false,
             needs_render: true, // fresh texture, needs first render
             device_lost,
+            texture_size_bytes,
         }
     }
 
@@ -68,61 +115,73 @@ impl RenderContext {
         format: wgpu::TextureFormat,
         width: u32,
         height: u32,
-    ) -> (wgpu::Texture, wgpu::TextureView, egui::TextureId) {
-        // Provide a linear (non-srgb) view format for backends that require it
-        // when TEXTURE_BINDING is used with an sRGB format (e.g. Metal, Vulkan).
-        // Without this, creating a shader resource view can fail and cause
-        // device loss — especially on window maximize when the texture is large.
-        let linear_format = match format {
-            wgpu::TextureFormat::Bgra8UnormSrgb => Some(wgpu::TextureFormat::Bgra8Unorm),
-            wgpu::TextureFormat::Rgba8UnormSrgb => Some(wgpu::TextureFormat::Rgba8Unorm),
-            _ => None,
-        };
-        let view_formats: &[wgpu::TextureFormat] = if let Some(lf) = &linear_format {
-            std::slice::from_ref(lf)
-        } else {
-            &[]
-        };
+    ) -> (wgpu::Texture, wgpu::TextureView, egui::TextureId, u64) {
+        yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Gpu, || {
+            // Provide a linear (non-srgb) view format for backends that require it
+            // when TEXTURE_BINDING is used with an sRGB format (e.g. Metal, Vulkan).
+            // Without this, creating a shader resource view can fail and cause
+            // device loss — especially on window maximize when the texture is large.
+            let linear_format = match format {
+                wgpu::TextureFormat::Bgra8UnormSrgb => Some(wgpu::TextureFormat::Bgra8Unorm),
+                wgpu::TextureFormat::Rgba8UnormSrgb => Some(wgpu::TextureFormat::Rgba8Unorm),
+                _ => None,
+            };
+            let view_formats: &[wgpu::TextureFormat] = if let Some(lf) = &linear_format {
+                std::slice::from_ref(lf)
+            } else {
+                &[]
+            };
 
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("pianoroll_preview"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats,
-        });
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let texture_id =
-            egui_renderer.register_native_texture(device, &view, wgpu::FilterMode::Nearest);
-        (texture, view, texture_id)
+            let size_bytes = texture_byte_size(format, width, height, 1);
+            let texture = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("pianoroll_preview"),
+                size: wgpu::Extent3d {
+                    width,
+                    height,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats,
+            });
+            let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+            let texture_id =
+                egui_renderer.register_native_texture(device, &view, wgpu::FilterMode::Nearest);
+            yinhe_memtrace::add_gpu_resource(size_bytes);
+            (texture, view, texture_id, size_bytes)
+        })
     }
 
     fn recreate_target(&mut self, width: u32, height: u32) {
-        // Skip if the device was already lost — creating a new texture on a
-        // lost device can panic or hang.
-        if self.device_lost.load(Ordering::Relaxed) {
-            return;
-        }
+        yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Gpu, || {
+            // Skip if the device was already lost — creating a new texture on a
+            // lost device can panic or hang.
+            if self.device_lost.load(Ordering::Relaxed) {
+                return;
+            }
 
-        let format = self.wgpu_state.target_format;
-        let device = &self.wgpu_state.device;
-        let mut egui_renderer = self.wgpu_state.renderer.write();
-        egui_renderer.free_texture(&self.texture_id);
-        let (texture, view, texture_id) =
-            Self::create_target(device, &mut egui_renderer, format, width, height);
-        self.texture = texture;
-        self.view = view;
-        self.texture_id = texture_id;
-        self.width = width;
-        self.height = height;
-        self.needs_render = true; // fresh texture, must re-render
+            let format = self.wgpu_state.target_format;
+            let device = &self.wgpu_state.device;
+            let mut egui_renderer = self.wgpu_state.renderer.write();
+            egui_renderer.free_texture(&self.texture_id);
+
+            // The old texture is about to be dropped; subtract its tracked size
+            // before the new one is created.
+            yinhe_memtrace::sub_gpu_resource(self.texture_size_bytes);
+
+            let (texture, view, texture_id, texture_size_bytes) =
+                Self::create_target(device, &mut egui_renderer, format, width, height);
+            self.texture = texture;
+            self.view = view;
+            self.texture_id = texture_id;
+            self.texture_size_bytes = texture_size_bytes;
+            self.width = width;
+            self.height = height;
+            self.needs_render = true; // fresh texture, must re-render
+        });
     }
 
     /// Resize the offscreen texture if needed.
@@ -172,6 +231,17 @@ impl RenderContext {
 
     pub fn target_format(&self) -> wgpu::TextureFormat {
         self.wgpu_state.target_format
+    }
+
+    /// Query the underlying Metal driver's current allocated size (macOS only).
+    #[cfg(target_os = "macos")]
+    pub fn metal_allocated_size(&self) -> Option<u64> {
+        unsafe {
+            self.device().as_hal::<wgpu::hal::api::Metal>().map(|hal_device| {
+                use objc2_metal::MTLDevice;
+                hal_device.raw_device().currentAllocatedSize() as u64
+            })
+        }
     }
 
     pub fn preview_view(&self) -> &wgpu::TextureView {

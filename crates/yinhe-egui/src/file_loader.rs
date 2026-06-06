@@ -40,21 +40,20 @@ impl FileLoader {
             let path_for_thread = path_str.clone();
 
             std::thread::spawn(move || {
-                let data = match std::fs::read(&path_for_thread) {
-                    Ok(d) => d,
-                    Err(e) => {
-                        let _ = tx.send(MidiLoadEvent::Complete(Box::new(Err(
-                            yinhe_midi::MidiError::Io(e),
-                        ))));
-                        return;
-                    }
-                };
-                let result = yinhe_midi::MidiFile::load_from_bytes_with_progress(
-                    &data,
-                    |progress| {
-                        let _ = tx.send(MidiLoadEvent::Progress(progress));
-                    },
-                );
+                let result = yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Midi, || {
+                    let data = match std::fs::read(&path_for_thread) {
+                        Ok(d) => d,
+                        Err(e) => {
+                            return Err(yinhe_midi::MidiError::Io(e));
+                        }
+                    };
+                    yinhe_midi::MidiFile::load_from_bytes_with_progress(
+                        &data,
+                        |progress| {
+                            let _ = tx.send(MidiLoadEvent::Progress(progress));
+                        },
+                    )
+                });
                 let _ = tx.send(MidiLoadEvent::Complete(Box::new(result)));
             });
 

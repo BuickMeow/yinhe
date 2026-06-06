@@ -77,8 +77,34 @@ static COUNTERS: [AtomicIsize; AllocTag::COUNT] = [
     AtomicIsize::new(0),
 ];
 
+/// Tracks GPU resource memory that does not go through the Rust global
+/// allocator (e.g. wgpu textures/buffers allocated by the graphics driver).
+static GPU_RESOURCE_BYTES: AtomicIsize = AtomicIsize::new(0);
+
 thread_local! {
     static CURRENT_TAG: Cell<AllocTag> = const { Cell::new(AllocTag::Unknown) };
+}
+
+/// Add `bytes` to the GPU resource counter. Called when a wgpu Texture or
+/// Buffer is created.
+pub fn add_gpu_resource(bytes: u64) {
+    GPU_RESOURCE_BYTES.fetch_add(bytes as isize, Ordering::Relaxed);
+}
+
+/// Subtract `bytes` from the GPU resource counter. Called when a wgpu Texture
+/// or Buffer is dropped/replaced.
+pub fn sub_gpu_resource(bytes: u64) {
+    GPU_RESOURCE_BYTES.fetch_sub(bytes as isize, Ordering::Relaxed);
+}
+
+/// Current GPU resource memory in bytes.
+pub fn gpu_resource_bytes() -> isize {
+    GPU_RESOURCE_BYTES.load(Ordering::Relaxed)
+}
+
+/// Current GPU resource memory in megabytes.
+pub fn gpu_resource_mb() -> f64 {
+    gpu_resource_bytes() as f64 / 1_048_576.0
 }
 
 fn current_tag() -> AllocTag {
@@ -97,10 +123,11 @@ pub fn with_tag<T>(tag: AllocTag, f: impl FnOnce() -> T) -> T {
     })
 }
 
-/// Snapshot of memory attributed to each tag.
+/// Snapshot of memory attributed to each tag, plus GPU resources.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Snapshot {
     pub bytes: [isize; AllocTag::COUNT],
+    pub gpu_resources: isize,
 }
 
 impl Snapshot {
@@ -109,7 +136,10 @@ impl Snapshot {
         for (i, counter) in COUNTERS.iter().enumerate() {
             bytes[i] = counter.load(Ordering::Relaxed);
         }
-        Self { bytes }
+        Self {
+            bytes,
+            gpu_resources: gpu_resource_bytes(),
+        }
     }
 
     pub fn get(&self, tag: AllocTag) -> isize {
@@ -120,12 +150,25 @@ impl Snapshot {
         self.bytes.iter().sum()
     }
 
+    /// Total tracked memory including GPU resources.
+    pub fn total_with_gpu(&self) -> isize {
+        self.total_tracked().saturating_add(self.gpu_resources)
+    }
+
     pub fn mb(&self, tag: AllocTag) -> f64 {
         self.get(tag) as f64 / 1_048_576.0
     }
 
     pub fn total_mb(&self) -> f64 {
         self.total_tracked() as f64 / 1_048_576.0
+    }
+
+    pub fn total_with_gpu_mb(&self) -> f64 {
+        self.total_with_gpu() as f64 / 1_048_576.0
+    }
+
+    pub fn gpu_mb(&self) -> f64 {
+        self.gpu_resources as f64 / 1_048_576.0
     }
 }
 

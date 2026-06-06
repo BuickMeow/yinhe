@@ -28,6 +28,9 @@ sysinfo = { workspace = true }
 egui_material_icons = { workspace = true }
 image = { workspace = true }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-metal = "0.3.2"
+
 [package.metadata.bundle]
 name = "Yinhe"
 license = "LPGL-3.0"
@@ -37,5 +40,5 @@ version = "0.1.0"
 resources = []
 copyright = "Copyright (c) Jieneng 2026"
 category = "Developer Tool"
-short_description = "Yinhe MIDI Editor"
+short_description = "A MIDI editor built with Rust and egui."
 long_description = "A MIDI editor built with Rust and egui."

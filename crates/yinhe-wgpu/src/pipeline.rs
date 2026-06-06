@@ -11,12 +11,14 @@ pub struct RenderPipelineState {
 
 impl RenderPipelineState {
     pub fn new(device: &Device, format: TextureFormat, render_shader: &ShaderModule) -> Self {
+        let uniform_size = std::mem::size_of::<Uniforms>() as u64;
         let uniform_buffer = device.create_buffer(&BufferDescriptor {
             label: Some("uniforms"),
-            size: std::mem::size_of::<Uniforms>() as u64,
+            size: uniform_size,
             usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        yinhe_memtrace::add_gpu_resource(uniform_size);
 
         let bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
             label: Some("render_bind_group_layout"),

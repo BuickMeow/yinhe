@@ -37,15 +37,18 @@ fn main() {
         .with_inner_size([1400.0, 900.0])
         .with_transparent(true); // Avoid white flash before first frame
 
-    let icon = image::load_from_memory(include_bytes!("../../../assets/icon.png"))
-        .expect("Failed to load window icon")
-        .to_rgba8();
-    let (icon_w, icon_h) = icon.dimensions();
-    viewport = viewport.with_icon(egui::IconData {
-        rgba: icon.into_raw(),
-        width: icon_w,
-        height: icon_h,
+    let icon_data = yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Ui, || {
+        let icon = image::load_from_memory(include_bytes!("../../../assets/icon.png"))
+            .expect("Failed to load window icon")
+            .to_rgba8();
+        let (icon_w, icon_h) = icon.dimensions();
+        egui::IconData {
+            rgba: icon.into_raw(),
+            width: icon_w,
+            height: icon_h,
+        }
     });
+    viewport = viewport.with_icon(icon_data);
 
     #[cfg(target_os = "macos")]
     {
