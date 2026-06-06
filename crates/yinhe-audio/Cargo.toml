@@ -8,6 +8,7 @@ xsynth-core = "0.4"
 xsynth-soundfonts = "0.4"
 cpal = "0.17"
 hound = "3.5"
+crossbeam-channel = "0.5"
 
 yinhe-types = { path = "../yinhe-types" }
 yinhe-midi = { path = "../yinhe-midi" }

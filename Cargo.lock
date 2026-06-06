@@ -5708,6 +5708,7 @@ name = "yinhe-audio"
 version = "0.1.0"
 dependencies = [
  "cpal",
+ "crossbeam-channel",
  "hound",
  "xsynth-core",
  "xsynth-soundfonts",
