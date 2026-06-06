@@ -46,7 +46,7 @@ impl PlaybackState {
             self.play_start_instant = None;
         } else {
             // Start / resume
-            self.play_start_time = midi.tick_to_seconds(cursor_tick as u32);
+            self.play_start_time = midi.tick_to_seconds(cursor_tick as u64);
             self.play_start_instant = Some(Instant::now());
             self.playing = true;
         }

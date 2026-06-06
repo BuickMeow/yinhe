@@ -368,7 +368,7 @@ impl eframe::App for App {
                     doc.playback.stop();
                 } else {
                     let tick = doc.cursor_tick.unwrap_or(0.0);
-                    let cursor_sample = (doc.midi.tick_to_seconds(tick as u32) * audio.sample_rate as f64) as u64;
+                    let cursor_sample = (doc.midi.tick_to_seconds(tick as u64) * audio.sample_rate as f64) as u64;
                     let engine_sample = handle.sample_position();
                     // If cursor is at the engine's position, just resume (no seek)
                     if cursor_sample.abs_diff(engine_sample) < (audio.sample_rate as u64 / 10) {

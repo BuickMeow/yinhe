@@ -308,10 +308,9 @@ fn show_timecode_display(
     show_mem_breakdown: &mut bool,
 ) -> egui::Rect {
     let tick = doc.cursor_tick.unwrap_or(0.0);
-    let tick_u = tick as u32;
-    let seconds = doc.midi.tick_to_seconds(tick_u);
+    let seconds = doc.midi.tick_to_seconds(tick as u64);
     let bpm = doc.midi.bpm_at_time(seconds);
-    let (num, _denom_power) = doc.midi.time_sig_at_tick(tick_u);
+    let (num, _denom_power) = doc.midi.time_sig_at_tick(tick as u32);
     let ppq = doc.midi.ticks_per_beat;
 
     let bpm_str = time_format::format_bpm(bpm);

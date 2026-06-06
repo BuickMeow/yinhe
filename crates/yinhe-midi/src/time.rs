@@ -27,7 +27,7 @@ pub fn bpm_from_mpq(mpq: u64) -> f64 {
 }
 
 /// Convert a tick delta to seconds, given ticks-per-beat and microseconds-per-quarter.
-pub fn ticks_to_seconds(dtick: u32, ticks_per_beat: u32, mpq: u64) -> f64 {
+pub fn ticks_to_seconds(dtick: u64, ticks_per_beat: u32, mpq: u64) -> f64 {
     if ticks_per_beat == 0 {
         return 0.0;
     }

@@ -252,11 +252,9 @@ mod tests {
         let mut max_tick: u64 = 0;
         for (key, start_tick, end_tick, track, vel) in notes {
             let n = Note {
-                key,
-                start: start_tick as f64 / 480.0,
-                end: end_tick as f64 / 480.0,
                 start_tick,
                 end_tick,
+                key,
                 velocity: vel,
                 channel: 0,
                 track,

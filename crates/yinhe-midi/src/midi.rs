@@ -58,7 +58,7 @@ impl yinhe_types::NoteSource for MidiFile {
         &self.key_notes[key as usize]
     }
     fn duration(&self) -> f64 {
-        self.duration
+        self.tick_to_seconds(self.tick_length)
     }
     fn ticks_per_beat(&self) -> Option<u32> {
         Some(self.ticks_per_beat)
@@ -178,13 +178,13 @@ impl MidiFile {
     }
 
     /// Convert absolute tick to seconds (considering tempo changes).
-    pub fn tick_to_seconds(&self, tick: u32) -> f64 {
-        let count = self.tempo_segments.partition_point(|s| s.start_tick <= tick);
+    pub fn tick_to_seconds(&self, tick: u64) -> f64 {
+        let count = self.tempo_segments.partition_point(|s| (s.start_tick as u64) <= tick);
         if count == 0 {
             return crate::time::ticks_to_seconds(tick, self.ticks_per_beat, DEFAULT_MPQ);
         }
         let seg = &self.tempo_segments[count - 1];
-        let dtick = tick - seg.start_tick;
+        let dtick = tick - seg.start_tick as u64;
         seg.start_time
             + crate::time::ticks_to_seconds(dtick, self.ticks_per_beat, seg.micros_per_quarter)
     }

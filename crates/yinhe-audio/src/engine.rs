@@ -171,15 +171,15 @@ impl AudioEngine {
         for evt in &midi.control_events {
             let (sample, channel, event) = match evt {
                 MidiControlEvent::ControlChange { tick, channel, controller, value, .. } => {
-                    ((midi.tick_to_seconds(*tick) * sr) as u64, *channel as u32,
+                    ((midi.tick_to_seconds(*tick as u64) * sr) as u64, *channel as u32,
                      ChannelAudioEvent::Control(ControlEvent::Raw(*controller, *value)))
                 }
                 MidiControlEvent::ProgramChange { tick, channel, program, .. } => {
-                    ((midi.tick_to_seconds(*tick) * sr) as u64, *channel as u32,
+                    ((midi.tick_to_seconds(*tick as u64) * sr) as u64, *channel as u32,
                      ChannelAudioEvent::ProgramChange(*program))
                 }
                 MidiControlEvent::PitchBend { tick, channel, value, .. } => {
-                    ((midi.tick_to_seconds(*tick) * sr) as u64, *channel as u32,
+                    ((midi.tick_to_seconds(*tick as u64) * sr) as u64, *channel as u32,
                      ChannelAudioEvent::Control(ControlEvent::PitchBendValue(*value as f32 / 8192.0)))
                 }
             };
@@ -188,7 +188,7 @@ impl AudioEngine {
         self.cc_events.sort_by_key(|e| e.sample);
 
         self.note_cursors = [0; 128];
-        self.duration_samples = (midi.duration * sr) as u64;
+        self.duration_samples = (midi.tick_to_seconds(midi.tick_length) * sr) as u64;
     }
 
     fn setup_percussion(&mut self, midi: &MidiFile) {
@@ -236,10 +236,11 @@ impl AudioEngine {
         self.cc_cursor = self.cc_events.partition_point(|cc| cc.sample < sample);
 
         if let Some(ref midi) = self.midi {
+            let sr = self.sample_rate as f64;
             for key in 0..128usize {
                 let notes = &midi.key_notes[key];
                 self.note_cursors[key] = notes.partition_point(|n| {
-                    let note_start = (n.start * self.sample_rate as f64) as u64;
+                    let note_start = (midi.tick_to_seconds(n.start_tick as u64) * sr) as u64;
                     note_start < sample
                 });
             }
@@ -315,7 +316,7 @@ impl AudioEngine {
                         self.note_cursors[key] += 1;
                         continue;
                     }
-                    let note_start = (note.start * sr) as u64;
+                    let note_start = (midi.tick_to_seconds(note.start_tick as u64) * sr) as u64;
                     if note_start >= end { break; }
 
                     self.channel_group.send_event(SynthEvent::Channel(
@@ -328,7 +329,7 @@ impl AudioEngine {
                     self.active_notes.push(ActiveNote {
                         key: note.key,
                         channel: note.channel,
-                        end_sample: (note.end * sr) as u64,
+                        end_sample: (midi.tick_to_seconds(note.end_tick as u64) * sr) as u64,
                     });
 
                     self.note_cursors[key] += 1;
@@ -467,7 +468,7 @@ pub fn spawn_cpal_audio(
                             // Extract duration before moving cmd into handle_command
                             let is_load_midi = matches!(&cmd, AudioCommand::LoadMidi { .. });
                             if let AudioCommand::LoadMidi { ref midi } = cmd {
-                                dur.store((midi.duration * engine.sample_rate as f64) as u64, Ordering::Relaxed);
+                                dur.store((midi.tick_to_seconds(midi.tick_length) * engine.sample_rate as f64) as u64, Ordering::Relaxed);
                             }
                             engine.handle_command(cmd);
                             if is_load_midi {
@@ -524,19 +525,14 @@ mod tests {
             }
         ];
         for (key, start_tick, end_tick, velocity, channel) in notes {
-            let start = start_tick as f64 * 500_000.0 / (480.0 * 1_000_000.0);
-            let end = end_tick as f64 * 500_000.0 / (480.0 * 1_000_000.0);
             midi.key_notes[key as usize].push(yinhe_midi::Note {
-                key,
-                start,
-                end,
                 start_tick,
                 end_tick,
+                key,
                 velocity,
                 channel,
                 track: 0,
             });
-            midi.duration = midi.duration.max(end);
             midi.tick_length = midi.tick_length.max(end_tick as u64);
         }
         midi

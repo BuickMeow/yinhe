@@ -51,7 +51,7 @@ impl MidiParser {
             .unwrap_or((4, 4));
 
         let mut key_notes: [Vec<Note>; 128] = std::array::from_fn(|_| Vec::new());
-        let mut global_duration = 0.0f64;
+        let mut global_end_tick: u64 = 0;
         let mut track_ports: Vec<u8> = Vec::with_capacity(smf.tracks.len());
         let mut track_names: Vec<String> = Vec::with_capacity(smf.tracks.len());
         let mut control_events: Vec<MidiControlEvent> = Vec::new();
@@ -86,7 +86,7 @@ impl MidiParser {
                 ticks_per_beat,
                 track_idx as u16,
                 &mut key_notes,
-                &mut global_duration,
+                &mut global_end_tick,
                 &mut control_events,
             );
             track_ports.push(port);
@@ -99,13 +99,9 @@ impl MidiParser {
         drop(tracks);
         drop(data);
 
-        // Sort each key's notes by start time.
+        // Sort each key's notes by start tick.
         for notes in &mut key_notes {
-            notes.sort_by(|a, b| {
-                a.start
-                    .partial_cmp(&b.start)
-                    .expect("note start times should never be NaN")
-            });
+            notes.sort_by_key(|n| n.start_tick);
         }
 
         let note_count = key_notes.iter().map(|v| v.len() as u64).sum();
@@ -113,14 +109,14 @@ impl MidiParser {
             .iter()
             .flat_map(|v| v.iter().map(|n| n.end_tick as u64))
             .max()
-            .unwrap_or(0);
+            .unwrap_or(global_end_tick);
 
         // Build scan index for fast note seeking at render time.
         let scan_index = NoteScanIndex::build(&key_notes, tick_length);
 
         Ok(MidiFile {
             key_notes,
-            duration: global_duration,
+            duration: 0.0, // computed on demand from tick_length
             ticks_per_beat,
             tempo_segments,
             note_count,
@@ -156,7 +152,7 @@ impl MidiParser {
         for ev in events {
             let dtick = ev.tick - last_tick;
             if dtick > 0 {
-                last_time += ticks_to_seconds(dtick, ticks_per_beat, last_mpq);
+                last_time += ticks_to_seconds(dtick as u64, ticks_per_beat, last_mpq);
             }
             segments.push(crate::TempoSegment {
                 start_tick: ev.tick,
