@@ -158,26 +158,30 @@ pub fn show_panels(
         // Draw left panel background (covers the grid underneath)
         ui.painter().rect_filled(combo_rect, 0.0, theme::APP_BG);
 
-        // ComboBox for target selection
+        // Target selection button + popup (popup opens above, like transport bar pattern)
         let combo_inner = combo_rect.shrink(4.0);
-        ui.allocate_new_ui(egui::UiBuilder::new().max_rect(combo_inner), |ui| {
-            egui::ComboBox::from_id_salt(ui.id().with(format!("auto_combo_{}", i)))
-                .selected_text(panel.selected_target.display_name())
-                .width(combo_inner.width())
-                .show_ui(ui, |ui| {
+        let mut btn_resp = None::<egui::Response>;
+        ui.allocate_ui_at_rect(combo_inner, |ui| {
+            let label = panel.selected_target.display_name();
+            btn_resp = Some(ui.add(egui::Button::new(label)));
+        });
+        if let Some(ref btn_resp) = btn_resp {
+            egui::Popup::menu(btn_resp)
+                .align(egui::RectAlign::TOP_START)
+                .show(|ui| {
+                    ui.set_min_width(120.0);
                     for (idx, lane) in automation_lanes.iter().enumerate() {
                         let name = lane.target.display_name();
-                        if ui
-                            .selectable_label(panel.selected_target == lane.target, &name)
-                            .clicked()
-                        {
+                        let selected = panel.selected_target == lane.target;
+                        if ui.add(egui::Button::selectable(selected, &name)).clicked() {
                             panel.selected_target = lane.target.clone();
                             panel.lane_index = idx;
                             panel.dirty = true;
+                            ui.close();
                         }
                     }
                 });
-        });
+        }
 
         y_offset += panel_h;
     }
