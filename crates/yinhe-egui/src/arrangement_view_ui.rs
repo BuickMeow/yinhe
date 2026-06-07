@@ -155,7 +155,8 @@ pub fn show(
         )
     });
 
-    // Paint — skip GPU submit if nothing changed since last frame
+    // Paint — skip GPU submit if nothing changed and no cursor to animate
+    let content_changed = gpu_updated || is_playing;
     crate::qos::guarded(|| {
         render_ctx.paint(
             renderer,
@@ -164,7 +165,7 @@ pub fn show(
             "arrangement_frame",
             &painter,
             rect,
-            gpu_updated,
+            content_changed,
         );
     });
 
