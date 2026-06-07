@@ -71,6 +71,11 @@ pub fn show_panels(
     // Ensure renderer count matches panel count
     sync_renderer_count(renderers, panels, wgpu_state, 640, 200);
 
+    // Snapshot pre-drag heights so rendering stays consistent with the
+    // pre-computed panels_total_h layout. Drag writes to panel_height for
+    // the next frame instead of mid-frame, avoiding one-frame overlap jitter.
+    let orig_heights: Vec<f32> = panels.iter().map(|p| p.panel_height).collect();
+
     let mut y_offset = content_top_y;
 
     for (i, panel) in panels.iter_mut().enumerate() {
@@ -83,7 +88,7 @@ pub fn show_panels(
             crate::split_handle::horizontal(ui, format!("auto_handle_{}", i), handle_rect);
         if handle_resp.dragged() {
             let delta = handle_resp.drag_delta().y;
-            let new_h = (panel.panel_height + delta).clamp(
+            let new_h = (panel.panel_height - delta).clamp(
                 yinhe_automation::automation_view::MIN_PANEL_HEIGHT,
                 yinhe_automation::automation_view::MAX_PANEL_HEIGHT,
             );
@@ -93,7 +98,8 @@ pub fn show_panels(
         }
         y_offset += SPLIT_H;
 
-        let panel_h = panel.panel_height;
+        // Render at original height (consistent with pre-computed layout)
+        let panel_h = orig_heights[i];
         let panel_rect = egui::Rect::from_min_max(
             egui::pos2(0.0, y_offset),
             egui::pos2(content_rect_right, y_offset + panel_h),

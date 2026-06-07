@@ -45,7 +45,12 @@ impl Default for AutomationPanelView {
 
 impl AutomationPanelView {
     /// Sync horizontal scroll state from the pianoroll view.
-    pub fn sync_from_pianoroll(&mut self, scroll_x: f32, pixels_per_tick: f32, left_panel_width: f32) {
+    pub fn sync_from_pianoroll(
+        &mut self,
+        scroll_x: f32,
+        pixels_per_tick: f32,
+        left_panel_width: f32,
+    ) {
         if self.base.scroll_x != scroll_x
             || self.base.pixels_per_tick != pixels_per_tick
             || self.base.left_panel_width != left_panel_width

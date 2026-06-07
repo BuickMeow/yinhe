@@ -254,7 +254,10 @@ pub fn show(
 
         // ── Horizontal scrollbar + AUTO buttons in left blank ──
         if midi.is_some() {
-            let sb_y = content_rect.max.y + panels_total_h;
+            // sb_y is always at the bottom of the available rect regardless
+            // of panel heights; compute directly instead of depending on
+            // pre-computed panels_total_h which may be stale mid-drag.
+            let sb_y = rect.min.y + rect.height() - super::scrollbar::SCROLLBAR_H;
 
             // Left blank area (same width as piano keyboard) — houses AUTO +/- buttons
             let sb_left_blank = egui::Rect::from_min_max(
