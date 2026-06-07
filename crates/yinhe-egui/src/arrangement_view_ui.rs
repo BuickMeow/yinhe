@@ -128,41 +128,45 @@ pub fn show(
     }
     view.base.dirty = false;
 
-    let _gpu_updated = renderer.prepare_with_static_cache(
-        uniforms,
-        vhash,
-        |static_instances| {
-            arrangement_instances::build_arrangement_static(
-                static_instances,
-                w,
-                h,
-                midi,
-                view,
-                track_visible,
-                track_colors,
-            );
-        },
-        |cursor_instances| {
-            arrangement_instances::build_arrangement_cursor(
-                cursor_instances,
-                *cursor_tick,
-                view,
-                w,
-                h,
-            );
-        },
-    );
+    let gpu_updated = crate::qos::guarded(|| {
+        renderer.prepare_with_static_cache(
+            uniforms,
+            vhash,
+            |static_instances| {
+                arrangement_instances::build_arrangement_static(
+                    static_instances,
+                    w,
+                    h,
+                    midi,
+                    view,
+                    track_visible,
+                    track_colors,
+                );
+            },
+            |cursor_instances| {
+                arrangement_instances::build_arrangement_cursor(
+                    cursor_instances,
+                    *cursor_tick,
+                    view,
+                    w,
+                    h,
+                );
+            },
+        )
+    });
 
-    // Paint
-    render_ctx.paint(
-        renderer,
-        w,
-        h,
-        "arrangement_frame",
-        &painter,
-        rect,
-        true, // always paint while playing (cursor moves every frame)
-    );
+    // Paint — skip GPU submit if nothing changed since last frame
+    crate::qos::guarded(|| {
+        render_ctx.paint(
+            renderer,
+            w,
+            h,
+            "arrangement_frame",
+            &painter,
+            rect,
+            gpu_updated,
+        );
+    });
 
     // Handle input (zoom/pan/cursor/drag/reset).
     // Pass the painter response directly — the painter rect and interaction

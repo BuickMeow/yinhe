@@ -57,30 +57,32 @@ pub fn show(
     // Auto-follow: scroll based on follow mode (playback only).
     // Never auto-follow when paused, so the user can freely scroll around.
     if let Some(ct) = *cursor_tick
-        && is_playing && *follow_mode != super::view_interaction::FollowMode::None {
-            let cursor_x = view.tick_to_x(ct);
-            let right_edge = w as f32;
-            let kb_w = view.keyboard_width();
-            match *follow_mode {
-                super::view_interaction::FollowMode::Page => {
-                    let margin = (right_edge - kb_w) * 0.2;
-                    if cursor_x > right_edge - margin || cursor_x < kb_w {
-                        view.base.scroll_x =
-                            (ct as f32 * view.base.pixels_per_tick) - (right_edge - kb_w) * 0.5;
-                        view.clamp_scroll(w as f32, h as f32, total_ticks);
-                    }
-                }
-                super::view_interaction::FollowMode::Continuous => {
-                    // Cursor glued just inside the leftmost edge (1px inset
-                    // avoids GPU clip-boundary flicker).  Use f32 arithmetic
-                    // to match the GPU rendering path exactly.
-                    let target = ct as f32 * view.base.pixels_per_tick;
-                    view.base.scroll_x = target - 1.0;
+        && is_playing
+        && *follow_mode != super::view_interaction::FollowMode::None
+    {
+        let cursor_x = view.tick_to_x(ct);
+        let right_edge = w as f32;
+        let kb_w = view.keyboard_width();
+        match *follow_mode {
+            super::view_interaction::FollowMode::Page => {
+                let margin = (right_edge - kb_w) * 0.2;
+                if cursor_x > right_edge - margin || cursor_x < kb_w {
+                    view.base.scroll_x =
+                        (ct as f32 * view.base.pixels_per_tick) - (right_edge - kb_w) * 0.5;
                     view.clamp_scroll(w as f32, h as f32, total_ticks);
                 }
-                super::view_interaction::FollowMode::None => unreachable!(),
             }
+            super::view_interaction::FollowMode::Continuous => {
+                // Cursor glued just inside the leftmost edge (1px inset
+                // avoids GPU clip-boundary flicker).  Use f32 arithmetic
+                // to match the GPU rendering path exactly.
+                let target = ct as f32 * view.base.pixels_per_tick;
+                view.base.scroll_x = target - 1.0;
+                view.clamp_scroll(w as f32, h as f32, total_ticks);
+            }
+            super::view_interaction::FollowMode::None => unreachable!(),
         }
+    }
 
     // ── Content interaction (zoom/pan/cursor/drag/reset) ──
     // Created FIRST so that the keyboard handle (below) wins in the 4px
@@ -136,7 +138,9 @@ pub fn show(
     // ── Clamp scroll after all interactions ──
     // handle_input() and keyboard drag may have set scroll_x/scroll_y out of bounds.
     // Clamp before rendering to prevent 1-frame out-of-bounds visual.
-    let total_ticks = midi.map(|m| m.tick_length().unwrap_or(0) as f64).unwrap_or(0.0);
+    let total_ticks = midi
+        .map(|m| m.tick_length().unwrap_or(0) as f64)
+        .unwrap_or(0.0);
     view.clamp_scroll(w as f32, h as f32, total_ticks);
 
     // ── Dirty detection ──
@@ -149,45 +153,50 @@ pub fn show(
     let force_rebuild = view.base.dirty;
 
     // Prepare GPU data — uses the latest view state (keyboard_width, scroll, etc.)
-    let gpu_dirty = yinhe_pianoroll::prepare(
-        pianoroll,
-        w,
-        h,
-        midi,
-        view,
-        selected,
-        track_visible,
-        *cursor_tick,
-        force_rebuild,
-    );
+    let gpu_dirty = crate::qos::guarded(|| {
+        yinhe_pianoroll::prepare(
+            pianoroll,
+            w,
+            h,
+            midi,
+            view,
+            selected,
+            track_visible,
+            *cursor_tick,
+            force_rebuild,
+        )
+    });
 
     let content_changed = view.base.dirty || gpu_dirty;
     view.base.dirty = false;
 
     // Paint wgpu content into the content_rect (below the ruler)
-    render_ctx.paint(
-        pianoroll,
-        w,
-        h,
-        "pianoroll_frame",
-        &painter,
-        content_rect,
-        content_changed,
-    );
+    crate::qos::guarded(|| {
+        render_ctx.paint(
+            pianoroll,
+            w,
+            h,
+            "pianoroll_frame",
+            &painter,
+            content_rect,
+            content_changed,
+        );
+    });
 
     // ── Time ruler (top band, right of keyboard) ──
     if let Some(midi) = midi
-        && let Some(tpb) = midi.ticks_per_beat() {
-            let ruler_rect = egui::Rect::from_min_max(
-                egui::pos2(rect.min.x + view.keyboard_width(), ruler_band_y),
-                egui::pos2(rect.max.x, ruler_band_y + RULER_H),
-            );
-            let (def_num, def_den) = midi.time_sig_default();
-            let sig_events = midi.time_sig_events();
-            crate::time_ruler::paint(
-                &painter, ruler_rect, view, tpb, def_num, def_den, sig_events,
-            );
-        }
+        && let Some(tpb) = midi.ticks_per_beat()
+    {
+        let ruler_rect = egui::Rect::from_min_max(
+            egui::pos2(rect.min.x + view.keyboard_width(), ruler_band_y),
+            egui::pos2(rect.max.x, ruler_band_y + RULER_H),
+        );
+        let (def_num, def_den) = midi.time_sig_default();
+        let sig_events = midi.time_sig_events();
+        crate::time_ruler::paint(
+            &painter, ruler_rect, view, tpb, def_num, def_den, sig_events,
+        );
+    }
 
     // ── Horizontal scrollbar (right of keyboard, below content) ──
     if midi.is_some() {
