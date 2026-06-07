@@ -4,9 +4,7 @@ use eframe::egui;
 
 use yinhe_types::AutomationLane;
 
-use yinhe_automation::{
-    AutomationPanelView, PianorollRenderer, prepare_automation,
-};
+use yinhe_automation::{AutomationPanelView, PianorollRenderer, prepare_automation};
 
 use crate::render_context::RenderContext;
 use crate::theme;
@@ -114,44 +112,8 @@ pub fn show_panels(
             egui::pos2(content_rect_right, y_offset + panel_h),
         );
 
-        // Left side: dropdown area
-        let combo_rect = egui::Rect::from_min_max(
-            panel_rect.min,
-            egui::pos2(panel_rect.min.x + combo_width, panel_rect.max.y),
-        );
-
-        // Draw left panel background
-        ui.painter().rect_filled(combo_rect, 0.0, theme::APP_BG);
-
-        // ComboBox for target selection
-        let combo_inner = combo_rect.shrink(4.0);
-        ui.allocate_new_ui(egui::UiBuilder::new().max_rect(combo_inner), |ui| {
-            egui::ComboBox::from_id_salt(ui.id().with(format!("auto_combo_{}", i)))
-                .selected_text(panel.selected_target.display_name())
-                .width(combo_inner.width())
-                .show_ui(ui, |ui| {
-                    for (idx, lane) in automation_lanes.iter().enumerate() {
-                        let name = lane.target.display_name();
-                        if ui
-                            .selectable_label(
-                                panel.selected_target == lane.target,
-                                &name,
-                            )
-                            .clicked()
-                        {
-                            panel.selected_target = lane.target.clone();
-                            panel.lane_index = idx;
-                            panel.dirty = true;
-                        }
-                    }
-                });
-        });
-
-        // Right side: wgpu automation content
-        let grid_rect = egui::Rect::from_min_max(
-            egui::pos2(panel_rect.min.x + combo_width, panel_rect.min.y),
-            panel_rect.max,
-        );
+        // ── wgpu automation content (full width, from x=0) ──
+        let grid_rect = egui::Rect::from_min_max(panel_rect.min, panel_rect.max);
 
         let gw = grid_rect.width() as u32;
         let gh = grid_rect.height() as u32;
@@ -194,6 +156,36 @@ pub fn show_panels(
             }
         }
 
+        // ── Left side: dropdown area (drawn on top of grid) ──
+        let combo_rect = egui::Rect::from_min_max(
+            panel_rect.min,
+            egui::pos2(panel_rect.min.x + combo_width, panel_rect.max.y),
+        );
+
+        // Draw left panel background (covers the grid underneath)
+        ui.painter().rect_filled(combo_rect, 0.0, theme::APP_BG);
+
+        // ComboBox for target selection
+        let combo_inner = combo_rect.shrink(4.0);
+        ui.allocate_new_ui(egui::UiBuilder::new().max_rect(combo_inner), |ui| {
+            egui::ComboBox::from_id_salt(ui.id().with(format!("auto_combo_{}", i)))
+                .selected_text(panel.selected_target.display_name())
+                .width(combo_inner.width())
+                .show_ui(ui, |ui| {
+                    for (idx, lane) in automation_lanes.iter().enumerate() {
+                        let name = lane.target.display_name();
+                        if ui
+                            .selectable_label(panel.selected_target == lane.target, &name)
+                            .clicked()
+                        {
+                            panel.selected_target = lane.target.clone();
+                            panel.lane_index = idx;
+                            panel.dirty = true;
+                        }
+                    }
+                });
+        });
+
         y_offset += panel_h;
     }
 
@@ -204,18 +196,16 @@ pub fn show_panels(
 ///
 /// Designed to be called inside a `ui.horizontal()` or `ui.horizontal_centered()`
 /// scope (e.g. inside the scrollbar left blank area).
-pub fn show_toggle_buttons(
-    ui: &mut egui::Ui,
-    show_panels: &mut bool,
-    panel_count: &mut usize,
-) {
+pub fn show_toggle_buttons(ui: &mut egui::Ui, show_panels: &mut bool, panel_count: &mut usize) {
     // Toggle button
     let toggle_color = if *show_panels {
         theme::ACCENT_ACTIVE
     } else {
         egui::Color32::GRAY
     };
-    let toggle_label = egui::RichText::new("AUTO").size(theme::MODE_LABEL_FONT).color(toggle_color);
+    let toggle_label = egui::RichText::new("AUTO")
+        .size(theme::MODE_LABEL_FONT)
+        .color(toggle_color);
     let toggle_resp = ui.add(
         egui::Label::new(toggle_label)
             .sense(egui::Sense::click())
@@ -244,7 +234,9 @@ pub fn show_toggle_buttons(
         let plus_color = egui::Color32::GRAY;
         let plus_resp = ui.add(
             egui::Label::new(
-                egui::RichText::new("+").size(theme::MODE_LABEL_FONT + 2.0).color(plus_color),
+                egui::RichText::new("+")
+                    .size(theme::MODE_LABEL_FONT + 2.0)
+                    .color(plus_color),
             )
             .sense(egui::Sense::click())
             .selectable(false),
@@ -267,7 +259,9 @@ pub fn show_toggle_buttons(
         // - button
         let minus_resp = ui.add(
             egui::Label::new(
-                egui::RichText::new("-").size(theme::MODE_LABEL_FONT + 2.0).color(plus_color),
+                egui::RichText::new("-")
+                    .size(theme::MODE_LABEL_FONT + 2.0)
+                    .color(plus_color),
             )
             .sense(egui::Sense::click())
             .selectable(false),

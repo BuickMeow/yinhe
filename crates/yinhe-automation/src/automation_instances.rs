@@ -1,6 +1,4 @@
-use yinhe_types::{
-    AutomationLane, TimeSigEvent, TRACK_PALETTE,
-};
+use yinhe_types::{AutomationLane, TRACK_PALETTE, TimeSigEvent};
 
 use crate::AutomationPanelView;
 use crate::grid;
@@ -19,10 +17,11 @@ const CENTER_LINE_ALPHA: f32 = 0.6;
 
 /// Build all instances for one automation panel: background, grid, data bars, reference line.
 ///
-/// **Coordinate system:** All instances are rendered into a wgpu texture whose
-/// viewport is already clipped to the grid area (right of the combo box). The
-/// left edge of this texture corresponds to the left edge of the grid, so all
-/// `x` coordinates start at `0.0`, not at `left_panel_width`.
+/// **Coordinate system:** The wgpu texture covers the full panel width (from
+/// `x=0`). The combo/dropdown area is overlaid on top in egui, so this texture
+/// fills the entire visible area. Grid lines start at `left_panel_width` (the
+/// combo area width), and data bars are offset by `left_panel_width` so they
+/// align with the pianoroll content above.
 pub fn build_automation_instances(
     instances: &mut Vec<NoteInstance>,
     width: u32,
@@ -56,6 +55,9 @@ pub fn build_automation_instances(
     });
 
     // 2. Grid lines (vertical only — reuse the shared timeline grid builder)
+    // Grid lines start at left_panel_width (= combo width) so they don't
+    // render beneath the combo overlay; the background quad still fills
+    // the full texture so the entire panel has the grid background color.
     if let Some(tpb) = tpb {
         grid::build_timeline_grid(
             instances,
@@ -105,7 +107,7 @@ pub fn build_automation_instances(
         let pad_end = (tick_end + tick_pad as f64) as u32;
 
         let events = lane.events_in_range(pad_start, pad_end);
-        let x_offset = -view.base.scroll_x;
+        let x_offset = view.base.left_panel_width - view.base.scroll_x;
 
         for evt in events {
             let val = evt.value as f32;
