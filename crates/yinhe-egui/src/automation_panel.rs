@@ -4,7 +4,7 @@ use eframe::egui;
 
 use yinhe_types::AutomationLane;
 
-use yinhe_pianoroll::{
+use yinhe_automation::{
     AutomationPanelView, PianorollRenderer, prepare_automation,
 };
 
@@ -38,7 +38,11 @@ fn sync_renderer_count(
 
 /// Render all automation panels between the pianoroll content and the scrollbar.
 ///
-/// Returns the total height consumed by all panels (including split handles).
+/// The first panel sits flush against the content above. Each subsequent panel
+/// has a `SPLIT_H` drag handle at its top edge.
+///
+/// Returns the total height consumed by all panels (including split handles
+/// between them, but no leading handle for the first panel).
 pub fn show_panels(
     ui: &mut egui::Ui,
     panels: &mut Vec<AutomationPanelView>,
@@ -46,7 +50,7 @@ pub fn show_panels(
     automation_lanes: &[AutomationLane],
     show_panels: &mut bool,
     wgpu_state: &Arc<eframe::egui_wgpu::RenderState>,
-    left_panel_width: f32,
+    combo_width: f32,
     pianoroll_scroll_x: f32,
     pianoroll_ppt: f32,
     content_rect_right: f32,
@@ -62,7 +66,7 @@ pub fn show_panels(
 
     // Sync scroll state from pianoroll
     for panel in panels.iter_mut() {
-        panel.sync_from_pianoroll(pianoroll_scroll_x, pianoroll_ppt, left_panel_width);
+        panel.sync_from_pianoroll(pianoroll_scroll_x, pianoroll_ppt, combo_width);
     }
 
     // Ensure renderer count matches panel count
@@ -71,51 +75,81 @@ pub fn show_panels(
     let mut y_offset = content_top_y;
 
     for (i, panel) in panels.iter_mut().enumerate() {
+        // Add split handle before every panel except the first
+        if i > 0 {
+            let handle_rect = egui::Rect::from_min_max(
+                egui::pos2(combo_width, y_offset),
+                egui::pos2(content_rect_right, y_offset + SPLIT_H),
+            );
+            let handle_id = ui.id().with(format!("auto_handle_{}", i));
+            let handle_resp = ui.interact(handle_rect, handle_id, egui::Sense::click_and_drag());
+            ui.painter().rect_filled(
+                handle_rect,
+                0.0,
+                if handle_resp.hovered() || handle_resp.dragged() {
+                    theme::SPLIT_HOVER
+                } else {
+                    theme::SPLIT_DEFAULT
+                },
+            );
+            if handle_resp.hovered() || handle_resp.dragged() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+            }
+            if handle_resp.dragged() {
+                let delta = handle_resp.drag_delta().y;
+                let new_h = (panel.panel_height + delta).clamp(
+                    yinhe_automation::automation_view::MIN_PANEL_HEIGHT,
+                    yinhe_automation::automation_view::MAX_PANEL_HEIGHT,
+                );
+                panel.panel_height = new_h;
+                panel.dirty = true;
+                ui.ctx().request_repaint();
+            }
+            y_offset += SPLIT_H;
+        }
+
         let panel_h = panel.panel_height;
         let panel_rect = egui::Rect::from_min_max(
-            egui::pos2(content_rect_right - (content_rect_right - left_panel_width), y_offset),
+            egui::pos2(0.0, y_offset),
             egui::pos2(content_rect_right, y_offset + panel_h),
         );
 
         // Left side: dropdown area
         let combo_rect = egui::Rect::from_min_max(
             panel_rect.min,
-            egui::pos2(panel_rect.min.x + left_panel_width, panel_rect.max.y),
+            egui::pos2(panel_rect.min.x + combo_width, panel_rect.max.y),
         );
 
         // Draw left panel background
-        ui.painter()
-            .rect_filled(combo_rect, 0.0, theme::APP_BG);
+        ui.painter().rect_filled(combo_rect, 0.0, theme::APP_BG);
 
         // ComboBox for target selection
-        if let Some((_, _render_ctx)) = renderers.get_mut(i) {
-            let combo_inner = combo_rect.shrink(4.0);
-            ui.allocate_new_ui(egui::UiBuilder::new().max_rect(combo_inner), |ui| {
-                egui::ComboBox::from_id_salt(ui.id().with(format!("auto_combo_{}", i)))
-                    .selected_text(panel.selected_target.display_name())
-                    .width(combo_inner.width())
-                    .show_ui(ui, |ui| {
-                        for (idx, lane) in automation_lanes.iter().enumerate() {
-                            let name = lane.target.display_name();
-                            if ui
-                                .selectable_label(
-                                    panel.selected_target == lane.target,
-                                    &name,
-                                )
-                                .clicked()
-                            {
-                                panel.selected_target = lane.target.clone();
-                                panel.lane_index = idx;
-                                panel.dirty = true;
-                            }
+        let combo_inner = combo_rect.shrink(4.0);
+        ui.allocate_new_ui(egui::UiBuilder::new().max_rect(combo_inner), |ui| {
+            egui::ComboBox::from_id_salt(ui.id().with(format!("auto_combo_{}", i)))
+                .selected_text(panel.selected_target.display_name())
+                .width(combo_inner.width())
+                .show_ui(ui, |ui| {
+                    for (idx, lane) in automation_lanes.iter().enumerate() {
+                        let name = lane.target.display_name();
+                        if ui
+                            .selectable_label(
+                                panel.selected_target == lane.target,
+                                &name,
+                            )
+                            .clicked()
+                        {
+                            panel.selected_target = lane.target.clone();
+                            panel.lane_index = idx;
+                            panel.dirty = true;
                         }
-                    });
-            });
-        }
+                    }
+                });
+        });
 
         // Right side: wgpu automation content
         let grid_rect = egui::Rect::from_min_max(
-            egui::pos2(panel_rect.min.x + left_panel_width, panel_rect.min.y),
+            egui::pos2(panel_rect.min.x + combo_width, panel_rect.min.y),
             panel_rect.max,
         );
 
@@ -160,48 +194,20 @@ pub fn show_panels(
             }
         }
 
-        // Drag handle at bottom of panel
-        let handle_rect = egui::Rect::from_min_max(
-            egui::pos2(panel_rect.min.x + left_panel_width, panel_rect.max.y - SPLIT_H),
-            panel_rect.max,
-        );
-        let handle_id = ui.id().with(format!("auto_handle_{}", i));
-        let handle_resp = ui.interact(handle_rect, handle_id, egui::Sense::click_and_drag());
-        ui.painter().rect_filled(
-            handle_rect,
-            0.0,
-            if handle_resp.hovered() || handle_resp.dragged() {
-                theme::SPLIT_HOVER
-            } else {
-                theme::SPLIT_DEFAULT
-            },
-        );
-        if handle_resp.hovered() || handle_resp.dragged() {
-            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
-        }
-        if handle_resp.dragged() {
-            let delta = handle_resp.drag_delta().y;
-            let new_h = (panel.panel_height + delta).clamp(
-                yinhe_pianoroll::automation_view::MIN_PANEL_HEIGHT,
-                yinhe_pianoroll::automation_view::MAX_PANEL_HEIGHT,
-            );
-            panel.panel_height = new_h;
-            panel.dirty = true;
-            ui.ctx().request_repaint();
-        }
-
-        y_offset += panel.panel_height;
+        y_offset += panel_h;
     }
 
     y_offset - content_top_y
 }
 
-/// Show the toggle / add / remove buttons in the keyboard area below the scrollbar.
+/// Show the toggle / add / remove buttons horizontally.
+///
+/// Designed to be called inside a `ui.horizontal()` or `ui.horizontal_centered()`
+/// scope (e.g. inside the scrollbar left blank area).
 pub fn show_toggle_buttons(
     ui: &mut egui::Ui,
     show_panels: &mut bool,
     panel_count: &mut usize,
-    btn_rect: egui::Rect,
 ) {
     // Toggle button
     let toggle_color = if *show_panels {
@@ -255,6 +261,8 @@ pub fn show_toggle_buttons(
         if plus_resp.clicked() {
             *panel_count += 1;
         }
+
+        ui.add_space(2.0);
 
         // - button
         let minus_resp = ui.add(

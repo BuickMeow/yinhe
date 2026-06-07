@@ -25,7 +25,7 @@ pub(crate) struct Document {
     /// Cached track colors (computed once at load time, avoids per-frame allocation).
     pub track_colors_cache: Vec<[f32; 3]>,
     /// Automation panel view states.
-    pub controller_panels: Vec<yinhe_pianoroll::AutomationPanelView>,
+    pub controller_panels: Vec<yinhe_automation::AutomationPanelView>,
     /// Whether any automation panels are visible.
     pub show_controller_panels: bool,
 }

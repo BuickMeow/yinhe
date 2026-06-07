@@ -9,6 +9,7 @@ yinhe-midi = { path = "../yinhe-midi" }
 yinhe-dms = { path = "../yinhe-dms" }
 yinhe-archive = { path = "../yinhe-archive" }
 yinhe-pianoroll = { path = "../yinhe-pianoroll" }
+yinhe-automation = { path = "../yinhe-automation" }
 yinhe-arrangement = { path = "../yinhe-arrangement" }
 yinhe-wgpu = { path = "../yinhe-wgpu" }
 yinhe-audio = { path = "../yinhe-audio" }

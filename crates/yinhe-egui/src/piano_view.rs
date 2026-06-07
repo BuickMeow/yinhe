@@ -10,13 +10,12 @@ use crate::quantize::QuantizePreset;
 use crate::theme;
 const RULER_H: f32 = theme::RULER_H;
 
-/// Height of the AUTO toggle button strip.
-const TOGGLE_STRIP_H: f32 = 20.0;
-
 /// Display the pianoroll texture with zoom/pan interaction.
 ///
 /// When `auto_*` parameters are `Some`, automation panels are rendered between
-/// the pianoroll content and the horizontal scrollbar.
+/// the pianoroll content and the horizontal scrollbar. The AUTO toggle and
+/// +/- buttons live inside the scrollbar's left blank area (same width as the
+/// piano keyboard).
 #[allow(clippy::too_many_arguments)]
 pub fn show(
     ui: &mut egui::Ui,
@@ -35,8 +34,8 @@ pub fn show(
     last_cursor_tick: &mut Option<f64>,
     follow_mode: &mut super::view_interaction::FollowMode,
     // Automation panel data (all-or-nothing)
-    auto_panels: Option<&mut Vec<yinhe_pianoroll::AutomationPanelView>>,
-    auto_renderers: Option<&mut Vec<(yinhe_pianoroll::PianorollRenderer, super::render_context::RenderContext)>>,
+    auto_panels: Option<&mut Vec<yinhe_automation::AutomationPanelView>>,
+    auto_renderers: Option<&mut Vec<(yinhe_automation::PianorollRenderer, super::render_context::RenderContext)>>,
     auto_lanes: Option<&[AutomationLane]>,
     auto_show: Option<&mut bool>,
     auto_wgpu_state: Option<&Arc<eframe::egui_wgpu::RenderState>>,
@@ -46,21 +45,20 @@ pub fn show(
     let (resp, painter) = ui.allocate_painter(available, egui::Sense::hover());
     let rect = resp.rect;
 
-    // Compute automation panel total height (shrinkable, deducted from pianoroll content).
+    // Compute automation panel total height.
+    // First panel has no leading handle; subsequent panels have SPLIT_H above them.
     let panels_total_h: f32 = match (&auto_panels, &auto_show) {
-        (Some(panels), Some(show)) if **show => {
-            panels
-                .iter()
-                .map(|p| p.panel_height + crate::automation_panel::SPLIT_H)
-                .sum::<f32>()
+        (Some(panels), Some(show)) if **show && !panels.is_empty() => {
+            panels.iter().map(|p| p.panel_height).sum::<f32>()
+                + ((panels.len().saturating_sub(1)) as f32 * crate::automation_panel::SPLIT_H)
         }
         _ => 0.0,
     };
 
-    // Layout: ruler | pianoroll content | automation panels | toggle strip | scrollbar
+    // Layout: ruler | pianoroll content | automation panels | scrollbar
     let ruler_band_y = rect.min.y;
     let content_y = rect.min.y + RULER_H;
-    let content_h = (rect.height() - RULER_H - panels_total_h - TOGGLE_STRIP_H - super::scrollbar::SCROLLBAR_H).max(0.0);
+    let content_h = (rect.height() - RULER_H - panels_total_h - super::scrollbar::SCROLLBAR_H).max(0.0);
     let content_rect = egui::Rect::from_min_max(
         egui::pos2(rect.min.x, content_y),
         egui::pos2(rect.max.x, content_y + content_h),
@@ -214,12 +212,13 @@ pub fn show(
         );
     }
 
-    // ── Automation panels (between pianoroll content and scrollbar) ──
+    // ── Automation panels + scrollbar + AUTO buttons ──
     let panels_y = content_rect.max.y;
     if let (Some(panels), Some(renderers), Some(lanes), Some(show), Some(wgpu_state)) =
         (auto_panels, auto_renderers, auto_lanes, auto_show, auto_wgpu_state)
     {
         let kb_w = view.keyboard_width();
+        let combo_w = kb_w * theme::AUTO_PANEL_COMBO_WIDTH_RATIO;
 
         // Automation panels
         let _panels_h = crate::automation_panel::show_panels(
@@ -229,7 +228,7 @@ pub fn show(
             lanes,
             show,
             wgpu_state,
-            kb_w,
+            combo_w,
             view.base.scroll_x,
             view.base.pixels_per_tick,
             rect.max.x,
@@ -240,51 +239,55 @@ pub fn show(
             bar_line_data.map(|b| b.3).unwrap_or(&[]),
         );
 
-        // Toggle buttons in keyboard area (below pianoroll, above scrollbar)
-        let toggle_y = panels_y + panels_total_h;
-        let toggle_rect = egui::Rect::from_min_max(
-            egui::pos2(rect.min.x, toggle_y),
-            egui::pos2(rect.min.x + kb_w, toggle_y + TOGGLE_STRIP_H),
-        );
-        ui.painter().rect_filled(toggle_rect, 0.0, theme::APP_BG);
-        ui.allocate_new_ui(egui::UiBuilder::new().max_rect(toggle_rect), |ui| {
-            let mut count = panels.len();
-            crate::automation_panel::show_toggle_buttons(
-                ui,
-                show,
-                &mut count,
-                toggle_rect,
-            );
-            // Add/remove panels to match count
-            while panels.len() < count {
-                panels.push(yinhe_pianoroll::AutomationPanelView::default());
-            }
-            while panels.len() > count {
-                panels.pop();
-            }
-        });
-    }
+        // ── Horizontal scrollbar + AUTO buttons in left blank ──
+        if midi.is_some() {
+            let sb_y = content_rect.max.y + panels_total_h;
 
-    // ── Horizontal scrollbar (right of keyboard, below content + panels) ──
-    if midi.is_some() {
-        let sb_y = content_rect.max.y + panels_total_h + TOGGLE_STRIP_H;
-        let sb_rect = egui::Rect::from_min_max(
-            egui::pos2(rect.min.x + view.keyboard_width(), sb_y),
-            egui::pos2(
-                rect.max.x,
-                sb_y + super::scrollbar::SCROLLBAR_H,
-            ),
-        );
-        ui.push_id("piano_scrollbar", |ui| {
-            super::scrollbar::show(
-                ui,
-                sb_rect,
-                w as f32 - view.keyboard_width(),
-                &mut view.base.scroll_x,
-                &mut view.base.pixels_per_tick,
-                total_ticks,
-                &mut view.base.dirty,
+            // Left blank area (same width as piano keyboard) — houses AUTO +/- buttons
+            let sb_left_blank = egui::Rect::from_min_max(
+                egui::pos2(rect.min.x, sb_y),
+                egui::pos2(rect.min.x + kb_w, sb_y + super::scrollbar::SCROLLBAR_H),
             );
-        });
+            // Actual scrollbar track (right of keyboard)
+            let sb_rect = egui::Rect::from_min_max(
+                egui::pos2(rect.min.x + kb_w, sb_y),
+                egui::pos2(rect.max.x, sb_y + super::scrollbar::SCROLLBAR_H),
+            );
+
+            // Paint left blank background
+            ui.painter().rect_filled(sb_left_blank, 0.0, theme::SCROLLBAR_BG);
+
+            // AUTO +/- buttons inside left blank
+            ui.allocate_new_ui(egui::UiBuilder::new().max_rect(sb_left_blank), |ui| {
+                ui.horizontal_centered(|ui| {
+                    let mut count = panels.len();
+                    crate::automation_panel::show_toggle_buttons(
+                        ui,
+                        show,
+                        &mut count,
+                    );
+                    // Add/remove panels to match count
+                    while panels.len() < count {
+                        panels.push(yinhe_automation::AutomationPanelView::default());
+                    }
+                    while panels.len() > count {
+                        panels.pop();
+                    }
+                });
+            });
+
+            // Scrollbar
+            ui.push_id("piano_scrollbar", |ui| {
+                super::scrollbar::show(
+                    ui,
+                    sb_rect,
+                    w as f32 - kb_w,
+                    &mut view.base.scroll_x,
+                    &mut view.base.pixels_per_tick,
+                    total_ticks,
+                    &mut view.base.dirty,
+                );
+            });
+        }
     }
 }

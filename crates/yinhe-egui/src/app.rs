@@ -52,7 +52,7 @@ pub struct App {
     arr_split: f32,
 
     // ── Automation panel GPU resources (per-document, per-panel) ──
-    controller_renderers: Vec<Vec<(yinhe_pianoroll::PianorollRenderer, RenderContext)>>,
+    controller_renderers: Vec<Vec<(yinhe_automation::PianorollRenderer, RenderContext)>>,
 
     // ── Multi-document state ──
     pub(crate) documents: Vec<Document>,

@@ -74,7 +74,7 @@ pub const NOTE_CURSOR_THRESHOLD: f64 = 0.005;
 
 // ── Automation panel ──
 pub const AUTO_PANEL_SPLIT_H: f32 = 4.0;
-pub const AUTO_PANEL_COMBO_WIDTH_RATIO: f32 = 0.6; // fraction of keyboard_width for combo box
+pub const AUTO_PANEL_COMBO_WIDTH_RATIO: f32 = 1.0; // combo box width equals keyboard width
 
 // ── System monitoring ──
 pub const SYS_REFRESH_INTERVAL_SECS: f64 = 0.5;

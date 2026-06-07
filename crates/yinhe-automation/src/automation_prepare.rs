@@ -2,8 +2,8 @@ use yinhe_types::{AutomationLane, TimeSigEvent};
 
 use crate::PianorollRenderer;
 use crate::automation_instances;
-use crate::automation_view::AutomationPanelView;
-use crate::vertex::Uniforms;
+use crate::AutomationPanelView;
+use crate::Uniforms;
 
 /// Hash viewport properties that affect automation panel instances.
 fn viewport_hash(width: u32, height: u32, view: &AutomationPanelView, target_id: u64) -> u64 {

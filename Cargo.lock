@@ -5720,6 +5720,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "yinhe-automation"
+version = "0.1.0"
+dependencies = [
+ "yinhe-types",
+ "yinhe-wgpu",
+]
+
+[[package]]
 name = "yinhe-dms"
 version = "0.1.0"
 dependencies = [
@@ -5748,6 +5756,7 @@ dependencies = [
  "yinhe-archive",
  "yinhe-arrangement",
  "yinhe-audio",
+ "yinhe-automation",
  "yinhe-dms",
  "yinhe-memtrace",
  "yinhe-midi",

@@ -2,9 +2,9 @@ use yinhe_types::{
     AutomationLane, TimeSigEvent, TRACK_PALETTE,
 };
 
-use crate::automation_view::AutomationPanelView;
+use crate::AutomationPanelView;
 use crate::grid;
-use crate::vertex::{NoteInstance, pack_props, pack_rgba};
+use crate::{NoteInstance, pack_props, pack_rgba};
 
 /// Bar width in pixels for automation events.
 const BAR_WIDTH: f32 = 2.0;
@@ -18,6 +18,11 @@ const CENTER_LINE_COLOR: (f32, f32, f32) = (0.30, 0.30, 0.35);
 const CENTER_LINE_ALPHA: f32 = 0.6;
 
 /// Build all instances for one automation panel: background, grid, data bars, reference line.
+///
+/// **Coordinate system:** All instances are rendered into a wgpu texture whose
+/// viewport is already clipped to the grid area (right of the combo box). The
+/// left edge of this texture corresponds to the left edge of the grid, so all
+/// `x` coordinates start at `0.0`, not at `left_panel_width`.
 pub fn build_automation_instances(
     instances: &mut Vec<NoteInstance>,
     width: u32,
@@ -31,14 +36,13 @@ pub fn build_automation_instances(
 ) {
     let w = width as f32;
     let h = height as f32;
-    let kb_w = view.left_panel_width();
     let ppu = view.base.pixels_per_tick;
 
-    // 1. Background
+    // 1. Background — fill the entire texture (grid area only)
     instances.push(NoteInstance {
-        x: kb_w,
+        x: 0.0,
         y: 0.0,
-        w: w - kb_w,
+        w,
         h,
         rgba_packed: pack_rgba(
             grid::PR_BG_COLOR.0,
@@ -77,9 +81,9 @@ pub fn build_automation_instances(
             let y_center = h - (center_val / max_val) * h;
             // Draw a thin horizontal line across the panel
             instances.push(NoteInstance {
-                x: kb_w,
+                x: 0.0,
                 y: y_center - 0.5,
-                w: w - kb_w,
+                w,
                 h: 1.0,
                 rgba_packed: pack_rgba(
                     CENTER_LINE_COLOR.0,
@@ -96,12 +100,12 @@ pub fn build_automation_instances(
         // 4. Data bars
         let (tick_start, tick_end) = view.base.visible_tick_range(w);
         // Add some padding for bars that extend past the viewport edge
-        let tick_pad = (w - kb_w) / ppu;
+        let tick_pad = w / ppu;
         let pad_start = (tick_start - tick_pad as f64).max(0.0) as u32;
         let pad_end = (tick_end + tick_pad as f64) as u32;
 
         let events = lane.events_in_range(pad_start, pad_end);
-        let x_offset = kb_w - view.base.scroll_x;
+        let x_offset = -view.base.scroll_x;
 
         for evt in events {
             let val = evt.value as f32;
@@ -109,7 +113,7 @@ pub fn build_automation_instances(
             let bar_x = x_offset + evt.tick as f32 * ppu;
 
             // Skip if completely off-screen
-            if bar_x + BAR_WIDTH < kb_w || bar_x > w {
+            if bar_x + BAR_WIDTH < 0.0 || bar_x > w {
                 continue;
             }
 
