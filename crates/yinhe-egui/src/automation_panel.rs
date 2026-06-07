@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use eframe::egui;
+use egui_material_icons::icons::*;
 
 use yinhe_types::AutomationLane;
 
@@ -197,14 +198,18 @@ pub fn show_panels(
 /// Designed to be called inside a `ui.horizontal()` or `ui.horizontal_centered()`
 /// scope (e.g. inside the scrollbar left blank area).
 pub fn show_toggle_buttons(ui: &mut egui::Ui, show_panels: &mut bool, panel_count: &mut usize) {
+    ui.spacing_mut().item_spacing.x = 6.0;
+    ui.add_space(6.0);
+
     // Toggle button
     let toggle_color = if *show_panels {
         theme::ACCENT_ACTIVE
     } else {
         egui::Color32::GRAY
     };
-    let toggle_label = egui::RichText::new("AUTO")
-        .size(theme::MODE_LABEL_FONT)
+    let toggle_label = ICON_SIGNAL_CELLULAR_ALT
+        .rich_text()
+        .size(theme::MODE_LABEL_FONT + 2.0)
         .color(toggle_color);
     let toggle_resp = ui.add(
         egui::Label::new(toggle_label)
@@ -215,8 +220,11 @@ pub fn show_toggle_buttons(ui: &mut egui::Ui, show_panels: &mut bool, panel_coun
         ui.painter().text(
             toggle_resp.rect.center(),
             egui::Align2::CENTER_CENTER,
-            "AUTO",
-            egui::FontId::proportional(theme::MODE_LABEL_FONT),
+            ICON_SIGNAL_CELLULAR_ALT.codepoint,
+            egui::FontId::new(
+                theme::MODE_LABEL_FONT + 2.0,
+                ICON_SIGNAL_CELLULAR_ALT.font_family(),
+            ),
             egui::Color32::WHITE,
         );
     }
@@ -228,13 +236,12 @@ pub fn show_toggle_buttons(ui: &mut egui::Ui, show_panels: &mut bool, panel_coun
     }
 
     if *show_panels {
-        ui.add_space(4.0);
-
-        // + button
+        // + button (add panel)
         let plus_color = egui::Color32::GRAY;
         let plus_resp = ui.add(
             egui::Label::new(
-                egui::RichText::new("+")
+                ICON_ADD
+                    .rich_text()
                     .size(theme::MODE_LABEL_FONT + 2.0)
                     .color(plus_color),
             )
@@ -245,8 +252,8 @@ pub fn show_toggle_buttons(ui: &mut egui::Ui, show_panels: &mut bool, panel_coun
             ui.painter().text(
                 plus_resp.rect.center(),
                 egui::Align2::CENTER_CENTER,
-                "+",
-                egui::FontId::proportional(theme::MODE_LABEL_FONT + 2.0),
+                ICON_ADD.codepoint,
+                egui::FontId::new(theme::MODE_LABEL_FONT + 2.0, ICON_ADD.font_family()),
                 egui::Color32::WHITE,
             );
         }
@@ -254,12 +261,11 @@ pub fn show_toggle_buttons(ui: &mut egui::Ui, show_panels: &mut bool, panel_coun
             *panel_count += 1;
         }
 
-        ui.add_space(2.0);
-
-        // - button
+        // - button (remove panel)
         let minus_resp = ui.add(
             egui::Label::new(
-                egui::RichText::new("-")
+                ICON_REMOVE
+                    .rich_text()
                     .size(theme::MODE_LABEL_FONT + 2.0)
                     .color(plus_color),
             )
@@ -270,8 +276,8 @@ pub fn show_toggle_buttons(ui: &mut egui::Ui, show_panels: &mut bool, panel_coun
             ui.painter().text(
                 minus_resp.rect.center(),
                 egui::Align2::CENTER_CENTER,
-                "-",
-                egui::FontId::proportional(theme::MODE_LABEL_FONT + 2.0),
+                ICON_REMOVE.codepoint,
+                egui::FontId::new(theme::MODE_LABEL_FONT + 2.0, ICON_REMOVE.font_family()),
                 egui::Color32::WHITE,
             );
         }
