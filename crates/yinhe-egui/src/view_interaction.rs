@@ -293,3 +293,63 @@ pub(crate) fn handle_input(
         ui.ctx().request_repaint();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn none_mode_returns_none() {
+        assert_eq!(
+            compute_follow_scroll(100.0, 1.0, 800.0, 0.0, FollowMode::None, 1.0),
+            None
+        );
+    }
+
+    #[test]
+    fn continuous_mode_returns_cursor_minus_inset() {
+        // cursor_tick=100, ppt=2.0 → cursor_x=200; inset=50 → 200-50=150
+        assert_eq!(
+            compute_follow_scroll(100.0, 2.0, 800.0, 0.0, FollowMode::Continuous, 50.0),
+            Some(150.0)
+        );
+    }
+
+    #[test]
+    fn page_mode_scrolls_when_cursor_near_right_edge() {
+        // cursor_tick=900, ppt=1.0 → cursor_x=900
+        // content_width=800, margin=160
+        // 900 > 800-160=640 → should scroll
+        let result = compute_follow_scroll(900.0, 1.0, 800.0, 0.0, FollowMode::Page, 1.0);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn page_mode_scrolls_when_cursor_near_left_boundary() {
+        // cursor_tick=20, ppt=1.0 → cursor_x=20
+        // content_width=800, margin=160
+        // 20 < 0+160=160 → should scroll
+        let result = compute_follow_scroll(20.0, 1.0, 800.0, 0.0, FollowMode::Page, 1.0);
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn page_mode_stays_when_cursor_in_center() {
+        // cursor_tick=400, ppt=1.0 → cursor_x=400
+        // content_width=800, margin=160
+        // 400 is between 160 and 640 → no scroll
+        assert_eq!(
+            compute_follow_scroll(400.0, 1.0, 800.0, 0.0, FollowMode::Page, 1.0),
+            None
+        );
+    }
+
+    #[test]
+    fn page_mode_with_nonzero_left_boundary() {
+        // left_boundary=100, viewport_width=800
+        // content_width=700, margin=140
+        // cursor_x=50, 50 < 100+140=240 → should scroll
+        let result = compute_follow_scroll(50.0, 1.0, 800.0, 100.0, FollowMode::Page, 1.0);
+        assert!(result.is_some());
+    }
+}

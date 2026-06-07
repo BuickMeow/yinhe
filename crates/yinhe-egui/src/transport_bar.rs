@@ -28,21 +28,33 @@ struct MenuItem {
     enabled: bool,
 }
 
-pub fn show(
-    ui: &mut egui::Ui,
-    file_loader: &mut FileLoader,
-    toggle_play: &mut bool,
-    pause_return: &mut bool,
-    stop_play: &mut bool,
-    doc: Option<&Document>,
-    cpu_usage: f32,
-    mem_mb: f64,
-    pending_quantize: &mut Option<QuantizePreset>,
-    pending_file_action: &mut Option<FileAction>,
-    follow_mode: &mut FollowMode,
-    show_mem_breakdown: &mut bool,
-) {
-    let has_active = doc.is_some();
+/// Aggregated input for the transport bar — replaces 12 positional parameters.
+pub struct TransportContext<'a> {
+    pub file_loader: &'a mut FileLoader,
+    pub doc: Option<&'a Document>,
+    pub cpu_usage: f32,
+    pub mem_mb: f64,
+    pub follow_mode: &'a mut FollowMode,
+    pub show_mem_breakdown: &'a mut bool,
+}
+
+/// Output from the transport bar — replaces `&mut bool` out-parameters.
+pub struct TransportResponse {
+    pub toggle_play: bool,
+    pub pause_return: bool,
+    pub stop_play: bool,
+    pub pending_quantize: Option<QuantizePreset>,
+    pub pending_file_action: Option<FileAction>,
+}
+
+pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportResponse {
+    let has_active = ctx.doc.is_some();
+
+    let mut toggle_play = false;
+    let mut pause_return = false;
+    let mut stop_play = false;
+    let mut pending_quantize = None;
+    let mut pending_file_action = None;
 
     egui::Panel::top("transport_bar")
         .frame(egui::Frame {
@@ -72,10 +84,10 @@ pub fn show(
                         .min_size(btn_size)
                         .corner_radius(btn_rounding),
                 );
-                show_file_menu(&file_btn, file_loader, has_active, pending_file_action);
+                show_file_menu(&file_btn, ctx.file_loader, has_active, &mut pending_file_action);
 
                 if has_active {
-                    let is_playing = doc.map(|d| d.playback.is_playing()).unwrap_or(false);
+                    let is_playing = ctx.doc.map(|d| d.playback.is_playing()).unwrap_or(false);
 
                     if ui
                         .add(
@@ -94,9 +106,9 @@ pub fn show(
                         .clicked()
                     {
                         if is_playing {
-                            *pause_return = true;
+                            pause_return = true;
                         } else {
-                            *toggle_play = true;
+                            toggle_play = true;
                         }
                     }
 
@@ -108,23 +120,23 @@ pub fn show(
                         )
                         .clicked()
                     {
-                        *stop_play = true;
+                        stop_play = true;
                     }
 
                     // ── Follow-mode button (cycle: None → Page → Continuous) ──
                     let follow_resp = ui.add(
-                        egui::Button::new(follow_mode.icon().rich_text().size(18.0))
+                        egui::Button::new(ctx.follow_mode.icon().rich_text().size(18.0))
                             .min_size(btn_size)
                             .corner_radius(btn_rounding),
                     );
                     if follow_resp.clicked() {
-                        *follow_mode = follow_mode.next();
+                        *ctx.follow_mode = ctx.follow_mode.next();
                     }
-                    follow_resp.on_hover_text(follow_mode.tooltip());
+                    follow_resp.on_hover_text(ctx.follow_mode.tooltip());
 
                     // ── Quantization preset button + popup ──
-                    let ppq = doc.map(|d| d.midi.ticks_per_beat).unwrap_or(480);
-                    let q_label = doc.map(|d| d.quantize.button_text()).unwrap_or_default();
+                    let ppq = ctx.doc.map(|d| d.midi.ticks_per_beat).unwrap_or(480);
+                    let q_label = ctx.doc.map(|d| d.quantize.button_text()).unwrap_or_default();
                     let q_resp = ui.add(
                         egui::Button::new(q_label.as_str())
                             .min_size(egui::vec2(44.0, 32.0))
@@ -134,32 +146,33 @@ pub fn show(
                     egui::Popup::menu(&q_resp).show(|ui| {
                         ui.set_min_width(120.0);
                         for preset in QuantizePreset::ALL {
-                            let active = doc.map(|d| *preset == d.quantize).unwrap_or(false);
+                            let active = ctx.doc.map(|d| *preset == d.quantize).unwrap_or(false);
                             if ui
                                 .add(egui::Button::selectable(active, preset.display_item(ppq)))
                                 .clicked()
                             {
-                                *pending_quantize = Some(*preset);
+                                pending_quantize = Some(*preset);
                                 ui.close();
                             }
                         }
 
                         ui.separator();
 
-                        let is_custom = doc
+                        let is_custom = ctx
+                            .doc
                             .map(|d| matches!(d.quantize, QuantizePreset::Custom(_, _)))
                             .unwrap_or(false);
                         if ui
                             .add(egui::Button::selectable(is_custom, "Custom"))
                             .clicked()
                         {
-                            *pending_quantize = Some(QuantizePreset::Custom(1, 4));
+                            pending_quantize = Some(QuantizePreset::Custom(1, 4));
                             ui.close();
                         }
                     });
 
                     // ── Custom fraction editor (visible only when Custom is selected) ──
-                    if let Some(doc) = doc
+                    if let Some(doc) = ctx.doc
                         && let QuantizePreset::Custom(ref num, ref den) = doc.quantize {
                             let mut edit_num = *num;
                             let mut edit_den = *den;
@@ -190,15 +203,21 @@ pub fn show(
                                 || den_resp.changed()
                             {
                                 let edit_den = edit_den.max(1);
-                                *pending_quantize =
+                                pending_quantize =
                                     Some(QuantizePreset::Custom(edit_num, edit_den));
                             }
                         }
                 }
 
-                if let Some(doc) = doc {
+                if let Some(doc) = ctx.doc {
                     button_right = Some(ui.cursor().min.x);
-                    timecode_rect = Some(show_timecode_display(ui, doc, cpu_usage, mem_mb, show_mem_breakdown));
+                    timecode_rect = Some(show_timecode_display(
+                        ui,
+                        doc,
+                        ctx.cpu_usage,
+                        ctx.mem_mb,
+                        ctx.show_mem_breakdown,
+                    ));
                 }
             });
 
@@ -227,6 +246,14 @@ pub fn show(
                 }
             }
         });
+
+    TransportResponse {
+        toggle_play,
+        pause_return,
+        stop_play,
+        pending_quantize,
+        pending_file_action,
+    }
 }
 
 /// Show the file menu popup. Extracted from `show` for readability.

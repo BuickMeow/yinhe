@@ -254,3 +254,89 @@ unsafe impl GlobalAlloc for TaggedAlloc {
         ptr
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn round_up_boundary_cases() {
+        assert_eq!(round_up(0, 16), 0);
+        assert_eq!(round_up(1, 16), 16);
+        assert_eq!(round_up(16, 16), 16);
+        assert_eq!(round_up(17, 16), 32);
+    }
+
+    #[test]
+    fn round_up_small_aligns() {
+        assert_eq!(round_up(0, 1), 0);
+        assert_eq!(round_up(1, 1), 1);
+        assert_eq!(round_up(2, 1), 2);
+        assert_eq!(round_up(3, 2), 4);
+        assert_eq!(round_up(3, 4), 4);
+        assert_eq!(round_up(5, 8), 8);
+    }
+
+    #[test]
+    fn user_offset_minimum_and_alignment() {
+        for &align in &[1, 2, 4, 8, 16, 32, 64, 128] {
+            let off = user_offset(align);
+            // Must have room for Header + OFFSET_BACKUP_SIZE
+            assert!(
+                off >= HEADER_SIZE + OFFSET_BACKUP_SIZE,
+                "user_offset({}) = {} < HEADER_SIZE + OFFSET_BACKUP_SIZE = {}",
+                align,
+                off,
+                HEADER_SIZE + OFFSET_BACKUP_SIZE
+            );
+            // Must be a multiple of the requested alignment
+            assert_eq!(
+                off % align,
+                0,
+                "user_offset({}) = {} not aligned",
+                align,
+                off
+            );
+        }
+    }
+
+    #[test]
+    fn snapshot_capture_does_not_panic() {
+        let snap = Snapshot::capture();
+        let _ = snap.total_tracked();
+        let _ = snap.total_with_gpu();
+        let _ = snap.total_mb();
+        let _ = snap.total_with_gpu_mb();
+        let _ = snap.gpu_mb();
+    }
+
+    #[test]
+    fn alloc_tag_all_names_nonempty() {
+        for &tag in &AllocTag::ALL {
+            assert!(!tag.name().is_empty(), "tag {:?} has empty name", tag);
+        }
+    }
+
+    #[test]
+    fn with_tag_sets_and_restores() {
+        let original = current_tag();
+        let result = with_tag(AllocTag::Audio, || {
+            assert_eq!(current_tag(), AllocTag::Audio);
+            "done"
+        });
+        assert_eq!(result, "done");
+        assert_eq!(current_tag(), original);
+    }
+
+    #[test]
+    fn with_tag_nested() {
+        let original = current_tag();
+        with_tag(AllocTag::Gpu, || {
+            with_tag(AllocTag::Audio, || {
+                assert_eq!(current_tag(), AllocTag::Audio);
+            });
+            assert_eq!(current_tag(), AllocTag::Gpu);
+        });
+        assert_eq!(current_tag(), original);
+    }
+}

@@ -69,7 +69,6 @@ impl AudioHandle {
 pub struct CpalAudioHandle {
     pub handle: AudioHandle,
     pub sample_rate: u32,
-    pub num_channels: u32,
     pub(crate) _stream: cpal::Stream,
 }
 
@@ -193,7 +192,6 @@ pub fn spawn_cpal_audio(
             duration_samples,
         },
         sample_rate,
-        num_channels,
         _stream: stream,
     })
 }

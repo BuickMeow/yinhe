@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use eframe::egui;
@@ -20,25 +21,59 @@ pub struct AudioSettings {
     available_sample_rates: Vec<u32>,
 }
 
+/// Query the default output device for its default sample rate and all
+/// supported sample rates. Falls back to `(48000, [44100, 48000, 96000])`
+/// when no device is available.
+fn discover_sample_rates() -> (u32, Vec<u32>) {
+    let host = cpal::default_host();
+    let Some(device) = host.default_output_device() else {
+        return (48000, vec![44100, 48000, 96000]);
+    };
+
+    let default_rate = device
+        .default_output_config()
+        .ok()
+        .map(|cfg| cfg.sample_rate())
+        .unwrap_or(48000);
+
+    let supported_rates: Vec<u32> = device
+        .supported_output_configs()
+        .ok()
+        .map(|configs| {
+            configs
+                .flat_map(|cfg| {
+                    let min = cfg.min_sample_rate();
+                    let max = cfg.max_sample_rate();
+                    (min..=max).step_by(1000)
+                })
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect()
+        })
+        .unwrap_or_default();
+
+    if supported_rates.is_empty() {
+        (default_rate, vec![default_rate])
+    } else {
+        (default_rate, supported_rates)
+    }
+}
+
 impl Default for AudioSettings {
     fn default() -> Self {
         let available_devices = list_output_devices();
         let default_device = cpal::default_host()
             .default_output_device()
             .and_then(|d| d.name().ok());
-        let sample_rates = cpal::default_host()
-            .default_output_device()
-            .and_then(|d| d.default_output_config().ok())
-            .map(|cfg| vec![cfg.sample_rate()])
-            .unwrap_or_else(|| vec![44100, 48000, 96000]);
+        let (default_rate, available_sample_rates) = discover_sample_rates();
 
         Self {
             output_device_name: default_device,
-            sample_rate: 48000,
+            sample_rate: default_rate,
             default_sf2_path: String::new(),
             show_settings: false,
             available_devices,
-            available_sample_rates: sample_rates,
+            available_sample_rates,
         }
     }
 }
@@ -59,11 +94,13 @@ impl AudioSettings {
                 Ok(json) => match serde_json::from_str::<AudioSettings>(&json) {
                     Ok(mut s) => {
                         s.available_devices = list_output_devices();
-                        s.available_sample_rates = cpal::default_host()
-                            .default_output_device()
-                            .and_then(|d| d.default_output_config().ok())
-                            .map(|cfg| vec![cfg.sample_rate()])
-                            .unwrap_or_else(|| vec![44100, 48000, 96000]);
+                        let (default_rate, available_sample_rates) = discover_sample_rates();
+                        s.available_sample_rates = available_sample_rates;
+                        // Update sample rate to device default if the saved
+                        // value is not in the newly discovered list.
+                        if !s.available_sample_rates.contains(&s.sample_rate) {
+                            s.sample_rate = default_rate;
+                        }
                         return s;
                     }
                     Err(e) => {
@@ -223,6 +260,8 @@ pub fn show(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
             ui.horizontal(|ui| {
                 if ui.button("刷新设备列表").clicked() {
                     settings.available_devices = list_output_devices();
+                    let (_, rates) = discover_sample_rates();
+                    settings.available_sample_rates = rates;
                 }
                 if ui.button("关闭").clicked() {
                     should_close = true;

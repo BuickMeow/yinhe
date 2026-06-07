@@ -223,7 +223,7 @@ impl eframe::App for App {
             }
 
         // ── Keyboard shortcuts ──
-        let (mut toggle_play, mut pause_return, mut stop_play) =
+        let (kb_toggle, kb_pause, kb_stop) =
             self.handle_keyboard_shortcuts(ui);
 
         // ── System resource monitoring ──
@@ -254,29 +254,29 @@ impl eframe::App for App {
         // ── Ensure audio engine is loaded for the active document ──
         self.rebuild_audio_if_needed();
 
-        // ── Handle playback actions ──
-        self.handle_playback(toggle_play, pause_return, stop_play);
-
-        // ── Transport bar ──
-        let mut pending_quantize = None;
-        let mut pending_file_action = None;
+        // ── Transport bar (renders before handle_playback so button clicks
+        //    are processed in the same frame as keyboard shortcuts) ──
         let active_doc = self.active_doc.and_then(|idx| self.documents.get(idx));
-        transport_bar::show(
+        let transport_response = transport_bar::show(
             ui,
-            &mut self.file_loader,
-            &mut toggle_play,
-            &mut pause_return,
-            &mut stop_play,
-            active_doc,
-            self.sys_monitor.cpu_usage,
-            self.sys_monitor.mem_mb,
-            &mut pending_quantize,
-            &mut pending_file_action,
-            &mut self.follow_mode,
-            &mut self.show_mem_breakdown,
+            &mut transport_bar::TransportContext {
+                file_loader: &mut self.file_loader,
+                doc: active_doc,
+                cpu_usage: self.sys_monitor.cpu_usage,
+                mem_mb: self.sys_monitor.mem_mb,
+                follow_mode: &mut self.follow_mode,
+                show_mem_breakdown: &mut self.show_mem_breakdown,
+            },
         );
 
-        if let (Some(idx), Some(new_preset)) = (self.active_doc, pending_quantize)
+        // ── Handle playback actions (merge keyboard + transport bar inputs) ──
+        self.handle_playback(
+            kb_toggle || transport_response.toggle_play,
+            kb_pause || transport_response.pause_return,
+            kb_stop || transport_response.stop_play,
+        );
+
+        if let (Some(idx), Some(new_preset)) = (self.active_doc, transport_response.pending_quantize)
             && let Some(doc) = self.documents.get_mut(idx) {
                 doc.quantize = new_preset;
             }
@@ -285,7 +285,7 @@ impl eframe::App for App {
         self.show_memory_breakdown(ui);
 
         // ── Handle file menu actions ──
-        if let Some(action) = pending_file_action {
+        if let Some(action) = transport_response.pending_file_action {
             self.handle_file_action(action, ui.ctx());
         }
 
