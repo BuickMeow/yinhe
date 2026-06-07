@@ -2,7 +2,13 @@ use xsynth_core::channel::{ChannelAudioEvent, ChannelEvent, ControlEvent};
 use xsynth_core::channel_group::{ChannelGroup, SynthEvent};
 
 /// MIDI channel state for chase (restoring controller values after seek).
-#[derive(Clone, Copy, Default)]
+///
+/// Default values match xsynth-core's internal defaults and GM spec:
+///   - Volume 127, Pan 64, Expression 127
+///   - Pitch bend sensitivity 2 semitones (RPN 0 + DataEntry MSB = 2)
+///   - Sustain 0 (damper off), Cutoff 64 (disabled)
+///   - Attack/Release are `None` in xsynth → only sent when MIDI file sets them
+#[derive(Clone, Copy)]
 pub(crate) struct ChannelState {
     pub(crate) bank_msb: u8,
     pub(crate) bank_lsb: u8,
@@ -20,6 +26,33 @@ pub(crate) struct ChannelState {
     pub(crate) rpn_lsb: u8,
     pub(crate) data_entry_msb: u8,
     pub(crate) data_entry_lsb: u8,
+    /// Tracks whether attack/release were explicitly set by MIDI events.
+    /// If false, send_to skips CC 73/72 to avoid overriding xsynth's `None`.
+    pub(crate) env_set: bool,
+}
+
+impl Default for ChannelState {
+    fn default() -> Self {
+        Self {
+            bank_msb: 0,
+            bank_lsb: 0,
+            program: 0,
+            volume: 127,
+            pan: 64,
+            expression: 127,
+            sustain: 0,
+            cutoff: 64,
+            resonance: 0,
+            attack: 0,
+            release: 0,
+            pitch_bend: 0.0,
+            rpn_msb: 0,
+            rpn_lsb: 0,
+            data_entry_msb: 2,
+            data_entry_lsb: 0,
+            env_set: false,
+        }
+    }
 }
 
 impl ChannelState {
@@ -35,8 +68,14 @@ impl ChannelState {
                 38 => self.data_entry_lsb = *val,
                 64 => self.sustain = *val,
                 71 => self.resonance = *val,
-                72 => self.release = *val,
-                73 => self.attack = *val,
+                72 => {
+                    self.release = *val;
+                    self.env_set = true;
+                }
+                73 => {
+                    self.attack = *val;
+                    self.env_set = true;
+                }
                 74 => self.cutoff = *val,
                 100 => self.rpn_lsb = *val,
                 101 => self.rpn_msb = *val,
@@ -89,14 +128,16 @@ impl ChannelState {
             64,
             self.sustain,
         )));
-        send(ChannelAudioEvent::Control(ControlEvent::Raw(
-            73,
-            self.attack,
-        )));
-        send(ChannelAudioEvent::Control(ControlEvent::Raw(
-            72,
-            self.release,
-        )));
+        if self.env_set {
+            send(ChannelAudioEvent::Control(ControlEvent::Raw(
+                73,
+                self.attack,
+            )));
+            send(ChannelAudioEvent::Control(ControlEvent::Raw(
+                72,
+                self.release,
+            )));
+        }
         send(ChannelAudioEvent::Control(ControlEvent::Raw(
             74,
             self.cutoff,
@@ -146,9 +187,12 @@ mod tests {
     #[test]
     fn test_channel_state_default() {
         let state = ChannelState::default();
-        assert_eq!(state.volume, 0);
-        assert_eq!(state.pan, 0);
+        assert_eq!(state.volume, 127);
+        assert_eq!(state.pan, 64);
+        assert_eq!(state.expression, 127);
         assert_eq!(state.program, 0);
+        assert_eq!(state.data_entry_msb, 2);
+        assert_eq!(state.env_set, false);
         assert!((state.pitch_bend).abs() < f32::EPSILON);
     }
 }

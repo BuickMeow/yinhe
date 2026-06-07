@@ -6,6 +6,9 @@ edition = "2024"
 [dependencies]
 xsynth-core = "0.4"
 xsynth-soundfonts = "0.4"
+#xsynth-core = { git = "https://github.com/buickmeow/xsynth" }
+#xsynth-soundfonts = { git = "https://github.com/buickmeow/xsynth" }
+
 cpal = "0.17"
 hound = "3.5"
 crossbeam-channel = "0.5"
