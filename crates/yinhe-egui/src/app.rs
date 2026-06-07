@@ -1,19 +1,15 @@
-use std::sync::Arc;
-use std::time::Instant;
-
 use eframe::egui;
 
 use crate::document::Document;
 use crate::file_loader::{FileLoader, MidiLoadResult};
 use crate::title_bar;
-use sysinfo::{Pid, ProcessesToUpdate, System};
 
 use crate::arrange;
 use crate::mode_bar::{self, ViewMode};
 use crate::piano_view;
 use crate::render_context::RenderContext;
+use crate::system_monitor::SystemMonitor;
 use crate::transport_bar;
-use yinhe_memtrace::{AllocTag, Snapshot};
 
 // ── Panic-safe take guard ──
 /// Restores a taken value back into its slot on drop, preventing data loss
@@ -47,21 +43,21 @@ impl<'a, T> Drop for ReplaceGuard<'a, T> {
 
 pub struct App {
     // ── Pianoroll (shared GPU resources) ──
-    render_ctx: RenderContext,
+    pub(crate) render_ctx: RenderContext,
     pianoroll: yinhe_pianoroll::PianorollRenderer,
 
     // ── Arrangement (shared GPU resources) ──
-    arr_render_ctx: RenderContext,
+    pub(crate) arr_render_ctx: RenderContext,
     arr_renderer: yinhe_arrangement::PianorollRenderer,
     arr_split: f32,
 
     // ── Multi-document state ──
-    documents: Vec<Document>,
-    active_doc: Option<usize>,
+    pub(crate) documents: Vec<Document>,
+    pub(crate) active_doc: Option<usize>,
 
     // ── Shared state ──
     transport_panel_width: f32,
-    file_loader: FileLoader,
+    pub(crate) file_loader: FileLoader,
 
     // ── View mode ──
     view_mode: ViewMode,
@@ -82,21 +78,17 @@ pub struct App {
     follow_mode: crate::view_interaction::FollowMode,
 
     // ── Audio engine ──
-    audio: Option<yinhe_audio::CpalAudioHandle>,
-    audio_active_doc: Option<usize>,
+    pub(crate) audio: Option<yinhe_audio::CpalAudioHandle>,
+    pub(crate) audio_active_doc: Option<usize>,
 
     // ── Settings ──
-    audio_settings: crate::settings::AudioSettings,
+    pub(crate) audio_settings: crate::settings::AudioSettings,
 
     // ── System resource monitoring ──
-    sysinfo: System,
-    self_pid: Option<Pid>,
-    last_sys_refresh: Instant,
-    cpu_usage: f32,
-    mem_mb: f64,
+    pub(crate) sys_monitor: SystemMonitor,
 
     // ── Memory breakdown popup state ──
-    show_mem_breakdown: bool,
+    pub(crate) show_mem_breakdown: bool,
 }
 
 impl App {
@@ -149,24 +141,9 @@ impl App {
 
             arr_render_ctx,
             arr_renderer: yinhe_arrangement::PianorollRenderer::new(device, queue, format),
-            arr_split: 0.3,
+            arr_split: crate::theme::DEFAULT_ARR_SPLIT,
 
-            documents: {
-                let midi = {
-                    let mut m = yinhe_midi::MidiFile::default();
-                    m.track_ports = vec![0];
-                    m.track_names = vec!["Track 1".to_string()];
-                    m
-                };
-                let track_info_cache = midi.track_info();
-                vec![Document {
-                    midi: Arc::new(midi),
-                    file_name: "Untitled".into(),
-                    track_visible: vec![true],
-                    track_info_cache,
-                    ..Default::default()
-                }]
-            },
+            documents: vec![Document::empty()],
             active_doc: Some(0),
 
             transport_panel_width: 200.0,
@@ -182,8 +159,6 @@ impl App {
             last_cursor_tick: None,
             piano_last_cursor_tick: None,
 
-            sysinfo: System::new(),
-            self_pid: sysinfo::get_current_pid().ok(),
             follow_mode: crate::view_interaction::FollowMode::Page,
 
             audio: None,
@@ -191,9 +166,7 @@ impl App {
 
             audio_settings: crate::settings::AudioSettings::load(),
 
-            last_sys_refresh: Instant::now(),
-            cpu_usage: 0.0,
-            mem_mb: 0.0,
+            sys_monitor: SystemMonitor::new(),
 
             show_mem_breakdown: false,
         }
@@ -201,7 +174,7 @@ impl App {
 
     // ── macOS: reserve_render_targets_for_window_anim has been removed ──
 
-    fn close_document(&mut self, index: usize) {
+    pub(crate) fn close_document(&mut self, index: usize) {
         if index >= self.documents.len() {
             return;
         }
@@ -250,40 +223,11 @@ impl eframe::App for App {
             }
 
         // ── Keyboard shortcuts ──
-        let mut toggle_play = false;
-        let mut pause_return = false;
-        let mut stop_play = false;
-        let is_playing_any = self
-            .audio
-            .as_ref()
-            .map(|a| a.handle.is_playing())
-            .unwrap_or(false);
-        ui.input(|i| {
-            if i.key_pressed(egui::Key::Space) {
-                if is_playing_any {
-                    pause_return = true;
-                } else {
-                    toggle_play = true;
-                }
-            }
-            if i.key_pressed(egui::Key::Escape) {
-                stop_play = true;
-            }
-        });
+        let (mut toggle_play, mut pause_return, mut stop_play) =
+            self.handle_keyboard_shortcuts(ui);
 
         // ── System resource monitoring ──
-        if self.last_sys_refresh.elapsed().as_secs_f32() >= 0.5 {
-            if let Some(pid) = self.self_pid {
-                let _ = self
-                    .sysinfo
-                    .refresh_processes(ProcessesToUpdate::Some(&[pid]), false);
-                if let Some(p) = self.sysinfo.process(pid) {
-                    self.cpu_usage = p.cpu_usage();
-                    self.mem_mb = p.memory() as f64 / 1_048_576.0;
-                }
-            }
-            self.last_sys_refresh = Instant::now();
-        }
+        self.refresh_system_stats();
 
         // ── Poll async MIDI loading ──
         match self.file_loader.poll_midi_loading() {
@@ -297,8 +241,7 @@ impl eframe::App for App {
                     }
                 }
                 self.active_doc = None;
-                self.audio = None;
-                self.audio_active_doc = None;
+                self.teardown_audio();
 
                 let doc = Document::from_midi(&path, midi);
                 let insert_idx = self.documents.len();
@@ -309,104 +252,10 @@ impl eframe::App for App {
         }
 
         // ── Ensure audio engine is loaded for the active document ──
-        if let Some(idx) = self.active_doc {
-            let needs_rebuild = self.audio_active_doc != Some(idx) || self.audio.is_none();
-
-            if needs_rebuild {
-                // Drop old audio (stops cpal stream, frees engine)
-                self.audio = None;
-
-                let doc = &self.documents[idx];
-                let sr = self.audio_settings.sample_rate;
-                let (num_ch, active_mask) = yinhe_audio::channels_for_midi(&doc.midi);
-
-                match yinhe_audio::spawn_cpal_audio(sr, num_ch, active_mask) {
-                    Ok(audio) => {
-                        // Load MIDI
-                        audio.handle.send(yinhe_audio::AudioCommand::LoadMidi {
-                            midi: Arc::clone(&doc.midi),
-                        });
-                        // Load SoundFont
-                        let sf_path = if !self.audio_settings.default_sf2_path.is_empty() {
-                            self.audio_settings.default_sf2_path.clone()
-                        } else {
-                            let default_sf2 = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                                .join("../assets/GeneralUser GS v1.472.sf2");
-                            default_sf2.to_string_lossy().to_string()
-                        };
-                        let sf = std::path::Path::new(&sf_path);
-                        if sf.exists() {
-                            let num_ports = (num_ch / 16) as u8;
-                            for port in 0..num_ports {
-                                audio.handle.send(yinhe_audio::AudioCommand::LoadSoundFont {
-                                    port,
-                                    paths: vec![sf_path.clone()],
-                                });
-                            }
-                        }
-                        self.audio = Some(audio);
-                        self.audio_active_doc = Some(idx);
-                    }
-                    Err(e) => {
-                        eprintln!("Failed to create audio: {}", e);
-                    }
-                }
-            }
-        }
+        self.rebuild_audio_if_needed();
 
         // ── Handle playback actions ──
-        if let (Some(idx), Some(audio)) = (self.active_doc, &self.audio) {
-            let doc = &mut self.documents[idx];
-            let handle = &audio.handle;
-
-            if toggle_play {
-                if handle.is_playing() {
-                    handle.send(yinhe_audio::AudioCommand::Pause);
-                    let sample = handle.sample_position();
-                    let time = sample as f64 / audio.sample_rate as f64;
-                    doc.cursor_tick = Some(doc.midi.tick_at_time(time));
-                    doc.playback.stop();
-                } else {
-                    let tick = doc.cursor_tick.unwrap_or(0.0);
-                    let cursor_sample = (doc.midi.tick_to_seconds(tick as u64) * audio.sample_rate as f64) as u64;
-                    let engine_sample = handle.sample_position();
-                    // If cursor is at the engine's position, just resume (no seek)
-                    if cursor_sample.abs_diff(engine_sample) < (audio.sample_rate as u64 / 10) {
-                        handle.send(yinhe_audio::AudioCommand::Resume);
-                    } else {
-                        handle.send(yinhe_audio::AudioCommand::Play { from_sample: cursor_sample });
-                    }
-                    doc.playback.toggle_play(tick, &doc.midi);
-                }
-            }
-            if pause_return {
-                handle.send(yinhe_audio::AudioCommand::Pause);
-                let sample = handle.sample_position();
-                let time = sample as f64 / audio.sample_rate as f64;
-                doc.cursor_tick = Some(doc.midi.tick_at_time(time));
-                doc.playback.stop();
-            }
-            if stop_play {
-                handle.send(yinhe_audio::AudioCommand::Stop);
-                doc.cursor_tick = Some(0.0);
-                doc.playback.stop();
-            }
-
-            // Sync cursor from audio position during playback
-            if handle.is_playing() {
-                let sample = handle.sample_position();
-                let time = sample as f64 / audio.sample_rate as f64;
-                let tick = doc.midi.tick_at_time(time);
-                let end_tick = doc.midi.tick_length as f64;
-                if tick >= end_tick {
-                    handle.send(yinhe_audio::AudioCommand::Stop);
-                    doc.cursor_tick = Some(0.0);
-                    doc.playback.stop();
-                } else {
-                    doc.cursor_tick = Some(tick.max(0.0));
-                }
-            }
-        }
+        self.handle_playback(toggle_play, pause_return, stop_play);
 
         // ── Transport bar ──
         let mut pending_quantize = None;
@@ -419,8 +268,8 @@ impl eframe::App for App {
             &mut pause_return,
             &mut stop_play,
             active_doc,
-            self.cpu_usage,
-            self.mem_mb,
+            self.sys_monitor.cpu_usage,
+            self.sys_monitor.mem_mb,
             &mut pending_quantize,
             &mut pending_file_action,
             &mut self.follow_mode,
@@ -433,121 +282,17 @@ impl eframe::App for App {
             }
 
         // ── Memory breakdown popup ──
-        if self.show_mem_breakdown {
-            let snapshot = Snapshot::capture();
-            egui::Window::new("内存占用详情")
-                .id(egui::Id::new("memory_breakdown_window"))
-                .default_size([360.0, 260.0])
-                .collapsible(false)
-                .resizable(false)
-                .show(ui.ctx(), |ui| {
-                    ui.label(format!(
-                        "系统统计总内存: {:.1} MB",
-                        self.mem_mb
-                    ));
-                    ui.label(format!(
-                        "分配器追踪内存: {:.1} MB",
-                        snapshot.total_mb()
-                    ));
-                    ui.label(format!(
-                        "wgpu 显式 GPU 资源: {:.1} MB",
-                        snapshot.gpu_mb()
-                    ));
-
-                    #[cfg(target_os = "macos")]
-                    {
-                        let metal_size = self
-                            .render_ctx
-                            .metal_allocated_size()
-                            .unwrap_or(0)
-                            .saturating_add(
-                                self.arr_render_ctx
-                                    .metal_allocated_size()
-                                    .unwrap_or(0),
-                            );
-                        ui.label(format!(
-                            "Metal 驱动真实显存: {:.1} MB",
-                            metal_size as f64 / 1_048_576.0
-                        ));
-                    }
-
-                    ui.separator();
-
-                    ui.heading("按子系统分类");
-                    egui::Grid::new("mem_breakdown_grid")
-                        .num_columns(2)
-                        .spacing([12.0, 8.0])
-                        .show(ui, |ui| {
-                            for tag in AllocTag::ALL {
-                                if tag == AllocTag::Unknown && snapshot.get(tag) <= 0 {
-                                    continue;
-                                }
-                                ui.label(tag.name());
-                                ui.label(format!("{:.1} MB", snapshot.mb(tag)));
-                                ui.end_row();
-                            }
-                        });
-
-                    ui.separator();
-                    ui.small(
-                        "注：GPU 资源计数反映应用显式创建的 wgpu Texture/Buffer 大小；\
-                         驱动层额外开销（swapchain、depth、pipeline cache 等）\
-                         不纳入此项统计。",
-                    );
-
-                    if ui.button("关闭").clicked() {
-                        self.show_mem_breakdown = false;
-                    }
-                });
-        }
+        self.show_memory_breakdown(ui);
 
         // ── Handle file menu actions ──
         if let Some(action) = pending_file_action {
-            match action {
-                transport_bar::FileAction::NewProject => {
-                    let midi = {
-                        let mut m = yinhe_midi::MidiFile::default();
-                        m.track_ports = vec![0];
-                        m.track_names = vec!["Track 1".to_string()];
-                        m
-                    };
-                    let track_info_cache = midi.track_info();
-                    let doc = Document {
-                        midi: Arc::new(midi),
-                        file_name: "Untitled".into(),
-                        track_info_cache,
-                        track_visible: vec![true],
-                        ..Default::default()
-                    };
-                    self.documents.push(doc);
-                    self.active_doc = Some(self.documents.len() - 1);
-                }
-                transport_bar::FileAction::Open => {
-                    self.file_loader.pick_midi_file();
-                }
-                transport_bar::FileAction::CloseDocument => {
-                    if let Some(idx) = self.active_doc {
-                        self.close_document(idx);
-                    }
-                }
-                transport_bar::FileAction::Exit => {
-                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-                }
-                transport_bar::FileAction::Settings => {
-                    self.audio_settings.show_settings = true;
-                }
-                _ => {
-                    // Save, SaveAs, ExportAudio, ExportMidi
-                    // not yet implemented
-                }
-            }
+            self.handle_file_action(action, ui.ctx());
         }
 
         // ── Settings panel ──
         let settings_changed = crate::settings::show(ui, &mut self.audio_settings);
         if settings_changed {
-            self.audio = None;
-            self.audio_active_doc = None;
+            self.teardown_audio();
         }
 
         // ── Bottom mode bar ──
@@ -569,7 +314,7 @@ impl eframe::App for App {
 
             let arr_h = if self.show_transport {
                 if self.show_pianoroll {
-                    (total.y * self.arr_split).max(60.0)
+                    (total.y * self.arr_split).max(crate::theme::MIN_ARR_HEIGHT)
                 } else {
                     total.y
                 }
@@ -634,7 +379,7 @@ impl eframe::App for App {
                     );
                     if h_split_resp.dragged() {
                         let delta = h_split_resp.drag_delta().y;
-                        self.arr_split = ((arr_h + delta) / total.y).clamp(0.1, 0.7);
+                        self.arr_split = ((arr_h + delta) / total.y).clamp(crate::theme::SPLIT_CLAMP_MIN, crate::theme::SPLIT_CLAMP_MAX);
                     }
                     if h_split_resp.hovered() || h_split_resp.dragged() {
                         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);

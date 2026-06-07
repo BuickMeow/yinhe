@@ -47,6 +47,21 @@ impl Default for Document {
 }
 
 impl Document {
+    /// Create a new empty "Untitled" document with a default single-track MIDI.
+    pub fn empty() -> Self {
+        let mut m = yinhe_midi::MidiFile::default();
+        m.track_ports = vec![0];
+        m.track_names = vec!["Track 1".to_string()];
+        let track_info_cache = m.track_info();
+        Document {
+            midi: Arc::new(m),
+            file_name: "Untitled".into(),
+            track_visible: vec![true],
+            track_info_cache,
+            ..Default::default()
+        }
+    }
+
     pub fn track_colors(&self) -> &[[f32; 3]] {
         &self.track_colors_cache
     }

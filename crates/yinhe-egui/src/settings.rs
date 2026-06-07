@@ -67,11 +67,11 @@ impl AudioSettings {
                         return s;
                     }
                     Err(e) => {
-                        eprintln!("Failed to parse settings: {}", e);
+                        tracing::warn!("Failed to parse settings: {}", e);
                     }
                 },
                 Err(e) => {
-                    eprintln!("Failed to read settings file: {}", e);
+                    tracing::warn!("Failed to read settings file: {}", e);
                 }
             }
         }
@@ -83,11 +83,11 @@ impl AudioSettings {
         match serde_json::to_string_pretty(self) {
             Ok(json) => {
                 if let Err(e) = std::fs::write(&path, json) {
-                    eprintln!("Failed to save settings: {}", e);
+                    tracing::error!("Failed to save settings: {}", e);
                 }
             }
             Err(e) => {
-                eprintln!("Failed to serialize settings: {}", e);
+                tracing::error!("Failed to serialize settings: {}", e);
             }
         }
     }

@@ -275,7 +275,7 @@ fn paint_window_buttons(ui: &mut egui::Ui, rects: (egui::Rect, egui::Rect, egui:
     let close_hover = close_rect.contains(hover_pos);
     if close_hover {
         ui.painter()
-            .rect_filled(close_rect, 0.0, egui::Color32::from_rgb(200, 50, 50));
+            .rect_filled(close_rect, 0.0, crate::theme::DANGER_HOVER);
     }
     ui.painter().text(
         close_rect.center(),

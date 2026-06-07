@@ -8,6 +8,39 @@ pub enum ViewMode {
     Edit,
 }
 
+fn mode_button(
+    ui: &mut egui::Ui,
+    label: &str,
+    is_selected: bool,
+    on_click: impl FnOnce(),
+) {
+    let resp = ui.add(
+        egui::Label::new(
+            egui::RichText::new(label)
+                .size(crate::theme::MODE_LABEL_FONT)
+                .color(if is_selected {
+                    crate::theme::ACCENT_ACTIVE
+                } else {
+                    egui::Color32::GRAY
+                }),
+        )
+        .sense(egui::Sense::click())
+        .selectable(false),
+    );
+    if !is_selected && resp.hovered() {
+        ui.painter().text(
+            resp.rect.center(),
+            egui::Align2::CENTER_CENTER,
+            label,
+            egui::FontId::proportional(crate::theme::MODE_LABEL_FONT),
+            egui::Color32::WHITE,
+        );
+    }
+    if resp.clicked() {
+        on_click();
+    }
+}
+
 pub fn show(
     ui: &mut egui::Ui,
     view_mode: &mut ViewMode,
@@ -23,99 +56,29 @@ pub fn show(
         })
         .show_inside(ui, |ui| {
             ui.horizontal(|ui| {
-                let active_color = crate::theme::ACCENT_ACTIVE;
-                let inactive_color = egui::Color32::GRAY;
-                let font_size = 9.5;
-
                 ui.add_space(2.0);
 
-                // ── ARRANGE ──
-                let arrange_sel = *view_mode == ViewMode::Arrange;
-                let arrange_resp = ui.add(
-                    egui::Label::new(egui::RichText::new("ARRANGE").size(font_size).color(
-                        if arrange_sel {
-                            active_color
-                        } else {
-                            inactive_color
-                        },
-                    ))
-                    .sense(egui::Sense::click())
-                    .selectable(false),
-                );
-                if !arrange_sel && arrange_resp.hovered() {
-                    ui.painter().text(
-                        arrange_resp.rect.center(),
-                        egui::Align2::CENTER_CENTER,
-                        "ARRANGE",
-                        egui::FontId::proportional(font_size),
-                        egui::Color32::WHITE,
-                    );
-                }
-                if arrange_resp.clicked() {
+                mode_button(ui, "ARRANGE", *view_mode == ViewMode::Arrange, || {
                     *view_mode = ViewMode::Arrange;
                     *show_transport = true;
                     *show_pianoroll = *show_pianoroll_in_arrange;
-                }
+                });
 
                 ui.add_space(2.0);
 
-                // ── MIX ──
-                let mix_sel = *view_mode == ViewMode::Mix;
-                let mix_resp = ui.add(
-                    egui::Label::new(egui::RichText::new("MIX").size(font_size).color(
-                        if mix_sel {
-                            active_color
-                        } else {
-                            inactive_color
-                        },
-                    ))
-                    .sense(egui::Sense::click())
-                    .selectable(false),
-                );
-                if !mix_sel && mix_resp.hovered() {
-                    ui.painter().text(
-                        mix_resp.rect.center(),
-                        egui::Align2::CENTER_CENTER,
-                        "MIX",
-                        egui::FontId::proportional(font_size),
-                        egui::Color32::WHITE,
-                    );
-                }
-                if mix_resp.clicked() {
+                mode_button(ui, "MIX", *view_mode == ViewMode::Mix, || {
                     *view_mode = ViewMode::Mix;
                     *show_transport = false;
                     *show_pianoroll = false;
-                }
+                });
 
                 ui.add_space(2.0);
 
-                // ── EDIT ──
-                let edit_sel = *view_mode == ViewMode::Edit;
-                let edit_resp = ui.add(
-                    egui::Label::new(egui::RichText::new("EDIT").size(font_size).color(
-                        if edit_sel {
-                            active_color
-                        } else {
-                            inactive_color
-                        },
-                    ))
-                    .sense(egui::Sense::click())
-                    .selectable(false),
-                );
-                if !edit_sel && edit_resp.hovered() {
-                    ui.painter().text(
-                        edit_resp.rect.center(),
-                        egui::Align2::CENTER_CENTER,
-                        "EDIT",
-                        egui::FontId::proportional(font_size),
-                        egui::Color32::WHITE,
-                    );
-                }
-                if edit_resp.clicked() {
+                mode_button(ui, "EDIT", *view_mode == ViewMode::Edit, || {
                     *view_mode = ViewMode::Edit;
                     *show_transport = false;
                     *show_pianoroll = true;
-                }
+                });
 
                 // ── Piano roll toggle ──
                 if *view_mode == ViewMode::Arrange {
@@ -124,9 +87,9 @@ pub fn show(
                     ui.add_space(6.0);
 
                     let piano_color = if *show_pianoroll_in_arrange {
-                        active_color
+                        crate::theme::ACCENT_ACTIVE
                     } else {
-                        inactive_color
+                        egui::Color32::GRAY
                     };
                     let piano_resp = ui.add(
                         egui::Label::new(ICON_PIANO.rich_text().size(14.0).color(piano_color))

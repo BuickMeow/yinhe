@@ -5,7 +5,8 @@ use yinhe_types::TimeSigEvent;
 use crate::quantize::QuantizePreset;
 
 /// Height of the time ruler band at the top of the pianoroll view.
-const RULER_H: f32 = 24.0;
+use crate::theme;
+const RULER_H: f32 = theme::RULER_H;
 
 /// Display the pianoroll texture with zoom/pan interaction.
 pub fn show(
@@ -60,27 +61,16 @@ pub fn show(
         && is_playing
         && *follow_mode != super::view_interaction::FollowMode::None
     {
-        let cursor_x = view.tick_to_x(ct);
-        let right_edge = w as f32;
-        let kb_w = view.keyboard_width();
-        match *follow_mode {
-            super::view_interaction::FollowMode::Page => {
-                let margin = (right_edge - kb_w) * 0.2;
-                if cursor_x > right_edge - margin || cursor_x < kb_w {
-                    view.base.scroll_x =
-                        (ct as f32 * view.base.pixels_per_tick) - (right_edge - kb_w) * 0.5;
-                    view.clamp_scroll(w as f32, h as f32, total_ticks);
-                }
-            }
-            super::view_interaction::FollowMode::Continuous => {
-                // Cursor glued just inside the leftmost edge (1px inset
-                // avoids GPU clip-boundary flicker).  Use f32 arithmetic
-                // to match the GPU rendering path exactly.
-                let target = ct as f32 * view.base.pixels_per_tick;
-                view.base.scroll_x = target - 1.0;
-                view.clamp_scroll(w as f32, h as f32, total_ticks);
-            }
-            super::view_interaction::FollowMode::None => unreachable!(),
+        if let Some(new_scroll_x) = super::view_interaction::compute_follow_scroll(
+            ct,
+            view.base.pixels_per_tick,
+            w as f32,
+            view.keyboard_width(),
+            *follow_mode,
+            1.0,
+        ) {
+            view.base.scroll_x = new_scroll_x;
+            view.clamp_scroll(w as f32, h as f32, total_ticks);
         }
     }
 
@@ -116,7 +106,7 @@ pub fn show(
         if handle_resp.dragged() {
             let delta = handle_resp.drag_delta().x;
             let old_kb = view.keyboard_width();
-            let new_kb = (old_kb + delta).clamp(30.0, rect.width() * 0.4);
+            let new_kb = (old_kb + delta).clamp(crate::theme::MIN_KEYBOARD_WIDTH, rect.width() * crate::theme::MAX_KEYBOARD_RATIO);
 
             // Keep scrollbar thumb visually in sync with the content area by
             // adjusting scroll_x so that the thumb's pixel offset within the

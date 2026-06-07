@@ -113,6 +113,40 @@ pub(crate) fn total_ticks_padded(tick_length: u64) -> f64 {
     }
 }
 
+/// Apply cursor-follow scrolling during playback.
+///
+/// Returns the new `scroll_x` if the view should scroll, or `None` if no
+/// scroll is needed (mode is `None` or cursor is within the safe margin).
+///
+/// - `left_boundary`: left content edge in pixels (keyboard_width for piano, 0.0 for arrangement)
+/// - `continuous_inset`: pixels to inset the cursor in Continuous mode (1.0 for piano, 0.01 for arrangement)
+pub(crate) fn compute_follow_scroll(
+    cursor_tick: f64,
+    pixels_per_tick: f32,
+    viewport_width: f32,
+    left_boundary: f32,
+    follow_mode: FollowMode,
+    continuous_inset: f32,
+) -> Option<f32> {
+    match follow_mode {
+        FollowMode::None => None,
+        FollowMode::Page => {
+            let cursor_x = cursor_tick as f32 * pixels_per_tick;
+            let content_width = viewport_width - left_boundary;
+            let margin = content_width * 0.2;
+            if cursor_x > viewport_width - margin || cursor_x < left_boundary + margin {
+                Some((cursor_tick as f32 * pixels_per_tick) - content_width * 0.5)
+            } else {
+                None
+            }
+        }
+        FollowMode::Continuous => {
+            let target = cursor_tick as f32 * pixels_per_tick;
+            Some(target - continuous_inset)
+        }
+    }
+}
+
 // ── Input handling ──
 
 /// Handle zoom/pan/cursor input for a view that implements ViewInteraction.

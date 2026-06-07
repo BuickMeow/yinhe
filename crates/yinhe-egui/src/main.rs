@@ -4,8 +4,10 @@ use yinhe_memtrace::TaggedAlloc;
 static GLOBAL_ALLOC: TaggedAlloc = TaggedAlloc;
 
 mod app;
+mod app_actions;
 mod arrange;
 mod arrangement_view_ui;
+mod audio_controller;
 mod document;
 mod file_loader;
 mod loading;
@@ -17,6 +19,7 @@ mod quantize;
 mod render_context;
 mod scrollbar;
 mod settings;
+mod system_monitor;
 mod theme;
 mod time_format;
 mod time_ruler;

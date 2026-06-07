@@ -83,25 +83,16 @@ pub fn show(
         && is_playing
         && *follow_mode != crate::view_interaction::FollowMode::None
     {
-        let cursor_x = view.tick_to_x(ct);
-        let right_edge = w as f32;
-        match *follow_mode {
-            crate::view_interaction::FollowMode::Page => {
-                let margin = right_edge * 0.2;
-                if cursor_x > right_edge - margin || cursor_x < 0.0 {
-                    view.base.scroll_x = (ct as f32 * view.base.pixels_per_tick) - right_edge * 0.5;
-                    view.clamp_scroll(w as f32, h as f32, total_ticks, num_tracks);
-                }
-            }
-            crate::view_interaction::FollowMode::Continuous => {
-                // Cursor glued just inside the leftmost edge (1px inset
-                // avoids GPU clip-boundary flicker).  Use f32 arithmetic
-                // to match the GPU rendering path exactly.
-                let target = ct as f32 * view.base.pixels_per_tick;
-                view.base.scroll_x = target - 0.01;
-                view.clamp_scroll(w as f32, h as f32, total_ticks, num_tracks);
-            }
-            crate::view_interaction::FollowMode::None => unreachable!(),
+        if let Some(new_scroll_x) = crate::view_interaction::compute_follow_scroll(
+            ct,
+            view.base.pixels_per_tick,
+            w as f32,
+            0.0,
+            *follow_mode,
+            0.01,
+        ) {
+            view.base.scroll_x = new_scroll_x;
+            view.clamp_scroll(w as f32, h as f32, total_ticks, num_tracks);
         }
     }
 

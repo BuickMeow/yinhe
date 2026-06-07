@@ -46,7 +46,7 @@ pub fn show(
 
     egui::Panel::top("transport_bar")
         .frame(egui::Frame {
-            fill: egui::Color32::from_rgb(25, 25, 28),
+            fill: crate::theme::APP_BG,
             inner_margin: egui::Margin {
                 left: 8,
                 right: 8,
