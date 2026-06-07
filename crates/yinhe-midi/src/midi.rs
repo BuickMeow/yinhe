@@ -2,6 +2,7 @@ use crate::TempoSegment;
 use crate::error::MidiError;
 use crate::parser::MidiParser;
 use crate::time::{DEFAULT_BPM, DEFAULT_MPQ, bpm_from_mpq, seconds_to_ticks};
+use std::collections::HashMap;
 use std::path::Path;
 
 pub use yinhe_types::{MidiControlEvent, Note, TimeSigEvent};
@@ -31,6 +32,8 @@ pub struct MidiFile {
     pub control_events: Vec<MidiControlEvent>,
     /// Scan index for fast visible-note seeking.  Built at load time.
     pub scan_index: Option<yinhe_types::NoteScanIndex>,
+    /// Automation lanes built from control events + velocity data.
+    pub automation_lanes: Vec<yinhe_types::AutomationLane>,
 }
 
 impl Default for MidiFile {
@@ -49,6 +52,7 @@ impl Default for MidiFile {
             time_sig_events: Vec::new(),
             control_events: Vec::new(),
             scan_index: None,
+            automation_lanes: Vec::new(),
         }
     }
 }
@@ -77,6 +81,9 @@ impl yinhe_types::NoteSource for MidiFile {
     }
     fn time_sig_events(&self) -> &[TimeSigEvent] {
         &self.time_sig_events
+    }
+    fn automation_lanes(&self) -> &[yinhe_types::AutomationLane] {
+        &self.automation_lanes
     }
 }
 
@@ -265,4 +272,89 @@ pub struct TrackInfo {
     pub note_count: u64,
     pub port: u8,
     pub channel: u8,
+}
+
+/// Build automation lanes from control events and note velocity data.
+///
+/// Groups CC events by controller number, normalizes PitchBend values,
+/// and extracts per-note velocity as a separate lane.
+pub(crate) fn build_automation_lanes(
+    control_events: &[MidiControlEvent],
+    key_notes: &[Vec<Note>; 128],
+) -> Vec<yinhe_types::AutomationLane> {
+    use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget};
+
+    let mut lanes: HashMap<AutomationTarget, Vec<AutomationEvent>> = HashMap::new();
+
+    for evt in control_events {
+        match evt {
+            MidiControlEvent::ControlChange {
+                tick,
+                channel,
+                controller,
+                value,
+                track,
+            } => {
+                lanes.entry(AutomationTarget::CC {
+                    controller: *controller,
+                })
+                .or_default()
+                .push(AutomationEvent {
+                    tick: *tick,
+                    value: *value as u16,
+                    channel: *channel,
+                    track: *track,
+                });
+            }
+            MidiControlEvent::PitchBend {
+                tick,
+                channel,
+                value,
+                track,
+            } => {
+                // value is i16 (-8192..8191) → normalize to u16 (0..16383)
+                let normalized = (*value + 8192) as u16;
+                lanes.entry(AutomationTarget::PitchBend)
+                    .or_default()
+                    .push(AutomationEvent {
+                        tick: *tick,
+                        value: normalized,
+                        channel: *channel,
+                        track: *track,
+                    });
+            }
+            // ProgramChange is not treated as automation data.
+            _ => {}
+        }
+    }
+
+    // Extract velocity data from notes.
+    let mut velocity_events: Vec<AutomationEvent> = Vec::new();
+    for notes in key_notes.iter() {
+        for note in notes {
+            velocity_events.push(AutomationEvent {
+                tick: note.start_tick,
+                value: note.velocity as u16,
+                channel: note.channel,
+                track: note.track,
+            });
+        }
+    }
+    if !velocity_events.is_empty() {
+        velocity_events.sort_by_key(|e| e.tick);
+        lanes.insert(AutomationTarget::Velocity, velocity_events);
+    }
+
+    // Convert HashMap into sorted Vec<AutomationLane>.
+    let mut result: Vec<AutomationLane> = lanes
+        .into_iter()
+        .map(|(target, mut events)| {
+            events.sort_by_key(|e| e.tick);
+            AutomationLane { target, events }
+        })
+        .collect();
+
+    // Sort lanes by target for deterministic ordering.
+    result.sort_by(|a, b| a.target.display_name().cmp(&b.target.display_name()));
+    result
 }

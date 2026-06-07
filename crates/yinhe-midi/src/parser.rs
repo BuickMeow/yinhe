@@ -114,6 +114,10 @@ impl MidiParser {
         // Build scan index for fast note seeking at render time.
         let scan_index = NoteScanIndex::build(&key_notes, tick_length);
 
+        // Build automation lanes from control events and note velocity.
+        let automation_lanes =
+            crate::midi::build_automation_lanes(&control_events, &key_notes);
+
         Ok(MidiFile {
             key_notes,
             duration: 0.0, // computed on demand from tick_length
@@ -128,6 +132,7 @@ impl MidiParser {
             track_ports,
             control_events,
             scan_index: Some(scan_index),
+            automation_lanes,
         })
         })
     }
@@ -224,6 +229,7 @@ mod tests {
             track_ports: Vec::new(),
             control_events: Vec::new(),
             scan_index: None,
+            automation_lanes: Vec::new(),
         };
         assert!((midi.tick_at_time(1.0) - 960.0).abs() < 1e-6);
         assert!((midi.tick_at_time(0.5) - 480.0).abs() < 1e-6);
@@ -256,6 +262,7 @@ mod tests {
             track_ports: Vec::new(),
             control_events: Vec::new(),
             scan_index: None,
+            automation_lanes: Vec::new(),
         };
         assert!((midi.tick_at_time(0.5) - 480.0).abs() < 1e-6);
         assert!((midi.tick_at_time(1.0) - 1440.0).abs() < 1e-6);

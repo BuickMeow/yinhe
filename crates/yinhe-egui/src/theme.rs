@@ -72,6 +72,10 @@ pub const MAX_KEYBOARD_RATIO: f32 = 0.4;
 pub const WHEEL_SCROLL_SPEED: f32 = 5000.0;
 pub const NOTE_CURSOR_THRESHOLD: f64 = 0.005;
 
+// ── Automation panel ──
+pub const AUTO_PANEL_SPLIT_H: f32 = 4.0;
+pub const AUTO_PANEL_COMBO_WIDTH_RATIO: f32 = 0.6; // fraction of keyboard_width for combo box
+
 // ── System monitoring ──
 pub const SYS_REFRESH_INTERVAL_SECS: f64 = 0.5;
 pub const MEM_POPUP_SIZE: [f32; 2] = [360.0, 260.0];

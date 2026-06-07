@@ -1,6 +1,8 @@
+use std::sync::Arc;
+
 use eframe::egui;
 
-use yinhe_types::TimeSigEvent;
+use yinhe_types::{AutomationLane, TimeSigEvent};
 
 use crate::quantize::QuantizePreset;
 
@@ -8,7 +10,14 @@ use crate::quantize::QuantizePreset;
 use crate::theme;
 const RULER_H: f32 = theme::RULER_H;
 
+/// Height of the AUTO toggle button strip.
+const TOGGLE_STRIP_H: f32 = 20.0;
+
 /// Display the pianoroll texture with zoom/pan interaction.
+///
+/// When `auto_*` parameters are `Some`, automation panels are rendered between
+/// the pianoroll content and the horizontal scrollbar.
+#[allow(clippy::too_many_arguments)]
 pub fn show(
     ui: &mut egui::Ui,
     available: egui::Vec2,
@@ -25,16 +34,33 @@ pub fn show(
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
     last_cursor_tick: &mut Option<f64>,
     follow_mode: &mut super::view_interaction::FollowMode,
+    // Automation panel data (all-or-nothing)
+    auto_panels: Option<&mut Vec<yinhe_pianoroll::AutomationPanelView>>,
+    auto_renderers: Option<&mut Vec<(yinhe_pianoroll::PianorollRenderer, super::render_context::RenderContext)>>,
+    auto_lanes: Option<&[AutomationLane]>,
+    auto_show: Option<&mut bool>,
+    auto_wgpu_state: Option<&Arc<eframe::egui_wgpu::RenderState>>,
 ) {
     // Sense::hover() — no drag ownership. All drag is handled by dedicated
     // ui.interact calls below, each inside its own push_id scope.
     let (resp, painter) = ui.allocate_painter(available, egui::Sense::hover());
     let rect = resp.rect;
 
-    // Split: ruler band at top (24 px), wgpu content below, scrollbar at bottom
+    // Compute automation panel total height (shrinkable, deducted from pianoroll content).
+    let panels_total_h: f32 = match (&auto_panels, &auto_show) {
+        (Some(panels), Some(show)) if **show => {
+            panels
+                .iter()
+                .map(|p| p.panel_height + crate::automation_panel::SPLIT_H)
+                .sum::<f32>()
+        }
+        _ => 0.0,
+    };
+
+    // Layout: ruler | pianoroll content | automation panels | toggle strip | scrollbar
     let ruler_band_y = rect.min.y;
     let content_y = rect.min.y + RULER_H;
-    let content_h = (rect.height() - RULER_H - super::scrollbar::SCROLLBAR_H).max(0.0);
+    let content_h = (rect.height() - RULER_H - panels_total_h - TOGGLE_STRIP_H - super::scrollbar::SCROLLBAR_H).max(0.0);
     let content_rect = egui::Rect::from_min_max(
         egui::pos2(rect.min.x, content_y),
         egui::pos2(rect.max.x, content_y + content_h),
@@ -188,13 +214,65 @@ pub fn show(
         );
     }
 
-    // ── Horizontal scrollbar (right of keyboard, below content) ──
+    // ── Automation panels (between pianoroll content and scrollbar) ──
+    let panels_y = content_rect.max.y;
+    if let (Some(panels), Some(renderers), Some(lanes), Some(show), Some(wgpu_state)) =
+        (auto_panels, auto_renderers, auto_lanes, auto_show, auto_wgpu_state)
+    {
+        let kb_w = view.keyboard_width();
+
+        // Automation panels
+        let _panels_h = crate::automation_panel::show_panels(
+            ui,
+            panels,
+            renderers,
+            lanes,
+            show,
+            wgpu_state,
+            kb_w,
+            view.base.scroll_x,
+            view.base.pixels_per_tick,
+            rect.max.x,
+            panels_y,
+            midi.and_then(|m| m.ticks_per_beat()),
+            bar_line_data.map(|b| b.1).unwrap_or(4),
+            bar_line_data.map(|b| b.2).unwrap_or(4),
+            bar_line_data.map(|b| b.3).unwrap_or(&[]),
+        );
+
+        // Toggle buttons in keyboard area (below pianoroll, above scrollbar)
+        let toggle_y = panels_y + panels_total_h;
+        let toggle_rect = egui::Rect::from_min_max(
+            egui::pos2(rect.min.x, toggle_y),
+            egui::pos2(rect.min.x + kb_w, toggle_y + TOGGLE_STRIP_H),
+        );
+        ui.painter().rect_filled(toggle_rect, 0.0, theme::APP_BG);
+        ui.allocate_new_ui(egui::UiBuilder::new().max_rect(toggle_rect), |ui| {
+            let mut count = panels.len();
+            crate::automation_panel::show_toggle_buttons(
+                ui,
+                show,
+                &mut count,
+                toggle_rect,
+            );
+            // Add/remove panels to match count
+            while panels.len() < count {
+                panels.push(yinhe_pianoroll::AutomationPanelView::default());
+            }
+            while panels.len() > count {
+                panels.pop();
+            }
+        });
+    }
+
+    // ── Horizontal scrollbar (right of keyboard, below content + panels) ──
     if midi.is_some() {
+        let sb_y = content_rect.max.y + panels_total_h + TOGGLE_STRIP_H;
         let sb_rect = egui::Rect::from_min_max(
-            egui::pos2(rect.min.x + view.keyboard_width(), content_rect.max.y),
+            egui::pos2(rect.min.x + view.keyboard_width(), sb_y),
             egui::pos2(
                 rect.max.x,
-                content_rect.max.y + super::scrollbar::SCROLLBAR_H,
+                sb_y + super::scrollbar::SCROLLBAR_H,
             ),
         );
         ui.push_id("piano_scrollbar", |ui| {

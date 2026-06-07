@@ -24,6 +24,10 @@ pub(crate) struct Document {
     pub pc_map_cache: HashMap<u8, u8>,
     /// Cached track colors (computed once at load time, avoids per-frame allocation).
     pub track_colors_cache: Vec<[f32; 3]>,
+    /// Automation panel view states.
+    pub controller_panels: Vec<yinhe_pianoroll::AutomationPanelView>,
+    /// Whether any automation panels are visible.
+    pub show_controller_panels: bool,
 }
 
 impl Default for Document {
@@ -42,6 +46,8 @@ impl Default for Document {
             track_info_cache: Vec::new(),
             pc_map_cache: HashMap::new(),
             track_colors_cache: Vec::new(),
+            controller_panels: Vec::new(),
+            show_controller_panels: false,
         }
     }
 }
@@ -111,6 +117,8 @@ impl Document {
                 track_info_cache,
                 pc_map_cache,
                 track_colors_cache,
+                controller_panels: Vec::new(),
+                show_controller_panels: false,
             }
         })
     }

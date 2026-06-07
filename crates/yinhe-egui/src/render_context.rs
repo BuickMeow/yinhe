@@ -109,6 +109,56 @@ impl RenderContext {
         }
     }
 
+    /// Create a `RenderContext` from an existing `Arc<RenderState>`.
+    ///
+    /// This is used for automation panels where the device/queue/format are
+    /// derived from an existing `RenderContext` rather than from a
+    /// `CreationContext`.
+    pub fn from_render_state(
+        wgpu_state: Arc<eframe::egui_wgpu::RenderState>,
+        width: u32,
+        height: u32,
+    ) -> Self {
+        let device = &wgpu_state.device;
+        let format = wgpu_state.target_format;
+
+        let device_lost = Arc::new(AtomicBool::new(false));
+        {
+            let flag = Arc::clone(&device_lost);
+            device.set_device_lost_callback(move |reason, msg| {
+                tracing::error!("wgpu device lost: {reason:?} — {msg}");
+                flag.store(true, Ordering::Relaxed);
+            });
+        }
+
+        let (texture, view, texture_id, texture_size_bytes) = Self::create_target(
+            device,
+            &mut wgpu_state.renderer.write(),
+            format,
+            width,
+            height,
+        );
+
+        Self {
+            wgpu_state,
+            texture,
+            view,
+            texture_id,
+            width,
+            height,
+            shrink_to_fit_on_next_size: false,
+            needs_render: true,
+            device_lost,
+            texture_size_bytes,
+        }
+    }
+
+    /// Access the shared wgpu `RenderState` (for creating additional
+    /// `RenderContext`s, e.g. for automation panels).
+    pub fn wgpu_state(&self) -> &Arc<eframe::egui_wgpu::RenderState> {
+        &self.wgpu_state
+    }
+
     fn create_target(
         device: &wgpu::Device,
         egui_renderer: &mut eframe::egui_wgpu::Renderer,

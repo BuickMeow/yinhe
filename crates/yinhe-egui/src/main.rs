@@ -8,6 +8,7 @@ mod app_actions;
 mod arrange;
 mod arrangement_view_ui;
 mod audio_controller;
+mod automation_panel;
 mod document;
 mod file_loader;
 mod loading;

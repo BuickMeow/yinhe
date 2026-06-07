@@ -1,10 +1,12 @@
 //! Core MIDI data types shared across the yinhe workspace.
 
+pub mod automation;
 mod note;
 pub mod palette;
 mod source;
 pub mod view_base;
 
+pub use automation::{AutomationEvent, AutomationLane, AutomationTarget};
 pub use note::{MidiControlEvent, Note, NoteScanIndex, ScanBlock, TimeSigEvent, seek_first_note};
 pub use palette::TRACK_PALETTE;
 pub use source::NoteSource;

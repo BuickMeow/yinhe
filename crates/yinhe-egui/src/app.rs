@@ -51,6 +51,9 @@ pub struct App {
     arr_renderer: yinhe_arrangement::PianorollRenderer,
     arr_split: f32,
 
+    // ── Automation panel GPU resources (per-document, per-panel) ──
+    controller_renderers: Vec<Vec<(yinhe_pianoroll::PianorollRenderer, RenderContext)>>,
+
     // ── Multi-document state ──
     pub(crate) documents: Vec<Document>,
     pub(crate) active_doc: Option<usize>,
@@ -143,6 +146,8 @@ impl App {
             arr_renderer: yinhe_arrangement::PianorollRenderer::new(device, queue, format),
             arr_split: crate::theme::DEFAULT_ARR_SPLIT,
 
+            controller_renderers: Vec::new(),
+
             documents: vec![Document::empty()],
             active_doc: Some(0),
 
@@ -179,6 +184,9 @@ impl App {
             return;
         }
         self.documents.remove(index);
+        if index < self.controller_renderers.len() {
+            self.controller_renderers.remove(index);
+        }
         if self.documents.is_empty() {
             self.active_doc = None;
         } else if let Some(active) = self.active_doc {
@@ -392,6 +400,15 @@ impl eframe::App for App {
                     Some(&*doc.midi as &dyn yinhe_pianoroll::NoteSource);
                 let piano_rect =
                     egui::Rect::from_min_max(egui::pos2(remaining.min.x, bottom_y), remaining.max);
+
+                // Clone wgpu_state for automation panels before closure borrows render_ctx
+                let auto_wgpu_state = self.render_ctx.wgpu_state().clone();
+                let auto_lanes = doc.midi.automation_lanes.clone();
+                // Ensure controller_renderers has an entry for this document
+                while self.controller_renderers.len() <= idx {
+                    self.controller_renderers.push(Vec::new());
+                }
+
                 ui.allocate_new_ui(egui::UiBuilder::new().max_rect(piano_rect), |ui| {
                     piano_view::show(
                         ui,
@@ -414,6 +431,12 @@ impl eframe::App for App {
                         )),
                         &mut self.piano_last_cursor_tick,
                         &mut follow_mode,
+                        // Automation panel data
+                        Some(&mut doc.controller_panels),
+                        Some(&mut self.controller_renderers[idx]),
+                        Some(&auto_lanes),
+                        Some(&mut doc.show_controller_panels),
+                        Some(&auto_wgpu_state),
                     );
                 });
                 // guard drops here → document restored even on panic

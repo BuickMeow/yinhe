@@ -29,6 +29,9 @@ pub(crate) struct ChannelState {
     /// Tracks whether attack/release were explicitly set by MIDI events.
     /// If false, send_to skips CC 73/72 to avoid overriding xsynth's `None`.
     pub(crate) env_set: bool,
+    /// Generic CC values for all 128 controllers.
+    /// Used to chase CC numbers not covered by the specific fields above.
+    pub(crate) cc_values: [u8; 128],
 }
 
 impl Default for ChannelState {
@@ -51,6 +54,7 @@ impl Default for ChannelState {
             data_entry_msb: 2,
             data_entry_lsb: 0,
             env_set: false,
+            cc_values: [0; 128],
         }
     }
 }
@@ -58,29 +62,35 @@ impl Default for ChannelState {
 impl ChannelState {
     pub(crate) fn apply(&mut self, event: &ChannelAudioEvent) {
         match event {
-            ChannelAudioEvent::Control(ControlEvent::Raw(cc, val)) => match cc {
-                0 => self.bank_msb = *val,
-                6 => self.data_entry_msb = *val,
-                7 => self.volume = *val,
-                10 => self.pan = *val,
-                11 => self.expression = *val,
-                32 => self.bank_lsb = *val,
-                38 => self.data_entry_lsb = *val,
-                64 => self.sustain = *val,
-                71 => self.resonance = *val,
-                72 => {
-                    self.release = *val;
-                    self.env_set = true;
+            ChannelAudioEvent::Control(ControlEvent::Raw(cc, val)) => {
+                let cc_idx = *cc as usize;
+                if cc_idx < 128 {
+                    self.cc_values[cc_idx] = *val;
                 }
-                73 => {
-                    self.attack = *val;
-                    self.env_set = true;
+                match cc {
+                    0 => self.bank_msb = *val,
+                    6 => self.data_entry_msb = *val,
+                    7 => self.volume = *val,
+                    10 => self.pan = *val,
+                    11 => self.expression = *val,
+                    32 => self.bank_lsb = *val,
+                    38 => self.data_entry_lsb = *val,
+                    64 => self.sustain = *val,
+                    71 => self.resonance = *val,
+                    72 => {
+                        self.release = *val;
+                        self.env_set = true;
+                    }
+                    73 => {
+                        self.attack = *val;
+                        self.env_set = true;
+                    }
+                    74 => self.cutoff = *val,
+                    100 => self.rpn_lsb = *val,
+                    101 => self.rpn_msb = *val,
+                    _ => {}
                 }
-                74 => self.cutoff = *val,
-                100 => self.rpn_lsb = *val,
-                101 => self.rpn_msb = *val,
-                _ => {}
-            },
+            }
             ChannelAudioEvent::Control(ControlEvent::PitchBendValue(v)) => self.pitch_bend = *v,
             ChannelAudioEvent::ProgramChange(p) => self.program = *p,
             _ => {}
@@ -137,6 +147,17 @@ impl ChannelState {
         send(ChannelAudioEvent::Control(ControlEvent::PitchBendValue(
             self.pitch_bend,
         )));
+
+        // Send generic CC values for controllers not covered by specific fields above.
+        // CCs already sent: 0, 7, 10, 11, 32, 64, 71, 72, 73, 74.
+        // Also skip RPN-related CCs (100, 101, 6, 38) per the comment above.
+        const ALREADY_SENT: [u8; 12] = [0, 6, 7, 10, 11, 32, 38, 64, 71, 72, 73, 74];
+        for cc in 0u8..128u8 {
+            let val = self.cc_values[cc as usize];
+            if val != 0 && !ALREADY_SENT.contains(&cc) && cc != 100 && cc != 101 {
+                send(ChannelAudioEvent::Control(ControlEvent::Raw(cc, val)));
+            }
+        }
     }
 }
 
