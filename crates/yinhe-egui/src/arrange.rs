@@ -129,27 +129,10 @@ pub fn show(
         egui::pos2(arr_rect.min.x + tp_w, arr_rect.min.y),
         egui::pos2(arr_rect.min.x + tp_w + 4.0, arr_rect.max.y),
     );
-    let v_resp = ui.interact(
-        v_handle,
-        ui.id().with("__v_split__"),
-        egui::Sense::click_and_drag(),
-    );
-    let v_hovered = v_resp.hovered() || v_resp.dragged();
-    ui.painter().rect_filled(
-        v_handle,
-        0.0,
-        if v_hovered {
-            crate::theme::V_SPLIT_HOVER
-        } else {
-            crate::theme::V_SPLIT_DEFAULT
-        },
-    );
+    let v_resp = crate::split_handle::vertical(ui, "__v_split__", v_handle);
     if v_resp.dragged() {
         *transport_panel_width =
             (*transport_panel_width + v_resp.drag_delta().x).clamp(60.0, arr_total_w - 60.0);
-    }
-    if v_hovered {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
     }
 
     // ── Arrangement GPU view (below ruler) ──

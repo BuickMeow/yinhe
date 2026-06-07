@@ -20,6 +20,7 @@ mod quantize;
 mod render_context;
 mod scrollbar;
 mod settings;
+mod split_handle;
 mod system_monitor;
 mod theme;
 mod time_format;

@@ -25,7 +25,10 @@ impl<'a, T> ReplaceGuard<'a, T> {
         T: Default,
     {
         let value = std::mem::take(slot);
-        ReplaceGuard { slot, value: Some(value) }
+        ReplaceGuard {
+            slot,
+            value: Some(value),
+        }
     }
 
     fn as_mut(&mut self) -> &mut T {
@@ -222,17 +225,17 @@ impl eframe::App for App {
 
         // ── Defensive: ensure active_doc is always in bounds ──
         if let Some(idx) = self.active_doc
-            && idx >= self.documents.len() {
-                self.active_doc = if self.documents.is_empty() {
-                    None
-                } else {
-                    Some(self.documents.len() - 1)
-                };
-            }
+            && idx >= self.documents.len()
+        {
+            self.active_doc = if self.documents.is_empty() {
+                None
+            } else {
+                Some(self.documents.len() - 1)
+            };
+        }
 
         // ── Keyboard shortcuts ──
-        let (kb_toggle, kb_pause, kb_stop) =
-            self.handle_keyboard_shortcuts(ui);
+        let (kb_toggle, kb_pause, kb_stop) = self.handle_keyboard_shortcuts(ui);
 
         // ── System resource monitoring ──
         self.refresh_system_stats();
@@ -284,10 +287,12 @@ impl eframe::App for App {
             kb_stop || transport_response.stop_play,
         );
 
-        if let (Some(idx), Some(new_preset)) = (self.active_doc, transport_response.pending_quantize)
-            && let Some(doc) = self.documents.get_mut(idx) {
-                doc.quantize = new_preset;
-            }
+        if let (Some(idx), Some(new_preset)) =
+            (self.active_doc, transport_response.pending_quantize)
+            && let Some(doc) = self.documents.get_mut(idx)
+        {
+            doc.quantize = new_preset;
+        }
 
         // ── Memory breakdown popup ──
         self.show_memory_breakdown(ui);
@@ -317,7 +322,11 @@ impl eframe::App for App {
 
         if let Some(idx) = self.active_doc {
             let total = remaining.size();
-            let is_playing = self.audio.as_ref().map(|a| a.handle.is_playing()).unwrap_or(false);
+            let is_playing = self
+                .audio
+                .as_ref()
+                .map(|a| a.handle.is_playing())
+                .unwrap_or(false);
             let mut follow_mode = self.follow_mode;
 
             let arr_h = if self.show_transport {
@@ -365,17 +374,21 @@ impl eframe::App for App {
                 if self.show_transport {
                     let h_split_rect = egui::Rect::from_min_max(
                         egui::pos2(remaining.min.x, remaining.min.y + arr_h),
-                        egui::pos2(remaining.max.x, remaining.min.y + arr_h + crate::theme::SPLIT_GAP),
+                        egui::pos2(
+                            remaining.max.x,
+                            remaining.min.y + arr_h + crate::theme::SPLIT_GAP,
+                        ),
                     );
                     let h_int_rect = egui::Rect::from_min_max(
                         egui::pos2(remaining.min.x, remaining.min.y + arr_h + 0.5),
-                        egui::pos2(remaining.max.x, remaining.min.y + arr_h + crate::theme::SPLIT_GAP),
+                        egui::pos2(
+                            remaining.max.x,
+                            remaining.min.y + arr_h + crate::theme::SPLIT_GAP,
+                        ),
                     );
-                    let h_split_resp = ui.interact(
-                        h_int_rect,
-                        ui.id().with("__h_split__"),
-                        egui::Sense::click_and_drag(),
-                    );
+                    let h_split_resp =
+                        crate::split_handle::horizontal(ui, "__h_split__", h_int_rect);
+                    // Overdraw visual rect — interaction rect is inset 0.5px
                     ui.painter().rect_filled(
                         h_split_rect,
                         0.0,
@@ -387,10 +400,8 @@ impl eframe::App for App {
                     );
                     if h_split_resp.dragged() {
                         let delta = h_split_resp.drag_delta().y;
-                        self.arr_split = ((arr_h + delta) / total.y).clamp(crate::theme::SPLIT_CLAMP_MIN, crate::theme::SPLIT_CLAMP_MAX);
-                    }
-                    if h_split_resp.hovered() || h_split_resp.dragged() {
-                        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+                        self.arr_split = ((arr_h + delta) / total.y)
+                            .clamp(crate::theme::SPLIT_CLAMP_MIN, crate::theme::SPLIT_CLAMP_MAX);
                     }
                 }
 
