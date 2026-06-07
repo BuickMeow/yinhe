@@ -91,22 +91,9 @@ impl ChannelState {
         let mut send = |event: ChannelAudioEvent| {
             cg.send_event(SynthEvent::Channel(ch, ChannelEvent::Audio(event)));
         };
-        send(ChannelAudioEvent::Control(ControlEvent::Raw(
-            101,
-            self.rpn_msb,
-        )));
-        send(ChannelAudioEvent::Control(ControlEvent::Raw(
-            100,
-            self.rpn_lsb,
-        )));
-        send(ChannelAudioEvent::Control(ControlEvent::Raw(
-            6,
-            self.data_entry_msb,
-        )));
-        send(ChannelAudioEvent::Control(ControlEvent::Raw(
-            38,
-            self.data_entry_lsb,
-        )));
+        // NOTE: RPN 相关的 CC (101/100 RPN选择, 6/38 DataEntry) 不发。
+        // MIDI 文件自身包含 RPN 事件时会自然处理；不需要 chase 额外注入。
+        // 见 /Users/jieneng/Documents/GitHub/midirenderer/nezha/crates/nezha-xsynth/src/render.rs
         send(ChannelAudioEvent::Control(ControlEvent::Raw(
             0,
             self.bank_msb,
