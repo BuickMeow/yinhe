@@ -277,6 +277,23 @@ impl AudioEngine {
 
         self.note_cursors = [0; 128];
         self.duration_samples = (midi.tick_to_seconds(midi.tick_length) * sr) as u64;
+
+        // Auto-detect note-drawing tracks: tracks where every note has
+        // velocity ≤ 1 produce no audible sound and should be skipped
+        // by the audio engine to reduce voice count in black MIDI files.
+        let mut track_has_audio = Vec::new();
+        for key in 0..128usize {
+            for note in &midi.key_notes[key] {
+                let t = note.track as usize;
+                if t >= track_has_audio.len() {
+                    track_has_audio.resize(t + 1, false);
+                }
+                if note.velocity > 1 {
+                    track_has_audio[t] = true;
+                }
+            }
+        }
+        self.skip_track = track_has_audio.iter().map(|&has| !has).collect();
     }
 
     fn setup_percussion(&mut self, midi: &MidiFile) {
