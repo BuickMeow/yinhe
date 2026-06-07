@@ -9,7 +9,7 @@ xsynth-soundfonts = "0.4"
 cpal = "0.17"
 hound = "3.5"
 crossbeam-channel = "0.5"
-rtrb = { workspace = true }
+crossbeam-queue = "0.3"
 
 yinhe-types = { path = "../yinhe-types" }
 yinhe-midi = { path = "../yinhe-midi" }

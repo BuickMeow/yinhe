@@ -97,6 +97,17 @@ pub fn channels_for_midi(midi: &MidiFile) -> (u32, Vec<bool>) {
 /// Number of output channels (stereo).
 const STEREO_CHANNELS: usize = 2;
 
+/// Frames rendered per chunk by the pre-render thread.
+const CHUNK_FRAMES: usize = 256;
+/// Total number of f32 samples per chunk.
+const CHUNK_LEN: usize = CHUNK_FRAMES * STEREO_CHANNELS;
+
+/// Number of chunks in the ring buffer (~186ms at 44.1kHz).
+const RING_CHUNKS: usize = 32;
+
+/// Type of a single audio chunk (stack-allocated, no heap allocation).
+pub type AudioChunk = [f32; CHUNK_LEN];
+
 struct SortedCC {
     sample: u64,
     channel: u32,
@@ -550,6 +561,8 @@ pub fn spawn_cpal_audio(
     num_channels: u32,
     active_mask: Vec<bool>,
 ) -> Result<CpalAudioHandle, String> {
+    use crossbeam_queue::ArrayQueue;
+
     let (cmd_tx, cmd_rx) = unbounded::<AudioCommand>();
     let sample_position = Arc::new(AtomicU64::new(0));
     let playing = Arc::new(AtomicBool::new(false));
@@ -559,9 +572,9 @@ pub fn spawn_cpal_audio(
     let pl = Arc::clone(&playing);
     let dur = Arc::clone(&duration_samples);
 
-    // Ring buffer: ~186ms of stereo audio at 44.1kHz
-    const RING_FRAMES: usize = 8192;
-    let (mut producer, mut consumer) = rtrb::RingBuffer::<f32>::new(RING_FRAMES * STEREO_CHANNELS);
+    // Ring buffer: 32 chunks of 256 stereo frames ≈ 186ms at 44.1kHz
+    let ring = Arc::new(ArrayQueue::<AudioChunk>::new(RING_CHUNKS));
+    let ring_clone = Arc::clone(&ring);
 
     let host = cpal::default_host();
     let device = host.default_output_device().ok_or("No output device")?;
@@ -581,8 +594,7 @@ pub fn spawn_cpal_audio(
         .name("yinhe-prerender".into())
         .spawn(move || {
             yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Audio, || {
-                const CHUNK_FRAMES: usize = 256;
-                let chunk_len = CHUNK_FRAMES * STEREO_CHANNELS;
+                let mut buf = [0.0f32; CHUNK_LEN];
                 let mut initialized = false;
 
                 loop {
@@ -610,36 +622,25 @@ pub fn spawn_cpal_audio(
                     }
 
                     if engine.playing && initialized {
-                        let mut buf = vec![0.0f32; chunk_len];
+                        buf.fill(0.0);
                         engine.render(&mut buf);
 
                         sp.store(engine.sample_position, Ordering::Relaxed);
                         pl.store(true, Ordering::Relaxed);
 
-                        // Push samples into ring buffer one by one
-                        for &sample in &buf {
+                        // Push chunk into ring buffer (one memcpy of 2KB, not 512 CAS ops)
+                        if ring_clone.push(buf).is_err() {
+                            // Buffer full — consumer is slow or device underrun.
+                            // Brief yield then try again next iteration;
+                            // meanwhile check for commands.
+                            std::thread::yield_now();
+                            // Check for Pause/Stop
                             loop {
-                                match producer.push(sample) {
-                                    Ok(()) => break,
-                                    Err(rtrb::PushError::Full(_)) => {
-                                        // Check for Pause/Stop while waiting
-                                        loop {
-                                            match cmd_rx.try_recv() {
-                                                Ok(cmd) => engine.handle_command(cmd),
-                                                Err(TryRecvError::Empty) => break,
-                                                Err(TryRecvError::Disconnected) => return,
-                                            }
-                                        }
-                                        if !engine.playing {
-                                            break;
-                                        }
-                                        // Brief yield — consumer will pop soon
-                                        std::thread::yield_now();
-                                    }
+                                match cmd_rx.try_recv() {
+                                    Ok(cmd) => engine.handle_command(cmd),
+                                    Err(TryRecvError::Empty) => break,
+                                    Err(TryRecvError::Disconnected) => return,
                                 }
-                            }
-                            if !engine.playing {
-                                break;
                             }
                         }
                     } else {
@@ -670,13 +671,25 @@ pub fn spawn_cpal_audio(
         })
         .map_err(|e| format!("Failed to spawn pre-render thread: {e}"))?;
 
-    // ── Audio callback: only pop samples from ring buffer (~0.01ms, never misses deadline) ──
+    // ── Audio callback: pop chunks from ring buffer and copy to output ──
     let stream = device
         .build_output_stream(
             &config,
             move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                for d in data.iter_mut() {
-                    *d = consumer.pop().unwrap_or(0.0);
+                let mut offset = 0;
+                while offset < data.len() {
+                    match ring.pop() {
+                        Some(chunk) => {
+                            let n = chunk.len().min(data.len() - offset);
+                            data[offset..offset + n].copy_from_slice(&chunk[..n]);
+                            offset += n;
+                        }
+                        None => {
+                            // Underrun — fill remaining with silence
+                            data[offset..].fill(0.0);
+                            break;
+                        }
+                    }
                 }
             },
             |err| eprintln!("Audio stream error: {}", err),
