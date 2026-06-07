@@ -74,38 +74,36 @@ pub fn show_panels(
     let mut y_offset = content_top_y;
 
     for (i, panel) in panels.iter_mut().enumerate() {
-        // Add split handle before every panel except the first
-        if i > 0 {
-            let handle_rect = egui::Rect::from_min_max(
-                egui::pos2(combo_width, y_offset),
-                egui::pos2(content_rect_right, y_offset + SPLIT_H),
-            );
-            let handle_id = ui.id().with(format!("auto_handle_{}", i));
-            let handle_resp = ui.interact(handle_rect, handle_id, egui::Sense::click_and_drag());
-            ui.painter().rect_filled(
-                handle_rect,
-                0.0,
-                if handle_resp.hovered() || handle_resp.dragged() {
-                    theme::SPLIT_HOVER
-                } else {
-                    theme::SPLIT_DEFAULT
-                },
-            );
+        // Split handle before every panel (first = divider from pianoroll)
+        let handle_rect = egui::Rect::from_min_max(
+            egui::pos2(0.0, y_offset),
+            egui::pos2(content_rect_right, y_offset + SPLIT_H),
+        );
+        let handle_id = ui.id().with(format!("auto_handle_{}", i));
+        let handle_resp = ui.interact(handle_rect, handle_id, egui::Sense::click_and_drag());
+        ui.painter().rect_filled(
+            handle_rect,
+            0.0,
             if handle_resp.hovered() || handle_resp.dragged() {
-                ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
-            }
-            if handle_resp.dragged() {
-                let delta = handle_resp.drag_delta().y;
-                let new_h = (panel.panel_height + delta).clamp(
-                    yinhe_automation::automation_view::MIN_PANEL_HEIGHT,
-                    yinhe_automation::automation_view::MAX_PANEL_HEIGHT,
-                );
-                panel.panel_height = new_h;
-                panel.dirty = true;
-                ui.ctx().request_repaint();
-            }
-            y_offset += SPLIT_H;
+                theme::SPLIT_HOVER
+            } else {
+                theme::SPLIT_DEFAULT
+            },
+        );
+        if handle_resp.hovered() || handle_resp.dragged() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
         }
+        if handle_resp.dragged() {
+            let delta = handle_resp.drag_delta().y;
+            let new_h = (panel.panel_height + delta).clamp(
+                yinhe_automation::automation_view::MIN_PANEL_HEIGHT,
+                yinhe_automation::automation_view::MAX_PANEL_HEIGHT,
+            );
+            panel.panel_height = new_h;
+            panel.dirty = true;
+            ui.ctx().request_repaint();
+        }
+        y_offset += SPLIT_H;
 
         let panel_h = panel.panel_height;
         let panel_rect = egui::Rect::from_min_max(

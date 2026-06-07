@@ -35,7 +35,12 @@ pub fn show(
     follow_mode: &mut super::view_interaction::FollowMode,
     // Automation panel data (all-or-nothing)
     auto_panels: Option<&mut Vec<yinhe_automation::AutomationPanelView>>,
-    auto_renderers: Option<&mut Vec<(yinhe_automation::PianorollRenderer, super::render_context::RenderContext)>>,
+    auto_renderers: Option<
+        &mut Vec<(
+            yinhe_automation::PianorollRenderer,
+            super::render_context::RenderContext,
+        )>,
+    >,
     auto_lanes: Option<&[AutomationLane]>,
     auto_show: Option<&mut bool>,
     auto_wgpu_state: Option<&Arc<eframe::egui_wgpu::RenderState>>,
@@ -50,7 +55,7 @@ pub fn show(
     let panels_total_h: f32 = match (&auto_panels, &auto_show) {
         (Some(panels), Some(show)) if **show && !panels.is_empty() => {
             panels.iter().map(|p| p.panel_height).sum::<f32>()
-                + ((panels.len().saturating_sub(1)) as f32 * crate::automation_panel::SPLIT_H)
+                + (panels.len() as f32 * crate::automation_panel::SPLIT_H)
         }
         _ => 0.0,
     };
@@ -58,7 +63,8 @@ pub fn show(
     // Layout: ruler | pianoroll content | automation panels | scrollbar
     let ruler_band_y = rect.min.y;
     let content_y = rect.min.y + RULER_H;
-    let content_h = (rect.height() - RULER_H - panels_total_h - super::scrollbar::SCROLLBAR_H).max(0.0);
+    let content_h =
+        (rect.height() - RULER_H - panels_total_h - super::scrollbar::SCROLLBAR_H).max(0.0);
     let content_rect = egui::Rect::from_min_max(
         egui::pos2(rect.min.x, content_y),
         egui::pos2(rect.max.x, content_y + content_h),
@@ -130,7 +136,10 @@ pub fn show(
         if handle_resp.dragged() {
             let delta = handle_resp.drag_delta().x;
             let old_kb = view.keyboard_width();
-            let new_kb = (old_kb + delta).clamp(crate::theme::MIN_KEYBOARD_WIDTH, rect.width() * crate::theme::MAX_KEYBOARD_RATIO);
+            let new_kb = (old_kb + delta).clamp(
+                crate::theme::MIN_KEYBOARD_WIDTH,
+                rect.width() * crate::theme::MAX_KEYBOARD_RATIO,
+            );
 
             // Keep scrollbar thumb visually in sync with the content area by
             // adjusting scroll_x so that the thumb's pixel offset within the
@@ -214,9 +223,13 @@ pub fn show(
 
     // ── Automation panels + scrollbar + AUTO buttons ──
     let panels_y = content_rect.max.y;
-    if let (Some(panels), Some(renderers), Some(lanes), Some(show), Some(wgpu_state)) =
-        (auto_panels, auto_renderers, auto_lanes, auto_show, auto_wgpu_state)
-    {
+    if let (Some(panels), Some(renderers), Some(lanes), Some(show), Some(wgpu_state)) = (
+        auto_panels,
+        auto_renderers,
+        auto_lanes,
+        auto_show,
+        auto_wgpu_state,
+    ) {
         let kb_w = view.keyboard_width();
         let combo_w = kb_w * theme::AUTO_PANEL_COMBO_WIDTH_RATIO;
 
@@ -255,17 +268,14 @@ pub fn show(
             );
 
             // Paint left blank background
-            ui.painter().rect_filled(sb_left_blank, 0.0, theme::SCROLLBAR_BG);
+            ui.painter()
+                .rect_filled(sb_left_blank, 0.0, theme::SCROLLBAR_BG);
 
             // AUTO +/- buttons inside left blank
             ui.allocate_new_ui(egui::UiBuilder::new().max_rect(sb_left_blank), |ui| {
                 ui.horizontal_centered(|ui| {
                     let mut count = panels.len();
-                    crate::automation_panel::show_toggle_buttons(
-                        ui,
-                        show,
-                        &mut count,
-                    );
+                    crate::automation_panel::show_toggle_buttons(ui, show, &mut count);
                     // Add/remove panels to match count
                     while panels.len() < count {
                         panels.push(yinhe_automation::AutomationPanelView::default());
