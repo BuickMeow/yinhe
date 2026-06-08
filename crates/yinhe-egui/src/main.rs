@@ -5,6 +5,7 @@ static GLOBAL_ALLOC: TaggedAlloc = TaggedAlloc;
 
 mod app;
 mod app_actions;
+mod app_eframe;
 mod arrange;
 mod arrangement_view_ui;
 mod audio_controller;
