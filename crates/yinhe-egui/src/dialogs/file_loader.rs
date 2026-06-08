@@ -1,6 +1,19 @@
 use std::sync::mpsc;
 
-use crate::loading::{MidiLoadEvent, MidiLoader};
+use yinhe_midi::LoadProgress;
+
+/// Events sent from the background loading thread to the UI thread.
+pub(crate) enum MidiLoadEvent {
+    Progress(LoadProgress),
+    Complete(Box<Result<yinhe_midi::MidiFile, yinhe_midi::MidiError>>),
+}
+
+/// Tracks the state of an in-flight MIDI load operation.
+pub(crate) struct MidiLoader {
+    pub path: String,
+    pub rx: mpsc::Receiver<MidiLoadEvent>,
+    pub current_progress: Option<LoadProgress>,
+}
 
 /// Result of polling the async MIDI loader.
 pub(crate) enum MidiLoadResult {
@@ -47,12 +60,9 @@ impl FileLoader {
                             return Err(yinhe_midi::MidiError::Io(e));
                         }
                     };
-                    yinhe_midi::MidiFile::load_from_bytes_with_progress_owned(
-                        data,
-                        |progress| {
-                            let _ = tx.send(MidiLoadEvent::Progress(progress));
-                        },
-                    )
+                    yinhe_midi::MidiFile::load_from_bytes_with_progress_owned(data, |progress| {
+                        let _ = tx.send(MidiLoadEvent::Progress(progress));
+                    })
                 });
                 let _ = tx.send(MidiLoadEvent::Complete(Box::new(result)));
             });
@@ -112,7 +122,10 @@ impl FileLoader {
                 .collapsible(false)
                 .resizable(false)
                 .movable(false)
-                .anchor(eframe::egui::Align2::CENTER_CENTER, eframe::egui::Vec2::ZERO)
+                .anchor(
+                    eframe::egui::Align2::CENTER_CENTER,
+                    eframe::egui::Vec2::ZERO,
+                )
                 .show(ui.ctx(), |ui| {
                     if let Some(progress) = &loader.current_progress {
                         ui.label(format!(

@@ -8,18 +8,13 @@ pub enum ViewMode {
     Edit,
 }
 
-fn mode_button(
-    ui: &mut egui::Ui,
-    label: &str,
-    is_selected: bool,
-    on_click: impl FnOnce(),
-) {
+fn mode_button(ui: &mut egui::Ui, label: &str, is_selected: bool, on_click: impl FnOnce()) {
     let resp = ui.add(
         egui::Label::new(
             egui::RichText::new(label)
-                .size(crate::theme::MODE_LABEL_FONT)
+                .size(crate::widgets::theme::MODE_LABEL_FONT)
                 .color(if is_selected {
-                    crate::theme::ACCENT_ACTIVE
+                    crate::widgets::theme::ACCENT_ACTIVE
                 } else {
                     egui::Color32::GRAY
                 }),
@@ -32,7 +27,7 @@ fn mode_button(
             resp.rect.center(),
             egui::Align2::CENTER_CENTER,
             label,
-            egui::FontId::proportional(crate::theme::MODE_LABEL_FONT),
+            egui::FontId::proportional(crate::widgets::theme::MODE_LABEL_FONT),
             egui::Color32::WHITE,
         );
     }
@@ -51,7 +46,7 @@ pub fn show(
     egui::Panel::bottom("bottom_bar")
         .frame(egui::Frame {
             inner_margin: egui::Margin::symmetric(8, 6),
-            fill: crate::theme::APP_BG,
+            fill: crate::widgets::theme::APP_BG,
             ..Default::default()
         })
         .show_inside(ui, |ui| {
@@ -87,7 +82,7 @@ pub fn show(
                     ui.add_space(6.0);
 
                     let piano_color = if *show_pianoroll_in_arrange {
-                        crate::theme::ACCENT_ACTIVE
+                        crate::widgets::theme::ACCENT_ACTIVE
                     } else {
                         egui::Color32::GRAY
                     };

@@ -7,7 +7,7 @@ use yinhe_types::{AutomationLane, TimeSigEvent};
 use crate::quantize::QuantizePreset;
 
 /// Height of the time ruler band at the top of the pianoroll view.
-use crate::theme;
+use crate::widgets::theme;
 const RULER_H: f32 = theme::RULER_H;
 
 /// Display the pianoroll texture with zoom/pan interaction.
@@ -64,7 +64,8 @@ pub fn show(
     let ruler_band_y = rect.min.y;
     let content_y = rect.min.y + RULER_H;
     let content_h =
-        (rect.height() - RULER_H - panels_total_h - super::scrollbar::SCROLLBAR_H).max(0.0);
+        (rect.height() - RULER_H - panels_total_h - crate::widgets::scrollbar::SCROLLBAR_H)
+            .max(0.0);
     let content_rect = egui::Rect::from_min_max(
         egui::pos2(rect.min.x, content_y),
         egui::pos2(rect.max.x, content_y + content_h),
@@ -137,8 +138,8 @@ pub fn show(
             let delta = handle_resp.drag_delta().x;
             let old_kb = view.keyboard_width();
             let new_kb = (old_kb + delta).clamp(
-                crate::theme::MIN_KEYBOARD_WIDTH,
-                rect.width() * crate::theme::MAX_KEYBOARD_RATIO,
+                crate::widgets::theme::MIN_KEYBOARD_WIDTH,
+                rect.width() * crate::widgets::theme::MAX_KEYBOARD_RATIO,
             );
 
             // Keep scrollbar thumb visually in sync with the content area by
@@ -176,7 +177,7 @@ pub fn show(
     let force_rebuild = view.base.dirty;
 
     // Prepare GPU data — uses the latest view state (keyboard_width, scroll, etc.)
-    let gpu_dirty = crate::qos::guarded(|| {
+    let gpu_dirty = crate::widgets::qos::guarded(|| {
         yinhe_pianoroll::prepare(
             pianoroll,
             w,
@@ -194,7 +195,7 @@ pub fn show(
     view.base.dirty = false;
 
     // Paint wgpu content into the content_rect (below the ruler)
-    crate::qos::guarded(|| {
+    crate::widgets::qos::guarded(|| {
         render_ctx.paint(
             pianoroll,
             w,
@@ -216,7 +217,7 @@ pub fn show(
         );
         let (def_num, def_den) = midi.time_sig_default();
         let sig_events = midi.time_sig_events();
-        crate::time_ruler::paint(
+        crate::widgets::time_ruler::paint(
             &painter, ruler_rect, view, tpb, def_num, def_den, sig_events,
         );
     }
@@ -254,10 +255,13 @@ pub fn show(
         // AUTO +/- buttons (in the scrollbar's left blank area)
         // We render them here while we still have access to `panels`/`show`.
         if midi.is_some() {
-            let sb_y = rect.min.y + rect.height() - super::scrollbar::SCROLLBAR_H;
+            let sb_y = rect.min.y + rect.height() - crate::widgets::scrollbar::SCROLLBAR_H;
             let sb_left_blank = egui::Rect::from_min_max(
                 egui::pos2(rect.min.x, sb_y),
-                egui::pos2(rect.min.x + kb_w, sb_y + super::scrollbar::SCROLLBAR_H),
+                egui::pos2(
+                    rect.min.x + kb_w,
+                    sb_y + crate::widgets::scrollbar::SCROLLBAR_H,
+                ),
             );
             // Paint background first, then buttons on top
             ui.painter()
@@ -284,14 +288,14 @@ pub fn show(
     // It is painted inside the automation block alongside the AUTO buttons
     // so the buttons are not covered by a later background fill.
     let kb_w = view.keyboard_width();
-    let sb_y = rect.min.y + rect.height() - super::scrollbar::SCROLLBAR_H;
+    let sb_y = rect.min.y + rect.height() - crate::widgets::scrollbar::SCROLLBAR_H;
     let sb_rect = egui::Rect::from_min_max(
         egui::pos2(rect.min.x + kb_w, sb_y),
-        egui::pos2(rect.max.x, sb_y + super::scrollbar::SCROLLBAR_H),
+        egui::pos2(rect.max.x, sb_y + crate::widgets::scrollbar::SCROLLBAR_H),
     );
 
     ui.push_id("piano_scrollbar", |ui| {
-        super::scrollbar::show(
+        crate::widgets::scrollbar::show(
             ui,
             sb_rect,
             w as f32 - kb_w,

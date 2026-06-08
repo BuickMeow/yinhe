@@ -1,15 +1,15 @@
 use eframe::egui;
 
+use crate::dialogs::file_loader::{FileLoader, MidiLoadResult};
 use crate::document::Document;
-use crate::file_loader::{FileLoader, MidiLoadResult};
-use crate::title_bar;
+use crate::widgets::title_bar;
 
 use crate::arrange;
-use crate::mode_bar::{self, ViewMode};
+use crate::dialogs::system_monitor::SystemMonitor;
 use crate::piano_view;
 use crate::render_context::RenderContext;
-use crate::system_monitor::SystemMonitor;
-use crate::transport_bar;
+use crate::widgets::mode_bar::{self, ViewMode};
+use crate::widgets::transport_bar;
 use yinhe_arrangement::ArrangementView;
 use yinhe_pianoroll::PianoRollView;
 
@@ -92,7 +92,7 @@ pub struct App {
     pub(crate) audio_active_doc: Option<usize>,
 
     // ── Settings ──
-    pub(crate) audio_settings: crate::settings::AudioSettings,
+    pub(crate) audio_settings: crate::dialogs::settings::AudioSettings,
 
     // ── System resource monitoring ──
     pub(crate) sys_monitor: SystemMonitor,
@@ -153,7 +153,7 @@ impl App {
             arr_render_ctx,
             arr_renderer: yinhe_arrangement::PianorollRenderer::new(device, queue, format),
             arrange_view: ArrangementView::default(),
-            arr_split: crate::theme::DEFAULT_ARR_SPLIT,
+            arr_split: crate::widgets::theme::DEFAULT_ARR_SPLIT,
 
             controller_renderers: Vec::new(),
 
@@ -178,7 +178,7 @@ impl App {
             audio: None,
             audio_active_doc: None,
 
-            audio_settings: crate::settings::AudioSettings::load(),
+            audio_settings: crate::dialogs::settings::AudioSettings::load(),
 
             sys_monitor: SystemMonitor::new(),
 
@@ -211,7 +211,7 @@ impl App {
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         // ── Full-viewport background (matching title bar / transport bar) ──
-        let bg = crate::theme::APP_BG;
+        let bg = crate::widgets::theme::APP_BG;
         ui.painter().rect_filled(ui.ctx().screen_rect(), 0.0, bg);
 
         // ── Force dark mode ──
@@ -306,7 +306,7 @@ impl eframe::App for App {
         }
 
         // ── Settings panel ──
-        let settings_changed = crate::settings::show(ui, &mut self.audio_settings);
+        let settings_changed = crate::dialogs::settings::show(ui, &mut self.audio_settings);
         if settings_changed {
             self.teardown_audio();
         }
@@ -334,7 +334,7 @@ impl eframe::App for App {
 
             let arr_h = if self.show_transport {
                 if self.show_pianoroll {
-                    (total.y * self.arr_split).max(crate::theme::MIN_ARR_HEIGHT)
+                    (total.y * self.arr_split).max(crate::widgets::theme::MIN_ARR_HEIGHT)
                 } else {
                     total.y
                 }
@@ -344,7 +344,7 @@ impl eframe::App for App {
             let bottom_y = remaining.min.y
                 + arr_h
                 + if self.show_transport && self.show_pianoroll {
-                    crate::theme::SPLIT_GAP
+                    crate::widgets::theme::SPLIT_GAP
                 } else {
                     0.0
                 };
@@ -380,32 +380,34 @@ impl eframe::App for App {
                         egui::pos2(remaining.min.x, remaining.min.y + arr_h),
                         egui::pos2(
                             remaining.max.x,
-                            remaining.min.y + arr_h + crate::theme::SPLIT_GAP,
+                            remaining.min.y + arr_h + crate::widgets::theme::SPLIT_GAP,
                         ),
                     );
                     let h_int_rect = egui::Rect::from_min_max(
                         egui::pos2(remaining.min.x, remaining.min.y + arr_h + 0.5),
                         egui::pos2(
                             remaining.max.x,
-                            remaining.min.y + arr_h + crate::theme::SPLIT_GAP,
+                            remaining.min.y + arr_h + crate::widgets::theme::SPLIT_GAP,
                         ),
                     );
                     let h_split_resp =
-                        crate::split_handle::horizontal(ui, "__h_split__", h_int_rect);
+                        crate::widgets::split_handle::horizontal(ui, "__h_split__", h_int_rect);
                     // Overdraw visual rect — interaction rect is inset 0.5px
                     ui.painter().rect_filled(
                         h_split_rect,
                         0.0,
                         if h_split_resp.hovered() || h_split_resp.dragged() {
-                            crate::theme::SPLIT_HOVER
+                            crate::widgets::theme::SPLIT_HOVER
                         } else {
-                            crate::theme::SPLIT_DEFAULT
+                            crate::widgets::theme::SPLIT_DEFAULT
                         },
                     );
                     if h_split_resp.dragged() {
                         let delta = h_split_resp.drag_delta().y;
-                        self.arr_split = ((arr_h + delta) / total.y)
-                            .clamp(crate::theme::SPLIT_CLAMP_MIN, crate::theme::SPLIT_CLAMP_MAX);
+                        self.arr_split = ((arr_h + delta) / total.y).clamp(
+                            crate::widgets::theme::SPLIT_CLAMP_MIN,
+                            crate::widgets::theme::SPLIT_CLAMP_MAX,
+                        );
                     }
                 }
 

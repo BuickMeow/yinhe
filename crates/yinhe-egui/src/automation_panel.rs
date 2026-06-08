@@ -26,7 +26,7 @@ const AUTOMATION_TARGETS: &[AutomationTarget] = &[
 ];
 
 use crate::render_context::RenderContext;
-use crate::theme;
+use crate::widgets::theme;
 
 /// Height of the split/handle between automation panels.
 pub(crate) const SPLIT_H: f32 = theme::AUTO_PANEL_SPLIT_H;
@@ -103,7 +103,7 @@ pub fn show_panels(
             egui::pos2(content_rect_right, y_offset + SPLIT_H),
         );
         let handle_resp =
-            crate::split_handle::horizontal(ui, format!("auto_handle_{}", i), handle_rect);
+            crate::widgets::split_handle::horizontal(ui, format!("auto_handle_{}", i), handle_rect);
         if handle_resp.dragged() {
             let delta = handle_resp.drag_delta().y;
             let new_h = (panel.panel_height - delta).clamp(

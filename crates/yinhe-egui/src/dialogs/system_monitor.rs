@@ -26,7 +26,9 @@ impl SystemMonitor {
     }
 
     pub fn refresh_if_needed(&mut self) {
-        if self.last_refresh.elapsed().as_secs_f64() >= crate::theme::SYS_REFRESH_INTERVAL_SECS {
+        if self.last_refresh.elapsed().as_secs_f64()
+            >= crate::widgets::theme::SYS_REFRESH_INTERVAL_SECS
+        {
             if let Some(pid) = self.self_pid {
                 let _ = self
                     .sysinfo
@@ -54,19 +56,13 @@ impl App {
         let mem_mb = self.sys_monitor.mem_mb;
         egui::Window::new("内存占用详情")
             .id(egui::Id::new("memory_breakdown_window"))
-            .default_size(crate::theme::MEM_POPUP_SIZE)
+            .default_size(crate::widgets::theme::MEM_POPUP_SIZE)
             .collapsible(false)
             .resizable(false)
             .show(ui.ctx(), |ui| {
                 ui.label(format!("系统统计总内存: {:.1} MB", mem_mb));
-                ui.label(format!(
-                    "分配器追踪内存: {:.1} MB",
-                    snapshot.total_mb()
-                ));
-                ui.label(format!(
-                    "wgpu 显式 GPU 资源: {:.1} MB",
-                    snapshot.gpu_mb()
-                ));
+                ui.label(format!("分配器追踪内存: {:.1} MB", snapshot.total_mb()));
+                ui.label(format!("wgpu 显式 GPU 资源: {:.1} MB", snapshot.gpu_mb()));
 
                 #[cfg(target_os = "macos")]
                 {
@@ -74,11 +70,7 @@ impl App {
                         .render_ctx
                         .metal_allocated_size()
                         .unwrap_or(0)
-                        .saturating_add(
-                            self.arr_render_ctx
-                                .metal_allocated_size()
-                                .unwrap_or(0),
-                        );
+                        .saturating_add(self.arr_render_ctx.metal_allocated_size().unwrap_or(0));
                     ui.label(format!(
                         "Metal 驱动真实显存: {:.1} MB",
                         metal_size as f64 / 1_048_576.0

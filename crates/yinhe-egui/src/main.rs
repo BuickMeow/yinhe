@@ -9,26 +9,14 @@ mod arrange;
 mod arrangement_view_ui;
 mod audio_controller;
 mod automation_panel;
+mod dialogs;
 mod document;
-mod file_loader;
-mod loading;
-mod mode_bar;
 mod piano_view;
 mod playback;
-mod qos;
 mod quantize;
 mod render_context;
-mod scrollbar;
-mod settings;
-mod split_handle;
-mod system_monitor;
-mod theme;
-mod time_format;
-mod time_ruler;
-mod title_bar;
-mod track_panel;
-mod transport_bar;
 mod view_interaction;
+mod widgets;
 
 fn main() {
     tracing_subscriber::fmt()

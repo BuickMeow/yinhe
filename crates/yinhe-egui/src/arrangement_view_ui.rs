@@ -119,7 +119,7 @@ pub fn show(
     }
     view.base.dirty = false;
 
-    let gpu_updated = crate::qos::guarded(|| {
+    let gpu_updated = crate::widgets::qos::guarded(|| {
         renderer.prepare_with_static_cache(
             uniforms,
             vhash,
@@ -148,7 +148,7 @@ pub fn show(
 
     // Paint — skip GPU submit if nothing changed and no cursor to animate
     let content_changed = gpu_updated || is_playing;
-    crate::qos::guarded(|| {
+    crate::widgets::qos::guarded(|| {
         render_ctx.paint(
             renderer,
             w,

@@ -1,11 +1,11 @@
 use eframe::egui;
 use egui_material_icons::icons::*;
 
+use crate::dialogs::file_loader::FileLoader;
 use crate::document::Document;
-use crate::file_loader::FileLoader;
 use crate::quantize::QuantizePreset;
-use crate::time_format;
 use crate::view_interaction::FollowMode;
+use crate::widgets::time_format;
 
 /// Actions triggered from the file menu dropdown.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -58,7 +58,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
 
     egui::Panel::top("transport_bar")
         .frame(egui::Frame {
-            fill: crate::theme::APP_BG,
+            fill: crate::widgets::theme::APP_BG,
             inner_margin: egui::Margin {
                 left: 8,
                 right: 8,
@@ -84,7 +84,12 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                         .min_size(btn_size)
                         .corner_radius(btn_rounding),
                 );
-                show_file_menu(&file_btn, ctx.file_loader, has_active, &mut pending_file_action);
+                show_file_menu(
+                    &file_btn,
+                    ctx.file_loader,
+                    has_active,
+                    &mut pending_file_action,
+                );
 
                 if has_active {
                     let is_playing = ctx.doc.map(|d| d.playback.is_playing()).unwrap_or(false);
@@ -136,7 +141,10 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
 
                     // ── Quantization preset button + popup ──
                     let ppq = ctx.doc.map(|d| d.midi.ticks_per_beat).unwrap_or(480);
-                    let q_label = ctx.doc.map(|d| d.quantize.button_text()).unwrap_or_default();
+                    let q_label = ctx
+                        .doc
+                        .map(|d| d.quantize.button_text())
+                        .unwrap_or_default();
                     let q_resp = ui.add(
                         egui::Button::new(q_label.as_str())
                             .min_size(egui::vec2(44.0, 32.0))
@@ -173,40 +181,40 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
 
                     // ── Custom fraction editor (visible only when Custom is selected) ──
                     if let Some(doc) = ctx.doc
-                        && let QuantizePreset::Custom(ref num, ref den) = doc.quantize {
-                            let mut edit_num = *num;
-                            let mut edit_den = *den;
+                        && let QuantizePreset::Custom(ref num, ref den) = doc.quantize
+                    {
+                        let mut edit_num = *num;
+                        let mut edit_den = *den;
 
-                            ui.add_space(2.0);
-                            ui.label("n:");
-                            let num_resp = ui.add(
-                                egui::DragValue::new(&mut edit_num)
-                                    .range(1..=9999)
-                                    .speed(0.5)
-                                    .prefix("")
-                                    .max_decimals(0)
-                                    .fixed_decimals(0),
-                            );
-                            ui.label("d:");
-                            let den_resp = ui.add(
-                                egui::DragValue::new(&mut edit_den)
-                                    .range(1..=9999)
-                                    .speed(0.5)
-                                    .prefix("")
-                                    .max_decimals(0)
-                                    .fixed_decimals(0),
-                            );
+                        ui.add_space(2.0);
+                        ui.label("n:");
+                        let num_resp = ui.add(
+                            egui::DragValue::new(&mut edit_num)
+                                .range(1..=9999)
+                                .speed(0.5)
+                                .prefix("")
+                                .max_decimals(0)
+                                .fixed_decimals(0),
+                        );
+                        ui.label("d:");
+                        let den_resp = ui.add(
+                            egui::DragValue::new(&mut edit_den)
+                                .range(1..=9999)
+                                .speed(0.5)
+                                .prefix("")
+                                .max_decimals(0)
+                                .fixed_decimals(0),
+                        );
 
-                            if num_resp.dragged()
-                                || den_resp.dragged()
-                                || num_resp.changed()
-                                || den_resp.changed()
-                            {
-                                let edit_den = edit_den.max(1);
-                                pending_quantize =
-                                    Some(QuantizePreset::Custom(edit_num, edit_den));
-                            }
+                        if num_resp.dragged()
+                            || den_resp.dragged()
+                            || num_resp.changed()
+                            || den_resp.changed()
+                        {
+                            let edit_den = edit_den.max(1);
+                            pending_quantize = Some(QuantizePreset::Custom(edit_num, edit_den));
                         }
+                    }
                 }
 
                 if let Some(doc) = ctx.doc {
@@ -300,27 +308,72 @@ fn show_file_menu(
         }
 
         let items = [
-            MenuItem { icon: ICON_NOTE_ADD, label: "新建工程", action: FileAction::NewProject, enabled: !file_loader.is_loading() },
-            MenuItem { icon: ICON_FOLDER_OPEN, label: "打开", action: FileAction::Open, enabled: !file_loader.is_loading() },
-            MenuItem { icon: ICON_SAVE, label: "保存", action: FileAction::Save, enabled: has_active },
-            MenuItem { icon: ICON_SAVE_ALT, label: "另存为", action: FileAction::SaveAs, enabled: has_active },
-            MenuItem { icon: ICON_CLOSE, label: "关闭", action: FileAction::CloseDocument, enabled: has_active },
+            MenuItem {
+                icon: ICON_NOTE_ADD,
+                label: "新建工程",
+                action: FileAction::NewProject,
+                enabled: !file_loader.is_loading(),
+            },
+            MenuItem {
+                icon: ICON_FOLDER_OPEN,
+                label: "打开",
+                action: FileAction::Open,
+                enabled: !file_loader.is_loading(),
+            },
+            MenuItem {
+                icon: ICON_SAVE,
+                label: "保存",
+                action: FileAction::Save,
+                enabled: has_active,
+            },
+            MenuItem {
+                icon: ICON_SAVE_ALT,
+                label: "另存为",
+                action: FileAction::SaveAs,
+                enabled: has_active,
+            },
+            MenuItem {
+                icon: ICON_CLOSE,
+                label: "关闭",
+                action: FileAction::CloseDocument,
+                enabled: has_active,
+            },
         ];
         menu_items(ui, &items, pending_action);
 
         ui.separator();
 
         let export_items = [
-            MenuItem { icon: ICON_AUDIO_FILE, label: "导出音频", action: FileAction::ExportAudio, enabled: has_active },
-            MenuItem { icon: ICON_MUSIC_NOTE, label: "导出MIDI", action: FileAction::ExportMidi, enabled: has_active },
+            MenuItem {
+                icon: ICON_AUDIO_FILE,
+                label: "导出音频",
+                action: FileAction::ExportAudio,
+                enabled: has_active,
+            },
+            MenuItem {
+                icon: ICON_MUSIC_NOTE,
+                label: "导出MIDI",
+                action: FileAction::ExportMidi,
+                enabled: has_active,
+            },
         ];
         menu_items(ui, &export_items, pending_action);
 
         ui.separator();
 
         let misc_items = [
-            MenuItem { icon: ICON_SETTINGS, label: "设置", action: FileAction::Settings, enabled: true },
-            MenuItem { icon: ICON_EXIT_TO_APP, label: "退出", action: FileAction::Exit, enabled: true },
+            MenuItem {
+                icon: ICON_SETTINGS,
+                label: "设置",
+                action: FileAction::Settings,
+                enabled: true,
+            },
+            MenuItem {
+                icon: ICON_EXIT_TO_APP,
+                label: "退出",
+                action: FileAction::Exit,
+                enabled: true,
+            },
         ];
         menu_items(ui, &misc_items, pending_action);
     });
@@ -341,7 +394,11 @@ fn show_timecode_display(
     let ppq = doc.midi.ticks_per_beat;
 
     let bpm_str = time_format::format_bpm(bpm);
-    let ts_str = format!("{}  {}", time_format::format_time_sig(num, _denom_power), ppq);
+    let ts_str = format!(
+        "{}  {}",
+        time_format::format_time_sig(num, _denom_power),
+        ppq
+    );
     let time_str = time_format::format_time(seconds);
     let pos_str = time_format::format_tick_bar_beat(tick, ppq, num);
 
@@ -355,22 +412,15 @@ fn show_timecode_display(
     ui.add_space(pad);
     let (rect, _) = ui.allocate_exact_size(egui::vec2(rect_w, rect_h), egui::Sense::hover());
 
-    let c = crate::theme::ACCENT_ACTIVE;
+    let c = crate::widgets::theme::ACCENT_ACTIVE;
     let font = egui::FontId::proportional(12.0);
     let grid = egui::Stroke::new(1.0, egui::Color32::from_gray(60));
 
-    ui.painter().rect_filled(rect, egui::CornerRadius::same(8), egui::Color32::BLACK);
+    ui.painter()
+        .rect_filled(rect, egui::CornerRadius::same(8), egui::Color32::BLACK);
 
-    let texts_top = [
-        format!("{:.1}%", cpu_usage),
-        bpm_str,
-        pos_str,
-    ];
-    let texts_bot = [
-        format!("{:.1} MB", mem_mb),
-        ts_str,
-        time_str,
-    ];
+    let texts_top = [format!("{:.1}%", cpu_usage), bpm_str, pos_str];
+    let texts_bot = [format!("{:.1} MB", mem_mb), ts_str, time_str];
 
     let mut col_x = rect.min.x;
     for i in 0..3 {

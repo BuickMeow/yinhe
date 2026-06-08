@@ -2,7 +2,7 @@ use eframe::egui;
 
 use crate::app::App;
 use crate::document::Document;
-use crate::transport_bar;
+use crate::widgets::transport_bar;
 
 impl App {
     /// Handle keyboard shortcuts (Space for play/pause, Escape for stop).

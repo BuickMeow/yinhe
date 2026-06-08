@@ -5,10 +5,10 @@ use yinhe_arrangement::ArrangementView;
 use crate::arrangement_view_ui;
 use crate::document::Document;
 use crate::render_context::RenderContext;
-use crate::track_panel;
+use crate::widgets::track_panel;
 
 /// Height of the time ruler band at the top of the arrangement view.
-use crate::theme;
+use crate::widgets::theme;
 const RULER_H: f32 = theme::RULER_H;
 
 pub fn show(
@@ -40,7 +40,7 @@ pub fn show(
         egui::pos2(arr_rect.min.x, arr_rect.min.y + RULER_H),
         egui::pos2(
             arr_rect.min.x + tp_w,
-            arr_rect.max.y - crate::scrollbar::SCROLLBAR_H,
+            arr_rect.max.y - crate::widgets::scrollbar::SCROLLBAR_H,
         ),
     );
 
@@ -49,7 +49,7 @@ pub fn show(
         egui::pos2(arr_rect.min.x + tp_w + 4.0, arr_rect.min.y + RULER_H),
         egui::pos2(
             arr_rect.max.x,
-            arr_rect.max.y - crate::scrollbar::SCROLLBAR_H,
+            arr_rect.max.y - crate::widgets::scrollbar::SCROLLBAR_H,
         ),
     );
 
@@ -76,7 +76,7 @@ pub fn show(
         // Parent painter works in screen coordinates; paint_labels applies
         // offset_x = rect.min.x - view.content_left() internally.
         let ruler_painter = ui.painter();
-        crate::time_ruler::paint(
+        crate::widgets::time_ruler::paint(
             ruler_painter,
             ruler_rect,
             arr_view,
@@ -91,7 +91,7 @@ pub fn show(
     ui.allocate_new_ui(egui::UiBuilder::new().max_rect(tp_rect), |ui| {
         ui.set_clip_rect(tp_rect);
         ui.painter()
-            .rect_filled(ui.max_rect(), 0.0, crate::theme::APP_BG);
+            .rect_filled(ui.max_rect(), 0.0, crate::widgets::theme::APP_BG);
 
         arr_view.base.track_panel_scroll_y = arr_view.base.scroll_y;
 
@@ -131,7 +131,7 @@ pub fn show(
         egui::pos2(arr_rect.min.x + tp_w, arr_rect.min.y),
         egui::pos2(arr_rect.min.x + tp_w + 4.0, arr_rect.max.y),
     );
-    let v_resp = crate::split_handle::vertical(ui, "__v_split__", v_handle);
+    let v_resp = crate::widgets::split_handle::vertical(ui, "__v_split__", v_handle);
     if v_resp.dragged() {
         *transport_panel_width =
             (*transport_panel_width + v_resp.drag_delta().x).clamp(60.0, arr_total_w - 60.0);
@@ -172,7 +172,7 @@ pub fn show(
             egui::pos2(arr_rect.min.x + tp_w + 4.0, gpu_rect.max.y),
             egui::pos2(arr_rect.max.x, arr_rect.max.y),
         );
-        crate::scrollbar::show(
+        crate::widgets::scrollbar::show(
             ui,
             sb_rect,
             gpu_rect.width(),

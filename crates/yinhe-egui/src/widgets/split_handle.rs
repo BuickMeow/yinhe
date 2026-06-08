@@ -1,6 +1,6 @@
 use eframe::egui;
 
-use crate::theme;
+use crate::widgets::theme;
 
 /// Paint and interact with a horizontal split handle.
 ///

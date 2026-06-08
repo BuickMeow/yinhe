@@ -4,7 +4,7 @@ use egui_material_icons::icons::*;
 use crate::document::Document;
 
 /// Height of the custom title bar.
-pub(crate) const TITLE_BAR_HEIGHT: f32 = crate::theme::TITLE_BAR_H;
+pub(crate) const TITLE_BAR_HEIGHT: f32 = crate::widgets::theme::TITLE_BAR_H;
 
 /// Action to be performed by the caller after title bar rendering.
 pub(crate) enum TitleBarAction {
@@ -23,7 +23,7 @@ pub(crate) fn show(
     egui::Panel::top("title_bar")
         .show_separator_line(false)
         .frame(egui::Frame {
-            fill: crate::theme::APP_BG,
+            fill: crate::widgets::theme::APP_BG,
             inner_margin: egui::Margin::ZERO,
             outer_margin: egui::Margin::ZERO,
             ..Default::default()
@@ -80,9 +80,9 @@ pub(crate) fn show(
 
                 // Tab background
                 let bg = if *is_active {
-                    crate::theme::TAB_ACTIVE_BG
+                    crate::widgets::theme::TAB_ACTIVE_BG
                 } else {
-                    crate::theme::TAB_INACTIVE_BG
+                    crate::widgets::theme::TAB_INACTIVE_BG
                 };
                 painter.rect_filled(tab_rect, 4.0, bg);
 
@@ -130,10 +130,10 @@ pub(crate) fn show(
                     egui::pos2(tab_rect.max.x - close_w, tab_rect.min.y),
                     egui::vec2(close_w, tab_h),
                 );
-                let close_hover =
-                    tab_close_rect.contains(ui.input(|i| i.pointer.hover_pos().unwrap_or_default()));
+                let close_hover = tab_close_rect
+                    .contains(ui.input(|i| i.pointer.hover_pos().unwrap_or_default()));
                 if close_hover {
-                    painter.rect_filled(tab_close_rect, 4.0, crate::theme::DANGER_HOVER);
+                    painter.rect_filled(tab_close_rect, 4.0, crate::widgets::theme::DANGER_HOVER);
                 }
                 painter.text(
                     tab_close_rect.center(),
@@ -184,35 +184,42 @@ pub(crate) fn show(
                 ui.input(|i| i.pointer.button_released(egui::PointerButton::Primary));
             if pointer_released
                 && let Some(press) = title_bar_press_pos.take()
-                    && let Some(release) = ui.input(|i| i.pointer.interact_pos()) {
-                        let dist = (release - press).length();
-                        if dist < 8.0 {
-                            // Check document tab buttons
-                            for &(idx, tab_rect, tab_close_rect) in click_targets.iter().rev() {
-                                if tab_close_rect.contains(press) && tab_close_rect.contains(release) {
-                                    action = Some(TitleBarAction::CloseDocument(idx));
-                                    break;
-                                }
-                                if tab_rect.contains(press) && tab_rect.contains(release) {
-                                    *active_doc = Some(idx);
-                                    break;
-                                }
-                            }
-
-                            // Check window title bar buttons (non-macOS only)
-                            #[cfg(not(target_os = "macos"))]
-                            {
-                                if win_btn_rects.0.contains(press) && win_btn_rects.0.contains(release) {
-                                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-                                } else if win_btn_rects.1.contains(press) && win_btn_rects.1.contains(release) {
-                                    let maximized = ui.input(|i| i.viewport().maximized.unwrap_or(false));
-                                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
-                                } else if win_btn_rects.2.contains(press) && win_btn_rects.2.contains(release) {
-                                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Minimized(true));
-                                }
-                            }
+                && let Some(release) = ui.input(|i| i.pointer.interact_pos())
+            {
+                let dist = (release - press).length();
+                if dist < 8.0 {
+                    // Check document tab buttons
+                    for &(idx, tab_rect, tab_close_rect) in click_targets.iter().rev() {
+                        if tab_close_rect.contains(press) && tab_close_rect.contains(release) {
+                            action = Some(TitleBarAction::CloseDocument(idx));
+                            break;
+                        }
+                        if tab_rect.contains(press) && tab_rect.contains(release) {
+                            *active_doc = Some(idx);
+                            break;
                         }
                     }
+
+                    // Check window title bar buttons (non-macOS only)
+                    #[cfg(not(target_os = "macos"))]
+                    {
+                        if win_btn_rects.0.contains(press) && win_btn_rects.0.contains(release) {
+                            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                        } else if win_btn_rects.1.contains(press)
+                            && win_btn_rects.1.contains(release)
+                        {
+                            let maximized = ui.input(|i| i.viewport().maximized.unwrap_or(false));
+                            ui.ctx()
+                                .send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+                        } else if win_btn_rects.2.contains(press)
+                            && win_btn_rects.2.contains(release)
+                        {
+                            ui.ctx()
+                                .send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+                        }
+                    }
+                }
+            }
 
             // ── Draw centered title ──
             painter.text(
@@ -250,13 +257,16 @@ pub(crate) fn show(
 
             // Double-click title bar drag area to toggle maximize/restore
             // (same pattern as transport_bar's working implementation)
-            if ui.input(|i| i.pointer.button_double_clicked(egui::PointerButton::Primary))
-                && let Some(pos) = ui.input(|i| i.pointer.interact_pos())
-                    && drag_rect.contains(pos) {
-                        let maximized = ui.input(|i| i.viewport().maximized.unwrap_or(false));
-                        ui.ctx()
-                            .send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
-                    }
+            if ui.input(|i| {
+                i.pointer
+                    .button_double_clicked(egui::PointerButton::Primary)
+            }) && let Some(pos) = ui.input(|i| i.pointer.interact_pos())
+                && drag_rect.contains(pos)
+            {
+                let maximized = ui.input(|i| i.viewport().maximized.unwrap_or(false));
+                ui.ctx()
+                    .send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+            }
 
             // Reserve space for title bar height
             ui.allocate_space(egui::vec2(0.0, TITLE_BAR_HEIGHT));
@@ -267,7 +277,11 @@ pub(crate) fn show(
 /// Paint window buttons (close/maximize/minimize) on non-macOS platforms.
 /// Visual only — interactions are handled via manual click detection.
 #[cfg(not(target_os = "macos"))]
-fn paint_window_buttons(ui: &mut egui::Ui, rects: (egui::Rect, egui::Rect, egui::Rect), maximized: bool) {
+fn paint_window_buttons(
+    ui: &mut egui::Ui,
+    rects: (egui::Rect, egui::Rect, egui::Rect),
+    maximized: bool,
+) {
     let (close_rect, max_rect, min_rect) = rects;
     let hover_pos = ui.input(|i| i.pointer.hover_pos()).unwrap_or_default();
 
@@ -275,7 +289,7 @@ fn paint_window_buttons(ui: &mut egui::Ui, rects: (egui::Rect, egui::Rect, egui:
     let close_hover = close_rect.contains(hover_pos);
     if close_hover {
         ui.painter()
-            .rect_filled(close_rect, 0.0, crate::theme::DANGER_HOVER);
+            .rect_filled(close_rect, 0.0, crate::widgets::theme::DANGER_HOVER);
     }
     ui.painter().text(
         close_rect.center(),
@@ -290,10 +304,15 @@ fn paint_window_buttons(ui: &mut egui::Ui, rects: (egui::Rect, egui::Rect, egui:
     );
 
     // Maximize / Restore (show restore icon when window is maximized)
-    let max_icon = if maximized { ICON_FILTER_NONE } else { ICON_CHECK_BOX_OUTLINE_BLANK };
+    let max_icon = if maximized {
+        ICON_FILTER_NONE
+    } else {
+        ICON_CHECK_BOX_OUTLINE_BLANK
+    };
     let max_hover = max_rect.contains(hover_pos);
     if max_hover {
-        ui.painter().rect_filled(max_rect, 0.0, crate::theme::WIN_BTN_HOVER);
+        ui.painter()
+            .rect_filled(max_rect, 0.0, crate::widgets::theme::WIN_BTN_HOVER);
     }
     ui.painter().text(
         max_rect.center(),
@@ -310,7 +329,8 @@ fn paint_window_buttons(ui: &mut egui::Ui, rects: (egui::Rect, egui::Rect, egui:
     // Minimize
     let min_hover = min_rect.contains(hover_pos);
     if min_hover {
-        ui.painter().rect_filled(min_rect, 0.0, crate::theme::WIN_BTN_HOVER);
+        ui.painter()
+            .rect_filled(min_rect, 0.0, crate::widgets::theme::WIN_BTN_HOVER);
     }
     ui.painter().text(
         min_rect.center(),
