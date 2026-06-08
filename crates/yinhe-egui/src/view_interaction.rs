@@ -109,7 +109,7 @@ pub(crate) fn total_ticks_padded(tick_length: u64) -> f64 {
     if tick_length > 0 {
         tick_length as f64 * 1.2
     } else {
-        10000.0
+        0.0
     }
 }
 
@@ -244,35 +244,37 @@ pub(crate) fn handle_input(
     // Hover check here also uses raw rect containment for the same reason.
     let released = ui.input(|i| i.pointer.primary_released());
     let drag_dist = content_resp.drag_delta().length();
-    if released && pointer_in_rect && drag_dist < 3.0
-        && let Some(pos) = content_resp.interact_pointer_pos() {
-            let pointer_x = pos.x - rect.min.x;
-            if pointer_x >= left_zone_width {
-                let tick = view.x_to_tick(pointer_x);
-                let snapped = if let Some((q, ppq)) = &quantize {
-                    if let Some((tpb, num, den, events)) = &bar_line_data {
-                        let (bar_start, next_bar) = yinhe_wgpu::grid::measure_bounds_at_tick(
-                            tick, *tpb, *num, *den, events,
-                        );
-                        let offset = tick - bar_start;
-                        let snapped_offset = q.snap_tick(offset, *ppq);
-                        let grid_tick = bar_start + snapped_offset;
-                        if (tick - next_bar).abs() < (tick - grid_tick).abs() {
-                            next_bar
-                        } else {
-                            grid_tick
-                        }
+    if released
+        && pointer_in_rect
+        && drag_dist < 3.0
+        && let Some(pos) = content_resp.interact_pointer_pos()
+    {
+        let pointer_x = pos.x - rect.min.x;
+        if pointer_x >= left_zone_width {
+            let tick = view.x_to_tick(pointer_x);
+            let snapped = if let Some((q, ppq)) = &quantize {
+                if let Some((tpb, num, den, events)) = &bar_line_data {
+                    let (bar_start, next_bar) =
+                        yinhe_wgpu::grid::measure_bounds_at_tick(tick, *tpb, *num, *den, events);
+                    let offset = tick - bar_start;
+                    let snapped_offset = q.snap_tick(offset, *ppq);
+                    let grid_tick = bar_start + snapped_offset;
+                    if (tick - next_bar).abs() < (tick - grid_tick).abs() {
+                        next_bar
                     } else {
-                        q.snap_tick(tick, *ppq)
+                        grid_tick
                     }
                 } else {
-                    tick
-                };
-                *cursor_tick = Some(snapped.max(0.0));
-                *view.dirty() = true;
-                ui.ctx().request_repaint();
-            }
+                    q.snap_tick(tick, *ppq)
+                }
+            } else {
+                tick
+            };
+            *cursor_tick = Some(snapped.max(0.0));
+            *view.dirty() = true;
+            ui.ctx().request_repaint();
         }
+    }
 
     // Drag to pan
     if content_resp.dragged() {
