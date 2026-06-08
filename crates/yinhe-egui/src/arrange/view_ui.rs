@@ -4,8 +4,8 @@ use yinhe_arrangement::instances as arrangement_instances;
 use yinhe_arrangement::{ArrangementView, NoteSource, PianorollRenderer, Uniforms};
 use yinhe_types::TimeSigEvent;
 
-use super::render_context::RenderContext;
 use crate::quantize::QuantizePreset;
+use crate::render_context::RenderContext;
 
 /// Hash viewport properties that affect static arrangement instances.
 fn viewport_hash(width: u32, height: u32, view: &ArrangementView) -> u64 {

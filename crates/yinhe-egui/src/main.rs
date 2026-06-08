@@ -7,7 +7,6 @@ mod app;
 mod app_actions;
 mod app_eframe;
 mod arrange;
-mod arrangement_view_ui;
 mod audio_controller;
 mod automation_panel;
 mod dialogs;

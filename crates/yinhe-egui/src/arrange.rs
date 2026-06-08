@@ -1,8 +1,9 @@
+mod view_ui;
+
 use eframe::egui;
 
 use yinhe_arrangement::ArrangementView;
 
-use crate::arrangement_view_ui;
 use crate::document::Document;
 use crate::render_context::RenderContext;
 use crate::widgets::track_panel;
@@ -142,7 +143,7 @@ pub fn show(
         Some(&*doc.midi as &dyn yinhe_arrangement::NoteSource);
     let gpu_size = gpu_rect.size();
     ui.allocate_new_ui(egui::UiBuilder::new().max_rect(gpu_rect), |ui| {
-        arrangement_view_ui::show(
+        view_ui::show(
             ui,
             gpu_size,
             arr_renderer,
