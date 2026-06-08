@@ -58,11 +58,6 @@ pub fn show(
     follow_mode: &mut crate::view_interaction::FollowMode,
     active_tool: &Tool,
 ) {
-    // Sense::click_and_drag() so that the response passed to handle_input
-    // provides hover/drag/click/double-click state.  Unlike the piano roll,
-    // the arrangement view's painter rect *is* the interaction rect (there
-    // is no ruler/kb sub-division inside this child UI), so decoupling them
-    // would be artificial.
     let (resp, painter) = ui.allocate_painter(available, egui::Sense::click_and_drag());
     let rect = resp.rect;
     let w = rect.width() as u32;
@@ -72,18 +67,14 @@ pub fn show(
         return;
     }
 
-    // Resize render target if needed — texture_id may change after this
     render_ctx.ensure_size(w, h);
 
-    // Clamp scroll
     let total_ticks = crate::view_interaction::total_ticks_padded(
         midi.and_then(|m| m.tick_length()).unwrap_or(0),
     );
     let num_tracks = track_visible.len();
     view.clamp_scroll(w as f32, h as f32, total_ticks, num_tracks);
 
-    // Auto-follow: scroll based on follow mode (playback only).
-    // Never auto-follow when paused, so the user can freely scroll around.
     if let Some(ct) = *cursor_tick
         && is_playing
         && *follow_mode != crate::view_interaction::FollowMode::None
@@ -101,7 +92,6 @@ pub fn show(
         }
     }
 
-    // ── Compute uniforms ──
     let uniforms = Uniforms {
         width: w as f32,
         height: h as f32,
@@ -113,14 +103,9 @@ pub fn show(
         _pad: 0.0,
     };
 
-    // ── Prepare GPU data with static caching ──
-    // The viewport hash captures all view properties that affect static
-    // instances.  When the hash matches the cached value, the expensive
-    // note-instance build is skipped entirely — only the cheap cursor
-    // update runs every frame.
     let mut vhash = viewport_hash(w, h, view);
     if view.base.dirty {
-        vhash = !vhash; // force rebuild for non-viewport changes (e.g. track visibility)
+        vhash = !vhash;
     }
     view.base.dirty = false;
 
@@ -151,7 +136,6 @@ pub fn show(
         )
     });
 
-    // Paint — skip GPU submit if nothing changed and no cursor to animate
     let content_changed = gpu_updated || is_playing;
     crate::widgets::qos::guarded(|| {
         render_ctx.paint(
@@ -165,9 +149,11 @@ pub fn show(
         );
     });
 
-    // Handle input (zoom/pan/cursor/drag/reset).
-    // Pass the painter response directly — the painter rect and interaction
-    // rect are the same here, so there is no need for a dedicated interact.
+    // Selection drag runs BEFORE handle_input to avoid pointer-capture conflicts
+    if *active_tool == Tool::Select && !is_playing {
+        sel_drag_frame_arrange(ui, rect, view, midi, selected, quantize, ppq, bar_line_data);
+    }
+
     crate::view_interaction::handle_input(
         ui,
         rect,
@@ -181,11 +167,6 @@ pub fn show(
         follow_mode,
         active_tool,
     );
-
-    // ── Selection drag (Select tool only) ──
-    if *active_tool == Tool::Select && !is_playing {
-        sel_drag_frame_arrange(ui, rect, view, midi, selected, quantize, ppq, bar_line_data);
-    }
 }
 
 // ── Arrangement selection drag ──
@@ -205,6 +186,12 @@ fn sel_drag_frame_arrange(
         ui.data_mut(|d| d.get_persisted(sel_id)).unwrap_or(None);
 
     let pointer = ui.input(|i| i.pointer.clone());
+    let cmd = ui.input(|i| i.modifiers.command || i.modifiers.ctrl);
+
+    // Clear stale drag state (e.g. lost window focus mid-drag)
+    if drag.is_some() && !pointer.primary_down() && !pointer.primary_released() {
+        drag = None;
+    }
 
     if pointer.primary_pressed()
         && let Some(pos) = pointer.hover_pos()
@@ -212,51 +199,41 @@ fn sel_drag_frame_arrange(
     {
         let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
         drag = Some((local, local));
-        let cmd = ui.input(|i| i.modifiers.command || i.modifiers.ctrl);
         if !cmd {
             selected.clear();
         }
     }
 
     if let Some((start, _)) = drag {
-        if pointer.primary_down() {
+        // Only update end on frames after the initial press
+        if pointer.primary_down() && !pointer.primary_pressed() {
             if let Some(pos) = pointer.hover_pos() {
-                let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
+                let clamped = pos.clamp(content_rect.min, content_rect.max);
+                let local = egui::pos2(
+                    clamped.x - content_rect.min.x,
+                    clamped.y - content_rect.min.y,
+                );
                 drag = Some((start, local));
             }
         }
 
         if pointer.primary_released() {
             if let (Some(midi_ref), Some((start, end))) = (midi, drag) {
-                let sx = start.x.min(end.x);
-                let ex = start.x.max(end.x);
-                let sy = start.y.min(end.y);
-                let ey = start.y.max(end.y);
+                let (
+                    screen_sx,
+                    screen_ex,
+                    screen_sy,
+                    screen_ey,
+                    t_start,
+                    t_end,
+                    track_lo,
+                    track_hi,
+                ) = arrange_snapped_bounds(start, end, view, quantize, ppq, bar_line_data);
 
-                let tick_s = view.x_to_tick(sx);
-                let tick_e = view.x_to_tick(ex);
-
-                // Y: pixel → track index
-                let lh = view.lane_height;
-                let scroll_y = view.base.scroll_y;
-                let track_lo = ((scroll_y + sy) / lh).floor().max(0.0) as usize;
-                let track_hi = ((scroll_y + ey) / lh).ceil().max(0.0) as usize;
-
-                // Snap ticks
-                let snapped_s = snap_tick(tick_s, quantize, ppq, bar_line_data);
-                let snapped_e = snap_tick(tick_e, quantize, ppq, bar_line_data);
-                let t_start = snapped_s.min(snapped_e);
-                let t_end = snapped_s.max(snapped_e);
-
-                let cmd = ui.input(|i| i.modifiers.command || i.modifiers.ctrl);
                 if !cmd {
                     selected.clear();
                 }
                 for track in track_lo..=track_hi {
-                    // Arrangement: iterate all keys for this track
-                    // Since notes don't have a track-indexed lookup, we
-                    // iterate key_notes and filter by track.
-                    // With max 128 keys this is fast (<10 µs per key scan).
                     for key in 0..128u8 {
                         for note in midi_ref.key_notes(key) {
                             if note.track as usize != track {
@@ -268,34 +245,63 @@ fn sel_drag_frame_arrange(
                         }
                     }
                 }
-
                 view.base.dirty = true;
             }
             drag = None;
         }
     }
 
-    // Draw selection rect
+    // Draw snapped selection rect
     if let Some((start, end)) = drag {
-        let sx = content_rect.min.x + start.x.min(end.x);
-        let sy = content_rect.min.y + start.y.min(end.y);
-        let ex = content_rect.min.x + start.x.max(end.x);
-        let ey = content_rect.min.y + start.y.max(end.y);
-        let sel_rect = egui::Rect::from_min_max(egui::pos2(sx, sy), egui::pos2(ex, ey));
-        ui.painter().rect_filled(
-            sel_rect,
-            0.0,
-            egui::Color32::from_rgba_premultiplied(100, 180, 255, 50),
+        let (vx, vy, vw, vh, _, _, _, _) =
+            arrange_snapped_bounds(start, end, view, quantize, ppq, bar_line_data);
+        let snapped = egui::Rect::from_min_max(
+            egui::pos2(vx.min(vy), vw.min(vh)),
+            egui::pos2(vx.max(vy), vw.max(vh)),
         );
-        ui.painter().rect_stroke(
-            sel_rect,
-            0.0,
-            egui::Stroke::new(1.0, egui::Color32::from_rgb(100, 180, 255)),
-            egui::StrokeKind::Middle,
-        );
+        crate::widgets::selection_box::draw(&ui.painter(), content_rect, snapped);
     }
 
     ui.data_mut(|d| d.insert_persisted(sel_id, drag));
+}
+
+/// Compute snapped selection bounds for arrangement.
+/// Returns (view_local_sx, view_local_ex, view_local_sy, view_local_ey,
+///          t_start, t_end, track_lo, track_hi).
+fn arrange_snapped_bounds(
+    start: egui::Pos2,
+    end: egui::Pos2,
+    view: &ArrangementView,
+    quantize: QuantizePreset,
+    ppq: u32,
+    bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
+) -> (f32, f32, f32, f32, f64, f64, usize, usize) {
+    let sx = start.x.min(end.x);
+    let ex = start.x.max(end.x);
+    let sy = start.y.min(end.y);
+    let ey = start.y.max(end.y);
+
+    let tick_s = view.x_to_tick(sx);
+    let tick_e = view.x_to_tick(ex);
+    let snapped_s = snap_tick(tick_s, quantize, ppq, bar_line_data);
+    let snapped_e = snap_tick(tick_e, quantize, ppq, bar_line_data);
+    let t_start = snapped_s.min(snapped_e);
+    let t_end = snapped_s.max(snapped_e);
+
+    let lh = view.lane_height;
+    let scroll_y = view.base.scroll_y;
+    let track_lo = ((scroll_y + sy) / lh).floor().max(0.0) as usize;
+    let track_hi = ((scroll_y + ey) / lh).floor().max(0.0) as usize;
+
+    let view_sy = track_lo as f32 * lh - scroll_y;
+    let view_ey = (track_hi as f32 + 1.0) * lh - scroll_y;
+
+    let view_sx = view.tick_to_x(t_start);
+    let view_ex = view.tick_to_x(t_end);
+
+    (
+        view_sx, view_ex, view_sy, view_ey, t_start, t_end, track_lo, track_hi,
+    )
 }
 
 fn snap_tick(

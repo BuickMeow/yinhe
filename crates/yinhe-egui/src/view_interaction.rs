@@ -244,11 +244,13 @@ pub(crate) fn handle_input(
 
     // Click to set cursor — pointer release + small drag distance.
     // Hover check here also uses raw rect containment for the same reason.
+    // Skip in Select mode — selection handler manages its own clicks.
     let released = ui.input(|i| i.pointer.primary_released());
     let drag_dist = content_resp.drag_delta().length();
     if released
         && pointer_in_rect
         && drag_dist < 3.0
+        && *active_tool != Tool::Select
         && let Some(pos) = content_resp.interact_pointer_pos()
     {
         let pointer_x = pos.x - rect.min.x;

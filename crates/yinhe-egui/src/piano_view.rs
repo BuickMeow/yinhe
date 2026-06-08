@@ -107,9 +107,22 @@ pub fn show(
         }
     }
 
+    // ── Selection drag (Select tool only) ──
+    // Update state BEFORE handle_input to avoid egui pointer-capture conflicts.
+    if *active_tool == Tool::Select && !is_playing {
+        sel_drag_frame(
+            ui,
+            content_rect,
+            view,
+            midi,
+            selected,
+            quantize,
+            ppq,
+            bar_line_data,
+        );
+    }
+
     // ── Content interaction (zoom/pan/cursor/drag/reset) ──
-    // Created FIRST so that the keyboard handle (below) wins in the 4px
-    // overlap zone where they intersect.
     crate::view_interaction::handle_input(
         ui,
         content_rect,
@@ -124,23 +137,7 @@ pub fn show(
         active_tool,
     );
 
-    // ── Selection drag (Select tool only) ──
-    if *active_tool == Tool::Select && !is_playing {
-        sel_drag_frame(
-            ui,
-            content_rect,
-            view,
-            midi,
-            selected,
-            quantize,
-            ppq,
-            bar_line_data,
-        );
-    }
-
     // ── Keyboard resize handle ──
-    // Created AFTER content interact so it wins the 4px overlap at the edge.
-    // Covers ruler + content area, not the scrollbar below.
     ui.push_id("kb_handle", |ui| {
         let handle_x = rect.min.x + view.keyboard_width();
         let handle_rect = egui::Rect::from_min_max(
@@ -159,9 +156,6 @@ pub fn show(
                 rect.width() * crate::widgets::theme::MAX_KEYBOARD_RATIO,
             );
 
-            // Keep scrollbar thumb visually in sync with the content area by
-            // adjusting scroll_x so that the thumb's pixel offset within the
-            // scrollbar track stays constant as the track width changes.
             let old_sb_w = w as f32 - old_kb;
             let new_sb_w = w as f32 - new_kb;
             if old_sb_w > 0.0 && new_sb_w > 0.0 {
@@ -177,15 +171,12 @@ pub fn show(
     });
 
     // ── Clamp scroll after all interactions ──
-    // handle_input() and keyboard drag may have set scroll_x/scroll_y out of bounds.
-    // Clamp before rendering to prevent 1-frame out-of-bounds visual.
     let total_ticks = midi
         .map(|m| m.tick_length().unwrap_or(0) as f64)
         .unwrap_or(0.0);
     view.clamp_scroll(w as f32, h as f32, total_ticks);
 
     // ── Dirty detection ──
-    // Run AFTER all interactions so handle_input/keyboard changes are caught.
     if *cursor_tick != *last_cursor_tick {
         view.base.dirty = true;
     }
@@ -193,7 +184,7 @@ pub fn show(
 
     let force_rebuild = view.base.dirty;
 
-    // Prepare GPU data — uses the latest view state (keyboard_width, scroll, etc.)
+    // Prepare GPU data
     let gpu_dirty = crate::widgets::qos::guarded(|| {
         yinhe_pianoroll::prepare(
             pianoroll,
@@ -211,7 +202,7 @@ pub fn show(
     let content_changed = view.base.dirty || gpu_dirty;
     view.base.dirty = false;
 
-    // Paint wgpu content into the content_rect (below the ruler)
+    // Paint wgpu content into the content_rect
     crate::widgets::qos::guarded(|| {
         render_ctx.paint(
             pianoroll,
@@ -224,7 +215,14 @@ pub fn show(
         );
     });
 
-    // ── Time ruler (top band, right of keyboard) ──
+    // ── Draw selection box on TOP of GPU content ──
+    // State was already updated by sel_drag_frame above; this just draws the box
+    // after the GPU paint so it's not covered by the texture.
+    if *active_tool == Tool::Select && !is_playing {
+        sel_draw_box(ui, content_rect, view, quantize, ppq, bar_line_data);
+    }
+
+    // ── Time ruler ──
     if let Some(midi) = midi
         && let Some(tpb) = midi.ticks_per_beat()
     {
@@ -269,8 +267,6 @@ pub fn show(
             bar_line_data.map(|b| b.3).unwrap_or(&[]),
         );
 
-        // AUTO +/- buttons (in the scrollbar's left blank area)
-        // We render them here while we still have access to `panels`/`show`.
         if midi.is_some() {
             let sb_y = rect.min.y + rect.height() - crate::widgets::scrollbar::SCROLLBAR_H;
             let sb_left_blank = egui::Rect::from_min_max(
@@ -280,7 +276,6 @@ pub fn show(
                     sb_y + crate::widgets::scrollbar::SCROLLBAR_H,
                 ),
             );
-            // Paint background first, then buttons on top
             ui.painter()
                 .rect_filled(sb_left_blank, 0.0, theme::SCROLLBAR_BG);
             ui.allocate_new_ui(egui::UiBuilder::new().max_rect(sb_left_blank), |ui| {
@@ -298,12 +293,7 @@ pub fn show(
         }
     }
 
-    // ── Horizontal scrollbar (always rendered) ──
-    // scrollbar::show handles the total_ticks <= 0 case internally,
-    // matching the arrangement view's behavior.
-    // NOTE: The left blank area (same width as keyboard) is NOT painted here.
-    // It is painted inside the automation block alongside the AUTO buttons
-    // so the buttons are not covered by a later background fill.
+    // ── Horizontal scrollbar ──
     let kb_w = view.keyboard_width();
     let sb_y = rect.min.y + rect.height() - crate::widgets::scrollbar::SCROLLBAR_H;
     let sb_rect = egui::Rect::from_min_max(
@@ -341,6 +331,12 @@ fn sel_drag_frame(
         ui.data_mut(|d| d.get_persisted(sel_id)).unwrap_or(None);
 
     let pointer = ui.input(|i| i.pointer.clone());
+    let cmd = ui.input(|i| i.modifiers.command || i.modifiers.ctrl);
+
+    // Clear stale drag state
+    if drag.is_some() && !pointer.primary_down() && !pointer.primary_released() {
+        drag = None;
+    }
 
     // Start drag
     if pointer.primary_pressed()
@@ -349,50 +345,38 @@ fn sel_drag_frame(
     {
         let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
         drag = Some((local, local));
-        // Non-Cmd mode: clear selection on drag start
-        let cmd = ui.input(|i| i.modifiers.command || i.modifiers.ctrl);
         if !cmd {
             selected.clear();
         }
     }
 
-    // Update during drag
+    // Update end on frames after the initial press
     if let Some((start, _)) = drag {
-        if pointer.primary_down() {
+        if pointer.primary_down() && !pointer.primary_pressed() {
             if let Some(pos) = pointer.hover_pos() {
-                let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
+                let clamped = pos.clamp(content_rect.min, content_rect.max);
+                let local = egui::pos2(
+                    clamped.x - content_rect.min.x,
+                    clamped.y - content_rect.min.y,
+                );
                 drag = Some((start, local));
             }
         }
 
-        // Release → hit test
+        // Release -> hit test
         if pointer.primary_released() {
             if let (Some(midi_ref), Some((start, end))) = (midi, drag) {
-                let sx = start.x.min(end.x);
-                let ex = start.x.max(end.x);
-                let sy = start.y.min(end.y);
-                let ey = start.y.max(end.y);
+                let (
+                    snapped_sx,
+                    snapped_ex,
+                    snapped_sy,
+                    snapped_ey,
+                    t_start,
+                    t_end,
+                    key_lo,
+                    key_hi,
+                ) = piano_snapped_bounds(start, end, view, quantize, ppq, bar_line_data);
 
-                // Pixel → tick (X axis)
-                let tick_s = view.x_to_tick(sx);
-                let tick_e = view.x_to_tick(ex);
-
-                // Pixel → key (Y axis)
-                let kh = view.key_height;
-                let scroll_y = view.base.scroll_y;
-
-                // content_rect Y: 0 = top = key 127, h = bottom = key 0
-                let key_lo = (127.0 - ((scroll_y + ey) / kh)).floor().max(0.0).min(127.0) as u8;
-                let key_hi = (127.0 - ((scroll_y + sy) / kh)).ceil().max(0.0).min(127.0) as u8;
-
-                // Snap ticks to quantize grid
-                let snapped_s = snap_tick(tick_s, quantize, ppq, bar_line_data);
-                let snapped_e = snap_tick(tick_e, quantize, ppq, bar_line_data);
-                let t_start = snapped_s.min(snapped_e);
-                let t_end = snapped_s.max(snapped_e);
-
-                // Hit test: notes overlapping the rect
-                let cmd = ui.input(|i| i.modifiers.command || i.modifiers.ctrl);
                 if !cmd {
                     selected.clear();
                 }
@@ -403,35 +387,76 @@ fn sel_drag_frame(
                         }
                     }
                 }
-
                 view.base.dirty = true;
             }
             drag = None;
         }
     }
 
-    // Draw selection rect
-    if let Some((start, end)) = drag {
-        let sx = content_rect.min.x + start.x.min(end.x);
-        let sy = content_rect.min.y + start.y.min(end.y);
-        let ex = content_rect.min.x + start.x.max(end.x);
-        let ey = content_rect.min.y + start.y.max(end.y);
-        let sel_rect = egui::Rect::from_min_max(egui::pos2(sx, sy), egui::pos2(ex, ey));
-        ui.painter().rect_filled(
-            sel_rect,
-            0.0,
-            egui::Color32::from_rgba_premultiplied(100, 180, 255, 50),
-        );
-        ui.painter().rect_stroke(
-            sel_rect,
-            0.0,
-            egui::Stroke::new(1.0, egui::Color32::from_rgb(100, 180, 255)),
-            egui::StrokeKind::Middle,
-        );
-    }
-
-    // Persist across frames
     ui.data_mut(|d| d.insert_persisted(sel_id, drag));
+}
+
+/// Read persisted drag state and draw the selection box on top of GPU content.
+/// Must be called AFTER `render_ctx.paint` so the box is not covered by the texture.
+fn sel_draw_box(
+    ui: &mut egui::Ui,
+    content_rect: egui::Rect,
+    view: &yinhe_pianoroll::PianoRollView,
+    quantize: QuantizePreset,
+    ppq: u32,
+    bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
+) {
+    let sel_id = ui.id().with("sel_drag");
+    let drag: Option<(egui::Pos2, egui::Pos2)> =
+        ui.data_mut(|d| d.get_persisted(sel_id)).unwrap_or(None);
+
+    if let Some((start, end)) = drag {
+        let (vx, vy, vw, vh, _, _, _, _) =
+            piano_snapped_bounds(start, end, view, quantize, ppq, bar_line_data);
+        let snapped = egui::Rect::from_min_max(
+            egui::pos2(vx.min(vy), vw.min(vh)),
+            egui::pos2(vx.max(vy), vw.max(vh)),
+        );
+        crate::widgets::selection_box::draw(&ui.painter(), content_rect, snapped);
+    }
+}
+
+/// Compute snapped selection bounds for piano roll.
+#[allow(clippy::too_many_arguments)]
+fn piano_snapped_bounds(
+    start: egui::Pos2,
+    end: egui::Pos2,
+    view: &yinhe_pianoroll::PianoRollView,
+    quantize: QuantizePreset,
+    ppq: u32,
+    bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
+) -> (f32, f32, f32, f32, f64, f64, u8, u8) {
+    let sx = start.x.min(end.x);
+    let ex = start.x.max(end.x);
+    let sy = start.y.min(end.y);
+    let ey = start.y.max(end.y);
+
+    let tick_s = view.x_to_tick(sx);
+    let tick_e = view.x_to_tick(ex);
+    let snapped_s = snap_tick(tick_s, quantize, ppq, bar_line_data);
+    let snapped_e = snap_tick(tick_e, quantize, ppq, bar_line_data);
+    let t_start = snapped_s.min(snapped_e);
+    let t_end = snapped_s.max(snapped_e);
+
+    let kh = view.key_height;
+    let scroll_y = view.base.scroll_y;
+
+    let key_lo = (127.0 - ((scroll_y + ey) / kh)).ceil().max(0.0).min(127.0) as u8;
+    let key_hi = (127.0 - ((scroll_y + sy) / kh)).ceil().max(0.0).min(127.0) as u8;
+    let screen_sy = (127.0 - key_hi as f32) * kh - scroll_y;
+    let screen_ey = (127.0 - key_lo as f32 + 1.0) * kh - scroll_y;
+
+    let screen_sx = view.tick_to_x(t_start);
+    let screen_ex = view.tick_to_x(t_end);
+
+    (
+        screen_sx, screen_ex, screen_sy, screen_ey, t_start, t_end, key_lo, key_hi,
+    )
 }
 
 /// Snap a tick value to the current quantize grid.
