@@ -6,7 +6,11 @@ pub enum Tool {
     Select,
     Pencil,
     Scissors,
+    Eraser,
 }
+
+/// All currently available tools — shown on both panels.
+pub const ALL_TOOLS: [Tool; 4] = [Tool::Select, Tool::Pencil, Tool::Scissors, Tool::Eraser];
 
 impl Tool {
     pub fn icon(self) -> egui_material_icons::MaterialIcon {
@@ -14,6 +18,7 @@ impl Tool {
             Tool::Select => ICON_SELECT,
             Tool::Pencil => ICON_EDIT,
             Tool::Scissors => ICON_CONTENT_CUT,
+            Tool::Eraser => ICON_INK_ERASER,
         }
     }
 
@@ -22,6 +27,7 @@ impl Tool {
             Tool::Select => "选择",
             Tool::Pencil => "铅笔",
             Tool::Scissors => "剪刀",
+            Tool::Eraser => "橡皮擦",
         }
     }
 }
@@ -29,10 +35,11 @@ impl Tool {
 /// Tool panel width (icon + padding).
 pub const TOOLS_PANEL_W: f32 = 28.0;
 
-/// Show the vertical tool palette.
+/// Show a vertical tool palette inside `rect`.
 ///
-/// `rect` is the full area allocated for the tool buttons.
-pub fn show(ui: &mut egui::Ui, rect: egui::Rect, active_tool: &mut Tool) {
+/// `available_tools` controls which tools appear and in what order.
+/// Pass [`ALL_TOOLS`] to show everything.
+pub fn show(ui: &mut egui::Ui, rect: egui::Rect, active_tool: &mut Tool, available_tools: &[Tool]) {
     let layout = egui::Layout::top_down(egui::Align::Center);
     ui.allocate_new_ui(egui::UiBuilder::new().max_rect(rect).layout(layout), |ui| {
         ui.set_clip_rect(rect);
@@ -41,7 +48,7 @@ pub fn show(ui: &mut egui::Ui, rect: egui::Rect, active_tool: &mut Tool) {
 
         ui.add_space(4.0);
 
-        for tool in &[Tool::Select, Tool::Pencil, Tool::Scissors] {
+        for tool in available_tools {
             let is_active = *active_tool == *tool;
             let color = if is_active {
                 crate::widgets::theme::ACCENT_ACTIVE

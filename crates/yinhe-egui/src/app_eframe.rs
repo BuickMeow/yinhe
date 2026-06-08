@@ -167,8 +167,14 @@ impl eframe::App for App {
         // ── Main area: arrangement (top) + pianoroll (bottom) ──
         let mut remaining = ui.available_rect_before_wrap();
 
-        // ── Tools panel (always visible) ──
-        let tools_panel_w = crate::widgets::tools_panel::TOOLS_PANEL_W;
+        // ── Reserve space for tool panels (one per visible section) ──
+        let has_arr = self.show_transport && self.active_doc.is_some();
+        let has_piano = self.show_pianoroll && self.active_doc.is_some();
+        let tools_panel_w = if has_arr || has_piano {
+            crate::widgets::tools_panel::TOOLS_PANEL_W
+        } else {
+            0.0
+        };
         remaining.max.x -= tools_panel_w;
 
         // ── Reserve space for right panel ──
@@ -183,31 +189,31 @@ impl eframe::App for App {
         };
         remaining.max.x -= right_panel_total_w;
 
+        let total = remaining.size();
+        let arr_h = if self.show_transport && self.active_doc.is_some() {
+            if self.show_pianoroll {
+                (total.y * self.arr_split).max(theme::MIN_ARR_HEIGHT)
+            } else {
+                total.y
+            }
+        } else {
+            0.0
+        };
+        let bottom_y = remaining.min.y
+            + arr_h
+            + if self.show_transport && self.show_pianoroll && self.active_doc.is_some() {
+                theme::SPLIT_GAP
+            } else {
+                0.0
+            };
+
         if let Some(idx) = self.active_doc {
-            let total = remaining.size();
             let is_playing = self
                 .audio
                 .as_ref()
                 .map(|a| a.handle.is_playing())
                 .unwrap_or(false);
             let mut follow_mode = self.follow_mode;
-
-            let arr_h = if self.show_transport {
-                if self.show_pianoroll {
-                    (total.y * self.arr_split).max(theme::MIN_ARR_HEIGHT)
-                } else {
-                    total.y
-                }
-            } else {
-                0.0
-            };
-            let bottom_y = remaining.min.y
-                + arr_h
-                + if self.show_transport && self.show_pianoroll {
-                    theme::SPLIT_GAP
-                } else {
-                    0.0
-                };
 
             // ── Arrangement view (transport track panel + arrangement GPU) ──
             if self.show_transport {
@@ -234,13 +240,14 @@ impl eframe::App for App {
 
                 // Horizontal splitter (between arrangement and pianoroll)
                 if self.show_transport {
+                    let split_right = remaining.max.x + tools_panel_w;
                     let h_split_rect = egui::Rect::from_min_max(
                         egui::pos2(remaining.min.x, remaining.min.y + arr_h),
-                        egui::pos2(remaining.max.x, remaining.min.y + arr_h + theme::SPLIT_GAP),
+                        egui::pos2(split_right, remaining.min.y + arr_h + theme::SPLIT_GAP),
                     );
                     let h_int_rect = egui::Rect::from_min_max(
                         egui::pos2(remaining.min.x, remaining.min.y + arr_h + 0.5),
-                        egui::pos2(remaining.max.x, remaining.min.y + arr_h + theme::SPLIT_GAP),
+                        egui::pos2(split_right, remaining.min.y + arr_h + theme::SPLIT_GAP),
                     );
                     let h_split_resp =
                         crate::widgets::split_handle::horizontal(ui, "__h_split__", h_int_rect);
@@ -311,17 +318,37 @@ impl eframe::App for App {
             self.follow_mode = follow_mode;
         }
 
-        // ── Tools panel ──
-        let tools_rect = egui::Rect::from_min_size(
-            egui::pos2(remaining.max.x, remaining.min.y),
-            egui::vec2(tools_panel_w, remaining.height()),
-        );
-        crate::widgets::tools_panel::show(ui, tools_rect, &mut self.active_tool);
+        // ── Tool panels ──
+        let tools_x = remaining.max.x;
+        if has_arr {
+            let rect = egui::Rect::from_min_size(
+                egui::pos2(tools_x, remaining.min.y),
+                egui::vec2(tools_panel_w, arr_h),
+            );
+            crate::widgets::tools_panel::show(
+                ui,
+                rect,
+                &mut self.active_tool,
+                &crate::widgets::tools_panel::ALL_TOOLS,
+            );
+        }
+        if has_piano {
+            let rect = egui::Rect::from_min_size(
+                egui::pos2(tools_x, bottom_y),
+                egui::vec2(tools_panel_w, remaining.max.y - bottom_y),
+            );
+            crate::widgets::tools_panel::show(
+                ui,
+                rect,
+                &mut self.active_tool,
+                &crate::widgets::tools_panel::ALL_TOOLS,
+            );
+        }
 
         // ── Right panel ──
         if self.right_tab.is_some() {
             let right_rect = egui::Rect::from_min_size(
-                egui::pos2(tools_rect.max.x, remaining.min.y),
+                egui::pos2(tools_x + tools_panel_w, remaining.min.y),
                 egui::vec2(right_panel_total_w, remaining.height()),
             );
             let doc = self.active_doc.and_then(|idx| self.documents.get_mut(idx));
