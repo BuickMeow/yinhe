@@ -68,3 +68,73 @@ impl AutomationPanelView {
         self.base.left_panel_width
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_default_values() {
+        let view = AutomationPanelView::default();
+        assert_eq!(view.panel_height, DEFAULT_PANEL_HEIGHT);
+        assert_eq!(view.selected_target, AutomationTarget::Velocity);
+        assert_eq!(view.lane_index, 0);
+        assert!(view.dirty);
+        assert_eq!(view.base.pixels_per_tick, 0.15);
+        assert_eq!(view.base.scroll_x, 0.0);
+        assert_eq!(view.base.left_panel_width, 60.0);
+    }
+
+    #[test]
+    fn test_sync_from_pianoroll_updates_values() {
+        let mut view = AutomationPanelView::default();
+        view.dirty = false;
+
+        view.sync_from_pianoroll(100.0, 0.5, 80.0);
+
+        assert_eq!(view.base.scroll_x, 100.0);
+        assert_eq!(view.base.pixels_per_tick, 0.5);
+        assert_eq!(view.base.left_panel_width, 80.0);
+        assert!(view.dirty);
+    }
+
+    #[test]
+    fn test_sync_from_pianoroll_no_change_skips_dirty() {
+        let mut view = AutomationPanelView::default();
+        view.dirty = false;
+
+        view.sync_from_pianoroll(0.0, 0.15, 60.0);
+
+        assert!(
+            !view.dirty,
+            "dirty should remain false when values unchanged"
+        );
+    }
+
+    #[test]
+    fn test_sync_from_pianoroll_partial_update_triggers_dirty() {
+        let mut view = AutomationPanelView::default();
+        view.dirty = false;
+
+        // Only change scroll_x
+        view.sync_from_pianoroll(50.0, 0.15, 60.0);
+
+        assert!(view.dirty);
+        assert_eq!(view.base.scroll_x, 50.0);
+        assert_eq!(view.base.pixels_per_tick, 0.15);
+        assert_eq!(view.base.left_panel_width, 60.0);
+    }
+
+    #[test]
+    fn test_left_panel_width_returns_base_value() {
+        let view = AutomationPanelView::default();
+        assert_eq!(view.left_panel_width(), view.base.left_panel_width);
+    }
+
+    #[test]
+    fn test_panel_height_constants() {
+        assert_eq!(DEFAULT_PANEL_HEIGHT, 80.0);
+        assert_eq!(MIN_PANEL_HEIGHT, 40.0);
+        assert_eq!(MAX_PANEL_HEIGHT, 200.0);
+    }
+}
