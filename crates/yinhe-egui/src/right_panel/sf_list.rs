@@ -1,6 +1,6 @@
 use eframe::egui;
 
-use super::config::SfEntry;
+use crate::right_panel::config::SfEntry;
 
 /// A reusable, compact list of SoundFont entries with checkboxes.
 ///

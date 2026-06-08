@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use cpal::traits::{DeviceTrait, HostTrait};
 
-use crate::rack::config::GlobalSfConfig;
+use crate::right_panel::config::GlobalSfConfig;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]

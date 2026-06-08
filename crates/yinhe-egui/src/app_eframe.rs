@@ -8,6 +8,7 @@ use crate::widgets::title_bar;
 use crate::arrange;
 use crate::piano_view;
 use crate::widgets::mode_bar;
+use crate::widgets::theme;
 use crate::widgets::transport_bar;
 
 // ── Panic-safe take guard ──
@@ -160,35 +161,23 @@ impl eframe::App for App {
             &mut self.show_pianoroll_in_arrange,
             &mut self.show_transport,
             &mut self.show_pianoroll,
+            &mut self.right_tab,
         );
 
-        // ── RACK view ──
-        if self.view_mode == crate::widgets::mode_bar::ViewMode::Rack {
-            let rack_doc = self.active_doc.and_then(|idx| self.documents.get_mut(idx));
-            let changed = crate::rack::show(ui, &mut self.audio_settings, rack_doc);
-            if changed {
-                self.teardown_audio();
-            }
-            // Skip arrangement/pianoroll rendering
-            // ── Request repaint during playback ──
-            let is_audio_playing = self
-                .audio
-                .as_ref()
-                .map(|a| a.handle.is_playing())
-                .unwrap_or(false);
-            if is_audio_playing {
-                ui.ctx().request_repaint();
-            }
-            // ── Loading overlay ──
-            self.file_loader.show_midi_loading_overlay(ui);
-            if self.file_loader.is_loading() {
-                ui.ctx().request_repaint();
-            }
-            return;
-        }
-
         // ── Main area: arrangement (top) + pianoroll (bottom) ──
-        let remaining = ui.available_rect_before_wrap();
+        let mut remaining = ui.available_rect_before_wrap();
+
+        // ── Reserve space for right panel ──
+        let right_panel_total_w = if self.right_tab.is_some() {
+            let max_w = (remaining.width() - 60.0).max(theme::RIGHT_PANEL_MIN_WIDTH + 4.0);
+            let pw =
+                (self.right_panel_width + 4.0).clamp(theme::RIGHT_PANEL_MIN_WIDTH + 4.0, max_w);
+            self.right_panel_width = (pw - 4.0).max(theme::RIGHT_PANEL_MIN_WIDTH);
+            pw
+        } else {
+            0.0
+        };
+        remaining.max.x -= right_panel_total_w;
 
         if let Some(idx) = self.active_doc {
             let total = remaining.size();
@@ -201,7 +190,7 @@ impl eframe::App for App {
 
             let arr_h = if self.show_transport {
                 if self.show_pianoroll {
-                    (total.y * self.arr_split).max(crate::widgets::theme::MIN_ARR_HEIGHT)
+                    (total.y * self.arr_split).max(theme::MIN_ARR_HEIGHT)
                 } else {
                     total.y
                 }
@@ -211,7 +200,7 @@ impl eframe::App for App {
             let bottom_y = remaining.min.y
                 + arr_h
                 + if self.show_transport && self.show_pianoroll {
-                    crate::widgets::theme::SPLIT_GAP
+                    theme::SPLIT_GAP
                 } else {
                     0.0
                 };
@@ -240,41 +229,30 @@ impl eframe::App for App {
                 let mut guard = ReplaceGuard::new(&mut self.documents[idx]);
 
                 // Horizontal splitter (between arrangement and pianoroll)
-                // Interact rect inset 0.5px at top so it never shares a
-                // boundary with the arrangement scrollbar above.
                 if self.show_transport {
                     let h_split_rect = egui::Rect::from_min_max(
                         egui::pos2(remaining.min.x, remaining.min.y + arr_h),
-                        egui::pos2(
-                            remaining.max.x,
-                            remaining.min.y + arr_h + crate::widgets::theme::SPLIT_GAP,
-                        ),
+                        egui::pos2(remaining.max.x, remaining.min.y + arr_h + theme::SPLIT_GAP),
                     );
                     let h_int_rect = egui::Rect::from_min_max(
                         egui::pos2(remaining.min.x, remaining.min.y + arr_h + 0.5),
-                        egui::pos2(
-                            remaining.max.x,
-                            remaining.min.y + arr_h + crate::widgets::theme::SPLIT_GAP,
-                        ),
+                        egui::pos2(remaining.max.x, remaining.min.y + arr_h + theme::SPLIT_GAP),
                     );
                     let h_split_resp =
                         crate::widgets::split_handle::horizontal(ui, "__h_split__", h_int_rect);
-                    // Overdraw visual rect — interaction rect is inset 0.5px
                     ui.painter().rect_filled(
                         h_split_rect,
                         0.0,
                         if h_split_resp.hovered() || h_split_resp.dragged() {
-                            crate::widgets::theme::SPLIT_HOVER
+                            theme::SPLIT_HOVER
                         } else {
-                            crate::widgets::theme::SPLIT_DEFAULT
+                            theme::SPLIT_DEFAULT
                         },
                     );
                     if h_split_resp.dragged() {
                         let delta = h_split_resp.drag_delta().y;
-                        self.arr_split = ((arr_h + delta) / total.y).clamp(
-                            crate::widgets::theme::SPLIT_CLAMP_MIN,
-                            crate::widgets::theme::SPLIT_CLAMP_MAX,
-                        );
+                        self.arr_split = ((arr_h + delta) / total.y)
+                            .clamp(theme::SPLIT_CLAMP_MIN, theme::SPLIT_CLAMP_MAX);
                     }
                 }
 
@@ -327,6 +305,27 @@ impl eframe::App for App {
             }
 
             self.follow_mode = follow_mode;
+        }
+
+        // ── Right panel ──
+        if self.right_tab.is_some() {
+            let right_rect = egui::Rect::from_min_size(
+                egui::pos2(remaining.max.x, remaining.min.y),
+                egui::vec2(right_panel_total_w, remaining.height()),
+            );
+            let doc = self.active_doc.and_then(|idx| self.documents.get_mut(idx));
+            let changed = crate::right_panel::show(
+                ui,
+                right_rect,
+                &mut self.right_panel_width,
+                &mut self.right_tab,
+                &mut self.audio_settings,
+                doc,
+                self.audio.as_ref(),
+            );
+            if changed {
+                self.teardown_audio();
+            }
         }
 
         // ── Request repaint during playback ──

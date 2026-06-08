@@ -5,7 +5,23 @@ use yinhe_types::TRACK_PALETTE;
 
 use crate::playback::PlaybackState;
 use crate::quantize::QuantizePreset;
-use crate::rack::config::ProjectSfConfig;
+use crate::right_panel::config::ProjectSfConfig;
+
+/// Per-track mutable overrides (mute, solo, future name/port/channel edits).
+#[derive(Clone)]
+pub(crate) struct TrackOverride {
+    pub muted: bool,
+    pub soloed: bool,
+}
+
+impl Default for TrackOverride {
+    fn default() -> Self {
+        Self {
+            muted: false,
+            soloed: false,
+        }
+    }
+}
 
 /// Per-document state: holds one MIDI file and editing state for it.
 ///
@@ -32,6 +48,8 @@ pub(crate) struct Document {
     pub show_controller_panels: bool,
     /// Song-specific soundfont overrides (not yet persisted).
     pub project_sf: ProjectSfConfig,
+    /// Per-track mute/solo overrides.
+    pub track_overrides: Vec<TrackOverride>,
 }
 
 impl Default for Document {
@@ -51,6 +69,7 @@ impl Default for Document {
             controller_panels: vec![yinhe_automation::AutomationPanelView::default()],
             show_controller_panels: true,
             project_sf: ProjectSfConfig::default(),
+            track_overrides: vec![TrackOverride::default()],
         }
     }
 }
@@ -124,6 +143,7 @@ impl Document {
                 controller_panels: vec![yinhe_automation::AutomationPanelView::default()],
                 show_controller_panels: true,
                 project_sf: ProjectSfConfig::default(),
+                track_overrides: (0..num_tracks).map(|_| TrackOverride::default()).collect(),
             }
         })
     }

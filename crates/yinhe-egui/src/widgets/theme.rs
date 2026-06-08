@@ -72,6 +72,10 @@ pub const MAX_KEYBOARD_RATIO: f32 = 0.4;
 pub const WHEEL_SCROLL_SPEED: f32 = 5000.0;
 pub const NOTE_CURSOR_THRESHOLD: f64 = 0.005;
 
+// ── Right panel ──
+pub const RIGHT_PANEL_MIN_WIDTH: f32 = 160.0;
+pub const RIGHT_PANEL_DEFAULT_WIDTH: f32 = 320.0;
+
 // ── Automation panel ──
 pub const AUTO_PANEL_SPLIT_H: f32 = 4.0;
 pub const AUTO_PANEL_COMBO_WIDTH_RATIO: f32 = 1.0; // combo box width equals keyboard width

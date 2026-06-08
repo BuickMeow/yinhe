@@ -88,6 +88,17 @@ impl App {
                         paths: paths.clone(),
                     });
                 }
+                // Send initial mute/solo state
+                let has_solo = doc.track_overrides.iter().any(|t| t.soloed);
+                let skip: Vec<bool> = doc
+                    .track_overrides
+                    .iter()
+                    .map(|ov| if has_solo { !ov.soloed } else { ov.muted })
+                    .collect();
+                audio
+                    .handle
+                    .send(yinhe_audio::AudioCommand::SkipTracks { skip });
+
                 self.audio = Some(audio);
                 self.audio_active_doc = Some(idx);
             }

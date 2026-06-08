@@ -1,12 +1,13 @@
 use eframe::egui;
 use egui_material_icons::icons::*;
 
+use crate::right_panel::RightTab;
+
 #[derive(PartialEq)]
 pub enum ViewMode {
     Arrange,
     Mix,
     Edit,
-    Rack,
 }
 
 fn mode_button(ui: &mut egui::Ui, label: &str, is_selected: bool, on_click: impl FnOnce()) {
@@ -37,12 +38,43 @@ fn mode_button(ui: &mut egui::Ui, label: &str, is_selected: bool, on_click: impl
     }
 }
 
+fn right_icon_button(
+    ui: &mut egui::Ui,
+    icon: egui_material_icons::MaterialIcon,
+    is_active: bool,
+    on_click: impl FnOnce(),
+) {
+    let color = if is_active {
+        crate::widgets::theme::ACCENT_ACTIVE
+    } else {
+        egui::Color32::GRAY
+    };
+    let resp = ui.add(
+        egui::Label::new(icon.rich_text().size(14.0).color(color))
+            .sense(egui::Sense::click())
+            .selectable(false),
+    );
+    if !is_active && resp.hovered() {
+        ui.painter().text(
+            resp.rect.center(),
+            egui::Align2::CENTER_CENTER,
+            icon.codepoint,
+            egui::FontId::new(14.0, icon.font_family()),
+            egui::Color32::WHITE,
+        );
+    }
+    if resp.clicked() {
+        on_click();
+    }
+}
+
 pub fn show(
     ui: &mut egui::Ui,
     view_mode: &mut ViewMode,
     show_pianoroll_in_arrange: &mut bool,
     show_transport: &mut bool,
     show_pianoroll: &mut bool,
+    right_tab: &mut Option<RightTab>,
 ) {
     egui::Panel::bottom("bottom_bar")
         .frame(egui::Frame {
@@ -76,14 +108,6 @@ pub fn show(
                     *show_pianoroll = true;
                 });
 
-                ui.add_space(2.0);
-
-                mode_button(ui, "RACK", *view_mode == ViewMode::Rack, || {
-                    *view_mode = ViewMode::Rack;
-                    *show_transport = false;
-                    *show_pianoroll = false;
-                });
-
                 // ── Piano roll toggle ──
                 if *view_mode == ViewMode::Arrange {
                     ui.add_space(6.0);
@@ -114,6 +138,36 @@ pub fn show(
                         *show_pianoroll = *show_pianoroll_in_arrange;
                     }
                 }
+
+                // ── Spacer: push right icons to the right edge ──
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    // Right-most first (from right to left):
+                    //  1. ICON_INFO
+                    //  2. ICON_MUSIC_CAST
+
+                    right_icon_button(ui, ICON_INFO, *right_tab == Some(RightTab::Info), || {
+                        *right_tab = if *right_tab == Some(RightTab::Info) {
+                            None
+                        } else {
+                            Some(RightTab::Info)
+                        };
+                    });
+
+                    ui.add_space(4.0);
+
+                    right_icon_button(
+                        ui,
+                        ICON_MUSIC_CAST,
+                        *right_tab == Some(RightTab::SoundBank),
+                        || {
+                            *right_tab = if *right_tab == Some(RightTab::SoundBank) {
+                                None
+                            } else {
+                                Some(RightTab::SoundBank)
+                            };
+                        },
+                    );
+                });
             });
         });
 }

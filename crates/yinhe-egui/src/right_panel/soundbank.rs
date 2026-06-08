@@ -1,14 +1,11 @@
-pub mod config;
-pub mod sf_list;
-
 use eframe::egui;
 
 use crate::dialogs::settings::AudioSettings;
 use crate::document::Document;
 
-use self::config::SfEntry;
+use super::config::SfEntry;
 
-/// Show the RACK panel — replaces the main area when `view_mode == Rack`.
+/// Show the sound-bank (SoundFont) panel.
 ///
 /// Returns `true` if audio should be reloaded (SF config changed).
 pub fn show(
@@ -22,12 +19,12 @@ pub fn show(
     ui.horizontal(|ui| {
         ui.add_space(8.0);
         let glbl = &mut settings.global_sf_config.global_enabled;
-        ui.checkbox(glbl, "启用全局音色库");
+        ui.checkbox(glbl, "全局音色库");
         ui.add_space(16.0);
         if let Some(ref mut doc) = doc {
-            ui.checkbox(&mut doc.project_sf.project_enabled, "启用歌曲配置（覆盖）");
+            ui.checkbox(&mut doc.project_sf.project_enabled, "歌曲配置（覆盖）");
         } else {
-            ui.label("启用歌曲配置（覆盖）");
+            ui.label("歌曲配置（覆盖）");
         }
         ui.add_space(8.0);
     });
@@ -148,7 +145,7 @@ fn global_panel(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
 
     // SF list
     let entries = &mut settings.global_sf_config.ports[port];
-    changed |= sf_list::sf_list(ui, entries);
+    changed |= super::sf_list::sf_list(ui, entries);
 
     // Toolbar
     ui.horizontal(|ui| {
@@ -194,7 +191,6 @@ fn project_panel(ui: &mut egui::Ui, doc: &mut Document) -> bool {
                 seen.insert(p as u8);
             }
         }
-        // Always include port 0 as the first/default
         if seen.is_empty() {
             seen.insert(0);
         }
@@ -212,7 +208,6 @@ fn project_panel(ui: &mut egui::Ui, doc: &mut Document) -> bool {
         .map(|&p| format!("Port {}", (b'A' + p) as char))
         .collect();
 
-    // Track which port combo is selected
     let mut selected_port = 0_usize;
     egui::ComboBox::from_id_salt("project_port")
         .selected_text(&port_names[0])
@@ -225,12 +220,9 @@ fn project_panel(ui: &mut egui::Ui, doc: &mut Document) -> bool {
         });
     let port = used_ports[selected_port];
 
-    // Check if this port has a project override — capture bool first to avoid
-    // borrowing doc inside the if-let branches that borrow doc mutably.
     let has_override = doc.project_sf.overrides.iter().any(|(p, _)| *p == port);
 
     if has_override {
-        // Find the override index
         let ov_idx = doc
             .project_sf
             .overrides
@@ -238,7 +230,7 @@ fn project_panel(ui: &mut egui::Ui, doc: &mut Document) -> bool {
             .position(|(p, _)| *p == port)
             .unwrap();
         let entries = &mut doc.project_sf.overrides[ov_idx].1;
-        changed |= sf_list::sf_list(ui, entries);
+        changed |= super::sf_list::sf_list(ui, entries);
 
         ui.horizontal(|ui| {
             if ui.button("＋ 添加").clicked() {
@@ -263,7 +255,6 @@ fn project_panel(ui: &mut egui::Ui, doc: &mut Document) -> bool {
             }
         });
 
-        // "清除覆盖" button — borrow doc.project_sf.overrides separately
         if ui.button("清除覆盖").clicked() {
             if let Some(idx) = doc
                 .project_sf
@@ -276,7 +267,6 @@ fn project_panel(ui: &mut egui::Ui, doc: &mut Document) -> bool {
             }
         }
     } else {
-        // Show "inherited from global" indicator
         ui.label(
             egui::RichText::new("（继承自全局配置）")
                 .color(egui::Color32::from_gray(100))

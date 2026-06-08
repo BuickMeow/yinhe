@@ -31,6 +31,10 @@ pub struct App {
 
     // ── View mode ──
     pub(crate) view_mode: ViewMode,
+
+    // ── Right panel ──
+    pub(crate) right_panel_width: f32,
+    pub(crate) right_tab: Option<crate::right_panel::RightTab>,
     pub(crate) show_pianoroll_in_arrange: bool,
 
     // ── Visibility toggles (derived from view_mode) ──
@@ -131,6 +135,9 @@ impl App {
             show_pianoroll_in_arrange: true,
             show_transport: true,
             show_pianoroll: true,
+
+            right_panel_width: crate::widgets::theme::RIGHT_PANEL_DEFAULT_WIDTH,
+            right_tab: None,
 
             title_bar_press_pos: None,
 
