@@ -44,6 +44,9 @@ pub struct App {
     pub(crate) last_cursor_tick: Option<f64>,
     pub(crate) piano_last_cursor_tick: Option<f64>,
 
+    // ── Document switch tracking ──
+    pub(crate) prev_active_doc: Option<usize>,
+
     // ── Cursor-follow mode (shared across arrangement & piano roll) ──
     pub(crate) follow_mode: crate::view_interaction::FollowMode,
 
@@ -119,6 +122,7 @@ impl App {
 
             documents: vec![Document::empty()],
             active_doc: Some(0),
+            prev_active_doc: Some(0),
 
             transport_panel_width: 200.0,
             file_loader: FileLoader::new(),

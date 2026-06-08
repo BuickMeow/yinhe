@@ -111,7 +111,9 @@ pub fn build_automation_instances(
 
         for evt in events {
             let val = evt.value as f32;
-            let bar_h = (val / max_val) * h;
+            let max_val = max_val.max(1.0);
+            // Map 0..max_val to 1..max_val+1 so every value has a visible bar.
+            let bar_h = ((val + 1.0) / (max_val + 1.0)) * h;
             let bar_x = x_offset + evt.tick as f32 * ppu;
 
             // Skip if completely off-screen
@@ -343,10 +345,11 @@ mod tests {
         assert_eq!(instances.len(), 3);
 
         // Bar at tick=100, value=64, max=127
+        // New mapping: bar_h = ((val+1)/(max_val+1)) * h
         // x = 60 - 0 + 100*1.0 = 160
         let bar0 = &instances[1];
         assert!((bar0.x - 160.0).abs() < 0.001);
-        let expected_y0 = 100.0 - (64.0_f32 / 127.0_f32) * 100.0;
+        let expected_y0 = 100.0 - ((64.0 + 1.0) / (127.0 + 1.0)) * 100.0;
         assert!((bar0.y - expected_y0).abs() < 0.001);
         assert_eq!(bar0.w, 2.0);
 
@@ -428,9 +431,9 @@ mod tests {
 
         assert_eq!(instances.len(), 4);
 
-        // value=0: height=0, at bottom
-        assert!((instances[1].h - 0.0).abs() < 0.001);
-        assert!((instances[1].y - 200.0).abs() < 0.001);
+        // value=0: height = (1/128)*200 = 1.5625
+        assert!((instances[1].h - 1.5625).abs() < 0.001);
+        assert!((instances[1].y - 198.4375).abs() < 0.001);
 
         // value=127: full height
         assert!((instances[3].h - 200.0).abs() < 0.001);
