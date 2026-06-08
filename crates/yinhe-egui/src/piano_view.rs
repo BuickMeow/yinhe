@@ -221,7 +221,7 @@ pub fn show(
         );
     }
 
-    // ── Automation panels + scrollbar + AUTO buttons ──
+    // ── Automation panels ──
     let panels_y = content_rect.max.y;
     if let (Some(panels), Some(renderers), Some(lanes), Some(show), Some(wgpu_state)) = (
         auto_panels,
@@ -233,8 +233,7 @@ pub fn show(
         let kb_w = view.keyboard_width();
         let combo_w = kb_w * theme::AUTO_PANEL_COMBO_WIDTH_RATIO;
 
-        // Automation panels
-        let _panels_h = crate::automation_panel::show_panels(
+        crate::automation_panel::show_panels(
             ui,
             panels,
             renderers,
@@ -252,34 +251,18 @@ pub fn show(
             bar_line_data.map(|b| b.3).unwrap_or(&[]),
         );
 
-        // ── Horizontal scrollbar + AUTO buttons in left blank ──
+        // AUTO +/- buttons (in the scrollbar's left blank area)
+        // We render them here while we still have access to `panels`/`show`.
         if midi.is_some() {
-            // sb_y is always at the bottom of the available rect regardless
-            // of panel heights; compute directly instead of depending on
-            // pre-computed panels_total_h which may be stale mid-drag.
             let sb_y = rect.min.y + rect.height() - super::scrollbar::SCROLLBAR_H;
-
-            // Left blank area (same width as piano keyboard) — houses AUTO +/- buttons
             let sb_left_blank = egui::Rect::from_min_max(
                 egui::pos2(rect.min.x, sb_y),
                 egui::pos2(rect.min.x + kb_w, sb_y + super::scrollbar::SCROLLBAR_H),
             );
-            // Actual scrollbar track (right of keyboard)
-            let sb_rect = egui::Rect::from_min_max(
-                egui::pos2(rect.min.x + kb_w, sb_y),
-                egui::pos2(rect.max.x, sb_y + super::scrollbar::SCROLLBAR_H),
-            );
-
-            // Paint left blank background
-            ui.painter()
-                .rect_filled(sb_left_blank, 0.0, theme::SCROLLBAR_BG);
-
-            // AUTO +/- buttons inside left blank
             ui.allocate_new_ui(egui::UiBuilder::new().max_rect(sb_left_blank), |ui| {
                 ui.horizontal_centered(|ui| {
                     let mut count = panels.len();
                     crate::automation_panel::show_toggle_buttons(ui, show, &mut count);
-                    // Add/remove panels to match count
                     while panels.len() < count {
                         panels.push(yinhe_automation::AutomationPanelView::default());
                     }
@@ -288,19 +271,36 @@ pub fn show(
                     }
                 });
             });
-
-            // Scrollbar
-            ui.push_id("piano_scrollbar", |ui| {
-                super::scrollbar::show(
-                    ui,
-                    sb_rect,
-                    w as f32 - kb_w,
-                    &mut view.base.scroll_x,
-                    &mut view.base.pixels_per_tick,
-                    total_ticks,
-                    &mut view.base.dirty,
-                );
-            });
         }
     }
+
+    // ── Horizontal scrollbar (always rendered) ──
+    // scrollbar::show handles the total_ticks <= 0 case internally,
+    // matching the arrangement view's behavior.
+    let kb_w = view.keyboard_width();
+    let sb_y = rect.min.y + rect.height() - super::scrollbar::SCROLLBAR_H;
+    let sb_rect = egui::Rect::from_min_max(
+        egui::pos2(rect.min.x + kb_w, sb_y),
+        egui::pos2(rect.max.x, sb_y + super::scrollbar::SCROLLBAR_H),
+    );
+
+    // Paint background for left blank area
+    let sb_left_blank = egui::Rect::from_min_max(
+        egui::pos2(rect.min.x, sb_y),
+        egui::pos2(rect.min.x + kb_w, sb_y + super::scrollbar::SCROLLBAR_H),
+    );
+    ui.painter()
+        .rect_filled(sb_left_blank, 0.0, theme::SCROLLBAR_BG);
+
+    ui.push_id("piano_scrollbar", |ui| {
+        super::scrollbar::show(
+            ui,
+            sb_rect,
+            w as f32 - kb_w,
+            &mut view.base.scroll_x,
+            &mut view.base.pixels_per_tick,
+            total_ticks,
+            &mut view.base.dirty,
+        );
+    });
 }

@@ -4,8 +4,26 @@ use eframe::egui;
 use egui_material_icons::icons::*;
 
 use yinhe_types::AutomationLane;
+use yinhe_types::AutomationTarget;
 
 use yinhe_automation::{AutomationPanelView, PianorollRenderer, prepare_automation};
+
+/// Curated list of known automation targets shown in the dropdown.
+const AUTOMATION_TARGETS: &[AutomationTarget] = &[
+    AutomationTarget::Velocity,
+    AutomationTarget::PitchBend,
+    AutomationTarget::CC { controller: 7 },  // Volume
+    AutomationTarget::CC { controller: 10 }, // Pan
+    AutomationTarget::CC { controller: 11 }, // Expression
+    AutomationTarget::CC { controller: 64 }, // Sustain
+    AutomationTarget::CC { controller: 71 }, // Resonance
+    AutomationTarget::CC { controller: 72 }, // Release
+    AutomationTarget::CC { controller: 73 }, // Attack
+    AutomationTarget::CC { controller: 74 }, // Cutoff
+    AutomationTarget::PitchBendSensitivity,  // RPN 0
+    AutomationTarget::FineTune,              // RPN 1
+    AutomationTarget::CoarseTune,            // RPN 2
+];
 
 use crate::render_context::RenderContext;
 use crate::theme;
@@ -149,7 +167,7 @@ pub fn show_panels(
             }
         }
 
-        // ── Left side: dropdown area (drawn on top of grid) ──
+        // ── Left side: automation icon button + popup ──
         let combo_rect = egui::Rect::from_min_max(
             panel_rect.min,
             egui::pos2(panel_rect.min.x + combo_width, panel_rect.max.y),
@@ -158,30 +176,88 @@ pub fn show_panels(
         // Draw left panel background (covers the grid underneath)
         ui.painter().rect_filled(combo_rect, 0.0, theme::APP_BG);
 
-        // Target selection button + popup (popup opens above, like transport bar pattern)
+        // ICON_AUTOMATION button + popup (like transport bar pattern)
         let combo_inner = combo_rect.shrink(4.0);
         let mut btn_resp = None::<egui::Response>;
         ui.allocate_ui_at_rect(combo_inner, |ui| {
-            let label = panel.selected_target.display_name();
-            btn_resp = Some(ui.add(egui::Button::new(label)));
+            let btn = egui::Button::new(ICON_AUTOMATION.rich_text().size(14.0));
+            btn_resp = Some(ui.add(btn));
         });
         if let Some(ref btn_resp) = btn_resp {
+            if btn_resp.hovered() || btn_resp.dragged() {
+                ui.painter().text(
+                    btn_resp.rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    ICON_AUTOMATION.codepoint,
+                    egui::FontId::new(14.0, ICON_AUTOMATION.font_family()),
+                    egui::Color32::WHITE,
+                );
+            }
+
             egui::Popup::menu(btn_resp)
                 .align(egui::RectAlign::TOP_START)
                 .show(|ui| {
                     ui.set_min_width(120.0);
-                    for (idx, lane) in automation_lanes.iter().enumerate() {
-                        let name = lane.target.display_name();
-                        let selected = panel.selected_target == lane.target;
+                    for target in AUTOMATION_TARGETS {
+                        let name = target.display_name();
+                        let selected = panel.selected_target == *target;
                         if ui.add(egui::Button::selectable(selected, &name)).clicked() {
-                            panel.selected_target = lane.target.clone();
-                            panel.lane_index = idx;
+                            panel.selected_target = target.clone();
                             panel.dirty = true;
                             ui.close();
                         }
                     }
                 });
         }
+
+        // ── Grid overlay: value labels + target name ──
+        let name = panel.selected_target.display_name();
+        let label_color = theme::MEASURE_LABEL;
+        let font_id = egui::FontId::proportional(10.0);
+        let pad_x = 4.0;
+
+        let (top_val, mid_val, bot_val) = match panel.selected_target {
+            AutomationTarget::PitchBend => ("8191", "0", "-8192"),
+            _ => ("127", "64", "0"),
+        };
+
+        let text_x = panel_rect.min.x + combo_width + pad_x;
+        let top_y = panel_rect.min.y + 4.0;
+        let mid_y = panel_rect.center().y;
+        let bot_y = panel_rect.max.y - 4.0;
+
+        let painter = ui.painter();
+        painter.text(
+            egui::pos2(text_x, top_y),
+            egui::Align2::LEFT_TOP,
+            top_val,
+            font_id.clone(),
+            label_color,
+        );
+        painter.text(
+            egui::pos2(text_x, mid_y),
+            egui::Align2::LEFT_CENTER,
+            mid_val,
+            font_id.clone(),
+            label_color,
+        );
+        painter.text(
+            egui::pos2(text_x, bot_y),
+            egui::Align2::LEFT_BOTTOM,
+            bot_val,
+            font_id.clone(),
+            label_color,
+        );
+
+        // Target name: bottom-left, 100px from grid left edge, same row as bottom value
+        let name_x = panel_rect.min.x + combo_width + 40.0;
+        painter.text(
+            egui::pos2(name_x, bot_y),
+            egui::Align2::LEFT_BOTTOM,
+            &name,
+            font_id.clone(),
+            label_color,
+        );
 
         y_offset += panel_h;
     }

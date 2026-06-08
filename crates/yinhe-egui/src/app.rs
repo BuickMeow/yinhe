@@ -10,6 +10,8 @@ use crate::piano_view;
 use crate::render_context::RenderContext;
 use crate::system_monitor::SystemMonitor;
 use crate::transport_bar;
+use yinhe_arrangement::ArrangementView;
+use yinhe_pianoroll::PianoRollView;
 
 // ── Panic-safe take guard ──
 /// Restores a taken value back into its slot on drop, preventing data loss
@@ -45,13 +47,15 @@ impl<'a, T> Drop for ReplaceGuard<'a, T> {
 }
 
 pub struct App {
-    // ── Pianoroll (shared GPU resources) ──
+    // ── Pianoroll (shared GPU resources + global view state) ──
     pub(crate) render_ctx: RenderContext,
     pianoroll: yinhe_pianoroll::PianorollRenderer,
+    pub(crate) pianoroll_view: PianoRollView,
 
-    // ── Arrangement (shared GPU resources) ──
+    // ── Arrangement (shared GPU resources + global view state) ──
     pub(crate) arr_render_ctx: RenderContext,
     arr_renderer: yinhe_arrangement::PianorollRenderer,
+    pub(crate) arrange_view: ArrangementView,
     arr_split: f32,
 
     // ── Automation panel GPU resources (per-document, per-panel) ──
@@ -144,9 +148,11 @@ impl App {
                 queue.clone(),
                 format,
             ),
+            pianoroll_view: PianoRollView::default(),
 
             arr_render_ctx,
             arr_renderer: yinhe_arrangement::PianorollRenderer::new(device, queue, format),
+            arrange_view: ArrangementView::default(),
             arr_split: crate::theme::DEFAULT_ARR_SPLIT,
 
             controller_renderers: Vec::new(),
@@ -243,21 +249,18 @@ impl eframe::App for App {
         // ── Poll async MIDI loading ──
         match self.file_loader.poll_midi_loading() {
             MidiLoadResult::Loaded { path, midi } => {
-                // Drop the currently active document *before* taking the new MIDI
-                // data so we don't briefly hold the old MIDI + new MIDI in memory,
-                // which can roughly double peak memory during "File > Open".
-                if let Some(idx) = self.active_doc {
-                    if idx < self.documents.len() {
-                        self.documents.remove(idx);
-                    }
-                }
-                self.active_doc = None;
-                self.teardown_audio();
+                // Inherit quantize from the current active document.
+                let quantize = self
+                    .active_doc
+                    .and_then(|idx| self.documents.get(idx))
+                    .map(|doc| doc.quantize)
+                    .unwrap_or_default();
 
-                let doc = Document::from_midi(&path, midi);
+                let doc = Document::from_midi(&path, midi, quantize);
                 let insert_idx = self.documents.len();
                 self.documents.push(doc);
                 self.active_doc = Some(insert_idx);
+                self.teardown_audio();
             }
             MidiLoadResult::NotReady => {}
         }
@@ -352,6 +355,7 @@ impl eframe::App for App {
                 arrange::show(
                     ui,
                     guard.as_mut(),
+                    &mut self.arrange_view,
                     remaining,
                     arr_h,
                     &mut self.transport_panel_width,
@@ -426,7 +430,7 @@ impl eframe::App for App {
                         ui.available_size(),
                         &mut self.pianoroll,
                         &mut self.render_ctx,
-                        &mut doc.view,
+                        &mut self.pianoroll_view,
                         midi_source,
                         &doc.selected,
                         &doc.track_visible,

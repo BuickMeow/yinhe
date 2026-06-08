@@ -6,15 +6,16 @@ use yinhe_types::TRACK_PALETTE;
 use crate::playback::PlaybackState;
 use crate::quantize::QuantizePreset;
 
-/// Per-document state: holds one MIDI file and all UI/GPU state for it.
+/// Per-document state: holds one MIDI file and editing state for it.
+///
+/// Layout/zoom state (PianoRollView, ArrangementView) lives in `App`,
+/// not here, so loading a new MIDI file preserves the user's zoom/scroll.
 pub(crate) struct Document {
     pub midi: Arc<yinhe_midi::MidiFile>,
     pub file_name: String,
     pub selected: HashSet<(u16, u32)>,
     pub track_visible: Vec<bool>,
     pub track_selected: Option<u16>,
-    pub view: yinhe_pianoroll::PianoRollView,
-    pub arr_view: yinhe_arrangement::ArrangementView,
     pub cursor_tick: Option<f64>,
     pub quantize: QuantizePreset,
     pub playback: PlaybackState,
@@ -38,16 +39,14 @@ impl Default for Document {
             selected: HashSet::new(),
             track_visible: Vec::new(),
             track_selected: None,
-            view: yinhe_pianoroll::PianoRollView::default(),
-            arr_view: yinhe_arrangement::ArrangementView::default(),
-            cursor_tick: None,
+            cursor_tick: Some(0.0),
             quantize: QuantizePreset::default(),
             playback: PlaybackState::default(),
             track_info_cache: Vec::new(),
             pc_map_cache: HashMap::new(),
             track_colors_cache: Vec::new(),
-            controller_panels: Vec::new(),
-            show_controller_panels: false,
+            controller_panels: vec![yinhe_automation::AutomationPanelView::default()],
+            show_controller_panels: true,
         }
     }
 }
@@ -77,7 +76,10 @@ impl Document {
     }
 
     /// Create a new Document from a loaded MIDI file.
-    pub fn from_midi(path: &str, midi: yinhe_midi::MidiFile) -> Self {
+    ///
+    /// `quantize` is inherited from the current document so the user's
+    /// quantization setting is preserved across MIDI loads.
+    pub fn from_midi(path: &str, midi: yinhe_midi::MidiFile, quantize: QuantizePreset) -> Self {
         yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Ui, || {
             let num_tracks = midi.track_ports.len();
             let file_name = std::path::Path::new(path)
@@ -109,16 +111,14 @@ impl Document {
                 track_visible: vec![true; num_tracks],
                 track_selected: None,
                 selected: HashSet::new(),
-                view: yinhe_pianoroll::PianoRollView::default(),
-                arr_view: yinhe_arrangement::ArrangementView::default(),
-                cursor_tick: None,
-                quantize: QuantizePreset::default(),
-                playback: PlaybackState::default(),
+                cursor_tick: Some(0.0),
+                quantize,                           // inherit from current document
+                playback: PlaybackState::default(), // reset
                 track_info_cache,
                 pc_map_cache,
                 track_colors_cache,
-                controller_panels: Vec::new(),
-                show_controller_panels: false,
+                controller_panels: vec![yinhe_automation::AutomationPanelView::default()],
+                show_controller_panels: true,
             }
         })
     }

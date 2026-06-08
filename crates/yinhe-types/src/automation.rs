@@ -26,8 +26,8 @@ impl AutomationTarget {
         match self {
             AutomationTarget::CC { .. } => 127,
             AutomationTarget::PitchBend => 16383,
-            AutomationTarget::PitchBendSensitivity => 24,
-            AutomationTarget::FineTune => 100,  // ±50 cents → range 100
+            AutomationTarget::PitchBendSensitivity => 127,
+            AutomationTarget::FineTune => 100, // ±50 cents → range 100
             AutomationTarget::CoarseTune => 24,
             AutomationTarget::Velocity => 127,
         }
@@ -39,7 +39,7 @@ impl AutomationTarget {
             AutomationTarget::CC { .. } => 0,
             AutomationTarget::PitchBend => 8192,
             AutomationTarget::PitchBendSensitivity => 2,
-            AutomationTarget::FineTune => 50,   // center of 0..100
+            AutomationTarget::FineTune => 50, // center of 0..100
             AutomationTarget::CoarseTune => 0,
             AutomationTarget::Velocity => 0,
         }
@@ -172,7 +172,10 @@ mod tests {
 
     #[test]
     fn test_events_in_range() {
-        let lane = make_lane(AutomationTarget::CC { controller: 7 }, &[100, 200, 300, 400, 500]);
+        let lane = make_lane(
+            AutomationTarget::CC { controller: 7 },
+            &[100, 200, 300, 400, 500],
+        );
         let slice = lane.events_in_range(150, 450);
         assert_eq!(slice.len(), 3);
         assert_eq!(slice[0].tick, 200);
@@ -190,9 +193,24 @@ mod tests {
         let mut lane = AutomationLane {
             target: AutomationTarget::CC { controller: 7 },
             events: vec![
-                AutomationEvent { tick: 100, value: 80, channel: 0, track: 0 },
-                AutomationEvent { tick: 200, value: 100, channel: 0, track: 0 },
-                AutomationEvent { tick: 300, value: 60, channel: 0, track: 0 },
+                AutomationEvent {
+                    tick: 100,
+                    value: 80,
+                    channel: 0,
+                    track: 0,
+                },
+                AutomationEvent {
+                    tick: 200,
+                    value: 100,
+                    channel: 0,
+                    track: 0,
+                },
+                AutomationEvent {
+                    tick: 300,
+                    value: 60,
+                    channel: 0,
+                    track: 0,
+                },
             ],
         };
         // Chase at tick 250 → should return value 100 (event at tick 200)
@@ -213,9 +231,24 @@ mod tests {
         let lane = AutomationLane {
             target: AutomationTarget::CC { controller: 7 },
             events: vec![
-                AutomationEvent { tick: 100, value: 80, channel: 0, track: 0 },
-                AutomationEvent { tick: 100, value: 90, channel: 1, track: 1 },
-                AutomationEvent { tick: 200, value: 100, channel: 0, track: 0 },
+                AutomationEvent {
+                    tick: 100,
+                    value: 80,
+                    channel: 0,
+                    track: 0,
+                },
+                AutomationEvent {
+                    tick: 100,
+                    value: 90,
+                    channel: 1,
+                    track: 1,
+                },
+                AutomationEvent {
+                    tick: 200,
+                    value: 100,
+                    channel: 0,
+                    track: 0,
+                },
             ],
         };
         assert_eq!(lane.chase_value(300, 0), Some(100));

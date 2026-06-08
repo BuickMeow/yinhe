@@ -1,5 +1,7 @@
 use eframe::egui;
 
+use yinhe_arrangement::ArrangementView;
+
 use crate::arrangement_view_ui;
 use crate::document::Document;
 use crate::render_context::RenderContext;
@@ -12,6 +14,7 @@ const RULER_H: f32 = theme::RULER_H;
 pub fn show(
     ui: &mut egui::Ui,
     doc: &mut Document,
+    arr_view: &mut ArrangementView,
     remaining: egui::Rect,
     arr_h: f32,
     transport_panel_width: &mut f32,
@@ -58,8 +61,7 @@ pub fn show(
     // "bounce-back" effect on the ruler labels.
     let total_ticks = crate::view_interaction::total_ticks_padded(doc.midi.tick_length);
     let num_tracks = doc.track_visible.len();
-    doc.arr_view
-        .clamp_scroll(gpu_rect.width(), gpu_rect.height(), total_ticks, num_tracks);
+    arr_view.clamp_scroll(gpu_rect.width(), gpu_rect.height(), total_ticks, num_tracks);
 
     // ── Ruler: top-right band, drawn with parent painter ──
     {
@@ -77,7 +79,7 @@ pub fn show(
         crate::time_ruler::paint(
             ruler_painter,
             ruler_rect,
-            &doc.arr_view,
+            arr_view,
             tpb,
             def_num,
             def_den,
@@ -91,7 +93,7 @@ pub fn show(
         ui.painter()
             .rect_filled(ui.max_rect(), 0.0, crate::theme::APP_BG);
 
-        doc.arr_view.base.track_panel_scroll_y = doc.arr_view.base.scroll_y;
+        arr_view.base.track_panel_scroll_y = arr_view.base.scroll_y;
 
         let zoom_delta = ui.input(|i| i.zoom_delta());
         if (zoom_delta - 1.0).abs() > 0.001
@@ -99,14 +101,14 @@ pub fn show(
             && tp_rect.contains(hover)
         {
             let pointer_y = hover.y - tp_rect.min.y;
-            let old = doc.arr_view.base.track_panel_row_height;
-            doc.arr_view.base.track_panel_row_height =
-                (doc.arr_view.base.track_panel_row_height * zoom_delta).clamp(16.0, 120.0);
-            doc.arr_view.lane_height = doc.arr_view.base.track_panel_row_height;
-            let track_frac = (pointer_y + doc.arr_view.base.track_panel_scroll_y) / old;
-            doc.arr_view.base.track_panel_scroll_y =
-                (track_frac * doc.arr_view.base.track_panel_row_height - pointer_y).max(0.0);
-            doc.arr_view.base.dirty = true;
+            let old = arr_view.base.track_panel_row_height;
+            arr_view.base.track_panel_row_height =
+                (arr_view.base.track_panel_row_height * zoom_delta).clamp(16.0, 120.0);
+            arr_view.lane_height = arr_view.base.track_panel_row_height;
+            let track_frac = (pointer_y + arr_view.base.track_panel_scroll_y) / old;
+            arr_view.base.track_panel_scroll_y =
+                (track_frac * arr_view.base.track_panel_row_height - pointer_y).max(0.0);
+            arr_view.base.dirty = true;
         }
 
         track_panel::show(
@@ -115,11 +117,11 @@ pub fn show(
             &mut doc.track_visible,
             &mut doc.track_selected,
             &doc.pc_map_cache,
-            &mut doc.arr_view.base.track_panel_row_height,
-            &mut doc.arr_view.base.track_panel_scroll_y,
+            &mut arr_view.base.track_panel_row_height,
+            &mut arr_view.base.track_panel_scroll_y,
         );
 
-        doc.arr_view.base.scroll_y = doc.arr_view.base.track_panel_scroll_y;
+        arr_view.base.scroll_y = arr_view.base.track_panel_scroll_y;
     });
 
     // ── Vertical splitter handle ──
@@ -145,7 +147,7 @@ pub fn show(
             gpu_size,
             arr_renderer,
             arr_render_ctx,
-            &mut doc.arr_view,
+            arr_view,
             arr_midi,
             &doc.track_visible,
             &doc.track_colors_cache,
@@ -174,10 +176,10 @@ pub fn show(
             ui,
             sb_rect,
             gpu_rect.width(),
-            &mut doc.arr_view.base.scroll_x,
-            &mut doc.arr_view.base.pixels_per_tick,
+            &mut arr_view.base.scroll_x,
+            &mut arr_view.base.pixels_per_tick,
             total_ticks,
-            &mut doc.arr_view.base.dirty,
+            &mut arr_view.base.dirty,
         );
     }
 }

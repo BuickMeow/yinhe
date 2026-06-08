@@ -130,7 +130,9 @@ impl MidiFile {
         if self.tempo_segments.is_empty() {
             return None;
         }
-        let idx = self.tempo_segments.partition_point(|s| s.start_time <= time);
+        let idx = self
+            .tempo_segments
+            .partition_point(|s| s.start_time <= time);
         if idx == 0 {
             return None;
         }
@@ -186,7 +188,9 @@ impl MidiFile {
 
     /// Convert absolute tick to seconds (considering tempo changes).
     pub fn tick_to_seconds(&self, tick: u64) -> f64 {
-        let count = self.tempo_segments.partition_point(|s| (s.start_tick as u64) <= tick);
+        let count = self
+            .tempo_segments
+            .partition_point(|s| (s.start_tick as u64) <= tick);
         if count == 0 {
             return crate::time::ticks_to_seconds(tick, self.ticks_per_beat, DEFAULT_MPQ);
         }
@@ -277,7 +281,19 @@ pub struct TrackInfo {
 /// Build automation lanes from control events and note velocity data.
 ///
 /// Groups CC events by controller number, normalizes PitchBend values,
-/// and extracts per-note velocity as a separate lane.
+/// Map an RPN number (CC101=MSB, CC100=LSB) to an `AutomationTarget`.
+fn rpn_target(msb: u8, lsb: u8) -> Option<yinhe_types::AutomationTarget> {
+    use yinhe_types::AutomationTarget;
+    match (msb, lsb) {
+        (0, 0) => Some(AutomationTarget::PitchBendSensitivity),
+        (1, 0) => Some(AutomationTarget::FineTune),
+        (2, 0) => Some(AutomationTarget::CoarseTune),
+        _ => None,
+    }
+}
+
+/// Build automation lanes from a slice of MIDI control events.
+/// Also extracts per-note velocity as a separate lane.
 pub(crate) fn build_automation_lanes(
     control_events: &[MidiControlEvent],
     key_notes: &[Vec<Note>; 128],
@@ -286,8 +302,61 @@ pub(crate) fn build_automation_lanes(
 
     let mut lanes: HashMap<AutomationTarget, Vec<AutomationEvent>> = HashMap::new();
 
+    // Track RPN selection state (CC101=MSB, CC100=LSB) across events.
+    // When CC6/CC38 follow an RPN select pair, emit a dedicated RPN lane.
+    let mut rpn_msb: Option<u8> = None;
+    let mut rpn_lsb: Option<u8> = None;
+
     for evt in control_events {
         match evt {
+            MidiControlEvent::ControlChange {
+                controller: 101,
+                value,
+                ..
+            } => {
+                rpn_msb = Some(*value);
+                // RPN selectors are NOT stored as raw CC lanes
+            }
+            MidiControlEvent::ControlChange {
+                controller: 100,
+                value,
+                ..
+            } => {
+                rpn_lsb = Some(*value);
+            }
+            MidiControlEvent::ControlChange {
+                tick,
+                channel,
+                controller,
+                value,
+                track,
+            } if *controller == 6 || *controller == 38 => {
+                // Data Entry MSB (6) / LSB (38) — emit RPN event when active
+                if let Some(msb) = rpn_msb
+                    && let Some(lsb) = rpn_lsb
+                    && let Some(target) = rpn_target(msb, lsb)
+                {
+                    lanes.entry(target).or_default().push(AutomationEvent {
+                        tick: *tick,
+                        value: *value as u16,
+                        channel: *channel,
+                        track: *track,
+                    });
+                } else {
+                    // No active RPN → store as raw CC lane
+                    lanes
+                        .entry(AutomationTarget::CC {
+                            controller: *controller,
+                        })
+                        .or_default()
+                        .push(AutomationEvent {
+                            tick: *tick,
+                            value: *value as u16,
+                            channel: *channel,
+                            track: *track,
+                        });
+                }
+            }
             MidiControlEvent::ControlChange {
                 tick,
                 channel,
@@ -295,16 +364,18 @@ pub(crate) fn build_automation_lanes(
                 value,
                 track,
             } => {
-                lanes.entry(AutomationTarget::CC {
-                    controller: *controller,
-                })
-                .or_default()
-                .push(AutomationEvent {
-                    tick: *tick,
-                    value: *value as u16,
-                    channel: *channel,
-                    track: *track,
-                });
+                // Other CCs — store as raw lane
+                lanes
+                    .entry(AutomationTarget::CC {
+                        controller: *controller,
+                    })
+                    .or_default()
+                    .push(AutomationEvent {
+                        tick: *tick,
+                        value: *value as u16,
+                        channel: *channel,
+                        track: *track,
+                    });
             }
             MidiControlEvent::PitchBend {
                 tick,
@@ -314,7 +385,8 @@ pub(crate) fn build_automation_lanes(
             } => {
                 // value is i16 (-8192..8191) → normalize to u16 (0..16383)
                 let normalized = (*value + 8192) as u16;
-                lanes.entry(AutomationTarget::PitchBend)
+                lanes
+                    .entry(AutomationTarget::PitchBend)
                     .or_default()
                     .push(AutomationEvent {
                         tick: *tick,
