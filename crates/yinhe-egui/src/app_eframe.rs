@@ -155,6 +155,31 @@ impl eframe::App for App {
             &mut self.show_pianoroll,
         );
 
+        // ── RACK view ──
+        if self.view_mode == crate::widgets::mode_bar::ViewMode::Rack {
+            let rack_doc = self.active_doc.and_then(|idx| self.documents.get_mut(idx));
+            let changed = crate::rack::show(ui, &mut self.audio_settings, rack_doc);
+            if changed {
+                self.teardown_audio();
+            }
+            // Skip arrangement/pianoroll rendering
+            // ── Request repaint during playback ──
+            let is_audio_playing = self
+                .audio
+                .as_ref()
+                .map(|a| a.handle.is_playing())
+                .unwrap_or(false);
+            if is_audio_playing {
+                ui.ctx().request_repaint();
+            }
+            // ── Loading overlay ──
+            self.file_loader.show_midi_loading_overlay(ui);
+            if self.file_loader.is_loading() {
+                ui.ctx().request_repaint();
+            }
+            return;
+        }
+
         // ── Main area: arrangement (top) + pianoroll (bottom) ──
         let remaining = ui.available_rect_before_wrap();
 

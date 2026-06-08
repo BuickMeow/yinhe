@@ -3,6 +3,58 @@ use std::sync::Arc;
 use crate::app::App;
 
 impl App {
+    /// Resolve the merged SF configuration for the given document.
+    ///
+    /// Returns a list of `(port, paths)` for every port the MIDI uses.
+    fn resolve_sf_config(&self, doc: &crate::document::Document) -> Vec<(u8, Vec<String>)> {
+        let num_ch = yinhe_audio::channels_for_midi(&doc.midi).0;
+        let num_ports = ((num_ch / 16) as u8).max(1);
+        let global = &self.audio_settings.global_sf_config;
+        let project = &doc.project_sf;
+
+        let mut result: Vec<(u8, Vec<String>)> = Vec::new();
+
+        for port in 0..num_ports {
+            // 1. Project override (if enabled and present)
+            if project.project_enabled {
+                if let Some((_, entries)) = project.overrides.iter().find(|(p, _)| *p == port) {
+                    let paths: Vec<String> = entries
+                        .iter()
+                        .filter(|e| e.enabled)
+                        .map(|e| e.path.clone())
+                        .collect();
+                    if !paths.is_empty() {
+                        result.push((port, paths));
+                        continue;
+                    }
+                }
+            }
+
+            // 2. Global config (if enabled)
+            if global.global_enabled {
+                let paths: Vec<String> = global.ports[port as usize]
+                    .iter()
+                    .filter(|e| e.enabled)
+                    .map(|e| e.path.clone())
+                    .collect();
+                if !paths.is_empty() {
+                    result.push((port, paths));
+                    continue;
+                }
+            }
+
+            // 3. Built-in fallback
+            let builtin = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../assets/GeneralUser GS v1.472.sf2");
+            if builtin.exists() {
+                let path_str = builtin.to_string_lossy().to_string();
+                result.push((port, vec![path_str]));
+            }
+        }
+
+        result
+    }
+
     /// Rebuild the audio engine if the active document changed or audio was dropped.
     pub(crate) fn rebuild_audio_if_needed(&mut self) {
         let idx = match self.active_doc {
@@ -28,23 +80,13 @@ impl App {
                 audio.handle.send(yinhe_audio::AudioCommand::LoadMidi {
                     midi: Arc::clone(&doc.midi),
                 });
-                // Load SoundFont
-                let sf_path = if !self.audio_settings.default_sf2_path.is_empty() {
-                    self.audio_settings.default_sf2_path.clone()
-                } else {
-                    let default_sf2 = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                        .join("../assets/GeneralUser GS v1.472.sf2");
-                    default_sf2.to_string_lossy().to_string()
-                };
-                let sf = std::path::Path::new(&sf_path);
-                if sf.exists() {
-                    let num_ports = (num_ch / 16) as u8;
-                    for port in 0..num_ports {
-                        audio.handle.send(yinhe_audio::AudioCommand::LoadSoundFont {
-                            port,
-                            paths: vec![sf_path.clone()],
-                        });
-                    }
+                // Load SoundFonts — resolved from global + project config
+                let port_configs = self.resolve_sf_config(doc);
+                for (port, paths) in &port_configs {
+                    audio.handle.send(yinhe_audio::AudioCommand::LoadSoundFont {
+                        port: *port,
+                        paths: paths.clone(),
+                    });
                 }
                 self.audio = Some(audio);
                 self.audio_active_doc = Some(idx);

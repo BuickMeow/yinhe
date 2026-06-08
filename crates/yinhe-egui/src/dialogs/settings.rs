@@ -7,12 +7,16 @@ use serde::{Deserialize, Serialize};
 
 use cpal::traits::{DeviceTrait, HostTrait};
 
+use crate::rack::config::GlobalSfConfig;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AudioSettings {
     pub output_device_name: Option<String>,
     pub sample_rate: u32,
+    /// Kept for migration — no longer used directly.
     pub default_sf2_path: String,
+    pub global_sf_config: GlobalSfConfig,
     #[serde(skip)]
     pub show_settings: bool,
     #[serde(skip)]
@@ -71,6 +75,7 @@ impl Default for AudioSettings {
             output_device_name: default_device,
             sample_rate: default_rate,
             default_sf2_path: String::new(),
+            global_sf_config: GlobalSfConfig::builtin_default(),
             show_settings: false,
             available_devices,
             available_sample_rates,
@@ -100,6 +105,12 @@ impl AudioSettings {
                         // value is not in the newly discovered list.
                         if !s.available_sample_rates.contains(&s.sample_rate) {
                             s.sample_rate = default_rate;
+                        }
+                        // Migrate old default_sf2_path into global config
+                        if !s.default_sf2_path.is_empty() && s.global_sf_config.ports[0].is_empty()
+                        {
+                            s.global_sf_config = std::mem::take(&mut s.global_sf_config)
+                                .with_fallback_path(&s.default_sf2_path);
                         }
                         return s;
                     }
@@ -159,10 +170,8 @@ pub fn show(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
                 .spacing([12.0, 8.0])
                 .show(ui, |ui| {
                     ui.label("输出设备");
-                    let current_device = settings
-                        .output_device_name
-                        .as_deref()
-                        .unwrap_or("默认设备");
+                    let current_device =
+                        settings.output_device_name.as_deref().unwrap_or("默认设备");
                     egui::ComboBox::from_id_salt("output_device")
                         .selected_text(current_device)
                         .show_ui(ui, |ui| {
@@ -217,29 +226,26 @@ pub fn show(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
                         let path_text = if settings.default_sf2_path.is_empty() {
                             "未设置".to_string()
                         } else {
-                            
                             std::path::Path::new(&settings.default_sf2_path)
                                 .file_name()
                                 .map(|n| n.to_string_lossy().to_string())
                                 .unwrap_or_else(|| settings.default_sf2_path.clone())
                         };
-                        ui.label(
-                            egui::RichText::new(&path_text).color(
-                                if settings.default_sf2_path.is_empty() {
-                                    egui::Color32::from_gray(100)
-                                } else {
-                                    egui::Color32::from_gray(200)
-                                },
-                            ),
-                        );
+                        ui.label(egui::RichText::new(&path_text).color(
+                            if settings.default_sf2_path.is_empty() {
+                                egui::Color32::from_gray(100)
+                            } else {
+                                egui::Color32::from_gray(200)
+                            },
+                        ));
                         if ui.button("选择...").clicked()
                             && let Some(path) = rfd::FileDialog::new()
                                 .add_filter("SoundFont", &["sf2", "sf3", "sfz"])
                                 .pick_file()
-                            {
-                                settings.default_sf2_path = path.to_string_lossy().to_string();
-                                changed = true;
-                            }
+                        {
+                            settings.default_sf2_path = path.to_string_lossy().to_string();
+                            changed = true;
+                        }
                         if !settings.default_sf2_path.is_empty()
                             && ui
                                 .button(ICON_DELETE.rich_text().size(14.0))

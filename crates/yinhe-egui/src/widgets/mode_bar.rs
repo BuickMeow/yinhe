@@ -6,6 +6,7 @@ pub enum ViewMode {
     Arrange,
     Mix,
     Edit,
+    Rack,
 }
 
 fn mode_button(ui: &mut egui::Ui, label: &str, is_selected: bool, on_click: impl FnOnce()) {
@@ -73,6 +74,14 @@ pub fn show(
                     *view_mode = ViewMode::Edit;
                     *show_transport = false;
                     *show_pianoroll = true;
+                });
+
+                ui.add_space(2.0);
+
+                mode_button(ui, "RACK", *view_mode == ViewMode::Rack, || {
+                    *view_mode = ViewMode::Rack;
+                    *show_transport = false;
+                    *show_pianoroll = false;
                 });
 
                 // ── Piano roll toggle ──

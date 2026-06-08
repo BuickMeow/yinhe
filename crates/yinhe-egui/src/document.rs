@@ -5,6 +5,7 @@ use yinhe_types::TRACK_PALETTE;
 
 use crate::playback::PlaybackState;
 use crate::quantize::QuantizePreset;
+use crate::rack::config::ProjectSfConfig;
 
 /// Per-document state: holds one MIDI file and editing state for it.
 ///
@@ -29,6 +30,8 @@ pub(crate) struct Document {
     pub controller_panels: Vec<yinhe_automation::AutomationPanelView>,
     /// Whether any automation panels are visible.
     pub show_controller_panels: bool,
+    /// Song-specific soundfont overrides (not yet persisted).
+    pub project_sf: ProjectSfConfig,
 }
 
 impl Default for Document {
@@ -47,6 +50,7 @@ impl Default for Document {
             track_colors_cache: Vec::new(),
             controller_panels: vec![yinhe_automation::AutomationPanelView::default()],
             show_controller_panels: true,
+            project_sf: ProjectSfConfig::default(),
         }
     }
 }
@@ -119,6 +123,7 @@ impl Document {
                 track_colors_cache,
                 controller_panels: vec![yinhe_automation::AutomationPanelView::default()],
                 show_controller_panels: true,
+                project_sf: ProjectSfConfig::default(),
             }
         })
     }

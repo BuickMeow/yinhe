@@ -14,6 +14,7 @@ mod document;
 mod piano_view;
 mod playback;
 mod quantize;
+mod rack;
 mod render_context;
 mod view_interaction;
 mod widgets;
