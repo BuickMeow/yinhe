@@ -168,7 +168,7 @@ pub fn push_grid_line(
     tick: u32,
 ) {
     out.push(NoteInstance {
-        x,
+        x: x - line_width / 2.0, // centre the line on the tick position
         y: 0.0,
         w: line_width,
         h,

@@ -441,7 +441,13 @@ fn piano_snapped_bounds(
     let snapped_s = snap_tick(tick_s, quantize, ppq, bar_line_data);
     let snapped_e = snap_tick(tick_e, quantize, ppq, bar_line_data);
     let t_start = snapped_s.min(snapped_e);
-    let t_end = snapped_s.max(snapped_e);
+    let mut t_end = snapped_s.max(snapped_e);
+
+    // Ensure minimum width of one quantise grid interval
+    let interval = quantize.tick_interval(ppq) as f64;
+    if t_end <= t_start {
+        t_end = t_start + interval.max(1.0);
+    }
 
     let kh = view.key_height;
     let scroll_y = view.base.scroll_y;
