@@ -259,6 +259,9 @@ pub fn show(
                 egui::pos2(rect.min.x, sb_y),
                 egui::pos2(rect.min.x + kb_w, sb_y + super::scrollbar::SCROLLBAR_H),
             );
+            // Paint background first, then buttons on top
+            ui.painter()
+                .rect_filled(sb_left_blank, 0.0, theme::SCROLLBAR_BG);
             ui.allocate_new_ui(egui::UiBuilder::new().max_rect(sb_left_blank), |ui| {
                 ui.horizontal_centered(|ui| {
                     let mut count = panels.len();
@@ -277,20 +280,15 @@ pub fn show(
     // ── Horizontal scrollbar (always rendered) ──
     // scrollbar::show handles the total_ticks <= 0 case internally,
     // matching the arrangement view's behavior.
+    // NOTE: The left blank area (same width as keyboard) is NOT painted here.
+    // It is painted inside the automation block alongside the AUTO buttons
+    // so the buttons are not covered by a later background fill.
     let kb_w = view.keyboard_width();
     let sb_y = rect.min.y + rect.height() - super::scrollbar::SCROLLBAR_H;
     let sb_rect = egui::Rect::from_min_max(
         egui::pos2(rect.min.x + kb_w, sb_y),
         egui::pos2(rect.max.x, sb_y + super::scrollbar::SCROLLBAR_H),
     );
-
-    // Paint background for left blank area
-    let sb_left_blank = egui::Rect::from_min_max(
-        egui::pos2(rect.min.x, sb_y),
-        egui::pos2(rect.min.x + kb_w, sb_y + super::scrollbar::SCROLLBAR_H),
-    );
-    ui.painter()
-        .rect_filled(sb_left_blank, 0.0, theme::SCROLLBAR_BG);
 
     ui.push_id("piano_scrollbar", |ui| {
         super::scrollbar::show(
