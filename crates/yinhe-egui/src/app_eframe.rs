@@ -230,6 +230,7 @@ impl eframe::App for App {
                     &mut self.last_cursor_tick,
                     is_playing,
                     &mut follow_mode,
+                    &self.active_tool,
                 );
                 // guard drops here → document restored even on panic
             }
@@ -290,7 +291,7 @@ impl eframe::App for App {
                         &mut self.render_ctx,
                         &mut self.pianoroll_view,
                         midi_source,
-                        &doc.selected,
+                        &mut doc.selected,
                         &doc.track_visible,
                         &mut doc.cursor_tick,
                         is_playing,
@@ -304,6 +305,7 @@ impl eframe::App for App {
                         )),
                         &mut self.piano_last_cursor_tick,
                         &mut follow_mode,
+                        &self.active_tool,
                         // Automation panel data
                         Some(&mut doc.controller_panels),
                         Some(&mut self.controller_renderers[idx]),

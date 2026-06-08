@@ -4,8 +4,11 @@ use yinhe_arrangement::instances as arrangement_instances;
 use yinhe_arrangement::{ArrangementView, NoteSource, PianorollRenderer, Uniforms};
 use yinhe_types::TimeSigEvent;
 
+use std::collections::HashSet;
+
 use crate::quantize::QuantizePreset;
 use crate::render_context::RenderContext;
+use crate::widgets::tools_panel::Tool;
 
 /// Hash viewport properties that affect static arrangement instances.
 fn viewport_hash(width: u32, height: u32, view: &ArrangementView) -> u64 {
@@ -43,6 +46,7 @@ pub fn show(
     render_ctx: &mut RenderContext,
     view: &mut ArrangementView,
     midi: Option<&dyn NoteSource>,
+    selected: &mut HashSet<(u16, u32)>,
     track_visible: &[bool],
     track_colors: &[[f32; 3]],
     cursor_tick: &mut Option<f64>,
@@ -52,6 +56,7 @@ pub fn show(
     is_playing: bool,
     _track_names: &[String],
     follow_mode: &mut crate::view_interaction::FollowMode,
+    active_tool: &Tool,
 ) {
     // Sense::click_and_drag() so that the response passed to handle_input
     // provides hover/drag/click/double-click state.  Unlike the piano roll,
@@ -174,5 +179,143 @@ pub fn show(
         Some(&resp),
         is_playing,
         follow_mode,
+        active_tool,
     );
+
+    // ── Selection drag (Select tool only) ──
+    if *active_tool == Tool::Select && !is_playing {
+        sel_drag_frame_arrange(ui, rect, view, midi, selected, quantize, ppq, bar_line_data);
+    }
+}
+
+// ── Arrangement selection drag ──
+
+fn sel_drag_frame_arrange(
+    ui: &mut egui::Ui,
+    content_rect: egui::Rect,
+    view: &mut ArrangementView,
+    midi: Option<&dyn NoteSource>,
+    selected: &mut HashSet<(u16, u32)>,
+    quantize: QuantizePreset,
+    ppq: u32,
+    bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
+) {
+    let sel_id = ui.id().with("sel_drag_arr");
+    let mut drag: Option<(egui::Pos2, egui::Pos2)> =
+        ui.data_mut(|d| d.get_persisted(sel_id)).unwrap_or(None);
+
+    let pointer = ui.input(|i| i.pointer.clone());
+
+    if pointer.primary_pressed()
+        && let Some(pos) = pointer.hover_pos()
+        && content_rect.contains(pos)
+    {
+        let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
+        drag = Some((local, local));
+        let cmd = ui.input(|i| i.modifiers.command || i.modifiers.ctrl);
+        if !cmd {
+            selected.clear();
+        }
+    }
+
+    if let Some((start, _)) = drag {
+        if pointer.primary_down() {
+            if let Some(pos) = pointer.hover_pos() {
+                let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
+                drag = Some((start, local));
+            }
+        }
+
+        if pointer.primary_released() {
+            if let (Some(midi_ref), Some((start, end))) = (midi, drag) {
+                let sx = start.x.min(end.x);
+                let ex = start.x.max(end.x);
+                let sy = start.y.min(end.y);
+                let ey = start.y.max(end.y);
+
+                let tick_s = view.x_to_tick(sx);
+                let tick_e = view.x_to_tick(ex);
+
+                // Y: pixel → track index
+                let lh = view.lane_height;
+                let scroll_y = view.base.scroll_y;
+                let track_lo = ((scroll_y + sy) / lh).floor().max(0.0) as usize;
+                let track_hi = ((scroll_y + ey) / lh).ceil().max(0.0) as usize;
+
+                // Snap ticks
+                let snapped_s = snap_tick(tick_s, quantize, ppq, bar_line_data);
+                let snapped_e = snap_tick(tick_e, quantize, ppq, bar_line_data);
+                let t_start = snapped_s.min(snapped_e);
+                let t_end = snapped_s.max(snapped_e);
+
+                let cmd = ui.input(|i| i.modifiers.command || i.modifiers.ctrl);
+                if !cmd {
+                    selected.clear();
+                }
+                for track in track_lo..=track_hi {
+                    // Arrangement: iterate all keys for this track
+                    // Since notes don't have a track-indexed lookup, we
+                    // iterate key_notes and filter by track.
+                    // With max 128 keys this is fast (<10 µs per key scan).
+                    for key in 0..128u8 {
+                        for note in midi_ref.key_notes(key) {
+                            if note.track as usize != track {
+                                continue;
+                            }
+                            if note.start_tick as f64 <= t_end && note.end_tick as f64 >= t_start {
+                                selected.insert((note.track, note.start_tick));
+                            }
+                        }
+                    }
+                }
+
+                view.base.dirty = true;
+            }
+            drag = None;
+        }
+    }
+
+    // Draw selection rect
+    if let Some((start, end)) = drag {
+        let sx = content_rect.min.x + start.x.min(end.x);
+        let sy = content_rect.min.y + start.y.min(end.y);
+        let ex = content_rect.min.x + start.x.max(end.x);
+        let ey = content_rect.min.y + start.y.max(end.y);
+        let sel_rect = egui::Rect::from_min_max(egui::pos2(sx, sy), egui::pos2(ex, ey));
+        ui.painter().rect_filled(
+            sel_rect,
+            0.0,
+            egui::Color32::from_rgba_premultiplied(100, 180, 255, 50),
+        );
+        ui.painter().rect_stroke(
+            sel_rect,
+            0.0,
+            egui::Stroke::new(1.0, egui::Color32::from_rgb(100, 180, 255)),
+            egui::StrokeKind::Middle,
+        );
+    }
+
+    ui.data_mut(|d| d.insert_persisted(sel_id, drag));
+}
+
+fn snap_tick(
+    tick: f64,
+    quantize: QuantizePreset,
+    ppq: u32,
+    bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
+) -> f64 {
+    if let Some((tpb, num, den, events)) = bar_line_data {
+        let (bar_start, next_bar) =
+            yinhe_wgpu::grid::measure_bounds_at_tick(tick, tpb, num, den, events);
+        let offset = tick - bar_start;
+        let snapped_offset = quantize.snap_tick(offset, ppq);
+        let grid_tick = bar_start + snapped_offset;
+        if (tick - next_bar).abs() < (tick - grid_tick).abs() {
+            next_bar
+        } else {
+            grid_tick
+        }
+    } else {
+        quantize.snap_tick(tick, ppq)
+    }
 }

@@ -1,5 +1,6 @@
 // ── Rendering constants ───────────────────────────────────────────────────
 const BORDER_DARKEN_FACTOR: f32 = 0.4;
+const SELECTED_DARKEN_FACTOR: f32 = 0.15;
 
 struct Uniforms {
     width: f32,
@@ -24,6 +25,7 @@ struct VertexOutput {
     @location(2) half_size: vec2<f32>,
     @location(3) radius: f32,
     @location(4) border_width: f32,
+    @location(5) sel_flag: u32, // 1 = selected note (velocity>0 && tag==1)
 }
 
 @group(0) @binding(0)
@@ -79,6 +81,10 @@ fn vs_main(
 
     out.uv = uv[vertex_index];
     out.half_size = vec2<f32>(w, h) * 0.5;
+    // sel_flag = velocity>0 && tag==1 (selected note)
+    let vel = instance.packed.z;
+    let tag = instance.packed.w;
+    out.sel_flag = select(0u, 1u, vel > 0u && tag == 1u);
     return out;
 }
 
@@ -101,6 +107,14 @@ fn composite_border_fill(fill_a: f32, border_a: f32, color: vec4<f32>) -> vec4<f
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    // 选中暗化
+    let base_color = in.color;
+    let fill_color = select(
+        base_color,
+        vec4(base_color.rgb * SELECTED_DARKEN_FACTOR, base_color.a),
+        in.sel_flag != 0u,
+    );
+
     let p = (in.uv - 0.5) * in.half_size * 2.0;
 
     // Fast path: no rounded corners
@@ -119,7 +133,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             border_a = outer_a - inner_a;
         }
 
-        return composite_border_fill(fill_a, border_a, in.color);
+        return composite_border_fill(fill_a, border_a, fill_color);
     }
 
     // Slow path: SDF rounded rectangle
@@ -139,5 +153,5 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         border_a = outer_a - inner_a;
     }
 
-    return composite_border_fill(fill_a, border_a, in.color);
+    return composite_border_fill(fill_a, border_a, fill_color);
 }

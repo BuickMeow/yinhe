@@ -6,6 +6,7 @@ use yinhe_arrangement::ArrangementView;
 
 use crate::document::Document;
 use crate::render_context::RenderContext;
+use crate::widgets::tools_panel::Tool;
 use crate::widgets::track_panel;
 
 /// Height of the time ruler band at the top of the arrangement view.
@@ -24,6 +25,7 @@ pub fn show(
     last_cursor_tick: &mut Option<f64>,
     is_playing: bool,
     follow_mode: &mut crate::view_interaction::FollowMode,
+    active_tool: &Tool,
 ) {
     *last_cursor_tick = doc.cursor_tick;
 
@@ -150,6 +152,7 @@ pub fn show(
             arr_render_ctx,
             arr_view,
             arr_midi,
+            &mut doc.selected,
             &doc.track_visible,
             &doc.track_colors_cache,
             &mut doc.cursor_tick,
@@ -164,6 +167,7 @@ pub fn show(
             is_playing,
             &doc.midi.track_names,
             follow_mode,
+            active_tool,
         );
     });
 

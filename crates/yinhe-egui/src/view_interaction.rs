@@ -3,6 +3,7 @@ use eframe::egui;
 use yinhe_types::TimeSigEvent;
 
 use crate::quantize::QuantizePreset;
+use crate::widgets::tools_panel::Tool;
 
 /// Cursor-follow mode for auto-scrolling during playback.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -175,6 +176,7 @@ pub(crate) fn handle_input(
     existing_resp: Option<&egui::Response>,
     is_playing: bool,
     follow_mode: &mut FollowMode,
+    active_tool: &Tool,
 ) {
     // Use caller-supplied response when painter and interact rect are the
     // same; otherwise create a dedicated click_and_drag interact.
@@ -276,8 +278,20 @@ pub(crate) fn handle_input(
         }
     }
 
-    // Drag to pan
-    if content_resp.dragged() {
+    // Middle-button drag → pan (always, regardless of tool)
+    if pointer_in_rect && ui.input(|i| i.pointer.middle_down()) {
+        let delta = ui.input(|i| i.pointer.delta());
+        *view.scroll_x() -= delta.x;
+        *view.scroll_y() -= delta.y;
+        *view.dirty() = true;
+        if is_playing && *follow_mode != FollowMode::None {
+            *follow_mode = FollowMode::None;
+        }
+        ui.ctx().request_repaint();
+    }
+
+    // Left-button drag → pan (Pan tool only)
+    if *active_tool != Tool::Select && content_resp.dragged() {
         let delta = content_resp.drag_delta();
         *view.scroll_x() -= delta.x;
         *view.scroll_y() -= delta.y;

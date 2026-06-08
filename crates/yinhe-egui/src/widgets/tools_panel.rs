@@ -4,18 +4,26 @@ use egui_material_icons::icons::*;
 #[derive(PartialEq, Clone, Copy, Debug)]
 pub enum Tool {
     Select,
+    Pan,
     Pencil,
     Scissors,
     Eraser,
 }
 
 /// All currently available tools — shown on both panels.
-pub const ALL_TOOLS: [Tool; 4] = [Tool::Select, Tool::Pencil, Tool::Scissors, Tool::Eraser];
+pub const ALL_TOOLS: [Tool; 5] = [
+    Tool::Select,
+    Tool::Pan,
+    Tool::Pencil,
+    Tool::Scissors,
+    Tool::Eraser,
+];
 
 impl Tool {
     pub fn icon(self) -> egui_material_icons::MaterialIcon {
         match self {
             Tool::Select => ICON_SELECT,
+            Tool::Pan => ICON_PAN_TOOL,
             Tool::Pencil => ICON_EDIT,
             Tool::Scissors => ICON_CONTENT_CUT,
             Tool::Eraser => ICON_INK_ERASER,
@@ -25,6 +33,7 @@ impl Tool {
     pub fn label(self) -> &'static str {
         match self {
             Tool::Select => "选择",
+            Tool::Pan => "手形",
             Tool::Pencil => "铅笔",
             Tool::Scissors => "剪刀",
             Tool::Eraser => "橡皮擦",
