@@ -1,4 +1,4 @@
-use yinhe_types::{AutomationLane, TRACK_PALETTE, TimeSigEvent};
+use yinhe_types::{AutomationEvent, AutomationLane, TRACK_PALETTE, TimeSigEvent};
 
 use crate::AutomationPanelView;
 use crate::grid;
@@ -109,10 +109,35 @@ pub fn build_automation_instances(
         let events = lane.events_in_range(pad_start, pad_end);
         let x_offset = view.base.left_panel_width - view.base.scroll_x;
 
+        // ── Collect unique (tick, value) bars, keeping first occurrence ──
+        // Events are sorted by tick. Within each tick, we track seen values
+        // so duplicate values (even across tracks) only produce one bar.
+        struct Bar<'a> {
+            evt: &'a AutomationEvent,
+            bar_x: f32,
+            bar_h: f32,
+            color: [f32; 3],
+        }
+
+        let mut bars: Vec<Bar> = Vec::new();
+        let mut last_tick = u32::MAX;
+        let mut seen_values: Vec<u16> = Vec::new();
+
         for evt in events {
+            // New tick → reset seen values
+            if evt.tick != last_tick {
+                last_tick = evt.tick;
+                seen_values.clear();
+            }
+
+            // Skip duplicate values at the same tick
+            if seen_values.contains(&evt.value) {
+                continue;
+            }
+            seen_values.push(evt.value);
+
             let val = evt.value as f32;
             let max_val = max_val.max(1.0);
-            // Map 0..max_val to 1..max_val+1 so every value has a visible bar.
             let bar_h = ((val + 1.0) / (max_val + 1.0)) * h;
             let bar_x = x_offset + evt.tick as f32 * ppu;
 
@@ -124,14 +149,28 @@ pub fn build_automation_instances(
             let trk = evt.track as usize % TRACK_PALETTE.len();
             let color = TRACK_PALETTE[trk];
 
+            bars.push(Bar {
+                evt,
+                bar_x,
+                bar_h,
+                color,
+            });
+        }
+
+        // ── Sort by value descending so higher values draw first (bottom) ──
+        // Lower values draw on top, so at the same tick the bottom portion
+        // shows the lower value's track color while the top shows the higher.
+        bars.sort_by(|a, b| b.evt.value.cmp(&a.evt.value));
+
+        for bar in &bars {
             instances.push(NoteInstance {
-                x: bar_x,
-                y: h - bar_h,
+                x: bar.bar_x,
+                y: h - bar.bar_h,
                 w: BAR_WIDTH,
-                h: bar_h,
-                rgba_packed: pack_rgba(color[0], color[1], color[2], 0.85),
+                h: bar.bar_h,
+                rgba_packed: pack_rgba(bar.color[0], bar.color[1], bar.color[2], 0.85),
                 props_packed: pack_props(BAR_ROUNDING, BAR_BORDER),
-                velocity: evt.value as u32,
+                velocity: bar.evt.value as u32,
                 tag: 0,
             });
         }
@@ -344,19 +383,20 @@ mod tests {
 
         assert_eq!(instances.len(), 3);
 
+        // Bars are sorted by value descending: val=127 first, then val=64.
+        // Bar at tick=200, value=127 (full height, drawn first = bottom)
+        let bar0 = &instances[1];
+        assert!((bar0.x - 260.0).abs() < 0.001);
+        assert!((bar0.y - 0.0).abs() < 0.001);
+        assert_eq!(bar0.w, 2.0);
+
         // Bar at tick=100, value=64, max=127
         // New mapping: bar_h = ((val+1)/(max_val+1)) * h
         // x = 60 - 0 + 100*1.0 = 160
-        let bar0 = &instances[1];
-        assert!((bar0.x - 160.0).abs() < 0.001);
-        let expected_y0 = 100.0 - ((64.0 + 1.0) / (127.0 + 1.0)) * 100.0;
-        assert!((bar0.y - expected_y0).abs() < 0.001);
-        assert_eq!(bar0.w, 2.0);
-
-        // Bar at tick=200, value=127 (full height)
         let bar1 = &instances[2];
-        assert!((bar1.x - 260.0).abs() < 0.001);
-        assert!((bar1.y - 0.0).abs() < 0.001);
+        assert!((bar1.x - 160.0).abs() < 0.001);
+        let expected_y1 = 100.0 - ((64.0 + 1.0) / (127.0 + 1.0)) * 100.0;
+        assert!((bar1.y - expected_y1).abs() < 0.001);
         assert_eq!(bar1.w, 2.0);
     }
 
@@ -431,13 +471,18 @@ mod tests {
 
         assert_eq!(instances.len(), 4);
 
-        // value=0: height = (1/128)*200 = 1.5625
-        assert!((instances[1].h - 1.5625).abs() < 0.001);
-        assert!((instances[1].y - 198.4375).abs() < 0.001);
-
+        // Bars are sorted by value descending: val=127, 64, 0.
         // value=127: full height
-        assert!((instances[3].h - 200.0).abs() < 0.001);
-        assert!((instances[3].y - 0.0).abs() < 0.001);
+        assert!((instances[1].h - 200.0).abs() < 0.001);
+        assert!((instances[1].y - 0.0).abs() < 0.001);
+
+        // value=64: mid height
+        assert!((instances[2].h - 101.5625).abs() < 0.001);
+        assert!((instances[2].y - 98.4375).abs() < 0.001);
+
+        // value=0: min height = (1/128)*200 = 1.5625
+        assert!((instances[3].h - 1.5625).abs() < 0.001);
+        assert!((instances[3].y - 198.4375).abs() < 0.001);
     }
 
     #[test]
