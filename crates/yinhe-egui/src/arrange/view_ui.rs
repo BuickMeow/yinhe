@@ -151,7 +151,18 @@ pub fn show(
 
     // Selection drag runs BEFORE handle_input to avoid pointer-capture conflicts
     if *active_tool == Tool::Select && !is_playing {
-        sel_drag_frame_arrange(ui, rect, view, midi, selected, quantize, ppq, bar_line_data);
+        sel_drag_frame_arrange(
+            ui,
+            rect,
+            view,
+            midi,
+            selected,
+            quantize,
+            ppq,
+            bar_line_data,
+            total_ticks,
+            num_tracks,
+        );
     }
 
     crate::view_interaction::handle_input(
@@ -180,6 +191,8 @@ fn sel_drag_frame_arrange(
     quantize: QuantizePreset,
     ppq: u32,
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
+    total_ticks: f64,
+    num_tracks: usize,
 ) {
     let sel_id = ui.id().with("sel_drag_arr");
     let mut drag: Option<(egui::Pos2, egui::Pos2)> =
@@ -214,6 +227,46 @@ fn sel_drag_frame_arrange(
                     clamped.y - content_rect.min.y,
                 );
                 drag = Some((start, local));
+
+                // ── Auto-scroll when dragging near the edge ──
+                const MARGIN: f32 = 20.0;
+                const BASE_SPEED: f32 = 15.0;
+                let dt = ui.input(|i| i.unstable_dt);
+                let mut dx = 0.0f32;
+                let mut dy = 0.0f32;
+
+                if pos.x < content_rect.min.x + MARGIN {
+                    dx = -(content_rect.min.x + MARGIN - pos.x) * BASE_SPEED * dt;
+                } else if pos.x > content_rect.max.x - MARGIN {
+                    dx = (pos.x - (content_rect.max.x - MARGIN)) * BASE_SPEED * dt;
+                }
+
+                if pos.y < content_rect.min.y + MARGIN {
+                    dy = -(content_rect.min.y + MARGIN - pos.y) * BASE_SPEED * dt;
+                } else if pos.y > content_rect.max.y - MARGIN {
+                    dy = (pos.y - (content_rect.max.y - MARGIN)) * BASE_SPEED * dt;
+                }
+
+                if dx != 0.0 || dy != 0.0 {
+                    let old_x = view.base.scroll_x;
+                    let old_y = view.base.scroll_y;
+                    view.base.scroll_x += dx;
+                    view.base.scroll_y += dy;
+                    view.clamp_scroll(
+                        content_rect.width(),
+                        content_rect.height(),
+                        total_ticks,
+                        num_tracks,
+                    );
+                    let actual_dx = view.base.scroll_x - old_x;
+                    let actual_dy = view.base.scroll_y - old_y;
+                    if actual_dx != 0.0 || actual_dy != 0.0 {
+                        view.base.dirty = true;
+                        ui.ctx().request_repaint();
+                        // Compensate start so it stays fixed in content space
+                        drag = drag.map(|(s, e)| (egui::pos2(s.x - actual_dx, s.y - actual_dy), e));
+                    }
+                }
             }
         }
 
