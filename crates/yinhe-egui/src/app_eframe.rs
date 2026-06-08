@@ -49,9 +49,10 @@ impl eframe::App for App {
         let bg = crate::widgets::theme::APP_BG;
         ui.painter().rect_filled(ui.ctx().screen_rect(), 0.0, bg);
 
-        // ── Detect document switch → invalidate arrangement GPU cache ──
+        // ── Detect document switch → invalidate GPU caches ──
         if self.active_doc != self.prev_active_doc {
             self.arrange_view.base.dirty = true;
+            self.pianoroll_view.base.dirty = true;
             self.prev_active_doc = self.active_doc;
         }
 
