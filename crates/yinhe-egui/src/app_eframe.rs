@@ -167,6 +167,10 @@ impl eframe::App for App {
         // ── Main area: arrangement (top) + pianoroll (bottom) ──
         let mut remaining = ui.available_rect_before_wrap();
 
+        // ── Tools panel (always visible) ──
+        let tools_panel_w = crate::widgets::tools_panel::TOOLS_PANEL_W;
+        remaining.max.x -= tools_panel_w;
+
         // ── Reserve space for right panel ──
         let right_panel_total_w = if self.right_tab.is_some() {
             let max_w = (remaining.width() - 60.0).max(theme::RIGHT_PANEL_MIN_WIDTH + 4.0);
@@ -307,10 +311,17 @@ impl eframe::App for App {
             self.follow_mode = follow_mode;
         }
 
+        // ── Tools panel ──
+        let tools_rect = egui::Rect::from_min_size(
+            egui::pos2(remaining.max.x, remaining.min.y),
+            egui::vec2(tools_panel_w, remaining.height()),
+        );
+        crate::widgets::tools_panel::show(ui, tools_rect, &mut self.active_tool);
+
         // ── Right panel ──
         if self.right_tab.is_some() {
             let right_rect = egui::Rect::from_min_size(
-                egui::pos2(remaining.max.x, remaining.min.y),
+                egui::pos2(tools_rect.max.x, remaining.min.y),
                 egui::vec2(right_panel_total_w, remaining.height()),
             );
             let doc = self.active_doc.and_then(|idx| self.documents.get_mut(idx));

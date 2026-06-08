@@ -6,5 +6,6 @@ pub mod theme;
 pub mod time_format;
 pub mod time_ruler;
 pub mod title_bar;
+pub mod tools_panel;
 pub mod track_panel;
 pub mod transport_bar;

@@ -35,6 +35,9 @@ pub struct App {
     // ── Right panel ──
     pub(crate) right_panel_width: f32,
     pub(crate) right_tab: Option<crate::right_panel::RightTab>,
+
+    // ── Tool palette ──
+    pub(crate) active_tool: crate::widgets::tools_panel::Tool,
     pub(crate) show_pianoroll_in_arrange: bool,
 
     // ── Visibility toggles (derived from view_mode) ──
@@ -138,6 +141,8 @@ impl App {
 
             right_panel_width: crate::widgets::theme::RIGHT_PANEL_DEFAULT_WIDTH,
             right_tab: None,
+
+            active_tool: crate::widgets::tools_panel::Tool::Select,
 
             title_bar_press_pos: None,
 
