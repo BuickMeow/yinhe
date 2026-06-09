@@ -319,16 +319,15 @@ fn sel_drag_frame_arrange(
 
     // Draw snapped selection rect
     if let Some((start, end)) = drag {
-        if (end - start).length() < 3.0 {
-            return;
+        if (end - start).length() >= 3.0 {
+            let (vx, vy, vw, vh, _, _, _, _) =
+                arrange_snapped_bounds(start, end, view, quantize, ppq, bar_line_data);
+            let snapped = egui::Rect::from_min_max(
+                egui::pos2(vx.min(vy), vw.min(vh)),
+                egui::pos2(vx.max(vy), vw.max(vh)),
+            );
+            crate::widgets::selection_box::draw(&ui.painter(), content_rect, snapped);
         }
-        let (vx, vy, vw, vh, _, _, _, _) =
-            arrange_snapped_bounds(start, end, view, quantize, ppq, bar_line_data);
-        let snapped = egui::Rect::from_min_max(
-            egui::pos2(vx.min(vy), vw.min(vh)),
-            egui::pos2(vx.max(vy), vw.max(vh)),
-        );
-        crate::widgets::selection_box::draw(&ui.painter(), content_rect, snapped);
     }
 
     ui.data_mut(|d| d.insert_persisted(sel_id, drag));
