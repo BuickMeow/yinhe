@@ -142,7 +142,7 @@ impl App {
             right_panel_width: crate::widgets::theme::RIGHT_PANEL_DEFAULT_WIDTH,
             right_tab: None,
 
-            active_tool: crate::widgets::tools_panel::Tool::Pan,
+            active_tool: crate::widgets::tools_panel::Tool::Select,
 
             title_bar_press_pos: None,
 

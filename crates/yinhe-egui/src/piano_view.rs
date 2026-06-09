@@ -120,6 +120,7 @@ pub fn show(
             ppq,
             bar_line_data,
             total_ticks,
+            cursor_tick,
         );
     }
 
@@ -327,6 +328,7 @@ fn sel_drag_frame(
     ppq: u32,
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
     total_ticks: f64,
+    cursor_tick: &mut Option<f64>,
 ) {
     let sel_id = ui.id().with("sel_drag");
     let mut drag: Option<(egui::Pos2, egui::Pos2)> =
@@ -403,24 +405,35 @@ fn sel_drag_frame(
         // Release -> hit test
         if pointer.primary_released() {
             if let (Some(midi_ref), Some((start, end))) = (midi, drag) {
-                let (
-                    snapped_sx,
-                    snapped_ex,
-                    snapped_sy,
-                    snapped_ey,
-                    t_start,
-                    t_end,
-                    key_lo,
-                    key_hi,
-                ) = piano_snapped_bounds(start, end, view, quantize, ppq, bar_line_data);
+                let drag_dist = (end - start).length();
 
-                if !cmd {
+                if drag_dist < 3.0 {
+                    // Click (no meaningful drag) — set cursor, clear selection
+                    let tick = view.x_to_tick(start.x);
+                    let snapped = snap_tick(tick, quantize, ppq, bar_line_data);
                     selected.clear();
-                }
-                for key in key_lo..=key_hi {
-                    for note in midi_ref.key_notes(key) {
-                        if note.start_tick as f64 <= t_end && note.end_tick as f64 >= t_start {
-                            selected.insert((note.track, note.start_tick));
+                    *cursor_tick = Some(snapped.max(0.0));
+                } else {
+                    // Drag — existing marquee behavior
+                    let (
+                        _snapped_sx,
+                        _snapped_ex,
+                        _snapped_sy,
+                        _snapped_ey,
+                        t_start,
+                        t_end,
+                        key_lo,
+                        key_hi,
+                    ) = piano_snapped_bounds(start, end, view, quantize, ppq, bar_line_data);
+
+                    if !cmd {
+                        selected.clear();
+                    }
+                    for key in key_lo..=key_hi {
+                        for note in midi_ref.key_notes(key) {
+                            if (note.start_tick as f64) < t_end && (note.end_tick as f64) > t_start {
+                                selected.insert((note.track, note.start_tick));
+                            }
                         }
                     }
                 }
@@ -448,6 +461,9 @@ fn sel_draw_box(
         ui.data_mut(|d| d.get_persisted(sel_id)).unwrap_or(None);
 
     if let Some((start, end)) = drag {
+        if (end - start).length() < 3.0 {
+            return;
+        }
         let (vx, vy, vw, vh, _, _, _, _) =
             piano_snapped_bounds(start, end, view, quantize, ppq, bar_line_data);
         let snapped = egui::Rect::from_min_max(

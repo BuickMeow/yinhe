@@ -162,6 +162,7 @@ pub fn show(
             bar_line_data,
             total_ticks,
             num_tracks,
+            cursor_tick,
         );
     }
 
@@ -193,6 +194,7 @@ fn sel_drag_frame_arrange(
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
     total_ticks: f64,
     num_tracks: usize,
+    cursor_tick: &mut Option<f64>,
 ) {
     let sel_id = ui.id().with("sel_drag_arr");
     let mut drag: Option<(egui::Pos2, egui::Pos2)> =
@@ -272,28 +274,39 @@ fn sel_drag_frame_arrange(
 
         if pointer.primary_released() {
             if let (Some(midi_ref), Some((start, end))) = (midi, drag) {
-                let (
-                    screen_sx,
-                    screen_ex,
-                    screen_sy,
-                    screen_ey,
-                    t_start,
-                    t_end,
-                    track_lo,
-                    track_hi,
-                ) = arrange_snapped_bounds(start, end, view, quantize, ppq, bar_line_data);
+                let drag_dist = (end - start).length();
 
-                if !cmd {
+                if drag_dist < 3.0 {
+                    // Click (no meaningful drag) — set cursor, clear selection
+                    let tick = view.x_to_tick(start.x);
+                    let snapped = snap_tick(tick, quantize, ppq, bar_line_data);
                     selected.clear();
-                }
-                for track in track_lo..=track_hi {
-                    for key in 0..128u8 {
-                        for note in midi_ref.key_notes(key) {
-                            if note.track as usize != track {
-                                continue;
-                            }
-                            if note.start_tick as f64 <= t_end && note.end_tick as f64 >= t_start {
-                                selected.insert((note.track, note.start_tick));
+                    *cursor_tick = Some(snapped.max(0.0));
+                } else {
+                    // Drag — existing marquee behavior
+                    let (
+                        _screen_sx,
+                        _screen_ex,
+                        _screen_sy,
+                        _screen_ey,
+                        t_start,
+                        t_end,
+                        track_lo,
+                        track_hi,
+                    ) = arrange_snapped_bounds(start, end, view, quantize, ppq, bar_line_data);
+
+                    if !cmd {
+                        selected.clear();
+                    }
+                    for track in track_lo..=track_hi {
+                        for key in 0..128u8 {
+                            for note in midi_ref.key_notes(key) {
+                                if note.track as usize != track {
+                                    continue;
+                                }
+                                if (note.start_tick as f64) < t_end && (note.end_tick as f64) > t_start {
+                                    selected.insert((note.track, note.start_tick));
+                                }
                             }
                         }
                     }
@@ -306,6 +319,9 @@ fn sel_drag_frame_arrange(
 
     // Draw snapped selection rect
     if let Some((start, end)) = drag {
+        if (end - start).length() < 3.0 {
+            return;
+        }
         let (vx, vy, vw, vh, _, _, _, _) =
             arrange_snapped_bounds(start, end, view, quantize, ppq, bar_line_data);
         let snapped = egui::Rect::from_min_max(

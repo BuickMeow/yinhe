@@ -95,25 +95,20 @@ fn sd_rounded_box(p: vec2<f32>, half_size: vec2<f32>, r: f32) -> f32 {
 }
 
 // Border + fill alpha compositing
-fn composite_border_fill(fill_a: f32, border_a: f32, color: vec4<f32>) -> vec4<f32> {
+fn composite_border_fill(fill_a: f32, border_a: f32, base_color: vec4<f32>, sel_flag: u32) -> vec4<f32> {
     let total_a = fill_a + border_a;
-    let border_color = color.rgb * BORDER_DARKEN_FACTOR;
+    let fill_color = select(base_color.rgb, base_color.rgb * SELECTED_DARKEN_FACTOR, sel_flag != 0u);
+    let border_color = select(base_color.rgb * BORDER_DARKEN_FACTOR, base_color.rgb, sel_flag != 0u);
     var rgb = border_color;
     if fill_a > 0.0 {
-        rgb = (color.rgb * fill_a + border_color * border_a) / total_a;
+        rgb = (fill_color * fill_a + border_color * border_a) / total_a;
     }
-    return vec4(rgb, color.a * total_a);
+    return vec4(rgb, base_color.a * total_a);
 }
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    // 选中暗化
     let base_color = in.color;
-    let fill_color = select(
-        base_color,
-        vec4(base_color.rgb * SELECTED_DARKEN_FACTOR, base_color.a),
-        in.sel_flag != 0u,
-    );
 
     let p = (in.uv - 0.5) * in.half_size * 2.0;
 
@@ -133,7 +128,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             border_a = outer_a - inner_a;
         }
 
-        return composite_border_fill(fill_a, border_a, fill_color);
+        return composite_border_fill(fill_a, border_a, base_color, in.sel_flag);
     }
 
     // Slow path: SDF rounded rectangle
@@ -153,5 +148,5 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         border_a = outer_a - inner_a;
     }
 
-    return composite_border_fill(fill_a, border_a, fill_color);
+    return composite_border_fill(fill_a, border_a, base_color, in.sel_flag);
 }
