@@ -30,7 +30,7 @@ impl Default for TrackOverride {
 pub(crate) struct Document {
     pub midi: Arc<yinhe_midi::MidiFile>,
     pub file_name: String,
-    pub selected: HashSet<(u16, u32)>,
+    pub selected: HashSet<(u16, u32, u8)>,
     pub track_visible: Vec<bool>,
     pub track_selected: Option<u16>,
     pub cursor_tick: Option<f64>,

@@ -46,7 +46,7 @@ pub fn show(
     render_ctx: &mut RenderContext,
     view: &mut ArrangementView,
     midi: Option<&dyn NoteSource>,
-    selected: &mut HashSet<(u16, u32)>,
+    selected: &mut HashSet<(u16, u32, u8)>,
     track_visible: &[bool],
     track_colors: &[[f32; 3]],
     cursor_tick: &mut Option<f64>,
@@ -188,7 +188,7 @@ fn sel_drag_frame_arrange(
     content_rect: egui::Rect,
     view: &mut ArrangementView,
     midi: Option<&dyn NoteSource>,
-    selected: &mut HashSet<(u16, u32)>,
+    selected: &mut HashSet<(u16, u32, u8)>,
     quantize: QuantizePreset,
     ppq: u32,
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
@@ -305,7 +305,7 @@ fn sel_drag_frame_arrange(
                                     continue;
                                 }
                                 if (note.start_tick as f64) < t_end && (note.end_tick as f64) > t_start {
-                                    selected.insert((note.track, note.start_tick));
+                                    selected.insert((note.track, note.start_tick, note.key));
                                 }
                             }
                         }

@@ -25,7 +25,7 @@ pub fn show(
     render_ctx: &mut super::render_context::RenderContext,
     view: &mut yinhe_pianoroll::PianoRollView,
     midi: Option<&dyn yinhe_pianoroll::NoteSource>,
-    selected: &mut std::collections::HashSet<(u16, u32)>,
+    selected: &mut std::collections::HashSet<(u16, u32, u8)>,
     track_visible: &[bool],
     cursor_tick: &mut Option<f64>,
     is_playing: bool,
@@ -323,7 +323,7 @@ fn sel_drag_frame(
     content_rect: egui::Rect,
     view: &mut yinhe_pianoroll::PianoRollView,
     midi: Option<&dyn yinhe_pianoroll::NoteSource>,
-    selected: &mut std::collections::HashSet<(u16, u32)>,
+    selected: &mut std::collections::HashSet<(u16, u32, u8)>,
     quantize: QuantizePreset,
     ppq: u32,
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
@@ -432,7 +432,7 @@ fn sel_drag_frame(
                     for key in key_lo..=key_hi {
                         for note in midi_ref.key_notes(key) {
                             if (note.start_tick as f64) < t_end && (note.end_tick as f64) > t_start {
-                                selected.insert((note.track, note.start_tick));
+                                selected.insert((note.track, note.start_tick, note.key));
                             }
                         }
                     }

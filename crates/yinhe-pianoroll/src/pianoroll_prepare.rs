@@ -44,7 +44,7 @@ pub fn prepare(
     height: u32,
     midi: Option<&dyn NoteSource>,
     view: &PianoRollView,
-    selected: &HashSet<(u16, u32)>,
+    selected: &HashSet<(u16, u32, u8)>,
     track_visible: &[bool],
     cursor_tick: Option<f64>,
     force_rebuild: bool,

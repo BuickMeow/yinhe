@@ -43,7 +43,7 @@ pub fn build_instances(
     height: u32,
     midi: Option<&dyn NoteSource>,
     view: &PianoRollView,
-    selected: &std::collections::HashSet<(u16, u32)>,
+    selected: &std::collections::HashSet<(u16, u32, u8)>,
     track_visible: &[bool],
     cursor_tick: Option<f64>,
 ) -> ([bool; 128], [[f32; 3]; 128]) {
@@ -71,7 +71,7 @@ pub fn build_static_instances(
     height: u32,
     midi: Option<&dyn NoteSource>,
     view: &PianoRollView,
-    selected: &std::collections::HashSet<(u16, u32)>,
+    selected: &std::collections::HashSet<(u16, u32, u8)>,
     track_visible: &[bool],
     cursor_tick: Option<f64>,
 ) -> ([bool; 128], [[f32; 3]; 128]) {
@@ -187,7 +187,7 @@ pub fn build_static_instances(
                     let color = TRACK_PALETTE[trk];
 
                     let is_selected =
-                        has_selection && selected.contains(&(note.track, note.start_tick));
+                        has_selection && selected.contains(&(note.track, note.start_tick, note.key));
                     // 选中视觉由 shader 通过 tag 处理（fill 暗化），边框保持不变
                     let border_w = 0.1 * nw.min(nh);
                     let rounding = NOTE_ROUNDING * nw.min(nh);
