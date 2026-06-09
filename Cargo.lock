@@ -544,6 +544,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "bincode"
+version = "1.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b1f45e9417d87227c7a56d22e471c6206462cba514c7590c09aff4cf6d1ddcad"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "biquad"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4518,6 +4527,7 @@ version = "1.23.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d258b83ceec21034727ecee8c382cfa6c3e133699b0742c64571814fb420c9f7"
 dependencies = [
+ "getrandom 0.4.2",
  "js-sys",
  "serde_core",
  "wasm-bindgen",
@@ -5738,12 +5748,14 @@ dependencies = [
 name = "yinhe-egui"
 version = "0.1.0"
 dependencies = [
+ "bincode",
  "cpal",
  "dirs",
  "eframe",
  "egui",
  "egui_material_icons",
  "image",
+ "midly",
  "objc2-metal 0.3.2",
  "pollster",
  "rfd",
@@ -5752,6 +5764,7 @@ dependencies = [
  "sysinfo",
  "tracing",
  "tracing-subscriber",
+ "uuid",
  "wgpu",
  "yinhe-archive",
  "yinhe-arrangement",
@@ -5761,6 +5774,7 @@ dependencies = [
  "yinhe-memtrace",
  "yinhe-midi",
  "yinhe-pianoroll",
+ "yinhe-project",
  "yinhe-types",
  "yinhe-wgpu",
 ]
@@ -5786,6 +5800,16 @@ dependencies = [
  "rayon",
  "yinhe-types",
  "yinhe-wgpu",
+]
+
+[[package]]
+name = "yinhe-project"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "serde",
+ "uuid",
+ "zstd",
 ]
 
 [[package]]

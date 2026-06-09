@@ -13,6 +13,7 @@ mod dialogs;
 mod document;
 mod piano_view;
 mod playback;
+mod project_io;
 mod quantize;
 mod render_context;
 mod right_panel;

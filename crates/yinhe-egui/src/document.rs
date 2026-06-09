@@ -29,7 +29,11 @@ impl Default for TrackOverride {
 /// not here, so loading a new MIDI file preserves the user's zoom/scroll.
 pub(crate) struct Document {
     pub midi: Arc<yinhe_midi::MidiFile>,
+    /// In-memory project archive (source of truth for save).
+    /// Set when loading a .mid (converted) or a .yin (loaded directly).
+    pub archive: Option<yinhe_project::ProjectArchive>,
     pub file_name: String,
+    pub file_path: Option<String>,
     pub selected: HashSet<(u16, u32, u8)>,
     pub track_visible: Vec<bool>,
     pub track_selected: Option<u16>,
@@ -57,6 +61,8 @@ impl Default for Document {
         Self {
             midi: Arc::new(yinhe_midi::MidiFile::default()),
             file_name: String::new(),
+            file_path: None,
+            archive: None,
             selected: HashSet::new(),
             track_visible: Vec::new(),
             track_selected: None,
@@ -84,6 +90,8 @@ impl Document {
         Document {
             midi: Arc::new(m),
             file_name: "Untitled".into(),
+            file_path: None,
+            archive: None,
             track_visible: vec![true],
             track_info_cache,
             ..Default::default()
@@ -128,9 +136,14 @@ impl Document {
                 .map(|i| TRACK_PALETTE[i % TRACK_PALETTE.len()])
                 .collect();
 
+            // Build in-memory project archive for save
+            let archive = Some(crate::project_io::midi_to_archive(&midi));
+
             Document {
                 midi,
                 file_name,
+                file_path: None,
+                archive,
                 track_visible: vec![true; num_tracks],
                 track_selected: None,
                 selected: HashSet::new(),
@@ -145,6 +158,46 @@ impl Document {
                 project_sf: ProjectSfConfig::default(),
                 track_overrides: (0..num_tracks).map(|_| TrackOverride::default()).collect(),
             }
+        })
+    }
+
+    /// Create a new Document from a .yin project file.
+    pub fn from_yin(path: &str, quantize: QuantizePreset) -> std::io::Result<Self> {
+        let (midi, file_name, archive) = crate::project_io::load_project_full(path)?;
+        let num_tracks = midi.track_ports.len();
+        let track_info_cache = midi.track_info();
+        let mut pc_map_cache = std::collections::HashMap::new();
+        for ev in &midi.control_events {
+            if let yinhe_midi::MidiControlEvent::ProgramChange {
+                channel, program, ..
+            } = ev
+            {
+                pc_map_cache.entry(*channel).or_insert(*program);
+            }
+        }
+
+        let track_colors_cache = (0..num_tracks)
+            .map(|i| yinhe_types::TRACK_PALETTE[i % yinhe_types::TRACK_PALETTE.len()])
+            .collect();
+
+        Ok(Document {
+            midi: Arc::new(midi),
+            file_name,
+            file_path: Some(path.to_string()),
+            archive: Some(archive),
+            track_visible: vec![true; num_tracks],
+            track_selected: None,
+            selected: HashSet::new(),
+            cursor_tick: Some(0.0),
+            quantize,
+            playback: PlaybackState::default(),
+            track_info_cache,
+            pc_map_cache,
+            track_colors_cache,
+            controller_panels: vec![yinhe_automation::AutomationPanelView::default()],
+            show_controller_panels: true,
+            project_sf: ProjectSfConfig::default(),
+            track_overrides: (0..num_tracks).map(|_| TrackOverride::default()).collect(),
         })
     }
 }

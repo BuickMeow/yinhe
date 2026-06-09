@@ -44,16 +44,37 @@ impl App {
             transport_bar::FileAction::NewProject => {
                 self.documents.push(Document::empty());
                 self.active_doc = Some(self.documents.len() - 1);
-                // Tear down old audio so it stops immediately
                 self.teardown_audio();
             }
             transport_bar::FileAction::Open => {
-                self.file_loader.pick_midi_file();
+                self.file_loader.pick_file();
+            }
+            transport_bar::FileAction::Save => {
+                if let Some(idx) = self.active_doc {
+                    let doc = &self.documents[idx];
+                    if doc.file_path.is_some() {
+                        let path = doc.file_path.clone().unwrap();
+                        if let Err(e) = crate::project_io::save_project(doc, &path) {
+                            tracing::error!("Failed to save project: {}", e);
+                        }
+                    } else {
+                        self.save_as_dialog();
+                    }
+                }
+            }
+            transport_bar::FileAction::SaveAs => {
+                self.save_as_dialog();
             }
             transport_bar::FileAction::CloseDocument => {
                 if let Some(idx) = self.active_doc {
                     self.close_document(idx);
                 }
+            }
+            transport_bar::FileAction::ExportMidi => {
+                self.export_midi_dialog();
+            }
+            transport_bar::FileAction::ExportAudio => {
+                // not yet implemented
             }
             transport_bar::FileAction::Exit => {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -61,9 +82,47 @@ impl App {
             transport_bar::FileAction::Settings => {
                 self.audio_settings.show_settings = true;
             }
-            _ => {
-                // Save, SaveAs, ExportAudio, ExportMidi
-                // not yet implemented
+        }
+    }
+
+    fn save_as_dialog(&mut self) {
+        if let Some(path) = rfd::FileDialog::new()
+            .add_filter("Yinhe Project", &["yin"])
+            .set_file_name("Untitled.yin")
+            .save_file()
+        {
+            let path_str = path.to_string_lossy().to_string();
+            if let Some(idx) = self.active_doc {
+                let doc = &self.documents[idx];
+                if let Err(e) = crate::project_io::save_project(doc, &path_str) {
+                    tracing::error!("Failed to save project: {}", e);
+                } else {
+                    // Update file_path and file_name
+                    if let Some(doc) = self.documents.get_mut(idx) {
+                        doc.file_path = Some(path_str);
+                        doc.file_name = path
+                            .file_stem()
+                            .and_then(|n| n.to_str())
+                            .map(|s| s.to_string())
+                            .unwrap_or_default();
+                    }
+                }
+            }
+        }
+    }
+
+    fn export_midi_dialog(&mut self) {
+        if let Some(path) = rfd::FileDialog::new()
+            .add_filter("MIDI", &["mid", "midi"])
+            .set_file_name("export.mid")
+            .save_file()
+        {
+            let path_str = path.to_string_lossy().to_string();
+            if let Some(idx) = self.active_doc {
+                let doc = &self.documents[idx];
+                if let Err(e) = crate::project_io::export_midi(doc, &path_str) {
+                    tracing::error!("Failed to export MIDI: {}", e);
+                }
             }
         }
     }

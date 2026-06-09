@@ -1,7 +1,7 @@
 use eframe::egui;
 
 use crate::app::App;
-use crate::dialogs::file_loader::MidiLoadResult;
+use crate::dialogs::file_loader::LoadResult;
 use crate::document::Document;
 use crate::widgets::title_bar;
 
@@ -89,23 +89,36 @@ impl eframe::App for App {
         // ── System resource monitoring ──
         self.refresh_system_stats();
 
-        // ── Poll async MIDI loading ──
-        match self.file_loader.poll_midi_loading() {
-            MidiLoadResult::Loaded { path, midi } => {
-                // Inherit quantize from the current active document.
+        // ── Poll async file loading ──
+        match self.file_loader.poll_loading() {
+            LoadResult::MidiLoaded { path, midi } => {
                 let quantize = self
                     .active_doc
                     .and_then(|idx| self.documents.get(idx))
                     .map(|doc| doc.quantize)
                     .unwrap_or_default();
-
                 let doc = Document::from_midi(&path, midi, quantize);
                 let insert_idx = self.documents.len();
                 self.documents.push(doc);
                 self.active_doc = Some(insert_idx);
                 self.teardown_audio();
             }
-            MidiLoadResult::NotReady => {}
+            LoadResult::YinLoaded { path, midi, file_name } => {
+                let quantize = self
+                    .active_doc
+                    .and_then(|idx| self.documents.get(idx))
+                    .map(|doc| doc.quantize)
+                    .unwrap_or_default();
+                let doc = Document::from_yin(&path, quantize).unwrap_or_else(|_| {
+                    // Fallback: create from midi directly
+                    Document::from_midi(&file_name, midi, quantize)
+                });
+                let insert_idx = self.documents.len();
+                self.documents.push(doc);
+                self.active_doc = Some(insert_idx);
+                self.teardown_audio();
+            }
+            LoadResult::NotReady => {}
         }
 
         // ── Ensure audio engine is loaded for the active document ──
@@ -379,7 +392,7 @@ impl eframe::App for App {
         }
 
         // ── Loading overlay ──
-        self.file_loader.show_midi_loading_overlay(ui);
+        self.file_loader.show_loading_overlay(ui);
         if self.file_loader.is_loading() {
             ui.ctx().request_repaint();
         }

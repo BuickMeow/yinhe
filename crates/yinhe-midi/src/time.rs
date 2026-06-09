@@ -26,6 +26,14 @@ pub fn bpm_from_mpq(mpq: u64) -> f64 {
     60_000_000.0 / mpq as f64
 }
 
+/// Convert BPM to microseconds-per-quarter-note.
+pub fn mpq_from_bpm(bpm: f32) -> u64 {
+    if bpm <= 0.0 {
+        return DEFAULT_MPQ;
+    }
+    (60_000_000.0 / bpm as f64).round() as u64
+}
+
 /// Convert a tick delta to seconds, given ticks-per-beat and microseconds-per-quarter.
 pub fn ticks_to_seconds(dtick: u64, ticks_per_beat: u32, mpq: u64) -> f64 {
     if ticks_per_beat == 0 {

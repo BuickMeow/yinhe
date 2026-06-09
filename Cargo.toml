@@ -12,6 +12,7 @@ members = [
     "crates/yinhe-audio",
     "crates/yinhe-egui",
     "crates/yinhe-memtrace",
+    "crates/yinhe-project",
 ]
 resolver = "2"
 

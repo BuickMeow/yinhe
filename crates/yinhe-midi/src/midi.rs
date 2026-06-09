@@ -294,7 +294,7 @@ fn rpn_target(msb: u8, lsb: u8) -> Option<yinhe_types::AutomationTarget> {
 
 /// Build automation lanes from a slice of MIDI control events.
 /// Also extracts per-note velocity as a separate lane.
-pub(crate) fn build_automation_lanes(
+pub fn build_automation_lanes(
     control_events: &[MidiControlEvent],
     key_notes: &[Vec<Note>; 128],
 ) -> Vec<yinhe_types::AutomationLane> {
