@@ -109,10 +109,17 @@ impl Document {
 
     /// Create a new Document from a loaded MIDI file.
     ///
+    /// Immediately converts to a ProjectArchive and derives the MidiFile from it,
+    /// so the document behaves identically to one loaded from a .yin file.
+    ///
     /// `quantize` is inherited from the current document so the user's
     /// quantization setting is preserved across MIDI loads.
     pub fn from_midi(path: &str, midi: yinhe_midi::MidiFile, quantize: QuantizePreset) -> Self {
         yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Ui, || {
+            // Convert to archive (the canonical storage format)
+            let archive = crate::project_io::midi_to_archive(&midi);
+            // Derive MidiFile from the archive (same path as .yin loading)
+            let midi = crate::project_io::archive_to_midi(&archive);
             let num_tracks = midi.track_ports.len();
             let file_name = std::path::Path::new(path)
                 .file_stem()
@@ -145,14 +152,11 @@ impl Document {
                 .map(|i| TRACK_PALETTE[i % TRACK_PALETTE.len()])
                 .collect();
 
-            // Build in-memory project archive for save
-            let archive = Some(crate::project_io::midi_to_archive(&midi));
-
             Document {
                 midi,
                 file_name,
                 file_path: None,
-                archive,
+                archive: Some(archive),
                 track_visible: vec![true; num_tracks],
                 track_selected: None,
                 selected: HashSet::new(),
