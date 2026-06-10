@@ -99,12 +99,12 @@ pub fn build_automation_instances(
             });
         }
 
-        // 4. Data bars
+        // 4. Data bars — visible tick range only.
+        // Events are discrete vertical bars; off-screen bars are also rejected
+        // by the per-bar x check below. No extra tick padding needed.
         let (tick_start, tick_end) = view.base.visible_tick_range(w);
-        // Add some padding for bars that extend past the viewport edge
-        let tick_pad = w / ppu;
-        let pad_start = (tick_start - tick_pad as f64).max(0.0) as u32;
-        let pad_end = (tick_end + tick_pad as f64) as u32;
+        let pad_start = tick_start.max(0.0) as u32;
+        let pad_end = tick_end.max(0.0) as u32;
 
         let events = lane.events_in_range(pad_start, pad_end);
         let x_offset = view.base.left_panel_width - view.base.scroll_x;

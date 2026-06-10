@@ -21,7 +21,7 @@
 | A2 | cursor 独立 instance buffer | 高 | 小 | 低 | 待做 |
 | A5 | piano roll 小音符合并 | 高 | 中 | 低 | 待做 |
 | B3 | velocity lane 懒加载 | 高 | 小 | 低 | 待做 |
-| A4 | 删除一整屏的 padding 扩展 | 中 | 小 | 低 | 待做 |
+| A4 | 删除一整屏的 padding 扩展 | 中 | 小 | 低 | **已完成** |
 | A8 | 取消 is_playing 强制重提交 | 中 | 小 | 中（依赖 A1） | 待做 |
 | A6 | track_buckets 复用 | 低 | 小 | 低 | 待做 |
 | A9 | 小音符跳过抗锯齿和边框 | 低 | 小 | 低 | 待做 |

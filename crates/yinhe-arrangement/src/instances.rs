@@ -106,9 +106,11 @@ pub fn build_arrangement_static(
         build_arrangement_grid(instances, w, h, view, tpb, def_num, def_den, sig_events);
 
         // Note rectangles — merge consecutive same-track same-key notes into longer rects.
-        let tick_pad = (w - lb_w) / ppu;
-        let pad_start = (tick_start - tick_pad as f64).max(0.0);
-        let pad_end = tick_end + tick_pad as f64;
+        // scan_index's `cumulative_max_end` handles notes that start before
+        // `tick_start` but extend into view; `seek_first_note` returns the
+        // correct first index. No extra padding needed.
+        let pad_start = tick_start;
+        let pad_end = tick_end;
         let (trk_first, trk_last) = view.visible_track_range(h, num_tracks);
 
         let x_offset = lb_w - view.base.scroll_x;

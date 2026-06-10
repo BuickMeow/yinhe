@@ -136,10 +136,12 @@ pub fn build_static_instances(
         let sig_events = midi.time_sig_events();
         build_pianoroll_grid(instances, w, h, view, tpb, def_num, def_den, sig_events);
 
-        // 3. Notes — padded tick range, with seek and parallel key processing
-        let tick_pad = (w - kb_w) / ppu;
-        let pad_start = (tick_start - tick_pad as f64).max(0.0);
-        let pad_end = tick_end + tick_pad as f64;
+        // 3. Notes — visible tick range only.
+        // scan_index's `cumulative_max_end` handles notes that start before
+        // `tick_start` but extend into view; `seek_first_note` returns the
+        // correct first index. No extra padding needed.
+        let pad_start = tick_start;
+        let pad_end = tick_end;
         let (key_lo, key_hi) = view.visible_key_range(h);
         let has_selection = !selected.is_empty();
 
