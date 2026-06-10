@@ -1,3 +1,5 @@
+use std::sync::mpsc;
+
 use eframe::egui;
 
 use crate::app::App;
@@ -51,12 +53,9 @@ impl App {
             }
             transport_bar::FileAction::Save => {
                 if let Some(idx) = self.active_doc {
-                    let doc = &self.documents[idx];
-                    if doc.file_path.is_some() {
-                        let path = doc.file_path.clone().unwrap();
-                        if let Err(e) = crate::project_io::save_project(doc, &path) {
-                            tracing::error!("Failed to save project: {}", e);
-                        }
+                    let path = self.documents[idx].file_path.clone();
+                    if let Some(path) = path {
+                        self.save_project_async(idx, path);
                     } else {
                         self.save_as_dialog();
                     }
@@ -85,6 +84,42 @@ impl App {
         }
     }
 
+    /// Spawn a background thread to save the project.
+    fn save_project_async(&mut self, idx: usize, path: String) {
+        let doc = &self.documents[idx];
+        let midi = doc.midi.clone();
+        let track_names = doc.track_names.clone();
+        let project_name = doc.project_name.clone();
+        let project_artist = doc.project_artist.clone();
+        let project_description = doc.project_description.clone();
+        let project_ppq = doc.project_ppq;
+        let compression_level = doc.archive.as_ref().map(|a| a.compression_level).unwrap_or(0);
+        let path_for_thread = path.clone();
+
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let archive = crate::project_io::build_archive_from(
+                &midi,
+                &track_names,
+                &project_name,
+                &project_artist,
+                project_ppq,
+                compression_level,
+                &project_description,
+            );
+            if let Err(e) = archive.write_to(&path_for_thread) {
+                tracing::error!("Failed to save project: {}", e);
+            }
+            let _ = tx.send(());
+        });
+
+        // Update metadata immediately (not waiting for thread)
+        if let Some(doc) = self.documents.get_mut(idx) {
+            doc.file_path = Some(path);
+        }
+        self.save_rx = Some(rx);
+    }
+
     fn save_as_dialog(&mut self) {
         let default_name = if let Some(idx) = self.active_doc {
             format!("{}.yin", self.documents[idx].file_name)
@@ -102,19 +137,15 @@ impl App {
                 path_str.push_str(".yin");
             }
             if let Some(idx) = self.active_doc {
-                let doc = &self.documents[idx];
-                if let Err(e) = crate::project_io::save_project(doc, &path_str) {
-                    tracing::error!("Failed to save project: {}", e);
-                } else {
-                    // Update file_path and file_name
-                    if let Some(doc) = self.documents.get_mut(idx) {
-                        doc.file_path = Some(path_str);
-                        doc.file_name = path
-                            .file_stem()
-                            .and_then(|n| n.to_str())
-                            .map(|s| s.to_string())
-                            .unwrap_or_default();
-                    }
+                let path2 = path_str.clone();
+                self.save_project_async(idx, path2);
+                // Update file_name
+                if let Some(doc) = self.documents.get_mut(idx) {
+                    doc.file_name = path
+                        .file_stem()
+                        .and_then(|n| n.to_str())
+                        .map(|s| s.to_string())
+                        .unwrap_or_default();
                 }
             }
         }

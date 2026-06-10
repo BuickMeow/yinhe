@@ -1,3 +1,5 @@
+use std::sync::mpsc;
+
 use crate::dialogs::file_loader::FileLoader;
 use crate::dialogs::system_monitor::SystemMonitor;
 use crate::document::Document;
@@ -28,6 +30,9 @@ pub struct App {
     // ── Shared state ──
     pub(crate) transport_panel_width: f32,
     pub(crate) file_loader: FileLoader,
+
+    // ── Async save ──
+    pub(crate) save_rx: Option<mpsc::Receiver<()>>,
 
     // ── View mode ──
     pub(crate) view_mode: ViewMode,
@@ -133,6 +138,7 @@ impl App {
 
             transport_panel_width: 200.0,
             file_loader: FileLoader::new(),
+            save_rx: None,
 
             view_mode: ViewMode::Arrange,
             show_pianoroll_in_arrange: true,

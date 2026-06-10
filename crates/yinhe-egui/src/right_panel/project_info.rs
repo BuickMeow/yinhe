@@ -50,12 +50,20 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
 
     ui.add_space(6.0);
 
-    // ── PPQ (read-only for now) ──
+    // ── PPQ ──
     ui.label(
-        egui::RichText::new(format!("PPQ: {}", doc.midi.ticks_per_beat))
-            .color(egui::Color32::from_gray(140))
+        egui::RichText::new("PPQ (每拍节拍数)")
+            .color(egui::Color32::from_gray(160))
             .size(11.0),
     );
+    let mut ppq = doc.project_ppq as i32;
+    let resp = ui.add_sized(
+        egui::vec2(80.0, 20.0),
+        egui::DragValue::new(&mut ppq).range(1..=32767),
+    );
+    if resp.changed() {
+        doc.project_ppq = ppq.max(1) as u32;
+    }
 
     ui.add_space(6.0);
 

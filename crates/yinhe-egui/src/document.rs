@@ -60,6 +60,8 @@ pub(crate) struct Document {
     pub project_name: String,
     pub project_artist: String,
     pub project_description: String,
+    /// Editable PPQ (ticks per beat). Saved to project.json; takes effect on next load.
+    pub project_ppq: u32,
 }
 
 impl Default for Document {
@@ -86,6 +88,7 @@ impl Default for Document {
             project_name: String::new(),
             project_artist: String::new(),
             project_description: String::new(),
+            project_ppq: 480,
         }
     }
 }
@@ -153,6 +156,7 @@ impl Document {
                 }
             }
 
+            let ticks_per_beat = midi.ticks_per_beat;
             let midi = Arc::new(midi);
 
             let track_colors_cache = (0..num_tracks)
@@ -178,6 +182,7 @@ impl Document {
                 show_controller_panels: true,
                 project_sf: ProjectSfConfig::default(),
                 track_overrides: (0..num_tracks).map(|_| TrackOverride::default()).collect(),
+                project_ppq: ticks_per_beat,
                 ..Default::default()
             }
         })
@@ -207,11 +212,11 @@ impl Document {
         }
 
         // Read project metadata from archive
-        let (project_name, project_artist, project_description) = archive
+        let (project_name, project_artist, project_description, project_ppq) = archive
             .get_events::<yinhe_project::ProjectJson>("project.json")
             .and_then(|v| v.into_iter().next())
-            .map(|p| (p.name, p.artist, p.description))
-            .unwrap_or_default();
+            .map(|p| (p.name, p.artist, p.description, p.ppq))
+            .unwrap_or((String::new(), String::new(), String::new(), 480));
 
         let track_colors_cache = (0..num_tracks)
             .map(|i| yinhe_types::TRACK_PALETTE[i % yinhe_types::TRACK_PALETTE.len()])
@@ -239,6 +244,7 @@ impl Document {
             project_name,
             project_artist,
             project_description,
+            project_ppq,
         })
     }
 }

@@ -396,22 +396,47 @@ pub fn archive_to_midi(archive: &ProjectArchive) -> yinhe_midi::MidiFile {
 
 /// Save a document as a .yin file.
 pub fn save_project(doc: &crate::document::Document, path: &str) -> std::io::Result<()> {
-    // Always rebuild the archive from current MidiFile + edited track_names,
-    // so renames and other Document-level edits are persisted.
-    let mut archive = midi_to_archive_with_names(&doc.midi, &doc.track_names);
+    let archive = build_archive(doc);
+    archive.write_to(path)
+}
+
+/// Build a ProjectArchive from a Document (without writing to disk).
+pub fn build_archive(doc: &crate::document::Document) -> ProjectArchive {
+    build_archive_from(
+        &doc.midi,
+        &doc.track_names,
+        &doc.project_name,
+        &doc.project_artist,
+        doc.project_ppq,
+        doc.archive.as_ref().map(|a| a.compression_level).unwrap_or(0),
+        &doc.project_description,
+    )
+}
+
+/// Build a ProjectArchive from raw fields (usable from a background thread).
+pub fn build_archive_from(
+    midi: &yinhe_midi::MidiFile,
+    track_names: &[String],
+    project_name: &str,
+    project_artist: &str,
+    project_ppq: u32,
+    compression_level: i32,
+    project_description: &str,
+) -> ProjectArchive {
+    let mut archive = midi_to_archive_with_names(midi, track_names);
 
     let proj = ProjectJson {
         version: 1,
-        name: doc.project_name.clone(),
-        artist: doc.project_artist.clone(),
-        ppq: doc.midi.ticks_per_beat,
-        zstd_level: doc.archive.as_ref().map(|a| a.compression_level).unwrap_or(0),
-        description: doc.project_description.clone(),
+        name: project_name.to_string(),
+        artist: project_artist.to_string(),
+        ppq: project_ppq,
+        zstd_level: compression_level,
+        description: project_description.to_string(),
     };
     archive.set_events("project.json", FileHeader::new(*b"YHPR", 0, 0, 0), &[proj]);
 
-    archive.compression_level = doc.archive.as_ref().map(|a| a.compression_level).unwrap_or(0);
-    archive.write_to(path)
+    archive.compression_level = compression_level;
+    archive
 }
 
 /// Load a .yin file and return a MidiFile + file stem name + the archive.

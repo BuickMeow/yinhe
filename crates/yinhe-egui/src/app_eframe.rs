@@ -121,6 +121,13 @@ impl eframe::App for App {
             LoadResult::NotReady => {}
         }
 
+        // ── Poll async save completion ──
+        if let Some(rx) = &self.save_rx {
+            if rx.try_recv().is_ok() {
+                self.save_rx = None;
+            }
+        }
+
         // ── Ensure audio engine is loaded for the active document ──
         self.rebuild_audio_if_needed();
 
