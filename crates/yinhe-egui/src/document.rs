@@ -56,6 +56,10 @@ pub(crate) struct Document {
     pub project_sf: ProjectSfConfig,
     /// Per-track mute/solo overrides.
     pub track_overrides: Vec<TrackOverride>,
+    /// Editable project metadata (synced with project.json on save/load).
+    pub project_name: String,
+    pub project_artist: String,
+    pub project_description: String,
 }
 
 impl Default for Document {
@@ -79,6 +83,9 @@ impl Default for Document {
             show_controller_panels: true,
             project_sf: ProjectSfConfig::default(),
             track_overrides: vec![TrackOverride::default()],
+            project_name: String::new(),
+            project_artist: String::new(),
+            project_description: String::new(),
         }
     }
 }
@@ -171,6 +178,7 @@ impl Document {
                 show_controller_panels: true,
                 project_sf: ProjectSfConfig::default(),
                 track_overrides: (0..num_tracks).map(|_| TrackOverride::default()).collect(),
+                ..Default::default()
             }
         })
     }
@@ -198,6 +206,13 @@ impl Document {
             }
         }
 
+        // Read project metadata from archive
+        let (project_name, project_artist, project_description) = archive
+            .get_events::<yinhe_project::ProjectJson>("project.json")
+            .and_then(|v| v.into_iter().next())
+            .map(|p| (p.name, p.artist, p.description))
+            .unwrap_or_default();
+
         let track_colors_cache = (0..num_tracks)
             .map(|i| yinhe_types::TRACK_PALETTE[i % yinhe_types::TRACK_PALETTE.len()])
             .collect();
@@ -221,6 +236,9 @@ impl Document {
             show_controller_panels: true,
             project_sf: ProjectSfConfig::default(),
             track_overrides: (0..num_tracks).map(|_| TrackOverride::default()).collect(),
+            project_name,
+            project_artist,
+            project_description,
         })
     }
 }

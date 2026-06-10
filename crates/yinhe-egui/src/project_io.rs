@@ -217,6 +217,8 @@ pub fn midi_to_archive_with_names(
         name: String::new(),
         artist: String::new(),
         ppq: midi.ticks_per_beat,
+        zstd_level: 0,
+        description: String::new(),
     };
     archive.set_events("project.json", FileHeader::new(*b"YHPR", 0, 0, 0), &[proj]);
 
@@ -400,12 +402,15 @@ pub fn save_project(doc: &crate::document::Document, path: &str) -> std::io::Res
 
     let proj = ProjectJson {
         version: 1,
-        name: doc.file_name.clone(),
-        artist: String::new(),
+        name: doc.project_name.clone(),
+        artist: doc.project_artist.clone(),
         ppq: doc.midi.ticks_per_beat,
+        zstd_level: doc.archive.as_ref().map(|a| a.compression_level).unwrap_or(0),
+        description: doc.project_description.clone(),
     };
     archive.set_events("project.json", FileHeader::new(*b"YHPR", 0, 0, 0), &[proj]);
 
+    archive.compression_level = doc.archive.as_ref().map(|a| a.compression_level).unwrap_or(0);
     archive.write_to(path)
 }
 

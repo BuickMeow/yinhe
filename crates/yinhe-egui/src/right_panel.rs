@@ -1,5 +1,6 @@
 pub mod config;
 pub mod info_panel;
+pub mod project_info;
 pub mod sf_list;
 pub mod soundbank;
 
@@ -12,6 +13,7 @@ use crate::document::Document;
 pub enum RightTab {
     Info,
     SoundBank,
+    Project,
 }
 
 /// Render the right panel (if a tab is active).
@@ -67,6 +69,7 @@ pub fn show(
                 let title = match tab.unwrap() {
                     RightTab::Info => "信息",
                     RightTab::SoundBank => "音色库",
+                    RightTab::Project => "项目信息",
                 };
                 ui.label(egui::RichText::new(title).size(13.0).strong());
                 let mut clicked = false;
@@ -91,6 +94,9 @@ pub fn show(
             }
             RightTab::SoundBank => {
                 changed |= soundbank::show(ui, audio_settings, doc);
+            }
+            RightTab::Project => {
+                project_info::show(ui, doc);
             }
         }
     });

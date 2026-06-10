@@ -24,12 +24,15 @@ pub struct ArchiveEntry {
 #[derive(Clone, Debug, Default)]
 pub struct ProjectArchive {
     pub entries: HashMap<String, ArchiveEntry>,
+    /// zstd compression level for `write_to` (0 = default / 3).
+    pub compression_level: i32,
 }
 
 impl ProjectArchive {
     pub fn new() -> Self {
         Self {
             entries: HashMap::new(),
+            compression_level: 0,
         }
     }
 
@@ -66,7 +69,7 @@ impl ProjectArchive {
     /// Write the archive to a .yin file (zstd compressed).
     pub fn write_to(&self, path: impl AsRef<Path>) -> std::io::Result<()> {
         let file = std::fs::File::create(path.as_ref())?;
-        let mut writer = zstd::Encoder::new(file, 0)?;
+        let mut writer = zstd::Encoder::new(file, self.compression_level)?;
 
         // Global header
         writer.write_all(&YIN_MAGIC)?;
@@ -121,7 +124,10 @@ impl ProjectArchive {
             .map(|e| (e.path.clone(), e))
             .collect();
 
-        Ok(Self { entries: map })
+        Ok(Self {
+            entries: map,
+            compression_level: 0,
+        })
     }
 }
 
@@ -263,10 +269,20 @@ pub struct ProjectJson {
     /// Ticks per beat (quarter note).
     #[serde(default = "default_ppq")]
     pub ppq: u32,
+    /// zstd compression level (0 = default / 3).
+    #[serde(default = "default_zstd_level")]
+    pub zstd_level: i32,
+    /// Song description / notes.
+    #[serde(default)]
+    pub description: String,
 }
 
 fn default_ppq() -> u32 {
     480
+}
+
+fn default_zstd_level() -> i32 {
+    0
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -352,6 +368,9 @@ mod tests {
             version: 1,
             name: "Test Song".into(),
             artist: "Test Artist".into(),
+            ppq: 480,
+            zstd_level: 0,
+            description: String::new(),
         };
         archive.set_events(
             "project.json",
