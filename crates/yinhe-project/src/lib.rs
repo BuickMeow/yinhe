@@ -62,6 +62,38 @@ impl ProjectArchive {
         );
     }
 
+    /// Store a track's notes using the compact delta+gate varint encoding
+    /// (FileHeader version is forced to NOTES_VERSION_DELTA_GATE).
+    /// `notes` must be sorted by `start_tick`.
+    pub fn set_notes(
+        &mut self,
+        path: impl Into<String>,
+        mut header: FileHeader,
+        notes: &[Note],
+    ) {
+        header.version = NOTES_VERSION_DELTA_GATE;
+        let data = encode_notes_delta_gate(notes);
+        self.entries.insert(
+            path.into(),
+            ArchiveEntry {
+                path: String::new(),
+                header,
+                data,
+            },
+        );
+    }
+
+    /// Decode a notes entry, auto-detecting legacy bincode (version 1) vs
+    /// delta+gate (version 2).
+    pub fn get_notes(&self, path: &str) -> Option<Vec<Note>> {
+        let entry = self.entries.get(path)?;
+        if entry.header.version >= NOTES_VERSION_DELTA_GATE {
+            Some(decode_notes_delta_gate(&entry.data))
+        } else {
+            bincode::deserialize(&entry.data).ok()
+        }
+    }
+
     pub fn remove(&mut self, path: &str) {
         self.entries.remove(path);
     }
@@ -186,6 +218,90 @@ pub struct Note {
     pub end_tick: u32,
     pub key: u8,
     pub velocity: u8,
+}
+
+/// FileHeader.version value indicating notes use the compact
+/// delta-start + gate-duration varint encoding.
+pub const NOTES_VERSION_DELTA_GATE: u8 = 2;
+
+/// Encode notes as: count(varint) followed by per-note
+/// (start_delta varint, duration varint, key u8, velocity u8).
+/// `notes` must be sorted by `start_tick`.
+pub fn encode_notes_delta_gate(notes: &[Note]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(notes.len() * 4 + 8);
+    write_varint(&mut out, notes.len() as u64);
+    let mut prev_start: u32 = 0;
+    for n in notes {
+        let delta = n.start_tick.saturating_sub(prev_start);
+        let duration = n.end_tick.saturating_sub(n.start_tick);
+        write_varint(&mut out, delta as u64);
+        write_varint(&mut out, duration as u64);
+        out.push(n.key);
+        out.push(n.velocity);
+        prev_start = n.start_tick;
+    }
+    out
+}
+
+/// Decode notes written by `encode_notes_delta_gate`.
+pub fn decode_notes_delta_gate(buf: &[u8]) -> Vec<Note> {
+    let mut cursor = 0usize;
+    let count = match read_varint(buf, &mut cursor) {
+        Some(c) => c as usize,
+        None => return Vec::new(),
+    };
+    let mut notes = Vec::with_capacity(count);
+    let mut prev_start: u32 = 0;
+    for _ in 0..count {
+        let Some(delta) = read_varint(buf, &mut cursor) else { break };
+        let Some(duration) = read_varint(buf, &mut cursor) else { break };
+        if cursor + 2 > buf.len() {
+            break;
+        }
+        let key = buf[cursor];
+        let velocity = buf[cursor + 1];
+        cursor += 2;
+        let start_tick = prev_start.wrapping_add(delta as u32);
+        let end_tick = start_tick.wrapping_add(duration as u32);
+        notes.push(Note {
+            start_tick,
+            end_tick,
+            key,
+            velocity,
+        });
+        prev_start = start_tick;
+    }
+    notes
+}
+
+/// LEB128-style unsigned varint writer.
+fn write_varint(out: &mut Vec<u8>, mut v: u64) {
+    while v >= 0x80 {
+        out.push((v as u8) | 0x80);
+        v >>= 7;
+    }
+    out.push(v as u8);
+}
+
+/// LEB128-style unsigned varint reader. Returns None on truncation.
+fn read_varint(buf: &[u8], cursor: &mut usize) -> Option<u64> {
+    let mut result: u64 = 0;
+    let mut shift: u32 = 0;
+    loop {
+        if *cursor >= buf.len() {
+            return None;
+        }
+        let b = buf[*cursor];
+        *cursor += 1;
+        result |= ((b & 0x7F) as u64) << shift;
+        if b & 0x80 == 0 {
+            return Some(result);
+        }
+        shift += 7;
+        if shift >= 64 {
+            return None;
+        }
+    }
 }
 
 /// A control change event, stored per-CC-number.
@@ -452,5 +568,74 @@ mod tests {
         assert_eq!(cc_path(1, 2, 7), "port_01/channel_02/cc_007.zst");
         assert_eq!(pitch_path(1, 2), "port_01/channel_02/pitch.zst");
         assert_eq!(rpn_path(1, 2, 0), "port_01/channel_02/rpn_0.zst");
+    }
+
+    #[test]
+    fn delta_gate_roundtrip_basic() {
+        let notes = vec![
+            Note { start_tick: 0, end_tick: 480, key: 60, velocity: 100 },
+            Note { start_tick: 240, end_tick: 720, key: 64, velocity: 90 },
+            Note { start_tick: 480, end_tick: 960, key: 67, velocity: 80 },
+            Note { start_tick: 1920, end_tick: 2400, key: 72, velocity: 110 },
+        ];
+        let encoded = encode_notes_delta_gate(&notes);
+        let decoded = decode_notes_delta_gate(&encoded);
+        assert_eq!(decoded.len(), notes.len());
+        for (a, b) in notes.iter().zip(decoded.iter()) {
+            assert_eq!(a.start_tick, b.start_tick);
+            assert_eq!(a.end_tick, b.end_tick);
+            assert_eq!(a.key, b.key);
+            assert_eq!(a.velocity, b.velocity);
+        }
+    }
+
+    #[test]
+    fn delta_gate_empty() {
+        let notes: Vec<Note> = Vec::new();
+        let encoded = encode_notes_delta_gate(&notes);
+        let decoded = decode_notes_delta_gate(&encoded);
+        assert_eq!(decoded.len(), 0);
+    }
+
+    #[test]
+    fn delta_gate_size_smaller_than_bincode_for_dense_notes() {
+        // 1000 notes, each 1 tick apart, duration 10 — perfect for delta+gate.
+        let mut notes = Vec::with_capacity(1000);
+        for i in 0..1000u32 {
+            notes.push(Note {
+                start_tick: i,
+                end_tick: i + 10,
+                key: 60,
+                velocity: 100,
+            });
+        }
+        let dg = encode_notes_delta_gate(&notes);
+        let bc = bincode::serialize(&notes).unwrap();
+        // bincode fixint: 4+4+1+1 = 10 bytes per note + 8 length prefix = 10008
+        // delta+gate: 1(count) + per-note (1+1+1+1) = ~4001
+        assert!(dg.len() < bc.len(), "delta+gate {} should be smaller than bincode {}", dg.len(), bc.len());
+        // Should be close to half
+        assert!(dg.len() * 2 < bc.len(), "delta+gate {} should be < half of bincode {}", dg.len(), bc.len());
+    }
+
+    #[test]
+    fn set_notes_via_archive_roundtrip() {
+        let mut archive = ProjectArchive::new();
+        let notes = vec![
+            Note { start_tick: 100, end_tick: 200, key: 60, velocity: 100 },
+            Note { start_tick: 300, end_tick: 400, key: 64, velocity: 90 },
+        ];
+        let path = track_notes_path(1, 1, "test");
+        archive.set_notes(&path, FileHeader::new(magic::TRACK_NOTES, 1, 1, 0), &notes);
+
+        // header.version should be auto-set to NOTES_VERSION_DELTA_GATE
+        let entry = archive.entries.get(&path).unwrap();
+        assert_eq!(entry.header.version, NOTES_VERSION_DELTA_GATE);
+
+        let decoded = archive.get_notes(&path).unwrap();
+        assert_eq!(decoded.len(), 2);
+        assert_eq!(decoded[0].start_tick, 100);
+        assert_eq!(decoded[0].end_tick, 200);
+        assert_eq!(decoded[1].key, 64);
     }
 }

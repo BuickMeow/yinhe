@@ -189,7 +189,7 @@ pub fn build_static_instances(
                     let color = TRACK_PALETTE[trk];
 
                     let is_selected =
-                        has_selection && selected.contains(&(note.track, note.start_tick, note.key));
+                        has_selection && selected.contains(&(note.track, note.start_tick, key));
                     // 选中视觉由 shader 通过 tag 处理（fill 暗化），边框保持不变
                     let border_w = 0.1 * nw.min(nh);
                     let rounding = NOTE_ROUNDING * nw.min(nh);

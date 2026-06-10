@@ -305,7 +305,7 @@ fn sel_drag_frame_arrange(
                                     continue;
                                 }
                                 if (note.start_tick as f64) < t_end && (note.end_tick as f64) > t_start {
-                                    selected.insert((note.track, note.start_tick, note.key));
+                                    selected.insert((note.track, note.start_tick, key));
                                 }
                             }
                         }

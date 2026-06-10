@@ -21,12 +21,12 @@
 | A2 | cursor 独立 instance buffer | 高 | 小 | 低 | 待做 |
 | A5 | piano roll 小音符合并 | 高 | 中 | 低 | 待做 |
 | B3 | velocity lane 懒加载 | 高 | 小 | 低 | 待做 |
-| A4 | 删除一整屏的 padding 扩展 | 中 | 小 | 低 | **已完成** |
+| A4 | 删除一整屏的 padding 扩展 | 中 | 小 | 低 | ✅ **已完成** |
 | A8 | 取消 is_playing 强制重提交 | 中 | 小 | 中（依赖 A1） | 待做 |
 | A6 | track_buckets 复用 | 低 | 小 | 低 | 待做 |
 | A9 | 小音符跳过抗锯齿和边框 | 低 | 小 | 低 | 待做 |
 | A7 | 删除 qos::guarded | 极低 | 小 | 中（需确认动机） | 待评估 |
-| C1 | Note 结构瘦身 | 低 | 中 | 高（工程文件格式） | 待评估 |
+| C1 | Note 结构瘦身 | 低 | 中 | 高（工程文件格式） | ✅ 已完成 |
 
 依赖关系：
 
@@ -485,41 +485,98 @@ velocity_events.sort_by_key(|e| e.tick);
 
 ## C 数据布局
 
-### C1 Note 结构与工程文件瘦身（待评估）
+### C1 Note 结构与工程文件瘦身（✅ 已完成）
 
-**位置**：`crates/yinhe-types/src/note.rs`，工程文件相关 crate
+**两步实施：C1-mem（内存 Note 瘦身）+ C1-disk（磁盘 delta+gate 编码）**。
 
-**讨论点（需用户澄清）**：用户提到「把 Note 的上下宽高从工程文件里扔掉，能不能现算」。
+---
 
-需要澄清「上下宽高」具体指什么字段。当前 `Note` 是：
+#### C1-mem: 内存 Note 去 key 字段 ✅
+
+**位置**：`crates/yinhe-types/src/note.rs:36-44`
+
+**改造**：移除 `Note.key` 字段，加 `#[repr(C)]`。
 
 ```rust
+#[derive(Clone, Debug, Default)]
+#[repr(C)]
 pub struct Note {
     pub start_tick: u32,   // 4
     pub end_tick: u32,     // 4
-    pub key: u8,           // 1
     pub velocity: u8,      // 1
     pub channel: u8,       // 1
     pub track: u16,        // 2
 }
-// 实际 padding 后 = 16 字节
+// 共 12 字节，无 padding（原来含 key 是 16 字节）
 ```
 
-- `start_tick / end_tick` 是必要数据，不能算（保留）；
-- `key` 在 `key_notes[key]` 分桶后理论上可以删，省 1 字节 → 4000 万 × 1 ≈ 40 MB；
-- `channel` 是 audio 路径必需，不能算；
-- `track` 是渲染、mute 必需，不能算。
+**理由**：`key_notes[k]` 中所有 note 的 key 必然等于 k，存一份冗余。读取时由外层下标提供。
 
-**可能的优化**：
-1. **删除 key 字段**：`key_notes[key]` 已经知道 key，迭代时传入。需要修改 NoteSource trait 接口（迭代时把 key 附带传给消费者）。Layout 改成 12 字节（含 padding 可能仍 16）。
-2. **u32 end_tick 改成 u32 duration**：节省同样空间但可能让代码更清晰。
-3. **工程文件（.yin）格式精简**：若 .yin 是自己定义的格式，可以只存 (start, duration, vel, ch, track) 然后按 key 分组，加载时重组。
+**影响面**：
+- `yinhe-types::Note` 结构本体。
+- `yinhe-audio/src/engine.rs:185,191` — `note.key` → `key as u8`（外层循环变量）。
+- `yinhe-pianoroll/src/instances.rs:192` — `note.key` → `key`（外层 par_iter key）。
+- `yinhe-egui/src/piano_view.rs:435` — 同上。
+- `yinhe-egui/src/arrange/view_ui.rs:308` — 同上。
+- `yinhe-egui/src/project_io.rs:69-84`（写 archive）、`306-325`（读 archive）、`472-498`（export MIDI）— 改用 `.enumerate()` 拿到 key 下标。
+- `yinhe-midi/src/track_parser.rs:152-159` — push 时去 key 字段。
+- 所有 Note 构造站点（测试 + 业务）— 同步去掉 `key: ...`。
+
+**收益**：
+- Note 16B → 12B，**节省 25%**。
+- 4000 万音符内存：480 MB → 360 MB（净省 120 MB）。
+- Cache line（64B）单次装载从 4 个 note → 5 个 note，扫描/绘制吞吐 +25%。
+- 为后续"按 key/track 分线程"奠定基础（去 key 后线程上下文只剩纯数据，无冗余）。
 
 **风险**：
-- 修改 Note 是大改，影响范围横跨 midi / pianoroll / arrangement / audio / automation。
-- key_notes 接口改动需要小心：所有 `for note in key_notes[key]` 的地方都要把 key 加进迭代。
+- 改动面广（9 文件），需机械检查所有 `note.key` 站点。
+- ✅ 已 `cargo build --release` 通过 + `cargo test --release --workspace` 全过（一个 grid 测试失败但在改动前就坏，与本任务无关）。
 
-**建议**：等其他优化都做完，确认 Note 结构是否真的成为瓶颈（用 dhat / Instruments 测内存）再决定。预期收益是 40-80 MB（4000 万音符）。
+---
+
+#### C1-disk: 磁盘 delta+gate varint 编码 ✅
+
+**位置**：`crates/yinhe-project/src/lib.rs`（编解码） + `crates/yinhe-egui/src/project_io.rs`（调用点）
+
+**改造**：`.yin` 里 `YHTK`（track notes）entry 的 bincode 序列化改为手写 varint 流。
+
+**新格式**：
+```
+[count: varint u32]
+for each note (按 start_tick 升序):
+  [start_delta: varint u32]   // 相对前一个 note.start_tick，第一个相对 0
+  [duration: varint u32]      // end_tick - start_tick
+  [key: u8]
+  [velocity: u8]
+```
+
+**编解码**：`yinhe_project::encode_notes_delta_gate(&[Note]) -> Vec<u8>` 和 `decode_notes_delta_gate(&[u8]) -> Vec<Note>`，LEB128 风格 varint。
+
+**新方法**：`ProjectArchive::set_notes(...)` 自动写入新格式并把 `FileHeader.version` 标记为 `NOTES_VERSION_DELTA_GATE = 2`；`ProjectArchive::get_notes(...)` 按 version 自动分支（version ≥ 2 走新解码，否则回退 bincode，向后兼容旧 .yin）。
+
+**收益**（实测 + 单元测试断言）：
+- bincode fixint Note: 10 B/note + 8 B 长度前缀。
+- delta+gate（密集场景 delta=1, duration=10, key/velocity 固定）: ≈ 4 B/note + 1 B count。
+- **直接 raw bytes 缩小 > 50%**，再叠加 zstd 字典压缩（重复 gate 值高度可压）实际比例更优。
+- 单元测试 `delta_gate_size_smaller_than_bincode_for_dense_notes` 已断言 `dg.len() * 2 < bc.len()`。
+
+**运行时影响**：
+- 加载 .yin 时多一次 O(n) 累加还原绝对 tick（一次性，加载阶段，与 zstd 解压同量级）。
+- 加载完后内存里仍是 `Vec<Note>` 含绝对 start_tick/end_tick，**与原来一字节不差**，对渲染/audio 完全透明。
+
+**风险**：
+- 新旧格式靠 `FileHeader.version` 区分，旧文件回退 bincode 路径，**已加单元测试覆盖 roundtrip**。
+- 编码假设 notes 按 start_tick 升序（`midi_to_archive_with_names` 中已 `sort_by_key`）。
+
+**验证**：
+- `cargo test --release -p yinhe-project`：6 tests pass（delta_gate_roundtrip_basic / delta_gate_empty / delta_gate_size_smaller_than_bincode_for_dense_notes / set_notes_via_archive_roundtrip / 原有 roundtrip_project / path_helpers）。
+- `cargo test --release --workspace`：除 grid 老 bug 外全过。
+
+---
+
+**后续延伸（未做，留作笔记）**：
+- C1+ 内存按 track 分组的轻量索引（`Vec<TrackView { channel, program, note_refs: Vec<(key u8, idx u32)> }>` ≈ 5 B/note），用于 audio 路径按 track 并行，避免在 key_notes 上反复扫 track filter。
+- C1++ 磁盘可再叠加"按 key 分二级"再省 1 字节/note（key 只存桶头），但读写代码复杂，暂不做。
 
 ---
 
@@ -567,6 +624,3 @@ tracing::debug!(
 - 每个编号一次提交（A3 单独，A1 单独），便于 bisect 性能问题。
 - 提交信息格式：`perf(A4): 删除 pianoroll/arrangement padding 扩展` + 量化数据（如果有）。
 - 涉及 shader 改动的（A3、A9）务必单独提交并测试三个视图。
-
-
-

@@ -344,7 +344,6 @@ mod tests {
         assert_eq!(midi.key_notes[60].len(), 1);
 
         let note = &midi.key_notes[60][0];
-        assert_eq!(note.key, 60);
         assert_eq!(note.velocity, 100);
         assert_eq!(note.start_tick, 0);
         assert_eq!(note.end_tick, 320);

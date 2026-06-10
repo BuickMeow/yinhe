@@ -182,13 +182,13 @@ impl AudioEngine {
                     self.channel_group.send_event(SynthEvent::Channel(
                         note.channel as u32,
                         ChannelEvent::Audio(ChannelAudioEvent::NoteOn {
-                            key: note.key,
+                            key: key as u8,
                             vel: note.velocity,
                         }),
                     ));
 
                     self.active_notes.push(ActiveNote {
-                        key: note.key,
+                        key: key as u8,
                         channel: note.channel,
                         end_sample: (midi.tick_to_seconds(note.end_tick as u64) * sr) as u64,
                     });
@@ -415,7 +415,6 @@ mod tests {
             midi.key_notes[key as usize].push(yinhe_midi::Note {
                 start_tick,
                 end_tick,
-                key,
                 velocity,
                 channel,
                 track: 0,

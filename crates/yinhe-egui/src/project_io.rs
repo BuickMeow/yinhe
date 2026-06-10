@@ -66,14 +66,14 @@ pub fn midi_to_archive_with_names(
     let mut track_notes: Vec<Vec<yinhe_project::Note>> = (0..num_tracks).map(|_| Vec::new()).collect();
     let mut track_channels: Vec<u8> = vec![0; num_tracks];
 
-    for key_notes in &midi.key_notes {
+    for (key_idx, key_notes) in midi.key_notes.iter().enumerate() {
         for note in key_notes {
             let idx = note.track as usize;
             if idx < num_tracks {
                 track_notes[idx].push(yinhe_project::Note {
                     start_tick: note.start_tick,
                     end_tick: note.end_tick,
-                    key: note.key,
+                    key: key_idx as u8,
                     velocity: note.velocity,
                 });
                 if track_channels[idx] == 0 {
@@ -105,7 +105,7 @@ pub fn midi_to_archive_with_names(
             .unwrap_or(name);
 
         if !track_notes[track_idx].is_empty() {
-            archive.set_events(
+            archive.set_notes(
                 track_notes_path(port, channel, &uuid),
                 FileHeader::new(*b"YHTK", port, channel, track_idx as u8),
                 &track_notes[track_idx],
@@ -269,9 +269,14 @@ pub fn archive_to_midi(archive: &ProjectArchive) -> yinhe_midi::MidiFile {
 
     for (_path, entry) in &archive.entries {
         if entry.header.magic == *b"YHTK" {
-            if let Ok(notes) = bincode::deserialize::<Vec<yinhe_project::Note>>(&entry.data) {
-                track_entries.push((entry.header.port, entry.header.channel, entry.header.extra, notes));
-            }
+            let notes = if entry.header.version >= yinhe_project::NOTES_VERSION_DELTA_GATE {
+                yinhe_project::decode_notes_delta_gate(&entry.data)
+            } else if let Ok(v) = bincode::deserialize::<Vec<yinhe_project::Note>>(&entry.data) {
+                v
+            } else {
+                continue;
+            };
+            track_entries.push((entry.header.port, entry.header.channel, entry.header.extra, notes));
         }
     }
 
@@ -315,7 +320,6 @@ pub fn archive_to_midi(archive: &ProjectArchive) -> yinhe_midi::MidiFile {
                 midi.key_notes[key].push(yinhe_types::Note {
                     start_tick: note.start_tick,
                     end_tick: note.end_tick,
-                    key: note.key,
                     velocity: note.velocity,
                     channel: *channel,
                     track: *track_idx as u16,
@@ -470,7 +474,8 @@ pub fn export_midi(doc: &crate::document::Document, path: &str) -> Result<(), St
     for track_idx in 0..num_tracks {
         let mut events: Vec<(u32, TrackEventKind)> = Vec::new();
 
-        for key_notes in &midi.key_notes {
+        for (key_idx, key_notes) in midi.key_notes.iter().enumerate() {
+            let key_u7 = u7::new(key_idx as u8);
             for note in key_notes {
                 if note.track as usize != track_idx {
                     continue;
@@ -480,7 +485,7 @@ pub fn export_midi(doc: &crate::document::Document, path: &str) -> Result<(), St
                     TrackEventKind::Midi {
                         channel: u4::new(note.channel & 0x0F),
                         message: MidiMessage::NoteOn {
-                            key: u7::new(note.key),
+                            key: key_u7,
                             vel: u7::new(note.velocity),
                         },
                     },
@@ -490,7 +495,7 @@ pub fn export_midi(doc: &crate::document::Document, path: &str) -> Result<(), St
                     TrackEventKind::Midi {
                         channel: u4::new(note.channel & 0x0F),
                         message: MidiMessage::NoteOff {
-                            key: u7::new(note.key),
+                            key: key_u7,
                             vel: u7::new(0),
                         },
                     },

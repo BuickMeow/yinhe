@@ -432,7 +432,7 @@ fn sel_drag_frame(
                     for key in key_lo..=key_hi {
                         for note in midi_ref.key_notes(key) {
                             if (note.start_tick as f64) < t_end && (note.end_tick as f64) > t_start {
-                                selected.insert((note.track, note.start_tick, note.key));
+                                selected.insert((note.track, note.start_tick, key));
                             }
                         }
                     }

@@ -304,7 +304,6 @@ mod tests {
             let n = Note {
                 start_tick,
                 end_tick,
-                key,
                 velocity: vel,
                 channel: 0,
                 track,

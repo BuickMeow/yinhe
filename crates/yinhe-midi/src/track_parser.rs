@@ -152,7 +152,6 @@ fn resolve_note_off(
         key_notes[n.key as usize].push(Note {
             start_tick: n.start_tick,
             end_tick,
-            key: n.key,
             velocity: n.velocity,
             channel: n.channel,
             track: n.track,
@@ -212,7 +211,6 @@ mod tests {
         assert!(active.is_empty());
         assert_eq!(key_notes[60].len(), 1);
         let note = &key_notes[60][0];
-        assert_eq!(note.key, 60);
         assert_eq!(note.start_tick, 0);
         assert_eq!(note.end_tick, 960);
         assert_eq!(note.velocity, 100);

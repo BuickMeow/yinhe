@@ -34,10 +34,10 @@ pub enum MidiControlEvent {
 }
 
 #[derive(Clone, Debug, Default)]
+#[repr(C)]
 pub struct Note {
     pub start_tick: u32,
     pub end_tick: u32,
-    pub key: u8,
     pub velocity: u8,
     pub channel: u8,
     pub track: u16,
@@ -174,11 +174,10 @@ mod tests {
         fn scan_index(&self) -> Option<&NoteScanIndex> { self.index.as_ref() }
     }
 
-    fn make_note(key: u8, start_tick: u32, end_tick: u32) -> Note {
+    fn make_note(_key: u8, start_tick: u32, end_tick: u32) -> Note {
         Note {
             start_tick,
             end_tick,
-            key,
             velocity: 100,
             channel: 0,
             track: 0,
