@@ -34,7 +34,6 @@ pub fn show(
 
     // ── Track selector ──
     let track_names: Vec<String> = doc
-        .midi
         .track_names
         .iter()
         .enumerate()
@@ -58,23 +57,27 @@ pub fn show(
 
     let track_idx = doc.track_selected.unwrap_or(0) as usize;
     let track_idx = track_idx.min(num_tracks - 1);
-    let ti = &doc.track_info_cache[track_idx];
 
     // ── Track name ──
+    let mut name_change: Option<String> = None;
     ui.horizontal(|ui| {
         ui.label("音轨名称:");
-        let mut name = doc.midi.track_names[track_idx].clone();
+        let mut name = doc.track_names[track_idx].clone();
         let resp = ui.add_sized(
             egui::vec2(ui.available_width().max(60.0), 18.0),
             egui::TextEdit::singleline(&mut name),
         );
         if resp.changed() {
-            // Use Arc::make_mut for copy-on-write mutation
-            if let Some(midi) = std::sync::Arc::get_mut(&mut doc.midi) {
-                midi.track_names[track_idx] = name;
-            }
+            name_change = Some(name);
         }
     });
+    if let Some(new_name) = name_change {
+        doc.track_names[track_idx] = new_name.clone();
+        if let Some(ti_mut) = doc.track_info_cache.get_mut(track_idx) {
+            ti_mut.name = new_name;
+        }
+    }
+    let ti = &doc.track_info_cache[track_idx];
 
     ui.add_space(4.0);
 

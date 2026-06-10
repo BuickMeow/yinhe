@@ -8,6 +8,23 @@ use yinhe_project::*;
 
 /// Convert a MidiFile into a ProjectArchive.
 pub fn midi_to_archive(midi: &yinhe_midi::MidiFile) -> ProjectArchive {
+    let names: Vec<String> = (0..midi.track_ports.len())
+        .map(|i| {
+            midi.track_names
+                .get(i)
+                .cloned()
+                .unwrap_or_else(|| format!("Track {}", i + 1))
+        })
+        .collect();
+    midi_to_archive_with_names(midi, &names)
+}
+
+/// Same as `midi_to_archive` but uses caller-provided track names (the
+/// authoritative editable copy from `Document.track_names`).
+pub fn midi_to_archive_with_names(
+    midi: &yinhe_midi::MidiFile,
+    track_names: &[String],
+) -> ProjectArchive {
     let mut archive = ProjectArchive::new();
 
     // ── Conductor events ──
@@ -82,6 +99,10 @@ pub fn midi_to_archive(midi: &yinhe_midi::MidiFile) -> ProjectArchive {
             .get(track_idx)
             .cloned()
             .unwrap_or_else(|| format!("Track {}", track_idx + 1));
+        let name = track_names
+            .get(track_idx)
+            .cloned()
+            .unwrap_or(name);
 
         if !track_notes[track_idx].is_empty() {
             archive.set_events(
@@ -94,6 +115,7 @@ pub fn midi_to_archive(midi: &yinhe_midi::MidiFile) -> ProjectArchive {
         // Collect CC events per controller number
         let mut cc_events: HashMap<u8, Vec<CcEvent>> = HashMap::new();
         let mut pitch_events: Vec<PitchBendEvent> = Vec::new();
+        let mut pc_events: Vec<PcEvent> = Vec::new();
         for ev in &midi.control_events {
             let ev_track = match ev {
                 yinhe_midi::MidiControlEvent::ControlChange { track, .. }
@@ -124,7 +146,12 @@ pub fn midi_to_archive(midi: &yinhe_midi::MidiFile) -> ProjectArchive {
                         value: *value,
                     });
                 }
-                _ => {}
+                yinhe_midi::MidiControlEvent::ProgramChange { tick, program, .. } => {
+                    pc_events.push(PcEvent {
+                        tick: *tick,
+                        program: *program,
+                    });
+                }
             }
         }
 
@@ -141,6 +168,14 @@ pub fn midi_to_archive(midi: &yinhe_midi::MidiFile) -> ProjectArchive {
                 pitch_path(port, channel),
                 FileHeader::new(*b"YHPB", port, channel, 0),
                 &pitch_events,
+            );
+        }
+
+        if !pc_events.is_empty() {
+            archive.set_events(
+                pc_path(port, channel),
+                FileHeader::new(*b"YHPC", port, channel, 0),
+                &pc_events,
             );
         }
 
@@ -200,6 +235,7 @@ pub fn archive_to_midi(archive: &ProjectArchive) -> yinhe_midi::MidiFile {
                 micros_per_quarter: yinhe_midi::mpq_from_bpm(t.bpm),
             })
             .collect();
+        yinhe_midi::recompute_tempo_start_times(&mut midi.tempo_segments, midi.ticks_per_beat);
     }
 
     if let Some(time_sigs) = archive.get_events::<TimeSigEvent>(&conductor_path("time_sig.zst")) {
@@ -307,6 +343,17 @@ pub fn archive_to_midi(archive: &ProjectArchive) -> yinhe_midi::MidiFile {
                     });
                 }
             }
+        } else if h.magic == *b"YHPC" {
+            if let Ok(events) = bincode::deserialize::<Vec<PcEvent>>(&entry.data) {
+                for ev in events {
+                    midi.control_events.push(yinhe_midi::MidiControlEvent::ProgramChange {
+                        tick: ev.tick,
+                        channel: h.channel,
+                        program: ev.program,
+                        track: h.extra as u16,
+                    });
+                }
+            }
         }
     }
 
@@ -338,7 +385,9 @@ pub fn archive_to_midi(archive: &ProjectArchive) -> yinhe_midi::MidiFile {
 
 /// Save a document as a .yin file.
 pub fn save_project(doc: &crate::document::Document, path: &str) -> std::io::Result<()> {
-    let mut archive = doc.archive.clone().unwrap_or_else(|| midi_to_archive(&doc.midi));
+    // Always rebuild the archive from current MidiFile + edited track_names,
+    // so renames and other Document-level edits are persisted.
+    let mut archive = midi_to_archive_with_names(&doc.midi, &doc.track_names);
 
     let proj = ProjectJson {
         version: 1,
@@ -448,7 +497,7 @@ pub fn export_midi(doc: &crate::document::Document, path: &str) -> Result<(), St
         let mut abs_tick = 0u32;
         let mut track_events = Vec::new();
 
-        if let Some(name) = midi.track_names.get(track_idx) {
+        if let Some(name) = doc.track_names.get(track_idx) {
             track_events.push(TrackEvent {
                 delta: 0.into(),
                 kind: TrackEventKind::Meta(MetaMessage::TrackName(name.as_bytes())),

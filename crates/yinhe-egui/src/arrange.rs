@@ -165,7 +165,7 @@ pub fn show(
                 doc.midi.time_sig_events.as_slice(),
             )),
             is_playing,
-            &doc.midi.track_names,
+            &doc.track_names,
             follow_mode,
             active_tool,
         );

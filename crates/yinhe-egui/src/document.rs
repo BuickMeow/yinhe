@@ -40,6 +40,8 @@ pub(crate) struct Document {
     pub cursor_tick: Option<f64>,
     pub quantize: QuantizePreset,
     pub playback: PlaybackState,
+    /// Authoritative, editable track names. Mirrored into `track_info_cache[i].name`.
+    pub track_names: Vec<String>,
     /// Cached track metadata (computed once at load time).
     pub track_info_cache: Vec<yinhe_midi::TrackInfo>,
     /// Cached first ProgramChange per channel (computed once at load time).
@@ -69,6 +71,7 @@ impl Default for Document {
             cursor_tick: Some(0.0),
             quantize: QuantizePreset::default(),
             playback: PlaybackState::default(),
+            track_names: Vec::new(),
             track_info_cache: Vec::new(),
             pc_map_cache: HashMap::new(),
             track_colors_cache: Vec::new(),
@@ -86,6 +89,7 @@ impl Document {
         let mut m = yinhe_midi::MidiFile::default();
         m.track_ports = vec![0];
         m.track_names = vec!["Track 1".to_string()];
+        let track_names = m.track_names.clone();
         let track_info_cache = m.track_info();
         Document {
             midi: Arc::new(m),
@@ -93,6 +97,7 @@ impl Document {
             file_path: None,
             archive: None,
             track_visible: vec![true],
+            track_names,
             track_info_cache,
             ..Default::default()
         }
@@ -100,10 +105,6 @@ impl Document {
 
     pub fn track_colors(&self) -> &[[f32; 3]] {
         &self.track_colors_cache
-    }
-
-    pub fn track_names(&self) -> &[String] {
-        &self.midi.track_names
     }
 
     /// Create a new Document from a loaded MIDI file.
@@ -119,6 +120,14 @@ impl Document {
                 .map(|s| s.to_string())
                 .unwrap_or_default();
 
+            let track_names: Vec<String> = (0..num_tracks)
+                .map(|i| {
+                    midi.track_names
+                        .get(i)
+                        .cloned()
+                        .unwrap_or_else(|| format!("Track {}", i + 1))
+                })
+                .collect();
             let track_info_cache = midi.track_info();
             let mut pc_map_cache = HashMap::new();
             for ev in &midi.control_events {
@@ -150,6 +159,7 @@ impl Document {
                 cursor_tick: Some(0.0),
                 quantize,                           // inherit from current document
                 playback: PlaybackState::default(), // reset
+                track_names,
                 track_info_cache,
                 pc_map_cache,
                 track_colors_cache,
@@ -165,6 +175,14 @@ impl Document {
     pub fn from_yin(path: &str, quantize: QuantizePreset) -> std::io::Result<Self> {
         let (midi, file_name, archive) = crate::project_io::load_project_full(path)?;
         let num_tracks = midi.track_ports.len();
+        let track_names: Vec<String> = (0..num_tracks)
+            .map(|i| {
+                midi.track_names
+                    .get(i)
+                    .cloned()
+                    .unwrap_or_else(|| format!("Track {}", i + 1))
+            })
+            .collect();
         let track_info_cache = midi.track_info();
         let mut pc_map_cache = std::collections::HashMap::new();
         for ev in &midi.control_events {
@@ -191,6 +209,7 @@ impl Document {
             cursor_tick: Some(0.0),
             quantize,
             playback: PlaybackState::default(),
+            track_names,
             track_info_cache,
             pc_map_cache,
             track_colors_cache,

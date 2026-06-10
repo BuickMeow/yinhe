@@ -131,6 +131,7 @@ impl ProjectArchive {
 pub mod magic {
     pub const TRACK_NOTES: [u8; 4] = *b"YHTK";
     pub const CC: [u8; 4] = *b"YHCC";
+    pub const PC: [u8; 4] = *b"YHPC";
     pub const PITCH_BEND: [u8; 4] = *b"YHPB";
     pub const RPN: [u8; 4] = *b"YHRP";
     pub const TEMPO: [u8; 4] = *b"YHTM";
@@ -193,6 +194,13 @@ pub struct CcEvent {
 pub struct PitchBendEvent {
     pub tick: u32,
     pub value: i16,
+}
+
+/// A program change event, stored per-channel.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct PcEvent {
+    pub tick: u32,
+    pub program: u8,
 }
 
 /// An RPN event, stored per-RPN-number.
@@ -315,6 +323,11 @@ pub fn cc_path(port: u8, channel: u8, cc_num: u8) -> String {
 /// Build the full path for a pitch bend entry.
 pub fn pitch_path(port: u8, channel: u8) -> String {
     format!("port_{port:02}/channel_{channel:02}/pitch.zst")
+}
+
+/// Build the full path for a program change entry (per-channel).
+pub fn pc_path(port: u8, channel: u8) -> String {
+    format!("port_{port:02}/channel_{channel:02}/pc.zst")
 }
 
 /// Build the full path for an RPN entry.

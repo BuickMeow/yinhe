@@ -73,6 +73,24 @@ pub fn total_bars(tick_length: u64, bar_div: f64) -> u64 {
     (tick_length as f64 / bar_div).ceil() as u64
 }
 
+/// Recompute `start_time` for each tempo segment based on cumulative tick deltas.
+///
+/// Segments must already be sorted by `start_tick`. The first segment's
+/// `start_time` is set to 0.0. Each subsequent segment's `start_time` is
+/// computed by adding the duration of the previous segment using its mpq.
+pub fn recompute_tempo_start_times(segments: &mut [TempoSegment], ticks_per_beat: u32) {
+    if segments.is_empty() {
+        return;
+    }
+    segments[0].start_time = 0.0;
+    for i in 1..segments.len() {
+        let prev = &segments[i - 1];
+        let dtick = (segments[i].start_tick - prev.start_tick) as u64;
+        let elapsed = ticks_to_seconds(dtick, ticks_per_beat, prev.micros_per_quarter);
+        segments[i].start_time = prev.start_time + elapsed;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
