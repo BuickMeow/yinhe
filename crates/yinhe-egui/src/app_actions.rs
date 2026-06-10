@@ -86,12 +86,21 @@ impl App {
     }
 
     fn save_as_dialog(&mut self) {
+        let default_name = if let Some(idx) = self.active_doc {
+            format!("{}.yin", self.documents[idx].file_name)
+        } else {
+            "Untitled.yin".to_string()
+        };
         if let Some(path) = rfd::FileDialog::new()
             .add_filter("Yinhe Project", &["yin"])
-            .set_file_name("Untitled.yin")
+            .set_file_name(&default_name)
             .save_file()
         {
-            let path_str = path.to_string_lossy().to_string();
+            let mut path_str = path.to_string_lossy().to_string();
+            // Ensure .yin extension
+            if !path_str.ends_with(".yin") {
+                path_str.push_str(".yin");
+            }
             if let Some(idx) = self.active_doc {
                 let doc = &self.documents[idx];
                 if let Err(e) = crate::project_io::save_project(doc, &path_str) {
@@ -112,9 +121,14 @@ impl App {
     }
 
     fn export_midi_dialog(&mut self) {
+        let default_name = if let Some(idx) = self.active_doc {
+            format!("{}.mid", self.documents[idx].file_name)
+        } else {
+            "export.mid".to_string()
+        };
         if let Some(path) = rfd::FileDialog::new()
             .add_filter("MIDI", &["mid", "midi"])
-            .set_file_name("export.mid")
+            .set_file_name(&default_name)
             .save_file()
         {
             let path_str = path.to_string_lossy().to_string();

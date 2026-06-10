@@ -211,6 +211,15 @@ pub fn midi_to_archive_with_names(
     };
     archive.set_events("mapping.json", FileHeader::new(*b"YHMP", 0, 0, 0), &[mapping]);
 
+    // ── Write project.json ──
+    let proj = ProjectJson {
+        version: 1,
+        name: String::new(),
+        artist: String::new(),
+        ppq: midi.ticks_per_beat,
+    };
+    archive.set_events("project.json", FileHeader::new(*b"YHPR", 0, 0, 0), &[proj]);
+
     archive
 }
 
