@@ -84,10 +84,6 @@ pub struct PianorollRenderer {
     current_batch_counts: Vec<usize>,
     /// Cached last uniforms — used to skip GPU write when nothing changed.
     cached_uniforms: Option<Uniforms>,
-    /// CPU-side cache of static instances (background, grid, notes, keyboard).
-    static_instance_cache: Vec<NoteInstance>,
-    /// Viewport hash when the static cache was last built.
-    cached_viewport_hash: Option<u64>,
 }
 
 impl PianorollRenderer {
@@ -108,8 +104,6 @@ impl PianorollRenderer {
                 instance_scratch: Vec::new(),
                 current_batch_counts: Vec::new(),
                 cached_uniforms: None,
-                static_instance_cache: Vec::new(),
-                cached_viewport_hash: None,
             }
         })
     }
@@ -138,76 +132,59 @@ impl PianorollRenderer {
         self.instance_scratch = scratch;
     }
 
-    /// Two-phase prepare: static instances (cached) + dynamic cursor (every frame).
+    /// Prepare static instances + uniforms — rebuilds every frame.
     ///
-    /// `viewport_hash` captures all view properties that affect static instances
-    /// (scroll, zoom, window size). Static layer is rebuilt only when this hash
-    /// changes — NOT on every frame during playback.
+    /// Previously had a viewport-keyed cache, but the cache was useless during
+    /// playback (cursor changes invalidated it) and during user interaction
+    /// (scroll/zoom changes invalidated it). Removed to simplify the code.
+    /// `viewport_hash` is kept in the signature only for API stability —
+    /// callers can pass 0 if they have nothing to hash.
     ///
-    /// `build_static` populates background, grid, notes, and keyboard instances.
-    /// `build_cursor` appends the cursor line (O(1) work, called every frame).
-    ///
-    /// Returns `true` if any GPU data was actually updated (new uniforms or
-    /// instances), `false` if everything was already up-to-date.
-    /// Returns timing breakdown for perf instrumentation. Callers that don't
-    /// care can ignore it (it's cheap to produce — a handful of Instant calls).
-    /// Prepare static instances + uniforms with a viewport-keyed cache.
-    ///
-    /// `build_static` is only called when `viewport_hash` differs from the
-    /// previously cached hash. Uniforms are written whenever they change.
-    /// Instance upload to GPU is skipped entirely on a cache hit, so
-    /// playing-but-stationary frames have zero GPU upload cost.
-    ///
-    /// The playback cursor is no longer part of the wgpu pipeline — it is
-    /// drawn by egui on top of the rendered texture.
+    /// The playback cursor is drawn by egui on top of the rendered texture
+    /// and is NOT part of the instance buffer.
     pub fn prepare_with_static_cache(
         &mut self,
         uniforms: Uniforms,
-        viewport_hash: u64,
+        _viewport_hash: u64,
         build_static: impl FnOnce(&mut Vec<NoteInstance>),
     ) -> PrepareTimings {
         yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Gpu, || {
-        let need_static = self.cached_viewport_hash != Some(viewport_hash);
-        let uniforms_changed = self
-            .cached_uniforms
-            .as_ref()
-            .is_none_or(|c| *c != uniforms);
+            let uniforms_changed = self
+                .cached_uniforms
+                .as_ref()
+                .is_none_or(|c| *c != uniforms);
 
-        let mut build_static_dur = std::time::Duration::ZERO;
-        let mut upload_dur = std::time::Duration::ZERO;
-        if need_static {
             let mut scratch = std::mem::take(&mut self.instance_scratch);
             scratch.clear();
             let t = std::time::Instant::now();
             build_static(&mut scratch);
-            build_static_dur = t.elapsed();
+            let build_static_dur = t.elapsed();
+
             let t = std::time::Instant::now();
             self.upload_instances(&scratch);
-            upload_dur = t.elapsed();
-            self.static_instance_cache = std::mem::take(&mut scratch);
+            let upload_dur = t.elapsed();
+
+            let instance_count = scratch.len();
+            scratch.clear();
             self.instance_scratch = scratch;
-            self.cached_viewport_hash = Some(viewport_hash);
-        }
 
-        if uniforms_changed {
-            self.queue.write_buffer(
-                &self.render.uniform_buffer,
-                0,
-                bytemuck::bytes_of(&uniforms),
-            );
-            self.cached_uniforms = Some(uniforms);
-        }
+            if uniforms_changed {
+                self.queue.write_buffer(
+                    &self.render.uniform_buffer,
+                    0,
+                    bytemuck::bytes_of(&uniforms),
+                );
+                self.cached_uniforms = Some(uniforms);
+            }
 
-        let instance_count = self.static_instance_cache.len();
-
-        PrepareTimings {
-            dirty: need_static || uniforms_changed,
-            static_rebuilt: need_static,
-            build_static: build_static_dur,
-            build_cursor: std::time::Duration::ZERO,
-            upload: upload_dur,
-            instance_count,
-        }
+            PrepareTimings {
+                dirty: true,
+                static_rebuilt: true,
+                build_static: build_static_dur,
+                build_cursor: std::time::Duration::ZERO,
+                upload: upload_dur,
+                instance_count,
+            }
         })
     }
 

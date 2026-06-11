@@ -192,8 +192,6 @@ pub fn show(
     // app_eframe already calls request_repaint while audio is playing.
     *last_cursor_tick = *cursor_tick;
 
-    let force_rebuild = view.base.dirty;
-
     // Perf probe: capture input phase duration (everything up to prepare).
     let t_input_end = if perf_on {
         Some(std::time::Instant::now())
@@ -211,7 +209,6 @@ pub fn show(
             view,
             &*selected,
             track_visible,
-            force_rebuild,
         )
     });
 
@@ -221,8 +218,9 @@ pub fn show(
         None
     };
 
-    let content_changed = view.base.dirty || prep_timings.dirty;
+    // Static cache was removed — every frame rebuilds + uploads, so always paint.
     view.base.dirty = false;
+    let content_changed = true;
 
     // Paint wgpu content into the content_rect
     crate::widgets::qos::guarded(|| {

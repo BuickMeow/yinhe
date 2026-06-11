@@ -10,35 +10,11 @@ use crate::quantize::QuantizePreset;
 use crate::render_context::RenderContext;
 use crate::widgets::tools_panel::Tool;
 
-/// Hash viewport properties that affect static arrangement instances.
-fn viewport_hash(width: u32, height: u32, view: &ArrangementView) -> u64 {
-    let mut h: u64 = 0;
-    h ^= width as u64;
-    h = h.wrapping_mul(31).wrapping_add(height as u64);
-    h = h
-        .wrapping_mul(31)
-        .wrapping_add(view.base.scroll_x.to_bits() as u64);
-    h = h
-        .wrapping_mul(31)
-        .wrapping_add(view.base.scroll_y.to_bits() as u64);
-    h = h
-        .wrapping_mul(31)
-        .wrapping_add(view.base.pixels_per_tick.to_bits() as u64);
-    h = h
-        .wrapping_mul(31)
-        .wrapping_add(view.lane_height.to_bits() as u64);
-    h = h
-        .wrapping_mul(31)
-        .wrapping_add(view.base.left_panel_width.to_bits() as u64);
-    h
-}
-
 /// Display the arrangement view texture with zoom/pan interaction.
 ///
-/// Uses `PianorollRenderer::prepare_with_static_cache` so that the expensive
-/// note-instance build only runs when the viewport actually changes (scroll,
-/// zoom, resize).  During playback, only the cheap playhead-cursor update
-/// runs every frame, leaving the audio thread enough CPU time.
+/// Static instances are rebuilt every frame (the previous viewport-keyed
+/// cache was removed). The playhead cursor is drawn by egui on top of the
+/// wgpu texture.
 pub fn show(
     ui: &mut egui::Ui,
     available: egui::Vec2,
@@ -103,15 +79,11 @@ pub fn show(
         _pad: 0.0,
     };
 
-    let mut vhash = viewport_hash(w, h, view);
-    if view.base.dirty {
-        vhash = !vhash;
-    }
     view.base.dirty = false;
 
-    let gpu_updated = crate::widgets::qos::guarded(|| {
+    let _gpu_updated = crate::widgets::qos::guarded(|| {
         renderer
-            .prepare_with_static_cache(uniforms, vhash, |static_instances| {
+            .prepare_with_static_cache(uniforms, 0, |static_instances| {
                 arrangement_instances::build_arrangement_static(
                     static_instances,
                     w,
@@ -125,7 +97,7 @@ pub fn show(
             .dirty
     });
 
-    let content_changed = gpu_updated;
+    let content_changed = true;
     crate::widgets::qos::guarded(|| {
         render_ctx.paint(
             renderer,
