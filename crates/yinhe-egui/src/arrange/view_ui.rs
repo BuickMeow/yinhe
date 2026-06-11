@@ -111,34 +111,21 @@ pub fn show(
 
     let gpu_updated = crate::widgets::qos::guarded(|| {
         renderer
-            .prepare_with_static_cache(
-                uniforms,
-                vhash,
-                |static_instances| {
-                    arrangement_instances::build_arrangement_static(
-                        static_instances,
-                        w,
-                        h,
-                        midi,
-                        view,
-                        track_visible,
-                        track_colors,
-                    );
-                },
-                |cursor_instances| {
-                    arrangement_instances::build_arrangement_cursor(
-                        cursor_instances,
-                        *cursor_tick,
-                        view,
-                        w,
-                        h,
-                    );
-                },
-            )
+            .prepare_with_static_cache(uniforms, vhash, |static_instances| {
+                arrangement_instances::build_arrangement_static(
+                    static_instances,
+                    w,
+                    h,
+                    midi,
+                    view,
+                    track_visible,
+                    track_colors,
+                );
+            })
             .dirty
     });
 
-    let content_changed = gpu_updated || is_playing;
+    let content_changed = gpu_updated;
     crate::widgets::qos::guarded(|| {
         render_ctx.paint(
             renderer,
@@ -150,6 +137,22 @@ pub fn show(
             content_changed,
         );
     });
+
+    // ── Playback cursor (drawn by egui on top of the wgpu texture) ──
+    if let Some(ct) = *cursor_tick {
+        let lb_w = view.base.left_panel_width;
+        let cx_local = view.tick_to_x(ct);
+        if cx_local >= lb_w && cx_local <= w as f32 {
+            let cx = rect.min.x + cx_local;
+            painter.line_segment(
+                [
+                    egui::pos2(cx, rect.min.y),
+                    egui::pos2(cx, rect.max.y),
+                ],
+                egui::Stroke::new(2.0, egui::Color32::from_rgba_unmultiplied(255, 255, 255, 204)),
+            );
+        }
+    }
 
     // Selection drag runs BEFORE handle_input to avoid pointer-capture conflicts
     if *active_tool == Tool::Select && !is_playing {

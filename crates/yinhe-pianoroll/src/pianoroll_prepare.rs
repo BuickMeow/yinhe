@@ -34,12 +34,12 @@ fn viewport_hash(width: u32, height: u32, view: &PianoRollView) -> u64 {
 
 /// Prepare the pianoroll for rendering.
 ///
-/// Uses two-phase caching: static instances (background, grid, notes, keyboard)
-/// are only rebuilt when the view changes or `force_rebuild` is set. During
-/// playback, only the cursor line is updated each frame (O(1) work).
+/// Static instances (background, grid, notes, keyboard) are rebuilt only
+/// when the viewport changes or `force_rebuild` is set. The playback
+/// cursor line is drawn separately by egui on top of the rendered texture,
+/// so it does NOT participate in caching or instance upload.
 ///
-/// Returns `PrepareTimings` with per-phase wall-clock breakdown. Use
-/// `.dirty` to decide whether a re-paint is needed.
+/// Returns `PrepareTimings` with per-phase wall-clock breakdown.
 pub fn prepare(
     renderer: &mut PianorollRenderer,
     width: u32,
@@ -48,7 +48,6 @@ pub fn prepare(
     view: &PianoRollView,
     selected: &HashSet<(u16, u32, u8)>,
     track_visible: &[bool],
-    cursor_tick: Option<f64>,
     force_rebuild: bool,
 ) -> PrepareTimings {
     let uniforms = Uniforms {
@@ -70,23 +69,15 @@ pub fn prepare(
         vhash = !vhash;
     }
 
-    renderer.prepare_with_static_cache(
-        uniforms,
-        vhash,
-        |static_instances| {
-            instances::build_static_instances(
-                static_instances,
-                width,
-                height,
-                midi,
-                view,
-                selected,
-                track_visible,
-                cursor_tick,
-            );
-        },
-        |cursor_instances| {
-            instances::build_cursor_instance(cursor_instances, cursor_tick, view, width, height);
-        },
-    )
+    renderer.prepare_with_static_cache(uniforms, vhash, |static_instances| {
+        instances::build_static_instances(
+            static_instances,
+            width,
+            height,
+            midi,
+            view,
+            selected,
+            track_visible,
+        );
+    })
 }

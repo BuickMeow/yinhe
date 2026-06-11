@@ -37,6 +37,9 @@ pub fn build_pianoroll_grid(
 }
 
 /// Build all instances for the piano roll frame (backward-compatible wrapper).
+///
+/// The playback cursor is drawn by egui on top of the texture and is NOT
+/// part of the instance buffer.
 pub fn build_instances(
     instances: &mut Vec<NoteInstance>,
     width: u32,
@@ -45,9 +48,8 @@ pub fn build_instances(
     view: &PianoRollView,
     selected: &std::collections::HashSet<(u16, u32, u8)>,
     track_visible: &[bool],
-    cursor_tick: Option<f64>,
-) -> ([bool; 128], [[f32; 3]; 128]) {
-    let result = build_static_instances(
+) {
+    build_static_instances(
         instances,
         width,
         height,
@@ -55,16 +57,13 @@ pub fn build_instances(
         view,
         selected,
         track_visible,
-        cursor_tick,
     );
-    build_cursor_instance(instances, cursor_tick, view, width, height);
-    result
 }
 
 /// Build static instances: background, black-key rows, grid lines, notes, keyboard.
 ///
-/// Uses `cursor_tick` only for active-key detection (keyboard highlighting),
-/// NOT for drawing the cursor line — that is handled by `build_cursor_instance`.
+/// Does NOT depend on `cursor_tick` — only on viewport/zoom/selection/track
+/// visibility. The playback cursor line is added by `build_cursor_instance`.
 pub fn build_static_instances(
     instances: &mut Vec<NoteInstance>,
     width: u32,
@@ -73,11 +72,7 @@ pub fn build_static_instances(
     view: &PianoRollView,
     selected: &std::collections::HashSet<(u16, u32, u8)>,
     track_visible: &[bool],
-    cursor_tick: Option<f64>,
-) -> ([bool; 128], [[f32; 3]; 128]) {
-    let mut active_keys = [false; 128];
-    let mut active_colors = [[0.0f32; 3]; 128];
-
+) {
     let w = width as f32;
     let h = height as f32;
     let kb_w = view.keyboard_width();
@@ -147,7 +142,7 @@ pub fn build_static_instances(
 
         let x_offset = kb_w - view.base.scroll_x;
 
-        let results: Vec<(Vec<NoteInstance>, u8, bool, [f32; 3])> = (0u8..128)
+        let results: Vec<Vec<NoteInstance>> = (0u8..128)
             .into_par_iter()
             .filter_map(|key| {
                 if key < key_lo || key > key_hi {
@@ -162,8 +157,6 @@ pub fn build_static_instances(
                 let key_y = bottom - (key as f32 + 1.0) * kh;
 
                 let mut local = Vec::new();
-                let mut key_active = false;
-                let mut key_color = [0.0f32; 3];
 
                 for note in &notes[start_idx..] {
                     if note.start_tick as f64 > pad_end {
@@ -204,45 +197,19 @@ pub fn build_static_instances(
                         velocity: note.velocity as u32,
                         tag: if is_selected { 1 } else { 0 },
                     });
-
-                    if let Some(ct) = cursor_tick
-                        && note.start_tick as f64 <= ct
-                        && ct < note.end_tick as f64
-                    {
-                        key_active = true;
-                        key_color = color;
-                    }
                 }
 
-                if local.is_empty() {
-                    None
-                } else {
-                    Some((local, key, key_active, key_color))
-                }
+                if local.is_empty() { None } else { Some(local) }
             })
             .collect();
 
-        for (mut local, key, active, color) in results {
+        for mut local in results {
             instances.append(&mut local);
-            if active {
-                active_keys[key as usize] = true;
-                active_colors[key as usize] = color;
-            }
         }
     }
 
     // 4. Keyboard
-    keyboard::append_keyboard_instances(
-        instances,
-        kb_w,
-        kh,
-        view.base.scroll_y,
-        h,
-        &active_keys,
-        &active_colors,
-    );
-
-    (active_keys, active_colors)
+    keyboard::append_keyboard_instances(instances, kb_w, kh, view.base.scroll_y, h);
 }
 
 /// Build only the cursor line instance (O(1) work).

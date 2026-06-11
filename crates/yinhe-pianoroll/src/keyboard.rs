@@ -16,8 +16,6 @@ pub fn append_keyboard_instances(
     key_height: f32,
     scroll_y: f32,
     canvas_height: f32,
-    active_keys: &[bool; 128],
-    active_colors: &[[f32; 3]; 128],
 ) {
     let bottom = 128.0 * key_height - scroll_y;
 
@@ -32,12 +30,7 @@ pub fn append_keyboard_instances(
             continue;
         }
 
-        let (r, g, b) = if active_keys[key as usize] {
-            let c = active_colors[key as usize];
-            (c[0], c[1], c[2])
-        } else {
-            WHITE_KEY_COLOR
-        };
+        let (r, g, b) = WHITE_KEY_COLOR;
 
         out.push(NoteInstance {
             x: 0.0,
@@ -61,12 +54,7 @@ pub fn append_keyboard_instances(
             continue;
         }
 
-        let (r, g, b) = if active_keys[key as usize] {
-            let c = active_colors[key as usize];
-            (c[0], c[1], c[2])
-        } else {
-            BLACK_KEY_COLOR
-        };
+        let (r, g, b) = BLACK_KEY_COLOR;
 
         out.push(NoteInstance {
             x: 0.0,

@@ -19,10 +19,11 @@ pub struct PrepareTimings {
     /// Time spent in the user-supplied `build_static` closure (zero if not run).
     pub build_static: std::time::Duration,
     /// Time spent in the user-supplied `build_cursor` closure.
+    /// Kept for API stability; always zero now that the cursor is drawn by egui.
     pub build_cursor: std::time::Duration,
-    /// Time spent uploading the combined instance buffer to the GPU.
+    /// Time spent uploading the instance buffer to the GPU (zero if not run).
     pub upload: std::time::Duration,
-    /// Total instances uploaded (static + cursor).
+    /// Total instances uploaded.
     pub instance_count: usize,
 }
 
@@ -150,12 +151,20 @@ impl PianorollRenderer {
     /// instances), `false` if everything was already up-to-date.
     /// Returns timing breakdown for perf instrumentation. Callers that don't
     /// care can ignore it (it's cheap to produce — a handful of Instant calls).
+    /// Prepare static instances + uniforms with a viewport-keyed cache.
+    ///
+    /// `build_static` is only called when `viewport_hash` differs from the
+    /// previously cached hash. Uniforms are written whenever they change.
+    /// Instance upload to GPU is skipped entirely on a cache hit, so
+    /// playing-but-stationary frames have zero GPU upload cost.
+    ///
+    /// The playback cursor is no longer part of the wgpu pipeline — it is
+    /// drawn by egui on top of the rendered texture.
     pub fn prepare_with_static_cache(
         &mut self,
         uniforms: Uniforms,
         viewport_hash: u64,
         build_static: impl FnOnce(&mut Vec<NoteInstance>),
-        build_cursor: impl FnOnce(&mut Vec<NoteInstance>),
     ) -> PrepareTimings {
         yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Gpu, || {
         let need_static = self.cached_viewport_hash != Some(viewport_hash);
@@ -165,18 +174,21 @@ impl PianorollRenderer {
             .is_none_or(|c| *c != uniforms);
 
         let mut build_static_dur = std::time::Duration::ZERO;
+        let mut upload_dur = std::time::Duration::ZERO;
         if need_static {
             let mut scratch = std::mem::take(&mut self.instance_scratch);
             scratch.clear();
             let t = std::time::Instant::now();
             build_static(&mut scratch);
             build_static_dur = t.elapsed();
+            let t = std::time::Instant::now();
+            self.upload_instances(&scratch);
+            upload_dur = t.elapsed();
             self.static_instance_cache = std::mem::take(&mut scratch);
             self.instance_scratch = scratch;
             self.cached_viewport_hash = Some(viewport_hash);
         }
 
-        // Always write uniforms (cheap, needed for cursor position changes).
         if uniforms_changed {
             self.queue.write_buffer(
                 &self.render.uniform_buffer,
@@ -186,25 +198,13 @@ impl PianorollRenderer {
             self.cached_uniforms = Some(uniforms);
         }
 
-        // Combine static cache + dynamic cursor, then upload to GPU.
-        let mut combined = std::mem::take(&mut self.instance_scratch);
-        combined.clear();
-        combined.extend_from_slice(&self.static_instance_cache);
-        let t = std::time::Instant::now();
-        build_cursor(&mut combined);
-        let build_cursor_dur = t.elapsed();
-        let instance_count = combined.len();
-        let t = std::time::Instant::now();
-        self.upload_instances(&combined);
-        let upload_dur = t.elapsed();
-        combined.clear();
-        self.instance_scratch = combined;
+        let instance_count = self.static_instance_cache.len();
 
         PrepareTimings {
             dirty: need_static || uniforms_changed,
             static_rebuilt: need_static,
             build_static: build_static_dur,
-            build_cursor: build_cursor_dur,
+            build_cursor: std::time::Duration::ZERO,
             upload: upload_dur,
             instance_count,
         }

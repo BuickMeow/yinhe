@@ -187,9 +187,9 @@ pub fn show(
     view.clamp_scroll(w as f32, h as f32, total_ticks);
 
     // ── Dirty detection ──
-    if *cursor_tick != *last_cursor_tick {
-        view.base.dirty = true;
-    }
+    // cursor_tick no longer affects rendering at all — the cursor is drawn
+    // by egui directly on top of the wgpu texture, outside the cache.
+    // app_eframe already calls request_repaint while audio is playing.
     *last_cursor_tick = *cursor_tick;
 
     let force_rebuild = view.base.dirty;
@@ -211,7 +211,6 @@ pub fn show(
             view,
             &*selected,
             track_visible,
-            *cursor_tick,
             force_rebuild,
         )
     });
@@ -243,6 +242,24 @@ pub fn show(
     } else {
         None
     };
+
+    // ── Playback cursor (drawn by egui on top of the wgpu texture) ──
+    // Decoupled from the wgpu pipeline so cursor movement during playback
+    // does NOT invalidate the static instance cache.
+    if let Some(ct) = *cursor_tick {
+        let kb_w = view.keyboard_width();
+        let cx_local = view.tick_to_x(ct);
+        if cx_local >= kb_w && cx_local <= w as f32 {
+            let cx = content_rect.min.x + cx_local;
+            painter.line_segment(
+                [
+                    egui::pos2(cx, content_rect.min.y),
+                    egui::pos2(cx, content_rect.max.y),
+                ],
+                egui::Stroke::new(2.0, egui::Color32::from_rgba_unmultiplied(255, 255, 255, 204)),
+            );
+        }
+    }
 
     // ── Draw selection box on TOP of GPU content ──
     // State was already updated by sel_drag_frame above; this just draws the box
