@@ -110,30 +110,32 @@ pub fn show(
     view.base.dirty = false;
 
     let gpu_updated = crate::widgets::qos::guarded(|| {
-        renderer.prepare_with_static_cache(
-            uniforms,
-            vhash,
-            |static_instances| {
-                arrangement_instances::build_arrangement_static(
-                    static_instances,
-                    w,
-                    h,
-                    midi,
-                    view,
-                    track_visible,
-                    track_colors,
-                );
-            },
-            |cursor_instances| {
-                arrangement_instances::build_arrangement_cursor(
-                    cursor_instances,
-                    *cursor_tick,
-                    view,
-                    w,
-                    h,
-                );
-            },
-        )
+        renderer
+            .prepare_with_static_cache(
+                uniforms,
+                vhash,
+                |static_instances| {
+                    arrangement_instances::build_arrangement_static(
+                        static_instances,
+                        w,
+                        h,
+                        midi,
+                        view,
+                        track_visible,
+                        track_colors,
+                    );
+                },
+                |cursor_instances| {
+                    arrangement_instances::build_arrangement_cursor(
+                        cursor_instances,
+                        *cursor_tick,
+                        view,
+                        w,
+                        h,
+                    );
+                },
+            )
+            .dirty
     });
 
     let content_changed = gpu_updated || is_playing;

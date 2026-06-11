@@ -8,6 +8,24 @@ const MAX_INSTANCE_COUNT: usize = 6_000_000;
 /// Minimum instance buffer capacity (in number of instances).
 const MIN_INSTANCE_BUFFER_CAPACITY: usize = 4096;
 
+/// Per-frame timing breakdown returned by `prepare_with_static_cache`.
+/// Durations are zero when the corresponding phase did not run.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct PrepareTimings {
+    /// Whether any GPU-visible state was updated (uniforms or instances).
+    pub dirty: bool,
+    /// Whether the static instance cache was rebuilt this frame.
+    pub static_rebuilt: bool,
+    /// Time spent in the user-supplied `build_static` closure (zero if not run).
+    pub build_static: std::time::Duration,
+    /// Time spent in the user-supplied `build_cursor` closure.
+    pub build_cursor: std::time::Duration,
+    /// Time spent uploading the combined instance buffer to the GPU.
+    pub upload: std::time::Duration,
+    /// Total instances uploaded (static + cursor).
+    pub instance_count: usize,
+}
+
 /// Instance buffer with tracking of capacity and GPU bytes.
 struct InstanceBufferSlot {
     buffer: Buffer,
@@ -130,13 +148,15 @@ impl PianorollRenderer {
     ///
     /// Returns `true` if any GPU data was actually updated (new uniforms or
     /// instances), `false` if everything was already up-to-date.
+    /// Returns timing breakdown for perf instrumentation. Callers that don't
+    /// care can ignore it (it's cheap to produce — a handful of Instant calls).
     pub fn prepare_with_static_cache(
         &mut self,
         uniforms: Uniforms,
         viewport_hash: u64,
         build_static: impl FnOnce(&mut Vec<NoteInstance>),
         build_cursor: impl FnOnce(&mut Vec<NoteInstance>),
-    ) -> bool {
+    ) -> PrepareTimings {
         yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Gpu, || {
         let need_static = self.cached_viewport_hash != Some(viewport_hash);
         let uniforms_changed = self
@@ -144,10 +164,13 @@ impl PianorollRenderer {
             .as_ref()
             .is_none_or(|c| *c != uniforms);
 
+        let mut build_static_dur = std::time::Duration::ZERO;
         if need_static {
             let mut scratch = std::mem::take(&mut self.instance_scratch);
             scratch.clear();
+            let t = std::time::Instant::now();
             build_static(&mut scratch);
+            build_static_dur = t.elapsed();
             self.static_instance_cache = std::mem::take(&mut scratch);
             self.instance_scratch = scratch;
             self.cached_viewport_hash = Some(viewport_hash);
@@ -167,12 +190,24 @@ impl PianorollRenderer {
         let mut combined = std::mem::take(&mut self.instance_scratch);
         combined.clear();
         combined.extend_from_slice(&self.static_instance_cache);
+        let t = std::time::Instant::now();
         build_cursor(&mut combined);
+        let build_cursor_dur = t.elapsed();
+        let instance_count = combined.len();
+        let t = std::time::Instant::now();
         self.upload_instances(&combined);
+        let upload_dur = t.elapsed();
         combined.clear();
         self.instance_scratch = combined;
 
-        need_static || uniforms_changed
+        PrepareTimings {
+            dirty: need_static || uniforms_changed,
+            static_rebuilt: need_static,
+            build_static: build_static_dur,
+            build_cursor: build_cursor_dur,
+            upload: upload_dur,
+            instance_count,
+        }
         })
     }
 

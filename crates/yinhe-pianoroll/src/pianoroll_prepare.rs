@@ -7,6 +7,8 @@ use crate::instances;
 use crate::vertex::Uniforms;
 use crate::view::PianoRollView;
 
+pub use yinhe_wgpu::PrepareTimings;
+
 /// Hash viewport properties that affect static instances.
 fn viewport_hash(width: u32, height: u32, view: &PianoRollView) -> u64 {
     let mut h: u64 = 0;
@@ -36,8 +38,8 @@ fn viewport_hash(width: u32, height: u32, view: &PianoRollView) -> u64 {
 /// are only rebuilt when the view changes or `force_rebuild` is set. During
 /// playback, only the cursor line is updated each frame (O(1) work).
 ///
-/// Returns `true` if GPU data (uniforms or instances) was actually updated,
-/// `false` if everything was already up-to-date and a re-render can be skipped.
+/// Returns `PrepareTimings` with per-phase wall-clock breakdown. Use
+/// `.dirty` to decide whether a re-paint is needed.
 pub fn prepare(
     renderer: &mut PianorollRenderer,
     width: u32,
@@ -48,7 +50,7 @@ pub fn prepare(
     track_visible: &[bool],
     cursor_tick: Option<f64>,
     force_rebuild: bool,
-) -> bool {
+) -> PrepareTimings {
     let uniforms = Uniforms {
         width: width as f32,
         height: height as f32,

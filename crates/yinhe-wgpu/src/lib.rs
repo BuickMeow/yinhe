@@ -3,5 +3,5 @@ pub mod pipeline;
 pub mod renderer;
 pub mod vertex;
 
-pub use renderer::PianorollRenderer;
+pub use renderer::{PianorollRenderer, PrepareTimings};
 pub use vertex::{NoteInstance, Uniforms, pack_props, pack_rgba};

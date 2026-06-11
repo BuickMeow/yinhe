@@ -72,24 +72,26 @@ pub fn prepare(
     }
 
     // Automation panels don't have dynamic content, so the cursor phase is a no-op.
-    renderer.prepare_with_static_cache(
-        uniforms,
-        vhash,
-        |static_instances| {
-            automation_instances::build_automation_instances(
-                static_instances,
-                width,
-                height,
-                view,
-                lane,
-                tpb,
-                default_num,
-                default_den,
-                time_sig_events,
-            );
-        },
-        |_cursor_instances| {
-            // No dynamic content for automation panels (cursor is drawn in pianoroll).
-        },
-    )
+    renderer
+        .prepare_with_static_cache(
+            uniforms,
+            vhash,
+            |static_instances| {
+                automation_instances::build_automation_instances(
+                    static_instances,
+                    width,
+                    height,
+                    view,
+                    lane,
+                    tpb,
+                    default_num,
+                    default_den,
+                    time_sig_events,
+                );
+            },
+            |_cursor_instances| {
+                // No dynamic content for automation panels (cursor is drawn in pianoroll).
+            },
+        )
+        .dirty
 }

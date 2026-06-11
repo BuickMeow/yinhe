@@ -79,6 +79,14 @@ pub fn show(
         return;
     }
 
+    // ── Perf probe (only when YIN_PERF=1) ──
+    let perf_on = crate::perf_probe::enabled();
+    let t_show_start = if perf_on {
+        Some(std::time::Instant::now())
+    } else {
+        None
+    };
+
     // Resize render target if needed — texture_id may change after this
     render_ctx.ensure_size(w, h);
 
@@ -186,8 +194,15 @@ pub fn show(
 
     let force_rebuild = view.base.dirty;
 
+    // Perf probe: capture input phase duration (everything up to prepare).
+    let t_input_end = if perf_on {
+        Some(std::time::Instant::now())
+    } else {
+        None
+    };
+
     // Prepare GPU data
-    let gpu_dirty = crate::widgets::qos::guarded(|| {
+    let prep_timings = crate::widgets::qos::guarded(|| {
         yinhe_pianoroll::prepare(
             pianoroll,
             w,
@@ -201,7 +216,13 @@ pub fn show(
         )
     });
 
-    let content_changed = view.base.dirty || gpu_dirty;
+    let t_prepare_end = if perf_on {
+        Some(std::time::Instant::now())
+    } else {
+        None
+    };
+
+    let content_changed = view.base.dirty || prep_timings.dirty;
     view.base.dirty = false;
 
     // Paint wgpu content into the content_rect
@@ -216,6 +237,12 @@ pub fn show(
             content_changed,
         );
     });
+
+    let t_paint_end = if perf_on {
+        Some(std::time::Instant::now())
+    } else {
+        None
+    };
 
     // ── Draw selection box on TOP of GPU content ──
     // State was already updated by sel_drag_frame above; this just draws the box
@@ -314,6 +341,52 @@ pub fn show(
             &mut view.base.dirty,
         );
     });
+
+    // ── Perf probe: submit per-frame sample ──
+    if let (Some(t0), Some(t1), Some(t2), Some(t3)) =
+        (t_show_start, t_input_end, t_prepare_end, t_paint_end)
+    {
+        let t_end = std::time::Instant::now();
+        let input = t1.saturating_duration_since(t0);
+        let prepare_total = t2.saturating_duration_since(t1);
+        let paint = t3.saturating_duration_since(t2);
+        let misc = t_end.saturating_duration_since(t3);
+        // prep_static + prep_cursor + upload should ≈ prepare_total. The
+        // residual (closure dispatch, hashing, etc.) goes into misc by
+        // omitting it from this sample's prep_* fields.
+        let known = prep_timings.build_static + prep_timings.build_cursor + prep_timings.upload;
+        let prepare_overhead = prepare_total.saturating_sub(known);
+        let follow_name = match follow_mode {
+            super::view_interaction::FollowMode::None => "None",
+            super::view_interaction::FollowMode::Page => "Page",
+            super::view_interaction::FollowMode::Continuous => "Continuous",
+        };
+        crate::perf_probe::submit(crate::perf_probe::FrameSample {
+            input,
+            prep_static: prep_timings.build_static,
+            prep_cursor: prep_timings.build_cursor,
+            upload: prep_timings.upload,
+            paint,
+            misc: misc + prepare_overhead,
+            static_rebuilt: prep_timings.static_rebuilt,
+            instance_count: prep_timings.instance_count,
+            follow_mode: follow_name,
+            total_notes: midi
+                .map(|m| {
+                    let mut sum = 0u64;
+                    for k in 0..128u8 {
+                        sum += m.key_notes(k).len() as u64;
+                    }
+                    sum
+                })
+                .unwrap_or(0),
+            ppt: view.base.pixels_per_tick,
+            visible_ticks: {
+                let (s, e) = view.visible_tick_range(w as f32);
+                e - s
+            },
+        });
+    }
 }
 
 // ── Selection drag logic ──
