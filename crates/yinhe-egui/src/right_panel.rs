@@ -1,3 +1,4 @@
+pub mod channels_panel;
 pub mod config;
 pub mod info_panel;
 pub mod project_info;
@@ -14,6 +15,7 @@ pub enum RightTab {
     Info,
     SoundBank,
     Project,
+    Channels,
 }
 
 /// Render the right panel (if a tab is active).
@@ -70,6 +72,7 @@ pub fn show(
                     RightTab::Info => "信息",
                     RightTab::SoundBank => "音色库",
                     RightTab::Project => "项目信息",
+                    RightTab::Channels => "通道映射",
                 };
                 ui.label(egui::RichText::new(title).size(13.0).strong());
                 let mut clicked = false;
@@ -97,6 +100,9 @@ pub fn show(
             }
             RightTab::Project => {
                 project_info::show(ui, doc);
+            }
+            RightTab::Channels => {
+                channels_panel::show(ui, doc);
             }
         }
     });

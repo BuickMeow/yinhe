@@ -219,6 +219,8 @@ pub fn midi_to_archive_with_names(
         ppq: midi.ticks_per_beat,
         zstd_level: 0,
         description: String::new(),
+        soundfont_enabled: false,
+        soundfont_overrides: Vec::new(),
     };
     archive.set_events("project.json", FileHeader::new(*b"YHPR", 0, 0, 0), &[proj]);
 
@@ -414,6 +416,7 @@ pub fn build_archive(doc: &crate::document::Document) -> ProjectArchive {
         doc.project_ppq,
         doc.archive.as_ref().map(|a| a.compression_level).unwrap_or(0),
         &doc.project_description,
+        &doc.project_sf,
     )
 }
 
@@ -426,8 +429,25 @@ pub fn build_archive_from(
     project_ppq: u32,
     compression_level: i32,
     project_description: &str,
+    project_sf: &crate::right_panel::config::ProjectSfConfig,
 ) -> ProjectArchive {
     let mut archive = midi_to_archive_with_names(midi, track_names);
+
+    let soundfont_overrides: Vec<yinhe_project::SfPortOverride> = project_sf
+        .overrides
+        .iter()
+        .map(|(port, entries)| yinhe_project::SfPortOverride {
+            port: *port,
+            entries: entries
+                .iter()
+                .map(|e| yinhe_project::SfEntryJson {
+                    path: e.path.clone(),
+                    name: e.name.clone(),
+                    enabled: e.enabled,
+                })
+                .collect(),
+        })
+        .collect();
 
     let proj = ProjectJson {
         version: 1,
@@ -436,6 +456,8 @@ pub fn build_archive_from(
         ppq: project_ppq,
         zstd_level: compression_level,
         description: project_description.to_string(),
+        soundfont_enabled: project_sf.project_enabled,
+        soundfont_overrides,
     };
     archive.set_events("project.json", FileHeader::new(*b"YHPR", 0, 0, 0), &[proj]);
 

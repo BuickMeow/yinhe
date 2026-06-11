@@ -375,6 +375,26 @@ pub struct SmpteOffsetEvent {
 
 // ── JSON structures ──
 
+/// A single SoundFont entry stored in the project JSON.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SfEntryJson {
+    pub path: String,
+    pub name: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// Project-level soundfont override for one port.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SfPortOverride {
+    pub port: u8,
+    pub entries: Vec<SfEntryJson>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ProjectJson {
     pub version: u8,
@@ -391,6 +411,12 @@ pub struct ProjectJson {
     /// Song description / notes.
     #[serde(default)]
     pub description: String,
+    /// Whether project-level soundfont overrides are enabled.
+    #[serde(default)]
+    pub soundfont_enabled: bool,
+    /// Per-port soundfont overrides (only used when soundfont_enabled is true).
+    #[serde(default)]
+    pub soundfont_overrides: Vec<SfPortOverride>,
 }
 
 fn default_ppq() -> u32 {

@@ -94,6 +94,7 @@ impl App {
         let project_description = doc.project_description.clone();
         let project_ppq = doc.project_ppq;
         let compression_level = doc.archive.as_ref().map(|a| a.compression_level).unwrap_or(0);
+        let project_sf = doc.project_sf.clone();
         let path_for_thread = path.clone();
 
         let (tx, rx) = mpsc::channel();
@@ -106,6 +107,7 @@ impl App {
                 project_ppq,
                 compression_level,
                 &project_description,
+                &project_sf,
             );
             if let Err(e) = archive.write_to(&path_for_thread) {
                 tracing::error!("Failed to save project: {}", e);

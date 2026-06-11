@@ -112,35 +112,28 @@ pub fn show(
 fn global_panel(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
     let mut changed = false;
     let port_count = 16;
-    let active_ports: Vec<usize> = (0..port_count)
-        .filter(|&p| !settings.global_sf_config.ports[p].is_empty() || p == 0)
-        .collect();
+    // Show all 16 ports so the user can add soundfonts to any port,
+    // even if it is currently empty.
+    let active_ports: Vec<usize> = (0..port_count).collect();
 
     // Port selector
     let port_names: Vec<String> = active_ports
         .iter()
         .map(|&p| format!("Port {}", (b'A' + p as u8) as char))
         .collect();
-    let port_idx = {
-        let p = settings
-            .global_sf_config
-            .ports
-            .iter()
-            .position(|entries| !entries.is_empty())
-            .unwrap_or(0);
-        active_ports.iter().position(|&ap| ap == p).unwrap_or(0)
-    };
 
-    let mut selected_port = port_idx;
+    let mut selected_port = settings.global_sf_config.selected_port as usize;
+    selected_port = selected_port.min(port_names.len().saturating_sub(1));
     egui::ComboBox::from_id_salt("global_port")
-        .selected_text(&port_names[port_idx])
+        .selected_text(&port_names[selected_port])
         .show_ui(ui, |ui| {
             for (i, name) in port_names.iter().enumerate() {
-                if ui.selectable_label(i == port_idx, name).clicked() {
+                if ui.selectable_label(i == selected_port, name).clicked() {
                     selected_port = i;
                 }
             }
         });
+    settings.global_sf_config.selected_port = selected_port as u8;
     let port = active_ports[selected_port];
 
     // SF list
@@ -183,41 +176,53 @@ fn global_panel(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
 fn project_panel(ui: &mut egui::Ui, doc: &mut Document) -> bool {
     let mut changed = false;
 
-    // Gather ports actually used by the MIDI file
-    let used_ports: Vec<u8> = {
-        let mut seen = std::collections::BTreeSet::new();
-        for &p in &doc.midi.track_ports {
-            if p < 16 {
-                seen.insert(p as u8);
+    // Derive used ports from actual note/control-event channels rather than
+    // track_ports (which only reflects MidiPort meta messages that many DAWs
+    // do not emit).
+    let max_port = {
+        let mut max_p = 0u8;
+        for notes in &doc.midi.key_notes {
+            for note in notes {
+                let p = (note.channel >> 4) & 0x0F;
+                if p > max_p {
+                    max_p = p;
+                }
             }
         }
-        if seen.is_empty() {
-            seen.insert(0);
+        for ev in &doc.midi.control_events {
+            let ch = match ev {
+                yinhe_midi::MidiControlEvent::ControlChange { channel, .. }
+                | yinhe_midi::MidiControlEvent::ProgramChange { channel, .. }
+                | yinhe_midi::MidiControlEvent::PitchBend { channel, .. } => *channel,
+            };
+            let p = (ch >> 4) & 0x0F;
+            if p > max_p {
+                max_p = p;
+            }
         }
-        seen.into_iter().collect()
+        max_p
     };
+    let num_ports = (max_port + 1).max(1);
+    let used_ports: Vec<u8> = (0..num_ports).collect();
 
-    if used_ports.is_empty() {
-        ui.label("（当前 MIDI 未使用任何端口）");
-        return false;
-    }
-
-    // Port selector
+    // Port selector — persist selection in Document so it survives frames.
     let port_names: Vec<String> = used_ports
         .iter()
         .map(|&p| format!("Port {}", (b'A' + p) as char))
         .collect();
 
-    let mut selected_port = 0_usize;
+    let mut selected_port = doc.soundbank_selected_port as usize;
+    selected_port = selected_port.min(port_names.len().saturating_sub(1));
     egui::ComboBox::from_id_salt("project_port")
-        .selected_text(&port_names[0])
+        .selected_text(&port_names[selected_port])
         .show_ui(ui, |ui| {
             for (i, name) in port_names.iter().enumerate() {
-                if ui.selectable_label(i == 0, name).clicked() {
+                if ui.selectable_label(i == selected_port, name).clicked() {
                     selected_port = i;
                 }
             }
         });
+    doc.soundbank_selected_port = selected_port as u8;
     let port = used_ports[selected_port];
 
     let has_override = doc.project_sf.overrides.iter().any(|(p, _)| *p == port);

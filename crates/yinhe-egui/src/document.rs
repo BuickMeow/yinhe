@@ -54,6 +54,8 @@ pub(crate) struct Document {
     pub show_controller_panels: bool,
     /// Song-specific soundfont overrides (not yet persisted).
     pub project_sf: ProjectSfConfig,
+    /// Currently selected port in the soundbank panel (persists across frames).
+    pub soundbank_selected_port: u8,
     /// Per-track mute/solo overrides.
     pub track_overrides: Vec<TrackOverride>,
     /// Editable project metadata (synced with project.json on save/load).
@@ -84,6 +86,7 @@ impl Default for Document {
             controller_panels: vec![yinhe_automation::AutomationPanelView::default()],
             show_controller_panels: true,
             project_sf: ProjectSfConfig::default(),
+            soundbank_selected_port: 0,
             track_overrides: vec![TrackOverride::default()],
             project_name: String::new(),
             project_artist: String::new(),
@@ -211,12 +214,46 @@ impl Document {
             }
         }
 
-        // Read project metadata from archive
-        let (project_name, project_artist, project_description, project_ppq) = archive
+        // Read project metadata + soundfont config from archive
+        let (
+            project_name,
+            project_artist,
+            project_description,
+            project_ppq,
+            project_sf,
+        ) = archive
             .get_events::<yinhe_project::ProjectJson>("project.json")
             .and_then(|v| v.into_iter().next())
-            .map(|p| (p.name, p.artist, p.description, p.ppq))
-            .unwrap_or((String::new(), String::new(), String::new(), 480));
+            .map(|p| {
+                let sf = crate::right_panel::config::ProjectSfConfig {
+                    project_enabled: p.soundfont_enabled,
+                    overrides: p
+                        .soundfont_overrides
+                        .into_iter()
+                        .map(|ov| {
+                            (
+                                ov.port,
+                                ov.entries
+                                    .into_iter()
+                                    .map(|e| crate::right_panel::config::SfEntry {
+                                        path: e.path,
+                                        name: e.name,
+                                        enabled: e.enabled,
+                                    })
+                                    .collect(),
+                            )
+                        })
+                        .collect(),
+                };
+                (p.name, p.artist, p.description, p.ppq, sf)
+            })
+            .unwrap_or((
+                String::new(),
+                String::new(),
+                String::new(),
+                480,
+                crate::right_panel::config::ProjectSfConfig::default(),
+            ));
 
         let track_colors_cache = (0..num_tracks)
             .map(|i| yinhe_types::TRACK_PALETTE[i % yinhe_types::TRACK_PALETTE.len()])
@@ -239,7 +276,8 @@ impl Document {
             track_colors_cache,
             controller_panels: vec![yinhe_automation::AutomationPanelView::default()],
             show_controller_panels: true,
-            project_sf: ProjectSfConfig::default(),
+            project_sf,
+            soundbank_selected_port: 0,
             track_overrides: (0..num_tracks).map(|_| TrackOverride::default()).collect(),
             project_name,
             project_artist,

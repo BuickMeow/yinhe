@@ -15,6 +15,9 @@ pub struct SfEntry {
 pub struct GlobalSfConfig {
     pub ports: [Vec<SfEntry>; 16],
     pub global_enabled: bool,
+    /// Which port is currently selected in the global soundbank UI.
+    #[serde(default)]
+    pub selected_port: u8,
 }
 
 impl GlobalSfConfig {
@@ -33,6 +36,7 @@ impl GlobalSfConfig {
         Self {
             ports,
             global_enabled: true,
+            selected_port: 0,
         }
     }
 

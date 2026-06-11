@@ -183,6 +183,21 @@ pub fn show(
                             };
                         },
                     );
+
+                    ui.add_space(4.0);
+
+                    right_icon_button(
+                        ui,
+                        ICON_SHUFFLE,
+                        *right_tab == Some(RightTab::Channels),
+                        || {
+                            *right_tab = if *right_tab == Some(RightTab::Channels) {
+                                None
+                            } else {
+                                Some(RightTab::Channels)
+                            };
+                        },
+                    );
                 });
             });
         });
