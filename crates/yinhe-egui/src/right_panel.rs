@@ -50,11 +50,16 @@ pub fn show(
     );
     let resp = crate::widgets::split_handle::vertical(ui, "__right_split__", handle_rect);
     if resp.dragged() {
-        *right_panel_width = (*right_panel_width + resp.drag_delta().x).clamp(theme, max_w - 4.0);
+        // Handle is at the left edge of a right-aligned panel.
+        // Dragging right → panel narrows (width decreases).
+        *right_panel_width = (*right_panel_width - resp.drag_delta().x).clamp(theme, max_w - 4.0);
     }
 
-    // ── Panel content area (after the handle) ──
-    let content_rect = egui::Rect::from_min_max(egui::pos2(rect.min.x + 4.0, rect.min.y), rect.max);
+    // ── Panel content area (8px left/right padding, after the handle) ──
+    let content_rect = egui::Rect::from_min_max(
+        egui::pos2(rect.min.x + 4.0 + 8.0, rect.min.y),
+        egui::pos2(rect.max.x - 8.0, rect.max.y),
+    );
 
     let mut changed = false;
 
@@ -64,31 +69,6 @@ pub fn show(
         // Background
         ui.painter()
             .rect_filled(ui.max_rect(), 0.0, crate::widgets::theme::APP_BG);
-
-        // ── Title bar ──
-        let close_clicked = ui
-            .horizontal(|ui| {
-                let title = match tab.unwrap() {
-                    RightTab::Info => "信息",
-                    RightTab::SoundBank => "音色库",
-                    RightTab::Project => "项目信息",
-                    RightTab::Channels => "通道映射",
-                };
-                ui.label(egui::RichText::new(title).size(13.0).strong());
-                let mut clicked = false;
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("✕").clicked() {
-                        clicked = true;
-                    }
-                });
-                clicked
-            })
-            .inner;
-        if close_clicked {
-            *right_tab = None;
-        }
-
-        ui.separator();
 
         // ── Content ──
         match tab.unwrap() {
@@ -102,7 +82,7 @@ pub fn show(
                 project_info::show(ui, doc);
             }
             RightTab::Channels => {
-                channels_panel::show(ui, doc);
+                channels_panel::show(ui, doc, audio_settings);
             }
         }
     });

@@ -15,8 +15,19 @@ impl App {
         let mut result: Vec<(u8, Vec<String>)> = Vec::new();
 
         for port in 0..num_ports {
-            // 1. Project override (if enabled and present)
-            if project.project_enabled {
+            if global.global_enabled {
+                // ── Global mode: all ports share ports[0] ──
+                let paths: Vec<String> = global.ports[0]
+                    .iter()
+                    .filter(|e| e.enabled)
+                    .map(|e| e.path.clone())
+                    .collect();
+                if !paths.is_empty() {
+                    result.push((port, paths));
+                    continue;
+                }
+            } else {
+                // ── Project mode: per-port from overrides ──
                 if let Some((_, entries)) = project.overrides.iter().find(|(p, _)| *p == port) {
                     let paths: Vec<String> = entries
                         .iter()
@@ -30,20 +41,7 @@ impl App {
                 }
             }
 
-            // 2. Global config (if enabled)
-            if global.global_enabled {
-                let paths: Vec<String> = global.ports[port as usize]
-                    .iter()
-                    .filter(|e| e.enabled)
-                    .map(|e| e.path.clone())
-                    .collect();
-                if !paths.is_empty() {
-                    result.push((port, paths));
-                    continue;
-                }
-            }
-
-            // 3. Built-in fallback
+            // Built-in fallback
             let builtin = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../assets/GeneralUser GS v1.472.sf2");
             if builtin.exists() {

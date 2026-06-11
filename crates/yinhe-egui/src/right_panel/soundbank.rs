@@ -15,75 +15,112 @@ pub fn show(
 ) -> bool {
     let mut changed = false;
 
-    // ── Top: global / project toggle ──
+    // ── Top: mode toggle (two text buttons, mutually exclusive) ──
     ui.horizontal(|ui| {
         ui.add_space(8.0);
-        let glbl = &mut settings.global_sf_config.global_enabled;
-        ui.checkbox(glbl, "全局音色库");
-        ui.add_space(16.0);
-        if let Some(ref mut doc) = doc {
-            ui.checkbox(&mut doc.project_sf.project_enabled, "歌曲配置（覆盖）");
-        } else {
-            ui.label("歌曲配置（覆盖）");
+
+        let is_global = settings.global_sf_config.global_enabled;
+
+        // "全局音色库" button
+        let resp_g = ui.add(
+            egui::Label::new(
+                egui::RichText::new("全局音色库")
+                    .size(crate::widgets::theme::MODE_LABEL_FONT)
+                    .color(if is_global {
+                        crate::widgets::theme::ACCENT_ACTIVE
+                    } else {
+                        egui::Color32::GRAY
+                    }),
+            )
+            .sense(egui::Sense::click())
+            .selectable(false),
+        );
+        if !is_global && resp_g.hovered() {
+            ui.painter().text(
+                resp_g.rect.center(),
+                egui::Align2::CENTER_CENTER,
+                "全局音色库",
+                egui::FontId::proportional(crate::widgets::theme::MODE_LABEL_FONT),
+                egui::Color32::WHITE,
+            );
         }
-        ui.add_space(8.0);
+        if resp_g.clicked() && !is_global {
+            settings.global_sf_config.global_enabled = true;
+            changed = true;
+        }
+
+        ui.add_space(16.0);
+
+        // "歌曲音色库" button
+        let resp_p = ui.add(
+            egui::Label::new(
+                egui::RichText::new("歌曲音色库")
+                    .size(crate::widgets::theme::MODE_LABEL_FONT)
+                    .color(if !is_global {
+                        crate::widgets::theme::ACCENT_ACTIVE
+                    } else {
+                        egui::Color32::GRAY
+                    }),
+            )
+            .sense(egui::Sense::click())
+            .selectable(false),
+        );
+        if is_global && resp_p.hovered() {
+            ui.painter().text(
+                resp_p.rect.center(),
+                egui::Align2::CENTER_CENTER,
+                "歌曲音色库",
+                egui::FontId::proportional(crate::widgets::theme::MODE_LABEL_FONT),
+                egui::Color32::WHITE,
+            );
+        }
+        if resp_p.clicked() && is_global {
+            settings.global_sf_config.global_enabled = false;
+            changed = true;
+        }
     });
 
+    ui.add_space(8.0);
+    ui.separator();
     ui.add_space(4.0);
 
-    // ── Split: global left, project right ──
-    let avail = ui.available_size();
-    let half_w = (avail.x - 8.0) / 2.0;
-
-    ui.horizontal(|ui| {
-        // ── Left: Global ──
-        ui.group(|ui| {
-            ui.set_min_width(half_w);
-            ui.set_max_width(half_w);
-            ui.vertical(|ui| {
-                ui.label(egui::RichText::new("全局音色库").strong().size(14.0));
-                ui.add_space(4.0);
-                changed |= global_panel(ui, settings);
-            });
-        });
-
-        ui.add_space(8.0);
-
-        // ── Right: Project ──
-        ui.group(|ui| {
-            ui.set_min_width(half_w);
-            ui.set_max_width(half_w);
-            ui.vertical(|ui| {
-                ui.label(egui::RichText::new("歌曲配置").strong().size(14.0));
-                ui.add_space(4.0);
-                if let Some(ref mut doc) = doc {
-                    changed |= project_panel(ui, doc);
-                } else {
-                    ui.label("（未打开文档）");
-                }
-            });
-        });
-    });
+    // ── Panel content: only one visible at a time ──
+    if settings.global_sf_config.global_enabled {
+        ui.label(
+            egui::RichText::new("所有端口共享同一组音色库")
+                .color(egui::Color32::from_gray(140))
+                .size(12.0),
+        );
+        ui.add_space(4.0);
+        changed |= global_panel(ui, settings);
+    } else {
+        if let Some(ref mut doc) = doc {
+            changed |= project_panel(ui, doc);
+        } else {
+            ui.label("（未打开文档）");
+        }
+    }
 
     // ── Bottom status bar ──
     ui.add_space(8.0);
     ui.separator();
     ui.horizontal(|ui| {
-        let total: usize = settings
-            .global_sf_config
-            .ports
-            .iter()
-            .map(|p| p.len())
-            .sum();
-        let enabled: usize = settings
-            .global_sf_config
-            .ports
-            .iter()
-            .flat_map(|p| p.iter())
-            .filter(|e| e.enabled)
-            .count();
-        ui.label(format!("全局: {} SF 文件, {} 已启用", total, enabled));
-        if let Some(ref doc) = doc {
+        if settings.global_sf_config.global_enabled {
+            let total: usize = settings
+                .global_sf_config
+                .ports
+                .iter()
+                .map(|p| p.len())
+                .sum();
+            let enabled: usize = settings
+                .global_sf_config
+                .ports
+                .iter()
+                .flat_map(|p| p.iter())
+                .filter(|e| e.enabled)
+                .count();
+            ui.label(format!("全局: {} SF 文件, {} 已启用", total, enabled));
+        } else if let Some(ref doc) = doc {
             let proj_total: usize = doc.project_sf.overrides.iter().map(|(_, e)| e.len()).sum();
             let proj_enabled: usize = doc
                 .project_sf
@@ -93,7 +130,7 @@ pub fn show(
                 .filter(|e| e.enabled)
                 .count();
             ui.label(format!(
-                "  歌曲: {} SF 文件, {} 已启用",
+                "歌曲: {} SF 文件, {} 已启用",
                 proj_total, proj_enabled
             ));
         }
@@ -107,37 +144,13 @@ pub fn show(
     changed
 }
 
-// ── Global panel ──
+// ── Global panel (no port selector — all ports share ports[0]) ──
 
 fn global_panel(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
     let mut changed = false;
-    let port_count = 16;
-    // Show all 16 ports so the user can add soundfonts to any port,
-    // even if it is currently empty.
-    let active_ports: Vec<usize> = (0..port_count).collect();
 
-    // Port selector
-    let port_names: Vec<String> = active_ports
-        .iter()
-        .map(|&p| format!("Port {}", (b'A' + p as u8) as char))
-        .collect();
-
-    let mut selected_port = settings.global_sf_config.selected_port as usize;
-    selected_port = selected_port.min(port_names.len().saturating_sub(1));
-    egui::ComboBox::from_id_salt("global_port")
-        .selected_text(&port_names[selected_port])
-        .show_ui(ui, |ui| {
-            for (i, name) in port_names.iter().enumerate() {
-                if ui.selectable_label(i == selected_port, name).clicked() {
-                    selected_port = i;
-                }
-            }
-        });
-    settings.global_sf_config.selected_port = selected_port as u8;
-    let port = active_ports[selected_port];
-
-    // SF list
-    let entries = &mut settings.global_sf_config.ports[port];
+    // SF list — always edit ports[0]
+    let entries = &mut settings.global_sf_config.ports[0];
     changed |= super::sf_list::sf_list(ui, entries);
 
     // Toolbar
@@ -162,7 +175,7 @@ fn global_panel(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
                 changed = true;
             }
         }
-        if ui.button("清空此 Port").clicked() {
+        if ui.button("清空").clicked() {
             entries.clear();
             changed = true;
         }
@@ -171,7 +184,7 @@ fn global_panel(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
     changed
 }
 
-// ── Project panel ──
+// ── Project panel (per-port SF lists) ──
 
 fn project_panel(ui: &mut egui::Ui, doc: &mut Document) -> bool {
     let mut changed = false;
@@ -225,16 +238,20 @@ fn project_panel(ui: &mut egui::Ui, doc: &mut Document) -> bool {
     doc.soundbank_selected_port = selected_port as u8;
     let port = used_ports[selected_port];
 
-    let has_override = doc.project_sf.overrides.iter().any(|(p, _)| *p == port);
+    let has_entries = doc
+        .project_sf
+        .overrides
+        .iter()
+        .any(|(p, _)| *p == port);
 
-    if has_override {
-        let ov_idx = doc
+    if has_entries {
+        let idx = doc
             .project_sf
             .overrides
             .iter()
             .position(|(p, _)| *p == port)
             .unwrap();
-        let entries = &mut doc.project_sf.overrides[ov_idx].1;
+        let entries = &mut doc.project_sf.overrides[idx].1;
         changed |= super::sf_list::sf_list(ui, entries);
 
         ui.horizontal(|ui| {
@@ -260,25 +277,18 @@ fn project_panel(ui: &mut egui::Ui, doc: &mut Document) -> bool {
             }
         });
 
-        if ui.button("清除覆盖").clicked() {
-            if let Some(idx) = doc
-                .project_sf
-                .overrides
-                .iter()
-                .position(|(p, _)| *p == port)
-            {
-                doc.project_sf.overrides.remove(idx);
-                changed = true;
-            }
+        if ui.button("清空此 Port").clicked() {
+            doc.project_sf.overrides[idx].1.clear();
+            changed = true;
         }
     } else {
         ui.label(
-            egui::RichText::new("（继承自全局配置）")
+            egui::RichText::new("（未配置音色库）")
                 .color(egui::Color32::from_gray(100))
                 .size(12.0),
         );
         ui.add_space(4.0);
-        if ui.button("为此 Port 创建覆盖").clicked() {
+        if ui.button("为此 Port 添加音色库").clicked() {
             doc.project_sf.overrides.push((port, Vec::new()));
         }
     }

@@ -13,11 +13,11 @@ pub struct SfEntry {
 /// Always has 16 ports (A–P). Ports with no entries are simply empty.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GlobalSfConfig {
+    /// Global SF list.  In global mode all ports share `ports[0]`.
     pub ports: [Vec<SfEntry>; 16],
+    /// `true` = global mode (one SF set for all ports).
+    /// `false` = project mode (per-port SF from `ProjectSfConfig`).
     pub global_enabled: bool,
-    /// Which port is currently selected in the global soundbank UI.
-    #[serde(default)]
-    pub selected_port: u8,
 }
 
 impl GlobalSfConfig {
@@ -36,7 +36,6 @@ impl GlobalSfConfig {
         Self {
             ports,
             global_enabled: true,
-            selected_port: 0,
         }
     }
 
@@ -64,22 +63,20 @@ impl Default for GlobalSfConfig {
     }
 }
 
-/// Song-specific soundfont overrides — lives in `Document`, not persisted yet.
+/// Song-specific soundfont config — lives in `Document`.
 ///
-/// Only ports that appear in `overrides` differ from the global config.
-/// When `project_enabled` is false, only the global config is used.
+/// When `GlobalSfConfig.global_enabled` is `false`, each port uses its
+/// entry here (if present), otherwise falls back to the built-in SF.
 #[derive(Clone, Debug)]
 pub struct ProjectSfConfig {
-    /// Port → entries that *replace* the global config for that port.
+    /// Port → SF entries for that port.
     pub overrides: Vec<(u8, Vec<SfEntry>)>,
-    pub project_enabled: bool,
 }
 
 impl Default for ProjectSfConfig {
     fn default() -> Self {
         Self {
             overrides: Vec::new(),
-            project_enabled: false,
         }
     }
 }

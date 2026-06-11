@@ -87,9 +87,7 @@ impl AudioEngine {
                     next_dense += 1;
                 }
             }
-            // Always instantiate at least 16 channels so a freshly-loaded
-            // file with no notes still has somewhere to send CC's.
-            let compacted_channels = next_dense.max(16);
+            let compacted_channels = next_dense.max(1);
 
             let config = ChannelGroupConfig {
                 channel_init_options: ChannelInitOptions {
@@ -174,8 +172,6 @@ impl AudioEngine {
             return;
         }
 
-        let t_start = std::time::Instant::now();
-
         let start = self.sample_position;
         let end = start + frames as u64;
 
@@ -196,7 +192,7 @@ impl AudioEngine {
             self.cc_cursor += 1;
         }
 
-        let mut notes_dispatched: usize = 0;
+        let mut _notes_dispatched: usize = 0;
 
         if let Some(ref midi) = self.midi {
             let sr = self.sample_rate as f64;
@@ -242,7 +238,7 @@ impl AudioEngine {
                                 end_sample: (midi.tick_to_seconds(note.end_tick as u64) * sr)
                                     as u64,
                             });
-                            notes_dispatched += 1;
+                            _notes_dispatched += 1;
                         }
                     }
 
@@ -287,37 +283,12 @@ impl AudioEngine {
             });
         }
 
-        let t_after_dispatch = std::time::Instant::now();
-
         let interleaved = &mut self.interleaved_buffer[..frames * STEREO_CHANNELS];
         interleaved.fill(0.0);
         self.channel_group.read_samples(interleaved);
         output[..frames * STEREO_CHANNELS].copy_from_slice(interleaved);
 
         self.sample_position = end;
-
-        // Per-callback perf trace: budget for `frames` samples at sr Hz is
-        // `frames / sr` seconds. Anything close to that is dangerous.
-        let total = t_start.elapsed().as_secs_f64();
-        let budget = frames as f64 / self.sample_rate as f64;
-        if total > budget * 0.5 {
-            let dispatch = t_after_dispatch
-                .saturating_duration_since(t_start)
-                .as_secs_f64();
-            let mix = total - dispatch;
-            eprintln!(
-                "[audio_trace] frames={} budget={:.2}ms total={:.2}ms ({:.0}%) \
-                 dispatch={:.2}ms mix={:.2}ms notes_on={} active={}",
-                frames,
-                budget * 1e3,
-                total * 1e3,
-                total / budget * 100.0,
-                dispatch * 1e3,
-                mix * 1e3,
-                notes_dispatched,
-                self.active_notes.len(),
-            );
-        }
     }
 
     // ── Private helpers ──

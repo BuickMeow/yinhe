@@ -52,7 +52,7 @@ pub(crate) struct Document {
     pub controller_panels: Vec<yinhe_automation::AutomationPanelView>,
     /// Whether any automation panels are visible.
     pub show_controller_panels: bool,
-    /// Song-specific soundfont overrides (not yet persisted).
+    /// Song-specific soundfont config.
     pub project_sf: ProjectSfConfig,
     /// Currently selected port in the soundbank panel (persists across frames).
     pub soundbank_selected_port: u8,
@@ -192,7 +192,13 @@ impl Document {
     }
 
     /// Create a new Document from a .yin project file.
-    pub fn from_yin(path: &str, quantize: QuantizePreset) -> std::io::Result<Self> {
+    ///
+    /// Returns `(document, soundfont_project_mode)` — the caller should
+    /// set `audio_settings.global_sf_config.global_enabled = !soundfont_project_mode`.
+    pub fn from_yin(
+        path: &str,
+        quantize: QuantizePreset,
+    ) -> std::io::Result<(Self, bool)> {
         let (midi, file_name, archive) = crate::project_io::load_project_full(path)?;
         let num_tracks = midi.track_ports.len();
         let track_names: Vec<String> = (0..num_tracks)
@@ -221,12 +227,12 @@ impl Document {
             project_description,
             project_ppq,
             project_sf,
+            soundfont_project_mode,
         ) = archive
             .get_events::<yinhe_project::ProjectJson>("project.json")
             .and_then(|v| v.into_iter().next())
             .map(|p| {
                 let sf = crate::right_panel::config::ProjectSfConfig {
-                    project_enabled: p.soundfont_enabled,
                     overrides: p
                         .soundfont_overrides
                         .into_iter()
@@ -245,7 +251,7 @@ impl Document {
                         })
                         .collect(),
                 };
-                (p.name, p.artist, p.description, p.ppq, sf)
+                (p.name, p.artist, p.description, p.ppq, sf, p.soundfont_project_mode)
             })
             .unwrap_or((
                 String::new(),
@@ -253,13 +259,14 @@ impl Document {
                 String::new(),
                 480,
                 crate::right_panel::config::ProjectSfConfig::default(),
+                false,
             ));
 
         let track_colors_cache = (0..num_tracks)
             .map(|i| yinhe_types::TRACK_PALETTE[i % yinhe_types::TRACK_PALETTE.len()])
             .collect();
 
-        Ok(Document {
+        Ok((Document {
             midi: Arc::new(midi),
             file_name,
             file_path: Some(path.to_string()),
@@ -283,6 +290,6 @@ impl Document {
             project_artist,
             project_description,
             project_ppq,
-        })
+        }, soundfont_project_mode))
     }
 }

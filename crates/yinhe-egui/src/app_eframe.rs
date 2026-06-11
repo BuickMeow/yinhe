@@ -114,10 +114,12 @@ impl eframe::App for App {
                     .and_then(|idx| self.documents.get(idx))
                     .map(|doc| doc.quantize)
                     .unwrap_or_default();
-                let doc = Document::from_yin(&path, quantize).unwrap_or_else(|_| {
-                    // Fallback: create from midi directly
-                    Document::from_midi(&file_name, midi, quantize)
-                });
+                let (doc, sf_project_mode) =
+                    Document::from_yin(&path, quantize).unwrap_or_else(|_| {
+                        // Fallback: create from midi directly
+                        (Document::from_midi(&file_name, midi, quantize), false)
+                    });
+                self.audio_settings.global_sf_config.global_enabled = !sf_project_mode;
                 let insert_idx = self.documents.len();
                 self.documents.push(doc);
                 self.active_doc = Some(insert_idx);

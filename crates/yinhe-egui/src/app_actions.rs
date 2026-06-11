@@ -95,6 +95,7 @@ impl App {
         let project_ppq = doc.project_ppq;
         let compression_level = doc.archive.as_ref().map(|a| a.compression_level).unwrap_or(0);
         let project_sf = doc.project_sf.clone();
+        let global_enabled = self.audio_settings.global_sf_config.global_enabled;
         let path_for_thread = path.clone();
 
         let (tx, rx) = mpsc::channel();
@@ -108,6 +109,7 @@ impl App {
                 compression_level,
                 &project_description,
                 &project_sf,
+                global_enabled,
             );
             if let Err(e) = archive.write_to(&path_for_thread) {
                 tracing::error!("Failed to save project: {}", e);

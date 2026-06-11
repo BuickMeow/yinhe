@@ -331,28 +331,12 @@ impl RenderContext {
         let do_render = self.needs_render || content_changed;
 
         if do_render {
-            let t0 = std::time::Instant::now();
             let mut encoder = self
                 .device()
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some(label) });
-            let t1 = std::time::Instant::now();
             renderer.draw(&mut encoder, self.preview_view(), width, height);
-            let t2 = std::time::Instant::now();
             self.queue().submit(std::iter::once(encoder.finish()));
-            let t3 = std::time::Instant::now();
             self.needs_render = false;
-
-            // Trace GPU pipeline phases when any phase is suspiciously slow
-            // (any phase taking >300us is worth a line).
-            let enc_us = t1.saturating_duration_since(t0).as_secs_f64() * 1e6;
-            let draw_us = t2.saturating_duration_since(t1).as_secs_f64() * 1e6;
-            let sub_us = t3.saturating_duration_since(t2).as_secs_f64() * 1e6;
-            if enc_us > 300.0 || draw_us > 300.0 || sub_us > 300.0 {
-                eprintln!(
-                    "[gpu_trace] {}: encoder={:.0}us draw={:.0}us submit={:.0}us",
-                    label, enc_us, draw_us, sub_us,
-                );
-            }
         }
 
         let texture_id = self.preview_texture_id();

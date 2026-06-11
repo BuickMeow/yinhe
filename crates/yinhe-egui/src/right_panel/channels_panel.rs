@@ -1,13 +1,14 @@
 use eframe::egui;
 
+use crate::dialogs::settings::AudioSettings;
 use crate::document::Document;
 
 /// Show the XSynth channel-mapping panel.
 ///
 /// Displays how many XSynth channels were created and which MIDI
-/// (port, channel) each one maps to.  Helps confirm that multi-port
-/// MIDI files are wired up correctly.
-pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
+/// (port, channel) each one maps to, plus whether each port has a
+/// SoundFont loaded.
+pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>, settings: &AudioSettings) {
     let Some(doc) = doc else {
         ui.add_space(8.0);
         ui.label(
@@ -75,12 +76,13 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
 
     egui::ScrollArea::vertical().show(ui, |ui| {
         egui::Grid::new("channel_map_grid")
-            .num_columns(3)
+            .num_columns(4)
             .spacing([12.0, 4.0])
             .show(ui, |ui| {
                 ui.label(egui::RichText::new("XSynth").strong());
                 ui.label(egui::RichText::new("源通道").strong());
                 ui.label(egui::RichText::new("活跃").strong());
+                ui.label(egui::RichText::new("音色库").strong());
                 ui.end_row();
 
                 for d in 0..compacted_channels {
@@ -110,6 +112,24 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
                         egui::Color32::from_gray(120)
                     };
 
+                    // Determine SF status for this row's port.
+                    let sf_status = if sources.is_empty() {
+                        None // inactive channel — no indicator
+                    } else {
+                        let port = (sources[0] >> 4) as u8;
+                        let has_sf = if settings.global_sf_config.global_enabled {
+                            settings.global_sf_config.ports[0]
+                                .iter()
+                                .any(|e| e.enabled)
+                        } else {
+                            doc.project_sf
+                                .overrides
+                                .iter()
+                                .any(|(p, entries)| *p == port && entries.iter().any(|e| e.enabled))
+                        };
+                        Some(has_sf)
+                    };
+
                     ui.label(
                         egui::RichText::new(format!("{:3}", d))
                             .monospace()
@@ -128,6 +148,22 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
                                 egui::Color32::from_gray(120)
                             }),
                     );
+                    match sf_status {
+                        None => {
+                            ui.label("");
+                        }
+                        Some(true) => {
+                            // SF loaded — no extra label needed
+                            ui.label("");
+                        }
+                        Some(false) => {
+                            ui.label(
+                                egui::RichText::new("● 未加载音色库")
+                                    .color(egui::Color32::from_rgb(230, 160, 40))
+                                    .size(12.0),
+                            );
+                        }
+                    }
                     ui.end_row();
                 }
             });

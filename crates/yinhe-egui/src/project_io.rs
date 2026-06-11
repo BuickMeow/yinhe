@@ -219,7 +219,7 @@ pub fn midi_to_archive_with_names(
         ppq: midi.ticks_per_beat,
         zstd_level: 0,
         description: String::new(),
-        soundfont_enabled: false,
+        soundfont_project_mode: false,
         soundfont_overrides: Vec::new(),
     };
     archive.set_events("project.json", FileHeader::new(*b"YHPR", 0, 0, 0), &[proj]);
@@ -401,13 +401,20 @@ pub fn archive_to_midi(archive: &ProjectArchive) -> yinhe_midi::MidiFile {
 }
 
 /// Save a document as a .yin file.
-pub fn save_project(doc: &crate::document::Document, path: &str) -> std::io::Result<()> {
-    let archive = build_archive(doc);
+pub fn save_project(
+    doc: &crate::document::Document,
+    path: &str,
+    global_enabled: bool,
+) -> std::io::Result<()> {
+    let archive = build_archive(doc, global_enabled);
     archive.write_to(path)
 }
 
 /// Build a ProjectArchive from a Document (without writing to disk).
-pub fn build_archive(doc: &crate::document::Document) -> ProjectArchive {
+pub fn build_archive(
+    doc: &crate::document::Document,
+    global_enabled: bool,
+) -> ProjectArchive {
     build_archive_from(
         &doc.midi,
         &doc.track_names,
@@ -417,6 +424,7 @@ pub fn build_archive(doc: &crate::document::Document) -> ProjectArchive {
         doc.archive.as_ref().map(|a| a.compression_level).unwrap_or(0),
         &doc.project_description,
         &doc.project_sf,
+        global_enabled,
     )
 }
 
@@ -430,6 +438,7 @@ pub fn build_archive_from(
     compression_level: i32,
     project_description: &str,
     project_sf: &crate::right_panel::config::ProjectSfConfig,
+    global_enabled: bool,
 ) -> ProjectArchive {
     let mut archive = midi_to_archive_with_names(midi, track_names);
 
@@ -456,7 +465,7 @@ pub fn build_archive_from(
         ppq: project_ppq,
         zstd_level: compression_level,
         description: project_description.to_string(),
-        soundfont_enabled: project_sf.project_enabled,
+        soundfont_project_mode: !global_enabled,
         soundfont_overrides,
     };
     archive.set_events("project.json", FileHeader::new(*b"YHPR", 0, 0, 0), &[proj]);

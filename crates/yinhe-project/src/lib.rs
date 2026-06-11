@@ -411,10 +411,10 @@ pub struct ProjectJson {
     /// Song description / notes.
     #[serde(default)]
     pub description: String,
-    /// Whether project-level soundfont overrides are enabled.
+    /// `true` = project mode (per-port SF).  `false` = global mode.
     #[serde(default)]
-    pub soundfont_enabled: bool,
-    /// Per-port soundfont overrides (only used when soundfont_enabled is true).
+    pub soundfont_project_mode: bool,
+    /// Per-port soundfont entries (only used in project mode).
     #[serde(default)]
     pub soundfont_overrides: Vec<SfPortOverride>,
 }

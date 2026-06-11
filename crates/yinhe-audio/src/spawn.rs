@@ -94,8 +94,7 @@ pub fn channels_for_midi(midi: &MidiFile) -> (u32, Vec<bool>) {
     }
 
     let max_active_ch = ch_active.iter().rposition(|&c| c > 0).unwrap_or(0);
-    let num_ports = ((max_active_ch / 16) + 1).max(1);
-    let num_channels = (num_ports as u32) * 16;
+    let num_channels = (max_active_ch + 1).max(1) as u32;
 
     let active_mask: Vec<bool> = ch_active[..num_channels as usize]
         .iter()
