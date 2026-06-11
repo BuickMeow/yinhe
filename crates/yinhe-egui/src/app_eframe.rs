@@ -46,6 +46,11 @@ impl<'a, T> Drop for ReplaceGuard<'a, T> {
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let _ui_total_start = if crate::perf_probe::enabled() {
+            Some(std::time::Instant::now())
+        } else {
+            None
+        };
         // ── Full-viewport background (matching title bar / transport bar) ──
         let bg = crate::widgets::theme::APP_BG;
         ui.painter().rect_filled(ui.ctx().screen_rect(), 0.0, bg);
@@ -297,13 +302,17 @@ impl eframe::App for App {
 
                 // Clone wgpu_state for automation panels before closure borrows render_ctx
                 let auto_wgpu_state = self.render_ctx.wgpu_state().clone();
-                let auto_lanes = doc.midi.automation_lanes.clone();
                 // Ensure controller_renderers has an entry for this document
                 while self.controller_renderers.len() <= idx {
                     self.controller_renderers.push(Vec::new());
                 }
 
                 ui.allocate_new_ui(egui::UiBuilder::new().max_rect(piano_rect), |ui| {
+                    let _piano_total_start = if crate::perf_probe::enabled() {
+                        Some(std::time::Instant::now())
+                    } else {
+                        None
+                    };
                     piano_view::show(
                         ui,
                         ui.available_size(),
@@ -329,10 +338,13 @@ impl eframe::App for App {
                         // Automation panel data
                         Some(&mut doc.controller_panels),
                         Some(&mut self.controller_renderers[idx]),
-                        Some(&auto_lanes),
+                        Some(&doc.midi.automation_lanes),
                         Some(&mut doc.show_controller_panels),
                         Some(&auto_wgpu_state),
                     );
+                    if let Some(t0) = _piano_total_start {
+                        crate::perf_probe::record_piano_total(t0.elapsed());
+                    }
                 });
                 // guard drops here → document restored even on panic
             }
@@ -402,6 +414,10 @@ impl eframe::App for App {
         self.file_loader.show_loading_overlay(ui);
         if self.file_loader.is_loading() {
             ui.ctx().request_repaint();
+        }
+
+        if let Some(t0) = _ui_total_start {
+            crate::perf_probe::record_ui_total(t0.elapsed());
         }
     }
 }

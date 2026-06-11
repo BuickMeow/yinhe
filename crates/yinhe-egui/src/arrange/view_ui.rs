@@ -34,6 +34,11 @@ pub fn show(
     follow_mode: &mut crate::view_interaction::FollowMode,
     active_tool: &Tool,
 ) {
+    let _arrange_total_start = if crate::perf_probe::enabled() {
+        Some(std::time::Instant::now())
+    } else {
+        None
+    };
     let (resp, painter) = ui.allocate_painter(available, egui::Sense::click_and_drag());
     let rect = resp.rect;
     let w = rect.width() as u32;
@@ -156,6 +161,10 @@ pub fn show(
         follow_mode,
         active_tool,
     );
+
+    if let Some(t0) = _arrange_total_start {
+        crate::perf_probe::record_arrange_total(t0.elapsed());
+    }
 }
 
 // ── Arrangement selection drag ──

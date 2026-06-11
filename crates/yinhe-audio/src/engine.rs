@@ -32,7 +32,17 @@ struct ActiveNote {
 /// Core MIDI synthesis engine.  Owned by the audio callback.
 pub(crate) struct AudioEngine {
     channel_group: ChannelGroup,
-    num_channels: u32,
+    /// Number of XSynth channels actually instantiated (== count of `true` in
+    /// `active_mask`, rounded up to a minimum of 16 for sane defaults).
+    /// This is what XSynth mixes per callback, NOT the maximum MIDI channel
+    /// index that appears in the file.
+    compacted_channels: u32,
+    /// Map: source MIDI channel (0..256) → compacted XSynth channel index.
+    /// `u32::MAX` for source channels that are inactive (not used by MIDI).
+    /// Built once at MIDI load from `active_mask`.
+    channel_map: Box<[u32; 256]>,
+    /// Per-source-channel active flag from the MIDI file. Kept for reference
+    /// (mute / solo overrides still operate on source channels).
     active_mask: Vec<bool>,
     sf_manager: SoundFontManager,
     sample_rate: u32,
@@ -63,15 +73,30 @@ pub(crate) struct AudioEngine {
 }
 
 impl AudioEngine {
-    pub(crate) fn new(sample_rate: u32, num_channels: u32, active_mask: Vec<bool>) -> Self {
+    pub(crate) fn new(sample_rate: u32, _num_channels: u32, active_mask: Vec<bool>) -> Self {
         yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Audio, || {
-            let num_channels = num_channels.max(16);
+            // Build channel_map: compact source-channel indices down to a
+            // dense range. XSynth will only allocate / mix the channels we
+            // actually need, which is critical for big MIDI files whose
+            // max channel index can be 4799 but only ~20 are alive.
+            let mut channel_map = Box::new([u32::MAX; 256]);
+            let mut next_dense: u32 = 0;
+            for (src, &alive) in active_mask.iter().enumerate().take(256) {
+                if alive {
+                    channel_map[src] = next_dense;
+                    next_dense += 1;
+                }
+            }
+            // Always instantiate at least 16 channels so a freshly-loaded
+            // file with no notes still has somewhere to send CC's.
+            let compacted_channels = next_dense.max(16);
+
             let config = ChannelGroupConfig {
                 channel_init_options: ChannelInitOptions {
                     fade_out_killing: true,
                 },
                 format: SynthFormat::Custom {
-                    channels: num_channels,
+                    channels: compacted_channels,
                 },
                 audio_params: AudioStreamParams {
                     sample_rate,
@@ -82,7 +107,8 @@ impl AudioEngine {
 
             Self {
                 channel_group: ChannelGroup::new(config),
-                num_channels,
+                compacted_channels,
+                channel_map,
                 active_mask,
                 sf_manager: SoundFontManager::new(sample_rate),
                 sample_rate,
@@ -148,18 +174,29 @@ impl AudioEngine {
             return;
         }
 
+        let t_start = std::time::Instant::now();
+
         let start = self.sample_position;
         let end = start + frames as u64;
 
         // Push CC events
         while self.cc_cursor < self.cc_events.len() && self.cc_events[self.cc_cursor].sample < end {
             let cc = &self.cc_events[self.cc_cursor];
-            self.channel_group.send_event(SynthEvent::Channel(
-                cc.channel,
-                ChannelEvent::Audio(cc.event),
-            ));
+            let dense = self
+                .channel_map
+                .get(cc.channel as usize)
+                .copied()
+                .unwrap_or(u32::MAX);
+            if dense != u32::MAX {
+                self.channel_group.send_event(SynthEvent::Channel(
+                    dense,
+                    ChannelEvent::Audio(cc.event),
+                ));
+            }
             self.cc_cursor += 1;
         }
+
+        let mut notes_dispatched: usize = 0;
 
         if let Some(ref midi) = self.midi {
             let sr = self.sample_rate as f64;
@@ -185,19 +222,28 @@ impl AudioEngine {
                     // skip_track is dynamic (mute changes at runtime).
                     let track = note.track as usize;
                     if !self.skip_track.get(track).copied().unwrap_or(false) {
-                        self.channel_group.send_event(SynthEvent::Channel(
-                            note.channel as u32,
-                            ChannelEvent::Audio(ChannelAudioEvent::NoteOn {
-                                key: key as u8,
-                                vel: note.velocity,
-                            }),
-                        ));
+                        let dense = self
+                            .channel_map
+                            .get(note.channel as usize)
+                            .copied()
+                            .unwrap_or(u32::MAX);
+                        if dense != u32::MAX {
+                            self.channel_group.send_event(SynthEvent::Channel(
+                                dense,
+                                ChannelEvent::Audio(ChannelAudioEvent::NoteOn {
+                                    key: key as u8,
+                                    vel: note.velocity,
+                                }),
+                            ));
 
-                        self.active_notes.push(ActiveNote {
-                            key: key as u8,
-                            channel: note.channel,
-                            end_sample: (midi.tick_to_seconds(note.end_tick as u64) * sr) as u64,
-                        });
+                            self.active_notes.push(ActiveNote {
+                                key: key as u8,
+                                channel: note.channel,
+                                end_sample: (midi.tick_to_seconds(note.end_tick as u64) * sr)
+                                    as u64,
+                            });
+                            notes_dispatched += 1;
+                        }
                     }
 
                     // Advance cursor and refresh the cache for the next note
@@ -215,12 +261,23 @@ impl AudioEngine {
             }
 
             // NoteOff: only check active notes (O(active) not O(128 * 1024))
+            // Borrow channel_map + channel_group as separate mutable views
+            // so the retain closure can call into them without borrowing
+            // `self` recursively.
+            let channel_map = &self.channel_map;
+            let cg = &mut self.channel_group;
             self.active_notes.retain(|an| {
                 if an.end_sample >= start && an.end_sample < end {
-                    self.channel_group.send_event(SynthEvent::Channel(
-                        an.channel as u32,
-                        ChannelEvent::Audio(ChannelAudioEvent::NoteOff { key: an.key }),
-                    ));
+                    let dense = channel_map
+                        .get(an.channel as usize)
+                        .copied()
+                        .unwrap_or(u32::MAX);
+                    if dense != u32::MAX {
+                        cg.send_event(SynthEvent::Channel(
+                            dense,
+                            ChannelEvent::Audio(ChannelAudioEvent::NoteOff { key: an.key }),
+                        ));
+                    }
                     false // remove from active list
                 } else if an.end_sample < start {
                     false // already past, clean up
@@ -230,12 +287,37 @@ impl AudioEngine {
             });
         }
 
+        let t_after_dispatch = std::time::Instant::now();
+
         let interleaved = &mut self.interleaved_buffer[..frames * STEREO_CHANNELS];
         interleaved.fill(0.0);
         self.channel_group.read_samples(interleaved);
         output[..frames * STEREO_CHANNELS].copy_from_slice(interleaved);
 
         self.sample_position = end;
+
+        // Per-callback perf trace: budget for `frames` samples at sr Hz is
+        // `frames / sr` seconds. Anything close to that is dangerous.
+        let total = t_start.elapsed().as_secs_f64();
+        let budget = frames as f64 / self.sample_rate as f64;
+        if total > budget * 0.5 {
+            let dispatch = t_after_dispatch
+                .saturating_duration_since(t_start)
+                .as_secs_f64();
+            let mix = total - dispatch;
+            eprintln!(
+                "[audio_trace] frames={} budget={:.2}ms total={:.2}ms ({:.0}%) \
+                 dispatch={:.2}ms mix={:.2}ms notes_on={} active={}",
+                frames,
+                budget * 1e3,
+                total * 1e3,
+                total / budget * 100.0,
+                dispatch * 1e3,
+                mix * 1e3,
+                notes_dispatched,
+                self.active_notes.len(),
+            );
+        }
     }
 
     // ── Private helpers ──
@@ -353,16 +435,20 @@ impl AudioEngine {
     }
 
     fn setup_percussion(&mut self, midi: &MidiFile) {
-        let num_ports = self.num_channels / 16;
-        for port in 0..num_ports {
-            let ch = (port * 16 + 9) as usize;
-            if ch < self.num_channels as usize && self.active_mask.get(ch).copied().unwrap_or(false)
-            {
-                self.channel_group.send_event(SynthEvent::Channel(
-                    ch as u32,
-                    ChannelEvent::Config(ChannelConfigEvent::SetPercussionMode(true)),
-                ));
+        // Drum channels in GM are channel 9 of each port (port*16 + 9).
+        // Iterate every active source channel matching that pattern.
+        for (src_ch, &alive) in self.active_mask.iter().enumerate().take(256) {
+            if !alive || src_ch % 16 != 9 {
+                continue;
             }
+            let dense = self.channel_map[src_ch];
+            if dense == u32::MAX {
+                continue;
+            }
+            self.channel_group.send_event(SynthEvent::Channel(
+                dense,
+                ChannelEvent::Config(ChannelConfigEvent::SetPercussionMode(true)),
+            ));
         }
         for evt in &midi.control_events {
             if let MidiControlEvent::ControlChange {
@@ -372,33 +458,43 @@ impl AudioEngine {
                 ..
             } = evt
             {
-                let ch = *channel as usize;
-                if ch < self.num_channels as usize
-                    && self.active_mask.get(ch).copied().unwrap_or(false)
-                {
-                    self.channel_group.send_event(SynthEvent::Channel(
-                        ch as u32,
-                        ChannelEvent::Config(ChannelConfigEvent::SetPercussionMode(*value >= 120)),
-                    ));
+                let src_ch = *channel as usize;
+                if src_ch >= 256 {
+                    continue;
                 }
+                let dense = self.channel_map[src_ch];
+                if dense == u32::MAX {
+                    continue;
+                }
+                self.channel_group.send_event(SynthEvent::Channel(
+                    dense,
+                    ChannelEvent::Config(ChannelConfigEvent::SetPercussionMode(*value >= 120)),
+                ));
             }
         }
     }
 
     fn load_soundfont_for_port(&mut self, port: u8, paths: &[String]) {
-        let base_ch = (port as u32) * 16;
-        if base_ch >= self.num_channels {
+        // A "port" is a logical group of 16 source MIDI channels. We need to
+        // pass the SF manager the set of *dense* (XSynth) channels that
+        // correspond to alive source channels of this port.
+        let base_src = (port as u32 * 16) as usize;
+        let end_src = (base_src + 16).min(256);
+        let mut dense_channels: Vec<u32> = Vec::with_capacity(16);
+        for src in base_src..end_src {
+            if self.active_mask.get(src).copied().unwrap_or(false) {
+                let dense = self.channel_map[src];
+                if dense != u32::MAX {
+                    dense_channels.push(dense);
+                }
+            }
+        }
+        if dense_channels.is_empty() {
             return;
         }
-        let end_ch = (base_ch + 16).min(self.num_channels);
-        let has_active =
-            (base_ch..end_ch).any(|ch| self.active_mask.get(ch as usize).copied().unwrap_or(false));
-        if !has_active {
-            return;
-        }
-        let _ =
-            self.sf_manager
-                .load_for_port(port, paths, &mut self.channel_group, &self.active_mask);
+        let _ = self
+            .sf_manager
+            .load_for_port_with_dense(port, paths, &mut self.channel_group, &dense_channels);
     }
 
     fn seek_to(&mut self, sample: u64) {

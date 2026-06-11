@@ -60,6 +60,26 @@ struct Aggregator {
     last_flush_at: Option<Instant>,
     /// Wall-clock instant of first sample in current window (for real fps).
     window_started_at: Option<Instant>,
+    /// Wall-clock instant of most recent sample (for gap measurement).
+    last_sample_at: Option<Instant>,
+    /// Largest wall-clock gap between two consecutive submitted samples
+    /// in this window. Reveals "stall" frames where the main thread
+    /// blocked between two render passes (e.g. waiting on vsync, audio
+    /// callback contention, GPU present).
+    max_gap_ms: f64,
+    /// Sum of ui() total durations recorded via [`record_ui_total`].
+    /// Captures everything inside `App::ui` (arrangement, automation
+    /// panel, menus, status bar, background tasks) — not just the
+    /// piano roll. Used to detect work happening outside the
+    /// per-phase decomposition.
+    ui_total_sum: Duration,
+    ui_total_count: u32,
+    /// Sum of arrange::show durations.
+    arrange_total_sum: Duration,
+    arrange_total_count: u32,
+    /// Sum of piano_view::show durations (the closure passed to allocate_new_ui).
+    piano_total_sum: Duration,
+    piano_total_count: u32,
     last_emitted_total_ms: f64,
     last_emitted_rebuild_active: bool,
     quiet_flushes_in_row: u32,
@@ -71,6 +91,14 @@ impl Aggregator {
             samples: Vec::new(),
             last_flush_at: None,
             window_started_at: None,
+            last_sample_at: None,
+            max_gap_ms: 0.0,
+            ui_total_sum: Duration::ZERO,
+            ui_total_count: 0,
+            arrange_total_sum: Duration::ZERO,
+            arrange_total_count: 0,
+            piano_total_sum: Duration::ZERO,
+            piano_total_count: 0,
             last_emitted_total_ms: 0.0,
             last_emitted_rebuild_active: false,
             quiet_flushes_in_row: 0,
@@ -81,6 +109,40 @@ impl Aggregator {
 fn agg() -> &'static Mutex<Aggregator> {
     static A: OnceLock<Mutex<Aggregator>> = OnceLock::new();
     A.get_or_init(|| Mutex::new(Aggregator::new()))
+}
+
+/// Record the wall-clock duration of one full `App::ui` call. Cheap;
+/// dropped silently if the mutex is busy.
+pub fn record_ui_total(d: Duration) {
+    if !enabled() {
+        return;
+    }
+    if let Ok(mut a) = agg().try_lock() {
+        a.ui_total_sum += d;
+        a.ui_total_count += 1;
+    }
+}
+
+/// Record the wall-clock duration of one full `arrange::show` call.
+pub fn record_arrange_total(d: Duration) {
+    if !enabled() {
+        return;
+    }
+    if let Ok(mut a) = agg().try_lock() {
+        a.arrange_total_sum += d;
+        a.arrange_total_count += 1;
+    }
+}
+
+/// Record the wall-clock duration of one full `piano_view::show` call.
+pub fn record_piano_total(d: Duration) {
+    if !enabled() {
+        return;
+    }
+    if let Ok(mut a) = agg().try_lock() {
+        a.piano_total_sum += d;
+        a.piano_total_count += 1;
+    }
 }
 
 /// Submit a per-frame sample. Cheap: amortised O(1), holds Mutex briefly.
@@ -104,6 +166,16 @@ pub fn submit(sample: FrameSample) {
     }
 
     let now = Instant::now();
+    // Wall-clock gap from previous submitted sample. Captures stalls
+    // (vsync, audio contention, GPU present blocking) that don't appear
+    // in any per-phase CPU timing.
+    if let Some(prev) = a.last_sample_at {
+        let gap_ms = now.duration_since(prev).as_secs_f64() * 1000.0;
+        if gap_ms > a.max_gap_ms {
+            a.max_gap_ms = gap_ms;
+        }
+    }
+    a.last_sample_at = Some(now);
     // Heartbeat: every 2s tell stderr how many samples landed, so we know
     // submit() is actually being called even if flush is somehow gated.
     {
@@ -144,6 +216,30 @@ fn flush(a: &mut Aggregator) {
         .map(|t| t.elapsed())
         .unwrap_or(Duration::ZERO);
     a.window_started_at = None;
+    let max_gap_ms = a.max_gap_ms;
+    a.max_gap_ms = 0.0;
+    a.last_sample_at = None;
+    let ui_total_ms = if a.ui_total_count > 0 {
+        a.ui_total_sum.as_secs_f64() * 1000.0 / a.ui_total_count as f64
+    } else {
+        0.0
+    };
+    a.ui_total_sum = Duration::ZERO;
+    a.ui_total_count = 0;
+    let arrange_total_ms = if a.arrange_total_count > 0 {
+        a.arrange_total_sum.as_secs_f64() * 1000.0 / a.arrange_total_count as f64
+    } else {
+        0.0
+    };
+    a.arrange_total_sum = Duration::ZERO;
+    a.arrange_total_count = 0;
+    let piano_total_ms = if a.piano_total_count > 0 {
+        a.piano_total_sum.as_secs_f64() * 1000.0 / a.piano_total_count as f64
+    } else {
+        0.0
+    };
+    a.piano_total_sum = Duration::ZERO;
+    a.piano_total_count = 0;
 
     let mut sum_input = Duration::ZERO;
     let mut sum_ps = Duration::ZERO;
@@ -201,7 +297,7 @@ fn flush(a: &mut Aggregator) {
     if !quiet || force {
         let line = format!(
             "[yin_perf] frames={n} real_fps={real_fps:.1} cpu_fps={cpu_fps:.0} \
-             cpu/frame={total:.2}ms wall={wall_secs:.2}s | input={input:.2} \
+             cpu/frame={total:.2}ms ui_total={ui_total_ms:.2}ms arrange={arrange_total_ms:.2}ms piano={piano_total_ms:.2}ms wall={wall_secs:.2}s gap_max={max_gap_ms:.1}ms | input={input:.2} \
              prep_static={ps:.2}(rb {rebuild_count}/{n}) prep_cursor={pc:.3} \
              upload={up:.2} | paint={pt:.2} misc={mi:.2} \
              | inst_max={max_inst} notes={total_notes} ppt={ppt:.4} \

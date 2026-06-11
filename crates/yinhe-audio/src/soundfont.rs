@@ -85,10 +85,47 @@ impl SoundFontManager {
         Ok(())
     }
 
+    /// Load soundfonts and bind them to an explicit set of dense (XSynth)
+    /// channel indices.
+    ///
+    /// The caller still passes the source-side `port` so we can keep
+    /// `port_sfs` indexed by port (preserves `load_for_midi`'s port-based
+    /// re-send behaviour). `dense_channels` should be the compacted XSynth
+    /// channel indices corresponding to the alive source channels of this
+    /// port.
+    pub fn load_for_port_with_dense(
+        &mut self,
+        port: u8,
+        paths: &[String],
+        cg: &mut ChannelGroup,
+        dense_channels: &[u32],
+    ) -> Result<(), String> {
+        let mut soundfonts = Vec::new();
+        for p in paths {
+            let path = Path::new(p);
+            let sf = self.load_soundfont(path)?;
+            soundfonts.push(sf);
+        }
+
+        self.port_sfs[port as usize] = soundfonts;
+        sweep_unused();
+
+        for &dense in dense_channels {
+            let sfs = self.port_sfs[port as usize].clone();
+            cg.send_event(SynthEvent::Channel(
+                dense,
+                ChannelEvent::Config(ChannelConfigEvent::SetSoundfonts(sfs)),
+            ));
+        }
+
+        Ok(())
+    }
+
     pub fn load_for_midi(
         &mut self,
         midi: &MidiFile,
         cg: &mut ChannelGroup,
+        channel_map: &[u32; 256],
     ) -> Result<(), String> {
         let mut used_ports = [false; 16];
         for &port in &midi.track_ports {
@@ -100,12 +137,15 @@ impl SoundFontManager {
         for (port, &used) in used_ports.iter().enumerate() {
             if used && !self.port_sfs[port].is_empty() {
                 let sfs = self.port_sfs[port].clone();
-                let base_ch = (port as u32) * 16;
-                for ch in base_ch..base_ch + 16 {
-                    cg.send_event(SynthEvent::Channel(
-                        ch,
-                        ChannelEvent::Config(ChannelConfigEvent::SetSoundfonts(sfs.clone())),
-                    ));
+                let base_src = (port as u32 * 16) as usize;
+                for src_ch in base_src..base_src + 16 {
+                    let dense = channel_map[src_ch];
+                    if dense != u32::MAX {
+                        cg.send_event(SynthEvent::Channel(
+                            dense,
+                            ChannelEvent::Config(ChannelConfigEvent::SetSoundfonts(sfs.clone())),
+                        ));
+                    }
                 }
             }
         }
