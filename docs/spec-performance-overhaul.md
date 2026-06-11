@@ -17,7 +17,7 @@
 |------|------|----------|--------|------|------|
 | A3 | 把 scroll_x 平移做到 shader uniform | 极高 | 中 | 中（跨视图） | 待做 |
 | A1 | 让 static 缓存在播放时真正生效 | 极高 | 小 | 低（依赖 A3） | 待做 |
-| B1+B2 | audio 扁平化 + 预算 sample | 极高 | 中 | 中（mute 重建） | 待做 |
+| B1+B2 | audio 扁平化 + 预算 sample | 极高 | 中 | 中（mute 重建） | ✅ **已完成**（采 B1' + B2' 简化方案，见下） |
 | A2 | cursor 独立 instance buffer | 高 | 小 | 低 | 待做 |
 | A5 | piano roll 小音符合并 | 高 | 中 | 低 | 待做 |
 | B3 | velocity lane 懒加载 | 高 | 小 | 低 | 待做 |
@@ -440,6 +440,17 @@ for key in 0..128 {
 1. 4000 万音符 MIDI 满载播放，无破音、无音频回调超时；
 2. mute/unmute 单个 track 实时生效，无重建延迟；
 3. seek 仍准确。
+
+**实际落地（2026-06 实施版本，简化为 B1' + B2'）**
+
+放弃了"全量预算 sample"的 `PreparedNoteEvent` 方案（4000 万 × 18B = 720 MB 内存代价过高）。改采：
+
+- **B1'**：`AudioEngine` 新增 `audible_index: [Vec<u32>; 128]`，`load_midi` 时按 `velocity > 1 && active_mask[channel]` 过滤，存的是原 `key_notes[k]` 的下标。render 路径只走 `audible_index`，vel≤1 和 inactive channel 的音符**永远不进入 cursor 步进**。内存 ~16 MB（10% 有声 × 4B）。
+- **B2'**：`next_note_sample: [u64; 128]` 缓存当前 cursor 指向音符的 `start_sample`，render 直接对比缓存判断"是不是到时间了"，零 `tick_to_seconds` 调用。cursor 推进时算下一个的 `start_sample`（每音符全程 2 次 `tick_to_seconds`：start + end）。
+
+mute/unmute 不重建 `audible_index`（保留 `track` 字段，render 处动态检查 `skip_track`）。seek_to 在 `audible_index` 上做 `partition_point` 二分，仍准确。
+
+**收益**：cursor 步进量 ↓ ~10–100×（黑 MIDI 通常 90%+ 为 vel≤1 装饰）；运行时无每帧 `tick_to_seconds` 流量。**内存仅 +16 MB**。
 
 ---
 

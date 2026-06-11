@@ -41,7 +41,19 @@ pub(crate) struct AudioEngine {
     interleaved_buffer: Vec<f32>,
     duration_samples: u64,
 
-    note_cursors: [usize; 128],
+    /// Per-key index list pointing into `midi.key_notes[k]`. Only contains
+    /// notes that are actually audible (velocity > 1 AND channel is active).
+    /// Built once in `load_midi`; mute/unmute does NOT rebuild this — it only
+    /// flips `skip_track` bits checked at render time.
+    audible_index: [Vec<u32>; 128],
+    /// Current cursor into `audible_index[k]` per key.
+    audible_cursor: [usize; 128],
+    /// Cached start_sample of the note that `audible_cursor[k]` currently points
+    /// to. Equals `u64::MAX` when the cursor has reached the end of the list.
+    /// Lets the render loop decide "is the next note due yet?" without calling
+    /// `tick_to_seconds`.
+    next_note_sample: [u64; 128],
+
     cc_events: Vec<SortedCC>,
     cc_cursor: usize,
     active_notes: Vec<ActiveNote>,
@@ -78,7 +90,9 @@ impl AudioEngine {
                 playing: false,
                 interleaved_buffer: vec![0.0f32; sample_rate as usize * STEREO_CHANNELS],
                 duration_samples: 0,
-                note_cursors: [0; 128],
+                audible_index: core::array::from_fn(|_| Vec::new()),
+                audible_cursor: [0; 128],
+                next_note_sample: [u64::MAX; 128],
                 cc_events: Vec::new(),
                 cc_cursor: 0,
                 active_notes: Vec::new(),
@@ -136,7 +150,6 @@ impl AudioEngine {
 
         let start = self.sample_position;
         let end = start + frames as u64;
-        let sr = self.sample_rate as f64;
 
         // Push CC events
         while self.cc_cursor < self.cc_events.len() && self.cc_events[self.cc_cursor].sample < end {
@@ -149,51 +162,55 @@ impl AudioEngine {
         }
 
         if let Some(ref midi) = self.midi {
-            // NoteOn + track active notes (single pass over 128 keys)
+            let sr = self.sample_rate as f64;
+
+            // NoteOn: walk pre-filtered audible_index per key.
+            // vel ≤ 1 and inactive-channel notes were already excluded at
+            // load_midi time, so they are never iterated here.
+            // next_note_sample[key] caches the start_sample of the cursor's
+            // current target, eliminating per-note tick_to_seconds calls in
+            // the "is it time yet?" check.
             for key in 0..128usize {
-                let notes = &midi.key_notes[key];
-                while self.note_cursors[key] < notes.len() {
-                    let note = &notes[self.note_cursors[key]];
-                    if note.velocity <= 1 {
-                        self.note_cursors[key] += 1;
-                        continue;
-                    }
-
-                    // Cheap checks first (no tick_to_seconds):
-                    // Skip notes on inactive channels
-                    let ch = note.channel as usize;
-                    if !self.active_mask.get(ch).copied().unwrap_or(false) {
-                        self.note_cursors[key] += 1;
-                        continue;
-                    }
-                    // Skip notes on hidden tracks
-                    let track = note.track as usize;
-                    if self.skip_track.get(track).copied().unwrap_or(false) {
-                        self.note_cursors[key] += 1;
-                        continue;
-                    }
-
-                    // Expensive: convert tick to sample position
-                    let note_start = (midi.tick_to_seconds(note.start_tick as u64) * sr) as u64;
-                    if note_start >= end {
+                loop {
+                    let start_sample = self.next_note_sample[key];
+                    if start_sample >= end {
                         break;
                     }
 
-                    self.channel_group.send_event(SynthEvent::Channel(
-                        note.channel as u32,
-                        ChannelEvent::Audio(ChannelAudioEvent::NoteOn {
+                    let cursor = self.audible_cursor[key];
+                    let list = &self.audible_index[key];
+                    let note_idx = list[cursor] as usize;
+                    let note = &midi.key_notes[key][note_idx];
+
+                    // skip_track is dynamic (mute changes at runtime).
+                    let track = note.track as usize;
+                    if !self.skip_track.get(track).copied().unwrap_or(false) {
+                        self.channel_group.send_event(SynthEvent::Channel(
+                            note.channel as u32,
+                            ChannelEvent::Audio(ChannelAudioEvent::NoteOn {
+                                key: key as u8,
+                                vel: note.velocity,
+                            }),
+                        ));
+
+                        self.active_notes.push(ActiveNote {
                             key: key as u8,
-                            vel: note.velocity,
-                        }),
-                    ));
+                            channel: note.channel,
+                            end_sample: (midi.tick_to_seconds(note.end_tick as u64) * sr) as u64,
+                        });
+                    }
 
-                    self.active_notes.push(ActiveNote {
-                        key: key as u8,
-                        channel: note.channel,
-                        end_sample: (midi.tick_to_seconds(note.end_tick as u64) * sr) as u64,
-                    });
-
-                    self.note_cursors[key] += 1;
+                    // Advance cursor and refresh the cache for the next note
+                    // on this key (B2': single tick_to_seconds per advance).
+                    let next_cursor = cursor + 1;
+                    self.audible_cursor[key] = next_cursor;
+                    self.next_note_sample[key] = if next_cursor < list.len() {
+                        let next_idx = list[next_cursor] as usize;
+                        let next_note = &midi.key_notes[key][next_idx];
+                        (midi.tick_to_seconds(next_note.start_tick as u64) * sr) as u64
+                    } else {
+                        u64::MAX
+                    };
                 }
             }
 
@@ -275,7 +292,6 @@ impl AudioEngine {
         }
         self.cc_events.sort_by_key(|e| e.sample);
 
-        self.note_cursors = [0; 128];
         self.duration_samples = (midi.tick_to_seconds(midi.tick_length) * sr) as u64;
 
         // Auto-detect note-drawing tracks: tracks where every note has
@@ -294,6 +310,46 @@ impl AudioEngine {
             }
         }
         self.skip_track = track_has_audio.iter().map(|&has| !has).collect();
+
+        // Build audible_index: pre-filter velocity ≤ 1 and inactive channels.
+        // Notes filtered here are NEVER seen by the render loop.
+        // (skip_track is mute state — dynamic, checked at render time.)
+        for key in 0..128usize {
+            let notes = &midi.key_notes[key];
+            let mut idx_list: Vec<u32> = Vec::new();
+            for (i, note) in notes.iter().enumerate() {
+                if note.velocity <= 1 {
+                    continue;
+                }
+                let ch = note.channel as usize;
+                if !self.active_mask.get(ch).copied().unwrap_or(false) {
+                    continue;
+                }
+                idx_list.push(i as u32);
+            }
+            idx_list.shrink_to_fit();
+            self.audible_index[key] = idx_list;
+        }
+
+        self.audible_cursor = [0; 128];
+        self.refresh_next_note_samples(midi);
+    }
+
+    /// Refresh `next_note_sample[k]` based on current `audible_cursor[k]`.
+    /// Used after `load_midi` and `seek_to` to prime the cache.
+    fn refresh_next_note_samples(&mut self, midi: &MidiFile) {
+        let sr = self.sample_rate as f64;
+        for key in 0..128usize {
+            let cursor = self.audible_cursor[key];
+            let list = &self.audible_index[key];
+            self.next_note_sample[key] = if cursor < list.len() {
+                let note_idx = list[cursor] as usize;
+                let note = &midi.key_notes[key][note_idx];
+                (midi.tick_to_seconds(note.start_tick as u64) * sr) as u64
+            } else {
+                u64::MAX
+            };
+        }
     }
 
     fn setup_percussion(&mut self, midi: &MidiFile) {
@@ -356,21 +412,25 @@ impl AudioEngine {
             )));
 
         self.sample_position = sample;
-        self.note_cursors = [0; 128];
+        self.audible_cursor = [0; 128];
         self.cc_cursor = 0;
         self.active_notes.clear();
 
         self.cc_cursor = self.cc_events.partition_point(|cc| cc.sample < sample);
 
-        if let Some(ref midi) = self.midi {
+        if let Some(midi) = self.midi.as_ref().map(Arc::clone) {
             let sr = self.sample_rate as f64;
             for key in 0..128usize {
-                let notes = &midi.key_notes[key];
-                self.note_cursors[key] = notes.partition_point(|n| {
-                    let note_start = (midi.tick_to_seconds(n.start_tick as u64) * sr) as u64;
+                let list = &self.audible_index[key];
+                // Binary search over audible_index (not key_notes): only audible
+                // notes need to be considered as starting points after seek.
+                self.audible_cursor[key] = list.partition_point(|&note_idx| {
+                    let note = &midi.key_notes[key][note_idx as usize];
+                    let note_start = (midi.tick_to_seconds(note.start_tick as u64) * sr) as u64;
                     note_start < sample
                 });
             }
+            self.refresh_next_note_samples(&midi);
         }
 
         self.inject_chase(sample);
@@ -515,5 +575,52 @@ mod tests {
     fn test_active_mask_length() {
         let mask = vec![false; 16];
         let _engine = AudioEngine::new(44100, 16, mask);
+    }
+
+    #[test]
+    fn test_audible_index_filters_vel_and_inactive_channel() {
+        // key 60: 4 notes — vel=0 ch0 / vel=1 ch0 / vel=100 ch0 / vel=100 ch3
+        // active_mask: ch0 active, ch3 inactive (and everything else)
+        // Expected audible_index[60] = [2] (only vel=100 ch0)
+        let midi = Arc::new(make_midi_with_notes(vec![
+            (60, 0, 480, 0, 0),    // vel=0  → filtered
+            (60, 480, 960, 1, 0),  // vel=1  → filtered
+            (60, 960, 1440, 100, 0),  // vel=100 ch0 → kept (idx 2)
+            (60, 1440, 1920, 100, 3), // vel=100 ch3 → filtered (ch3 inactive)
+        ]));
+        let mut mask = vec![false; 16];
+        mask[0] = true;
+        let mut engine = AudioEngine::new(44100, 16, mask);
+        engine.load_midi(&midi);
+
+        assert_eq!(engine.audible_index[60], vec![2u32]);
+        for key in 0..128usize {
+            if key != 60 {
+                assert!(engine.audible_index[key].is_empty(), "key {} should be empty", key);
+            }
+        }
+
+        // next_note_sample[60] should be the start_sample of note idx 2
+        // (start_tick=960). With tpb=480 @ 120 BPM, 1 beat = 0.5s, so
+        // 960 ticks = 1.0s = 44100 samples.
+        assert_eq!(engine.next_note_sample[60], 44100);
+        // Other keys: no audible notes → MAX
+        assert_eq!(engine.next_note_sample[0], u64::MAX);
+    }
+
+    #[test]
+    fn test_audible_index_empty_when_all_filtered() {
+        let midi = Arc::new(make_midi_with_notes(vec![
+            (60, 0, 480, 0, 0), // vel=0 only
+            (61, 0, 480, 1, 0), // vel=1 only
+        ]));
+        let mask = vec![true; 16];
+        let mut engine = AudioEngine::new(44100, 16, mask);
+        engine.load_midi(&midi);
+
+        for key in 0..128usize {
+            assert!(engine.audible_index[key].is_empty());
+            assert_eq!(engine.next_note_sample[key], u64::MAX);
+        }
     }
 }
