@@ -264,33 +264,33 @@ pub(crate) fn show(
 
     if resp.double_clicked() {
         if let Some(pos) = resp.interact_pointer_pos() {
-            if let Some((idx, _)) = hit(pos) {
-                // Save snapshot only on first solo (no existing snapshot).
-                if track_pianoroll_visible_snapshot.is_none() {
-                    *track_pianoroll_visible_snapshot = Some(track_pianoroll_visible.to_vec());
-                }
-                // Solo this row: only `idx` visible.
-                for i in 0..track_pianoroll_visible.len() {
-                    track_pianoroll_visible[i] = i == idx;
-                }
-                *track_selected = Some(track_info[idx].index);
-            }
-        }
-    } else if resp.clicked() {
-        if let Some(pos) = resp.interact_pointer_pos() {
             if let Some((idx, in_name_zone)) = hit(pos) {
                 let row_track_idx = track_info[idx].index;
                 if in_name_zone && *track_selected == Some(row_track_idx) {
-                    // Re-click on the selected row's name zone → deselect and
-                    // restore snapshot if one exists.
+                    // Double-click on the selected row's name zone → deselect
+                    // and restore snapshot if one exists.
                     *track_selected = None;
                     if let Some(snap) = track_pianoroll_visible_snapshot.take() {
                         let n = track_pianoroll_visible.len().min(snap.len());
                         track_pianoroll_visible[..n].copy_from_slice(&snap[..n]);
                     }
                 } else {
+                    // Double-click on an unselected row → solo it.
+                    if track_pianoroll_visible_snapshot.is_none() {
+                        *track_pianoroll_visible_snapshot =
+                            Some(track_pianoroll_visible.to_vec());
+                    }
+                    for i in 0..track_pianoroll_visible.len() {
+                        track_pianoroll_visible[i] = i == idx;
+                    }
                     *track_selected = Some(row_track_idx);
                 }
+            }
+        }
+    } else if resp.clicked() {
+        if let Some(pos) = resp.interact_pointer_pos() {
+            if let Some((idx, _)) = hit(pos) {
+                *track_selected = Some(track_info[idx].index);
             }
         }
     }

@@ -312,6 +312,7 @@ pub fn show(
             bar_line_data.map(|b| b.2).unwrap_or(4),
             bar_line_data.map(|b| b.3).unwrap_or(&[]),
             track_visible,
+            track_colors,
         );
 
         if midi.is_some() {

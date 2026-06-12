@@ -33,6 +33,7 @@ pub fn build_automation_instances(
     default_den: u8,
     time_sig_events: &[TimeSigEvent],
     track_visible: &[bool],
+    track_colors: &[[f32; 3]],
 ) {
     let w = width as f32;
     let h = height as f32;
@@ -153,8 +154,11 @@ pub fn build_automation_instances(
                 continue;
             }
 
-            let trk = evt.track as usize % TRACK_PALETTE.len();
-            let color = TRACK_PALETTE[trk];
+            let trk = evt.track as usize;
+            let color = track_colors
+                .get(trk)
+                .copied()
+                .unwrap_or_else(|| TRACK_PALETTE[trk % TRACK_PALETTE.len()]);
 
             bars.push(Bar {
                 evt,
@@ -231,7 +235,7 @@ mod tests {
         let mut instances = Vec::new();
         let view = make_view(1.0, 0.0, 80.0);
 
-        build_automation_instances(&mut instances, 800, 100, &view, None, None, 4, 2, &[], &[]);
+        build_automation_instances(&mut instances, 800, 100, &view, None, None, 4, 2, &[], &[], &[]);
 
         assert!(!instances.is_empty());
         let bg = &instances[0];
@@ -246,7 +250,7 @@ mod tests {
         let mut instances = Vec::new();
         let view = make_view(1.0, 0.0, 80.0);
 
-        build_automation_instances(&mut instances, 800, 100, &view, None, None, 4, 2, &[], &[]);
+        build_automation_instances(&mut instances, 800, 100, &view, None, None, 4, 2, &[], &[], &[]);
 
         assert_eq!(instances.len(), 1, "no TPB means no grid lines");
     }
@@ -256,7 +260,7 @@ mod tests {
         let mut instances = Vec::new();
         let view = make_view(1.0, 0.0, 80.0);
 
-        build_automation_instances(&mut instances, 800, 100, &view, None, Some(480), 4, 2, &[], &[]);
+        build_automation_instances(&mut instances, 800, 100, &view, None, Some(480), 4, 2, &[], &[], &[]);
 
         assert!(instances.len() > 1);
         let grid_line = &instances[1];
@@ -282,7 +286,7 @@ mod tests {
             None,
             4,
             2,
-            &[], &[]);
+            &[], &[], &[]);
 
         assert_eq!(instances.len(), 2);
         let center = &instances[1];
@@ -310,7 +314,7 @@ mod tests {
             None,
             4,
             2,
-            &[], &[]);
+            &[], &[], &[]);
 
         assert_eq!(instances.len(), 2);
         let center = &instances[1];
@@ -335,7 +339,7 @@ mod tests {
             None,
             4,
             2,
-            &[], &[]);
+            &[], &[], &[]);
 
         assert_eq!(instances.len(), 1);
     }
@@ -358,7 +362,7 @@ mod tests {
             None,
             4,
             2,
-            &[], &[]);
+            &[], &[], &[]);
 
         assert_eq!(instances.len(), 1);
     }
@@ -381,7 +385,7 @@ mod tests {
             None,
             4,
             2,
-            &[], &[]);
+            &[], &[], &[]);
 
         assert_eq!(instances.len(), 3);
 
@@ -420,7 +424,7 @@ mod tests {
             None,
             4,
             2,
-            &[], &[]);
+            &[], &[], &[]);
 
         assert_eq!(instances.len(), 1, "off-screen events should be skipped");
     }
@@ -440,7 +444,7 @@ mod tests {
             None,
             4,
             2,
-            &[], &[]);
+            &[], &[], &[]);
 
         assert_eq!(instances.len(), 2);
         // x = 60 - 50 + 100 = 110
@@ -466,7 +470,7 @@ mod tests {
             None,
             4,
             2,
-            &[], &[]);
+            &[], &[], &[]);
 
         assert_eq!(instances.len(), 4);
 
@@ -515,7 +519,7 @@ mod tests {
             None,
             4,
             2,
-            &[], &[]);
+            &[], &[], &[]);
 
         assert_eq!(instances.len(), 3);
         assert_ne!(instances[1].rgba_packed, instances[2].rgba_packed);
@@ -541,7 +545,7 @@ mod tests {
             None,
             4,
             2,
-            &[], &[]);
+            &[], &[], &[]);
 
         assert_eq!(instances.len(), 1);
     }
@@ -551,7 +555,7 @@ mod tests {
         let mut instances = Vec::new();
         let view = make_view(1.0, 0.0, 0.0);
 
-        build_automation_instances(&mut instances, 0, 0, &view, None, None, 4, 2, &[], &[]);
+        build_automation_instances(&mut instances, 0, 0, &view, None, None, 4, 2, &[], &[], &[]);
 
         assert_eq!(instances.len(), 1);
         assert_eq!(instances[0].w, 0.0);
@@ -573,7 +577,7 @@ mod tests {
             None,
             4,
             2,
-            &[], &[]);
+            &[], &[], &[]);
 
         // Background + center line + 1 bar
         assert_eq!(instances.len(), 3);
@@ -601,7 +605,7 @@ mod tests {
             None,
             4,
             2,
-            &[], &[]);
+            &[], &[], &[]);
 
         assert_eq!(instances.len(), 2);
         assert!((instances[1].x - 60.0).abs() < 0.001);
@@ -624,7 +628,7 @@ mod tests {
             None,
             4,
             2,
-            &[], &[]);
+            &[], &[], &[]);
 
         assert_eq!(instances.len(), 1, "bar with negative x should be skipped");
     }
@@ -645,7 +649,7 @@ mod tests {
             None,
             4,
             2,
-            &[], &[]);
+            &[], &[], &[]);
 
         assert_eq!(
             instances.len(),
@@ -673,7 +677,7 @@ mod tests {
             Some(480),
             4,
             2,
-            &ts_events, &[]);
+            &ts_events, &[], &[]);
 
         // Background + grid lines (no lane)
         assert!(instances.len() > 1);
@@ -715,6 +719,7 @@ mod tests {
             2,
             &[],
             &[true, true],
+            &[],
         );
 
         // Only track 0 visible → only one bar.
@@ -730,6 +735,7 @@ mod tests {
             2,
             &[],
             &[true, false],
+            &[],
         );
 
         // The difference must be exactly one instance (the hidden bar).
