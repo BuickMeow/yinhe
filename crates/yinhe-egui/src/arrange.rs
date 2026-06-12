@@ -122,6 +122,9 @@ pub fn show(
             &doc.pc_map_cache,
             &mut arr_view.base.track_panel_row_height,
             &mut arr_view.base.track_panel_scroll_y,
+            &mut doc.channel_groups,
+            &mut doc.conductor_expanded,
+            &doc.tempo_lane,
         );
 
         arr_view.base.scroll_y = arr_view.base.track_panel_scroll_y;

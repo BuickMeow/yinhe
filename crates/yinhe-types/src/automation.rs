@@ -17,6 +17,8 @@ pub enum AutomationTarget {
     CoarseTune,
     /// Per-note velocity (extracted from NoteOn events).
     Velocity,
+    /// BPM / Tempo automation (from conductor track tempo_segments).
+    Tempo,
     // Future: VSTParam { plugin_id: u32, param_id: u32 },
 }
 
@@ -30,6 +32,7 @@ impl AutomationTarget {
             AutomationTarget::FineTune => 100, // ±50 cents → range 100
             AutomationTarget::CoarseTune => 24,
             AutomationTarget::Velocity => 127,
+            AutomationTarget::Tempo => 300, // BPM max
         }
     }
 
@@ -42,6 +45,7 @@ impl AutomationTarget {
             AutomationTarget::FineTune => 50, // center of 0..100
             AutomationTarget::CoarseTune => 0,
             AutomationTarget::Velocity => 0,
+            AutomationTarget::Tempo => 120, // default BPM
         }
     }
 
@@ -69,6 +73,7 @@ impl AutomationTarget {
             AutomationTarget::FineTune => "Fine Tune (RPN 1)".into(),
             AutomationTarget::CoarseTune => "Coarse Tune (RPN 2)".into(),
             AutomationTarget::Velocity => "Velocity".into(),
+            AutomationTarget::Tempo => "Tempo (BPM)".into(),
         }
     }
 }

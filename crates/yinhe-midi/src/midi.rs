@@ -430,3 +430,32 @@ pub fn build_automation_lanes(
     result.sort_by(|a, b| a.target.display_name().cmp(&b.target.display_name()));
     result
 }
+
+/// Build a tempo automation lane from tempo segments.
+///
+/// Each `TempoSegment` produces one event at `start_tick` with value = BPM.
+/// The value is stored as `(bpm * 100) as u16` to preserve two decimal places
+/// of precision (e.g. 120.50 BPM → 12050).
+pub fn build_tempo_automation_lane(
+    tempo_segments: &[TempoSegment],
+) -> yinhe_types::AutomationLane {
+    use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget};
+
+    let events: Vec<AutomationEvent> = tempo_segments
+        .iter()
+        .map(|seg| {
+            let bpm = bpm_from_mpq(seg.micros_per_quarter);
+            AutomationEvent {
+                tick: seg.start_tick,
+                value: (bpm * 100.0).round() as u16,
+                channel: 0,
+                track: 0,
+            }
+        })
+        .collect();
+
+    AutomationLane {
+        target: AutomationTarget::Tempo,
+        events,
+    }
+}

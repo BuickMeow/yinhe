@@ -6,6 +6,7 @@ use yinhe_types::TRACK_PALETTE;
 use crate::playback::PlaybackState;
 use crate::quantize::QuantizePreset;
 use crate::right_panel::config::ProjectSfConfig;
+use crate::widgets::track_panel::ChannelGroup;
 
 /// Per-track mutable overrides (mute, solo, future name/port/channel edits).
 #[derive(Clone)]
@@ -64,6 +65,12 @@ pub(crate) struct Document {
     pub project_description: String,
     /// Editable PPQ (ticks per beat). Saved to project.json; takes effect on next load.
     pub project_ppq: u32,
+    /// Channel groups (port+channel) for track panel folder display.
+    pub channel_groups: Vec<ChannelGroup>,
+    /// Whether the conductor track is expanded.
+    pub conductor_expanded: bool,
+    /// BPM automation lane (built from tempo_segments).
+    pub tempo_lane: Option<yinhe_types::AutomationLane>,
 }
 
 impl Default for Document {
@@ -92,6 +99,9 @@ impl Default for Document {
             project_artist: String::new(),
             project_description: String::new(),
             project_ppq: 480,
+            channel_groups: Vec::new(),
+            conductor_expanded: true,
+            tempo_lane: None,
         }
     }
 }
@@ -104,6 +114,8 @@ impl Document {
         m.track_names = vec!["Track 1".to_string()];
         let track_names = m.track_names.clone();
         let track_info_cache = m.track_info();
+        let channel_groups =
+            crate::widgets::track_panel::build_channel_groups(&track_info_cache, &[]);
         Document {
             midi: Arc::new(m),
             file_name: "Untitled".into(),
@@ -112,6 +124,9 @@ impl Document {
             track_visible: vec![true],
             track_names,
             track_info_cache,
+            channel_groups,
+            conductor_expanded: true,
+            tempo_lane: None,
             ..Default::default()
         }
     }
@@ -166,6 +181,14 @@ impl Document {
                 .map(|i| TRACK_PALETTE[i % TRACK_PALETTE.len()])
                 .collect();
 
+            let channel_groups = crate::widgets::track_panel::build_channel_groups(
+                &track_info_cache,
+                &midi.automation_lanes,
+            );
+            let tempo_lane = Some(yinhe_midi::build_tempo_automation_lane(
+                &midi.tempo_segments,
+            ));
+
             Document {
                 midi,
                 file_name,
@@ -186,6 +209,9 @@ impl Document {
                 project_sf: ProjectSfConfig::default(),
                 track_overrides: (0..num_tracks).map(|_| TrackOverride::default()).collect(),
                 project_ppq: ticks_per_beat,
+                channel_groups,
+                conductor_expanded: true,
+                tempo_lane,
                 ..Default::default()
             }
         })
@@ -266,6 +292,14 @@ impl Document {
             .map(|i| yinhe_types::TRACK_PALETTE[i % yinhe_types::TRACK_PALETTE.len()])
             .collect();
 
+        let channel_groups = crate::widgets::track_panel::build_channel_groups(
+            &track_info_cache,
+            &midi.automation_lanes,
+        );
+        let tempo_lane = Some(yinhe_midi::build_tempo_automation_lane(
+            &midi.tempo_segments,
+        ));
+
         Ok((Document {
             midi: Arc::new(midi),
             file_name,
@@ -290,6 +324,9 @@ impl Document {
             project_artist,
             project_description,
             project_ppq,
+            channel_groups,
+            conductor_expanded: true,
+            tempo_lane,
         }, soundfont_project_mode))
     }
 }
