@@ -74,6 +74,9 @@ pub struct App {
 
     // ── Memory breakdown popup state ──
     pub(crate) show_mem_breakdown: bool,
+
+    // ── Event browser ──
+    pub(crate) event_browser_state: crate::right_panel::event_browser::EventBrowserState,
 }
 
 impl App {
@@ -165,6 +168,8 @@ impl App {
             sys_monitor: SystemMonitor::new(),
 
             show_mem_breakdown: false,
+
+            event_browser_state: crate::right_panel::event_browser::EventBrowserState::default(),
         }
     }
 

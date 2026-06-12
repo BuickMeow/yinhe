@@ -64,7 +64,9 @@ pub fn midi_to_archive_with_names(
     // ── Group notes by track index ──
     let num_tracks = midi.track_ports.len();
     let mut track_notes: Vec<Vec<yinhe_project::Note>> = (0..num_tracks).map(|_| Vec::new()).collect();
-    let mut track_channels: Vec<u8> = vec![0; num_tracks];
+    // Authoritative global channel (port*16 + raw_ch, range 0..=127) per track,
+    // discovered from the first event (note or control) for that track.
+    let mut track_global_channels: Vec<Option<u8>> = vec![None; num_tracks];
 
     for (key_idx, key_notes) in midi.key_notes.iter().enumerate() {
         for note in key_notes {
@@ -76,10 +78,23 @@ pub fn midi_to_archive_with_names(
                     key: key_idx as u8,
                     velocity: note.velocity,
                 });
-                if track_channels[idx] == 0 {
-                    track_channels[idx] = note.channel;
+                if track_global_channels[idx].is_none() {
+                    track_global_channels[idx] = Some(note.channel);
                 }
             }
+        }
+    }
+
+    // Also derive channel from control events for tracks without notes.
+    for ev in &midi.control_events {
+        let (ev_track, ev_channel) = match ev {
+            yinhe_midi::MidiControlEvent::ControlChange { track, channel, .. }
+            | yinhe_midi::MidiControlEvent::ProgramChange { track, channel, .. }
+            | yinhe_midi::MidiControlEvent::PitchBend { track, channel, .. } => (*track, *channel),
+        };
+        let idx = ev_track as usize;
+        if idx < num_tracks && track_global_channels[idx].is_none() {
+            track_global_channels[idx] = Some(ev_channel);
         }
     }
 
@@ -91,8 +106,14 @@ pub fn midi_to_archive_with_names(
     let mut port_map: HashMap<u8, Vec<(u8, Vec<TrackMapping>)>> = HashMap::new();
 
     for track_idx in 0..num_tracks {
-        let port = midi.track_ports.get(track_idx).copied().unwrap_or(0);
-        let channel = track_channels[track_idx];
+        // Authoritative channel: prefer one discovered from events; fall back
+        // to track_ports[idx] * 16 (raw channel unknown → 0).
+        let global_channel = track_global_channels[track_idx].unwrap_or_else(|| {
+            let port = midi.track_ports.get(track_idx).copied().unwrap_or(0);
+            port * 16
+        });
+        let port = global_channel >> 4;
+        let raw_channel = global_channel & 0x0F;
         let uuid = Uuid::new_v4().to_string();
         let name = midi
             .track_names
@@ -104,15 +125,18 @@ pub fn midi_to_archive_with_names(
             .cloned()
             .unwrap_or(name);
 
+        let inner = InnerHeader::new(track_idx as u16, global_channel);
+
         if !track_notes[track_idx].is_empty() {
             archive.set_notes(
-                track_notes_path(port, channel, &uuid),
-                FileHeader::new(*b"YHTK", port, channel, track_idx as u8),
+                track_notes_path(&uuid),
+                FileHeader::new(*b"YHTK", port, raw_channel, track_idx as u8),
+                inner,
                 &track_notes[track_idx],
             );
         }
 
-        // Collect CC events per controller number
+        // Collect CC events per controller number for this track.
         let mut cc_events: HashMap<u8, Vec<CcEvent>> = HashMap::new();
         let mut pitch_events: Vec<PitchBendEvent> = Vec::new();
         let mut pc_events: Vec<PcEvent> = Vec::new();
@@ -156,44 +180,46 @@ pub fn midi_to_archive_with_names(
         }
 
         for (cc_num, events) in &cc_events {
-            archive.set_events(
-                cc_path(port, channel, *cc_num),
-                FileHeader::new(*b"YHCC", port, channel, *cc_num),
+            archive.set_events_with_inner(
+                cc_path(&uuid, *cc_num),
+                FileHeader::new(*b"YHCC", port, raw_channel, *cc_num),
+                inner,
                 events,
             );
         }
 
         if !pitch_events.is_empty() {
-            archive.set_events(
-                pitch_path(port, channel),
-                FileHeader::new(*b"YHPB", port, channel, 0),
+            archive.set_events_with_inner(
+                pitch_path(&uuid),
+                FileHeader::new(*b"YHPB", port, raw_channel, 0),
+                inner,
                 &pitch_events,
             );
         }
 
         if !pc_events.is_empty() {
-            archive.set_events(
-                pc_path(port, channel),
-                FileHeader::new(*b"YHPC", port, channel, 0),
+            archive.set_events_with_inner(
+                pc_path(&uuid),
+                FileHeader::new(*b"YHPC", port, raw_channel, 0),
+                inner,
                 &pc_events,
             );
         }
 
-        // Add to mapping
-        port_map
-            .entry(port)
-            .or_default()
-            .push((channel, vec![]));
-        let channels = port_map.get_mut(&port).unwrap();
-        let ch_entry = channels
-            .iter_mut()
-            .find(|(ch, _)| *ch == channel)
-            .unwrap();
+        // Add to mapping (group by (port, raw_channel))
+        let channels = port_map.entry(port).or_default();
+        let ch_entry = if let Some(existing) = channels.iter_mut().find(|(ch, _)| *ch == raw_channel) {
+            existing
+        } else {
+            channels.push((raw_channel, Vec::new()));
+            channels.last_mut().unwrap()
+        };
         ch_entry.1.push(TrackMapping {
             uuid,
             name,
             color: [0.5, 0.5, 0.5],
             track_index: track_idx as u8,
+            channel_prefix: midi.track_channel_prefixes.get(track_idx).copied().flatten(),
         });
     }
 
@@ -267,31 +293,128 @@ pub fn archive_to_midi(archive: &ProjectArchive) -> yinhe_midi::MidiFile {
     let mapping: Vec<MappingJson> = archive.get_events("mapping.json").unwrap_or_default();
     let mapping = mapping.into_iter().next();
 
-    // ── Collect all track entries ──
-    let mut track_entries: Vec<(u8, u8, u8, Vec<yinhe_project::Note>)> = Vec::new();
-
-    for (_path, entry) in &archive.entries {
-        if entry.header.magic == *b"YHTK" {
-            let notes = if entry.header.version >= yinhe_project::NOTES_VERSION_DELTA_GATE {
-                yinhe_project::decode_notes_delta_gate(&entry.data)
-            } else if let Ok(v) = bincode::deserialize::<Vec<yinhe_project::Note>>(&entry.data) {
-                v
-            } else {
-                continue;
-            };
-            track_entries.push((entry.header.port, entry.header.channel, entry.header.extra, notes));
+    // Build uuid → track_index lookup from mapping.
+    let mut uuid_to_track: HashMap<&str, usize> = HashMap::new();
+    if let Some(mapping) = &mapping {
+        for port_mapping in &mapping.ports {
+            for ch_mapping in &port_mapping.channels {
+                for track_mapping in &ch_mapping.tracks {
+                    uuid_to_track.insert(
+                        track_mapping.uuid.as_str(),
+                        track_mapping.track_index as usize,
+                    );
+                    // Silence unused-field warnings for now.
+                    let _ = port_mapping.port;
+                    let _ = ch_mapping.channel;
+                }
+            }
         }
     }
 
-    track_entries.sort_by_key(|e| e.2);
+    // Extract uuid from a path matching "tracks/{uuid}/...".
+    fn extract_uuid(path: &str) -> Option<&str> {
+        let rest = path.strip_prefix("tracks/")?;
+        let slash = rest.find('/')?;
+        Some(&rest[..slash])
+    }
 
-    let num_tracks = track_entries
-        .iter()
-        .map(|e| e.2 as usize + 1)
-        .max()
-        .unwrap_or(1);
+    // ── Rebuild track data from archive entries ──
+    // We collect all per-track data by track_index, reading inner header.
+    let mut track_data: Vec<Option<TrackReadData>> = Vec::new();
 
+    struct TrackReadData {
+        notes: Vec<yinhe_project::Note>,
+        global_channel: Option<u8>, // from inner header (port*16 + raw_ch)
+        cc_events: Vec<(u8, CcEvent)>,
+        pitch_events: Vec<PitchBendEvent>,
+        pc_events: Vec<PcEvent>,
+    }
+
+    for (_path, entry) in &archive.entries {
+        let path = &entry.path; // use the stored path
+        if path.starts_with("conductor/") || path == "mapping.json" || path == "project.json" {
+            continue;
+        }
+        let Some(uuid_str) = extract_uuid(path) else { continue };
+        let Some(&track_idx) = uuid_to_track.get(uuid_str) else { continue };
+
+        // Ensure track_data is large enough.
+        while track_data.len() <= track_idx {
+            track_data.push(None);
+        }
+        let data = track_data[track_idx].get_or_insert_with(|| {
+            TrackReadData {
+                notes: Vec::new(),
+                global_channel: None,
+                cc_events: Vec::new(),
+                pitch_events: Vec::new(),
+                pc_events: Vec::new(),
+            }
+        });
+
+        let h = entry.header;
+        // Read inner header (and decode payload) in a type-specific arm.
+        // Each arm returns the InnerHeader to validate the per-track channel,
+        // and also commits the decoded events into `data`.
+        let inner_header: InnerHeader = match h.magic {
+            magic::TRACK_NOTES => {
+                let Some((inner, notes)) = archive.get_notes(path) else { continue };
+                data.notes.extend(notes);
+                inner
+            }
+            magic::CC => {
+                let Some((inner, events)) = archive.get_events_with_inner::<CcEvent>(path) else { continue };
+                for ev in &events {
+                    data.cc_events.push((h.extra, *ev));
+                }
+                inner
+            }
+            magic::PITCH_BEND => {
+                let Some((inner, events)) = archive.get_events_with_inner::<PitchBendEvent>(path) else { continue };
+                data.pitch_events.extend(events);
+                inner
+            }
+            magic::PC => {
+                let Some((inner, events)) = archive.get_events_with_inner::<PcEvent>(path) else { continue };
+                data.pc_events.extend(events);
+                inner
+            }
+            _ => continue,
+        };
+
+        // Enforce "one track, one channel".
+        if let Some(existing) = data.global_channel {
+            if existing != inner_header.channel {
+                eprintln!(
+                    "yinhe: track #{track_idx} has inconsistent channel: \
+                     already {existing}, got {} in {path}; refusing extra channel.",
+                    inner_header.channel,
+                );
+            }
+        } else {
+            data.global_channel = Some(inner_header.channel);
+        }
+    }
+
+    let num_tracks_from_entries = track_data.len();
+    let num_tracks_from_mapping = mapping
+        .as_ref()
+        .map(|m| {
+            m.ports
+                .iter()
+                .flat_map(|p| p.channels.iter())
+                .flat_map(|c| c.tracks.iter())
+                .map(|t| t.track_index as usize + 1)
+                .max()
+                .unwrap_or(0)
+        })
+        .unwrap_or(0);
+    let num_tracks = num_tracks_from_entries.max(num_tracks_from_mapping).max(1);
+    while track_data.len() < num_tracks {
+        track_data.push(None);
+    }
     midi.track_ports = vec![0; num_tracks];
+    midi.track_channel_prefixes = vec![None; num_tracks];
     midi.track_names = (0..num_tracks)
         .map(|i| format!("Track {}", i + 1))
         .collect();
@@ -304,6 +427,7 @@ pub fn archive_to_midi(archive: &ProjectArchive) -> yinhe_midi::MidiFile {
                     if idx < num_tracks {
                         midi.track_names[idx] = track_mapping.name.clone();
                         midi.track_ports[idx] = port_mapping.port;
+                        midi.track_channel_prefixes[idx] = track_mapping.channel_prefix;
                     }
                 }
             }
@@ -311,68 +435,56 @@ pub fn archive_to_midi(archive: &ProjectArchive) -> yinhe_midi::MidiFile {
     }
 
     // ── Rebuild key_notes ──
-    for (port, channel, track_idx, notes) in &track_entries {
-        let idx = *track_idx as usize;
-        if idx >= num_tracks {
-            continue;
-        }
-        midi.track_ports[idx] = *port;
-        for note in notes {
+    for (track_idx, data) in track_data.iter().enumerate() {
+        let Some(data) = data else { continue };
+        let Some(global_ch) = data.global_channel else { continue };
+        let port = global_ch >> 4;
+        midi.track_ports[track_idx] = port;
+
+        for note in &data.notes {
             let key = note.key as usize;
             if key < 128 {
                 midi.key_notes[key].push(yinhe_types::Note {
                     start_tick: note.start_tick,
                     end_tick: note.end_tick,
                     velocity: note.velocity,
-                    channel: *channel,
-                    track: *track_idx as u16,
+                    channel: global_ch,
+                    track: track_idx as u16,
                 });
             }
+        }
+
+        for (controller, ev) in &data.cc_events {
+            midi.control_events.push(yinhe_midi::MidiControlEvent::ControlChange {
+                tick: ev.tick,
+                channel: global_ch,
+                controller: *controller,
+                value: ev.value,
+                track: track_idx as u16,
+            });
+        }
+
+        for ev in &data.pitch_events {
+            midi.control_events.push(yinhe_midi::MidiControlEvent::PitchBend {
+                tick: ev.tick,
+                channel: global_ch,
+                value: ev.value,
+                track: track_idx as u16,
+            });
+        }
+
+        for ev in &data.pc_events {
+            midi.control_events.push(yinhe_midi::MidiControlEvent::ProgramChange {
+                tick: ev.tick,
+                channel: global_ch,
+                program: ev.program,
+                track: track_idx as u16,
+            });
         }
     }
 
     for notes in &mut midi.key_notes {
         notes.sort_by_key(|n| n.start_tick);
-    }
-
-    // ── Rebuild control events ──
-    for (_path, entry) in &archive.entries {
-        let h = entry.header;
-        if h.magic == *b"YHCC" {
-            if let Ok(events) = bincode::deserialize::<Vec<CcEvent>>(&entry.data) {
-                for ev in events {
-                    midi.control_events.push(yinhe_midi::MidiControlEvent::ControlChange {
-                        tick: ev.tick,
-                        channel: h.channel,
-                        controller: h.extra,
-                        value: ev.value,
-                        track: h.extra as u16,
-                    });
-                }
-            }
-        } else if h.magic == *b"YHPB" {
-            if let Ok(events) = bincode::deserialize::<Vec<PitchBendEvent>>(&entry.data) {
-                for ev in events {
-                    midi.control_events.push(yinhe_midi::MidiControlEvent::PitchBend {
-                        tick: ev.tick,
-                        channel: h.channel,
-                        value: ev.value,
-                        track: h.extra as u16,
-                    });
-                }
-            }
-        } else if h.magic == *b"YHPC" {
-            if let Ok(events) = bincode::deserialize::<Vec<PcEvent>>(&entry.data) {
-                for ev in events {
-                    midi.control_events.push(yinhe_midi::MidiControlEvent::ProgramChange {
-                        tick: ev.tick,
-                        channel: h.channel,
-                        program: ev.program,
-                        track: h.extra as u16,
-                    });
-                }
-            }
-        }
     }
 
     midi.control_events.sort_by_key(|e| match e {

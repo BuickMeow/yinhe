@@ -13,7 +13,8 @@ struct ActiveNote {
 
 /// Parse a single MIDI track, extracting notes and control events.
 ///
-/// Returns the MIDI port number used by this track.
+/// Returns `(MIDI port, channel prefix)` — the channel prefix is from
+/// `MetaMessage::MidiChannel` (0x20) and is `None` if not present.
 pub(crate) fn parse_track(
     track: &midly::Track,
     segments: &[crate::TempoSegment],
@@ -22,11 +23,12 @@ pub(crate) fn parse_track(
     key_notes: &mut [Vec<Note>; 128],
     global_end_tick: &mut u64,
     control_events: &mut Vec<MidiControlEvent>,
-) -> u8 {
+) -> (u8, Option<u8>) {
     let mut active_notes: Vec<ActiveNote> = Vec::new();
     let mut current_tick: u32 = 0;
     let mut seg_idx: usize = 0;
     let mut current_port: u8 = 0;
+    let mut channel_prefix: Option<u8> = None;
 
     for event in track {
         let new_tick = current_tick + event.delta.as_int();
@@ -48,6 +50,9 @@ pub(crate) fn parse_track(
         match event.kind {
             midly::TrackEventKind::Meta(midly::MetaMessage::MidiPort(port)) => {
                 current_port = port.as_int();
+            }
+            midly::TrackEventKind::Meta(midly::MetaMessage::MidiChannel(ch)) => {
+                channel_prefix = Some(ch.as_int());
             }
             midly::TrackEventKind::Midi { channel, message } => {
                 let ch = channel.as_int();
@@ -116,7 +121,7 @@ pub(crate) fn parse_track(
             _ => {}
         }
     }
-    current_port
+    (current_port, channel_prefix)
 }
 
 /// Advance the tempo segment index from current_tick to target_tick.

@@ -24,6 +24,9 @@ pub struct MidiFile {
     pub time_sig_denominator: u8,
     /// MIDI port per track for channel mapping (port * 16 + channel).
     pub track_ports: Vec<u8>,
+    /// MIDI Channel Prefix (0x20 meta event) per track, if present.
+    /// Used as fallback for channel info on tracks with no note/CC events.
+    pub track_channel_prefixes: Vec<Option<u8>>,
     /// Track names parsed from MetaMessage::TrackName.
     pub track_names: Vec<String>,
     /// All time signature events sorted by tick.
@@ -48,6 +51,7 @@ impl Default for MidiFile {
             time_sig_numerator: 4,
             time_sig_denominator: 2,
             track_ports: Vec::new(),
+            track_channel_prefixes: Vec::new(),
             track_names: Vec::new(),
             time_sig_events: Vec::new(),
             control_events: Vec::new(),
@@ -210,7 +214,8 @@ impl MidiFile {
     /// Port and channel are both derived from `note.channel` which encodes
     /// `port * 16 + midi_channel`.  For tracks with no notes, falls back to
     /// `control_events` (CC, PC, PitchBend) which also carry a `track` field.
-    /// Final fallback to `track_ports` when nothing is found.
+    /// Further falls back to `track_channel_prefixes` (MIDI Channel Prefix
+    /// meta event 0x20).  Final fallback to `track_ports` when nothing is found.
     pub fn track_info(&self) -> Vec<TrackInfo> {
         let num_tracks = self.track_ports.len();
         let mut note_counts = vec![0u64; num_tracks];
@@ -245,6 +250,14 @@ impl MidiFile {
                 if !note_port_set[idx] {
                     note_port_set[idx] = true;
                     track_ports_from_notes[idx] = (ch >> 4) & 0x0F;
+                }
+            }
+        }
+        // Third pass: for tracks still without channel info, use MIDI Channel Prefix
+        for (idx, prefix) in self.track_channel_prefixes.iter().enumerate() {
+            if idx < num_tracks && track_channels[idx] == 0 {
+                if let Some(ch) = prefix {
+                    track_channels[idx] = *ch + 1; // 0-based → 1-based
                 }
             }
         }

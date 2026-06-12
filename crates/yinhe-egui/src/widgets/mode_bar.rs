@@ -145,6 +145,8 @@ pub fn show(
                     //  1. ICON_INFO
                     //  2. ICON_ALBUM
                     //  3. ICON_MUSIC_CAST
+                    //  4. ICON_SHUFFLE
+                    //  5. ICON_AUTO_STORIES (event browser)
 
                     right_icon_button(ui, ICON_INFO, *right_tab == Some(RightTab::Info), || {
                         *right_tab = if *right_tab == Some(RightTab::Info) {
@@ -195,6 +197,21 @@ pub fn show(
                                 None
                             } else {
                                 Some(RightTab::Channels)
+                            };
+                        },
+                    );
+
+                    ui.add_space(4.0);
+
+                    right_icon_button(
+                        ui,
+                        ICON_AUTO_STORIES,
+                        *right_tab == Some(RightTab::EventBrowser),
+                        || {
+                            *right_tab = if *right_tab == Some(RightTab::EventBrowser) {
+                                None
+                            } else {
+                                Some(RightTab::EventBrowser)
                             };
                         },
                     );

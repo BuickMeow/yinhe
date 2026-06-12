@@ -53,6 +53,7 @@ impl MidiParser {
         let mut key_notes: [Vec<Note>; 128] = std::array::from_fn(|_| Vec::new());
         let mut global_end_tick: u64 = 0;
         let mut track_ports: Vec<u8> = Vec::with_capacity(smf.tracks.len());
+        let mut track_channel_prefixes: Vec<Option<u8>> = Vec::with_capacity(smf.tracks.len());
         let mut track_names: Vec<String> = Vec::with_capacity(smf.tracks.len());
         let mut control_events: Vec<MidiControlEvent> = Vec::new();
 
@@ -80,7 +81,7 @@ impl MidiParser {
             }).unwrap_or_else(|| format!("Track {}", track_idx + 1));
             track_names.push(track_name);
 
-            let port = crate::track_parser::parse_track(
+            let (port, channel_prefix) = crate::track_parser::parse_track(
                 track,
                 &tempo_segments,
                 ticks_per_beat,
@@ -90,6 +91,7 @@ impl MidiParser {
                 &mut control_events,
             );
             track_ports.push(port);
+            track_channel_prefixes.push(channel_prefix);
 
             // Free this track's event vector now that we've extracted everything
             // we need from it.
@@ -130,6 +132,7 @@ impl MidiParser {
             time_sig_events,
             track_names,
             track_ports,
+            track_channel_prefixes,
             control_events,
             scan_index: Some(scan_index),
             automation_lanes,
@@ -227,6 +230,7 @@ mod tests {
             track_names: Vec::new(),
             time_sig_events: Vec::new(),
             track_ports: Vec::new(),
+            track_channel_prefixes: Vec::new(),
             control_events: Vec::new(),
             scan_index: None,
             automation_lanes: Vec::new(),
@@ -260,6 +264,7 @@ mod tests {
             track_names: Vec::new(),
             time_sig_events: Vec::new(),
             track_ports: Vec::new(),
+            track_channel_prefixes: Vec::new(),
             control_events: Vec::new(),
             scan_index: None,
             automation_lanes: Vec::new(),

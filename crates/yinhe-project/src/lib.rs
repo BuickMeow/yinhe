@@ -62,17 +62,20 @@ impl ProjectArchive {
         );
     }
 
-    /// Store a track's notes using the compact delta+gate varint encoding
-    /// (FileHeader version is forced to NOTES_VERSION_DELTA_GATE).
-    /// `notes` must be sorted by `start_tick`.
-    pub fn set_notes(
+    /// Store track-scoped events with an inner header at the start of the
+    /// payload. Used for CC / PB / PC entries (per-track) so each zst file
+    /// is self-describing.
+    pub fn set_events_with_inner<T: Serialize>(
         &mut self,
         path: impl Into<String>,
-        mut header: FileHeader,
-        notes: &[Note],
+        header: FileHeader,
+        inner: InnerHeader,
+        events: &[T],
     ) {
-        header.version = NOTES_VERSION_DELTA_GATE;
-        let data = encode_notes_delta_gate(notes);
+        let body = bincode::serialize(events).expect("bincode serialization failed");
+        let mut data = Vec::with_capacity(InnerHeader::SIZE + body.len());
+        inner.write(&mut data);
+        data.extend_from_slice(&body);
         self.entries.insert(
             path.into(),
             ArchiveEntry {
@@ -83,15 +86,51 @@ impl ProjectArchive {
         );
     }
 
-    /// Decode a notes entry, auto-detecting legacy bincode (version 1) vs
-    /// delta+gate (version 2).
-    pub fn get_notes(&self, path: &str) -> Option<Vec<Note>> {
+    /// Read track-scoped events written by `set_events_with_inner`.
+    /// Returns `(inner_header, events)` or `None` if the path doesn't exist
+    /// or the payload is malformed.
+    pub fn get_events_with_inner<T: serde::de::DeserializeOwned>(
+        &self,
+        path: &str,
+    ) -> Option<(InnerHeader, Vec<T>)> {
         let entry = self.entries.get(path)?;
-        if entry.header.version >= NOTES_VERSION_DELTA_GATE {
-            Some(decode_notes_delta_gate(&entry.data))
-        } else {
-            bincode::deserialize(&entry.data).ok()
-        }
+        let (inner, rest) = InnerHeader::read(&entry.data)?;
+        let events = bincode::deserialize(rest).ok()?;
+        Some((inner, events))
+    }
+
+    /// Store a track's notes using the compact delta+gate varint encoding
+    /// (FileHeader version is forced to NOTES_VERSION_DELTA_GATE). The
+    /// 3-byte InnerHeader is prepended to the payload.
+    /// `notes` must be sorted by `start_tick`.
+    pub fn set_notes(
+        &mut self,
+        path: impl Into<String>,
+        mut header: FileHeader,
+        inner: InnerHeader,
+        notes: &[Note],
+    ) {
+        header.version = NOTES_VERSION_DELTA_GATE;
+        let body = encode_notes_delta_gate(notes);
+        let mut data = Vec::with_capacity(InnerHeader::SIZE + body.len());
+        inner.write(&mut data);
+        data.extend_from_slice(&body);
+        self.entries.insert(
+            path.into(),
+            ArchiveEntry {
+                path: String::new(),
+                header,
+                data,
+            },
+        );
+    }
+
+    /// Decode a notes entry. Returns `(inner_header, notes)`.
+    pub fn get_notes(&self, path: &str) -> Option<(InnerHeader, Vec<Note>)> {
+        let entry = self.entries.get(path)?;
+        let (inner, rest) = InnerHeader::read(&entry.data)?;
+        let notes = decode_notes_delta_gate(rest);
+        Some((inner, notes))
     }
 
     pub fn remove(&mut self, path: &str) {
@@ -206,6 +245,65 @@ impl FileHeader {
             channel,
             extra,
         }
+    }
+}
+
+// ── Inner payload header ──
+//
+// Every track-scoped event/notes payload starts with a 3-byte inner header
+// that identifies which logical track and global channel the data belongs to.
+// The archive path itself uses a UUID to avoid collisions when multiple
+// tracks share the same (port, channel) — the inner header makes each zst
+// file self-describing without needing mapping.json.
+//
+// Layout:
+//   [track_index: u16 LE][channel: u8]
+//
+// `channel` is the combined `port * 16 + raw_midi_channel` (0..=127), so
+// the inner header alone fully identifies (track, port, channel). The path
+// does not redundantly encode port/channel — only the UUID.
+
+/// 3-byte inner header at the start of every track-scoped zst payload.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct InnerHeader {
+    /// 0-based MIDI track index.
+    pub track_index: u16,
+    /// Combined `port * 16 + raw_channel`, range 0..=127.
+    /// `port = channel >> 4`, `raw_channel = channel & 0x0F`.
+    pub channel: u8,
+}
+
+impl InnerHeader {
+    pub const SIZE: usize = 3;
+
+    pub fn new(track_index: u16, channel: u8) -> Self {
+        Self { track_index, channel }
+    }
+
+    /// Combined port from `channel` (high nibble of the global channel byte).
+    pub fn port(&self) -> u8 {
+        self.channel >> 4
+    }
+
+    /// Raw MIDI channel 0..=15 (low nibble of the global channel byte).
+    pub fn raw_channel(&self) -> u8 {
+        self.channel & 0x0F
+    }
+
+    pub fn write(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&self.track_index.to_le_bytes());
+        out.push(self.channel);
+    }
+
+    /// Parse the inner header from the start of `buf`.
+    /// Returns the parsed header and the rest of the buffer.
+    pub fn read(buf: &[u8]) -> Option<(Self, &[u8])> {
+        if buf.len() < Self::SIZE {
+            return None;
+        }
+        let track_index = u16::from_le_bytes([buf[0], buf[1]]);
+        let channel = buf[2];
+        Some((Self { track_index, channel }, &buf[Self::SIZE..]))
     }
 }
 
@@ -452,48 +550,52 @@ pub struct TrackMapping {
     /// Original MIDI track index (preserved across save/load for correct name mapping).
     #[serde(default)]
     pub track_index: u8,
+    /// MIDI Channel Prefix (meta event 0x20) for this track, if present.
+    /// Used as fallback for channel info on tracks with no note/CC events.
+    #[serde(default)]
+    pub channel_prefix: Option<u8>,
 }
 
 // ── Path helpers ──
+//
+// Track-scoped data uses `tracks/{uuid}/...` paths. The UUID alone
+// identifies the track; port/channel are carried in the InnerHeader and in
+// mapping.json. Multiple tracks sharing the same (port, channel) live under
+// distinct UUIDs and never collide.
 
 /// Build the conductor entry path inside the archive.
 pub fn conductor_path(name: &str) -> String {
     format!("conductor/{name}")
 }
 
-/// Build the port directory prefix.
-pub fn port_prefix(port: u8) -> String {
-    format!("port_{port:02}")
-}
-
-/// Build the channel directory prefix.
-pub fn channel_prefix(port: u8, channel: u8) -> String {
-    format!("port_{port:02}/channel_{channel:02}")
+/// Build the directory prefix for a single track.
+pub fn track_prefix(uuid: &str) -> String {
+    format!("tracks/{uuid}")
 }
 
 /// Build the full path for a track notes entry.
-pub fn track_notes_path(port: u8, channel: u8, uuid: &str) -> String {
-    format!("port_{port:02}/channel_{channel:02}/{uuid}.zst")
+pub fn track_notes_path(uuid: &str) -> String {
+    format!("tracks/{uuid}/notes.zst")
 }
 
-/// Build the full path for a CC entry.
-pub fn cc_path(port: u8, channel: u8, cc_num: u8) -> String {
-    format!("port_{port:02}/channel_{channel:02}/cc_{cc_num:03}.zst")
+/// Build the full path for a CC entry for one track.
+pub fn cc_path(uuid: &str, cc_num: u8) -> String {
+    format!("tracks/{uuid}/cc_{cc_num:03}.zst")
 }
 
-/// Build the full path for a pitch bend entry.
-pub fn pitch_path(port: u8, channel: u8) -> String {
-    format!("port_{port:02}/channel_{channel:02}/pitch.zst")
+/// Build the full path for a pitch bend entry for one track.
+pub fn pitch_path(uuid: &str) -> String {
+    format!("tracks/{uuid}/pitch.zst")
 }
 
-/// Build the full path for a program change entry (per-channel).
-pub fn pc_path(port: u8, channel: u8) -> String {
-    format!("port_{port:02}/channel_{channel:02}/pc.zst")
+/// Build the full path for a program change entry for one track.
+pub fn pc_path(uuid: &str) -> String {
+    format!("tracks/{uuid}/pc.zst")
 }
 
-/// Build the full path for an RPN entry.
-pub fn rpn_path(port: u8, channel: u8, rpn_num: u8) -> String {
-    format!("port_{port:02}/channel_{channel:02}/rpn_{rpn_num}.zst")
+/// Build the full path for an RPN entry for one track.
+pub fn rpn_path(uuid: &str, rpn_num: u8) -> String {
+    format!("tracks/{uuid}/rpn_{rpn_num}.zst")
 }
 
 #[cfg(test)]
@@ -540,9 +642,10 @@ mod tests {
                 velocity: 80,
             },
         ];
-        archive.set_events(
-            track_notes_path(1, 1, "abc123"),
+        archive.set_notes(
+            track_notes_path("abc123"),
             FileHeader::new(magic::TRACK_NOTES, 1, 1, 0),
+            InnerHeader::new(0, 1 * 16 + 1),
             &notes,
         );
 
@@ -574,8 +677,9 @@ mod tests {
         assert_eq!(proj_events[0].name, "Test Song");
 
         // Verify notes
-        let note_events: Vec<Note> =
-            loaded.get_events(&track_notes_path(1, 1, "abc123")).unwrap();
+        let (inner, note_events) = loaded.get_notes(&track_notes_path("abc123")).unwrap();
+        assert_eq!(inner.track_index, 0);
+        assert_eq!(inner.channel, 17);
         assert_eq!(note_events.len(), 2);
         assert_eq!(note_events[0].start_tick, 0);
         assert_eq!(note_events[1].key, 64);
@@ -595,10 +699,25 @@ mod tests {
     #[test]
     fn path_helpers() {
         assert_eq!(conductor_path("tempo.zst"), "conductor/tempo.zst");
-        assert_eq!(track_notes_path(1, 2, "abc"), "port_01/channel_02/abc.zst");
-        assert_eq!(cc_path(1, 2, 7), "port_01/channel_02/cc_007.zst");
-        assert_eq!(pitch_path(1, 2), "port_01/channel_02/pitch.zst");
-        assert_eq!(rpn_path(1, 2, 0), "port_01/channel_02/rpn_0.zst");
+        assert_eq!(track_notes_path("abc"), "tracks/abc/notes.zst");
+        assert_eq!(cc_path("abc", 7), "tracks/abc/cc_007.zst");
+        assert_eq!(pitch_path("abc"), "tracks/abc/pitch.zst");
+        assert_eq!(pc_path("abc"), "tracks/abc/pc.zst");
+        assert_eq!(rpn_path("abc", 0), "tracks/abc/rpn_0.zst");
+    }
+
+    #[test]
+    fn inner_header_roundtrip() {
+        let inner = InnerHeader::new(42, 0x35); // port=3, raw_ch=5
+        let mut buf = Vec::new();
+        inner.write(&mut buf);
+        assert_eq!(buf.len(), InnerHeader::SIZE);
+        let (decoded, rest) = InnerHeader::read(&buf).unwrap();
+        assert_eq!(decoded.track_index, 42);
+        assert_eq!(decoded.channel, 0x35);
+        assert_eq!(decoded.port(), 3);
+        assert_eq!(decoded.raw_channel(), 5);
+        assert!(rest.is_empty());
     }
 
     #[test]
@@ -656,14 +775,21 @@ mod tests {
             Note { start_tick: 100, end_tick: 200, key: 60, velocity: 100 },
             Note { start_tick: 300, end_tick: 400, key: 64, velocity: 90 },
         ];
-        let path = track_notes_path(1, 1, "test");
-        archive.set_notes(&path, FileHeader::new(magic::TRACK_NOTES, 1, 1, 0), &notes);
+        let path = track_notes_path("test");
+        archive.set_notes(
+            &path,
+            FileHeader::new(magic::TRACK_NOTES, 1, 1, 0),
+            InnerHeader::new(5, 0x11),
+            &notes,
+        );
 
         // header.version should be auto-set to NOTES_VERSION_DELTA_GATE
         let entry = archive.entries.get(&path).unwrap();
         assert_eq!(entry.header.version, NOTES_VERSION_DELTA_GATE);
 
-        let decoded = archive.get_notes(&path).unwrap();
+        let (inner, decoded) = archive.get_notes(&path).unwrap();
+        assert_eq!(inner.track_index, 5);
+        assert_eq!(inner.channel, 0x11);
         assert_eq!(decoded.len(), 2);
         assert_eq!(decoded[0].start_tick, 100);
         assert_eq!(decoded[0].end_tick, 200);

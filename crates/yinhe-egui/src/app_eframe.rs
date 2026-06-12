@@ -396,6 +396,7 @@ impl eframe::App for App {
                 &mut self.audio_settings,
                 doc,
                 self.audio.as_ref(),
+                &mut self.event_browser_state,
             );
             if changed {
                 self.teardown_audio();

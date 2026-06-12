@@ -1,5 +1,6 @@
 pub mod channels_panel;
 pub mod config;
+pub mod event_browser;
 pub mod info_panel;
 pub mod project_info;
 pub mod sf_list;
@@ -16,6 +17,7 @@ pub enum RightTab {
     SoundBank,
     Project,
     Channels,
+    EventBrowser,
 }
 
 /// Render the right panel (if a tab is active).
@@ -31,6 +33,7 @@ pub fn show(
     audio_settings: &mut AudioSettings,
     doc: Option<&mut Document>,
     audio: Option<&yinhe_audio::CpalAudioHandle>,
+    event_browser_state: &mut event_browser::EventBrowserState,
 ) -> bool {
     let tab = *right_tab;
     if tab.is_none() {
@@ -83,6 +86,9 @@ pub fn show(
             }
             RightTab::Channels => {
                 channels_panel::show(ui, doc, audio_settings);
+            }
+            RightTab::EventBrowser => {
+                event_browser::show(ui, doc, event_browser_state);
             }
         }
     });
