@@ -24,6 +24,7 @@ serde_json = "1"
 dirs = "6"
 eframe = { workspace = true }
 egui = { workspace = true }
+egui_extras = { workspace = true }
 wgpu = { workspace = true }
 rfd = { workspace = true }
 pollster = { workspace = true }

@@ -62,17 +62,39 @@ impl ProjectArchive {
         );
     }
 
-    /// Store track-scoped events with an inner header at the start of the
-    /// payload. Used for CC / PB / PC entries (per-track) so each zst file
-    /// is self-describing.
-    pub fn set_events_with_inner<T: Serialize>(
+    /// Store conductor-scoped events using compact delta encoding (no inner header).
+    pub fn set_delta_events<T: DeltaEvent>(
+        &mut self,
+        path: impl Into<String>,
+        header: FileHeader,
+        events: &[T],
+    ) {
+        let data = encode_delta_events(events);
+        self.entries.insert(
+            path.into(),
+            ArchiveEntry {
+                path: String::new(),
+                header,
+                data,
+            },
+        );
+    }
+
+    /// Read conductor-scoped events written by `set_delta_events`.
+    pub fn get_delta_events<T: DeltaEvent>(&self, path: &str) -> Option<Vec<T>> {
+        let entry = self.entries.get(path)?;
+        Some(decode_delta_events(&entry.data))
+    }
+
+    /// Store track-scoped events with an inner header using compact delta encoding.
+    pub fn set_delta_events_with_inner<T: DeltaEvent>(
         &mut self,
         path: impl Into<String>,
         header: FileHeader,
         inner: InnerHeader,
         events: &[T],
     ) {
-        let body = bincode::serialize(events).expect("bincode serialization failed");
+        let body = encode_delta_events(events);
         let mut data = Vec::with_capacity(InnerHeader::SIZE + body.len());
         inner.write(&mut data);
         data.extend_from_slice(&body);
@@ -86,20 +108,18 @@ impl ProjectArchive {
         );
     }
 
-    /// Read track-scoped events written by `set_events_with_inner`.
-    /// Returns `(inner_header, events)` or `None` if the path doesn't exist
-    /// or the payload is malformed.
-    pub fn get_events_with_inner<T: serde::de::DeserializeOwned>(
+    /// Read track-scoped events written by `set_delta_events_with_inner`.
+    pub fn get_delta_events_with_inner<T: DeltaEvent>(
         &self,
         path: &str,
     ) -> Option<(InnerHeader, Vec<T>)> {
         let entry = self.entries.get(path)?;
         let (inner, rest) = InnerHeader::read(&entry.data)?;
-        let events = bincode::deserialize(rest).ok()?;
+        let events = decode_delta_events(rest);
         Some((inner, events))
     }
 
-    /// Store a track's notes using the compact delta+gate varint encoding
+    /// Store a track's notes using the compact delta encoding
     /// (FileHeader version is forced to NOTES_VERSION_DELTA_GATE). The
     /// 3-byte InnerHeader is prepended to the payload.
     /// `notes` must be sorted by `start_tick`.
@@ -111,7 +131,7 @@ impl ProjectArchive {
         notes: &[Note],
     ) {
         header.version = NOTES_VERSION_DELTA_GATE;
-        let body = encode_notes_delta_gate(notes);
+        let body = encode_delta_events(notes);
         let mut data = Vec::with_capacity(InnerHeader::SIZE + body.len());
         inner.write(&mut data);
         data.extend_from_slice(&body);
@@ -129,7 +149,7 @@ impl ProjectArchive {
     pub fn get_notes(&self, path: &str) -> Option<(InnerHeader, Vec<Note>)> {
         let entry = self.entries.get(path)?;
         let (inner, rest) = InnerHeader::read(&entry.data)?;
-        let notes = decode_notes_delta_gate(rest);
+        let notes = decode_delta_events(rest);
         Some((inner, notes))
     }
 
@@ -322,58 +342,19 @@ pub struct Note {
 /// delta-start + gate-duration varint encoding.
 pub const NOTES_VERSION_DELTA_GATE: u8 = 2;
 
-/// Encode notes as: count(varint) followed by per-note
-/// (start_delta varint, duration varint, key u8, velocity u8).
+/// Encode notes using the unified delta-event format.
 /// `notes` must be sorted by `start_tick`.
 pub fn encode_notes_delta_gate(notes: &[Note]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(notes.len() * 4 + 8);
-    write_varint(&mut out, notes.len() as u64);
-    let mut prev_start: u32 = 0;
-    for n in notes {
-        let delta = n.start_tick.saturating_sub(prev_start);
-        let duration = n.end_tick.saturating_sub(n.start_tick);
-        write_varint(&mut out, delta as u64);
-        write_varint(&mut out, duration as u64);
-        out.push(n.key);
-        out.push(n.velocity);
-        prev_start = n.start_tick;
-    }
-    out
+    encode_delta_events(notes)
 }
 
 /// Decode notes written by `encode_notes_delta_gate`.
 pub fn decode_notes_delta_gate(buf: &[u8]) -> Vec<Note> {
-    let mut cursor = 0usize;
-    let count = match read_varint(buf, &mut cursor) {
-        Some(c) => c as usize,
-        None => return Vec::new(),
-    };
-    let mut notes = Vec::with_capacity(count);
-    let mut prev_start: u32 = 0;
-    for _ in 0..count {
-        let Some(delta) = read_varint(buf, &mut cursor) else { break };
-        let Some(duration) = read_varint(buf, &mut cursor) else { break };
-        if cursor + 2 > buf.len() {
-            break;
-        }
-        let key = buf[cursor];
-        let velocity = buf[cursor + 1];
-        cursor += 2;
-        let start_tick = prev_start.wrapping_add(delta as u32);
-        let end_tick = start_tick.wrapping_add(duration as u32);
-        notes.push(Note {
-            start_tick,
-            end_tick,
-            key,
-            velocity,
-        });
-        prev_start = start_tick;
-    }
-    notes
+    decode_delta_events(buf)
 }
 
 /// LEB128-style unsigned varint writer.
-fn write_varint(out: &mut Vec<u8>, mut v: u64) {
+pub fn write_varint(out: &mut Vec<u8>, mut v: u64) {
     while v >= 0x80 {
         out.push((v as u8) | 0x80);
         v >>= 7;
@@ -382,7 +363,7 @@ fn write_varint(out: &mut Vec<u8>, mut v: u64) {
 }
 
 /// LEB128-style unsigned varint reader. Returns None on truncation.
-fn read_varint(buf: &[u8], cursor: &mut usize) -> Option<u64> {
+pub fn read_varint(buf: &[u8], cursor: &mut usize) -> Option<u64> {
     let mut result: u64 = 0;
     let mut shift: u32 = 0;
     loop {
@@ -402,11 +383,98 @@ fn read_varint(buf: &[u8], cursor: &mut usize) -> Option<u64> {
     }
 }
 
+/// Zigzag-encode a signed integer into an unsigned integer for varint encoding.
+fn zigzag_encode(v: i64) -> u64 {
+    ((v << 1) ^ (v >> 63)) as u64
+}
+
+/// Zigzag-decode an unsigned integer back to a signed integer.
+fn zigzag_decode(v: u64) -> i64 {
+    let v = v as i64;
+    (v >> 1) ^ -(v & 1)
+}
+
+// ── Delta event trait ──
+
+pub trait DeltaEvent: Sized {
+    fn tick(&self) -> u32;
+    fn set_tick(&mut self, tick: u32);
+    fn encode_payload(&self, out: &mut Vec<u8>);
+    fn decode_payload(buf: &[u8], cursor: &mut usize) -> Option<Self>;
+}
+
+pub fn encode_delta_events<T: DeltaEvent>(events: &[T]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(events.len() * 4 + 8);
+    write_varint(&mut out, events.len() as u64);
+    let mut prev_tick: u32 = 0;
+    for e in events {
+        let delta = e.tick().saturating_sub(prev_tick);
+        write_varint(&mut out, delta as u64);
+        e.encode_payload(&mut out);
+        prev_tick = e.tick();
+    }
+    out
+}
+
+pub fn decode_delta_events<T: DeltaEvent>(buf: &[u8]) -> Vec<T> {
+    let mut cursor = 0usize;
+    let count = match read_varint(buf, &mut cursor) {
+        Some(c) => c as usize,
+        None => return Vec::new(),
+    };
+    let mut events = Vec::with_capacity(count);
+    let mut prev_tick: u32 = 0;
+    for _ in 0..count {
+        let Some(delta) = read_varint(buf, &mut cursor) else { break };
+        let Some(mut ev) = T::decode_payload(buf, &mut cursor) else { break };
+        let tick = prev_tick.wrapping_add(delta as u32);
+        ev.set_tick(tick);
+        events.push(ev);
+        prev_tick = tick;
+    }
+    events
+}
+
+impl DeltaEvent for Note {
+    fn tick(&self) -> u32 { self.start_tick }
+    fn set_tick(&mut self, tick: u32) {
+        let duration = self.end_tick.saturating_sub(self.start_tick);
+        self.start_tick = tick;
+        self.end_tick = tick.saturating_add(duration);
+    }
+    fn encode_payload(&self, out: &mut Vec<u8>) {
+        let duration = self.end_tick.saturating_sub(self.start_tick);
+        write_varint(out, duration as u64);
+        out.push(self.key);
+        out.push(self.velocity);
+    }
+    fn decode_payload(buf: &[u8], cursor: &mut usize) -> Option<Self> {
+        let duration = read_varint(buf, cursor)? as u32;
+        if *cursor + 2 > buf.len() { return None; }
+        let key = buf[*cursor];
+        let velocity = buf[*cursor + 1];
+        *cursor += 2;
+        Some(Note { start_tick: 0, end_tick: duration, key, velocity })
+    }
+}
+
 /// A control change event, stored per-CC-number.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct CcEvent {
     pub tick: u32,
     pub value: u8,
+}
+
+impl DeltaEvent for CcEvent {
+    fn tick(&self) -> u32 { self.tick }
+    fn set_tick(&mut self, tick: u32) { self.tick = tick; }
+    fn encode_payload(&self, out: &mut Vec<u8>) { out.push(self.value); }
+    fn decode_payload(buf: &[u8], cursor: &mut usize) -> Option<Self> {
+        if *cursor >= buf.len() { return None; }
+        let value = buf[*cursor];
+        *cursor += 1;
+        Some(CcEvent { tick: 0, value })
+    }
 }
 
 /// A pitch bend event.
@@ -416,6 +484,19 @@ pub struct PitchBendEvent {
     pub value: i16,
 }
 
+impl DeltaEvent for PitchBendEvent {
+    fn tick(&self) -> u32 { self.tick }
+    fn set_tick(&mut self, tick: u32) { self.tick = tick; }
+    fn encode_payload(&self, out: &mut Vec<u8>) {
+        write_varint(out, zigzag_encode(self.value as i64));
+    }
+    fn decode_payload(buf: &[u8], cursor: &mut usize) -> Option<Self> {
+        let raw = read_varint(buf, cursor)?;
+        let value = zigzag_decode(raw) as i16;
+        Some(PitchBendEvent { tick: 0, value })
+    }
+}
+
 /// A program change event, stored per-channel.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct PcEvent {
@@ -423,11 +504,35 @@ pub struct PcEvent {
     pub program: u8,
 }
 
+impl DeltaEvent for PcEvent {
+    fn tick(&self) -> u32 { self.tick }
+    fn set_tick(&mut self, tick: u32) { self.tick = tick; }
+    fn encode_payload(&self, out: &mut Vec<u8>) { out.push(self.program); }
+    fn decode_payload(buf: &[u8], cursor: &mut usize) -> Option<Self> {
+        if *cursor >= buf.len() { return None; }
+        let program = buf[*cursor];
+        *cursor += 1;
+        Some(PcEvent { tick: 0, program })
+    }
+}
+
 /// An RPN event, stored per-RPN-number.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct RpnEvent {
     pub tick: u32,
     pub value: u16,
+}
+
+impl DeltaEvent for RpnEvent {
+    fn tick(&self) -> u32 { self.tick }
+    fn set_tick(&mut self, tick: u32) { self.tick = tick; }
+    fn encode_payload(&self, out: &mut Vec<u8>) {
+        write_varint(out, self.value as u64);
+    }
+    fn decode_payload(buf: &[u8], cursor: &mut usize) -> Option<Self> {
+        let value = read_varint(buf, cursor)? as u16;
+        Some(RpnEvent { tick: 0, value })
+    }
 }
 
 // ── Conductor event types ──
@@ -438,12 +543,42 @@ pub struct TempoEvent {
     pub bpm: f32,
 }
 
+impl DeltaEvent for TempoEvent {
+    fn tick(&self) -> u32 { self.tick }
+    fn set_tick(&mut self, tick: u32) { self.tick = tick; }
+    fn encode_payload(&self, out: &mut Vec<u8>) {
+        out.extend_from_slice(&self.bpm.to_le_bytes());
+    }
+    fn decode_payload(buf: &[u8], cursor: &mut usize) -> Option<Self> {
+        if *cursor + 4 > buf.len() { return None; }
+        let bpm = f32::from_le_bytes([buf[*cursor], buf[*cursor+1], buf[*cursor+2], buf[*cursor+3]]);
+        *cursor += 4;
+        Some(TempoEvent { tick: 0, bpm })
+    }
+}
+
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct TimeSigEvent {
     pub tick: u32,
     pub numerator: u8,
     /// Denominator as power of 2 (e.g. 2 means 4).
     pub denominator_power: u8,
+}
+
+impl DeltaEvent for TimeSigEvent {
+    fn tick(&self) -> u32 { self.tick }
+    fn set_tick(&mut self, tick: u32) { self.tick = tick; }
+    fn encode_payload(&self, out: &mut Vec<u8>) {
+        out.push(self.numerator);
+        out.push(self.denominator_power);
+    }
+    fn decode_payload(buf: &[u8], cursor: &mut usize) -> Option<Self> {
+        if *cursor + 2 > buf.len() { return None; }
+        let numerator = buf[*cursor];
+        let denominator_power = buf[*cursor + 1];
+        *cursor += 2;
+        Some(TimeSigEvent { tick: 0, numerator, denominator_power })
+    }
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
@@ -558,44 +693,58 @@ pub struct TrackMapping {
 
 // ── Path helpers ──
 //
-// Track-scoped data uses `tracks/{uuid}/...` paths. The UUID alone
-// identifies the track; port/channel are carried in the InnerHeader and in
-// mapping.json. Multiple tracks sharing the same (port, channel) live under
-// distinct UUIDs and never collide.
+// Track-scoped data uses `channels/{A01}/{uuid}/...` paths, where `A01`
+// derives from the global channel (port * 16 + raw_ch): port letter A..H +
+// 1-indexed raw channel 01..16. The UUID alone identifies the track; port/
+// channel are also carried in the InnerHeader and in mapping.json. Multiple
+// tracks sharing the same (port, channel) live under distinct UUIDs and
+// never collide.
 
 /// Build the conductor entry path inside the archive.
 pub fn conductor_path(name: &str) -> String {
     format!("conductor/{name}")
 }
 
+/// Format a global channel (0..127) as `A01` style label.
+/// port = global_channel / 16 → letter 'A' + port (A..H)
+/// raw  = global_channel % 16 → 1-indexed two-digit "01".."16"
+pub fn channel_label(global_channel: u8) -> String {
+    let port = global_channel / 16;
+    let raw = global_channel % 16;
+    format!("{}{:02}", (b'A' + port) as char, raw + 1)
+}
+
 /// Build the directory prefix for a single track.
-pub fn track_prefix(uuid: &str) -> String {
-    format!("tracks/{uuid}")
+pub fn track_prefix(global_channel: u8, uuid: &str) -> String {
+    format!("channels/{}/{}", channel_label(global_channel), uuid)
 }
 
 /// Build the full path for a track notes entry.
-pub fn track_notes_path(uuid: &str) -> String {
-    format!("tracks/{uuid}/notes.zst")
+pub fn track_notes_path(global_channel: u8, uuid: &str) -> String {
+    format!("{}/notes.zst", track_prefix(global_channel, uuid))
 }
 
 /// Build the full path for a CC entry for one track.
-pub fn cc_path(uuid: &str, cc_num: u8) -> String {
-    format!("tracks/{uuid}/cc_{cc_num:03}.zst")
+pub fn cc_path(global_channel: u8, uuid: &str, cc_num: u8) -> String {
+    format!(
+        "{}/cc_{cc_num:03}.zst",
+        track_prefix(global_channel, uuid)
+    )
 }
 
 /// Build the full path for a pitch bend entry for one track.
-pub fn pitch_path(uuid: &str) -> String {
-    format!("tracks/{uuid}/pitch.zst")
+pub fn pitch_path(global_channel: u8, uuid: &str) -> String {
+    format!("{}/pitch.zst", track_prefix(global_channel, uuid))
 }
 
 /// Build the full path for a program change entry for one track.
-pub fn pc_path(uuid: &str) -> String {
-    format!("tracks/{uuid}/pc.zst")
+pub fn pc_path(global_channel: u8, uuid: &str) -> String {
+    format!("{}/pc.zst", track_prefix(global_channel, uuid))
 }
 
 /// Build the full path for an RPN entry for one track.
-pub fn rpn_path(uuid: &str, rpn_num: u8) -> String {
-    format!("tracks/{uuid}/rpn_{rpn_num}.zst")
+pub fn rpn_path(global_channel: u8, uuid: &str, rpn_num: u8) -> String {
+    format!("{}/rpn_{rpn_num}.zst", track_prefix(global_channel, uuid))
 }
 
 #[cfg(test)]
@@ -643,9 +792,9 @@ mod tests {
             },
         ];
         archive.set_notes(
-            track_notes_path("abc123"),
+            track_notes_path(17, "abc123"),
             FileHeader::new(magic::TRACK_NOTES, 1, 1, 0),
-            InnerHeader::new(0, 1 * 16 + 1),
+            InnerHeader::new(0, 17),
             &notes,
         );
 
@@ -660,7 +809,7 @@ mod tests {
                 bpm: 140.0,
             },
         ];
-        archive.set_events(
+        archive.set_delta_events(
             conductor_path("tempo.zst"),
             FileHeader::new(magic::TEMPO, 0, 0, 0),
             &tempos,
@@ -677,7 +826,7 @@ mod tests {
         assert_eq!(proj_events[0].name, "Test Song");
 
         // Verify notes
-        let (inner, note_events) = loaded.get_notes(&track_notes_path("abc123")).unwrap();
+        let (inner, note_events) = loaded.get_notes(&track_notes_path(17, "abc123")).unwrap();
         assert_eq!(inner.track_index, 0);
         assert_eq!(inner.channel, 17);
         assert_eq!(note_events.len(), 2);
@@ -686,7 +835,7 @@ mod tests {
 
         // Verify tempo
         let tempo_events: Vec<TempoEvent> =
-            loaded.get_events(&conductor_path("tempo.zst")).unwrap();
+            loaded.get_delta_events(&conductor_path("tempo.zst")).unwrap();
         assert_eq!(tempo_events.len(), 2);
         assert_eq!(tempo_events[1].bpm, 140.0);
 
@@ -699,11 +848,22 @@ mod tests {
     #[test]
     fn path_helpers() {
         assert_eq!(conductor_path("tempo.zst"), "conductor/tempo.zst");
-        assert_eq!(track_notes_path("abc"), "tracks/abc/notes.zst");
-        assert_eq!(cc_path("abc", 7), "tracks/abc/cc_007.zst");
-        assert_eq!(pitch_path("abc"), "tracks/abc/pitch.zst");
-        assert_eq!(pc_path("abc"), "tracks/abc/pc.zst");
-        assert_eq!(rpn_path("abc", 0), "tracks/abc/rpn_0.zst");
+        // global_channel = 0 → port 'A', raw_ch 0 → label "A01"
+        assert_eq!(track_notes_path(0, "abc"), "channels/A01/abc/notes.zst");
+        // global_channel = 17 = port 1 ('B') + raw_ch 1 (label "02") → "B02"
+        assert_eq!(cc_path(17, "abc", 7), "channels/B02/abc/cc_007.zst");
+        assert_eq!(pitch_path(0, "abc"), "channels/A01/abc/pitch.zst");
+        assert_eq!(pc_path(0, "abc"), "channels/A01/abc/pc.zst");
+        assert_eq!(rpn_path(0, "abc", 0), "channels/A01/abc/rpn_0.zst");
+    }
+
+    #[test]
+    fn channel_label_format() {
+        assert_eq!(channel_label(0), "A01");
+        assert_eq!(channel_label(15), "A16");
+        assert_eq!(channel_label(16), "B01");
+        assert_eq!(channel_label(17), "B02");
+        assert_eq!(channel_label(127), "H16");
     }
 
     #[test]
@@ -775,7 +935,7 @@ mod tests {
             Note { start_tick: 100, end_tick: 200, key: 60, velocity: 100 },
             Note { start_tick: 300, end_tick: 400, key: 64, velocity: 90 },
         ];
-        let path = track_notes_path("test");
+        let path = track_notes_path(0x11, "test");
         archive.set_notes(
             &path,
             FileHeader::new(magic::TRACK_NOTES, 1, 1, 0),

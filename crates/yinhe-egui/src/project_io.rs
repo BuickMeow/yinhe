@@ -37,7 +37,7 @@ pub fn midi_to_archive_with_names(
         })
         .collect();
     if !tempos.is_empty() {
-        archive.set_events(
+        archive.set_delta_events(
             conductor_path("tempo.zst"),
             FileHeader::new(*b"YHTM", 0, 0, 0),
             &tempos,
@@ -54,7 +54,7 @@ pub fn midi_to_archive_with_names(
         })
         .collect();
     if !time_sigs.is_empty() {
-        archive.set_events(
+        archive.set_delta_events(
             conductor_path("time_sig.zst"),
             FileHeader::new(*b"YHTS", 0, 0, 0),
             &time_sigs,
@@ -129,7 +129,7 @@ pub fn midi_to_archive_with_names(
 
         if !track_notes[track_idx].is_empty() {
             archive.set_notes(
-                track_notes_path(&uuid),
+                track_notes_path(global_channel, &uuid),
                 FileHeader::new(*b"YHTK", port, raw_channel, track_idx as u8),
                 inner,
                 &track_notes[track_idx],
@@ -180,8 +180,8 @@ pub fn midi_to_archive_with_names(
         }
 
         for (cc_num, events) in &cc_events {
-            archive.set_events_with_inner(
-                cc_path(&uuid, *cc_num),
+            archive.set_delta_events_with_inner(
+                cc_path(global_channel, &uuid, *cc_num),
                 FileHeader::new(*b"YHCC", port, raw_channel, *cc_num),
                 inner,
                 events,
@@ -189,8 +189,8 @@ pub fn midi_to_archive_with_names(
         }
 
         if !pitch_events.is_empty() {
-            archive.set_events_with_inner(
-                pitch_path(&uuid),
+            archive.set_delta_events_with_inner(
+                pitch_path(global_channel, &uuid),
                 FileHeader::new(*b"YHPB", port, raw_channel, 0),
                 inner,
                 &pitch_events,
@@ -198,8 +198,8 @@ pub fn midi_to_archive_with_names(
         }
 
         if !pc_events.is_empty() {
-            archive.set_events_with_inner(
-                pc_path(&uuid),
+            archive.set_delta_events_with_inner(
+                pc_path(global_channel, &uuid),
                 FileHeader::new(*b"YHPC", port, raw_channel, 0),
                 inner,
                 &pc_events,
@@ -266,7 +266,7 @@ pub fn archive_to_midi(archive: &ProjectArchive) -> yinhe_midi::MidiFile {
     }
 
     // ── Read conductor events ──
-    if let Some(tempos) = archive.get_events::<TempoEvent>(&conductor_path("tempo.zst")) {
+    if let Some(tempos) = archive.get_delta_events::<TempoEvent>(&conductor_path("tempo.zst")) {
         midi.tempo_segments = tempos
             .iter()
             .map(|t| yinhe_midi::TempoSegment {
@@ -311,11 +311,14 @@ pub fn archive_to_midi(archive: &ProjectArchive) -> yinhe_midi::MidiFile {
         }
     }
 
-    // Extract uuid from a path matching "tracks/{uuid}/...".
+    // Extract uuid from a path matching "channels/{label}/{uuid}/...".
     fn extract_uuid(path: &str) -> Option<&str> {
-        let rest = path.strip_prefix("tracks/")?;
-        let slash = rest.find('/')?;
-        Some(&rest[..slash])
+        let rest = path.strip_prefix("channels/")?;
+        // rest = "{label}/{uuid}/..."
+        let slash1 = rest.find('/')?;
+        let after_label = &rest[slash1 + 1..];
+        let slash2 = after_label.find('/')?;
+        Some(&after_label[..slash2])
     }
 
     // ── Rebuild track data from archive entries ──
@@ -363,19 +366,19 @@ pub fn archive_to_midi(archive: &ProjectArchive) -> yinhe_midi::MidiFile {
                 inner
             }
             magic::CC => {
-                let Some((inner, events)) = archive.get_events_with_inner::<CcEvent>(path) else { continue };
+                let Some((inner, events)) = archive.get_delta_events_with_inner::<CcEvent>(path) else { continue };
                 for ev in &events {
                     data.cc_events.push((h.extra, *ev));
                 }
                 inner
             }
             magic::PITCH_BEND => {
-                let Some((inner, events)) = archive.get_events_with_inner::<PitchBendEvent>(path) else { continue };
+                let Some((inner, events)) = archive.get_delta_events_with_inner::<PitchBendEvent>(path) else { continue };
                 data.pitch_events.extend(events);
                 inner
             }
             magic::PC => {
-                let Some((inner, events)) = archive.get_events_with_inner::<PcEvent>(path) else { continue };
+                let Some((inner, events)) = archive.get_delta_events_with_inner::<PcEvent>(path) else { continue };
                 data.pc_events.extend(events);
                 inner
             }

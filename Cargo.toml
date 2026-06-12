@@ -20,6 +20,7 @@ resolver = "2"
 wgpu = "29.0.3"
 eframe = { version = "0.34.2", features = ["wgpu"] }
 egui = "0.34.2"
+egui_extras = "0.34"
 pollster = "0.4"
 bytemuck = { version = "1", features = ["derive"] }
 midly = "0.5.3"

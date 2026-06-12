@@ -1,7 +1,9 @@
 use eframe::egui;
+use egui_extras::{Column, TableBuilder};
 use egui_material_icons::icons::*;
 use std::collections::BTreeMap;
 use yinhe_project::*;
+use yinhe_types::TimeSigEvent as TypesTimeSigEvent;
 
 use crate::document::Document;
 
@@ -53,12 +55,68 @@ fn build_tree(entries: &[(&String, &ArchiveEntry)]) -> TreeNode {
     root
 }
 
+/// Precomputed bar-counting table for fast tick -> "{bar}/{tick_in_bar}".
+struct BarLookup {
+    segs: Vec<BarSeg>,
+}
+
+struct BarSeg {
+    tick_start: u32,
+    bar_start: u32,
+    ticks_per_bar: u32,
+}
+
+impl BarLookup {
+    fn build(ppq: u32, default_num: u8, ts_events: &[TypesTimeSigEvent]) -> Self {
+        let mut points: Vec<(u32, u8)> = Vec::new();
+        if ts_events.first().map(|e| e.tick).unwrap_or(u32::MAX) != 0 {
+            points.push((0, default_num));
+        }
+        for e in ts_events {
+            points.push((e.tick, e.numerator));
+        }
+        let mut segs = Vec::with_capacity(points.len());
+        let mut cum_bars: u32 = 0;
+        for (i, &(tick, num)) in points.iter().enumerate() {
+            let ticks_per_bar = ppq.saturating_mul(num.max(1) as u32);
+            segs.push(BarSeg { tick_start: tick, bar_start: cum_bars, ticks_per_bar });
+            if let Some(&(next_tick, _)) = points.get(i + 1) {
+                let span = next_tick.saturating_sub(tick);
+                cum_bars = cum_bars.saturating_add(span / ticks_per_bar.max(1));
+            }
+        }
+        if segs.is_empty() {
+            segs.push(BarSeg { tick_start: 0, bar_start: 0, ticks_per_bar: ppq.saturating_mul(4) });
+        }
+        BarLookup { segs }
+    }
+
+    fn format(&self, tick: u32) -> String {
+        let idx = match self.segs.binary_search_by_key(&tick, |s| s.tick_start) {
+            Ok(i) => i,
+            Err(i) => i.saturating_sub(1),
+        };
+        let seg = &self.segs[idx];
+        let local = tick.saturating_sub(seg.tick_start);
+        let tpb = seg.ticks_per_bar.max(1);
+        let bar_offset = local / tpb;
+        let tick_in_bar = local % tpb;
+        let bar_1 = seg.bar_start + bar_offset + 1;
+        format!("{}/{}", bar_1, tick_in_bar)
+    }
+}
+
 pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>, state: &mut EventBrowserState) {
     let Some(doc) = doc else {
         ui.add_space(8.0);
         ui.label(egui::RichText::new("（未打开文档）").color(egui::Color32::from_gray(100)).size(12.0));
         return;
     };
+
+    let ppq = doc.midi.ticks_per_beat;
+    let default_num = doc.midi.time_sig_numerator;
+    let ts_events: Vec<TypesTimeSigEvent> = doc.midi.time_sig_events.clone();
+    let bar_lookup = BarLookup::build(ppq, default_num, &ts_events);
 
     let Some(archive) = &doc.archive else {
         ui.add_space(8.0);
@@ -120,7 +178,7 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>, state: &mut EventBrow
                     ui.set_min_width(ui.available_width());
                     if let Some(sel) = &state.selected_path {
                         if let Some(entry) = archive.entries.get(sel) {
-                            show_entry_detail(ui, sel, entry);
+                            show_entry_detail(ui, sel, entry, &bar_lookup);
                         } else {
                             ui.colored_label(egui::Color32::GRAY, "（条目不存在）");
                         }
@@ -231,7 +289,9 @@ fn render_leaf_row(
         b if b == *b"YHCC" => ICON_SETTINGS,
         b if b == *b"YHPB" => ICON_CENTER_FOCUS_STRONG,
         b if b == *b"YHPC" => ICON_DESCRIPTION,
-        b if b == *b"YHMP" || b == *b"YHPR" || b == *b"YHTM" || b == *b"YHTS" => ICON_AUDIO_FILE,
+        b if b == *b"YHTM" => ICON_SPEED,
+        b if b == *b"YHTS" => ICON_SCHEDULE,
+        b if b == *b"YHMP" || b == *b"YHPR" => ICON_AUDIO_FILE,
         _ => ICON_AUDIO_FILE,
     };
     let bg = if is_selected {
@@ -282,7 +342,13 @@ fn render_leaf_row(
         state.selected_path = Some(full_path.to_string());
     }
 }
-fn show_entry_detail(ui: &mut egui::Ui, path: &str, entry: &ArchiveEntry) {
+
+/// Returns true if the magic indicates a track-scoped file with InnerHeader.
+fn magic_has_inner_header(magic: [u8; 4]) -> bool {
+    matches!(&magic, b"YHTK" | b"YHCC" | b"YHPB" | b"YHPC")
+}
+
+fn show_entry_detail(ui: &mut egui::Ui, _path: &str, entry: &ArchiveEntry, bar_lookup: &BarLookup) {
     let h = entry.header;
 
     ui.label(egui::RichText::new("文件头").size(12.0).strong());
@@ -295,23 +361,40 @@ fn show_entry_detail(ui: &mut egui::Ui, path: &str, entry: &ArchiveEntry) {
 
     ui.add_space(6.0);
 
-    if entry.data.len() >= 3 {
-        if let Some((inner, _rest)) = InnerHeader::read(&entry.data) {
+    let payload: &[u8] = if magic_has_inner_header(h.magic) && entry.data.len() >= InnerHeader::SIZE {
+        if let Some((inner, rest)) = InnerHeader::read(&entry.data) {
             ui.label(egui::RichText::new("内头").size(12.0).strong());
             ui.add_space(2.0);
             header_row(ui, "track_index", &format!("{}", inner.track_index));
-            header_row(ui, "channel", &format!("{} (port={}, raw_ch={})", inner.channel, inner.port(), inner.raw_channel()));
+            header_row(
+                ui,
+                "channel",
+                &format!(
+                    "{} (port={}, raw_ch={}, label={})",
+                    inner.channel,
+                    inner.port(),
+                    inner.raw_channel(),
+                    channel_label(inner.channel),
+                ),
+            );
             ui.add_space(6.0);
+            rest
+        } else {
+            &entry.data[..]
         }
-    }
+    } else {
+        &entry.data[..]
+    };
 
     match h.magic {
-        b if b == *b"YHTK" => render_notes_table(ui, &entry.data),
-        b if b == *b"YHCC" => render_cc_table(ui, &entry.data),
-        b if b == *b"YHPB" => render_pitch_table(ui, &entry.data),
-        b if b == *b"YHPC" => render_pc_table(ui, &entry.data),
-        b if b == *b"YHMP" || b == *b"YHPR" || b == *b"YHTM" || b == *b"YHTS" => render_json_text(ui, &entry.data),
-        _ => render_hexdump(ui, &entry.data),
+        b if b == *b"YHTK" => render_notes_table(ui, payload, bar_lookup),
+        b if b == *b"YHCC" => render_cc_table(ui, payload, bar_lookup),
+        b if b == *b"YHPB" => render_pitch_table(ui, payload, bar_lookup),
+        b if b == *b"YHPC" => render_pc_table(ui, payload, bar_lookup),
+        b if b == *b"YHTM" => render_tempo_table(ui, payload, bar_lookup),
+        b if b == *b"YHTS" => render_time_sig_table(ui, payload, bar_lookup),
+        b if b == *b"YHMP" || b == *b"YHPR" => render_json_text(ui, payload),
+        _ => render_hexdump(ui, payload),
     }
 }
 
@@ -370,116 +453,212 @@ fn render_hexdump(ui: &mut egui::Ui, data: &[u8]) {
     );
 }
 
-fn render_notes_table(ui: &mut egui::Ui, data: &[u8]) {
-    let Some((_inner, notes)) = (|| -> Option<_> {
-        let entry = data;
-        let (inner, rest) = InnerHeader::read(entry)?;
-        Some((inner, decode_notes_delta_gate(rest)))
-    })() else {
-        render_hexdump(ui, data);
-        return;
-    };
-    ui.add_space(4.0);
-    ui.label(egui::RichText::new(format!("音符 ({} 个)", notes.len())).size(12.0).strong());
-    ui.add_space(2.0);
-    let mut table_text = String::from("tick\t结束\t键位\t力度\n");
-    for n in &notes {
-        table_text.push_str(&format!("{}\t{}\t{}\t{}\n", n.start_tick, n.end_tick, n.key, n.velocity));
+/// Common table builder: header + virtualised body rows.
+/// `rows`: total row count. `row_cb(row_idx, row)`: render one row's cells in order.
+fn build_table<F>(
+    ui: &mut egui::Ui,
+    id_salt: &str,
+    headers: &[(&str, f32)], // (label, min_width)
+    rows: usize,
+    mut row_cb: F,
+) where
+    F: FnMut(usize, &mut egui_extras::TableRow),
+{
+    let mut tb = TableBuilder::new(ui)
+        .id_salt(id_salt)
+        .striped(true)
+        .resizable(true)
+        .cell_layout(egui::Layout::left_to_right(egui::Align::Center));
+    for (_, min_w) in headers {
+        tb = tb.column(Column::initial(*min_w).at_least(40.0).clip(true));
     }
-    let mut clone = table_text;
-    egui::ScrollArea::vertical().auto_shrink([false, true]).show(ui, |ui| {
-        ui.add_sized(
-            egui::vec2(ui.available_width(), ui.available_height().max(300.0)),
-            egui::TextEdit::multiline(&mut clone)
-                .desired_rows(notes.len().min(30))
-                .font(egui::TextStyle::Monospace)
-                .code_editor(),
-        );
+    tb.header(20.0, |mut h| {
+        for (label, _) in headers {
+            h.col(|ui| {
+                ui.label(egui::RichText::new(*label).strong().size(11.0));
+            });
+        }
+    })
+    .body(|body| {
+        body.rows(18.0, rows, |mut row| {
+            let i = row.index();
+            row_cb(i, &mut row);
+        });
     });
 }
 
-fn render_cc_table(ui: &mut egui::Ui, data: &[u8]) {
-    let Some((_inner, events)) = (|| -> Option<_> {
-        let (inner, rest) = InnerHeader::read(data)?;
-        let ev: Vec<CcEvent> = bincode::deserialize(rest).ok()?;
-        Some((inner, ev))
-    })() else {
-        render_hexdump(ui, data);
-        return;
+fn cell_text(row: &mut egui_extras::TableRow, text: impl Into<String>) {
+    let s: String = text.into();
+    row.col(|ui| {
+        ui.label(egui::RichText::new(s).size(11.0).monospace());
+    });
+}
+
+fn render_notes_table(ui: &mut egui::Ui, payload: &[u8], bar_lookup: &BarLookup) {
+    let notes: Vec<Note> = decode_delta_events(payload);
+    ui.add_space(4.0);
+    ui.label(egui::RichText::new(format!("音符 ({} 个)", notes.len())).size(12.0).strong());
+    ui.add_space(2.0);
+    build_table(
+        ui,
+        "notes_table",
+        &[
+            ("#", 40.0),
+            ("tick", 70.0),
+            ("位置", 80.0),
+            ("结束 tick", 80.0),
+            ("结束位置", 90.0),
+            ("键位", 50.0),
+            ("力度", 50.0),
+        ],
+        notes.len(),
+        |i, row| {
+            let n = &notes[i];
+            cell_text(row, format!("{}", i + 1));
+            cell_text(row, format!("{}", n.start_tick));
+            cell_text(row, bar_lookup.format(n.start_tick));
+            cell_text(row, format!("{}", n.end_tick));
+            cell_text(row, bar_lookup.format(n.end_tick));
+            cell_text(row, format!("{}", n.key));
+            cell_text(row, format!("{}", n.velocity));
+        },
+    );
+}
+
+fn render_cc_table(ui: &mut egui::Ui, payload: &[u8], bar_lookup: &BarLookup) {
+    let events: Vec<CcEvent> = {
+        let v: Vec<CcEvent> = decode_delta_events(payload);
+        if v.is_empty() && !payload.is_empty() {
+            render_hexdump(ui, payload);
+            return;
+        }
+        v
     };
     ui.add_space(4.0);
     ui.label(egui::RichText::new(format!("CC 事件 ({} 个)", events.len())).size(12.0).strong());
     ui.add_space(2.0);
-    let mut table_text = String::from("tick\t值\n");
-    for e in &events {
-        table_text.push_str(&format!("{}\t{}\n", e.tick, e.value));
-    }
-    let mut clone = table_text;
-    egui::ScrollArea::vertical().auto_shrink([false, true]).show(ui, |ui| {
-        ui.add_sized(
-            egui::vec2(ui.available_width(), ui.available_height().max(300.0)),
-            egui::TextEdit::multiline(&mut clone)
-                .desired_rows(events.len().min(30))
-                .font(egui::TextStyle::Monospace)
-                .code_editor(),
-        );
-    });
+    build_table(
+        ui,
+        "cc_table",
+        &[("#", 40.0), ("tick", 70.0), ("位置", 80.0), ("值", 60.0)],
+        events.len(),
+        |i, row| {
+            let e = &events[i];
+            cell_text(row, format!("{}", i + 1));
+            cell_text(row, format!("{}", e.tick));
+            cell_text(row, bar_lookup.format(e.tick));
+            cell_text(row, format!("{}", e.value));
+        },
+    );
 }
 
-fn render_pitch_table(ui: &mut egui::Ui, data: &[u8]) {
-    let Some((_inner, events)) = (|| -> Option<_> {
-        let (inner, rest) = InnerHeader::read(data)?;
-        let ev: Vec<PitchBendEvent> = bincode::deserialize(rest).ok()?;
-        Some((inner, ev))
-    })() else {
-        render_hexdump(ui, data);
-        return;
+fn render_pitch_table(ui: &mut egui::Ui, payload: &[u8], bar_lookup: &BarLookup) {
+    let events: Vec<PitchBendEvent> = {
+        let v: Vec<PitchBendEvent> = decode_delta_events(payload);
+        if v.is_empty() && !payload.is_empty() {
+            render_hexdump(ui, payload);
+            return;
+        }
+        v
     };
     ui.add_space(4.0);
     ui.label(egui::RichText::new(format!("弯音事件 ({} 个)", events.len())).size(12.0).strong());
     ui.add_space(2.0);
-    let mut table_text = String::from("tick\t值\n");
-    for e in &events {
-        table_text.push_str(&format!("{}\t{}\n", e.tick, e.value));
-    }
-    let mut clone = table_text;
-    egui::ScrollArea::vertical().auto_shrink([false, true]).show(ui, |ui| {
-        ui.add_sized(
-            egui::vec2(ui.available_width(), ui.available_height().max(300.0)),
-            egui::TextEdit::multiline(&mut clone)
-                .desired_rows(events.len().min(30))
-                .font(egui::TextStyle::Monospace)
-                .code_editor(),
-        );
-    });
+    build_table(
+        ui,
+        "pb_table",
+        &[("#", 40.0), ("tick", 70.0), ("位置", 80.0), ("值", 70.0)],
+        events.len(),
+        |i, row| {
+            let e = &events[i];
+            cell_text(row, format!("{}", i + 1));
+            cell_text(row, format!("{}", e.tick));
+            cell_text(row, bar_lookup.format(e.tick));
+            cell_text(row, format!("{}", e.value));
+        },
+    );
 }
 
-fn render_pc_table(ui: &mut egui::Ui, data: &[u8]) {
-    let Some((_inner, events)) = (|| -> Option<_> {
-        let (inner, rest) = InnerHeader::read(data)?;
-        let ev: Vec<PcEvent> = bincode::deserialize(rest).ok()?;
-        Some((inner, ev))
-    })() else {
-        render_hexdump(ui, data);
-        return;
+fn render_pc_table(ui: &mut egui::Ui, payload: &[u8], bar_lookup: &BarLookup) {
+    let events: Vec<PcEvent> = {
+        let v: Vec<PcEvent> = decode_delta_events(payload);
+        if v.is_empty() && !payload.is_empty() {
+            render_hexdump(ui, payload);
+            return;
+        }
+        v
     };
     ui.add_space(4.0);
     ui.label(egui::RichText::new(format!("音色变更 ({} 个)", events.len())).size(12.0).strong());
     ui.add_space(2.0);
-    let mut table_text = String::from("tick\t音色\n");
-    for e in &events {
-        table_text.push_str(&format!("{}\t{}\n", e.tick, e.program));
-    }
-    let mut clone = table_text;
-    egui::ScrollArea::vertical().auto_shrink([false, true]).show(ui, |ui| {
-        ui.add_sized(
-            egui::vec2(ui.available_width(), ui.available_height().max(300.0)),
-            egui::TextEdit::multiline(&mut clone)
-                .desired_rows(events.len().min(30))
-                .font(egui::TextStyle::Monospace)
-                .code_editor(),
-        );
-    });
+    build_table(
+        ui,
+        "pc_table",
+        &[("#", 40.0), ("tick", 70.0), ("位置", 80.0), ("音色", 60.0)],
+        events.len(),
+        |i, row| {
+            let e = &events[i];
+            cell_text(row, format!("{}", i + 1));
+            cell_text(row, format!("{}", e.tick));
+            cell_text(row, bar_lookup.format(e.tick));
+            cell_text(row, format!("{}", e.program));
+        },
+    );
+}
+
+fn render_tempo_table(ui: &mut egui::Ui, payload: &[u8], bar_lookup: &BarLookup) {
+    let events: Vec<TempoEvent> = {
+        let v: Vec<TempoEvent> = decode_delta_events(payload);
+        if v.is_empty() && !payload.is_empty() {
+            render_hexdump(ui, payload);
+            return;
+        }
+        v
+    };
+    ui.add_space(4.0);
+    ui.label(egui::RichText::new(format!("Tempo ({} 个)", events.len())).size(12.0).strong());
+    ui.add_space(2.0);
+    build_table(
+        ui,
+        "tempo_table",
+        &[("#", 40.0), ("tick", 70.0), ("位置", 80.0), ("BPM", 70.0)],
+        events.len(),
+        |i, row| {
+            let e = &events[i];
+            cell_text(row, format!("{}", i + 1));
+            cell_text(row, format!("{}", e.tick));
+            cell_text(row, bar_lookup.format(e.tick));
+            cell_text(row, format!("{:.2}", e.bpm));
+        },
+    );
+}
+
+fn render_time_sig_table(ui: &mut egui::Ui, payload: &[u8], bar_lookup: &BarLookup) {
+    let events: Vec<TimeSigEvent> = {
+        let v: Vec<TimeSigEvent> = decode_delta_events(payload);
+        if v.is_empty() && !payload.is_empty() {
+            render_hexdump(ui, payload);
+            return;
+        }
+        v
+    };
+    ui.add_space(4.0);
+    ui.label(egui::RichText::new(format!("拍号 ({} 个)", events.len())).size(12.0).strong());
+    ui.add_space(2.0);
+    build_table(
+        ui,
+        "ts_table",
+        &[("#", 40.0), ("tick", 70.0), ("位置", 80.0), ("拍号", 80.0)],
+        events.len(),
+        |i, row| {
+            let e = &events[i];
+            cell_text(row, format!("{}", i + 1));
+            cell_text(row, format!("{}", e.tick));
+            cell_text(row, bar_lookup.format(e.tick));
+            let denom = 1u32 << e.denominator_power as u32;
+            cell_text(row, format!("{}/{}", e.numerator, denom));
+        },
+    );
 }
 
 fn show_root_overview(ui: &mut egui::Ui, entries: &[(&String, &ArchiveEntry)], _archive: &ProjectArchive) {
@@ -489,11 +668,10 @@ fn show_root_overview(ui: &mut egui::Ui, entries: &[(&String, &ArchiveEntry)], _
     ui.colored_label(egui::Color32::GRAY, format!("{} 个条目, 共 {} 字节", entries.len(), total_bytes));
     ui.add_space(4.0);
 
-    // Summary by category
     let track_count = entries.iter().filter(|(p, _)| p.contains("/notes.zst")).count();
     let cc_count = entries.iter().filter(|(p, _)| p.contains("/cc_")).count();
     let conductor_count = entries.iter().filter(|(p, _)| p.starts_with("conductor/")).count();
-    ui.colored_label(egui::Color32::from_gray(120), format!("◉ 音轨: {} 个", track_count));
+    ui.colored_label(egui::Color32::from_gray(120), format!("音轨: {} 个", track_count));
     ui.colored_label(egui::Color32::from_gray(120), format!("CC: {} 个", cc_count));
     ui.colored_label(egui::Color32::from_gray(120), format!("指挥: {} 个", conductor_count));
 
