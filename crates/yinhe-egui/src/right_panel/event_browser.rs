@@ -432,7 +432,7 @@ fn render_leaf_row(
 
 /// Returns true if the magic indicates a track-scoped file with InnerHeader.
 fn magic_has_inner_header(magic: [u8; 4]) -> bool {
-    matches!(&magic, b"YHTK" | b"YHCC" | b"YHPB" | b"YHPC")
+    matches!(&magic, b"YHTK" | b"YHCC" | b"YHPB" | b"YHPC" | b"YHRP")
 }
 
 fn show_entry_detail(ui: &mut egui::Ui, _path: &str, entry: &ArchiveEntry, bar_lookup: &BarLookup) {
@@ -489,6 +489,7 @@ fn show_entry_detail(ui: &mut egui::Ui, _path: &str, entry: &ArchiveEntry, bar_l
         b if b == *b"YHTM" => render_tempo_table(ui, payload, bar_lookup),
         b if b == *b"YHTS" => render_time_sig_table(ui, payload, bar_lookup),
         b if b == *b"YHMP" || b == *b"YHPR" => render_json_text(ui, payload),
+        b if b == *b"YHRP" => render_rpn_table(ui, payload, bar_lookup, h.extra),
         _ => render_hexdump(ui, payload),
     }
 }
@@ -832,4 +833,46 @@ fn show_root_overview(
 
     ui.add_space(8.0);
     ui.colored_label(egui::Color32::from_gray(100), "← 点击左侧文件查看详情");
+}
+
+fn render_rpn_table(ui: &mut egui::Ui, payload: &[u8], bar_lookup: &BarLookup, rpn_num: u8) {
+    let events: Vec<RpnEvent> = {
+        let v: Vec<RpnEvent> = decode_delta_events(payload);
+        if v.is_empty() && !payload.is_empty() {
+            render_hexdump(ui, payload);
+            return;
+        }
+        v
+    };
+    ui.add_space(4.0);
+    ui.label(
+        egui::RichText::new(format!("RPN {} ({} 个)", rpn_num, events.len()))
+            .size(12.0)
+            .strong(),
+    );
+    ui.add_space(2.0);
+    build_table(
+        ui,
+        "rpn_table",
+        &[("#", 40.0), ("tick", 70.0), ("位置", 80.0), ("RPN", 50.0), ("值", 60.0), ("名称", 160.0)],
+        events.len(),
+        |i, row| {
+            let e = &events[i];
+            cell_text(row, format!("{}", i + 1));
+            cell_text(row, format!("{}", e.tick));
+            cell_text(row, bar_lookup.format(e.tick));
+            cell_text(row, format!("{}", rpn_num));
+            cell_text(row, format!("{}", e.value));
+            cell_text(row, rpn_name(rpn_num));
+        },
+    );
+}
+
+fn rpn_name(rpn_num: u8) -> &'static str {
+    match rpn_num {
+        0 => "Pitch Bend Sensitivity",
+        1 => "Fine Tune",
+        2 => "Coarse Tune",
+        _ => "Unknown",
+    }
 }

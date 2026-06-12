@@ -136,10 +136,14 @@ pub fn midi_to_archive_with_names(
             );
         }
 
-        // Collect CC events per controller number for this track.
+        // Collect CC events per controller number for this track,
+        // extracting known RPN sequences (CC 101/100/6/38) into dedicated RPN entries.
         let mut cc_events: HashMap<u8, Vec<CcEvent>> = HashMap::new();
+        let mut rpn_events: HashMap<u8, Vec<RpnEvent>> = HashMap::new();
         let mut pitch_events: Vec<PitchBendEvent> = Vec::new();
         let mut pc_events: Vec<PcEvent> = Vec::new();
+        let mut rpn_msb: Option<u8> = None;
+        let mut rpn_lsb: Option<u8> = None;
         for ev in &midi.control_events {
             let ev_track = match ev {
                 yinhe_midi::MidiControlEvent::ControlChange { track, .. }
@@ -156,13 +160,41 @@ pub fn midi_to_archive_with_names(
                     value,
                     ..
                 } => {
-                    cc_events
-                        .entry(*controller)
-                        .or_default()
-                        .push(CcEvent {
-                            tick: *tick,
-                            value: *value,
-                        });
+                    match controller {
+                        101 => { rpn_msb = Some(*value); }
+                        100 => { rpn_lsb = Some(*value); }
+                        6 | 38 => {
+                            if let Some(msb) = rpn_msb
+                                && let Some(lsb) = rpn_lsb
+                                && let Some(rpn_num) = rpn_number(msb, lsb)
+                            {
+                                rpn_events
+                                    .entry(rpn_num)
+                                    .or_default()
+                                    .push(RpnEvent {
+                                        tick: *tick,
+                                        value: *value as u16,
+                                    });
+                            } else {
+                                cc_events
+                                    .entry(*controller)
+                                    .or_default()
+                                    .push(CcEvent {
+                                        tick: *tick,
+                                        value: *value,
+                                    });
+                            }
+                        }
+                        _ => {
+                            cc_events
+                                .entry(*controller)
+                                .or_default()
+                                .push(CcEvent {
+                                    tick: *tick,
+                                    value: *value,
+                                });
+                        }
+                    }
                 }
                 yinhe_midi::MidiControlEvent::PitchBend { tick, value, .. } => {
                     pitch_events.push(PitchBendEvent {
@@ -183,6 +215,15 @@ pub fn midi_to_archive_with_names(
             archive.set_delta_events_with_inner(
                 cc_path(global_channel, &uuid, *cc_num),
                 FileHeader::new(*b"YHCC", port, raw_channel, *cc_num),
+                inner,
+                events,
+            );
+        }
+
+        for (rpn_num, events) in &rpn_events {
+            archive.set_delta_events_with_inner(
+                rpn_path(global_channel, &uuid, *rpn_num),
+                FileHeader::new(*b"YHRP", port, raw_channel, *rpn_num),
                 inner,
                 events,
             );
@@ -343,6 +384,7 @@ pub fn archive_to_midi(archive: &ProjectArchive) -> yinhe_midi::MidiFile {
         notes: Vec<yinhe_project::Note>,
         global_channel: Option<u8>, // from inner header (port*16 + raw_ch)
         cc_events: Vec<(u8, CcEvent)>,
+        rpn_events: Vec<(u8, RpnEvent)>,
         pitch_events: Vec<PitchBendEvent>,
         pc_events: Vec<PcEvent>,
     }
@@ -364,6 +406,7 @@ pub fn archive_to_midi(archive: &ProjectArchive) -> yinhe_midi::MidiFile {
                 notes: Vec::new(),
                 global_channel: None,
                 cc_events: Vec::new(),
+                rpn_events: Vec::new(),
                 pitch_events: Vec::new(),
                 pc_events: Vec::new(),
             }
@@ -394,6 +437,13 @@ pub fn archive_to_midi(archive: &ProjectArchive) -> yinhe_midi::MidiFile {
             magic::PC => {
                 let Some((inner, events)) = archive.get_delta_events_with_inner::<PcEvent>(path) else { continue };
                 data.pc_events.extend(events);
+                inner
+            }
+            magic::RPN => {
+                let Some((inner, events)) = archive.get_delta_events_with_inner::<RpnEvent>(path) else { continue };
+                for ev in &events {
+                    data.rpn_events.push((h.extra, *ev));
+                }
                 inner
             }
             _ => continue,
@@ -495,6 +545,30 @@ pub fn archive_to_midi(archive: &ProjectArchive) -> yinhe_midi::MidiFile {
                 tick: ev.tick,
                 channel: global_ch,
                 program: ev.program,
+                track: track_idx as u16,
+            });
+        }
+
+        for (rpn_num, ev) in &data.rpn_events {
+            midi.control_events.push(yinhe_midi::MidiControlEvent::ControlChange {
+                tick: ev.tick,
+                channel: global_ch,
+                controller: 101,
+                value: *rpn_num,
+                track: track_idx as u16,
+            });
+            midi.control_events.push(yinhe_midi::MidiControlEvent::ControlChange {
+                tick: ev.tick,
+                channel: global_ch,
+                controller: 100,
+                value: 0,
+                track: track_idx as u16,
+            });
+            midi.control_events.push(yinhe_midi::MidiControlEvent::ControlChange {
+                tick: ev.tick,
+                channel: global_ch,
+                controller: 6,
+                value: ev.value.min(127) as u8,
                 track: track_idx as u16,
             });
         }
@@ -920,5 +994,63 @@ mod roundtrip_tests {
         let restored = archive_to_midi(&archive);
 
         assert_eq!(restored.track_names, vec!["Lead", "Bass", "Drums"]);
+    }
+
+    #[test]
+    fn roundtrip_rpn_events() {
+        let mut m = make_test_midi();
+        m.control_events.push(yinhe_midi::MidiControlEvent::ControlChange {
+            tick: 100, channel: 0, controller: 101, value: 0, track: 0,
+        });
+        m.control_events.push(yinhe_midi::MidiControlEvent::ControlChange {
+            tick: 100, channel: 0, controller: 100, value: 0, track: 0,
+        });
+        m.control_events.push(yinhe_midi::MidiControlEvent::ControlChange {
+            tick: 100, channel: 0, controller: 6, value: 2, track: 0,
+        });
+        m.control_events.push(yinhe_midi::MidiControlEvent::ControlChange {
+            tick: 200, channel: 0, controller: 101, value: 1, track: 0,
+        });
+        m.control_events.push(yinhe_midi::MidiControlEvent::ControlChange {
+            tick: 200, channel: 0, controller: 100, value: 0, track: 0,
+        });
+        m.control_events.push(yinhe_midi::MidiControlEvent::ControlChange {
+            tick: 200, channel: 0, controller: 6, value: 50, track: 0,
+        });
+        m.control_events.push(yinhe_midi::MidiControlEvent::ControlChange {
+            tick: 300, channel: 0, controller: 101, value: 2, track: 0,
+        });
+        m.control_events.push(yinhe_midi::MidiControlEvent::ControlChange {
+            tick: 300, channel: 0, controller: 100, value: 0, track: 0,
+        });
+        m.control_events.push(yinhe_midi::MidiControlEvent::ControlChange {
+            tick: 300, channel: 0, controller: 6, value: 24, track: 0,
+        });
+
+        let archive = midi_to_archive(&m);
+        let restored = archive_to_midi(&archive);
+
+        let rpn_ccs: Vec<_> = restored
+            .control_events
+            .iter()
+            .filter_map(|ev| match ev {
+                yinhe_midi::MidiControlEvent::ControlChange {
+                    controller: 101 | 100 | 6, ..
+                } => Some(ev),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(rpn_ccs.len(), 9, "expected 9 RPN-related CCs");
+    }
+}
+
+/// Map (RPN MSB, RPN LSB) to a canonical RPN number for storage.
+/// Returns `Some(rpn_num)` for known RPNs (0, 1, 2), `None` for unknown.
+fn rpn_number(msb: u8, lsb: u8) -> Option<u8> {
+    match (msb, lsb) {
+        (0, 0) => Some(0),
+        (1, 0) => Some(1),
+        (2, 0) => Some(2),
+        _ => None,
     }
 }
