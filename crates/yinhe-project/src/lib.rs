@@ -449,6 +449,9 @@ pub struct TrackMapping {
     pub uuid: String,
     pub name: String,
     pub color: [f32; 3],
+    /// Original MIDI track index (preserved across save/load for correct name mapping).
+    #[serde(default)]
+    pub track_index: u8,
 }
 
 // ── Path helpers ──
@@ -513,6 +516,8 @@ mod tests {
             ppq: 480,
             zstd_level: 0,
             description: String::new(),
+            soundfont_project_mode: false,
+            soundfont_overrides: Vec::new(),
         };
         archive.set_events(
             "project.json",

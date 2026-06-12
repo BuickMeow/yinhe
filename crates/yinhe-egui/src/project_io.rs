@@ -193,6 +193,7 @@ pub fn midi_to_archive_with_names(
             uuid,
             name,
             color: [0.5, 0.5, 0.5],
+            track_index: track_idx as u8,
         });
     }
 
@@ -298,10 +299,10 @@ pub fn archive_to_midi(archive: &ProjectArchive) -> yinhe_midi::MidiFile {
     if let Some(mapping) = &mapping {
         for port_mapping in &mapping.ports {
             for ch_mapping in &port_mapping.channels {
-                for (track_idx, track_mapping) in ch_mapping.tracks.iter().enumerate() {
-                    let idx = track_idx.min(num_tracks.saturating_sub(1));
-                    midi.track_names[idx] = track_mapping.name.clone();
-                    if idx < midi.track_ports.len() {
+                for track_mapping in &ch_mapping.tracks {
+                    let idx = track_mapping.track_index as usize;
+                    if idx < num_tracks {
+                        midi.track_names[idx] = track_mapping.name.clone();
                         midi.track_ports[idx] = port_mapping.port;
                     }
                 }
