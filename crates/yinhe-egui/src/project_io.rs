@@ -266,8 +266,11 @@ pub fn archive_to_midi(archive: &ProjectArchive) -> yinhe_midi::MidiFile {
     }
 
     // ── Read conductor events ──
-    if let Some(tempos) = archive.get_delta_events::<TempoEvent>(&conductor_path("tempo.zst")) {
-        midi.tempo_segments = tempos
+    {
+        let tempos = archive
+            .get_delta_events::<TempoEvent>(&conductor_path("tempo.zst"))
+            .unwrap_or_default();
+        let mut segments: Vec<yinhe_midi::TempoSegment> = tempos
             .iter()
             .map(|t| yinhe_midi::TempoSegment {
                 start_tick: t.tick,
@@ -275,10 +278,21 @@ pub fn archive_to_midi(archive: &ProjectArchive) -> yinhe_midi::MidiFile {
                 micros_per_quarter: yinhe_midi::mpq_from_bpm(t.bpm),
             })
             .collect();
-        yinhe_midi::recompute_tempo_start_times(&mut midi.tempo_segments, midi.ticks_per_beat);
+        // Ensure there is always a tempo segment at tick 0 (matches MidiParser
+        // behaviour). Without this, time-based seeking before the first tempo
+        // event would fall through to the default-mpq fallback path.
+        if segments.first().map(|s| s.start_tick).unwrap_or(u32::MAX) > 0 {
+            segments.insert(0, yinhe_midi::TempoSegment {
+                start_tick: 0,
+                start_time: 0.0,
+                micros_per_quarter: yinhe_midi::mpq_from_bpm(120.0),
+            });
+        }
+        yinhe_midi::recompute_tempo_start_times(&mut segments, midi.ticks_per_beat);
+        midi.tempo_segments = segments;
     }
 
-    if let Some(time_sigs) = archive.get_events::<TimeSigEvent>(&conductor_path("time_sig.zst")) {
+    if let Some(time_sigs) = archive.get_delta_events::<TimeSigEvent>(&conductor_path("time_sig.zst")) {
         midi.time_sig_events = time_sigs
             .iter()
             .map(|e| yinhe_types::TimeSigEvent {
@@ -333,8 +347,8 @@ pub fn archive_to_midi(archive: &ProjectArchive) -> yinhe_midi::MidiFile {
         pc_events: Vec<PcEvent>,
     }
 
-    for (_path, entry) in &archive.entries {
-        let path = &entry.path; // use the stored path
+    for (path, entry) in &archive.entries {
+        let path = path.as_str();
         if path.starts_with("conductor/") || path == "mapping.json" || path == "project.json" {
             continue;
         }
@@ -767,4 +781,144 @@ pub fn export_midi(doc: &crate::document::Document, path: &str) -> Result<(), St
     smf.write(&mut buf).map_err(|e| format!("{e}"))?;
     std::fs::write(path, &buf).map_err(|e| format!("{e}"))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod roundtrip_tests {
+    use super::*;
+    use yinhe_midi::MidiFile;
+    use yinhe_midi::MidiControlEvent;
+    use yinhe_types::{Note, TimeSigEvent as TypesTimeSigEvent};
+
+    fn make_test_midi() -> MidiFile {
+        let mut m = MidiFile::default();
+        m.ticks_per_beat = 480;
+        m.track_ports = vec![0, 0, 1];
+        m.track_channel_prefixes = vec![None, None, None];
+        m.track_names = vec!["Lead".into(), "Bass".into(), "Drums".into()];
+
+        // Notes: track 0 channel 0, track 1 channel 1, track 2 channel 16 (port 1, raw 0)
+        m.key_notes[60].push(Note { start_tick: 0, end_tick: 480, velocity: 100, channel: 0, track: 0 });
+        m.key_notes[60].push(Note { start_tick: 480, end_tick: 960, velocity: 100, channel: 0, track: 0 });
+        m.key_notes[48].push(Note { start_tick: 0, end_tick: 1920, velocity: 90, channel: 1, track: 1 });
+        m.key_notes[36].push(Note { start_tick: 0, end_tick: 240, velocity: 120, channel: 16, track: 2 });
+
+        // Control events
+        m.control_events.push(MidiControlEvent::ControlChange { tick: 0, channel: 0, controller: 7, value: 100, track: 0 });
+        m.control_events.push(MidiControlEvent::ControlChange { tick: 240, channel: 0, controller: 7, value: 80, track: 0 });
+        m.control_events.push(MidiControlEvent::PitchBend { tick: 100, channel: 1, value: 1024, track: 1 });
+        m.control_events.push(MidiControlEvent::ProgramChange { tick: 0, channel: 16, program: 7, track: 2 });
+
+        // Tempo: 120 -> 140 at tick 1920
+        m.tempo_segments = vec![
+            yinhe_midi::TempoSegment { start_tick: 0, start_time: 0.0, micros_per_quarter: yinhe_midi::mpq_from_bpm(120.0) },
+            yinhe_midi::TempoSegment { start_tick: 1920, start_time: 0.0, micros_per_quarter: yinhe_midi::mpq_from_bpm(140.0) },
+        ];
+        yinhe_midi::recompute_tempo_start_times(&mut m.tempo_segments, m.ticks_per_beat);
+
+        // Time signature: 4/4 then 3/4 at bar 2
+        m.time_sig_events = vec![
+            TypesTimeSigEvent { tick: 0, numerator: 4, denominator: 2 },
+            TypesTimeSigEvent { tick: 1920, numerator: 3, denominator: 2 },
+        ];
+
+        m.note_count = m.key_notes.iter().map(|n| n.len() as u64).sum();
+        m.tick_length = 1920;
+        m
+    }
+
+    #[test]
+    fn roundtrip_preserves_notes_and_channels() {
+        let original = make_test_midi();
+        let archive = midi_to_archive(&original);
+        let restored = archive_to_midi(&archive);
+
+        assert_eq!(restored.ticks_per_beat, 480);
+        assert_eq!(restored.track_ports.len(), 3);
+        assert_eq!(restored.track_ports, vec![0, 0, 1]);
+
+        // Notes preserved with correct channels
+        assert_eq!(restored.key_notes[60].len(), 2, "track 0 notes at key 60");
+        assert!(restored.key_notes[60].iter().all(|n| n.channel == 0 && n.track == 0));
+        assert_eq!(restored.key_notes[48].len(), 1);
+        assert_eq!(restored.key_notes[48][0].channel, 1);
+        assert_eq!(restored.key_notes[48][0].track, 1);
+        assert_eq!(restored.key_notes[36].len(), 1);
+        assert_eq!(restored.key_notes[36][0].channel, 16);
+        assert_eq!(restored.key_notes[36][0].track, 2);
+    }
+
+    #[test]
+    fn roundtrip_preserves_control_events() {
+        let original = make_test_midi();
+        let archive = midi_to_archive(&original);
+        let restored = archive_to_midi(&archive);
+
+        let cc_count = restored.control_events.iter().filter(|e| matches!(e, MidiControlEvent::ControlChange { .. })).count();
+        assert_eq!(cc_count, 2);
+        let pb_count = restored.control_events.iter().filter(|e| matches!(e, MidiControlEvent::PitchBend { .. })).count();
+        assert_eq!(pb_count, 1);
+        let pc_count = restored.control_events.iter().filter(|e| matches!(e, MidiControlEvent::ProgramChange { .. })).count();
+        assert_eq!(pc_count, 1);
+
+        // Verify channel & track on PB
+        let pb = restored.control_events.iter().find_map(|e| match e {
+            MidiControlEvent::PitchBend { tick, channel, value, track } => Some((*tick, *channel, *value, *track)),
+            _ => None,
+        }).unwrap();
+        assert_eq!(pb, (100, 1, 1024, 1));
+    }
+
+    #[test]
+    fn roundtrip_preserves_tempo_and_time_sig() {
+        let original = make_test_midi();
+        let archive = midi_to_archive(&original);
+        let restored = archive_to_midi(&archive);
+
+        // Tempo: should have segment at 0 and 1920
+        assert!(!restored.tempo_segments.is_empty());
+        let bpm0 = yinhe_midi::bpm_from_mpq(restored.tempo_segments[0].micros_per_quarter);
+        assert!((bpm0 - 120.0).abs() < 0.5, "expected ~120 BPM at tick 0, got {bpm0}");
+        // Find the 140 BPM segment
+        let has_140 = restored.tempo_segments.iter().any(|s| {
+            s.start_tick == 1920 && (yinhe_midi::bpm_from_mpq(s.micros_per_quarter) - 140.0).abs() < 0.5
+        });
+        assert!(has_140, "expected 140 BPM segment at tick 1920, got {:?}", restored.tempo_segments);
+
+        // Time sig
+        assert_eq!(restored.time_sig_events.len(), 2);
+        assert_eq!(restored.time_sig_events[0].numerator, 4);
+        assert_eq!(restored.time_sig_events[1].numerator, 3);
+        assert_eq!(restored.time_sig_events[1].tick, 1920);
+    }
+
+    #[test]
+    fn roundtrip_no_tempo_yields_default_segment_at_zero() {
+        // An archive with no tempo entries (e.g. brand-new project) should
+        // still produce a tempo_segments[0] at tick 0 so that timing math
+        // doesn't fall back to the global default path.
+        let mut m = MidiFile::default();
+        m.ticks_per_beat = 480;
+        m.track_ports = vec![0];
+        m.track_names = vec!["t".into()];
+        m.tempo_segments.clear();
+        m.time_sig_events.clear();
+
+        let archive = midi_to_archive(&m);
+        let restored = archive_to_midi(&archive);
+
+        assert_eq!(restored.tempo_segments.len(), 1);
+        assert_eq!(restored.tempo_segments[0].start_tick, 0);
+        let bpm = yinhe_midi::bpm_from_mpq(restored.tempo_segments[0].micros_per_quarter);
+        assert!((bpm - 120.0).abs() < 0.5);
+    }
+
+    #[test]
+    fn roundtrip_preserves_track_names() {
+        let original = make_test_midi();
+        let archive = midi_to_archive(&original);
+        let restored = archive_to_midi(&archive);
+
+        assert_eq!(restored.track_names, vec!["Lead", "Bass", "Drums"]);
+    }
 }
