@@ -205,7 +205,7 @@ pub fn show(
 
                     right_icon_button(
                         ui,
-                        ICON_AUTO_STORIES,
+                        ICON_FOLDER_ZIP,
                         *right_tab == Some(RightTab::EventBrowser),
                         || {
                             *right_tab = if *right_tab == Some(RightTab::EventBrowser) {

@@ -102,11 +102,17 @@ impl eframe::App for App {
                     .and_then(|idx| self.documents.get(idx))
                     .map(|doc| doc.quantize)
                     .unwrap_or_default();
-                let doc = Document::from_midi(&path, midi, quantize);
-                let insert_idx = self.documents.len();
-                self.documents.push(doc);
-                self.active_doc = Some(insert_idx);
-                self.teardown_audio();
+                match Document::from_midi(&path, midi, quantize) {
+                    Ok(doc) => {
+                        let insert_idx = self.documents.len();
+                        self.documents.push(doc);
+                        self.active_doc = Some(insert_idx);
+                        self.teardown_audio();
+                    }
+                    Err(msg) => {
+                        self.load_error = Some(msg);
+                    }
+                }
             }
             LoadResult::YinLoaded { path, midi, file_name } => {
                 let quantize = self
@@ -114,16 +120,26 @@ impl eframe::App for App {
                     .and_then(|idx| self.documents.get(idx))
                     .map(|doc| doc.quantize)
                     .unwrap_or_default();
-                let (doc, sf_project_mode) =
-                    Document::from_yin(&path, quantize).unwrap_or_else(|_| {
-                        // Fallback: create from midi directly
-                        (Document::from_midi(&file_name, midi, quantize), false)
+                let result = Document::from_yin(&path, quantize)
+                    .ok()
+                    .or_else(|| {
+                        // Fallback: build from the embedded MIDI directly.
+                        Document::from_midi(&file_name, midi, quantize)
+                            .ok()
+                            .map(|d| (d, false))
                     });
-                self.audio_settings.global_sf_config.global_enabled = !sf_project_mode;
-                let insert_idx = self.documents.len();
-                self.documents.push(doc);
-                self.active_doc = Some(insert_idx);
-                self.teardown_audio();
+                if let Some((doc, sf_project_mode)) = result {
+                    self.audio_settings.global_sf_config.global_enabled = !sf_project_mode;
+                    let insert_idx = self.documents.len();
+                    self.documents.push(doc);
+                    self.active_doc = Some(insert_idx);
+                    self.teardown_audio();
+                } else {
+                    self.load_error = Some(format!(
+                        "无法打开「{}」：可能不是有效的 .yin 文件，或其内嵌 MIDI 缺少 Conductor 轨道。",
+                        file_name
+                    ));
+                }
             }
             LoadResult::NotReady => {}
         }
@@ -258,6 +274,7 @@ impl eframe::App for App {
                     is_playing,
                     &mut follow_mode,
                     &self.active_tool,
+                    self.audio.as_ref(),
                 );
                 // guard drops here → document restored even on panic
             }
@@ -315,6 +332,14 @@ impl eframe::App for App {
                     } else {
                         None
                     };
+                    // Effective pianoroll visibility = track_visible AND track_pianoroll_visible.
+                    // V button toggles only the latter; arrangement always uses track_visible.
+                    let pr_visible: Vec<bool> = (0..doc.track_visible.len())
+                        .map(|i| {
+                            doc.track_visible[i]
+                                && doc.track_pianoroll_visible.get(i).copied().unwrap_or(true)
+                        })
+                        .collect();
                     piano_view::show(
                         ui,
                         ui.available_size(),
@@ -323,7 +348,7 @@ impl eframe::App for App {
                         &mut self.pianoroll_view,
                         midi_source,
                         &mut doc.selected,
-                        &doc.track_visible,
+                        &pr_visible,
                         &mut doc.cursor_tick,
                         is_playing,
                         doc.quantize,
@@ -417,6 +442,44 @@ impl eframe::App for App {
         self.file_loader.show_loading_overlay(ui);
         if self.file_loader.is_loading() {
             ui.ctx().request_repaint();
+        }
+
+        // ── Load-error modal ──
+        if self.load_error.is_some() {
+            let screen_rect = ui.ctx().content_rect();
+            ui.ctx()
+                .layer_painter(egui::LayerId::new(
+                    egui::Order::Foreground,
+                    "load_error_overlay".into(),
+                ))
+                .rect_filled(
+                    screen_rect,
+                    0.0,
+                    egui::Color32::from_rgba_premultiplied(0, 0, 0, 160),
+                );
+
+            let mut dismiss = false;
+            egui::Window::new("无法打开文件")
+                .order(egui::Order::Tooltip)
+                .collapsible(false)
+                .resizable(false)
+                .movable(false)
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                .show(ui.ctx(), |ui| {
+                    if let Some(msg) = &self.load_error {
+                        ui.set_max_width(420.0);
+                        ui.label(msg);
+                        ui.add_space(8.0);
+                        ui.horizontal(|ui| {
+                            if ui.button("确定").clicked() {
+                                dismiss = true;
+                            }
+                        });
+                    }
+                });
+            if dismiss {
+                self.load_error = None;
+            }
         }
 
         if let Some(t0) = _ui_total_start {

@@ -26,6 +26,7 @@ pub fn show(
     is_playing: bool,
     follow_mode: &mut crate::view_interaction::FollowMode,
     active_tool: &Tool,
+    audio: Option<&yinhe_audio::CpalAudioHandle>,
 ) {
     *last_cursor_tick = doc.cursor_tick;
 
@@ -114,15 +115,38 @@ pub fn show(
             arr_view.base.dirty = true;
         }
 
-        track_panel::show(
+        // Ensure parallel arrays are correctly sized (track count may have grown).
+        let n = doc.track_info_cache.len();
+        if doc.track_pianoroll_visible.len() < n {
+            doc.track_pianoroll_visible.resize(n, true);
+        }
+        if doc.track_overrides.len() < n {
+            doc.track_overrides
+                .resize(n, crate::document::TrackOverride::default());
+        }
+        if doc.track_colors_cache.len() < n {
+            for i in doc.track_colors_cache.len()..n {
+                doc.track_colors_cache
+                    .push(crate::document::track_color(i, doc.conductor_track_idx));
+            }
+        }
+
+        let audio_dirty = track_panel::show(
             ui,
             &doc.track_info_cache,
-            &mut doc.track_visible,
+            &doc.track_visible,
+            &mut doc.track_pianoroll_visible,
+            &mut doc.track_overrides,
             &mut doc.track_selected,
-            &doc.pc_map_cache,
+            doc.conductor_track_idx,
+            &doc.track_colors_cache,
             &mut arr_view.base.track_panel_row_height,
             &mut arr_view.base.track_panel_scroll_y,
         );
+
+        if audio_dirty {
+            crate::right_panel::info_panel::send_skip_tracks(doc, audio);
+        }
 
         arr_view.base.scroll_y = arr_view.base.track_panel_scroll_y;
     });

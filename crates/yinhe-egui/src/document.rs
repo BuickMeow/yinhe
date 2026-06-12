@@ -58,12 +58,62 @@ pub(crate) struct Document {
     pub soundbank_selected_port: u8,
     /// Per-track mute/solo overrides.
     pub track_overrides: Vec<TrackOverride>,
+    /// Per-track pianoroll-only visibility (V button). Independent of `track_visible`.
+    /// `track_visible[i] && track_pianoroll_visible[i]` is the effective pianoroll mask.
+    /// Memory-only (not persisted).
+    pub track_pianoroll_visible: Vec<bool>,
+    /// Index of the conductor track, if one was detected on load.
+    /// Heuristic: track 0 with zero notes and zero control events.
+    pub conductor_track_idx: Option<u16>,
     /// Editable project metadata (synced with project.json on save/load).
     pub project_name: String,
     pub project_artist: String,
     pub project_description: String,
     /// Editable PPQ (ticks per beat). Saved to project.json; takes effect on next load.
     pub project_ppq: u32,
+}
+
+/// Detect the conductor track using a SMF format-1 heuristic.
+///
+/// A track is treated as the conductor if it is index 0, has zero notes, and
+/// has no control events targeting it. This is true for virtually all
+/// well-formed format-1 files (where track 0 holds tempo / time-sig / key-sig
+/// meta and the song title via TrackName).
+pub(crate) fn detect_conductor(
+    track_info: &[yinhe_midi::TrackInfo],
+    control_events: &[yinhe_midi::MidiControlEvent],
+) -> Option<u16> {
+    if track_info.is_empty() {
+        return None;
+    }
+    if track_info[0].note_count != 0 {
+        return None;
+    }
+    let has_ctrl_on_zero = control_events.iter().any(|e| match e {
+        yinhe_midi::MidiControlEvent::ControlChange { track, .. }
+        | yinhe_midi::MidiControlEvent::ProgramChange { track, .. }
+        | yinhe_midi::MidiControlEvent::PitchBend { track, .. } => *track == 0,
+    });
+    if has_ctrl_on_zero {
+        return None;
+    }
+    Some(0)
+}
+
+/// Compute the display color for a track, respecting an optional conductor offset.
+///
+/// Conductor track gets a fixed near-white color; subsequent tracks index into
+/// the palette starting at 0 (so the first non-conductor track gets palette[0]).
+/// Without a conductor, all tracks use `TRACK_PALETTE[idx % LEN]` (legacy).
+pub(crate) fn track_color(idx: usize, conductor_idx: Option<u16>) -> [f32; 3] {
+    if Some(idx as u16) == conductor_idx {
+        return [0.94, 0.94, 0.94]; // near-white "Master" badge
+    }
+    let palette_idx = match conductor_idx {
+        Some(c) if (idx as u16) > c => idx - 1,
+        _ => idx,
+    };
+    TRACK_PALETTE[palette_idx % TRACK_PALETTE.len()]
 }
 
 impl Default for Document {
@@ -88,6 +138,8 @@ impl Default for Document {
             project_sf: ProjectSfConfig::default(),
             soundbank_selected_port: 0,
             track_overrides: vec![TrackOverride::default()],
+            track_pianoroll_visible: Vec::new(),
+            conductor_track_idx: None,
             project_name: String::new(),
             project_artist: String::new(),
             project_description: String::new(),
@@ -110,6 +162,8 @@ impl Document {
             file_path: None,
             archive: None,
             track_visible: vec![true],
+            track_pianoroll_visible: vec![true],
+            conductor_track_idx: None,
             track_names,
             track_info_cache,
             ..Default::default()
@@ -127,7 +181,15 @@ impl Document {
     ///
     /// `quantize` is inherited from the current document so the user's
     /// quantization setting is preserved across MIDI loads.
-    pub fn from_midi(path: &str, midi: yinhe_midi::MidiFile, quantize: QuantizePreset) -> Self {
+    ///
+    /// Returns `Err` with a user-facing message if the MIDI lacks a recognizable
+    /// conductor track (e.g. format-0 single-track files). In that case the
+    /// caller should surface the error to the user instead of opening the doc.
+    pub fn from_midi(
+        path: &str,
+        midi: yinhe_midi::MidiFile,
+        quantize: QuantizePreset,
+    ) -> Result<Self, String> {
         yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Ui, || {
             // Convert to archive (the canonical storage format)
             let archive = crate::project_io::midi_to_archive(&midi);
@@ -140,7 +202,7 @@ impl Document {
                 .map(|s| s.to_string())
                 .unwrap_or_default();
 
-            let track_names: Vec<String> = (0..num_tracks)
+            let mut track_names: Vec<String> = (0..num_tracks)
                 .map(|i| {
                     midi.track_names
                         .get(i)
@@ -149,6 +211,33 @@ impl Document {
                 })
                 .collect();
             let track_info_cache = midi.track_info();
+
+            // ── Conductor detection (heuristic: track 0, no notes, no ctrl events) ──
+            let conductor_track_idx = detect_conductor(&track_info_cache, &midi.control_events);
+            if conductor_track_idx.is_none() {
+                return Err(format!(
+                    "MIDI 文件「{}」缺少 Conductor 轨道（标准 format-1 文件应在第 0 轨包含 \
+                     tempo/time-sig 等元事件，且不含音符）。\n当前不支持非标准 MIDI，请用 \
+                     DAW 重新导出为 format-1 后再试。",
+                    file_name
+                ));
+            }
+
+            // Promote track 0's TrackName (song title) to project_name; rename track 0 to "Conductor".
+            let mut project_name_override: Option<String> = None;
+            if let Some(c_idx) = conductor_track_idx {
+                let c = c_idx as usize;
+                if let Some(name) = track_names.get(c) {
+                    let trimmed = name.trim();
+                    if !trimmed.is_empty() && !trimmed.starts_with("Track ") {
+                        project_name_override = Some(trimmed.to_string());
+                    }
+                }
+                if c < track_names.len() {
+                    track_names[c] = "Conductor".to_string();
+                }
+            }
+
             let mut pc_map_cache = HashMap::new();
             for ev in &midi.control_events {
                 if let yinhe_midi::MidiControlEvent::ProgramChange {
@@ -163,15 +252,17 @@ impl Document {
             let midi = Arc::new(midi);
 
             let track_colors_cache = (0..num_tracks)
-                .map(|i| TRACK_PALETTE[i % TRACK_PALETTE.len()])
+                .map(|i| track_color(i, conductor_track_idx))
                 .collect();
 
-            Document {
+            Ok(Document {
                 midi,
                 file_name,
                 file_path: None,
                 archive: Some(archive),
                 track_visible: vec![true; num_tracks],
+                track_pianoroll_visible: vec![true; num_tracks],
+                conductor_track_idx,
                 track_selected: None,
                 selected: HashSet::new(),
                 cursor_tick: Some(0.0),
@@ -186,8 +277,9 @@ impl Document {
                 project_sf: ProjectSfConfig::default(),
                 track_overrides: (0..num_tracks).map(|_| TrackOverride::default()).collect(),
                 project_ppq: ticks_per_beat,
+                project_name: project_name_override.unwrap_or_default(),
                 ..Default::default()
-            }
+            })
         })
     }
 
@@ -201,7 +293,7 @@ impl Document {
     ) -> std::io::Result<(Self, bool)> {
         let (midi, file_name, archive) = crate::project_io::load_project_full(path)?;
         let num_tracks = midi.track_ports.len();
-        let track_names: Vec<String> = (0..num_tracks)
+        let mut track_names: Vec<String> = (0..num_tracks)
             .map(|i| {
                 midi.track_names
                     .get(i)
@@ -217,6 +309,21 @@ impl Document {
             } = ev
             {
                 pc_map_cache.entry(*channel).or_insert(*program);
+            }
+        }
+
+        // ── Conductor detection ──
+        // .yin files are produced by yinhe and so should always have a
+        // conductor track at index 0 (zero notes, zero ctrl events). We still
+        // run the heuristic for robustness; if the file was hand-edited and
+        // lacks one, we leave conductor_track_idx = None and let the UI fall
+        // back to "no special row" (no rejection here, since the file already
+        // round-tripped through midi_to_archive once).
+        let conductor_track_idx = detect_conductor(&track_info_cache, &midi.control_events);
+        if let Some(c_idx) = conductor_track_idx {
+            let c = c_idx as usize;
+            if c < track_names.len() {
+                track_names[c] = "Conductor".to_string();
             }
         }
 
@@ -263,7 +370,7 @@ impl Document {
             ));
 
         let track_colors_cache = (0..num_tracks)
-            .map(|i| yinhe_types::TRACK_PALETTE[i % yinhe_types::TRACK_PALETTE.len()])
+            .map(|i| track_color(i, conductor_track_idx))
             .collect();
 
         Ok((Document {
@@ -272,6 +379,8 @@ impl Document {
             file_path: Some(path.to_string()),
             archive: Some(archive),
             track_visible: vec![true; num_tracks],
+            track_pianoroll_visible: vec![true; num_tracks],
+            conductor_track_idx,
             track_selected: None,
             selected: HashSet::new(),
             cursor_tick: Some(0.0),

@@ -58,6 +58,54 @@ pub fn show(
     let track_idx = doc.track_selected.unwrap_or(0) as usize;
     let track_idx = track_idx.min(num_tracks - 1);
 
+    // ── Conductor track: show a simplified read-only view ──
+    if Some(track_idx as u16) == doc.conductor_track_idx {
+        ui.add_space(4.0);
+        ui.label(
+            egui::RichText::new("Conductor")
+                .strong()
+                .size(14.0)
+                .color(egui::Color32::from_gray(220)),
+        );
+        ui.add_space(2.0);
+        ui.label(
+            egui::RichText::new("（指挥轨：tempo / time-sig 等全局元事件）")
+                .size(11.0)
+                .color(egui::Color32::GRAY),
+        );
+        ui.add_space(8.0);
+
+        if !doc.project_name.is_empty() {
+            ui.horizontal(|ui| {
+                ui.label("歌曲标题:");
+                ui.label(
+                    egui::RichText::new(&doc.project_name)
+                        .color(egui::Color32::from_gray(200))
+                        .size(13.0),
+                );
+            });
+            ui.add_space(2.0);
+        }
+
+        ui.horizontal(|ui| {
+            ui.label("Tempo 数:");
+            ui.label(
+                egui::RichText::new(format!("{}", doc.midi.tempo_segments.len()))
+                    .color(egui::Color32::from_gray(180))
+                    .size(13.0),
+            );
+        });
+        ui.horizontal(|ui| {
+            ui.label("Time-sig 数:");
+            ui.label(
+                egui::RichText::new(format!("{}", doc.midi.time_sig_events.len()))
+                    .color(egui::Color32::from_gray(180))
+                    .size(13.0),
+            );
+        });
+        return;
+    }
+
     // ── Track name ──
     let mut name_change: Option<String> = None;
     ui.horizontal(|ui| {
@@ -216,7 +264,7 @@ pub fn show(
 }
 
 /// Compute the per-track skip mask and send it to the audio engine.
-fn send_skip_tracks(doc: &Document, audio: Option<&yinhe_audio::CpalAudioHandle>) {
+pub(crate) fn send_skip_tracks(doc: &Document, audio: Option<&yinhe_audio::CpalAudioHandle>) {
     let has_solo = doc.track_overrides.iter().any(|t| t.soloed);
     let skip: Vec<bool> = doc
         .track_overrides

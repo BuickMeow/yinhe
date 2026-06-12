@@ -30,6 +30,8 @@ pub struct App {
     // ── Shared state ──
     pub(crate) transport_panel_width: f32,
     pub(crate) file_loader: FileLoader,
+    /// Last user-facing load error (e.g. unsupported MIDI). Cleared on dismiss.
+    pub(crate) load_error: Option<String>,
 
     // ── Async save ──
     pub(crate) save_rx: Option<mpsc::Receiver<()>>,
@@ -141,6 +143,7 @@ impl App {
 
             transport_panel_width: 200.0,
             file_loader: FileLoader::new(),
+            load_error: None,
             save_rx: None,
 
             view_mode: ViewMode::Arrange,

@@ -6,33 +6,61 @@ use yinhe_project::*;
 use yinhe_types::TimeSigEvent as TypesTimeSigEvent;
 
 use crate::document::Document;
+use crate::widgets::{split_handle, theme};
 
-#[derive(Default)]
 pub struct EventBrowserState {
     pub expanded_paths: std::collections::HashSet<String>,
     pub selected_path: Option<String>,
     archive_fingerprint: Option<usize>,
+    /// Top pane height as fraction of total. Memory-persistent only.
+    split_ratio: f32,
+}
+
+impl Default for EventBrowserState {
+    fn default() -> Self {
+        Self {
+            expanded_paths: Default::default(),
+            selected_path: None,
+            archive_fingerprint: None,
+            split_ratio: 0.45,
+        }
+    }
 }
 
 enum TreeNode {
-    Dir { children: BTreeMap<String, TreeNode> },
-    Leaf { full_path: String },
+    Dir {
+        children: BTreeMap<String, TreeNode>,
+    },
+    Leaf {
+        full_path: String,
+    },
 }
 
 impl TreeNode {
     fn new_dir() -> Self {
-        TreeNode::Dir { children: BTreeMap::new() }
+        TreeNode::Dir {
+            children: BTreeMap::new(),
+        }
     }
 
     fn insert(&mut self, segments: &[&str], full_path: &str) {
-        let TreeNode::Dir { children } = self else { return };
+        let TreeNode::Dir { children } = self else {
+            return;
+        };
         match segments {
             [] => {}
             [name] => {
-                children.insert((*name).to_string(), TreeNode::Leaf { full_path: full_path.to_string() });
+                children.insert(
+                    (*name).to_string(),
+                    TreeNode::Leaf {
+                        full_path: full_path.to_string(),
+                    },
+                );
             }
             [head, rest @ ..] => {
-                let entry = children.entry((*head).to_string()).or_insert_with(TreeNode::new_dir);
+                let entry = children
+                    .entry((*head).to_string())
+                    .or_insert_with(TreeNode::new_dir);
                 entry.insert(rest, full_path);
             }
         }
@@ -79,14 +107,22 @@ impl BarLookup {
         let mut cum_bars: u32 = 0;
         for (i, &(tick, num)) in points.iter().enumerate() {
             let ticks_per_bar = ppq.saturating_mul(num.max(1) as u32);
-            segs.push(BarSeg { tick_start: tick, bar_start: cum_bars, ticks_per_bar });
+            segs.push(BarSeg {
+                tick_start: tick,
+                bar_start: cum_bars,
+                ticks_per_bar,
+            });
             if let Some(&(next_tick, _)) = points.get(i + 1) {
                 let span = next_tick.saturating_sub(tick);
                 cum_bars = cum_bars.saturating_add(span / ticks_per_bar.max(1));
             }
         }
         if segs.is_empty() {
-            segs.push(BarSeg { tick_start: 0, bar_start: 0, ticks_per_bar: ppq.saturating_mul(4) });
+            segs.push(BarSeg {
+                tick_start: 0,
+                bar_start: 0,
+                ticks_per_bar: ppq.saturating_mul(4),
+            });
         }
         BarLookup { segs }
     }
@@ -109,7 +145,11 @@ impl BarLookup {
 pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>, state: &mut EventBrowserState) {
     let Some(doc) = doc else {
         ui.add_space(8.0);
-        ui.label(egui::RichText::new("（未打开文档）").color(egui::Color32::from_gray(100)).size(12.0));
+        ui.label(
+            egui::RichText::new("（未打开文档）")
+                .color(egui::Color32::from_gray(100))
+                .size(12.0),
+        );
         return;
     };
 
@@ -120,7 +160,11 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>, state: &mut EventBrow
 
     let Some(archive) = &doc.archive else {
         ui.add_space(8.0);
-        ui.label(egui::RichText::new("（无工程文件归档）").color(egui::Color32::from_gray(100)).size(12.0));
+        ui.label(
+            egui::RichText::new("（无工程文件归档）")
+                .color(egui::Color32::from_gray(100))
+                .size(12.0),
+        );
         return;
     };
 
@@ -147,13 +191,28 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>, state: &mut EventBrow
         .fill(egui::Color32::from_gray(16))
         .inner_margin(egui::Margin::symmetric(4, 2));
 
-    let total_h = ui.available_height();
-    let top_h = (total_h * 0.45).max(120.0).min(total_h - 80.0);
+    let total_rect = ui.available_rect_before_wrap();
+    let total_h = total_rect.height();
+    let gap = theme::SPLIT_GAP;
+    let split_y = total_rect.min.y + (total_h * state.split_ratio).round();
 
-    ui.vertical(|ui| {
+    let top_rect = egui::Rect::from_min_max(
+        total_rect.min,
+        egui::pos2(total_rect.max.x, split_y),
+    );
+    let handle_rect = egui::Rect::from_min_max(
+        egui::pos2(total_rect.min.x, split_y),
+        egui::pos2(total_rect.max.x, split_y + gap),
+    );
+    let bot_rect = egui::Rect::from_min_max(
+        egui::pos2(total_rect.min.x, split_y + gap),
+        total_rect.max,
+    );
+
+    // Top: tree
+    ui.allocate_new_ui(egui::UiBuilder::new().max_rect(top_rect), |ui| {
         egui::ScrollArea::both()
             .id_salt("event_browser_tree")
-            .max_height(top_h)
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 frame_bg.show(ui, |ui| {
@@ -167,9 +226,18 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>, state: &mut EventBrow
                     });
                 });
             });
+    });
 
-        ui.add_space(4.0);
+    // Splitter handle
+    let resp = split_handle::horizontal(ui, "__event_browser_split__", handle_rect);
+    if resp.dragged() {
+        let new_ratio = ((split_y + resp.drag_delta().y - total_rect.min.y) / total_h)
+            .clamp(theme::SPLIT_CLAMP_MIN, theme::SPLIT_CLAMP_MAX);
+        state.split_ratio = new_ratio;
+    }
 
+    // Bottom: detail
+    ui.allocate_new_ui(egui::UiBuilder::new().max_rect(bot_rect), |ui| {
         egui::ScrollArea::both()
             .id_salt("event_browser_detail")
             .auto_shrink([false, false])
@@ -246,25 +314,46 @@ fn render_dir_row(
                 ui.spacing_mut().item_spacing.x = 2.0;
                 ui.add_space(depth as f32 * 14.0);
 
-                let chev = if expanded { ICON_EXPAND_MORE } else { ICON_CHEVRON_RIGHT };
+                let chev = if expanded {
+                    ICON_EXPAND_MORE
+                } else {
+                    ICON_CHEVRON_RIGHT
+                };
                 let chev_resp = ui.add(
-                    egui::Label::new(chev.rich_text().size(13.0).color(egui::Color32::from_gray(190)))
-                        .sense(egui::Sense::click()),
+                    egui::Label::new(
+                        chev.rich_text()
+                            .size(13.0)
+                            .color(egui::Color32::from_gray(190)),
+                    )
+                    .sense(egui::Sense::click()),
                 );
                 if chev_resp.clicked() {
                     toggled = true;
                 }
 
-                let folder_icon = if expanded { ICON_FOLDER_OPEN } else { ICON_FOLDER };
+                let folder_icon = if expanded {
+                    ICON_FOLDER_OPEN
+                } else {
+                    ICON_FOLDER
+                };
                 let folder_resp = ui.add(
-                    egui::Label::new(folder_icon.rich_text().size(13.0).color(egui::Color32::from_rgb(220, 180, 90)))
-                        .sense(egui::Sense::click()),
+                    egui::Label::new(
+                        folder_icon
+                            .rich_text()
+                            .size(13.0)
+                            .color(egui::Color32::from_rgb(220, 180, 90)),
+                    )
+                    .sense(egui::Sense::click()),
                 );
                 if folder_resp.clicked() {
                     toggled = true;
                 }
 
-                ui.label(egui::RichText::new(name).size(11.0).color(egui::Color32::from_gray(220)));
+                ui.label(
+                    egui::RichText::new(name)
+                        .size(11.0)
+                        .color(egui::Color32::from_gray(220)),
+                );
                 ui.label(
                     egui::RichText::new(format!("({})", child_count))
                         .size(10.0)
@@ -287,8 +376,8 @@ fn render_leaf_row(
     let icon = match entry.header.magic {
         b if b == *b"YHTK" => ICON_MUSIC_NOTE,
         b if b == *b"YHCC" => ICON_SETTINGS,
-        b if b == *b"YHPB" => ICON_CENTER_FOCUS_STRONG,
-        b if b == *b"YHPC" => ICON_DESCRIPTION,
+        b if b == *b"YHPB" => ICON_EDIT_AUDIO,
+        b if b == *b"YHPC" => ICON_PALETTE,
         b if b == *b"YHTM" => ICON_SPEED,
         b if b == *b"YHTS" => ICON_SCHEDULE,
         b if b == *b"YHMP" || b == *b"YHPR" => ICON_AUDIO_FILE,
@@ -307,36 +396,34 @@ fn render_leaf_row(
         format!("{:.1}M", entry.data.len() as f64 / (1024.0 * 1024.0))
     };
 
-    let frame_r = egui::Frame::none()
-        .fill(bg)
-        .inner_margin(egui::Margin::symmetric(2, 1))
-        .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 2.0;
-                ui.add_space(depth as f32 * 14.0);
-                ui.add_space(14.0);
-                ui.label(icon.rich_text().size(12.0).color(if is_selected {
-                    egui::Color32::WHITE
-                } else {
-                    egui::Color32::from_gray(160)
-                }));
-                ui.label(
-                    egui::RichText::new(name)
-                        .size(11.0)
-                        .monospace()
-                        .color(if is_selected {
+    let frame_r =
+        egui::Frame::none()
+            .fill(bg)
+            .inner_margin(egui::Margin::symmetric(2, 1))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 2.0;
+                    ui.add_space(depth as f32 * 14.0);
+                    ui.add_space(14.0);
+                    ui.label(icon.rich_text().size(12.0).color(if is_selected {
+                        egui::Color32::WHITE
+                    } else {
+                        egui::Color32::from_gray(160)
+                    }));
+                    ui.label(egui::RichText::new(name).size(11.0).monospace().color(
+                        if is_selected {
                             egui::Color32::WHITE
                         } else {
                             egui::Color32::from_gray(200)
-                        }),
-                );
-                ui.label(
-                    egui::RichText::new(format!("({})", size_label))
-                        .size(10.0)
-                        .color(egui::Color32::from_gray(110)),
-                );
+                        },
+                    ));
+                    ui.label(
+                        egui::RichText::new(format!("({})", size_label))
+                            .size(10.0)
+                            .color(egui::Color32::from_gray(110)),
+                    );
+                });
             });
-        });
     let resp = frame_r.response.interact(egui::Sense::click());
     if resp.clicked() {
         state.selected_path = Some(full_path.to_string());
@@ -353,7 +440,14 @@ fn show_entry_detail(ui: &mut egui::Ui, _path: &str, entry: &ArchiveEntry, bar_l
 
     ui.label(egui::RichText::new("文件头").size(12.0).strong());
     ui.add_space(2.0);
-    header_row(ui, "magic", &format!("{}{}{}{}", h.magic[0] as char, h.magic[1] as char, h.magic[2] as char, h.magic[3] as char));
+    header_row(
+        ui,
+        "magic",
+        &format!(
+            "{}{}{}{}",
+            h.magic[0] as char, h.magic[1] as char, h.magic[2] as char, h.magic[3] as char
+        ),
+    );
     header_row(ui, "version", &format!("{}", h.version));
     header_row(ui, "port", &format!("{}", h.port));
     header_row(ui, "channel", &format!("{}", h.channel));
@@ -361,7 +455,8 @@ fn show_entry_detail(ui: &mut egui::Ui, _path: &str, entry: &ArchiveEntry, bar_l
 
     ui.add_space(6.0);
 
-    let payload: &[u8] = if magic_has_inner_header(h.magic) && entry.data.len() >= InnerHeader::SIZE {
+    let payload: &[u8] = if magic_has_inner_header(h.magic) && entry.data.len() >= InnerHeader::SIZE
+    {
         if let Some((inner, rest)) = InnerHeader::read(&entry.data) {
             ui.label(egui::RichText::new("内头").size(12.0).strong());
             ui.add_space(2.0);
@@ -400,8 +495,16 @@ fn show_entry_detail(ui: &mut egui::Ui, _path: &str, entry: &ArchiveEntry, bar_l
 
 fn header_row(ui: &mut egui::Ui, label: &str, value: &str) {
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(label).size(10.0).color(egui::Color32::GRAY));
-        ui.label(egui::RichText::new(value).size(10.0).color(egui::Color32::from_gray(200)));
+        ui.label(
+            egui::RichText::new(label)
+                .size(10.0)
+                .color(egui::Color32::GRAY),
+        );
+        ui.label(
+            egui::RichText::new(value)
+                .size(10.0)
+                .color(egui::Color32::from_gray(200)),
+        );
     });
 }
 
@@ -412,15 +515,17 @@ fn render_json_text(ui: &mut egui::Ui, data: &[u8]) {
     if let Ok(obj) = serde_json::from_slice::<serde_json::Value>(data) {
         let pretty = serde_json::to_string_pretty(&obj).unwrap_or_default();
         let mut text = pretty;
-        egui::ScrollArea::vertical().auto_shrink([false, true]).show(ui, |ui| {
-            ui.add_sized(
-                egui::vec2(ui.available_width(), ui.available_height().max(200.0)),
-                egui::TextEdit::multiline(&mut text)
-                    .desired_rows(20)
-                    .font(egui::TextStyle::Monospace)
-                    .code_editor(),
-            );
-        });
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                ui.add_sized(
+                    egui::vec2(ui.available_width(), ui.available_height().max(200.0)),
+                    egui::TextEdit::multiline(&mut text)
+                        .desired_rows(20)
+                        .font(egui::TextStyle::Monospace)
+                        .code_editor(),
+                );
+            });
     } else {
         render_hexdump(ui, data);
     }
@@ -437,7 +542,11 @@ fn render_hexdump(ui: &mut egui::Ui, data: &[u8]) {
         hex.push_str("  ");
         for b in chunk {
             let c = *b as char;
-            hex.push(if c.is_ascii_graphic() || c == ' ' { c } else { '.' });
+            hex.push(if c.is_ascii_graphic() || c == ' ' {
+                c
+            } else {
+                '.'
+            });
         }
         hex.push('\n');
     }
@@ -497,7 +606,11 @@ fn cell_text(row: &mut egui_extras::TableRow, text: impl Into<String>) {
 fn render_notes_table(ui: &mut egui::Ui, payload: &[u8], bar_lookup: &BarLookup) {
     let notes: Vec<Note> = decode_delta_events(payload);
     ui.add_space(4.0);
-    ui.label(egui::RichText::new(format!("音符 ({} 个)", notes.len())).size(12.0).strong());
+    ui.label(
+        egui::RichText::new(format!("音符 ({} 个)", notes.len()))
+            .size(12.0)
+            .strong(),
+    );
     ui.add_space(2.0);
     build_table(
         ui,
@@ -535,7 +648,11 @@ fn render_cc_table(ui: &mut egui::Ui, payload: &[u8], bar_lookup: &BarLookup) {
         v
     };
     ui.add_space(4.0);
-    ui.label(egui::RichText::new(format!("CC 事件 ({} 个)", events.len())).size(12.0).strong());
+    ui.label(
+        egui::RichText::new(format!("CC 事件 ({} 个)", events.len()))
+            .size(12.0)
+            .strong(),
+    );
     ui.add_space(2.0);
     build_table(
         ui,
@@ -562,7 +679,11 @@ fn render_pitch_table(ui: &mut egui::Ui, payload: &[u8], bar_lookup: &BarLookup)
         v
     };
     ui.add_space(4.0);
-    ui.label(egui::RichText::new(format!("弯音事件 ({} 个)", events.len())).size(12.0).strong());
+    ui.label(
+        egui::RichText::new(format!("弯音事件 ({} 个)", events.len()))
+            .size(12.0)
+            .strong(),
+    );
     ui.add_space(2.0);
     build_table(
         ui,
@@ -589,7 +710,11 @@ fn render_pc_table(ui: &mut egui::Ui, payload: &[u8], bar_lookup: &BarLookup) {
         v
     };
     ui.add_space(4.0);
-    ui.label(egui::RichText::new(format!("音色变更 ({} 个)", events.len())).size(12.0).strong());
+    ui.label(
+        egui::RichText::new(format!("音色变更 ({} 个)", events.len()))
+            .size(12.0)
+            .strong(),
+    );
     ui.add_space(2.0);
     build_table(
         ui,
@@ -616,7 +741,11 @@ fn render_tempo_table(ui: &mut egui::Ui, payload: &[u8], bar_lookup: &BarLookup)
         v
     };
     ui.add_space(4.0);
-    ui.label(egui::RichText::new(format!("Tempo ({} 个)", events.len())).size(12.0).strong());
+    ui.label(
+        egui::RichText::new(format!("Tempo ({} 个)", events.len()))
+            .size(12.0)
+            .strong(),
+    );
     ui.add_space(2.0);
     build_table(
         ui,
@@ -643,7 +772,11 @@ fn render_time_sig_table(ui: &mut egui::Ui, payload: &[u8], bar_lookup: &BarLook
         v
     };
     ui.add_space(4.0);
-    ui.label(egui::RichText::new(format!("拍号 ({} 个)", events.len())).size(12.0).strong());
+    ui.label(
+        egui::RichText::new(format!("拍号 ({} 个)", events.len()))
+            .size(12.0)
+            .strong(),
+    );
     ui.add_space(2.0);
     build_table(
         ui,
@@ -661,19 +794,41 @@ fn render_time_sig_table(ui: &mut egui::Ui, payload: &[u8], bar_lookup: &BarLook
     );
 }
 
-fn show_root_overview(ui: &mut egui::Ui, entries: &[(&String, &ArchiveEntry)], _archive: &ProjectArchive) {
+fn show_root_overview(
+    ui: &mut egui::Ui,
+    entries: &[(&String, &ArchiveEntry)],
+    _archive: &ProjectArchive,
+) {
     ui.label(egui::RichText::new("工程文件结构").size(14.0).strong());
     ui.add_space(4.0);
     let total_bytes: usize = entries.iter().map(|(_, e)| e.data.len()).sum();
-    ui.colored_label(egui::Color32::GRAY, format!("{} 个条目, 共 {} 字节", entries.len(), total_bytes));
+    ui.colored_label(
+        egui::Color32::GRAY,
+        format!("{} 个条目, 共 {} 字节", entries.len(), total_bytes),
+    );
     ui.add_space(4.0);
 
-    let track_count = entries.iter().filter(|(p, _)| p.contains("/notes.zst")).count();
+    let track_count = entries
+        .iter()
+        .filter(|(p, _)| p.contains("/notes.zst"))
+        .count();
     let cc_count = entries.iter().filter(|(p, _)| p.contains("/cc_")).count();
-    let conductor_count = entries.iter().filter(|(p, _)| p.starts_with("conductor/")).count();
-    ui.colored_label(egui::Color32::from_gray(120), format!("音轨: {} 个", track_count));
-    ui.colored_label(egui::Color32::from_gray(120), format!("CC: {} 个", cc_count));
-    ui.colored_label(egui::Color32::from_gray(120), format!("指挥: {} 个", conductor_count));
+    let conductor_count = entries
+        .iter()
+        .filter(|(p, _)| p.starts_with("conductor/"))
+        .count();
+    ui.colored_label(
+        egui::Color32::from_gray(120),
+        format!("音轨: {} 个", track_count),
+    );
+    ui.colored_label(
+        egui::Color32::from_gray(120),
+        format!("CC: {} 个", cc_count),
+    );
+    ui.colored_label(
+        egui::Color32::from_gray(120),
+        format!("指挥: {} 个", conductor_count),
+    );
 
     ui.add_space(8.0);
     ui.colored_label(egui::Color32::from_gray(100), "← 点击左侧文件查看详情");
