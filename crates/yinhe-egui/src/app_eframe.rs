@@ -349,6 +349,7 @@ impl eframe::App for App {
                         midi_source,
                         &mut doc.selected,
                         &pr_visible,
+                        &doc.track_colors_cache,
                         &mut doc.cursor_tick,
                         is_playing,
                         doc.quantize,

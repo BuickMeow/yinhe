@@ -48,6 +48,7 @@ pub fn build_instances(
     view: &PianoRollView,
     selected: &std::collections::HashSet<(u16, u32, u8)>,
     track_visible: &[bool],
+    track_colors: &[[f32; 3]],
 ) {
     build_static_instances(
         instances,
@@ -57,6 +58,7 @@ pub fn build_instances(
         view,
         selected,
         track_visible,
+        track_colors,
     );
 }
 
@@ -72,6 +74,7 @@ pub fn build_static_instances(
     view: &PianoRollView,
     selected: &std::collections::HashSet<(u16, u32, u8)>,
     track_visible: &[bool],
+    track_colors: &[[f32; 3]],
 ) {
     let w = width as f32;
     let h = height as f32;
@@ -178,8 +181,11 @@ pub fn build_static_instances(
                     let ny = key_y;
                     let nh = kh;
 
-                    let trk = note.track as usize % TRACK_PALETTE.len();
-                    let color = TRACK_PALETTE[trk];
+                    let trk_idx = note.track as usize;
+                    let color = track_colors
+                        .get(trk_idx)
+                        .copied()
+                        .unwrap_or_else(|| TRACK_PALETTE[trk_idx % TRACK_PALETTE.len()]);
 
                     let is_selected =
                         has_selection && selected.contains(&(note.track, note.start_tick, key));

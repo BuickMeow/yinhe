@@ -24,6 +24,7 @@ pub fn prepare(
     view: &PianoRollView,
     selected: &HashSet<(u16, u32, u8)>,
     track_visible: &[bool],
+    track_colors: &[[f32; 3]],
 ) -> PrepareTimings {
     let uniforms = Uniforms {
         width: width as f32,
@@ -45,6 +46,7 @@ pub fn prepare(
             view,
             selected,
             track_visible,
+            track_colors,
         );
     })
 }

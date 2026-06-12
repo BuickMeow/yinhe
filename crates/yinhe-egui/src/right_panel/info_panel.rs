@@ -186,10 +186,10 @@ pub fn show(
     let mut solo_clicked = false;
 
     ui.horizontal(|ui| {
-        // Mute button
+        // Mute button (yellow)
         let mute_label = if muted { "🔇 静音" } else { "🔊 静音" };
         let mute_color = if muted {
-            egui::Color32::from_rgb(220, 80, 80)
+            egui::Color32::from_rgb(240, 200, 60)
         } else {
             egui::Color32::from_gray(140)
         };
@@ -200,10 +200,10 @@ pub fn show(
 
         ui.add_space(4.0);
 
-        // Solo button
+        // Solo button (red)
         let solo_label = if soloed { "🔊 独奏" } else { "🔈 独奏" };
         let solo_color = if soloed {
-            egui::Color32::from_rgb(240, 200, 60)
+            egui::Color32::from_rgb(220, 80, 80)
         } else {
             egui::Color32::from_gray(140)
         };

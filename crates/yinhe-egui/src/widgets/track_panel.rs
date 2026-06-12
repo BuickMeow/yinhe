@@ -152,12 +152,12 @@ pub(crate) fn show(
 
                 let m_resp = draw_inline_button(
                     ui, &painter, m_rect, "M", muted,
-                    egui::Color32::from_rgb(220, 80, 80),
+                    egui::Color32::from_rgb(240, 200, 60),
                     egui::Id::new(("track_btn_m", idx)),
                 );
                 let s_resp = draw_inline_button(
                     ui, &painter, s_rect, "S", soloed,
-                    egui::Color32::from_rgb(240, 200, 60),
+                    egui::Color32::from_rgb(220, 80, 80),
                     egui::Id::new(("track_btn_s", idx)),
                 );
                 let v_resp = draw_inline_button(
@@ -181,6 +181,27 @@ pub(crate) fn show(
                 if v_resp.clicked() {
                     if let Some(v) = track_pianoroll_visible.get_mut(idx) {
                         *v = !*v;
+                    }
+                }
+                if v_resp.secondary_clicked() {
+                    // Right-click: solo this track, or restore all if already soloed.
+                    let n = track_pianoroll_visible.len();
+                    let is_solo_on_self = track_pianoroll_visible
+                        .iter()
+                        .enumerate()
+                        .all(|(i, &v)| {
+                            if i == idx { v } else { !v }
+                        });
+                    if is_solo_on_self {
+                        // Restore all to visible
+                        for v in track_pianoroll_visible.iter_mut() {
+                            *v = true;
+                        }
+                    } else {
+                        // Solo this track
+                        for i in 0..n {
+                            track_pianoroll_visible[i] = i == idx;
+                        }
                     }
                 }
             }

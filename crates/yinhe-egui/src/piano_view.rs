@@ -27,6 +27,7 @@ pub fn show(
     midi: Option<&dyn yinhe_pianoroll::NoteSource>,
     selected: &mut std::collections::HashSet<(u16, u32, u8)>,
     track_visible: &[bool],
+    track_colors: &[[f32; 3]],
     cursor_tick: &mut Option<f64>,
     is_playing: bool,
     quantize: QuantizePreset,
@@ -209,6 +210,7 @@ pub fn show(
             view,
             &*selected,
             track_visible,
+            track_colors,
         )
     });
 
