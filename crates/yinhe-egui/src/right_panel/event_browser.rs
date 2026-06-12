@@ -1,5 +1,6 @@
 use eframe::egui;
 use egui_material_icons::icons::*;
+use std::collections::BTreeMap;
 use yinhe_project::*;
 
 use crate::document::Document;
@@ -8,35 +9,81 @@ use crate::document::Document;
 pub struct EventBrowserState {
     pub expanded_paths: std::collections::HashSet<String>,
     pub selected_path: Option<String>,
+    archive_fingerprint: Option<usize>,
 }
 
-pub fn show(
-    ui: &mut egui::Ui,
-    doc: Option<&mut Document>,
-    state: &mut EventBrowserState,
-) {
+enum TreeNode {
+    Dir { children: BTreeMap<String, TreeNode> },
+    Leaf { full_path: String },
+}
+
+impl TreeNode {
+    fn new_dir() -> Self {
+        TreeNode::Dir { children: BTreeMap::new() }
+    }
+
+    fn insert(&mut self, segments: &[&str], full_path: &str) {
+        let TreeNode::Dir { children } = self else { return };
+        match segments {
+            [] => {}
+            [name] => {
+                children.insert((*name).to_string(), TreeNode::Leaf { full_path: full_path.to_string() });
+            }
+            [head, rest @ ..] => {
+                let entry = children.entry((*head).to_string()).or_insert_with(TreeNode::new_dir);
+                entry.insert(rest, full_path);
+            }
+        }
+    }
+
+    fn leaf_count(&self) -> usize {
+        match self {
+            TreeNode::Leaf { .. } => 1,
+            TreeNode::Dir { children } => children.values().map(|c| c.leaf_count()).sum(),
+        }
+    }
+}
+
+fn build_tree(entries: &[(&String, &ArchiveEntry)]) -> TreeNode {
+    let mut root = TreeNode::new_dir();
+    for (path, _) in entries {
+        let segs: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+        root.insert(&segs, path);
+    }
+    root
+}
+
+pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>, state: &mut EventBrowserState) {
     let Some(doc) = doc else {
         ui.add_space(8.0);
-        ui.label(
-            egui::RichText::new("（未打开文档）")
-                .color(egui::Color32::from_gray(100))
-                .size(12.0),
-        );
+        ui.label(egui::RichText::new("（未打开文档）").color(egui::Color32::from_gray(100)).size(12.0));
         return;
     };
 
     let Some(archive) = &doc.archive else {
         ui.add_space(8.0);
-        ui.label(
-            egui::RichText::new("（无工程文件归档）")
-                .color(egui::Color32::from_gray(100))
-                .size(12.0),
-        );
+        ui.label(egui::RichText::new("（无工程文件归档）").color(egui::Color32::from_gray(100)).size(12.0));
         return;
     };
 
     let mut entries: Vec<(&String, &ArchiveEntry)> = archive.entries.iter().collect();
     entries.sort_by(|a, b| a.0.cmp(b.0));
+
+    let fingerprint = entries.len();
+    if state.archive_fingerprint != Some(fingerprint) {
+        state.expanded_paths.clear();
+        let tree_init = build_tree(&entries);
+        if let TreeNode::Dir { children } = &tree_init {
+            for (name, node) in children {
+                if matches!(node, TreeNode::Dir { .. }) {
+                    state.expanded_paths.insert(name.clone());
+                }
+            }
+        }
+        state.archive_fingerprint = Some(fingerprint);
+    }
+
+    let tree = build_tree(&entries);
 
     let frame_bg = egui::Frame::none()
         .fill(egui::Color32::from_gray(16))
@@ -46,7 +93,6 @@ pub fn show(
     let top_h = (total_h * 0.45).max(120.0).min(total_h - 80.0);
 
     ui.vertical(|ui| {
-        // ── Top: file tree (vertical list, full width) ──
         egui::ScrollArea::both()
             .id_salt("event_browser_tree")
             .max_height(top_h)
@@ -55,8 +101,10 @@ pub fn show(
                 frame_bg.show(ui, |ui| {
                     ui.set_min_width(ui.available_width());
                     ui.vertical(|ui| {
-                        for (path, entry) in &entries {
-                            render_tree_item(ui, path, entry, state);
+                        if let TreeNode::Dir { children } = &tree {
+                            for (name, node) in children {
+                                render_node(ui, name, node, "", 0, archive, state);
+                            }
                         }
                     });
                 });
@@ -64,7 +112,6 @@ pub fn show(
 
         ui.add_space(4.0);
 
-        // ── Bottom: detail panel ──
         egui::ScrollArea::both()
             .id_salt("event_browser_detail")
             .auto_shrink([false, false])
@@ -85,13 +132,100 @@ pub fn show(
     });
 }
 
-fn render_tree_item(
+fn render_node(
     ui: &mut egui::Ui,
-    path: &str,
-    entry: &ArchiveEntry,
+    name: &str,
+    node: &TreeNode,
+    parent_path: &str,
+    depth: usize,
+    archive: &ProjectArchive,
     state: &mut EventBrowserState,
 ) {
-    let is_selected = state.selected_path.as_deref() == Some(path);
+    let cur_path = if parent_path.is_empty() {
+        name.to_string()
+    } else {
+        format!("{}/{}", parent_path, name)
+    };
+    match node {
+        TreeNode::Dir { children } => {
+            let expanded = state.expanded_paths.contains(&cur_path);
+            let count = node.leaf_count();
+            if render_dir_row(ui, name, depth, expanded, count) {
+                if expanded {
+                    state.expanded_paths.remove(&cur_path);
+                } else {
+                    state.expanded_paths.insert(cur_path.clone());
+                }
+            }
+            if state.expanded_paths.contains(&cur_path) {
+                for (cname, cnode) in children {
+                    render_node(ui, cname, cnode, &cur_path, depth + 1, archive, state);
+                }
+            }
+        }
+        TreeNode::Leaf { full_path } => {
+            let entry = match archive.entries.get(full_path) {
+                Some(e) => e,
+                None => return,
+            };
+            render_leaf_row(ui, name, full_path, entry, depth, state);
+        }
+    }
+}
+
+fn render_dir_row(
+    ui: &mut egui::Ui,
+    name: &str,
+    depth: usize,
+    expanded: bool,
+    child_count: usize,
+) -> bool {
+    let mut toggled = false;
+    egui::Frame::none()
+        .inner_margin(egui::Margin::symmetric(2, 1))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 2.0;
+                ui.add_space(depth as f32 * 14.0);
+
+                let chev = if expanded { ICON_EXPAND_MORE } else { ICON_CHEVRON_RIGHT };
+                let chev_resp = ui.add(
+                    egui::Label::new(chev.rich_text().size(13.0).color(egui::Color32::from_gray(190)))
+                        .sense(egui::Sense::click()),
+                );
+                if chev_resp.clicked() {
+                    toggled = true;
+                }
+
+                let folder_icon = if expanded { ICON_FOLDER_OPEN } else { ICON_FOLDER };
+                let folder_resp = ui.add(
+                    egui::Label::new(folder_icon.rich_text().size(13.0).color(egui::Color32::from_rgb(220, 180, 90)))
+                        .sense(egui::Sense::click()),
+                );
+                if folder_resp.clicked() {
+                    toggled = true;
+                }
+
+                ui.label(egui::RichText::new(name).size(11.0).color(egui::Color32::from_gray(220)));
+                ui.label(
+                    egui::RichText::new(format!("({})", child_count))
+                        .size(10.0)
+                        .color(egui::Color32::from_gray(110)),
+                );
+            });
+        });
+    toggled
+}
+
+fn render_leaf_row(
+    ui: &mut egui::Ui,
+    name: &str,
+    full_path: &str,
+    entry: &ArchiveEntry,
+    depth: usize,
+    state: &mut EventBrowserState,
+) {
+    let is_selected = state.selected_path.as_deref() == Some(full_path);
     let icon = match entry.header.magic {
         b if b == *b"YHTK" => ICON_MUSIC_NOTE,
         b if b == *b"YHCC" => ICON_SETTINGS,
@@ -100,52 +234,54 @@ fn render_tree_item(
         b if b == *b"YHMP" || b == *b"YHPR" || b == *b"YHTM" || b == *b"YHTS" => ICON_AUDIO_FILE,
         _ => ICON_AUDIO_FILE,
     };
-
     let bg = if is_selected {
         egui::Color32::from_rgb(40, 50, 70)
     } else {
         egui::Color32::TRANSPARENT
     };
+    let size_label = if entry.data.len() < 1024 {
+        format!("{}B", entry.data.len())
+    } else if entry.data.len() < 1024 * 1024 {
+        format!("{:.1}K", entry.data.len() as f64 / 1024.0)
+    } else {
+        format!("{:.1}M", entry.data.len() as f64 / (1024.0 * 1024.0))
+    };
 
-    let frame_resp = egui::Frame::none()
+    let frame_r = egui::Frame::none()
         .fill(bg)
         .inner_margin(egui::Margin::symmetric(2, 1))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 4.0;
+                ui.spacing_mut().item_spacing.x = 2.0;
+                ui.add_space(depth as f32 * 14.0);
+                ui.add_space(14.0);
                 ui.label(icon.rich_text().size(12.0).color(if is_selected {
                     egui::Color32::WHITE
                 } else {
                     egui::Color32::from_gray(160)
                 }));
-                let size_label = if entry.data.len() < 1024 {
-                    format!("{}B", entry.data.len())
-                } else if entry.data.len() < 1024 * 1024 {
-                    format!("{:.1}K", entry.data.len() as f64 / 1024.0)
-                } else {
-                    format!("{:.1}M", entry.data.len() as f64 / (1024.0 * 1024.0))
-                };
                 ui.label(
-                    egui::RichText::new(format!("{}  ({})", path, size_label))
+                    egui::RichText::new(name)
                         .size(11.0)
                         .monospace()
                         .color(if is_selected {
                             egui::Color32::WHITE
                         } else {
-                            egui::Color32::from_gray(180)
+                            egui::Color32::from_gray(200)
                         }),
+                );
+                ui.label(
+                    egui::RichText::new(format!("({})", size_label))
+                        .size(10.0)
+                        .color(egui::Color32::from_gray(110)),
                 );
             });
         });
-    let resp = frame_resp
-        .response
-        .interact(egui::Sense::click());
-
+    let resp = frame_r.response.interact(egui::Sense::click());
     if resp.clicked() {
-        state.selected_path = Some(path.to_string());
+        state.selected_path = Some(full_path.to_string());
     }
 }
-
 fn show_entry_detail(ui: &mut egui::Ui, path: &str, entry: &ArchiveEntry) {
     let h = entry.header;
 
