@@ -62,6 +62,11 @@ pub(crate) struct Document {
     /// `track_visible[i] && track_pianoroll_visible[i]` is the effective pianoroll mask.
     /// Memory-only (not persisted).
     pub track_pianoroll_visible: Vec<bool>,
+    /// Snapshot of `track_pianoroll_visible` taken when the user double-clicks a
+    /// track row to "solo" it. Cleared (and snapshot restored) when the user
+    /// single-clicks the already-selected row's badge/name area.
+    /// Memory-only (not persisted).
+    pub track_pianoroll_visible_snapshot: Option<Vec<bool>>,
     /// Index of the conductor track, if one was detected on load.
     /// Heuristic: track 0 with zero notes and zero control events.
     pub conductor_track_idx: Option<u16>,
@@ -139,6 +144,7 @@ impl Default for Document {
             soundbank_selected_port: 0,
             track_overrides: vec![TrackOverride::default()],
             track_pianoroll_visible: Vec::new(),
+            track_pianoroll_visible_snapshot: None,
             conductor_track_idx: None,
             project_name: String::new(),
             project_artist: String::new(),
@@ -194,7 +200,7 @@ impl Document {
             // Convert to archive (the canonical storage format)
             let archive = crate::project_io::midi_to_archive(&midi);
             // Derive MidiFile from the archive (same path as .yin loading)
-            let midi = crate::project_io::archive_to_midi(&archive);
+            let mut midi = crate::project_io::archive_to_midi(&archive);
             let num_tracks = midi.track_ports.len();
             let file_name = std::path::Path::new(path)
                 .file_stem()
@@ -210,10 +216,10 @@ impl Document {
                         .unwrap_or_else(|| format!("Track {}", i + 1))
                 })
                 .collect();
-            let track_info_cache = midi.track_info();
+            let track_info_cache_initial = midi.track_info();
 
             // ── Conductor detection (heuristic: track 0, no notes, no ctrl events) ──
-            let conductor_track_idx = detect_conductor(&track_info_cache, &midi.control_events);
+            let conductor_track_idx = detect_conductor(&track_info_cache_initial, &midi.control_events);
             if conductor_track_idx.is_none() {
                 return Err(format!(
                     "MIDI 文件「{}」缺少 Conductor 轨道（标准 format-1 文件应在第 0 轨包含 \
@@ -236,7 +242,17 @@ impl Document {
                 if c < track_names.len() {
                     track_names[c] = "Conductor".to_string();
                 }
+                if c < midi.track_names.len() {
+                    midi.track_names[c] = "Conductor".to_string();
+                } else {
+                    while midi.track_names.len() < c {
+                        midi.track_names.push(String::new());
+                    }
+                    midi.track_names.push("Conductor".to_string());
+                }
             }
+            // Rebuild after the rename so track_info_cache reflects "Conductor".
+            let track_info_cache = midi.track_info();
 
             let mut pc_map_cache = HashMap::new();
             for ev in &midi.control_events {
@@ -292,6 +308,7 @@ impl Document {
         quantize: QuantizePreset,
     ) -> std::io::Result<(Self, bool)> {
         let (midi, file_name, archive) = crate::project_io::load_project_full(path)?;
+        let mut midi = midi;
         let num_tracks = midi.track_ports.len();
         let mut track_names: Vec<String> = (0..num_tracks)
             .map(|i| {
@@ -301,7 +318,7 @@ impl Document {
                     .unwrap_or_else(|| format!("Track {}", i + 1))
             })
             .collect();
-        let track_info_cache = midi.track_info();
+        let track_info_cache_initial = midi.track_info();
         let mut pc_map_cache = std::collections::HashMap::new();
         for ev in &midi.control_events {
             if let yinhe_midi::MidiControlEvent::ProgramChange {
@@ -319,13 +336,22 @@ impl Document {
         // lacks one, we leave conductor_track_idx = None and let the UI fall
         // back to "no special row" (no rejection here, since the file already
         // round-tripped through midi_to_archive once).
-        let conductor_track_idx = detect_conductor(&track_info_cache, &midi.control_events);
+        let conductor_track_idx = detect_conductor(&track_info_cache_initial, &midi.control_events);
         if let Some(c_idx) = conductor_track_idx {
             let c = c_idx as usize;
             if c < track_names.len() {
                 track_names[c] = "Conductor".to_string();
             }
+            if c < midi.track_names.len() {
+                midi.track_names[c] = "Conductor".to_string();
+            } else {
+                while midi.track_names.len() < c {
+                    midi.track_names.push(String::new());
+                }
+                midi.track_names.push("Conductor".to_string());
+            }
         }
+        let track_info_cache = midi.track_info();
 
         // Read project metadata + soundfont config from archive
         let (
@@ -380,6 +406,7 @@ impl Document {
             archive: Some(archive),
             track_visible: vec![true; num_tracks],
             track_pianoroll_visible: vec![true; num_tracks],
+            track_pianoroll_visible_snapshot: None,
             conductor_track_idx,
             track_selected: None,
             selected: HashSet::new(),

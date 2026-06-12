@@ -136,6 +136,7 @@ pub fn show(
             &doc.track_info_cache,
             &doc.track_visible,
             &mut doc.track_pianoroll_visible,
+            &mut doc.track_pianoroll_visible_snapshot,
             &mut doc.track_overrides,
             &mut doc.track_selected,
             doc.conductor_track_idx,

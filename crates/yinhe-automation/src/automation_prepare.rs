@@ -19,6 +19,7 @@ pub fn prepare(
     default_num: u8,
     default_den: u8,
     time_sig_events: &[TimeSigEvent],
+    track_visible: &[bool],
     _force_rebuild: bool,
 ) -> bool {
     let uniforms = Uniforms {
@@ -44,6 +45,7 @@ pub fn prepare(
                 default_num,
                 default_den,
                 time_sig_events,
+                track_visible,
             );
         })
         .dirty

@@ -16,6 +16,7 @@ pub(crate) fn show(
     track_info: &[TrackInfo],
     track_visible: &[bool],
     track_pianoroll_visible: &mut [bool],
+    track_pianoroll_visible_snapshot: &mut Option<Vec<bool>>,
     track_overrides: &mut [TrackOverride],
     track_selected: &mut Option<u16>,
     conductor_track_idx: Option<u16>,
@@ -67,7 +68,6 @@ pub(crate) fn show(
         );
 
         let is_conductor = Some(ti.index) == conductor_track_idx;
-
         let selected = *track_selected == Some(ti.index);
         if selected {
             painter.rect_filled(row_rect, 0.0, ui.visuals().selection.bg_fill);
@@ -83,14 +83,11 @@ pub(crate) fn show(
         );
 
         let badge_w = 8.0_f32;
-        let badge_rect = egui::Rect::from_min_size(
-            row_rect.min,
-            egui::vec2(badge_w, *row_height),
-        );
+        let badge_rect = egui::Rect::from_min_size(row_rect.min, egui::vec2(badge_w, *row_height));
         painter.rect_filled(badge_rect, 0.0, color32);
 
         let text_x = badge_rect.max.x + 6.0;
-        let track_num_text = format!("{:03}", ti.index + 1);
+        let track_num_text = format!("{:03}", ti.index);
 
         if show_details && *row_height >= 30.0 {
             let font = egui::FontId::proportional((*row_height * 0.25).clamp(8.0, 13.0));
@@ -106,8 +103,14 @@ pub(crate) fn show(
                 "Master".to_string()
             } else {
                 let port_letter = match ti.port {
-                    0 => 'A', 1 => 'B', 2 => 'C', 3 => 'D',
-                    4 => 'E', 5 => 'F', 6 => 'G', 7 => 'H',
+                    0 => 'A',
+                    1 => 'B',
+                    2 => 'C',
+                    3 => 'D',
+                    4 => 'E',
+                    5 => 'F',
+                    6 => 'G',
+                    7 => 'H',
                     _ => '?',
                 };
                 format!("{}{:02}", port_letter, ti.channel)
@@ -151,17 +154,29 @@ pub(crate) fn show(
                 );
 
                 let m_resp = draw_inline_button(
-                    ui, &painter, m_rect, "M", muted,
+                    ui,
+                    &painter,
+                    m_rect,
+                    "M",
+                    muted,
                     egui::Color32::from_rgb(240, 200, 60),
                     egui::Id::new(("track_btn_m", idx)),
                 );
                 let s_resp = draw_inline_button(
-                    ui, &painter, s_rect, "S", soloed,
+                    ui,
+                    &painter,
+                    s_rect,
+                    "S",
+                    soloed,
                     egui::Color32::from_rgb(220, 80, 80),
                     egui::Id::new(("track_btn_s", idx)),
                 );
                 let v_resp = draw_inline_button(
-                    ui, &painter, v_rect, "V", pr_visible,
+                    ui,
+                    &painter,
+                    v_rect,
+                    "V",
+                    pr_visible,
                     egui::Color32::from_rgb(120, 200, 240),
                     egui::Id::new(("track_btn_v", idx)),
                 );
@@ -186,12 +201,11 @@ pub(crate) fn show(
                 if v_resp.secondary_clicked() {
                     // Right-click: solo this track, or restore all if already soloed.
                     let n = track_pianoroll_visible.len();
-                    let is_solo_on_self = track_pianoroll_visible
-                        .iter()
-                        .enumerate()
-                        .all(|(i, &v)| {
-                            if i == idx { v } else { !v }
-                        });
+                    let is_solo_on_self =
+                        track_pianoroll_visible
+                            .iter()
+                            .enumerate()
+                            .all(|(i, &v)| if i == idx { v } else { !v });
                     if is_solo_on_self {
                         // Restore all to visible
                         for v in track_pianoroll_visible.iter_mut() {
@@ -227,14 +241,59 @@ pub(crate) fn show(
         }
     }
 
-    if resp.clicked()
-        && let Some(pos) = resp.interact_pointer_pos() {
-            let rel_y = pos.y - panel_rect.min.y + *scroll_y;
-            let clicked_idx = (rel_y / *row_height).floor() as usize;
-            if clicked_idx < num_tracks {
-                *track_selected = Some(track_info[clicked_idx].index);
+    // ── Click handling: select / toggle-deselect / double-click solo ──
+    // Helpers to translate a pointer position to (row index, in-name-zone).
+    let total_btn_w = 3.0 * btn_size.x + 2.0 * 2.0; // matches the inner-loop layout
+    let name_zone_max_x_default = panel_rect.max.x - total_btn_w - 6.0;
+
+    let hit = |pos: egui::Pos2| -> Option<(usize, bool)> {
+        let rel_y = pos.y - panel_rect.min.y + *scroll_y;
+        let idx = (rel_y / *row_height).floor() as usize;
+        if idx >= num_tracks {
+            return None;
+        }
+        let is_conductor = Some(track_info[idx].index) == conductor_track_idx;
+        // Conductor row has no inline buttons → entire row is the name zone.
+        let in_name_zone = if is_conductor {
+            true
+        } else {
+            pos.x < name_zone_max_x_default
+        };
+        Some((idx, in_name_zone))
+    };
+
+    if resp.double_clicked() {
+        if let Some(pos) = resp.interact_pointer_pos() {
+            if let Some((idx, _)) = hit(pos) {
+                // Save snapshot only on first solo (no existing snapshot).
+                if track_pianoroll_visible_snapshot.is_none() {
+                    *track_pianoroll_visible_snapshot = Some(track_pianoroll_visible.to_vec());
+                }
+                // Solo this row: only `idx` visible.
+                for i in 0..track_pianoroll_visible.len() {
+                    track_pianoroll_visible[i] = i == idx;
+                }
+                *track_selected = Some(track_info[idx].index);
             }
         }
+    } else if resp.clicked() {
+        if let Some(pos) = resp.interact_pointer_pos() {
+            if let Some((idx, in_name_zone)) = hit(pos) {
+                let row_track_idx = track_info[idx].index;
+                if in_name_zone && *track_selected == Some(row_track_idx) {
+                    // Re-click on the selected row's name zone → deselect and
+                    // restore snapshot if one exists.
+                    *track_selected = None;
+                    if let Some(snap) = track_pianoroll_visible_snapshot.take() {
+                        let n = track_pianoroll_visible.len().min(snap.len());
+                        track_pianoroll_visible[..n].copy_from_slice(&snap[..n]);
+                    }
+                } else {
+                    *track_selected = Some(row_track_idx);
+                }
+            }
+        }
+    }
 
     if resp.hovered() {
         let scroll_delta = ui.input(|i| i.smooth_scroll_delta);
@@ -260,7 +319,11 @@ fn draw_inline_button(
     let hovered = resp.hovered();
 
     let (fill, text_col) = if active {
-        let f = if hovered { active_color.gamma_multiply(1.15) } else { active_color };
+        let f = if hovered {
+            active_color.gamma_multiply(1.15)
+        } else {
+            active_color
+        };
         (f, egui::Color32::BLACK)
     } else {
         let f = if hovered {

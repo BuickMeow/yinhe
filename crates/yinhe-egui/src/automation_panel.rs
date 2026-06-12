@@ -76,6 +76,7 @@ pub fn show_panels(
     default_num: u8,
     default_den: u8,
     time_sig_events: &[yinhe_types::TimeSigEvent],
+    track_visible: &[bool],
 ) -> f32 {
     if !*show_panels || panels.is_empty() {
         return 0.0;
@@ -148,6 +149,7 @@ pub fn show_panels(
                     default_num,
                     default_den,
                     time_sig_events,
+                    track_visible,
                     force_rebuild,
                 );
 

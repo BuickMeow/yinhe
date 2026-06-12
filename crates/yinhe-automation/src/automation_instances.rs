@@ -32,6 +32,7 @@ pub fn build_automation_instances(
     default_num: u8,
     default_den: u8,
     time_sig_events: &[TimeSigEvent],
+    track_visible: &[bool],
 ) {
     let w = width as f32;
     let h = height as f32;
@@ -124,6 +125,12 @@ pub fn build_automation_instances(
         let mut seen_values: Vec<u16> = Vec::new();
 
         for evt in events {
+            // Skip events from hidden tracks
+            let trk_idx = evt.track as usize;
+            if !track_visible.get(trk_idx).copied().unwrap_or(true) {
+                continue;
+            }
+
             // New tick → reset seen values
             if evt.tick != last_tick {
                 last_tick = evt.tick;
@@ -224,7 +231,7 @@ mod tests {
         let mut instances = Vec::new();
         let view = make_view(1.0, 0.0, 80.0);
 
-        build_automation_instances(&mut instances, 800, 100, &view, None, None, 4, 2, &[]);
+        build_automation_instances(&mut instances, 800, 100, &view, None, None, 4, 2, &[], &[]);
 
         assert!(!instances.is_empty());
         let bg = &instances[0];
@@ -239,7 +246,7 @@ mod tests {
         let mut instances = Vec::new();
         let view = make_view(1.0, 0.0, 80.0);
 
-        build_automation_instances(&mut instances, 800, 100, &view, None, None, 4, 2, &[]);
+        build_automation_instances(&mut instances, 800, 100, &view, None, None, 4, 2, &[], &[]);
 
         assert_eq!(instances.len(), 1, "no TPB means no grid lines");
     }
@@ -249,7 +256,7 @@ mod tests {
         let mut instances = Vec::new();
         let view = make_view(1.0, 0.0, 80.0);
 
-        build_automation_instances(&mut instances, 800, 100, &view, None, Some(480), 4, 2, &[]);
+        build_automation_instances(&mut instances, 800, 100, &view, None, Some(480), 4, 2, &[], &[]);
 
         assert!(instances.len() > 1);
         let grid_line = &instances[1];
@@ -275,8 +282,7 @@ mod tests {
             None,
             4,
             2,
-            &[],
-        );
+            &[], &[]);
 
         assert_eq!(instances.len(), 2);
         let center = &instances[1];
@@ -304,8 +310,7 @@ mod tests {
             None,
             4,
             2,
-            &[],
-        );
+            &[], &[]);
 
         assert_eq!(instances.len(), 2);
         let center = &instances[1];
@@ -330,8 +335,7 @@ mod tests {
             None,
             4,
             2,
-            &[],
-        );
+            &[], &[]);
 
         assert_eq!(instances.len(), 1);
     }
@@ -354,8 +358,7 @@ mod tests {
             None,
             4,
             2,
-            &[],
-        );
+            &[], &[]);
 
         assert_eq!(instances.len(), 1);
     }
@@ -378,8 +381,7 @@ mod tests {
             None,
             4,
             2,
-            &[],
-        );
+            &[], &[]);
 
         assert_eq!(instances.len(), 3);
 
@@ -418,8 +420,7 @@ mod tests {
             None,
             4,
             2,
-            &[],
-        );
+            &[], &[]);
 
         assert_eq!(instances.len(), 1, "off-screen events should be skipped");
     }
@@ -439,8 +440,7 @@ mod tests {
             None,
             4,
             2,
-            &[],
-        );
+            &[], &[]);
 
         assert_eq!(instances.len(), 2);
         // x = 60 - 50 + 100 = 110
@@ -466,8 +466,7 @@ mod tests {
             None,
             4,
             2,
-            &[],
-        );
+            &[], &[]);
 
         assert_eq!(instances.len(), 4);
 
@@ -516,8 +515,7 @@ mod tests {
             None,
             4,
             2,
-            &[],
-        );
+            &[], &[]);
 
         assert_eq!(instances.len(), 3);
         assert_ne!(instances[1].rgba_packed, instances[2].rgba_packed);
@@ -543,8 +541,7 @@ mod tests {
             None,
             4,
             2,
-            &[],
-        );
+            &[], &[]);
 
         assert_eq!(instances.len(), 1);
     }
@@ -554,7 +551,7 @@ mod tests {
         let mut instances = Vec::new();
         let view = make_view(1.0, 0.0, 0.0);
 
-        build_automation_instances(&mut instances, 0, 0, &view, None, None, 4, 2, &[]);
+        build_automation_instances(&mut instances, 0, 0, &view, None, None, 4, 2, &[], &[]);
 
         assert_eq!(instances.len(), 1);
         assert_eq!(instances[0].w, 0.0);
@@ -576,8 +573,7 @@ mod tests {
             None,
             4,
             2,
-            &[],
-        );
+            &[], &[]);
 
         // Background + center line + 1 bar
         assert_eq!(instances.len(), 3);
@@ -605,8 +601,7 @@ mod tests {
             None,
             4,
             2,
-            &[],
-        );
+            &[], &[]);
 
         assert_eq!(instances.len(), 2);
         assert!((instances[1].x - 60.0).abs() < 0.001);
@@ -629,8 +624,7 @@ mod tests {
             None,
             4,
             2,
-            &[],
-        );
+            &[], &[]);
 
         assert_eq!(instances.len(), 1, "bar with negative x should be skipped");
     }
@@ -651,8 +645,7 @@ mod tests {
             None,
             4,
             2,
-            &[],
-        );
+            &[], &[]);
 
         assert_eq!(
             instances.len(),
@@ -680,10 +673,66 @@ mod tests {
             Some(480),
             4,
             2,
-            &ts_events,
-        );
+            &ts_events, &[]);
 
         // Background + grid lines (no lane)
         assert!(instances.len() > 1);
+    }
+
+    #[test]
+    fn test_track_visibility_filters_bars() {
+        // Lane has 2 events, one on each track. With track_visible=[true,false],
+        // only the track-0 event should produce a bar.
+        let view = make_view(1.0, 0.0, 100.0);
+        let lane = AutomationLane {
+            target: AutomationTarget::CC { controller: 7 },
+            events: vec![
+                yinhe_types::AutomationEvent {
+                    tick: 100,
+                    value: 64,
+                    channel: 0,
+                    track: 0,
+                },
+                yinhe_types::AutomationEvent {
+                    tick: 200,
+                    value: 80,
+                    channel: 1,
+                    track: 1,
+                },
+            ],
+        };
+
+        // Both visible → both bars rendered.
+        let mut both = Vec::new();
+        build_automation_instances(
+            &mut both,
+            800,
+            100,
+            &view,
+            Some(&lane),
+            None,
+            4,
+            2,
+            &[],
+            &[true, true],
+        );
+
+        // Only track 0 visible → only one bar.
+        let mut only0 = Vec::new();
+        build_automation_instances(
+            &mut only0,
+            800,
+            100,
+            &view,
+            Some(&lane),
+            None,
+            4,
+            2,
+            &[],
+            &[true, false],
+        );
+
+        // The difference must be exactly one instance (the hidden bar).
+        assert_eq!(both.len(), only0.len() + 1);
     }
 }
