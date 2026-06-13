@@ -502,17 +502,25 @@ impl DeltaEvent for PitchBendEvent {
 pub struct PcEvent {
     pub tick: u32,
     pub program: u8,
+    pub bank_msb: u8,
+    pub bank_lsb: u8,
 }
 
 impl DeltaEvent for PcEvent {
     fn tick(&self) -> u32 { self.tick }
     fn set_tick(&mut self, tick: u32) { self.tick = tick; }
-    fn encode_payload(&self, out: &mut Vec<u8>) { out.push(self.program); }
+    fn encode_payload(&self, out: &mut Vec<u8>) {
+        out.push(self.program);
+        out.push(self.bank_msb);
+        out.push(self.bank_lsb);
+    }
     fn decode_payload(buf: &[u8], cursor: &mut usize) -> Option<Self> {
-        if *cursor >= buf.len() { return None; }
+        if *cursor + 3 > buf.len() { return None; }
         let program = buf[*cursor];
-        *cursor += 1;
-        Some(PcEvent { tick: 0, program })
+        let bank_msb = buf[*cursor + 1];
+        let bank_lsb = buf[*cursor + 2];
+        *cursor += 3;
+        Some(PcEvent { tick: 0, program, bank_msb, bank_lsb })
     }
 }
 

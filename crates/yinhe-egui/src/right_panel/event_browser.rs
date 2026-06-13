@@ -720,7 +720,7 @@ fn render_pc_table(ui: &mut egui::Ui, payload: &[u8], bar_lookup: &BarLookup) {
     build_table(
         ui,
         "pc_table",
-        &[("#", 40.0), ("tick", 70.0), ("位置", 80.0), ("音色", 60.0)],
+        &[("#", 40.0), ("tick", 70.0), ("位置", 80.0), ("音色", 50.0), ("Bank MSB", 70.0), ("Bank LSB", 70.0)],
         events.len(),
         |i, row| {
             let e = &events[i];
@@ -728,6 +728,8 @@ fn render_pc_table(ui: &mut egui::Ui, payload: &[u8], bar_lookup: &BarLookup) {
             cell_text(row, format!("{}", e.tick));
             cell_text(row, bar_lookup.format(e.tick));
             cell_text(row, format!("{}", e.program));
+            cell_text(row, if e.bank_msb == 0xFF { "-".into() } else { format!("{}", e.bank_msb) });
+            cell_text(row, if e.bank_lsb == 0xFF { "-".into() } else { format!("{}", e.bank_lsb) });
         },
     );
 }

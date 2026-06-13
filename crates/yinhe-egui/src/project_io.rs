@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use midly::num::{u4, u7, u15};
 use midly::{Format, Header, MetaMessage, MidiMessage, PitchBend, Smf, Timing, TrackEvent, TrackEventKind};
@@ -138,12 +138,11 @@ pub fn midi_to_archive_with_names(
 
         // Collect CC events per controller number for this track,
         // extracting known RPN sequences (CC 101/100/6/38) into dedicated RPN entries.
-        let mut cc_events: HashMap<u8, Vec<CcEvent>> = HashMap::new();
-        let mut rpn_events: HashMap<u8, Vec<RpnEvent>> = HashMap::new();
+        // Group by tick so that CC 101/100/6 at the same tick are recognized
+        // regardless of event ordering.
+        let mut cc_by_tick: std::collections::BTreeMap<u32, Vec<(u8, u8)>> = std::collections::BTreeMap::new();
         let mut pitch_events: Vec<PitchBendEvent> = Vec::new();
-        let mut pc_events: Vec<PcEvent> = Vec::new();
-        let mut rpn_msb: Option<u8> = None;
-        let mut rpn_lsb: Option<u8> = None;
+        let mut pc_by_tick: std::collections::BTreeMap<u32, Vec<u8>> = std::collections::BTreeMap::new();
         for ev in &midi.control_events {
             let ev_track = match ev {
                 yinhe_midi::MidiControlEvent::ControlChange { track, .. }
@@ -155,46 +154,9 @@ pub fn midi_to_archive_with_names(
             }
             match ev {
                 yinhe_midi::MidiControlEvent::ControlChange {
-                    tick,
-                    controller,
-                    value,
-                    ..
+                    tick, controller, value, ..
                 } => {
-                    match controller {
-                        101 => { rpn_msb = Some(*value); }
-                        100 => { rpn_lsb = Some(*value); }
-                        6 | 38 => {
-                            if let Some(msb) = rpn_msb
-                                && let Some(lsb) = rpn_lsb
-                                && let Some(rpn_num) = rpn_number(msb, lsb)
-                            {
-                                rpn_events
-                                    .entry(rpn_num)
-                                    .or_default()
-                                    .push(RpnEvent {
-                                        tick: *tick,
-                                        value: *value as u16,
-                                    });
-                            } else {
-                                cc_events
-                                    .entry(*controller)
-                                    .or_default()
-                                    .push(CcEvent {
-                                        tick: *tick,
-                                        value: *value,
-                                    });
-                            }
-                        }
-                        _ => {
-                            cc_events
-                                .entry(*controller)
-                                .or_default()
-                                .push(CcEvent {
-                                    tick: *tick,
-                                    value: *value,
-                                });
-                        }
-                    }
+                    cc_by_tick.entry(*tick).or_default().push((*controller, *value));
                 }
                 yinhe_midi::MidiControlEvent::PitchBend { tick, value, .. } => {
                     pitch_events.push(PitchBendEvent {
@@ -203,11 +165,62 @@ pub fn midi_to_archive_with_names(
                     });
                 }
                 yinhe_midi::MidiControlEvent::ProgramChange { tick, program, .. } => {
-                    pc_events.push(PcEvent {
-                        tick: *tick,
-                        program: *program,
-                    });
+                    pc_by_tick.entry(*tick).or_default().push(*program);
                 }
+            }
+        }
+
+        let mut cc_events: HashMap<u8, Vec<CcEvent>> = HashMap::new();
+        let mut rpn_events: HashMap<u8, Vec<RpnEvent>> = HashMap::new();
+        let mut pc_events: Vec<PcEvent> = Vec::new();
+
+        // Collect all unique ticks from CCs and PCs.
+        let mut all_ticks: std::collections::BTreeSet<u32> = cc_by_tick.keys().copied().collect();
+        all_ticks.extend(pc_by_tick.keys().copied());
+        for tick in all_ticks {
+            let ccs = cc_by_tick.get(&tick).map(|v| v.as_slice()).unwrap_or(&[]);
+            let pcs = pc_by_tick.get(&tick).map(|v| v.as_slice()).unwrap_or(&[]);
+
+            // ── RPN extraction ──
+            let msb = ccs.iter().find(|(c, _)| *c == 101).map(|(_, v)| *v);
+            let lsb = ccs.iter().find(|(c, _)| *c == 100).map(|(_, v)| *v);
+            let data_msb = ccs.iter().find(|(c, _)| *c == 6).map(|(_, v)| *v);
+            let data_lsb = ccs.iter().find(|(c, _)| *c == 38).map(|(_, v)| *v);
+
+            let consumed_rpn = if let (Some(msb_v), Some(lsb_v), Some(dv)) = (msb, lsb, data_msb.or(data_lsb))
+                && let Some(rpn_num) = rpn_number(msb_v, lsb_v)
+            {
+                let value = match (data_msb, data_lsb) {
+                    (Some(m), Some(l)) => ((m as u16) << 7) | (l as u16),
+                    (Some(m), None) => m as u16,
+                    (None, Some(l)) => l as u16,
+                    _ => 0,
+                };
+                rpn_events.entry(rpn_num).or_default().push(RpnEvent { tick, value });
+                true
+            } else {
+                false
+            };
+
+            // ── Bank merge: CC 0/32 at same tick as PC ──
+            let bank_msb = ccs.iter().find(|(c, _)| *c == 0).map(|(_, v)| *v).unwrap_or(0xFF);
+            let bank_lsb = ccs.iter().find(|(c, _)| *c == 32).map(|(_, v)| *v).unwrap_or(0xFF);
+
+            if !pcs.is_empty() {
+                for &prog in pcs {
+                    pc_events.push(PcEvent { tick, program: prog, bank_msb, bank_lsb });
+                }
+            }
+
+            // ── Remaining CCs (skip consumed RPN and bank CCs) ──
+            for (ctrl, val) in ccs {
+                if consumed_rpn && matches!(ctrl, 101 | 100 | 6 | 38) {
+                    continue;
+                }
+                if !pcs.is_empty() && matches!(ctrl, 0 | 32) {
+                    continue;
+                }
+                cc_events.entry(*ctrl).or_default().push(CcEvent { tick, value: *val });
             }
         }
 
@@ -547,6 +560,24 @@ pub fn archive_to_midi(archive: &ProjectArchive) -> yinhe_midi::MidiFile {
                 program: ev.program,
                 track: track_idx as u16,
             });
+            if ev.bank_msb != 0xFF {
+                midi.control_events.push(yinhe_midi::MidiControlEvent::ControlChange {
+                    tick: ev.tick,
+                    channel: global_ch,
+                    controller: 0,
+                    value: ev.bank_msb,
+                    track: track_idx as u16,
+                });
+            }
+            if ev.bank_lsb != 0xFF {
+                midi.control_events.push(yinhe_midi::MidiControlEvent::ControlChange {
+                    tick: ev.tick,
+                    channel: global_ch,
+                    controller: 32,
+                    value: ev.bank_lsb,
+                    track: track_idx as u16,
+                });
+            }
         }
 
         for (rpn_num, ev) in &data.rpn_events {
@@ -999,15 +1030,17 @@ mod roundtrip_tests {
     #[test]
     fn roundtrip_rpn_events() {
         let mut m = make_test_midi();
+        // RPN 0 at tick 100: CC 6 before CC 101/100 (order shouldn't matter)
+        m.control_events.push(yinhe_midi::MidiControlEvent::ControlChange {
+            tick: 100, channel: 0, controller: 6, value: 2, track: 0,
+        });
         m.control_events.push(yinhe_midi::MidiControlEvent::ControlChange {
             tick: 100, channel: 0, controller: 101, value: 0, track: 0,
         });
         m.control_events.push(yinhe_midi::MidiControlEvent::ControlChange {
             tick: 100, channel: 0, controller: 100, value: 0, track: 0,
         });
-        m.control_events.push(yinhe_midi::MidiControlEvent::ControlChange {
-            tick: 100, channel: 0, controller: 6, value: 2, track: 0,
-        });
+        // RPN 1 at tick 200: only CC 6, no CC 38
         m.control_events.push(yinhe_midi::MidiControlEvent::ControlChange {
             tick: 200, channel: 0, controller: 101, value: 1, track: 0,
         });
@@ -1017,6 +1050,7 @@ mod roundtrip_tests {
         m.control_events.push(yinhe_midi::MidiControlEvent::ControlChange {
             tick: 200, channel: 0, controller: 6, value: 50, track: 0,
         });
+        // RPN 2 at tick 300: CC 6 + CC 38 (14-bit value)
         m.control_events.push(yinhe_midi::MidiControlEvent::ControlChange {
             tick: 300, channel: 0, controller: 101, value: 2, track: 0,
         });
@@ -1025,6 +1059,9 @@ mod roundtrip_tests {
         });
         m.control_events.push(yinhe_midi::MidiControlEvent::ControlChange {
             tick: 300, channel: 0, controller: 6, value: 24, track: 0,
+        });
+        m.control_events.push(yinhe_midi::MidiControlEvent::ControlChange {
+            tick: 300, channel: 0, controller: 38, value: 127, track: 0,
         });
 
         let archive = midi_to_archive(&m);
@@ -1040,6 +1077,7 @@ mod roundtrip_tests {
                 _ => None,
             })
             .collect();
+        // 3 RPN events × 3 CCs each = 9 CCs (CC 38 is consumed, not stored)
         assert_eq!(rpn_ccs.len(), 9, "expected 9 RPN-related CCs");
     }
 }
