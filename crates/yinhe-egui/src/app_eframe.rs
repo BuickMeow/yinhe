@@ -340,10 +340,19 @@ impl eframe::App for App {
                         None
                     };
                     // Effective pianoroll visibility = track_visible AND track_selected.
+                    // Conductor track acts as "Master" — shows all tracks.
+                    let show_all = doc
+                        .conductor_track_idx
+                        .map(|c| doc.track_selected.contains(&c))
+                        .unwrap_or(false);
                     let pr_visible: Vec<bool> = (0..doc.track_visible.len())
                         .map(|i| {
-                            doc.track_visible[i]
-                                && doc.track_selected.contains(&(i as u16))
+                            if show_all {
+                                doc.track_visible[i]
+                            } else {
+                                doc.track_visible[i]
+                                    && doc.track_selected.contains(&(i as u16))
+                            }
                         })
                         .collect();
                     piano_view::show(
