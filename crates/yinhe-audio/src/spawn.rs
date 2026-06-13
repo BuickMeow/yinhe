@@ -21,6 +21,11 @@ pub enum AudioCommand {
     LoadMidi {
         midi: Arc<MidiFile>,
     },
+    /// Like LoadMidi but does NOT stop playback.
+    /// Replaces the midi reference and resets note cursors.
+    ReloadNotes {
+        midi: Arc<MidiFile>,
+    },
     LoadSoundFont {
         port: u8,
         paths: Vec<String>,

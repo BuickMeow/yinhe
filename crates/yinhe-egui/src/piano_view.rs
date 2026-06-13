@@ -17,6 +17,8 @@ const RULER_H: f32 = theme::RULER_H;
 /// the pianoroll content and the horizontal scrollbar. The AUTO toggle and
 /// +/- buttons live inside the scrollbar's left blank area (same width as the
 /// piano keyboard).
+///
+/// Returns an optional `SelectionAction` if the user clicked a floating action button.
 #[allow(clippy::too_many_arguments)]
 pub fn show(
     ui: &mut egui::Ui,
@@ -47,7 +49,7 @@ pub fn show(
     auto_lanes: Option<&[AutomationLane]>,
     auto_show: Option<&mut bool>,
     auto_wgpu_state: Option<&Arc<eframe::egui_wgpu::RenderState>>,
-) {
+) -> Option<crate::widgets::selection_actions::SelectionAction> {
     // Sense::hover() — no drag ownership. All drag is handled by dedicated
     // ui.interact calls below, each inside its own push_id scope.
     let (resp, painter) = ui.allocate_painter(available, egui::Sense::hover());
@@ -77,7 +79,7 @@ pub fn show(
     let h = content_rect.height() as u32;
 
     if w == 0 || h == 0 {
-        return;
+        return None;
     }
 
     // ── Perf probe (only when YIN_PERF=1) ──
@@ -118,6 +120,7 @@ pub fn show(
 
     // ── Selection drag (Select tool only) ──
     // Update state BEFORE handle_input to avoid egui pointer-capture conflicts.
+    let mut sel_action = None;
     if *active_tool == Tool::Select && !is_playing {
         sel_drag_frame(
             ui,
@@ -265,7 +268,21 @@ pub fn show(
     // State was already updated by sel_drag_frame above; this just draws the box
     // after the GPU paint so it's not covered by the texture.
     if *active_tool == Tool::Select && !is_playing {
+        // Draw active drag box (if any)
         sel_draw_box(ui, content_rect, view, quantize, ppq, bar_line_data);
+
+        // Draw persisted selection rect (remains after mouse release)
+        let persist_id = ui.id().with("sel_rect_persist");
+        let sel_rect: Option<Option<egui::Rect>> = ui.data_mut(|d| d.get_persisted(persist_id));
+        let sel_rect = sel_rect.flatten();
+        if let Some(rect) = sel_rect {
+            crate::widgets::selection_box::draw(&ui.painter(), content_rect, rect);
+        }
+
+        // Show floating action bar next to the persisted selection rect
+        if let Some(action) = crate::widgets::selection_actions::show(ui, content_rect, sel_rect) {
+            sel_action = Some(action);
+        }
     }
 
     // ── Time ruler ──
@@ -406,6 +423,8 @@ pub fn show(
             },
         });
     }
+
+    sel_action
 }
 
 // ── Selection drag logic ──
@@ -444,6 +463,9 @@ fn sel_drag_frame(
         if !cmd {
             selected.clear();
         }
+        // Clear persisted selection rect when starting a new drag
+        let persist_id = ui.id().with("sel_rect_persist");
+        ui.data_mut(|d| d.insert_persisted(persist_id, Option::<egui::Rect>::None));
     }
 
     // Update end on frames after the initial press
@@ -496,6 +518,7 @@ fn sel_drag_frame(
 
         // Release -> hit test
         if pointer.primary_released() {
+            let persist_id = ui.id().with("sel_rect_persist");
             if let (Some(midi_ref), Some((start, end))) = (midi, drag) {
                 let drag_dist = (end - start).length();
 
@@ -505,13 +528,15 @@ fn sel_drag_frame(
                     let snapped = snap_tick(tick, quantize, ppq, bar_line_data);
                     selected.clear();
                     *cursor_tick = Some(snapped.max(0.0));
+                    // Clear persisted selection rect on click
+                    ui.data_mut(|d| d.insert_persisted(persist_id, Option::<egui::Rect>::None));
                 } else {
                     // Drag — existing marquee behavior
                     let (
-                        _snapped_sx,
-                        _snapped_ex,
-                        _snapped_sy,
-                        _snapped_ey,
+                        snapped_sx,
+                        snapped_ex,
+                        snapped_sy,
+                        snapped_ey,
                         t_start,
                         t_end,
                         key_lo,
@@ -528,6 +553,13 @@ fn sel_drag_frame(
                             }
                         }
                     }
+
+                    // Persist the snapped selection rect for the floating action bar
+                    let sel_rect = egui::Rect::from_min_max(
+                        egui::pos2(snapped_sx.min(snapped_ex), snapped_sy.min(snapped_ey)),
+                        egui::pos2(snapped_sx.max(snapped_ex), snapped_sy.max(snapped_ey)),
+                    );
+                    ui.data_mut(|d| d.insert_persisted(persist_id, Some(sel_rect)));
                 }
                 view.base.dirty = true;
             }

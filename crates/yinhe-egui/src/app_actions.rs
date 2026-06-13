@@ -71,108 +71,138 @@ impl App {
     /// Delete all selected notes from the active document.
     pub(crate) fn delete_selected_notes(&mut self) {
         let Some(idx) = self.active_doc else { return };
-        let doc = &mut self.documents[idx];
-        if doc.selected.is_empty() {
-            return;
-        }
 
-        let midi = Arc::make_mut(&mut doc.midi);
-        for &(track, start_tick, key) in &doc.selected {
-            let notes = &mut midi.key_notes[key as usize];
-            notes.retain(|n| !(n.track == track && n.start_tick == start_tick));
+        let midi_clone = {
+            let doc = &mut self.documents[idx];
+            if doc.selected.is_empty() {
+                return;
+            }
+
+            let midi = Arc::make_mut(&mut doc.midi);
+            for &(track, start_tick, key) in &doc.selected {
+                let notes = &mut midi.key_notes[key as usize];
+                notes.retain(|n| !(n.track == track && n.start_tick == start_tick));
+            }
+            doc.selected.clear();
+            rebuild_midi_metadata(midi);
+            self.pianoroll_view.base.dirty = true;
+            Arc::clone(&doc.midi)
+        };
+
+        if let Some(ref audio) = self.audio {
+            let _ = audio.handle.send(yinhe_audio::AudioCommand::ReloadNotes {
+                midi: midi_clone,
+            });
         }
-        doc.selected.clear();
-        rebuild_midi_metadata(midi);
-        self.pianoroll_view.base.dirty = true;
     }
 
     /// Duplicate all selected notes (Ctrl+D / Cmd+D).
     /// New notes are placed after the original selection, offset by the selection duration.
     pub(crate) fn duplicate_selected_notes(&mut self) {
         let Some(idx) = self.active_doc else { return };
-        let doc = &mut self.documents[idx];
-        if doc.selected.is_empty() {
-            return;
-        }
 
-        let midi = Arc::make_mut(&mut doc.midi);
-
-        // Collect full note data for each selected entry
-        let mut selected_data: Vec<(yinhe_types::Note, u8)> = Vec::new();
-        for &(track, start_tick, key) in &doc.selected {
-            if let Some(note) = midi.key_notes[key as usize]
-                .iter()
-                .find(|n| n.track == track && n.start_tick == start_tick)
-            {
-                selected_data.push((note.clone(), key));
+        let midi_clone = {
+            let doc = &mut self.documents[idx];
+            if doc.selected.is_empty() {
+                return;
             }
+
+            let midi = Arc::make_mut(&mut doc.midi);
+
+            // Collect full note data for each selected entry
+            let mut selected_data: Vec<(yinhe_types::Note, u8)> = Vec::new();
+            for &(track, start_tick, key) in &doc.selected {
+                if let Some(note) = midi.key_notes[key as usize]
+                    .iter()
+                    .find(|n| n.track == track && n.start_tick == start_tick)
+                {
+                    selected_data.push((note.clone(), key));
+                }
+            }
+
+            if selected_data.is_empty() {
+                return;
+            }
+
+            // Calculate offset: duration of the selection (max_end - min_start)
+            let min_start = selected_data.iter().map(|(n, _)| n.start_tick).min().unwrap();
+            let max_end = selected_data.iter().map(|(n, _)| n.end_tick).max().unwrap();
+            let offset = (max_end - min_start).max(1);
+
+            let mut new_selected = HashSet::new();
+            for (note, key) in &selected_data {
+                let new_note = yinhe_types::Note {
+                    start_tick: note.start_tick + offset,
+                    end_tick: note.end_tick + offset,
+                    ..note.clone()
+                };
+                let notes = &mut midi.key_notes[*key as usize];
+                let insert_pos = notes.partition_point(|n| n.start_tick < new_note.start_tick);
+                notes.insert(insert_pos, new_note);
+                new_selected.insert((note.track, note.start_tick + offset, *key));
+            }
+
+            doc.selected = new_selected;
+            rebuild_midi_metadata(midi);
+            self.pianoroll_view.base.dirty = true;
+            Arc::clone(&doc.midi)
+        };
+
+        if let Some(ref audio) = self.audio {
+            let _ = audio.handle.send(yinhe_audio::AudioCommand::ReloadNotes {
+                midi: midi_clone,
+            });
         }
-
-        if selected_data.is_empty() {
-            return;
-        }
-
-        // Calculate offset: duration of the selection (max_end - min_start)
-        let min_start = selected_data.iter().map(|(n, _)| n.start_tick).min().unwrap();
-        let max_end = selected_data.iter().map(|(n, _)| n.end_tick).max().unwrap();
-        let offset = (max_end - min_start).max(1);
-
-        let mut new_selected = HashSet::new();
-        for (note, key) in &selected_data {
-            let new_note = yinhe_types::Note {
-                start_tick: note.start_tick + offset,
-                end_tick: note.end_tick + offset,
-                ..note.clone()
-            };
-            let notes = &mut midi.key_notes[*key as usize];
-            let insert_pos = notes.partition_point(|n| n.start_tick < new_note.start_tick);
-            notes.insert(insert_pos, new_note);
-            new_selected.insert((note.track, note.start_tick + offset, *key));
-        }
-
-        doc.selected = new_selected;
-        rebuild_midi_metadata(midi);
-        self.pianoroll_view.base.dirty = true;
     }
 
     /// Transpose selected notes by `semitones` (e.g. +12 for up an octave, -12 for down).
     pub(crate) fn transpose_selected_notes(&mut self, semitones: i8) {
         let Some(idx) = self.active_doc else { return };
-        let doc = &mut self.documents[idx];
-        if doc.selected.is_empty() {
-            return;
-        }
 
-        let midi = Arc::make_mut(&mut doc.midi);
-
-        // Remove selected notes from their current keys and collect their data
-        let mut moved_data: Vec<(yinhe_types::Note, u8)> = Vec::new();
-        for &(track, start_tick, key) in &doc.selected {
-            let notes = &mut midi.key_notes[key as usize];
-            if let Some(pos) = notes.iter().position(|n| n.track == track && n.start_tick == start_tick)
-            {
-                let note = notes.remove(pos);
-                moved_data.push((note, key));
+        let midi_clone = {
+            let doc = &mut self.documents[idx];
+            if doc.selected.is_empty() {
+                return;
             }
-        }
 
-        if moved_data.is_empty() {
-            return;
-        }
+            let midi = Arc::make_mut(&mut doc.midi);
 
-        // Re-insert at new keys
-        let mut new_selected = HashSet::new();
-        for (note, old_key) in &moved_data {
-            let new_key = ((*old_key as i16) + (semitones as i16)).clamp(0, 127) as u8;
-            let notes = &mut midi.key_notes[new_key as usize];
-            let insert_pos = notes.partition_point(|n| n.start_tick < note.start_tick);
-            notes.insert(insert_pos, note.clone());
-            new_selected.insert((note.track, note.start_tick, new_key));
-        }
+            // Remove selected notes from their current keys and collect their data
+            let mut moved_data: Vec<(yinhe_types::Note, u8)> = Vec::new();
+            for &(track, start_tick, key) in &doc.selected {
+                let notes = &mut midi.key_notes[key as usize];
+                if let Some(pos) = notes.iter().position(|n| n.track == track && n.start_tick == start_tick)
+                {
+                    let note = notes.remove(pos);
+                    moved_data.push((note, key));
+                }
+            }
 
-        doc.selected = new_selected;
-        rebuild_midi_metadata(midi);
-        self.pianoroll_view.base.dirty = true;
+            if moved_data.is_empty() {
+                return;
+            }
+
+            // Re-insert at new keys
+            let mut new_selected = HashSet::new();
+            for (note, old_key) in &moved_data {
+                let new_key = ((*old_key as i16) + (semitones as i16)).clamp(0, 127) as u8;
+                let notes = &mut midi.key_notes[new_key as usize];
+                let insert_pos = notes.partition_point(|n| n.start_tick < note.start_tick);
+                notes.insert(insert_pos, note.clone());
+                new_selected.insert((note.track, note.start_tick, new_key));
+            }
+
+            doc.selected = new_selected;
+            rebuild_midi_metadata(midi);
+            self.pianoroll_view.base.dirty = true;
+            Arc::clone(&doc.midi)
+        };
+
+        if let Some(ref audio) = self.audio {
+            let _ = audio.handle.send(yinhe_audio::AudioCommand::ReloadNotes {
+                midi: midi_clone,
+            });
+        }
     }
 }
 

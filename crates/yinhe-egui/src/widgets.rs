@@ -1,6 +1,7 @@
 pub mod mode_bar;
 pub mod qos;
 pub mod scrollbar;
+pub mod selection_actions;
 pub mod selection_box;
 pub mod split_handle;
 pub mod theme;

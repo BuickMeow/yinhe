@@ -302,8 +302,6 @@ impl eframe::App for App {
 
             // ── Pianoroll area ──
             if self.show_pianoroll {
-                let mut guard = ReplaceGuard::new(&mut self.documents[idx]);
-
                 // Horizontal splitter (between arrangement and pianoroll)
                 if self.show_transport {
                     let split_right = remaining.max.x + tools_panel_w;
@@ -333,77 +331,91 @@ impl eframe::App for App {
                     }
                 }
 
-                // Pianoroll GPU view (full width, no track panel)
-                let doc = guard.as_mut();
-                let midi_source: Option<&dyn yinhe_pianoroll::NoteSource> =
-                    Some(&*doc.midi as &dyn yinhe_pianoroll::NoteSource);
-                let piano_rect =
-                    egui::Rect::from_min_max(egui::pos2(remaining.min.x, bottom_y), remaining.max);
-
-                // Clone wgpu_state for automation panels before closure borrows render_ctx
+                // Pianoroll GPU view (full width, no track panel) — inner block
+                // ensures guard drops before we call self.* methods below.
                 let auto_wgpu_state = self.render_ctx.wgpu_state().clone();
                 // Ensure controller_renderers has an entry for this document
                 while self.controller_renderers.len() <= idx {
                     self.controller_renderers.push(Vec::new());
                 }
+                let sel_action = {
+                    let mut guard = ReplaceGuard::new(&mut self.documents[idx]);
+                    let doc = guard.as_mut();
+                    let midi_source: Option<&dyn yinhe_pianoroll::NoteSource> =
+                        Some(&*doc.midi as &dyn yinhe_pianoroll::NoteSource);
+                    let piano_rect =
+                        egui::Rect::from_min_max(egui::pos2(remaining.min.x, bottom_y), remaining.max);
 
-                ui.allocate_new_ui(egui::UiBuilder::new().max_rect(piano_rect), |ui| {
-                    let _piano_total_start = if crate::perf_probe::enabled() {
-                        Some(std::time::Instant::now())
-                    } else {
-                        None
-                    };
-                    // Effective pianoroll visibility = track_visible AND track_selected.
-                    // Conductor track acts as "Master" — shows all tracks.
-                    let show_all = doc
-                        .conductor_track_idx
-                        .map(|c| doc.track_selected.contains(&c))
-                        .unwrap_or(false);
-                    let pr_visible: Vec<bool> = (0..doc.track_visible.len())
-                        .map(|i| {
-                            if show_all {
-                                doc.track_visible[i]
-                            } else {
-                                doc.track_visible[i]
-                                    && doc.track_selected.contains(&(i as u16))
-                            }
-                        })
-                        .collect();
-                    piano_view::show(
-                        ui,
-                        ui.available_size(),
-                        &mut self.pianoroll,
-                        &mut self.render_ctx,
-                        &mut self.pianoroll_view,
-                        midi_source,
-                        &mut doc.selected,
-                        &pr_visible,
-                        &doc.track_colors_cache,
-                        &mut doc.cursor_tick,
-                        is_playing,
-                        doc.quantize,
-                        doc.midi.ticks_per_beat,
-                        Some((
+                    let mut action = None;
+                    ui.allocate_new_ui(egui::UiBuilder::new().max_rect(piano_rect), |ui| {
+                        let _piano_total_start = if crate::perf_probe::enabled() {
+                            Some(std::time::Instant::now())
+                        } else {
+                            None
+                        };
+                        // Effective pianoroll visibility = track_visible AND track_selected.
+                        // Conductor track acts as "Master" — shows all tracks.
+                        let show_all = doc
+                            .conductor_track_idx
+                            .map(|c| doc.track_selected.contains(&c))
+                            .unwrap_or(false);
+                        let pr_visible: Vec<bool> = (0..doc.track_visible.len())
+                            .map(|i| {
+                                if show_all {
+                                    doc.track_visible[i]
+                                } else {
+                                    doc.track_visible[i]
+                                        && doc.track_selected.contains(&(i as u16))
+                                }
+                            })
+                            .collect();
+                        action = piano_view::show(
+                            ui,
+                            ui.available_size(),
+                            &mut self.pianoroll,
+                            &mut self.render_ctx,
+                            &mut self.pianoroll_view,
+                            midi_source,
+                            &mut doc.selected,
+                            &pr_visible,
+                            &doc.track_colors_cache,
+                            &mut doc.cursor_tick,
+                            is_playing,
+                            doc.quantize,
                             doc.midi.ticks_per_beat,
-                            doc.midi.time_sig_numerator,
-                            doc.midi.time_sig_denominator,
-                            doc.midi.time_sig_events.as_slice(),
-                        )),
-                        &mut self.piano_last_cursor_tick,
-                        &mut follow_mode,
-                        &self.active_tool,
-                        // Automation panel data
-                        Some(&mut doc.controller_panels),
-                        Some(&mut self.controller_renderers[idx]),
-                        Some(&doc.midi.automation_lanes),
-                        Some(&mut doc.show_controller_panels),
-                        Some(&auto_wgpu_state),
-                    );
-                    if let Some(t0) = _piano_total_start {
-                        crate::perf_probe::record_piano_total(t0.elapsed());
+                            Some((
+                                doc.midi.ticks_per_beat,
+                                doc.midi.time_sig_numerator,
+                                doc.midi.time_sig_denominator,
+                                doc.midi.time_sig_events.as_slice(),
+                            )),
+                            &mut self.piano_last_cursor_tick,
+                            &mut follow_mode,
+                            &self.active_tool,
+                            // Automation panel data
+                            Some(&mut doc.controller_panels),
+                            Some(&mut self.controller_renderers[idx]),
+                            Some(&doc.midi.automation_lanes),
+                            Some(&mut doc.show_controller_panels),
+                            Some(&auto_wgpu_state),
+                        );
+                        if let Some(t0) = _piano_total_start {
+                            crate::perf_probe::record_piano_total(t0.elapsed());
+                        }
+                    });
+                    action
+                    // guard drops here → document restored even on panic
+                };
+                // Handle floating action bar clicks (after guard/doc borrow is dropped)
+                if let Some(action) = sel_action {
+                    use crate::widgets::selection_actions::SelectionAction;
+                    match action {
+                        SelectionAction::Delete => self.delete_selected_notes(),
+                        SelectionAction::Duplicate => self.duplicate_selected_notes(),
+                        SelectionAction::TransposeUp => self.transpose_selected_notes(12),
+                        SelectionAction::TransposeDown => self.transpose_selected_notes(-12),
                     }
-                });
-                // guard drops here → document restored even on panic
+                }
             }
 
             self.follow_mode = follow_mode;
