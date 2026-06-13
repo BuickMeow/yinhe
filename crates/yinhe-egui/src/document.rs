@@ -201,12 +201,38 @@ impl Document {
             let archive = crate::project_io::midi_to_archive(&midi);
             // Derive MidiFile from the archive (same path as .yin loading)
             let mut midi = crate::project_io::archive_to_midi(&archive);
-            let num_tracks = midi.track_ports.len();
             let file_name = std::path::Path::new(path)
                 .file_stem()
                 .and_then(|n| n.to_str())
                 .map(|s| s.to_string())
                 .unwrap_or_default();
+
+            // ── Conductor detection (heuristic: track 0, no notes, no ctrl events) ──
+            let track_info_cache_initial = midi.track_info();
+            let conductor_track_idx = detect_conductor(&track_info_cache_initial, &midi.control_events);
+            if conductor_track_idx.is_none() {
+                // Non-standard MIDI: track 0 has notes/CCs. Insert a new
+                // conductor track at index 0 and shift all existing tracks
+                // down by one.
+                for notes in &mut midi.key_notes {
+                    for note in notes.iter_mut() {
+                        note.track += 1;
+                    }
+                }
+                for ev in &mut midi.control_events {
+                    match ev {
+                        yinhe_midi::MidiControlEvent::ControlChange { track, .. }
+                        | yinhe_midi::MidiControlEvent::ProgramChange { track, .. }
+                        | yinhe_midi::MidiControlEvent::PitchBend { track, .. } => *track += 1,
+                    }
+                }
+                midi.track_ports.insert(0, 0);
+                midi.track_names.insert(0, "Conductor".to_string());
+                midi.track_channel_prefixes.insert(0, None);
+            }
+            let track_info_cache_initial = midi.track_info();
+            let conductor_track_idx = detect_conductor(&track_info_cache_initial, &midi.control_events);
+            let num_tracks = midi.track_ports.len();
 
             let mut track_names: Vec<String> = (0..num_tracks)
                 .map(|i| {
@@ -216,18 +242,6 @@ impl Document {
                         .unwrap_or_else(|| format!("Track {}", i + 1))
                 })
                 .collect();
-            let track_info_cache_initial = midi.track_info();
-
-            // ── Conductor detection (heuristic: track 0, no notes, no ctrl events) ──
-            let conductor_track_idx = detect_conductor(&track_info_cache_initial, &midi.control_events);
-            if conductor_track_idx.is_none() {
-                return Err(format!(
-                    "MIDI 文件「{}」缺少 Conductor 轨道（标准 format-1 文件应在第 0 轨包含 \
-                     tempo/time-sig 等元事件，且不含音符）。\n当前不支持非标准 MIDI，请用 \
-                     DAW 重新导出为 format-1 后再试。",
-                    file_name
-                ));
-            }
 
             // Promote track 0's TrackName (song title) to project_name; rename track 0 to "Conductor".
             let mut project_name_override: Option<String> = None;

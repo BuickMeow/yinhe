@@ -350,6 +350,36 @@ pub fn midi_to_archive_with_names(
         }
     }
 
+    // ── Ensure empty tracks (e.g. conductor) still have mapping entries ──
+    for original_idx in 0..num_tracks {
+        if !channels_per_track[original_idx].is_empty() {
+            continue;
+        }
+        let port = midi.track_ports.get(original_idx).copied().unwrap_or(0);
+        let raw_channel = 0;
+        let uuid = Uuid::new_v4().to_string();
+        let name = track_names
+            .get(original_idx)
+            .cloned()
+            .or_else(|| midi.track_names.get(original_idx).cloned())
+            .unwrap_or_else(|| format!("Track {}", original_idx + 1));
+
+        let channels_entry = port_map.entry(port).or_default();
+        let ch_entry = if let Some(existing) = channels_entry.iter_mut().find(|(c, _)| *c == raw_channel) {
+            existing
+        } else {
+            channels_entry.push((raw_channel, Vec::new()));
+            channels_entry.last_mut().unwrap()
+        };
+        ch_entry.1.push(TrackMapping {
+            uuid,
+            name,
+            color: [0.5, 0.5, 0.5],
+            track_index: original_idx as u8,
+            channel_prefix: midi.track_channel_prefixes.get(original_idx).copied().flatten(),
+        });
+    }
+
     // ── Write mapping.json ──
     let mapping = MappingJson {
         ports: port_map
