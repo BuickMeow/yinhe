@@ -344,7 +344,7 @@ pub fn midi_to_archive_with_names(
                 uuid,
                 name,
                 color: [0.5, 0.5, 0.5],
-                track_index: new_idx as u8,
+                track_index: new_idx as u16,
                 channel_prefix: new_track_channel_prefixes[new_idx],
             });
         }
@@ -375,7 +375,7 @@ pub fn midi_to_archive_with_names(
             uuid,
             name,
             color: [0.5, 0.5, 0.5],
-            track_index: original_idx as u8,
+            track_index: original_idx as u16,
             channel_prefix: midi.track_channel_prefixes.get(original_idx).copied().flatten(),
         });
     }

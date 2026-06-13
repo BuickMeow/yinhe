@@ -692,7 +692,7 @@ pub struct TrackMapping {
     pub color: [f32; 3],
     /// Original MIDI track index (preserved across save/load for correct name mapping).
     #[serde(default)]
-    pub track_index: u8,
+    pub track_index: u16,
     /// MIDI Channel Prefix (meta event 0x20) for this track, if present.
     /// Used as fallback for channel info on tracks with no note/CC events.
     #[serde(default)]
