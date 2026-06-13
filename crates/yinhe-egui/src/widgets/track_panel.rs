@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use eframe::egui;
 
 use yinhe_midi::TrackInfo;
@@ -9,16 +11,15 @@ use crate::document::TrackOverride;
 ///
 /// Returns `true` if the user toggled a Mute or Solo button this frame, in
 /// which case the caller should send `AudioCommand::SkipTracks` to the audio
-/// engine. (V toggles do not require audio re-sync.)
+/// engine.
 #[must_use]
 pub(crate) fn show(
     ui: &mut egui::Ui,
     track_info: &[TrackInfo],
     track_visible: &[bool],
-    track_pianoroll_visible: &mut [bool],
-    track_pianoroll_visible_snapshot: &mut Option<Vec<bool>>,
     track_overrides: &mut [TrackOverride],
-    track_selected: &mut Option<u16>,
+    track_selected: &mut HashSet<u16>,
+    selection_anchor: &mut Option<u16>,
     conductor_track_idx: Option<u16>,
     track_colors: &[[f32; 3]],
     row_height: &mut f32,
@@ -69,7 +70,7 @@ pub(crate) fn show(
         );
 
         let is_conductor = Some(ti.index) == conductor_track_idx;
-        let selected = *track_selected == Some(ti.index);
+        let selected = track_selected.contains(&ti.index);
         if selected {
             painter.rect_filled(row_rect, 0.0, ui.visuals().selection.bg_fill);
         } else if row_rect.contains(ui.input(|i| i.pointer.hover_pos().unwrap_or_default())) {
@@ -137,20 +138,15 @@ pub(crate) fn show(
             if !is_conductor {
                 let muted = track_overrides.get(idx).map(|o| o.muted).unwrap_or(false);
                 let soloed = track_overrides.get(idx).map(|o| o.soloed).unwrap_or(false);
-                let pr_visible = track_pianoroll_visible.get(idx).copied().unwrap_or(true);
 
                 let gap = 2.0;
-                let total_btn_w = 3.0 * btn_size.x + 2.0 * gap;
+                let total_btn_w = 2.0 * btn_size.x + gap;
                 let btn_x_start = row_rect.max.x - total_btn_w - 6.0;
                 let btn_y = badge_rect.center().y - btn_size.y * 0.5;
 
                 let m_rect = egui::Rect::from_min_size(egui::pos2(btn_x_start, btn_y), btn_size);
                 let s_rect = egui::Rect::from_min_size(
                     egui::pos2(btn_x_start + btn_size.x + gap, btn_y),
-                    btn_size,
-                );
-                let v_rect = egui::Rect::from_min_size(
-                    egui::pos2(btn_x_start + 2.0 * (btn_size.x + gap), btn_y),
                     btn_size,
                 );
 
@@ -172,15 +168,6 @@ pub(crate) fn show(
                     egui::Color32::from_rgb(220, 80, 80),
                     egui::Id::new(("track_btn_s", idx)),
                 );
-                let v_resp = draw_inline_button(
-                    ui,
-                    &painter,
-                    v_rect,
-                    "V",
-                    pr_visible,
-                    egui::Color32::from_rgb(120, 200, 240),
-                    egui::Id::new(("track_btn_v", idx)),
-                );
 
                 if m_resp.clicked() {
                     if let Some(ov) = track_overrides.get_mut(idx) {
@@ -192,31 +179,6 @@ pub(crate) fn show(
                     if let Some(ov) = track_overrides.get_mut(idx) {
                         ov.soloed = !ov.soloed;
                         audio_dirty = true;
-                    }
-                }
-                if v_resp.clicked() {
-                    if let Some(v) = track_pianoroll_visible.get_mut(idx) {
-                        *v = !*v;
-                    }
-                }
-                if v_resp.secondary_clicked() {
-                    // Right-click: solo this track, or restore all if already soloed.
-                    let n = track_pianoroll_visible.len();
-                    let is_solo_on_self =
-                        track_pianoroll_visible
-                            .iter()
-                            .enumerate()
-                            .all(|(i, &v)| if i == idx { v } else { !v });
-                    if is_solo_on_self {
-                        // Restore all to visible
-                        for v in track_pianoroll_visible.iter_mut() {
-                            *v = true;
-                        }
-                    } else {
-                        // Solo this track
-                        for i in 0..n {
-                            track_pianoroll_visible[i] = i == idx;
-                        }
                     }
                 }
             }
@@ -242,47 +204,55 @@ pub(crate) fn show(
         }
     }
 
-    // ── Click handling: select / toggle-deselect / double-click solo ──
-    // Helpers to translate a pointer position to (row index, in-name-zone).
-    let total_btn_w = 3.0 * btn_size.x + 2.0 * 2.0; // matches the inner-loop layout
-    let name_zone_max_x_default = panel_rect.max.x - total_btn_w - 6.0;
-
-    let hit = |pos: egui::Pos2| -> Option<(usize, bool)> {
+    // ── Click handling ──
+    let hit = |pos: egui::Pos2| -> Option<usize> {
         let rel_y = pos.y - panel_rect.min.y + *scroll_y;
         let idx = (rel_y / *row_height).floor() as usize;
-        if idx >= num_tracks {
-            return None;
-        }
-        let is_conductor = Some(track_info[idx].index) == conductor_track_idx;
-        // Conductor row has no inline buttons → entire row is the name zone.
-        let in_name_zone = if is_conductor {
-            true
-        } else {
-            pos.x < name_zone_max_x_default
-        };
-        Some((idx, in_name_zone))
+        if idx >= num_tracks { None } else { Some(idx) }
     };
 
     if resp.double_clicked() {
         if let Some(pos) = resp.interact_pointer_pos() {
-            if let Some((idx, _)) = hit(pos) {
-                let row_track_idx = track_info[idx].index;
-                // Always solo this track and request pianoroll panel.
-                if track_pianoroll_visible_snapshot.is_none() {
-                    *track_pianoroll_visible_snapshot =
-                        Some(track_pianoroll_visible.to_vec());
-                }
-                for i in 0..track_pianoroll_visible.len() {
-                    track_pianoroll_visible[i] = i == idx;
-                }
-                *track_selected = Some(row_track_idx);
+            if hit(pos).is_some() {
                 *request_pianoroll = true;
             }
         }
     } else if resp.clicked() {
         if let Some(pos) = resp.interact_pointer_pos() {
-            if let Some((idx, _)) = hit(pos) {
-                *track_selected = Some(track_info[idx].index);
+            if let Some(idx) = hit(pos) {
+                let track_idx = track_info[idx].index;
+                let shift = ui.input(|i| i.modifiers.shift);
+                let cmd = ui.input(|i| i.modifiers.command || i.modifiers.ctrl);
+
+                if shift {
+                    // Range-select from anchor to this track.
+                    if let Some(anchor) = *selection_anchor {
+                        let a = anchor as usize;
+                        let b = track_idx as usize;
+                        let lo = a.min(b);
+                        let hi = a.max(b);
+                        for i in lo..=hi {
+                            track_selected.insert(i as u16);
+                        }
+                    } else {
+                        track_selected.clear();
+                        track_selected.insert(track_idx);
+                        *selection_anchor = Some(track_idx);
+                    }
+                } else if cmd {
+                    // Toggle this track.
+                    if track_selected.contains(&track_idx) {
+                        track_selected.remove(&track_idx);
+                    } else {
+                        track_selected.insert(track_idx);
+                    }
+                    *selection_anchor = Some(track_idx);
+                } else {
+                    // Plain click: replace selection.
+                    track_selected.clear();
+                    track_selected.insert(track_idx);
+                    *selection_anchor = Some(track_idx);
+                }
             }
         }
     }

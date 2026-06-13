@@ -50,6 +50,9 @@ pub struct App {
     // ── Visibility toggles (derived from view_mode) ──
     pub(crate) show_transport: bool,
     pub(crate) show_pianoroll: bool,
+    /// Anchor for shift-click range selection in the track panel.
+    /// Set on every non-shift click; consumed on shift-click.
+    pub(crate) track_selection_anchor: Option<u16>,
 
     // ── Manual click tracking for title bar tabs ──
     pub(crate) title_bar_press_pos: Option<egui::Pos2>,
@@ -150,6 +153,7 @@ impl App {
             show_pianoroll_in_arrange: false,
             show_transport: true,
             show_pianoroll: false,
+            track_selection_anchor: None,
 
             right_panel_width: crate::widgets::theme::RIGHT_PANEL_DEFAULT_WIDTH,
             right_tab: None,

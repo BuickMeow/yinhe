@@ -277,6 +277,7 @@ impl eframe::App for App {
                     &self.active_tool,
                     self.audio.as_ref(),
                     &mut request_pianoroll,
+                    &mut self.track_selection_anchor,
                 );
                 if request_pianoroll {
                     self.show_pianoroll = true;
@@ -338,12 +339,11 @@ impl eframe::App for App {
                     } else {
                         None
                     };
-                    // Effective pianoroll visibility = track_visible AND track_pianoroll_visible.
-                    // V button toggles only the latter; arrangement always uses track_visible.
+                    // Effective pianoroll visibility = track_visible AND track_selected.
                     let pr_visible: Vec<bool> = (0..doc.track_visible.len())
                         .map(|i| {
                             doc.track_visible[i]
-                                && doc.track_pianoroll_visible.get(i).copied().unwrap_or(true)
+                                && doc.track_selected.contains(&(i as u16))
                         })
                         .collect();
                     piano_view::show(

@@ -40,22 +40,55 @@ pub fn show(
         .map(|(i, name)| format!("{:03} – {}", i + 1, name))
         .collect();
 
-    let sel = doc.track_selected.unwrap_or(0) as usize;
-    let sel_idx = sel.min(num_tracks - 1);
+    let sel_idx = doc
+        .track_selected
+        .iter()
+        .next()
+        .copied()
+        .map(|i| (i as usize).min(num_tracks - 1))
+        .unwrap_or(0);
 
     egui::ComboBox::from_id_salt("info_track_sel")
         .selected_text(&track_names[sel_idx])
         .show_ui(ui, |ui| {
             for (i, tn) in track_names.iter().enumerate() {
                 if ui.selectable_label(i == sel_idx, tn).clicked() {
-                    doc.track_selected = Some(i as u16);
+                    doc.track_selected.clear();
+                    doc.track_selected.insert(i as u16);
                 }
             }
         });
 
     ui.add_space(6.0);
 
-    let track_idx = doc.track_selected.unwrap_or(0) as usize;
+    // ── Multi-select summary ──
+    if doc.track_selected.len() > 1 {
+        ui.add_space(4.0);
+        ui.label(
+            egui::RichText::new(format!("已选 {} 个音轨", doc.track_selected.len()))
+                .strong()
+                .size(14.0)
+                .color(egui::Color32::from_gray(220)),
+        );
+        ui.add_space(2.0);
+        ui.label(
+            egui::RichText::new("（多选模式：卷帘将显示所有选中音轨的音符）")
+                .size(11.0)
+                .color(egui::Color32::GRAY),
+        );
+        return;
+    }
+
+    let Some(&track_idx) = doc.track_selected.iter().next() else {
+        ui.add_space(8.0);
+        ui.label(
+            egui::RichText::new("（未选中音轨）")
+                .color(egui::Color32::from_gray(100))
+                .size(12.0),
+        );
+        return;
+    };
+    let track_idx = track_idx as usize;
     let track_idx = track_idx.min(num_tracks - 1);
 
     // ── Conductor track: show a simplified read-only view ──

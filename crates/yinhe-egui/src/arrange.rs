@@ -28,6 +28,7 @@ pub fn show(
     active_tool: &Tool,
     audio: Option<&yinhe_audio::CpalAudioHandle>,
     request_pianoroll: &mut bool,
+    selection_anchor: &mut Option<u16>,
 ) {
     *last_cursor_tick = doc.cursor_tick;
 
@@ -136,10 +137,9 @@ pub fn show(
             ui,
             &doc.track_info_cache,
             &doc.track_visible,
-            &mut doc.track_pianoroll_visible,
-            &mut doc.track_pianoroll_visible_snapshot,
             &mut doc.track_overrides,
             &mut doc.track_selected,
+            selection_anchor,
             doc.conductor_track_idx,
             &doc.track_colors_cache,
             &mut arr_view.base.track_panel_row_height,
