@@ -116,6 +116,13 @@ impl MidiParser {
         // Build scan index for fast note seeking at render time.
         let scan_index = NoteScanIndex::build(&key_notes, tick_length);
 
+        // Build coarse tick buckets so renderers can cull off-screen notes
+        // without scanning entire keys.  65536 ticks is large enough that a
+        // typical screen spans only a handful of buckets, while still being
+        // fine-grained enough to avoid huge per-bucket scans.
+        const BUCKET_SIZE: u32 = 65536;
+        let tick_buckets = yinhe_types::TickBuckets::build(&key_notes, tick_length, BUCKET_SIZE);
+
         // Build automation lanes from control events and note velocity.
         let automation_lanes =
             crate::midi::build_automation_lanes(&control_events, &key_notes);
@@ -135,6 +142,7 @@ impl MidiParser {
             track_channel_prefixes,
             control_events,
             scan_index: Some(scan_index),
+            tick_buckets: Some(tick_buckets),
             automation_lanes,
         })
         })
@@ -233,6 +241,7 @@ mod tests {
             track_channel_prefixes: Vec::new(),
             control_events: Vec::new(),
             scan_index: None,
+            tick_buckets: None,
             automation_lanes: Vec::new(),
         };
         assert!((midi.tick_at_time(1.0) - 960.0).abs() < 1e-6);
@@ -267,6 +276,7 @@ mod tests {
             track_channel_prefixes: Vec::new(),
             control_events: Vec::new(),
             scan_index: None,
+            tick_buckets: None,
             automation_lanes: Vec::new(),
         };
         assert!((midi.tick_at_time(0.5) - 480.0).abs() < 1e-6);

@@ -125,7 +125,7 @@ impl NoteScanIndex {
 /// notes that start before `min_tick` but extend far enough to be visible.
 ///
 /// Falls back to 0 when no scan index is available (backwards-compatible).
-pub fn seek_first_note(key: u8, source: &dyn NoteSource, min_tick: u32) -> usize {
+pub fn seek_first_note<S: NoteSource + ?Sized>(key: u8, source: &S, min_tick: u32) -> usize {
     let notes = source.key_notes(key);
     if notes.is_empty() {
         return 0;

@@ -4,12 +4,14 @@ pub mod automation;
 mod note;
 pub mod palette;
 mod source;
+pub mod tick_buckets;
 pub mod view_base;
 
 pub use automation::{AutomationEvent, AutomationLane, AutomationTarget};
 pub use note::{MidiControlEvent, Note, NoteScanIndex, ScanBlock, TimeSigEvent, seek_first_note};
 pub use palette::TRACK_PALETTE;
 pub use source::NoteSource;
+pub use tick_buckets::{Bucket, TickBuckets};
 pub use view_base::TimelineViewBase;
 
 /// Returns true if the given MIDI key (0–127) is a black key on a piano.

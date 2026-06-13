@@ -1,5 +1,5 @@
 use rayon::prelude::*;
-use yinhe_types::{NoteSource, TimeSigEvent, seek_first_note};
+use yinhe_types::{NoteSource, TimeSigEvent};
 
 use crate::view::ArrangementView;
 use yinhe_wgpu::grid;
@@ -106,9 +106,7 @@ pub fn build_arrangement_static(
         build_arrangement_grid(instances, w, h, view, tpb, def_num, def_den, sig_events);
 
         // Note rectangles — merge consecutive same-track same-key notes into longer rects.
-        // scan_index's `cumulative_max_end` handles notes that start before
-        // `tick_start` but extend into view; `seek_first_note` returns the
-        // correct first index. No extra padding needed.
+        // `key_notes_in_range` uses coarse tick buckets to avoid scanning entire keys.
         let pad_start = tick_start;
         let pad_end = tick_end;
         let (trk_first, trk_last) = view.visible_track_range(h, num_tracks);
@@ -121,15 +119,8 @@ pub fn build_arrangement_static(
         let note_instances: Vec<Vec<NoteInstance>> = (0u8..128)
             .into_par_iter()
             .filter_map(|key| {
-                let notes = midi.key_notes(key);
+                let notes = midi.key_notes_in_range(key, pad_start as u32, pad_end as u32);
                 if notes.is_empty() {
-                    return None;
-                }
-                let start_idx = seek_first_note(key, midi, pad_start as u32);
-                if start_idx >= notes.len() {
-                    return None;
-                }
-                if notes.first().is_none_or(|n| n.start_tick as f64 > pad_end) {
                     return None;
                 }
 
@@ -171,7 +162,7 @@ pub fn build_arrangement_static(
 
                 // Bucket notes by track using Vec (avoids per-frame HashMap allocation).
                 let mut track_buckets: Vec<Vec<(u32, u32, u8)>> = vec![Vec::new(); num_tracks];
-                for note in &notes[start_idx..] {
+                for note in notes {
                     if note.start_tick as f64 > pad_end {
                         break;
                     }

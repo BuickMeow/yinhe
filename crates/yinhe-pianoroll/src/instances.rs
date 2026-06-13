@@ -1,5 +1,5 @@
 use rayon::prelude::*;
-use yinhe_types::{NoteSource, TRACK_PALETTE, TimeSigEvent, is_black_key, seek_first_note};
+use yinhe_types::{NoteSource, TRACK_PALETTE, TimeSigEvent, is_black_key};
 
 use crate::grid;
 use crate::keyboard;
@@ -134,10 +134,7 @@ pub fn build_static_instances(
         let sig_events = midi.time_sig_events();
         build_pianoroll_grid(instances, w, h, view, tpb, def_num, def_den, sig_events);
 
-        // 3. Notes — visible tick range only.
-        // scan_index's `cumulative_max_end` handles notes that start before
-        // `tick_start` but extend into view; `seek_first_note` returns the
-        // correct first index. No extra padding needed.
+        // 3. Notes — visible tick range only, using tick buckets when available.
         let pad_start = tick_start;
         let pad_end = tick_end;
         let (key_lo, key_hi) = view.visible_key_range(h);
@@ -145,23 +142,19 @@ pub fn build_static_instances(
 
         let x_offset = kb_w - view.base.scroll_x;
 
-        let results: Vec<Vec<NoteInstance>> = (0u8..128)
+        let results: Vec<Vec<NoteInstance>> = (key_lo..=key_hi)
             .into_par_iter()
             .filter_map(|key| {
-                if key < key_lo || key > key_hi {
-                    return None;
-                }
-                let notes = midi.key_notes(key);
+                let notes = midi.key_notes_in_range(key, pad_start as u32, pad_end as u32);
                 if notes.is_empty() {
                     return None;
                 }
-                let start_idx = seek_first_note(key, midi, pad_start as u32);
 
                 let key_y = bottom - (key as f32 + 1.0) * kh;
 
                 let mut local = Vec::new();
 
-                for note in &notes[start_idx..] {
+                for note in notes {
                     if note.start_tick as f64 > pad_end {
                         break;
                     }
@@ -189,7 +182,6 @@ pub fn build_static_instances(
 
                     let is_selected =
                         has_selection && selected.contains(&(note.track, note.start_tick, key));
-                    // 选中视觉由 shader 通过 tag 处理（fill 暗化），边框保持不变
                     let border_w = 0.1 * nw.min(nh);
                     let rounding = NOTE_ROUNDING * nw.min(nh);
 

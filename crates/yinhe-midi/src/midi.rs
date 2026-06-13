@@ -35,6 +35,8 @@ pub struct MidiFile {
     pub control_events: Vec<MidiControlEvent>,
     /// Scan index for fast visible-note seeking.  Built at load time.
     pub scan_index: Option<yinhe_types::NoteScanIndex>,
+    /// Coarse tick buckets for fast range queries.  Built at load time.
+    pub tick_buckets: Option<yinhe_types::TickBuckets>,
     /// Automation lanes built from control events + velocity data.
     pub automation_lanes: Vec<yinhe_types::AutomationLane>,
 }
@@ -52,10 +54,11 @@ impl Default for MidiFile {
             time_sig_denominator: 2,
             track_ports: Vec::new(),
             track_channel_prefixes: Vec::new(),
-            track_names: Vec::new(),
             time_sig_events: Vec::new(),
+            track_names: Vec::new(),
             control_events: Vec::new(),
             scan_index: None,
+            tick_buckets: None,
             automation_lanes: Vec::new(),
         }
     }
@@ -79,6 +82,9 @@ impl yinhe_types::NoteSource for MidiFile {
     }
     fn scan_index(&self) -> Option<&yinhe_types::NoteScanIndex> {
         self.scan_index.as_ref()
+    }
+    fn tick_buckets(&self) -> Option<&yinhe_types::TickBuckets> {
+        self.tick_buckets.as_ref()
     }
     fn time_sig_default(&self) -> (u8, u8) {
         (self.time_sig_numerator, self.time_sig_denominator)
