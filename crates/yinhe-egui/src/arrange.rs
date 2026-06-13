@@ -27,6 +27,7 @@ pub fn show(
     follow_mode: &mut crate::view_interaction::FollowMode,
     active_tool: &Tool,
     audio: Option<&yinhe_audio::CpalAudioHandle>,
+    request_pianoroll: &mut bool,
 ) {
     *last_cursor_tick = doc.cursor_tick;
 
@@ -143,6 +144,7 @@ pub fn show(
             &doc.track_colors_cache,
             &mut arr_view.base.track_panel_row_height,
             &mut arr_view.base.track_panel_scroll_y,
+            request_pianoroll,
         );
 
         if audio_dirty {

@@ -147,9 +147,9 @@ impl App {
             save_rx: None,
 
             view_mode: ViewMode::Arrange,
-            show_pianoroll_in_arrange: true,
+            show_pianoroll_in_arrange: false,
             show_transport: true,
-            show_pianoroll: true,
+            show_pianoroll: false,
 
             right_panel_width: crate::widgets::theme::RIGHT_PANEL_DEFAULT_WIDTH,
             right_tab: None,

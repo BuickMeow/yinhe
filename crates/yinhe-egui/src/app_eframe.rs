@@ -260,6 +260,7 @@ impl eframe::App for App {
 
             // ── Arrangement view (transport track panel + arrangement GPU) ──
             if self.show_transport {
+                let mut request_pianoroll = false;
                 let mut guard = ReplaceGuard::new(&mut self.documents[idx]);
                 arrange::show(
                     ui,
@@ -275,7 +276,12 @@ impl eframe::App for App {
                     &mut follow_mode,
                     &self.active_tool,
                     self.audio.as_ref(),
+                    &mut request_pianoroll,
                 );
+                if request_pianoroll {
+                    self.show_pianoroll = true;
+                    self.show_pianoroll_in_arrange = true;
+                }
                 // guard drops here → document restored even on panic
             }
 

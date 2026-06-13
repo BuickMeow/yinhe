@@ -23,6 +23,7 @@ pub(crate) fn show(
     track_colors: &[[f32; 3]],
     row_height: &mut f32,
     scroll_y: &mut f32,
+    request_pianoroll: &mut bool,
 ) -> bool {
     let panel_rect = ui.max_rect();
     let panel_w = panel_rect.width();
@@ -264,27 +265,18 @@ pub(crate) fn show(
 
     if resp.double_clicked() {
         if let Some(pos) = resp.interact_pointer_pos() {
-            if let Some((idx, in_name_zone)) = hit(pos) {
+            if let Some((idx, _)) = hit(pos) {
                 let row_track_idx = track_info[idx].index;
-                if in_name_zone && *track_selected == Some(row_track_idx) {
-                    // Double-click on the selected row's name zone → deselect
-                    // and restore snapshot if one exists.
-                    *track_selected = None;
-                    if let Some(snap) = track_pianoroll_visible_snapshot.take() {
-                        let n = track_pianoroll_visible.len().min(snap.len());
-                        track_pianoroll_visible[..n].copy_from_slice(&snap[..n]);
-                    }
-                } else {
-                    // Double-click on an unselected row → solo it.
-                    if track_pianoroll_visible_snapshot.is_none() {
-                        *track_pianoroll_visible_snapshot =
-                            Some(track_pianoroll_visible.to_vec());
-                    }
-                    for i in 0..track_pianoroll_visible.len() {
-                        track_pianoroll_visible[i] = i == idx;
-                    }
-                    *track_selected = Some(row_track_idx);
+                // Always solo this track and request pianoroll panel.
+                if track_pianoroll_visible_snapshot.is_none() {
+                    *track_pianoroll_visible_snapshot =
+                        Some(track_pianoroll_visible.to_vec());
                 }
+                for i in 0..track_pianoroll_visible.len() {
+                    track_pianoroll_visible[i] = i == idx;
+                }
+                *track_selected = Some(row_track_idx);
+                *request_pianoroll = true;
             }
         }
     } else if resp.clicked() {
