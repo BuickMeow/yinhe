@@ -88,7 +88,7 @@ fn config_path() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
         .join("yinhe");
     std::fs::create_dir_all(&dir).ok();
-    dir.join("settings.json")
+    dir.join("yinhe_settings.json")
 }
 
 impl AudioSettings {

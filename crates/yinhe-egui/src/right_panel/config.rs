@@ -1,5 +1,34 @@
 use serde::{Deserialize, Serialize};
 
+/// Name of the built-in GeneralUser GS SoundFont file.
+pub const BUILTIN_SF_NAME: &str = "GeneralUser GS v1.472.sf2";
+
+/// Try to locate the built-in SoundFont.
+///
+/// In release builds it should live next to the executable under `assets/`.
+/// In development we fall back to `crates/yinhe-egui/../assets/` via
+/// `CARGO_MANIFEST_DIR`.
+pub fn builtin_soundfont_path() -> Option<std::path::PathBuf> {
+    let candidates = [
+        std::env::current_exe()
+            .ok()
+            .and_then(|exe| exe.parent().map(|p| p.join("assets").join(BUILTIN_SF_NAME))),
+        std::env::current_exe()
+            .ok()
+            .and_then(|exe| exe.parent().map(|p| p.join("../assets").join(BUILTIN_SF_NAME))),
+        Some(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../assets")
+                .join(BUILTIN_SF_NAME),
+        ),
+    ];
+
+    candidates
+        .into_iter()
+        .flatten()
+        .find(|path| path.exists())
+}
+
 /// A single SoundFont entry — one .sf2/.sf3/.sfz file.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SfEntry {
@@ -8,7 +37,7 @@ pub struct SfEntry {
     pub enabled: bool,
 }
 
-/// Global soundfont config — persisted to `settings.json`.
+/// Global soundfont config — persisted to `yinhe_settings.json`.
 ///
 /// Always has 16 ports (A–P). Ports with no entries are simply empty.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -23,10 +52,8 @@ pub struct GlobalSfConfig {
 impl GlobalSfConfig {
     /// Build the default config: Port A gets the built-in GeneralUser GS.
     pub fn builtin_default() -> Self {
-        let builtin = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../assets/GeneralUser GS v1.472.sf2");
         let mut ports = std::array::from_fn(|_| Vec::new());
-        if builtin.exists() {
+        if let Some(builtin) = builtin_soundfont_path() {
             ports[0] = vec![SfEntry {
                 path: builtin.to_string_lossy().to_string(),
                 name: "GeneralUser GS".into(),

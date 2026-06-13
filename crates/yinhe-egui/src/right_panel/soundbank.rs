@@ -290,6 +290,7 @@ fn project_panel(ui: &mut egui::Ui, doc: &mut Document) -> bool {
         ui.add_space(4.0);
         if ui.button("为此 Port 添加音色库").clicked() {
             doc.project_sf.overrides.push((port, Vec::new()));
+            changed = true;
         }
     }
 

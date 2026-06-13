@@ -42,9 +42,7 @@ impl App {
             }
 
             // Built-in fallback
-            let builtin = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../assets/GeneralUser GS v1.472.sf2");
-            if builtin.exists() {
+            if let Some(builtin) = crate::right_panel::config::builtin_soundfont_path() {
                 let path_str = builtin.to_string_lossy().to_string();
                 result.push((port, vec![path_str]));
             }
