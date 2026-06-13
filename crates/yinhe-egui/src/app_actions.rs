@@ -1,4 +1,6 @@
+use std::collections::HashSet;
 use std::sync::mpsc;
+use std::sync::Arc;
 
 use eframe::egui;
 
@@ -6,13 +8,23 @@ use crate::app::App;
 use crate::document::Document;
 use crate::widgets::transport_bar;
 
+/// Actions detected from keyboard input in the current frame.
+#[derive(Default)]
+pub(crate) struct KeyboardActions {
+    pub toggle_play: bool,
+    pub pause_return: bool,
+    pub stop_play: bool,
+    pub delete_selected: bool,
+    pub duplicate_selected: bool,
+    pub transpose_up: bool,
+    pub transpose_down: bool,
+}
+
 impl App {
-    /// Handle keyboard shortcuts (Space for play/pause, Escape for stop).
-    /// Returns (toggle_play, pause_return, stop_play).
-    pub(crate) fn handle_keyboard_shortcuts(&self, ui: &egui::Ui) -> (bool, bool, bool) {
-        let mut toggle_play = false;
-        let mut pause_return = false;
-        let mut stop_play = false;
+    /// Handle keyboard shortcuts.
+    /// Returns a `KeyboardActions` struct describing which actions were triggered.
+    pub(crate) fn handle_keyboard_shortcuts(&self, ui: &egui::Ui) -> KeyboardActions {
+        let mut actions = KeyboardActions::default();
 
         let is_playing_any = self
             .audio
@@ -23,19 +35,163 @@ impl App {
         ui.input(|i| {
             if i.key_pressed(egui::Key::Space) {
                 if is_playing_any {
-                    pause_return = true;
+                    actions.pause_return = true;
                 } else {
-                    toggle_play = true;
+                    actions.toggle_play = true;
                 }
             }
             if i.key_pressed(egui::Key::Escape) {
-                stop_play = true;
+                actions.stop_play = true;
+            }
+
+            // Delete / Backspace — delete selected notes
+            if i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace) {
+                actions.delete_selected = true;
+            }
+
+            // Ctrl+D / Cmd+D — duplicate selected notes
+            if (i.modifiers.command || i.modifiers.ctrl) && i.key_pressed(egui::Key::D) {
+                actions.duplicate_selected = true;
+            }
+
+            // Shift+↑ / Shift+↓ — transpose octave
+            if i.modifiers.shift {
+                if i.key_pressed(egui::Key::ArrowUp) {
+                    actions.transpose_up = true;
+                }
+                if i.key_pressed(egui::Key::ArrowDown) {
+                    actions.transpose_down = true;
+                }
             }
         });
 
-        (toggle_play, pause_return, stop_play)
+        actions
     }
 
+    /// Delete all selected notes from the active document.
+    pub(crate) fn delete_selected_notes(&mut self) {
+        let Some(idx) = self.active_doc else { return };
+        let doc = &mut self.documents[idx];
+        if doc.selected.is_empty() {
+            return;
+        }
+
+        let midi = Arc::make_mut(&mut doc.midi);
+        for &(track, start_tick, key) in &doc.selected {
+            let notes = &mut midi.key_notes[key as usize];
+            notes.retain(|n| !(n.track == track && n.start_tick == start_tick));
+        }
+        doc.selected.clear();
+        rebuild_midi_metadata(midi);
+        self.pianoroll_view.base.dirty = true;
+    }
+
+    /// Duplicate all selected notes (Ctrl+D / Cmd+D).
+    /// New notes are placed after the original selection, offset by the selection duration.
+    pub(crate) fn duplicate_selected_notes(&mut self) {
+        let Some(idx) = self.active_doc else { return };
+        let doc = &mut self.documents[idx];
+        if doc.selected.is_empty() {
+            return;
+        }
+
+        let midi = Arc::make_mut(&mut doc.midi);
+
+        // Collect full note data for each selected entry
+        let mut selected_data: Vec<(yinhe_types::Note, u8)> = Vec::new();
+        for &(track, start_tick, key) in &doc.selected {
+            if let Some(note) = midi.key_notes[key as usize]
+                .iter()
+                .find(|n| n.track == track && n.start_tick == start_tick)
+            {
+                selected_data.push((note.clone(), key));
+            }
+        }
+
+        if selected_data.is_empty() {
+            return;
+        }
+
+        // Calculate offset: duration of the selection (max_end - min_start)
+        let min_start = selected_data.iter().map(|(n, _)| n.start_tick).min().unwrap();
+        let max_end = selected_data.iter().map(|(n, _)| n.end_tick).max().unwrap();
+        let offset = (max_end - min_start).max(1);
+
+        let mut new_selected = HashSet::new();
+        for (note, key) in &selected_data {
+            let new_note = yinhe_types::Note {
+                start_tick: note.start_tick + offset,
+                end_tick: note.end_tick + offset,
+                ..note.clone()
+            };
+            let notes = &mut midi.key_notes[*key as usize];
+            let insert_pos = notes.partition_point(|n| n.start_tick < new_note.start_tick);
+            notes.insert(insert_pos, new_note);
+            new_selected.insert((note.track, note.start_tick + offset, *key));
+        }
+
+        doc.selected = new_selected;
+        rebuild_midi_metadata(midi);
+        self.pianoroll_view.base.dirty = true;
+    }
+
+    /// Transpose selected notes by `semitones` (e.g. +12 for up an octave, -12 for down).
+    pub(crate) fn transpose_selected_notes(&mut self, semitones: i8) {
+        let Some(idx) = self.active_doc else { return };
+        let doc = &mut self.documents[idx];
+        if doc.selected.is_empty() {
+            return;
+        }
+
+        let midi = Arc::make_mut(&mut doc.midi);
+
+        // Remove selected notes from their current keys and collect their data
+        let mut moved_data: Vec<(yinhe_types::Note, u8)> = Vec::new();
+        for &(track, start_tick, key) in &doc.selected {
+            let notes = &mut midi.key_notes[key as usize];
+            if let Some(pos) = notes.iter().position(|n| n.track == track && n.start_tick == start_tick)
+            {
+                let note = notes.remove(pos);
+                moved_data.push((note, key));
+            }
+        }
+
+        if moved_data.is_empty() {
+            return;
+        }
+
+        // Re-insert at new keys
+        let mut new_selected = HashSet::new();
+        for (note, old_key) in &moved_data {
+            let new_key = ((*old_key as i16) + (semitones as i16)).clamp(0, 127) as u8;
+            let notes = &mut midi.key_notes[new_key as usize];
+            let insert_pos = notes.partition_point(|n| n.start_tick < note.start_tick);
+            notes.insert(insert_pos, note.clone());
+            new_selected.insert((note.track, note.start_tick, new_key));
+        }
+
+        doc.selected = new_selected;
+        rebuild_midi_metadata(midi);
+        self.pianoroll_view.base.dirty = true;
+    }
+}
+
+/// Rebuild computed metadata on a MidiFile after note mutations.
+fn rebuild_midi_metadata(midi: &mut yinhe_midi::MidiFile) {
+    midi.note_count = 0;
+    let mut max_tick = 0u64;
+    for notes in &midi.key_notes {
+        midi.note_count += notes.len() as u64;
+        for note in notes {
+            max_tick = max_tick.max(note.end_tick as u64);
+        }
+    }
+    midi.tick_length = max_tick;
+    midi.scan_index = Some(yinhe_types::NoteScanIndex::build(&midi.key_notes, max_tick));
+    midi.automation_lanes = yinhe_midi::build_automation_lanes(&midi.control_events, &midi.key_notes);
+}
+
+impl App {
     /// Handle file menu actions from the transport bar.
     pub(crate) fn handle_file_action(
         &mut self,

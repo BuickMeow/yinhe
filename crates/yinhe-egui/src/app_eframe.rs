@@ -89,7 +89,21 @@ impl eframe::App for App {
         }
 
         // ── Keyboard shortcuts ──
-        let (kb_toggle, kb_pause, kb_stop) = self.handle_keyboard_shortcuts(ui);
+        let kb = self.handle_keyboard_shortcuts(ui);
+
+        // Handle note editing shortcuts
+        if kb.delete_selected {
+            self.delete_selected_notes();
+        }
+        if kb.duplicate_selected {
+            self.duplicate_selected_notes();
+        }
+        if kb.transpose_up {
+            self.transpose_selected_notes(12);
+        }
+        if kb.transpose_down {
+            self.transpose_selected_notes(-12);
+        }
 
         // ── System resource monitoring ──
         self.refresh_system_stats();
@@ -171,9 +185,9 @@ impl eframe::App for App {
 
         // ── Handle playback actions (merge keyboard + transport bar inputs) ──
         self.handle_playback(
-            kb_toggle || transport_response.toggle_play,
-            kb_pause || transport_response.pause_return,
-            kb_stop || transport_response.stop_play,
+            kb.toggle_play || transport_response.toggle_play,
+            kb.pause_return || transport_response.pause_return,
+            kb.stop_play || transport_response.stop_play,
         );
 
         if let (Some(idx), Some(new_preset)) =
