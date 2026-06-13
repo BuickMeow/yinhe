@@ -21,6 +21,46 @@ const V_PAD: f32 = 6.0;
 /// Spacing between buttons.
 const BTN_SPACING: f32 = 4.0;
 
+/// Compute the screen-space rect of the floating action bar for a given
+/// selection rect, or `None` if the bar would be clipped / off-screen.
+/// This is used by `sel_drag_frame` to detect clicks on the bar.
+pub fn compute_bar_rect(
+    content_rect: egui::Rect,
+    sel_view_rect: egui::Rect,
+) -> Option<egui::Rect> {
+    let sel_screen = egui::Rect::from_min_max(
+        egui::pos2(content_rect.min.x + sel_view_rect.min.x, content_rect.min.y + sel_view_rect.min.y),
+        egui::pos2(content_rect.min.x + sel_view_rect.max.x, content_rect.min.y + sel_view_rect.max.y),
+    );
+
+    let btn_count = 4;
+    let bar_w = ICON_SIZE + H_PAD * 2.0;
+    let bar_h = ICON_SIZE * btn_count as f32 + V_PAD * 2.0 + (btn_count - 1) as f32 * BTN_SPACING;
+
+    let bar_x = sel_screen.max.x + GAP;
+    let bar_y = sel_screen.center().y - bar_h / 2.0;
+
+    let bar_rect = egui::Rect::from_min_max(
+        egui::pos2(bar_x, bar_y),
+        egui::pos2(bar_x + bar_w, bar_y + bar_h),
+    );
+
+    let bar_rect = egui::Rect::from_min_max(
+        egui::pos2(bar_rect.min.x, bar_rect.min.y.max(content_rect.min.y)),
+        egui::pos2(bar_rect.max.x, bar_rect.max.y.min(content_rect.max.y)),
+    );
+
+    if bar_rect.max.x > content_rect.max.x - 4.0 {
+        return None;
+    }
+    let visible_h = bar_rect.height();
+    if visible_h < bar_h * 0.5 {
+        return None;
+    }
+
+    Some(bar_rect)
+}
+
 /// Show a vertical floating action bar to the right of the selection box.
 ///
 /// Returns the action that was clicked, if any.
@@ -84,6 +124,7 @@ pub fn show(
 
     let mut result = None;
     let pointer_pos = ui.input(|i| i.pointer.hover_pos());
+    let released = ui.input(|i| i.pointer.primary_released());
 
     for (i, (&icon, action)) in icons.iter().zip(actions.iter()).enumerate() {
         let btn_y = bar_rect.min.y + V_PAD + i as f32 * (ICON_SIZE + BTN_SPACING);
@@ -110,9 +151,8 @@ pub fn show(
             color,
         );
 
-        // Click detection
-        let resp = ui.interact(btn_rect, ui.id().with("sel_action").with(i), egui::Sense::click());
-        if resp.clicked() {
+        // Manual click detection using primary_released (not consumed by widgets)
+        if released && hovered {
             result = Some(*action);
         }
     }

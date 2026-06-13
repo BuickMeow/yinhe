@@ -271,16 +271,39 @@ pub fn show(
         // Draw active drag box (if any)
         sel_draw_box(ui, content_rect, view, quantize, ppq, bar_line_data);
 
-        // Draw persisted selection rect (remains after mouse release)
+        // Draw persisted selection rect (remains after mouse release).
+        // Compute pixel rect from music coordinates each frame so it follows
+        // scroll/zoom.
         let persist_id = ui.id().with("sel_rect_persist");
-        let sel_rect: Option<Option<egui::Rect>> = ui.data_mut(|d| d.get_persisted(persist_id));
-        let sel_rect = sel_rect.flatten();
-        if let Some(rect) = sel_rect {
-            crate::widgets::selection_box::draw(&ui.painter(), content_rect, rect);
+        let sel_music: Option<Option<(f64, f64, u8, u8)>> =
+            ui.data_mut(|d| d.get_persisted(persist_id));
+        let persisted_pixel_rect = sel_music.flatten().map(|(t_start, t_end, key_lo, key_hi)| {
+            let kh = view.key_height;
+            let scroll_y = view.base.scroll_y;
+            let sy = (127.0 - key_hi as f32) * kh - scroll_y;
+            let ey = (127.0 - key_lo as f32 + 1.0) * kh - scroll_y;
+            let sx = view.tick_to_x(t_start);
+            let ex = view.tick_to_x(t_end);
+            egui::Rect::from_min_max(
+                egui::pos2(sx.min(ex) as f32, sy.min(ey) as f32),
+                egui::pos2(sx.max(ex) as f32, sy.max(ey) as f32),
+            )
+        });
+        if let Some(rect) = persisted_pixel_rect {
+            // Only draw if at least partially visible
+            let viewport = egui::Rect::from_min_max(
+                egui::pos2(0.0, 0.0),
+                egui::pos2(w as f32, h as f32),
+            );
+            if rect.intersects(viewport) {
+                crate::widgets::selection_box::draw(&ui.painter(), content_rect, rect);
+            }
         }
 
         // Show floating action bar next to the persisted selection rect
-        if let Some(action) = crate::widgets::selection_actions::show(ui, content_rect, sel_rect) {
+        if let Some(action) =
+            crate::widgets::selection_actions::show(ui, content_rect, persisted_pixel_rect)
+        {
             sel_action = Some(action);
         }
     }
@@ -458,14 +481,39 @@ fn sel_drag_frame(
         && let Some(pos) = pointer.hover_pos()
         && content_rect.contains(pos)
     {
-        let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
-        drag = Some((local, local));
-        if !cmd {
-            selected.clear();
+        // Check if click is on the floating action bar — if so, skip.
+        let on_bar = {
+            let persist_id = ui.id().with("sel_rect_persist");
+            let sel_music: Option<Option<(f64, f64, u8, u8)>> =
+                ui.data_mut(|d| d.get_persisted(persist_id));
+            sel_music.flatten().is_some_and(|(t_start, t_end, key_lo, key_hi)| {
+                let kh = view.key_height;
+                let scroll_y = view.base.scroll_y;
+                let sy = (127.0 - key_hi as f32) * kh - scroll_y;
+                let ey = (127.0 - key_lo as f32 + 1.0) * kh - scroll_y;
+                let sx = view.tick_to_x(t_start);
+                let ex = view.tick_to_x(t_end);
+                let pixel_rect = egui::Rect::from_min_max(
+                    egui::pos2(sx.min(ex) as f32, sy.min(ey) as f32),
+                    egui::pos2(sx.max(ex) as f32, sy.max(ey) as f32),
+                );
+                crate::widgets::selection_actions::compute_bar_rect(content_rect, pixel_rect)
+                    .is_some_and(|bar| bar.contains(pos))
+            })
+        };
+
+        if on_bar {
+            // Don't start drag, don't clear anything — let the button handle it.
+        } else {
+            let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
+            drag = Some((local, local));
+            if !cmd {
+                selected.clear();
+            }
+            // Clear persisted selection rect when starting a new drag
+            let persist_id = ui.id().with("sel_rect_persist");
+            ui.data_mut(|d| d.insert_persisted(persist_id, Option::<(f64, f64, u8, u8)>::None));
         }
-        // Clear persisted selection rect when starting a new drag
-        let persist_id = ui.id().with("sel_rect_persist");
-        ui.data_mut(|d| d.insert_persisted(persist_id, Option::<egui::Rect>::None));
     }
 
     // Update end on frames after the initial press
@@ -529,14 +577,14 @@ fn sel_drag_frame(
                     selected.clear();
                     *cursor_tick = Some(snapped.max(0.0));
                     // Clear persisted selection rect on click
-                    ui.data_mut(|d| d.insert_persisted(persist_id, Option::<egui::Rect>::None));
+                    ui.data_mut(|d| d.insert_persisted(persist_id, Option::<(f64, f64, u8, u8)>::None));
                 } else {
                     // Drag — existing marquee behavior
                     let (
-                        snapped_sx,
-                        snapped_ex,
-                        snapped_sy,
-                        snapped_ey,
+                        _snapped_sx,
+                        _snapped_ex,
+                        _snapped_sy,
+                        _snapped_ey,
                         t_start,
                         t_end,
                         key_lo,
@@ -554,12 +602,8 @@ fn sel_drag_frame(
                         }
                     }
 
-                    // Persist the snapped selection rect for the floating action bar
-                    let sel_rect = egui::Rect::from_min_max(
-                        egui::pos2(snapped_sx.min(snapped_ex), snapped_sy.min(snapped_ey)),
-                        egui::pos2(snapped_sx.max(snapped_ex), snapped_sy.max(snapped_ey)),
-                    );
-                    ui.data_mut(|d| d.insert_persisted(persist_id, Some(sel_rect)));
+                    // Persist music coordinates for the floating action bar
+                    ui.data_mut(|d| d.insert_persisted(persist_id, Some((t_start, t_end, key_lo, key_hi))));
                 }
                 view.base.dirty = true;
             }
