@@ -1,10 +1,21 @@
-use yinhe_types::{AutomationLane, NoteSource, TimeSigEvent};
+use yinhe_types::{AutomationLane, AutomationTarget, NoteSource, TimeSigEvent};
 
 use crate::PianorollRenderer;
 use crate::automation_instances;
 use crate::AutomationPanelView;
 use crate::Uniforms;
 use yinhe_wgpu::layer_cache_key;
+
+fn target_hash(target: &AutomationTarget) -> u64 {
+    match target {
+        AutomationTarget::CC { controller } => *controller as u64,
+        AutomationTarget::PitchBend => 1,
+        AutomationTarget::PitchBendSensitivity => 2,
+        AutomationTarget::FineTune => 3,
+        AutomationTarget::CoarseTune => 4,
+        AutomationTarget::Velocity => 5,
+    }
+}
 
 /// Prepare an automation panel for rendering using the layered cache API.
 ///
@@ -75,6 +86,7 @@ pub fn prepare(
         w.to_bits() as u64,
         h.to_bits() as u64,
         center_line_hash,
+        target_hash(&view.selected_target),
     ]);
     renderer.upload_layer(0, decor_key, |out| {
         automation_instances::build_decor(out, w, h, lane);
@@ -116,6 +128,7 @@ pub fn prepare(
         view.base.left_panel_width.to_bits() as u64,
         tv_hash,
         velocity_display_mode as u64,
+        target_hash(&view.selected_target),
     ]);
     renderer.upload_layer(2, bars_key, |out| {
         if is_velocity {
