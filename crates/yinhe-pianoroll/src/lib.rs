@@ -8,6 +8,7 @@ pub use yinhe_wgpu::{
     NoteInstance, Uniforms, pack_props, pack_rgba,
     PianorollRenderer, grid, renderer, pipeline, vertex,
 };
-pub use pianoroll_prepare::{prepare, PrepareTimings};
+pub use pianoroll_prepare::{prepare};
+pub use yinhe_wgpu::PrepareTimings;
 pub use view::PianoRollView;
 pub use yinhe_types::{Note, NoteSource, is_black_key};

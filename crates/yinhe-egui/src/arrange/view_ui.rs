@@ -3,6 +3,7 @@ use eframe::egui;
 use yinhe_arrangement::instances as arrangement_instances;
 use yinhe_arrangement::{ArrangementView, NoteSource, PianorollRenderer, Uniforms};
 use yinhe_types::TimeSigEvent;
+use yinhe_wgpu::layer_cache_key;
 
 use std::collections::HashSet;
 
@@ -12,9 +13,8 @@ use crate::widgets::tools_panel::Tool;
 
 /// Display the arrangement view texture with zoom/pan interaction.
 ///
-/// Static instances are rebuilt every frame (the previous viewport-keyed
-/// cache was removed). The playhead cursor is drawn by egui on top of the
-/// wgpu texture.
+/// Uses the layered cache API: decor (layer 0), grid (layer 1), notes (layer 2).
+/// The playhead cursor is drawn by egui on top of the wgpu texture.
 pub fn show(
     ui: &mut egui::Ui,
     available: egui::Vec2,
@@ -86,20 +86,90 @@ pub fn show(
 
     view.base.dirty = false;
 
-    let _gpu_updated = crate::widgets::qos::guarded(|| {
-        renderer
-            .prepare_with_static_cache(uniforms, 0, |static_instances| {
-                arrangement_instances::build_arrangement_static(
-                    static_instances,
-                    w,
-                    h,
+    crate::widgets::qos::guarded(|| {
+        renderer.upload_uniforms(uniforms);
+        renderer.ensure_layers(3);
+
+        // Layer 0: decor (background + track lanes)
+        let decor_key = layer_cache_key(&[
+            view.base.scroll_y.to_bits() as u64,
+            view.lane_height.to_bits() as u64,
+            h as u64,
+        ]);
+        renderer.upload_layer(0, decor_key, |out| {
+            arrangement_instances::build_decor(
+                out,
+                w as f32,
+                h as f32,
+                view.base.left_panel_width,
+                view.lane_height,
+                view.base.scroll_y,
+                track_visible,
+            );
+        });
+
+        // Layer 1: grid lines
+        let mut grid_key = layer_cache_key(&[
+            view.base.scroll_x.to_bits() as u64,
+            view.base.pixels_per_tick.to_bits() as u64,
+        ]);
+        if let Some(midi) = midi {
+            let sig_events = midi.time_sig_events();
+            let mut sig_hash = 0u64;
+            for ev in sig_events {
+                sig_hash = sig_hash.wrapping_mul(31).wrapping_add(ev.tick as u64);
+                sig_hash = sig_hash.wrapping_mul(31).wrapping_add(ev.numerator as u64);
+                sig_hash = sig_hash.wrapping_mul(31).wrapping_add(ev.denominator as u64);
+            }
+            grid_key = layer_cache_key(&[grid_key, sig_hash]);
+        }
+        renderer.upload_layer(1, grid_key, |out| {
+            if let Some(midi) = midi
+                && let Some(tpb) = midi.ticks_per_beat()
+            {
+                let (def_num, def_den) = midi.time_sig_default();
+                let sig_events = midi.time_sig_events();
+                arrangement_instances::build_grid(
+                    out,
+                    w as f32,
+                    h as f32,
+                    view,
+                    tpb,
+                    def_num,
+                    def_den,
+                    sig_events,
+                );
+            }
+        });
+
+        // Layer 2: notes
+        let tv_hash = {
+            let mut h = 0u64;
+            for &v in track_visible {
+                h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(v as u64);
+            }
+            h
+        };
+        let notes_key = layer_cache_key(&[
+            view.base.scroll_x.to_bits() as u64,
+            view.base.scroll_y.to_bits() as u64,
+            view.base.pixels_per_tick.to_bits() as u64,
+            view.lane_height.to_bits() as u64,
+            tv_hash,
+        ]);
+        renderer.upload_layer(2, notes_key, |out| {
+            if let Some(midi) = midi {
+                arrangement_instances::build_notes(
+                    out,
+                    w as f32,
+                    h as f32,
                     midi,
                     view,
                     track_visible,
                     track_colors,
                 );
-            })
-            .dirty
+            }
+        });
     });
 
     let content_changed = true;

@@ -53,11 +53,26 @@ impl ArrangementView {
 
     /// The track range visible on screen.
     pub fn visible_track_range(&self, height: f32, num_tracks: usize) -> (usize, usize) {
-        let first = ((self.base.scroll_y / self.lane_height).floor() as usize)
+        Self::visible_track_range_static(self.base.scroll_y, height, self.lane_height, num_tracks)
+    }
+
+    /// Static version of `visible_track_range` — no view reference needed.
+    pub fn visible_track_range_static(
+        scroll_y: f32,
+        height: f32,
+        lane_height: f32,
+        num_tracks: usize,
+    ) -> (usize, usize) {
+        let first = ((scroll_y / lane_height).floor() as usize)
             .min(num_tracks.saturating_sub(1));
-        let visible_count = (height / self.lane_height).ceil() as usize + 1;
+        let visible_count = (height / lane_height).ceil() as usize + 1;
         let last = (first + visible_count).min(num_tracks);
         (first, last)
+    }
+
+    /// Static version of `lane_y` — no view reference needed.
+    pub fn lane_y_static(track_idx: usize, scroll_y: f32, lane_height: f32) -> f32 {
+        track_idx as f32 * lane_height - scroll_y
     }
 
     /// Clamp scroll so the view doesn't go out of bounds.

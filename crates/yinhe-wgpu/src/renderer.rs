@@ -1,9 +1,10 @@
 use wgpu::*;
 
+use crate::layer::LayerSlot;
 use crate::pipeline::RenderPipelineState;
 use crate::vertex::{NoteInstance, Uniforms};
 
-/// Maximum instances per draw call.
+/// Maximum instances per draw call (old API batching).
 const MAX_INSTANCE_COUNT: usize = 6_000_000;
 /// Minimum instance buffer capacity (in number of instances).
 const MIN_INSTANCE_BUFFER_CAPACITY: usize = 4096;
@@ -72,18 +73,23 @@ fn next_instance_capacity(required: usize) -> usize {
 
 /// Generic wgpu renderer for instanced rectangle drawing.
 ///
-/// Manages GPU buffers and provides `prepare_from_parts()` + `draw()` for
-/// rendering NoteInstance data.  View-specific convenience methods (like
-/// pianoroll's `prepare()`) belong in the calling crate.
+/// Manages GPU buffers and provides two APIs:
+/// - **Layered API** (preferred): `upload_uniforms` + `upload_layer` + `draw_layers`
+/// - **Legacy API**: `prepare_with_static_cache`, `prepare_with_builder`, `prepare_from_parts`
+///
+/// View-specific convenience methods (like pianoroll's `prepare()`) belong in
+/// the calling crate.
 pub struct PianorollRenderer {
     device: Device,
     queue: Queue,
     render: RenderPipelineState,
+    // ── Legacy API fields ──
     instance_buffers: Vec<InstanceBufferSlot>,
     instance_scratch: Vec<NoteInstance>,
     current_batch_counts: Vec<usize>,
-    /// Cached last uniforms — used to skip GPU write when nothing changed.
     cached_uniforms: Option<Uniforms>,
+    // ── Layered API fields ──
+    layers: Vec<LayerSlot>,
 }
 
 impl PianorollRenderer {
@@ -104,9 +110,102 @@ impl PianorollRenderer {
                 instance_scratch: Vec::new(),
                 current_batch_counts: Vec::new(),
                 cached_uniforms: None,
+                layers: Vec::new(),
             }
         })
     }
+
+    // ── Layered API ──
+
+    /// Upload uniforms to the GPU.  Skips the write when the value is unchanged.
+    pub fn upload_uniforms(&mut self, uniforms: Uniforms) {
+        let changed = self
+            .cached_uniforms
+            .as_ref()
+            .is_none_or(|c| *c != uniforms);
+        if !changed {
+            return;
+        }
+        self.queue.write_buffer(
+            &self.render.uniform_buffer,
+            0,
+            bytemuck::bytes_of(&uniforms),
+        );
+        self.cached_uniforms = Some(uniforms);
+    }
+
+    /// Ensure at least `count` layers exist (pushing empty ones as needed).
+    pub fn ensure_layers(&mut self, count: usize) {
+        while self.layers.len() < count {
+            self.layers.push(LayerSlot::new(&self.device));
+        }
+    }
+
+    /// Upload a layer with cache: skips rebuild when `cache_key` matches.
+    ///
+    /// `index` is the layer index (0 = bottom).  Layers are drawn in order.
+    /// Panics if `index >= layers.len()` — call `ensure_layers` first.
+    pub fn upload_layer(
+        &mut self,
+        index: usize,
+        cache_key: u64,
+        build: impl FnOnce(&mut Vec<NoteInstance>),
+    ) -> bool {
+        self.layers[index].upload(&self.device, &self.queue, cache_key, build)
+    }
+
+    /// Upload a layer without cache (always rebuilds).
+    pub fn upload_layer_force(
+        &mut self,
+        index: usize,
+        build: impl FnOnce(&mut Vec<NoteInstance>),
+    ) {
+        self.layers[index].upload_force(&self.device, &self.queue, build);
+    }
+
+    /// Draw all layers into the given render target.
+    pub fn draw_layers(
+        &self,
+        encoder: &mut CommandEncoder,
+        target: &TextureView,
+        width: u32,
+        height: u32,
+    ) {
+        let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
+            label: Some("pianoroll_pass"),
+            color_attachments: &[Some(RenderPassColorAttachment {
+                view: target,
+                resolve_target: None,
+                depth_slice: None,
+                ops: Operations {
+                    load: LoadOp::Clear(Color {
+                        r: 0.12,
+                        g: 0.12,
+                        b: 0.14,
+                        a: 1.0,
+                    }),
+                    store: StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: None,
+            ..Default::default()
+        });
+
+        pass.set_viewport(0.0, 0.0, width as f32, height as f32, 0.0, 1.0);
+        pass.set_pipeline(&self.render.pipeline);
+        pass.set_bind_group(0, &self.render.bind_group, &[]);
+
+        for layer in &self.layers {
+            layer.draw(&mut pass, 0);
+        }
+    }
+
+    /// Total instances across all layers.
+    pub fn total_layer_instances(&self) -> usize {
+        self.layers.iter().map(|l| l.instance_count()).sum()
+    }
+
+    // ── Legacy API (kept for backward compatibility) ──
 
     /// Generic prepare with scratch buffer reuse and dirty-check.
     ///
@@ -142,6 +241,9 @@ impl PianorollRenderer {
     ///
     /// The playback cursor is drawn by egui on top of the rendered texture
     /// and is NOT part of the instance buffer.
+    ///
+    /// Prefer the layered API (`upload_uniforms` + `upload_layer` + `draw_layers`)
+    /// for new code.
     pub fn prepare_with_static_cache(
         &mut self,
         uniforms: Uniforms,
@@ -241,6 +343,9 @@ impl PianorollRenderer {
     }
 
     /// Draw the prepared instances into the given render target.
+    ///
+    /// Draws both legacy instance buffers and layered buffers (in order).
+    /// This allows `render_context::paint()` to work with both APIs.
     pub fn draw(
         &self,
         encoder: &mut CommandEncoder,
@@ -269,14 +374,18 @@ impl PianorollRenderer {
         });
 
         pass.set_viewport(0.0, 0.0, width as f32, height as f32, 0.0, 1.0);
+        pass.set_pipeline(&self.render.pipeline);
+        pass.set_bind_group(0, &self.render.bind_group, &[]);
 
-        if !self.instance_buffers.is_empty() && !self.current_batch_counts.is_empty() {
-            pass.set_pipeline(&self.render.pipeline);
-            pass.set_bind_group(0, &self.render.bind_group, &[]);
-            for (i, &count) in self.current_batch_counts.iter().enumerate() {
-                pass.set_vertex_buffer(0, self.instance_buffers[i].buffer.slice(..));
-                pass.draw(0..6, 0..count as u32);
-            }
+        // Legacy instance buffers
+        for (i, &count) in self.current_batch_counts.iter().enumerate() {
+            pass.set_vertex_buffer(0, self.instance_buffers[i].buffer.slice(..));
+            pass.draw(0..6, 0..count as u32);
+        }
+
+        // Layered buffers (drawn on top, in order)
+        for layer in &self.layers {
+            layer.draw(&mut pass, 0);
         }
     }
 
