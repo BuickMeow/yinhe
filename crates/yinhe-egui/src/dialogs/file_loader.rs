@@ -129,7 +129,17 @@ impl FileLoader {
                         // Stage 1: archive conversion in background thread
                         if let Ok(ref midi) = result {
                             progress::set_stage(&progress, 1, StageStatus::Active);
-                            let _ = crate::project_io::midi_to_archive(midi);
+                            let p = progress.clone();
+                            let cb = |pct: f32, detail: &str| {
+                                progress::set_stage_progress(
+                                    &p, 1, pct, detail.to_string(),
+                                );
+                            };
+                            let _ = crate::project_io::midi_to_archive_with_names(
+                                midi,
+                                &midi.track_names,
+                                Some(&cb),
+                            );
                             progress::set_stage(&progress, 1, StageStatus::Done);
                         }
                         let _ = tx.send(MidiLoadEvent::Complete(Box::new(result)));

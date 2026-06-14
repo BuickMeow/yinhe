@@ -16,7 +16,7 @@ pub fn midi_to_archive(midi: &yinhe_midi::MidiFile) -> ProjectArchive {
                 .unwrap_or_else(|| format!("Track {}", i + 1))
         })
         .collect();
-    midi_to_archive_with_names(midi, &names)
+    midi_to_archive_with_names(midi, &names, None)
 }
 
 /// Same as `midi_to_archive` but uses caller-provided track names (the
@@ -24,6 +24,7 @@ pub fn midi_to_archive(midi: &yinhe_midi::MidiFile) -> ProjectArchive {
 pub fn midi_to_archive_with_names(
     midi: &yinhe_midi::MidiFile,
     track_names: &[String],
+    progress: Option<&dyn Fn(f32, &str)>,
 ) -> ProjectArchive {
     let mut archive = ProjectArchive::new();
 
@@ -74,6 +75,11 @@ pub fn midi_to_archive_with_names(
 
     let mut groups: HashMap<(usize, u8), TrackChannelData> = HashMap::new();
 
+    let total_notes: usize = midi.key_notes.iter().map(|n| n.len()).sum();
+    let total_events = total_notes + midi.control_events.len();
+    let mut processed: usize = 0;
+    let progress_step = (total_events.max(1) / 100).max(1000);
+
     for (key_idx, key_notes) in midi.key_notes.iter().enumerate() {
         for note in key_notes {
             let idx = note.track as usize;
@@ -99,6 +105,15 @@ pub fn midi_to_archive_with_names(
                         key: key_idx as u8,
                         velocity: note.velocity,
                     });
+            }
+            processed += 1;
+            if processed % progress_step == 0 {
+                if let Some(cb) = progress {
+                    cb(
+                        processed as f32 / total_events.max(1) as f32,
+                        &format!("{}/{}", processed.min(total_events), total_events),
+                    );
+                }
             }
         }
     }
@@ -144,6 +159,15 @@ pub fn midi_to_archive_with_names(
                     bank_msb: 0xFF,
                     bank_lsb: 0xFF,
                 });
+            }
+        }
+        processed += 1;
+        if processed % progress_step == 0 {
+            if let Some(cb) = progress {
+                cb(
+                    processed as f32 / total_events.max(1) as f32,
+                    &format!("{}/{}", processed.min(total_events), total_events),
+                );
             }
         }
     }
@@ -807,7 +831,7 @@ pub fn build_archive_from(
     project_sf: &crate::right_panel::config::ProjectSfConfig,
     global_enabled: bool,
 ) -> ProjectArchive {
-    let mut archive = midi_to_archive_with_names(midi, track_names);
+    let mut archive = midi_to_archive_with_names(midi, track_names, None);
 
     let soundfont_overrides: Vec<yinhe_project::SfPortOverride> = project_sf
         .overrides
