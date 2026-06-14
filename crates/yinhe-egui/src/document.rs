@@ -227,6 +227,7 @@ impl Document {
                     }
                 }
                 midi.track_ports.insert(0, 0);
+                midi.track_channels.insert(0, 0);
                 midi.track_names.insert(0, "Conductor".to_string());
                 midi.track_channel_prefixes.insert(0, None);
             }
@@ -271,10 +272,15 @@ impl Document {
             let mut pc_map_cache = HashMap::new();
             for ev in &midi.control_events {
                 if let yinhe_midi::MidiControlEvent::ProgramChange {
-                    channel, program, ..
+                    program, track, ..
                 } = ev
                 {
-                    pc_map_cache.entry(*channel).or_insert(*program);
+                    let ch = midi
+                        .track_channels
+                        .get(*track as usize)
+                        .copied()
+                        .unwrap_or(0);
+                    pc_map_cache.entry(ch).or_insert(*program);
                 }
             }
 
@@ -336,10 +342,15 @@ impl Document {
         let mut pc_map_cache = std::collections::HashMap::new();
         for ev in &midi.control_events {
             if let yinhe_midi::MidiControlEvent::ProgramChange {
-                channel, program, ..
+                program, track, ..
             } = ev
             {
-                pc_map_cache.entry(*channel).or_insert(*program);
+                let ch = midi
+                    .track_channels
+                    .get(*track as usize)
+                    .copied()
+                    .unwrap_or(0);
+                pc_map_cache.entry(ch).or_insert(*program);
             }
         }
 

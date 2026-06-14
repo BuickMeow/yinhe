@@ -83,16 +83,28 @@ pub fn channels_for_midi(midi: &MidiFile) -> (u32, Vec<bool>) {
     for notes in &midi.key_notes {
         for note in notes {
             if note.velocity > 1 {
-                ch_active[note.channel as usize] += 1;
+                let ch = midi
+                    .track_channels
+                    .get(note.track as usize)
+                    .copied()
+                    .unwrap_or(0) as usize;
+                ch_active[ch] += 1;
             }
         }
     }
     for evt in &midi.control_events {
-        let ch = match evt {
-            MidiControlEvent::ControlChange { channel, .. }
-            | MidiControlEvent::ProgramChange { channel, .. }
-            | MidiControlEvent::PitchBend { channel, .. } => *channel as usize,
+        // Control events no longer carry a channel field; we derive it
+        // from the track's track_channels.
+        let track = match evt {
+            MidiControlEvent::ControlChange { track, .. }
+            | MidiControlEvent::ProgramChange { track, .. }
+            | MidiControlEvent::PitchBend { track, .. } => *track as usize,
         };
+        let ch = midi
+            .track_channels
+            .get(track)
+            .copied()
+            .unwrap_or(0) as usize;
         if ch < 256 {
             ch_active[ch] = ch_active[ch].max(1);
         }

@@ -193,25 +193,12 @@ fn global_panel(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
 fn project_panel(ui: &mut egui::Ui, doc: &mut Document) -> bool {
     let mut changed = false;
 
-    // Derive used ports from actual note/control-event channels rather than
+    // Derive used ports from track_channels rather than
     // track_ports (which only reflects MidiPort meta messages that many DAWs
     // do not emit).
     let max_port = {
         let mut max_p = 0u8;
-        for notes in &doc.midi.key_notes {
-            for note in notes {
-                let p = (note.channel >> 4) & 0x0F;
-                if p > max_p {
-                    max_p = p;
-                }
-            }
-        }
-        for ev in &doc.midi.control_events {
-            let ch = match ev {
-                yinhe_midi::MidiControlEvent::ControlChange { channel, .. }
-                | yinhe_midi::MidiControlEvent::ProgramChange { channel, .. }
-                | yinhe_midi::MidiControlEvent::PitchBend { channel, .. } => *channel,
-            };
+        for &ch in &doc.midi.track_channels {
             let p = (ch >> 4) & 0x0F;
             if p > max_p {
                 max_p = p;

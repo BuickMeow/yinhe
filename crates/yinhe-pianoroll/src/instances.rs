@@ -298,7 +298,6 @@ mod tests {
                 start_tick,
                 end_tick,
                 velocity: vel,
-                channel: 0,
                 track,
             };
             if (end_tick as u64) > max_tick {

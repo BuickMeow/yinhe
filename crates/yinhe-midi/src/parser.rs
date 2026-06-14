@@ -54,6 +54,7 @@ impl MidiParser {
         let mut global_end_tick: u64 = 0;
         let mut track_ports: Vec<u8> = Vec::with_capacity(smf.tracks.len());
         let mut track_channel_prefixes: Vec<Option<u8>> = Vec::with_capacity(smf.tracks.len());
+        let mut track_channels: Vec<u8> = Vec::with_capacity(smf.tracks.len());
         let mut track_names: Vec<String> = Vec::with_capacity(smf.tracks.len());
         let mut control_events: Vec<MidiControlEvent> = Vec::new();
 
@@ -81,7 +82,7 @@ impl MidiParser {
             }).unwrap_or_else(|| format!("Track {}", track_idx + 1));
             track_names.push(track_name);
 
-            let (port, channel_prefix) = crate::track_parser::parse_track(
+            let (port, channel_prefix, track_ch) = crate::track_parser::parse_track(
                 track,
                 &tempo_segments,
                 ticks_per_beat,
@@ -92,6 +93,7 @@ impl MidiParser {
             );
             track_ports.push(port);
             track_channel_prefixes.push(channel_prefix);
+            track_channels.push(track_ch);
 
             // Free this track's event vector now that we've extracted everything
             // we need from it.
@@ -125,7 +127,7 @@ impl MidiParser {
 
         // Build automation lanes from control events and note velocity.
         let automation_lanes =
-            crate::midi::build_automation_lanes(&control_events, &key_notes);
+            crate::midi::build_automation_lanes(&control_events, &key_notes, &track_channels);
 
         Ok(MidiFile {
             key_notes,
@@ -140,6 +142,7 @@ impl MidiParser {
             track_names,
             track_ports,
             track_channel_prefixes,
+            track_channels,
             control_events,
             scan_index: Some(scan_index),
             tick_buckets: Some(tick_buckets),
@@ -239,6 +242,7 @@ mod tests {
             time_sig_events: Vec::new(),
             track_ports: Vec::new(),
             track_channel_prefixes: Vec::new(),
+            track_channels: Vec::new(),
             control_events: Vec::new(),
             scan_index: None,
             tick_buckets: None,
@@ -274,6 +278,7 @@ mod tests {
             time_sig_events: Vec::new(),
             track_ports: Vec::new(),
             track_channel_prefixes: Vec::new(),
+            track_channels: Vec::new(),
             control_events: Vec::new(),
             scan_index: None,
             tick_buckets: None,

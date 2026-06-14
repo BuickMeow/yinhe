@@ -78,8 +78,13 @@ pub fn midi_to_archive_with_names(
         for note in key_notes {
             let idx = note.track as usize;
             if idx < num_tracks {
+                let ch = midi
+                    .track_channels
+                    .get(idx)
+                    .copied()
+                    .unwrap_or(0);
                 groups
-                    .entry((idx, note.channel))
+                    .entry((idx, ch))
                     .or_insert_with(|| TrackChannelData {
                         notes: Vec::new(),
                         cc_events: Vec::new(),
@@ -99,15 +104,20 @@ pub fn midi_to_archive_with_names(
     }
 
     for ev in &midi.control_events {
-        let (ev_track, ev_channel) = match ev {
-            yinhe_midi::MidiControlEvent::ControlChange { track, channel, .. }
-            | yinhe_midi::MidiControlEvent::ProgramChange { track, channel, .. }
-            | yinhe_midi::MidiControlEvent::PitchBend { track, channel, .. } => (*track, *channel),
+        let ev_track = match ev {
+            yinhe_midi::MidiControlEvent::ControlChange { track, .. }
+            | yinhe_midi::MidiControlEvent::ProgramChange { track, .. }
+            | yinhe_midi::MidiControlEvent::PitchBend { track, .. } => *track,
         };
         let idx = ev_track as usize;
         if idx >= num_tracks {
             continue;
         }
+        let ev_channel = midi
+            .track_channels
+            .get(idx)
+            .copied()
+            .unwrap_or(0);
         let data = groups.entry((idx, ev_channel)).or_insert_with(|| TrackChannelData {
             notes: Vec::new(),
             cc_events: Vec::new(),
@@ -579,6 +589,7 @@ pub fn archive_to_midi(archive: &ProjectArchive) -> yinhe_midi::MidiFile {
     }
     midi.track_ports = vec![0; num_tracks];
     midi.track_channel_prefixes = vec![None; num_tracks];
+    midi.track_channels = vec![0; num_tracks];
     midi.track_names = (0..num_tracks)
         .map(|i| format!("Track {}", i + 1))
         .collect();
@@ -649,6 +660,7 @@ pub fn archive_to_midi(archive: &ProjectArchive) -> yinhe_midi::MidiFile {
 
         let port = global_ch >> 4;
         midi.track_ports[track_idx] = port;
+        midi.track_channels[track_idx] = global_ch;
 
         for note in &data.notes {
             let key = note.key as usize;
@@ -657,7 +669,6 @@ pub fn archive_to_midi(archive: &ProjectArchive) -> yinhe_midi::MidiFile {
                     start_tick: note.start_tick,
                     end_tick: note.end_tick,
                     velocity: note.velocity,
-                    channel: global_ch,
                     track: track_idx as u16,
                 });
             }
@@ -666,7 +677,6 @@ pub fn archive_to_midi(archive: &ProjectArchive) -> yinhe_midi::MidiFile {
         for (controller, ev) in &data.cc_events {
             midi.control_events.push(yinhe_midi::MidiControlEvent::ControlChange {
                 tick: ev.tick,
-                channel: global_ch,
                 controller: *controller,
                 value: ev.value,
                 track: track_idx as u16,
@@ -676,7 +686,6 @@ pub fn archive_to_midi(archive: &ProjectArchive) -> yinhe_midi::MidiFile {
         for ev in &data.pitch_events {
             midi.control_events.push(yinhe_midi::MidiControlEvent::PitchBend {
                 tick: ev.tick,
-                channel: global_ch,
                 value: ev.value,
                 track: track_idx as u16,
             });
@@ -685,14 +694,12 @@ pub fn archive_to_midi(archive: &ProjectArchive) -> yinhe_midi::MidiFile {
         for ev in &data.pc_events {
             midi.control_events.push(yinhe_midi::MidiControlEvent::ProgramChange {
                 tick: ev.tick,
-                channel: global_ch,
                 program: ev.program,
                 track: track_idx as u16,
             });
             if ev.bank_msb != 0xFF {
                 midi.control_events.push(yinhe_midi::MidiControlEvent::ControlChange {
                     tick: ev.tick,
-                    channel: global_ch,
                     controller: 0,
                     value: ev.bank_msb,
                     track: track_idx as u16,
@@ -701,7 +708,6 @@ pub fn archive_to_midi(archive: &ProjectArchive) -> yinhe_midi::MidiFile {
             if ev.bank_lsb != 0xFF {
                 midi.control_events.push(yinhe_midi::MidiControlEvent::ControlChange {
                     tick: ev.tick,
-                    channel: global_ch,
                     controller: 32,
                     value: ev.bank_lsb,
                     track: track_idx as u16,
@@ -712,21 +718,18 @@ pub fn archive_to_midi(archive: &ProjectArchive) -> yinhe_midi::MidiFile {
         for (rpn_num, ev) in &data.rpn_events {
             midi.control_events.push(yinhe_midi::MidiControlEvent::ControlChange {
                 tick: ev.tick,
-                channel: global_ch,
                 controller: 101,
                 value: *rpn_num,
                 track: track_idx as u16,
             });
             midi.control_events.push(yinhe_midi::MidiControlEvent::ControlChange {
                 tick: ev.tick,
-                channel: global_ch,
                 controller: 100,
                 value: 0,
                 track: track_idx as u16,
             });
             midi.control_events.push(yinhe_midi::MidiControlEvent::ControlChange {
                 tick: ev.tick,
-                channel: global_ch,
                 controller: 6,
                 value: ev.value.min(127) as u8,
                 track: track_idx as u16,
@@ -759,7 +762,7 @@ pub fn archive_to_midi(archive: &ProjectArchive) -> yinhe_midi::MidiFile {
         midi.tick_length,
     ));
 
-    midi.automation_lanes = yinhe_midi::build_automation_lanes(&midi.control_events, &midi.key_notes);
+    midi.automation_lanes = yinhe_midi::build_automation_lanes(&midi.control_events, &midi.key_notes, &midi.track_channels);
 
     midi
 }
@@ -868,6 +871,11 @@ pub fn export_midi(doc: &crate::document::Document, path: &str) -> Result<(), St
 
     for track_idx in 0..num_tracks {
         let mut events: Vec<(u32, TrackEventKind)> = Vec::new();
+        let track_ch = midi
+            .track_channels
+            .get(track_idx)
+            .copied()
+            .unwrap_or(0);
 
         for (key_idx, key_notes) in midi.key_notes.iter().enumerate() {
             let key_u7 = u7::new(key_idx as u8);
@@ -878,7 +886,7 @@ pub fn export_midi(doc: &crate::document::Document, path: &str) -> Result<(), St
                 events.push((
                     note.start_tick,
                     TrackEventKind::Midi {
-                        channel: u4::new(note.channel & 0x0F),
+                        channel: u4::new(track_ch & 0x0F),
                         message: MidiMessage::NoteOn {
                             key: key_u7,
                             vel: u7::new(note.velocity),
@@ -888,7 +896,7 @@ pub fn export_midi(doc: &crate::document::Document, path: &str) -> Result<(), St
                 events.push((
                     note.end_tick,
                     TrackEventKind::Midi {
-                        channel: u4::new(note.channel & 0x0F),
+                        channel: u4::new(track_ch & 0x0F),
                         message: MidiMessage::NoteOff {
                             key: key_u7,
                             vel: u7::new(0),
@@ -899,28 +907,28 @@ pub fn export_midi(doc: &crate::document::Document, path: &str) -> Result<(), St
         }
 
         for ev in &midi.control_events {
-            let (tick, track, channel, kind) = match ev {
+            let (tick, track, kind) = match ev {
                 yinhe_midi::MidiControlEvent::ControlChange {
-                    tick, channel, controller, value, track
-                } => (*tick, *track, *channel, TrackEventKind::Midi {
-                    channel: u4::new(*channel & 0x0F),
+                    tick, controller, value, track
+                } => (*tick, *track, TrackEventKind::Midi {
+                    channel: u4::new(track_ch & 0x0F),
                     message: MidiMessage::Controller {
                         controller: u7::new(*controller),
                         value: u7::new(*value),
                     },
                 }),
                 yinhe_midi::MidiControlEvent::ProgramChange {
-                    tick, channel, program, track
-                } => (*tick, *track, *channel, TrackEventKind::Midi {
-                    channel: u4::new(*channel & 0x0F),
+                    tick, program, track
+                } => (*tick, *track, TrackEventKind::Midi {
+                    channel: u4::new(track_ch & 0x0F),
                     message: MidiMessage::ProgramChange {
                         program: u7::new(*program),
                     },
                 }),
                 yinhe_midi::MidiControlEvent::PitchBend {
-                    tick, channel, value, track
-                } => (*tick, *track, *channel, TrackEventKind::Midi {
-                    channel: u4::new(*channel & 0x0F),
+                    tick, value, track
+                } => (*tick, *track, TrackEventKind::Midi {
+                    channel: u4::new(track_ch & 0x0F),
                     message: MidiMessage::PitchBend {
                         bend: PitchBend::from_int(*value),
                     },
@@ -1029,19 +1037,20 @@ mod roundtrip_tests {
         m.ticks_per_beat = 480;
         m.track_ports = vec![0, 0, 1];
         m.track_channel_prefixes = vec![None, None, None];
+        m.track_channels = vec![0, 1, 16];
         m.track_names = vec!["Lead".into(), "Bass".into(), "Drums".into()];
 
         // Notes: track 0 channel 0, track 1 channel 1, track 2 channel 16 (port 1, raw 0)
-        m.key_notes[60].push(Note { start_tick: 0, end_tick: 480, velocity: 100, channel: 0, track: 0 });
-        m.key_notes[60].push(Note { start_tick: 480, end_tick: 960, velocity: 100, channel: 0, track: 0 });
-        m.key_notes[48].push(Note { start_tick: 0, end_tick: 1920, velocity: 90, channel: 1, track: 1 });
-        m.key_notes[36].push(Note { start_tick: 0, end_tick: 240, velocity: 120, channel: 16, track: 2 });
+        m.key_notes[60].push(Note { start_tick: 0, end_tick: 480, velocity: 100, track: 0 });
+        m.key_notes[60].push(Note { start_tick: 480, end_tick: 960, velocity: 100, track: 0 });
+        m.key_notes[48].push(Note { start_tick: 0, end_tick: 1920, velocity: 90, track: 1 });
+        m.key_notes[36].push(Note { start_tick: 0, end_tick: 240, velocity: 120, track: 2 });
 
         // Control events
-        m.control_events.push(MidiControlEvent::ControlChange { tick: 0, channel: 0, controller: 7, value: 100, track: 0 });
-        m.control_events.push(MidiControlEvent::ControlChange { tick: 240, channel: 0, controller: 7, value: 80, track: 0 });
-        m.control_events.push(MidiControlEvent::PitchBend { tick: 100, channel: 1, value: 1024, track: 1 });
-        m.control_events.push(MidiControlEvent::ProgramChange { tick: 0, channel: 16, program: 7, track: 2 });
+        m.control_events.push(MidiControlEvent::ControlChange { tick: 0, controller: 7, value: 100, track: 0 });
+        m.control_events.push(MidiControlEvent::ControlChange { tick: 240, controller: 7, value: 80, track: 0 });
+        m.control_events.push(MidiControlEvent::PitchBend { tick: 100, value: 1024, track: 1 });
+        m.control_events.push(MidiControlEvent::ProgramChange { tick: 0, program: 7, track: 2 });
 
         // Tempo: 120 -> 140 at tick 1920
         m.tempo_segments = vec![
@@ -1071,15 +1080,16 @@ mod roundtrip_tests {
         assert_eq!(restored.track_ports.len(), 3);
         assert_eq!(restored.track_ports, vec![0, 0, 1]);
 
-        // Notes preserved with correct channels
+        // Notes preserved with correct channels (via track_channels)
         assert_eq!(restored.key_notes[60].len(), 2, "track 0 notes at key 60");
-        assert!(restored.key_notes[60].iter().all(|n| n.channel == 0 && n.track == 0));
+        assert!(restored.key_notes[60].iter().all(|n| n.track == 0));
+        assert_eq!(restored.track_channels[0], 0);
         assert_eq!(restored.key_notes[48].len(), 1);
-        assert_eq!(restored.key_notes[48][0].channel, 1);
         assert_eq!(restored.key_notes[48][0].track, 1);
+        assert_eq!(restored.track_channels[1], 1);
         assert_eq!(restored.key_notes[36].len(), 1);
-        assert_eq!(restored.key_notes[36][0].channel, 16);
         assert_eq!(restored.key_notes[36][0].track, 2);
+        assert_eq!(restored.track_channels[2], 16);
     }
 
     #[test]
@@ -1095,12 +1105,13 @@ mod roundtrip_tests {
         let pc_count = restored.control_events.iter().filter(|e| matches!(e, MidiControlEvent::ProgramChange { .. })).count();
         assert_eq!(pc_count, 1);
 
-        // Verify channel & track on PB
+        // Verify track & value on PB
         let pb = restored.control_events.iter().find_map(|e| match e {
-            MidiControlEvent::PitchBend { tick, channel, value, track } => Some((*tick, *channel, *value, *track)),
+            MidiControlEvent::PitchBend { tick, value, track } => Some((*tick, *value, *track)),
             _ => None,
         }).unwrap();
-        assert_eq!(pb, (100, 1, 1024, 1));
+        assert_eq!(pb, (100, 1024, 1));
+        assert_eq!(restored.track_channels[1], 1);
     }
 
     #[test]
@@ -1161,36 +1172,36 @@ mod roundtrip_tests {
         let mut m = make_test_midi();
         // RPN 0 at tick 100: CC 6 before CC 101/100 (order shouldn't matter)
         m.control_events.push(yinhe_midi::MidiControlEvent::ControlChange {
-            tick: 100, channel: 0, controller: 6, value: 2, track: 0,
+            tick: 100, controller: 6, value: 2, track: 0,
         });
         m.control_events.push(yinhe_midi::MidiControlEvent::ControlChange {
-            tick: 100, channel: 0, controller: 101, value: 0, track: 0,
+            tick: 100, controller: 101, value: 0, track: 0,
         });
         m.control_events.push(yinhe_midi::MidiControlEvent::ControlChange {
-            tick: 100, channel: 0, controller: 100, value: 0, track: 0,
+            tick: 100, controller: 100, value: 0, track: 0,
         });
         // RPN 1 at tick 200: only CC 6, no CC 38
         m.control_events.push(yinhe_midi::MidiControlEvent::ControlChange {
-            tick: 200, channel: 0, controller: 101, value: 1, track: 0,
+            tick: 200, controller: 101, value: 1, track: 0,
         });
         m.control_events.push(yinhe_midi::MidiControlEvent::ControlChange {
-            tick: 200, channel: 0, controller: 100, value: 0, track: 0,
+            tick: 200, controller: 100, value: 0, track: 0,
         });
         m.control_events.push(yinhe_midi::MidiControlEvent::ControlChange {
-            tick: 200, channel: 0, controller: 6, value: 50, track: 0,
+            tick: 200, controller: 6, value: 50, track: 0,
         });
         // RPN 2 at tick 300: CC 6 + CC 38 (14-bit value)
         m.control_events.push(yinhe_midi::MidiControlEvent::ControlChange {
-            tick: 300, channel: 0, controller: 101, value: 2, track: 0,
+            tick: 300, controller: 101, value: 2, track: 0,
         });
         m.control_events.push(yinhe_midi::MidiControlEvent::ControlChange {
-            tick: 300, channel: 0, controller: 100, value: 0, track: 0,
+            tick: 300, controller: 100, value: 0, track: 0,
         });
         m.control_events.push(yinhe_midi::MidiControlEvent::ControlChange {
-            tick: 300, channel: 0, controller: 6, value: 24, track: 0,
+            tick: 300, controller: 6, value: 24, track: 0,
         });
         m.control_events.push(yinhe_midi::MidiControlEvent::ControlChange {
-            tick: 300, channel: 0, controller: 38, value: 127, track: 0,
+            tick: 300, controller: 38, value: 127, track: 0,
         });
 
         let archive = midi_to_archive(&m);

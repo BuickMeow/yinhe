@@ -29,18 +29,28 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>, settings: &AudioSetti
     for notes in &doc.midi.key_notes {
         for note in notes {
             if note.velocity > 1 {
-                active[note.channel as usize] = true;
+                let ch = doc.midi
+                    .track_channels
+                    .get(note.track as usize)
+                    .copied()
+                    .unwrap_or(0) as usize;
+                active[ch] = true;
             }
         }
     }
     for ev in &doc.midi.control_events {
-        let ch = match ev {
-            yinhe_midi::MidiControlEvent::ControlChange { channel, .. }
-            | yinhe_midi::MidiControlEvent::ProgramChange { channel, .. }
-            | yinhe_midi::MidiControlEvent::PitchBend { channel, .. } => *channel,
+        let track = match ev {
+            yinhe_midi::MidiControlEvent::ControlChange { track, .. }
+            | yinhe_midi::MidiControlEvent::ProgramChange { track, .. }
+            | yinhe_midi::MidiControlEvent::PitchBend { track, .. } => *track,
         };
-        if (ch as usize) < 256 {
-            active[ch as usize] = true;
+        let ch = doc.midi
+            .track_channels
+            .get(track as usize)
+            .copied()
+            .unwrap_or(0) as usize;
+        if ch < 256 {
+            active[ch] = true;
         }
     }
 

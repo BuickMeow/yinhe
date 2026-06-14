@@ -218,7 +218,7 @@ fn rebuild_midi_metadata(midi: &mut yinhe_midi::MidiFile) {
     }
     midi.tick_length = max_tick;
     midi.scan_index = Some(yinhe_types::NoteScanIndex::build(&midi.key_notes, max_tick));
-    midi.automation_lanes = yinhe_midi::build_automation_lanes(&midi.control_events, &midi.key_notes);
+    midi.automation_lanes = yinhe_midi::build_automation_lanes(&midi.control_events, &midi.key_notes, &midi.track_channels);
 }
 
 impl App {

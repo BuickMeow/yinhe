@@ -32,10 +32,10 @@ struct ActiveNote {
 /// A pre-filtered note that is guaranteed to be audible (velocity > 1 and
 /// channel active).  `start_sample` / `end_sample` are pre-computed at load
 /// time to eliminate runtime `tick_to_seconds` calls.
+/// Channel is resolved from `midi.track_channels[track]` at render time.
 struct AudibleNote {
     start_sample: u64,
     end_sample: u64,
-    channel: u8,
     track: u16,
     velocity: u8,
 }
@@ -213,10 +213,11 @@ impl AudioEngine {
 
         let mut _notes_dispatched: usize = 0;
 
-        if self.midi.is_some() {
+        if let Some(ref midi) = self.midi {
             // NoteOn: walk audible_notes per key.  All notes in audible_notes
             // are guaranteed to have velocity > 1 and an active channel, so
             // no filtering is needed — only the dynamic skip_track check.
+            // Channel is resolved from midi.track_channels[note.track].
             for key in 0..128usize {
                 let notes = &self.audible_notes[key];
                 let mut cursor = self.note_cursor[key];
@@ -225,9 +226,14 @@ impl AudioEngine {
 
                     let track = note.track as usize;
                     if !self.skip_track.get(track).copied().unwrap_or(false) {
+                        let ch = midi
+                            .track_channels
+                            .get(track)
+                            .copied()
+                            .unwrap_or(0) as usize;
                         let dense = self
                             .channel_map
-                            .get(note.channel as usize)
+                            .get(ch)
                             .copied()
                             .unwrap_or(u32::MAX);
                         if dense != u32::MAX {
@@ -241,7 +247,7 @@ impl AudioEngine {
 
                             self.active_notes.push(ActiveNote {
                                 key: key as u8,
-                                channel: note.channel,
+                                channel: ch as u8,
                                 end_sample: note.end_sample,
                             });
                             _notes_dispatched += 1;
@@ -299,41 +305,40 @@ impl AudioEngine {
         let sr = self.sample_rate as f64;
 
         for evt in &midi.control_events {
-            let (sample, channel, event) = match evt {
+            let (sample, track, event) = match evt {
                 MidiControlEvent::ControlChange {
                     tick,
-                    channel,
                     controller,
                     value,
+                    track,
                     ..
                 } => (
                     (midi.tick_to_seconds(*tick as u64) * sr) as u64,
-                    *channel as u32,
+                    *track as usize,
                     ChannelAudioEvent::Control(ControlEvent::Raw(*controller, *value)),
                 ),
                 MidiControlEvent::ProgramChange {
-                    tick,
-                    channel,
-                    program,
-                    ..
+                    tick, program, track, ..
                 } => (
                     (midi.tick_to_seconds(*tick as u64) * sr) as u64,
-                    *channel as u32,
+                    *track as usize,
                     ChannelAudioEvent::ProgramChange(*program),
                 ),
                 MidiControlEvent::PitchBend {
-                    tick,
-                    channel,
-                    value,
-                    ..
+                    tick, value, track, ..
                 } => (
                     (midi.tick_to_seconds(*tick as u64) * sr) as u64,
-                    *channel as u32,
+                    *track as usize,
                     ChannelAudioEvent::Control(ControlEvent::PitchBendValue(
                         *value as f32 / 8192.0,
                     )),
                 ),
             };
+            let channel = midi
+                .track_channels
+                .get(track)
+                .copied()
+                .unwrap_or(0) as u32;
             self.cc_events.push(SortedCC {
                 sample,
                 channel,
@@ -364,19 +369,23 @@ impl AudioEngine {
         // Build audible_notes: pre-filter to only notes with velocity > 1 and
         // an active channel.  Pre-compute start_sample / end_sample so the
         // render loop never calls tick_to_seconds at runtime.
+        // Channel is resolved from midi.track_channels[note.track].
         self.note_cursor = [0; 128];
         let sr = self.sample_rate as f64;
         for key in 0..128usize {
             let mut audible = Vec::new();
             for note in &midi.key_notes[key] {
                 if note.velocity > 1 {
-                    let ch = note.channel as usize;
+                    let ch = midi
+                        .track_channels
+                        .get(note.track as usize)
+                        .copied()
+                        .unwrap_or(0) as usize;
                     if self.active_mask.get(ch).copied().unwrap_or(false) {
                         audible.push(AudibleNote {
                             start_sample: (midi.tick_to_seconds(note.start_tick as u64) * sr)
                                 as u64,
                             end_sample: (midi.tick_to_seconds(note.end_tick as u64) * sr) as u64,
-                            channel: note.channel,
                             track: note.track,
                             velocity: note.velocity,
                         });
@@ -395,13 +404,16 @@ impl AudioEngine {
             let mut audible = Vec::new();
             for note in &midi.key_notes[key] {
                 if note.velocity > 1 {
-                    let ch = note.channel as usize;
+                    let ch = midi
+                        .track_channels
+                        .get(note.track as usize)
+                        .copied()
+                        .unwrap_or(0) as usize;
                     if self.active_mask.get(ch).copied().unwrap_or(false) {
                         audible.push(AudibleNote {
                             start_sample: (midi.tick_to_seconds(note.start_tick as u64) * sr)
                                 as u64,
                             end_sample: (midi.tick_to_seconds(note.end_tick as u64) * sr) as u64,
-                            channel: note.channel,
                             track: note.track,
                             velocity: note.velocity,
                         });
@@ -439,13 +451,17 @@ impl AudioEngine {
         }
         for evt in &midi.control_events {
             if let MidiControlEvent::ControlChange {
-                channel,
                 controller: 0,
                 value,
+                track,
                 ..
             } = evt
             {
-                let src_ch = *channel as usize;
+                let src_ch = midi
+                    .track_channels
+                    .get(*track as usize)
+                    .copied()
+                    .unwrap_or(0) as usize;
                 if src_ch >= 256 {
                     continue;
                 }
@@ -548,14 +564,23 @@ mod tests {
             start_time: 0.0,
             micros_per_quarter: 500_000, // 120 BPM
         }];
+        // track 0 is the only track used in these tests
+        midi.track_ports = vec![0];
+        midi.track_channels = vec![0];
+        midi.track_names = vec!["Track 1".to_string()];
         for (key, start_tick, end_tick, velocity, channel) in notes {
             midi.key_notes[key as usize].push(yinhe_midi::Note {
                 start_tick,
                 end_tick,
                 velocity,
-                channel,
                 track: 0,
             });
+            // Set track_channels[0] to the first non-zero channel we see,
+            // or the last channel if all are zero (tests use single-channel).
+            // The test helper always uses track 0 for all notes.
+            if channel > 0 || midi.track_channels[0] == 0 {
+                midi.track_channels[0] = channel;
+            }
             midi.tick_length = midi.tick_length.max(end_tick as u64);
         }
         midi
@@ -563,11 +588,26 @@ mod tests {
 
     #[test]
     fn test_channels_for_midi_basic() {
-        let midi = make_midi_with_notes(vec![
-            (60, 0, 480, 100, 0), // ch0
-            (64, 0, 480, 100, 1), // ch1
-            (67, 0, 480, 100, 9), // ch9 (drum)
-        ]);
+        let mut midi = MidiFile::default();
+        midi.ticks_per_beat = 480;
+        midi.tempo_segments = vec![yinhe_midi::TempoSegment {
+            start_tick: 0,
+            start_time: 0.0,
+            micros_per_quarter: 500_000,
+        }];
+        midi.track_ports = vec![0, 0, 0];
+        midi.track_channels = vec![0, 1, 9];
+        midi.track_names = vec!["T1".into(), "T2".into(), "T3".into()];
+        midi.key_notes[60].push(yinhe_midi::Note {
+            start_tick: 0, end_tick: 480, velocity: 100, track: 0,
+        });
+        midi.key_notes[64].push(yinhe_midi::Note {
+            start_tick: 0, end_tick: 480, velocity: 100, track: 1,
+        });
+        midi.key_notes[67].push(yinhe_midi::Note {
+            start_tick: 0, end_tick: 480, velocity: 100, track: 2,
+        });
+        midi.tick_length = 480;
         let (num_ch, mask) = crate::spawn::channels_for_midi(&midi);
         assert_eq!(num_ch, 10);
         assert!(mask[0]);
@@ -578,10 +618,25 @@ mod tests {
 
     #[test]
     fn test_channels_for_midi_multi_port() {
-        let midi = make_midi_with_notes(vec![
-            (60, 0, 480, 100, 0),  // port 0, ch0
-            (60, 0, 480, 100, 16), // port 1, ch0
-        ]);
+        let mut midi = MidiFile::default();
+        midi.ticks_per_beat = 480;
+        midi.tempo_segments = vec![yinhe_midi::TempoSegment {
+            start_tick: 0,
+            start_time: 0.0,
+            micros_per_quarter: 500_000,
+        }];
+        midi.track_ports = vec![0, 1];
+        midi.track_channels = vec![0, 16];
+        midi.track_names = vec!["Track 1".to_string(), "Track 2".to_string()];
+        // Track 0, channel 0
+        midi.key_notes[60].push(yinhe_midi::Note {
+            start_tick: 0, end_tick: 480, velocity: 100, track: 0,
+        });
+        // Track 1, channel 16 (port 1, ch 0)
+        midi.key_notes[60].push(yinhe_midi::Note {
+            start_tick: 0, end_tick: 480, velocity: 100, track: 1,
+        });
+        midi.tick_length = 480;
         let (num_ch, mask) = crate::spawn::channels_for_midi(&midi);
         assert_eq!(num_ch, 17);
         assert!(mask[0]);
@@ -603,9 +658,11 @@ mod tests {
     #[test]
     fn test_channels_for_midi_cc_activates_channel() {
         let mut midi = MidiFile::default();
+        midi.track_ports = vec![0];
+        midi.track_channels = vec![5];
+        midi.track_names = vec!["Track 1".to_string()];
         midi.control_events.push(MidiControlEvent::ControlChange {
             tick: 0,
-            channel: 5,
             controller: 7,
             value: 100,
             track: 0,
@@ -656,21 +713,42 @@ mod tests {
 
     #[test]
     fn test_audible_index_filters_vel_and_inactive_channel() {
-        // key 60: 4 notes — vel=0 ch0 / vel=1 ch0 / vel=100 ch0 / vel=100 ch3
+        // Track 0: vel=0 ch0 / vel=1 ch0 / vel=100 ch0 — all on ch0 (active)
+        // Track 1: vel=100 ch3 — ch3 inactive
         // active_mask: ch0 active, ch3 inactive
         // audible_notes[60] should contain only the 3rd note (vel=100 ch0).
-        let midi = Arc::new(make_midi_with_notes(vec![
-            (60, 0, 480, 0, 0),    // vel=0  → filtered out
-            (60, 480, 960, 1, 0),  // vel=1  → filtered out
-            (60, 960, 1440, 100, 0),  // vel=100 ch0 → audible
-            (60, 1440, 1920, 100, 3), // vel=100 ch3 → filtered out (ch3 inactive)
-        ]));
+        let mut midi = MidiFile::default();
+        midi.ticks_per_beat = 480;
+        midi.tempo_segments = vec![yinhe_midi::TempoSegment {
+            start_tick: 0,
+            start_time: 0.0,
+            micros_per_quarter: 500_000,
+        }];
+        midi.track_ports = vec![0, 0];
+        midi.track_channels = vec![0, 3];
+        midi.track_names = vec!["T1".into(), "T2".into()];
+        // Track 0: vel=0, vel=1, vel=100 — all ch0
+        midi.key_notes[60].push(yinhe_midi::Note {
+            start_tick: 0, end_tick: 480, velocity: 0, track: 0,
+        });
+        midi.key_notes[60].push(yinhe_midi::Note {
+            start_tick: 480, end_tick: 960, velocity: 1, track: 0,
+        });
+        midi.key_notes[60].push(yinhe_midi::Note {
+            start_tick: 960, end_tick: 1440, velocity: 100, track: 0,
+        });
+        // Track 1: vel=100 ch3 — inactive
+        midi.key_notes[60].push(yinhe_midi::Note {
+            start_tick: 1440, end_tick: 1920, velocity: 100, track: 1,
+        });
+        midi.tick_length = 1920;
+        let midi = Arc::new(midi);
         let mut mask = vec![false; 16];
         mask[0] = true;
         let mut engine = AudioEngine::new(44100, 16, mask);
         engine.load_midi(&midi);
 
-        // audible_notes[60] should have exactly 1 note
+        // audible_notes[60] should have exactly 1 note (vel=100 ch0, track 0)
         assert_eq!(engine.audible_notes[60].len(), 1);
         // cursor starts at 0 (first audible note)
         assert_eq!(engine.note_cursor[60], 0);

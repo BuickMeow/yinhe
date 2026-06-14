@@ -27,6 +27,9 @@ pub struct MidiFile {
     /// MIDI Channel Prefix (0x20 meta event) per track, if present.
     /// Used as fallback for channel info on tracks with no note/CC events.
     pub track_channel_prefixes: Vec<Option<u8>>,
+    /// Global channel per track (port * 16 + raw_midi_channel).
+    /// This is the authoritative channel used by the audio engine.
+    pub track_channels: Vec<u8>,
     /// Track names parsed from MetaMessage::TrackName.
     pub track_names: Vec<String>,
     /// All time signature events sorted by tick.
@@ -54,6 +57,7 @@ impl Default for MidiFile {
             time_sig_denominator: 2,
             track_ports: Vec::new(),
             track_channel_prefixes: Vec::new(),
+            track_channels: Vec::new(),
             time_sig_events: Vec::new(),
             track_names: Vec::new(),
             control_events: Vec::new(),
@@ -217,71 +221,34 @@ impl MidiFile {
 
     /// Get info for all tracks (name, note count, port, channel).
     ///
-    /// Port and channel are both derived from `note.channel` which encodes
-    /// `port * 16 + midi_channel`.  For tracks with no notes, falls back to
-    /// `control_events` (CC, PC, PitchBend) which also carry a `track` field.
-    /// Further falls back to `track_channel_prefixes` (MIDI Channel Prefix
-    /// meta event 0x20).  Final fallback to `track_ports` when nothing is found.
+    /// Port and channel are read from `track_ports` and `track_channels`.
     pub fn track_info(&self) -> Vec<TrackInfo> {
         let num_tracks = self.track_ports.len();
         let mut note_counts = vec![0u64; num_tracks];
-        let mut track_channels = vec![0u8; num_tracks];
-        let mut track_ports_from_notes = vec![0u8; num_tracks];
-        let mut note_port_set = vec![false; num_tracks];
         for notes in &self.key_notes {
             for note in notes {
                 let idx = note.track as usize;
                 if idx < num_tracks {
                     note_counts[idx] += 1;
-                    if track_channels[idx] == 0 {
-                        track_channels[idx] = (note.channel & 0x0F) + 1;
-                    }
-                    if !note_port_set[idx] {
-                        note_port_set[idx] = true;
-                        track_ports_from_notes[idx] = (note.channel >> 4) & 0x0F;
-                    }
-                }
-            }
-        }
-        // Second pass: for tracks with no notes, scan control events
-        for ev in &self.control_events {
-            let (track, ch) = match ev {
-                MidiControlEvent::ControlChange { track, channel, .. }
-                | MidiControlEvent::ProgramChange { track, channel, .. }
-                | MidiControlEvent::PitchBend { track, channel, .. } => (*track, *channel),
-            };
-            let idx = track as usize;
-            if idx < num_tracks && track_channels[idx] == 0 {
-                track_channels[idx] = (ch & 0x0F) + 1;
-                if !note_port_set[idx] {
-                    note_port_set[idx] = true;
-                    track_ports_from_notes[idx] = (ch >> 4) & 0x0F;
-                }
-            }
-        }
-        // Third pass: for tracks still without channel info, use MIDI Channel Prefix
-        for (idx, prefix) in self.track_channel_prefixes.iter().enumerate() {
-            if idx < num_tracks && track_channels[idx] == 0 {
-                if let Some(ch) = prefix {
-                    track_channels[idx] = *ch + 1; // 0-based → 1-based
                 }
             }
         }
         (0..num_tracks)
-            .map(|i| TrackInfo {
-                index: i as u16,
-                name: self
-                    .track_names
-                    .get(i)
-                    .cloned()
-                    .unwrap_or_else(|| format!("Track {}", i + 1)),
-                note_count: note_counts[i],
-                port: if note_port_set[i] {
-                    track_ports_from_notes[i]
-                } else {
-                    self.track_ports.get(i).copied().unwrap_or(0)
-                },
-                channel: track_channels[i].clamp(1, 16),
+            .map(|i| {
+                let global_ch = self.track_channels.get(i).copied().unwrap_or(0);
+                let port = (global_ch >> 4) & 0x0F;
+                let ch = (global_ch & 0x0F) + 1; // 1-based for display
+                TrackInfo {
+                    index: i as u16,
+                    name: self
+                        .track_names
+                        .get(i)
+                        .cloned()
+                        .unwrap_or_else(|| format!("Track {}", i + 1)),
+                    note_count: note_counts[i],
+                    port,
+                    channel: ch.clamp(1, 16),
+                }
             })
             .collect()
     }
@@ -316,6 +283,7 @@ fn rpn_target(msb: u8, lsb: u8) -> Option<yinhe_types::AutomationTarget> {
 pub fn build_automation_lanes(
     control_events: &[MidiControlEvent],
     key_notes: &[Vec<Note>; 128],
+    track_channels: &[u8],
 ) -> Vec<yinhe_types::AutomationLane> {
     use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget};
 
@@ -345,12 +313,13 @@ pub fn build_automation_lanes(
             }
             MidiControlEvent::ControlChange {
                 tick,
-                channel,
                 controller,
                 value,
                 track,
+                ..
             } if *controller == 6 || *controller == 38 => {
                 // Data Entry MSB (6) / LSB (38) — emit RPN event when active
+                let ch = track_channels.get(*track as usize).copied().unwrap_or(0);
                 if let Some(msb) = rpn_msb
                     && let Some(lsb) = rpn_lsb
                     && let Some(target) = rpn_target(msb, lsb)
@@ -358,7 +327,7 @@ pub fn build_automation_lanes(
                     lanes.entry(target).or_default().push(AutomationEvent {
                         tick: *tick,
                         value: *value as u16,
-                        channel: *channel,
+                        channel: ch,
                         track: *track,
                     });
                 } else {
@@ -371,19 +340,20 @@ pub fn build_automation_lanes(
                         .push(AutomationEvent {
                             tick: *tick,
                             value: *value as u16,
-                            channel: *channel,
+                            channel: ch,
                             track: *track,
                         });
                 }
             }
             MidiControlEvent::ControlChange {
                 tick,
-                channel,
                 controller,
                 value,
                 track,
+                ..
             } => {
                 // Other CCs — store as raw lane
+                let ch = track_channels.get(*track as usize).copied().unwrap_or(0);
                 lanes
                     .entry(AutomationTarget::CC {
                         controller: *controller,
@@ -392,25 +362,23 @@ pub fn build_automation_lanes(
                     .push(AutomationEvent {
                         tick: *tick,
                         value: *value as u16,
-                        channel: *channel,
+                        channel: ch,
                         track: *track,
                     });
             }
             MidiControlEvent::PitchBend {
-                tick,
-                channel,
-                value,
-                track,
+                tick, value, track, ..
             } => {
                 // value is i16 (-8192..8191) → normalize to u16 (0..16383)
                 let normalized = (*value + 8192) as u16;
+                let ch = track_channels.get(*track as usize).copied().unwrap_or(0);
                 lanes
                     .entry(AutomationTarget::PitchBend)
                     .or_default()
                     .push(AutomationEvent {
                         tick: *tick,
                         value: normalized,
-                        channel: *channel,
+                        channel: ch,
                         track: *track,
                     });
             }
@@ -423,10 +391,11 @@ pub fn build_automation_lanes(
     let mut velocity_events: Vec<AutomationEvent> = Vec::new();
     for notes in key_notes.iter() {
         for note in notes {
+            let ch = track_channels.get(note.track as usize).copied().unwrap_or(0);
             velocity_events.push(AutomationEvent {
                 tick: note.start_tick,
                 value: note.velocity as u16,
-                channel: note.channel,
+                channel: ch,
                 track: note.track,
             });
         }

@@ -13,8 +13,10 @@ struct ActiveNote {
 
 /// Parse a single MIDI track, extracting notes and control events.
 ///
-/// Returns `(MIDI port, channel prefix)` — the channel prefix is from
-/// `MetaMessage::MidiChannel` (0x20) and is `None` if not present.
+/// Returns `(MIDI port, channel prefix, global_channel)` — the channel
+/// prefix is from `MetaMessage::MidiChannel` (0x20) and is `None` if not
+/// present.  `global_channel` is the first MIDI channel seen in this track
+/// (or `port * 16` if no events).
 pub(crate) fn parse_track(
     track: &midly::Track,
     segments: &[crate::TempoSegment],
@@ -23,12 +25,13 @@ pub(crate) fn parse_track(
     key_notes: &mut [Vec<Note>; 128],
     global_end_tick: &mut u64,
     control_events: &mut Vec<MidiControlEvent>,
-) -> (u8, Option<u8>) {
+) -> (u8, Option<u8>, u8) {
     let mut active_notes: Vec<ActiveNote> = Vec::new();
     let mut current_tick: u32 = 0;
     let mut seg_idx: usize = 0;
     let mut current_port: u8 = 0;
     let mut channel_prefix: Option<u8> = None;
+    let mut track_channel: Option<u8> = None;
 
     for event in track {
         let new_tick = current_tick + event.delta.as_int();
@@ -57,6 +60,7 @@ pub(crate) fn parse_track(
             midly::TrackEventKind::Midi { channel, message } => {
                 let ch = channel.as_int();
                 let global_ch = current_port * 16 + ch;
+                track_channel.get_or_insert(global_ch);
                 match message {
                     midly::MidiMessage::NoteOn { key, vel } => {
                         let k = key.as_int();
@@ -93,7 +97,6 @@ pub(crate) fn parse_track(
                     midly::MidiMessage::Controller { controller, value } => {
                         control_events.push(MidiControlEvent::ControlChange {
                             tick: current_tick,
-                            channel: global_ch,
                             controller: controller.as_int(),
                             value: value.as_int(),
                             track: track_idx,
@@ -102,7 +105,6 @@ pub(crate) fn parse_track(
                     midly::MidiMessage::ProgramChange { program } => {
                         control_events.push(MidiControlEvent::ProgramChange {
                             tick: current_tick,
-                            channel: global_ch,
                             program: program.as_int(),
                             track: track_idx,
                         });
@@ -110,7 +112,6 @@ pub(crate) fn parse_track(
                     midly::MidiMessage::PitchBend { bend } => {
                         control_events.push(MidiControlEvent::PitchBend {
                             tick: current_tick,
-                            channel: global_ch,
                             value: bend.as_int(),
                             track: track_idx,
                         });
@@ -121,7 +122,8 @@ pub(crate) fn parse_track(
             _ => {}
         }
     }
-    (current_port, channel_prefix)
+    let track_ch = track_channel.unwrap_or(current_port * 16);
+    (current_port, channel_prefix, track_ch)
 }
 
 /// Advance the tempo segment index from current_tick to target_tick.
@@ -158,7 +160,6 @@ fn resolve_note_off(
             start_tick: n.start_tick,
             end_tick,
             velocity: n.velocity,
-            channel: n.channel,
             track: n.track,
         });
     }
@@ -269,7 +270,7 @@ mod tests {
         let mut global_end_tick: u64 = 0;
         let mut control_events: Vec<MidiControlEvent> = Vec::new();
 
-        let (port, prefix) = parse_track(&track, &segments, 480, 0, &mut key_notes, &mut global_end_tick, &mut control_events);
+        let (port, prefix, _track_ch) = parse_track(&track, &segments, 480, 0, &mut key_notes, &mut global_end_tick, &mut control_events);
 
         assert_eq!(port, 0);
         assert!(prefix.is_none());
@@ -363,9 +364,8 @@ mod tests {
 
         assert_eq!(control_events.len(), 3);
         match &control_events[0] {
-            MidiControlEvent::ControlChange { tick, channel, controller, value, track } => {
+            MidiControlEvent::ControlChange { tick, controller, value, track } => {
                 assert_eq!(*tick, 0);
-                assert_eq!(*channel, 0);
                 assert_eq!(*controller, 7);
                 assert_eq!(*value, 100);
                 assert_eq!(*track, 1);
@@ -373,18 +373,16 @@ mod tests {
             _ => panic!("expected ControlChange"),
         }
         match &control_events[1] {
-            MidiControlEvent::ProgramChange { tick, channel, program, track } => {
+            MidiControlEvent::ProgramChange { tick, program, track } => {
                 assert_eq!(*tick, 100);
-                assert_eq!(*channel, 1); // port 0 * 16 + ch 1
                 assert_eq!(*program, 5);
                 assert_eq!(*track, 1);
             }
             _ => panic!("expected ProgramChange"),
         }
         match &control_events[2] {
-            MidiControlEvent::PitchBend { tick, channel, value, track } => {
+            MidiControlEvent::PitchBend { tick, value, track } => {
                 assert_eq!(*tick, 300);
-                assert_eq!(*channel, 0);
                 assert_eq!(*value, 2000);
                 assert_eq!(*track, 1);
             }
@@ -419,7 +417,7 @@ mod tests {
         let mut global_end_tick: u64 = 0;
         let mut control_events: Vec<MidiControlEvent> = Vec::new();
 
-        let (port, prefix) = parse_track(&track, &segments, 480, 0, &mut key_notes, &mut global_end_tick, &mut control_events);
+        let (port, prefix, _track_ch) = parse_track(&track, &segments, 480, 0, &mut key_notes, &mut global_end_tick, &mut control_events);
 
         assert_eq!(port, 1);
         assert_eq!(prefix, Some(5));
@@ -463,11 +461,11 @@ mod tests {
         let mut global_end_tick: u64 = 0;
         let mut control_events: Vec<MidiControlEvent> = Vec::new();
 
-        parse_track(&track, &segments, 480, 0, &mut key_notes, &mut global_end_tick, &mut control_events);
+        let (port, prefix, track_ch) = parse_track(&track, &segments, 480, 0, &mut key_notes, &mut global_end_tick, &mut control_events);
 
         assert_eq!(key_notes[60].len(), 1);
         // global_ch = port 2 * 16 + ch 3 = 35
-        assert_eq!(key_notes[60][0].channel, 35);
+        assert_eq!(track_ch, 35);
     }
 
     #[test]

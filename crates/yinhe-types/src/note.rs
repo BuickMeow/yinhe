@@ -14,20 +14,17 @@ pub struct TimeSigEvent {
 pub enum MidiControlEvent {
     ControlChange {
         tick: u32,
-        channel: u8,
         controller: u8,
         value: u8,
         track: u16,
     },
     ProgramChange {
         tick: u32,
-        channel: u8,
         program: u8,
         track: u16,
     },
     PitchBend {
         tick: u32,
-        channel: u8,
         value: i16,
         track: u16,
     },
@@ -39,7 +36,6 @@ pub struct Note {
     pub start_tick: u32,
     pub end_tick: u32,
     pub velocity: u8,
-    pub channel: u8,
     pub track: u16,
 }
 
@@ -179,7 +175,6 @@ mod tests {
             start_tick,
             end_tick,
             velocity: 100,
-            channel: 0,
             track: 0,
         }
     }
