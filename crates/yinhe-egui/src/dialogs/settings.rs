@@ -67,7 +67,7 @@ impl Default for AudioSettings {
         let available_devices = list_output_devices();
         let default_device = cpal::default_host()
             .default_output_device()
-            .and_then(|d| d.name().ok());
+            .and_then(|d| d.description().ok().map(|desc| desc.to_string()));
         let (default_rate, available_sample_rates) = discover_sample_rates();
 
         Self {
@@ -143,7 +143,7 @@ impl AudioSettings {
 fn list_output_devices() -> Vec<String> {
     let host = cpal::default_host();
     host.output_devices()
-        .map(|devices| devices.filter_map(|d| d.name().ok()).collect::<Vec<_>>())
+        .map(|devices| devices.filter_map(|d| d.description().ok().map(|desc| desc.to_string())).collect::<Vec<_>>())
         .unwrap_or_default()
 }
 

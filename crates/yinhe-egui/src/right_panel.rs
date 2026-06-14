@@ -66,7 +66,7 @@ pub fn show(
 
     let mut changed = false;
 
-    ui.allocate_new_ui(egui::UiBuilder::new().max_rect(content_rect), |ui| {
+    ui.scope_builder(egui::UiBuilder::new().max_rect(content_rect), |ui| {
         ui.set_clip_rect(content_rect);
 
         // Background

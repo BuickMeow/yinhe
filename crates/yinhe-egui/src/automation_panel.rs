@@ -183,7 +183,7 @@ pub fn show_panels(
         // ICON_AUTOMATION button + popup (like transport bar pattern)
         let combo_inner = combo_rect.shrink(4.0);
         let mut btn_resp = None::<egui::Response>;
-        ui.allocate_ui_at_rect(combo_inner, |ui| {
+        ui.scope_builder(egui::UiBuilder::new().max_rect(combo_inner), |ui| {
             let btn = egui::Button::new(ICON_AUTOMATION.rich_text().size(14.0));
             btn_resp = Some(ui.add(btn));
         });

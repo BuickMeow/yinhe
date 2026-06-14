@@ -94,7 +94,7 @@ pub fn show(
     }
 
     // ── Track panel content ──
-    ui.allocate_new_ui(egui::UiBuilder::new().max_rect(tp_rect), |ui| {
+    ui.scope_builder(egui::UiBuilder::new().max_rect(tp_rect), |ui| {
         ui.set_clip_rect(tp_rect);
         ui.painter()
             .rect_filled(ui.max_rect(), 0.0, crate::widgets::theme::APP_BG);
@@ -171,7 +171,7 @@ pub fn show(
     let arr_midi: Option<&dyn yinhe_arrangement::NoteSource> =
         Some(&*doc.midi as &dyn yinhe_arrangement::NoteSource);
     let gpu_size = gpu_rect.size();
-    ui.allocate_new_ui(egui::UiBuilder::new().max_rect(gpu_rect), |ui| {
+    ui.scope_builder(egui::UiBuilder::new().max_rect(gpu_rect), |ui| {
         view_ui::show(
             ui,
             gpu_size,

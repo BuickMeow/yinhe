@@ -50,7 +50,7 @@ pub const TOOLS_PANEL_W: f32 = 28.0;
 /// Pass [`ALL_TOOLS`] to show everything.
 pub fn show(ui: &mut egui::Ui, rect: egui::Rect, active_tool: &mut Tool, available_tools: &[Tool]) {
     let layout = egui::Layout::top_down(egui::Align::Center);
-    ui.allocate_new_ui(egui::UiBuilder::new().max_rect(rect).layout(layout), |ui| {
+    ui.scope_builder(egui::UiBuilder::new().max_rect(rect).layout(layout), |ui| {
         ui.set_clip_rect(rect);
         ui.painter()
             .rect_filled(rect, 0.0, crate::widgets::theme::APP_BG);

@@ -53,7 +53,7 @@ impl eframe::App for App {
         };
         // ── Full-viewport background (matching title bar / transport bar) ──
         let bg = crate::widgets::theme::APP_BG;
-        ui.painter().rect_filled(ui.ctx().screen_rect(), 0.0, bg);
+        ui.painter().rect_filled(ui.ctx().viewport_rect(), 0.0, bg);
 
         // ── Detect document switch → invalidate GPU caches ──
         if self.active_doc != self.prev_active_doc {
@@ -347,7 +347,7 @@ impl eframe::App for App {
                         egui::Rect::from_min_max(egui::pos2(remaining.min.x, bottom_y), remaining.max);
 
                     let mut action = None;
-                    ui.allocate_new_ui(egui::UiBuilder::new().max_rect(piano_rect), |ui| {
+                    ui.scope_builder(egui::UiBuilder::new().max_rect(piano_rect), |ui| {
                         let _piano_total_start = if crate::perf_probe::enabled() {
                             Some(std::time::Instant::now())
                         } else {

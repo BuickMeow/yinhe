@@ -366,7 +366,7 @@ pub fn show(
             );
             ui.painter()
                 .rect_filled(sb_left_blank, 0.0, theme::SCROLLBAR_BG);
-            ui.allocate_new_ui(egui::UiBuilder::new().max_rect(sb_left_blank), |ui| {
+            ui.scope_builder(egui::UiBuilder::new().max_rect(sb_left_blank), |ui| {
                 ui.horizontal_centered(|ui| {
                     let mut count = panels.len();
                     crate::automation_panel::show_toggle_buttons(ui, show, &mut count);

@@ -187,7 +187,7 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>, state: &mut EventBrow
 
     let tree = build_tree(&entries);
 
-    let frame_bg = egui::Frame::none()
+    let frame_bg = egui::Frame::NONE
         .fill(egui::Color32::from_gray(16))
         .inner_margin(egui::Margin::symmetric(4, 2));
 
@@ -210,7 +210,7 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>, state: &mut EventBrow
     );
 
     // Top: tree
-    ui.allocate_new_ui(egui::UiBuilder::new().max_rect(top_rect), |ui| {
+    ui.scope_builder(egui::UiBuilder::new().max_rect(top_rect), |ui| {
         egui::ScrollArea::both()
             .id_salt("event_browser_tree")
             .auto_shrink([false, false])
@@ -237,7 +237,7 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>, state: &mut EventBrow
     }
 
     // Bottom: detail
-    ui.allocate_new_ui(egui::UiBuilder::new().max_rect(bot_rect), |ui| {
+    ui.scope_builder(egui::UiBuilder::new().max_rect(bot_rect), |ui| {
         egui::ScrollArea::both()
             .id_salt("event_browser_detail")
             .auto_shrink([false, false])
@@ -307,7 +307,7 @@ fn render_dir_row(
     child_count: usize,
 ) -> bool {
     let mut toggled = false;
-    egui::Frame::none()
+        egui::Frame::NONE
         .inner_margin(egui::Margin::symmetric(2, 1))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
@@ -397,7 +397,7 @@ fn render_leaf_row(
     };
 
     let frame_r =
-        egui::Frame::none()
+    egui::Frame::NONE
             .fill(bg)
             .inner_margin(egui::Margin::symmetric(2, 1))
             .show(ui, |ui| {

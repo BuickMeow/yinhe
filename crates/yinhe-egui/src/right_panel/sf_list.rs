@@ -184,16 +184,16 @@ fn sf_row(
         ui.set_min_width(100.0);
         if index > 0 && ui.button("上移").clicked() {
             action = Some(SfAction::MoveUp);
-            ui.close_menu();
+            ui.close();
         }
         if index < total - 1 && ui.button("下移").clicked() {
             action = Some(SfAction::MoveDown);
-            ui.close_menu();
+            ui.close();
         }
         ui.separator();
         if ui.button("删除").clicked() {
             action = Some(SfAction::Remove);
-            ui.close_menu();
+            ui.close();
         }
     });
 
