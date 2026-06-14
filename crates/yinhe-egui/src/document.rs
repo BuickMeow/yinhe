@@ -54,8 +54,8 @@ pub(crate) struct Document {
     pub show_controller_panels: bool,
     /// Song-specific soundfont config.
     pub project_sf: ProjectSfConfig,
-    /// Currently selected port in the soundbank panel (persists across frames).
-    pub soundbank_selected_port: u8,
+    /// Currently selected port in the soundfont panel (persists across frames).
+    pub soundfont_selected_port: u8,
     /// Per-track mute/solo overrides.
     pub track_overrides: Vec<TrackOverride>,
     /// Per-track pianoroll-only visibility (V button). Independent of `track_visible`.
@@ -141,7 +141,7 @@ impl Default for Document {
             controller_panels: vec![yinhe_automation::AutomationPanelView::default()],
             show_controller_panels: true,
             project_sf: ProjectSfConfig::default(),
-            soundbank_selected_port: 0,
+            soundfont_selected_port: 0,
             track_overrides: vec![TrackOverride::default()],
             track_pianoroll_visible: Vec::new(),
             track_pianoroll_visible_snapshot: None,
@@ -434,7 +434,7 @@ impl Document {
             controller_panels: vec![yinhe_automation::AutomationPanelView::default()],
             show_controller_panels: true,
             project_sf,
-            soundbank_selected_port: 0,
+            soundfont_selected_port: 0,
             track_overrides: (0..num_tracks).map(|_| TrackOverride::default()).collect(),
             project_name,
             project_artist,

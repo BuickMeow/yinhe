@@ -4,7 +4,7 @@ pub mod event_browser;
 pub mod info_panel;
 pub mod project_info;
 pub mod sf_list;
-pub mod soundbank;
+pub mod soundfont;
 
 use eframe::egui;
 
@@ -14,7 +14,7 @@ use crate::document::Document;
 #[derive(PartialEq, Clone, Copy)]
 pub enum RightTab {
     Info,
-    SoundBank,
+    SoundFont,
     Project,
     Channels,
     EventBrowser,
@@ -78,8 +78,8 @@ pub fn show(
             RightTab::Info => {
                 info_panel::show(ui, doc, audio);
             }
-            RightTab::SoundBank => {
-                changed |= soundbank::show(ui, audio_settings, doc);
+            RightTab::SoundFont => {
+                changed |= soundfont::show(ui, audio_settings, doc);
             }
             RightTab::Project => {
                 project_info::show(ui, doc);

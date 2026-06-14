@@ -224,7 +224,7 @@ fn project_panel(ui: &mut egui::Ui, doc: &mut Document) -> bool {
         .map(|&p| format!("Port {}", (b'A' + p) as char))
         .collect();
 
-    let mut selected_port = doc.soundbank_selected_port as usize;
+    let mut selected_port = doc.soundfont_selected_port as usize;
     selected_port = selected_port.min(port_names.len().saturating_sub(1));
     egui::ComboBox::from_id_salt("project_port")
         .selected_text(&port_names[selected_port])
@@ -235,7 +235,7 @@ fn project_panel(ui: &mut egui::Ui, doc: &mut Document) -> bool {
                 }
             }
         });
-    doc.soundbank_selected_port = selected_port as u8;
+    doc.soundfont_selected_port = selected_port as u8;
     let port = used_ports[selected_port];
 
     let has_entries = doc

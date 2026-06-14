@@ -2,7 +2,6 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use eframe::egui;
-use egui_material_icons::icons::*;
 use serde::{Deserialize, Serialize};
 
 use cpal::traits::{DeviceTrait, HostTrait};
@@ -207,55 +206,6 @@ pub fn show(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
                                 }
                             }
                         });
-                    ui.end_row();
-                });
-
-            ui.add_space(16.0);
-            ui.separator();
-            ui.add_space(8.0);
-
-            ui.heading("音色库");
-            ui.add_space(8.0);
-
-            egui::Grid::new("sf_settings_grid")
-                .num_columns(2)
-                .spacing([12.0, 8.0])
-                .show(ui, |ui| {
-                    ui.label("默认 SF2 路径");
-                    ui.horizontal(|ui| {
-                        let path_text = if settings.default_sf2_path.is_empty() {
-                            "未设置".to_string()
-                        } else {
-                            std::path::Path::new(&settings.default_sf2_path)
-                                .file_name()
-                                .map(|n| n.to_string_lossy().to_string())
-                                .unwrap_or_else(|| settings.default_sf2_path.clone())
-                        };
-                        ui.label(egui::RichText::new(&path_text).color(
-                            if settings.default_sf2_path.is_empty() {
-                                egui::Color32::from_gray(100)
-                            } else {
-                                egui::Color32::from_gray(200)
-                            },
-                        ));
-                        if ui.button("选择...").clicked()
-                            && let Some(path) = rfd::FileDialog::new()
-                                .add_filter("SoundFont", &["sf2", "sf3", "sfz"])
-                                .pick_file()
-                        {
-                            settings.default_sf2_path = path.to_string_lossy().to_string();
-                            changed = true;
-                        }
-                        if !settings.default_sf2_path.is_empty()
-                            && ui
-                                .button(ICON_DELETE.rich_text().size(14.0))
-                                .on_hover_text("清除")
-                                .clicked()
-                        {
-                            settings.default_sf2_path.clear();
-                            changed = true;
-                        }
-                    });
                     ui.end_row();
                 });
 

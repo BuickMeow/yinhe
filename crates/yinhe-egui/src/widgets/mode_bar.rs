@@ -176,12 +176,12 @@ pub fn show(
                     right_icon_button(
                         ui,
                         ICON_MUSIC_CAST,
-                        *right_tab == Some(RightTab::SoundBank),
+                        *right_tab == Some(RightTab::SoundFont),
                         || {
-                            *right_tab = if *right_tab == Some(RightTab::SoundBank) {
+                            *right_tab = if *right_tab == Some(RightTab::SoundFont) {
                                 None
                             } else {
-                                Some(RightTab::SoundBank)
+                                Some(RightTab::SoundFont)
                             };
                         },
                     );
