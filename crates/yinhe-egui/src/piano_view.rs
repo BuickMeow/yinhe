@@ -51,7 +51,9 @@ pub fn show(
     auto_wgpu_state: Option<&Arc<eframe::egui_wgpu::RenderState>>,
     scroll_mode: u32,
     min_border_width: f32,
-    velocity_display_mode: u32,
+    velocity_display_mode: &mut u32,
+    automation_display_mode: &mut u32,
+    automation_show_dots: &mut bool,
 ) -> Option<crate::widgets::selection_actions::SelectionAction> {
     // Sense::hover() — no drag ownership. All drag is handled by dedicated
     // ui.interact calls below, each inside its own push_id scope.
@@ -362,6 +364,8 @@ pub fn show(
             min_border_width,
             midi,
             velocity_display_mode,
+            automation_display_mode,
+            automation_show_dots,
         );
 
         if midi.is_some() {

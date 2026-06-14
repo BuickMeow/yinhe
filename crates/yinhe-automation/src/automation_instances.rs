@@ -187,6 +187,111 @@ pub fn build_data_bars(
     }
 }
 
+/// Build stepped-line instances for automation data (layer 2, replaces data bars).
+///
+/// Renders each event as a staircase: horizontal line (value held) + vertical
+/// line (value change).  Optionally draws dots at event positions.
+pub fn build_data_lines(
+    out: &mut Vec<NoteInstance>,
+    w: f32,
+    h: f32,
+    view: &AutomationPanelView,
+    lane: Option<&AutomationLane>,
+    track_visible: &[bool],
+    track_colors: &[[f32; 3]],
+    show_dots: bool,
+) {
+    let Some(lane) = lane else { return };
+    let target = &lane.target;
+    let max_val = target.max_value() as f32;
+    if max_val <= 0.0 {
+        return;
+    }
+
+    let ppu = view.base.pixels_per_tick;
+    let (tick_start, tick_end) = view.base.visible_tick_range(w);
+    let pad_start = tick_start.max(0.0) as u32;
+    let pad_end = tick_end.max(0.0) as u32;
+    let x_offset = view.base.left_panel_width - view.base.scroll_x;
+
+    // Collect visible events grouped by track
+    let mut track_events: Vec<Vec<(u32, u16)>> = vec![Vec::new(); track_visible.len()];
+    for evt in lane.events_in_range(pad_start, pad_end) {
+        let trk = evt.track as usize;
+        if trk >= track_events.len() || !track_visible.get(trk).copied().unwrap_or(true) {
+            continue;
+        }
+        track_events[trk].push((evt.tick, evt.value));
+    }
+
+    for (ti, events) in track_events.iter().enumerate() {
+        if events.is_empty() {
+            continue;
+        }
+        let color = track_colors
+            .get(ti)
+            .copied()
+            .unwrap_or_else(|| TRACK_PALETTE[ti % TRACK_PALETTE.len()]);
+
+        // Chase: find the value before the first visible event
+        let mut prev_val = lane.chase_value(events[0].0, 0).unwrap_or(0);
+        let mut prev_tick = events[0].0;
+
+        for &(tick, value) in events {
+            let x1 = x_offset + prev_tick as f32 * ppu;
+            let x2 = x_offset + tick as f32 * ppu;
+            let y1 = h - (prev_val as f32 / max_val) * h;
+            let y2 = h - (value as f32 / max_val) * h;
+
+            // Horizontal line: value held from prev_tick to tick
+            if x2 - x1 >= 1.0 {
+                out.push(NoteInstance {
+                    x: x1,
+                    y: y1,
+                    w: x2 - x1,
+                    h: 1.0,
+                    rgba_packed: pack_rgba(color[0], color[1], color[2], 0.85),
+                    props_packed: pack_props(0.0, 0.0),
+                    velocity: 0,
+                    tag: 0,
+                });
+            }
+
+            // Vertical line: value change at tick
+            let dy = (y2 - y1).abs();
+            if dy >= 1.0 {
+                out.push(NoteInstance {
+                    x: x2 - 0.5,
+                    y: y1.min(y2),
+                    w: 1.0,
+                    h: dy,
+                    rgba_packed: pack_rgba(color[0], color[1], color[2], 0.85),
+                    props_packed: pack_props(0.0, 0.0),
+                    velocity: 0,
+                    tag: 0,
+                });
+            }
+
+            // Dot at event position
+            if show_dots {
+                out.push(NoteInstance {
+                    x: x2 - 2.0,
+                    y: y2 - 2.0,
+                    w: 4.0,
+                    h: 4.0,
+                    rgba_packed: pack_rgba(color[0], color[1], color[2], 1.0),
+                    props_packed: pack_props(2.0, 0.0), // rounded dot
+                    velocity: 0,
+                    tag: 0,
+                });
+            }
+
+            prev_val = value;
+            prev_tick = tick;
+        }
+    }
+}
+
 /// Build velocity bars from NoteSource (layer 2, replaces data bars for Velocity).
 ///
 /// `display_mode`: 0=柱状(2px竖条), 1=矩形(填充), 2=空心矩形(边框)

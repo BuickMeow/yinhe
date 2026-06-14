@@ -402,7 +402,9 @@ impl eframe::App for App {
                             Some(&auto_wgpu_state),
                             self.audio_settings.scroll_mode,
                             self.audio_settings.min_border_width,
-                            self.audio_settings.velocity_display_mode,
+                            &mut self.audio_settings.velocity_display_mode,
+                            &mut self.audio_settings.automation_display_mode,
+                            &mut self.audio_settings.automation_show_dots,
                         );
                         if let Some(t0) = _piano_total_start {
                             crate::perf_probe::record_piano_total(t0.elapsed());

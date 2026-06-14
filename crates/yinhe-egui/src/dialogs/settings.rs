@@ -19,6 +19,10 @@ pub struct AudioSettings {
     /// 0=原始, 1=整数对齐, 2=子像素偏移
     /// 0=柱状(2px竖条), 1=矩形(填充), 2=空心矩形(边框)
     pub velocity_display_mode: u32,
+    /// 0=柱状, 1=折线
+    pub automation_display_mode: u32,
+    /// 折线模式下是否显示圆点
+    pub automation_show_dots: bool,
     pub scroll_mode: u32,
     /// 最小边框宽度(像素), 0=不设下限
     pub min_border_width: f32,
@@ -84,6 +88,8 @@ impl Default for AudioSettings {
             scroll_mode: 0,
             min_border_width: 0.0,
             velocity_display_mode: 0,
+            automation_display_mode: 0,
+            automation_show_dots: true,
             show_settings: false,
             available_devices,
             available_sample_rates,
@@ -259,6 +265,28 @@ pub fn show(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
                                 }
                             }
                         });
+                    ui.end_row();
+
+                    ui.label("自动化显示");
+                    let auto_names = ["柱状", "折线"];
+                    let current_auto = settings.automation_display_mode as usize;
+                    egui::ComboBox::from_id_salt("automation_display_mode")
+                        .selected_text(auto_names[current_auto])
+                        .show_ui(ui, |ui| {
+                            for (i, name) in auto_names.iter().enumerate() {
+                                let selected = settings.automation_display_mode == i as u32;
+                                if ui.selectable_label(selected, *name).clicked() {
+                                    settings.automation_display_mode = i as u32;
+                                    changed = true;
+                                }
+                            }
+                        });
+                    ui.end_row();
+
+                    ui.label("折线圆点");
+                    if ui.checkbox(&mut settings.automation_show_dots, "").changed() {
+                        changed = true;
+                    }
                     ui.end_row();
 
                     ui.label("最小边框宽度");

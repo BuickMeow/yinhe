@@ -43,6 +43,8 @@ pub fn prepare(
     scroll_mode: u32,
     min_border_width: f32,
     velocity_display_mode: u32,
+    automation_display_mode: u32,
+    automation_show_dots: bool,
 ) -> bool {
     let w = width as f32;
     let h = height as f32;
@@ -129,6 +131,8 @@ pub fn prepare(
         tv_hash,
         velocity_display_mode as u64,
         target_hash(&view.selected_target),
+        automation_display_mode as u64,
+        automation_show_dots as u64,
     ]);
     renderer.upload_layer(2, bars_key, |out| {
         if is_velocity {
@@ -137,6 +141,10 @@ pub fn prepare(
                     out, w, h, midi, view, track_visible, track_colors, velocity_display_mode,
                 );
             }
+        } else if automation_display_mode == 1 {
+            automation_instances::build_data_lines(
+                out, w, h, view, lane, track_visible, track_colors, automation_show_dots,
+            );
         } else {
             automation_instances::build_data_bars(out, w, h, view, lane, track_visible, track_colors);
         }
