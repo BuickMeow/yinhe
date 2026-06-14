@@ -53,9 +53,24 @@ fn vs_main(
         let end_tick = pixel_w;
         let ppu = u.pixels_per_tick;
         let x_offset = u.keyboard_width - u.scroll_x;
-        pixel_x = x_offset + start_tick * ppu;
-        pixel_w = max((end_tick - start_tick) * ppu, 2.0);
+        let raw_x = x_offset + start_tick * ppu;
+        let raw_end = x_offset + end_tick * ppu;
+        pixel_x = floor(raw_x + 0.5);
+        pixel_w = max(floor(raw_end + 0.5) - floor(raw_x + 0.5), 2.0);
     }
+
+    // Snap all positions to integer pixels to prevent sub-pixel jitter
+    // during scrolling.  1-pixel steps at 60fps are perceived as smooth
+    // scrolling, while sub-pixel movement causes visible "ripple" artifacts
+    // on dense note patterns.
+    // Use floor(end) - floor(start) for width/height so adjacent notes
+    // sharing a boundary have no gap.
+    pixel_x = floor(pixel_x + 0.5);
+    let raw_y = pixel_y;
+    let raw_bottom = pixel_y + pixel_h;
+    pixel_y = floor(raw_y + 0.5);
+    pixel_w = max(floor(pixel_w + 0.5), 1.0);
+    pixel_h = max(floor(raw_bottom + 0.5) - floor(raw_y + 0.5), 1.0);
 
     var pos = array<vec2<f32>, 6>(
         vec2<f32>(pixel_x + pixel_w, pixel_y),
