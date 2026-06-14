@@ -88,7 +88,10 @@ pub fn build_grid(
 }
 
 /// Build note rectangle instances with sub-pixel merging (layer 2).
-/// Dependencies: scroll_x/y, pixels_per_tick, track_visible, track_colors
+/// Dependencies: scroll_y, lane_height, track_visible, track_colors
+/// x/w store ticks (shader converts to pixels), y/h store pixel positions.
+///
+/// `tick_pad`: extra ticks to include on each side of the visible range.
 pub fn build_notes(
     out: &mut Vec<NoteInstance>,
     w: f32,
@@ -97,19 +100,18 @@ pub fn build_notes(
     view: &ArrangementView,
     track_visible: &[bool],
     track_colors: &[[f32; 3]],
+    tick_pad: f64,
 ) {
     let lh = view.lane_height;
-    let lb_w = view.base.left_panel_width;
     let ppu = view.base.pixels_per_tick;
     let num_tracks = track_visible.len();
     let (tick_start, tick_end) = view.visible_tick_range(w);
     let (trk_first, trk_last) = view.visible_track_range(h, num_tracks);
-    let x_offset = lb_w - view.base.scroll_x;
     let y_offset = -view.base.scroll_y;
     let lh_per_key = lh / 128.0;
     let note_h = lh_per_key.max(1.0);
-    let pad_start = tick_start;
-    let pad_end = tick_end;
+    let pad_start = (tick_start - tick_pad).max(0.0);
+    let pad_end = tick_end + tick_pad;
 
     let note_instances: Vec<Vec<NoteInstance>> = (0u8..128)
         .into_par_iter()
@@ -136,17 +138,15 @@ pub fn build_notes(
                     if !track_visible.get(ti).copied().unwrap_or(true) {
                         return;
                     }
-                    let nx = x_offset + s as f32 * ppu;
-                    let nw = ((e - s) as f32 * ppu).max(2.0);
                     let note_y = key_y_base + ti as f32 * lh;
                     let color = track_colors.get(ti).copied().unwrap_or([0.5, 0.5, 0.5]);
                     local.push(NoteInstance {
-                        x: nx,
-                        y: note_y,
-                        w: nw,
-                        h: note_h,
+                        x: s as f32,        // tick (shader converts to pixel)
+                        y: note_y,           // pixel
+                        w: e as f32,         // tick (shader converts to pixel)
+                        h: note_h,           // pixel
                         rgba_packed: pack_rgba(color[0], color[1], color[2], 0.85),
-                        props_packed: pack_props(0.0, 0.0),
+                        props_packed: 0,     // no rounding/border for AR notes
                         velocity: vel as u32,
                         tag: 0,
                     });
@@ -227,7 +227,7 @@ pub fn build_arrangement_static(
         let (def_num, def_den) = midi.time_sig_default();
         let sig_events = midi.time_sig_events();
         build_grid(instances, w, h, view, tpb, def_num, def_den, sig_events);
-        build_notes(instances, w, h, midi, view, track_visible, track_colors);
+        build_notes(instances, w, h, midi, view, track_visible, track_colors, 0.0);
     }
 }
 

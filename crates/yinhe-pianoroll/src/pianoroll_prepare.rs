@@ -45,7 +45,7 @@ pub fn prepare(
         pixels_per_tick: ppu,
         key_height: kh,
         keyboard_width: kb_w,
-        _pad: 0.0,
+        mode: 1, // PR notes: tick→pixel + compute rounding in shader
     };
 
     let t = std::time::Instant::now();
@@ -110,8 +110,15 @@ pub fn prepare(
         }
         h
     };
+    // Quantized scroll_x: during playback scroll_x changes smoothly, so the
+    // cache stays valid for many frames.  Inside build_notes the tick range is
+    // padded by SCROLL_BUCKET/ppu on each side so cached notes cover the full
+    // bucket range.  The GPU clips off-screen notes.
+    const SCROLL_BUCKET: f32 = 500.0;
+    let scroll_bucket = (scroll_x / SCROLL_BUCKET) as i64 as u64;
+    let tick_pad = (SCROLL_BUCKET / ppu) as f64;
     let notes_key = layer_cache_key(&[
-        scroll_x.to_bits() as u64,
+        scroll_bucket,
         scroll_y.to_bits() as u64,
         ppu.to_bits() as u64,
         kh.to_bits() as u64,
@@ -123,7 +130,7 @@ pub fn prepare(
     ]);
     renderer.upload_layer(2, notes_key, |out| {
         if let Some(midi) = midi {
-            instances::build_notes(out, w, h, midi, view, selected, track_visible, track_colors);
+            instances::build_notes(out, w, h, midi, view, selected, track_visible, track_colors, tick_pad);
         }
     });
 

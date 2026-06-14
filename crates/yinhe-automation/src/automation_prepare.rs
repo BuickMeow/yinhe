@@ -37,7 +37,7 @@ pub fn prepare(
         pixels_per_tick: view.base.pixels_per_tick,
         key_height: 0.0,
         keyboard_width: view.base.left_panel_width,
-        _pad: 0.0,
+        mode: 0, // pixel mode
     };
 
     renderer.upload_uniforms(uniforms);

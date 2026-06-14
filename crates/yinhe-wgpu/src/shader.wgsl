@@ -10,7 +10,7 @@ struct Uniforms {
     pixels_per_tick: f32,
     key_height: f32,
     keyboard_width: f32,
-    _pad: f32,
+    mode: u32, // 0=pixel, 1=PR notes(tick→pixel+rounding), 2=AR notes(tick→pixel)
 }
 
 struct NoteInstance {
@@ -38,18 +38,32 @@ fn vs_main(
 ) -> VertexOutput {
     var out: VertexOutput;
 
-    let x = instance.xywh.x;
-    let y = instance.xywh.y;
-    let w = instance.xywh.z;
-    let h = instance.xywh.w;
+    let vel = instance.packed.z;
+    let tag = instance.packed.w;
+
+    // Convert tick→pixel for note instances when mode is 1 or 2
+    var pixel_x = instance.xywh.x;
+    var pixel_y = instance.xywh.y;
+    var pixel_w = instance.xywh.z;
+    var pixel_h = instance.xywh.w;
+
+    if (u.mode == 1u || u.mode == 2u) && vel > 0u {
+        // x = start_tick, w = end_tick
+        let start_tick = pixel_x;
+        let end_tick = pixel_w;
+        let ppu = u.pixels_per_tick;
+        let x_offset = u.keyboard_width - u.scroll_x;
+        pixel_x = x_offset + start_tick * ppu;
+        pixel_w = max((end_tick - start_tick) * ppu, 2.0);
+    }
 
     var pos = array<vec2<f32>, 6>(
-        vec2<f32>(x + w, y),
-        vec2<f32>(x + w, y + h),
-        vec2<f32>(x,     y),
-        vec2<f32>(x + w, y + h),
-        vec2<f32>(x,     y + h),
-        vec2<f32>(x,     y),
+        vec2<f32>(pixel_x + pixel_w, pixel_y),
+        vec2<f32>(pixel_x + pixel_w, pixel_y + pixel_h),
+        vec2<f32>(pixel_x,           pixel_y),
+        vec2<f32>(pixel_x + pixel_w, pixel_y + pixel_h),
+        vec2<f32>(pixel_x,           pixel_y + pixel_h),
+        vec2<f32>(pixel_x,           pixel_y),
     );
 
     var uv = array<vec2<f32>, 6>(
@@ -74,16 +88,24 @@ fn vs_main(
     out.color.b = f32((rgba >> 16u) & 0xFFu) / 255.0;
     out.color.a = f32((rgba >> 24u) & 0xFFu) / 255.0;
 
-    // Unpack props from packed u32 (2x f16)
+    // Unpack props from packed u32 (2x f16), or compute for PR notes
     let props = instance.packed.y;
-    out.radius = unpack2x16float(props).x;
-    out.border_width = unpack2x16float(props).y;
+    var radius = unpack2x16float(props).x;
+    var border_width = unpack2x16float(props).y;
+
+    if u.mode == 1u && vel > 0u {
+        // PR notes: compute rounding/border from pixel dimensions
+        let min_dim = min(pixel_w, pixel_h);
+        radius = 0.15 * min_dim;
+        border_width = 0.1 * min_dim;
+    }
+
+    out.radius = radius;
+    out.border_width = border_width;
 
     out.uv = uv[vertex_index];
-    out.half_size = vec2<f32>(w, h) * 0.5;
+    out.half_size = vec2<f32>(pixel_w, pixel_h) * 0.5;
     // sel_flag = velocity>0 && tag==1 (selected note)
-    let vel = instance.packed.z;
-    let tag = instance.packed.w;
     out.sel_flag = select(0u, 1u, vel > 0u && tag == 1u);
     return out;
 }

@@ -9,7 +9,7 @@ pub struct Uniforms {
     pub pixels_per_tick: f32,
     pub key_height: f32,
     pub keyboard_width: f32,
-    pub _pad: f32,
+    pub mode: u32, // 0=pixel, 1=PR notes(tick→pixel+rounding), 2=AR notes(tick→pixel)
 }
 
 /// Packed instance: 32 bytes.

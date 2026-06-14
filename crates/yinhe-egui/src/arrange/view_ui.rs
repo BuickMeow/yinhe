@@ -80,8 +80,8 @@ pub fn show(
         scroll_y: view.base.scroll_y,
         pixels_per_tick: view.base.pixels_per_tick,
         key_height: view.lane_height,
-        keyboard_width: 0.0,
-        _pad: 0.0,
+        keyboard_width: view.base.left_panel_width,
+        mode: 2, // AR notes: tick→pixel only
     };
 
     view.base.dirty = false;
@@ -156,8 +156,14 @@ pub fn show(
         });
 
         // Layer 2: notes
+        // Quantized scroll_x: during playback scroll_x changes smoothly, so the
+        // cache stays valid for many frames.  tick_pad ensures cached notes
+        // cover the full bucket range.  GPU clips off-screen notes.
+        const SCROLL_BUCKET: f32 = 500.0;
+        let scroll_bucket = (view.base.scroll_x / SCROLL_BUCKET) as i64 as u64;
+        let tick_pad = (SCROLL_BUCKET / view.base.pixels_per_tick) as f64;
         let notes_key = layer_cache_key(&[
-            view.base.scroll_x.to_bits() as u64,
+            scroll_bucket,
             view.base.scroll_y.to_bits() as u64,
             view.base.pixels_per_tick.to_bits() as u64,
             view.lane_height.to_bits() as u64,
@@ -176,6 +182,7 @@ pub fn show(
                     view,
                     track_visible,
                     track_colors,
+                    tick_pad,
                 );
             }
         });

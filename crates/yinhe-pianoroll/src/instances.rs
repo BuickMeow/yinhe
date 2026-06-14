@@ -90,7 +90,12 @@ pub fn build_grid(
 }
 
 /// Build note instances (layer 2).
-/// Dependencies: scroll_x/y, pixels_per_tick, key_height, selection, track_visible
+/// Dependencies: scroll_y, key_height, selection, track_visible
+/// x/w store ticks (shader converts to pixels), y/h store pixel positions.
+///
+/// `tick_pad`: extra ticks to include on each side of the visible range.
+/// Used when scroll_x is quantized in the cache key — ensures cached notes
+/// cover the full bucket range.
 pub fn build_notes(
     out: &mut Vec<NoteInstance>,
     w: f32,
@@ -100,17 +105,16 @@ pub fn build_notes(
     selected: &std::collections::HashSet<(u16, u32, u8)>,
     track_visible: &[bool],
     track_colors: &[[f32; 3]],
+    tick_pad: f64,
 ) {
     let kb_w = view.keyboard_width();
     let kh = view.key_height;
     let bottom = 128.0 * kh - view.base.scroll_y;
-    let ppu = view.base.pixels_per_tick;
     let (tick_start, tick_end) = view.visible_tick_range(w);
     let (key_lo, key_hi) = view.visible_key_range(h);
     let has_selection = !selected.is_empty();
-    let x_offset = kb_w - view.base.scroll_x;
-    let pad_start = tick_start;
-    let pad_end = tick_end;
+    let pad_start = (tick_start - tick_pad).max(0.0);
+    let pad_end = tick_end + tick_pad;
 
     let results: Vec<Vec<NoteInstance>> = (key_lo..=key_hi)
         .into_par_iter()
@@ -139,11 +143,6 @@ pub fn build_notes(
                     continue;
                 }
 
-                let nx = x_offset + note.start_tick as f32 * ppu;
-                let nw = ((note.end_tick - note.start_tick) as f32 * ppu).max(2.0);
-                let ny = key_y;
-                let nh = kh;
-
                 let trk_idx = note.track as usize;
                 let color = track_colors
                     .get(trk_idx)
@@ -152,16 +151,14 @@ pub fn build_notes(
 
                 let is_selected =
                     has_selection && selected.contains(&(note.track, note.start_tick, key));
-                let border_w = 0.1 * nw.min(nh);
-                let rounding = NOTE_ROUNDING * nw.min(nh);
 
                 local.push(NoteInstance {
-                    x: nx,
-                    y: ny,
-                    w: nw,
-                    h: nh,
+                    x: note.start_tick as f32,  // tick (shader converts to pixel)
+                    y: key_y,                    // pixel
+                    w: note.end_tick as f32,     // tick (shader converts to pixel)
+                    h: kh,                       // pixel
                     rgba_packed: pack_rgba(color[0], color[1], color[2], 1.0),
-                    props_packed: pack_props(rounding, border_w),
+                    props_packed: 0,             // shader computes rounding/border
                     velocity: note.velocity as u32,
                     tag: if is_selected { 1 } else { 0 },
                 });
@@ -236,7 +233,7 @@ pub fn build_static_instances(
         let (def_num, def_den) = midi.time_sig_default();
         let sig_events = midi.time_sig_events();
         build_grid(instances, w, h, view, tpb, def_num, def_den, sig_events);
-        build_notes(instances, w, h, midi, view, selected, track_visible, track_colors);
+        build_notes(instances, w, h, midi, view, selected, track_visible, track_colors, 0.0);
     }
 
     build_keyboard(instances, kb_w, kh, scroll_y, h);
