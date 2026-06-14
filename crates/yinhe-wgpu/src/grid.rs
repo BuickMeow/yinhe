@@ -182,7 +182,7 @@ pub fn push_grid_line(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use yinhe_types::TimeSigEvent;
+    use yinhe_types::{TimeSigEvent, TimelineViewBase};
 
     #[test]
     fn test_measure_ticks_4_4() {
@@ -246,9 +246,126 @@ mod tests {
         let mut out = Vec::new();
         push_grid_line(&mut out, 100.0, 500.0, 1.0, (0.5, 0.5, 0.5, 1.0), 42);
         assert_eq!(out.len(), 1);
-        assert_eq!(out[0].x, 100.0);
+        assert_eq!(out[0].x, 99.5); // centered: 100 - 1.0/2
         assert_eq!(out[0].h, 500.0);
         assert_eq!(out[0].w, 1.0);
         assert_eq!(out[0].tag, 42);
+    }
+
+    #[test]
+    fn test_measure_bounds_at_tick_4_4() {
+        let (prev, next) = measure_bounds_at_tick(0.0, 480, 4, 2, &[]);
+        assert!((prev - 0.0).abs() < 1.0);
+        assert!((next - 1920.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn test_measure_bounds_at_tick_mid_bar() {
+        let (prev, next) = measure_bounds_at_tick(1000.0, 480, 4, 2, &[]);
+        assert!((prev - 0.0).abs() < 1.0);
+        assert!((next - 1920.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn test_measure_bounds_at_tick_second_bar() {
+        let (prev, next) = measure_bounds_at_tick(2000.0, 480, 4, 2, &[]);
+        assert!((prev - 1920.0).abs() < 1.0);
+        assert!((next - 3840.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn test_measure_bounds_at_tick_with_time_sig_change() {
+        let events = vec![
+            TimeSigEvent { tick: 0, numerator: 4, denominator: 2 },
+            TimeSigEvent { tick: 1920, numerator: 3, denominator: 2 },
+        ];
+        let (prev, next) = measure_bounds_at_tick(2000.0, 480, 4, 2, &events);
+        // After tick 1920, time sig is 3/4 → measure = 1440 ticks
+        assert!((prev - 1920.0).abs() < 1.0);
+        assert!((next - 3360.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn test_measure_bounds_at_tick_negative() {
+        let (prev, next) = measure_bounds_at_tick(-10.0, 480, 4, 2, &[]);
+        assert!((prev - 0.0).abs() < 1.0);
+        assert!((next - 1920.0).abs() < 1.0);
+    }
+
+    #[test]
+    fn test_build_timeline_grid_basic() {
+        let mut out = Vec::new();
+        let base = TimelineViewBase {
+            pixels_per_tick: 0.1,
+            scroll_x: 0.0,
+            scroll_y: 0.0,
+            left_panel_width: 60.0,
+            dirty: false,
+            track_panel_row_height: 40.0,
+            track_panel_scroll_y: 0.0,
+        };
+        build_timeline_grid(&mut out, 800.0, 500.0, &base, 480, 4, 2, &[],
+            (0.3, 0.3, 0.35, 1.0), (0.2, 0.2, 0.25, 1.0), Some((0.16, 0.16, 0.18, 1.0)));
+        assert!(!out.is_empty(), "grid should produce lines");
+        for inst in &out {
+            assert!(inst.x >= 0.0, "line should be within viewport");
+            assert!(inst.x <= 800.0, "line should be within viewport");
+            assert_eq!(inst.h, 500.0);
+        }
+    }
+
+    #[test]
+    fn test_build_timeline_grid_zero_ppu() {
+        let mut out = Vec::new();
+        let base = TimelineViewBase {
+            pixels_per_tick: 0.0,
+            scroll_x: 0.0,
+            scroll_y: 0.0,
+            left_panel_width: 60.0,
+            dirty: false,
+            track_panel_row_height: 40.0,
+            track_panel_scroll_y: 0.0,
+        };
+        build_timeline_grid(&mut out, 800.0, 500.0, &base, 480, 4, 2, &[],
+            (0.3, 0.3, 0.35, 1.0), (0.2, 0.2, 0.25, 1.0), Some((0.16, 0.16, 0.18, 1.0)));
+        assert!(out.is_empty(), "no grid lines when ppu is 0");
+    }
+
+    #[test]
+    fn test_build_timeline_grid_with_time_sig_change() {
+        let mut out = Vec::new();
+        let base = TimelineViewBase {
+            pixels_per_tick: 0.1,
+            scroll_x: 0.0,
+            scroll_y: 0.0,
+            left_panel_width: 60.0,
+            dirty: false,
+            track_panel_row_height: 40.0,
+            track_panel_scroll_y: 0.0,
+        };
+        let events = vec![
+            TimeSigEvent { tick: 0, numerator: 4, denominator: 2 },
+            TimeSigEvent { tick: 1920, numerator: 3, denominator: 2 },
+        ];
+        build_timeline_grid(&mut out, 800.0, 500.0, &base, 480, 4, 2, &events,
+            (0.3, 0.3, 0.35, 1.0), (0.2, 0.2, 0.25, 1.0), Some((0.16, 0.16, 0.18, 1.0)));
+        assert!(!out.is_empty());
+    }
+
+    #[test]
+    fn test_build_timeline_grid_no_sub_beats() {
+        let mut out = Vec::new();
+        let base = TimelineViewBase {
+            pixels_per_tick: 0.1,
+            scroll_x: 0.0,
+            scroll_y: 0.0,
+            left_panel_width: 60.0,
+            dirty: false,
+            track_panel_row_height: 40.0,
+            track_panel_scroll_y: 0.0,
+        };
+        build_timeline_grid(&mut out, 800.0, 500.0, &base, 480, 4, 2, &[],
+            (0.3, 0.3, 0.35, 1.0), (0.2, 0.2, 0.25, 1.0), None);
+        assert!(!out.is_empty());
     }
 }

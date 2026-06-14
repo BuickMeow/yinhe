@@ -234,4 +234,298 @@ mod tests {
         assert!(key_notes[60].is_empty());
         assert_eq!(global_end_tick, 0);
     }
+
+    #[test]
+    fn test_parse_track_note_on_off() {
+        use midly::{TrackEvent, TrackEventKind};
+        use midly::MidiMessage::NoteOn;
+        use midly::MidiMessage::NoteOff;
+        use midly::num::u7;
+
+        let track = vec![
+            TrackEvent {
+                delta: 0.into(),
+                kind: TrackEventKind::Midi {
+                    channel: 0.into(),
+                    message: NoteOn { key: u7::new(60), vel: u7::new(100) },
+                },
+            },
+            TrackEvent {
+                delta: 480.into(),
+                kind: TrackEventKind::Midi {
+                    channel: 0.into(),
+                    message: NoteOff { key: u7::new(60), vel: u7::new(0) },
+                },
+            },
+        ];
+
+        let segments = vec![crate::TempoSegment {
+            start_tick: 0,
+            start_time: 0.0,
+            micros_per_quarter: crate::time::DEFAULT_MPQ,
+        }];
+
+        let mut key_notes: [Vec<Note>; 128] = std::array::from_fn(|_| Vec::new());
+        let mut global_end_tick: u64 = 0;
+        let mut control_events: Vec<MidiControlEvent> = Vec::new();
+
+        let (port, prefix) = parse_track(&track, &segments, 480, 0, &mut key_notes, &mut global_end_tick, &mut control_events);
+
+        assert_eq!(port, 0);
+        assert!(prefix.is_none());
+        assert_eq!(key_notes[60].len(), 1);
+        assert_eq!(key_notes[60][0].start_tick, 0);
+        assert_eq!(key_notes[60][0].end_tick, 480);
+        assert_eq!(key_notes[60][0].velocity, 100);
+        assert_eq!(global_end_tick, 480);
+    }
+
+    #[test]
+    fn test_parse_track_note_on_with_vel_zero() {
+        use midly::{TrackEvent, TrackEventKind};
+        use midly::MidiMessage::NoteOn;
+        use midly::num::u7;
+
+        let track = vec![
+            TrackEvent {
+                delta: 0.into(),
+                kind: TrackEventKind::Midi {
+                    channel: 0.into(),
+                    message: NoteOn { key: u7::new(60), vel: u7::new(100) },
+                },
+            },
+            TrackEvent {
+                delta: 480.into(),
+                kind: TrackEventKind::Midi {
+                    channel: 0.into(),
+                    message: NoteOn { key: u7::new(60), vel: u7::new(0) },
+                },
+            },
+        ];
+
+        let segments = vec![crate::TempoSegment {
+            start_tick: 0,
+            start_time: 0.0,
+            micros_per_quarter: crate::time::DEFAULT_MPQ,
+        }];
+
+        let mut key_notes: [Vec<Note>; 128] = std::array::from_fn(|_| Vec::new());
+        let mut global_end_tick: u64 = 0;
+        let mut control_events: Vec<MidiControlEvent> = Vec::new();
+
+        parse_track(&track, &segments, 480, 0, &mut key_notes, &mut global_end_tick, &mut control_events);
+
+        assert_eq!(key_notes[60].len(), 1);
+        assert_eq!(key_notes[60][0].end_tick, 480);
+    }
+
+    #[test]
+    fn test_parse_track_control_events() {
+        use midly::{TrackEvent, TrackEventKind};
+        use midly::MidiMessage::{Controller, ProgramChange, PitchBend};
+        use midly::num::u7;
+
+        let track = vec![
+            TrackEvent {
+                delta: 0.into(),
+                kind: TrackEventKind::Midi {
+                    channel: 0.into(),
+                    message: Controller { controller: u7::new(7), value: u7::new(100) },
+                },
+            },
+            TrackEvent {
+                delta: 100.into(),
+                kind: TrackEventKind::Midi {
+                    channel: 1.into(),
+                    message: ProgramChange { program: u7::new(5) },
+                },
+            },
+            TrackEvent {
+                delta: 200.into(),
+                kind: TrackEventKind::Midi {
+                    channel: 0.into(),
+                    message: PitchBend { bend: midly::PitchBend::from_int(2000) },
+                },
+            },
+        ];
+
+        let segments = vec![crate::TempoSegment {
+            start_tick: 0,
+            start_time: 0.0,
+            micros_per_quarter: crate::time::DEFAULT_MPQ,
+        }];
+
+        let mut key_notes: [Vec<Note>; 128] = std::array::from_fn(|_| Vec::new());
+        let mut global_end_tick: u64 = 0;
+        let mut control_events: Vec<MidiControlEvent> = Vec::new();
+
+        parse_track(&track, &segments, 480, 1, &mut key_notes, &mut global_end_tick, &mut control_events);
+
+        assert_eq!(control_events.len(), 3);
+        match &control_events[0] {
+            MidiControlEvent::ControlChange { tick, channel, controller, value, track } => {
+                assert_eq!(*tick, 0);
+                assert_eq!(*channel, 0);
+                assert_eq!(*controller, 7);
+                assert_eq!(*value, 100);
+                assert_eq!(*track, 1);
+            }
+            _ => panic!("expected ControlChange"),
+        }
+        match &control_events[1] {
+            MidiControlEvent::ProgramChange { tick, channel, program, track } => {
+                assert_eq!(*tick, 100);
+                assert_eq!(*channel, 1); // port 0 * 16 + ch 1
+                assert_eq!(*program, 5);
+                assert_eq!(*track, 1);
+            }
+            _ => panic!("expected ProgramChange"),
+        }
+        match &control_events[2] {
+            MidiControlEvent::PitchBend { tick, channel, value, track } => {
+                assert_eq!(*tick, 300);
+                assert_eq!(*channel, 0);
+                assert_eq!(*value, 2000);
+                assert_eq!(*track, 1);
+            }
+            _ => panic!("expected PitchBend"),
+        }
+    }
+
+    #[test]
+    fn test_parse_track_midi_port_and_channel_prefix() {
+        use midly::{TrackEvent, TrackEventKind};
+        use midly::MetaMessage::{MidiPort, MidiChannel};
+        use midly::num::u7;
+
+        let track = vec![
+            TrackEvent {
+                delta: 0.into(),
+                kind: TrackEventKind::Meta(MidiPort(u7::new(1))),
+            },
+            TrackEvent {
+                delta: 0.into(),
+                kind: TrackEventKind::Meta(MidiChannel(midly::num::u4::new(5))),
+            },
+        ];
+
+        let segments = vec![crate::TempoSegment {
+            start_tick: 0,
+            start_time: 0.0,
+            micros_per_quarter: crate::time::DEFAULT_MPQ,
+        }];
+
+        let mut key_notes: [Vec<Note>; 128] = std::array::from_fn(|_| Vec::new());
+        let mut global_end_tick: u64 = 0;
+        let mut control_events: Vec<MidiControlEvent> = Vec::new();
+
+        let (port, prefix) = parse_track(&track, &segments, 480, 0, &mut key_notes, &mut global_end_tick, &mut control_events);
+
+        assert_eq!(port, 1);
+        assert_eq!(prefix, Some(5));
+    }
+
+    #[test]
+    fn test_parse_track_multi_port_channel() {
+        use midly::{TrackEvent, TrackEventKind};
+        use midly::MidiMessage::NoteOn;
+        use midly::MetaMessage::MidiPort;
+        use midly::num::u7;
+
+        let track = vec![
+            TrackEvent {
+                delta: 0.into(),
+                kind: TrackEventKind::Meta(MidiPort(u7::new(2))),
+            },
+            TrackEvent {
+                delta: 0.into(),
+                kind: TrackEventKind::Midi {
+                    channel: 3.into(),
+                    message: NoteOn { key: u7::new(60), vel: u7::new(100) },
+                },
+            },
+            TrackEvent {
+                delta: 480.into(),
+                kind: TrackEventKind::Midi {
+                    channel: 3.into(),
+                    message: NoteOn { key: u7::new(60), vel: u7::new(0) },
+                },
+            },
+        ];
+
+        let segments = vec![crate::TempoSegment {
+            start_tick: 0,
+            start_time: 0.0,
+            micros_per_quarter: crate::time::DEFAULT_MPQ,
+        }];
+
+        let mut key_notes: [Vec<Note>; 128] = std::array::from_fn(|_| Vec::new());
+        let mut global_end_tick: u64 = 0;
+        let mut control_events: Vec<MidiControlEvent> = Vec::new();
+
+        parse_track(&track, &segments, 480, 0, &mut key_notes, &mut global_end_tick, &mut control_events);
+
+        assert_eq!(key_notes[60].len(), 1);
+        // global_ch = port 2 * 16 + ch 3 = 35
+        assert_eq!(key_notes[60][0].channel, 35);
+    }
+
+    #[test]
+    fn test_parse_track_overlapping_notes_same_key() {
+        use midly::{TrackEvent, TrackEventKind};
+        use midly::MidiMessage::NoteOn;
+        use midly::num::u7;
+
+        let track = vec![
+            TrackEvent {
+                delta: 0.into(),
+                kind: TrackEventKind::Midi {
+                    channel: 0.into(),
+                    message: NoteOn { key: u7::new(60), vel: u7::new(100) },
+                },
+            },
+            TrackEvent {
+                delta: 240.into(),
+                kind: TrackEventKind::Midi {
+                    channel: 0.into(),
+                    message: NoteOn { key: u7::new(60), vel: u7::new(80) },
+                },
+            },
+            TrackEvent {
+                delta: 240.into(),
+                kind: TrackEventKind::Midi {
+                    channel: 0.into(),
+                    message: NoteOn { key: u7::new(60), vel: u7::new(0) },
+                },
+            },
+            TrackEvent {
+                delta: 240.into(),
+                kind: TrackEventKind::Midi {
+                    channel: 0.into(),
+                    message: NoteOn { key: u7::new(60), vel: u7::new(0) },
+                },
+            },
+        ];
+
+        let segments = vec![crate::TempoSegment {
+            start_tick: 0,
+            start_time: 0.0,
+            micros_per_quarter: crate::time::DEFAULT_MPQ,
+        }];
+
+        let mut key_notes: [Vec<Note>; 128] = std::array::from_fn(|_| Vec::new());
+        let mut global_end_tick: u64 = 0;
+        let mut control_events: Vec<MidiControlEvent> = Vec::new();
+
+        parse_track(&track, &segments, 480, 0, &mut key_notes, &mut global_end_tick, &mut control_events);
+
+        // LIFO matching: second NoteOn (vel=80) resolves first, then first (vel=100)
+        assert_eq!(key_notes[60].len(), 2);
+        assert_eq!(key_notes[60][0].start_tick, 240);
+        assert_eq!(key_notes[60][0].end_tick, 480);
+        assert_eq!(key_notes[60][0].velocity, 80);
+        assert_eq!(key_notes[60][1].start_tick, 0);
+        assert_eq!(key_notes[60][1].end_tick, 720);
+        assert_eq!(key_notes[60][1].velocity, 100);
+    }
 }

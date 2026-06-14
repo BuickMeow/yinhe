@@ -120,3 +120,210 @@ impl PianoRollView {
         self.base.dirty = true;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_view() -> PianoRollView {
+        PianoRollView {
+            base: TimelineViewBase {
+                pixels_per_tick: 0.15,
+                scroll_x: 0.0,
+                scroll_y: 0.0,
+                left_panel_width: 60.0,
+                dirty: false,
+                track_panel_row_height: 40.0,
+                track_panel_scroll_y: 0.0,
+            },
+            key_height: 12.0,
+        }
+    }
+
+    #[test]
+    fn test_default_values() {
+        let v = PianoRollView::default();
+        assert_eq!(v.key_height, 12.0);
+        assert_eq!(v.base.pixels_per_tick, 0.15);
+        assert_eq!(v.base.left_panel_width, 60.0);
+        assert!(v.base.dirty);
+    }
+
+    #[test]
+    fn test_keyboard_width() {
+        let v = make_view();
+        assert_eq!(v.keyboard_width(), 60.0);
+    }
+
+    #[test]
+    fn test_total_key_height() {
+        let v = make_view();
+        assert_eq!(v.total_key_height(), 128.0 * 12.0);
+    }
+
+    #[test]
+    fn test_tick_to_x_origin() {
+        let v = make_view();
+        let x = v.tick_to_x(0.0);
+        assert!((x - 60.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_tick_to_x_with_value() {
+        let v = make_view();
+        let x = v.tick_to_x(480.0);
+        assert!((x - (60.0 + 480.0 * 0.15)).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_key_to_y_key_60() {
+        let v = make_view();
+        // Key 60 (middle C): bottom = 128*12 - 0 = 1536
+        // y = 1536 - (60+1)*12 = 1536 - 732 = 804
+        let y = v.key_to_y(60);
+        assert!((y - 804.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_key_to_y_top_key() {
+        let v = make_view();
+        let y = v.key_to_y(127);
+        assert!((y - (1536.0 - 128.0 * 12.0)).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_key_to_y_bottom_key() {
+        let v = make_view();
+        let y = v.key_to_y(0);
+        assert!((y - (1536.0 - 12.0)).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_x_to_tick_roundtrip() {
+        let v = make_view();
+        let tick = 480.0;
+        let x = v.tick_to_x(tick);
+        let back = v.x_to_tick(x);
+        assert!((back - tick).abs() < 0.1);
+    }
+
+    #[test]
+    fn test_y_to_key_roundtrip() {
+        let v = make_view();
+        for key in [0, 12, 36, 60, 72, 127] {
+            let y = v.key_to_y(key);
+            let back = v.y_to_key(y + 6.0); // middle of the key
+            assert_eq!(back, key, "key {} roundtrip failed", key);
+        }
+    }
+
+    #[test]
+    fn test_y_to_key_clamps() {
+        let v = make_view();
+        assert_eq!(v.y_to_key(-100.0), 127);
+        assert_eq!(v.y_to_key(99999.0), 0);
+    }
+
+    #[test]
+    fn test_visible_tick_range() {
+        let v = make_view();
+        let (start, end) = v.visible_tick_range(1100.0);
+        assert!((start - 0.0).abs() < 1.0);
+        assert!((end - 6933.33).abs() < 1.0);
+    }
+
+    #[test]
+    fn test_visible_key_range() {
+        let v = make_view();
+        let (lo, hi) = v.visible_key_range(500.0);
+        assert!(lo < hi);
+        assert!(hi <= 127);
+    }
+
+    #[test]
+    fn test_clamp_scroll_horizontal() {
+        let mut v = make_view();
+        v.base.scroll_x = 99999.0;
+        v.clamp_scroll(1000.0, 500.0, 10000.0);
+        assert!(v.base.scroll_x < 99999.0);
+    }
+
+    #[test]
+    fn test_clamp_scroll_vertical() {
+        let mut v = make_view();
+        v.base.scroll_y = 99999.0;
+        v.clamp_scroll(1000.0, 500.0, 10000.0);
+        let max_scroll = (128.0f32 * 12.0 - 500.0).max(0.0);
+        assert!(v.base.scroll_y <= max_scroll);
+    }
+
+    #[test]
+    fn test_clamp_scroll_sets_dirty_on_change() {
+        let mut v = make_view();
+        v.base.dirty = false;
+        v.base.scroll_x = 100.0;
+        v.clamp_scroll(1000.0, 500.0, 100.0);
+        assert!(v.base.dirty);
+    }
+
+    #[test]
+    fn test_clamp_scroll_snaps_key_height_when_close() {
+        let mut v = make_view();
+        v.key_height = 12.0;
+        // total = 1536, height = 1532, diff = 4 < 5
+        v.clamp_scroll(1000.0, 1532.0, 10000.0);
+        assert!((v.key_height - 1532.0 / 128.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_zoom_around_x_preserves_tick() {
+        let mut v = make_view();
+        let px = 300.0;
+        let tick_before = v.x_to_tick(px);
+        v.zoom_around_x(px, 2.0);
+        let tick_after = v.x_to_tick(px);
+        assert!((tick_before - tick_after).abs() < 1.0);
+    }
+
+    #[test]
+    fn test_zoom_around_x_clamps() {
+        let mut v = make_view();
+        v.zoom_around_x(300.0, 0.0001);
+        assert!(v.base.pixels_per_tick >= 0.001);
+        v.zoom_around_x(300.0, 100.0);
+        assert!(v.base.pixels_per_tick <= 10.0);
+    }
+
+    #[test]
+    fn test_zoom_around_y_preserves_pointer() {
+        let mut v = make_view();
+        let py = 200.0;
+        let key_before = v.y_to_key(py);
+        v.zoom_around_y(py, 2.0, 500.0);
+        let key_after = v.y_to_key(py);
+        assert_eq!(key_before, key_after);
+    }
+
+    #[test]
+    fn test_zoom_around_y_clamps_min() {
+        let mut v = make_view();
+        v.zoom_around_y(200.0, 0.01, 500.0);
+        let min_kh = 500.0 / 128.0;
+        assert!(v.key_height >= min_kh - 0.001);
+    }
+
+    #[test]
+    fn test_zoom_around_y_clamps_max() {
+        let mut v = make_view();
+        v.zoom_around_y(200.0, 100.0, 500.0);
+        assert!(v.key_height <= 60.0);
+    }
+
+    #[test]
+    fn test_zoom_around_y_sets_dirty() {
+        let mut v = make_view();
+        v.base.dirty = false;
+        v.zoom_around_y(200.0, 1.0, 500.0);
+        assert!(v.base.dirty);
+    }
+}

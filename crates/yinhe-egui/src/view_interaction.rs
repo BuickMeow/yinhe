@@ -370,4 +370,63 @@ mod tests {
         let result = compute_follow_scroll(50.0, 1.0, 800.0, 100.0, FollowMode::Page, 1.0);
         assert!(result.is_some());
     }
+
+    #[test]
+    fn follow_mode_next_cycles() {
+        assert_eq!(FollowMode::None.next(), FollowMode::Page);
+        assert_eq!(FollowMode::Page.next(), FollowMode::Continuous);
+        assert_eq!(FollowMode::Continuous.next(), FollowMode::None);
+    }
+
+    #[test]
+    fn follow_mode_icon_not_empty() {
+        // Just verify the method doesn't panic
+        let _ = FollowMode::None.icon();
+        let _ = FollowMode::Page.icon();
+        let _ = FollowMode::Continuous.icon();
+    }
+
+    #[test]
+    fn follow_mode_tooltip_not_empty() {
+        assert!(!FollowMode::None.tooltip().is_empty());
+        assert!(!FollowMode::Page.tooltip().is_empty());
+        assert!(!FollowMode::Continuous.tooltip().is_empty());
+    }
+
+    #[test]
+    fn total_ticks_padded_positive() {
+        assert!((total_ticks_padded(1000) - 1200.0).abs() < 0.01);
+        assert!((total_ticks_padded(480) - 576.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn total_ticks_padded_zero() {
+        assert_eq!(total_ticks_padded(0), 0.0);
+    }
+
+    #[test]
+    fn page_mode_scroll_target() {
+        // cursor_tick=900, ppt=1.0, viewport=800, left_boundary=0
+        // cursor_x=900, content_width=800, margin=160
+        // target = 900 - 800*0.5 = 500
+        let result = compute_follow_scroll(900.0, 1.0, 800.0, 0.0, FollowMode::Page, 1.0);
+        assert_eq!(result, Some(500.0));
+    }
+
+    #[test]
+    fn continuous_mode_with_left_boundary() {
+        // cursor_tick=100, ppt=1.0, inset=60
+        // target = 100 - 60 = 40
+        let result = compute_follow_scroll(100.0, 1.0, 800.0, 60.0, FollowMode::Continuous, 60.0);
+        assert_eq!(result, Some(40.0));
+    }
+
+    #[test]
+    fn page_mode_no_scroll_when_cursor_in_margin() {
+        // cursor_tick=300, ppt=1.0, viewport=800, left_boundary=60
+        // cursor_x=300, content_width=740, margin=148
+        // 300 is between 60+148=208 and 800-148=652 → no scroll
+        let result = compute_follow_scroll(300.0, 1.0, 800.0, 60.0, FollowMode::Page, 1.0);
+        assert_eq!(result, None);
+    }
 }

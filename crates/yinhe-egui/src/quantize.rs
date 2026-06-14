@@ -198,4 +198,57 @@ mod tests {
         assert_eq!(QuantizePreset::Quarter.as_fraction(), (1, 4));
         assert_eq!(QuantizePreset::Custom(3, 8).as_fraction(), (3, 8));
     }
+
+    #[test]
+    fn test_triplet_intervals() {
+        let ppq = 480;
+        assert_eq!(QuantizePreset::QuarterTriplet.tick_interval(ppq), 320);
+        assert_eq!(QuantizePreset::EighthTriplet.tick_interval(ppq), 160);
+        assert_eq!(QuantizePreset::SixteenthTriplet.tick_interval(ppq), 80);
+    }
+
+    #[test]
+    fn test_half_and_thirtysec_intervals() {
+        let ppq = 480;
+        assert_eq!(QuantizePreset::Half.tick_interval(ppq), 960);
+        assert_eq!(QuantizePreset::ThirtySec.tick_interval(ppq), 60);
+        assert_eq!(QuantizePreset::SixtyFourth.tick_interval(ppq), 30);
+    }
+
+    #[test]
+    fn test_label_not_empty() {
+        for preset in QuantizePreset::ALL {
+            assert!(!preset.label().is_empty(), "label should not be empty for {:?}", preset);
+        }
+    }
+
+    #[test]
+    fn test_button_text_not_empty() {
+        for preset in QuantizePreset::ALL {
+            assert!(!preset.button_text().is_empty(), "button_text should not be empty for {:?}", preset);
+        }
+    }
+
+    #[test]
+    fn test_display_item_not_empty() {
+        for preset in QuantizePreset::ALL {
+            assert!(!preset.display_item(480).is_empty(), "display_item should not be empty for {:?}", preset);
+        }
+    }
+
+    #[test]
+    fn test_snap_tick_zero_interval() {
+        // When interval is 0, snap_tick should return the input unchanged
+        // (edge case protection)
+        let result = QuantizePreset::Quarter.snap_tick(100.0, 0);
+        assert_eq!(result, 100.0);
+    }
+
+    #[test]
+    fn test_all_presets_have_unique_labels() {
+        let mut labels = std::collections::HashSet::new();
+        for preset in QuantizePreset::ALL {
+            assert!(labels.insert(preset.label()), "duplicate label: {}", preset.label());
+        }
+    }
 }

@@ -68,3 +68,74 @@ pub fn append_keyboard_instances(
         });
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_append_keyboard_instances_basic() {
+        let mut out = Vec::new();
+        append_keyboard_instances(&mut out, 60.0, 12.0, 0.0, 500.0);
+        assert!(!out.is_empty(), "should produce instances");
+        let first = &out[0];
+        assert_eq!(first.x, 0.0);
+        assert_eq!(first.w, 60.0);
+        assert_eq!(first.h, 12.0);
+    }
+
+    #[test]
+    fn test_keyboard_white_keys_first() {
+        let mut out = Vec::new();
+        append_keyboard_instances(&mut out, 60.0, 12.0, 0.0, 1536.0);
+        let mut white_count = 0;
+        let mut black_count = 0;
+        for inst in &out {
+            let (r, _g, _b, _) = crate::vertex::unpack_rgba(inst.rgba_packed);
+            if (r - 0.70).abs() < 0.01 {
+                white_count += 1;
+            } else if (r - 0.16).abs() < 0.01 {
+                black_count += 1;
+            }
+        }
+        assert_eq!(white_count, 75);
+        assert_eq!(black_count, 53);
+    }
+
+    #[test]
+    fn test_keyboard_scrolled() {
+        let mut out = Vec::new();
+        append_keyboard_instances(&mut out, 60.0, 12.0, 500.0, 500.0);
+        assert!(!out.is_empty());
+        for inst in &out {
+            assert!(inst.y + inst.h > 0.0, "key should be on screen");
+            assert!(inst.y < 500.0, "key should be on screen");
+        }
+    }
+
+    #[test]
+    fn test_keyboard_zero_height() {
+        let mut out = Vec::new();
+        append_keyboard_instances(&mut out, 60.0, 12.0, 0.0, 0.0);
+        // With canvas_height=0, only key 127 (topmost) has y=0 which is not culled
+        assert_eq!(out.len(), 1, "expected 1 instance (key 127), got {}", out.len());
+        assert_eq!(out[0].y, 0.0);
+    }
+
+    #[test]
+    fn test_keyboard_props() {
+        let mut out = Vec::new();
+        append_keyboard_instances(&mut out, 60.0, 12.0, 0.0, 1536.0);
+        let white = &out[0];
+        let (cr, bw) = crate::vertex::unpack_props(white.props_packed);
+        assert!((cr - 2.0).abs() < 0.01, "white key corner radius");
+        assert!((bw - 0.5).abs() < 0.01, "key border width");
+        let black = out.iter().find(|i| {
+            let (r, _g, _b, _) = crate::vertex::unpack_rgba(i.rgba_packed);
+            (r - 0.16).abs() < 0.01
+        }).unwrap();
+        let (cr_b, bw_b) = crate::vertex::unpack_props(black.props_packed);
+        assert!((cr_b - 1.5).abs() < 0.01, "black key corner radius");
+        assert!((bw_b - 0.5).abs() < 0.01, "black key border width");
+    }
+}

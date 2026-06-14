@@ -963,4 +963,162 @@ mod tests {
         assert_eq!(decoded[0].end_tick, 200);
         assert_eq!(decoded[1].key, 64);
     }
+
+    #[test]
+    fn write_varint_roundtrip() {
+        let values = [0u64, 1, 127, 128, 255, 256, 16383, 16384, 0x3FFF_FFFF, u64::MAX];
+        for &v in &values {
+            let mut buf = Vec::new();
+            write_varint(&mut buf, v);
+            let mut cursor = 0;
+            let decoded = read_varint(&buf, &mut cursor).unwrap();
+            assert_eq!(decoded, v, "varint roundtrip failed for {}", v);
+            assert_eq!(cursor, buf.len(), "cursor should consume all bytes for {}", v);
+        }
+    }
+
+    #[test]
+    fn write_varint_invalid_empty() {
+        let mut cursor = 0;
+        let result = read_varint(&[], &mut cursor);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn encode_delta_events_tempo_roundtrip() {
+        let events = vec![
+            TempoEvent { tick: 0, bpm: 120.0 },
+            TempoEvent { tick: 480, bpm: 140.0 },
+            TempoEvent { tick: 1920, bpm: 160.0 },
+        ];
+        let encoded = encode_delta_events(&events);
+        let decoded: Vec<TempoEvent> = decode_delta_events(&encoded);
+        assert_eq!(decoded.len(), events.len());
+        for (a, b) in events.iter().zip(decoded.iter()) {
+            assert_eq!(a.tick, b.tick);
+            assert!((a.bpm - b.bpm).abs() < 0.01);
+        }
+    }
+
+    #[test]
+    fn encode_delta_events_empty() {
+        let events: Vec<TempoEvent> = Vec::new();
+        let encoded = encode_delta_events(&events);
+        let decoded: Vec<TempoEvent> = decode_delta_events(&encoded);
+        assert!(decoded.is_empty());
+    }
+
+    #[test]
+    fn encode_delta_events_time_sig_roundtrip() {
+        let events = vec![
+            TimeSigEvent { tick: 0, numerator: 4, denominator_power: 2 },
+            TimeSigEvent { tick: 1920, numerator: 3, denominator_power: 2 },
+        ];
+        let encoded = encode_delta_events(&events);
+        let decoded: Vec<TimeSigEvent> = decode_delta_events(&encoded);
+        assert_eq!(decoded.len(), 2);
+        assert_eq!(decoded[0].tick, 0);
+        assert_eq!(decoded[0].numerator, 4);
+        assert_eq!(decoded[0].denominator_power, 2);
+        assert_eq!(decoded[1].tick, 1920);
+        assert_eq!(decoded[1].numerator, 3);
+        assert_eq!(decoded[1].denominator_power, 2);
+    }
+
+    #[test]
+    fn encode_delta_events_cc_roundtrip() {
+        let events = vec![
+            CcEvent { tick: 0, value: 100 },
+            CcEvent { tick: 100, value: 64 },
+            CcEvent { tick: 200, value: 80 },
+        ];
+        let encoded = encode_delta_events(&events);
+        let decoded: Vec<CcEvent> = decode_delta_events(&encoded);
+        assert_eq!(decoded.len(), 3);
+        assert_eq!(decoded[0].tick, 0);
+        assert_eq!(decoded[0].value, 100);
+        assert_eq!(decoded[1].tick, 100);
+        assert_eq!(decoded[2].tick, 200);
+    }
+
+    #[test]
+    fn encode_delta_events_pitch_bend_roundtrip() {
+        let events = vec![
+            PitchBendEvent { tick: 0, value: 8192 },
+            PitchBendEvent { tick: 480, value: 10000 },
+        ];
+        let encoded = encode_delta_events(&events);
+        let decoded: Vec<PitchBendEvent> = decode_delta_events(&encoded);
+        assert_eq!(decoded.len(), 2);
+        assert_eq!(decoded[0].value, 8192);
+        assert_eq!(decoded[1].value, 10000);
+    }
+
+    #[test]
+    fn encode_delta_events_pc_roundtrip() {
+        let events = vec![
+            PcEvent { tick: 0, program: 5, bank_msb: 0, bank_lsb: 0 },
+            PcEvent { tick: 480, program: 42, bank_msb: 0, bank_lsb: 0 },
+        ];
+        let encoded = encode_delta_events(&events);
+        let decoded: Vec<PcEvent> = decode_delta_events(&encoded);
+        assert_eq!(decoded.len(), 2);
+        assert_eq!(decoded[0].program, 5);
+        assert_eq!(decoded[1].program, 42);
+    }
+
+    #[test]
+    fn encode_delta_events_rpn_roundtrip() {
+        let events = vec![
+            RpnEvent { tick: 0, value: 2 },
+            RpnEvent { tick: 480, value: 0 },
+        ];
+        let encoded = encode_delta_events(&events);
+        let decoded: Vec<RpnEvent> = decode_delta_events(&encoded);
+        assert_eq!(decoded.len(), 2);
+        assert_eq!(decoded[0].value, 2);
+        assert_eq!(decoded[1].value, 0);
+    }
+
+    #[test]
+    fn set_get_delta_events_with_inner() {
+        let mut archive = ProjectArchive::new();
+        let events = vec![
+            CcEvent { tick: 0, value: 100 },
+        ];
+        let path = cc_path(0, "test-uuid", 7);
+        archive.set_delta_events_with_inner(
+            &path,
+            FileHeader::new(magic::CC, 1, 0, 0),
+            InnerHeader::new(0, 0),
+            &events,
+        );
+        let (inner, decoded): (InnerHeader, Vec<CcEvent>) =
+            archive.get_delta_events_with_inner(&path).unwrap();
+        assert_eq!(inner.track_index, 0);
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(decoded[0].value, 100);
+    }
+
+    #[test]
+    fn archive_get_remove() {
+        let mut archive = ProjectArchive::new();
+        let path = "test/entry.zst".to_string();
+        let events: Vec<TempoEvent> = vec![TempoEvent { tick: 0, bpm: 120.0 }];
+        archive.set_delta_events(&path, FileHeader::new(*b"TEST", 0, 0, 0), &events);
+
+        assert!(archive.get::<Vec<TempoEvent>>(&path).is_some());
+        archive.remove(&path);
+        assert!(archive.get::<Vec<TempoEvent>>(&path).is_none());
+    }
+
+    #[test]
+    fn file_header_new() {
+        let h = FileHeader::new(*b"YHPR", 7, 3, 42);
+        assert_eq!(h.magic, *b"YHPR");
+        assert_eq!(h.version, 1);
+        assert_eq!(h.port, 7);
+        assert_eq!(h.channel, 3);
+        assert_eq!(h.extra, 42);
+    }
 }

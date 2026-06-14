@@ -122,4 +122,139 @@ mod tests {
         assert!(!is_black_key(4)); // E
         assert!(!is_black_key(12)); // next C
     }
+
+    #[test]
+    fn test_mpq_from_bpm() {
+        assert_eq!(mpq_from_bpm(120.0), DEFAULT_MPQ);
+        assert_eq!(mpq_from_bpm(240.0), 250_000);
+        assert_eq!(mpq_from_bpm(60.0), 1_000_000);
+    }
+
+    #[test]
+    fn test_mpq_from_bpm_zero_or_negative() {
+        assert_eq!(mpq_from_bpm(0.0), DEFAULT_MPQ);
+        assert_eq!(mpq_from_bpm(-10.0), DEFAULT_MPQ);
+    }
+
+    #[test]
+    fn test_bpm_from_mpq_zero() {
+        assert!((bpm_from_mpq(0) - DEFAULT_BPM).abs() < 1e-3);
+    }
+
+    #[test]
+    fn test_ticks_to_seconds_zero_tpb() {
+        assert_eq!(ticks_to_seconds(480, 0, DEFAULT_MPQ), 0.0);
+    }
+
+    #[test]
+    fn test_seconds_to_ticks_zero_mpq() {
+        assert_eq!(seconds_to_ticks(1.0, 480, 0), 0.0);
+    }
+
+    #[test]
+    fn test_bar_divide_4_4() {
+        let div = bar_divide(480, 4, 2);
+        assert!((div - 1920.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_bar_divide_3_4() {
+        let div = bar_divide(480, 3, 2);
+        assert!((div - 1440.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_bar_divide_6_8() {
+        let div = bar_divide(480, 6, 3);
+        assert!((div - 1440.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_bar_at_tick_basic() {
+        let div = 1920.0; // 4/4 at 480 tpb
+        assert_eq!(bar_at_tick(0, div), 1);
+        assert_eq!(bar_at_tick(1, div), 1);
+        assert_eq!(bar_at_tick(1920, div), 2);
+        assert_eq!(bar_at_tick(1919, div), 1);
+        assert_eq!(bar_at_tick(1920 * 4, div), 5);
+    }
+
+    #[test]
+    fn test_bar_at_tick_zero_div() {
+        assert_eq!(bar_at_tick(100, 0.0), 1);
+    }
+
+    #[test]
+    fn test_total_bars_basic() {
+        let div = 1920.0;
+        assert_eq!(total_bars(0, div), 0);
+        assert_eq!(total_bars(1, div), 1);
+        assert_eq!(total_bars(1920, div), 1);
+        assert_eq!(total_bars(1921, div), 2);
+        assert_eq!(total_bars(1920 * 4, div), 4);
+    }
+
+    #[test]
+    fn test_total_bars_zero_div() {
+        assert_eq!(total_bars(100, 0.0), 1);
+    }
+
+    #[test]
+    fn test_recompute_tempo_start_times_empty() {
+        let mut segments: Vec<TempoSegment> = vec![];
+        recompute_tempo_start_times(&mut segments, 480);
+        assert!(segments.is_empty());
+    }
+
+    #[test]
+    fn test_recompute_tempo_start_times_single() {
+        let mut segments = vec![TempoSegment {
+            start_tick: 0,
+            start_time: 999.0,
+            micros_per_quarter: DEFAULT_MPQ,
+        }];
+        recompute_tempo_start_times(&mut segments, 480);
+        assert!((segments[0].start_time - 0.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_recompute_tempo_start_times_two_segments() {
+        let mut segments = vec![
+            TempoSegment {
+                start_tick: 0,
+                start_time: 999.0,
+                micros_per_quarter: DEFAULT_MPQ,
+            },
+            TempoSegment {
+                start_tick: 480,
+                start_time: 999.0,
+                micros_per_quarter: 250_000,
+            },
+        ];
+        recompute_tempo_start_times(&mut segments, 480);
+        assert!((segments[0].start_time - 0.0).abs() < 1e-9);
+        assert!((segments[1].start_time - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_ticks_to_seconds_roundtrip() {
+        let tpb = 480;
+        let mpq = DEFAULT_MPQ;
+        let ticks = [0, 1, 480, 960, 100000];
+        for &t in &ticks {
+            let secs = ticks_to_seconds(t, tpb, mpq);
+            let back = seconds_to_ticks(secs, tpb, mpq);
+            assert!((back - t as f64).abs() < 1e-6, "roundtrip failed for tick={}", t);
+        }
+    }
+
+    #[test]
+    fn test_roundtrip_bpm_mpq() {
+        let bpms = [30.0, 60.0, 120.0, 140.0, 200.0, 240.0];
+        for &bpm in &bpms {
+            let mpq = mpq_from_bpm(bpm as f32);
+            let back = bpm_from_mpq(mpq);
+            assert!((back - bpm).abs() < 0.1, "roundtrip failed for bpm={}", bpm);
+        }
+    }
 }

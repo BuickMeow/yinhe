@@ -609,7 +609,7 @@ mod tests {
             (67, 0, 480, 100, 9), // ch9 (drum)
         ]);
         let (num_ch, mask) = crate::spawn::channels_for_midi(&midi);
-        assert_eq!(num_ch, 16);
+        assert_eq!(num_ch, 10);
         assert!(mask[0]);
         assert!(mask[1]);
         assert!(mask[9]);
@@ -623,7 +623,7 @@ mod tests {
             (60, 0, 480, 100, 16), // port 1, ch0
         ]);
         let (num_ch, mask) = crate::spawn::channels_for_midi(&midi);
-        assert_eq!(num_ch, 32);
+        assert_eq!(num_ch, 17);
         assert!(mask[0]);
         assert!(mask[16]);
         assert!(!mask[15]);
@@ -651,7 +651,7 @@ mod tests {
             track: 0,
         });
         let (num_ch, mask) = crate::spawn::channels_for_midi(&midi);
-        assert!(num_ch >= 16);
+        assert_eq!(num_ch, 6);
         assert!(mask[5]);
     }
 
@@ -659,7 +659,7 @@ mod tests {
     fn test_channels_for_midi_empty() {
         let midi = MidiFile::default();
         let (num_ch, mask) = crate::spawn::channels_for_midi(&midi);
-        assert_eq!(num_ch, 16);
+        assert_eq!(num_ch, 1);
         assert!(mask.iter().all(|&b| !b));
     }
 
@@ -746,5 +746,110 @@ mod tests {
         for key in 0..128usize {
             assert_eq!(engine.next_note_sample[key], u64::MAX);
         }
+    }
+
+    #[test]
+    fn test_engine_accessors() {
+        let mask = vec![true; 16];
+        let engine = AudioEngine::new(44100, 16, mask);
+        assert_eq!(engine.sample_rate_hz(), 44100);
+        assert_eq!(engine.sample_position(), 0);
+        assert!(!engine.playing());
+    }
+
+    #[test]
+    fn test_engine_handle_command_play_pause_stop() {
+        let mask = vec![true; 16];
+        let mut engine = AudioEngine::new(44100, 16, mask);
+
+        engine.handle_command(AudioCommand::Play { from_sample: 0 });
+        assert!(engine.playing());
+        assert_eq!(engine.sample_position(), 0);
+
+        engine.handle_command(AudioCommand::Pause);
+        assert!(!engine.playing());
+
+        engine.handle_command(AudioCommand::Resume);
+        assert!(engine.playing());
+
+        engine.handle_command(AudioCommand::Stop);
+        assert!(!engine.playing());
+        assert_eq!(engine.sample_position(), 0);
+    }
+
+    #[test]
+    fn test_engine_handle_command_seek() {
+        let mask = vec![true; 16];
+        let mut engine = AudioEngine::new(44100, 16, mask);
+
+        engine.handle_command(AudioCommand::Seek { sample: 44100 });
+        assert_eq!(engine.sample_position(), 44100);
+    }
+
+    #[test]
+    fn test_engine_handle_command_skip_tracks() {
+        let mask = vec![true; 16];
+        let mut engine = AudioEngine::new(44100, 16, mask);
+
+        let skip = vec![false, true, false];
+        engine.handle_command(AudioCommand::SkipTracks { skip });
+        assert_eq!(engine.skip_track, vec![false, true, false]);
+    }
+
+    #[test]
+    fn test_engine_render_not_playing() {
+        let mask = vec![true; 16];
+        let mut engine = AudioEngine::new(44100, 16, mask);
+        let mut output = vec![1.0f32; 100];
+        engine.render(&mut output);
+        // When not playing, output should be zeroed
+        assert!(output.iter().all(|&s| s == 0.0));
+    }
+
+    #[test]
+    fn test_engine_render_zero_frames() {
+        let mask = vec![true; 16];
+        let mut engine = AudioEngine::new(44100, 16, mask);
+        engine.handle_command(AudioCommand::Play { from_sample: 0 });
+        let mut output: Vec<f32> = Vec::new();
+        engine.render(&mut output);
+        // No frames → no crash
+    }
+
+    #[test]
+    fn test_engine_load_midi_and_reload() {
+        let midi = Arc::new(make_midi_with_notes(vec![(60, 0, 480, 100, 0)]));
+        let mask = vec![true; 16];
+        let mut engine = AudioEngine::new(44100, 16, mask);
+
+        engine.handle_command(AudioCommand::LoadMidi { midi: midi.clone() });
+        assert!(!engine.playing());
+
+        engine.handle_command(AudioCommand::ReloadNotes { midi });
+        // Should not crash
+    }
+
+    #[test]
+    fn test_engine_channel_map_inactive_channel() {
+        let mut mask = vec![false; 16];
+        mask[5] = true;
+        let engine = AudioEngine::new(44100, 16, mask);
+        // Channel 5 should map to dense index 0
+        assert_eq!(engine.channel_map[5], 0);
+        // Channel 0 (inactive) should map to u32::MAX
+        assert_eq!(engine.channel_map[0], u32::MAX);
+    }
+
+    #[test]
+    fn test_engine_channel_map_multiple_active() {
+        let mut mask = vec![false; 256];
+        mask[0] = true;
+        mask[2] = true;
+        mask[10] = true;
+        let engine = AudioEngine::new(44100, 256, mask);
+        assert_eq!(engine.channel_map[0], 0);
+        assert_eq!(engine.channel_map[1], u32::MAX);
+        assert_eq!(engine.channel_map[2], 1);
+        assert_eq!(engine.channel_map[10], 2);
     }
 }
