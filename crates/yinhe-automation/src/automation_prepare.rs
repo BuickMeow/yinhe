@@ -62,6 +62,9 @@ pub fn prepare(
     let mut grid_key = layer_cache_key(&[
         view.base.scroll_x.to_bits() as u64,
         view.base.pixels_per_tick.to_bits() as u64,
+        w.to_bits() as u64,
+        h.to_bits() as u64,
+        view.base.left_panel_width.to_bits() as u64,
     ]);
     let mut sig_hash = 0u64;
     for ev in time_sig_events {

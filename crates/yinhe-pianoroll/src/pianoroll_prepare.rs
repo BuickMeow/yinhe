@@ -66,6 +66,9 @@ pub fn prepare(
     let mut grid_key = layer_cache_key(&[
         scroll_x.to_bits() as u64,
         ppu.to_bits() as u64,
+        w.to_bits() as u64,
+        h.to_bits() as u64,
+        kb_w.to_bits() as u64,
     ]);
     if let Some(midi) = midi {
         let sig_events = midi.time_sig_events();

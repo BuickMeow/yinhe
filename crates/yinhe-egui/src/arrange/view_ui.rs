@@ -112,6 +112,9 @@ pub fn show(
         let mut grid_key = layer_cache_key(&[
             view.base.scroll_x.to_bits() as u64,
             view.base.pixels_per_tick.to_bits() as u64,
+            w as u64,
+            h as u64,
+            view.base.left_panel_width.to_bits() as u64,
         ]);
         if let Some(midi) = midi {
             let sig_events = midi.time_sig_events();
