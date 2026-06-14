@@ -80,6 +80,8 @@ pub fn show_panels(
     track_colors: &[[f32; 3]],
     scroll_mode: u32,
     min_border_width: f32,
+    midi: Option<&dyn yinhe_automation::NoteSource>,
+    velocity_display_mode: u32,
 ) -> f32 {
     if !*show_panels || panels.is_empty() {
         return 0.0;
@@ -148,6 +150,7 @@ pub fn show_panels(
                     gh,
                     panel,
                     lane,
+                    midi,
                     tpb,
                     default_num,
                     default_den,
@@ -157,6 +160,7 @@ pub fn show_panels(
                     force_rebuild,
                     scroll_mode,
                     min_border_width,
+                    velocity_display_mode,
                 );
 
                 let content_changed = panel.dirty || gpu_dirty;

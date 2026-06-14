@@ -17,6 +17,8 @@ pub struct AudioSettings {
     pub default_sf2_path: String,
     pub global_sf_config: GlobalSfConfig,
     /// 0=原始, 1=整数对齐, 2=子像素偏移
+    /// 0=柱状(2px竖条), 1=矩形(填充), 2=空心矩形(边框)
+    pub velocity_display_mode: u32,
     pub scroll_mode: u32,
     /// 最小边框宽度(像素), 0=不设下限
     pub min_border_width: f32,
@@ -81,6 +83,7 @@ impl Default for AudioSettings {
             global_sf_config: GlobalSfConfig::builtin_default(),
             scroll_mode: 0,
             min_border_width: 0.0,
+            velocity_display_mode: 0,
             show_settings: false,
             available_devices,
             available_sample_rates,
@@ -236,6 +239,22 @@ pub fn show(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
                                 let selected = settings.scroll_mode == i as u32;
                                 if ui.selectable_label(selected, *name).clicked() {
                                     settings.scroll_mode = i as u32;
+                                    changed = true;
+                                }
+                            }
+                        });
+                    ui.end_row();
+
+                    ui.label("Velocity显示");
+                    let vel_names = ["柱状", "矩形", "空心矩形"];
+                    let current_vel = settings.velocity_display_mode as usize;
+                    egui::ComboBox::from_id_salt("velocity_display_mode")
+                        .selected_text(vel_names[current_vel])
+                        .show_ui(ui, |ui| {
+                            for (i, name) in vel_names.iter().enumerate() {
+                                let selected = settings.velocity_display_mode == i as u32;
+                                if ui.selectable_label(selected, *name).clicked() {
+                                    settings.velocity_display_mode = i as u32;
                                     changed = true;
                                 }
                             }

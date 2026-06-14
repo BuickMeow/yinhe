@@ -8,4 +8,4 @@ pub use yinhe_wgpu::{
 };
 pub use automation_prepare::prepare as prepare_automation;
 pub use automation_view::AutomationPanelView;
-pub use yinhe_types::{AutomationLane, AutomationTarget, TimeSigEvent, TimelineViewBase};
+pub use yinhe_types::{AutomationLane, AutomationTarget, NoteSource, TimeSigEvent, TimelineViewBase};

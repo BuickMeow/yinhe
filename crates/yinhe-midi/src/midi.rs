@@ -387,23 +387,8 @@ pub fn build_automation_lanes(
         }
     }
 
-    // Extract velocity data from notes.
-    let mut velocity_events: Vec<AutomationEvent> = Vec::new();
-    for notes in key_notes.iter() {
-        for note in notes {
-            let ch = track_channels.get(note.track as usize).copied().unwrap_or(0);
-            velocity_events.push(AutomationEvent {
-                tick: note.start_tick,
-                value: note.velocity as u16,
-                channel: ch,
-                track: note.track,
-            });
-        }
-    }
-    if !velocity_events.is_empty() {
-        velocity_events.sort_by_key(|e| e.tick);
-        lanes.insert(AutomationTarget::Velocity, velocity_events);
-    }
+    // Velocity is rendered directly from NoteSource, not as an automation lane.
+    // No need to extract velocity events here.
 
     // Convert HashMap into sorted Vec<AutomationLane>.
     let mut result: Vec<AutomationLane> = lanes

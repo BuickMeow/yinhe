@@ -1,4 +1,4 @@
-use yinhe_types::{AutomationLane, TimeSigEvent};
+use yinhe_types::{AutomationLane, NoteSource, TimeSigEvent};
 
 use crate::PianorollRenderer;
 use crate::automation_instances;
@@ -11,13 +11,17 @@ use yinhe_wgpu::layer_cache_key;
 /// Layers:
 ///   0 = decor (background + center line)
 ///   1 = grid lines
-///   2 = data bars
+///   2 = data bars (or velocity bars when target is Velocity)
+///
+/// When `lane` is None and the panel target is Velocity, velocity bars are
+/// rendered directly from `midi` instead of from an automation lane.
 pub fn prepare(
     renderer: &mut PianorollRenderer,
     width: u32,
     height: u32,
     view: &AutomationPanelView,
     lane: Option<&AutomationLane>,
+    midi: Option<&dyn NoteSource>,
     tpb: Option<u32>,
     default_num: u8,
     default_den: u8,
@@ -27,6 +31,7 @@ pub fn prepare(
     _force_rebuild: bool,
     scroll_mode: u32,
     min_border_width: f32,
+    velocity_display_mode: u32,
 ) -> bool {
     let w = width as f32;
     let h = height as f32;
@@ -94,7 +99,8 @@ pub fn prepare(
         automation_instances::build_grid(out, w, h, view, tpb, default_num, default_den, time_sig_events, scroll_x_pos);
     });
 
-    // Layer 2: data bars
+    // Layer 2: data bars (or velocity bars for Velocity target)
+    let is_velocity = view.selected_target == yinhe_types::AutomationTarget::Velocity;
     let tv_hash = {
         let mut h = 0u64;
         for &v in track_visible {
@@ -109,9 +115,18 @@ pub fn prepare(
         h.to_bits() as u64,
         view.base.left_panel_width.to_bits() as u64,
         tv_hash,
+        velocity_display_mode as u64,
     ]);
     renderer.upload_layer(2, bars_key, |out| {
-        automation_instances::build_data_bars(out, w, h, view, lane, track_visible, track_colors);
+        if is_velocity {
+            if let Some(midi) = midi {
+                automation_instances::build_velocity_bars(
+                    out, w, h, midi, view, track_visible, track_colors, velocity_display_mode,
+                );
+            }
+        } else {
+            automation_instances::build_data_bars(out, w, h, view, lane, track_visible, track_colors);
+        }
     });
 
     true

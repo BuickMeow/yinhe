@@ -66,11 +66,13 @@ fn vs_main(
     // Use floor(end) - floor(start) for width/height so adjacent notes
     // sharing a boundary have no gap.
     if u.scroll_mode != 0u {
-        pixel_x = floor(pixel_x + 0.5);
+        let raw_x = pixel_x;
+        let raw_right = pixel_x + pixel_w;
+        pixel_x = floor(raw_x + 0.5);
         let raw_y = pixel_y;
         let raw_bottom = pixel_y + pixel_h;
         pixel_y = floor(raw_y + 0.5);
-        pixel_w = max(floor(pixel_w + 0.5), 1.0);
+        pixel_w = max(floor(raw_right + 0.5) - floor(raw_x + 0.5), 1.0);
         pixel_h = max(floor(raw_bottom + 0.5) - floor(raw_y + 0.5), 1.0);
     }
 
