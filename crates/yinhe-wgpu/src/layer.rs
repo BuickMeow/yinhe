@@ -3,6 +3,9 @@ use wgpu::*;
 use crate::vertex::NoteInstance;
 
 const MIN_CAPACITY: usize = 4096;
+/// Maximum instances per GPU buffer chunk.
+/// 4M × 32 bytes = 128 MB, well under the 256 MB wgpu limit.
+const MAX_PER_CHUNK: usize = 4_000_000;
 
 fn grow_capacity(required: usize) -> usize {
     let mut cap = MIN_CAPACITY;
@@ -12,24 +15,29 @@ fn grow_capacity(required: usize) -> usize {
     cap
 }
 
-/// A single GPU instance buffer layer with built-in caching and scratch reuse.
-///
-/// Each layer holds its own GPU buffer, a scratch `Vec<NoteInstance>` for
-/// building, and a `cache_key` that controls whether `upload()` actually
-/// rebuilds.  Layers are drawn in index order (lowest index = bottom).
-pub struct LayerSlot {
+struct BufferChunk {
     buffer: Buffer,
     capacity: usize,
     size_bytes: u64,
-    scratch: Vec<NoteInstance>,
-    cache_key: u64,
-    count: usize,
 }
 
-impl Drop for LayerSlot {
+impl Drop for BufferChunk {
     fn drop(&mut self) {
         yinhe_memtrace::sub_gpu_resource(self.size_bytes);
     }
+}
+
+/// A single GPU instance buffer layer with built-in caching and scratch reuse.
+///
+/// Each layer holds chunked GPU buffers, a scratch `Vec<NoteInstance>` for
+/// building, and a `cache_key` that controls whether `upload()` actually
+/// rebuilds.  When instances exceed `MAX_PER_CHUNK`, additional chunks are
+/// created automatically.  Layers are drawn in index order (lowest = bottom).
+pub struct LayerSlot {
+    chunks: Vec<BufferChunk>,
+    scratch: Vec<NoteInstance>,
+    cache_key: u64,
+    count: usize,
 }
 
 impl LayerSlot {
@@ -47,9 +55,11 @@ impl LayerSlot {
         });
         yinhe_memtrace::add_gpu_resource(size);
         Self {
-            buffer,
-            capacity: cap,
-            size_bytes: size,
+            chunks: vec![BufferChunk {
+                buffer,
+                capacity: cap,
+                size_bytes: size,
+            }],
             scratch: Vec::new(),
             cache_key: 0,
             count: 0,
@@ -95,16 +105,81 @@ impl LayerSlot {
         if self.count == 0 {
             return;
         }
-        self.ensure_buffer(device, self.count);
-        queue.write_buffer(&self.buffer, 0, bytemuck::cast_slice(instances));
+        self.ensure_chunks(device, self.count);
+        for (i, chunk_instances) in instances.chunks(MAX_PER_CHUNK).enumerate() {
+            let chunk = &mut self.chunks[i];
+            chunk.ensure_capacity(device, chunk_instances.len());
+            queue.write_buffer(&chunk.buffer, 0, bytemuck::cast_slice(chunk_instances));
+        }
     }
 
-    fn ensure_buffer(&mut self, device: &Device, required: usize) {
+    fn ensure_chunks(&mut self, device: &Device, required: usize) {
+        let needed = required.div_ceil(MAX_PER_CHUNK);
+        while self.chunks.len() > needed {
+            self.chunks.pop();
+        }
+        while self.chunks.len() < needed {
+            let instance_size = std::mem::size_of::<NoteInstance>() as u64;
+            let cap = MIN_CAPACITY;
+            let size = instance_size * cap as u64;
+            let buffer = yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Gpu, || {
+                device.create_buffer(&BufferDescriptor {
+                    label: Some("layer_buffer"),
+                    size,
+                    usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                })
+            });
+            yinhe_memtrace::add_gpu_resource(size);
+            self.chunks.push(BufferChunk {
+                buffer,
+                capacity: cap,
+                size_bytes: size,
+            });
+        }
+    }
+
+    fn flush(&mut self, device: &Device, queue: &Queue) {
+        if self.count == 0 {
+            return;
+        }
+        self.ensure_chunks(device, self.count);
+        for (i, chunk_instances) in self.scratch[..self.count].chunks(MAX_PER_CHUNK).enumerate() {
+            let chunk = &mut self.chunks[i];
+            chunk.ensure_capacity(device, chunk_instances.len());
+            queue.write_buffer(&chunk.buffer, 0, bytemuck::cast_slice(chunk_instances));
+        }
+    }
+
+    /// Draw this layer into an active render pass.
+    pub fn draw<'a>(&self, pass: &mut RenderPass<'a>, vertex_slot: u32) {
+        if self.count == 0 {
+            return;
+        }
+        let mut remaining = self.count;
+        for chunk in &self.chunks {
+            let batch_count = remaining.min(MAX_PER_CHUNK);
+            if batch_count == 0 {
+                break;
+            }
+            pass.set_vertex_buffer(vertex_slot, chunk.buffer.slice(..));
+            pass.draw(0..6, 0..batch_count as u32);
+            remaining -= batch_count;
+        }
+    }
+
+    pub fn instance_count(&self) -> usize {
+        self.count
+    }
+}
+
+impl BufferChunk {
+    fn ensure_capacity(&mut self, device: &Device, required: usize) {
         if required <= self.capacity {
             return;
         }
         let instance_size = std::mem::size_of::<NoteInstance>() as u64;
-        let new_cap = grow_capacity(required);
+        let new_cap = grow_capacity(required).min(MAX_PER_CHUNK);
         let new_size = instance_size * new_cap as u64;
         let new_buffer = yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Gpu, || {
             device.create_buffer(&BufferDescriptor {
@@ -119,27 +194,6 @@ impl LayerSlot {
         self.buffer = new_buffer;
         self.capacity = new_cap;
         self.size_bytes = new_size;
-    }
-
-    fn flush(&mut self, device: &Device, queue: &Queue) {
-        if self.count == 0 {
-            return;
-        }
-        self.ensure_buffer(device, self.count);
-        queue.write_buffer(&self.buffer, 0, bytemuck::cast_slice(&self.scratch[..self.count]));
-    }
-
-    /// Draw this layer into an active render pass.
-    pub fn draw<'a>(&self, pass: &mut RenderPass<'a>, vertex_slot: u32) {
-        if self.count == 0 {
-            return;
-        }
-        pass.set_vertex_buffer(vertex_slot, self.buffer.slice(..));
-        pass.draw(0..6, 0..self.count as u32);
-    }
-
-    pub fn instance_count(&self) -> usize {
-        self.count
     }
 }
 
