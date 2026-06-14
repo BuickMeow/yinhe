@@ -53,7 +53,11 @@ pub fn prepare(
             }
         })
         .unwrap_or(0);
-    let decor_key = layer_cache_key(&[h.to_bits() as u64, center_line_hash]);
+    let decor_key = layer_cache_key(&[
+        w.to_bits() as u64,
+        h.to_bits() as u64,
+        center_line_hash,
+    ]);
     renderer.upload_layer(0, decor_key, |out| {
         automation_instances::build_decor(out, w, h, lane);
     });
@@ -88,6 +92,9 @@ pub fn prepare(
     let bars_key = layer_cache_key(&[
         view.base.scroll_x.to_bits() as u64,
         view.base.pixels_per_tick.to_bits() as u64,
+        w.to_bits() as u64,
+        h.to_bits() as u64,
+        view.base.left_panel_width.to_bits() as u64,
         tv_hash,
     ]);
     renderer.upload_layer(2, bars_key, |out| {

@@ -91,10 +91,20 @@ pub fn show(
         renderer.ensure_layers(3);
 
         // Layer 0: decor (background + track lanes)
+        let tv_hash = {
+            let mut h = 0u64;
+            for &v in track_visible {
+                h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(v as u64);
+            }
+            h
+        };
         let decor_key = layer_cache_key(&[
             view.base.scroll_y.to_bits() as u64,
             view.lane_height.to_bits() as u64,
             h as u64,
+            w as u64,
+            view.base.left_panel_width.to_bits() as u64,
+            tv_hash,
         ]);
         renderer.upload_layer(0, decor_key, |out| {
             arrangement_instances::build_decor(
@@ -146,18 +156,14 @@ pub fn show(
         });
 
         // Layer 2: notes
-        let tv_hash = {
-            let mut h = 0u64;
-            for &v in track_visible {
-                h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(v as u64);
-            }
-            h
-        };
         let notes_key = layer_cache_key(&[
             view.base.scroll_x.to_bits() as u64,
             view.base.scroll_y.to_bits() as u64,
             view.base.pixels_per_tick.to_bits() as u64,
             view.lane_height.to_bits() as u64,
+            w as u64,
+            h as u64,
+            view.base.left_panel_width.to_bits() as u64,
             tv_hash,
         ]);
         renderer.upload_layer(2, notes_key, |out| {

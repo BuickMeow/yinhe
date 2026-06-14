@@ -57,6 +57,8 @@ pub fn prepare(
         scroll_y.to_bits() as u64,
         kh.to_bits() as u64,
         h.to_bits() as u64,
+        w.to_bits() as u64,
+        kb_w.to_bits() as u64,
     ]);
     renderer.upload_layer(0, decor_key, |out| {
         instances::build_decor(out, w, h, kb_w, kh, scroll_y);
@@ -113,6 +115,9 @@ pub fn prepare(
         scroll_y.to_bits() as u64,
         ppu.to_bits() as u64,
         kh.to_bits() as u64,
+        w.to_bits() as u64,
+        h.to_bits() as u64,
+        kb_w.to_bits() as u64,
         sel_hash,
         tv_hash,
     ]);
@@ -127,6 +132,7 @@ pub fn prepare(
         scroll_y.to_bits() as u64,
         kh.to_bits() as u64,
         h.to_bits() as u64,
+        kb_w.to_bits() as u64,
     ]);
     renderer.upload_layer(3, kb_key, |out| {
         instances::build_keyboard(out, kb_w, kh, scroll_y, h);
