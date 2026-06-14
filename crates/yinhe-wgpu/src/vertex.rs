@@ -10,6 +10,9 @@ pub struct Uniforms {
     pub key_height: f32,
     pub keyboard_width: f32,
     pub mode: u32, // 0=pixel, 1=PR notes(tick→pixel+rounding), 2=AR notes(tick→pixel)
+    pub scroll_frac: f32, // fractional part of scroll_x for sub-pixel NDC offset
+    pub scroll_mode: u32, // 0=原始, 1=整数对齐, 2=子像素偏移
+    pub min_border_width: f32,
 }
 
 /// Packed instance: 32 bytes.

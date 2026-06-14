@@ -49,6 +49,8 @@ pub fn show(
     auto_lanes: Option<&[AutomationLane]>,
     auto_show: Option<&mut bool>,
     auto_wgpu_state: Option<&Arc<eframe::egui_wgpu::RenderState>>,
+    scroll_mode: u32,
+    min_border_width: f32,
 ) -> Option<crate::widgets::selection_actions::SelectionAction> {
     // Sense::hover() — no drag ownership. All drag is handled by dedicated
     // ui.interact calls below, each inside its own push_id scope.
@@ -214,6 +216,8 @@ pub fn show(
             &*selected,
             track_visible,
             track_colors,
+            scroll_mode,
+            min_border_width,
         )
     });
 
@@ -353,6 +357,8 @@ pub fn show(
             bar_line_data.map(|b| b.3).unwrap_or(&[]),
             track_visible,
             track_colors,
+            scroll_mode,
+            min_border_width,
         );
 
         if midi.is_some() {

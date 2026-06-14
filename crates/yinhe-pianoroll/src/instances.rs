@@ -66,6 +66,7 @@ pub fn build_grid(
     default_num: u8,
     default_den: u8,
     time_sig_events: &[TimeSigEvent],
+    scroll_x_pixel: f32,
 ) {
     grid::build_timeline_grid(
         out,
@@ -79,6 +80,7 @@ pub fn build_grid(
         grid::PR_MEASURE_LINE_COLOR,
         grid::PR_BEAT_LINE_COLOR,
         Some(grid::PR_SUB_BEAT_LINE_COLOR),
+        scroll_x_pixel,
     );
 }
 
@@ -219,7 +221,7 @@ pub fn build_static_instances(
     {
         let (def_num, def_den) = midi.time_sig_default();
         let sig_events = midi.time_sig_events();
-        build_grid(instances, w, h, view, tpb, def_num, def_den, sig_events);
+        build_grid(instances, w, h, view, tpb, def_num, def_den, sig_events, 0.0);
         build_notes(
             instances,
             w,
@@ -367,7 +369,7 @@ mod tests {
     fn test_build_grid_basic() {
         let mut out = Vec::new();
         let view = make_view();
-        build_grid(&mut out, 800.0, 500.0, &view, 480, 4, 2, &[]);
+        build_grid(&mut out, 800.0, 500.0, &view, 480, 4, 2, &[], 0.0);
         assert!(!out.is_empty(), "grid should produce lines");
         for inst in &out {
             // Grid lines are centered: x = tick_x - line_width/2
@@ -386,7 +388,7 @@ mod tests {
             TimeSigEvent { tick: 0, numerator: 4, denominator: 2 },
             TimeSigEvent { tick: 1920, numerator: 3, denominator: 2 },
         ];
-        build_grid(&mut out, 800.0, 500.0, &view, 480, 4, 2, &sigs);
+        build_grid(&mut out, 800.0, 500.0, &view, 480, 4, 2, &sigs, 0.0);
         assert!(!out.is_empty());
     }
 

@@ -86,6 +86,9 @@ pub fn measure_bounds_at_tick(
 /// Build timeline grid lines shared by pianoroll and arrangement views.
 ///
 /// `sub_beat_color`: if Some, render sub-beat lines when `pixels_per_sub >= 2.0`.
+/// `scroll_x_pixel`: the integer-scrolled scroll_x used for pixel positions.
+///   This should be `floor(scroll_x)` so grid lines are stable across frames;
+///   the fractional part is applied as a uniform NDC offset in the shader.
 pub fn build_timeline_grid(
     out: &mut Vec<NoteInstance>,
     w: f32,
@@ -98,6 +101,7 @@ pub fn build_timeline_grid(
     measure_color: (f32, f32, f32, f32),
     beat_color: (f32, f32, f32, f32),
     sub_beat_color: Option<(f32, f32, f32, f32)>,
+    scroll_x_pixel: f32,
 ) {
     let ppu = base.pixels_per_tick;
     if ppu <= 0.001 {
@@ -105,7 +109,7 @@ pub fn build_timeline_grid(
     }
     let (tick_start, tick_end) = base.visible_tick_range(w);
     let left_w = base.left_panel_width;
-    let x_origin = left_w - base.scroll_x;
+    let x_origin = left_w - scroll_x_pixel;
 
     let sub_beat_div = 4u32;
     let ticks_per_sub = (tpb / sub_beat_div).max(1);
@@ -305,7 +309,7 @@ mod tests {
             track_panel_scroll_y: 0.0,
         };
         build_timeline_grid(&mut out, 800.0, 500.0, &base, 480, 4, 2, &[],
-            (0.3, 0.3, 0.35, 1.0), (0.2, 0.2, 0.25, 1.0), Some((0.16, 0.16, 0.18, 1.0)));
+            (0.3, 0.3, 0.35, 1.0), (0.2, 0.2, 0.25, 1.0), Some((0.16, 0.16, 0.18, 1.0)), 0.0);
         assert!(!out.is_empty(), "grid should produce lines");
         for inst in &out {
             assert!(inst.x >= 0.0, "line should be within viewport");
@@ -327,7 +331,7 @@ mod tests {
             track_panel_scroll_y: 0.0,
         };
         build_timeline_grid(&mut out, 800.0, 500.0, &base, 480, 4, 2, &[],
-            (0.3, 0.3, 0.35, 1.0), (0.2, 0.2, 0.25, 1.0), Some((0.16, 0.16, 0.18, 1.0)));
+            (0.3, 0.3, 0.35, 1.0), (0.2, 0.2, 0.25, 1.0), Some((0.16, 0.16, 0.18, 1.0)), 0.0);
         assert!(out.is_empty(), "no grid lines when ppu is 0");
     }
 
@@ -348,7 +352,7 @@ mod tests {
             TimeSigEvent { tick: 1920, numerator: 3, denominator: 2 },
         ];
         build_timeline_grid(&mut out, 800.0, 500.0, &base, 480, 4, 2, &events,
-            (0.3, 0.3, 0.35, 1.0), (0.2, 0.2, 0.25, 1.0), Some((0.16, 0.16, 0.18, 1.0)));
+            (0.3, 0.3, 0.35, 1.0), (0.2, 0.2, 0.25, 1.0), Some((0.16, 0.16, 0.18, 1.0)), 0.0);
         assert!(!out.is_empty());
     }
 
@@ -365,7 +369,7 @@ mod tests {
             track_panel_scroll_y: 0.0,
         };
         build_timeline_grid(&mut out, 800.0, 500.0, &base, 480, 4, 2, &[],
-            (0.3, 0.3, 0.35, 1.0), (0.2, 0.2, 0.25, 1.0), None);
+            (0.3, 0.3, 0.35, 1.0), (0.2, 0.2, 0.25, 1.0), None, 0.0);
         assert!(!out.is_empty());
     }
 }

@@ -78,6 +78,8 @@ pub fn show_panels(
     time_sig_events: &[yinhe_types::TimeSigEvent],
     track_visible: &[bool],
     track_colors: &[[f32; 3]],
+    scroll_mode: u32,
+    min_border_width: f32,
 ) -> f32 {
     if !*show_panels || panels.is_empty() {
         return 0.0;
@@ -153,6 +155,8 @@ pub fn show_panels(
                     track_visible,
                     track_colors,
                     force_rebuild,
+                    scroll_mode,
+                    min_border_width,
                 );
 
                 let content_changed = panel.dirty || gpu_dirty;

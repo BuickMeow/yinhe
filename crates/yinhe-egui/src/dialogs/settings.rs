@@ -16,6 +16,10 @@ pub struct AudioSettings {
     /// Kept for migration — no longer used directly.
     pub default_sf2_path: String,
     pub global_sf_config: GlobalSfConfig,
+    /// 0=原始, 1=整数对齐, 2=子像素偏移
+    pub scroll_mode: u32,
+    /// 最小边框宽度(像素), 0=不设下限
+    pub min_border_width: f32,
     #[serde(skip)]
     pub show_settings: bool,
     #[serde(skip)]
@@ -75,6 +79,8 @@ impl Default for AudioSettings {
             sample_rate: default_rate,
             default_sf2_path: String::new(),
             global_sf_config: GlobalSfConfig::builtin_default(),
+            scroll_mode: 0,
+            min_border_width: 0.0,
             show_settings: false,
             available_devices,
             available_sample_rates,
@@ -206,6 +212,45 @@ pub fn show(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
                                 }
                             }
                         });
+                    ui.end_row();
+                });
+
+            ui.add_space(16.0);
+            ui.separator();
+            ui.add_space(8.0);
+
+            ui.heading("渲染");
+            ui.add_space(8.0);
+
+            egui::Grid::new("render_settings_grid")
+                .num_columns(2)
+                .spacing([12.0, 8.0])
+                .show(ui, |ui| {
+                    ui.label("滚动模式");
+                    let mode_names = ["原始", "整数对齐", "子像素偏移"];
+                    let current = settings.scroll_mode as usize;
+                    egui::ComboBox::from_id_salt("scroll_mode")
+                        .selected_text(mode_names[current])
+                        .show_ui(ui, |ui| {
+                            for (i, name) in mode_names.iter().enumerate() {
+                                let selected = settings.scroll_mode == i as u32;
+                                if ui.selectable_label(selected, *name).clicked() {
+                                    settings.scroll_mode = i as u32;
+                                    changed = true;
+                                }
+                            }
+                        });
+                    ui.end_row();
+
+                    ui.label("最小边框宽度");
+                    let mut bw = settings.min_border_width;
+                    if ui
+                        .add(egui::Slider::new(&mut bw, 0.0..=5.0).step_by(0.5))
+                        .changed()
+                    {
+                        settings.min_border_width = bw;
+                        changed = true;
+                    }
                     ui.end_row();
                 });
 

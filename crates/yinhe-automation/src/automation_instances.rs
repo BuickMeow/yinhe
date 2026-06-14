@@ -75,6 +75,7 @@ pub fn build_grid(
     default_num: u8,
     default_den: u8,
     time_sig_events: &[TimeSigEvent],
+    scroll_x_pixel: f32,
 ) {
     if let Some(tpb) = tpb {
         grid::build_timeline_grid(
@@ -89,6 +90,7 @@ pub fn build_grid(
             grid::PR_MEASURE_LINE_COLOR,
             grid::PR_BEAT_LINE_COLOR,
             Some(grid::PR_SUB_BEAT_LINE_COLOR),
+            scroll_x_pixel,
         );
     }
 }
@@ -203,7 +205,7 @@ pub fn build_automation_instances(
     let h = height as f32;
 
     build_decor(instances, w, h, lane);
-    build_grid(instances, w, h, view, tpb, default_num, default_den, time_sig_events);
+    build_grid(instances, w, h, view, tpb, default_num, default_den, time_sig_events, 0.0);
     build_data_bars(instances, w, h, view, lane, track_visible, track_colors);
 }
 

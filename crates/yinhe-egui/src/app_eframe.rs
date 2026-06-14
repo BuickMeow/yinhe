@@ -292,6 +292,8 @@ impl eframe::App for App {
                     self.audio.as_ref(),
                     &mut request_pianoroll,
                     &mut self.track_selection_anchor,
+                    self.audio_settings.scroll_mode,
+                    self.audio_settings.min_border_width,
                 );
                 if request_pianoroll {
                     self.show_pianoroll = true;
@@ -398,6 +400,8 @@ impl eframe::App for App {
                             Some(&doc.midi.automation_lanes),
                             Some(&mut doc.show_controller_panels),
                             Some(&auto_wgpu_state),
+                            self.audio_settings.scroll_mode,
+                            self.audio_settings.min_border_width,
                         );
                         if let Some(t0) = _piano_total_start {
                             crate::perf_probe::record_piano_total(t0.elapsed());

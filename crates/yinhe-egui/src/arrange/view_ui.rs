@@ -33,6 +33,8 @@ pub fn show(
     _track_names: &[String],
     follow_mode: &mut crate::view_interaction::FollowMode,
     active_tool: &Tool,
+    scroll_mode: u32,
+    min_border_width: f32,
 ) {
     let _arrange_total_start = if crate::perf_probe::enabled() {
         Some(std::time::Instant::now())
@@ -73,15 +75,27 @@ pub fn show(
         }
     }
 
+    let scroll_x = view.base.scroll_x;
+    let (scroll_x_pos, scroll_frac) = match scroll_mode {
+        0 => (scroll_x, 0.0),
+        _ => {
+            let f = scroll_x.floor();
+            (f, scroll_x - f)
+        },
+    };
+
     let uniforms = Uniforms {
         width: w as f32,
         height: h as f32,
-        scroll_x: view.base.scroll_x,
+        scroll_x: scroll_x_pos,
         scroll_y: view.base.scroll_y,
         pixels_per_tick: view.base.pixels_per_tick,
         key_height: view.lane_height,
         keyboard_width: view.base.left_panel_width,
         mode: 2, // AR notes: tick→pixel only
+        scroll_frac,
+        scroll_mode,
+        min_border_width,
     };
 
     view.base.dirty = false;
@@ -120,7 +134,7 @@ pub fn show(
 
         // Layer 1: grid lines
         let mut grid_key = layer_cache_key(&[
-            view.base.scroll_x.to_bits() as u64,
+            scroll_x_pos.to_bits() as u64,
             view.base.pixels_per_tick.to_bits() as u64,
             w as u64,
             h as u64,
@@ -151,6 +165,7 @@ pub fn show(
                     def_num,
                     def_den,
                     sig_events,
+                    scroll_x_pos,
                 );
             }
         });

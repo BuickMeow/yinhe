@@ -28,6 +28,8 @@ pub fn prepare(
     selected: &HashSet<(u16, u32, u8)>,
     track_visible: &[bool],
     track_colors: &[[f32; 3]],
+    scroll_mode: u32,
+    min_border_width: f32,
 ) -> yinhe_wgpu::PrepareTimings {
     let w = width as f32;
     let h = height as f32;
@@ -36,16 +38,26 @@ pub fn prepare(
     let scroll_y = view.base.scroll_y;
     let ppu = view.base.pixels_per_tick;
     let scroll_x = view.base.scroll_x;
+    let (scroll_x_pos, scroll_frac) = match scroll_mode {
+        0 => (scroll_x, 0.0),
+        _ => {
+            let f = scroll_x.floor();
+            (f, scroll_x - f)
+        },
+    };
 
     let uniforms = Uniforms {
         width: w,
         height: h,
-        scroll_x,
+        scroll_x: scroll_x_pos,
         scroll_y,
         pixels_per_tick: ppu,
         key_height: kh,
         keyboard_width: kb_w,
         mode: 1, // PR notes: tick→pixel + compute rounding in shader
+        scroll_frac,
+        scroll_mode,
+        min_border_width,
     };
 
     let t = std::time::Instant::now();
@@ -66,7 +78,7 @@ pub fn prepare(
 
     // Layer 1: grid lines
     let mut grid_key = layer_cache_key(&[
-        scroll_x.to_bits() as u64,
+        scroll_x_pos.to_bits() as u64,
         ppu.to_bits() as u64,
         w.to_bits() as u64,
         h.to_bits() as u64,
@@ -89,7 +101,7 @@ pub fn prepare(
         {
             let (def_num, def_den) = midi.time_sig_default();
             let sig_events = midi.time_sig_events();
-            instances::build_grid(out, w, h, view, tpb, def_num, def_den, sig_events);
+            instances::build_grid(out, w, h, view, tpb, def_num, def_den, sig_events, scroll_x_pos);
         }
     });
 

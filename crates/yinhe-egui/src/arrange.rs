@@ -29,6 +29,8 @@ pub fn show(
     audio: Option<&yinhe_audio::CpalAudioHandle>,
     request_pianoroll: &mut bool,
     selection_anchor: &mut Option<u16>,
+    scroll_mode: u32,
+    min_border_width: f32,
 ) {
     *last_cursor_tick = doc.cursor_tick;
 
@@ -195,6 +197,8 @@ pub fn show(
             &doc.track_names,
             follow_mode,
             active_tool,
+            scroll_mode,
+            min_border_width,
         );
     });
 

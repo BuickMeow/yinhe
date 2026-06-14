@@ -71,6 +71,7 @@ pub fn build_grid(
     default_num: u8,
     default_den: u8,
     time_sig_events: &[TimeSigEvent],
+    scroll_x_pixel: f32,
 ) {
     grid::build_timeline_grid(
         out,
@@ -84,6 +85,7 @@ pub fn build_grid(
         grid::AR_MEASURE_LINE_COLOR,
         grid::AR_BEAT_LINE_COLOR,
         None,
+        scroll_x_pixel,
     );
 }
 
@@ -226,7 +228,7 @@ pub fn build_arrangement_static(
     {
         let (def_num, def_den) = midi.time_sig_default();
         let sig_events = midi.time_sig_events();
-        build_grid(instances, w, h, view, tpb, def_num, def_den, sig_events);
+        build_grid(instances, w, h, view, tpb, def_num, def_den, sig_events, 0.0);
         build_notes(instances, w, h, midi, view, track_visible, track_colors, 0.0);
     }
 }
@@ -503,7 +505,7 @@ mod tests {
         ];
 
         let mut grid_lines = Vec::new();
-        build_grid(&mut grid_lines, 2000.0, 400.0, &view, tpb, 4, 2, &events);
+        build_grid(&mut grid_lines, 2000.0, 400.0, &view, tpb, 4, 2, &events, 0.0);
 
         let ticks: Vec<u32> = grid_lines.iter().map(|i| i.tag).collect();
 

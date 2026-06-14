@@ -25,19 +25,32 @@ pub fn prepare(
     track_visible: &[bool],
     track_colors: &[[f32; 3]],
     _force_rebuild: bool,
+    scroll_mode: u32,
+    min_border_width: f32,
 ) -> bool {
     let w = width as f32;
     let h = height as f32;
+    let scroll_x = view.base.scroll_x;
+    let (scroll_x_pos, scroll_frac) = match scroll_mode {
+        0 => (scroll_x, 0.0),
+        _ => {
+            let f = scroll_x.floor();
+            (f, scroll_x - f)
+        },
+    };
 
     let uniforms = Uniforms {
         width: w,
         height: h,
-        scroll_x: view.base.scroll_x,
+        scroll_x: scroll_x_pos,
         scroll_y: 0.0,
         pixels_per_tick: view.base.pixels_per_tick,
         key_height: 0.0,
         keyboard_width: view.base.left_panel_width,
         mode: 0, // pixel mode
+        scroll_frac,
+        scroll_mode,
+        min_border_width,
     };
 
     renderer.upload_uniforms(uniforms);
@@ -64,7 +77,7 @@ pub fn prepare(
 
     // Layer 1: grid lines
     let mut grid_key = layer_cache_key(&[
-        view.base.scroll_x.to_bits() as u64,
+        scroll_x_pos.to_bits() as u64,
         view.base.pixels_per_tick.to_bits() as u64,
         w.to_bits() as u64,
         h.to_bits() as u64,
@@ -78,7 +91,7 @@ pub fn prepare(
     }
     grid_key = layer_cache_key(&[grid_key, sig_hash]);
     renderer.upload_layer(1, grid_key, |out| {
-        automation_instances::build_grid(out, w, h, view, tpb, default_num, default_den, time_sig_events);
+        automation_instances::build_grid(out, w, h, view, tpb, default_num, default_den, time_sig_events, scroll_x_pos);
     });
 
     // Layer 2: data bars
@@ -90,7 +103,7 @@ pub fn prepare(
         h
     };
     let bars_key = layer_cache_key(&[
-        view.base.scroll_x.to_bits() as u64,
+        scroll_x_pos.to_bits() as u64,
         view.base.pixels_per_tick.to_bits() as u64,
         w.to_bits() as u64,
         h.to_bits() as u64,

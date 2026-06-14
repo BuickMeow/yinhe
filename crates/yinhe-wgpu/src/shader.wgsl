@@ -11,6 +11,9 @@ struct Uniforms {
     key_height: f32,
     keyboard_width: f32,
     mode: u32, // 0=pixel, 1=PR notes(tick→pixel+rounding), 2=AR notes(tick→pixel)
+    scroll_frac: f32, // fractional part of scroll_x for sub-pixel NDC offset
+    scroll_mode: u32, // 0=原始, 1=整数对齐, 2=子像素偏移
+    min_border_width: f32,
 }
 
 struct NoteInstance {
@@ -55,22 +58,21 @@ fn vs_main(
         let x_offset = u.keyboard_width - u.scroll_x;
         let raw_x = x_offset + start_tick * ppu;
         let raw_end = x_offset + end_tick * ppu;
-        pixel_x = floor(raw_x + 0.5);
-        pixel_w = max(floor(raw_end + 0.5) - floor(raw_x + 0.5), 2.0);
+        pixel_x = raw_x;
+        pixel_w = max(raw_end - raw_x, 2.0);
     }
 
-    // Snap all positions to integer pixels to prevent sub-pixel jitter
-    // during scrolling.  1-pixel steps at 60fps are perceived as smooth
-    // scrolling, while sub-pixel movement causes visible "ripple" artifacts
-    // on dense note patterns.
+    // Snap to integer pixels (模式1和2) to prevent sub-pixel jitter.
     // Use floor(end) - floor(start) for width/height so adjacent notes
     // sharing a boundary have no gap.
-    pixel_x = floor(pixel_x + 0.5);
-    let raw_y = pixel_y;
-    let raw_bottom = pixel_y + pixel_h;
-    pixel_y = floor(raw_y + 0.5);
-    pixel_w = max(floor(pixel_w + 0.5), 1.0);
-    pixel_h = max(floor(raw_bottom + 0.5) - floor(raw_y + 0.5), 1.0);
+    if u.scroll_mode != 0u {
+        pixel_x = floor(pixel_x + 0.5);
+        let raw_y = pixel_y;
+        let raw_bottom = pixel_y + pixel_h;
+        pixel_y = floor(raw_y + 0.5);
+        pixel_w = max(floor(pixel_w + 0.5), 1.0);
+        pixel_h = max(floor(raw_bottom + 0.5) - floor(raw_y + 0.5), 1.0);
+    }
 
     var pos = array<vec2<f32>, 6>(
         vec2<f32>(pixel_x + pixel_w, pixel_y),
@@ -91,7 +93,11 @@ fn vs_main(
     );
 
     let pixel_pos = pos[vertex_index];
-    let ndc_x = (pixel_pos.x / u.width) * 2.0 - 1.0;
+    // Sub-pixel NDC offset (仅模式2): scroll_frac is the fractional part of
+    // scroll_x.  CPU-side positions use floor(scroll_x) so they are stable.
+    // The fractional offset here makes scrolling appear smooth at sub-pixel level.
+    let ndc_offset = select(0.0, u.scroll_frac, u.scroll_mode == 2u);
+    let ndc_x = ((pixel_pos.x - ndc_offset) / u.width) * 2.0 - 1.0;
     let ndc_y = 1.0 - (pixel_pos.y / u.height) * 2.0;
 
     out.clip_position = vec4<f32>(ndc_x, ndc_y, 0.0, 1.0);
@@ -112,7 +118,7 @@ fn vs_main(
         // PR notes: compute rounding/border from pixel dimensions
         let min_dim = min(pixel_w, pixel_h);
         radius = 0.15 * min_dim;
-        border_width = 0.1 * min_dim;
+        border_width = max(0.1 * min_dim, u.min_border_width);
     }
 
     out.radius = radius;
