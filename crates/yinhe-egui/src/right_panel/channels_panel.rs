@@ -1,4 +1,5 @@
 use eframe::egui;
+use egui_extras::{Column, TableBuilder};
 
 use crate::dialogs::settings::AudioSettings;
 use crate::document::Document;
@@ -84,72 +85,81 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>, settings: &AudioSetti
         }
     }
 
-    egui::ScrollArea::vertical().show(ui, |ui| {
-        egui::Grid::new("channel_map_grid")
-            .num_columns(4)
-            .spacing([12.0, 4.0])
-            .show(ui, |ui| {
-                ui.label(egui::RichText::new("XSynth").strong());
-                ui.label(egui::RichText::new("源通道").strong());
-                ui.label(egui::RichText::new("活跃").strong());
-                ui.label(egui::RichText::new("音色库").strong());
-                ui.end_row();
+    TableBuilder::new(ui)
+        .id_salt("channel_map_table")
+        .striped(true)
+        .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
+        .column(Column::initial(40.0).at_least(30.0).clip(true))
+        .column(Column::initial(130.0).at_least(60.0).clip(true))
+        .column(Column::initial(30.0).at_least(24.0))
+        .column(Column::initial(140.0).at_least(60.0).clip(true))
+        .header(20.0, |mut h| {
+            h.col(|ui| { ui.label(egui::RichText::new("XSynth").strong().size(11.0)); });
+            h.col(|ui| { ui.label(egui::RichText::new("源通道").strong().size(11.0)); });
+            h.col(|ui| { ui.label(egui::RichText::new("活跃").strong().size(11.0)); });
+            h.col(|ui| { ui.label(egui::RichText::new("音色库").strong().size(11.0)); });
+        })
+        .body(|body| {
+            body.rows(18.0, compacted_channels as usize, |mut row| {
+                let d = row.index();
+                let sources = &reverse[d as usize];
+                let source_label = if sources.is_empty() {
+                    "—".to_string()
+                } else {
+                    sources
+                        .iter()
+                        .map(|&src| {
+                            let port = (src >> 4) as u8;
+                            let ch = (src & 0x0F) + 1;
+                            format!(
+                                "{}{:02}",
+                                (b'A' + port) as char,
+                                ch
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                };
 
-                for d in 0..compacted_channels {
-                    let sources = &reverse[d as usize];
-                    let source_label = if sources.is_empty() {
-                        "—".to_string()
-                    } else {
-                        sources
+                let is_active = !sources.is_empty();
+                let color = if is_active {
+                    egui::Color32::WHITE
+                } else {
+                    egui::Color32::from_gray(120)
+                };
+
+                let sf_status = if sources.is_empty() {
+                    None
+                } else {
+                    let port = (sources[0] >> 4) as u8;
+                    let has_sf = if settings.global_sf_config.global_enabled {
+                        settings.global_sf_config.ports[0]
                             .iter()
-                            .map(|&src| {
-                                let port = (src >> 4) as u8;
-                                let ch = (src & 0x0F) + 1; // 1-based for display
-                                format!(
-                                    "{}{:02}",
-                                    (b'A' + port) as char,
-                                    ch
-                                )
-                            })
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    };
-
-                    let is_active = !sources.is_empty();
-                    let color = if is_active {
-                        ui.visuals().text_color()
+                            .any(|e| e.enabled)
                     } else {
-                        egui::Color32::from_gray(120)
+                        doc.project_sf
+                            .overrides
+                            .iter()
+                            .any(|(p, entries)| *p == port && entries.iter().any(|e| e.enabled))
                     };
+                    Some(has_sf)
+                };
 
-                    // Determine SF status for this row's port.
-                    let sf_status = if sources.is_empty() {
-                        None // inactive channel — no indicator
-                    } else {
-                        let port = (sources[0] >> 4) as u8;
-                        let has_sf = if settings.global_sf_config.global_enabled {
-                            settings.global_sf_config.ports[0]
-                                .iter()
-                                .any(|e| e.enabled)
-                        } else {
-                            doc.project_sf
-                                .overrides
-                                .iter()
-                                .any(|(p, entries)| *p == port && entries.iter().any(|e| e.enabled))
-                        };
-                        Some(has_sf)
-                    };
-
+                row.col(|ui| {
                     ui.label(
                         egui::RichText::new(format!("{:3}", d))
                             .monospace()
                             .color(color),
                     );
+                });
+                row.col(|ui| {
                     ui.label(
                         egui::RichText::new(source_label)
                             .monospace()
                             .color(color),
                     );
+                });
+                row.col(|ui| {
                     ui.label(
                         egui::RichText::new(if is_active { "●" } else { "○" })
                             .color(if is_active {
@@ -158,24 +168,24 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>, settings: &AudioSetti
                                 egui::Color32::from_gray(120)
                             }),
                     );
-                    match sf_status {
-                        None => {
-                            ui.label("");
-                        }
-                        Some(true) => {
-                            // SF loaded — no extra label needed
-                            ui.label("");
-                        }
-                        Some(false) => {
+                });
+                match sf_status {
+                    None => {
+                        row.col(|_| {});
+                    }
+                    Some(true) => {
+                        row.col(|_| {});
+                    }
+                    Some(false) => {
+                        row.col(|ui| {
                             ui.label(
                                 egui::RichText::new("● 未加载音色库")
                                     .color(egui::Color32::from_rgb(230, 160, 40))
-                                    .size(12.0),
+                                    .size(11.0),
                             );
-                        }
+                        });
                     }
-                    ui.end_row();
                 }
             });
-    });
+        });
 }
