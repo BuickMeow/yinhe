@@ -141,6 +141,10 @@ pub fn show(
         });
     });
 
+    if changed {
+        settings.save();
+    }
+
     changed
 }
 
