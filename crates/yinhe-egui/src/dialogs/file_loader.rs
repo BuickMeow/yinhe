@@ -2,6 +2,8 @@ use std::sync::mpsc;
 
 use yinhe_midi::LoadProgress;
 
+use crate::progress::{self, SharedProgress, StageStatus};
+
 /// Events sent from the background loading thread to the UI thread.
 pub(crate) enum MidiLoadEvent {
     Progress(LoadProgress),
@@ -44,13 +46,16 @@ pub(crate) enum LoadResult {
 pub(crate) struct FileLoader {
     midi_loader: Option<MidiLoader>,
     yin_loader: Option<YinLoader>,
+    /// Shared multi-stage progress state.
+    load_progress: SharedProgress,
 }
 
 impl FileLoader {
-    pub fn new() -> Self {
+    pub fn new(load_progress: SharedProgress) -> Self {
         Self {
             midi_loader: None,
             yin_loader: None,
+            load_progress,
         }
     }
 
@@ -77,14 +82,21 @@ impl FileLoader {
                 .map(|e| e.to_lowercase())
                 .unwrap_or_default();
 
+            // Reset and show progress overlay
+            progress::set_visible(&self.load_progress, true);
+
             match ext.as_str() {
                 "yin" => {
                     let (tx, rx) = mpsc::channel();
                     let path_for_thread = path_str.clone();
+                    let progress = self.load_progress.clone();
                     std::thread::spawn(move || {
+                        progress::set_stage(&progress, 0, StageStatus::Done);
+                        progress::set_stage(&progress, 1, StageStatus::Active);
                         let result = crate::project_io::load_project(&path_for_thread);
                         match result {
                             Ok((midi, file_name)) => {
+                                progress::set_stage(&progress, 1, StageStatus::Done);
                                 let _ = tx.send(YinLoadEvent::Complete(Ok((midi, file_name))));
                             }
                             Err(e) => {
@@ -101,16 +113,25 @@ impl FileLoader {
                     // MIDI file
                     let (tx, rx) = mpsc::channel();
                     let path_for_thread = path_str.clone();
+                    let progress = self.load_progress.clone();
                     std::thread::spawn(move || {
+                        progress::set_stage(&progress, 0, StageStatus::Active);
                         let result = yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Midi, || {
                             let data = match std::fs::read(&path_for_thread) {
                                 Ok(d) => d,
                                 Err(e) => return Err(yinhe_midi::MidiError::Io(e)),
                             };
-                            yinhe_midi::MidiFile::load_from_bytes_with_progress_owned(data, |progress| {
-                                let _ = tx.send(MidiLoadEvent::Progress(progress));
+                            yinhe_midi::MidiFile::load_from_bytes_with_progress_owned(data, |p| {
+                                let _ = tx.send(MidiLoadEvent::Progress(p));
                             })
                         });
+                        progress::set_stage(&progress, 0, StageStatus::Done);
+                        // Stage 1: archive conversion in background thread
+                        if let Ok(ref midi) = result {
+                            progress::set_stage(&progress, 1, StageStatus::Active);
+                            let _ = crate::project_io::midi_to_archive(midi);
+                            progress::set_stage(&progress, 1, StageStatus::Done);
+                        }
                         let _ = tx.send(MidiLoadEvent::Complete(Box::new(result)));
                     });
                     self.midi_loader = Some(MidiLoader {
@@ -129,13 +150,21 @@ impl FileLoader {
         if let Some(mut loader) = self.midi_loader.take() {
             while let Ok(event) = loader.rx.try_recv() {
                 match event {
-                    MidiLoadEvent::Progress(progress) => {
-                        loader.current_progress = Some(progress);
+                    MidiLoadEvent::Progress(p) => {
+                        loader.current_progress = Some(p);
+                        let ratio = p.current_track as f32 / p.total_tracks.max(1) as f32;
+                        progress::set_stage_progress(
+                            &self.load_progress,
+                            0,
+                            ratio,
+                            format!("{}/{}", p.current_track, p.total_tracks),
+                        );
                     }
                     MidiLoadEvent::Complete(result) => {
                         match *result {
                             Ok(midi) => {
                                 let path = loader.path.clone();
+                                progress::set_visible(&self.load_progress, false);
                                 return LoadResult::MidiLoaded { path, midi };
                             }
                             Err(e) => {
@@ -156,6 +185,7 @@ impl FileLoader {
                     YinLoadEvent::Complete(result) => match result {
                         Ok((midi, file_name)) => {
                             let path = loader.path.clone();
+                            progress::set_visible(&self.load_progress, false);
                             return LoadResult::YinLoaded {
                                 path,
                                 midi,
@@ -175,44 +205,66 @@ impl FileLoader {
         LoadResult::NotReady
     }
 
-    /// Draw a dark overlay + centered window with loading progress.
+    /// Draw a dark overlay + centered window with multi-stage loading progress.
     pub fn show_loading_overlay(&self, ui: &mut eframe::egui::Ui) {
-        if let Some(loader) = &self.midi_loader {
-            let screen_rect = ui.ctx().content_rect();
-            ui.ctx()
-                .layer_painter(eframe::egui::LayerId::new(
-                    eframe::egui::Order::Foreground,
-                    "midi_loading_overlay".into(),
-                ))
-                .rect_filled(
-                    screen_rect,
-                    0.0,
-                    eframe::egui::Color32::from_rgba_premultiplied(0, 0, 0, 160),
-                );
-
-            eframe::egui::Window::new("Loading MIDI")
-                .order(eframe::egui::Order::Tooltip)
-                .collapsible(false)
-                .resizable(false)
-                .movable(false)
-                .anchor(
-                    eframe::egui::Align2::CENTER_CENTER,
-                    eframe::egui::Vec2::ZERO,
-                )
-                .show(ui.ctx(), |ui| {
-                    if let Some(progress) = &loader.current_progress {
-                        ui.label(format!(
-                            "Parsing track {} / {}...",
-                            progress.current_track, progress.total_tracks
-                        ));
-                        let ratio =
-                            progress.current_track as f32 / progress.total_tracks.max(1) as f32;
-                        ui.add(eframe::egui::ProgressBar::new(ratio).show_percentage());
-                    } else {
-                        ui.label("Reading MIDI file...");
-                        ui.add(eframe::egui::Spinner::new());
-                    }
-                });
+        if !self.is_loading() {
+            return;
         }
+
+        let progress = match self.load_progress.lock() {
+            Ok(p) => p.clone(),
+            Err(_) => return,
+        };
+        if !progress.visible {
+            return;
+        }
+
+        let screen_rect = ui.ctx().content_rect();
+        ui.ctx()
+            .layer_painter(eframe::egui::LayerId::new(
+                eframe::egui::Order::Foreground,
+                "loading_overlay".into(),
+            ))
+            .rect_filled(
+                screen_rect,
+                0.0,
+                eframe::egui::Color32::from_rgba_premultiplied(0, 0, 0, 160),
+            );
+
+        eframe::egui::Window::new("正在加载")
+            .order(eframe::egui::Order::Tooltip)
+            .collapsible(false)
+            .resizable(false)
+            .movable(false)
+            .anchor(
+                eframe::egui::Align2::CENTER_CENTER,
+                eframe::egui::Vec2::ZERO,
+            )
+            .show(ui.ctx(), |ui| {
+                ui.set_max_width(380.0);
+                for stage in &progress.stages {
+                    ui.horizontal(|ui| {
+                        let icon = match stage.status {
+                            StageStatus::Done => "✅",
+                            StageStatus::Active => "⏳",
+                            StageStatus::Pending => "⬜",
+                        };
+                        ui.label(icon);
+                        ui.add(
+                            eframe::egui::ProgressBar::new(stage.progress)
+                                .desired_width(200.0)
+                                .show_percentage(),
+                        );
+                        ui.label(eframe::egui::RichText::new(&stage.label).size(12.0));
+                    });
+                    if !stage.detail.is_empty() {
+                        ui.label(
+                            eframe::egui::RichText::new(&stage.detail)
+                                .size(10.0)
+                                .color(eframe::egui::Color32::GRAY),
+                        );
+                    }
+                }
+            });
     }
 }

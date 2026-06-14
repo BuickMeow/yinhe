@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use crate::app::App;
+use crate::progress;
 
 impl App {
     /// Resolve the merged SF configuration for the given document.
@@ -63,6 +64,9 @@ impl App {
             return;
         }
 
+        progress::set_visible(&self.load_progress, true);
+        progress::set_stage(&self.load_progress, 2, progress::StageStatus::Active);
+
         // Drop old audio (stops cpal stream, frees engine)
         self.audio = None;
 
@@ -72,18 +76,40 @@ impl App {
 
         match yinhe_audio::spawn_cpal_audio(sr, num_ch, active_mask) {
             Ok(audio) => {
+                progress::set_stage(&self.load_progress, 2, progress::StageStatus::Done);
+
                 // Load MIDI
                 audio.handle.send(yinhe_audio::AudioCommand::LoadMidi {
                     midi: Arc::clone(&doc.midi),
                 });
+
                 // Load SoundFonts — resolved from global + project config
                 let port_configs = self.resolve_sf_config(doc);
+                let total_sf: usize = port_configs.iter().map(|(_, p)| p.len()).sum();
+                progress::set_stage_progress(
+                    &self.load_progress,
+                    3,
+                    0.0,
+                    format!("0/{}", total_sf),
+                );
+                let mut loaded = 0usize;
                 for (port, paths) in &port_configs {
+                    for _p in paths {
+                        loaded += 1;
+                        progress::set_stage_progress(
+                            &self.load_progress,
+                            3,
+                            loaded as f32 / total_sf.max(1) as f32,
+                            format!("{}/{}", loaded, total_sf),
+                        );
+                    }
                     audio.handle.send(yinhe_audio::AudioCommand::LoadSoundFont {
                         port: *port,
                         paths: paths.clone(),
                     });
                 }
+                progress::set_stage(&self.load_progress, 3, progress::StageStatus::Done);
+
                 // Send initial mute/solo state
                 let has_solo = doc.track_overrides.iter().any(|t| t.soloed);
                 let skip: Vec<bool> = doc
@@ -97,9 +123,12 @@ impl App {
 
                 self.audio = Some(audio);
                 self.audio_active_doc = Some(idx);
+
+                progress::set_visible(&self.load_progress, false);
             }
             Err(e) => {
                 tracing::error!("Failed to create audio: {}", e);
+                progress::set_visible(&self.load_progress, false);
             }
         }
     }

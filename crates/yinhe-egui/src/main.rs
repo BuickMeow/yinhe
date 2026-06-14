@@ -14,6 +14,7 @@ mod document;
 mod perf_probe;
 mod piano_view;
 mod playback;
+mod progress;
 mod project_io;
 mod quantize;
 mod render_context;

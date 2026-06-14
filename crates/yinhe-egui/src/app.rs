@@ -82,6 +82,9 @@ pub struct App {
 
     // ── Event browser ──
     pub(crate) event_browser_state: crate::right_panel::event_browser::EventBrowserState,
+
+    // ── Multi-stage loading progress ──
+    pub(crate) load_progress: crate::progress::SharedProgress,
 }
 
 impl App {
@@ -124,6 +127,8 @@ impl App {
         let queue = render_ctx.queue().clone();
         let format = render_ctx.target_format();
 
+        let load_progress = crate::progress::new_shared();
+
         Self {
             render_ctx,
             pianoroll: yinhe_pianoroll::PianorollRenderer::new(
@@ -145,7 +150,8 @@ impl App {
             prev_active_doc: Some(0),
 
             transport_panel_width: 200.0,
-            file_loader: FileLoader::new(),
+            load_progress: load_progress.clone(),
+            file_loader: FileLoader::new(load_progress.clone()),
             load_error: None,
             save_rx: None,
 
