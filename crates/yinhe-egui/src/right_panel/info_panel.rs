@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use eframe::egui;
 
 use crate::document::Document;
@@ -6,11 +8,14 @@ use crate::document::Document;
 ///
 /// Displays track name, port, channel, mute/solo controls, and summary
 /// metadata.  When no document or no track is selected, shows a placeholder.
+///
+/// Returns `true` if the port or channel was changed (caller should tear
+/// down the audio engine so it gets rebuilt with the new channel map).
 pub fn show(
     ui: &mut egui::Ui,
     doc: Option<&mut Document>,
     audio: Option<&yinhe_audio::CpalAudioHandle>,
-) {
+) -> bool {
     let Some(doc) = doc else {
         ui.add_space(8.0);
         ui.label(
@@ -18,7 +23,7 @@ pub fn show(
                 .color(egui::Color32::from_gray(100))
                 .size(12.0),
         );
-        return;
+        return false;
     };
 
     let num_tracks = doc.midi.track_ports.len();
@@ -29,7 +34,7 @@ pub fn show(
                 .color(egui::Color32::from_gray(100))
                 .size(12.0),
         );
-        return;
+        return false;
     }
 
     // ── Track selector ──
@@ -76,7 +81,7 @@ pub fn show(
                 .size(11.0)
                 .color(egui::Color32::GRAY),
         );
-        return;
+        return false;
     }
 
     let Some(&track_idx) = doc.track_selected.iter().next() else {
@@ -86,7 +91,7 @@ pub fn show(
                 .color(egui::Color32::from_gray(100))
                 .size(12.0),
         );
-        return;
+        return false;
     };
     let track_idx = track_idx as usize;
     let track_idx = track_idx.min(num_tracks - 1);
@@ -136,7 +141,7 @@ pub fn show(
                     .size(13.0),
             );
         });
-        return;
+        return false;
     }
 
     // ── Track name ──
@@ -162,46 +167,75 @@ pub fn show(
 
     ui.add_space(4.0);
 
-    // ── Port (read for now, editable in future) ──
-    let port_letter = match ti.port {
-        0 => 'A',
-        1 => 'B',
-        2 => 'C',
-        3 => 'D',
-        4 => 'E',
-        5 => 'F',
-        6 => 'G',
-        7 => 'H',
-        8 => 'I',
-        9 => 'J',
-        10 => 'K',
-        11 => 'L',
-        12 => 'M',
-        13 => 'N',
-        14 => 'O',
-        15 => 'P',
-        _ => '?',
-    };
+    // ── Port / Channel (editable) ──
+    let mut port_changed = false;
+    let mut new_port = ti.port;
+    let mut new_ch = ti.channel;
+
     ui.horizontal(|ui| {
-        ui.label("端口:");
-        ui.label(
-            egui::RichText::new(format!("Port {}", port_letter))
-                .color(egui::Color32::from_gray(180))
-                .size(13.0),
-        );
+        ui.label("端口/通道:");
+
+        // Port combo: A(0) .. P(15)
+        let port_options: Vec<String> = (0..16)
+            .map(|p| format!("Port {}", (b'A' + p) as char))
+            .collect();
+        let port_sel = egui::ComboBox::from_id_salt("track_port")
+            .selected_text(format!("Port {}", (b'A' + ti.port) as char))
+            .width(70.0)
+            .show_ui(ui, |ui| {
+                for (i, label) in port_options.iter().enumerate() {
+                    if ui.selectable_label(i == ti.port as usize, label).clicked() {
+                        new_port = i as u8;
+                        port_changed = true;
+                    }
+                }
+            });
+
+        ui.add_space(4.0);
+
+        // Channel combo: 01 .. 16
+        let ch_options: Vec<String> = (1..=16).map(|c| format!("{:02}", c)).collect();
+        let _ch_sel = egui::ComboBox::from_id_salt("track_channel")
+            .selected_text(format!("{:02}", ti.channel))
+            .width(50.0)
+            .show_ui(ui, |ui| {
+                for (i, label) in ch_options.iter().enumerate() {
+                    if ui.selectable_label(i + 1 == ti.channel as usize, label).clicked() {
+                        new_ch = (i + 1) as u8;
+                        port_changed = true;
+                    }
+                }
+            });
     });
 
-    ui.add_space(2.0);
-
-    // ── Channel ──
-    ui.horizontal(|ui| {
-        ui.label("通道:");
-        ui.label(
-            egui::RichText::new(format!("{:02}", ti.channel))
-                .color(egui::Color32::from_gray(180))
-                .size(13.0),
-        );
-    });
+    // Apply port/channel change
+    if port_changed {
+        let new_global_ch = new_port * 16 + (new_ch - 1);
+        let midi = Arc::make_mut(&mut doc.midi);
+        midi.track_channels[track_idx] = new_global_ch;
+        midi.track_ports[track_idx] = new_port;
+        // Rebuild metadata and caches
+        crate::app_actions::rebuild_midi_metadata(midi);
+        doc.track_info_cache = midi.track_info();
+        // Rebuild pc_map_cache
+        let mut pc_map = std::collections::HashMap::new();
+        for ev in &midi.control_events {
+            if let yinhe_midi::MidiControlEvent::ProgramChange {
+                program, track, ..
+            } = ev
+            {
+                let ch = midi
+                    .track_channels
+                    .get(*track as usize)
+                    .copied()
+                    .unwrap_or(0);
+                pc_map.entry(ch).or_insert(*program);
+            }
+        }
+        doc.pc_map_cache = pc_map;
+        // Signal caller to tear down audio
+        return true;
+    }
 
     ui.add_space(6.0);
 
@@ -294,6 +328,8 @@ pub fn show(
             ui.label(egui::RichText::new(format!("PC {}", pc)).size(11.0));
         });
     }
+
+    false
 }
 
 /// Compute the per-track skip mask and send it to the audio engine.

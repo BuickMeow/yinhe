@@ -76,7 +76,7 @@ pub fn show(
         // ── Content ──
         match tab.unwrap() {
             RightTab::Info => {
-                info_panel::show(ui, doc, audio);
+                changed |= info_panel::show(ui, doc, audio);
             }
             RightTab::SoundFont => {
                 changed |= soundfont::show(ui, audio_settings, doc);

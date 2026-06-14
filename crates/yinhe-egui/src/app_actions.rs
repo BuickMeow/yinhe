@@ -207,7 +207,7 @@ impl App {
 }
 
 /// Rebuild computed metadata on a MidiFile after note mutations.
-fn rebuild_midi_metadata(midi: &mut yinhe_midi::MidiFile) {
+pub(crate) fn rebuild_midi_metadata(midi: &mut yinhe_midi::MidiFile) {
     midi.note_count = 0;
     let mut max_tick = 0u64;
     for notes in &midi.key_notes {
