@@ -213,18 +213,29 @@ pub fn build_data_lines(
     let pad_start = tick_start.max(0.0) as u32;
     let pad_end = tick_end.max(0.0) as u32;
     let x_offset = view.base.left_panel_width - view.base.scroll_x;
+    let grid_left_x = view.base.left_panel_width;
 
-    // Collect visible events grouped by track
-    let mut track_events: Vec<Vec<(u32, u16)>> = vec![Vec::new(); track_visible.len()];
-    for evt in lane.events_in_range(pad_start, pad_end) {
+    // Group all events by track so per-track operations don't leak across tracks.
+    let mut track_all_events: Vec<Vec<(u32, u16)>> = vec![Vec::new(); track_visible.len()];
+    for evt in lane.events.iter() {
         let trk = evt.track as usize;
-        if trk >= track_events.len() || !track_visible.get(trk).copied().unwrap_or(true) {
+        if trk >= track_all_events.len() || !track_visible.get(trk).copied().unwrap_or(true) {
             continue;
         }
-        track_events[trk].push((evt.tick, evt.value));
+        track_all_events[trk].push((evt.tick, evt.value));
     }
 
-    for (ti, events) in track_events.iter().enumerate() {
+    // Collect visible events (within pad_start..pad_end) grouped by track
+    let mut track_visible_events: Vec<Vec<(u32, u16)>> = vec![Vec::new(); track_visible.len()];
+    for evt in lane.events_in_range(pad_start, pad_end) {
+        let trk = evt.track as usize;
+        if trk >= track_visible_events.len() || !track_visible.get(trk).copied().unwrap_or(true) {
+            continue;
+        }
+        track_visible_events[trk].push((evt.tick, evt.value));
+    }
+
+    for (ti, events) in track_visible_events.iter().enumerate() {
         if events.is_empty() {
             continue;
         }
@@ -233,9 +244,28 @@ pub fn build_data_lines(
             .copied()
             .unwrap_or_else(|| TRACK_PALETTE[ti % TRACK_PALETTE.len()]);
 
-        // Chase: find the value before the first visible event
-        let mut prev_val = lane.chase_value(events[0].0, 0).unwrap_or(0);
+        let all = &track_all_events[ti];
+
+        // Find the value before the first visible event (same track only)
+        let prev_idx = all.partition_point(|e| e.0 < events[0].0);
+        let mut prev_val = if prev_idx > 0 { all[prev_idx - 1].1 } else { 0 };
         let mut prev_tick = events[0].0;
+
+        // Horizontal line from grid left edge to the first event
+        let first_x = x_offset + events[0].0 as f32 * ppu;
+        let first_y = h - (prev_val as f32 / max_val) * h;
+        if first_x - grid_left_x >= 1.0 {
+            out.push(NoteInstance {
+                x: grid_left_x,
+                y: first_y,
+                w: first_x - grid_left_x,
+                h: 1.0,
+                rgba_packed: pack_rgba(color[0], color[1], color[2], 0.85),
+                props_packed: pack_props(0.0, 0.0),
+                velocity: 0,
+                tag: 0,
+            });
+        }
 
         for &(tick, value) in events {
             let x1 = x_offset + prev_tick as f32 * ppu;
@@ -288,6 +318,60 @@ pub fn build_data_lines(
 
             prev_val = value;
             prev_tick = tick;
+        }
+
+        // Horizontal line from the last event to the next event (same track only)
+        let last_x = x_offset + prev_tick as f32 * ppu;
+        let last_y = h - (prev_val as f32 / max_val) * h;
+        let next_idx = all.partition_point(|e| e.0 <= prev_tick);
+        let right_bound = if next_idx < all.len() {
+            x_offset + all[next_idx].0 as f32 * ppu
+        } else {
+            w
+        };
+        if right_bound - last_x >= 1.0 {
+            out.push(NoteInstance {
+                x: last_x,
+                y: last_y,
+                w: right_bound - last_x,
+                h: 1.0,
+                rgba_packed: pack_rgba(color[0], color[1], color[2], 0.85),
+                props_packed: pack_props(0.0, 0.0),
+                velocity: 0,
+                tag: 0,
+            });
+        }
+    }
+
+    // Handle tracks with no visible events: chase the value at pad_start and
+    // draw a full-width horizontal line so the automation doesn't disappear
+    // when the viewport contains no event points.
+    for (ti, events) in track_visible_events.iter().enumerate() {
+        if !events.is_empty() {
+            continue;
+        }
+        if !track_visible.get(ti).copied().unwrap_or(true) {
+            continue;
+        }
+        let all = &track_all_events[ti];
+        let idx = all.partition_point(|e| e.0 < pad_start);
+        let val = if idx > 0 { all[idx - 1].1 } else { 0 };
+        let color = track_colors
+            .get(ti)
+            .copied()
+            .unwrap_or_else(|| TRACK_PALETTE[ti % TRACK_PALETTE.len()]);
+        let y = h - (val as f32 / max_val) * h;
+        if w - grid_left_x >= 1.0 {
+            out.push(NoteInstance {
+                x: grid_left_x,
+                y,
+                w: w - grid_left_x,
+                h: 1.0,
+                rgba_packed: pack_rgba(color[0], color[1], color[2], 0.85),
+                props_packed: pack_props(0.0, 0.0),
+                velocity: 0,
+                tag: 0,
+            });
         }
     }
 }

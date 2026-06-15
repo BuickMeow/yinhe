@@ -232,94 +232,96 @@ pub fn show_panels(
 
                 ui.add_space(4.0);
 
-                if is_velocity {
-                    // ── Velocity display mode: three small buttons ──
-                    let vel_modes = [(0u32, "柱"), (1u32, "矩"), (2u32, "空")];
-                    for &(mode, label) in &vel_modes {
-                        let is_active = *velocity_display_mode == mode;
-                        let color = if is_active {
-                            crate::widgets::theme::ACCENT_ACTIVE
-                        } else {
-                            egui::Color32::GRAY
-                        };
-                        let resp = ui.add(
-                            egui::Label::new(
-                                egui::RichText::new(label).size(11.0).color(color)
-                            )
-                            .sense(egui::Sense::click())
-                            .selectable(false),
-                        );
-                        if resp.clicked() {
-                            *velocity_display_mode = mode;
-                        }
-                        if !is_active && resp.hovered() {
-                            ui.painter().text(
-                                resp.rect.center(),
-                                egui::Align2::CENTER_CENTER,
-                                label,
-                                egui::FontId::proportional(11.0),
-                                egui::Color32::WHITE,
-                            );
-                        }
-                    }
-                } else {
-                    // ── Automation display mode:柱状/折线 toggle ──
-                    let auto_modes = [(0u32, ICON_BAR_CHART), (1u32, ICON_SHOW_CHART)];
-                    for &(mode, icon) in &auto_modes {
-                        let is_active = *automation_display_mode == mode;
-                        let color = if is_active {
-                            crate::widgets::theme::ACCENT_ACTIVE
-                        } else {
-                            egui::Color32::GRAY
-                        };
-                        let resp = ui.add(
-                            egui::Label::new(icon.rich_text().size(14.0).color(color))
+                // ── Second row: display mode buttons ──
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 2.0;
+                    if is_velocity {
+                        // Velocity display mode: three text buttons
+                        let vel_modes = [(0u32, "柱"), (1u32, "矩"), (2u32, "空")];
+                        for &(mode, label) in &vel_modes {
+                            let is_active = *velocity_display_mode == mode;
+                            let color = if is_active {
+                                crate::widgets::theme::ACCENT_ACTIVE
+                            } else {
+                                egui::Color32::GRAY
+                            };
+                            let resp = ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(label).size(11.0).color(color)
+                                )
                                 .sense(egui::Sense::click())
                                 .selectable(false),
-                        );
-                        if resp.clicked() {
-                            *automation_display_mode = mode;
-                        }
-                        if !is_active && resp.hovered() {
-                            ui.painter().text(
-                                resp.rect.center(),
-                                egui::Align2::CENTER_CENTER,
-                                icon.codepoint,
-                                egui::FontId::new(14.0, icon.font_family()),
-                                egui::Color32::WHITE,
                             );
+                            if resp.clicked() {
+                                *velocity_display_mode = mode;
+                            }
+                            if !is_active && resp.hovered() {
+                                ui.painter().text(
+                                    resp.rect.center(),
+                                    egui::Align2::CENTER_CENTER,
+                                    label,
+                                    egui::FontId::proportional(11.0),
+                                    egui::Color32::WHITE,
+                                );
+                            }
                         }
-                    }
+                    } else {
+                        // Automation display mode: bar chart / line chart icons
+                        let auto_modes = [(0u32, ICON_BAR_CHART), (1u32, ICON_SHOW_CHART)];
+                        for &(mode, icon) in &auto_modes {
+                            let is_active = *automation_display_mode == mode;
+                            let color = if is_active {
+                                crate::widgets::theme::ACCENT_ACTIVE
+                            } else {
+                                egui::Color32::GRAY
+                            };
+                            let resp = ui.add(
+                                egui::Label::new(icon.rich_text().size(14.0).color(color))
+                                    .sense(egui::Sense::click())
+                                    .selectable(false),
+                            );
+                            if resp.clicked() {
+                                *automation_display_mode = mode;
+                            }
+                            if !is_active && resp.hovered() {
+                                ui.painter().text(
+                                    resp.rect.center(),
+                                    egui::Align2::CENTER_CENTER,
+                                    icon.codepoint,
+                                    egui::FontId::new(14.0, icon.font_family()),
+                                    egui::Color32::WHITE,
+                                );
+                            }
+                        }
 
-                    // ── Dots toggle (only in折线 mode) ──
-                    if *automation_display_mode == 1 {
-                        let dot_color = if *automation_show_dots {
-                            crate::widgets::theme::ACCENT_ACTIVE
-                        } else {
-                            egui::Color32::GRAY
-                        };
-                        let dot_resp = ui.add(
-                            egui::Label::new(
-                                egui::RichText::new("●").size(12.0).color(dot_color)
-                            )
-                            .sense(egui::Sense::click())
-                            .selectable(false),
-                        );
-                        if dot_resp.clicked() {
-                            *automation_show_dots = !*automation_show_dots;
-                        }
-                        if !*automation_show_dots && dot_resp.hovered() {
-                            ui.painter().text(
-                                dot_resp.rect.center(),
-                                egui::Align2::CENTER_CENTER,
-                                "●",
-                                egui::FontId::proportional(12.0),
-                                egui::Color32::WHITE,
+                        // Dots toggle (only in折线 mode)
+                        if *automation_display_mode == 1 {
+                            let dot_color = if *automation_show_dots {
+                                crate::widgets::theme::ACCENT_ACTIVE
+                            } else {
+                                egui::Color32::GRAY
+                            };
+                            let dot_resp = ui.add(
+                                egui::Label::new(ICON_STEPPERS.rich_text().size(14.0).color(dot_color))
+                                    .sense(egui::Sense::click())
+                                    .selectable(false),
                             );
+                            if dot_resp.clicked() {
+                                *automation_show_dots = !*automation_show_dots;
+                            }
+                            if !*automation_show_dots && dot_resp.hovered() {
+                                ui.painter().text(
+                                    dot_resp.rect.center(),
+                                    egui::Align2::CENTER_CENTER,
+                                    ICON_STEPPERS.codepoint,
+                                    egui::FontId::new(14.0, ICON_STEPPERS.font_family()),
+                                    egui::Color32::WHITE,
+                                );
+                            }
+                            dot_resp.on_hover_text(if *automation_show_dots { "隐藏圆点" } else { "显示圆点" });
                         }
-                        dot_resp.on_hover_text(if *automation_show_dots { "隐藏圆点" } else { "显示圆点" });
                     }
-                }
+                });
             });
         });
 
