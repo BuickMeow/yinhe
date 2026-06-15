@@ -254,7 +254,7 @@ pub fn build_data_lines(
         // Horizontal line from grid left edge to the first event
         let first_x = x_offset + events[0].0 as f32 * ppu;
         let first_y = h - (prev_val as f32 / max_val) * h;
-        if first_x - grid_left_x >= 1.0 {
+        if first_x > grid_left_x {
             out.push(NoteInstance {
                 x: grid_left_x,
                 y: first_y,
@@ -274,7 +274,7 @@ pub fn build_data_lines(
             let y2 = h - (value as f32 / max_val) * h;
 
             // Horizontal line: value held from prev_tick to tick
-            if x2 - x1 >= 1.0 {
+            if x2 > x1 {
                 out.push(NoteInstance {
                     x: x1,
                     y: y1,
@@ -288,13 +288,13 @@ pub fn build_data_lines(
             }
 
             // Vertical line: value change at tick
-            let dy = (y2 - y1).abs();
-            if dy >= 1.0 {
+            let dy = y2 - y1;
+            if dy.abs() > 0.0 {
                 out.push(NoteInstance {
                     x: x2 - 0.5,
                     y: y1.min(y2),
                     w: 1.0,
-                    h: dy,
+                    h: dy.abs(),
                     rgba_packed: pack_rgba(color[0], color[1], color[2], 0.85),
                     props_packed: pack_props(0.0, 0.0),
                     velocity: 0,
@@ -329,7 +329,7 @@ pub fn build_data_lines(
         } else {
             w
         };
-        if right_bound - last_x >= 1.0 {
+        if right_bound > last_x {
             out.push(NoteInstance {
                 x: last_x,
                 y: last_y,
@@ -361,7 +361,7 @@ pub fn build_data_lines(
             .copied()
             .unwrap_or_else(|| TRACK_PALETTE[ti % TRACK_PALETTE.len()]);
         let y = h - (val as f32 / max_val) * h;
-        if w - grid_left_x >= 1.0 {
+        if w > grid_left_x {
             out.push(NoteInstance {
                 x: grid_left_x,
                 y,
