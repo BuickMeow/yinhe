@@ -515,6 +515,8 @@ impl eframe::App for App {
                 ui.ctx(),
                 &mut self.export_bit_depth,
                 &mut self.export_layer_count,
+                &mut self.export_sample_rate,
+                self.audio_settings.sample_rate,
                 &mut self.show_export_bit_depth,
             );
             if result.started {

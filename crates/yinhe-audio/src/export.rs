@@ -1,6 +1,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use xsynth_core::effects::VolumeLimiter;
 use yinhe_midi::MidiFile;
 
 use crate::engine::AudioEngine;
@@ -105,6 +106,9 @@ pub fn export_wav(
 
     engine.handle_command(crate::spawn::AudioCommand::Play { from_sample: 0 });
 
+    let use_limiter = bit_depth != WavBitDepth::Bit32Float;
+    let mut limiter = VolumeLimiter::new(STEREO_CHANNELS as u16);
+
     let mut chunk = vec![0.0f32; RENDER_CHUNK_FRAMES * STEREO_CHANNELS];
     let mut rendered: u64 = 0;
 
@@ -113,6 +117,9 @@ pub fn export_wav(
         let frames = ((main_duration - rendered) as usize).min(RENDER_CHUNK_FRAMES);
         let buf = &mut chunk[..frames * STEREO_CHANNELS];
         engine.render(buf);
+        if use_limiter {
+            limiter.limit(buf);
+        }
 
         write_samples(&mut writer, buf, bit_depth)?;
 
@@ -132,6 +139,9 @@ pub fn export_wav(
         }
         let buf = &mut chunk[..frames * STEREO_CHANNELS];
         engine.render(buf);
+        if use_limiter {
+            limiter.limit(buf);
+        }
 
         write_samples(&mut writer, buf, bit_depth)?;
 

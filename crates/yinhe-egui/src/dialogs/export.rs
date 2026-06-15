@@ -24,19 +24,25 @@ impl ExportProgress {
 pub(crate) struct ExportSettings {
     pub started: bool,
     pub layer_count: u32,
+    pub sample_rate: u32,
 }
 
-/// Show the export settings dialog (bit depth + layer count).
+/// Show the export settings dialog (bit depth + layer count + sample rate).
 pub(crate) fn show_export_settings_dialog(
     ctx: &egui::Context,
     bit_depth: &mut yinhe_audio::export::WavBitDepth,
     layer_count: &mut u32,
+    sample_rate: &mut u32,
+    global_sample_rate: u32,
     open: &mut bool,
 ) -> ExportSettings {
     let mut result = ExportSettings {
         started: false,
         layer_count: *layer_count,
+        sample_rate: *sample_rate,
     };
+
+    let sample_rates: [u32; 5] = [0, 44100, 48000, 96000, 192000];
 
     let mut dialog_open = *open;
     egui::Window::new("导出音频")
@@ -88,6 +94,30 @@ pub(crate) fn show_export_settings_dialog(
                 });
 
                 ui.horizontal(|ui| {
+                    ui.label("采样率：");
+                    let sr_text = if *sample_rate == 0 {
+                        format!("跟随全局 ({} Hz)", global_sample_rate)
+                    } else {
+                        format!("{} Hz", sample_rate)
+                    };
+                    egui::ComboBox::from_id_salt("export_sample_rate")
+                        .selected_text(&sr_text)
+                        .show_ui(ui, |ui| {
+                            for &sr in &sample_rates {
+                                let label = if sr == 0 {
+                                    format!("跟随全局 ({} Hz)", global_sample_rate)
+                                } else {
+                                    format!("{} Hz", sr)
+                                };
+                                let selected = *sample_rate == sr;
+                                if ui.selectable_label(selected, label).clicked() {
+                                    *sample_rate = sr;
+                                }
+                            }
+                        });
+                });
+
+                ui.horizontal(|ui| {
                     ui.label("XSynth层数：");
                     let mut layers = *layer_count as usize;
                     ui.add(
@@ -106,6 +136,7 @@ pub(crate) fn show_export_settings_dialog(
                 if ui.button("导出").clicked() {
                     result.started = true;
                     result.layer_count = *layer_count;
+                    result.sample_rate = *sample_rate;
                 }
 
                 ui.add_space(8.0);

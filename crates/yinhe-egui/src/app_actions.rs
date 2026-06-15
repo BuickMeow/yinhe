@@ -405,7 +405,11 @@ impl App {
 
         // Collect render inputs
         let midi = doc.midi.clone();
-        let sr = self.audio_settings.sample_rate;
+        let sr = if self.export_sample_rate > 0 {
+            self.export_sample_rate
+        } else {
+            self.audio_settings.sample_rate
+        };
         let port_sf = self.resolve_sf_config(doc);
         let has_solo = doc.track_overrides.iter().any(|t| t.soloed);
         let skip: Vec<bool> = doc

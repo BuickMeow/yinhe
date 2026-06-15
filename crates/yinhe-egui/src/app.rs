@@ -92,6 +92,7 @@ pub struct App {
     pub(crate) show_export_bit_depth: bool,
     pub(crate) export_bit_depth: yinhe_audio::export::WavBitDepth,
     pub(crate) export_layer_count: u32,
+    pub(crate) export_sample_rate: u32, // 0 = 跟随全局设置
 }
 
 impl App {
@@ -166,6 +167,7 @@ impl App {
             show_export_bit_depth: false,
             export_bit_depth: yinhe_audio::export::WavBitDepth::Bit24,
             export_layer_count: 4,
+            export_sample_rate: 0,
 
             view_mode: ViewMode::Arrange,
             show_pianoroll_in_arrange: false,
