@@ -1,4 +1,4 @@
-use std::sync::mpsc;
+use std::sync::{Arc, Mutex, mpsc};
 
 use crate::dialogs::file_loader::FileLoader;
 use crate::dialogs::system_monitor::SystemMonitor;
@@ -85,6 +85,12 @@ pub struct App {
 
     // ── Multi-stage loading progress ──
     pub(crate) load_progress: crate::progress::SharedProgress,
+
+    // ── Async audio export ──
+    pub(crate) export_rx: Option<mpsc::Receiver<Result<(), String>>>,
+    pub(crate) export_progress: Arc<Mutex<crate::dialogs::export::ExportProgress>>,
+    pub(crate) show_export_bit_depth: bool,
+    pub(crate) export_bit_depth: yinhe_audio::export::WavBitDepth,
 }
 
 impl App {
@@ -154,6 +160,10 @@ impl App {
             file_loader: FileLoader::new(load_progress.clone()),
             load_error: None,
             save_rx: None,
+            export_rx: None,
+            export_progress: crate::dialogs::export::ExportProgress::new(),
+            show_export_bit_depth: false,
+            export_bit_depth: yinhe_audio::export::WavBitDepth::Bit24,
 
             view_mode: ViewMode::Arrange,
             show_pianoroll_in_arrange: false,

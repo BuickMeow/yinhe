@@ -259,7 +259,7 @@ impl App {
                 self.export_midi_dialog();
             }
             transport_bar::FileAction::ExportAudio => {
-                // not yet implemented
+                self.export_audio_dialog();
             }
             transport_bar::FileAction::Exit => {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
@@ -360,5 +360,97 @@ impl App {
                 }
             }
         }
+    }
+
+    fn export_audio_dialog(&mut self) {
+        if self.active_doc.is_none() {
+            return;
+        }
+
+        if self.export_rx.is_some() {
+            return; // already exporting
+        }
+
+        // Show bit-depth selection dialog first
+        self.show_export_bit_depth = true;
+    }
+
+    /// Called after the bit-depth dialog is confirmed.
+    /// Opens the file-save dialog and starts the export.
+    pub(crate) fn start_export(&mut self) {
+        let idx = match self.active_doc {
+            Some(idx) => idx,
+            None => return,
+        };
+
+        let doc = &self.documents[idx];
+        let project_name = if doc.project_name.is_empty() {
+            doc.file_name.clone()
+        } else {
+            doc.project_name.clone()
+        };
+        let default_name = format!("{}.wav", project_name);
+
+        let path = match rfd::FileDialog::new()
+            .add_filter("WAV", &["wav"])
+            .set_file_name(&default_name)
+            .save_file()
+        {
+            Some(p) => p,
+            None => return,
+        };
+
+        let mut path_str = path.to_string_lossy().to_string();
+        if !path_str.ends_with(".wav") {
+            path_str.push_str(".wav");
+        }
+
+        // Collect render inputs
+        let midi = doc.midi.clone();
+        let sr = self.audio_settings.sample_rate;
+        let port_sf = self.resolve_sf_config(doc);
+        let has_solo = doc.track_overrides.iter().any(|t| t.soloed);
+        let skip: Vec<bool> = doc
+            .track_overrides
+            .iter()
+            .map(|ov| if has_solo { !ov.soloed } else { ov.muted })
+            .collect();
+        let bit_depth = self.export_bit_depth;
+        let export_progress = self.export_progress.clone();
+
+        // Reset progress state
+        {
+            let mut p = export_progress.lock().unwrap();
+            p.visible = true;
+            p.progress = 0.0;
+            p.status = "准备中…".into();
+        }
+
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let result = yinhe_audio::export::export_wav(
+                midi,
+                sr,
+                &port_sf,
+                &skip,
+                std::path::Path::new(&path_str),
+                bit_depth,
+                |pct, msg| {
+                    if let Ok(mut p) = export_progress.lock() {
+                        p.progress = pct;
+                        if !msg.is_empty() {
+                            p.status = msg.to_string();
+                        }
+                    }
+                },
+            );
+            // Mark done
+            if let Ok(mut p) = export_progress.lock() {
+                p.visible = false;
+            }
+            let _ = tx.send(result.map_err(|e| e.to_string()));
+        });
+
+        self.export_rx = Some(rx);
     }
 }

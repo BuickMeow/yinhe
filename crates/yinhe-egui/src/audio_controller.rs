@@ -7,7 +7,7 @@ impl App {
     /// Resolve the merged SF configuration for the given document.
     ///
     /// Returns a list of `(port, paths)` for every port the MIDI uses.
-    fn resolve_sf_config(&self, doc: &crate::document::Document) -> Vec<(u8, Vec<String>)> {
+    pub(crate) fn resolve_sf_config(&self, doc: &crate::document::Document) -> Vec<(u8, Vec<String>)> {
         let num_ch = yinhe_audio::channels_for_midi(&doc.midi).0;
         let num_ports = (num_ch.div_ceil(16) as u8).max(1);
         let global = &self.audio_settings.global_sf_config;

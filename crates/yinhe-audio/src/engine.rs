@@ -145,6 +145,14 @@ impl AudioEngine {
         self.sample_rate
     }
 
+    pub(crate) fn duration_samples(&self) -> u64 {
+        self.duration_samples
+    }
+
+    pub(crate) fn voice_count(&self) -> u64 {
+        self.channel_group.voice_count()
+    }
+
     pub(crate) fn handle_command(&mut self, cmd: AudioCommand) {
         match cmd {
             AudioCommand::Play { from_sample } => {

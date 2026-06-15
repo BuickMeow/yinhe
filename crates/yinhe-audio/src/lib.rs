@@ -1,5 +1,6 @@
 mod channel;
 pub mod engine;
+pub mod export;
 pub mod soundfont;
 pub mod spawn;
 

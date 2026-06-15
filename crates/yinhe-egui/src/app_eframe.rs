@@ -165,6 +165,16 @@ impl eframe::App for App {
             }
         }
 
+        // ── Poll async export completion ──
+        if let Some(rx) = &self.export_rx {
+            if let Ok(result) = rx.try_recv() {
+                self.export_rx = None;
+                if let Err(e) = result {
+                    self.load_error = Some(e);
+                }
+            }
+        }
+
         // ── Ensure audio engine is loaded for the active document ──
         self.rebuild_audio_if_needed();
 
@@ -491,6 +501,23 @@ impl eframe::App for App {
         self.file_loader.show_loading_overlay(ui);
         if self.file_loader.is_loading() {
             ui.ctx().request_repaint();
+        }
+
+        // ── Export progress overlay ──
+        if self.export_rx.is_some() {
+            crate::dialogs::export::show_export_progress(ui, &self.export_progress);
+            ui.ctx().request_repaint();
+        }
+
+        // ── Export bit-depth dialog ──
+        if self.show_export_bit_depth {
+            if crate::dialogs::export::show_bit_depth_dialog(
+                ui.ctx(),
+                &mut self.export_bit_depth,
+                &mut self.show_export_bit_depth,
+            ) {
+                self.start_export();
+            }
         }
 
         // ── Load-error modal ──
