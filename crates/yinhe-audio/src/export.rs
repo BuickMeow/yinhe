@@ -47,6 +47,7 @@ pub fn export_wav(
     skip_tracks: &[bool],
     path: &Path,
     bit_depth: WavBitDepth,
+    layer_count: Option<usize>,
     progress: impl Fn(f32, &str),
 ) -> Result<(), ExportError> {
     let (_num_ch, active_mask) = channels_for_midi(&midi);
@@ -57,6 +58,8 @@ pub fn export_wav(
     engine.handle_command(crate::spawn::AudioCommand::LoadMidi {
         midi: Arc::clone(&midi),
     });
+
+    engine.set_layer_count(layer_count);
 
     let total_sf: usize = port_soundfonts.iter().map(|(_, p)| p.len()).sum();
     let mut sf_loaded = 0usize;

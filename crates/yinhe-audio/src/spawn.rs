@@ -34,6 +34,10 @@ pub enum AudioCommand {
     SkipTracks {
         skip: Vec<bool>,
     },
+    /// Set per-key layer count (None = unlimited).
+    SetLayerCount {
+        count: Option<usize>,
+    },
 }
 
 /// Handle used by the UI to control audio playback.

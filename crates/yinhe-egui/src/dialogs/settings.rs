@@ -16,6 +16,7 @@ pub struct AudioSettings {
     /// Kept for migration — no longer used directly.
     pub default_sf2_path: String,
     pub global_sf_config: GlobalSfConfig,
+    pub xsynth_layers: u32,
     /// 0=原始, 1=整数对齐, 2=子像素偏移
     /// 0=柱状(2px竖条), 1=矩形(填充), 2=空心矩形(边框)
     pub velocity_display_mode: u32,
@@ -85,6 +86,7 @@ impl Default for AudioSettings {
             sample_rate: default_rate,
             default_sf2_path: String::new(),
             global_sf_config: GlobalSfConfig::builtin_default(),
+            xsynth_layers: 4,
             scroll_mode: 0,
             min_border_width: 0.0,
             velocity_display_mode: 0,
@@ -221,6 +223,29 @@ pub fn show(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
                                 }
                             }
                         });
+                    ui.end_row();
+
+                    ui.label("XSynth层数");
+                    let mut layers = settings.xsynth_layers as usize;
+                    if ui
+                        .add(
+                            egui::DragValue::new(&mut layers)
+                                .range(0..=128)
+                                .speed(1.0),
+                        )
+                        .changed()
+                    {
+                        settings.xsynth_layers = layers as u32;
+                        changed = true;
+                    }
+                    let layer_label = if settings.xsynth_layers == 0 {
+                        "无限制"
+                    } else {
+                        ""
+                    };
+                    if !layer_label.is_empty() {
+                        ui.label(layer_label);
+                    }
                     ui.end_row();
                 });
 

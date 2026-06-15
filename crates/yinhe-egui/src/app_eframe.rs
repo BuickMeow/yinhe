@@ -511,11 +511,13 @@ impl eframe::App for App {
 
         // ── Export bit-depth dialog ──
         if self.show_export_bit_depth {
-            if crate::dialogs::export::show_bit_depth_dialog(
+            let result = crate::dialogs::export::show_export_settings_dialog(
                 ui.ctx(),
                 &mut self.export_bit_depth,
+                &mut self.export_layer_count,
                 &mut self.show_export_bit_depth,
-            ) {
+            );
+            if result.started {
                 self.start_export();
             }
         }

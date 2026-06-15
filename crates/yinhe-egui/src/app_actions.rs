@@ -371,7 +371,10 @@ impl App {
             return; // already exporting
         }
 
-        // Show bit-depth selection dialog first
+        // Close settings window to avoid ComboBox overlay conflict
+        self.audio_settings.show_settings = false;
+
+        // Show export settings dialog first
         self.show_export_bit_depth = true;
     }
 
@@ -384,12 +387,7 @@ impl App {
         };
 
         let doc = &self.documents[idx];
-        let project_name = if doc.project_name.is_empty() {
-            doc.file_name.clone()
-        } else {
-            doc.project_name.clone()
-        };
-        let default_name = format!("{}.wav", project_name);
+        let default_name = format!("{}.wav", doc.file_name);
 
         let path = match rfd::FileDialog::new()
             .add_filter("WAV", &["wav"])
@@ -416,6 +414,11 @@ impl App {
             .map(|ov| if has_solo { !ov.soloed } else { ov.muted })
             .collect();
         let bit_depth = self.export_bit_depth;
+        let layer_count = if self.export_layer_count == 0 {
+            None
+        } else {
+            Some(self.export_layer_count as usize)
+        };
         let export_progress = self.export_progress.clone();
 
         // Reset progress state
@@ -435,6 +438,7 @@ impl App {
                 &skip,
                 std::path::Path::new(&path_str),
                 bit_depth,
+                layer_count,
                 |pct, msg| {
                     if let Ok(mut p) = export_progress.lock() {
                         p.progress = pct;

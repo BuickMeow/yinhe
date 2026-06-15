@@ -153,6 +153,14 @@ impl AudioEngine {
         self.channel_group.voice_count()
     }
 
+    pub(crate) fn set_layer_count(&mut self, count: Option<usize>) {
+        use xsynth_core::channel_group::SynthEvent;
+        use xsynth_core::channel::{ChannelEvent, ChannelConfigEvent};
+        self.channel_group.send_event(SynthEvent::AllChannels(
+            ChannelEvent::Config(ChannelConfigEvent::SetLayerCount(count)),
+        ));
+    }
+
     pub(crate) fn handle_command(&mut self, cmd: AudioCommand) {
         match cmd {
             AudioCommand::Play { from_sample } => {
@@ -188,6 +196,9 @@ impl AudioEngine {
             }
             AudioCommand::SkipTracks { skip } => {
                 self.skip_track = skip;
+            }
+            AudioCommand::SetLayerCount { count } => {
+                self.set_layer_count(count);
             }
         }
     }

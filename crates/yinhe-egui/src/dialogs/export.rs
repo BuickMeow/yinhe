@@ -20,19 +20,27 @@ impl ExportProgress {
     }
 }
 
-/// Show the bit-depth selection dialog.
-/// Returns `true` when the user clicks "导出".
-pub(crate) fn show_bit_depth_dialog(
+/// Result from the export settings dialog.
+pub(crate) struct ExportSettings {
+    pub started: bool,
+    pub layer_count: u32,
+}
+
+/// Show the export settings dialog (bit depth + layer count).
+pub(crate) fn show_export_settings_dialog(
     ctx: &egui::Context,
     bit_depth: &mut yinhe_audio::export::WavBitDepth,
+    layer_count: &mut u32,
     open: &mut bool,
-) -> bool {
-    let mut started = false;
+) -> ExportSettings {
+    let mut result = ExportSettings {
+        started: false,
+        layer_count: *layer_count,
+    };
 
     let mut dialog_open = *open;
     egui::Window::new("导出音频")
         .open(&mut dialog_open)
-        .order(egui::Order::Tooltip)
         .collapsible(false)
         .resizable(false)
         .movable(false)
@@ -79,23 +87,38 @@ pub(crate) fn show_bit_depth_dialog(
                         });
                 });
 
+                ui.horizontal(|ui| {
+                    ui.label("XSynth层数：");
+                    let mut layers = *layer_count as usize;
+                    ui.add(
+                        egui::DragValue::new(&mut layers)
+                            .range(0..=128)
+                            .speed(1.0),
+                    );
+                    *layer_count = layers as u32;
+                    if *layer_count == 0 {
+                        ui.label("无限制");
+                    }
+                });
+
                 ui.add_space(12.0);
 
                 if ui.button("导出").clicked() {
-                    started = true;
+                    result.started = true;
+                    result.layer_count = *layer_count;
                 }
 
                 ui.add_space(8.0);
             });
         });
 
-    if !dialog_open || started {
+    if !dialog_open || result.started {
         *open = false;
     }
-    started
+    result
 }
 
-/// Show the export progress overlay (spinner + progress bar + status text).
+/// Show the export progress overlay (progress bar + status text).
 pub(crate) fn show_export_progress(ui: &egui::Ui, progress: &Arc<Mutex<ExportProgress>>) {
     let state = match progress.lock() {
         Ok(s) => s.clone(),
@@ -125,7 +148,6 @@ pub(crate) fn show_export_progress(ui: &egui::Ui, progress: &Arc<Mutex<ExportPro
                     );
                     ui.add_space(12.0);
 
-                    // Progress bar
                     ui.add(
                         egui::ProgressBar::new(state.progress)
                             .desired_width(240.0)

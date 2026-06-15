@@ -91,6 +91,7 @@ pub struct App {
     pub(crate) export_progress: Arc<Mutex<crate::dialogs::export::ExportProgress>>,
     pub(crate) show_export_bit_depth: bool,
     pub(crate) export_bit_depth: yinhe_audio::export::WavBitDepth,
+    pub(crate) export_layer_count: u32,
 }
 
 impl App {
@@ -164,6 +165,7 @@ impl App {
             export_progress: crate::dialogs::export::ExportProgress::new(),
             show_export_bit_depth: false,
             export_bit_depth: yinhe_audio::export::WavBitDepth::Bit24,
+            export_layer_count: 4,
 
             view_mode: ViewMode::Arrange,
             show_pianoroll_in_arrange: false,

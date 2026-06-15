@@ -83,6 +83,16 @@ impl App {
                     midi: Arc::clone(&doc.midi),
                 });
 
+                // Apply XSynth layer count
+                let layers = if self.audio_settings.xsynth_layers == 0 {
+                    None
+                } else {
+                    Some(self.audio_settings.xsynth_layers as usize)
+                };
+                audio
+                    .handle
+                    .send(yinhe_audio::AudioCommand::SetLayerCount { count: layers });
+
                 // Load SoundFonts — resolved from global + project config
                 let port_configs = self.resolve_sf_config(doc);
                 let total_sf: usize = port_configs.iter().map(|(_, p)| p.len()).sum();
