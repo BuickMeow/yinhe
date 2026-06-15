@@ -452,4 +452,17 @@ impl Document {
             project_ppq,
         }, soundfont_project_mode))
     }
+
+    /// Re-decode all track names using a different encoding.
+    pub fn recode_track_names(&mut self, encoding: yinhe_midi::MidiImportEncoding) {
+        Arc::make_mut(&mut self.midi).recode_track_names(encoding);
+        for (i, name) in self.midi.track_names.iter().enumerate() {
+            if i < self.track_names.len() {
+                self.track_names[i] = name.clone();
+            }
+            if let Some(ti) = self.track_info_cache.get_mut(i) {
+                ti.name = name.clone();
+            }
+        }
+    }
 }

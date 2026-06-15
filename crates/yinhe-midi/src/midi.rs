@@ -1,4 +1,5 @@
 use crate::TempoSegment;
+use crate::encoding::MidiImportEncoding;
 use crate::error::MidiError;
 use crate::parser::MidiParser;
 use crate::time::{DEFAULT_BPM, DEFAULT_MPQ, bpm_from_mpq, seconds_to_ticks};
@@ -32,6 +33,8 @@ pub struct MidiFile {
     pub track_channels: Vec<u8>,
     /// Track names parsed from MetaMessage::TrackName.
     pub track_names: Vec<String>,
+    /// Raw bytes of track names (before encoding decoding), for re-decoding.
+    pub raw_track_names: Vec<Vec<u8>>,
     /// All time signature events sorted by tick.
     pub time_sig_events: Vec<TimeSigEvent>,
     /// Non-note MIDI events (CC, Program Change, Pitch Bend).
@@ -60,6 +63,7 @@ impl Default for MidiFile {
             track_channels: Vec::new(),
             time_sig_events: Vec::new(),
             track_names: Vec::new(),
+            raw_track_names: Vec::new(),
             control_events: Vec::new(),
             scan_index: None,
             tick_buckets: None,
@@ -120,14 +124,14 @@ impl MidiFile {
     }
 
     pub fn load_from_bytes(data: &[u8]) -> Result<Self, MidiError> {
-        MidiParser::parse_bytes_with_progress(data, |_| {})
+        MidiParser::parse_bytes_with_progress(data, MidiImportEncoding::Utf8, |_| {})
     }
 
     pub fn load_from_bytes_with_progress(
         data: &[u8],
         progress: impl FnMut(LoadProgress),
     ) -> Result<Self, MidiError> {
-        MidiParser::parse_bytes_with_progress(data, progress)
+        MidiParser::parse_bytes_with_progress(data, MidiImportEncoding::Utf8, progress)
     }
 
     /// Same as `load_from_bytes_with_progress` but takes ownership of the byte
@@ -136,7 +140,30 @@ impl MidiFile {
         data: Vec<u8>,
         progress: impl FnMut(LoadProgress),
     ) -> Result<Self, MidiError> {
-        MidiParser::parse_bytes_with_progress_owned(data, progress)
+        MidiParser::parse_bytes_with_progress_owned(data, MidiImportEncoding::Utf8, progress)
+    }
+
+    /// Load with a specific encoding for track name decoding.
+    pub fn load_from_bytes_with_encoding(
+        data: Vec<u8>,
+        encoding: MidiImportEncoding,
+        progress: impl FnMut(LoadProgress),
+    ) -> Result<Self, MidiError> {
+        MidiParser::parse_bytes_with_progress_owned(data, encoding, progress)
+    }
+
+    /// Re-decode all track names using a different encoding (preserves raw bytes).
+    pub fn recode_track_names(&mut self, encoding: MidiImportEncoding) {
+        for (i, raw) in self.raw_track_names.iter().enumerate() {
+            if raw.is_empty() {
+                if i >= self.track_names.len() || self.track_names[i].starts_with("Track ") {
+                    continue;
+                }
+                self.track_names[i] = format!("Track {}", i + 1);
+            } else {
+                self.track_names[i] = encoding.decode(raw);
+            }
+        }
     }
 
     /// Find the tempo segment containing the given time.

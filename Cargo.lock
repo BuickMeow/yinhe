@@ -5980,7 +5980,9 @@ version = "0.1.0"
 name = "yinhe-midi"
 version = "0.1.0"
 dependencies = [
+ "encoding_rs",
  "midly",
+ "serde",
  "thiserror 2.0.18",
  "yinhe-memtrace",
  "yinhe-types",

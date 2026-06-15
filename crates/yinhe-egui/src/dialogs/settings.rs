@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use cpal::traits::{DeviceTrait, HostTrait};
 
 use crate::right_panel::config::GlobalSfConfig;
+use yinhe_midi::MidiImportEncoding;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -27,6 +28,8 @@ pub struct AudioSettings {
     pub scroll_mode: u32,
     /// 最小边框宽度(像素), 0=不设下限
     pub min_border_width: f32,
+    /// MIDI 导入编码
+    pub midi_import_encoding: MidiImportEncoding,
     #[serde(skip)]
     pub show_settings: bool,
     #[serde(skip)]
@@ -89,6 +92,7 @@ impl Default for AudioSettings {
             xsynth_layers: 4,
             scroll_mode: 0,
             min_border_width: 0.0,
+            midi_import_encoding: MidiImportEncoding::Utf8,
             velocity_display_mode: 0,
             automation_display_mode: 0,
             automation_show_dots: true,
@@ -323,6 +327,32 @@ pub fn show(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
                         settings.min_border_width = bw;
                         changed = true;
                     }
+                    ui.end_row();
+                });
+
+            ui.add_space(16.0);
+            ui.separator();
+            ui.add_space(8.0);
+
+            ui.heading("MIDI 导入");
+            ui.add_space(8.0);
+
+            egui::Grid::new("midi_import_grid")
+                .num_columns(2)
+                .spacing([12.0, 8.0])
+                .show(ui, |ui| {
+                    ui.label("音轨名编码");
+                    egui::ComboBox::from_id_salt("midi_import_encoding")
+                        .selected_text(settings.midi_import_encoding.label())
+                        .show_ui(ui, |ui| {
+                            for &enc in MidiImportEncoding::ALL {
+                                let selected = settings.midi_import_encoding == enc;
+                                if ui.selectable_label(selected, enc.label()).clicked() {
+                                    settings.midi_import_encoding = enc;
+                                    changed = true;
+                                }
+                            }
+                        });
                     ui.end_row();
                 });
 

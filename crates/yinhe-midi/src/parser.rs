@@ -1,4 +1,5 @@
 use crate::MidiError;
+use crate::encoding::MidiImportEncoding;
 use crate::event_collector::TempoEvent;
 use crate::midi::{LoadProgress, MidiControlEvent, MidiFile, Note};
 use crate::time::{DEFAULT_MPQ, TIMECODE_FALLBACK_TPB, ticks_to_seconds};
@@ -16,21 +17,31 @@ impl MidiParser {
         path: impl AsRef<Path>,
         progress: impl FnMut(LoadProgress),
     ) -> Result<MidiFile, MidiError> {
+        Self::load_with_progress_encoding(path, MidiImportEncoding::Utf8, progress)
+    }
+
+    pub fn load_with_progress_encoding(
+        path: impl AsRef<Path>,
+        encoding: MidiImportEncoding,
+        progress: impl FnMut(LoadProgress),
+    ) -> Result<MidiFile, MidiError> {
         yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Midi, || {
             let data = std::fs::read(path.as_ref())?;
-            Self::parse_bytes_with_progress_owned(data, progress)
+            Self::parse_bytes_with_progress_owned(data, encoding, progress)
         })
     }
 
     pub fn parse_bytes_with_progress(
         data: &[u8],
+        encoding: MidiImportEncoding,
         progress: impl FnMut(LoadProgress),
     ) -> Result<MidiFile, MidiError> {
-        Self::parse_bytes_with_progress_owned(data.to_vec(), progress)
+        Self::parse_bytes_with_progress_owned(data.to_vec(), encoding, progress)
     }
 
     pub fn parse_bytes_with_progress_owned(
         data: Vec<u8>,
+        encoding: MidiImportEncoding,
         mut progress: impl FnMut(LoadProgress),
     ) -> Result<MidiFile, MidiError> {
         yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Midi, || {
@@ -67,19 +78,26 @@ impl MidiParser {
         drop(smf);
 
         let total_tracks = tracks.len();
+        let mut raw_track_names: Vec<Vec<u8>> = Vec::with_capacity(total_tracks);
         for (track_idx, track) in tracks.iter_mut().enumerate() {
             progress(LoadProgress {
                 current_track: track_idx + 1,
                 total_tracks,
             });
             // Extract track name from MetaMessage::TrackName before clearing.
-            let track_name = track.iter().find_map(|ev| {
+            let raw_name: Vec<u8> = track.iter().find_map(|ev| {
                 if let midly::TrackEventKind::Meta(midly::MetaMessage::TrackName(name)) = ev.kind {
-                    Some(String::from_utf8_lossy(name).into_owned())
+                    Some(name.to_vec())
                 } else {
                     None
                 }
-            }).unwrap_or_else(|| format!("Track {}", track_idx + 1));
+            }).unwrap_or_default();
+            let track_name = if raw_name.is_empty() {
+                format!("Track {}", track_idx + 1)
+            } else {
+                encoding.decode(&raw_name)
+            };
+            raw_track_names.push(raw_name);
             track_names.push(track_name);
 
             let (port, channel_prefix, track_ch) = crate::track_parser::parse_track(
@@ -140,6 +158,7 @@ impl MidiParser {
             time_sig_denominator,
             time_sig_events,
             track_names,
+            raw_track_names,
             track_ports,
             track_channel_prefixes,
             track_channels,
@@ -239,6 +258,7 @@ mod tests {
             time_sig_numerator: 4,
             time_sig_denominator: 2,
             track_names: Vec::new(),
+            raw_track_names: Vec::new(),
             time_sig_events: Vec::new(),
             track_ports: Vec::new(),
             track_channel_prefixes: Vec::new(),
@@ -275,6 +295,7 @@ mod tests {
             time_sig_numerator: 4,
             time_sig_denominator: 2,
             track_names: Vec::new(),
+            raw_track_names: Vec::new(),
             time_sig_events: Vec::new(),
             track_ports: Vec::new(),
             track_channel_prefixes: Vec::new(),

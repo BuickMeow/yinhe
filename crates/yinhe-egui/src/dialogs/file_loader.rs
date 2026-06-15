@@ -1,6 +1,7 @@
 use std::sync::mpsc;
 
 use yinhe_midi::LoadProgress;
+use yinhe_midi::MidiImportEncoding;
 
 use crate::progress::{self, SharedProgress, StageStatus};
 
@@ -64,7 +65,7 @@ impl FileLoader {
     }
 
     /// Show file dialog and start loading in a background thread.
-    pub fn pick_file(&mut self) {
+    pub fn pick_file(&mut self, encoding: MidiImportEncoding) {
         if self.is_loading() {
             return;
         }
@@ -114,6 +115,7 @@ impl FileLoader {
                     let (tx, rx) = mpsc::channel();
                     let path_for_thread = path_str.clone();
                     let progress = self.load_progress.clone();
+                    let enc = encoding;
                     std::thread::spawn(move || {
                         progress::set_stage(&progress, 0, StageStatus::Active);
                         let result = yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Midi, || {
@@ -121,7 +123,7 @@ impl FileLoader {
                                 Ok(d) => d,
                                 Err(e) => return Err(yinhe_midi::MidiError::Io(e)),
                             };
-                            yinhe_midi::MidiFile::load_from_bytes_with_progress_owned(data, |p| {
+                            yinhe_midi::MidiFile::load_from_bytes_with_encoding(data, enc, |p| {
                                 let _ = tx.send(MidiLoadEvent::Progress(p));
                             })
                         });

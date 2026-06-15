@@ -235,7 +235,7 @@ impl App {
                 self.teardown_audio();
             }
             transport_bar::FileAction::Open => {
-                self.file_loader.pick_file();
+                self.file_loader.pick_file(self.audio_settings.midi_import_encoding);
             }
             transport_bar::FileAction::Save => {
                 if let Some(idx) = self.active_doc {

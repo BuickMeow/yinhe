@@ -221,6 +221,17 @@ impl eframe::App for App {
             self.teardown_audio();
         }
 
+        // ── MIDI encoding change: re-decode track names in active document ──
+        let new_enc = self.audio_settings.midi_import_encoding;
+        if new_enc != self.last_midi_encoding {
+            self.last_midi_encoding = new_enc;
+            if let Some(idx) = self.active_doc {
+                if let Some(doc) = self.documents.get_mut(idx) {
+                    doc.recode_track_names(new_enc);
+                }
+            }
+        }
+
         // ── Bottom mode bar ──
         mode_bar::show(
             ui,
