@@ -387,8 +387,7 @@ impl Document {
             project_sf,
             soundfont_project_mode,
         ) = archive
-            .get_events::<yinhe_project::ProjectJson>("project.json")
-            .and_then(|v| v.into_iter().next())
+            .get_json::<yinhe_project::ProjectJson>("project.json")
             .map(|p| {
                 let sf = crate::right_panel::config::ProjectSfConfig {
                     overrides: p

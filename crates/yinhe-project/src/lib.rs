@@ -62,6 +62,30 @@ impl ProjectArchive {
         );
     }
 
+    /// Store a single value as JSON text (human-readable).
+    pub fn set_json<T: Serialize>(
+        &mut self,
+        path: impl Into<String>,
+        header: FileHeader,
+        value: &T,
+    ) {
+        let data = serde_json::to_vec(value).expect("json serialization failed");
+        self.entries.insert(
+            path.into(),
+            ArchiveEntry {
+                path: String::new(),
+                header,
+                data,
+            },
+        );
+    }
+
+    /// Read a single value stored by `set_json`.
+    pub fn get_json<T: serde::de::DeserializeOwned>(&self, path: &str) -> Option<T> {
+        let entry = self.entries.get(path)?;
+        serde_json::from_slice(&entry.data).ok()
+    }
+
     /// Store conductor-scoped events using compact delta encoding (no inner header).
     pub fn set_delta_events<T: DeltaEvent>(
         &mut self,
@@ -778,10 +802,10 @@ mod tests {
             soundfont_project_mode: false,
             soundfont_overrides: Vec::new(),
         };
-        archive.set_events(
+        archive.set_json(
             "project.json",
             FileHeader::new(*b"YHPR", 0, 0, 0),
-            &[proj],
+            &proj,
         );
 
         // Add track notes
@@ -830,8 +854,8 @@ mod tests {
         let loaded = ProjectArchive::read_from(&path).unwrap();
 
         // Verify project.json
-        let proj_events: Vec<ProjectJson> = loaded.get_events("project.json").unwrap();
-        assert_eq!(proj_events[0].name, "Test Song");
+        let proj: ProjectJson = loaded.get_json("project.json").unwrap();
+        assert_eq!(proj.name, "Test Song");
 
         // Verify notes
         let (inner, note_events) = loaded.get_notes(&track_notes_path(17, "abc123")).unwrap();

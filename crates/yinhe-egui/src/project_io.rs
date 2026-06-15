@@ -427,12 +427,17 @@ pub fn midi_to_archive_with_names(
             })
             .collect(),
     };
-    archive.set_events("mapping.json", FileHeader::new(*b"YHMP", 0, 0, 0), &[mapping]);
+    archive.set_json("mapping.json", FileHeader::new(*b"YHMP", 0, 0, 0), &mapping);
 
     // ── Write project.json ──
+    let song_title = track_names
+        .first()
+        .filter(|n| !n.is_empty() && !n.starts_with("Track "))
+        .cloned()
+        .unwrap_or_default();
     let proj = ProjectJson {
         version: 1,
-        name: String::new(),
+        name: song_title,
         artist: String::new(),
         ppq: midi.ticks_per_beat,
         zstd_level: 0,
@@ -440,7 +445,7 @@ pub fn midi_to_archive_with_names(
         soundfont_project_mode: false,
         soundfont_overrides: Vec::new(),
     };
-    archive.set_events("project.json", FileHeader::new(*b"YHPR", 0, 0, 0), &[proj]);
+    archive.set_json("project.json", FileHeader::new(*b"YHPR", 0, 0, 0), &proj);
 
     archive
 }
@@ -450,10 +455,8 @@ pub fn archive_to_midi(archive: &ProjectArchive) -> yinhe_midi::MidiFile {
     let mut midi = yinhe_midi::MidiFile::default();
 
     // ── Read project.json for ppq ──
-    if let Some(proj) = archive.get_events::<ProjectJson>("project.json") {
-        if let Some(p) = proj.first() {
-            midi.ticks_per_beat = p.ppq;
-        }
+    if let Some(proj) = archive.get_json::<ProjectJson>("project.json") {
+        midi.ticks_per_beat = proj.ppq;
     }
 
     // ── Read conductor events ──
@@ -495,8 +498,7 @@ pub fn archive_to_midi(archive: &ProjectArchive) -> yinhe_midi::MidiFile {
     }
 
     // ── Read mapping ──
-    let mapping: Vec<MappingJson> = archive.get_events("mapping.json").unwrap_or_default();
-    let mapping = mapping.into_iter().next();
+    let mapping: Option<MappingJson> = archive.get_json("mapping.json");
 
     // Build uuid → track_index lookup from mapping.
     let mut uuid_to_track: HashMap<&str, usize> = HashMap::new();
@@ -859,7 +861,7 @@ pub fn build_archive_from(
         soundfont_project_mode: !global_enabled,
         soundfont_overrides,
     };
-    archive.set_events("project.json", FileHeader::new(*b"YHPR", 0, 0, 0), &[proj]);
+    archive.set_json("project.json", FileHeader::new(*b"YHPR", 0, 0, 0), &proj);
 
     archive.compression_level = compression_level;
     archive

@@ -533,9 +533,8 @@ fn render_json_text(ui: &mut egui::Ui, data: &[u8]) {
 }
 
 fn render_hexdump(ui: &mut egui::Ui, data: &[u8]) {
-    let max = data.len().min(512);
     let mut hex = String::new();
-    for (i, chunk) in data[..max].chunks(16).enumerate() {
+    for (i, chunk) in data.chunks(16).enumerate() {
         hex.push_str(&format!("{:04x}  ", i * 16));
         for b in chunk {
             hex.push_str(&format!("{:02x} ", b));
@@ -550,9 +549,6 @@ fn render_hexdump(ui: &mut egui::Ui, data: &[u8]) {
             });
         }
         hex.push('\n');
-    }
-    if data.len() > max {
-        hex.push_str(&format!("... ({} bytes total)", data.len()));
     }
     let mut clone = hex;
     ui.add(
