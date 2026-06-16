@@ -1,5 +1,9 @@
 use std::sync::{Arc, Mutex, mpsc};
 
+pub(crate) mod actions;
+pub(crate) mod audio;
+pub(crate) mod main_loop;
+
 use crate::file_loader::FileLoader;
 use crate::dialogs::system_monitor::SystemMonitor;
 use crate::document::Document;

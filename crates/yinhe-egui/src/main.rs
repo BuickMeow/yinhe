@@ -4,9 +4,6 @@ use yinhe_memtrace::TaggedAlloc;
 static GLOBAL_ALLOC: TaggedAlloc = TaggedAlloc;
 
 mod app;
-mod app_actions;
-mod app_audio;
-mod app_eframe;
 mod arrange;
 mod audio_settings;
 mod dialogs;
