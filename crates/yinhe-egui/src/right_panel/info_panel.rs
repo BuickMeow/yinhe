@@ -146,21 +146,35 @@ pub fn show(
 
     // ── Track name ──
     let mut name_change: Option<String> = None;
+    let mut name_resp_id: Option<egui::Id> = None;
+    let mut name_gained_focus = false;
+    let mut name_lost_focus = false;
     ui.horizontal(|ui| {
         ui.label("音轨名称:");
         let mut name = doc.track_names[track_idx].clone();
         let resp = ui.add_sized(
             egui::vec2(ui.available_width().max(60.0), 18.0),
-            egui::TextEdit::singleline(&mut name),
+            egui::TextEdit::singleline(&mut name).id_salt(("track_name", track_idx)),
         );
         if resp.changed() {
             name_change = Some(name);
         }
+        name_resp_id = Some(resp.id);
+        name_gained_focus = resp.gained_focus();
+        name_lost_focus = resp.lost_focus();
     });
-    if let Some(new_name) = name_change {
-        doc.track_names[track_idx] = new_name.clone();
-        if let Some(ti_mut) = doc.track_info_cache.get_mut(track_idx) {
-            ti_mut.name = new_name;
+    if let Some(id) = name_resp_id {
+        if name_gained_focus {
+            crate::history::begin_edit(doc, id, "Edit track name");
+        }
+        if let Some(new_name) = name_change {
+            doc.track_names[track_idx] = new_name.clone();
+            if let Some(ti_mut) = doc.track_info_cache.get_mut(track_idx) {
+                ti_mut.name = new_name;
+            }
+        }
+        if name_lost_focus {
+            crate::history::commit_edit(doc, id);
         }
     }
     let ti = &doc.track_info_cache[track_idx];
@@ -210,6 +224,9 @@ pub fn show(
 
     // Apply port/channel change
     if port_changed {
+        // Push pre-change snapshot for undo.
+        let snap = crate::history::Snapshot::capture(doc, "Change port/channel");
+        doc.history.push(snap);
         let new_global_ch = new_port * 16 + (new_ch - 1);
         let midi = Arc::make_mut(&mut doc.midi);
         midi.track_channels[track_idx] = new_global_ch;

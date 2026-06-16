@@ -106,6 +106,12 @@ impl eframe::App for App {
         if kb.transpose_down {
             self.transpose_selected_notes(-12);
         }
+        if kb.undo {
+            self.undo();
+        }
+        if kb.redo {
+            self.redo();
+        }
 
         // ── System resource monitoring ──
         self.refresh_system_stats();
@@ -227,10 +233,11 @@ impl eframe::App for App {
         let new_enc = self.audio_settings.midi_import_encoding;
         if new_enc != self.last_midi_encoding {
             self.last_midi_encoding = new_enc;
-            if let Some(idx) = self.active_doc {
-                if let Some(doc) = self.documents.get_mut(idx) {
+            if self.active_doc.is_some() {
+                self.with_undo("Recode track names", |doc| {
                     doc.recode_track_names(new_enc);
-                }
+                    true
+                });
             }
         }
 
@@ -454,9 +461,15 @@ impl eframe::App for App {
                         let doc = &mut self.documents[idx];
                         if doc.selected.is_empty() {
                             self.note_drag_originals = None;
+                            self.note_drag_undo_snapshot = None;
+                            self.note_drag_moved = false;
                         } else {
                             // Save originals on first frame of drag
                             if self.note_drag_originals.is_none() {
+                                // Capture undo snapshot before any mutation.
+                                self.note_drag_undo_snapshot =
+                                    Some(crate::history::Snapshot::capture(doc, "Move notes"));
+                                self.note_drag_moved = false;
                                 let mut originals = Vec::new();
                                 let midi = &doc.midi;
                                 for &(track, start_tick, key) in &doc.selected {
@@ -470,7 +483,11 @@ impl eframe::App for App {
                                 self.note_drag_originals = Some(originals);
                             }
 
-                            // Rebuild notes from originals + delta each frame
+                            if delta_ticks != 0 || delta_keys != 0 {
+                                self.note_drag_moved = true;
+                            }
+
+                            // Rebuild notes from originals + delta each frame.
                             if let Some(ref originals) = self.note_drag_originals.clone() {
                                 let midi = Arc::make_mut(&mut doc.midi);
                                 // Clear all current selected notes
@@ -500,12 +517,21 @@ impl eframe::App for App {
                     }
                 } else {
                     // Drag ended — finalize
-                    if let Some(originals) = self.note_drag_originals.take() {
+                    if let Some(_originals) = self.note_drag_originals.take() {
                         if let Some(idx) = self.active_doc {
                             let doc = &mut self.documents[idx];
                             let midi = Arc::make_mut(&mut doc.midi);
                             crate::app_actions::rebuild_midi_metadata(midi);
                             self.pianoroll_view.base.dirty = true;
+                            // Push the pre-drag snapshot onto the undo stack
+                            // only if the drag actually moved notes.
+                            let snap = self.note_drag_undo_snapshot.take();
+                            let moved = std::mem::replace(&mut self.note_drag_moved, false);
+                            if moved {
+                                if let Some(snap) = snap {
+                                    doc.history.push(snap);
+                                }
+                            }
                             if let Some(ref audio) = self.audio {
                                 let _ = audio.handle.send(yinhe_audio::AudioCommand::ReloadNotes {
                                     midi: Arc::clone(&doc.midi),

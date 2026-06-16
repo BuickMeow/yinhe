@@ -1,6 +1,7 @@
 use eframe::egui;
 
 use crate::document::Document;
+use crate::history::{begin_edit, commit_edit};
 
 /// Show the Project Info panel for editing project metadata.
 pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
@@ -25,10 +26,16 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
     let mut name = doc.project_name.clone();
     let resp = ui.add_sized(
         egui::vec2(ui.available_width(), 20.0),
-        egui::TextEdit::singleline(&mut name),
+        egui::TextEdit::singleline(&mut name).id_salt("proj_name"),
     );
+    if resp.gained_focus() {
+        begin_edit(doc, resp.id, "Edit project name");
+    }
     if resp.changed() {
         doc.project_name = name;
+    }
+    if resp.lost_focus() {
+        commit_edit(doc, resp.id);
     }
 
     ui.add_space(6.0);
@@ -42,10 +49,16 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
     let mut artist = doc.project_artist.clone();
     let resp = ui.add_sized(
         egui::vec2(ui.available_width(), 20.0),
-        egui::TextEdit::singleline(&mut artist),
+        egui::TextEdit::singleline(&mut artist).id_salt("proj_artist"),
     );
+    if resp.gained_focus() {
+        begin_edit(doc, resp.id, "Edit artist");
+    }
     if resp.changed() {
         doc.project_artist = artist;
+    }
+    if resp.lost_focus() {
+        commit_edit(doc, resp.id);
     }
 
     ui.add_space(6.0);
@@ -61,8 +74,14 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
         egui::vec2(80.0, 20.0),
         egui::DragValue::new(&mut ppq).range(1..=32767),
     );
+    if resp.gained_focus() || (resp.drag_started() && !doc.pending_edits.has(resp.id)) {
+        begin_edit(doc, resp.id, "Edit PPQ");
+    }
     if resp.changed() {
         doc.project_ppq = ppq.max(1) as u32;
+    }
+    if resp.lost_focus() || resp.drag_stopped() {
+        commit_edit(doc, resp.id);
     }
 
     ui.add_space(6.0);
@@ -82,10 +101,16 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
         egui::vec2(60.0, 20.0),
         egui::DragValue::new(&mut zstd_level).range(0..=22),
     );
+    if resp.gained_focus() || (resp.drag_started() && !doc.pending_edits.has(resp.id)) {
+        begin_edit(doc, resp.id, "Edit zstd level");
+    }
     if resp.changed() {
         if let Some(archive) = &mut doc.archive {
             archive.compression_level = zstd_level;
         }
+    }
+    if resp.lost_focus() || resp.drag_stopped() {
+        commit_edit(doc, resp.id);
     }
 
     ui.add_space(6.0);
@@ -99,9 +124,15 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
     let mut desc = doc.project_description.clone();
     let resp = ui.add_sized(
         egui::vec2(ui.available_width(), 60.0),
-        egui::TextEdit::multiline(&mut desc),
+        egui::TextEdit::multiline(&mut desc).id_salt("proj_desc"),
     );
+    if resp.gained_focus() {
+        begin_edit(doc, resp.id, "Edit description");
+    }
     if resp.changed() {
         doc.project_description = desc;
+    }
+    if resp.lost_focus() {
+        commit_edit(doc, resp.id);
     }
 }

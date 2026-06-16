@@ -18,6 +18,8 @@ pub(crate) struct KeyboardActions {
     pub duplicate_selected: bool,
     pub transpose_up: bool,
     pub transpose_down: bool,
+    pub undo: bool,
+    pub redo: bool,
 }
 
 impl App {
@@ -63,6 +65,19 @@ impl App {
                     actions.transpose_down = true;
                 }
             }
+
+            // Cmd/Ctrl+Z — undo;  Cmd/Ctrl+Shift+Z or Cmd/Ctrl+Y — redo.
+            let cmd = i.modifiers.command || i.modifiers.ctrl;
+            if cmd && i.key_pressed(egui::Key::Z) {
+                if i.modifiers.shift {
+                    actions.redo = true;
+                } else {
+                    actions.undo = true;
+                }
+            }
+            if cmd && i.key_pressed(egui::Key::Y) {
+                actions.redo = true;
+            }
         });
 
         actions
@@ -70,14 +85,10 @@ impl App {
 
     /// Delete all selected notes from the active document.
     pub(crate) fn delete_selected_notes(&mut self) {
-        let Some(idx) = self.active_doc else { return };
-
-        let midi_clone = {
-            let doc = &mut self.documents[idx];
+        self.with_undo("Delete notes", |doc| {
             if doc.selected.is_empty() {
-                return;
+                return false;
             }
-
             let midi = Arc::make_mut(&mut doc.midi);
             for &(track, start_tick, key) in &doc.selected {
                 let notes = &mut midi.key_notes[key as usize];
@@ -85,26 +96,16 @@ impl App {
             }
             doc.selected.clear();
             rebuild_midi_metadata(midi);
-            self.pianoroll_view.base.dirty = true;
-            Arc::clone(&doc.midi)
-        };
-
-        if let Some(ref audio) = self.audio {
-            let _ = audio.handle.send(yinhe_audio::AudioCommand::ReloadNotes {
-                midi: midi_clone,
-            });
-        }
+            true
+        });
     }
 
     /// Duplicate all selected notes (Ctrl+D / Cmd+D).
     /// New notes are placed after the original selection, offset by the selection duration.
     pub(crate) fn duplicate_selected_notes(&mut self) {
-        let Some(idx) = self.active_doc else { return };
-
-        let midi_clone = {
-            let doc = &mut self.documents[idx];
+        self.with_undo("Duplicate notes", |doc| {
             if doc.selected.is_empty() {
-                return;
+                return false;
             }
 
             let midi = Arc::make_mut(&mut doc.midi);
@@ -121,7 +122,7 @@ impl App {
             }
 
             if selected_data.is_empty() {
-                return;
+                return false;
             }
 
             // Calculate offset: duration of the selection (max_end - min_start)
@@ -144,25 +145,20 @@ impl App {
 
             doc.selected = new_selected;
             rebuild_midi_metadata(midi);
-            self.pianoroll_view.base.dirty = true;
-            Arc::clone(&doc.midi)
-        };
-
-        if let Some(ref audio) = self.audio {
-            let _ = audio.handle.send(yinhe_audio::AudioCommand::ReloadNotes {
-                midi: midi_clone,
-            });
-        }
+            true
+        });
     }
 
     /// Transpose selected notes by `semitones` (e.g. +12 for up an octave, -12 for down).
     pub(crate) fn transpose_selected_notes(&mut self, semitones: i8) {
-        let Some(idx) = self.active_doc else { return };
-
-        let midi_clone = {
-            let doc = &mut self.documents[idx];
+        let label = if semitones >= 0 {
+            "Transpose up"
+        } else {
+            "Transpose down"
+        };
+        self.with_undo(label, |doc| {
             if doc.selected.is_empty() {
-                return;
+                return false;
             }
 
             let midi = Arc::make_mut(&mut doc.midi);
@@ -179,7 +175,7 @@ impl App {
             }
 
             if moved_data.is_empty() {
-                return;
+                return false;
             }
 
             // Re-insert at new keys
@@ -194,10 +190,89 @@ impl App {
 
             doc.selected = new_selected;
             rebuild_midi_metadata(midi);
+            true
+        });
+    }
+
+    /// Capture a `Snapshot` of the active document's persistent state.
+    /// Returns `None` if no document is active.
+    pub(crate) fn capture_snapshot(&self, label: &'static str) -> Option<crate::history::Snapshot> {
+        let idx = self.active_doc?;
+        let doc = self.documents.get(idx)?;
+        Some(crate::history::Snapshot::capture(doc, label))
+    }
+
+    /// Run an edit closure, recording an undo entry beforehand and notifying
+    /// audio afterwards.
+    ///
+    /// The closure receives `&mut Document` and should return `true` if it
+    /// actually changed anything; on `false` no snapshot is pushed and audio
+    /// is not notified.
+    pub(crate) fn with_undo<F>(&mut self, label: &'static str, f: F)
+    where
+        F: FnOnce(&mut crate::document::Document) -> bool,
+    {
+        let Some(idx) = self.active_doc else { return };
+        // Build snapshot before mutation. Cheap: Arc::clone + small clones.
+        let snapshot = crate::history::Snapshot::capture(&self.documents[idx], label);
+        let changed = {
+            let doc = &mut self.documents[idx];
+            f(doc)
+        };
+        if !changed {
+            return;
+        }
+        let midi_clone = {
+            let doc = &mut self.documents[idx];
+            doc.history.push(snapshot);
             self.pianoroll_view.base.dirty = true;
             Arc::clone(&doc.midi)
         };
+        if let Some(ref audio) = self.audio {
+            let _ = audio.handle.send(yinhe_audio::AudioCommand::ReloadNotes {
+                midi: midi_clone,
+            });
+        }
+    }
 
+    /// Restore the previous state on the active document's history stack.
+    pub(crate) fn undo(&mut self) {
+        let Some(idx) = self.active_doc else { return };
+        let current = crate::history::Snapshot::capture(&self.documents[idx], "current");
+        let restored = self.documents[idx].history.undo(current);
+        if let Some(snap) = restored {
+            self.apply_snapshot(idx, snap);
+        }
+    }
+
+    /// Re-apply the most recently undone state on the active document.
+    pub(crate) fn redo(&mut self) {
+        let Some(idx) = self.active_doc else { return };
+        let current = crate::history::Snapshot::capture(&self.documents[idx], "current");
+        let restored = self.documents[idx].history.redo(current);
+        if let Some(snap) = restored {
+            self.apply_snapshot(idx, snap);
+        }
+    }
+
+    /// Apply a snapshot to the document at `idx`: restore persistent fields,
+    /// rebuild caches, clear selection, and notify audio.
+    fn apply_snapshot(&mut self, idx: usize, snap: crate::history::Snapshot) {
+        let midi_clone = {
+            let doc = &mut self.documents[idx];
+            snap.restore(doc);
+            // Track name mirror in cache must stay in sync.
+            for (i, name) in doc.track_names.iter().enumerate() {
+                if let Some(ti) = doc.track_info_cache.get_mut(i) {
+                    ti.name = name.clone();
+                }
+            }
+            // Clear selection: restored notes' (start_tick, key) may no longer
+            // match what the user had selected.
+            doc.selected.clear();
+            self.pianoroll_view.base.dirty = true;
+            Arc::clone(&doc.midi)
+        };
         if let Some(ref audio) = self.audio {
             let _ = audio.handle.send(yinhe_audio::AudioCommand::ReloadNotes {
                 midi: midi_clone,

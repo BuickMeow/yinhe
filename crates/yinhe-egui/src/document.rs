@@ -76,6 +76,10 @@ pub(crate) struct Document {
     pub project_description: String,
     /// Editable PPQ (ticks per beat). Saved to project.json; takes effect on next load.
     pub project_ppq: u32,
+    /// Per-document undo/redo stack. Captures `midi` + `track_names` at each edit.
+    pub history: crate::history::History,
+    /// Per-widget baseline snapshots awaiting commit on lost-focus / Enter.
+    pub pending_edits: crate::history::PendingEdits,
 }
 
 /// Detect the conductor track using a SMF format-1 heuristic.
@@ -150,6 +154,8 @@ impl Default for Document {
             project_artist: String::new(),
             project_description: String::new(),
             project_ppq: 480,
+            history: crate::history::History::new(),
+            pending_edits: crate::history::PendingEdits::default(),
         }
     }
 }
@@ -450,6 +456,8 @@ impl Document {
             project_artist,
             project_description,
             project_ppq,
+            history: crate::history::History::new(),
+            pending_edits: crate::history::PendingEdits::default(),
         }, soundfont_project_mode))
     }
 

@@ -87,6 +87,12 @@ pub struct App {
 
     // ── Note drag originals (for real-time visual feedback) ──
     pub(crate) note_drag_originals: Option<Vec<(yinhe_types::Note, u8)>>,
+    /// Snapshot taken on the first frame of a note drag.  Pushed onto the
+    /// active document's undo stack on mouse-up (drag finalize).
+    pub(crate) note_drag_undo_snapshot: Option<crate::history::Snapshot>,
+    /// Tracks whether the current drag ever produced a non-zero delta.
+    /// A click without motion should not push an undo entry.
+    pub(crate) note_drag_moved: bool,
 
     // ── Multi-stage loading progress ──
     pub(crate) load_progress: crate::progress::SharedProgress,
@@ -204,6 +210,8 @@ impl App {
 
             event_browser_state: crate::right_panel::event_browser::EventBrowserState::default(),
             note_drag_originals: None,
+            note_drag_undo_snapshot: None,
+            note_drag_moved: false,
         }
     }
 

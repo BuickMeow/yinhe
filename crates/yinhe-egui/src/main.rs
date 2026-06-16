@@ -11,6 +11,7 @@ mod audio_controller;
 mod automation_panel;
 mod dialogs;
 mod document;
+mod history;
 mod perf_probe;
 mod piano_view;
 mod playback;
