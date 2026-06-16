@@ -85,6 +85,9 @@ pub struct App {
     // ── Event browser ──
     pub(crate) event_browser_state: crate::right_panel::event_browser::EventBrowserState,
 
+    // ── Note drag originals (for real-time visual feedback) ──
+    pub(crate) note_drag_originals: Option<Vec<(yinhe_types::Note, u8)>>,
+
     // ── Multi-stage loading progress ──
     pub(crate) load_progress: crate::progress::SharedProgress,
 
@@ -200,6 +203,7 @@ impl App {
             show_mem_breakdown: false,
 
             event_browser_state: crate::right_panel::event_browser::EventBrowserState::default(),
+            note_drag_originals: None,
         }
     }
 

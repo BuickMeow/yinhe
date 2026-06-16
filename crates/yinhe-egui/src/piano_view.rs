@@ -54,6 +54,7 @@ pub fn show(
     velocity_display_mode: &mut u32,
     automation_display_mode: &mut u32,
     automation_show_dots: &mut bool,
+    note_drag_delta: &mut Option<(i64, i32)>,
 ) -> Option<crate::widgets::selection_actions::SelectionAction> {
     // Sense::hover() — no drag ownership. All drag is handled by dedicated
     // ui.interact calls below, each inside its own push_id scope.
@@ -131,6 +132,7 @@ pub fn show(
     // ── Selection drag (Select tool only) ──
     // Update state BEFORE handle_input to avoid egui pointer-capture conflicts.
     let mut sel_action = None;
+    let mut note_drag_delta: Option<(i64, i32)> = None;
     if *active_tool == Tool::Select && !is_playing {
         sel_drag_frame(
             ui,
@@ -144,7 +146,22 @@ pub fn show(
             bar_line_data,
             total_ticks,
             cursor_tick,
+            &mut note_drag_delta,
         );
+    }
+
+    // ── Hover cursor: show Move when over a selected note ──
+    if *active_tool == Tool::Select && !is_playing && note_drag_delta.is_none() {
+        if let Some(midi_ref) = midi {
+            if let Some(pos) = ui.input(|i| i.pointer.hover_pos()) {
+                if music_rect.contains(pos) {
+                    let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
+                    if hit_selected_note(local, view, midi_ref, selected) {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::Move);
+                    }
+                }
+            }
+        }
     }
 
     // ── Content interaction (zoom/pan/cursor/drag/reset) ──
@@ -161,6 +178,33 @@ pub fn show(
         follow_mode,
         active_tool,
     );
+
+    // ── Keyboard area: vertical zoom (pinch / cmd+scroll) ──
+    ui.push_id("kb_zoom", |ui| {
+        let kb_rect = egui::Rect::from_min_max(
+            egui::pos2(rect.min.x, content_y),
+            egui::pos2(rect.min.x + kb_w, content_y + content_h),
+        );
+        let pointer_in_kb = ui.input(|i| i.pointer.hover_pos().is_some_and(|p| kb_rect.contains(p)));
+        if pointer_in_kb {
+            let zoom_delta = ui.input(|i| i.zoom_delta());
+            if (zoom_delta - 1.0).abs() > 0.001 {
+                let pointer_y = ui.input(|i| i.pointer.hover_pos().unwrap_or_default()).y - content_y;
+                view.zoom_around_y(pointer_y, zoom_delta, content_h);
+                view.base.dirty = true;
+                ui.ctx().request_repaint();
+            }
+            let cmd = ui.input(|i| i.modifiers.command || i.modifiers.ctrl);
+            let scroll = ui.input(|i| i.smooth_scroll_delta);
+            if cmd && scroll.y.abs() > 0.5 {
+                let factor = if scroll.y > 0.0 { 1.1 } else { 1.0 / 1.1 };
+                let pointer_y = ui.input(|i| i.pointer.hover_pos().unwrap_or_default()).y - content_y;
+                view.zoom_around_y(pointer_y, factor, content_h);
+                view.base.dirty = true;
+                ui.ctx().request_repaint();
+            }
+        }
+    });
 
     // ── Keyboard resize handle ──
     ui.push_id("kb_handle", |ui| {
@@ -488,10 +532,15 @@ fn sel_drag_frame(
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
     total_ticks: f64,
     cursor_tick: &mut Option<f64>,
+    note_drag_delta: &mut Option<(i64, i32)>,
 ) {
     let sel_id = ui.id().with("sel_drag");
     let mut drag: Option<(egui::Pos2, egui::Pos2)> =
         ui.data_mut(|d| d.get_persisted(sel_id)).unwrap_or(None);
+
+    let note_drag_id = ui.id().with("note_drag_origin");
+    let mut note_drag_origin: Option<(f64, f64)> =
+        ui.data_mut(|d| d.get_persisted(note_drag_id)).unwrap_or(None);
 
     let pointer = ui.input(|i| i.pointer.clone());
     let cmd = ui.input(|i| i.modifiers.command || i.modifiers.ctrl);
@@ -499,6 +548,9 @@ fn sel_drag_frame(
     // Clear stale drag state
     if drag.is_some() && !pointer.primary_down() && !pointer.primary_released() {
         drag = None;
+    }
+    if note_drag_origin.is_some() && !pointer.primary_down() && !pointer.primary_released() {
+        note_drag_origin = None;
     }
 
     // Start drag
@@ -531,17 +583,65 @@ fn sel_drag_frame(
             // Don't start drag, don't clear anything — let the button handle it.
         } else {
             let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
-            drag = Some((local, local));
-            if !cmd {
-                selected.clear();
+            // Check if clicking inside the selection rect or on a selected note → note-drag mode
+            let in_sel_rect = {
+                let persist_id = ui.id().with("sel_rect_persist");
+                let sel_music: Option<Option<(f64, f64, u8, u8)>> =
+                    ui.data_mut(|d| d.get_persisted(persist_id));
+                sel_music.flatten().is_some_and(|(t_start, t_end, key_lo, key_hi)| {
+                    let kh = view.key_height;
+                    let scroll_y = view.base.scroll_y;
+                    let sy = (127.0 - key_hi as f32) * kh - scroll_y;
+                    let ey = (127.0 - key_lo as f32 + 1.0) * kh - scroll_y;
+                    let sx = view.tick_to_x(t_start);
+                    let ex = view.tick_to_x(t_end);
+                    let pixel_rect = egui::Rect::from_min_max(
+                        egui::pos2(sx.min(ex) as f32, sy.min(ey) as f32),
+                        egui::pos2(sx.max(ex) as f32, sy.max(ey) as f32),
+                    );
+                    pixel_rect.contains(local)
+                })
+            };
+            let on_note = midi.is_some_and(|m| hit_selected_note(local, view, m, selected));
+            if in_sel_rect || on_note {
+                let tick = view.x_to_tick(local.x);
+                let key = view.y_to_key(local.y) as f64;
+                note_drag_origin = Some((tick, key));
+                // Don't clear sel_rect_persist — keep the selection box visible
+            } else {
+                // Not on a selected note or selection rect → marquee selection
+                drag = Some((local, local));
+                if !cmd {
+                    selected.clear();
+                }
+                let persist_id = ui.id().with("sel_rect_persist");
+                ui.data_mut(|d| d.insert_persisted(persist_id, Option::<(f64, f64, u8, u8)>::None));
             }
-            // Clear persisted selection rect when starting a new drag
-            let persist_id = ui.id().with("sel_rect_persist");
-            ui.data_mut(|d| d.insert_persisted(persist_id, Option::<(f64, f64, u8, u8)>::None));
         }
     }
 
-    // Update end on frames after the initial press
+    // Note drag: update delta each frame
+    if let Some((origin_tick, origin_key)) = note_drag_origin {
+        if pointer.primary_down() && !pointer.primary_pressed() {
+            if let Some(pos) = pointer.hover_pos() {
+                let local_x = pos.x - content_rect.min.x;
+                let local_y = pos.y - content_rect.min.y;
+                let current_tick = view.x_to_tick(local_x);
+                let current_key = view.y_to_key(local_y) as f64;
+                let dt = (current_tick - origin_tick).round() as i64;
+                let dk = (current_key - origin_key).round() as i32;
+                *note_drag_delta = Some((dt, dk));
+                ui.ctx().request_repaint();
+            }
+        }
+        if pointer.primary_released() {
+            note_drag_origin = None;
+        }
+    } else if note_drag_delta.is_some() {
+        *note_drag_delta = None;
+    }
+
+    // Marquee drag: update end on frames after the initial press
     if let Some((start, _)) = drag {
         if pointer.primary_down() && !pointer.primary_pressed() {
             if let Some(pos) = pointer.hover_pos() {
@@ -637,6 +737,26 @@ fn sel_drag_frame(
     }
 
     ui.data_mut(|d| d.insert_persisted(sel_id, drag));
+    ui.data_mut(|d| d.insert_persisted(note_drag_id, note_drag_origin));
+}
+
+/// Check if a local coordinate hits any selected note.
+fn hit_selected_note(
+    local: egui::Pos2,
+    view: &yinhe_pianoroll::PianoRollView,
+    midi: &dyn yinhe_pianoroll::NoteSource,
+    selected: &std::collections::HashSet<(u16, u32, u8)>,
+) -> bool {
+    let tick = view.x_to_tick(local.x);
+    let key = view.y_to_key(local.y);
+    for note in midi.key_notes(key) {
+        if (note.start_tick as f64) <= tick && tick < (note.end_tick as f64) {
+            if selected.contains(&(note.track, note.start_tick, key)) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// Read persisted drag state and draw the selection box on top of GPU content.

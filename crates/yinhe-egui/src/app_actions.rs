@@ -204,6 +204,62 @@ impl App {
             });
         }
     }
+
+    /// Move selected notes by `delta_ticks` and `delta_keys`.
+    pub(crate) fn move_selected_notes(&mut self, delta_ticks: i64, delta_keys: i32) {
+        let Some(idx) = self.active_doc else { return };
+
+        let midi_clone = {
+            let doc = &mut self.documents[idx];
+            if doc.selected.is_empty() {
+                return;
+            }
+
+            let midi = Arc::make_mut(&mut doc.midi);
+
+            // Remove selected notes from their current keys and collect their data
+            let mut moved_data: Vec<(yinhe_types::Note, u8)> = Vec::new();
+            for &(track, start_tick, key) in &doc.selected {
+                let notes = &mut midi.key_notes[key as usize];
+                if let Some(pos) = notes.iter().position(|n| n.track == track && n.start_tick == start_tick) {
+                    let note = notes.remove(pos);
+                    moved_data.push((note, key));
+                }
+            }
+
+            if moved_data.is_empty() {
+                return;
+            }
+
+            // Re-insert at new positions
+            let mut new_selected = HashSet::new();
+            for (note, old_key) in &moved_data {
+                let new_key = ((*old_key as i32) + delta_keys).clamp(0, 127) as u8;
+                let new_start = (note.start_tick as i64 + delta_ticks).max(0) as u32;
+                let new_end = (note.end_tick as i64 + delta_ticks).max(1) as u32;
+                let moved = yinhe_types::Note {
+                    start_tick: new_start,
+                    end_tick: new_end,
+                    ..note.clone()
+                };
+                let notes = &mut midi.key_notes[new_key as usize];
+                let insert_pos = notes.partition_point(|n| n.start_tick < moved.start_tick);
+                notes.insert(insert_pos, moved);
+                new_selected.insert((note.track, new_start, new_key));
+            }
+
+            doc.selected = new_selected;
+            rebuild_midi_metadata(midi);
+            self.pianoroll_view.base.dirty = true;
+            Arc::clone(&doc.midi)
+        };
+
+        if let Some(ref audio) = self.audio {
+            let _ = audio.handle.send(yinhe_audio::AudioCommand::ReloadNotes {
+                midi: midi_clone,
+            });
+        }
+    }
 }
 
 /// Rebuild computed metadata on a MidiFile after note mutations.

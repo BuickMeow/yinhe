@@ -1,4 +1,6 @@
 use eframe::egui;
+use std::collections::HashSet;
+use std::sync::Arc;
 
 use crate::app::App;
 use crate::dialogs::file_loader::LoadResult;
@@ -361,7 +363,7 @@ impl eframe::App for App {
                 while self.controller_renderers.len() <= idx {
                     self.controller_renderers.push(Vec::new());
                 }
-                let sel_action = {
+                let (sel_action, note_drag_delta) = {
                     let mut guard = ReplaceGuard::new(&mut self.documents[idx]);
                     let doc = guard.as_mut();
                     let midi_source: Option<&dyn yinhe_pianoroll::NoteSource> =
@@ -370,6 +372,7 @@ impl eframe::App for App {
                         egui::Rect::from_min_max(egui::pos2(remaining.min.x, bottom_y), remaining.max);
 
                     let mut action = None;
+                    let mut note_drag_delta: Option<(i64, i32)> = None;
                     ui.scope_builder(egui::UiBuilder::new().max_rect(piano_rect), |ui| {
                         let _piano_total_start = if crate::perf_probe::enabled() {
                             Some(std::time::Instant::now())
@@ -426,12 +429,13 @@ impl eframe::App for App {
                             &mut self.audio_settings.velocity_display_mode,
                             &mut self.audio_settings.automation_display_mode,
                             &mut self.audio_settings.automation_show_dots,
+                            &mut note_drag_delta,
                         );
                         if let Some(t0) = _piano_total_start {
                             crate::perf_probe::record_piano_total(t0.elapsed());
                         }
                     });
-                    action
+                    (action, note_drag_delta)
                     // guard drops here → document restored even on panic
                 };
                 // Handle floating action bar clicks (after guard/doc borrow is dropped)
@@ -442,6 +446,72 @@ impl eframe::App for App {
                         SelectionAction::Duplicate => self.duplicate_selected_notes(),
                         SelectionAction::TransposeUp => self.transpose_selected_notes(12),
                         SelectionAction::TransposeDown => self.transpose_selected_notes(-12),
+                    }
+                }
+                // Handle note drag (after guard/doc borrow is dropped)
+                if let Some((delta_ticks, delta_keys)) = note_drag_delta {
+                    if let Some(idx) = self.active_doc {
+                        let doc = &mut self.documents[idx];
+                        if doc.selected.is_empty() {
+                            self.note_drag_originals = None;
+                        } else {
+                            // Save originals on first frame of drag
+                            if self.note_drag_originals.is_none() {
+                                let mut originals = Vec::new();
+                                let midi = &doc.midi;
+                                for &(track, start_tick, key) in &doc.selected {
+                                    if let Some(note) = midi.key_notes[key as usize]
+                                        .iter()
+                                        .find(|n| n.track == track && n.start_tick == start_tick)
+                                    {
+                                        originals.push((note.clone(), key));
+                                    }
+                                }
+                                self.note_drag_originals = Some(originals);
+                            }
+
+                            // Rebuild notes from originals + delta each frame
+                            if let Some(ref originals) = self.note_drag_originals.clone() {
+                                let midi = Arc::make_mut(&mut doc.midi);
+                                // Clear all current selected notes
+                                for &(track, start_tick, key) in &doc.selected {
+                                    midi.key_notes[key as usize].retain(|n| !(n.track == track && n.start_tick == start_tick));
+                                }
+                                // Re-insert at new positions
+                                let mut new_selected = HashSet::new();
+                                for (note, old_key) in originals {
+                                    let new_key = ((*old_key as i32) + delta_keys).clamp(0, 127) as u8;
+                                    let new_start = (note.start_tick as i64 + delta_ticks).max(0) as u32;
+                                    let new_end = (note.end_tick as i64 + delta_ticks).max(1) as u32;
+                                    let moved = yinhe_types::Note {
+                                        start_tick: new_start,
+                                        end_tick: new_end,
+                                        ..note.clone()
+                                    };
+                                    let notes = &mut midi.key_notes[new_key as usize];
+                                    let insert_pos = notes.partition_point(|n| n.start_tick < moved.start_tick);
+                                    notes.insert(insert_pos, moved);
+                                    new_selected.insert((note.track, new_start, new_key));
+                                }
+                                doc.selected = new_selected;
+                                self.pianoroll_view.base.dirty = true;
+                            }
+                        }
+                    }
+                } else {
+                    // Drag ended — finalize
+                    if let Some(originals) = self.note_drag_originals.take() {
+                        if let Some(idx) = self.active_doc {
+                            let doc = &mut self.documents[idx];
+                            let midi = Arc::make_mut(&mut doc.midi);
+                            crate::app_actions::rebuild_midi_metadata(midi);
+                            self.pianoroll_view.base.dirty = true;
+                            if let Some(ref audio) = self.audio {
+                                let _ = audio.handle.send(yinhe_audio::AudioCommand::ReloadNotes {
+                                    midi: Arc::clone(&doc.midi),
+                                });
+                            }
+                        }
                     }
                 }
             }
