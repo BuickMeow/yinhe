@@ -809,14 +809,14 @@ pub fn build_archive(
     global_enabled: bool,
 ) -> ProjectArchive {
     build_archive_from(
-        &doc.midi,
-        &doc.track_names,
-        &doc.project_name,
-        &doc.project_artist,
-        doc.project_ppq,
-        doc.archive.as_ref().map(|a| a.compression_level).unwrap_or(0),
-        &doc.project_description,
-        &doc.project_sf,
+        doc.midi(),
+        doc.track_names(),
+        &doc.data.project_name,
+        &doc.data.project_artist,
+        doc.data.project_ppq,
+        doc.data.compression_level,
+        &doc.data.project_description,
+        &doc.edit.project_sf,
         global_enabled,
     )
 }
@@ -889,7 +889,7 @@ pub fn load_project(path: &str) -> std::io::Result<(yinhe_midi::MidiFile, String
 
 /// Export the current document as a standard MIDI file.
 pub fn export_midi(doc: &crate::document::Document, path: &str) -> Result<(), String> {
-    let midi = &doc.midi;
+    let midi = doc.midi();
     let num_tracks = midi.track_ports.len();
     let ppq = midi.ticks_per_beat;
 
@@ -970,7 +970,7 @@ pub fn export_midi(doc: &crate::document::Document, path: &str) -> Result<(), St
         let mut abs_tick = 0u32;
         let mut track_events = Vec::new();
 
-        if let Some(name) = doc.track_names.get(track_idx) {
+        if let Some(name) = doc.track_names().get(track_idx) {
             track_events.push(TrackEvent {
                 delta: 0.into(),
                 kind: TrackEventKind::Meta(MetaMessage::TrackName(name.as_bytes())),

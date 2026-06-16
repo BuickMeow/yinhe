@@ -153,9 +153,9 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>, state: &mut EventBrow
         return;
     };
 
-    let ppq = doc.midi.ticks_per_beat;
-    let default_num = doc.midi.time_sig_numerator;
-    let ts_events: Vec<TypesTimeSigEvent> = doc.midi.time_sig_events.clone();
+    let ppq = doc.midi().ticks_per_beat;
+    let default_num = doc.midi().time_sig_numerator;
+    let ts_events: Vec<TypesTimeSigEvent> = doc.midi().time_sig_events.clone();
     let bar_lookup = BarLookup::build(ppq, default_num, &ts_events);
 
     let Some(archive) = &doc.archive else {

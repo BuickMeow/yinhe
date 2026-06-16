@@ -85,39 +85,37 @@ impl App {
 
     /// Delete all selected notes from the active document.
     pub(crate) fn delete_selected_notes(&mut self) {
-        self.with_undo("Delete notes", |doc| {
-            if doc.selected.is_empty() {
+        self.with_undo("Delete notes", |data, edit| {
+            if edit.selected.is_empty() {
                 return false;
             }
-            let changed = {
-                let midi = Arc::make_mut(&mut doc.midi);
-                for &(track, start_tick, key) in &doc.selected {
+            {
+                let midi = Arc::make_mut(&mut data.midi);
+                for &(track, start_tick, key) in &edit.selected {
                     let notes = &mut midi.key_notes[key as usize];
                     notes.retain(|n| !(n.track == track && n.start_tick == start_tick));
                 }
-                doc.selected.clear();
-                rebuild_midi_metadata(midi);
-                true
-            };
-            doc.midi_version = doc.midi_version.wrapping_add(1);
-            changed
+                edit.selected.clear();
+            }
+            data.rebuild_midi_metadata();
+            true
         });
     }
 
     /// Duplicate all selected notes (Ctrl+D / Cmd+D).
     /// New notes are placed after the original selection, offset by the selection duration.
     pub(crate) fn duplicate_selected_notes(&mut self) {
-        self.with_undo("Duplicate notes", |doc| {
-            if doc.selected.is_empty() {
+        self.with_undo("Duplicate notes", |data, edit| {
+            if edit.selected.is_empty() {
                 return false;
             }
 
-            let changed = {
-                let midi = Arc::make_mut(&mut doc.midi);
+            {
+                let midi = Arc::make_mut(&mut data.midi);
 
                 // Collect full note data for each selected entry
                 let mut selected_data: Vec<(yinhe_types::Note, u8)> = Vec::new();
-                for &(track, start_tick, key) in &doc.selected {
+                for &(track, start_tick, key) in &edit.selected {
                     if let Some(note) = midi.key_notes[key as usize]
                         .iter()
                         .find(|n| n.track == track && n.start_tick == start_tick)
@@ -148,12 +146,10 @@ impl App {
                     new_selected.insert((note.track, note.start_tick + offset, *key));
                 }
 
-                doc.selected = new_selected;
-                rebuild_midi_metadata(midi);
-                true
-            };
-            doc.midi_version = doc.midi_version.wrapping_add(1);
-            changed
+                edit.selected = new_selected;
+            }
+            data.rebuild_midi_metadata();
+            true
         });
     }
 
@@ -164,17 +160,17 @@ impl App {
         } else {
             "Transpose down"
         };
-        self.with_undo(label, |doc| {
-            if doc.selected.is_empty() {
+        self.with_undo(label, |data, edit| {
+            if edit.selected.is_empty() {
                 return false;
             }
 
-            let changed = {
-                let midi = Arc::make_mut(&mut doc.midi);
+            {
+                let midi = Arc::make_mut(&mut data.midi);
 
                 // Remove selected notes from their current keys and collect their data
                 let mut moved_data: Vec<(yinhe_types::Note, u8)> = Vec::new();
-                for &(track, start_tick, key) in &doc.selected {
+                for &(track, start_tick, key) in &edit.selected {
                     let notes = &mut midi.key_notes[key as usize];
                     if let Some(pos) = notes.iter().position(|n| n.track == track && n.start_tick == start_tick)
                     {
@@ -197,52 +193,47 @@ impl App {
                     new_selected.insert((note.track, note.start_tick, new_key));
                 }
 
-                doc.selected = new_selected;
-                rebuild_midi_metadata(midi);
-                true
-            };
-            doc.midi_version = doc.midi_version.wrapping_add(1);
-            changed
+                edit.selected = new_selected;
+            }
+            data.rebuild_midi_metadata();
+            true
         });
     }
 
-    /// Capture a `Snapshot` of the active document's persistent state.
+    /// Capture an `UndoSnapshot` of the active document's persistent state.
     /// Returns `None` if no document is active.
-    pub(crate) fn capture_snapshot(&self, label: &'static str) -> Option<crate::history::Snapshot> {
+    pub(crate) fn capture_snapshot(&self, label: &'static str) -> Option<crate::history::UndoSnapshot> {
         let idx = self.active_doc?;
         let doc = self.documents.get(idx)?;
-        Some(crate::history::Snapshot::capture(doc, label))
+        Some(doc.data.snapshot(label))
     }
 
     /// Run an edit closure, recording an undo entry beforehand and notifying
     /// audio afterwards.
     ///
-    /// The closure receives `&mut Document` and should return `true` if it
-    /// actually changed anything; on `false` no snapshot is pushed and audio
-    /// is not notified.
+    /// The closure receives `(&mut ProjectData, &mut EditState)` and should
+    /// return `true` if it actually changed anything; on `false` no snapshot
+    /// is pushed and audio is not notified.
     pub(crate) fn with_undo<F>(&mut self, label: &'static str, f: F)
     where
-        F: FnOnce(&mut crate::document::Document) -> bool,
+        F: FnOnce(&mut crate::project_data::ProjectData, &mut crate::edit_state::EditState) -> bool,
     {
         let Some(idx) = self.active_doc else { return };
-        // Build snapshot before mutation. Cheap: Arc::clone + small clones.
-        let snapshot = crate::history::Snapshot::capture(&self.documents[idx], label);
+        let snapshot = self.documents[idx].data.snapshot(label);
         let changed = {
             let doc = &mut self.documents[idx];
-            f(doc)
+            f(&mut doc.data, &mut doc.edit)
         };
         if !changed {
             return;
         }
-        let midi_clone = {
-            let doc = &mut self.documents[idx];
-            doc.history.push(snapshot);
-            self.pianoroll_view.base.dirty = true;
-            Arc::clone(&doc.midi)
-        };
+        let doc = &mut self.documents[idx];
+        doc.history.push(snapshot);
+        doc.data.bump_version();
+        self.pianoroll_view.base.dirty = true;
         if let Some(ref audio) = self.audio {
             let _ = audio.handle.send(yinhe_audio::AudioCommand::ReloadNotes {
-                midi: midi_clone,
+                midi: Arc::clone(&doc.data.midi),
             });
         }
     }
@@ -250,7 +241,7 @@ impl App {
     /// Restore the previous state on the active document's history stack.
     pub(crate) fn undo(&mut self) {
         let Some(idx) = self.active_doc else { return };
-        let current = crate::history::Snapshot::capture(&self.documents[idx], "current");
+        let current = self.documents[idx].data.snapshot("current");
         let restored = self.documents[idx].history.undo(current);
         if let Some(snap) = restored {
             self.apply_snapshot(idx, snap);
@@ -260,7 +251,7 @@ impl App {
     /// Re-apply the most recently undone state on the active document.
     pub(crate) fn redo(&mut self) {
         let Some(idx) = self.active_doc else { return };
-        let current = crate::history::Snapshot::capture(&self.documents[idx], "current");
+        let current = self.documents[idx].data.snapshot("current");
         let restored = self.documents[idx].history.redo(current);
         if let Some(snap) = restored {
             self.apply_snapshot(idx, snap);
@@ -269,58 +260,31 @@ impl App {
 
     /// Apply a snapshot to the document at `idx`: restore persistent fields,
     /// rebuild caches, clear selection, and notify audio.
-    fn apply_snapshot(&mut self, idx: usize, snap: crate::history::Snapshot) {
-        let midi_clone = {
-            let doc = &mut self.documents[idx];
-            snap.restore(doc);
-            // Rebuild track_info_cache from the restored midi (port, channel,
-            // note_count, name — all may have changed).
-            doc.track_info_cache = doc.midi.track_info();
-            // Sync track_names from cache (track_info() reads midi.track_names).
-            for (i, ti) in doc.track_info_cache.iter().enumerate() {
-                if i < doc.track_names.len() {
-                    doc.track_names[i] = ti.name.clone();
-                }
+    fn apply_snapshot(&mut self, idx: usize, snap: crate::history::UndoSnapshot) {
+        let doc = &mut self.documents[idx];
+        doc.data = snap.data;
+        doc.data.bump_version();
+        // Rebuild track_info_cache from the restored midi (port, channel,
+        // note_count, name — all may have changed).
+        doc.edit.track_info_cache = doc.data.track_info();
+        // Sync track_names from cache (track_info() reads midi.track_names).
+        for (i, ti) in doc.edit.track_info_cache.iter().enumerate() {
+            if i < doc.data.track_names.len() {
+                doc.data.track_names[i] = ti.name.clone();
             }
-            // Rebuild pc_map_cache from restored control events.
-            let mut pc_map = std::collections::HashMap::new();
-            for ev in &doc.midi.control_events {
-                if let yinhe_midi::MidiControlEvent::ProgramChange {
-                    program, track, ..
-                } = ev
-                {
-                    let ch = doc.midi.track_channels.get(*track as usize).copied().unwrap_or(0);
-                    pc_map.entry(ch).or_insert(*program);
-                }
-            }
-            doc.pc_map_cache = pc_map;
-            // Clear selection: restored notes' (start_tick, key) may no longer
-            // match what the user had selected.
-            doc.selected.clear();
-            self.pianoroll_view.base.dirty = true;
-            Arc::clone(&doc.midi)
-        };
+        }
+        // Rebuild pc_map_cache from restored control events.
+        doc.edit.pc_map_cache = doc.data.pc_map_cache();
+        // Clear selection: restored notes' (start_tick, key) may no longer
+        // match what the user had selected.
+        doc.edit.selected.clear();
+        self.pianoroll_view.base.dirty = true;
         if let Some(ref audio) = self.audio {
             let _ = audio.handle.send(yinhe_audio::AudioCommand::ReloadNotes {
-                midi: midi_clone,
+                midi: Arc::clone(&doc.data.midi),
             });
         }
     }
-}
-
-/// Rebuild computed metadata on a MidiFile after note mutations.
-pub(crate) fn rebuild_midi_metadata(midi: &mut yinhe_midi::MidiFile) {
-    midi.note_count = 0;
-    let mut max_tick = 0u64;
-    for notes in &midi.key_notes {
-        midi.note_count += notes.len() as u64;
-        for note in notes {
-            max_tick = max_tick.max(note.end_tick as u64);
-        }
-    }
-    midi.tick_length = max_tick;
-    midi.scan_index = Some(yinhe_types::NoteScanIndex::build(&midi.key_notes, max_tick));
-    midi.automation_lanes = yinhe_midi::build_automation_lanes(&midi.control_events, &midi.key_notes, &midi.track_channels);
 }
 
 impl App {
@@ -375,14 +339,14 @@ impl App {
     /// Spawn a background thread to save the project.
     fn save_project_async(&mut self, idx: usize, path: String) {
         let doc = &self.documents[idx];
-        let midi = doc.midi.clone();
-        let track_names = doc.track_names.clone();
-        let project_name = doc.project_name.clone();
-        let project_artist = doc.project_artist.clone();
-        let project_description = doc.project_description.clone();
-        let project_ppq = doc.project_ppq;
-        let compression_level = doc.archive.as_ref().map(|a| a.compression_level).unwrap_or(0);
-        let project_sf = doc.project_sf.clone();
+        let midi = doc.data.midi.clone();
+        let track_names = doc.data.track_names.clone();
+        let project_name = doc.data.project_name.clone();
+        let project_artist = doc.data.project_artist.clone();
+        let project_description = doc.data.project_description.clone();
+        let project_ppq = doc.data.project_ppq;
+        let compression_level = doc.data.compression_level;
+        let project_sf = doc.edit.project_sf.clone();
         let global_enabled = self.audio_settings.global_sf_config.global_enabled;
         let path_for_thread = path.clone();
 
@@ -506,15 +470,16 @@ impl App {
         }
 
         // Collect render inputs
-        let midi = doc.midi.clone();
+        let midi = doc.data.midi.clone();
         let sr = if self.export_sample_rate > 0 {
             self.export_sample_rate
         } else {
             self.audio_settings.sample_rate
         };
         let port_sf = self.resolve_sf_config(doc);
-        let has_solo = doc.track_overrides.iter().any(|t| t.soloed);
+        let has_solo = doc.edit.track_overrides.iter().any(|t| t.soloed);
         let skip: Vec<bool> = doc
+            .edit
             .track_overrides
             .iter()
             .map(|ov| if has_solo { !ov.soloed } else { ov.muted })
@@ -564,4 +529,3 @@ impl App {
         self.export_rx = Some(rx);
     }
 }
-

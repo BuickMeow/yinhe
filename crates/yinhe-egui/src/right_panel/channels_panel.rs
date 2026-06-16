@@ -27,10 +27,10 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>, settings: &AudioSetti
     // Build active mask from the MIDI file (same logic as
     // yinhe_audio::channels_for_midi).
     let mut active = [false; 256];
-    for notes in &doc.midi.key_notes {
+    for notes in &doc.midi().key_notes {
         for note in notes {
             if note.velocity > 1 {
-                let ch = doc.midi
+                let ch = doc.midi()
                     .track_channels
                     .get(note.track as usize)
                     .copied()
@@ -39,13 +39,13 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>, settings: &AudioSetti
             }
         }
     }
-    for ev in &doc.midi.control_events {
+    for ev in &doc.midi().control_events {
         let track = match ev {
             yinhe_midi::MidiControlEvent::ControlChange { track, .. }
             | yinhe_midi::MidiControlEvent::ProgramChange { track, .. }
             | yinhe_midi::MidiControlEvent::PitchBend { track, .. } => *track,
         };
-        let ch = doc.midi
+        let ch = doc.midi()
             .track_channels
             .get(track as usize)
             .copied()
@@ -137,7 +137,7 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>, settings: &AudioSetti
                             .iter()
                             .any(|e| e.enabled)
                     } else {
-                        doc.project_sf
+                        doc.edit.project_sf
                             .overrides
                             .iter()
                             .any(|(p, entries)| *p == port && entries.iter().any(|e| e.enabled))

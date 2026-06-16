@@ -122,7 +122,7 @@ impl eframe::App for App {
                 let quantize = self
                     .active_doc
                     .and_then(|idx| self.documents.get(idx))
-                    .map(|doc| doc.quantize)
+                    .map(|doc| doc.edit.quantize)
                     .unwrap_or_default();
                 match Document::from_midi(&path, midi, quantize) {
                     Ok(doc) => {
@@ -140,7 +140,7 @@ impl eframe::App for App {
                 let quantize = self
                     .active_doc
                     .and_then(|idx| self.documents.get(idx))
-                    .map(|doc| doc.quantize)
+                    .map(|doc| doc.edit.quantize)
                     .unwrap_or_default();
                 let result = Document::from_yin(&path, quantize)
                     .ok()
@@ -212,7 +212,7 @@ impl eframe::App for App {
             (self.active_doc, transport_response.pending_quantize)
             && let Some(doc) = self.documents.get_mut(idx)
         {
-            doc.quantize = new_preset;
+            doc.edit.quantize = new_preset;
         }
 
         // ── Memory breakdown popup ──
@@ -234,8 +234,17 @@ impl eframe::App for App {
         if new_enc != self.last_midi_encoding {
             self.last_midi_encoding = new_enc;
             if self.active_doc.is_some() {
-                self.with_undo("Recode track names", |doc| {
-                    doc.recode_track_names(new_enc);
+                self.with_undo("Recode track names", |data, edit| {
+                    Arc::make_mut(&mut data.midi).recode_track_names(new_enc);
+                    data.midi_version = data.midi_version.wrapping_add(1);
+                    for (i, name) in data.midi.track_names.iter().enumerate() {
+                        if i < data.track_names.len() {
+                            data.track_names[i] = name.clone();
+                        }
+                        if let Some(ti) = edit.track_info_cache.get_mut(i) {
+                            ti.name = name.clone();
+                        }
+                    }
                     true
                 });
             }
@@ -373,8 +382,8 @@ impl eframe::App for App {
                 let (sel_action, note_drag_delta) = {
                     let mut guard = ReplaceGuard::new(&mut self.documents[idx]);
                     let doc = guard.as_mut();
-                    let midi_source: Option<&dyn yinhe_pianoroll::NoteSource> =
-                        Some(&*doc.midi as &dyn yinhe_pianoroll::NoteSource);
+                        let midi_source: Option<&dyn yinhe_pianoroll::NoteSource> =
+                            Some(doc.data.midi.as_ref());
                     let piano_rect =
                         egui::Rect::from_min_max(egui::pos2(remaining.min.x, bottom_y), remaining.max);
 
@@ -389,19 +398,24 @@ impl eframe::App for App {
                         // Effective pianoroll visibility = track_visible AND track_selected.
                         // Conductor track acts as "Master" — shows all tracks.
                         let show_all = doc
-                            .conductor_track_idx
-                            .map(|c| doc.track_selected.contains(&c))
+                            .edit.conductor_track_idx
+                            .map(|c| doc.edit.track_selected.contains(&c))
                             .unwrap_or(false);
-                        let pr_visible: Vec<bool> = (0..doc.track_visible.len())
+                        let pr_visible: Vec<bool> = (0..doc.edit.track_visible.len())
                             .map(|i| {
                                 if show_all {
-                                    doc.track_visible[i]
+                                    doc.edit.track_visible[i]
                                 } else {
-                                    doc.track_visible[i]
-                                        && doc.track_selected.contains(&(i as u16))
+                                    doc.edit.track_visible[i]
+                                        && doc.edit.track_selected.contains(&(i as u16))
                                 }
                             })
                             .collect();
+                        let tpb = doc.data.midi.ticks_per_beat;
+                        let ts_num = doc.data.midi.time_sig_numerator;
+                        let ts_den = doc.data.midi.time_sig_denominator;
+                        let ts_events = doc.data.midi.time_sig_events.as_slice();
+                        let automation_lanes = &doc.data.midi.automation_lanes;
                         action = piano_view::show(
                             ui,
                             ui.available_size(),
@@ -409,27 +423,27 @@ impl eframe::App for App {
                             &mut self.render_ctx,
                             &mut self.pianoroll_view,
                             midi_source,
-                            &mut doc.selected,
+                            &mut doc.edit.selected,
                             &pr_visible,
-                            &doc.track_colors_cache,
-                            &mut doc.cursor_tick,
+                            &doc.edit.track_colors_cache,
+                            &mut doc.edit.cursor_tick,
                             is_playing,
-                            doc.quantize,
-                            doc.midi.ticks_per_beat,
+                            doc.edit.quantize,
+                            tpb,
                             Some((
-                                doc.midi.ticks_per_beat,
-                                doc.midi.time_sig_numerator,
-                                doc.midi.time_sig_denominator,
-                                doc.midi.time_sig_events.as_slice(),
+                                tpb,
+                                ts_num,
+                                ts_den,
+                                ts_events,
                             )),
                             &mut self.piano_last_cursor_tick,
                             &mut follow_mode,
                             &self.active_tool,
                             // Automation panel data
-                            Some(&mut doc.controller_panels),
+                            Some(&mut doc.edit.controller_panels),
                             Some(&mut self.controller_renderers[idx]),
-                            Some(&doc.midi.automation_lanes),
-                            Some(&mut doc.show_controller_panels),
+                            Some(automation_lanes),
+                            Some(&mut doc.edit.show_controller_panels),
                             Some(&auto_wgpu_state),
                             self.audio_settings.scroll_mode,
                             self.audio_settings.min_border_width,
@@ -437,7 +451,7 @@ impl eframe::App for App {
                             &mut self.audio_settings.automation_display_mode,
                             &mut self.audio_settings.automation_show_dots,
                             &mut note_drag_delta,
-                            doc.midi_version,
+                            doc.data.midi_version,
                         );
                         if let Some(t0) = _piano_total_start {
                             crate::perf_probe::record_piano_total(t0.elapsed());
@@ -460,7 +474,7 @@ impl eframe::App for App {
                 if let Some((delta_ticks, delta_keys)) = note_drag_delta {
                     if let Some(idx) = self.active_doc {
                         let doc = &mut self.documents[idx];
-                        if doc.selected.is_empty() {
+                        if doc.edit.selected.is_empty() {
                             self.note_drag_originals = None;
                             self.note_drag_undo_snapshot = None;
                             self.note_drag_moved = false;
@@ -469,11 +483,11 @@ impl eframe::App for App {
                             if self.note_drag_originals.is_none() {
                                 // Capture undo snapshot before any mutation.
                                 self.note_drag_undo_snapshot =
-                                    Some(crate::history::Snapshot::capture(doc, "Move notes"));
+                                    Some(doc.data.snapshot("Move notes"));
                                 self.note_drag_moved = false;
                                 let mut originals = Vec::new();
-                                let midi = &doc.midi;
-                                for &(track, start_tick, key) in &doc.selected {
+                                let midi = &*doc.data.midi;
+                                for &(track, start_tick, key) in &doc.edit.selected {
                                     if let Some(note) = midi.key_notes[key as usize]
                                         .iter()
                                         .find(|n| n.track == track && n.start_tick == start_tick)
@@ -491,9 +505,9 @@ impl eframe::App for App {
                             // Rebuild notes from originals + delta each frame.
                             if let Some(ref originals) = self.note_drag_originals.clone() {
                                 {
-                                    let midi = Arc::make_mut(&mut doc.midi);
+                                    let midi = Arc::make_mut(&mut doc.data.midi);
                                     // Clear all current selected notes
-                                    for &(track, start_tick, key) in &doc.selected {
+                                    for &(track, start_tick, key) in &doc.edit.selected {
                                         midi.key_notes[key as usize].retain(|n| !(n.track == track && n.start_tick == start_tick));
                                     }
                                     // Re-insert at new positions
@@ -512,9 +526,9 @@ impl eframe::App for App {
                                         notes.insert(insert_pos, moved);
                                         new_selected.insert((note.track, new_start, new_key));
                                     }
-                                    doc.selected = new_selected;
+                                    doc.edit.selected = new_selected;
                                 }
-                                doc.midi_version = doc.midi_version.wrapping_add(1);
+                                doc.data.midi_version = doc.data.midi_version.wrapping_add(1);
                                 self.pianoroll_view.base.dirty = true;
                             }
                         }
@@ -524,11 +538,8 @@ impl eframe::App for App {
                     if let Some(_originals) = self.note_drag_originals.take() {
                         if let Some(idx) = self.active_doc {
                             let doc = &mut self.documents[idx];
-                            {
-                                let midi = Arc::make_mut(&mut doc.midi);
-                                crate::app_actions::rebuild_midi_metadata(midi);
-                            }
-                            doc.midi_version = doc.midi_version.wrapping_add(1);
+                            doc.data.rebuild_midi_metadata();
+                            doc.data.midi_version = doc.data.midi_version.wrapping_add(1);
                             self.pianoroll_view.base.dirty = true;
                             // Push the pre-drag snapshot onto the undo stack
                             // only if the drag actually moved notes.
@@ -541,7 +552,7 @@ impl eframe::App for App {
                             }
                             if let Some(ref audio) = self.audio {
                                 let _ = audio.handle.send(yinhe_audio::AudioCommand::ReloadNotes {
-                                    midi: Arc::clone(&doc.midi),
+                                    midi: Arc::clone(&doc.data.midi),
                                 });
                             }
                         }

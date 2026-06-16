@@ -26,7 +26,7 @@ pub fn show(
         return false;
     };
 
-    let num_tracks = doc.midi.track_ports.len();
+    let num_tracks = doc.data.midi.track_ports.len();
     if num_tracks == 0 {
         ui.add_space(8.0);
         ui.label(
@@ -39,6 +39,7 @@ pub fn show(
 
     // ── Track selector ──
     let track_names: Vec<String> = doc
+        .data
         .track_names
         .iter()
         .enumerate()
@@ -46,6 +47,7 @@ pub fn show(
         .collect();
 
     let sel_idx = doc
+        .edit
         .track_selected
         .iter()
         .next()
@@ -58,8 +60,8 @@ pub fn show(
         .show_ui(ui, |ui| {
             for (i, tn) in track_names.iter().enumerate() {
                 if ui.selectable_label(i == sel_idx, tn).clicked() {
-                    doc.track_selected.clear();
-                    doc.track_selected.insert(i as u16);
+                    doc.edit.track_selected.clear();
+                    doc.edit.track_selected.insert(i as u16);
                 }
             }
         });
@@ -67,10 +69,10 @@ pub fn show(
     ui.add_space(6.0);
 
     // ── Multi-select summary ──
-    if doc.track_selected.len() > 1 {
+    if doc.edit.track_selected.len() > 1 {
         ui.add_space(4.0);
         ui.label(
-            egui::RichText::new(format!("已选 {} 个音轨", doc.track_selected.len()))
+            egui::RichText::new(format!("已选 {} 个音轨", doc.edit.track_selected.len()))
                 .strong()
                 .size(14.0)
                 .color(egui::Color32::from_gray(220)),
@@ -84,7 +86,7 @@ pub fn show(
         return false;
     }
 
-    let Some(&track_idx) = doc.track_selected.iter().next() else {
+    let Some(&track_idx) = doc.edit.track_selected.iter().next() else {
         ui.add_space(8.0);
         ui.label(
             egui::RichText::new("（未选中音轨）")
@@ -97,7 +99,7 @@ pub fn show(
     let track_idx = track_idx.min(num_tracks - 1);
 
     // ── Conductor track: show a simplified read-only view ──
-    if Some(track_idx as u16) == doc.conductor_track_idx {
+    if Some(track_idx as u16) == doc.edit.conductor_track_idx {
         ui.add_space(4.0);
         ui.label(
             egui::RichText::new("Conductor")
@@ -113,11 +115,11 @@ pub fn show(
         );
         ui.add_space(8.0);
 
-        if !doc.project_name.is_empty() {
+        if !doc.data.project_name.is_empty() {
             ui.horizontal(|ui| {
                 ui.label("歌曲标题:");
                 ui.label(
-                    egui::RichText::new(&doc.project_name)
+                    egui::RichText::new(&doc.data.project_name)
                         .color(egui::Color32::from_gray(200))
                         .size(13.0),
                 );
@@ -128,7 +130,7 @@ pub fn show(
         ui.horizontal(|ui| {
             ui.label("Tempo 数:");
             ui.label(
-                egui::RichText::new(format!("{}", doc.midi.tempo_segments.len()))
+                egui::RichText::new(format!("{}", doc.data.midi.tempo_segments.len()))
                     .color(egui::Color32::from_gray(180))
                     .size(13.0),
             );
@@ -136,7 +138,7 @@ pub fn show(
         ui.horizontal(|ui| {
             ui.label("Time-sig 数:");
             ui.label(
-                egui::RichText::new(format!("{}", doc.midi.time_sig_events.len()))
+                egui::RichText::new(format!("{}", doc.data.midi.time_sig_events.len()))
                     .color(egui::Color32::from_gray(180))
                     .size(13.0),
             );
@@ -151,7 +153,7 @@ pub fn show(
     let mut name_lost_focus = false;
     ui.horizontal(|ui| {
         ui.label("音轨名称:");
-        let mut name = doc.track_names[track_idx].clone();
+        let mut name = doc.data.track_names[track_idx].clone();
         let resp = ui.add_sized(
             egui::vec2(ui.available_width().max(60.0), 18.0),
             egui::TextEdit::singleline(&mut name).id_salt(("track_name", track_idx)),
@@ -165,19 +167,19 @@ pub fn show(
     });
     if let Some(id) = name_resp_id {
         if name_gained_focus {
-            crate::history::begin_edit(doc, id, "Edit track name");
+            crate::history::begin_edit(&doc.data, &mut doc.edit.pending_edits, id, "Edit track name");
         }
         if let Some(new_name) = name_change {
-            doc.track_names[track_idx] = new_name.clone();
-            if let Some(ti_mut) = doc.track_info_cache.get_mut(track_idx) {
+            doc.data.track_names[track_idx] = new_name.clone();
+            if let Some(ti_mut) = doc.edit.track_info_cache.get_mut(track_idx) {
                 ti_mut.name = new_name;
             }
         }
         if name_lost_focus {
-            crate::history::commit_edit(doc, id);
+            crate::history::commit_edit(&doc.data, &mut doc.history, &mut doc.edit.pending_edits, id);
         }
     }
-    let ti = &doc.track_info_cache[track_idx];
+    let ti = &doc.edit.track_info_cache[track_idx];
 
     ui.add_space(4.0);
 
@@ -225,34 +227,19 @@ pub fn show(
     // Apply port/channel change
     if port_changed {
         // Push pre-change snapshot for undo.
-        let snap = crate::history::Snapshot::capture(doc, "Change port/channel");
+        let snap = doc.data.snapshot("Change port/channel");
         doc.history.push(snap);
         let new_global_ch = new_port * 16 + (new_ch - 1);
         {
-            let midi = Arc::make_mut(&mut doc.midi);
+            let midi = Arc::make_mut(&mut doc.data.midi);
             midi.track_channels[track_idx] = new_global_ch;
             midi.track_ports[track_idx] = new_port;
-            // Rebuild metadata and caches
-            crate::app_actions::rebuild_midi_metadata(midi);
-            doc.track_info_cache = midi.track_info();
-            // Rebuild pc_map_cache
-            let mut pc_map = std::collections::HashMap::new();
-            for ev in &midi.control_events {
-                if let yinhe_midi::MidiControlEvent::ProgramChange {
-                    program, track, ..
-                } = ev
-                {
-                    let ch = midi
-                        .track_channels
-                        .get(*track as usize)
-                        .copied()
-                        .unwrap_or(0);
-                    pc_map.entry(ch).or_insert(*program);
-                }
-            }
-            doc.pc_map_cache = pc_map;
         }
-        doc.midi_version = doc.midi_version.wrapping_add(1);
+        // Rebuild metadata and caches
+        doc.data.rebuild_midi_metadata();
+        doc.edit.track_info_cache = doc.data.track_info();
+        doc.edit.pc_map_cache = doc.data.pc_map_cache();
+        doc.data.bump_version();
         // Signal caller to tear down audio
         return true;
     }
@@ -261,13 +248,13 @@ pub fn show(
 
     // ── Mute / Solo ──
     // Ensure track_overrides is long enough
-    while doc.track_overrides.len() <= track_idx {
-        doc.track_overrides
+    while doc.edit.track_overrides.len() <= track_idx {
+        doc.edit.track_overrides
             .push(crate::document::TrackOverride::default());
     }
 
-    let muted = doc.track_overrides[track_idx].muted;
-    let soloed = doc.track_overrides[track_idx].soloed;
+    let muted = doc.edit.track_overrides[track_idx].muted;
+    let soloed = doc.edit.track_overrides[track_idx].soloed;
 
     let mut mute_clicked = false;
     let mut solo_clicked = false;
@@ -306,15 +293,15 @@ pub fn show(
     // Apply changes after the closure so we can borrow doc mutably again
     if mute_clicked || solo_clicked {
         // Ensure track_overrides is long enough (re-check since closure is done)
-        while doc.track_overrides.len() <= track_idx {
-            doc.track_overrides
+        while doc.edit.track_overrides.len() <= track_idx {
+            doc.edit.track_overrides
                 .push(crate::document::TrackOverride::default());
         }
         if mute_clicked {
-            doc.track_overrides[track_idx].muted = !muted;
+            doc.edit.track_overrides[track_idx].muted = !muted;
         }
         if solo_clicked {
-            doc.track_overrides[track_idx].soloed = !soloed;
+            doc.edit.track_overrides[track_idx].soloed = !soloed;
         }
         send_skip_tracks(doc, audio);
     }
@@ -338,7 +325,7 @@ pub fn show(
 
     // Show program change if available
     let global_ch = ti.port as u32 * 16 + (ti.channel as u32 - 1);
-    if let Some(pc) = doc.pc_map_cache.get(&(global_ch as u8)) {
+    if let Some(pc) = doc.edit.pc_map_cache.get(&(global_ch as u8)) {
         ui.horizontal(|ui| {
             ui.label(
                 egui::RichText::new("音色:")
@@ -354,8 +341,9 @@ pub fn show(
 
 /// Compute the per-track skip mask and send it to the audio engine.
 pub(crate) fn send_skip_tracks(doc: &Document, audio: Option<&yinhe_audio::CpalAudioHandle>) {
-    let has_solo = doc.track_overrides.iter().any(|t| t.soloed);
+    let has_solo = doc.edit.track_overrides.iter().any(|t| t.soloed);
     let skip: Vec<bool> = doc
+        .edit
         .track_overrides
         .iter()
         .map(|ov| if has_solo { !ov.soloed } else { ov.muted })

@@ -8,10 +8,10 @@ impl App {
     ///
     /// Returns a list of `(port, paths)` for every port the MIDI uses.
     pub(crate) fn resolve_sf_config(&self, doc: &crate::document::Document) -> Vec<(u8, Vec<String>)> {
-        let num_ch = yinhe_audio::channels_for_midi(&doc.midi).0;
+        let num_ch = yinhe_audio::channels_for_midi(&doc.data.midi).0;
         let num_ports = (num_ch.div_ceil(16) as u8).max(1);
         let global = &self.audio_settings.global_sf_config;
-        let project = &doc.project_sf;
+        let project = &doc.edit.project_sf;
 
         let mut result: Vec<(u8, Vec<String>)> = Vec::new();
 
@@ -72,7 +72,7 @@ impl App {
 
         let doc = &self.documents[idx];
         let sr = self.audio_settings.sample_rate;
-        let (num_ch, active_mask) = yinhe_audio::channels_for_midi(&doc.midi);
+        let (num_ch, active_mask) = yinhe_audio::channels_for_midi(&doc.data.midi);
 
         match yinhe_audio::spawn_cpal_audio(sr, num_ch, active_mask) {
             Ok(audio) => {
@@ -80,7 +80,7 @@ impl App {
 
                 // Load MIDI
                 audio.handle.send(yinhe_audio::AudioCommand::LoadMidi {
-                    midi: Arc::clone(&doc.midi),
+                    midi: Arc::clone(&doc.data.midi),
                 });
 
                 // Apply XSynth layer count
@@ -121,9 +121,9 @@ impl App {
                 progress::set_stage(&self.load_progress, 3, progress::StageStatus::Done);
 
                 // Send initial mute/solo state
-                let has_solo = doc.track_overrides.iter().any(|t| t.soloed);
+                let has_solo = doc.edit.track_overrides.iter().any(|t| t.soloed);
                 let skip: Vec<bool> = doc
-                    .track_overrides
+                    .edit.track_overrides
                     .iter()
                     .map(|ov| if has_solo { !ov.soloed } else { ov.muted })
                     .collect();
@@ -163,12 +163,12 @@ impl App {
                 handle.send(yinhe_audio::AudioCommand::Pause);
                 let sample = handle.sample_position();
                 let time = sample as f64 / audio.sample_rate as f64;
-                doc.cursor_tick = Some(doc.midi.tick_at_time(time));
-                doc.playback.stop();
+                doc.edit.cursor_tick = Some(doc.data.midi.tick_at_time(time));
+                doc.edit.playback.stop();
             } else {
-                let tick = doc.cursor_tick.unwrap_or(0.0);
+                let tick = doc.edit.cursor_tick.unwrap_or(0.0);
                 let cursor_sample =
-                    (doc.midi.tick_to_seconds(tick as u64) * audio.sample_rate as f64) as u64;
+                    (doc.data.midi.tick_to_seconds(tick as u64) * audio.sample_rate as f64) as u64;
                 let engine_sample = handle.sample_position();
                 // If cursor is at the engine's position, just resume (no seek)
                 if cursor_sample.abs_diff(engine_sample) < (audio.sample_rate as u64 / 10) {
@@ -178,34 +178,34 @@ impl App {
                         from_sample: cursor_sample,
                     });
                 }
-                doc.playback.toggle_play(tick, &doc.midi);
+                doc.edit.playback.toggle_play(tick, &doc.data.midi);
             }
         }
         if pause_return {
             handle.send(yinhe_audio::AudioCommand::Pause);
             let sample = handle.sample_position();
             let time = sample as f64 / audio.sample_rate as f64;
-            doc.cursor_tick = Some(doc.midi.tick_at_time(time));
-            doc.playback.stop();
+            doc.edit.cursor_tick = Some(doc.data.midi.tick_at_time(time));
+            doc.edit.playback.stop();
         }
         if stop_play {
             handle.send(yinhe_audio::AudioCommand::Stop);
-            doc.cursor_tick = Some(0.0);
-            doc.playback.stop();
+            doc.edit.cursor_tick = Some(0.0);
+            doc.edit.playback.stop();
         }
 
         // Sync cursor from audio position during playback
         if handle.is_playing() {
             let sample = handle.sample_position();
             let time = sample as f64 / audio.sample_rate as f64;
-            let tick = doc.midi.tick_at_time(time);
-            let end_tick = doc.midi.tick_length as f64;
+            let tick = doc.data.midi.tick_at_time(time);
+            let end_tick = doc.data.midi.tick_length as f64;
             if tick >= end_tick {
                 handle.send(yinhe_audio::AudioCommand::Stop);
-                doc.cursor_tick = Some(0.0);
-                doc.playback.stop();
+                doc.edit.cursor_tick = Some(0.0);
+                doc.edit.playback.stop();
             } else {
-                doc.cursor_tick = Some(tick.max(0.0));
+                doc.edit.cursor_tick = Some(tick.max(0.0));
             }
         }
     }

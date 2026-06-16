@@ -121,9 +121,9 @@ pub fn show(
                 .count();
             ui.label(format!("全局: {} SF 文件, {} 已启用", total, enabled));
         } else if let Some(ref doc) = doc {
-            let proj_total: usize = doc.project_sf.overrides.iter().map(|(_, e)| e.len()).sum();
+            let proj_total: usize = doc.edit.project_sf.overrides.iter().map(|(_, e)| e.len()).sum();
             let proj_enabled: usize = doc
-                .project_sf
+                .edit.project_sf
                 .overrides
                 .iter()
                 .flat_map(|(_, e)| e.iter())
@@ -198,7 +198,7 @@ fn project_panel(ui: &mut egui::Ui, doc: &mut Document) -> bool {
     // do not emit).
     let max_port = {
         let mut max_p = 0u8;
-        for &ch in &doc.midi.track_channels {
+        for &ch in &doc.midi().track_channels {
             let p = (ch >> 4) & 0x0F;
             if p > max_p {
                 max_p = p;
@@ -215,7 +215,7 @@ fn project_panel(ui: &mut egui::Ui, doc: &mut Document) -> bool {
         .map(|&p| format!("Port {}", (b'A' + p) as char))
         .collect();
 
-    let mut selected_port = doc.soundfont_selected_port as usize;
+    let mut selected_port = doc.edit.soundfont_selected_port as usize;
     selected_port = selected_port.min(port_names.len().saturating_sub(1));
     egui::ComboBox::from_id_salt("project_port")
         .selected_text(&port_names[selected_port])
@@ -226,23 +226,23 @@ fn project_panel(ui: &mut egui::Ui, doc: &mut Document) -> bool {
                 }
             }
         });
-    doc.soundfont_selected_port = selected_port as u8;
+    doc.edit.soundfont_selected_port = selected_port as u8;
     let port = used_ports[selected_port];
 
     let has_entries = doc
-        .project_sf
+        .edit.project_sf
         .overrides
         .iter()
         .any(|(p, _)| *p == port);
 
     if has_entries {
         let idx = doc
-            .project_sf
+            .edit.project_sf
             .overrides
             .iter()
             .position(|(p, _)| *p == port)
             .unwrap();
-        let entries = &mut doc.project_sf.overrides[idx].1;
+        let entries = &mut doc.edit.project_sf.overrides[idx].1;
         changed |= super::sf_list::sf_list(ui, entries);
 
         ui.horizontal(|ui| {
@@ -269,7 +269,7 @@ fn project_panel(ui: &mut egui::Ui, doc: &mut Document) -> bool {
         });
 
         if ui.button("清空此 Port").clicked() {
-            doc.project_sf.overrides[idx].1.clear();
+            doc.edit.project_sf.overrides[idx].1.clear();
             changed = true;
         }
     } else {
@@ -280,7 +280,7 @@ fn project_panel(ui: &mut egui::Ui, doc: &mut Document) -> bool {
         );
         ui.add_space(4.0);
         if ui.button("为此 Port 添加音色库").clicked() {
-            doc.project_sf.overrides.push((port, Vec::new()));
+            doc.edit.project_sf.overrides.push((port, Vec::new()));
             changed = true;
         }
     }

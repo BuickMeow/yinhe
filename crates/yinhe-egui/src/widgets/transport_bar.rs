@@ -92,7 +92,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                 );
 
                 if has_active {
-                    let is_playing = ctx.doc.map(|d| d.playback.is_playing()).unwrap_or(false);
+                    let is_playing = ctx.doc.map(|d| d.edit.playback.is_playing()).unwrap_or(false);
 
                     if ui
                         .add(
@@ -140,10 +140,10 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                     follow_resp.on_hover_text(ctx.follow_mode.tooltip());
 
                     // ── Quantization preset button + popup ──
-                    let ppq = ctx.doc.map(|d| d.midi.ticks_per_beat).unwrap_or(480);
+                    let ppq = ctx.doc.map(|d| d.midi().ticks_per_beat).unwrap_or(480);
                     let q_label = ctx
                         .doc
-                        .map(|d| d.quantize.button_text())
+                        .map(|d| d.edit.quantize.button_text())
                         .unwrap_or_default();
                     let q_resp = ui.add(
                         egui::Button::new(q_label.as_str())
@@ -154,7 +154,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                     egui::Popup::menu(&q_resp).show(|ui| {
                         ui.set_min_width(120.0);
                         for preset in QuantizePreset::ALL {
-                            let active = ctx.doc.map(|d| *preset == d.quantize).unwrap_or(false);
+                            let active = ctx.doc.map(|d| *preset == d.edit.quantize).unwrap_or(false);
                             if ui
                                 .add(egui::Button::selectable(active, preset.display_item(ppq)))
                                 .clicked()
@@ -168,7 +168,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
 
                         let is_custom = ctx
                             .doc
-                            .map(|d| matches!(d.quantize, QuantizePreset::Custom(_, _)))
+                            .map(|d| matches!(d.edit.quantize, QuantizePreset::Custom(_, _)))
                             .unwrap_or(false);
                         if ui
                             .add(egui::Button::selectable(is_custom, "Custom"))
@@ -181,7 +181,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
 
                     // ── Custom fraction editor (visible only when Custom is selected) ──
                     if let Some(doc) = ctx.doc
-                        && let QuantizePreset::Custom(ref num, ref den) = doc.quantize
+                        && let QuantizePreset::Custom(ref num, ref den) = doc.edit.quantize
                     {
                         let mut edit_num = *num;
                         let mut edit_den = *den;
@@ -387,11 +387,11 @@ fn show_timecode_display(
     mem_mb: f64,
     show_mem_breakdown: &mut bool,
 ) -> egui::Rect {
-    let tick = doc.cursor_tick.unwrap_or(0.0);
-    let seconds = doc.midi.tick_to_seconds(tick as u64);
-    let bpm = doc.midi.bpm_at_time(seconds);
-    let (num, _denom_power) = doc.midi.time_sig_at_tick(tick as u32);
-    let ppq = doc.midi.ticks_per_beat;
+    let tick = doc.edit.cursor_tick.unwrap_or(0.0);
+    let seconds = doc.midi().tick_to_seconds(tick as u64);
+    let bpm = doc.midi().bpm_at_time(seconds);
+    let (num, _denom_power) = doc.midi().time_sig_at_tick(tick as u32);
+    let ppq = doc.midi().ticks_per_beat;
 
     let bpm_str = time_format::format_bpm(bpm);
     let ts_str = format!(

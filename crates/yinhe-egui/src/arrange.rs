@@ -32,7 +32,7 @@ pub fn show(
     scroll_mode: u32,
     min_border_width: f32,
 ) {
-    *last_cursor_tick = doc.cursor_tick;
+    *last_cursor_tick = doc.edit.cursor_tick;
 
     let arr_total_w = remaining.width();
     let tp_w = transport_panel_width.clamp(60.0, (arr_total_w - 60.0).max(60.0));
@@ -67,8 +67,8 @@ pub fn show(
     // show unclamped positions while the GPU content (clamped inside
     // arrangement_view_ui::show) stays at the boundary — producing a visible
     // "bounce-back" effect on the ruler labels.
-    let total_ticks = crate::view_interaction::total_ticks_padded(doc.midi.tick_length);
-    let num_tracks = doc.track_visible.len();
+    let total_ticks = crate::view_interaction::total_ticks_padded(doc.data.midi.tick_length);
+    let num_tracks = doc.edit.track_visible.len();
     arr_view.clamp_scroll(gpu_rect.width(), gpu_rect.height(), total_ticks, num_tracks);
 
     // ── Ruler: top-right band, drawn with parent painter ──
@@ -77,10 +77,10 @@ pub fn show(
             egui::pos2(arr_rect.min.x + tp_w + 4.0, arr_rect.min.y),
             egui::pos2(arr_rect.max.x, arr_rect.min.y + RULER_H),
         );
-        let tpb = doc.midi.ticks_per_beat;
-        let def_num = doc.midi.time_sig_numerator;
-        let def_den = doc.midi.time_sig_denominator;
-        let sig_events = doc.midi.time_sig_events.as_slice();
+        let tpb = doc.data.midi.ticks_per_beat;
+        let def_num = doc.data.midi.time_sig_numerator;
+        let def_den = doc.data.midi.time_sig_denominator;
+        let sig_events = doc.data.midi.time_sig_events.as_slice();
         // Parent painter works in screen coordinates; paint_labels applies
         // offset_x = rect.min.x - view.content_left() internally.
         let ruler_painter = ui.painter();
@@ -120,30 +120,30 @@ pub fn show(
         }
 
         // Ensure parallel arrays are correctly sized (track count may have grown).
-        let n = doc.track_info_cache.len();
-        if doc.track_pianoroll_visible.len() < n {
-            doc.track_pianoroll_visible.resize(n, true);
+        let n = doc.edit.track_info_cache.len();
+        if doc.edit.track_pianoroll_visible.len() < n {
+            doc.edit.track_pianoroll_visible.resize(n, true);
         }
-        if doc.track_overrides.len() < n {
-            doc.track_overrides
+        if doc.edit.track_overrides.len() < n {
+            doc.edit.track_overrides
                 .resize(n, crate::document::TrackOverride::default());
         }
-        if doc.track_colors_cache.len() < n {
-            for i in doc.track_colors_cache.len()..n {
-                doc.track_colors_cache
-                    .push(crate::document::track_color(i, doc.conductor_track_idx));
+        if doc.edit.track_colors_cache.len() < n {
+            for i in doc.edit.track_colors_cache.len()..n {
+                doc.edit.track_colors_cache
+                    .push(crate::document::track_color(i, doc.edit.conductor_track_idx));
             }
         }
 
         let audio_dirty = track_panel::show(
             ui,
-            &doc.track_info_cache,
-            &doc.track_visible,
-            &mut doc.track_overrides,
-            &mut doc.track_selected,
+            &doc.edit.track_info_cache,
+            &doc.edit.track_visible,
+            &mut doc.edit.track_overrides,
+            &mut doc.edit.track_selected,
             selection_anchor,
-            doc.conductor_track_idx,
-            &doc.track_colors_cache,
+            doc.edit.conductor_track_idx,
+            &doc.edit.track_colors_cache,
             &mut arr_view.base.track_panel_row_height,
             &mut arr_view.base.track_panel_scroll_y,
             request_pianoroll,
@@ -171,7 +171,7 @@ pub fn show(
 
     // ── Arrangement GPU view (below ruler) ──
     let arr_midi: Option<&dyn yinhe_arrangement::NoteSource> =
-        Some(&*doc.midi as &dyn yinhe_arrangement::NoteSource);
+        Some(&*doc.data.midi as &dyn yinhe_arrangement::NoteSource);
     let gpu_size = gpu_rect.size();
     ui.scope_builder(egui::UiBuilder::new().max_rect(gpu_rect), |ui| {
         view_ui::show(
@@ -181,20 +181,20 @@ pub fn show(
             arr_render_ctx,
             arr_view,
             arr_midi,
-            &mut doc.selected,
-            &doc.track_visible,
-            &doc.track_colors_cache,
-            &mut doc.cursor_tick,
-            doc.quantize,
-            doc.midi.ticks_per_beat,
+            &mut doc.edit.selected,
+            &doc.edit.track_visible,
+            &doc.edit.track_colors_cache,
+            &mut doc.edit.cursor_tick,
+            doc.edit.quantize,
+            doc.data.midi.ticks_per_beat,
             Some((
-                doc.midi.ticks_per_beat,
-                doc.midi.time_sig_numerator,
-                doc.midi.time_sig_denominator,
-                doc.midi.time_sig_events.as_slice(),
+                doc.data.midi.ticks_per_beat,
+                doc.data.midi.time_sig_numerator,
+                doc.data.midi.time_sig_denominator,
+                doc.data.midi.time_sig_events.as_slice(),
             )),
             is_playing,
-            &doc.track_names,
+            &doc.data.track_names,
             follow_mode,
             active_tool,
             scroll_mode,

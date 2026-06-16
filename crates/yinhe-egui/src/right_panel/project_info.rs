@@ -23,19 +23,19 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
             .color(egui::Color32::from_gray(160))
             .size(11.0),
     );
-    let mut name = doc.project_name.clone();
+    let mut name = doc.data.project_name.clone();
     let resp = ui.add_sized(
         egui::vec2(ui.available_width(), 20.0),
         egui::TextEdit::singleline(&mut name).id_salt("proj_name"),
     );
     if resp.gained_focus() {
-        begin_edit(doc, resp.id, "Edit project name");
+        begin_edit(&doc.data, &mut doc.edit.pending_edits, resp.id, "Edit project name");
     }
     if resp.changed() {
-        doc.project_name = name;
+        doc.data.project_name = name;
     }
     if resp.lost_focus() {
-        commit_edit(doc, resp.id);
+        commit_edit(&doc.data, &mut doc.history, &mut doc.edit.pending_edits, resp.id);
     }
 
     ui.add_space(6.0);
@@ -46,19 +46,19 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
             .color(egui::Color32::from_gray(160))
             .size(11.0),
     );
-    let mut artist = doc.project_artist.clone();
+    let mut artist = doc.data.project_artist.clone();
     let resp = ui.add_sized(
         egui::vec2(ui.available_width(), 20.0),
         egui::TextEdit::singleline(&mut artist).id_salt("proj_artist"),
     );
     if resp.gained_focus() {
-        begin_edit(doc, resp.id, "Edit artist");
+        begin_edit(&doc.data, &mut doc.edit.pending_edits, resp.id, "Edit artist");
     }
     if resp.changed() {
-        doc.project_artist = artist;
+        doc.data.project_artist = artist;
     }
     if resp.lost_focus() {
-        commit_edit(doc, resp.id);
+        commit_edit(&doc.data, &mut doc.history, &mut doc.edit.pending_edits, resp.id);
     }
 
     ui.add_space(6.0);
@@ -69,19 +69,19 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
             .color(egui::Color32::from_gray(160))
             .size(11.0),
     );
-    let mut ppq = doc.project_ppq as i32;
+    let mut ppq = doc.data.project_ppq as i32;
     let resp = ui.add_sized(
         egui::vec2(80.0, 20.0),
         egui::DragValue::new(&mut ppq).range(1..=32767),
     );
-    if resp.gained_focus() || (resp.drag_started() && !doc.pending_edits.has(resp.id)) {
-        begin_edit(doc, resp.id, "Edit PPQ");
+    if resp.gained_focus() || (resp.drag_started() && !doc.edit.pending_edits.has(resp.id)) {
+        begin_edit(&doc.data, &mut doc.edit.pending_edits, resp.id, "Edit PPQ");
     }
     if resp.changed() {
-        doc.project_ppq = ppq.max(1) as u32;
+        doc.data.project_ppq = ppq.max(1) as u32;
     }
     if resp.lost_focus() || resp.drag_stopped() {
-        commit_edit(doc, resp.id);
+        commit_edit(&doc.data, &mut doc.history, &mut doc.edit.pending_edits, resp.id);
     }
 
     ui.add_space(6.0);
@@ -92,25 +92,19 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
             .color(egui::Color32::from_gray(160))
             .size(11.0),
     );
-    let mut zstd_level = doc
-        .archive
-        .as_ref()
-        .map(|a| a.compression_level)
-        .unwrap_or(0) as i32;
+    let mut zstd_level = doc.data.compression_level as i32;
     let resp = ui.add_sized(
         egui::vec2(60.0, 20.0),
         egui::DragValue::new(&mut zstd_level).range(0..=22),
     );
-    if resp.gained_focus() || (resp.drag_started() && !doc.pending_edits.has(resp.id)) {
-        begin_edit(doc, resp.id, "Edit zstd level");
+    if resp.gained_focus() || (resp.drag_started() && !doc.edit.pending_edits.has(resp.id)) {
+        begin_edit(&doc.data, &mut doc.edit.pending_edits, resp.id, "Edit zstd level");
     }
     if resp.changed() {
-        if let Some(archive) = &mut doc.archive {
-            archive.compression_level = zstd_level;
-        }
+        doc.data.compression_level = zstd_level;
     }
     if resp.lost_focus() || resp.drag_stopped() {
-        commit_edit(doc, resp.id);
+        commit_edit(&doc.data, &mut doc.history, &mut doc.edit.pending_edits, resp.id);
     }
 
     ui.add_space(6.0);
@@ -121,18 +115,18 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
             .color(egui::Color32::from_gray(160))
             .size(11.0),
     );
-    let mut desc = doc.project_description.clone();
+    let mut desc = doc.data.project_description.clone();
     let resp = ui.add_sized(
         egui::vec2(ui.available_width(), 60.0),
         egui::TextEdit::multiline(&mut desc).id_salt("proj_desc"),
     );
     if resp.gained_focus() {
-        begin_edit(doc, resp.id, "Edit description");
+        begin_edit(&doc.data, &mut doc.edit.pending_edits, resp.id, "Edit description");
     }
     if resp.changed() {
-        doc.project_description = desc;
+        doc.data.project_description = desc;
     }
     if resp.lost_focus() {
-        commit_edit(doc, resp.id);
+        commit_edit(&doc.data, &mut doc.history, &mut doc.edit.pending_edits, resp.id);
     }
 }
