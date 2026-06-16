@@ -15,7 +15,6 @@ mod edit_state;
 mod history;
 mod perf_probe;
 mod piano_view;
-mod playback;
 mod progress;
 mod project_data;
 mod project_io;

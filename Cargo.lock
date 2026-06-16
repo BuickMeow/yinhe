@@ -5952,7 +5952,6 @@ dependencies = [
 name = "yinhe-egui"
 version = "0.1.0"
 dependencies = [
- "bincode",
  "cpal",
  "dirs",
  "eframe",
@@ -5961,7 +5960,6 @@ dependencies = [
  "egui_material_icons",
  "embed-resource",
  "image",
- "midly",
  "objc2-metal 0.3.2",
  "pollster",
  "rfd",
@@ -5970,7 +5968,6 @@ dependencies = [
  "sysinfo",
  "tracing",
  "tracing-subscriber",
- "uuid",
  "wgpu",
  "yinhe-archive",
  "yinhe-arrangement",

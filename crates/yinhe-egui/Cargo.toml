@@ -16,9 +16,6 @@ yinhe-audio = { path = "../yinhe-audio" }
 yinhe-memtrace = { path = "../yinhe-memtrace" }
 yinhe-project = { path = "../yinhe-project" }
 yinhe-editor-core = { path = "../yinhe-editor-core" }
-midly = { workspace = true }
-uuid = { version = "1", features = ["v4"] }
-bincode = "1.3"
 cpal = "0.17"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

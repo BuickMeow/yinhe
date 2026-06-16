@@ -1,23 +1,8 @@
+pub use yinhe_project::conversion::{
+    archive_to_midi, load_project, load_project_full, midi_to_archive, midi_to_archive_with_names,
+};
+
 use yinhe_project::*;
-
-/// Convert a MidiFile into a ProjectArchive.
-pub fn midi_to_archive(midi: &yinhe_midi::MidiFile) -> ProjectArchive {
-    yinhe_project::conversion::midi_to_archive(midi)
-}
-
-/// Same as `midi_to_archive` but uses caller-provided track names.
-pub fn midi_to_archive_with_names(
-    midi: &yinhe_midi::MidiFile,
-    track_names: &[String],
-    progress: Option<&dyn Fn(f32, &str)>,
-) -> ProjectArchive {
-    yinhe_project::conversion::midi_to_archive_with_names(midi, track_names, progress)
-}
-
-/// Convert a ProjectArchive back into a MidiFile.
-pub fn archive_to_midi(archive: &ProjectArchive) -> yinhe_midi::MidiFile {
-    yinhe_project::conversion::archive_to_midi(archive)
-}
 
 /// Save a document as a .yin file.
 pub fn save_project(
@@ -90,16 +75,6 @@ pub fn build_archive_from(
         project_sf_overrides,
         global_enabled,
     )
-}
-
-/// Load a .yin file and return a MidiFile + file stem name + the archive.
-pub fn load_project_full(path: &str) -> std::io::Result<(yinhe_midi::MidiFile, String, ProjectArchive)> {
-    yinhe_project::conversion::load_project_full(path)
-}
-
-/// Load a .yin file and return a MidiFile + file stem name.
-pub fn load_project(path: &str) -> std::io::Result<(yinhe_midi::MidiFile, String)> {
-    yinhe_project::conversion::load_project(path)
 }
 
 /// Export the current document as a standard MIDI file.
