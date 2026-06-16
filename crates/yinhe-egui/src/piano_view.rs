@@ -55,6 +55,7 @@ pub fn show(
     automation_display_mode: &mut u32,
     automation_show_dots: &mut bool,
     note_drag_delta: &mut Option<(i64, i32)>,
+    midi_version: u64,
 ) -> Option<crate::widgets::selection_actions::SelectionAction> {
     // Sense::hover() — no drag ownership. All drag is handled by dedicated
     // ui.interact calls below, each inside its own push_id scope.
@@ -284,6 +285,7 @@ pub fn show(
             track_colors,
             scroll_mode,
             min_border_width,
+            midi_version,
         )
     });
 

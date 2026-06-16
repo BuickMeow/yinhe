@@ -30,6 +30,7 @@ pub fn prepare(
     track_colors: &[[f32; 3]],
     scroll_mode: u32,
     min_border_width: f32,
+    midi_version: u64,
 ) -> yinhe_wgpu::PrepareTimings {
     let w = width as f32;
     let h = height as f32;
@@ -139,6 +140,7 @@ pub fn prepare(
         kb_w.to_bits() as u64,
         sel_hash,
         tv_hash,
+        midi_version,
     ]);
     renderer.upload_layer(2, notes_key, |out| {
         if let Some(midi) = midi {

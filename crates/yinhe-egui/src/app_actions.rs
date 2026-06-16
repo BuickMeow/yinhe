@@ -89,14 +89,18 @@ impl App {
             if doc.selected.is_empty() {
                 return false;
             }
-            let midi = Arc::make_mut(&mut doc.midi);
-            for &(track, start_tick, key) in &doc.selected {
-                let notes = &mut midi.key_notes[key as usize];
-                notes.retain(|n| !(n.track == track && n.start_tick == start_tick));
-            }
-            doc.selected.clear();
-            rebuild_midi_metadata(midi);
-            true
+            let changed = {
+                let midi = Arc::make_mut(&mut doc.midi);
+                for &(track, start_tick, key) in &doc.selected {
+                    let notes = &mut midi.key_notes[key as usize];
+                    notes.retain(|n| !(n.track == track && n.start_tick == start_tick));
+                }
+                doc.selected.clear();
+                rebuild_midi_metadata(midi);
+                true
+            };
+            doc.midi_version = doc.midi_version.wrapping_add(1);
+            changed
         });
     }
 
@@ -108,44 +112,48 @@ impl App {
                 return false;
             }
 
-            let midi = Arc::make_mut(&mut doc.midi);
+            let changed = {
+                let midi = Arc::make_mut(&mut doc.midi);
 
-            // Collect full note data for each selected entry
-            let mut selected_data: Vec<(yinhe_types::Note, u8)> = Vec::new();
-            for &(track, start_tick, key) in &doc.selected {
-                if let Some(note) = midi.key_notes[key as usize]
-                    .iter()
-                    .find(|n| n.track == track && n.start_tick == start_tick)
-                {
-                    selected_data.push((note.clone(), key));
+                // Collect full note data for each selected entry
+                let mut selected_data: Vec<(yinhe_types::Note, u8)> = Vec::new();
+                for &(track, start_tick, key) in &doc.selected {
+                    if let Some(note) = midi.key_notes[key as usize]
+                        .iter()
+                        .find(|n| n.track == track && n.start_tick == start_tick)
+                    {
+                        selected_data.push((note.clone(), key));
+                    }
                 }
-            }
 
-            if selected_data.is_empty() {
-                return false;
-            }
+                if selected_data.is_empty() {
+                    return false;
+                }
 
-            // Calculate offset: duration of the selection (max_end - min_start)
-            let min_start = selected_data.iter().map(|(n, _)| n.start_tick).min().unwrap();
-            let max_end = selected_data.iter().map(|(n, _)| n.end_tick).max().unwrap();
-            let offset = (max_end - min_start).max(1);
+                // Calculate offset: duration of the selection (max_end - min_start)
+                let min_start = selected_data.iter().map(|(n, _)| n.start_tick).min().unwrap();
+                let max_end = selected_data.iter().map(|(n, _)| n.end_tick).max().unwrap();
+                let offset = (max_end - min_start).max(1);
 
-            let mut new_selected = HashSet::new();
-            for (note, key) in &selected_data {
-                let new_note = yinhe_types::Note {
-                    start_tick: note.start_tick + offset,
-                    end_tick: note.end_tick + offset,
-                    ..note.clone()
-                };
-                let notes = &mut midi.key_notes[*key as usize];
-                let insert_pos = notes.partition_point(|n| n.start_tick < new_note.start_tick);
-                notes.insert(insert_pos, new_note);
-                new_selected.insert((note.track, note.start_tick + offset, *key));
-            }
+                let mut new_selected = HashSet::new();
+                for (note, key) in &selected_data {
+                    let new_note = yinhe_types::Note {
+                        start_tick: note.start_tick + offset,
+                        end_tick: note.end_tick + offset,
+                        ..note.clone()
+                    };
+                    let notes = &mut midi.key_notes[*key as usize];
+                    let insert_pos = notes.partition_point(|n| n.start_tick < new_note.start_tick);
+                    notes.insert(insert_pos, new_note);
+                    new_selected.insert((note.track, note.start_tick + offset, *key));
+                }
 
-            doc.selected = new_selected;
-            rebuild_midi_metadata(midi);
-            true
+                doc.selected = new_selected;
+                rebuild_midi_metadata(midi);
+                true
+            };
+            doc.midi_version = doc.midi_version.wrapping_add(1);
+            changed
         });
     }
 
@@ -161,36 +169,40 @@ impl App {
                 return false;
             }
 
-            let midi = Arc::make_mut(&mut doc.midi);
+            let changed = {
+                let midi = Arc::make_mut(&mut doc.midi);
 
-            // Remove selected notes from their current keys and collect their data
-            let mut moved_data: Vec<(yinhe_types::Note, u8)> = Vec::new();
-            for &(track, start_tick, key) in &doc.selected {
-                let notes = &mut midi.key_notes[key as usize];
-                if let Some(pos) = notes.iter().position(|n| n.track == track && n.start_tick == start_tick)
-                {
-                    let note = notes.remove(pos);
-                    moved_data.push((note, key));
+                // Remove selected notes from their current keys and collect their data
+                let mut moved_data: Vec<(yinhe_types::Note, u8)> = Vec::new();
+                for &(track, start_tick, key) in &doc.selected {
+                    let notes = &mut midi.key_notes[key as usize];
+                    if let Some(pos) = notes.iter().position(|n| n.track == track && n.start_tick == start_tick)
+                    {
+                        let note = notes.remove(pos);
+                        moved_data.push((note, key));
+                    }
                 }
-            }
 
-            if moved_data.is_empty() {
-                return false;
-            }
+                if moved_data.is_empty() {
+                    return false;
+                }
 
-            // Re-insert at new keys
-            let mut new_selected = HashSet::new();
-            for (note, old_key) in &moved_data {
-                let new_key = ((*old_key as i16) + (semitones as i16)).clamp(0, 127) as u8;
-                let notes = &mut midi.key_notes[new_key as usize];
-                let insert_pos = notes.partition_point(|n| n.start_tick < note.start_tick);
-                notes.insert(insert_pos, note.clone());
-                new_selected.insert((note.track, note.start_tick, new_key));
-            }
+                // Re-insert at new keys
+                let mut new_selected = HashSet::new();
+                for (note, old_key) in &moved_data {
+                    let new_key = ((*old_key as i16) + (semitones as i16)).clamp(0, 127) as u8;
+                    let notes = &mut midi.key_notes[new_key as usize];
+                    let insert_pos = notes.partition_point(|n| n.start_tick < note.start_tick);
+                    notes.insert(insert_pos, note.clone());
+                    new_selected.insert((note.track, note.start_tick, new_key));
+                }
 
-            doc.selected = new_selected;
-            rebuild_midi_metadata(midi);
-            true
+                doc.selected = new_selected;
+                rebuild_midi_metadata(midi);
+                true
+            };
+            doc.midi_version = doc.midi_version.wrapping_add(1);
+            changed
         });
     }
 
@@ -261,12 +273,27 @@ impl App {
         let midi_clone = {
             let doc = &mut self.documents[idx];
             snap.restore(doc);
-            // Track name mirror in cache must stay in sync.
-            for (i, name) in doc.track_names.iter().enumerate() {
-                if let Some(ti) = doc.track_info_cache.get_mut(i) {
-                    ti.name = name.clone();
+            // Rebuild track_info_cache from the restored midi (port, channel,
+            // note_count, name — all may have changed).
+            doc.track_info_cache = doc.midi.track_info();
+            // Sync track_names from cache (track_info() reads midi.track_names).
+            for (i, ti) in doc.track_info_cache.iter().enumerate() {
+                if i < doc.track_names.len() {
+                    doc.track_names[i] = ti.name.clone();
                 }
             }
+            // Rebuild pc_map_cache from restored control events.
+            let mut pc_map = std::collections::HashMap::new();
+            for ev in &doc.midi.control_events {
+                if let yinhe_midi::MidiControlEvent::ProgramChange {
+                    program, track, ..
+                } = ev
+                {
+                    let ch = doc.midi.track_channels.get(*track as usize).copied().unwrap_or(0);
+                    pc_map.entry(ch).or_insert(*program);
+                }
+            }
+            doc.pc_map_cache = pc_map;
             // Clear selection: restored notes' (start_tick, key) may no longer
             // match what the user had selected.
             doc.selected.clear();

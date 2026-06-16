@@ -228,28 +228,31 @@ pub fn show(
         let snap = crate::history::Snapshot::capture(doc, "Change port/channel");
         doc.history.push(snap);
         let new_global_ch = new_port * 16 + (new_ch - 1);
-        let midi = Arc::make_mut(&mut doc.midi);
-        midi.track_channels[track_idx] = new_global_ch;
-        midi.track_ports[track_idx] = new_port;
-        // Rebuild metadata and caches
-        crate::app_actions::rebuild_midi_metadata(midi);
-        doc.track_info_cache = midi.track_info();
-        // Rebuild pc_map_cache
-        let mut pc_map = std::collections::HashMap::new();
-        for ev in &midi.control_events {
-            if let yinhe_midi::MidiControlEvent::ProgramChange {
-                program, track, ..
-            } = ev
-            {
-                let ch = midi
-                    .track_channels
-                    .get(*track as usize)
-                    .copied()
-                    .unwrap_or(0);
-                pc_map.entry(ch).or_insert(*program);
+        {
+            let midi = Arc::make_mut(&mut doc.midi);
+            midi.track_channels[track_idx] = new_global_ch;
+            midi.track_ports[track_idx] = new_port;
+            // Rebuild metadata and caches
+            crate::app_actions::rebuild_midi_metadata(midi);
+            doc.track_info_cache = midi.track_info();
+            // Rebuild pc_map_cache
+            let mut pc_map = std::collections::HashMap::new();
+            for ev in &midi.control_events {
+                if let yinhe_midi::MidiControlEvent::ProgramChange {
+                    program, track, ..
+                } = ev
+                {
+                    let ch = midi
+                        .track_channels
+                        .get(*track as usize)
+                        .copied()
+                        .unwrap_or(0);
+                    pc_map.entry(ch).or_insert(*program);
+                }
             }
+            doc.pc_map_cache = pc_map;
         }
-        doc.pc_map_cache = pc_map;
+        doc.midi_version = doc.midi_version.wrapping_add(1);
         // Signal caller to tear down audio
         return true;
     }

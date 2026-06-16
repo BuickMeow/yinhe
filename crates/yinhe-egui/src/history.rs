@@ -58,6 +58,7 @@ impl Snapshot {
         doc.project_artist = self.project_artist;
         doc.project_description = self.project_description;
         doc.project_ppq = self.project_ppq;
+        doc.midi_version = doc.midi_version.wrapping_add(1);
         if let (Some(archive), Some(level)) = (doc.archive.as_mut(), self.archive_compression_level)
         {
             archive.compression_level = level;

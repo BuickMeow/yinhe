@@ -437,6 +437,7 @@ impl eframe::App for App {
                             &mut self.audio_settings.automation_display_mode,
                             &mut self.audio_settings.automation_show_dots,
                             &mut note_drag_delta,
+                            doc.midi_version,
                         );
                         if let Some(t0) = _piano_total_start {
                             crate::perf_probe::record_piano_total(t0.elapsed());
@@ -489,28 +490,31 @@ impl eframe::App for App {
 
                             // Rebuild notes from originals + delta each frame.
                             if let Some(ref originals) = self.note_drag_originals.clone() {
-                                let midi = Arc::make_mut(&mut doc.midi);
-                                // Clear all current selected notes
-                                for &(track, start_tick, key) in &doc.selected {
-                                    midi.key_notes[key as usize].retain(|n| !(n.track == track && n.start_tick == start_tick));
+                                {
+                                    let midi = Arc::make_mut(&mut doc.midi);
+                                    // Clear all current selected notes
+                                    for &(track, start_tick, key) in &doc.selected {
+                                        midi.key_notes[key as usize].retain(|n| !(n.track == track && n.start_tick == start_tick));
+                                    }
+                                    // Re-insert at new positions
+                                    let mut new_selected = HashSet::new();
+                                    for (note, old_key) in originals {
+                                        let new_key = ((*old_key as i32) + delta_keys).clamp(0, 127) as u8;
+                                        let new_start = (note.start_tick as i64 + delta_ticks).max(0) as u32;
+                                        let new_end = (note.end_tick as i64 + delta_ticks).max(1) as u32;
+                                        let moved = yinhe_types::Note {
+                                            start_tick: new_start,
+                                            end_tick: new_end,
+                                            ..note.clone()
+                                        };
+                                        let notes = &mut midi.key_notes[new_key as usize];
+                                        let insert_pos = notes.partition_point(|n| n.start_tick < moved.start_tick);
+                                        notes.insert(insert_pos, moved);
+                                        new_selected.insert((note.track, new_start, new_key));
+                                    }
+                                    doc.selected = new_selected;
                                 }
-                                // Re-insert at new positions
-                                let mut new_selected = HashSet::new();
-                                for (note, old_key) in originals {
-                                    let new_key = ((*old_key as i32) + delta_keys).clamp(0, 127) as u8;
-                                    let new_start = (note.start_tick as i64 + delta_ticks).max(0) as u32;
-                                    let new_end = (note.end_tick as i64 + delta_ticks).max(1) as u32;
-                                    let moved = yinhe_types::Note {
-                                        start_tick: new_start,
-                                        end_tick: new_end,
-                                        ..note.clone()
-                                    };
-                                    let notes = &mut midi.key_notes[new_key as usize];
-                                    let insert_pos = notes.partition_point(|n| n.start_tick < moved.start_tick);
-                                    notes.insert(insert_pos, moved);
-                                    new_selected.insert((note.track, new_start, new_key));
-                                }
-                                doc.selected = new_selected;
+                                doc.midi_version = doc.midi_version.wrapping_add(1);
                                 self.pianoroll_view.base.dirty = true;
                             }
                         }
@@ -520,8 +524,11 @@ impl eframe::App for App {
                     if let Some(_originals) = self.note_drag_originals.take() {
                         if let Some(idx) = self.active_doc {
                             let doc = &mut self.documents[idx];
-                            let midi = Arc::make_mut(&mut doc.midi);
-                            crate::app_actions::rebuild_midi_metadata(midi);
+                            {
+                                let midi = Arc::make_mut(&mut doc.midi);
+                                crate::app_actions::rebuild_midi_metadata(midi);
+                            }
+                            doc.midi_version = doc.midi_version.wrapping_add(1);
                             self.pianoroll_view.base.dirty = true;
                             // Push the pre-drag snapshot onto the undo stack
                             // only if the drag actually moved notes.

@@ -171,7 +171,8 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>, state: &mut EventBrow
     let mut entries: Vec<(&String, &ArchiveEntry)> = archive.entries.iter().collect();
     entries.sort_by(|a, b| a.0.cmp(b.0));
 
-    let fingerprint = entries.len();
+    let fingerprint = entries.len()
+        ^ entries.iter().map(|(_, e)| e.data.len()).sum::<usize>();
     if state.archive_fingerprint != Some(fingerprint) {
         state.expanded_paths.clear();
         let tree_init = build_tree(&entries);

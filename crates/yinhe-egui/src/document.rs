@@ -80,6 +80,10 @@ pub(crate) struct Document {
     pub history: crate::history::History,
     /// Per-widget baseline snapshots awaiting commit on lost-focus / Enter.
     pub pending_edits: crate::history::PendingEdits,
+    /// Monotonic counter bumped on every `Arc::make_mut(&mut self.midi)` or
+    /// `Snapshot::restore`. Used as a pianoroll layer-cache key component so
+    /// the GPU re-renders when the underlying MIDI data changes.
+    pub midi_version: u64,
 }
 
 /// Detect the conductor track using a SMF format-1 heuristic.
@@ -156,11 +160,19 @@ impl Default for Document {
             project_ppq: 480,
             history: crate::history::History::new(),
             pending_edits: crate::history::PendingEdits::default(),
+            midi_version: 0,
         }
     }
 }
 
 impl Document {
+    /// Bump `midi_version` to invalidate the pianoroll layer cache.
+    /// Call after every `Arc::make_mut(&mut self.midi)` or after replacing
+    /// `self.midi` entirely (e.g. `Snapshot::restore`).
+    pub fn bump_midi_version(&mut self) {
+        self.midi_version = self.midi_version.wrapping_add(1);
+    }
+
     /// Create a new empty "Untitled" document with a default single-track MIDI.
     pub fn empty() -> Self {
         let mut m = yinhe_midi::MidiFile::default();
@@ -458,12 +470,16 @@ impl Document {
             project_ppq,
             history: crate::history::History::new(),
             pending_edits: crate::history::PendingEdits::default(),
+            midi_version: 0,
         }, soundfont_project_mode))
     }
 
     /// Re-decode all track names using a different encoding.
     pub fn recode_track_names(&mut self, encoding: yinhe_midi::MidiImportEncoding) {
-        Arc::make_mut(&mut self.midi).recode_track_names(encoding);
+        {
+            Arc::make_mut(&mut self.midi).recode_track_names(encoding);
+        }
+        self.midi_version = self.midi_version.wrapping_add(1);
         for (i, name) in self.midi.track_names.iter().enumerate() {
             if i < self.track_names.len() {
                 self.track_names[i] = name.clone();
