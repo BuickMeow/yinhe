@@ -3,6 +3,7 @@ use std::sync::mpsc;
 use yinhe_midi::LoadProgress;
 use yinhe_midi::MidiImportEncoding;
 
+use crate::dialogs::archive_picker::ArchivePickerState;
 use crate::progress::{self, SharedProgress, StageStatus};
 
 /// Events sent from the background loading thread to the UI thread.
@@ -14,6 +15,11 @@ pub(crate) enum MidiLoadEvent {
 /// Events for .yin project loading.
 pub(crate) enum YinLoadEvent {
     Complete(Result<(yinhe_midi::MidiFile, String), String>),
+}
+
+/// Events for archive opening.
+pub(crate) enum ArchiveLoadEvent {
+    Complete(Result<(yinhe_archive::Archive, Vec<yinhe_archive::ArchiveEntry>), String>),
 }
 
 /// Tracks the state of an in-flight MIDI load operation.
@@ -29,6 +35,12 @@ pub(crate) struct YinLoader {
     pub rx: mpsc::Receiver<YinLoadEvent>,
 }
 
+/// Tracks the state of an in-flight archive opening operation.
+pub(crate) struct ArchiveLoader {
+    pub path: String,
+    pub rx: mpsc::Receiver<ArchiveLoadEvent>,
+}
+
 /// Result of polling the async loader.
 pub(crate) enum LoadResult {
     MidiLoaded {
@@ -40,6 +52,7 @@ pub(crate) enum LoadResult {
         midi: yinhe_midi::MidiFile,
         file_name: String,
     },
+    ArchiveError(String),
     NotReady,
 }
 
@@ -47,6 +60,9 @@ pub(crate) enum LoadResult {
 pub(crate) struct FileLoader {
     midi_loader: Option<MidiLoader>,
     yin_loader: Option<YinLoader>,
+    archive_loader: Option<ArchiveLoader>,
+    /// Archive picker dialog state.
+    pub archive_picker: Option<ArchivePickerState>,
     /// Shared multi-stage progress state.
     load_progress: SharedProgress,
 }
@@ -56,12 +72,17 @@ impl FileLoader {
         Self {
             midi_loader: None,
             yin_loader: None,
+            archive_loader: None,
+            archive_picker: None,
             load_progress,
         }
     }
 
     pub fn is_loading(&self) -> bool {
-        self.midi_loader.is_some() || self.yin_loader.is_some()
+        self.midi_loader.is_some()
+            || self.yin_loader.is_some()
+            || self.archive_loader.is_some()
+            || self.archive_picker.is_some()
     }
 
     pub fn load_progress(&self) -> &SharedProgress {
@@ -75,9 +96,10 @@ impl FileLoader {
         }
 
         if let Some(path) = rfd::FileDialog::new()
-            .add_filter("All supported", &["mid", "midi", "yin"])
+            .add_filter("All supported", &["mid", "midi", "yin", "zip", "7z", "tar", "gz", "xz", "tgz", "txz"])
             .add_filter("MIDI", &["mid", "midi"])
             .add_filter("Yinhe Project", &["yin"])
+            .add_filter("Archive", &["zip", "7z", "tar", "gz", "xz", "tgz", "txz"])
             .pick_file()
         {
             let path_str = path.to_string_lossy().to_string();
@@ -110,6 +132,24 @@ impl FileLoader {
                         }
                     });
                     self.yin_loader = Some(YinLoader {
+                        path: path_str,
+                        rx,
+                    });
+                }
+                "zip" | "7z" | "tar" | "gz" | "xz" | "tgz" | "txz" => {
+                    // Archive file
+                    let (tx, rx) = mpsc::channel();
+                    let path_for_thread = path_str.clone();
+                    std::thread::spawn(move || {
+                        let result = yinhe_archive::Archive::open(&path_for_thread)
+                            .map(|archive| {
+                                let entries = archive.list_midi_files();
+                                (archive, entries)
+                            })
+                            .map_err(|e| e.to_string());
+                        let _ = tx.send(ArchiveLoadEvent::Complete(result));
+                    });
+                    self.archive_loader = Some(ArchiveLoader {
                         path: path_str,
                         rx,
                     });
@@ -218,7 +258,103 @@ impl FileLoader {
             self.yin_loader = Some(loader);
         }
 
+        // Poll Archive loader
+        if let Some(loader) = self.archive_loader.take() {
+            if let Ok(event) = loader.rx.try_recv() {
+                match event {
+                    ArchiveLoadEvent::Complete(result) => match result {
+                        Ok((archive, entries)) => {
+                            progress::set_visible(&self.load_progress, false);
+                            if entries.is_empty() {
+                                tracing::warn!("压缩包中没有找到 MIDI 文件: {}", loader.path);
+                                return LoadResult::ArchiveError(
+                                    "压缩包中没有找到 MIDI 文件".to_string(),
+                                );
+                            }
+                            if entries.len() == 1 {
+                                let entry = entries[0].clone();
+                                tracing::info!(
+                                    "压缩包中只有一个 MIDI 文件，直接加载: {}",
+                                    entry.name
+                                );
+                                self.start_load_from_archive(archive, entry);
+                                return LoadResult::NotReady;
+                            }
+                            self.archive_picker = Some(ArchivePickerState::Opening {
+                                path: loader.path,
+                                rx: {
+                                    let (tx, rx) = mpsc::channel();
+                                    let _ = tx.send(Ok((archive, entries)));
+                                    rx
+                                },
+                            });
+                            return LoadResult::NotReady;
+                        }
+                        Err(e) => {
+                            tracing::error!("打开压缩包失败: {}", e);
+                            return LoadResult::ArchiveError(format!("打开压缩包失败: {}", e));
+                        }
+                    },
+                }
+            }
+            self.archive_loader = Some(loader);
+        }
+
         LoadResult::NotReady
+    }
+
+    /// Start loading a MIDI file from an archive entry.
+    pub fn start_load_from_archive(
+        &mut self,
+        archive: yinhe_archive::Archive,
+        entry: yinhe_archive::ArchiveEntry,
+    ) {
+        let (tx, rx) = mpsc::channel();
+        let progress = self.load_progress.clone();
+        let entry_name = entry.name.clone();
+        progress::set_visible(&self.load_progress, true);
+        std::thread::spawn(move || {
+            progress::set_stage(&progress, 0, StageStatus::Active);
+            let result = archive.read_file(&entry_name).map_err(|e| {
+                yinhe_midi::MidiError::Io(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    e.to_string(),
+                ))
+            });
+            match result {
+                Ok(data) => {
+                    let load_result = yinhe_midi::MidiFile::load_from_bytes_with_progress(
+                        &data,
+                        |p| {
+                            let _ = tx.send(MidiLoadEvent::Progress(p));
+                        },
+                    );
+                    progress::set_stage(&progress, 0, StageStatus::Done);
+                    if let Ok(ref midi) = load_result {
+                        progress::set_stage(&progress, 1, StageStatus::Active);
+                        let p = progress.clone();
+                        let cb = |pct: f32, detail: &str| {
+                            progress::set_stage_progress(&p, 1, pct, detail.to_string());
+                        };
+                        let _ = yinhe_project::conversion::midi_to_archive_with_names(
+                            midi,
+                            &midi.track_names,
+                            Some(&cb),
+                        );
+                        progress::set_stage(&progress, 1, StageStatus::Done);
+                    }
+                    let _ = tx.send(MidiLoadEvent::Complete(Box::new(load_result)));
+                }
+                Err(e) => {
+                    let _ = tx.send(MidiLoadEvent::Complete(Box::new(Err(e))));
+                }
+            }
+        });
+        self.midi_loader = Some(MidiLoader {
+            path: entry.name,
+            rx,
+            current_progress: None,
+        });
     }
 
     /// Draw a dark overlay + centered window with multi-stage loading progress.

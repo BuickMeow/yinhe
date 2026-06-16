@@ -163,6 +163,9 @@ impl eframe::App for App {
                     ));
                 }
             }
+            LoadResult::ArchiveError(msg) => {
+                self.load_error = Some(msg);
+            }
             LoadResult::NotReady => {}
         }
 
@@ -625,6 +628,26 @@ impl eframe::App for App {
         // ── Loading overlay ──
         self.file_loader.show_loading_overlay(ui);
         if self.file_loader.is_loading() {
+            ui.ctx().request_repaint();
+        }
+
+        // ── Archive picker dialog ──
+        if let Some(ref mut state) = self.file_loader.archive_picker {
+            use crate::dialogs::archive_picker;
+            match archive_picker::show(state, ui.ctx()) {
+                archive_picker::ArchivePickerAction::LoadFile { archive, entry } => {
+                    self.file_loader.start_load_from_archive(archive, entry);
+                    self.file_loader.archive_picker = None;
+                }
+                archive_picker::ArchivePickerAction::Cancel => {
+                    self.file_loader.archive_picker = None;
+                }
+                archive_picker::ArchivePickerAction::Error(msg) => {
+                    self.load_error = Some(msg);
+                    self.file_loader.archive_picker = None;
+                }
+                archive_picker::ArchivePickerAction::None => {}
+            }
             ui.ctx().request_repaint();
         }
 

@@ -4,4 +4,27 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-yinhe-midi = { path = "../yinhe-midi" }
+thiserror = "2"
+tracing = "0.1"
+zip = "8.6"
+
+# Optional: 7z support
+sevenz-rust = { version = "0.6", optional = true }
+
+# Optional: tar support
+tar = { version = "0.4", optional = true }
+
+# Optional: gzip decompression (for .tar.gz)
+flate2 = { version = "1", optional = true }
+
+# Optional: xz decompression (for .tar.xz)
+lzma-rs = { version = "0.3", optional = true }
+
+[dev-dependencies]
+tempfile = "3"
+
+[features]
+default = ["sevenz", "tar-gz", "tar-xz"]
+sevenz = ["dep:sevenz-rust"]
+tar-gz = ["dep:tar", "dep:flate2"]
+tar-xz = ["dep:tar", "dep:lzma-rs"]
