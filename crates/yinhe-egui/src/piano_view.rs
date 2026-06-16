@@ -4,7 +4,7 @@ use eframe::egui;
 
 use yinhe_types::{AutomationLane, TimeSigEvent};
 
-use crate::quantize::QuantizePreset;
+use yinhe_editor_core::quantize::QuantizePreset;
 use crate::widgets::tools_panel::Tool;
 
 mod automation_panel;

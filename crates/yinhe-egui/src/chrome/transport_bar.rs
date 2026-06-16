@@ -2,8 +2,8 @@ use eframe::egui;
 use egui_material_icons::icons::*;
 
 use crate::file_loader::FileLoader;
-use crate::document::Document;
-use crate::quantize::QuantizePreset;
+use yinhe_editor_core::document::Document;
+use yinhe_editor_core::quantize::QuantizePreset;
 use crate::view_interaction::FollowMode;
 use crate::util::time_format;
 

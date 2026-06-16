@@ -5,7 +5,7 @@ use eframe::egui;
 
 use yinhe_arrangement::ArrangementView;
 
-use crate::document::Document;
+use yinhe_editor_core::document::Document;
 use crate::render_context::RenderContext;
 use crate::widgets::tools_panel::Tool;
 
@@ -126,12 +126,12 @@ pub fn show(
         }
         if doc.edit.track_overrides.len() < n {
             doc.edit.track_overrides
-                .resize(n, crate::document::TrackOverride::default());
+                .resize(n, yinhe_editor_core::document::TrackOverride::default());
         }
         if doc.edit.track_colors_cache.len() < n {
             for i in doc.edit.track_colors_cache.len()..n {
                 doc.edit.track_colors_cache
-                    .push(crate::document::track_color(i, doc.edit.conductor_track_idx));
+                    .push(yinhe_editor_core::document::track_color(i, doc.edit.conductor_track_idx));
             }
         }
 

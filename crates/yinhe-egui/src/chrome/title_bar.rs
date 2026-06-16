@@ -1,7 +1,7 @@
 use eframe::egui;
 use egui_material_icons::icons::*;
 
-use crate::document::Document;
+use yinhe_editor_core::document::Document;
 
 /// Height of the custom title bar.
 pub(crate) const TITLE_BAR_HEIGHT: f32 = crate::theme::TITLE_BAR_H;

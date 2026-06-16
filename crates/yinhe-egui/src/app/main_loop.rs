@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::app::App;
 use crate::file_loader::LoadResult;
-use crate::document::Document;
+use yinhe_editor_core::document::Document;
 use crate::chrome::title_bar;
 
 use crate::arrange;

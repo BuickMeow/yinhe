@@ -2,7 +2,7 @@ use eframe::egui;
 
 use yinhe_types::TimeSigEvent;
 
-use crate::quantize::QuantizePreset;
+use yinhe_editor_core::quantize::QuantizePreset;
 use crate::widgets::tools_panel::Tool;
 
 /// Cursor-follow mode for auto-scrolling during playback.

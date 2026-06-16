@@ -5,7 +5,7 @@ use std::sync::Arc;
 use eframe::egui;
 
 use crate::app::App;
-use crate::document::Document;
+use yinhe_editor_core::document::Document;
 use crate::chrome::transport_bar;
 
 /// Actions detected from keyboard input in the current frame.
@@ -202,7 +202,7 @@ impl App {
 
     /// Capture an `UndoSnapshot` of the active document's persistent state.
     /// Returns `None` if no document is active.
-    pub(crate) fn capture_snapshot(&self, label: &'static str) -> Option<crate::history::UndoSnapshot> {
+    pub(crate) fn capture_snapshot(&self, label: &'static str) -> Option<yinhe_editor_core::history::UndoSnapshot> {
         let idx = self.active_doc?;
         let doc = self.documents.get(idx)?;
         Some(doc.data.snapshot(label))
@@ -216,7 +216,7 @@ impl App {
     /// is pushed and audio is not notified.
     pub(crate) fn with_undo<F>(&mut self, label: &'static str, f: F)
     where
-        F: FnOnce(&mut crate::project_data::ProjectData, &mut crate::edit_state::EditState) -> bool,
+        F: FnOnce(&mut yinhe_editor_core::project_data::ProjectData, &mut yinhe_editor_core::edit_state::EditState) -> bool,
     {
         let Some(idx) = self.active_doc else { return };
         let snapshot = self.documents[idx].data.snapshot(label);
@@ -260,7 +260,7 @@ impl App {
 
     /// Apply a snapshot to the document at `idx`: restore persistent fields,
     /// rebuild caches, clear selection, and notify audio.
-    fn apply_snapshot(&mut self, idx: usize, snap: crate::history::UndoSnapshot) {
+    fn apply_snapshot(&mut self, idx: usize, snap: yinhe_editor_core::history::UndoSnapshot) {
         let doc = &mut self.documents[idx];
         doc.data = snap.data;
         doc.data.bump_version();

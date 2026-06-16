@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use yinhe_project::*;
 use yinhe_types::TimeSigEvent as TypesTimeSigEvent;
 
-use crate::document::Document;
+use yinhe_editor_core::document::Document;
 use crate::widgets::split_handle;
 use crate::theme;
 

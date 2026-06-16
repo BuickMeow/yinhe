@@ -7,7 +7,7 @@ use yinhe_wgpu::layer_cache_key;
 
 use std::collections::HashSet;
 
-use crate::quantize::QuantizePreset;
+use yinhe_editor_core::quantize::QuantizePreset;
 use crate::render_context::RenderContext;
 use crate::widgets::tools_panel::Tool;
 

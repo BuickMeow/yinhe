@@ -8,7 +8,7 @@ pub mod soundfont;
 use eframe::egui;
 
 use crate::audio_settings::AudioSettings;
-use crate::document::Document;
+use yinhe_editor_core::document::Document;
 
 #[derive(PartialEq, Clone, Copy)]
 pub enum RightTab {

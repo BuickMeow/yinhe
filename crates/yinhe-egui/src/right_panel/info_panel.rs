@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use eframe::egui;
 
-use crate::document::Document;
+use yinhe_editor_core::document::Document;
 
 /// Show the Info panel for the selected track.
 ///
@@ -167,7 +167,7 @@ pub fn show(
     });
     if let Some(id) = name_resp_id {
         if name_gained_focus {
-            crate::history::begin_edit(&doc.data, &mut doc.edit.pending_edits, id.value(), "Edit track name");
+            yinhe_editor_core::history::begin_edit(&doc.data, &mut doc.edit.pending_edits, id.value(), "Edit track name");
         }
         if let Some(new_name) = name_change {
             doc.data.track_names[track_idx] = new_name.clone();
@@ -176,7 +176,7 @@ pub fn show(
             }
         }
         if name_lost_focus {
-            crate::history::commit_edit(&doc.data, &mut doc.history, &mut doc.edit.pending_edits, id.value());
+            yinhe_editor_core::history::commit_edit(&doc.data, &mut doc.history, &mut doc.edit.pending_edits, id.value());
         }
     }
     let ti = &doc.edit.track_info_cache[track_idx];
@@ -250,7 +250,7 @@ pub fn show(
     // Ensure track_overrides is long enough
     while doc.edit.track_overrides.len() <= track_idx {
         doc.edit.track_overrides
-            .push(crate::document::TrackOverride::default());
+            .push(yinhe_editor_core::document::TrackOverride::default());
     }
 
     let muted = doc.edit.track_overrides[track_idx].muted;
@@ -295,7 +295,7 @@ pub fn show(
         // Ensure track_overrides is long enough (re-check since closure is done)
         while doc.edit.track_overrides.len() <= track_idx {
             doc.edit.track_overrides
-                .push(crate::document::TrackOverride::default());
+                .push(yinhe_editor_core::document::TrackOverride::default());
         }
         if mute_clicked {
             doc.edit.track_overrides[track_idx].muted = !muted;

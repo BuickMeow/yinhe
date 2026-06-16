@@ -4,7 +4,7 @@ use eframe::egui;
 
 use yinhe_midi::TrackInfo;
 
-use crate::document::TrackOverride;
+use yinhe_editor_core::document::TrackOverride;
 
 /// Render the track list using a painter (unified component for both
 /// pianoroll and transport contexts).

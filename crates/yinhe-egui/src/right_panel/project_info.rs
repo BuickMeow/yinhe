@@ -1,7 +1,7 @@
 use eframe::egui;
 
-use crate::document::Document;
-use crate::history::{begin_edit, commit_edit};
+use yinhe_editor_core::document::Document;
+use yinhe_editor_core::history::{begin_edit, commit_edit};
 
 /// Show the Project Info panel for editing project metadata.
 pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {

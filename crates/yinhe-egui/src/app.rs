@@ -6,7 +6,7 @@ pub(crate) mod main_loop;
 
 use crate::file_loader::FileLoader;
 use crate::dialogs::system_monitor::SystemMonitor;
-use crate::document::Document;
+use yinhe_editor_core::document::Document;
 use crate::render_context::RenderContext;
 use crate::chrome::mode_bar::ViewMode;
 use yinhe_arrangement::ArrangementView;
@@ -93,7 +93,7 @@ pub struct App {
     pub(crate) note_drag_originals: Option<Vec<(yinhe_types::Note, u8)>>,
     /// Snapshot taken on the first frame of a note drag.  Pushed onto the
     /// active document's undo stack on mouse-up (drag finalize).
-    pub(crate) note_drag_undo_snapshot: Option<crate::history::UndoSnapshot>,
+    pub(crate) note_drag_undo_snapshot: Option<yinhe_editor_core::history::UndoSnapshot>,
     /// Tracks whether the current drag ever produced a non-zero delta.
     /// A click without motion should not push an undo entry.
     pub(crate) note_drag_moved: bool,
