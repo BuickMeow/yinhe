@@ -15,6 +15,7 @@ yinhe-wgpu = { path = "../yinhe-wgpu" }
 yinhe-audio = { path = "../yinhe-audio" }
 yinhe-memtrace = { path = "../yinhe-memtrace" }
 yinhe-project = { path = "../yinhe-project" }
+yinhe-editor-core = { path = "../yinhe-editor-core" }
 midly = { workspace = true }
 uuid = { version = "1", features = ["v4"] }
 bincode = "1.3"

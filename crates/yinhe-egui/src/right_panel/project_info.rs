@@ -29,13 +29,13 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
         egui::TextEdit::singleline(&mut name).id_salt("proj_name"),
     );
     if resp.gained_focus() {
-        begin_edit(&doc.data, &mut doc.edit.pending_edits, resp.id, "Edit project name");
+        begin_edit(&doc.data, &mut doc.edit.pending_edits, resp.id.value(), "Edit project name");
     }
     if resp.changed() {
         doc.data.project_name = name;
     }
     if resp.lost_focus() {
-        commit_edit(&doc.data, &mut doc.history, &mut doc.edit.pending_edits, resp.id);
+        commit_edit(&doc.data, &mut doc.history, &mut doc.edit.pending_edits, resp.id.value());
     }
 
     ui.add_space(6.0);
@@ -52,13 +52,13 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
         egui::TextEdit::singleline(&mut artist).id_salt("proj_artist"),
     );
     if resp.gained_focus() {
-        begin_edit(&doc.data, &mut doc.edit.pending_edits, resp.id, "Edit artist");
+        begin_edit(&doc.data, &mut doc.edit.pending_edits, resp.id.value(), "Edit artist");
     }
     if resp.changed() {
         doc.data.project_artist = artist;
     }
     if resp.lost_focus() {
-        commit_edit(&doc.data, &mut doc.history, &mut doc.edit.pending_edits, resp.id);
+        commit_edit(&doc.data, &mut doc.history, &mut doc.edit.pending_edits, resp.id.value());
     }
 
     ui.add_space(6.0);
@@ -74,14 +74,14 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
         egui::vec2(80.0, 20.0),
         egui::DragValue::new(&mut ppq).range(1..=32767),
     );
-    if resp.gained_focus() || (resp.drag_started() && !doc.edit.pending_edits.has(resp.id)) {
-        begin_edit(&doc.data, &mut doc.edit.pending_edits, resp.id, "Edit PPQ");
+    if resp.gained_focus() || (resp.drag_started() && !doc.edit.pending_edits.has(resp.id.value())) {
+        begin_edit(&doc.data, &mut doc.edit.pending_edits, resp.id.value(), "Edit PPQ");
     }
     if resp.changed() {
         doc.data.project_ppq = ppq.max(1) as u32;
     }
     if resp.lost_focus() || resp.drag_stopped() {
-        commit_edit(&doc.data, &mut doc.history, &mut doc.edit.pending_edits, resp.id);
+        commit_edit(&doc.data, &mut doc.history, &mut doc.edit.pending_edits, resp.id.value());
     }
 
     ui.add_space(6.0);
@@ -97,14 +97,14 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
         egui::vec2(60.0, 20.0),
         egui::DragValue::new(&mut zstd_level).range(0..=22),
     );
-    if resp.gained_focus() || (resp.drag_started() && !doc.edit.pending_edits.has(resp.id)) {
-        begin_edit(&doc.data, &mut doc.edit.pending_edits, resp.id, "Edit zstd level");
+    if resp.gained_focus() || (resp.drag_started() && !doc.edit.pending_edits.has(resp.id.value())) {
+        begin_edit(&doc.data, &mut doc.edit.pending_edits, resp.id.value(), "Edit zstd level");
     }
     if resp.changed() {
         doc.data.compression_level = zstd_level;
     }
     if resp.lost_focus() || resp.drag_stopped() {
-        commit_edit(&doc.data, &mut doc.history, &mut doc.edit.pending_edits, resp.id);
+        commit_edit(&doc.data, &mut doc.history, &mut doc.edit.pending_edits, resp.id.value());
     }
 
     ui.add_space(6.0);
@@ -121,12 +121,12 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
         egui::TextEdit::multiline(&mut desc).id_salt("proj_desc"),
     );
     if resp.gained_focus() {
-        begin_edit(&doc.data, &mut doc.edit.pending_edits, resp.id, "Edit description");
+        begin_edit(&doc.data, &mut doc.edit.pending_edits, resp.id.value(), "Edit description");
     }
     if resp.changed() {
         doc.data.project_description = desc;
     }
     if resp.lost_focus() {
-        commit_edit(&doc.data, &mut doc.history, &mut doc.edit.pending_edits, resp.id);
+        commit_edit(&doc.data, &mut doc.history, &mut doc.edit.pending_edits, resp.id.value());
     }
 }

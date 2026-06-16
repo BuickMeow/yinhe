@@ -346,7 +346,25 @@ impl App {
         let project_description = doc.data.project_description.clone();
         let project_ppq = doc.data.project_ppq;
         let compression_level = doc.data.compression_level;
-        let project_sf = doc.edit.project_sf.clone();
+        let sf_overrides: Vec<(u8, Vec<yinhe_project::SfEntryJson>)> = doc
+            .edit
+            .project_sf
+            .overrides
+            .iter()
+            .map(|(port, entries)| {
+                (
+                    *port,
+                    entries
+                        .iter()
+                        .map(|e| yinhe_project::SfEntryJson {
+                            path: e.path.clone(),
+                            name: e.name.clone(),
+                            enabled: e.enabled,
+                        })
+                        .collect(),
+                )
+            })
+            .collect();
         let global_enabled = self.audio_settings.global_sf_config.global_enabled;
         let path_for_thread = path.clone();
 
@@ -360,7 +378,7 @@ impl App {
                 project_ppq,
                 compression_level,
                 &project_description,
-                &project_sf,
+                &sf_overrides,
                 global_enabled,
             );
             if let Err(e) = archive.write_to(&path_for_thread) {

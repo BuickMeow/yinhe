@@ -167,7 +167,7 @@ pub fn show(
     });
     if let Some(id) = name_resp_id {
         if name_gained_focus {
-            crate::history::begin_edit(&doc.data, &mut doc.edit.pending_edits, id, "Edit track name");
+            crate::history::begin_edit(&doc.data, &mut doc.edit.pending_edits, id.value(), "Edit track name");
         }
         if let Some(new_name) = name_change {
             doc.data.track_names[track_idx] = new_name.clone();
@@ -176,7 +176,7 @@ pub fn show(
             }
         }
         if name_lost_focus {
-            crate::history::commit_edit(&doc.data, &mut doc.history, &mut doc.edit.pending_edits, id);
+            crate::history::commit_edit(&doc.data, &mut doc.history, &mut doc.edit.pending_edits, id.value());
         }
     }
     let ti = &doc.edit.track_info_cache[track_idx];

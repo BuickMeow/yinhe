@@ -1,0 +1,13 @@
+[package]
+name = "yinhe-editor-core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+yinhe-types = { path = "../yinhe-types" }
+yinhe-midi = { path = "../yinhe-midi" }
+yinhe-project = { path = "../yinhe-project" }
+yinhe-automation = { path = "../yinhe-automation" }
+yinhe-memtrace = { path = "../yinhe-memtrace" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

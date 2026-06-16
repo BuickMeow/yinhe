@@ -3,6 +3,8 @@ use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::path::Path;
 
+pub mod conversion;
+
 // ── Archive format ──
 
 /// Magic bytes at the start of every .yin file.

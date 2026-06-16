@@ -1,4 +1,4 @@
-use serde::{Deserialize, Serialize};
+pub use yinhe_editor_core::config::{ProjectSfConfig, SfEntry};
 
 /// Name of the built-in GeneralUser GS SoundFont file.
 pub const BUILTIN_SF_NAME: &str = "GeneralUser GS v1.472.sf2";
@@ -29,18 +29,10 @@ pub fn builtin_soundfont_path() -> Option<std::path::PathBuf> {
         .find(|path| path.exists())
 }
 
-/// A single SoundFont entry — one .sf2/.sf3/.sfz file.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct SfEntry {
-    pub path: String,
-    pub name: String,
-    pub enabled: bool,
-}
-
 /// Global soundfont config — persisted to `yinhe_settings.json`.
 ///
 /// Always has 16 ports (A–P). Ports with no entries are simply empty.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct GlobalSfConfig {
     /// Global SF list.  In global mode all ports share `ports[0]`.
     pub ports: [Vec<SfEntry>; 16],
@@ -87,23 +79,5 @@ impl GlobalSfConfig {
 impl Default for GlobalSfConfig {
     fn default() -> Self {
         Self::builtin_default()
-    }
-}
-
-/// Song-specific soundfont config — lives in `Document`.
-///
-/// When `GlobalSfConfig.global_enabled` is `false`, each port uses its
-/// entry here (if present), otherwise falls back to the built-in SF.
-#[derive(Clone, Debug)]
-pub struct ProjectSfConfig {
-    /// Port → SF entries for that port.
-    pub overrides: Vec<(u8, Vec<SfEntry>)>,
-}
-
-impl Default for ProjectSfConfig {
-    fn default() -> Self {
-        Self {
-            overrides: Vec::new(),
-        }
     }
 }

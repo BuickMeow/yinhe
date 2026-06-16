@@ -5936,6 +5936,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "yinhe-editor-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "yinhe-automation",
+ "yinhe-memtrace",
+ "yinhe-midi",
+ "yinhe-project",
+ "yinhe-types",
+]
+
+[[package]]
 name = "yinhe-egui"
 version = "0.1.0"
 dependencies = [
@@ -5964,6 +5977,7 @@ dependencies = [
  "yinhe-audio",
  "yinhe-automation",
  "yinhe-dms",
+ "yinhe-editor-core",
  "yinhe-memtrace",
  "yinhe-midi",
  "yinhe-pianoroll",
@@ -6002,9 +6016,12 @@ name = "yinhe-project"
 version = "0.1.0"
 dependencies = [
  "bincode",
+ "midly",
  "serde",
  "serde_json",
  "uuid",
+ "yinhe-midi",
+ "yinhe-types",
  "zstd",
 ]
 
