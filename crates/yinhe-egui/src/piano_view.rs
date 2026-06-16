@@ -80,6 +80,11 @@ pub fn show(
         egui::pos2(rect.min.x, content_y),
         egui::pos2(rect.max.x, content_y + content_h),
     );
+    let kb_w = view.keyboard_width();
+    let music_rect = egui::Rect::from_min_max(
+        egui::pos2(rect.min.x + kb_w, content_y),
+        egui::pos2(rect.max.x, content_y + content_h),
+    );
     let w = content_rect.width() as u32;
     let h = content_rect.height() as u32;
 
@@ -130,6 +135,7 @@ pub fn show(
         sel_drag_frame(
             ui,
             content_rect,
+            music_rect,
             view,
             midi,
             selected,
@@ -144,10 +150,10 @@ pub fn show(
     // ── Content interaction (zoom/pan/cursor/drag/reset) ──
     crate::view_interaction::handle_input(
         ui,
-        content_rect,
+        music_rect,
         view,
         cursor_tick,
-        view.keyboard_width(),
+        0.0,
         Some((quantize, ppq)),
         bar_line_data,
         None,
@@ -276,7 +282,7 @@ pub fn show(
     // after the GPU paint so it's not covered by the texture.
     if *active_tool == Tool::Select && !is_playing {
         // Draw active drag box (if any)
-        sel_draw_box(ui, content_rect, view, quantize, ppq, bar_line_data);
+        sel_draw_box(ui, content_rect, music_rect, view, quantize, ppq, bar_line_data);
 
         // Draw persisted selection rect (remains after mouse release).
         // Compute pixel rect from music coordinates each frame so it follows
@@ -298,18 +304,23 @@ pub fn show(
         });
         if let Some(rect) = persisted_pixel_rect {
             // Only draw if at least partially visible
-            let viewport = egui::Rect::from_min_max(
+            let kb_w = music_rect.min.x - content_rect.min.x;
+            let music_rect_local = egui::Rect::from_min_max(
                 egui::pos2(0.0, 0.0),
-                egui::pos2(w as f32, h as f32),
+                egui::pos2(music_rect.width(), music_rect.height()),
             );
-            if rect.intersects(viewport) {
-                crate::widgets::selection_box::draw(&ui.painter(), content_rect, rect);
+            let shifted = egui::Rect::from_min_max(
+                egui::pos2(rect.min.x - kb_w, rect.min.y),
+                egui::pos2(rect.max.x - kb_w, rect.max.y),
+            );
+            if shifted.intersects(music_rect_local) {
+                crate::widgets::selection_box::draw(&ui.painter(), music_rect, shifted);
             }
         }
 
         // Show floating action bar next to the persisted selection rect
         if let Some(action) =
-            crate::widgets::selection_actions::show(ui, content_rect, persisted_pixel_rect)
+            crate::widgets::selection_actions::show(ui, music_rect, persisted_pixel_rect)
         {
             sel_action = Some(action);
         }
@@ -468,6 +479,7 @@ pub fn show(
 fn sel_drag_frame(
     ui: &mut egui::Ui,
     content_rect: egui::Rect,
+    music_rect: egui::Rect,
     view: &mut yinhe_pianoroll::PianoRollView,
     midi: Option<&dyn yinhe_pianoroll::NoteSource>,
     selected: &mut std::collections::HashSet<(u16, u32, u8)>,
@@ -492,7 +504,7 @@ fn sel_drag_frame(
     // Start drag
     if pointer.primary_pressed()
         && let Some(pos) = pointer.hover_pos()
-        && content_rect.contains(pos)
+        && music_rect.contains(pos)
     {
         // Check if click is on the floating action bar — if so, skip.
         let on_bar = {
@@ -510,7 +522,7 @@ fn sel_drag_frame(
                     egui::pos2(sx.min(ex) as f32, sy.min(ey) as f32),
                     egui::pos2(sx.max(ex) as f32, sy.max(ey) as f32),
                 );
-                crate::widgets::selection_actions::compute_bar_rect(content_rect, pixel_rect)
+                crate::widgets::selection_actions::compute_bar_rect(music_rect, pixel_rect)
                     .is_some_and(|bar| bar.contains(pos))
             })
         };
@@ -533,7 +545,7 @@ fn sel_drag_frame(
     if let Some((start, _)) = drag {
         if pointer.primary_down() && !pointer.primary_pressed() {
             if let Some(pos) = pointer.hover_pos() {
-                let clamped = pos.clamp(content_rect.min, content_rect.max);
+                let clamped = pos.clamp(music_rect.min, music_rect.max);
                 let local = egui::pos2(
                     clamped.x - content_rect.min.x,
                     clamped.y - content_rect.min.y,
@@ -547,16 +559,16 @@ fn sel_drag_frame(
                 let mut dx = 0.0f32;
                 let mut dy = 0.0f32;
 
-                if pos.x < content_rect.min.x + MARGIN {
-                    dx = -(content_rect.min.x + MARGIN - pos.x) * BASE_SPEED * dt;
-                } else if pos.x > content_rect.max.x - MARGIN {
-                    dx = (pos.x - (content_rect.max.x - MARGIN)) * BASE_SPEED * dt;
+                if pos.x < music_rect.min.x + MARGIN {
+                    dx = -(music_rect.min.x + MARGIN - pos.x) * BASE_SPEED * dt;
+                } else if pos.x > music_rect.max.x - MARGIN {
+                    dx = (pos.x - (music_rect.max.x - MARGIN)) * BASE_SPEED * dt;
                 }
 
-                if pos.y < content_rect.min.y + MARGIN {
-                    dy = -(content_rect.min.y + MARGIN - pos.y) * BASE_SPEED * dt;
-                } else if pos.y > content_rect.max.y - MARGIN {
-                    dy = (pos.y - (content_rect.max.y - MARGIN)) * BASE_SPEED * dt;
+                if pos.y < music_rect.min.y + MARGIN {
+                    dy = -(music_rect.min.y + MARGIN - pos.y) * BASE_SPEED * dt;
+                } else if pos.y > music_rect.max.y - MARGIN {
+                    dy = (pos.y - (music_rect.max.y - MARGIN)) * BASE_SPEED * dt;
                 }
 
                 if dx != 0.0 || dy != 0.0 {
@@ -632,6 +644,7 @@ fn sel_drag_frame(
 fn sel_draw_box(
     ui: &mut egui::Ui,
     content_rect: egui::Rect,
+    music_rect: egui::Rect,
     view: &yinhe_pianoroll::PianoRollView,
     quantize: QuantizePreset,
     ppq: u32,
@@ -647,11 +660,12 @@ fn sel_draw_box(
         }
         let (vx, vy, vw, vh, _, _, _, _) =
             piano_snapped_bounds(start, end, view, quantize, ppq, bar_line_data);
+        let kb_w = music_rect.min.x - content_rect.min.x;
         let snapped = egui::Rect::from_min_max(
-            egui::pos2(vx.min(vy), vw.min(vh)),
-            egui::pos2(vx.max(vy), vw.max(vh)),
+            egui::pos2(vx.min(vy) - kb_w, vw.min(vh)),
+            egui::pos2(vx.max(vy) - kb_w, vw.max(vh)),
         );
-        crate::widgets::selection_box::draw(&ui.painter(), content_rect, snapped);
+        crate::widgets::selection_box::draw(&ui.painter(), music_rect, snapped);
     }
 }
 
