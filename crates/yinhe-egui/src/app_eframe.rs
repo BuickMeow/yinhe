@@ -3,15 +3,15 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::app::App;
-use crate::dialogs::file_loader::LoadResult;
+use crate::file_loader::LoadResult;
 use crate::document::Document;
-use crate::widgets::title_bar;
+use crate::chrome::title_bar;
 
 use crate::arrange;
 use crate::piano_view;
-use crate::widgets::mode_bar;
-use crate::widgets::theme;
-use crate::widgets::transport_bar;
+use crate::chrome::mode_bar;
+use crate::theme;
+use crate::chrome::transport_bar;
 
 // ── Panic-safe take guard ──
 /// Restores a taken value back into its slot on drop, preventing data loss
@@ -54,7 +54,7 @@ impl eframe::App for App {
             None
         };
         // ── Full-viewport background (matching title bar / transport bar) ──
-        let bg = crate::widgets::theme::APP_BG;
+        let bg = crate::theme::APP_BG;
         ui.painter().rect_filled(ui.ctx().viewport_rect(), 0.0, bg);
 
         // ── Detect document switch → invalidate GPU caches ──

@@ -1,10 +1,10 @@
 use std::sync::{Arc, Mutex, mpsc};
 
-use crate::dialogs::file_loader::FileLoader;
+use crate::file_loader::FileLoader;
 use crate::dialogs::system_monitor::SystemMonitor;
 use crate::document::Document;
 use crate::render_context::RenderContext;
-use crate::widgets::mode_bar::ViewMode;
+use crate::chrome::mode_bar::ViewMode;
 use yinhe_arrangement::ArrangementView;
 use yinhe_pianoroll::PianoRollView;
 
@@ -72,7 +72,7 @@ pub struct App {
     pub(crate) audio_active_doc: Option<usize>,
 
     // ── Settings ──
-    pub(crate) audio_settings: crate::dialogs::settings::AudioSettings,
+    pub(crate) audio_settings: crate::audio_settings::AudioSettings,
     /// Tracks the last applied MIDI encoding to detect changes.
     pub(crate) last_midi_encoding: yinhe_midi::MidiImportEncoding,
 
@@ -160,7 +160,7 @@ impl App {
             arr_render_ctx,
             arr_renderer: yinhe_arrangement::PianorollRenderer::new(device, queue, format),
             arrange_view: ArrangementView::default(),
-            arr_split: crate::widgets::theme::DEFAULT_ARR_SPLIT,
+            arr_split: crate::theme::DEFAULT_ARR_SPLIT,
 
             controller_renderers: Vec::new(),
 
@@ -186,7 +186,7 @@ impl App {
             show_pianoroll: false,
             track_selection_anchor: None,
 
-            right_panel_width: crate::widgets::theme::RIGHT_PANEL_DEFAULT_WIDTH,
+            right_panel_width: crate::theme::RIGHT_PANEL_DEFAULT_WIDTH,
             right_tab: None,
 
             active_tool: crate::widgets::tools_panel::Tool::Select,
@@ -201,7 +201,7 @@ impl App {
             audio: None,
             audio_active_doc: None,
 
-            audio_settings: crate::dialogs::settings::AudioSettings::load(),
+            audio_settings: crate::audio_settings::AudioSettings::load(),
             last_midi_encoding: yinhe_midi::MidiImportEncoding::Utf8,
 
             sys_monitor: SystemMonitor::new(),

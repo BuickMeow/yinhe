@@ -26,7 +26,7 @@ const AUTOMATION_TARGETS: &[AutomationTarget] = &[
 ];
 
 use crate::render_context::RenderContext;
-use crate::widgets::theme;
+use crate::theme;
 
 /// Height of the split/handle between automation panels.
 pub(crate) const SPLIT_H: f32 = theme::AUTO_PANEL_SPLIT_H;
@@ -241,7 +241,7 @@ pub fn show_panels(
                         for &(mode, label) in &vel_modes {
                             let is_active = *velocity_display_mode == mode;
                             let color = if is_active {
-                                crate::widgets::theme::ACCENT_ACTIVE
+                                crate::theme::ACCENT_ACTIVE
                             } else {
                                 egui::Color32::GRAY
                             };
@@ -271,7 +271,7 @@ pub fn show_panels(
                         for &(mode, icon) in &auto_modes {
                             let is_active = *automation_display_mode == mode;
                             let color = if is_active {
-                                crate::widgets::theme::ACCENT_ACTIVE
+                                crate::theme::ACCENT_ACTIVE
                             } else {
                                 egui::Color32::GRAY
                             };
@@ -297,7 +297,7 @@ pub fn show_panels(
                         // Dots toggle (only in折线 mode)
                         if *automation_display_mode == 1 {
                             let dot_color = if *automation_show_dots {
-                                crate::widgets::theme::ACCENT_ACTIVE
+                                crate::theme::ACCENT_ACTIVE
                             } else {
                                 egui::Color32::GRAY
                             };

@@ -1,7 +1,7 @@
 use eframe::egui;
 use egui_extras::{Column, TableBuilder};
 
-use crate::dialogs::settings::AudioSettings;
+use crate::audio_settings::AudioSettings;
 use crate::document::Document;
 
 /// Show the XSynth channel-mapping panel.

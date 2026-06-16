@@ -1,9 +1,9 @@
 use eframe::egui;
 
-use crate::dialogs::settings::AudioSettings;
+use crate::audio_settings::AudioSettings;
 use crate::document::Document;
 
-use super::config::SfEntry;
+use crate::config::SfEntry;
 
 /// Show the sound-bank (SoundFont) panel.
 ///
@@ -25,9 +25,9 @@ pub fn show(
         let resp_g = ui.add(
             egui::Label::new(
                 egui::RichText::new("全局音色库")
-                    .size(crate::widgets::theme::MODE_LABEL_FONT)
+                    .size(crate::theme::MODE_LABEL_FONT)
                     .color(if is_global {
-                        crate::widgets::theme::ACCENT_ACTIVE
+                        crate::theme::ACCENT_ACTIVE
                     } else {
                         egui::Color32::GRAY
                     }),
@@ -40,7 +40,7 @@ pub fn show(
                 resp_g.rect.center(),
                 egui::Align2::CENTER_CENTER,
                 "全局音色库",
-                egui::FontId::proportional(crate::widgets::theme::MODE_LABEL_FONT),
+                egui::FontId::proportional(crate::theme::MODE_LABEL_FONT),
                 egui::Color32::WHITE,
             );
         }
@@ -55,9 +55,9 @@ pub fn show(
         let resp_p = ui.add(
             egui::Label::new(
                 egui::RichText::new("歌曲音色库")
-                    .size(crate::widgets::theme::MODE_LABEL_FONT)
+                    .size(crate::theme::MODE_LABEL_FONT)
                     .color(if !is_global {
-                        crate::widgets::theme::ACCENT_ACTIVE
+                        crate::theme::ACCENT_ACTIVE
                     } else {
                         egui::Color32::GRAY
                     }),
@@ -70,7 +70,7 @@ pub fn show(
                 resp_p.rect.center(),
                 egui::Align2::CENTER_CENTER,
                 "歌曲音色库",
-                egui::FontId::proportional(crate::widgets::theme::MODE_LABEL_FONT),
+                egui::FontId::proportional(crate::theme::MODE_LABEL_FONT),
                 egui::Color32::WHITE,
             );
         }

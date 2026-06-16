@@ -5,23 +5,27 @@ static GLOBAL_ALLOC: TaggedAlloc = TaggedAlloc;
 
 mod app;
 mod app_actions;
+mod app_audio;
 mod app_eframe;
 mod arrange;
-mod audio_controller;
-mod automation_panel;
+mod audio_settings;
 mod dialogs;
 mod document;
 mod edit_state;
+mod file_loader;
 mod history;
 mod perf_probe;
 mod piano_view;
 mod progress;
 mod project_data;
-mod project_io;
 mod quantize;
 mod render_context;
+mod config;
 mod right_panel;
+mod theme;
+mod util;
 mod view_interaction;
+mod chrome;
 mod widgets;
 
 fn main() {

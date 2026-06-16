@@ -27,7 +27,7 @@ impl SystemMonitor {
 
     pub fn refresh_if_needed(&mut self) {
         if self.last_refresh.elapsed().as_secs_f64()
-            >= crate::widgets::theme::SYS_REFRESH_INTERVAL_SECS
+            >= crate::theme::SYS_REFRESH_INTERVAL_SECS
         {
             if let Some(pid) = self.self_pid {
                 let _ = self
@@ -56,7 +56,7 @@ impl App {
         let mem_mb = self.sys_monitor.mem_mb;
         egui::Window::new("内存占用详情")
             .id(egui::Id::new("memory_breakdown_window"))
-            .default_size(crate::widgets::theme::MEM_POPUP_SIZE)
+            .default_size(crate::theme::MEM_POPUP_SIZE)
             .collapsible(false)
             .resizable(false)
             .show(ui.ctx(), |ui| {

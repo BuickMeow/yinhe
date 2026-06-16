@@ -1,11 +1,11 @@
 use eframe::egui;
 use egui_material_icons::icons::*;
 
-use crate::dialogs::file_loader::FileLoader;
+use crate::file_loader::FileLoader;
 use crate::document::Document;
 use crate::quantize::QuantizePreset;
 use crate::view_interaction::FollowMode;
-use crate::widgets::time_format;
+use crate::util::time_format;
 
 /// Actions triggered from the file menu dropdown.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -58,7 +58,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
 
     egui::Panel::top("transport_bar")
         .frame(egui::Frame {
-            fill: crate::widgets::theme::APP_BG,
+            fill: crate::theme::APP_BG,
             inner_margin: egui::Margin {
                 left: 8,
                 right: 8,
@@ -412,7 +412,7 @@ fn show_timecode_display(
     ui.add_space(pad);
     let (rect, _) = ui.allocate_exact_size(egui::vec2(rect_w, rect_h), egui::Sense::hover());
 
-    let c = crate::widgets::theme::ACCENT_ACTIVE;
+    let c = crate::theme::ACCENT_ACTIVE;
     let font = egui::FontId::proportional(12.0);
     let grid = egui::Stroke::new(1.0, egui::Color32::from_gray(60));
 

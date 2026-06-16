@@ -6,7 +6,8 @@ use yinhe_project::*;
 use yinhe_types::TimeSigEvent as TypesTimeSigEvent;
 
 use crate::document::Document;
-use crate::widgets::{split_handle, theme};
+use crate::widgets::split_handle;
+use crate::theme;
 
 pub struct EventBrowserState {
     pub expanded_paths: std::collections::HashSet<String>,

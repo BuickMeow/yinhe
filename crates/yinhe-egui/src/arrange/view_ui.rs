@@ -100,7 +100,7 @@ pub fn show(
 
     view.base.dirty = false;
 
-    crate::widgets::qos::guarded(|| {
+    crate::util::qos::guarded(|| {
         renderer.upload_uniforms(uniforms);
         renderer.ensure_layers(3);
 
@@ -204,7 +204,7 @@ pub fn show(
     });
 
     let content_changed = true;
-    crate::widgets::qos::guarded(|| {
+    crate::util::qos::guarded(|| {
         render_ctx.paint(
             renderer,
             w,

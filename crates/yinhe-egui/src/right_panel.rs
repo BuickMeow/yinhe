@@ -1,5 +1,4 @@
 pub mod channels_panel;
-pub mod config;
 pub mod event_browser;
 pub mod info_panel;
 pub mod project_info;
@@ -8,7 +7,7 @@ pub mod soundfont;
 
 use eframe::egui;
 
-use crate::dialogs::settings::AudioSettings;
+use crate::audio_settings::AudioSettings;
 use crate::document::Document;
 
 #[derive(PartialEq, Clone, Copy)]
@@ -40,7 +39,7 @@ pub fn show(
         return false;
     }
 
-    let theme = crate::widgets::theme::RIGHT_PANEL_MIN_WIDTH;
+    let theme = crate::theme::RIGHT_PANEL_MIN_WIDTH;
     let total_avail = ui.available_rect_before_wrap().width();
     let max_w = (total_avail - 60.0).max(theme + 4.0);
     let clamp_w = (*right_panel_width + 4.0).clamp(theme + 4.0, max_w);
@@ -71,7 +70,7 @@ pub fn show(
 
         // Background
         ui.painter()
-            .rect_filled(ui.max_rect(), 0.0, crate::widgets::theme::APP_BG);
+            .rect_filled(ui.max_rect(), 0.0, crate::theme::APP_BG);
 
         // ── Content ──
         match tab.unwrap() {

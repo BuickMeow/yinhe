@@ -64,6 +64,10 @@ impl FileLoader {
         self.midi_loader.is_some() || self.yin_loader.is_some()
     }
 
+    pub fn load_progress(&self) -> &SharedProgress {
+        &self.load_progress
+    }
+
     /// Show file dialog and start loading in a background thread.
     pub fn pick_file(&mut self, encoding: MidiImportEncoding) {
         if self.is_loading() {
@@ -94,7 +98,7 @@ impl FileLoader {
                     std::thread::spawn(move || {
                         progress::set_stage(&progress, 0, StageStatus::Done);
                         progress::set_stage(&progress, 1, StageStatus::Active);
-                        let result = crate::project_io::load_project(&path_for_thread);
+                        let result = yinhe_project::conversion::load_project(&path_for_thread);
                         match result {
                             Ok((midi, file_name)) => {
                                 progress::set_stage(&progress, 1, StageStatus::Done);
@@ -137,7 +141,7 @@ impl FileLoader {
                                     &p, 1, pct, detail.to_string(),
                                 );
                             };
-                            let _ = crate::project_io::midi_to_archive_with_names(
+                            let _ = yinhe_project::conversion::midi_to_archive_with_names(
                                 midi,
                                 &midi.track_names,
                                 Some(&cb),
@@ -219,64 +223,6 @@ impl FileLoader {
 
     /// Draw a dark overlay + centered window with multi-stage loading progress.
     pub fn show_loading_overlay(&self, ui: &mut eframe::egui::Ui) {
-        if !self.is_loading() {
-            return;
-        }
-
-        let progress = match self.load_progress.lock() {
-            Ok(p) => p.clone(),
-            Err(_) => return,
-        };
-        if !progress.visible {
-            return;
-        }
-
-        let screen_rect = ui.ctx().content_rect();
-        ui.ctx()
-            .layer_painter(eframe::egui::LayerId::new(
-                eframe::egui::Order::Foreground,
-                "loading_overlay".into(),
-            ))
-            .rect_filled(
-                screen_rect,
-                0.0,
-                eframe::egui::Color32::from_rgba_premultiplied(0, 0, 0, 160),
-            );
-
-        eframe::egui::Window::new("正在加载")
-            .order(eframe::egui::Order::Tooltip)
-            .collapsible(false)
-            .resizable(false)
-            .movable(false)
-            .anchor(
-                eframe::egui::Align2::CENTER_CENTER,
-                eframe::egui::Vec2::ZERO,
-            )
-            .show(ui.ctx(), |ui| {
-                ui.set_max_width(380.0);
-                for stage in &progress.stages {
-                    ui.horizontal(|ui| {
-                        let icon = match stage.status {
-                            StageStatus::Done => "✅",
-                            StageStatus::Active => "⏳",
-                            StageStatus::Pending => "⬜",
-                        };
-                        ui.label(icon);
-                        ui.add(
-                            eframe::egui::ProgressBar::new(stage.progress)
-                                .desired_width(200.0)
-                                .show_percentage(),
-                        );
-                        ui.label(eframe::egui::RichText::new(&stage.label).size(12.0));
-                    });
-                    if !stage.detail.is_empty() {
-                        ui.label(
-                            eframe::egui::RichText::new(&stage.detail)
-                                .size(10.0)
-                                .color(eframe::egui::Color32::GRAY),
-                        );
-                    }
-                }
-            });
+        crate::dialogs::loading_overlay::show(ui, self);
     }
 }

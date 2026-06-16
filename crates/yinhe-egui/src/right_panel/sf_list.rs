@@ -1,6 +1,6 @@
 use eframe::egui;
 
-use crate::right_panel::config::SfEntry;
+use crate::config::SfEntry;
 
 /// A reusable, compact list of SoundFont entries with checkboxes.
 ///
@@ -117,7 +117,7 @@ fn sf_row(
 
     // Draw checkbox
     let cb_color = if entry.enabled {
-        crate::widgets::theme::ACCENT_ACTIVE
+        crate::theme::ACCENT_ACTIVE
     } else {
         egui::Color32::GRAY
     };

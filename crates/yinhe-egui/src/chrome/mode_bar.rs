@@ -14,9 +14,9 @@ fn mode_button(ui: &mut egui::Ui, label: &str, is_selected: bool, on_click: impl
     let resp = ui.add(
         egui::Label::new(
             egui::RichText::new(label)
-                .size(crate::widgets::theme::MODE_LABEL_FONT)
+                .size(crate::theme::MODE_LABEL_FONT)
                 .color(if is_selected {
-                    crate::widgets::theme::ACCENT_ACTIVE
+                    crate::theme::ACCENT_ACTIVE
                 } else {
                     egui::Color32::GRAY
                 }),
@@ -29,7 +29,7 @@ fn mode_button(ui: &mut egui::Ui, label: &str, is_selected: bool, on_click: impl
             resp.rect.center(),
             egui::Align2::CENTER_CENTER,
             label,
-            egui::FontId::proportional(crate::widgets::theme::MODE_LABEL_FONT),
+            egui::FontId::proportional(crate::theme::MODE_LABEL_FONT),
             egui::Color32::WHITE,
         );
     }
@@ -45,7 +45,7 @@ fn right_icon_button(
     on_click: impl FnOnce(),
 ) {
     let color = if is_active {
-        crate::widgets::theme::ACCENT_ACTIVE
+        crate::theme::ACCENT_ACTIVE
     } else {
         egui::Color32::GRAY
     };
@@ -79,7 +79,7 @@ pub fn show(
     egui::Panel::bottom("bottom_bar")
         .frame(egui::Frame {
             inner_margin: egui::Margin::symmetric(8, 6),
-            fill: crate::widgets::theme::APP_BG,
+            fill: crate::theme::APP_BG,
             ..Default::default()
         })
         .show_inside(ui, |ui| {
@@ -115,7 +115,7 @@ pub fn show(
                     ui.add_space(6.0);
 
                     let piano_color = if *show_pianoroll_in_arrange {
-                        crate::widgets::theme::ACCENT_ACTIVE
+                        crate::theme::ACCENT_ACTIVE
                     } else {
                         egui::Color32::GRAY
                     };

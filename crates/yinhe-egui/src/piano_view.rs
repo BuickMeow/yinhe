@@ -7,8 +7,10 @@ use yinhe_types::{AutomationLane, TimeSigEvent};
 use crate::quantize::QuantizePreset;
 use crate::widgets::tools_panel::Tool;
 
+mod automation_panel;
+
 /// Height of the time ruler band at the top of the pianoroll view.
-use crate::widgets::theme;
+use crate::theme;
 const RULER_H: f32 = theme::RULER_H;
 
 /// Display the pianoroll texture with zoom/pan interaction.
@@ -67,7 +69,7 @@ pub fn show(
     let panels_total_h: f32 = match (&auto_panels, &auto_show) {
         (Some(panels), Some(show)) if **show && !panels.is_empty() => {
             panels.iter().map(|p| p.panel_height).sum::<f32>()
-                + (panels.len() as f32 * crate::automation_panel::SPLIT_H)
+                + (panels.len() as f32 * automation_panel::SPLIT_H)
         }
         _ => 0.0,
     };
@@ -235,8 +237,8 @@ pub fn show(
             let delta = handle_resp.drag_delta().x;
             let old_kb = view.keyboard_width();
             let new_kb = (old_kb + delta).clamp(
-                crate::widgets::theme::MIN_KEYBOARD_WIDTH,
-                rect.width() * crate::widgets::theme::MAX_KEYBOARD_RATIO,
+                crate::theme::MIN_KEYBOARD_WIDTH,
+                rect.width() * crate::theme::MAX_KEYBOARD_RATIO,
             );
 
             let old_sb_w = w as f32 - old_kb;
@@ -273,7 +275,7 @@ pub fn show(
     };
 
     // Prepare GPU data
-    let prep_timings = crate::widgets::qos::guarded(|| {
+    let prep_timings = crate::util::qos::guarded(|| {
         yinhe_pianoroll::prepare(
             pianoroll,
             w,
@@ -300,7 +302,7 @@ pub fn show(
     let content_changed = true;
 
     // Paint wgpu content into the content_rect
-    crate::widgets::qos::guarded(|| {
+    crate::util::qos::guarded(|| {
         render_ctx.paint(
             pianoroll,
             w,
@@ -412,7 +414,7 @@ pub fn show(
         let kb_w = view.keyboard_width();
         let combo_w = kb_w * theme::AUTO_PANEL_COMBO_WIDTH_RATIO;
 
-        crate::automation_panel::show_panels(
+        automation_panel::show_panels(
             ui,
             panels,
             renderers,
@@ -452,7 +454,7 @@ pub fn show(
             ui.scope_builder(egui::UiBuilder::new().max_rect(sb_left_blank), |ui| {
                 ui.horizontal_centered(|ui| {
                     let mut count = panels.len();
-                    crate::automation_panel::show_toggle_buttons(ui, show, &mut count);
+                    automation_panel::show_toggle_buttons(ui, show, &mut count);
                     while panels.len() < count {
                         panels.push(yinhe_automation::AutomationPanelView::default());
                     }

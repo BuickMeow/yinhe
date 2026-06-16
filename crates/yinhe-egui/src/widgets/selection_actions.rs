@@ -136,7 +136,7 @@ pub fn show(
         // Hover detection
         let hovered = pointer_pos.is_some_and(|p| btn_rect.contains(p));
         let color = if hovered {
-            crate::widgets::theme::ACCENT_ACTIVE
+            crate::theme::ACCENT_ACTIVE
         } else {
             egui::Color32::GRAY
         };

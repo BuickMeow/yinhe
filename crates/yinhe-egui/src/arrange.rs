@@ -1,3 +1,4 @@
+mod track_panel;
 mod view_ui;
 
 use eframe::egui;
@@ -7,10 +8,9 @@ use yinhe_arrangement::ArrangementView;
 use crate::document::Document;
 use crate::render_context::RenderContext;
 use crate::widgets::tools_panel::Tool;
-use crate::widgets::track_panel;
 
 /// Height of the time ruler band at the top of the arrangement view.
-use crate::widgets::theme;
+use crate::theme;
 const RULER_H: f32 = theme::RULER_H;
 
 pub fn show(
@@ -99,7 +99,7 @@ pub fn show(
     ui.scope_builder(egui::UiBuilder::new().max_rect(tp_rect), |ui| {
         ui.set_clip_rect(tp_rect);
         ui.painter()
-            .rect_filled(ui.max_rect(), 0.0, crate::widgets::theme::APP_BG);
+            .rect_filled(ui.max_rect(), 0.0, crate::theme::APP_BG);
 
         arr_view.base.track_panel_scroll_y = arr_view.base.scroll_y;
 

@@ -4,7 +4,7 @@ use yinhe_wgpu::grid;
 
 // ── Constants ──
 
-use crate::widgets::theme;
+use crate::theme;
 const MIN_LABEL_SPACING: f32 = 38.0;
 const SUB_BEAT_DIV: u32 = 4;
 

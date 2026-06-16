@@ -43,7 +43,7 @@ impl App {
             }
 
             // Built-in fallback
-            if let Some(builtin) = crate::right_panel::config::builtin_soundfont_path() {
+            if let Some(builtin) = crate::config::builtin_soundfont_path() {
                 let path_str = builtin.to_string_lossy().to_string();
                 result.push((port, vec![path_str]));
             }

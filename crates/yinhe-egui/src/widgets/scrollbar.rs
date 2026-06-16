@@ -1,6 +1,6 @@
 use eframe::egui;
 
-use crate::widgets::theme;
+use crate::theme;
 
 // ── Constants ──
 

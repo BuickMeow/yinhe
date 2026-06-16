@@ -6,7 +6,7 @@ use eframe::egui;
 
 use crate::app::App;
 use crate::document::Document;
-use crate::widgets::transport_bar;
+use crate::chrome::transport_bar;
 
 /// Actions detected from keyboard input in the current frame.
 #[derive(Default)]
@@ -370,7 +370,7 @@ impl App {
 
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
-            let archive = crate::project_io::build_archive_from(
+            let archive = yinhe_project::conversion::build_archive_from(
                 &midi,
                 &track_names,
                 &project_name,
@@ -439,7 +439,7 @@ impl App {
             let path_str = path.to_string_lossy().to_string();
             if let Some(idx) = self.active_doc {
                 let doc = &self.documents[idx];
-                if let Err(e) = crate::project_io::export_midi(doc, &path_str) {
+                if let Err(e) = yinhe_project::conversion::export_midi(doc.midi(), doc.track_names(), &path_str) {
                     tracing::error!("Failed to export MIDI: {}", e);
                 }
             }
