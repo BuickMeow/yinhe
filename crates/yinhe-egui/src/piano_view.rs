@@ -132,7 +132,6 @@ pub fn show(
     // ── Selection drag (Select tool only) ──
     // Update state BEFORE handle_input to avoid egui pointer-capture conflicts.
     let mut sel_action = None;
-    let mut note_drag_delta: Option<(i64, i32)> = None;
     if *active_tool == Tool::Select && !is_playing {
         sel_drag_frame(
             ui,
@@ -146,19 +145,33 @@ pub fn show(
             bar_line_data,
             total_ticks,
             cursor_tick,
-            &mut note_drag_delta,
+            note_drag_delta,
         );
     }
 
-    // ── Hover cursor: show Move when over a selected note ──
-    if *active_tool == Tool::Select && !is_playing && note_drag_delta.is_none() {
-        if let Some(midi_ref) = midi {
-            if let Some(pos) = ui.input(|i| i.pointer.hover_pos()) {
-                if music_rect.contains(pos) {
-                    let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
-                    if hit_selected_note(local, view, midi_ref, selected) {
-                        ui.ctx().set_cursor_icon(egui::CursorIcon::Move);
-                    }
+    // ── Hover cursor: show Move when over selection rect ──
+    if *active_tool == Tool::Select && !is_playing {
+        if let Some(pos) = ui.input(|i| i.pointer.hover_pos()) {
+            if music_rect.contains(pos) {
+                let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
+                let persist_id = ui.id().with("sel_rect_persist");
+                let sel_music: Option<Option<(f64, f64, u8, u8)>> =
+                    ui.data_mut(|d| d.get_persisted(persist_id));
+                let in_sel_rect = sel_music.flatten().is_some_and(|(t_start, t_end, key_lo, key_hi)| {
+                    let kh = view.key_height;
+                    let scroll_y = view.base.scroll_y;
+                    let sy = (127.0 - key_hi as f32) * kh - scroll_y;
+                    let ey = (127.0 - key_lo as f32 + 1.0) * kh - scroll_y;
+                    let sx = view.tick_to_x(t_start);
+                    let ex = view.tick_to_x(t_end);
+                    let pixel_rect = egui::Rect::from_min_max(
+                        egui::pos2(sx.min(ex) as f32, sy.min(ey) as f32),
+                        egui::pos2(sx.max(ex) as f32, sy.max(ey) as f32),
+                    );
+                    pixel_rect.contains(local)
+                });
+                if in_sel_rect {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::Move);
                 }
             }
         }
@@ -583,7 +596,7 @@ fn sel_drag_frame(
             // Don't start drag, don't clear anything — let the button handle it.
         } else {
             let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
-            // Check if clicking inside the selection rect or on a selected note → note-drag mode
+            // Check if clicking inside the selection rect → note-drag mode
             let in_sel_rect = {
                 let persist_id = ui.id().with("sel_rect_persist");
                 let sel_music: Option<Option<(f64, f64, u8, u8)>> =
@@ -602,14 +615,14 @@ fn sel_drag_frame(
                     pixel_rect.contains(local)
                 })
             };
-            let on_note = midi.is_some_and(|m| hit_selected_note(local, view, m, selected));
-            if in_sel_rect || on_note {
-                let tick = view.x_to_tick(local.x);
+            if in_sel_rect {
+                let raw_tick = view.x_to_tick(local.x);
+                let tick = snap_tick(raw_tick, quantize, ppq, bar_line_data);
                 let key = view.y_to_key(local.y) as f64;
                 note_drag_origin = Some((tick, key));
                 // Don't clear sel_rect_persist — keep the selection box visible
             } else {
-                // Not on a selected note or selection rect → marquee selection
+                // Not on selection rect → marquee selection
                 drag = Some((local, local));
                 if !cmd {
                     selected.clear();
@@ -626,19 +639,29 @@ fn sel_drag_frame(
             if let Some(pos) = pointer.hover_pos() {
                 let local_x = pos.x - content_rect.min.x;
                 let local_y = pos.y - content_rect.min.y;
-                let current_tick = view.x_to_tick(local_x);
+                let raw_tick = view.x_to_tick(local_x);
+                let snapped_tick = snap_tick(raw_tick, quantize, ppq, bar_line_data);
                 let current_key = view.y_to_key(local_y) as f64;
-                let dt = (current_tick - origin_tick).round() as i64;
+                let dt = (snapped_tick - origin_tick).round() as i64;
                 let dk = (current_key - origin_key).round() as i32;
                 *note_drag_delta = Some((dt, dk));
                 ui.ctx().request_repaint();
             }
         }
         if pointer.primary_released() {
+            // Set final delta before clearing origin
+            if let Some(pos) = pointer.hover_pos() {
+                let local_x = pos.x - content_rect.min.x;
+                let local_y = pos.y - content_rect.min.y;
+                let raw_tick = view.x_to_tick(local_x);
+                let snapped_tick = snap_tick(raw_tick, quantize, ppq, bar_line_data);
+                let current_key = view.y_to_key(local_y) as f64;
+                let dt = (snapped_tick - origin_tick).round() as i64;
+                let dk = (current_key - origin_key).round() as i32;
+                *note_drag_delta = Some((dt, dk));
+            }
             note_drag_origin = None;
         }
-    } else if note_drag_delta.is_some() {
-        *note_drag_delta = None;
     }
 
     // Marquee drag: update end on frames after the initial press
@@ -741,24 +764,6 @@ fn sel_drag_frame(
 }
 
 /// Check if a local coordinate hits any selected note.
-fn hit_selected_note(
-    local: egui::Pos2,
-    view: &yinhe_pianoroll::PianoRollView,
-    midi: &dyn yinhe_pianoroll::NoteSource,
-    selected: &std::collections::HashSet<(u16, u32, u8)>,
-) -> bool {
-    let tick = view.x_to_tick(local.x);
-    let key = view.y_to_key(local.y);
-    for note in midi.key_notes(key) {
-        if (note.start_tick as f64) <= tick && tick < (note.end_tick as f64) {
-            if selected.contains(&(note.track, note.start_tick, key)) {
-                return true;
-            }
-        }
-    }
-    false
-}
-
 /// Read persisted drag state and draw the selection box on top of GPU content.
 /// Must be called AFTER `render_ctx.paint` so the box is not covered by the texture.
 fn sel_draw_box(
