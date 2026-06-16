@@ -8,11 +8,7 @@ const MIN_CAPACITY: usize = 4096;
 const MAX_PER_CHUNK: usize = 4_000_000;
 
 fn grow_capacity(required: usize) -> usize {
-    let mut cap = MIN_CAPACITY;
-    while cap < required {
-        cap *= 2;
-    }
-    cap
+    crate::util::next_capacity(required, MIN_CAPACITY)
 }
 
 struct BufferChunk {
@@ -45,15 +41,7 @@ impl LayerSlot {
         let instance_size = std::mem::size_of::<NoteInstance>() as u64;
         let cap = MIN_CAPACITY;
         let size = instance_size * cap as u64;
-        let buffer = yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Gpu, || {
-            device.create_buffer(&BufferDescriptor {
-                label: Some("layer_buffer"),
-                size,
-                usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            })
-        });
-        yinhe_memtrace::add_gpu_resource(size);
+        let buffer = crate::util::create_vertex_buffer(device, "layer_buffer", size);
         Self {
             chunks: vec![BufferChunk {
                 buffer,
@@ -122,15 +110,7 @@ impl LayerSlot {
             let instance_size = std::mem::size_of::<NoteInstance>() as u64;
             let cap = MIN_CAPACITY;
             let size = instance_size * cap as u64;
-            let buffer = yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Gpu, || {
-                device.create_buffer(&BufferDescriptor {
-                    label: Some("layer_buffer"),
-                    size,
-                    usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                })
-            });
-            yinhe_memtrace::add_gpu_resource(size);
+            let buffer = crate::util::create_vertex_buffer(device, "layer_buffer", size);
             self.chunks.push(BufferChunk {
                 buffer,
                 capacity: cap,
@@ -181,15 +161,7 @@ impl BufferChunk {
         let instance_size = std::mem::size_of::<NoteInstance>() as u64;
         let new_cap = grow_capacity(required).min(MAX_PER_CHUNK);
         let new_size = instance_size * new_cap as u64;
-        let new_buffer = yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Gpu, || {
-            device.create_buffer(&BufferDescriptor {
-                label: Some("layer_buffer"),
-                size: new_size,
-                usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            })
-        });
-        yinhe_memtrace::add_gpu_resource(new_size);
+        let new_buffer = crate::util::create_vertex_buffer(device, "layer_buffer", new_size);
         yinhe_memtrace::sub_gpu_resource(self.size_bytes);
         self.buffer = new_buffer;
         self.capacity = new_cap;

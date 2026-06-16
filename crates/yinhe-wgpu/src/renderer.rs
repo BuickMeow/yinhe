@@ -47,15 +47,7 @@ fn create_instance_buffer_slot(
     capacity: usize,
 ) -> InstanceBufferSlot {
     let size_bytes = instance_size * capacity as u64;
-    let buffer = yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Gpu, || {
-        device.create_buffer(&BufferDescriptor {
-            label: Some("instance_buffer"),
-            size: size_bytes,
-            usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        })
-    });
-    yinhe_memtrace::add_gpu_resource(size_bytes);
+    let buffer = crate::util::create_vertex_buffer(device, "instance_buffer", size_bytes);
     InstanceBufferSlot {
         buffer,
         capacity_instances: capacity,
@@ -64,11 +56,7 @@ fn create_instance_buffer_slot(
 }
 
 fn next_instance_capacity(required: usize) -> usize {
-    let mut cap = MIN_INSTANCE_BUFFER_CAPACITY;
-    while cap < required {
-        cap *= 2;
-    }
-    cap
+    crate::util::next_capacity(required, MIN_INSTANCE_BUFFER_CAPACITY)
 }
 
 /// Generic wgpu renderer for instanced rectangle drawing.
@@ -119,19 +107,12 @@ impl PianorollRenderer {
 
     /// Upload uniforms to the GPU.  Skips the write when the value is unchanged.
     pub fn upload_uniforms(&mut self, uniforms: Uniforms) {
-        let changed = self
-            .cached_uniforms
-            .as_ref()
-            .is_none_or(|c| *c != uniforms);
-        if !changed {
-            return;
-        }
-        self.queue.write_buffer(
+        crate::util::write_uniforms_if_changed(
+            &self.queue,
             &self.render.uniform_buffer,
-            0,
-            bytemuck::bytes_of(&uniforms),
+            &mut self.cached_uniforms,
+            uniforms,
         );
-        self.cached_uniforms = Some(uniforms);
     }
 
     /// Ensure at least `count` layers exist (pushing empty ones as needed).
@@ -171,29 +152,14 @@ impl PianorollRenderer {
         width: u32,
         height: u32,
     ) {
-        let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
-            label: Some("pianoroll_pass"),
-            color_attachments: &[Some(RenderPassColorAttachment {
-                view: target,
-                resolve_target: None,
-                depth_slice: None,
-                ops: Operations {
-                    load: LoadOp::Clear(Color {
-                        r: 0.12,
-                        g: 0.12,
-                        b: 0.14,
-                        a: 1.0,
-                    }),
-                    store: StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: None,
-            ..Default::default()
-        });
-
-        pass.set_viewport(0.0, 0.0, width as f32, height as f32, 0.0, 1.0);
-        pass.set_pipeline(&self.render.pipeline);
-        pass.set_bind_group(0, &self.render.bind_group, &[]);
+        let mut pass = crate::util::begin_pianoroll_pass(
+            encoder,
+            target,
+            &self.render.pipeline,
+            &self.render.bind_group,
+            width,
+            height,
+        );
 
         for layer in &self.layers {
             layer.draw(&mut pass, 0);
@@ -251,11 +217,6 @@ impl PianorollRenderer {
         build_static: impl FnOnce(&mut Vec<NoteInstance>),
     ) -> PrepareTimings {
         yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Gpu, || {
-            let uniforms_changed = self
-                .cached_uniforms
-                .as_ref()
-                .is_none_or(|c| *c != uniforms);
-
             let mut scratch = std::mem::take(&mut self.instance_scratch);
             scratch.clear();
             let t = std::time::Instant::now();
@@ -270,14 +231,12 @@ impl PianorollRenderer {
             scratch.clear();
             self.instance_scratch = scratch;
 
-            if uniforms_changed {
-                self.queue.write_buffer(
-                    &self.render.uniform_buffer,
-                    0,
-                    bytemuck::bytes_of(&uniforms),
-                );
-                self.cached_uniforms = Some(uniforms);
-            }
+            crate::util::write_uniforms_if_changed(
+                &self.queue,
+                &self.render.uniform_buffer,
+                &mut self.cached_uniforms,
+                uniforms,
+            );
 
             PrepareTimings {
                 dirty: true,
@@ -292,11 +251,11 @@ impl PianorollRenderer {
 
     /// Upload uniforms + instances to GPU.
     pub fn prepare_from_parts(&mut self, uniforms: Uniforms, instances: &[NoteInstance]) {
-        self.cached_uniforms = Some(uniforms);
-        self.queue.write_buffer(
+        crate::util::write_uniforms_if_changed(
+            &self.queue,
             &self.render.uniform_buffer,
-            0,
-            bytemuck::bytes_of(&uniforms),
+            &mut self.cached_uniforms,
+            uniforms,
         );
         self.upload_instances(instances);
     }
@@ -353,29 +312,14 @@ impl PianorollRenderer {
         width: u32,
         height: u32,
     ) {
-        let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
-            label: Some("pianoroll_pass"),
-            color_attachments: &[Some(RenderPassColorAttachment {
-                view: target,
-                resolve_target: None,
-                depth_slice: None,
-                ops: Operations {
-                    load: LoadOp::Clear(Color {
-                        r: 0.12,
-                        g: 0.12,
-                        b: 0.14,
-                        a: 1.0,
-                    }),
-                    store: StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: None,
-            ..Default::default()
-        });
-
-        pass.set_viewport(0.0, 0.0, width as f32, height as f32, 0.0, 1.0);
-        pass.set_pipeline(&self.render.pipeline);
-        pass.set_bind_group(0, &self.render.bind_group, &[]);
+        let mut pass = crate::util::begin_pianoroll_pass(
+            encoder,
+            target,
+            &self.render.pipeline,
+            &self.render.bind_group,
+            width,
+            height,
+        );
 
         // Legacy instance buffers
         for (i, &count) in self.current_batch_counts.iter().enumerate() {

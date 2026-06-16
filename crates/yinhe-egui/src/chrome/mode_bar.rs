@@ -24,15 +24,13 @@ fn mode_button(ui: &mut egui::Ui, label: &str, is_selected: bool, on_click: impl
         .sense(egui::Sense::click())
         .selectable(false),
     );
-    if !is_selected && resp.hovered() {
-        ui.painter().text(
-            resp.rect.center(),
-            egui::Align2::CENTER_CENTER,
-            label,
-            egui::FontId::proportional(crate::theme::MODE_LABEL_FONT),
-            egui::Color32::WHITE,
-        );
-    }
+    crate::widgets::hover::hover_highlight(
+        ui,
+        &resp,
+        label,
+        egui::FontId::proportional(crate::theme::MODE_LABEL_FONT),
+        is_selected,
+    );
     if resp.clicked() {
         on_click();
     }
@@ -54,15 +52,13 @@ fn right_icon_button(
             .sense(egui::Sense::click())
             .selectable(false),
     );
-    if !is_active && resp.hovered() {
-        ui.painter().text(
-            resp.rect.center(),
-            egui::Align2::CENTER_CENTER,
-            icon.codepoint,
-            egui::FontId::new(14.0, icon.font_family()),
-            egui::Color32::WHITE,
-        );
-    }
+    crate::widgets::hover::hover_highlight(
+        ui,
+        &resp,
+        icon.codepoint,
+        egui::FontId::new(14.0, icon.font_family()),
+        is_active,
+    );
     if resp.clicked() {
         on_click();
     }
@@ -124,15 +120,13 @@ pub fn show(
                             .sense(egui::Sense::click())
                             .selectable(false),
                     );
-                    if !*show_pianoroll_in_arrange && piano_resp.hovered() {
-                        ui.painter().text(
-                            piano_resp.rect.center(),
-                            egui::Align2::CENTER_CENTER,
-                            ICON_PIANO.codepoint,
-                            egui::FontId::new(14.0, ICON_PIANO.font_family()),
-                            egui::Color32::WHITE,
-                        );
-                    }
+                    crate::widgets::hover::hover_highlight(
+                        ui,
+                        &piano_resp,
+                        ICON_PIANO.codepoint,
+                        egui::FontId::new(14.0, ICON_PIANO.font_family()),
+                        *show_pianoroll_in_arrange,
+                    );
                     if piano_resp.clicked() {
                         *show_pianoroll_in_arrange = !*show_pianoroll_in_arrange;
                         *show_pianoroll = *show_pianoroll_in_arrange;

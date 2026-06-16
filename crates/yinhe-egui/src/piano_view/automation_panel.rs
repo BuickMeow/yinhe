@@ -205,15 +205,13 @@ pub fn show_panels(
                         .sense(egui::Sense::click())
                         .selectable(false),
                 );
-                if target_resp.hovered() {
-                    ui.painter().text(
-                        target_resp.rect.center(),
-                        egui::Align2::CENTER_CENTER,
-                        ICON_AUTOMATION.codepoint,
-                        egui::FontId::new(14.0, ICON_AUTOMATION.font_family()),
-                        egui::Color32::WHITE,
-                    );
-                }
+                crate::widgets::hover::hover_highlight(
+                    ui,
+                    &target_resp,
+                    ICON_AUTOMATION.codepoint,
+                    egui::FontId::new(14.0, ICON_AUTOMATION.font_family()),
+                    false,
+                );
 
                 egui::Popup::menu(&target_resp)
                     .align(egui::RectAlign::TOP_START)
@@ -255,15 +253,13 @@ pub fn show_panels(
                             if resp.clicked() {
                                 *velocity_display_mode = mode;
                             }
-                            if !is_active && resp.hovered() {
-                                ui.painter().text(
-                                    resp.rect.center(),
-                                    egui::Align2::CENTER_CENTER,
-                                    label,
-                                    egui::FontId::proportional(11.0),
-                                    egui::Color32::WHITE,
-                                );
-                            }
+                            crate::widgets::hover::hover_highlight(
+                                ui,
+                                &resp,
+                                label,
+                                egui::FontId::proportional(11.0),
+                                is_active,
+                            );
                         }
                     } else {
                         // Automation display mode: bar chart / line chart icons
@@ -283,15 +279,13 @@ pub fn show_panels(
                             if resp.clicked() {
                                 *automation_display_mode = mode;
                             }
-                            if !is_active && resp.hovered() {
-                                ui.painter().text(
-                                    resp.rect.center(),
-                                    egui::Align2::CENTER_CENTER,
-                                    icon.codepoint,
-                                    egui::FontId::new(14.0, icon.font_family()),
-                                    egui::Color32::WHITE,
-                                );
-                            }
+                            crate::widgets::hover::hover_highlight(
+                                ui,
+                                &resp,
+                                icon.codepoint,
+                                egui::FontId::new(14.0, icon.font_family()),
+                                is_active,
+                            );
                         }
 
                         // Dots toggle (only in折线 mode)
@@ -309,15 +303,13 @@ pub fn show_panels(
                             if dot_resp.clicked() {
                                 *automation_show_dots = !*automation_show_dots;
                             }
-                            if !*automation_show_dots && dot_resp.hovered() {
-                                ui.painter().text(
-                                    dot_resp.rect.center(),
-                                    egui::Align2::CENTER_CENTER,
-                                    ICON_STEPPERS.codepoint,
-                                    egui::FontId::new(14.0, ICON_STEPPERS.font_family()),
-                                    egui::Color32::WHITE,
-                                );
-                            }
+                            crate::widgets::hover::hover_highlight(
+                                ui,
+                                &dot_resp,
+                                ICON_STEPPERS.codepoint,
+                                egui::FontId::new(14.0, ICON_STEPPERS.font_family()),
+                                *automation_show_dots,
+                            );
                             dot_resp.on_hover_text(if *automation_show_dots { "隐藏圆点" } else { "显示圆点" });
                         }
                     }
@@ -403,18 +395,16 @@ pub fn show_toggle_buttons(ui: &mut egui::Ui, show_panels: &mut bool, panel_coun
             .sense(egui::Sense::click())
             .selectable(false),
     );
-    if !*show_panels && toggle_resp.hovered() {
-        ui.painter().text(
-            toggle_resp.rect.center(),
-            egui::Align2::CENTER_CENTER,
-            ICON_SIGNAL_CELLULAR_ALT.codepoint,
-            egui::FontId::new(
-                theme::MODE_LABEL_FONT + 2.0,
-                ICON_SIGNAL_CELLULAR_ALT.font_family(),
-            ),
-            egui::Color32::WHITE,
-        );
-    }
+    crate::widgets::hover::hover_highlight(
+        ui,
+        &toggle_resp,
+        ICON_SIGNAL_CELLULAR_ALT.codepoint,
+        egui::FontId::new(
+            theme::MODE_LABEL_FONT + 2.0,
+            ICON_SIGNAL_CELLULAR_ALT.font_family(),
+        ),
+        *show_panels,
+    );
     if toggle_resp.clicked() {
         *show_panels = !*show_panels;
         if *show_panels && *panel_count == 0 {
@@ -435,15 +425,13 @@ pub fn show_toggle_buttons(ui: &mut egui::Ui, show_panels: &mut bool, panel_coun
             .sense(egui::Sense::click())
             .selectable(false),
         );
-        if plus_resp.hovered() {
-            ui.painter().text(
-                plus_resp.rect.center(),
-                egui::Align2::CENTER_CENTER,
-                ICON_ADD.codepoint,
-                egui::FontId::new(theme::MODE_LABEL_FONT + 2.0, ICON_ADD.font_family()),
-                egui::Color32::WHITE,
-            );
-        }
+        crate::widgets::hover::hover_highlight(
+            ui,
+            &plus_resp,
+            ICON_ADD.codepoint,
+            egui::FontId::new(theme::MODE_LABEL_FONT + 2.0, ICON_ADD.font_family()),
+            false,
+        );
         if plus_resp.clicked() {
             *panel_count += 1;
         }
@@ -459,15 +447,13 @@ pub fn show_toggle_buttons(ui: &mut egui::Ui, show_panels: &mut bool, panel_coun
             .sense(egui::Sense::click())
             .selectable(false),
         );
-        if minus_resp.hovered() {
-            ui.painter().text(
-                minus_resp.rect.center(),
-                egui::Align2::CENTER_CENTER,
-                ICON_REMOVE.codepoint,
-                egui::FontId::new(theme::MODE_LABEL_FONT + 2.0, ICON_REMOVE.font_family()),
-                egui::Color32::WHITE,
-            );
-        }
+        crate::widgets::hover::hover_highlight(
+            ui,
+            &minus_resp,
+            ICON_REMOVE.codepoint,
+            egui::FontId::new(theme::MODE_LABEL_FONT + 2.0, ICON_REMOVE.font_family()),
+            false,
+        );
         if minus_resp.clicked() && *panel_count > 0 {
             *panel_count -= 1;
         }

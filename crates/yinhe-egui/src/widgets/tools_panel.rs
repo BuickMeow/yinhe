@@ -72,16 +72,13 @@ pub fn show(ui: &mut egui::Ui, rect: egui::Rect, active_tool: &mut Tool, availab
             if resp.clicked() {
                 *active_tool = *tool;
             }
-            // Hover highlight
-            if !is_active && resp.hovered() {
-                ui.painter().text(
-                    resp.rect.center(),
-                    egui::Align2::CENTER_CENTER,
-                    tool.icon().codepoint,
-                    egui::FontId::new(16.0, tool.icon().font_family()),
-                    egui::Color32::WHITE,
-                );
-            }
+            crate::widgets::hover::hover_highlight(
+                ui,
+                &resp,
+                tool.icon().codepoint,
+                egui::FontId::new(16.0, tool.icon().font_family()),
+                is_active,
+            );
             resp.on_hover_text(tool.label());
 
             ui.add_space(2.0);

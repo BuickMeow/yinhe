@@ -161,15 +161,8 @@ pub fn show(
                 let sel_music: Option<Option<(f64, f64, u8, u8)>> =
                     ui.data_mut(|d| d.get_persisted(persist_id));
                 let in_sel_rect = sel_music.flatten().is_some_and(|(t_start, t_end, key_lo, key_hi)| {
-                    let kh = view.key_height;
-                    let scroll_y = view.base.scroll_y;
-                    let sy = (127.0 - key_hi as f32) * kh - scroll_y;
-                    let ey = (127.0 - key_lo as f32 + 1.0) * kh - scroll_y;
-                    let sx = view.tick_to_x(t_start);
-                    let ex = view.tick_to_x(t_end);
-                    let pixel_rect = egui::Rect::from_min_max(
-                        egui::pos2(sx.min(ex) as f32, sy.min(ey) as f32),
-                        egui::pos2(sx.max(ex) as f32, sy.max(ey) as f32),
+                    let pixel_rect = crate::view_interaction::music_sel_to_pixel_rect(
+                        &view.base, view.key_height, t_start, t_end, key_lo, key_hi,
                     );
                     pixel_rect.contains(local)
                 });
@@ -352,15 +345,8 @@ pub fn show(
         let sel_music: Option<Option<(f64, f64, u8, u8)>> =
             ui.data_mut(|d| d.get_persisted(persist_id));
         let persisted_pixel_rect = sel_music.flatten().map(|(t_start, t_end, key_lo, key_hi)| {
-            let kh = view.key_height;
-            let scroll_y = view.base.scroll_y;
-            let sy = (127.0 - key_hi as f32) * kh - scroll_y;
-            let ey = (127.0 - key_lo as f32 + 1.0) * kh - scroll_y;
-            let sx = view.tick_to_x(t_start);
-            let ex = view.tick_to_x(t_end);
-            egui::Rect::from_min_max(
-                egui::pos2(sx.min(ex) as f32, sy.min(ey) as f32),
-                egui::pos2(sx.max(ex) as f32, sy.max(ey) as f32),
+            crate::view_interaction::music_sel_to_pixel_rect(
+                &view.base, view.key_height, t_start, t_end, key_lo, key_hi,
             )
         });
         if let Some(rect) = persisted_pixel_rect {
@@ -581,15 +567,8 @@ fn sel_drag_frame(
             let sel_music: Option<Option<(f64, f64, u8, u8)>> =
                 ui.data_mut(|d| d.get_persisted(persist_id));
             sel_music.flatten().is_some_and(|(t_start, t_end, key_lo, key_hi)| {
-                let kh = view.key_height;
-                let scroll_y = view.base.scroll_y;
-                let sy = (127.0 - key_hi as f32) * kh - scroll_y;
-                let ey = (127.0 - key_lo as f32 + 1.0) * kh - scroll_y;
-                let sx = view.tick_to_x(t_start);
-                let ex = view.tick_to_x(t_end);
-                let pixel_rect = egui::Rect::from_min_max(
-                    egui::pos2(sx.min(ex) as f32, sy.min(ey) as f32),
-                    egui::pos2(sx.max(ex) as f32, sy.max(ey) as f32),
+                let pixel_rect = crate::view_interaction::music_sel_to_pixel_rect(
+                    &view.base, view.key_height, t_start, t_end, key_lo, key_hi,
                 );
                 crate::widgets::selection_actions::compute_bar_rect(music_rect, pixel_rect)
                     .is_some_and(|bar| bar.contains(pos))
@@ -606,22 +585,15 @@ fn sel_drag_frame(
                 let sel_music: Option<Option<(f64, f64, u8, u8)>> =
                     ui.data_mut(|d| d.get_persisted(persist_id));
                 sel_music.flatten().is_some_and(|(t_start, t_end, key_lo, key_hi)| {
-                    let kh = view.key_height;
-                    let scroll_y = view.base.scroll_y;
-                    let sy = (127.0 - key_hi as f32) * kh - scroll_y;
-                    let ey = (127.0 - key_lo as f32 + 1.0) * kh - scroll_y;
-                    let sx = view.tick_to_x(t_start);
-                    let ex = view.tick_to_x(t_end);
-                    let pixel_rect = egui::Rect::from_min_max(
-                        egui::pos2(sx.min(ex) as f32, sy.min(ey) as f32),
-                        egui::pos2(sx.max(ex) as f32, sy.max(ey) as f32),
+                    let pixel_rect = crate::view_interaction::music_sel_to_pixel_rect(
+                        &view.base, view.key_height, t_start, t_end, key_lo, key_hi,
                     );
                     pixel_rect.contains(local)
                 })
             };
             if in_sel_rect {
                 let raw_tick = view.x_to_tick(local.x);
-                let tick = snap_tick(raw_tick, quantize, ppq, bar_line_data);
+                let tick = crate::view_interaction::snap_tick(raw_tick, quantize, ppq, bar_line_data);
                 let key = view.y_to_key(local.y) as f64;
                 note_drag_origin = Some((tick, key));
                 // Don't clear sel_rect_persist — keep the selection box visible
@@ -644,7 +616,7 @@ fn sel_drag_frame(
                 let local_x = pos.x - content_rect.min.x;
                 let local_y = pos.y - content_rect.min.y;
                 let raw_tick = view.x_to_tick(local_x);
-                let snapped_tick = snap_tick(raw_tick, quantize, ppq, bar_line_data);
+                let snapped_tick = crate::view_interaction::snap_tick(raw_tick, quantize, ppq, bar_line_data);
                 let current_key = view.y_to_key(local_y) as f64;
                 let dt = (snapped_tick - origin_tick).round() as i64;
                 let dk = (current_key - origin_key).round() as i32;
@@ -658,7 +630,7 @@ fn sel_drag_frame(
                 let local_x = pos.x - content_rect.min.x;
                 let local_y = pos.y - content_rect.min.y;
                 let raw_tick = view.x_to_tick(local_x);
-                let snapped_tick = snap_tick(raw_tick, quantize, ppq, bar_line_data);
+                let snapped_tick = crate::view_interaction::snap_tick(raw_tick, quantize, ppq, bar_line_data);
                 let current_key = view.y_to_key(local_y) as f64;
                 let dt = (snapped_tick - origin_tick).round() as i64;
                 let dk = (current_key - origin_key).round() as i32;
@@ -680,38 +652,19 @@ fn sel_drag_frame(
                 drag = Some((start, local));
 
                 // ── Auto-scroll when dragging near the edge ──
-                const MARGIN: f32 = 20.0;
-                const BASE_SPEED: f32 = 15.0;
-                let dt = ui.input(|i| i.unstable_dt);
-                let mut dx = 0.0f32;
-                let mut dy = 0.0f32;
-
-                if pos.x < music_rect.min.x + MARGIN {
-                    dx = -(music_rect.min.x + MARGIN - pos.x) * BASE_SPEED * dt;
-                } else if pos.x > music_rect.max.x - MARGIN {
-                    dx = (pos.x - (music_rect.max.x - MARGIN)) * BASE_SPEED * dt;
-                }
-
-                if pos.y < music_rect.min.y + MARGIN {
-                    dy = -(music_rect.min.y + MARGIN - pos.y) * BASE_SPEED * dt;
-                } else if pos.y > music_rect.max.y - MARGIN {
-                    dy = (pos.y - (music_rect.max.y - MARGIN)) * BASE_SPEED * dt;
-                }
-
-                if dx != 0.0 || dy != 0.0 {
-                    let old_x = view.base.scroll_x;
-                    let old_y = view.base.scroll_y;
-                    view.base.scroll_x += dx;
-                    view.base.scroll_y += dy;
-                    view.clamp_scroll(content_rect.width(), content_rect.height(), total_ticks);
-                    let actual_dx = view.base.scroll_x - old_x;
-                    let actual_dy = view.base.scroll_y - old_y;
-                    if actual_dx != 0.0 || actual_dy != 0.0 {
-                        view.base.dirty = true;
-                        ui.ctx().request_repaint();
-                        // Compensate start so it stays fixed in content space
-                        drag = drag.map(|(s, e)| (egui::pos2(s.x - actual_dx, s.y - actual_dy), e));
-                    }
+                let (actual_dx, actual_dy) = crate::view_interaction::auto_scroll_on_drag(
+                    ui,
+                    &mut view.base,
+                    music_rect,
+                    pos,
+                    |base, w, h| {
+                        base.clamp_scroll_x(w, total_ticks);
+                        base.scroll_y = base.scroll_y.max(0.0);
+                    },
+                );
+                view.clamp_scroll(content_rect.width(), content_rect.height(), total_ticks);
+                if actual_dx != 0.0 || actual_dy != 0.0 {
+                    drag = drag.map(|(s, e)| (egui::pos2(s.x - actual_dx, s.y - actual_dy), e));
                 }
             }
         }
@@ -725,7 +678,7 @@ fn sel_drag_frame(
                 if drag_dist < 3.0 {
                     // Click (no meaningful drag) — set cursor, clear selection
                     let tick = view.x_to_tick(start.x);
-                    let snapped = snap_tick(tick, quantize, ppq, bar_line_data);
+                    let snapped = crate::view_interaction::snap_tick(tick, quantize, ppq, bar_line_data);
                     selected.clear();
                     *cursor_tick = Some(snapped.max(0.0));
                     // Clear persisted selection rect on click
@@ -815,8 +768,8 @@ fn piano_snapped_bounds(
 
     let tick_s = view.x_to_tick(sx);
     let tick_e = view.x_to_tick(ex);
-    let snapped_s = snap_tick(tick_s, quantize, ppq, bar_line_data);
-    let snapped_e = snap_tick(tick_e, quantize, ppq, bar_line_data);
+    let snapped_s = crate::view_interaction::snap_tick(tick_s, quantize, ppq, bar_line_data);
+    let snapped_e = crate::view_interaction::snap_tick(tick_e, quantize, ppq, bar_line_data);
     let t_start = snapped_s.min(snapped_e);
     let mut t_end = snapped_s.max(snapped_e);
 
@@ -842,25 +795,4 @@ fn piano_snapped_bounds(
     )
 }
 
-/// Snap a tick value to the current quantize grid.
-fn snap_tick(
-    tick: f64,
-    quantize: QuantizePreset,
-    ppq: u32,
-    bar_line_data: Option<(u32, u8, u8, &[yinhe_types::TimeSigEvent])>,
-) -> f64 {
-    if let Some((tpb, num, den, events)) = bar_line_data {
-        let (bar_start, next_bar) =
-            yinhe_wgpu::grid::measure_bounds_at_tick(tick, tpb, num, den, events);
-        let offset = tick - bar_start;
-        let snapped_offset = quantize.snap_tick(offset, ppq);
-        let grid_tick = bar_start + snapped_offset;
-        if (tick - next_bar).abs() < (tick - grid_tick).abs() {
-            next_bar
-        } else {
-            grid_tick
-        }
-    } else {
-        quantize.snap_tick(tick, ppq)
-    }
-}
+

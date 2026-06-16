@@ -35,15 +35,13 @@ pub fn show(
             .sense(egui::Sense::click())
             .selectable(false),
         );
-        if !is_global && resp_g.hovered() {
-            ui.painter().text(
-                resp_g.rect.center(),
-                egui::Align2::CENTER_CENTER,
-                "全局音色库",
-                egui::FontId::proportional(crate::theme::MODE_LABEL_FONT),
-                egui::Color32::WHITE,
-            );
-        }
+        crate::widgets::hover::hover_highlight(
+            ui,
+            &resp_g,
+            "全局音色库",
+            egui::FontId::proportional(crate::theme::MODE_LABEL_FONT),
+            is_global,
+        );
         if resp_g.clicked() && !is_global {
             settings.global_sf_config.global_enabled = true;
             changed = true;
@@ -65,15 +63,13 @@ pub fn show(
             .sense(egui::Sense::click())
             .selectable(false),
         );
-        if is_global && resp_p.hovered() {
-            ui.painter().text(
-                resp_p.rect.center(),
-                egui::Align2::CENTER_CENTER,
-                "歌曲音色库",
-                egui::FontId::proportional(crate::theme::MODE_LABEL_FONT),
-                egui::Color32::WHITE,
-            );
-        }
+        crate::widgets::hover::hover_highlight(
+            ui,
+            &resp_p,
+            "歌曲音色库",
+            egui::FontId::proportional(crate::theme::MODE_LABEL_FONT),
+            !is_global,
+        );
         if resp_p.clicked() && is_global {
             settings.global_sf_config.global_enabled = false;
             changed = true;
