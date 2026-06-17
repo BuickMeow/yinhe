@@ -24,34 +24,21 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>, settings: &AudioSetti
     ui.label(egui::RichText::new("XSynth 通道映射").size(14.0).strong());
     ui.add_space(4.0);
 
-    // Build active mask from the MIDI file (same logic as
-    // yinhe_audio::channels_for_midi).
+    // Build active mask from the YinModel: a (port, channel) is active if
+    // the track has any audible note (vel > 1) OR any control event.
     let mut active = [false; 256];
-    for notes in &doc.midi().key_notes {
-        for note in notes {
-            if note.velocity > 1 {
-                let ch = doc.midi()
-                    .track_channels
-                    .get(note.track as usize)
-                    .copied()
-                    .unwrap_or(0) as usize;
-                active[ch] = true;
-            }
+    for track in &doc.data.model.tracks {
+        let global_ch = ((track.port & 0x0F) << 4 | (track.channel & 0x0F)) as usize;
+        if global_ch >= 256 {
+            continue;
         }
-    }
-    for ev in &doc.midi().control_events {
-        let track = match ev {
-            yinhe_midi::MidiControlEvent::ControlChange { track, .. }
-            | yinhe_midi::MidiControlEvent::ProgramChange { track, .. }
-            | yinhe_midi::MidiControlEvent::PitchBend { track, .. } => *track,
-        };
-        let ch = doc.midi()
-            .track_channels
-            .get(track as usize)
-            .copied()
-            .unwrap_or(0) as usize;
-        if ch < 256 {
-            active[ch] = true;
+        let has_audible_note = track.notes.iter().any(|n| n.velocity > 1);
+        let has_ctrl = !track.cc.is_empty()
+            || !track.pitch_bend.is_empty()
+            || !track.program_change.is_empty()
+            || !track.rpn.is_empty();
+        if has_audible_note || has_ctrl {
+            active[global_ch] = true;
         }
     }
 

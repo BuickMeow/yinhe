@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use yinhe_midi::MidiFile;
+use yinhe_core::YinModel;
 
 /// Playback state: tracks wall-clock time and converts to MIDI tick position.
 pub struct PlaybackState {
@@ -39,14 +39,14 @@ impl PlaybackState {
 
     /// Toggle between play and pause.
     /// `cursor_tick` is the current cursor position when the action is triggered.
-    pub fn toggle_play(&mut self, cursor_tick: f64, midi: &MidiFile) {
+    pub fn toggle_play(&mut self, cursor_tick: f64, model: &YinModel) {
         if self.playing {
             // Pause: snapshot current position back to cursor_tick (handled by caller via current_tick)
             self.playing = false;
             self.play_start_instant = None;
         } else {
             // Start / resume
-            self.play_start_time = midi.tick_to_seconds(cursor_tick as u64);
+            self.play_start_time = model.tempo_map.tick_to_seconds(cursor_tick as u64);
             self.play_start_instant = Some(Instant::now());
             self.playing = true;
         }
@@ -62,7 +62,7 @@ impl PlaybackState {
     /// Compute the current tick position.
     /// Returns `None` when not playing (caller should keep its own cursor_tick).
     /// Returns `Some(tick)` when playing, and `reached_end` flag if playback hit the end.
-    pub fn current_tick(&self, midi: &MidiFile) -> Option<(f64, bool)> {
+    pub fn current_tick(&self, model: &YinModel) -> Option<(f64, bool)> {
         if !self.playing {
             return None;
         }
@@ -72,10 +72,10 @@ impl PlaybackState {
             .unwrap_or(0.0);
         let current_time = self.play_start_time + elapsed;
 
-        let tick = midi.tick_at_time(current_time);
+        let tick = model.tempo_map.tick_at_time(current_time);
         // Always provide at least one bar of playable range
-        let min_end = midi.bar_divide();
-        let end_tick = (midi.tick_length as f64).max(min_end);
+        let min_end = model.tempo_map.bar_divide();
+        let end_tick = (model.tick_length as f64).max(min_end);
 
         if tick >= end_tick {
             Some((end_tick, true))
@@ -88,14 +88,17 @@ impl PlaybackState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use yinhe_midi::MidiFile;
 
-    fn make_test_midi() -> MidiFile {
-        MidiFile {
-            ticks_per_beat: 480,
-            tick_length: 4800,
-            ..MidiFile::default()
-        }
+    fn make_test_model() -> YinModel {
+        let mut model = YinModel::default();
+        model.meta.ppq = 480;
+        // Pre-set tick_length so playback bounds work in tests.
+        model.tick_length = 4800;
+        model.rebuild();
+        // rebuild() recomputes tick_length from notes; restore it.
+        model.tick_length = 4800;
+        // tempo_map already has a default 120 BPM segment after rebuild.
+        model
     }
 
     #[test]
@@ -116,25 +119,25 @@ mod tests {
     #[test]
     fn toggle_play_sets_playing() {
         let mut state = PlaybackState::default();
-        let midi = make_test_midi();
-        state.toggle_play(0.0, &midi);
+        let model = make_test_model();
+        state.toggle_play(0.0, &model);
         assert!(state.is_playing());
     }
 
     #[test]
     fn toggle_play_again_sets_paused() {
         let mut state = PlaybackState::default();
-        let midi = make_test_midi();
-        state.toggle_play(0.0, &midi);
-        state.toggle_play(0.0, &midi);
+        let model = make_test_model();
+        state.toggle_play(0.0, &model);
+        state.toggle_play(0.0, &model);
         assert!(!state.is_playing());
     }
 
     #[test]
     fn stop_resets_to_beginning() {
         let mut state = PlaybackState::default();
-        let midi = make_test_midi();
-        state.toggle_play(0.0, &midi);
+        let model = make_test_model();
+        state.toggle_play(0.0, &model);
         state.stop();
         assert!(!state.is_playing());
         assert_eq!(state.play_start_time, 0.0);
@@ -143,7 +146,7 @@ mod tests {
     #[test]
     fn current_tick_none_when_not_playing() {
         let state = PlaybackState::default();
-        let midi = make_test_midi();
-        assert!(state.current_tick(&midi).is_none());
+        let model = make_test_model();
+        assert!(state.current_tick(&model).is_none());
     }
 }

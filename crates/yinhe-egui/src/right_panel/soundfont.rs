@@ -189,15 +189,13 @@ fn global_panel(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
 fn project_panel(ui: &mut egui::Ui, doc: &mut Document) -> bool {
     let mut changed = false;
 
-    // Derive used ports from track_channels rather than
-    // track_ports (which only reflects MidiPort meta messages that many DAWs
-    // do not emit).
+    // Derive used ports directly from track port fields. (Old code looked at
+    // track_channels which packed port|channel into a u8.)
     let max_port = {
         let mut max_p = 0u8;
-        for &ch in &doc.midi().track_channels {
-            let p = (ch >> 4) & 0x0F;
-            if p > max_p {
-                max_p = p;
+        for t in &doc.data.model.tracks {
+            if t.port > max_p {
+                max_p = t.port;
             }
         }
         max_p

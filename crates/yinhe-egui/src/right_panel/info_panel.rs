@@ -26,7 +26,7 @@ pub fn show(
         return false;
     };
 
-    let num_tracks = doc.data.midi().track_ports.len();
+    let num_tracks = doc.data.model.tracks.len();
     if num_tracks == 0 {
         ui.add_space(8.0);
         ui.label(
@@ -130,7 +130,7 @@ pub fn show(
         ui.horizontal(|ui| {
             ui.label("Tempo 数:");
             ui.label(
-                egui::RichText::new(format!("{}", doc.data.midi().tempo_segments.len()))
+                egui::RichText::new(format!("{}", doc.data.model.conductor.tempo.len()))
                     .color(egui::Color32::from_gray(180))
                     .size(13.0),
             );
@@ -138,7 +138,7 @@ pub fn show(
         ui.horizontal(|ui| {
             ui.label("Time-sig 数:");
             ui.label(
-                egui::RichText::new(format!("{}", doc.data.midi().time_sig_events.len()))
+                egui::RichText::new(format!("{}", doc.data.model.conductor.time_sig.len()))
                     .color(egui::Color32::from_gray(180))
                     .size(13.0),
             );

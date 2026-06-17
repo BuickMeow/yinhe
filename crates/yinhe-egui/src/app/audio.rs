@@ -163,12 +163,12 @@ impl App {
                 handle.send(yinhe_audio::AudioCommand::Pause);
                 let sample = handle.sample_position();
                 let time = sample as f64 / audio.sample_rate as f64;
-                doc.edit.cursor_tick = Some(doc.data.midi().tick_at_time(time));
+                doc.edit.cursor_tick = Some(doc.data.model.tempo_map.tick_at_time(time));
                 doc.edit.playback.stop();
             } else {
                 let tick = doc.edit.cursor_tick.unwrap_or(0.0);
-                let cursor_sample =
-                    (doc.data.midi().tick_to_seconds(tick as u64) * audio.sample_rate as f64) as u64;
+                let cursor_sample = (doc.data.model.tempo_map.tick_to_seconds(tick as u64)
+                    * audio.sample_rate as f64) as u64;
                 let engine_sample = handle.sample_position();
                 // If cursor is at the engine's position, just resume (no seek)
                 if cursor_sample.abs_diff(engine_sample) < (audio.sample_rate as u64 / 10) {
@@ -178,14 +178,14 @@ impl App {
                         from_sample: cursor_sample,
                     });
                 }
-                doc.edit.playback.toggle_play(tick, &*doc.data.midi());
+                doc.edit.playback.toggle_play(tick, &doc.data.model);
             }
         }
         if pause_return {
             handle.send(yinhe_audio::AudioCommand::Pause);
             let sample = handle.sample_position();
             let time = sample as f64 / audio.sample_rate as f64;
-            doc.edit.cursor_tick = Some(doc.data.midi().tick_at_time(time));
+            doc.edit.cursor_tick = Some(doc.data.model.tempo_map.tick_at_time(time));
             doc.edit.playback.stop();
         }
         if stop_play {
@@ -198,8 +198,8 @@ impl App {
         if handle.is_playing() {
             let sample = handle.sample_position();
             let time = sample as f64 / audio.sample_rate as f64;
-            let tick = doc.data.midi().tick_at_time(time);
-            let end_tick = doc.data.midi().tick_length as f64;
+            let tick = doc.data.model.tempo_map.tick_at_time(time);
+            let end_tick = doc.data.model.tick_length as f64;
             if tick >= end_tick {
                 handle.send(yinhe_audio::AudioCommand::Stop);
                 doc.edit.cursor_tick = Some(0.0);

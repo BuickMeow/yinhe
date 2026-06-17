@@ -67,7 +67,7 @@ pub fn show(
     // show unclamped positions while the GPU content (clamped inside
     // arrangement_view_ui::show) stays at the boundary — producing a visible
     // "bounce-back" effect on the ruler labels.
-    let total_ticks = crate::view_interaction::total_ticks_padded(doc.data.midi().tick_length);
+    let total_ticks = crate::view_interaction::total_ticks_padded(doc.data.model.tick_length);
     let num_tracks = doc.edit.track_visible.len();
     arr_view.clamp_scroll(gpu_rect.width(), gpu_rect.height(), total_ticks, num_tracks);
 
@@ -77,11 +77,10 @@ pub fn show(
             egui::pos2(arr_rect.min.x + tp_w + 4.0, arr_rect.min.y),
             egui::pos2(arr_rect.max.x, arr_rect.min.y + RULER_H),
         );
-        let midi = doc.data.midi();
-        let tpb = midi.ticks_per_beat;
-        let def_num = midi.time_sig_numerator;
-        let def_den = midi.time_sig_denominator;
-        let sig_events = midi.time_sig_events.as_slice();
+        let model = &doc.data.model;
+        let tpb = model.meta.ppq;
+        let (def_num, def_den) = model.tempo_map.time_sig_default;
+        let sig_events = model.tempo_map.time_sig_events.as_slice();
         // Parent painter works in screen coordinates; paint_labels applies
         // offset_x = rect.min.x - view.content_left() internally.
         let ruler_painter = ui.painter();
@@ -187,13 +186,17 @@ pub fn show(
             &doc.edit.track_colors_cache,
             &mut doc.edit.cursor_tick,
             doc.edit.quantize,
-            doc.data.midi().ticks_per_beat,
-            Some((
-                doc.data.midi().ticks_per_beat,
-                doc.data.midi().time_sig_numerator,
-                doc.data.midi().time_sig_denominator,
-                doc.data.midi().time_sig_events.as_slice(),
-            )),
+            doc.data.model.meta.ppq,
+            Some({
+                let model = &doc.data.model;
+                let (def_num, def_den) = model.tempo_map.time_sig_default;
+                (
+                    model.meta.ppq,
+                    def_num,
+                    def_den,
+                    model.tempo_map.time_sig_events.as_slice(),
+                )
+            }),
             is_playing,
             &doc.data.track_names,
             follow_mode,
