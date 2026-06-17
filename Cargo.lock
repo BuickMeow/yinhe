@@ -6392,8 +6392,10 @@ dependencies = [
 name = "yinhe-editor-core"
 version = "0.1.0"
 dependencies = [
+ "dirs",
  "serde",
  "serde_json",
+ "tracing",
  "yinhe-automation",
  "yinhe-memtrace",
  "yinhe-midi",
@@ -6439,6 +6441,9 @@ dependencies = [
 [[package]]
 name = "yinhe-memtrace"
 version = "0.1.0"
+dependencies = [
+ "tracing",
+]
 
 [[package]]
 name = "yinhe-midi"

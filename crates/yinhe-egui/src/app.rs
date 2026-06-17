@@ -206,7 +206,7 @@ impl App {
             audio: None,
             audio_active_doc: None,
 
-            audio_settings: crate::audio_settings::AudioSettings::load(),
+            audio_settings: crate::audio_settings::load_audio_settings(),
             last_midi_encoding: yinhe_midi::MidiImportEncoding::Utf8,
 
             sys_monitor: SystemMonitor::new(),

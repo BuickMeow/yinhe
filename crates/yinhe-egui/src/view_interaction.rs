@@ -6,40 +6,20 @@ use yinhe_editor_core::quantize::QuantizePreset;
 use crate::widgets::tools_panel::Tool;
 use yinhe_types::view_base::TimelineViewBase;
 
-/// Cursor-follow mode for auto-scrolling during playback.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum FollowMode {
-    /// Never auto-scroll — user has full manual control.
-    None,
-    /// Scroll when cursor reaches the viewport edge (current behavior).
-    Page,
-    /// Cursor stays glued to the leftmost edge of the content area.
-    Continuous,
+pub use yinhe_editor_core::follow::{FollowMode, compute_follow_scroll, total_ticks_padded};
+
+/// Extension trait adding egui-specific methods to [`FollowMode`].
+pub(crate) trait FollowModeExt {
+    fn icon(self) -> egui_material_icons::MaterialIcon;
 }
 
-impl FollowMode {
-    pub fn next(self) -> Self {
-        match self {
-            FollowMode::None => FollowMode::Page,
-            FollowMode::Page => FollowMode::Continuous,
-            FollowMode::Continuous => FollowMode::None,
-        }
-    }
-
-    pub fn icon(self) -> egui_material_icons::MaterialIcon {
+impl FollowModeExt for FollowMode {
+    fn icon(self) -> egui_material_icons::MaterialIcon {
         use egui_material_icons::icons::*;
         match self {
             FollowMode::None => ICON_LOCK,
             FollowMode::Page => ICON_AUTO_STORIES,
             FollowMode::Continuous => ICON_CENTER_FOCUS_STRONG,
-        }
-    }
-
-    pub fn tooltip(self) -> &'static str {
-        match self {
-            FollowMode::None => "不滚动",
-            FollowMode::Page => "翻页跟随",
-            FollowMode::Continuous => "实时跟随",
         }
     }
 }
@@ -100,52 +80,6 @@ impl ViewInteraction for yinhe_arrangement::ArrangementView {
     }
     fn reset_to_default(&mut self) {
         *self = Self::default();
-    }
-}
-
-// ── Shared helpers ──
-
-/// Total timeline length in ticks with 20% padding, or a sensible default
-/// when the source has no notes.
-pub(crate) fn total_ticks_padded(tick_length: u64) -> f64 {
-    if tick_length > 0 {
-        tick_length as f64 * 1.2
-    } else {
-        0.0
-    }
-}
-
-/// Apply cursor-follow scrolling during playback.
-///
-/// Returns the new `scroll_x` if the view should scroll, or `None` if no
-/// scroll is needed (mode is `None` or cursor is within the safe margin).
-///
-/// - `left_boundary`: left content edge in pixels (keyboard_width for piano, 0.0 for arrangement)
-/// - `continuous_inset`: pixels to inset the cursor in Continuous mode (1.0 for piano, 0.01 for arrangement)
-pub(crate) fn compute_follow_scroll(
-    cursor_tick: f64,
-    pixels_per_tick: f32,
-    viewport_width: f32,
-    left_boundary: f32,
-    follow_mode: FollowMode,
-    continuous_inset: f32,
-) -> Option<f32> {
-    match follow_mode {
-        FollowMode::None => None,
-        FollowMode::Page => {
-            let cursor_x = cursor_tick as f32 * pixels_per_tick;
-            let content_width = viewport_width - left_boundary;
-            let margin = content_width * 0.2;
-            if cursor_x > viewport_width - margin || cursor_x < left_boundary + margin {
-                Some((cursor_tick as f32 * pixels_per_tick) - content_width * 0.5)
-            } else {
-                None
-            }
-        }
-        FollowMode::Continuous => {
-            let target = cursor_tick as f32 * pixels_per_tick;
-            Some(target - continuous_inset)
-        }
     }
 }
 
@@ -395,123 +329,4 @@ pub fn music_sel_to_pixel_rect(
         egui::pos2(sx.min(ex), sy.min(ey)),
         egui::pos2(sx.max(ex), sy.max(ey)),
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn none_mode_returns_none() {
-        assert_eq!(
-            compute_follow_scroll(100.0, 1.0, 800.0, 0.0, FollowMode::None, 1.0),
-            None
-        );
-    }
-
-    #[test]
-    fn continuous_mode_returns_cursor_minus_inset() {
-        // cursor_tick=100, ppt=2.0 → cursor_x=200; inset=50 → 200-50=150
-        assert_eq!(
-            compute_follow_scroll(100.0, 2.0, 800.0, 0.0, FollowMode::Continuous, 50.0),
-            Some(150.0)
-        );
-    }
-
-    #[test]
-    fn page_mode_scrolls_when_cursor_near_right_edge() {
-        // cursor_tick=900, ppt=1.0 → cursor_x=900
-        // content_width=800, margin=160
-        // 900 > 800-160=640 → should scroll
-        let result = compute_follow_scroll(900.0, 1.0, 800.0, 0.0, FollowMode::Page, 1.0);
-        assert!(result.is_some());
-    }
-
-    #[test]
-    fn page_mode_scrolls_when_cursor_near_left_boundary() {
-        // cursor_tick=20, ppt=1.0 → cursor_x=20
-        // content_width=800, margin=160
-        // 20 < 0+160=160 → should scroll
-        let result = compute_follow_scroll(20.0, 1.0, 800.0, 0.0, FollowMode::Page, 1.0);
-        assert!(result.is_some());
-    }
-
-    #[test]
-    fn page_mode_stays_when_cursor_in_center() {
-        // cursor_tick=400, ppt=1.0 → cursor_x=400
-        // content_width=800, margin=160
-        // 400 is between 160 and 640 → no scroll
-        assert_eq!(
-            compute_follow_scroll(400.0, 1.0, 800.0, 0.0, FollowMode::Page, 1.0),
-            None
-        );
-    }
-
-    #[test]
-    fn page_mode_with_nonzero_left_boundary() {
-        // left_boundary=100, viewport_width=800
-        // content_width=700, margin=140
-        // cursor_x=50, 50 < 100+140=240 → should scroll
-        let result = compute_follow_scroll(50.0, 1.0, 800.0, 100.0, FollowMode::Page, 1.0);
-        assert!(result.is_some());
-    }
-
-    #[test]
-    fn follow_mode_next_cycles() {
-        assert_eq!(FollowMode::None.next(), FollowMode::Page);
-        assert_eq!(FollowMode::Page.next(), FollowMode::Continuous);
-        assert_eq!(FollowMode::Continuous.next(), FollowMode::None);
-    }
-
-    #[test]
-    fn follow_mode_icon_not_empty() {
-        // Just verify the method doesn't panic
-        let _ = FollowMode::None.icon();
-        let _ = FollowMode::Page.icon();
-        let _ = FollowMode::Continuous.icon();
-    }
-
-    #[test]
-    fn follow_mode_tooltip_not_empty() {
-        assert!(!FollowMode::None.tooltip().is_empty());
-        assert!(!FollowMode::Page.tooltip().is_empty());
-        assert!(!FollowMode::Continuous.tooltip().is_empty());
-    }
-
-    #[test]
-    fn total_ticks_padded_positive() {
-        assert!((total_ticks_padded(1000) - 1200.0).abs() < 0.01);
-        assert!((total_ticks_padded(480) - 576.0).abs() < 0.01);
-    }
-
-    #[test]
-    fn total_ticks_padded_zero() {
-        assert_eq!(total_ticks_padded(0), 0.0);
-    }
-
-    #[test]
-    fn page_mode_scroll_target() {
-        // cursor_tick=900, ppt=1.0, viewport=800, left_boundary=0
-        // cursor_x=900, content_width=800, margin=160
-        // target = 900 - 800*0.5 = 500
-        let result = compute_follow_scroll(900.0, 1.0, 800.0, 0.0, FollowMode::Page, 1.0);
-        assert_eq!(result, Some(500.0));
-    }
-
-    #[test]
-    fn continuous_mode_with_left_boundary() {
-        // cursor_tick=100, ppt=1.0, inset=60
-        // target = 100 - 60 = 40
-        let result = compute_follow_scroll(100.0, 1.0, 800.0, 60.0, FollowMode::Continuous, 60.0);
-        assert_eq!(result, Some(40.0));
-    }
-
-    #[test]
-    fn page_mode_no_scroll_when_cursor_in_margin() {
-        // cursor_tick=300, ppt=1.0, viewport=800, left_boundary=60
-        // cursor_x=300, content_width=740, margin=148
-        // 300 is between 60+148=208 and 800-148=652 → no scroll
-        let result = compute_follow_scroll(300.0, 1.0, 800.0, 60.0, FollowMode::Page, 1.0);
-        assert_eq!(result, None);
-    }
 }

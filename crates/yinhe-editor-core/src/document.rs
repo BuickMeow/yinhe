@@ -338,6 +338,125 @@ impl Document {
             }
         }
     }
+
+    // ── Note editing operations ──
+
+    /// Delete all selected notes. Returns `true` if any notes were removed.
+    pub fn delete_selected(&mut self) -> bool {
+        if self.edit.selected.is_empty() {
+            return false;
+        }
+        {
+            let midi = Arc::make_mut(&mut self.data.midi);
+            for &(track, start_tick, key) in &self.edit.selected {
+                let notes = &mut midi.key_notes[key as usize];
+                notes.retain(|n| !(n.track == track && n.start_tick == start_tick));
+            }
+            self.edit.selected.clear();
+        }
+        self.data.rebuild_midi_metadata();
+        true
+    }
+
+    /// Duplicate all selected notes. New notes are placed after the original
+    /// selection, offset by the selection duration. Returns `true` if any
+    /// notes were duplicated.
+    pub fn duplicate_selected(&mut self) -> bool {
+        if self.edit.selected.is_empty() {
+            return false;
+        }
+        {
+            let midi = Arc::make_mut(&mut self.data.midi);
+
+            let mut selected_data: Vec<(yinhe_types::Note, u8)> = Vec::new();
+            for &(track, start_tick, key) in &self.edit.selected {
+                if let Some(note) = midi.key_notes[key as usize]
+                    .iter()
+                    .find(|n| n.track == track && n.start_tick == start_tick)
+                {
+                    selected_data.push((note.clone(), key));
+                }
+            }
+
+            if selected_data.is_empty() {
+                return false;
+            }
+
+            let min_start = selected_data.iter().map(|(n, _)| n.start_tick).min().unwrap();
+            let max_end = selected_data.iter().map(|(n, _)| n.end_tick).max().unwrap();
+            let offset = (max_end - min_start).max(1);
+
+            let mut new_selected = HashSet::new();
+            for (note, key) in &selected_data {
+                let new_note = yinhe_types::Note {
+                    start_tick: note.start_tick + offset,
+                    end_tick: note.end_tick + offset,
+                    ..note.clone()
+                };
+                let notes = &mut midi.key_notes[*key as usize];
+                let insert_pos = notes.partition_point(|n| n.start_tick < new_note.start_tick);
+                notes.insert(insert_pos, new_note);
+                new_selected.insert((note.track, note.start_tick + offset, *key));
+            }
+
+            self.edit.selected = new_selected;
+        }
+        self.data.rebuild_midi_metadata();
+        true
+    }
+
+    /// Transpose selected notes by `semitones` (e.g. +12 for up an octave,
+    /// -12 for down). Returns `true` if any notes were moved.
+    pub fn transpose_selected(&mut self, semitones: i8) -> bool {
+        if self.edit.selected.is_empty() {
+            return false;
+        }
+        {
+            let midi = Arc::make_mut(&mut self.data.midi);
+
+            let mut moved_data: Vec<(yinhe_types::Note, u8)> = Vec::new();
+            for &(track, start_tick, key) in &self.edit.selected {
+                let notes = &mut midi.key_notes[key as usize];
+                if let Some(pos) = notes.iter().position(|n| n.track == track && n.start_tick == start_tick)
+                {
+                    let note = notes.remove(pos);
+                    moved_data.push((note, key));
+                }
+            }
+
+            if moved_data.is_empty() {
+                return false;
+            }
+
+            let mut new_selected = HashSet::new();
+            for (note, old_key) in &moved_data {
+                let new_key = ((*old_key as i16) + (semitones as i16)).clamp(0, 127) as u8;
+                let notes = &mut midi.key_notes[new_key as usize];
+                let insert_pos = notes.partition_point(|n| n.start_tick < note.start_tick);
+                notes.insert(insert_pos, note.clone());
+                new_selected.insert((note.track, note.start_tick, new_key));
+            }
+
+            self.edit.selected = new_selected;
+        }
+        self.data.rebuild_midi_metadata();
+        true
+    }
+
+    /// Restore document state from an undo snapshot, rebuild caches,
+    /// and clear selection.
+    pub fn apply_undo_snapshot(&mut self, snap: crate::history::UndoSnapshot) {
+        self.data = snap.data;
+        self.data.bump_version();
+        self.edit.track_info_cache = self.data.track_info();
+        for (i, ti) in self.edit.track_info_cache.iter().enumerate() {
+            if i < self.data.track_names.len() {
+                self.data.track_names[i] = ti.name.clone();
+            }
+        }
+        self.edit.pc_map_cache = self.data.pc_map_cache();
+        self.edit.selected.clear();
+    }
 }
 
 // ── Free functions ──

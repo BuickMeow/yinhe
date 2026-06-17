@@ -2,6 +2,8 @@ use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
 use std::sync::atomic::{AtomicIsize, Ordering};
 
+pub mod perf_probe;
+
 /// Allocation tag used to attribute heap memory to a subsystem.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]

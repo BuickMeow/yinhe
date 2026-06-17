@@ -4,7 +4,7 @@ use egui_material_icons::icons::*;
 use crate::file_loader::FileLoader;
 use yinhe_editor_core::document::Document;
 use yinhe_editor_core::quantize::QuantizePreset;
-use crate::view_interaction::FollowMode;
+use crate::view_interaction::{FollowMode, FollowModeExt};
 use crate::util::time_format;
 
 /// Actions triggered from the file menu dropdown.

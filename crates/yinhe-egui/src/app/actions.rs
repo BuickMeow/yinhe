@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::sync::mpsc;
 use std::sync::Arc;
 
@@ -85,72 +84,13 @@ impl App {
 
     /// Delete all selected notes from the active document.
     pub(crate) fn delete_selected_notes(&mut self) {
-        self.with_undo("Delete notes", |data, edit| {
-            if edit.selected.is_empty() {
-                return false;
-            }
-            {
-                let midi = Arc::make_mut(&mut data.midi);
-                for &(track, start_tick, key) in &edit.selected {
-                    let notes = &mut midi.key_notes[key as usize];
-                    notes.retain(|n| !(n.track == track && n.start_tick == start_tick));
-                }
-                edit.selected.clear();
-            }
-            data.rebuild_midi_metadata();
-            true
-        });
+        self.with_undo("Delete notes", |doc| doc.delete_selected());
     }
 
     /// Duplicate all selected notes (Ctrl+D / Cmd+D).
     /// New notes are placed after the original selection, offset by the selection duration.
     pub(crate) fn duplicate_selected_notes(&mut self) {
-        self.with_undo("Duplicate notes", |data, edit| {
-            if edit.selected.is_empty() {
-                return false;
-            }
-
-            {
-                let midi = Arc::make_mut(&mut data.midi);
-
-                // Collect full note data for each selected entry
-                let mut selected_data: Vec<(yinhe_types::Note, u8)> = Vec::new();
-                for &(track, start_tick, key) in &edit.selected {
-                    if let Some(note) = midi.key_notes[key as usize]
-                        .iter()
-                        .find(|n| n.track == track && n.start_tick == start_tick)
-                    {
-                        selected_data.push((note.clone(), key));
-                    }
-                }
-
-                if selected_data.is_empty() {
-                    return false;
-                }
-
-                // Calculate offset: duration of the selection (max_end - min_start)
-                let min_start = selected_data.iter().map(|(n, _)| n.start_tick).min().unwrap();
-                let max_end = selected_data.iter().map(|(n, _)| n.end_tick).max().unwrap();
-                let offset = (max_end - min_start).max(1);
-
-                let mut new_selected = HashSet::new();
-                for (note, key) in &selected_data {
-                    let new_note = yinhe_types::Note {
-                        start_tick: note.start_tick + offset,
-                        end_tick: note.end_tick + offset,
-                        ..note.clone()
-                    };
-                    let notes = &mut midi.key_notes[*key as usize];
-                    let insert_pos = notes.partition_point(|n| n.start_tick < new_note.start_tick);
-                    notes.insert(insert_pos, new_note);
-                    new_selected.insert((note.track, note.start_tick + offset, *key));
-                }
-
-                edit.selected = new_selected;
-            }
-            data.rebuild_midi_metadata();
-            true
-        });
+        self.with_undo("Duplicate notes", |doc| doc.duplicate_selected());
     }
 
     /// Transpose selected notes by `semitones` (e.g. +12 for up an octave, -12 for down).
@@ -160,44 +100,7 @@ impl App {
         } else {
             "Transpose down"
         };
-        self.with_undo(label, |data, edit| {
-            if edit.selected.is_empty() {
-                return false;
-            }
-
-            {
-                let midi = Arc::make_mut(&mut data.midi);
-
-                // Remove selected notes from their current keys and collect their data
-                let mut moved_data: Vec<(yinhe_types::Note, u8)> = Vec::new();
-                for &(track, start_tick, key) in &edit.selected {
-                    let notes = &mut midi.key_notes[key as usize];
-                    if let Some(pos) = notes.iter().position(|n| n.track == track && n.start_tick == start_tick)
-                    {
-                        let note = notes.remove(pos);
-                        moved_data.push((note, key));
-                    }
-                }
-
-                if moved_data.is_empty() {
-                    return false;
-                }
-
-                // Re-insert at new keys
-                let mut new_selected = HashSet::new();
-                for (note, old_key) in &moved_data {
-                    let new_key = ((*old_key as i16) + (semitones as i16)).clamp(0, 127) as u8;
-                    let notes = &mut midi.key_notes[new_key as usize];
-                    let insert_pos = notes.partition_point(|n| n.start_tick < note.start_tick);
-                    notes.insert(insert_pos, note.clone());
-                    new_selected.insert((note.track, note.start_tick, new_key));
-                }
-
-                edit.selected = new_selected;
-            }
-            data.rebuild_midi_metadata();
-            true
-        });
+        self.with_undo(label, |doc| doc.transpose_selected(semitones));
     }
 
     /// Capture an `UndoSnapshot` of the active document's persistent state.
@@ -211,19 +114,16 @@ impl App {
     /// Run an edit closure, recording an undo entry beforehand and notifying
     /// audio afterwards.
     ///
-    /// The closure receives `(&mut ProjectData, &mut EditState)` and should
-    /// return `true` if it actually changed anything; on `false` no snapshot
-    /// is pushed and audio is not notified.
+    /// The closure receives `&mut Document` and should return `true` if it
+    /// actually changed anything; on `false` no snapshot is pushed and audio
+    /// is not notified.
     pub(crate) fn with_undo<F>(&mut self, label: &'static str, f: F)
     where
-        F: FnOnce(&mut yinhe_editor_core::project_data::ProjectData, &mut yinhe_editor_core::edit_state::EditState) -> bool,
+        F: FnOnce(&mut Document) -> bool,
     {
         let Some(idx) = self.active_doc else { return };
         let snapshot = self.documents[idx].data.snapshot(label);
-        let changed = {
-            let doc = &mut self.documents[idx];
-            f(&mut doc.data, &mut doc.edit)
-        };
+        let changed = f(&mut self.documents[idx]);
         if !changed {
             return;
         }
@@ -262,22 +162,7 @@ impl App {
     /// rebuild caches, clear selection, and notify audio.
     fn apply_snapshot(&mut self, idx: usize, snap: yinhe_editor_core::history::UndoSnapshot) {
         let doc = &mut self.documents[idx];
-        doc.data = snap.data;
-        doc.data.bump_version();
-        // Rebuild track_info_cache from the restored midi (port, channel,
-        // note_count, name — all may have changed).
-        doc.edit.track_info_cache = doc.data.track_info();
-        // Sync track_names from cache (track_info() reads midi.track_names).
-        for (i, ti) in doc.edit.track_info_cache.iter().enumerate() {
-            if i < doc.data.track_names.len() {
-                doc.data.track_names[i] = ti.name.clone();
-            }
-        }
-        // Rebuild pc_map_cache from restored control events.
-        doc.edit.pc_map_cache = doc.data.pc_map_cache();
-        // Clear selection: restored notes' (start_tick, key) may no longer
-        // match what the user had selected.
-        doc.edit.selected.clear();
+        doc.apply_undo_snapshot(snap);
         self.pianoroll_view.base.dirty = true;
         if let Some(ref audio) = self.audio {
             let _ = audio.handle.send(yinhe_audio::AudioCommand::ReloadNotes {

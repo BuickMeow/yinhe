@@ -1,8 +1,11 @@
+pub mod audio_settings;
 pub mod config;
 pub mod document;
 pub mod edit_state;
+pub mod follow;
 pub mod history;
 pub mod playback;
+pub mod progress;
 pub mod project_data;
 pub mod quantize;
 

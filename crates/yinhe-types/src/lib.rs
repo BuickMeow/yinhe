@@ -5,6 +5,7 @@ mod note;
 pub mod palette;
 mod source;
 pub mod tick_buckets;
+pub mod time_format;
 pub mod view_base;
 
 pub use automation::{AutomationEvent, AutomationLane, AutomationTarget};

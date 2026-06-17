@@ -196,7 +196,9 @@ pub fn show(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
 
             ui.horizontal(|ui| {
                 if ui.button("刷新设备列表").clicked() {
-                    settings.refresh_devices();
+                    let devices = crate::audio_settings::list_output_devices();
+                    let (default_rate, rates) = crate::audio_settings::discover_sample_rates();
+                    settings.refresh_devices(devices, rates, default_rate);
                 }
                 if ui.button("关闭").clicked() {
                     should_close = true;

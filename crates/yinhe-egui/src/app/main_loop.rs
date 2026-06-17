@@ -161,17 +161,8 @@ impl eframe::App for App {
         if new_enc != self.last_midi_encoding {
             self.last_midi_encoding = new_enc;
             if self.active_doc.is_some() {
-                self.with_undo("Recode track names", |data, edit| {
-                    std::sync::Arc::make_mut(&mut data.midi).recode_track_names(new_enc);
-                    data.midi_version = data.midi_version.wrapping_add(1);
-                    for (i, name) in data.midi.track_names.iter().enumerate() {
-                        if i < data.track_names.len() {
-                            data.track_names[i] = name.clone();
-                        }
-                        if let Some(ti) = edit.track_info_cache.get_mut(i) {
-                            ti.name = name.clone();
-                        }
-                    }
+                self.with_undo("Recode track names", |doc| {
+                    doc.recode_track_names(new_enc);
                     true
                 });
             }
