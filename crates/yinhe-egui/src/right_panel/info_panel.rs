@@ -236,7 +236,7 @@ pub fn show(
             midi.track_ports[track_idx] = new_port;
         }
         // Rebuild metadata and caches
-        doc.data.rebuild_midi_metadata();
+        doc.data.rebuild_model();
         doc.edit.track_info_cache = doc.data.track_info();
         doc.edit.pc_map_cache = doc.data.pc_map_cache();
         doc.data.bump_version();

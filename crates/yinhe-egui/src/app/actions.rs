@@ -133,7 +133,7 @@ impl App {
         self.pianoroll_view.base.dirty = true;
         if let Some(ref audio) = self.audio {
             let _ = audio.handle.send(yinhe_audio::AudioCommand::ReloadNotes {
-                midi: Arc::clone(&doc.data.midi),
+                midi: Arc::new(doc.midi()),
             });
         }
     }
@@ -166,7 +166,7 @@ impl App {
         self.pianoroll_view.base.dirty = true;
         if let Some(ref audio) = self.audio {
             let _ = audio.handle.send(yinhe_audio::AudioCommand::ReloadNotes {
-                midi: Arc::clone(&doc.data.midi),
+                midi: Arc::new(doc.midi()),
             });
         }
     }
@@ -224,13 +224,7 @@ impl App {
     /// Spawn a background thread to save the project.
     fn save_project_async(&mut self, idx: usize, path: String) {
         let doc = &self.documents[idx];
-        let midi = doc.data.midi.clone();
-        let track_names = doc.data.track_names.clone();
-        let project_name = doc.data.project_name.clone();
-        let project_artist = doc.data.project_artist.clone();
-        let project_description = doc.data.project_description.clone();
-        let project_ppq = doc.data.project_ppq;
-        let compression_level = doc.data.compression_level;
+        let model = doc.data.model.clone();
         let sf_overrides: Vec<(u8, Vec<yinhe_project::SfEntryJson>)> = doc
             .edit
             .project_sf
@@ -255,17 +249,7 @@ impl App {
 
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
-            let archive = yinhe_project::conversion::build_archive_from(
-                &midi,
-                &track_names,
-                &project_name,
-                &project_artist,
-                project_ppq,
-                compression_level,
-                &project_description,
-                &sf_overrides,
-                global_enabled,
-            );
+            let archive = yinhe_model::convert::to_archive::yinmodel_to_archive(&model);
             if let Err(e) = archive.write_to(&path_for_thread) {
                 tracing::error!("Failed to save project: {}", e);
             }
@@ -324,7 +308,8 @@ impl App {
             let path_str = path.to_string_lossy().to_string();
             if let Some(idx) = self.active_doc {
                 let doc = &self.documents[idx];
-                if let Err(e) = yinhe_project::conversion::export_midi(doc.midi(), doc.track_names(), &path_str) {
+                let midi = doc.midi();
+                if let Err(e) = yinhe_project::conversion::export_midi(&midi, doc.track_names(), &path_str) {
                     tracing::error!("Failed to export MIDI: {}", e);
                 }
             }
@@ -373,7 +358,7 @@ impl App {
         }
 
         // Collect render inputs
-        let midi = doc.data.midi.clone();
+        let midi = Arc::new(doc.midi());
         let sr = if self.export_sample_rate > 0 {
             self.export_sample_rate
         } else {

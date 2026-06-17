@@ -6396,9 +6396,11 @@ dependencies = [
  "serde",
  "serde_json",
  "tracing",
+ "uuid",
  "yinhe-automation",
  "yinhe-memtrace",
  "yinhe-midi",
+ "yinhe-model",
  "yinhe-project",
  "yinhe-types",
 ]
@@ -6432,6 +6434,7 @@ dependencies = [
  "yinhe-editor-core",
  "yinhe-memtrace",
  "yinhe-midi",
+ "yinhe-model",
  "yinhe-pianoroll",
  "yinhe-project",
  "yinhe-types",
@@ -6455,6 +6458,20 @@ dependencies = [
  "thiserror 2.0.18",
  "yinhe-memtrace",
  "yinhe-types",
+]
+
+[[package]]
+name = "yinhe-model"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "serde",
+ "tracing",
+ "uuid",
+ "yinhe-midi",
+ "yinhe-project",
+ "yinhe-types",
+ "zstd",
 ]
 
 [[package]]

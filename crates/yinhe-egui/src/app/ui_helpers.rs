@@ -257,7 +257,7 @@ impl App {
             let mut guard = super::main_loop::ReplaceGuard::new(&mut self.documents[idx]);
             let doc = guard.as_mut();
             let midi_source: Option<&dyn yinhe_pianoroll::NoteSource> =
-                Some(doc.data.midi.as_ref());
+                Some(doc.data.model.as_ref());
             let piano_rect = egui::Rect::from_min_max(
                 egui::pos2(layout.remaining.min.x, layout.bottom_y),
                 layout.remaining.max,
@@ -288,11 +288,15 @@ impl App {
                             }
                         })
                         .collect();
-                    let tpb = doc.data.midi.ticks_per_beat;
-                    let ts_num = doc.data.midi.time_sig_numerator;
-                    let ts_den = doc.data.midi.time_sig_denominator;
-                    let ts_events = doc.data.midi.time_sig_events.as_slice();
-                    let automation_lanes = &doc.data.midi.automation_lanes;
+                    let tpb = doc.data.model.meta.ppq;
+                    let ts_num = doc.data.model.conductor.time_sig.first().map(|t| t.numerator).unwrap_or(4);
+                    let ts_den = doc.data.model.conductor.time_sig.first().map(|t| t.denominator).unwrap_or(2);
+                    let ts_events: Vec<yinhe_types::TimeSigEvent> = doc.data.model.conductor.time_sig.iter().map(|t| yinhe_types::TimeSigEvent {
+                        tick: t.tick,
+                        numerator: t.numerator,
+                        denominator: t.denominator,
+                    }).collect();
+                    let automation_lanes: Vec<yinhe_types::AutomationLane> = Vec::new();
                     action = piano_view::show(
                         ui,
                         ui.available_size(),
@@ -307,13 +311,13 @@ impl App {
                         is_playing,
                         doc.edit.quantize,
                         tpb,
-                        Some((tpb, ts_num, ts_den, ts_events)),
+                        Some((tpb, ts_num, ts_den, &ts_events)),
                         &mut self.piano_last_cursor_tick,
                         follow_mode,
                         &self.active_tool,
                         Some(&mut doc.edit.controller_panels),
                         Some(&mut self.controller_renderers[idx]),
-                        Some(automation_lanes),
+                        Some(&automation_lanes),
                         Some(&mut doc.edit.show_controller_panels),
                         Some(&auto_wgpu_state),
                         self.audio_settings.scroll_mode,
@@ -364,49 +368,58 @@ impl App {
                         Some(doc.data.snapshot("Move notes"));
                     self.note_drag_moved = false;
                     let mut originals = Vec::new();
-                    let midi = &*doc.data.midi;
+                    let model = &doc.data.model;
                     for &(track, start_tick, key) in &doc.edit.selected {
-                        if let Some(note) = midi.key_notes[key as usize]
-                            .iter()
-                            .find(|n| n.track == track && n.start_tick == start_tick)
-                        {
-                            originals.push((note.clone(), key));
+                        let t = track as usize;
+                        if t < model.tracks.len() {
+                            if let Some(note) = model.tracks[t].notes
+                                .iter()
+                                .find(|n| n.key == key as u8 && n.tick == start_tick)
+                            {
+                                originals.push((*note, key, track));
+                            }
                         }
                     }
-                    self.note_drag_originals = Some(originals);
+                    self.note_drag_originals_note = Some(originals);
                 }
 
                 if delta_ticks != 0 || delta_keys != 0 {
                     self.note_drag_moved = true;
                 }
 
-                if let Some(ref originals) = self.note_drag_originals.clone() {
+                if let Some(ref originals) = self.note_drag_originals_note.clone() {
                     {
-                        let midi = Arc::make_mut(&mut doc.data.midi);
+                        let model = Arc::make_mut(&mut doc.data.model);
+                        // Remove selected notes from their tracks
                         for &(track, start_tick, key) in &doc.edit.selected {
-                            midi.key_notes[key as usize]
-                                .retain(|n| !(n.track == track && n.start_tick == start_tick));
+                            let t = track as usize;
+                            if t < model.tracks.len() {
+                                model.tracks[t].notes
+                                    .retain(|n| !(n.key == key as u8 && n.tick == start_tick));
+                            }
                         }
                         let mut new_selected = std::collections::HashSet::new();
-                        for (note, old_key) in originals {
-                            let new_key =
-                                ((*old_key as i32) + delta_keys).clamp(0, 127) as u8;
-                            let new_start =
-                                (note.start_tick as i64 + delta_ticks).max(0) as u32;
-                            let new_end =
-                                (note.end_tick as i64 + delta_ticks).max(1) as u32;
-                            let moved = yinhe_types::Note {
-                                start_tick: new_start,
-                                end_tick: new_end,
-                                ..note.clone()
-                            };
-                            let notes = &mut midi.key_notes[new_key as usize];
-                            let insert_pos =
-                                notes.partition_point(|n| n.start_tick < moved.start_tick);
-                            notes.insert(insert_pos, moved);
-                            new_selected.insert((note.track, new_start, new_key));
+                        for (note, old_key, track) in originals {
+                            let t = *track as usize;
+                            if t < model.tracks.len() {
+                                let new_key =
+                                    ((*old_key as i32) + delta_keys).clamp(0, 127) as u8;
+                                let new_tick =
+                                    (note.tick as i64 + delta_ticks).max(0) as u32;
+                                let moved = yinhe_model::NoteEvent {
+                                    tick: new_tick,
+                                    duration: note.duration,
+                                    key: new_key,
+                                    velocity: note.velocity,
+                                };
+                                let insert_pos =
+                                    model.tracks[t].notes.partition_point(|n| n.tick < moved.tick);
+                                model.tracks[t].notes.insert(insert_pos, moved);
+                                new_selected.insert((*track, new_tick, new_key));
+                            }
                         }
                         doc.edit.selected = new_selected;
+                        model.rebuild();
                     }
                     doc.data.midi_version = doc.data.midi_version.wrapping_add(1);
                     self.pianoroll_view.base.dirty = true;
@@ -414,10 +427,10 @@ impl App {
             }
         } else {
             // Drag ended — finalize
-            if let Some(_originals) = self.note_drag_originals.take() {
+            if let Some(_originals) = self.note_drag_originals_note.take() {
                 if let Some(idx) = self.active_doc {
                     let doc = &mut self.documents[idx];
-                    doc.data.rebuild_midi_metadata();
+                    doc.data.rebuild_model();
                     doc.data.midi_version = doc.data.midi_version.wrapping_add(1);
                     self.pianoroll_view.base.dirty = true;
                     let snap = self.note_drag_undo_snapshot.take();
@@ -432,7 +445,7 @@ impl App {
                             audio
                                 .handle
                                 .send(yinhe_audio::AudioCommand::ReloadNotes {
-                                    midi: Arc::clone(&doc.data.midi),
+                                    midi: Arc::new(doc.midi()),
                                 });
                     }
                 }

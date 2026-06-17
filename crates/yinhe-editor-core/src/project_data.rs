@@ -1,17 +1,19 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use yinhe_midi::build_automation_lanes;
 use yinhe_midi::{MidiFile, TrackInfo};
-use yinhe_types::NoteScanIndex;
+use yinhe_model::YinModel;
 
 /// Persistent project data. This is the source of truth for saving,
 /// and the content of undo/redo snapshots.
 ///
-/// `Arc<MidiFile>` ensures snapshot clone is O(1) — actual data copy
+/// `Arc<YinModel>` ensures snapshot clone is O(1) — actual data copy
 /// only happens on `Arc::make_mut` (copy-on-write).
 #[derive(Clone)]
 pub struct ProjectData {
+    pub model: Arc<YinModel>,
+    /// Cached MidiFile for legacy consumers (audio engine, piano roll).
+    /// Rebuilt lazily when model changes.
     pub midi: Arc<MidiFile>,
     /// Authoritative, editable track names. Mirrored into `track_info_cache`.
     pub track_names: Vec<String>,
@@ -20,7 +22,7 @@ pub struct ProjectData {
     pub project_description: String,
     pub project_ppq: u32,
     pub compression_level: i32,
-    /// Monotonic counter bumped on every MidiFile mutation or snapshot restore.
+    /// Monotonic counter bumped on every YinModel mutation or snapshot restore.
     /// Used as pianoroll layer-cache key so GPU re-renders when data changes.
     pub midi_version: u64,
 }
@@ -39,46 +41,50 @@ impl ProjectData {
         self.midi_version = self.midi_version.wrapping_add(1);
     }
 
-    /// Rebuild `note_count`, `tick_length`, `scan_index`, `automation_lanes`
-    /// on the MidiFile after note mutations.
+    /// Rebuild derived indices on the YinModel after mutations.
     ///
     /// O(N) where N = total notes. Call after `Arc::make_mut`.
-    pub fn rebuild_midi_metadata(&mut self) {
-        let midi = Arc::make_mut(&mut self.midi);
-        midi.note_count = 0;
-        let mut max_tick = 0u64;
-        for notes in &midi.key_notes {
-            midi.note_count += notes.len() as u64;
-            for note in notes {
-                max_tick = max_tick.max(note.end_tick as u64);
-            }
-        }
-        midi.tick_length = max_tick;
-        midi.scan_index = Some(NoteScanIndex::build(&midi.key_notes, max_tick));
-        midi.automation_lanes = build_automation_lanes(
-            &midi.control_events,
-            &midi.key_notes,
-            &midi.track_channels,
-        );
+    pub fn rebuild_model(&mut self) {
+        let model = Arc::make_mut(&mut self.model);
+        model.rebuild();
+        // Rebuild cached MidiFile for legacy consumers
+        self.midi = Arc::new(yinhe_model::convert::to_midi::yinmodel_to_midi(model));
     }
 
-    /// Rebuild `track_info_cache` from current midi + track_names.
+    /// Get a reference to the YinModel.
+    pub fn model(&self) -> &YinModel {
+        &self.model
+    }
+
+    /// Rebuild `track_info_cache` from current model.
     pub fn track_info(&self) -> Vec<TrackInfo> {
-        self.midi.track_info()
+        self.model
+            .tracks
+            .iter()
+            .enumerate()
+            .map(|(i, track)| TrackInfo {
+                index: i as u16,
+                name: track.name.clone(),
+                note_count: track.notes.len() as u64,
+                port: track.port,
+                channel: track.channel,
+            })
+            .collect()
     }
 
     /// Rebuild `pc_map_cache` from current control events.
     pub fn pc_map_cache(&self) -> HashMap<u8, u8> {
         let mut pc_map = HashMap::new();
-        for ev in &self.midi.control_events {
-            if let yinhe_midi::MidiControlEvent::ProgramChange {
-                program, track, ..
-            } = ev
-            {
-                let ch = self.midi.track_channels.get(*track as usize).copied().unwrap_or(0);
-                pc_map.entry(ch).or_insert(*program);
+        for track in &self.model.tracks {
+            for pc in &track.program_change {
+                pc_map.entry(track.channel).or_insert(pc.program);
             }
         }
         pc_map
+    }
+
+    /// Convert to MidiFile for legacy consumers (audio engine, export).
+    pub fn to_midi(&self) -> MidiFile {
+        yinhe_model::convert::to_midi::yinmodel_to_midi(&self.model)
     }
 }

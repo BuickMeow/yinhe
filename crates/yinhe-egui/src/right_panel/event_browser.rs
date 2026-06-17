@@ -159,17 +159,18 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>, state: &mut EventBrow
 
 fn show_realtime(ui: &mut egui::Ui, doc: &mut Document, state: &mut EventBrowserState) {
     let midi = doc.midi();
-    let ppq = midi.ticks_per_beat;
-    let default_num = midi.time_sig_numerator;
-    let ts_events: Vec<TypesTimeSigEvent> = midi.time_sig_events.clone();
+    let midi_ref = &midi;
+    let ppq = midi_ref.ticks_per_beat;
+    let default_num = midi_ref.time_sig_numerator;
+    let ts_events: Vec<TypesTimeSigEvent> = midi_ref.time_sig_events.clone();
     let bar_lookup = BarLookup::build(ppq, default_num, &ts_events);
 
-    let fingerprint = midi.tick_length
-        ^ (midi.note_count << 16)
-        ^ (midi.control_events.len() as u64).wrapping_mul(0x9E3779B9);
+    let fingerprint = midi_ref.tick_length
+        ^ (midi_ref.note_count << 16)
+        ^ (midi_ref.control_events.len() as u64).wrapping_mul(0x9E3779B9);
     if state.midi_fingerprint != Some(fingerprint) {
         state.expanded_tracks.clear();
-        for i in 0..midi.track_ports.len() {
+        for i in 0..midi_ref.track_ports.len() {
             state.expanded_tracks.insert(i as u16);
         }
         state.midi_fingerprint = Some(fingerprint);
@@ -201,7 +202,7 @@ fn show_realtime(ui: &mut egui::Ui, doc: &mut Document, state: &mut EventBrowser
             .show(ui, |ui| {
                 frame_bg.show(ui, |ui| {
                     ui.set_min_width(ui.available_width());
-                    ui.vertical(|ui| render_realtime_tree(ui, midi, state));
+                    ui.vertical(|ui| render_realtime_tree(ui, midi_ref, state));
                 });
             });
     });
@@ -221,9 +222,9 @@ fn show_realtime(ui: &mut egui::Ui, doc: &mut Document, state: &mut EventBrowser
                 frame_bg.show(ui, |ui| {
                     ui.set_min_width(ui.available_width());
                     if let Some(sel) = &state.selected_item {
-                        show_realtime_detail(ui, sel, midi, &bar_lookup);
+                        show_realtime_detail(ui, sel, midi_ref, &bar_lookup);
                     } else {
-                        show_realtime_overview(ui, midi);
+                        show_realtime_overview(ui, midi_ref);
                     }
                 });
             });
@@ -396,15 +397,8 @@ fn show_realtime_overview(ui: &mut egui::Ui, midi: &yinhe_midi::MidiFile) {
 // ═══════════════════════════════════════════════════════════════
 
 fn show_archive(ui: &mut egui::Ui, doc: &mut Document, state: &mut EventBrowserState) {
-    let Some(archive) = &doc.archive else {
-        ui.add_space(8.0);
-        ui.label(
-            egui::RichText::new("（无归档数据 — 仅 .yin 文件支持此视图）")
-                .color(egui::Color32::from_gray(100))
-                .size(12.0),
-        );
-        return;
-    };
+    // Generate archive from model for display
+    let archive = yinhe_model::convert::to_archive::yinmodel_to_archive(&doc.data.model);
 
     let mut entries: Vec<(&String, &ArchiveEntry)> = archive.entries.iter().collect();
     entries.sort_by(|a, b| a.0.cmp(b.0));
@@ -451,9 +445,9 @@ fn show_archive(ui: &mut egui::Ui, doc: &mut Document, state: &mut EventBrowserS
                     ui.set_min_width(ui.available_width());
                     ui.vertical(|ui| {
                         if let ArchiveTreeNode::Dir { children } = &tree {
-                            for (name, node) in children {
-                                render_archive_node(ui, name, node, "", 0, archive, state);
-                            }
+                        for (name, node) in children {
+                            render_archive_node(ui, name, node, "", 0, &archive, state);
+                        }
                         }
                     });
                 });

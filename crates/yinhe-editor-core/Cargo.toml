@@ -7,9 +7,11 @@ edition = "2024"
 yinhe-types = { path = "../yinhe-types" }
 yinhe-midi = { path = "../yinhe-midi" }
 yinhe-project = { path = "../yinhe-project" }
+yinhe-model = { path = "../yinhe-model" }
 yinhe-automation = { path = "../yinhe-automation" }
 yinhe-memtrace = { path = "../yinhe-memtrace" }
 dirs = "6"
+uuid = { version = "1", features = ["v4"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tracing = { workspace = true }

@@ -14,6 +14,7 @@ members = [
     "crates/yinhe-egui",
     "crates/yinhe-memtrace",
     "crates/yinhe-project",
+    "crates/yinhe-model",
     "crates/yinhe-tests",
     "crates/yinhe-test-helpers",
 ]
