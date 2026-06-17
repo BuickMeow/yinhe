@@ -5,6 +5,7 @@ members = [
     "crates/yinhe-core",
     "crates/yinhe-midi",
     "crates/yinhe-mid2",
+    "crates/yinhe-yin",
     "crates/yinhe-dms",
     "crates/yinhe-archive",
     "crates/yinhe-wgpu",
