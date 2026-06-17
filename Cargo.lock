@@ -6481,6 +6481,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "yinhe-test-helpers"
+version = "0.1.0"
+dependencies = [
+ "yinhe-editor-core",
+ "yinhe-midi",
+ "yinhe-types",
+]
+
+[[package]]
+name = "yinhe-tests"
+version = "0.1.0"
+dependencies = [
+ "tempfile",
+ "yinhe-arrangement",
+ "yinhe-editor-core",
+ "yinhe-midi",
+ "yinhe-pianoroll",
+ "yinhe-project",
+ "yinhe-test-helpers",
+ "yinhe-types",
+]
+
+[[package]]
 name = "yinhe-types"
 version = "0.1.0"
 

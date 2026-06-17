@@ -1,0 +1,16 @@
+[package]
+name = "yinhe-tests"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+
+[dev-dependencies]
+yinhe-types = { path = "../yinhe-types" }
+yinhe-midi = { path = "../yinhe-midi" }
+yinhe-project = { path = "../yinhe-project" }
+yinhe-editor-core = { path = "../yinhe-editor-core" }
+yinhe-pianoroll = { path = "../yinhe-pianoroll" }
+yinhe-arrangement = { path = "../yinhe-arrangement" }
+yinhe-test-helpers = { path = "../yinhe-test-helpers" }
+tempfile = { workspace = true }
