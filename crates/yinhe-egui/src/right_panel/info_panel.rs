@@ -26,7 +26,7 @@ pub fn show(
         return false;
     };
 
-    let num_tracks = doc.data.midi.track_ports.len();
+    let num_tracks = doc.data.midi().track_ports.len();
     if num_tracks == 0 {
         ui.add_space(8.0);
         ui.label(
@@ -130,7 +130,7 @@ pub fn show(
         ui.horizontal(|ui| {
             ui.label("Tempo 数:");
             ui.label(
-                egui::RichText::new(format!("{}", doc.data.midi.tempo_segments.len()))
+                egui::RichText::new(format!("{}", doc.data.midi().tempo_segments.len()))
                     .color(egui::Color32::from_gray(180))
                     .size(13.0),
             );
@@ -138,7 +138,7 @@ pub fn show(
         ui.horizontal(|ui| {
             ui.label("Time-sig 数:");
             ui.label(
-                egui::RichText::new(format!("{}", doc.data.midi.time_sig_events.len()))
+                egui::RichText::new(format!("{}", doc.data.midi().time_sig_events.len()))
                     .color(egui::Color32::from_gray(180))
                     .size(13.0),
             );
@@ -229,11 +229,13 @@ pub fn show(
         // Push pre-change snapshot for undo.
         let snap = doc.data.snapshot("Change port/channel");
         doc.history.push(snap);
-        let new_global_ch = new_port * 16 + (new_ch - 1);
         {
-            let midi = Arc::make_mut(&mut doc.data.midi);
-            midi.track_channels[track_idx] = new_global_ch;
-            midi.track_ports[track_idx] = new_port;
+            let model = Arc::make_mut(&mut doc.data.model);
+            if track_idx < model.tracks.len() {
+                let td = Arc::make_mut(&mut model.tracks[track_idx]);
+                td.port = new_port;
+                td.channel = new_ch.saturating_sub(1);
+            }
         }
         // Rebuild metadata and caches
         doc.data.rebuild_model();

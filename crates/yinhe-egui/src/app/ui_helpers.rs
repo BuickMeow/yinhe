@@ -374,7 +374,7 @@ impl App {
                         if t < model.tracks.len() {
                             if let Some(note) = model.tracks[t].notes
                                 .iter()
-                                .find(|n| n.key == key as u8 && n.tick == start_tick)
+                                .find(|n| n.key == key as u8 && n.start_tick == start_tick)
                             {
                                 originals.push((*note, key, track));
                             }
@@ -394,8 +394,9 @@ impl App {
                         for &(track, start_tick, key) in &doc.edit.selected {
                             let t = track as usize;
                             if t < model.tracks.len() {
-                                model.tracks[t].notes
-                                    .retain(|n| !(n.key == key as u8 && n.tick == start_tick));
+                                let td = Arc::make_mut(&mut model.tracks[t]);
+                                td.notes
+                                    .retain(|n| !(n.key == key as u8 && n.start_tick == start_tick));
                             }
                         }
                         let mut new_selected = std::collections::HashSet::new();
@@ -405,16 +406,19 @@ impl App {
                                 let new_key =
                                     ((*old_key as i32) + delta_keys).clamp(0, 127) as u8;
                                 let new_tick =
-                                    (note.tick as i64 + delta_ticks).max(0) as u32;
-                                let moved = yinhe_model::NoteEvent {
-                                    tick: new_tick,
-                                    duration: note.duration,
+                                    (note.start_tick as i64 + delta_ticks).max(0) as u32;
+                                let length = note.end_tick - note.start_tick;
+                                let moved = yinhe_core::NoteEvent {
+                                    start_tick: new_tick,
+                                    end_tick: new_tick + length,
                                     key: new_key,
                                     velocity: note.velocity,
+                                    dup_index: 0,
                                 };
+                                let td = Arc::make_mut(&mut model.tracks[t]);
                                 let insert_pos =
-                                    model.tracks[t].notes.partition_point(|n| n.tick < moved.tick);
-                                model.tracks[t].notes.insert(insert_pos, moved);
+                                    td.notes.partition_point(|n| n.start_tick < moved.start_tick);
+                                td.notes.insert(insert_pos, moved);
                                 new_selected.insert((*track, new_tick, new_key));
                             }
                         }
@@ -445,7 +449,7 @@ impl App {
                             audio
                                 .handle
                                 .send(yinhe_audio::AudioCommand::ReloadNotes {
-                                    midi: Arc::new(doc.midi()),
+                                    midi: doc.midi(),
                                 });
                     }
                 }

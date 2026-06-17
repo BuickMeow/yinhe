@@ -1,10 +1,9 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use yinhe_model::{NoteEvent, YinModel};
+use yinhe_core::{NoteEvent, TrackData, YinModel};
 use yinhe_types::TRACK_PALETTE;
 
-use crate::config::{ProjectSfConfig, SfEntry};
 use crate::edit_state::EditState;
 use crate::history::UndoStack;
 use crate::project_data::ProjectData;
@@ -27,17 +26,10 @@ impl Default for TrackOverride {
 }
 
 /// Per-document state: persistent data + editing state + undo history.
-///
-/// Layout/zoom state (PianoRollView, ArrangementView) lives in `App`,
-/// not here, so loading a new MIDI file preserves the user's zoom/scroll.
 pub struct Document {
-    /// Persistent project data (source of truth for save, undo snapshots).
     pub data: ProjectData,
-    /// Transient editing state (not persisted, not in undo snapshots).
     pub edit: EditState,
-    /// Per-document undo/redo stack.
     pub history: UndoStack,
-    /// File identity.
     pub file_name: String,
     pub file_path: Option<String>,
 }
@@ -49,16 +41,13 @@ impl Default for Document {
 }
 
 impl Document {
-    // ── Convenience accessors ──
-
     pub fn model(&self) -> &YinModel {
         &self.data.model
     }
 
-    /// Compatibility: convert YinModel to MidiFile for legacy consumers.
-    /// This is O(N) — prefer using model() directly when possible.
-    pub fn midi(&self) -> yinhe_midi::MidiFile {
-        self.data.to_midi()
+    /// Compatibility: lazy MidiFile view of the model. Cheap on cache hit.
+    pub fn midi(&self) -> Arc<yinhe_midi::MidiFile> {
+        self.data.midi()
     }
 
     pub fn track_names(&self) -> &[String] {
@@ -73,37 +62,22 @@ impl Document {
         &self.edit.track_info_cache
     }
 
-    // ── Constructors ──
-
     pub fn empty() -> Self {
         let mut model = YinModel {
-            conductor: yinhe_model::ConductorData {
-                tempo: vec![yinhe_model::TempoEvent {
-                    tick: 0,
-                    bpm: 120.0,
-                }],
-                time_sig: vec![yinhe_model::TimeSigEvent {
+            conductor: Arc::new(yinhe_core::ConductorData {
+                tempo: vec![yinhe_core::TempoEvent { tick: 0, bpm: 120.0 }],
+                time_sig: vec![yinhe_core::TimeSigEvent {
                     tick: 0,
                     numerator: 4,
                     denominator: 2,
                 }],
-            },
-            tracks: vec![yinhe_model::TrackData {
-                uuid: uuid::Uuid::new_v4().to_string(),
-                name: "Track 1".to_string(),
-                port: 0,
-                channel: 0,
-                notes: Vec::new(),
-                cc: std::collections::BTreeMap::new(),
-                pitch_bend: Vec::new(),
-                program_change: Vec::new(),
-                rpn: std::collections::BTreeMap::new(),
-            }],
-            meta: yinhe_model::ProjectMeta::default(),
-            key_index: yinhe_model::KeyIndex::default(),
-            key_notes_cache: (0..128).map(|_| Vec::new()).collect(),
-            note_count: 0,
-            tick_length: 0,
+            }),
+            tracks: vec![Arc::new({
+                let mut t = TrackData::new(0, 0);
+                t.name = "Track 1".to_string();
+                t
+            })],
+            ..Default::default()
         };
         model.rebuild();
 
@@ -111,20 +85,17 @@ impl Document {
         let track_info_cache = build_track_info(&model);
         let num_tracks = model.tracks.len();
         let conductor_track_idx = None;
-        let midi = Arc::new(yinhe_model::convert::to_midi::yinmodel_to_midi(&model));
 
         Document {
-            data: ProjectData {
-                model: Arc::new(model),
-                midi,
+            data: ProjectData::new(
+                Arc::new(model),
                 track_names,
-                project_name: String::new(),
-                project_artist: String::new(),
-                project_description: String::new(),
-                project_ppq: 480,
-                compression_level: 0,
-                midi_version: 0,
-            },
+                String::new(),
+                String::new(),
+                String::new(),
+                480,
+                0,
+            ),
             edit: EditState {
                 track_visible: vec![true],
                 track_pianoroll_visible: vec![true],
@@ -153,32 +124,18 @@ impl Document {
                 .map(|s| s.to_string())
                 .unwrap_or_default();
 
-            // Convert to YinModel
-            let mut model = yinhe_model::convert::from_midi::midi_to_yinmodel(&midi);
+            // Phase 1: still uses old yinhe-model::convert::from_midi to
+            // build a YinModel, then bridges to yinhe_core::YinModel.
+            // Phase 1b will switch to yinhe_mid2::parse_bytes directly.
+            let old_model = yinhe_model::convert::from_midi::midi_to_yinmodel(&midi);
+            let mut model = old_model_to_core(old_model);
 
-            // Detect conductor track
+            // Detect conductor track; insert one if missing.
             let conductor_track_idx = detect_conductor_from_model(&model);
             if conductor_track_idx.is_none() {
-                // Insert conductor track
-                for track in &mut model.tracks {
-                    for note in &mut track.notes {
-                        // Notes are already per-track, no global track offset needed
-                    }
-                }
-                model.tracks.insert(
-                    0,
-                    yinhe_model::TrackData {
-                        uuid: uuid::Uuid::new_v4().to_string(),
-                        name: "Conductor".to_string(),
-                        port: 0,
-                        channel: 0,
-                        notes: Vec::new(),
-                        cc: std::collections::BTreeMap::new(),
-                        pitch_bend: Vec::new(),
-                        program_change: Vec::new(),
-                        rpn: std::collections::BTreeMap::new(),
-                    },
-                );
+                let mut conductor = TrackData::new(0, 0);
+                conductor.name = "Conductor".to_string();
+                model.tracks.insert(0, Arc::new(conductor));
             }
             let conductor_track_idx = detect_conductor_from_model(&model);
 
@@ -190,17 +147,15 @@ impl Document {
                 .map(|i| track_color(i, conductor_track_idx))
                 .collect();
 
-            let mut data = ProjectData {
-                model: Arc::new(model.clone()),
-                midi: Arc::new(yinhe_model::convert::to_midi::yinmodel_to_midi(&model)),
+            let mut data = ProjectData::new(
+                Arc::new(model),
                 track_names,
-                project_name: String::new(),
-                project_artist: String::new(),
-                project_description: String::new(),
-                project_ppq: 480,
-                compression_level: 0,
-                midi_version: 0,
-            };
+                String::new(),
+                String::new(),
+                String::new(),
+                480,
+                0,
+            );
             data.rebuild_model();
 
             Ok(Document {
@@ -227,8 +182,10 @@ impl Document {
         path: &str,
         quantize: QuantizePreset,
     ) -> std::io::Result<(Self, bool)> {
-        // Load .yin file
-        let model = yinhe_model::io::load::load_yin(path)?;
+        // Phase 1: still uses old yinhe-model::io::load::load_yin, then
+        // bridges. Phase 1b will switch to yinhe_yin::load_yin directly.
+        let old_model = yinhe_model::io::load::load_yin(path)?;
+        let model = old_model_to_core(old_model);
 
         let file_name = std::path::Path::new(path)
             .file_stem()
@@ -242,7 +199,6 @@ impl Document {
         let pc_map_cache = build_pc_map_cache_from_model(&model);
         let conductor_track_idx = detect_conductor_from_model(&model);
 
-        // Extract project metadata
         let project_name = model.meta.name.clone();
         let project_artist = model.meta.artist.clone();
         let project_description = model.meta.description.clone();
@@ -253,17 +209,15 @@ impl Document {
             .map(|i| track_color(i, conductor_track_idx))
             .collect();
 
-        let mut data = ProjectData {
-            model: Arc::new(model.clone()),
-            midi: Arc::new(yinhe_model::convert::to_midi::yinmodel_to_midi(&model)),
+        let mut data = ProjectData::new(
+            Arc::new(model),
             track_names,
             project_name,
             project_artist,
             project_description,
             project_ppq,
             compression_level,
-            midi_version: 0,
-        };
+        );
         data.rebuild_model();
 
         Ok((
@@ -284,19 +238,17 @@ impl Document {
                 file_name,
                 file_path: Some(path.to_string()),
             },
-            false, // soundfont_project_mode
+            false,
         ))
     }
 
-    /// Re-decode all track names using a different encoding.
     pub fn recode_track_names(&mut self, _encoding: yinhe_midi::MidiImportEncoding) {
         // TODO: implement track name re-encoding for YinModel
         self.data.bump_version();
     }
+}
 
-    // ── Note editing operations ──
-
-    /// Delete all selected notes. Returns `true` if any notes were removed.
+impl Document {
     pub fn delete_selected(&mut self) -> bool {
         if self.edit.selected.is_empty() {
             return false;
@@ -306,9 +258,9 @@ impl Document {
             for &(track, start_tick, key) in &self.edit.selected {
                 let track = track as usize;
                 if track < model.tracks.len() {
-                    model.tracks[track]
-                        .notes
-                        .retain(|n| !(n.key == key as u8 && n.tick == start_tick));
+                    let td = Arc::make_mut(&mut model.tracks[track]);
+                    td.notes
+                        .retain(|n| !(n.key == key as u8 && n.start_tick == start_tick));
                 }
             }
             self.edit.selected.clear();
@@ -317,9 +269,6 @@ impl Document {
         true
     }
 
-    /// Duplicate all selected notes. New notes are placed after the original
-    /// selection, offset by the selection duration. Returns `true` if any
-    /// notes were duplicated.
     pub fn duplicate_selected(&mut self) -> bool {
         if self.edit.selected.is_empty() {
             return false;
@@ -334,7 +283,7 @@ impl Document {
                     if let Some(note) = model.tracks[t]
                         .notes
                         .iter()
-                        .find(|n| n.key == key as u8 && n.tick == start_tick)
+                        .find(|n| n.key == key as u8 && n.start_tick == start_tick)
                     {
                         selected_data.push((*note, track));
                     }
@@ -345,12 +294,8 @@ impl Document {
                 return false;
             }
 
-            let min_start = selected_data.iter().map(|(n, _)| n.tick).min().unwrap();
-            let max_end = selected_data
-                .iter()
-                .map(|(n, _)| n.tick + n.duration)
-                .max()
-                .unwrap();
+            let min_start = selected_data.iter().map(|(n, _)| n.start_tick).min().unwrap();
+            let max_end = selected_data.iter().map(|(n, _)| n.end_tick).max().unwrap();
             let offset = (max_end - min_start).max(1);
 
             let mut new_selected = HashSet::new();
@@ -358,16 +303,16 @@ impl Document {
                 let t = *track as usize;
                 if t < model.tracks.len() {
                     let new_note = NoteEvent {
-                        tick: note.tick + offset,
-                        duration: note.duration,
+                        start_tick: note.start_tick + offset,
+                        end_tick: note.end_tick + offset,
                         key: note.key,
                         velocity: note.velocity,
+                        dup_index: 0,
                     };
-                    let insert_pos = model.tracks[t]
-                        .notes
-                        .partition_point(|n| n.tick < new_note.tick);
-                    model.tracks[t].notes.insert(insert_pos, new_note);
-                    new_selected.insert((*track, note.tick + offset, note.key));
+                    let td = Arc::make_mut(&mut model.tracks[t]);
+                    let insert_pos = td.notes.partition_point(|n| n.start_tick < new_note.start_tick);
+                    td.notes.insert(insert_pos, new_note);
+                    new_selected.insert((*track, note.start_tick + offset, note.key));
                 }
             }
 
@@ -377,8 +322,6 @@ impl Document {
         true
     }
 
-    /// Transpose selected notes by `semitones` (e.g. +12 for up an octave,
-    /// -12 for down). Returns `true` if any notes were moved.
     pub fn transpose_selected(&mut self, semitones: i8) -> bool {
         if self.edit.selected.is_empty() {
             return false;
@@ -390,12 +333,13 @@ impl Document {
             for &(track, start_tick, key) in &self.edit.selected {
                 let t = track as usize;
                 if t < model.tracks.len() {
-                    if let Some(pos) = model.tracks[t]
+                    let td = Arc::make_mut(&mut model.tracks[t]);
+                    if let Some(pos) = td
                         .notes
                         .iter()
-                        .position(|n| n.key == key as u8 && n.tick == start_tick)
+                        .position(|n| n.key == key as u8 && n.start_tick == start_tick)
                     {
-                        let note = model.tracks[t].notes.remove(pos);
+                        let note = td.notes.remove(pos);
                         moved_data.push((note, track));
                     }
                 }
@@ -411,16 +355,16 @@ impl Document {
                 if t < model.tracks.len() {
                     let new_key = ((note.key as i16) + (semitones as i16)).clamp(0, 127) as u8;
                     let new_note = NoteEvent {
-                        tick: note.tick,
-                        duration: note.duration,
+                        start_tick: note.start_tick,
+                        end_tick: note.end_tick,
                         key: new_key,
                         velocity: note.velocity,
+                        dup_index: 0,
                     };
-                    let insert_pos = model.tracks[t]
-                        .notes
-                        .partition_point(|n| n.tick < new_note.tick);
-                    model.tracks[t].notes.insert(insert_pos, new_note);
-                    new_selected.insert((*track, note.tick, new_key));
+                    let td = Arc::make_mut(&mut model.tracks[t]);
+                    let insert_pos = td.notes.partition_point(|n| n.start_tick < new_note.start_tick);
+                    td.notes.insert(insert_pos, new_note);
+                    new_selected.insert((*track, note.start_tick, new_key));
                 }
             }
 
@@ -430,8 +374,6 @@ impl Document {
         true
     }
 
-    /// Restore document state from an undo snapshot, rebuild caches,
-    /// and clear selection.
     pub fn apply_undo_snapshot(&mut self, snap: crate::history::UndoSnapshot) {
         self.data = snap.data;
         self.data.bump_version();
@@ -448,12 +390,119 @@ impl Document {
 
 // ── Free functions ──
 
-/// Detect the conductor track from a YinModel.
+/// Bridge: convert old yinhe_model::YinModel → new yinhe_core::YinModel.
+/// Used during Phase 1 while consumers still go through old parser/loader.
+/// Deleted in Phase 4 along with yinhe-model.
+fn old_model_to_core(old: yinhe_model::YinModel) -> YinModel {
+    use std::collections::BTreeMap;
+
+    let conductor = yinhe_core::ConductorData {
+        tempo: old
+            .conductor
+            .tempo
+            .iter()
+            .map(|t| yinhe_core::TempoEvent { tick: t.tick, bpm: t.bpm })
+            .collect(),
+        time_sig: old
+            .conductor
+            .time_sig
+            .iter()
+            .map(|t| yinhe_core::TimeSigEvent {
+                tick: t.tick,
+                numerator: t.numerator,
+                denominator: t.denominator,
+            })
+            .collect(),
+    };
+
+    let tracks: Vec<Arc<TrackData>> = old
+        .tracks
+        .iter()
+        .map(|ot| {
+            let mut td = TrackData::new(ot.port, ot.channel);
+            td.uuid = ot.uuid.clone();
+            td.name = ot.name.clone();
+            // Convert notes (tick + duration → start_tick + end_tick)
+            // and assign dup_index for any (key, start_tick) collisions.
+            let mut notes: Vec<NoteEvent> = ot
+                .notes
+                .iter()
+                .map(|n| NoteEvent {
+                    start_tick: n.tick,
+                    end_tick: n.tick + n.duration,
+                    key: n.key,
+                    velocity: n.velocity,
+                    dup_index: 0,
+                })
+                .collect();
+            notes.sort_by_key(|n| (n.start_tick, n.key));
+            let mut counter: BTreeMap<(u8, u32), u8> = BTreeMap::new();
+            for n in notes.iter_mut() {
+                let entry = counter.entry((n.key, n.start_tick)).or_insert(0);
+                n.dup_index = *entry;
+                *entry = entry.saturating_add(1);
+            }
+            td.notes = notes;
+            for (&controller, evs) in &ot.cc {
+                td.cc.insert(
+                    controller,
+                    evs.iter()
+                        .map(|e| yinhe_core::CcEvent { tick: e.tick, value: e.value })
+                        .collect(),
+                );
+            }
+            td.pitch_bend = ot
+                .pitch_bend
+                .iter()
+                .map(|e| yinhe_core::PitchBendEvent { tick: e.tick, value: e.value })
+                .collect();
+            td.program_change = ot
+                .program_change
+                .iter()
+                .map(|e| yinhe_core::PcEvent {
+                    tick: e.tick,
+                    program: e.program,
+                    bank_msb: e.bank_msb,
+                    bank_lsb: e.bank_lsb,
+                })
+                .collect();
+            // Old RPN keyed by u8 (typically 0/1/2 with implicit lsb=0); new
+            // uses u16 (msb<<8)|lsb. Promote.
+            for (&rpn_msb, evs) in &ot.rpn {
+                let key = (rpn_msb as u16) << 8;
+                td.rpn.insert(
+                    key,
+                    evs.iter()
+                        .map(|e| yinhe_core::RpnEvent { tick: e.tick, value: e.value })
+                        .collect(),
+                );
+            }
+            Arc::new(td)
+        })
+        .collect();
+
+    let meta = yinhe_core::ProjectMeta {
+        name: old.meta.name,
+        artist: old.meta.artist,
+        description: old.meta.description,
+        ppq: old.meta.ppq,
+        compression_level: old.meta.compression_level,
+    };
+
+    let mut model = YinModel {
+        conductor: Arc::new(conductor),
+        tracks,
+        meta,
+        ..Default::default()
+    };
+    model.rebuild();
+    model
+}
+
 pub fn detect_conductor_from_model(model: &YinModel) -> Option<u16> {
     if model.tracks.is_empty() {
         return None;
     }
-    // First track is conductor if it has no notes and no CC events
     let first = &model.tracks[0];
     if !first.notes.is_empty() {
         return None;
@@ -464,7 +513,6 @@ pub fn detect_conductor_from_model(model: &YinModel) -> Option<u16> {
     Some(0)
 }
 
-/// Build track info from YinModel.
 fn build_track_info(model: &YinModel) -> Vec<yinhe_midi::TrackInfo> {
     model
         .tracks
@@ -480,7 +528,6 @@ fn build_track_info(model: &YinModel) -> Vec<yinhe_midi::TrackInfo> {
         .collect()
 }
 
-/// Build pc_map_cache from YinModel.
 fn build_pc_map_cache_from_model(model: &YinModel) -> HashMap<u8, u8> {
     let mut pc_map = HashMap::new();
     for track in &model.tracks {
@@ -491,7 +538,6 @@ fn build_pc_map_cache_from_model(model: &YinModel) -> HashMap<u8, u8> {
     pc_map
 }
 
-/// Compute the display color for a track, respecting an optional conductor offset.
 pub fn track_color(idx: usize, conductor_idx: Option<u16>) -> [f32; 3] {
     if Some(idx as u16) == conductor_idx {
         return [0.94, 0.94, 0.94];
@@ -522,32 +568,18 @@ mod tests {
 
     #[test]
     fn detect_conductor_none_when_track0_has_notes() {
+        let mut t = TrackData::new(0, 0);
+        t.name = "Piano".into();
+        t.notes = vec![NoteEvent {
+            start_tick: 0,
+            end_tick: 480,
+            key: 60,
+            velocity: 100,
+            dup_index: 0,
+        }];
         let mut model = YinModel {
-            conductor: yinhe_model::ConductorData {
-                tempo: Vec::new(),
-                time_sig: Vec::new(),
-            },
-            tracks: vec![yinhe_model::TrackData {
-                uuid: "test".into(),
-                name: "Piano".into(),
-                port: 0,
-                channel: 0,
-                notes: vec![NoteEvent {
-                    tick: 0,
-                    duration: 480,
-                    key: 60,
-                    velocity: 100,
-                }],
-                cc: std::collections::BTreeMap::new(),
-                pitch_bend: Vec::new(),
-                program_change: Vec::new(),
-                rpn: std::collections::BTreeMap::new(),
-            }],
-            meta: yinhe_model::ProjectMeta::default(),
-            key_index: yinhe_model::KeyIndex::default(),
-            key_notes_cache: (0..128).map(|_| Vec::new()).collect(),
-            note_count: 0,
-            tick_length: 0,
+            tracks: vec![Arc::new(t)],
+            ..Default::default()
         };
         model.rebuild();
         assert_eq!(detect_conductor_from_model(&model), None);
@@ -555,45 +587,20 @@ mod tests {
 
     #[test]
     fn detect_conductor_some_when_track0_has_no_notes_and_no_ctrl() {
+        let mut t1 = TrackData::new(0, 0);
+        t1.name = "Conductor".into();
+        let mut t2 = TrackData::new(0, 0);
+        t2.name = "Piano".into();
+        t2.notes = vec![NoteEvent {
+            start_tick: 0,
+            end_tick: 480,
+            key: 60,
+            velocity: 100,
+            dup_index: 0,
+        }];
         let mut model = YinModel {
-            conductor: yinhe_model::ConductorData {
-                tempo: Vec::new(),
-                time_sig: Vec::new(),
-            },
-            tracks: vec![
-                yinhe_model::TrackData {
-                    uuid: "test1".into(),
-                    name: "Conductor".into(),
-                    port: 0,
-                    channel: 0,
-                    notes: Vec::new(),
-                    cc: std::collections::BTreeMap::new(),
-                    pitch_bend: Vec::new(),
-                    program_change: Vec::new(),
-                    rpn: std::collections::BTreeMap::new(),
-                },
-                yinhe_model::TrackData {
-                    uuid: "test2".into(),
-                    name: "Piano".into(),
-                    port: 0,
-                    channel: 0,
-                    notes: vec![NoteEvent {
-                        tick: 0,
-                        duration: 480,
-                        key: 60,
-                        velocity: 100,
-                    }],
-                    cc: std::collections::BTreeMap::new(),
-                    pitch_bend: Vec::new(),
-                    program_change: Vec::new(),
-                    rpn: std::collections::BTreeMap::new(),
-                },
-            ],
-            meta: yinhe_model::ProjectMeta::default(),
-            key_index: yinhe_model::KeyIndex::default(),
-            key_notes_cache: (0..128).map(|_| Vec::new()).collect(),
-            note_count: 0,
-            tick_length: 0,
+            tracks: vec![Arc::new(t1), Arc::new(t2)],
+            ..Default::default()
         };
         model.rebuild();
         assert_eq!(detect_conductor_from_model(&model), Some(0));

@@ -5,8 +5,11 @@ edition = "2024"
 
 [dependencies]
 yinhe-types = { path = "../yinhe-types" }
+yinhe-core = { path = "../yinhe-core" }
 yinhe-midi = { path = "../yinhe-midi" }
+yinhe-mid2 = { path = "../yinhe-mid2" }
 yinhe-project = { path = "../yinhe-project" }
+yinhe-yin = { path = "../yinhe-yin" }
 yinhe-model = { path = "../yinhe-model" }
 yinhe-automation = { path = "../yinhe-automation" }
 yinhe-memtrace = { path = "../yinhe-memtrace" }

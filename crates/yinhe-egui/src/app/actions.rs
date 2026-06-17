@@ -133,7 +133,7 @@ impl App {
         self.pianoroll_view.base.dirty = true;
         if let Some(ref audio) = self.audio {
             let _ = audio.handle.send(yinhe_audio::AudioCommand::ReloadNotes {
-                midi: Arc::new(doc.midi()),
+                midi: doc.midi(),
             });
         }
     }
@@ -166,7 +166,7 @@ impl App {
         self.pianoroll_view.base.dirty = true;
         if let Some(ref audio) = self.audio {
             let _ = audio.handle.send(yinhe_audio::AudioCommand::ReloadNotes {
-                midi: Arc::new(doc.midi()),
+                midi: doc.midi(),
             });
         }
     }
@@ -249,7 +249,8 @@ impl App {
 
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
-            let archive = yinhe_model::convert::to_archive::yinmodel_to_archive(&model);
+            let old_model = yinhe_editor_core::midi_compat::core_to_old_model(&model);
+            let archive = yinhe_model::convert::to_archive::yinmodel_to_archive(&old_model);
             if let Err(e) = archive.write_to(&path_for_thread) {
                 tracing::error!("Failed to save project: {}", e);
             }
@@ -358,7 +359,7 @@ impl App {
         }
 
         // Collect render inputs
-        let midi = Arc::new(doc.midi());
+        let midi = doc.midi();
         let sr = if self.export_sample_rate > 0 {
             self.export_sample_rate
         } else {

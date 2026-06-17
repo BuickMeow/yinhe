@@ -147,33 +147,19 @@ pub fn commit_edit(
 mod tests {
     use super::*;
     use std::sync::Arc;
-    use yinhe_midi::MidiFile;
-    use yinhe_model::YinModel;
+    use yinhe_core::YinModel;
 
     fn make_test_data(name: &str) -> ProjectData {
-        let model = YinModel {
-            conductor: yinhe_model::ConductorData {
-                tempo: Vec::new(),
-                time_sig: Vec::new(),
-            },
-            tracks: Vec::new(),
-            meta: yinhe_model::ProjectMeta::default(),
-            key_index: yinhe_model::KeyIndex::default(),
-            key_notes_cache: (0..128).map(|_| Vec::new()).collect(),
-            note_count: 0,
-            tick_length: 0,
-        };
-        ProjectData {
-            model: Arc::new(model),
-            midi: Arc::new(MidiFile::default()),
-            track_names: Vec::new(),
-            project_name: name.to_string(),
-            project_artist: String::new(),
-            project_description: String::new(),
-            project_ppq: 480,
-            compression_level: 0,
-            midi_version: 0,
-        }
+        let model = YinModel::default();
+        ProjectData::new(
+            Arc::new(model),
+            Vec::new(),
+            name.to_string(),
+            String::new(),
+            String::new(),
+            480,
+            0,
+        )
     }
 
     fn snap(label: &'static str, name: &str) -> UndoSnapshot {

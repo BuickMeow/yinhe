@@ -67,7 +67,7 @@ pub fn show(
     // show unclamped positions while the GPU content (clamped inside
     // arrangement_view_ui::show) stays at the boundary — producing a visible
     // "bounce-back" effect on the ruler labels.
-    let total_ticks = crate::view_interaction::total_ticks_padded(doc.data.midi.tick_length);
+    let total_ticks = crate::view_interaction::total_ticks_padded(doc.data.midi().tick_length);
     let num_tracks = doc.edit.track_visible.len();
     arr_view.clamp_scroll(gpu_rect.width(), gpu_rect.height(), total_ticks, num_tracks);
 
@@ -77,10 +77,11 @@ pub fn show(
             egui::pos2(arr_rect.min.x + tp_w + 4.0, arr_rect.min.y),
             egui::pos2(arr_rect.max.x, arr_rect.min.y + RULER_H),
         );
-        let tpb = doc.data.midi.ticks_per_beat;
-        let def_num = doc.data.midi.time_sig_numerator;
-        let def_den = doc.data.midi.time_sig_denominator;
-        let sig_events = doc.data.midi.time_sig_events.as_slice();
+        let midi = doc.data.midi();
+        let tpb = midi.ticks_per_beat;
+        let def_num = midi.time_sig_numerator;
+        let def_den = midi.time_sig_denominator;
+        let sig_events = midi.time_sig_events.as_slice();
         // Parent painter works in screen coordinates; paint_labels applies
         // offset_x = rect.min.x - view.content_left() internally.
         let ruler_painter = ui.painter();
@@ -171,7 +172,7 @@ pub fn show(
 
     // ── Arrangement GPU view (below ruler) ──
     let arr_midi: Option<&dyn yinhe_arrangement::NoteSource> =
-        Some(&*doc.data.midi as &dyn yinhe_arrangement::NoteSource);
+        Some(&*doc.data.model as &dyn yinhe_arrangement::NoteSource);
     let gpu_size = gpu_rect.size();
     ui.scope_builder(egui::UiBuilder::new().max_rect(gpu_rect), |ui| {
         view_ui::show(
@@ -186,12 +187,12 @@ pub fn show(
             &doc.edit.track_colors_cache,
             &mut doc.edit.cursor_tick,
             doc.edit.quantize,
-            doc.data.midi.ticks_per_beat,
+            doc.data.midi().ticks_per_beat,
             Some((
-                doc.data.midi.ticks_per_beat,
-                doc.data.midi.time_sig_numerator,
-                doc.data.midi.time_sig_denominator,
-                doc.data.midi.time_sig_events.as_slice(),
+                doc.data.midi().ticks_per_beat,
+                doc.data.midi().time_sig_numerator,
+                doc.data.midi().time_sig_denominator,
+                doc.data.midi().time_sig_events.as_slice(),
             )),
             is_playing,
             &doc.data.track_names,

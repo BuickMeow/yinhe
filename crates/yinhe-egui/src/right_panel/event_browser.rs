@@ -397,8 +397,9 @@ fn show_realtime_overview(ui: &mut egui::Ui, midi: &yinhe_midi::MidiFile) {
 // ═══════════════════════════════════════════════════════════════
 
 fn show_archive(ui: &mut egui::Ui, doc: &mut Document, state: &mut EventBrowserState) {
-    // Generate archive from model for display
-    let archive = yinhe_model::convert::to_archive::yinmodel_to_archive(&doc.data.model);
+    // Generate archive from model for display (Phase 1 bridge through old model).
+    let old_model = yinhe_editor_core::midi_compat::core_to_old_model(&doc.data.model);
+    let archive = yinhe_model::convert::to_archive::yinmodel_to_archive(&old_model);
 
     let mut entries: Vec<(&String, &ArchiveEntry)> = archive.entries.iter().collect();
     entries.sort_by(|a, b| a.0.cmp(b.0));

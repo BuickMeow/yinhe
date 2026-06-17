@@ -6407,11 +6407,14 @@ dependencies = [
  "tracing",
  "uuid",
  "yinhe-automation",
+ "yinhe-core",
  "yinhe-memtrace",
+ "yinhe-mid2",
  "yinhe-midi",
  "yinhe-model",
  "yinhe-project",
  "yinhe-types",
+ "yinhe-yin",
 ]
 
 [[package]]
@@ -6439,6 +6442,7 @@ dependencies = [
  "yinhe-arrangement",
  "yinhe-audio",
  "yinhe-automation",
+ "yinhe-core",
  "yinhe-dms",
  "yinhe-editor-core",
  "yinhe-memtrace",
