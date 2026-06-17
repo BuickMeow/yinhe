@@ -326,7 +326,7 @@ pub fn show(
                     egui::pos2(cx, content_rect.min.y),
                     egui::pos2(cx, content_rect.max.y),
                 ],
-                egui::Stroke::new(2.0, egui::Color32::from_rgba_unmultiplied(255, 255, 255, 204)),
+                egui::Stroke::new(crate::theme::CURSOR_WIDTH, crate::theme::CURSOR_COLOR),
             );
         }
     }

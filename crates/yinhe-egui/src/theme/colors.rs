@@ -36,3 +36,11 @@ pub const SPLIT_HOVER: egui::Color32 = egui::Color32::from_gray(100);
 pub const SPLIT_DEFAULT: egui::Color32 = egui::Color32::from_gray(60);
 pub const V_SPLIT_HOVER: egui::Color32 = egui::Color32::from_gray(160);
 pub const V_SPLIT_DEFAULT: egui::Color32 = egui::Color32::from_gray(80);
+
+// ── Track button colors ──
+pub const MUTE_ACTIVE: egui::Color32 = egui::Color32::from_rgb(240, 200, 60);
+pub const SOLO_ACTIVE: egui::Color32 = egui::Color32::from_rgb(220, 80, 80);
+
+// ── Cursor / playhead ──
+pub const CURSOR_COLOR: egui::Color32 = egui::Color32::from_rgba_premultiplied(255, 255, 255, 204);
+pub const CURSOR_WIDTH: f32 = 2.0;

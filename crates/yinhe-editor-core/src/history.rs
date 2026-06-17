@@ -142,3 +142,128 @@ pub fn commit_edit(
         stack.push(baseline);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use yinhe_midi::MidiFile;
+
+    fn make_test_data(name: &str) -> ProjectData {
+        ProjectData {
+            midi: Arc::new(MidiFile::default()),
+            track_names: Vec::new(),
+            project_name: name.to_string(),
+            project_artist: String::new(),
+            project_description: String::new(),
+            project_ppq: 480,
+            compression_level: 0,
+            midi_version: 0,
+        }
+    }
+
+    fn snap(label: &'static str, name: &str) -> UndoSnapshot {
+        UndoSnapshot {
+            data: make_test_data(name),
+            label,
+        }
+    }
+
+    #[test]
+    fn push_stores_and_clears_redo() {
+        let mut stack = UndoStack::new();
+        stack.push(snap("init", "a"));
+        assert!(stack.can_undo());
+        // Simulate an undo to populate the redo stack
+        stack.undo(snap("cur", "b"));
+        assert!(stack.can_redo());
+        // Push should clear redo
+        stack.push(snap("new", "c"));
+        assert!(!stack.can_redo());
+        assert!(stack.can_undo());
+    }
+
+    #[test]
+    fn undo_returns_previous_and_pushes_to_future() {
+        let mut stack = UndoStack::new();
+        stack.push(snap("init", "old"));
+        let current = snap("cur", "current");
+        let prev = stack.undo(current);
+        assert!(prev.is_some());
+        assert_eq!(prev.unwrap().data.project_name, "old");
+        assert!(stack.can_redo());
+    }
+
+    #[test]
+    fn redo_returns_future_and_pushes_to_past() {
+        let mut stack = UndoStack::new();
+        stack.push(snap("init", "a"));
+        // undo pushes current ("b") to future, returns previous ("a")
+        stack.undo(snap("cur", "b"));
+        // redo pops future ("b"), pushes current ("a") to past, returns "b"
+        let current = snap("after_undo", "a");
+        let next = stack.redo(current);
+        assert!(next.is_some());
+        assert_eq!(next.unwrap().data.project_name, "b");
+        assert!(stack.can_undo());
+    }
+
+    #[test]
+    fn undo_returns_none_when_empty() {
+        let mut stack = UndoStack::new();
+        let result = stack.undo(snap("cur", "x"));
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn redo_returns_none_when_empty() {
+        let mut stack = UndoStack::new();
+        let result = stack.redo(snap("cur", "x"));
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn can_undo_can_redo_correctness() {
+        let mut stack = UndoStack::new();
+        assert!(!stack.can_undo());
+        assert!(!stack.can_redo());
+
+        stack.push(snap("1", "a"));
+        assert!(stack.can_undo());
+        assert!(!stack.can_redo());
+
+        stack.undo(snap("cur", "b"));
+        assert!(!stack.can_undo());
+        assert!(stack.can_redo());
+
+        stack.redo(snap("cur2", "b"));
+        assert!(stack.can_undo());
+        assert!(!stack.can_redo());
+    }
+
+    #[test]
+    fn push_beyond_max_depth_evicts_oldest() {
+        let mut stack = UndoStack::new();
+        for i in 0..=MAX_DEPTH {
+            stack.push(snap("fill", &format!("item_{i}")));
+        }
+        assert_eq!(stack.past.len(), MAX_DEPTH);
+        // The oldest item should have been evicted
+        let oldest = stack.past.front().unwrap();
+        assert_eq!(oldest.data.project_name, "item_1");
+    }
+
+    #[test]
+    fn clear_wipes_everything() {
+        let mut stack = UndoStack::new();
+        stack.push(snap("1", "a"));
+        stack.undo(snap("2", "b"));
+        assert!(stack.can_undo() || stack.can_redo());
+
+        stack.clear();
+        assert!(!stack.can_undo());
+        assert!(!stack.can_redo());
+        assert_eq!(stack.past.len(), 0);
+        assert_eq!(stack.future.len(), 0);
+    }
+}

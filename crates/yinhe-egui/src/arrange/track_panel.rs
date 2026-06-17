@@ -156,7 +156,7 @@ pub(crate) fn show(
                     m_rect,
                     "M",
                     muted,
-                    egui::Color32::from_rgb(240, 200, 60),
+                    crate::theme::MUTE_ACTIVE,
                     egui::Id::new(("track_btn_m", idx)),
                 );
                 let s_resp = draw_inline_button(
@@ -165,7 +165,7 @@ pub(crate) fn show(
                     s_rect,
                     "S",
                     soloed,
-                    egui::Color32::from_rgb(220, 80, 80),
+                    crate::theme::SOLO_ACTIVE,
                     egui::Id::new(("track_btn_s", idx)),
                 );
 

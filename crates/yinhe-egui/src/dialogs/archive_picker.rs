@@ -41,18 +41,6 @@ impl ArchivePicker {
     }
 }
 
-/// Check if a file path is an archive file.
-pub(crate) fn is_archive_file(path: &str) -> bool {
-    let lower = path.to_lowercase();
-    lower.ends_with(".zip")
-        || lower.ends_with(".7z")
-        || lower.ends_with(".tar")
-        || lower.ends_with(".tar.gz")
-        || lower.ends_with(".tgz")
-        || lower.ends_with(".tar.xz")
-        || lower.ends_with(".txz")
-}
-
 /// Format a byte size into a human-readable string.
 fn format_size(bytes: u64) -> String {
     if bytes < 1024 {

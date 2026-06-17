@@ -76,11 +76,11 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
             let mut button_right: Option<f32> = None;
 
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                let btn_size = egui::vec2(32.0, 32.0);
+                let btn_size = egui::vec2(crate::theme::TRANSPORT_BTN_SIZE, crate::theme::TRANSPORT_BTN_SIZE);
                 let btn_rounding = egui::CornerRadius::same(2);
 
                 let file_btn = ui.add(
-                    egui::Button::new(ICON_DESCRIPTION.rich_text().size(18.0))
+                    egui::Button::new(ICON_DESCRIPTION.rich_text().size(crate::theme::TRANSPORT_BTN_FONT))
                         .min_size(btn_size)
                         .corner_radius(btn_rounding),
                 );
@@ -103,7 +103,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                                     ICON_PLAY_ARROW
                                 })
                                 .rich_text()
-                                .size(18.0),
+                                .size(crate::theme::TRANSPORT_BTN_FONT),
                             )
                             .min_size(btn_size)
                             .corner_radius(btn_rounding),
@@ -119,7 +119,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
 
                     if ui
                         .add(
-                            egui::Button::new(ICON_STOP.rich_text().size(18.0))
+                            egui::Button::new(ICON_STOP.rich_text().size(crate::theme::TRANSPORT_BTN_FONT))
                                 .min_size(btn_size)
                                 .corner_radius(btn_rounding),
                         )
@@ -130,7 +130,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
 
                     // ── Follow-mode button (cycle: None → Page → Continuous) ──
                     let follow_resp = ui.add(
-                        egui::Button::new(ctx.follow_mode.icon().rich_text().size(18.0))
+                        egui::Button::new(ctx.follow_mode.icon().rich_text().size(crate::theme::TRANSPORT_BTN_FONT))
                             .min_size(btn_size)
                             .corner_radius(btn_rounding),
                     );
@@ -289,7 +289,7 @@ fn show_file_menu(
                     item.enabled,
                     egui::Button::selectable(
                         false,
-                        egui::RichText::new(format!("      {}", item.label)).size(14.0),
+                        egui::RichText::new(format!("      {}", item.label)).size(crate::theme::FILE_MENU_FONT),
                     ),
                 );
                 if resp.clicked() {
@@ -413,7 +413,7 @@ fn show_timecode_display(
     let (rect, _) = ui.allocate_exact_size(egui::vec2(rect_w, rect_h), egui::Sense::hover());
 
     let c = crate::theme::ACCENT_ACTIVE;
-    let font = egui::FontId::proportional(12.0);
+    let font = egui::FontId::proportional(crate::theme::TIMECODE_FONT);
     let grid = egui::Stroke::new(1.0, egui::Color32::from_gray(60));
 
     ui.painter()

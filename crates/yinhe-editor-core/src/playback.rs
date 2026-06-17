@@ -84,3 +84,66 @@ impl PlaybackState {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use yinhe_midi::MidiFile;
+
+    fn make_test_midi() -> MidiFile {
+        MidiFile {
+            ticks_per_beat: 480,
+            tick_length: 4800,
+            ..MidiFile::default()
+        }
+    }
+
+    #[test]
+    fn default_is_not_playing() {
+        let state = PlaybackState::default();
+        assert!(!state.is_playing());
+    }
+
+    #[test]
+    fn set_speed_clamps_minimum() {
+        let mut state = PlaybackState::default();
+        state.set_speed(0.01);
+        assert!((state.speed() - 0.1).abs() < f64::EPSILON);
+        state.set_speed(0.0);
+        assert!((state.speed() - 0.1).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn toggle_play_sets_playing() {
+        let mut state = PlaybackState::default();
+        let midi = make_test_midi();
+        state.toggle_play(0.0, &midi);
+        assert!(state.is_playing());
+    }
+
+    #[test]
+    fn toggle_play_again_sets_paused() {
+        let mut state = PlaybackState::default();
+        let midi = make_test_midi();
+        state.toggle_play(0.0, &midi);
+        state.toggle_play(0.0, &midi);
+        assert!(!state.is_playing());
+    }
+
+    #[test]
+    fn stop_resets_to_beginning() {
+        let mut state = PlaybackState::default();
+        let midi = make_test_midi();
+        state.toggle_play(0.0, &midi);
+        state.stop();
+        assert!(!state.is_playing());
+        assert_eq!(state.play_start_time, 0.0);
+    }
+
+    #[test]
+    fn current_tick_none_when_not_playing() {
+        let state = PlaybackState::default();
+        let midi = make_test_midi();
+        assert!(state.current_tick(&midi).is_none());
+    }
+}

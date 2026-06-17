@@ -130,7 +130,7 @@ pub fn build_data_bars(
 
         let mut bars: Vec<Bar> = Vec::new();
         let mut last_tick = u32::MAX;
-        let mut seen_values: Vec<u16> = Vec::new();
+        let mut seen_values = [false; 128];
 
         for evt in events {
             let trk_idx = evt.track as usize;
@@ -140,13 +140,16 @@ pub fn build_data_bars(
 
             if evt.tick != last_tick {
                 last_tick = evt.tick;
-                seen_values.clear();
+                seen_values.fill(false);
             }
 
-            if seen_values.contains(&evt.value) {
+            let val_idx = evt.value as usize;
+            if val_idx < 128 && seen_values[val_idx] {
                 continue;
             }
-            seen_values.push(evt.value);
+            if val_idx < 128 {
+                seen_values[val_idx] = true;
+            }
 
             let val = evt.value as f32;
             let bar_h = ((val + 1.0) / (max_val + 1.0)) * h;

@@ -13,7 +13,7 @@ static GLOBAL_SF_CACHE: LazyLock<RwLock<HashMap<PathBuf, Arc<dyn SoundfontBase>>
 
 /// Remove cache entries that are no longer referenced outside the cache.
 fn sweep_unused() {
-    let mut cache = GLOBAL_SF_CACHE.write().unwrap();
+    let mut cache = GLOBAL_SF_CACHE.write().unwrap_or_else(|e| e.into_inner());
     cache.retain(|_, sf| Arc::strong_count(sf) > 1);
 }
 
@@ -35,7 +35,7 @@ impl SoundFontManager {
 
     pub fn load_soundfont(&self, path: &Path) -> Result<Arc<dyn SoundfontBase>, String> {
         {
-            let cache = GLOBAL_SF_CACHE.read().unwrap();
+            let cache = GLOBAL_SF_CACHE.read().unwrap_or_else(|e| e.into_inner());
             if let Some(sf) = cache.get(path) {
                 return Ok(Arc::clone(sf));
             }
@@ -47,7 +47,7 @@ impl SoundFontManager {
         })?;
 
         let arc: Arc<dyn SoundfontBase> = Arc::new(sf);
-        let mut cache = GLOBAL_SF_CACHE.write().unwrap();
+        let mut cache = GLOBAL_SF_CACHE.write().unwrap_or_else(|e| e.into_inner());
         cache.insert(path.to_path_buf(), Arc::clone(&arc));
         Ok(arc)
     }

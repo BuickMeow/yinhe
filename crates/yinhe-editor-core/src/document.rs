@@ -390,3 +390,118 @@ fn build_pc_map_cache(midi: &yinhe_midi::MidiFile) -> HashMap<u8, u8> {
     }
     pc_map
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_creates_valid_document_with_one_track() {
+        let doc = Document::empty();
+        assert_eq!(doc.midi().track_ports.len(), 1);
+        assert_eq!(doc.midi().track_names.len(), 1);
+        assert_eq!(doc.midi().track_names[0], "Track 1");
+        assert_eq!(doc.track_names().len(), 1);
+        assert_eq!(doc.track_names()[0], "Track 1");
+        assert!(doc.edit.conductor_track_idx.is_none());
+        assert_eq!(doc.edit.track_visible.len(), 1);
+        assert_eq!(doc.edit.track_pianoroll_visible.len(), 1);
+        assert_eq!(doc.file_name, "Untitled");
+    }
+
+    #[test]
+    fn detect_conductor_none_when_track0_has_notes() {
+        let track_info = vec![yinhe_midi::TrackInfo {
+            index: 0,
+            name: "Piano".into(),
+            note_count: 10,
+            port: 0,
+            channel: 0,
+        }];
+        assert_eq!(detect_conductor(&track_info, &[]), None);
+    }
+
+    #[test]
+    fn detect_conductor_some_when_track0_has_no_notes_and_no_ctrl() {
+        let track_info = vec![
+            yinhe_midi::TrackInfo {
+                index: 0,
+                name: "Conductor".into(),
+                note_count: 0,
+                port: 0,
+                channel: 0,
+            },
+            yinhe_midi::TrackInfo {
+                index: 1,
+                name: "Piano".into(),
+                note_count: 5,
+                port: 0,
+                channel: 0,
+            },
+        ];
+        assert_eq!(detect_conductor(&track_info, &[]), Some(0));
+    }
+
+    #[test]
+    fn detect_conductor_none_when_track0_no_notes_but_has_ctrl() {
+        let track_info = vec![yinhe_midi::TrackInfo {
+            index: 0,
+            name: "CC Track".into(),
+            note_count: 0,
+            port: 0,
+            channel: 0,
+        }];
+        let ctrl = vec![yinhe_midi::MidiControlEvent::ControlChange {
+            tick: 0,
+            controller: 7,
+            value: 100,
+            track: 0,
+        }];
+        assert_eq!(detect_conductor(&track_info, &ctrl), None);
+    }
+
+    #[test]
+    fn detect_conductor_none_for_empty_track_info() {
+        assert_eq!(detect_conductor(&[], &[]), None);
+    }
+
+    #[test]
+    fn track_color_conductor_is_whiteish() {
+        let color = track_color(0, Some(0));
+        assert_eq!(color, [0.94, 0.94, 0.94]);
+    }
+
+    #[test]
+    fn track_color_cycles_through_palette() {
+        let first = track_color(0, None);
+        assert_eq!(first, TRACK_PALETTE[0]);
+        let second = track_color(1, None);
+        assert_eq!(second, TRACK_PALETTE[1]);
+        let wrap = track_color(16, None);
+        assert_eq!(wrap, TRACK_PALETTE[0]);
+    }
+
+    #[test]
+    fn track_color_offsets_after_conductor() {
+        // Track 1 after conductor at 0 should use palette index 0 (1-1=0)
+        let color = track_color(1, Some(0));
+        assert_eq!(color, TRACK_PALETTE[0]);
+    }
+
+    #[test]
+    fn build_pc_map_cache_via_from_midi() {
+        let mut m = yinhe_midi::MidiFile::default();
+        m.track_ports = vec![0, 0];
+        m.track_names = vec!["Conductor".into(), "Piano".into()];
+        m.track_channels = vec![0, 0];
+        m.track_channel_prefixes = vec![None, None];
+        m.control_events = vec![yinhe_midi::MidiControlEvent::ProgramChange {
+            tick: 0,
+            program: 48,
+            track: 1,
+        }];
+        let doc = Document::from_midi("test.mid", m, QuantizePreset::default())
+            .expect("from_midi failed");
+        assert_eq!(doc.edit.pc_map_cache.get(&0), Some(&48));
+    }
+}
