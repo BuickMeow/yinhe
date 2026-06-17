@@ -5,7 +5,7 @@ use crate::file_loader::FileLoader;
 use yinhe_editor_core::document::Document;
 use yinhe_editor_core::quantize::QuantizePreset;
 use crate::view_interaction::{FollowMode, FollowModeExt};
-use crate::util::time_format;
+use yinhe_types::time_format;
 
 /// Actions triggered from the file menu dropdown.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -36,7 +36,7 @@ pub fn show(
     scroll_mode: u32,
     min_border_width: f32,
 ) {
-    let _arrange_total_start = if crate::perf_probe::enabled() {
+    let _arrange_total_start = if yinhe_memtrace::perf_probe::enabled() {
         Some(std::time::Instant::now())
     } else {
         None
@@ -100,8 +100,7 @@ pub fn show(
 
     view.base.dirty = false;
 
-    crate::util::qos::guarded(|| {
-        renderer.upload_uniforms(uniforms);
+    renderer.upload_uniforms(uniforms);
         renderer.ensure_layers(3);
 
         // Layer 0: decor (background + track lanes)
@@ -201,20 +200,17 @@ pub fn show(
                 );
             }
         });
-    });
 
     let content_changed = true;
-    crate::util::qos::guarded(|| {
-        render_ctx.paint(
-            renderer,
-            w,
-            h,
-            "arrangement_frame",
-            &painter,
-            rect,
-            content_changed,
-        );
-    });
+    render_ctx.paint(
+        renderer,
+        w,
+        h,
+        "arrangement_frame",
+        &painter,
+        rect,
+        content_changed,
+    );
 
     // ── Playback cursor (drawn by egui on top of the wgpu texture) ──
     if let Some(ct) = *cursor_tick {
@@ -264,7 +260,7 @@ pub fn show(
     );
 
     if let Some(t0) = _arrange_total_start {
-        crate::perf_probe::record_arrange_total(t0.elapsed());
+        yinhe_memtrace::perf_probe::record_arrange_total(t0.elapsed());
     }
 }
 

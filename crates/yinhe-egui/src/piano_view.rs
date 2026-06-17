@@ -97,7 +97,7 @@ pub fn show(
     }
 
     // ── Perf probe (only when YIN_PERF=1) ──
-    let perf_on = crate::perf_probe::enabled();
+    let perf_on = yinhe_memtrace::perf_probe::enabled();
     let t_show_start = if perf_on {
         Some(std::time::Instant::now())
     } else {
@@ -268,21 +268,19 @@ pub fn show(
     };
 
     // Prepare GPU data
-    let prep_timings = crate::util::qos::guarded(|| {
-        yinhe_pianoroll::prepare(
-            pianoroll,
-            w,
-            h,
-            midi,
-            view,
-            &*selected,
-            track_visible,
-            track_colors,
-            scroll_mode,
-            min_border_width,
-            midi_version,
-        )
-    });
+    let prep_timings = yinhe_pianoroll::prepare(
+        pianoroll,
+        w,
+        h,
+        midi,
+        view,
+        &*selected,
+        track_visible,
+        track_colors,
+        scroll_mode,
+        min_border_width,
+        midi_version,
+    );
 
     let t_prepare_end = if perf_on {
         Some(std::time::Instant::now())
@@ -295,17 +293,15 @@ pub fn show(
     let content_changed = true;
 
     // Paint wgpu content into the content_rect
-    crate::util::qos::guarded(|| {
-        render_ctx.paint(
-            pianoroll,
-            w,
-            h,
-            "pianoroll_frame",
-            &painter,
-            content_rect,
-            content_changed,
-        );
-    });
+    render_ctx.paint(
+        pianoroll,
+        w,
+        h,
+        "pianoroll_frame",
+        &painter,
+        content_rect,
+        content_changed,
+    );
 
     let t_paint_end = if perf_on {
         Some(std::time::Instant::now())
@@ -491,7 +487,7 @@ pub fn show(
             super::view_interaction::FollowMode::Page => "Page",
             super::view_interaction::FollowMode::Continuous => "Continuous",
         };
-        crate::perf_probe::submit(crate::perf_probe::FrameSample {
+        yinhe_memtrace::perf_probe::submit(yinhe_memtrace::perf_probe::FrameSample {
             input,
             prep_static: prep_timings.build_static,
             prep_cursor: prep_timings.build_cursor,

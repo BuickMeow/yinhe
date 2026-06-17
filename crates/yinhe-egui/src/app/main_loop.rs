@@ -42,7 +42,7 @@ impl<'a, T> Drop for ReplaceGuard<'a, T> {
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        let _ui_total_start = if crate::perf_probe::enabled() {
+        let _ui_total_start = if yinhe_memtrace::perf_probe::enabled() {
             Some(std::time::Instant::now())
         } else {
             None
@@ -186,7 +186,7 @@ impl eframe::App for App {
         self.show_load_error_modal(ui);
 
         if let Some(t0) = _ui_total_start {
-            crate::perf_probe::record_ui_total(t0.elapsed());
+            yinhe_memtrace::perf_probe::record_ui_total(t0.elapsed());
         }
     }
 }

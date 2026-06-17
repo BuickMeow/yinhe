@@ -876,3 +876,62 @@ fn rpn_name(rpn_num: u8) -> &'static str {
         _ => "Unknown",
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bar_lookup_single_segment() {
+        let bl = BarLookup::build(480, 4, &[]);
+        // tick 0 → bar 1
+        assert_eq!(bl.format(0), "1/0");
+        // tick 480 → bar 1, beat 2
+        assert_eq!(bl.format(480), "1/480");
+        // tick 1920 → bar 2
+        assert_eq!(bl.format(1920), "2/0");
+    }
+
+    #[test]
+    fn bar_lookup_with_time_sig() {
+        let events = vec![TypesTimeSigEvent { tick: 0, numerator: 4, denominator: 2 }];
+        let bl = BarLookup::build(480, 4, &events);
+        assert_eq!(bl.format(0), "1/0");
+        assert_eq!(bl.format(480), "1/480");
+    }
+
+    #[test]
+    fn bar_lookup_time_sig_change() {
+        // 4/4 for 1 bar (1920 ticks), then 3/4
+        let events = vec![
+            TypesTimeSigEvent { tick: 0, numerator: 4, denominator: 2 },
+            TypesTimeSigEvent { tick: 1920, numerator: 3, denominator: 2 },
+        ];
+        let bl = BarLookup::build(480, 4, &events);
+        assert_eq!(bl.format(0), "1/0");
+        assert_eq!(bl.format(1920), "2/0");
+        // tick 1920 + 480 = 2400, in 3/4 bar: offset 480 within bar
+        assert_eq!(bl.format(2400), "2/480");
+    }
+
+    #[test]
+    fn bar_lookup_format_tick_zero() {
+        let bl = BarLookup::build(480, 4, &[]);
+        assert_eq!(bl.format(0), "1/0");
+    }
+
+    #[test]
+    fn bar_lookup_default_time_sig() {
+        // No events, default 4/4
+        let bl = BarLookup::build(480, 4, &[]);
+        assert_eq!(bl.format(960), "1/960");
+    }
+
+    #[test]
+    fn bar_lookup_format_bar_start() {
+        let bl = BarLookup::build(480, 4, &[]);
+        // Each bar = 1920 ticks
+        assert_eq!(bl.format(1920), "2/0");
+        assert_eq!(bl.format(3840), "3/0");
+    }
+}

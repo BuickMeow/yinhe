@@ -297,3 +297,41 @@ fn cumulative_bar_offsets(tpb: u32, segments: &[(u32, u8, u8)]) -> Vec<u32> {
     }
     offsets
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cumulative_bar_offsets_single_segment() {
+        // 4/4 at 480tpb, one segment from tick 0
+        let segs = vec![(0u32, 4u8, 2u8)];
+        let offsets = cumulative_bar_offsets(480, &segs);
+        assert_eq!(offsets, vec![0]);
+    }
+
+    #[test]
+    fn cumulative_bar_offsets_two_segments() {
+        // 4/4 from tick 0, then 3/4 from tick 1920
+        let segs = vec![(0, 4, 2), (1920, 3, 2)];
+        let offsets = cumulative_bar_offsets(480, &segs);
+        assert_eq!(offsets.len(), 2);
+        assert_eq!(offsets[0], 0);
+        // 1920 ticks / (480*4=1920 ticks/bar) = 1 bar
+        assert_eq!(offsets[1], 1);
+    }
+
+    #[test]
+    fn cumulative_bar_offsets_empty() {
+        let segs: Vec<(u32, u8, u8)> = vec![];
+        let offsets = cumulative_bar_offsets(480, &segs);
+        assert!(offsets.is_empty());
+    }
+
+    #[test]
+    fn cumulative_bar_offsets_starts_at_zero() {
+        let segs = vec![(0, 4, 2), (960, 4, 2), (1920, 3, 2)];
+        let offsets = cumulative_bar_offsets(480, &segs);
+        assert_eq!(offsets[0], 0);
+    }
+}

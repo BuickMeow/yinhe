@@ -1,5 +1,5 @@
 use crate::file_loader::FileLoader;
-use crate::progress::StageStatus;
+use yinhe_editor_core::progress::StageStatus;
 
 pub(crate) fn show(ui: &mut eframe::egui::Ui, loader: &FileLoader) {
     if !loader.is_loading() {

@@ -268,7 +268,7 @@ impl App {
             ui.scope_builder(
                 egui::UiBuilder::new().max_rect(piano_rect),
                 |ui| {
-                    let _piano_total_start = if crate::perf_probe::enabled() {
+                    let _piano_total_start = if yinhe_memtrace::perf_probe::enabled() {
                         Some(std::time::Instant::now())
                     } else {
                         None
@@ -325,7 +325,7 @@ impl App {
                         doc.data.midi_version,
                     );
                     if let Some(t0) = _piano_total_start {
-                        crate::perf_probe::record_piano_total(t0.elapsed());
+                        yinhe_memtrace::perf_probe::record_piano_total(t0.elapsed());
                     }
                 },
             );

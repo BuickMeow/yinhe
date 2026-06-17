@@ -100,7 +100,7 @@ pub struct App {
     pub(crate) note_drag_moved: bool,
 
     // ── Multi-stage loading progress ──
-    pub(crate) load_progress: crate::progress::SharedProgress,
+    pub(crate) load_progress: yinhe_editor_core::progress::SharedProgress,
 
     // ── Async audio export ──
     pub(crate) export_rx: Option<mpsc::Receiver<Result<(), String>>>,
@@ -151,7 +151,7 @@ impl App {
         let queue = render_ctx.queue().clone();
         let format = render_ctx.target_format();
 
-        let load_progress = crate::progress::new_shared();
+        let load_progress = yinhe_editor_core::progress::new_shared();
 
         Self {
             render_ctx,

@@ -4,7 +4,7 @@ use yinhe_midi::LoadProgress;
 use yinhe_midi::MidiImportEncoding;
 
 use crate::dialogs::archive_picker::ArchivePickerState;
-use crate::progress::{self, SharedProgress, StageStatus};
+use yinhe_editor_core::progress::{self, SharedProgress, StageStatus};
 
 /// Events sent from the background loading thread to the UI thread.
 pub(crate) enum MidiLoadEvent {

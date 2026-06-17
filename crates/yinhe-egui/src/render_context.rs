@@ -348,3 +348,44 @@ impl RenderContext {
         );
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn texture_byte_size_rgba8() {
+        let size = texture_byte_size(wgpu::TextureFormat::Rgba8Unorm, 100, 100, 1);
+        assert_eq!(size, 100 * 100 * 4);
+    }
+
+    #[test]
+    fn texture_byte_size_r8() {
+        let size = texture_byte_size(wgpu::TextureFormat::R8Unorm, 200, 100, 1);
+        assert_eq!(size, 200 * 100 * 1);
+    }
+
+    #[test]
+    fn texture_byte_size_rgba32() {
+        let size = texture_byte_size(wgpu::TextureFormat::Rgba32Float, 50, 50, 1);
+        assert_eq!(size, 50 * 50 * 16);
+    }
+
+    #[test]
+    fn texture_byte_size_msaa4x() {
+        let size = texture_byte_size(wgpu::TextureFormat::Rgba8Unorm, 100, 100, 4);
+        assert_eq!(size, 100 * 100 * 4 * 4);
+    }
+
+    #[test]
+    fn texture_byte_size_1x1() {
+        let size = texture_byte_size(wgpu::TextureFormat::Rgba8Unorm, 1, 1, 1);
+        assert_eq!(size, 4);
+    }
+
+    #[test]
+    fn texture_byte_size_rg16() {
+        let size = texture_byte_size(wgpu::TextureFormat::Rg16Float, 100, 100, 1);
+        assert_eq!(size, 100 * 100 * 4);
+    }
+}

@@ -1,6 +1,6 @@
 use eframe::egui;
 
-use crate::config::SfEntry;
+use yinhe_editor_core::config::SfEntry;
 
 /// A reusable, compact list of SoundFont entries with checkboxes.
 ///

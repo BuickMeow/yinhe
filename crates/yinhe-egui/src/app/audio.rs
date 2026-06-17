@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use crate::app::App;
-use crate::progress;
+use yinhe_editor_core::progress;
 
 impl App {
     /// Resolve the merged SF configuration for the given document.
@@ -43,7 +43,7 @@ impl App {
             }
 
             // Built-in fallback
-            if let Some(builtin) = crate::config::builtin_soundfont_path() {
+            if let Some(builtin) = yinhe_editor_core::config::builtin_soundfont_path() {
                 let path_str = builtin.to_string_lossy().to_string();
                 result.push((port, vec![path_str]));
             }

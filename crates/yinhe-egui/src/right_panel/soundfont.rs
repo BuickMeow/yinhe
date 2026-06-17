@@ -3,7 +3,7 @@ use eframe::egui;
 use crate::audio_settings::AudioSettings;
 use yinhe_editor_core::document::Document;
 
-use crate::config::SfEntry;
+use yinhe_editor_core::config::SfEntry;
 
 /// Show the sound-bank (SoundFont) panel.
 ///

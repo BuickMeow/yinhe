@@ -159,3 +159,45 @@ pub fn show(
 
     result
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn content() -> egui::Rect {
+        egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(800.0, 600.0))
+    }
+
+    #[test]
+    fn compute_bar_rect_normal() {
+        let sel = egui::Rect::from_min_size(egui::pos2(100.0, 100.0), egui::vec2(200.0, 50.0));
+        let bar = compute_bar_rect(content(), sel);
+        assert!(bar.is_some());
+        let bar = bar.unwrap();
+        // bar should be to the right of selection
+        assert!(bar.min.x > sel.max.x);
+    }
+
+    #[test]
+    fn compute_bar_rect_near_right_edge() {
+        // Selection near right edge → bar would be clipped
+        let sel = egui::Rect::from_min_size(egui::pos2(600.0, 100.0), egui::vec2(180.0, 50.0));
+        let bar = compute_bar_rect(content(), sel);
+        assert!(bar.is_none(), "bar should be clipped at right edge");
+    }
+
+    #[test]
+    fn compute_bar_rect_small_selection() {
+        let sel = egui::Rect::from_min_size(egui::pos2(100.0, 100.0), egui::vec2(20.0, 20.0));
+        let bar = compute_bar_rect(content(), sel);
+        assert!(bar.is_some());
+    }
+
+    #[test]
+    fn compute_bar_rect_wide_content() {
+        let wide = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(2000.0, 600.0));
+        let sel = egui::Rect::from_min_size(egui::pos2(100.0, 100.0), egui::vec2(200.0, 50.0));
+        let bar = compute_bar_rect(wide, sel);
+        assert!(bar.is_some());
+    }
+}
