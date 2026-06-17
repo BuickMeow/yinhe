@@ -1,0 +1,282 @@
+//! Round-trip tests: bytes -> YinModel -> bytes -> YinModel
+
+use yinhe_core::{
+    CcEvent, ConductorData, NoteEvent, PcEvent, PitchBendEvent, ProjectMeta, RpnEvent, TempoEvent,
+    TimeSigEvent, TrackData, YinModel,
+};
+use yinhe_mid2::{parse_bytes, write_to_bytes};
+
+/// Hand-craft minimal SMF bytes: 1 track, 1 note (C4 quarter note at 120 BPM).
+fn minimal_midi_bytes() -> Vec<u8> {
+    let mut data = Vec::new();
+    // MThd: format 0, 1 track, 480 ppq
+    data.extend_from_slice(b"MThd");
+    data.extend_from_slice(&6u32.to_be_bytes());
+    data.extend_from_slice(&[0, 0, 0, 1, 1, 0xE0]);
+    // MTrk: tempo + NoteOn C4 + NoteOff C4
+    data.extend_from_slice(b"MTrk");
+    let track: &[u8] = &[
+        0x00, 0xFF, 0x51, 0x03, 0x07, 0xA1, 0x20, // 120 BPM (mpq=500_000)
+        0x00, 0x90, 60, 100, // NoteOn key=60 vel=100
+        0x82, 0x40, 0x80, 60, 0, // delta=320 (0x82 0x40 = 320), NoteOff
+        0x00, 0xFF, 0x2F, 0x00, // EndOfTrack
+    ];
+    data.extend_from_slice(&(track.len() as u32).to_be_bytes());
+    data.extend_from_slice(track);
+    data
+}
+
+#[test]
+fn parse_minimal_midi() {
+    let bytes = minimal_midi_bytes();
+    let model = parse_bytes(&bytes).expect("parse failed");
+
+    assert_eq!(model.meta.ppq, 480);
+    assert_eq!(model.tracks.len(), 1);
+    assert_eq!(model.tracks[0].notes.len(), 1);
+    let n = &model.tracks[0].notes[0];
+    assert_eq!(n.key, 60);
+    assert_eq!(n.start_tick, 0);
+    assert_eq!(n.end_tick, 320);
+    assert_eq!(n.velocity, 100);
+    assert_eq!(n.dup_index, 0);
+
+    assert_eq!(model.conductor.tempo.len(), 1);
+    assert!((model.conductor.tempo[0].bpm - 120.0).abs() < 0.5);
+
+    assert_eq!(model.note_count, 1);
+    assert_eq!(model.tick_length, 320);
+    assert_eq!(model.key_notes_cache[60].len(), 1);
+}
+
+#[test]
+fn roundtrip_minimal_midi() {
+    let bytes1 = minimal_midi_bytes();
+    let model1 = parse_bytes(&bytes1).unwrap();
+    let bytes2 = write_to_bytes(&model1).unwrap();
+    let model2 = parse_bytes(&bytes2).unwrap();
+
+    assert_eq!(model2.meta.ppq, model1.meta.ppq);
+    assert_eq!(model2.tracks.len(), model1.tracks.len());
+    assert_eq!(model2.tracks[0].notes.len(), model1.tracks[0].notes.len());
+    let n1 = &model1.tracks[0].notes[0];
+    let n2 = &model2.tracks[0].notes[0];
+    assert_eq!(n2.key, n1.key);
+    assert_eq!(n2.start_tick, n1.start_tick);
+    assert_eq!(n2.end_tick, n1.end_tick);
+    assert_eq!(n2.velocity, n1.velocity);
+    assert_eq!(model2.conductor.tempo.len(), model1.conductor.tempo.len());
+}
+
+fn build_complex_model() -> YinModel {
+    use std::collections::BTreeMap;
+    use std::sync::Arc;
+
+    let conductor = ConductorData {
+        tempo: vec![
+            TempoEvent { tick: 0, bpm: 120.0 },
+            TempoEvent { tick: 1920, bpm: 60.0 },
+        ],
+        time_sig: vec![
+            TimeSigEvent { tick: 0, numerator: 4, denominator: 2 },
+            TimeSigEvent { tick: 3840, numerator: 3, denominator: 2 },
+        ],
+    };
+
+    let mut t0 = TrackData::new(0, 0);
+    t0.name = "Lead".to_string();
+    t0.notes = vec![
+        NoteEvent { start_tick: 0, end_tick: 480, key: 60, velocity: 100, dup_index: 0 },
+        NoteEvent { start_tick: 480, end_tick: 960, key: 64, velocity: 90, dup_index: 0 },
+        NoteEvent { start_tick: 1000, end_tick: 1500, key: 60, velocity: 80, dup_index: 0 },
+        NoteEvent { start_tick: 1000, end_tick: 1400, key: 60, velocity: 70, dup_index: 1 },
+    ];
+    let mut cc_map: BTreeMap<u8, Vec<CcEvent>> = BTreeMap::new();
+    cc_map.insert(7, vec![
+        CcEvent { tick: 0, value: 100 },
+        CcEvent { tick: 480, value: 80 },
+    ]);
+    t0.cc = cc_map;
+    t0.pitch_bend = vec![PitchBendEvent { tick: 200, value: 2000 }];
+    t0.program_change = vec![PcEvent {
+        tick: 0,
+        program: 5,
+        bank_msb: 0xFF,
+        bank_lsb: 0xFF,
+    }];
+    let mut rpn_map: BTreeMap<u16, Vec<RpnEvent>> = BTreeMap::new();
+    rpn_map.insert(0x0000, vec![RpnEvent { tick: 100, value: 2 }]);
+    t0.rpn = rpn_map;
+
+    let mut t1 = TrackData::new(0, 1);
+    t1.name = "Bass".to_string();
+    t1.notes = vec![NoteEvent {
+        start_tick: 0,
+        end_tick: 1920,
+        key: 36,
+        velocity: 110,
+        dup_index: 0,
+    }];
+
+    let meta = ProjectMeta {
+        ppq: 480,
+        ..ProjectMeta::default()
+    };
+    let mut model = YinModel {
+        conductor: Arc::new(conductor),
+        tracks: vec![Arc::new(t0), Arc::new(t1)],
+        meta,
+        ..Default::default()
+    };
+    model.rebuild();
+    model
+}
+
+#[test]
+fn roundtrip_complex_model_preserves_everything() {
+    let model1 = build_complex_model();
+    let bytes = write_to_bytes(&model1).unwrap();
+    let model2 = parse_bytes(&bytes).unwrap();
+
+    assert_eq!(model2.tracks.len(), model1.tracks.len());
+
+    let l1 = &model1.tracks[0];
+    let l2 = &model2.tracks[0];
+    assert_eq!(l1.notes.len(), l2.notes.len(), "note count mismatch");
+    assert_eq!(l2.name, "Lead");
+    // Notes equal as a multiset of (start_tick, end_tick, key, velocity).
+    // dup_index is a local-stable ordering and may differ across SMF
+    // round-trips because the MIDI encoding doesn't preserve which note
+    // was "first" among same-tick same-key onsets.
+    let key_of = |n: &NoteEvent| (n.start_tick, n.end_tick, n.key, n.velocity);
+    let mut s1: Vec<_> = l1.notes.iter().map(key_of).collect();
+    let mut s2: Vec<_> = l2.notes.iter().map(key_of).collect();
+    s1.sort();
+    s2.sort();
+    assert_eq!(s1, s2, "note multiset differs");
+    assert!(l2.cc.contains_key(&7));
+    assert_eq!(l2.cc[&7].len(), 2);
+    assert_eq!(l2.pitch_bend.len(), 1);
+    assert_eq!(l2.pitch_bend[0].value, 2000);
+    assert_eq!(l2.program_change.len(), 1);
+    assert_eq!(l2.program_change[0].program, 5);
+    assert!(l2.rpn.contains_key(&0x0000));
+    assert_eq!(l2.rpn[&0x0000].len(), 1);
+    assert_eq!(l2.rpn[&0x0000][0].value, 2);
+
+    assert_eq!(model2.conductor.tempo.len(), 2);
+    assert!((model2.conductor.tempo[1].bpm - 60.0).abs() < 0.5);
+    assert_eq!(model2.conductor.time_sig.len(), 2);
+
+    let b1 = &model1.tracks[1];
+    let b2 = &model2.tracks[1];
+    assert_eq!(b2.notes.len(), b1.notes.len());
+    assert_eq!(b2.notes[0].key, 36);
+    assert_eq!(b2.channel, 1);
+}
+
+/// Build SMF bytes with two NoteOns on key=60 at tick=0, then two NoteOffs.
+fn build_overlap_midi_bytes() -> Vec<u8> {
+    let mut data = Vec::new();
+    data.extend_from_slice(b"MThd");
+    data.extend_from_slice(&6u32.to_be_bytes());
+    data.extend_from_slice(&[0, 0, 0, 1, 1, 0xE0]);
+    data.extend_from_slice(b"MTrk");
+    let track: &[u8] = &[
+        0x00, 0x90, 60, 100, // NoteOn at tick 0, vel=100
+        0x00, 0x90, 60, 80,  // NoteOn at tick 0 (overlap), vel=80
+        0x81, 0x70, 0x80, 60, 0, // delta=240, NoteOff (matches second NoteOn LIFO)
+        0x81, 0x70, 0x80, 60, 0, // delta=240 (tick=480), NoteOff (matches first NoteOn)
+        0x00, 0xFF, 0x2F, 0x00,
+    ];
+    data.extend_from_slice(&(track.len() as u32).to_be_bytes());
+    data.extend_from_slice(track);
+    data
+}
+
+#[test]
+fn dup_index_assigned_for_overlapping_notes() {
+    let bytes = build_overlap_midi_bytes();
+    let model = parse_bytes(&bytes).expect("parse failed");
+    assert_eq!(model.tracks.len(), 1);
+    let t = &model.tracks[0];
+    let key60_at_0: Vec<&NoteEvent> = t
+        .notes
+        .iter()
+        .filter(|n| n.key == 60 && n.start_tick == 0)
+        .collect();
+    assert_eq!(key60_at_0.len(), 2, "expected two overlapping notes at tick 0");
+    let dups: Vec<u8> = key60_at_0.iter().map(|n| n.dup_index).collect();
+    assert!(dups.contains(&0));
+    assert!(dups.contains(&1));
+}
+
+/// Build SMF bytes with a CC101+CC100+CC6 RPN sequence.
+fn build_rpn_midi_bytes() -> Vec<u8> {
+    let mut data = Vec::new();
+    data.extend_from_slice(b"MThd");
+    data.extend_from_slice(&6u32.to_be_bytes());
+    data.extend_from_slice(&[0, 0, 0, 1, 1, 0xE0]);
+    data.extend_from_slice(b"MTrk");
+    let track: &[u8] = &[
+        // RPN MSB=0 (CC101=0)
+        0x00, 0xB0, 101, 0,
+        // RPN LSB=0 (CC100=0) → selects RPN 0/0 (Pitch Bend Sensitivity)
+        0x00, 0xB0, 100, 0,
+        // Data Entry MSB=2 (CC6=2)
+        0x00, 0xB0, 6, 2,
+        0x00, 0xFF, 0x2F, 0x00,
+    ];
+    data.extend_from_slice(&(track.len() as u32).to_be_bytes());
+    data.extend_from_slice(track);
+    data
+}
+
+#[test]
+fn rpn_sequence_decodes_to_rpn_event() {
+    let bytes = build_rpn_midi_bytes();
+    let model = parse_bytes(&bytes).expect("parse failed");
+    assert_eq!(model.tracks.len(), 1);
+    let t = &model.tracks[0];
+    // CC101/100/6 should NOT appear as plain CC
+    assert!(!t.cc.contains_key(&101));
+    assert!(!t.cc.contains_key(&100));
+    assert!(!t.cc.contains_key(&6));
+    // Should have one RPN event for key 0x0000
+    assert!(t.rpn.contains_key(&0x0000));
+    assert_eq!(t.rpn[&0x0000].len(), 1);
+    assert_eq!(t.rpn[&0x0000][0].value, 2);
+}
+
+/// Build SMF with port + channel-prefix metas
+fn build_port_channel_midi() -> Vec<u8> {
+    let mut data = Vec::new();
+    data.extend_from_slice(b"MThd");
+    data.extend_from_slice(&6u32.to_be_bytes());
+    data.extend_from_slice(&[0, 0, 0, 1, 1, 0xE0]);
+    data.extend_from_slice(b"MTrk");
+    let track: &[u8] = &[
+        // MidiPort = 2 (FF 21 01 02)
+        0x00, 0xFF, 0x21, 0x01, 0x02,
+        // MidiChannel prefix = 5 (FF 20 01 05)
+        0x00, 0xFF, 0x20, 0x01, 0x05,
+        // NoteOn channel=3 key=60
+        0x00, 0x93, 60, 100,
+        0x81, 0x70, 0x83, 60, 0, // NoteOff
+        0x00, 0xFF, 0x2F, 0x00,
+    ];
+    data.extend_from_slice(&(track.len() as u32).to_be_bytes());
+    data.extend_from_slice(track);
+    data
+}
+
+#[test]
+fn port_and_channel_prefix_captured() {
+    let bytes = build_port_channel_midi();
+    let model = parse_bytes(&bytes).unwrap();
+    let t = &model.tracks[0];
+    assert_eq!(t.port, 2);
+    assert_eq!(t.channel_prefix, Some(5));
+    // First MIDI event uses channel 3 (raw); td.channel reflects that
+    assert_eq!(t.channel, 3);
+}

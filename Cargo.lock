@@ -6458,6 +6458,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "yinhe-mid2"
+version = "0.1.0"
+dependencies = [
+ "encoding_rs",
+ "midly",
+ "serde",
+ "thiserror 2.0.18",
+ "uuid",
+ "yinhe-core",
+ "yinhe-memtrace",
+ "yinhe-types",
+]
+
+[[package]]
 name = "yinhe-midi"
 version = "0.1.0"
 dependencies = [
