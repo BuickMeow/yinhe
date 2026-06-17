@@ -188,6 +188,7 @@ impl FileLoader {
                             );
                             progress::set_stage(&progress, 1, StageStatus::Done);
                         }
+                        progress::set_visible(&progress, false);
                         let _ = tx.send(MidiLoadEvent::Complete(Box::new(result)));
                     });
                     self.midi_loader = Some(MidiLoader {
@@ -330,6 +331,7 @@ impl FileLoader {
                         },
                     );
                     progress::set_stage(&progress, 0, StageStatus::Done);
+                    // Stage 1: archive conversion in background thread
                     if let Ok(ref midi) = load_result {
                         progress::set_stage(&progress, 1, StageStatus::Active);
                         let p = progress.clone();
@@ -343,6 +345,7 @@ impl FileLoader {
                         );
                         progress::set_stage(&progress, 1, StageStatus::Done);
                     }
+                    progress::set_visible(&progress, false);
                     let _ = tx.send(MidiLoadEvent::Complete(Box::new(load_result)));
                 }
                 Err(e) => {

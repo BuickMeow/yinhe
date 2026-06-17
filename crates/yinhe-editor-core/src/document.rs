@@ -39,7 +39,7 @@ pub struct Document {
     /// File identity.
     pub file_name: String,
     pub file_path: Option<String>,
-    /// Project archive (for event browser inspection).
+    /// Project archive (for Event Browser archive view + .yin save).
     pub archive: Option<yinhe_project::ProjectArchive>,
 }
 
@@ -208,7 +208,7 @@ impl Document {
                 history: UndoStack::new(),
                 file_name,
                 file_path: None,
-                archive: None,
+                archive: Some(archive),
             })
         })
     }
@@ -248,6 +248,7 @@ impl Document {
 
         let pc_map_cache = build_pc_map_cache(&midi);
 
+        // Extract project metadata from archive (don't store archive itself)
         let (
             project_name,
             project_artist,
