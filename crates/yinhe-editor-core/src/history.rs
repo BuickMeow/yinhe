@@ -148,9 +148,23 @@ mod tests {
     use super::*;
     use std::sync::Arc;
     use yinhe_midi::MidiFile;
+    use yinhe_model::YinModel;
 
     fn make_test_data(name: &str) -> ProjectData {
+        let model = YinModel {
+            conductor: yinhe_model::ConductorData {
+                tempo: Vec::new(),
+                time_sig: Vec::new(),
+            },
+            tracks: Vec::new(),
+            meta: yinhe_model::ProjectMeta::default(),
+            key_index: yinhe_model::KeyIndex::default(),
+            key_notes_cache: (0..128).map(|_| Vec::new()).collect(),
+            note_count: 0,
+            tick_length: 0,
+        };
         ProjectData {
+            model: Arc::new(model),
             midi: Arc::new(MidiFile::default()),
             track_names: Vec::new(),
             project_name: name.to_string(),

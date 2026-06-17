@@ -6382,6 +6382,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "yinhe-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "uuid",
+ "yinhe-types",
+]
+
+[[package]]
 name = "yinhe-dms"
 version = "0.1.0"
 dependencies = [

@@ -1,0 +1,9 @@
+[package]
+name = "yinhe-core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+yinhe-types = { path = "../yinhe-types" }
+serde = { version = "1", features = ["derive"] }
+uuid = { version = "1", features = ["v4"] }
