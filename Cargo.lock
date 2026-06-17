@@ -6370,7 +6370,6 @@ dependencies = [
  "xsynth-soundfonts",
  "yinhe-core",
  "yinhe-memtrace",
- "yinhe-midi",
  "yinhe-types",
 ]
 
@@ -6532,8 +6531,8 @@ dependencies = [
 name = "yinhe-test-helpers"
 version = "0.1.0"
 dependencies = [
+ "yinhe-core",
  "yinhe-editor-core",
- "yinhe-midi",
  "yinhe-types",
 ]
 

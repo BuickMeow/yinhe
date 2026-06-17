@@ -158,19 +158,18 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>, state: &mut EventBrow
 // ═══════════════════════════════════════════════════════════════
 
 fn show_realtime(ui: &mut egui::Ui, doc: &mut Document, state: &mut EventBrowserState) {
-    let midi = doc.midi();
-    let midi_ref = &midi;
-    let ppq = midi_ref.ticks_per_beat;
-    let default_num = midi_ref.time_sig_numerator;
-    let ts_events: Vec<TypesTimeSigEvent> = midi_ref.time_sig_events.clone();
+    let model = &doc.data.model;
+    let ppq = model.meta.ppq;
+    let default_num = model.tempo_map.time_sig_default.0;
+    let ts_events: Vec<TypesTimeSigEvent> = model.tempo_map.time_sig_events.iter().map(|e| TypesTimeSigEvent { tick: e.tick, numerator: e.numerator, denominator: e.denominator }).collect();
     let bar_lookup = BarLookup::build(ppq, default_num, &ts_events);
 
-    let fingerprint = midi_ref.tick_length
-        ^ (midi_ref.note_count << 16)
-        ^ (midi_ref.control_events.len() as u64).wrapping_mul(0x9E3779B9);
+    let fingerprint = model.tick_length
+        ^ (model.note_count << 16)
+        ^ (model.tracks.len() as u64).wrapping_mul(0x9E3779B9);
     if state.midi_fingerprint != Some(fingerprint) {
         state.expanded_tracks.clear();
-        for i in 0..midi_ref.track_ports.len() {
+        for i in 0..model.tracks.len() {
             state.expanded_tracks.insert(i as u16);
         }
         state.midi_fingerprint = Some(fingerprint);
@@ -202,7 +201,7 @@ fn show_realtime(ui: &mut egui::Ui, doc: &mut Document, state: &mut EventBrowser
             .show(ui, |ui| {
                 frame_bg.show(ui, |ui| {
                     ui.set_min_width(ui.available_width());
-                    ui.vertical(|ui| render_realtime_tree(ui, midi_ref, state));
+                    ui.vertical(|ui| render_realtime_tree(ui, model, state));
                 });
             });
     });
@@ -222,9 +221,9 @@ fn show_realtime(ui: &mut egui::Ui, doc: &mut Document, state: &mut EventBrowser
                 frame_bg.show(ui, |ui| {
                     ui.set_min_width(ui.available_width());
                     if let Some(sel) = &state.selected_item {
-                        show_realtime_detail(ui, sel, midi_ref, &bar_lookup);
+                        show_realtime_detail(ui, sel, model, &bar_lookup);
                     } else {
-                        show_realtime_overview(ui, midi_ref);
+                        show_realtime_overview(ui, model);
                     }
                 });
             });
@@ -233,14 +232,14 @@ fn show_realtime(ui: &mut egui::Ui, doc: &mut Document, state: &mut EventBrowser
 
 // ── Realtime tree ──
 
-fn render_realtime_tree(ui: &mut egui::Ui, midi: &yinhe_midi::MidiFile, state: &mut EventBrowserState) {
-    let num_tracks = midi.track_ports.len();
+fn render_realtime_tree(ui: &mut egui::Ui, model: &yinhe_core::YinModel, state: &mut EventBrowserState) {
+    let num_tracks = model.tracks.len();
 
-    if !midi.tempo_segments.is_empty() || !midi.time_sig_events.is_empty() {
+    if !model.conductor.tempo.is_empty() || !model.conductor.time_sig.is_empty() {
         let expanded = state.expanded_tracks.contains(&u16::MAX)
             || state.selected_item.as_ref().map(|s| matches!(s, SelectedItem::Tempo | SelectedItem::TimeSig)).unwrap_or(false);
-        let tempo_count = midi.tempo_segments.len();
-        let ts_count = midi.time_sig_events.len();
+        let tempo_count = model.conductor.tempo.len();
+        let ts_count = model.conductor.time_sig.len();
         let child_count = tempo_count + ts_count;
 
         if render_dir_row(ui, "Conductor", 0, expanded, child_count) {
@@ -248,23 +247,23 @@ fn render_realtime_tree(ui: &mut egui::Ui, midi: &yinhe_midi::MidiFile, state: &
             else { state.expanded_tracks.insert(u16::MAX); }
         }
         if expanded {
-            if !midi.tempo_segments.is_empty() {
+            if !model.conductor.tempo.is_empty() {
                 render_leaf_item(ui, &format!("Tempo ({})", tempo_count), ICON_SPEED, 1, SelectedItem::Tempo, state);
             }
-            if !midi.time_sig_events.is_empty() {
+            if !model.conductor.time_sig.is_empty() {
                 render_leaf_item(ui, &format!("TimeSig ({})", ts_count), ICON_SCHEDULE, 1, SelectedItem::TimeSig, state);
             }
         }
     }
 
-    for track_idx in 0..num_tracks {
+    for (track_idx, track) in model.tracks.iter().enumerate() {
         let t = track_idx as u16;
-        let name = midi.track_names.get(track_idx).cloned().unwrap_or_else(|| format!("Track {}", track_idx + 1));
-        let ch = midi.track_channels.get(track_idx).copied().unwrap_or(0);
-        let note_count = count_notes_for_track(midi, t);
-        let cc_map = count_cc_for_track(midi, t);
-        let pb = count_pitch_bend(midi, t);
-        let pc = count_pc(midi, t);
+        let name = track.name.clone();
+        let ch = track.channel;
+        let note_count = track.notes.len();
+        let cc_map: std::collections::BTreeMap<u8, usize> = track.cc.iter().map(|(&c, v)| (c, v.len())).collect();
+        let pb = track.pitch_bend.len();
+        let pc = track.program_change.len();
         let child_count = if note_count > 0 { 1 } else { 0 } + cc_map.len() + if pb > 0 { 1 } else { 0 } + if pc > 0 { 1 } else { 0 };
         if child_count == 0 { continue; }
 
@@ -286,27 +285,27 @@ fn render_realtime_tree(ui: &mut egui::Ui, midi: &yinhe_midi::MidiFile, state: &
 
 // ── Realtime detail ──
 
-fn show_realtime_detail(ui: &mut egui::Ui, item: &SelectedItem, midi: &yinhe_midi::MidiFile, bar_lookup: &BarLookup) {
+fn show_realtime_detail(ui: &mut egui::Ui, item: &SelectedItem, model: &yinhe_core::YinModel, bar_lookup: &BarLookup) {
     match item {
         SelectedItem::Tempo => {
             ui.add_space(4.0);
-            ui.label(egui::RichText::new(format!("Tempo ({} 个)", midi.tempo_segments.len())).size(12.0).strong());
+            ui.label(egui::RichText::new(format!("Tempo ({} 个)", model.conductor.tempo.len())).size(12.0).strong());
             ui.add_space(2.0);
-            build_table(ui, "eb_tempo", &[("#", 40.0), ("tick", 70.0), ("位置", 80.0), ("BPM", 70.0)], midi.tempo_segments.len(), |i, row| {
-                let s = &midi.tempo_segments[i];
-                let bpm = yinhe_midi::bpm_from_mpq(s.micros_per_quarter);
+            build_table(ui, "eb_tempo", &[("#", 40.0), ("tick", 70.0), ("位置", 80.0), ("BPM", 70.0)], model.conductor.tempo.len(), |i, row| {
+                let s = &model.conductor.tempo[i];
+                let bpm = s.bpm;
                 cell_text(row, format!("{}", i + 1));
-                cell_text(row, format!("{}", s.start_tick));
-                cell_text(row, bar_lookup.format(s.start_tick as u32));
+                cell_text(row, format!("{}", s.tick));
+                cell_text(row, bar_lookup.format(s.tick as u32));
                 cell_text(row, format!("{:.2}", bpm));
             });
         }
         SelectedItem::TimeSig => {
             ui.add_space(4.0);
-            ui.label(egui::RichText::new(format!("拍号 ({} 个)", midi.time_sig_events.len())).size(12.0).strong());
+            ui.label(egui::RichText::new(format!("拍号 ({} 个)", model.conductor.time_sig.len())).size(12.0).strong());
             ui.add_space(2.0);
-            build_table(ui, "eb_ts", &[("#", 40.0), ("tick", 70.0), ("位置", 80.0), ("拍号", 80.0)], midi.time_sig_events.len(), |i, row| {
-                let e = &midi.time_sig_events[i];
+            build_table(ui, "eb_ts", &[("#", 40.0), ("tick", 70.0), ("位置", 80.0), ("拍号", 80.0)], model.conductor.time_sig.len(), |i, row| {
+                let e = &model.conductor.time_sig[i];
                 let denom = 1u32 << e.denominator as u32;
                 cell_text(row, format!("{}", i + 1));
                 cell_text(row, format!("{}", e.tick));
@@ -315,79 +314,95 @@ fn show_realtime_detail(ui: &mut egui::Ui, item: &SelectedItem, midi: &yinhe_mid
             });
         }
         SelectedItem::Notes { track } => {
-            let notes = collect_notes_for_track(midi, *track);
+            let t = *track as usize;
+            let track_data = model.tracks.get(t);
+            let notes: Vec<(&yinhe_core::NoteEvent, u8, u16)> = if let Some(td) = track_data {
+                td.notes.iter().map(|n| (n, n.key, *track)).collect()
+            } else { Vec::new() };
             ui.add_space(4.0);
             ui.label(egui::RichText::new(format!("音符 ({} 个)", notes.len())).size(12.0).strong());
             ui.add_space(2.0);
             build_table(ui, "eb_notes", &[("#", 40.0), ("tick", 70.0), ("位置", 80.0), ("结束 tick", 80.0), ("结束位置", 90.0), ("键位", 50.0), ("力度", 50.0)], notes.len(), |i, row| {
-                let (key, n) = &notes[i];
+                let (n, _key, _trk) = &notes[i];
                 cell_text(row, format!("{}", i + 1));
                 cell_text(row, format!("{}", n.start_tick));
                 cell_text(row, bar_lookup.format(n.start_tick));
                 cell_text(row, format!("{}", n.end_tick));
                 cell_text(row, bar_lookup.format(n.end_tick));
-                cell_text(row, format!("{}", key));
+                cell_text(row, format!("{}", n.key));
                 cell_text(row, format!("{}", n.velocity));
             });
         }
         SelectedItem::Cc { track, controller } => {
-            let events: Vec<&MidiControlEvent> = midi.control_events.iter().filter(|ev| matches!(ev, MidiControlEvent::ControlChange { track: t, controller: c, .. } if *t == *track && *c == *controller)).collect();
+            let t = *track as usize;
+            let events: Vec<&yinhe_core::CcEvent> = model.tracks.get(t)
+                .and_then(|td| td.cc.get(controller))
+                .map(|v| v.iter().collect())
+                .unwrap_or_default();
             ui.add_space(4.0);
             ui.label(egui::RichText::new(format!("CC {} {} ({} 个)", controller, cc_label(*controller), events.len())).size(12.0).strong());
             ui.add_space(2.0);
             build_table(ui, "eb_cc", &[("#", 40.0), ("tick", 70.0), ("位置", 80.0), ("值", 60.0)], events.len(), |i, row| {
-                if let MidiControlEvent::ControlChange { tick, value, .. } = events[i] {
-                    cell_text(row, format!("{}", i + 1));
-                    cell_text(row, format!("{}", tick));
-                    cell_text(row, bar_lookup.format(*tick));
-                    cell_text(row, format!("{}", value));
-                }
+                let e = events[i];
+                cell_text(row, format!("{}", i + 1));
+                cell_text(row, format!("{}", e.tick));
+                cell_text(row, bar_lookup.format(e.tick));
+                cell_text(row, format!("{}", e.value));
             });
         }
         SelectedItem::PitchBend { track } => {
-            let events: Vec<&MidiControlEvent> = midi.control_events.iter().filter(|ev| matches!(ev, MidiControlEvent::PitchBend { track: t, .. } if *t == *track)).collect();
+            let t = *track as usize;
+            let events: Vec<&yinhe_core::PitchBendEvent> = model.tracks.get(t)
+                .map(|td| td.pitch_bend.iter().collect())
+                .unwrap_or_default();
             ui.add_space(4.0);
             ui.label(egui::RichText::new(format!("弯音事件 ({} 个)", events.len())).size(12.0).strong());
             ui.add_space(2.0);
             build_table(ui, "eb_pb", &[("#", 40.0), ("tick", 70.0), ("位置", 80.0), ("值", 70.0)], events.len(), |i, row| {
-                if let MidiControlEvent::PitchBend { tick, value, .. } = events[i] {
-                    cell_text(row, format!("{}", i + 1));
-                    cell_text(row, format!("{}", tick));
-                    cell_text(row, bar_lookup.format(*tick));
-                    cell_text(row, format!("{}", value));
-                }
+                let e = events[i];
+                cell_text(row, format!("{}", i + 1));
+                cell_text(row, format!("{}", e.tick));
+                cell_text(row, bar_lookup.format(e.tick));
+                cell_text(row, format!("{}", e.value));
             });
         }
         SelectedItem::ProgramChange { track } => {
-            let events: Vec<&MidiControlEvent> = midi.control_events.iter().filter(|ev| matches!(ev, MidiControlEvent::ProgramChange { track: t, .. } if *t == *track)).collect();
+            let t = *track as usize;
+            let events: Vec<&yinhe_core::PcEvent> = model.tracks.get(t)
+                .map(|td| td.program_change.iter().collect())
+                .unwrap_or_default();
             ui.add_space(4.0);
             ui.label(egui::RichText::new(format!("音色变更 ({} 个)", events.len())).size(12.0).strong());
             ui.add_space(2.0);
             build_table(ui, "eb_pc", &[("#", 40.0), ("tick", 70.0), ("位置", 80.0), ("音色", 50.0)], events.len(), |i, row| {
-                if let MidiControlEvent::ProgramChange { tick, program, .. } = events[i] {
-                    cell_text(row, format!("{}", i + 1));
-                    cell_text(row, format!("{}", tick));
-                    cell_text(row, bar_lookup.format(*tick));
-                    cell_text(row, format!("{}", program));
-                }
+                let e = events[i];
+                cell_text(row, format!("{}", i + 1));
+                cell_text(row, format!("{}", e.tick));
+                cell_text(row, bar_lookup.format(e.tick));
+                cell_text(row, format!("{}", e.program));
             });
         }
     }
 }
 
-fn show_realtime_overview(ui: &mut egui::Ui, midi: &yinhe_midi::MidiFile) {
+fn show_realtime_overview(ui: &mut egui::Ui, model: &yinhe_core::YinModel) {
     ui.label(egui::RichText::new("工程概览").size(14.0).strong());
     ui.add_space(4.0);
-    let cc = midi.control_events.iter().filter(|e| matches!(e, MidiControlEvent::ControlChange { .. })).count();
-    let pb = midi.control_events.iter().filter(|e| matches!(e, MidiControlEvent::PitchBend { .. })).count();
-    let pc = midi.control_events.iter().filter(|e| matches!(e, MidiControlEvent::ProgramChange { .. })).count();
-    ui.colored_label(egui::Color32::from_gray(120), format!("轨道: {} 个", midi.track_ports.len()));
-    ui.colored_label(egui::Color32::from_gray(120), format!("音符: {} 个", midi.note_count));
+    let mut cc = 0usize;
+    let mut pb = 0usize;
+    let mut pc = 0usize;
+    for t in &model.tracks {
+        cc += t.cc.values().map(|v| v.len()).sum::<usize>();
+        pb += t.pitch_bend.len();
+        pc += t.program_change.len();
+    }
+    ui.colored_label(egui::Color32::from_gray(120), format!("轨道: {} 个", model.tracks.len()));
+    ui.colored_label(egui::Color32::from_gray(120), format!("音符: {} 个", model.note_count));
     ui.colored_label(egui::Color32::from_gray(120), format!("CC: {} 个", cc));
     ui.colored_label(egui::Color32::from_gray(120), format!("弯音: {} 个", pb));
     ui.colored_label(egui::Color32::from_gray(120), format!("音色变更: {} 个", pc));
-    ui.colored_label(egui::Color32::from_gray(120), format!("Tempo: {} 个", midi.tempo_segments.len()));
-    ui.colored_label(egui::Color32::from_gray(120), format!("拍号: {} 个", midi.time_sig_events.len()));
+    ui.colored_label(egui::Color32::from_gray(120), format!("Tempo: {} 个", model.conductor.tempo.len()));
+    ui.colored_label(egui::Color32::from_gray(120), format!("拍号: {} 个", model.conductor.time_sig.len()));
     ui.add_space(8.0);
     ui.colored_label(egui::Color32::from_gray(100), "← 点击左侧条目查看详情");
 }
@@ -397,355 +412,39 @@ fn show_realtime_overview(ui: &mut egui::Ui, midi: &yinhe_midi::MidiFile) {
 // ═══════════════════════════════════════════════════════════════
 
 fn show_archive(ui: &mut egui::Ui, doc: &mut Document, state: &mut EventBrowserState) {
-    // Generate archive from model for display (Phase 1 bridge through old model).
-    let old_model = yinhe_editor_core::midi_compat::core_to_old_model(&doc.data.model);
-    let archive = yinhe_model::convert::to_archive::yinmodel_to_archive(&old_model);
-
-    let mut entries: Vec<(&String, &ArchiveEntry)> = archive.entries.iter().collect();
-    entries.sort_by(|a, b| a.0.cmp(b.0));
-
-    let fingerprint = entries.len() ^ entries.iter().map(|(_, e)| e.data.len()).sum::<usize>();
-    if state.archive_fingerprint != Some(fingerprint) {
-        state.expanded_archive_paths.clear();
-        // Auto-expand top-level dirs
-        for path in entries.iter().map(|(p, _)| *p) {
-            if let Some(top) = path.split('/').next() {
-                state.expanded_archive_paths.insert(top.to_string());
-            }
-        }
-        state.archive_fingerprint = Some(fingerprint);
-    }
-
-    let tree = build_archive_tree(&entries);
-
-    let frame_bg = egui::Frame::NONE
-        .fill(egui::Color32::from_gray(16))
-        .inner_margin(egui::Margin::symmetric(4, 2));
-
-    let total_rect = ui.available_rect_before_wrap();
-    let total_h = total_rect.height();
-    let gap = theme::SPLIT_GAP;
-    let split_y = total_rect.min.y + (total_h * state.split_ratio).round();
-
-    let top_rect = egui::Rect::from_min_max(total_rect.min, egui::pos2(total_rect.max.x, split_y));
-    let handle_rect = egui::Rect::from_min_max(
-        egui::pos2(total_rect.min.x, split_y),
-        egui::pos2(total_rect.max.x, split_y + gap),
-    );
-    let bot_rect = egui::Rect::from_min_max(
-        egui::pos2(total_rect.min.x, split_y + gap),
-        total_rect.max,
-    );
-
-    ui.scope_builder(egui::UiBuilder::new().max_rect(top_rect), |ui| {
-        egui::ScrollArea::both()
-            .id_salt("eb_ar_tree")
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                frame_bg.show(ui, |ui| {
-                    ui.set_min_width(ui.available_width());
-                    ui.vertical(|ui| {
-                        if let ArchiveTreeNode::Dir { children } = &tree {
-                        for (name, node) in children {
-                            render_archive_node(ui, name, node, "", 0, &archive, state);
-                        }
-                        }
-                    });
-                });
-            });
-    });
-
-    let resp = split_handle::horizontal(ui, "__eb_ar_split__", handle_rect);
-    if resp.dragged() {
-        let new_ratio = ((split_y + resp.drag_delta().y - total_rect.min.y) / total_h)
-            .clamp(theme::SPLIT_CLAMP_MIN, theme::SPLIT_CLAMP_MAX);
-        state.split_ratio = new_ratio;
-    }
-
-    ui.scope_builder(egui::UiBuilder::new().max_rect(bot_rect), |ui| {
-        egui::ScrollArea::both()
-            .id_salt("eb_ar_detail")
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                frame_bg.show(ui, |ui| {
-                    ui.set_min_width(ui.available_width());
-                    if let Some(sel) = &state.selected_archive_path {
-                        if let Some(entry) = archive.entries.get(sel) {
-                            show_archive_entry_detail(ui, sel, entry);
-                        } else {
-                            ui.colored_label(egui::Color32::GRAY, "（条目不存在）");
-                        }
-                    } else {
-                        show_archive_overview(ui, &entries);
-                    }
-                });
-            });
-    });
-}
-
-// ── Archive tree ──
-
-enum ArchiveTreeNode {
-    Dir { children: BTreeMap<String, ArchiveTreeNode> },
-    Leaf { full_path: String },
-}
-
-fn build_archive_tree(entries: &[(&String, &ArchiveEntry)]) -> ArchiveTreeNode {
-    let mut root = ArchiveTreeNode::Dir { children: BTreeMap::new() };
-    for (path, _) in entries {
-        let segs: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-        insert_archive_node(&mut root, &segs, path);
-    }
-    root
-}
-
-fn insert_archive_node(node: &mut ArchiveTreeNode, segments: &[&str], full_path: &str) {
-    let ArchiveTreeNode::Dir { children } = node else { return; };
-    match segments {
-        [] => {}
-        [name] => {
-            children.insert((*name).to_string(), ArchiveTreeNode::Leaf { full_path: full_path.to_string() });
-        }
-        [head, rest @ ..] => {
-            let entry = children.entry((*head).to_string()).or_insert_with(|| ArchiveTreeNode::Dir { children: BTreeMap::new() });
-            insert_archive_node(entry, rest, full_path);
-        }
-    }
-}
-
-fn archive_node_leaf_count(node: &ArchiveTreeNode) -> usize {
-    match node {
-        ArchiveTreeNode::Leaf { .. } => 1,
-        ArchiveTreeNode::Dir { children } => children.values().map(archive_node_leaf_count).sum(),
-    }
-}
-
-fn render_archive_node(
-    ui: &mut egui::Ui, name: &str, node: &ArchiveTreeNode, parent_path: &str, depth: usize,
-    archive: &ProjectArchive, state: &mut EventBrowserState,
-) {
-    let cur_path = if parent_path.is_empty() { name.to_string() } else { format!("{}/{}", parent_path, name) };
-    match node {
-        ArchiveTreeNode::Dir { children } => {
-            let expanded = state.expanded_archive_paths.contains(&cur_path);
-            let count = archive_node_leaf_count(node);
-            if render_dir_row(ui, name, depth, expanded, count) {
-                if expanded { state.expanded_archive_paths.remove(&cur_path); }
-                else { state.expanded_archive_paths.insert(cur_path.clone()); }
-            }
-            if state.expanded_archive_paths.contains(&cur_path) {
-                for (cname, cnode) in children {
-                    render_archive_node(ui, cname, cnode, &cur_path, depth + 1, archive, state);
-                }
-            }
-        }
-        ArchiveTreeNode::Leaf { full_path } => {
-            let entry = match archive.entries.get(full_path) { Some(e) => e, None => return };
-            let is_selected = state.selected_archive_path.as_deref() == Some(full_path.as_str());
-            let magic_str = format!("{}{}{}{}", entry.header.magic[0] as char, entry.header.magic[1] as char, entry.header.magic[2] as char, entry.header.magic[3] as char);
-            let icon = match &entry.header.magic {
-                b"YHTK" => ICON_MUSIC_NOTE,
-                b"YHCC" => ICON_SETTINGS,
-                b"YHPB" => ICON_EDIT_AUDIO,
-                b"YHPC" => ICON_PALETTE,
-                b"YHTM" => ICON_SPEED,
-                b"YHTS" => ICON_SCHEDULE,
-                _ => ICON_AUDIO_FILE,
-            };
-            let bg = if is_selected { egui::Color32::from_rgb(40, 50, 70) } else { egui::Color32::TRANSPARENT };
-            let size_label = format_size(entry.data.len());
-            let display_name = format!("{} [{}]", name, magic_str);
-
-            let frame_r = egui::Frame::NONE.fill(bg).inner_margin(egui::Margin::symmetric(2, 1)).show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 2.0;
-                    ui.add_space(depth as f32 * 14.0);
-                    ui.add_space(14.0);
-                    ui.label(icon.rich_text().size(12.0).color(if is_selected { egui::Color32::WHITE } else { egui::Color32::from_gray(160) }));
-                    ui.label(egui::RichText::new(display_name).size(11.0).monospace().color(if is_selected { egui::Color32::WHITE } else { egui::Color32::from_gray(200) }));
-                    ui.label(egui::RichText::new(format!("({})", size_label)).size(10.0).color(egui::Color32::from_gray(110)));
-                });
-            });
-            if frame_r.response.interact(egui::Sense::click()).clicked() {
-                state.selected_archive_path = Some(full_path.to_string());
-            }
-        }
-    }
-}
-
-// ── Archive entry detail ──
-
-fn show_archive_entry_detail(ui: &mut egui::Ui, _path: &str, entry: &ArchiveEntry) {
-    let h = entry.header;
-    ui.label(egui::RichText::new("文件头").size(12.0).strong());
-    ui.add_space(2.0);
-    archive_header_row(ui, "magic", &format!("{}{}{}{}", h.magic[0] as char, h.magic[1] as char, h.magic[2] as char, h.magic[3] as char));
-    archive_header_row(ui, "version", &format!("{}", h.version));
-    archive_header_row(ui, "port", &format!("{}", h.port));
-    archive_header_row(ui, "channel", &format!("{}", h.channel));
-    archive_header_row(ui, "extra", &format!("{}", h.extra));
-    ui.add_space(4.0);
-    archive_header_row(ui, "data size", &format_size(entry.data.len()));
-
-    // Try to decode as specific types
-    ui.add_space(6.0);
-    match &entry.header.magic {
-        b"YHTK" => show_archive_notes(ui, entry),
-        b"YHCC" => show_archive_cc(ui, entry),
-        b"YHPB" => show_archive_pitch(ui, entry),
-        b"YHPC" => show_archive_pc(ui, entry),
-        b"YHTM" => show_archive_tempo(ui, entry),
-        b"YHTS" => show_archive_time_sig(ui, entry),
-        b"YHMP" | b"YHPR" => show_archive_json(ui, entry),
-        _ => show_archive_hexdump(ui, &entry.data),
-    }
-}
-
-fn show_archive_notes(ui: &mut egui::Ui, entry: &ArchiveEntry) {
-    // Notes data starts with InnerHeader (3 bytes) then delta-gate encoded notes
-    let min_size = yinhe_project::InnerHeader::SIZE;
-    if entry.data.len() >= min_size {
-        if let Some((_inner, rest)) = yinhe_project::InnerHeader::read(&entry.data) {
-            let notes: Vec<yinhe_project::Note> = yinhe_project::decode_delta_events(rest);
-            ui.label(egui::RichText::new(format!("音符 ({} 个)", notes.len())).size(12.0).strong());
-            ui.add_space(2.0);
-            build_table(ui, "eb_ar_notes", &[("#", 40.0), ("start_tick", 70.0), ("end_tick", 70.0), ("key", 50.0), ("velocity", 50.0)], notes.len(), |i, row| {
-                let n = &notes[i];
-                cell_text(row, format!("{}", i + 1));
-                cell_text(row, format!("{}", n.start_tick));
-                cell_text(row, format!("{}", n.end_tick));
-                cell_text(row, format!("{}", n.key));
-                cell_text(row, format!("{}", n.velocity));
-            });
-            return;
-        }
-    }
-    // Fallback: try raw decode
-    let notes: Vec<yinhe_project::Note> = yinhe_project::decode_delta_events(&entry.data);
-    ui.label(egui::RichText::new(format!("音符 ({} 个)", notes.len())).size(12.0).strong());
-    ui.add_space(2.0);
-    build_table(ui, "eb_ar_notes", &[("#", 40.0), ("start_tick", 70.0), ("end_tick", 70.0), ("key", 50.0), ("velocity", 50.0)], notes.len(), |i, row| {
-        let n = &notes[i];
-        cell_text(row, format!("{}", i + 1));
-        cell_text(row, format!("{}", n.start_tick));
-        cell_text(row, format!("{}", n.end_tick));
-        cell_text(row, format!("{}", n.key));
-        cell_text(row, format!("{}", n.velocity));
-    });
-}
-
-fn show_archive_cc(ui: &mut egui::Ui, entry: &ArchiveEntry) {
-    // CC data starts with InnerHeader (3 bytes) then delta-varint encoded events
-    let payload = skip_inner_header_if_present(&entry.data);
-    let events: Vec<yinhe_project::CcEvent> = yinhe_project::decode_delta_events(payload);
-    ui.label(egui::RichText::new(format!("CC 事件 ({} 个)", events.len())).size(12.0).strong());
-    ui.add_space(2.0);
-    build_table(ui, "eb_ar_cc", &[("#", 40.0), ("tick", 70.0), ("value", 60.0)], events.len(), |i, row| {
-        let e = &events[i];
-        cell_text(row, format!("{}", i + 1));
-        cell_text(row, format!("{}", e.tick));
-        cell_text(row, format!("{}", e.value));
-    });
-}
-
-fn show_archive_pitch(ui: &mut egui::Ui, entry: &ArchiveEntry) {
-    let payload = skip_inner_header_if_present(&entry.data);
-    let events: Vec<yinhe_project::PitchBendEvent> = yinhe_project::decode_delta_events(payload);
-    ui.label(egui::RichText::new(format!("弯音 ({} 个)", events.len())).size(12.0).strong());
-    ui.add_space(2.0);
-    build_table(ui, "eb_ar_pb", &[("#", 40.0), ("tick", 70.0), ("value", 70.0)], events.len(), |i, row| {
-        let e = &events[i];
-        cell_text(row, format!("{}", i + 1));
-        cell_text(row, format!("{}", e.tick));
-        cell_text(row, format!("{}", e.value));
-    });
-}
-
-fn show_archive_pc(ui: &mut egui::Ui, entry: &ArchiveEntry) {
-    let payload = skip_inner_header_if_present(&entry.data);
-    let events: Vec<yinhe_project::PcEvent> = yinhe_project::decode_delta_events(payload);
-    ui.label(egui::RichText::new(format!("音色变更 ({} 个)", events.len())).size(12.0).strong());
-    ui.add_space(2.0);
-    build_table(ui, "eb_ar_pc", &[("#", 40.0), ("tick", 70.0), ("program", 50.0)], events.len(), |i, row| {
-        let e = &events[i];
-        cell_text(row, format!("{}", i + 1));
-        cell_text(row, format!("{}", e.tick));
-        cell_text(row, format!("{}", e.program));
-    });
-}
-
-fn show_archive_tempo(ui: &mut egui::Ui, entry: &ArchiveEntry) {
-    let events: Vec<yinhe_project::TempoEvent> = yinhe_project::decode_delta_events(&entry.data);
-    ui.label(egui::RichText::new(format!("Tempo ({} 个)", events.len())).size(12.0).strong());
-    ui.add_space(2.0);
-    build_table(ui, "eb_ar_tempo", &[("#", 40.0), ("tick", 70.0), ("BPM", 70.0)], events.len(), |i, row| {
-        let e = &events[i];
-        cell_text(row, format!("{}", i + 1));
-        cell_text(row, format!("{}", e.tick));
-        cell_text(row, format!("{:.2}", e.bpm));
-    });
-}
-
-fn show_archive_time_sig(ui: &mut egui::Ui, entry: &ArchiveEntry) {
-    let events: Vec<yinhe_project::TimeSigEvent> = yinhe_project::decode_delta_events(&entry.data);
-    ui.label(egui::RichText::new(format!("拍号 ({} 个)", events.len())).size(12.0).strong());
-    ui.add_space(2.0);
-    build_table(ui, "eb_ar_ts", &[("#", 40.0), ("tick", 70.0), ("拍号", 80.0)], events.len(), |i, row| {
-        let e = &events[i];
-        let denom = 1u32 << e.denominator_power as u32;
-        cell_text(row, format!("{}", i + 1));
-        cell_text(row, format!("{}", e.tick));
-        cell_text(row, format!("{}/{}", e.numerator, denom));
-    });
-}
-
-fn show_archive_json(ui: &mut egui::Ui, entry: &ArchiveEntry) {
-    ui.label(egui::RichText::new("JSON 数据").size(12.0).strong());
-    ui.add_space(2.0);
-    if let Ok(obj) = serde_json::from_slice::<serde_json::Value>(&entry.data) {
-        let pretty = serde_json::to_string_pretty(&obj).unwrap_or_default();
-        let mut text = pretty;
-        egui::ScrollArea::vertical().auto_shrink([false, true]).show(ui, |ui| {
-            ui.add_sized(
-                egui::vec2(ui.available_width(), ui.available_height().max(200.0)),
-                egui::TextEdit::multiline(&mut text).desired_rows(20).font(egui::TextStyle::Monospace).code_editor(),
-            );
+    // Display YinModel structure directly as a tree view.
+    ui.heading("YinModel Structure");
+    ui.separator();
+    
+    let model = &doc.data.model;
+    ui.label(format!("Tracks: {}", model.tracks.len()));
+    ui.label(format!("Conductor: {} tempo, {} time-sig",
+        model.conductor.tempo.len(),
+        model.conductor.time_sig.len()
+    ));
+    ui.label(format!("Note count: {}", model.note_count));
+    ui.label(format!("Tick length: {}", model.tick_length));
+    
+    ui.separator();
+    ui.label("Track list:");
+    
+    for (i, track) in model.tracks.iter().enumerate() {
+        ui.horizontal(|ui| {
+            ui.label(format!("  [{}] {} (ch {}, port {})",
+                i, track.name, track.channel, track.port));
+            ui.label(format!("{} notes", track.notes.len()));
+            ui.label(format!("{} CCs", track.cc.len()));
+            ui.label(format!("{} PB", track.pitch_bend.len()));
+            ui.label(format!("{} PC", track.program_change.len()));
+            ui.label(format!("{} RPN", track.rpn.len()));
         });
-    } else {
-        show_archive_hexdump(ui, &entry.data);
     }
 }
 
-fn show_archive_hexdump(ui: &mut egui::Ui, data: &[u8]) {
-    let mut hex = String::new();
-    for (i, chunk) in data.chunks(16).enumerate() {
-        hex.push_str(&format!("{:04x}  ", i * 16));
-        for b in chunk { hex.push_str(&format!("{:02x} ", b)); }
-        hex.push_str("  ");
-        for b in chunk {
-            let c = *b as char;
-            hex.push(if c.is_ascii_graphic() || c == ' ' { c } else { '.' });
-        }
-        hex.push('\n');
-    }
-    let mut clone = hex;
-    ui.add(egui::TextEdit::multiline(&mut clone).desired_rows(15).font(egui::TextStyle::Monospace).code_editor());
-}
-
-fn show_archive_overview(ui: &mut egui::Ui, entries: &[(&String, &ArchiveEntry)]) {
-    ui.label(egui::RichText::new("归档结构").size(14.0).strong());
-    ui.add_space(4.0);
-    let total_bytes: usize = entries.iter().map(|(_, e)| e.data.len()).sum();
-    ui.colored_label(egui::Color32::GRAY, format!("{} 个条目, 共 {}", entries.len(), format_size(total_bytes)));
-    ui.add_space(4.0);
-    let track_count = entries.iter().filter(|(p, _)| p.contains("notes.zst")).count();
-    let cc_count = entries.iter().filter(|(p, _)| p.contains("cc_")).count();
-    let json_count = entries.iter().filter(|(p, _)| p.ends_with(".json")).count();
-    ui.colored_label(egui::Color32::from_gray(120), format!("音符条目: {} 个", track_count));
-    ui.colored_label(egui::Color32::from_gray(120), format!("CC 条目: {} 个", cc_count));
-    ui.colored_label(egui::Color32::from_gray(120), format!("JSON 条目: {} 个", json_count));
-    ui.add_space(8.0);
-    ui.colored_label(egui::Color32::from_gray(100), "← 点击左侧条目查看详情");
+fn format_size(bytes: usize) -> String {
+    if bytes < 1024 { format!("{}B", bytes) }
+    else if bytes < 1024 * 1024 { format!("{:.1}K", bytes as f64 / 1024.0) }
+    else { format!("{:.1}M", bytes as f64 / (1024.0 * 1024.0)) }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -791,12 +490,6 @@ fn cc_label(controller: u8) -> &'static str {
         10 => "Pan", 11 => "Expression", 64 => "Sustain",
         91 => "Reverb", 93 => "Chorus", _ => "",
     }
-}
-
-fn format_size(bytes: usize) -> String {
-    if bytes < 1024 { format!("{}B", bytes) }
-    else if bytes < 1024 * 1024 { format!("{:.1}K", bytes as f64 / 1024.0) }
-    else { format!("{:.1}M", bytes as f64 / (1024.0 * 1024.0)) }
 }
 
 /// Try to skip InnerHeader (3 bytes) for track-scoped archive entries.

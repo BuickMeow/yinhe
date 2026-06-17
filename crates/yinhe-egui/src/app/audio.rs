@@ -8,7 +8,7 @@ impl App {
     ///
     /// Returns a list of `(port, paths)` for every port the MIDI uses.
     pub(crate) fn resolve_sf_config(&self, doc: &yinhe_editor_core::document::Document) -> Vec<(u8, Vec<String>)> {
-        let num_ch = yinhe_audio::channels_for_midi(&*doc.data.midi()).0;
+        let num_ch = yinhe_audio::channels_for_model(&doc.data.model).0;
         let num_ports = (num_ch.div_ceil(16) as u8).max(1);
         let global = &self.audio_settings.global_sf_config;
         let project = &doc.edit.project_sf;
@@ -72,15 +72,15 @@ impl App {
 
         let doc = &self.documents[idx];
         let sr = self.audio_settings.sample_rate;
-        let (num_ch, active_mask) = yinhe_audio::channels_for_midi(&*doc.data.midi());
+        let (num_ch, active_mask) = yinhe_audio::channels_for_model(&doc.data.model);
 
         match yinhe_audio::spawn_cpal_audio(sr, num_ch, active_mask) {
             Ok(audio) => {
                 progress::set_stage(&self.load_progress, 2, progress::StageStatus::Done);
 
                 // Load MIDI
-                audio.handle.send(yinhe_audio::AudioCommand::LoadMidi {
-                    midi: doc.data.midi(),
+                audio.handle.send(yinhe_audio::AudioCommand::LoadModel {
+                    model: doc.data.model.clone(),
                 });
 
                 // Apply XSynth layer count

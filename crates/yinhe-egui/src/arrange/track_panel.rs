@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use eframe::egui;
 
-use yinhe_midi::TrackInfo;
+use yinhe_core::TrackInfo;
 
 use yinhe_editor_core::document::TrackOverride;
 

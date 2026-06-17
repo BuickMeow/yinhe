@@ -1,149 +1,95 @@
+use std::collections::BTreeMap;
+use std::sync::Arc;
+
+use yinhe_core::{CcEvent, ConductorData, NoteEvent, PcEvent, PitchBendEvent, ProjectMeta, TempoEvent, TimeSigEvent, TrackData, YinModel};
 use yinhe_editor_core::document::Document;
 use yinhe_editor_core::quantize::QuantizePreset;
-use yinhe_midi::{MidiControlEvent, MidiFile};
-use yinhe_types::{Note, TimeSigEvent};
 
-/// Create a minimal valid MIDI file from raw bytes (SMF format 0, 1 track, 480 tpb).
-pub fn minimal_midi_bytes() -> Vec<u8> {
-    let mut data = Vec::new();
-    data.extend_from_slice(b"MThd");
-    data.extend_from_slice(&6u32.to_be_bytes());
-    data.extend_from_slice(&[0, 0, 0, 1, 1, 0xE0]);
-    data.extend_from_slice(b"MTrk");
-    let track: &[u8] = &[
-        0x00, 0xFF, 0x51, 0x03, 0x07, 0xA1, 0x20, 0x00, 0x90, 60, 100, 0x82, 0x40, 0x80, 60, 0,
-        0x00, 0xFF, 0x2F, 0x00,
+/// Create a multi-track test YinModel (programmatically, no raw bytes).
+pub fn make_test_model() -> YinModel {
+    let conductor = ConductorData {
+        tempo: vec![
+            TempoEvent { tick: 0, bpm: 120.0 },
+            TempoEvent { tick: 1920, bpm: 140.0 },
+        ],
+        time_sig: vec![
+            TimeSigEvent { tick: 0, numerator: 4, denominator: 2 },
+            TimeSigEvent { tick: 1920, numerator: 3, denominator: 2 },
+        ],
+    };
+
+    let mut t0 = TrackData::new(0, 0); // port 0, ch 0
+    t0.name = "Lead".into();
+    t0.notes = vec![
+        NoteEvent { start_tick: 0, end_tick: 480, key: 60, velocity: 100, dup_index: 0 },
+        NoteEvent { start_tick: 480, end_tick: 960, key: 60, velocity: 100, dup_index: 0 },
     ];
-    data.extend_from_slice(&(track.len() as u32).to_be_bytes());
-    data.extend_from_slice(track);
-    data
+    t0.cc.insert(7, vec![
+        CcEvent { tick: 0, value: 100 },
+        CcEvent { tick: 240, value: 80 },
+    ]);
+
+    let mut t1 = TrackData::new(0, 1); // port 0, ch 1
+    t1.name = "Bass".into();
+    t1.notes = vec![
+        NoteEvent { start_tick: 0, end_tick: 1920, key: 48, velocity: 90, dup_index: 0 },
+    ];
+    t1.pitch_bend = vec![PitchBendEvent { tick: 100, value: 1024 }];
+
+    let mut t2 = TrackData::new(1, 0); // port 1, ch 0
+    t2.name = "Drums".into();
+    t2.notes = vec![
+        NoteEvent { start_tick: 0, end_tick: 240, key: 36, velocity: 120, dup_index: 0 },
+    ];
+    t2.program_change = vec![PcEvent { tick: 0, program: 7, bank_msb: 0xFF, bank_lsb: 0xFF }];
+
+    let meta = ProjectMeta { ppq: 480, ..ProjectMeta::default() };
+    let mut model = YinModel {
+        conductor: Arc::new(conductor),
+        tracks: vec![Arc::new(t0), Arc::new(t1), Arc::new(t2)],
+        meta,
+        ..Default::default()
+    };
+    model.rebuild();
+    model
 }
 
-/// Create a minimal MIDI file from bytes and parse it.
-pub fn parse_minimal_midi() -> MidiFile {
-    let data = minimal_midi_bytes();
-    MidiFile::load_from_bytes(&data).expect("failed to parse minimal MIDI")
-}
-
-/// Create a multi-track test MIDI file (programmatically, no raw bytes).
-pub fn make_test_midi() -> MidiFile {
-    let mut m = MidiFile::default();
-    m.ticks_per_beat = 480;
-    m.track_ports = vec![0, 0, 1];
-    m.track_channel_prefixes = vec![None, None, None];
-    m.track_channels = vec![0, 1, 16];
-    m.track_names = vec!["Lead".into(), "Bass".into(), "Drums".into()];
-
-    m.key_notes[60].push(Note {
-        start_tick: 0,
-        end_tick: 480,
-        velocity: 100,
-        track: 0,
-    });
-    m.key_notes[60].push(Note {
-        start_tick: 480,
-        end_tick: 960,
-        velocity: 100,
-        track: 0,
-    });
-    m.key_notes[48].push(Note {
-        start_tick: 0,
-        end_tick: 1920,
-        velocity: 90,
-        track: 1,
-    });
-    m.key_notes[36].push(Note {
-        start_tick: 0,
-        end_tick: 240,
-        velocity: 120,
-        track: 2,
-    });
-
-    m.control_events.push(MidiControlEvent::ControlChange {
-        tick: 0,
-        controller: 7,
-        value: 100,
-        track: 0,
-    });
-    m.control_events.push(MidiControlEvent::ControlChange {
-        tick: 240,
-        controller: 7,
-        value: 80,
-        track: 0,
-    });
-    m.control_events.push(MidiControlEvent::PitchBend {
-        tick: 100,
-        value: 1024,
-        track: 1,
-    });
-    m.control_events.push(MidiControlEvent::ProgramChange {
-        tick: 0,
-        program: 7,
-        track: 2,
-    });
-
-    m.tempo_segments = vec![
-        yinhe_midi::TempoSegment {
-            start_tick: 0,
-            start_time: 0.0,
-            micros_per_quarter: yinhe_midi::mpq_from_bpm(120.0),
-        },
-        yinhe_midi::TempoSegment {
-            start_tick: 1920,
-            start_time: 0.0,
-            micros_per_quarter: yinhe_midi::mpq_from_bpm(140.0),
-        },
-    ];
-    yinhe_midi::recompute_tempo_start_times(&mut m.tempo_segments, m.ticks_per_beat);
-
-    m.time_sig_events = vec![
-        TimeSigEvent {
-            tick: 0,
-            numerator: 4,
-            denominator: 2,
-        },
-        TimeSigEvent {
-            tick: 1920,
-            numerator: 3,
-            denominator: 2,
-        },
-    ];
-
-    m.note_count = m.key_notes.iter().map(|n| n.len() as u64).sum();
-    m.tick_length = 1920;
-    m
-}
-
-/// Create a Document from a MidiFile.
+/// Create a Document from a test model.
 pub fn make_test_document() -> Document {
-    let midi = make_test_midi();
-    Document::from_midi("test.mid", midi, QuantizePreset::default()).expect("from_midi failed")
+    let model = make_test_model();
+    Document::from_model("test.mid", model, QuantizePreset::default()).expect("from_model failed")
 }
 
-/// Create a multi-track MIDI with notes on many keys for stress testing.
-pub fn make_stress_midi(track_count: u16, notes_per_track: u32) -> MidiFile {
-    let mut m = MidiFile::default();
-    m.ticks_per_beat = 480;
-    m.track_ports = (0..track_count).map(|i| i as u8).collect();
-    m.track_channels = (0..track_count).map(|i| i as u8).collect();
-    m.track_channel_prefixes = (0..track_count).map(|_| None).collect();
-    m.track_names = (0..track_count).map(|i| format!("Track {}", i)).collect();
+/// Create a multi-track YinModel with notes on many keys for stress testing.
+pub fn make_stress_model(track_count: u16, notes_per_track: u32) -> YinModel {
+    let conductor = ConductorData::default();
 
-    let mut note_count = 0u64;
-    for t in 0..track_count {
-        for n in 0..notes_per_track {
-            let key = (n % 128) as u8;
-            let start = n * 120;
-            m.key_notes[key as usize].push(Note {
-                start_tick: start,
-                end_tick: start + 100,
-                velocity: 80,
-                track: t,
-            });
-            note_count += 1;
-        }
-    }
-    m.note_count = note_count;
-    m.tick_length = (notes_per_track * 120 + 100) as u64;
-    m
+    let tracks: Vec<Arc<TrackData>> = (0..track_count)
+        .map(|t| {
+            let mut track = TrackData::new(0, t as u8);
+            track.name = format!("Track {}", t);
+            for n in 0..notes_per_track {
+                let key = (n % 128) as u8;
+                let start = n * 120;
+                track.notes.push(NoteEvent {
+                    start_tick: start,
+                    end_tick: start + 100,
+                    key,
+                    velocity: 80,
+                    dup_index: 0,
+                });
+            }
+            Arc::new(track)
+        })
+        .collect();
+
+    let meta = ProjectMeta { ppq: 480, ..ProjectMeta::default() };
+    let mut model = YinModel {
+        conductor: Arc::new(conductor),
+        tracks,
+        meta,
+        ..Default::default()
+    };
+    model.rebuild();
+    model
 }

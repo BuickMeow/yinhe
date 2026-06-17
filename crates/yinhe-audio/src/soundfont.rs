@@ -6,7 +6,7 @@ use xsynth_core::channel::{ChannelConfigEvent, ChannelEvent};
 use xsynth_core::channel_group::{ChannelGroup, SynthEvent};
 use xsynth_core::soundfont::{SampleSoundfont, SoundfontBase, SoundfontInitOptions};
 use xsynth_core::{AudioStreamParams, ChannelCount};
-use yinhe_midi::MidiFile;
+use yinhe_core::YinModel;
 
 static GLOBAL_SF_CACHE: LazyLock<RwLock<HashMap<PathBuf, Arc<dyn SoundfontBase>>>> =
     LazyLock::new(|| RwLock::new(HashMap::new()));
@@ -121,16 +121,16 @@ impl SoundFontManager {
         Ok(())
     }
 
-    pub fn load_for_midi(
+    pub fn load_for_model(
         &mut self,
-        midi: &MidiFile,
+        model: &YinModel,
         cg: &mut ChannelGroup,
         channel_map: &[u32; 256],
     ) -> Result<(), String> {
         let mut used_ports = [false; 16];
-        for &port in &midi.track_ports {
-            if (port as usize) < 16 {
-                used_ports[port as usize] = true;
+        for t in &model.tracks {
+            if (t.port as usize) < 16 {
+                used_ports[t.port as usize] = true;
             }
         }
 

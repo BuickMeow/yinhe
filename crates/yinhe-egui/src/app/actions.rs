@@ -132,9 +132,7 @@ impl App {
         doc.data.bump_version();
         self.pianoroll_view.base.dirty = true;
         if let Some(ref audio) = self.audio {
-            let _ = audio.handle.send(yinhe_audio::AudioCommand::ReloadNotes {
-                midi: doc.midi(),
-            });
+            let _ = audio.handle.send(yinhe_audio::AudioCommand::ReloadNotes { model: doc.data.model.clone() });
         }
     }
 
@@ -165,9 +163,7 @@ impl App {
         doc.apply_undo_snapshot(snap);
         self.pianoroll_view.base.dirty = true;
         if let Some(ref audio) = self.audio {
-            let _ = audio.handle.send(yinhe_audio::AudioCommand::ReloadNotes {
-                midi: doc.midi(),
-            });
+            let _ = audio.handle.send(yinhe_audio::AudioCommand::ReloadNotes { model: doc.data.model.clone() });
         }
     }
 }
@@ -249,9 +245,7 @@ impl App {
 
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
-            let old_model = yinhe_editor_core::midi_compat::core_to_old_model(&model);
-            let archive = yinhe_model::convert::to_archive::yinmodel_to_archive(&old_model);
-            if let Err(e) = archive.write_to(&path_for_thread) {
+            if let Err(e) = yinhe_yin::save_yin(&model, &path_for_thread) {
                 tracing::error!("Failed to save project: {}", e);
             }
             let _ = tx.send(());
@@ -309,9 +303,15 @@ impl App {
             let path_str = path.to_string_lossy().to_string();
             if let Some(idx) = self.active_doc {
                 let doc = &self.documents[idx];
-                let midi = doc.midi();
-                if let Err(e) = yinhe_project::conversion::export_midi(&midi, doc.track_names(), &path_str) {
-                    tracing::error!("Failed to export MIDI: {}", e);
+                match yinhe_mid2::write_to_bytes(&doc.data.model) {
+                    Ok(bytes) => {
+                        if let Err(e) = std::fs::write(&path_str, &bytes) {
+                            tracing::error!("Failed to export MIDI: {}", e);
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to export MIDI: {}", e);
+                    }
                 }
             }
         }
@@ -359,7 +359,7 @@ impl App {
         }
 
         // Collect render inputs
-        let midi = doc.midi();
+        let model = doc.data.model.clone();
         let sr = if self.export_sample_rate > 0 {
             self.export_sample_rate
         } else {
@@ -392,7 +392,7 @@ impl App {
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
             let result = yinhe_audio::export::export_wav(
-                midi,
+                model,
                 sr,
                 &port_sf,
                 &skip,

@@ -140,7 +140,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                     follow_resp.on_hover_text(ctx.follow_mode.tooltip());
 
                     // ── Quantization preset button + popup ──
-                    let ppq = ctx.doc.map(|d| d.midi().ticks_per_beat).unwrap_or(480);
+                    let ppq = ctx.doc.map(|d| d.data.model.meta.ppq).unwrap_or(480);
                     let q_label = ctx
                         .doc
                         .map(|d| d.edit.quantize.button_text())

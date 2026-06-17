@@ -45,11 +45,6 @@ impl Document {
         &self.data.model
     }
 
-    /// Compatibility: lazy MidiFile view of the model. Cheap on cache hit.
-    pub fn midi(&self) -> Arc<yinhe_midi::MidiFile> {
-        self.data.midi()
-    }
-
     pub fn track_names(&self) -> &[String] {
         &self.data.track_names
     }
@@ -58,7 +53,7 @@ impl Document {
         &self.edit.selected
     }
 
-    pub fn track_info_cache(&self) -> &[yinhe_midi::TrackInfo] {
+    pub fn track_info_cache(&self) -> &[yinhe_core::TrackInfo] {
         &self.edit.track_info_cache
     }
 
@@ -181,19 +176,6 @@ impl Document {
                 file_path: None,
             })
         })
-    }
-
-    /// Legacy: Create a Document from a yinhe_midi::MidiFile.
-    /// Used during migration; bridges through old yinhe-model. Will be
-    /// removed once all callers go through `from_model`.
-    pub fn from_midi(
-        path: &str,
-        midi: yinhe_midi::MidiFile,
-        quantize: QuantizePreset,
-    ) -> Result<Self, String> {
-        let old_model = yinhe_model::convert::from_midi::midi_to_yinmodel(&midi);
-        let model = old_model_to_core(old_model);
-        Self::from_model(path, model, quantize)
     }
 
     /// Load a `.yin` file. Returns `(Document, soundfont_project_mode)`.
@@ -367,117 +349,6 @@ impl Document {
     }
 }
 
-// ── Free functions ──
-
-/// Bridge: convert old yinhe_model::YinModel → new yinhe_core::YinModel.
-/// Used during Phase 1 while consumers still go through old parser/loader.
-/// Deleted in Phase 4 along with yinhe-model.
-fn old_model_to_core(old: yinhe_model::YinModel) -> YinModel {
-    use std::collections::BTreeMap;
-
-    let conductor = yinhe_core::ConductorData {
-        tempo: old
-            .conductor
-            .tempo
-            .iter()
-            .map(|t| yinhe_core::TempoEvent { tick: t.tick, bpm: t.bpm })
-            .collect(),
-        time_sig: old
-            .conductor
-            .time_sig
-            .iter()
-            .map(|t| yinhe_core::TimeSigEvent {
-                tick: t.tick,
-                numerator: t.numerator,
-                denominator: t.denominator,
-            })
-            .collect(),
-    };
-
-    let tracks: Vec<Arc<TrackData>> = old
-        .tracks
-        .iter()
-        .map(|ot| {
-            let mut td = TrackData::new(ot.port, ot.channel);
-            td.uuid = ot.uuid.clone();
-            td.name = ot.name.clone();
-            // Convert notes (tick + duration → start_tick + end_tick)
-            // and assign dup_index for any (key, start_tick) collisions.
-            let mut notes: Vec<NoteEvent> = ot
-                .notes
-                .iter()
-                .map(|n| NoteEvent {
-                    start_tick: n.tick,
-                    end_tick: n.tick + n.duration,
-                    key: n.key,
-                    velocity: n.velocity,
-                    dup_index: 0,
-                })
-                .collect();
-            notes.sort_by_key(|n| (n.start_tick, n.key));
-            let mut counter: BTreeMap<(u8, u32), u8> = BTreeMap::new();
-            for n in notes.iter_mut() {
-                let entry = counter.entry((n.key, n.start_tick)).or_insert(0);
-                n.dup_index = *entry;
-                *entry = entry.saturating_add(1);
-            }
-            td.notes = notes;
-            for (&controller, evs) in &ot.cc {
-                td.cc.insert(
-                    controller,
-                    evs.iter()
-                        .map(|e| yinhe_core::CcEvent { tick: e.tick, value: e.value })
-                        .collect(),
-                );
-            }
-            td.pitch_bend = ot
-                .pitch_bend
-                .iter()
-                .map(|e| yinhe_core::PitchBendEvent { tick: e.tick, value: e.value })
-                .collect();
-            td.program_change = ot
-                .program_change
-                .iter()
-                .map(|e| yinhe_core::PcEvent {
-                    tick: e.tick,
-                    program: e.program,
-                    bank_msb: e.bank_msb,
-                    bank_lsb: e.bank_lsb,
-                })
-                .collect();
-            // Old RPN keyed by u8 (typically 0/1/2 with implicit lsb=0); new
-            // uses u16 (msb<<8)|lsb. Promote.
-            for (&rpn_msb, evs) in &ot.rpn {
-                let key = (rpn_msb as u16) << 8;
-                td.rpn.insert(
-                    key,
-                    evs.iter()
-                        .map(|e| yinhe_core::RpnEvent { tick: e.tick, value: e.value })
-                        .collect(),
-                );
-            }
-            Arc::new(td)
-        })
-        .collect();
-
-    let meta = yinhe_core::ProjectMeta {
-        name: old.meta.name,
-        artist: old.meta.artist,
-        description: old.meta.description,
-        ppq: old.meta.ppq,
-        compression_level: old.meta.compression_level,
-    };
-
-    let mut model = YinModel {
-        conductor: Arc::new(conductor),
-        tracks,
-        meta,
-        ..Default::default()
-    };
-    model.rebuild();
-    model
-}
-
 pub fn detect_conductor_from_model(model: &YinModel) -> Option<u16> {
     if model.tracks.is_empty() {
         return None;
@@ -492,12 +363,12 @@ pub fn detect_conductor_from_model(model: &YinModel) -> Option<u16> {
     Some(0)
 }
 
-fn build_track_info(model: &YinModel) -> Vec<yinhe_midi::TrackInfo> {
+fn build_track_info(model: &YinModel) -> Vec<yinhe_core::TrackInfo> {
     model
         .tracks
         .iter()
         .enumerate()
-        .map(|(i, track)| yinhe_midi::TrackInfo {
+        .map(|(i, track)| yinhe_core::TrackInfo {
             index: i as u16,
             name: track.name.clone(),
             note_count: track.notes.len() as u64,

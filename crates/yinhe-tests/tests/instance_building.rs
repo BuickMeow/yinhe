@@ -1,7 +1,7 @@
 use yinhe_types::{Note, NoteScanIndex, TickBuckets};
 use yinhe_pianoroll::instances;
 use yinhe_pianoroll::PianoRollView;
-use yinhe_midi::MidiFile;
+
 use yinhe_test_helpers::*;
 
 fn wide_view() -> PianoRollView {
@@ -13,10 +13,10 @@ fn wide_view() -> PianoRollView {
 
 #[test]
 fn build_notes_output_count_matches_input() {
-    let m = make_test_midi();
+    let m = make_test_model();
     let view = wide_view();
-    let visible = vec![true; m.track_ports.len()];
-    let colors = vec![[1.0f32, 1.0, 1.0]; m.track_ports.len()];
+    let visible = vec![true; m.tracks.len()];
+    let colors = vec![[1.0f32, 1.0, 1.0]; m.tracks.len()];
     let selected = std::collections::HashSet::new();
 
     let mut out = Vec::new();
@@ -26,7 +26,7 @@ fn build_notes_output_count_matches_input() {
 
 #[test]
 fn build_notes_empty_source() {
-    let m = MidiFile::default();
+    let m = YinModel::default();
     let view = wide_view();
     let visible = vec![];
     let colors = vec![];
@@ -39,10 +39,10 @@ fn build_notes_empty_source() {
 
 #[test]
 fn build_notes_with_selection() {
-    let m = make_test_midi();
+    let m = make_test_model();
     let view = wide_view();
-    let visible = vec![true; m.track_ports.len()];
-    let colors = vec![[1.0f32, 1.0, 1.0]; m.track_ports.len()];
+    let visible = vec![true; m.tracks.len()];
+    let colors = vec![[1.0f32, 1.0, 1.0]; m.tracks.len()];
     let mut selected = std::collections::HashSet::new();
     selected.insert((0u16, 0u32, 60u8));
 
@@ -53,11 +53,11 @@ fn build_notes_with_selection() {
 
 #[test]
 fn build_notes_visibility_filter() {
-    let m = make_test_midi();
+    let m = make_test_model();
     let view = wide_view();
-    let mut visible = vec![true; m.track_ports.len()];
+    let mut visible = vec![true; m.tracks.len()];
     visible[0] = false; // hide track 0
-    let colors = vec![[1.0f32, 1.0, 1.0]; m.track_ports.len()];
+    let colors = vec![[1.0f32, 1.0, 1.0]; m.tracks.len()];
     let selected = std::collections::HashSet::new();
 
     let mut out = Vec::new();
@@ -69,10 +69,10 @@ fn build_notes_visibility_filter() {
 
 #[test]
 fn build_notes_visible_range_culling() {
-    let m = make_test_midi();
+    let m = make_test_model();
     let view = wide_view();
-    let visible = vec![true; m.track_ports.len()];
-    let colors = vec![[1.0f32, 1.0, 1.0]; m.track_ports.len()];
+    let visible = vec![true; m.tracks.len()];
+    let colors = vec![[1.0f32, 1.0, 1.0]; m.tracks.len()];
     let selected = std::collections::HashSet::new();
 
     let mut out = Vec::new();
@@ -83,7 +83,7 @@ fn build_notes_visible_range_culling() {
 
 #[test]
 fn build_notes_empty_data() {
-    let m = MidiFile::default();
+    let m = YinModel::default();
     let view = wide_view();
     let visible = vec![true; 0];
     let colors = vec![[1.0f32, 1.0, 1.0]; 0];
@@ -100,8 +100,8 @@ fn build_notes_stress_many_tracks() {
     let mut view = wide_view();
     // Zoom out so all notes (up to tick 12100) are visible
     view.base.pixels_per_tick = 0.01;
-    let visible = vec![true; m.track_ports.len()];
-    let colors = vec![[1.0f32, 1.0, 1.0]; m.track_ports.len()];
+    let visible = vec![true; m.tracks.len()];
+    let colors = vec![[1.0f32, 1.0, 1.0]; m.tracks.len()];
     let selected = std::collections::HashSet::new();
 
     let mut out = Vec::new();
@@ -132,7 +132,7 @@ fn note_scan_index_build_and_seek() {
     key_notes[60].push(Note { start_tick: 500, end_tick: 600, velocity: 80, track: 0 });
     key_notes[60].push(Note { start_tick: 1000, end_tick: 1100, velocity: 80, track: 0 });
 
-    let mut m = MidiFile::default();
+    let mut m = YinModel::default();
     m.key_notes = key_notes.clone();
     m.scan_index = Some(NoteScanIndex::build(&key_notes, 1200));
 

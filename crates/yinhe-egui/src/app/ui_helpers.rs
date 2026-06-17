@@ -447,9 +447,7 @@ impl App {
                         let _ =
                             audio
                                 .handle
-                                .send(yinhe_audio::AudioCommand::ReloadNotes {
-                                    midi: doc.midi(),
-                                });
+                                .send(yinhe_audio::AudioCommand::ReloadNotes { model: doc.data.model.clone() });
                     }
                 }
             }

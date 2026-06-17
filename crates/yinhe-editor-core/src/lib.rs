@@ -4,7 +4,6 @@ pub mod document;
 pub mod edit_state;
 pub mod follow;
 pub mod history;
-pub mod midi_compat;
 pub mod playback;
 pub mod progress;
 pub mod project_data;

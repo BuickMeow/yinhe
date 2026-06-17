@@ -2,10 +2,10 @@ use std::path::Path;
 use std::sync::Arc;
 
 use xsynth_core::effects::VolumeLimiter;
-use yinhe_midi::MidiFile;
+use yinhe_core::YinModel;
 
 use crate::engine::AudioEngine;
-use crate::spawn::channels_for_midi;
+use crate::spawn::channels_for_model;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum WavBitDepth {
@@ -42,7 +42,7 @@ const RENDER_CHUNK_FRAMES: usize = 1024;
 const MAX_TAIL_SECONDS: f64 = 30.0;
 
 pub fn export_wav(
-    midi: Arc<MidiFile>,
+    model: Arc<YinModel>,
     sample_rate: u32,
     port_soundfonts: &[(u8, Vec<String>)],
     skip_tracks: &[bool],
@@ -51,13 +51,13 @@ pub fn export_wav(
     layer_count: Option<usize>,
     progress: impl Fn(f32, &str),
 ) -> Result<(), ExportError> {
-    let (_num_ch, active_mask) = channels_for_midi(&midi);
+    let (_num_ch, active_mask) = channels_for_model(&model);
 
     let mut engine = AudioEngine::new(sample_rate, 0, active_mask);
 
     progress(0.0, "加载 MIDI");
-    engine.handle_command(crate::spawn::AudioCommand::LoadMidi {
-        midi: Arc::clone(&midi),
+    engine.handle_command(crate::spawn::AudioCommand::LoadModel {
+        model: Arc::clone(&model),
     });
 
     engine.set_layer_count(layer_count);

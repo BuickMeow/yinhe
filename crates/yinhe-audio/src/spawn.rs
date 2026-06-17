@@ -4,8 +4,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use crossbeam_channel::{Sender, TryRecvError, unbounded};
 
-use yinhe_midi::MidiFile;
-use yinhe_types::MidiControlEvent;
+use yinhe_core::YinModel;
 
 /// Command sent from UI thread to the audio callback.
 pub enum AudioCommand {
@@ -18,13 +17,13 @@ pub enum AudioCommand {
     Seek {
         sample: u64,
     },
-    LoadMidi {
-        midi: Arc<MidiFile>,
+    LoadModel {
+        model: Arc<YinModel>,
     },
-    /// Like LoadMidi but does NOT stop playback.
-    /// Replaces the midi reference and resets note cursors.
+    /// Like LoadModel but does NOT stop playback.
+    /// Replaces the model reference and resets note cursors.
     ReloadNotes {
-        midi: Arc<MidiFile>,
+        model: Arc<YinModel>,
     },
     LoadSoundFont {
         port: u8,
@@ -81,35 +80,36 @@ pub struct CpalAudioHandle {
     pub(crate) _stream: cpal::Stream,
 }
 
-/// Analyse a MIDI file and return (num_channels, active_mask).
-pub fn channels_for_midi(midi: &MidiFile) -> (u32, Vec<bool>) {
+/// Compute the global channel byte for a track: `(port << 4) | channel`.
+#[inline]
+pub(crate) fn track_global_channel(model: &YinModel, track_idx: usize) -> u8 {
+    let t = match model.tracks.get(track_idx) {
+        Some(t) => t,
+        None => return 0,
+    };
+    (t.port & 0x0F) << 4 | (t.channel & 0x0F)
+}
+
+/// Analyse a YinModel and return (num_channels, active_mask).
+///
+/// A channel is "active" if any note with vel>1 lives on it, OR any
+/// non-note control event is present on the owning track.
+pub fn channels_for_model(model: &YinModel) -> (u32, Vec<bool>) {
     let mut ch_active = [0u32; 256];
-    for notes in &midi.key_notes {
-        for note in notes {
-            if note.velocity > 1 {
-                let ch = midi
-                    .track_channels
-                    .get(note.track as usize)
-                    .copied()
-                    .unwrap_or(0) as usize;
-                ch_active[ch] += 1;
+    for (track_idx, track) in model.tracks.iter().enumerate() {
+        let ch = track_global_channel(model, track_idx) as usize;
+        // Notes with vel > 1
+        for n in &track.notes {
+            if n.velocity > 1 {
+                ch_active[ch] = ch_active[ch].saturating_add(1);
             }
         }
-    }
-    for evt in &midi.control_events {
-        // Control events no longer carry a channel field; we derive it
-        // from the track's track_channels.
-        let track = match evt {
-            MidiControlEvent::ControlChange { track, .. }
-            | MidiControlEvent::ProgramChange { track, .. }
-            | MidiControlEvent::PitchBend { track, .. } => *track as usize,
-        };
-        let ch = midi
-            .track_channels
-            .get(track)
-            .copied()
-            .unwrap_or(0) as usize;
-        if ch < 256 {
+        // Any non-note event activates the channel too.
+        let has_ctrl = !track.cc.is_empty()
+            || !track.pitch_bend.is_empty()
+            || !track.program_change.is_empty()
+            || !track.rpn.is_empty();
+        if has_ctrl && ch < 256 {
             ch_active[ch] = ch_active[ch].max(1);
         }
     }
@@ -162,17 +162,17 @@ pub fn spawn_cpal_audio(
                     loop {
                         match cmd_rx.try_recv() {
                             Ok(cmd) => {
-                                let is_load_midi = matches!(&cmd, AudioCommand::LoadMidi { .. });
-                                if let AudioCommand::LoadMidi { ref midi } = cmd {
+                                let is_load = matches!(&cmd, AudioCommand::LoadModel { .. });
+                                if let AudioCommand::LoadModel { ref model } = cmd {
                                     dur.store(
-                                        (midi.tick_to_seconds(midi.tick_length)
+                                        (model.tempo_map.tick_to_seconds(model.tick_length)
                                             * engine.sample_rate_hz() as f64)
                                             as u64,
                                         Ordering::Relaxed,
                                     );
                                 }
                                 engine.handle_command(cmd);
-                                if is_load_midi {
+                                if is_load {
                                     initialized = true;
                                 }
                             }

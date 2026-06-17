@@ -26,7 +26,7 @@ pub struct EditState {
     /// Per-track display colors (computed once at load time).
     pub track_colors_cache: Vec<[f32; 3]>,
     /// Cached track metadata (recomputed from midi + track_names).
-    pub track_info_cache: Vec<yinhe_midi::TrackInfo>,
+    pub track_info_cache: Vec<yinhe_core::TrackInfo>,
     /// Cached first ProgramChange per channel.
     pub pc_map_cache: HashMap<u8, u8>,
     /// Index of the conductor track, if detected.

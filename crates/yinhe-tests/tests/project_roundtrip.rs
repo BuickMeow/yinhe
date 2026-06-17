@@ -4,7 +4,7 @@ use yinhe_test_helpers::*;
 
 #[test]
 fn roundtrip_notes_and_channels() {
-    let original = make_test_midi();
+    let original = make_test_model();
     let archive = midi_to_archive(&original);
     let restored = archive_to_midi(&archive);
 
@@ -20,7 +20,7 @@ fn roundtrip_notes_and_channels() {
 
 #[test]
 fn roundtrip_control_events() {
-    let original = make_test_midi();
+    let original = make_test_model();
     let archive = midi_to_archive(&original);
     let restored = archive_to_midi(&archive);
 
@@ -40,7 +40,7 @@ fn roundtrip_control_events() {
 
 #[test]
 fn roundtrip_tempo_and_time_sig() {
-    let original = make_test_midi();
+    let original = make_test_model();
     let archive = midi_to_archive(&original);
     let restored = archive_to_midi(&archive);
 
@@ -53,7 +53,7 @@ fn roundtrip_tempo_and_time_sig() {
 
 #[test]
 fn roundtrip_track_names() {
-    let original = make_test_midi();
+    let original = make_test_model();
     let archive = midi_to_archive(&original);
     let restored = archive_to_midi(&archive);
     assert_eq!(restored.track_names, vec!["Lead", "Bass", "Drums"]);
@@ -61,7 +61,7 @@ fn roundtrip_track_names() {
 
 #[test]
 fn roundtrip_preserves_tick_length() {
-    let original = make_test_midi();
+    let original = make_test_model();
     let archive = midi_to_archive(&original);
     let restored = archive_to_midi(&archive);
     assert_eq!(restored.tick_length, original.tick_length);
@@ -72,7 +72,7 @@ fn archive_json_roundtrip() {
     use yinhe_project::schema::ProjectJson;
     use yinhe_project::header::FileHeader;
 
-    let original = make_test_midi();
+    let original = make_test_model();
     let mut archive = midi_to_archive(&original);
 
     let proj = ProjectJson {
@@ -111,7 +111,7 @@ fn archive_stress_many_notes() {
 
 #[test]
 fn roundtrip_pitchbend_value() {
-    let original = make_test_midi();
+    let original = make_test_model();
     let archive = midi_to_archive(&original);
     let restored = archive_to_midi(&archive);
 
@@ -124,7 +124,7 @@ fn roundtrip_pitchbend_value() {
 
 #[test]
 fn roundtrip_rpn_events() {
-    let mut m = make_test_midi();
+    let mut m = make_test_model();
     m.control_events.push(MidiControlEvent::ControlChange {
         tick: 100, controller: 6, value: 2, track: 0,
     });
@@ -149,7 +149,7 @@ fn roundtrip_rpn_events() {
 
 #[test]
 fn archive_write_to_file_and_read_back() {
-    let original = make_test_midi();
+    let original = make_test_model();
     let archive = midi_to_archive(&original);
 
     let tmp = tempfile::NamedTempFile::new().expect("tmp file");
