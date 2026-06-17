@@ -15,5 +15,6 @@ crossbeam-channel = "0.5"
 #tracing = "0.1"
 
 yinhe-types = { path = "../yinhe-types" }
+yinhe-core = { path = "../yinhe-core" }
 yinhe-midi = { path = "../yinhe-midi" }
 yinhe-memtrace = { path = "../yinhe-memtrace" }

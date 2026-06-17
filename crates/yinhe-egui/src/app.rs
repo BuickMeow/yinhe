@@ -79,7 +79,7 @@ pub struct App {
     // ── Settings ──
     pub(crate) audio_settings: crate::audio_settings::AudioSettings,
     /// Tracks the last applied MIDI encoding to detect changes.
-    pub(crate) last_midi_encoding: yinhe_midi::MidiImportEncoding,
+    pub(crate) last_midi_encoding: yinhe_mid2::MidiImportEncoding,
 
     // ── System resource monitoring ──
     pub(crate) sys_monitor: SystemMonitor,
@@ -208,7 +208,7 @@ impl App {
             audio_active_doc: None,
 
             audio_settings: crate::audio_settings::load_audio_settings(),
-            last_midi_encoding: yinhe_midi::MidiImportEncoding::Utf8,
+            last_midi_encoding: yinhe_mid2::MidiImportEncoding::Utf8,
 
             sys_monitor: SystemMonitor::new(),
 

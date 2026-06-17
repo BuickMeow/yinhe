@@ -6368,6 +6368,7 @@ dependencies = [
  "hound",
  "xsynth-core",
  "xsynth-soundfonts",
+ "yinhe-core",
  "yinhe-memtrace",
  "yinhe-midi",
  "yinhe-types",
@@ -6446,12 +6447,14 @@ dependencies = [
  "yinhe-dms",
  "yinhe-editor-core",
  "yinhe-memtrace",
+ "yinhe-mid2",
  "yinhe-midi",
  "yinhe-model",
  "yinhe-pianoroll",
  "yinhe-project",
  "yinhe-types",
  "yinhe-wgpu",
+ "yinhe-yin",
 ]
 
 [[package]]
@@ -6541,6 +6544,7 @@ dependencies = [
  "tempfile",
  "yinhe-arrangement",
  "yinhe-editor-core",
+ "yinhe-mid2",
  "yinhe-midi",
  "yinhe-pianoroll",
  "yinhe-project",

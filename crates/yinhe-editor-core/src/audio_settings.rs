@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::config::GlobalSfConfig;
-use yinhe_midi::MidiImportEncoding;
+use yinhe_mid2::MidiImportEncoding;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]

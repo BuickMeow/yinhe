@@ -24,13 +24,13 @@ impl App {
     pub(super) fn poll_async_operations(&mut self) {
         // Poll async file loading
         match self.file_loader.poll_loading() {
-            LoadResult::MidiLoaded { path, midi } => {
+            LoadResult::ModelLoaded { path, model } => {
                 let quantize = self
                     .active_doc
                     .and_then(|idx| self.documents.get(idx))
                     .map(|doc| doc.edit.quantize)
                     .unwrap_or_default();
-                match Document::from_midi(&path, midi, quantize) {
+                match Document::from_model(&path, model, quantize) {
                     Ok(doc) => {
                         let insert_idx = self.documents.len();
                         self.documents.push(doc);
@@ -42,9 +42,9 @@ impl App {
                     }
                 }
             }
-            LoadResult::YinLoaded {
+            LoadResult::ModelFromYin {
                 path,
-                midi,
+                model,
                 file_name,
             } => {
                 let quantize = self
@@ -52,12 +52,11 @@ impl App {
                     .and_then(|idx| self.documents.get(idx))
                     .map(|doc| doc.edit.quantize)
                     .unwrap_or_default();
-                let result = Document::from_yin(&path, quantize)
+                let result = Document::from_model(&path, model, quantize)
                     .ok()
-                    .or_else(|| {
-                        Document::from_midi(&file_name, midi, quantize)
-                            .ok()
-                            .map(|d| (d, false))
+                    .map(|mut d| {
+                        d.file_path = Some(path.clone());
+                        (d, false)
                     });
                 if let Some((doc, sf_project_mode)) = result {
                     self.audio_settings.global_sf_config.global_enabled = !sf_project_mode;

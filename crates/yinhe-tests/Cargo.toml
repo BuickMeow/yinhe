@@ -8,6 +8,7 @@ edition = "2024"
 [dev-dependencies]
 yinhe-types = { path = "../yinhe-types" }
 yinhe-midi = { path = "../yinhe-midi" }
+yinhe-mid2 = { path = "../yinhe-mid2" }
 yinhe-project = { path = "../yinhe-project" }
 yinhe-editor-core = { path = "../yinhe-editor-core" }
 yinhe-pianoroll = { path = "../yinhe-pianoroll" }

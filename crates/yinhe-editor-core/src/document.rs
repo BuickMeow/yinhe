@@ -112,9 +112,12 @@ impl Document {
         }
     }
 
-    pub fn from_midi(
+    /// Create a Document from a freshly parsed YinModel.
+    /// Path is used only to derive the file name; data ownership comes from
+    /// the model. Inserts a conductor track at index 0 if absent.
+    pub fn from_model(
         path: &str,
-        midi: yinhe_midi::MidiFile,
+        model: YinModel,
         quantize: QuantizePreset,
     ) -> Result<Self, String> {
         yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Ui, || {
@@ -124,11 +127,7 @@ impl Document {
                 .map(|s| s.to_string())
                 .unwrap_or_default();
 
-            // Phase 1: still uses old yinhe-model::convert::from_midi to
-            // build a YinModel, then bridges to yinhe_core::YinModel.
-            // Phase 1b will switch to yinhe_mid2::parse_bytes directly.
-            let old_model = yinhe_model::convert::from_midi::midi_to_yinmodel(&midi);
-            let mut model = old_model_to_core(old_model);
+            let mut model = model;
 
             // Detect conductor track; insert one if missing.
             let conductor_track_idx = detect_conductor_from_model(&model);
@@ -147,14 +146,20 @@ impl Document {
                 .map(|i| track_color(i, conductor_track_idx))
                 .collect();
 
+            let project_name = model.meta.name.clone();
+            let project_artist = model.meta.artist.clone();
+            let project_description = model.meta.description.clone();
+            let project_ppq = model.meta.ppq;
+            let compression_level = model.meta.compression_level;
+
             let mut data = ProjectData::new(
                 Arc::new(model),
                 track_names,
-                String::new(),
-                String::new(),
-                String::new(),
-                480,
-                0,
+                project_name,
+                project_artist,
+                project_description,
+                project_ppq,
+                compression_level,
             );
             data.rebuild_model();
 
@@ -178,71 +183,45 @@ impl Document {
         })
     }
 
+    /// Legacy: Create a Document from a yinhe_midi::MidiFile.
+    /// Used during migration; bridges through old yinhe-model. Will be
+    /// removed once all callers go through `from_model`.
+    pub fn from_midi(
+        path: &str,
+        midi: yinhe_midi::MidiFile,
+        quantize: QuantizePreset,
+    ) -> Result<Self, String> {
+        let old_model = yinhe_model::convert::from_midi::midi_to_yinmodel(&midi);
+        let model = old_model_to_core(old_model);
+        Self::from_model(path, model, quantize)
+    }
+
+    /// Load a `.yin` file. Returns `(Document, soundfont_project_mode)`.
+    pub fn from_yin_path(
+        path: &str,
+        quantize: QuantizePreset,
+    ) -> std::io::Result<(Self, bool)> {
+        let model = yinhe_yin::load_yin(path).map_err(|e| match e {
+            yinhe_yin::YinError::Io(io) => io,
+            other => std::io::Error::new(std::io::ErrorKind::InvalidData, other.to_string()),
+        })?;
+        let mut doc = Self::from_model(path, model, quantize).map_err(|e| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, e)
+        })?;
+        doc.file_path = Some(path.to_string());
+        Ok((doc, false))
+    }
+
+    /// Legacy: load a .yin file via the old yinhe-project archive path.
+    /// Kept until Phase 4d removes the old path.
     pub fn from_yin(
         path: &str,
         quantize: QuantizePreset,
     ) -> std::io::Result<(Self, bool)> {
-        // Phase 1: still uses old yinhe-model::io::load::load_yin, then
-        // bridges. Phase 1b will switch to yinhe_yin::load_yin directly.
-        let old_model = yinhe_model::io::load::load_yin(path)?;
-        let model = old_model_to_core(old_model);
-
-        let file_name = std::path::Path::new(path)
-            .file_stem()
-            .and_then(|n| n.to_str())
-            .map(|s| s.to_string())
-            .unwrap_or_default();
-
-        let num_tracks = model.tracks.len();
-        let track_names: Vec<String> = model.tracks.iter().map(|t| t.name.clone()).collect();
-        let track_info_cache = build_track_info(&model);
-        let pc_map_cache = build_pc_map_cache_from_model(&model);
-        let conductor_track_idx = detect_conductor_from_model(&model);
-
-        let project_name = model.meta.name.clone();
-        let project_artist = model.meta.artist.clone();
-        let project_description = model.meta.description.clone();
-        let project_ppq = model.meta.ppq;
-        let compression_level = model.meta.compression_level;
-
-        let track_colors_cache = (0..num_tracks)
-            .map(|i| track_color(i, conductor_track_idx))
-            .collect();
-
-        let mut data = ProjectData::new(
-            Arc::new(model),
-            track_names,
-            project_name,
-            project_artist,
-            project_description,
-            project_ppq,
-            compression_level,
-        );
-        data.rebuild_model();
-
-        Ok((
-            Document {
-                data,
-                edit: EditState {
-                    quantize,
-                    track_visible: vec![true; num_tracks],
-                    track_pianoroll_visible: vec![true; num_tracks],
-                    track_overrides: (0..num_tracks).map(|_| TrackOverride::default()).collect(),
-                    track_info_cache,
-                    pc_map_cache,
-                    track_colors_cache,
-                    conductor_track_idx,
-                    ..Default::default()
-                },
-                history: UndoStack::new(),
-                file_name,
-                file_path: Some(path.to_string()),
-            },
-            false,
-        ))
+        Self::from_yin_path(path, quantize)
     }
 
-    pub fn recode_track_names(&mut self, _encoding: yinhe_midi::MidiImportEncoding) {
+    pub fn recode_track_names(&mut self, _encoding: yinhe_mid2::MidiImportEncoding) {
         // TODO: implement track name re-encoding for YinModel
         self.data.bump_version();
     }

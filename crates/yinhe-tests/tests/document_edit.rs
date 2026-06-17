@@ -186,7 +186,7 @@ fn document_recode_track_names() {
     let mut doc = Document::from_midi("test.mid", m, QuantizePreset::default())
         .expect("from_midi failed");
     let original_names = doc.data.track_names.clone();
-    doc.recode_track_names(yinhe_midi::MidiImportEncoding::Utf8);
+    doc.recode_track_names(yinhe_mid2::MidiImportEncoding::Utf8);
     assert_eq!(doc.data.track_names, original_names);
 }
 
