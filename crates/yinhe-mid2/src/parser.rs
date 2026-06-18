@@ -269,7 +269,7 @@ fn parse_track(track: &midly::Track, track_idx: usize, encoding: MidiImportEncod
                                     let key = ((msb as u16) << 8) | lsb as u16;
                                     td.rpn.entry(key).or_default().push(RpnEvent {
                                         tick: current_tick,
-                                        value: val as u16,
+                                        value: (val as u16) << 7,
                                     });
                                 } else {
                                     // No RPN selected — store as plain CC6
