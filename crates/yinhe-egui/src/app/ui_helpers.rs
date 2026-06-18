@@ -46,6 +46,7 @@ impl App {
                 path,
                 model,
                 file_name,
+                sf,
             } => {
                 let quantize = self
                     .active_doc
@@ -56,7 +57,27 @@ impl App {
                     .ok()
                     .map(|mut d| {
                         d.file_path = Some(path.clone());
-                        (d, false)
+
+                        // Translate yinhe_yin SF state back into the editor's
+                        // ProjectSfConfig representation.
+                        d.edit.project_sf.overrides = sf
+                            .overrides
+                            .iter()
+                            .map(|po| {
+                                let entries = po
+                                    .entries
+                                    .iter()
+                                    .map(|e| yinhe_editor_core::SfEntry {
+                                        path: e.path.clone(),
+                                        name: e.name.clone(),
+                                        enabled: e.enabled,
+                                    })
+                                    .collect();
+                                (po.port, entries)
+                            })
+                            .collect();
+
+                        (d, sf.mode)
                     });
                 if let Some((doc, sf_project_mode)) = result {
                     self.audio_settings.global_sf_config.global_enabled = !sf_project_mode;

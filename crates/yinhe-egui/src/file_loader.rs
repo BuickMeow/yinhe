@@ -2,6 +2,7 @@ use std::sync::mpsc;
 
 use yinhe_core::YinModel;
 use yinhe_mid2::{LoadProgress, MidiImportEncoding};
+use yinhe_yin::ProjectSoundFonts;
 
 use crate::dialogs::archive_picker::ArchivePickerState;
 use yinhe_editor_core::progress::{self, SharedProgress, StageStatus};
@@ -14,7 +15,7 @@ pub(crate) enum MidiLoadEvent {
 
 /// Events for .yin project loading.
 pub(crate) enum YinLoadEvent {
-    Complete(Result<(YinModel, String), String>),
+    Complete(Result<(YinModel, ProjectSoundFonts, String), String>),
 }
 
 /// Events for archive opening.
@@ -48,6 +49,7 @@ pub(crate) enum LoadResult {
         path: String,
         model: YinModel,
         file_name: String,
+        sf: ProjectSoundFonts,
     },
     ArchiveError(String),
     NotReady,
@@ -124,9 +126,9 @@ impl FileLoader {
         std::thread::spawn(move || {
             progress::set_stage(&progress, 0, StageStatus::Done);
             progress::set_stage(&progress, 1, StageStatus::Active);
-            let result = yinhe_yin::load_yin(&path_for_thread);
+            let result = yinhe_yin::load_yin_with_sf(&path_for_thread);
             match result {
-                Ok(model) => {
+                Ok((model, sf)) => {
                     let file_name = std::path::Path::new(&path_for_thread)
                         .file_stem()
                         .and_then(|n| n.to_str())
@@ -134,7 +136,7 @@ impl FileLoader {
                         .unwrap_or_default();
                     progress::set_stage(&progress, 1, StageStatus::Done);
                     progress::set_visible(&progress, false);
-                    let _ = tx.send(YinLoadEvent::Complete(Ok((model, file_name))));
+                    let _ = tx.send(YinLoadEvent::Complete(Ok((model, sf, file_name))));
                 }
                 Err(e) => {
                     progress::set_visible(&progress, false);
@@ -237,13 +239,14 @@ impl FileLoader {
             if let Ok(event) = loader.rx.try_recv() {
                 match event {
                     YinLoadEvent::Complete(result) => match result {
-                        Ok((model, file_name)) => {
+                        Ok((model, sf, file_name)) => {
                             let path = loader.path.clone();
                             progress::set_visible(&self.load_progress, false);
                             return LoadResult::ModelFromYin {
                                 path,
                                 model,
                                 file_name,
+                                sf,
                             };
                         }
                         Err(e) => {

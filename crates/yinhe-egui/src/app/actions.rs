@@ -221,31 +221,35 @@ impl App {
     fn save_project_async(&mut self, idx: usize, path: String) {
         let doc = &self.documents[idx];
         let model = doc.data.model.clone();
-        let sf_overrides: Vec<(u8, Vec<yinhe_project::SfEntryJson>)> = doc
+
+        // Translate the editor's SF state into the file-format crate's types.
+        // `global_enabled = true` means we're in global mode → soundfont_project_mode = false.
+        let sf_overrides: Vec<yinhe_yin::SfPortOverride> = doc
             .edit
             .project_sf
             .overrides
             .iter()
-            .map(|(port, entries)| {
-                (
-                    *port,
-                    entries
-                        .iter()
-                        .map(|e| yinhe_project::SfEntryJson {
-                            path: e.path.clone(),
-                            name: e.name.clone(),
-                            enabled: e.enabled,
-                        })
-                        .collect(),
-                )
+            .map(|(port, entries)| yinhe_yin::SfPortOverride {
+                port: *port,
+                entries: entries
+                    .iter()
+                    .map(|e| yinhe_yin::SfEntryJson {
+                        path: e.path.clone(),
+                        name: e.name.clone(),
+                        enabled: e.enabled,
+                    })
+                    .collect(),
             })
             .collect();
-        let global_enabled = self.audio_settings.global_sf_config.global_enabled;
+        let sf = yinhe_yin::ProjectSoundFonts {
+            mode: !self.audio_settings.global_sf_config.global_enabled,
+            overrides: sf_overrides,
+        };
         let path_for_thread = path.clone();
 
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
-            if let Err(e) = yinhe_yin::save_yin(&model, &path_for_thread) {
+            if let Err(e) = yinhe_yin::save_yin_with_sf(&model, &path_for_thread, &sf) {
                 tracing::error!("Failed to save project: {}", e);
             }
             let _ = tx.send(());

@@ -11,13 +11,25 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use yinhe_core::{
-    CcEvent, ConductorData, NoteEvent, PcEvent, PitchBendEvent, RpnEvent, TrackData, YinModel,
+    CcEvent, ConductorData, NoteEvent, PcEvent, PitchBendEvent, ProjectMeta, RpnEvent, TrackData,
+    YinModel,
 };
 
 use crate::container::{Sections, pack, unpack};
 use crate::error::YinError;
 use crate::mapping::MappingFile;
-use crate::project_meta::ProjectFile;
+use crate::project_meta::{ProjectFile, SfPortOverride};
+
+/// SoundFont state attached to a project (mode + per-port overrides).
+///
+/// This is what `save_yin_with_sf` consumes and `load_yin_with_sf` returns.
+/// `mode = true` means the project was saved in per-port mode; `false`
+/// means global mode (or the file predates SF persistence).
+#[derive(Debug, Clone, Default)]
+pub struct ProjectSoundFonts {
+    pub mode: bool,
+    pub overrides: Vec<SfPortOverride>,
+}
 
 /// What goes into the zstd-compressed bincode blob.
 #[derive(Serialize, Deserialize)]
@@ -53,10 +65,16 @@ impl TrackPayload {
 //  Save
 // =========================================================
 
-/// Serialize a `YinModel` to `.yin` bytes.
-pub fn save_yin_bytes(model: &YinModel) -> Result<Vec<u8>, YinError> {
-    // 1. project.json
-    let project = ProjectFile::from_meta(&model.meta);
+/// Internal: serialize a model with optional SF state attached.
+fn save_yin_bytes_inner(
+    model: &YinModel,
+    sf: Option<&ProjectSoundFonts>,
+) -> Result<Vec<u8>, YinError> {
+    // 1. project.json (with or without SF state)
+    let project = match sf {
+        Some(sf) => ProjectFile::from_meta_with_sf(&model.meta, sf.mode, sf.overrides.clone()),
+        None => ProjectFile::from_meta(&model.meta),
+    };
     let project_json = serde_json::to_vec_pretty(&project)?;
 
     // 2. mapping.json
@@ -69,8 +87,6 @@ pub fn save_yin_bytes(model: &YinModel) -> Result<Vec<u8>, YinError> {
     // load can match payloads to TrackMap entries by index.
     let mut tracks_payload = Vec::with_capacity(model.tracks.len());
     {
-        // Build (port, channel, uuid) → &TrackData lookup so we can iterate
-        // mapping order while still finding the right track.
         let mut by_uuid: std::collections::HashMap<&str, &Arc<TrackData>> =
             std::collections::HashMap::with_capacity(model.tracks.len());
         for t in &model.tracks {
@@ -100,9 +116,33 @@ pub fn save_yin_bytes(model: &YinModel) -> Result<Vec<u8>, YinError> {
     Ok(bytes)
 }
 
-/// Save a `YinModel` to a file at `path`.
+/// Serialize a `YinModel` to `.yin` bytes (no SoundFont state).
+pub fn save_yin_bytes(model: &YinModel) -> Result<Vec<u8>, YinError> {
+    save_yin_bytes_inner(model, None)
+}
+
+/// Serialize a `YinModel` plus its SoundFont state to `.yin` bytes.
+pub fn save_yin_bytes_with_sf(
+    model: &YinModel,
+    sf: &ProjectSoundFonts,
+) -> Result<Vec<u8>, YinError> {
+    save_yin_bytes_inner(model, Some(sf))
+}
+
+/// Save a `YinModel` to a file at `path` (no SoundFont state).
 pub fn save_yin(model: &YinModel, path: impl AsRef<Path>) -> Result<(), YinError> {
     let bytes = save_yin_bytes(model)?;
+    std::fs::write(path.as_ref(), &bytes)?;
+    Ok(())
+}
+
+/// Save a `YinModel` plus its SoundFont state to a file at `path`.
+pub fn save_yin_with_sf(
+    model: &YinModel,
+    path: impl AsRef<Path>,
+    sf: &ProjectSoundFonts,
+) -> Result<(), YinError> {
+    let bytes = save_yin_bytes_with_sf(model, sf)?;
     std::fs::write(path.as_ref(), &bytes)?;
     Ok(())
 }
@@ -111,8 +151,9 @@ pub fn save_yin(model: &YinModel, path: impl AsRef<Path>) -> Result<(), YinError
 //  Load
 // =========================================================
 
-/// Parse `.yin` bytes into a `YinModel`.
-pub fn load_yin_bytes(bytes: &[u8]) -> Result<YinModel, YinError> {
+/// Internal: parse `.yin` bytes, returning model and the raw `ProjectFile`
+/// (so callers can extract SF state if they want it).
+fn load_yin_bytes_inner(bytes: &[u8]) -> Result<(YinModel, ProjectFile), YinError> {
     let sections = unpack(bytes)?;
 
     let project: ProjectFile = serde_json::from_slice(&sections.project_json)?;
@@ -125,8 +166,6 @@ pub fn load_yin_bytes(bytes: &[u8]) -> Result<YinModel, YinError> {
     // Re-assemble TrackData by zipping mapping entries with payloads in order.
     let flat: Vec<(u8, u8, &crate::mapping::TrackMap)> = mapping.flat_tracks().collect();
     if flat.len() != model_data.tracks.len() {
-        // Length mismatch is recoverable: trust payload count for events, but
-        // metadata will be partial. We choose to error here so callers know.
         return Err(YinError::Io(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             format!(
@@ -154,7 +193,6 @@ pub fn load_yin_bytes(bytes: &[u8]) -> Result<YinModel, YinError> {
             program_change: payload.program_change,
             rpn: payload.rpn,
         };
-        // Mismatched UUID = corrupted file.
         if td.uuid != payload.uuid {
             return Err(YinError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
@@ -170,15 +208,48 @@ pub fn load_yin_bytes(bytes: &[u8]) -> Result<YinModel, YinError> {
     let mut model = YinModel {
         conductor: Arc::new(model_data.conductor),
         tracks,
-        meta: project.into_meta(),
+        meta: ProjectMeta {
+            name: project.name.clone(),
+            artist: project.artist.clone(),
+            description: project.description.clone(),
+            ppq: project.ppq,
+            compression_level: project.compression_level,
+        },
         ..Default::default()
     };
     model.rebuild();
+    Ok((model, project))
+}
+
+/// Parse `.yin` bytes into a `YinModel` (SoundFont state, if any, is dropped).
+pub fn load_yin_bytes(bytes: &[u8]) -> Result<YinModel, YinError> {
+    let (model, _project) = load_yin_bytes_inner(bytes)?;
     Ok(model)
 }
 
-/// Load a `.yin` file from `path`.
+/// Parse `.yin` bytes into a `YinModel` and its SoundFont state.
+///
+/// For files written before SF persistence, `ProjectSoundFonts` will be
+/// `default()` (mode = false, overrides empty).
+pub fn load_yin_bytes_with_sf(bytes: &[u8]) -> Result<(YinModel, ProjectSoundFonts), YinError> {
+    let (model, project) = load_yin_bytes_inner(bytes)?;
+    let sf = ProjectSoundFonts {
+        mode: project.soundfont_project_mode,
+        overrides: project.soundfont_overrides,
+    };
+    Ok((model, sf))
+}
+
+/// Load a `.yin` file from `path` (SoundFont state, if any, is dropped).
 pub fn load_yin(path: impl AsRef<Path>) -> Result<YinModel, YinError> {
     let bytes = std::fs::read(path.as_ref())?;
     load_yin_bytes(&bytes)
+}
+
+/// Load a `.yin` file from `path`, returning the model and its SoundFont state.
+pub fn load_yin_with_sf(
+    path: impl AsRef<Path>,
+) -> Result<(YinModel, ProjectSoundFonts), YinError> {
+    let bytes = std::fs::read(path.as_ref())?;
+    load_yin_bytes_with_sf(&bytes)
 }
