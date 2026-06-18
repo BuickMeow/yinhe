@@ -1,10 +1,6 @@
 use eframe::egui;
 use egui_extras::{Column, TableBuilder};
 use egui_material_icons::icons::*;
-use std::collections::BTreeMap;
-use yinhe_midi::MidiControlEvent;
-use yinhe_project::{ArchiveEntry, ProjectArchive};
-use yinhe_types::TimeSigEvent as TypesTimeSigEvent;
 
 use yinhe_editor_core::document::Document;
 use crate::widgets::split_handle;
@@ -20,14 +16,14 @@ pub enum ViewTab {
 
 pub struct EventBrowserState {
     pub active_tab: ViewTab,
-    // Realtime view state
+    // Realtime view state — flat track list with per-event children.
     pub expanded_tracks: std::collections::HashSet<u16>,
     pub selected_item: Option<SelectedItem>,
     midi_fingerprint: Option<u64>,
-    // Archive view state
-    pub expanded_archive_paths: std::collections::HashSet<String>,
-    pub selected_archive_path: Option<String>,
-    archive_fingerprint: Option<usize>,
+    // Archive view state — port/channel/track tree (structure lens).
+    pub expanded_archive_keys: std::collections::HashSet<ArchiveKey>,
+    pub selected_archive_track: Option<u16>,
+    archive_fingerprint: Option<u64>,
     // Shared
     split_ratio: f32,
 }
@@ -42,6 +38,18 @@ pub enum SelectedItem {
     ProgramChange { track: u16 },
 }
 
+/// Identifies an expandable directory row in the archive tree.
+///
+/// `Project` = root, `Port(p)` = one MIDI port, `Channel(p, c)` = one
+/// (port, channel) pair. Track leaves don't get a key because they're
+/// always rendered when their parent channel is expanded.
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub enum ArchiveKey {
+    Project,
+    Port(u8),
+    Channel(u8, u8),
+}
+
 impl Default for EventBrowserState {
     fn default() -> Self {
         Self {
@@ -49,8 +57,8 @@ impl Default for EventBrowserState {
             expanded_tracks: Default::default(),
             selected_item: None,
             midi_fingerprint: None,
-            expanded_archive_paths: Default::default(),
-            selected_archive_path: None,
+            expanded_archive_keys: Default::default(),
+            selected_archive_track: None,
             archive_fingerprint: None,
             split_ratio: 0.45,
         }
@@ -70,13 +78,19 @@ struct BarSeg {
 }
 
 impl BarLookup {
-    fn build(ppq: u32, default_num: u8, ts_events: &[TypesTimeSigEvent]) -> Self {
+    /// Build a bar-position lookup from `(tick, numerator)` change points.
+    ///
+    /// `default_num` is used when the first time-sig is not at tick 0. The
+    /// lightweight tuple input avoids depending on a specific event type
+    /// and avoids per-render allocation when callers just want to project
+    /// `model.conductor.time_sig` into a bar grid.
+    fn build(ppq: u32, default_num: u8, ts_changes: &[(u32, u8)]) -> Self {
         let mut points: Vec<(u32, u8)> = Vec::new();
-        if ts_events.first().map(|e| e.tick).unwrap_or(u32::MAX) != 0 {
+        if ts_changes.first().map(|e| e.0).unwrap_or(u32::MAX) != 0 {
             points.push((0, default_num));
         }
-        for e in ts_events {
-            points.push((e.tick, e.numerator));
+        for &(tick, num) in ts_changes {
+            points.push((tick, num));
         }
         let mut segs = Vec::with_capacity(points.len());
         let mut cum_bars: u32 = 0;
@@ -115,6 +129,17 @@ impl BarLookup {
         let bar_1 = seg.bar_start + bar_offset + 1;
         format!("{}/{}", bar_1, tick_in_bar)
     }
+}
+
+/// Project a YinModel's conductor time-sig events into the lightweight
+/// `(tick, numerator)` form `BarLookup::build` expects.
+fn ts_changes(model: &yinhe_core::YinModel) -> Vec<(u32, u8)> {
+    model
+        .conductor
+        .time_sig
+        .iter()
+        .map(|e| (e.tick, e.numerator))
+        .collect()
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -161,8 +186,8 @@ fn show_realtime(ui: &mut egui::Ui, doc: &mut Document, state: &mut EventBrowser
     let model = &doc.data.model;
     let ppq = model.meta.ppq;
     let default_num = model.tempo_map.time_sig_default.0;
-    let ts_events: Vec<TypesTimeSigEvent> = model.tempo_map.time_sig_events.iter().map(|e| TypesTimeSigEvent { tick: e.tick, numerator: e.numerator, denominator: e.denominator }).collect();
-    let bar_lookup = BarLookup::build(ppq, default_num, &ts_events);
+    let ts = ts_changes(model);
+    let bar_lookup = BarLookup::build(ppq, default_num, &ts);
 
     let fingerprint = model.tick_length
         ^ (model.note_count << 16)
@@ -233,8 +258,6 @@ fn show_realtime(ui: &mut egui::Ui, doc: &mut Document, state: &mut EventBrowser
 // ── Realtime tree ──
 
 fn render_realtime_tree(ui: &mut egui::Ui, model: &yinhe_core::YinModel, state: &mut EventBrowserState) {
-    let num_tracks = model.tracks.len();
-
     if !model.conductor.tempo.is_empty() || !model.conductor.time_sig.is_empty() {
         let expanded = state.expanded_tracks.contains(&u16::MAX)
             || state.selected_item.as_ref().map(|s| matches!(s, SelectedItem::Tempo | SelectedItem::TimeSig)).unwrap_or(false);
@@ -408,81 +431,375 @@ fn show_realtime_overview(ui: &mut egui::Ui, model: &yinhe_core::YinModel) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  Archive view (reads from ProjectArchive)
+//  Archive view — structure-oriented lens on YinModel
 // ═══════════════════════════════════════════════════════════════
+//
+// The archive view mirrors how `mapping.json` organises the project on
+// disk: a port → channel → track tree. This is intentionally a different
+// lens from the realtime view (which is event-oriented). When the user
+// is debugging "why is this track on this port?", they read the archive
+// view; when they're inspecting "what events are firing now?", they read
+// the realtime view. Don't merge the two.
 
 fn show_archive(ui: &mut egui::Ui, doc: &mut Document, state: &mut EventBrowserState) {
-    // Display YinModel structure directly as a tree view.
-    ui.heading("YinModel Structure");
-    ui.separator();
-    
     let model = &doc.data.model;
-    ui.label(format!("Tracks: {}", model.tracks.len()));
-    ui.label(format!("Conductor: {} tempo, {} time-sig",
-        model.conductor.tempo.len(),
-        model.conductor.time_sig.len()
-    ));
-    ui.label(format!("Note count: {}", model.note_count));
-    ui.label(format!("Tick length: {}", model.tick_length));
-    
-    ui.separator();
-    ui.label("Track list:");
-    
-    for (i, track) in model.tracks.iter().enumerate() {
-        ui.horizontal(|ui| {
-            ui.label(format!("  [{}] {} (ch {}, port {})",
-                i, track.name, track.channel, track.port));
-            ui.label(format!("{} notes", track.notes.len()));
-            ui.label(format!("{} CCs", track.cc.len()));
-            ui.label(format!("{} PB", track.pitch_bend.len()));
-            ui.label(format!("{} PC", track.program_change.len()));
-            ui.label(format!("{} RPN", track.rpn.len()));
-        });
+
+    // Re-expand to defaults whenever the underlying model changes shape.
+    // Note count moves under any edit, so it's a cheap fingerprint.
+    let fingerprint = (model.tracks.len() as u64)
+        ^ (model.note_count << 16)
+        ^ model.tick_length.wrapping_mul(0x9E3779B9);
+    if state.archive_fingerprint != Some(fingerprint) {
+        state.expanded_archive_keys.clear();
+        state.expanded_archive_keys.insert(ArchiveKey::Project);
+        // Auto-expand all ports so the user sees the structure at a glance.
+        for t in &model.tracks {
+            state.expanded_archive_keys.insert(ArchiveKey::Port(t.port));
+        }
+        state.archive_fingerprint = Some(fingerprint);
+    }
+
+    let frame_bg = egui::Frame::NONE
+        .fill(egui::Color32::from_gray(16))
+        .inner_margin(egui::Margin::symmetric(4, 2));
+
+    let total_rect = ui.available_rect_before_wrap();
+    let total_h = total_rect.height();
+    let gap = theme::SPLIT_GAP;
+    let split_y = total_rect.min.y + (total_h * state.split_ratio).round();
+
+    let top_rect = egui::Rect::from_min_max(total_rect.min, egui::pos2(total_rect.max.x, split_y));
+    let handle_rect = egui::Rect::from_min_max(
+        egui::pos2(total_rect.min.x, split_y),
+        egui::pos2(total_rect.max.x, split_y + gap),
+    );
+    let bot_rect = egui::Rect::from_min_max(
+        egui::pos2(total_rect.min.x, split_y + gap),
+        total_rect.max,
+    );
+
+    ui.scope_builder(egui::UiBuilder::new().max_rect(top_rect), |ui| {
+        egui::ScrollArea::both()
+            .id_salt("eb_ar_tree")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                frame_bg.show(ui, |ui| {
+                    ui.set_min_width(ui.available_width());
+                    ui.vertical(|ui| render_archive_tree(ui, model, state));
+                });
+            });
+    });
+
+    let resp = split_handle::horizontal(ui, "__eb_ar_split__", handle_rect);
+    if resp.dragged() {
+        let new_ratio = ((split_y + resp.drag_delta().y - total_rect.min.y) / total_h)
+            .clamp(theme::SPLIT_CLAMP_MIN, theme::SPLIT_CLAMP_MAX);
+        state.split_ratio = new_ratio;
+    }
+
+    ui.scope_builder(egui::UiBuilder::new().max_rect(bot_rect), |ui| {
+        egui::ScrollArea::both()
+            .id_salt("eb_ar_detail")
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                frame_bg.show(ui, |ui| {
+                    ui.set_min_width(ui.available_width());
+                    let detail = state
+                        .selected_archive_track
+                        .and_then(|idx| model.tracks.get(idx as usize).map(|t| (idx, t)));
+                    if let Some((idx, track)) = detail {
+                        show_archive_track_detail(ui, idx, track);
+                    } else {
+                        show_archive_overview(ui, model);
+                    }
+                });
+            });
+    });
+}
+
+/// Group `model.tracks` into `port → channel → [track_idx]` for tree rendering.
+///
+/// Mirrors the shape of `mapping.json` so the archive tree visually matches
+/// the on-disk structure of a `.yin` file.
+fn group_tracks_by_port_channel(
+    model: &yinhe_core::YinModel,
+) -> std::collections::BTreeMap<u8, std::collections::BTreeMap<u8, Vec<u16>>> {
+    let mut out: std::collections::BTreeMap<u8, std::collections::BTreeMap<u8, Vec<u16>>> =
+        std::collections::BTreeMap::new();
+    for (i, t) in model.tracks.iter().enumerate() {
+        out.entry(t.port)
+            .or_default()
+            .entry(t.channel)
+            .or_default()
+            .push(i as u16);
+    }
+    out
+}
+
+fn render_archive_tree(
+    ui: &mut egui::Ui,
+    model: &yinhe_core::YinModel,
+    state: &mut EventBrowserState,
+) {
+    let groups = group_tracks_by_port_channel(model);
+
+    let project_expanded = state.expanded_archive_keys.contains(&ArchiveKey::Project);
+    let project_label = format!(
+        "Project ({} tracks, {} notes)",
+        model.tracks.len(),
+        model.note_count,
+    );
+    if render_dir_row(ui, &project_label, 0, project_expanded, groups.len()) {
+        toggle_archive_key(state, ArchiveKey::Project);
+    }
+    if !project_expanded {
+        return;
+    }
+
+    for (&port, channels) in &groups {
+        let port_key = ArchiveKey::Port(port);
+        let port_expanded = state.expanded_archive_keys.contains(&port_key);
+        let port_track_count: usize = channels.values().map(|v| v.len()).sum();
+        let port_label = format!("Port {} ({} tracks)", port_letter(port), port_track_count);
+        if render_dir_row(ui, &port_label, 1, port_expanded, channels.len()) {
+            toggle_archive_key(state, port_key.clone());
+        }
+        if !port_expanded {
+            continue;
+        }
+
+        for (&channel, track_indices) in channels {
+            let ch_key = ArchiveKey::Channel(port, channel);
+            let ch_expanded = state.expanded_archive_keys.contains(&ch_key);
+            let ch_label = format!(
+                "Channel {} ({} tracks)",
+                channel + 1,
+                track_indices.len()
+            );
+            if render_dir_row(ui, &ch_label, 2, ch_expanded, track_indices.len()) {
+                toggle_archive_key(state, ch_key.clone());
+            }
+            if !ch_expanded {
+                continue;
+            }
+
+            for &track_idx in track_indices {
+                let track = &model.tracks[track_idx as usize];
+                render_archive_track_leaf(ui, track_idx, track, state);
+            }
+        }
     }
 }
 
-fn format_size(bytes: usize) -> String {
-    if bytes < 1024 { format!("{}B", bytes) }
-    else if bytes < 1024 * 1024 { format!("{:.1}K", bytes as f64 / 1024.0) }
-    else { format!("{:.1}M", bytes as f64 / (1024.0 * 1024.0)) }
+fn render_archive_track_leaf(
+    ui: &mut egui::Ui,
+    idx: u16,
+    track: &yinhe_core::TrackData,
+    state: &mut EventBrowserState,
+) {
+    let is_selected = state.selected_archive_track == Some(idx);
+    let bg = if is_selected {
+        egui::Color32::from_rgb(40, 50, 70)
+    } else {
+        egui::Color32::TRANSPARENT
+    };
+    let label_text = if track.name.is_empty() {
+        format!("(track #{})", idx)
+    } else {
+        track.name.clone()
+    };
+    let summary = format!(
+        "{} notes · {} CC · {} PB · {} PC · {} RPN",
+        track.notes.len(),
+        track.cc.values().map(|v| v.len()).sum::<usize>(),
+        track.pitch_bend.len(),
+        track.program_change.len(),
+        track.rpn.values().map(|v| v.len()).sum::<usize>(),
+    );
+
+    let frame_r = egui::Frame::NONE
+        .fill(bg)
+        .inner_margin(egui::Margin::symmetric(2, 1))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 2.0;
+                ui.add_space(3.0 * 14.0); // depth = 3 (project / port / channel)
+                ui.add_space(14.0);
+                ui.label(
+                    ICON_AUDIOTRACK
+                        .rich_text()
+                        .size(12.0)
+                        .color(if is_selected {
+                            egui::Color32::WHITE
+                        } else {
+                            egui::Color32::from_gray(160)
+                        }),
+                );
+                ui.label(
+                    egui::RichText::new(label_text)
+                        .size(11.0)
+                        .monospace()
+                        .color(if is_selected {
+                            egui::Color32::WHITE
+                        } else {
+                            egui::Color32::from_gray(220)
+                        }),
+                );
+                ui.label(
+                    egui::RichText::new(format!("[{}]", summary))
+                        .size(10.0)
+                        .color(egui::Color32::from_gray(110)),
+                );
+            });
+        });
+    if frame_r.response.interact(egui::Sense::click()).clicked() {
+        state.selected_archive_track = Some(idx);
+    }
+}
+
+fn show_archive_overview(ui: &mut egui::Ui, model: &yinhe_core::YinModel) {
+    ui.label(
+        egui::RichText::new("归档结构概览")
+            .size(14.0)
+            .strong(),
+    );
+    ui.add_space(4.0);
+    let name = if model.meta.name.is_empty() {
+        "(未命名)"
+    } else {
+        &model.meta.name
+    };
+    let artist = if model.meta.artist.is_empty() {
+        "(未填)"
+    } else {
+        &model.meta.artist
+    };
+    ui.colored_label(
+        egui::Color32::from_gray(120),
+        format!("名称: {}", name),
+    );
+    ui.colored_label(
+        egui::Color32::from_gray(120),
+        format!("作者: {}", artist),
+    );
+    ui.colored_label(
+        egui::Color32::from_gray(120),
+        format!("PPQ: {}", model.meta.ppq),
+    );
+    ui.colored_label(
+        egui::Color32::from_gray(120),
+        format!("zstd 等级: {}", model.meta.compression_level),
+    );
+    let groups = group_tracks_by_port_channel(model);
+    ui.colored_label(
+        egui::Color32::from_gray(120),
+        format!("活跃 port 数: {}", groups.len()),
+    );
+    ui.colored_label(
+        egui::Color32::from_gray(120),
+        format!("音符总数: {}", model.note_count),
+    );
+    ui.add_space(8.0);
+    ui.colored_label(
+        egui::Color32::from_gray(100),
+        "← 点击左侧条目查看 track 详情",
+    );
+}
+
+fn show_archive_track_detail(
+    ui: &mut egui::Ui,
+    idx: u16,
+    track: &yinhe_core::TrackData,
+) {
+    ui.add_space(4.0);
+    let header = if track.name.is_empty() {
+        format!("Track #{} (未命名)", idx)
+    } else {
+        format!("Track #{} — {}", idx, track.name)
+    };
+    ui.label(egui::RichText::new(header).size(13.0).strong());
+    ui.add_space(4.0);
+
+    let kv = |ui: &mut egui::Ui, k: &str, v: String| {
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new(k)
+                    .size(11.0)
+                    .color(egui::Color32::GRAY),
+            );
+            ui.label(
+                egui::RichText::new(v)
+                    .size(11.0)
+                    .monospace()
+                    .color(egui::Color32::from_gray(220)),
+            );
+        });
+    };
+
+    kv(ui, "UUID", track.uuid.clone());
+    kv(
+        ui,
+        "Port / Channel",
+        format!("{} / {}", port_letter(track.port), track.channel + 1),
+    );
+    kv(
+        ui,
+        "Channel Prefix",
+        match track.channel_prefix {
+            Some(c) => format!("{}", c),
+            None => "(none)".to_string(),
+        },
+    );
+    kv(
+        ui,
+        "Color",
+        format!(
+            "[{:.2}, {:.2}, {:.2}]",
+            track.color[0], track.color[1], track.color[2]
+        ),
+    );
+    kv(
+        ui,
+        "Muted / Soloed",
+        format!("{} / {}", track.muted, track.soloed),
+    );
+    ui.add_space(6.0);
+    ui.label(
+        egui::RichText::new("事件计数")
+            .size(12.0)
+            .strong(),
+    );
+    kv(ui, "Notes", format!("{}", track.notes.len()));
+    if !track.cc.is_empty() {
+        let total_cc: usize = track.cc.values().map(|v| v.len()).sum();
+        kv(
+            ui,
+            "CC",
+            format!("{} controllers, {} events total", track.cc.len(), total_cc),
+        );
+        for (&ctrl, evs) in &track.cc {
+            kv(
+                ui,
+                &format!("  CC {} {}", ctrl, cc_label(ctrl)),
+                format!("{} events", evs.len()),
+            );
+        }
+    }
+    kv(ui, "Pitch Bend", format!("{}", track.pitch_bend.len()));
+    kv(ui, "Program Change", format!("{}", track.program_change.len()));
+    if !track.rpn.is_empty() {
+        let total_rpn: usize = track.rpn.values().map(|v| v.len()).sum();
+        kv(
+            ui,
+            "RPN",
+            format!("{} keys, {} events total", track.rpn.len(), total_rpn),
+        );
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════
 //  Shared helpers
 // ═══════════════════════════════════════════════════════════════
-
-fn count_notes_for_track(midi: &yinhe_midi::MidiFile, track: u16) -> usize {
-    midi.key_notes.iter().map(|kn| kn.iter().filter(|n| n.track == track).count()).sum()
-}
-
-fn count_cc_for_track(midi: &yinhe_midi::MidiFile, track: u16) -> BTreeMap<u8, usize> {
-    let mut map = BTreeMap::new();
-    for ev in &midi.control_events {
-        if let MidiControlEvent::ControlChange { track: t, controller, .. } = ev {
-            if *t == track { *map.entry(*controller).or_insert(0) += 1; }
-        }
-    }
-    map
-}
-
-fn count_pitch_bend(midi: &yinhe_midi::MidiFile, track: u16) -> usize {
-    midi.control_events.iter().filter(|e| matches!(e, MidiControlEvent::PitchBend { track: t, .. } if *t == track)).count()
-}
-
-fn count_pc(midi: &yinhe_midi::MidiFile, track: u16) -> usize {
-    midi.control_events.iter().filter(|e| matches!(e, MidiControlEvent::ProgramChange { track: t, .. } if *t == track)).count()
-}
-
-fn collect_notes_for_track(midi: &yinhe_midi::MidiFile, track: u16) -> Vec<(u8, &yinhe_types::Note)> {
-    let mut notes = Vec::new();
-    for (key_idx, key_notes) in midi.key_notes.iter().enumerate() {
-        for note in key_notes {
-            if note.track == track { notes.push((key_idx as u8, note)); }
-        }
-    }
-    notes.sort_by_key(|(_, n)| n.start_tick);
-    notes
-}
 
 fn cc_label(controller: u8) -> &'static str {
     match controller {
@@ -492,22 +809,22 @@ fn cc_label(controller: u8) -> &'static str {
     }
 }
 
-/// Try to skip InnerHeader (3 bytes) for track-scoped archive entries.
-fn skip_inner_header_if_present(data: &[u8]) -> &[u8] {
-    let min_size = yinhe_project::InnerHeader::SIZE;
-    if data.len() >= min_size {
-        if let Some((_inner, rest)) = yinhe_project::InnerHeader::read(data) {
-            return rest;
-        }
+/// MIDI port byte → display letter (0 → "A", 1 → "B", …, 25 → "Z", 26+ → "?").
+fn port_letter(port: u8) -> char {
+    if port < 26 {
+        (b'A' + port) as char
+    } else {
+        '?'
     }
-    data
 }
 
-fn archive_header_row(ui: &mut egui::Ui, label: &str, value: &str) {
-    ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(label).size(10.0).color(egui::Color32::GRAY));
-        ui.label(egui::RichText::new(value).size(10.0).color(egui::Color32::from_gray(200)));
-    });
+/// Toggle a key's presence in the archive view's expanded set.
+fn toggle_archive_key(state: &mut EventBrowserState, key: ArchiveKey) {
+    if state.expanded_archive_keys.contains(&key) {
+        state.expanded_archive_keys.remove(&key);
+    } else {
+        state.expanded_archive_keys.insert(key);
+    }
 }
 
 // ── Tree row renderers (shared) ──
@@ -576,19 +893,14 @@ mod tests {
 
     #[test]
     fn bar_lookup_with_time_sig() {
-        let events = vec![TypesTimeSigEvent { tick: 0, numerator: 4, denominator: 2 }];
-        let bl = BarLookup::build(480, 4, &events);
+        let bl = BarLookup::build(480, 4, &[(0, 4)]);
         assert_eq!(bl.format(0), "1/0");
         assert_eq!(bl.format(480), "1/480");
     }
 
     #[test]
     fn bar_lookup_time_sig_change() {
-        let events = vec![
-            TypesTimeSigEvent { tick: 0, numerator: 4, denominator: 2 },
-            TypesTimeSigEvent { tick: 1920, numerator: 3, denominator: 2 },
-        ];
-        let bl = BarLookup::build(480, 4, &events);
+        let bl = BarLookup::build(480, 4, &[(0, 4), (1920, 3)]);
         assert_eq!(bl.format(0), "1/0");
         assert_eq!(bl.format(1920), "2/0");
         assert_eq!(bl.format(2400), "2/480");
@@ -611,5 +923,86 @@ mod tests {
         let bl = BarLookup::build(480, 4, &[]);
         assert_eq!(bl.format(1920), "2/0");
         assert_eq!(bl.format(3840), "3/0");
+    }
+
+    #[test]
+    fn bar_lookup_first_ts_after_zero_uses_default() {
+        // First TS event is at tick 1920, not 0 — bar 1 should still use the default 4/4.
+        let bl = BarLookup::build(480, 4, &[(1920, 3)]);
+        assert_eq!(bl.format(0), "1/0");
+        assert_eq!(bl.format(1920), "2/0");
+    }
+
+    #[test]
+    fn port_letter_basic() {
+        assert_eq!(port_letter(0), 'A');
+        assert_eq!(port_letter(1), 'B');
+        assert_eq!(port_letter(15), 'P');
+        assert_eq!(port_letter(25), 'Z');
+        assert_eq!(port_letter(26), '?');
+        assert_eq!(port_letter(255), '?');
+    }
+
+    #[test]
+    fn toggle_archive_key_inserts_then_removes() {
+        let mut state = EventBrowserState::default();
+        assert!(!state.expanded_archive_keys.contains(&ArchiveKey::Project));
+        toggle_archive_key(&mut state, ArchiveKey::Project);
+        assert!(state.expanded_archive_keys.contains(&ArchiveKey::Project));
+        toggle_archive_key(&mut state, ArchiveKey::Project);
+        assert!(!state.expanded_archive_keys.contains(&ArchiveKey::Project));
+    }
+
+    #[test]
+    fn group_tracks_by_port_channel_orders_and_groups() {
+        use std::sync::Arc;
+        use yinhe_core::{TrackData, YinModel};
+
+        let mut t0 = TrackData::new(0, 0);
+        t0.name = "A0c0".into();
+        let mut t1 = TrackData::new(0, 1);
+        t1.name = "A0c1".into();
+        let mut t2 = TrackData::new(1, 0);
+        t2.name = "B0c0".into();
+        let mut t3 = TrackData::new(0, 0);
+        t3.name = "A0c0_dup".into();
+
+        let model = YinModel {
+            tracks: vec![Arc::new(t0), Arc::new(t1), Arc::new(t2), Arc::new(t3)],
+            ..Default::default()
+        };
+
+        let groups = group_tracks_by_port_channel(&model);
+        // Two ports: 0 and 1.
+        assert_eq!(groups.len(), 2);
+        // Port 0 has channels 0 and 1.
+        let p0 = &groups[&0];
+        assert_eq!(p0.len(), 2);
+        // Channel 0 on port 0 has both t0 and t3 (preserves model order).
+        assert_eq!(p0[&0], vec![0, 3]);
+        assert_eq!(p0[&1], vec![1]);
+        // Port 1 has only channel 0.
+        assert_eq!(groups[&1][&0], vec![2]);
+    }
+
+    #[test]
+    fn ts_changes_extracts_tick_numerator() {
+        use std::sync::Arc;
+        use yinhe_core::{ConductorData, TimeSigEvent, YinModel};
+
+        let conductor = ConductorData {
+            tempo: vec![],
+            time_sig: vec![
+                TimeSigEvent { tick: 0, numerator: 4, denominator: 2 },
+                TimeSigEvent { tick: 1920, numerator: 3, denominator: 2 },
+            ],
+        };
+        let model = YinModel {
+            conductor: Arc::new(conductor),
+            ..Default::default()
+        };
+
+        let changes = ts_changes(&model);
+        assert_eq!(changes, vec![(0, 4), (1920, 3)]);
     }
 }
