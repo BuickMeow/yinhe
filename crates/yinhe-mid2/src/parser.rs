@@ -176,6 +176,17 @@ struct RpnState {
     lsb: Option<u8>,
 }
 
+/// Per-channel pending Bank Select state.
+///
+/// CC 0 (Bank MSB) and CC 32 (Bank LSB) are buffered here and folded into
+/// the next ProgramChange on the same tick. If no PC follows, they are
+/// flushed to `td.cc` at the end of the track.
+#[derive(Default, Clone, Copy)]
+struct PendingBank {
+    msb: Option<(u8, u32)>, // (value, tick)
+    lsb: Option<(u8, u32)>, // (value, tick)
+}
+
 fn parse_track(track: &midly::Track, track_idx: usize, encoding: MidiImportEncoding) -> TrackData {
     let mut td = TrackData::new(0, 0);
     td.uuid = uuid::Uuid::new_v4().to_string();
@@ -187,6 +198,9 @@ fn parse_track(track: &midly::Track, track_idx: usize, encoding: MidiImportEncod
 
     // RPN state per channel (channel 0..16).
     let mut rpn_state: [RpnState; 16] = [RpnState::default(); 16];
+
+    // Pending Bank Select per channel (CC 0 / CC 32).
+    let mut pending_bank: [PendingBank; 16] = [PendingBank::default(); 16];
 
     // Collect raw per-controller CC streams; we'll filter RPN selectors out
     // when we're sure they belong to an RPN sequence. Selectors that DON'T
@@ -262,6 +276,14 @@ fn parse_track(track: &midly::Track, track_idx: usize, encoding: MidiImportEncod
                                 rpn_state[ch_idx].lsb = Some(val);
                                 // Don't store CC100 — it's an RPN selector
                             }
+                            0 => {
+                                // Bank MSB: buffer for potential PC folding
+                                pending_bank[ch_idx].msb = Some((val, current_tick));
+                            }
+                            32 => {
+                                // Bank LSB: buffer for potential PC folding
+                                pending_bank[ch_idx].lsb = Some((val, current_tick));
+                            }
                             6 => {
                                 // Data Entry MSB: emit RpnEvent if RPN is selected
                                 let st = rpn_state[ch_idx];
@@ -315,12 +337,30 @@ fn parse_track(track: &midly::Track, track_idx: usize, encoding: MidiImportEncod
                         }
                     }
                     midly::MidiMessage::ProgramChange { program } => {
+                        let ch_idx = ch_raw as usize;
+                        let bank_msb_val = pending_bank[ch_idx].msb;
+                        let bank_lsb_val = pending_bank[ch_idx].lsb;
+                        let bank_msb = bank_msb_val
+                            .filter(|&(_, t)| t == current_tick)
+                            .map(|(v, _)| v)
+                            .unwrap_or(0xFF);
+                        let bank_lsb = bank_lsb_val
+                            .filter(|&(_, t)| t == current_tick)
+                            .map(|(v, _)| v)
+                            .unwrap_or(0xFF);
                         td.program_change.push(PcEvent {
                             tick: current_tick,
                             program: program.as_int(),
-                            bank_msb: 0xFF,
-                            bank_lsb: 0xFF,
+                            bank_msb,
+                            bank_lsb,
                         });
+                        // Clear pending bank values that were consumed (same tick)
+                        if bank_msb_val.is_some_and(|(_, t)| t == current_tick) {
+                            pending_bank[ch_idx].msb = None;
+                        }
+                        if bank_lsb_val.is_some_and(|(_, t)| t == current_tick) {
+                            pending_bank[ch_idx].lsb = None;
+                        }
                     }
                     midly::MidiMessage::PitchBend { bend } => {
                         td.pitch_bend.push(PitchBendEvent {
@@ -341,6 +381,17 @@ fn parse_track(track: &midly::Track, track_idx: usize, encoding: MidiImportEncod
     td.channel = first_global_channel
         .map(|gc| gc & 0x0F)
         .unwrap_or(0);
+
+    // Flush pending bank values that were NOT consumed by a ProgramChange.
+    // These become plain CC events so nothing is lost.
+    for bank in &pending_bank {
+        if let Some((val, tick)) = bank.msb {
+            td.cc.entry(0).or_default().push(CcEvent { tick, value: val });
+        }
+        if let Some((val, tick)) = bank.lsb {
+            td.cc.entry(32).or_default().push(CcEvent { tick, value: val });
+        }
+    }
 
     // Assign dup_index for any (key, start_tick) collisions.
     assign_dup_indices(&mut td.notes);

@@ -24,14 +24,14 @@ fn target_hash(target: &AutomationTarget) -> u64 {
 ///   1 = grid lines
 ///   2 = data bars (or velocity bars when target is Velocity)
 ///
-/// When `lane` is None and the panel target is Velocity, velocity bars are
+/// When `lanes` is empty and the panel target is Velocity, velocity bars are
 /// rendered directly from `midi` instead of from an automation lane.
 pub fn prepare(
     renderer: &mut PianorollRenderer,
     width: u32,
     height: u32,
     view: &AutomationPanelView,
-    lane: Option<&AutomationLane>,
+    lanes: &[&AutomationLane],
     midi: Option<&dyn NoteSource>,
     tpb: Option<u32>,
     default_num: u8,
@@ -75,7 +75,8 @@ pub fn prepare(
     renderer.ensure_layers(3);
 
     // Layer 0: decor (background + center line)
-    let center_line_hash = lane
+    let center_line_hash = lanes
+        .first()
         .map(|l| {
             if l.target.max_value() > 0 && l.target.has_center_line() {
                 l.target.default_value() as u64
@@ -91,7 +92,7 @@ pub fn prepare(
         target_hash(&view.selected_target),
     ]);
     renderer.upload_layer(0, decor_key, |out| {
-        automation_instances::build_decor(out, w, h, lane);
+        automation_instances::build_decor(out, w, h, lanes);
     });
 
     // Layer 1: grid lines
@@ -143,10 +144,10 @@ pub fn prepare(
             }
         } else if automation_display_mode == 1 {
             automation_instances::build_data_lines(
-                out, w, h, view, lane, track_visible, track_colors, automation_show_dots,
+                out, w, h, view, lanes, track_visible, track_colors, automation_show_dots,
             );
         } else {
-            automation_instances::build_data_bars(out, w, h, view, lane, track_visible, track_colors);
+            automation_instances::build_data_bars(out, w, h, view, lanes, track_visible, track_colors);
         }
     });
 

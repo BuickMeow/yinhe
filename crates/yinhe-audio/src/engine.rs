@@ -308,9 +308,23 @@ impl AudioEngine {
                     )),
                 });
             }
-            // Program change
+            // Program change (with bank MSB/LSB if available)
             for e in &track.program_change {
                 let sample = (model.tempo_map.tick_to_seconds(e.tick as u64) * sr) as u64;
+                if e.bank_msb != 0xFF {
+                    self.cc_events.push(SortedCC {
+                        sample,
+                        channel,
+                        event: ChannelAudioEvent::Control(ControlEvent::Raw(0, e.bank_msb)),
+                    });
+                }
+                if e.bank_lsb != 0xFF {
+                    self.cc_events.push(SortedCC {
+                        sample,
+                        channel,
+                        event: ChannelAudioEvent::Control(ControlEvent::Raw(32, e.bank_lsb)),
+                    });
+                }
                 self.cc_events.push(SortedCC {
                     sample,
                     channel,
@@ -970,10 +984,10 @@ mod tests {
         ));
         engine.handle_command(AudioCommand::ReloadNotes { model: model_b });
 
-        // 3 CC + 2 PB + 2 PC + 3 RPN-expanded (CC101+CC100+CC6, data_lsb==0 skips CC38) = 10
+        // 3 CC + 2 PB + 2 PC (each with bank_msb=0 + bank_lsb=0 → 2 extra) + 3 RPN-expanded = 14
         assert_eq!(
             engine.cc_events.len(),
-            10,
+            14,
             "ReloadNotes must rebuild cc_events from the new model (was {} from model A)",
             cc_count_a
         );

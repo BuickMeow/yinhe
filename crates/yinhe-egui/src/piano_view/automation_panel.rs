@@ -141,9 +141,10 @@ pub fn show_panels(
             if let Some((renderer, render_ctx)) = renderers.get_mut(i) {
                 render_ctx.ensure_size(gw, gh);
 
-                let lane = automation_lanes
+                let lanes: Vec<&AutomationLane> = automation_lanes
                     .iter()
-                    .find(|l| l.target == panel.selected_target);
+                    .filter(|l| l.target == panel.selected_target)
+                    .collect();
 
                 let force_rebuild = panel.dirty;
                 let gpu_dirty = prepare_automation(
@@ -151,7 +152,7 @@ pub fn show_panels(
                     gw,
                     gh,
                     panel,
-                    lane,
+                    &lanes,
                     midi,
                     tpb,
                     default_num,
@@ -225,6 +226,18 @@ pub fn show_panels(
                                 panel.dirty = true;
                                 ui.close();
                             }
+                        }
+                        ui.separator();
+                        ui.label("自定义 CC:");
+                        let mut cc_input = match &panel.selected_target {
+                            AutomationTarget::CC { controller } => *controller as i32,
+                            _ => 0,
+                        };
+                        let resp = ui.add(egui::DragValue::new(&mut cc_input).range(0..=127).speed(1));
+                        if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                            panel.selected_target = AutomationTarget::CC { controller: cc_input as u8 };
+                            panel.dirty = true;
+                            ui.close();
                         }
                     });
 
@@ -323,9 +336,22 @@ pub fn show_panels(
         let font_id = egui::FontId::proportional(10.0);
         let pad_x = 4.0;
 
-        let (top_val, mid_val, bot_val) = match panel.selected_target {
-            AutomationTarget::PitchBend => ("8191", "0", "-8192"),
-            _ => ("127", "64", "0"),
+        let (top_val, mid_val, bot_val) = {
+            let target = &panel.selected_target;
+            let max = target.max_value();
+            let def = target.default_value();
+            match target {
+                AutomationTarget::PitchBend => {
+                    let half = max - def; // 8191
+                    (half.to_string(), "0".into(), (-(half as i32)).to_string())
+                }
+                _ if target.has_center_line() => {
+                    (max.to_string(), def.to_string(), "0".into())
+                }
+                _ => {
+                    (max.to_string(), (max / 2).to_string(), "0".into())
+                }
+            }
         };
 
         let text_x = panel_rect.min.x + combo_width + pad_x;

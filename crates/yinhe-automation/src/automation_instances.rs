@@ -21,7 +21,7 @@ pub fn build_decor(
     out: &mut Vec<NoteInstance>,
     w: f32,
     h: f32,
-    lane: Option<&AutomationLane>,
+    lanes: &[&AutomationLane],
 ) {
     out.push(NoteInstance {
         x: 0.0,
@@ -39,7 +39,7 @@ pub fn build_decor(
         tag: 0,
     });
 
-    if let Some(lane) = lane {
+    if let Some(lane) = lanes.first() {
         let target = &lane.target;
         let max_val = target.max_value() as f32;
         if max_val > 0.0 && target.has_center_line() {
@@ -102,42 +102,50 @@ pub fn build_data_bars(
     w: f32,
     h: f32,
     view: &AutomationPanelView,
-    lane: Option<&AutomationLane>,
+    lanes: &[&AutomationLane],
     track_visible: &[bool],
     track_colors: &[[f32; 3]],
 ) {
-    if let Some(lane) = lane {
-        let target = &lane.target;
-        let max_val = target.max_value() as f32;
-        if max_val <= 0.0 {
-            return;
+    if lanes.is_empty() {
+        return;
+    }
+    let target = &lanes[0].target;
+    let max_val = target.max_value() as f32;
+    if max_val <= 0.0 {
+        return;
+    }
+
+    let ppu = view.base.pixels_per_tick;
+    let (tick_start, tick_end) = view.base.visible_tick_range(w);
+    let pad_start = tick_start.max(0.0) as u32;
+    let pad_end = tick_end.max(0.0) as u32;
+    let x_offset = view.base.left_panel_width - view.base.scroll_x;
+
+    struct Bar<'a> {
+        evt: &'a AutomationEvent,
+        bar_x: f32,
+        bar_h: f32,
+        color: [f32; 3],
+    }
+
+    let mut bars: Vec<Bar> = Vec::new();
+
+    for lane in lanes {
+        let trk_idx = lane.track as usize;
+        if !track_visible.get(trk_idx).copied().unwrap_or(true) {
+            continue;
         }
 
-        let ppu = view.base.pixels_per_tick;
-        let (tick_start, tick_end) = view.base.visible_tick_range(w);
-        let pad_start = tick_start.max(0.0) as u32;
-        let pad_end = tick_end.max(0.0) as u32;
+        let color = track_colors
+            .get(trk_idx)
+            .copied()
+            .unwrap_or_else(|| TRACK_PALETTE[trk_idx % TRACK_PALETTE.len()]);
 
         let events = lane.events_in_range(pad_start, pad_end);
-        let x_offset = view.base.left_panel_width - view.base.scroll_x;
-
-        struct Bar<'a> {
-            evt: &'a AutomationEvent,
-            bar_x: f32,
-            bar_h: f32,
-            color: [f32; 3],
-        }
-
-        let mut bars: Vec<Bar> = Vec::new();
         let mut last_tick = u32::MAX;
         let mut seen_values = [false; 128];
 
         for evt in events {
-            let trk_idx = evt.track as usize;
-            if !track_visible.get(trk_idx).copied().unwrap_or(true) {
-                continue;
-            }
-
             if evt.tick != last_tick {
                 last_tick = evt.tick;
                 seen_values.fill(false);
@@ -159,34 +167,23 @@ pub fn build_data_bars(
                 continue;
             }
 
-            let trk = evt.track as usize;
-            let color = track_colors
-                .get(trk)
-                .copied()
-                .unwrap_or_else(|| TRACK_PALETTE[trk % TRACK_PALETTE.len()]);
-
-            bars.push(Bar {
-                evt,
-                bar_x,
-                bar_h,
-                color,
-            });
+            bars.push(Bar { evt, bar_x, bar_h, color });
         }
+    }
 
-        bars.sort_by(|a, b| b.evt.value.cmp(&a.evt.value));
+    bars.sort_by(|a, b| b.evt.value.cmp(&a.evt.value));
 
-        for bar in &bars {
-            out.push(NoteInstance {
-                x: bar.bar_x,
-                y: h - bar.bar_h,
-                w: BAR_WIDTH,
-                h: bar.bar_h,
-                rgba_packed: pack_rgba(bar.color[0], bar.color[1], bar.color[2], 0.85),
-                props_packed: pack_props(BAR_ROUNDING, BAR_BORDER),
-                velocity: bar.evt.value as u32,
-                tag: 0,
-            });
-        }
+    for bar in &bars {
+        out.push(NoteInstance {
+            x: bar.bar_x,
+            y: h - bar.bar_h,
+            w: BAR_WIDTH,
+            h: bar.bar_h,
+            rgba_packed: pack_rgba(bar.color[0], bar.color[1], bar.color[2], 0.85),
+            props_packed: pack_props(BAR_ROUNDING, BAR_BORDER),
+            velocity: bar.evt.value as u32,
+            tag: 0,
+        });
     }
 }
 
@@ -199,13 +196,15 @@ pub fn build_data_lines(
     w: f32,
     h: f32,
     view: &AutomationPanelView,
-    lane: Option<&AutomationLane>,
+    lanes: &[&AutomationLane],
     track_visible: &[bool],
     track_colors: &[[f32; 3]],
     show_dots: bool,
 ) {
-    let Some(lane) = lane else { return };
-    let target = &lane.target;
+    if lanes.is_empty() {
+        return;
+    }
+    let target = &lanes[0].target;
     let max_val = target.max_value() as f32;
     if max_val <= 0.0 {
         return;
@@ -218,44 +217,51 @@ pub fn build_data_lines(
     let x_offset = view.base.left_panel_width - view.base.scroll_x;
     let grid_left_x = view.base.left_panel_width;
 
-    // Group all events by track so per-track operations don't leak across tracks.
-    let mut track_all_events: Vec<Vec<(u32, u16)>> = vec![Vec::new(); track_visible.len()];
-    for evt in lane.events.iter() {
-        let trk = evt.track as usize;
-        if trk >= track_all_events.len() || !track_visible.get(trk).copied().unwrap_or(true) {
+    for lane in lanes {
+        let trk_idx = lane.track as usize;
+        if !track_visible.get(trk_idx).copied().unwrap_or(true) {
             continue;
         }
-        track_all_events[trk].push((evt.tick, evt.value));
-    }
 
-    // Collect visible events (within pad_start..pad_end) grouped by track
-    let mut track_visible_events: Vec<Vec<(u32, u16)>> = vec![Vec::new(); track_visible.len()];
-    for evt in lane.events_in_range(pad_start, pad_end) {
-        let trk = evt.track as usize;
-        if trk >= track_visible_events.len() || !track_visible.get(trk).copied().unwrap_or(true) {
-            continue;
-        }
-        track_visible_events[trk].push((evt.tick, evt.value));
-    }
-
-    for (ti, events) in track_visible_events.iter().enumerate() {
-        if events.is_empty() {
-            continue;
-        }
         let color = track_colors
-            .get(ti)
+            .get(trk_idx)
             .copied()
-            .unwrap_or_else(|| TRACK_PALETTE[ti % TRACK_PALETTE.len()]);
+            .unwrap_or_else(|| TRACK_PALETTE[trk_idx % TRACK_PALETTE.len()]);
 
-        let all = &track_all_events[ti];
+        let all_events: Vec<(u32, u16)> = lane.events.iter().map(|e| (e.tick, e.value)).collect();
+        let visible_events: Vec<(u32, u16)> = lane
+            .events_in_range(pad_start, pad_end)
+            .iter()
+            .map(|e| (e.tick, e.value))
+            .collect();
 
-        // Find the value before the first visible event (same track only)
-        let prev_idx = all.partition_point(|e| e.0 < events[0].0);
-        let mut prev_val = if prev_idx > 0 { all[prev_idx - 1].1 } else { 0 };
-        let mut prev_tick = events[0].0;
+        if visible_events.is_empty() {
+            // No visible events: draw a full-width horizontal line at chase value
+            let idx = all_events.partition_point(|e| e.0 < pad_start);
+            let val = if idx > 0 { all_events[idx - 1].1 } else { 0 };
+            let y = h - (val as f32 / max_val) * h;
+            if w > grid_left_x {
+                out.push(NoteInstance {
+                    x: grid_left_x,
+                    y,
+                    w: w - grid_left_x,
+                    h: 1.0,
+                    rgba_packed: pack_rgba(color[0], color[1], color[2], 0.85),
+                    props_packed: pack_props(0.0, 0.0),
+                    velocity: 0,
+                    tag: 0,
+                });
+            }
+            continue;
+        }
+
+        // Find the value before the first visible event
+        let prev_idx = all_events.partition_point(|e| e.0 < visible_events[0].0);
+        let mut prev_val = if prev_idx > 0 { all_events[prev_idx - 1].1 } else { 0 };
+        let mut prev_tick = visible_events[0].0;
 
         // Horizontal line from grid left edge to the first event
-        let first_x = x_offset + events[0].0 as f32 * ppu;
+        let first_x = x_offset + visible_events[0].0 as f32 * ppu;
         let first_y = h - (prev_val as f32 / max_val) * h;
         if first_x > grid_left_x {
             out.push(NoteInstance {
@@ -270,7 +276,7 @@ pub fn build_data_lines(
             });
         }
 
-        for &(tick, value) in events {
+        for &(tick, value) in &visible_events {
             let x1 = x_offset + prev_tick as f32 * ppu;
             let x2 = x_offset + tick as f32 * ppu;
             let y1 = h - (prev_val as f32 / max_val) * h;
@@ -313,7 +319,7 @@ pub fn build_data_lines(
                     w: 4.0,
                     h: 4.0,
                     rgba_packed: pack_rgba(color[0], color[1], color[2], 1.0),
-                    props_packed: pack_props(2.0, 0.0), // rounded dot
+                    props_packed: pack_props(2.0, 0.0),
                     velocity: 0,
                     tag: 0,
                 });
@@ -323,12 +329,12 @@ pub fn build_data_lines(
             prev_tick = tick;
         }
 
-        // Horizontal line from the last event to the next event (same track only)
+        // Horizontal line from the last event to the next event (or right edge)
         let last_x = x_offset + prev_tick as f32 * ppu;
         let last_y = h - (prev_val as f32 / max_val) * h;
-        let next_idx = all.partition_point(|e| e.0 <= prev_tick);
-        let right_bound = if next_idx < all.len() {
-            x_offset + all[next_idx].0 as f32 * ppu
+        let next_idx = all_events.partition_point(|e| e.0 <= prev_tick);
+        let right_bound = if next_idx < all_events.len() {
+            x_offset + all_events[next_idx].0 as f32 * ppu
         } else {
             w
         };
@@ -337,38 +343,6 @@ pub fn build_data_lines(
                 x: last_x,
                 y: last_y,
                 w: right_bound - last_x,
-                h: 1.0,
-                rgba_packed: pack_rgba(color[0], color[1], color[2], 0.85),
-                props_packed: pack_props(0.0, 0.0),
-                velocity: 0,
-                tag: 0,
-            });
-        }
-    }
-
-    // Handle tracks with no visible events: chase the value at pad_start and
-    // draw a full-width horizontal line so the automation doesn't disappear
-    // when the viewport contains no event points.
-    for (ti, events) in track_visible_events.iter().enumerate() {
-        if !events.is_empty() {
-            continue;
-        }
-        if !track_visible.get(ti).copied().unwrap_or(true) {
-            continue;
-        }
-        let all = &track_all_events[ti];
-        let idx = all.partition_point(|e| e.0 < pad_start);
-        let val = if idx > 0 { all[idx - 1].1 } else { 0 };
-        let color = track_colors
-            .get(ti)
-            .copied()
-            .unwrap_or_else(|| TRACK_PALETTE[ti % TRACK_PALETTE.len()]);
-        let y = h - (val as f32 / max_val) * h;
-        if w > grid_left_x {
-            out.push(NoteInstance {
-                x: grid_left_x,
-                y,
-                w: w - grid_left_x,
                 h: 1.0,
                 rgba_packed: pack_rgba(color[0], color[1], color[2], 0.85),
                 props_packed: pack_props(0.0, 0.0),
@@ -504,7 +478,7 @@ pub fn build_automation_instances(
     width: u32,
     height: u32,
     view: &AutomationPanelView,
-    lane: Option<&AutomationLane>,
+    lanes: &[&AutomationLane],
     tpb: Option<u32>,
     default_num: u8,
     default_den: u8,
@@ -515,9 +489,9 @@ pub fn build_automation_instances(
     let w = width as f32;
     let h = height as f32;
 
-    build_decor(instances, w, h, lane);
+    build_decor(instances, w, h, lanes);
     build_grid(instances, w, h, view, tpb, default_num, default_den, time_sig_events, 0.0);
-    build_data_bars(instances, w, h, view, lane, track_visible, track_colors);
+    build_data_bars(instances, w, h, view, lanes, track_visible, track_colors);
 }
 
 #[cfg(test)]
@@ -548,14 +522,10 @@ mod tests {
     fn make_lane(target: AutomationTarget, ticks: &[(u32, u16)]) -> AutomationLane {
         AutomationLane {
             target,
+            track: 0,
             events: ticks
                 .iter()
-                .map(|&(tick, value)| AutomationEvent {
-                    tick,
-                    value,
-                    channel: 0,
-                    track: 0,
-                })
+                .map(|&(tick, value)| AutomationEvent { tick, value })
                 .collect(),
         }
     }
@@ -565,7 +535,7 @@ mod tests {
         let mut instances = Vec::new();
         let view = make_view(1.0, 0.0, 80.0);
 
-        build_automation_instances(&mut instances, 800, 100, &view, None, None, 4, 2, &[], &[], &[]);
+        build_automation_instances(&mut instances, 800, 100, &view, &[], None, 4, 2, &[], &[], &[]);
 
         assert!(!instances.is_empty());
         let bg = &instances[0];
@@ -580,7 +550,7 @@ mod tests {
         let mut instances = Vec::new();
         let view = make_view(1.0, 0.0, 80.0);
 
-        build_automation_instances(&mut instances, 800, 100, &view, None, None, 4, 2, &[], &[], &[]);
+        build_automation_instances(&mut instances, 800, 100, &view, &[], None, 4, 2, &[], &[], &[]);
 
         assert_eq!(instances.len(), 1, "no TPB means no grid lines");
     }
@@ -590,7 +560,7 @@ mod tests {
         let mut instances = Vec::new();
         let view = make_view(1.0, 0.0, 80.0);
 
-        build_automation_instances(&mut instances, 800, 100, &view, None, Some(480), 4, 2, &[], &[], &[]);
+        build_automation_instances(&mut instances, 800, 100, &view, &[], Some(480), 4, 2, &[], &[], &[]);
 
         assert!(instances.len() > 1);
         let grid_line = &instances[1];
@@ -604,6 +574,7 @@ mod tests {
         let view = make_view(1.0, 0.0, 100.0);
         let lane = AutomationLane {
             target: AutomationTarget::PitchBend,
+            track: 0,
             events: vec![],
         };
 
@@ -612,7 +583,7 @@ mod tests {
             800,
             100,
             &view,
-            Some(&lane),
+            &[&lane],
             None,
             4,
             2,
@@ -632,6 +603,7 @@ mod tests {
         let view = make_view(1.0, 0.0, 100.0);
         let lane = AutomationLane {
             target: AutomationTarget::FineTune,
+            track: 0,
             events: vec![],
         };
 
@@ -640,7 +612,7 @@ mod tests {
             800,
             100,
             &view,
-            Some(&lane),
+            &[&lane],
             None,
             4,
             2,
@@ -648,7 +620,8 @@ mod tests {
 
         assert_eq!(instances.len(), 2);
         let center = &instances[1];
-        assert!((center.y - (100.0 - 50.0 - 0.5)).abs() < f32::EPSILON);
+        let expected_y = 100.0 - (8192.0_f32 / 16383.0_f32) * 100.0 - 0.5;
+        assert!((center.y - expected_y).abs() < 0.001);
     }
 
     #[test]
@@ -657,6 +630,7 @@ mod tests {
         let view = make_view(1.0, 0.0, 100.0);
         let lane = AutomationLane {
             target: AutomationTarget::Velocity,
+            track: 0,
             events: vec![],
         };
 
@@ -665,7 +639,7 @@ mod tests {
             800,
             100,
             &view,
-            Some(&lane),
+            &[&lane],
             None,
             4,
             2,
@@ -680,6 +654,7 @@ mod tests {
         let view = make_view(1.0, 0.0, 100.0);
         let lane = AutomationLane {
             target: AutomationTarget::CC { controller: 7 },
+            track: 0,
             events: vec![],
         };
 
@@ -688,7 +663,7 @@ mod tests {
             800,
             100,
             &view,
-            Some(&lane),
+            &[&lane],
             None,
             4,
             2,
@@ -711,7 +686,7 @@ mod tests {
             800,
             100,
             &view,
-            Some(&lane),
+            &[&lane],
             None,
             4,
             2,
@@ -745,7 +720,7 @@ mod tests {
             800,
             100,
             &view,
-            Some(&lane),
+            &[&lane],
             None,
             4,
             2,
@@ -765,7 +740,7 @@ mod tests {
             800,
             100,
             &view,
-            Some(&lane),
+            &[&lane],
             None,
             4,
             2,
@@ -790,7 +765,7 @@ mod tests {
             800,
             200,
             &view,
-            Some(&lane),
+            &[&lane],
             None,
             4,
             2,
@@ -812,22 +787,15 @@ mod tests {
     fn test_track_colors_from_palette() {
         let mut instances = Vec::new();
         let view = make_view(1.0, 0.0, 100.0);
-        let lane = AutomationLane {
+        let lane0 = AutomationLane {
             target: AutomationTarget::CC { controller: 7 },
-            events: vec![
-                AutomationEvent {
-                    tick: 100,
-                    value: 64,
-                    channel: 0,
-                    track: 0,
-                },
-                AutomationEvent {
-                    tick: 200,
-                    value: 64,
-                    channel: 0,
-                    track: 1,
-                },
-            ],
+            track: 0,
+            events: vec![AutomationEvent { tick: 100, value: 64 }],
+        };
+        let lane1 = AutomationLane {
+            target: AutomationTarget::CC { controller: 7 },
+            track: 1,
+            events: vec![AutomationEvent { tick: 200, value: 64 }],
         };
 
         build_automation_instances(
@@ -835,7 +803,7 @@ mod tests {
             800,
             100,
             &view,
-            Some(&lane),
+            &[&lane0, &lane1],
             None,
             4,
             2,
@@ -853,6 +821,7 @@ mod tests {
         let view = make_view(1.0, 0.0, 100.0);
         let lane = AutomationLane {
             target: AutomationTarget::CC { controller: 7 },
+            track: 0,
             events: vec![],
         };
 
@@ -861,7 +830,7 @@ mod tests {
             800,
             100,
             &view,
-            Some(&lane),
+            &[&lane],
             None,
             4,
             2,
@@ -875,7 +844,7 @@ mod tests {
         let mut instances = Vec::new();
         let view = make_view(1.0, 0.0, 0.0);
 
-        build_automation_instances(&mut instances, 0, 0, &view, None, None, 4, 2, &[], &[], &[]);
+        build_automation_instances(&mut instances, 0, 0, &view, &[], None, 4, 2, &[], &[], &[]);
 
         assert_eq!(instances.len(), 1);
         assert_eq!(instances[0].w, 0.0);
@@ -893,7 +862,7 @@ mod tests {
             800,
             100,
             &view,
-            Some(&lane),
+            &[&lane],
             None,
             4,
             2,
@@ -916,7 +885,7 @@ mod tests {
             800,
             100,
             &view,
-            Some(&lane),
+            &[&lane],
             None,
             4,
             2,
@@ -937,7 +906,7 @@ mod tests {
             800,
             100,
             &view,
-            Some(&lane),
+            &[&lane],
             None,
             4,
             2,
@@ -957,7 +926,7 @@ mod tests {
             800,
             100,
             &view,
-            Some(&lane),
+            &[&lane],
             None,
             4,
             2,
@@ -985,7 +954,7 @@ mod tests {
             800,
             100,
             &view,
-            None,
+            &[],
             Some(480),
             4,
             2,
@@ -997,22 +966,15 @@ mod tests {
     #[test]
     fn test_track_visibility_filters_bars() {
         let view = make_view(1.0, 0.0, 100.0);
-        let lane = AutomationLane {
+        let lane0 = AutomationLane {
             target: AutomationTarget::CC { controller: 7 },
-            events: vec![
-                yinhe_types::AutomationEvent {
-                    tick: 100,
-                    value: 64,
-                    channel: 0,
-                    track: 0,
-                },
-                yinhe_types::AutomationEvent {
-                    tick: 200,
-                    value: 80,
-                    channel: 1,
-                    track: 1,
-                },
-            ],
+            track: 0,
+            events: vec![AutomationEvent { tick: 100, value: 64 }],
+        };
+        let lane1 = AutomationLane {
+            target: AutomationTarget::CC { controller: 7 },
+            track: 1,
+            events: vec![AutomationEvent { tick: 200, value: 80 }],
         };
 
         let mut both = Vec::new();
@@ -1021,7 +983,7 @@ mod tests {
             800,
             100,
             &view,
-            Some(&lane),
+            &[&lane0, &lane1],
             None,
             4,
             2,
@@ -1036,7 +998,7 @@ mod tests {
             800,
             100,
             &view,
-            Some(&lane),
+            &[&lane0, &lane1],
             None,
             4,
             2,

@@ -27,8 +27,8 @@ impl AutomationTarget {
             AutomationTarget::CC { .. } => 127,
             AutomationTarget::PitchBend => 16383,
             AutomationTarget::PitchBendSensitivity => 127,
-            AutomationTarget::FineTune => 100, // ±50 cents → range 100
-            AutomationTarget::CoarseTune => 24,
+            AutomationTarget::FineTune => 16383, // 14-bit (MSB+LSB, like PitchBend)
+            AutomationTarget::CoarseTune => 127,
             AutomationTarget::Velocity => 127,
         }
     }
@@ -36,10 +36,13 @@ impl AutomationTarget {
     /// Default / center value (used to draw a reference line).
     pub fn default_value(&self) -> u16 {
         match self {
-            AutomationTarget::CC { .. } => 0,
+            AutomationTarget::CC { controller } => match controller {
+                10 | 71 | 72 | 73 | 74 => 64,
+                _ => 0,
+            },
             AutomationTarget::PitchBend => 8192,
             AutomationTarget::PitchBendSensitivity => 2,
-            AutomationTarget::FineTune => 50, // center of 0..100
+            AutomationTarget::FineTune => 8192, // center of 14-bit range
             AutomationTarget::CoarseTune => 0,
             AutomationTarget::Velocity => 0,
         }
@@ -49,7 +52,13 @@ impl AutomationTarget {
     pub fn has_center_line(&self) -> bool {
         matches!(
             self,
-            AutomationTarget::PitchBend | AutomationTarget::FineTune
+            AutomationTarget::PitchBend
+                | AutomationTarget::FineTune
+                | AutomationTarget::CC { controller: 10 }
+                | AutomationTarget::CC { controller: 71 }
+                | AutomationTarget::CC { controller: 72 }
+                | AutomationTarget::CC { controller: 73 }
+                | AutomationTarget::CC { controller: 74 }
         )
     }
 
@@ -110,19 +119,22 @@ fn cc_name(cc: u8) -> &'static str {
 }
 
 /// A single automation event: a value at a point in time.
+///
+/// Channel and track are not stored here — they are implied by the
+/// owning `AutomationLane` (which mirrors `TrackData`'s per-track design).
 #[derive(Clone, Debug)]
 pub struct AutomationEvent {
     pub tick: u32,
     /// Raw value. Range depends on the target (0–127 for CC, 0–16383 for PB, etc.).
     pub value: u16,
-    pub channel: u8,
-    pub track: u16,
 }
 
-/// A sorted lane of automation events for one parameter.
+/// A sorted lane of automation events for one parameter on one track.
 #[derive(Clone, Debug)]
 pub struct AutomationLane {
     pub target: AutomationTarget,
+    /// Track index (matches `TrackData` position in `YinModel.tracks`).
+    pub track: u16,
     /// Events sorted by `tick`.
     pub events: Vec<AutomationEvent>,
 }
@@ -137,17 +149,12 @@ impl AutomationLane {
         &self.events[lo..hi]
     }
 
-    /// Chase: find the last event for `channel` before `target_tick`.
+    /// Chase: find the last event before `target_tick`.
     ///
-    /// Returns `None` if no event exists before the target tick for this channel.
-    pub fn chase_value(&self, target_tick: u32, channel: u8) -> Option<u16> {
-        // Binary search for the last event at or before target_tick on this channel.
+    /// Returns `None` if no event exists before the target tick.
+    pub fn chase_value(&self, target_tick: u32) -> Option<u16> {
         let idx = self.events.partition_point(|e| e.tick < target_tick);
-        // Scan backwards to find a matching channel.
-        self.events[..idx]
-            .iter()
-            .rposition(|e| e.channel == channel)
-            .map(|i| self.events[i].value)
+        if idx > 0 { Some(self.events[idx - 1].value) } else { None }
     }
 }
 
@@ -158,13 +165,12 @@ mod tests {
     fn make_lane(target: AutomationTarget, ticks: &[u32]) -> AutomationLane {
         AutomationLane {
             target,
+            track: 0,
             events: ticks
                 .iter()
                 .map(|&t| AutomationEvent {
                     tick: t,
                     value: 64,
-                    channel: 0,
-                    track: 0,
                 })
                 .collect(),
         }
@@ -190,70 +196,42 @@ mod tests {
 
     #[test]
     fn test_chase_value_found() {
-        let mut lane = AutomationLane {
+        let lane = AutomationLane {
             target: AutomationTarget::CC { controller: 7 },
+            track: 0,
             events: vec![
-                AutomationEvent {
-                    tick: 100,
-                    value: 80,
-                    channel: 0,
-                    track: 0,
-                },
-                AutomationEvent {
-                    tick: 200,
-                    value: 100,
-                    channel: 0,
-                    track: 0,
-                },
-                AutomationEvent {
-                    tick: 300,
-                    value: 60,
-                    channel: 0,
-                    track: 0,
-                },
+                AutomationEvent { tick: 100, value: 80 },
+                AutomationEvent { tick: 200, value: 100 },
+                AutomationEvent { tick: 300, value: 60 },
             ],
         };
         // Chase at tick 250 → should return value 100 (event at tick 200)
-        assert_eq!(lane.chase_value(250, 0), Some(100));
+        assert_eq!(lane.chase_value(250), Some(100));
         // Chase at tick 300 → should return value 100 (event before 300, not at 300)
-        assert_eq!(lane.chase_value(300, 0), Some(100));
+        assert_eq!(lane.chase_value(300), Some(100));
     }
 
     #[test]
     fn test_chase_value_none() {
         let lane = make_lane(AutomationTarget::CC { controller: 7 }, &[200, 300]);
         // Chase at tick 100 → no events before
-        assert_eq!(lane.chase_value(100, 0), None);
+        assert_eq!(lane.chase_value(100), None);
     }
 
     #[test]
-    fn test_chase_value_channel_filter() {
+    fn test_chase_value_exact_tick() {
         let lane = AutomationLane {
             target: AutomationTarget::CC { controller: 7 },
+            track: 0,
             events: vec![
-                AutomationEvent {
-                    tick: 100,
-                    value: 80,
-                    channel: 0,
-                    track: 0,
-                },
-                AutomationEvent {
-                    tick: 100,
-                    value: 90,
-                    channel: 1,
-                    track: 1,
-                },
-                AutomationEvent {
-                    tick: 200,
-                    value: 100,
-                    channel: 0,
-                    track: 0,
-                },
+                AutomationEvent { tick: 100, value: 80 },
+                AutomationEvent { tick: 200, value: 100 },
             ],
         };
-        assert_eq!(lane.chase_value(300, 0), Some(100));
-        assert_eq!(lane.chase_value(300, 1), Some(90));
-        assert_eq!(lane.chase_value(300, 2), None);
+        // Chase at tick 100 → event at tick 100 is NOT before tick 100
+        assert_eq!(lane.chase_value(100), None);
+        // Chase at tick 101 → event at tick 100 is before tick 101
+        assert_eq!(lane.chase_value(101), Some(80));
     }
 
     #[test]
@@ -274,9 +252,22 @@ mod tests {
     fn test_max_and_default_values() {
         assert_eq!(AutomationTarget::CC { controller: 0 }.max_value(), 127);
         assert_eq!(AutomationTarget::CC { controller: 0 }.default_value(), 0);
+        assert_eq!(AutomationTarget::CC { controller: 10 }.default_value(), 64);
+        assert_eq!(AutomationTarget::CC { controller: 71 }.default_value(), 64);
+        assert_eq!(AutomationTarget::CC { controller: 72 }.default_value(), 64);
+        assert_eq!(AutomationTarget::CC { controller: 73 }.default_value(), 64);
+        assert_eq!(AutomationTarget::CC { controller: 74 }.default_value(), 64);
         assert_eq!(AutomationTarget::PitchBend.max_value(), 16383);
         assert_eq!(AutomationTarget::PitchBend.default_value(), 8192);
         assert!(AutomationTarget::PitchBend.has_center_line());
         assert!(!AutomationTarget::CC { controller: 0 }.has_center_line());
+        assert!(AutomationTarget::CC { controller: 10 }.has_center_line());
+        assert!(AutomationTarget::CC { controller: 71 }.has_center_line());
+        assert!(!AutomationTarget::CC { controller: 7 }.has_center_line());
+        assert_eq!(AutomationTarget::FineTune.max_value(), 16383);
+        assert_eq!(AutomationTarget::FineTune.default_value(), 8192);
+        assert!(AutomationTarget::FineTune.has_center_line());
+        assert_eq!(AutomationTarget::CoarseTune.max_value(), 127);
+        assert_eq!(AutomationTarget::CoarseTune.default_value(), 0);
     }
 }
