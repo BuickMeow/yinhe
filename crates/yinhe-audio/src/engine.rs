@@ -134,9 +134,10 @@ impl AudioEngine {
     pub(crate) fn set_layer_count(&mut self, count: Option<usize>) {
         use xsynth_core::channel::{ChannelConfigEvent, ChannelEvent};
         use xsynth_core::channel_group::SynthEvent;
-        self.channel_group.send_event(SynthEvent::AllChannels(
-            ChannelEvent::Config(ChannelConfigEvent::SetLayerCount(count)),
-        ));
+        self.channel_group
+            .send_event(SynthEvent::AllChannels(ChannelEvent::Config(
+                ChannelConfigEvent::SetLayerCount(count),
+            )));
     }
 
     pub(crate) fn handle_command(&mut self, cmd: AudioCommand) {
@@ -163,6 +164,7 @@ impl AudioEngine {
                         ChannelAudioEvent::AllNotesOff,
                     )));
                 self.active_notes.clear();
+                self.load_model(&model);
                 self.model = Some(model);
                 self.reset_note_cursors();
             }
@@ -197,10 +199,8 @@ impl AudioEngine {
                 .copied()
                 .unwrap_or(u32::MAX);
             if dense != u32::MAX {
-                self.channel_group.send_event(SynthEvent::Channel(
-                    dense,
-                    ChannelEvent::Audio(cc.event),
-                ));
+                self.channel_group
+                    .send_event(SynthEvent::Channel(dense, ChannelEvent::Audio(cc.event)));
             }
             self.cc_cursor += 1;
         }
@@ -217,11 +217,7 @@ impl AudioEngine {
                     let track = note.track as usize;
                     if !self.skip_track.get(track).copied().unwrap_or(false) {
                         let ch = track_global_channel(model, track) as usize;
-                        let dense = self
-                            .channel_map
-                            .get(ch)
-                            .copied()
-                            .unwrap_or(u32::MAX);
+                        let dense = self.channel_map.get(ch).copied().unwrap_or(u32::MAX);
                         if dense != u32::MAX {
                             self.channel_group.send_event(SynthEvent::Channel(
                                 dense,
@@ -293,8 +289,7 @@ impl AudioEngine {
             // CC
             for (&controller, evs) in &track.cc {
                 for e in evs {
-                    let sample =
-                        (model.tempo_map.tick_to_seconds(e.tick as u64) * sr) as u64;
+                    let sample = (model.tempo_map.tick_to_seconds(e.tick as u64) * sr) as u64;
                     self.cc_events.push(SortedCC {
                         sample,
                         channel,
@@ -304,8 +299,7 @@ impl AudioEngine {
             }
             // Pitch bend
             for e in &track.pitch_bend {
-                let sample =
-                    (model.tempo_map.tick_to_seconds(e.tick as u64) * sr) as u64;
+                let sample = (model.tempo_map.tick_to_seconds(e.tick as u64) * sr) as u64;
                 self.cc_events.push(SortedCC {
                     sample,
                     channel,
@@ -316,8 +310,7 @@ impl AudioEngine {
             }
             // Program change
             for e in &track.program_change {
-                let sample =
-                    (model.tempo_map.tick_to_seconds(e.tick as u64) * sr) as u64;
+                let sample = (model.tempo_map.tick_to_seconds(e.tick as u64) * sr) as u64;
                 self.cc_events.push(SortedCC {
                     sample,
                     channel,
@@ -332,8 +325,7 @@ impl AudioEngine {
                 for e in evs {
                     let data_msb = ((e.value >> 7) & 0x7F) as u8;
                     let data_lsb = (e.value & 0x7F) as u8;
-                    let sample =
-                        (model.tempo_map.tick_to_seconds(e.tick as u64) * sr) as u64;
+                    let sample = (model.tempo_map.tick_to_seconds(e.tick as u64) * sr) as u64;
                     self.cc_events.push(SortedCC {
                         sample,
                         channel,
@@ -388,8 +380,8 @@ impl AudioEngine {
                         audible.push(AudibleNote {
                             start_sample: (model.tempo_map.tick_to_seconds(note.start_tick as u64)
                                 * sr) as u64,
-                            end_sample: (model.tempo_map.tick_to_seconds(note.end_tick as u64)
-                                * sr) as u64,
+                            end_sample: (model.tempo_map.tick_to_seconds(note.end_tick as u64) * sr)
+                                as u64,
                             track: note.track,
                             velocity: note.velocity,
                         });
@@ -412,8 +404,8 @@ impl AudioEngine {
                         audible.push(AudibleNote {
                             start_sample: (model.tempo_map.tick_to_seconds(note.start_tick as u64)
                                 * sr) as u64,
-                            end_sample: (model.tempo_map.tick_to_seconds(note.end_tick as u64)
-                                * sr) as u64,
+                            end_sample: (model.tempo_map.tick_to_seconds(note.end_tick as u64) * sr)
+                                as u64,
                             track: note.track,
                             velocity: note.velocity,
                         });
@@ -483,9 +475,12 @@ impl AudioEngine {
         if dense_channels.is_empty() {
             return;
         }
-        let _ = self
-            .sf_manager
-            .load_for_port_with_dense(port, paths, &mut self.channel_group, &dense_channels);
+        let _ = self.sf_manager.load_for_port_with_dense(
+            port,
+            paths,
+            &mut self.channel_group,
+            &dense_channels,
+        );
     }
 
     fn seek_to(&mut self, sample: u64) {
@@ -541,13 +536,15 @@ mod tests {
     use super::*;
     use std::collections::BTreeMap;
     use yinhe_core::{
-        CcEvent, ConductorData, NoteEvent, ProjectMeta, TempoEvent,
-        TrackData, YinModel,
+        CcEvent, ConductorData, NoteEvent, ProjectMeta, TempoEvent, TrackData, YinModel,
     };
 
     fn make_model_with_notes(notes: Vec<(u8, u32, u32, u8, u8)>) -> YinModel {
         let conductor = ConductorData {
-            tempo: vec![TempoEvent { tick: 0, bpm: 120.0 }],
+            tempo: vec![TempoEvent {
+                tick: 0,
+                bpm: 120.0,
+            }],
             time_sig: Vec::new(),
         };
         let first_ch = notes.first().map(|n| n.4).unwrap_or(0);
@@ -563,7 +560,10 @@ mod tests {
                 dup_index: 0,
             })
             .collect();
-        let meta = ProjectMeta { ppq: 480, ..ProjectMeta::default() };
+        let meta = ProjectMeta {
+            ppq: 480,
+            ..ProjectMeta::default()
+        };
         let mut model = YinModel {
             conductor: Arc::new(conductor),
             tracks: vec![Arc::new(t)],
@@ -576,17 +576,27 @@ mod tests {
 
     fn make_model_3_tracks() -> YinModel {
         let conductor = ConductorData {
-            tempo: vec![TempoEvent { tick: 0, bpm: 120.0 }],
+            tempo: vec![TempoEvent {
+                tick: 0,
+                bpm: 120.0,
+            }],
             time_sig: Vec::new(),
         };
         let mk = |ch: u8, key: u8| {
             let mut t = TrackData::new(0, ch);
             t.notes = vec![NoteEvent {
-                start_tick: 0, end_tick: 480, key, velocity: 100, dup_index: 0,
+                start_tick: 0,
+                end_tick: 480,
+                key,
+                velocity: 100,
+                dup_index: 0,
             }];
             Arc::new(t)
         };
-        let meta = ProjectMeta { ppq: 480, ..ProjectMeta::default() };
+        let meta = ProjectMeta {
+            ppq: 480,
+            ..ProjectMeta::default()
+        };
         let mut model = YinModel {
             conductor: Arc::new(conductor),
             tracks: vec![mk(0, 60), mk(1, 64), mk(9, 67)],
@@ -611,21 +621,35 @@ mod tests {
     #[test]
     fn test_channels_for_model_multi_port() {
         let conductor = ConductorData {
-            tempo: vec![TempoEvent { tick: 0, bpm: 120.0 }],
+            tempo: vec![TempoEvent {
+                tick: 0,
+                bpm: 120.0,
+            }],
             time_sig: Vec::new(),
         };
         let mut t1 = TrackData::new(0, 0);
         t1.notes = vec![NoteEvent {
-            start_tick: 0, end_tick: 480, key: 60, velocity: 100, dup_index: 0,
+            start_tick: 0,
+            end_tick: 480,
+            key: 60,
+            velocity: 100,
+            dup_index: 0,
         }];
         let mut t2 = TrackData::new(1, 0);
         t2.notes = vec![NoteEvent {
-            start_tick: 0, end_tick: 480, key: 60, velocity: 100, dup_index: 0,
+            start_tick: 0,
+            end_tick: 480,
+            key: 60,
+            velocity: 100,
+            dup_index: 0,
         }];
         let mut model = YinModel {
             conductor: Arc::new(conductor),
             tracks: vec![Arc::new(t1), Arc::new(t2)],
-            meta: ProjectMeta { ppq: 480, ..ProjectMeta::default() },
+            meta: ProjectMeta {
+                ppq: 480,
+                ..ProjectMeta::default()
+            },
             ..Default::default()
         };
         model.rebuild();
@@ -652,12 +676,21 @@ mod tests {
         let conductor = ConductorData::default();
         let mut t = TrackData::new(0, 5);
         let mut cc: BTreeMap<u8, Vec<CcEvent>> = BTreeMap::new();
-        cc.insert(7, vec![CcEvent { tick: 0, value: 100 }]);
+        cc.insert(
+            7,
+            vec![CcEvent {
+                tick: 0,
+                value: 100,
+            }],
+        );
         t.cc = cc;
         let mut model = YinModel {
             conductor: Arc::new(conductor),
             tracks: vec![Arc::new(t)],
-            meta: ProjectMeta { ppq: 480, ..ProjectMeta::default() },
+            meta: ProjectMeta {
+                ppq: 480,
+                ..ProjectMeta::default()
+            },
             ..Default::default()
         };
         model.rebuild();
@@ -677,9 +710,21 @@ mod tests {
     #[test]
     fn test_sorted_cc_ordering() {
         let mut cc = vec![
-            SortedCC { sample: 100, channel: 0, event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 80)) },
-            SortedCC { sample: 50, channel: 0, event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 100)) },
-            SortedCC { sample: 200, channel: 0, event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 60)) },
+            SortedCC {
+                sample: 100,
+                channel: 0,
+                event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 80)),
+            },
+            SortedCC {
+                sample: 50,
+                channel: 0,
+                event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 100)),
+            },
+            SortedCC {
+                sample: 200,
+                channel: 0,
+                event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 60)),
+            },
         ];
         cc.sort_by_key(|e| e.sample);
         assert_eq!(cc[0].sample, 50);
@@ -696,23 +741,51 @@ mod tests {
     #[test]
     fn test_audible_index_filters_vel_and_inactive_channel() {
         let conductor = ConductorData {
-            tempo: vec![TempoEvent { tick: 0, bpm: 120.0 }],
+            tempo: vec![TempoEvent {
+                tick: 0,
+                bpm: 120.0,
+            }],
             time_sig: Vec::new(),
         };
         let mut t0 = TrackData::new(0, 0);
         t0.notes = vec![
-            NoteEvent { start_tick: 0, end_tick: 480, key: 60, velocity: 0, dup_index: 0 },
-            NoteEvent { start_tick: 480, end_tick: 960, key: 60, velocity: 1, dup_index: 0 },
-            NoteEvent { start_tick: 960, end_tick: 1440, key: 60, velocity: 100, dup_index: 0 },
+            NoteEvent {
+                start_tick: 0,
+                end_tick: 480,
+                key: 60,
+                velocity: 0,
+                dup_index: 0,
+            },
+            NoteEvent {
+                start_tick: 480,
+                end_tick: 960,
+                key: 60,
+                velocity: 1,
+                dup_index: 0,
+            },
+            NoteEvent {
+                start_tick: 960,
+                end_tick: 1440,
+                key: 60,
+                velocity: 100,
+                dup_index: 0,
+            },
         ];
         let mut t1 = TrackData::new(0, 3);
         t1.notes = vec![NoteEvent {
-            start_tick: 1440, end_tick: 1920, key: 60, velocity: 100, dup_index: 0,
+            start_tick: 1440,
+            end_tick: 1920,
+            key: 60,
+            velocity: 100,
+            dup_index: 0,
         }];
         let mut model = YinModel {
             conductor: Arc::new(conductor),
             tracks: vec![Arc::new(t0), Arc::new(t1)],
-            meta: ProjectMeta { ppq: 480, ..ProjectMeta::default() },
+            meta: ProjectMeta {
+                ppq: 480,
+                ..ProjectMeta::default()
+            },
             ..Default::default()
         };
         model.rebuild();
@@ -816,16 +889,108 @@ mod tests {
         engine.render(&mut output);
     }
 
+    #[cfg(test)]
+    use yinhe_core::{PcEvent, PitchBendEvent, RpnEvent};
+
+    fn make_model_with_controls(
+        cc: Vec<(u8, u32, u8)>,
+        pb: Vec<(u32, i16)>,
+        pc: Vec<(u32, u8)>,
+        rpn: Vec<(u16, u32, u16)>,
+    ) -> YinModel {
+        let conductor = ConductorData {
+            tempo: vec![TempoEvent { tick: 0, bpm: 120.0 }],
+            time_sig: Vec::new(),
+        };
+        let mut t = TrackData::new(0, 0);
+        for (controller, tick, value) in cc {
+            t.cc.entry(controller).or_default().push(CcEvent { tick, value });
+        }
+        t.pitch_bend = pb.into_iter().map(|(tick, value)| PitchBendEvent { tick, value }).collect();
+        t.program_change = pc.into_iter().map(|(tick, program)| PcEvent { tick, program, bank_msb: 0, bank_lsb: 0 }).collect();
+        for (key, tick, value) in rpn {
+            t.rpn.entry(key).or_default().push(RpnEvent { tick, value });
+        }
+        let mut model = YinModel {
+            conductor: Arc::new(conductor),
+            tracks: vec![Arc::new(t)],
+            meta: ProjectMeta { ppq: 480, ..ProjectMeta::default() },
+            ..Default::default()
+        };
+        model.rebuild();
+        model
+    }
+
     #[test]
     fn test_engine_load_model_and_reload() {
         let model = Arc::new(make_model_with_notes(vec![(60, 0, 480, 100, 0)]));
         let mask = vec![true; 16];
         let mut engine = AudioEngine::new(44100, 16, mask);
 
-        engine.handle_command(AudioCommand::LoadModel { model: model.clone() });
+        engine.handle_command(AudioCommand::LoadModel {
+            model: model.clone(),
+        });
         assert!(!engine.playing());
 
         engine.handle_command(AudioCommand::ReloadNotes { model });
+    }
+
+    /// Regression test: the MIMO refactor originally forgot to call
+    /// `load_model()` inside `ReloadNotes`, which meant CC / pitch-bend /
+    /// program-change / RPN events were never rebuilt after editing — they
+    /// stayed at whatever the *previous* model had.  This test loads model
+    /// A (rich controllers), reloads with model B (different controllers),
+    /// and asserts `cc_events` reflects model B.
+    #[test]
+    fn test_reload_notes_rebuilds_cc_pb_pc_rpn() {
+        let mask = vec![true; 16];
+        let mut engine = AudioEngine::new(44100, 16, mask);
+
+        let model_a = Arc::new(make_model_with_controls(
+            vec![(7, 0, 100), (10, 0, 64)],
+            vec![(0, 0)],
+            vec![(0, 5)],
+            vec![],
+        ));
+        engine.handle_command(AudioCommand::LoadModel { model: model_a });
+        let cc_count_a = engine.cc_events.len();
+        assert!(cc_count_a > 0, "model A should produce some events");
+
+        // Model B: completely different shape — 3 CCs at different ticks,
+        // 2 pitch bends, 2 program changes, 1 RPN (which expands to 3 raw CCs).
+        let model_b = Arc::new(make_model_with_controls(
+            vec![
+                (7, 480, 80),
+                (7, 960, 90),
+                (11, 240, 100),
+            ],
+            vec![(120, 4096), (600, -2048)],
+            vec![(0, 1), (480, 2)],
+            vec![(0x0000, 240, 0x0200)],
+        ));
+        engine.handle_command(AudioCommand::ReloadNotes { model: model_b });
+
+        // 3 CC + 2 PB + 2 PC + 3 RPN-expanded (CC101+CC100+CC6, data_lsb==0 skips CC38) = 10
+        assert_eq!(
+            engine.cc_events.len(),
+            10,
+            "ReloadNotes must rebuild cc_events from the new model (was {} from model A)",
+            cc_count_a
+        );
+
+        // Assert events are sorted (so the schedule loop's monotonic cursor works).
+        for w in engine.cc_events.windows(2) {
+            assert!(w[0].sample <= w[1].sample, "cc_events must be sorted by sample");
+        }
+
+        // Reload again with an empty model — cc_events must drain to zero.
+        let model_c = Arc::new(make_model_with_controls(vec![], vec![], vec![], vec![]));
+        engine.handle_command(AudioCommand::ReloadNotes { model: model_c });
+        assert_eq!(
+            engine.cc_events.len(),
+            0,
+            "ReloadNotes with empty model must clear cc_events"
+        );
     }
 
     #[test]
