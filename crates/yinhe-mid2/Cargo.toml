@@ -14,7 +14,3 @@ serde = { version = "1", features = ["derive"] }
 uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
-# Old parser kept here only for the vs_old.rs bridge tests, which compare
-# new yinhe-mid2 against old yinhe-midi on the same .mid bytes. Both this
-# dev-dep and the vs_old.rs file are deleted on switchover day.
-yinhe-midi = { path = "../yinhe-midi" }

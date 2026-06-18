@@ -3,7 +3,6 @@ default-members = ["crates/yinhe-egui"]
 members = [
     "crates/yinhe-types",
     "crates/yinhe-core",
-    "crates/yinhe-midi",
     "crates/yinhe-mid2",
     "crates/yinhe-yin",
     "crates/yinhe-dms",
@@ -16,8 +15,6 @@ members = [
     "crates/yinhe-editor-core",
     "crates/yinhe-egui",
     "crates/yinhe-memtrace",
-    "crates/yinhe-project",
-    "crates/yinhe-model",
     "crates/yinhe-tests",
     "crates/yinhe-test-helpers",
 ]

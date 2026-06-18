@@ -1,6 +1,7 @@
 use yinhe_types::{Note, NoteScanIndex, TickBuckets};
 use yinhe_pianoroll::instances;
 use yinhe_pianoroll::PianoRollView;
+use yinhe_core::YinModel;
 
 use yinhe_test_helpers::*;
 
@@ -96,7 +97,7 @@ fn build_notes_empty_data() {
 
 #[test]
 fn build_notes_stress_many_tracks() {
-    let m = make_stress_midi(8, 100);
+    let m = make_stress_model(8, 100);
     let mut view = wide_view();
     // Zoom out so all notes (up to tick 12100) are visible
     view.base.pixels_per_tick = 0.01;
@@ -133,7 +134,7 @@ fn note_scan_index_build_and_seek() {
     key_notes[60].push(Note { start_tick: 1000, end_tick: 1100, velocity: 80, track: 0 });
 
     let mut m = YinModel::default();
-    m.key_notes = key_notes.clone();
+    m.key_notes_cache = key_notes.to_vec();
     m.scan_index = Some(NoteScanIndex::build(&key_notes, 1200));
 
     let first = yinhe_types::seek_first_note(60, &m, 400);

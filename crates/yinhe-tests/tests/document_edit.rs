@@ -1,5 +1,6 @@
 use yinhe_editor_core::document::Document;
 use yinhe_editor_core::quantize::QuantizePreset;
+use yinhe_mid2::MidiImportEncoding;
 use yinhe_test_helpers::*;
 
 fn doc_with_notes() -> Document {
@@ -37,10 +38,10 @@ fn document_empty_has_one_track() {
 }
 
 #[test]
-fn document_from_midi() {
+fn document_from_model() {
     let m = make_test_model();
-    let doc = Document::from_midi("test.mid", m, QuantizePreset::default())
-        .expect("from_midi failed");
+    let doc = Document::from_model("test.mid", m, QuantizePreset::default())
+        .expect("from_model failed");
     assert_eq!(doc.data.model.note_count, 4);
     assert_eq!(doc.file_name, "test");
 }
@@ -183,10 +184,10 @@ fn undo_stack_push_and_undo_redo() {
 #[test]
 fn document_recode_track_names() {
     let m = make_test_model();
-    let mut doc = Document::from_midi("test.mid", m, QuantizePreset::default())
-        .expect("from_midi failed");
+    let mut doc = Document::from_model("test.mid", m, QuantizePreset::default())
+        .expect("from_model failed");
     let original_names = doc.data.track_names.clone();
-    doc.recode_track_names(yinhe_mid2::MidiImportEncoding::Utf8);
+    doc.recode_track_names(MidiImportEncoding::Utf8);
     assert_eq!(doc.data.track_names, original_names);
 }
 
