@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use yinhe_core::{NoteEvent, TrackData, YinModel};
 use yinhe_types::TRACK_PALETTE;
+use yinhe_yin::{MappingFile, ProjectFile};
 
 use crate::edit_state::EditState;
 use crate::history::UndoStack;
@@ -85,11 +86,8 @@ impl Document {
             data: ProjectData::new(
                 Arc::new(model),
                 track_names,
-                String::new(),
-                String::new(),
-                String::new(),
-                480,
-                0,
+                ProjectFile::default(),
+                MappingFile::default(),
             ),
             edit: EditState {
                 track_visible: vec![true],
@@ -114,6 +112,8 @@ impl Document {
         path: &str,
         model: YinModel,
         quantize: QuantizePreset,
+        project_file: ProjectFile,
+        mapping_file: MappingFile,
     ) -> Result<Self, String> {
         yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Ui, || {
             let file_name = std::path::Path::new(path)
@@ -141,20 +141,11 @@ impl Document {
                 .map(|i| track_color(i, conductor_track_idx))
                 .collect();
 
-            let project_name = model.meta.name.clone();
-            let project_artist = model.meta.artist.clone();
-            let project_description = model.meta.description.clone();
-            let project_ppq = model.meta.ppq;
-            let compression_level = model.meta.compression_level;
-
             let mut data = ProjectData::new(
                 Arc::new(model),
                 track_names,
-                project_name,
-                project_artist,
-                project_description,
-                project_ppq,
-                compression_level,
+                project_file,
+                mapping_file,
             );
             data.rebuild_model();
 
@@ -183,15 +174,20 @@ impl Document {
         path: &str,
         quantize: QuantizePreset,
     ) -> std::io::Result<(Self, bool)> {
-        let model = yinhe_yin::load_yin(path).map_err(|e| match e {
+        let (model, sf, mapping) = yinhe_yin::load_yin_with_sf(path).map_err(|e| match e {
             yinhe_yin::YinError::Io(io) => io,
             other => std::io::Error::new(std::io::ErrorKind::InvalidData, other.to_string()),
         })?;
-        let mut doc = Self::from_model(path, model, quantize).map_err(|e| {
+        let project_file = yinhe_yin::ProjectFile::from_meta_with_sf(
+            &model.meta,
+            sf.mode,
+            sf.overrides.clone(),
+        );
+        let mut doc = Self::from_model(path, model, quantize, project_file, mapping).map_err(|e| {
             std::io::Error::new(std::io::ErrorKind::InvalidData, e)
         })?;
         doc.file_path = Some(path.to_string());
-        Ok((doc, false))
+        Ok((doc, sf.mode))
     }
 
     /// Legacy: load a .yin file via the old yinhe-project archive path.

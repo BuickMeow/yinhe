@@ -219,12 +219,14 @@ impl App {
 
     /// Spawn a background thread to save the project.
     fn save_project_async(&mut self, idx: usize, path: String) {
-        let doc = &self.documents[idx];
-        let model = doc.data.model.clone();
+        let doc = &mut self.documents[idx];
+        doc.data.sync_project_file();
+        doc.data.sync_mapping_file();
 
-        // Translate the editor's SF state into the file-format crate's types.
-        // `global_enabled = true` means we're in global mode → soundfont_project_mode = false.
-        let sf_overrides: Vec<yinhe_yin::SfPortOverride> = doc
+        // Sync SF state into project_file
+        doc.data.project_file.soundfont_project_mode =
+            !self.audio_settings.global_sf_config.global_enabled;
+        doc.data.project_file.soundfont_overrides = doc
             .edit
             .project_sf
             .overrides
@@ -241,21 +243,25 @@ impl App {
                     .collect(),
             })
             .collect();
-        let sf = yinhe_yin::ProjectSoundFonts {
-            mode: !self.audio_settings.global_sf_config.global_enabled,
-            overrides: sf_overrides,
-        };
+
+        let model = doc.data.model.clone();
+        let project_file = doc.data.project_file.clone();
+        let mapping_file = doc.data.mapping_file.clone();
         let path_for_thread = path.clone();
 
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
-            if let Err(e) = yinhe_yin::save_yin_with_sf(&model, &path_for_thread, &sf) {
+            if let Err(e) = yinhe_yin::save_yin_with_files(
+                &model,
+                &path_for_thread,
+                &project_file,
+                &mapping_file,
+            ) {
                 tracing::error!("Failed to save project: {}", e);
             }
             let _ = tx.send(());
         });
 
-        // Update metadata immediately (not waiting for thread)
         if let Some(doc) = self.documents.get_mut(idx) {
             doc.file_path = Some(path);
         }

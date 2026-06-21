@@ -28,7 +28,7 @@ mod project_meta;
 pub use error::YinError;
 pub use io::{
     ProjectSoundFonts, load_yin, load_yin_bytes, load_yin_bytes_with_sf, load_yin_with_sf,
-    save_yin, save_yin_bytes, save_yin_bytes_with_sf, save_yin_with_sf,
+    save_yin, save_yin_bytes, save_yin_bytes_with_sf, save_yin_with_files, save_yin_with_sf,
 };
 pub use mapping::{ChannelMap, MappingFile, PortMap, TrackMap, ViewState};
 pub use project_meta::{ProjectFile, SfEntryJson, SfPortOverride};

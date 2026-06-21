@@ -293,7 +293,7 @@ fn sf_roundtrip_preserves_mode_and_entries() {
     let sf = sample_sf_state();
 
     let bytes = save_yin_bytes_with_sf(&model, &sf).unwrap();
-    let (m2, sf2) = load_yin_bytes_with_sf(&bytes).unwrap();
+    let (m2, sf2, _mapping) = load_yin_bytes_with_sf(&bytes).unwrap();
 
     // Model is intact.
     assert_eq!(m2.tracks.len(), model.tracks.len());
@@ -323,7 +323,7 @@ fn sf_save_without_state_loads_as_empty() {
     // Old-style save (no SF) round-trips through with-sf load as default state.
     let model = build_complex_model();
     let bytes = save_yin_bytes(&model).unwrap();
-    let (_m2, sf2) = load_yin_bytes_with_sf(&bytes).unwrap();
+    let (_m2, sf2, _mapping) = load_yin_bytes_with_sf(&bytes).unwrap();
     assert!(!sf2.mode);
     assert!(sf2.overrides.is_empty());
 }
@@ -349,7 +349,7 @@ fn sf_global_mode_and_empty_overrides() {
         overrides: vec![],
     };
     let bytes = save_yin_bytes_with_sf(&model, &sf).unwrap();
-    let (_m2, sf2) = load_yin_bytes_with_sf(&bytes).unwrap();
+    let (_m2, sf2, _mapping) = load_yin_bytes_with_sf(&bytes).unwrap();
     assert!(!sf2.mode);
     assert!(sf2.overrides.is_empty());
 }
@@ -365,7 +365,7 @@ fn sf_global_mode_preserves_overrides_list() {
         overrides: sample_sf_state().overrides, // but per-port list intact
     };
     let bytes = save_yin_bytes_with_sf(&model, &sf).unwrap();
-    let (_m2, sf2) = load_yin_bytes_with_sf(&bytes).unwrap();
+    let (_m2, sf2, _mapping) = load_yin_bytes_with_sf(&bytes).unwrap();
     assert!(!sf2.mode);
     assert_eq!(sf2.overrides.len(), 2);
     assert_eq!(sf2.overrides[0].entries[0].path, "/sf2/piano.sf2");

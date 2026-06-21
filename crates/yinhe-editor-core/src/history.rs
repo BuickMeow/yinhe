@@ -148,18 +148,20 @@ mod tests {
     use super::*;
     use std::sync::Arc;
     use yinhe_core::YinModel;
+    use yinhe_yin::{MappingFile, ProjectFile};
 
     fn make_test_data(name: &str) -> ProjectData {
         let model = YinModel::default();
-        ProjectData::new(
+        let mut pf = ProjectFile::default();
+        pf.name = name.to_string();
+        let mut data = ProjectData::new(
             Arc::new(model),
             Vec::new(),
-            name.to_string(),
-            String::new(),
-            String::new(),
-            480,
-            0,
-        )
+            pf,
+            MappingFile::default(),
+        );
+        data.project_name = name.to_string();
+        data
     }
 
     fn snap(label: &'static str, name: &str) -> UndoSnapshot {

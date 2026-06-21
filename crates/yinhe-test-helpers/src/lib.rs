@@ -57,7 +57,7 @@ pub fn make_test_model() -> YinModel {
 /// Create a Document from a test model.
 pub fn make_test_document() -> Document {
     let model = make_test_model();
-    Document::from_model("test.mid", model, QuantizePreset::default()).expect("from_model failed")
+    Document::from_model("test.mid", model, QuantizePreset::default(), Default::default(), Default::default()).expect("from_model failed")
 }
 
 /// Create a multi-track YinModel with notes on many keys for stress testing.

@@ -30,7 +30,7 @@ impl App {
                     .and_then(|idx| self.documents.get(idx))
                     .map(|doc| doc.edit.quantize)
                     .unwrap_or_default();
-                match Document::from_model(&path, model, quantize) {
+                match Document::from_model(&path, model, quantize, yinhe_yin::ProjectFile::default(), yinhe_yin::MappingFile::default()) {
                     Ok(doc) => {
                         let insert_idx = self.documents.len();
                         self.documents.push(doc);
@@ -47,19 +47,23 @@ impl App {
                 model,
                 file_name,
                 sf,
+                mapping,
             } => {
                 let quantize = self
                     .active_doc
                     .and_then(|idx| self.documents.get(idx))
                     .map(|doc| doc.edit.quantize)
                     .unwrap_or_default();
-                let result = Document::from_model(&path, model, quantize)
+                let project_file = yinhe_yin::ProjectFile::from_meta_with_sf(
+                    &model.meta,
+                    sf.mode,
+                    sf.overrides.clone(),
+                );
+                let result = Document::from_model(&path, model, quantize, project_file, mapping)
                     .ok()
                     .map(|mut d| {
                         d.file_path = Some(path.clone());
 
-                        // Translate yinhe_yin SF state back into the editor's
-                        // ProjectSfConfig representation.
                         d.edit.project_sf.overrides = sf
                             .overrides
                             .iter()

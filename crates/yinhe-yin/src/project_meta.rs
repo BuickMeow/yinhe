@@ -27,7 +27,7 @@ pub struct SfPortOverride {
     pub entries: Vec<SfEntryJson>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ProjectFile {
     /// Schema version of project.json itself.
     pub version: u16,
