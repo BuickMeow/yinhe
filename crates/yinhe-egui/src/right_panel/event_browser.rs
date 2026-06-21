@@ -18,6 +18,8 @@ pub struct EventBrowserState {
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub enum SelectedItem {
+    ProjectJson,
+    MappingJson,
     Tempo,
     TimeSig,
     Notes { track: u16 },
@@ -178,7 +180,7 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>, state: &mut EventBrow
             .show(ui, |ui| {
                 frame_bg.show(ui, |ui| {
                     ui.set_min_width(ui.available_width());
-                    ui.vertical(|ui| render_tree(ui, model, state));
+                    ui.vertical(|ui| render_tree(ui, doc, state));
                 });
             });
     });
@@ -198,7 +200,7 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>, state: &mut EventBrow
                 frame_bg.show(ui, |ui| {
                     ui.set_min_width(ui.available_width());
                     if let Some(sel) = &state.selected_item {
-                        show_event_detail(ui, sel, model, &bar_lookup);
+                        show_event_detail(ui, sel, doc, &bar_lookup);
                     } else if let Some(idx) = state.selected_track {
                         if let Some(track) = model.tracks.get(idx as usize) {
                             show_track_detail(ui, idx, track);
@@ -219,10 +221,14 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>, state: &mut EventBrow
 
 fn render_tree(
     ui: &mut egui::Ui,
-    model: &yinhe_core::YinModel,
+    doc: &Document,
     state: &mut EventBrowserState,
 ) {
+    let model = &doc.data.model;
     let groups = group_tracks_by_port_channel(model);
+
+    render_leaf_item(ui, "project.json", ICON_DESCRIPTION, 0, SelectedItem::ProjectJson, state);
+    render_leaf_item(ui, "mapping.json", ICON_DESCRIPTION, 0, SelectedItem::MappingJson, state);
 
     let has_tempo = !model.conductor.tempo.is_empty();
     let has_ts = !model.conductor.time_sig.is_empty();
@@ -384,8 +390,17 @@ fn render_track_row(
 //  Detail panels
 // ═══════════════════════════════════════════════════════════════
 
-fn show_event_detail(ui: &mut egui::Ui, item: &SelectedItem, model: &yinhe_core::YinModel, bar_lookup: &BarLookup) {
+fn show_event_detail(ui: &mut egui::Ui, item: &SelectedItem, doc: &Document, bar_lookup: &BarLookup) {
+    let model = &doc.data.model;
     match item {
+        SelectedItem::ProjectJson => {
+            show_project_json(ui, doc);
+            return;
+        }
+        SelectedItem::MappingJson => {
+            show_mapping_json(ui, doc);
+            return;
+        }
         SelectedItem::Tempo => {
             ui.add_space(4.0);
             ui.label(egui::RichText::new(format!("Tempo ({} 个)", model.conductor.tempo.len())).size(12.0).strong());
@@ -480,6 +495,93 @@ fn show_event_detail(ui: &mut egui::Ui, item: &SelectedItem, model: &yinhe_core:
                 cell_text(row, format!("{}", e.program));
             });
         }
+    }
+}
+
+fn show_project_json(ui: &mut egui::Ui, doc: &Document) {
+    let pf = &doc.data.project_file;
+    ui.add_space(4.0);
+    ui.label(egui::RichText::new("project.json").size(13.0).strong());
+    ui.add_space(6.0);
+
+    let kv = |ui: &mut egui::Ui, k: &str, v: String| {
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new(k).size(11.0).color(egui::Color32::GRAY));
+            ui.label(egui::RichText::new(v).size(11.0).monospace().color(egui::Color32::from_gray(220)));
+        });
+    };
+
+    kv(ui, "version", format!("{}", pf.version));
+    kv(ui, "name", pf.name.clone());
+    kv(ui, "artist", pf.artist.clone());
+    kv(ui, "description", pf.description.clone());
+    kv(ui, "ppq", format!("{}", pf.ppq));
+    kv(ui, "compression_level", format!("{}", pf.compression_level));
+    kv(ui, "soundfont_project_mode", format!("{}", pf.soundfont_project_mode));
+
+    if !pf.soundfont_overrides.is_empty() {
+        ui.add_space(6.0);
+        ui.label(egui::RichText::new("soundfont_overrides").size(11.0).strong());
+        for po in &pf.soundfont_overrides {
+            ui.horizontal(|ui| {
+                ui.add_space(14.0);
+                ui.label(egui::RichText::new(format!("port {}:", po.port)).size(11.0).color(egui::Color32::GRAY));
+            });
+            for entry in &po.entries {
+                ui.horizontal(|ui| {
+                    ui.add_space(28.0);
+                    let status = if entry.enabled { "\u{2705}" } else { "\u{274c}" };
+                    ui.label(egui::RichText::new(format!("{} {} ({})", status, entry.name, entry.path)).size(10.0).monospace().color(egui::Color32::from_gray(180)));
+                });
+            }
+        }
+    }
+}
+
+fn show_mapping_json(ui: &mut egui::Ui, doc: &Document) {
+    let mf = &doc.data.mapping_file;
+    ui.add_space(4.0);
+    ui.label(egui::RichText::new("mapping.json").size(13.0).strong());
+    ui.add_space(6.0);
+
+    let kv = |ui: &mut egui::Ui, k: &str, v: String| {
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new(k).size(11.0).color(egui::Color32::GRAY));
+            ui.label(egui::RichText::new(v).size(11.0).monospace().color(egui::Color32::from_gray(220)));
+        });
+    };
+
+    kv(ui, "version", format!("{}", mf.version));
+
+    ui.add_space(6.0);
+    ui.label(egui::RichText::new("ports").size(11.0).strong());
+    for p in &mf.ports {
+        for ch in &p.channels {
+            for t in &ch.tracks {
+                let muted = if t.muted { " [muted]" } else { "" };
+                let soloed = if t.soloed { " [solo]" } else { "" };
+                kv(ui, &format!("P{} Ch{}", p.port, ch.channel + 1),
+                   format!("{} ({}){}{}", t.name, &t.uuid[..8], muted, soloed));
+            }
+        }
+    }
+
+    if !mf.soundfonts.is_empty() {
+        ui.add_space(6.0);
+        ui.label(egui::RichText::new("soundfonts").size(11.0).strong());
+        for (port, paths) in &mf.soundfonts {
+            kv(ui, &format!("port {}", port), paths.join(", "));
+        }
+    }
+
+    ui.add_space(6.0);
+    ui.label(egui::RichText::new("view").size(11.0).strong());
+    kv(ui, "zoom_x", format!("{:.2}", mf.view.zoom_x));
+    kv(ui, "zoom_y", format!("{:.2}", mf.view.zoom_y));
+    kv(ui, "scroll_tick", format!("{}", mf.view.scroll_tick));
+    kv(ui, "scroll_key", format!("{}", mf.view.scroll_key));
+    if let Some(ref uuid) = mf.view.active_track_uuid {
+        kv(ui, "active_track_uuid", uuid.clone());
     }
 }
 
@@ -615,7 +717,10 @@ fn render_leaf_item(ui: &mut egui::Ui, name: &str, icon: egui_material_icons::Ma
             ui.label(egui::RichText::new(name).size(11.0).monospace().color(if is_selected { egui::Color32::WHITE } else { egui::Color32::from_gray(200) }));
         });
     });
-    if frame_r.response.interact(egui::Sense::click()).clicked() { state.selected_item = Some(item); }
+    if frame_r.response.interact(egui::Sense::click()).clicked() {
+        state.selected_item = Some(item);
+        state.selected_track = None;
+    }
 }
 
 // ── Table helpers ──
