@@ -16,12 +16,13 @@ use crate::spawn::{AudioCommand, track_global_channel};
 /// Number of output channels (stereo).
 const STEREO_CHANNELS: usize = 2;
 
-struct SortedCC {
-    sample: u64,
-    channel: u32,
-    event: ChannelAudioEvent,
+pub(crate) struct SortedCC {
+    pub(crate) sample: u64,
+    pub(crate) channel: u32,
+    pub(crate) event: ChannelAudioEvent,
 }
 
+#[derive(Clone, Copy)]
 struct ActiveNote {
     key: u8,
     channel: u8,
@@ -31,17 +32,189 @@ struct ActiveNote {
 /// A pre-filtered note that is guaranteed to be audible (velocity > 1 and
 /// channel active).  `start_sample` / `end_sample` are pre-computed at load
 /// time to eliminate runtime `tick_to_seconds` calls.
-struct AudibleNote {
-    start_sample: u64,
-    end_sample: u64,
-    track: u16,
-    velocity: u8,
+pub(crate) struct AudibleNote {
+    pub(crate) start_sample: u64,
+    pub(crate) end_sample: u64,
+    pub(crate) track: u16,
+    pub(crate) velocity: u8,
+}
+
+/// Pre-computed model data, built on a worker thread and applied
+/// atomically on the audio thread.
+pub(crate) struct PreparedModel {
+    pub model: Arc<YinModel>,
+    pub cc_events: Vec<SortedCC>,
+    pub duration_samples: u64,
+    pub skip_track: Vec<bool>,
+    pub audible_notes: [Vec<AudibleNote>; 128],
+}
+
+/// Build `PreparedModel` on a worker thread (no `&mut AudioEngine` needed).
+/// This is the expensive part; the result is applied cheaply on the audio thread.
+pub(crate) fn prepare_model(
+    model: &YinModel,
+    sample_rate: u32,
+    active_mask: &[bool],
+    _channel_map: &[u32; 256],
+) -> PreparedModel {
+    let sr = sample_rate as f64;
+    let mut cc_events = Vec::new();
+
+    for (track_idx, track) in model.tracks.iter().enumerate() {
+        let channel = track_global_channel(model, track_idx) as u32;
+
+        for (&controller, evs) in &track.cc {
+            for e in evs {
+                let sample = (model.tempo_map.tick_to_seconds(e.tick as u64) * sr) as u64;
+                cc_events.push(SortedCC {
+                    sample,
+                    channel,
+                    event: ChannelAudioEvent::Control(ControlEvent::Raw(controller, e.value)),
+                });
+            }
+        }
+        for e in &track.pitch_bend {
+            let sample = (model.tempo_map.tick_to_seconds(e.tick as u64) * sr) as u64;
+            cc_events.push(SortedCC {
+                sample,
+                channel,
+                event: ChannelAudioEvent::Control(ControlEvent::PitchBendValue(
+                    e.value as f32 / 8192.0,
+                )),
+            });
+        }
+        for e in &track.program_change {
+            let sample = (model.tempo_map.tick_to_seconds(e.tick as u64) * sr) as u64;
+            if e.bank_msb != 0xFF {
+                cc_events.push(SortedCC {
+                    sample,
+                    channel,
+                    event: ChannelAudioEvent::Control(ControlEvent::Raw(0, e.bank_msb)),
+                });
+            }
+            if e.bank_lsb != 0xFF {
+                cc_events.push(SortedCC {
+                    sample,
+                    channel,
+                    event: ChannelAudioEvent::Control(ControlEvent::Raw(32, e.bank_lsb)),
+                });
+            }
+            cc_events.push(SortedCC {
+                sample,
+                channel,
+                event: ChannelAudioEvent::ProgramChange(e.program),
+            });
+        }
+        for (&rpn_key, evs) in &track.rpn {
+            let msb = ((rpn_key >> 8) & 0x7F) as u8;
+            let lsb = (rpn_key & 0x7F) as u8;
+            for e in evs {
+                let data_msb = ((e.value >> 7) & 0x7F) as u8;
+                let data_lsb = (e.value & 0x7F) as u8;
+                let sample = (model.tempo_map.tick_to_seconds(e.tick as u64) * sr) as u64;
+                cc_events.push(SortedCC {
+                    sample,
+                    channel,
+                    event: ChannelAudioEvent::Control(ControlEvent::Raw(101, msb)),
+                });
+                cc_events.push(SortedCC {
+                    sample,
+                    channel,
+                    event: ChannelAudioEvent::Control(ControlEvent::Raw(100, lsb)),
+                });
+                cc_events.push(SortedCC {
+                    sample,
+                    channel,
+                    event: ChannelAudioEvent::Control(ControlEvent::Raw(6, data_msb)),
+                });
+                if data_lsb != 0 {
+                    cc_events.push(SortedCC {
+                        sample,
+                        channel,
+                        event: ChannelAudioEvent::Control(ControlEvent::Raw(38, data_lsb)),
+                    });
+                }
+            }
+        }
+    }
+    cc_events.sort_by_key(|e| e.sample);
+
+    let duration_samples = (model.tempo_map.tick_to_seconds(model.tick_length) * sr) as u64;
+
+    let mut track_has_audio = vec![false; model.tracks.len()];
+    for (track_idx, track) in model.tracks.iter().enumerate() {
+        for n in &track.notes {
+            if n.velocity > 1 {
+                track_has_audio[track_idx] = true;
+                break;
+            }
+        }
+    }
+    let skip_track = track_has_audio.iter().map(|&has| !has).collect();
+
+    let segments = &model.tempo_map.tempo_segments;
+    let tpb = model.tempo_map.ticks_per_beat;
+    let mut seg_start = 0usize;
+    let mut seg_end = 0usize;
+    let mut audible_notes: [Vec<AudibleNote>; 128] = core::array::from_fn(|_| Vec::new());
+    for key in 0..128usize {
+        let mut audible = Vec::new();
+        for note in &model.key_notes_cache[key] {
+            if note.velocity > 1 {
+                let ch = track_global_channel(model, note.track as usize) as usize;
+                if active_mask.get(ch).copied().unwrap_or(false) {
+                    while seg_start + 1 < segments.len()
+                        && segments[seg_start + 1].start_tick as u64 <= note.start_tick as u64
+                    {
+                        seg_start += 1;
+                    }
+                    let seg = &segments[seg_start];
+                    let start_sample = (seg.start_time
+                        + yinhe_core::ticks_to_seconds(
+                            note.start_tick as u64 - seg.start_tick as u64,
+                            tpb,
+                            seg.micros_per_quarter,
+                        ))
+                        * sr;
+
+                    while seg_end + 1 < segments.len()
+                        && segments[seg_end + 1].start_tick as u64 <= note.end_tick as u64
+                    {
+                        seg_end += 1;
+                    }
+                    let seg = &segments[seg_end];
+                    let end_sample = (seg.start_time
+                        + yinhe_core::ticks_to_seconds(
+                            note.end_tick as u64 - seg.start_tick as u64,
+                            tpb,
+                            seg.micros_per_quarter,
+                        ))
+                        * sr;
+
+                    audible.push(AudibleNote {
+                        start_sample: start_sample as u64,
+                        end_sample: end_sample as u64,
+                        track: note.track,
+                        velocity: note.velocity,
+                    });
+                }
+            }
+        }
+        audible_notes[key] = audible;
+    }
+
+    PreparedModel {
+        model: Arc::new(model.clone()),
+        cc_events,
+        duration_samples,
+        skip_track,
+        audible_notes,
+    }
 }
 
 /// Core MIDI synthesis engine.  Owned by the audio callback.
 pub(crate) struct AudioEngine {
     channel_group: ChannelGroup,
-    compacted_channels: u32,
     /// Map: source MIDI channel (0..256) → compacted XSynth channel index.
     channel_map: Box<[u32; 256]>,
     active_mask: Vec<bool>,
@@ -49,7 +222,6 @@ pub(crate) struct AudioEngine {
     sample_rate: u32,
     sample_position: u64,
     playing: bool,
-    interleaved_buffer: Vec<f32>,
     duration_samples: u64,
 
     note_cursor: [usize; 128],
@@ -58,8 +230,11 @@ pub(crate) struct AudioEngine {
     cc_events: Vec<SortedCC>,
     cc_cursor: usize,
     active_notes: Vec<ActiveNote>,
+    ended_notes: Vec<ActiveNote>,
     model: Option<Arc<YinModel>>,
     skip_track: Vec<bool>,
+    /// Set when Play arrives during async model loading.
+    pending_play_from_sample: Option<u64>,
 }
 
 impl AudioEngine {
@@ -91,22 +266,22 @@ impl AudioEngine {
 
             Self {
                 channel_group: ChannelGroup::new(config),
-                compacted_channels,
                 channel_map,
                 active_mask,
                 sf_manager: SoundFontManager::new(sample_rate),
                 sample_rate,
                 sample_position: 0,
                 playing: false,
-                interleaved_buffer: vec![0.0f32; sample_rate as usize * STEREO_CHANNELS],
                 duration_samples: 0,
                 note_cursor: [0; 128],
                 audible_notes: core::array::from_fn(|_| Vec::new()),
                 cc_events: Vec::new(),
                 cc_cursor: 0,
                 active_notes: Vec::new(),
+                ended_notes: Vec::new(),
                 model: None,
                 skip_track: Vec::new(),
+                pending_play_from_sample: None,
             }
         })
     }
@@ -129,6 +304,33 @@ impl AudioEngine {
 
     pub(crate) fn voice_count(&self) -> u64 {
         self.channel_group.voice_count()
+    }
+
+    pub(crate) fn channel_map_clone(&self) -> Box<[u32; 256]> {
+        self.channel_map.clone()
+    }
+
+    pub(crate) fn active_mask(&self) -> &[bool] {
+        &self.active_mask
+    }
+
+    pub(crate) fn model_loaded(&self) -> bool {
+        self.model.is_some()
+    }
+
+    pub(crate) fn set_pending_play(&mut self, from_sample: u64) {
+        self.pending_play_from_sample = Some(from_sample);
+    }
+
+    pub(crate) fn send_all_notes_off(&mut self) {
+        self.channel_group
+            .send_event(SynthEvent::AllChannels(ChannelEvent::Audio(
+                ChannelAudioEvent::AllNotesOff,
+            )));
+    }
+
+    pub(crate) fn clear_active_notes(&mut self) {
+        self.active_notes.clear();
     }
 
     pub(crate) fn set_layer_count(&mut self, count: Option<usize>) {
@@ -159,14 +361,10 @@ impl AudioEngine {
                 self.model = Some(model);
             }
             AudioCommand::ReloadNotes { model } => {
-                self.channel_group
-                    .send_event(SynthEvent::AllChannels(ChannelEvent::Audio(
-                        ChannelAudioEvent::AllNotesOff,
-                    )));
+                self.send_all_notes_off();
                 self.active_notes.clear();
                 self.load_model(&model);
                 self.model = Some(model);
-                self.reset_note_cursors();
             }
             AudioCommand::LoadSoundFont { port, paths } => {
                 self.load_soundfont_for_port(port, &paths);
@@ -242,32 +440,30 @@ impl AudioEngine {
             }
 
             let channel_map = &self.channel_map;
-            let cg = &mut self.channel_group;
+            self.ended_notes.clear();
             self.active_notes.retain(|an| {
-                if an.end_sample >= start && an.end_sample < end {
-                    let dense = channel_map
-                        .get(an.channel as usize)
-                        .copied()
-                        .unwrap_or(u32::MAX);
-                    if dense != u32::MAX {
-                        cg.send_event(SynthEvent::Channel(
-                            dense,
-                            ChannelEvent::Audio(ChannelAudioEvent::NoteOff { key: an.key }),
-                        ));
+                if an.end_sample < end {
+                    if an.end_sample >= start {
+                        self.ended_notes.push(*an);
                     }
-                    false
-                } else if an.end_sample < start {
                     false
                 } else {
                     true
                 }
             });
+            for an in &self.ended_notes {
+                if let Some(&dense) = channel_map.get(an.channel as usize) {
+                    if dense != u32::MAX {
+                        self.channel_group.send_event(SynthEvent::Channel(
+                            dense,
+                            ChannelEvent::Audio(ChannelAudioEvent::NoteOff { key: an.key }),
+                        ));
+                    }
+                }
+            }
         }
 
-        let interleaved = &mut self.interleaved_buffer[..frames * STEREO_CHANNELS];
-        interleaved.fill(0.0);
-        self.channel_group.read_samples(interleaved);
-        output[..frames * STEREO_CHANNELS].copy_from_slice(interleaved);
+        self.channel_group.read_samples(&mut output[..frames * STEREO_CHANNELS]);
 
         self.sample_position = end;
     }
@@ -280,6 +476,7 @@ impl AudioEngine {
         self.cc_events.clear();
         self.cc_cursor = 0;
         self.active_notes.clear();
+        self.active_notes.reserve(model.note_count as usize);
         let sr = self.sample_rate as f64;
 
         // Flatten control events from each track and convert to ChannelAudioEvents.
@@ -384,18 +581,52 @@ impl AudioEngine {
 
         // Build audible_notes from key_notes_cache (already per-key, sorted
         // by start_tick, with track tagging by yinhe_types::Note).
+        // Use a linear sweep through tempo_segments instead of repeated
+        // binary searches — O(N + T) instead of O(N log T).
         self.note_cursor = [0; 128];
+        let segments = &model.tempo_map.tempo_segments;
+        let tpb = model.tempo_map.ticks_per_beat;
+        let mut seg_start = 0usize;
+        let mut seg_end = 0usize;
         for key in 0..128usize {
             let mut audible = Vec::new();
             for note in &model.key_notes_cache[key] {
                 if note.velocity > 1 {
                     let ch = track_global_channel(model, note.track as usize) as usize;
                     if self.active_mask.get(ch).copied().unwrap_or(false) {
+                        // Advance segment pointer for start_tick
+                        while seg_start + 1 < segments.len()
+                            && segments[seg_start + 1].start_tick as u64 <= note.start_tick as u64
+                        {
+                            seg_start += 1;
+                        }
+                        let seg = &segments[seg_start];
+                        let start_sample = (seg.start_time
+                            + yinhe_core::ticks_to_seconds(
+                                note.start_tick as u64 - seg.start_tick as u64,
+                                tpb,
+                                seg.micros_per_quarter,
+                            ))
+                            * sr;
+
+                        // Advance segment pointer for end_tick
+                        while seg_end + 1 < segments.len()
+                            && segments[seg_end + 1].start_tick as u64 <= note.end_tick as u64
+                        {
+                            seg_end += 1;
+                        }
+                        let seg = &segments[seg_end];
+                        let end_sample = (seg.start_time
+                            + yinhe_core::ticks_to_seconds(
+                                note.end_tick as u64 - seg.start_tick as u64,
+                                tpb,
+                                seg.micros_per_quarter,
+                            ))
+                            * sr;
+
                         audible.push(AudibleNote {
-                            start_sample: (model.tempo_map.tick_to_seconds(note.start_tick as u64)
-                                * sr) as u64,
-                            end_sample: (model.tempo_map.tick_to_seconds(note.end_tick as u64) * sr)
-                                as u64,
+                            start_sample: start_sample as u64,
+                            end_sample: end_sample as u64,
                             track: note.track,
                             velocity: note.velocity,
                         });
@@ -406,36 +637,29 @@ impl AudioEngine {
         }
     }
 
-    /// Rebuild `audible_notes` from the current model. Called on `ReloadNotes`.
-    fn rebuild_audible_notes(&mut self, model: &YinModel) {
-        let sr = self.sample_rate as f64;
-        for key in 0..128usize {
-            let mut audible = Vec::new();
-            for note in &model.key_notes_cache[key] {
-                if note.velocity > 1 {
-                    let ch = track_global_channel(model, note.track as usize) as usize;
-                    if self.active_mask.get(ch).copied().unwrap_or(false) {
-                        audible.push(AudibleNote {
-                            start_sample: (model.tempo_map.tick_to_seconds(note.start_tick as u64)
-                                * sr) as u64,
-                            end_sample: (model.tempo_map.tick_to_seconds(note.end_tick as u64) * sr)
-                                as u64,
-                            track: note.track,
-                            velocity: note.velocity,
-                        });
-                    }
-                }
-            }
-            self.audible_notes[key] = audible;
+    /// Apply a `PreparedModel` computed on a worker thread.
+    /// This is cheap: just swaps pre-built data and sends config events.
+    pub(crate) fn apply_prepared_model(&mut self, prepared: PreparedModel) {
+        self.setup_percussion(&prepared.model);
+
+        self.cc_events = prepared.cc_events;
+        self.cc_cursor = 0;
+        self.active_notes.clear();
+        self.active_notes.reserve(prepared.model.note_count as usize);
+        self.duration_samples = prepared.duration_samples;
+        self.skip_track = prepared.skip_track;
+        self.audible_notes = prepared.audible_notes;
+        self.note_cursor = [0; 128];
+        self.model = Some(prepared.model);
+
+        // If Play arrived while loading, seek now
+        if let Some(from_sample) = self.pending_play_from_sample.take() {
+            self.seek_to(from_sample);
+            self.playing = true;
         }
     }
 
-    fn reset_note_cursors(&mut self) {
-        self.note_cursor = [0; 128];
-        if let Some(model) = self.model.clone() {
-            self.rebuild_audible_notes(&model);
-        }
-    }
+
 
     fn setup_percussion(&mut self, model: &YinModel) {
         // Drum channels in GM are channel 9 of each port (port*16 + 9).
