@@ -73,8 +73,13 @@ impl App {
         let doc = &self.documents[idx];
         let sr = self.audio_settings.sample_rate;
         let (num_ch, active_mask) = yinhe_audio::channels_for_model(&doc.data.model);
+        let buffer_size = if self.audio_settings.buffer_size == 0 {
+            cpal::BufferSize::Default
+        } else {
+            cpal::BufferSize::Fixed(self.audio_settings.buffer_size)
+        };
 
-        match yinhe_audio::spawn_cpal_audio(sr, num_ch, active_mask) {
+        match yinhe_audio::spawn_cpal_audio(sr, num_ch, active_mask, buffer_size) {
             Ok(audio) => {
                 progress::set_stage(&self.load_progress, 2, progress::StageStatus::Done);
 

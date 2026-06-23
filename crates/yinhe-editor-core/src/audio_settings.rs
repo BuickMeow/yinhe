@@ -14,6 +14,8 @@ pub struct AudioSettings {
     pub default_sf2_path: String,
     pub global_sf_config: GlobalSfConfig,
     pub xsynth_layers: u32,
+    /// Audio buffer size in frames. 0 = system default (~512 on macOS).
+    pub buffer_size: u32,
     /// 0=原始, 1=整数对齐, 2=子像素偏移
     /// 0=柱状(2px竖条), 1=矩形(填充), 2=空心矩形(边框)
     pub velocity_display_mode: u32,
@@ -42,6 +44,7 @@ impl Default for AudioSettings {
             default_sf2_path: String::new(),
             global_sf_config: GlobalSfConfig::builtin_default(),
             xsynth_layers: 4,
+            buffer_size: 0,
             scroll_mode: 0,
             min_border_width: 0.0,
             midi_import_encoding: MidiImportEncoding::Utf8,

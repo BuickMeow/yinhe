@@ -63,6 +63,34 @@ pub fn show(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
                         });
                     ui.end_row();
 
+                    ui.label("缓冲区大小");
+                    let buf_sizes: &[(u32, &str)] = &[
+                        (0, "默认 (系统)"),
+                        (128, "128 帧"),
+                        (256, "256 帧"),
+                        (512, "512 帧"),
+                        (1024, "1024 帧"),
+                        (2048, "2048 帧"),
+                        (4096, "4096 帧"),
+                    ];
+                    let buf_label = buf_sizes
+                        .iter()
+                        .find(|(v, _)| *v == settings.buffer_size)
+                        .map(|(_, l)| *l)
+                        .unwrap_or("自定义");
+                    egui::ComboBox::from_id_salt("buffer_size")
+                        .selected_text(buf_label)
+                        .show_ui(ui, |ui| {
+                            for &(val, label) in buf_sizes {
+                                let selected = settings.buffer_size == val;
+                                if ui.selectable_label(selected, label).clicked() {
+                                    settings.buffer_size = val;
+                                    changed = true;
+                                }
+                            }
+                        });
+                    ui.end_row();
+
                     ui.label("XSynth层数");
                     let mut layers = settings.xsynth_layers as usize;
                     if ui

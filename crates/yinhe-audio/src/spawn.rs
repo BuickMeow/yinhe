@@ -171,6 +171,7 @@ pub fn spawn_cpal_audio(
     sample_rate: u32,
     num_channels: u32,
     active_mask: Vec<bool>,
+    buffer_size: cpal::BufferSize,
 ) -> Result<CpalAudioHandle, String> {
     let (cmd_tx, cmd_rx) = unbounded::<AudioCommand>();
     let sample_position = Arc::new(AtomicU64::new(0));
@@ -189,7 +190,7 @@ pub fn spawn_cpal_audio(
     let config = cpal::StreamConfig {
         channels: channels as u16,
         sample_rate,
-        buffer_size: cpal::BufferSize::Default,
+        buffer_size,
     };
 
     let engine = crate::engine::AudioEngine::new(sample_rate, num_channels, active_mask);
