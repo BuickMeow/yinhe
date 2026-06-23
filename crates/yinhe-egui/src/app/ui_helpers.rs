@@ -387,7 +387,7 @@ impl App {
                 self.note_drag_undo_snapshot = None;
                 self.note_drag_moved = false;
             } else {
-                if self.note_drag_originals.is_none() {
+                if self.note_drag_originals_note.is_none() {
                     self.note_drag_undo_snapshot =
                         Some(doc.data.snapshot("Move notes"));
                     self.note_drag_moved = false;
