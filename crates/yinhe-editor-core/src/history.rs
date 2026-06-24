@@ -21,6 +21,8 @@ pub struct UndoSnapshot {
     pub label: &'static str,
     /// Selected notes at the time of the snapshot.
     pub selected: HashSet<(u16, u32, u8)>,
+    /// Selected arrangement tracks at the time of the snapshot.
+    pub track_selected: HashSet<u16>,
     /// Selection rectangle at the time of the snapshot.
     pub sel_rect: SelRectState,
 }
@@ -122,6 +124,7 @@ pub fn begin_edit(data: &ProjectData, pending: &mut PendingEdits, id: u64, label
         data: data.clone(),
         label,
         selected: HashSet::new(),
+        track_selected: HashSet::new(),
         sel_rect: SelRectState::default(),
     };
     pending.insert_raw(id, snap);
@@ -176,6 +179,7 @@ mod tests {
             data: make_test_data(name),
             label,
             selected: HashSet::new(),
+            track_selected: HashSet::new(),
             sel_rect: SelRectState::default(),
         }
     }

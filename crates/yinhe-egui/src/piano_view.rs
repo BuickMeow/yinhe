@@ -6,8 +6,15 @@ use yinhe_types::{AutomationLane, TimeSigEvent};
 
 use yinhe_editor_core::quantize::QuantizePreset;
 use crate::widgets::tools_panel::Tool;
+use crate::widgets::selection_actions::SelectionAction;
 
 mod automation_panel;
+
+/// Events emitted by the piano-roll view for the caller to act on.
+pub enum PianoViewEvent {
+    SelectionAction(SelectionAction),
+    AddNote { track: u16, note: yinhe_core::NoteEvent },
+}
 
 /// Height of the time ruler band at the top of the pianoroll view.
 use crate::theme;
@@ -20,7 +27,8 @@ const RULER_H: f32 = theme::RULER_H;
 /// +/- buttons live inside the scrollbar's left blank area (same width as the
 /// piano keyboard).
 ///
-/// Returns an optional `SelectionAction` if the user clicked a floating action button.
+/// Returns an optional event for the caller to handle (selection action or
+/// note-add request).
 #[allow(clippy::too_many_arguments)]
 pub fn show(
     ui: &mut egui::Ui,
@@ -58,8 +66,10 @@ pub fn show(
     automation_show_dots: &mut bool,
     note_drag_delta: &mut Option<(i64, i32)>,
     sel_rect: &mut yinhe_editor_core::edit_state::SelRectState,
+    track_selected: &std::collections::HashSet<u16>,
+    conductor_idx: Option<u16>,
     midi_version: u64,
-) -> Option<crate::widgets::selection_actions::SelectionAction> {
+) -> Option<PianoViewEvent> {
     // Sense::hover() — no drag ownership. All drag is handled by dedicated
     // ui.interact calls below, each inside its own push_id scope.
     let (resp, painter) = ui.allocate_painter(available, egui::Sense::hover());
@@ -136,6 +146,7 @@ pub fn show(
     // ── Selection drag (Select tool only) ──
     // Update state BEFORE handle_input to avoid egui pointer-capture conflicts.
     let mut sel_action = None;
+    let mut pencil_event: Option<PianoViewEvent> = None;
     if *active_tool == Tool::Select {
         sel_drag_frame(
             ui,
@@ -152,6 +163,22 @@ pub fn show(
             note_drag_delta,
             sel_rect,
         );
+    } else if *active_tool == Tool::Pencil {
+        if let Some(note) = pencil_frame(
+            ui,
+            content_rect,
+            music_rect,
+            view,
+            quantize,
+            ppq,
+            bar_line_data,
+            track_selected,
+            conductor_idx,
+        ) {
+            if let Some(track) = valid_pencil_track(track_selected, conductor_idx) {
+                pencil_event = Some(PianoViewEvent::AddNote { track, note });
+            }
+        }
     }
 
     // ── Hover cursor: show Move when over selection rect ──
@@ -515,7 +542,7 @@ pub fn show(
         });
     }
 
-    sel_action
+    sel_action.map(PianoViewEvent::SelectionAction).or(pencil_event)
 }
 
 // ── Selection drag logic ──
@@ -779,4 +806,178 @@ fn piano_snapped_bounds(
     )
 }
 
+/// Returns the single valid target track for the Pencil tool, if any.
+fn valid_pencil_track(
+    track_selected: &std::collections::HashSet<u16>,
+    conductor_idx: Option<u16>,
+) -> Option<u16> {
+    if track_selected.len() != 1 {
+        return None;
+    }
+    let &track = track_selected.iter().next()?;
+    if Some(track) == conductor_idx {
+        return None;
+    }
+    Some(track)
+}
+
+/// Pencil-tool input handling: hover preview, click to write a note, drag to lengthen.
+/// Returns a `NoteEvent` when the user releases the primary button and a valid
+/// target track exists.
+fn pencil_frame(
+    ui: &mut egui::Ui,
+    content_rect: egui::Rect,
+    music_rect: egui::Rect,
+    view: &mut yinhe_pianoroll::PianoRollView,
+    quantize: QuantizePreset,
+    ppq: u32,
+    bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
+    track_selected: &std::collections::HashSet<u16>,
+    conductor_idx: Option<u16>,
+) -> Option<yinhe_core::NoteEvent> {
+    let pencil_id = ui.id().with("pencil_drag");
+    let mut start: Option<(f64, u8)> =
+        ui.data_mut(|d| d.get_persisted(pencil_id)).unwrap_or(None);
+
+    let pointer = ui.input(|i| i.pointer.clone());
+
+    // Clear stale drag state.
+    if start.is_some() && !pointer.primary_down() && !pointer.primary_released() {
+        start = None;
+    }
+
+    let hover_pos = pointer.hover_pos();
+    let can_write = valid_pencil_track(track_selected, conductor_idx).is_some();
+
+    // Hover / drag preview.
+    let preview = if let Some(pos) = hover_pos {
+        if music_rect.contains(pos) {
+            let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
+            let raw_tick = view.x_to_tick(local.x);
+            let tick = crate::view_interaction::snap_tick(raw_tick, quantize, ppq, bar_line_data);
+            let key = view.y_to_key(local.y);
+            Some((tick.max(0.0), key))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    // Draw ghost note.
+    if can_write {
+        if let Some((tick, key)) = preview {
+            let interval = quantize.tick_interval(ppq) as f64;
+            let (start_tick, end_tick) = if let Some((s_tick, s_key)) = start {
+                if s_key == key {
+                    let current_end = tick.max(s_tick + 1.0);
+                    let snapped_end = crate::view_interaction::snap_tick(
+                        current_end,
+                        quantize,
+                        ppq,
+                        bar_line_data,
+                    );
+                    let end = snapped_end.max(s_tick + interval.max(1.0));
+                    (s_tick, end)
+                } else {
+                    (s_tick, s_tick + interval.max(1.0))
+                }
+            } else {
+                (tick, tick + interval.max(1.0))
+            };
+            draw_pencil_ghost(
+                ui,
+                content_rect,
+                music_rect,
+                view,
+                start_tick,
+                end_tick,
+                key,
+            );
+        }
+    }
+
+    // Start drag.
+    if pointer.primary_pressed() {
+        if let Some((tick, key)) = preview {
+            start = Some((tick, key));
+        }
+    }
+
+    // Update drag end while held.
+    if start.is_some() && pointer.primary_down() && !pointer.primary_pressed() {
+        if let Some((_, key)) = preview {
+            if let Some((s_tick, s_key)) = start {
+                if key != s_key {
+                    // Lock key to the one where the drag started.
+                    start = Some((s_tick, s_key));
+                }
+            }
+        }
+    }
+
+    // Release -> commit note.
+    let mut result = None;
+    if pointer.primary_released() {
+        if let Some((s_tick, s_key)) = start {
+            if can_write {
+                let interval = quantize.tick_interval(ppq) as f64;
+                let end_tick = if let Some((tick, _)) = preview {
+                    let current_end = tick.max(s_tick + 1.0);
+                    let snapped_end = crate::view_interaction::snap_tick(
+                        current_end,
+                        quantize,
+                        ppq,
+                        bar_line_data,
+                    );
+                    snapped_end.max(s_tick + interval.max(1.0))
+                } else {
+                    s_tick + interval.max(1.0)
+                };
+                result = Some(yinhe_core::NoteEvent {
+                    start_tick: s_tick as u32,
+                    end_tick: end_tick as u32,
+                    key: s_key,
+                    velocity: 100,
+                    dup_index: 0,
+                });
+            }
+            start = None;
+        }
+    }
+
+    ui.data_mut(|d| d.insert_persisted(pencil_id, start));
+    result
+}
+
+/// Draw a semi-transparent preview of the note about to be written.
+fn draw_pencil_ghost(
+    ui: &egui::Ui,
+    content_rect: egui::Rect,
+    music_rect: egui::Rect,
+    view: &yinhe_pianoroll::PianoRollView,
+    start_tick: f64,
+    end_tick: f64,
+    key: u8,
+) {
+    let kb_w = music_rect.min.x - content_rect.min.x;
+    let rect = crate::view_interaction::music_sel_to_pixel_rect(
+        &view.base,
+        view.key_height,
+        start_tick,
+        end_tick,
+        key,
+        key,
+    );
+    let local = egui::Rect::from_min_max(
+        egui::pos2(rect.min.x - kb_w, rect.min.y),
+        egui::pos2(rect.max.x - kb_w, rect.max.y),
+    );
+    let screen = egui::Rect::from_min_max(
+        egui::pos2(music_rect.min.x + local.min.x, music_rect.min.y + local.min.y),
+        egui::pos2(music_rect.min.x + local.max.x, music_rect.min.y + local.max.y),
+    );
+    let color = egui::Color32::from_rgb(200, 200, 255).gamma_multiply(0.5);
+    ui.painter().rect_filled(screen, 2.0, color);
+}
 

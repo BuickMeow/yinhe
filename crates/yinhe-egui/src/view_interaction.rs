@@ -179,13 +179,14 @@ pub(crate) fn handle_input(
 
     // Click to set cursor — pointer release + small drag distance.
     // Hover check here also uses raw rect containment for the same reason.
-    // Skip in Select mode — selection handler manages its own clicks.
+    // Skip in Select and Pencil modes — those tools manage their own clicks.
     let released = ui.input(|i| i.pointer.primary_released());
     let drag_dist = content_resp.drag_delta().length();
     if released
         && pointer_in_rect
         && drag_dist < 3.0
         && *active_tool != Tool::Select
+        && *active_tool != Tool::Pencil
         && let Some(pos) = content_resp.interact_pointer_pos()
     {
         let pointer_x = pos.x - rect.min.x;
@@ -216,7 +217,7 @@ pub(crate) fn handle_input(
     }
 
     // Left-button drag → pan (Pan tool only)
-    if *active_tool != Tool::Select && content_resp.dragged() {
+    if *active_tool == Tool::Pan && content_resp.dragged() {
         let delta = content_resp.drag_delta();
         *view.scroll_x() -= delta.x;
         *view.scroll_y() -= delta.y;

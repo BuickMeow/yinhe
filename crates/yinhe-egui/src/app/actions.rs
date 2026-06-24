@@ -111,6 +111,11 @@ impl App {
         });
     }
 
+    /// Add a single note to the given track and record an undo entry.
+    pub(crate) fn add_note_with_undo(&mut self, track_idx: u16, note: yinhe_core::NoteEvent) {
+        self.with_undo("Add note", |doc| doc.add_note(track_idx, note));
+    }
+
     /// Capture an `UndoSnapshot` of the active document's persistent state.
     /// Returns `None` if no document is active.
     pub(crate) fn capture_snapshot(&self, label: &'static str) -> Option<yinhe_editor_core::history::UndoSnapshot> {

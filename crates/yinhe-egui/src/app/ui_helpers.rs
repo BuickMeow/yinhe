@@ -277,7 +277,7 @@ impl App {
             self.controller_renderers.push(Vec::new());
         }
 
-        let (sel_action, note_drag_delta) = {
+        let (piano_event, note_drag_delta) = {
             let mut guard = super::main_loop::ReplaceGuard::new(&mut self.documents[idx]);
             let doc = guard.as_mut();
             let midi_source: Option<&dyn yinhe_pianoroll::NoteSource> =
@@ -287,7 +287,7 @@ impl App {
                 layout.remaining.max,
             );
 
-            let mut action = None;
+            let mut event = None;
             let mut note_drag_delta: Option<(i64, i32)> = None;
             ui.scope_builder(
                 egui::UiBuilder::new().max_rect(piano_rect),
@@ -321,7 +321,7 @@ impl App {
                         denominator: t.denominator,
                     }).collect();
                     let automation_lanes: Vec<yinhe_types::AutomationLane> = Vec::new();
-                    action = piano_view::show(
+                    event = piano_view::show(
                         ui,
                         ui.available_size(),
                         &mut self.pianoroll,
@@ -351,6 +351,8 @@ impl App {
                         &mut self.audio_settings.automation_show_dots,
                         &mut note_drag_delta,
                         &mut doc.edit.sel_rect,
+                        &doc.edit.track_selected,
+                        doc.edit.conductor_track_idx,
                         doc.data.midi_version,
                     );
                     if let Some(t0) = _piano_total_start {
@@ -358,17 +360,25 @@ impl App {
                     }
                 },
             );
-            (action, note_drag_delta)
+            (event, note_drag_delta)
         };
 
-        // Handle selection actions
-        if let Some(action) = sel_action {
-            use crate::widgets::selection_actions::SelectionAction;
-            match action {
-                SelectionAction::Delete => self.delete_selected_notes(),
-                SelectionAction::Duplicate => self.duplicate_selected_notes(),
-                SelectionAction::TransposeUp => self.transpose_selected_notes(12),
-                SelectionAction::TransposeDown => self.transpose_selected_notes(-12),
+        // Handle piano-view events
+        if let Some(event) = piano_event {
+            use crate::piano_view::PianoViewEvent;
+            match event {
+                PianoViewEvent::SelectionAction(action) => {
+                    use crate::widgets::selection_actions::SelectionAction;
+                    match action {
+                        SelectionAction::Delete => self.delete_selected_notes(),
+                        SelectionAction::Duplicate => self.duplicate_selected_notes(),
+                        SelectionAction::TransposeUp => self.transpose_selected_notes(12),
+                        SelectionAction::TransposeDown => self.transpose_selected_notes(-12),
+                    }
+                }
+                PianoViewEvent::AddNote { track, note } => {
+                    self.add_note_with_undo(track, note);
+                }
             }
         }
 
