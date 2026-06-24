@@ -158,9 +158,33 @@ pub fn show(
             if music_rect.contains(pos) {
                 let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
                 let persist_id = ui.id().with("sel_rect_persist");
-                let sel_music: Option<Option<(f64, f64, u8, u8)>> =
-                    ui.data_mut(|d| d.get_persisted(persist_id));
-                let in_sel_rect = sel_music.flatten().is_some_and(|(t_start, t_end, key_lo, key_hi)| {
+                let sel_origin_id = ui.id().with("sel_drag_origin");
+                let note_drag_id = ui.id().with("note_drag_origin");
+                let origin: Option<(f64, f64, u8, u8)> = {
+                    let o: Option<Option<(f64, f64, u8, u8)>> =
+                        ui.data_mut(|d| d.get_persisted(sel_origin_id));
+                    o.flatten()
+                };
+                let sel_rect = if let Some((t_start, t_end, key_lo, key_hi)) = origin {
+                    let last_delta_id = note_drag_id.with("last_delta");
+                    let last_delta: Option<(i64, i32)> = {
+                        let d: Option<Option<(i64, i32)>> =
+                            ui.data_mut(|d| d.get_persisted(last_delta_id));
+                        d.flatten()
+                    };
+                    let (dt, dk) = last_delta.unwrap_or((0, 0));
+                    Some((
+                        t_start + dt as f64,
+                        t_end + dt as f64,
+                        (key_lo as i32 + dk).clamp(0, 127) as u8,
+                        (key_hi as i32 + dk).clamp(0, 127) as u8,
+                    ))
+                } else {
+                    let sel_music: Option<Option<(f64, f64, u8, u8)>> =
+                        ui.data_mut(|d| d.get_persisted(persist_id));
+                    sel_music.flatten()
+                };
+                let in_sel_rect = sel_rect.is_some_and(|(t_start, t_end, key_lo, key_hi)| {
                     let pixel_rect = crate::view_interaction::music_sel_to_pixel_rect(
                         &view.base, view.key_height, t_start, t_end, key_lo, key_hi,
                     );
@@ -338,9 +362,34 @@ pub fn show(
         // Compute pixel rect from music coordinates each frame so it follows
         // scroll/zoom.
         let persist_id = ui.id().with("sel_rect_persist");
-        let sel_music: Option<Option<(f64, f64, u8, u8)>> =
-            ui.data_mut(|d| d.get_persisted(persist_id));
-        let persisted_pixel_rect = sel_music.flatten().map(|(t_start, t_end, key_lo, key_hi)| {
+        let sel_origin_id = ui.id().with("sel_drag_origin");
+        let note_drag_id = ui.id().with("note_drag_origin");
+        // During note drag, draw from origin + delta directly (like marquee draws from drag)
+        let origin: Option<(f64, f64, u8, u8)> = {
+            let o: Option<Option<(f64, f64, u8, u8)>> =
+                ui.data_mut(|d| d.get_persisted(sel_origin_id));
+            o.flatten()
+        };
+        let sel_rect = if let Some((t_start, t_end, key_lo, key_hi)) = origin {
+            let last_delta_id = note_drag_id.with("last_delta");
+            let last_delta: Option<(i64, i32)> = {
+                let d: Option<Option<(i64, i32)>> =
+                    ui.data_mut(|d| d.get_persisted(last_delta_id));
+                d.flatten()
+            };
+            let (dt, dk) = last_delta.unwrap_or((0, 0));
+            Some((
+                t_start + dt as f64,
+                t_end + dt as f64,
+                (key_lo as i32 + dk).clamp(0, 127) as u8,
+                (key_hi as i32 + dk).clamp(0, 127) as u8,
+            ))
+        } else {
+            let sel_music: Option<Option<(f64, f64, u8, u8)>> =
+                ui.data_mut(|d| d.get_persisted(persist_id));
+            sel_music.flatten()
+        };
+        let persisted_pixel_rect = sel_rect.map(|(t_start, t_end, key_lo, key_hi)| {
             crate::view_interaction::music_sel_to_pixel_rect(
                 &view.base, view.key_height, t_start, t_end, key_lo, key_hi,
             )
@@ -541,6 +590,8 @@ fn sel_drag_frame(
     let mut note_drag_origin: Option<(f64, f64)> =
         ui.data_mut(|d| d.get_persisted(note_drag_id)).unwrap_or(None);
 
+    let sel_origin_id = ui.id().with("sel_drag_origin");
+
     let pointer = ui.input(|i| i.pointer.clone());
     let cmd = ui.input(|i| i.modifiers.command || i.modifiers.ctrl);
 
@@ -550,6 +601,9 @@ fn sel_drag_frame(
     }
     if note_drag_origin.is_some() && !pointer.primary_down() && !pointer.primary_released() {
         note_drag_origin = None;
+        ui.data_mut(|d| d.insert_persisted(sel_origin_id, Option::<(f64, f64, u8, u8)>::None));
+        let last_delta_id = note_drag_id.with("last_delta");
+        ui.data_mut(|d| d.insert_persisted(last_delta_id, Option::<(i64, i32)>::None));
     }
 
     // Start drag
@@ -592,7 +646,13 @@ fn sel_drag_frame(
                 let tick = crate::view_interaction::snap_tick(raw_tick, quantize, ppq, bar_line_data);
                 let key = view.y_to_key(local.y) as f64;
                 note_drag_origin = Some((tick, key));
-                // Don't clear sel_rect_persist — keep the selection box visible
+                // Save current sel_rect_persist as drag origin
+                let persist_id = ui.id().with("sel_rect_persist");
+                let sel: Option<Option<(f64, f64, u8, u8)>> =
+                    ui.data_mut(|d| d.get_persisted(persist_id));
+                if let Some(Some(eff)) = sel {
+                    ui.data_mut(|d| d.insert_persisted(sel_origin_id, Some(eff)));
+                }
             } else {
                 // Not on selection rect → marquee selection
                 drag = Some((local, local));
@@ -601,6 +661,7 @@ fn sel_drag_frame(
                 }
                 let persist_id = ui.id().with("sel_rect_persist");
                 ui.data_mut(|d| d.insert_persisted(persist_id, Option::<(f64, f64, u8, u8)>::None));
+                ui.data_mut(|d| d.insert_persisted(sel_origin_id, Option::<(f64, f64, u8, u8)>::None));
             }
         }
     }
@@ -617,11 +678,13 @@ fn sel_drag_frame(
                 let dt = (snapped_tick - origin_tick).round() as i64;
                 let dk = (current_key - origin_key).round() as i32;
                 *note_drag_delta = Some((dt, dk));
+                // Persist delta so drawing code can offset the origin
+                let last_delta_id = note_drag_id.with("last_delta");
+                ui.data_mut(|d| d.insert_persisted(last_delta_id, Some((dt, dk))));
                 ui.ctx().request_repaint();
             }
         }
         if pointer.primary_released() {
-            // Set final delta before clearing origin
             if let Some(pos) = pointer.hover_pos() {
                 let local_x = pos.x - content_rect.min.x;
                 let local_y = pos.y - content_rect.min.y;
@@ -631,7 +694,41 @@ fn sel_drag_frame(
                 let dt = (snapped_tick - origin_tick).round() as i64;
                 let dk = (current_key - origin_key).round() as i32;
                 *note_drag_delta = Some((dt, dk));
+                // Persist delta so drawing code sees it on this frame
+                let last_delta_id = note_drag_id.with("last_delta");
+                ui.data_mut(|d| d.insert_persisted(last_delta_id, Some((dt, dk))));
             }
+            // Write origin + final delta to sel_rect_persist
+            let origin: Option<(f64, f64, u8, u8)> = {
+                let o: Option<Option<(f64, f64, u8, u8)>> =
+                    ui.data_mut(|d| d.get_persisted(sel_origin_id));
+                o.flatten()
+            };
+            if let Some((t_start, t_end, key_lo, key_hi)) = origin {
+                let last_delta_id = note_drag_id.with("last_delta");
+                let last_delta: Option<(i64, i32)> = {
+                    let d: Option<Option<(i64, i32)>> =
+                        ui.data_mut(|d| d.get_persisted(last_delta_id));
+                    d.flatten()
+                };
+                let (dt, dk) = last_delta.unwrap_or((0, 0));
+                let persist_id = ui.id().with("sel_rect_persist");
+                ui.data_mut(|d| {
+                    d.insert_persisted(
+                        persist_id,
+                        Some((
+                            t_start + dt as f64,
+                            t_end + dt as f64,
+                            (key_lo as i32 + dk).clamp(0, 127) as u8,
+                            (key_hi as i32 + dk).clamp(0, 127) as u8,
+                        )),
+                    )
+                });
+            }
+            // Clean up drag state (on NEXT frame, drawing falls back to sel_rect_persist)
+            ui.data_mut(|d| d.insert_persisted(sel_origin_id, Option::<(f64, f64, u8, u8)>::None));
+            let last_delta_id = note_drag_id.with("last_delta");
+            ui.data_mut(|d| d.insert_persisted(last_delta_id, Option::<(i64, i32)>::None));
             note_drag_origin = None;
         }
     }
