@@ -93,6 +93,27 @@ pub fn show(
             def_den,
             sig_events,
         );
+
+        // Click / drag on the ruler jumps the edit cursor (all tools).
+        let ruler_resp = ui.interact(
+            ruler_rect,
+            ui.id().with("arr_time_ruler_click"),
+            egui::Sense::click_and_drag(),
+        );
+        if (ruler_resp.clicked() || ruler_resp.dragged())
+            && let Some(pos) = ruler_resp.interact_pointer_pos()
+        {
+            let local_x = pos.x - ruler_rect.min.x;
+            let tick = arr_view.x_to_tick(local_x);
+            let snapped = crate::view_interaction::snap_tick(
+                tick,
+                doc.edit.quantize,
+                tpb,
+                Some((tpb, def_num, def_den, sig_events)),
+            );
+            doc.edit.cursor_tick = Some(snapped.max(0.0));
+            ui.ctx().request_repaint();
+        }
     }
 
     // ── Track panel content ──

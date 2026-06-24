@@ -410,6 +410,20 @@ pub fn show(
         crate::widgets::time_ruler::paint(
             &painter, ruler_rect, view, tpb, def_num, def_den, sig_events,
         );
+
+        // Click / drag on the ruler jumps the edit cursor (all tools).
+        let ruler_resp = ui.interact(
+            ruler_rect,
+            ui.id().with("time_ruler_click"),
+            egui::Sense::click_and_drag(),
+        );
+        if (ruler_resp.clicked() || ruler_resp.dragged()) && let Some(pos) = ruler_resp.interact_pointer_pos() {
+            let local_x = pos.x - content_rect.min.x;
+            let tick = view.x_to_tick(local_x);
+            let snapped = crate::view_interaction::snap_tick(tick, quantize, ppq, bar_line_data);
+            *cursor_tick = Some(snapped.max(0.0));
+            ui.ctx().request_repaint();
+        }
     }
 
     // ── Automation panels ──
