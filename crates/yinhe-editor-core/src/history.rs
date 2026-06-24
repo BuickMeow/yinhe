@@ -7,7 +7,7 @@
 //! Selection, scroll, mute/solo and other UI state are intentionally NOT
 //! captured — undo restores notes and names, not the user's cursor.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::project_data::ProjectData;
 
@@ -21,6 +21,8 @@ pub struct UndoSnapshot {
     pub data: ProjectData,
     /// Short label for debugging / future UI ("Delete notes", "Move notes", …).
     pub label: &'static str,
+    /// Selected notes at the time of the snapshot.
+    pub selected: HashSet<(u16, u32, u8)>,
 }
 
 /// Per-document undo/redo stack.
@@ -116,7 +118,11 @@ impl PendingEdits {
 /// Begin tracking a TextEdit/DragValue keyed by `id`.
 /// Captures a baseline snapshot of `data` (overwriting any previous one).
 pub fn begin_edit(data: &ProjectData, pending: &mut PendingEdits, id: u64, label: &'static str) {
-    let snap = data.snapshot(label);
+    let snap = UndoSnapshot {
+        data: data.clone(),
+        label,
+        selected: HashSet::new(),
+    };
     pending.insert_raw(id, snap);
 }
 
@@ -168,6 +174,7 @@ mod tests {
         UndoSnapshot {
             data: make_test_data(name),
             label,
+            selected: HashSet::new(),
         }
     }
 

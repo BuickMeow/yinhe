@@ -39,7 +39,8 @@ impl ProjectData {
     pub fn snapshot(&self, label: &'static str) -> crate::history::UndoSnapshot {
         crate::history::UndoSnapshot {
             data: self.clone(),
-        label,
+            label,
+            selected: std::collections::HashSet::new(),
         }
     }
 

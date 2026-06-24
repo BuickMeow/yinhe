@@ -350,6 +350,7 @@ impl App {
                         &mut self.audio_settings.automation_display_mode,
                         &mut self.audio_settings.automation_show_dots,
                         &mut note_drag_delta,
+                        &mut self.pending_sel_rect_delta,
                         doc.data.midi_version,
                     );
                     if let Some(t0) = _piano_total_start {
@@ -389,7 +390,7 @@ impl App {
             } else {
                 if self.note_drag_originals_note.is_none() {
                     self.note_drag_undo_snapshot =
-                        Some(doc.data.snapshot("Move notes"));
+                        Some(doc.snapshot_with_selection("Move notes"));
                     self.note_drag_moved = false;
                     let mut originals = Vec::new();
                     let model = &doc.data.model;

@@ -206,6 +206,15 @@ impl Document {
 }
 
 impl Document {
+    /// Create an undo snapshot that includes the current selection.
+    pub fn snapshot_with_selection(&self, label: &'static str) -> crate::history::UndoSnapshot {
+        crate::history::UndoSnapshot {
+            data: self.data.clone(),
+            label,
+            selected: self.edit.selected.clone(),
+        }
+    }
+
     pub fn delete_selected(&mut self) -> bool {
         if self.edit.selected.is_empty() {
             return false;
@@ -226,11 +235,11 @@ impl Document {
         true
     }
 
-    pub fn duplicate_selected(&mut self) -> bool {
+    pub fn duplicate_selected(&mut self) -> Option<u32> {
         if self.edit.selected.is_empty() {
-            return false;
+            return None;
         }
-        {
+        let offset = {
             let model = Arc::make_mut(&mut self.data.model);
 
             let mut selected_data: Vec<(NoteEvent, u16)> = Vec::new();
@@ -248,7 +257,7 @@ impl Document {
             }
 
             if selected_data.is_empty() {
-                return false;
+                return None;
             }
 
             let min_start = selected_data.iter().map(|(n, _)| n.start_tick).min().unwrap();
@@ -274,14 +283,15 @@ impl Document {
             }
 
             self.edit.selected = new_selected;
-        }
+            offset
+        };
         self.data.rebuild_model();
-        true
+        Some(offset)
     }
 
-    pub fn transpose_selected(&mut self, semitones: i8) -> bool {
+    pub fn transpose_selected(&mut self, semitones: i8) -> Option<i8> {
         if self.edit.selected.is_empty() {
-            return false;
+            return None;
         }
         {
             let model = Arc::make_mut(&mut self.data.model);
@@ -303,7 +313,7 @@ impl Document {
             }
 
             if moved_data.is_empty() {
-                return false;
+                return None;
             }
 
             let mut new_selected = HashSet::new();
@@ -328,12 +338,13 @@ impl Document {
             self.edit.selected = new_selected;
         }
         self.data.rebuild_model();
-        true
+        Some(semitones)
     }
 
     pub fn apply_undo_snapshot(&mut self, snap: crate::history::UndoSnapshot) {
+        let old_version = self.data.midi_version;
         self.data = snap.data;
-        self.data.bump_version();
+        self.data.midi_version = old_version.wrapping_add(1);
         self.edit.track_info_cache = self.data.track_info();
         for (i, ti) in self.edit.track_info_cache.iter().enumerate() {
             if i < self.data.track_names.len() {
@@ -341,7 +352,7 @@ impl Document {
             }
         }
         self.edit.pc_map_cache = self.data.pc_map_cache();
-        self.edit.selected.clear();
+        self.edit.selected = snap.selected;
     }
 }
 

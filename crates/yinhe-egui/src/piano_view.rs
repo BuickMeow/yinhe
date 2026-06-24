@@ -57,6 +57,7 @@ pub fn show(
     automation_display_mode: &mut u32,
     automation_show_dots: &mut bool,
     note_drag_delta: &mut Option<(i64, i32)>,
+    pending_sel_rect_delta: &mut Option<(i64, i32)>,
     midi_version: u64,
 ) -> Option<crate::widgets::selection_actions::SelectionAction> {
     // Sense::hover() — no drag ownership. All drag is handled by dedicated
@@ -355,6 +356,27 @@ pub fn show(
     // State was already updated by sel_drag_frame above; this just draws the box
     // after the GPU paint so it's not covered by the texture.
     if *active_tool == Tool::Select && !is_playing {
+        // Apply pending sel_rect delta from duplicate/transpose
+        if let Some((dt, dk)) = *pending_sel_rect_delta {
+            let persist_id = ui.id().with("sel_rect_persist");
+            let sel: Option<Option<(f64, f64, u8, u8)>> =
+                ui.data_mut(|d| d.get_persisted(persist_id));
+            if let Some(Some((t_start, t_end, key_lo, key_hi))) = sel {
+                ui.data_mut(|d| {
+                    d.insert_persisted(
+                        persist_id,
+                        Some((
+                            t_start + dt as f64,
+                            t_end + dt as f64,
+                            (key_lo as i32 + dk).clamp(0, 127) as u8,
+                            (key_hi as i32 + dk).clamp(0, 127) as u8,
+                        )),
+                    )
+                });
+            }
+            *pending_sel_rect_delta = None;
+        }
+
         // Draw active drag box (if any)
         sel_draw_box(ui, content_rect, music_rect, view, quantize, ppq, bar_line_data);
 

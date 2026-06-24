@@ -90,7 +90,13 @@ impl App {
     /// Duplicate all selected notes (Ctrl+D / Cmd+D).
     /// New notes are placed after the original selection, offset by the selection duration.
     pub(crate) fn duplicate_selected_notes(&mut self) {
-        self.with_undo("Duplicate notes", |doc| doc.duplicate_selected());
+        let mut delta = None;
+        self.with_undo("Duplicate notes", |doc| {
+            let offset = doc.duplicate_selected();
+            delta = offset.map(|o| (o as i64, 0));
+            offset.is_some()
+        });
+        self.pending_sel_rect_delta = delta;
     }
 
     /// Transpose selected notes by `semitones` (e.g. +12 for up an octave, -12 for down).
@@ -100,7 +106,13 @@ impl App {
         } else {
             "Transpose down"
         };
-        self.with_undo(label, |doc| doc.transpose_selected(semitones));
+        let mut delta = None;
+        self.with_undo(label, |doc| {
+            let st = doc.transpose_selected(semitones);
+            delta = st.map(|s| (0, s as i32));
+            st.is_some()
+        });
+        self.pending_sel_rect_delta = delta;
     }
 
     /// Capture an `UndoSnapshot` of the active document's persistent state.
@@ -108,7 +120,7 @@ impl App {
     pub(crate) fn capture_snapshot(&self, label: &'static str) -> Option<yinhe_editor_core::history::UndoSnapshot> {
         let idx = self.active_doc?;
         let doc = self.documents.get(idx)?;
-        Some(doc.data.snapshot(label))
+        Some(doc.snapshot_with_selection(label))
     }
 
     /// Run an edit closure, recording an undo entry beforehand and notifying
@@ -122,7 +134,7 @@ impl App {
         F: FnOnce(&mut Document) -> bool,
     {
         let Some(idx) = self.active_doc else { return };
-        let snapshot = self.documents[idx].data.snapshot(label);
+        let snapshot = self.documents[idx].snapshot_with_selection(label);
         let changed = f(&mut self.documents[idx]);
         if !changed {
             return;
@@ -139,7 +151,7 @@ impl App {
     /// Restore the previous state on the active document's history stack.
     pub(crate) fn undo(&mut self) {
         let Some(idx) = self.active_doc else { return };
-        let current = self.documents[idx].data.snapshot("current");
+        let current = self.documents[idx].snapshot_with_selection("current");
         let restored = self.documents[idx].history.undo(current);
         if let Some(snap) = restored {
             self.apply_snapshot(idx, snap);
@@ -149,7 +161,7 @@ impl App {
     /// Re-apply the most recently undone state on the active document.
     pub(crate) fn redo(&mut self) {
         let Some(idx) = self.active_doc else { return };
-        let current = self.documents[idx].data.snapshot("current");
+        let current = self.documents[idx].snapshot_with_selection("current");
         let restored = self.documents[idx].history.redo(current);
         if let Some(snap) = restored {
             self.apply_snapshot(idx, snap);
