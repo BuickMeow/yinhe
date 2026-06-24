@@ -212,6 +212,7 @@ impl Document {
             data: self.data.clone(),
             label,
             selected: self.edit.selected.clone(),
+            sel_rect: self.edit.sel_rect.clone(),
         }
     }
 
@@ -353,6 +354,7 @@ impl Document {
         }
         self.edit.pc_map_cache = self.data.pc_map_cache();
         self.edit.selected = snap.selected;
+        self.edit.sel_rect = snap.sel_rect;
     }
 }
 

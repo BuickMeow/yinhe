@@ -90,13 +90,11 @@ impl App {
     /// Duplicate all selected notes (Ctrl+D / Cmd+D).
     /// New notes are placed after the original selection, offset by the selection duration.
     pub(crate) fn duplicate_selected_notes(&mut self) {
-        let mut delta = None;
         self.with_undo("Duplicate notes", |doc| {
             let offset = doc.duplicate_selected();
-            delta = offset.map(|o| (o as i64, 0));
+            doc.edit.sel_rect.pending_delta = offset.map(|o| (o as i64, 0));
             offset.is_some()
         });
-        self.pending_sel_rect_delta = delta;
     }
 
     /// Transpose selected notes by `semitones` (e.g. +12 for up an octave, -12 for down).
@@ -106,13 +104,11 @@ impl App {
         } else {
             "Transpose down"
         };
-        let mut delta = None;
         self.with_undo(label, |doc| {
             let st = doc.transpose_selected(semitones);
-            delta = st.map(|s| (0, s as i32));
+            doc.edit.sel_rect.pending_delta = st.map(|s| (0, s as i32));
             st.is_some()
         });
-        self.pending_sel_rect_delta = delta;
     }
 
     /// Capture an `UndoSnapshot` of the active document's persistent state.

@@ -99,8 +99,6 @@ pub struct App {
     /// Tracks whether the current drag ever produced a non-zero delta.
     /// A click without motion should not push an undo entry.
     pub(crate) note_drag_moved: bool,
-    /// Pending sel_rect delta from duplicate/transpose (tick, key).
-    pub(crate) pending_sel_rect_delta: Option<(i64, i32)>,
 
     // ── Multi-stage loading progress ──
     pub(crate) load_progress: yinhe_editor_core::progress::SharedProgress,
@@ -221,7 +219,6 @@ impl App {
             note_drag_originals_note: None,
             note_drag_undo_snapshot: None,
             note_drag_moved: false,
-            pending_sel_rect_delta: None,
         }
     }
 

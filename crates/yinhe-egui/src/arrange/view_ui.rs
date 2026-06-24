@@ -229,7 +229,7 @@ pub fn show(
     }
 
     // Selection drag runs BEFORE handle_input to avoid pointer-capture conflicts
-    if *active_tool == Tool::Select && !is_playing {
+    if *active_tool == Tool::Select {
         sel_drag_frame_arrange(
             ui,
             rect,

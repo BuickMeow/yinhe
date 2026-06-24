@@ -41,6 +41,7 @@ impl ProjectData {
             data: self.clone(),
             label,
             selected: std::collections::HashSet::new(),
+            sel_rect: crate::edit_state::SelRectState::default(),
         }
     }
 

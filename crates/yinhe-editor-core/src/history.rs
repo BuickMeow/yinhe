@@ -3,12 +3,10 @@
 //! Stores `UndoSnapshot`s containing a full `ProjectData` clone.
 //! Cloning is cheap: `Arc<MidiFile>` is O(1), metrics/names/metadata are small.
 //! Actual data copy only happens when `Arc::make_mut` is called (copy-on-write).
-//!
-//! Selection, scroll, mute/solo and other UI state are intentionally NOT
-//! captured — undo restores notes and names, not the user's cursor.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
+use crate::edit_state::SelRectState;
 use crate::project_data::ProjectData;
 
 /// Maximum number of past edits kept in the undo stack.
@@ -23,6 +21,8 @@ pub struct UndoSnapshot {
     pub label: &'static str,
     /// Selected notes at the time of the snapshot.
     pub selected: HashSet<(u16, u32, u8)>,
+    /// Selection rectangle at the time of the snapshot.
+    pub sel_rect: SelRectState,
 }
 
 /// Per-document undo/redo stack.
@@ -122,6 +122,7 @@ pub fn begin_edit(data: &ProjectData, pending: &mut PendingEdits, id: u64, label
         data: data.clone(),
         label,
         selected: HashSet::new(),
+        sel_rect: SelRectState::default(),
     };
     pending.insert_raw(id, snap);
 }
@@ -175,6 +176,7 @@ mod tests {
             data: make_test_data(name),
             label,
             selected: HashSet::new(),
+            sel_rect: SelRectState::default(),
         }
     }
 

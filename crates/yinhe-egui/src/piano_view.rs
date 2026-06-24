@@ -57,7 +57,7 @@ pub fn show(
     automation_display_mode: &mut u32,
     automation_show_dots: &mut bool,
     note_drag_delta: &mut Option<(i64, i32)>,
-    pending_sel_rect_delta: &mut Option<(i64, i32)>,
+    sel_rect: &mut yinhe_editor_core::edit_state::SelRectState,
     midi_version: u64,
 ) -> Option<crate::widgets::selection_actions::SelectionAction> {
     // Sense::hover() — no drag ownership. All drag is handled by dedicated
@@ -136,7 +136,7 @@ pub fn show(
     // ── Selection drag (Select tool only) ──
     // Update state BEFORE handle_input to avoid egui pointer-capture conflicts.
     let mut sel_action = None;
-    if *active_tool == Tool::Select && !is_playing {
+    if *active_tool == Tool::Select {
         sel_drag_frame(
             ui,
             content_rect,
@@ -150,42 +150,17 @@ pub fn show(
             total_ticks,
             cursor_tick,
             note_drag_delta,
+            sel_rect,
         );
     }
 
     // ── Hover cursor: show Move when over selection rect ──
-    if *active_tool == Tool::Select && !is_playing {
+    if *active_tool == Tool::Select {
         if let Some(pos) = ui.input(|i| i.pointer.hover_pos()) {
             if music_rect.contains(pos) {
                 let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
-                let persist_id = ui.id().with("sel_rect_persist");
-                let sel_origin_id = ui.id().with("sel_drag_origin");
-                let note_drag_id = ui.id().with("note_drag_origin");
-                let origin: Option<(f64, f64, u8, u8)> = {
-                    let o: Option<Option<(f64, f64, u8, u8)>> =
-                        ui.data_mut(|d| d.get_persisted(sel_origin_id));
-                    o.flatten()
-                };
-                let sel_rect = if let Some((t_start, t_end, key_lo, key_hi)) = origin {
-                    let last_delta_id = note_drag_id.with("last_delta");
-                    let last_delta: Option<(i64, i32)> = {
-                        let d: Option<Option<(i64, i32)>> =
-                            ui.data_mut(|d| d.get_persisted(last_delta_id));
-                        d.flatten()
-                    };
-                    let (dt, dk) = last_delta.unwrap_or((0, 0));
-                    Some((
-                        t_start + dt as f64,
-                        t_end + dt as f64,
-                        (key_lo as i32 + dk).clamp(0, 127) as u8,
-                        (key_hi as i32 + dk).clamp(0, 127) as u8,
-                    ))
-                } else {
-                    let sel_music: Option<Option<(f64, f64, u8, u8)>> =
-                        ui.data_mut(|d| d.get_persisted(persist_id));
-                    sel_music.flatten()
-                };
-                let in_sel_rect = sel_rect.is_some_and(|(t_start, t_end, key_lo, key_hi)| {
+                let eff = sel_rect.effective();
+                let in_sel_rect = eff.is_some_and(|(t_start, t_end, key_lo, key_hi)| {
                     let pixel_rect = crate::view_interaction::music_sel_to_pixel_rect(
                         &view.base, view.key_height, t_start, t_end, key_lo, key_hi,
                     );
@@ -355,27 +330,9 @@ pub fn show(
     // ── Draw selection box on TOP of GPU content ──
     // State was already updated by sel_drag_frame above; this just draws the box
     // after the GPU paint so it's not covered by the texture.
-    if *active_tool == Tool::Select && !is_playing {
+    if *active_tool == Tool::Select {
         // Apply pending sel_rect delta from duplicate/transpose
-        if let Some((dt, dk)) = *pending_sel_rect_delta {
-            let persist_id = ui.id().with("sel_rect_persist");
-            let sel: Option<Option<(f64, f64, u8, u8)>> =
-                ui.data_mut(|d| d.get_persisted(persist_id));
-            if let Some(Some((t_start, t_end, key_lo, key_hi))) = sel {
-                ui.data_mut(|d| {
-                    d.insert_persisted(
-                        persist_id,
-                        Some((
-                            t_start + dt as f64,
-                            t_end + dt as f64,
-                            (key_lo as i32 + dk).clamp(0, 127) as u8,
-                            (key_hi as i32 + dk).clamp(0, 127) as u8,
-                        )),
-                    )
-                });
-            }
-            *pending_sel_rect_delta = None;
-        }
+        sel_rect.apply_pending();
 
         // Draw active drag box (if any)
         sel_draw_box(ui, content_rect, music_rect, view, quantize, ppq, bar_line_data);
@@ -383,35 +340,8 @@ pub fn show(
         // Draw persisted selection rect (remains after mouse release).
         // Compute pixel rect from music coordinates each frame so it follows
         // scroll/zoom.
-        let persist_id = ui.id().with("sel_rect_persist");
-        let sel_origin_id = ui.id().with("sel_drag_origin");
-        let note_drag_id = ui.id().with("note_drag_origin");
-        // During note drag, draw from origin + delta directly (like marquee draws from drag)
-        let origin: Option<(f64, f64, u8, u8)> = {
-            let o: Option<Option<(f64, f64, u8, u8)>> =
-                ui.data_mut(|d| d.get_persisted(sel_origin_id));
-            o.flatten()
-        };
-        let sel_rect = if let Some((t_start, t_end, key_lo, key_hi)) = origin {
-            let last_delta_id = note_drag_id.with("last_delta");
-            let last_delta: Option<(i64, i32)> = {
-                let d: Option<Option<(i64, i32)>> =
-                    ui.data_mut(|d| d.get_persisted(last_delta_id));
-                d.flatten()
-            };
-            let (dt, dk) = last_delta.unwrap_or((0, 0));
-            Some((
-                t_start + dt as f64,
-                t_end + dt as f64,
-                (key_lo as i32 + dk).clamp(0, 127) as u8,
-                (key_hi as i32 + dk).clamp(0, 127) as u8,
-            ))
-        } else {
-            let sel_music: Option<Option<(f64, f64, u8, u8)>> =
-                ui.data_mut(|d| d.get_persisted(persist_id));
-            sel_music.flatten()
-        };
-        let persisted_pixel_rect = sel_rect.map(|(t_start, t_end, key_lo, key_hi)| {
+        let eff = sel_rect.effective();
+        let persisted_pixel_rect = eff.map(|(t_start, t_end, key_lo, key_hi)| {
             crate::view_interaction::music_sel_to_pixel_rect(
                 &view.base, view.key_height, t_start, t_end, key_lo, key_hi,
             )
@@ -603,6 +533,7 @@ fn sel_drag_frame(
     total_ticks: f64,
     cursor_tick: &mut Option<f64>,
     note_drag_delta: &mut Option<(i64, i32)>,
+    sel_rect: &mut yinhe_editor_core::edit_state::SelRectState,
 ) {
     let sel_id = ui.id().with("sel_drag");
     let mut drag: Option<(egui::Pos2, egui::Pos2)> =
@@ -611,8 +542,6 @@ fn sel_drag_frame(
     let note_drag_id = ui.id().with("note_drag_origin");
     let mut note_drag_origin: Option<(f64, f64)> =
         ui.data_mut(|d| d.get_persisted(note_drag_id)).unwrap_or(None);
-
-    let sel_origin_id = ui.id().with("sel_drag_origin");
 
     let pointer = ui.input(|i| i.pointer.clone());
     let cmd = ui.input(|i| i.modifiers.command || i.modifiers.ctrl);
@@ -623,9 +552,7 @@ fn sel_drag_frame(
     }
     if note_drag_origin.is_some() && !pointer.primary_down() && !pointer.primary_released() {
         note_drag_origin = None;
-        ui.data_mut(|d| d.insert_persisted(sel_origin_id, Option::<(f64, f64, u8, u8)>::None));
-        let last_delta_id = note_drag_id.with("last_delta");
-        ui.data_mut(|d| d.insert_persisted(last_delta_id, Option::<(i64, i32)>::None));
+        sel_rect.cancel_drag();
     }
 
     // Start drag
@@ -633,57 +560,38 @@ fn sel_drag_frame(
         && let Some(pos) = pointer.hover_pos()
         && music_rect.contains(pos)
     {
-        // Check if click is on the floating action bar — if so, skip.
-        let on_bar = {
-            let persist_id = ui.id().with("sel_rect_persist");
-            let sel_music: Option<Option<(f64, f64, u8, u8)>> =
-                ui.data_mut(|d| d.get_persisted(persist_id));
-            sel_music.flatten().is_some_and(|(t_start, t_end, key_lo, key_hi)| {
-                let pixel_rect = crate::view_interaction::music_sel_to_pixel_rect(
-                    &view.base, view.key_height, t_start, t_end, key_lo, key_hi,
-                );
-                crate::widgets::selection_actions::compute_bar_rect(music_rect, pixel_rect)
-                    .is_some_and(|bar| bar.contains(pos))
-            })
-        };
+        let eff = sel_rect.effective();
+        let on_bar = eff.is_some_and(|(t_start, t_end, key_lo, key_hi)| {
+            let pixel_rect = crate::view_interaction::music_sel_to_pixel_rect(
+                &view.base, view.key_height, t_start, t_end, key_lo, key_hi,
+            );
+            crate::widgets::selection_actions::compute_bar_rect(music_rect, pixel_rect)
+                .is_some_and(|bar| bar.contains(pos))
+        });
 
         if on_bar {
             // Don't start drag, don't clear anything — let the button handle it.
         } else {
             let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
-            // Check if clicking inside the selection rect → note-drag mode
-            let in_sel_rect = {
-                let persist_id = ui.id().with("sel_rect_persist");
-                let sel_music: Option<Option<(f64, f64, u8, u8)>> =
-                    ui.data_mut(|d| d.get_persisted(persist_id));
-                sel_music.flatten().is_some_and(|(t_start, t_end, key_lo, key_hi)| {
-                    let pixel_rect = crate::view_interaction::music_sel_to_pixel_rect(
-                        &view.base, view.key_height, t_start, t_end, key_lo, key_hi,
-                    );
-                    pixel_rect.contains(local)
-                })
-            };
+            let in_sel_rect = eff.is_some_and(|(t_start, t_end, key_lo, key_hi)| {
+                let pixel_rect = crate::view_interaction::music_sel_to_pixel_rect(
+                    &view.base, view.key_height, t_start, t_end, key_lo, key_hi,
+                );
+                pixel_rect.contains(local)
+            });
             if in_sel_rect {
                 let raw_tick = view.x_to_tick(local.x);
                 let tick = crate::view_interaction::snap_tick(raw_tick, quantize, ppq, bar_line_data);
                 let key = view.y_to_key(local.y) as f64;
                 note_drag_origin = Some((tick, key));
-                // Save current sel_rect_persist as drag origin
-                let persist_id = ui.id().with("sel_rect_persist");
-                let sel: Option<Option<(f64, f64, u8, u8)>> =
-                    ui.data_mut(|d| d.get_persisted(persist_id));
-                if let Some(Some(eff)) = sel {
-                    ui.data_mut(|d| d.insert_persisted(sel_origin_id, Some(eff)));
-                }
+                sel_rect.start_drag();
             } else {
                 // Not on selection rect → marquee selection
                 drag = Some((local, local));
                 if !cmd {
                     selected.clear();
                 }
-                let persist_id = ui.id().with("sel_rect_persist");
-                ui.data_mut(|d| d.insert_persisted(persist_id, Option::<(f64, f64, u8, u8)>::None));
-                ui.data_mut(|d| d.insert_persisted(sel_origin_id, Option::<(f64, f64, u8, u8)>::None));
+                sel_rect.rect = None;
             }
         }
     }
@@ -700,9 +608,7 @@ fn sel_drag_frame(
                 let dt = (snapped_tick - origin_tick).round() as i64;
                 let dk = (current_key - origin_key).round() as i32;
                 *note_drag_delta = Some((dt, dk));
-                // Persist delta so drawing code can offset the origin
-                let last_delta_id = note_drag_id.with("last_delta");
-                ui.data_mut(|d| d.insert_persisted(last_delta_id, Some((dt, dk))));
+                sel_rect.update_drag(dt, dk);
                 ui.ctx().request_repaint();
             }
         }
@@ -716,41 +622,9 @@ fn sel_drag_frame(
                 let dt = (snapped_tick - origin_tick).round() as i64;
                 let dk = (current_key - origin_key).round() as i32;
                 *note_drag_delta = Some((dt, dk));
-                // Persist delta so drawing code sees it on this frame
-                let last_delta_id = note_drag_id.with("last_delta");
-                ui.data_mut(|d| d.insert_persisted(last_delta_id, Some((dt, dk))));
+                sel_rect.update_drag(dt, dk);
             }
-            // Write origin + final delta to sel_rect_persist
-            let origin: Option<(f64, f64, u8, u8)> = {
-                let o: Option<Option<(f64, f64, u8, u8)>> =
-                    ui.data_mut(|d| d.get_persisted(sel_origin_id));
-                o.flatten()
-            };
-            if let Some((t_start, t_end, key_lo, key_hi)) = origin {
-                let last_delta_id = note_drag_id.with("last_delta");
-                let last_delta: Option<(i64, i32)> = {
-                    let d: Option<Option<(i64, i32)>> =
-                        ui.data_mut(|d| d.get_persisted(last_delta_id));
-                    d.flatten()
-                };
-                let (dt, dk) = last_delta.unwrap_or((0, 0));
-                let persist_id = ui.id().with("sel_rect_persist");
-                ui.data_mut(|d| {
-                    d.insert_persisted(
-                        persist_id,
-                        Some((
-                            t_start + dt as f64,
-                            t_end + dt as f64,
-                            (key_lo as i32 + dk).clamp(0, 127) as u8,
-                            (key_hi as i32 + dk).clamp(0, 127) as u8,
-                        )),
-                    )
-                });
-            }
-            // Clean up drag state (on NEXT frame, drawing falls back to sel_rect_persist)
-            ui.data_mut(|d| d.insert_persisted(sel_origin_id, Option::<(f64, f64, u8, u8)>::None));
-            let last_delta_id = note_drag_id.with("last_delta");
-            ui.data_mut(|d| d.insert_persisted(last_delta_id, Option::<(i64, i32)>::None));
+            sel_rect.end_drag();
             note_drag_origin = None;
         }
     }
@@ -786,20 +660,16 @@ fn sel_drag_frame(
 
         // Release -> hit test
         if pointer.primary_released() {
-            let persist_id = ui.id().with("sel_rect_persist");
             if let (Some(midi_ref), Some((start, end))) = (midi, drag) {
                 let drag_dist = (end - start).length();
 
                 if drag_dist < 3.0 {
-                    // Click (no meaningful drag) — set cursor, clear selection
                     let tick = view.x_to_tick(start.x);
                     let snapped = crate::view_interaction::snap_tick(tick, quantize, ppq, bar_line_data);
                     selected.clear();
                     *cursor_tick = Some(snapped.max(0.0));
-                    // Clear persisted selection rect on click
-                    ui.data_mut(|d| d.insert_persisted(persist_id, Option::<(f64, f64, u8, u8)>::None));
+                    sel_rect.rect = None;
                 } else {
-                    // Drag — existing marquee behavior
                     let (
                         _snapped_sx,
                         _snapped_ex,
@@ -822,8 +692,7 @@ fn sel_drag_frame(
                         }
                     }
 
-                    // Persist music coordinates for the floating action bar
-                    ui.data_mut(|d| d.insert_persisted(persist_id, Some((t_start, t_end, key_lo, key_hi))));
+                    sel_rect.rect = Some((t_start, t_end, key_lo, key_hi));
                 }
                 view.base.dirty = true;
             }
@@ -836,7 +705,7 @@ fn sel_drag_frame(
 }
 
 /// Check if a local coordinate hits any selected note.
-/// Read persisted drag state and draw the selection box on top of GPU content.
+/// Draws the active marquee selection box on top of GPU content.
 /// Must be called AFTER `render_ctx.paint` so the box is not covered by the texture.
 fn sel_draw_box(
     ui: &mut egui::Ui,

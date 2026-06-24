@@ -350,7 +350,7 @@ impl App {
                         &mut self.audio_settings.automation_display_mode,
                         &mut self.audio_settings.automation_show_dots,
                         &mut note_drag_delta,
-                        &mut self.pending_sel_rect_delta,
+                        &mut doc.edit.sel_rect,
                         doc.data.midi_version,
                     );
                     if let Some(t0) = _piano_total_start {

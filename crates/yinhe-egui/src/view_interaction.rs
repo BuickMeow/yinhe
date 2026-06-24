@@ -87,7 +87,7 @@ impl ViewInteraction for yinhe_arrangement::ArrangementView {
 
 /// Handle zoom/pan/cursor input for a view that implements ViewInteraction.
 ///
-/// When `existing_resp` is `Some`, it is used directly for click/drag/double-click
+/// When `existing_resp` is `Some`, it is used directly for click/drag
 /// detection instead of creating a new `click_and_drag` interact.  This avoids
 /// egui interaction conflicts when the caller's `allocate_painter` already owns
 /// the same rect (e.g. arrangement view inside a child UI).
@@ -225,12 +225,6 @@ pub(crate) fn handle_input(
         if is_playing && *follow_mode != FollowMode::None {
             *follow_mode = FollowMode::None;
         }
-        ui.ctx().request_repaint();
-    }
-
-    // Double-click to reset view
-    if content_resp.double_clicked() {
-        view.reset_to_default();
         ui.ctx().request_repaint();
     }
 }

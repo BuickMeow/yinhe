@@ -6,8 +6,81 @@ use crate::history::PendingEdits;
 use crate::playback::PlaybackState;
 use crate::quantize::QuantizePreset;
 
-/// Transient editing state. Not persisted to disk, not included in undo snapshots.
-/// Preserved across document switches (zoom/scroll live in App, not here).
+/// Selection rectangle state. Single source of truth for the visual selection box.
+/// Replaces scattered egui persisted data (sel_rect_persist, sel_drag_origin, last_delta).
+#[derive(Clone, Default)]
+pub struct SelRectState {
+    /// Current committed selection rect: (t_start, t_end, key_lo, key_hi).
+    pub rect: Option<(f64, f64, u8, u8)>,
+    /// Saved rect at drag start; never modified during drag.
+    pub drag_origin: Option<(f64, f64, u8, u8)>,
+    /// Current drag delta in (tick, key) units.
+    pub drag_delta: Option<(i64, i32)>,
+    /// Pending delta from duplicate/transpose; applied once then cleared.
+    pub pending_delta: Option<(i64, i32)>,
+}
+
+impl SelRectState {
+    fn offset_rect(rect: (f64, f64, u8, u8), dt: i64, dk: i32) -> (f64, f64, u8, u8) {
+        let (t0, t1, kl, kh) = rect;
+        (
+            t0 + dt as f64,
+            t1 + dt as f64,
+            (kl as i32 + dk).clamp(0, 127) as u8,
+            (kh as i32 + dk).clamp(0, 127) as u8,
+        )
+    }
+
+    /// Returns the effective selection rect:
+    /// - During drag: drag_origin + drag_delta
+    /// - Otherwise: rect
+    pub fn effective(&self) -> Option<(f64, f64, u8, u8)> {
+        if let (Some(origin), Some((dt, dk))) = (self.drag_origin, self.drag_delta) {
+            Some(Self::offset_rect(origin, dt, dk))
+        } else {
+            self.rect
+        }
+    }
+
+    /// Begin dragging: save current rect as origin, clear delta.
+    pub fn start_drag(&mut self) {
+        self.drag_origin = self.rect;
+        self.drag_delta = None;
+    }
+
+    /// Update drag delta.
+    pub fn update_drag(&mut self, dt: i64, dk: i32) {
+        self.drag_delta = Some((dt, dk));
+    }
+
+    /// End drag: commit origin + delta to rect, clear drag state.
+    pub fn end_drag(&mut self) {
+        if let (Some(origin), Some((dt, dk))) = (self.drag_origin, self.drag_delta) {
+            self.rect = Some(Self::offset_rect(origin, dt, dk));
+        }
+        self.drag_origin = None;
+        self.drag_delta = None;
+    }
+
+    /// Cancel drag without committing.
+    pub fn cancel_drag(&mut self) {
+        self.drag_origin = None;
+        self.drag_delta = None;
+    }
+
+    /// Apply pending delta from duplicate/transpose to rect.
+    pub fn apply_pending(&mut self) {
+        if let (Some(rect), Some((dt, dk))) = (self.rect, self.pending_delta) {
+            self.rect = Some(Self::offset_rect(rect, dt, dk));
+        }
+        self.pending_delta = None;
+    }
+}
+
+/// Transient editing state. Not persisted to disk.
+/// Selection (`selected` and `sel_rect`) is captured in undo snapshots; most
+/// other fields are not. Preserved across document switches (zoom/scroll live
+/// in App, not here).
 pub struct EditState {
     pub selected: HashSet<(u16, u32, u8)>,
     pub track_selected: HashSet<u16>,
@@ -31,6 +104,8 @@ pub struct EditState {
     pub pc_map_cache: HashMap<u8, u8>,
     /// Index of the conductor track, if detected.
     pub conductor_track_idx: Option<u16>,
+    /// Selection rectangle state.
+    pub sel_rect: SelRectState,
 }
 
 impl Default for EditState {
@@ -54,6 +129,7 @@ impl Default for EditState {
             track_info_cache: Vec::new(),
             pc_map_cache: HashMap::new(),
             conductor_track_idx: None,
+            sel_rect: SelRectState::default(),
         }
     }
 }
