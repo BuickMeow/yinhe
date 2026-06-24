@@ -60,23 +60,10 @@ impl TimeRulerView for yinhe_arrangement::ArrangementView {
 /// - medium → `bar.beat`
 /// - dense  → `bar.beat.sub_beat`
 /// - very dense → `bar.beat.tick` (e.g. `1.1.234`)
-pub(crate) fn paint(
-    painter: &egui::Painter,
-    rect: egui::Rect,
-    view: &impl TimeRulerView,
-    tpb: u32,
-    default_num: u8,
-    default_den: u8,
-    time_sig_events: &[TimeSigEvent],
-) {
-    // Clip to ruler rect so labels don't spill into keyboard / track-panel area
-    let clipped_painter = painter.clone().with_clip_rect(rect);
-    let painter = &clipped_painter;
-
-    // Background
+/// Paint the ruler background and bottom divider.
+fn paint_background(painter: &egui::Painter, rect: egui::Rect) {
     painter.rect_filled(rect, 0.0, theme::RULER_BG);
 
-    // Bottom divider
     let stroke = egui::Stroke::new(1.0, theme::RULER_DIVIDER);
     painter.line_segment(
         [
@@ -85,16 +72,50 @@ pub(crate) fn paint(
         ],
         stroke,
     );
+}
 
+/// Paint an interactive time ruler that also jumps the cursor when clicked or dragged.
+///
+/// `snap` receives the raw tick under the pointer and should return the snapped tick.
+/// `id_salt` must be unique for each ruler in the same UI scope (e.g. "piano_ruler"
+/// vs "arrange_ruler").
+pub(crate) fn interactive_ruler(
+    ui: &mut egui::Ui,
+    ruler_rect: egui::Rect,
+    view: &impl TimeRulerView,
+    tpb: u32,
+    default_num: u8,
+    default_den: u8,
+    time_sig_events: &[TimeSigEvent],
+    snap: impl Fn(f64) -> f64,
+    id_salt: &str,
+    cursor_tick: &mut Option<f64>,
+) {
+    let painter = ui.painter_at(ruler_rect);
+    paint_background(&painter, ruler_rect);
     paint_labels(
-        painter,
-        rect,
+        &painter,
+        ruler_rect,
         view,
         tpb,
         default_num,
         default_den,
         time_sig_events,
     );
+
+    let ruler_resp = ui.interact(
+        ruler_rect,
+        ui.id().with(id_salt),
+        egui::Sense::click_and_drag(),
+    );
+    if (ruler_resp.clicked() || ruler_resp.dragged())
+        && let Some(pos) = ruler_resp.interact_pointer_pos()
+    {
+        let view_x = pos.x - (ruler_rect.min.x - view.content_left());
+        let tick = view.x_to_tick(view_x);
+        *cursor_tick = Some(snap(tick).max(0.0));
+        ui.ctx().request_repaint();
+    }
 }
 
 // ── Label painting ──

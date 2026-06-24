@@ -81,39 +81,25 @@ pub fn show(
         let tpb = model.meta.ppq;
         let (def_num, def_den) = model.tempo_map.time_sig_default;
         let sig_events = model.tempo_map.time_sig_events.as_slice();
-        // Parent painter works in screen coordinates; paint_labels applies
-        // offset_x = rect.min.x - view.content_left() internally.
-        let ruler_painter = ui.painter();
-        crate::widgets::time_ruler::paint(
-            ruler_painter,
+        crate::widgets::time_ruler::interactive_ruler(
+            ui,
             ruler_rect,
             arr_view,
             tpb,
             def_num,
             def_den,
             sig_events,
+            |tick| {
+                crate::view_interaction::snap_tick(
+                    tick,
+                    doc.edit.quantize,
+                    tpb,
+                    Some((tpb, def_num, def_den, sig_events)),
+                )
+            },
+            "arrange_ruler",
+            &mut doc.edit.cursor_tick,
         );
-
-        // Click / drag on the ruler jumps the edit cursor (all tools).
-        let ruler_resp = ui.interact(
-            ruler_rect,
-            ui.id().with("arr_time_ruler_click"),
-            egui::Sense::click_and_drag(),
-        );
-        if (ruler_resp.clicked() || ruler_resp.dragged())
-            && let Some(pos) = ruler_resp.interact_pointer_pos()
-        {
-            let local_x = pos.x - ruler_rect.min.x;
-            let tick = arr_view.x_to_tick(local_x);
-            let snapped = crate::view_interaction::snap_tick(
-                tick,
-                doc.edit.quantize,
-                tpb,
-                Some((tpb, def_num, def_den, sig_events)),
-            );
-            doc.edit.cursor_tick = Some(snapped.max(0.0));
-            ui.ctx().request_repaint();
-        }
     }
 
     // ── Track panel content ──
