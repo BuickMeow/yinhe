@@ -4,6 +4,7 @@ use std::thread;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use crossbeam_channel::{Sender, TryRecvError, bounded, unbounded};
+use xsynth_core::soundfont::SoundfontBase;
 
 use yinhe_core::YinModel;
 
@@ -130,6 +131,20 @@ pub fn channels_for_model(model: &YinModel) -> (u32, Vec<bool>) {
 /// Internal command sent from the audio callback to the worker thread.
 enum WorkerCmd {
     PrepareModel(Arc<YinModel>),
+    LoadSoundFont {
+        port: u8,
+        paths: Vec<String>,
+        dense_channels: Vec<u32>,
+    },
+}
+
+enum WorkerResult {
+    PreparedModel(PreparedModel),
+    LoadedSoundFont {
+        port: u8,
+        soundfonts: Vec<Arc<dyn SoundfontBase>>,
+        dense_channels: Vec<u32>,
+    },
 }
 
 /// Spawn a background worker thread that processes heavy commands
@@ -138,12 +153,12 @@ fn spawn_worker(
     sample_rate: u32,
     active_mask: Vec<bool>,
     channel_map: Box<[u32; 256]>,
-) -> (Sender<WorkerCmd>, crossbeam_channel::Receiver<PreparedModel>) {
+) -> (Sender<WorkerCmd>, crossbeam_channel::Receiver<WorkerResult>) {
     let (cmd_tx, cmd_rx) = unbounded::<WorkerCmd>();
     // Bounded(1): if the worker produces a new result before the audio
     // callback consumed the old one, the worker blocks.  This naturally
     // throttles the UI from queuing redundant work.
-    let (result_tx, result_rx) = bounded::<PreparedModel>(1);
+    let (result_tx, result_rx) = bounded::<WorkerResult>(1);
 
     thread::Builder::new()
         .name("audio-worker".into())
@@ -153,7 +168,22 @@ fn spawn_worker(
                     WorkerCmd::PrepareModel(model) => {
                         let prepared =
                             crate::engine::prepare_model(&model, sample_rate, &active_mask, &channel_map);
-                        let _ = result_tx.send(prepared);
+                        let _ = result_tx.send(WorkerResult::PreparedModel(prepared));
+                    }
+                    WorkerCmd::LoadSoundFont {
+                        port,
+                        paths,
+                        dense_channels,
+                    } => {
+                        if let Ok(soundfonts) =
+                            crate::engine::AudioEngine::load_soundfont_paths(sample_rate, &paths)
+                        {
+                            let _ = result_tx.send(WorkerResult::LoadedSoundFont {
+                                port,
+                                soundfonts,
+                                dense_channels,
+                            });
+                        }
                     }
                 }
             }
@@ -227,12 +257,14 @@ pub fn spawn_cpal_audio(
                                         let _ = worker_tx.send(WorkerCmd::PrepareModel(model));
                                     }
                                     AudioCommand::LoadSoundFont { port, paths } => {
-                                        // TODO: async soundfont loading
-                                        // For now, process synchronously (SF loading is cached)
-                                        engine.handle_command(AudioCommand::LoadSoundFont {
-                                            port,
-                                            paths,
-                                        });
+                                        let dense_channels = engine.dense_channels_for_port(port);
+                                        if !dense_channels.is_empty() {
+                                            let _ = worker_tx.send(WorkerCmd::LoadSoundFont {
+                                                port,
+                                                paths,
+                                                dense_channels,
+                                            });
+                                        }
                                     }
                                     AudioCommand::Play { from_sample } => {
                                         if engine.model_loaded() {
@@ -257,15 +289,28 @@ pub fn spawn_cpal_audio(
                         }
                     }
 
-                    // Check for prepared model from worker
-                    match prepared_rx.try_recv() {
-                        Ok(prepared) => {
-                            dur.store(prepared.duration_samples, Ordering::Relaxed);
-                            engine.apply_prepared_model(prepared);
-                            initialized = true;
+                    // Check for prepared worker results
+                    loop {
+                        match prepared_rx.try_recv() {
+                            Ok(WorkerResult::PreparedModel(prepared)) => {
+                                dur.store(prepared.duration_samples, Ordering::Relaxed);
+                                engine.apply_prepared_model(prepared);
+                                initialized = true;
+                            }
+                            Ok(WorkerResult::LoadedSoundFont {
+                                port,
+                                soundfonts,
+                                dense_channels,
+                            }) => {
+                                engine.apply_loaded_soundfont_for_port(
+                                    port,
+                                    soundfonts,
+                                    &dense_channels,
+                                );
+                            }
+                            Err(TryRecvError::Empty) => break,
+                            Err(TryRecvError::Disconnected) => break,
                         }
-                        Err(TryRecvError::Empty) => {}
-                        Err(TryRecvError::Disconnected) => {}
                     }
 
                     pl.store(engine.playing(), Ordering::Relaxed);

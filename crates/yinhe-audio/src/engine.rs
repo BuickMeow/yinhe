@@ -5,6 +5,7 @@ use xsynth_core::channel::{ChannelAudioEvent, ChannelConfigEvent, ChannelEvent, 
 use xsynth_core::channel_group::{
     ChannelGroup, ChannelGroupConfig, ParallelismOptions, SynthEvent, SynthFormat,
 };
+use xsynth_core::soundfont::SoundfontBase;
 use xsynth_core::{AudioPipe, AudioStreamParams, ChannelCount};
 
 use yinhe_core::YinModel;
@@ -385,11 +386,66 @@ impl AudioEngine {
             return;
         }
 
-        let start = self.sample_position;
-        let end = start + frames as u64;
+        let block_start = self.sample_position;
+        let block_end = block_start + frames as u64;
+        let mut rendered_until = block_start;
+        let mut offset_frames = 0usize;
 
-        // Push CC events
-        while self.cc_cursor < self.cc_events.len() && self.cc_events[self.cc_cursor].sample < end {
+        while rendered_until < block_end {
+            let next_event_sample = self
+                .next_event_sample(rendered_until, block_end)
+                .unwrap_or(block_end)
+                .max(rendered_until)
+                .min(block_end);
+
+            if next_event_sample > rendered_until {
+                let segment_frames = (next_event_sample - rendered_until) as usize;
+                let start = offset_frames * STEREO_CHANNELS;
+                let end = (offset_frames + segment_frames) * STEREO_CHANNELS;
+                self.channel_group.read_samples(&mut output[start..end]);
+                rendered_until = next_event_sample;
+                offset_frames += segment_frames;
+            }
+
+            if rendered_until >= block_end {
+                break;
+            }
+
+            self.dispatch_events_at(rendered_until);
+        }
+
+        self.sample_position = block_end;
+    }
+
+    fn next_event_sample(&self, rendered_until: u64, block_end: u64) -> Option<u64> {
+        let mut next: Option<u64> = self
+            .cc_events
+            .get(self.cc_cursor)
+            .map(|cc| cc.sample)
+            .filter(|&sample| sample >= rendered_until && sample < block_end);
+
+        if self.model.is_some() {
+            for key in 0..128usize {
+                let cursor = self.note_cursor[key];
+                if let Some(note) = self.audible_notes[key].get(cursor) {
+                    if note.start_sample >= rendered_until && note.start_sample < block_end {
+                        next = Some(next.map_or(note.start_sample, |s| s.min(note.start_sample)));
+                    }
+                }
+            }
+
+            for note in &self.active_notes {
+                if note.end_sample >= rendered_until && note.end_sample < block_end {
+                    next = Some(next.map_or(note.end_sample, |s| s.min(note.end_sample)));
+                }
+            }
+        }
+
+        next
+    }
+
+    fn dispatch_events_at(&mut self, sample: u64) {
+        while self.cc_cursor < self.cc_events.len() && self.cc_events[self.cc_cursor].sample <= sample {
             let cc = &self.cc_events[self.cc_cursor];
             let dense = self
                 .channel_map
@@ -403,15 +459,12 @@ impl AudioEngine {
             self.cc_cursor += 1;
         }
 
-        let mut _notes_dispatched: usize = 0;
-
         if let Some(ref model) = self.model {
             for key in 0..128usize {
                 let notes = &self.audible_notes[key];
                 let mut cursor = self.note_cursor[key];
-                while cursor < notes.len() && notes[cursor].start_sample < end {
+                while cursor < notes.len() && notes[cursor].start_sample <= sample {
                     let note = &notes[cursor];
-
                     let track = note.track as usize;
                     if !self.skip_track.get(track).copied().unwrap_or(false) {
                         let ch = track_global_channel(model, track) as usize;
@@ -424,48 +477,39 @@ impl AudioEngine {
                                     vel: note.velocity,
                                 }),
                             ));
-
                             self.active_notes.push(ActiveNote {
                                 key: key as u8,
                                 channel: ch as u8,
                                 end_sample: note.end_sample,
                             });
-                            _notes_dispatched += 1;
                         }
                     }
-
                     cursor += 1;
                 }
                 self.note_cursor[key] = cursor;
             }
+        }
 
-            let channel_map = &self.channel_map;
-            self.ended_notes.clear();
-            self.active_notes.retain(|an| {
-                if an.end_sample < end {
-                    if an.end_sample >= start {
-                        self.ended_notes.push(*an);
-                    }
-                    false
-                } else {
-                    true
-                }
-            });
-            for an in &self.ended_notes {
-                if let Some(&dense) = channel_map.get(an.channel as usize) {
-                    if dense != u32::MAX {
-                        self.channel_group.send_event(SynthEvent::Channel(
-                            dense,
-                            ChannelEvent::Audio(ChannelAudioEvent::NoteOff { key: an.key }),
-                        ));
-                    }
+        let channel_map = &self.channel_map;
+        self.ended_notes.clear();
+        self.active_notes.retain(|an| {
+            if an.end_sample <= sample {
+                self.ended_notes.push(*an);
+                false
+            } else {
+                true
+            }
+        });
+        for an in &self.ended_notes {
+            if let Some(&dense) = channel_map.get(an.channel as usize) {
+                if dense != u32::MAX {
+                    self.channel_group.send_event(SynthEvent::Channel(
+                        dense,
+                        ChannelEvent::Audio(ChannelAudioEvent::NoteOff { key: an.key }),
+                    ));
                 }
             }
         }
-
-        self.channel_group.read_samples(&mut output[..frames * STEREO_CHANNELS]);
-
-        self.sample_position = end;
     }
 }
 
@@ -699,6 +743,19 @@ impl AudioEngine {
     }
 
     fn load_soundfont_for_port(&mut self, port: u8, paths: &[String]) {
+        let dense_channels = self.dense_channels_for_port(port);
+        if dense_channels.is_empty() {
+            return;
+        }
+        let _ = self.sf_manager.load_for_port_with_dense(
+            port,
+            paths,
+            &mut self.channel_group,
+            &dense_channels,
+        );
+    }
+
+    pub(crate) fn dense_channels_for_port(&self, port: u8) -> Vec<u32> {
         let base_src = (port as u32 * 16) as usize;
         let end_src = (base_src + 16).min(256);
         let mut dense_channels: Vec<u32> = Vec::with_capacity(16);
@@ -710,14 +767,30 @@ impl AudioEngine {
                 }
             }
         }
+        dense_channels
+    }
+
+    pub(crate) fn load_soundfont_paths(
+        sample_rate: u32,
+        paths: &[String],
+    ) -> Result<Vec<Arc<dyn SoundfontBase>>, String> {
+        SoundFontManager::new(sample_rate).load_paths(paths)
+    }
+
+    pub(crate) fn apply_loaded_soundfont_for_port(
+        &mut self,
+        port: u8,
+        soundfonts: Vec<Arc<dyn SoundfontBase>>,
+        dense_channels: &[u32],
+    ) {
         if dense_channels.is_empty() {
             return;
         }
-        let _ = self.sf_manager.load_for_port_with_dense(
+        self.sf_manager.apply_loaded_for_port_with_dense(
             port,
-            paths,
+            soundfonts,
             &mut self.channel_group,
-            &dense_channels,
+            dense_channels,
         );
     }
 
@@ -968,6 +1041,29 @@ mod tests {
         assert_eq!(cc[0].sample, 50);
         assert_eq!(cc[1].sample, 100);
         assert_eq!(cc[2].sample, 200);
+    }
+
+    #[test]
+    fn test_render_dispatches_note_inside_large_buffer_at_exact_sample() {
+        let model = make_model_with_notes(vec![(60, 960, 1440, 100, 0)]);
+        assert_eq!(model.key_notes_cache[60].len(), 1);
+        let model = Arc::new(model);
+        let mask = vec![true; 16];
+        let mut engine = AudioEngine::new(48000, 16, mask);
+        engine.load_model(&model);
+        engine.model = Some(Arc::clone(&model));
+        engine.playing = true;
+
+        assert_eq!(engine.audible_notes[60].len(), 1);
+        assert_eq!(engine.audible_notes[60][0].start_sample, 48000);
+        let output = vec![0.0f32; 60000 * STEREO_CHANNELS];
+        assert_eq!(engine.next_event_sample(0, 60000), Some(48000));
+        engine.dispatch_events_at(48000);
+
+        assert_eq!(engine.note_cursor[60], 1);
+        assert_eq!(engine.active_notes.len(), 1);
+        assert_eq!(engine.sample_position(), 0);
+        assert_eq!(output.len(), 60000 * STEREO_CHANNELS);
     }
 
     #[test]

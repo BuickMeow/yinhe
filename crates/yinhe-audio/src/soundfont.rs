@@ -100,13 +100,28 @@ impl SoundFontManager {
         cg: &mut ChannelGroup,
         dense_channels: &[u32],
     ) -> Result<(), String> {
+        let soundfonts = self.load_paths(paths)?;
+        self.apply_loaded_for_port_with_dense(port, soundfonts, cg, dense_channels);
+        Ok(())
+    }
+
+    pub fn load_paths(&self, paths: &[String]) -> Result<Vec<Arc<dyn SoundfontBase>>, String> {
         let mut soundfonts = Vec::new();
         for p in paths {
             let path = Path::new(p);
             let sf = self.load_soundfont(path)?;
             soundfonts.push(sf);
         }
+        Ok(soundfonts)
+    }
 
+    pub fn apply_loaded_for_port_with_dense(
+        &mut self,
+        port: u8,
+        soundfonts: Vec<Arc<dyn SoundfontBase>>,
+        cg: &mut ChannelGroup,
+        dense_channels: &[u32],
+    ) {
         self.port_sfs[port as usize] = soundfonts;
         sweep_unused();
 
@@ -117,8 +132,6 @@ impl SoundFontManager {
                 ChannelEvent::Config(ChannelConfigEvent::SetSoundfonts(sfs)),
             ));
         }
-
-        Ok(())
     }
 
     pub fn load_for_model(
