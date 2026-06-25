@@ -47,36 +47,38 @@ pub fn parse_bytes_with_encoding(
     mut progress: impl FnMut(LoadProgress),
 ) -> Result<YinModel, MidiError> {
     yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Midi, || {
-        let smf = midly::Smf::parse(data)?;
+        // 惰性解析：只切出 header + track 块迭代器，不构建全量事件树喵～
+        let (header, track_iter) = midly::parse(data)?;
 
-        let ticks_per_beat = match smf.header.timing {
+        let ticks_per_beat = match header.timing {
             midly::Timing::Metrical(t) => t.as_int() as u32,
             midly::Timing::Timecode(_, _) => TIMECODE_FALLBACK_TPB,
         };
 
         // Pass 1: collect conductor events (tempo + time-sig) across ALL tracks.
-        let conductor = collect_conductor(&smf.tracks);
+        // 克隆一个惰性迭代器逐事件扫描，扫完即丢，常驻 O(1)。
+        let conductor = collect_conductor(track_iter.clone())?;
 
         // Pass 2: per-track parse → TrackData.
         // Skip "conductor-only" tracks: those with no MIDI messages at all
         // (only meta events). These are typical of SMF format-1 files where
         // track 0 is a conductor track.
-        let total_tracks = smf.tracks.len();
+        let total_tracks = track_iter.clone().count();
         let mut tracks: Vec<TrackData> = Vec::with_capacity(total_tracks);
-        for (track_idx, raw_track) in smf.tracks.iter().enumerate() {
+        for (track_idx, track_result) in track_iter.enumerate() {
             progress(LoadProgress {
                 current_track: track_idx + 1,
                 total_tracks,
             });
-            if track_is_conductor_only(raw_track) {
-                continue;
+            let events = track_result?;
+            // parse_track 逐事件惰性消费 events，整个 track 的事件不会一次性驻留。
+            if let Some(mut td) = parse_track(events, track_idx, encoding)? {
+                // Set fallback name if MetaMessage::TrackName was missing.
+                if td.name.is_empty() {
+                    td.name = format!("Track {}", tracks.len() + 1);
+                }
+                tracks.push(td);
             }
-            let mut td = parse_track(raw_track, track_idx, encoding);
-            // Set fallback name if MetaMessage::TrackName was missing.
-            if td.name.is_empty() {
-                td.name = format!("Track {}", tracks.len() + 1);
-            }
-            tracks.push(td);
         }
 
         let meta = ProjectMeta {
@@ -100,13 +102,15 @@ pub fn parse_bytes_with_encoding(
 //  Conductor pass (across all tracks)
 // =========================================================
 
-fn collect_conductor(tracks: &[midly::Track]) -> ConductorData {
+fn collect_conductor(track_iter: midly::TrackIter) -> Result<ConductorData, MidiError> {
     let mut tempo: Vec<TempoEvent> = Vec::new();
     let mut time_sig: Vec<TimeSigEvent> = Vec::new();
 
-    for track in tracks {
+    for track_result in track_iter {
+        let events = track_result?;
         let mut tick: u32 = 0;
-        for ev in track {
+        for ev in events {
+            let ev = ev?;
             tick += ev.delta.as_int();
             match ev.kind {
                 midly::TrackEventKind::Meta(midly::MetaMessage::Tempo(us)) => {
@@ -135,18 +139,7 @@ fn collect_conductor(tracks: &[midly::Track]) -> ConductorData {
     time_sig.sort_by_key(|e| e.tick);
     time_sig.dedup_by_key(|e| e.tick);
 
-    ConductorData { tempo, time_sig }
-}
-
-/// True if a track has no MIDI messages (only meta events).
-///
-/// Such tracks are conductor tracks in SMF format-1 files; their tempo and
-/// time-signature events are already collected by `collect_conductor` and
-/// they shouldn't surface as a `TrackData`.
-fn track_is_conductor_only(track: &midly::Track) -> bool {
-    !track
-        .iter()
-        .any(|ev| matches!(ev.kind, midly::TrackEventKind::Midi { .. }))
+    Ok(ConductorData { tempo, time_sig })
 }
 
 // =========================================================
@@ -187,7 +180,11 @@ struct PendingBank {
     lsb: Option<(u8, u32)>, // (value, tick)
 }
 
-fn parse_track(track: &midly::Track, track_idx: usize, encoding: MidiImportEncoding) -> TrackData {
+fn parse_track(
+    events: midly::EventIter,
+    track_idx: usize,
+    encoding: MidiImportEncoding,
+) -> Result<Option<TrackData>, MidiError> {
     let mut td = TrackData::new(0, 0);
     td.uuid = uuid::Uuid::new_v4().to_string();
 
@@ -195,6 +192,10 @@ fn parse_track(track: &midly::Track, track_idx: usize, encoding: MidiImportEncod
     let mut current_port: u8 = 0;
     let mut active_notes: Vec<ActiveNote> = Vec::new();
     let mut first_global_channel: Option<u8> = None;
+    // Track whether this track carries any MIDI message. Conductor-only tracks
+    // (meta events only, typical of SMF format-1 track 0) are skipped — their
+    // tempo/time-sig were already collected by `collect_conductor`.
+    let mut has_midi_message = false;
 
     // RPN state per channel (channel 0..16).
     let mut rpn_state: [RpnState; 16] = [RpnState::default(); 16];
@@ -222,7 +223,8 @@ fn parse_track(track: &midly::Track, track_idx: usize, encoding: MidiImportEncod
     // CC101/100/6/38 we just stored on this channel. This is what yinhe-model
     // approximates by grouping by (track, tick).
 
-    for ev in track {
+    for ev in events {
+        let ev = ev?;
         current_tick += ev.delta.as_int();
         match ev.kind {
             midly::TrackEventKind::Meta(midly::MetaMessage::TrackName(name_bytes)) => {
@@ -237,6 +239,7 @@ fn parse_track(track: &midly::Track, track_idx: usize, encoding: MidiImportEncod
                 td.channel_prefix = Some(ch.as_int());
             }
             midly::TrackEventKind::Midi { channel, message } => {
+                has_midi_message = true;
                 let ch_raw = channel.as_int();
                 let global_ch = (current_port & 0x0F) << 4 | (ch_raw & 0x0F);
                 if first_global_channel.is_none() {
@@ -375,6 +378,11 @@ fn parse_track(track: &midly::Track, track_idx: usize, encoding: MidiImportEncod
         }
     }
 
+    // Skip conductor-only tracks (no MIDI messages at all).
+    if !has_midi_message {
+        return Ok(None);
+    }
+
     // Pin port/channel from first MIDI event seen, or default.
     let _ = track_idx; // (kept for future use)
     td.port = current_port;
@@ -408,7 +416,7 @@ fn parse_track(track: &midly::Track, track_idx: usize, encoding: MidiImportEncod
         v.sort_by_key(|e| e.tick);
     }
 
-    td
+    Ok(Some(td))
 }
 
 /// Match a NoteOff (or NoteOn vel=0) to the most recent matching NoteOn.
