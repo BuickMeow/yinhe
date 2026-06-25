@@ -266,7 +266,7 @@ impl YinModel {
 
         self.scan_index = Some(scan_index);
         self.tick_buckets = Some(tick_buckets);
-        self.key_notes_cache = key_notes.to_vec();
+        self.key_notes_cache = key_notes.into_iter().collect();
 
         // Pass 3: rebuild tempo_map (depends on tick_length we just computed).
         self.tempo_map = Arc::new(self.build_tempo_map());
