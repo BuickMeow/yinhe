@@ -18,6 +18,46 @@ fn main() {
                 model.note_count,
                 model.tracks.len(),
             );
+
+            // ── 派生结构内存分解 ──
+            const MB: f64 = 1_048_576.0;
+            let note_sz = std::mem::size_of::<yinhe_core::NoteEvent>();
+            let cachenote_sz = std::mem::size_of::<yinhe_types::Note>();
+
+            let src_notes: usize = model.tracks.iter().map(|t| t.notes.len()).sum();
+            let cache_notes: usize = model.key_notes_cache.iter().map(|v| v.len()).sum();
+            let cache_cap: usize = model.key_notes_cache.iter().map(|v| v.capacity()).sum();
+
+            eprintln!(
+                "[mem-probe]   源 TrackData.notes : {} 条 × {}B = {:.1} MB",
+                src_notes,
+                note_sz,
+                (src_notes * note_sz) as f64 / MB,
+            );
+            eprintln!(
+                "[mem-probe]   key_notes_cache    : {} 条 × {}B = {:.1} MB (cap {:.1} MB)",
+                cache_notes,
+                cachenote_sz,
+                (cache_notes * cachenote_sz) as f64 / MB,
+                (cache_cap * cachenote_sz) as f64 / MB,
+            );
+
+            if let Some(si) = &model.scan_index {
+                let blocks: usize = si.key_blocks.iter().map(|v| v.capacity()).sum();
+                let bsz = std::mem::size_of::<yinhe_types::ScanBlock>();
+                eprintln!(
+                    "[mem-probe]   scan_index         : {} blocks × {}B = {:.1} MB",
+                    blocks, bsz, (blocks * bsz) as f64 / MB,
+                );
+            }
+            if let Some(tb) = &model.tick_buckets {
+                let blocks: usize = tb.key_blocks.iter().map(|v| v.capacity()).sum();
+                let bsz = std::mem::size_of::<yinhe_types::Bucket>();
+                eprintln!(
+                    "[mem-probe]   tick_buckets       : {} buckets × {}B = {:.1} MB",
+                    blocks, bsz, (blocks * bsz) as f64 / MB,
+                );
+            }
         }
         Err(e) => eprintln!("[mem-probe] parse error: {e}"),
     }

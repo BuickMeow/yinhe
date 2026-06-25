@@ -231,19 +231,30 @@ impl YinModel {
     /// Call this after any mutation that changes notes, conductor, or
     /// track structure. O(N) where N = total note count.
     pub fn rebuild(&mut self) {
-        // Pass 1: scan all notes, build per-key buckets, compute counts.
-        let mut key_notes: [Vec<yinhe_types::Note>; 128] =
-            core::array::from_fn(|_| Vec::new());
+        // Pass 0: count notes per key so we can allocate each bucket exactly.
+        // Vec::push uses exponential (×2) growth, which for 128 buckets of a
+        // black MIDI leaves ~30% of capacity unused (hundreds of MB). Sizing
+        // each bucket up-front to its final length avoids that slack entirely.
+        let mut per_key_count = [0u32; 128];
         let mut note_count: u64 = 0;
         let mut max_tick: u64 = 0;
-
-        for (track_idx, track) in self.tracks.iter().enumerate() {
+        for track in self.tracks.iter() {
             for note in &track.notes {
                 note_count += 1;
+                per_key_count[note.key as usize] += 1;
                 let end = note.end_tick as u64;
                 if end > max_tick {
                     max_tick = end;
                 }
+            }
+        }
+
+        // Pass 1: fill per-key buckets (each pre-sized to its exact length).
+        let mut key_notes: [Vec<yinhe_types::Note>; 128] =
+            core::array::from_fn(|k| Vec::with_capacity(per_key_count[k] as usize));
+
+        for (track_idx, track) in self.tracks.iter().enumerate() {
+            for note in &track.notes {
                 key_notes[note.key as usize].push(yinhe_types::Note {
                     start_tick: note.start_tick,
                     end_tick: note.end_tick,
