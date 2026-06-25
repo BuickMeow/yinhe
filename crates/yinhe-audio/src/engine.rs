@@ -43,11 +43,56 @@ pub(crate) struct AudibleNote {
 /// Pre-computed model data, built on a worker thread and applied
 /// atomically on the audio thread.
 pub(crate) struct PreparedModel {
-    pub model: Arc<YinModel>,
+    pub model: AudioModel,
     pub cc_events: Vec<SortedCC>,
     pub duration_samples: u64,
     pub skip_track: Vec<bool>,
     pub audible_notes: [Vec<AudibleNote>; 128],
+}
+
+/// Lightweight per-track snapshot the audio engine actually needs.
+///
+/// The full `YinModel` carries `key_notes_cache` / `scan_index` /
+/// `tick_buckets` — hundreds of MB to GBs for black MIDI — none of which the
+/// audio thread touches (note scheduling runs off pre-built `audible_notes`).
+/// We extract only `(global_channel)` per track plus the CC0 bank-select
+/// events used for percussion-mode detection, so the audio thread holds a few
+/// KB instead of a full deep clone of the model.
+pub(crate) struct AudioModel {
+    /// `track_channels[i]` = global channel `(port<<4)|channel` for track `i`.
+    pub track_channels: Vec<u8>,
+    /// CC0 (Bank Select MSB) values per track, for percussion-mode detection.
+    /// Empty Vec for tracks with no CC0.
+    pub track_cc0: Vec<Vec<u8>>,
+    pub note_count: u64,
+}
+
+impl AudioModel {
+    fn from_model(model: &YinModel) -> Self {
+        let track_channels: Vec<u8> = (0..model.tracks.len())
+            .map(|i| track_global_channel(model, i))
+            .collect();
+        let track_cc0: Vec<Vec<u8>> = model
+            .tracks
+            .iter()
+            .map(|t| {
+                t.cc
+                    .get(&0)
+                    .map(|evs| evs.iter().map(|e| e.value).collect())
+                    .unwrap_or_default()
+            })
+            .collect();
+        Self {
+            track_channels,
+            track_cc0,
+            note_count: model.note_count,
+        }
+    }
+
+    /// Global channel for a track index, or 0 if out of range.
+    pub fn track_channel(&self, track_idx: usize) -> u8 {
+        self.track_channels.get(track_idx).copied().unwrap_or(0)
+    }
 }
 
 /// Build `PreparedModel` on a worker thread (no `&mut AudioEngine` needed).
@@ -205,7 +250,7 @@ pub(crate) fn prepare_model(
     }
 
     PreparedModel {
-        model: Arc::new(model.clone()),
+        model: AudioModel::from_model(model),
         cc_events,
         duration_samples,
         skip_track,
@@ -232,7 +277,7 @@ pub(crate) struct AudioEngine {
     cc_cursor: usize,
     active_notes: Vec<ActiveNote>,
     ended_notes: Vec<ActiveNote>,
-    model: Option<Arc<YinModel>>,
+    model: Option<AudioModel>,
     skip_track: Vec<bool>,
     /// Set when Play arrives during async model loading.
     pending_play_from_sample: Option<u64>,
@@ -359,13 +404,11 @@ impl AudioEngine {
             AudioCommand::LoadModel { model } => {
                 self.playing = false;
                 self.load_model(&model);
-                self.model = Some(model);
             }
             AudioCommand::ReloadNotes { model } => {
                 self.send_all_notes_off();
                 self.active_notes.clear();
                 self.load_model(&model);
-                self.model = Some(model);
             }
             AudioCommand::LoadSoundFont { port, paths } => {
                 self.load_soundfont_for_port(port, &paths);
@@ -467,7 +510,7 @@ impl AudioEngine {
                     let note = &notes[cursor];
                     let track = note.track as usize;
                     if !self.skip_track.get(track).copied().unwrap_or(false) {
-                        let ch = track_global_channel(model, track) as usize;
+                        let ch = model.track_channel(track) as usize;
                         let dense = self.channel_map.get(ch).copied().unwrap_or(u32::MAX);
                         if dense != u32::MAX {
                             self.channel_group.send_event(SynthEvent::Channel(
@@ -515,7 +558,8 @@ impl AudioEngine {
 
 impl AudioEngine {
     fn load_model(&mut self, model: &YinModel) {
-        self.setup_percussion(model);
+        let audio_model = AudioModel::from_model(model);
+        self.setup_percussion(&audio_model);
 
         self.cc_events.clear();
         self.cc_cursor = 0;
@@ -679,6 +723,8 @@ impl AudioEngine {
             }
             self.audible_notes[key] = audible;
         }
+
+        self.model = Some(audio_model);
     }
 
     /// Apply a `PreparedModel` computed on a worker thread.
@@ -705,7 +751,7 @@ impl AudioEngine {
 
 
 
-    fn setup_percussion(&mut self, model: &YinModel) {
+    fn setup_percussion(&mut self, model: &AudioModel) {
         // Drum channels in GM are channel 9 of each port (port*16 + 9).
         for (src_ch, &alive) in self.active_mask.iter().enumerate().take(256) {
             if !alive || src_ch % 16 != 9 {
@@ -722,22 +768,23 @@ impl AudioEngine {
         }
         // Honour CC0 (Bank Select MSB) values >= 120 as percussion-mode toggle,
         // matching the legacy MidiFile path.
-        for (track_idx, track) in model.tracks.iter().enumerate() {
-            if let Some(cc0_events) = track.cc.get(&0) {
-                let src_ch = track_global_channel(model, track_idx) as usize;
-                if src_ch >= 256 {
-                    continue;
-                }
-                let dense = self.channel_map[src_ch];
-                if dense == u32::MAX {
-                    continue;
-                }
-                for e in cc0_events {
-                    self.channel_group.send_event(SynthEvent::Channel(
-                        dense,
-                        ChannelEvent::Config(ChannelConfigEvent::SetPercussionMode(e.value >= 120)),
-                    ));
-                }
+        for (track_idx, cc0_values) in model.track_cc0.iter().enumerate() {
+            if cc0_values.is_empty() {
+                continue;
+            }
+            let src_ch = model.track_channel(track_idx) as usize;
+            if src_ch >= 256 {
+                continue;
+            }
+            let dense = self.channel_map[src_ch];
+            if dense == u32::MAX {
+                continue;
+            }
+            for &value in cc0_values {
+                self.channel_group.send_event(SynthEvent::Channel(
+                    dense,
+                    ChannelEvent::Config(ChannelConfigEvent::SetPercussionMode(value >= 120)),
+                ));
             }
         }
     }
@@ -1051,7 +1098,6 @@ mod tests {
         let mask = vec![true; 16];
         let mut engine = AudioEngine::new(48000, 16, mask);
         engine.load_model(&model);
-        engine.model = Some(Arc::clone(&model));
         engine.playing = true;
 
         assert_eq!(engine.audible_notes[60].len(), 1);
