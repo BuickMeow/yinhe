@@ -263,24 +263,30 @@ impl YinModel {
                 });
             }
         }
-        for bucket in key_notes.iter_mut() {
-            bucket.sort_by_key(|n| n.start_tick);
-        }
+        // The 128 buckets are independent — sort them in parallel.
+        use rayon::prelude::*;
+        key_notes
+            .par_iter_mut()
+            .for_each(|bucket| bucket.sort_by_key(|n| n.start_tick));
 
         self.note_count = note_count;
         self.tick_length = max_tick;
 
         // Pass 2: build scan_index + tick_buckets.
         const BUCKET_SIZE: u32 = 65536;
+        let _t_idx = std::time::Instant::now();
         let scan_index = yinhe_types::NoteScanIndex::build(&key_notes, max_tick);
         let tick_buckets = yinhe_types::TickBuckets::build(&key_notes, max_tick, BUCKET_SIZE);
+        eprintln!("[parse-time]   scan_index+tick_buckets: {:?}", _t_idx.elapsed());
 
         self.scan_index = Some(scan_index);
         self.tick_buckets = Some(tick_buckets);
         self.key_notes_cache = key_notes.into_iter().collect();
 
         // Pass 3: rebuild tempo_map (depends on tick_length we just computed).
+        let _t_tm = std::time::Instant::now();
         self.tempo_map = Arc::new(self.build_tempo_map());
+        eprintln!("[parse-time]   tempo_map: {:?}", _t_tm.elapsed());
     }
 }
 

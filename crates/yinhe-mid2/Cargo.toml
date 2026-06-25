@@ -8,6 +8,7 @@ yinhe-core = { path = "../yinhe-core" }
 yinhe-types = { path = "../yinhe-types" }
 yinhe-memtrace = { path = "../yinhe-memtrace" }
 midly = { workspace = true }
+rayon = { workspace = true }
 thiserror = { workspace = true }
 encoding_rs = "0.8"
 serde = { version = "1", features = ["derive"] }

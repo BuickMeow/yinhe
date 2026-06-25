@@ -6385,6 +6385,7 @@ dependencies = [
 name = "yinhe-core"
 version = "0.1.0"
 dependencies = [
+ "rayon",
  "serde",
  "uuid",
  "yinhe-types",
@@ -6463,6 +6464,7 @@ version = "0.1.0"
 dependencies = [
  "encoding_rs",
  "midly",
+ "rayon",
  "serde",
  "thiserror 2.0.18",
  "uuid",

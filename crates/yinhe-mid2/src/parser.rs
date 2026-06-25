@@ -8,6 +8,8 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use rayon::prelude::*;
+
 use yinhe_core::{
     CcEvent, ConductorData, NoteEvent, PcEvent, PitchBendEvent, ProjectMeta, RpnEvent, TempoEvent,
     TimeSigEvent, TrackData, YinModel,
@@ -59,26 +61,34 @@ pub fn parse_bytes_with_encoding(
         // 克隆一个惰性迭代器逐事件扫描，扫完即丢，常驻 O(1)。
         let conductor = collect_conductor(track_iter.clone())?;
 
-        // Pass 2: per-track parse → TrackData.
+        // Pass 2: per-track parse → TrackData, run in parallel across tracks.
+        // Each track parses independently (all state in parse_track is local),
+        // so we collect the per-track EventIters first, then fan them out with
+        // rayon. Results are gathered in original track order.
         // Skip "conductor-only" tracks: those with no MIDI messages at all
         // (only meta events). These are typical of SMF format-1 files where
         // track 0 is a conductor track.
-        let total_tracks = track_iter.clone().count();
+        let track_events: Vec<midly::EventIter> =
+            track_iter.clone().collect::<Result<Vec<_>, _>>()?;
+        let total_tracks = track_events.len();
+        progress(LoadProgress {
+            current_track: total_tracks,
+            total_tracks,
+        });
+
+        let parsed: Vec<Option<TrackData>> = track_events
+            .into_par_iter()
+            .enumerate()
+            .map(|(track_idx, events)| parse_track(events, track_idx, encoding))
+            .collect::<Result<Vec<_>, _>>()?;
+
+        // Drop skipped tracks and assign fallback names by final position.
         let mut tracks: Vec<TrackData> = Vec::with_capacity(total_tracks);
-        for (track_idx, track_result) in track_iter.enumerate() {
-            progress(LoadProgress {
-                current_track: track_idx + 1,
-                total_tracks,
-            });
-            let events = track_result?;
-            // parse_track 逐事件惰性消费 events，整个 track 的事件不会一次性驻留。
-            if let Some(mut td) = parse_track(events, track_idx, encoding)? {
-                // Set fallback name if MetaMessage::TrackName was missing.
-                if td.name.is_empty() {
-                    td.name = format!("Track {}", tracks.len() + 1);
-                }
-                tracks.push(td);
+        for mut td in parsed.into_iter().flatten() {
+            if td.name.is_empty() {
+                td.name = format!("Track {}", tracks.len() + 1);
             }
+            tracks.push(td);
         }
 
         let meta = ProjectMeta {
