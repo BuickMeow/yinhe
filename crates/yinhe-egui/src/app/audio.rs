@@ -199,25 +199,8 @@ impl App {
             doc.edit.playback.stop();
         }
 
-        // Sync cursor from audio position during playback
-        if handle.is_playing() {
-            let sample = handle.sample_position();
-            let now = std::time::Instant::now();
-            self.playback_anchor = Some((sample, now));
-            let time = sample as f64 / audio.sample_rate as f64;
-            let tick = doc.data.model.tempo_map.tick_at_time(time);
-            let end_tick = doc.data.model.tick_length as f64;
-            if tick >= end_tick {
-                handle.send(yinhe_audio::AudioCommand::Stop);
-                doc.edit.cursor_tick = Some(0.0);
-                doc.edit.playback.stop();
-                self.playback_anchor = None;
-            } else {
-                doc.edit.cursor_tick = Some(tick.max(0.0));
-            }
-        } else {
-            self.playback_anchor = None;
-        }
+        // 光标推进交给 interpolate_playback_cursor 独占处理～
+        // 这里千万不要每帧重置 playback_anchor，不然插值会被压成一帧、变得一卡一卡的喵！
     }
 
     /// Between audio callback updates, interpolate the cursor position
@@ -243,24 +226,26 @@ impl App {
         let now = std::time::Instant::now();
         let engine_sample = handle.sample_position();
 
-        // Determine the interpolated sample position.
+        // Anchor = the last time the engine's atomic sample position actually
+        // changed.  We only refresh it when engine_sample differs from the
+        // anchored sample, so `elapsed` accumulates the true wall-clock time
+        // since the audio callback last advanced the position.  Resetting the
+        // anchor every frame would collapse `elapsed` to a single frame and
+        // kill the interpolation (cursor would step once per callback).
         let interpolated_sample = match self.playback_anchor {
             Some((anchor_sample, anchor_time)) if engine_sample == anchor_sample => {
-                // Atomic hasn't changed since last frame — extrapolate from anchor.
+                // Atomic unchanged — extrapolate from the anchor.
                 let elapsed = now.saturating_duration_since(anchor_time);
-                let delta = elapsed.as_secs_f64() * sr;
-                (anchor_sample as f64 + delta) as u64
+                anchor_sample as f64 + elapsed.as_secs_f64() * sr
             }
             _ => {
-                // Atomic just advanced (or first frame) — use it as new anchor.
-                engine_sample
+                // Atomic advanced (or first frame) — re-anchor to it.
+                self.playback_anchor = Some((engine_sample, now));
+                engine_sample as f64
             }
         };
 
-        // Refresh anchor so the next frame can extrapolate from here.
-        self.playback_anchor = Some((engine_sample, now));
-
-        let time = interpolated_sample as f64 / sr;
+        let time = interpolated_sample / sr;
         let tick = doc.data.model.tempo_map.tick_at_time(time);
         let end_tick = doc.data.model.tick_length as f64;
         if tick >= end_tick {
