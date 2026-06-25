@@ -76,6 +76,11 @@ pub struct App {
     pub(crate) audio: Option<yinhe_audio::CpalAudioHandle>,
     pub(crate) audio_active_doc: Option<usize>,
 
+    // ── Playback cursor interpolation ──
+    /// Last known sample position from the audio engine, and the instant we read it.
+    /// Used to interpolate cursor position between callback updates.
+    pub(crate) playback_anchor: Option<(u64, std::time::Instant)>,
+
     // ── Settings ──
     pub(crate) audio_settings: crate::audio_settings::AudioSettings,
     /// Tracks the last applied MIDI encoding to detect changes.
@@ -206,6 +211,7 @@ impl App {
 
             audio: None,
             audio_active_doc: None,
+            playback_anchor: None,
 
             audio_settings: crate::audio_settings::load_audio_settings(),
             last_midi_encoding: yinhe_mid2::MidiImportEncoding::Utf8,

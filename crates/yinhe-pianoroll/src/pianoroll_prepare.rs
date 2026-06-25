@@ -107,6 +107,11 @@ pub fn prepare(
     });
 
     // Layer 2: notes
+    // Only the on-screen tick range is built, so the cache key MUST include
+    // scroll_x — scrolling produces a new viewport and must rebuild.  When
+    // scroll_x is unchanged (paused / static) the cache hits and nothing is
+    // rebuilt or re-uploaded.  build_notes looks back via the max_end index
+    // to include long notes that cross the left edge, so no padding is needed.
     let sel_hash = {
         let mut h = 0u64;
         for &(trk, tick, key) in selected.iter() {
@@ -123,15 +128,8 @@ pub fn prepare(
         }
         h
     };
-    // Quantized scroll_x: during playback scroll_x changes smoothly, so the
-    // cache stays valid for many frames.  Inside build_notes the tick range is
-    // padded by SCROLL_BUCKET/ppu on each side so cached notes cover the full
-    // bucket range.  The GPU clips off-screen notes.
-    const SCROLL_BUCKET: f32 = 500.0;
-    let scroll_bucket = (scroll_x / SCROLL_BUCKET) as i64 as u64;
-    let tick_pad = (SCROLL_BUCKET / ppu) as f64;
     let notes_key = layer_cache_key(&[
-        scroll_bucket,
+        scroll_x_pos.to_bits() as u64,
         scroll_y.to_bits() as u64,
         ppu.to_bits() as u64,
         kh.to_bits() as u64,
@@ -144,7 +142,7 @@ pub fn prepare(
     ]);
     renderer.upload_layer(2, notes_key, |out| {
         if let Some(midi) = midi {
-            instances::build_notes(out, w, h, midi, view, selected, track_visible, track_colors, tick_pad);
+            instances::build_notes(out, w, h, midi, view, selected, track_visible, track_colors);
         }
     });
 

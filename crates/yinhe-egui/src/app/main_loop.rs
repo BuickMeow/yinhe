@@ -135,6 +135,9 @@ impl eframe::App for App {
             kb.stop_play || transport_response.stop_play,
         );
 
+        // ── Smooth cursor interpolation between audio callback updates ──
+        self.interpolate_playback_cursor();
+
         if let (Some(idx), Some(new_preset)) =
             (self.active_doc, transport_response.pending_quantize)
             && let Some(doc) = self.documents.get_mut(idx)

@@ -88,9 +88,8 @@ pub fn build_grid(
 /// Dependencies: scroll_y, key_height, selection, track_visible
 /// x/w store ticks (shader converts to pixels), y/h store pixel positions.
 ///
-/// `tick_pad`: extra ticks to include on each side of the visible range.
-/// Used when scroll_x is quantized in the cache key — ensures cached notes
-/// cover the full bucket range.
+/// Padding: one screen width on each side of the visible tick range,
+/// so fast scrolling doesn't flash empty space before the cache rebuilds.
 pub fn build_notes(
     out: &mut Vec<NoteInstance>,
     w: f32,
@@ -100,21 +99,23 @@ pub fn build_notes(
     selected: &std::collections::HashSet<(u16, u32, u8)>,
     track_visible: &[bool],
     track_colors: &[[f32; 3]],
-    tick_pad: f64,
 ) {
-    let kb_w = view.keyboard_width();
     let kh = view.key_height;
     let bottom = 128.0 * kh - view.base.scroll_y;
     let (tick_start, tick_end) = view.visible_tick_range(w);
     let (key_lo, key_hi) = view.visible_key_range(h);
     let has_selection = !selected.is_empty();
-    let pad_start = (tick_start - tick_pad).max(0.0);
-    let pad_end = tick_end + tick_pad;
+    // Only build notes whose visible interval overlaps the current viewport.
+    // key_notes_in_range looks back via the max_end index, so any note that
+    // starts off-screen-left but extends into view is still included — no
+    // padding required, regardless of note length.
+    let range_start = tick_start.max(0.0);
+    let range_end = tick_end;
 
     let results: Vec<Vec<NoteInstance>> = (key_lo..=key_hi)
         .into_par_iter()
         .filter_map(|key| {
-            let notes = midi.key_notes_in_range(key, pad_start as u32, pad_end as u32);
+            let notes = midi.key_notes_in_range(key, range_start as u32, range_end as u32);
             if notes.is_empty() {
                 return None;
             }
@@ -124,10 +125,10 @@ pub fn build_notes(
             let mut local = Vec::new();
 
             for note in notes {
-                if note.start_tick as f64 > pad_end {
+                if note.start_tick as f64 > range_end {
                     break;
                 }
-                if (note.end_tick as f64) < pad_start {
+                if (note.end_tick as f64) < range_start {
                     continue;
                 }
                 if !track_visible
@@ -231,7 +232,6 @@ pub fn build_static_instances(
             selected,
             track_visible,
             track_colors,
-            0.0,
         );
     }
 
@@ -401,7 +401,7 @@ mod tests {
         let track_visible = vec![true];
         let track_colors = [[0.5, 0.5, 0.5]];
 
-        build_notes(&mut out, 800.0, 500.0, &midi, &view, &selected, &track_visible, &track_colors, 0.0);
+        build_notes(&mut out, 800.0, 500.0, &midi, &view, &selected, &track_visible, &track_colors);
         assert!(!out.is_empty(), "should produce note instances");
         let note = &out[0];
         assert_eq!(note.x, 0.0);
@@ -418,7 +418,7 @@ mod tests {
         let selected = std::collections::HashSet::new();
         let track_visible = vec![false];
 
-        build_notes(&mut out, 800.0, 500.0, &midi, &view, &selected, &track_visible, &[], 0.0);
+        build_notes(&mut out, 800.0, 500.0, &midi, &view, &selected, &track_visible, &[]);
         assert!(out.is_empty(), "notes on hidden track should be skipped");
     }
 
@@ -432,7 +432,7 @@ mod tests {
         let track_visible = vec![true];
         let track_colors = [[0.5, 0.5, 0.5]];
 
-        build_notes(&mut out, 800.0, 500.0, &midi, &view, &selected, &track_visible, &track_colors, 0.0);
+        build_notes(&mut out, 800.0, 500.0, &midi, &view, &selected, &track_visible, &track_colors);
         assert_eq!(out[0].tag, 1, "selected note should have tag=1");
     }
 
@@ -445,7 +445,7 @@ mod tests {
         let track_visible = vec![true];
         let track_colors = [[0.5, 0.5, 0.5]];
 
-        build_notes(&mut out, 800.0, 500.0, &midi, &view, &selected, &track_visible, &track_colors, 0.0);
+        build_notes(&mut out, 800.0, 500.0, &midi, &view, &selected, &track_visible, &track_colors);
         assert_eq!(out[0].tag, 0, "unselected note should have tag=0");
     }
 
@@ -462,22 +462,48 @@ mod tests {
         let track_visible = vec![true];
         let track_colors = [[0.5, 0.5, 0.5]];
 
-        build_notes(&mut out, 800.0, 500.0, &midi, &view, &selected, &track_visible, &track_colors, 0.0);
+        build_notes(&mut out, 800.0, 500.0, &midi, &view, &selected, &track_visible, &track_colors);
         assert_eq!(out.len(), 3, "should produce 3 note instances");
     }
 
     #[test]
-    fn test_build_notes_tick_pad() {
+    fn test_build_notes_long_note_crossing_left_edge() {
+        // A note that starts far off-screen-left but extends into the viewport
+        // must still be built (no padding; relies on the max_end look-back).
         let mut out = Vec::new();
-        let midi = make_midi(vec![(100, 1000, 1480, 0, 100)]);
+        // Note spans tick 0..100000, key 100.
+        let midi = make_midi(vec![(100, 0, 100000, 0, 100)]);
         let mut view = make_view();
-        view.base.scroll_x = 0.0;
+        // Scroll right so the note's start is far off-screen to the left,
+        // but its body still covers the viewport.
+        view.base.scroll_x = 5000.0;
         let selected = std::collections::HashSet::new();
         let track_visible = vec![true];
         let track_colors = [[0.5, 0.5, 0.5]];
 
-        build_notes(&mut out, 800.0, 500.0, &midi, &view, &selected, &track_visible, &track_colors, 500.0);
-        assert!(!out.is_empty(), "note should be included with tick_pad");
+        build_notes(&mut out, 800.0, 500.0, &midi, &view, &selected, &track_visible, &track_colors);
+        assert!(
+            !out.is_empty(),
+            "long note crossing the left edge must be included"
+        );
+    }
+
+    #[test]
+    fn test_build_notes_skips_fully_offscreen() {
+        // A short note entirely to the left of the viewport must NOT be built.
+        let mut out = Vec::new();
+        let midi = make_midi(vec![(100, 0, 480, 0, 100)]);
+        let mut view = make_view();
+        view.base.scroll_x = 5000.0; // viewport starts well past tick 480
+        let selected = std::collections::HashSet::new();
+        let track_visible = vec![true];
+        let track_colors = [[0.5, 0.5, 0.5]];
+
+        build_notes(&mut out, 800.0, 500.0, &midi, &view, &selected, &track_visible, &track_colors);
+        assert!(
+            out.is_empty(),
+            "note fully off-screen-left must be culled"
+        );
     }
 
     #[test]

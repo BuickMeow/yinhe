@@ -202,6 +202,8 @@ impl App {
         // Sync cursor from audio position during playback
         if handle.is_playing() {
             let sample = handle.sample_position();
+            let now = std::time::Instant::now();
+            self.playback_anchor = Some((sample, now));
             let time = sample as f64 / audio.sample_rate as f64;
             let tick = doc.data.model.tempo_map.tick_at_time(time);
             let end_tick = doc.data.model.tick_length as f64;
@@ -209,9 +211,65 @@ impl App {
                 handle.send(yinhe_audio::AudioCommand::Stop);
                 doc.edit.cursor_tick = Some(0.0);
                 doc.edit.playback.stop();
+                self.playback_anchor = None;
             } else {
                 doc.edit.cursor_tick = Some(tick.max(0.0));
             }
+        } else {
+            self.playback_anchor = None;
+        }
+    }
+
+    /// Between audio callback updates, interpolate the cursor position
+    /// using the last known anchor + elapsed wall-clock time.
+    /// Call this every frame during playback for smooth cursor motion.
+    pub(crate) fn interpolate_playback_cursor(&mut self) {
+        let (idx, audio) = match (self.active_doc, &self.audio) {
+            (Some(idx), Some(audio)) => (idx, audio),
+            _ => return,
+        };
+        let handle = &audio.handle;
+        if !handle.is_playing() {
+            self.playback_anchor = None;
+            return;
+        }
+
+        let sr = audio.sample_rate as f64;
+        let doc = match self.documents.get_mut(idx) {
+            Some(doc) => doc,
+            None => return,
+        };
+
+        let now = std::time::Instant::now();
+        let engine_sample = handle.sample_position();
+
+        // Determine the interpolated sample position.
+        let interpolated_sample = match self.playback_anchor {
+            Some((anchor_sample, anchor_time)) if engine_sample == anchor_sample => {
+                // Atomic hasn't changed since last frame — extrapolate from anchor.
+                let elapsed = now.saturating_duration_since(anchor_time);
+                let delta = elapsed.as_secs_f64() * sr;
+                (anchor_sample as f64 + delta) as u64
+            }
+            _ => {
+                // Atomic just advanced (or first frame) — use it as new anchor.
+                engine_sample
+            }
+        };
+
+        // Refresh anchor so the next frame can extrapolate from here.
+        self.playback_anchor = Some((engine_sample, now));
+
+        let time = interpolated_sample as f64 / sr;
+        let tick = doc.data.model.tempo_map.tick_at_time(time);
+        let end_tick = doc.data.model.tick_length as f64;
+        if tick >= end_tick {
+            handle.send(yinhe_audio::AudioCommand::Stop);
+            doc.edit.cursor_tick = Some(0.0);
+            doc.edit.playback.stop();
+            self.playback_anchor = None;
+        } else {
+            doc.edit.cursor_tick = Some(tick.max(0.0));
         }
     }
 
