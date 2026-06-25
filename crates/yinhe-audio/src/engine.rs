@@ -557,7 +557,6 @@ impl AudioEngine {
         self.cc_events.clear();
         self.cc_cursor = 0;
         self.active_notes.clear();
-        self.active_notes.reserve(model.note_count as usize);
         let sr = self.sample_rate as f64;
 
         // Flatten control events from each track and convert to ChannelAudioEvents.
@@ -664,7 +663,6 @@ impl AudioEngine {
         self.cc_events = prepared.cc_events;
         self.cc_cursor = 0;
         self.active_notes.clear();
-        self.active_notes.reserve(prepared.model.note_count as usize);
         self.duration_samples = prepared.duration_samples;
         self.skip_track = prepared.skip_track;
         self.note_cursor = [0; 128];
