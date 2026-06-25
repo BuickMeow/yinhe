@@ -154,10 +154,10 @@ pub(crate) fn prepare_model(
 
     let segments = &model.tempo_map.tempo_segments;
     let tpb = model.tempo_map.ticks_per_beat;
-    let mut seg_start = 0usize;
-    let mut seg_end = 0usize;
     let mut audible_notes: [Vec<AudibleNote>; 128] = core::array::from_fn(|_| Vec::new());
     for key in 0..128usize {
+        let mut seg_start = 0usize;
+        let mut seg_end = 0usize;
         let mut audible = Vec::new();
         for note in &model.key_notes_cache[key] {
             if note.velocity > 1 {
@@ -586,9 +586,9 @@ impl AudioEngine {
         self.note_cursor = [0; 128];
         let segments = &model.tempo_map.tempo_segments;
         let tpb = model.tempo_map.ticks_per_beat;
-        let mut seg_start = 0usize;
-        let mut seg_end = 0usize;
         for key in 0..128usize {
+            let mut seg_start = 0usize;
+            let mut seg_end = 0usize;
             let mut audible = Vec::new();
             for note in &model.key_notes_cache[key] {
                 if note.velocity > 1 {
@@ -1061,6 +1061,51 @@ mod tests {
         for key in 0..128usize {
             assert_eq!(engine.note_cursor[key], 0);
         }
+    }
+
+    #[test]
+    fn test_audible_index_uses_per_key_tempo_cursor() {
+        let conductor = ConductorData {
+            tempo: vec![
+                TempoEvent { tick: 0, bpm: 120.0 },
+                TempoEvent { tick: 1000, bpm: 60.0 },
+            ],
+            time_sig: Vec::new(),
+        };
+        let mut t = TrackData::new(0, 0);
+        t.notes = vec![
+            NoteEvent {
+                start_tick: 2000,
+                end_tick: 2480,
+                key: 0,
+                velocity: 100,
+                dup_index: 0,
+            },
+            NoteEvent {
+                start_tick: 480,
+                end_tick: 960,
+                key: 60,
+                velocity: 100,
+                dup_index: 0,
+            },
+        ];
+        let mut model = YinModel {
+            conductor: Arc::new(conductor),
+            tracks: vec![Arc::new(t)],
+            meta: ProjectMeta {
+                ppq: 480,
+                ..ProjectMeta::default()
+            },
+            ..Default::default()
+        };
+        model.rebuild();
+
+        let mask = vec![true; 16];
+        let mut engine = AudioEngine::new(48000, 16, mask);
+        engine.load_model(&Arc::new(model));
+
+        assert_eq!(engine.audible_notes[0][0].start_sample, 150000);
+        assert_eq!(engine.audible_notes[60][0].start_sample, 24000);
     }
 
     #[test]
