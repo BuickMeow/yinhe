@@ -1,7 +1,7 @@
 use std::time::Instant;
 
 use eframe::egui;
-use sysinfo::{Pid, ProcessesToUpdate, System};
+use sysinfo::{CpuRefreshKind, Pid, ProcessesToUpdate, System};
 
 use crate::app::App;
 use yinhe_memtrace::{AllocTag, Snapshot};
@@ -16,8 +16,10 @@ pub(crate) struct SystemMonitor {
 
 impl SystemMonitor {
     pub fn new() -> Self {
+        let mut sysinfo = System::new();
+        sysinfo.refresh_cpu_list(CpuRefreshKind::everything());
         Self {
-            sysinfo: System::new(),
+            sysinfo,
             self_pid: sysinfo::get_current_pid().ok(),
             last_refresh: Instant::now(),
             cpu_usage: 0.0,
@@ -34,7 +36,8 @@ impl SystemMonitor {
                     .sysinfo
                     .refresh_processes(ProcessesToUpdate::Some(&[pid]), false);
                 if let Some(p) = self.sysinfo.process(pid) {
-                    self.cpu_usage = p.cpu_usage();
+                    let num_cpus = self.sysinfo.cpus().len().max(1) as f32;
+                    self.cpu_usage = p.cpu_usage() / num_cpus;
                     self.mem_mb = p.memory() as f64 / 1_048_576.0;
                 }
             }
