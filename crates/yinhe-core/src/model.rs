@@ -57,6 +57,9 @@ pub struct TrackData {
     pub muted: bool,
     pub soloed: bool,
 
+    /// Notes are stored in `YinModel.notes` (by-key store).
+    /// This field is only used during parsing and is moved out
+    /// by `YinModel::load_track_notes`. At runtime it is empty.
     pub notes: Vec<NoteEvent>,
     pub cc: BTreeMap<u8, Vec<CcEvent>>,
     pub pitch_bend: Vec<PitchBendEvent>,
@@ -121,6 +124,10 @@ impl Default for ProjectMeta {
 
 /// The single source of truth for a Yinhe project.
 ///
+/// All note data lives in the `notes` array (by key, sorted by start_tick).
+/// `TrackData` no longer stores notes — they are accessed via `notes[key]`
+/// and filtered by `note.track` when per-track iteration is needed.
+///
 /// Tracks are held in `Arc<TrackData>` for cheap clone-on-write editing
 /// (C1 mode). The conductor is also Arc to avoid copying it when only
 /// a track changes. tempo_map is derived from conductor.
@@ -131,12 +138,16 @@ pub struct YinModel {
     pub tempo_map: Arc<TempoMap>,
     pub meta: ProjectMeta,
 
-    // Derived caches (rebuilt by `rebuild()`).
-    /// `key_notes_cache[k]` = all notes with `note.key == k`, sorted by start_tick.
+    /// Single authoritative note store: `notes[key]` = all notes at that key,
+    /// sorted by start_tick. Each note carries its track index and dup_index.
     /// Compatible with `yinhe_types::NoteSource`.
-    pub key_notes_cache: Vec<Vec<yinhe_types::Note>>,
+    pub notes: [Vec<yinhe_types::Note>; 128],
     pub note_count: u64,
     pub tick_length: u64,
+    /// Per-track note count cache (avoids scanning 128 buckets for stats).
+    pub track_note_count: Vec<u64>,
+    /// Per-track "has audible notes" cache (velocity > 1).
+    pub track_has_audio_cache: Vec<bool>,
 
     // Optional indices for fast range queries.
     pub scan_index: Option<yinhe_types::NoteScanIndex>,
@@ -150,9 +161,11 @@ impl Default for YinModel {
             tracks: Vec::new(),
             tempo_map: Arc::new(TempoMap::default()),
             meta: ProjectMeta::default(),
-            key_notes_cache: (0..128).map(|_| Vec::new()).collect(),
+            notes: core::array::from_fn(|_| Vec::new()),
             note_count: 0,
             tick_length: 0,
+            track_note_count: Vec::new(),
+            track_has_audio_cache: Vec::new(),
             scan_index: None,
             tick_buckets: None,
         }
@@ -226,67 +239,136 @@ impl YinModel {
         }
     }
 
-    /// Rebuild all derived data from scratch.
+    /// Distribute per-track notes into the by-key store.
     ///
-    /// Call this after any mutation that changes notes, conductor, or
-    /// track structure. O(N) where N = total note count.
-    pub fn rebuild(&mut self) {
-        // Pass 0: count notes per key so we can allocate each bucket exactly.
-        // Vec::push uses exponential (×2) growth, which for 128 buckets of a
-        // black MIDI leaves ~30% of capacity unused (hundreds of MB). Sizing
-        // each bucket up-front to its final length avoids that slack entirely.
+    /// Called once during parsing. After this, `TrackData` no longer
+    /// holds notes — the by-key `self.notes` is the single source.
+    /// Also computes `note_count`, `tick_length`, and `track_note_count`
+    /// in the same pass (avoids a second full scan in `rebuild()`).
+    pub fn load_track_notes(&mut self, per_track_notes: Vec<Vec<NoteEvent>>) {
+        // Count per key for exact allocation.
         let mut per_key_count = [0u32; 128];
+        for notes in per_track_notes.iter() {
+            for note in notes {
+                per_key_count[note.key as usize] += 1;
+            }
+        }
+
+        // Allocate and fill each bucket, counting in one pass.
+        let mut key_notes: [Vec<yinhe_types::Note>; 128] =
+            core::array::from_fn(|k| Vec::with_capacity(per_key_count[k] as usize));
+
         let mut note_count: u64 = 0;
         let mut max_tick: u64 = 0;
-        for track in self.tracks.iter() {
-            for note in &track.notes {
-                note_count += 1;
-                per_key_count[note.key as usize] += 1;
+        let mut track_counts: Vec<u64> = vec![0u64; self.tracks.len()];
+        let mut track_has_audio: Vec<bool> = vec![false; self.tracks.len()];
+
+        for (track_idx, notes) in per_track_notes.into_iter().enumerate() {
+            for note in notes {
                 let end = note.end_tick as u64;
                 if end > max_tick {
                     max_tick = end;
                 }
-            }
-        }
-
-        // Pass 1: fill per-key buckets (each pre-sized to its exact length).
-        let mut key_notes: [Vec<yinhe_types::Note>; 128] =
-            core::array::from_fn(|k| Vec::with_capacity(per_key_count[k] as usize));
-
-        for (track_idx, track) in self.tracks.iter().enumerate() {
-            for note in &track.notes {
+                note_count += 1;
+                if (track_idx as usize) < track_counts.len() {
+                    track_counts[track_idx as usize] += 1;
+                }
+                if note.velocity > 1 {
+                    if (track_idx as usize) < track_has_audio.len() {
+                        track_has_audio[track_idx as usize] = true;
+                    }
+                }
                 key_notes[note.key as usize].push(yinhe_types::Note {
                     start_tick: note.start_tick,
                     end_tick: note.end_tick,
                     velocity: note.velocity,
+                    dup_index: note.dup_index,
                     track: track_idx as u16,
                 });
             }
         }
-        // The 128 buckets are independent — sort them in parallel.
+
+        self.notes = key_notes;
+        self.note_count = note_count;
+        self.tick_length = max_tick;
+        self.track_note_count = track_counts;
+        self.track_has_audio_cache = track_has_audio;
+    }
+
+    /// Rebuild all derived data from scratch.
+    ///
+    /// Call this after any mutation that changes notes, conductor, or
+    /// track structure. O(N) where N = total note count.
+    ///
+    /// This operates on `self.notes` (the by-key store) directly — no
+    /// longer reads from `TrackData.notes`.
+    ///
+    /// Note: `note_count` and `track_note_count` are maintained by
+    /// `load_track_notes` and by edit operations. `rebuild()` only
+    /// sorts buckets and rebuilds indices.
+    pub fn rebuild(&mut self) {
+        // Sort all 128 buckets in parallel.
         use rayon::prelude::*;
-        key_notes
+        self.notes
             .par_iter_mut()
             .for_each(|bucket| bucket.sort_by_key(|n| n.start_tick));
 
+        // Recompute note_count, max_tick, track_note_count, track_has_audio_cache
+        // (may have changed after edits or track insertions).
+        let mut note_count: u64 = 0;
+        let mut max_tick: u64 = 0;
+        let mut track_counts: Vec<u64> = vec![0u64; self.tracks.len()];
+        let mut track_has_audio: Vec<bool> = vec![false; self.tracks.len()];
+        for bucket in self.notes.iter() {
+            note_count += bucket.len() as u64;
+            for n in bucket {
+                let end = n.end_tick as u64;
+                if end > max_tick {
+                    max_tick = end;
+                }
+                if (n.track as usize) < track_counts.len() {
+                    track_counts[n.track as usize] += 1;
+                }
+                if n.velocity > 1 {
+                    if (n.track as usize) < track_has_audio.len() {
+                        track_has_audio[n.track as usize] = true;
+                    }
+                }
+            }
+        }
         self.note_count = note_count;
         self.tick_length = max_tick;
+        self.track_note_count = track_counts;
+        self.track_has_audio_cache = track_has_audio;
 
-        // Pass 2: build scan_index + tick_buckets.
+        // Build scan_index + tick_buckets.
         const BUCKET_SIZE: u32 = 65536;
-        let _t_idx = std::time::Instant::now();
-        let scan_index = yinhe_types::NoteScanIndex::build(&key_notes, max_tick);
-        let tick_buckets = yinhe_types::TickBuckets::build(&key_notes, max_tick, BUCKET_SIZE);
-        eprintln!("[parse-time]   scan_index+tick_buckets: {:?}", _t_idx.elapsed());
+        let scan_index = yinhe_types::NoteScanIndex::build(&self.notes, max_tick);
+        let tick_buckets = yinhe_types::TickBuckets::build(&self.notes, max_tick, BUCKET_SIZE);
 
         self.scan_index = Some(scan_index);
         self.tick_buckets = Some(tick_buckets);
-        self.key_notes_cache = key_notes.into_iter().collect();
 
-        // Pass 3: rebuild tempo_map (depends on tick_length we just computed).
-        let _t_tm = std::time::Instant::now();
+        // Rebuild tempo_map (depends on tick_length we just computed).
         self.tempo_map = Arc::new(self.build_tempo_map());
-        eprintln!("[parse-time]   tempo_map: {:?}", _t_tm.elapsed());
+    }
+
+    /// Iterate all notes belonging to a specific track.
+    ///
+    /// Scans all 128 key buckets and yields notes where `note.track == track_idx`.
+    /// O(N) in total notes. For statistics use `track_note_count[track_idx]`.
+    pub fn notes_for_track(&self, track_idx: u16) -> impl Iterator<Item = &yinhe_types::Note> {
+        self.notes
+            .iter()
+            .flat_map(move |bucket| bucket.iter().filter(move |n| n.track == track_idx))
+    }
+
+    /// Check if a track has any audible notes (velocity > 1).
+    pub fn track_has_audio(&self, track_idx: u16) -> bool {
+        self.track_has_audio_cache
+            .get(track_idx as usize)
+            .copied()
+            .unwrap_or(false)
     }
 }
 
@@ -306,7 +388,6 @@ mod tests {
 
     fn track_with_notes(notes: Vec<NoteEvent>) -> TrackData {
         let mut t = TrackData::new(0, 0);
-        t.notes = notes;
         t
     }
 
@@ -316,41 +397,42 @@ mod tests {
         m.rebuild();
         assert_eq!(m.note_count, 0);
         assert_eq!(m.tick_length, 0);
-        assert_eq!(m.key_notes_cache.len(), 128);
-        assert!(m.key_notes_cache.iter().all(|v| v.is_empty()));
+        assert!(m.notes.iter().all(|v| v.is_empty()));
     }
 
     #[test]
     fn rebuild_counts_and_buckets_notes() {
-        let t = track_with_notes(vec![
+        let per_track = vec![vec![
             note(0, 480, 60),
             note(480, 960, 64),
             note(960, 1920, 60),
-        ]);
+        ]];
         let mut m = YinModel {
-            tracks: vec![Arc::new(t)],
+            tracks: vec![Arc::new(TrackData::new(0, 0))],
             ..Default::default()
         };
+        m.load_track_notes(per_track);
         m.rebuild();
         assert_eq!(m.note_count, 3);
         assert_eq!(m.tick_length, 1920);
-        assert_eq!(m.key_notes_cache[60].len(), 2);
-        assert_eq!(m.key_notes_cache[64].len(), 1);
-        assert_eq!(m.key_notes_cache[60][0].start_tick, 0);
-        assert_eq!(m.key_notes_cache[60][1].start_tick, 960);
+        assert_eq!(m.notes[60].len(), 2);
+        assert_eq!(m.notes[64].len(), 1);
+        assert_eq!(m.notes[60][0].start_tick, 0);
+        assert_eq!(m.notes[60][1].start_tick, 960);
     }
 
     #[test]
     fn rebuild_sorts_per_key() {
         // Insert notes out-of-order; cache should be sorted by start_tick.
-        let t = track_with_notes(vec![note(960, 1920, 60), note(0, 480, 60)]);
+        let per_track = vec![vec![note(960, 1920, 60), note(0, 480, 60)]];
         let mut m = YinModel {
-            tracks: vec![Arc::new(t)],
+            tracks: vec![Arc::new(TrackData::new(0, 0))],
             ..Default::default()
         };
+        m.load_track_notes(per_track);
         m.rebuild();
-        assert_eq!(m.key_notes_cache[60][0].start_tick, 0);
-        assert_eq!(m.key_notes_cache[60][1].start_tick, 960);
+        assert_eq!(m.notes[60][0].start_tick, 0);
+        assert_eq!(m.notes[60][1].start_tick, 960);
     }
 
     #[test]

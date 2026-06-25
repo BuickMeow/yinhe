@@ -73,7 +73,7 @@ impl ProjectData {
             .map(|(i, track)| TrackInfo {
                 index: i as u16,
                 name: track.name.clone(),
-                note_count: track.notes.len() as u64,
+                note_count: self.model.track_note_count.get(i).copied().unwrap_or(0),
                 port: track.port,
                 channel: track.channel,
             })

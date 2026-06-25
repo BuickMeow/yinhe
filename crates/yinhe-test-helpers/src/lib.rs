@@ -20,10 +20,6 @@ pub fn make_test_model() -> YinModel {
 
     let mut t0 = TrackData::new(0, 0); // port 0, ch 0
     t0.name = "Lead".into();
-    t0.notes = vec![
-        NoteEvent { start_tick: 0, end_tick: 480, key: 60, velocity: 100, dup_index: 0 },
-        NoteEvent { start_tick: 480, end_tick: 960, key: 60, velocity: 100, dup_index: 0 },
-    ];
     t0.cc.insert(7, vec![
         CcEvent { tick: 0, value: 100 },
         CcEvent { tick: 240, value: 80 },
@@ -31,17 +27,24 @@ pub fn make_test_model() -> YinModel {
 
     let mut t1 = TrackData::new(0, 1); // port 0, ch 1
     t1.name = "Bass".into();
-    t1.notes = vec![
-        NoteEvent { start_tick: 0, end_tick: 1920, key: 48, velocity: 90, dup_index: 0 },
-    ];
     t1.pitch_bend = vec![PitchBendEvent { tick: 100, value: 1024 }];
 
     let mut t2 = TrackData::new(1, 0); // port 1, ch 0
     t2.name = "Drums".into();
-    t2.notes = vec![
-        NoteEvent { start_tick: 0, end_tick: 240, key: 36, velocity: 120, dup_index: 0 },
-    ];
     t2.program_change = vec![PcEvent { tick: 0, program: 7, bank_msb: 0xFF, bank_lsb: 0xFF }];
+
+    let per_track_notes: Vec<Vec<NoteEvent>> = vec![
+        vec![
+            NoteEvent { start_tick: 0, end_tick: 480, key: 60, velocity: 100, dup_index: 0 },
+            NoteEvent { start_tick: 480, end_tick: 960, key: 60, velocity: 100, dup_index: 0 },
+        ],
+        vec![
+            NoteEvent { start_tick: 0, end_tick: 1920, key: 48, velocity: 90, dup_index: 0 },
+        ],
+        vec![
+            NoteEvent { start_tick: 0, end_tick: 240, key: 36, velocity: 120, dup_index: 0 },
+        ],
+    ];
 
     let meta = ProjectMeta { ppq: 480, ..ProjectMeta::default() };
     let mut model = YinModel {
@@ -50,6 +53,7 @@ pub fn make_test_model() -> YinModel {
         meta,
         ..Default::default()
     };
+    model.load_track_notes(per_track_notes);
     model.rebuild();
     model
 }
@@ -66,12 +70,17 @@ pub fn make_stress_model(track_count: u16, notes_per_track: u32) -> YinModel {
 
     let tracks: Vec<Arc<TrackData>> = (0..track_count)
         .map(|t| {
-            let mut track = TrackData::new(0, t as u8);
-            track.name = format!("Track {}", t);
+            Arc::new(TrackData::new(0, t as u8))
+        })
+        .collect();
+
+    let per_track_notes: Vec<Vec<NoteEvent>> = (0..track_count)
+        .map(|t| {
+            let mut notes = Vec::with_capacity(notes_per_track as usize);
             for n in 0..notes_per_track {
                 let key = (n % 128) as u8;
                 let start = n * 120;
-                track.notes.push(NoteEvent {
+                notes.push(NoteEvent {
                     start_tick: start,
                     end_tick: start + 100,
                     key,
@@ -79,7 +88,7 @@ pub fn make_stress_model(track_count: u16, notes_per_track: u32) -> YinModel {
                     dup_index: 0,
                 });
             }
-            Arc::new(track)
+            notes
         })
         .collect();
 
@@ -90,6 +99,7 @@ pub fn make_stress_model(track_count: u16, notes_per_track: u32) -> YinModel {
         meta,
         ..Default::default()
     };
+    model.load_track_notes(per_track_notes);
     model.rebuild();
     model
 }

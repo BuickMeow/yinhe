@@ -203,7 +203,7 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>, state: &mut EventBrow
                         show_event_detail(ui, sel, doc, &bar_lookup);
                     } else if let Some(idx) = state.selected_track {
                         if let Some(track) = model.tracks.get(idx as usize) {
-                            show_track_detail(ui, idx, track);
+                            show_track_detail(ui, idx, track, model);
                         } else {
                             show_overview(ui, model);
                         }
@@ -428,10 +428,26 @@ fn show_event_detail(ui: &mut egui::Ui, item: &SelectedItem, doc: &Document, bar
         }
         SelectedItem::Notes { track } => {
             let t = *track as usize;
-            let track_data = model.tracks.get(t);
-            let notes: Vec<(&yinhe_core::NoteEvent, u8, u16)> = if let Some(td) = track_data {
-                td.notes.iter().map(|n| (n, n.key, *track)).collect()
-            } else { Vec::new() };
+            let model = &doc.data.model;
+            let notes: Vec<(yinhe_core::NoteEvent, u8, u16)> = {
+                let mut v = Vec::new();
+                for (key, bucket) in model.notes.iter().enumerate() {
+                    for n in bucket.iter().filter(|n| n.track == *track) {
+                        v.push((
+                            yinhe_core::NoteEvent {
+                                start_tick: n.start_tick,
+                                end_tick: n.end_tick,
+                                key: key as u8,
+                                velocity: n.velocity,
+                                dup_index: n.dup_index,
+                            },
+                            key as u8,
+                            *track,
+                        ));
+                    }
+                }
+                v
+            };
             ui.add_space(4.0);
             ui.label(egui::RichText::new(format!("音符 ({} 个)", notes.len())).size(12.0).strong());
             ui.add_space(2.0);
@@ -615,7 +631,7 @@ fn show_overview(ui: &mut egui::Ui, model: &yinhe_core::YinModel) {
     ui.colored_label(egui::Color32::from_gray(100), "← 点击左侧条目查看详情");
 }
 
-fn show_track_detail(ui: &mut egui::Ui, idx: u16, track: &yinhe_core::TrackData) {
+fn show_track_detail(ui: &mut egui::Ui, idx: u16, track: &yinhe_core::TrackData, model: &yinhe_core::YinModel) {
     ui.add_space(4.0);
     let header = if track.name.is_empty() {
         format!("Track #{} (未命名)", idx)
@@ -642,7 +658,7 @@ fn show_track_detail(ui: &mut egui::Ui, idx: u16, track: &yinhe_core::TrackData)
     kv(ui, "Muted / Soloed", format!("{} / {}", track.muted, track.soloed));
     ui.add_space(6.0);
     ui.label(egui::RichText::new("事件计数").size(12.0).strong());
-    kv(ui, "Notes", format!("{}", track.notes.len()));
+    kv(ui, "Notes", format!("{}", model.track_note_count.get(idx as usize).copied().unwrap_or(0)));
     if !track.cc.is_empty() {
         let total_cc: usize = track.cc.values().map(|v| v.len()).sum();
         kv(ui, "CC", format!("{} controllers, {} events total", track.cc.len(), total_cc));

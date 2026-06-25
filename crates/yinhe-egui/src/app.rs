@@ -97,7 +97,7 @@ pub struct App {
 
     // ── Note drag originals (for real-time visual feedback) ──
     pub(crate) note_drag_originals: Option<Vec<(yinhe_types::Note, u8)>>,
-    pub(crate) note_drag_originals_note: Option<Vec<(yinhe_core::NoteEvent, u8, u16)>>,
+    pub(crate) note_drag_originals_note: Option<Vec<(yinhe_types::Note, u8, u16)>>,
     /// Snapshot taken on the first frame of a note drag.  Pushed onto the
     /// active document's undo stack on mouse-up (drag finalize).
     pub(crate) note_drag_undo_snapshot: Option<yinhe_editor_core::history::UndoSnapshot>,

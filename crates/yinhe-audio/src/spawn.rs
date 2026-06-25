@@ -100,15 +100,22 @@ pub(crate) fn track_global_channel(model: &YinModel, track_idx: usize) -> u8 {
 /// non-note control event is present on the owning track.
 pub fn channels_for_model(model: &YinModel) -> (u32, Vec<bool>) {
     let mut ch_active = [0u32; 256];
-    for (track_idx, track) in model.tracks.iter().enumerate() {
-        let ch = track_global_channel(model, track_idx) as usize;
-        // Notes with vel > 1
-        for n in &track.notes {
+
+    // Single pass: scan all notes once.
+    for bucket in model.notes.iter() {
+        for n in bucket {
             if n.velocity > 1 {
-                ch_active[ch] = ch_active[ch].saturating_add(1);
+                let ch = track_global_channel(model, n.track as usize) as usize;
+                if ch < 256 {
+                    ch_active[ch] = ch_active[ch].saturating_add(1);
+                }
             }
         }
-        // Any non-note event activates the channel too.
+    }
+
+    // Any non-note event activates the channel too.
+    for (track_idx, track) in model.tracks.iter().enumerate() {
+        let ch = track_global_channel(model, track_idx) as usize;
         let has_ctrl = !track.cc.is_empty()
             || !track.pitch_bend.is_empty()
             || !track.program_change.is_empty()

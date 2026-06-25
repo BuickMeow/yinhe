@@ -27,12 +27,12 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>, settings: &AudioSetti
     // Build active mask from the YinModel: a (port, channel) is active if
     // the track has any audible note (vel > 1) OR any control event.
     let mut active = [false; 256];
-    for track in &doc.data.model.tracks {
+    for (track_idx, track) in doc.data.model.tracks.iter().enumerate() {
         let global_ch = ((track.port & 0x0F) << 4 | (track.channel & 0x0F)) as usize;
         if global_ch >= 256 {
             continue;
         }
-        let has_audible_note = track.notes.iter().any(|n| n.velocity > 1);
+        let has_audible_note = doc.data.model.track_has_audio(track_idx as u16);
         let has_ctrl = !track.cc.is_empty()
             || !track.pitch_bend.is_empty()
             || !track.program_change.is_empty()

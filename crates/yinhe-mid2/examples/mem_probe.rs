@@ -10,13 +10,14 @@ fn main() {
         .unwrap_or_else(|| "/Users/jieneng/Music/MIDIs/start.mid".to_string());
     eprintln!("[mem-probe] loading: {path}");
     let t0 = std::time::Instant::now();
-    match yinhe_mid2::parse_path(&path) {
-        Ok(model) => {
+    let model = yinhe_mid2::parse_path(&path);
+    match &model {
+        Ok(m) => {
             eprintln!(
                 "[mem-probe] done in {:?}  note_count={}  tracks={}",
                 t0.elapsed(),
-                model.note_count,
-                model.tracks.len(),
+                m.note_count,
+                m.tracks.len(),
             );
         }
         Err(e) => eprintln!("[mem-probe] parse error: {e}"),
@@ -27,4 +28,5 @@ fn main() {
         snap.mb(yinhe_memtrace::AllocTag::Midi),
         snap.total_mb(),
     );
+    drop(model);
 }

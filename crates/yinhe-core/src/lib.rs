@@ -17,6 +17,7 @@ mod tempo_map;
 
 pub use events::{CcEvent, NoteEvent, PcEvent, PitchBendEvent, RpnEvent};
 pub use model::{ConductorData, ProjectMeta, TempoEvent, TimeSigEvent, TrackData, TrackInfo, YinModel};
+pub use yinhe_types::Note;
 pub use tempo_map::{
     DEFAULT_BPM, DEFAULT_MPQ, TempoMap, TempoSegment, bar_at_tick, bar_divide, bpm_from_mpq,
     mpq_from_bpm, recompute_tempo_start_times, seconds_to_ticks, ticks_to_seconds, total_bars,

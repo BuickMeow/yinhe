@@ -30,12 +30,15 @@ pub enum MidiControlEvent {
     },
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default)]
 #[repr(C)]
 pub struct Note {
     pub start_tick: u32,
     pub end_tick: u32,
     pub velocity: u8,
+    /// Distinguishes overlapping notes at the same (track, key, start_tick).
+    /// 99% of notes have dup_index == 0.
+    pub dup_index: u8,
     pub track: u16,
 }
 
@@ -175,6 +178,7 @@ mod tests {
             start_tick,
             end_tick,
             velocity: 100,
+            dup_index: 0,
             track: 0,
         }
     }

@@ -30,31 +30,21 @@ struct ActiveNote {
     end_sample: u64,
 }
 
-/// A pre-filtered note that is guaranteed to be audible (velocity > 1 and
-/// channel active).  `start_sample` / `end_sample` are pre-computed at load
-/// time to eliminate runtime `tick_to_seconds` calls.
-pub(crate) struct AudibleNote {
-    pub(crate) start_sample: u64,
-    pub(crate) end_sample: u64,
-    pub(crate) track: u16,
-    pub(crate) velocity: u8,
-}
-
 /// Pre-computed model data, built on a worker thread and applied
 /// atomically on the audio thread.
 pub(crate) struct PreparedModel {
     pub model: AudioModel,
+    pub yin_model: Arc<YinModel>,
     pub cc_events: Vec<SortedCC>,
     pub duration_samples: u64,
     pub skip_track: Vec<bool>,
-    pub audible_notes: [Vec<AudibleNote>; 128],
 }
 
 /// Lightweight per-track snapshot the audio engine actually needs.
 ///
 /// The full `YinModel` carries `key_notes_cache` / `scan_index` /
 /// `tick_buckets` — hundreds of MB to GBs for black MIDI — none of which the
-/// audio thread touches (note scheduling runs off pre-built `audible_notes`).
+/// audio thread touches (note scheduling reads directly from `yin_model.notes`).
 /// We extract only `(global_channel)` per track plus the CC0 bank-select
 /// events used for percussion-mode detection, so the audio thread holds a few
 /// KB instead of a full deep clone of the model.
@@ -98,7 +88,7 @@ impl AudioModel {
 /// Build `PreparedModel` on a worker thread (no `&mut AudioEngine` needed).
 /// This is the expensive part; the result is applied cheaply on the audio thread.
 pub(crate) fn prepare_model(
-    model: &YinModel,
+    model: &Arc<YinModel>,
     sample_rate: u32,
     active_mask: &[bool],
     _channel_map: &[u32; 256],
@@ -187,74 +177,18 @@ pub(crate) fn prepare_model(
 
     let duration_samples = (model.tempo_map.tick_to_seconds(model.tick_length) * sr) as u64;
 
-    let mut track_has_audio = vec![false; model.tracks.len()];
-    for (track_idx, track) in model.tracks.iter().enumerate() {
-        for n in &track.notes {
-            if n.velocity > 1 {
-                track_has_audio[track_idx] = true;
-                break;
-            }
-        }
-    }
-    let skip_track = track_has_audio.iter().map(|&has| !has).collect();
-
-    let segments = &model.tempo_map.tempo_segments;
-    let tpb = model.tempo_map.ticks_per_beat;
-    let mut audible_notes: [Vec<AudibleNote>; 128] = core::array::from_fn(|_| Vec::new());
-    for key in 0..128usize {
-        let mut seg_start = 0usize;
-        let mut seg_end = 0usize;
-        let mut audible = Vec::new();
-        for note in &model.key_notes_cache[key] {
-            if note.velocity > 1 {
-                let ch = track_global_channel(model, note.track as usize) as usize;
-                if active_mask.get(ch).copied().unwrap_or(false) {
-                    while seg_start + 1 < segments.len()
-                        && segments[seg_start + 1].start_tick as u64 <= note.start_tick as u64
-                    {
-                        seg_start += 1;
-                    }
-                    let seg = &segments[seg_start];
-                    let start_sample = (seg.start_time
-                        + yinhe_core::ticks_to_seconds(
-                            note.start_tick as u64 - seg.start_tick as u64,
-                            tpb,
-                            seg.micros_per_quarter,
-                        ))
-                        * sr;
-
-                    while seg_end + 1 < segments.len()
-                        && segments[seg_end + 1].start_tick as u64 <= note.end_tick as u64
-                    {
-                        seg_end += 1;
-                    }
-                    let seg = &segments[seg_end];
-                    let end_sample = (seg.start_time
-                        + yinhe_core::ticks_to_seconds(
-                            note.end_tick as u64 - seg.start_tick as u64,
-                            tpb,
-                            seg.micros_per_quarter,
-                        ))
-                        * sr;
-
-                    audible.push(AudibleNote {
-                        start_sample: start_sample as u64,
-                        end_sample: end_sample as u64,
-                        track: note.track,
-                        velocity: note.velocity,
-                    });
-                }
-            }
-        }
-        audible_notes[key] = audible;
-    }
+    let skip_track: Vec<bool> = model
+        .track_has_audio_cache
+        .iter()
+        .map(|&has| !has)
+        .collect();
 
     PreparedModel {
         model: AudioModel::from_model(model),
+        yin_model: Arc::clone(model),
         cc_events,
         duration_samples,
         skip_track,
-        audible_notes,
     }
 }
 
@@ -271,7 +205,9 @@ pub(crate) struct AudioEngine {
     duration_samples: u64,
 
     note_cursor: [usize; 128],
-    audible_notes: [Vec<AudibleNote>; 128],
+    /// Reference to the full YinModel (notes are read directly from
+    /// `yin_model.notes[key]` with real-time tick→sample conversion).
+    yin_model: Option<Arc<YinModel>>,
 
     cc_events: Vec<SortedCC>,
     cc_cursor: usize,
@@ -320,7 +256,7 @@ impl AudioEngine {
                 playing: false,
                 duration_samples: 0,
                 note_cursor: [0; 128],
-                audible_notes: core::array::from_fn(|_| Vec::new()),
+                yin_model: None,
                 cc_events: Vec::new(),
                 cc_cursor: 0,
                 active_notes: Vec::new(),
@@ -467,12 +403,33 @@ impl AudioEngine {
             .map(|cc| cc.sample)
             .filter(|&sample| sample >= rendered_until && sample < block_end);
 
-        if self.model.is_some() {
+        if let Some(ref yin_model) = self.yin_model {
+            let segments = &yin_model.tempo_map.tempo_segments;
+            let tpb = yin_model.tempo_map.ticks_per_beat;
+            let sr = self.sample_rate as f64;
+
             for key in 0..128usize {
                 let cursor = self.note_cursor[key];
-                if let Some(note) = self.audible_notes[key].get(cursor) {
-                    if note.start_sample >= rendered_until && note.start_sample < block_end {
-                        next = Some(next.map_or(note.start_sample, |s| s.min(note.start_sample)));
+                // Advance past low-velocity and inactive-channel notes.
+                let notes = &yin_model.notes[key];
+                let mut idx = cursor;
+                while idx < notes.len() {
+                    let n = &notes[idx];
+                    if n.velocity <= 1 {
+                        idx += 1;
+                        continue;
+                    }
+                    let ch = self.model.as_ref().map(|m| m.track_channel(n.track as usize) as usize).unwrap_or(0);
+                    if !self.active_mask.get(ch).copied().unwrap_or(false) {
+                        idx += 1;
+                        continue;
+                    }
+                    break;
+                }
+                if let Some(note) = notes.get(idx) {
+                    let start_sample = tick_to_sample(note.start_tick as u64, segments, tpb, sr);
+                    if start_sample >= rendered_until && start_sample < block_end {
+                        next = Some(next.map_or(start_sample, |s| s.min(start_sample)));
                     }
                 }
             }
@@ -502,15 +459,31 @@ impl AudioEngine {
             self.cc_cursor += 1;
         }
 
-        if let Some(ref model) = self.model {
+        if let Some(ref yin_model) = self.yin_model.clone() {
+            let segments = &yin_model.tempo_map.tempo_segments;
+            let tpb = yin_model.tempo_map.ticks_per_beat;
+            let sr = self.sample_rate as f64;
+
             for key in 0..128usize {
-                let notes = &self.audible_notes[key];
+                let notes = &yin_model.notes[key];
                 let mut cursor = self.note_cursor[key];
-                while cursor < notes.len() && notes[cursor].start_sample <= sample {
+                while cursor < notes.len() {
                     let note = &notes[cursor];
+                    if note.velocity <= 1 {
+                        cursor += 1;
+                        continue;
+                    }
+                    let start_sample = tick_to_sample(note.start_tick as u64, segments, tpb, sr);
+                    if start_sample > sample {
+                        break;
+                    }
                     let track = note.track as usize;
+                    let ch = self.model.as_ref().map(|m| m.track_channel(track) as usize).unwrap_or(0);
+                    if !self.active_mask.get(ch).copied().unwrap_or(false) {
+                        cursor += 1;
+                        continue;
+                    }
                     if !self.skip_track.get(track).copied().unwrap_or(false) {
-                        let ch = model.track_channel(track) as usize;
                         let dense = self.channel_map.get(ch).copied().unwrap_or(u32::MAX);
                         if dense != u32::MAX {
                             self.channel_group.send_event(SynthEvent::Channel(
@@ -520,10 +493,11 @@ impl AudioEngine {
                                     vel: note.velocity,
                                 }),
                             ));
+                            let end_sample = tick_to_sample(note.end_tick as u64, segments, tpb, sr);
                             self.active_notes.push(ActiveNote {
                                 key: key as u8,
                                 channel: ch as u8,
-                                end_sample: note.end_sample,
+                                end_sample,
                             });
                         }
                     }
@@ -556,8 +530,27 @@ impl AudioEngine {
     }
 }
 
+/// Convert a tick value to sample position using the tempo map.
+/// Uses a linear sweep through tempo segments (O(T) total across all calls
+/// since segments are few and the sweep advances monotonically).
+fn tick_to_sample(tick: u64, segments: &[yinhe_core::TempoSegment], tpb: u32, sr: f64) -> u64 {
+    // Binary search for the segment containing this tick.
+    let idx = match segments.binary_search_by_key(&tick, |s| s.start_tick as u64) {
+        Ok(i) => i,
+        Err(i) => i.saturating_sub(1),
+    };
+    let seg = &segments[idx];
+    let secs = seg.start_time
+        + yinhe_core::ticks_to_seconds(
+            tick - seg.start_tick as u64,
+            tpb,
+            seg.micros_per_quarter,
+        );
+    (secs * sr) as u64
+}
+
 impl AudioEngine {
-    fn load_model(&mut self, model: &YinModel) {
+    fn load_model(&mut self, model: &Arc<YinModel>) {
         let audio_model = AudioModel::from_model(model);
         self.setup_percussion(&audio_model);
 
@@ -617,7 +610,6 @@ impl AudioEngine {
                 });
             }
             // RPN expanded back to CC101 + CC100 + CC6 (+ CC38 if LSB != 0)
-            // so the synth sees the same wire-level sequence as a normal MIDI file.
             for (&rpn_key, evs) in &track.rpn {
                 let msb = ((rpn_key >> 8) & 0x7F) as u8;
                 let lsb = (rpn_key & 0x7F) as u8;
@@ -654,81 +646,18 @@ impl AudioEngine {
 
         self.duration_samples = (model.tempo_map.tick_to_seconds(model.tick_length) * sr) as u64;
 
-        // Auto-detect note-drawing tracks: tracks where every note has
-        // velocity ≤ 1 produce no audible sound and should be skipped.
-        let mut track_has_audio = vec![false; model.tracks.len()];
-        for (track_idx, track) in model.tracks.iter().enumerate() {
-            for n in &track.notes {
-                if n.velocity > 1 {
-                    track_has_audio[track_idx] = true;
-                    break;
-                }
-            }
-        }
-        self.skip_track = track_has_audio.iter().map(|&has| !has).collect();
+        self.skip_track = model
+            .track_has_audio_cache
+            .iter()
+            .map(|&has| !has)
+            .collect();
 
-        // Build audible_notes from key_notes_cache (already per-key, sorted
-        // by start_tick, with track tagging by yinhe_types::Note).
-        // Use a linear sweep through tempo_segments instead of repeated
-        // binary searches — O(N + T) instead of O(N log T).
         self.note_cursor = [0; 128];
-        let segments = &model.tempo_map.tempo_segments;
-        let tpb = model.tempo_map.ticks_per_beat;
-        for key in 0..128usize {
-            let mut seg_start = 0usize;
-            let mut seg_end = 0usize;
-            let mut audible = Vec::new();
-            for note in &model.key_notes_cache[key] {
-                if note.velocity > 1 {
-                    let ch = track_global_channel(model, note.track as usize) as usize;
-                    if self.active_mask.get(ch).copied().unwrap_or(false) {
-                        // Advance segment pointer for start_tick
-                        while seg_start + 1 < segments.len()
-                            && segments[seg_start + 1].start_tick as u64 <= note.start_tick as u64
-                        {
-                            seg_start += 1;
-                        }
-                        let seg = &segments[seg_start];
-                        let start_sample = (seg.start_time
-                            + yinhe_core::ticks_to_seconds(
-                                note.start_tick as u64 - seg.start_tick as u64,
-                                tpb,
-                                seg.micros_per_quarter,
-                            ))
-                            * sr;
-
-                        // Advance segment pointer for end_tick
-                        while seg_end + 1 < segments.len()
-                            && segments[seg_end + 1].start_tick as u64 <= note.end_tick as u64
-                        {
-                            seg_end += 1;
-                        }
-                        let seg = &segments[seg_end];
-                        let end_sample = (seg.start_time
-                            + yinhe_core::ticks_to_seconds(
-                                note.end_tick as u64 - seg.start_tick as u64,
-                                tpb,
-                                seg.micros_per_quarter,
-                            ))
-                            * sr;
-
-                        audible.push(AudibleNote {
-                            start_sample: start_sample as u64,
-                            end_sample: end_sample as u64,
-                            track: note.track,
-                            velocity: note.velocity,
-                        });
-                    }
-                }
-            }
-            self.audible_notes[key] = audible;
-        }
-
+        self.yin_model = Some(Arc::clone(model));
         self.model = Some(audio_model);
     }
 
     /// Apply a `PreparedModel` computed on a worker thread.
-    /// This is cheap: just swaps pre-built data and sends config events.
     pub(crate) fn apply_prepared_model(&mut self, prepared: PreparedModel) {
         self.setup_percussion(&prepared.model);
 
@@ -738,8 +667,8 @@ impl AudioEngine {
         self.active_notes.reserve(prepared.model.note_count as usize);
         self.duration_samples = prepared.duration_samples;
         self.skip_track = prepared.skip_track;
-        self.audible_notes = prepared.audible_notes;
         self.note_cursor = [0; 128];
+        self.yin_model = Some(prepared.yin_model);
         self.model = Some(prepared.model);
 
         // If Play arrived while loading, seek now
@@ -858,10 +787,21 @@ impl AudioEngine {
 
         self.cc_cursor = self.cc_events.partition_point(|cc| cc.sample < sample);
 
-        for key in 0..128usize {
-            let notes = &self.audible_notes[key];
-            let cursor = notes.partition_point(|n| n.start_sample < sample);
-            self.note_cursor[key] = cursor;
+        // Reset note cursors to the correct position based on tick→sample conversion.
+        if let Some(ref yin_model) = self.yin_model {
+            let segments = &yin_model.tempo_map.tempo_segments;
+            let tpb = yin_model.tempo_map.ticks_per_beat;
+            let sr = self.sample_rate as f64;
+            for key in 0..128usize {
+                let notes = &yin_model.notes[key];
+                let cursor = notes.partition_point(|n| {
+                    if n.velocity <= 1 {
+                        return false;
+                    }
+                    tick_to_sample(n.start_tick as u64, segments, tpb, sr) < sample
+                });
+                self.note_cursor[key] = cursor;
+            }
         }
 
         self.inject_chase(sample);
@@ -908,7 +848,7 @@ mod tests {
         let first_ch = notes.first().map(|n| n.4).unwrap_or(0);
         let mut t = TrackData::new(0, first_ch);
         t.name = "Track 1".into();
-        t.notes = notes
+        let per_track_notes: Vec<Vec<NoteEvent>> = vec![notes
             .into_iter()
             .map(|(key, start, end, vel, _ch)| NoteEvent {
                 start_tick: start,
@@ -917,7 +857,7 @@ mod tests {
                 velocity: vel,
                 dup_index: 0,
             })
-            .collect();
+            .collect()];
         let meta = ProjectMeta {
             ppq: 480,
             ..ProjectMeta::default()
@@ -928,6 +868,7 @@ mod tests {
             meta,
             ..Default::default()
         };
+        model.load_track_notes(per_track_notes);
         model.rebuild();
         model
     }
@@ -941,26 +882,43 @@ mod tests {
             time_sig: Vec::new(),
         };
         let mk = |ch: u8, key: u8| {
-            let mut t = TrackData::new(0, ch);
-            t.notes = vec![NoteEvent {
-                start_tick: 0,
-                end_tick: 480,
-                key,
-                velocity: 100,
-                dup_index: 0,
-            }];
+            let t = TrackData::new(0, ch);
             Arc::new(t)
         };
         let meta = ProjectMeta {
             ppq: 480,
             ..ProjectMeta::default()
         };
+        let per_track_notes: Vec<Vec<NoteEvent>> = vec![
+            vec![NoteEvent {
+                start_tick: 0,
+                end_tick: 480,
+                key: 60,
+                velocity: 100,
+                dup_index: 0,
+            }],
+            vec![NoteEvent {
+                start_tick: 0,
+                end_tick: 480,
+                key: 64,
+                velocity: 100,
+                dup_index: 0,
+            }],
+            vec![NoteEvent {
+                start_tick: 0,
+                end_tick: 480,
+                key: 67,
+                velocity: 100,
+                dup_index: 0,
+            }],
+        ];
         let mut model = YinModel {
             conductor: Arc::new(conductor),
             tracks: vec![mk(0, 60), mk(1, 64), mk(9, 67)],
             meta,
             ..Default::default()
         };
+        model.load_track_notes(per_track_notes);
         model.rebuild();
         model
     }
@@ -985,22 +943,24 @@ mod tests {
             }],
             time_sig: Vec::new(),
         };
-        let mut t1 = TrackData::new(0, 0);
-        t1.notes = vec![NoteEvent {
-            start_tick: 0,
-            end_tick: 480,
-            key: 60,
-            velocity: 100,
-            dup_index: 0,
-        }];
-        let mut t2 = TrackData::new(1, 0);
-        t2.notes = vec![NoteEvent {
-            start_tick: 0,
-            end_tick: 480,
-            key: 60,
-            velocity: 100,
-            dup_index: 0,
-        }];
+        let t1 = TrackData::new(0, 0);
+        let t2 = TrackData::new(1, 0);
+        let per_track_notes: Vec<Vec<NoteEvent>> = vec![
+            vec![NoteEvent {
+                start_tick: 0,
+                end_tick: 480,
+                key: 60,
+                velocity: 100,
+                dup_index: 0,
+            }],
+            vec![NoteEvent {
+                start_tick: 0,
+                end_tick: 480,
+                key: 60,
+                velocity: 100,
+                dup_index: 0,
+            }],
+        ];
         let mut model = YinModel {
             conductor: Arc::new(conductor),
             tracks: vec![Arc::new(t1), Arc::new(t2)],
@@ -1010,6 +970,7 @@ mod tests {
             },
             ..Default::default()
         };
+        model.load_track_notes(per_track_notes);
         model.rebuild();
         let (num_ch, mask) = crate::spawn::channels_for_model(&model);
         assert_eq!(num_ch, 17);
@@ -1093,23 +1054,20 @@ mod tests {
     #[test]
     fn test_render_dispatches_note_inside_large_buffer_at_exact_sample() {
         let model = make_model_with_notes(vec![(60, 960, 1440, 100, 0)]);
-        assert_eq!(model.key_notes_cache[60].len(), 1);
+        assert_eq!(model.notes[60].len(), 1);
         let model = Arc::new(model);
         let mask = vec![true; 16];
         let mut engine = AudioEngine::new(48000, 16, mask);
         engine.load_model(&model);
         engine.playing = true;
 
-        assert_eq!(engine.audible_notes[60].len(), 1);
-        assert_eq!(engine.audible_notes[60][0].start_sample, 48000);
-        let output = vec![0.0f32; 60000 * STEREO_CHANNELS];
+        // Note at key 60, start_tick=960, velocity=100 → should dispatch at sample 48000.
         assert_eq!(engine.next_event_sample(0, 60000), Some(48000));
         engine.dispatch_events_at(48000);
 
         assert_eq!(engine.note_cursor[60], 1);
         assert_eq!(engine.active_notes.len(), 1);
         assert_eq!(engine.sample_position(), 0);
-        assert_eq!(output.len(), 60000 * STEREO_CHANNELS);
     }
 
     #[test]
@@ -1127,38 +1085,40 @@ mod tests {
             }],
             time_sig: Vec::new(),
         };
-        let mut t0 = TrackData::new(0, 0);
-        t0.notes = vec![
-            NoteEvent {
-                start_tick: 0,
-                end_tick: 480,
-                key: 60,
-                velocity: 0,
-                dup_index: 0,
-            },
-            NoteEvent {
-                start_tick: 480,
-                end_tick: 960,
-                key: 60,
-                velocity: 1,
-                dup_index: 0,
-            },
-            NoteEvent {
-                start_tick: 960,
-                end_tick: 1440,
+        let t0 = TrackData::new(0, 0);
+        let t1 = TrackData::new(0, 3);
+        let per_track_notes: Vec<Vec<NoteEvent>> = vec![
+            vec![
+                NoteEvent {
+                    start_tick: 0,
+                    end_tick: 480,
+                    key: 60,
+                    velocity: 0,
+                    dup_index: 0,
+                },
+                NoteEvent {
+                    start_tick: 480,
+                    end_tick: 960,
+                    key: 60,
+                    velocity: 1,
+                    dup_index: 0,
+                },
+                NoteEvent {
+                    start_tick: 960,
+                    end_tick: 1440,
+                    key: 60,
+                    velocity: 100,
+                    dup_index: 0,
+                },
+            ],
+            vec![NoteEvent {
+                start_tick: 1440,
+                end_tick: 1920,
                 key: 60,
                 velocity: 100,
                 dup_index: 0,
-            },
+            }],
         ];
-        let mut t1 = TrackData::new(0, 3);
-        t1.notes = vec![NoteEvent {
-            start_tick: 1440,
-            end_tick: 1920,
-            key: 60,
-            velocity: 100,
-            dup_index: 0,
-        }];
         let mut model = YinModel {
             conductor: Arc::new(conductor),
             tracks: vec![Arc::new(t0), Arc::new(t1)],
@@ -1168,6 +1128,7 @@ mod tests {
             },
             ..Default::default()
         };
+        model.load_track_notes(per_track_notes);
         model.rebuild();
         let model = Arc::new(model);
 
@@ -1176,15 +1137,18 @@ mod tests {
         let mut engine = AudioEngine::new(44100, 16, mask);
         engine.load_model(&model);
 
-        assert_eq!(engine.audible_notes[60].len(), 1);
         assert_eq!(engine.note_cursor[60], 0);
+        // Note at key 60, start_tick=960, velocity=100 → should dispatch at sample 44100.
+        assert_eq!(engine.next_event_sample(0, 60000), Some(44100));
+        engine.dispatch_events_at(44100);
+        // Cursor = 3: 2 low-vel skipped + 1 dispatched (4th note's start_sample > 44100).
+        assert_eq!(engine.note_cursor[60], 3);
+        assert_eq!(engine.active_notes.len(), 1);
         for key in 0..128usize {
             if key != 60 {
-                assert_eq!(engine.audible_notes[key].len(), 0);
                 assert_eq!(engine.note_cursor[key], 0);
             }
         }
-        assert_eq!(engine.audible_notes[60][0].start_sample, 44100);
     }
 
     #[test]
@@ -1197,9 +1161,8 @@ mod tests {
         let mut engine = AudioEngine::new(44100, 16, mask);
         engine.load_model(&model);
 
-        assert!(engine.audible_notes[60].is_empty());
-        assert!(engine.audible_notes[61].is_empty());
-        assert!(engine.audible_notes[0].is_empty());
+        // All notes have velocity ≤ 1 → no events should dispatch.
+        assert_eq!(engine.next_event_sample(0, 60000), None);
         for key in 0..128usize {
             assert_eq!(engine.note_cursor[key], 0);
         }
@@ -1214,8 +1177,8 @@ mod tests {
             ],
             time_sig: Vec::new(),
         };
-        let mut t = TrackData::new(0, 0);
-        t.notes = vec![
+        let t = TrackData::new(0, 0);
+        let per_track_notes: Vec<Vec<NoteEvent>> = vec![vec![
             NoteEvent {
                 start_tick: 2000,
                 end_tick: 2480,
@@ -1230,7 +1193,7 @@ mod tests {
                 velocity: 100,
                 dup_index: 0,
             },
-        ];
+        ]];
         let mut model = YinModel {
             conductor: Arc::new(conductor),
             tracks: vec![Arc::new(t)],
@@ -1240,14 +1203,23 @@ mod tests {
             },
             ..Default::default()
         };
+        model.load_track_notes(per_track_notes);
         model.rebuild();
 
         let mask = vec![true; 16];
         let mut engine = AudioEngine::new(48000, 16, mask);
         engine.load_model(&Arc::new(model));
 
-        assert_eq!(engine.audible_notes[0][0].start_sample, 150000);
-        assert_eq!(engine.audible_notes[60][0].start_sample, 24000);
+        // Note at key 0, start_tick=2000 → ~150000 samples at 48000 Hz (120→60 BPM at tick 1000).
+        // Note at key 60, start_tick=480 → 24000 samples at 48000 Hz.
+        assert_eq!(engine.next_event_sample(0, 200000), Some(24000));
+        engine.dispatch_events_at(24000);
+        assert_eq!(engine.note_cursor[60], 1);
+        assert_eq!(engine.active_notes.len(), 1);
+        engine.dispatch_events_at(150000);
+        assert_eq!(engine.note_cursor[0], 1);
+        // Note at key 60 ended at sample 48000, so only key 0 is active.
+        assert_eq!(engine.active_notes.len(), 1);
     }
 
     #[test]

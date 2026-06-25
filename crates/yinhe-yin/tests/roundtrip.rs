@@ -26,7 +26,7 @@ fn build_complex_model() -> YinModel {
     t0.color = [0.8, 0.3, 0.2];
     t0.muted = false;
     t0.soloed = true;
-    t0.notes = vec![
+    let t0_notes = vec![
         NoteEvent { start_tick: 0, end_tick: 480, key: 60, velocity: 100, dup_index: 0 },
         NoteEvent { start_tick: 480, end_tick: 960, key: 64, velocity: 90, dup_index: 0 },
         NoteEvent { start_tick: 1000, end_tick: 1500, key: 60, velocity: 80, dup_index: 0 },
@@ -54,7 +54,7 @@ fn build_complex_model() -> YinModel {
     let mut t1 = TrackData::new(0, 1);
     t1.name = "Bass".to_string();
     t1.color = [0.2, 0.5, 0.9];
-    t1.notes = vec![NoteEvent {
+    let t1_notes = vec![NoteEvent {
         start_tick: 0,
         end_tick: 1920,
         key: 36,
@@ -64,10 +64,12 @@ fn build_complex_model() -> YinModel {
 
     let mut t2 = TrackData::new(1, 9);
     t2.name = "Drums".to_string();
-    t2.notes = vec![
+    let t2_notes = vec![
         NoteEvent { start_tick: 0, end_tick: 60, key: 36, velocity: 127, dup_index: 0 },
         NoteEvent { start_tick: 240, end_tick: 300, key: 38, velocity: 100, dup_index: 0 },
     ];
+
+    let per_track_notes = vec![t0_notes, t1_notes, t2_notes];
 
     let meta = ProjectMeta {
         name: "My Black MIDI".to_string(),
@@ -83,6 +85,7 @@ fn build_complex_model() -> YinModel {
         meta,
         ..Default::default()
     };
+    model.load_track_notes(per_track_notes);
     model.rebuild();
     model
 }
@@ -104,9 +107,10 @@ fn roundtrip_in_memory() {
     assert_eq!(m2.tracks.len(), 3);
 
     let lead = m2.tracks.iter().find(|t| t.name == "Lead").expect("Lead");
+    let lead_idx = m2.tracks.iter().position(|t| t.name == "Lead").unwrap() as u16;
     assert_eq!(lead.color, [0.8, 0.3, 0.2]);
     assert!(lead.soloed);
-    assert_eq!(lead.notes.len(), 4);
+    assert_eq!(m2.track_note_count[lead_idx as usize], 4);
     assert!(lead.cc.contains_key(&7));
     assert_eq!(lead.cc[&7].len(), 2);
     assert!(lead.cc.contains_key(&11));
@@ -119,18 +123,21 @@ fn roundtrip_in_memory() {
     assert_eq!(lead.rpn[&0x0001][0].value, 8192);
 
     let bass = m2.tracks.iter().find(|t| t.name == "Bass").expect("Bass");
-    assert_eq!(bass.notes[0].key, 36);
+    let bass_idx = m2.tracks.iter().position(|t| t.name == "Bass").unwrap() as u16;
+    let bass_notes: Vec<&yinhe_core::Note> = m2.notes_for_track(bass_idx).collect();
+    assert_eq!(bass_notes[0].start_tick, 0); // key is bucket index, not on Note
     assert_eq!(bass.channel, 1);
     assert_eq!(bass.port, 0);
 
     let drums = m2.tracks.iter().find(|t| t.name == "Drums").expect("Drums");
+    let drums_idx = m2.tracks.iter().position(|t| t.name == "Drums").unwrap() as u16;
     assert_eq!(drums.port, 1);
     assert_eq!(drums.channel, 9);
-    assert_eq!(drums.notes.len(), 2);
+    assert_eq!(m2.track_note_count[drums_idx as usize], 2);
 
     assert_eq!(m2.note_count, 7);
     assert_eq!(m2.tick_length, 1920);
-    assert_eq!(m2.key_notes_cache.len(), 128);
+    assert_eq!(m2.notes.len(), 128);
 }
 
 #[test]
@@ -205,9 +212,8 @@ fn mapping_json_carries_track_metadata() {
 
 #[test]
 fn dense_score_compresses_well() {
-    let mut t = TrackData::new(0, 0);
-    t.name = "Stress".to_string();
-    t.notes = (0..100_000u32)
+    let t = TrackData::new(0, 0);
+    let per_track_notes: Vec<Vec<NoteEvent>> = vec![(0..100_000u32)
         .map(|i| NoteEvent {
             start_tick: i * 10,
             end_tick: i * 10 + 5,
@@ -215,12 +221,13 @@ fn dense_score_compresses_well() {
             velocity: 100,
             dup_index: 0,
         })
-        .collect();
+        .collect()];
     let mut model = YinModel {
         tracks: vec![Arc::new(t)],
         ..Default::default()
     };
     model.meta.compression_level = 3;
+    model.load_track_notes(per_track_notes);
     model.rebuild();
 
     let bytes = save_yin_bytes(&model).unwrap();
@@ -235,7 +242,6 @@ fn dense_score_compresses_well() {
     // Roundtrip preserves count.
     let m2 = load_yin_bytes(&bytes).unwrap();
     assert_eq!(m2.tracks.len(), 1);
-    assert_eq!(m2.tracks[0].notes.len(), 100_000);
     assert_eq!(m2.note_count, 100_000);
 }
 

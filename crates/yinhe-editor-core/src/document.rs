@@ -129,7 +129,14 @@ impl Document {
             if conductor_track_idx.is_none() {
                 let mut conductor = TrackData::new(0, 0);
                 conductor.name = "Conductor".to_string();
+                // Shift all existing note track indices by 1 to make room.
+                for bucket in model.notes.iter_mut() {
+                    for n in bucket.iter_mut() {
+                        n.track += 1;
+                    }
+                }
                 model.tracks.insert(0, Arc::new(conductor));
+                model.rebuild();
             }
             let conductor_track_idx = detect_conductor_from_model(&model);
 
@@ -225,13 +232,22 @@ impl Document {
         if Some(track_idx) == self.edit.conductor_track_idx {
             return false;
         }
-        if self.data.model.tracks[t].notes.is_empty() {
+        if self.data.model.track_note_count.get(t).copied().unwrap_or(0) == 0 {
             return false;
         }
         let model = Arc::make_mut(&mut self.data.model);
-        let td = Arc::make_mut(&mut model.tracks[t]);
-        let insert_pos = td.notes.partition_point(|n| n.start_tick < note.start_tick);
-        td.notes.insert(insert_pos, note);
+        let key = note.key as usize;
+        let insert_pos = model.notes[key].partition_point(|n| n.start_tick < note.start_tick);
+        model.notes[key].insert(
+            insert_pos,
+            yinhe_types::Note {
+                start_tick: note.start_tick,
+                end_tick: note.end_tick,
+                velocity: note.velocity,
+                dup_index: note.dup_index,
+                track: track_idx,
+            },
+        );
         self.data.rebuild_model();
         true
     }
@@ -243,12 +259,10 @@ impl Document {
         {
             let model = Arc::make_mut(&mut self.data.model);
             for &(track, start_tick, key) in &self.edit.selected {
-                let track = track as usize;
-                if track < model.tracks.len() {
-                    let td = Arc::make_mut(&mut model.tracks[track]);
-                    td.notes
-                        .retain(|n| !(n.key == key as u8 && n.start_tick == start_tick));
-                }
+                let key = key as usize;
+                model.notes[key].retain(|n| {
+                    !(n.track == track && n.start_tick == start_tick)
+                });
             }
             self.edit.selected.clear();
         }
@@ -263,17 +277,15 @@ impl Document {
         let offset = {
             let model = Arc::make_mut(&mut self.data.model);
 
-            let mut selected_data: Vec<(NoteEvent, u16)> = Vec::new();
+            // Collect selected notes with their key (bucket index).
+            let mut selected_data: Vec<(yinhe_types::Note, u16, u8)> = Vec::new();
             for &(track, start_tick, key) in &self.edit.selected {
-                let t = track as usize;
-                if t < model.tracks.len() {
-                    if let Some(note) = model.tracks[t]
-                        .notes
-                        .iter()
-                        .find(|n| n.key == key as u8 && n.start_tick == start_tick)
-                    {
-                        selected_data.push((*note, track));
-                    }
+                let k = key as usize;
+                if let Some(note) = model.notes[k]
+                    .iter()
+                    .find(|n| n.track == track && n.start_tick == start_tick)
+                {
+                    selected_data.push((*note, track, key));
                 }
             }
 
@@ -281,26 +293,23 @@ impl Document {
                 return None;
             }
 
-            let min_start = selected_data.iter().map(|(n, _)| n.start_tick).min().unwrap();
-            let max_end = selected_data.iter().map(|(n, _)| n.end_tick).max().unwrap();
+            let min_start = selected_data.iter().map(|(n, _, _)| n.start_tick).min().unwrap();
+            let max_end = selected_data.iter().map(|(n, _, _)| n.end_tick).max().unwrap();
             let offset = (max_end - min_start).max(1);
 
             let mut new_selected = HashSet::new();
-            for (note, track) in &selected_data {
-                let t = *track as usize;
-                if t < model.tracks.len() {
-                    let new_note = NoteEvent {
-                        start_tick: note.start_tick + offset,
-                        end_tick: note.end_tick + offset,
-                        key: note.key,
-                        velocity: note.velocity,
-                        dup_index: 0,
-                    };
-                    let td = Arc::make_mut(&mut model.tracks[t]);
-                    let insert_pos = td.notes.partition_point(|n| n.start_tick < new_note.start_tick);
-                    td.notes.insert(insert_pos, new_note);
-                    new_selected.insert((*track, note.start_tick + offset, note.key));
-                }
+            for (note, track, key) in &selected_data {
+                let new_note = yinhe_types::Note {
+                    start_tick: note.start_tick + offset,
+                    end_tick: note.end_tick + offset,
+                    velocity: note.velocity,
+                    dup_index: 0,
+                    track: *track,
+                };
+                let k = *key as usize;
+                let insert_pos = model.notes[k].partition_point(|n| n.start_tick < new_note.start_tick);
+                model.notes[k].insert(insert_pos, new_note);
+                new_selected.insert((*track, note.start_tick + offset, *key));
             }
 
             self.edit.selected = new_selected;
@@ -317,19 +326,16 @@ impl Document {
         {
             let model = Arc::make_mut(&mut self.data.model);
 
-            let mut moved_data: Vec<(NoteEvent, u16)> = Vec::new();
+            // Remove selected notes from their current key buckets.
+            let mut moved_data: Vec<(yinhe_types::Note, u16, u8)> = Vec::new();
             for &(track, start_tick, key) in &self.edit.selected {
-                let t = track as usize;
-                if t < model.tracks.len() {
-                    let td = Arc::make_mut(&mut model.tracks[t]);
-                    if let Some(pos) = td
-                        .notes
-                        .iter()
-                        .position(|n| n.key == key as u8 && n.start_tick == start_tick)
-                    {
-                        let note = td.notes.remove(pos);
-                        moved_data.push((note, track));
-                    }
+                let k = key as usize;
+                if let Some(pos) = model.notes[k]
+                    .iter()
+                    .position(|n| n.track == track && n.start_tick == start_tick)
+                {
+                    let note = model.notes[k].remove(pos);
+                    moved_data.push((note, track, key));
                 }
             }
 
@@ -338,22 +344,19 @@ impl Document {
             }
 
             let mut new_selected = HashSet::new();
-            for (note, track) in &moved_data {
-                let t = *track as usize;
-                if t < model.tracks.len() {
-                    let new_key = ((note.key as i16) + (semitones as i16)).clamp(0, 127) as u8;
-                    let new_note = NoteEvent {
-                        start_tick: note.start_tick,
-                        end_tick: note.end_tick,
-                        key: new_key,
-                        velocity: note.velocity,
-                        dup_index: 0,
-                    };
-                    let td = Arc::make_mut(&mut model.tracks[t]);
-                    let insert_pos = td.notes.partition_point(|n| n.start_tick < new_note.start_tick);
-                    td.notes.insert(insert_pos, new_note);
-                    new_selected.insert((*track, note.start_tick, new_key));
-                }
+            for (note, track, old_key) in &moved_data {
+                let new_key = ((*old_key as i16) + (semitones as i16)).clamp(0, 127) as u8;
+                let new_note = yinhe_types::Note {
+                    start_tick: note.start_tick,
+                    end_tick: note.end_tick,
+                    velocity: note.velocity,
+                    dup_index: 0,
+                    track: *track,
+                };
+                let k = new_key as usize;
+                let insert_pos = model.notes[k].partition_point(|n| n.start_tick < new_note.start_tick);
+                model.notes[k].insert(insert_pos, new_note);
+                new_selected.insert((*track, note.start_tick, new_key));
             }
 
             self.edit.selected = new_selected;
@@ -384,7 +387,7 @@ pub fn detect_conductor_from_model(model: &YinModel) -> Option<u16> {
         return None;
     }
     let first = &model.tracks[0];
-    if !first.notes.is_empty() {
+    if model.track_note_count.first().copied().unwrap_or(0) > 0 {
         return None;
     }
     if !first.cc.is_empty() || !first.pitch_bend.is_empty() || !first.program_change.is_empty() {
@@ -401,7 +404,7 @@ fn build_track_info(model: &YinModel) -> Vec<yinhe_core::TrackInfo> {
         .map(|(i, track)| yinhe_core::TrackInfo {
             index: i as u16,
             name: track.name.clone(),
-            note_count: track.notes.len() as u64,
+            note_count: model.track_note_count.get(i).copied().unwrap_or(0),
             port: track.port,
             channel: track.channel,
         })
@@ -448,19 +451,18 @@ mod tests {
 
     #[test]
     fn detect_conductor_none_when_track0_has_notes() {
-        let mut t = TrackData::new(0, 0);
-        t.name = "Piano".into();
-        t.notes = vec![NoteEvent {
+        let t = TrackData::new(0, 0);
+        let mut model = YinModel {
+            tracks: vec![Arc::new(t)],
+            ..Default::default()
+        };
+        model.load_track_notes(vec![vec![NoteEvent {
             start_tick: 0,
             end_tick: 480,
             key: 60,
             velocity: 100,
             dup_index: 0,
-        }];
-        let mut model = YinModel {
-            tracks: vec![Arc::new(t)],
-            ..Default::default()
-        };
+        }]]);
         model.rebuild();
         assert_eq!(detect_conductor_from_model(&model), None);
     }
@@ -471,17 +473,17 @@ mod tests {
         t1.name = "Conductor".into();
         let mut t2 = TrackData::new(0, 0);
         t2.name = "Piano".into();
-        t2.notes = vec![NoteEvent {
+        let mut model = YinModel {
+            tracks: vec![Arc::new(t1), Arc::new(t2)],
+            ..Default::default()
+        };
+        model.load_track_notes(vec![vec![], vec![NoteEvent {
             start_tick: 0,
             end_tick: 480,
             key: 60,
             velocity: 100,
             dup_index: 0,
-        }];
-        let mut model = YinModel {
-            tracks: vec![Arc::new(t1), Arc::new(t2)],
-            ..Default::default()
-        };
+        }]]);
         model.rebuild();
         assert_eq!(detect_conductor_from_model(&model), Some(0));
     }

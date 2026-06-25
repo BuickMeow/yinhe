@@ -49,10 +49,22 @@ struct TrackPayload {
 }
 
 impl TrackPayload {
-    fn from_track(t: &TrackData) -> Self {
+    fn from_track(t: &TrackData, track_idx: u16, model: &YinModel) -> Self {
+        let mut notes: Vec<NoteEvent> = Vec::new();
+        for (key, bucket) in model.notes.iter().enumerate() {
+            for n in bucket.iter().filter(|n| n.track == track_idx) {
+                notes.push(NoteEvent {
+                    start_tick: n.start_tick,
+                    end_tick: n.end_tick,
+                    key: key as u8,
+                    velocity: n.velocity,
+                    dup_index: n.dup_index,
+                });
+            }
+        }
         Self {
             uuid: t.uuid.clone(),
-            notes: t.notes.clone(),
+            notes,
             cc: t.cc.clone(),
             pitch_bend: t.pitch_bend.clone(),
             program_change: t.program_change.clone(),
@@ -91,14 +103,18 @@ fn save_yin_bytes_with_files_inner(
     // data.bin: bincode(ModelData) → zstd
     let mut tracks_payload = Vec::with_capacity(model.tracks.len());
     {
-        let mut by_uuid: std::collections::HashMap<&str, &Arc<TrackData>> =
+        let mut by_uuid: std::collections::HashMap<&str, usize> =
             std::collections::HashMap::with_capacity(model.tracks.len());
-        for t in &model.tracks {
-            by_uuid.insert(&t.uuid, t);
+        for (i, t) in model.tracks.iter().enumerate() {
+            by_uuid.insert(&t.uuid, i);
         }
         for (_port, _ch, tm) in mapping.flat_tracks() {
-            if let Some(t) = by_uuid.get(tm.uuid.as_str()) {
-                tracks_payload.push(TrackPayload::from_track(t));
+            if let Some(&track_idx) = by_uuid.get(tm.uuid.as_str()) {
+                tracks_payload.push(TrackPayload::from_track(
+                    &model.tracks[track_idx],
+                    track_idx as u16,
+                    model,
+                ));
             }
         }
     }
@@ -193,6 +209,7 @@ fn load_yin_bytes_inner(bytes: &[u8]) -> Result<(YinModel, ProjectFile, MappingF
     }
 
     let mut tracks: Vec<Arc<TrackData>> = Vec::with_capacity(flat.len());
+    let mut per_track_notes: Vec<Vec<NoteEvent>> = Vec::with_capacity(flat.len());
     for ((port, channel, tm), payload) in flat.into_iter().zip(model_data.tracks.into_iter()) {
         let td = TrackData {
             uuid: tm.uuid.clone(),
@@ -203,7 +220,7 @@ fn load_yin_bytes_inner(bytes: &[u8]) -> Result<(YinModel, ProjectFile, MappingF
             channel_prefix: tm.channel_prefix,
             muted: tm.muted,
             soloed: tm.soloed,
-            notes: payload.notes,
+            notes: Vec::new(), // notes loaded via load_track_notes
             cc: payload.cc,
             pitch_bend: payload.pitch_bend,
             program_change: payload.program_change,
@@ -218,6 +235,7 @@ fn load_yin_bytes_inner(bytes: &[u8]) -> Result<(YinModel, ProjectFile, MappingF
                 ),
             )));
         }
+        per_track_notes.push(payload.notes);
         tracks.push(Arc::new(td));
     }
 
@@ -233,6 +251,7 @@ fn load_yin_bytes_inner(bytes: &[u8]) -> Result<(YinModel, ProjectFile, MappingF
         },
         ..Default::default()
     };
+    model.load_track_notes(per_track_notes);
     model.rebuild();
     Ok((model, project, mapping))
 }

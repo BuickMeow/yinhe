@@ -33,9 +33,8 @@ fn parse_minimal_midi() {
 
     assert_eq!(model.meta.ppq, 480);
     assert_eq!(model.tracks.len(), 1);
-    assert_eq!(model.tracks[0].notes.len(), 1);
-    let n = &model.tracks[0].notes[0];
-    assert_eq!(n.key, 60);
+    assert_eq!(model.note_count, 1);
+    let n = &model.notes[60][0];
     assert_eq!(n.start_tick, 0);
     assert_eq!(n.end_tick, 320);
     assert_eq!(n.velocity, 100);
@@ -46,7 +45,7 @@ fn parse_minimal_midi() {
 
     assert_eq!(model.note_count, 1);
     assert_eq!(model.tick_length, 320);
-    assert_eq!(model.key_notes_cache[60].len(), 1);
+    assert_eq!(model.notes[60].len(), 1);
 }
 
 #[test]
@@ -58,10 +57,9 @@ fn roundtrip_minimal_midi() {
 
     assert_eq!(model2.meta.ppq, model1.meta.ppq);
     assert_eq!(model2.tracks.len(), model1.tracks.len());
-    assert_eq!(model2.tracks[0].notes.len(), model1.tracks[0].notes.len());
-    let n1 = &model1.tracks[0].notes[0];
-    let n2 = &model2.tracks[0].notes[0];
-    assert_eq!(n2.key, n1.key);
+    assert_eq!(model2.note_count, model1.note_count);
+    let n1 = &model1.notes[60][0];
+    let n2 = &model2.notes[60][0];
     assert_eq!(n2.start_tick, n1.start_tick);
     assert_eq!(n2.end_tick, n1.end_tick);
     assert_eq!(n2.velocity, n1.velocity);
@@ -85,7 +83,7 @@ fn build_complex_model() -> YinModel {
 
     let mut t0 = TrackData::new(0, 0);
     t0.name = "Lead".to_string();
-    t0.notes = vec![
+    let t0_notes = vec![
         NoteEvent { start_tick: 0, end_tick: 480, key: 60, velocity: 100, dup_index: 0 },
         NoteEvent { start_tick: 480, end_tick: 960, key: 64, velocity: 90, dup_index: 0 },
         NoteEvent { start_tick: 1000, end_tick: 1500, key: 60, velocity: 80, dup_index: 0 },
@@ -110,13 +108,15 @@ fn build_complex_model() -> YinModel {
 
     let mut t1 = TrackData::new(0, 1);
     t1.name = "Bass".to_string();
-    t1.notes = vec![NoteEvent {
+    let t1_notes = vec![NoteEvent {
         start_tick: 0,
         end_tick: 1920,
         key: 36,
         velocity: 110,
         dup_index: 0,
     }];
+
+    let per_track_notes = vec![t0_notes, t1_notes];
 
     let meta = ProjectMeta {
         ppq: 480,
@@ -128,6 +128,7 @@ fn build_complex_model() -> YinModel {
         meta,
         ..Default::default()
     };
+    model.load_track_notes(per_track_notes);
     model.rebuild();
     model
 }
@@ -142,15 +143,24 @@ fn roundtrip_complex_model_preserves_everything() {
 
     let l1 = &model1.tracks[0];
     let l2 = &model2.tracks[0];
-    assert_eq!(l1.notes.len(), l2.notes.len(), "note count mismatch");
+    assert_eq!(model1.track_note_count[0], model2.track_note_count[0], "note count mismatch");
     assert_eq!(l2.name, "Lead");
     // Notes equal as a multiset of (start_tick, end_tick, key, velocity).
     // dup_index is a local-stable ordering and may differ across SMF
     // round-trips because the MIDI encoding doesn't preserve which note
     // was "first" among same-tick same-key onsets.
-    let key_of = |n: &NoteEvent| (n.start_tick, n.end_tick, n.key, n.velocity);
-    let mut s1: Vec<_> = l1.notes.iter().map(key_of).collect();
-    let mut s2: Vec<_> = l2.notes.iter().map(key_of).collect();
+    let mut s1: Vec<_> = Vec::new();
+    for (key, bucket) in model1.notes.iter().enumerate() {
+        for n in bucket.iter().filter(|n| n.track == 0) {
+            s1.push((n.start_tick, n.end_tick, key as u8, n.velocity));
+        }
+    }
+    let mut s2: Vec<_> = Vec::new();
+    for (key, bucket) in model2.notes.iter().enumerate() {
+        for n in bucket.iter().filter(|n| n.track == 0) {
+            s2.push((n.start_tick, n.end_tick, key as u8, n.velocity));
+        }
+    }
     s1.sort();
     s2.sort();
     assert_eq!(s1, s2, "note multiset differs");
@@ -170,8 +180,7 @@ fn roundtrip_complex_model_preserves_everything() {
 
     let b1 = &model1.tracks[1];
     let b2 = &model2.tracks[1];
-    assert_eq!(b2.notes.len(), b1.notes.len());
-    assert_eq!(b2.notes[0].key, 36);
+    assert_eq!(model2.track_note_count[1], model1.track_note_count[1]);
     assert_eq!(b2.channel, 1);
 }
 
@@ -199,11 +208,9 @@ fn dup_index_assigned_for_overlapping_notes() {
     let bytes = build_overlap_midi_bytes();
     let model = parse_bytes(&bytes).expect("parse failed");
     assert_eq!(model.tracks.len(), 1);
-    let t = &model.tracks[0];
-    let key60_at_0: Vec<&NoteEvent> = t
-        .notes
+    let key60_at_0: Vec<&yinhe_core::Note> = model.notes[60]
         .iter()
-        .filter(|n| n.key == 60 && n.start_tick == 0)
+        .filter(|n| n.track == 0 && n.start_tick == 0)
         .collect();
     assert_eq!(key60_at_0.len(), 2, "expected two overlapping notes at tick 0");
     let dups: Vec<u8> = key60_at_0.iter().map(|n| n.dup_index).collect();

@@ -84,10 +84,13 @@ pub fn parse_bytes_with_encoding(
 
         // Drop skipped tracks and assign fallback names by final position.
         let mut tracks: Vec<TrackData> = Vec::with_capacity(total_tracks);
+        let mut per_track_notes: Vec<Vec<NoteEvent>> = Vec::with_capacity(total_tracks);
         for mut td in parsed.into_iter().flatten() {
             if td.name.is_empty() {
                 td.name = format!("Track {}", tracks.len() + 1);
             }
+            per_track_notes.push(td.notes);
+            td.notes = Vec::new(); // notes moved out, clear to avoid confusion
             tracks.push(td);
         }
 
@@ -102,6 +105,7 @@ pub fn parse_bytes_with_encoding(
             meta,
             ..Default::default()
         };
+        model.load_track_notes(per_track_notes);
         model.rebuild();
 
         Ok(model)

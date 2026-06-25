@@ -21,7 +21,7 @@ fn build_notes_output_count_matches_input() {
     let selected = std::collections::HashSet::new();
 
     let mut out = Vec::new();
-    instances::build_notes(&mut out, 800.0, 600.0, &m, &view, &selected, &visible, &colors, 0.0);
+    instances::build_notes(&mut out, 800.0, 600.0, &m, &view, &selected, &visible, &colors);
     assert_eq!(out.len(), m.note_count as usize);
 }
 
@@ -34,7 +34,7 @@ fn build_notes_empty_source() {
     let selected = std::collections::HashSet::new();
 
     let mut out = Vec::new();
-    instances::build_notes(&mut out, 800.0, 600.0, &m, &view, &selected, &visible, &colors, 0.0);
+    instances::build_notes(&mut out, 800.0, 600.0, &m, &view, &selected, &visible, &colors);
     assert!(out.is_empty());
 }
 
@@ -48,7 +48,7 @@ fn build_notes_with_selection() {
     selected.insert((0u16, 0u32, 60u8));
 
     let mut out = Vec::new();
-    instances::build_notes(&mut out, 800.0, 600.0, &m, &view, &selected, &visible, &colors, 0.0);
+    instances::build_notes(&mut out, 800.0, 600.0, &m, &view, &selected, &visible, &colors);
     assert_eq!(out.len(), 4);
 }
 
@@ -62,7 +62,7 @@ fn build_notes_visibility_filter() {
     let selected = std::collections::HashSet::new();
 
     let mut out = Vec::new();
-    instances::build_notes(&mut out, 800.0, 600.0, &m, &view, &selected, &visible, &colors, 0.0);
+    instances::build_notes(&mut out, 800.0, 600.0, &m, &view, &selected, &visible, &colors);
     // Track 0 has 2 notes, track 1 has 1, track 2 has 1
     // Hiding track 0 should leave 2 notes
     assert_eq!(out.len(), 2);
@@ -77,7 +77,7 @@ fn build_notes_visible_range_culling() {
     let selected = std::collections::HashSet::new();
 
     let mut out = Vec::new();
-    instances::build_notes(&mut out, 800.0, 600.0, &m, &view, &selected, &visible, &colors, 0.0);
+    instances::build_notes(&mut out, 800.0, 600.0, &m, &view, &selected, &visible, &colors);
     // Default view shows all notes
     assert_eq!(out.len(), 4);
 }
@@ -91,7 +91,7 @@ fn build_notes_empty_data() {
     let selected = std::collections::HashSet::new();
 
     let mut out = Vec::new();
-    instances::build_notes(&mut out, 800.0, 600.0, &m, &view, &selected, &visible, &colors, 0.0);
+    instances::build_notes(&mut out, 800.0, 600.0, &m, &view, &selected, &visible, &colors);
     assert!(out.is_empty());
 }
 
@@ -106,7 +106,7 @@ fn build_notes_stress_many_tracks() {
     let selected = std::collections::HashSet::new();
 
     let mut out = Vec::new();
-    instances::build_notes(&mut out, 800.0, 600.0, &m, &view, &selected, &visible, &colors, 0.0);
+    instances::build_notes(&mut out, 800.0, 600.0, &m, &view, &selected, &visible, &colors);
     assert_eq!(out.len(), 800);
 }
 
@@ -115,9 +115,9 @@ fn build_notes_stress_many_tracks() {
 #[test]
 fn tick_buckets_build_and_range() {
     let mut key_notes: [Vec<Note>; 128] = std::array::from_fn(|_| Vec::new());
-    key_notes[60].push(Note { start_tick: 0, end_tick: 100, velocity: 80, track: 0 });
-    key_notes[60].push(Note { start_tick: 200, end_tick: 300, velocity: 80, track: 0 });
-    key_notes[60].push(Note { start_tick: 1000, end_tick: 1100, velocity: 80, track: 0 });
+    key_notes[60].push(Note { start_tick: 0, end_tick: 100, velocity: 80, dup_index: 0, track: 0 });
+    key_notes[60].push(Note { start_tick: 200, end_tick: 300, velocity: 80, dup_index: 0, track: 0 });
+    key_notes[60].push(Note { start_tick: 1000, end_tick: 1100, velocity: 80, dup_index: 0, track: 0 });
 
     let buckets = TickBuckets::build(&key_notes, 1200, 500);
     let (start, end) = buckets.range_for(60, 0, 500);
@@ -129,12 +129,12 @@ fn tick_buckets_build_and_range() {
 #[test]
 fn note_scan_index_build_and_seek() {
     let mut key_notes: [Vec<Note>; 128] = std::array::from_fn(|_| Vec::new());
-    key_notes[60].push(Note { start_tick: 0, end_tick: 100, velocity: 80, track: 0 });
-    key_notes[60].push(Note { start_tick: 500, end_tick: 600, velocity: 80, track: 0 });
-    key_notes[60].push(Note { start_tick: 1000, end_tick: 1100, velocity: 80, track: 0 });
+    key_notes[60].push(Note { start_tick: 0, end_tick: 100, velocity: 80, dup_index: 0, track: 0 });
+    key_notes[60].push(Note { start_tick: 500, end_tick: 600, velocity: 80, dup_index: 0, track: 0 });
+    key_notes[60].push(Note { start_tick: 1000, end_tick: 1100, velocity: 80, dup_index: 0, track: 0 });
 
     let mut m = YinModel::default();
-    m.key_notes_cache = key_notes.to_vec();
+    m.notes[60] = key_notes[60].clone();
     m.scan_index = Some(NoteScanIndex::build(&key_notes, 1200));
 
     let first = yinhe_types::seek_first_note(60, &m, 400);

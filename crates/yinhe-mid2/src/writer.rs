@@ -25,8 +25,8 @@ pub fn write_to_bytes(model: &YinModel) -> Result<Vec<u8>, MidiError> {
     tracks.push(build_conductor_track(model));
 
     // Tracks 1..N+1: per-track event streams
-    for t in &model.tracks {
-        tracks.push(build_track(t));
+    for (i, t) in model.tracks.iter().enumerate() {
+        tracks.push(build_track(t, i as u16, model));
     }
 
     let smf = Smf {
@@ -73,32 +73,34 @@ fn build_conductor_track<'a>(model: &'a YinModel) -> Vec<TrackEvent<'a>> {
     flatten_to_track(events, None)
 }
 
-fn build_track<'a>(track: &'a TrackData) -> Vec<TrackEvent<'a>> {
+fn build_track<'a>(track: &'a TrackData, track_idx: u16, model: &'a YinModel) -> Vec<TrackEvent<'a>> {
     let ch = u4::new(track.channel & 0x0F);
     let mut events: Vec<(u32, TrackEventKind<'a>)> = Vec::new();
 
     // Notes → NoteOn + NoteOff pairs
-    for n in &track.notes {
-        events.push((
-            n.start_tick,
-            TrackEventKind::Midi {
-                channel: ch,
-                message: MidiMessage::NoteOn {
-                    key: u7::new(n.key & 0x7F),
-                    vel: u7::new(n.velocity & 0x7F),
+    for (key, bucket) in model.notes.iter().enumerate() {
+        for n in bucket.iter().filter(|n| n.track == track_idx) {
+            events.push((
+                n.start_tick,
+                TrackEventKind::Midi {
+                    channel: ch,
+                    message: MidiMessage::NoteOn {
+                        key: u7::new((key as u8) & 0x7F),
+                        vel: u7::new(n.velocity & 0x7F),
+                    },
                 },
-            },
-        ));
-        events.push((
-            n.end_tick,
-            TrackEventKind::Midi {
-                channel: ch,
-                message: MidiMessage::NoteOff {
-                    key: u7::new(n.key & 0x7F),
-                    vel: u7::new(0),
+            ));
+            events.push((
+                n.end_tick,
+                TrackEventKind::Midi {
+                    channel: ch,
+                    message: MidiMessage::NoteOff {
+                        key: u7::new((key as u8) & 0x7F),
+                        vel: u7::new(0),
+                    },
                 },
-            },
-        ));
+            ));
+        }
     }
 
     // CC events
