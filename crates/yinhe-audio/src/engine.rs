@@ -805,6 +805,38 @@ impl AudioEngine {
                     tick_to_sample(n.start_tick as u64, segments, tpb, sr) < sample
                 });
                 self.note_cursor[key] = cursor;
+
+                // If the note just before cursor is a long note that started
+                // before seek but hasn't ended yet, start it now.
+                if cursor > 0 {
+                    let prev = &notes[cursor - 1];
+                    if prev.velocity > 1 {
+                        let end_sample = tick_to_sample(prev.end_tick as u64, segments, tpb, sr);
+                        if end_sample > sample {
+                            let track = prev.track as usize;
+                            let ch = self.model.as_ref().map(|m| m.track_channel(track) as usize).unwrap_or(0);
+                            if self.active_mask.get(ch).copied().unwrap_or(false)
+                                && !self.skip_track.get(track).copied().unwrap_or(false)
+                            {
+                                let dense = self.channel_map.get(ch).copied().unwrap_or(u32::MAX);
+                                if dense != u32::MAX {
+                                    self.channel_group.send_event(SynthEvent::Channel(
+                                        dense,
+                                        ChannelEvent::Audio(ChannelAudioEvent::NoteOn {
+                                            key: key as u8,
+                                            vel: prev.velocity,
+                                        }),
+                                    ));
+                                    self.active_notes.push(ActiveNote {
+                                        key: key as u8,
+                                        channel: ch as u8,
+                                        end_sample,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
 

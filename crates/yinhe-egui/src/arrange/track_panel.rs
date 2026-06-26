@@ -115,7 +115,7 @@ pub(crate) fn show(
                     7 => 'H',
                     _ => '?',
                 };
-                format!("{}{:02}", port_letter, ti.channel)
+                format!("{}{:02}", port_letter, ti.channel + 1)
             };
             painter.text(
                 egui::pos2(text_x + 32.0, badge_rect.min.y + *row_height * 0.30),
