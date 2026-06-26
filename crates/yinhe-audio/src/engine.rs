@@ -171,6 +171,8 @@ pub(crate) fn prepare_model(
         }
     }
     cc_events.sort_by_key(|e| e.sample);
+    // 去重：同 sample 同 channel 的重复事件 + 连续相同值的事件（不改变 xsynth 状态）
+    cc_events.dedup_by(|a, b| a.channel == b.channel && a.event == b.event);
 
     let duration_samples = (model.tempo_map.tick_to_seconds(model.tick_length) * sr) as u64;
 
@@ -658,6 +660,8 @@ impl AudioEngine {
             }
         }
         self.cc_events.sort_by_key(|e| e.sample);
+        // 去重：同 sample 同 channel 的重复事件 + 连续相同值的事件（不改变 xsynth 状态）
+        self.cc_events.dedup_by(|a, b| a.channel == b.channel && a.event == b.event);
 
         self.duration_samples = (model.tempo_map.tick_to_seconds(model.tick_length) * sr) as u64;
 
