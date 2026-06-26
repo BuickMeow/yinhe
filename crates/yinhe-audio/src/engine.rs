@@ -374,9 +374,6 @@ impl AudioEngine {
                 .max(rendered_until)
                 .min(block_end);
 
-            // CC/PB/RPN 在 render 之前批量发出，效果立即生效
-            self.dispatch_cc_until(next_event_sample);
-
             if next_event_sample > rendered_until {
                 let segment_frames = (next_event_sample - rendered_until) as usize;
                 let start = offset_frames * STEREO_CHANNELS;
@@ -390,6 +387,9 @@ impl AudioEngine {
                 break;
             }
 
+            // CC/PB/RPN 在 render 之后发出，确保只在当前 sample 位置生效，
+            // 不会影响之前已渲染的音频段。
+            self.dispatch_cc_until(rendered_until);
             // NoteOn/NoteOff 在 render 之后发出，保证精确切分
             self.dispatch_notes_at(rendered_until);
         }
@@ -397,9 +397,10 @@ impl AudioEngine {
         self.sample_position = block_end;
     }
 
-    /// 返回下一个需要切分渲染的位置（只看音符边界：NoteOn / NoteOff）。
-    /// CC / PitchBend / RPN 事件不再影响切分，改为在 `dispatch_cc_until` 中
-    /// 批量一次性发出，避免黑乐谱（海量 CC）把渲染循环切碎。
+    /// 返回下一个需要切分渲染的位置（音符边界 + CC 事件位置）。
+    /// 音符边界（NoteOn/NoteOff）用于精确切分音符起止；
+    /// CC 事件位置确保快速变换的 CC（如 CC7/CC11）能在正确的 sample
+    /// 位置生效，而不是被批量推迟到下一个音符边界才发出。
     fn next_event_sample(&self, rendered_until: u64, block_end: u64) -> Option<u64> {
         let mut next: Option<u64> = None;
 
@@ -438,6 +439,15 @@ impl AudioEngine {
                 if note.end_sample >= rendered_until && note.end_sample < block_end {
                     next = Some(next.map_or(note.end_sample, |s| s.min(note.end_sample)));
                 }
+            }
+        }
+
+        // 也考虑 CC 事件位置，确保快速变换的 CC 在正确的 sample 位置生效，
+        // 而不是被推迟到下一个音符边界才一次性发出。
+        if self.cc_cursor < self.cc_events.len() {
+            let cc_sample = self.cc_events[self.cc_cursor].sample;
+            if cc_sample >= rendered_until && cc_sample < block_end {
+                next = Some(next.map_or(cc_sample, |s| s.min(cc_sample)));
             }
         }
 
