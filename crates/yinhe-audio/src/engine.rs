@@ -377,6 +377,9 @@ impl AudioEngine {
                 .max(rendered_until)
                 .min(block_end);
 
+            // CC/PB/RPN 在 render 之前批量发出，效果立即生效
+            self.dispatch_cc_until(next_event_sample);
+
             if next_event_sample > rendered_until {
                 let segment_frames = (next_event_sample - rendered_until) as usize;
                 let start = offset_frames * STEREO_CHANNELS;
@@ -390,18 +393,18 @@ impl AudioEngine {
                 break;
             }
 
-            self.dispatch_events_at(rendered_until);
+            // NoteOn/NoteOff 在 render 之后发出，保证精确切分
+            self.dispatch_notes_at(rendered_until);
         }
 
         self.sample_position = block_end;
     }
 
+    /// 返回下一个需要切分渲染的位置（只看音符边界：NoteOn / NoteOff）。
+    /// CC / PitchBend / RPN 事件不再影响切分，改为在 `dispatch_cc_until` 中
+    /// 批量一次性发出，避免黑乐谱（海量 CC）把渲染循环切碎。
     fn next_event_sample(&self, rendered_until: u64, block_end: u64) -> Option<u64> {
-        let mut next: Option<u64> = self
-            .cc_events
-            .get(self.cc_cursor)
-            .map(|cc| cc.sample)
-            .filter(|&sample| sample >= rendered_until && sample < block_end);
+        let mut next: Option<u64> = None;
 
         if let Some(ref yin_model) = self.yin_model {
             let segments = &yin_model.tempo_map.tempo_segments;
@@ -444,7 +447,9 @@ impl AudioEngine {
         next
     }
 
-    fn dispatch_events_at(&mut self, sample: u64) {
+    /// 批量发出 sample ≤ cutoff 的所有 CC / PitchBend / RPN 事件。
+    /// 在 render 之前调用，效果立即生效。
+    fn dispatch_cc_until(&mut self, sample: u64) {
         while self.cc_cursor < self.cc_events.len() && self.cc_events[self.cc_cursor].sample <= sample {
             let cc = &self.cc_events[self.cc_cursor];
             let dense = self
@@ -458,7 +463,11 @@ impl AudioEngine {
             }
             self.cc_cursor += 1;
         }
+    }
 
+    /// 发出 sample 位置处的 NoteOn 和已结束的 NoteOff。
+    /// 在 render 之后调用，保证精确切分在音符边界。
+    fn dispatch_notes_at(&mut self, sample: u64) {
         if let Some(ref yin_model) = self.yin_model.clone() {
             let segments = &yin_model.tempo_map.tempo_segments;
             let tpb = yin_model.tempo_map.ticks_per_beat;
@@ -1061,7 +1070,8 @@ mod tests {
 
         // Note at key 60, start_tick=960, velocity=100 → should dispatch at sample 48000.
         assert_eq!(engine.next_event_sample(0, 60000), Some(48000));
-        engine.dispatch_events_at(48000);
+        engine.dispatch_cc_until(48000);
+        engine.dispatch_notes_at(48000);
 
         assert_eq!(engine.note_cursor[60], 1);
         assert_eq!(engine.active_notes.len(), 1);
@@ -1138,7 +1148,8 @@ mod tests {
         assert_eq!(engine.note_cursor[60], 0);
         // Note at key 60, start_tick=960, velocity=100 → should dispatch at sample 44100.
         assert_eq!(engine.next_event_sample(0, 60000), Some(44100));
-        engine.dispatch_events_at(44100);
+        engine.dispatch_cc_until(44100);
+        engine.dispatch_notes_at(44100);
         // Cursor = 3: 2 low-vel skipped + 1 dispatched (4th note's start_sample > 44100).
         assert_eq!(engine.note_cursor[60], 3);
         assert_eq!(engine.active_notes.len(), 1);
@@ -1211,10 +1222,12 @@ mod tests {
         // Note at key 0, start_tick=2000 → ~150000 samples at 48000 Hz (120→60 BPM at tick 1000).
         // Note at key 60, start_tick=480 → 24000 samples at 48000 Hz.
         assert_eq!(engine.next_event_sample(0, 200000), Some(24000));
-        engine.dispatch_events_at(24000);
+        engine.dispatch_cc_until(24000);
+        engine.dispatch_notes_at(24000);
         assert_eq!(engine.note_cursor[60], 1);
         assert_eq!(engine.active_notes.len(), 1);
-        engine.dispatch_events_at(150000);
+        engine.dispatch_cc_until(150000);
+        engine.dispatch_notes_at(150000);
         assert_eq!(engine.note_cursor[0], 1);
         // Note at key 60 ended at sample 48000, so only key 0 is active.
         assert_eq!(engine.active_notes.len(), 1);
