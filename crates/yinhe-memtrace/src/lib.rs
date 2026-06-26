@@ -1,6 +1,27 @@
-use std::alloc::{GlobalAlloc, Layout, System};
+use std::alloc::{GlobalAlloc, Layout};
 use std::cell::Cell;
 use std::sync::atomic::{AtomicIsize, Ordering};
+
+// ---------------------------------------------------------------------------
+// Backend allocator selection
+// ---------------------------------------------------------------------------
+// macOS: jemalloc — its macOS backend aggressively munmaps freed segments,
+//        keeping RSS close to the true live allocation size.
+// Other platforms (Linux, Windows): mimalloc — excellent performance and
+//        low fragmentation, with acceptable RSS behaviour on those OSes.
+// ---------------------------------------------------------------------------
+
+#[cfg(target_os = "macos")]
+use tikv_jemallocator::Jemalloc;
+
+#[cfg(target_os = "macos")]
+const BACKEND: Jemalloc = Jemalloc;
+
+#[cfg(not(target_os = "macos"))]
+use mimalloc::MiMalloc;
+
+#[cfg(not(target_os = "macos"))]
+const BACKEND: MiMalloc = MiMalloc;
 
 pub mod perf_probe;
 
@@ -125,6 +146,30 @@ pub fn with_tag<T>(tag: AllocTag, f: impl FnOnce() -> T) -> T {
     })
 }
 
+/// Hint to the backend allocator to purge free pages back to the OS.
+/// Call after a batch of large allocations is dropped (e.g. after MIDI
+/// parsing completes) to reduce RSS without affecting future allocations.
+#[cfg(target_os = "macos")]
+pub fn purge_free_pages() {
+    // jemalloc: advance epoch to trigger decay-based decommit of unused pages.
+    // This is a best-effort hint; jemalloc on macOS is already far more
+    // aggressive than mimalloc at munmapping freed segments.
+    use tikv_jemalloc_ctl::epoch;
+    let _ = epoch::advance();
+}
+
+/// Hint to the backend allocator to purge free pages back to the OS.
+/// Call after a batch of large allocations is dropped (e.g. after MIDI
+/// parsing completes) to reduce RSS without affecting future allocations.
+#[cfg(not(target_os = "macos"))]
+pub fn purge_free_pages() {
+    // mimalloc: direct FFI call to mi_collect.
+    unsafe extern "C" {
+        fn mi_collect(force: bool);
+    }
+    unsafe { mi_collect(true) };
+}
+
 /// Snapshot of memory attributed to each tag, plus GPU resources.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Snapshot {
@@ -193,7 +238,7 @@ unsafe impl GlobalAlloc for TaggedAlloc {
             Err(_) => return std::ptr::null_mut(),
         };
 
-        let ptr = unsafe { System.alloc(combined) };
+        let ptr = unsafe { BACKEND.alloc(combined) };
         if ptr.is_null() {
             return std::ptr::null_mut();
         }
@@ -229,7 +274,7 @@ unsafe impl GlobalAlloc for TaggedAlloc {
         let header_align = std::mem::align_of::<Header>();
         let combined_align = header_align.max(user_align);
         let combined = unsafe { Layout::from_size_align_unchecked(combined_size, combined_align) };
-        unsafe { System.dealloc(header_ptr as *mut u8, combined) };
+        unsafe { BACKEND.dealloc(header_ptr as *mut u8, combined) };
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {

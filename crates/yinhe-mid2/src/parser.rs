@@ -108,6 +108,12 @@ pub fn parse_bytes_with_encoding(
         model.load_track_notes(per_track_notes);
         model.rebuild();
 
+        // Purge mimalloc free pages: after load_track_notes drops the
+        // per-track temporary Vecs, many pages are idle in mimalloc's
+        // free list.  This hint tells it to munmap them back to the OS,
+        // reducing RSS without affecting future allocations.
+        yinhe_memtrace::purge_free_pages();
+
         Ok(model)
     })
 }
