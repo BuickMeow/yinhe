@@ -170,14 +170,8 @@ pub fn show(
         });
 
         // Layer 2: notes
-        // Quantized scroll_x: during playback scroll_x changes smoothly, so the
-        // cache stays valid for many frames.  tick_pad ensures cached notes
-        // cover the full bucket range.  GPU clips off-screen notes.
-        const SCROLL_BUCKET: f32 = 500.0;
-        let scroll_bucket = (view.base.scroll_x / SCROLL_BUCKET) as i64 as u64;
-        let tick_pad = (SCROLL_BUCKET / view.base.pixels_per_tick) as f64;
         let notes_key = layer_cache_key(&[
-            scroll_bucket,
+            view.base.scroll_x.to_bits() as u64,
             view.base.scroll_y.to_bits() as u64,
             view.base.pixels_per_tick.to_bits() as u64,
             view.lane_height.to_bits() as u64,
@@ -196,7 +190,6 @@ pub fn show(
                     view,
                     track_visible,
                     track_colors,
-                    tick_pad,
                 );
             }
         });

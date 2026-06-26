@@ -93,7 +93,7 @@ pub fn build_grid(
 /// Dependencies: scroll_y, lane_height, track_visible, track_colors
 /// x/w store ticks (shader converts to pixels), y/h store pixel positions.
 ///
-/// `tick_pad`: extra ticks to include on each side of the visible range.
+/// GPU clips off-screen notes.
 pub fn build_notes(
     out: &mut Vec<NoteInstance>,
     w: f32,
@@ -102,7 +102,6 @@ pub fn build_notes(
     view: &ArrangementView,
     track_visible: &[bool],
     track_colors: &[[f32; 3]],
-    tick_pad: f64,
 ) {
     let lh = view.lane_height;
     let ppu = view.base.pixels_per_tick;
@@ -112,13 +111,11 @@ pub fn build_notes(
     let y_offset = -view.base.scroll_y;
     let lh_per_key = lh / 128.0;
     let note_h = lh_per_key.max(1.0);
-    let pad_start = (tick_start - tick_pad).max(0.0);
-    let pad_end = tick_end + tick_pad;
 
     let note_instances: Vec<Vec<NoteInstance>> = (0u8..128)
         .into_par_iter()
         .filter_map(|key| {
-            let notes = midi.key_notes_in_range(key, pad_start as u32, pad_end as u32);
+            let notes = midi.key_notes_in_range(key, tick_start as u32, tick_end as u32);
             if notes.is_empty() {
                 return None;
             }
@@ -129,8 +126,8 @@ pub fn build_notes(
 
             let flush_merge =
                 |local: &mut Vec<NoteInstance>, ti: usize, start: u32, end: u32, vel: u8| {
-                    let s = (start as f64).max(pad_start) as u32;
-                    let e = (end as f64).min(pad_end).max(start as f64) as u32;
+                    let s = (start as f64).max(tick_start) as u32;
+                    let e = (end as f64).min(tick_end).max(start as f64) as u32;
                     if s >= e {
                         return;
                     }
@@ -158,10 +155,10 @@ pub fn build_notes(
 
             let mut track_buckets: Vec<Vec<(u32, u32, u8)>> = vec![Vec::new(); num_tracks];
             for note in notes {
-                if note.start_tick as f64 > pad_end {
+                if note.start_tick as f64 > tick_end {
                     break;
                 }
-                if (note.end_tick as f64) < pad_start {
+                if (note.end_tick as f64) < tick_start {
                     continue;
                 }
                 let ti = note.track as usize;
@@ -229,7 +226,7 @@ pub fn build_arrangement_static(
         let (def_num, def_den) = midi.time_sig_default();
         let sig_events = midi.time_sig_events();
         build_grid(instances, w, h, view, tpb, def_num, def_den, sig_events, 0.0);
-        build_notes(instances, w, h, midi, view, track_visible, track_colors, 0.0);
+        build_notes(instances, w, h, midi, view, track_visible, track_colors);
     }
 }
 

@@ -130,9 +130,6 @@ pub fn prepare(
     };
     let notes_key = layer_cache_key(&[
         scroll_x_pos.to_bits() as u64,
-        scroll_y.to_bits() as u64,
-        ppu.to_bits() as u64,
-        kh.to_bits() as u64,
         w.to_bits() as u64,
         h.to_bits() as u64,
         kb_w.to_bits() as u64,
