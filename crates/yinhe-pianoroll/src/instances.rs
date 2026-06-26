@@ -7,7 +7,6 @@ use crate::vertex::{NoteInstance, pack_props, pack_rgba};
 use crate::view::PianoRollView;
 
 const BLACK_KEY_ROW_COLOR: (f32, f32, f32) = (0.10, 0.10, 0.12);
-const NOTE_ROUNDING: f32 = 0.15;
 
 /// Build background + black-key row instances (layer 0).
 /// Dependencies: scroll_y, key_height, h
@@ -85,8 +84,11 @@ pub fn build_grid(
 }
 
 /// Build note instances (layer 2).
-/// Dependencies: scroll_y, key_height, selection, track_visible
-/// x/w store ticks (shader converts to pixels), y/h store pixel positions.
+/// Dependencies: selection, track_visible, tick range (scroll_x)
+///
+/// x/w store ticks, y stores key number (shader converts to pixel y via
+/// scroll_y + key_height), h is unused (shader uses key_height directly).
+/// This means scroll_y and key_height changes do NOT invalidate the cache.
 ///
 /// Padding: one screen width on each side of the visible tick range,
 /// so fast scrolling doesn't flash empty space before the cache rebuilds.
@@ -100,8 +102,6 @@ pub fn build_notes(
     track_visible: &[bool],
     track_colors: &[[f32; 3]],
 ) {
-    let kh = view.key_height;
-    let bottom = 128.0 * kh - view.base.scroll_y;
     let (tick_start, tick_end) = view.visible_tick_range(w);
     let (key_lo, key_hi) = view.visible_key_range(h);
     let has_selection = !selected.is_empty();
@@ -119,8 +119,6 @@ pub fn build_notes(
             if notes.is_empty() {
                 return None;
             }
-
-            let key_y = bottom - (key as f32 + 1.0) * kh;
 
             let mut local = Vec::new();
 
@@ -150,9 +148,9 @@ pub fn build_notes(
 
                 local.push(NoteInstance {
                     x: note.start_tick as f32, // tick (shader converts to pixel)
-                    y: key_y,                  // pixel
+                    y: key as f32,             // key number (shader converts to pixel y)
                     w: note.end_tick as f32,   // tick (shader converts to pixel)
-                    h: kh,                     // pixel
+                    h: 0.0,                    // unused (shader uses key_height)
                     rgba_packed: pack_rgba(color[0], color[1], color[2], 1.0),
                     props_packed: 0, // shader computes rounding/border
                     velocity: note.velocity as u32,
@@ -407,7 +405,8 @@ mod tests {
         let note = &out[0];
         assert_eq!(note.x, 0.0);
         assert_eq!(note.w, 480.0);
-        assert_eq!(note.h, 12.0);
+        assert_eq!(note.y, 100.0); // key number (shader converts to pixel y)
+        assert_eq!(note.h, 0.0);   // unused (shader uses key_height from uniforms)
         assert_eq!(note.velocity, 100);
     }
 

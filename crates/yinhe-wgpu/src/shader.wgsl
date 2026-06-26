@@ -50,16 +50,29 @@ fn vs_main(
     var pixel_w = instance.xywh.z;
     var pixel_h = instance.xywh.w;
 
-    if (u.mode == 1u || u.mode == 2u) && vel > 0u {
-        // x = start_tick, w = end_tick
+    if u.mode == 1u && vel > 0u {
+        // PR notes: x=start_tick, y=key_number, w=end_tick, h=unused
+        // x/w → pixel via ppu + scroll_x; y/h → pixel via key_height + scroll_y
+        let start_tick = pixel_x;
+        let key = pixel_y;
+        let end_tick = pixel_w;
+        let ppu = u.pixels_per_tick;
+        let x_offset = u.keyboard_width - u.scroll_x;
+        pixel_x = x_offset + start_tick * ppu;
+        pixel_w = max(x_offset + end_tick * ppu - pixel_x, 2.0);
+        let bottom = 128.0 * u.key_height - u.scroll_y;
+        pixel_y = bottom - (key + 1.0) * u.key_height;
+        pixel_h = u.key_height;
+    }
+
+    if u.mode == 2u && vel > 0u {
+        // AR notes: x=start_tick, w=end_tick (y/h are pixel, unchanged)
         let start_tick = pixel_x;
         let end_tick = pixel_w;
         let ppu = u.pixels_per_tick;
         let x_offset = u.keyboard_width - u.scroll_x;
-        let raw_x = x_offset + start_tick * ppu;
-        let raw_end = x_offset + end_tick * ppu;
-        pixel_x = raw_x;
-        pixel_w = max(raw_end - raw_x, 2.0);
+        pixel_x = x_offset + start_tick * ppu;
+        pixel_w = max(x_offset + end_tick * ppu - pixel_x, 2.0);
     }
 
     // Snap to integer pixels (模式1和2) to prevent sub-pixel jitter.
