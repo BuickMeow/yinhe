@@ -109,4 +109,16 @@ impl ArrangementView {
         self.base.scroll_y = self.base.scroll_y.max(0.0);
         self.base.dirty = true;
     }
+
+    /// Hash of all fields that affect GPU rendering output.
+    /// Used as cache key for GPU layers.
+    pub fn render_hash(&self) -> u64 {
+        let mut h: u64 = 0;
+        h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(self.base.pixels_per_tick.to_bits() as u64);
+        h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(self.base.scroll_x.to_bits() as u64);
+        h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(self.base.scroll_y.to_bits() as u64);
+        h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(self.base.left_panel_width.to_bits() as u64);
+        h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(self.lane_height.to_bits() as u64);
+        h
+    }
 }

@@ -66,28 +66,22 @@ pub fn prepare(
     renderer.ensure_layers(4);
 
     // Layer 0: decor (background + black-key rows)
-    let decor_key = layer_cache_key(&[
-        scroll_y.to_bits() as u64,
-        kh.to_bits() as u64,
-        h.to_bits() as u64,
-        w.to_bits() as u64,
-        kb_w.to_bits() as u64,
-    ]);
+    let vh = view.render_hash();
+    let wh = {
+        let mut hash: u64 = 0;
+        hash = hash.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(w.to_bits() as u64);
+        hash = hash.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(h.to_bits() as u64);
+        hash
+    };
+    let decor_key = layer_cache_key(&[vh, wh]);
     renderer.upload_layer(0, decor_key, |out| {
         instances::build_decor(out, w, h, kb_w, kh, scroll_y);
     });
 
     // Layer 1: grid lines
-    let mut grid_key = layer_cache_key(&[
-        scroll_x_pos.to_bits() as u64,
-        ppu.to_bits() as u64,
-        w.to_bits() as u64,
-        h.to_bits() as u64,
-        kb_w.to_bits() as u64,
-    ]);
+    let mut grid_key = layer_cache_key(&[vh, wh]);
     if let Some(midi) = midi {
         let sig_events = midi.time_sig_events();
-        // Hash the time sig events into the key
         let mut sig_hash = 0u64;
         for ev in sig_events {
             sig_hash = sig_hash.wrapping_mul(31).wrapping_add(ev.tick as u64);
@@ -107,11 +101,6 @@ pub fn prepare(
     });
 
     // Layer 2: notes
-    // Only the on-screen tick range is built, so the cache key MUST include
-    // scroll_x — scrolling produces a new viewport and must rebuild.  When
-    // scroll_x is unchanged (paused / static) the cache hits and nothing is
-    // rebuilt or re-uploaded.  build_notes looks back via the max_end index
-    // to include long notes that cross the left edge, so no padding is needed.
     let sel_hash = {
         let mut h = 0u64;
         for &(trk, tick, key) in selected.iter() {
@@ -128,16 +117,7 @@ pub fn prepare(
         }
         h
     };
-    let notes_key = layer_cache_key(&[
-        scroll_x_pos.to_bits() as u64,
-        ppu.to_bits() as u64,
-        w.to_bits() as u64,
-        h.to_bits() as u64,
-        kb_w.to_bits() as u64,
-        sel_hash,
-        tv_hash,
-        midi_version,
-    ]);
+    let notes_key = layer_cache_key(&[vh, wh, sel_hash, tv_hash, midi_version]);
     renderer.upload_layer(2, notes_key, |out| {
         if let Some(midi) = midi {
             instances::build_notes(out, w, h, midi, view, selected, track_visible, track_colors);
@@ -145,12 +125,7 @@ pub fn prepare(
     });
 
     // Layer 3: keyboard
-    let kb_key = layer_cache_key(&[
-        scroll_y.to_bits() as u64,
-        kh.to_bits() as u64,
-        h.to_bits() as u64,
-        kb_w.to_bits() as u64,
-    ]);
+    let kb_key = layer_cache_key(&[vh, wh]);
     renderer.upload_layer(3, kb_key, |out| {
         instances::build_keyboard(out, kb_w, kh, scroll_y, h);
     });

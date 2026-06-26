@@ -74,6 +74,14 @@ pub fn prepare(
     renderer.upload_uniforms(uniforms);
     renderer.ensure_layers(3);
 
+    let vh = view.render_hash();
+    let wh = {
+        let mut hash: u64 = 0;
+        hash = hash.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(w.to_bits() as u64);
+        hash = hash.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(h.to_bits() as u64);
+        hash
+    };
+
     // Layer 0: decor (background + center line)
     let center_line_hash = lanes
         .first()
@@ -85,24 +93,13 @@ pub fn prepare(
             }
         })
         .unwrap_or(0);
-    let decor_key = layer_cache_key(&[
-        w.to_bits() as u64,
-        h.to_bits() as u64,
-        center_line_hash,
-        target_hash(&view.selected_target),
-    ]);
+    let decor_key = layer_cache_key(&[vh, wh, center_line_hash, target_hash(&view.selected_target)]);
     renderer.upload_layer(0, decor_key, |out| {
         automation_instances::build_decor(out, w, h, lanes);
     });
 
     // Layer 1: grid lines
-    let mut grid_key = layer_cache_key(&[
-        scroll_x_pos.to_bits() as u64,
-        view.base.pixels_per_tick.to_bits() as u64,
-        w.to_bits() as u64,
-        h.to_bits() as u64,
-        view.base.left_panel_width.to_bits() as u64,
-    ]);
+    let mut grid_key = layer_cache_key(&[vh, wh]);
     let mut sig_hash = 0u64;
     for ev in time_sig_events {
         sig_hash = sig_hash.wrapping_mul(31).wrapping_add(ev.tick as u64);
@@ -124,12 +121,7 @@ pub fn prepare(
         h
     };
     let bars_key = layer_cache_key(&[
-        scroll_x_pos.to_bits() as u64,
-        view.base.pixels_per_tick.to_bits() as u64,
-        w.to_bits() as u64,
-        h.to_bits() as u64,
-        view.base.left_panel_width.to_bits() as u64,
-        tv_hash,
+        vh, wh, tv_hash,
         velocity_display_mode as u64,
         target_hash(&view.selected_target),
         automation_display_mode as u64,

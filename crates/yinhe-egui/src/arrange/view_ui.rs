@@ -101,98 +101,84 @@ pub fn show(
     view.base.dirty = false;
 
     renderer.upload_uniforms(uniforms);
-        renderer.ensure_layers(3);
+    renderer.ensure_layers(3);
 
-        // Layer 0: decor (background + track lanes)
-        let tv_hash = {
-            let mut h = 0u64;
-            for &v in track_visible {
-                h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(v as u64);
-            }
-            h
-        };
-        let decor_key = layer_cache_key(&[
-            view.base.scroll_y.to_bits() as u64,
-            view.lane_height.to_bits() as u64,
-            h as u64,
-            w as u64,
-            view.base.left_panel_width.to_bits() as u64,
-            tv_hash,
-        ]);
-        renderer.upload_layer(0, decor_key, |out| {
-            arrangement_instances::build_decor(
+    let vh = view.render_hash();
+    let wh = {
+        let mut hash: u64 = 0;
+        hash = hash.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(w as u64);
+        hash = hash.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(h as u64);
+        hash
+    };
+
+    // Layer 0: decor (background + track lanes)
+    let tv_hash = {
+        let mut h = 0u64;
+        for &v in track_visible {
+            h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(v as u64);
+        }
+        h
+    };
+    let decor_key = layer_cache_key(&[vh, wh, tv_hash]);
+    renderer.upload_layer(0, decor_key, |out| {
+        arrangement_instances::build_decor(
+            out,
+            w as f32,
+            h as f32,
+            view.base.left_panel_width,
+            view.lane_height,
+            view.base.scroll_y,
+            track_visible,
+        );
+    });
+
+    // Layer 1: grid lines
+    let mut grid_key = layer_cache_key(&[vh, wh]);
+    if let Some(midi) = midi {
+        let sig_events = midi.time_sig_events();
+        let mut sig_hash = 0u64;
+        for ev in sig_events {
+            sig_hash = sig_hash.wrapping_mul(31).wrapping_add(ev.tick as u64);
+            sig_hash = sig_hash.wrapping_mul(31).wrapping_add(ev.numerator as u64);
+            sig_hash = sig_hash.wrapping_mul(31).wrapping_add(ev.denominator as u64);
+        }
+        grid_key = layer_cache_key(&[grid_key, sig_hash]);
+    }
+    renderer.upload_layer(1, grid_key, |out| {
+        if let Some(midi) = midi
+            && let Some(tpb) = midi.ticks_per_beat()
+        {
+            let (def_num, def_den) = midi.time_sig_default();
+            let sig_events = midi.time_sig_events();
+            arrangement_instances::build_grid(
                 out,
                 w as f32,
                 h as f32,
-                view.base.left_panel_width,
-                view.lane_height,
-                view.base.scroll_y,
-                track_visible,
+                view,
+                tpb,
+                def_num,
+                def_den,
+                sig_events,
+                scroll_x_pos,
             );
-        });
-
-        // Layer 1: grid lines
-        let mut grid_key = layer_cache_key(&[
-            scroll_x_pos.to_bits() as u64,
-            view.base.pixels_per_tick.to_bits() as u64,
-            w as u64,
-            h as u64,
-            view.base.left_panel_width.to_bits() as u64,
-        ]);
-        if let Some(midi) = midi {
-            let sig_events = midi.time_sig_events();
-            let mut sig_hash = 0u64;
-            for ev in sig_events {
-                sig_hash = sig_hash.wrapping_mul(31).wrapping_add(ev.tick as u64);
-                sig_hash = sig_hash.wrapping_mul(31).wrapping_add(ev.numerator as u64);
-                sig_hash = sig_hash.wrapping_mul(31).wrapping_add(ev.denominator as u64);
-            }
-            grid_key = layer_cache_key(&[grid_key, sig_hash]);
         }
-        renderer.upload_layer(1, grid_key, |out| {
-            if let Some(midi) = midi
-                && let Some(tpb) = midi.ticks_per_beat()
-            {
-                let (def_num, def_den) = midi.time_sig_default();
-                let sig_events = midi.time_sig_events();
-                arrangement_instances::build_grid(
-                    out,
-                    w as f32,
-                    h as f32,
-                    view,
-                    tpb,
-                    def_num,
-                    def_den,
-                    sig_events,
-                    scroll_x_pos,
-                );
-            }
-        });
+    });
 
-        // Layer 2: notes
-        let notes_key = layer_cache_key(&[
-            view.base.scroll_x.to_bits() as u64,
-            view.base.scroll_y.to_bits() as u64,
-            view.base.pixels_per_tick.to_bits() as u64,
-            view.lane_height.to_bits() as u64,
-            w as u64,
-            h as u64,
-            view.base.left_panel_width.to_bits() as u64,
-            tv_hash,
-        ]);
-        renderer.upload_layer(2, notes_key, |out| {
-            if let Some(midi) = midi {
-                arrangement_instances::build_notes(
-                    out,
-                    w as f32,
-                    h as f32,
-                    midi,
-                    view,
-                    track_visible,
-                    track_colors,
-                );
-            }
-        });
+    // Layer 2: notes
+    let notes_key = layer_cache_key(&[vh, wh, tv_hash]);
+    renderer.upload_layer(2, notes_key, |out| {
+        if let Some(midi) = midi {
+            arrangement_instances::build_notes(
+                out,
+                w as f32,
+                h as f32,
+                midi,
+                view,
+                track_visible,
+                track_colors,
+            );
+        }
+    });
 
     let content_changed = true;
     render_ctx.paint(
