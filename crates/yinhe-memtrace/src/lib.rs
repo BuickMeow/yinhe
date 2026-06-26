@@ -151,11 +151,13 @@ pub fn with_tag<T>(tag: AllocTag, f: impl FnOnce() -> T) -> T {
 /// parsing completes) to reduce RSS without affecting future allocations.
 #[cfg(target_os = "macos")]
 pub fn purge_free_pages() {
-    // jemalloc: advance epoch to trigger decay-based decommit of unused pages.
+    // jemalloc: force immediate decay of dirty/muzzy pages via mallctl.
     // This is a best-effort hint; jemalloc on macOS is already far more
     // aggressive than mimalloc at munmapping freed segments.
-    use tikv_jemalloc_ctl::epoch;
+    use tikv_jemalloc_ctl::{epoch, raw};
     let _ = epoch::advance();
+    // Attempt to purge all arenas (best-effort, may fail if MIB not found).
+    unsafe { let _ = raw::write(b"arena.0.purge\0", &mut 0u64); }
 }
 
 /// Hint to the backend allocator to purge free pages back to the OS.
