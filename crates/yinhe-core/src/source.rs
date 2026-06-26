@@ -5,7 +5,7 @@
 //! that already speaks NoteSource (PianoRoll, Arrangement, automation
 //! browser) works without changes.
 
-use yinhe_types::{AutomationLane, Note, NoteScanIndex, NoteSource, TickBuckets, TimeSigEvent};
+use yinhe_types::{AutomationLane, Note, NoteSource, TimeSigEvent};
 
 use crate::model::YinModel;
 
@@ -28,14 +28,6 @@ impl NoteSource for YinModel {
 
     fn tick_length(&self) -> Option<u64> {
         Some(self.tick_length)
-    }
-
-    fn scan_index(&self) -> Option<&NoteScanIndex> {
-        self.scan_index.as_ref()
-    }
-
-    fn tick_buckets(&self) -> Option<&TickBuckets> {
-        self.tick_buckets.as_ref()
     }
 
     fn time_sig_default(&self) -> (u8, u8) {

@@ -1,4 +1,4 @@
-use yinhe_types::{Note, NoteScanIndex, TickBuckets};
+use yinhe_types::Note;
 use yinhe_pianoroll::instances;
 use yinhe_pianoroll::PianoRollView;
 use yinhe_core::YinModel;
@@ -108,36 +108,4 @@ fn build_notes_stress_many_tracks() {
     let mut out = Vec::new();
     instances::build_notes(&mut out, 800.0, 600.0, &m, &view, &selected, &visible, &colors);
     assert_eq!(out.len(), 800);
-}
-
-// ── TickBuckets ──
-
-#[test]
-fn tick_buckets_build_and_range() {
-    let mut key_notes: [Vec<Note>; 128] = std::array::from_fn(|_| Vec::new());
-    key_notes[60].push(Note { start_tick: 0, end_tick: 100, velocity: 80, dup_index: 0, track: 0 });
-    key_notes[60].push(Note { start_tick: 200, end_tick: 300, velocity: 80, dup_index: 0, track: 0 });
-    key_notes[60].push(Note { start_tick: 1000, end_tick: 1100, velocity: 80, dup_index: 0, track: 0 });
-
-    let buckets = TickBuckets::build(&key_notes, 1200, 500);
-    let (start, end) = buckets.range_for(60, 0, 500);
-    assert!(start < end);
-}
-
-// ── NoteScanIndex ──
-
-#[test]
-fn note_scan_index_build_and_seek() {
-    let mut key_notes: [Vec<Note>; 128] = std::array::from_fn(|_| Vec::new());
-    key_notes[60].push(Note { start_tick: 0, end_tick: 100, velocity: 80, dup_index: 0, track: 0 });
-    key_notes[60].push(Note { start_tick: 500, end_tick: 600, velocity: 80, dup_index: 0, track: 0 });
-    key_notes[60].push(Note { start_tick: 1000, end_tick: 1100, velocity: 80, dup_index: 0, track: 0 });
-
-    let mut m = YinModel::default();
-    m.notes[60] = key_notes[60].clone();
-    m.scan_index = Some(NoteScanIndex::build(&key_notes, 1200));
-
-    let first = yinhe_types::seek_first_note(60, &m, 400);
-    assert!(first < key_notes[60].len());
-    assert!(key_notes[60][first].start_tick >= 400);
 }

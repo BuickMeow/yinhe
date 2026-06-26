@@ -148,10 +148,6 @@ pub struct YinModel {
     pub track_note_count: Vec<u64>,
     /// Per-track "has audible notes" cache (velocity > 1).
     pub track_has_audio_cache: Vec<bool>,
-
-    // Optional indices for fast range queries.
-    pub scan_index: Option<yinhe_types::NoteScanIndex>,
-    pub tick_buckets: Option<yinhe_types::TickBuckets>,
 }
 
 impl Default for YinModel {
@@ -166,8 +162,6 @@ impl Default for YinModel {
             tick_length: 0,
             track_note_count: Vec::new(),
             track_has_audio_cache: Vec::new(),
-            scan_index: None,
-            tick_buckets: None,
         }
     }
 }
@@ -340,14 +334,6 @@ impl YinModel {
         self.tick_length = max_tick;
         self.track_note_count = track_counts;
         self.track_has_audio_cache = track_has_audio;
-
-        // Build scan_index + tick_buckets.
-        const BUCKET_SIZE: u32 = 65536;
-        let scan_index = yinhe_types::NoteScanIndex::build(&self.notes, max_tick);
-        let tick_buckets = yinhe_types::TickBuckets::build(&self.notes, max_tick, BUCKET_SIZE);
-
-        self.scan_index = Some(scan_index);
-        self.tick_buckets = Some(tick_buckets);
 
         // Rebuild tempo_map (depends on tick_length we just computed).
         self.tempo_map = Arc::new(self.build_tempo_map());

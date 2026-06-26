@@ -42,9 +42,6 @@ pub(crate) struct PreparedModel {
 
 /// Lightweight per-track snapshot the audio engine actually needs.
 ///
-/// The full `YinModel` carries `key_notes_cache` / `scan_index` /
-/// `tick_buckets` — hundreds of MB to GBs for black MIDI — none of which the
-/// audio thread touches (note scheduling reads directly from `yin_model.notes`).
 /// We extract only `(global_channel)` per track plus the CC0 bank-select
 /// events used for percussion-mode detection, so the audio thread holds a few
 /// KB instead of a full deep clone of the model.
