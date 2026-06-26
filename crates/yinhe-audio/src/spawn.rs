@@ -4,6 +4,7 @@ use std::thread;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use crossbeam_channel::{Sender, TryRecvError, bounded, unbounded};
+use xsynth_core::effects::VolumeLimiter;
 use xsynth_core::soundfont::SoundfontBase;
 
 use yinhe_core::YinModel;
@@ -239,6 +240,7 @@ pub fn spawn_cpal_audio(
     // Move engine into the callback
     let mut engine = engine;
     let mut initialized = false;
+    let mut limiter = VolumeLimiter::new(channels as u16);
 
     let stream = device
         .build_output_stream(
@@ -324,6 +326,7 @@ pub fn spawn_cpal_audio(
 
                     if initialized {
                         engine.render(data);
+                        limiter.limit(data);
                     } else {
                         data.fill(0.0);
                     }
