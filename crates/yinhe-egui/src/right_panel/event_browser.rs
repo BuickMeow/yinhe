@@ -289,7 +289,7 @@ fn render_track_row(
     let expanded = state.expanded_keys.contains(&track_key);
     let is_selected = state.selected_track == Some(idx);
 
-    let note_count = track.notes.len();
+    let note_count = *model.track_note_count.get(idx as usize).unwrap_or(&0) as usize;
     let cc_map: std::collections::BTreeMap<u8, usize> =
         track.cc.iter().map(|(&c, v)| (c, v.len())).collect();
     let pb_count = track.pitch_bend.len();
