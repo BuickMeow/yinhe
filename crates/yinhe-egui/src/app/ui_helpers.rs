@@ -568,7 +568,15 @@ impl App {
                     let mut slot = settings_cb.borrow_mut().take();
                     if let Some(ref mut s) = slot {
                         let mut close = false;
-                        egui::CentralPanel::default().show_inside(vctx, |ui| {
+                        if vctx.input(|i| i.viewport().close_requested()) {
+                            close = true;
+                        }
+                        egui::CentralPanel::default()
+                            .frame(egui::Frame {
+                                fill: crate::theme::APP_BG,
+                                ..Default::default()
+                            })
+                            .show_inside(vctx, |ui| {
                             crate::chrome::title_bar::dialog_title_bar(ui, "设置", &mut close);
                             let changed = crate::dialogs::settings::show_content(ui, s);
                             if changed {
@@ -616,7 +624,15 @@ impl App {
                 ),
                 move |vctx, _class| {
                     let mut close = false;
-                    egui::CentralPanel::default().show_inside(vctx, |ui| {
+                    if vctx.input(|i| i.viewport().close_requested()) {
+                        close = true;
+                    }
+                    egui::CentralPanel::default()
+                        .frame(egui::Frame {
+                            fill: crate::theme::APP_BG,
+                            ..Default::default()
+                        })
+                        .show_inside(vctx, |ui| {
                         crate::chrome::title_bar::dialog_title_bar(
                             ui,
                             "内存占用详情",
@@ -682,7 +698,12 @@ impl App {
                 egui::ViewportId::from_hash_of("loading_overlay_dialog"),
                 crate::chrome::title_bar::dialog_viewport_builder("正在加载", [380.0, 120.0], false),
                 move |vctx, _class| {
-                    egui::CentralPanel::default().show_inside(vctx, |ui| {
+                    egui::CentralPanel::default()
+                        .frame(egui::Frame {
+                            fill: crate::theme::APP_BG,
+                            ..Default::default()
+                        })
+                        .show_inside(vctx, |ui| {
                         let p = match progress.lock() {
                             Ok(p) => p.clone(),
                             Err(_) => return,
@@ -739,8 +760,12 @@ impl App {
                 egui::ViewportId::from_hash_of("archive_picker_dialog"),
                 crate::chrome::title_bar::dialog_viewport_builder("选择 MIDI 文件", [500.0, 400.0], true),
                 move |vctx, _class| {
-                    let result = archive_picker::show(&mut *taken_state_cb.borrow_mut(), vctx);
-                    *action_cb.borrow_mut() = result;
+                    if vctx.input(|i| i.viewport().close_requested()) {
+                        *action_cb.borrow_mut() = archive_picker::ArchivePickerAction::Cancel;
+                    } else {
+                        let result = archive_picker::show(&mut *taken_state_cb.borrow_mut(), vctx);
+                        *action_cb.borrow_mut() = result;
+                    }
                 },
             );
 
@@ -779,7 +804,12 @@ impl App {
                     if !state.visible {
                         return;
                     }
-                    egui::CentralPanel::default().show_inside(vctx, |ui| {
+                    egui::CentralPanel::default()
+                        .frame(egui::Frame {
+                            fill: crate::theme::APP_BG,
+                            ..Default::default()
+                        })
+                        .show_inside(vctx, |ui| {
                         ui.vertical_centered(|ui| {
                             ui.add_space(16.0);
                             ui.label(
@@ -827,7 +857,15 @@ impl App {
                 crate::chrome::title_bar::dialog_viewport_builder("导出音频", [320.0, 260.0], false),
                 move |vctx, _class| {
                     let mut close = false;
-                    egui::CentralPanel::default().show_inside(vctx, |ui| {
+                    if vctx.input(|i| i.viewport().close_requested()) {
+                        close = true;
+                    }
+                    egui::CentralPanel::default()
+                        .frame(egui::Frame {
+                            fill: crate::theme::APP_BG,
+                            ..Default::default()
+                        })
+                        .show_inside(vctx, |ui| {
                         crate::chrome::title_bar::dialog_title_bar(ui, "导出音频", &mut close);
                         ui.set_max_width(280.0);
                         ui.vertical_centered(|ui| {
@@ -964,7 +1002,15 @@ impl App {
                 crate::chrome::title_bar::dialog_viewport_builder("无法打开文件", [420.0, 120.0], false),
                 move |vctx, _class| {
                     let mut close = false;
-                    egui::CentralPanel::default().show_inside(vctx, |ui| {
+                    if vctx.input(|i| i.viewport().close_requested()) {
+                        close = true;
+                    }
+                    egui::CentralPanel::default()
+                        .frame(egui::Frame {
+                            fill: crate::theme::APP_BG,
+                            ..Default::default()
+                        })
+                        .show_inside(vctx, |ui| {
                         crate::chrome::title_bar::dialog_title_bar(ui, "无法打开文件", &mut close);
                         ui.set_max_width(420.0);
                         ui.label(&msg);

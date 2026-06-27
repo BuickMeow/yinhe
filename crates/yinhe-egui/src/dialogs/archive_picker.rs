@@ -1,3 +1,4 @@
+use crate::theme;
 use std::sync::mpsc;
 
 /// State of the archive picker dialog.
@@ -97,7 +98,12 @@ pub(crate) fn show(
                 Ok(Err(e)) => ArchivePickerAction::Error(format!("打开压缩包失败: {}", e)),
                 Err(_) => {
                     // Still loading — show spinner
-                    eframe::egui::CentralPanel::default().show(ctx, |ui| {
+                    eframe::egui::CentralPanel::default()
+                        .frame(eframe::egui::Frame {
+                            fill: crate::theme::APP_BG,
+                            ..Default::default()
+                        })
+                        .show(ctx, |ui| {
                         ui.horizontal(|ui| {
                             ui.spinner();
                             ui.label("正在扫描压缩包...");
@@ -110,7 +116,12 @@ pub(crate) fn show(
         ArchivePickerState::Opened(picker) => {
             let mut action = ArchivePickerAction::None;
 
-            eframe::egui::CentralPanel::default().show(ctx, |ui| {
+            eframe::egui::CentralPanel::default()
+                .frame(eframe::egui::Frame {
+                    fill: theme::APP_BG,
+                    ..Default::default()
+                })
+                .show(ctx, |ui| {
                 let filename = std::path::Path::new(&picker.path)
                     .file_name()
                     .map(|f| f.to_string_lossy().to_string())

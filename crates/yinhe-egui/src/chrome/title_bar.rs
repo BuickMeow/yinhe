@@ -131,7 +131,7 @@ pub(crate) fn show(
                     egui::vec2(close_w, tab_h),
                 );
                 let close_hover = tab_close_rect
-                    .contains(ui.input(|i| i.pointer.hover_pos().unwrap_or_default()));
+                    .contains(ui.input(|i| i.pointer.hover_pos()).unwrap_or_default());
                 if close_hover {
                     painter.rect_filled(tab_close_rect, 4.0, crate::theme::DANGER_HOVER);
                 }
@@ -307,59 +307,71 @@ pub(crate) fn dialog_viewport_builder(
 
 /// Draw a custom title bar for a dialog window.
 ///
-/// Includes a title label on the left, a close button on the right, and a
-/// drag region. Sets `*close = true` when the close button is clicked.
+/// - macOS: draws a background colour strip, centered title, and drag
+///   region. The native traffic-light buttons remain visible and functional
+///   (via `with_fullsize_content_view`).
+/// - Other platforms: draws an X close button on the right, centered title,
+///   and drag region.
+///
+/// Sets `*close = true` when the close button is clicked.
 pub(crate) fn dialog_title_bar(ui: &mut egui::Ui, title: &str, close: &mut bool) {
+    #[cfg(target_os = "macos")]
+    let _ = close;
+
     let height = 28.0;
     let bar_rect = ui.max_rect();
 
-    // Background
+    // Background strip
     ui.painter().rect_filled(
         egui::Rect::from_min_size(bar_rect.min, egui::vec2(bar_rect.max.x, height)),
         0.0,
         crate::theme::APP_BG,
     );
 
-    // Title text
+    // ── Close button (right side, non-macOS only) ──
+    #[cfg(not(target_os = "macos"))]
+    {
+        let close_rect = egui::Rect::from_min_size(
+            egui::pos2(bar_rect.max.x - height, bar_rect.min.y),
+            egui::vec2(height, height),
+        );
+        let close_hover =
+            close_rect.contains(ui.input(|i| i.pointer.hover_pos()).unwrap_or_default());
+        if close_hover {
+            ui.painter()
+                .rect_filled(close_rect, 0.0, crate::theme::DANGER_HOVER);
+        }
+        if ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Primary))
+            && close_rect.contains(ui.input(|i| i.pointer.interact_pos()).unwrap_or_default())
+        {
+            *close = true;
+        }
+        ui.painter().text(
+            close_rect.center(),
+            egui::Align2::CENTER_CENTER,
+            ICON_CLOSE.codepoint,
+            egui::FontId::new(12.0, ICON_CLOSE.font_family()),
+            if close_hover {
+                egui::Color32::WHITE
+            } else {
+                egui::Color32::from_gray(160)
+            },
+        );
+    }
+
+    // ── Centered title (both platforms) ──
     ui.painter().text(
-        egui::pos2(bar_rect.min.x + 12.0, bar_rect.min.y + height / 2.0),
-        egui::Align2::LEFT_CENTER,
+        egui::pos2(bar_rect.center().x, bar_rect.min.y + height / 2.0),
+        egui::Align2::CENTER_CENTER,
         title,
         egui::FontId::proportional(12.0),
         egui::Color32::from_gray(200),
     );
 
-    // Close button
-    let close_rect = egui::Rect::from_min_size(
-        egui::pos2(bar_rect.max.x - height, bar_rect.min.y),
-        egui::vec2(height, height),
-    );
-    let close_hover = close_rect.contains(ui.input(|i| i.pointer.hover_pos().unwrap_or_default()));
-    if close_hover {
-        ui.painter()
-            .rect_filled(close_rect, 0.0, crate::theme::DANGER_HOVER);
-    }
-    if ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Primary))
-        && close_rect.contains(ui.input(|i| i.pointer.interact_pos()).unwrap_or_default())
-    {
-        *close = true;
-    }
-    ui.painter().text(
-        close_rect.center(),
-        egui::Align2::CENTER_CENTER,
-        ICON_CLOSE.codepoint,
-        egui::FontId::new(12.0, ICON_CLOSE.font_family()),
-        if close_hover {
-            egui::Color32::WHITE
-        } else {
-            egui::Color32::from_gray(160)
-        },
-    );
-
-    // Drag region
+    // ── Drag region (both platforms) ──
     let drag_rect = egui::Rect::from_min_max(
         egui::pos2(bar_rect.min.x, bar_rect.min.y),
-        egui::pos2(close_rect.min.x, bar_rect.min.y + height),
+        egui::pos2(bar_rect.max.x, bar_rect.min.y + height),
     );
     let drag_resp = ui.interact(drag_rect, ui.next_auto_id(), egui::Sense::drag());
     if drag_resp.dragged_by(egui::PointerButton::Primary) {
