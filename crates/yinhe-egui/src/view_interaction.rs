@@ -232,6 +232,37 @@ pub(crate) fn handle_input(
 
 // ── Shared helpers ──
 
+/// Check if the view has reached a scroll boundary and notify the haptic engine.
+///
+/// Call this after `clamp_scroll` with the old scroll values and the raw
+/// scroll delta from the input event.  The haptic engine tracks per-edge
+/// flags internally so it only fires on *entry* into a boundary, not while
+/// staying in one.
+pub(crate) fn notify_haptic_boundary(
+    old_scroll_x: f32,
+    old_scroll_y: f32,
+    new_scroll_x: f32,
+    new_scroll_y: f32,
+    raw_scroll_delta: egui::Vec2,
+    haptic: Option<&yinhe_haptic::HapticEngine>,
+) {
+    let Some(haptic) = haptic else { return };
+    if raw_scroll_delta == egui::Vec2::ZERO {
+        return;
+    }
+
+    // Determine which edges were hit by comparing the scroll delta direction
+    // with whether the scroll value actually changed.
+    let at_left = raw_scroll_delta.x < 0.0 && old_scroll_x == new_scroll_x;
+    let at_right = raw_scroll_delta.x > 0.0 && old_scroll_x == new_scroll_x;
+    let at_top = raw_scroll_delta.y < 0.0 && old_scroll_y == new_scroll_y;
+    let at_bottom = raw_scroll_delta.y > 0.0 && old_scroll_y == new_scroll_y;
+
+    if at_left || at_right || at_top || at_bottom {
+        haptic.notify_boundary(at_top, at_bottom, at_left, at_right);
+    }
+}
+
 /// Snap a tick value to the current quantize grid, with optional bar-line awareness.
 pub fn snap_tick(
     tick: f64,

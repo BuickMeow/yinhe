@@ -35,6 +35,7 @@ pub fn show(
     active_tool: &Tool,
     scroll_mode: u32,
     min_border_width: f32,
+    haptic_engine: Option<&yinhe_haptic::HapticEngine>,
 ) {
     let _arrange_total_start = if yinhe_memtrace::perf_probe::enabled() {
         Some(std::time::Instant::now())
@@ -224,6 +225,10 @@ pub fn show(
         );
     }
 
+    // Save scroll state before input for haptic boundary detection
+    let pre_scroll_x = view.base.scroll_x;
+    let pre_scroll_y = view.base.scroll_y;
+    let raw_scroll = ui.input(|i| i.smooth_scroll_delta);
     crate::view_interaction::handle_input(
         ui,
         rect,
@@ -236,6 +241,17 @@ pub fn show(
         is_playing,
         follow_mode,
         active_tool,
+    );
+
+    // Clamp scroll after input and check for haptic boundary
+    view.clamp_scroll(w as f32, h as f32, total_ticks, num_tracks);
+    crate::view_interaction::notify_haptic_boundary(
+        pre_scroll_x,
+        pre_scroll_y,
+        view.base.scroll_x,
+        view.base.scroll_y,
+        raw_scroll,
+        haptic_engine,
     );
 
     if let Some(t0) = _arrange_total_start {

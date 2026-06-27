@@ -208,6 +208,7 @@ impl App {
                 &mut self.track_selection_anchor,
                 self.audio_settings.scroll_mode,
                 self.audio_settings.min_border_width,
+                Some(&self.haptic_engine),
             );
             if request_pianoroll {
                 self.show_pianoroll = true;
@@ -354,6 +355,7 @@ impl App {
                         &doc.edit.track_selected,
                         doc.edit.conductor_track_idx,
                         doc.data.midi_version,
+                        Some(&self.haptic_engine),
                     );
                     if let Some(t0) = _piano_total_start {
                         yinhe_memtrace::perf_probe::record_piano_total(t0.elapsed());
@@ -563,7 +565,7 @@ impl App {
 
             ctx_clone.show_viewport_immediate(
                 egui::ViewportId::from_hash_of("settings_dialog"),
-                crate::chrome::title_bar::dialog_viewport_builder("设置", [480.0, 400.0], true),
+                crate::chrome::title_bar::dialog_viewport_builder("设置", [480.0, 520.0], true),
                 move |vctx, _class| {
                     let mut slot = settings_cb.borrow_mut().take();
                     if let Some(ref mut s) = slot {
@@ -593,6 +595,11 @@ impl App {
 
             if let Some(s) = std::rc::Rc::into_inner(settings).unwrap().into_inner() {
                 self.audio_settings = s;
+                // Sync haptic settings to the engine
+                self.haptic_engine.apply_settings(
+                    self.audio_settings.haptic_enabled,
+                    self.audio_settings.haptic_intensity,
+                );
             } else {
                 self.audio_settings.show_settings = false;
                 self.teardown_audio();

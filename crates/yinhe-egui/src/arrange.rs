@@ -31,6 +31,7 @@ pub fn show(
     selection_anchor: &mut Option<u16>,
     scroll_mode: u32,
     min_border_width: f32,
+    haptic_engine: Option<&yinhe_haptic::HapticEngine>,
 ) {
     *last_cursor_tick = doc.edit.cursor_tick;
 
@@ -210,6 +211,7 @@ pub fn show(
             active_tool,
             scroll_mode,
             min_border_width,
+            haptic_engine,
         );
     });
 

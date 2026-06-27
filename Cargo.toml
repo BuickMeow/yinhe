@@ -15,6 +15,7 @@ members = [
     "crates/yinhe-editor-core",
     "crates/yinhe-egui",
     "crates/yinhe-memtrace",
+    "crates/yinhe-haptic",
     "crates/yinhe-tests",
     "crates/yinhe-test-helpers",
 ]

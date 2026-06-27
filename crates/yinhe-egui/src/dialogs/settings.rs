@@ -221,5 +221,34 @@ pub fn show_content(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
         }
     });
 
+    ui.add_space(16.0);
+    ui.separator();
+    ui.add_space(8.0);
+
+    ui.heading("触控板震动");
+    ui.add_space(8.0);
+
+    egui::Grid::new("haptic_settings_grid")
+        .num_columns(2)
+        .spacing([12.0, 8.0])
+        .show(ui, |ui| {
+            ui.label("启用震动");
+            if ui.checkbox(&mut settings.haptic_enabled, "").changed() {
+                changed = true;
+            }
+            ui.end_row();
+
+            ui.label("震动强度");
+            let mut intensity = settings.haptic_intensity;
+            if ui
+                .add(egui::Slider::new(&mut intensity, 0.0..=1.0).step_by(0.05))
+                .changed()
+            {
+                settings.haptic_intensity = intensity;
+                changed = true;
+            }
+            ui.end_row();
+        });
+
     changed
 }

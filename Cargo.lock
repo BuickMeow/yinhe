@@ -6492,12 +6492,20 @@ dependencies = [
  "yinhe-core",
  "yinhe-dms",
  "yinhe-editor-core",
+ "yinhe-haptic",
  "yinhe-memtrace",
  "yinhe-mid2",
  "yinhe-pianoroll",
  "yinhe-types",
  "yinhe-wgpu",
  "yinhe-yin",
+]
+
+[[package]]
+name = "yinhe-haptic"
+version = "0.1.0"
+dependencies = [
+ "tracing",
 ]
 
 [[package]]

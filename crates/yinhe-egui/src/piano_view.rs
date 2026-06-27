@@ -69,6 +69,7 @@ pub fn show(
     track_selected: &std::collections::HashSet<u16>,
     conductor_idx: Option<u16>,
     midi_version: u64,
+    haptic_engine: Option<&yinhe_haptic::HapticEngine>,
 ) -> Option<PianoViewEvent> {
     // Sense::hover() — no drag ownership. All drag is handled by dedicated
     // ui.interact calls below, each inside its own push_id scope.
@@ -201,6 +202,10 @@ pub fn show(
     }
 
     // ── Content interaction (zoom/pan/cursor/drag/reset) ──
+    // Save scroll state before input for haptic boundary detection
+    let pre_scroll_x = view.base.scroll_x;
+    let pre_scroll_y = view.base.scroll_y;
+    let raw_scroll = ui.input(|i| i.smooth_scroll_delta);
     crate::view_interaction::handle_input(
         ui,
         music_rect,
@@ -280,6 +285,16 @@ pub fn show(
         .map(|m| m.tick_length().unwrap_or(0) as f64)
         .unwrap_or(0.0);
     view.clamp_scroll(w as f32, h as f32, total_ticks);
+
+    // ── Haptic boundary feedback ──
+    crate::view_interaction::notify_haptic_boundary(
+        pre_scroll_x,
+        pre_scroll_y,
+        view.base.scroll_x,
+        view.base.scroll_y,
+        raw_scroll,
+        haptic_engine,
+    );
 
     // ── Dirty detection ──
     // cursor_tick no longer affects rendering at all — the cursor is drawn

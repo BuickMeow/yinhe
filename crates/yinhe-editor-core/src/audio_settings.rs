@@ -28,6 +28,10 @@ pub struct AudioSettings {
     pub min_border_width: f32,
     /// MIDI 导入编码
     pub midi_import_encoding: MidiImportEncoding,
+    /// 触控板震动反馈
+    pub haptic_enabled: bool,
+    /// 震动强度 0.0~1.0
+    pub haptic_intensity: f32,
     #[serde(skip)]
     pub show_settings: bool,
     #[serde(skip)]
@@ -51,6 +55,8 @@ impl Default for AudioSettings {
             velocity_display_mode: 0,
             automation_display_mode: 0,
             automation_show_dots: true,
+            haptic_enabled: true,
+            haptic_intensity: 0.5,
             show_settings: false,
             available_devices: Vec::new(),
             available_sample_rates: Vec::new(),

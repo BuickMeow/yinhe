@@ -86,6 +86,9 @@ pub struct App {
     /// Tracks the last applied MIDI encoding to detect changes.
     pub(crate) last_midi_encoding: yinhe_mid2::MidiImportEncoding,
 
+    // ── Haptic feedback ──
+    pub(crate) haptic_engine: yinhe_haptic::HapticEngine,
+
     // ── System resource monitoring ──
     pub(crate) sys_monitor: SystemMonitor,
 
@@ -159,7 +162,7 @@ impl App {
 
         let load_progress = yinhe_editor_core::progress::new_shared();
 
-        Self {
+        let mut app = Self {
             render_ctx,
             pianoroll: yinhe_pianoroll::PianorollRenderer::new(
                 device.clone(),
@@ -216,6 +219,8 @@ impl App {
             audio_settings: crate::audio_settings::load_audio_settings(),
             last_midi_encoding: yinhe_mid2::MidiImportEncoding::Utf8,
 
+            haptic_engine: yinhe_haptic::HapticEngine::new(),
+
             sys_monitor: SystemMonitor::new(),
 
             show_mem_breakdown: false,
@@ -225,7 +230,14 @@ impl App {
             note_drag_originals_note: None,
             note_drag_undo_snapshot: None,
             note_drag_moved: false,
-        }
+        };
+
+        // Sync haptic settings from persisted config
+        app.haptic_engine.apply_settings(
+            app.audio_settings.haptic_enabled,
+            app.audio_settings.haptic_intensity,
+        );
+        app
     }
 
     // ── macOS: reserve_render_targets_for_window_anim has been removed ──
