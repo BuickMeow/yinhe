@@ -96,6 +96,38 @@ pub(crate) fn prepare_model(
     for (track_idx, track) in model.tracks.iter().enumerate() {
         let channel = track_global_channel(model, track_idx) as u32;
 
+        // RPN 展开必须在 PB 之前，这样 PB 才能使用正确的 PBS 值
+        for (&rpn_key, evs) in &track.rpn {
+            let msb = ((rpn_key >> 8) & 0x7F) as u8;
+            let lsb = (rpn_key & 0x7F) as u8;
+            for e in evs {
+                let data_msb = ((e.value >> 7) & 0x7F) as u8;
+                let data_lsb = (e.value & 0x7F) as u8;
+                let sample = (model.tempo_map.tick_to_seconds(e.tick as u64) * sr) as u64;
+                cc_events.push(SortedCC {
+                    sample,
+                    channel,
+                    event: ChannelAudioEvent::Control(ControlEvent::Raw(101, msb)),
+                });
+                cc_events.push(SortedCC {
+                    sample,
+                    channel,
+                    event: ChannelAudioEvent::Control(ControlEvent::Raw(100, lsb)),
+                });
+                cc_events.push(SortedCC {
+                    sample,
+                    channel,
+                    event: ChannelAudioEvent::Control(ControlEvent::Raw(6, data_msb)),
+                });
+                if data_lsb != 0 {
+                    cc_events.push(SortedCC {
+                        sample,
+                        channel,
+                        event: ChannelAudioEvent::Control(ControlEvent::Raw(38, data_lsb)),
+                    });
+                }
+            }
+        }
         for (&controller, evs) in &track.cc {
             for e in evs {
                 let sample = (model.tempo_map.tick_to_seconds(e.tick as u64) * sr) as u64;
@@ -137,37 +169,6 @@ pub(crate) fn prepare_model(
                 channel,
                 event: ChannelAudioEvent::ProgramChange(e.program),
             });
-        }
-        for (&rpn_key, evs) in &track.rpn {
-            let msb = ((rpn_key >> 8) & 0x7F) as u8;
-            let lsb = (rpn_key & 0x7F) as u8;
-            for e in evs {
-                let data_msb = ((e.value >> 7) & 0x7F) as u8;
-                let data_lsb = (e.value & 0x7F) as u8;
-                let sample = (model.tempo_map.tick_to_seconds(e.tick as u64) * sr) as u64;
-                cc_events.push(SortedCC {
-                    sample,
-                    channel,
-                    event: ChannelAudioEvent::Control(ControlEvent::Raw(101, msb)),
-                });
-                cc_events.push(SortedCC {
-                    sample,
-                    channel,
-                    event: ChannelAudioEvent::Control(ControlEvent::Raw(100, lsb)),
-                });
-                cc_events.push(SortedCC {
-                    sample,
-                    channel,
-                    event: ChannelAudioEvent::Control(ControlEvent::Raw(6, data_msb)),
-                });
-                if data_lsb != 0 {
-                    cc_events.push(SortedCC {
-                        sample,
-                        channel,
-                        event: ChannelAudioEvent::Control(ControlEvent::Raw(38, data_lsb)),
-                    });
-                }
-            }
         }
     }
     cc_events.sort_by_key(|e| e.sample);
@@ -581,6 +582,39 @@ impl AudioEngine {
         for (track_idx, track) in model.tracks.iter().enumerate() {
             let channel = track_global_channel(model, track_idx) as u32;
 
+            // RPN expanded back to CC101 + CC100 + CC6 (+ CC38 if LSB != 0)
+            // MUST come before PB so PB uses the correct PBS value.
+            for (&rpn_key, evs) in &track.rpn {
+                let msb = ((rpn_key >> 8) & 0x7F) as u8;
+                let lsb = (rpn_key & 0x7F) as u8;
+                for e in evs {
+                    let data_msb = ((e.value >> 7) & 0x7F) as u8;
+                    let data_lsb = (e.value & 0x7F) as u8;
+                    let sample = (model.tempo_map.tick_to_seconds(e.tick as u64) * sr) as u64;
+                    self.cc_events.push(SortedCC {
+                        sample,
+                        channel,
+                        event: ChannelAudioEvent::Control(ControlEvent::Raw(101, msb)),
+                    });
+                    self.cc_events.push(SortedCC {
+                        sample,
+                        channel,
+                        event: ChannelAudioEvent::Control(ControlEvent::Raw(100, lsb)),
+                    });
+                    self.cc_events.push(SortedCC {
+                        sample,
+                        channel,
+                        event: ChannelAudioEvent::Control(ControlEvent::Raw(6, data_msb)),
+                    });
+                    if data_lsb != 0 {
+                        self.cc_events.push(SortedCC {
+                            sample,
+                            channel,
+                            event: ChannelAudioEvent::Control(ControlEvent::Raw(38, data_lsb)),
+                        });
+                    }
+                }
+            }
             // CC
             for (&controller, evs) in &track.cc {
                 for e in evs {
@@ -625,38 +659,6 @@ impl AudioEngine {
                     channel,
                     event: ChannelAudioEvent::ProgramChange(e.program),
                 });
-            }
-            // RPN expanded back to CC101 + CC100 + CC6 (+ CC38 if LSB != 0)
-            for (&rpn_key, evs) in &track.rpn {
-                let msb = ((rpn_key >> 8) & 0x7F) as u8;
-                let lsb = (rpn_key & 0x7F) as u8;
-                for e in evs {
-                    let data_msb = ((e.value >> 7) & 0x7F) as u8;
-                    let data_lsb = (e.value & 0x7F) as u8;
-                    let sample = (model.tempo_map.tick_to_seconds(e.tick as u64) * sr) as u64;
-                    self.cc_events.push(SortedCC {
-                        sample,
-                        channel,
-                        event: ChannelAudioEvent::Control(ControlEvent::Raw(101, msb)),
-                    });
-                    self.cc_events.push(SortedCC {
-                        sample,
-                        channel,
-                        event: ChannelAudioEvent::Control(ControlEvent::Raw(100, lsb)),
-                    });
-                    self.cc_events.push(SortedCC {
-                        sample,
-                        channel,
-                        event: ChannelAudioEvent::Control(ControlEvent::Raw(6, data_msb)),
-                    });
-                    if data_lsb != 0 {
-                        self.cc_events.push(SortedCC {
-                            sample,
-                            channel,
-                            event: ChannelAudioEvent::Control(ControlEvent::Raw(38, data_lsb)),
-                        });
-                    }
-                }
             }
         }
         self.cc_events.sort_by_key(|e| e.sample);
