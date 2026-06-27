@@ -145,18 +145,9 @@ impl eframe::App for App {
             doc.edit.quantize = new_preset;
         }
 
-        // ── Memory breakdown popup ──
-        self.show_memory_breakdown(ui);
-
         // ── Handle file menu actions ──
         if let Some(action) = transport_response.pending_file_action {
             self.handle_file_action(action, ui.ctx());
-        }
-
-        // ── Settings panel ──
-        let settings_changed = crate::dialogs::settings::show(ui, &mut self.audio_settings);
-        if settings_changed {
-            self.teardown_audio();
         }
 
         // ── MIDI encoding change ──

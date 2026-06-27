@@ -274,6 +274,102 @@ pub(crate) fn show(
     action
 }
 
+// ── Dialog viewport helpers ──
+
+/// Build a `ViewportBuilder` for a dialog window, matching the main window's
+/// custom chrome style (no native title bar, transparent background).
+pub(crate) fn dialog_viewport_builder(
+    title: &str,
+    size: [f32; 2],
+    resizable: bool,
+) -> egui::ViewportBuilder {
+    let mut vb = egui::ViewportBuilder::default()
+        .with_title(title)
+        .with_inner_size(size)
+        .with_resizable(resizable)
+        .with_transparent(true);
+
+    #[cfg(target_os = "macos")]
+    {
+        vb = vb
+            .with_fullsize_content_view(true)
+            .with_titlebar_shown(false)
+            .with_title_shown(false);
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        vb = vb.with_decorations(false);
+    }
+
+    vb
+}
+
+/// Draw a custom title bar for a dialog window.
+///
+/// Includes a title label on the left, a close button on the right, and a
+/// drag region. Sets `*close = true` when the close button is clicked.
+pub(crate) fn dialog_title_bar(ui: &mut egui::Ui, title: &str, close: &mut bool) {
+    let height = 28.0;
+    let bar_rect = ui.max_rect();
+
+    // Background
+    ui.painter().rect_filled(
+        egui::Rect::from_min_size(bar_rect.min, egui::vec2(bar_rect.max.x, height)),
+        0.0,
+        crate::theme::APP_BG,
+    );
+
+    // Title text
+    ui.painter().text(
+        egui::pos2(bar_rect.min.x + 12.0, bar_rect.min.y + height / 2.0),
+        egui::Align2::LEFT_CENTER,
+        title,
+        egui::FontId::proportional(12.0),
+        egui::Color32::from_gray(200),
+    );
+
+    // Close button
+    let close_rect = egui::Rect::from_min_size(
+        egui::pos2(bar_rect.max.x - height, bar_rect.min.y),
+        egui::vec2(height, height),
+    );
+    let close_hover = close_rect.contains(ui.input(|i| i.pointer.hover_pos().unwrap_or_default()));
+    if close_hover {
+        ui.painter()
+            .rect_filled(close_rect, 0.0, crate::theme::DANGER_HOVER);
+    }
+    if ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Primary))
+        && close_rect.contains(ui.input(|i| i.pointer.interact_pos()).unwrap_or_default())
+    {
+        *close = true;
+    }
+    ui.painter().text(
+        close_rect.center(),
+        egui::Align2::CENTER_CENTER,
+        ICON_CLOSE.codepoint,
+        egui::FontId::new(12.0, ICON_CLOSE.font_family()),
+        if close_hover {
+            egui::Color32::WHITE
+        } else {
+            egui::Color32::from_gray(160)
+        },
+    );
+
+    // Drag region
+    let drag_rect = egui::Rect::from_min_max(
+        egui::pos2(bar_rect.min.x, bar_rect.min.y),
+        egui::pos2(close_rect.min.x, bar_rect.min.y + height),
+    );
+    let drag_resp = ui.interact(drag_rect, ui.next_auto_id(), egui::Sense::drag());
+    if drag_resp.dragged_by(egui::PointerButton::Primary) {
+        ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+    }
+
+    // Reserve space
+    ui.allocate_space(egui::vec2(0.0, height));
+}
+
 /// Paint window buttons (close/maximize/minimize) on non-macOS platforms.
 /// Visual only — interactions are handled via manual click detection.
 #[cfg(not(target_os = "macos"))]

@@ -63,7 +63,8 @@ pub(crate) enum ArchivePickerAction {
     },
 }
 
-/// Show the archive picker dialog.
+/// Show the archive picker dialog content inside an existing Ui.
+/// Returns an action for the caller to perform.
 pub(crate) fn show(
     state: &mut ArchivePickerState,
     ctx: &eframe::egui::Context,
@@ -95,172 +96,142 @@ pub(crate) fn show(
                 }
                 Ok(Err(e)) => ArchivePickerAction::Error(format!("打开压缩包失败: {}", e)),
                 Err(_) => {
-                    let screen_rect = ctx.content_rect();
-                    ctx.layer_painter(eframe::egui::LayerId::new(
-                        eframe::egui::Order::Foreground,
-                        "archive_picker_loading".into(),
-                    )).rect_filled(
-                        screen_rect,
-                        0.0,
-                        eframe::egui::Color32::from_rgba_premultiplied(0, 0, 0, 160),
-                    );
-                    eframe::egui::Window::new("打开压缩包")
-                        .order(eframe::egui::Order::Tooltip)
-                        .collapsible(false)
-                        .resizable(false)
-                        .movable(false)
-                        .anchor(eframe::egui::Align2::CENTER_CENTER, eframe::egui::Vec2::ZERO)
-                        .show(ctx, |ui| {
-                            ui.horizontal(|ui| {
-                                ui.spinner();
-                                ui.label("正在扫描压缩包...");
-                            });
+                    // Still loading — show spinner
+                    eframe::egui::CentralPanel::default().show(ctx, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.spinner();
+                            ui.label("正在扫描压缩包...");
                         });
+                    });
                     ArchivePickerAction::None
                 }
             }
         }
         ArchivePickerState::Opened(picker) => {
             let mut action = ArchivePickerAction::None;
-            let screen_rect = ctx.content_rect();
-            ctx.layer_painter(eframe::egui::LayerId::new(
-                eframe::egui::Order::Foreground,
-                "archive_picker".into(),
-            )).rect_filled(
-                screen_rect,
-                0.0,
-                eframe::egui::Color32::from_rgba_premultiplied(0, 0, 0, 160),
-            );
 
-            let window_response = eframe::egui::Window::new("选择 MIDI 文件")
-                .order(eframe::egui::Order::Tooltip)
-                .collapsible(false)
-                .resizable(true)
-                .default_width(500.0)
-                .default_height(400.0)
-                .anchor(eframe::egui::Align2::CENTER_CENTER, eframe::egui::Vec2::ZERO)
-                .show(ctx, |ui| {
-                    let filename = std::path::Path::new(&picker.path)
-                        .file_name()
-                        .map(|f| f.to_string_lossy().to_string())
-                        .unwrap_or_else(|| picker.path.clone());
-                    ui.label(
-                        eframe::egui::RichText::new(format!("来源: {}", filename))
-                            .strong()
-                            .size(13.0),
-                    );
-                    ui.add_space(4.0);
+            eframe::egui::CentralPanel::default().show(ctx, |ui| {
+                let filename = std::path::Path::new(&picker.path)
+                    .file_name()
+                    .map(|f| f.to_string_lossy().to_string())
+                    .unwrap_or_else(|| picker.path.clone());
+                ui.label(
+                    eframe::egui::RichText::new(format!("来源: {}", filename))
+                        .strong()
+                        .size(13.0),
+                );
+                ui.add_space(4.0);
 
-                    let search_response = ui.horizontal(|ui| {
-                        ui.label("🔍");
-                        ui.add(
-                            eframe::egui::TextEdit::singleline(&mut picker.search_query)
-                                .hint_text("搜索文件...")
-                                .desired_width(f32::INFINITY),
-                        )
-                    });
-                    if search_response.response.changed() {
-                        picker.recompute_filter();
-                    }
-                    ui.add_space(4.0);
+                let search_response = ui.horizontal(|ui| {
+                    ui.label("🔍");
+                    ui.add(
+                        eframe::egui::TextEdit::singleline(&mut picker.search_query)
+                            .hint_text("搜索文件...")
+                            .desired_width(f32::INFINITY),
+                    )
+                });
+                if search_response.response.changed() {
+                    picker.recompute_filter();
+                }
+                ui.add_space(4.0);
 
-                    let row_height = 22.0;
-                    let available_height = ui.available_height() - 40.0;
-                    eframe::egui::ScrollArea::vertical()
-                        .max_height(available_height)
-                        .show_rows(ui, row_height, picker.filtered.len(), |ui, row_range| {
-                            for row_idx in row_range {
-                                let &entry_idx = &picker.filtered[row_idx];
-                                let entry = &picker.entries[entry_idx];
-                                let is_selected = picker.selected_idx == Some(entry_idx);
+                let row_height = 22.0;
+                let available_height = ui.available_height() - 40.0;
+                eframe::egui::ScrollArea::vertical()
+                    .max_height(available_height)
+                    .show_rows(ui, row_height, picker.filtered.len(), |ui, row_range| {
+                        for row_idx in row_range {
+                            let &entry_idx = &picker.filtered[row_idx];
+                            let entry = &picker.entries[entry_idx];
+                            let is_selected = picker.selected_idx == Some(entry_idx);
 
-                                let bg = if is_selected {
-                                    eframe::egui::Color32::from_rgba_premultiplied(40, 80, 160, 200)
+                            let bg = if is_selected {
+                                eframe::egui::Color32::from_rgba_premultiplied(40, 80, 160, 200)
+                            } else {
+                                eframe::egui::Color32::TRANSPARENT
+                            };
+
+                            let response = ui.add_sized(
+                                [ui.available_width(), row_height],
+                                eframe::egui::Button::new("").fill(bg),
+                            );
+
+                            if response.hovered() && !is_selected {
+                                let rect = response.rect;
+                                ui.painter().rect_filled(
+                                    rect,
+                                    0.0,
+                                    eframe::egui::Color32::from_rgba_premultiplied(255, 255, 255, 20),
+                                );
+                            }
+
+                            if response.clicked() {
+                                picker.selected_idx = Some(entry_idx);
+                            }
+                            if response.double_clicked() {
+                                let entry = picker.entries[entry_idx].clone();
+                                let archive = std::mem::replace(
+                                    &mut picker.archive,
+                                    yinhe_archive::Archive::open(&picker.path).unwrap(),
+                                );
+                                action = ArchivePickerAction::LoadFile { archive, entry };
+                                return;
+                            }
+
+                            let response_rect = response.rect;
+                            let prefix = if is_selected { "▶ " } else { "  " };
+                            let text = format!("{}{}", prefix, entry.name);
+                            let size_text = format_size(entry.size);
+
+                            ui.painter().text(
+                                response_rect.left_center() + eframe::egui::vec2(8.0, 0.0),
+                                eframe::egui::Align2::LEFT_CENTER,
+                                &text,
+                                eframe::egui::FontId::proportional(13.0),
+                                if is_selected {
+                                    eframe::egui::Color32::WHITE
                                 } else {
-                                    eframe::egui::Color32::TRANSPARENT
-                                };
+                                    ui.visuals().text_color()
+                                },
+                            );
+                            ui.painter().text(
+                                response_rect.right_center() + eframe::egui::vec2(-8.0, 0.0),
+                                eframe::egui::Align2::RIGHT_CENTER,
+                                &size_text,
+                                eframe::egui::FontId::proportional(11.0),
+                                eframe::egui::Color32::GRAY,
+                            );
+                        }
+                    });
 
-                                let response = ui.add_sized(
-                                    [ui.available_width(), row_height],
-                                    eframe::egui::Button::new("").fill(bg),
+                ui.add_space(4.0);
+                ui.separator();
+                ui.horizontal(|ui| {
+                    ui.label(
+                        eframe::egui::RichText::new(format!("{} 个文件", picker.filtered.len()))
+                            .size(12.0)
+                            .color(eframe::egui::Color32::GRAY),
+                    );
+                    ui.with_layout(eframe::egui::Layout::right_to_left(eframe::egui::Align::Center), |ui| {
+                        if ui.button("取消").clicked() {
+                            action = ArchivePickerAction::Cancel;
+                        }
+                        let confirm_enabled = picker.selected_idx.is_some();
+                        if ui.add_enabled(confirm_enabled, eframe::egui::Button::new("确认")).clicked() {
+                            if let Some(idx) = picker.selected_idx {
+                                let entry = picker.entries[idx].clone();
+                                let archive = std::mem::replace(
+                                    &mut picker.archive,
+                                    yinhe_archive::Archive::open(&picker.path).unwrap(),
                                 );
-
-                                if response.hovered() && !is_selected {
-                                    let rect = response.rect;
-                                    ui.painter().rect_filled(
-                                        rect,
-                                        0.0,
-                                        eframe::egui::Color32::from_rgba_premultiplied(255, 255, 255, 20),
-                                    );
-                                }
-
-                                if response.clicked() {
-                                    picker.selected_idx = Some(entry_idx);
-                                }
-                                if response.double_clicked() {
-                                    let entry = picker.entries[entry_idx].clone();
-                                    let archive = std::mem::replace(
-                                        &mut picker.archive,
-                                        yinhe_archive::Archive::open(&picker.path).unwrap(),
-                                    );
-                                    action = ArchivePickerAction::LoadFile { archive, entry };
-                                    return;
-                                }
-
-                                let response_rect = response.rect;
-                                let prefix = if is_selected { "▶ " } else { "  " };
-                                let text = format!("{}{}", prefix, entry.name);
-                                let size_text = format_size(entry.size);
-
-                                ui.painter().text(
-                                    response_rect.left_center() + eframe::egui::vec2(8.0, 0.0),
-                                    eframe::egui::Align2::LEFT_CENTER,
-                                    &text,
-                                    eframe::egui::FontId::proportional(13.0),
-                                    if is_selected {
-                                        eframe::egui::Color32::WHITE
-                                    } else {
-                                        ui.visuals().text_color()
-                                    },
-                                );
-                                ui.painter().text(
-                                    response_rect.right_center() + eframe::egui::vec2(-8.0, 0.0),
-                                    eframe::egui::Align2::RIGHT_CENTER,
-                                    &size_text,
-                                    eframe::egui::FontId::proportional(11.0),
-                                    eframe::egui::Color32::GRAY,
-                                );
+                                action = ArchivePickerAction::LoadFile { archive, entry };
                             }
-                        });
-
-                    ui.add_space(4.0);
-                    ui.separator();
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            eframe::egui::RichText::new(format!("{} 个文件", picker.filtered.len()))
-                                .size(12.0)
-                                .color(eframe::egui::Color32::GRAY),
-                        );
-                        ui.with_layout(eframe::egui::Layout::right_to_left(eframe::egui::Align::Center), |ui| {
-                            if ui.button("取消").clicked() {
-                                action = ArchivePickerAction::Cancel;
-                            }
-                            let confirm_enabled = picker.selected_idx.is_some();
-                            if ui.add_enabled(confirm_enabled, eframe::egui::Button::new("确认")).clicked() {
-                                if let Some(idx) = picker.selected_idx {
-                                    let entry = picker.entries[idx].clone();
-                                    let archive = std::mem::replace(
-                                        &mut picker.archive,
-                                        yinhe_archive::Archive::open(&picker.path).unwrap(),
-                                    );
-                                    action = ArchivePickerAction::LoadFile { archive, entry };
-                                }
-                            }
-                        });
+                        }
                     });
                 });
+            });
 
-            if window_response.is_none() && ctx.input(|i| i.key_pressed(eframe::egui::Key::Escape)) {
+            if ctx.input(|i| i.key_pressed(eframe::egui::Key::Escape)) {
                 action = ArchivePickerAction::Cancel;
             }
 

@@ -349,9 +349,6 @@ impl App {
             return; // already exporting
         }
 
-        // Close settings window to avoid ComboBox overlay conflict
-        self.audio_settings.show_settings = false;
-
         // Show export settings dialog first
         self.show_export_bit_depth = true;
     }

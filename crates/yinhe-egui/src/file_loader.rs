@@ -348,8 +348,4 @@ impl FileLoader {
         });
     }
 
-    /// Draw a dark overlay + centered window with multi-stage loading progress.
-    pub fn show_loading_overlay(&self, ui: &mut eframe::egui::Ui) {
-        crate::dialogs::loading_overlay::show(ui, self);
-    }
 }
