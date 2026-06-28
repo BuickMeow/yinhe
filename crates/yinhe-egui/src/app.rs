@@ -108,6 +108,14 @@ pub struct App {
     /// A click without motion should not push an undo entry.
     pub(crate) note_drag_moved: bool,
 
+    // ── Pencil note drag originals (for real-time visual feedback) ──
+    pub(crate) pencil_drag_originals: Option<(yinhe_types::Note, u8, u16)>,
+    /// Tracks the (start_tick, key) of the note placed in the previous frame,
+    /// so we can remove it before placing the new one.
+    pub(crate) pencil_drag_last_placed: Option<(u32, u8)>,
+    pub(crate) pencil_drag_undo_snapshot: Option<yinhe_editor_core::history::UndoSnapshot>,
+    pub(crate) pencil_drag_moved: bool,
+
     // ── Multi-stage loading progress ──
     pub(crate) load_progress: yinhe_editor_core::progress::SharedProgress,
 
@@ -230,6 +238,10 @@ impl App {
             note_drag_originals_note: None,
             note_drag_undo_snapshot: None,
             note_drag_moved: false,
+            pencil_drag_originals: None,
+            pencil_drag_last_placed: None,
+            pencil_drag_undo_snapshot: None,
+            pencil_drag_moved: false,
         };
 
         // Sync haptic settings from persisted config

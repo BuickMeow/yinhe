@@ -16,6 +16,46 @@ pub enum PianoViewEvent {
     AddNote { track: u16, note: yinhe_core::NoteEvent },
 }
 
+/// Pencil-tool drag output for modifying existing notes.
+/// `None` means the drag has ended; `Some(...)` means a drag is in progress.
+pub enum PencilNoteDrag {
+    /// Moving a single note by (delta_ticks, delta_keys) from its original position.
+    Move { track: u16, start_tick: u32, key: u8, delta_ticks: i64, delta_keys: i32 },
+    /// Resizing the right edge of a note.
+    ResizeRight { track: u16, start_tick: u32, key: u8, new_end_tick: u32 },
+    /// Resizing the left edge of a note.
+    ResizeLeft { track: u16, start_tick: u32, key: u8, new_start_tick: u32 },
+}
+
+/// Internal pencil-tool drag mode persisted across frames.
+#[derive(Clone)]
+enum PencilDrag {
+    /// Creating a new note: (start_tick, key)
+    Create(f64, u8),
+    /// Moving an existing note: (track, original_start_tick, original_key)
+    Move(u16, u32, u8),
+    /// Resizing right edge: (track, start_tick, end_tick, key)
+    ResizeRight(u16, u32, u32, u8),
+    /// Resizing left edge: (track, start_tick, end_tick, key)
+    ResizeLeft(u16, u32, u32, u8),
+}
+
+/// Result of hit-testing the cursor against existing notes.
+struct HitNote {
+    track: u16,
+    start_tick: u32,
+    end_tick: u32,
+    key: u8,
+    mode: HitMode,
+}
+
+#[derive(Clone)]
+enum HitMode {
+    Move,
+    ResizeLeft,
+    ResizeRight,
+}
+
 /// Height of the time ruler band at the top of the pianoroll view.
 use crate::theme;
 const RULER_H: f32 = theme::RULER_H;
@@ -70,6 +110,7 @@ pub fn show(
     conductor_idx: Option<u16>,
     midi_version: u64,
     haptic_engine: Option<&yinhe_haptic::HapticEngine>,
+    pencil_note_drag: &mut Option<PencilNoteDrag>,
 ) -> Option<PianoViewEvent> {
     // Sense::hover() — no drag ownership. All drag is handled by dedicated
     // ui.interact calls below, each inside its own push_id scope.
@@ -166,7 +207,7 @@ pub fn show(
             sel_rect,
         );
     } else if *active_tool == Tool::Pencil {
-        let (note_event, ghost) = pencil_frame(
+        let (note_event, ghost, pencil_drag) = pencil_frame(
             ui,
             content_rect,
             music_rect,
@@ -176,8 +217,10 @@ pub fn show(
             bar_line_data,
             track_selected,
             conductor_idx,
+            midi,
         );
         ghost_note = ghost;
+        *pencil_note_drag = pencil_drag;
         if let Some(note) = note_event {
             if let Some(track) = valid_pencil_track(track_selected, conductor_idx) {
                 pencil_event = Some(PianoViewEvent::AddNote { track, note });
@@ -864,9 +907,9 @@ fn valid_pencil_track(
     Some(track)
 }
 
-/// Pencil-tool input handling: hover preview, click to write a note, drag to lengthen.
-/// Returns `(note_event, ghost_note)` where `ghost_note` is `(start_tick, end_tick, key)`
-/// for the GPU ghost layer, or `None` when there's no preview.
+/// Pencil-tool input handling: hover preview, click to write a note, drag to lengthen,
+/// or hover over / drag existing notes to move or resize them.
+/// Returns `(note_event, ghost_note, pencil_note_drag)`.
 fn pencil_frame(
     ui: &mut egui::Ui,
     content_rect: egui::Rect,
@@ -877,20 +920,22 @@ fn pencil_frame(
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
     track_selected: &std::collections::HashSet<u16>,
     conductor_idx: Option<u16>,
-) -> (Option<yinhe_core::NoteEvent>, Option<(f64, f64, u8)>) {
+    midi: Option<&dyn yinhe_pianoroll::NoteSource>,
+) -> (Option<yinhe_core::NoteEvent>, Option<(f64, f64, u8)>, Option<PencilNoteDrag>) {
     let pencil_id = ui.id().with("pencil_drag");
-    let mut start: Option<(f64, u8)> =
+    let drag_state: Option<PencilDrag> =
         ui.data_mut(|d| d.get_persisted(pencil_id)).unwrap_or(None);
 
     let pointer = ui.input(|i| i.pointer.clone());
 
     // Clear stale drag state.
-    if start.is_some() && !pointer.primary_down() && !pointer.primary_released() {
-        start = None;
+    if drag_state.is_some() && !pointer.primary_down() && !pointer.primary_released() {
+        ui.data_mut(|d| d.insert_persisted(pencil_id, Option::<PencilDrag>::None));
     }
 
     let hover_pos = pointer.hover_pos();
     let can_write = valid_pencil_track(track_selected, conductor_idx).is_some();
+    let _track = valid_pencil_track(track_selected, conductor_idx);
 
     // Hover / drag preview.
     let preview = if let Some(pos) = hover_pos {
@@ -907,26 +952,70 @@ fn pencil_frame(
         None
     };
 
-    // Draw ghost note — compute preview data for the GPU ghost layer.
-    let ghost_note = if can_write {
+    // ── Hit-test existing notes (only when not dragging) ──
+    // Returns the closest note under cursor with its hit mode.
+    const EDGE_THRESHOLD_PX: f32 = 6.0;
+    let kb_w = music_rect.min.x - content_rect.min.x;
+
+    let hit_note = if drag_state.is_none() && can_write {
+        preview.and_then(|(_tick, key)| {
+            let midi = midi?;
+            let notes = midi.key_notes_in_range(key, 0, u32::MAX);
+            let mouse_screen = hover_pos?;
+            // Compute mouse position in local (music-area) coordinates
+            let mouse_local_x = mouse_screen.x - music_rect.min.x;
+            let mouse_local_y = mouse_screen.y - music_rect.min.y;
+
+            // Find the note whose pixel rect contains the mouse
+            for note in notes {
+                let note_left = view.tick_to_x(note.start_tick as f64) - kb_w;
+                let note_right = view.tick_to_x(note.end_tick as f64) - kb_w;
+                let note_top = view.key_to_y(key);
+                let note_bottom = note_top + view.key_height;
+
+                if mouse_local_x >= note_left && mouse_local_x <= note_right
+                    && mouse_local_y >= note_top && mouse_local_y <= note_bottom
+                {
+                    let dist_left = (mouse_local_x - note_left).abs();
+                    let dist_right = (mouse_local_x - note_right).abs();
+                    let mode = if dist_left < EDGE_THRESHOLD_PX {
+                        HitMode::ResizeLeft
+                    } else if dist_right < EDGE_THRESHOLD_PX {
+                        HitMode::ResizeRight
+                    } else {
+                        HitMode::Move
+                    };
+                    return Some(HitNote {
+                        track: note.track,
+                        start_tick: note.start_tick,
+                        end_tick: note.end_tick,
+                        key,
+                        mode,
+                    });
+                }
+            }
+            None
+        })
+    } else {
+        None
+    };
+
+    // ── Set cursor based on hit test ──
+    if let Some(ref hit) = hit_note {
+        match hit.mode {
+            HitMode::ResizeLeft => ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeWest),
+            HitMode::ResizeRight => ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeEast),
+            HitMode::Move => ui.ctx().set_cursor_icon(egui::CursorIcon::Move),
+        }
+    }
+
+    // ── Ghost note: only when not over an existing note ──
+    let ghost_note = if can_write && drag_state.is_none() && hit_note.is_none() {
         if let Some((tick, key)) = preview {
             let interval = quantize.tick_interval(ppq) as f64;
-            let (start_tick, end_tick, ghost_key) = if let Some((s_tick, s_key)) = start {
-                // Dragging: lock key to start key, extend/shorten with mouse
-                let current_end = tick.max(s_tick + 1.0);
-                let snapped_end = crate::view_interaction::snap_tick(
-                    current_end,
-                    quantize,
-                    ppq,
-                    bar_line_data,
-                );
-                let end = snapped_end.max(s_tick + interval.max(1.0));
-                (s_tick, end, s_key)
-            } else {
-                // Not dragging: show preview at hover position
-                (tick, tick + interval.max(1.0), key)
-            };
-            Some((start_tick, end_tick, ghost_key))
+            // Not dragging (drag_state is None due to the outer condition),
+            // show preview at hover position
+            Some((tick, tick + interval, key))
         } else {
             None
         }
@@ -934,56 +1023,113 @@ fn pencil_frame(
         None
     };
 
-    // Start drag.
+    // ── Start drag ──
     if pointer.primary_pressed() {
-        if let Some((tick, key)) = preview {
-            start = Some((tick, key));
+        if let Some(hit) = hit_note {
+            let new_drag = match hit.mode {
+                HitMode::ResizeLeft => PencilDrag::ResizeLeft(hit.track, hit.start_tick, hit.end_tick, hit.key),
+                HitMode::ResizeRight => PencilDrag::ResizeRight(hit.track, hit.start_tick, hit.end_tick, hit.key),
+                HitMode::Move => PencilDrag::Move(hit.track, hit.start_tick, hit.key),
+            };
+            ui.data_mut(|d| d.insert_persisted(pencil_id, Some(new_drag)));
+        } else if let Some((tick, key)) = preview {
+            ui.data_mut(|d| d.insert_persisted(pencil_id, Some(PencilDrag::Create(tick, key))));
         }
     }
 
-    // Update drag end while held.
-    if start.is_some() && pointer.primary_down() && !pointer.primary_pressed() {
-        if let Some((_, key)) = preview {
-            if let Some((s_tick, s_key)) = start {
-                if key != s_key {
-                    // Lock key to the one where the drag started.
-                    start = Some((s_tick, s_key));
+    // ── Compute drag output ──
+    let mut result = None;
+    let mut pencil_note_drag = None;
+
+    match &drag_state {
+        Some(PencilDrag::Create(s_tick, s_key)) => {
+            // Release -> commit note.
+            if pointer.primary_released() {
+                if can_write {
+                    let interval = quantize.tick_interval(ppq) as f64;
+                    let end_tick = if let Some((tick, _)) = preview {
+                        let current_end = tick.max(*s_tick + interval);
+                        let snapped_end = crate::view_interaction::snap_tick(
+                            current_end,
+                            quantize,
+                            ppq,
+                            bar_line_data,
+                        );
+                        snapped_end.max(*s_tick + interval)
+                    } else {
+                        *s_tick + interval
+                    };
+                    result = Some(yinhe_core::NoteEvent {
+                        start_tick: *s_tick as u32,
+                        end_tick: end_tick as u32,
+                        key: *s_key,
+                        velocity: 100,
+                        dup_index: 0,
+                    });
                 }
+                ui.data_mut(|d| d.insert_persisted(pencil_id, Option::<PencilDrag>::None));
             }
         }
-    }
-
-    // Release -> commit note.
-    let mut result = None;
-    if pointer.primary_released() {
-        if let Some((s_tick, s_key)) = start {
-            if can_write {
-                let interval = quantize.tick_interval(ppq) as f64;
-                let end_tick = if let Some((tick, _)) = preview {
-                    let current_end = tick.max(s_tick + 1.0);
-                    let snapped_end = crate::view_interaction::snap_tick(
-                        current_end,
-                        quantize,
-                        ppq,
-                        bar_line_data,
-                    );
-                    snapped_end.max(s_tick + interval.max(1.0))
-                } else {
-                    s_tick + interval.max(1.0)
-                };
-                result = Some(yinhe_core::NoteEvent {
-                    start_tick: s_tick as u32,
-                    end_tick: end_tick as u32,
-                    key: s_key,
-                    velocity: 100,
-                    dup_index: 0,
+        Some(PencilDrag::Move(trk, orig_tick, orig_key)) => {
+            if let Some((tick, key)) = preview {
+                let dt = (tick as i64) - (*orig_tick as i64);
+                let dk = (key as i32) - (*orig_key as i32);
+                pencil_note_drag = Some(PencilNoteDrag::Move {
+                    track: *trk,
+                    start_tick: *orig_tick,
+                    key: *orig_key,
+                    delta_ticks: dt,
+                    delta_keys: dk,
                 });
             }
-            start = None;
+            if pointer.primary_released() {
+                ui.data_mut(|d| d.insert_persisted(pencil_id, Option::<PencilDrag>::None));
+            }
         }
+        Some(PencilDrag::ResizeRight(trk, orig_tick, _orig_end, orig_key)) => {
+            if let Some((tick, _)) = preview {
+                let interval = quantize.tick_interval(ppq) as f64;
+                let new_end = tick.max(*orig_tick as f64 + interval).min(u32::MAX as f64) as u32;
+                pencil_note_drag = Some(PencilNoteDrag::ResizeRight {
+                    track: *trk,
+                    start_tick: *orig_tick,
+                    key: *orig_key,
+                    new_end_tick: new_end,
+                });
+            }
+            if pointer.primary_released() {
+                ui.data_mut(|d| d.insert_persisted(pencil_id, Option::<PencilDrag>::None));
+            }
+        }
+        Some(PencilDrag::ResizeLeft(trk, orig_tick, orig_end, orig_key)) => {
+            if let Some((tick, _)) = preview {
+                let interval = quantize.tick_interval(ppq) as f64;
+                let new_start = (tick as u32).min(*orig_end - 1);
+                // Clamp so the note is at least one quantize interval wide
+                let min_start = (*orig_end as f64 - interval).max(0.0) as u32;
+                let new_start = new_start.max(min_start);
+                pencil_note_drag = Some(PencilNoteDrag::ResizeLeft {
+                    track: *trk,
+                    start_tick: *orig_tick,
+                    key: *orig_key,
+                    new_start_tick: new_start,
+                });
+            }
+            if pointer.primary_released() {
+                ui.data_mut(|d| d.insert_persisted(pencil_id, Option::<PencilDrag>::None));
+            }
+        }
+        None => {}
     }
 
-    ui.data_mut(|d| d.insert_persisted(pencil_id, start));
-    (result, ghost_note)
+    // Persist drag state (updated for Create, cleared for others on release)
+    // Note: PencilDrag variants other than Create are stored directly via
+    // insert_persisted above on press, and cleared on release.
+    // For Create, the state is managed via the original `start` variable.
+    // We only need to persist if the drag_state was None and we didn't handle it above.
+    // Actually, the drag_state is already managed via insert_persisted in press/release handlers.
+    // The `start` variable from the old code is no longer needed since we use PencilDrag::Create.
+
+    (result, ghost_note, pencil_note_drag)
 }
 
