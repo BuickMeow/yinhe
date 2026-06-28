@@ -245,12 +245,27 @@ pub fn show(
 
     // Clamp scroll after input and check for haptic boundary
     view.clamp_scroll(w as f32, h as f32, total_ticks, num_tracks);
+    let max_sx = (total_ticks as f32 * view.base.pixels_per_tick - (w as f32 - view.base.left_panel_width)).max(0.0);
+    let max_sy = (num_tracks as f32 * view.lane_height - h as f32).max(0.0);
     crate::view_interaction::notify_haptic_boundary(
+        yinhe_haptic::HapticSlot::Arrangement,
         pre_scroll_x,
         pre_scroll_y,
         view.base.scroll_x,
         view.base.scroll_y,
+        max_sx,
+        max_sy,
         raw_scroll,
+        haptic_engine,
+    );
+    crate::view_interaction::notify_haptic_zoom(
+        yinhe_haptic::HapticSlot::Arrangement,
+        view.base.pixels_per_tick,
+        view.lane_height,
+        0.001,
+        10.0,
+        16.0,
+        120.0,
         haptic_engine,
     );
 

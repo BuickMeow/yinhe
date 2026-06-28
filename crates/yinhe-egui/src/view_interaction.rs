@@ -234,33 +234,48 @@ pub(crate) fn handle_input(
 
 /// Check if the view has reached a scroll boundary and notify the haptic engine.
 ///
-/// Call this after `clamp_scroll` with the old scroll values and the raw
-/// scroll delta from the input event.  The haptic engine tracks per-edge
-/// flags internally so it only fires on *entry* into a boundary, not while
-/// staying in one.
+/// Call this after `clamp_scroll` with the old scroll values, the raw
+/// scroll delta, and the maximum scroll range for each axis.
 pub(crate) fn notify_haptic_boundary(
+    slot: yinhe_haptic::HapticSlot,
     old_scroll_x: f32,
     old_scroll_y: f32,
     new_scroll_x: f32,
     new_scroll_y: f32,
+    max_scroll_x: f32,
+    max_scroll_y: f32,
     raw_scroll_delta: egui::Vec2,
     haptic: Option<&yinhe_haptic::HapticEngine>,
 ) {
     let Some(haptic) = haptic else { return };
-    if raw_scroll_delta == egui::Vec2::ZERO {
-        return;
-    }
+    haptic.notify_boundary(
+        slot,
+        old_scroll_x,
+        old_scroll_y,
+        new_scroll_x,
+        new_scroll_y,
+        max_scroll_x,
+        max_scroll_y,
+        (raw_scroll_delta.x, raw_scroll_delta.y),
+    );
+}
 
-    // Determine which edges were hit by comparing the scroll delta direction
-    // with whether the scroll value actually changed.
-    let at_left = raw_scroll_delta.x < 0.0 && old_scroll_x == new_scroll_x;
-    let at_right = raw_scroll_delta.x > 0.0 && old_scroll_x == new_scroll_x;
-    let at_top = raw_scroll_delta.y < 0.0 && old_scroll_y == new_scroll_y;
-    let at_bottom = raw_scroll_delta.y > 0.0 && old_scroll_y == new_scroll_y;
-
-    if at_left || at_right || at_top || at_bottom {
-        haptic.notify_boundary(at_top, at_bottom, at_left, at_right);
-    }
+/// Check if the view has reached a zoom boundary and notify the haptic engine.
+///
+/// Call this after `handle_input` with the current zoom values and their
+/// allowed ranges.
+pub(crate) fn notify_haptic_zoom(
+    slot: yinhe_haptic::HapticSlot,
+    zoom_x: f32,
+    zoom_y: f32,
+    min_x: f32,
+    max_x: f32,
+    min_y: f32,
+    max_y: f32,
+    haptic: Option<&yinhe_haptic::HapticEngine>,
+) {
+    let Some(haptic) = haptic else { return };
+    haptic.notify_zoom_boundary(slot, zoom_x, zoom_y, min_x, max_x, min_y, max_y);
 }
 
 /// Snap a tick value to the current quantize grid, with optional bar-line awareness.
