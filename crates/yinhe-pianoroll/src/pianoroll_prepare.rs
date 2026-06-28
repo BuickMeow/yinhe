@@ -27,12 +27,13 @@ pub fn prepare(
     midi: Option<&dyn NoteSource>,
     view: &PianoRollView,
     selected: &HashSet<(u16, u32, u8)>,
+    hidden_notes: &HashSet<(u16, u32, u8)>,
     track_visible: &[bool],
     track_colors: &[[f32; 3]],
     scroll_mode: u32,
     min_border_width: f32,
     midi_version: u64,
-    ghost: Option<(f64, f64, u8, [f32; 3])>, // (start_tick, end_tick, key, color) for pencil preview
+    ghost_notes: &[(f64, f64, u8, [f32; 3])], // (start_tick, end_tick, key, color) for pencil preview
 ) -> yinhe_wgpu::PrepareTimings {
     let w = width as f32;
     let h = height as f32;
@@ -122,7 +123,7 @@ pub fn prepare(
     let notes_key = layer_cache_key(&[vh, wh, sel_hash, tv_hash, midi_version]);
     renderer.upload_layer(2, notes_key, |out| {
         if let Some(midi) = midi {
-            instances::build_notes(out, w, h, midi, view, selected, track_visible, track_colors);
+            instances::build_notes(out, w, h, midi, view, selected, hidden_notes, track_visible, track_colors);
         }
     });
 
@@ -132,10 +133,12 @@ pub fn prepare(
         instances::build_keyboard(out, kb_w, kh, scroll_y, h);
     });
 
-    // Layer 4: pencil ghost note (no cache — rebuilt every frame)
-    if let Some((start_tick, end_tick, key, color)) = ghost {
+    // Layer 4: ghost notes (no cache — rebuilt every frame)
+    if !ghost_notes.is_empty() {
         renderer.upload_layer_force(4, |out| {
-            instances::build_ghost_note(out, start_tick, end_tick, key, color);
+            for &(start_tick, end_tick, key, color) in ghost_notes {
+                instances::build_ghost_note(out, start_tick, end_tick, key, color);
+            }
         });
     } else {
         // Clear the ghost layer when there's no preview

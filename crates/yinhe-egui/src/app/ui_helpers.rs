@@ -393,99 +393,59 @@ impl App {
         self.handle_pencil_note_drag(pencil_note_drag);
     }
 
-    /// Handle note drag updates or finalize the drag.
+    /// Handle note drag — called once on release.
     fn handle_note_drag(&mut self, note_drag_delta: Option<(i64, i32)>) {
         if let Some((delta_ticks, delta_keys)) = note_drag_delta {
-            let Some(idx) = self.active_doc else {
-                return;
-            };
+            let Some(idx) = self.active_doc else { return };
             let doc = &mut self.documents[idx];
             if doc.edit.selected.is_empty() {
-                self.note_drag_originals = None;
-                self.note_drag_undo_snapshot = None;
-                self.note_drag_moved = false;
-            } else {
-                if self.note_drag_originals_note.is_none() {
-                    self.note_drag_undo_snapshot =
-                        Some(doc.snapshot_with_selection("Move notes"));
-                    self.note_drag_moved = false;
-                    let mut originals = Vec::new();
-                    let model = &doc.data.model;
-                    for &(track, start_tick, key) in &doc.edit.selected {
-                        let k = key as usize;
-                        if let Some(note) = model.notes[k]
-                            .iter()
-                            .find(|n| n.track == track && n.start_tick == start_tick)
-                        {
-                            originals.push((*note, key, track));
-                        }
-                    }
-                    self.note_drag_originals_note = Some(originals);
-                }
-
-                if delta_ticks != 0 || delta_keys != 0 {
-                    self.note_drag_moved = true;
-                }
-
-                if let Some(ref originals) = self.note_drag_originals_note.clone() {
-                    {
-                        let model = Arc::make_mut(&mut doc.data.model);
-                        // Remove selected notes from their key buckets
-                        for &(track, start_tick, key) in &doc.edit.selected {
-                            let k = key as usize;
-                            model.notes[k].retain(|n| {
-                                !(n.track == track && n.start_tick == start_tick)
-                            });
-                        }
-                        let mut new_selected = std::collections::HashSet::new();
-                        for (note, old_key, track) in originals {
-                            let new_key =
-                                ((*old_key as i32) + delta_keys).clamp(0, 127) as u8;
-                            let new_tick =
-                                (note.start_tick as i64 + delta_ticks).max(0) as u32;
-                            let length = note.end_tick - note.start_tick;
-                            let moved = yinhe_types::Note {
-                                start_tick: new_tick,
-                                end_tick: new_tick + length,
-                                velocity: note.velocity,
-                                dup_index: 0,
-                                track: *track,
-                            };
-                            let k = new_key as usize;
-                            let insert_pos =
-                                model.notes[k].partition_point(|n| n.start_tick < moved.start_tick);
-                            model.notes[k].insert(insert_pos, moved);
-                            new_selected.insert((*track, new_tick, new_key));
-                        }
-                        doc.edit.selected = new_selected;
-                        model.rebuild();
-                    }
-                    doc.data.midi_version = doc.data.midi_version.wrapping_add(1);
-                    self.pianoroll_view.base.dirty = true;
-                }
+                return;
             }
-        } else {
-            // Drag ended — finalize
-            if let Some(_originals) = self.note_drag_originals_note.take() {
-                if let Some(idx) = self.active_doc {
-                    let doc = &mut self.documents[idx];
-                    doc.data.rebuild_model();
-                    doc.data.midi_version = doc.data.midi_version.wrapping_add(1);
-                    self.pianoroll_view.base.dirty = true;
-                    let snap = self.note_drag_undo_snapshot.take();
-                    let moved = std::mem::replace(&mut self.note_drag_moved, false);
-                    if moved {
-                        if let Some(snap) = snap {
-                            doc.history.push(snap);
-                        }
-                    }
-                    if let Some(ref audio) = self.audio {
-                        let _ =
-                            audio
-                                .handle
-                                .send(yinhe_audio::AudioCommand::ReloadNotes { model: doc.data.model.clone() });
-                    }
-                }
+            if delta_ticks == 0 && delta_keys == 0 {
+                return;
+            }
+
+            let snap = doc.snapshot_with_selection("Move notes");
+            let model = Arc::make_mut(&mut doc.data.model);
+
+            // Save originals and remove from old positions
+            let originals: Vec<(yinhe_types::Note, u8, u16)> = doc.edit.selected.iter().filter_map(|&(track, start_tick, key)| {
+                let k = key as usize;
+                model.notes[k].iter().find(|n| n.track == track && n.start_tick == start_tick)
+                    .map(|n| (*n, key, track))
+            }).collect();
+
+            for &(track, start_tick, key) in &doc.edit.selected {
+                let k = key as usize;
+                model.notes[k].retain(|n| {
+                    !(n.track == track && n.start_tick == start_tick)
+                });
+            }
+
+            let mut new_selected = std::collections::HashSet::new();
+            for (note, old_key, track) in &originals {
+                let new_key = ((*old_key as i32) + delta_keys).clamp(0, 127) as u8;
+                let new_tick = (note.start_tick as i64 + delta_ticks).max(0) as u32;
+                let length = note.end_tick - note.start_tick;
+                let moved = yinhe_types::Note {
+                    start_tick: new_tick,
+                    end_tick: new_tick + length,
+                    velocity: note.velocity,
+                    dup_index: 0,
+                    track: *track,
+                };
+                let k = new_key as usize;
+                let insert_pos = model.notes[k].partition_point(|n| n.start_tick < moved.start_tick);
+                model.notes[k].insert(insert_pos, moved);
+                new_selected.insert((*track, new_tick, new_key));
+            }
+            doc.edit.selected = new_selected;
+            model.rebuild();
+            doc.data.midi_version = doc.data.midi_version.wrapping_add(1);
+            self.pianoroll_view.base.dirty = true;
+            doc.history.push(snap);
+            if let Some(ref audio) = self.audio {
+                let _ = audio.handle.send(yinhe_audio::AudioCommand::ReloadNotes { model: doc.data.model.clone() });
             }
         }
     }

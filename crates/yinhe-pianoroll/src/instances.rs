@@ -99,6 +99,7 @@ pub fn build_notes(
     midi: &dyn NoteSource,
     view: &PianoRollView,
     selected: &std::collections::HashSet<(u16, u32, u8)>,
+    hidden_notes: &std::collections::HashSet<(u16, u32, u8)>,
     track_visible: &[bool],
     track_colors: &[[f32; 3]],
 ) {
@@ -134,6 +135,11 @@ pub fn build_notes(
                     .copied()
                     .unwrap_or(true)
                 {
+                    continue;
+                }
+
+                // Skip hidden notes (being dragged)
+                if hidden_notes.contains(&(note.track, note.start_tick, key)) {
                     continue;
                 }
 
@@ -203,6 +209,7 @@ pub fn build_instances(
     midi: Option<&dyn NoteSource>,
     view: &PianoRollView,
     selected: &std::collections::HashSet<(u16, u32, u8)>,
+    hidden_notes: &std::collections::HashSet<(u16, u32, u8)>,
     track_visible: &[bool],
     track_colors: &[[f32; 3]],
 ) {
@@ -213,6 +220,7 @@ pub fn build_instances(
         midi,
         view,
         selected,
+        hidden_notes,
         track_visible,
         track_colors,
     );
@@ -226,6 +234,7 @@ pub fn build_static_instances(
     midi: Option<&dyn NoteSource>,
     view: &PianoRollView,
     selected: &std::collections::HashSet<(u16, u32, u8)>,
+    hidden_notes: &std::collections::HashSet<(u16, u32, u8)>,
     track_visible: &[bool],
     track_colors: &[[f32; 3]],
 ) {
@@ -250,6 +259,7 @@ pub fn build_static_instances(
             midi,
             view,
             selected,
+            hidden_notes,
             track_visible,
             track_colors,
         );
@@ -422,7 +432,8 @@ mod tests {
         let track_visible = vec![true];
         let track_colors = [[0.5, 0.5, 0.5]];
 
-        build_notes(&mut out, 800.0, 500.0, &midi, &view, &selected, &track_visible, &track_colors);
+        let hidden = std::collections::HashSet::new();
+        build_notes(&mut out, 800.0, 500.0, &midi, &view, &selected, &hidden, &track_visible, &track_colors);
         assert!(!out.is_empty(), "should produce note instances");
         let note = &out[0];
         assert_eq!(note.x, 0.0);
@@ -440,7 +451,8 @@ mod tests {
         let selected = std::collections::HashSet::new();
         let track_visible = vec![false];
 
-        build_notes(&mut out, 800.0, 500.0, &midi, &view, &selected, &track_visible, &[]);
+        let hidden = std::collections::HashSet::new();
+        build_notes(&mut out, 800.0, 500.0, &midi, &view, &selected, &hidden, &track_visible, &[]);
         assert!(out.is_empty(), "notes on hidden track should be skipped");
     }
 
@@ -454,7 +466,8 @@ mod tests {
         let track_visible = vec![true];
         let track_colors = [[0.5, 0.5, 0.5]];
 
-        build_notes(&mut out, 800.0, 500.0, &midi, &view, &selected, &track_visible, &track_colors);
+        let hidden = std::collections::HashSet::new();
+        build_notes(&mut out, 800.0, 500.0, &midi, &view, &selected, &hidden, &track_visible, &track_colors);
         assert_eq!(out[0].tag, 1, "selected note should have tag=1");
     }
 
@@ -467,7 +480,8 @@ mod tests {
         let track_visible = vec![true];
         let track_colors = [[0.5, 0.5, 0.5]];
 
-        build_notes(&mut out, 800.0, 500.0, &midi, &view, &selected, &track_visible, &track_colors);
+        let hidden = std::collections::HashSet::new();
+        build_notes(&mut out, 800.0, 500.0, &midi, &view, &selected, &hidden, &track_visible, &track_colors);
         assert_eq!(out[0].tag, 0, "unselected note should have tag=0");
     }
 
@@ -484,7 +498,8 @@ mod tests {
         let track_visible = vec![true];
         let track_colors = [[0.5, 0.5, 0.5]];
 
-        build_notes(&mut out, 800.0, 500.0, &midi, &view, &selected, &track_visible, &track_colors);
+        let hidden = std::collections::HashSet::new();
+        build_notes(&mut out, 800.0, 500.0, &midi, &view, &selected, &hidden, &track_visible, &track_colors);
         assert_eq!(out.len(), 3, "should produce 3 note instances");
     }
 
@@ -503,7 +518,8 @@ mod tests {
         let track_visible = vec![true];
         let track_colors = [[0.5, 0.5, 0.5]];
 
-        build_notes(&mut out, 800.0, 500.0, &midi, &view, &selected, &track_visible, &track_colors);
+        let hidden = std::collections::HashSet::new();
+        build_notes(&mut out, 800.0, 500.0, &midi, &view, &selected, &hidden, &track_visible, &track_colors);
         assert!(
             !out.is_empty(),
             "long note crossing the left edge must be included"
@@ -521,7 +537,8 @@ mod tests {
         let track_visible = vec![true];
         let track_colors = [[0.5, 0.5, 0.5]];
 
-        build_notes(&mut out, 800.0, 500.0, &midi, &view, &selected, &track_visible, &track_colors);
+        let hidden = std::collections::HashSet::new();
+        build_notes(&mut out, 800.0, 500.0, &midi, &view, &selected, &hidden, &track_visible, &track_colors);
         assert!(
             out.is_empty(),
             "note fully off-screen-left must be culled"
@@ -573,7 +590,8 @@ mod tests {
         let track_visible = vec![true];
         let track_colors = [[0.5, 0.5, 0.5]];
 
-        build_static_instances(&mut out, 800, 500, Some(&midi), &view, &selected, &track_visible, &track_colors);
+        let hidden = std::collections::HashSet::new();
+        build_static_instances(&mut out, 800, 500, Some(&midi), &view, &selected, &hidden, &track_visible, &track_colors);
         assert!(out.len() > 3, "should have multiple layers");
     }
 
@@ -583,7 +601,8 @@ mod tests {
         let view = make_view();
         let selected = std::collections::HashSet::new();
 
-        build_static_instances(&mut out, 800, 500, None, &view, &selected, &[], &[]);
+        let hidden = std::collections::HashSet::new();
+        build_static_instances(&mut out, 800, 500, None, &view, &selected, &hidden, &[], &[]);
         assert!(!out.is_empty(), "should still produce decor and keyboard");
     }
 }

@@ -98,15 +98,6 @@ pub struct App {
     // ── Event browser ──
     pub(crate) event_browser_state: crate::right_panel::event_browser::EventBrowserState,
 
-    pub(crate) note_drag_originals: Option<Vec<(yinhe_types::Note, u8)>>,
-    pub(crate) note_drag_originals_note: Option<Vec<(yinhe_types::Note, u8, u16)>>,
-    /// Snapshot taken on the first frame of a note drag.  Pushed onto the
-    /// active document's undo stack on mouse-up (drag finalize).
-    pub(crate) note_drag_undo_snapshot: Option<yinhe_editor_core::history::UndoSnapshot>,
-    /// Tracks whether the current drag ever produced a non-zero delta.
-    /// A click without motion should not push an undo entry.
-    pub(crate) note_drag_moved: bool,
-
     // ── Multi-stage loading progress ──
     pub(crate) load_progress: yinhe_editor_core::progress::SharedProgress,
 
@@ -225,10 +216,6 @@ impl App {
             show_mem_breakdown: false,
 
             event_browser_state: crate::right_panel::event_browser::EventBrowserState::default(),
-            note_drag_originals: None,
-            note_drag_originals_note: None,
-            note_drag_undo_snapshot: None,
-            note_drag_moved: false,
         };
 
         // Sync haptic settings from persisted config
