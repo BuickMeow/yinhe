@@ -173,6 +173,28 @@ pub fn build_keyboard(out: &mut Vec<NoteInstance>, kb_w: f32, kh: f32, scroll_y:
     keyboard::append_keyboard_instances(out, kb_w, kh, scroll_y, h);
 }
 
+/// Build a single ghost note instance for the pencil tool preview (layer 4).
+/// Uses a semi-transparent light blue color so it appears as a preview overlay
+/// on top of the existing notes.
+pub fn build_ghost_note(
+    out: &mut Vec<NoteInstance>,
+    start_tick: f64,
+    end_tick: f64,
+    key: u8,
+) {
+    // Light blue, 50% alpha — same color as the old egui painter ghost
+    out.push(NoteInstance {
+        x: start_tick as f32, // tick (shader converts to pixel)
+        y: key as f32,        // key number (shader converts to pixel y)
+        w: end_tick as f32,   // tick (shader converts to pixel)
+        h: 0.0,               // unused (shader uses key_height)
+        rgba_packed: pack_rgba(0.78, 0.78, 1.0, 0.5),
+        props_packed: 0,      // shader computes rounding/border
+        velocity: 1,          // > 0 so shader treats it as a note (mode=1)
+        tag: 0,
+    });
+}
+
 /// Build all instances for the piano roll frame (backward-compatible wrapper).
 pub fn build_instances(
     instances: &mut Vec<NoteInstance>,

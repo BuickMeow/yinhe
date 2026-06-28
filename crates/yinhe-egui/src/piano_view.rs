@@ -148,6 +148,7 @@ pub fn show(
     // Update state BEFORE handle_input to avoid egui pointer-capture conflicts.
     let mut sel_action = None;
     let mut pencil_event: Option<PianoViewEvent> = None;
+    let mut ghost_note = None;
     if *active_tool == Tool::Select {
         sel_drag_frame(
             ui,
@@ -165,7 +166,7 @@ pub fn show(
             sel_rect,
         );
     } else if *active_tool == Tool::Pencil {
-        if let Some(note) = pencil_frame(
+        let (note_event, ghost) = pencil_frame(
             ui,
             content_rect,
             music_rect,
@@ -175,7 +176,9 @@ pub fn show(
             bar_line_data,
             track_selected,
             conductor_idx,
-        ) {
+        );
+        ghost_note = ghost;
+        if let Some(note) = note_event {
             if let Some(track) = valid_pencil_track(track_selected, conductor_idx) {
                 pencil_event = Some(PianoViewEvent::AddNote { track, note });
             }
@@ -337,6 +340,7 @@ pub fn show(
         scroll_mode,
         min_border_width,
         midi_version,
+        ghost_note,
     );
 
     let t_prepare_end = if perf_on {
@@ -861,8 +865,8 @@ fn valid_pencil_track(
 }
 
 /// Pencil-tool input handling: hover preview, click to write a note, drag to lengthen.
-/// Returns a `NoteEvent` when the user releases the primary button and a valid
-/// target track exists.
+/// Returns `(note_event, ghost_note)` where `ghost_note` is `(start_tick, end_tick, key)`
+/// for the GPU ghost layer, or `None` when there's no preview.
 fn pencil_frame(
     ui: &mut egui::Ui,
     content_rect: egui::Rect,
@@ -873,7 +877,7 @@ fn pencil_frame(
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
     track_selected: &std::collections::HashSet<u16>,
     conductor_idx: Option<u16>,
-) -> Option<yinhe_core::NoteEvent> {
+) -> (Option<yinhe_core::NoteEvent>, Option<(f64, f64, u8)>) {
     let pencil_id = ui.id().with("pencil_drag");
     let mut start: Option<(f64, u8)> =
         ui.data_mut(|d| d.get_persisted(pencil_id)).unwrap_or(None);
@@ -903,38 +907,32 @@ fn pencil_frame(
         None
     };
 
-    // Draw ghost note.
-    if can_write {
+    // Draw ghost note — compute preview data for the GPU ghost layer.
+    let ghost_note = if can_write {
         if let Some((tick, key)) = preview {
             let interval = quantize.tick_interval(ppq) as f64;
-            let (start_tick, end_tick) = if let Some((s_tick, s_key)) = start {
-                if s_key == key {
-                    let current_end = tick.max(s_tick + 1.0);
-                    let snapped_end = crate::view_interaction::snap_tick(
-                        current_end,
-                        quantize,
-                        ppq,
-                        bar_line_data,
-                    );
-                    let end = snapped_end.max(s_tick + interval.max(1.0));
-                    (s_tick, end)
-                } else {
-                    (s_tick, s_tick + interval.max(1.0))
-                }
+            let (start_tick, end_tick, ghost_key) = if let Some((s_tick, s_key)) = start {
+                // Dragging: lock key to start key, extend/shorten with mouse
+                let current_end = tick.max(s_tick + 1.0);
+                let snapped_end = crate::view_interaction::snap_tick(
+                    current_end,
+                    quantize,
+                    ppq,
+                    bar_line_data,
+                );
+                let end = snapped_end.max(s_tick + interval.max(1.0));
+                (s_tick, end, s_key)
             } else {
-                (tick, tick + interval.max(1.0))
+                // Not dragging: show preview at hover position
+                (tick, tick + interval.max(1.0), key)
             };
-            draw_pencil_ghost(
-                ui,
-                content_rect,
-                music_rect,
-                view,
-                start_tick,
-                end_tick,
-                key,
-            );
+            Some((start_tick, end_tick, ghost_key))
+        } else {
+            None
         }
-    }
+    } else {
+        None
+    };
 
     // Start drag.
     if pointer.primary_pressed() {
@@ -986,37 +984,6 @@ fn pencil_frame(
     }
 
     ui.data_mut(|d| d.insert_persisted(pencil_id, start));
-    result
-}
-
-/// Draw a semi-transparent preview of the note about to be written.
-fn draw_pencil_ghost(
-    ui: &egui::Ui,
-    content_rect: egui::Rect,
-    music_rect: egui::Rect,
-    view: &yinhe_pianoroll::PianoRollView,
-    start_tick: f64,
-    end_tick: f64,
-    key: u8,
-) {
-    let kb_w = music_rect.min.x - content_rect.min.x;
-    let rect = crate::view_interaction::music_sel_to_pixel_rect(
-        &view.base,
-        view.key_height,
-        start_tick,
-        end_tick,
-        key,
-        key,
-    );
-    let local = egui::Rect::from_min_max(
-        egui::pos2(rect.min.x - kb_w, rect.min.y),
-        egui::pos2(rect.max.x - kb_w, rect.max.y),
-    );
-    let screen = egui::Rect::from_min_max(
-        egui::pos2(music_rect.min.x + local.min.x, music_rect.min.y + local.min.y),
-        egui::pos2(music_rect.min.x + local.max.x, music_rect.min.y + local.max.y),
-    );
-    let color = egui::Color32::from_rgb(200, 200, 255).gamma_multiply(0.5);
-    ui.painter().rect_filled(screen, 2.0, color);
+    (result, ghost_note)
 }
 

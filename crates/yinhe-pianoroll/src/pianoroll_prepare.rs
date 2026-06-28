@@ -16,6 +16,7 @@ use yinhe_wgpu::layer_cache_key;
 ///   1 = grid lines
 ///   2 = notes
 ///   3 = keyboard
+///   4 = pencil ghost note (optional, rebuilt every frame)
 ///
 /// Each layer is cached independently so that playback (scroll_x changes)
 /// only invalidates the grid layer.
@@ -31,6 +32,7 @@ pub fn prepare(
     scroll_mode: u32,
     min_border_width: f32,
     midi_version: u64,
+    ghost: Option<(f64, f64, u8)>, // (start_tick, end_tick, key) for pencil preview
 ) -> yinhe_wgpu::PrepareTimings {
     let w = width as f32;
     let h = height as f32;
@@ -63,7 +65,7 @@ pub fn prepare(
 
     let t = std::time::Instant::now();
     renderer.upload_uniforms(uniforms);
-    renderer.ensure_layers(4);
+    renderer.ensure_layers(5);
 
     // Layer 0: decor (background + black-key rows)
     let vh = view.render_hash();
@@ -129,6 +131,16 @@ pub fn prepare(
     renderer.upload_layer(3, kb_key, |out| {
         instances::build_keyboard(out, kb_w, kh, scroll_y, h);
     });
+
+    // Layer 4: pencil ghost note (no cache — rebuilt every frame)
+    if let Some((start_tick, end_tick, key)) = ghost {
+        renderer.upload_layer_force(4, |out| {
+            instances::build_ghost_note(out, start_tick, end_tick, key);
+        });
+    } else {
+        // Clear the ghost layer when there's no preview
+        renderer.upload_layer_force(4, |_| {});
+    }
 
     let dur = t.elapsed();
 
