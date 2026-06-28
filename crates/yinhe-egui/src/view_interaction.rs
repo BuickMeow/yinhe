@@ -301,6 +301,54 @@ pub fn snap_tick(
     }
 }
 
+/// Snap a tick value to the next quantization grid boundary (ceil),
+/// with optional bar-line awareness.
+pub fn snap_tick_ceil(
+    tick: f64,
+    quantize: QuantizePreset,
+    ppq: u32,
+    bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
+) -> f64 {
+    if let Some((tpb, num, den, events)) = bar_line_data {
+        let (bar_start, next_bar) =
+            yinhe_wgpu::grid::measure_bounds_at_tick(tick, tpb, num, den, events);
+        let offset = tick - bar_start;
+        let snapped_offset = quantize.snap_tick_ceil(offset, ppq);
+        let grid_tick = bar_start + snapped_offset;
+        if (tick - next_bar).abs() < (tick - grid_tick).abs() {
+            next_bar
+        } else {
+            grid_tick
+        }
+    } else {
+        quantize.snap_tick_ceil(tick, ppq)
+    }
+}
+
+/// Snap a tick value to the previous quantization grid boundary (floor),
+/// with optional bar-line awareness.
+pub fn snap_tick_floor(
+    tick: f64,
+    quantize: QuantizePreset,
+    ppq: u32,
+    bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
+) -> f64 {
+    if let Some((tpb, num, den, events)) = bar_line_data {
+        let (bar_start, next_bar) =
+            yinhe_wgpu::grid::measure_bounds_at_tick(tick, tpb, num, den, events);
+        let offset = tick - bar_start;
+        let snapped_offset = quantize.snap_tick_floor(offset, ppq);
+        let grid_tick = bar_start + snapped_offset;
+        if (tick - next_bar).abs() < (tick - grid_tick).abs() {
+            next_bar
+        } else {
+            grid_tick
+        }
+    } else {
+        quantize.snap_tick_floor(tick, ppq)
+    }
+}
+
 /// Auto-scroll the view when the pointer is near the edges of `content_rect`.
 /// Returns the actual (dx, dy) scroll delta applied, so callers can compensate
 /// drag anchors.

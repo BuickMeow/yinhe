@@ -1049,7 +1049,7 @@ fn pencil_frame(
                     let interval = quantize.tick_interval(ppq) as f64;
                     let end_tick = if let Some((tick, _)) = preview {
                         let current_end = tick.max(*s_tick + interval);
-                        let snapped_end = crate::view_interaction::snap_tick(
+                        let snapped_end = crate::view_interaction::snap_tick_ceil(
                             current_end,
                             quantize,
                             ppq,
@@ -1089,7 +1089,13 @@ fn pencil_frame(
         Some(PencilDrag::ResizeRight(trk, orig_tick, _orig_end, orig_key)) => {
             if let Some((tick, _)) = preview {
                 let interval = quantize.tick_interval(ppq) as f64;
-                let new_end = tick.max(*orig_tick as f64 + interval).min(u32::MAX as f64) as u32;
+                let snapped = crate::view_interaction::snap_tick_ceil(
+                    tick.max(*orig_tick as f64 + interval),
+                    quantize,
+                    ppq,
+                    bar_line_data,
+                );
+                let new_end = snapped.max(*orig_tick as f64 + interval).min(u32::MAX as f64) as u32;
                 pencil_note_drag = Some(PencilNoteDrag::ResizeRight {
                     track: *trk,
                     start_tick: *orig_tick,
@@ -1104,7 +1110,13 @@ fn pencil_frame(
         Some(PencilDrag::ResizeLeft(trk, orig_tick, orig_end, orig_key)) => {
             if let Some((tick, _)) = preview {
                 let interval = quantize.tick_interval(ppq) as f64;
-                let new_start = (tick as u32).min(*orig_end - 1);
+                let snapped = crate::view_interaction::snap_tick_floor(
+                    tick,
+                    quantize,
+                    ppq,
+                    bar_line_data,
+                );
+                let new_start = (snapped as u32).min(*orig_end - 1);
                 // Clamp so the note is at least one quantize interval wide
                 let min_start = (*orig_end as f64 - interval).max(0.0) as u32;
                 let new_start = new_start.max(min_start);

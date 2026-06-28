@@ -105,13 +105,31 @@ impl QuantizePreset {
         }
     }
 
-    /// Snap a tick value to the nearest quantization grid boundary.
+    /// Snap a tick value to the nearest quantization grid boundary (round).
     pub fn snap_tick(&self, tick: f64, ppq: u32) -> f64 {
         let interval = self.tick_interval(ppq) as f64;
         if interval <= 0.0 {
             return tick;
         }
         (tick / interval).round() * interval
+    }
+
+    /// Snap a tick value to the next quantization grid boundary (ceil).
+    pub fn snap_tick_ceil(&self, tick: f64, ppq: u32) -> f64 {
+        let interval = self.tick_interval(ppq) as f64;
+        if interval <= 0.0 {
+            return tick;
+        }
+        (tick / interval).ceil() * interval
+    }
+
+    /// Snap a tick value to the previous quantization grid boundary (floor).
+    pub fn snap_tick_floor(&self, tick: f64, ppq: u32) -> f64 {
+        let interval = self.tick_interval(ppq) as f64;
+        if interval <= 0.0 {
+            return tick;
+        }
+        (tick / interval).floor() * interval
     }
 
     /// Display string for the dropdown list, e.g. `"1/8  (60 tick)"`.
@@ -179,6 +197,23 @@ mod tests {
         assert_eq!(QuantizePreset::Quarter.snap_tick(100.0, 480), 0.0);
         assert_eq!(QuantizePreset::Quarter.snap_tick(240.0, 480), 480.0);
         assert_eq!(QuantizePreset::Quarter.snap_tick(480.0, 480), 480.0);
+    }
+
+    #[test]
+    fn test_snap_tick_ceil() {
+        assert_eq!(QuantizePreset::Quarter.snap_tick_ceil(100.0, 480), 480.0);
+        assert_eq!(QuantizePreset::Quarter.snap_tick_ceil(240.0, 480), 480.0);
+        assert_eq!(QuantizePreset::Quarter.snap_tick_ceil(480.0, 480), 480.0);
+        assert_eq!(QuantizePreset::Quarter.snap_tick_ceil(481.0, 480), 960.0);
+    }
+
+    #[test]
+    fn test_snap_tick_floor() {
+        assert_eq!(QuantizePreset::Quarter.snap_tick_floor(100.0, 480), 0.0);
+        assert_eq!(QuantizePreset::Quarter.snap_tick_floor(240.0, 480), 0.0);
+        assert_eq!(QuantizePreset::Quarter.snap_tick_floor(479.0, 480), 0.0);
+        assert_eq!(QuantizePreset::Quarter.snap_tick_floor(480.0, 480), 480.0);
+        assert_eq!(QuantizePreset::Quarter.snap_tick_floor(720.0, 480), 480.0);
     }
 
     #[test]
