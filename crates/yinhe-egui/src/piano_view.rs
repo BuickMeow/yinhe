@@ -32,8 +32,8 @@ pub enum PencilNoteDrag {
 enum PencilDrag {
     /// Creating a new note: (start_tick, key)
     Create(f64, u8),
-    /// Moving an existing note: (track, original_start_tick, original_key)
-    Move(u16, u32, u8),
+    /// Moving an existing note: (track, original_start_tick, original_key, original_end, press_snapped_tick)
+    Move(u16, u32, u8, u32, f64),
     /// Resizing right edge: (track, start_tick, end_tick, key)
     ResizeRight(u16, u32, u32, u8),
     /// Resizing left edge: (track, start_tick, end_tick, key)
@@ -218,6 +218,7 @@ pub fn show(
             track_selected,
             conductor_idx,
             midi,
+            track_colors,
         );
         ghost_note = ghost;
         *pencil_note_drag = pencil_drag;
@@ -910,6 +911,7 @@ fn valid_pencil_track(
 /// Pencil-tool input handling: hover preview, click to write a note, drag to lengthen,
 /// or hover over / drag existing notes to move or resize them.
 /// Returns `(note_event, ghost_note, pencil_note_drag)`.
+/// ghost_note is (start_tick, end_tick, key, [r,g,b] color).
 fn pencil_frame(
     ui: &mut egui::Ui,
     content_rect: egui::Rect,
@@ -921,7 +923,8 @@ fn pencil_frame(
     track_selected: &std::collections::HashSet<u16>,
     conductor_idx: Option<u16>,
     midi: Option<&dyn yinhe_pianoroll::NoteSource>,
-) -> (Option<yinhe_core::NoteEvent>, Option<(f64, f64, u8)>, Option<PencilNoteDrag>) {
+    track_colors: &[[f32; 3]],
+) -> (Option<yinhe_core::NoteEvent>, Option<(f64, f64, u8, [f32; 3])>, Option<PencilNoteDrag>) {
     let pencil_id = ui.id().with("pencil_drag");
     let drag_state: Option<PencilDrag> =
         ui.data_mut(|d| d.get_persisted(pencil_id)).unwrap_or(None);
@@ -935,7 +938,8 @@ fn pencil_frame(
 
     let hover_pos = pointer.hover_pos();
     let can_write = valid_pencil_track(track_selected, conductor_idx).is_some();
-    let _track = valid_pencil_track(track_selected, conductor_idx);
+    let track = valid_pencil_track(track_selected, conductor_idx);
+    let track_color = track.and_then(|t| track_colors.get(t as usize).copied()).unwrap_or([0.78, 0.78, 1.0]);
 
     // Hover / drag preview.
     let preview = if let Some(pos) = hover_pos {
@@ -954,19 +958,24 @@ fn pencil_frame(
 
     // ── Hit-test existing notes (only when not dragging) ──
     // Returns the closest note under cursor with its hit mode.
+    // This is independent of `preview` / `snap_tick` so that clicking
+    // on a note always starts a drag, never accidentally creates a new note.
     const EDGE_THRESHOLD_PX: f32 = 6.0;
     let kb_w = music_rect.min.x - content_rect.min.x;
 
     let hit_note = if drag_state.is_none() && can_write {
-        preview.and_then(|(_tick, key)| {
-            let midi = midi?;
-            let notes = midi.key_notes_in_range(key, 0, u32::MAX);
+        // Use a closure so `?` returns from the closure, not from pencil_frame
+        (|| -> Option<HitNote> {
             let mouse_screen = hover_pos?;
-            // Compute mouse position in local (music-area) coordinates
+            if !music_rect.contains(mouse_screen) {
+                return None;
+            }
             let mouse_local_x = mouse_screen.x - music_rect.min.x;
             let mouse_local_y = mouse_screen.y - music_rect.min.y;
+            let key = view.y_to_key(mouse_local_y);
+            let midi = midi?;
+            let notes = midi.key_notes_in_range(key, 0, u32::MAX);
 
-            // Find the note whose pixel rect contains the mouse
             for note in notes {
                 let note_left = view.tick_to_x(note.start_tick as f64) - kb_w;
                 let note_right = view.tick_to_x(note.end_tick as f64) - kb_w;
@@ -995,7 +1004,7 @@ fn pencil_frame(
                 }
             }
             None
-        })
+        })()
     } else {
         None
     };
@@ -1010,12 +1019,12 @@ fn pencil_frame(
     }
 
     // ── Ghost note: only when not over an existing note ──
-    let ghost_note = if can_write && drag_state.is_none() && hit_note.is_none() {
+    let mut ghost_note = if can_write && drag_state.is_none() && hit_note.is_none() {
         if let Some((tick, key)) = preview {
             let interval = quantize.tick_interval(ppq) as f64;
             // Not dragging (drag_state is None due to the outer condition),
             // show preview at hover position
-            Some((tick, tick + interval, key))
+            Some((tick, tick + interval, key, track_color))
         } else {
             None
         }
@@ -1029,7 +1038,10 @@ fn pencil_frame(
             let new_drag = match hit.mode {
                 HitMode::ResizeLeft => PencilDrag::ResizeLeft(hit.track, hit.start_tick, hit.end_tick, hit.key),
                 HitMode::ResizeRight => PencilDrag::ResizeRight(hit.track, hit.start_tick, hit.end_tick, hit.key),
-                HitMode::Move => PencilDrag::Move(hit.track, hit.start_tick, hit.key),
+                HitMode::Move => {
+                    let press_tick = preview.map(|(t, _)| t).unwrap_or(0.0);
+                    PencilDrag::Move(hit.track, hit.start_tick, hit.key, hit.end_tick, press_tick)
+                }
             };
             ui.data_mut(|d| d.insert_persisted(pencil_id, Some(new_drag)));
         } else if let Some((tick, key)) = preview {
@@ -1043,6 +1055,14 @@ fn pencil_frame(
 
     match &drag_state {
         Some(PencilDrag::Create(s_tick, s_key)) => {
+            // Show ghost while dragging (before release)
+            if pointer.primary_down() && !pointer.primary_released() {
+                if let Some((tick, _)) = preview {
+                    let interval = quantize.tick_interval(ppq) as f64;
+                    let current_end = tick.max(*s_tick + interval);
+                    ghost_note = Some((*s_tick, current_end, *s_key, track_color));
+                }
+            }
             // Release -> commit note.
             if pointer.primary_released() {
                 if can_write {
@@ -1070,23 +1090,36 @@ fn pencil_frame(
                 ui.data_mut(|d| d.insert_persisted(pencil_id, Option::<PencilDrag>::None));
             }
         }
-        Some(PencilDrag::Move(trk, orig_tick, orig_key)) => {
+        Some(PencilDrag::Move(trk, orig_tick, orig_key, orig_end, press_tick)) => {
             if let Some((tick, key)) = preview {
-                let dt = (tick as i64) - (*orig_tick as i64);
+                let dt = (tick as i64) - (*press_tick as i64);
                 let dk = (key as i32) - (*orig_key as i32);
-                pencil_note_drag = Some(PencilNoteDrag::Move {
-                    track: *trk,
-                    start_tick: *orig_tick,
-                    key: *orig_key,
-                    delta_ticks: dt,
-                    delta_keys: dk,
-                });
-            }
-            if pointer.primary_released() {
-                ui.data_mut(|d| d.insert_persisted(pencil_id, Option::<PencilDrag>::None));
+
+                // Show ghost at the dragged position for visual feedback.
+                // The original note stays in place until release.
+                let new_start = (*orig_tick as i64 + dt).max(0) as u32;
+                let new_end = new_start + (*orig_end - *orig_tick);
+                let ghost_color = track.and_then(|t| track_colors.get(t as usize).copied()).unwrap_or([0.78, 0.78, 1.0]);
+                ghost_note = Some((new_start as f64, new_end as f64, key, ghost_color));
+
+                // Only output drag on release — do NOT modify the model during drag.
+                if pointer.primary_released() {
+                    pencil_note_drag = Some(PencilNoteDrag::Move {
+                        track: *trk,
+                        start_tick: *orig_tick,
+                        key: *orig_key,
+                        delta_ticks: dt,
+                        delta_keys: dk,
+                    });
+                    ui.data_mut(|d| d.insert_persisted(pencil_id, Option::<PencilDrag>::None));
+                }
+            } else {
+                if pointer.primary_released() {
+                    ui.data_mut(|d| d.insert_persisted(pencil_id, Option::<PencilDrag>::None));
+                }
             }
         }
-        Some(PencilDrag::ResizeRight(trk, orig_tick, _orig_end, orig_key)) => {
+        Some(PencilDrag::ResizeRight(trk, orig_tick, orig_end, orig_key)) => {
             if let Some((tick, _)) = preview {
                 let interval = quantize.tick_interval(ppq) as f64;
                 let snapped = crate::view_interaction::snap_tick_ceil(
@@ -1096,15 +1129,25 @@ fn pencil_frame(
                     bar_line_data,
                 );
                 let new_end = snapped.max(*orig_tick as f64 + interval).min(u32::MAX as f64) as u32;
-                pencil_note_drag = Some(PencilNoteDrag::ResizeRight {
-                    track: *trk,
-                    start_tick: *orig_tick,
-                    key: *orig_key,
-                    new_end_tick: new_end,
-                });
-            }
-            if pointer.primary_released() {
-                ui.data_mut(|d| d.insert_persisted(pencil_id, Option::<PencilDrag>::None));
+
+                // Show ghost
+                let ghost_color = track.and_then(|t| track_colors.get(t as usize).copied()).unwrap_or([0.78, 0.78, 1.0]);
+                ghost_note = Some((*orig_tick as f64, new_end as f64, *orig_key, ghost_color));
+
+                // Only output on release
+                if pointer.primary_released() {
+                    pencil_note_drag = Some(PencilNoteDrag::ResizeRight {
+                        track: *trk,
+                        start_tick: *orig_tick,
+                        key: *orig_key,
+                        new_end_tick: new_end,
+                    });
+                    ui.data_mut(|d| d.insert_persisted(pencil_id, Option::<PencilDrag>::None));
+                }
+            } else {
+                if pointer.primary_released() {
+                    ui.data_mut(|d| d.insert_persisted(pencil_id, Option::<PencilDrag>::None));
+                }
             }
         }
         Some(PencilDrag::ResizeLeft(trk, orig_tick, orig_end, orig_key)) => {
@@ -1117,18 +1160,28 @@ fn pencil_frame(
                     bar_line_data,
                 );
                 let new_start = (snapped as u32).min(*orig_end - 1);
-                // Clamp so the note is at least one quantize interval wide
-                let min_start = (*orig_end as f64 - interval).max(0.0) as u32;
-                let new_start = new_start.max(min_start);
-                pencil_note_drag = Some(PencilNoteDrag::ResizeLeft {
-                    track: *trk,
-                    start_tick: *orig_tick,
-                    key: *orig_key,
-                    new_start_tick: new_start,
-                });
-            }
-            if pointer.primary_released() {
-                ui.data_mut(|d| d.insert_persisted(pencil_id, Option::<PencilDrag>::None));
+                // Ensure minimum length: new_start must be <= orig_end - interval
+                let max_start = (*orig_end as f64 - interval).max(0.0) as u32;
+                let new_start = new_start.min(max_start);
+
+                // Show ghost
+                let ghost_color = track.and_then(|t| track_colors.get(t as usize).copied()).unwrap_or([0.78, 0.78, 1.0]);
+                ghost_note = Some((new_start as f64, *orig_end as f64, *orig_key, ghost_color));
+
+                // Only output on release
+                if pointer.primary_released() {
+                    pencil_note_drag = Some(PencilNoteDrag::ResizeLeft {
+                        track: *trk,
+                        start_tick: *orig_tick,
+                        key: *orig_key,
+                        new_start_tick: new_start,
+                    });
+                    ui.data_mut(|d| d.insert_persisted(pencil_id, Option::<PencilDrag>::None));
+                }
+            } else {
+                if pointer.primary_released() {
+                    ui.data_mut(|d| d.insert_persisted(pencil_id, Option::<PencilDrag>::None));
+                }
             }
         }
         None => {}

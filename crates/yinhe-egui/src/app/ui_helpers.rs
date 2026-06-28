@@ -498,157 +498,99 @@ impl App {
 
         match drag {
             Some(PencilNoteDrag::Move { track, start_tick, key, delta_ticks, delta_keys }) => {
-                // Save original on first frame
-                if self.pencil_drag_originals.is_none() {
-                    let model = &doc.data.model;
-                    let k = key as usize;
-                    if let Some(note) = model.notes[k].iter().find(|n| {
-                        n.track == track && n.start_tick == start_tick
-                    }) {
-                        self.pencil_drag_originals = Some((*note, key, track));
-                        self.pencil_drag_undo_snapshot =
-                            Some(doc.snapshot_with_selection("Move note"));
-                        self.pencil_drag_moved = false;
-                    }
-                }
-
-                if let Some((orig_note, orig_key, _)) = self.pencil_drag_originals {
-                    let new_key = ((orig_key as i32) + delta_keys).clamp(0, 127) as u8;
+                // Called once on release — find the note and move it.
+                let model = &doc.data.model;
+                let k = key as usize;
+                if let Some(note) = model.notes[k].iter().find(|n| {
+                    n.track == track && n.start_tick == start_tick
+                }) {
+                    let orig_note = *note;
+                    let new_key = ((key as i32) + delta_keys).clamp(0, 127) as u8;
                     let new_tick = (orig_note.start_tick as i64 + delta_ticks).max(0) as u32;
 
                     if delta_ticks != 0 || delta_keys != 0 {
-                        self.pencil_drag_moved = true;
-                    }
-
-                    let model = Arc::make_mut(&mut doc.data.model);
-
-                    // Remove the previous frame's placed note (if any) so it
-                    // doesn't leave a ghost behind when the position changes.
-                    if let Some((prev_tick, prev_key)) = self.pencil_drag_last_placed {
-                        let pk = prev_key as usize;
-                        model.notes[pk].retain(|n| {
-                            !(n.track == track && n.start_tick == prev_tick)
+                        let snap = doc.snapshot_with_selection("Move note");
+                        let model = Arc::make_mut(&mut doc.data.model);
+                        // Remove original
+                        let ok = key as usize;
+                        model.notes[ok].retain(|n| {
+                            !(n.track == track && n.start_tick == orig_note.start_tick && n.dup_index == orig_note.dup_index)
                         });
-                    }
-
-                    let length = orig_note.end_tick - orig_note.start_tick;
-                    let moved = yinhe_types::Note {
-                        start_tick: new_tick,
-                        end_tick: new_tick + length,
-                        velocity: orig_note.velocity,
-                        dup_index: 0,
-                        track,
-                    };
-                    let nk = new_key as usize;
-                    let insert_pos = model.notes[nk].partition_point(|n| n.start_tick < moved.start_tick);
-                    model.notes[nk].insert(insert_pos, moved);
-                    self.pencil_drag_last_placed = Some((new_tick, new_key));
-                    model.rebuild();
-                    doc.data.midi_version = doc.data.midi_version.wrapping_add(1);
-                    self.pianoroll_view.base.dirty = true;
-                }
-            }
-            Some(PencilNoteDrag::ResizeRight { track, start_tick, key, new_end_tick }) => {
-                // Save original on first frame
-                if self.pencil_drag_originals.is_none() {
-                    let model = &doc.data.model;
-                    let k = key as usize;
-                    if let Some(note) = model.notes[k].iter().find(|n| {
-                        n.track == track && n.start_tick == start_tick
-                    }) {
-                        self.pencil_drag_originals = Some((*note, key, track));
-                        self.pencil_drag_undo_snapshot =
-                            Some(doc.snapshot_with_selection("Resize note"));
-                        self.pencil_drag_moved = false;
-                    }
-                }
-
-                if let Some((orig_note, _, _)) = self.pencil_drag_originals {
-                    if new_end_tick != orig_note.end_tick {
-                        self.pencil_drag_moved = true;
-                    }
-
-                    let model = Arc::make_mut(&mut doc.data.model);
-                    let k = key as usize;
-                    if let Some(note) = model.notes[k].iter_mut().find(|n| {
-                        n.track == track && n.start_tick == orig_note.start_tick
-                    }) {
-                        note.end_tick = new_end_tick.max(note.start_tick + 1);
+                        // Insert moved
+                        let length = orig_note.end_tick - orig_note.start_tick;
+                        let moved = yinhe_types::Note {
+                            start_tick: new_tick,
+                            end_tick: new_tick + length,
+                            velocity: orig_note.velocity,
+                            dup_index: 0,
+                            track,
+                        };
+                        let nk = new_key as usize;
+                        let insert_pos = model.notes[nk].partition_point(|n| n.start_tick < moved.start_tick);
+                        model.notes[nk].insert(insert_pos, moved);
                         model.rebuild();
                         doc.data.midi_version = doc.data.midi_version.wrapping_add(1);
                         self.pianoroll_view.base.dirty = true;
+                        doc.history.push(snap);
+                    }
+                }
+            }
+            Some(PencilNoteDrag::ResizeRight { track, start_tick, key, new_end_tick }) => {
+                // Called once on release — find the note and resize it.
+                let model = &doc.data.model;
+                let k = key as usize;
+                if let Some(note) = model.notes[k].iter().find(|n| {
+                    n.track == track && n.start_tick == start_tick
+                }) {
+                    if new_end_tick != note.end_tick {
+                        let snap = doc.snapshot_with_selection("Resize note");
+                        let model = Arc::make_mut(&mut doc.data.model);
+                        if let Some(n) = model.notes[k].iter_mut().find(|n| {
+                            n.track == track && n.start_tick == start_tick
+                        }) {
+                            n.end_tick = new_end_tick.max(n.start_tick + 1);
+                            model.rebuild();
+                            doc.data.midi_version = doc.data.midi_version.wrapping_add(1);
+                            self.pianoroll_view.base.dirty = true;
+                            doc.history.push(snap);
+                        }
                     }
                 }
             }
             Some(PencilNoteDrag::ResizeLeft { track, start_tick, key, new_start_tick }) => {
-                // Save original on first frame
-                if self.pencil_drag_originals.is_none() {
-                    let model = &doc.data.model;
-                    let k = key as usize;
-                    if let Some(note) = model.notes[k].iter().find(|n| {
-                        n.track == track && n.start_tick == start_tick
-                    }) {
-                        self.pencil_drag_originals = Some((*note, key, track));
-                        self.pencil_drag_undo_snapshot =
-                            Some(doc.snapshot_with_selection("Resize note"));
-                        self.pencil_drag_moved = false;
+                // Called once on release — find the note and resize it.
+                let model = &doc.data.model;
+                let k = key as usize;
+                if let Some(note) = model.notes[k].iter().find(|n| {
+                    n.track == track && n.start_tick == start_tick
+                }) {
+                    if new_start_tick != note.start_tick {
+                        let snap = doc.snapshot_with_selection("Resize note");
+                        let model = Arc::make_mut(&mut doc.data.model);
+                        if let Some(n) = model.notes[k].iter_mut().find(|n| {
+                            n.track == track && n.start_tick == start_tick
+                        }) {
+                            n.start_tick = new_start_tick.min(n.end_tick - 1);
+                            model.rebuild();
+                            doc.data.midi_version = doc.data.midi_version.wrapping_add(1);
+                            self.pianoroll_view.base.dirty = true;
+                            doc.history.push(snap);
+                        }
                     }
-                }
-
-                if let Some((orig_note, _, _)) = self.pencil_drag_originals {
-                    if new_start_tick != orig_note.start_tick {
-                        self.pencil_drag_moved = true;
-                    }
-
-                    let model = Arc::make_mut(&mut doc.data.model);
-                    let k = key as usize;
-
-                    // Remove the previous frame's placed note (start_tick changes each frame)
-                    if let Some((prev_tick, prev_key)) = self.pencil_drag_last_placed {
-                        let pk = prev_key as usize;
-                        model.notes[pk].retain(|n| {
-                            !(n.track == track && n.start_tick == prev_tick)
-                        });
-                    }
-
-                    let new_start = new_start_tick.min(orig_note.end_tick - 1);
-                    let moved = yinhe_types::Note {
-                        start_tick: new_start,
-                        end_tick: orig_note.end_tick,
-                        velocity: orig_note.velocity,
-                        dup_index: 0,
-                        track,
-                    };
-                    let insert_pos = model.notes[k].partition_point(|n| n.start_tick < moved.start_tick);
-                    model.notes[k].insert(insert_pos, moved);
-                    self.pencil_drag_last_placed = Some((new_start, key));
-                    model.rebuild();
-                    doc.data.midi_version = doc.data.midi_version.wrapping_add(1);
-                    self.pianoroll_view.base.dirty = true;
                 }
             }
             None => {
-                // Drag ended — finalize undo
-                if let Some(_) = self.pencil_drag_originals.take() {
-                    self.pencil_drag_last_placed = None;
-                    if let Some(idx) = self.active_doc {
-                        let doc = &mut self.documents[idx];
-                        doc.data.rebuild_model();
-                        doc.data.midi_version = doc.data.midi_version.wrapping_add(1);
-                        self.pianoroll_view.base.dirty = true;
-                        let snap = self.pencil_drag_undo_snapshot.take();
-                        let moved = std::mem::replace(&mut self.pencil_drag_moved, false);
-                        if moved {
-                            if let Some(snap) = snap {
-                                doc.history.push(snap);
-                            }
-                        }
-                        if let Some(ref audio) = self.audio {
-                            let _ =
-                                audio
-                                    .handle
-                                    .send(yinhe_audio::AudioCommand::ReloadNotes { model: doc.data.model.clone() });
-                        }
+                // Drag ended — nothing to do (each operation pushes its own undo).
+                if let Some(idx) = self.active_doc {
+                    let doc = &mut self.documents[idx];
+                    doc.data.rebuild_model();
+                    doc.data.midi_version = doc.data.midi_version.wrapping_add(1);
+                    self.pianoroll_view.base.dirty = true;
+                    if let Some(ref audio) = self.audio {
+                        let _ =
+                            audio
+                                .handle
+                                .send(yinhe_audio::AudioCommand::ReloadNotes { model: doc.data.model.clone() });
                     }
                 }
             }

@@ -402,11 +402,13 @@ fn show_event_detail(ui: &mut egui::Ui, item: &SelectedItem, doc: &Document, bar
             return;
         }
         SelectedItem::Tempo => {
+            let mut sorted: Vec<&yinhe_core::TempoEvent> = model.conductor.tempo.iter().collect();
+            sorted.sort_by_key(|e| e.tick);
             ui.add_space(4.0);
-            ui.label(egui::RichText::new(format!("Tempo ({} 个)", model.conductor.tempo.len())).size(12.0).strong());
+            ui.label(egui::RichText::new(format!("Tempo ({} 个)", sorted.len())).size(12.0).strong());
             ui.add_space(2.0);
-            build_table(ui, "eb_tempo", &[("#", 40.0), ("tick", 70.0), ("位置", 80.0), ("BPM", 70.0)], model.conductor.tempo.len(), |i, row| {
-                let s = &model.conductor.tempo[i];
+            build_table(ui, "eb_tempo", &[("#", 40.0), ("tick", 70.0), ("位置", 80.0), ("BPM", 70.0)], sorted.len(), |i, row| {
+                let s = sorted[i];
                 cell_text(row, format!("{}", i + 1));
                 cell_text(row, format!("{}", s.tick));
                 cell_text(row, bar_lookup.format(s.tick as u32));
@@ -414,11 +416,13 @@ fn show_event_detail(ui: &mut egui::Ui, item: &SelectedItem, doc: &Document, bar
             });
         }
         SelectedItem::TimeSig => {
+            let mut sorted: Vec<&yinhe_core::TimeSigEvent> = model.conductor.time_sig.iter().collect();
+            sorted.sort_by_key(|e| e.tick);
             ui.add_space(4.0);
-            ui.label(egui::RichText::new(format!("拍号 ({} 个)", model.conductor.time_sig.len())).size(12.0).strong());
+            ui.label(egui::RichText::new(format!("拍号 ({} 个)", sorted.len())).size(12.0).strong());
             ui.add_space(2.0);
-            build_table(ui, "eb_ts", &[("#", 40.0), ("tick", 70.0), ("位置", 80.0), ("拍号", 80.0)], model.conductor.time_sig.len(), |i, row| {
-                let e = &model.conductor.time_sig[i];
+            build_table(ui, "eb_ts", &[("#", 40.0), ("tick", 70.0), ("位置", 80.0), ("拍号", 80.0)], sorted.len(), |i, row| {
+                let e = sorted[i];
                 let denom = 1u32 << e.denominator as u32;
                 cell_text(row, format!("{}", i + 1));
                 cell_text(row, format!("{}", e.tick));
@@ -429,7 +433,7 @@ fn show_event_detail(ui: &mut egui::Ui, item: &SelectedItem, doc: &Document, bar
         SelectedItem::Notes { track } => {
             let t = *track as usize;
             let model = &doc.data.model;
-            let notes: Vec<(yinhe_core::NoteEvent, u8, u16)> = {
+            let mut notes: Vec<(yinhe_core::NoteEvent, u8, u16)> = {
                 let mut v = Vec::new();
                 for (key, bucket) in model.notes.iter().enumerate() {
                     for n in bucket.iter().filter(|n| n.track == *track) {
@@ -448,6 +452,7 @@ fn show_event_detail(ui: &mut egui::Ui, item: &SelectedItem, doc: &Document, bar
                 }
                 v
             };
+            notes.sort_by_key(|(n, _, _)| n.start_tick);
             ui.add_space(4.0);
             ui.label(egui::RichText::new(format!("音符 ({} 个)", notes.len())).size(12.0).strong());
             ui.add_space(2.0);
@@ -464,10 +469,11 @@ fn show_event_detail(ui: &mut egui::Ui, item: &SelectedItem, doc: &Document, bar
         }
         SelectedItem::Cc { track, controller } => {
             let t = *track as usize;
-            let events: Vec<&yinhe_core::CcEvent> = model.tracks.get(t)
+            let mut events: Vec<&yinhe_core::CcEvent> = model.tracks.get(t)
                 .and_then(|td| td.cc.get(controller))
                 .map(|v| v.iter().collect())
                 .unwrap_or_default();
+            events.sort_by_key(|e| e.tick);
             ui.add_space(4.0);
             ui.label(egui::RichText::new(format!("CC {} {} ({} 个)", controller, cc_label(*controller), events.len())).size(12.0).strong());
             ui.add_space(2.0);
@@ -481,9 +487,10 @@ fn show_event_detail(ui: &mut egui::Ui, item: &SelectedItem, doc: &Document, bar
         }
         SelectedItem::PitchBend { track } => {
             let t = *track as usize;
-            let events: Vec<&yinhe_core::PitchBendEvent> = model.tracks.get(t)
+            let mut events: Vec<&yinhe_core::PitchBendEvent> = model.tracks.get(t)
                 .map(|td| td.pitch_bend.iter().collect())
                 .unwrap_or_default();
+            events.sort_by_key(|e| e.tick);
             ui.add_space(4.0);
             ui.label(egui::RichText::new(format!("弯音事件 ({} 个)", events.len())).size(12.0).strong());
             ui.add_space(2.0);
@@ -497,9 +504,10 @@ fn show_event_detail(ui: &mut egui::Ui, item: &SelectedItem, doc: &Document, bar
         }
         SelectedItem::ProgramChange { track } => {
             let t = *track as usize;
-            let events: Vec<&yinhe_core::PcEvent> = model.tracks.get(t)
+            let mut events: Vec<&yinhe_core::PcEvent> = model.tracks.get(t)
                 .map(|td| td.program_change.iter().collect())
                 .unwrap_or_default();
+            events.sort_by_key(|e| e.tick);
             ui.add_space(4.0);
             ui.label(egui::RichText::new(format!("音色变更 ({} 个)", events.len())).size(12.0).strong());
             ui.add_space(2.0);

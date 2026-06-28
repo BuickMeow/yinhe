@@ -32,7 +32,7 @@ pub fn prepare(
     scroll_mode: u32,
     min_border_width: f32,
     midi_version: u64,
-    ghost: Option<(f64, f64, u8)>, // (start_tick, end_tick, key) for pencil preview
+    ghost: Option<(f64, f64, u8, [f32; 3])>, // (start_tick, end_tick, key, color) for pencil preview
 ) -> yinhe_wgpu::PrepareTimings {
     let w = width as f32;
     let h = height as f32;
@@ -133,9 +133,9 @@ pub fn prepare(
     });
 
     // Layer 4: pencil ghost note (no cache — rebuilt every frame)
-    if let Some((start_tick, end_tick, key)) = ghost {
+    if let Some((start_tick, end_tick, key, color)) = ghost {
         renderer.upload_layer_force(4, |out| {
-            instances::build_ghost_note(out, start_tick, end_tick, key);
+            instances::build_ghost_note(out, start_tick, end_tick, key, color);
         });
     } else {
         // Clear the ghost layer when there's no preview
