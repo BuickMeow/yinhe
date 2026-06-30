@@ -10,7 +10,7 @@ use yinhe_core::YinModel;
 
 use crate::audio_renderer::{RendererSharedState, spawn_renderer};
 use crate::audio_ring::AudioRing;
-use crate::engine::PreparedModel;
+use crate::audio_model::PreparedModel;
 
 const STEREO_CHANNELS: usize = 2;
 const RING_BUFFER_FRAMES: usize = 16_384;
@@ -184,7 +184,7 @@ pub(crate) fn spawn_worker(
                                 }
                             }
                         }
-                        let prepared = crate::engine::prepare_model(
+                        let prepared = crate::prepare_model::prepare_model(
                             &latest,
                             sample_rate,
                             &active_mask,
