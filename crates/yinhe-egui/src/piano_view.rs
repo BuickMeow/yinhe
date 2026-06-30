@@ -218,6 +218,7 @@ pub fn show(
             note_drag_delta,
             sel_rect,
             track_colors,
+            track_visible,
         );
         ghost_notes = sel_ghosts;
         hidden_notes = sel_hidden.into_iter().collect();
@@ -666,6 +667,7 @@ fn sel_drag_frame(
     note_drag_delta: &mut Option<(i64, i32)>,
     sel_rect: &mut yinhe_editor_core::edit_state::SelRectState,
     track_colors: &[[f32; 3]],
+    track_visible: &[bool],
 ) -> (Vec<(f64, f64, u8, [f32; 3])>, Vec<(u16, u32, u8)>) {
     let sel_id = ui.id().with("sel_drag");
     let mut drag: Option<(egui::Pos2, egui::Pos2)> =
@@ -864,7 +866,10 @@ fn sel_drag_frame(
                     for key in key_lo..=key_hi {
                         for note in midi_ref.key_notes(key) {
                             if (note.start_tick as f64) < t_end && (note.end_tick as f64) > t_start {
-                                selected.insert((note.track, note.start_tick, key));
+                                // Only select notes from visible tracks
+                                if track_visible.get(note.track as usize).copied().unwrap_or(true) {
+                                    selected.insert((note.track, note.start_tick, key));
+                                }
                             }
                         }
                     }

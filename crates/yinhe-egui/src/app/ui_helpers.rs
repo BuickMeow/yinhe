@@ -427,9 +427,10 @@ impl App {
                 let k = *key as usize;
                 let removal_set: std::collections::HashSet<_> = removals.iter().copied().collect();
                 Arc::make_mut(&mut model.notes[k]).retain(|n| !removal_set.contains(&(n.track, n.start_tick)));
+                model.mark_dirty(*key);
             }
 
-            // Batch insert: group by destination key, extend + let rebuild sort
+            // Batch insert: group by destination key, extend + let rebuild_dirty sort
             let mut new_by_key: std::collections::HashMap<u8, Vec<yinhe_types::Note>> = std::collections::HashMap::new();
             let mut new_selected = std::collections::HashSet::new();
             for (note, old_key, track) in &originals {
@@ -449,10 +450,11 @@ impl App {
             for (key, new_notes) in new_by_key {
                 let k = key as usize;
                 Arc::make_mut(&mut model.notes[k]).extend(new_notes);
+                model.mark_dirty(key);
             }
 
             doc.edit.selected = new_selected;
-            model.rebuild();
+            model.rebuild_dirty();
             doc.data.midi_version = doc.data.midi_version.wrapping_add(1);
             self.pianoroll_view.base.dirty = true;
             doc.history.push(snap);
@@ -488,6 +490,7 @@ impl App {
                         Arc::make_mut(&mut model.notes[ok]).retain(|n| {
                             !(n.track == track && n.start_tick == orig_note.start_tick && n.dup_index == orig_note.dup_index)
                         });
+                        model.mark_dirty(key);
                         // Insert moved
                         let length = orig_note.end_tick - orig_note.start_tick;
                         let moved = yinhe_types::Note {
@@ -500,7 +503,8 @@ impl App {
                         let nk = new_key as usize;
                         let insert_pos = model.notes[nk].partition_point(|n| n.start_tick < moved.start_tick);
                         Arc::make_mut(&mut model.notes[nk]).insert(insert_pos, moved);
-                        model.rebuild();
+                        model.mark_dirty(new_key);
+                        model.rebuild_dirty();
                         doc.data.midi_version = doc.data.midi_version.wrapping_add(1);
                         self.pianoroll_view.base.dirty = true;
                         doc.history.push(snap);
@@ -521,7 +525,8 @@ impl App {
                             n.track == track && n.start_tick == start_tick
                         }) {
                             n.end_tick = new_end_tick.max(n.start_tick + 1);
-                            model.rebuild();
+                            model.mark_dirty(key);
+                            model.rebuild_dirty();
                             doc.data.midi_version = doc.data.midi_version.wrapping_add(1);
                             self.pianoroll_view.base.dirty = true;
                             doc.history.push(snap);
@@ -543,7 +548,8 @@ impl App {
                             n.track == track && n.start_tick == start_tick
                         }) {
                             n.start_tick = new_start_tick.min(n.end_tick - 1);
-                            model.rebuild();
+                            model.mark_dirty(key);
+                            model.rebuild_dirty();
                             doc.data.midi_version = doc.data.midi_version.wrapping_add(1);
                             self.pianoroll_view.base.dirty = true;
                             doc.history.push(snap);

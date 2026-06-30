@@ -248,7 +248,8 @@ impl Document {
                 track: track_idx,
             },
         );
-        self.data.rebuild_model();
+        model.mark_dirty(note.key);
+        self.data.rebuild_model_dirty();
         true
     }
 
@@ -263,10 +264,11 @@ impl Document {
                 Arc::make_mut(&mut model.notes[key]).retain(|n| {
                     !(n.track == track && n.start_tick == start_tick)
                 });
+                model.mark_dirty(key as u8);
             }
             self.edit.selected.clear();
         }
-        self.data.rebuild_model();
+        self.data.rebuild_model_dirty();
         true
     }
 
@@ -309,13 +311,14 @@ impl Document {
                 let k = *key as usize;
                 let insert_pos = model.notes[k].partition_point(|n| n.start_tick < new_note.start_tick);
                 Arc::make_mut(&mut model.notes[k]).insert(insert_pos, new_note);
+                model.mark_dirty(*key);
                 new_selected.insert((*track, note.start_tick + offset, *key));
             }
 
             self.edit.selected = new_selected;
             offset
         };
-        self.data.rebuild_model();
+        self.data.rebuild_model_dirty();
         Some(offset)
     }
 
@@ -335,6 +338,7 @@ impl Document {
                     .position(|n| n.track == track && n.start_tick == start_tick)
                 {
                     let note = Arc::make_mut(&mut model.notes[k]).remove(pos);
+                    model.mark_dirty(key);
                     moved_data.push((note, track, key));
                 }
             }
@@ -356,12 +360,13 @@ impl Document {
                 let k = new_key as usize;
                 let insert_pos = model.notes[k].partition_point(|n| n.start_tick < new_note.start_tick);
                 Arc::make_mut(&mut model.notes[k]).insert(insert_pos, new_note);
+                model.mark_dirty(new_key);
                 new_selected.insert((*track, note.start_tick, new_key));
             }
 
             self.edit.selected = new_selected;
         }
-        self.data.rebuild_model();
+        self.data.rebuild_model_dirty();
         Some(semitones)
     }
 
