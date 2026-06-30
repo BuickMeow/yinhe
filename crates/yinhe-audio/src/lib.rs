@@ -1,3 +1,5 @@
+mod audio_renderer;
+mod audio_ring;
 mod channel;
 pub mod engine;
 pub mod export;

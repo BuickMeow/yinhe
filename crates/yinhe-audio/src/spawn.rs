@@ -3,15 +3,19 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use crossbeam_channel::{Sender, TryRecvError, bounded, unbounded};
-use xsynth_core::effects::VolumeLimiter;
+use crossbeam_channel::{Sender, bounded, unbounded};
 use xsynth_core::soundfont::SoundfontBase;
 
 use yinhe_core::YinModel;
 
+use crate::audio_renderer::{RendererSharedState, spawn_renderer};
+use crate::audio_ring::AudioRing;
 use crate::engine::PreparedModel;
 
-/// Command sent from UI thread to the audio callback.
+const STEREO_CHANNELS: usize = 2;
+const RING_BUFFER_FRAMES: usize = 16_384;
+
+/// Command sent from UI thread to the audio renderer thread.
 pub enum AudioCommand {
     Play {
         from_sample: u64,
@@ -102,7 +106,6 @@ pub(crate) fn track_global_channel(model: &YinModel, track_idx: usize) -> u8 {
 pub fn channels_for_model(model: &YinModel) -> (u32, Vec<bool>) {
     let mut ch_active = [0u32; 256];
 
-    // Single pass: scan all notes once.
     for bucket in model.notes.iter() {
         for n in bucket {
             if n.velocity > 1 {
@@ -114,7 +117,6 @@ pub fn channels_for_model(model: &YinModel) -> (u32, Vec<bool>) {
         }
     }
 
-    // Any non-note event activates the channel too.
     for (track_idx, track) in model.tracks.iter().enumerate() {
         let ch = track_global_channel(model, track_idx) as usize;
         let has_ctrl = !track.cc.is_empty()
@@ -136,8 +138,8 @@ pub fn channels_for_model(model: &YinModel) -> (u32, Vec<bool>) {
     (num_channels, active_mask)
 }
 
-/// Internal command sent from the audio callback to the worker thread.
-enum WorkerCmd {
+/// Internal command sent from the renderer thread to the worker thread.
+pub(crate) enum WorkerCmd {
     PrepareModel(Arc<YinModel>),
     LoadSoundFont {
         port: u8,
@@ -146,7 +148,7 @@ enum WorkerCmd {
     },
 }
 
-enum WorkerResult {
+pub(crate) enum WorkerResult {
     PreparedModel(PreparedModel),
     LoadedSoundFont {
         port: u8,
@@ -156,16 +158,13 @@ enum WorkerResult {
 }
 
 /// Spawn a background worker thread that processes heavy commands
-/// (model preparation, soundfont loading) off the audio thread.
-fn spawn_worker(
+/// (model preparation, soundfont loading) off the renderer thread.
+pub(crate) fn spawn_worker(
     sample_rate: u32,
     active_mask: Vec<bool>,
     channel_map: Box<[u32; 256]>,
 ) -> (Sender<WorkerCmd>, crossbeam_channel::Receiver<WorkerResult>) {
     let (cmd_tx, cmd_rx) = unbounded::<WorkerCmd>();
-    // Bounded(1): if the worker produces a new result before the audio
-    // callback consumed the old one, the worker blocks.  This naturally
-    // throttles the UI from queuing redundant work.
     let (result_tx, result_rx) = bounded::<WorkerResult>(1);
 
     thread::Builder::new()
@@ -174,19 +173,12 @@ fn spawn_worker(
             while let Ok(cmd) = cmd_rx.recv() {
                 match cmd {
                     WorkerCmd::PrepareModel(model) => {
-                        // Coalesce: drain any subsequent PrepareModel commands,
-                        // keeping only the latest one.  This avoids redundant
-                        // rebuilds when the UI sends multiple ReloadNotes in
-                        // quick succession (e.g. during fast note editing).
                         let mut latest = model;
                         let mut pending_other: Option<WorkerCmd> = None;
                         while let Ok(next) = cmd_rx.try_recv() {
                             match next {
                                 WorkerCmd::PrepareModel(m) => latest = m,
                                 other => {
-                                    // Stop coalescing — we hit a different command.
-                                    // Process the coalesced model first, then
-                                    // handle `other` below.
                                     pending_other = Some(other);
                                     break;
                                 }
@@ -199,8 +191,6 @@ fn spawn_worker(
                             &channel_map,
                         );
                         let _ = result_tx.send(WorkerResult::PreparedModel(prepared));
-                        // If we stopped coalescing because of a non-PrepareModel
-                        // command, handle it now.
                         if let Some(other) = pending_other {
                             match other {
                                 WorkerCmd::LoadSoundFont {
@@ -248,10 +238,11 @@ fn spawn_worker(
     (cmd_tx, result_rx)
 }
 
-/// Spawn a CPAL audio stream with the engine running directly in the callback.
+/// Spawn a CPAL audio stream backed by a producer/consumer audio FIFO.
 ///
-/// Heavy operations (model loading, soundfont loading) are offloaded to a
-/// background worker thread so the audio callback never stalls.
+/// The CPAL callback only consumes already-rendered contiguous samples from the
+/// ring buffer. All command processing, model application and XSynth rendering
+/// live on the renderer thread.
 pub fn spawn_cpal_audio(
     sample_rate: u32,
     num_channels: u32,
@@ -262,10 +253,6 @@ pub fn spawn_cpal_audio(
     let sample_position = Arc::new(AtomicU64::new(0));
     let playing = Arc::new(AtomicBool::new(false));
     let duration_samples = Arc::new(AtomicU64::new(0));
-
-    let sp = Arc::clone(&sample_position);
-    let pl = Arc::clone(&playing);
-    let dur = Arc::clone(&duration_samples);
 
     let host = cpal::default_host();
     let device = host.default_output_device().ok_or("No output device")?;
@@ -280,113 +267,65 @@ pub fn spawn_cpal_audio(
 
     let engine = crate::engine::AudioEngine::new(sample_rate, num_channels, active_mask);
     let channel_map = engine.channel_map_clone();
-
     let (worker_tx, prepared_rx) =
         spawn_worker(sample_rate, engine.active_mask().to_vec(), channel_map);
 
-    // Move engine into the callback
-    let mut engine = engine;
-    let mut initialized = false;
-    let mut limiter = VolumeLimiter::new(channels as u16);
+    let ring_capacity = (RING_BUFFER_FRAMES * STEREO_CHANNELS).next_power_of_two();
+    let (ring_producer, mut ring_consumer) = AudioRing::new(ring_capacity).split();
+
+    let renderer_state = RendererSharedState::new();
+    let renderer_position = Arc::clone(&renderer_state.producer_sample_position);
+    let renderer_playing = Arc::clone(&renderer_state.playing);
+    let renderer_duration = Arc::clone(&renderer_state.duration_samples);
+    let initialized = Arc::clone(&renderer_state.initialized);
+    let reset_generation = Arc::clone(&renderer_state.reset_generation);
+    let reset_ack = Arc::clone(&renderer_state.reset_ack);
+
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let _renderer_handle = spawn_renderer(
+        engine,
+        ring_producer,
+        renderer_state,
+        channels as u16,
+        cmd_rx,
+        worker_tx,
+        prepared_rx,
+        Arc::clone(&shutdown),
+    );
+
+    let sp = Arc::clone(&sample_position);
+    let pl = Arc::clone(&playing);
+    let dur = Arc::clone(&duration_samples);
+    let mut consumer_sample_position = 0u64;
+    let mut acknowledged_generation = 0u64;
 
     let stream = device
         .build_output_stream(
             &config,
             move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
                 yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Audio, || {
-                    // Process commands with coalescing
-                    let mut pending_reload: Option<Arc<YinModel>> = None;
+                    let generation = reset_generation.load(Ordering::Acquire);
+                    if generation != acknowledged_generation {
+                        ring_consumer.clear();
+                        consumer_sample_position = renderer_position.load(Ordering::Acquire);
+                        acknowledged_generation = generation;
+                        reset_ack.store(generation, Ordering::Release);
+                    }
 
-                    loop {
-                        match cmd_rx.try_recv() {
-                            Ok(cmd) => {
-                                match cmd {
-                                    AudioCommand::LoadModel { model } => {
-                                        // Stop playback, clear state, send to worker
-                                        engine.handle_command(AudioCommand::Pause);
-                                        engine.handle_command(AudioCommand::Stop);
-                                        let _ = worker_tx.send(WorkerCmd::PrepareModel(model));
-                                    }
-                                    AudioCommand::ReloadNotes { model } => {
-                                        // Coalesce: keep only the latest model
-                                        pending_reload = Some(model);
-                                    }
-                                    AudioCommand::LoadSoundFont { port, paths } => {
-                                        let dense_channels = engine.dense_channels_for_port(port);
-                                        if !dense_channels.is_empty() {
-                                            let _ = worker_tx.send(WorkerCmd::LoadSoundFont {
-                                                port,
-                                                paths,
-                                                dense_channels,
-                                            });
-                                        }
-                                    }
-                                    AudioCommand::Play { from_sample } => {
-                                        if engine.model_loaded() {
-                                            engine.handle_command(AudioCommand::Play {
-                                                from_sample,
-                                            });
-                                        } else {
-                                            // Model not yet loaded — save for later
-                                            engine.set_pending_play(from_sample);
-                                        }
-                                    }
-                                    other => {
-                                        engine.handle_command(other);
-                                    }
-                                }
-                            }
-                            Err(TryRecvError::Empty) => break,
-                            Err(TryRecvError::Disconnected) => {
-                                data.fill(0.0);
-                                return;
-                            }
+                    if initialized.load(Ordering::Acquire) {
+                        let popped = ring_consumer.pop_into(data);
+                        if popped < data.len() {
+                            data[popped..].fill(0.0);
                         }
-                    }
-
-                    // Apply coalesced reload if any
-                    if let Some(model) = pending_reload {
-                        // Lightweight: stop voices + clear active notes
-                        engine.send_all_notes_off();
-                        engine.clear_active_notes();
-                        // Heavy work: send to worker
-                        let _ = worker_tx.send(WorkerCmd::PrepareModel(model));
-                    }
-
-                    // Check for prepared worker results
-                    loop {
-                        match prepared_rx.try_recv() {
-                            Ok(WorkerResult::PreparedModel(prepared)) => {
-                                dur.store(prepared.duration_samples, Ordering::Relaxed);
-                                engine.apply_prepared_model(prepared);
-                                initialized = true;
-                            }
-                            Ok(WorkerResult::LoadedSoundFont {
-                                port,
-                                soundfonts,
-                                dense_channels,
-                            }) => {
-                                engine.apply_loaded_soundfont_for_port(
-                                    port,
-                                    soundfonts,
-                                    &dense_channels,
-                                );
-                            }
-                            Err(TryRecvError::Empty) => break,
-                            Err(TryRecvError::Disconnected) => break,
-                        }
-                    }
-
-                    pl.store(engine.playing(), Ordering::Relaxed);
-
-                    if initialized {
-                        engine.render(data);
-                        limiter.limit(data);
+                        consumer_sample_position = consumer_sample_position
+                            .saturating_add((popped / STEREO_CHANNELS) as u64);
                     } else {
                         data.fill(0.0);
                     }
 
-                    sp.store(engine.sample_position(), Ordering::Relaxed);
+                    sp.store(consumer_sample_position, Ordering::Relaxed);
+                    pl.store(renderer_playing.load(Ordering::Relaxed), Ordering::Relaxed);
+                    dur.store(renderer_duration.load(Ordering::Relaxed), Ordering::Relaxed);
                 })
             },
             |err| eprintln!("Audio stream error: {}", err),
