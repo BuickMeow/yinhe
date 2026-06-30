@@ -10,7 +10,7 @@ fn doc_with_notes() -> Document {
 fn first_note_key60(doc: &Document) -> (u16, u32, u8) {
     // Find the first note at key 60 and return its (track, start_tick, key) tuple
     for (key, notes) in doc.data.model.notes.iter().enumerate() {
-        for n in notes {
+        for n in notes.iter() {
             if key == 60 {
                 return (n.track, n.start_tick, key as u8);
             }
@@ -21,7 +21,7 @@ fn first_note_key60(doc: &Document) -> (u16, u32, u8) {
 
 fn first_note_key48(doc: &Document) -> (u16, u32, u8) {
     for (key, notes) in doc.data.model.notes.iter().enumerate() {
-        for n in notes {
+        for n in notes.iter() {
             if key == 48 {
                 return (n.track, n.start_tick, key as u8);
             }

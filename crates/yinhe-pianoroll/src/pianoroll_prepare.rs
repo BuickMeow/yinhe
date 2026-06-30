@@ -104,31 +104,27 @@ pub fn prepare(
     });
 
     // Layer 2: notes
-    let sel_hash = {
-        let mut h = 0u64;
-        for &(trk, tick, key) in selected.iter() {
-            h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(trk as u64);
-            h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(tick as u64);
-            h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(key as u64);
-        }
-        h
-    };
-    let tv_hash = {
-        let mut h = 0u64;
-        for &v in track_visible {
-            h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(v as u64);
-        }
-        h
-    };
-    let hidden_hash = {
-        let mut h = 0u64;
-        for &(trk, tick, key) in hidden_notes.iter() {
-            h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(trk as u64);
-            h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(tick as u64);
-            h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(key as u64);
-        }
-        h
-    };
+    // Commutative (XOR) hashes — order-independent so HashSet iteration
+    // order doesn't cause spurious cache invalidation.
+    let sel_hash = selected.iter().fold(0u64, |acc, &(trk, tick, key)| {
+        let mut h: u64 = 0;
+        h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(trk as u64);
+        h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(tick as u64);
+        h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(key as u64);
+        acc ^ h
+    });
+    let tv_hash = track_visible.iter().fold(0u64, |acc, &v| {
+        let mut h: u64 = 0;
+        h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(v as u64);
+        acc ^ h
+    });
+    let hidden_hash = hidden_notes.iter().fold(0u64, |acc, &(trk, tick, key)| {
+        let mut h: u64 = 0;
+        h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(trk as u64);
+        h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(tick as u64);
+        h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(key as u64);
+        acc ^ h
+    });
     let notes_key = layer_cache_key(&[vh, wh, sel_hash, tv_hash, midi_version, hidden_hash]);
     renderer.upload_layer(2, notes_key, |out| {
         if let Some(midi) = midi {

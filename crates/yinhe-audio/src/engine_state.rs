@@ -249,7 +249,7 @@ impl AudioEngine {
             let tpb = yin_model.tempo_map.ticks_per_beat;
             let sr = self.sample_rate as f64;
             for key in 0..128usize {
-                let notes = &yin_model.notes[key];
+                let notes = yin_model.notes[key].as_slice();
                 let cursor = notes.partition_point(|n| {
                     if n.velocity <= 1 {
                         return false;

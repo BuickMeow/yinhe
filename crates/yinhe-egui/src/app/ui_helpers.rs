@@ -408,20 +408,29 @@ impl App {
             let snap = doc.snapshot_with_selection("Move notes");
             let model = Arc::make_mut(&mut doc.data.model);
 
-            // Save originals and remove from old positions
+            // Save originals using binary search (O(N log B) instead of O(N×B))
             let originals: Vec<(yinhe_types::Note, u8, u16)> = doc.edit.selected.iter().filter_map(|&(track, start_tick, key)| {
                 let k = key as usize;
-                model.notes[k].iter().find(|n| n.track == track && n.start_tick == start_tick)
+                let bucket = &model.notes[k];
+                let idx = bucket.partition_point(|n| n.start_tick < start_tick);
+                bucket[idx..].iter()
+                    .find(|n| n.track == track && n.start_tick == start_tick)
                     .map(|n| (*n, key, track))
             }).collect();
 
+            // Batch removal: group by key, single retain per bucket
+            let mut by_key: std::collections::HashMap<u8, Vec<(u16, u32)>> = std::collections::HashMap::new();
             for &(track, start_tick, key) in &doc.edit.selected {
-                let k = key as usize;
-                model.notes[k].retain(|n| {
-                    !(n.track == track && n.start_tick == start_tick)
-                });
+                by_key.entry(key).or_default().push((track, start_tick));
+            }
+            for (key, removals) in &by_key {
+                let k = *key as usize;
+                let removal_set: std::collections::HashSet<_> = removals.iter().copied().collect();
+                Arc::make_mut(&mut model.notes[k]).retain(|n| !removal_set.contains(&(n.track, n.start_tick)));
             }
 
+            // Batch insert: group by destination key, extend + let rebuild sort
+            let mut new_by_key: std::collections::HashMap<u8, Vec<yinhe_types::Note>> = std::collections::HashMap::new();
             let mut new_selected = std::collections::HashSet::new();
             for (note, old_key, track) in &originals {
                 let new_key = ((*old_key as i32) + delta_keys).clamp(0, 127) as u8;
@@ -434,11 +443,14 @@ impl App {
                     dup_index: 0,
                     track: *track,
                 };
-                let k = new_key as usize;
-                let insert_pos = model.notes[k].partition_point(|n| n.start_tick < moved.start_tick);
-                model.notes[k].insert(insert_pos, moved);
+                new_by_key.entry(new_key).or_default().push(moved);
                 new_selected.insert((*track, new_tick, new_key));
             }
+            for (key, new_notes) in new_by_key {
+                let k = key as usize;
+                Arc::make_mut(&mut model.notes[k]).extend(new_notes);
+            }
+
             doc.edit.selected = new_selected;
             model.rebuild();
             doc.data.midi_version = doc.data.midi_version.wrapping_add(1);
@@ -473,7 +485,7 @@ impl App {
                         let model = Arc::make_mut(&mut doc.data.model);
                         // Remove original
                         let ok = key as usize;
-                        model.notes[ok].retain(|n| {
+                        Arc::make_mut(&mut model.notes[ok]).retain(|n| {
                             !(n.track == track && n.start_tick == orig_note.start_tick && n.dup_index == orig_note.dup_index)
                         });
                         // Insert moved
@@ -487,7 +499,7 @@ impl App {
                         };
                         let nk = new_key as usize;
                         let insert_pos = model.notes[nk].partition_point(|n| n.start_tick < moved.start_tick);
-                        model.notes[nk].insert(insert_pos, moved);
+                        Arc::make_mut(&mut model.notes[nk]).insert(insert_pos, moved);
                         model.rebuild();
                         doc.data.midi_version = doc.data.midi_version.wrapping_add(1);
                         self.pianoroll_view.base.dirty = true;
@@ -505,7 +517,7 @@ impl App {
                     if new_end_tick != note.end_tick {
                         let snap = doc.snapshot_with_selection("Resize note");
                         let model = Arc::make_mut(&mut doc.data.model);
-                        if let Some(n) = model.notes[k].iter_mut().find(|n| {
+                        if let Some(n) = Arc::make_mut(&mut model.notes[k]).iter_mut().find(|n| {
                             n.track == track && n.start_tick == start_tick
                         }) {
                             n.end_tick = new_end_tick.max(n.start_tick + 1);
@@ -527,7 +539,7 @@ impl App {
                     if new_start_tick != note.start_tick {
                         let snap = doc.snapshot_with_selection("Resize note");
                         let model = Arc::make_mut(&mut doc.data.model);
-                        if let Some(n) = model.notes[k].iter_mut().find(|n| {
+                        if let Some(n) = Arc::make_mut(&mut model.notes[k]).iter_mut().find(|n| {
                             n.track == track && n.start_tick == start_tick
                         }) {
                             n.start_tick = new_start_tick.min(n.end_tick - 1);

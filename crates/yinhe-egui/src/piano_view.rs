@@ -56,6 +56,17 @@ enum HitMode {
     ResizeRight,
 }
 
+/// Pre-computed info for each selected note during a selection drag.
+/// Built once at drag start, reused every frame — eliminates O(N×M) midi lookups.
+#[derive(Clone)]
+struct SelDragNoteInfo {
+    track: u16,
+    start_tick: u32,
+    end_tick: u32,
+    key: u8,
+    color: [f32; 3],
+}
+
 /// Height of the time ruler band at the top of the pianoroll view.
 use crate::theme;
 const RULER_H: f32 = theme::RULER_H;
@@ -206,6 +217,7 @@ pub fn show(
             cursor_tick,
             note_drag_delta,
             sel_rect,
+            track_colors,
         );
         ghost_notes = sel_ghosts;
         hidden_notes = sel_hidden.into_iter().collect();
@@ -653,6 +665,7 @@ fn sel_drag_frame(
     cursor_tick: &mut Option<f64>,
     note_drag_delta: &mut Option<(i64, i32)>,
     sel_rect: &mut yinhe_editor_core::edit_state::SelRectState,
+    track_colors: &[[f32; 3]],
 ) -> (Vec<(f64, f64, u8, [f32; 3])>, Vec<(u16, u32, u8)>) {
     let sel_id = ui.id().with("sel_drag");
     let mut drag: Option<(egui::Pos2, egui::Pos2)> =
@@ -661,6 +674,11 @@ fn sel_drag_frame(
     let note_drag_id = ui.id().with("note_drag_origin");
     let mut note_drag_origin: Option<(f64, f64)> =
         ui.data_mut(|d| d.get_persisted(note_drag_id)).unwrap_or(None);
+
+    // Pre-computed drag note info — built once at drag start, reused every frame.
+    let drag_notes_id = ui.id().with("drag_notes");
+    let mut drag_notes: Option<Vec<SelDragNoteInfo>> =
+        ui.data_mut(|d| d.get_persisted(drag_notes_id)).unwrap_or(None);
 
     let pointer = ui.input(|i| i.pointer.clone());
     let cmd = ui.input(|i| i.modifiers.command || i.modifiers.ctrl);
@@ -671,6 +689,7 @@ fn sel_drag_frame(
     }
     if note_drag_origin.is_some() && !pointer.primary_down() && !pointer.primary_released() {
         note_drag_origin = None;
+        drag_notes = None;
         sel_rect.cancel_drag();
     }
 
@@ -704,6 +723,21 @@ fn sel_drag_frame(
                 let key = view.y_to_key(local.y) as f64;
                 note_drag_origin = Some((tick, key));
                 sel_rect.start_drag();
+
+                // Pre-compute all selected note info once — O(N×M) but only at drag start.
+                drag_notes = Some(selected.iter().filter_map(|&(trk, st, k)| {
+                    midi.and_then(|m| {
+                        let bucket = m.key_notes(k);
+                        let idx = bucket.partition_point(|n| n.start_tick < st);
+                        bucket[idx..].iter().find(|n| n.track == trk && n.start_tick == st)
+                    }).map(|n| SelDragNoteInfo {
+                        track: trk,
+                        start_tick: st,
+                        end_tick: n.end_tick,
+                        key: k,
+                        color: track_colors.get(trk as usize).copied().unwrap_or([0.78, 0.78, 1.0]),
+                    })
+                }).collect());
             } else {
                 // Not on selection rect → marquee selection
                 drag = Some((local, local));
@@ -715,64 +749,60 @@ fn sel_drag_frame(
         }
     }
 
-    // Note drag: compute ghost/hidden for visual feedback, store delta only on release
+    // Note drag: use pre-computed data for ghost/hidden, store delta only on release
     let mut ghost_notes: Vec<(f64, f64, u8, [f32; 3])> = Vec::new();
     let mut hidden_notes: Vec<(u16, u32, u8)> = Vec::new();
     if let Some((origin_tick, origin_key)) = note_drag_origin {
-        if pointer.primary_down() && !pointer.primary_pressed() {
-            if let Some(pos) = pointer.hover_pos() {
-                let local_x = pos.x - content_rect.min.x;
-                let local_y = pos.y - content_rect.min.y;
-                let raw_tick = view.x_to_tick(local_x);
-                let snapped_tick = crate::view_interaction::snap_tick(raw_tick, quantize, ppq, bar_line_data);
-                let current_key = view.y_to_key(local_y) as f64;
-                let dt = (snapped_tick - origin_tick).round() as i64;
-                let dk = (current_key - origin_key).round() as i32;
+        if let Some(ref notes) = drag_notes {
+            if pointer.primary_down() && !pointer.primary_pressed() {
+                if let Some(pos) = pointer.hover_pos() {
+                    let local_x = pos.x - content_rect.min.x;
+                    let local_y = pos.y - content_rect.min.y;
+                    let raw_tick = view.x_to_tick(local_x);
+                    let snapped_tick = crate::view_interaction::snap_tick(raw_tick, quantize, ppq, bar_line_data);
+                    let current_key = view.y_to_key(local_y) as f64;
+                    let dt = (snapped_tick - origin_tick).round() as i64;
+                    let dk = (current_key - origin_key).round() as i32;
 
-                // Compute ghost notes and hidden notes for visual feedback
-                for &(trk, st, k) in selected.iter() {
-                    let new_tick = (st as i64 + dt).max(0) as u32;
-                    let new_key = ((k as i32) + dk).clamp(0, 127) as u8;
-                    // Find note length from midi
-                    let length = midi
-                        .and_then(|m| m.key_notes(k).iter().find(|n| n.start_tick == st && n.track == trk))
-                        .map(|n| n.end_tick - n.start_tick)
-                        .unwrap_or(0);
-                    ghost_notes.push((new_tick as f64, (new_tick + length) as f64, new_key, [0.78, 0.78, 1.0]));
-                    hidden_notes.push((trk, st, k));
-                }
+                    // O(N) — just apply delta to pre-computed data, no midi lookup.
+                    for info in notes {
+                        let new_tick = (info.start_tick as i64 + dt).max(0) as u32;
+                        let new_key = ((info.key as i32) + dk).clamp(0, 127) as u8;
+                        let length = info.end_tick - info.start_tick;
+                        ghost_notes.push((new_tick as f64, (new_tick + length) as f64, new_key, info.color));
+                        hidden_notes.push((info.track, info.start_tick, info.key));
+                    }
 
-                sel_rect.update_drag(dt, dk);
-                ui.ctx().request_repaint();
-            }
-        }
-        if pointer.primary_released() {
-            if let Some(pos) = pointer.hover_pos() {
-                let local_x = pos.x - content_rect.min.x;
-                let local_y = pos.y - content_rect.min.y;
-                let raw_tick = view.x_to_tick(local_x);
-                let snapped_tick = crate::view_interaction::snap_tick(raw_tick, quantize, ppq, bar_line_data);
-                let current_key = view.y_to_key(local_y) as f64;
-                let dt = (snapped_tick - origin_tick).round() as i64;
-                let dk = (current_key - origin_key).round() as i32;
-                *note_drag_delta = Some((dt, dk));
-                sel_rect.update_drag(dt, dk);
-
-                // Keep ghost/hidden alive on the release frame so the original
-                // notes don't flash back before the model is updated.
-                for &(trk, st, k) in selected.iter() {
-                    let new_tick = (st as i64 + dt).max(0) as u32;
-                    let new_key = ((k as i32) + dk).clamp(0, 127) as u8;
-                    let length = midi
-                        .and_then(|m| m.key_notes(k).iter().find(|n| n.start_tick == st && n.track == trk))
-                        .map(|n| n.end_tick - n.start_tick)
-                        .unwrap_or(0);
-                    ghost_notes.push((new_tick as f64, (new_tick + length) as f64, new_key, [0.78, 0.78, 1.0]));
-                    hidden_notes.push((trk, st, k));
+                    sel_rect.update_drag(dt, dk);
+                    ui.ctx().request_repaint();
                 }
             }
-            sel_rect.end_drag();
-            note_drag_origin = None;
+            if pointer.primary_released() {
+                if let Some(pos) = pointer.hover_pos() {
+                    let local_x = pos.x - content_rect.min.x;
+                    let local_y = pos.y - content_rect.min.y;
+                    let raw_tick = view.x_to_tick(local_x);
+                    let snapped_tick = crate::view_interaction::snap_tick(raw_tick, quantize, ppq, bar_line_data);
+                    let current_key = view.y_to_key(local_y) as f64;
+                    let dt = (snapped_tick - origin_tick).round() as i64;
+                    let dk = (current_key - origin_key).round() as i32;
+                    *note_drag_delta = Some((dt, dk));
+                    sel_rect.update_drag(dt, dk);
+
+                    // Keep ghost/hidden alive on the release frame so the original
+                    // notes don't flash back before the model is updated.
+                    for info in notes {
+                        let new_tick = (info.start_tick as i64 + dt).max(0) as u32;
+                        let new_key = ((info.key as i32) + dk).clamp(0, 127) as u8;
+                        let length = info.end_tick - info.start_tick;
+                        ghost_notes.push((new_tick as f64, (new_tick + length) as f64, new_key, info.color));
+                        hidden_notes.push((info.track, info.start_tick, info.key));
+                    }
+                }
+                sel_rect.end_drag();
+                note_drag_origin = None;
+                drag_notes = None;
+            }
         }
     }
 
@@ -849,6 +879,7 @@ fn sel_drag_frame(
 
     ui.data_mut(|d| d.insert_persisted(sel_id, drag));
     ui.data_mut(|d| d.insert_persisted(note_drag_id, note_drag_origin));
+    ui.data_mut(|d| d.insert_persisted(drag_notes_id, drag_notes));
     (ghost_notes, hidden_notes)
 }
 

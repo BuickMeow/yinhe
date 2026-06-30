@@ -107,7 +107,7 @@ pub fn channels_for_model(model: &YinModel) -> (u32, Vec<bool>) {
     let mut ch_active = [0u32; 256];
 
     for bucket in model.notes.iter() {
-        for n in bucket {
+        for n in bucket.iter() {
             if n.velocity > 1 {
                 let ch = track_global_channel(model, n.track as usize) as usize;
                 if ch < 256 {

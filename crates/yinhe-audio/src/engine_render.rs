@@ -62,7 +62,7 @@ impl AudioEngine {
 
             for key in 0..128usize {
                 let cursor = self.note_cursor[key];
-                let notes = &yin_model.notes[key];
+                let notes = yin_model.notes[key].as_slice();
                 let mut idx = cursor;
                 while idx < notes.len() {
                     let n = &notes[idx];
@@ -128,7 +128,7 @@ impl AudioEngine {
             let sr = self.sample_rate as f64;
 
             for key in 0..128usize {
-                let notes = &yin_model.notes[key];
+                let notes = yin_model.notes[key].as_slice();
                 let mut cursor = self.note_cursor[key];
                 while cursor < notes.len() {
                     let note = &notes[cursor];

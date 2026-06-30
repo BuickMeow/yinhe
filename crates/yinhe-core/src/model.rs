@@ -141,7 +141,7 @@ pub struct YinModel {
     /// Single authoritative note store: `notes[key]` = all notes at that key,
     /// sorted by start_tick. Each note carries its track index and dup_index.
     /// Compatible with `yinhe_types::NoteSource`.
-    pub notes: [Vec<yinhe_types::Note>; 128],
+    pub notes: Box<[Arc<Vec<yinhe_types::Note>>; 128]>,
     pub note_count: u64,
     pub tick_length: u64,
     /// Per-track note count cache (avoids scanning 128 buckets for stats).
@@ -157,7 +157,7 @@ impl Default for YinModel {
             tracks: Vec::new(),
             tempo_map: Arc::new(TempoMap::default()),
             meta: ProjectMeta::default(),
-            notes: core::array::from_fn(|_| Vec::new()),
+            notes: Box::new(core::array::from_fn(|_| Arc::new(Vec::new()))),
             note_count: 0,
             tick_length: 0,
             track_note_count: Vec::new(),
@@ -282,7 +282,7 @@ impl YinModel {
             }
         }
 
-        self.notes = key_notes;
+        self.notes = Box::new(key_notes.map(|v| Arc::new(v)));
         self.note_count = note_count;
         self.tick_length = max_tick;
         self.track_note_count = track_counts;
@@ -305,7 +305,7 @@ impl YinModel {
         use rayon::prelude::*;
         self.notes
             .par_iter_mut()
-            .for_each(|bucket| bucket.sort_by_key(|n| n.start_tick));
+            .for_each(|bucket| Arc::make_mut(bucket).sort_by_key(|n| n.start_tick));
 
         // Recompute note_count, max_tick, track_note_count, track_has_audio_cache
         // (may have changed after edits or track insertions).
@@ -315,7 +315,7 @@ impl YinModel {
         let mut track_has_audio: Vec<bool> = vec![false; self.tracks.len()];
         for bucket in self.notes.iter() {
             note_count += bucket.len() as u64;
-            for n in bucket {
+            for n in bucket.iter() {
                 let end = n.end_tick as u64;
                 if end > max_tick {
                     max_tick = end;

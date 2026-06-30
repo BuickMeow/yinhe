@@ -11,7 +11,7 @@ use crate::model::YinModel;
 
 impl NoteSource for YinModel {
     fn key_notes(&self, key: u8) -> &[Note] {
-        &self.notes[key as usize]
+        self.notes[key as usize].as_slice()
     }
 
     fn duration(&self) -> f64 {

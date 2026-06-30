@@ -131,7 +131,7 @@ impl Document {
                 conductor.name = "Conductor".to_string();
                 // Shift all existing note track indices by 1 to make room.
                 for bucket in model.notes.iter_mut() {
-                    for n in bucket.iter_mut() {
+                    for n in Arc::make_mut(bucket).iter_mut() {
                         n.track += 1;
                     }
                 }
@@ -238,7 +238,7 @@ impl Document {
         let model = Arc::make_mut(&mut self.data.model);
         let key = note.key as usize;
         let insert_pos = model.notes[key].partition_point(|n| n.start_tick < note.start_tick);
-        model.notes[key].insert(
+        Arc::make_mut(&mut model.notes[key]).insert(
             insert_pos,
             yinhe_types::Note {
                 start_tick: note.start_tick,
@@ -260,7 +260,7 @@ impl Document {
             let model = Arc::make_mut(&mut self.data.model);
             for &(track, start_tick, key) in &self.edit.selected {
                 let key = key as usize;
-                model.notes[key].retain(|n| {
+                Arc::make_mut(&mut model.notes[key]).retain(|n| {
                     !(n.track == track && n.start_tick == start_tick)
                 });
             }
@@ -308,7 +308,7 @@ impl Document {
                 };
                 let k = *key as usize;
                 let insert_pos = model.notes[k].partition_point(|n| n.start_tick < new_note.start_tick);
-                model.notes[k].insert(insert_pos, new_note);
+                Arc::make_mut(&mut model.notes[k]).insert(insert_pos, new_note);
                 new_selected.insert((*track, note.start_tick + offset, *key));
             }
 
@@ -334,7 +334,7 @@ impl Document {
                     .iter()
                     .position(|n| n.track == track && n.start_tick == start_tick)
                 {
-                    let note = model.notes[k].remove(pos);
+                    let note = Arc::make_mut(&mut model.notes[k]).remove(pos);
                     moved_data.push((note, track, key));
                 }
             }
@@ -355,7 +355,7 @@ impl Document {
                 };
                 let k = new_key as usize;
                 let insert_pos = model.notes[k].partition_point(|n| n.start_tick < new_note.start_tick);
-                model.notes[k].insert(insert_pos, new_note);
+                Arc::make_mut(&mut model.notes[k]).insert(insert_pos, new_note);
                 new_selected.insert((*track, note.start_tick, new_key));
             }
 
