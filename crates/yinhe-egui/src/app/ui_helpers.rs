@@ -651,7 +651,8 @@ impl App {
                             }
                         });
                         if close {
-                            slot = None;
+                            s.show_settings = false;
+                            // Keep slot = Some(s) — don't drop the settings
                         }
                     }
                     *settings_cb.borrow_mut() = slot;
@@ -665,9 +666,9 @@ impl App {
                     self.audio_settings.haptic_enabled,
                     self.audio_settings.haptic_intensity,
                 );
-            } else {
-                self.audio_settings.show_settings = false;
-                self.teardown_audio();
+                if !self.audio_settings.show_settings {
+                    self.teardown_audio();
+                }
             }
         }
 

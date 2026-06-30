@@ -401,7 +401,13 @@ fn show_timecode_display(
         ppq
     );
     let time_str = time_format::format_time(seconds);
-    let pos_str = time_format::format_tick_bar_beat(tick, ppq, num);
+    let pos_str = time_format::format_tick_bar_beat_with_time_sig(
+        tick,
+        ppq,
+        &model.tempo_map.time_sig_events,
+        model.tempo_map.time_sig_default.0,
+        model.tempo_map.time_sig_default.1,
+    );
 
     let col_widths = [70.0, 76.0, 90.0];
     let rect_h = 36.0;

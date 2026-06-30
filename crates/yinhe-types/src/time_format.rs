@@ -1,3 +1,5 @@
+use crate::note::TimeSigEvent;
+
 /// Format seconds as `mm:ss.ms` (e.g. 0:00.000).
 pub fn format_time(seconds: f64) -> String {
     let mins = (seconds / 60.0) as u32;
@@ -19,12 +21,92 @@ pub fn format_time_sig(numerator: u8, denominator_power: u8) -> String {
 }
 
 /// Convert tick to `bar.beat.tick_in_beat` format (all 1-indexed).
+///
+/// NOTE: This function assumes a single uniform time signature throughout the
+/// entire project.  Use [`format_tick_bar_beat_with_time_sig`] when there are
+/// time signature changes.
 pub fn format_tick_bar_beat(tick: f64, ppq: u32, numerator: u8) -> String {
     let ticks_per_bar = ppq * numerator as u32;
     let bar = (tick / ticks_per_bar as f64).floor() as u32 + 1;
     let beat = ((tick % ticks_per_bar as f64) / ppq as f64).floor() as u32 + 1;
     let tick_in_beat = (tick % ppq as f64) as u32;
     format!("{}.{}.{:03}", bar, beat, tick_in_beat)
+}
+
+/// Convert tick to `bar.beat.tick_in_beat` format, correctly accounting for
+/// variable (changing) time signatures by segmenting the timeline.
+///
+/// Uses the same segment+build logic as the time ruler so the two displays
+/// always agree.
+pub fn format_tick_bar_beat_with_time_sig(
+    tick: f64,
+    ppq: u32,
+    time_sig_events: &[TimeSigEvent],
+    default_num: u8,
+    default_den: u8,
+) -> String {
+    // ── 1. Build time-signature segments (sorted by start tick) ──
+    let mut segments: Vec<(u32, u8, u8)> = Vec::new();
+    let mut prev_tick = 0u32;
+    let mut prev_num = default_num;
+    let mut prev_den = default_den;
+    for ev in time_sig_events {
+        if ev.tick > prev_tick {
+            segments.push((prev_tick, prev_num, prev_den));
+        }
+        prev_tick = ev.tick;
+        prev_num = ev.numerator;
+        prev_den = ev.denominator;
+    }
+    segments.push((prev_tick, prev_num, prev_den));
+
+    // ── 2. Compute cumulative bar offsets ──
+    let bar_offsets = compute_bar_offsets(ppq, &segments);
+
+    // ── 3. Find which segment tick falls in ──
+    let tick_u32 = tick as u32;
+    let seg_idx = segments
+        .partition_point(|&(start, _, _)| start <= tick_u32)
+        .saturating_sub(1);
+    let (seg_start, num, den) = segments[seg_idx];
+    let local = tick_u32 - seg_start;
+
+    // ── 4. Compute bar / beat / tick_in_beat within the segment ──
+    let ticks_per_measure = measure_ticks_inner(ppq, num, den);
+    let ticks_per_beat = (ticks_per_measure / num as u32).max(1);
+    let bar = bar_offsets[seg_idx] + (local / ticks_per_measure) + 1;
+    let beat = ((local % ticks_per_measure) / ticks_per_beat) + 1;
+    let tick_in_beat = tick as u32 % ppq;
+
+    format!("{}.{}.{:03}", bar, beat, tick_in_beat)
+}
+
+/// Compute ticks per measure from time signature.
+fn measure_ticks_inner(tpb: u32, numerator: u8, denominator_power: u8) -> u32 {
+    if numerator == 0 {
+        return (tpb * 4).max(1);
+    }
+    let num = numerator as f64;
+    let den = (1u32 << denominator_power) as f64;
+    ((tpb as f64 * num / den * 4.0).round() as u32).max(1)
+}
+
+/// Compute the cumulative number of complete bars before each segment.
+fn compute_bar_offsets(tpb: u32, segments: &[(u32, u8, u8)]) -> Vec<u32> {
+    let mut offsets = Vec::with_capacity(segments.len());
+    let mut acc = 0u32;
+    for i in 0..segments.len() {
+        offsets.push(acc);
+        if i + 1 < segments.len() {
+            let (start, num, den) = segments[i];
+            let end = segments[i + 1].0;
+            let tm = measure_ticks_inner(tpb, num, den);
+            if tm > 0 && end > start {
+                acc += (end - start) / tm;
+            }
+        }
+    }
+    offsets
 }
 
 #[cfg(test)]
