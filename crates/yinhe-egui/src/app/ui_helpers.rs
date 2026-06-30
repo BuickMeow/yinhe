@@ -540,19 +540,12 @@ impl App {
                 }
             }
             None => {
-                // Drag ended — nothing to do (each operation pushes its own undo).
-                if let Some(idx) = self.active_doc {
-                    let doc = &mut self.documents[idx];
-                    doc.data.rebuild_model();
-                    doc.data.midi_version = doc.data.midi_version.wrapping_add(1);
-                    self.pianoroll_view.base.dirty = true;
-                    if let Some(ref audio) = self.audio {
-                        let _ =
-                            audio
-                                .handle
-                                .send(yinhe_audio::AudioCommand::ReloadNotes { model: doc.data.model.clone() });
-                    }
-                }
+                // Drag ended — nothing to do.
+                // Each drag operation (Move/ResizeLeft/ResizeRight) already
+                // calls rebuild_model, increments midi_version, and sends
+                // ReloadNotes on release.  Calling them again here on every
+                // frame where drag is None would cause a full model reload
+                // every frame, breaking audio playback.
             }
         }
     }

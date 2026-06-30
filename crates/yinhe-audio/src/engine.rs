@@ -683,13 +683,15 @@ impl AudioEngine {
         self.setup_percussion(&prepared.model);
 
         self.cc_events = prepared.cc_events;
-        self.cc_cursor = 0;
-        self.active_notes.clear();
         self.duration_samples = prepared.duration_samples;
         self.skip_track = prepared.skip_track;
-        self.note_cursor = [0; 128];
         self.yin_model = Some(prepared.yin_model);
         self.model = Some(prepared.model);
+
+        // Seek to current playback position to avoid triggering all notes
+        // before the current position (which would cause voice stealing).
+        let current_sample = self.sample_position;
+        self.seek_to(current_sample);
 
         // If Play arrived while loading, seek now
         if let Some(from_sample) = self.pending_play_from_sample.take() {

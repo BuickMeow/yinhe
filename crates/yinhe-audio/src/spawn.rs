@@ -174,9 +174,56 @@ fn spawn_worker(
             while let Ok(cmd) = cmd_rx.recv() {
                 match cmd {
                     WorkerCmd::PrepareModel(model) => {
-                        let prepared =
-                            crate::engine::prepare_model(&model, sample_rate, &active_mask, &channel_map);
+                        // Coalesce: drain any subsequent PrepareModel commands,
+                        // keeping only the latest one.  This avoids redundant
+                        // rebuilds when the UI sends multiple ReloadNotes in
+                        // quick succession (e.g. during fast note editing).
+                        let mut latest = model;
+                        let mut pending_other: Option<WorkerCmd> = None;
+                        while let Ok(next) = cmd_rx.try_recv() {
+                            match next {
+                                WorkerCmd::PrepareModel(m) => latest = m,
+                                other => {
+                                    // Stop coalescing — we hit a different command.
+                                    // Process the coalesced model first, then
+                                    // handle `other` below.
+                                    pending_other = Some(other);
+                                    break;
+                                }
+                            }
+                        }
+                        let prepared = crate::engine::prepare_model(
+                            &latest,
+                            sample_rate,
+                            &active_mask,
+                            &channel_map,
+                        );
                         let _ = result_tx.send(WorkerResult::PreparedModel(prepared));
+                        // If we stopped coalescing because of a non-PrepareModel
+                        // command, handle it now.
+                        if let Some(other) = pending_other {
+                            match other {
+                                WorkerCmd::LoadSoundFont {
+                                    port,
+                                    paths,
+                                    dense_channels,
+                                } => {
+                                    if let Ok(soundfonts) =
+                                        crate::engine::AudioEngine::load_soundfont_paths(
+                                            sample_rate,
+                                            &paths,
+                                        )
+                                    {
+                                        let _ = result_tx.send(WorkerResult::LoadedSoundFont {
+                                            port,
+                                            soundfonts,
+                                            dense_channels,
+                                        });
+                                    }
+                                }
+                                WorkerCmd::PrepareModel(_) => unreachable!(),
+                            }
+                        }
                     }
                     WorkerCmd::LoadSoundFont {
                         port,
@@ -247,7 +294,9 @@ pub fn spawn_cpal_audio(
             &config,
             move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
                 yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Audio, || {
-                    // Process commands
+                    // Process commands with coalescing
+                    let mut pending_reload: Option<Arc<YinModel>> = None;
+
                     loop {
                         match cmd_rx.try_recv() {
                             Ok(cmd) => {
@@ -259,11 +308,8 @@ pub fn spawn_cpal_audio(
                                         let _ = worker_tx.send(WorkerCmd::PrepareModel(model));
                                     }
                                     AudioCommand::ReloadNotes { model } => {
-                                        // Lightweight: stop voices + clear active notes
-                                        engine.send_all_notes_off();
-                                        engine.clear_active_notes();
-                                        // Heavy work: send to worker
-                                        let _ = worker_tx.send(WorkerCmd::PrepareModel(model));
+                                        // Coalesce: keep only the latest model
+                                        pending_reload = Some(model);
                                     }
                                     AudioCommand::LoadSoundFont { port, paths } => {
                                         let dense_channels = engine.dense_channels_for_port(port);
@@ -296,6 +342,15 @@ pub fn spawn_cpal_audio(
                                 return;
                             }
                         }
+                    }
+
+                    // Apply coalesced reload if any
+                    if let Some(model) = pending_reload {
+                        // Lightweight: stop voices + clear active notes
+                        engine.send_all_notes_off();
+                        engine.clear_active_notes();
+                        // Heavy work: send to worker
+                        let _ = worker_tx.send(WorkerCmd::PrepareModel(model));
                     }
 
                     // Check for prepared worker results
