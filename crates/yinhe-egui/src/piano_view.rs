@@ -757,6 +757,19 @@ fn sel_drag_frame(
                 let dk = (current_key - origin_key).round() as i32;
                 *note_drag_delta = Some((dt, dk));
                 sel_rect.update_drag(dt, dk);
+
+                // Keep ghost/hidden alive on the release frame so the original
+                // notes don't flash back before the model is updated.
+                for &(trk, st, k) in selected.iter() {
+                    let new_tick = (st as i64 + dt).max(0) as u32;
+                    let new_key = ((k as i32) + dk).clamp(0, 127) as u8;
+                    let length = midi
+                        .and_then(|m| m.key_notes(k).iter().find(|n| n.start_tick == st && n.track == trk))
+                        .map(|n| n.end_tick - n.start_tick)
+                        .unwrap_or(0);
+                    ghost_notes.push((new_tick as f64, (new_tick + length) as f64, new_key, [0.78, 0.78, 1.0]));
+                    hidden_notes.push((trk, st, k));
+                }
             }
             sel_rect.end_drag();
             note_drag_origin = None;
@@ -1151,9 +1164,10 @@ fn pencil_frame(
                 );
                 let new_end = snapped.max(*orig_tick as f64 + interval).min(u32::MAX as f64) as u32;
 
-                // Show ghost
+                // Show ghost and hide original note
                 let ghost_color = track.and_then(|t| track_colors.get(t as usize).copied()).unwrap_or([0.78, 0.78, 1.0]);
                 ghost_notes.push((*orig_tick as f64, new_end as f64, *orig_key, ghost_color));
+                hidden_notes.push((*trk, *orig_tick, *orig_key));
 
                 // Only output on release
                 if pointer.primary_released() {
@@ -1185,9 +1199,10 @@ fn pencil_frame(
                 let max_start = (*orig_end as f64 - interval).max(0.0) as u32;
                 let new_start = new_start.min(max_start);
 
-                // Show ghost
+                // Show ghost and hide original note
                 let ghost_color = track.and_then(|t| track_colors.get(t as usize).copied()).unwrap_or([0.78, 0.78, 1.0]);
                 ghost_notes.push((new_start as f64, *orig_end as f64, *orig_key, ghost_color));
+                hidden_notes.push((*trk, *orig_tick, *orig_key));
 
                 // Only output on release
                 if pointer.primary_released() {

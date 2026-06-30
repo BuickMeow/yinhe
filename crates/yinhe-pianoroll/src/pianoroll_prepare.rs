@@ -120,7 +120,16 @@ pub fn prepare(
         }
         h
     };
-    let notes_key = layer_cache_key(&[vh, wh, sel_hash, tv_hash, midi_version]);
+    let hidden_hash = {
+        let mut h = 0u64;
+        for &(trk, tick, key) in hidden_notes.iter() {
+            h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(trk as u64);
+            h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(tick as u64);
+            h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(key as u64);
+        }
+        h
+    };
+    let notes_key = layer_cache_key(&[vh, wh, sel_hash, tv_hash, midi_version, hidden_hash]);
     renderer.upload_layer(2, notes_key, |out| {
         if let Some(midi) = midi {
             instances::build_notes(out, w, h, midi, view, selected, hidden_notes, track_visible, track_colors);

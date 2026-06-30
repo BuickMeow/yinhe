@@ -180,7 +180,7 @@ pub fn build_keyboard(out: &mut Vec<NoteInstance>, kb_w: f32, kh: f32, scroll_y:
 }
 
 /// Build a single ghost note instance for the pencil tool preview (layer 4).
-/// Uses the note's track color at 50% alpha so it appears as a preview overlay
+/// Uses the note's track color at full opacity so it appears as a solid preview
 /// on top of the existing notes.
 pub fn build_ghost_note(
     out: &mut Vec<NoteInstance>,
@@ -194,7 +194,7 @@ pub fn build_ghost_note(
         y: key as f32,        // key number (shader converts to pixel y)
         w: end_tick as f32,   // tick (shader converts to pixel)
         h: 0.0,               // unused (shader uses key_height)
-        rgba_packed: pack_rgba(color[0], color[1], color[2], 0.5),
+        rgba_packed: pack_rgba(color[0], color[1], color[2], 1.0),
         props_packed: 0,      // shader computes rounding/border
         velocity: 1,          // > 0 so shader treats it as a note (mode=1)
         tag: 0,
