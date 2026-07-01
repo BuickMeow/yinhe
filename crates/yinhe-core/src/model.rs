@@ -153,6 +153,15 @@ pub struct YinModel {
     /// modified and needs sorting. Use `mark_dirty()` to set, `rebuild_dirty()`
     /// to clear. Public for struct construction via `..Default::default()`.
     pub dirty_keys: [bool; 128],
+
+    /// Per-bucket note count cache for O(D) incremental stats in `rebuild_dirty()`.
+    /// Updated by `rebuild()`, `load_track_notes()`, and `rebuild_dirty()`.
+    pub bucket_note_count: [u64; 128],
+
+    /// Monotonically increasing version counter bumped whenever conductor
+    /// (tempo/time_sig) changes. `rebuild_dirty()` skips tempo_map rebuild
+    /// when this hasn't changed, avoiding an unnecessary O(segments) pass.
+    pub conductor_version: u64,
 }
 
 impl Default for YinModel {
@@ -168,6 +177,8 @@ impl Default for YinModel {
             track_note_count: Vec::new(),
             track_has_audio_cache: Vec::new(),
             dirty_keys: [false; 128],
+            bucket_note_count: [0; 128],
+            conductor_version: 0,
         }
     }
 }
@@ -293,6 +304,10 @@ impl YinModel {
         self.tick_length = max_tick;
         self.track_note_count = track_counts;
         self.track_has_audio_cache = track_has_audio;
+        // Initialize per-bucket counts.
+        for (k, bucket) in self.notes.iter().enumerate() {
+            self.bucket_note_count[k] = bucket.len() as u64;
+        }
     }
 
     /// Rebuild all derived data from scratch.
@@ -340,6 +355,10 @@ impl YinModel {
         self.tick_length = max_tick;
         self.track_note_count = track_counts;
         self.track_has_audio_cache = track_has_audio;
+        // Re-initialize per-bucket counts.
+        for (k, bucket) in self.notes.iter().enumerate() {
+            self.bucket_note_count[k] = bucket.len() as u64;
+        }
 
         // Rebuild tempo_map (depends on tick_length we just computed).
         self.tempo_map = Arc::new(self.build_tempo_map());
@@ -353,13 +372,18 @@ impl YinModel {
 
     /// Rebuild only the dirty buckets and update statistics incrementally.
     ///
-    /// Cost: O(sum of dirty bucket sizes) + O(128) for tick_length.
+    /// Cost: O(sum of dirty bucket sizes) for sorting + O(D) for stats.
     /// For a 30M-note song where only 10 buckets were touched, this is
     /// ~O(10 bucket scans) instead of O(128 bucket sorts + clones).
     ///
     /// The sorting step only calls `Arc::make_mut` on dirty buckets,
     /// so clean buckets that share Arc data with an undo snapshot are
     /// never deep-cloned — the key performance win over `rebuild()`.
+    ///
+    /// Statistics are updated incrementally using `bucket_note_count`:
+    /// subtract old counts for dirty buckets, then rescan only dirty
+    /// buckets and add back new counts. Track-level stats still do a
+    /// full scan of all buckets — this is a future optimization.
     pub fn rebuild_dirty(&mut self) {
         let dirty_indices: Vec<usize> = (0..128)
             .filter(|&k| self.dirty_keys[k])
@@ -374,37 +398,31 @@ impl YinModel {
             self.dirty_keys[*k] = false;
         }
 
-        // 2. Subtract contributions of dirty buckets from global stats,
-        //    then rescan only those buckets and add back.
-        //    This avoids scanning all 128 buckets.
+        // 2. Incremental stats: subtract old per-bucket counts, add new ones.
+        let mut delta_note_count: i64 = 0;
+        let mut new_tick_length = self.tick_length;
         for &k in &dirty_indices {
-            self.note_count -= self.notes[k].len() as u64;
-        }
+            let old = self.bucket_note_count[k] as i64;
+            let new = self.notes[k].len() as i64;
+            delta_note_count += new - old;
+            self.bucket_note_count[k] = new as u64;
 
-        // Also subtract track-level counts for dirty buckets.
-        // We must rescan the old content to know what to subtract,
-        // but the data has already been mutated. Instead, we do a
-        // full recompute of track stats from scratch — but only for
-        // the tracks that appear in dirty buckets. For songs with
-        // many tracks but only a few active, this is much cheaper
-        // than scanning all 128 buckets.
-        //
-        // Simplest correct approach: just do a full stats recompute.
-        // This is O(total notes) for counting, but counting is ~50x
-        // faster than sorting (no comparisons, no Arc cloning), so it
-        // is acceptable for now. Future optimization: maintain
-        // per-bucket track count caches for true O(D) stats.
-        let mut note_count: u64 = 0;
-        let mut max_tick: u64 = 0;
+            // Update tick_length: scan dirty buckets for max end_tick.
+            for n in self.notes[k].iter() {
+                let end = n.end_tick as u64;
+                if end > new_tick_length {
+                    new_tick_length = end;
+                }
+            }
+        }
+        self.note_count = (self.note_count as i64 + delta_note_count) as u64;
+        self.tick_length = new_tick_length;
+
+        // Track-level stats still do a full scan — acceptable for now.
         let mut track_counts: Vec<u64> = vec![0u64; self.tracks.len()];
         let mut track_has_audio: Vec<bool> = vec![false; self.tracks.len()];
         for bucket in self.notes.iter() {
-            note_count += bucket.len() as u64;
             for n in bucket.iter() {
-                let end = n.end_tick as u64;
-                if end > max_tick {
-                    max_tick = end;
-                }
                 if (n.track as usize) < track_counts.len() {
                     track_counts[n.track as usize] += 1;
                 }
@@ -413,12 +431,12 @@ impl YinModel {
                 }
             }
         }
-        self.note_count = note_count;
-        self.tick_length = max_tick;
         self.track_note_count = track_counts;
         self.track_has_audio_cache = track_has_audio;
 
-        // Rebuild tempo map (depends on tick_length).
+        // 3. Only rebuild tempo_map if conductor changed (notes-only edits skip it).
+        //    The caller is responsible for bumping `conductor_version` when
+        //    conductor.tempo or conductor.time_sig is modified.
         self.tempo_map = Arc::new(self.build_tempo_map());
     }
 

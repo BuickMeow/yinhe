@@ -259,13 +259,7 @@ impl Document {
         }
         {
             let model = Arc::make_mut(&mut self.data.model);
-            for &(track, start_tick, key) in &self.edit.selected {
-                let key = key as usize;
-                Arc::make_mut(&mut model.notes[key]).retain(|n| {
-                    !(n.track == track && n.start_tick == start_tick)
-                });
-                model.mark_dirty(key as u8);
-            }
+            crate::batch_ops::remove_selected(model, &self.edit.selected);
             self.edit.selected.clear();
         }
         self.data.rebuild_model_dirty();
@@ -279,41 +273,31 @@ impl Document {
         let offset = {
             let model = Arc::make_mut(&mut self.data.model);
 
-            // Collect selected notes with their key (bucket index).
-            let mut selected_data: Vec<(yinhe_types::Note, u16, u8)> = Vec::new();
-            for &(track, start_tick, key) in &self.edit.selected {
-                let k = key as usize;
-                if let Some(note) = model.notes[k]
-                    .iter()
-                    .find(|n| n.track == track && n.start_tick == start_tick)
-                {
-                    selected_data.push((*note, track, key));
-                }
-            }
-
+            // Collect selected notes.
+            let selected_data = crate::batch_ops::collect_selected(model, &self.edit.selected);
             if selected_data.is_empty() {
                 return None;
             }
 
-            let min_start = selected_data.iter().map(|(n, _, _)| n.start_tick).min().unwrap();
-            let max_end = selected_data.iter().map(|(n, _, _)| n.end_tick).max().unwrap();
+            let min_start = selected_data.iter().map(|(n, _)| n.start_tick).min().unwrap();
+            let max_end = selected_data.iter().map(|(n, _)| n.end_tick).max().unwrap();
             let offset = (max_end - min_start).max(1);
 
+            // Batch insert: group by key, extend.
+            let mut new_by_key: std::collections::HashMap<u8, Vec<yinhe_types::Note>> = std::collections::HashMap::new();
             let mut new_selected = HashSet::new();
-            for (note, track, key) in &selected_data {
+            for (note, key) in &selected_data {
                 let new_note = yinhe_types::Note {
                     start_tick: note.start_tick + offset,
                     end_tick: note.end_tick + offset,
                     velocity: note.velocity,
                     dup_index: 0,
-                    track: *track,
+                    track: note.track,
                 };
-                let k = *key as usize;
-                let insert_pos = model.notes[k].partition_point(|n| n.start_tick < new_note.start_tick);
-                Arc::make_mut(&mut model.notes[k]).insert(insert_pos, new_note);
-                model.mark_dirty(*key);
-                new_selected.insert((*track, note.start_tick + offset, *key));
+                new_by_key.entry(*key).or_default().push(new_note);
+                new_selected.insert((note.track, note.start_tick + offset, *key));
             }
+            crate::batch_ops::insert_batch(model, new_by_key);
 
             self.edit.selected = new_selected;
             offset
@@ -329,40 +313,28 @@ impl Document {
         {
             let model = Arc::make_mut(&mut self.data.model);
 
-            // Remove selected notes from their current key buckets.
-            let mut moved_data: Vec<(yinhe_types::Note, u16, u8)> = Vec::new();
-            for &(track, start_tick, key) in &self.edit.selected {
-                let k = key as usize;
-                if let Some(pos) = model.notes[k]
-                    .iter()
-                    .position(|n| n.track == track && n.start_tick == start_tick)
-                {
-                    let note = Arc::make_mut(&mut model.notes[k]).remove(pos);
-                    model.mark_dirty(key);
-                    moved_data.push((note, track, key));
-                }
-            }
-
+            // Batch removal + collect removed notes.
+            let moved_data = crate::batch_ops::remove_selected(model, &self.edit.selected);
             if moved_data.is_empty() {
                 return None;
             }
 
+            // Batch insert: group by destination key, extend.
+            let mut new_by_key: std::collections::HashMap<u8, Vec<yinhe_types::Note>> = std::collections::HashMap::new();
             let mut new_selected = HashSet::new();
-            for (note, track, old_key) in &moved_data {
+            for (note, old_key) in &moved_data {
                 let new_key = ((*old_key as i16) + (semitones as i16)).clamp(0, 127) as u8;
                 let new_note = yinhe_types::Note {
                     start_tick: note.start_tick,
                     end_tick: note.end_tick,
                     velocity: note.velocity,
                     dup_index: 0,
-                    track: *track,
+                    track: note.track,
                 };
-                let k = new_key as usize;
-                let insert_pos = model.notes[k].partition_point(|n| n.start_tick < new_note.start_tick);
-                Arc::make_mut(&mut model.notes[k]).insert(insert_pos, new_note);
-                model.mark_dirty(new_key);
-                new_selected.insert((*track, note.start_tick, new_key));
+                new_by_key.entry(new_key).or_default().push(new_note);
+                new_selected.insert((note.track, note.start_tick, new_key));
             }
+            crate::batch_ops::insert_batch(model, new_by_key);
 
             self.edit.selected = new_selected;
         }

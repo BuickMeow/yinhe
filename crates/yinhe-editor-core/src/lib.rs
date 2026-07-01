@@ -1,4 +1,5 @@
 pub mod audio_settings;
+pub mod batch_ops;
 pub mod config;
 pub mod document;
 pub mod edit_state;

@@ -408,32 +408,13 @@ impl App {
             let snap = doc.snapshot_with_selection("Move notes");
             let model = Arc::make_mut(&mut doc.data.model);
 
-            // Save originals using binary search (O(N log B) instead of O(N×B))
-            let originals: Vec<(yinhe_types::Note, u8, u16)> = doc.edit.selected.iter().filter_map(|&(track, start_tick, key)| {
-                let k = key as usize;
-                let bucket = &model.notes[k];
-                let idx = bucket.partition_point(|n| n.start_tick < start_tick);
-                bucket[idx..].iter()
-                    .find(|n| n.track == track && n.start_tick == start_tick)
-                    .map(|n| (*n, key, track))
-            }).collect();
+            // Batch removal + collect removed notes.
+            let originals = yinhe_editor_core::batch_ops::remove_selected(model, &doc.edit.selected);
 
-            // Batch removal: group by key, single retain per bucket
-            let mut by_key: std::collections::HashMap<u8, Vec<(u16, u32)>> = std::collections::HashMap::new();
-            for &(track, start_tick, key) in &doc.edit.selected {
-                by_key.entry(key).or_default().push((track, start_tick));
-            }
-            for (key, removals) in &by_key {
-                let k = *key as usize;
-                let removal_set: std::collections::HashSet<_> = removals.iter().copied().collect();
-                Arc::make_mut(&mut model.notes[k]).retain(|n| !removal_set.contains(&(n.track, n.start_tick)));
-                model.mark_dirty(*key);
-            }
-
-            // Batch insert: group by destination key, extend + let rebuild_dirty sort
+            // Batch insert: group by destination key, extend.
             let mut new_by_key: std::collections::HashMap<u8, Vec<yinhe_types::Note>> = std::collections::HashMap::new();
             let mut new_selected = std::collections::HashSet::new();
-            for (note, old_key, track) in &originals {
+            for (note, old_key) in &originals {
                 let new_key = ((*old_key as i32) + delta_keys).clamp(0, 127) as u8;
                 let new_tick = (note.start_tick as i64 + delta_ticks).max(0) as u32;
                 let length = note.end_tick - note.start_tick;
@@ -442,16 +423,12 @@ impl App {
                     end_tick: new_tick + length,
                     velocity: note.velocity,
                     dup_index: 0,
-                    track: *track,
+                    track: note.track,
                 };
                 new_by_key.entry(new_key).or_default().push(moved);
-                new_selected.insert((*track, new_tick, new_key));
+                new_selected.insert((note.track, new_tick, new_key));
             }
-            for (key, new_notes) in new_by_key {
-                let k = key as usize;
-                Arc::make_mut(&mut model.notes[k]).extend(new_notes);
-                model.mark_dirty(key);
-            }
+            yinhe_editor_core::batch_ops::insert_batch(model, new_by_key);
 
             doc.edit.selected = new_selected;
             model.rebuild_dirty();
