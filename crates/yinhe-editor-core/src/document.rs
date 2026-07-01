@@ -200,15 +200,6 @@ impl Document {
         Ok((doc, sf.mode))
     }
 
-    /// Legacy: load a .yin file via the old yinhe-project archive path.
-    /// Kept until Phase 4d removes the old path.
-    pub fn from_yin(
-        path: &str,
-        quantize: QuantizePreset,
-    ) -> std::io::Result<(Self, bool)> {
-        Self::from_yin_path(path, quantize)
-    }
-
     pub fn recode_track_names(&mut self, _encoding: yinhe_mid2::MidiImportEncoding) {
         // TODO: implement track name re-encoding for YinModel
         self.data.bump_version();
