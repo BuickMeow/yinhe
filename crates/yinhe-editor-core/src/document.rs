@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use yinhe_core::{NoteEvent, TrackData, YinModel};
@@ -50,7 +50,7 @@ impl Document {
         &self.data.track_names
     }
 
-    pub fn selected(&self) -> &HashSet<(u16, u32, u8)> {
+    pub fn selected(&self) -> &yinhe_core::Selection {
         &self.edit.selected
     }
 
@@ -92,6 +92,7 @@ impl Document {
             edit: EditState {
                 track_visible: vec![true],
                 track_pianoroll_visible: vec![true],
+                track_overrides: vec![TrackOverride::default()],
                 track_info_cache,
                 track_colors_cache: (0..num_tracks)
                     .map(|i| track_color(i, conductor_track_idx))
@@ -285,7 +286,6 @@ impl Document {
 
             // Batch insert: group by key, extend.
             let mut new_by_key: std::collections::HashMap<u8, Vec<yinhe_types::Note>> = std::collections::HashMap::new();
-            let mut new_selected = HashSet::new();
             for (note, key) in &selected_data {
                 let new_note = yinhe_types::Note {
                     start_tick: note.start_tick + offset,
@@ -295,11 +295,11 @@ impl Document {
                     track: note.track,
                 };
                 new_by_key.entry(*key).or_default().push(new_note);
-                new_selected.insert((note.track, note.start_tick + offset, *key));
             }
             crate::batch_ops::insert_batch(model, new_by_key);
 
-            self.edit.selected = new_selected;
+            // Offset selection rects to cover the duplicated notes.
+            self.edit.selected.offset(offset as i64, 0);
             offset
         };
         self.data.rebuild_model_dirty();
@@ -321,7 +321,6 @@ impl Document {
 
             // Batch insert: group by destination key, extend.
             let mut new_by_key: std::collections::HashMap<u8, Vec<yinhe_types::Note>> = std::collections::HashMap::new();
-            let mut new_selected = HashSet::new();
             for (note, old_key) in &moved_data {
                 let new_key = ((*old_key as i16) + (semitones as i16)).clamp(0, 127) as u8;
                 let new_note = yinhe_types::Note {
@@ -332,11 +331,11 @@ impl Document {
                     track: note.track,
                 };
                 new_by_key.entry(new_key).or_default().push(new_note);
-                new_selected.insert((note.track, note.start_tick, new_key));
             }
             crate::batch_ops::insert_batch(model, new_by_key);
 
-            self.edit.selected = new_selected;
+            // Offset selection rects to follow the transposed notes.
+            self.edit.selected.offset(0, semitones as i32);
         }
         self.data.rebuild_model_dirty();
         Some(semitones)

@@ -6538,6 +6538,7 @@ name = "yinhe-pianoroll"
 version = "0.1.0"
 dependencies = [
  "rayon",
+ "yinhe-core",
  "yinhe-types",
  "yinhe-wgpu",
 ]

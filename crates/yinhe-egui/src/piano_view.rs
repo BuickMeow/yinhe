@@ -88,7 +88,7 @@ pub fn show(
     render_ctx: &mut super::render_context::RenderContext,
     view: &mut yinhe_pianoroll::PianoRollView,
     midi: Option<&dyn yinhe_pianoroll::NoteSource>,
-    selected: &mut std::collections::HashSet<(u16, u32, u8)>,
+    selected: &mut yinhe_core::Selection,
     track_visible: &[bool],
     track_colors: &[[f32; 3]],
     cursor_tick: &mut Option<f64>,
@@ -219,6 +219,7 @@ pub fn show(
             sel_rect,
             track_colors,
             track_visible,
+            track_selected,
         );
         ghost_notes = sel_ghosts;
         hidden_notes = sel_hidden.into_iter().collect();
@@ -658,7 +659,7 @@ fn sel_drag_frame(
     music_rect: egui::Rect,
     view: &mut yinhe_pianoroll::PianoRollView,
     midi: Option<&dyn yinhe_pianoroll::NoteSource>,
-    selected: &mut std::collections::HashSet<(u16, u32, u8)>,
+    selected: &mut yinhe_core::Selection,
     quantize: QuantizePreset,
     ppq: u32,
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
@@ -668,6 +669,7 @@ fn sel_drag_frame(
     sel_rect: &mut yinhe_editor_core::edit_state::SelRectState,
     track_colors: &[[f32; 3]],
     track_visible: &[bool],
+    track_selected: &std::collections::HashSet<u16>,
 ) -> (Vec<(f64, f64, u8, [f32; 3])>, Vec<(u16, u32, u8)>) {
     let sel_id = ui.id().with("sel_drag");
     let mut drag: Option<(egui::Pos2, egui::Pos2)> =
@@ -726,18 +728,21 @@ fn sel_drag_frame(
                 note_drag_origin = Some((tick, key));
                 sel_rect.start_drag();
 
-                // Pre-compute all selected note info once — O(N×M) but only at drag start.
-                drag_notes = Some(selected.iter().filter_map(|&(trk, st, k)| {
-                    midi.and_then(|m| {
-                        let bucket = m.key_notes(k);
-                        let idx = bucket.partition_point(|n| n.start_tick < st);
-                        bucket[idx..].iter().find(|n| n.track == trk && n.start_tick == st)
-                    }).map(|n| SelDragNoteInfo {
-                        track: trk,
-                        start_tick: st,
-                        end_tick: n.end_tick,
-                        key: k,
-                        color: track_colors.get(trk as usize).copied().unwrap_or([0.78, 0.78, 1.0]),
+                // Pre-compute all selected note info from rects + midi.
+                drag_notes = Some(selected.rects.iter().flat_map(|&(ts, te, kl, kh, tl, th)| {
+                    (kl..=kh).flat_map(move |key| {
+                        midi.map(|m| {
+                            m.key_notes_in_range(key, ts, te).iter()
+                                .filter(|n| n.track >= tl && n.track <= th)
+                                .map(|n| SelDragNoteInfo {
+                                    track: n.track,
+                                    start_tick: n.start_tick,
+                                    end_tick: n.end_tick,
+                                    key,
+                                    color: track_colors.get(n.track as usize).copied().unwrap_or([0.78, 0.78, 1.0]),
+                                })
+                                .collect::<Vec<_>>()
+                        }).unwrap_or_default()
                     })
                 }).collect());
             } else {
@@ -863,16 +868,11 @@ fn sel_drag_frame(
                     if !cmd {
                         selected.clear();
                     }
-                    for key in key_lo..=key_hi {
-                        for note in midi_ref.key_notes(key) {
-                            if (note.start_tick as f64) < t_end && (note.end_tick as f64) > t_start {
-                                // Only select notes from visible tracks
-                                if track_visible.get(note.track as usize).copied().unwrap_or(true) {
-                                    selected.insert((note.track, note.start_tick, key));
-                                }
-                            }
-                        }
-                    }
+                    // Limit selection to visible tracks. If no tracks are selected,
+                    // default to all tracks (u16::MAX = all).
+                    let track_lo = track_selected.iter().min().copied().unwrap_or(0);
+                    let track_hi = track_selected.iter().max().copied().unwrap_or(u16::MAX);
+                    selected.add_rect_track(t_start as u32, t_end as u32, key_lo, key_hi, track_lo, track_hi);
 
                     sel_rect.rect = Some((t_start, t_end, key_lo, key_hi));
                 }

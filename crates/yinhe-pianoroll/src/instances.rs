@@ -98,7 +98,7 @@ pub fn build_notes(
     h: f32,
     midi: &dyn NoteSource,
     view: &PianoRollView,
-    selected: &std::collections::HashSet<(u16, u32, u8)>,
+    selected: &yinhe_core::Selection,
     hidden_notes: &std::collections::HashSet<(u16, u32, u8)>,
     track_visible: &[bool],
     track_colors: &[[f32; 3]],
@@ -150,7 +150,7 @@ pub fn build_notes(
                     .unwrap_or_else(|| TRACK_PALETTE[trk_idx % TRACK_PALETTE.len()]);
 
                 let is_selected =
-                    has_selection && selected.contains(&(note.track, note.start_tick, key));
+                    has_selection && selected.contains(note.track, note.start_tick, key);
 
                 local.push(NoteInstance {
                     x: note.start_tick as f32, // tick (shader converts to pixel)
@@ -208,7 +208,7 @@ pub fn build_instances(
     height: u32,
     midi: Option<&dyn NoteSource>,
     view: &PianoRollView,
-    selected: &std::collections::HashSet<(u16, u32, u8)>,
+    selected: &yinhe_core::Selection,
     hidden_notes: &std::collections::HashSet<(u16, u32, u8)>,
     track_visible: &[bool],
     track_colors: &[[f32; 3]],
@@ -233,7 +233,7 @@ pub fn build_static_instances(
     height: u32,
     midi: Option<&dyn NoteSource>,
     view: &PianoRollView,
-    selected: &std::collections::HashSet<(u16, u32, u8)>,
+    selected: &yinhe_core::Selection,
     hidden_notes: &std::collections::HashSet<(u16, u32, u8)>,
     track_visible: &[bool],
     track_colors: &[[f32; 3]],
@@ -428,7 +428,7 @@ mod tests {
         let mut out = Vec::new();
         let midi = make_midi(vec![(100, 0, 480, 0, 100)]);
         let view = make_view();
-        let selected = std::collections::HashSet::new();
+        let selected = yinhe_core::Selection::default();
         let track_visible = vec![true];
         let track_colors = [[0.5, 0.5, 0.5]];
 
@@ -448,7 +448,7 @@ mod tests {
         let mut out = Vec::new();
         let midi = make_midi(vec![(100, 0, 480, 0, 100)]);
         let view = make_view();
-        let selected = std::collections::HashSet::new();
+        let selected = yinhe_core::Selection::default();
         let track_visible = vec![false];
 
         let hidden = std::collections::HashSet::new();
@@ -461,8 +461,8 @@ mod tests {
         let mut out = Vec::new();
         let midi = make_midi(vec![(100, 0, 480, 0, 100)]);
         let view = make_view();
-        let mut selected = std::collections::HashSet::new();
-        selected.insert((0, 0, 100));
+        let mut selected = yinhe_core::Selection::default();
+        selected.add_pick(0, 0, 100);
         let track_visible = vec![true];
         let track_colors = [[0.5, 0.5, 0.5]];
 
@@ -476,7 +476,7 @@ mod tests {
         let mut out = Vec::new();
         let midi = make_midi(vec![(100, 0, 480, 0, 100)]);
         let view = make_view();
-        let selected = std::collections::HashSet::new();
+        let selected = yinhe_core::Selection::default();
         let track_visible = vec![true];
         let track_colors = [[0.5, 0.5, 0.5]];
 
@@ -494,7 +494,7 @@ mod tests {
             (107, 0, 480, 0, 90),
         ]);
         let view = make_view();
-        let selected = std::collections::HashSet::new();
+        let selected = yinhe_core::Selection::default();
         let track_visible = vec![true];
         let track_colors = [[0.5, 0.5, 0.5]];
 
@@ -514,7 +514,7 @@ mod tests {
         // Scroll right so the note's start is far off-screen to the left,
         // but its body still covers the viewport.
         view.base.scroll_x = 5000.0;
-        let selected = std::collections::HashSet::new();
+        let selected = yinhe_core::Selection::default();
         let track_visible = vec![true];
         let track_colors = [[0.5, 0.5, 0.5]];
 
@@ -533,7 +533,7 @@ mod tests {
         let midi = make_midi(vec![(100, 0, 480, 0, 100)]);
         let mut view = make_view();
         view.base.scroll_x = 5000.0; // viewport starts well past tick 480
-        let selected = std::collections::HashSet::new();
+        let selected = yinhe_core::Selection::default();
         let track_visible = vec![true];
         let track_colors = [[0.5, 0.5, 0.5]];
 
@@ -586,7 +586,7 @@ mod tests {
         let mut out = Vec::new();
         let midi = make_midi(vec![(100, 0, 480, 0, 100)]);
         let view = make_view();
-        let selected = std::collections::HashSet::new();
+        let selected = yinhe_core::Selection::default();
         let track_visible = vec![true];
         let track_colors = [[0.5, 0.5, 0.5]];
 
@@ -599,7 +599,7 @@ mod tests {
     fn test_build_static_instances_without_midi() {
         let mut out = Vec::new();
         let view = make_view();
-        let selected = std::collections::HashSet::new();
+        let selected = yinhe_core::Selection::default();
 
         let hidden = std::collections::HashSet::new();
         build_static_instances(&mut out, 800, 500, None, &view, &selected, &hidden, &[], &[]);

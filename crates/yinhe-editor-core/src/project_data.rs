@@ -40,7 +40,7 @@ impl ProjectData {
         crate::history::UndoSnapshot {
             data: self.clone(),
             label,
-            selected: std::collections::HashSet::new(),
+            selected: yinhe_core::Selection::default(),
             track_selected: std::collections::HashSet::new(),
             sel_rect: crate::edit_state::SelRectState::default(),
         }

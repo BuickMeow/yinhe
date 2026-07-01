@@ -13,6 +13,7 @@ pub mod quantize;
 pub use config::{ProjectSfConfig, SfEntry};
 pub use document::{Document, TrackOverride};
 pub use edit_state::EditState;
+pub use yinhe_core::Selection;
 pub use history::{PendingEdits, UndoSnapshot, UndoStack};
 pub use playback::PlaybackState;
 pub use project_data::ProjectData;

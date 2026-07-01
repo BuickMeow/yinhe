@@ -32,6 +32,7 @@ pub fn show(
     scroll_mode: u32,
     min_border_width: f32,
     haptic_engine: Option<&yinhe_haptic::HapticEngine>,
+    arr_sel_rect: &mut Option<(f64, f64, usize, usize)>,
 ) {
     *last_cursor_tick = doc.edit.cursor_tick;
 
@@ -212,6 +213,8 @@ pub fn show(
             scroll_mode,
             min_border_width,
             haptic_engine,
+            doc.data.midi_version,
+            arr_sel_rect,
         );
     });
 

@@ -20,7 +20,7 @@ pub struct UndoSnapshot {
     /// Short label for debugging / future UI ("Delete notes", "Move notes", …).
     pub label: &'static str,
     /// Selected notes at the time of the snapshot.
-    pub selected: HashSet<(u16, u32, u8)>,
+    pub selected: yinhe_core::Selection,
     /// Selected arrangement tracks at the time of the snapshot.
     pub track_selected: HashSet<u16>,
     /// Selection rectangle at the time of the snapshot.
@@ -123,7 +123,7 @@ pub fn begin_edit(data: &ProjectData, pending: &mut PendingEdits, id: u64, label
     let snap = UndoSnapshot {
         data: data.clone(),
         label,
-        selected: HashSet::new(),
+        selected: yinhe_core::Selection::default(),
         track_selected: HashSet::new(),
         sel_rect: SelRectState::default(),
     };
@@ -178,7 +178,7 @@ mod tests {
         UndoSnapshot {
             data: make_test_data(name),
             label,
-            selected: HashSet::new(),
+            selected: yinhe_core::Selection::default(),
             track_selected: HashSet::new(),
             sel_rect: SelRectState::default(),
         }

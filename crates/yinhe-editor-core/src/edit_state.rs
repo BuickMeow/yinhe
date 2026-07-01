@@ -82,7 +82,7 @@ impl SelRectState {
 /// other fields are not. Preserved across document switches (zoom/scroll live
 /// in App, not here).
 pub struct EditState {
-    pub selected: HashSet<(u16, u32, u8)>,
+    pub selected: yinhe_core::Selection,
     pub track_selected: HashSet<u16>,
     pub cursor_tick: Option<f64>,
     pub quantize: QuantizePreset,
@@ -111,7 +111,7 @@ pub struct EditState {
 impl Default for EditState {
     fn default() -> Self {
         Self {
-            selected: HashSet::new(),
+            selected: yinhe_core::Selection::default(),
             track_selected: HashSet::new(),
             cursor_tick: Some(0.0),
             quantize: QuantizePreset::default(),

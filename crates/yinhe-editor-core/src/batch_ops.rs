@@ -4,51 +4,55 @@
 //! the same pattern: group by key bucket, single `retain` per bucket for
 //! removal, single `extend` per bucket for insertion, then `mark_dirty` +
 //! `rebuild_dirty`. This module centralizes that pattern.
+//!
+//! Selection is always rectangular (from marquee). For each rect, iterate
+//! the key range and use `partition_point` to find the tick range, then
+//! `drain` or collect in a single pass per bucket.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 
-use yinhe_core::YinModel;
+use yinhe_core::{Selection, YinModel};
 use yinhe_types::Note;
 
-/// Selection identity: (track, start_tick, key).
-pub type SelId = (u16, u32, u8);
-
-/// Group a selection by key bucket.
-/// Returns `HashMap<key, Vec<(track, start_tick)>>`.
-pub fn group_by_key(selected: &HashSet<SelId>) -> HashMap<u8, Vec<(u16, u32)>> {
-    let mut by_key: HashMap<u8, Vec<(u16, u32)>> = HashMap::new();
-    for &(track, start_tick, key) in selected {
-        by_key.entry(key).or_default().push((track, start_tick));
-    }
-    by_key
-}
-
-/// Remove all notes matching `selected` from the model.
+/// Remove all notes matching `selection` from the model.
 ///
-/// For each key bucket, does a single `retain` pass (O(B) per bucket, not
-/// O(S × B)). Marks each touched bucket dirty.
+/// For each rect × key range, uses `partition_point` to locate the tick
+/// range, then `drain` in a single O(B) pass per bucket.
 ///
 /// Returns the removed notes with their original key, so callers can
-/// re-insert them at a new position (move/transpose) or discard them
-/// (delete).
-pub fn remove_selected(model: &mut YinModel, selected: &HashSet<SelId>) -> Vec<(Note, u8)> {
-    let by_key = group_by_key(selected);
+/// re-insert them at a new position (move/transpose) or discard them (delete).
+pub fn remove_selected(model: &mut YinModel, selection: &Selection) -> Vec<(Note, u8)> {
     let mut removed: Vec<(Note, u8)> = Vec::new();
 
-    for (key, removals) in &by_key {
-        let k = *key as usize;
-        let removal_set: HashSet<(u16, u32)> = removals.iter().copied().collect();
+    for &(tick_start, tick_end, key_lo, key_hi, track_lo, track_hi) in &selection.rects {
+        for key in key_lo..=key_hi {
+            let k = key as usize;
+            let start_idx = model.notes[k].partition_point(|n| n.start_tick < tick_start);
+            let end_idx = model.notes[k].partition_point(|n| n.start_tick < tick_end);
 
-        // Collect the notes we're about to remove (for move/transpose).
-        for n in model.notes[k].iter() {
-            if removal_set.contains(&(n.track, n.start_tick)) {
-                removed.push((*n, *key));
+            // Collect removed notes before clearing.
+            for n in &model.notes[k][start_idx..end_idx] {
+                if n.track >= track_lo && n.track <= track_hi {
+                    removed.push((*n, key));
+                }
+            }
+
+            if start_idx < end_idx {
+                let mut bucket = Arc::make_mut(&mut model.notes[k]);
+                // Fast path: all tracks selected → contiguous drain (memmove).
+                // Slow path: track-filtered → retain (full scan).
+                if track_lo == 0 && track_hi == u16::MAX {
+                    bucket.drain(start_idx..end_idx);
+                } else {
+                    bucket.retain(|n| {
+                        !(n.start_tick >= tick_start && n.start_tick < tick_end
+                            && n.track >= track_lo && n.track <= track_hi)
+                    });
+                }
+                model.mark_dirty(key);
             }
         }
-
-        Arc::make_mut(&mut model.notes[k]).retain(|n| !removal_set.contains(&(n.track, n.start_tick)));
-        model.mark_dirty(*key);
     }
 
     removed
@@ -67,21 +71,22 @@ pub fn insert_batch(model: &mut YinModel, notes_by_key: HashMap<u8, Vec<Note>>) 
     }
 }
 
-/// Collect notes matching `selected` from the model (read-only, no removal).
+/// Collect notes matching `selection` from the model (read-only, no removal).
 ///
-/// Uses `partition_point` for O(log B) lookup per note.
+/// For each rect × key range, uses `partition_point` to find the tick range.
 /// Returns `(Note, key)` pairs.
-pub fn collect_selected(model: &YinModel, selected: &HashSet<SelId>) -> Vec<(Note, u8)> {
-    let by_key = group_by_key(selected);
+pub fn collect_selected(model: &YinModel, selection: &Selection) -> Vec<(Note, u8)> {
     let mut result: Vec<(Note, u8)> = Vec::new();
 
-    for (key, picks) in &by_key {
-        let k = *key as usize;
-        let bucket = &model.notes[k];
-        for (track, start_tick) in picks {
-            let idx = bucket.partition_point(|n| n.start_tick < *start_tick);
-            if let Some(note) = bucket[idx..].iter().find(|n| n.track == *track && n.start_tick == *start_tick) {
-                result.push((*note, *key));
+    for &(tick_start, tick_end, key_lo, key_hi, track_lo, track_hi) in &selection.rects {
+        for key in key_lo..=key_hi {
+            let k = key as usize;
+            let start_idx = model.notes[k].partition_point(|n| n.start_tick < tick_start);
+            let end_idx = model.notes[k].partition_point(|n| n.start_tick < tick_end);
+            for n in &model.notes[k][start_idx..end_idx] {
+                if n.track >= track_lo && n.track <= track_hi {
+                    result.push((*n, key));
+                }
             }
         }
     }

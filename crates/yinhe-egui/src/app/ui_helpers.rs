@@ -209,6 +209,7 @@ impl App {
                 self.audio_settings.scroll_mode,
                 self.audio_settings.min_border_width,
                 Some(&self.haptic_engine),
+                &mut self.arr_sel_rect,
             );
             if request_pianoroll {
                 self.show_pianoroll = true;
@@ -413,7 +414,6 @@ impl App {
 
             // Batch insert: group by destination key, extend.
             let mut new_by_key: std::collections::HashMap<u8, Vec<yinhe_types::Note>> = std::collections::HashMap::new();
-            let mut new_selected = std::collections::HashSet::new();
             for (note, old_key) in &originals {
                 let new_key = ((*old_key as i32) + delta_keys).clamp(0, 127) as u8;
                 let new_tick = (note.start_tick as i64 + delta_ticks).max(0) as u32;
@@ -426,11 +426,11 @@ impl App {
                     track: note.track,
                 };
                 new_by_key.entry(new_key).or_default().push(moved);
-                new_selected.insert((note.track, new_tick, new_key));
             }
             yinhe_editor_core::batch_ops::insert_batch(model, new_by_key);
 
-            doc.edit.selected = new_selected;
+            // Offset selection rects to follow the moved notes.
+            doc.edit.selected.offset(delta_ticks, delta_keys);
             model.rebuild_dirty();
             doc.data.midi_version = doc.data.midi_version.wrapping_add(1);
             self.pianoroll_view.base.dirty = true;

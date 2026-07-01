@@ -5,8 +5,6 @@ use yinhe_arrangement::{ArrangementView, NoteSource, PianorollRenderer, Uniforms
 use yinhe_types::TimeSigEvent;
 use yinhe_wgpu::layer_cache_key;
 
-use std::collections::HashSet;
-
 use yinhe_editor_core::quantize::QuantizePreset;
 use crate::render_context::RenderContext;
 use crate::widgets::tools_panel::Tool;
@@ -22,7 +20,7 @@ pub fn show(
     render_ctx: &mut RenderContext,
     view: &mut ArrangementView,
     midi: Option<&dyn NoteSource>,
-    selected: &mut HashSet<(u16, u32, u8)>,
+    selected: &mut yinhe_core::Selection,
     track_visible: &[bool],
     track_colors: &[[f32; 3]],
     cursor_tick: &mut Option<f64>,
@@ -36,6 +34,8 @@ pub fn show(
     scroll_mode: u32,
     min_border_width: f32,
     haptic_engine: Option<&yinhe_haptic::HapticEngine>,
+    midi_version: u64,
+    arr_sel_rect: &mut Option<(f64, f64, usize, usize)>,
 ) {
     let _arrange_total_start = if yinhe_memtrace::perf_probe::enabled() {
         Some(std::time::Instant::now())
@@ -166,7 +166,7 @@ pub fn show(
     });
 
     // Layer 2: notes
-    let notes_key = layer_cache_key(&[vh, wh, tv_hash]);
+    let notes_key = layer_cache_key(&[vh, wh, tv_hash, midi_version]);
     renderer.upload_layer(2, notes_key, |out| {
         if let Some(midi) = midi {
             arrangement_instances::build_notes(
@@ -222,7 +222,23 @@ pub fn show(
             total_ticks,
             num_tracks,
             cursor_tick,
+            arr_sel_rect,
         );
+    }
+
+    // Draw persisted selection rect (remains after mouse release).
+    if let Some((t_start, t_end, track_lo, track_hi)) = *arr_sel_rect {
+        let lh = view.lane_height;
+        let scroll_y = view.base.scroll_y;
+        let view_sy = track_lo as f32 * lh - scroll_y;
+        let view_ey = (track_hi as f32 + 1.0) * lh - scroll_y;
+        let view_sx = view.tick_to_x(t_start);
+        let view_ex = view.tick_to_x(t_end);
+        let snapped = egui::Rect::from_min_max(
+            egui::pos2(view_sx.min(view_ex), view_sy.min(view_ey)),
+            egui::pos2(view_sx.max(view_ex), view_sy.max(view_ey)),
+        );
+        crate::widgets::selection_box::draw(&ui.painter(), rect, snapped);
     }
 
     // Save scroll state before input for haptic boundary detection
@@ -281,13 +297,14 @@ fn sel_drag_frame_arrange(
     content_rect: egui::Rect,
     view: &mut ArrangementView,
     midi: Option<&dyn NoteSource>,
-    selected: &mut HashSet<(u16, u32, u8)>,
+    selected: &mut yinhe_core::Selection,
     quantize: QuantizePreset,
     ppq: u32,
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
     total_ticks: f64,
     num_tracks: usize,
     cursor_tick: &mut Option<f64>,
+    arr_sel_rect: &mut Option<(f64, f64, usize, usize)>,
 ) {
     let sel_id = ui.id().with("sel_drag_arr");
     let mut drag: Option<(egui::Pos2, egui::Pos2)> =
@@ -350,6 +367,7 @@ fn sel_drag_frame_arrange(
                     let tick = view.x_to_tick(start.x);
                     let snapped = crate::view_interaction::snap_tick(tick, quantize, ppq, bar_line_data);
                     selected.clear();
+                    *arr_sel_rect = None;
                     *cursor_tick = Some(snapped.max(0.0));
                 } else {
                     // Drag — existing marquee behavior
@@ -367,18 +385,8 @@ fn sel_drag_frame_arrange(
                     if !cmd {
                         selected.clear();
                     }
-                    for track in track_lo..=track_hi {
-                        for key in 0..128u8 {
-                            for note in midi_ref.key_notes(key) {
-                                if note.track as usize != track {
-                                    continue;
-                                }
-                                if (note.start_tick as f64) < t_end && (note.end_tick as f64) > t_start {
-                                    selected.insert((note.track, note.start_tick, key));
-                                }
-                            }
-                        }
-                    }
+                    selected.add_rect_track(t_start as u32, t_end as u32, 0, 127, track_lo as u16, track_hi as u16);
+                    *arr_sel_rect = Some((t_start, t_end, track_lo, track_hi));
                 }
                 view.base.dirty = true;
             }

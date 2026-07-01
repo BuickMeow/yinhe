@@ -26,7 +26,7 @@ pub fn prepare(
     height: u32,
     midi: Option<&dyn NoteSource>,
     view: &PianoRollView,
-    selected: &HashSet<(u16, u32, u8)>,
+    selected: &yinhe_core::Selection,
     hidden_notes: &HashSet<(u16, u32, u8)>,
     track_visible: &[bool],
     track_colors: &[[f32; 3]],
@@ -104,15 +104,7 @@ pub fn prepare(
     });
 
     // Layer 2: notes
-    // Commutative (XOR) hashes — order-independent so HashSet iteration
-    // order doesn't cause spurious cache invalidation.
-    let sel_hash = selected.iter().fold(0u64, |acc, &(trk, tick, key)| {
-        let mut h: u64 = 0;
-        h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(trk as u64);
-        h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(tick as u64);
-        h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(key as u64);
-        acc ^ h
-    });
+    let sel_hash = selected.hash();
     let tv_hash = track_visible.iter().fold(0u64, |acc, &v| {
         let mut h: u64 = 0;
         h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(v as u64);
