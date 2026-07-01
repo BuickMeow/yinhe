@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use yinhe_core::{NoteEvent, TrackData, YinModel};
@@ -78,17 +77,19 @@ impl Document {
         model.rebuild();
 
         let track_names = model.tracks.iter().map(|t| t.name.clone()).collect();
-        let track_info_cache = build_track_info(&model);
         let num_tracks = model.tracks.len();
         let conductor_track_idx = None;
 
+        let data = ProjectData::new(
+            Arc::new(model),
+            track_names,
+            ProjectFile::default(),
+            MappingFile::default(),
+        );
+        let track_info_cache = data.track_info();
+
         Document {
-            data: ProjectData::new(
-                Arc::new(model),
-                track_names,
-                ProjectFile::default(),
-                MappingFile::default(),
-            ),
+            data,
             edit: EditState {
                 track_visible: vec![true],
                 track_pianoroll_visible: vec![true],
@@ -143,8 +144,6 @@ impl Document {
 
             let num_tracks = model.tracks.len();
             let track_names: Vec<String> = model.tracks.iter().map(|t| t.name.clone()).collect();
-            let track_info_cache = build_track_info(&model);
-            let pc_map_cache = build_pc_map_cache_from_model(&model);
             let track_colors_cache = (0..num_tracks)
                 .map(|i| track_color(i, conductor_track_idx))
                 .collect();
@@ -156,6 +155,9 @@ impl Document {
                 mapping_file,
             );
             data.rebuild_model();
+
+            let track_info_cache = data.track_info();
+            let pc_map_cache = data.pc_map_cache();
 
             Ok(Document {
                 data,
@@ -370,31 +372,6 @@ pub fn detect_conductor_from_model(model: &YinModel) -> Option<u16> {
         return None;
     }
     Some(0)
-}
-
-fn build_track_info(model: &YinModel) -> Vec<yinhe_core::TrackInfo> {
-    model
-        .tracks
-        .iter()
-        .enumerate()
-        .map(|(i, track)| yinhe_core::TrackInfo {
-            index: i as u16,
-            name: track.name.clone(),
-            note_count: model.track_note_count.get(i).copied().unwrap_or(0),
-            port: track.port,
-            channel: track.channel,
-        })
-        .collect()
-}
-
-fn build_pc_map_cache_from_model(model: &YinModel) -> HashMap<u8, u8> {
-    let mut pc_map = HashMap::new();
-    for track in &model.tracks {
-        for pc in &track.program_change {
-            pc_map.entry(track.channel).or_insert(pc.program);
-        }
-    }
-    pc_map
 }
 
 pub fn track_color(idx: usize, conductor_idx: Option<u16>) -> [f32; 3] {

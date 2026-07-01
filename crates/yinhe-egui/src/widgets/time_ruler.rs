@@ -1,6 +1,5 @@
 use eframe::egui;
-use yinhe_types::TimeSigEvent;
-use yinhe_wgpu::grid;
+use yinhe_types::{build_time_sig_segments, measure_ticks, TimeSigEvent};
 
 // ── Constants ──
 
@@ -151,7 +150,7 @@ fn paint_labels(
 
     let ticks_per_sub = (tpb / SUB_BEAT_DIV).max(1);
 
-    let segments = grid::build_time_sig_segments(time_sig_events, default_num, default_den);
+    let segments = build_time_sig_segments(time_sig_events, default_num, default_den);
 
     let bar_offsets = cumulative_bar_offsets(tpb, &segments);
 
@@ -182,7 +181,7 @@ fn paint_labels(
             break;
         }
 
-        let ticks_per_measure = grid::measure_ticks(tpb, num, den);
+        let ticks_per_measure = measure_ticks(tpb, num, den);
         let ticks_per_beat = ticks_per_measure / num as u32;
         let bar_offset = bar_offsets[i];
 
@@ -310,7 +309,7 @@ fn cumulative_bar_offsets(tpb: u32, segments: &[(u32, u8, u8)]) -> Vec<u32> {
         if i + 1 < segments.len() {
             let (start, num, den) = segments[i];
             let end = segments[i + 1].0;
-            let tm = grid::measure_ticks(tpb, num, den);
+            let tm = measure_ticks(tpb, num, den);
             if tm > 0 && end > start {
                 acc += (end - start) / tm;
             }
