@@ -611,11 +611,10 @@ pub fn show(
         let prepare_total = t2.saturating_duration_since(t1);
         let paint = t3.saturating_duration_since(t2);
         let misc = t_end.saturating_duration_since(t3);
-        // prep_static + prep_cursor + upload should ≈ prepare_total. The
-        // residual (closure dispatch, hashing, etc.) goes into misc by
-        // omitting it from this sample's prep_* fields.
-        let known = prep_timings.build_static + prep_timings.build_cursor + prep_timings.upload;
-        let prepare_overhead = prepare_total.saturating_sub(known);
+        // prep_static should ≈ prepare_total. The residual (closure dispatch,
+        // hashing, etc.) goes into misc by omitting it from this sample's
+        // prep_* fields.
+        let prepare_overhead = prepare_total.saturating_sub(prep_timings.build_static);
         let follow_name = match follow_mode {
             super::view_interaction::FollowMode::None => "None",
             super::view_interaction::FollowMode::Page => "Page",
@@ -624,11 +623,8 @@ pub fn show(
         yinhe_memtrace::perf_probe::submit(yinhe_memtrace::perf_probe::FrameSample {
             input,
             prep_static: prep_timings.build_static,
-            prep_cursor: prep_timings.build_cursor,
-            upload: prep_timings.upload,
             paint,
             misc: misc + prepare_overhead,
-            static_rebuilt: prep_timings.static_rebuilt,
             instance_count: prep_timings.instance_count,
             follow_mode: follow_name,
             total_notes: midi

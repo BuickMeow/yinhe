@@ -145,11 +145,7 @@ pub fn prepare(
     let dur = t.elapsed();
 
     yinhe_wgpu::PrepareTimings {
-        dirty: true,
-        static_rebuilt: true,
         build_static: dur,
-        build_cursor: std::time::Duration::ZERO,
-        upload: std::time::Duration::ZERO,
         instance_count: renderer.total_layer_instances(),
     }
 }
