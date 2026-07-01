@@ -1,19 +1,22 @@
 //! Parse Standard MIDI File bytes directly into a `yinhe_core::YinModel`.
 //!
 //! Single-pass per track: NoteOn/NoteOff pairing, port/channel prefix
-//! tracking, CC/PB/PC collection, and RPN state-machine decoding all
+//! tracking, CC/PB/PC collection, and RPN/NRPN state-machine decoding all
 //! happen in one walk. Conductor events (tempo, time signature) are
 //! collected across all tracks first.
+//!
+//! Control events are unified into `AutomationLane` — one lane per
+//! parameter per track. RPN and NRPN are decoded from their CC sequences
+//! and stored as `AutomationTarget::Rpn` / `AutomationTarget::Nrpn`.
 
-use std::collections::BTreeMap;
 use std::path::Path;
 
 use rayon::prelude::*;
 
 use yinhe_core::{
-    CcEvent, ConductorData, NoteEvent, PcEvent, PitchBendEvent, ProjectMeta, RpnEvent, TempoEvent,
-    TimeSigEvent, TrackData, YinModel,
+    ConductorData, NoteEvent, PcEvent, ProjectMeta, TempoEvent, TimeSigEvent, TrackData, YinModel,
 };
+use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget};
 
 use crate::encoding::MidiImportEncoding;
 use crate::error::MidiError;
@@ -180,9 +183,12 @@ struct ActiveNote {
 /// Per-channel RPN state machine.
 ///
 /// MIDI RPNs are selected with CC101 (MSB) + CC100 (LSB), then written by
-/// CC6 (Data Entry MSB) and CC38 (Data Entry LSB). We track the most recent
-/// (msb, lsb) per channel; when CC6/38 arrives with both selected, emit an
-/// RpnEvent (and DON'T store CC101/100/6/38 as plain CC).
+/// CC6 (Data Entry MSB) and CC38 (Data Entry LSB). NRPNs use CC99 (MSB) +
+/// CC98 (LSB) instead.
+///
+/// When CC6/38 arrives with both msb/lsb selected, emit an RPN or NRPN
+/// AutomationEvent. The selector CCs (101/100/99/98) are NOT stored as
+/// plain CC — they are consumed by the RPN/NRPN state machine.
 #[derive(Default, Clone, Copy)]
 struct RpnState {
     msb: Option<u8>,
@@ -193,7 +199,7 @@ struct RpnState {
 ///
 /// CC 0 (Bank MSB) and CC 32 (Bank LSB) are buffered here and folded into
 /// the next ProgramChange on the same tick. If no PC follows, they are
-/// flushed to `td.cc` at the end of the track.
+/// flushed to automation_lanes at the end of the track.
 #[derive(Default, Clone, Copy)]
 struct PendingBank {
     msb: Option<(u8, u32)>, // (value, tick)
@@ -219,29 +225,16 @@ fn parse_track(
 
     // RPN state per channel (channel 0..16).
     let mut rpn_state: [RpnState; 16] = [RpnState::default(); 16];
+    // NRPN state per channel (channel 0..16).
+    let mut nrpn_state: [RpnState; 16] = [RpnState::default(); 16];
 
     // Pending Bank Select per channel (CC 0 / CC 32).
     let mut pending_bank: [PendingBank; 16] = [PendingBank::default(); 16];
 
-    // Collect raw per-controller CC streams; we'll filter RPN selectors out
-    // when we're sure they belong to an RPN sequence. Selectors that DON'T
-    // resolve into an RpnEvent fall back to plain CC.
-    // For simplicity we emit RpnEvent the moment CC6/38 arrives with both
-    // msb/lsb known, and we do NOT store the corresponding CC101/100/6/38
-    // in `cc`. Lone CC101/100 with no CC6 follow stays as plain CC.
-    //
-    // We can't know in advance if a CC101/100 will be followed by CC6,
-    // so we buffer them per channel and only commit them as plain CC if
-    // the channel sees a non-RPN-related event before any CC6/38 closes
-    // the sequence.
-    //
-    // Simpler rule (matches yinhe-model::convert::from_midi semantics):
-    // - CC101 / CC100 are stored as plain CC ONLY if no matching CC6 closes
-    //   the sequence within the SAME tick on the same channel.
-    // We'll use a simpler approximation: whenever CC6/38 fires with both
-    // msb/lsb selected → emit RpnEvent and DROP the most recent
-    // CC101/100/6/38 we just stored on this channel. This is what yinhe-model
-    // approximates by grouping by (track, tick).
+    // Accumulate automation events per target during parsing.
+    // Key = (target_variant, controller_or_parameter).
+    // We use a Vec<(AutomationTarget, AutomationEvent)> and sort at the end.
+    let mut auto_events: Vec<(AutomationTarget, AutomationEvent)> = Vec::new();
 
     for ev in events {
         let ev = ev?;
@@ -292,12 +285,20 @@ fn parse_track(
                         let ch_idx = ch_raw as usize;
                         match cc {
                             101 => {
+                                // RPN MSB selector
                                 rpn_state[ch_idx].msb = Some(val);
-                                // Don't store CC101 — it's an RPN selector
                             }
                             100 => {
+                                // RPN LSB selector
                                 rpn_state[ch_idx].lsb = Some(val);
-                                // Don't store CC100 — it's an RPN selector
+                            }
+                            99 => {
+                                // NRPN MSB selector
+                                nrpn_state[ch_idx].msb = Some(val);
+                            }
+                            98 => {
+                                // NRPN LSB selector
+                                nrpn_state[ch_idx].lsb = Some(val);
                             }
                             0 => {
                                 // Bank MSB: buffer for potential PC folding
@@ -308,54 +309,95 @@ fn parse_track(
                                 pending_bank[ch_idx].lsb = Some((val, current_tick));
                             }
                             6 => {
-                                // Data Entry MSB: emit RpnEvent if RPN is selected
-                                let st = rpn_state[ch_idx];
-                                if let (Some(msb), Some(lsb)) = (st.msb, st.lsb) {
-                                    let key = ((msb as u16) << 8) | lsb as u16;
-                                    td.rpn.entry(key).or_default().push(RpnEvent {
-                                        tick: current_tick,
-                                        value: (val as u16) << 7,
-                                    });
+                                // Data Entry MSB
+                                let rpn = rpn_state[ch_idx];
+                                let nrpn = nrpn_state[ch_idx];
+                                if let (Some(msb), Some(lsb)) = (rpn.msb, rpn.lsb) {
+                                    let parameter = ((msb as u16) << 8) | lsb as u16;
+                                    auto_events.push((
+                                        AutomationTarget::Rpn { parameter },
+                                        AutomationEvent {
+                                            tick: current_tick,
+                                            value: (val as u16) << 7,
+                                        },
+                                    ));
+                                } else if let (Some(msb), Some(lsb)) = (nrpn.msb, nrpn.lsb) {
+                                    let parameter = ((msb as u16) << 8) | lsb as u16;
+                                    auto_events.push((
+                                        AutomationTarget::Nrpn { parameter },
+                                        AutomationEvent {
+                                            tick: current_tick,
+                                            value: (val as u16) << 7,
+                                        },
+                                    ));
                                 } else {
-                                    // No RPN selected — store as plain CC6
-                                    td.cc.entry(6).or_default().push(CcEvent {
-                                        tick: current_tick,
-                                        value: val,
-                                    });
+                                    // No RPN/NRPN selected — store as plain CC6
+                                    auto_events.push((
+                                        AutomationTarget::CC { controller: 6 },
+                                        AutomationEvent {
+                                            tick: current_tick,
+                                            value: val as u16,
+                                        },
+                                    ));
                                 }
                             }
                             38 => {
-                                // Data Entry LSB: append low 7 bits to most recent RPN value
-                                let st = rpn_state[ch_idx];
-                                if let (Some(msb), Some(lsb)) = (st.msb, st.lsb) {
-                                    let key = ((msb as u16) << 8) | lsb as u16;
-                                    if let Some(events) = td.rpn.get_mut(&key) {
-                                        if let Some(last) = events.last_mut() {
-                                            // Combine: existing MSB in high bits, new LSB low
-                                            last.value = (last.value & 0xFF80) | (val as u16);
-                                            continue;
-                                        }
+                                // Data Entry LSB: append low 7 bits to most recent value
+                                let rpn = rpn_state[ch_idx];
+                                let nrpn = nrpn_state[ch_idx];
+                                if let (Some(msb), Some(lsb)) = (rpn.msb, rpn.lsb) {
+                                    let parameter = ((msb as u16) << 8) | lsb as u16;
+                                    // Try to find the last RPN event at this tick and combine
+                                    let target = AutomationTarget::Rpn { parameter };
+                                    if let Some((_, last)) = auto_events.iter_mut()
+                                        .rfind(|(t, e)| *t == target && e.tick == current_tick)
+                                    {
+                                        last.value = (last.value & 0xFF80) | (val as u16);
+                                    } else {
+                                        auto_events.push((
+                                            target,
+                                            AutomationEvent {
+                                                tick: current_tick,
+                                                value: val as u16,
+                                            },
+                                        ));
                                     }
-                                    // No prior MSB on this RPN — store as standalone with LSB only
-                                    td.rpn
-                                        .entry(key)
-                                        .or_default()
-                                        .push(RpnEvent {
+                                } else if let (Some(msb), Some(lsb)) = (nrpn.msb, nrpn.lsb) {
+                                    let parameter = ((msb as u16) << 8) | lsb as u16;
+                                    let target = AutomationTarget::Nrpn { parameter };
+                                    if let Some((_, last)) = auto_events.iter_mut()
+                                        .rfind(|(t, e)| *t == target && e.tick == current_tick)
+                                    {
+                                        last.value = (last.value & 0xFF80) | (val as u16);
+                                    } else {
+                                        auto_events.push((
+                                            target,
+                                            AutomationEvent {
+                                                tick: current_tick,
+                                                value: val as u16,
+                                            },
+                                        ));
+                                    }
+                                } else {
+                                    // No RPN/NRPN selected — store as plain CC38
+                                    auto_events.push((
+                                        AutomationTarget::CC { controller: 38 },
+                                        AutomationEvent {
                                             tick: current_tick,
                                             value: val as u16,
-                                        });
-                                } else {
-                                    td.cc.entry(38).or_default().push(CcEvent {
-                                        tick: current_tick,
-                                        value: val,
-                                    });
+                                        },
+                                    ));
                                 }
                             }
                             _ => {
-                                td.cc.entry(cc).or_default().push(CcEvent {
-                                    tick: current_tick,
-                                    value: val,
-                                });
+                                // All other CC → AutomationTarget::CC
+                                auto_events.push((
+                                    AutomationTarget::CC { controller: cc },
+                                    AutomationEvent {
+                                        tick: current_tick,
+                                        value: val as u16,
+                                    },
+                                ));
                             }
                         }
                     }
@@ -386,10 +428,13 @@ fn parse_track(
                         }
                     }
                     midly::MidiMessage::PitchBend { bend } => {
-                        td.pitch_bend.push(PitchBendEvent {
-                            tick: current_tick,
-                            value: bend.as_int(),
-                        });
+                        auto_events.push((
+                            AutomationTarget::PitchBend,
+                            AutomationEvent {
+                                tick: current_tick,
+                                value: bend.as_int() as u16,
+                            },
+                        ));
                     }
                     _ => {}
                 }
@@ -412,31 +457,67 @@ fn parse_track(
 
     // Flush pending bank values that were NOT consumed by a ProgramChange.
     // These become plain CC events so nothing is lost.
-    for bank in &pending_bank {
+    for (ch_idx, bank) in pending_bank.iter().enumerate() {
         if let Some((val, tick)) = bank.msb {
-            td.cc.entry(0).or_default().push(CcEvent { tick, value: val });
+            auto_events.push((
+                AutomationTarget::CC { controller: 0 },
+                AutomationEvent { tick, value: val as u16 },
+            ));
         }
         if let Some((val, tick)) = bank.lsb {
-            td.cc.entry(32).or_default().push(CcEvent { tick, value: val });
+            auto_events.push((
+                AutomationTarget::CC { controller: 32 },
+                AutomationEvent { tick, value: val as u16 },
+            ));
         }
     }
 
     // Assign dup_index for any (key, start_tick) collisions.
     assign_dup_indices(&mut td.notes);
 
-    // Sort all event streams by tick (rebuild() also sorts, but per-track
-    // streams are expected sorted for fast partition_point queries).
+    // Sort notes by tick.
     td.notes.sort_by_key(|n| (n.start_tick, n.key, n.dup_index));
-    for v in td.cc.values_mut() {
-        v.sort_by_key(|e| e.tick);
-    }
-    td.pitch_bend.sort_by_key(|e| e.tick);
     td.program_change.sort_by_key(|e| e.tick);
-    for v in td.rpn.values_mut() {
-        v.sort_by_key(|e| e.tick);
-    }
+
+    // Build automation_lanes from accumulated events.
+    // Sort by (target, tick) then group into lanes.
+    auto_events.sort_by(|a, b| {
+        a.0.cmp(&b.0).then_with(|| a.1.tick.cmp(&b.1.tick))
+    });
+
+    td.automation_lanes = group_automation_events(auto_events, td.port, td.channel);
 
     Ok(Some(td))
+}
+
+/// Group sorted (target, event) pairs into AutomationLane vecs.
+fn group_automation_events(
+    events: Vec<(AutomationTarget, AutomationEvent)>,
+    port: u8,
+    channel: u8,
+) -> Vec<AutomationLane> {
+    if events.is_empty() {
+        return Vec::new();
+    }
+    let mut lanes: Vec<AutomationLane> = Vec::new();
+    let mut i = 0;
+    while i < events.len() {
+        let target = events[i].0.clone();
+        let start = i;
+        while i < events.len() && events[i].0 == target {
+            i += 1;
+        }
+        let lane_events: Vec<AutomationEvent> = events[start..i]
+            .iter()
+            .map(|(_, e)| e.clone())
+            .collect();
+        lanes.push(AutomationLane {
+            target,
+            track: 0, // track index assigned by caller
+            events: lane_events,
+        });
+    }
+    lanes
 }
 
 /// Match a NoteOff (or NoteOn vel=0) to the most recent matching NoteOn.
@@ -465,8 +546,9 @@ fn resolve_note_off(
 /// Walk notes and assign `dup_index` for any colliding `(key, start_tick)`.
 ///
 /// Notes are inserted in NoteOff order, but dup_index should be insertion
-/// order. We use a BTreeMap<(key, start_tick), u8> counter.
+/// order. We use a std::collections::BTreeMap<(key, start_tick), u8> counter.
 fn assign_dup_indices(notes: &mut [NoteEvent]) {
+    use std::collections::BTreeMap;
     let mut counter: BTreeMap<(u8, u32), u8> = BTreeMap::new();
     // Sort first by start_tick so we assign dup_index in start order.
     notes.sort_by_key(|n| (n.start_tick, n.key));

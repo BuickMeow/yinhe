@@ -33,10 +33,8 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>, settings: &AudioSetti
             continue;
         }
         let has_audible_note = doc.data.model.track_has_audio(track_idx as u16);
-        let has_ctrl = !track.cc.is_empty()
-            || !track.pitch_bend.is_empty()
-            || !track.program_change.is_empty()
-            || !track.rpn.is_empty();
+        let has_ctrl = !track.automation_lanes.is_empty()
+            || !track.program_change.is_empty();
         if has_audible_note || has_ctrl {
             active[global_ch] = true;
         }

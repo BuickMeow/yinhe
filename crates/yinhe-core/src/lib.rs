@@ -16,7 +16,7 @@ mod selection;
 mod source;
 mod tempo_map;
 
-pub use events::{CcEvent, NoteEvent, PcEvent, PitchBendEvent, RpnEvent};
+pub use events::{NoteEvent, PcEvent};
 pub use model::{ConductorData, ProjectMeta, TempoEvent, TimeSigEvent, TrackData, TrackInfo, YinModel};
 pub use selection::Selection;
 pub use yinhe_types::Note;

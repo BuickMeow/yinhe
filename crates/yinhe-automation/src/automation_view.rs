@@ -16,7 +16,10 @@ pub struct AutomationPanelView {
     /// Current panel height in pixels.
     pub panel_height: f32,
     /// The automation target currently displayed in this panel.
+    /// When `show_velocity` is true, this field is ignored for data rendering.
     pub selected_target: AutomationTarget,
+    /// When true, render velocity bars from note data instead of automation lanes.
+    pub show_velocity: bool,
     /// Cached index into `MidiFile.automation_lanes` for fast lookup.
     pub lane_index: usize,
     /// Whether the panel content needs to be rebuilt.
@@ -36,7 +39,8 @@ impl Default for AutomationPanelView {
                 track_panel_scroll_y: 0.0,
             },
             panel_height: DEFAULT_PANEL_HEIGHT,
-            selected_target: AutomationTarget::Velocity,
+            selected_target: AutomationTarget::CC { controller: 7 },
+            show_velocity: false,
             lane_index: 0,
             dirty: true,
         }
@@ -88,7 +92,7 @@ mod tests {
     fn test_default_values() {
         let view = AutomationPanelView::default();
         assert_eq!(view.panel_height, DEFAULT_PANEL_HEIGHT);
-        assert_eq!(view.selected_target, AutomationTarget::Velocity);
+        assert_eq!(view.selected_target, AutomationTarget::CC { controller: 7 });
         assert_eq!(view.lane_index, 0);
         assert!(view.dirty);
         assert_eq!(view.base.pixels_per_tick, 0.15);

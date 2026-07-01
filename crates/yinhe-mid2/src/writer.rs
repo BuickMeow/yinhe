@@ -2,9 +2,8 @@
 //!
 //! Produces a Type-1 SMF: track 0 is the conductor (tempo + time-sig),
 //! tracks 1..N+1 are the YinModel tracks. Each YinModel track flattens
-//! `notes / cc / pitch_bend / program_change / rpn` into one event stream
-//! sorted by tick. RPN events expand to CC101+CC100+CC6 triplets at the
-//! same tick.
+//! `notes / automation_lanes / program_change` into one event stream
+//! sorted by tick. RPN/NRPN lanes expand to their CC selector sequences.
 
 use midly::num::{u4, u7, u15, u24};
 use midly::{
@@ -12,6 +11,7 @@ use midly::{
 };
 
 use yinhe_core::{TrackData, YinModel};
+use yinhe_types::AutomationTarget;
 
 use crate::error::MidiError;
 
@@ -103,33 +103,115 @@ fn build_track<'a>(track: &'a TrackData, track_idx: u16, model: &'a YinModel) ->
         }
     }
 
-    // CC events
-    for (&cc_num, ccs) in &track.cc {
-        for ev in ccs {
-            events.push((
-                ev.tick,
-                TrackEventKind::Midi {
-                    channel: ch,
-                    message: MidiMessage::Controller {
-                        controller: u7::new(cc_num & 0x7F),
-                        value: u7::new(ev.value & 0x7F),
-                    },
-                },
-            ));
+    // Automation lanes → MIDI events
+    for lane in &track.automation_lanes {
+        for ev in &lane.events {
+            match &lane.target {
+                AutomationTarget::CC { controller } => {
+                    events.push((
+                        ev.tick,
+                        TrackEventKind::Midi {
+                            channel: ch,
+                            message: MidiMessage::Controller {
+                                controller: u7::new(*controller & 0x7F),
+                                value: u7::new((ev.value & 0x7F) as u8),
+                            },
+                        },
+                    ));
+                }
+                AutomationTarget::PitchBend => {
+                    events.push((
+                        ev.tick,
+                        TrackEventKind::Midi {
+                            channel: ch,
+                            message: MidiMessage::PitchBend {
+                                bend: PitchBend::from_int(ev.value as i16),
+                            },
+                        },
+                    ));
+                }
+                AutomationTarget::Rpn { parameter } => {
+                    let msb = ((parameter >> 8) & 0x7F) as u8;
+                    let lsb = (parameter & 0x7F) as u8;
+                    let data_msb = ((ev.value >> 7) & 0x7F) as u8;
+                    let data_lsb = (ev.value & 0x7F) as u8;
+                    // CC101 (RPN MSB)
+                    events.push((ev.tick, TrackEventKind::Midi {
+                        channel: ch,
+                        message: MidiMessage::Controller {
+                            controller: u7::new(101),
+                            value: u7::new(msb),
+                        },
+                    }));
+                    // CC100 (RPN LSB)
+                    events.push((ev.tick, TrackEventKind::Midi {
+                        channel: ch,
+                        message: MidiMessage::Controller {
+                            controller: u7::new(100),
+                            value: u7::new(lsb),
+                        },
+                    }));
+                    // CC6 (Data Entry MSB)
+                    events.push((ev.tick, TrackEventKind::Midi {
+                        channel: ch,
+                        message: MidiMessage::Controller {
+                            controller: u7::new(6),
+                            value: u7::new(data_msb),
+                        },
+                    }));
+                    // CC38 (Data Entry LSB) only if non-zero
+                    if data_lsb != 0 {
+                        events.push((ev.tick, TrackEventKind::Midi {
+                            channel: ch,
+                            message: MidiMessage::Controller {
+                                controller: u7::new(38),
+                                value: u7::new(data_lsb),
+                            },
+                        }));
+                    }
+                }
+                AutomationTarget::Nrpn { parameter } => {
+                    let msb = ((parameter >> 8) & 0x7F) as u8;
+                    let lsb = (parameter & 0x7F) as u8;
+                    let data_msb = ((ev.value >> 7) & 0x7F) as u8;
+                    let data_lsb = (ev.value & 0x7F) as u8;
+                    // CC99 (NRPN MSB)
+                    events.push((ev.tick, TrackEventKind::Midi {
+                        channel: ch,
+                        message: MidiMessage::Controller {
+                            controller: u7::new(99),
+                            value: u7::new(msb),
+                        },
+                    }));
+                    // CC98 (NRPN LSB)
+                    events.push((ev.tick, TrackEventKind::Midi {
+                        channel: ch,
+                        message: MidiMessage::Controller {
+                            controller: u7::new(98),
+                            value: u7::new(lsb),
+                        },
+                    }));
+                    // CC6 (Data Entry MSB)
+                    events.push((ev.tick, TrackEventKind::Midi {
+                        channel: ch,
+                        message: MidiMessage::Controller {
+                            controller: u7::new(6),
+                            value: u7::new(data_msb),
+                        },
+                    }));
+                    // CC38 (Data Entry LSB) only if non-zero
+                    if data_lsb != 0 {
+                        events.push((ev.tick, TrackEventKind::Midi {
+                            channel: ch,
+                            message: MidiMessage::Controller {
+                                controller: u7::new(38),
+                                value: u7::new(data_lsb),
+                            },
+                        }));
+                    }
+                }
+            }
         }
-    }
-
-    // Pitch bend
-    for ev in &track.pitch_bend {
-        events.push((
-            ev.tick,
-            TrackEventKind::Midi {
-                channel: ch,
-                message: MidiMessage::PitchBend {
-                    bend: PitchBend::from_int(ev.value),
-                },
-            },
-        ));
     }
 
     // Program change
@@ -145,61 +227,7 @@ fn build_track<'a>(track: &'a TrackData, track_idx: u16, model: &'a YinModel) ->
         ));
     }
 
-    // RPN events expand to CC101+CC100+CC6 at the same tick
-    for (&rpn_key, rpns) in &track.rpn {
-        let msb = ((rpn_key >> 8) & 0x7F) as u8;
-        let lsb = (rpn_key & 0x7F) as u8;
-        for ev in rpns {
-            let data_msb = ((ev.value >> 7) & 0x7F) as u8;
-            let data_lsb = (ev.value & 0x7F) as u8;
-            events.push((
-                ev.tick,
-                TrackEventKind::Midi {
-                    channel: ch,
-                    message: MidiMessage::Controller {
-                        controller: u7::new(101),
-                        value: u7::new(msb),
-                    },
-                },
-            ));
-            events.push((
-                ev.tick,
-                TrackEventKind::Midi {
-                    channel: ch,
-                    message: MidiMessage::Controller {
-                        controller: u7::new(100),
-                        value: u7::new(lsb),
-                    },
-                },
-            ));
-            events.push((
-                ev.tick,
-                TrackEventKind::Midi {
-                    channel: ch,
-                    message: MidiMessage::Controller {
-                        controller: u7::new(6),
-                        value: u7::new(data_msb),
-                    },
-                },
-            ));
-            // Only emit Data Entry LSB if it's non-zero (most RPN values are 7-bit)
-            if data_lsb != 0 {
-                events.push((
-                    ev.tick,
-                    TrackEventKind::Midi {
-                        channel: ch,
-                        message: MidiMessage::Controller {
-                            controller: u7::new(38),
-                            value: u7::new(data_lsb),
-                        },
-                    },
-                ));
-            }
-        }
-    }
-
-    // Stable sort by tick (preserves NoteOn before NoteOff at same tick if
-    // they happened to coincide; same for CC ordering within a tick).
+    // Stable sort by tick.
     events.sort_by_key(|e| e.0);
 
     let track_name = if track.name.is_empty() {

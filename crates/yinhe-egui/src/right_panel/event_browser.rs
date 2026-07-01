@@ -3,6 +3,7 @@ use egui_extras::{Column, TableBuilder};
 use egui_material_icons::icons::*;
 
 use yinhe_editor_core::document::Document;
+use yinhe_types::AutomationTarget;
 use crate::widgets::split_handle;
 use crate::theme;
 
@@ -290,9 +291,20 @@ fn render_track_row(
     let is_selected = state.selected_track == Some(idx);
 
     let note_count = *model.track_note_count.get(idx as usize).unwrap_or(&0) as usize;
-    let cc_map: std::collections::BTreeMap<u8, usize> =
-        track.cc.iter().map(|(&c, v)| (c, v.len())).collect();
-    let pb_count = track.pitch_bend.len();
+    // Build CC map and PB count from automation_lanes
+    let mut cc_map: std::collections::BTreeMap<u8, usize> = std::collections::BTreeMap::new();
+    let mut pb_count: usize = 0;
+    for lane in &track.automation_lanes {
+        match &lane.target {
+            AutomationTarget::CC { controller } => {
+                *cc_map.entry(*controller).or_insert(0) += lane.events.len();
+            }
+            AutomationTarget::PitchBend => {
+                pb_count += lane.events.len();
+            }
+            _ => {}
+        }
+    }
     let pc_count = track.program_change.len();
     let _child_count = (note_count > 0) as usize
         + cc_map.len()
@@ -307,7 +319,7 @@ fn render_track_row(
     let summary = format!(
         "{} notes \u{00b7} {} CC \u{00b7} {} PB \u{00b7} {} PC",
         note_count,
-        track.cc.values().map(|v| v.len()).sum::<usize>(),
+        cc_map.values().sum::<usize>(),
         pb_count,
         pc_count,
     );
@@ -469,10 +481,14 @@ fn show_event_detail(ui: &mut egui::Ui, item: &SelectedItem, doc: &Document, bar
         }
         SelectedItem::Cc { track, controller } => {
             let t = *track as usize;
-            let mut events: Vec<&yinhe_core::CcEvent> = model.tracks.get(t)
-                .and_then(|td| td.cc.get(controller))
-                .map(|v| v.iter().collect())
-                .unwrap_or_default();
+            let mut events: Vec<&yinhe_types::AutomationEvent> = Vec::new();
+            if let Some(td) = model.tracks.get(t) {
+                for lane in &td.automation_lanes {
+                    if matches!(lane.target, AutomationTarget::CC { controller: c } if c == *controller) {
+                        events.extend(lane.events.iter());
+                    }
+                }
+            }
             events.sort_by_key(|e| e.tick);
             ui.add_space(4.0);
             ui.label(egui::RichText::new(format!("CC {} {} ({} 个)", controller, cc_label(*controller), events.len())).size(12.0).strong());
@@ -487,9 +503,14 @@ fn show_event_detail(ui: &mut egui::Ui, item: &SelectedItem, doc: &Document, bar
         }
         SelectedItem::PitchBend { track } => {
             let t = *track as usize;
-            let mut events: Vec<&yinhe_core::PitchBendEvent> = model.tracks.get(t)
-                .map(|td| td.pitch_bend.iter().collect())
-                .unwrap_or_default();
+            let mut events: Vec<&yinhe_types::AutomationEvent> = Vec::new();
+            if let Some(td) = model.tracks.get(t) {
+                for lane in &td.automation_lanes {
+                    if lane.target == AutomationTarget::PitchBend {
+                        events.extend(lane.events.iter());
+                    }
+                }
+            }
             events.sort_by_key(|e| e.tick);
             ui.add_space(4.0);
             ui.label(egui::RichText::new(format!("弯音事件 ({} 个)", events.len())).size(12.0).strong());
@@ -626,8 +647,13 @@ fn show_overview(ui: &mut egui::Ui, model: &yinhe_core::YinModel) {
     let mut pb = 0usize;
     let mut pc = 0usize;
     for t in &model.tracks {
-        cc += t.cc.values().map(|v| v.len()).sum::<usize>();
-        pb += t.pitch_bend.len();
+        for lane in &t.automation_lanes {
+            match &lane.target {
+                AutomationTarget::CC { .. } => cc += lane.events.len(),
+                AutomationTarget::PitchBend => pb += lane.events.len(),
+                _ => {}
+            }
+        }
         pc += t.program_change.len();
     }
     ui.colored_label(egui::Color32::from_gray(120), format!("CC: {} 个", cc));
@@ -667,18 +693,37 @@ fn show_track_detail(ui: &mut egui::Ui, idx: u16, track: &yinhe_core::TrackData,
     ui.add_space(6.0);
     ui.label(egui::RichText::new("事件计数").size(12.0).strong());
     kv(ui, "Notes", format!("{}", model.track_note_count.get(idx as usize).copied().unwrap_or(0)));
-    if !track.cc.is_empty() {
-        let total_cc: usize = track.cc.values().map(|v| v.len()).sum();
-        kv(ui, "CC", format!("{} controllers, {} events total", track.cc.len(), total_cc));
-        for (&ctrl, evs) in &track.cc {
-            kv(ui, &format!("  CC {} {}", ctrl, cc_label(ctrl)), format!("{} events", evs.len()));
+    // Count CC/PB/RPN events from automation_lanes
+    let mut cc_total = 0usize;
+    let mut cc_controllers: Vec<u8> = Vec::new();
+    let mut cc_counts: Vec<usize> = Vec::new();
+    let mut pb_total = 0usize;
+    let mut rpn_total = 0usize;
+    for lane in &track.automation_lanes {
+        match &lane.target {
+            AutomationTarget::CC { controller } => {
+                cc_total += lane.events.len();
+                if let Some(pos) = cc_controllers.iter().position(|c| c == controller) {
+                    cc_counts[pos] += lane.events.len();
+                } else {
+                    cc_controllers.push(*controller);
+                    cc_counts.push(lane.events.len());
+                }
+            }
+            AutomationTarget::PitchBend => pb_total += lane.events.len(),
+            AutomationTarget::Rpn { .. } | AutomationTarget::Nrpn { .. } => rpn_total += lane.events.len(),
         }
     }
-    kv(ui, "Pitch Bend", format!("{}", track.pitch_bend.len()));
+    if !cc_controllers.is_empty() {
+        kv(ui, "CC", format!("{} controllers, {} events total", cc_controllers.len(), cc_total));
+        for (i, ctrl) in cc_controllers.iter().enumerate() {
+            kv(ui, &format!("  CC {} {}", ctrl, cc_label(*ctrl)), format!("{} events", cc_counts[i]));
+        }
+    }
+    kv(ui, "Pitch Bend", format!("{}", pb_total));
     kv(ui, "Program Change", format!("{}", track.program_change.len()));
-    if !track.rpn.is_empty() {
-        let total_rpn: usize = track.rpn.values().map(|v| v.len()).sum();
-        kv(ui, "RPN", format!("{} keys, {} events total", track.rpn.len(), total_rpn));
+    if rpn_total > 0 {
+        kv(ui, "RPN/NRPN", format!("{} events total", rpn_total));
     }
 }
 

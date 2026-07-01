@@ -10,10 +10,8 @@ fn target_hash(target: &AutomationTarget) -> u64 {
     match target {
         AutomationTarget::CC { controller } => *controller as u64,
         AutomationTarget::PitchBend => 1,
-        AutomationTarget::PitchBendSensitivity => 2,
-        AutomationTarget::FineTune => 3,
-        AutomationTarget::CoarseTune => 4,
-        AutomationTarget::Velocity => 5,
+        AutomationTarget::Rpn { parameter } => 2 + *parameter as u64,
+        AutomationTarget::Nrpn { parameter } => 2 + 0x10000 + *parameter as u64,
     }
 }
 
@@ -111,8 +109,8 @@ pub fn prepare(
         automation_instances::build_grid(out, w, h, view, tpb, default_num, default_den, time_sig_events, scroll_x_pos);
     });
 
-    // Layer 2: data bars (or velocity bars for Velocity target)
-    let is_velocity = view.selected_target == yinhe_types::AutomationTarget::Velocity;
+    // Layer 2: data bars (or velocity bars when show_velocity is true)
+    let is_velocity = view.show_velocity;
     let tv_hash = {
         let mut h = 0u64;
         for &v in track_visible {

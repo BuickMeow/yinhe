@@ -1,10 +1,10 @@
 //! Round-trip tests: bytes -> YinModel -> bytes -> YinModel
 
 use yinhe_core::{
-    CcEvent, ConductorData, NoteEvent, PcEvent, PitchBendEvent, ProjectMeta, RpnEvent, TempoEvent,
-    TimeSigEvent, TrackData, YinModel,
+    ConductorData, NoteEvent, PcEvent, ProjectMeta, TempoEvent, TimeSigEvent, TrackData, YinModel,
 };
 use yinhe_mid2::{parse_bytes, write_to_bytes};
+use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget};
 
 /// Hand-craft minimal SMF bytes: 1 track, 1 note (C4 quarter note at 120 BPM).
 fn minimal_midi_bytes() -> Vec<u8> {
@@ -67,7 +67,6 @@ fn roundtrip_minimal_midi() {
 }
 
 fn build_complex_model() -> YinModel {
-    use std::collections::BTreeMap;
     use std::sync::Arc;
 
     let conductor = ConductorData {
@@ -89,22 +88,36 @@ fn build_complex_model() -> YinModel {
         NoteEvent { start_tick: 1000, end_tick: 1500, key: 60, velocity: 80, dup_index: 0 },
         NoteEvent { start_tick: 1000, end_tick: 1400, key: 60, velocity: 70, dup_index: 1 },
     ];
-    let mut cc_map: BTreeMap<u8, Vec<CcEvent>> = BTreeMap::new();
-    cc_map.insert(7, vec![
-        CcEvent { tick: 0, value: 100 },
-        CcEvent { tick: 480, value: 80 },
-    ]);
-    t0.cc = cc_map;
-    t0.pitch_bend = vec![PitchBendEvent { tick: 200, value: 2000 }];
+    t0.automation_lanes = vec![
+        AutomationLane {
+            target: AutomationTarget::CC { controller: 7 },
+            track: 0,
+            events: vec![
+                AutomationEvent { tick: 0, value: 100 },
+                AutomationEvent { tick: 480, value: 80 },
+            ],
+        },
+        AutomationLane {
+            target: AutomationTarget::PitchBend,
+            track: 0,
+            events: vec![
+                AutomationEvent { tick: 200, value: 2000 },
+            ],
+        },
+        AutomationLane {
+            target: AutomationTarget::Rpn { parameter: 0x0000 },
+            track: 0,
+            events: vec![
+                AutomationEvent { tick: 100, value: 2 },
+            ],
+        },
+    ];
     t0.program_change = vec![PcEvent {
         tick: 0,
         program: 5,
         bank_msb: 0xFF,
         bank_lsb: 0xFF,
     }];
-    let mut rpn_map: BTreeMap<u16, Vec<RpnEvent>> = BTreeMap::new();
-    rpn_map.insert(0x0000, vec![RpnEvent { tick: 100, value: 2 }]);
-    t0.rpn = rpn_map;
 
     let mut t1 = TrackData::new(0, 1);
     t1.name = "Bass".to_string();
@@ -164,15 +177,22 @@ fn roundtrip_complex_model_preserves_everything() {
     s1.sort();
     s2.sort();
     assert_eq!(s1, s2, "note multiset differs");
-    assert!(l2.cc.contains_key(&7));
-    assert_eq!(l2.cc[&7].len(), 2);
-    assert_eq!(l2.pitch_bend.len(), 1);
-    assert_eq!(l2.pitch_bend[0].value, 2000);
+    // Find lanes by target
+    let find_lane = |target: &AutomationTarget| -> Option<&AutomationLane> {
+        l2.automation_lanes.iter().find(|l| &l.target == target)
+    };
+    let cc7 = find_lane(&AutomationTarget::CC { controller: 7 }).expect("CC 7 lane");
+    assert_eq!(cc7.events.len(), 2);
+    assert_eq!(cc7.events[0].value, 100);
+    assert_eq!(cc7.events[1].value, 80);
+    let pb = find_lane(&AutomationTarget::PitchBend).expect("PitchBend lane");
+    assert_eq!(pb.events.len(), 1);
+    assert_eq!(pb.events[0].value, 2000);
+    let rpn = find_lane(&AutomationTarget::Rpn { parameter: 0x0000 }).expect("RPN 0 lane");
+    assert_eq!(rpn.events.len(), 1);
+    assert_eq!(rpn.events[0].value, 2);
     assert_eq!(l2.program_change.len(), 1);
     assert_eq!(l2.program_change[0].program, 5);
-    assert!(l2.rpn.contains_key(&0x0000));
-    assert_eq!(l2.rpn[&0x0000].len(), 1);
-    assert_eq!(l2.rpn[&0x0000][0].value, 2);
 
     assert_eq!(model2.conductor.tempo.len(), 2);
     assert!((model2.conductor.tempo[1].bpm - 60.0).abs() < 0.5);
@@ -245,14 +265,20 @@ fn rpn_sequence_decodes_to_rpn_event() {
     let model = parse_bytes(&bytes).expect("parse failed");
     assert_eq!(model.tracks.len(), 1);
     let t = &model.tracks[0];
-    // CC101/100/6 should NOT appear as plain CC
-    assert!(!t.cc.contains_key(&101));
-    assert!(!t.cc.contains_key(&100));
-    assert!(!t.cc.contains_key(&6));
-    // Should have one RPN event for key 0x0000
-    assert!(t.rpn.contains_key(&0x0000));
-    assert_eq!(t.rpn[&0x0000].len(), 1);
-    assert_eq!(t.rpn[&0x0000][0].value, 2);
+    // CC101/100/6 should NOT appear as plain CC lanes
+    assert!(t.automation_lanes.iter().all(|l| match &l.target {
+        AutomationTarget::CC { controller } => *controller != 101 && *controller != 100 && *controller != 6,
+        _ => true,
+    }));
+    // Should have one RPN lane for parameter 0x0000
+    let rpn_lane = t
+        .automation_lanes
+        .iter()
+        .find(|l| l.target == AutomationTarget::Rpn { parameter: 0x0000 })
+        .expect("RPN 0 lane");
+    assert_eq!(rpn_lane.events.len(), 1);
+    // CC6=2 is stored as 14-bit value: (2 << 7) | 0 = 256
+    assert_eq!(rpn_lane.events[0].value, 256);
 }
 
 /// Build SMF with port + channel-prefix metas

@@ -1,23 +1,20 @@
+use serde::{Deserialize, Serialize};
+
 /// Identifies an automatable parameter.
 ///
 /// This enum is the unified key for all automation data — CC, PitchBend,
-/// RPN, Velocity, and future VST parameters. Each variant maps to a lane
+/// RPN, NRPN, and future VST parameters. Each variant maps to a lane
 /// of `(tick, value)` events sorted by tick.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum AutomationTarget {
     /// MIDI CC 0–127.
     CC { controller: u8 },
     /// MIDI Pitch Bend (0–16383, center 8192).
     PitchBend,
-    /// RPN 0: Pitch Bend Sensitivity (in semitones, 0–24 typical).
-    PitchBendSensitivity,
-    /// RPN 1: Fine Tune (in cents, ±50 typical).
-    FineTune,
-    /// RPN 2: Coarse Tune (in semitones).
-    CoarseTune,
-    /// Per-note velocity (extracted from NoteOn events).
-    Velocity,
-    // Future: VSTParam { plugin_id: u32, param_id: u32 },
+    /// RPN (Registered Parameter Number), 14-bit parameter address 0–16383.
+    Rpn { parameter: u16 },
+    /// NRPN (Non-Registered Parameter Number), 14-bit parameter address 0–16383.
+    Nrpn { parameter: u16 },
 }
 
 impl AutomationTarget {
@@ -26,10 +23,8 @@ impl AutomationTarget {
         match self {
             AutomationTarget::CC { .. } => 127,
             AutomationTarget::PitchBend => 16383,
-            AutomationTarget::PitchBendSensitivity => 127,
-            AutomationTarget::FineTune => 16383, // 14-bit (MSB+LSB, like PitchBend)
-            AutomationTarget::CoarseTune => 127,
-            AutomationTarget::Velocity => 127,
+            AutomationTarget::Rpn { .. } => 16383,
+            AutomationTarget::Nrpn { .. } => 16383,
         }
     }
 
@@ -41,19 +36,21 @@ impl AutomationTarget {
                 _ => 0,
             },
             AutomationTarget::PitchBend => 8192,
-            AutomationTarget::PitchBendSensitivity => 2,
-            AutomationTarget::FineTune => 8192, // center of 14-bit range
-            AutomationTarget::CoarseTune => 0,
-            AutomationTarget::Velocity => 0,
+            AutomationTarget::Rpn { parameter } => match parameter {
+                0 => 2,     // Pitch Bend Sensitivity
+                1 => 8192,  // Fine Tune (center of 14-bit range)
+                _ => 0,
+            },
+            AutomationTarget::Nrpn { .. } => 0,
         }
     }
 
-    /// Whether this target has a non-zero center (PitchBend, FineTune).
+    /// Whether this target has a non-zero center (PitchBend, Fine Tune).
     pub fn has_center_line(&self) -> bool {
         matches!(
             self,
             AutomationTarget::PitchBend
-                | AutomationTarget::FineTune
+                | AutomationTarget::Rpn { parameter: 1 }
                 | AutomationTarget::CC { controller: 10 }
                 | AutomationTarget::CC { controller: 71 }
                 | AutomationTarget::CC { controller: 72 }
@@ -74,10 +71,17 @@ impl AutomationTarget {
                 }
             }
             AutomationTarget::PitchBend => "Pitch Bend".into(),
-            AutomationTarget::PitchBendSensitivity => "PB Sensitivity (RPN 0)".into(),
-            AutomationTarget::FineTune => "Fine Tune (RPN 1)".into(),
-            AutomationTarget::CoarseTune => "Coarse Tune (RPN 2)".into(),
-            AutomationTarget::Velocity => "Velocity".into(),
+            AutomationTarget::Rpn { parameter } => {
+                match parameter {
+                    0 => "PB Sensitivity (RPN 0)".into(),
+                    1 => "Fine Tune (RPN 1)".into(),
+                    2 => "Coarse Tune (RPN 2)".into(),
+                    _ => format!("RPN {}", parameter),
+                }
+            }
+            AutomationTarget::Nrpn { parameter } => {
+                format!("NRPN {}", parameter)
+            }
         }
     }
 }
@@ -122,7 +126,7 @@ fn cc_name(cc: u8) -> &'static str {
 ///
 /// Channel and track are not stored here — they are implied by the
 /// owning `AutomationLane` (which mirrors `TrackData`'s per-track design).
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AutomationEvent {
     pub tick: u32,
     /// Raw value. Range depends on the target (0–127 for CC, 0–16383 for PB, etc.).
@@ -130,7 +134,7 @@ pub struct AutomationEvent {
 }
 
 /// A sorted lane of automation events for one parameter on one track.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AutomationLane {
     pub target: AutomationTarget,
     /// Track index (matches `TrackData` position in `YinModel.tracks`).
@@ -245,7 +249,26 @@ mod tests {
             "CC 99"
         );
         assert_eq!(AutomationTarget::PitchBend.display_name(), "Pitch Bend");
-        assert_eq!(AutomationTarget::Velocity.display_name(), "Velocity");
+        assert_eq!(
+            AutomationTarget::Rpn { parameter: 0 }.display_name(),
+            "PB Sensitivity (RPN 0)"
+        );
+        assert_eq!(
+            AutomationTarget::Rpn { parameter: 1 }.display_name(),
+            "Fine Tune (RPN 1)"
+        );
+        assert_eq!(
+            AutomationTarget::Rpn { parameter: 2 }.display_name(),
+            "Coarse Tune (RPN 2)"
+        );
+        assert_eq!(
+            AutomationTarget::Rpn { parameter: 5 }.display_name(),
+            "RPN 5"
+        );
+        assert_eq!(
+            AutomationTarget::Nrpn { parameter: 10 }.display_name(),
+            "NRPN 10"
+        );
     }
 
     #[test]
@@ -264,10 +287,15 @@ mod tests {
         assert!(AutomationTarget::CC { controller: 10 }.has_center_line());
         assert!(AutomationTarget::CC { controller: 71 }.has_center_line());
         assert!(!AutomationTarget::CC { controller: 7 }.has_center_line());
-        assert_eq!(AutomationTarget::FineTune.max_value(), 16383);
-        assert_eq!(AutomationTarget::FineTune.default_value(), 8192);
-        assert!(AutomationTarget::FineTune.has_center_line());
-        assert_eq!(AutomationTarget::CoarseTune.max_value(), 127);
-        assert_eq!(AutomationTarget::CoarseTune.default_value(), 0);
+        assert_eq!(AutomationTarget::Rpn { parameter: 0 }.max_value(), 16383);
+        assert_eq!(AutomationTarget::Rpn { parameter: 0 }.default_value(), 2);
+        assert_eq!(AutomationTarget::Rpn { parameter: 1 }.max_value(), 16383);
+        assert_eq!(AutomationTarget::Rpn { parameter: 1 }.default_value(), 8192);
+        assert!(AutomationTarget::Rpn { parameter: 1 }.has_center_line());
+        assert_eq!(AutomationTarget::Rpn { parameter: 2 }.max_value(), 16383);
+        assert_eq!(AutomationTarget::Rpn { parameter: 2 }.default_value(), 0);
+        assert!(!AutomationTarget::Rpn { parameter: 2 }.has_center_line());
+        assert_eq!(AutomationTarget::Nrpn { parameter: 5 }.max_value(), 16383);
+        assert_eq!(AutomationTarget::Nrpn { parameter: 5 }.default_value(), 0);
     }
 }

@@ -1,11 +1,10 @@
 //! YinModel + TrackData + ConductorData + ProjectMeta + rebuild logic.
 
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::events::{CcEvent, NoteEvent, PcEvent, PitchBendEvent, RpnEvent};
+use crate::events::{NoteEvent, PcEvent};
 use crate::tempo_map::{
     DEFAULT_MPQ, TempoMap, TempoSegment, mpq_from_bpm, recompute_tempo_start_times,
 };
@@ -44,6 +43,11 @@ pub struct ConductorData {
 ///
 /// Channel/track are held here, not in individual events. NoteEvent is
 /// looked up by `(track_idx, key, start_tick, dup_index)`.
+///
+/// Control events (CC, PitchBend, RPN, NRPN) are unified into
+/// `automation_lanes` — one lane per parameter per track. Program Change
+/// is stored separately since it is a discrete event, not a continuous
+/// automation curve.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TrackData {
     pub uuid: String,
@@ -61,11 +65,11 @@ pub struct TrackData {
     /// This field is only used during parsing and is moved out
     /// by `YinModel::load_track_notes`. At runtime it is empty.
     pub notes: Vec<NoteEvent>,
-    pub cc: BTreeMap<u8, Vec<CcEvent>>,
-    pub pitch_bend: Vec<PitchBendEvent>,
+    /// Unified automation lanes: CC, PitchBend, RPN, NRPN.
+    /// Each lane is a sorted list of (tick, value) events.
+    pub automation_lanes: Vec<yinhe_types::AutomationLane>,
+    /// Program Change events (discrete, not automation).
     pub program_change: Vec<PcEvent>,
-    /// RPN keyed by (msb << 8) | lsb.
-    pub rpn: BTreeMap<u16, Vec<RpnEvent>>,
 }
 
 impl TrackData {
@@ -80,10 +84,8 @@ impl TrackData {
             muted: false,
             soloed: false,
             notes: Vec::new(),
-            cc: BTreeMap::new(),
-            pitch_bend: Vec::new(),
+            automation_lanes: Vec::new(),
             program_change: Vec::new(),
-            rpn: BTreeMap::new(),
         }
     }
 

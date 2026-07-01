@@ -1,12 +1,11 @@
 //! Round-trip tests: YinModel -> .yin bytes -> YinModel.
 
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use yinhe_core::{
-    CcEvent, ConductorData, NoteEvent, PcEvent, PitchBendEvent, ProjectMeta, RpnEvent, TempoEvent,
-    TimeSigEvent, TrackData, YinModel,
+    ConductorData, NoteEvent, PcEvent, ProjectMeta, TempoEvent, TimeSigEvent, TrackData, YinModel,
 };
+use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget};
 use yinhe_yin::{load_yin, load_yin_bytes, save_yin, save_yin_bytes};
 
 fn build_complex_model() -> YinModel {
@@ -32,13 +31,44 @@ fn build_complex_model() -> YinModel {
         NoteEvent { start_tick: 1000, end_tick: 1500, key: 60, velocity: 80, dup_index: 0 },
         NoteEvent { start_tick: 1000, end_tick: 1400, key: 60, velocity: 70, dup_index: 1 },
     ];
-    let mut cc_map: BTreeMap<u8, Vec<CcEvent>> = BTreeMap::new();
-    cc_map.insert(7, vec![CcEvent { tick: 0, value: 100 }, CcEvent { tick: 480, value: 80 }]);
-    cc_map.insert(11, vec![CcEvent { tick: 100, value: 64 }]);
-    t0.cc = cc_map;
-    t0.pitch_bend = vec![
-        PitchBendEvent { tick: 200, value: 2000 },
-        PitchBendEvent { tick: 400, value: -1000 },
+    t0.automation_lanes = vec![
+        AutomationLane {
+            target: AutomationTarget::CC { controller: 7 },
+            track: 0,
+            events: vec![
+                AutomationEvent { tick: 0, value: 100 },
+                AutomationEvent { tick: 480, value: 80 },
+            ],
+        },
+        AutomationLane {
+            target: AutomationTarget::CC { controller: 11 },
+            track: 0,
+            events: vec![
+                AutomationEvent { tick: 100, value: 64 },
+            ],
+        },
+        AutomationLane {
+            target: AutomationTarget::PitchBend,
+            track: 0,
+            events: vec![
+                AutomationEvent { tick: 200, value: 2000 },
+                AutomationEvent { tick: 400, value: 1000 }, // 8192 - 1000 = 7192 → 1000
+            ],
+        },
+        AutomationLane {
+            target: AutomationTarget::Rpn { parameter: 0x0000 },
+            track: 0,
+            events: vec![
+                AutomationEvent { tick: 100, value: 2 },
+            ],
+        },
+        AutomationLane {
+            target: AutomationTarget::Rpn { parameter: 0x0001 },
+            track: 0,
+            events: vec![
+                AutomationEvent { tick: 200, value: 8192 },
+            ],
+        },
     ];
     t0.program_change = vec![PcEvent {
         tick: 0,
@@ -46,10 +76,6 @@ fn build_complex_model() -> YinModel {
         bank_msb: 0xFF,
         bank_lsb: 0xFF,
     }];
-    let mut rpn_map: BTreeMap<u16, Vec<RpnEvent>> = BTreeMap::new();
-    rpn_map.insert(0x0000, vec![RpnEvent { tick: 100, value: 2 }]);
-    rpn_map.insert(0x0001, vec![RpnEvent { tick: 200, value: 8192 }]);
-    t0.rpn = rpn_map;
 
     let mut t1 = TrackData::new(0, 1);
     t1.name = "Bass".to_string();
@@ -111,16 +137,48 @@ fn roundtrip_in_memory() {
     assert_eq!(lead.color, [0.8, 0.3, 0.2]);
     assert!(lead.soloed);
     assert_eq!(m2.track_note_count[lead_idx as usize], 4);
-    assert!(lead.cc.contains_key(&7));
-    assert_eq!(lead.cc[&7].len(), 2);
-    assert!(lead.cc.contains_key(&11));
-    assert_eq!(lead.pitch_bend.len(), 2);
-    assert_eq!(lead.pitch_bend[1].value, -1000);
+
+    // Check CC automation lanes
+    let cc7 = lead
+        .automation_lanes
+        .iter()
+        .find(|l| l.target == AutomationTarget::CC { controller: 7 })
+        .expect("CC 7 lane");
+    assert_eq!(cc7.events.len(), 2);
+
+    let cc11 = lead
+        .automation_lanes
+        .iter()
+        .find(|l| l.target == AutomationTarget::CC { controller: 11 })
+        .expect("CC 11 lane");
+    assert_eq!(cc11.events.len(), 1);
+
+    // Check PitchBend automation lane
+    let pb = lead
+        .automation_lanes
+        .iter()
+        .find(|l| l.target == AutomationTarget::PitchBend)
+        .expect("PitchBend lane");
+    assert_eq!(pb.events.len(), 2);
+    assert_eq!(pb.events[1].value, 1000);
+
     assert_eq!(lead.program_change.len(), 1);
     assert_eq!(lead.program_change[0].program, 5);
-    assert!(lead.rpn.contains_key(&0x0000));
-    assert!(lead.rpn.contains_key(&0x0001));
-    assert_eq!(lead.rpn[&0x0001][0].value, 8192);
+
+    // Check RPN automation lanes
+    let rpn0 = lead
+        .automation_lanes
+        .iter()
+        .find(|l| l.target == AutomationTarget::Rpn { parameter: 0x0000 })
+        .expect("RPN 0x0000 lane");
+    assert_eq!(rpn0.events.len(), 1);
+
+    let rpn1 = lead
+        .automation_lanes
+        .iter()
+        .find(|l| l.target == AutomationTarget::Rpn { parameter: 0x0001 })
+        .expect("RPN 0x0001 lane");
+    assert_eq!(rpn1.events[0].value, 8192);
 
     let bass = m2.tracks.iter().find(|t| t.name == "Bass").expect("Bass");
     let bass_idx = m2.tracks.iter().position(|t| t.name == "Bass").unwrap() as u16;

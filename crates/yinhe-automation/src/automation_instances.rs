@@ -514,6 +514,7 @@ mod tests {
             },
             panel_height,
             selected_target: AutomationTarget::CC { controller: 7 },
+            show_velocity: false,
             lane_index: 0,
             dirty: true,
         }
@@ -602,7 +603,7 @@ mod tests {
         let mut instances = Vec::new();
         let view = make_view(1.0, 0.0, 100.0);
         let lane = AutomationLane {
-            target: AutomationTarget::FineTune,
+            target: AutomationTarget::Rpn { parameter: 1 },
             track: 0,
             events: vec![],
         };
@@ -625,11 +626,11 @@ mod tests {
     }
 
     #[test]
-    fn test_no_center_line_for_velocity() {
+    fn test_no_center_line_for_rpn_parameter_2() {
         let mut instances = Vec::new();
         let view = make_view(1.0, 0.0, 100.0);
         let lane = AutomationLane {
-            target: AutomationTarget::Velocity,
+            target: AutomationTarget::Rpn { parameter: 2 },
             track: 0,
             events: vec![],
         };

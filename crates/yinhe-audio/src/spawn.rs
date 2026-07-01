@@ -119,10 +119,8 @@ pub fn channels_for_model(model: &YinModel) -> (u32, Vec<bool>) {
 
     for (track_idx, track) in model.tracks.iter().enumerate() {
         let ch = track_global_channel(model, track_idx) as usize;
-        let has_ctrl = !track.cc.is_empty()
-            || !track.pitch_bend.is_empty()
-            || !track.program_change.is_empty()
-            || !track.rpn.is_empty();
+        let has_ctrl = !track.automation_lanes.is_empty()
+            || !track.program_change.is_empty();
         if has_ctrl && ch < 256 {
             ch_active[ch] = ch_active[ch].max(1);
         }

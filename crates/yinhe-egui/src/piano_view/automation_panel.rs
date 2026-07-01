@@ -10,7 +10,6 @@ use yinhe_automation::{AutomationPanelView, PianorollRenderer, prepare_automatio
 
 /// Curated list of known automation targets shown in the dropdown.
 const AUTOMATION_TARGETS: &[AutomationTarget] = &[
-    AutomationTarget::Velocity,
     AutomationTarget::PitchBend,
     AutomationTarget::CC { controller: 7 },  // Volume
     AutomationTarget::CC { controller: 10 }, // Pan
@@ -20,9 +19,9 @@ const AUTOMATION_TARGETS: &[AutomationTarget] = &[
     AutomationTarget::CC { controller: 72 }, // Release
     AutomationTarget::CC { controller: 73 }, // Attack
     AutomationTarget::CC { controller: 74 }, // Cutoff
-    AutomationTarget::PitchBendSensitivity,  // RPN 0
-    AutomationTarget::FineTune,              // RPN 1
-    AutomationTarget::CoarseTune,            // RPN 2
+    AutomationTarget::Rpn { parameter: 0 },  // PB Sensitivity
+    AutomationTarget::Rpn { parameter: 1 },  // Fine Tune
+    AutomationTarget::Rpn { parameter: 2 },  // Coarse Tune
 ];
 
 use crate::render_context::RenderContext;
@@ -194,7 +193,6 @@ pub fn show_panels(
         ui.painter().rect_filled(combo_rect, 0.0, theme::APP_BG);
 
         let combo_inner = combo_rect.shrink(4.0);
-        let is_velocity = panel.selected_target == AutomationTarget::Velocity;
 
         ui.scope_builder(egui::UiBuilder::new().max_rect(combo_inner), |ui| {
             ui.set_clip_rect(combo_inner);
@@ -218,11 +216,20 @@ pub fn show_panels(
                     .align(egui::RectAlign::TOP_START)
                     .show(|ui| {
                         ui.set_min_width(120.0);
+                        // Velocity (special: not an AutomationTarget, renders from notes)
+                        let vel_selected = panel.show_velocity;
+                        if ui.add(egui::Button::selectable(vel_selected, "Velocity")).clicked() {
+                            panel.show_velocity = true;
+                            panel.dirty = true;
+                            ui.close();
+                        }
+                        ui.separator();
                         for target in AUTOMATION_TARGETS {
                             let name = target.display_name();
-                            let selected = panel.selected_target == *target;
+                            let selected = !panel.show_velocity && panel.selected_target == *target;
                             if ui.add(egui::Button::selectable(selected, &name)).clicked() {
                                 panel.selected_target = target.clone();
+                                panel.show_velocity = false;
                                 panel.dirty = true;
                                 ui.close();
                             }
@@ -236,6 +243,7 @@ pub fn show_panels(
                         let resp = ui.add(egui::DragValue::new(&mut cc_input).range(0..=127).speed(1));
                         if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                             panel.selected_target = AutomationTarget::CC { controller: cc_input as u8 };
+                            panel.show_velocity = false;
                             panel.dirty = true;
                             ui.close();
                         }
@@ -243,10 +251,10 @@ pub fn show_panels(
 
                 ui.add_space(4.0);
 
-                // ── Second row: display mode buttons ──
+                // ── Display mode buttons ──
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 2.0;
-                    if is_velocity {
+                    if panel.show_velocity {
                         // Velocity display mode: three text buttons
                         let vel_modes = [(0u32, "柱"), (1u32, "矩"), (2u32, "空")];
                         for &(mode, label) in &vel_modes {
@@ -331,12 +339,18 @@ pub fn show_panels(
         });
 
         // ── Grid overlay: value labels + target name ──
-        let name = panel.selected_target.display_name();
+        let name = if panel.show_velocity {
+            "Velocity".to_string()
+        } else {
+            panel.selected_target.display_name()
+        };
         let label_color = theme::MEASURE_LABEL;
         let font_id = egui::FontId::proportional(10.0);
         let pad_x = 4.0;
 
-        let (top_val, mid_val, bot_val) = {
+        let (top_val, mid_val, bot_val) = if panel.show_velocity {
+            ("127".to_string(), "64".to_string(), "0".to_string())
+        } else {
             let target = &panel.selected_target;
             let max = target.max_value();
             let def = target.default_value();

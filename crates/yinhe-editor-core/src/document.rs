@@ -359,7 +359,7 @@ pub fn detect_conductor_from_model(model: &YinModel) -> Option<u16> {
     if model.track_note_count.first().copied().unwrap_or(0) > 0 {
         return None;
     }
-    if !first.cc.is_empty() || !first.pitch_bend.is_empty() || !first.program_change.is_empty() {
+    if !first.automation_lanes.is_empty() || !first.program_change.is_empty() {
         return None;
     }
     Some(0)

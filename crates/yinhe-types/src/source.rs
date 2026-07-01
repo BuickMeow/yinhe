@@ -1,4 +1,4 @@
-use crate::{AutomationLane, Note, TimeSigEvent};
+use crate::{Note, TimeSigEvent};
 
 pub trait NoteSource: Sync {
     fn key_notes(&self, key: u8) -> &[Note];
@@ -19,10 +19,6 @@ pub trait NoteSource: Sync {
     }
     /// Time signature change events, sorted by tick.
     fn time_sig_events(&self) -> &[TimeSigEvent] {
-        &[]
-    }
-    /// Automation lanes built from control events (CC, PB, RPN, Velocity).
-    fn automation_lanes(&self) -> &[AutomationLane] {
         &[]
     }
 

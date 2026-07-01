@@ -323,7 +323,13 @@ impl App {
                         numerator: t.numerator,
                         denominator: t.denominator,
                     }).collect();
-                    let automation_lanes: Vec<yinhe_types::AutomationLane> = Vec::new();
+                    // Get automation lanes from the first selected track
+                    let automation_lanes: Vec<yinhe_types::AutomationLane> = {
+                        let first_track = doc.edit.track_selected.iter().next().copied().unwrap_or(0) as usize;
+                        doc.data.model.tracks.get(first_track)
+                            .map(|t| t.automation_lanes.clone())
+                            .unwrap_or_default()
+                    };
                     event = piano_view::show(
                         ui,
                         ui.available_size(),

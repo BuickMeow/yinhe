@@ -2,9 +2,9 @@ use super::*;
 use std::collections::BTreeMap;
 use xsynth_core::channel::ControlEvent;
 use yinhe_core::{
-    CcEvent, ConductorData, NoteEvent, ProjectMeta, TempoEvent, TrackData, YinModel,
+    ConductorData, NoteEvent, PcEvent, ProjectMeta, TempoEvent, TrackData, YinModel,
 };
-use yinhe_core::{PcEvent, PitchBendEvent, RpnEvent};
+use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget};
 
 fn make_model_with_notes(notes: Vec<(u8, u32, u32, u8, u8)>) -> YinModel {
     let conductor = ConductorData {
@@ -163,15 +163,11 @@ fn test_channels_for_model_skips_velocity_0_1() {
 fn test_channels_for_model_cc_activates_channel() {
     let conductor = ConductorData::default();
     let mut t = TrackData::new(0, 5);
-    let mut cc: BTreeMap<u8, Vec<CcEvent>> = BTreeMap::new();
-    cc.insert(
-        7,
-        vec![CcEvent {
-            tick: 0,
-            value: 100,
-        }],
-    );
-    t.cc = cc;
+    t.automation_lanes = vec![AutomationLane {
+        target: AutomationTarget::CC { controller: 7 },
+        track: 0,
+        events: vec![AutomationEvent { tick: 0, value: 100 }],
+    }];
     let mut model = YinModel {
         conductor: Arc::new(conductor),
         tracks: vec![Arc::new(t)],
@@ -470,18 +466,71 @@ fn make_model_with_controls(
         time_sig: Vec::new(),
     };
     let mut t = TrackData::new(0, 0);
-    for (controller, tick, value) in cc {
-        t.cc.entry(controller).or_default().push(CcEvent { tick, value });
+
+    // Build automation lanes from CC events
+    let mut lanes: Vec<AutomationLane> = Vec::new();
+    if !cc.is_empty() {
+        let mut cc_by_controller: BTreeMap<u8, Vec<AutomationEvent>> = BTreeMap::new();
+        for (controller, tick, value) in cc {
+            cc_by_controller
+                .entry(controller)
+                .or_default()
+                .push(AutomationEvent {
+                    tick,
+                    value: value as u16,
+                });
+        }
+        for (controller, events) in cc_by_controller {
+            lanes.push(AutomationLane {
+                target: AutomationTarget::CC { controller },
+                track: 0,
+                events,
+            });
+        }
     }
-    t.pitch_bend = pb.into_iter().map(|(tick, value)| PitchBendEvent { tick, value }).collect();
-    t.program_change = pc.into_iter().map(|(tick, program)| PcEvent { tick, program, bank_msb: 0, bank_lsb: 0 }).collect();
+
+    // Pitch bend lane
+    if !pb.is_empty() {
+        let events: Vec<AutomationEvent> = pb
+            .into_iter()
+            .map(|(tick, value)| AutomationEvent {
+                tick,
+                value: (value + 8192) as u16,
+            })
+            .collect();
+        lanes.push(AutomationLane {
+            target: AutomationTarget::PitchBend,
+            track: 0,
+            events,
+        });
+    }
+
+    // RPN lanes
     for (key, tick, value) in rpn {
-        t.rpn.entry(key).or_default().push(RpnEvent { tick, value });
+        lanes.push(AutomationLane {
+            target: AutomationTarget::Rpn { parameter: key },
+            track: 0,
+            events: vec![AutomationEvent { tick, value }],
+        });
     }
+
+    t.automation_lanes = lanes;
+    t.program_change = pc
+        .into_iter()
+        .map(|(tick, program)| PcEvent {
+            tick,
+            program,
+            bank_msb: 0,
+            bank_lsb: 0,
+        })
+        .collect();
     let mut model = YinModel {
         conductor: Arc::new(conductor),
         tracks: vec![Arc::new(t)],
-        meta: ProjectMeta { ppq: 480, ..ProjectMeta::default() },
+        meta: ProjectMeta {
+            ppq: 480,
+            ..ProjectMeta::default()
+        },
         ..Default::default()
     };
     model.rebuild();

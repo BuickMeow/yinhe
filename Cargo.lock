@@ -6569,6 +6569,9 @@ dependencies = [
 [[package]]
 name = "yinhe-types"
 version = "0.1.0"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "yinhe-wgpu"
@@ -6591,6 +6594,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "yinhe-core",
+ "yinhe-types",
  "zstd",
 ]
 

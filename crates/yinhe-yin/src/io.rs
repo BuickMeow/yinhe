@@ -4,16 +4,15 @@
 //! `save_yin_bytes(model)` / `load_yin_bytes(bytes)` operate on memory
 //! buffers (used by tests and for streaming).
 
-use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
 use yinhe_core::{
-    CcEvent, ConductorData, NoteEvent, PcEvent, PitchBendEvent, ProjectMeta, RpnEvent, TrackData,
-    YinModel,
+    ConductorData, NoteEvent, PcEvent, ProjectMeta, TrackData, YinModel,
 };
+use yinhe_types::AutomationLane;
 
 use crate::container::{Sections, pack, unpack};
 use crate::error::YinError;
@@ -42,10 +41,8 @@ struct ModelData {
 struct TrackPayload {
     uuid: String,
     notes: Vec<NoteEvent>,
-    cc: BTreeMap<u8, Vec<CcEvent>>,
-    pitch_bend: Vec<PitchBendEvent>,
+    automation_lanes: Vec<AutomationLane>,
     program_change: Vec<PcEvent>,
-    rpn: BTreeMap<u16, Vec<RpnEvent>>,
 }
 
 impl TrackPayload {
@@ -65,10 +62,8 @@ impl TrackPayload {
         Self {
             uuid: t.uuid.clone(),
             notes,
-            cc: t.cc.clone(),
-            pitch_bend: t.pitch_bend.clone(),
+            automation_lanes: t.automation_lanes.clone(),
             program_change: t.program_change.clone(),
-            rpn: t.rpn.clone(),
         }
     }
 }
@@ -221,10 +216,8 @@ fn load_yin_bytes_inner(bytes: &[u8]) -> Result<(YinModel, ProjectFile, MappingF
             muted: tm.muted,
             soloed: tm.soloed,
             notes: Vec::new(), // notes loaded via load_track_notes
-            cc: payload.cc,
-            pitch_bend: payload.pitch_bend,
+            automation_lanes: payload.automation_lanes,
             program_change: payload.program_change,
-            rpn: payload.rpn,
         };
         if td.uuid != payload.uuid {
             return Err(YinError::Io(std::io::Error::new(

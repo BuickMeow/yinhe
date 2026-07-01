@@ -51,9 +51,10 @@ impl AudioModel {
             .tracks
             .iter()
             .map(|t| {
-                t.cc
-                    .get(&0)
-                    .map(|evs| evs.iter().map(|e| e.value).collect())
+                t.automation_lanes
+                    .iter()
+                    .find(|l| matches!(l.target, yinhe_types::AutomationTarget::CC { controller: 0 }))
+                    .map(|lane| lane.events.iter().map(|e| (e.value & 0x7F) as u8).collect())
                     .unwrap_or_default()
             })
             .collect();

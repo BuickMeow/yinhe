@@ -2,10 +2,10 @@
 //!
 //! This trait is the contract between data sources and rendering / audio
 //! consumers. By implementing it on YinModel directly, every component
-//! that already speaks NoteSource (PianoRoll, Arrangement, automation
-//! browser) works without changes.
+//! that already speaks NoteSource (PianoRoll, Arrangement) works without
+//! changes.
 
-use yinhe_types::{AutomationLane, Note, NoteSource, TimeSigEvent};
+use yinhe_types::{Note, NoteSource, TimeSigEvent};
 
 use crate::model::YinModel;
 
@@ -36,12 +36,5 @@ impl NoteSource for YinModel {
 
     fn time_sig_events(&self) -> &[TimeSigEvent] {
         &self.tempo_map.time_sig_events
-    }
-
-    fn automation_lanes(&self) -> &[AutomationLane] {
-        // Automation lanes are derived from TrackData on demand. The
-        // current renderer pulls them via a separate call; we don't cache
-        // them here yet (no consumer requires this returned slice today).
-        &[]
     }
 }

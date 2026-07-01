@@ -21,21 +21,6 @@ pub struct NoteEvent {
     pub dup_index: u8,
 }
 
-/// Control Change event. The CC controller number is the key in
-/// `TrackData::cc: BTreeMap<u8, Vec<CcEvent>>`.
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
-pub struct CcEvent {
-    pub tick: u32,
-    pub value: u8,
-}
-
-/// Pitch Bend event. Value range -8192 to +8191, 0 = center.
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
-pub struct PitchBendEvent {
-    pub tick: u32,
-    pub value: i16,
-}
-
 /// Program Change event. Bank MSB/LSB are stored alongside for SF2 mapping.
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 pub struct PcEvent {
@@ -43,17 +28,4 @@ pub struct PcEvent {
     pub program: u8,
     pub bank_msb: u8,
     pub bank_lsb: u8,
-}
-
-/// Registered Parameter Number event. The RPN selector is the key in
-/// `TrackData::rpn: BTreeMap<u16, Vec<RpnEvent>>` where key = (msb << 8) | lsb.
-///
-/// Common RPNs:
-/// - 0x0000: Pitch Bend Sensitivity (semitones)
-/// - 0x0001: Fine Tune (14-bit, 8192 = 0 cents)
-/// - 0x0002: Coarse Tune (14-bit, 8192 = 0 semitones)
-#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
-pub struct RpnEvent {
-    pub tick: u32,
-    pub value: u16,
 }

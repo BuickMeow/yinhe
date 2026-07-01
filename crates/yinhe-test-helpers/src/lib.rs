@@ -1,7 +1,7 @@
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use yinhe_core::{CcEvent, ConductorData, NoteEvent, PcEvent, PitchBendEvent, ProjectMeta, TempoEvent, TimeSigEvent, TrackData, YinModel};
+use yinhe_core::{ConductorData, NoteEvent, PcEvent, ProjectMeta, TempoEvent, TimeSigEvent, TrackData, YinModel};
+use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget};
 use yinhe_editor_core::document::Document;
 use yinhe_editor_core::quantize::QuantizePreset;
 
@@ -20,14 +20,22 @@ pub fn make_test_model() -> YinModel {
 
     let mut t0 = TrackData::new(0, 0); // port 0, ch 0
     t0.name = "Lead".into();
-    t0.cc.insert(7, vec![
-        CcEvent { tick: 0, value: 100 },
-        CcEvent { tick: 240, value: 80 },
-    ]);
+    t0.automation_lanes = vec![AutomationLane {
+        target: AutomationTarget::CC { controller: 7 },
+        track: 0,
+        events: vec![
+            AutomationEvent { tick: 0, value: 100 },
+            AutomationEvent { tick: 240, value: 80 },
+        ],
+    }];
 
     let mut t1 = TrackData::new(0, 1); // port 0, ch 1
     t1.name = "Bass".into();
-    t1.pitch_bend = vec![PitchBendEvent { tick: 100, value: 1024 }];
+    t1.automation_lanes = vec![AutomationLane {
+        target: AutomationTarget::PitchBend,
+        track: 1,
+        events: vec![AutomationEvent { tick: 100, value: 1024 }],
+    }];
 
     let mut t2 = TrackData::new(1, 0); // port 1, ch 0
     t2.name = "Drums".into();
