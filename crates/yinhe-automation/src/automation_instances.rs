@@ -507,9 +507,10 @@ pub fn build_tempo_lines(
     let vis_start = tempo_events.partition_point(|e| e.0 < pad_start);
     let vis_end = tempo_events.partition_point(|e| e.0 < pad_end);
 
-    if vis_start >= vis_end && vis_start == 0 {
-        // No visible events: draw full-width line at first tempo
-        let val = tempo_events[0].1 as f32;
+    if vis_start >= vis_end {
+        // No events in visible range: draw full-width line at chase value
+        let chase_idx = if vis_start > 0 { vis_start - 1 } else { 0 };
+        let val = tempo_events[chase_idx].1 as f32;
         let y = h - (val / max_bpm) * h;
         if w > grid_left_x {
             out.push(NoteInstance {
@@ -529,7 +530,7 @@ pub fn build_tempo_lines(
     // Value before first visible event (chase)
     let prev_idx = if vis_start > 0 { vis_start - 1 } else { 0 };
     let mut prev_val = tempo_events[prev_idx].1 as f32;
-    let mut prev_tick = tempo_events[vis_start.min(vis_end.max(vis_start))].0;
+    let mut prev_tick = tempo_events[prev_idx].0;
 
     // Horizontal line from grid left edge to the first visible event
     let first_tick = tempo_events[vis_start].0;
