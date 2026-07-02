@@ -249,7 +249,9 @@ pub fn show(
     }
 
     // ── Hover cursor: show Move when over selection rect ──
-    if *active_tool == Tool::Select {
+    if *active_tool == Tool::Select
+        && !crate::view_interaction::pointer_over_popup(ui.ctx())
+    {
         if let Some(pos) = ui.input(|i| i.pointer.hover_pos()) {
             if music_rect.contains(pos) {
                 let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
@@ -695,6 +697,11 @@ fn sel_drag_frame(
         sel_rect.cancel_drag();
     }
 
+    // 弹窗打开时跳过所有 pointer 处理，避免点击穿透
+    if crate::view_interaction::pointer_over_popup(ui.ctx()) {
+        return (Vec::new(), Vec::new());
+    }
+
     // Start drag
     if pointer.primary_pressed()
         && let Some(pos) = pointer.hover_pos()
@@ -1010,6 +1017,11 @@ fn pencil_frame(
     // Clear stale drag state.
     if drag_state.is_some() && !pointer.primary_down() && !pointer.primary_released() {
         ui.data_mut(|d| d.insert_persisted(pencil_id, Option::<PencilDrag>::None));
+    }
+
+    // 弹窗打开时跳过所有 pointer 处理，避免点击穿透
+    if crate::view_interaction::pointer_over_popup(ui.ctx()) {
+        return (None, Vec::new(), Vec::new(), None);
     }
 
     let hover_pos = pointer.hover_pos();

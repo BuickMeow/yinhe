@@ -322,6 +322,13 @@ fn sel_drag_frame_arrange(
         drag = None;
     }
 
+    // 弹窗打开时跳过所有 pointer 处理，避免点击穿透
+    if crate::view_interaction::pointer_over_popup(ui.ctx()) {
+        // Persist drag state before returning
+        ui.data_mut(|d| d.insert_persisted(sel_id, drag));
+        return;
+    }
+
     if pointer.primary_pressed()
         && let Some(pos) = pointer.hover_pos()
         && content_rect.contains(pos)

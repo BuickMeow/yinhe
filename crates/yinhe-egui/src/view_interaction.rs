@@ -231,6 +231,17 @@ pub(crate) fn handle_input(
 
 // ── Shared helpers ──
 
+/// Returns true if the pointer is currently over a foreground layer (popup/menu).
+/// When true, lower layers should not process pointer events to avoid click-through.
+pub(crate) fn pointer_over_popup(ctx: &egui::Context) -> bool {
+    if let Some(pos) = ctx.input(|i| i.pointer.hover_pos()) {
+        if let Some(layer) = ctx.layer_id_at(pos) {
+            return layer.order == egui::Order::Foreground;
+        }
+    }
+    false
+}
+
 /// Check if the view has reached a scroll boundary and notify the haptic engine.
 ///
 /// Call this after `clamp_scroll` with the old scroll values, the raw
