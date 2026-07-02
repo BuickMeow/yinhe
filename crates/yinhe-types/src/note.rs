@@ -1,7 +1,8 @@
+use serde::{Deserialize, Serialize};
 use crate::NoteSource;
 
 /// A time signature event at a specific tick position.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TimeSigEvent {
     pub tick: u32,
     pub numerator: u8,
@@ -30,7 +31,7 @@ pub enum MidiControlEvent {
     },
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 #[repr(C)]
 pub struct Note {
     pub start_tick: u32,

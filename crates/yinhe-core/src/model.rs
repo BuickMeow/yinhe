@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
+use serde::ser::SerializeTuple;
 
 use crate::events::{NoteEvent, PcEvent};
 use crate::tempo_map::{
@@ -164,6 +165,76 @@ pub struct YinModel {
     /// (tempo/time_sig) changes. `rebuild_dirty()` skips tempo_map rebuild
     /// when this hasn't changed, avoiding an unnecessary O(segments) pass.
     pub conductor_version: u64,
+}
+
+// ── Manual Serialize/Deserialize for YinModel ──
+// We use manual impls because `[Arc<Vec<Note>>; 128]` exceeds serde's
+// default array-size limit (32). The notes array is serialized as a
+// sequence of 128 buckets. Cached/derived fields are skipped on
+// serialization and reconstructed on deserialization.
+
+impl Serialize for YinModel {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeTuple;
+        let note_buckets: Vec<Vec<yinhe_types::Note>> = self.notes.iter()
+            .map(|bucket| bucket.as_ref().clone())
+            .collect();
+        let mut t = s.serialize_tuple(5)?;
+        t.serialize_element(&self.conductor)?;
+        t.serialize_element(&self.tracks)?;
+        t.serialize_element(&self.meta)?;
+        t.serialize_element(&note_buckets)?;
+        t.serialize_element(&self.conductor_version)?;
+        t.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for YinModel {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        struct YinModelVisitor;
+        impl<'de> serde::de::Visitor<'de> for YinModelVisitor {
+            type Value = YinModel;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("YinModel")
+            }
+            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+                let conductor: Arc<ConductorData> = seq.next_element()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+                let tracks: Vec<Arc<TrackData>> = seq.next_element()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
+                let meta: ProjectMeta = seq.next_element()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(2, &self))?;
+                let note_buckets: Vec<Vec<yinhe_types::Note>> = seq.next_element()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(3, &self))?;
+                let conductor_version: u64 = seq.next_element()?
+                    .ok_or_else(|| serde::de::Error::invalid_length(4, &self))?;
+
+                let mut arr: Box<[Arc<Vec<yinhe_types::Note>>; 128]> = Box::new(core::array::from_fn(|_| Arc::new(Vec::new())));
+                for (i, bucket) in note_buckets.into_iter().enumerate() {
+                    if i < 128 {
+                        arr[i] = Arc::new(bucket);
+                    }
+                }
+                let mut model = YinModel {
+                    conductor,
+                    tracks,
+                    tempo_map: Arc::new(TempoMap::default()),
+                    meta,
+                    notes: arr,
+                    note_count: 0,
+                    tick_length: 0,
+                    track_note_count: Vec::new(),
+                    track_has_audio_cache: Vec::new(),
+                    dirty_keys: [false; 128],
+                    bucket_note_count: [0; 128],
+                    conductor_version,
+                };
+                model.rebuild();
+                Ok(model)
+            }
+        }
+        d.deserialize_tuple(5, YinModelVisitor)
+    }
 }
 
 impl Default for YinModel {

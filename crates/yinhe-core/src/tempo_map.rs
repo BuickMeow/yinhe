@@ -88,7 +88,7 @@ pub fn recompute_tempo_start_times(segments: &mut [TempoSegment], ticks_per_beat
 }
 
 /// Standalone time-mapping structure derived from a `YinModel.conductor`.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TempoMap {
     pub ticks_per_beat: u32,
     pub tempo_segments: Vec<TempoSegment>,

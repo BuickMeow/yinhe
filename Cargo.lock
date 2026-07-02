@@ -6451,6 +6451,7 @@ dependencies = [
 name = "yinhe-editor-core"
 version = "0.1.0"
 dependencies = [
+ "bincode",
  "dirs",
  "serde",
  "serde_json",
@@ -6462,6 +6463,7 @@ dependencies = [
  "yinhe-mid2",
  "yinhe-types",
  "yinhe-yin",
+ "zstd",
 ]
 
 [[package]]

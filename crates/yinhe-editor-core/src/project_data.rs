@@ -9,7 +9,7 @@ use yinhe_yin::{MappingFile, ProjectFile};
 ///
 /// `Arc<YinModel>` ensures snapshot clone is O(1) — actual data copy
 /// only happens on `Arc::make_mut` (copy-on-write).
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct ProjectData {
     pub model: Arc<YinModel>,
     /// Authoritative, editable track names. Mirrored into `track_info_cache`.
@@ -44,6 +44,24 @@ impl ProjectData {
             track_selected: std::collections::HashSet::new(),
             sel_rect: crate::edit_state::SelRectState::default(),
         }
+    }
+
+    /// Compress this data into a zstd-compressed bincode blob for undo storage.
+    /// Uses streaming encoder to avoid an intermediate uncompressed buffer.
+    pub fn compress_snapshot(&self) -> Vec<u8> {
+        let mut compressed = Vec::new();
+        {
+            let mut encoder = zstd::Encoder::new(&mut compressed, 3).unwrap();
+            bincode::serialize_into(&mut encoder, self).unwrap();
+            encoder.finish().unwrap();
+        }
+        compressed
+    }
+
+    /// Decompress a zstd-compressed bincode blob back into ProjectData.
+    pub fn decompress_snapshot(compressed: &[u8]) -> Self {
+        let decoder = zstd::Decoder::new(compressed).unwrap();
+        bincode::deserialize_from(decoder).unwrap()
     }
 
     /// Bump the version counter to invalidate GPU layer caches.

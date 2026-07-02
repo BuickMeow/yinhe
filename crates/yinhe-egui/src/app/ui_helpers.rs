@@ -409,6 +409,11 @@ impl App {
 
         // Handle pencil note drag
         self.handle_pencil_note_drag(pencil_note_drag);
+
+        // Compress one pending undo snapshot (if any) to free memory.
+        if let Some(doc) = self.documents.get_mut(idx) {
+            doc.history.compress_one();
+        }
     }
 
     /// Handle note drag — called once on release.
