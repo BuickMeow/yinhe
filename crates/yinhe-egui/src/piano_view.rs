@@ -129,9 +129,9 @@ pub fn show(
     let (resp, painter) = ui.allocate_painter(available, egui::Sense::hover());
     let rect = resp.rect;
 
-    // Compute automation panel total height.
+    // Compute automation panel natural total height.
     // First panel has no leading handle; subsequent panels have SPLIT_H above them.
-    let panels_total_h: f32 = match (&auto_panels, &auto_show) {
+    let panels_natural_h: f32 = match (&auto_panels, &auto_show) {
         (Some(panels), Some(show)) if **show && !panels.is_empty() => {
             panels.iter().map(|p| p.panel_height).sum::<f32>()
                 + (panels.len() as f32 * automation_panel::SPLIT_H)
@@ -139,12 +139,17 @@ pub fn show(
         _ => 0.0,
     };
 
+    // Cap panels area to prevent overflow when too many panels.
+    // Reserve at least 35% of available height for the pianoroll content;
+    // excess panels become scrollable.
+    let avail_h = rect.height() - RULER_H - crate::widgets::scrollbar::SCROLLBAR_H;
+    let panels_max_h = (avail_h * 0.65).max(0.0);
+    let panels_total_h = panels_natural_h.min(panels_max_h);
+
     // Layout: ruler | pianoroll content | automation panels | scrollbar
     let ruler_band_y = rect.min.y;
     let content_y = rect.min.y + RULER_H;
-    let content_h =
-        (rect.height() - RULER_H - panels_total_h - crate::widgets::scrollbar::SCROLLBAR_H)
-            .max(0.0);
+    let content_h = (avail_h - panels_total_h).max(0.0);
     let content_rect = egui::Rect::from_min_max(
         egui::pos2(rect.min.x, content_y),
         egui::pos2(rect.max.x, content_y + content_h),
@@ -545,6 +550,7 @@ pub fn show(
             view.base.pixels_per_tick,
             rect.max.x,
             panels_y,
+            panels_total_h,
             midi.and_then(|m| m.ticks_per_beat()),
             bar_line_data.map(|b| b.1).unwrap_or(4),
             bar_line_data.map(|b| b.2).unwrap_or(4),

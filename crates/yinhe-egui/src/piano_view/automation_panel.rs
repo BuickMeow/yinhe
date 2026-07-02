@@ -71,6 +71,7 @@ pub fn show_panels(
     pianoroll_ppt: f32,
     content_rect_right: f32,
     content_top_y: f32,
+    panels_visible_h: f32,
     tpb: Option<u32>,
     default_num: u8,
     default_den: u8,
@@ -102,7 +103,40 @@ pub fn show_panels(
     // the next frame instead of mid-frame, avoiding one-frame overlap jitter.
     let orig_heights: Vec<f32> = panels.iter().map(|p| p.panel_height).collect();
 
-    let mut y_offset = content_top_y;
+    // ── Scroll state for overflow ──
+    let panels_natural_h: f32 =
+        orig_heights.iter().sum::<f32>() + (panels.len() as f32 * SPLIT_H);
+    let max_scroll = (panels_natural_h - panels_visible_h).max(0.0);
+
+    let scroll_id = ui.id().with("auto_panel_scroll_y");
+    let mut scroll_y: f32 = ui.data_mut(|d| d.get_persisted(scroll_id)).unwrap_or(0.0);
+    scroll_y = scroll_y.clamp(0.0, max_scroll);
+
+    // Panels area rect (visible portion only)
+    let panels_area_rect = egui::Rect::from_min_max(
+        egui::pos2(0.0, content_top_y),
+        egui::pos2(content_rect_right, content_top_y + panels_visible_h),
+    );
+
+    // Handle mouse wheel / trackpad scroll in the panels area
+    let pointer_in_panels = ui.input(|i| {
+        i.pointer
+            .hover_pos()
+            .is_some_and(|p| panels_area_rect.contains(p))
+    });
+    if pointer_in_panels && max_scroll > 0.0 {
+        let scroll_delta = ui.input(|i| i.smooth_scroll_delta);
+        scroll_y = (scroll_y - scroll_delta.y).clamp(0.0, max_scroll);
+    }
+    ui.data_mut(|d| d.insert_persisted(scroll_id, scroll_y));
+
+    // Clip all painting to the panels area
+    let old_clip = ui.clip_rect();
+    ui.set_clip_rect(panels_area_rect.intersect(old_clip));
+
+    let mut y_offset = content_top_y - scroll_y;
+    let visible_top = content_top_y;
+    let visible_bottom = content_top_y + panels_visible_h;
 
     for (i, panel) in panels.iter_mut().enumerate() {
         // Split handle before every panel (first = divider from pianoroll)
@@ -126,10 +160,19 @@ pub fn show_panels(
 
         // Render at original height (consistent with pre-computed layout)
         let panel_h = orig_heights[i];
+        let panel_top = y_offset;
+        let panel_bottom = y_offset + panel_h;
         let panel_rect = egui::Rect::from_min_max(
-            egui::pos2(0.0, y_offset),
-            egui::pos2(content_rect_right, y_offset + panel_h),
+            egui::pos2(0.0, panel_top),
+            egui::pos2(content_rect_right, panel_bottom),
         );
+
+        // Skip heavy rendering for panels entirely outside the visible area
+        let is_visible = panel_bottom >= visible_top && panel_top <= visible_bottom;
+        if !is_visible {
+            y_offset += panel_h;
+            continue;
+        }
 
         // ── wgpu automation content (full width, from x=0) ──
         let grid_rect = egui::Rect::from_min_max(panel_rect.min, panel_rect.max);
@@ -197,7 +240,7 @@ pub fn show_panels(
         let combo_inner = combo_rect.shrink(4.0);
 
         ui.scope_builder(egui::UiBuilder::new().max_rect(combo_inner), |ui| {
-            ui.set_clip_rect(combo_inner);
+            ui.set_clip_rect(combo_inner.intersect(panels_area_rect));
             let layout = egui::Layout::top_down(egui::Align::Center);
             ui.with_layout(layout, |ui| {
                 // ── Target selector button (tools panel style) ──
@@ -430,7 +473,10 @@ pub fn show_panels(
         y_offset += panel_h;
     }
 
-    y_offset - content_top_y
+    // Restore clip rect
+    ui.set_clip_rect(old_clip);
+
+    panels_visible_h
 }
 
 /// Show the toggle / add / remove buttons horizontally.
