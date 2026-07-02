@@ -1,7 +1,7 @@
 use eframe::egui;
 
 use yinhe_editor_core::document::Document;
-use yinhe_editor_core::history::{begin_edit, commit_edit};
+use yinhe_editor_core::history::{begin_edit, commit_project_name, commit_artist, commit_description, commit_ppq, commit_compression_level};
 
 /// Show the Project Info panel for editing project metadata.
 pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
@@ -29,13 +29,21 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
         egui::TextEdit::singleline(&mut name).id_salt("proj_name"),
     );
     if resp.gained_focus() {
-        begin_edit(&doc.data, &mut doc.edit.pending_edits, resp.id.value(), "Edit project name");
+        begin_edit(&mut doc.edit.pending_edits, resp.id.value(), &doc.data.project_name);
     }
     if resp.changed() {
         doc.data.project_name = name;
     }
     if resp.lost_focus() {
-        commit_edit(&doc.data, &mut doc.history, &mut doc.edit.pending_edits, resp.id.value());
+        commit_project_name(
+            &mut doc.history,
+            &mut doc.edit.pending_edits,
+            resp.id.value(),
+            &doc.data.project_name,
+            doc.edit.selected.clone(),
+            doc.edit.track_selected.clone(),
+            doc.edit.sel_rect.clone(),
+        );
     }
 
     ui.add_space(6.0);
@@ -52,13 +60,21 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
         egui::TextEdit::singleline(&mut artist).id_salt("proj_artist"),
     );
     if resp.gained_focus() {
-        begin_edit(&doc.data, &mut doc.edit.pending_edits, resp.id.value(), "Edit artist");
+        begin_edit(&mut doc.edit.pending_edits, resp.id.value(), &doc.data.project_artist);
     }
     if resp.changed() {
         doc.data.project_artist = artist;
     }
     if resp.lost_focus() {
-        commit_edit(&doc.data, &mut doc.history, &mut doc.edit.pending_edits, resp.id.value());
+        commit_artist(
+            &mut doc.history,
+            &mut doc.edit.pending_edits,
+            resp.id.value(),
+            &doc.data.project_artist,
+            doc.edit.selected.clone(),
+            doc.edit.track_selected.clone(),
+            doc.edit.sel_rect.clone(),
+        );
     }
 
     ui.add_space(6.0);
@@ -75,13 +91,21 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
         egui::DragValue::new(&mut ppq).range(1..=32767),
     );
     if resp.gained_focus() || (resp.drag_started() && !doc.edit.pending_edits.has(resp.id.value())) {
-        begin_edit(&doc.data, &mut doc.edit.pending_edits, resp.id.value(), "Edit PPQ");
+        begin_edit(&mut doc.edit.pending_edits, resp.id.value(), &doc.data.project_ppq.to_string());
     }
     if resp.changed() {
         doc.data.project_ppq = ppq.max(1) as u32;
     }
     if resp.lost_focus() || resp.drag_stopped() {
-        commit_edit(&doc.data, &mut doc.history, &mut doc.edit.pending_edits, resp.id.value());
+        commit_ppq(
+            &mut doc.history,
+            &mut doc.edit.pending_edits,
+            resp.id.value(),
+            doc.data.project_ppq,
+            doc.edit.selected.clone(),
+            doc.edit.track_selected.clone(),
+            doc.edit.sel_rect.clone(),
+        );
     }
 
     ui.add_space(6.0);
@@ -98,13 +122,21 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
         egui::DragValue::new(&mut zstd_level).range(0..=22),
     );
     if resp.gained_focus() || (resp.drag_started() && !doc.edit.pending_edits.has(resp.id.value())) {
-        begin_edit(&doc.data, &mut doc.edit.pending_edits, resp.id.value(), "Edit zstd level");
+        begin_edit(&mut doc.edit.pending_edits, resp.id.value(), &doc.data.compression_level.to_string());
     }
     if resp.changed() {
         doc.data.compression_level = zstd_level;
     }
     if resp.lost_focus() || resp.drag_stopped() {
-        commit_edit(&doc.data, &mut doc.history, &mut doc.edit.pending_edits, resp.id.value());
+        commit_compression_level(
+            &mut doc.history,
+            &mut doc.edit.pending_edits,
+            resp.id.value(),
+            doc.data.compression_level,
+            doc.edit.selected.clone(),
+            doc.edit.track_selected.clone(),
+            doc.edit.sel_rect.clone(),
+        );
     }
 
     ui.add_space(6.0);
@@ -121,12 +153,20 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
         egui::TextEdit::multiline(&mut desc).id_salt("proj_desc"),
     );
     if resp.gained_focus() {
-        begin_edit(&doc.data, &mut doc.edit.pending_edits, resp.id.value(), "Edit description");
+        begin_edit(&mut doc.edit.pending_edits, resp.id.value(), &doc.data.project_description);
     }
     if resp.changed() {
         doc.data.project_description = desc;
     }
     if resp.lost_focus() {
-        commit_edit(&doc.data, &mut doc.history, &mut doc.edit.pending_edits, resp.id.value());
+        commit_description(
+            &mut doc.history,
+            &mut doc.edit.pending_edits,
+            resp.id.value(),
+            &doc.data.project_description,
+            doc.edit.selected.clone(),
+            doc.edit.track_selected.clone(),
+            doc.edit.sel_rect.clone(),
+        );
     }
 }

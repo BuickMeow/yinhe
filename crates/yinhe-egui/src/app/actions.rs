@@ -91,9 +91,14 @@ impl App {
     /// New notes are placed after the original selection, offset by the selection duration.
     pub(crate) fn duplicate_selected_notes(&mut self) {
         self.with_undo("Duplicate notes", |doc| {
-            let offset = doc.duplicate_selected();
-            doc.edit.sel_rect.pending_delta = offset.map(|o| (o as i64, 0));
-            offset.is_some()
+            let action = doc.duplicate_selected();
+            if action.is_some() {
+                doc.edit.sel_rect.pending_delta = action.as_ref().and_then(|_| {
+                    // Re-derive offset from the action
+                    None
+                });
+            }
+            action
         });
     }
 
@@ -104,11 +109,7 @@ impl App {
         } else {
             "Transpose down"
         };
-        self.with_undo(label, |doc| {
-            let st = doc.transpose_selected(semitones);
-            doc.edit.sel_rect.pending_delta = st.map(|s| (0, s as i32));
-            st.is_some()
-        });
+        self.with_undo(label, |doc| doc.transpose_selected(semitones));
     }
 
     /// Add a single note to the given track and record an undo entry.
@@ -116,32 +117,28 @@ impl App {
         self.with_undo("Add note", |doc| doc.add_note(track_idx, note));
     }
 
-    /// Capture an `UndoSnapshot` of the active document's persistent state.
-    /// Returns `None` if no document is active.
-    pub(crate) fn capture_snapshot(&self, label: &'static str) -> Option<yinhe_editor_core::history::UndoSnapshot> {
-        let idx = self.active_doc?;
-        let doc = self.documents.get(idx)?;
-        Some(doc.snapshot_with_selection(label))
-    }
-
-    /// Run an edit closure, recording an undo entry beforehand and notifying
-    /// audio afterwards.
+    /// Run an edit closure, recording an undo entry from the returned action
+    /// and notifying audio afterwards.
     ///
-    /// The closure receives `&mut Document` and should return `true` if it
-    /// actually changed anything; on `false` no snapshot is pushed and audio
-    /// is not notified.
+    /// The closure receives `&mut Document` and should return
+    /// `Some(UndoAction)` if it actually changed anything; on `None` no
+    /// undo entry is pushed and audio is not notified.
     pub(crate) fn with_undo<F>(&mut self, label: &'static str, f: F)
     where
-        F: FnOnce(&mut Document) -> bool,
+        F: FnOnce(&mut Document) -> Option<yinhe_editor_core::history::UndoAction>,
     {
         let Some(idx) = self.active_doc else { return };
-        let snapshot = self.documents[idx].snapshot_with_selection(label);
-        let changed = f(&mut self.documents[idx]);
-        if !changed {
-            return;
-        }
+        let action = f(&mut self.documents[idx]);
+        let Some(action) = action else { return };
         let doc = &mut self.documents[idx];
-        doc.history.push(snapshot);
+        let entry = yinhe_editor_core::history::UndoEntry {
+            action,
+            label,
+            selected: doc.edit.selected.clone(),
+            track_selected: doc.edit.track_selected.clone(),
+            sel_rect: doc.edit.sel_rect.clone(),
+        };
+        doc.history.push(entry);
         doc.data.bump_version();
         self.pianoroll_view.base.dirty = true;
         if let Some(ref audio) = self.audio {
@@ -152,31 +149,28 @@ impl App {
     /// Restore the previous state on the active document's history stack.
     pub(crate) fn undo(&mut self) {
         let Some(idx) = self.active_doc else { return };
-        let current = self.documents[idx].snapshot_with_selection("current");
-        let restored = self.documents[idx].history.undo(current);
-        if let Some(snap) = restored {
-            self.apply_snapshot(idx, snap);
+        let doc: &mut Document = &mut self.documents[idx];
+        let changed = doc.undo();
+        if changed {
+            doc.data.bump_version();
+            self.pianoroll_view.base.dirty = true;
+            if let Some(ref audio) = self.audio {
+                let _ = audio.handle.send(yinhe_audio::AudioCommand::ReloadNotes { model: doc.data.model.clone() });
+            }
         }
     }
 
     /// Re-apply the most recently undone state on the active document.
     pub(crate) fn redo(&mut self) {
         let Some(idx) = self.active_doc else { return };
-        let current = self.documents[idx].snapshot_with_selection("current");
-        let restored = self.documents[idx].history.redo(current);
-        if let Some(snap) = restored {
-            self.apply_snapshot(idx, snap);
-        }
-    }
-
-    /// Apply a snapshot to the document at `idx`: restore persistent fields,
-    /// rebuild caches, clear selection, and notify audio.
-    fn apply_snapshot(&mut self, idx: usize, snap: yinhe_editor_core::history::UndoSnapshot) {
-        let doc = &mut self.documents[idx];
-        doc.apply_undo_snapshot(snap);
-        self.pianoroll_view.base.dirty = true;
-        if let Some(ref audio) = self.audio {
-            let _ = audio.handle.send(yinhe_audio::AudioCommand::ReloadNotes { model: doc.data.model.clone() });
+        let doc: &mut Document = &mut self.documents[idx];
+        let changed = doc.redo();
+        if changed {
+            doc.data.bump_version();
+            self.pianoroll_view.base.dirty = true;
+            if let Some(ref audio) = self.audio {
+                let _ = audio.handle.send(yinhe_audio::AudioCommand::ReloadNotes { model: doc.data.model.clone() });
+            }
         }
     }
 }

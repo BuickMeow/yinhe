@@ -35,35 +35,6 @@ pub struct ProjectData {
 }
 
 impl ProjectData {
-    /// Snapshot this data for undo. Cheap: Arc::clone + small field clones.
-    pub fn snapshot(&self, label: &'static str) -> crate::history::UndoSnapshot {
-        crate::history::UndoSnapshot {
-            data: self.clone(),
-            label,
-            selected: yinhe_core::Selection::default(),
-            track_selected: std::collections::HashSet::new(),
-            sel_rect: crate::edit_state::SelRectState::default(),
-        }
-    }
-
-    /// Compress this data into a zstd-compressed bincode blob for undo storage.
-    /// Uses streaming encoder to avoid an intermediate uncompressed buffer.
-    pub fn compress_snapshot(&self) -> Vec<u8> {
-        let mut compressed = Vec::new();
-        {
-            let mut encoder = zstd::Encoder::new(&mut compressed, 3).unwrap();
-            bincode::serialize_into(&mut encoder, self).unwrap();
-            encoder.finish().unwrap();
-        }
-        compressed
-    }
-
-    /// Decompress a zstd-compressed bincode blob back into ProjectData.
-    pub fn decompress_snapshot(compressed: &[u8]) -> Self {
-        let decoder = zstd::Decoder::new(compressed).unwrap();
-        bincode::deserialize_from(decoder).unwrap()
-    }
-
     /// Bump the version counter to invalidate GPU layer caches.
     pub fn bump_version(&mut self) {
         self.midi_version = self.midi_version.wrapping_add(1);

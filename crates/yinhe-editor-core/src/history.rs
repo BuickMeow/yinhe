@@ -1,262 +1,250 @@
-//! Undo/redo history for a single document.
+//! Undo/redo history using command pattern.
 //!
-//! When `compression_enabled` is false (default), snapshots are stored
-//! uncompressed (`ProjectData` via Arc bump) — fast but memory-heavy.
-//!
-//! When `compression_enabled` is true, snapshots are compressed on a
-//! background thread — memory-efficient but adds a small latency on undo/redo
-//! (decompress ~50 ms).
+//! Instead of storing full snapshots (which cost O(model) memory per entry),
+//! each undo entry stores only the delta — what changed. For note operations
+//! this is the before/after state of the affected notes, typically a few
+//! hundred bytes instead of hundreds of megabytes.
 
 use std::collections::{HashMap, HashSet};
 
+use yinhe_core::Selection;
+use yinhe_types::Note;
+
+use crate::document::Document;
 use crate::edit_state::SelRectState;
-use crate::project_data::ProjectData;
 
 /// Maximum number of past edits kept in the undo stack.
 pub const MAX_DEPTH: usize = 100;
 
-/// One undo/redo snapshot. Returned by `snapshot_with_selection()` and
-/// consumed by `UndoStack::push()` / returned by `undo()` / `redo()`.
-#[derive(Clone)]
-pub struct UndoSnapshot {
-    pub data: ProjectData,
-    /// Short label for debugging / future UI ("Delete notes", "Move notes", …).
+// ---------------------------------------------------------------------------
+// Delta types
+// ---------------------------------------------------------------------------
+
+/// Before/after state of affected notes for a single operation.
+///
+/// `before` = notes as they were before the edit (at their original positions).
+/// `after`  = notes as they are after the edit (at their new positions).
+///
+/// For a delete: `before = removed`, `after = []`.
+/// For an add:    `before = []`,      `after = added`.
+/// For a move:    `before = originals`, `after = moved`.
+#[derive(Clone, Debug)]
+pub struct NoteDelta {
+    pub before: Vec<(Note, u8)>,
+    pub after: Vec<(Note, u8)>,
+}
+
+// ---------------------------------------------------------------------------
+// Action enum
+// ---------------------------------------------------------------------------
+
+/// What changed — the delta needed to undo/redo an operation.
+#[derive(Clone, Debug)]
+pub enum UndoAction {
+    /// Note-level changes (delete, add, move, resize, duplicate, transpose).
+    Notes(NoteDelta),
+    /// A track name was edited.
+    TrackName {
+        track_idx: usize,
+        old: String,
+        new: String,
+    },
+    /// Project metadata was edited.
+    ProjectName { old: String, new: String },
+    ProjectArtist { old: String, new: String },
+    ProjectDescription { old: String, new: String },
+    ProjectPpq { old: u32, new: u32 },
+    CompressionLevel { old: i32, new: i32 },
+}
+
+impl UndoAction {
+    /// Apply the forward action (used by redo).
+    pub fn redo(&self, doc: &mut Document) {
+        match self {
+            UndoAction::Notes(delta) => apply_note_delta(doc, &delta.before, &delta.after),
+            UndoAction::TrackName { track_idx, old: _, new } => {
+                let model = std::sync::Arc::make_mut(&mut doc.data.model);
+                if let Some(track) = model.tracks.get_mut(*track_idx) {
+                    let track = std::sync::Arc::make_mut(track);
+                    track.name = new.clone();
+                }
+            }
+            UndoAction::ProjectName { old: _, new } => {
+                doc.data.project_name = new.clone();
+            }
+            UndoAction::ProjectArtist { old: _, new } => {
+                doc.data.project_artist = new.clone();
+            }
+            UndoAction::ProjectDescription { old: _, new } => {
+                doc.data.project_description = new.clone();
+            }
+            UndoAction::ProjectPpq { old: _, new } => {
+                doc.data.project_ppq = *new;
+            }
+            UndoAction::CompressionLevel { old: _, new } => {
+                doc.data.compression_level = *new;
+            }
+        }
+    }
+
+    /// Apply the reverse action (used by undo).
+    pub fn undo(&self, doc: &mut Document) {
+        match self {
+            UndoAction::Notes(delta) => apply_note_delta(doc, &delta.after, &delta.before),
+            UndoAction::TrackName { track_idx, old, new: _ } => {
+                let model = std::sync::Arc::make_mut(&mut doc.data.model);
+                if let Some(track) = model.tracks.get_mut(*track_idx) {
+                    let track = std::sync::Arc::make_mut(track);
+                    track.name = old.clone();
+                }
+            }
+            UndoAction::ProjectName { old, new: _ } => {
+                doc.data.project_name = old.clone();
+            }
+            UndoAction::ProjectArtist { old, new: _ } => {
+                doc.data.project_artist = old.clone();
+            }
+            UndoAction::ProjectDescription { old, new: _ } => {
+                doc.data.project_description = old.clone();
+            }
+            UndoAction::ProjectPpq { old, new: _ } => {
+                doc.data.project_ppq = *old;
+            }
+            UndoAction::CompressionLevel { old, new: _ } => {
+                doc.data.compression_level = *old;
+            }
+        }
+    }
+
+    /// Return the inverse action (swap before/after, old/new).
+    pub fn reversed(&self) -> Self {
+        match self {
+            UndoAction::Notes(delta) => UndoAction::Notes(NoteDelta {
+                before: delta.after.clone(),
+                after: delta.before.clone(),
+            }),
+            UndoAction::TrackName { track_idx, old, new } => UndoAction::TrackName {
+                track_idx: *track_idx,
+                old: new.clone(),
+                new: old.clone(),
+            },
+            UndoAction::ProjectName { old, new } => UndoAction::ProjectName {
+                old: new.clone(),
+                new: old.clone(),
+            },
+            UndoAction::ProjectArtist { old, new } => UndoAction::ProjectArtist {
+                old: new.clone(),
+                new: old.clone(),
+            },
+            UndoAction::ProjectDescription { old, new } => UndoAction::ProjectDescription {
+                old: new.clone(),
+                new: old.clone(),
+            },
+            UndoAction::ProjectPpq { old, new } => UndoAction::ProjectPpq {
+                old: *new,
+                new: *old,
+            },
+            UndoAction::CompressionLevel { old, new } => UndoAction::CompressionLevel {
+                old: *new,
+                new: *old,
+            },
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Apply helpers
+// ---------------------------------------------------------------------------
+
+/// Remove `remove` notes and insert `insert` notes into the model.
+///
+/// Notes in `remove` are matched by (track, start_tick, key, dup_index).
+fn apply_note_delta(doc: &mut Document, remove: &[(Note, u8)], insert: &[(Note, u8)]) {
+    if remove.is_empty() && insert.is_empty() {
+        return;
+    }
+    let model = std::sync::Arc::make_mut(&mut doc.data.model);
+
+    // Remove notes matching `remove`.
+    for (note, key) in remove {
+        let k = *key as usize;
+        std::sync::Arc::make_mut(&mut model.notes[k]).retain(|n| {
+            !(n.track == note.track
+                && n.start_tick == note.start_tick
+                && n.dup_index == note.dup_index)
+        });
+        model.mark_dirty(*key);
+    }
+
+    // Insert `insert` notes, grouped by key.
+    let mut by_key: HashMap<u8, Vec<Note>> = HashMap::new();
+    for (note, key) in insert {
+        by_key.entry(*key).or_default().push(*note);
+    }
+    for (key, notes) in by_key {
+        let k = key as usize;
+        std::sync::Arc::make_mut(&mut model.notes[k]).extend(notes);
+        model.mark_dirty(key);
+    }
+
+    model.rebuild_dirty();
+    doc.data.midi_version = doc.data.midi_version.wrapping_add(1);
+}
+
+// ---------------------------------------------------------------------------
+// UndoEntry
+// ---------------------------------------------------------------------------
+
+/// A single entry on the undo/redo stack.
+pub struct UndoEntry {
+    pub action: UndoAction,
     pub label: &'static str,
-    /// Selected notes at the time of the snapshot.
-    pub selected: yinhe_core::Selection,
-    /// Selected arrangement tracks at the time of the snapshot.
+    pub selected: Selection,
     pub track_selected: HashSet<u16>,
-    /// Selection rectangle at the time of the snapshot.
     pub sel_rect: SelRectState,
 }
 
-/// Internal storage: either compressed bytes or the full ProjectData.
-enum StoredSnapshot {
-    /// Zstd-compressed bincode blob.
-    Compressed(Vec<u8>),
-    /// Uncompressed project data (Arc bump only).
-    Uncompressed(ProjectData),
-}
+// ---------------------------------------------------------------------------
+// UndoStack
+// ---------------------------------------------------------------------------
 
-struct StoredSnapshotMeta {
-    inner: StoredSnapshot,
-    label: &'static str,
-    selected: yinhe_core::Selection,
-    track_selected: HashSet<u16>,
-    sel_rect: SelRectState,
-}
-
-/// A snapshot currently being compressed on a background thread.
-struct CompressingSnapshot {
-    handle: std::thread::JoinHandle<Vec<u8>>,
-    label: &'static str,
-    selected: yinhe_core::Selection,
-    track_selected: HashSet<u16>,
-    sel_rect: SelRectState,
-}
-
-/// Per-document undo/redo stack.
+/// Per-document undo/redo stack using command pattern.
 ///
-/// When `compression_enabled` is false (default), snapshots are stored
-/// as `StoredSnapshot::Uncompressed` — no compression overhead.
-/// When true, they are compressed on background threads.
+/// Each entry stores only the delta, so memory usage is proportional to
+/// the number of affected notes, not the total model size.
 pub struct UndoStack {
-    past: Vec<StoredSnapshotMeta>,
-    past_compressing: Vec<CompressingSnapshot>,
-    future: Vec<StoredSnapshotMeta>,
-    future_compressing: Vec<CompressingSnapshot>,
-    /// When true, snapshots are compressed on a background thread.
-    /// When false (default), snapshots are stored uncompressed.
-    pub compression_enabled: bool,
+    pub(crate) past: Vec<UndoEntry>,
+    pub(crate) future: Vec<UndoEntry>,
 }
 
 impl UndoStack {
     pub fn new() -> Self {
         Self {
             past: Vec::new(),
-            past_compressing: Vec::new(),
             future: Vec::new(),
-            future_compressing: Vec::new(),
-            compression_enabled: false,
         }
     }
 
-    /// Record a snapshot of the state *before* an edit.
-    ///
-    /// If `compression_enabled` is true, spawns a background thread to
-    /// compress it (O(1) — returns instantly).
-    /// Otherwise, stores the snapshot uncompressed (O(1) Arc bump).
-    pub fn push(&mut self, snapshot: UndoSnapshot) {
+    /// Record an undo entry (called *after* the edit is done).
+    pub fn push(&mut self, entry: UndoEntry) {
         if self.past.len() >= MAX_DEPTH {
             self.past.remove(0);
         }
-        if self.compression_enabled {
-            let data = snapshot.data;
-            let handle = std::thread::spawn(move || data.compress_snapshot());
-            self.past_compressing.push(CompressingSnapshot {
-                handle,
-                label: snapshot.label,
-                selected: snapshot.selected,
-                track_selected: snapshot.track_selected,
-                sel_rect: snapshot.sel_rect,
-            });
-        } else {
-            self.past.push(StoredSnapshotMeta {
-                inner: StoredSnapshot::Uncompressed(snapshot.data),
-                label: snapshot.label,
-                selected: snapshot.selected,
-                track_selected: snapshot.track_selected,
-                sel_rect: snapshot.sel_rect,
-            });
-        }
+        self.past.push(entry);
         self.future.clear();
-        self.future_compressing.clear();
-    }
-
-    /// Enable or disable compression.
-    /// Existing snapshots are not retroactively converted.
-    pub fn set_compression_enabled(&mut self, enabled: bool) {
-        self.compression_enabled = enabled;
-    }
-
-    /// Call once per frame. Moves finished background compressions into
-    /// the `past` / `future` stacks.
-    pub fn poll_compression(&mut self) {
-        Self::drain_finished(&mut self.past, &mut self.past_compressing);
-        Self::drain_finished(&mut self.future, &mut self.future_compressing);
-    }
-
-    fn drain_finished(
-        dest: &mut Vec<StoredSnapshotMeta>,
-        src: &mut Vec<CompressingSnapshot>,
-    ) {
-        let mut i = 0;
-        while i < src.len() {
-            if src[i].handle.is_finished() {
-                let c = src.swap_remove(i);
-                let compressed = c.handle.join().unwrap();
-                dest.push(StoredSnapshotMeta {
-                    inner: StoredSnapshot::Compressed(compressed),
-                    label: c.label,
-                    selected: c.selected,
-                    track_selected: c.track_selected,
-                    sel_rect: c.sel_rect,
-                });
-            } else {
-                i += 1;
-            }
-        }
-    }
-
-    /// Pop the most recent past snapshot, pushing `current` onto the redo stack.
-    /// Returns `None` when there is nothing to undo.
-    pub fn undo(&mut self, current: UndoSnapshot) -> Option<UndoSnapshot> {
-        let prev = if let Some(prev) = self.past.pop() {
-            prev
-        } else {
-            let c = self.past_compressing.pop()?;
-            let compressed = c.handle.join().unwrap();
-            StoredSnapshotMeta {
-                inner: StoredSnapshot::Compressed(compressed),
-                label: c.label,
-                selected: c.selected,
-                track_selected: c.track_selected,
-                sel_rect: c.sel_rect,
-            }
-        };
-        let data = match prev.inner {
-            StoredSnapshot::Compressed(bytes) => ProjectData::decompress_snapshot(&bytes),
-            StoredSnapshot::Uncompressed(data) => data,
-        };
-        // Store current state.
-        if self.compression_enabled {
-            let handle = std::thread::spawn(move || current.data.compress_snapshot());
-            self.future_compressing.push(CompressingSnapshot {
-                handle,
-                label: current.label,
-                selected: current.selected,
-                track_selected: current.track_selected,
-                sel_rect: current.sel_rect,
-            });
-        } else {
-            self.future.push(StoredSnapshotMeta {
-                inner: StoredSnapshot::Uncompressed(current.data),
-                label: current.label,
-                selected: current.selected,
-                track_selected: current.track_selected,
-                sel_rect: current.sel_rect,
-            });
-        }
-        Some(UndoSnapshot {
-            data,
-            label: prev.label,
-            selected: prev.selected,
-            track_selected: prev.track_selected,
-            sel_rect: prev.sel_rect,
-        })
-    }
-
-    /// Pop the most recent future snapshot, pushing `current` onto the undo stack.
-    /// Returns `None` when there is nothing to redo.
-    pub fn redo(&mut self, current: UndoSnapshot) -> Option<UndoSnapshot> {
-        let next = if let Some(next) = self.future.pop() {
-            next
-        } else {
-            let c = self.future_compressing.pop()?;
-            let compressed = c.handle.join().unwrap();
-            StoredSnapshotMeta {
-                inner: StoredSnapshot::Compressed(compressed),
-                label: c.label,
-                selected: c.selected,
-                track_selected: c.track_selected,
-                sel_rect: c.sel_rect,
-            }
-        };
-        let data = match next.inner {
-            StoredSnapshot::Compressed(bytes) => ProjectData::decompress_snapshot(&bytes),
-            StoredSnapshot::Uncompressed(data) => data,
-        };
-        // Store current state.
-        if self.compression_enabled {
-            let handle = std::thread::spawn(move || current.data.compress_snapshot());
-            self.past_compressing.push(CompressingSnapshot {
-                handle,
-                label: current.label,
-                selected: current.selected,
-                track_selected: current.track_selected,
-                sel_rect: current.sel_rect,
-            });
-        } else {
-            self.past.push(StoredSnapshotMeta {
-                inner: StoredSnapshot::Uncompressed(current.data),
-                label: current.label,
-                selected: current.selected,
-                track_selected: current.track_selected,
-                sel_rect: current.sel_rect,
-            });
-        }
-        Some(UndoSnapshot {
-            data,
-            label: next.label,
-            selected: next.selected,
-            track_selected: next.track_selected,
-            sel_rect: next.sel_rect,
-        })
     }
 
     pub fn can_undo(&self) -> bool {
-        !self.past.is_empty() || !self.past_compressing.is_empty()
+        !self.past.is_empty()
     }
 
     pub fn can_redo(&self) -> bool {
-        !self.future.is_empty() || !self.future_compressing.is_empty()
+        !self.future.is_empty()
     }
 
     pub fn clear(&mut self) {
         self.past.clear();
-        self.past_compressing.clear();
         self.future.clear();
-        self.future_compressing.clear();
     }
 }
 
@@ -266,10 +254,16 @@ impl Default for UndoStack {
     }
 }
 
-/// Tracks per-widget "before-edit" snapshots for TextEdit-like fields.
+// ---------------------------------------------------------------------------
+// PendingEdits — tracks old values for text-field edits
+// ---------------------------------------------------------------------------
+
+/// Tracks old values for TextEdit-like fields.
+/// On `commit`, the old value is compared with the current value and an
+/// `UndoAction` is pushed if they differ.
 #[derive(Default)]
 pub struct PendingEdits {
-    map: HashMap<u64, UndoSnapshot>,
+    map: HashMap<u64, String>,
 }
 
 impl PendingEdits {
@@ -277,56 +271,211 @@ impl PendingEdits {
         self.map.contains_key(&id)
     }
 
-    pub fn insert_raw(&mut self, id: u64, snapshot: UndoSnapshot) {
-        self.map.insert(id, snapshot);
+    /// Save the old value before a text edit begins.
+    pub fn begin(&mut self, id: u64, old_value: &str) {
+        self.map.insert(id, old_value.to_string());
     }
 
-    pub fn take(&mut self, id: u64) -> Option<UndoSnapshot> {
+    /// Take the saved old value without removing it (for comparison).
+    pub fn get(&self, id: u64) -> Option<&str> {
+        self.map.get(&id).map(|s| s.as_str())
+    }
+
+    /// Remove and return the saved old value.
+    pub fn take(&mut self, id: u64) -> Option<String> {
         self.map.remove(&id)
     }
 }
 
+// ---------------------------------------------------------------------------
+// Convenience helpers for text-field edits
+// ---------------------------------------------------------------------------
+
 /// Begin tracking a TextEdit/DragValue keyed by `id`.
-pub fn begin_edit(data: &ProjectData, pending: &mut PendingEdits, id: u64, label: &'static str) {
-    let snap = UndoSnapshot {
-        data: data.clone(),
-        label,
-        selected: yinhe_core::Selection::default(),
-        track_selected: HashSet::new(),
-        sel_rect: SelRectState::default(),
-    };
-    pending.insert_raw(id, snap);
+pub fn begin_edit(pending: &mut PendingEdits, id: u64, old_value: &str) {
+    pending.begin(id, old_value);
 }
 
-/// Commit a TextEdit/DragValue keyed by `id`.
-pub fn commit_edit(
-    data: &ProjectData,
+/// Commit a track-name edit.
+pub fn commit_track_name(
     stack: &mut UndoStack,
     pending: &mut PendingEdits,
     id: u64,
+    track_idx: usize,
+    new_name: &str,
+    selected: Selection,
+    track_selected: HashSet<u16>,
+    sel_rect: SelRectState,
 ) {
-    let Some(baseline) = pending.take(id) else {
+    let Some(old) = pending.take(id) else {
         return;
     };
-    let changed = baseline.data.project_name != data.project_name
-        || baseline.data.project_artist != data.project_artist
-        || baseline.data.project_description != data.project_description
-        || baseline.data.project_ppq != data.project_ppq
-        || baseline.data.compression_level != data.compression_level
-        || baseline.data.track_names != data.track_names;
-    if changed {
-        stack.push(baseline);
+    if old == new_name {
+        return;
     }
+    stack.push(UndoEntry {
+        action: UndoAction::TrackName {
+            track_idx,
+            old,
+            new: new_name.to_string(),
+        },
+        label: "Edit track name",
+        selected,
+        track_selected,
+        sel_rect,
+    });
 }
+
+/// Commit a project-name edit.
+pub fn commit_project_name(
+    stack: &mut UndoStack,
+    pending: &mut PendingEdits,
+    id: u64,
+    new_value: &str,
+    selected: Selection,
+    track_selected: HashSet<u16>,
+    sel_rect: SelRectState,
+) {
+    let Some(old) = pending.take(id) else {
+        return;
+    };
+    if old == new_value {
+        return;
+    }
+    stack.push(UndoEntry {
+        action: UndoAction::ProjectName {
+            old,
+            new: new_value.to_string(),
+        },
+        label: "Edit project name",
+        selected,
+        track_selected,
+        sel_rect,
+    });
+}
+
+/// Commit an artist edit.
+pub fn commit_artist(
+    stack: &mut UndoStack,
+    pending: &mut PendingEdits,
+    id: u64,
+    new_value: &str,
+    selected: Selection,
+    track_selected: HashSet<u16>,
+    sel_rect: SelRectState,
+) {
+    let Some(old) = pending.take(id) else {
+        return;
+    };
+    if old == new_value {
+        return;
+    }
+    stack.push(UndoEntry {
+        action: UndoAction::ProjectArtist {
+            old,
+            new: new_value.to_string(),
+        },
+        label: "Edit artist",
+        selected,
+        track_selected,
+        sel_rect,
+    });
+}
+
+/// Commit a description edit.
+pub fn commit_description(
+    stack: &mut UndoStack,
+    pending: &mut PendingEdits,
+    id: u64,
+    new_value: &str,
+    selected: Selection,
+    track_selected: HashSet<u16>,
+    sel_rect: SelRectState,
+) {
+    let Some(old) = pending.take(id) else {
+        return;
+    };
+    if old == new_value {
+        return;
+    }
+    stack.push(UndoEntry {
+        action: UndoAction::ProjectDescription {
+            old,
+            new: new_value.to_string(),
+        },
+        label: "Edit description",
+        selected,
+        track_selected,
+        sel_rect,
+    });
+}
+
+/// Commit a PPQ edit.
+pub fn commit_ppq(
+    stack: &mut UndoStack,
+    pending: &mut PendingEdits,
+    id: u64,
+    new_value: u32,
+    selected: Selection,
+    track_selected: HashSet<u16>,
+    sel_rect: SelRectState,
+) {
+    let Some(old_str) = pending.take(id) else {
+        return;
+    };
+    let old: u32 = old_str.parse().unwrap_or(480);
+    if old == new_value {
+        return;
+    }
+    stack.push(UndoEntry {
+        action: UndoAction::ProjectPpq { old, new: new_value },
+        label: "Edit PPQ",
+        selected,
+        track_selected,
+        sel_rect,
+    });
+}
+
+/// Commit a compression-level edit.
+pub fn commit_compression_level(
+    stack: &mut UndoStack,
+    pending: &mut PendingEdits,
+    id: u64,
+    new_value: i32,
+    selected: Selection,
+    track_selected: HashSet<u16>,
+    sel_rect: SelRectState,
+) {
+    let Some(old_str) = pending.take(id) else {
+        return;
+    };
+    let old: i32 = old_str.parse().unwrap_or(3);
+    if old == new_value {
+        return;
+    }
+    stack.push(UndoEntry {
+        action: UndoAction::CompressionLevel {
+            old,
+            new: new_value,
+        },
+        label: "Edit zstd level",
+        selected,
+        track_selected,
+        sel_rect,
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::project_data::ProjectData;
     use std::sync::Arc;
-    use yinhe_core::{ConductorData, TempoEvent, TimeSigEvent, TrackData, YinModel};
+    use yinhe_core::{ConductorData, NoteEvent, TempoEvent, TimeSigEvent, TrackData, YinModel};
 
-    fn make_test_data(name: &str) -> ProjectData {
+    fn make_doc(name: &str) -> Document {
         let model = YinModel {
             conductor: Arc::new(ConductorData {
                 tempo: vec![TempoEvent { tick: 0, bpm: 120.0 }],
@@ -343,133 +492,188 @@ mod tests {
             })],
             ..Default::default()
         };
-        ProjectData::new(
-            Arc::new(model),
-            vec![name.to_string()],
-            Default::default(),
-            Default::default(),
-        )
-    }
-
-    fn snap(label: &'static str, name: &str) -> UndoSnapshot {
-        UndoSnapshot {
-            data: make_test_data(name),
-            label,
-            selected: yinhe_core::Selection::default(),
-            track_selected: HashSet::new(),
-            sel_rect: SelRectState::default(),
+        Document {
+            data: crate::project_data::ProjectData::new(
+                Arc::new(model),
+                vec![name.to_string()],
+                Default::default(),
+                Default::default(),
+            ),
+            edit: crate::edit_state::EditState {
+                track_visible: vec![true],
+                track_pianoroll_visible: vec![true],
+                ..Default::default()
+            },
+            history: UndoStack::new(),
+            file_name: "test".into(),
+            file_path: None,
         }
     }
 
     #[test]
     fn push_stores_and_clears_redo() {
-        let mut stack = UndoStack::new();
-        stack.push(snap("init", "a"));
-        assert!(stack.can_undo());
-        stack.undo(snap("cur", "b"));
-        assert!(stack.can_redo());
-        stack.push(snap("new", "c"));
-        assert!(!stack.can_redo());
-        assert!(stack.can_undo());
+        let mut doc = make_doc("a");
+        doc.history.push(UndoEntry {
+            action: UndoAction::TrackName {
+                track_idx: 0,
+                old: "a".into(),
+                new: "b".into(),
+            },
+            label: "rename",
+            selected: Selection::default(),
+            track_selected: HashSet::new(),
+            sel_rect: SelRectState::default(),
+        });
+        assert!(doc.history.can_undo());
+        assert!(!doc.history.can_redo());
+
+        doc.undo();
+        assert!(!doc.history.can_undo());
+        assert!(doc.history.can_redo());
+
+        doc.history.push(UndoEntry {
+            action: UndoAction::TrackName {
+                track_idx: 0,
+                old: "c".into(),
+                new: "d".into(),
+            },
+            label: "rename2",
+            selected: Selection::default(),
+            track_selected: HashSet::new(),
+            sel_rect: SelRectState::default(),
+        });
+        assert!(!doc.history.can_redo());
+        assert!(doc.history.can_undo());
     }
 
     #[test]
-    fn undo_returns_previous_and_pushes_to_future() {
-        let mut stack = UndoStack::new();
-        stack.push(snap("init", "old"));
-        let current = snap("cur", "current");
-        let prev = stack.undo(current);
-        assert!(prev.is_some());
-        assert_eq!(prev.unwrap().data.model.tracks[0].name, "old");
-        assert!(stack.can_redo());
+    fn undo_restores_track_name() {
+        let mut doc = make_doc("old");
+        doc.history.push(UndoEntry {
+            action: UndoAction::TrackName {
+                track_idx: 0,
+                old: "old".into(),
+                new: "new".into(),
+            },
+            label: "rename",
+            selected: Selection::default(),
+            track_selected: HashSet::new(),
+            sel_rect: SelRectState::default(),
+        });
+        // Apply the forward action manually (simulating the edit)
+        {
+            let model = Arc::make_mut(&mut doc.data.model);
+            let track = Arc::make_mut(&mut model.tracks[0]);
+            track.name = "new".into();
+        }
+        assert_eq!(doc.data.model.tracks[0].name, "new");
+
+        // Undo
+        assert!(doc.undo());
+        assert_eq!(doc.data.model.tracks[0].name, "old");
+        assert!(doc.history.can_redo());
+
+        // Redo
+        assert!(doc.redo());
+        assert_eq!(doc.data.model.tracks[0].name, "new");
+        assert!(doc.history.can_undo());
     }
 
     #[test]
-    fn redo_returns_future_and_pushes_to_past() {
-        let mut stack = UndoStack::new();
-        stack.push(snap("init", "a"));
-        stack.undo(snap("cur", "b"));
-        let current = snap("after_undo", "a");
-        let next = stack.redo(current);
-        assert!(next.is_some());
-        assert_eq!(next.unwrap().data.model.tracks[0].name, "b");
-        assert!(stack.can_undo());
+    fn note_delta_undo_redo() {
+        let mut doc = make_doc("test");
+        // Add a note
+        let note = NoteEvent {
+            start_tick: 0,
+            end_tick: 480,
+            key: 60,
+            velocity: 100,
+            dup_index: 0,
+        };
+        let key = 60;
+        {
+            let model = Arc::make_mut(&mut doc.data.model);
+            Arc::make_mut(&mut model.notes[key as usize]).push(yinhe_types::Note {
+                start_tick: note.start_tick,
+                end_tick: note.end_tick,
+                velocity: note.velocity,
+                dup_index: note.dup_index,
+                track: 0,
+            });
+            model.mark_dirty(key);
+            model.rebuild_dirty();
+        }
+
+        let removed = {
+            let model = Arc::make_mut(&mut doc.data.model);
+            let mut sel = Selection::default();
+            sel.add_rect_track(0, 480, 60, 60, 0, u16::MAX);
+            let r = crate::batch_ops::remove_selected(
+                model,
+                &sel,
+            );
+            model.rebuild_dirty();
+            r
+        };
+        assert_eq!(removed.len(), 1);
+
+        doc.history.push(UndoEntry {
+            action: UndoAction::Notes(NoteDelta {
+                before: removed,
+                after: vec![],
+            }),
+            label: "delete",
+            selected: Selection::default(),
+            track_selected: HashSet::new(),
+            sel_rect: SelRectState::default(),
+        });
+
+        // Note should be gone
+        assert!(doc.data.model.notes[60].is_empty());
+
+        // Undo
+        assert!(doc.undo());
+        assert_eq!(doc.data.model.notes[60].len(), 1);
+        assert_eq!(doc.data.model.notes[60][0].start_tick, 0);
+
+        // Redo
+        assert!(doc.redo());
+        assert!(doc.data.model.notes[60].is_empty());
     }
 
     #[test]
     fn undo_returns_none_when_empty() {
-        let mut stack = UndoStack::new();
-        let result = stack.undo(snap("cur", "x"));
-        assert!(result.is_none());
+        let mut doc = make_doc("x");
+        assert!(!doc.undo());
     }
 
     #[test]
     fn redo_returns_none_when_empty() {
-        let mut stack = UndoStack::new();
-        let result = stack.redo(snap("cur", "x"));
-        assert!(result.is_none());
-    }
-
-    #[test]
-    fn can_undo_can_redo_correctness() {
-        let mut stack = UndoStack::new();
-        assert!(!stack.can_undo());
-        assert!(!stack.can_redo());
-
-        stack.push(snap("1", "a"));
-        assert!(stack.can_undo());
-
-        stack.undo(snap("cur", "b"));
-        assert!(!stack.can_undo());
-        assert!(stack.can_redo());
-
-        stack.redo(snap("cur2", "b"));
-        assert!(stack.can_undo());
-        assert!(!stack.can_redo());
+        let mut doc = make_doc("x");
+        assert!(!doc.redo());
     }
 
     #[test]
     fn clear_wipes_everything() {
-        let mut stack = UndoStack::new();
-        stack.push(snap("1", "a"));
-        stack.undo(snap("2", "b"));
-        assert!(stack.can_undo() || stack.can_redo());
+        let mut doc = make_doc("a");
+        doc.history.push(UndoEntry {
+            action: UndoAction::TrackName {
+                track_idx: 0,
+                old: "a".into(),
+                new: "b".into(),
+            },
+            label: "rename",
+            selected: Selection::default(),
+            track_selected: HashSet::new(),
+            sel_rect: SelRectState::default(),
+        });
+        doc.undo();
+        assert!(doc.history.can_undo() || doc.history.can_redo());
 
-        stack.clear();
-        assert!(!stack.can_undo());
-        assert!(!stack.can_redo());
-        assert_eq!(stack.past.len(), 0);
-        assert_eq!(stack.past_compressing.len(), 0);
-        assert_eq!(stack.future.len(), 0);
-        assert_eq!(stack.future_compressing.len(), 0);
-    }
-
-    #[test]
-    fn compression_enabled_background_thread() {
-        let mut stack = UndoStack::new();
-        stack.set_compression_enabled(true);
-        stack.push(snap("init", "a"));
-        // Should be in past_compressing, not past
-        assert_eq!(stack.past.len(), 0);
-        assert_eq!(stack.past_compressing.len(), 1);
-        // Poll should move it to past (retry in case thread isn't done yet)
-        for _ in 0..100 {
-            stack.poll_compression();
-            if stack.past.len() == 1 {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-        assert_eq!(stack.past.len(), 1);
-        assert_eq!(stack.past_compressing.len(), 0);
-    }
-
-    #[test]
-    fn compress_and_decompress_roundtrip() {
-        let data = make_test_data("roundtrip_test");
-        let compressed = data.compress_snapshot();
-        let restored = ProjectData::decompress_snapshot(&compressed);
-        assert_eq!(restored.model.tracks.len(), 1);
-        assert_eq!(restored.model.tracks[0].name, "roundtrip_test");
+        doc.history.clear();
+        assert!(!doc.history.can_undo());
+        assert!(!doc.history.can_redo());
+        assert_eq!(doc.history.past.len(), 0);
+        assert_eq!(doc.history.future.len(), 0);
     }
 }

@@ -5,7 +5,7 @@ use yinhe_types::TRACK_PALETTE;
 use yinhe_yin::{MappingFile, ProjectFile};
 
 use crate::edit_state::EditState;
-use crate::history::UndoStack;
+use crate::history::{NoteDelta, UndoAction, UndoEntry, UndoStack};
 use crate::project_data::ProjectData;
 use crate::quantize::QuantizePreset;
 
@@ -206,56 +206,115 @@ impl Document {
     }
 }
 
-impl Document {
-    /// Create an undo snapshot that includes the current selection.
-    pub fn snapshot_with_selection(&self, label: &'static str) -> crate::history::UndoSnapshot {
-        crate::history::UndoSnapshot {
-            data: self.data.clone(),
-            label,
-            selected: self.edit.selected.clone(),
-            track_selected: self.edit.track_selected.clone(),
-            sel_rect: self.edit.sel_rect.clone(),
-        }
-    }
+// ---------------------------------------------------------------------------
+// Note editing methods — each returns Option<UndoAction> for the caller to push
+// ---------------------------------------------------------------------------
 
-    pub fn add_note(&mut self, track_idx: u16, note: NoteEvent) -> bool {
-        let t = track_idx as usize;
-        if t >= self.data.model.tracks.len() {
+impl Document {
+    /// Undo the most recent operation. Returns true if something was undone.
+    pub fn undo(&mut self) -> bool {
+        let Some(entry) = self.history.past.pop() else {
             return false;
-        }
-        if Some(track_idx) == self.edit.conductor_track_idx {
-            return false;
-        }
-        if self.data.model.track_note_count.get(t).copied().unwrap_or(0) == 0 {
-            return false;
-        }
-        let model = Arc::make_mut(&mut self.data.model);
-        let key = note.key as usize;
-        let insert_pos = model.notes[key].partition_point(|n| n.start_tick < note.start_tick);
-        Arc::make_mut(&mut model.notes[key]).insert(
-            insert_pos,
-            yinhe_types::Note {
-                start_tick: note.start_tick,
-                end_tick: note.end_tick,
-                velocity: note.velocity,
-                dup_index: note.dup_index,
-                track: track_idx,
-            },
-        );
-        model.mark_dirty(note.key);
-        self.data.rebuild_model_dirty();
+        };
+
+        // Save current selection so redo can restore it.
+        let current_selected = self.edit.selected.clone();
+        let current_track_selected = self.edit.track_selected.clone();
+        let current_sel_rect = self.edit.sel_rect.clone();
+
+        // Apply reverse action.
+        entry.action.undo(self);
+
+        // Restore selection from the undo entry.
+        self.edit.selected = entry.selected;
+        self.edit.track_selected = entry.track_selected;
+        self.edit.sel_rect = entry.sel_rect;
+
+        // Push reversed action onto the redo stack.
+        self.history.future.push(UndoEntry {
+            action: entry.action.reversed(),
+            label: entry.label,
+            selected: current_selected,
+            track_selected: current_track_selected,
+            sel_rect: current_sel_rect,
+        });
+
         true
     }
 
-    pub fn delete_selected(&mut self) -> bool {
-        if self.edit.selected.is_empty() {
+    /// Redo the most recently undone operation. Returns true if something was redone.
+    pub fn redo(&mut self) -> bool {
+        let Some(entry) = self.history.future.pop() else {
             return false;
+        };
+
+        let current_selected = self.edit.selected.clone();
+        let current_track_selected = self.edit.track_selected.clone();
+        let current_sel_rect = self.edit.sel_rect.clone();
+
+        entry.action.undo(self);
+
+        self.edit.selected = entry.selected;
+        self.edit.track_selected = entry.track_selected;
+        self.edit.sel_rect = entry.sel_rect;
+
+        self.history.past.push(UndoEntry {
+            action: entry.action.reversed(),
+            label: entry.label,
+            selected: current_selected,
+            track_selected: current_track_selected,
+            sel_rect: current_sel_rect,
+        });
+
+        true
+    }
+}
+
+impl Document {
+    /// Add a single note. Returns an `UndoAction` if the note was added.
+    pub fn add_note(&mut self, track_idx: u16, note: NoteEvent) -> Option<UndoAction> {
+        let t = track_idx as usize;
+        if t >= self.data.model.tracks.len() {
+            return None;
         }
-        // Check if any notes actually match before deep-copying the model.
+        if Some(track_idx) == self.edit.conductor_track_idx {
+            return None;
+        }
+        if self.data.model.track_note_count.get(t).copied().unwrap_or(0) == 0 {
+            return None;
+        }
+        let key = note.key;
+        let typed_note = yinhe_types::Note {
+            start_tick: note.start_tick,
+            end_tick: note.end_tick,
+            velocity: note.velocity,
+            dup_index: note.dup_index,
+            track: track_idx,
+        };
+        {
+            let model = Arc::make_mut(&mut self.data.model);
+            let k = key as usize;
+            let insert_pos = model.notes[k].partition_point(|n| n.start_tick < note.start_tick);
+            Arc::make_mut(&mut model.notes[k]).insert(insert_pos, typed_note);
+            model.mark_dirty(key);
+        }
+        self.data.rebuild_model_dirty();
+        Some(UndoAction::Notes(NoteDelta {
+            before: vec![],
+            after: vec![(typed_note, key)],
+        }))
+    }
+
+    /// Delete all selected notes. Returns an `UndoAction` if any notes were deleted.
+    pub fn delete_selected(&mut self) -> Option<UndoAction> {
+        if self.edit.selected.is_empty() {
+            return None;
+        }
+        // Collect before any mutation.
         let matched = crate::batch_ops::collect_selected(&self.data.model, &self.edit.selected);
         if matched.is_empty() {
             self.edit.selected.clear();
-            return false;
+            return None;
         }
         {
             let model = Arc::make_mut(&mut self.data.model);
@@ -263,17 +322,20 @@ impl Document {
             self.edit.selected.clear();
         }
         self.data.rebuild_model_dirty();
-        true
+        Some(UndoAction::Notes(NoteDelta {
+            before: matched,
+            after: vec![],
+        }))
     }
 
-    pub fn duplicate_selected(&mut self) -> Option<u32> {
+    /// Duplicate all selected notes. Returns an `UndoAction` if any notes were duplicated.
+    pub fn duplicate_selected(&mut self) -> Option<UndoAction> {
         if self.edit.selected.is_empty() {
             return None;
         }
-        let offset = {
+        let after = {
             let model = Arc::make_mut(&mut self.data.model);
 
-            // Collect selected notes.
             let selected_data = crate::batch_ops::collect_selected(model, &self.edit.selected);
             if selected_data.is_empty() {
                 return None;
@@ -283,8 +345,8 @@ impl Document {
             let max_end = selected_data.iter().map(|(n, _)| n.end_tick).max().unwrap();
             let offset = (max_end - min_start).max(1);
 
-            // Batch insert: group by key, extend.
-            let mut new_by_key: std::collections::HashMap<u8, Vec<yinhe_types::Note>> = std::collections::HashMap::new();
+            let mut new_by_key: std::collections::HashMap<u8, Vec<yinhe_types::Note>> =
+                std::collections::HashMap::new();
             for (note, key) in &selected_data {
                 let new_note = yinhe_types::Note {
                     start_tick: note.start_tick + offset,
@@ -295,31 +357,41 @@ impl Document {
                 };
                 new_by_key.entry(*key).or_default().push(new_note);
             }
+
+            // Build after vec before moving new_by_key.
+            let after: Vec<(yinhe_types::Note, u8)> = new_by_key
+                .iter()
+                .flat_map(|(key, notes)| notes.iter().map(|n| (*n, *key)))
+                .collect();
+
             crate::batch_ops::insert_batch(model, new_by_key);
 
             // Offset selection rects to cover the duplicated notes.
             self.edit.selected.offset(offset as i64, 0);
-            offset
+            after
         };
         self.data.rebuild_model_dirty();
-        Some(offset)
+        Some(UndoAction::Notes(NoteDelta {
+            before: vec![],
+            after,
+        }))
     }
 
-    pub fn transpose_selected(&mut self, semitones: i8) -> Option<i8> {
+    /// Transpose all selected notes by `semitones`. Returns an `UndoAction` if any notes were transposed.
+    pub fn transpose_selected(&mut self, semitones: i8) -> Option<UndoAction> {
         if self.edit.selected.is_empty() {
             return None;
         }
-        {
+        let (before, after) = {
             let model = Arc::make_mut(&mut self.data.model);
 
-            // Batch removal + collect removed notes.
             let moved_data = crate::batch_ops::remove_selected(model, &self.edit.selected);
             if moved_data.is_empty() {
                 return None;
             }
 
-            // Batch insert: group by destination key, extend.
-            let mut new_by_key: std::collections::HashMap<u8, Vec<yinhe_types::Note>> = std::collections::HashMap::new();
+            let mut new_by_key: std::collections::HashMap<u8, Vec<yinhe_types::Note>> =
+                std::collections::HashMap::new();
             for (note, old_key) in &moved_data {
                 let new_key = ((*old_key as i16) + (semitones as i16)).clamp(0, 127) as u8;
                 let new_note = yinhe_types::Note {
@@ -331,29 +403,21 @@ impl Document {
                 };
                 new_by_key.entry(new_key).or_default().push(new_note);
             }
+
+            // Build after vec before moving new_by_key.
+            let after: Vec<(yinhe_types::Note, u8)> = new_by_key
+                .iter()
+                .flat_map(|(key, notes)| notes.iter().map(|n| (*n, *key)))
+                .collect();
+
             crate::batch_ops::insert_batch(model, new_by_key);
 
             // Offset selection rects to follow the transposed notes.
             self.edit.selected.offset(0, semitones as i32);
-        }
+            (moved_data, after)
+        };
         self.data.rebuild_model_dirty();
-        Some(semitones)
-    }
-
-    pub fn apply_undo_snapshot(&mut self, snap: crate::history::UndoSnapshot) {
-        let old_version = self.data.midi_version;
-        self.data = snap.data;
-        self.data.midi_version = old_version.wrapping_add(1);
-        self.edit.track_info_cache = self.data.track_info();
-        for (i, ti) in self.edit.track_info_cache.iter().enumerate() {
-            if i < self.data.track_names.len() {
-                self.data.track_names[i] = ti.name.clone();
-            }
-        }
-        self.edit.pc_map_cache = self.data.pc_map_cache();
-        self.edit.selected = snap.selected;
-        self.edit.track_selected = snap.track_selected;
-        self.edit.sel_rect = snap.sel_rect;
+        Some(UndoAction::Notes(NoteDelta { before, after }))
     }
 }
 

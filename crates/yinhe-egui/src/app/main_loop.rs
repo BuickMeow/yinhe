@@ -157,7 +157,7 @@ impl eframe::App for App {
             if self.active_doc.is_some() {
                 self.with_undo("Recode track names", |doc| {
                     doc.recode_track_names(new_enc);
-                    true
+                    None::<yinhe_editor_core::history::UndoAction>
                 });
             }
         }

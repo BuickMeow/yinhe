@@ -254,19 +254,5 @@ pub fn show_content(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
     ui.separator();
     ui.add_space(8.0);
 
-    ui.heading("撤销/重做");
-    ui.add_space(8.0);
-
-    egui::Grid::new("undo_settings_grid")
-        .num_columns(2)
-        .spacing([12.0, 8.0])
-        .show(ui, |ui| {
-            ui.label("压缩快照");
-            if ui.checkbox(&mut settings.undo_compression_enabled, "开启后撤销/重做会压缩存储以节省内存，但会增加少量延迟").changed() {
-                changed = true;
-            }
-            ui.end_row();
-        });
-
     changed
 }

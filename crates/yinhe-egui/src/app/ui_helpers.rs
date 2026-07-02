@@ -179,10 +179,6 @@ impl App {
             return;
         };
 
-        // Poll background undo compression so finished snapshots get moved
-        // into the stack without blocking the UI.
-        self.documents[idx].history.poll_compression();
-
         let is_playing = self
             .audio
             .as_ref()
@@ -427,7 +423,6 @@ impl App {
                 return;
             }
 
-            let snap = doc.snapshot_with_selection("Move notes");
             let model = Arc::make_mut(&mut doc.data.model);
 
             // Batch removal + collect removed notes.
@@ -448,6 +443,10 @@ impl App {
                 };
                 new_by_key.entry(new_key).or_default().push(moved);
             }
+            let after: Vec<(yinhe_types::Note, u8)> = new_by_key
+                .iter()
+                .flat_map(|(key, notes)| notes.iter().map(|n| (*n, *key)))
+                .collect();
             yinhe_editor_core::batch_ops::insert_batch(model, new_by_key);
 
             // Offset selection rects to follow the moved notes.
@@ -455,7 +454,18 @@ impl App {
             model.rebuild_dirty();
             doc.data.midi_version = doc.data.midi_version.wrapping_add(1);
             self.pianoroll_view.base.dirty = true;
-            doc.history.push(snap);
+            doc.history.push(yinhe_editor_core::history::UndoEntry {
+                action: yinhe_editor_core::history::UndoAction::Notes(
+                    yinhe_editor_core::history::NoteDelta {
+                        before: originals,
+                        after,
+                    },
+                ),
+                label: "Move notes",
+                selected: doc.edit.selected.clone(),
+                track_selected: doc.edit.track_selected.clone(),
+                sel_rect: doc.edit.sel_rect.clone(),
+            });
             if let Some(ref audio) = self.audio {
                 let _ = audio.handle.send(yinhe_audio::AudioCommand::ReloadNotes { model: doc.data.model.clone() });
             }
@@ -481,7 +491,6 @@ impl App {
                     let new_tick = (orig_note.start_tick as i64 + delta_ticks).max(0) as u32;
 
                     if delta_ticks != 0 || delta_keys != 0 {
-                        let snap = doc.snapshot_with_selection("Move note");
                         let model = Arc::make_mut(&mut doc.data.model);
                         // Remove original
                         let ok = key as usize;
@@ -505,7 +514,18 @@ impl App {
                         model.rebuild_dirty();
                         doc.data.midi_version = doc.data.midi_version.wrapping_add(1);
                         self.pianoroll_view.base.dirty = true;
-                        doc.history.push(snap);
+                        doc.history.push(yinhe_editor_core::history::UndoEntry {
+                            action: yinhe_editor_core::history::UndoAction::Notes(
+                                yinhe_editor_core::history::NoteDelta {
+                                    before: vec![(orig_note, key)],
+                                    after: vec![(moved, new_key)],
+                                },
+                            ),
+                            label: "Move note",
+                            selected: doc.edit.selected.clone(),
+                            track_selected: doc.edit.track_selected.clone(),
+                            sel_rect: doc.edit.sel_rect.clone(),
+                        });
                     }
                 }
             }
@@ -517,17 +537,29 @@ impl App {
                     n.track == track && n.start_tick == start_tick
                 }) {
                     if new_end_tick != note.end_tick {
-                        let snap = doc.snapshot_with_selection("Resize note");
+                        let before = *note;
                         let model = Arc::make_mut(&mut doc.data.model);
                         if let Some(n) = Arc::make_mut(&mut model.notes[k]).iter_mut().find(|n| {
                             n.track == track && n.start_tick == start_tick
                         }) {
                             n.end_tick = new_end_tick.max(n.start_tick + 1);
+                            let after = *n;
                             model.mark_dirty(key);
                             model.rebuild_dirty();
                             doc.data.midi_version = doc.data.midi_version.wrapping_add(1);
                             self.pianoroll_view.base.dirty = true;
-                            doc.history.push(snap);
+                            doc.history.push(yinhe_editor_core::history::UndoEntry {
+                                action: yinhe_editor_core::history::UndoAction::Notes(
+                                    yinhe_editor_core::history::NoteDelta {
+                                        before: vec![(before, key)],
+                                        after: vec![(after, key)],
+                                    },
+                                ),
+                                label: "Resize note",
+                                selected: doc.edit.selected.clone(),
+                                track_selected: doc.edit.track_selected.clone(),
+                                sel_rect: doc.edit.sel_rect.clone(),
+                            });
                         }
                     }
                 }
@@ -540,17 +572,29 @@ impl App {
                     n.track == track && n.start_tick == start_tick
                 }) {
                     if new_start_tick != note.start_tick {
-                        let snap = doc.snapshot_with_selection("Resize note");
+                        let before = *note;
                         let model = Arc::make_mut(&mut doc.data.model);
                         if let Some(n) = Arc::make_mut(&mut model.notes[k]).iter_mut().find(|n| {
                             n.track == track && n.start_tick == start_tick
                         }) {
                             n.start_tick = new_start_tick.min(n.end_tick - 1);
+                            let after = *n;
                             model.mark_dirty(key);
                             model.rebuild_dirty();
                             doc.data.midi_version = doc.data.midi_version.wrapping_add(1);
                             self.pianoroll_view.base.dirty = true;
-                            doc.history.push(snap);
+                            doc.history.push(yinhe_editor_core::history::UndoEntry {
+                                action: yinhe_editor_core::history::UndoAction::Notes(
+                                    yinhe_editor_core::history::NoteDelta {
+                                        before: vec![(before, key)],
+                                        after: vec![(after, key)],
+                                    },
+                                ),
+                                label: "Resize note",
+                                selected: doc.edit.selected.clone(),
+                                track_selected: doc.edit.track_selected.clone(),
+                                sel_rect: doc.edit.sel_rect.clone(),
+                            });
                         }
                     }
                 }
@@ -682,11 +726,6 @@ impl App {
                     self.audio_settings.haptic_enabled,
                     self.audio_settings.haptic_intensity,
                 );
-                // Sync undo compression setting to active document
-                if let Some(idx) = self.active_doc {
-                    self.documents[idx].history
-                        .set_compression_enabled(self.audio_settings.undo_compression_enabled);
-                }
                 if !self.audio_settings.show_settings {
                     self.teardown_audio();
                 }
