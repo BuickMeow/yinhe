@@ -84,6 +84,10 @@ pub struct App {
     /// Used to interpolate cursor position between callback updates.
     pub(crate) playback_anchor: Option<(u64, std::time::Instant)>,
 
+    /// Set when Play/Resume is sent but the audio thread hasn't acknowledged yet.
+    /// Ensures request_repaint() keeps firing until is_playing() returns true.
+    pub(crate) pending_playback: bool,
+
     // ── Settings ──
     pub(crate) audio_settings: crate::audio_settings::AudioSettings,
     /// Tracks the last applied MIDI encoding to detect changes.
@@ -209,6 +213,7 @@ impl App {
             audio: None,
             audio_active_doc: None,
             playback_anchor: None,
+            pending_playback: false,
 
             audio_settings: crate::audio_settings::load_audio_settings(),
             last_midi_encoding: yinhe_mid2::MidiImportEncoding::Utf8,

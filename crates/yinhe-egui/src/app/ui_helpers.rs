@@ -608,13 +608,13 @@ impl App {
             }
         }
 
-        // Request repaint during playback
+        // Request repaint during playback (or while waiting for audio thread to start)
         let is_audio_playing = self
             .audio
             .as_ref()
             .map(|a| a.handle.is_playing())
             .unwrap_or(false);
-        if is_audio_playing {
+        if is_audio_playing || self.pending_playback {
             ui.ctx().request_repaint();
         }
     }

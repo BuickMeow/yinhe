@@ -166,6 +166,7 @@ impl App {
         if toggle_play {
             if handle.is_playing() {
                 handle.send(yinhe_audio::AudioCommand::Pause);
+                self.pending_playback = false;
                 let sample = handle.sample_position();
                 let time = sample as f64 / audio.sample_rate as f64;
                 doc.edit.cursor_tick = Some(doc.data.model.tempo_map.tick_at_time(time));
@@ -183,11 +184,13 @@ impl App {
                         from_sample: cursor_sample,
                     });
                 }
+                self.pending_playback = true;
                 doc.edit.playback.toggle_play(tick, &doc.data.model);
             }
         }
         if pause_return {
             handle.send(yinhe_audio::AudioCommand::Pause);
+            self.pending_playback = false;
             let sample = handle.sample_position();
             let time = sample as f64 / audio.sample_rate as f64;
             doc.edit.cursor_tick = Some(doc.data.model.tempo_map.tick_at_time(time));
@@ -195,6 +198,7 @@ impl App {
         }
         if stop_play {
             handle.send(yinhe_audio::AudioCommand::Stop);
+            self.pending_playback = false;
             doc.edit.cursor_tick = Some(0.0);
             doc.edit.playback.stop();
         }
@@ -214,8 +218,16 @@ impl App {
         let handle = &audio.handle;
         if !handle.is_playing() {
             self.playback_anchor = None;
+            // Clear pending flag once the audio thread has caught up
+            if self.pending_playback {
+                // Audio thread hasn't processed the Play command yet.
+                // Keep the flag set so request_repaint() keeps firing.
+                return;
+            }
             return;
         }
+        // Audio is confirmed playing — clear the pending flag.
+        self.pending_playback = false;
 
         let sr = audio.sample_rate as f64;
         let doc = match self.documents.get_mut(idx) {
