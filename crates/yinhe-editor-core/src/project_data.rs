@@ -51,7 +51,7 @@ impl ProjectData {
     pub fn compress_snapshot(&self) -> Vec<u8> {
         let mut compressed = Vec::new();
         {
-            let mut encoder = zstd::Encoder::new(&mut compressed, 3).unwrap();
+            let mut encoder = zstd::Encoder::new(&mut compressed, 1).unwrap();
             bincode::serialize_into(&mut encoder, self).unwrap();
             encoder.finish().unwrap();
         }
