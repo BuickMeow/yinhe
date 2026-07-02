@@ -40,21 +40,19 @@ pub fn compute_bar_rect(
     let bar_x = sel_screen.max.x + GAP;
     let bar_y = sel_screen.center().y - bar_h / 2.0;
 
+    // 整体平移到 content 区域内（不压缩高度，避免背景与按钮脱节）
+    let max_y = (content_rect.max.y - bar_h).max(content_rect.min.y);
+    let bar_y = bar_y.clamp(content_rect.min.y, max_y);
     let bar_rect = egui::Rect::from_min_max(
         egui::pos2(bar_x, bar_y),
         egui::pos2(bar_x + bar_w, bar_y + bar_h),
     );
 
-    let bar_rect = egui::Rect::from_min_max(
-        egui::pos2(bar_rect.min.x, bar_rect.min.y.max(content_rect.min.y)),
-        egui::pos2(bar_rect.max.x, bar_rect.max.y.min(content_rect.max.y)),
-    );
-
     if bar_rect.max.x > content_rect.max.x - 4.0 {
         return None;
     }
-    let visible_h = bar_rect.height();
-    if visible_h < bar_h * 0.5 {
+    // content 区域本身太小时隐藏
+    if content_rect.height() < bar_h * 0.5 {
         return None;
     }
 
@@ -86,15 +84,12 @@ pub fn show(
     let bar_x = sel_screen.max.x + GAP;
     let bar_y = sel_screen.center().y - bar_h / 2.0;
 
+    // 整体平移到 content 区域内（不压缩高度，避免背景与按钮脱节）
+    let max_y = (content_rect.max.y - bar_h).max(content_rect.min.y);
+    let bar_y = bar_y.clamp(content_rect.min.y, max_y);
     let bar_rect = egui::Rect::from_min_max(
         egui::pos2(bar_x, bar_y),
         egui::pos2(bar_x + bar_w, bar_y + bar_h),
-    );
-
-    // Clamp to content area vertically
-    let bar_rect = egui::Rect::from_min_max(
-        egui::pos2(bar_rect.min.x, bar_rect.min.y.max(content_rect.min.y)),
-        egui::pos2(bar_rect.max.x, bar_rect.max.y.min(content_rect.max.y)),
     );
 
     // Don't show if too close to right edge
@@ -102,9 +97,8 @@ pub fn show(
         return None;
     }
 
-    // Don't show if clipped too much vertically
-    let visible_h = bar_rect.height();
-    if visible_h < bar_h * 0.5 {
+    // content 区域本身太小时隐藏
+    if content_rect.height() < bar_h * 0.5 {
         return None;
     }
 
