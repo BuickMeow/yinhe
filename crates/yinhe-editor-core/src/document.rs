@@ -251,6 +251,12 @@ impl Document {
         if self.edit.selected.is_empty() {
             return false;
         }
+        // Check if any notes actually match before deep-copying the model.
+        let matched = crate::batch_ops::collect_selected(&self.data.model, &self.edit.selected);
+        if matched.is_empty() {
+            self.edit.selected.clear();
+            return false;
+        }
         {
             let model = Arc::make_mut(&mut self.data.model);
             crate::batch_ops::remove_selected(model, &self.edit.selected);
