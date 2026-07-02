@@ -823,7 +823,12 @@ fn sel_drag_frame(
                 drag = Some((start, local));
 
                 // ── Auto-scroll when dragging near the edge ──
-                let (actual_dx, actual_dy) = crate::selection::drag::auto_scroll_on_drag(
+                // 记录滚动前的位置，在所有 clamp 之后用实际差值补偿拖拽起点，
+                // 避免 auto_scroll_on_drag 返回值与后续 view.clamp_scroll 不一致
+                // 导致最小缩放时上边界向上漂移。
+                let pre_scroll_x = view.base.scroll_x;
+                let pre_scroll_y = view.base.scroll_y;
+                crate::selection::drag::auto_scroll_on_drag(
                     ui,
                     &mut view.base,
                     music_rect,
@@ -834,6 +839,8 @@ fn sel_drag_frame(
                     },
                 );
                 view.clamp_scroll(content_rect.width(), content_rect.height(), total_ticks);
+                let actual_dx = view.base.scroll_x - pre_scroll_x;
+                let actual_dy = view.base.scroll_y - pre_scroll_y;
                 if actual_dx != 0.0 || actual_dy != 0.0 {
                     drag = drag.map(|(s, e)| (egui::pos2(s.x - actual_dx, s.y - actual_dy), e));
                 }
