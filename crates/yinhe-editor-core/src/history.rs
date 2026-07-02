@@ -53,12 +53,19 @@ struct CompressingSnapshot {
 ///
 /// `past` / `future` hold fully compressed snapshots.
 /// `past_compressing` / `future_compressing` hold snapshots still being
-/// compressed on background threads.
+/// compressed on background threads (only used when `compression_enabled`).
+///
+/// When compression is disabled, snapshots are stored uncompressed
+/// (Arc bump only) — fast but memory-heavy. Enable only when working
+/// with very large projects.
 pub struct UndoStack {
     past: Vec<CompressedSnapshot>,
     past_compressing: Vec<CompressingSnapshot>,
     future: Vec<CompressedSnapshot>,
     future_compressing: Vec<CompressingSnapshot>,
+    /// When true, snapshots are compressed on a background thread.
+    /// When false (default), snapshots are stored uncompressed.
+    pub compression_enabled: bool,
 }
 
 impl UndoStack {
@@ -68,26 +75,48 @@ impl UndoStack {
             past_compressing: Vec::new(),
             future: Vec::new(),
             future_compressing: Vec::new(),
+            compression_enabled: false,
         }
     }
 
     /// Record a snapshot of the state *before* an edit.
-    /// Spawns a background thread to compress it. O(1) — returns instantly.
+    ///
+    /// If `compression_enabled` is true, spawns a background thread to
+    /// compress it (O(1) — returns instantly).
+    /// Otherwise, stores the snapshot uncompressed (O(1) Arc bump).
     pub fn push(&mut self, snapshot: UndoSnapshot) {
         if self.past.len() >= MAX_DEPTH {
             self.past.remove(0);
         }
-        let data = snapshot.data; // move, not clone
-        let handle = std::thread::spawn(move || data.compress_snapshot());
-        self.past_compressing.push(CompressingSnapshot {
-            handle,
-            label: snapshot.label,
-            selected: snapshot.selected,
-            track_selected: snapshot.track_selected,
-            sel_rect: snapshot.sel_rect,
-        });
+        if self.compression_enabled {
+            let data = snapshot.data; // move, not clone
+            let handle = std::thread::spawn(move || data.compress_snapshot());
+            self.past_compressing.push(CompressingSnapshot {
+                handle,
+                label: snapshot.label,
+                selected: snapshot.selected,
+                track_selected: snapshot.track_selected,
+                sel_rect: snapshot.sel_rect,
+            });
+        } else {
+            let compressed = snapshot.data.compress_snapshot();
+            self.past.push(CompressedSnapshot {
+                compressed,
+                label: snapshot.label,
+                selected: snapshot.selected,
+                track_selected: snapshot.track_selected,
+                sel_rect: snapshot.sel_rect,
+            });
+        }
         self.future.clear();
         self.future_compressing.clear();
+    }
+
+    /// Enable or disable background compression.
+    /// When switching from disabled to enabled, existing uncompressed
+    /// snapshots are not retroactively compressed.
+    pub fn set_compression_enabled(&mut self, enabled: bool) {
+        self.compression_enabled = enabled;
     }
 
     /// Call once per frame. Moves finished background compressions into
@@ -142,15 +171,26 @@ impl UndoStack {
             }
         };
         let data = ProjectData::decompress_snapshot(&prev.compressed);
-        // Compress current state in background.
-        let handle = std::thread::spawn(move || current.data.compress_snapshot());
-        self.future_compressing.push(CompressingSnapshot {
-            handle,
-            label: current.label,
-            selected: current.selected,
-            track_selected: current.track_selected,
-            sel_rect: current.sel_rect,
-        });
+        // Compress current state.
+        if self.compression_enabled {
+            let handle = std::thread::spawn(move || current.data.compress_snapshot());
+            self.future_compressing.push(CompressingSnapshot {
+                handle,
+                label: current.label,
+                selected: current.selected,
+                track_selected: current.track_selected,
+                sel_rect: current.sel_rect,
+            });
+        } else {
+            let compressed = current.data.compress_snapshot();
+            self.future.push(CompressedSnapshot {
+                compressed,
+                label: current.label,
+                selected: current.selected,
+                track_selected: current.track_selected,
+                sel_rect: current.sel_rect,
+            });
+        }
         Some(UndoSnapshot {
             data,
             label: prev.label,
@@ -181,15 +221,26 @@ impl UndoStack {
             }
         };
         let data = ProjectData::decompress_snapshot(&next.compressed);
-        // Compress current state in background.
-        let handle = std::thread::spawn(move || current.data.compress_snapshot());
-        self.past_compressing.push(CompressingSnapshot {
-            handle,
-            label: current.label,
-            selected: current.selected,
-            track_selected: current.track_selected,
-            sel_rect: current.sel_rect,
-        });
+        // Compress current state.
+        if self.compression_enabled {
+            let handle = std::thread::spawn(move || current.data.compress_snapshot());
+            self.past_compressing.push(CompressingSnapshot {
+                handle,
+                label: current.label,
+                selected: current.selected,
+                track_selected: current.track_selected,
+                sel_rect: current.sel_rect,
+            });
+        } else {
+            let compressed = current.data.compress_snapshot();
+            self.past.push(CompressedSnapshot {
+                compressed,
+                label: current.label,
+                selected: current.selected,
+                track_selected: current.track_selected,
+                sel_rect: current.sel_rect,
+            });
+        }
         Some(UndoSnapshot {
             data,
             label: next.label,

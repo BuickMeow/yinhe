@@ -250,5 +250,23 @@ pub fn show_content(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
             ui.end_row();
         });
 
+    ui.add_space(16.0);
+    ui.separator();
+    ui.add_space(8.0);
+
+    ui.heading("撤销/重做");
+    ui.add_space(8.0);
+
+    egui::Grid::new("undo_settings_grid")
+        .num_columns(2)
+        .spacing([12.0, 8.0])
+        .show(ui, |ui| {
+            ui.label("后台压缩快照");
+            if ui.checkbox(&mut settings.undo_compression_enabled, "大项目时开启以节省内存").changed() {
+                changed = true;
+            }
+            ui.end_row();
+        });
+
     changed
 }

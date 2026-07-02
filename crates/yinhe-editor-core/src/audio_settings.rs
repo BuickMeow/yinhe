@@ -32,6 +32,8 @@ pub struct AudioSettings {
     pub haptic_enabled: bool,
     /// 震动强度 0.0~1.0
     pub haptic_intensity: f32,
+    /// 后台压缩undo快照（默认关闭，大项目时开启）
+    pub undo_compression_enabled: bool,
     #[serde(skip)]
     pub show_settings: bool,
     #[serde(skip)]
@@ -57,6 +59,7 @@ impl Default for AudioSettings {
             automation_show_dots: true,
             haptic_enabled: true,
             haptic_intensity: 0.5,
+            undo_compression_enabled: false,
             show_settings: false,
             available_devices: Vec::new(),
             available_sample_rates: Vec::new(),

@@ -682,6 +682,11 @@ impl App {
                     self.audio_settings.haptic_enabled,
                     self.audio_settings.haptic_intensity,
                 );
+                // Sync undo compression setting to active document
+                if let Some(idx) = self.active_doc {
+                    self.documents[idx].history
+                        .set_compression_enabled(self.audio_settings.undo_compression_enabled);
+                }
                 if !self.audio_settings.show_settings {
                     self.teardown_audio();
                 }
