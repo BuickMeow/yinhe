@@ -330,6 +330,8 @@ fn sel_drag_frame_arrange(
         let start_tick = view.x_to_tick(local.x);
         let start_track_y = (local.y + view.base.scroll_y) / view.lane_height;
         drag = Some(((start_tick, start_track_y), local));
+        // 立即清除上一个选框，避免拖动期间同时出现两个选框
+        *arr_sel_rect = None;
         if !cmd {
             selected.clear();
         }
