@@ -19,6 +19,11 @@ pub fn draw(painter: &egui::Painter, content_rect: egui::Rect, snapped_view_rect
     );
     let sel = sel_raw.intersect(content_rect);
 
+    // 选框完全在 content 区域之外时，交集退化为零面积矩形，跳过绘制
+    if !sel.is_positive() {
+        return;
+    }
+
     // Detect which edges were clipped
     let clipped = [
         sel.min.y != sel_raw.min.y, // top
