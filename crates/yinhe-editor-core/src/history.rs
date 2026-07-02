@@ -119,34 +119,28 @@ impl UndoStack {
         }
     }
 
-    /// Block until all background compressions finish.
-    fn drain_compressing(&mut self) {
-        Self::drain_blocking(&mut self.past, &mut self.past_compressing);
-        Self::drain_blocking(&mut self.future, &mut self.future_compressing);
-    }
 
-    fn drain_blocking(
-        dest: &mut Vec<CompressedSnapshot>,
-        src: &mut Vec<CompressingSnapshot>,
-    ) {
-        for c in src.drain(..) {
+
+    /// Pop the most recent past snapshot, pushing `current` onto the redo stack.
+    /// If the snapshot is still being compressed on a background thread, waits
+    /// only for that one thread (not all pending compressions).
+    /// Returns `None` when there is nothing to undo.
+    pub fn undo(&mut self, current: UndoSnapshot) -> Option<UndoSnapshot> {
+        // Try already-compressed first.
+        let prev = if let Some(prev) = self.past.pop() {
+            prev
+        } else {
+            // Still compressing — wait only for the most recent one.
+            let c = self.past_compressing.pop()?;
             let compressed = c.handle.join().unwrap();
-            dest.push(CompressedSnapshot {
+            CompressedSnapshot {
                 compressed,
                 label: c.label,
                 selected: c.selected,
                 track_selected: c.track_selected,
                 sel_rect: c.sel_rect,
-            });
-        }
-    }
-
-    /// Pop the most recent past snapshot, pushing `current` onto the redo stack.
-    /// Blocks until all pending compressions finish, then decompresses (~50 ms).
-    /// Returns `None` when there is nothing to undo.
-    pub fn undo(&mut self, current: UndoSnapshot) -> Option<UndoSnapshot> {
-        self.drain_compressing();
-        let prev = self.past.pop()?;
+            }
+        };
         let data = ProjectData::decompress_snapshot(&prev.compressed);
         // Compress current state in background.
         let handle = std::thread::spawn(move || current.data.compress_snapshot());
@@ -167,11 +161,25 @@ impl UndoStack {
     }
 
     /// Pop the most recent future snapshot, pushing `current` onto the undo stack.
-    /// Blocks until all pending compressions finish, then decompresses (~50 ms).
+    /// If the snapshot is still being compressed on a background thread, waits
+    /// only for that one thread (not all pending compressions).
     /// Returns `None` when there is nothing to redo.
     pub fn redo(&mut self, current: UndoSnapshot) -> Option<UndoSnapshot> {
-        self.drain_compressing();
-        let next = self.future.pop()?;
+        // Try already-compressed first.
+        let next = if let Some(next) = self.future.pop() {
+            next
+        } else {
+            // Still compressing — wait only for the most recent one.
+            let c = self.future_compressing.pop()?;
+            let compressed = c.handle.join().unwrap();
+            CompressedSnapshot {
+                compressed,
+                label: c.label,
+                selected: c.selected,
+                track_selected: c.track_selected,
+                sel_rect: c.sel_rect,
+            }
+        };
         let data = ProjectData::decompress_snapshot(&next.compressed);
         // Compress current state in background.
         let handle = std::thread::spawn(move || current.data.compress_snapshot());
