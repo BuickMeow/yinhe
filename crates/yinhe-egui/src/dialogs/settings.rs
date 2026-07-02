@@ -261,8 +261,8 @@ pub fn show_content(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
         .num_columns(2)
         .spacing([12.0, 8.0])
         .show(ui, |ui| {
-            ui.label("后台压缩快照");
-            if ui.checkbox(&mut settings.undo_compression_enabled, "大项目时开启以节省内存").changed() {
+            ui.label("压缩快照");
+            if ui.checkbox(&mut settings.undo_compression_enabled, "开启后撤销/重做会压缩存储以节省内存，但会增加少量延迟").changed() {
                 changed = true;
             }
             ui.end_row();

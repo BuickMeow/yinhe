@@ -32,7 +32,7 @@ pub struct AudioSettings {
     pub haptic_enabled: bool,
     /// 震动强度 0.0~1.0
     pub haptic_intensity: f32,
-    /// 后台压缩undo快照（默认关闭，大项目时开启）
+    /// 压缩undo快照（默认关闭，开启后节省内存但增加少量延迟）
     pub undo_compression_enabled: bool,
     #[serde(skip)]
     pub show_settings: bool,
