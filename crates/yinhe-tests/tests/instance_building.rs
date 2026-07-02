@@ -2,6 +2,7 @@ use yinhe_types::Note;
 use yinhe_pianoroll::instances;
 use yinhe_pianoroll::PianoRollView;
 use yinhe_core::YinModel;
+use yinhe_core::Selection;
 
 use yinhe_test_helpers::*;
 
@@ -18,7 +19,7 @@ fn build_notes_output_count_matches_input() {
     let view = wide_view();
     let visible = vec![true; m.tracks.len()];
     let colors = vec![[1.0f32, 1.0, 1.0]; m.tracks.len()];
-    let selected = std::collections::HashSet::new();
+    let selected = Selection::default();
     let hidden = std::collections::HashSet::new();
 
     let mut out = Vec::new();
@@ -32,7 +33,7 @@ fn build_notes_empty_source() {
     let view = wide_view();
     let visible = vec![];
     let colors = vec![];
-    let selected = std::collections::HashSet::new();
+    let selected = Selection::default();
     let hidden = std::collections::HashSet::new();
 
     let mut out = Vec::new();
@@ -46,8 +47,9 @@ fn build_notes_with_selection() {
     let view = wide_view();
     let visible = vec![true; m.tracks.len()];
     let colors = vec![[1.0f32, 1.0, 1.0]; m.tracks.len()];
-    let mut selected = std::collections::HashSet::new();
-    selected.insert((0u16, 0u32, 60u8));
+    // Select note at track 0, start_tick 0, key 60 (end_tick 480 based on test model)
+    let mut selected = Selection::default();
+    selected.add_rect_track(0, 480, 60, 60, 0, 0);
     let hidden = std::collections::HashSet::new();
 
     let mut out = Vec::new();
@@ -62,7 +64,7 @@ fn build_notes_visibility_filter() {
     let mut visible = vec![true; m.tracks.len()];
     visible[0] = false; // hide track 0
     let colors = vec![[1.0f32, 1.0, 1.0]; m.tracks.len()];
-    let selected = std::collections::HashSet::new();
+    let selected = Selection::default();
     let hidden = std::collections::HashSet::new();
 
     let mut out = Vec::new();
@@ -78,7 +80,7 @@ fn build_notes_visible_range_culling() {
     let view = wide_view();
     let visible = vec![true; m.tracks.len()];
     let colors = vec![[1.0f32, 1.0, 1.0]; m.tracks.len()];
-    let selected = std::collections::HashSet::new();
+    let selected = Selection::default();
     let hidden = std::collections::HashSet::new();
 
     let mut out = Vec::new();
@@ -93,7 +95,7 @@ fn build_notes_empty_data() {
     let view = wide_view();
     let visible = vec![true; 0];
     let colors = vec![[1.0f32, 1.0, 1.0]; 0];
-    let selected = std::collections::HashSet::new();
+    let selected = Selection::default();
     let hidden = std::collections::HashSet::new();
 
     let mut out = Vec::new();
@@ -109,7 +111,7 @@ fn build_notes_stress_many_tracks() {
     view.base.pixels_per_tick = 0.01;
     let visible = vec![true; m.tracks.len()];
     let colors = vec![[1.0f32, 1.0, 1.0]; m.tracks.len()];
-    let selected = std::collections::HashSet::new();
+    let selected = Selection::default();
     let hidden = std::collections::HashSet::new();
 
     let mut out = Vec::new();

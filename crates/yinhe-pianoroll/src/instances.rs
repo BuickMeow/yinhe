@@ -462,7 +462,7 @@ mod tests {
         let midi = make_midi(vec![(100, 0, 480, 0, 100)]);
         let view = make_view();
         let mut selected = yinhe_core::Selection::default();
-        selected.add_pick(0, 0, 100);
+        selected.add_rect_track(0, 480, 100, 100, 0, 0);
         let track_visible = vec![true];
         let track_colors = [[0.5, 0.5, 0.5]];
 

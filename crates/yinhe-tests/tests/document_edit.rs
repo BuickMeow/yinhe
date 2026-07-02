@@ -7,23 +7,23 @@ fn doc_with_notes() -> Document {
     make_test_document()
 }
 
-fn first_note_key60(doc: &Document) -> (u16, u32, u8) {
-    // Find the first note at key 60 and return its (track, start_tick, key) tuple
+fn first_note_key60(doc: &Document) -> (u16, u32, u8, u32) {
+    // Find the first note at key 60 and return (track, start_tick, key, end_tick)
     for (key, notes) in doc.data.model.notes.iter().enumerate() {
         for n in notes.iter() {
             if key == 60 {
-                return (n.track, n.start_tick, key as u8);
+                return (n.track, n.start_tick, key as u8, n.end_tick);
             }
         }
     }
     panic!("no note at key 60");
 }
 
-fn first_note_key48(doc: &Document) -> (u16, u32, u8) {
+fn first_note_key48(doc: &Document) -> (u16, u32, u8, u32) {
     for (key, notes) in doc.data.model.notes.iter().enumerate() {
         for n in notes.iter() {
             if key == 48 {
-                return (n.track, n.start_tick, key as u8);
+                return (n.track, n.start_tick, key as u8, n.end_tick);
             }
         }
     }
@@ -65,8 +65,8 @@ fn document_track_info_cache() {
 #[test]
 fn delete_selected_notes() {
     let mut doc = doc_with_notes();
-    let sel = first_note_key60(&mut doc);
-    doc.edit.selected.insert(sel);
+    let (track, start_tick, key, end_tick) = first_note_key60(&mut doc);
+    doc.edit.selected.add_rect_track(start_tick, end_tick, key, key, track, track);
     let deleted = doc.delete_selected();
     assert!(deleted);
     // One fewer note at key 60
@@ -85,8 +85,8 @@ fn delete_selected_notes_empty_selection() {
 fn duplicate_selected_notes() {
     let mut doc = doc_with_notes();
     let count_before = doc.data.model.notes[60].len();
-    let sel = first_note_key60(&mut doc);
-    doc.edit.selected.insert(sel);
+    let (track, start_tick, key, end_tick) = first_note_key60(&mut doc);
+    doc.edit.selected.add_rect_track(start_tick, end_tick, key, key, track, track);
     let duplicated = doc.duplicate_selected();
     assert!(duplicated.is_some());
     assert_eq!(doc.data.model.notes[60].len(), count_before + 1);
@@ -101,8 +101,8 @@ fn duplicate_selected_notes_empty_selection() {
 #[test]
 fn transpose_selected_notes_up() {
     let mut doc = doc_with_notes();
-    let sel = first_note_key60(&mut doc);
-    doc.edit.selected.insert(sel);
+    let (track, start_tick, key, end_tick) = first_note_key60(&mut doc);
+    doc.edit.selected.add_rect_track(start_tick, end_tick, key, key, track, track);
     let transposed = doc.transpose_selected(12);
     assert!(transposed.is_some());
     // Note should now be at key 72
@@ -112,8 +112,8 @@ fn transpose_selected_notes_up() {
 #[test]
 fn transpose_selected_notes_down() {
     let mut doc = doc_with_notes();
-    let sel = first_note_key60(&mut doc);
-    doc.edit.selected.insert(sel);
+    let (track, start_tick, key, end_tick) = first_note_key60(&mut doc);
+    doc.edit.selected.add_rect_track(start_tick, end_tick, key, key, track, track);
     let transposed = doc.transpose_selected(-12);
     assert!(transposed.is_some());
     // Note should now be at key 48 (60 - 12)
@@ -131,8 +131,8 @@ fn undo_redo_delete() {
     let mut doc = doc_with_notes();
     let note_count_before = doc.data.model.note_count;
     let snap = doc.data.snapshot("delete");
-    let sel = first_note_key60(&mut doc);
-    doc.edit.selected.insert(sel);
+    let (track, start_tick, key, end_tick) = first_note_key60(&mut doc);
+    doc.edit.selected.add_rect_track(start_tick, end_tick, key, key, track, track);
     doc.delete_selected();
     assert_eq!(doc.data.model.note_count, note_count_before - 1);
     doc.apply_undo_snapshot(snap);
@@ -143,8 +143,8 @@ fn undo_redo_delete() {
 fn undo_redo_transpose() {
     let mut doc = doc_with_notes();
     let snap = doc.data.snapshot("transpose");
-    let sel = first_note_key60(&mut doc);
-    doc.edit.selected.insert(sel);
+    let (track, start_tick, key, end_tick) = first_note_key60(&mut doc);
+    doc.edit.selected.add_rect_track(start_tick, end_tick, key, key, track, track);
     doc.transpose_selected(7);
     assert_eq!(doc.data.model.notes[67].len(), 1);
     doc.apply_undo_snapshot(snap);
@@ -156,8 +156,8 @@ fn undo_redo_duplicate() {
     let mut doc = doc_with_notes();
     let count_before = doc.data.model.notes[60].len();
     let snap = doc.data.snapshot("duplicate");
-    let sel = first_note_key60(&mut doc);
-    doc.edit.selected.insert(sel);
+    let (track, start_tick, key, end_tick) = first_note_key60(&mut doc);
+    doc.edit.selected.add_rect_track(start_tick, end_tick, key, key, track, track);
     doc.duplicate_selected();
     assert_eq!(doc.data.model.notes[60].len(), count_before + 1);
     doc.apply_undo_snapshot(snap);
@@ -202,13 +202,13 @@ fn document_pc_map_cache() {
 fn delete_multiple_notes() {
     let mut doc = doc_with_notes();
     // Collect note references first to avoid borrow conflict
-    let to_delete: Vec<(u16, u32, u8)> = doc.data.model.notes.iter().enumerate()
-        .flat_map(|(key, notes)| notes.iter().map(move |n| (n.track, n.start_tick, key as u8)))
+    let to_delete: Vec<(u16, u32, u8, u32)> = doc.data.model.notes.iter().enumerate()
+        .flat_map(|(key, notes)| notes.iter().map(move |n| (n.track, n.start_tick, key as u8, n.end_tick)))
         .take(2)
         .collect();
     let note_count_before = doc.data.model.note_count;
-    for sel in &to_delete {
-        doc.edit.selected.insert(*sel);
+    for (track, start_tick, key, end_tick) in &to_delete {
+        doc.edit.selected.add_rect_track(*start_tick, *end_tick, *key, *key, *track, *track);
     }
     doc.delete_selected();
     assert_eq!(doc.data.model.note_count, note_count_before - 2);
@@ -217,13 +217,13 @@ fn delete_multiple_notes() {
 #[test]
 fn duplicate_multiple_notes() {
     let mut doc = doc_with_notes();
-    let to_dup: Vec<(u16, u32, u8)> = doc.data.model.notes.iter().enumerate()
-        .flat_map(|(key, notes)| notes.iter().map(move |n| (n.track, n.start_tick, key as u8)))
+    let to_dup: Vec<(u16, u32, u8, u32)> = doc.data.model.notes.iter().enumerate()
+        .flat_map(|(key, notes)| notes.iter().map(move |n| (n.track, n.start_tick, key as u8, n.end_tick)))
         .take(2)
         .collect();
     let note_count_before = doc.data.model.note_count;
-    for sel in &to_dup {
-        doc.edit.selected.insert(*sel);
+    for (track, start_tick, key, end_tick) in &to_dup {
+        doc.edit.selected.add_rect_track(*start_tick, *end_tick, *key, *key, *track, *track);
     }
     doc.duplicate_selected();
     assert_eq!(doc.data.model.note_count, note_count_before + 2);
@@ -232,8 +232,8 @@ fn duplicate_multiple_notes() {
 #[test]
 fn transpose_clamps_to_valid_range() {
     let mut doc = doc_with_notes();
-    let sel = first_note_key60(&mut doc);
-    doc.edit.selected.insert(sel);
+    let (track, start_tick, key, end_tick) = first_note_key60(&mut doc);
+    doc.edit.selected.add_rect_track(start_tick, end_tick, key, key, track, track);
     doc.transpose_selected(-100);
     // Should clamp to key 0
     assert_eq!(doc.data.model.notes[0].len(), 1);
@@ -242,8 +242,8 @@ fn transpose_clamps_to_valid_range() {
 #[test]
 fn transpose_clamps_upper_bound() {
     let mut doc = doc_with_notes();
-    let sel = first_note_key60(&mut doc);
-    doc.edit.selected.insert(sel);
+    let (track, start_tick, key, end_tick) = first_note_key60(&mut doc);
+    doc.edit.selected.add_rect_track(start_tick, end_tick, key, key, track, track);
     doc.transpose_selected(100);
     // Should clamp to key 127
     assert_eq!(doc.data.model.notes[127].len(), 1);
@@ -254,8 +254,8 @@ fn delete_then_undo_restores_notes() {
     let mut doc = doc_with_notes();
     let snap = doc.data.snapshot("before");
     let note_count_before = doc.data.model.note_count;
-    let sel = first_note_key60(&mut doc);
-    doc.edit.selected.insert(sel);
+    let (track, start_tick, key, end_tick) = first_note_key60(&mut doc);
+    doc.edit.selected.add_rect_track(start_tick, end_tick, key, key, track, track);
     doc.delete_selected();
     assert_eq!(doc.data.model.note_count, note_count_before - 1);
     doc.apply_undo_snapshot(snap);
@@ -267,13 +267,13 @@ fn consecutive_operations() {
     let mut doc = doc_with_notes();
     let snap1 = doc.data.snapshot("del");
     let note_count_before = doc.data.model.note_count;
-    let sel = first_note_key60(&mut doc);
-    doc.edit.selected.insert(sel);
+    let (track, start_tick, key, end_tick) = first_note_key60(&mut doc);
+    doc.edit.selected.add_rect_track(start_tick, end_tick, key, key, track, track);
     doc.delete_selected();
     assert_eq!(doc.data.model.note_count, note_count_before - 1);
 
-    let sel2 = first_note_key48(&mut doc);
-    doc.edit.selected.insert(sel2);
+    let (track2, start_tick2, key2, end_tick2) = first_note_key48(&mut doc);
+    doc.edit.selected.add_rect_track(start_tick2, end_tick2, key2, key2, track2, track2);
     doc.transpose_selected(12);
 
     doc.apply_undo_snapshot(snap1);
