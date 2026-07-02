@@ -126,6 +126,7 @@ pub fn prepare(
         target_hash(&view.selected_target),
         automation_display_mode as u64,
         automation_show_dots as u64,
+        view.show_velocity as u64,
     ]);
     renderer.upload_layer(2, bars_key, |out| {
         if is_velocity {

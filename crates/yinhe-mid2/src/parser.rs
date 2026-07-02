@@ -485,7 +485,7 @@ fn parse_track(
         a.0.cmp(&b.0).then_with(|| a.1.tick.cmp(&b.1.tick))
     });
 
-    td.automation_lanes = group_automation_events(auto_events, td.port, td.channel);
+    td.automation_lanes = group_automation_events(auto_events, td.port, td.channel, track_idx);
 
     Ok(Some(td))
 }
@@ -495,6 +495,7 @@ fn group_automation_events(
     events: Vec<(AutomationTarget, AutomationEvent)>,
     port: u8,
     channel: u8,
+    track_idx: usize,
 ) -> Vec<AutomationLane> {
     if events.is_empty() {
         return Vec::new();
@@ -513,7 +514,7 @@ fn group_automation_events(
             .collect();
         lanes.push(AutomationLane {
             target,
-            track: 0, // track index assigned by caller
+            track: track_idx as u16,
             events: lane_events,
         });
     }
