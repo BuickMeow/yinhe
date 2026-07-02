@@ -126,11 +126,15 @@ pub fn prepare(
     // Layer 2: notes
     // Notes layer no longer depends on selection or track_colors (handled in shader)
     // Only depends on: viewport, track_visible, hidden_notes, midi_version
-    let tv_hash = track_visible.iter().fold(0u64, |acc, &v| {
-        let mut h: u64 = 0;
-        h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(v as u64);
-        acc ^ h
-    });
+    // 顺序哈希：位置敏感，[true,false] ≠ [false,true]
+    // 之前用 XOR 导致只算奇偶校验位，切换轨道时哈希不变，缓存不失效
+    let tv_hash = {
+        let mut h = 0u64;
+        for &v in track_visible {
+            h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(v as u64);
+        }
+        h
+    };
     let hidden_hash = hidden_notes.iter().fold(0u64, |acc, &(trk, tick, key)| {
         let mut h: u64 = 0;
         h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(trk as u64);
