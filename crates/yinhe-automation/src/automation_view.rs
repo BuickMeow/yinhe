@@ -20,6 +20,8 @@ pub struct AutomationPanelView {
     pub selected_target: AutomationTarget,
     /// When true, render velocity bars from note data instead of automation lanes.
     pub show_velocity: bool,
+    /// When true, render tempo curve from conductor tempo events.
+    pub show_tempo: bool,
     /// Cached index into `MidiFile.automation_lanes` for fast lookup.
     pub lane_index: usize,
     /// Whether the panel content needs to be rebuilt.
@@ -41,6 +43,7 @@ impl Default for AutomationPanelView {
             panel_height: DEFAULT_PANEL_HEIGHT,
             selected_target: AutomationTarget::CC { controller: 7 },
             show_velocity: false,
+            show_tempo: false,
             lane_index: 0,
             dirty: true,
         }
@@ -80,6 +83,7 @@ impl AutomationPanelView {
         h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(self.base.scroll_x.to_bits() as u64);
         h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(self.base.left_panel_width.to_bits() as u64);
         h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(self.panel_height.to_bits() as u64);
+        h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(self.show_tempo as u64);
         h
     }
 }

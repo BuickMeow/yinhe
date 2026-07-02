@@ -115,6 +115,7 @@ pub fn show(
     velocity_display_mode: &mut u32,
     automation_display_mode: &mut u32,
     automation_show_dots: &mut bool,
+    tempo_events: &[(u32, f64)],
     note_drag_delta: &mut Option<(i64, i32)>,
     sel_rect: &mut yinhe_editor_core::edit_state::SelRectState,
     track_selected: &std::collections::HashSet<u16>,
@@ -554,6 +555,7 @@ pub fn show(
             velocity_display_mode,
             automation_display_mode,
             automation_show_dots,
+            tempo_events,
         );
 
         if midi.is_some() {

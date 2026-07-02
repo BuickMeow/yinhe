@@ -15,12 +15,21 @@ fn target_hash(target: &AutomationTarget) -> u64 {
     }
 }
 
+fn tempo_hash(tempo_events: &[(u32, f64)]) -> u64 {
+    let mut h: u64 = 0;
+    for (tick, bpm) in tempo_events {
+        h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(*tick as u64);
+        h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(bpm.to_bits());
+    }
+    h
+}
+
 /// Prepare an automation panel for rendering using the layered cache API.
 ///
 /// Layers:
 ///   0 = decor (background + center line)
 ///   1 = grid lines
-///   2 = data bars (or velocity bars when target is Velocity)
+///   2 = data bars (or velocity bars when target is Velocity, or tempo curve)
 ///
 /// When `lanes` is empty and the panel target is Velocity, velocity bars are
 /// rendered directly from `midi` instead of from an automation lane.
@@ -43,6 +52,7 @@ pub fn prepare(
     velocity_display_mode: u32,
     automation_display_mode: u32,
     automation_show_dots: bool,
+    tempo_events: &[(u32, f64)],
 ) -> bool {
     let w = width as f32;
     let h = height as f32;
@@ -111,8 +121,9 @@ pub fn prepare(
         automation_instances::build_grid(out, w, h, view, tpb, default_num, default_den, time_sig_events, scroll_x_pos);
     });
 
-    // Layer 2: data bars (or velocity bars when show_velocity is true)
+    // Layer 2: data bars (or velocity bars when show_velocity is true, or tempo curve)
     let is_velocity = view.show_velocity;
+    let is_tempo = view.show_tempo;
     let tv_hash = {
         let mut h = 0u64;
         for &v in track_visible {
@@ -127,9 +138,13 @@ pub fn prepare(
         automation_display_mode as u64,
         automation_show_dots as u64,
         view.show_velocity as u64,
+        view.show_tempo as u64,
+        tempo_hash(tempo_events),
     ]);
     renderer.upload_layer(2, bars_key, |out| {
-        if is_velocity {
+        if is_tempo {
+            automation_instances::build_tempo_lines(out, w, h, view, tempo_events);
+        } else if is_velocity {
             if let Some(midi) = midi {
                 automation_instances::build_velocity_bars(
                     out, w, h, midi, view, track_visible, track_colors, velocity_display_mode,

@@ -472,6 +472,140 @@ pub fn build_velocity_bars(
     }
 }
 
+/// Build stepped-line instances for tempo curve (layer 2).
+///
+/// Renders each tempo event as a staircase: horizontal line (bpm held) +
+/// vertical line (bpm change).  Range is [0, max_bpm] where max_bpm is the
+/// highest BPM across all tempo events.
+pub fn build_tempo_lines(
+    out: &mut Vec<NoteInstance>,
+    w: f32,
+    h: f32,
+    view: &AutomationPanelView,
+    tempo_events: &[(u32, f64)],
+) {
+    if tempo_events.is_empty() {
+        return;
+    }
+
+    let max_bpm = tempo_events
+        .iter()
+        .map(|(_, bpm)| *bpm)
+        .fold(0.0f64, f64::max) as f32;
+    if max_bpm <= 0.0 {
+        return;
+    }
+
+    let ppu = view.base.pixels_per_tick;
+    let (tick_start, tick_end) = view.base.visible_tick_range(w);
+    let pad_start = tick_start.max(0.0) as u32;
+    let pad_end = tick_end.max(0.0) as u32;
+    let x_offset = view.base.left_panel_width - view.base.scroll_x;
+    let grid_left_x = view.base.left_panel_width;
+
+    // Find first visible event index
+    let vis_start = tempo_events.partition_point(|e| e.0 < pad_start);
+    let vis_end = tempo_events.partition_point(|e| e.0 < pad_end);
+
+    if vis_start >= vis_end && vis_start == 0 {
+        // No visible events: draw full-width line at first tempo
+        let val = tempo_events[0].1 as f32;
+        let y = h - (val / max_bpm) * h;
+        if w > grid_left_x {
+            out.push(NoteInstance {
+                x: grid_left_x,
+                y,
+                w: w - grid_left_x,
+                h: 1.0,
+                rgba_packed: pack_rgba(0.80, 0.30, 0.30, 0.85),
+                props_packed: pack_props(0.0, 0.0),
+                velocity: 0,
+                tag: 0,
+            });
+        }
+        return;
+    }
+
+    // Value before first visible event (chase)
+    let prev_idx = if vis_start > 0 { vis_start - 1 } else { 0 };
+    let mut prev_val = tempo_events[prev_idx].1 as f32;
+    let mut prev_tick = tempo_events[vis_start.min(vis_end.max(vis_start))].0;
+
+    // Horizontal line from grid left edge to the first visible event
+    let first_tick = tempo_events[vis_start].0;
+    let first_x = x_offset + first_tick as f32 * ppu;
+    let first_y = h - (prev_val / max_bpm) * h;
+    if first_x > grid_left_x {
+        out.push(NoteInstance {
+            x: grid_left_x,
+            y: first_y,
+            w: first_x - grid_left_x,
+            h: 1.0,
+            rgba_packed: pack_rgba(0.80, 0.30, 0.30, 0.85),
+            props_packed: pack_props(0.0, 0.0),
+            velocity: 0,
+            tag: 0,
+        });
+    }
+
+    for i in vis_start..vis_end {
+        let (tick, bpm) = tempo_events[i];
+        let val = bpm as f32;
+        let x1 = x_offset + prev_tick as f32 * ppu;
+        let x2 = x_offset + tick as f32 * ppu;
+        let y1 = h - (prev_val / max_bpm) * h;
+        let y2 = h - (val / max_bpm) * h;
+
+        // Horizontal line: value held from prev_tick to tick
+        if x2 > x1 {
+            out.push(NoteInstance {
+                x: x1,
+                y: y1,
+                w: x2 - x1,
+                h: 1.0,
+                rgba_packed: pack_rgba(0.80, 0.30, 0.30, 0.85),
+                props_packed: pack_props(0.0, 0.0),
+                velocity: 0,
+                tag: 0,
+            });
+        }
+
+        // Vertical line: value change at tick
+        let dy = y2 - y1;
+        if dy.abs() > 0.0 {
+            out.push(NoteInstance {
+                x: x2 - 0.5,
+                y: y1.min(y2),
+                w: 1.0,
+                h: dy.abs(),
+                rgba_packed: pack_rgba(0.80, 0.30, 0.30, 0.85),
+                props_packed: pack_props(0.0, 0.0),
+                velocity: 0,
+                tag: 0,
+            });
+        }
+
+        prev_val = val;
+        prev_tick = tick;
+    }
+
+    // Horizontal line from last visible event to right edge
+    let last_x = x_offset + prev_tick as f32 * ppu;
+    let last_y = h - (prev_val / max_bpm) * h;
+    if w > last_x {
+        out.push(NoteInstance {
+            x: last_x,
+            y: last_y,
+            w: w - last_x,
+            h: 1.0,
+            rgba_packed: pack_rgba(0.80, 0.30, 0.30, 0.85),
+            props_packed: pack_props(0.0, 0.0),
+            velocity: 0,
+            tag: 0,
+        });
+    }
+}
+
 /// Build all instances for one automation panel (backward-compatible).
 pub fn build_automation_instances(
     instances: &mut Vec<NoteInstance>,
@@ -515,6 +649,7 @@ mod tests {
             panel_height,
             selected_target: AutomationTarget::CC { controller: 7 },
             show_velocity: false,
+            show_tempo: false,
             lane_index: 0,
             dirty: true,
         }

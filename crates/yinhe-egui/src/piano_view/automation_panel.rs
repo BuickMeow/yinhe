@@ -83,6 +83,7 @@ pub fn show_panels(
     velocity_display_mode: &mut u32,
     automation_display_mode: &mut u32,
     automation_show_dots: &mut bool,
+    tempo_events: &[(u32, f64)],
 ) -> f32 {
     if !*show_panels || panels.is_empty() {
         return 0.0;
@@ -165,6 +166,7 @@ pub fn show_panels(
                     *velocity_display_mode,
                     *automation_display_mode,
                     *automation_show_dots,
+                    tempo_events,
                 );
 
                 let content_changed = panel.dirty || gpu_dirty;
@@ -220,6 +222,15 @@ pub fn show_panels(
                         let vel_selected = panel.show_velocity;
                         if ui.add(egui::Button::selectable(vel_selected, "Velocity")).clicked() {
                             panel.show_velocity = true;
+                            panel.show_tempo = false;
+                            panel.dirty = true;
+                            ui.close();
+                        }
+                        // Tempo (special: renders from conductor tempo events)
+                        let tempo_selected = panel.show_tempo;
+                        if ui.add(egui::Button::selectable(tempo_selected, "Tempo")).clicked() {
+                            panel.show_tempo = true;
+                            panel.show_velocity = false;
                             panel.dirty = true;
                             ui.close();
                         }
@@ -230,6 +241,7 @@ pub fn show_panels(
                             if ui.add(egui::Button::selectable(selected, &name)).clicked() {
                                 panel.selected_target = target.clone();
                                 panel.show_velocity = false;
+                                panel.show_tempo = false;
                                 panel.dirty = true;
                                 ui.close();
                             }
@@ -244,6 +256,7 @@ pub fn show_panels(
                         if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                             panel.selected_target = AutomationTarget::CC { controller: cc_input as u8 };
                             panel.show_velocity = false;
+                            panel.show_tempo = false;
                             panel.dirty = true;
                             ui.close();
                         }
@@ -282,6 +295,8 @@ pub fn show_panels(
                                 is_active,
                             );
                         }
+                    } else if panel.show_tempo {
+                        // Tempo only uses line mode — no display mode buttons
                     } else {
                         // Automation display mode: bar chart / line chart icons
                         let auto_modes = [(0u32, ICON_BAR_CHART), (1u32, ICON_SHOW_CHART)];
@@ -350,6 +365,12 @@ pub fn show_panels(
 
         let (top_val, mid_val, bot_val) = if panel.show_velocity {
             ("127".to_string(), "64".to_string(), "0".to_string())
+        } else if panel.show_tempo {
+            let max_bpm = tempo_events
+                .iter()
+                .map(|(_, bpm)| *bpm)
+                .fold(0.0f64, f64::max);
+            (format!("{:.1}", max_bpm), format!("{:.1}", max_bpm / 2.0), "0.0".into())
         } else {
             let target = &panel.selected_target;
             let max = target.max_value();

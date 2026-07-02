@@ -336,6 +336,10 @@ impl App {
                                 .unwrap_or_default()
                         }
                     };
+                    // Extract tempo events for automation panel
+                    let tempo_events: Vec<(u32, f64)> = doc.data.model.conductor.tempo.iter()
+                        .map(|t| (t.tick, t.bpm))
+                        .collect();
                     event = piano_view::show(
                         ui,
                         ui.available_size(),
@@ -364,6 +368,7 @@ impl App {
                         &mut self.audio_settings.velocity_display_mode,
                         &mut self.audio_settings.automation_display_mode,
                         &mut self.audio_settings.automation_show_dots,
+                        &tempo_events,
                         &mut note_drag_delta,
                         &mut doc.edit.sel_rect,
                         &doc.edit.track_selected,
