@@ -1,8 +1,12 @@
 //! Undo/redo history for a single document.
 //!
-//! Snapshots are compressed synchronously on `push()` using zstd level 1
-//! (fast compression, ~500 MB/s). This avoids the memory blow-up of keeping
-//! uncompressed `Arc<YinModel>` snapshots alive in the undo stack.
+//! Snapshots are compressed on a **background thread** so the UI never stalls.
+//!
+//! - `push()`: spawns a thread to compress the snapshot, returns instantly.
+//! - `poll_compression()`: call once per frame — moves finished compressions
+//!   into the `past` / `future` stack.
+//! - `undo()` / `redo()`: drain all pending compressions first (blocks on
+//!   join), then decompress the target snapshot synchronously (~50 ms).
 
 use std::collections::{HashMap, HashSet};
 
@@ -27,7 +31,7 @@ pub struct UndoSnapshot {
     pub sel_rect: SelRectState,
 }
 
-/// A compressed snapshot stored in the stack.
+/// A fully compressed snapshot stored in the stack.
 struct CompressedSnapshot {
     compressed: Vec<u8>,
     label: &'static str,
@@ -36,48 +40,118 @@ struct CompressedSnapshot {
     sel_rect: SelRectState,
 }
 
+/// A snapshot currently being compressed on a background thread.
+struct CompressingSnapshot {
+    handle: std::thread::JoinHandle<Vec<u8>>,
+    label: &'static str,
+    selected: yinhe_core::Selection,
+    track_selected: HashSet<u16>,
+    sel_rect: SelRectState,
+}
+
 /// Per-document undo/redo stack.
 ///
-/// `past` holds compressed states *before* each completed edit, oldest at front.
-/// `future` holds compressed states that have been undone, ready to be redone.
+/// `past` / `future` hold fully compressed snapshots.
+/// `past_compressing` / `future_compressing` hold snapshots still being
+/// compressed on background threads.
 pub struct UndoStack {
     past: Vec<CompressedSnapshot>,
+    past_compressing: Vec<CompressingSnapshot>,
     future: Vec<CompressedSnapshot>,
+    future_compressing: Vec<CompressingSnapshot>,
 }
 
 impl UndoStack {
     pub fn new() -> Self {
         Self {
             past: Vec::new(),
+            past_compressing: Vec::new(),
             future: Vec::new(),
+            future_compressing: Vec::new(),
         }
     }
 
     /// Record a snapshot of the state *before* an edit.
-    /// Compresses synchronously. O(N) where N = total notes.
+    /// Spawns a background thread to compress it. O(1) — returns instantly.
     pub fn push(&mut self, snapshot: UndoSnapshot) {
         if self.past.len() >= MAX_DEPTH {
             self.past.remove(0);
         }
-        let compressed = snapshot.data.compress_snapshot();
-        self.past.push(CompressedSnapshot {
-            compressed,
+        let data = snapshot.data; // move, not clone
+        let handle = std::thread::spawn(move || data.compress_snapshot());
+        self.past_compressing.push(CompressingSnapshot {
+            handle,
             label: snapshot.label,
             selected: snapshot.selected,
             track_selected: snapshot.track_selected,
             sel_rect: snapshot.sel_rect,
         });
         self.future.clear();
+        self.future_compressing.clear();
+    }
+
+    /// Call once per frame. Moves finished background compressions into
+    /// the `past` / `future` stacks.
+    pub fn poll_compression(&mut self) {
+        Self::drain_finished(&mut self.past, &mut self.past_compressing);
+        Self::drain_finished(&mut self.future, &mut self.future_compressing);
+    }
+
+    fn drain_finished(
+        dest: &mut Vec<CompressedSnapshot>,
+        src: &mut Vec<CompressingSnapshot>,
+    ) {
+        let mut i = 0;
+        while i < src.len() {
+            if src[i].handle.is_finished() {
+                let c = src.swap_remove(i);
+                let compressed = c.handle.join().unwrap();
+                dest.push(CompressedSnapshot {
+                    compressed,
+                    label: c.label,
+                    selected: c.selected,
+                    track_selected: c.track_selected,
+                    sel_rect: c.sel_rect,
+                });
+            } else {
+                i += 1;
+            }
+        }
+    }
+
+    /// Block until all background compressions finish.
+    fn drain_compressing(&mut self) {
+        Self::drain_blocking(&mut self.past, &mut self.past_compressing);
+        Self::drain_blocking(&mut self.future, &mut self.future_compressing);
+    }
+
+    fn drain_blocking(
+        dest: &mut Vec<CompressedSnapshot>,
+        src: &mut Vec<CompressingSnapshot>,
+    ) {
+        for c in src.drain(..) {
+            let compressed = c.handle.join().unwrap();
+            dest.push(CompressedSnapshot {
+                compressed,
+                label: c.label,
+                selected: c.selected,
+                track_selected: c.track_selected,
+                sel_rect: c.sel_rect,
+            });
+        }
     }
 
     /// Pop the most recent past snapshot, pushing `current` onto the redo stack.
+    /// Blocks until all pending compressions finish, then decompresses (~50 ms).
     /// Returns `None` when there is nothing to undo.
     pub fn undo(&mut self, current: UndoSnapshot) -> Option<UndoSnapshot> {
+        self.drain_compressing();
         let prev = self.past.pop()?;
         let data = ProjectData::decompress_snapshot(&prev.compressed);
-        let current_compressed = current.data.compress_snapshot();
-        self.future.push(CompressedSnapshot {
-            compressed: current_compressed,
+        // Compress current state in background.
+        let handle = std::thread::spawn(move || current.data.compress_snapshot());
+        self.future_compressing.push(CompressingSnapshot {
+            handle,
             label: current.label,
             selected: current.selected,
             track_selected: current.track_selected,
@@ -93,13 +167,16 @@ impl UndoStack {
     }
 
     /// Pop the most recent future snapshot, pushing `current` onto the undo stack.
+    /// Blocks until all pending compressions finish, then decompresses (~50 ms).
     /// Returns `None` when there is nothing to redo.
     pub fn redo(&mut self, current: UndoSnapshot) -> Option<UndoSnapshot> {
+        self.drain_compressing();
         let next = self.future.pop()?;
         let data = ProjectData::decompress_snapshot(&next.compressed);
-        let current_compressed = current.data.compress_snapshot();
-        self.past.push(CompressedSnapshot {
-            compressed: current_compressed,
+        // Compress current state in background.
+        let handle = std::thread::spawn(move || current.data.compress_snapshot());
+        self.past_compressing.push(CompressingSnapshot {
+            handle,
             label: current.label,
             selected: current.selected,
             track_selected: current.track_selected,
@@ -115,16 +192,18 @@ impl UndoStack {
     }
 
     pub fn can_undo(&self) -> bool {
-        !self.past.is_empty()
+        !self.past.is_empty() || !self.past_compressing.is_empty()
     }
 
     pub fn can_redo(&self) -> bool {
-        !self.future.is_empty()
+        !self.future.is_empty() || !self.future_compressing.is_empty()
     }
 
     pub fn clear(&mut self) {
         self.past.clear();
+        self.past_compressing.clear();
         self.future.clear();
+        self.future_compressing.clear();
     }
 }
 
@@ -247,6 +326,7 @@ mod tests {
     fn undo_returns_previous_and_pushes_to_future() {
         let mut stack = UndoStack::new();
         stack.push(snap("init", "old"));
+        stack.poll_compression(); // wait for background compression
         let current = snap("cur", "current");
         let prev = stack.undo(current);
         assert!(prev.is_some());
@@ -258,8 +338,10 @@ mod tests {
     fn redo_returns_future_and_pushes_to_past() {
         let mut stack = UndoStack::new();
         stack.push(snap("init", "a"));
+        stack.poll_compression();
         // undo pushes current ("b") to future, returns previous ("a")
         stack.undo(snap("cur", "b"));
+        stack.poll_compression();
         // redo pops future ("b"), pushes current ("a") to past, returns "b"
         let current = snap("after_undo", "a");
         let next = stack.redo(current);
@@ -292,10 +374,12 @@ mod tests {
         assert!(stack.can_undo());
         assert!(!stack.can_redo());
 
+        stack.poll_compression();
         stack.undo(snap("cur", "b"));
         assert!(!stack.can_undo());
         assert!(stack.can_redo());
 
+        stack.poll_compression();
         stack.redo(snap("cur2", "b"));
         assert!(stack.can_undo());
         assert!(!stack.can_redo());
@@ -305,6 +389,7 @@ mod tests {
     fn clear_wipes_everything() {
         let mut stack = UndoStack::new();
         stack.push(snap("1", "a"));
+        stack.poll_compression();
         stack.undo(snap("2", "b"));
         assert!(stack.can_undo() || stack.can_redo());
 
@@ -312,7 +397,9 @@ mod tests {
         assert!(!stack.can_undo());
         assert!(!stack.can_redo());
         assert_eq!(stack.past.len(), 0);
+        assert_eq!(stack.past_compressing.len(), 0);
         assert_eq!(stack.future.len(), 0);
+        assert_eq!(stack.future_compressing.len(), 0);
     }
 
     #[test]

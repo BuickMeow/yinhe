@@ -179,6 +179,10 @@ impl App {
             return;
         };
 
+        // Poll background undo compression so finished snapshots get moved
+        // into the stack without blocking the UI.
+        self.documents[idx].history.poll_compression();
+
         let is_playing = self
             .audio
             .as_ref()
