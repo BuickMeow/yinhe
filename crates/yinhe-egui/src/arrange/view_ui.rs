@@ -240,7 +240,7 @@ pub fn show(
             egui::pos2(view_sx.min(view_ex), view_sy.min(view_ey)),
             egui::pos2(view_sx.max(view_ex), view_sy.max(view_ey)),
         );
-        crate::widgets::selection_box::draw(&ui.painter(), rect, snapped);
+        crate::selection::draw::draw(&ui.painter(), rect, snapped);
     }
 
     // Save scroll state before input for haptic boundary detection
@@ -343,7 +343,7 @@ fn sel_drag_frame_arrange(
                 drag = Some((start, local));
 
                 let lane_height = view.lane_height;
-                let (actual_dx, actual_dy) = crate::view_interaction::auto_scroll_on_drag(
+                let (actual_dx, actual_dy) = crate::selection::drag::auto_scroll_on_drag(
                     ui,
                     &mut view.base,
                     content_rect,
@@ -405,7 +405,7 @@ fn sel_drag_frame_arrange(
                 egui::pos2(vx.min(vy), vw.min(vh)),
                 egui::pos2(vx.max(vy), vw.max(vh)),
             );
-            crate::widgets::selection_box::draw(&ui.painter(), content_rect, snapped);
+            crate::selection::draw::draw(&ui.painter(), content_rect, snapped);
         }
     }
 

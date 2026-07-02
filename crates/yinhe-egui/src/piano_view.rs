@@ -255,7 +255,7 @@ pub fn show(
                 let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
                 let eff = sel_rect.effective();
                 let in_sel_rect = eff.is_some_and(|(t_start, t_end, key_lo, key_hi)| {
-                    let pixel_rect = crate::view_interaction::music_sel_to_pixel_rect(
+                    let pixel_rect = crate::selection::drag::music_sel_to_pixel_rect(
                         &view.base, view.key_height, t_start, t_end, key_lo, key_hi,
                     );
                     pixel_rect.contains(local)
@@ -467,7 +467,7 @@ pub fn show(
         // scroll/zoom.
         let eff = sel_rect.effective();
         let persisted_pixel_rect = eff.map(|(t_start, t_end, key_lo, key_hi)| {
-            crate::view_interaction::music_sel_to_pixel_rect(
+            crate::selection::drag::music_sel_to_pixel_rect(
                 &view.base, view.key_height, t_start, t_end, key_lo, key_hi,
             )
         });
@@ -483,7 +483,7 @@ pub fn show(
                 egui::pos2(rect.max.x - kb_w, rect.max.y),
             );
             if shifted.intersects(music_rect_local) {
-                crate::widgets::selection_box::draw(&ui.painter(), music_rect, shifted);
+                crate::selection::draw::draw(&ui.painter(), music_rect, shifted);
             }
         }
 
@@ -702,7 +702,7 @@ fn sel_drag_frame(
     {
         let eff = sel_rect.effective();
         let on_bar = eff.is_some_and(|(t_start, t_end, key_lo, key_hi)| {
-            let pixel_rect = crate::view_interaction::music_sel_to_pixel_rect(
+            let pixel_rect = crate::selection::drag::music_sel_to_pixel_rect(
                 &view.base, view.key_height, t_start, t_end, key_lo, key_hi,
             );
             crate::widgets::selection_actions::compute_bar_rect(music_rect, pixel_rect)
@@ -714,7 +714,7 @@ fn sel_drag_frame(
         } else {
             let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
             let in_sel_rect = eff.is_some_and(|(t_start, t_end, key_lo, key_hi)| {
-                let pixel_rect = crate::view_interaction::music_sel_to_pixel_rect(
+                let pixel_rect = crate::selection::drag::music_sel_to_pixel_rect(
                     &view.base, view.key_height, t_start, t_end, key_lo, key_hi,
                 );
                 pixel_rect.contains(local)
@@ -823,7 +823,7 @@ fn sel_drag_frame(
                 drag = Some((start, local));
 
                 // ── Auto-scroll when dragging near the edge ──
-                let (actual_dx, actual_dy) = crate::view_interaction::auto_scroll_on_drag(
+                let (actual_dx, actual_dy) = crate::selection::drag::auto_scroll_on_drag(
                     ui,
                     &mut view.base,
                     music_rect,
@@ -913,7 +913,7 @@ fn sel_draw_box(
             egui::pos2(vx.min(vy) - kb_w, vw.min(vh)),
             egui::pos2(vx.max(vy) - kb_w, vw.max(vh)),
         );
-        crate::widgets::selection_box::draw(&ui.painter(), music_rect, snapped);
+        crate::selection::draw::draw(&ui.painter(), music_rect, snapped);
     }
 }
 

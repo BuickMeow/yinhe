@@ -12,6 +12,7 @@ mod piano_view;
 mod render_context;
 mod right_panel;
 mod theme;
+mod selection;
 mod view_interaction;
 mod chrome;
 mod widgets;
