@@ -13,6 +13,32 @@ pub struct Uniforms {
     pub scroll_frac: f32, // fractional part of scroll_x for sub-pixel NDC offset
     pub scroll_mode: u32, // 0=原始, 1=整数对齐, 2=子像素偏移
     pub min_border_width: f32,
+    pub track_count: u32, // number of valid tracks in track_colors
+    pub sel_rect_count: u32, // number of valid selection rects
+}
+
+/// Maximum number of tracks supported in uniform buffer.
+pub const MAX_TRACKS: usize = 256;
+
+/// Maximum number of selection rects supported in uniform buffer.
+pub const MAX_SEL_RECTS: usize = 32;
+
+/// Track colors uniform buffer: array of vec4<f32> (RGBA).
+/// Each entry is (r, g, b, a) in 0.0-1.0 range.
+#[repr(C)]
+#[derive(Clone, Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct TrackColorsUniform {
+    pub colors: [[f32; 4]; MAX_TRACKS],
+}
+
+/// Selection rects uniform buffer: array of vec4<u32>.
+/// Each rect uses 2 vec4 entries:
+///   entry 0: (tick_start, tick_end, key_lo, key_hi)
+///   entry 1: (track_lo, track_hi, 0, 0)
+#[repr(C)]
+#[derive(Clone, Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct SelectionUniform {
+    pub rects: [[u32; 4]; MAX_SEL_RECTS * 2],
 }
 
 /// Packed instance: 32 bytes.

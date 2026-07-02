@@ -2,7 +2,7 @@ use wgpu::*;
 
 use crate::layer::LayerSlot;
 use crate::pipeline::RenderPipelineState;
-use crate::vertex::{NoteInstance, Uniforms};
+use crate::vertex::{NoteInstance, Uniforms, TrackColorsUniform, SelectionUniform};
 
 /// Per-frame timing breakdown returned by `prepare`.
 #[derive(Clone, Copy, Debug, Default)]
@@ -16,7 +16,7 @@ pub struct PrepareTimings {
 /// Generic wgpu renderer for instanced rectangle drawing.
 ///
 /// Manages GPU buffers and provides a layered cache API:
-/// `upload_uniforms` + `ensure_layers` + `upload_layer` / `upload_layer_force` + `draw`
+/// `upload_uniforms` + `upload_track_colors` + `upload_selection` + `ensure_layers` + `upload_layer` / `upload_layer_force` + `draw`
 ///
 /// View-specific convenience methods (like pianoroll's `prepare()`) belong in
 /// the calling crate.
@@ -25,6 +25,8 @@ pub struct PianorollRenderer {
     queue: Queue,
     render: RenderPipelineState,
     cached_uniforms: Option<Uniforms>,
+    cached_track_colors: Option<TrackColorsUniform>,
+    cached_selection: Option<SelectionUniform>,
     layers: Vec<LayerSlot>,
 }
 
@@ -43,6 +45,8 @@ impl PianorollRenderer {
                 queue,
                 render,
                 cached_uniforms: None,
+                cached_track_colors: None,
+                cached_selection: None,
                 layers: Vec::new(),
             }
         })
@@ -56,6 +60,22 @@ impl PianorollRenderer {
             &mut self.cached_uniforms,
             uniforms,
         );
+    }
+
+    /// Upload track colors to the GPU.  Skips the write when the value is unchanged.
+    pub fn upload_track_colors(&mut self, colors: &TrackColorsUniform) {
+        if self.cached_track_colors.as_ref() != Some(colors) {
+            self.queue.write_buffer(&self.render.track_colors_buffer, 0, bytemuck::bytes_of(colors));
+            self.cached_track_colors = Some(*colors);
+        }
+    }
+
+    /// Upload selection rects to the GPU.  Skips the write when the value is unchanged.
+    pub fn upload_selection(&mut self, sel: &SelectionUniform) {
+        if self.cached_selection.as_ref() != Some(sel) {
+            self.queue.write_buffer(&self.render.selection_buffer, 0, bytemuck::bytes_of(sel));
+            self.cached_selection = Some(*sel);
+        }
     }
 
     /// Ensure at least `count` layers exist (pushing empty ones as needed).

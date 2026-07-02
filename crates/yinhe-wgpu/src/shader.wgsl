@@ -1,6 +1,8 @@
 // ── Rendering constants ───────────────────────────────────────────────────
 const BORDER_DARKEN_FACTOR: f32 = 0.4;
 const SELECTED_DARKEN_FACTOR: f32 = 0.15;
+const MAX_TRACKS: u32 = 256u;
+const MAX_SEL_RECTS: u32 = 32u;
 
 struct Uniforms {
     width: f32,
@@ -14,6 +16,16 @@ struct Uniforms {
     scroll_frac: f32, // fractional part of scroll_x for sub-pixel NDC offset
     scroll_mode: u32, // 0=原始, 1=整数对齐, 2=子像素偏移
     min_border_width: f32,
+    track_count: u32, // number of valid tracks in track_colors
+    sel_rect_count: u32, // number of valid selection rects
+}
+
+struct TrackColorsUniform {
+    colors: array<vec4<f32>, MAX_TRACKS>, // RGBA for each track
+}
+
+struct SelectionUniform {
+    rects: array<vec4<u32>, MAX_SEL_RECTS * 2u>, // 2 vec4 per rect: (tick_start, tick_end, key_lo, key_hi) + (track_lo, track_hi, 0, 0)
 }
 
 struct NoteInstance {
@@ -28,11 +40,38 @@ struct VertexOutput {
     @location(2) half_size: vec2<f32>,
     @location(3) radius: f32,
     @location(4) border_width: f32,
-    @location(5) sel_flag: u32, // 1 = selected note (velocity>0 && tag==1)
+    @location(5) sel_flag: u32, // 1 = selected note
 }
 
 @group(0) @binding(0)
 var<uniform> u: Uniforms;
+
+@group(0) @binding(1)
+var<uniform> tc: TrackColorsUniform;
+
+@group(0) @binding(2)
+var<uniform> sel: SelectionUniform;
+
+// Check if a note (track, start_tick, key) is within any selection rect.
+fn is_selected(track: u32, start_tick: u32, key: u32) -> bool {
+    let count = u.sel_rect_count;
+    for (var i = 0u; i < count; i++) {
+        let r0 = sel.rects[i * 2u];
+        let r1 = sel.rects[i * 2u + 1u];
+        let tick_start = r0.x;
+        let tick_end = r0.y;
+        let key_lo = r0.z;
+        let key_hi = r0.w;
+        let track_lo = r1.x;
+        let track_hi = r1.y;
+        if (track >= track_lo && track <= track_hi
+            && key >= key_lo && key <= key_hi
+            && start_tick >= tick_start && start_tick < tick_end) {
+            return true;
+        }
+    }
+    return false;
+}
 
 @vertex
 fn vs_main(
@@ -52,6 +91,7 @@ fn vs_main(
 
     if u.mode == 1u && vel > 0u {
         // PR notes: x=start_tick, y=key_number, w=end_tick, h=unused
+        // tag stores track_index (u16 in lower bits)
         // x/w → pixel via ppu + scroll_x; y/h → pixel via key_height + scroll_y
         let start_tick = pixel_x;
         let key = pixel_y;
@@ -117,12 +157,30 @@ fn vs_main(
 
     out.clip_position = vec4<f32>(ndc_x, ndc_y, 0.0, 1.0);
 
-    // Unpack RGBA from packed u32 (4x UNORM8)
-    let rgba = instance.packed.x;
-    out.color.r = f32((rgba >> 0u) & 0xFFu) / 255.0;
-    out.color.g = f32((rgba >> 8u) & 0xFFu) / 255.0;
-    out.color.b = f32((rgba >> 16u) & 0xFFu) / 255.0;
-    out.color.a = f32((rgba >> 24u) & 0xFFu) / 255.0;
+    // Color: mode=1 (PR notes) uses track_index from tag, mode=2/0 uses packed rgba
+    var base_color: vec4<f32>;
+    if u.mode == 1u && vel > 0u {
+        // PR notes: get color from track_colors uniform via track_index (tag)
+        let track_idx = tag;
+        if track_idx < u.track_count {
+            base_color = tc.colors[track_idx];
+        } else {
+            // Fallback: use packed rgba if track_index out of range
+            let rgba = instance.packed.x;
+            base_color.r = f32((rgba >> 0u) & 0xFFu) / 255.0;
+            base_color.g = f32((rgba >> 8u) & 0xFFu) / 255.0;
+            base_color.b = f32((rgba >> 16u) & 0xFFu) / 255.0;
+            base_color.a = f32((rgba >> 24u) & 0xFFu) / 255.0;
+        }
+    } else {
+        // AR notes, decor, grid, keyboard: use packed rgba
+        let rgba = instance.packed.x;
+        base_color.r = f32((rgba >> 0u) & 0xFFu) / 255.0;
+        base_color.g = f32((rgba >> 8u) & 0xFFu) / 255.0;
+        base_color.b = f32((rgba >> 16u) & 0xFFu) / 255.0;
+        base_color.a = f32((rgba >> 24u) & 0xFFu) / 255.0;
+    }
+    out.color = base_color;
 
     // Unpack props from packed u32 (2x f16), or compute for PR notes
     let props = instance.packed.y;
@@ -141,8 +199,18 @@ fn vs_main(
 
     out.uv = uv[vertex_index];
     out.half_size = vec2<f32>(pixel_w, pixel_h) * 0.5;
-    // sel_flag = velocity>0 && tag==1 (selected note)
-    out.sel_flag = select(0u, 1u, vel > 0u && tag == 1u);
+
+    // Selection: mode=1 (PR notes) checks selection uniform via track_index
+    // mode=2 (AR notes) or decor/grid/keyboard: sel_flag = 0
+    if u.mode == 1u && vel > 0u {
+        let track_idx = tag;
+        let start_tick = instance.xywh.x;  // stored as tick
+        let key = instance.xywh.y;          // stored as key number
+        out.sel_flag = select(0u, 1u, is_selected(track_idx, u32(start_tick), u32(key)));
+    } else {
+        out.sel_flag = 0u;
+    }
+
     return out;
 }
 

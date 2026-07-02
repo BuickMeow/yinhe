@@ -63,10 +63,12 @@ pub fn prepare(
         pixels_per_tick: view.base.pixels_per_tick,
         key_height: 0.0,
         keyboard_width: view.base.left_panel_width,
-        mode: 0, // pixel mode
+        mode: 0, // pixel mode (automation uses rgba_packed directly)
         scroll_frac,
         scroll_mode,
         min_border_width,
+        track_count: 0, // unused in pixel mode
+        sel_rect_count: 0, // unused in pixel mode
     };
 
     renderer.upload_uniforms(uniforms);

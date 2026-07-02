@@ -4,7 +4,7 @@ use yinhe_types::NoteSource;
 
 use crate::PianorollRenderer;
 use crate::instances;
-use crate::vertex::Uniforms;
+use crate::vertex::{Uniforms, TrackColorsUniform, SelectionUniform, MAX_TRACKS, MAX_SEL_RECTS};
 use crate::view::PianoRollView;
 
 use yinhe_wgpu::layer_cache_key;
@@ -50,6 +50,22 @@ pub fn prepare(
         },
     };
 
+    // Build track colors uniform
+    let track_count = track_colors.len().min(MAX_TRACKS) as u32;
+    let mut tc_uniform = TrackColorsUniform { colors: [[0.0; 4]; MAX_TRACKS] };
+    for (i, color) in track_colors.iter().enumerate().take(MAX_TRACKS) {
+        tc_uniform.colors[i] = [color[0], color[1], color[2], 1.0];
+    }
+
+    // Build selection rects uniform
+    let sel_rect_count = selected.rects.len().min(MAX_SEL_RECTS) as u32;
+    let mut sel_uniform = SelectionUniform { rects: [[0; 4]; MAX_SEL_RECTS * 2] };
+    for (i, rect) in selected.rects.iter().enumerate().take(MAX_SEL_RECTS) {
+        let (tick_start, tick_end, key_lo, key_hi, track_lo, track_hi) = *rect;
+        sel_uniform.rects[i * 2] = [tick_start, tick_end, key_lo as u32, key_hi as u32];
+        sel_uniform.rects[i * 2 + 1] = [track_lo as u32, track_hi as u32, 0, 0];
+    }
+
     let uniforms = Uniforms {
         width: w,
         height: h,
@@ -62,10 +78,14 @@ pub fn prepare(
         scroll_frac,
         scroll_mode,
         min_border_width,
+        track_count,
+        sel_rect_count,
     };
 
     let t = std::time::Instant::now();
     renderer.upload_uniforms(uniforms);
+    renderer.upload_track_colors(&tc_uniform);
+    renderer.upload_selection(&sel_uniform);
     renderer.ensure_layers(5);
 
     // Layer 0: decor (background + black-key rows)
@@ -104,7 +124,8 @@ pub fn prepare(
     });
 
     // Layer 2: notes
-    let sel_hash = selected.hash();
+    // Notes layer no longer depends on selection or track_colors (handled in shader)
+    // Only depends on: viewport, track_visible, hidden_notes, midi_version
     let tv_hash = track_visible.iter().fold(0u64, |acc, &v| {
         let mut h: u64 = 0;
         h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(v as u64);
@@ -117,7 +138,7 @@ pub fn prepare(
         h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(key as u64);
         acc ^ h
     });
-    let notes_key = layer_cache_key(&[vh, wh, sel_hash, tv_hash, midi_version, hidden_hash]);
+    let notes_key = layer_cache_key(&[vh, wh, tv_hash, midi_version, hidden_hash]);
     renderer.upload_layer(2, notes_key, |out| {
         if let Some(midi) = midi {
             instances::build_notes(out, w, h, midi, view, selected, hidden_notes, track_visible, track_colors);

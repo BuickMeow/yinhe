@@ -93,10 +93,12 @@ pub fn show(
         pixels_per_tick: view.base.pixels_per_tick,
         key_height: view.lane_height,
         keyboard_width: view.base.left_panel_width,
-        mode: 2, // AR notes: tick→pixel only
+        mode: 2, // AR notes: tick→pixel only (uses rgba_packed directly)
         scroll_frac,
         scroll_mode,
         min_border_width,
+        track_count: 0, // unused in AR mode
+        sel_rect_count: 0, // unused in AR mode
     };
 
     view.base.dirty = false;

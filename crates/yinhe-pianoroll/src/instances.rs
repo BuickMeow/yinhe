@@ -98,14 +98,13 @@ pub fn build_notes(
     h: f32,
     midi: &dyn NoteSource,
     view: &PianoRollView,
-    selected: &yinhe_core::Selection,
+    _selected: &yinhe_core::Selection, // selection now handled in shader
     hidden_notes: &std::collections::HashSet<(u16, u32, u8)>,
     track_visible: &[bool],
-    track_colors: &[[f32; 3]],
+    _track_colors: &[[f32; 3]], // colors now fetched from uniform in shader
 ) {
     let (tick_start, tick_end) = view.visible_tick_range(w);
     let (key_lo, key_hi) = view.visible_key_range(h);
-    let has_selection = !selected.is_empty();
     // Only build notes whose visible interval overlaps the current viewport.
     // key_notes_in_range looks back via the max_end index, so any note that
     // starts off-screen-left but extends into view is still included — no
@@ -143,24 +142,17 @@ pub fn build_notes(
                     continue;
                 }
 
-                let trk_idx = note.track as usize;
-                let color = track_colors
-                    .get(trk_idx)
-                    .copied()
-                    .unwrap_or_else(|| TRACK_PALETTE[trk_idx % TRACK_PALETTE.len()]);
-
-                let is_selected =
-                    has_selection && selected.contains(note.track, note.start_tick, key);
-
+                // Store track index in tag (shader will use it for color lookup and selection check)
+                // rgba_packed is unused for PR notes (shader fetches from uniform), but keep 0 as placeholder
                 local.push(NoteInstance {
                     x: note.start_tick as f32, // tick (shader converts to pixel)
                     y: key as f32,             // key number (shader converts to pixel y)
                     w: note.end_tick as f32,   // tick (shader converts to pixel)
                     h: 0.0,                    // unused (shader uses key_height)
-                    rgba_packed: pack_rgba(color[0], color[1], color[2], 1.0),
-                    props_packed: 0, // shader computes rounding/border
+                    rgba_packed: 0,            // unused for PR notes (shader uses track_colors uniform)
+                    props_packed: 0,           // shader computes rounding/border
                     velocity: note.velocity as u32,
-                    tag: if is_selected { 1 } else { 0 },
+                    tag: note.track as u32,    // track_index for shader lookup
                 });
             }
 
@@ -457,23 +449,24 @@ mod tests {
     }
 
     #[test]
-    fn test_build_notes_selected_tag() {
+    fn test_build_notes_tag_is_track_index() {
         let mut out = Vec::new();
-        let midi = make_midi(vec![(100, 0, 480, 0, 100)]);
+        // Create a note on track 2
+        let midi = make_midi(vec![(100, 0, 480, 2, 100)]);
         let view = make_view();
-        let mut selected = yinhe_core::Selection::default();
-        selected.add_rect_track(0, 480, 100, 100, 0, 0);
-        let track_visible = vec![true];
-        let track_colors = [[0.5, 0.5, 0.5]];
+        let selected = yinhe_core::Selection::default();
+        let track_visible = vec![true, true, true];
+        let track_colors = [[0.5, 0.5, 0.5], [0.5, 0.5, 0.5], [0.5, 0.5, 0.5]];
 
         let hidden = std::collections::HashSet::new();
         build_notes(&mut out, 800.0, 500.0, &midi, &view, &selected, &hidden, &track_visible, &track_colors);
-        assert_eq!(out[0].tag, 1, "selected note should have tag=1");
+        assert_eq!(out[0].tag, 2, "tag should store track_index (2)");
     }
 
     #[test]
-    fn test_build_notes_unselected_tag() {
+    fn test_build_notes_tag_is_track_zero() {
         let mut out = Vec::new();
+        // Create a note on track 0
         let midi = make_midi(vec![(100, 0, 480, 0, 100)]);
         let view = make_view();
         let selected = yinhe_core::Selection::default();
@@ -482,7 +475,7 @@ mod tests {
 
         let hidden = std::collections::HashSet::new();
         build_notes(&mut out, 800.0, 500.0, &midi, &view, &selected, &hidden, &track_visible, &track_colors);
-        assert_eq!(out[0].tag, 0, "unselected note should have tag=0");
+        assert_eq!(out[0].tag, 0, "tag should store track_index (0)");
     }
 
     #[test]
