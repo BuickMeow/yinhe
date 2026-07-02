@@ -79,6 +79,7 @@ pub fn prepare(
         min_border_width,
         track_count: 0, // unused in pixel mode
         sel_rect_count: 0, // unused in pixel mode
+        note_selection_highlight: 0, // automation: no note selection highlight
     };
 
     renderer.upload_uniforms(uniforms);

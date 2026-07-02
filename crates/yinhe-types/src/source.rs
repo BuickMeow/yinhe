@@ -33,7 +33,7 @@ pub trait NoteSource: Sync {
             return &[];
         }
 
-        let end = notes.partition_point(|n| n.start_tick <= tick_end);
+        let end = notes.partition_point(|n| n.start_tick < tick_end);
         &notes[0..end]
     }
 }

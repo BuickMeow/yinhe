@@ -368,6 +368,7 @@ impl App {
                         &mut self.audio_settings.velocity_display_mode,
                         &mut self.audio_settings.automation_display_mode,
                         &mut self.audio_settings.automation_show_dots,
+                        self.audio_settings.note_selection_highlight,
                         &tempo_events,
                         &mut note_drag_delta,
                         &mut doc.edit.sel_rect,

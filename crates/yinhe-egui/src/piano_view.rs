@@ -115,6 +115,7 @@ pub fn show(
     velocity_display_mode: &mut u32,
     automation_display_mode: &mut u32,
     automation_show_dots: &mut bool,
+    note_selection_highlight: bool,
     tempo_events: &[(u32, f64)],
     note_drag_delta: &mut Option<(i64, i32)>,
     sel_rect: &mut yinhe_editor_core::edit_state::SelRectState,
@@ -412,6 +413,7 @@ pub fn show(
         min_border_width,
         midi_version,
         &ghost_notes,
+        note_selection_highlight,
     );
 
     let t_prepare_end = if perf_on {
@@ -740,11 +742,18 @@ fn sel_drag_frame(
                 sel_rect.start_drag();
 
                 // Pre-compute all selected note info from rects + midi.
-                drag_notes = Some(selected.rects.iter().flat_map(|&(ts, te, kl, kh, tl, th)| {
+                // Use Selection.contains() for precise half-open tick filtering
+                // (avoids off-by-one vs key_notes_in_range's broad range).
+                // Add track_selected + track_visible filters to align ghost with
+                // the note layer (build_notes).
+                let sel = &*selected;
+                drag_notes = Some(sel.rects.iter().flat_map(|&(ts, te, kl, kh, tl, th)| {
                     (kl..=kh).flat_map(move |key| {
                         midi.map(|m| {
                             m.key_notes_in_range(key, ts, te).iter()
-                                .filter(|n| n.track >= tl && n.track <= th)
+                                .filter(|n| sel.contains(n.track, n.start_tick, key))
+                                .filter(|n| track_selected.is_empty() || track_selected.contains(&n.track))
+                                .filter(|n| track_visible.get(n.track as usize).copied().unwrap_or(true))
                                 .map(|n| SelDragNoteInfo {
                                     track: n.track,
                                     start_tick: n.start_tick,

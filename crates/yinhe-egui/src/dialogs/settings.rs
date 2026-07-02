@@ -171,6 +171,12 @@ pub fn show_content(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
             }
             ui.end_row();
 
+            ui.label("选中音符变色");
+            if ui.checkbox(&mut settings.note_selection_highlight, "").changed() {
+                changed = true;
+            }
+            ui.end_row();
+
             ui.label("最小边框宽度");
             let mut bw = settings.min_border_width;
             if ui

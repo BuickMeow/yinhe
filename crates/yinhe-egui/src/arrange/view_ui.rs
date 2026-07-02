@@ -99,6 +99,7 @@ pub fn show(
         min_border_width,
         track_count: 0, // unused in AR mode
         sel_rect_count: 0, // unused in AR mode
+        note_selection_highlight: 0, // AR mode: no note selection highlight
     };
 
     view.base.dirty = false;

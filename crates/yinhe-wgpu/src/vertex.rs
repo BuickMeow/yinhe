@@ -15,6 +15,7 @@ pub struct Uniforms {
     pub min_border_width: f32,
     pub track_count: u32, // number of valid tracks in track_colors
     pub sel_rect_count: u32, // number of valid selection rects
+    pub note_selection_highlight: u32, // 0=off (no color change on select), 1=on
 }
 
 /// Maximum number of tracks supported in uniform buffer.

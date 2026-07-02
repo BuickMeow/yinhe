@@ -23,6 +23,8 @@ pub struct AudioSettings {
     pub automation_display_mode: u32,
     /// 折线模式下是否显示圆点
     pub automation_show_dots: bool,
+    /// 选中音符是否变色（默认关闭，仅靠选框标识选中状态）
+    pub note_selection_highlight: bool,
     pub scroll_mode: u32,
     /// 最小边框宽度(像素), 0=不设下限
     pub min_border_width: f32,
@@ -55,6 +57,7 @@ impl Default for AudioSettings {
             velocity_display_mode: 0,
             automation_display_mode: 0,
             automation_show_dots: true,
+            note_selection_highlight: false,
             haptic_enabled: true,
             haptic_intensity: 0.5,
             show_settings: false,

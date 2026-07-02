@@ -18,6 +18,7 @@ struct Uniforms {
     min_border_width: f32,
     track_count: u32, // number of valid tracks in track_colors
     sel_rect_count: u32, // number of valid selection rects
+    note_selection_highlight: u32, // 0=off (no color change), 1=on
 }
 
 struct TrackColorsUniform {
@@ -202,7 +203,9 @@ fn vs_main(
 
     // Selection: mode=1 (PR notes) checks selection uniform via track_index
     // mode=2 (AR notes) or decor/grid/keyboard: sel_flag = 0
-    if u.mode == 1u && vel > 0u {
+    // Color change is gated by u.note_selection_highlight — when off, sel_flag
+    // stays 0 so selected notes render with the same color as unselected ones.
+    if u.mode == 1u && vel > 0u && u.note_selection_highlight != 0u {
         let track_idx = tag;
         let start_tick = instance.xywh.x;  // stored as tick
         let key = instance.xywh.y;          // stored as key number

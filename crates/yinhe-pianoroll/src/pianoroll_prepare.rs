@@ -34,6 +34,7 @@ pub fn prepare(
     min_border_width: f32,
     midi_version: u64,
     ghost_notes: &[(f64, f64, u8, [f32; 3])], // (start_tick, end_tick, key, color) for pencil preview
+    note_selection_highlight: bool,
 ) -> yinhe_wgpu::PrepareTimings {
     let w = width as f32;
     let h = height as f32;
@@ -80,6 +81,7 @@ pub fn prepare(
         min_border_width,
         track_count,
         sel_rect_count,
+        note_selection_highlight: if note_selection_highlight { 1 } else { 0 },
     };
 
     let t = std::time::Instant::now();
