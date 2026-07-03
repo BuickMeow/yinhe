@@ -1,10 +1,16 @@
 use wgpu::*;
 
-use crate::vertex::{DrawInstance, Uniforms, TrackColorsUniform, SelectionUniform};
+use crate::vertex::{DrawInstance, NoteInstance, Uniforms, TrackColorsUniform, SelectionUniform};
 
-/// Owns the render pipeline and its associated uniform buffers / bind groups.
+/// Owns the render pipelines and their shared uniform buffers / bind group.
+///
+/// Two pipelines share the same uniform buffer, track-colors buffer, selection
+/// buffer, and bind group:
+///   - `pipeline`: decor pipeline (32-byte `DrawInstance` vertex layout, `vs_main`)
+///   - `note_pipeline`: note pipeline (16-byte `NoteInstance` vertex layout, `vs_main_note`)
 pub struct RenderPipelineState {
     pub pipeline: RenderPipeline,
+    pub note_pipeline: RenderPipeline,
     pub uniform_buffer: Buffer,
     pub track_colors_buffer: Buffer,
     pub selection_buffer: Buffer,
@@ -104,8 +110,9 @@ impl RenderPipelineState {
             immediate_size: 0,
         });
 
+        // Decor pipeline: 32-byte DrawInstance vertex layout
         let pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
-            label: Some("pianoroll_pipeline"),
+            label: Some("decor_pipeline"),
             layout: Some(&pipeline_layout),
             vertex: VertexState {
                 module: render_shader,
@@ -140,8 +147,45 @@ impl RenderPipelineState {
             cache: None,
         });
 
+        // Note pipeline: 16-byte NoteInstance vertex layout, shares uniforms/bind group
+        let note_pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
+            label: Some("note_pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: VertexState {
+                module: render_shader,
+                entry_point: Some("vs_main_note"),
+                buffers: &[VertexBufferLayout {
+                    array_stride: std::mem::size_of::<NoteInstance>() as u64,
+                    step_mode: VertexStepMode::Instance,
+                    attributes: &vertex_attr_array![
+                        0 => Uint32x4,
+                    ],
+                }],
+                compilation_options: PipelineCompilationOptions::default(),
+            },
+            fragment: Some(FragmentState {
+                module: render_shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(ColorTargetState {
+                    format,
+                    blend: Some(BlendState::ALPHA_BLENDING),
+                    write_mask: ColorWrites::ALL,
+                })],
+                compilation_options: PipelineCompilationOptions::default(),
+            }),
+            primitive: PrimitiveState {
+                topology: PrimitiveTopology::TriangleList,
+                ..PrimitiveState::default()
+            },
+            depth_stencil: None,
+            multisample: MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+
         Self {
             pipeline,
+            note_pipeline,
             uniform_buffer,
             track_colors_buffer,
             selection_buffer,

@@ -3,7 +3,7 @@ use yinhe_types::{NoteSource, TimeSigEvent};
 
 use crate::view::ArrangementView;
 use yinhe_wgpu::grid;
-use yinhe_wgpu::vertex::{DrawInstance, pack_props, pack_rgba};
+use yinhe_wgpu::vertex::{DrawInstance, NoteInstance, pack_props, pack_rgba};
 
 /// Build background + track lane instances (layer 0).
 /// Dependencies: scroll_y, lane_height, track_visible
@@ -91,30 +91,32 @@ pub fn build_grid(
 }
 
 /// Build note rectangle instances with sub-pixel merging (layer 2).
-/// Dependencies: scroll_y, lane_height, track_visible, track_colors
-/// x/w store ticks (shader converts to pixels), y/h store pixel positions.
+/// Dependencies: track_visible, tick range (scroll_x), track range (scroll_y)
+///
+/// Output is 16B `NoteInstance` (semantic data only: ticks, key, track, vel).
+/// All pixel positions and colors are computed in the GPU vertex shader:
+///   - x/w: ticks → pixels via ppu + scroll_x (same as before)
+///   - y/h: shader computes from lane_height + scroll_y + key + track
+/// This means scroll_y changes do NOT invalidate the cache (same optimization
+/// as PR notes).
 ///
 /// GPU clips off-screen notes.
 pub fn build_notes(
-    out: &mut Vec<DrawInstance>,
+    out: &mut Vec<NoteInstance>,
     w: f32,
     h: f32,
     midi: &dyn NoteSource,
     view: &ArrangementView,
     track_visible: &[bool],
-    track_colors: &[[f32; 3]],
+    _track_colors: &[[f32; 3]], // colors now fetched from uniform in shader
     _theme: &yinhe_theme::GpuTheme,
 ) {
-    let lh = view.lane_height;
     let ppu = view.base.pixels_per_tick;
     let num_tracks = track_visible.len();
     let (tick_start, tick_end) = view.visible_tick_range(w);
     let (trk_first, trk_last) = view.visible_track_range(h, num_tracks);
-    let y_offset = -view.base.scroll_y;
-    let lh_per_key = lh / 128.0;
-    let note_h = lh_per_key.max(1.0);
 
-    let note_instances: Vec<Vec<DrawInstance>> = (0u8..128)
+    let note_instances: Vec<Vec<NoteInstance>> = (0u8..128)
         .into_par_iter()
         .filter_map(|key| {
             let notes = midi.key_notes_in_range(key, tick_start as u32, tick_end as u32);
@@ -122,12 +124,10 @@ pub fn build_notes(
                 return None;
             }
 
-            let key_y_base = y_offset + lh - (key as f32 + 1.0) * lh_per_key;
-
             let mut local = Vec::new();
 
             let flush_merge =
-                |local: &mut Vec<DrawInstance>, ti: usize, start: u32, end: u32, vel: u8| {
+                |local: &mut Vec<NoteInstance>, ti: usize, start: u32, end: u32, vel: u8| {
                     let s = (start as f64).max(tick_start) as u32;
                     let e = (end as f64).min(tick_end).max(start as f64) as u32;
                     if s >= e {
@@ -139,17 +139,14 @@ pub fn build_notes(
                     if !track_visible.get(ti).copied().unwrap_or(true) {
                         return;
                     }
-                    let note_y = key_y_base + ti as f32 * lh;
-                    let color = track_colors.get(ti).copied().unwrap_or([0.5, 0.5, 0.5]);
-                    local.push(DrawInstance {
-                        x: s as f32,        // tick (shader converts to pixel)
-                        y: note_y,           // pixel
-                        w: e as f32,         // tick (shader converts to pixel)
-                        h: note_h,           // pixel
-                        rgba_packed: pack_rgba(color[0], color[1], color[2], 0.85),
-                        props_packed: 0,     // no rounding/border for AR notes
-                        velocity: vel as u32,
-                        tag: 0,
+                    // 16B NoteInstance: shader computes pixel_y from
+                    // lane_height + scroll_y + key + track, and fetches color
+                    // from track_colors uniform via track index.
+                    local.push(NoteInstance {
+                        start_tick: s,
+                        end_tick: e,
+                        packed: NoteInstance::pack(key, ti.min(255) as u8, vel, 0),
+                        reserved: 0,
                     });
                 };
 

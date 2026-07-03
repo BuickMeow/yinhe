@@ -33,7 +33,7 @@ pub fn prepare(
     scroll_mode: u32,
     min_border_width: f32,
     midi_version: u64,
-    ghost_notes: &[(f64, f64, u8, [f32; 3])], // (start_tick, end_tick, key, color) for pencil preview
+    ghost_notes: &[(f64, f64, u8, u8)], // (start_tick, end_tick, key, track) for pencil preview
     note_selection_highlight: bool,
 ) -> yinhe_wgpu::PrepareTimings {
     let w = width as f32;
@@ -82,6 +82,8 @@ pub fn prepare(
         track_count,
         sel_rect_count,
         note_selection_highlight: if note_selection_highlight { 1 } else { 0 },
+        lane_height: 0.0, // PR unused (shader uses key_height)
+        note_alpha: 1.0,  // PR notes fully opaque
     };
 
     let t = std::time::Instant::now();
@@ -135,7 +137,7 @@ pub fn prepare(
         acc ^ h
     });
     let notes_key = layer_cache_key(&[vh, wh, tv_hash, midi_version, hidden_hash]);
-    renderer.upload_layer(2, notes_key, |out| {
+    renderer.upload_note_layer(2, notes_key, |out| {
         if let Some(midi) = midi {
             instances::build_notes(out, w, h, midi, view, selected, hidden_notes, track_visible, track_colors, &theme);
         }
@@ -149,14 +151,14 @@ pub fn prepare(
 
     // Layer 4: ghost notes (no cache — rebuilt every frame)
     if !ghost_notes.is_empty() {
-        renderer.upload_layer_force(4, |out| {
-            for &(start_tick, end_tick, key, color) in ghost_notes {
-                instances::build_ghost_note(out, start_tick, end_tick, key, color, &theme);
+        renderer.upload_note_layer_force(4, |out| {
+            for &(start_tick, end_tick, key, track) in ghost_notes {
+                instances::build_ghost_note(out, start_tick, end_tick, key, track, &theme);
             }
         });
     } else {
         // Clear the ghost layer when there's no preview
-        renderer.upload_layer_force(4, |_| {});
+        renderer.upload_note_layer_force(4, |_| {});
     }
 
     let dur = t.elapsed();

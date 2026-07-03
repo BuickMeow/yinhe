@@ -16,6 +16,8 @@ pub struct Uniforms {
     pub track_count: u32, // number of valid tracks in track_colors
     pub sel_rect_count: u32, // number of valid selection rects
     pub note_selection_highlight: u32, // 0=off (no color change on select), 1=on
+    pub lane_height: f32, // AR: per-track lane height (PR unused, set to 0)
+    pub note_alpha: f32, // note alpha override (PR=1.0, AR=0.85)
 }
 
 /// Maximum number of tracks supported in uniform buffer.
@@ -59,6 +61,33 @@ pub struct DrawInstance {
     pub velocity: u32,
     /// Semantic tag: grid lines store tick, notes store selection state
     pub tag: u32,
+}
+
+/// Note instance: 16 bytes = vec4<u32>.
+/// Used by the note pipeline (PR notes, AR notes, ghost notes).
+///
+/// All pixel positions are computed in the GPU vertex shader from uniforms;
+/// the CPU only stores semantic data (ticks, key, track).
+///
+/// Layout:
+///   d0 = start_tick (u32)
+///   d1 = end_tick   (u32)
+///   d2 = packed: key(u8) | track(u8) | vel(u8) | flags(u8)
+///   d3 = reserved (u32)
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct NoteInstance {
+    pub start_tick: u32,
+    pub end_tick: u32,
+    /// key(u8) | track(u8) | vel(u8) | flags(u8)
+    pub packed: u32,
+    pub reserved: u32,
+}
+
+impl NoteInstance {
+    pub fn pack(key: u8, track: u8, vel: u8, flags: u8) -> u32 {
+        key as u32 | ((track as u32) << 8) | ((vel as u32) << 16) | ((flags as u32) << 24)
+    }
 }
 
 /// Pack RGBA floats (0.0-1.0) into a single u32 (UNORM8 x 4).
@@ -139,6 +168,7 @@ mod tests {
     #[test]
     fn test_note_instance_size() {
         assert_eq!(std::mem::size_of::<DrawInstance>(), 32);
+        assert_eq!(std::mem::size_of::<NoteInstance>(), 16);
     }
 
     #[test]
@@ -146,5 +176,6 @@ mod tests {
         fn assert_pod<T: bytemuck::Pod + bytemuck::Zeroable>() {}
         assert_pod::<Uniforms>();
         assert_pod::<DrawInstance>();
+        assert_pod::<NoteInstance>();
     }
 }

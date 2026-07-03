@@ -2,7 +2,7 @@ use eframe::egui;
 
 use yinhe_arrangement::instances as arrangement_instances;
 use yinhe_arrangement::{ArrangementView, NoteSource};
-use yinhe_wgpu::{InstanceRenderer, Uniforms};
+use yinhe_wgpu::{InstanceRenderer, Uniforms, TrackColorsUniform, MAX_TRACKS};
 use yinhe_types::TimeSigEvent;
 use yinhe_wgpu::layer_cache_key;
 
@@ -86,27 +86,37 @@ pub fn show(
         },
     };
 
+    // Build track colors uniform (AR notes now fetch color from uniform in shader)
+    let track_count = track_colors.len().min(MAX_TRACKS) as u32;
+    let mut tc_uniform = TrackColorsUniform { colors: [[0.0; 4]; MAX_TRACKS] };
+    for (i, color) in track_colors.iter().enumerate().take(MAX_TRACKS) {
+        tc_uniform.colors[i] = [color[0], color[1], color[2], 1.0];
+    }
+
     let uniforms = Uniforms {
         width: w as f32,
         height: h as f32,
         scroll_x: scroll_x_pos,
         scroll_y: view.base.scroll_y,
         pixels_per_tick: view.base.pixels_per_tick,
-        key_height: view.lane_height,
+        key_height: 0.0, // AR unused (shader uses lane_height)
         keyboard_width: view.base.left_panel_width,
-        mode: 2, // AR notes: tick→pixel only (uses rgba_packed directly)
+        mode: 2, // AR notes: shader computes pixel_y from lane_height + scroll_y
         scroll_frac,
         scroll_mode,
         min_border_width,
-        track_count: 0, // unused in AR mode
+        track_count, // AR notes now use track_colors uniform for coloring
         sel_rect_count: 0, // unused in AR mode
         note_selection_highlight: 0, // AR mode: no note selection highlight
+        lane_height: view.lane_height, // AR: per-track lane height
+        note_alpha: 0.85, // AR notes semi-transparent
     };
 
     view.base.dirty = false;
 
     let theme = renderer.theme().clone();
     renderer.upload_uniforms(uniforms);
+    renderer.upload_track_colors(&tc_uniform);
     renderer.ensure_layers(3);
 
     let vh = view.render_hash();
@@ -171,9 +181,9 @@ pub fn show(
         }
     });
 
-    // Layer 2: notes
+    // Layer 2: notes (16B NoteInstance — shader computes pixel positions from uniforms)
     let notes_key = layer_cache_key(&[vh, wh, tv_hash, midi_version]);
-    renderer.upload_layer(2, notes_key, |out| {
+    renderer.upload_note_layer(2, notes_key, |out| {
         if let Some(midi) = midi {
             arrangement_instances::build_notes(
                 out,

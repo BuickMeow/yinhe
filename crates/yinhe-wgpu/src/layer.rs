@@ -1,6 +1,5 @@
+use bytemuck::Pod;
 use wgpu::*;
-
-use crate::vertex::DrawInstance;
 
 const MIN_CAPACITY: usize = 4096;
 /// Maximum instances per GPU buffer chunk.
@@ -23,22 +22,41 @@ impl Drop for BufferChunk {
     }
 }
 
+impl BufferChunk {
+    fn ensure_capacity(&mut self, device: &Device, required: usize, instance_size: u64) {
+        if required <= self.capacity {
+            return;
+        }
+        let new_cap = grow_capacity(required).min(MAX_PER_CHUNK);
+        let new_size = instance_size * new_cap as u64;
+        let new_buffer = crate::util::create_vertex_buffer(device, "layer_buffer", new_size);
+        yinhe_memtrace::sub_gpu_resource(self.size_bytes);
+        self.buffer = new_buffer;
+        self.capacity = new_cap;
+        self.size_bytes = new_size;
+    }
+}
+
 /// A single GPU instance buffer layer with built-in caching and scratch reuse.
 ///
-/// Each layer holds chunked GPU buffers, a scratch `Vec<DrawInstance>` for
-/// building, and a `cache_key` that controls whether `upload()` actually
-/// rebuilds.  When instances exceed `MAX_PER_CHUNK`, additional chunks are
-/// created automatically.  Layers are drawn in index order (lowest = bottom).
-pub struct LayerSlot {
+/// Each layer holds chunked GPU buffers, a scratch `Vec<T>` for building, and a
+/// `cache_key` that controls whether `upload()` actually rebuilds.  When
+/// instances exceed `MAX_PER_CHUNK`, additional chunks are created
+/// automatically.  Layers are drawn in index order (lowest = bottom).
+///
+/// Generic over the instance type `T` (e.g. `DrawInstance` for decor, or
+/// `NoteInstance` for notes) so that both 32-byte and 16-byte instance layouts
+/// share the same caching/chunking logic.
+pub struct LayerSlot<T: Pod> {
     chunks: Vec<BufferChunk>,
-    scratch: Vec<DrawInstance>,
+    scratch: Vec<T>,
     cache_key: u64,
     count: usize,
 }
 
-impl LayerSlot {
+impl<T: Pod> LayerSlot<T> {
     pub fn new(device: &Device) -> Self {
-        let instance_size = std::mem::size_of::<DrawInstance>() as u64;
+        let instance_size = std::mem::size_of::<T>() as u64;
         let cap = MIN_CAPACITY;
         let size = instance_size * cap as u64;
         let buffer = crate::util::create_vertex_buffer(device, "layer_buffer", size);
@@ -61,7 +79,7 @@ impl LayerSlot {
         device: &Device,
         queue: &Queue,
         cache_key: u64,
-        build: impl FnOnce(&mut Vec<DrawInstance>),
+        build: impl FnOnce(&mut Vec<T>),
     ) -> bool {
         if cache_key == self.cache_key {
             return false;
@@ -79,7 +97,7 @@ impl LayerSlot {
         &mut self,
         device: &Device,
         queue: &Queue,
-        build: impl FnOnce(&mut Vec<DrawInstance>),
+        build: impl FnOnce(&mut Vec<T>),
     ) {
         self.scratch.clear();
         build(&mut self.scratch);
@@ -87,27 +105,13 @@ impl LayerSlot {
         self.flush(device, queue);
     }
 
-    /// Direct write from an existing slice (no closure, no cache).
-    pub fn upload_slice(&mut self, device: &Device, queue: &Queue, instances: &[DrawInstance]) {
-        self.count = instances.len();
-        if self.count == 0 {
-            return;
-        }
-        self.ensure_chunks(device, self.count);
-        for (i, chunk_instances) in instances.chunks(MAX_PER_CHUNK).enumerate() {
-            let chunk = &mut self.chunks[i];
-            chunk.ensure_capacity(device, chunk_instances.len());
-            queue.write_buffer(&chunk.buffer, 0, bytemuck::cast_slice(chunk_instances));
-        }
-    }
-
     fn ensure_chunks(&mut self, device: &Device, required: usize) {
+        let instance_size = std::mem::size_of::<T>() as u64;
         let needed = required.div_ceil(MAX_PER_CHUNK);
         while self.chunks.len() > needed {
             self.chunks.pop();
         }
         while self.chunks.len() < needed {
-            let instance_size = std::mem::size_of::<DrawInstance>() as u64;
             let cap = MIN_CAPACITY;
             let size = instance_size * cap as u64;
             let buffer = crate::util::create_vertex_buffer(device, "layer_buffer", size);
@@ -123,10 +127,11 @@ impl LayerSlot {
         if self.count == 0 {
             return;
         }
+        let instance_size = std::mem::size_of::<T>() as u64;
         self.ensure_chunks(device, self.count);
         for (i, chunk_instances) in self.scratch[..self.count].chunks(MAX_PER_CHUNK).enumerate() {
             let chunk = &mut self.chunks[i];
-            chunk.ensure_capacity(device, chunk_instances.len());
+            chunk.ensure_capacity(device, chunk_instances.len(), instance_size);
             queue.write_buffer(&chunk.buffer, 0, bytemuck::cast_slice(chunk_instances));
         }
     }
@@ -150,22 +155,6 @@ impl LayerSlot {
 
     pub fn instance_count(&self) -> usize {
         self.count
-    }
-}
-
-impl BufferChunk {
-    fn ensure_capacity(&mut self, device: &Device, required: usize) {
-        if required <= self.capacity {
-            return;
-        }
-        let instance_size = std::mem::size_of::<DrawInstance>() as u64;
-        let new_cap = grow_capacity(required).min(MAX_PER_CHUNK);
-        let new_size = instance_size * new_cap as u64;
-        let new_buffer = crate::util::create_vertex_buffer(device, "layer_buffer", new_size);
-        yinhe_memtrace::sub_gpu_resource(self.size_bytes);
-        self.buffer = new_buffer;
-        self.capacity = new_cap;
-        self.size_bytes = new_size;
     }
 }
 

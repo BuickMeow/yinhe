@@ -4,7 +4,7 @@ use yinhe_types::{NoteSource, TimeSigEvent, is_black_key};
 
 use crate::grid;
 use crate::keyboard;
-use crate::vertex::{DrawInstance, pack_props, pack_rgba};
+use crate::vertex::{DrawInstance, NoteInstance, pack_props, pack_rgba};
 use crate::view::PianoRollView;
 
 /// Build background + black-key row instances (layer 0).
@@ -86,14 +86,14 @@ pub fn build_grid(
 /// Build note instances (layer 2).
 /// Dependencies: selection, track_visible, tick range (scroll_x)
 ///
-/// x/w store ticks, y stores key number (shader converts to pixel y via
-/// scroll_y + key_height), h is unused (shader uses key_height directly).
-/// This means scroll_y and key_height changes do NOT invalidate the cache.
+/// Output is 16B `NoteInstance` (semantic data only: ticks, key, track, vel).
+/// All pixel positions and colors are computed in the GPU vertex shader from
+/// uniforms, so scroll_y and key_height changes do NOT invalidate the cache.
 ///
 /// Padding: one screen width on each side of the visible tick range,
 /// so fast scrolling doesn't flash empty space before the cache rebuilds.
 pub fn build_notes(
-    out: &mut Vec<DrawInstance>,
+    out: &mut Vec<NoteInstance>,
     w: f32,
     h: f32,
     midi: &dyn NoteSource,
@@ -113,7 +113,7 @@ pub fn build_notes(
     let range_start = tick_start.max(0.0);
     let range_end = tick_end;
 
-    let results: Vec<Vec<DrawInstance>> = (key_lo..=key_hi)
+    let results: Vec<Vec<NoteInstance>> = (key_lo..=key_hi)
         .into_par_iter()
         .filter_map(|key| {
             let notes = midi.key_notes_in_range(key, range_start as u32, range_end as u32);
@@ -143,17 +143,15 @@ pub fn build_notes(
                     continue;
                 }
 
-                // Store track index in tag (shader will use it for color lookup and selection check)
-                // rgba_packed is unused for PR notes (shader fetches from uniform), but keep 0 as placeholder
-                local.push(DrawInstance {
-                    x: note.start_tick as f32, // tick (shader converts to pixel)
-                    y: key as f32,             // key number (shader converts to pixel y)
-                    w: note.end_tick as f32,   // tick (shader converts to pixel)
-                    h: 0.0,                    // unused (shader uses key_height)
-                    rgba_packed: 0,            // unused for PR notes (shader uses track_colors uniform)
-                    props_packed: 0,           // shader computes rounding/border
-                    velocity: note.velocity as u32,
-                    tag: note.track as u32,    // track_index for shader lookup
+                // 16B NoteInstance: shader fetches color from track_colors uniform
+                // via track index, and computes pixel positions from uniforms.
+                // track is u16 but NoteInstance packs to u8 (MAX_TRACKS=256);
+                // saturate to 255 so out-of-range tracks fall back to shader default.
+                local.push(NoteInstance {
+                    start_tick: note.start_tick,
+                    end_tick: note.end_tick,
+                    packed: NoteInstance::pack(key, note.track.min(255) as u8, note.velocity, 0),
+                    reserved: 0,
                 });
             }
 
@@ -174,24 +172,21 @@ pub fn build_keyboard(out: &mut Vec<DrawInstance>, kb_w: f32, kh: f32, scroll_y:
 
 /// Build a single ghost note instance for the pencil tool preview (layer 4).
 /// Uses the note's track color at full opacity so it appears as a solid preview
-/// on top of the existing notes.
+/// on top of the existing notes. Color is fetched from track_colors uniform in
+/// the shader (same as regular notes).
 pub fn build_ghost_note(
-    out: &mut Vec<DrawInstance>,
+    out: &mut Vec<NoteInstance>,
     start_tick: f64,
     end_tick: f64,
     key: u8,
-    color: [f32; 3],
+    track: u8,
     _theme: &GpuTheme,
 ) {
-    out.push(DrawInstance {
-        x: start_tick as f32, // tick (shader converts to pixel)
-        y: key as f32,        // key number (shader converts to pixel y)
-        w: end_tick as f32,   // tick (shader converts to pixel)
-        h: 0.0,               // unused (shader uses key_height)
-        rgba_packed: pack_rgba(color[0], color[1], color[2], 1.0),
-        props_packed: 0,      // shader computes rounding/border
-        velocity: 1,          // > 0 so shader treats it as a note (mode=1)
-        tag: 0,
+    out.push(NoteInstance {
+        start_tick: start_tick as u32,
+        end_tick: end_tick as u32,
+        packed: NoteInstance::pack(key, track, 0, 0),
+        reserved: 0,
     });
 }
 
@@ -324,7 +319,7 @@ mod tests {
 
     #[test]
     fn test_build_notes_basic() {
-        let mut out = Vec::new();
+        let mut out: Vec<NoteInstance> = Vec::new();
         let midi = make_midi(vec![(100, 0, 480, 0, 100)]);
         let view = make_view();
         let selected = yinhe_core::Selection::default();
@@ -336,16 +331,17 @@ mod tests {
         build_notes(&mut out, 800.0, 500.0, &midi, &view, &selected, &hidden, &track_visible, &track_colors, &theme);
         assert!(!out.is_empty(), "should produce note instances");
         let note = &out[0];
-        assert_eq!(note.x, 0.0);
-        assert_eq!(note.w, 480.0);
-        assert_eq!(note.y, 100.0); // key number (shader converts to pixel y)
-        assert_eq!(note.h, 0.0);   // unused (shader uses key_height from uniforms)
-        assert_eq!(note.velocity, 100);
+        assert_eq!(note.start_tick, 0);
+        assert_eq!(note.end_tick, 480);
+        // packed = key(100) | track(0) | vel(100) | flags(0)
+        assert_eq!(note.packed & 0xFF, 100, "key");
+        assert_eq!((note.packed >> 8) & 0xFF, 0, "track");
+        assert_eq!((note.packed >> 16) & 0xFF, 100, "velocity");
     }
 
     #[test]
     fn test_build_notes_hidden_track() {
-        let mut out = Vec::new();
+        let mut out: Vec<NoteInstance> = Vec::new();
         let midi = make_midi(vec![(100, 0, 480, 0, 100)]);
         let view = make_view();
         let selected = yinhe_core::Selection::default();
@@ -359,7 +355,7 @@ mod tests {
 
     #[test]
     fn test_build_notes_tag_is_track_index() {
-        let mut out = Vec::new();
+        let mut out: Vec<NoteInstance> = Vec::new();
         // Create a note on track 2
         let midi = make_midi(vec![(100, 0, 480, 2, 100)]);
         let view = make_view();
@@ -370,12 +366,12 @@ mod tests {
 
         let hidden = std::collections::HashSet::new();
         build_notes(&mut out, 800.0, 500.0, &midi, &view, &selected, &hidden, &track_visible, &track_colors, &theme);
-        assert_eq!(out[0].tag, 2, "tag should store track_index (2)");
+        assert_eq!((out[0].packed >> 8) & 0xFF, 2, "track should be 2");
     }
 
     #[test]
     fn test_build_notes_tag_is_track_zero() {
-        let mut out = Vec::new();
+        let mut out: Vec<NoteInstance> = Vec::new();
         // Create a note on track 0
         let midi = make_midi(vec![(100, 0, 480, 0, 100)]);
         let view = make_view();
@@ -386,12 +382,12 @@ mod tests {
 
         let hidden = std::collections::HashSet::new();
         build_notes(&mut out, 800.0, 500.0, &midi, &view, &selected, &hidden, &track_visible, &track_colors, &theme);
-        assert_eq!(out[0].tag, 0, "tag should store track_index (0)");
+        assert_eq!((out[0].packed >> 8) & 0xFF, 0, "track should be 0");
     }
 
     #[test]
     fn test_build_notes_multiple_keys() {
-        let mut out = Vec::new();
+        let mut out: Vec<NoteInstance> = Vec::new();
         let midi = make_midi(vec![
             (100, 0, 480, 0, 100),
             (104, 0, 480, 0, 80),
@@ -412,7 +408,7 @@ mod tests {
     fn test_build_notes_long_note_crossing_left_edge() {
         // A note that starts far off-screen-left but extends into the viewport
         // must still be built (no padding; relies on the max_end look-back).
-        let mut out = Vec::new();
+        let mut out: Vec<NoteInstance> = Vec::new();
         // Note spans tick 0..100000, key 100.
         let midi = make_midi(vec![(100, 0, 100000, 0, 100)]);
         let mut view = make_view();
@@ -435,7 +431,7 @@ mod tests {
     #[test]
     fn test_build_notes_skips_fully_offscreen() {
         // A short note entirely to the left of the viewport must NOT be built.
-        let mut out = Vec::new();
+        let mut out: Vec<NoteInstance> = Vec::new();
         let midi = make_midi(vec![(100, 0, 480, 0, 100)]);
         let mut view = make_view();
         view.base.scroll_x = 5000.0; // viewport starts well past tick 480

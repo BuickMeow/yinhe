@@ -6571,6 +6571,7 @@ dependencies = [
  "yinhe-mid2",
  "yinhe-pianoroll",
  "yinhe-test-helpers",
+ "yinhe-theme",
  "yinhe-types",
 ]
 

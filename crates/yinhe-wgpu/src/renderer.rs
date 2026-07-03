@@ -2,7 +2,7 @@ use wgpu::*;
 
 use crate::layer::LayerSlot;
 use crate::pipeline::RenderPipelineState;
-use crate::vertex::{DrawInstance, Uniforms, TrackColorsUniform, SelectionUniform};
+use crate::vertex::{DrawInstance, NoteInstance, Uniforms, TrackColorsUniform, SelectionUniform};
 
 /// Per-frame timing breakdown returned by `prepare`.
 #[derive(Clone, Copy, Debug, Default)]
@@ -13,13 +13,57 @@ pub struct PrepareTimings {
     pub instance_count: usize,
 }
 
+/// Layer kind: decor (32B `DrawInstance`) or note (16B `NoteInstance`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LayerKind {
+    Decor,
+    Note,
+}
+
+/// Type-erased layer slot that can hold either `DrawInstance` or `NoteInstance`.
+pub enum AnyLayer {
+    Decor(LayerSlot<DrawInstance>),
+    Note(LayerSlot<NoteInstance>),
+}
+
+impl AnyLayer {
+    fn new(device: &Device, kind: LayerKind) -> Self {
+        match kind {
+            LayerKind::Decor => AnyLayer::Decor(LayerSlot::new(device)),
+            LayerKind::Note => AnyLayer::Note(LayerSlot::new(device)),
+        }
+    }
+
+    fn kind(&self) -> LayerKind {
+        match self {
+            AnyLayer::Decor(_) => LayerKind::Decor,
+            AnyLayer::Note(_) => LayerKind::Note,
+        }
+    }
+
+    pub fn instance_count(&self) -> usize {
+        match self {
+            AnyLayer::Decor(l) => l.instance_count(),
+            AnyLayer::Note(l) => l.instance_count(),
+        }
+    }
+
+    fn draw<'a>(&self, pass: &mut RenderPass<'a>, vertex_slot: u32) {
+        match self {
+            AnyLayer::Decor(l) => l.draw(pass, vertex_slot),
+            AnyLayer::Note(l) => l.draw(pass, vertex_slot),
+        }
+    }
+}
+
 /// Generic wgpu renderer for instanced rectangle drawing.
 ///
-/// Manages GPU buffers and provides a layered cache API:
-/// `upload_uniforms` + `upload_track_colors` + `upload_selection` + `ensure_layers` + `upload_layer` / `upload_layer_force` + `draw`
+/// Manages two pipelines sharing one uniform buffer:
+///   - **decor pipeline** (32B `DrawInstance`, `vs_main`): decor, grid, keyboard, cursor, automation
+///   - **note pipeline** (16B `NoteInstance`, `vs_main_note`): PR notes, AR notes, ghost notes
 ///
-/// View-specific convenience methods (like pianoroll's `prepare()`) belong in
-/// the calling crate.
+/// Layers are stored in z-order; `draw` switches pipelines as needed when
+/// traversing layers.
 pub struct InstanceRenderer {
     device: Device,
     queue: Queue,
@@ -27,7 +71,7 @@ pub struct InstanceRenderer {
     cached_uniforms: Option<Uniforms>,
     cached_track_colors: Option<TrackColorsUniform>,
     cached_selection: Option<SelectionUniform>,
-    layers: Vec<LayerSlot>,
+    layers: Vec<AnyLayer>,
     pub theme: yinhe_theme::GpuTheme,
 }
 
@@ -80,36 +124,86 @@ impl InstanceRenderer {
         }
     }
 
-    /// Ensure at least `count` layers exist (pushing empty ones as needed).
+    /// Ensure at least `count` decor layers exist (pushing empty ones as needed).
+    /// Layers created here are decor by default; call `upload_note_layer` to
+    /// upgrade a layer to the note pipeline.
     pub fn ensure_layers(&mut self, count: usize) {
         while self.layers.len() < count {
-            self.layers.push(LayerSlot::new(&self.device));
+            self.layers.push(AnyLayer::new(&self.device, LayerKind::Decor));
         }
     }
 
-    /// Upload a layer with cache: skips rebuild when `cache_key` matches.
-    ///
-    /// `index` is the layer index (0 = bottom).  Layers are drawn in order.
-    /// Panics if `index >= layers.len()` — call `ensure_layers` first.
+    /// Ensure layer `index` exists with the given kind.  If the layer already
+    /// exists with a different kind, it is replaced (buffer is recreated).
+    pub fn ensure_layer(&mut self, index: usize, kind: LayerKind) {
+        while self.layers.len() <= index {
+            self.layers.push(AnyLayer::new(&self.device, LayerKind::Decor));
+        }
+        if self.layers[index].kind() != kind {
+            self.layers[index] = AnyLayer::new(&self.device, kind);
+        }
+    }
+
+    /// Upload a decor layer with cache: skips rebuild when `cache_key` matches.
     pub fn upload_layer(
         &mut self,
         index: usize,
         cache_key: u64,
         build: impl FnOnce(&mut Vec<DrawInstance>),
     ) -> bool {
-        self.layers[index].upload(&self.device, &self.queue, cache_key, build)
+        self.ensure_layer(index, LayerKind::Decor);
+        if let AnyLayer::Decor(slot) = &mut self.layers[index] {
+            slot.upload(&self.device, &self.queue, cache_key, build)
+        } else {
+            unreachable!()
+        }
     }
 
-    /// Upload a layer without cache (always rebuilds).
+    /// Upload a decor layer without cache (always rebuilds).
     pub fn upload_layer_force(
         &mut self,
         index: usize,
         build: impl FnOnce(&mut Vec<DrawInstance>),
     ) {
-        self.layers[index].upload_force(&self.device, &self.queue, build);
+        self.ensure_layer(index, LayerKind::Decor);
+        if let AnyLayer::Decor(slot) = &mut self.layers[index] {
+            slot.upload_force(&self.device, &self.queue, build);
+        } else {
+            unreachable!()
+        }
+    }
+
+    /// Upload a note layer with cache: skips rebuild when `cache_key` matches.
+    pub fn upload_note_layer(
+        &mut self,
+        index: usize,
+        cache_key: u64,
+        build: impl FnOnce(&mut Vec<NoteInstance>),
+    ) -> bool {
+        self.ensure_layer(index, LayerKind::Note);
+        if let AnyLayer::Note(slot) = &mut self.layers[index] {
+            slot.upload(&self.device, &self.queue, cache_key, build)
+        } else {
+            unreachable!()
+        }
+    }
+
+    /// Upload a note layer without cache (always rebuilds).
+    pub fn upload_note_layer_force(
+        &mut self,
+        index: usize,
+        build: impl FnOnce(&mut Vec<NoteInstance>),
+    ) {
+        self.ensure_layer(index, LayerKind::Note);
+        if let AnyLayer::Note(slot) = &mut self.layers[index] {
+            slot.upload_force(&self.device, &self.queue, build);
+        } else {
+            unreachable!()
+        }
     }
 
     /// Draw all layers into the given render target.
+    /// Switches between decor and note pipelines as needed.
     pub fn draw(
         &self,
         encoder: &mut CommandEncoder,
@@ -126,7 +220,16 @@ impl InstanceRenderer {
             height,
         );
 
+        let mut current_kind: Option<LayerKind> = None;
         for layer in &self.layers {
+            let kind = layer.kind();
+            if current_kind != Some(kind) {
+                match kind {
+                    LayerKind::Decor => pass.set_pipeline(&self.render.pipeline),
+                    LayerKind::Note => pass.set_pipeline(&self.render.note_pipeline),
+                }
+                current_kind = Some(kind);
+            }
             layer.draw(&mut pass, 0);
         }
     }

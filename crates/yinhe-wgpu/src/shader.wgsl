@@ -19,6 +19,8 @@ struct Uniforms {
     track_count: u32, // number of valid tracks in track_colors
     sel_rect_count: u32, // number of valid selection rects
     note_selection_highlight: u32, // 0=off (no color change), 1=on
+    lane_height: f32, // AR: per-track lane height (PR unused)
+    note_alpha: f32, // note alpha override (PR=1.0, AR=0.85)
 }
 
 struct TrackColorsUniform {
@@ -32,6 +34,10 @@ struct SelectionUniform {
 struct DrawInstance {
     @location(0) xywh: vec4<f32>,
     @location(1) packed: vec4<u32>,  // x=rgba(UNORM8), y=props(2xf16), z=velocity, w=tag
+}
+
+struct NoteInstance {
+    @location(0) data: vec4<u32>,  // x=start_tick, y=end_tick, z=packed(key|track|vel|flags), w=reserved
 }
 
 struct VertexOutput {
@@ -210,6 +216,112 @@ fn vs_main(
         let start_tick = instance.xywh.x;  // stored as tick
         let key = instance.xywh.y;          // stored as key number
         out.sel_flag = select(0u, 1u, is_selected(track_idx, u32(start_tick), u32(key)));
+    } else {
+        out.sel_flag = 0u;
+    }
+
+    return out;
+}
+
+// ── Note pipeline vertex shader ───────────────────────────────────────────
+// Handles PR notes (mode==1) and AR notes (mode==2).
+// CPU only stores semantic data (start_tick, end_tick, key, track);
+// all pixel positions are computed here from uniforms.
+// Color is fetched from track_colors uniform; alpha is overridden by note_alpha.
+@vertex
+fn vs_main_note(
+    @builtin(vertex_index) vertex_index: u32,
+    instance: NoteInstance,
+) -> VertexOutput {
+    var out: VertexOutput;
+
+    let start_tick = instance.data.x;
+    let end_tick = instance.data.y;
+    let packed = instance.data.z;
+    let key = packed & 0xFFu;
+    let track = (packed >> 8u) & 0xFFu;
+
+    let ppu = u.pixels_per_tick;
+    let x_offset = u.keyboard_width - u.scroll_x;
+
+    var pixel_x = x_offset + f32(start_tick) * ppu;
+    var pixel_w = max(x_offset + f32(end_tick) * ppu - pixel_x, 2.0);
+    var pixel_y: f32;
+    var pixel_h: f32;
+
+    if u.mode == 1u {
+        // PR: key_height based vertical layout
+        let bottom = 128.0 * u.key_height - u.scroll_y;
+        pixel_y = bottom - (f32(key) + 1.0) * u.key_height;
+        pixel_h = u.key_height;
+    } else {
+        // AR (mode == 2u): lane_height based vertical layout
+        // scroll_y is handled here (GPU-side), so AR notes cache is stable
+        // across vertical scrolling — same optimization as PR notes.
+        let lh = u.lane_height;
+        let lh_per_key = lh / 128.0;
+        pixel_y = -u.scroll_y + lh - (f32(key) + 1.0) * lh_per_key + f32(track) * lh;
+        pixel_h = max(lh_per_key, 1.0);
+    }
+
+    // Snap to integer pixels to prevent sub-pixel jitter.
+    if u.scroll_mode != 0u {
+        let raw_x = pixel_x;
+        let raw_right = pixel_x + pixel_w;
+        pixel_x = floor(raw_x + 0.5);
+        let raw_y = pixel_y;
+        let raw_bottom = pixel_y + pixel_h;
+        pixel_y = floor(raw_y + 0.5);
+        pixel_w = max(floor(raw_right + 0.5) - floor(raw_x + 0.5), 1.0);
+        pixel_h = max(floor(raw_bottom + 0.5) - floor(raw_y + 0.5), 1.0);
+    }
+
+    var pos = array<vec2<f32>, 6>(
+        vec2<f32>(pixel_x + pixel_w, pixel_y),
+        vec2<f32>(pixel_x + pixel_w, pixel_y + pixel_h),
+        vec2<f32>(pixel_x,           pixel_y),
+        vec2<f32>(pixel_x + pixel_w, pixel_y + pixel_h),
+        vec2<f32>(pixel_x,           pixel_y + pixel_h),
+        vec2<f32>(pixel_x,           pixel_y),
+    );
+
+    var uv = array<vec2<f32>, 6>(
+        vec2<f32>(1.0, 0.0),
+        vec2<f32>(1.0, 1.0),
+        vec2<f32>(0.0, 0.0),
+        vec2<f32>(1.0, 1.0),
+        vec2<f32>(0.0, 1.0),
+        vec2<f32>(0.0, 0.0),
+    );
+
+    let pixel_pos = pos[vertex_index];
+    let ndc_offset = select(0.0, u.scroll_frac, u.scroll_mode == 2u);
+    let ndc_x = ((pixel_pos.x - ndc_offset) / u.width) * 2.0 - 1.0;
+    let ndc_y = 1.0 - (pixel_pos.y / u.height) * 2.0;
+
+    out.clip_position = vec4<f32>(ndc_x, ndc_y, 0.0, 1.0);
+
+    // Color: from track_colors uniform, alpha overridden by note_alpha
+    var base_color: vec4<f32>;
+    if track < u.track_count {
+        base_color = tc.colors[track];
+    } else {
+        base_color = vec4<f32>(0.5, 0.5, 0.5, 1.0);
+    }
+    base_color.a = u.note_alpha;
+    out.color = base_color;
+
+    // Rounding/border: compute from pixel dimensions
+    let min_dim = min(pixel_w, pixel_h);
+    out.radius = 0.15 * min_dim;
+    out.border_width = max(0.1 * min_dim, u.min_border_width);
+
+    out.uv = uv[vertex_index];
+    out.half_size = vec2<f32>(pixel_w, pixel_h) * 0.5;
+
+    // Selection: only PR mode (mode==1) checks selection uniform
+    if u.mode == 1u && u.note_selection_highlight != 0u {
+        out.sel_flag = select(0u, 1u, is_selected(track, start_tick, key));
     } else {
         out.sel_flag = 0u;
     }
