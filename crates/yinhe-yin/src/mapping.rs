@@ -18,7 +18,7 @@ pub struct MappingFile {
     pub ports: Vec<PortMap>,
     /// Soundfont paths per port (0..15).
     #[serde(default)]
-    pub soundfonts: BTreeMap<String, Vec<String>>,
+    pub soundfonts: BTreeMap<u8, Vec<String>>,
     #[serde(default)]
     pub view: ViewState,
 }
