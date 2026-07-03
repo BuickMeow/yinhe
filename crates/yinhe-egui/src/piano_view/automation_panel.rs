@@ -257,53 +257,76 @@ pub fn show_panels(
                     false,
                 );
 
-                egui::Popup::menu(&target_resp)
-                    .align(egui::RectAlign::TOP_START)
-                    .show(|ui| {
-                        ui.set_min_width(120.0);
-                        // Velocity (special: not an AutomationTarget, renders from notes)
-                        let vel_selected = panel.show_velocity;
-                        if ui.add(egui::Button::selectable(vel_selected, "Velocity")).clicked() {
-                            panel.show_velocity = true;
-                            panel.show_tempo = false;
-                            panel.dirty = true;
-                            ui.close();
-                        }
-                        // Tempo (special: renders from conductor tempo events)
-                        let tempo_selected = panel.show_tempo;
-                        if ui.add(egui::Button::selectable(tempo_selected, "Tempo")).clicked() {
-                            panel.show_tempo = true;
-                            panel.show_velocity = false;
-                            panel.dirty = true;
-                            ui.close();
-                        }
-                        ui.separator();
-                        for target in AUTOMATION_TARGETS {
-                            let name = target.display_name();
-                            let selected = !panel.show_velocity && panel.selected_target == *target;
-                            if ui.add(egui::Button::selectable(selected, &name)).clicked() {
-                                panel.selected_target = target.clone();
-                                panel.show_velocity = false;
-                                panel.show_tempo = false;
-                                panel.dirty = true;
-                                ui.close();
+                // ── Popup menu (manually managed Area to support DragValue interaction) ──
+                let popup_id = ui.id().with("auto_target_popup");
+                let is_open = ui.data_mut(|d| d.get_persisted::<bool>(popup_id)).unwrap_or(false);
+
+                if target_resp.clicked() {
+                    ui.data_mut(|d| d.insert_persisted(popup_id, !is_open));
+                }
+
+                if is_open {
+                    let popup_pos = egui::pos2(target_resp.rect.left(), target_resp.rect.bottom());
+                    let area_resp = egui::Area::new(popup_id)
+                        .order(egui::Order::Foreground)
+                        .fixed_pos(popup_pos)
+                        .show(ui.ctx(), |ui| {
+                            egui::Frame::menu(ui.style()).show(ui, |ui| {
+                                ui.set_min_width(120.0);
+                                // Velocity (special: not an AutomationTarget, renders from notes)
+                                let vel_selected = panel.show_velocity;
+                                if ui.add(egui::Button::selectable(vel_selected, "Velocity")).clicked() {
+                                    panel.show_velocity = true;
+                                    panel.show_tempo = false;
+                                    panel.dirty = true;
+                                    ui.ctx().data_mut(|d| d.insert_persisted(popup_id, false));
+                                }
+                                // Tempo (special: renders from conductor tempo events)
+                                let tempo_selected = panel.show_tempo;
+                                if ui.add(egui::Button::selectable(tempo_selected, "Tempo")).clicked() {
+                                    panel.show_tempo = true;
+                                    panel.show_velocity = false;
+                                    panel.dirty = true;
+                                    ui.ctx().data_mut(|d| d.insert_persisted(popup_id, false));
+                                }
+                                ui.separator();
+                                for target in AUTOMATION_TARGETS {
+                                    let name = target.display_name();
+                                    let selected = !panel.show_velocity && panel.selected_target == *target;
+                                    if ui.add(egui::Button::selectable(selected, &name)).clicked() {
+                                        panel.selected_target = target.clone();
+                                        panel.show_velocity = false;
+                                        panel.show_tempo = false;
+                                        panel.dirty = true;
+                                        ui.ctx().data_mut(|d| d.insert_persisted(popup_id, false));
+                                    }
+                                }
+                                ui.separator();
+                                ui.label("自定义 CC:");
+                                let mut cc_input = match &panel.selected_target {
+                                    AutomationTarget::CC { controller } => *controller as i32,
+                                    _ => 0,
+                                };
+                                let resp = ui.add(egui::DragValue::new(&mut cc_input).range(0..=127).speed(1));
+                                if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                                    panel.selected_target = AutomationTarget::CC { controller: cc_input as u8 };
+                                    panel.show_velocity = false;
+                                    panel.show_tempo = false;
+                                    panel.dirty = true;
+                                    ui.ctx().data_mut(|d| d.insert_persisted(popup_id, false));
+                                }
+                            });
+                        });
+
+                    // Close on click outside the area
+                    if ui.input(|i| i.pointer.any_click()) {
+                        if let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
+                            if !area_resp.response.rect.contains(pos) {
+                                ui.data_mut(|d| d.insert_persisted(popup_id, false));
                             }
                         }
-                        ui.separator();
-                        ui.label("自定义 CC:");
-                        let mut cc_input = match &panel.selected_target {
-                            AutomationTarget::CC { controller } => *controller as i32,
-                            _ => 0,
-                        };
-                        let resp = ui.add(egui::DragValue::new(&mut cc_input).range(0..=127).speed(1));
-                        if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                            panel.selected_target = AutomationTarget::CC { controller: cc_input as u8 };
-                            panel.show_velocity = false;
-                            panel.show_tempo = false;
-                            panel.dirty = true;
-                            ui.close();
-                        }
-                    });
+                    }
+                }
 
                 ui.add_space(4.0);
 
@@ -393,6 +416,7 @@ pub fn show_panels(
                         }
                     }
                 });
+
             });
         });
 

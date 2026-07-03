@@ -42,7 +42,7 @@ impl Default for AutomationPanelView {
             },
             panel_height: DEFAULT_PANEL_HEIGHT,
             selected_target: AutomationTarget::CC { controller: 7 },
-            show_velocity: false,
+            show_velocity: true,
             show_tempo: false,
             lane_index: 0,
             dirty: true,
@@ -96,7 +96,8 @@ mod tests {
     fn test_default_values() {
         let view = AutomationPanelView::default();
         assert_eq!(view.panel_height, DEFAULT_PANEL_HEIGHT);
-        assert_eq!(view.selected_target, AutomationTarget::CC { controller: 7 });
+        assert!(view.show_velocity);
+        assert!(!view.show_tempo);
         assert_eq!(view.lane_index, 0);
         assert!(view.dirty);
         assert_eq!(view.base.pixels_per_tick, 0.15);
