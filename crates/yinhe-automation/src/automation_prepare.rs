@@ -115,13 +115,9 @@ pub fn prepare(
         sig_hash = sig_hash.wrapping_mul(31).wrapping_add(ev.denominator as u64);
     }
     grid_key = layer_cache_key(&[grid_key, sig_hash]);
-    let measure_color = theme.pr_measure_line;
-    let beat_color = theme.pr_beat_line;
-    let sub_beat_color = theme.pr_sub_beat_line;
     renderer.upload_layer(1, grid_key, |out| {
         automation_instances::build_grid(
-            out, w, h, view, tpb, default_num, default_den, time_sig_events, scroll_x_pos,
-            measure_color, beat_color, Some(sub_beat_color),
+            out, w, h, view, tpb, default_num, default_den, time_sig_events, scroll_x_pos, &theme,
         );
     });
 

@@ -74,9 +74,7 @@ pub fn build_grid(
     default_den: u8,
     time_sig_events: &[TimeSigEvent],
     scroll_x_pixel: f32,
-    measure_color: (f32, f32, f32, f32),
-    beat_color: (f32, f32, f32, f32),
-    sub_beat_color: Option<(f32, f32, f32, f32)>,
+    theme: &yinhe_theme::GpuTheme,
 ) {
     if let Some(tpb) = tpb {
         grid::build_timeline_grid(
@@ -88,9 +86,9 @@ pub fn build_grid(
             default_num,
             default_den,
             time_sig_events,
-            measure_color,
-            beat_color,
-            sub_beat_color,
+            theme.pr_measure_line,
+            theme.pr_beat_line,
+            Some(theme.pr_sub_beat_line),
             scroll_x_pixel,
         );
     }

@@ -168,15 +168,7 @@ pub fn show(
             let (def_num, def_den) = midi.time_sig_default();
             let sig_events = midi.time_sig_events();
             arrangement_instances::build_grid(
-                out,
-                w as f32,
-                h as f32,
-                view,
-                tpb,
-                def_num,
-                def_den,
-                sig_events,
-                scroll_x_pos,
+                out, w as f32, h as f32, view, tpb, def_num, def_den, sig_events, scroll_x_pos, &theme,
             );
         }
     });

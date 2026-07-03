@@ -3,21 +3,6 @@ use yinhe_types::{build_time_sig_segments, measure_ticks, TimeSigEvent, Timeline
 
 use crate::vertex::{DrawInstance, pack_props, pack_rgba};
 
-// TODO: migrate callers to GpuTheme, then remove these constants
-// ── Pianoroll grid colors ──
-pub const PR_BG_COLOR: (f32, f32, f32) = (0.12, 0.12, 0.14);
-pub const PR_MEASURE_LINE_COLOR: (f32, f32, f32, f32) = (0.35, 0.35, 0.40, 1.0);
-pub const PR_BEAT_LINE_COLOR: (f32, f32, f32, f32) = (0.22, 0.22, 0.25, 1.0);
-pub const PR_SUB_BEAT_LINE_COLOR: (f32, f32, f32, f32) = (0.16, 0.16, 0.18, 1.0);
-
-// ── Arrangement grid colors ──
-pub const AR_BG_COLOR: (f32, f32, f32) = (0.14, 0.14, 0.16);
-pub const AR_LANE_EVEN_COLOR: (f32, f32, f32) = (0.16, 0.16, 0.18);
-pub const AR_LANE_ODD_COLOR: (f32, f32, f32) = (0.13, 0.13, 0.15);
-pub const AR_MEASURE_LINE_COLOR: (f32, f32, f32, f32) = (0.30, 0.30, 0.35, 1.0);
-pub const AR_BEAT_LINE_COLOR: (f32, f32, f32, f32) = (0.20, 0.20, 0.23, 1.0);
-pub const AR_PLAYHEAD_COLOR: (f32, f32, f32, f32) = (1.0, 1.0, 1.0, 0.8);
-
 /// Given a tick and time signature info, return the previous and next
 /// bar-line positions.  Respects time-signature changes.
 pub fn measure_bounds_at_tick(

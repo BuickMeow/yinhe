@@ -73,6 +73,7 @@ pub fn build_grid(
     default_den: u8,
     time_sig_events: &[TimeSigEvent],
     scroll_x_pixel: f32,
+    theme: &yinhe_theme::GpuTheme,
 ) {
     grid::build_timeline_grid(
         out,
@@ -83,8 +84,8 @@ pub fn build_grid(
         default_num,
         default_den,
         time_sig_events,
-        grid::AR_MEASURE_LINE_COLOR,
-        grid::AR_BEAT_LINE_COLOR,
+        theme.ar_measure_line,
+        theme.ar_beat_line,
         None,
         scroll_x_pixel,
     );
@@ -251,7 +252,7 @@ mod tests {
         ];
 
         let mut grid_lines = Vec::new();
-        build_grid(&mut grid_lines, 2000.0, 400.0, &view, tpb, 4, 2, &events, 0.0);
+        build_grid(&mut grid_lines, 2000.0, 400.0, &view, tpb, 4, 2, &events, 0.0, &yinhe_theme::GpuTheme::default());
 
         let ticks: Vec<u32> = grid_lines.iter().map(|i| i.tag).collect();
 
