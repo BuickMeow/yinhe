@@ -292,7 +292,7 @@ pub fn show_panels(
                                 ui.separator();
                                 for target in AUTOMATION_TARGETS {
                                     let name = target.display_name();
-                                    let selected = !panel.show_velocity && panel.selected_target == *target;
+                                    let selected = !panel.show_velocity && !panel.show_tempo && panel.selected_target == *target;
                                     if ui.add(egui::Button::selectable(selected, &name)).clicked() {
                                         panel.selected_target = target.clone();
                                         panel.show_velocity = false;
@@ -307,21 +307,21 @@ pub fn show_panels(
                                     AutomationTarget::CC { controller } => *controller as i32,
                                     _ => 0,
                                 };
-                                let resp = ui.add(egui::DragValue::new(&mut cc_input).range(0..=127).speed(1));
-                                if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                                let old_cc = cc_input;
+                                ui.add(egui::DragValue::new(&mut cc_input).range(0..=127).speed(1));
+                                if cc_input != old_cc {
                                     panel.selected_target = AutomationTarget::CC { controller: cc_input as u8 };
                                     panel.show_velocity = false;
                                     panel.show_tempo = false;
                                     panel.dirty = true;
-                                    ui.ctx().data_mut(|d| d.insert_persisted(popup_id, false));
                                 }
                             });
                         });
 
-                    // Close on click outside the area
-                    if ui.input(|i| i.pointer.any_click()) {
+                    // Close only when clicking outside the popup area (not on any interactive element)
+                    if ui.input(|i| i.pointer.any_pressed()) {
                         if let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
-                            if !area_resp.response.rect.contains(pos) {
+                            if !area_resp.response.rect.contains(pos) && !target_resp.rect.contains(pos) {
                                 ui.data_mut(|d| d.insert_persisted(popup_id, false));
                             }
                         }
@@ -423,6 +423,8 @@ pub fn show_panels(
         // ── Grid overlay: value labels + target name ──
         let name = if panel.show_velocity {
             "Velocity".to_string()
+        } else if panel.show_tempo {
+            "Tempo".to_string()
         } else {
             panel.selected_target.display_name()
         };
