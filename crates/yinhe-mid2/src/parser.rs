@@ -14,9 +14,9 @@ use std::path::Path;
 use rayon::prelude::*;
 
 use yinhe_core::{
-    ConductorData, NoteEvent, PcEvent, ProjectMeta, TempoEvent, TimeSigEvent, TrackData, YinModel,
+    ConductorData, NoteEvent, PcEvent, ProjectMeta, TempoEvent, TrackData, YinModel,
 };
-use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget};
+use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, TimeSigEvent};
 
 use crate::encoding::MidiImportEncoding;
 use crate::error::MidiError;

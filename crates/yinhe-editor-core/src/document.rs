@@ -61,7 +61,7 @@ impl Document {
         let mut model = YinModel {
             conductor: Arc::new(yinhe_core::ConductorData {
                 tempo: vec![yinhe_core::TempoEvent { tick: 0, bpm: 120.0 }],
-                time_sig: vec![yinhe_core::TimeSigEvent {
+                time_sig: vec![yinhe_types::TimeSigEvent {
                     tick: 0,
                     numerator: 4,
                     denominator: 2,

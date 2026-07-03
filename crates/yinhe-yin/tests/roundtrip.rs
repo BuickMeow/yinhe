@@ -3,9 +3,9 @@
 use std::sync::Arc;
 
 use yinhe_core::{
-    ConductorData, NoteEvent, PcEvent, ProjectMeta, TempoEvent, TimeSigEvent, TrackData, YinModel,
+    ConductorData, NoteEvent, PcEvent, ProjectMeta, TempoEvent, TrackData, YinModel,
 };
-use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget};
+use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, TimeSigEvent};
 use yinhe_yin::{load_yin, load_yin_bytes, save_yin, save_yin_bytes};
 
 fn build_complex_model() -> YinModel {

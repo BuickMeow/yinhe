@@ -1,8 +1,9 @@
 //! Round-trip tests: bytes -> YinModel -> bytes -> YinModel
 
 use yinhe_core::{
-    ConductorData, NoteEvent, PcEvent, ProjectMeta, TempoEvent, TimeSigEvent, TrackData, YinModel,
+    ConductorData, NoteEvent, PcEvent, ProjectMeta, TempoEvent, TrackData, YinModel,
 };
+use yinhe_types::TimeSigEvent;
 use yinhe_mid2::{parse_bytes, write_to_bytes};
 use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget};
 

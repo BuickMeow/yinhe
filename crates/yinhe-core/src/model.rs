@@ -21,19 +21,11 @@ pub struct TempoEvent {
     pub bpm: f64,
 }
 
-/// Time signature event (denominator stored as power of 2: 2 means 4 = 2^2).
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-pub struct TimeSigEvent {
-    pub tick: u32,
-    pub numerator: u8,
-    pub denominator: u8,
-}
-
 /// Global score-level events.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ConductorData {
     pub tempo: Vec<TempoEvent>,
-    pub time_sig: Vec<TimeSigEvent>,
+    pub time_sig: Vec<yinhe_types::TimeSigEvent>,
 }
 
 // =========================================================
@@ -296,17 +288,7 @@ impl YinModel {
         };
         recompute_tempo_start_times(&mut segments, ppq);
 
-        // Convert TimeSigEvent -> yinhe_types::TimeSigEvent.
-        let mut ts_events: Vec<yinhe_types::TimeSigEvent> = self
-            .conductor
-            .time_sig
-            .iter()
-            .map(|ts| yinhe_types::TimeSigEvent {
-                tick: ts.tick,
-                numerator: ts.numerator,
-                denominator: ts.denominator,
-            })
-            .collect();
+        let mut ts_events = self.conductor.time_sig.clone();
         ts_events.sort_by_key(|e| e.tick);
 
         let time_sig_default = ts_events

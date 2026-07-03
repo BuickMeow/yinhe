@@ -431,7 +431,7 @@ fn show_event_detail(ui: &mut egui::Ui, item: &SelectedItem, doc: &Document, bar
             });
         }
         SelectedItem::TimeSig => {
-            let mut sorted: Vec<&yinhe_core::TimeSigEvent> = model.conductor.time_sig.iter().collect();
+            let mut sorted: Vec<&yinhe_types::TimeSigEvent> = model.conductor.time_sig.iter().collect();
             sorted.sort_by_key(|e| e.tick);
             ui.add_space(4.0);
             ui.label(egui::RichText::new(format!("拍号 ({} 个)", sorted.len())).size(12.0).strong());
@@ -938,7 +938,8 @@ mod tests {
     #[test]
     fn ts_changes_extracts_tick_numerator() {
         use std::sync::Arc;
-        use yinhe_core::{ConductorData, TimeSigEvent, YinModel};
+        use yinhe_core::{ConductorData, YinModel};
+        use yinhe_types::TimeSigEvent;
 
         let conductor = ConductorData {
             tempo: vec![],

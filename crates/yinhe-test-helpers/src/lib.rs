@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use yinhe_core::{ConductorData, NoteEvent, PcEvent, ProjectMeta, TempoEvent, TimeSigEvent, TrackData, YinModel};
-use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, Note, NoteSource};
+use yinhe_core::{ConductorData, NoteEvent, PcEvent, ProjectMeta, TempoEvent, TrackData, YinModel};
+use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, Note, NoteSource, TimeSigEvent};
 use yinhe_editor_core::document::Document;
 use yinhe_editor_core::quantize::QuantizePreset;
 

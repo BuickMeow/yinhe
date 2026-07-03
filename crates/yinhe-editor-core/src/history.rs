@@ -473,7 +473,8 @@ pub fn commit_compression_level(
 mod tests {
     use super::*;
     use std::sync::Arc;
-    use yinhe_core::{ConductorData, NoteEvent, TempoEvent, TimeSigEvent, TrackData, YinModel};
+    use yinhe_core::{ConductorData, NoteEvent, TempoEvent, TrackData, YinModel};
+    use yinhe_types::TimeSigEvent;
 
     fn make_doc(name: &str) -> Document {
         let model = YinModel {
