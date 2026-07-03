@@ -230,26 +230,33 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
             });
 
             // ── Double-click transport bar blank area to toggle maximize/restore ──
+            // Manual click-timestamp tracking avoids egui's button_double_clicked()
+            // misfiring on the first click when the window regains focus.
             // Only triggers on the background gaps (between buttons and timecode,
             // and after timecode to the right edge), NOT on buttons or timecode.
-            let double_clicked = ui.input(|i| {
-                i.pointer
-                    .button_double_clicked(egui::PointerButton::Primary)
-            });
-            if double_clicked {
+            const DOUBLE_CLICK_MS: f64 = 400.0;
+            let dbl_id = ui.id().with("transport_bar_dbl_click");
+            if ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Primary))
+                && let Some(pos) = ui.input(|i| i.pointer.interact_pos())
+            {
                 let bar_rect = ui.max_rect();
-                if let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
-                    let in_bar = bar_rect.contains(pos);
-                    let in_timecode = timecode_rect
-                        .map(|r: egui::Rect| r.contains(pos))
-                        .unwrap_or(false);
-                    let in_buttons = button_right
-                        .map(|r: f32| pos.x >= bar_rect.min.x && pos.x < r)
-                        .unwrap_or(false);
-                    if in_bar && !in_timecode && !in_buttons {
+                let in_bar = bar_rect.contains(pos);
+                let in_timecode = timecode_rect
+                    .map(|r: egui::Rect| r.contains(pos))
+                    .unwrap_or(false);
+                let in_buttons = button_right
+                    .map(|r: f32| pos.x >= bar_rect.min.x && pos.x < r)
+                    .unwrap_or(false);
+                if in_bar && !in_timecode && !in_buttons {
+                    let now = ui.input(|i| i.time);
+                    let last_click: f64 = ui.data_mut(|d| d.get_persisted(dbl_id)).unwrap_or(0.0);
+                    if now - last_click < DOUBLE_CLICK_MS / 1000.0 {
                         let maximized = ui.input(|i| i.viewport().maximized.unwrap_or(false));
                         ui.ctx()
                             .send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+                        ui.data_mut(|d| d.insert_persisted(dbl_id, 0.0)); // reset
+                    } else {
+                        ui.data_mut(|d| d.insert_persisted(dbl_id, now));
                     }
                 }
             }

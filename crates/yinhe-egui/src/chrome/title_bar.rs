@@ -256,16 +256,24 @@ pub(crate) fn show(
             }
 
             // Double-click title bar drag area to toggle maximize/restore
-            // (same pattern as transport_bar's working implementation)
-            if ui.input(|i| {
-                i.pointer
-                    .button_double_clicked(egui::PointerButton::Primary)
-            }) && let Some(pos) = ui.input(|i| i.pointer.interact_pos())
+            // Manual click-timestamp tracking avoids egui's button_double_clicked()
+            // misfiring on the first click when the window regains focus.
+            const DOUBLE_CLICK_MS: f64 = 400.0;
+            let dbl_id = ui.id().with("title_bar_dbl_click");
+            if ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Primary))
+                && let Some(pos) = ui.input(|i| i.pointer.interact_pos())
                 && drag_rect.contains(pos)
             {
-                let maximized = ui.input(|i| i.viewport().maximized.unwrap_or(false));
-                ui.ctx()
-                    .send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+                let now = ui.input(|i| i.time);
+                let last_click: f64 = ui.data_mut(|d| d.get_persisted(dbl_id)).unwrap_or(0.0);
+                if now - last_click < DOUBLE_CLICK_MS / 1000.0 {
+                    let maximized = ui.input(|i| i.viewport().maximized.unwrap_or(false));
+                    ui.ctx()
+                        .send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+                    ui.data_mut(|d| d.insert_persisted(dbl_id, 0.0)); // reset
+                } else {
+                    ui.data_mut(|d| d.insert_persisted(dbl_id, now));
+                }
             }
 
             // Reserve space for title bar height
