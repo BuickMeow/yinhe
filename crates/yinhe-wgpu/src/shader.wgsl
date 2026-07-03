@@ -29,7 +29,7 @@ struct SelectionUniform {
     rects: array<vec4<u32>, MAX_SEL_RECTS * 2u>, // 2 vec4 per rect: (tick_start, tick_end, key_lo, key_hi) + (track_lo, track_hi, 0, 0)
 }
 
-struct NoteInstance {
+struct DrawInstance {
     @location(0) xywh: vec4<f32>,
     @location(1) packed: vec4<u32>,  // x=rgba(UNORM8), y=props(2xf16), z=velocity, w=tag
 }
@@ -77,7 +77,7 @@ fn is_selected(track: u32, start_tick: u32, key: u32) -> bool {
 @vertex
 fn vs_main(
     @builtin(vertex_index) vertex_index: u32,
-    instance: NoteInstance,
+    instance: DrawInstance,
 ) -> VertexOutput {
     var out: VertexOutput;
 

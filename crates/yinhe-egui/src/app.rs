@@ -16,17 +16,17 @@ use yinhe_pianoroll::PianoRollView;
 pub struct App {
     // ── Pianoroll (shared GPU resources + global view state) ──
     pub(crate) render_ctx: RenderContext,
-    pub(crate) pianoroll: yinhe_pianoroll::PianorollRenderer,
+    pub(crate) pianoroll: yinhe_wgpu::InstanceRenderer,
     pub(crate) pianoroll_view: PianoRollView,
 
     // ── Arrangement (shared GPU resources + global view state) ──
     pub(crate) arr_render_ctx: RenderContext,
-    pub(crate) arr_renderer: yinhe_arrangement::PianorollRenderer,
+    pub(crate) arr_renderer: yinhe_wgpu::InstanceRenderer,
     pub(crate) arrange_view: ArrangementView,
     pub(crate) arr_split: f32,
 
     // ── Automation panel GPU resources (per-document, per-panel) ──
-    pub(crate) controller_renderers: Vec<Vec<(yinhe_automation::PianorollRenderer, RenderContext)>>,
+    pub(crate) controller_renderers: Vec<Vec<(yinhe_wgpu::InstanceRenderer, RenderContext)>>,
 
     // ── Multi-document state ──
     pub(crate) documents: Vec<Document>,
@@ -161,7 +161,7 @@ impl App {
 
         let mut app = Self {
             render_ctx,
-            pianoroll: yinhe_pianoroll::PianorollRenderer::new(
+            pianoroll: yinhe_wgpu::InstanceRenderer::new(
                 device.clone(),
                 queue.clone(),
                 format,
@@ -169,7 +169,7 @@ impl App {
             pianoroll_view: PianoRollView::default(),
 
             arr_render_ctx,
-            arr_renderer: yinhe_arrangement::PianorollRenderer::new(device, queue, format),
+            arr_renderer: yinhe_wgpu::InstanceRenderer::new(device, queue, format),
             arrange_view: ArrangementView::default(),
             arr_split: crate::theme::DEFAULT_ARR_SPLIT,
 

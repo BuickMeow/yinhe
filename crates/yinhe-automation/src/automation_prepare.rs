@@ -1,6 +1,6 @@
 use yinhe_types::{AutomationLane, AutomationTarget, NoteSource, TimeSigEvent};
 
-use crate::PianorollRenderer;
+use crate::InstanceRenderer;
 use crate::automation_instances;
 use crate::AutomationPanelView;
 use crate::Uniforms;
@@ -34,7 +34,7 @@ fn tempo_hash(tempo_events: &[(u32, f64)]) -> u64 {
 /// When `lanes` is empty and the panel target is Velocity, velocity bars are
 /// rendered directly from `midi` instead of from an automation lane.
 pub fn prepare(
-    renderer: &mut PianorollRenderer,
+    renderer: &mut InstanceRenderer,
     width: u32,
     height: u32,
     view: &AutomationPanelView,
@@ -46,7 +46,6 @@ pub fn prepare(
     time_sig_events: &[TimeSigEvent],
     track_visible: &[bool],
     track_colors: &[[f32; 3]],
-    _force_rebuild: bool,
     scroll_mode: u32,
     min_border_width: f32,
     velocity_display_mode: u32,
@@ -86,12 +85,7 @@ pub fn prepare(
     renderer.ensure_layers(3);
 
     let vh = view.render_hash();
-    let wh = {
-        let mut hash: u64 = 0;
-        hash = hash.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(w.to_bits() as u64);
-        hash = hash.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(h.to_bits() as u64);
-        hash
-    };
+    let wh = yinhe_wgpu::hash_f32s(&[w, h]);
 
     // Layer 0: decor (background + center line)
     let center_line_hash = lanes
@@ -125,13 +119,7 @@ pub fn prepare(
     // Layer 2: data bars (or velocity bars when show_velocity is true, or tempo curve)
     let is_velocity = view.show_velocity;
     let is_tempo = view.show_tempo;
-    let tv_hash = {
-        let mut h = 0u64;
-        for &v in track_visible {
-            h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(v as u64);
-        }
-        h
-    };
+    let tv_hash = yinhe_wgpu::hash_bools(track_visible);
     let bars_key = layer_cache_key(&[
         vh, wh, tv_hash,
         velocity_display_mode as u64,

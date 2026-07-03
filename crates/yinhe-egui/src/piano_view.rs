@@ -84,7 +84,7 @@ const RULER_H: f32 = theme::RULER_H;
 pub fn show(
     ui: &mut egui::Ui,
     available: egui::Vec2,
-    pianoroll: &mut yinhe_pianoroll::PianorollRenderer,
+    pianoroll: &mut yinhe_wgpu::InstanceRenderer,
     render_ctx: &mut super::render_context::RenderContext,
     view: &mut yinhe_pianoroll::PianoRollView,
     midi: Option<&dyn yinhe_pianoroll::NoteSource>,
@@ -103,7 +103,7 @@ pub fn show(
     auto_panels: Option<&mut Vec<yinhe_automation::AutomationPanelView>>,
     auto_renderers: Option<
         &mut Vec<(
-            yinhe_automation::PianorollRenderer,
+            yinhe_wgpu::InstanceRenderer,
             super::render_context::RenderContext,
         )>,
     >,

@@ -1,7 +1,7 @@
 /// Shared grid-building utilities used by both pianoroll and arrangement instances.
 use yinhe_types::{build_time_sig_segments, measure_ticks, TimeSigEvent, TimelineViewBase};
 
-use crate::vertex::{NoteInstance, pack_props, pack_rgba};
+use crate::vertex::{DrawInstance, pack_props, pack_rgba};
 
 // ── Pianoroll grid colors ──
 pub const PR_BG_COLOR: (f32, f32, f32) = (0.12, 0.12, 0.14);
@@ -53,7 +53,7 @@ pub fn measure_bounds_at_tick(
 ///   This should be `floor(scroll_x)` so grid lines are stable across frames;
 ///   the fractional part is applied as a uniform NDC offset in the shader.
 pub fn build_timeline_grid(
-    out: &mut Vec<NoteInstance>,
+    out: &mut Vec<DrawInstance>,
     w: f32,
     h: f32,
     base: &TimelineViewBase,
@@ -127,14 +127,14 @@ pub fn build_timeline_grid(
 
 /// Push a grid line instance into `out`.
 pub fn push_grid_line(
-    out: &mut Vec<NoteInstance>,
+    out: &mut Vec<DrawInstance>,
     x: f32,
     h: f32,
     line_width: f32,
     color: (f32, f32, f32, f32),
     tick: u32,
 ) {
-    out.push(NoteInstance {
+    out.push(DrawInstance {
         x: x - line_width / 2.0, // centre the line on the tick position
         y: 0.0,
         w: line_width,

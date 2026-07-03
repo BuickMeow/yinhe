@@ -2,7 +2,7 @@ use yinhe_types::{AutomationEvent, AutomationLane, NoteSource, TRACK_PALETTE, Ti
 
 use crate::AutomationPanelView;
 use crate::grid;
-use crate::{NoteInstance, pack_props, pack_rgba};
+use yinhe_wgpu::{DrawInstance, pack_props, pack_rgba};
 
 /// Bar width in pixels for automation events.
 const BAR_WIDTH: f32 = 2.0;
@@ -18,12 +18,12 @@ const CENTER_LINE_ALPHA: f32 = 0.6;
 /// Build background + center line instances (layer 0).
 /// Dependencies: none (background is static), lane target (center line)
 pub fn build_decor(
-    out: &mut Vec<NoteInstance>,
+    out: &mut Vec<DrawInstance>,
     w: f32,
     h: f32,
     lanes: &[&AutomationLane],
 ) {
-    out.push(NoteInstance {
+    out.push(DrawInstance {
         x: 0.0,
         y: 0.0,
         w,
@@ -45,7 +45,7 @@ pub fn build_decor(
         if max_val > 0.0 && target.has_center_line() {
             let center_val = target.default_value() as f32;
             let y_center = h - (center_val / max_val) * h;
-            out.push(NoteInstance {
+            out.push(DrawInstance {
                 x: 0.0,
                 y: y_center - 0.5,
                 w,
@@ -67,7 +67,7 @@ pub fn build_decor(
 /// Build grid line instances (layer 1).
 /// Dependencies: scroll_x, pixels_per_tick, time_sig
 pub fn build_grid(
-    out: &mut Vec<NoteInstance>,
+    out: &mut Vec<DrawInstance>,
     w: f32,
     h: f32,
     view: &AutomationPanelView,
@@ -98,7 +98,7 @@ pub fn build_grid(
 /// Build data bar instances (layer 2).
 /// Dependencies: scroll_x, pixels_per_tick, track_visible, track_colors
 pub fn build_data_bars(
-    out: &mut Vec<NoteInstance>,
+    out: &mut Vec<DrawInstance>,
     w: f32,
     h: f32,
     view: &AutomationPanelView,
@@ -174,7 +174,7 @@ pub fn build_data_bars(
     bars.sort_by(|a, b| b.evt.value.cmp(&a.evt.value));
 
     for bar in &bars {
-        out.push(NoteInstance {
+        out.push(DrawInstance {
             x: bar.bar_x,
             y: h - bar.bar_h,
             w: BAR_WIDTH,
@@ -192,7 +192,7 @@ pub fn build_data_bars(
 /// Renders each event as a staircase: horizontal line (value held) + vertical
 /// line (value change).  Optionally draws dots at event positions.
 pub fn build_data_lines(
-    out: &mut Vec<NoteInstance>,
+    out: &mut Vec<DrawInstance>,
     w: f32,
     h: f32,
     view: &AutomationPanelView,
@@ -241,7 +241,7 @@ pub fn build_data_lines(
             let val = if idx > 0 { all_events[idx - 1].1 } else { 0 };
             let y = h - (val as f32 / max_val) * h;
             if w > grid_left_x {
-                out.push(NoteInstance {
+                out.push(DrawInstance {
                     x: grid_left_x,
                     y,
                     w: w - grid_left_x,
@@ -264,7 +264,7 @@ pub fn build_data_lines(
         let first_x = x_offset + visible_events[0].0 as f32 * ppu;
         let first_y = h - (prev_val as f32 / max_val) * h;
         if first_x > grid_left_x {
-            out.push(NoteInstance {
+            out.push(DrawInstance {
                 x: grid_left_x,
                 y: first_y,
                 w: first_x - grid_left_x,
@@ -284,7 +284,7 @@ pub fn build_data_lines(
 
             // Horizontal line: value held from prev_tick to tick
             if x2 > x1 {
-                out.push(NoteInstance {
+                out.push(DrawInstance {
                     x: x1,
                     y: y1,
                     w: x2 - x1,
@@ -299,7 +299,7 @@ pub fn build_data_lines(
             // Vertical line: value change at tick
             let dy = y2 - y1;
             if dy.abs() > 0.0 {
-                out.push(NoteInstance {
+                out.push(DrawInstance {
                     x: x2 - 0.5,
                     y: y1.min(y2),
                     w: 1.0,
@@ -313,7 +313,7 @@ pub fn build_data_lines(
 
             // Dot at event position
             if show_dots {
-                out.push(NoteInstance {
+                out.push(DrawInstance {
                     x: x2 - 2.0,
                     y: y2 - 2.0,
                     w: 4.0,
@@ -339,7 +339,7 @@ pub fn build_data_lines(
             w
         };
         if right_bound > last_x {
-            out.push(NoteInstance {
+            out.push(DrawInstance {
                 x: last_x,
                 y: last_y,
                 w: right_bound - last_x,
@@ -357,7 +357,7 @@ pub fn build_data_lines(
 ///
 /// `display_mode`: 0=柱状(2px竖条), 1=矩形(填充), 2=空心矩形(边框)
 pub fn build_velocity_bars(
-    out: &mut Vec<NoteInstance>,
+    out: &mut Vec<DrawInstance>,
     w: f32,
     h: f32,
     midi: &dyn NoteSource,
@@ -459,7 +459,7 @@ pub fn build_velocity_bars(
     let fill_alpha = if display_mode == 2 { 0.0 } else { alpha };
 
     for bar in &bars {
-        out.push(NoteInstance {
+        out.push(DrawInstance {
             x: bar.x,
             y: bar.y,
             w: bar.w,
@@ -478,7 +478,7 @@ pub fn build_velocity_bars(
 /// vertical line (bpm change).  Range is [0, max_bpm] where max_bpm is the
 /// highest BPM across all tempo events.
 pub fn build_tempo_lines(
-    out: &mut Vec<NoteInstance>,
+    out: &mut Vec<DrawInstance>,
     w: f32,
     h: f32,
     view: &AutomationPanelView,
@@ -513,7 +513,7 @@ pub fn build_tempo_lines(
         let val = tempo_events[chase_idx].1 as f32;
         let y = h - (val / max_bpm) * h;
         if w > grid_left_x {
-            out.push(NoteInstance {
+            out.push(DrawInstance {
                 x: grid_left_x,
                 y,
                 w: w - grid_left_x,
@@ -537,7 +537,7 @@ pub fn build_tempo_lines(
     let first_x = x_offset + first_tick as f32 * ppu;
     let first_y = h - (prev_val / max_bpm) * h;
     if first_x > grid_left_x {
-        out.push(NoteInstance {
+        out.push(DrawInstance {
             x: grid_left_x,
             y: first_y,
             w: first_x - grid_left_x,
@@ -559,7 +559,7 @@ pub fn build_tempo_lines(
 
         // Horizontal line: value held from prev_tick to tick
         if x2 > x1 {
-            out.push(NoteInstance {
+            out.push(DrawInstance {
                 x: x1,
                 y: y1,
                 w: x2 - x1,
@@ -574,7 +574,7 @@ pub fn build_tempo_lines(
         // Vertical line: value change at tick
         let dy = y2 - y1;
         if dy.abs() > 0.0 {
-            out.push(NoteInstance {
+            out.push(DrawInstance {
                 x: x2 - 0.5,
                 y: y1.min(y2),
                 w: 1.0,
@@ -594,7 +594,7 @@ pub fn build_tempo_lines(
     let last_x = x_offset + prev_tick as f32 * ppu;
     let last_y = h - (prev_val / max_bpm) * h;
     if w > last_x {
-        out.push(NoteInstance {
+        out.push(DrawInstance {
             x: last_x,
             y: last_y,
             w: w - last_x,
@@ -604,546 +604,5 @@ pub fn build_tempo_lines(
             velocity: 0,
             tag: 0,
         });
-    }
-}
-
-/// Build all instances for one automation panel (backward-compatible).
-pub fn build_automation_instances(
-    instances: &mut Vec<NoteInstance>,
-    width: u32,
-    height: u32,
-    view: &AutomationPanelView,
-    lanes: &[&AutomationLane],
-    tpb: Option<u32>,
-    default_num: u8,
-    default_den: u8,
-    time_sig_events: &[TimeSigEvent],
-    track_visible: &[bool],
-    track_colors: &[[f32; 3]],
-) {
-    let w = width as f32;
-    let h = height as f32;
-
-    build_decor(instances, w, h, lanes);
-    build_grid(instances, w, h, view, tpb, default_num, default_den, time_sig_events, 0.0);
-    build_data_bars(instances, w, h, view, lanes, track_visible, track_colors);
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use yinhe_types::{
-        AutomationEvent, AutomationLane, AutomationTarget, TimeSigEvent, TimelineViewBase,
-    };
-
-    fn make_view(pixels_per_tick: f32, scroll_x: f32, panel_height: f32) -> AutomationPanelView {
-        AutomationPanelView {
-            base: TimelineViewBase {
-                pixels_per_tick,
-                scroll_x,
-                scroll_y: 0.0,
-                left_panel_width: 60.0,
-                dirty: true,
-                track_panel_row_height: 40.0,
-                track_panel_scroll_y: 0.0,
-            },
-            panel_height,
-            selected_target: AutomationTarget::CC { controller: 7 },
-            show_velocity: false,
-            show_tempo: false,
-            lane_index: 0,
-            dirty: true,
-        }
-    }
-
-    fn make_lane(target: AutomationTarget, ticks: &[(u32, u16)]) -> AutomationLane {
-        AutomationLane {
-            target,
-            track: 0,
-            events: ticks
-                .iter()
-                .map(|&(tick, value)| AutomationEvent { tick, value })
-                .collect(),
-        }
-    }
-
-    #[test]
-    fn test_background_always_first() {
-        let mut instances = Vec::new();
-        let view = make_view(1.0, 0.0, 80.0);
-
-        build_automation_instances(&mut instances, 800, 100, &view, &[], None, 4, 2, &[], &[], &[]);
-
-        assert!(!instances.is_empty());
-        let bg = &instances[0];
-        assert_eq!(bg.x, 0.0);
-        assert_eq!(bg.y, 0.0);
-        assert_eq!(bg.w, 800.0);
-        assert_eq!(bg.h, 100.0);
-    }
-
-    #[test]
-    fn test_no_grid_when_tpb_is_none() {
-        let mut instances = Vec::new();
-        let view = make_view(1.0, 0.0, 80.0);
-
-        build_automation_instances(&mut instances, 800, 100, &view, &[], None, 4, 2, &[], &[], &[]);
-
-        assert_eq!(instances.len(), 1, "no TPB means no grid lines");
-    }
-
-    #[test]
-    fn test_grid_lines_when_tpb_provided() {
-        let mut instances = Vec::new();
-        let view = make_view(1.0, 0.0, 80.0);
-
-        build_automation_instances(&mut instances, 800, 100, &view, &[], Some(480), 4, 2, &[], &[], &[]);
-
-        assert!(instances.len() > 1);
-        let grid_line = &instances[1];
-        assert!(grid_line.x >= 0.0);
-        assert!(grid_line.w < 5.0, "grid lines should be thin");
-    }
-
-    #[test]
-    fn test_center_line_appears_for_pitch_bend() {
-        let mut instances = Vec::new();
-        let view = make_view(1.0, 0.0, 100.0);
-        let lane = AutomationLane {
-            target: AutomationTarget::PitchBend,
-            track: 0,
-            events: vec![],
-        };
-
-        build_automation_instances(
-            &mut instances,
-            800,
-            100,
-            &view,
-            &[&lane],
-            None,
-            4,
-            2,
-            &[], &[], &[]);
-
-        assert_eq!(instances.len(), 2);
-        let center = &instances[1];
-        let expected_center_y = 100.0 - (8192.0_f32 / 16383.0_f32) * 100.0 - 0.5;
-        assert!((center.y - expected_center_y).abs() < 0.001);
-        assert_eq!(center.w, 800.0);
-        assert_eq!(center.h, 1.0);
-    }
-
-    #[test]
-    fn test_center_line_appears_for_fine_tune() {
-        let mut instances = Vec::new();
-        let view = make_view(1.0, 0.0, 100.0);
-        let lane = AutomationLane {
-            target: AutomationTarget::Rpn { parameter: 1 },
-            track: 0,
-            events: vec![],
-        };
-
-        build_automation_instances(
-            &mut instances,
-            800,
-            100,
-            &view,
-            &[&lane],
-            None,
-            4,
-            2,
-            &[], &[], &[]);
-
-        assert_eq!(instances.len(), 2);
-        let center = &instances[1];
-        let expected_y = 100.0 - (8192.0_f32 / 16383.0_f32) * 100.0 - 0.5;
-        assert!((center.y - expected_y).abs() < 0.001);
-    }
-
-    #[test]
-    fn test_no_center_line_for_rpn_parameter_2() {
-        let mut instances = Vec::new();
-        let view = make_view(1.0, 0.0, 100.0);
-        let lane = AutomationLane {
-            target: AutomationTarget::Rpn { parameter: 2 },
-            track: 0,
-            events: vec![],
-        };
-
-        build_automation_instances(
-            &mut instances,
-            800,
-            100,
-            &view,
-            &[&lane],
-            None,
-            4,
-            2,
-            &[], &[], &[]);
-
-        assert_eq!(instances.len(), 1);
-    }
-
-    #[test]
-    fn test_no_center_line_for_cc() {
-        let mut instances = Vec::new();
-        let view = make_view(1.0, 0.0, 100.0);
-        let lane = AutomationLane {
-            target: AutomationTarget::CC { controller: 7 },
-            track: 0,
-            events: vec![],
-        };
-
-        build_automation_instances(
-            &mut instances,
-            800,
-            100,
-            &view,
-            &[&lane],
-            None,
-            4,
-            2,
-            &[], &[], &[]);
-
-        assert_eq!(instances.len(), 1);
-    }
-
-    #[test]
-    fn test_data_bars_positioned_correctly() {
-        let mut instances = Vec::new();
-        let view = make_view(1.0, 0.0, 100.0);
-        let lane = make_lane(
-            AutomationTarget::CC { controller: 7 },
-            &[(100, 64), (200, 127)],
-        );
-
-        build_automation_instances(
-            &mut instances,
-            800,
-            100,
-            &view,
-            &[&lane],
-            None,
-            4,
-            2,
-            &[], &[], &[]);
-
-        assert_eq!(instances.len(), 3);
-
-        let bar0 = &instances[1];
-        assert!((bar0.x - 260.0).abs() < 0.001);
-        assert!((bar0.y - 0.0).abs() < 0.001);
-        assert_eq!(bar0.w, 2.0);
-
-        let bar1 = &instances[2];
-        assert!((bar1.x - 160.0).abs() < 0.001);
-        let expected_y1 = 100.0 - ((64.0 + 1.0) / (127.0 + 1.0)) * 100.0;
-        assert!((bar1.y - expected_y1).abs() < 0.001);
-        assert_eq!(bar1.w, 2.0);
-    }
-
-    #[test]
-    fn test_off_screen_events_are_skipped() {
-        let mut instances = Vec::new();
-        let view = make_view(1.0, 1000.0, 100.0);
-        let lane = make_lane(
-            AutomationTarget::CC { controller: 7 },
-            &[(100, 64), (200, 127)],
-        );
-
-        build_automation_instances(
-            &mut instances,
-            800,
-            100,
-            &view,
-            &[&lane],
-            None,
-            4,
-            2,
-            &[], &[], &[]);
-
-        assert_eq!(instances.len(), 1, "off-screen events should be skipped");
-    }
-
-    #[test]
-    fn test_scrolled_events_appear_at_correct_x() {
-        let mut instances = Vec::new();
-        let view = make_view(1.0, 50.0, 100.0);
-        let lane = make_lane(AutomationTarget::CC { controller: 7 }, &[(100, 64)]);
-
-        build_automation_instances(
-            &mut instances,
-            800,
-            100,
-            &view,
-            &[&lane],
-            None,
-            4,
-            2,
-            &[], &[], &[]);
-
-        assert_eq!(instances.len(), 2);
-        let bar = &instances[1];
-        assert!((bar.x - 110.0).abs() < 0.001);
-    }
-
-    #[test]
-    fn test_data_bar_height_scales_with_value() {
-        let mut instances = Vec::new();
-        let view = make_view(1.0, 0.0, 200.0);
-        let lane = make_lane(
-            AutomationTarget::CC { controller: 7 },
-            &[(100, 0), (200, 64), (300, 127)],
-        );
-
-        build_automation_instances(
-            &mut instances,
-            800,
-            200,
-            &view,
-            &[&lane],
-            None,
-            4,
-            2,
-            &[], &[], &[]);
-
-        assert_eq!(instances.len(), 4);
-
-        assert!((instances[1].h - 200.0).abs() < 0.001);
-        assert!((instances[1].y - 0.0).abs() < 0.001);
-
-        assert!((instances[2].h - 101.5625).abs() < 0.001);
-        assert!((instances[2].y - 98.4375).abs() < 0.001);
-
-        assert!((instances[3].h - 1.5625).abs() < 0.001);
-        assert!((instances[3].y - 198.4375).abs() < 0.001);
-    }
-
-    #[test]
-    fn test_track_colors_from_palette() {
-        let mut instances = Vec::new();
-        let view = make_view(1.0, 0.0, 100.0);
-        let lane0 = AutomationLane {
-            target: AutomationTarget::CC { controller: 7 },
-            track: 0,
-            events: vec![AutomationEvent { tick: 100, value: 64 }],
-        };
-        let lane1 = AutomationLane {
-            target: AutomationTarget::CC { controller: 7 },
-            track: 1,
-            events: vec![AutomationEvent { tick: 200, value: 64 }],
-        };
-
-        build_automation_instances(
-            &mut instances,
-            800,
-            100,
-            &view,
-            &[&lane0, &lane1],
-            None,
-            4,
-            2,
-            &[], &[], &[]);
-
-        assert_eq!(instances.len(), 3);
-        assert_ne!(instances[1].rgba_packed, instances[2].rgba_packed);
-        assert_eq!(instances[1].velocity, 64);
-        assert_eq!(instances[2].velocity, 64);
-    }
-
-    #[test]
-    fn test_empty_lane_produces_no_data_bars() {
-        let mut instances = Vec::new();
-        let view = make_view(1.0, 0.0, 100.0);
-        let lane = AutomationLane {
-            target: AutomationTarget::CC { controller: 7 },
-            track: 0,
-            events: vec![],
-        };
-
-        build_automation_instances(
-            &mut instances,
-            800,
-            100,
-            &view,
-            &[&lane],
-            None,
-            4,
-            2,
-            &[], &[], &[]);
-
-        assert_eq!(instances.len(), 1);
-    }
-
-    #[test]
-    fn test_zero_dimensions_produces_valid_instances() {
-        let mut instances = Vec::new();
-        let view = make_view(1.0, 0.0, 0.0);
-
-        build_automation_instances(&mut instances, 0, 0, &view, &[], None, 4, 2, &[], &[], &[]);
-
-        assert_eq!(instances.len(), 1);
-        assert_eq!(instances[0].w, 0.0);
-        assert_eq!(instances[0].h, 0.0);
-    }
-
-    #[test]
-    fn test_max_value_bar_full_height() {
-        let mut instances = Vec::new();
-        let view = make_view(1.0, 0.0, 100.0);
-        let lane = make_lane(AutomationTarget::PitchBend, &[(100, 16383)]);
-
-        build_automation_instances(
-            &mut instances,
-            800,
-            100,
-            &view,
-            &[&lane],
-            None,
-            4,
-            2,
-            &[], &[], &[]);
-
-        assert_eq!(instances.len(), 3);
-        let bar = &instances[2];
-        assert!((bar.y - 0.0).abs() < 0.001);
-        assert!((bar.h - 100.0).abs() < 0.001);
-    }
-
-    #[test]
-    fn test_event_partially_off_screen_left_edge() {
-        let mut instances = Vec::new();
-        let view = make_view(1.0, 0.0, 100.0);
-        let lane = make_lane(AutomationTarget::CC { controller: 7 }, &[(0, 100)]);
-
-        build_automation_instances(
-            &mut instances,
-            800,
-            100,
-            &view,
-            &[&lane],
-            None,
-            4,
-            2,
-            &[], &[], &[]);
-
-        assert_eq!(instances.len(), 2);
-        assert!((instances[1].x - 60.0).abs() < 0.001);
-    }
-
-    #[test]
-    fn test_negative_bar_x_skipped() {
-        let mut instances = Vec::new();
-        let view = make_view(1.0, 100.0, 100.0);
-        let lane = make_lane(AutomationTarget::CC { controller: 7 }, &[(10, 100)]);
-
-        build_automation_instances(
-            &mut instances,
-            800,
-            100,
-            &view,
-            &[&lane],
-            None,
-            4,
-            2,
-            &[], &[], &[]);
-
-        assert_eq!(instances.len(), 1, "bar with negative x should be skipped");
-    }
-
-    #[test]
-    fn test_bar_beyond_right_edge_skipped() {
-        let mut instances = Vec::new();
-        let view = make_view(1.0, 0.0, 100.0);
-        let lane = make_lane(AutomationTarget::CC { controller: 7 }, &[(1000, 100)]);
-
-        build_automation_instances(
-            &mut instances,
-            800,
-            100,
-            &view,
-            &[&lane],
-            None,
-            4,
-            2,
-            &[], &[], &[]);
-
-        assert_eq!(
-            instances.len(),
-            1,
-            "bar beyond right edge should be skipped"
-        );
-    }
-
-    #[test]
-    fn test_grid_with_time_signature_events() {
-        let mut instances = Vec::new();
-        let view = make_view(1.0, 0.0, 80.0);
-        let ts_events = [TimeSigEvent {
-            tick: 0,
-            numerator: 6,
-            denominator: 2,
-        }];
-
-        build_automation_instances(
-            &mut instances,
-            800,
-            100,
-            &view,
-            &[],
-            Some(480),
-            4,
-            2,
-            &ts_events, &[], &[]);
-
-        assert!(instances.len() > 1);
-    }
-
-    #[test]
-    fn test_track_visibility_filters_bars() {
-        let view = make_view(1.0, 0.0, 100.0);
-        let lane0 = AutomationLane {
-            target: AutomationTarget::CC { controller: 7 },
-            track: 0,
-            events: vec![AutomationEvent { tick: 100, value: 64 }],
-        };
-        let lane1 = AutomationLane {
-            target: AutomationTarget::CC { controller: 7 },
-            track: 1,
-            events: vec![AutomationEvent { tick: 200, value: 80 }],
-        };
-
-        let mut both = Vec::new();
-        build_automation_instances(
-            &mut both,
-            800,
-            100,
-            &view,
-            &[&lane0, &lane1],
-            None,
-            4,
-            2,
-            &[],
-            &[true, true],
-            &[],
-        );
-
-        let mut only0 = Vec::new();
-        build_automation_instances(
-            &mut only0,
-            800,
-            100,
-            &view,
-            &[&lane0, &lane1],
-            None,
-            4,
-            2,
-            &[],
-            &[true, false],
-            &[],
-        );
-
-        assert_eq!(both.len(), only0.len() + 1);
     }
 }

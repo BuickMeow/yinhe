@@ -1,19 +1,19 @@
 use rayon::prelude::*;
-use yinhe_types::{NoteSource, TRACK_PALETTE, TimeSigEvent, is_black_key};
+use yinhe_types::{NoteSource, TimeSigEvent, is_black_key};
 
 use crate::grid;
 use crate::keyboard;
-use crate::vertex::{NoteInstance, pack_props, pack_rgba};
+use crate::vertex::{DrawInstance, pack_props, pack_rgba};
 use crate::view::PianoRollView;
 
 const BLACK_KEY_ROW_COLOR: (f32, f32, f32) = (0.10, 0.10, 0.12);
 
 /// Build background + black-key row instances (layer 0).
 /// Dependencies: scroll_y, key_height, h
-pub fn build_decor(out: &mut Vec<NoteInstance>, w: f32, h: f32, kb_w: f32, kh: f32, scroll_y: f32) {
+pub fn build_decor(out: &mut Vec<DrawInstance>, w: f32, h: f32, kb_w: f32, kh: f32, scroll_y: f32) {
     let bottom = 128.0 * kh - scroll_y;
 
-    out.push(NoteInstance {
+    out.push(DrawInstance {
         x: kb_w,
         y: 0.0,
         w: w - kb_w,
@@ -36,7 +36,7 @@ pub fn build_decor(out: &mut Vec<NoteInstance>, w: f32, h: f32, kb_w: f32, kh: f
         if y + kh < 0.0 || y > h {
             continue;
         }
-        out.push(NoteInstance {
+        out.push(DrawInstance {
             x: kb_w,
             y,
             w: w - kb_w,
@@ -57,7 +57,7 @@ pub fn build_decor(out: &mut Vec<NoteInstance>, w: f32, h: f32, kb_w: f32, kh: f
 /// Build grid line instances (layer 1).
 /// Dependencies: scroll_x, pixels_per_tick, time_sig
 pub fn build_grid(
-    out: &mut Vec<NoteInstance>,
+    out: &mut Vec<DrawInstance>,
     w: f32,
     h: f32,
     view: &PianoRollView,
@@ -93,7 +93,7 @@ pub fn build_grid(
 /// Padding: one screen width on each side of the visible tick range,
 /// so fast scrolling doesn't flash empty space before the cache rebuilds.
 pub fn build_notes(
-    out: &mut Vec<NoteInstance>,
+    out: &mut Vec<DrawInstance>,
     w: f32,
     h: f32,
     midi: &dyn NoteSource,
@@ -112,7 +112,7 @@ pub fn build_notes(
     let range_start = tick_start.max(0.0);
     let range_end = tick_end;
 
-    let results: Vec<Vec<NoteInstance>> = (key_lo..=key_hi)
+    let results: Vec<Vec<DrawInstance>> = (key_lo..=key_hi)
         .into_par_iter()
         .filter_map(|key| {
             let notes = midi.key_notes_in_range(key, range_start as u32, range_end as u32);
@@ -144,7 +144,7 @@ pub fn build_notes(
 
                 // Store track index in tag (shader will use it for color lookup and selection check)
                 // rgba_packed is unused for PR notes (shader fetches from uniform), but keep 0 as placeholder
-                local.push(NoteInstance {
+                local.push(DrawInstance {
                     x: note.start_tick as f32, // tick (shader converts to pixel)
                     y: key as f32,             // key number (shader converts to pixel y)
                     w: note.end_tick as f32,   // tick (shader converts to pixel)
@@ -167,7 +167,7 @@ pub fn build_notes(
 
 /// Build keyboard instances (layer 3).
 /// Dependencies: scroll_y, key_height, h
-pub fn build_keyboard(out: &mut Vec<NoteInstance>, kb_w: f32, kh: f32, scroll_y: f32, h: f32) {
+pub fn build_keyboard(out: &mut Vec<DrawInstance>, kb_w: f32, kh: f32, scroll_y: f32, h: f32) {
     keyboard::append_keyboard_instances(out, kb_w, kh, scroll_y, h);
 }
 
@@ -175,13 +175,13 @@ pub fn build_keyboard(out: &mut Vec<NoteInstance>, kb_w: f32, kh: f32, scroll_y:
 /// Uses the note's track color at full opacity so it appears as a solid preview
 /// on top of the existing notes.
 pub fn build_ghost_note(
-    out: &mut Vec<NoteInstance>,
+    out: &mut Vec<DrawInstance>,
     start_tick: f64,
     end_tick: f64,
     key: u8,
     color: [f32; 3],
 ) {
-    out.push(NoteInstance {
+    out.push(DrawInstance {
         x: start_tick as f32, // tick (shader converts to pixel)
         y: key as f32,        // key number (shader converts to pixel y)
         w: end_tick as f32,   // tick (shader converts to pixel)
@@ -193,76 +193,9 @@ pub fn build_ghost_note(
     });
 }
 
-/// Build all instances for the piano roll frame (backward-compatible wrapper).
-pub fn build_instances(
-    instances: &mut Vec<NoteInstance>,
-    width: u32,
-    height: u32,
-    midi: Option<&dyn NoteSource>,
-    view: &PianoRollView,
-    selected: &yinhe_core::Selection,
-    hidden_notes: &std::collections::HashSet<(u16, u32, u8)>,
-    track_visible: &[bool],
-    track_colors: &[[f32; 3]],
-) {
-    build_static_instances(
-        instances,
-        width,
-        height,
-        midi,
-        view,
-        selected,
-        hidden_notes,
-        track_visible,
-        track_colors,
-    );
-}
-
-/// Build static instances (backward-compatible — rebuilds everything).
-pub fn build_static_instances(
-    instances: &mut Vec<NoteInstance>,
-    width: u32,
-    height: u32,
-    midi: Option<&dyn NoteSource>,
-    view: &PianoRollView,
-    selected: &yinhe_core::Selection,
-    hidden_notes: &std::collections::HashSet<(u16, u32, u8)>,
-    track_visible: &[bool],
-    track_colors: &[[f32; 3]],
-) {
-    let w = width as f32;
-    let h = height as f32;
-    let kb_w = view.keyboard_width();
-    let kh = view.key_height;
-    let scroll_y = view.base.scroll_y;
-
-    build_decor(instances, w, h, kb_w, kh, scroll_y);
-
-    if let Some(midi) = midi
-        && let Some(tpb) = midi.ticks_per_beat()
-    {
-        let (def_num, def_den) = midi.time_sig_default();
-        let sig_events = midi.time_sig_events();
-        build_grid(instances, w, h, view, tpb, def_num, def_den, sig_events, 0.0);
-        build_notes(
-            instances,
-            w,
-            h,
-            midi,
-            view,
-            selected,
-            hidden_notes,
-            track_visible,
-            track_colors,
-        );
-    }
-
-    build_keyboard(instances, kb_w, kh, scroll_y, h);
-}
-
 /// Build only the cursor line instance (O(1) work).
 pub fn build_cursor_instance(
-    instances: &mut Vec<NoteInstance>,
+    instances: &mut Vec<DrawInstance>,
     cursor_tick: Option<f64>,
     view: &PianoRollView,
     width: u32,
@@ -274,7 +207,7 @@ pub fn build_cursor_instance(
         let h = height as f32;
         let cx = view.tick_to_x(ct);
         if cx >= kb_w && cx <= w {
-            instances.push(NoteInstance {
+            instances.push(DrawInstance {
                 x: cx,
                 y: 0.0,
                 w: 2.0,
@@ -531,28 +464,4 @@ mod tests {
         assert!(out.is_empty(), "cursor off-screen right should be skipped");
     }
 
-    #[test]
-    fn test_build_static_instances_with_midi() {
-        let mut out = Vec::new();
-        let midi = make_midi(vec![(100, 0, 480, 0, 100)]);
-        let view = make_view();
-        let selected = yinhe_core::Selection::default();
-        let track_visible = vec![true];
-        let track_colors = [[0.5, 0.5, 0.5]];
-
-        let hidden = std::collections::HashSet::new();
-        build_static_instances(&mut out, 800, 500, Some(&midi), &view, &selected, &hidden, &track_visible, &track_colors);
-        assert!(out.len() > 3, "should have multiple layers");
-    }
-
-    #[test]
-    fn test_build_static_instances_without_midi() {
-        let mut out = Vec::new();
-        let view = make_view();
-        let selected = yinhe_core::Selection::default();
-
-        let hidden = std::collections::HashSet::new();
-        build_static_instances(&mut out, 800, 500, None, &view, &selected, &hidden, &[], &[]);
-        assert!(!out.is_empty(), "should still produce decor and keyboard");
-    }
 }

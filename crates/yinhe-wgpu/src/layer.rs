@@ -1,6 +1,6 @@
 use wgpu::*;
 
-use crate::vertex::NoteInstance;
+use crate::vertex::DrawInstance;
 
 const MIN_CAPACITY: usize = 4096;
 /// Maximum instances per GPU buffer chunk.
@@ -25,20 +25,20 @@ impl Drop for BufferChunk {
 
 /// A single GPU instance buffer layer with built-in caching and scratch reuse.
 ///
-/// Each layer holds chunked GPU buffers, a scratch `Vec<NoteInstance>` for
+/// Each layer holds chunked GPU buffers, a scratch `Vec<DrawInstance>` for
 /// building, and a `cache_key` that controls whether `upload()` actually
 /// rebuilds.  When instances exceed `MAX_PER_CHUNK`, additional chunks are
 /// created automatically.  Layers are drawn in index order (lowest = bottom).
 pub struct LayerSlot {
     chunks: Vec<BufferChunk>,
-    scratch: Vec<NoteInstance>,
+    scratch: Vec<DrawInstance>,
     cache_key: u64,
     count: usize,
 }
 
 impl LayerSlot {
     pub fn new(device: &Device) -> Self {
-        let instance_size = std::mem::size_of::<NoteInstance>() as u64;
+        let instance_size = std::mem::size_of::<DrawInstance>() as u64;
         let cap = MIN_CAPACITY;
         let size = instance_size * cap as u64;
         let buffer = crate::util::create_vertex_buffer(device, "layer_buffer", size);
@@ -61,7 +61,7 @@ impl LayerSlot {
         device: &Device,
         queue: &Queue,
         cache_key: u64,
-        build: impl FnOnce(&mut Vec<NoteInstance>),
+        build: impl FnOnce(&mut Vec<DrawInstance>),
     ) -> bool {
         if cache_key == self.cache_key {
             return false;
@@ -79,7 +79,7 @@ impl LayerSlot {
         &mut self,
         device: &Device,
         queue: &Queue,
-        build: impl FnOnce(&mut Vec<NoteInstance>),
+        build: impl FnOnce(&mut Vec<DrawInstance>),
     ) {
         self.scratch.clear();
         build(&mut self.scratch);
@@ -88,7 +88,7 @@ impl LayerSlot {
     }
 
     /// Direct write from an existing slice (no closure, no cache).
-    pub fn upload_slice(&mut self, device: &Device, queue: &Queue, instances: &[NoteInstance]) {
+    pub fn upload_slice(&mut self, device: &Device, queue: &Queue, instances: &[DrawInstance]) {
         self.count = instances.len();
         if self.count == 0 {
             return;
@@ -107,7 +107,7 @@ impl LayerSlot {
             self.chunks.pop();
         }
         while self.chunks.len() < needed {
-            let instance_size = std::mem::size_of::<NoteInstance>() as u64;
+            let instance_size = std::mem::size_of::<DrawInstance>() as u64;
             let cap = MIN_CAPACITY;
             let size = instance_size * cap as u64;
             let buffer = crate::util::create_vertex_buffer(device, "layer_buffer", size);
@@ -158,7 +158,7 @@ impl BufferChunk {
         if required <= self.capacity {
             return;
         }
-        let instance_size = std::mem::size_of::<NoteInstance>() as u64;
+        let instance_size = std::mem::size_of::<DrawInstance>() as u64;
         let new_cap = grow_capacity(required).min(MAX_PER_CHUNK);
         let new_size = instance_size * new_cap as u64;
         let new_buffer = crate::util::create_vertex_buffer(device, "layer_buffer", new_size);

@@ -1,6 +1,6 @@
 use yinhe_types::is_black_key;
 
-use crate::vertex::{NoteInstance, pack_props, pack_rgba};
+use crate::vertex::{DrawInstance, pack_props, pack_rgba};
 
 /// Keyboard appearance constants.
 const WHITE_KEY_COLOR: (f32, f32, f32) = (0.70, 0.70, 0.70); // #B2B2B2
@@ -11,7 +11,7 @@ const KEY_BORDER_WIDTH: f32 = 0.5;
 
 /// Append keyboard instances to the output buffer.
 pub fn append_keyboard_instances(
-    out: &mut Vec<NoteInstance>,
+    out: &mut Vec<DrawInstance>,
     keyboard_width: f32,
     key_height: f32,
     scroll_y: f32,
@@ -32,7 +32,7 @@ pub fn append_keyboard_instances(
 
         let (r, g, b) = WHITE_KEY_COLOR;
 
-        out.push(NoteInstance {
+        out.push(DrawInstance {
             x: 0.0,
             y,
             w: keyboard_width,
@@ -56,7 +56,7 @@ pub fn append_keyboard_instances(
 
         let (r, g, b) = BLACK_KEY_COLOR;
 
-        out.push(NoteInstance {
+        out.push(DrawInstance {
             x: 0.0,
             y,
             w: keyboard_width,

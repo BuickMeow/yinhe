@@ -1,6 +1,6 @@
 use wgpu::*;
 
-use crate::vertex::{NoteInstance, Uniforms, TrackColorsUniform, SelectionUniform};
+use crate::vertex::{DrawInstance, Uniforms, TrackColorsUniform, SelectionUniform};
 
 /// Owns the render pipeline and its associated uniform buffers / bind groups.
 pub struct RenderPipelineState {
@@ -111,7 +111,7 @@ impl RenderPipelineState {
                 module: render_shader,
                 entry_point: Some("vs_main"),
                 buffers: &[VertexBufferLayout {
-                    array_stride: std::mem::size_of::<NoteInstance>() as u64,
+                    array_stride: std::mem::size_of::<DrawInstance>() as u64,
                     step_mode: VertexStepMode::Instance,
                     attributes: &vertex_attr_array![
                         0 => Float32x4,

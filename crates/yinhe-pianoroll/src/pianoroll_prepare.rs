@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use yinhe_types::NoteSource;
 
-use crate::PianorollRenderer;
+use crate::InstanceRenderer;
 use crate::instances;
 use crate::vertex::{Uniforms, TrackColorsUniform, SelectionUniform, MAX_TRACKS, MAX_SEL_RECTS};
 use crate::view::PianoRollView;
@@ -21,7 +21,7 @@ use yinhe_wgpu::layer_cache_key;
 /// Each layer is cached independently so that playback (scroll_x changes)
 /// only invalidates the grid layer.
 pub fn prepare(
-    renderer: &mut PianorollRenderer,
+    renderer: &mut InstanceRenderer,
     width: u32,
     height: u32,
     midi: Option<&dyn NoteSource>,
@@ -92,12 +92,7 @@ pub fn prepare(
 
     // Layer 0: decor (background + black-key rows)
     let vh = view.render_hash();
-    let wh = {
-        let mut hash: u64 = 0;
-        hash = hash.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(w.to_bits() as u64);
-        hash = hash.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(h.to_bits() as u64);
-        hash
-    };
+    let wh = yinhe_wgpu::hash_f32s(&[w, h]);
     let decor_key = layer_cache_key(&[vh, wh]);
     renderer.upload_layer(0, decor_key, |out| {
         instances::build_decor(out, w, h, kb_w, kh, scroll_y);
@@ -130,13 +125,7 @@ pub fn prepare(
     // Only depends on: viewport, track_visible, hidden_notes, midi_version
     // 顺序哈希：位置敏感，[true,false] ≠ [false,true]
     // 之前用 XOR 导致只算奇偶校验位，切换轨道时哈希不变，缓存不失效
-    let tv_hash = {
-        let mut h = 0u64;
-        for &v in track_visible {
-            h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(v as u64);
-        }
-        h
-    };
+    let tv_hash = yinhe_wgpu::hash_bools(track_visible);
     let hidden_hash = hidden_notes.iter().fold(0u64, |acc, &(trk, tick, key)| {
         let mut h: u64 = 0;
         h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(trk as u64);

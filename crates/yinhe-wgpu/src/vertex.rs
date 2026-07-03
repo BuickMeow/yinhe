@@ -46,7 +46,7 @@ pub struct SelectionUniform {
 /// Layout: xywh (vec4 f32) + packed (vec4 u32) = 2 vertex attributes.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct NoteInstance {
+pub struct DrawInstance {
     pub x: f32,
     pub y: f32,
     pub w: f32,
@@ -138,13 +138,13 @@ mod tests {
 
     #[test]
     fn test_note_instance_size() {
-        assert_eq!(std::mem::size_of::<NoteInstance>(), 32);
+        assert_eq!(std::mem::size_of::<DrawInstance>(), 32);
     }
 
     #[test]
     fn test_uniforms_trait_bounds() {
         fn assert_pod<T: bytemuck::Pod + bytemuck::Zeroable>() {}
         assert_pod::<Uniforms>();
-        assert_pod::<NoteInstance>();
+        assert_pod::<DrawInstance>();
     }
 }

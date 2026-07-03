@@ -309,7 +309,7 @@ impl RenderContext {
     /// Returns early if the GPU device has been lost.
     pub fn paint(
         &mut self,
-        renderer: &yinhe_wgpu::PianorollRenderer,
+        renderer: &yinhe_wgpu::InstanceRenderer,
         width: u32,
         height: u32,
         label: &str,

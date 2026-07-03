@@ -1,7 +1,8 @@
 use eframe::egui;
 
 use yinhe_arrangement::instances as arrangement_instances;
-use yinhe_arrangement::{ArrangementView, NoteSource, PianorollRenderer, Uniforms};
+use yinhe_arrangement::{ArrangementView, NoteSource};
+use yinhe_wgpu::{InstanceRenderer, Uniforms};
 use yinhe_types::TimeSigEvent;
 use yinhe_wgpu::layer_cache_key;
 
@@ -16,7 +17,7 @@ use crate::widgets::tools_panel::Tool;
 pub fn show(
     ui: &mut egui::Ui,
     available: egui::Vec2,
-    renderer: &mut PianorollRenderer,
+    renderer: &mut InstanceRenderer,
     render_ctx: &mut RenderContext,
     view: &mut ArrangementView,
     midi: Option<&dyn NoteSource>,

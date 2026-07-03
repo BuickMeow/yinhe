@@ -6,7 +6,8 @@ use egui_material_icons::icons::*;
 use yinhe_types::AutomationLane;
 use yinhe_types::AutomationTarget;
 
-use yinhe_automation::{AutomationPanelView, PianorollRenderer, prepare_automation};
+use yinhe_automation::{AutomationPanelView, prepare_automation};
+use yinhe_wgpu::InstanceRenderer;
 
 /// Curated list of known automation targets shown in the dropdown.
 const AUTOMATION_TARGETS: &[AutomationTarget] = &[
@@ -32,14 +33,14 @@ pub(crate) const SPLIT_H: f32 = theme::AUTO_PANEL_SPLIT_H;
 
 /// Ensure `renderers` has the same count as `panels`, creating/destroying as needed.
 fn sync_renderer_count(
-    renderers: &mut Vec<(PianorollRenderer, RenderContext)>,
+    renderers: &mut Vec<(InstanceRenderer, RenderContext)>,
     panels: &[AutomationPanelView],
     wgpu_state: &Arc<eframe::egui_wgpu::RenderState>,
     default_w: u32,
     default_h: u32,
 ) {
     while renderers.len() < panels.len() {
-        let renderer = PianorollRenderer::new(
+        let renderer = InstanceRenderer::new(
             wgpu_state.device.clone(),
             wgpu_state.queue.clone(),
             wgpu_state.target_format,
@@ -62,7 +63,7 @@ fn sync_renderer_count(
 pub fn show_panels(
     ui: &mut egui::Ui,
     panels: &mut Vec<AutomationPanelView>,
-    renderers: &mut Vec<(PianorollRenderer, RenderContext)>,
+    renderers: &mut Vec<(InstanceRenderer, RenderContext)>,
     automation_lanes: &[AutomationLane],
     show_panels: &mut bool,
     wgpu_state: &Arc<eframe::egui_wgpu::RenderState>,
@@ -189,7 +190,6 @@ pub fn show_panels(
                     .filter(|l| l.target == panel.selected_target)
                     .collect();
 
-                let force_rebuild = panel.dirty;
                 let gpu_dirty = prepare_automation(
                     renderer,
                     gw,
@@ -203,7 +203,6 @@ pub fn show_panels(
                     time_sig_events,
                     track_visible,
                     track_colors,
-                    force_rebuild,
                     scroll_mode,
                     min_border_width,
                     *velocity_display_mode,

@@ -2,7 +2,7 @@ use wgpu::*;
 
 use crate::layer::LayerSlot;
 use crate::pipeline::RenderPipelineState;
-use crate::vertex::{NoteInstance, Uniforms, TrackColorsUniform, SelectionUniform};
+use crate::vertex::{DrawInstance, Uniforms, TrackColorsUniform, SelectionUniform};
 
 /// Per-frame timing breakdown returned by `prepare`.
 #[derive(Clone, Copy, Debug, Default)]
@@ -20,7 +20,7 @@ pub struct PrepareTimings {
 ///
 /// View-specific convenience methods (like pianoroll's `prepare()`) belong in
 /// the calling crate.
-pub struct PianorollRenderer {
+pub struct InstanceRenderer {
     device: Device,
     queue: Queue,
     render: RenderPipelineState,
@@ -30,7 +30,7 @@ pub struct PianorollRenderer {
     layers: Vec<LayerSlot>,
 }
 
-impl PianorollRenderer {
+impl InstanceRenderer {
     pub fn new(device: Device, queue: Queue, format: TextureFormat) -> Self {
         yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Gpu, || {
             let render_shader = device.create_shader_module(ShaderModuleDescriptor {
@@ -93,7 +93,7 @@ impl PianorollRenderer {
         &mut self,
         index: usize,
         cache_key: u64,
-        build: impl FnOnce(&mut Vec<NoteInstance>),
+        build: impl FnOnce(&mut Vec<DrawInstance>),
     ) -> bool {
         self.layers[index].upload(&self.device, &self.queue, cache_key, build)
     }
@@ -102,7 +102,7 @@ impl PianorollRenderer {
     pub fn upload_layer_force(
         &mut self,
         index: usize,
-        build: impl FnOnce(&mut Vec<NoteInstance>),
+        build: impl FnOnce(&mut Vec<DrawInstance>),
     ) {
         self.layers[index].upload_force(&self.device, &self.queue, build);
     }

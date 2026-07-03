@@ -20,7 +20,7 @@ pub fn show(
     remaining: egui::Rect,
     arr_h: f32,
     transport_panel_width: &mut f32,
-    arr_renderer: &mut yinhe_arrangement::PianorollRenderer,
+    arr_renderer: &mut yinhe_wgpu::InstanceRenderer,
     arr_render_ctx: &mut RenderContext,
     last_cursor_tick: &mut Option<f64>,
     is_playing: bool,

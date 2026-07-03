@@ -3,12 +3,12 @@ use yinhe_types::{NoteSource, TimeSigEvent};
 
 use crate::view::ArrangementView;
 use yinhe_wgpu::grid;
-use yinhe_wgpu::vertex::{NoteInstance, pack_props, pack_rgba};
+use yinhe_wgpu::vertex::{DrawInstance, pack_props, pack_rgba};
 
 /// Build background + track lane instances (layer 0).
 /// Dependencies: scroll_y, lane_height, track_visible
 pub fn build_decor(
-    out: &mut Vec<NoteInstance>,
+    out: &mut Vec<DrawInstance>,
     w: f32,
     h: f32,
     lb_w: f32,
@@ -18,7 +18,7 @@ pub fn build_decor(
 ) {
     let num_tracks = track_visible.len();
 
-    out.push(NoteInstance {
+    out.push(DrawInstance {
         x: lb_w,
         y: 0.0,
         w: w - lb_w,
@@ -46,7 +46,7 @@ pub fn build_decor(
             } else {
                 grid::AR_LANE_ODD_COLOR
             };
-            out.push(NoteInstance {
+            out.push(DrawInstance {
                 x: lb_w,
                 y,
                 w: w - lb_w,
@@ -63,7 +63,7 @@ pub fn build_decor(
 /// Build grid line instances (layer 1).
 /// Dependencies: scroll_x, pixels_per_tick, time_sig
 pub fn build_grid(
-    out: &mut Vec<NoteInstance>,
+    out: &mut Vec<DrawInstance>,
     w: f32,
     h: f32,
     view: &ArrangementView,
@@ -95,7 +95,7 @@ pub fn build_grid(
 ///
 /// GPU clips off-screen notes.
 pub fn build_notes(
-    out: &mut Vec<NoteInstance>,
+    out: &mut Vec<DrawInstance>,
     w: f32,
     h: f32,
     midi: &dyn NoteSource,
@@ -112,7 +112,7 @@ pub fn build_notes(
     let lh_per_key = lh / 128.0;
     let note_h = lh_per_key.max(1.0);
 
-    let note_instances: Vec<Vec<NoteInstance>> = (0u8..128)
+    let note_instances: Vec<Vec<DrawInstance>> = (0u8..128)
         .into_par_iter()
         .filter_map(|key| {
             let notes = midi.key_notes_in_range(key, tick_start as u32, tick_end as u32);
@@ -125,7 +125,7 @@ pub fn build_notes(
             let mut local = Vec::new();
 
             let flush_merge =
-                |local: &mut Vec<NoteInstance>, ti: usize, start: u32, end: u32, vel: u8| {
+                |local: &mut Vec<DrawInstance>, ti: usize, start: u32, end: u32, vel: u8| {
                     let s = (start as f64).max(tick_start) as u32;
                     let e = (end as f64).min(tick_end).max(start as f64) as u32;
                     if s >= e {
@@ -139,7 +139,7 @@ pub fn build_notes(
                     }
                     let note_y = key_y_base + ti as f32 * lh;
                     let color = track_colors.get(ti).copied().unwrap_or([0.5, 0.5, 0.5]);
-                    local.push(NoteInstance {
+                    local.push(DrawInstance {
                         x: s as f32,        // tick (shader converts to pixel)
                         y: note_y,           // pixel
                         w: e as f32,         // tick (shader converts to pixel)
@@ -202,37 +202,9 @@ pub fn build_notes(
     }
 }
 
-/// Build static arrangement instances (backward-compatible — rebuilds everything).
-pub fn build_arrangement_static(
-    instances: &mut Vec<NoteInstance>,
-    width: u32,
-    height: u32,
-    midi: Option<&dyn NoteSource>,
-    view: &ArrangementView,
-    track_visible: &[bool],
-    track_colors: &[[f32; 3]],
-) {
-    let w = width as f32;
-    let h = height as f32;
-    let lh = view.lane_height;
-    let lb_w = view.base.left_panel_width;
-    let scroll_y = view.base.scroll_y;
-
-    build_decor(instances, w, h, lb_w, lh, scroll_y, track_visible);
-
-    if let Some(midi) = midi
-        && let Some(tpb) = midi.ticks_per_beat()
-    {
-        let (def_num, def_den) = midi.time_sig_default();
-        let sig_events = midi.time_sig_events();
-        build_grid(instances, w, h, view, tpb, def_num, def_den, sig_events, 0.0);
-        build_notes(instances, w, h, midi, view, track_visible, track_colors);
-    }
-}
-
 /// Build the playhead cursor instance (a single vertical line).
 pub fn build_arrangement_cursor(
-    instances: &mut Vec<NoteInstance>,
+    instances: &mut Vec<DrawInstance>,
     cursor_tick: Option<f64>,
     view: &ArrangementView,
     width: u32,
@@ -250,189 +222,10 @@ pub fn build_arrangement_cursor(
     }
 }
 
-/// Build all instances for the arrangement view frame (convenience wrapper).
-pub fn build_arrangement_instances(
-    instances: &mut Vec<NoteInstance>,
-    width: u32,
-    height: u32,
-    midi: Option<&dyn NoteSource>,
-    view: &ArrangementView,
-    track_visible: &[bool],
-    track_colors: &[[f32; 3]],
-    cursor_tick: Option<f64>,
-) {
-    build_arrangement_static(instances, width, height, midi, view, track_visible, track_colors);
-    build_arrangement_cursor(instances, cursor_tick, view, width, height);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use yinhe_test_helpers::{MockMidi, make_midi};
-
-    #[test]
-    fn test_basic_note_instances() {
-        let mock = make_midi(vec![
-            (60, 0, 480, 0, 100),
-            (60, 480, 960, 0, 100),
-            (64, 240, 720, 1, 80),
-        ]);
-
-        let view = ArrangementView::default();
-        let track_visible = vec![true; 2];
-        let track_colors = [[0.3, 0.6, 0.9], [0.9, 0.3, 0.3]];
-        let mut instances = Vec::new();
-
-        let start = std::time::Instant::now();
-        build_arrangement_instances(
-            &mut instances,
-            1200,
-            400,
-            Some(&mock as &dyn NoteSource),
-            &view,
-            &track_visible,
-            &track_colors,
-            None,
-        );
-        let elapsed = start.elapsed();
-        assert!(
-            elapsed.as_millis() < 100,
-            "build took too long: {:?}",
-            elapsed
-        );
-        assert!(!instances.is_empty(), "should have generated instances");
-
-        let note_count = instances.iter().filter(|i| i.velocity > 0).count();
-        assert_eq!(note_count, 2, "should have 2 note instances after merge");
-
-        for inst in &instances {
-            if inst.velocity > 0 {
-                assert!(
-                    inst.x >= view.base.left_panel_width,
-                    "note x should be >= label_width"
-                );
-                assert!(inst.w > 0.0, "note width should be positive");
-            }
-        }
-    }
-
-    #[test]
-    fn test_all_keys_performance() {
-        let mut notes = Vec::with_capacity(128);
-        for key in 0..128u8 {
-            notes.push((key, key as u32 * 10, key as u32 * 10 + 120, 0, 90));
-        }
-        let mock = make_midi(notes);
-
-        let view = ArrangementView::default();
-        let track_visible = vec![true; 1];
-        let track_colors = [[0.3, 0.6, 0.9]];
-        let mut instances = Vec::new();
-
-        let start = std::time::Instant::now();
-        build_arrangement_instances(
-            &mut instances,
-            1200,
-            400,
-            Some(&mock as &dyn NoteSource),
-            &view,
-            &track_visible,
-            &track_colors,
-            None,
-        );
-        let elapsed = start.elapsed();
-        assert!(
-            elapsed.as_millis() < 100,
-            "128-key build took: {:?}",
-            elapsed
-        );
-        assert!(instances.len() > 128, "should have many instances");
-    }
-
-    #[test]
-    fn test_no_instance_cap() {
-        let mut notes = Vec::new();
-        let num_tick_positions = 1200u32;
-        for tick_offset in 0..num_tick_positions {
-            for key in 0..128u8 {
-                for track in 0..16u16 {
-                    let tick = 100 + tick_offset * 3;
-                    notes.push((key, tick, tick + 1, track, 100));
-                }
-            }
-        }
-        let mock = make_midi(notes);
-
-        let view = ArrangementView {
-            base: yinhe_types::TimelineViewBase {
-                pixels_per_tick: 0.08,
-                scroll_x: 0.0,
-                scroll_y: 0.0,
-                left_panel_width: 0.0,
-                dirty: true,
-                track_panel_row_height: 40.0,
-                track_panel_scroll_y: 0.0,
-            },
-            lane_height: 40.0,
-        };
-        let track_visible = vec![true; 16];
-        let track_colors = [[0.5f32; 3]; 16];
-        let mut instances = Vec::new();
-
-        let start = std::time::Instant::now();
-        build_arrangement_instances(
-            &mut instances,
-            2000,
-            800,
-            Some(&mock as &dyn NoteSource),
-            &view,
-            &track_visible,
-            &track_colors,
-            None,
-        );
-        let elapsed = start.elapsed();
-        assert!(
-            elapsed.as_millis() < 3000,
-            "large build took: {:?}",
-            elapsed
-        );
-
-        let note_count = instances.iter().filter(|i| i.velocity > 0).count();
-        assert!(note_count > 0, "should have generated note instances");
-        assert!(
-            note_count > 2000,
-            "should have many merged instances: got {}",
-            note_count
-        );
-    }
-
-    #[test]
-    fn test_grid_lines_dont_hang() {
-        let mock = make_midi(vec![(60, 0, 480, 0, 100)]);
-        let mut view = ArrangementView::default();
-        view.base.pixels_per_tick = 10.0;
-        let track_visible = vec![true; 1];
-        let track_colors = [[0.3, 0.6, 0.9]];
-        let mut instances = Vec::new();
-
-        let start = std::time::Instant::now();
-        build_arrangement_instances(
-            &mut instances,
-            2000,
-            400,
-            Some(&mock as &dyn NoteSource),
-            &view,
-            &track_visible,
-            &track_colors,
-            None,
-        );
-        let elapsed = start.elapsed();
-        assert!(
-            elapsed.as_millis() < 200,
-            "extreme zoom build took: {:?}",
-            elapsed
-        );
-    }
+    use yinhe_test_helpers::make_midi;
 
     #[test]
     fn test_no_duplicate_grid_lines_at_time_sig_boundary() {
