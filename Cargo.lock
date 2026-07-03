@@ -6404,6 +6404,7 @@ name = "yinhe-arrangement"
 version = "0.1.0"
 dependencies = [
  "rayon",
+ "yinhe-test-helpers",
  "yinhe-types",
  "yinhe-wgpu",
 ]
@@ -6541,6 +6542,7 @@ version = "0.1.0"
 dependencies = [
  "rayon",
  "yinhe-core",
+ "yinhe-test-helpers",
  "yinhe-types",
  "yinhe-wgpu",
 ]

@@ -546,11 +546,6 @@ mod tests {
         }
     }
 
-    fn track_with_notes(notes: Vec<NoteEvent>) -> TrackData {
-        let mut t = TrackData::new(0, 0);
-        t
-    }
-
     #[test]
     fn empty_model_rebuild() {
         let mut m = YinModel::default();

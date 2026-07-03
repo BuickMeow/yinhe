@@ -65,17 +65,17 @@ pub fn export_wav(
     let total_sf: usize = port_soundfonts.iter().map(|(_, p)| p.len()).sum();
     let mut sf_loaded = 0usize;
     for (port, paths) in port_soundfonts {
-        for _p in paths {
+        for (i, _p) in paths.iter().enumerate() {
             sf_loaded += 1;
             progress(
                 sf_loaded as f32 / total_sf.max(1) as f32 * 0.05,
-                &format!("加载音色库 {}/{}", sf_loaded, total_sf),
+                &format!("加载音色库 {}/{} …", sf_loaded, total_sf),
             );
+            engine.handle_command(crate::spawn::AudioCommand::LoadSoundFont {
+                port: *port,
+                paths: paths[i..i + 1].to_vec(),
+            });
         }
-        engine.handle_command(crate::spawn::AudioCommand::LoadSoundFont {
-            port: *port,
-            paths: paths.clone(),
-        });
     }
 
     progress(0.05, "应用音轨静音");

@@ -122,7 +122,7 @@ impl AudioEngine {
 
     /// 发出 sample 位置处的 NoteOn 和已结束的 NoteOff。
     pub(crate) fn dispatch_notes_at(&mut self, sample: u64) {
-        if let Some(ref yin_model) = self.yin_model.clone() {
+        if let Some(ref yin_model) = self.yin_model {
             let segments = &yin_model.tempo_map.tempo_segments;
             let tpb = yin_model.tempo_map.ticks_per_beat;
             let sr = self.sample_rate as f64;

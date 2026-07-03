@@ -1,9 +1,54 @@
 use std::sync::Arc;
 
 use yinhe_core::{ConductorData, NoteEvent, PcEvent, ProjectMeta, TempoEvent, TimeSigEvent, TrackData, YinModel};
-use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget};
+use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, Note, NoteSource};
 use yinhe_editor_core::document::Document;
 use yinhe_editor_core::quantize::QuantizePreset;
+
+/// Mock MIDI data for testing.
+pub struct MockMidi {
+    pub notes: [Vec<Note>; 128],
+    pub tpb: u32,
+    pub tick_len: u64,
+}
+
+impl NoteSource for MockMidi {
+    fn key_notes(&self, key: u8) -> &[Note] {
+        &self.notes[key as usize]
+    }
+    fn duration(&self) -> f64 {
+        10.0
+    }
+    fn ticks_per_beat(&self) -> Option<u32> {
+        Some(self.tpb)
+    }
+    fn tick_length(&self) -> Option<u64> {
+        Some(self.tick_len)
+    }
+}
+
+pub fn make_midi(notes: Vec<(u8, u32, u32, u16, u8)>) -> MockMidi {
+    let mut key_notes: [Vec<Note>; 128] = core::array::from_fn(|_| Vec::new());
+    let mut max_tick: u64 = 0;
+    for (key, start_tick, end_tick, track, vel) in notes {
+        let n = Note {
+            start_tick,
+            end_tick,
+            velocity: vel,
+            dup_index: 0,
+            track,
+        };
+        if (end_tick as u64) > max_tick {
+            max_tick = end_tick as u64;
+        }
+        key_notes[key as usize].push(n);
+    }
+    MockMidi {
+        notes: key_notes,
+        tpb: 480,
+        tick_len: max_tick,
+    }
+}
 
 /// Create a multi-track test YinModel (programmatically, no raw bytes).
 pub fn make_test_model() -> YinModel {

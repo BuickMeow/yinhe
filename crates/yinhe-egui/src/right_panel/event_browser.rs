@@ -95,6 +95,9 @@ impl BarLookup {
     }
 
     fn format(&self, tick: u32) -> String {
+        if self.segs.is_empty() {
+            return "?".into();
+        }
         let idx = match self.segs.binary_search_by_key(&tick, |s| s.tick_start) {
             Ok(i) => i,
             Err(i) => i.saturating_sub(1),
