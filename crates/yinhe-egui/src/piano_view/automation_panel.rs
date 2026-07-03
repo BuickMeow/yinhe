@@ -330,39 +330,11 @@ pub fn show_panels(
                 ui.add_space(4.0);
 
                 // ── Display mode buttons ──
+                // Velocity display mode is configured in Settings dialog.
+                // Tempo only uses line mode. Only automation lanes show mode buttons here.
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 2.0;
-                    if panel.show_velocity {
-                        // Velocity display mode: three text buttons
-                        let vel_modes = [(0u32, "柱"), (1u32, "矩"), (2u32, "空")];
-                        for &(mode, label) in &vel_modes {
-                            let is_active = *velocity_display_mode == mode;
-                            let color = if is_active {
-                                crate::theme::ACCENT_ACTIVE
-                            } else {
-                                egui::Color32::GRAY
-                            };
-                            let resp = ui.add(
-                                egui::Label::new(
-                                    egui::RichText::new(label).size(11.0).color(color)
-                                )
-                                .sense(egui::Sense::click())
-                                .selectable(false),
-                            );
-                            if resp.clicked() {
-                                *velocity_display_mode = mode;
-                            }
-                            crate::widgets::hover::hover_highlight(
-                                ui,
-                                &resp,
-                                label,
-                                egui::FontId::proportional(11.0),
-                                is_active,
-                            );
-                        }
-                    } else if panel.show_tempo {
-                        // Tempo only uses line mode — no display mode buttons
-                    } else {
+                    if !panel.show_velocity && !panel.show_tempo {
                         // Automation display mode: bar chart / line chart icons
                         let auto_modes = [(0u32, ICON_BAR_CHART), (1u32, ICON_SHOW_CHART)];
                         for &(mode, icon) in &auto_modes {
