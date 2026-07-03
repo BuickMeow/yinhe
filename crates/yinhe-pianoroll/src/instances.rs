@@ -1,4 +1,5 @@
 use rayon::prelude::*;
+use yinhe_theme::GpuTheme;
 use yinhe_types::{NoteSource, TimeSigEvent, is_black_key};
 
 use crate::grid;
@@ -6,11 +7,9 @@ use crate::keyboard;
 use crate::vertex::{DrawInstance, pack_props, pack_rgba};
 use crate::view::PianoRollView;
 
-const BLACK_KEY_ROW_COLOR: (f32, f32, f32) = (0.10, 0.10, 0.12);
-
 /// Build background + black-key row instances (layer 0).
 /// Dependencies: scroll_y, key_height, h
-pub fn build_decor(out: &mut Vec<DrawInstance>, w: f32, h: f32, kb_w: f32, kh: f32, scroll_y: f32) {
+pub fn build_decor(out: &mut Vec<DrawInstance>, w: f32, h: f32, kb_w: f32, kh: f32, scroll_y: f32, theme: &GpuTheme) {
     let bottom = 128.0 * kh - scroll_y;
 
     out.push(DrawInstance {
@@ -19,9 +18,9 @@ pub fn build_decor(out: &mut Vec<DrawInstance>, w: f32, h: f32, kb_w: f32, kh: f
         w: w - kb_w,
         h,
         rgba_packed: pack_rgba(
-            grid::PR_BG_COLOR.0,
-            grid::PR_BG_COLOR.1,
-            grid::PR_BG_COLOR.2,
+            theme.pr_bg.0,
+            theme.pr_bg.1,
+            theme.pr_bg.2,
             1.0,
         ),
         props_packed: pack_props(0.0, 0.0),
@@ -42,9 +41,9 @@ pub fn build_decor(out: &mut Vec<DrawInstance>, w: f32, h: f32, kb_w: f32, kh: f
             w: w - kb_w,
             h: kh,
             rgba_packed: pack_rgba(
-                BLACK_KEY_ROW_COLOR.0,
-                BLACK_KEY_ROW_COLOR.1,
-                BLACK_KEY_ROW_COLOR.2,
+                theme.pr_black_key_row.0,
+                theme.pr_black_key_row.1,
+                theme.pr_black_key_row.2,
                 1.0,
             ),
             props_packed: pack_props(0.0, 0.0),
@@ -66,6 +65,7 @@ pub fn build_grid(
     default_den: u8,
     time_sig_events: &[TimeSigEvent],
     scroll_x_pixel: f32,
+    theme: &GpuTheme,
 ) {
     grid::build_timeline_grid(
         out,
@@ -76,9 +76,9 @@ pub fn build_grid(
         default_num,
         default_den,
         time_sig_events,
-        grid::PR_MEASURE_LINE_COLOR,
-        grid::PR_BEAT_LINE_COLOR,
-        Some(grid::PR_SUB_BEAT_LINE_COLOR),
+        theme.pr_measure_line,
+        theme.pr_beat_line,
+        Some(theme.pr_sub_beat_line),
         scroll_x_pixel,
     );
 }
@@ -102,6 +102,7 @@ pub fn build_notes(
     hidden_notes: &std::collections::HashSet<(u16, u32, u8)>,
     track_visible: &[bool],
     _track_colors: &[[f32; 3]], // colors now fetched from uniform in shader
+    _theme: &GpuTheme,
 ) {
     let (tick_start, tick_end) = view.visible_tick_range(w);
     let (key_lo, key_hi) = view.visible_key_range(h);
@@ -167,8 +168,8 @@ pub fn build_notes(
 
 /// Build keyboard instances (layer 3).
 /// Dependencies: scroll_y, key_height, h
-pub fn build_keyboard(out: &mut Vec<DrawInstance>, kb_w: f32, kh: f32, scroll_y: f32, h: f32) {
-    keyboard::append_keyboard_instances(out, kb_w, kh, scroll_y, h);
+pub fn build_keyboard(out: &mut Vec<DrawInstance>, kb_w: f32, kh: f32, scroll_y: f32, h: f32, theme: &GpuTheme) {
+    keyboard::append_keyboard_instances(out, kb_w, kh, scroll_y, h, theme);
 }
 
 /// Build a single ghost note instance for the pencil tool preview (layer 4).
@@ -180,6 +181,7 @@ pub fn build_ghost_note(
     end_tick: f64,
     key: u8,
     color: [f32; 3],
+    _theme: &GpuTheme,
 ) {
     out.push(DrawInstance {
         x: start_tick as f32, // tick (shader converts to pixel)
@@ -200,6 +202,7 @@ pub fn build_cursor_instance(
     view: &PianoRollView,
     width: u32,
     height: u32,
+    theme: &GpuTheme,
 ) {
     if let Some(ct) = cursor_tick {
         let kb_w = view.keyboard_width();
@@ -212,7 +215,12 @@ pub fn build_cursor_instance(
                 y: 0.0,
                 w: 2.0,
                 h,
-                rgba_packed: pack_rgba(1.0, 1.0, 1.0, 0.8),
+                rgba_packed: pack_rgba(
+                    theme.pr_playhead.0,
+                    theme.pr_playhead.1,
+                    theme.pr_playhead.2,
+                    theme.pr_playhead.3,
+                ),
                 props_packed: pack_props(0.0, 0.0),
                 velocity: 0,
                 tag: 0,
@@ -242,10 +250,15 @@ mod tests {
         }
     }
 
+    fn make_theme() -> GpuTheme {
+        GpuTheme::default()
+    }
+
     #[test]
     fn test_build_decor_background() {
         let mut out = Vec::new();
-        build_decor(&mut out, 800.0, 500.0, 60.0, 12.0, 0.0);
+        let theme = make_theme();
+        build_decor(&mut out, 800.0, 500.0, 60.0, 12.0, 0.0, &theme);
         assert!(!out.is_empty());
         let bg = &out[0];
         assert_eq!(bg.x, 60.0);
@@ -257,7 +270,8 @@ mod tests {
     #[test]
     fn test_build_decor_black_key_rows() {
         let mut out = Vec::new();
-        build_decor(&mut out, 800.0, 500.0, 60.0, 12.0, 0.0);
+        let theme = make_theme();
+        build_decor(&mut out, 800.0, 500.0, 60.0, 12.0, 0.0, &theme);
         let black_rows = &out[1..];
         assert!(!black_rows.is_empty());
         for row in black_rows {
@@ -270,7 +284,8 @@ mod tests {
     #[test]
     fn test_build_decor_scrolled() {
         let mut out = Vec::new();
-        build_decor(&mut out, 800.0, 500.0, 60.0, 12.0, 1000.0);
+        let theme = make_theme();
+        build_decor(&mut out, 800.0, 500.0, 60.0, 12.0, 1000.0, &theme);
         assert!(!out.is_empty());
         for inst in &out[1..] {
             assert!(inst.y + inst.h > 0.0, "row should be on screen");
@@ -282,7 +297,8 @@ mod tests {
     fn test_build_grid_basic() {
         let mut out = Vec::new();
         let view = make_view();
-        build_grid(&mut out, 800.0, 500.0, &view, 480, 4, 2, &[], 0.0);
+        let theme = make_theme();
+        build_grid(&mut out, 800.0, 500.0, &view, 480, 4, 2, &[], 0.0, &theme);
         assert!(!out.is_empty(), "grid should produce lines");
         for inst in &out {
             // Grid lines are centered: x = tick_x - line_width/2
@@ -297,11 +313,12 @@ mod tests {
     fn test_build_grid_with_time_sig_change() {
         let mut out = Vec::new();
         let view = make_view();
+        let theme = make_theme();
         let sigs = vec![
             TimeSigEvent { tick: 0, numerator: 4, denominator: 2 },
             TimeSigEvent { tick: 1920, numerator: 3, denominator: 2 },
         ];
-        build_grid(&mut out, 800.0, 500.0, &view, 480, 4, 2, &sigs, 0.0);
+        build_grid(&mut out, 800.0, 500.0, &view, 480, 4, 2, &sigs, 0.0, &theme);
         assert!(!out.is_empty());
     }
 
@@ -313,9 +330,10 @@ mod tests {
         let selected = yinhe_core::Selection::default();
         let track_visible = vec![true];
         let track_colors = [[0.5, 0.5, 0.5]];
+        let theme = make_theme();
 
         let hidden = std::collections::HashSet::new();
-        build_notes(&mut out, 800.0, 500.0, &midi, &view, &selected, &hidden, &track_visible, &track_colors);
+        build_notes(&mut out, 800.0, 500.0, &midi, &view, &selected, &hidden, &track_visible, &track_colors, &theme);
         assert!(!out.is_empty(), "should produce note instances");
         let note = &out[0];
         assert_eq!(note.x, 0.0);
@@ -332,9 +350,10 @@ mod tests {
         let view = make_view();
         let selected = yinhe_core::Selection::default();
         let track_visible = vec![false];
+        let theme = make_theme();
 
         let hidden = std::collections::HashSet::new();
-        build_notes(&mut out, 800.0, 500.0, &midi, &view, &selected, &hidden, &track_visible, &[]);
+        build_notes(&mut out, 800.0, 500.0, &midi, &view, &selected, &hidden, &track_visible, &[], &theme);
         assert!(out.is_empty(), "notes on hidden track should be skipped");
     }
 
@@ -347,9 +366,10 @@ mod tests {
         let selected = yinhe_core::Selection::default();
         let track_visible = vec![true, true, true];
         let track_colors = [[0.5, 0.5, 0.5], [0.5, 0.5, 0.5], [0.5, 0.5, 0.5]];
+        let theme = make_theme();
 
         let hidden = std::collections::HashSet::new();
-        build_notes(&mut out, 800.0, 500.0, &midi, &view, &selected, &hidden, &track_visible, &track_colors);
+        build_notes(&mut out, 800.0, 500.0, &midi, &view, &selected, &hidden, &track_visible, &track_colors, &theme);
         assert_eq!(out[0].tag, 2, "tag should store track_index (2)");
     }
 
@@ -362,9 +382,10 @@ mod tests {
         let selected = yinhe_core::Selection::default();
         let track_visible = vec![true];
         let track_colors = [[0.5, 0.5, 0.5]];
+        let theme = make_theme();
 
         let hidden = std::collections::HashSet::new();
-        build_notes(&mut out, 800.0, 500.0, &midi, &view, &selected, &hidden, &track_visible, &track_colors);
+        build_notes(&mut out, 800.0, 500.0, &midi, &view, &selected, &hidden, &track_visible, &track_colors, &theme);
         assert_eq!(out[0].tag, 0, "tag should store track_index (0)");
     }
 
@@ -380,9 +401,10 @@ mod tests {
         let selected = yinhe_core::Selection::default();
         let track_visible = vec![true];
         let track_colors = [[0.5, 0.5, 0.5]];
+        let theme = make_theme();
 
         let hidden = std::collections::HashSet::new();
-        build_notes(&mut out, 800.0, 500.0, &midi, &view, &selected, &hidden, &track_visible, &track_colors);
+        build_notes(&mut out, 800.0, 500.0, &midi, &view, &selected, &hidden, &track_visible, &track_colors, &theme);
         assert_eq!(out.len(), 3, "should produce 3 note instances");
     }
 
@@ -400,9 +422,10 @@ mod tests {
         let selected = yinhe_core::Selection::default();
         let track_visible = vec![true];
         let track_colors = [[0.5, 0.5, 0.5]];
+        let theme = make_theme();
 
         let hidden = std::collections::HashSet::new();
-        build_notes(&mut out, 800.0, 500.0, &midi, &view, &selected, &hidden, &track_visible, &track_colors);
+        build_notes(&mut out, 800.0, 500.0, &midi, &view, &selected, &hidden, &track_visible, &track_colors, &theme);
         assert!(
             !out.is_empty(),
             "long note crossing the left edge must be included"
@@ -419,9 +442,10 @@ mod tests {
         let selected = yinhe_core::Selection::default();
         let track_visible = vec![true];
         let track_colors = [[0.5, 0.5, 0.5]];
+        let theme = make_theme();
 
         let hidden = std::collections::HashSet::new();
-        build_notes(&mut out, 800.0, 500.0, &midi, &view, &selected, &hidden, &track_visible, &track_colors);
+        build_notes(&mut out, 800.0, 500.0, &midi, &view, &selected, &hidden, &track_visible, &track_colors, &theme);
         assert!(
             out.is_empty(),
             "note fully off-screen-left must be culled"
@@ -432,7 +456,8 @@ mod tests {
     fn test_build_cursor_instance_visible() {
         let mut out = Vec::new();
         let view = make_view();
-        build_cursor_instance(&mut out, Some(480.0), &view, 800, 500);
+        let theme = make_theme();
+        build_cursor_instance(&mut out, Some(480.0), &view, 800, 500, &theme);
         assert_eq!(out.len(), 1);
         let cursor = &out[0];
         assert!((cursor.x - 132.0).abs() < 0.01);
@@ -444,7 +469,8 @@ mod tests {
     fn test_build_cursor_instance_none() {
         let mut out = Vec::new();
         let view = make_view();
-        build_cursor_instance(&mut out, None, &view, 800, 500);
+        let theme = make_theme();
+        build_cursor_instance(&mut out, None, &view, 800, 500, &theme);
         assert!(out.is_empty());
     }
 
@@ -452,7 +478,8 @@ mod tests {
     fn test_build_cursor_instance_off_screen_left() {
         let mut out = Vec::new();
         let view = make_view();
-        build_cursor_instance(&mut out, Some(0.0), &view, 800, 500);
+        let theme = make_theme();
+        build_cursor_instance(&mut out, Some(0.0), &view, 800, 500, &theme);
         assert_eq!(out.len(), 1);
     }
 
@@ -460,7 +487,8 @@ mod tests {
     fn test_build_cursor_instance_off_screen_right() {
         let mut out = Vec::new();
         let view = make_view();
-        build_cursor_instance(&mut out, Some(99999.0), &view, 800, 500);
+        let theme = make_theme();
+        build_cursor_instance(&mut out, Some(99999.0), &view, 800, 500, &theme);
         assert!(out.is_empty(), "cursor off-screen right should be skipped");
     }
 

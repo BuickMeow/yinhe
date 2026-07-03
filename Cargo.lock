@@ -6405,6 +6405,7 @@ version = "0.1.0"
 dependencies = [
  "rayon",
  "yinhe-test-helpers",
+ "yinhe-theme",
  "yinhe-types",
  "yinhe-wgpu",
 ]
@@ -6427,6 +6428,7 @@ dependencies = [
 name = "yinhe-automation"
 version = "0.1.0"
 dependencies = [
+ "yinhe-theme",
  "yinhe-types",
  "yinhe-wgpu",
 ]
@@ -6499,6 +6501,7 @@ dependencies = [
  "yinhe-memtrace",
  "yinhe-mid2",
  "yinhe-pianoroll",
+ "yinhe-theme",
  "yinhe-types",
  "yinhe-wgpu",
  "yinhe-yin",
@@ -6543,6 +6546,7 @@ dependencies = [
  "rayon",
  "yinhe-core",
  "yinhe-test-helpers",
+ "yinhe-theme",
  "yinhe-types",
  "yinhe-wgpu",
 ]
@@ -6571,10 +6575,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "yinhe-theme"
+version = "0.1.0"
+dependencies = [
+ "egui",
+]
+
+[[package]]
 name = "yinhe-types"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "yinhe-theme",
 ]
 
 [[package]]
@@ -6585,6 +6597,7 @@ dependencies = [
  "half",
  "wgpu",
  "yinhe-memtrace",
+ "yinhe-theme",
  "yinhe-types",
 ]
 

@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 yinhe-types = { path = "../yinhe-types" }
 yinhe-memtrace = { path = "../yinhe-memtrace" }
+yinhe-theme = { path = "../yinhe-theme" }
 wgpu = { workspace = true }
 bytemuck = { workspace = true }
 half = { workspace = true }

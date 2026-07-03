@@ -3,6 +3,7 @@ use yinhe_types::{build_time_sig_segments, measure_ticks, TimeSigEvent, Timeline
 
 use crate::vertex::{DrawInstance, pack_props, pack_rgba};
 
+// TODO: migrate callers to GpuTheme, then remove these constants
 // ── Pianoroll grid colors ──
 pub const PR_BG_COLOR: (f32, f32, f32) = (0.12, 0.12, 0.14);
 pub const PR_MEASURE_LINE_COLOR: (f32, f32, f32, f32) = (0.35, 0.35, 0.40, 1.0);

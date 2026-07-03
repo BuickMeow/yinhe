@@ -85,6 +85,7 @@ pub fn prepare(
     };
 
     let t = std::time::Instant::now();
+    let theme = renderer.theme.clone();
     renderer.upload_uniforms(uniforms);
     renderer.upload_track_colors(&tc_uniform);
     renderer.upload_selection(&sel_uniform);
@@ -95,7 +96,7 @@ pub fn prepare(
     let wh = yinhe_wgpu::hash_f32s(&[w, h]);
     let decor_key = layer_cache_key(&[vh, wh]);
     renderer.upload_layer(0, decor_key, |out| {
-        instances::build_decor(out, w, h, kb_w, kh, scroll_y);
+        instances::build_decor(out, w, h, kb_w, kh, scroll_y, &theme);
     });
 
     // Layer 1: grid lines
@@ -116,7 +117,7 @@ pub fn prepare(
         {
             let (def_num, def_den) = midi.time_sig_default();
             let sig_events = midi.time_sig_events();
-            instances::build_grid(out, w, h, view, tpb, def_num, def_den, sig_events, scroll_x_pos);
+            instances::build_grid(out, w, h, view, tpb, def_num, def_den, sig_events, scroll_x_pos, &theme);
         }
     });
 
@@ -136,21 +137,21 @@ pub fn prepare(
     let notes_key = layer_cache_key(&[vh, wh, tv_hash, midi_version, hidden_hash]);
     renderer.upload_layer(2, notes_key, |out| {
         if let Some(midi) = midi {
-            instances::build_notes(out, w, h, midi, view, selected, hidden_notes, track_visible, track_colors);
+            instances::build_notes(out, w, h, midi, view, selected, hidden_notes, track_visible, track_colors, &theme);
         }
     });
 
     // Layer 3: keyboard
     let kb_key = layer_cache_key(&[vh, wh]);
     renderer.upload_layer(3, kb_key, |out| {
-        instances::build_keyboard(out, kb_w, kh, scroll_y, h);
+        instances::build_keyboard(out, kb_w, kh, scroll_y, h, &theme);
     });
 
     // Layer 4: ghost notes (no cache — rebuilt every frame)
     if !ghost_notes.is_empty() {
         renderer.upload_layer_force(4, |out| {
             for &(start_tick, end_tick, key, color) in ghost_notes {
-                instances::build_ghost_note(out, start_tick, end_tick, key, color);
+                instances::build_ghost_note(out, start_tick, end_tick, key, color, &theme);
             }
         });
     } else {

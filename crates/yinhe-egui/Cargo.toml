@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+yinhe-theme = { path = "../yinhe-theme", features = ["egui"] }
 yinhe-types = { path = "../yinhe-types" }
 yinhe-core = { path = "../yinhe-core" }
 yinhe-mid2 = { path = "../yinhe-mid2" }

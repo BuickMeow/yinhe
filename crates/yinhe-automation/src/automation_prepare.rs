@@ -99,8 +99,9 @@ pub fn prepare(
         })
         .unwrap_or(0);
     let decor_key = layer_cache_key(&[vh, wh, center_line_hash, target_hash(&view.selected_target)]);
+    let theme = renderer.theme.clone();
     renderer.upload_layer(0, decor_key, |out| {
-        automation_instances::build_decor(out, w, h, lanes);
+        automation_instances::build_decor(out, w, h, lanes, &theme);
     });
 
     // Layer 1: grid lines
@@ -112,8 +113,14 @@ pub fn prepare(
         sig_hash = sig_hash.wrapping_mul(31).wrapping_add(ev.denominator as u64);
     }
     grid_key = layer_cache_key(&[grid_key, sig_hash]);
+    let measure_color = theme.pr_measure_line;
+    let beat_color = theme.pr_beat_line;
+    let sub_beat_color = theme.pr_sub_beat_line;
     renderer.upload_layer(1, grid_key, |out| {
-        automation_instances::build_grid(out, w, h, view, tpb, default_num, default_den, time_sig_events, scroll_x_pos);
+        automation_instances::build_grid(
+            out, w, h, view, tpb, default_num, default_den, time_sig_events, scroll_x_pos,
+            measure_color, beat_color, Some(sub_beat_color),
+        );
     });
 
     // Layer 2: data bars (or velocity bars when show_velocity is true, or tempo curve)
@@ -132,19 +139,19 @@ pub fn prepare(
     ]);
     renderer.upload_layer(2, bars_key, |out| {
         if is_tempo {
-            automation_instances::build_tempo_lines(out, w, h, view, tempo_events);
+            automation_instances::build_tempo_lines(out, w, h, view, tempo_events, &theme);
         } else if is_velocity {
             if let Some(midi) = midi {
                 automation_instances::build_velocity_bars(
-                    out, w, h, midi, view, track_visible, track_colors, velocity_display_mode,
+                    out, w, h, midi, view, track_visible, track_colors, velocity_display_mode, &theme,
                 );
             }
         } else if automation_display_mode == 1 {
             automation_instances::build_data_lines(
-                out, w, h, view, lanes, track_visible, track_colors, automation_show_dots,
+                out, w, h, view, lanes, track_visible, track_colors, automation_show_dots, &theme,
             );
         } else {
-            automation_instances::build_data_bars(out, w, h, view, lanes, track_visible, track_colors);
+            automation_instances::build_data_bars(out, w, h, view, lanes, track_visible, track_colors, &theme);
         }
     });
 

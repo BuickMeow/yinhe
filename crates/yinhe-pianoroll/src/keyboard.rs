@@ -1,10 +1,9 @@
+use yinhe_theme::GpuTheme;
 use yinhe_types::is_black_key;
 
 use crate::vertex::{DrawInstance, pack_props, pack_rgba};
 
-/// Keyboard appearance constants.
-const WHITE_KEY_COLOR: (f32, f32, f32) = (0.70, 0.70, 0.70); // #B2B2B2
-const BLACK_KEY_COLOR: (f32, f32, f32) = (0.16, 0.16, 0.17);
+/// Keyboard appearance constants (geometry only; colors come from GpuTheme).
 const WHITE_KEY_CORNER_RADIUS: f32 = 2.0;
 const BLACK_KEY_CORNER_RADIUS: f32 = 1.5;
 const KEY_BORDER_WIDTH: f32 = 0.5;
@@ -16,6 +15,7 @@ pub fn append_keyboard_instances(
     key_height: f32,
     scroll_y: f32,
     canvas_height: f32,
+    theme: &GpuTheme,
 ) {
     let bottom = 128.0 * key_height - scroll_y;
 
@@ -30,7 +30,7 @@ pub fn append_keyboard_instances(
             continue;
         }
 
-        let (r, g, b) = WHITE_KEY_COLOR;
+        let (r, g, b) = theme.pr_white_key;
 
         out.push(DrawInstance {
             x: 0.0,
@@ -54,7 +54,7 @@ pub fn append_keyboard_instances(
             continue;
         }
 
-        let (r, g, b) = BLACK_KEY_COLOR;
+        let (r, g, b) = theme.pr_black_key;
 
         out.push(DrawInstance {
             x: 0.0,
@@ -73,10 +73,15 @@ pub fn append_keyboard_instances(
 mod tests {
     use super::*;
 
+    fn make_theme() -> GpuTheme {
+        GpuTheme::default()
+    }
+
     #[test]
     fn test_append_keyboard_instances_basic() {
         let mut out = Vec::new();
-        append_keyboard_instances(&mut out, 60.0, 12.0, 0.0, 500.0);
+        let theme = make_theme();
+        append_keyboard_instances(&mut out, 60.0, 12.0, 0.0, 500.0, &theme);
         assert!(!out.is_empty(), "should produce instances");
         let first = &out[0];
         assert_eq!(first.x, 0.0);
@@ -87,7 +92,8 @@ mod tests {
     #[test]
     fn test_keyboard_white_keys_first() {
         let mut out = Vec::new();
-        append_keyboard_instances(&mut out, 60.0, 12.0, 0.0, 1536.0);
+        let theme = make_theme();
+        append_keyboard_instances(&mut out, 60.0, 12.0, 0.0, 1536.0, &theme);
         let mut white_count = 0;
         let mut black_count = 0;
         for inst in &out {
@@ -105,7 +111,8 @@ mod tests {
     #[test]
     fn test_keyboard_scrolled() {
         let mut out = Vec::new();
-        append_keyboard_instances(&mut out, 60.0, 12.0, 500.0, 500.0);
+        let theme = make_theme();
+        append_keyboard_instances(&mut out, 60.0, 12.0, 500.0, 500.0, &theme);
         assert!(!out.is_empty());
         for inst in &out {
             assert!(inst.y + inst.h > 0.0, "key should be on screen");
@@ -116,7 +123,8 @@ mod tests {
     #[test]
     fn test_keyboard_zero_height() {
         let mut out = Vec::new();
-        append_keyboard_instances(&mut out, 60.0, 12.0, 0.0, 0.0);
+        let theme = make_theme();
+        append_keyboard_instances(&mut out, 60.0, 12.0, 0.0, 0.0, &theme);
         // With canvas_height=0, only key 127 (topmost) has y=0 which is not culled
         assert_eq!(out.len(), 1, "expected 1 instance (key 127), got {}", out.len());
         assert_eq!(out[0].y, 0.0);
@@ -125,7 +133,8 @@ mod tests {
     #[test]
     fn test_keyboard_props() {
         let mut out = Vec::new();
-        append_keyboard_instances(&mut out, 60.0, 12.0, 0.0, 1536.0);
+        let theme = make_theme();
+        append_keyboard_instances(&mut out, 60.0, 12.0, 0.0, 1536.0, &theme);
         let white = &out[0];
         let (cr, bw) = crate::vertex::unpack_props(white.props_packed);
         assert!((cr - 2.0).abs() < 0.01, "white key corner radius");

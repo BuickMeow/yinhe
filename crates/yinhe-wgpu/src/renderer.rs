@@ -28,6 +28,7 @@ pub struct InstanceRenderer {
     cached_track_colors: Option<TrackColorsUniform>,
     cached_selection: Option<SelectionUniform>,
     layers: Vec<LayerSlot>,
+    pub theme: yinhe_theme::GpuTheme,
 }
 
 impl InstanceRenderer {
@@ -48,6 +49,7 @@ impl InstanceRenderer {
                 cached_track_colors: None,
                 cached_selection: None,
                 layers: Vec::new(),
+                theme: yinhe_theme::GpuTheme::default(),
             }
         })
     }
@@ -132,5 +134,13 @@ impl InstanceRenderer {
     /// Total instances across all layers.
     pub fn total_layer_instances(&self) -> usize {
         self.layers.iter().map(|l| l.instance_count()).sum()
+    }
+
+    pub fn theme(&self) -> &yinhe_theme::GpuTheme {
+        &self.theme
+    }
+
+    pub fn set_theme(&mut self, theme: yinhe_theme::GpuTheme) {
+        self.theme = theme;
     }
 }

@@ -3,6 +3,7 @@ use yinhe_types::{AutomationEvent, AutomationLane, NoteSource, TRACK_PALETTE, Ti
 use crate::AutomationPanelView;
 use crate::grid;
 use yinhe_wgpu::{DrawInstance, pack_props, pack_rgba};
+use yinhe_theme::GpuTheme;
 
 /// Bar width in pixels for automation events.
 const BAR_WIDTH: f32 = 2.0;
@@ -10,10 +11,6 @@ const BAR_WIDTH: f32 = 2.0;
 const BAR_ROUNDING: f32 = 0.0;
 /// Border width for automation bars.
 const BAR_BORDER: f32 = 0.0;
-/// Color for the center/default reference line.
-const CENTER_LINE_COLOR: (f32, f32, f32) = (0.30, 0.30, 0.35);
-/// Center line alpha.
-const CENTER_LINE_ALPHA: f32 = 0.6;
 
 /// Build background + center line instances (layer 0).
 /// Dependencies: none (background is static), lane target (center line)
@@ -22,6 +19,7 @@ pub fn build_decor(
     w: f32,
     h: f32,
     lanes: &[&AutomationLane],
+    theme: &GpuTheme,
 ) {
     out.push(DrawInstance {
         x: 0.0,
@@ -29,9 +27,9 @@ pub fn build_decor(
         w,
         h,
         rgba_packed: pack_rgba(
-            grid::PR_BG_COLOR.0,
-            grid::PR_BG_COLOR.1,
-            grid::PR_BG_COLOR.2,
+            theme.pr_bg.0,
+            theme.pr_bg.1,
+            theme.pr_bg.2,
             1.0,
         ),
         props_packed: pack_props(0.0, 0.0),
@@ -51,10 +49,10 @@ pub fn build_decor(
                 w,
                 h: 1.0,
                 rgba_packed: pack_rgba(
-                    CENTER_LINE_COLOR.0,
-                    CENTER_LINE_COLOR.1,
-                    CENTER_LINE_COLOR.2,
-                    CENTER_LINE_ALPHA,
+                    theme.center_line.0,
+                    theme.center_line.1,
+                    theme.center_line.2,
+                    theme.center_line.3,
                 ),
                 props_packed: pack_props(0.0, 0.0),
                 velocity: 0,
@@ -76,6 +74,9 @@ pub fn build_grid(
     default_den: u8,
     time_sig_events: &[TimeSigEvent],
     scroll_x_pixel: f32,
+    measure_color: (f32, f32, f32, f32),
+    beat_color: (f32, f32, f32, f32),
+    sub_beat_color: Option<(f32, f32, f32, f32)>,
 ) {
     if let Some(tpb) = tpb {
         grid::build_timeline_grid(
@@ -87,9 +88,9 @@ pub fn build_grid(
             default_num,
             default_den,
             time_sig_events,
-            grid::PR_MEASURE_LINE_COLOR,
-            grid::PR_BEAT_LINE_COLOR,
-            Some(grid::PR_SUB_BEAT_LINE_COLOR),
+            measure_color,
+            beat_color,
+            sub_beat_color,
             scroll_x_pixel,
         );
     }
@@ -105,6 +106,7 @@ pub fn build_data_bars(
     lanes: &[&AutomationLane],
     track_visible: &[bool],
     track_colors: &[[f32; 3]],
+    _theme: &GpuTheme,
 ) {
     if lanes.is_empty() {
         return;
@@ -200,6 +202,7 @@ pub fn build_data_lines(
     track_visible: &[bool],
     track_colors: &[[f32; 3]],
     show_dots: bool,
+    _theme: &GpuTheme,
 ) {
     if lanes.is_empty() {
         return;
@@ -365,6 +368,7 @@ pub fn build_velocity_bars(
     track_visible: &[bool],
     track_colors: &[[f32; 3]],
     display_mode: u32,
+    _theme: &GpuTheme,
 ) {
     let ppu = view.base.pixels_per_tick;
     let (tick_start, tick_end) = view.base.visible_tick_range(w);
@@ -483,6 +487,7 @@ pub fn build_tempo_lines(
     h: f32,
     view: &AutomationPanelView,
     tempo_events: &[(u32, f64)],
+    _theme: &GpuTheme,
 ) {
     if tempo_events.is_empty() {
         return;

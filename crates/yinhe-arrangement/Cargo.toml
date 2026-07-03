@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 yinhe-types = { path = "../yinhe-types" }
 yinhe-wgpu = { path = "../yinhe-wgpu" }
+yinhe-theme = { path = "../yinhe-theme" }
 rayon = { workspace = true }
 
 [dev-dependencies]

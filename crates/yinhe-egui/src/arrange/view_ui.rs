@@ -105,6 +105,7 @@ pub fn show(
 
     view.base.dirty = false;
 
+    let theme = renderer.theme().clone();
     renderer.upload_uniforms(uniforms);
     renderer.ensure_layers(3);
 
@@ -134,6 +135,7 @@ pub fn show(
             view.lane_height,
             view.base.scroll_y,
             track_visible,
+            &theme,
         );
     });
 
@@ -181,6 +183,7 @@ pub fn show(
                 view,
                 track_visible,
                 track_colors,
+                &theme,
             );
         }
     });

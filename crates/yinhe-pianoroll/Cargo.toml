@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 yinhe-core = { path = "../yinhe-core" }
+yinhe-theme = { path = "../yinhe-theme" }
 yinhe-types = { path = "../yinhe-types" }
 yinhe-wgpu = { path = "../yinhe-wgpu" }
 rayon = { workspace = true }

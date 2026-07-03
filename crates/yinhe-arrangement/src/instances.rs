@@ -15,6 +15,7 @@ pub fn build_decor(
     lh: f32,
     scroll_y: f32,
     track_visible: &[bool],
+    theme: &yinhe_theme::GpuTheme,
 ) {
     let num_tracks = track_visible.len();
 
@@ -24,9 +25,9 @@ pub fn build_decor(
         w: w - lb_w,
         h,
         rgba_packed: pack_rgba(
-            grid::AR_BG_COLOR.0,
-            grid::AR_BG_COLOR.1,
-            grid::AR_BG_COLOR.2,
+            theme.ar_bg.0,
+            theme.ar_bg.1,
+            theme.ar_bg.2,
             1.0,
         ),
         props_packed: pack_props(0.0, 0.0),
@@ -42,9 +43,9 @@ pub fn build_decor(
             }
             let y = ArrangementView::lane_y_static(idx, scroll_y, lh);
             let col = if idx % 2 == 0 {
-                grid::AR_LANE_EVEN_COLOR
+                theme.ar_lane_even
             } else {
-                grid::AR_LANE_ODD_COLOR
+                theme.ar_lane_odd
             };
             out.push(DrawInstance {
                 x: lb_w,
@@ -102,6 +103,7 @@ pub fn build_notes(
     view: &ArrangementView,
     track_visible: &[bool],
     track_colors: &[[f32; 3]],
+    _theme: &yinhe_theme::GpuTheme,
 ) {
     let lh = view.lane_height;
     let ppu = view.base.pixels_per_tick;
@@ -209,6 +211,7 @@ pub fn build_arrangement_cursor(
     view: &ArrangementView,
     width: u32,
     height: u32,
+    theme: &yinhe_theme::GpuTheme,
 ) {
     let w = width as f32;
     let h = height as f32;
@@ -217,7 +220,7 @@ pub fn build_arrangement_cursor(
     if let Some(ct) = cursor_tick {
         let cx = view.tick_to_x(ct);
         if cx >= lb_w && cx <= w {
-            grid::push_grid_line(instances, cx, h, 2.0, grid::AR_PLAYHEAD_COLOR, 0);
+            grid::push_grid_line(instances, cx, h, 2.0, theme.ar_playhead, 0);
         }
     }
 }
