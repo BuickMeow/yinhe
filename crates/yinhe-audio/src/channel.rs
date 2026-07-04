@@ -130,8 +130,8 @@ impl ChannelState {
             }
             1 => {
                 let val =
-                    ((self.data_entry_msb as u16) << 6) + self.data_entry_lsb as u16;
-                self.fine_tune = (val as f32 - 4096.0) / 4096.0 * 100.0;
+                    ((self.data_entry_msb as u16) << 7) + self.data_entry_lsb as u16;
+                self.fine_tune = (val as f32 - 8192.0) / 8192.0 * 100.0;
             }
             2 => {
                 self.coarse_tune = self.data_entry_msb as f32 - 64.0;

@@ -314,12 +314,15 @@ fn parse_track(
                                 let nrpn = nrpn_state[ch_idx];
                                 if let (Some(msb), Some(lsb)) = (rpn.msb, rpn.lsb) {
                                     let parameter = ((msb as u16) << 8) | lsb as u16;
+                                    let target = AutomationTarget::Rpn { parameter };
+                                    let value = if target.is_14bit() {
+                                        (val as u16) << 7
+                                    } else {
+                                        val as u16
+                                    };
                                     auto_events.push((
-                                        AutomationTarget::Rpn { parameter },
-                                        AutomationEvent {
-                                            tick: current_tick,
-                                            value: (val as u16) << 7,
-                                        },
+                                        target,
+                                        AutomationEvent { tick: current_tick, value },
                                     ));
                                 } else if let (Some(msb), Some(lsb)) = (nrpn.msb, nrpn.lsb) {
                                     let parameter = ((msb as u16) << 8) | lsb as u16;
@@ -347,19 +350,24 @@ fn parse_track(
                                 let nrpn = nrpn_state[ch_idx];
                                 if let (Some(msb), Some(lsb)) = (rpn.msb, rpn.lsb) {
                                     let parameter = ((msb as u16) << 8) | lsb as u16;
-                                    // Try to find the last RPN event at this tick and combine
                                     let target = AutomationTarget::Rpn { parameter };
-                                    if let Some((_, last)) = auto_events.iter_mut()
-                                        .rfind(|(t, e)| *t == target && e.tick == current_tick)
-                                    {
-                                        last.value = (last.value & 0xFF80) | (val as u16);
+                                    if target.is_14bit() {
+                                        // 14-bit target: combine LSB with MSB
+                                        if let Some((_, last)) = auto_events.iter_mut()
+                                            .rfind(|(t, e)| *t == target && e.tick == current_tick)
+                                        {
+                                            last.value = (last.value & 0xFF80) | (val as u16);
+                                        } else {
+                                            auto_events.push((
+                                                target,
+                                                AutomationEvent { tick: current_tick, value: val as u16 },
+                                            ));
+                                        }
                                     } else {
+                                        // 7-bit target (RPN 0/2): LSB is fractional, store as plain CC38
                                         auto_events.push((
-                                            target,
-                                            AutomationEvent {
-                                                tick: current_tick,
-                                                value: val as u16,
-                                            },
+                                            AutomationTarget::CC { controller: 38 },
+                                            AutomationEvent { tick: current_tick, value: val as u16 },
                                         ));
                                     }
                                 } else if let (Some(msb), Some(lsb)) = (nrpn.msb, nrpn.lsb) {
@@ -432,7 +440,7 @@ fn parse_track(
                             AutomationTarget::PitchBend,
                             AutomationEvent {
                                 tick: current_tick,
-                                value: bend.as_int() as u16,
+                                value: bend.0.as_int(), // raw 0–16383
                             },
                         ));
                     }

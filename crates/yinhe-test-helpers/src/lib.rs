@@ -79,7 +79,7 @@ pub fn make_test_model() -> YinModel {
     t1.automation_lanes = vec![AutomationLane {
         target: AutomationTarget::PitchBend,
         track: 1,
-        events: vec![AutomationEvent { tick: 100, value: 1024 }],
+        events: vec![AutomationEvent { tick: 100, value: 9216 }], // 1024 + 8192 = raw value
     }];
 
     let mut t2 = TrackData::new(1, 0); // port 1, ch 0

@@ -42,15 +42,18 @@ pub(crate) fn prepare_model(
                             sample,
                             channel,
                             event: ChannelAudioEvent::Control(ControlEvent::PitchBendValue(
-                                e.value as f32 / 8192.0,
+                                (e.value as f32 - 8192.0) / 8192.0,
                             )),
                         });
                     }
                     AutomationTarget::Rpn { parameter } => {
                         let msb = ((parameter >> 8) & 0x7F) as u8;
                         let lsb = (parameter & 0x7F) as u8;
-                        let data_msb = ((e.value >> 7) & 0x7F) as u8;
-                        let data_lsb = (e.value & 0x7F) as u8;
+                        let (data_msb, data_lsb) = if lane.target.is_14bit() {
+                            (((e.value >> 7) & 0x7F) as u8, (e.value & 0x7F) as u8)
+                        } else {
+                            (e.value as u8, 0u8)
+                        };
                         cc_events.push(SortedCC {
                             sample,
                             channel,

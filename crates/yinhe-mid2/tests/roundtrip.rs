@@ -278,8 +278,8 @@ fn rpn_sequence_decodes_to_rpn_event() {
         .find(|l| l.target == AutomationTarget::Rpn { parameter: 0x0000 })
         .expect("RPN 0 lane");
     assert_eq!(rpn_lane.events.len(), 1);
-    // CC6=2 is stored as 14-bit value: (2 << 7) | 0 = 256
-    assert_eq!(rpn_lane.events[0].value, 256);
+    // CC6=2 is stored as 7-bit value: 2 (Pitch Bend Sensitivity, semitones)
+    assert_eq!(rpn_lane.events[0].value, 2);
 }
 
 /// Build SMF with port + channel-prefix metas

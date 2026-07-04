@@ -18,12 +18,29 @@ pub enum AutomationTarget {
 }
 
 impl AutomationTarget {
+    /// Whether this target uses the full 14-bit range (0–16383).
+    ///
+    /// RPN 0 (Pitch Bend Sensitivity) and RPN 2 (Coarse Tune) are 7-bit
+    /// values (0–127). Only RPN 1 (Fine Tune) is 14-bit.
+    pub fn is_14bit(&self) -> bool {
+        matches!(
+            self,
+            AutomationTarget::PitchBend
+                | AutomationTarget::Rpn { parameter: 1 }
+                | AutomationTarget::Nrpn { .. }
+        )
+    }
+
     /// Maximum raw value for this target (used to normalize bar heights).
     pub fn max_value(&self) -> u16 {
         match self {
             AutomationTarget::CC { .. } => 127,
             AutomationTarget::PitchBend => 16383,
-            AutomationTarget::Rpn { .. } => 16383,
+            AutomationTarget::Rpn { parameter } => match parameter {
+                0 => 127,    // Pitch Bend Sensitivity (semitones)
+                2 => 127,    // Coarse Tune (semitones, -64..+63 stored as 0..127)
+                _ => 16383,  // Fine Tune (14-bit)
+            },
             AutomationTarget::Nrpn { .. } => 16383,
         }
     }
@@ -37,7 +54,7 @@ impl AutomationTarget {
             },
             AutomationTarget::PitchBend => 8192,
             AutomationTarget::Rpn { parameter } => match parameter {
-                0 => 2,     // Pitch Bend Sensitivity
+                0 => 2,     // Pitch Bend Sensitivity (2 semitones)
                 1 => 8192,  // Fine Tune (center of 14-bit range)
                 _ => 0,
             },
@@ -287,12 +304,12 @@ mod tests {
         assert!(AutomationTarget::CC { controller: 10 }.has_center_line());
         assert!(AutomationTarget::CC { controller: 71 }.has_center_line());
         assert!(!AutomationTarget::CC { controller: 7 }.has_center_line());
-        assert_eq!(AutomationTarget::Rpn { parameter: 0 }.max_value(), 16383);
+        assert_eq!(AutomationTarget::Rpn { parameter: 0 }.max_value(), 127);
         assert_eq!(AutomationTarget::Rpn { parameter: 0 }.default_value(), 2);
         assert_eq!(AutomationTarget::Rpn { parameter: 1 }.max_value(), 16383);
         assert_eq!(AutomationTarget::Rpn { parameter: 1 }.default_value(), 8192);
         assert!(AutomationTarget::Rpn { parameter: 1 }.has_center_line());
-        assert_eq!(AutomationTarget::Rpn { parameter: 2 }.max_value(), 16383);
+        assert_eq!(AutomationTarget::Rpn { parameter: 2 }.max_value(), 127);
         assert_eq!(AutomationTarget::Rpn { parameter: 2 }.default_value(), 0);
         assert!(!AutomationTarget::Rpn { parameter: 2 }.has_center_line());
         assert_eq!(AutomationTarget::Nrpn { parameter: 5 }.max_value(), 16383);

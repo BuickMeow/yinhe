@@ -125,7 +125,7 @@ fn build_track<'a>(track: &'a TrackData, track_idx: u16, model: &'a YinModel) ->
                         TrackEventKind::Midi {
                             channel: ch,
                             message: MidiMessage::PitchBend {
-                                bend: PitchBend::from_int(ev.value as i16),
+                                bend: PitchBend(midly::num::u14::new(ev.value)),
                             },
                         },
                     ));
@@ -133,8 +133,11 @@ fn build_track<'a>(track: &'a TrackData, track_idx: u16, model: &'a YinModel) ->
                 AutomationTarget::Rpn { parameter } => {
                     let msb = ((parameter >> 8) & 0x7F) as u8;
                     let lsb = (parameter & 0x7F) as u8;
-                    let data_msb = ((ev.value >> 7) & 0x7F) as u8;
-                    let data_lsb = (ev.value & 0x7F) as u8;
+                    let (data_msb, data_lsb) = if lane.target.is_14bit() {
+                        (((ev.value >> 7) & 0x7F) as u8, (ev.value & 0x7F) as u8)
+                    } else {
+                        (ev.value as u8, 0u8)
+                    };
                     // CC101 (RPN MSB)
                     events.push((ev.tick, TrackEventKind::Midi {
                         channel: ch,
