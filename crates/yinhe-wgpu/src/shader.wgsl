@@ -1,7 +1,7 @@
 // ── Rendering constants ───────────────────────────────────────────────────
 const BORDER_DARKEN_FACTOR: f32 = 0.4;
 const SELECTED_DARKEN_FACTOR: f32 = 0.15;
-const MAX_TRACKS: u32 = 256u;
+const MAX_TRACKS: u32 = 65536u;
 const MAX_SEL_RECTS: u32 = 32u;
 
 struct Uniforms {
@@ -37,7 +37,7 @@ struct DrawInstance {
 }
 
 struct NoteInstance {
-    @location(0) data: vec4<u32>,  // x=start_tick, y=end_tick, z=packed(key|track|vel|flags), w=reserved
+    @location(0) data: vec4<u32>,  // x=start_tick, y=end_tick, z=packed(key|track|vel), w=reserved
 }
 
 struct VertexOutput {
@@ -54,7 +54,7 @@ struct VertexOutput {
 var<uniform> u: Uniforms;
 
 @group(0) @binding(1)
-var<uniform> tc: TrackColorsUniform;
+var<storage> tc: TrackColorsUniform;
 
 @group(0) @binding(2)
 var<uniform> sel: SelectionUniform;
@@ -239,7 +239,7 @@ fn vs_main_note(
     let end_tick = instance.data.y;
     let packed = instance.data.z;
     let key = packed & 0xFFu;
-    let track = (packed >> 8u) & 0xFFu;
+    let track = (packed >> 8u) & 0xFFFFu;
 
     let ppu = u.pixels_per_tick;
     let x_offset = u.keyboard_width - u.scroll_x;

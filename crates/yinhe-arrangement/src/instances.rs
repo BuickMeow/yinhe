@@ -140,11 +140,12 @@ pub fn build_notes(
                     }
                     // 16B NoteInstance: shader computes pixel_y from
                     // lane_height + scroll_y + key + track, and fetches color
-                    // from track_colors uniform via track index.
+                    // from track_colors storage buffer via track index.
+                    // ti is usize; saturate to u16 (MAX_TRACKS=65536).
                     local.push(NoteInstance {
                         start_tick: s,
                         end_tick: e,
-                        packed: NoteInstance::pack(key, ti.min(255) as u8, vel, 0),
+                        packed: NoteInstance::pack(key, ti.min(65535) as u16, vel),
                         reserved: 0,
                     });
                 };

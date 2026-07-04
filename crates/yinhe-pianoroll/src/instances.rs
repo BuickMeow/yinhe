@@ -140,14 +140,13 @@ pub fn build_notes(
                     continue;
                 }
 
-                // 16B NoteInstance: shader fetches color from track_colors uniform
-                // via track index, and computes pixel positions from uniforms.
-                // track is u16 but NoteInstance packs to u8 (MAX_TRACKS=256);
-                // saturate to 255 so out-of-range tracks fall back to shader default.
+                // 16B NoteInstance: shader fetches color from track_colors
+                // storage buffer via track index, and computes pixel positions
+                // from uniforms. track is u16 (0..65535).
                 local.push(NoteInstance {
                     start_tick: note.start_tick,
                     end_tick: note.end_tick,
-                    packed: NoteInstance::pack(key, note.track.min(255) as u8, note.velocity, 0),
+                    packed: NoteInstance::pack(key, note.track, note.velocity),
                     reserved: 0,
                 });
             }
@@ -169,20 +168,20 @@ pub fn build_keyboard(out: &mut Vec<DrawInstance>, kb_w: f32, kh: f32, scroll_y:
 
 /// Build a single ghost note instance for the pencil tool preview (layer 4).
 /// Uses the note's track color at full opacity so it appears as a solid preview
-/// on top of the existing notes. Color is fetched from track_colors uniform in
-/// the shader (same as regular notes).
+/// on top of the existing notes. Color is fetched from track_colors storage
+/// buffer in the shader (same as regular notes).
 pub fn build_ghost_note(
     out: &mut Vec<NoteInstance>,
     start_tick: f64,
     end_tick: f64,
     key: u8,
-    track: u8,
+    track: u16,
     _theme: &GpuTheme,
 ) {
     out.push(NoteInstance {
         start_tick: start_tick as u32,
         end_tick: end_tick as u32,
-        packed: NoteInstance::pack(key, track, 0, 0),
+        packed: NoteInstance::pack(key, track, 0),
         reserved: 0,
     });
 }
@@ -327,10 +326,10 @@ mod tests {
         let note = &out[0];
         assert_eq!(note.start_tick, 0);
         assert_eq!(note.end_tick, 480);
-        // packed = key(100) | track(0) | vel(100) | flags(0)
+        // packed = key(100) | track(0) | vel(100)
         assert_eq!(note.packed & 0xFF, 100, "key");
-        assert_eq!((note.packed >> 8) & 0xFF, 0, "track");
-        assert_eq!((note.packed >> 16) & 0xFF, 100, "velocity");
+        assert_eq!((note.packed >> 8) & 0xFFFF, 0, "track");
+        assert_eq!((note.packed >> 24) & 0xFF, 100, "velocity");
     }
 
     #[test]
@@ -355,7 +354,7 @@ mod tests {
 
         let hidden = std::collections::HashSet::new();
         build_notes(&mut out, 800.0, 500.0, &midi, &view, &hidden, &track_visible);
-        assert_eq!((out[0].packed >> 8) & 0xFF, 2, "track should be 2");
+        assert_eq!((out[0].packed >> 8) & 0xFFFF, 2, "track should be 2");
     }
 
     #[test]
@@ -368,7 +367,7 @@ mod tests {
 
         let hidden = std::collections::HashSet::new();
         build_notes(&mut out, 800.0, 500.0, &midi, &view, &hidden, &track_visible);
-        assert_eq!((out[0].packed >> 8) & 0xFF, 0, "track should be 0");
+        assert_eq!((out[0].packed >> 8) & 0xFFFF, 0, "track should be 0");
     }
 
     #[test]

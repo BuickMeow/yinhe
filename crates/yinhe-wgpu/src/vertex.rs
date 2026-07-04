@@ -20,14 +20,17 @@ pub struct Uniforms {
     pub note_alpha: f32, // note alpha override (PR=1.0, AR=0.85)
 }
 
-/// Maximum number of tracks supported in uniform buffer.
-pub const MAX_TRACKS: usize = 256;
+/// Maximum number of tracks supported in track_colors storage buffer.
+/// 65536 × 16B = 1MB — exceeds typical uniform buffer limits, so we bind it
+/// as a read-only storage buffer (see pipeline.rs).
+pub const MAX_TRACKS: usize = 65536;
 
 /// Maximum number of selection rects supported in uniform buffer.
 pub const MAX_SEL_RECTS: usize = 32;
 
-/// Track colors uniform buffer: array of vec4<f32> (RGBA).
+/// Track colors buffer: array of vec4<f32> (RGBA).
 /// Each entry is (r, g, b, a) in 0.0-1.0 range.
+/// Bound as a read-only storage buffer (1MB at MAX_TRACKS=65536).
 #[repr(C)]
 #[derive(Clone, Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct TrackColorsUniform {
@@ -72,21 +75,21 @@ pub struct DrawInstance {
 /// Layout:
 ///   d0 = start_tick (u32)
 ///   d1 = end_tick   (u32)
-///   d2 = packed: key(u8) | track(u8) | vel(u8) | flags(u8)
+///   d2 = packed: key(u8) | track(u16) | vel(u8)
 ///   d3 = reserved (u32)
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct NoteInstance {
     pub start_tick: u32,
     pub end_tick: u32,
-    /// key(u8) | track(u8) | vel(u8) | flags(u8)
+    /// key(u8, bits 0..8) | track(u16, bits 8..24) | vel(u8, bits 24..32)
     pub packed: u32,
     pub reserved: u32,
 }
 
 impl NoteInstance {
-    pub fn pack(key: u8, track: u8, vel: u8, flags: u8) -> u32 {
-        key as u32 | ((track as u32) << 8) | ((vel as u32) << 16) | ((flags as u32) << 24)
+    pub fn pack(key: u8, track: u16, vel: u8) -> u32 {
+        key as u32 | ((track as u32) << 8) | ((vel as u32) << 24)
     }
 }
 

@@ -29,12 +29,13 @@ impl RenderPipelineState {
         });
         yinhe_memtrace::add_gpu_resource(uniform_size);
 
-        // Track colors buffer
+        // Track colors buffer — 1MB at MAX_TRACKS=65536, so use storage buffer
+        // (uniform buffers are typically capped at 16-64KB).
         let track_colors_size = std::mem::size_of::<TrackColorsUniform>() as u64;
         let track_colors_buffer = device.create_buffer(&BufferDescriptor {
             label: Some("track_colors"),
             size: track_colors_size,
-            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         yinhe_memtrace::add_gpu_resource(track_colors_size);
@@ -66,7 +67,7 @@ impl RenderPipelineState {
                     binding: 1,
                     visibility: ShaderStages::VERTEX | ShaderStages::FRAGMENT,
                     ty: BindingType::Buffer {
-                        ty: BufferBindingType::Uniform,
+                        ty: BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },

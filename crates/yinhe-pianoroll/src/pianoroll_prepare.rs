@@ -33,7 +33,7 @@ pub fn prepare(
     scroll_mode: u32,
     min_border_width: f32,
     midi_version: u64,
-    ghost_notes: &[(f64, f64, u8, u8)], // (start_tick, end_tick, key, track) for pencil preview
+    ghost_notes: &[(f64, f64, u8, u16)], // (start_tick, end_tick, key, track) for pencil preview
     note_selection_highlight: bool,
 ) -> yinhe_wgpu::PrepareTimings {
     let w = width as f32;

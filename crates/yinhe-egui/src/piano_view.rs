@@ -206,7 +206,7 @@ pub fn show(
     // Update state BEFORE handle_input to avoid egui pointer-capture conflicts.
     let mut sel_action = None;
     let mut pencil_event: Option<PianoViewEvent> = None;
-    let mut ghost_notes: Vec<(f64, f64, u8, u8)> = Vec::new();
+    let mut ghost_notes: Vec<(f64, f64, u8, u16)> = Vec::new();
     let mut hidden_notes: std::collections::HashSet<(u16, u32, u8)> = std::collections::HashSet::new();
     if *active_tool == Tool::Select {
         let (sel_ghosts, sel_hidden) = sel_drag_frame(
@@ -677,7 +677,7 @@ fn sel_drag_frame(
     track_colors: &[[f32; 3]],
     track_visible: &[bool],
     track_selected: &std::collections::HashSet<u16>,
-) -> (Vec<(f64, f64, u8, u8)>, Vec<(u16, u32, u8)>) {
+) -> (Vec<(f64, f64, u8, u16)>, Vec<(u16, u32, u8)>) {
     let sel_id = ui.id().with("sel_drag");
     let mut drag: Option<(egui::Pos2, egui::Pos2)> =
         ui.data_mut(|d| d.get_persisted(sel_id)).unwrap_or(None);
@@ -775,7 +775,7 @@ fn sel_drag_frame(
     }
 
     // Note drag: use pre-computed data for ghost/hidden, store delta only on release
-    let mut ghost_notes: Vec<(f64, f64, u8, u8)> = Vec::new();
+    let mut ghost_notes: Vec<(f64, f64, u8, u16)> = Vec::new();
     let mut hidden_notes: Vec<(u16, u32, u8)> = Vec::new();
     if let Some((origin_tick, origin_key)) = note_drag_origin {
         if let Some(ref notes) = drag_notes {
@@ -794,7 +794,7 @@ fn sel_drag_frame(
                         let new_tick = (info.start_tick as i64 + dt).max(0) as u32;
                         let new_key = ((info.key as i32) + dk).clamp(0, 127) as u8;
                         let length = info.end_tick - info.start_tick;
-                        ghost_notes.push((new_tick as f64, (new_tick + length) as f64, new_key, info.track.min(255) as u8));
+                        ghost_notes.push((new_tick as f64, (new_tick + length) as f64, new_key, info.track));
                         hidden_notes.push((info.track, info.start_tick, info.key));
                     }
 
@@ -820,7 +820,7 @@ fn sel_drag_frame(
                         let new_tick = (info.start_tick as i64 + dt).max(0) as u32;
                         let new_key = ((info.key as i32) + dk).clamp(0, 127) as u8;
                         let length = info.end_tick - info.start_tick;
-                        ghost_notes.push((new_tick as f64, (new_tick + length) as f64, new_key, info.track.min(255) as u8));
+                        ghost_notes.push((new_tick as f64, (new_tick + length) as f64, new_key, info.track));
                         hidden_notes.push((info.track, info.start_tick, info.key));
                     }
                 }
@@ -1020,7 +1020,7 @@ fn pencil_frame(
     conductor_idx: Option<u16>,
     midi: Option<&dyn yinhe_pianoroll::NoteSource>,
     track_colors: &[[f32; 3]],
-) -> (Option<yinhe_core::NoteEvent>, Vec<(f64, f64, u8, u8)>, Vec<(u16, u32, u8)>, Option<PencilNoteDrag>) {
+) -> (Option<yinhe_core::NoteEvent>, Vec<(f64, f64, u8, u16)>, Vec<(u16, u32, u8)>, Option<PencilNoteDrag>) {
     let pencil_id = ui.id().with("pencil_drag");
     let drag_state: Option<PencilDrag> =
         ui.data_mut(|d| d.get_persisted(pencil_id)).unwrap_or(None);
@@ -1040,7 +1040,7 @@ fn pencil_frame(
     let hover_pos = pointer.hover_pos();
     let can_write = valid_pencil_track(track_selected, conductor_idx).is_some();
     let track = valid_pencil_track(track_selected, conductor_idx);
-    let track_idx = track.map(|t| t.min(255) as u8).unwrap_or(0);
+    let track_idx = track.unwrap_or(0);
 
     // Hover / drag preview.
     let preview = if let Some(pos) = hover_pos {
@@ -1120,7 +1120,7 @@ fn pencil_frame(
     }
 
     // ── Ghost notes: only when not over an existing note ──
-    let mut ghost_notes: Vec<(f64, f64, u8, u8)> = Vec::new();
+    let mut ghost_notes: Vec<(f64, f64, u8, u16)> = Vec::new();
     let mut hidden_notes: Vec<(u16, u32, u8)> = Vec::new();
     if can_write && drag_state.is_none() && hit_note.is_none() {
         if let Some((tick, key)) = preview {
@@ -1198,7 +1198,7 @@ fn pencil_frame(
                 // The original note stays in place until release.
                 let new_start = (*orig_tick as i64 + dt).max(0) as u32;
                 let new_end = new_start + (*orig_end - *orig_tick);
-                ghost_notes.push((new_start as f64, new_end as f64, key, (*trk).min(255) as u8));
+                ghost_notes.push((new_start as f64, new_end as f64, key, *trk));
                 hidden_notes.push((*trk, *orig_tick, *orig_key));
 
                 // Only output drag on release — do NOT modify the model during drag.
@@ -1230,7 +1230,7 @@ fn pencil_frame(
                 let new_end = snapped.max(*orig_tick as f64 + interval).min(u32::MAX as f64) as u32;
 
                 // Show ghost and hide original note
-                ghost_notes.push((*orig_tick as f64, new_end as f64, *orig_key, (*trk).min(255) as u8));
+                ghost_notes.push((*orig_tick as f64, new_end as f64, *orig_key, *trk));
                 hidden_notes.push((*trk, *orig_tick, *orig_key));
 
                 // Only output on release
@@ -1264,7 +1264,7 @@ fn pencil_frame(
                 let new_start = new_start.min(max_start);
 
                 // Show ghost and hide original note
-                ghost_notes.push((new_start as f64, *orig_end as f64, *orig_key, (*trk).min(255) as u8));
+                ghost_notes.push((new_start as f64, *orig_end as f64, *orig_key, *trk));
                 hidden_notes.push((*trk, *orig_tick, *orig_key));
 
                 // Only output on release
