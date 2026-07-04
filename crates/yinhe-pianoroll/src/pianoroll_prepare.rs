@@ -111,7 +111,7 @@ pub fn prepare(
             sig_hash = sig_hash.wrapping_mul(31).wrapping_add(ev.numerator as u64);
             sig_hash = sig_hash.wrapping_mul(31).wrapping_add(ev.denominator as u64);
         }
-        grid_key = layer_cache_key(&[grid_key, sig_hash]);
+        grid_key = layer_cache_key(&[vh, wh, sig_hash]);
     }
     renderer.upload_layer(1, grid_key, |out| {
         if let Some(midi) = midi

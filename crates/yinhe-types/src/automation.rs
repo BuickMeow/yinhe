@@ -143,7 +143,7 @@ fn cc_name(cc: u8) -> &'static str {
 ///
 /// Channel and track are not stored here — they are implied by the
 /// owning `AutomationLane` (which mirrors `TrackData`'s per-track design).
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct AutomationEvent {
     pub tick: u32,
     /// Raw value. Range depends on the target (0–127 for CC, 0–16383 for PB, etc.).

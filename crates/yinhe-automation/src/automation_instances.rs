@@ -229,17 +229,12 @@ pub fn build_data_lines(
             .copied()
             .unwrap_or_else(|| TRACK_PALETTE[trk_idx % TRACK_PALETTE.len()]);
 
-        let all_events: Vec<(u32, u16)> = lane.events.iter().map(|e| (e.tick, e.value)).collect();
-        let visible_events: Vec<(u32, u16)> = lane
-            .events_in_range(pad_start, pad_end)
-            .iter()
-            .map(|e| (e.tick, e.value))
-            .collect();
+        let visible_events = lane.events_in_range(pad_start, pad_end);
 
         if visible_events.is_empty() {
             // No visible events: draw a full-width horizontal line at chase value
-            let idx = all_events.partition_point(|e| e.0 < pad_start);
-            let val = if idx > 0 { all_events[idx - 1].1 } else { 0 };
+            let idx = lane.events.partition_point(|e| e.tick < pad_start);
+            let val = if idx > 0 { lane.events[idx - 1].value } else { 0 };
             let y = h - (val as f32 / max_val) * h;
             if w > grid_left_x {
                 out.push(DrawInstance {
@@ -257,12 +252,12 @@ pub fn build_data_lines(
         }
 
         // Find the value before the first visible event
-        let prev_idx = all_events.partition_point(|e| e.0 < visible_events[0].0);
-        let mut prev_val = if prev_idx > 0 { all_events[prev_idx - 1].1 } else { 0 };
-        let mut prev_tick = visible_events[0].0;
+        let prev_idx = lane.events.partition_point(|e| e.tick < visible_events[0].tick);
+        let mut prev_val = if prev_idx > 0 { lane.events[prev_idx - 1].value } else { 0 };
+        let mut prev_tick = visible_events[0].tick;
 
         // Horizontal line from grid left edge to the first event
-        let first_x = x_offset + visible_events[0].0 as f32 * ppu;
+        let first_x = x_offset + visible_events[0].tick as f32 * ppu;
         let first_y = h - (prev_val as f32 / max_val) * h;
         if first_x > grid_left_x {
             out.push(DrawInstance {
@@ -277,7 +272,9 @@ pub fn build_data_lines(
             });
         }
 
-        for &(tick, value) in &visible_events {
+        for evt in visible_events {
+            let tick = evt.tick;
+            let value = evt.value;
             let x1 = x_offset + prev_tick as f32 * ppu;
             let x2 = x_offset + tick as f32 * ppu;
             let y1 = h - (prev_val as f32 / max_val) * h;
@@ -333,9 +330,9 @@ pub fn build_data_lines(
         // Horizontal line from the last event to the next event (or right edge)
         let last_x = x_offset + prev_tick as f32 * ppu;
         let last_y = h - (prev_val as f32 / max_val) * h;
-        let next_idx = all_events.partition_point(|e| e.0 <= prev_tick);
-        let right_bound = if next_idx < all_events.len() {
-            x_offset + all_events[next_idx].0 as f32 * ppu
+        let next_idx = lane.events.partition_point(|e| e.tick <= prev_tick);
+        let right_bound = if next_idx < lane.events.len() {
+            x_offset + lane.events[next_idx].tick as f32 * ppu
         } else {
             w
         };
