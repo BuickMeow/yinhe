@@ -111,6 +111,9 @@ impl ChannelState {
                 }
             }
             ChannelAudioEvent::Control(ControlEvent::PitchBendValue(v)) => self.pitch_bend = *v,
+            ChannelAudioEvent::Control(ControlEvent::PitchBendSensitivity(v)) => self.pitch_bend_sensitivity = *v,
+            ChannelAudioEvent::Control(ControlEvent::FineTune(v)) => self.fine_tune = *v,
+            ChannelAudioEvent::Control(ControlEvent::CoarseTune(v)) => self.coarse_tune = *v,
             ChannelAudioEvent::ProgramChange(p) => self.program = *p,
             _ => {}
         }

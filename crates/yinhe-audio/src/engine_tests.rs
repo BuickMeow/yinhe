@@ -586,10 +586,10 @@ fn test_reload_notes_rebuilds_cc_pb_pc_rpn() {
     ));
     engine.handle_command(AudioCommand::ReloadNotes { model: model_b });
 
-    // 3 CC + 2 PB + 2 PC (each with bank_msb=0 + bank_lsb=0 → 2 extra) + 3 RPN-expanded = 14
+    // 3 CC + 2 PB + 2 PC (each with bank_msb=0 + bank_lsb=0 → 2 extra) + 1 RPN (high-level) = 12
     assert_eq!(
         engine.cc_events.len(),
-        14,
+        12,
         "ReloadNotes must rebuild cc_events from the new model (was {} from model A)",
         cc_count_a
     );

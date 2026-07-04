@@ -5,9 +5,8 @@ use xsynth_core::channel_group::SynthEvent;
 use xsynth_core::soundfont::SoundfontBase;
 
 use yinhe_core::YinModel;
-use yinhe_types::AutomationTarget;
 
-use crate::audio_model::{ActiveNote, AudioModel, PreparedModel, SortedCC, tick_to_sample};
+use crate::audio_model::{ActiveNote, AudioModel, PreparedModel, flatten_automation_to_cc_events, tick_to_sample};
 use crate::channel::ChannelState;
 use crate::engine::AudioEngine;
 use crate::spawn::track_global_channel;
@@ -17,123 +16,11 @@ impl AudioEngine {
         let audio_model = AudioModel::from_model(model);
         self.setup_percussion(&audio_model);
 
-        self.cc_events.clear();
+        self.cc_events = flatten_automation_to_cc_events(model, self.sample_rate);
         self.cc_cursor = 0;
         self.active_notes.clear();
-        let sr = self.sample_rate as f64;
 
-        // Flatten control events from each track and convert to ChannelAudioEvents.
-        for (track_idx, track) in model.tracks.iter().enumerate() {
-            let channel = track_global_channel(model, track_idx) as u32;
-
-            // Automation lanes → xsynth events
-            for lane in &track.automation_lanes {
-                for e in &lane.events {
-                    let sample = (model.tempo_map.tick_to_seconds(e.tick as u64) * sr) as u64;
-                    match &lane.target {
-                        AutomationTarget::CC { controller } => {
-                            self.cc_events.push(SortedCC {
-                                sample,
-                                channel,
-                                event: ChannelAudioEvent::Control(ControlEvent::Raw(
-                                    *controller,
-                                    (e.value & 0x7F) as u8,
-                                )),
-                            });
-                        }
-                        AutomationTarget::PitchBend => {
-                            self.cc_events.push(SortedCC {
-                                sample,
-                                channel,
-                                event: ChannelAudioEvent::Control(ControlEvent::PitchBendValue(
-                                    (e.value as f32 - 8192.0) / 8192.0,
-                                )),
-                            });
-                        }
-                        AutomationTarget::Rpn { parameter } => {
-                            let msb = ((parameter >> 8) & 0x7F) as u8;
-                            let lsb = (parameter & 0x7F) as u8;
-                            let (data_msb, data_lsb) = if lane.target.is_14bit() {
-                                (((e.value >> 7) & 0x7F) as u8, (e.value & 0x7F) as u8)
-                            } else {
-                                (e.value as u8, 0u8)
-                            };
-                            self.cc_events.push(SortedCC {
-                                sample, channel,
-                                event: ChannelAudioEvent::Control(ControlEvent::Raw(101, msb)),
-                            });
-                            self.cc_events.push(SortedCC {
-                                sample, channel,
-                                event: ChannelAudioEvent::Control(ControlEvent::Raw(100, lsb)),
-                            });
-                            self.cc_events.push(SortedCC {
-                                sample, channel,
-                                event: ChannelAudioEvent::Control(ControlEvent::Raw(6, data_msb)),
-                            });
-                            if data_lsb != 0 {
-                                self.cc_events.push(SortedCC {
-                                    sample, channel,
-                                    event: ChannelAudioEvent::Control(ControlEvent::Raw(38, data_lsb)),
-                                });
-                            }
-                        }
-                        AutomationTarget::Nrpn { parameter } => {
-                            let msb = ((parameter >> 8) & 0x7F) as u8;
-                            let lsb = (parameter & 0x7F) as u8;
-                            let data_msb = ((e.value >> 7) & 0x7F) as u8;
-                            let data_lsb = (e.value & 0x7F) as u8;
-                            self.cc_events.push(SortedCC {
-                                sample, channel,
-                                event: ChannelAudioEvent::Control(ControlEvent::Raw(99, msb)),
-                            });
-                            self.cc_events.push(SortedCC {
-                                sample, channel,
-                                event: ChannelAudioEvent::Control(ControlEvent::Raw(98, lsb)),
-                            });
-                            self.cc_events.push(SortedCC {
-                                sample, channel,
-                                event: ChannelAudioEvent::Control(ControlEvent::Raw(6, data_msb)),
-                            });
-                            if data_lsb != 0 {
-                                self.cc_events.push(SortedCC {
-                                    sample, channel,
-                                    event: ChannelAudioEvent::Control(ControlEvent::Raw(38, data_lsb)),
-                                });
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Program change (with bank MSB/LSB if available)
-            for e in &track.program_change {
-                let sample = (model.tempo_map.tick_to_seconds(e.tick as u64) * sr) as u64;
-                if e.bank_msb != 0xFF {
-                    self.cc_events.push(SortedCC {
-                        sample,
-                        channel,
-                        event: ChannelAudioEvent::Control(ControlEvent::Raw(0, e.bank_msb)),
-                    });
-                }
-                if e.bank_lsb != 0xFF {
-                    self.cc_events.push(SortedCC {
-                        sample,
-                        channel,
-                        event: ChannelAudioEvent::Control(ControlEvent::Raw(32, e.bank_lsb)),
-                    });
-                }
-                self.cc_events.push(SortedCC {
-                    sample,
-                    channel,
-                    event: ChannelAudioEvent::ProgramChange(e.program),
-                });
-            }
-        }
-        self.cc_events.sort_by_key(|e| e.sample);
-        // 去重：同 sample 同 channel 的重复事件 + 连续相同值的事件（不改变 xsynth 状态）
-        self.cc_events.dedup_by(|a, b| a.channel == b.channel && a.event == b.event);
-
-        self.duration_samples = (model.tempo_map.tick_to_seconds(model.tick_length) * sr) as u64;
+        self.duration_samples = (model.tempo_map.tick_to_seconds(model.tick_length) * self.sample_rate as f64) as u64;
 
         self.skip_track = model
             .track_has_audio_cache
