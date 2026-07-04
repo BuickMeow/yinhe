@@ -483,8 +483,6 @@ fn parse_track(
     // Assign dup_index for any (key, start_tick) collisions.
     assign_dup_indices(&mut td.notes);
 
-    // Sort notes by tick.
-    td.notes.sort_by_key(|n| (n.start_tick, n.key, n.dup_index));
     td.program_change.sort_by_key(|e| e.tick);
 
     // Build automation_lanes from accumulated events.

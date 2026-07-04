@@ -98,11 +98,8 @@ pub fn build_notes(
     h: f32,
     midi: &dyn NoteSource,
     view: &PianoRollView,
-    _selected: &yinhe_core::Selection, // selection now handled in shader
     hidden_notes: &std::collections::HashSet<(u16, u32, u8)>,
     track_visible: &[bool],
-    _track_colors: &[[f32; 3]], // colors now fetched from uniform in shader
-    _theme: &GpuTheme,
 ) {
     let (tick_start, tick_end) = view.visible_tick_range(w);
     let (key_lo, key_hi) = view.visible_key_range(h);
@@ -322,13 +319,10 @@ mod tests {
         let mut out: Vec<NoteInstance> = Vec::new();
         let midi = make_midi(vec![(100, 0, 480, 0, 100)]);
         let view = make_view();
-        let selected = yinhe_core::Selection::default();
         let track_visible = vec![true];
-        let track_colors = [[0.5, 0.5, 0.5]];
-        let theme = make_theme();
 
         let hidden = std::collections::HashSet::new();
-        build_notes(&mut out, 800.0, 500.0, &midi, &view, &selected, &hidden, &track_visible, &track_colors, &theme);
+        build_notes(&mut out, 800.0, 500.0, &midi, &view, &hidden, &track_visible);
         assert!(!out.is_empty(), "should produce note instances");
         let note = &out[0];
         assert_eq!(note.start_tick, 0);
@@ -344,12 +338,10 @@ mod tests {
         let mut out: Vec<NoteInstance> = Vec::new();
         let midi = make_midi(vec![(100, 0, 480, 0, 100)]);
         let view = make_view();
-        let selected = yinhe_core::Selection::default();
         let track_visible = vec![false];
-        let theme = make_theme();
 
         let hidden = std::collections::HashSet::new();
-        build_notes(&mut out, 800.0, 500.0, &midi, &view, &selected, &hidden, &track_visible, &[], &theme);
+        build_notes(&mut out, 800.0, 500.0, &midi, &view, &hidden, &track_visible);
         assert!(out.is_empty(), "notes on hidden track should be skipped");
     }
 
@@ -359,13 +351,10 @@ mod tests {
         // Create a note on track 2
         let midi = make_midi(vec![(100, 0, 480, 2, 100)]);
         let view = make_view();
-        let selected = yinhe_core::Selection::default();
         let track_visible = vec![true, true, true];
-        let track_colors = [[0.5, 0.5, 0.5], [0.5, 0.5, 0.5], [0.5, 0.5, 0.5]];
-        let theme = make_theme();
 
         let hidden = std::collections::HashSet::new();
-        build_notes(&mut out, 800.0, 500.0, &midi, &view, &selected, &hidden, &track_visible, &track_colors, &theme);
+        build_notes(&mut out, 800.0, 500.0, &midi, &view, &hidden, &track_visible);
         assert_eq!((out[0].packed >> 8) & 0xFF, 2, "track should be 2");
     }
 
@@ -375,13 +364,10 @@ mod tests {
         // Create a note on track 0
         let midi = make_midi(vec![(100, 0, 480, 0, 100)]);
         let view = make_view();
-        let selected = yinhe_core::Selection::default();
         let track_visible = vec![true];
-        let track_colors = [[0.5, 0.5, 0.5]];
-        let theme = make_theme();
 
         let hidden = std::collections::HashSet::new();
-        build_notes(&mut out, 800.0, 500.0, &midi, &view, &selected, &hidden, &track_visible, &track_colors, &theme);
+        build_notes(&mut out, 800.0, 500.0, &midi, &view, &hidden, &track_visible);
         assert_eq!((out[0].packed >> 8) & 0xFF, 0, "track should be 0");
     }
 
@@ -394,13 +380,10 @@ mod tests {
             (107, 0, 480, 0, 90),
         ]);
         let view = make_view();
-        let selected = yinhe_core::Selection::default();
         let track_visible = vec![true];
-        let track_colors = [[0.5, 0.5, 0.5]];
-        let theme = make_theme();
 
         let hidden = std::collections::HashSet::new();
-        build_notes(&mut out, 800.0, 500.0, &midi, &view, &selected, &hidden, &track_visible, &track_colors, &theme);
+        build_notes(&mut out, 800.0, 500.0, &midi, &view, &hidden, &track_visible);
         assert_eq!(out.len(), 3, "should produce 3 note instances");
     }
 
@@ -415,13 +398,10 @@ mod tests {
         // Scroll right so the note's start is far off-screen to the left,
         // but its body still covers the viewport.
         view.base.scroll_x = 5000.0;
-        let selected = yinhe_core::Selection::default();
         let track_visible = vec![true];
-        let track_colors = [[0.5, 0.5, 0.5]];
-        let theme = make_theme();
 
         let hidden = std::collections::HashSet::new();
-        build_notes(&mut out, 800.0, 500.0, &midi, &view, &selected, &hidden, &track_visible, &track_colors, &theme);
+        build_notes(&mut out, 800.0, 500.0, &midi, &view, &hidden, &track_visible);
         assert!(
             !out.is_empty(),
             "long note crossing the left edge must be included"
@@ -435,13 +415,10 @@ mod tests {
         let midi = make_midi(vec![(100, 0, 480, 0, 100)]);
         let mut view = make_view();
         view.base.scroll_x = 5000.0; // viewport starts well past tick 480
-        let selected = yinhe_core::Selection::default();
         let track_visible = vec![true];
-        let track_colors = [[0.5, 0.5, 0.5]];
-        let theme = make_theme();
 
         let hidden = std::collections::HashSet::new();
-        build_notes(&mut out, 800.0, 500.0, &midi, &view, &selected, &hidden, &track_visible, &track_colors, &theme);
+        build_notes(&mut out, 800.0, 500.0, &midi, &view, &hidden, &track_visible);
         assert!(
             out.is_empty(),
             "note fully off-screen-left must be culled"

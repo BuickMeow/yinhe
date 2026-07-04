@@ -184,8 +184,6 @@ pub fn show(
                 midi,
                 view,
                 track_visible,
-                track_colors,
-                &theme,
             );
         }
     });

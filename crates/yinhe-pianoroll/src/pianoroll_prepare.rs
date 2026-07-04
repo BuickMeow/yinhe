@@ -139,7 +139,7 @@ pub fn prepare(
     let notes_key = layer_cache_key(&[vh, wh, tv_hash, midi_version, hidden_hash]);
     renderer.upload_note_layer(2, notes_key, |out| {
         if let Some(midi) = midi {
-            instances::build_notes(out, w, h, midi, view, selected, hidden_notes, track_visible, track_colors, &theme);
+            instances::build_notes(out, w, h, midi, view, hidden_notes, track_visible);
         }
     });
 

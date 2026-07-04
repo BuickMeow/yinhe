@@ -40,7 +40,6 @@ pub(crate) struct AudioModel {
     /// CC0 (Bank Select MSB) values per track, for percussion-mode detection.
     /// Empty Vec for tracks with no CC0.
     pub track_cc0: Vec<Vec<u8>>,
-    pub note_count: u64,
 }
 
 impl AudioModel {
@@ -62,7 +61,6 @@ impl AudioModel {
         Self {
             track_channels,
             track_cc0,
-            note_count: model.note_count,
         }
     }
 

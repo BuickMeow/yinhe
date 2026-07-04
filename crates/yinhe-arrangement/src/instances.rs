@@ -109,8 +109,6 @@ pub fn build_notes(
     midi: &dyn NoteSource,
     view: &ArrangementView,
     track_visible: &[bool],
-    _track_colors: &[[f32; 3]], // colors now fetched from uniform in shader
-    _theme: &yinhe_theme::GpuTheme,
 ) {
     let ppu = view.base.pixels_per_tick;
     let num_tracks = track_visible.len();
