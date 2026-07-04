@@ -337,7 +337,15 @@ impl AudioEngine {
             if !self.active_mask.get(ch as usize).copied().unwrap_or(false) {
                 continue;
             }
-            state[ch as usize].send_to(ch, &mut self.channel_group);
+            let dense = self
+                .channel_map
+                .get(ch as usize)
+                .copied()
+                .unwrap_or(u32::MAX);
+            if dense == u32::MAX {
+                continue;
+            }
+            state[ch as usize].send_to(dense, &mut self.channel_group);
         }
     }
 }
