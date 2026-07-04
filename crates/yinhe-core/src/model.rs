@@ -5,7 +5,8 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use serde::ser::SerializeTuple;
 
-use crate::events::{NoteEvent, PcEvent};
+use yinhe_types::{PcEvent, TempoEvent};
+use crate::events::NoteEvent;
 use crate::tempo_map::{
     DEFAULT_MPQ, TempoMap, TempoSegment, mpq_from_bpm, recompute_tempo_start_times,
 };
@@ -13,13 +14,6 @@ use crate::tempo_map::{
 // =========================================================
 //  Conductor
 // =========================================================
-
-/// Tempo event (BPM at a specific tick).
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
-pub struct TempoEvent {
-    pub tick: u32,
-    pub bpm: f64,
-}
 
 /// Global score-level events.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

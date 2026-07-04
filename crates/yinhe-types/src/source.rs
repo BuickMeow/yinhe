@@ -21,19 +21,22 @@ pub trait NoteSource: Sync {
     fn time_sig_events(&self) -> &[TimeSigEvent] {
         &[]
     }
+}
 
-    /// Return the slice of notes for `key` that may intersect `[tick_start, tick_end]`.
-    ///
-    /// Uses binary search (`partition_point`) on the sorted-by-start_tick note list.
-    /// The returned slice is conservative: callers must still perform their own
-    /// viewport/pixel culling.
-    fn key_notes_in_range(&self, key: u8, tick_start: u32, tick_end: u32) -> &[Note] {
-        let notes = self.key_notes(key);
-        if notes.is_empty() || tick_start > tick_end {
-            return &[];
-        }
-
-        let end = notes.partition_point(|n| n.start_tick < tick_end);
-        &notes[0..end]
+/// Return the slice of notes for `key` that may intersect `[tick_start, tick_end]`.
+///
+/// Uses binary search (`partition_point`) on the sorted-by-start_tick note list.
+/// The returned slice is conservative: callers must still perform their own
+/// viewport/pixel culling.
+pub fn key_notes_in_range<'a>(
+    notes: &'a [Note],
+    tick_start: u32,
+    tick_end: u32,
+) -> &'a [Note] {
+    if notes.is_empty() || tick_start > tick_end {
+        return &[];
     }
+
+    let end = notes.partition_point(|n| n.start_tick < tick_end);
+    &notes[0..end]
 }

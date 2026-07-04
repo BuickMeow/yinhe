@@ -6587,7 +6587,6 @@ name = "yinhe-types"
 version = "0.1.0"
 dependencies = [
  "serde",
- "yinhe-theme",
 ]
 
 [[package]]

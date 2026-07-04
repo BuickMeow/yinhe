@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use eframe::egui;
 
-use yinhe_types::{AutomationLane, TimeSigEvent};
+use yinhe_types::{key_notes_in_range, AutomationLane, TimeSigEvent};
 
 use yinhe_editor_core::quantize::QuantizePreset;
 use crate::widgets::tools_panel::Tool;
@@ -749,7 +749,7 @@ fn sel_drag_frame(
                 drag_notes = Some(sel.rects.iter().flat_map(|&(ts, te, kl, kh, tl, th)| {
                     (kl..=kh).flat_map(move |key| {
                         midi.map(|m| {
-                            m.key_notes_in_range(key, ts, te).iter()
+                            key_notes_in_range(m.key_notes(key), ts, te).iter()
                                 .filter(|n| sel.contains(n.track, n.start_tick, key))
                                 .filter(|n| track_selected.is_empty() || track_selected.contains(&n.track))
                                 .filter(|n| track_visible.get(n.track as usize).copied().unwrap_or(true))
@@ -1075,7 +1075,7 @@ fn pencil_frame(
             let mouse_local_y = mouse_screen.y - music_rect.min.y;
             let key = view.y_to_key(mouse_local_y);
             let midi = midi?;
-            let notes = midi.key_notes_in_range(key, 0, u32::MAX);
+            let notes = key_notes_in_range(midi.key_notes(key), 0, u32::MAX);
 
             for note in notes {
                 let note_left = view.tick_to_x(note.start_tick as f64) - kb_w;

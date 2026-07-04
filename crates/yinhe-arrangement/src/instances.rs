@@ -1,5 +1,5 @@
 use rayon::prelude::*;
-use yinhe_types::{NoteSource, TimeSigEvent};
+use yinhe_types::{key_notes_in_range, NoteSource, TimeSigEvent};
 
 use crate::view::ArrangementView;
 use yinhe_wgpu::grid;
@@ -120,7 +120,7 @@ pub fn build_notes(
     let note_instances: Vec<Vec<NoteInstance>> = (0u8..128)
         .into_par_iter()
         .filter_map(|key| {
-            let notes = midi.key_notes_in_range(key, tick_start as u32, tick_end as u32);
+            let notes = key_notes_in_range(midi.key_notes(key), tick_start as u32, tick_end as u32);
             if notes.is_empty() {
                 return None;
             }

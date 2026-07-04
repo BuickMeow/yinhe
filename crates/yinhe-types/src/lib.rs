@@ -3,14 +3,18 @@
 pub mod automation;
 mod note;
 pub mod palette;
+pub mod pc_event;
 mod source;
+pub mod tempo_event;
 pub mod time_format;
 pub mod view_base;
 
 pub use automation::{AutomationEvent, AutomationLane, AutomationTarget};
-pub use note::{MidiControlEvent, Note, TimeSigEvent};
+pub use note::{Note, TimeSigEvent};
 pub use palette::TRACK_PALETTE;
-pub use source::NoteSource;
+pub use pc_event::PcEvent;
+pub use source::{key_notes_in_range, NoteSource};
+pub use tempo_event::TempoEvent;
 pub use time_format::{build_time_sig_segments, measure_ticks};
 pub use view_base::TimelineViewBase;
 

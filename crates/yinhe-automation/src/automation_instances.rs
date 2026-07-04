@@ -1,4 +1,4 @@
-use yinhe_types::{AutomationEvent, AutomationLane, NoteSource, TRACK_PALETTE, TimeSigEvent};
+use yinhe_types::{key_notes_in_range, AutomationEvent, AutomationLane, NoteSource, TRACK_PALETTE, TimeSigEvent};
 
 use crate::AutomationPanelView;
 use crate::grid;
@@ -388,7 +388,7 @@ pub fn build_velocity_bars(
     let mut bars: Vec<VelBar> = Vec::new();
 
     for key in 0u8..128 {
-        let notes = midi.key_notes_in_range(key, pad_start, pad_end);
+        let notes = key_notes_in_range(midi.key_notes(key), pad_start, pad_end);
         for note in notes {
             if note.start_tick as f64 > pad_end as f64 {
                 break;

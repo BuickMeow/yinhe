@@ -1,6 +1,6 @@
 use rayon::prelude::*;
 use yinhe_theme::GpuTheme;
-use yinhe_types::{NoteSource, TimeSigEvent, is_black_key};
+use yinhe_types::{key_notes_in_range, NoteSource, TimeSigEvent, is_black_key};
 
 use crate::grid;
 use crate::keyboard;
@@ -116,7 +116,7 @@ pub fn build_notes(
     let results: Vec<Vec<NoteInstance>> = (key_lo..=key_hi)
         .into_par_iter()
         .filter_map(|key| {
-            let notes = midi.key_notes_in_range(key, range_start as u32, range_end as u32);
+            let notes = key_notes_in_range(midi.key_notes(key), range_start as u32, range_end as u32);
             if notes.is_empty() {
                 return None;
             }
