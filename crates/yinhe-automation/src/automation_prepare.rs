@@ -1,10 +1,21 @@
-use yinhe_types::{AutomationLane, AutomationTarget, NoteSource, TimeSigEvent};
+use yinhe_types::{AutomationLane, AutomationTarget, NoteSource, SegmentShape, TimeSigEvent};
 
 use crate::InstanceRenderer;
 use crate::automation_instances;
 use crate::AutomationPanelView;
 use crate::Uniforms;
 use yinhe_wgpu::layer_cache_key;
+
+/// 拖拽预览（ghost）。由交互层每帧计算，传给 wgpu 在 ghost 层绘制。
+///
+/// 坐标为 panel 局部像素坐标（原点在 panel 左上角）。
+#[derive(Clone, Copy, Debug)]
+pub enum AutomationGhost {
+    /// Pencil 拖拽锚点：从 `old` 位置移到 `cur` 位置
+    Move { old_x: f32, old_y: f32, cur_x: f32, cur_y: f32 },
+    /// Curve 拖拽：从 `start` 到 `cur` 画预览线
+    Curve { start_x: f32, start_y: f32, cur_x: f32, cur_y: f32 },
+}
 
 fn target_hash(target: &AutomationTarget) -> u64 {
     match target {
@@ -24,6 +35,25 @@ fn tempo_hash(tempo_events: &[(u32, f64)]) -> u64 {
     h
 }
 
+/// Hash automation lane 事件内容（tick + value + shape）。
+/// 用于 Layer 2 cache key：任何 Add/Move/Delete/CycleShape 后 key 变化 → 重建。
+fn hash_lanes(lanes: &[&AutomationLane]) -> u64 {
+    let mut h: u64 = 0;
+    for lane in lanes {
+        h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(lane.events.len() as u64);
+        for e in &lane.events {
+            h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(e.tick as u64);
+            h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(e.value as u64);
+            let shape_bits = match e.shape {
+                SegmentShape::Step => 0u64,
+                SegmentShape::Curve { tension } => 1 + (tension as u8 as u64),
+            };
+            h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(shape_bits);
+        }
+    }
+    h
+}
+
 /// Prepare an automation panel for rendering using the layered cache API.
 ///
 /// Layers:
@@ -35,6 +65,7 @@ fn tempo_hash(tempo_events: &[(u32, f64)]) -> u64 {
 /// rendered directly from `midi` instead of from an automation lane.
 ///
 /// `show_anchors`: 在每个事件位置画圆形锚点（铅笔工具下显示）。
+/// `ghost`: 拖拽预览（Layer 3，每帧重建，无缓存）。
 pub fn prepare(
     renderer: &mut InstanceRenderer,
     width: u32,
@@ -53,6 +84,7 @@ pub fn prepare(
     velocity_display_mode: u32,
     show_anchors: bool,
     tempo_events: &[(u32, f64)],
+    ghost: Option<AutomationGhost>,
 ) -> bool {
     let w = width as f32;
     let h = height as f32;
@@ -85,7 +117,7 @@ pub fn prepare(
     };
 
     renderer.upload_uniforms(uniforms);
-    renderer.ensure_layers(3);
+    renderer.ensure_layers(4);
 
     let vh = view.render_hash();
     let wh = yinhe_wgpu::hash_f32s(&[w, h]);
@@ -126,6 +158,8 @@ pub fn prepare(
     let is_velocity = view.show_velocity;
     let is_tempo = view.show_tempo;
     let tv_hash = yinhe_wgpu::hash_bools(track_visible);
+    // lanes 事件内容 hash：任何 Add/Move/Delete/CycleShape 后 key 变化 → Layer 2 重建
+    let lanes_hash = hash_lanes(lanes);
     let bars_key = layer_cache_key(&[
         vh, wh, tv_hash,
         velocity_display_mode as u64,
@@ -134,6 +168,7 @@ pub fn prepare(
         view.show_velocity as u64,
         view.show_tempo as u64,
         tempo_hash(tempo_events),
+        lanes_hash,
     ]);
     renderer.upload_layer(2, bars_key, |out| {
         if is_tempo {
@@ -148,6 +183,13 @@ pub fn prepare(
             automation_instances::build_data_lines(
                 out, w, h, view, lanes, track_visible, track_colors, show_anchors, &theme,
             );
+        }
+    });
+
+    // Layer 3: ghost (拖拽预览，无缓存，每帧重建)
+    renderer.upload_layer_force(3, |out| {
+        if let Some(g) = ghost {
+            automation_instances::build_ghost(out, g, &theme);
         }
     });
 

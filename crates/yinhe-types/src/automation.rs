@@ -9,10 +9,8 @@ use serde::{Deserialize, Serialize};
 pub enum SegmentShape {
     /// 离散：保持当前值，直到下个事件才瞬间跳变。MIDI CC 的原生语义。
     Step,
-    /// 直线：从本点到下一点线性插值。
-    Linear,
     /// 曲线：tension 控制曲线弯曲方向与程度。
-    /// - `0` 等价于 Linear
+    /// - `0` 等价于直线
     /// - `> 0` 慢起快落（ease-in）
     /// - `< 0` 快起慢落（ease-out）
     /// 范围 -127..=127。
@@ -35,7 +33,6 @@ impl SegmentShape {
         let t = t.clamp(0.0, 1.0);
         match self {
             SegmentShape::Step => 0.0, // Step: hold v1 until next event; segment value = v1
-            SegmentShape::Linear => t,
             SegmentShape::Curve { tension } => {
                 let k = (tension as f32) / 127.0; // [-1, 1]
                 if k >= 0.0 {
@@ -130,17 +127,17 @@ impl AutomationTarget {
     /// 用户在编辑器里新建事件时，本目标默认采用的插值形状。
     ///
     /// - 开关类 CC（Sustain/Sostenuto/Soft/Legato/Portamento）默认 `Step`
-    /// - 其他连续量（Volume/Pan/PB/FineTune/...）默认 `Linear`
+    /// - 其他连续量（Volume/Pan/PB/FineTune/...）默认 `Curve { tension: 0 }`（=直线）
     /// - MIDI 导入时一律使用 `Step`（保留 MIDI 原生语义），见 parser
     pub fn default_shape(&self) -> SegmentShape {
         match self {
             AutomationTarget::CC { controller } => match controller {
                 64 | 65 | 66 | 67 | 68 => SegmentShape::Step,
-                _ => SegmentShape::Linear,
+                _ => SegmentShape::Curve { tension: 0 },
             },
-            AutomationTarget::PitchBend => SegmentShape::Linear,
-            AutomationTarget::Rpn { parameter: _ } => SegmentShape::Linear,
-            AutomationTarget::Nrpn { parameter: _ } => SegmentShape::Linear,
+            AutomationTarget::PitchBend => SegmentShape::Curve { tension: 0 },
+            AutomationTarget::Rpn { parameter: _ } => SegmentShape::Curve { tension: 0 },
+            AutomationTarget::Nrpn { parameter: _ } => SegmentShape::Curve { tension: 0 },
         }
     }
 
@@ -407,19 +404,19 @@ mod tests {
                 "CC {cc} should default to Step"
             );
         }
-        // 连续量 CC → Linear
+        // 连续量 CC → Curve{tension:0}（=直线）
         for cc in [0u8, 1, 7, 10, 11, 71, 74] {
             assert_eq!(
                 AutomationTarget::CC { controller: cc }.default_shape(),
-                SegmentShape::Linear,
-                "CC {cc} should default to Linear"
+                SegmentShape::Curve { tension: 0 },
+                "CC {cc} should default to Curve{{tension:0}}"
             );
         }
-        // PB / RPN / NRPN → Linear
-        assert_eq!(AutomationTarget::PitchBend.default_shape(), SegmentShape::Linear);
-        assert_eq!(AutomationTarget::Rpn { parameter: 0 }.default_shape(), SegmentShape::Linear);
-        assert_eq!(AutomationTarget::Rpn { parameter: 1 }.default_shape(), SegmentShape::Linear);
-        assert_eq!(AutomationTarget::Nrpn { parameter: 5 }.default_shape(), SegmentShape::Linear);
+        // PB / RPN / NRPN → Curve{tension:0}
+        assert_eq!(AutomationTarget::PitchBend.default_shape(), SegmentShape::Curve { tension: 0 });
+        assert_eq!(AutomationTarget::Rpn { parameter: 0 }.default_shape(), SegmentShape::Curve { tension: 0 });
+        assert_eq!(AutomationTarget::Rpn { parameter: 1 }.default_shape(), SegmentShape::Curve { tension: 0 });
+        assert_eq!(AutomationTarget::Nrpn { parameter: 5 }.default_shape(), SegmentShape::Curve { tension: 0 });
     }
 
     #[test]
@@ -429,15 +426,11 @@ mod tests {
         assert_eq!(SegmentShape::Step.interpolate(0.5), 0.0);
         assert_eq!(SegmentShape::Step.interpolate(1.0), 0.0);
 
-        // Linear 端点
-        assert_eq!(SegmentShape::Linear.interpolate(0.0), 0.0);
-        assert_eq!(SegmentShape::Linear.interpolate(1.0), 1.0);
-        assert!((SegmentShape::Linear.interpolate(0.5) - 0.5).abs() < 1e-6);
-
-        // Curve tension=0 等价于 Linear
-        let lin = SegmentShape::Linear.interpolate(0.3);
-        let curve0 = SegmentShape::Curve { tension: 0 }.interpolate(0.3);
-        assert!((lin - curve0).abs() < 1e-6, "tension=0 should match Linear");
+        // Curve{tension:0} 端点（=直线）
+        let lin0 = SegmentShape::Curve { tension: 0 };
+        assert_eq!(lin0.interpolate(0.0), 0.0);
+        assert_eq!(lin0.interpolate(1.0), 1.0);
+        assert!((lin0.interpolate(0.5) - 0.5).abs() < 1e-6);
 
         // Curve 端点
         assert_eq!(SegmentShape::Curve { tension: 100 }.interpolate(0.0), 0.0);
@@ -471,7 +464,7 @@ mod tests {
         );
         assert_eq!(evt.tick, 100);
         assert_eq!(evt.value, 64);
-        assert_eq!(evt.shape, SegmentShape::Linear);
+        assert_eq!(evt.shape, SegmentShape::Curve { tension: 0 });
 
         let evt2 = AutomationEvent::with_default_shape(
             100,

@@ -8,7 +8,7 @@
 use std::collections::{HashMap, HashSet};
 
 use yinhe_core::Selection;
-use yinhe_types::Note;
+use yinhe_types::{AutomationEvent, Note};
 
 use crate::document::Document;
 use crate::edit_state::SelRectState;
@@ -34,6 +34,19 @@ pub struct NoteDelta {
     pub after: Vec<(Note, u8)>,
 }
 
+/// Automation lane before/after snapshot.
+///
+/// Stores the full event list of the affected lane before and after the edit.
+/// Automation lanes typically contain few events (hundreds at most), so
+/// full-snapshot undo is simpler and cheaper than per-event deltas.
+#[derive(Clone, Debug)]
+pub struct AutomationDelta {
+    pub track_idx: usize,
+    pub lane_idx: usize,
+    pub before: Vec<AutomationEvent>,
+    pub after: Vec<AutomationEvent>,
+}
+
 // ---------------------------------------------------------------------------
 // Action enum
 // ---------------------------------------------------------------------------
@@ -43,6 +56,8 @@ pub struct NoteDelta {
 pub enum UndoAction {
     /// Note-level changes (delete, add, move, resize, duplicate, transpose).
     Notes(NoteDelta),
+    /// Automation lane event changes (add/move/delete/shape).
+    Automation(AutomationDelta),
     /// A track name was edited.
     TrackName {
         track_idx: usize,
@@ -62,6 +77,7 @@ impl UndoAction {
     pub fn redo(&self, doc: &mut Document) {
         match self {
             UndoAction::Notes(delta) => apply_note_delta(doc, &delta.before, &delta.after),
+            UndoAction::Automation(delta) => apply_automation_delta(doc, delta.track_idx, delta.lane_idx, &delta.after),
             UndoAction::TrackName { track_idx, old: _, new } => {
                 let model = std::sync::Arc::make_mut(&mut doc.data.model);
                 if let Some(track) = model.tracks.get_mut(*track_idx) {
@@ -91,6 +107,7 @@ impl UndoAction {
     pub fn undo(&self, doc: &mut Document) {
         match self {
             UndoAction::Notes(delta) => apply_note_delta(doc, &delta.after, &delta.before),
+            UndoAction::Automation(delta) => apply_automation_delta(doc, delta.track_idx, delta.lane_idx, &delta.before),
             UndoAction::TrackName { track_idx, old, new: _ } => {
                 let model = std::sync::Arc::make_mut(&mut doc.data.model);
                 if let Some(track) = model.tracks.get_mut(*track_idx) {
@@ -120,6 +137,12 @@ impl UndoAction {
     pub fn reversed(&self) -> Self {
         match self {
             UndoAction::Notes(delta) => UndoAction::Notes(NoteDelta {
+                before: delta.after.clone(),
+                after: delta.before.clone(),
+            }),
+            UndoAction::Automation(delta) => UndoAction::Automation(AutomationDelta {
+                track_idx: delta.track_idx,
+                lane_idx: delta.lane_idx,
                 before: delta.after.clone(),
                 after: delta.before.clone(),
             }),
@@ -188,6 +211,26 @@ fn apply_note_delta(doc: &mut Document, remove: &[(Note, u8)], insert: &[(Note, 
     }
 
     model.rebuild_dirty();
+    doc.data.midi_version = doc.data.midi_version.wrapping_add(1);
+}
+
+/// Replace the event list of `track_idx`'s `lane_idx` with `events`.
+fn apply_automation_delta(
+    doc: &mut Document,
+    track_idx: usize,
+    lane_idx: usize,
+    events: &[AutomationEvent],
+) {
+    let model = std::sync::Arc::make_mut(&mut doc.data.model);
+    if let Some(track) = model.tracks.get_mut(track_idx) {
+        let track = std::sync::Arc::make_mut(track);
+        if let Some(lane) = track.automation_lanes.get_mut(lane_idx) {
+            lane.events.clear();
+            lane.events.extend_from_slice(events);
+            // 保持有序（编辑操作应已保证，但防御性排序）
+            lane.events.sort_by_key(|e| e.tick);
+        }
+    }
     doc.data.midi_version = doc.data.midi_version.wrapping_add(1);
 }
 

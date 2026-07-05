@@ -3,6 +3,7 @@ use yinhe_types::{
     TimeSigEvent,
 };
 
+use crate::AutomationGhost;
 use crate::AutomationPanelView;
 use crate::grid;
 use yinhe_wgpu::{pack_props, pack_rgba, DrawInstance};
@@ -281,17 +282,9 @@ fn render_segment(
                 });
             }
         }
-        SegmentShape::Linear => {
-            // 直线：用一条对角矩形近似（在像素级足够平滑）
-            // 简单实现：画一系列 1px 短水平段。对 1 亿音符场景太重，
-            // 这里直接画一条对角线（细矩形旋转近似）。
-            // 为了视觉平滑且实现简单，按像素步长子采样。
-            push_polyline(out, x1, y1, x2, y2, |t| t, color);
-        }
-        SegmentShape::Curve { tension } => {
+        SegmentShape::Curve { tension: _ } => {
+            // Curve{tension:0} = 直线，tension≠0 = 弯曲。统一用 interpolate 子采样。
             push_polyline(out, x1, y1, x2, y2, |t| shape.interpolate(t), color);
-            // 避免未使用 tension 警告（interpolate 内部已使用）
-            let _ = tension;
         }
     }
 }
@@ -611,5 +604,59 @@ pub fn build_tempo_lines(
             velocity: 0,
             tag: 0,
         });
+    }
+}
+
+/// ghost 锚点半径（像素）。
+const GHOST_RADIUS: f32 = 4.0;
+/// ghost 颜色（黄色）。
+const GHOST_COLOR: [f32; 3] = [1.0, 1.0, 0.4];
+/// ghost 不透明度。
+const GHOST_ALPHA: f32 = 0.9;
+
+/// Build ghost preview instances (layer 3, rebuilt every frame).
+///
+/// `AutomationGhost` 坐标为 panel 局部像素坐标。
+pub fn build_ghost(
+    out: &mut Vec<DrawInstance>,
+    ghost: AutomationGhost,
+    _theme: &GpuTheme,
+) {
+    let push_anchor = |out: &mut Vec<DrawInstance>, x: f32, y: f32| {
+        out.push(DrawInstance {
+            x: x - GHOST_RADIUS,
+            y: y - GHOST_RADIUS,
+            w: 2.0 * GHOST_RADIUS,
+            h: 2.0 * GHOST_RADIUS,
+            rgba_packed: pack_rgba(GHOST_COLOR[0], GHOST_COLOR[1], GHOST_COLOR[2], GHOST_ALPHA),
+            props_packed: pack_props(GHOST_RADIUS, 0.0),
+            velocity: 0,
+            tag: 0,
+        });
+    };
+
+    match ghost {
+        AutomationGhost::Move { old_x, old_y, cur_x, cur_y } => {
+            // 原位置画一个暗色小锚点（标识起点）
+            out.push(DrawInstance {
+                x: old_x - GHOST_RADIUS,
+                y: old_y - GHOST_RADIUS,
+                w: 2.0 * GHOST_RADIUS,
+                h: 2.0 * GHOST_RADIUS,
+                rgba_packed: pack_rgba(GHOST_COLOR[0] * 0.5, GHOST_COLOR[1] * 0.5, GHOST_COLOR[2] * 0.5, 0.6),
+                props_packed: pack_props(GHOST_RADIUS, 0.0),
+                velocity: 0,
+                tag: 0,
+            });
+            // 连线 old → cur（直线，复用 push_polyline）
+            push_polyline(out, old_x, old_y, cur_x, cur_y, |t| t, GHOST_COLOR);
+            // ghost 锚点在 cur
+            push_anchor(out, cur_x, cur_y);
+        }
+        AutomationGhost::Curve { start_x, start_y, cur_x, cur_y } => {
+            push_anchor(out, start_x, start_y);
+            push_polyline(out, start_x, start_y, cur_x, cur_y, |t| t, GHOST_COLOR);
+            push_anchor(out, cur_x, cur_y);
+        }
     }
 }

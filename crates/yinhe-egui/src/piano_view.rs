@@ -8,7 +8,7 @@ use yinhe_editor_core::quantize::QuantizePreset;
 use crate::widgets::tools_panel::Tool;
 use crate::widgets::selection_actions::SelectionAction;
 
-mod automation_panel;
+pub mod automation_panel;
 
 /// Events emitted by the piano-roll view for the caller to act on.
 pub enum PianoViewEvent {
@@ -121,6 +121,7 @@ pub fn show(
     midi_version: u64,
     haptic_engine: Option<&yinhe_haptic::HapticEngine>,
     pencil_note_drag: &mut Option<PencilNoteDrag>,
+    auto_edit_events: &mut Vec<crate::piano_view::automation_panel::AutomationEdit>,
 ) -> Option<PianoViewEvent> {
     // Sense::hover() — no drag ownership. All drag is handled by dedicated
     // ui.interact calls below, each inside its own push_id scope.
@@ -537,7 +538,28 @@ pub fn show(
         let kb_w = view.keyboard_width();
         let combo_w = kb_w * theme::AUTO_PANEL_COMBO_WIDTH_RATIO;
 
-        automation_panel::show_panels(
+        // automation 编辑上下文：Pencil/Curve 工具时启用。
+        // active_track 与 automation_lanes 用同样的逻辑：第一个选中 track（排除 conductor），
+        // 没有选中时用 track 0。不要求"唯一选中"。
+        let active_track = track_selected
+            .iter()
+            .next()
+            .copied()
+            .filter(|&t| Some(t) != conductor_idx)
+            .or(Some(0));
+        let edit_ctx = if *active_tool == Tool::Pencil || *active_tool == Tool::Curve {
+            Some(automation_panel::AutomationEditCtx {
+                active_tool: *active_tool,
+                active_track,
+                quantize,
+                ppq,
+                bar_line_data,
+            })
+        } else {
+            None
+        };
+
+        let (_h, auto_edits) = automation_panel::show_panels(
             ui,
             panels,
             renderers,
@@ -560,9 +582,12 @@ pub fn show(
             min_border_width,
             midi,
             velocity_display_mode,
-            *active_tool,
+            edit_ctx.as_ref(),
             tempo_events,
         );
+        for edit in auto_edits {
+            auto_edit_events.push(edit);
+        }
 
         if midi.is_some() {
             let sb_y = rect.min.y + rect.height() - crate::widgets::scrollbar::SCROLLBAR_H;

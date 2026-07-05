@@ -6,15 +6,17 @@ pub enum Tool {
     Select,
     Pan,
     Pencil,
+    Curve,
     Scissors,
     Eraser,
 }
 
 /// All currently available tools — shown on both panels.
-pub const ALL_TOOLS: [Tool; 5] = [
+pub const ALL_TOOLS: [Tool; 6] = [
     Tool::Select,
     Tool::Pan,
     Tool::Pencil,
+    Tool::Curve,
     Tool::Scissors,
     Tool::Eraser,
 ];
@@ -25,6 +27,7 @@ impl Tool {
             Tool::Select => ICON_SELECT,
             Tool::Pan => ICON_PAN_TOOL,
             Tool::Pencil => ICON_EDIT,
+            Tool::Curve => ICON_DRAW,
             Tool::Scissors => ICON_CONTENT_CUT,
             Tool::Eraser => ICON_INK_ERASER,
         }
@@ -35,6 +38,7 @@ impl Tool {
             Tool::Select => "选择",
             Tool::Pan => "手形",
             Tool::Pencil => "铅笔",
+            Tool::Curve => "曲线",
             Tool::Scissors => "剪刀",
             Tool::Eraser => "橡皮擦",
         }

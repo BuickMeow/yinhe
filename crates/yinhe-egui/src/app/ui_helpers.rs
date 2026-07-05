@@ -279,6 +279,8 @@ impl App {
             self.controller_renderers.push(Vec::new());
         }
 
+        let mut auto_edit_events: Vec<crate::piano_view::automation_panel::AutomationEdit> = Vec::new();
+
         let (piano_event, note_drag_delta, pencil_note_drag) = {
             let mut guard = super::main_loop::ReplaceGuard::new(&mut self.documents[idx]);
             let doc = guard.as_mut();
@@ -375,6 +377,7 @@ impl App {
                         doc.data.midi_version,
                         Some(&self.haptic_engine),
                         &mut pencil_note_drag,
+                        &mut auto_edit_events,
                     );
                     if let Some(t0) = _piano_total_start {
                         yinhe_memtrace::perf_probe::record_piano_total(t0.elapsed());
@@ -408,6 +411,83 @@ impl App {
 
         // Handle pencil note drag
         self.handle_pencil_note_drag(pencil_note_drag);
+
+        // Handle automation edits
+        if !auto_edit_events.is_empty() {
+            self.handle_automation_edits(auto_edit_events);
+        }
+    }
+
+    /// 把 automation 面板产生的编辑事件应用到 Document，push undo，并通知音频线程。
+    fn handle_automation_edits(
+        &mut self,
+        edits: Vec<crate::piano_view::automation_panel::AutomationEdit>,
+    ) {
+        use crate::piano_view::automation_panel::AutomationEdit;
+        let Some(idx) = self.active_doc else { return };
+        let doc = &mut self.documents[idx];
+
+        let mut model_changed = false;
+        for edit in edits {
+            let action = match edit {
+                AutomationEdit::Add { track_idx, target, tick, value, shape } => {
+                    let event = yinhe_types::AutomationEvent { tick, value, shape };
+                    match doc.add_automation_event(track_idx as usize, target, event) {
+                        Some((_, _, action)) => {
+                            model_changed = true;
+                            Some(action)
+                        }
+                        None => None,
+                    }
+                }
+                AutomationEdit::Move { track_idx, lane_idx, old_tick, new_tick, new_value } => {
+                    match doc.move_automation_event(track_idx as usize, lane_idx, old_tick, new_tick, new_value) {
+                        Some(action) => {
+                            model_changed = true;
+                            Some(action)
+                        }
+                        None => None,
+                    }
+                }
+                AutomationEdit::CycleShape { track_idx, lane_idx, tick } => {
+                    // Step ↔ Curve{tension:0}
+                    let track = doc.data.model.tracks.get(track_idx as usize);
+                    let lane = track.and_then(|t| t.automation_lanes.get(lane_idx));
+                    let evt = lane.and_then(|l| l.events.iter().find(|e| e.tick == tick));
+                    if let Some(evt) = evt {
+                        let next = match evt.shape {
+                            yinhe_types::SegmentShape::Step => yinhe_types::SegmentShape::Curve { tension: 0 },
+                            yinhe_types::SegmentShape::Curve { .. } => yinhe_types::SegmentShape::Step,
+                        };
+                        match doc.set_automation_shape(track_idx as usize, lane_idx, tick, next) {
+                            Some(action) => {
+                                model_changed = true;
+                                Some(action)
+                            }
+                            None => None,
+                        }
+                    } else {
+                        None
+                    }
+                }
+            };
+            if let Some(action) = action {
+                doc.history.push(yinhe_editor_core::history::UndoEntry {
+                    action,
+                    label: "Edit automation",
+                    selected: doc.edit.selected.clone(),
+                    track_selected: doc.edit.track_selected.clone(),
+                    sel_rect: doc.edit.sel_rect.clone(),
+                });
+            }
+        }
+
+        if model_changed {
+            self.pianoroll_view.base.dirty = true;
+            if let Some(ref audio) = self.audio {
+                let _ = audio.handle.send(yinhe_audio::AudioCommand::ReloadNotes { model: doc.data.model.clone() });
+            }
+        }
     }
 
     /// Handle note drag — called once on release.

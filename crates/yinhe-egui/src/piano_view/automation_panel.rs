@@ -3,10 +3,10 @@ use std::sync::Arc;
 use eframe::egui;
 use egui_material_icons::icons::*;
 
-use yinhe_types::AutomationLane;
-use yinhe_types::AutomationTarget;
+use yinhe_editor_core::quantize::QuantizePreset;
+use yinhe_types::{AutomationLane, AutomationTarget, SegmentShape, TimeSigEvent};
 
-use yinhe_automation::{AutomationPanelView, prepare_automation};
+use yinhe_automation::{AutomationGhost, AutomationPanelView, prepare_automation};
 use yinhe_wgpu::InstanceRenderer;
 
 use crate::widgets::tools_panel::Tool;
@@ -26,6 +26,50 @@ const AUTOMATION_TARGETS: &[AutomationTarget] = &[
     AutomationTarget::Rpn { parameter: 1 },  // Fine Tune
     AutomationTarget::Rpn { parameter: 2 },  // Coarse Tune
 ];
+
+/// 锚点命中半径（像素）。鼠标在此半径内点击视为选中该锚点。
+const ANCHOR_HIT_PX: f32 = 6.0;
+
+/// 用户在 automation 面板上的编辑操作。
+///
+/// 由 `show_panels` 返回，由上层（ui_helpers）应用到 Document。
+#[derive(Clone, Debug)]
+pub enum AutomationEdit {
+    /// 添加新事件。如果 lane 不存在会自动创建。
+    /// `shape` = 新事件的 shape。
+    Add {
+        track_idx: u16,
+        target: AutomationTarget,
+        tick: u32,
+        value: u16,
+        shape: SegmentShape,
+    },
+    /// 移动已有事件。
+    Move {
+        track_idx: u16,
+        lane_idx: usize,
+        old_tick: u32,
+        new_tick: u32,
+        new_value: u16,
+    },
+    /// 切换已有事件的 shape（双击）。
+    CycleShape {
+        track_idx: u16,
+        lane_idx: usize,
+        tick: u32,
+    },
+}
+
+/// 交互上下文：打包 `show_panels` 处理编辑所需的全部外部信息。
+///
+/// `None` 时（如未选中唯一 track）跳过所有编辑交互，仅渲染。
+pub struct AutomationEditCtx<'a> {
+    pub active_tool: Tool,
+    pub active_track: Option<u16>,
+    pub quantize: QuantizePreset,
+    pub ppq: u32,
+    pub bar_line_data: Option<(u32, u8, u8, &'a [TimeSigEvent])>,
+}
 
 use crate::render_context::RenderContext;
 use crate::theme;
@@ -85,12 +129,17 @@ pub fn show_panels(
     min_border_width: f32,
     midi: Option<&dyn yinhe_automation::NoteSource>,
     velocity_display_mode: &mut u32,
-    active_tool: Tool,
+    edit_ctx: Option<&AutomationEditCtx<'_>>,
     tempo_events: &[(u32, f64)],
-) -> f32 {
+) -> (f32, Vec<AutomationEdit>) {
+    let mut edits = Vec::new();
     if !*show_panels || panels.is_empty() {
-        return 0.0;
+        return (0.0, edits);
     }
+
+    // 派生 show_anchors：Pencil 或 Curve 工具下都显示锚点
+    let active_tool = edit_ctx.map(|c| c.active_tool).unwrap_or(Tool::Select);
+    let show_anchors = active_tool == Tool::Pencil || active_tool == Tool::Curve;
 
     // Sync scroll state from pianoroll
     for panel in panels.iter_mut() {
@@ -182,6 +231,32 @@ pub fn show_panels(
         let gw = grid_rect.width() as u32;
         let gh = grid_rect.height() as u32;
 
+        // 先处理交互，得到 ghost（传给 wgpu Layer 3 绘制）+ edits。
+        // 必须在 prepare_automation 之前，这样 ghost 能当帧渲染。
+        let mut panel_ghost: Option<AutomationGhost> = None;
+        if let Some(ctx) = edit_ctx {
+            if !panel.show_velocity && !panel.show_tempo {
+                if let Some(track) = ctx.active_track {
+                    let grid_area = egui::Rect::from_min_max(
+                        egui::pos2(panel_rect.min.x + combo_width, panel_rect.min.y),
+                        egui::pos2(panel_rect.max.x, panel_rect.max.y),
+                    );
+                    let (panel_edits, ghost) = handle_automation_interaction(
+                        ui,
+                        grid_area,
+                        panel_rect,
+                        panel,
+                        automation_lanes,
+                        track,
+                        ctx,
+                        i,
+                    );
+                    edits.extend(panel_edits);
+                    panel_ghost = ghost;
+                }
+            }
+        }
+
         if gw > 0 && gh > 0 {
             if let Some((renderer, render_ctx)) = renderers.get_mut(i) {
                 render_ctx.ensure_size(gw, gh);
@@ -191,7 +266,6 @@ pub fn show_panels(
                     .filter(|l| l.target == panel.selected_target)
                     .collect();
 
-                let show_anchors = active_tool == Tool::Pencil;
                 let gpu_dirty = prepare_automation(
                     renderer,
                     gw,
@@ -210,6 +284,7 @@ pub fn show_panels(
                     *velocity_display_mode,
                     show_anchors,
                     tempo_events,
+                    panel_ghost,
                 );
 
                 let content_changed = panel.dirty || gpu_dirty;
@@ -417,7 +492,237 @@ pub fn show_panels(
     // Restore clip rect
     ui.set_clip_rect(old_clip);
 
-    panels_visible_h
+    (panels_visible_h, edits)
+}
+
+/// 拖拽状态（ghost）。存在 egui data 中，跨帧保持。
+#[derive(Clone, Copy, Debug)]
+enum AutoDrag {
+    /// Pencil 拖拽锚点：`old_tick` 是原始位置，`(cur_tick, cur_value)` 是 ghost 位置
+    MoveAnchor { old_tick: u32 },
+    /// Curve 拖拽：起点已固定
+    CurveDraw { start_tick: u32, start_value: u16 },
+}
+
+/// 处理 automation 面板上的鼠标交互。
+///
+/// **Ghost 模式**：拖拽中不写模型，只返回 ghost 几何（由 wgpu Layer 3 绘制），
+/// 释放时才提交编辑。
+fn handle_automation_interaction(
+    ui: &mut egui::Ui,
+    grid_area: egui::Rect,
+    panel_rect: egui::Rect,
+    panel: &AutomationPanelView,
+    automation_lanes: &[AutomationLane],
+    track_idx: u16,
+    ctx: &AutomationEditCtx<'_>,
+    panel_index: usize,
+) -> (Vec<AutomationEdit>, Option<AutomationGhost>) {
+    let mut edits = Vec::new();
+    let target = &panel.selected_target;
+    let max_val = target.max_value();
+    if max_val == 0 {
+        return (edits, None);
+    }
+
+    let ppu = panel.base.pixels_per_tick;
+    let scroll_x = panel.base.scroll_x;
+    let drag_id = ui.id().with("auto_drag").with(panel_index);
+
+    // 读取当前拖拽状态
+    let drag_state = ui.ctx().data(|d| d.get_temp::<AutoDrag>(drag_id));
+
+    // 不用 ui.interact——piano_view 的 handle_input 已用 Sense::click_and_drag()
+    // 占用了整个 music_rect，自动化面板的 grid_area 是子区域，事件已被父级消费。
+    // 改用 ui.input() 直接检测指针状态。
+    let pointer_hover_pos = ui.input(|i| i.pointer.hover_pos());
+    let pointer_pressed = ui.input(|i| i.pointer.primary_pressed());
+    let pointer_released = ui.input(|i| i.pointer.primary_released());
+    let pointer_clicked = ui.input(|i| i.pointer.primary_clicked());
+    let pointer_double_clicked = ui.input(|i| i.pointer.button_double_clicked(egui::PointerButton::Primary));
+
+    // 鼠标位置 → tick/value。tick clamp 到 >= 0 防止 as u32 溢出。
+    let pos = pointer_hover_pos;
+    let mouse_info = pos.map(|p| {
+        let x_in_grid = p.x - grid_area.min.x;
+        let raw_tick = ((x_in_grid + scroll_x) / ppu).max(0.0);
+        let snapped_tick = crate::view_interaction::snap_tick(
+            raw_tick as f64,
+            ctx.quantize,
+            ctx.ppq,
+            ctx.bar_line_data,
+        ).max(0.0) as u32;
+        let y_in_panel = (p.y - panel_rect.min.y).clamp(0.0, panel_rect.height());
+        let value = ((1.0 - y_in_panel / panel_rect.height()) * max_val as f32)
+            .round()
+            .clamp(0.0, max_val as f32) as u16;
+        (p, snapped_tick, value)
+    });
+
+    // 鼠标是否在 grid 区域内
+    let in_grid = pos.is_some_and(|p| grid_area.contains(p));
+
+    // 找当前 lane
+    let lane_idx = automation_lanes.iter().position(|l| l.target == *target);
+    let lane = lane_idx.and_then(|i| automation_lanes.get(i));
+
+    // 命中检测：找距离鼠标最近的锚点
+    let hit_anchor = lane.and_then(|l| {
+        let (_, snapped_tick, _) = mouse_info?;
+        l.events
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, e)| (e.tick as i64 - snapped_tick as i64).unsigned_abs())
+            .and_then(|(i, e)| {
+                let (p, _, _) = mouse_info?;
+                let ex = grid_area.min.x + (e.tick as f32) * ppu - scroll_x;
+                let ey = panel_rect.min.y + (1.0 - e.value as f32 / max_val as f32) * panel_rect.height();
+                let dist = ((ex - p.x).powi(2) + (ey - p.y).powi(2)).sqrt();
+                if dist <= ANCHOR_HIT_PX {
+                    Some((i, e.tick))
+                } else {
+                    None
+                }
+            })
+    });
+
+    match ctx.active_tool {
+        Tool::Pencil => {
+            // 双击已有锚点：切换 shape
+            if pointer_double_clicked && in_grid {
+                if let Some((_, tick)) = hit_anchor {
+                    if let Some(lidx) = lane_idx {
+                        edits.push(AutomationEdit::CycleShape {
+                            track_idx,
+                            lane_idx: lidx,
+                            tick,
+                        });
+                    }
+                }
+                return (edits, None);
+            }
+
+            // 拖拽锚点：press 记录，release 提交
+            if pointer_pressed && in_grid {
+                if let Some((_, tick)) = hit_anchor {
+                    ui.ctx().data_mut(|d| {
+                        d.insert_temp(drag_id, AutoDrag::MoveAnchor { old_tick: tick });
+                    });
+                }
+            }
+            if pointer_released && in_grid {
+                let drag = ui.ctx().data(|d| d.get_temp::<AutoDrag>(drag_id));
+                ui.ctx().data_mut(|d| d.remove::<AutoDrag>(drag_id));
+                if let Some(AutoDrag::MoveAnchor { old_tick }) = drag {
+                    if let Some((_, new_tick, new_value)) = mouse_info {
+                        if let Some(lidx) = lane_idx {
+                            edits.push(AutomationEdit::Move {
+                                track_idx,
+                                lane_idx: lidx,
+                                old_tick,
+                                new_tick,
+                                new_value,
+                            });
+                        }
+                    }
+                }
+                return (edits, None);
+            }
+
+            // 点击空白（非拖拽）：添加新锚点（shape = Step）
+            if pointer_clicked && in_grid && hit_anchor.is_none() && drag_state.is_none() {
+                if let Some((_, tick, value)) = mouse_info {
+                    edits.push(AutomationEdit::Add {
+                        track_idx,
+                        target: target.clone(),
+                        tick,
+                        value,
+                        shape: SegmentShape::Step,
+                    });
+                }
+                return (edits, None);
+            }
+        }
+        Tool::Curve => {
+            // 拖拽起点 → 终点：press 记录起点，release 提交 2 个锚点
+            if pointer_pressed && in_grid {
+                if let Some((_, tick, value)) = mouse_info {
+                    ui.ctx().data_mut(|d| {
+                        d.insert_temp(drag_id, AutoDrag::CurveDraw { start_tick: tick, start_value: value });
+                    });
+                }
+            }
+            if pointer_released && in_grid {
+                let drag = ui.ctx().data(|d| d.get_temp::<AutoDrag>(drag_id));
+                ui.ctx().data_mut(|d| d.remove::<AutoDrag>(drag_id));
+                if let Some(AutoDrag::CurveDraw { start_tick: t1, start_value: v1 }) = drag {
+                    if let Some((_, t2, v2)) = mouse_info {
+                        if t1 != t2 {
+                            // 两个锚点：起点 Curve{tension:0}，终点 Step
+                            edits.push(AutomationEdit::Add {
+                                track_idx,
+                                target: target.clone(),
+                                tick: t1.min(t2),
+                                value: v1,
+                                shape: SegmentShape::Curve { tension: 0 },
+                            });
+                            edits.push(AutomationEdit::Add {
+                                track_idx,
+                                target: target.clone(),
+                                tick: t1.max(t2),
+                                value: v2,
+                                shape: SegmentShape::Step,
+                            });
+                        } else {
+                            // 单击：只加一个 Curve{tension:0} 锚点
+                            edits.push(AutomationEdit::Add {
+                                track_idx,
+                                target: target.clone(),
+                                tick: t2,
+                                value: v2,
+                                shape: SegmentShape::Curve { tension: 0 },
+                            });
+                        }
+                    }
+                }
+                return (edits, None);
+            }
+        }
+        _ => {}
+    }
+
+    // ── Ghost 计算（panel 局部坐标，传给 wgpu Layer 3 绘制）──
+    // 重新读取 drag_state：press 分支可能刚设置过，release 分支已 return。
+    let drag_now = ui.ctx().data(|d| d.get_temp::<AutoDrag>(drag_id));
+    let ghost = if let Some(drag) = drag_now
+        && let Some((_, cur_tick, cur_value)) = mouse_info
+    {
+        // panel 局部坐标，与 build_data_lines 一致：x = x_offset + tick*ppu
+        let x_offset = panel.base.left_panel_width - scroll_x;
+        let h = panel_rect.height();
+        let cur_x = x_offset + cur_tick as f32 * ppu;
+        let cur_y = h - (cur_value as f32 / max_val as f32) * h;
+        match drag {
+            AutoDrag::MoveAnchor { old_tick } => {
+                let old_value = lane
+                    .and_then(|l| l.events.iter().find(|e| e.tick == old_tick))
+                    .map(|e| e.value)
+                    .unwrap_or(cur_value);
+                let old_x = x_offset + old_tick as f32 * ppu;
+                let old_y = h - (old_value as f32 / max_val as f32) * h;
+                Some(AutomationGhost::Move { old_x, old_y, cur_x, cur_y })
+            }
+            AutoDrag::CurveDraw { start_tick, start_value } => {
+                let start_x = x_offset + start_tick as f32 * ppu;
+                let start_y = h - (start_value as f32 / max_val as f32) * h;
+                Some(AutomationGhost::Curve { start_x, start_y, cur_x, cur_y })
+            }
+        }
+    } else {
+        None
+    };
+
+    (edits, ghost)
 }
 
 /// Show the toggle / add / remove buttons horizontally.
