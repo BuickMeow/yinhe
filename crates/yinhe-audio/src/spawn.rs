@@ -46,6 +46,11 @@ pub enum AudioCommand {
     SetLayerCount {
         count: Option<usize>,
     },
+    /// Set automation Linear/Curve intermediate event density (tick interval).
+    /// Triggers a cc_events rebuild if a model is loaded.
+    SetAutomationDensity {
+        density: u32,
+    },
 }
 
 /// Handle used by the UI to control audio playback.
@@ -138,7 +143,7 @@ pub fn channels_for_model(model: &YinModel) -> (u32, Vec<bool>) {
 
 /// Internal command sent from the renderer thread to the worker thread.
 pub(crate) enum WorkerCmd {
-    PrepareModel(Arc<YinModel>),
+    PrepareModel(Arc<YinModel>, u32),
     LoadSoundFont {
         port: u8,
         paths: Vec<String>,
@@ -170,12 +175,16 @@ pub(crate) fn spawn_worker(
         .spawn(move || {
             while let Ok(cmd) = cmd_rx.recv() {
                 match cmd {
-                    WorkerCmd::PrepareModel(model) => {
+                    WorkerCmd::PrepareModel(model, density) => {
                         let mut latest = model;
+                        let mut latest_density = density;
                         let mut pending_other: Option<WorkerCmd> = None;
                         while let Ok(next) = cmd_rx.try_recv() {
                             match next {
-                                WorkerCmd::PrepareModel(m) => latest = m,
+                                WorkerCmd::PrepareModel(m, d) => {
+                                    latest = m;
+                                    latest_density = d;
+                                }
                                 other => {
                                     pending_other = Some(other);
                                     break;
@@ -185,6 +194,7 @@ pub(crate) fn spawn_worker(
                         let prepared = crate::prepare_model::prepare_model(
                             &latest,
                             sample_rate,
+                            latest_density,
                             &active_mask,
                             &channel_map,
                         );
@@ -209,7 +219,7 @@ pub(crate) fn spawn_worker(
                                         });
                                     }
                                 }
-                                WorkerCmd::PrepareModel(_) => unreachable!(),
+                                WorkerCmd::PrepareModel(_, _) => unreachable!(),
                             }
                         }
                     }

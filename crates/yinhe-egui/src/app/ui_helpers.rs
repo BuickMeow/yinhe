@@ -366,8 +366,6 @@ impl App {
                         self.audio_settings.scroll_mode,
                         self.audio_settings.min_border_width,
                         &mut self.audio_settings.velocity_display_mode,
-                        &mut self.audio_settings.automation_display_mode,
-                        &mut self.audio_settings.automation_show_dots,
                         self.audio_settings.note_selection_highlight,
                         &tempo_events,
                         &mut note_drag_delta,
@@ -676,6 +674,19 @@ impl App {
             .unwrap_or(false);
         if is_audio_playing || self.pending_playback {
             ui.ctx().request_repaint();
+        }
+    }
+
+    /// Sync `automation_event_density` to the audio engine when it changes.
+    pub(super) fn sync_automation_density(&mut self) {
+        let density = self.audio_settings.automation_event_density;
+        if density != self.last_automation_density {
+            self.last_automation_density = density;
+            if let Some(audio) = &self.audio {
+                audio.handle.send(yinhe_audio::AudioCommand::SetAutomationDensity {
+                    density,
+                });
+            }
         }
     }
 

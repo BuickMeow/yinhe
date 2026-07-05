@@ -149,24 +149,16 @@ pub fn show_content(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
                 });
             ui.end_row();
 
-            ui.label("自动化显示");
-            let auto_names = ["柱状", "折线"];
-            let current_auto = settings.automation_display_mode as usize;
-            egui::ComboBox::from_id_salt("automation_display_mode")
-                .selected_text(auto_names[current_auto])
-                .show_ui(ui, |ui| {
-                    for (i, name) in auto_names.iter().enumerate() {
-                        let selected = settings.automation_display_mode == i as u32;
-                        if ui.selectable_label(selected, *name).clicked() {
-                            settings.automation_display_mode = i as u32;
-                            changed = true;
-                        }
-                    }
-                });
-            ui.end_row();
-
-            ui.label("折线圆点");
-            if ui.checkbox(&mut settings.automation_show_dots, "").changed() {
+            ui.label("自动化事件密度");
+            let mut density = settings.automation_event_density as i32;
+            let drag = ui.add(
+                egui::DragValue::new(&mut density)
+                    .range(1..=480)
+                    .speed(0.2)
+                    .suffix(" tick"),
+            );
+            if drag.changed() {
+                settings.automation_event_density = density.max(1) as u32;
                 changed = true;
             }
             ui.end_row();

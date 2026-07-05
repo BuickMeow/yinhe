@@ -83,6 +83,11 @@ impl App {
             Ok(audio) => {
                 progress::set_stage(&self.load_progress, 2, progress::StageStatus::Done);
 
+                // Apply automation density before LoadModel so the first prepare uses it
+                audio.handle.send(yinhe_audio::AudioCommand::SetAutomationDensity {
+                    density: self.audio_settings.automation_event_density,
+                });
+
                 // Load MIDI
                 audio.handle.send(yinhe_audio::AudioCommand::LoadModel {
                     model: doc.data.model.clone(),

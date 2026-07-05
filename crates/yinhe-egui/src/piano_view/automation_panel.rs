@@ -9,6 +9,8 @@ use yinhe_types::AutomationTarget;
 use yinhe_automation::{AutomationPanelView, prepare_automation};
 use yinhe_wgpu::InstanceRenderer;
 
+use crate::widgets::tools_panel::Tool;
+
 /// Curated list of known automation targets shown in the dropdown.
 const AUTOMATION_TARGETS: &[AutomationTarget] = &[
     AutomationTarget::PitchBend,
@@ -83,8 +85,7 @@ pub fn show_panels(
     min_border_width: f32,
     midi: Option<&dyn yinhe_automation::NoteSource>,
     velocity_display_mode: &mut u32,
-    automation_display_mode: &mut u32,
-    automation_show_dots: &mut bool,
+    active_tool: Tool,
     tempo_events: &[(u32, f64)],
 ) -> f32 {
     if !*show_panels || panels.is_empty() {
@@ -190,6 +191,7 @@ pub fn show_panels(
                     .filter(|l| l.target == panel.selected_target)
                     .collect();
 
+                let show_anchors = active_tool == Tool::Pencil;
                 let gpu_dirty = prepare_automation(
                     renderer,
                     gw,
@@ -206,8 +208,7 @@ pub fn show_panels(
                     scroll_mode,
                     min_border_width,
                     *velocity_display_mode,
-                    *automation_display_mode,
-                    *automation_show_dots,
+                    show_anchors,
                     tempo_events,
                 );
 
@@ -329,65 +330,8 @@ pub fn show_panels(
 
                 ui.add_space(4.0);
 
-                // ── Display mode buttons ──
-                // Velocity display mode is configured in Settings dialog.
-                // Tempo only uses line mode. Only automation lanes show mode buttons here.
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 2.0;
-                    if !panel.show_velocity && !panel.show_tempo {
-                        // Automation display mode: bar chart / line chart icons
-                        let auto_modes = [(0u32, ICON_BAR_CHART), (1u32, ICON_SHOW_CHART)];
-                        for &(mode, icon) in &auto_modes {
-                            let is_active = *automation_display_mode == mode;
-                            let color = if is_active {
-                                crate::theme::ACCENT_ACTIVE
-                            } else {
-                                egui::Color32::GRAY
-                            };
-                            let resp = ui.add(
-                                egui::Label::new(icon.rich_text().size(14.0).color(color))
-                                    .sense(egui::Sense::click())
-                                    .selectable(false),
-                            );
-                            if resp.clicked() {
-                                *automation_display_mode = mode;
-                            }
-                            crate::widgets::hover::hover_highlight(
-                                ui,
-                                &resp,
-                                icon.codepoint,
-                                egui::FontId::new(14.0, icon.font_family()),
-                                is_active,
-                            );
-                        }
-
-                        // Dots toggle (only in折线 mode)
-                        if *automation_display_mode == 1 {
-                            let dot_color = if *automation_show_dots {
-                                crate::theme::ACCENT_ACTIVE
-                            } else {
-                                egui::Color32::GRAY
-                            };
-                            let dot_resp = ui.add(
-                                egui::Label::new(ICON_STEPPERS.rich_text().size(14.0).color(dot_color))
-                                    .sense(egui::Sense::click())
-                                    .selectable(false),
-                            );
-                            if dot_resp.clicked() {
-                                *automation_show_dots = !*automation_show_dots;
-                            }
-                            crate::widgets::hover::hover_highlight(
-                                ui,
-                                &dot_resp,
-                                ICON_STEPPERS.codepoint,
-                                egui::FontId::new(14.0, ICON_STEPPERS.font_family()),
-                                *automation_show_dots,
-                            );
-                            dot_resp.on_hover_text(if *automation_show_dots { "隐藏圆点" } else { "显示圆点" });
-                        }
-                    }
-                });
-
+                // 自动化渲染模式按钮已删除：默认使用折线图，
+                // 锚点显示由当前工具决定（铅笔工具下显示）。
             });
         });
 

@@ -9,7 +9,7 @@ pub mod tempo_event;
 pub mod time_format;
 pub mod view_base;
 
-pub use automation::{AutomationEvent, AutomationLane, AutomationTarget};
+pub use automation::{AutomationEvent, AutomationLane, AutomationTarget, SegmentShape};
 pub use note::{Note, TimeSigEvent};
 pub use palette::TRACK_PALETTE;
 pub use pc_event::PcEvent;

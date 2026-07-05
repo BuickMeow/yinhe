@@ -92,6 +92,8 @@ pub struct App {
     pub(crate) audio_settings: crate::audio_settings::AudioSettings,
     /// Tracks the last applied MIDI encoding to detect changes.
     pub(crate) last_midi_encoding: yinhe_mid2::MidiImportEncoding,
+    /// Tracks the last applied automation density to detect changes.
+    pub(crate) last_automation_density: u32,
 
     // ── Haptic feedback ──
     pub(crate) haptic_engine: yinhe_haptic::HapticEngine,
@@ -159,6 +161,9 @@ impl App {
 
         let load_progress = yinhe_editor_core::progress::new_shared();
 
+        let audio_settings = crate::audio_settings::load_audio_settings();
+        let last_automation_density = audio_settings.automation_event_density;
+
         let mut app = Self {
             render_ctx,
             pianoroll: yinhe_wgpu::InstanceRenderer::new(
@@ -215,8 +220,9 @@ impl App {
             playback_anchor: None,
             pending_playback: false,
 
-            audio_settings: crate::audio_settings::load_audio_settings(),
+            audio_settings,
             last_midi_encoding: yinhe_mid2::MidiImportEncoding::Utf8,
+            last_automation_density,
 
             haptic_engine: yinhe_haptic::HapticEngine::new(),
 

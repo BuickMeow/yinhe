@@ -5,7 +5,7 @@ use yinhe_core::{
 };
 use yinhe_types::TimeSigEvent;
 use yinhe_mid2::{parse_bytes, write_to_bytes};
-use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget};
+use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, SegmentShape};
 
 /// Hand-craft minimal SMF bytes: 1 track, 1 note (C4 quarter note at 120 BPM).
 fn minimal_midi_bytes() -> Vec<u8> {
@@ -94,22 +94,22 @@ fn build_complex_model() -> YinModel {
             target: AutomationTarget::CC { controller: 7 },
             track: 0,
             events: vec![
-                AutomationEvent { tick: 0, value: 100 },
-                AutomationEvent { tick: 480, value: 80 },
+                AutomationEvent { tick: 0, value: 100, shape: SegmentShape::Step },
+                AutomationEvent { tick: 480, value: 80, shape: SegmentShape::Step },
             ],
         },
         AutomationLane {
             target: AutomationTarget::PitchBend,
             track: 0,
             events: vec![
-                AutomationEvent { tick: 200, value: 2000 },
+                AutomationEvent { tick: 200, value: 2000, shape: SegmentShape::Step },
             ],
         },
         AutomationLane {
             target: AutomationTarget::Rpn { parameter: 0x0000 },
             track: 0,
             events: vec![
-                AutomationEvent { tick: 100, value: 2 },
+                AutomationEvent { tick: 100, value: 2, shape: SegmentShape::Step },
             ],
         },
     ];

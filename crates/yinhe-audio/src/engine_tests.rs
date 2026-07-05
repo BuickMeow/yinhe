@@ -4,7 +4,7 @@ use xsynth_core::channel::ControlEvent;
 use yinhe_core::{
     ConductorData, NoteEvent, PcEvent, ProjectMeta, TempoEvent, TrackData, YinModel,
 };
-use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget};
+use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, SegmentShape};
 
 fn make_model_with_notes(notes: Vec<(u8, u32, u32, u8, u8)>) -> YinModel {
     let conductor = ConductorData {
@@ -166,7 +166,7 @@ fn test_channels_for_model_cc_activates_channel() {
     t.automation_lanes = vec![AutomationLane {
         target: AutomationTarget::CC { controller: 7 },
         track: 0,
-        events: vec![AutomationEvent { tick: 0, value: 100 }],
+        events: vec![AutomationEvent { tick: 0, value: 100, shape: SegmentShape::Step }],
     }];
     let mut model = YinModel {
         conductor: Arc::new(conductor),
@@ -478,6 +478,7 @@ fn make_model_with_controls(
                 .push(AutomationEvent {
                     tick,
                     value: value as u16,
+                    shape: SegmentShape::Step,
                 });
         }
         for (controller, events) in cc_by_controller {
@@ -496,6 +497,7 @@ fn make_model_with_controls(
             .map(|(tick, value)| AutomationEvent {
                 tick,
                 value: (value + 8192) as u16,
+                shape: SegmentShape::Step,
             })
             .collect();
         lanes.push(AutomationLane {
@@ -510,7 +512,7 @@ fn make_model_with_controls(
         lanes.push(AutomationLane {
             target: AutomationTarget::Rpn { parameter: key },
             track: 0,
-            events: vec![AutomationEvent { tick, value }],
+            events: vec![AutomationEvent { tick, value, shape: SegmentShape::Step }],
         });
     }
 

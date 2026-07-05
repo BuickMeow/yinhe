@@ -5,7 +5,7 @@ use std::sync::Arc;
 use yinhe_core::{
     ConductorData, NoteEvent, PcEvent, ProjectMeta, TempoEvent, TrackData, YinModel,
 };
-use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, TimeSigEvent};
+use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, SegmentShape, TimeSigEvent};
 use yinhe_yin::{load_yin, load_yin_bytes, save_yin, save_yin_bytes};
 
 fn build_complex_model() -> YinModel {
@@ -36,37 +36,37 @@ fn build_complex_model() -> YinModel {
             target: AutomationTarget::CC { controller: 7 },
             track: 0,
             events: vec![
-                AutomationEvent { tick: 0, value: 100 },
-                AutomationEvent { tick: 480, value: 80 },
+                AutomationEvent { tick: 0, value: 100, shape: SegmentShape::Step },
+                AutomationEvent { tick: 480, value: 80, shape: SegmentShape::Step },
             ],
         },
         AutomationLane {
             target: AutomationTarget::CC { controller: 11 },
             track: 0,
             events: vec![
-                AutomationEvent { tick: 100, value: 64 },
+                AutomationEvent { tick: 100, value: 64, shape: SegmentShape::Step },
             ],
         },
         AutomationLane {
             target: AutomationTarget::PitchBend,
             track: 0,
             events: vec![
-                AutomationEvent { tick: 200, value: 2000 },
-                AutomationEvent { tick: 400, value: 1000 }, // 8192 - 1000 = 7192 → 1000
+                AutomationEvent { tick: 200, value: 2000, shape: SegmentShape::Step },
+                AutomationEvent { tick: 400, value: 1000, shape: SegmentShape::Step }, // 8192 - 1000 = 7192 → 1000
             ],
         },
         AutomationLane {
             target: AutomationTarget::Rpn { parameter: 0x0000 },
             track: 0,
             events: vec![
-                AutomationEvent { tick: 100, value: 2 },
+                AutomationEvent { tick: 100, value: 2, shape: SegmentShape::Step },
             ],
         },
         AutomationLane {
             target: AutomationTarget::Rpn { parameter: 0x0001 },
             track: 0,
             events: vec![
-                AutomationEvent { tick: 200, value: 8192 },
+                AutomationEvent { tick: 200, value: 8192, shape: SegmentShape::Step },
             ],
         },
     ];

@@ -322,7 +322,7 @@ fn parse_track(
                                     };
                                     auto_events.push((
                                         target,
-                                        AutomationEvent { tick: current_tick, value },
+                                        AutomationEvent { tick: current_tick, value, ..Default::default() },
                                     ));
                                 } else if let (Some(msb), Some(lsb)) = (nrpn.msb, nrpn.lsb) {
                                     let parameter = ((msb as u16) << 8) | lsb as u16;
@@ -331,6 +331,7 @@ fn parse_track(
                                         AutomationEvent {
                                             tick: current_tick,
                                             value: (val as u16) << 7,
+                                            ..Default::default()
                                         },
                                     ));
                                 } else {
@@ -340,6 +341,7 @@ fn parse_track(
                                         AutomationEvent {
                                             tick: current_tick,
                                             value: val as u16,
+                                            ..Default::default()
                                         },
                                     ));
                                 }
@@ -360,14 +362,14 @@ fn parse_track(
                                         } else {
                                             auto_events.push((
                                                 target,
-                                                AutomationEvent { tick: current_tick, value: val as u16 },
+                                                AutomationEvent { tick: current_tick, value: val as u16, ..Default::default() },
                                             ));
                                         }
                                     } else {
                                         // 7-bit target (RPN 0/2): LSB is fractional, store as plain CC38
                                         auto_events.push((
                                             AutomationTarget::CC { controller: 38 },
-                                            AutomationEvent { tick: current_tick, value: val as u16 },
+                                            AutomationEvent { tick: current_tick, value: val as u16, ..Default::default() },
                                         ));
                                     }
                                 } else if let (Some(msb), Some(lsb)) = (nrpn.msb, nrpn.lsb) {
@@ -383,6 +385,7 @@ fn parse_track(
                                             AutomationEvent {
                                                 tick: current_tick,
                                                 value: val as u16,
+                                                ..Default::default()
                                             },
                                         ));
                                     }
@@ -393,6 +396,7 @@ fn parse_track(
                                         AutomationEvent {
                                             tick: current_tick,
                                             value: val as u16,
+                                            ..Default::default()
                                         },
                                     ));
                                 }
@@ -404,6 +408,7 @@ fn parse_track(
                                     AutomationEvent {
                                         tick: current_tick,
                                         value: val as u16,
+                                        ..Default::default()
                                     },
                                 ));
                             }
@@ -441,6 +446,7 @@ fn parse_track(
                             AutomationEvent {
                                 tick: current_tick,
                                 value: bend.0.as_int(), // raw 0–16383
+                                ..Default::default()
                             },
                         ));
                     }
@@ -469,13 +475,13 @@ fn parse_track(
         if let Some((val, tick)) = bank.msb {
             auto_events.push((
                 AutomationTarget::CC { controller: 0 },
-                AutomationEvent { tick, value: val as u16 },
+                AutomationEvent { tick, value: val as u16, ..Default::default() },
             ));
         }
         if let Some((val, tick)) = bank.lsb {
             auto_events.push((
                 AutomationTarget::CC { controller: 32 },
-                AutomationEvent { tick, value: val as u16 },
+                AutomationEvent { tick, value: val as u16, ..Default::default() },
             ));
         }
     }

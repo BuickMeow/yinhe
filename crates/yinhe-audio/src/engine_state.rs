@@ -16,7 +16,7 @@ impl AudioEngine {
         let audio_model = AudioModel::from_model(model);
         self.setup_percussion(&audio_model);
 
-        self.cc_events = flatten_automation_to_cc_events(model, self.sample_rate);
+        self.cc_events = flatten_automation_to_cc_events(model, self.sample_rate, self.automation_density);
         self.cc_cursor = 0;
         self.active_notes.clear();
 

@@ -29,10 +29,12 @@ fn tempo_hash(tempo_events: &[(u32, f64)]) -> u64 {
 /// Layers:
 ///   0 = decor (background + center line)
 ///   1 = grid lines
-///   2 = data bars (or velocity bars when target is Velocity, or tempo curve)
+///   2 = data lines (or velocity bars when target is Velocity, or tempo curve)
 ///
 /// When `lanes` is empty and the panel target is Velocity, velocity bars are
 /// rendered directly from `midi` instead of from an automation lane.
+///
+/// `show_anchors`: 在每个事件位置画圆形锚点（铅笔工具下显示）。
 pub fn prepare(
     renderer: &mut InstanceRenderer,
     width: u32,
@@ -49,8 +51,7 @@ pub fn prepare(
     scroll_mode: u32,
     min_border_width: f32,
     velocity_display_mode: u32,
-    automation_display_mode: u32,
-    automation_show_dots: bool,
+    show_anchors: bool,
     tempo_events: &[(u32, f64)],
 ) -> bool {
     let w = width as f32;
@@ -121,7 +122,7 @@ pub fn prepare(
         );
     });
 
-    // Layer 2: data bars (or velocity bars when show_velocity is true, or tempo curve)
+    // Layer 2: data lines (or velocity bars when show_velocity is true, or tempo curve)
     let is_velocity = view.show_velocity;
     let is_tempo = view.show_tempo;
     let tv_hash = yinhe_wgpu::hash_bools(track_visible);
@@ -129,8 +130,7 @@ pub fn prepare(
         vh, wh, tv_hash,
         velocity_display_mode as u64,
         target_hash(&view.selected_target),
-        automation_display_mode as u64,
-        automation_show_dots as u64,
+        show_anchors as u64,
         view.show_velocity as u64,
         view.show_tempo as u64,
         tempo_hash(tempo_events),
@@ -144,12 +144,10 @@ pub fn prepare(
                     out, w, h, midi, view, track_visible, track_colors, velocity_display_mode, &theme,
                 );
             }
-        } else if automation_display_mode == 1 {
-            automation_instances::build_data_lines(
-                out, w, h, view, lanes, track_visible, track_colors, automation_show_dots, &theme,
-            );
         } else {
-            automation_instances::build_data_bars(out, w, h, view, lanes, track_visible, track_colors, &theme);
+            automation_instances::build_data_lines(
+                out, w, h, view, lanes, track_visible, track_colors, show_anchors, &theme,
+            );
         }
     });
 

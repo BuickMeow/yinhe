@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use xsynth_core::channel::{ChannelAudioEvent, ControlEvent};
 use yinhe_core::YinModel;
-use yinhe_types::AutomationTarget;
+use yinhe_types::{AutomationTarget, SegmentShape};
 
 use crate::spawn::track_global_channel;
 
@@ -90,86 +90,44 @@ pub(crate) fn tick_to_sample(tick: u64, segments: &[yinhe_core::TempoSegment], t
 ///
 /// Standard RPN 0/1/2 are sent as high-level xsynth events (PitchBendSensitivity,
 /// FineTune, CoarseTune). Non-standard RPN and NRPN use the raw CC sequence.
+///
+/// `density`: Linear/Curve 段在播放时按多少 tick 间隔展开中间事件。1 = 每 tick 一个事件
+/// （最平滑），值越大中间事件越少。Step 段不受影响（保持值到下一点）。
 pub(crate) fn flatten_automation_to_cc_events(
     model: &YinModel,
     sample_rate: u32,
+    density: u32,
 ) -> Vec<SortedCC> {
     let sr = sample_rate as f64;
+    let density = density.max(1);
     let mut cc_events = Vec::new();
 
     for (track_idx, track) in model.tracks.iter().enumerate() {
         let channel = track_global_channel(model, track_idx) as u32;
 
         for lane in &track.automation_lanes {
-            for e in &lane.events {
+            let n = lane.events.len();
+            for (i, e) in lane.events.iter().enumerate() {
                 let sample = (model.tempo_map.tick_to_seconds(e.tick as u64) * sr) as u64;
-                match &lane.target {
-                    AutomationTarget::CC { controller } => {
-                        cc_events.push(SortedCC {
-                            sample, channel,
-                            event: ChannelAudioEvent::Control(ControlEvent::Raw(
-                                *controller, (e.value & 0x7F) as u8,
-                            )),
-                        });
-                    }
-                    AutomationTarget::PitchBend => {
-                        cc_events.push(SortedCC {
-                            sample, channel,
-                            event: ChannelAudioEvent::Control(ControlEvent::PitchBendValue(
-                                (e.value as f32 - 8192.0) / 8192.0,
-                            )),
-                        });
-                    }
-                    AutomationTarget::Rpn { parameter } => {
-                        match parameter {
-                            0 => {
-                                cc_events.push(SortedCC {
-                                    sample, channel,
-                                    event: ChannelAudioEvent::Control(ControlEvent::PitchBendSensitivity(e.value as f32)),
-                                });
-                            }
-                            1 => {
-                                let fine = (e.value as f32 - 8192.0) / 8192.0 * 100.0;
-                                cc_events.push(SortedCC {
-                                    sample, channel,
-                                    event: ChannelAudioEvent::Control(ControlEvent::FineTune(fine)),
-                                });
-                            }
-                            2 => {
-                                let coarse = e.value as f32 - 64.0;
-                                cc_events.push(SortedCC {
-                                    sample, channel,
-                                    event: ChannelAudioEvent::Control(ControlEvent::CoarseTune(coarse)),
-                                });
-                            }
-                            _ => {
-                                // Non-standard RPN: fall back to CC sequence
-                                let msb = ((parameter >> 8) & 0x7F) as u8;
-                                let lsb = (parameter & 0x7F) as u8;
-                                let (data_msb, data_lsb) = if lane.target.is_14bit() {
-                                    (((e.value >> 7) & 0x7F) as u8, (e.value & 0x7F) as u8)
-                                } else {
-                                    (e.value as u8, 0u8)
-                                };
-                                cc_events.push(SortedCC { sample, channel, event: ChannelAudioEvent::Control(ControlEvent::Raw(101, msb)) });
-                                cc_events.push(SortedCC { sample, channel, event: ChannelAudioEvent::Control(ControlEvent::Raw(100, lsb)) });
-                                cc_events.push(SortedCC { sample, channel, event: ChannelAudioEvent::Control(ControlEvent::Raw(6, data_msb)) });
-                                if data_lsb != 0 {
-                                    cc_events.push(SortedCC { sample, channel, event: ChannelAudioEvent::Control(ControlEvent::Raw(38, data_lsb)) });
-                                }
-                            }
-                        }
-                    }
-                    AutomationTarget::Nrpn { parameter } => {
-                        let msb = ((parameter >> 8) & 0x7F) as u8;
-                        let lsb = (parameter & 0x7F) as u8;
-                        let data_msb = ((e.value >> 7) & 0x7F) as u8;
-                        let data_lsb = (e.value & 0x7F) as u8;
-                        cc_events.push(SortedCC { sample, channel, event: ChannelAudioEvent::Control(ControlEvent::Raw(99, msb)) });
-                        cc_events.push(SortedCC { sample, channel, event: ChannelAudioEvent::Control(ControlEvent::Raw(98, lsb)) });
-                        cc_events.push(SortedCC { sample, channel, event: ChannelAudioEvent::Control(ControlEvent::Raw(6, data_msb)) });
-                        if data_lsb != 0 {
-                            cc_events.push(SortedCC { sample, channel, event: ChannelAudioEvent::Control(ControlEvent::Raw(38, data_lsb)) });
+                emit_automation_event(&lane.target, e.value, sample, channel, &mut cc_events);
+
+                // Linear/Curve 段：在当前事件与下一事件之间按 density 间隔展开中间事件
+                if i + 1 < n {
+                    let next = &lane.events[i + 1];
+                    let tick1 = e.tick;
+                    let tick2 = next.tick;
+                    if tick2 > tick1 && !matches!(e.shape, SegmentShape::Step) {
+                        let v1 = e.value as f32;
+                        let v2 = next.value as f32;
+                        let span = (tick2 - tick1) as f32;
+                        let mut t = tick1.saturating_add(density);
+                        while t < tick2 {
+                            let frac = (t - tick1) as f32 / span;
+                            let f = e.shape.interpolate(frac);
+                            let v = (v1 + (v2 - v1) * f).round() as u16;
+                            let s = (model.tempo_map.tick_to_seconds(t as u64) * sr) as u64;
+                            emit_automation_event(&lane.target, v, s, channel, &mut cc_events);
+                            t = t.saturating_add(density);
                         }
                     }
                 }
@@ -191,4 +149,84 @@ pub(crate) fn flatten_automation_to_cc_events(
     cc_events.sort_by_key(|e| e.sample);
     cc_events.dedup_by(|a, b| a.channel == b.channel && a.event == b.event);
     cc_events
+}
+
+/// 将单个 automation 值转换成 XSynth 事件并推入 `out`。
+fn emit_automation_event(
+    target: &AutomationTarget,
+    value: u16,
+    sample: u64,
+    channel: u32,
+    out: &mut Vec<SortedCC>,
+) {
+    match target {
+        AutomationTarget::CC { controller } => {
+            out.push(SortedCC {
+                sample, channel,
+                event: ChannelAudioEvent::Control(ControlEvent::Raw(
+                    *controller, (value & 0x7F) as u8,
+                )),
+            });
+        }
+        AutomationTarget::PitchBend => {
+            out.push(SortedCC {
+                sample, channel,
+                event: ChannelAudioEvent::Control(ControlEvent::PitchBendValue(
+                    (value as f32 - 8192.0) / 8192.0,
+                )),
+            });
+        }
+        AutomationTarget::Rpn { parameter } => {
+            match parameter {
+                0 => {
+                    out.push(SortedCC {
+                        sample, channel,
+                        event: ChannelAudioEvent::Control(ControlEvent::PitchBendSensitivity(value as f32)),
+                    });
+                }
+                1 => {
+                    let fine = (value as f32 - 8192.0) / 8192.0 * 100.0;
+                    out.push(SortedCC {
+                        sample, channel,
+                        event: ChannelAudioEvent::Control(ControlEvent::FineTune(fine)),
+                    });
+                }
+                2 => {
+                    let coarse = value as f32 - 64.0;
+                    out.push(SortedCC {
+                        sample, channel,
+                        event: ChannelAudioEvent::Control(ControlEvent::CoarseTune(coarse)),
+                    });
+                }
+                _ => {
+                    // Non-standard RPN: fall back to CC sequence
+                    let msb = ((parameter >> 8) & 0x7F) as u8;
+                    let lsb = (parameter & 0x7F) as u8;
+                    let (data_msb, data_lsb) = if target.is_14bit() {
+                        (((value >> 7) & 0x7F) as u8, (value & 0x7F) as u8)
+                    } else {
+                        (value as u8, 0u8)
+                    };
+                    out.push(SortedCC { sample, channel, event: ChannelAudioEvent::Control(ControlEvent::Raw(101, msb)) });
+                    out.push(SortedCC { sample, channel, event: ChannelAudioEvent::Control(ControlEvent::Raw(100, lsb)) });
+                    out.push(SortedCC { sample, channel, event: ChannelAudioEvent::Control(ControlEvent::Raw(6, data_msb)) });
+                    if data_lsb != 0 {
+                        out.push(SortedCC { sample, channel, event: ChannelAudioEvent::Control(ControlEvent::Raw(38, data_lsb)) });
+                    }
+                }
+            }
+        }
+        AutomationTarget::Nrpn { parameter } => {
+            let msb = ((parameter >> 8) & 0x7F) as u8;
+            let lsb = (parameter & 0x7F) as u8;
+            let data_msb = ((value >> 7) & 0x7F) as u8;
+            let data_lsb = (value & 0x7F) as u8;
+            out.push(SortedCC { sample, channel, event: ChannelAudioEvent::Control(ControlEvent::Raw(99, msb)) });
+            out.push(SortedCC { sample, channel, event: ChannelAudioEvent::Control(ControlEvent::Raw(98, lsb)) });
+            out.push(SortedCC { sample, channel, event: ChannelAudioEvent::Control(ControlEvent::Raw(6, data_msb)) });
+            if data_lsb != 0 {
+                out.push(SortedCC { sample, channel, event: ChannelAudioEvent::Control(ControlEvent::Raw(38, data_lsb)) });
+            }
+        }
+    }
 }

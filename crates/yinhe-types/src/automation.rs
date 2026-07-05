@@ -1,5 +1,56 @@
 use serde::{Deserialize, Serialize};
 
+/// How to interpolate from one automation event to the next.
+///
+/// Stored per-event on `AutomationEvent::shape`, describing the segment
+/// that *starts* at this event. The last event's shape has no effect
+/// (no segment after it).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum SegmentShape {
+    /// 离散：保持当前值，直到下个事件才瞬间跳变。MIDI CC 的原生语义。
+    Step,
+    /// 直线：从本点到下一点线性插值。
+    Linear,
+    /// 曲线：tension 控制曲线弯曲方向与程度。
+    /// - `0` 等价于 Linear
+    /// - `> 0` 慢起快落（ease-in）
+    /// - `< 0` 快起慢落（ease-out）
+    /// 范围 -127..=127。
+    Curve { tension: i8 },
+}
+
+impl Default for SegmentShape {
+    /// MIDI 文件导入与未指定时的默认值。Step 与 MIDI CC 原生语义一致。
+    fn default() -> Self {
+        SegmentShape::Step
+    }
+}
+
+impl SegmentShape {
+    /// 在归一化进度 `t ∈ [0, 1]` 上计算插值因子 `f ∈ [0, 1]`。
+    /// `value_at = v1 + (v2 - v1) * f`。
+    #[inline]
+    pub fn interpolate(self, t: f32) -> f32 {
+        debug_assert!((0.0..=1.0).contains(&t), "interpolate t out of range: {t}");
+        let t = t.clamp(0.0, 1.0);
+        match self {
+            SegmentShape::Step => 0.0, // Step: hold v1 until next event; segment value = v1
+            SegmentShape::Linear => t,
+            SegmentShape::Curve { tension } => {
+                let k = (tension as f32) / 127.0; // [-1, 1]
+                if k >= 0.0 {
+                    // 慢起快落: 线性 → x²
+                    (1.0 - k) * t + k * t * t
+                } else {
+                    // 快起慢落: 线性 → 1 - (1-x)²
+                    let k = -k;
+                    (1.0 - k) * t + k * (1.0 - (1.0 - t).powi(2))
+                }
+            }
+        }
+    }
+}
+
 /// Identifies an automatable parameter.
 ///
 /// This enum is the unified key for all automation data — CC, PitchBend,
@@ -76,6 +127,23 @@ impl AutomationTarget {
         )
     }
 
+    /// 用户在编辑器里新建事件时，本目标默认采用的插值形状。
+    ///
+    /// - 开关类 CC（Sustain/Sostenuto/Soft/Legato/Portamento）默认 `Step`
+    /// - 其他连续量（Volume/Pan/PB/FineTune/...）默认 `Linear`
+    /// - MIDI 导入时一律使用 `Step`（保留 MIDI 原生语义），见 parser
+    pub fn default_shape(&self) -> SegmentShape {
+        match self {
+            AutomationTarget::CC { controller } => match controller {
+                64 | 65 | 66 | 67 | 68 => SegmentShape::Step,
+                _ => SegmentShape::Linear,
+            },
+            AutomationTarget::PitchBend => SegmentShape::Linear,
+            AutomationTarget::Rpn { parameter: _ } => SegmentShape::Linear,
+            AutomationTarget::Nrpn { parameter: _ } => SegmentShape::Linear,
+        }
+    }
+
     /// Human-readable display name for the dropdown.
     pub fn display_name(&self) -> String {
         match self {
@@ -143,11 +211,23 @@ fn cc_name(cc: u8) -> &'static str {
 ///
 /// Channel and track are not stored here — they are implied by the
 /// owning `AutomationLane` (which mirrors `TrackData`'s per-track design).
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 pub struct AutomationEvent {
     pub tick: u32,
     /// Raw value. Range depends on the target (0–127 for CC, 0–16383 for PB, etc.).
     pub value: u16,
+    /// 描述"从本事件到下一事件"的插值形状。
+    /// 默认 `Step`（保留 MIDI 原生语义），编辑器新建事件时由
+    /// `AutomationTarget::default_shape()` 提供更合适的默认。
+    #[serde(default)]
+    pub shape: SegmentShape,
+}
+
+impl AutomationEvent {
+    /// 构造一个使用目标默认 shape 的事件。
+    pub fn with_default_shape(tick: u32, value: u16, target: &AutomationTarget) -> Self {
+        Self { tick, value, shape: target.default_shape() }
+    }
 }
 
 /// A sorted lane of automation events for one parameter on one track.
@@ -192,6 +272,7 @@ mod tests {
                 .map(|&t| AutomationEvent {
                     tick: t,
                     value: 64,
+                    shape: SegmentShape::Step,
                 })
                 .collect(),
         }
@@ -221,9 +302,9 @@ mod tests {
             target: AutomationTarget::CC { controller: 7 },
             track: 0,
             events: vec![
-                AutomationEvent { tick: 100, value: 80 },
-                AutomationEvent { tick: 200, value: 100 },
-                AutomationEvent { tick: 300, value: 60 },
+                AutomationEvent { tick: 100, value: 80, shape: SegmentShape::Step },
+                AutomationEvent { tick: 200, value: 100, shape: SegmentShape::Step },
+                AutomationEvent { tick: 300, value: 60, shape: SegmentShape::Step },
             ],
         };
         // Chase at tick 250 → should return value 100 (event at tick 200)
@@ -245,8 +326,8 @@ mod tests {
             target: AutomationTarget::CC { controller: 7 },
             track: 0,
             events: vec![
-                AutomationEvent { tick: 100, value: 80 },
-                AutomationEvent { tick: 200, value: 100 },
+                AutomationEvent { tick: 100, value: 80, shape: SegmentShape::Step },
+                AutomationEvent { tick: 200, value: 100, shape: SegmentShape::Step },
             ],
         };
         // Chase at tick 100 → event at tick 100 is NOT before tick 100
@@ -314,5 +395,89 @@ mod tests {
         assert!(!AutomationTarget::Rpn { parameter: 2 }.has_center_line());
         assert_eq!(AutomationTarget::Nrpn { parameter: 5 }.max_value(), 16383);
         assert_eq!(AutomationTarget::Nrpn { parameter: 5 }.default_value(), 0);
+    }
+
+    #[test]
+    fn test_default_shape_per_target() {
+        // 开关类 CC → Step
+        for cc in [64u8, 65, 66, 67, 68] {
+            assert_eq!(
+                AutomationTarget::CC { controller: cc }.default_shape(),
+                SegmentShape::Step,
+                "CC {cc} should default to Step"
+            );
+        }
+        // 连续量 CC → Linear
+        for cc in [0u8, 1, 7, 10, 11, 71, 74] {
+            assert_eq!(
+                AutomationTarget::CC { controller: cc }.default_shape(),
+                SegmentShape::Linear,
+                "CC {cc} should default to Linear"
+            );
+        }
+        // PB / RPN / NRPN → Linear
+        assert_eq!(AutomationTarget::PitchBend.default_shape(), SegmentShape::Linear);
+        assert_eq!(AutomationTarget::Rpn { parameter: 0 }.default_shape(), SegmentShape::Linear);
+        assert_eq!(AutomationTarget::Rpn { parameter: 1 }.default_shape(), SegmentShape::Linear);
+        assert_eq!(AutomationTarget::Nrpn { parameter: 5 }.default_shape(), SegmentShape::Linear);
+    }
+
+    #[test]
+    fn test_segment_shape_interpolate_endpoints() {
+        // Step 在区间内始终返回 0（值仍为 v1，由调用方处理）
+        assert_eq!(SegmentShape::Step.interpolate(0.0), 0.0);
+        assert_eq!(SegmentShape::Step.interpolate(0.5), 0.0);
+        assert_eq!(SegmentShape::Step.interpolate(1.0), 0.0);
+
+        // Linear 端点
+        assert_eq!(SegmentShape::Linear.interpolate(0.0), 0.0);
+        assert_eq!(SegmentShape::Linear.interpolate(1.0), 1.0);
+        assert!((SegmentShape::Linear.interpolate(0.5) - 0.5).abs() < 1e-6);
+
+        // Curve tension=0 等价于 Linear
+        let lin = SegmentShape::Linear.interpolate(0.3);
+        let curve0 = SegmentShape::Curve { tension: 0 }.interpolate(0.3);
+        assert!((lin - curve0).abs() < 1e-6, "tension=0 should match Linear");
+
+        // Curve 端点
+        assert_eq!(SegmentShape::Curve { tension: 100 }.interpolate(0.0), 0.0);
+        assert_eq!(SegmentShape::Curve { tension: 100 }.interpolate(1.0), 1.0);
+        assert_eq!(SegmentShape::Curve { tension: -100 }.interpolate(0.0), 0.0);
+        assert_eq!(SegmentShape::Curve { tension: -100 }.interpolate(1.0), 1.0);
+    }
+
+    #[test]
+    fn test_segment_shape_curve_direction() {
+        // tension > 0（慢起快落）: t=0.5 时插值因子应 < 0.5
+        let ease_in = SegmentShape::Curve { tension: 127 }.interpolate(0.5);
+        assert!(ease_in < 0.5, "positive tension should be < 0.5 at midpoint, got {ease_in}");
+
+        // tension < 0（快起慢落）: t=0.5 时插值因子应 > 0.5
+        let ease_out = SegmentShape::Curve { tension: -127 }.interpolate(0.5);
+        assert!(ease_out > 0.5, "negative tension should be > 0.5 at midpoint, got {ease_out}");
+
+        // tension 越大，ease-in 越强
+        let small = SegmentShape::Curve { tension: 30 }.interpolate(0.5);
+        let big = SegmentShape::Curve { tension: 127 }.interpolate(0.5);
+        assert!(big < small, "stronger tension should produce smaller midpoint factor");
+    }
+
+    #[test]
+    fn test_automation_event_with_default_shape() {
+        let evt = AutomationEvent::with_default_shape(
+            100,
+            64,
+            &AutomationTarget::CC { controller: 7 },
+        );
+        assert_eq!(evt.tick, 100);
+        assert_eq!(evt.value, 64);
+        assert_eq!(evt.shape, SegmentShape::Linear);
+
+        let evt2 = AutomationEvent::with_default_shape(
+            100,
+            0,
+            &AutomationTarget::CC { controller: 64 },
+        );
+        assert_eq!(evt2.shape, SegmentShape::Step);
     }
 }

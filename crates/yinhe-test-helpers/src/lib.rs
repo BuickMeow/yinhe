@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use yinhe_core::{ConductorData, NoteEvent, PcEvent, ProjectMeta, TempoEvent, TrackData, YinModel};
-use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, Note, NoteSource, TimeSigEvent};
+use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, Note, NoteSource, SegmentShape, TimeSigEvent};
 use yinhe_editor_core::document::Document;
 use yinhe_editor_core::quantize::QuantizePreset;
 
@@ -69,8 +69,8 @@ pub fn make_test_model() -> YinModel {
         target: AutomationTarget::CC { controller: 7 },
         track: 0,
         events: vec![
-            AutomationEvent { tick: 0, value: 100 },
-            AutomationEvent { tick: 240, value: 80 },
+            AutomationEvent { tick: 0, value: 100, shape: SegmentShape::Step },
+            AutomationEvent { tick: 240, value: 80, shape: SegmentShape::Step },
         ],
     }];
 
@@ -79,7 +79,7 @@ pub fn make_test_model() -> YinModel {
     t1.automation_lanes = vec![AutomationLane {
         target: AutomationTarget::PitchBend,
         track: 1,
-        events: vec![AutomationEvent { tick: 100, value: 9216 }], // 1024 + 8192 = raw value
+        events: vec![AutomationEvent { tick: 100, value: 9216, shape: SegmentShape::Step }], // 1024 + 8192 = raw value
     }];
 
     let mut t2 = TrackData::new(1, 0); // port 1, ch 0

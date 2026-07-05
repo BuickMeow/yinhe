@@ -16,13 +16,11 @@ pub struct AudioSettings {
     pub xsynth_layers: u32,
     /// Audio buffer size in frames. 0 = system default (~512 on macOS).
     pub buffer_size: u32,
-    /// 0=原始, 1=整数对齐, 2=子像素偏移
     /// 0=柱状(2px竖条), 1=矩形(填充), 2=空心矩形(边框)
     pub velocity_display_mode: u32,
-    /// 0=柱状, 1=折线
-    pub automation_display_mode: u32,
-    /// 折线模式下是否显示圆点
-    pub automation_show_dots: bool,
+    /// Linear/Curve 自动化播放时，按多少 tick 间隔生成一个中间 MIDI 事件。
+    /// 默认 1（每 tick 一个事件，最平滑）。值越大文件越小但越阶梯化。
+    pub automation_event_density: u32,
     /// 选中音符是否变色（默认关闭，仅靠选框标识选中状态）
     pub note_selection_highlight: bool,
     pub scroll_mode: u32,
@@ -55,8 +53,7 @@ impl Default for AudioSettings {
             min_border_width: 0.0,
             midi_import_encoding: MidiImportEncoding::Utf8,
             velocity_display_mode: 0,
-            automation_display_mode: 0,
-            automation_show_dots: true,
+            automation_event_density: 1,
             note_selection_highlight: false,
             haptic_enabled: true,
             haptic_intensity: 0.5,

@@ -90,6 +90,7 @@ impl AudioRenderer {
     fn process_commands(&mut self) -> bool {
         let mut did_work = false;
         let mut pending_reload: Option<Arc<yinhe_core::YinModel>> = None;
+        let mut pending_density_rebuild: bool = false;
 
         loop {
             match self.cmd_rx.try_recv() {
@@ -100,7 +101,8 @@ impl AudioRenderer {
                             self.engine.handle_command(AudioCommand::Pause);
                             self.engine.handle_command(AudioCommand::Stop);
                             self.clear_buffered_audio();
-                            let _ = self.worker_tx.send(WorkerCmd::PrepareModel(model));
+                            let density = self.engine.automation_density;
+                            let _ = self.worker_tx.send(WorkerCmd::PrepareModel(model, density));
                         }
                         AudioCommand::ReloadNotes { model } => {
                             pending_reload = Some(model);
@@ -131,6 +133,13 @@ impl AudioRenderer {
                             self.engine.handle_command(AudioCommand::Stop);
                             self.clear_buffered_audio();
                         }
+                        AudioCommand::SetAutomationDensity { density } => {
+                            self.engine.automation_density = density.max(1);
+                            // 若已加载模型，触发 worker 重建 cc_events
+                            if self.engine.yin_model.is_some() {
+                                pending_density_rebuild = true;
+                            }
+                        }
                         other => self.engine.handle_command(other),
                     }
                 }
@@ -143,8 +152,16 @@ impl AudioRenderer {
             self.engine.send_all_notes_off();
             self.engine.clear_active_notes();
             self.clear_buffered_audio();
-            let _ = self.worker_tx.send(WorkerCmd::PrepareModel(model));
+            let density = self.engine.automation_density;
+            let _ = self.worker_tx.send(WorkerCmd::PrepareModel(model, density));
             did_work = true;
+        } else if pending_density_rebuild {
+            // density 改变后用当前模型重建 cc_events
+            if let Some(model) = self.engine.yin_model.clone() {
+                let density = self.engine.automation_density;
+                let _ = self.worker_tx.send(WorkerCmd::PrepareModel(model, density));
+                did_work = true;
+            }
         }
 
         did_work

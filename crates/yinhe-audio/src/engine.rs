@@ -39,6 +39,8 @@ pub(crate) struct AudioEngine {
     pub(crate) skip_track: Vec<bool>,
     /// Set when Play arrives during async model loading.
     pub(crate) pending_play_from_sample: Option<u64>,
+    /// Linear/Curve 自动化段播放时的中间事件 tick 间隔（默认 1）。
+    pub(crate) automation_density: u32,
 }
 
 impl AudioEngine {
@@ -86,6 +88,7 @@ impl AudioEngine {
                 model: None,
                 skip_track: Vec::new(),
                 pending_play_from_sample: None,
+                automation_density: 1,
             }
         })
     }
@@ -176,6 +179,9 @@ impl AudioEngine {
             }
             AudioCommand::SetLayerCount { count } => {
                 self.set_layer_count(count);
+            }
+            AudioCommand::SetAutomationDensity { density } => {
+                self.automation_density = density.max(1);
             }
         }
     }
