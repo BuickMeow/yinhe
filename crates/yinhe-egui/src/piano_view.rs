@@ -158,8 +158,11 @@ pub fn show(
         egui::pos2(rect.min.x + kb_w, content_y),
         egui::pos2(rect.max.x, content_y + content_h),
     );
+    let ppp = ui.ctx().pixels_per_point();
     let w = content_rect.width() as u32;
     let h = content_rect.height() as u32;
+    let pw = (w as f32 * ppp) as u32;
+    let ph = (h as f32 * ppp) as u32;
 
     if w == 0 || h == 0 {
         return None;
@@ -174,7 +177,7 @@ pub fn show(
     };
 
     // Resize render target if needed — texture_id may change after this
-    render_ctx.ensure_size(w, h);
+    render_ctx.ensure_size(pw, ph);
 
     // Clamp scroll — add some extra space beyond the last note
     let total_ticks = super::view_interaction::total_ticks_padded(
@@ -427,8 +430,8 @@ pub fn show(
     // Paint wgpu content into the content_rect
     render_ctx.paint(
         pianoroll,
-        w,
-        h,
+        pw,
+        ph,
         "pianoroll_frame",
         &painter,
         content_rect,

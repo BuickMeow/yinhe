@@ -45,14 +45,17 @@ pub fn show(
     };
     let (resp, painter) = ui.allocate_painter(available, egui::Sense::click_and_drag());
     let rect = resp.rect;
+    let ppp = ui.ctx().pixels_per_point();
     let w = rect.width() as u32;
     let h = rect.height() as u32;
+    let pw = (w as f32 * ppp) as u32;
+    let ph = (h as f32 * ppp) as u32;
 
     if w == 0 || h == 0 {
         return;
     }
 
-    render_ctx.ensure_size(w, h);
+    render_ctx.ensure_size(pw, ph);
 
     let total_ticks = crate::view_interaction::total_ticks_padded(
         midi.and_then(|m| m.tick_length()).unwrap_or(0),
@@ -191,8 +194,8 @@ pub fn show(
     let content_changed = true;
     render_ctx.paint(
         renderer,
-        w,
-        h,
+        pw,
+        ph,
         "arrangement_frame",
         &painter,
         rect,

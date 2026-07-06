@@ -276,8 +276,11 @@ pub fn show_panels(
         // ── wgpu automation content (full width, from x=0) ──
         let grid_rect = egui::Rect::from_min_max(panel_rect.min, panel_rect.max);
 
+        let ppp = ui.ctx().pixels_per_point();
         let gw = grid_rect.width() as u32;
         let gh = grid_rect.height() as u32;
+        let gpw = (gw as f32 * ppp) as u32;
+        let gph = (gh as f32 * ppp) as u32;
 
         // ── 垂直 zoom/scroll + 水平联动交互 ──
         // 内容区（grid_area）：
@@ -397,7 +400,7 @@ pub fn show_panels(
 
         if gw > 0 && gh > 0 {
             if let Some((renderer, render_ctx)) = renderers.get_mut(i) {
-                render_ctx.ensure_size(gw, gh);
+                render_ctx.ensure_size(gpw, gph);
 
                 let lanes: Vec<&AutomationLane> = automation_lanes
                     .iter()
@@ -431,8 +434,8 @@ pub fn show_panels(
                 let painter = ui.painter();
                 render_ctx.paint(
                     renderer,
-                    gw,
-                    gh,
+                    gpw,
+                    gph,
                     &format!("auto_panel_{}", i),
                     painter,
                     grid_rect,
