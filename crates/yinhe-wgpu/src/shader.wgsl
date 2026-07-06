@@ -195,10 +195,9 @@ fn vs_main(
     var border_width = unpack2x16float(props).y;
 
     if u.mode == 1u && vel > 0u {
-        // PR notes: compute rounding/border from pixel dimensions
-        let min_dim = min(pixel_w, pixel_h);
-        radius = 0.15 * min_dim;
-        border_width = max(0.1 * min_dim, u.min_border_width);
+        // PR notes: no rounded corners, border based on key height
+        radius = 0.0;
+        border_width = max(0.1 * pixel_h, u.min_border_width);
     }
 
     out.radius = radius;
@@ -311,10 +310,9 @@ fn vs_main_note(
     base_color.a = u.note_alpha;
     out.color = base_color;
 
-    // Rounding/border: compute from pixel dimensions
-    let min_dim = min(pixel_w, pixel_h);
-    out.radius = 0.15 * min_dim;
-    out.border_width = max(0.1 * min_dim, u.min_border_width);
+    // No rounded corners; border based on vertical dimension (key/lane height)
+    out.radius = 0.0;
+    out.border_width = max(0.1 * pixel_h, u.min_border_width);
 
     out.uv = uv[vertex_index];
     out.half_size = vec2<f32>(pixel_w, pixel_h) * 0.5;
@@ -356,7 +354,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Fast path: no rounded corners
     if in.radius < 0.5 {
         let d_outer = max(abs(p.x) - in.half_size.x, abs(p.y) - in.half_size.y);
-        let outer_a = 1.0 - smoothstep(-0.5, 0.5, d_outer);
+        let outer_a = 1.0 - smoothstep(-1.0, 1.0, d_outer);
 
         let inner_half = max(in.half_size - vec2(in.border_width), vec2(0.0));
         var fill_a: f32 = 0.0;
@@ -364,7 +362,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
         if inner_half.x > 0.0 && inner_half.y > 0.0 {
             let d_inner = max(abs(p.x) - inner_half.x, abs(p.y) - inner_half.y);
-            let inner_a = 1.0 - smoothstep(-0.5, 0.5, d_inner);
+            let inner_a = 1.0 - smoothstep(-1.0, 1.0, d_inner);
             fill_a = inner_a;
             border_a = outer_a - inner_a;
         }
@@ -374,7 +372,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // Slow path: SDF rounded rectangle
     let d_outer = sd_rounded_box(p, in.half_size, in.radius);
-    let outer_a = 1.0 - smoothstep(-0.5, 0.5, d_outer);
+    let outer_a = 1.0 - smoothstep(-1.0, 1.0, d_outer);
 
     let inner_half = max(in.half_size - vec2(in.border_width), vec2(0.0));
     let inner_r = max(in.radius - in.border_width, 0.0);
@@ -384,7 +382,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     if inner_half.x > 0.0 && inner_half.y > 0.0 {
         let d_inner = sd_rounded_box(p, inner_half, inner_r);
-        let inner_a = 1.0 - smoothstep(-0.5, 0.5, d_inner);
+        let inner_a = 1.0 - smoothstep(-1.0, 1.0, d_inner);
         fill_a = inner_a;
         border_a = outer_a - inner_a;
     }
