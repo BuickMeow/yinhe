@@ -26,6 +26,12 @@ pub struct AutomationPanelView {
     pub lane_index: usize,
     /// Whether the panel content needs to be rebuilt.
     pub dirty: bool,
+    /// 垂直缩放系数。1.0 = 满量程（0~max_val）映射到面板高度。
+    /// > 1.0 = 放大（只显示部分值范围），< 1.0 = 缩小（显示更宽范围）。
+    pub value_zoom: f32,
+    /// 垂直滚动偏移（值空间单位，如 CC 的 0~127）。
+    /// 面板顶部对应的值 = `value_scroll`。
+    pub value_scroll: f32,
 }
 
 impl Default for AutomationPanelView {
@@ -46,6 +52,8 @@ impl Default for AutomationPanelView {
             show_tempo: false,
             lane_index: 0,
             dirty: true,
+            value_zoom: 1.0,
+            value_scroll: 0.0,
         }
     }
 }
@@ -83,8 +91,41 @@ impl AutomationPanelView {
             self.base.scroll_x,
             self.base.left_panel_width,
             self.panel_height,
+            self.value_zoom,
+            self.value_scroll,
         ]);
         h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(self.show_tempo as u64)
+    }
+
+    /// 将自动化值转换为面板局部 Y 坐标（像素，0=顶部）。
+    /// `max_val` = 当前 target 的最大值（如 CC 的 127）。
+    #[inline]
+    pub fn value_to_y(&self, value: f32, max_val: f32) -> f32 {
+        let visible_range = max_val / self.value_zoom;
+        if visible_range <= 0.0 {
+            return 0.0;
+        }
+        let h = self.panel_height;
+        h - ((value - self.value_scroll) / visible_range) * h
+    }
+
+    /// 将面板局部 Y 坐标（像素，0=顶部）转换回自动化值。
+    /// `max_val` = 当前 target 的最大值。
+    #[inline]
+    pub fn y_to_value(&self, y: f32, max_val: f32) -> f32 {
+        let visible_range = max_val / self.value_zoom;
+        if visible_range <= 0.0 {
+            return 0.0;
+        }
+        let h = self.panel_height;
+        self.value_scroll + (1.0 - y / h) * visible_range
+    }
+
+    /// 根据 max_val 限制 value_scroll 的范围，防止滚出有效区间。
+    pub fn clamp_value_scroll(&mut self, max_val: f32) {
+        let visible_range = max_val / self.value_zoom;
+        let max_scroll = (max_val - visible_range).max(0.0);
+        self.value_scroll = self.value_scroll.clamp(0.0, max_scroll);
     }
 }
 

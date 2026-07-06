@@ -559,7 +559,7 @@ pub fn show(
             None
         };
 
-        let (_h, auto_edits) = automation_panel::show_panels(
+        let (_h, auto_edits, auto_feedback) = automation_panel::show_panels(
             ui,
             panels,
             renderers,
@@ -587,6 +587,15 @@ pub fn show(
         );
         for edit in auto_edits {
             auto_edit_events.push(edit);
+        }
+
+        // 应用 automation 面板的 pianoroll 联动反馈（水平滚动/缩放）
+        if auto_feedback.scroll_x_delta != 0.0 {
+            view.base.scroll_x -= auto_feedback.scroll_x_delta;
+            view.base.dirty = true;
+        }
+        if (auto_feedback.zoom_factor - 1.0).abs() > 0.001 {
+            view.zoom_around_x(auto_feedback.zoom_center_x, auto_feedback.zoom_factor);
         }
 
         if midi.is_some() {

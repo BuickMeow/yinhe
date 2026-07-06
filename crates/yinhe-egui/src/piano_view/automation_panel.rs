@@ -28,7 +28,7 @@ const AUTOMATION_TARGETS: &[AutomationTarget] = &[
 ];
 
 /// 锚点命中半径（像素）。鼠标在此半径内点击视为选中该锚点。
-const ANCHOR_HIT_PX: f32 = 6.0;
+const ANCHOR_HIT_PX: f32 = 10.0;
 
 /// 用户在 automation 面板上的编辑操作。
 ///
@@ -76,6 +76,53 @@ use crate::theme;
 
 /// Height of the split/handle between automation panels.
 pub(crate) const SPLIT_H: f32 = theme::AUTO_PANEL_SPLIT_H;
+
+/// Tempo 的绝对上限（BPM）。来自 `bpm_from_mpq`：mpq=1 时 BPM=60_000_000。
+const TEMPO_UPPER_BOUND: f32 = 60_000_000.0;
+
+/// automation 面板交互产生的 pianoroll 联动反馈。
+///
+/// `show_panels` 返回，由 `piano_view::show` 应用到 pianoroll view。
+#[derive(Clone, Copy)]
+pub struct PanelPianorollFeedback {
+    /// 水平滚动 delta（像素）。非零时 piano_view 会调整 `scroll_x`。
+    pub scroll_x_delta: f32,
+    /// 水平缩放因子（1.0 = 无缩放）。
+    pub zoom_factor: f32,
+    /// 缩放中心（pianoroll content 局部 x 坐标，已减去 rect.min.x）。
+    pub zoom_center_x: f32,
+}
+
+impl Default for PanelPianorollFeedback {
+    fn default() -> Self {
+        Self {
+            scroll_x_delta: 0.0,
+            zoom_factor: 1.0, // 1.0 = 无缩放
+            zoom_center_x: 0.0,
+        }
+    }
+}
+
+/// 计算 target 的值上限。达到此上限时不可再缩小 value_zoom。
+/// - Tempo: 60_000_000 BPM
+/// - CC/PB/RPN/NRPN: max_value()
+fn value_upper_bound(panel: &AutomationPanelView) -> f32 {
+    if panel.show_tempo {
+        TEMPO_UPPER_BOUND
+    } else if panel.show_velocity {
+        127.0
+    } else {
+        panel.selected_target.max_value() as f32
+    }
+}
+
+/// 计算 value_zoom 的下限，使得 visible_range 不超过 upper_bound。
+fn min_value_zoom(max_val: f32, upper_bound: f32) -> f32 {
+    if upper_bound <= 0.0 {
+        return 1.0;
+    }
+    (max_val / upper_bound).max(0.01)
+}
 
 /// Ensure `renderers` has the same count as `panels`, creating/destroying as needed.
 fn sync_renderer_count(
@@ -131,10 +178,11 @@ pub fn show_panels(
     velocity_display_mode: &mut u32,
     edit_ctx: Option<&AutomationEditCtx<'_>>,
     tempo_events: &[(u32, f64)],
-) -> (f32, Vec<AutomationEdit>) {
+) -> (f32, Vec<AutomationEdit>, PanelPianorollFeedback) {
     let mut edits = Vec::new();
+    let mut feedback = PanelPianorollFeedback::default();
     if !*show_panels || panels.is_empty() {
-        return (0.0, edits);
+        return (0.0, edits, feedback);
     }
 
     // 派生 show_anchors：Pencil 或 Curve 工具下都显示锚点
@@ -231,16 +279,105 @@ pub fn show_panels(
         let gw = grid_rect.width() as u32;
         let gh = grid_rect.height() as u32;
 
+        // ── 垂直 zoom/scroll + 水平联动交互 ──
+        // 内容区（grid_area）：
+        //   触控板双指滑动 x → pianoroll 水平滚动（feedback）
+        //   触控板双指滑动 y → value_scroll（仅单面板时；多面板时面板间滚动已在上方处理）
+        //   触控板捏合 (zoom_delta) → pianoroll 水平缩放（feedback）
+        //   Cmd+滚轮 → pianoroll 水平缩放（feedback）
+        //   中键拖拽 → 水平 pan (feedback) + value_scroll
+        // 左侧面板（combo_area）：
+        //   触控板捏合 (zoom_delta) → 垂直缩放
+        //   Cmd+滚轮 → 垂直缩放
+        //   普通滚轮 → 不操作
+        let grid_area = egui::Rect::from_min_max(
+            egui::pos2(panel_rect.min.x + combo_width, panel_rect.min.y),
+            egui::pos2(panel_rect.max.x, panel_rect.max.y),
+        );
+        let combo_area = egui::Rect::from_min_max(
+            panel_rect.min,
+            egui::pos2(panel_rect.min.x + combo_width, panel_rect.max.y),
+        );
+        let pointer_pos = ui.input(|i| i.pointer.hover_pos());
+        let scroll_delta = ui.input(|i| i.smooth_scroll_delta);
+        let zoom_delta = ui.input(|i| i.zoom_delta());
+        let cmd = ui.input(|i| i.modifiers.command || i.modifiers.ctrl);
+        let upper_bound = value_upper_bound(panel);
+        let max_val_f = if panel.show_tempo {
+            tempo_events.iter().map(|(_, b)| *b as f32).fold(0.0_f32, f32::max).max(1.0)
+        } else if panel.show_velocity {
+            127.0
+        } else {
+            panel.selected_target.max_value() as f32
+        };
+        let zoom_min = min_value_zoom(max_val_f, upper_bound);
+
+        // 垂直缩放辅助闭包
+        let apply_vertical_zoom = |panel: &mut AutomationPanelView, factor: f32| {
+            panel.value_zoom = (panel.value_zoom * factor).clamp(zoom_min, 8.0);
+            panel.clamp_value_scroll(max_val_f);
+            panel.dirty = true;
+            ui.ctx().request_repaint();
+        };
+
+        if let Some(p) = pointer_pos {
+            let in_grid = grid_area.contains(p);
+            let in_combo = combo_area.contains(p);
+            if in_grid {
+                // 触控板捏合 → 水平缩放（联动 pianoroll）
+                if (zoom_delta - 1.0).abs() > 0.001 {
+                    feedback.zoom_factor = zoom_delta;
+                    feedback.zoom_center_x = p.x - panel_rect.min.x;
+                }
+                // Cmd+滚轮 → 水平缩放（联动 pianoroll）
+                if cmd && scroll_delta.y.abs() > 0.5 {
+                    let factor = if scroll_delta.y > 0.0 { 1.1 } else { 1.0 / 1.1 };
+                    feedback.zoom_factor = factor;
+                    feedback.zoom_center_x = p.x - panel_rect.min.x;
+                }
+                // 触控板水平滑动 → pianoroll 水平滚动
+                if !cmd && scroll_delta.x.abs() > 0.5 {
+                    feedback.scroll_x_delta += scroll_delta.x;
+                }
+                // 触控板垂直滑动 → value_scroll（仅单面板时）
+                if !cmd && scroll_delta.y.abs() > 0.5 && max_scroll <= 0.0 {
+                    let visible_range = max_val_f / panel.value_zoom;
+                    let scroll_amount = (scroll_delta.y / 100.0) * visible_range * 0.2;
+                    let max_scroll_val = (max_val_f - visible_range).max(0.0);
+                    panel.value_scroll = (panel.value_scroll + scroll_amount).clamp(0.0, max_scroll_val);
+                    panel.dirty = true;
+                    ui.ctx().request_repaint();
+                }
+                // 中键拖拽 → 水平 pan + value_scroll
+                if ui.input(|i| i.pointer.middle_down()) {
+                    let delta = ui.input(|i| i.pointer.delta());
+                    feedback.scroll_x_delta += delta.x;
+                    let visible_range = max_val_f / panel.value_zoom;
+                    let scroll_amount = -delta.y / panel_rect.height() * visible_range;
+                    let max_scroll_val = (max_val_f - visible_range).max(0.0);
+                    panel.value_scroll = (panel.value_scroll + scroll_amount).clamp(0.0, max_scroll_val);
+                    panel.dirty = true;
+                    ui.ctx().request_repaint();
+                }
+            } else if in_combo {
+                // 左侧面板：触控板捏合 → 垂直缩放
+                if (zoom_delta - 1.0).abs() > 0.001 {
+                    apply_vertical_zoom(panel, zoom_delta);
+                }
+                // Cmd+滚轮 → 垂直缩放
+                if cmd && scroll_delta.y.abs() > 0.5 {
+                    let factor = if scroll_delta.y > 0.0 { 1.1 } else { 1.0 / 1.1 };
+                    apply_vertical_zoom(panel, factor);
+                }
+            }
+        }
+
         // 先处理交互，得到 ghost（传给 wgpu Layer 3 绘制）+ edits。
         // 必须在 prepare_automation 之前，这样 ghost 能当帧渲染。
         let mut panel_ghost: Option<AutomationGhost> = None;
         if let Some(ctx) = edit_ctx {
             if !panel.show_velocity && !panel.show_tempo {
                 if let Some(track) = ctx.active_track {
-                    let grid_area = egui::Rect::from_min_max(
-                        egui::pos2(panel_rect.min.x + combo_width, panel_rect.min.y),
-                        egui::pos2(panel_rect.max.x, panel_rect.max.y),
-                    );
                     let (panel_edits, ghost) = handle_automation_interaction(
                         ui,
                         grid_area,
@@ -250,6 +387,7 @@ pub fn show_panels(
                         track,
                         ctx,
                         i,
+                        track_colors,
                     );
                     edits.extend(panel_edits);
                     panel_ghost = ghost;
@@ -423,29 +561,25 @@ pub fn show_panels(
         let pad_x = 4.0;
 
         let (top_val, mid_val, bot_val) = if panel.show_velocity {
+            // Velocity: 固定 0~127，不受 zoom/scroll 影响
             ("127".to_string(), "64".to_string(), "0".to_string())
         } else if panel.show_tempo {
-            let max_bpm = tempo_events
-                .iter()
-                .map(|(_, bpm)| *bpm)
-                .fold(0.0f64, f64::max);
-            (format!("{:.1}", max_bpm), format!("{:.1}", max_bpm / 2.0), "0.0".into())
+            // Tempo: 根据垂直 zoom/scroll 计算实际显示范围
+            let h = panel_rect.height();
+            let top_f = panel.y_to_value(0.0, max_val_f).round() as u32;
+            let mid_f = panel.y_to_value(h * 0.5, max_val_f).round() as u32;
+            let bot_f = panel.y_to_value(h, max_val_f).round() as u32;
+            (top_f.to_string(), mid_f.to_string(), bot_f.to_string())
         } else {
             let target = &panel.selected_target;
             let max = target.max_value();
-            let def = target.default_value();
-            match target {
-                AutomationTarget::PitchBend => {
-                    let half = max - def; // 8191
-                    (half.to_string(), "0".into(), (-(half as i32)).to_string())
-                }
-                _ if target.has_center_line() => {
-                    (max.to_string(), def.to_string(), "0".into())
-                }
-                _ => {
-                    (max.to_string(), (max / 2).to_string(), "0".into())
-                }
-            }
+            let max_f = max as f32;
+            // 根据垂直 zoom/scroll 计算面板顶部、中部、底部的实际值
+            let h = panel_rect.height();
+            let top_val_f = panel.y_to_value(0.0, max_f).round() as u32;
+            let mid_val_f = panel.y_to_value(h * 0.5, max_f).round() as u32;
+            let bot_val_f = panel.y_to_value(h, max_f).round() as u32;
+            (top_val_f.to_string(), mid_val_f.to_string(), bot_val_f.to_string())
         };
 
         let text_x = panel_rect.min.x + combo_width + pad_x;
@@ -492,7 +626,7 @@ pub fn show_panels(
     // Restore clip rect
     ui.set_clip_rect(old_clip);
 
-    (panels_visible_h, edits)
+    (panels_visible_h, edits, feedback)
 }
 
 /// 拖拽状态（ghost）。存在 egui data 中，跨帧保持。
@@ -502,6 +636,43 @@ enum AutoDrag {
     MoveAnchor { old_tick: u32 },
     /// Curve 拖拽：起点已固定
     CurveDraw { start_tick: u32, start_value: u16 },
+}
+
+/// 检测鼠标是否悬停在两个锚点之间的线段上。
+///
+/// 如果鼠标位置在插值线附近（阈值 8 像素），返回 `true`。
+fn hit_line_on_lane(
+    lane: &AutomationLane,
+    tick: u32,
+    value: f32,
+    ppu: f32,
+    scroll_x: f32,
+    grid_min_x: f32,
+    panel_min_y: f32,
+    panel: &AutomationPanelView,
+    max_val: f32,
+) -> bool {
+    // 找 bracket tick 的两个事件
+    let idx = lane.events.partition_point(|e| e.tick <= tick);
+    if idx == 0 || idx >= lane.events.len() {
+        return false; // 左侧无事件或右侧无事件
+    }
+    let left = &lane.events[idx - 1];
+    let right = &lane.events[idx];
+
+    // 计算插值值
+    let t = if right.tick == left.tick {
+        0.0
+    } else {
+        (tick - left.tick) as f32 / (right.tick - left.tick) as f32
+    };
+    let interp = left.shape.interpolate(t);
+    let interp_value = left.value as f32 + interp * (right.value as f32 - left.value as f32);
+
+    // 转换为像素坐标并检查距离
+    let interp_y = panel.value_to_y(interp_value, max_val);
+    let mouse_y = panel.value_to_y(value, max_val);
+    (interp_y - mouse_y).abs() <= 8.0
 }
 
 /// 处理 automation 面板上的鼠标交互。
@@ -517,6 +688,7 @@ fn handle_automation_interaction(
     track_idx: u16,
     ctx: &AutomationEditCtx<'_>,
     panel_index: usize,
+    track_colors: &[[f32; 3]],
 ) -> (Vec<AutomationEdit>, Option<AutomationGhost>) {
     let mut edits = Vec::new();
     let target = &panel.selected_target;
@@ -528,6 +700,11 @@ fn handle_automation_interaction(
     let ppu = panel.base.pixels_per_tick;
     let scroll_x = panel.base.scroll_x;
     let drag_id = ui.id().with("auto_drag").with(panel_index);
+    // ghost 用 track color 而非黄色
+    let track_color = track_colors
+        .get(track_idx as usize)
+        .copied()
+        .unwrap_or([0.8, 0.8, 0.8]);
 
     // 读取当前拖拽状态
     let drag_state = ui.ctx().data(|d| d.get_temp::<AutoDrag>(drag_id));
@@ -553,7 +730,7 @@ fn handle_automation_interaction(
             ctx.bar_line_data,
         ).max(0.0) as u32;
         let y_in_panel = (p.y - panel_rect.min.y).clamp(0.0, panel_rect.height());
-        let value = ((1.0 - y_in_panel / panel_rect.height()) * max_val as f32)
+        let value = panel.y_to_value(y_in_panel, max_val as f32)
             .round()
             .clamp(0.0, max_val as f32) as u16;
         (p, snapped_tick, value)
@@ -576,7 +753,7 @@ fn handle_automation_interaction(
             .and_then(|(i, e)| {
                 let (p, _, _) = mouse_info?;
                 let ex = grid_area.min.x + (e.tick as f32) * ppu - scroll_x;
-                let ey = panel_rect.min.y + (1.0 - e.value as f32 / max_val as f32) * panel_rect.height();
+                let ey = panel_rect.min.y + panel.value_to_y(e.value as f32, max_val as f32);
                 let dist = ((ex - p.x).powi(2) + (ey - p.y).powi(2)).sqrt();
                 if dist <= ANCHOR_HIT_PX {
                     Some((i, e.tick))
@@ -585,6 +762,14 @@ fn handle_automation_interaction(
                 }
             })
     });
+
+    // 拖拽中：鼠标变捏合抓手
+    if drag_state.is_some() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+    } else if hit_anchor.is_some() && in_grid {
+        // 悬停在锚点上时，鼠标变抓手
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+    }
 
     match ctx.active_tool {
         Tool::Pencil => {
@@ -603,14 +788,34 @@ fn handle_automation_interaction(
             }
 
             // 拖拽锚点：press 记录，release 提交
+            // release 不检查 in_grid——用户可能拖到边缘（值=127/0）时鼠标移出 grid，
+            // 但 mouse_info 仍有效（y_in_panel 已 clamp），不应丢失这次编辑。
             if pointer_pressed && in_grid {
                 if let Some((_, tick)) = hit_anchor {
                     ui.ctx().data_mut(|d| {
                         d.insert_temp(drag_id, AutoDrag::MoveAnchor { old_tick: tick });
                     });
+                } else if drag_state.is_none() {
+                    // 不在锚点上：检查是否在线段上，是则添加锚点并开始拖拽
+                    if let Some(l) = lane {
+                        if let Some((_, tick, value)) = mouse_info {
+                            if hit_line_on_lane(l, tick, value as f32, ppu, scroll_x, grid_area.min.x, panel_rect.min.y, panel, max_val as f32) {
+                                edits.push(AutomationEdit::Add {
+                                    track_idx,
+                                    target: target.clone(),
+                                    tick,
+                                    value,
+                                    shape: SegmentShape::Step,
+                                });
+                                ui.ctx().data_mut(|d| {
+                                    d.insert_temp(drag_id, AutoDrag::MoveAnchor { old_tick: tick });
+                                });
+                            }
+                        }
+                    }
                 }
             }
-            if pointer_released && in_grid {
+            if pointer_released {
                 let drag = ui.ctx().data(|d| d.get_temp::<AutoDrag>(drag_id));
                 ui.ctx().data_mut(|d| d.remove::<AutoDrag>(drag_id));
                 if let Some(AutoDrag::MoveAnchor { old_tick }) = drag {
@@ -624,6 +829,43 @@ fn handle_automation_interaction(
                                 new_value,
                             });
                         }
+                        // 构造 ghost 用于本帧渲染（防止松手瞬间旧线段闪现）
+                        // 用 new_tick（实时位置）找 bracketing，跳过 old_tick 事件
+                        let ghost_x_offset = panel.base.left_panel_width - scroll_x;
+                        let ghost_cur_x = ghost_x_offset + new_tick as f32 * ppu;
+                        let ghost_cur_y = panel.value_to_y(new_value as f32, max_val as f32);
+                        let lane_data = lane.and_then(|l| {
+                            // cur_shape 从 old_tick 对应事件取（被拖事件自身的 shape）
+                            let cur_shape = l
+                                .events
+                                .iter()
+                                .find(|e| e.tick == old_tick)
+                                .map(|e| e.shape)
+                                .unwrap_or(SegmentShape::Step);
+                            // 用 new_tick 找 bracketing，跳过 old_tick 事件
+                            let mut filtered = l.events.iter().filter(|e| e.tick != old_tick).peekable();
+                            let mut prev = None;
+                            let mut next = None;
+                            while let Some(e) = filtered.next() {
+                                if e.tick <= new_tick {
+                                    prev = Some((e.tick, ghost_x_offset + e.tick as f32 * ppu, panel.value_to_y(e.value as f32, max_val as f32), e.shape));
+                                } else {
+                                    next = Some((e.tick, ghost_x_offset + e.tick as f32 * ppu, panel.value_to_y(e.value as f32, max_val as f32)));
+                                    break;
+                                }
+                            }
+                            Some((cur_shape, prev, next))
+                        });
+                        let (cur_shape, prev, next) = lane_data.unwrap_or((SegmentShape::Step, None, None));
+                        return (edits, Some(AutomationGhost::Move {
+                            skip_tick: old_tick,
+                            prev,
+                            cur_x: ghost_cur_x,
+                            cur_y: ghost_cur_y,
+                            cur_shape,
+                            next,
+                            color: track_color,
+                        }));
                     }
                 }
                 return (edits, None);
@@ -645,6 +887,7 @@ fn handle_automation_interaction(
         }
         Tool::Curve => {
             // 拖拽起点 → 终点：press 记录起点，release 提交 2 个锚点
+            // release 不检查 in_grid（同 Pencil 理由）。
             if pointer_pressed && in_grid {
                 if let Some((_, tick, value)) = mouse_info {
                     ui.ctx().data_mut(|d| {
@@ -652,7 +895,7 @@ fn handle_automation_interaction(
                     });
                 }
             }
-            if pointer_released && in_grid {
+            if pointer_released {
                 let drag = ui.ctx().data(|d| d.get_temp::<AutoDrag>(drag_id));
                 ui.ctx().data_mut(|d| d.remove::<AutoDrag>(drag_id));
                 if let Some(AutoDrag::CurveDraw { start_tick: t1, start_value: v1 }) = drag {
@@ -699,23 +942,52 @@ fn handle_automation_interaction(
     {
         // panel 局部坐标，与 build_data_lines 一致：x = x_offset + tick*ppu
         let x_offset = panel.base.left_panel_width - scroll_x;
-        let h = panel_rect.height();
         let cur_x = x_offset + cur_tick as f32 * ppu;
-        let cur_y = h - (cur_value as f32 / max_val as f32) * h;
+        let cur_y = panel.value_to_y(cur_value as f32, max_val as f32);
         match drag {
             AutoDrag::MoveAnchor { old_tick } => {
-                let old_value = lane
-                    .and_then(|l| l.events.iter().find(|e| e.tick == old_tick))
-                    .map(|e| e.value)
-                    .unwrap_or(cur_value);
-                let old_x = x_offset + old_tick as f32 * ppu;
-                let old_y = h - (old_value as f32 / max_val as f32) * h;
-                Some(AutomationGhost::Move { old_x, old_y, cur_x, cur_y })
+                // 用 cur_tick（实时位置）找 bracketing，而非 old_tick（原位置）。
+                // 这样锚点跨过其他锚点时（如 C 从 B 后拖到 AB 中间），
+                // prev/next 会实时更新，ghost 线段始终正确。
+                let lane_data = lane.and_then(|l| {
+                    // cur_shape 从 old_tick 对应事件取（被拖事件自身的 shape）
+                    let cur_shape = l
+                        .events
+                        .iter()
+                        .find(|e| e.tick == old_tick)
+                        .map(|e| e.shape)
+                        .unwrap_or(SegmentShape::Step);
+
+                    // 用 cur_tick 找插入位置：partition_point 返回第一个 > cur_tick 的索引
+                    // 跳过 old_tick 对应的事件本身（它正在被拖动）
+                    let mut filtered = l.events.iter().filter(|e| e.tick != old_tick).peekable();
+                    let mut prev = None;
+                    let mut next = None;
+                    while let Some(e) = filtered.next() {
+                        if e.tick <= cur_tick {
+                            prev = Some((e.tick, x_offset + e.tick as f32 * ppu, panel.value_to_y(e.value as f32, max_val as f32), e.shape));
+                        } else {
+                            next = Some((e.tick, x_offset + e.tick as f32 * ppu, panel.value_to_y(e.value as f32, max_val as f32)));
+                            break;
+                        }
+                    }
+                    Some((cur_shape, prev, next))
+                });
+                let (cur_shape, prev, next) = lane_data.unwrap_or((SegmentShape::Step, None, None));
+                Some(AutomationGhost::Move {
+                    skip_tick: old_tick,
+                    prev,
+                    cur_x,
+                    cur_y,
+                    cur_shape,
+                    next,
+                    color: track_color,
+                })
             }
             AutoDrag::CurveDraw { start_tick, start_value } => {
                 let start_x = x_offset + start_tick as f32 * ppu;
-                let start_y = h - (start_value as f32 / max_val as f32) * h;
-                Some(AutomationGhost::Curve { start_x, start_y, cur_x, cur_y })
+                let start_y = panel.value_to_y(start_value as f32, max_val as f32);
+                Some(AutomationGhost::Curve { start_x, start_y, cur_x, cur_y, color: track_color })
             }
         }
     } else {

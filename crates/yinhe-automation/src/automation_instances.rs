@@ -21,6 +21,7 @@ pub fn build_decor(
     out: &mut Vec<DrawInstance>,
     w: f32,
     h: f32,
+    view: &AutomationPanelView,
     lanes: &[&AutomationLane],
     theme: &GpuTheme,
 ) {
@@ -45,7 +46,7 @@ pub fn build_decor(
         let max_val = target.max_value() as f32;
         if max_val > 0.0 && target.has_center_line() {
             let center_val = target.default_value() as f32;
-            let y_center = h - (center_val / max_val) * h;
+            let y_center = view.value_to_y(center_val, max_val);
             out.push(DrawInstance {
                 x: 0.0,
                 y: y_center - 0.5,
@@ -114,6 +115,12 @@ pub fn build_data_lines(
     track_visible: &[bool],
     track_colors: &[[f32; 3]],
     show_anchors: bool,
+    // 拖动中的事件 tick。build_data_lines 跳过该事件的 prev→cur 和 cur→next 线段，
+    // 这些线段由 ghost 层绘制。
+    skip_tick: Option<u32>,
+    // 拖动中新位置的 bracketing（prev_tick, next_tick）。
+    // 固定层跳过 prev_tick→next_tick 这条线段（由 ghost 层的 prev→cur→next 取代）。
+    skip_bracket: Option<(Option<u32>, Option<u32>)>,
     _theme: &GpuTheme,
 ) {
     if lanes.is_empty() {
@@ -164,7 +171,7 @@ pub fn build_data_lines(
         if visible_events.is_empty() {
             let idx = lane.events.partition_point(|e| e.tick < pad_start);
             let val = if idx > 0 { lane.events[idx - 1].value } else { 0 };
-            let y = h - (val as f32 / max_val) * h;
+            let y = view.value_to_y(val as f32, max_val);
             if w > grid_left_x {
                 push_h_line(out, grid_left_x, y, w - grid_left_x, color);
             }
@@ -178,22 +185,42 @@ pub fn build_data_lines(
         // 起始段（从 chase 值到第一个事件）按 Step 处理：保持 chase 值
         let mut prev_shape = SegmentShape::Step;
         let mut prev_x = x_offset + prev_tick as f32 * ppu;
-        let mut prev_y = h - (prev_val as f32 / max_val) * h;
+        let mut prev_y = view.value_to_y(prev_val as f32, max_val);
 
         // 从网格左边缘到第一个事件的横线（保持 chase 值）
         if prev_x > grid_left_x {
             push_h_line(out, grid_left_x, prev_y, prev_x - grid_left_x, color);
         }
 
+        // 用于检测是否要跳过 prev_tick→next_tick 线段
+        let (skip_prev_tick, skip_next_tick) = skip_bracket.unwrap_or((None, None));
+        // 跟踪上一个非 dragged 事件的 tick（用于匹配 skip_bracket 的 prev_tick）
+        let mut last_nondragged_tick: Option<u32> = if prev_idx > 0 {
+            lane.events.get(prev_idx - 1).map(|e| e.tick)
+        } else { None };
+
         for evt in visible_events {
             let tick = evt.tick;
             let value = evt.value;
+            let is_dragged = Some(tick) == skip_tick;
+            if is_dragged {
+                // 被拖事件：完全跳过（不画线、不画锚点、不更新 prev）
+                // prev 仍然指向 dragged 之前的事件，下一个非 dragged 事件会画 prev→cur
+                continue;
+            }
             let x2 = x_offset + tick as f32 * ppu;
-            let y2 = h - (value as f32 / max_val) * h;
+            let y2 = view.value_to_y(value as f32, max_val);
 
-            render_segment(out, prev_x, prev_y, x2, y2, prev_shape, color);
+            // 跳过 skip_bracket 匹配的线段（prev_tick→next_tick，由 ghost 的 prev→cur→next 取代）
+            let is_bracket_segment = skip_prev_tick.is_some()
+                && skip_next_tick.is_some()
+                && skip_prev_tick == last_nondragged_tick
+                && skip_next_tick == Some(tick);
+            if !is_bracket_segment {
+                render_segment(out, prev_x, prev_y, x2, y2, prev_shape, color);
+            }
 
-            // 锚点（pencil 时显示）画在事件位置
+            // 锚点（pencil 时显示）
             if show_anchors {
                 out.push(DrawInstance {
                     x: x2 - ANCHOR_RADIUS,
@@ -210,17 +237,26 @@ pub fn build_data_lines(
             prev_shape = evt.shape;
             prev_x = x2;
             prev_y = y2;
+            last_nondragged_tick = Some(tick);
         }
 
         // 最后一个事件 → 右边界：保持最后值到右边界
-        let next_idx = lane.events.partition_point(|e| e.tick <= visible_events.last().unwrap().tick);
-        let right_bound = if next_idx < lane.events.len() {
-            x_offset + lane.events[next_idx].tick as f32 * ppu
+        // 检查 skip_bracket 的 next_tick == None（C 拖到末尾，右边界由 ghost 取代）
+        let skip_right_bracket = skip_next_tick.is_none()
+            && skip_prev_tick.is_some()
+            && skip_prev_tick == last_nondragged_tick;
+        if skip_right_bracket {
+            // bracket 段的右边界由 ghost 取代，不画
         } else {
-            w
-        };
-        if right_bound > prev_x {
-            push_h_line(out, prev_x, prev_y, right_bound - prev_x, color);
+            let next_idx = lane.events.partition_point(|e| e.tick <= visible_events.last().unwrap().tick);
+            let right_bound = if next_idx < lane.events.len() {
+                x_offset + lane.events[next_idx].tick as f32 * ppu
+            } else {
+                w
+            };
+            if right_bound > prev_x {
+                push_h_line(out, prev_x, prev_y, right_bound - prev_x, color);
+            }
         }
     }
 }
@@ -403,7 +439,8 @@ pub fn build_velocity_bars(
                 .copied()
                 .unwrap_or_else(|| TRACK_PALETTE[trk_idx % TRACK_PALETTE.len()]);
 
-            let vel_h = (note.velocity as f32 / 127.0) * h;
+            let y = view.value_to_y(note.velocity as f32, 127.0);
+            let vel_h = view.value_to_y(0.0, 127.0) - y;
 
             match display_mode {
                 0 => {
@@ -413,7 +450,7 @@ pub fn build_velocity_bars(
                     }
                     bars.push(VelBar {
                         x: bar_x,
-                        y: h - vel_h,
+                        y,
                         w: 2.0,
                         h: vel_h,
                         color,
@@ -432,7 +469,7 @@ pub fn build_velocity_bars(
                     }
                     bars.push(VelBar {
                         x: nx,
-                        y: h - vel_h,
+                        y,
                         w: nw,
                         h: vel_h,
                         color,
@@ -511,7 +548,7 @@ pub fn build_tempo_lines(
         // No events in visible range: draw full-width line at chase value
         let chase_idx = if vis_start > 0 { vis_start - 1 } else { 0 };
         let val = tempo_events[chase_idx].1 as f32;
-        let y = h - (val / max_bpm) * h;
+        let y = view.value_to_y(val, max_bpm);
         if w > grid_left_x {
             out.push(DrawInstance {
                 x: grid_left_x,
@@ -535,7 +572,7 @@ pub fn build_tempo_lines(
     // Horizontal line from grid left edge to the first visible event
     let first_tick = tempo_events[vis_start].0;
     let first_x = x_offset + first_tick as f32 * ppu;
-    let first_y = h - (prev_val / max_bpm) * h;
+    let first_y = view.value_to_y(prev_val, max_bpm);
     if first_x > grid_left_x {
         out.push(DrawInstance {
             x: grid_left_x,
@@ -554,8 +591,8 @@ pub fn build_tempo_lines(
         let val = bpm as f32;
         let x1 = x_offset + prev_tick as f32 * ppu;
         let x2 = x_offset + tick as f32 * ppu;
-        let y1 = h - (prev_val / max_bpm) * h;
-        let y2 = h - (val / max_bpm) * h;
+        let y1 = view.value_to_y(prev_val, max_bpm);
+        let y2 = view.value_to_y(val, max_bpm);
 
         // Horizontal line: value held from prev_tick to tick
         if x2 > x1 {
@@ -592,7 +629,7 @@ pub fn build_tempo_lines(
 
     // Horizontal line from last visible event to right edge
     let last_x = x_offset + prev_tick as f32 * ppu;
-    let last_y = h - (prev_val / max_bpm) * h;
+    let last_y = view.value_to_y(prev_val, max_bpm);
     if w > last_x {
         out.push(DrawInstance {
             x: last_x,
@@ -609,8 +646,6 @@ pub fn build_tempo_lines(
 
 /// ghost 锚点半径（像素）。
 const GHOST_RADIUS: f32 = 4.0;
-/// ghost 颜色（黄色）。
-const GHOST_COLOR: [f32; 3] = [1.0, 1.0, 0.4];
 /// ghost 不透明度。
 const GHOST_ALPHA: f32 = 0.9;
 
@@ -622,13 +657,13 @@ pub fn build_ghost(
     ghost: AutomationGhost,
     _theme: &GpuTheme,
 ) {
-    let push_anchor = |out: &mut Vec<DrawInstance>, x: f32, y: f32| {
+    let push_anchor = |out: &mut Vec<DrawInstance>, x: f32, y: f32, color: [f32; 3]| {
         out.push(DrawInstance {
             x: x - GHOST_RADIUS,
             y: y - GHOST_RADIUS,
             w: 2.0 * GHOST_RADIUS,
             h: 2.0 * GHOST_RADIUS,
-            rgba_packed: pack_rgba(GHOST_COLOR[0], GHOST_COLOR[1], GHOST_COLOR[2], GHOST_ALPHA),
+            rgba_packed: pack_rgba(color[0], color[1], color[2], GHOST_ALPHA),
             props_packed: pack_props(GHOST_RADIUS, 0.0),
             velocity: 0,
             tag: 0,
@@ -636,27 +671,22 @@ pub fn build_ghost(
     };
 
     match ghost {
-        AutomationGhost::Move { old_x, old_y, cur_x, cur_y } => {
-            // 原位置画一个暗色小锚点（标识起点）
-            out.push(DrawInstance {
-                x: old_x - GHOST_RADIUS,
-                y: old_y - GHOST_RADIUS,
-                w: 2.0 * GHOST_RADIUS,
-                h: 2.0 * GHOST_RADIUS,
-                rgba_packed: pack_rgba(GHOST_COLOR[0] * 0.5, GHOST_COLOR[1] * 0.5, GHOST_COLOR[2] * 0.5, 0.6),
-                props_packed: pack_props(GHOST_RADIUS, 0.0),
-                velocity: 0,
-                tag: 0,
-            });
-            // 连线 old → cur（直线，复用 push_polyline）
-            push_polyline(out, old_x, old_y, cur_x, cur_y, |t| t, GHOST_COLOR);
+        AutomationGhost::Move { skip_tick: _, prev, cur_x, cur_y, cur_shape, next, color } => {
+            // prev → cur 线段（track color）
+            if let Some((_prev_tick, prev_x, prev_y, prev_shape)) = prev {
+                render_segment(out, prev_x, prev_y, cur_x, cur_y, prev_shape, color);
+            }
+            // cur → next 线段（track color）
+            if let Some((_next_tick, next_x, next_y)) = next {
+                render_segment(out, cur_x, cur_y, next_x, next_y, cur_shape, color);
+            }
             // ghost 锚点在 cur
-            push_anchor(out, cur_x, cur_y);
+            push_anchor(out, cur_x, cur_y, color);
         }
-        AutomationGhost::Curve { start_x, start_y, cur_x, cur_y } => {
-            push_anchor(out, start_x, start_y);
-            push_polyline(out, start_x, start_y, cur_x, cur_y, |t| t, GHOST_COLOR);
-            push_anchor(out, cur_x, cur_y);
+        AutomationGhost::Curve { start_x, start_y, cur_x, cur_y, color } => {
+            push_anchor(out, start_x, start_y, color);
+            push_polyline(out, start_x, start_y, cur_x, cur_y, |t| t, color);
+            push_anchor(out, cur_x, cur_y, color);
         }
     }
 }
