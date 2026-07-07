@@ -814,6 +814,8 @@ impl App {
                                 });
                         });
                         if close {
+                            // Hide window before closing to prevent white flash
+                            vctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
                             s.show_settings = false;
                             // Keep slot = Some(s) — don't drop the settings
                         }
@@ -923,6 +925,8 @@ impl App {
                             });
                     });
                     if close {
+                        // Hide window before closing to prevent white flash
+                        vctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
                         *open_cb.borrow_mut() = false;
                     }
                 },
@@ -1011,6 +1015,7 @@ impl App {
                 crate::chrome::dialog::viewport_builder("选择 MIDI 文件", [500.0, 400.0], true),
                 move |vctx, _class| {
                     let close_requested = vctx.input(|i| i.viewport().close_requested());
+                    let vctx_cmd = vctx.clone();
                     egui::CentralPanel::default()
                         .frame(egui::Frame {
                             fill: crate::theme::APP_BG,
@@ -1020,6 +1025,8 @@ impl App {
                             let mut close = close_requested;
                             crate::chrome::dialog::title_bar(ui, "选择 MIDI 文件", &mut close);
                             if close {
+                                // Hide window before closing to prevent white flash
+                                vctx_cmd.send_viewport_cmd(egui::ViewportCommand::Visible(false));
                                 *action_cb.borrow_mut() = archive_picker::ArchivePickerAction::Cancel;
                                 return;
                             }
@@ -1246,6 +1253,8 @@ impl App {
                             });
                     });
                     if close {
+                        // Hide window before closing to prevent white flash
+                        vctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
                         *open_cb.borrow_mut() = false;
                     }
                 },
@@ -1301,6 +1310,8 @@ impl App {
                             });
                     });
                     if close {
+                        // Hide window before closing to prevent white flash
+                        vctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
                         *open_cb.borrow_mut() = false;
                     }
                 },
