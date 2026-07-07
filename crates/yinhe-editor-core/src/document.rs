@@ -137,6 +137,13 @@ impl Document {
                         n.track += 1;
                     }
                 }
+                // Shift automation lane track indices by 1 to match.
+                for track in model.tracks.iter_mut() {
+                    let track = Arc::make_mut(track);
+                    for lane in track.automation_lanes.iter_mut() {
+                        lane.track += 1;
+                    }
+                }
                 model.tracks.insert(0, Arc::new(conductor));
                 model.rebuild();
             }

@@ -85,12 +85,16 @@ pub fn parse_bytes_with_encoding(
             .map(|(track_idx, events)| parse_track(events, track_idx, encoding))
             .collect::<Result<Vec<_>, _>>()?;
 
-        // Drop skipped tracks and assign fallback names by final position.
+        // Drop skipped tracks and assign fallback names / final track indices by position.
         let mut tracks: Vec<TrackData> = Vec::with_capacity(total_tracks);
         let mut per_track_notes: Vec<Vec<NoteEvent>> = Vec::with_capacity(total_tracks);
         for mut td in parsed.into_iter().flatten() {
             if td.name.is_empty() {
                 td.name = format!("Track {}", tracks.len() + 1);
+            }
+            // 用最终 model 位置修正 lane.track，避免与后续插入 conductor 后的编号不一致
+            for lane in td.automation_lanes.iter_mut() {
+                lane.track = tracks.len() as u16;
             }
             per_track_notes.push(td.notes);
             td.notes = Vec::new(); // notes moved out, clear to avoid confusion

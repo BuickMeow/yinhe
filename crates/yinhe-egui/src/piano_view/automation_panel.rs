@@ -776,7 +776,7 @@ fn handle_automation_interaction(
 
     match ctx.active_tool {
         Tool::Pencil => {
-            // 双击已有锚点：切换 shape
+            // 双击：切换 shape（在锚点上）或新建锚点（空白处）
             if pointer_double_clicked && in_grid {
                 if let Some((_, tick)) = hit_anchor {
                     if let Some(lidx) = lane_idx {
@@ -786,6 +786,17 @@ fn handle_automation_interaction(
                             tick,
                         });
                     }
+                    // 清除可能残留的 drag_state（双击时 pointer_pressed 也会触发）
+                    ui.ctx().data_mut(|d| d.remove::<AutoDrag>(drag_id));
+                } else if let Some((_, tick, value)) = mouse_info {
+                    // 双击空白处：新建锚点
+                    edits.push(AutomationEdit::Add {
+                        track_idx,
+                        target: target.clone(),
+                        tick,
+                        value,
+                        shape: SegmentShape::Step,
+                    });
                 }
                 return (edits, None);
             }
