@@ -252,5 +252,23 @@ pub fn show_content(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
     ui.separator();
     ui.add_space(8.0);
 
+    // ── Factory reset button ──
+    ui.horizontal(|ui| {
+        ui.add_space(ui.available_width() / 2.0 - 80.0);
+        if ui
+            .button(egui::RichText::new("恢复出厂设置").color(egui::Color32::from_rgb(232, 80, 80)))
+            .clicked()
+        {
+            let default_settings = AudioSettings::default();
+            // Preserve runtime fields (device lists, etc.)
+            let devices = std::mem::take(&mut settings.available_devices);
+            let rates = std::mem::take(&mut settings.available_sample_rates);
+            *settings = default_settings;
+            settings.available_devices = devices;
+            settings.available_sample_rates = rates;
+            changed = true;
+        }
+    });
+
     changed
 }

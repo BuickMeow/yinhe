@@ -35,9 +35,9 @@ pub struct AudioSettings {
     #[serde(skip)]
     pub show_settings: bool,
     #[serde(skip)]
-    available_devices: Vec<String>,
+    pub available_devices: Vec<String>,
     #[serde(skip)]
-    available_sample_rates: Vec<u32>,
+    pub available_sample_rates: Vec<u32>,
 }
 
 impl Default for AudioSettings {

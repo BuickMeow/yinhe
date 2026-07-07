@@ -89,9 +89,10 @@ pub fn show(
         },
     };
 
-    // Build track colors uniform (AR notes now fetch color from uniform in shader)
+    // Build track colors uniform — allocate on heap to avoid 1MB stack overflow
     let track_count = track_colors.len().min(MAX_TRACKS) as u32;
-    let mut tc_uniform = TrackColorsUniform { colors: [[0.0; 4]; MAX_TRACKS] };
+    let mut tc_buf: Vec<u8> = vec![0u8; std::mem::size_of::<TrackColorsUniform>()];
+    let tc_uniform: &mut TrackColorsUniform = bytemuck::from_bytes_mut(&mut tc_buf);
     for (i, color) in track_colors.iter().enumerate().take(MAX_TRACKS) {
         tc_uniform.colors[i] = [color[0], color[1], color[2], 1.0];
     }
@@ -119,7 +120,7 @@ pub fn show(
 
     let theme = renderer.theme().clone();
     renderer.upload_uniforms(uniforms);
-    renderer.upload_track_colors(&tc_uniform);
+    renderer.upload_track_colors(tc_uniform);
     renderer.ensure_layers(3);
 
     let vh = view.render_hash();

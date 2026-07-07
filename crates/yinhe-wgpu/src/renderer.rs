@@ -69,7 +69,7 @@ pub struct InstanceRenderer {
     queue: Queue,
     render: RenderPipelineState,
     cached_uniforms: Option<Uniforms>,
-    cached_track_colors: Option<TrackColorsUniform>,
+    cached_track_colors: Option<Vec<u8>>,
     cached_selection: Option<SelectionUniform>,
     layers: Vec<AnyLayer>,
     pub theme: yinhe_theme::GpuTheme,
@@ -110,9 +110,10 @@ impl InstanceRenderer {
 
     /// Upload track colors to the GPU.  Skips the write when the value is unchanged.
     pub fn upload_track_colors(&mut self, colors: &TrackColorsUniform) {
-        if self.cached_track_colors.as_ref() != Some(colors) {
-            self.queue.write_buffer(&self.render.track_colors_buffer, 0, bytemuck::bytes_of(colors));
-            self.cached_track_colors = Some(*colors);
+        let new_bytes = bytemuck::bytes_of(colors);
+        if self.cached_track_colors.as_deref() != Some(new_bytes) {
+            self.queue.write_buffer(&self.render.track_colors_buffer, 0, new_bytes);
+            self.cached_track_colors = Some(new_bytes.to_vec());
         }
     }
 
