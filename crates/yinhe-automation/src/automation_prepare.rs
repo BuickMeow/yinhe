@@ -9,22 +9,13 @@ use yinhe_wgpu::layer_cache_key;
 /// 拖拽预览（ghost）。由交互层每帧计算，传给 wgpu 在 ghost 层绘制。
 ///
 /// 坐标为 panel 局部像素坐标（原点在 panel 左上角）。
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub enum AutomationGhost {
-    /// Pencil 拖拽锚点：被拖动的锚点从原位置移到 `cur` 位置。
-    /// prev→cur 和 cur→next 两条线段从固定层转移到 ghost 层绘制。
+    /// Pencil 拖拽锚点：整条 lane 用被拖事件的临时位置重新生成。
+    /// 固定层完全跳过该 lane，由 ghost 层画完整覆盖后的 lane。
     Move {
-        /// 被拖动事件的 tick（build_data_lines 据此跳过该事件及其相关线段）。
-        skip_tick: u32,
-        /// 前一个锚点（固定）。`(tick, x, y, shape)`，shape 决定 prev→cur 的插值。
-        prev: Option<(u32, f32, f32, SegmentShape)>,
-        /// 拖动中的 ghost 位置。
-        cur_x: f32,
-        cur_y: f32,
-        /// 被拖动锚点的 shape（决定 cur→next 的插值）。
-        cur_shape: SegmentShape,
-        /// 下一个锚点（固定）。`(tick, x, y)`。
-        next: Option<(u32, f32, f32)>,
+        /// 覆盖后的完整 lane（已将被拖事件移动到新位置）。
+        lane: AutomationLane,
         /// 音轨颜色（ghost 用 track color 而非黄色）。
         color: [f32; 3],
     },
@@ -52,19 +43,35 @@ fn tempo_hash(tempo_events: &[(u32, f64)]) -> u64 {
 
 /// Hash automation lane 事件内容（tick + value + shape）。
 /// 用于 Layer 2 cache key：任何 Add/Move/Delete/CycleShape 后 key 变化 → 重建。
-fn hash_lanes(lanes: &[&AutomationLane]) -> u64 {
+fn hash_lane(lane: &AutomationLane) -> u64 {
+    let mut h: u64 = 0;
+    h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(lane.events.len() as u64);
+    for e in &lane.events {
+        h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(e.tick as u64);
+        h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(e.value as u64);
+        let shape_bits = match e.shape {
+            SegmentShape::Step => 0u64,
+            SegmentShape::Curve { tension } => 1 + (tension as u8 as u64),
+        };
+        h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(shape_bits);
+    }
+    h
+}
+
+/// 计算 lanes 的 hash，但排除被 ghost 覆盖的 lane。
+/// 这样拖拽过程中固定层 key 不变，只在开始/结束拖拽时变化。
+fn hash_lanes_excluding(lanes: &[&AutomationLane], ghost: Option<&AutomationGhost>) -> u64 {
+    let ghost_lane_key = match ghost {
+        Some(AutomationGhost::Move { lane, .. }) => Some((lane.track, lane.target.clone())),
+        _ => None,
+    };
     let mut h: u64 = 0;
     for lane in lanes {
-        h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(lane.events.len() as u64);
-        for e in &lane.events {
-            h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(e.tick as u64);
-            h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(e.value as u64);
-            let shape_bits = match e.shape {
-                SegmentShape::Step => 0u64,
-                SegmentShape::Curve { tension } => 1 + (tension as u8 as u64),
-            };
-            h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(shape_bits);
+        // 通过 track + target 跳过被 ghost 覆盖的 lane
+        if ghost_lane_key.as_ref() == Some(&(lane.track, lane.target.clone())) {
+            continue;
         }
+        h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(hash_lane(lane));
     }
     h
 }
@@ -173,18 +180,14 @@ pub fn prepare(
     let is_velocity = view.show_velocity;
     let is_tempo = view.show_tempo;
     let tv_hash = yinhe_wgpu::hash_bools(track_visible);
-    // lanes 事件内容 hash：任何 Add/Move/Delete/CycleShape 后 key 变化 → Layer 2 重建
-    let lanes_hash = hash_lanes(lanes);
-    // skip_tick：拖拽开始/结束时 key 变化 → Layer 2 重建（隐藏/恢复被拖线段）
-    // skip_bracket：C 新位置变化时 key 变化 → Layer 2 重建（跳过 prev_tick→next_tick）
-    let (skip_tick_val, skip_bracket_val) = match ghost {
-        Some(AutomationGhost::Move { skip_tick, prev, next, .. }) => {
-            let prev_v = prev.map(|(t, _, _, _)| t as u64).unwrap_or(0);
-            let next_v = next.map(|(t, _, _)| t as u64).unwrap_or(0);
-            (skip_tick as u64 + 1, prev_v.wrapping_mul(1000003).wrapping_add(next_v))
-        }
-        _ => (0, 0),
-    };
+    // ghost_lane_hash：被 ghost 覆盖的 lane 内容变化时触发 Layer 2 重建。
+    // 这样开始/结束拖拽时固定层会隐藏/恢复该 lane。
+    let ghost_lane_hash = ghost.as_ref().map(|g| match g {
+        AutomationGhost::Move { lane, .. } => hash_lane(lane),
+        AutomationGhost::Curve { .. } => 1,
+    }).unwrap_or(0);
+    // 固定层排除 ghost lane 后计算 lanes_hash（避免拖拽时 lane 原数据未变但 key 变化）
+    let fixed_lanes_hash = hash_lanes_excluding(lanes, ghost.as_ref());
     let bars_key = layer_cache_key(&[
         vh, wh, tv_hash,
         velocity_display_mode as u64,
@@ -193,10 +196,10 @@ pub fn prepare(
         view.show_velocity as u64,
         view.show_tempo as u64,
         tempo_hash(tempo_events),
-        lanes_hash,
-        skip_tick_val,
-        skip_bracket_val,
+        fixed_lanes_hash,
+        ghost_lane_hash,
     ]);
+    let ghost_for_layer2 = ghost.clone();
     renderer.upload_layer(2, bars_key, |out| {
         if is_tempo {
             automation_instances::build_tempo_lines(out, w, h, view, tempo_events, &theme);
@@ -207,19 +210,13 @@ pub fn prepare(
                 );
             }
         } else {
-            // 从 ghost 提取 skip_tick 和 skip_bracket
-            // skip_tick: 被拖事件的原 tick（跳过该事件本身）
-            // skip_bracket: C 新位置的 (prev_tick, next_tick)，固定层跳过 prev_tick→next_tick 线段
-            let (skip_tick, skip_bracket) = match ghost {
-                Some(AutomationGhost::Move { skip_tick, prev, next, .. }) => {
-                    let prev_tick = prev.map(|(tick, _, _, _)| tick);
-                    let next_tick = next.map(|(tick, _, _)| tick);
-                    (Some(skip_tick), Some((prev_tick, next_tick)))
-                }
-                _ => (None, None),
+            // 固定层跳过被 ghost 覆盖的 lane
+            let skip_lane = match ghost_for_layer2 {
+                Some(AutomationGhost::Move { ref lane, .. }) => Some(lane),
+                _ => None,
             };
             automation_instances::build_data_lines(
-                out, w, h, view, lanes, track_visible, track_colors, show_anchors, skip_tick, skip_bracket, &theme,
+                out, w, h, view, lanes, track_visible, track_colors, show_anchors, skip_lane, &theme,
             );
         }
     });
@@ -227,7 +224,7 @@ pub fn prepare(
     // Layer 3: ghost (拖拽预览，无缓存，每帧重建)
     renderer.upload_layer_force(3, |out| {
         if let Some(g) = ghost {
-            automation_instances::build_ghost(out, g, &theme);
+            automation_instances::build_ghost(out, g, w, view, show_anchors, &theme);
         }
     });
 

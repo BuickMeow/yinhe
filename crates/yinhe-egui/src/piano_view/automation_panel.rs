@@ -6,7 +6,7 @@ use egui_material_icons::icons::*;
 use yinhe_editor_core::quantize::QuantizePreset;
 use yinhe_types::{AutomationLane, AutomationTarget, SegmentShape, TimeSigEvent};
 
-use yinhe_automation::{AutomationGhost, AutomationPanelView, prepare_automation};
+use yinhe_automation::{AutomationGhost, AutomationPanelView, automation_instances, prepare_automation};
 use yinhe_wgpu::InstanceRenderer;
 
 use crate::widgets::tools_panel::Tool;
@@ -833,42 +833,11 @@ fn handle_automation_interaction(
                             });
                         }
                         // 构造 ghost 用于本帧渲染（防止松手瞬间旧线段闪现）
-                        // 用 new_tick（实时位置）找 bracketing，跳过 old_tick 事件
-                        let ghost_x_offset = panel.base.left_panel_width - scroll_x;
-                        let ghost_cur_x = ghost_x_offset + new_tick as f32 * ppu;
-                        let ghost_cur_y = panel.value_to_y(new_value as f32, max_val as f32);
-                        let lane_data = lane.and_then(|l| {
-                            // cur_shape 从 old_tick 对应事件取（被拖事件自身的 shape）
-                            let cur_shape = l
-                                .events
-                                .iter()
-                                .find(|e| e.tick == old_tick)
-                                .map(|e| e.shape)
-                                .unwrap_or(SegmentShape::Step);
-                            // 用 new_tick 找 bracketing，跳过 old_tick 事件
-                            let mut filtered = l.events.iter().filter(|e| e.tick != old_tick).peekable();
-                            let mut prev = None;
-                            let mut next = None;
-                            while let Some(e) = filtered.next() {
-                                if e.tick <= new_tick {
-                                    prev = Some((e.tick, ghost_x_offset + e.tick as f32 * ppu, panel.value_to_y(e.value as f32, max_val as f32), e.shape));
-                                } else {
-                                    next = Some((e.tick, ghost_x_offset + e.tick as f32 * ppu, panel.value_to_y(e.value as f32, max_val as f32)));
-                                    break;
-                                }
-                            }
-                            Some((cur_shape, prev, next))
-                        });
-                        let (cur_shape, prev, next) = lane_data.unwrap_or((SegmentShape::Step, None, None));
-                        return (edits, Some(AutomationGhost::Move {
-                            skip_tick: old_tick,
-                            prev,
-                            cur_x: ghost_cur_x,
-                            cur_y: ghost_cur_y,
-                            cur_shape,
-                            next,
-                            color: track_color,
-                        }));
+                        // 用 build_lane_override 生成覆盖后的完整 lane，由 ghost 层整 lane 绘制
+                        if let Some(l) = lane {
+                            let override_lane = automation_instances::build_lane_override(l, old_tick, new_tick, new_value);
+                            return (edits, Some(AutomationGhost::Move { lane: override_lane, color: track_color }));
+                        }
                     }
                 }
                 return (edits, None);
@@ -949,42 +918,11 @@ fn handle_automation_interaction(
         let cur_y = panel.value_to_y(cur_value as f32, max_val as f32);
         match drag {
             AutoDrag::MoveAnchor { old_tick } => {
-                // 用 cur_tick（实时位置）找 bracketing，而非 old_tick（原位置）。
-                // 这样锚点跨过其他锚点时（如 C 从 B 后拖到 AB 中间），
-                // prev/next 会实时更新，ghost 线段始终正确。
-                let lane_data = lane.and_then(|l| {
-                    // cur_shape 从 old_tick 对应事件取（被拖事件自身的 shape）
-                    let cur_shape = l
-                        .events
-                        .iter()
-                        .find(|e| e.tick == old_tick)
-                        .map(|e| e.shape)
-                        .unwrap_or(SegmentShape::Step);
-
-                    // 用 cur_tick 找插入位置：partition_point 返回第一个 > cur_tick 的索引
-                    // 跳过 old_tick 对应的事件本身（它正在被拖动）
-                    let mut filtered = l.events.iter().filter(|e| e.tick != old_tick).peekable();
-                    let mut prev = None;
-                    let mut next = None;
-                    while let Some(e) = filtered.next() {
-                        if e.tick <= cur_tick {
-                            prev = Some((e.tick, x_offset + e.tick as f32 * ppu, panel.value_to_y(e.value as f32, max_val as f32), e.shape));
-                        } else {
-                            next = Some((e.tick, x_offset + e.tick as f32 * ppu, panel.value_to_y(e.value as f32, max_val as f32)));
-                            break;
-                        }
-                    }
-                    Some((cur_shape, prev, next))
-                });
-                let (cur_shape, prev, next) = lane_data.unwrap_or((SegmentShape::Step, None, None));
-                Some(AutomationGhost::Move {
-                    skip_tick: old_tick,
-                    prev,
-                    cur_x,
-                    cur_y,
-                    cur_shape,
-                    next,
-                    color: track_color,
+                // 用 build_lane_override 生成覆盖后的完整 lane，ghost 层整 lane 绘制。
+                // 这样无论锚点如何跨越、插入、拖到末尾，都只需要正常画线逻辑。
+                lane.map(|l| {
+                    let override_lane = automation_instances::build_lane_override(l, old_tick, cur_tick, cur_value);
+                    AutomationGhost::Move { lane: override_lane, color: track_color }
                 })
             }
             AutoDrag::CurveDraw { start_tick, start_value } => {

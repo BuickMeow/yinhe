@@ -98,29 +98,146 @@ pub fn build_grid(
     }
 }
 
+/// 一个需要绘制的线段（panel 局部像素坐标）。
+///
+/// `shape` 描述 `(x1,y1) → (x2,y2)` 的插值方式。
+struct SegSpan {
+    x1: f32,
+    y1: f32,
+    shape: SegmentShape,
+    x2: f32,
+    y2: f32,
+}
+
+/// 构造一条覆盖后的 lane：删除 `old_tick` 处的事件，在 `new_tick` 处插入新事件。
+///
+/// 用于拖拽 ghost：被拖事件从原位置移动到新位置，其余事件保持不变。
+/// 如果 `new_tick` 处已有事件，先删除再插入（避免同一 tick 多个事件）。
+pub fn build_lane_override(
+    lane: &AutomationLane,
+    old_tick: u32,
+    new_tick: u32,
+    new_value: u16,
+) -> AutomationLane {
+    let mut events = lane.events.clone();
+
+    // 找到并删除 old_tick 对应的事件，同时保留其 shape
+    let old_shape = events
+        .iter()
+        .position(|e| e.tick == old_tick)
+        .map(|idx| events.remove(idx).shape)
+        .unwrap_or_else(|| lane.target.default_shape());
+
+    // 删除 new_tick 处可能存在的旧事件（避免重复 tick）
+    if let Some(idx) = events.iter().position(|e| e.tick == new_tick) {
+        events.remove(idx);
+    }
+
+    // 二分查找插入位置，保持有序
+    let insert_idx = events.partition_point(|e| e.tick < new_tick);
+    events.insert(
+        insert_idx,
+        AutomationEvent {
+            tick: new_tick,
+            value: new_value,
+            shape: old_shape,
+        },
+    );
+
+    AutomationLane {
+        target: lane.target.clone(),
+        track: lane.track,
+        events,
+    }
+}
+
+/// 把 lane.events 转换成需要绘制的段列表。
+///
+/// # 段的类型
+/// - **chase 段**：从 grid 左边缘到第一个可见事件（Step shape，保持 chase 值）
+/// - **event 段**：从一个事件到下一个事件（用前一个事件的 shape）
+/// - **right 段**：从最后一个事件到右边界（Step shape，保持最后值）
+fn collect_segments(
+    lane: &AutomationLane,
+    view: &AutomationPanelView,
+    max_val: f32,
+    w: f32,
+    pad_start: u32,
+    pad_end: u32,
+    x_offset: f32,
+    grid_left_x: f32,
+) -> Vec<SegSpan> {
+    let ppu = view.base.pixels_per_tick;
+    let visible_events = lane.events_in_range(pad_start, pad_end);
+    let mut segs = Vec::new();
+
+    // 无可见事件：在 chase 值处画一条横贯网格的横线
+    if visible_events.is_empty() {
+        let idx = lane.events.partition_point(|e| e.tick < pad_start);
+        let val = if idx > 0 { lane.events[idx - 1].value } else { 0 };
+        let y = view.value_to_y(val as f32, max_val);
+        if w > grid_left_x {
+            segs.push(SegSpan { x1: grid_left_x, y1: y, shape: SegmentShape::Step, x2: w, y2: y });
+        }
+        return segs;
+    }
+
+    // chase 值（第一个可见事件之前的值）
+    let prev_idx = lane.events.partition_point(|e| e.tick < visible_events[0].tick);
+    let chase_val = if prev_idx > 0 { lane.events[prev_idx - 1].value } else { 0 };
+    let first_tick = visible_events[0].tick;
+    let first_x = x_offset + first_tick as f32 * ppu;
+    let chase_y = view.value_to_y(chase_val as f32, max_val);
+
+    // chase 段：grid_left → first_event
+    if first_x > grid_left_x {
+        segs.push(SegSpan { x1: grid_left_x, y1: chase_y, shape: SegmentShape::Step, x2: first_x, y2: chase_y });
+    }
+
+    // 事件段：prev → cur
+    let mut prev_x = first_x;
+    let mut prev_y = chase_y;
+    let mut prev_shape = SegmentShape::Step;
+
+    for evt in visible_events {
+        let x2 = x_offset + evt.tick as f32 * ppu;
+        let y2 = view.value_to_y(evt.value as f32, max_val);
+        segs.push(SegSpan { x1: prev_x, y1: prev_y, shape: prev_shape, x2, y2 });
+
+        prev_shape = evt.shape;
+        prev_x = x2;
+        prev_y = y2;
+    }
+
+    // right 段：last_event → right_bound
+    let last_visible_tick = visible_events.last().unwrap().tick;
+    let next_idx = lane.events.partition_point(|e| e.tick <= last_visible_tick);
+    let right_bound = if next_idx < lane.events.len() {
+        x_offset + lane.events[next_idx].tick as f32 * ppu
+    } else {
+        w
+    };
+    if right_bound > prev_x {
+        segs.push(SegSpan { x1: prev_x, y1: prev_y, shape: SegmentShape::Step, x2: right_bound, y2: prev_y });
+    }
+
+    segs
+}
+
 /// Build data line instances (layer 2).
 ///
-/// 渲染每条 lane：
-/// - `Step` 段（默认）：保持值到下一点再瞬间跳变 → 阶梯线
-/// - `Linear` 段：直线
-/// - `Curve { tension }` 段：tension 控制的 ease-in/out 曲线，按像素步长子采样
-///
-/// `show_anchors = true` 时在每个事件位置画一个圆形锚点（铅笔工具下）。
+/// 渲染每条 lane 的线段和锚点。被 ghost 覆盖的 lane 由调用方通过 `skip_lane`
+/// 跳过，本函数只画未被覆盖的 lane。
 pub fn build_data_lines(
     out: &mut Vec<DrawInstance>,
     w: f32,
-    h: f32,
+    _h: f32,
     view: &AutomationPanelView,
     lanes: &[&AutomationLane],
     track_visible: &[bool],
     track_colors: &[[f32; 3]],
     show_anchors: bool,
-    // 拖动中的事件 tick。build_data_lines 跳过该事件的 prev→cur 和 cur→next 线段，
-    // 这些线段由 ghost 层绘制。
-    skip_tick: Option<u32>,
-    // 拖动中新位置的 bracketing（prev_tick, next_tick）。
-    // 固定层跳过 prev_tick→next_tick 这条线段（由 ghost 层的 prev→cur→next 取代）。
-    skip_bracket: Option<(Option<u32>, Option<u32>)>,
+    skip_lane: Option<&AutomationLane>,
     _theme: &GpuTheme,
 ) {
     if lanes.is_empty() {
@@ -138,24 +255,13 @@ pub fn build_data_lines(
     let pad_end = tick_end.max(0.0) as u32;
     let x_offset = view.base.left_panel_width - view.base.scroll_x;
     let grid_left_x = view.base.left_panel_width;
-    let line_alpha = 0.85;
-
-    let push_h_line = |out: &mut Vec<DrawInstance>, x: f32, y: f32, len: f32, color: [f32; 3]| {
-        if len > 0.0 {
-            out.push(DrawInstance {
-                x,
-                y,
-                w: len,
-                h: 1.0,
-                rgba_packed: pack_rgba(color[0], color[1], color[2], line_alpha),
-                props_packed: pack_props(0.0, 0.0),
-                velocity: 0,
-                tag: 0,
-            });
-        }
-    };
 
     for lane in lanes {
+        // 跳过被 ghost 覆盖的 lane（通过 track + target 匹配）
+        if skip_lane.map(|sl| sl.track == lane.track && sl.target == lane.target).unwrap_or(false) {
+            continue;
+        }
+
         let trk_idx = lane.track as usize;
         if !track_visible.get(trk_idx).copied().unwrap_or(true) {
             continue;
@@ -165,66 +271,21 @@ pub fn build_data_lines(
             .copied()
             .unwrap_or_else(|| TRACK_PALETTE[trk_idx % TRACK_PALETTE.len()]);
 
-        let visible_events = lane.events_in_range(pad_start, pad_end);
-
-        // 无可见事件：在 chase 值处画一条横贯网格的横线
-        if visible_events.is_empty() {
-            let idx = lane.events.partition_point(|e| e.tick < pad_start);
-            let val = if idx > 0 { lane.events[idx - 1].value } else { 0 };
-            let y = view.value_to_y(val as f32, max_val);
-            if w > grid_left_x {
-                push_h_line(out, grid_left_x, y, w - grid_left_x, color);
-            }
-            continue;
+        // 收集并绘制所有段
+        let segs = collect_segments(lane, view, max_val, w, pad_start, pad_end, x_offset, grid_left_x);
+        for seg in &segs {
+            render_segment(out, seg.x1, seg.y1, seg.x2, seg.y2, seg.shape, color);
         }
 
-        // 第一个可见事件之前的值（chase）
-        let prev_idx = lane.events.partition_point(|e| e.tick < visible_events[0].tick);
-        let prev_val = if prev_idx > 0 { lane.events[prev_idx - 1].value } else { 0 };
-        let prev_tick = visible_events[0].tick;
-        // 起始段（从 chase 值到第一个事件）按 Step 处理：保持 chase 值
-        let mut prev_shape = SegmentShape::Step;
-        let mut prev_x = x_offset + prev_tick as f32 * ppu;
-        let mut prev_y = view.value_to_y(prev_val as f32, max_val);
-
-        // 从网格左边缘到第一个事件的横线（保持 chase 值）
-        if prev_x > grid_left_x {
-            push_h_line(out, grid_left_x, prev_y, prev_x - grid_left_x, color);
-        }
-
-        // 用于检测是否要跳过 prev_tick→next_tick 线段
-        let (skip_prev_tick, skip_next_tick) = skip_bracket.unwrap_or((None, None));
-        // 跟踪上一个非 dragged 事件的 tick（用于匹配 skip_bracket 的 prev_tick）
-        let mut last_nondragged_tick: Option<u32> = if prev_idx > 0 {
-            lane.events.get(prev_idx - 1).map(|e| e.tick)
-        } else { None };
-
-        for evt in visible_events {
-            let tick = evt.tick;
-            let value = evt.value;
-            let is_dragged = Some(tick) == skip_tick;
-            if is_dragged {
-                // 被拖事件：完全跳过（不画线、不画锚点、不更新 prev）
-                // prev 仍然指向 dragged 之前的事件，下一个非 dragged 事件会画 prev→cur
-                continue;
-            }
-            let x2 = x_offset + tick as f32 * ppu;
-            let y2 = view.value_to_y(value as f32, max_val);
-
-            // 跳过 skip_bracket 匹配的线段（prev_tick→next_tick，由 ghost 的 prev→cur→next 取代）
-            let is_bracket_segment = skip_prev_tick.is_some()
-                && skip_next_tick.is_some()
-                && skip_prev_tick == last_nondragged_tick
-                && skip_next_tick == Some(tick);
-            if !is_bracket_segment {
-                render_segment(out, prev_x, prev_y, x2, y2, prev_shape, color);
-            }
-
-            // 锚点（pencil 时显示）
-            if show_anchors {
+        // 画锚点
+        if show_anchors {
+            let visible_events = lane.events_in_range(pad_start, pad_end);
+            for evt in visible_events {
+                let x = x_offset + evt.tick as f32 * ppu;
+                let y = view.value_to_y(evt.value as f32, max_val);
                 out.push(DrawInstance {
-                    x: x2 - ANCHOR_RADIUS,
-                    y: y2 - ANCHOR_RADIUS,
+                    x: x - ANCHOR_RADIUS,
+                    y: y - ANCHOR_RADIUS,
                     w: 2.0 * ANCHOR_RADIUS,
                     h: 2.0 * ANCHOR_RADIUS,
                     rgba_packed: pack_rgba(color[0], color[1], color[2], 1.0),
@@ -233,30 +294,52 @@ pub fn build_data_lines(
                     tag: 0,
                 });
             }
-
-            prev_shape = evt.shape;
-            prev_x = x2;
-            prev_y = y2;
-            last_nondragged_tick = Some(tick);
         }
+    }
+}
 
-        // 最后一个事件 → 右边界：保持最后值到右边界
-        // 检查 skip_bracket 的 next_tick == None（C 拖到末尾，右边界由 ghost 取代）
-        let skip_right_bracket = skip_next_tick.is_none()
-            && skip_prev_tick.is_some()
-            && skip_prev_tick == last_nondragged_tick;
-        if skip_right_bracket {
-            // bracket 段的右边界由 ghost 取代，不画
-        } else {
-            let next_idx = lane.events.partition_point(|e| e.tick <= visible_events.last().unwrap().tick);
-            let right_bound = if next_idx < lane.events.len() {
-                x_offset + lane.events[next_idx].tick as f32 * ppu
-            } else {
-                w
-            };
-            if right_bound > prev_x {
-                push_h_line(out, prev_x, prev_y, right_bound - prev_x, color);
-            }
+/// 画单条 lane 的线段和锚点（用于 ghost 层）。
+fn build_lane_instances(
+    out: &mut Vec<DrawInstance>,
+    w: f32,
+    view: &AutomationPanelView,
+    lane: &AutomationLane,
+    color: [f32; 3],
+    show_anchors: bool,
+) {
+    let target = &lane.target;
+    let max_val = target.max_value() as f32;
+    if max_val <= 0.0 {
+        return;
+    }
+
+    let (tick_start, tick_end) = view.base.visible_tick_range(w);
+    let pad_start = tick_start.max(0.0) as u32;
+    let pad_end = tick_end.max(0.0) as u32;
+    let x_offset = view.base.left_panel_width - view.base.scroll_x;
+    let grid_left_x = view.base.left_panel_width;
+    let ppu = view.base.pixels_per_tick;
+
+    let segs = collect_segments(lane, view, max_val, w, pad_start, pad_end, x_offset, grid_left_x);
+    for seg in &segs {
+        render_segment(out, seg.x1, seg.y1, seg.x2, seg.y2, seg.shape, color);
+    }
+
+    if show_anchors {
+        let visible_events = lane.events_in_range(pad_start, pad_end);
+        for evt in visible_events {
+            let x = x_offset + evt.tick as f32 * ppu;
+            let y = view.value_to_y(evt.value as f32, max_val);
+            out.push(DrawInstance {
+                x: x - ANCHOR_RADIUS,
+                y: y - ANCHOR_RADIUS,
+                w: 2.0 * ANCHOR_RADIUS,
+                h: 2.0 * ANCHOR_RADIUS,
+                rgba_packed: pack_rgba(color[0], color[1], color[2], 1.0),
+                props_packed: pack_props(ANCHOR_RADIUS, 0.0),
+                velocity: 0,
+                tag: 0,
+            });
         }
     }
 }
@@ -655,6 +738,9 @@ const GHOST_ALPHA: f32 = 0.9;
 pub fn build_ghost(
     out: &mut Vec<DrawInstance>,
     ghost: AutomationGhost,
+    w: f32,
+    view: &AutomationPanelView,
+    show_anchors: bool,
     _theme: &GpuTheme,
 ) {
     let push_anchor = |out: &mut Vec<DrawInstance>, x: f32, y: f32, color: [f32; 3]| {
@@ -671,17 +757,9 @@ pub fn build_ghost(
     };
 
     match ghost {
-        AutomationGhost::Move { skip_tick: _, prev, cur_x, cur_y, cur_shape, next, color } => {
-            // prev → cur 线段（track color）
-            if let Some((_prev_tick, prev_x, prev_y, prev_shape)) = prev {
-                render_segment(out, prev_x, prev_y, cur_x, cur_y, prev_shape, color);
-            }
-            // cur → next 线段（track color）
-            if let Some((_next_tick, next_x, next_y)) = next {
-                render_segment(out, cur_x, cur_y, next_x, next_y, cur_shape, color);
-            }
-            // ghost 锚点在 cur
-            push_anchor(out, cur_x, cur_y, color);
+        AutomationGhost::Move { lane, color } => {
+            // 整条 lane 作为 ghost 重新绘制
+            build_lane_instances(out, w, view, &lane, color, show_anchors);
         }
         AutomationGhost::Curve { start_x, start_y, cur_x, cur_y, color } => {
             push_anchor(out, start_x, start_y, color);
