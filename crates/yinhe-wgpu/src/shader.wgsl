@@ -354,7 +354,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Fast path: no rounded corners
     if in.radius < 0.5 {
         let d_outer = max(abs(p.x) - in.half_size.x, abs(p.y) - in.half_size.y);
-        let outer_a = 1.0 - smoothstep(-1.0, 1.0, d_outer);
+        let outer_a = 1.0 - smoothstep(-0.5, 0.5, d_outer);
 
         let inner_half = max(in.half_size - vec2(in.border_width), vec2(0.0));
         var fill_a: f32 = 0.0;
@@ -362,7 +362,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
         if inner_half.x > 0.0 && inner_half.y > 0.0 {
             let d_inner = max(abs(p.x) - inner_half.x, abs(p.y) - inner_half.y);
-            let inner_a = 1.0 - smoothstep(-1.0, 1.0, d_inner);
+            let inner_a = 1.0 - smoothstep(-0.5, 0.5, d_inner);
             fill_a = inner_a;
             border_a = outer_a - inner_a;
         }
@@ -372,7 +372,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // Slow path: SDF rounded rectangle
     let d_outer = sd_rounded_box(p, in.half_size, in.radius);
-    let outer_a = 1.0 - smoothstep(-1.0, 1.0, d_outer);
+    let outer_a = 1.0 - smoothstep(-0.5, 0.5, d_outer);
 
     let inner_half = max(in.half_size - vec2(in.border_width), vec2(0.0));
     let inner_r = max(in.radius - in.border_width, 0.0);
@@ -382,7 +382,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     if inner_half.x > 0.0 && inner_half.y > 0.0 {
         let d_inner = sd_rounded_box(p, inner_half, inner_r);
-        let inner_a = 1.0 - smoothstep(-1.0, 1.0, d_inner);
+        let inner_a = 1.0 - smoothstep(-0.5, 0.5, d_inner);
         fill_a = inner_a;
         border_a = outer_a - inner_a;
     }
