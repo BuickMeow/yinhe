@@ -5,6 +5,7 @@ use egui_material_icons::icons::*;
 
 use yinhe_editor_core::quantize::QuantizePreset;
 use yinhe_types::{AutomationLane, AutomationTarget, SegmentShape, TimeSigEvent};
+use yinhe_types::time_format::format_tick_bar_beat_with_time_sig;
 
 use yinhe_automation::{AutomationGhost, AutomationPanelView, automation_instances, prepare_automation};
 use yinhe_wgpu::InstanceRenderer;
@@ -381,7 +382,7 @@ pub fn show_panels(
         if let Some(ctx) = edit_ctx {
             if !panel.show_velocity && !panel.show_tempo {
                 if let Some(track) = ctx.active_track {
-                    let (panel_edits, ghost) = handle_automation_interaction(
+                    let (panel_edits, ghost, drag_info) = handle_automation_interaction(
                         ui,
                         grid_area,
                         panel_rect,
@@ -394,6 +395,54 @@ pub fn show_panels(
                     );
                     edits.extend(panel_edits);
                     panel_ghost = ghost;
+
+                    // 拖拽 tooltip：鼠标指针右侧显示位置和值
+                    if let Some((tick, value)) = drag_info {
+                        if let Some(pos) = pointer_pos {
+                            let pos_str = if let Some((ppq, num, den, ts_events)) = ctx.bar_line_data {
+                                format_tick_bar_beat_with_time_sig(tick as f64, ppq, ts_events, num, den)
+                            } else {
+                                format!("{}", tick)
+                            };
+                            let val_str = if panel.show_tempo {
+                                format!("{:.2} BPM", value as f32)
+                            } else {
+                                format!("{}", value)
+                            };
+                            let painter = ui.ctx().debug_painter();
+                            let font_id = egui::FontId::monospace(12.0);
+                            let gap = 8.0;
+                            let tooltip_x = pos.x + gap;
+                            let tooltip_y = pos.y - 24.0;
+                            // 两行文本
+                            let lines = [pos_str.as_str(), val_str.as_str()];
+                            let mut max_w = 0.0_f32;
+                            let mut total_h = 0.0;
+                            let line_h = 16.0;
+                            for line in &lines {
+                                let galley = painter.layout_no_wrap(line.to_string(), font_id.clone(), egui::Color32::WHITE);
+                                max_w = max_w.max(galley.rect.width());
+                                total_h += line_h;
+                            }
+                            let pad = 6.0;
+                            let bg_rect = egui::Rect::from_min_size(
+                                egui::pos2(tooltip_x - pad, tooltip_y - pad),
+                                egui::vec2(max_w + pad * 2.0, total_h + pad * 2.0),
+                            );
+                            painter.rect_filled(bg_rect, 4.0, egui::Color32::from_black_alpha(180));
+                            let mut ly = tooltip_y;
+                            for line in &lines {
+                                painter.text(
+                                    egui::pos2(tooltip_x, ly),
+                                    egui::Align2::LEFT_TOP,
+                                    *line,
+                                    font_id.clone(),
+                                    egui::Color32::WHITE,
+                                );
+                                ly += line_h;
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -629,6 +678,92 @@ pub fn show_panels(
     // Restore clip rect
     ui.set_clip_rect(old_clip);
 
+    // ── 右键锚点编辑弹窗 ──
+    for i in 0..panels.len() {
+        let right_click_id = ui.id().with("auto_right_click").with(i);
+        if let Some(anchor) = ui.ctx().data(|d| d.get_temp::<RightClickAnchor>(right_click_id)) {
+            let max_val = anchor.target.max_value();
+            let edit_tick_id = ui.id().with("auto_right_tick").with(i);
+            let edit_value_id = ui.id().with("auto_right_value").with(i);
+            let mut new_tick = ui.ctx().data(|d| d.get_temp::<f64>(edit_tick_id)).unwrap_or(anchor.old_tick as f64);
+            let mut new_value = ui.ctx().data(|d| d.get_temp::<f64>(edit_value_id)).unwrap_or(anchor.old_value as f64);
+            let mut submitted = false;
+
+            let area_id = ui.id().with("auto_right_edit_area").with(i);
+            let area_pos = anchor.anchor_pos + egui::Vec2::new(16.0, -8.0);
+            let area_response = egui::Area::new(area_id)
+                .order(egui::Order::Foreground)
+                .fixed_pos(area_pos)
+                .show(ui.ctx(), |ui| {
+                    let frame = egui::Frame::popup(ui.style());
+                    frame.show(ui, |ui| {
+                        ui.set_min_width(160.0);
+                        // 只读位置显示
+                        if let Some(ctx) = edit_ctx {
+                            if let Some((ppq, num, den, ts_events)) = ctx.bar_line_data {
+                                let pos_str = format_tick_bar_beat_with_time_sig(anchor.old_tick as f64, ppq, ts_events, num, den);
+                                ui.label(egui::RichText::new(pos_str).size(11.0).color(egui::Color32::GRAY));
+                            }
+                        }
+                        ui.add_space(4.0);
+                        // Tick
+                        ui.horizontal(|ui| {
+                            ui.label("Tick:");
+                            let resp = ui.add(egui::DragValue::new(&mut new_tick).range(0..=u32::MAX as i64).speed(1.0));
+                            if resp.changed() || resp.lost_focus() {
+                                submitted = true;
+                            }
+                        });
+                        // Value
+                        ui.horizontal(|ui| {
+                            ui.label("Value:");
+                            let resp = ui.add(egui::DragValue::new(&mut new_value).range(0..=max_val as i64).speed(1.0));
+                            if resp.changed() || resp.lost_focus() {
+                                submitted = true;
+                            }
+                        });
+                    });
+                });
+
+            // 保存编辑中的值，跨帧保持
+            ui.ctx().data_mut(|d| {
+                d.insert_temp(edit_tick_id, new_tick);
+                d.insert_temp(edit_value_id, new_value);
+            });
+
+            if submitted {
+                // 提交编辑
+                println!("[auto_debug] popup submit: old_tick={}, new_tick={}, new_value={}", anchor.old_tick, new_tick as u32, new_value as u16);
+                edits.push(AutomationEdit::Move {
+                    track_idx: anchor.track_idx,
+                    lane_idx: anchor.lane_idx,
+                    old_tick: anchor.old_tick,
+                    new_tick: new_tick as u32,
+                    new_value: new_value as u16,
+                });
+                // 更新 RightClickAnchor 的 old_tick/old_value，使后续 edit 使用新位置
+                ui.ctx().data_mut(|d| {
+                    if let Some(mut a) = d.get_temp::<RightClickAnchor>(right_click_id) {
+                        a.old_tick = new_tick as u32;
+                        a.old_value = new_value as u16;
+                        d.insert_temp(right_click_id, a);
+                    }
+                });
+            }
+
+            // 弹窗外点击 → 关闭弹窗（跳过首帧，避免右键打开弹窗时立即关闭）
+            let was_open_id = ui.id().with("auto_right_was_open").with(i);
+            let was_open = ui.ctx().data(|d| d.get_temp::<bool>(was_open_id)).unwrap_or(false);
+            ui.ctx().data_mut(|d| d.insert_temp(was_open_id, true));
+            if was_open && area_response.response.clicked_elsewhere() {
+                ui.ctx().data_mut(|d| {
+                    d.remove::<RightClickAnchor>(right_click_id);
+                    d.remove::<bool>(was_open_id);
+                });
+            }
+        }
+    }
+
     (panels_visible_h, edits, feedback)
 }
 
@@ -639,6 +774,18 @@ enum AutoDrag {
     MoveAnchor { old_tick: u32 },
     /// Curve 拖拽：起点已固定
     CurveDraw { start_tick: u32, start_value: u16 },
+}
+
+/// 右键点击锚点时记录的编辑信息。
+#[derive(Clone, Debug)]
+struct RightClickAnchor {
+    track_idx: u16,
+    lane_idx: usize,
+    old_tick: u32,
+    old_value: u16,
+    target: AutomationTarget,
+    /// 锚点在屏幕上的位置（用于定位弹窗）。
+    anchor_pos: egui::Pos2,
 }
 
 /// 检测鼠标是否悬停在两个锚点之间的线段上。
@@ -692,12 +839,12 @@ fn handle_automation_interaction(
     ctx: &AutomationEditCtx<'_>,
     panel_index: usize,
     track_colors: &[[f32; 3]],
-) -> (Vec<AutomationEdit>, Option<AutomationGhost>) {
+) -> (Vec<AutomationEdit>, Option<AutomationGhost>, Option<(u32, u16)>) {
     let mut edits = Vec::new();
     let target = &panel.selected_target;
     let max_val = target.max_value();
     if max_val == 0 {
-        return (edits, None);
+        return (edits, None, None);
     }
 
     let ppu = panel.base.pixels_per_tick;
@@ -720,6 +867,7 @@ fn handle_automation_interaction(
     let pointer_released = ui.input(|i| i.pointer.primary_released());
     let pointer_clicked = ui.input(|i| i.pointer.primary_clicked());
     let pointer_double_clicked = ui.input(|i| i.pointer.button_double_clicked(egui::PointerButton::Primary));
+    let pointer_secondary_clicked = ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Secondary));
 
     // 鼠标位置 → tick/value。tick clamp 到 >= 0 防止 as u32 溢出。
     let pos = pointer_hover_pos;
@@ -798,7 +946,7 @@ fn handle_automation_interaction(
                         shape: SegmentShape::Step,
                     });
                 }
-                return (edits, None);
+                return (edits, None, None);
             }
 
             // 拖拽锚点：press 记录，release 提交
@@ -847,11 +995,11 @@ fn handle_automation_interaction(
                         // 用 build_lane_override 生成覆盖后的完整 lane，由 ghost 层整 lane 绘制
                         if let Some(l) = lane {
                             let override_lane = automation_instances::build_lane_override(l, old_tick, new_tick, new_value);
-                            return (edits, Some(AutomationGhost::Move { lane: override_lane, color: track_color }));
+                            return (edits, Some(AutomationGhost::Move { lane: override_lane, color: track_color }), None);
                         }
                     }
                 }
-                return (edits, None);
+                return (edits, None, None);
             }
 
             // 点击空白（非拖拽）：添加新锚点（shape = Step）
@@ -865,7 +1013,7 @@ fn handle_automation_interaction(
                         shape: SegmentShape::Step,
                     });
                 }
-                return (edits, None);
+                return (edits, None, None);
             }
         }
         Tool::Curve => {
@@ -911,10 +1059,43 @@ fn handle_automation_interaction(
                         }
                     }
                 }
-                return (edits, None);
+                return (edits, None, None);
             }
         }
         _ => {}
+    }
+
+    // 右键点击锚点 → 记录编辑信息，供 show_panels 弹窗
+    let right_click_id = ui.id().with("auto_right_click").with(panel_index);
+    if pointer_secondary_clicked && in_grid {
+        if let Some((_, tick)) = hit_anchor {
+            if let Some(lidx) = lane_idx {
+                if let Some(l) = lane {
+                    if let Some(evt) = l.events.iter().find(|e| e.tick == tick) {
+                        // 计算锚点屏幕坐标
+                        let ax = grid_area.min.x + (tick as f32) * ppu - scroll_x;
+                        let ay = panel_rect.min.y + panel.value_to_y(evt.value as f32, max_val as f32);
+                        // 清除旧编辑值，确保新锚点使用自己的初始值
+                        let edit_tick_id = ui.id().with("auto_right_tick").with(panel_index);
+                        let edit_value_id = ui.id().with("auto_right_value").with(panel_index);
+                        let was_open_id = ui.id().with("auto_right_was_open").with(panel_index);
+                        ui.ctx().data_mut(|d| {
+                            d.remove::<f64>(edit_tick_id);
+                            d.remove::<f64>(edit_value_id);
+                            d.remove::<bool>(was_open_id);
+                            d.insert_temp(right_click_id, RightClickAnchor {
+                                track_idx,
+                                lane_idx: lidx,
+                                old_tick: tick,
+                                old_value: evt.value,
+                                target: target.clone(),
+                                anchor_pos: egui::pos2(ax, ay),
+                            });
+                        });
+                    }
+                }
+            }
+        }
     }
 
     // ── Ghost 计算（panel 局部坐标，传给 wgpu Layer 3 绘制）──
@@ -946,7 +1127,29 @@ fn handle_automation_interaction(
         None
     };
 
-    (edits, ghost)
+    // 拖拽中返回拖拽信息用于 tooltip
+    let drag_info = if ghost.is_some() {
+        mouse_info.map(|(_, tick, value)| (tick, value))
+    } else {
+        None
+    };
+
+    // 拖拽中更新右键弹窗位置（跟随锚点移动）
+    if drag_state.is_some() {
+        if let Some((_, tick, value)) = mouse_info {
+            let right_click_id = ui.id().with("auto_right_click").with(panel_index);
+            ui.ctx().data_mut(|d| {
+                if let Some(mut anchor) = d.get_temp::<RightClickAnchor>(right_click_id) {
+                    let ax = grid_area.min.x + (tick as f32) * ppu - scroll_x;
+                    let ay = panel_rect.min.y + panel.value_to_y(value as f32, max_val as f32);
+                    anchor.anchor_pos = egui::pos2(ax, ay);
+                    d.insert_temp(right_click_id, anchor);
+                }
+            });
+        }
+    }
+
+    (edits, ghost, drag_info)
 }
 
 /// Show the toggle / add / remove buttons horizontally.

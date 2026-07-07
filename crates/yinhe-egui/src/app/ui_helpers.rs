@@ -428,6 +428,9 @@ impl App {
         let doc = &mut self.documents[idx];
 
         let mut model_changed = false;
+        for edit in &edits {
+            println!("[auto_debug] handle_automation_edits: {:?}", edit);
+        }
         for edit in edits {
             let action = match edit {
                 AutomationEdit::Add { track_idx, target, tick, value, shape } => {
