@@ -144,7 +144,12 @@ pub(crate) fn show_dialog(
                 .show_inside(vctx, |ui| {
                     title_bar(ui, title, &mut c);
                     egui::Frame::new()
-                        .inner_margin(egui::Margin::same(12))
+                        .inner_margin(egui::Margin {
+                            left: 12,
+                            right: 12,
+                            top: 0,
+                            bottom: 12,
+                        })
                         .show(ui, |ui| {
                             if scrollable {
                                 egui::ScrollArea::vertical()

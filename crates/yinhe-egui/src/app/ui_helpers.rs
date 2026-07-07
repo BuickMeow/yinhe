@@ -801,7 +801,12 @@ impl App {
                             .show_inside(vctx, |ui| {
                             crate::chrome::dialog::title_bar(ui, "设置", &mut close);
                             egui::Frame::new()
-                                .inner_margin(egui::Margin::same(12))
+                                .inner_margin(egui::Margin {
+                                    left: 12,
+                                    right: 12,
+                                    top: 0,
+                                    bottom: 12,
+                                })
                                 .show(ui, |ui| {
                                     egui::ScrollArea::vertical()
                                         .auto_shrink([false; 2])
@@ -877,7 +882,12 @@ impl App {
                             &mut close,
                         );
                         egui::Frame::new()
-                            .inner_margin(egui::Margin::same(12))
+                            .inner_margin(egui::Margin {
+                                left: 12,
+                                right: 12,
+                                top: 0,
+                                bottom: 12,
+                            })
                             .show(ui, |ui| {
                                 egui::ScrollArea::vertical()
                                     .auto_shrink([false; 2])
@@ -955,7 +965,12 @@ impl App {
                         let mut close = false;
                         crate::chrome::dialog::title_bar(ui, "正在加载", &mut close);
                         egui::Frame::new()
-                            .inner_margin(egui::Margin::same(12))
+                            .inner_margin(egui::Margin {
+                                left: 12,
+                                right: 12,
+                                top: 0,
+                                bottom: 12,
+                            })
                             .show(ui, |ui| {
                                 let p = match progress.lock() {
                                     Ok(p) => p.clone(),
@@ -1028,17 +1043,22 @@ impl App {
                                 // Hide window before closing to prevent white flash
                                 vctx_cmd.send_viewport_cmd(egui::ViewportCommand::Visible(false));
                                 *action_cb.borrow_mut() = archive_picker::ArchivePickerAction::Cancel;
-                                return;
+                            } else {
+                                egui::Frame::new()
+                                    .inner_margin(egui::Margin {
+                                        left: 12,
+                                        right: 12,
+                                        top: 0,
+                                        bottom: 12,
+                                    })
+                                    .show(ui, |ui| {
+                                        let result = archive_picker::show(
+                                            &mut *taken_state_cb.borrow_mut(),
+                                            ui,
+                                        );
+                                        *action_cb.borrow_mut() = result;
+                                    });
                             }
-                            egui::Frame::new()
-                                .inner_margin(egui::Margin::same(12))
-                                .show(ui, |ui| {
-                                    let result = archive_picker::show(
-                                        &mut *taken_state_cb.borrow_mut(),
-                                        ui,
-                                    );
-                                    *action_cb.borrow_mut() = result;
-                                });
                         });
                 },
             );
@@ -1087,7 +1107,12 @@ impl App {
                         let mut close = false;
                         crate::chrome::dialog::title_bar(ui, "导出音频", &mut close);
                         egui::Frame::new()
-                            .inner_margin(egui::Margin::same(12))
+                            .inner_margin(egui::Margin {
+                                left: 12,
+                                right: 12,
+                                top: 0,
+                                bottom: 12,
+                            })
                             .show(ui, |ui| {
                                 ui.vertical_centered(|ui| {
                                     ui.label(
@@ -1146,7 +1171,12 @@ impl App {
                         .show_inside(vctx, |ui| {
                         crate::chrome::dialog::title_bar(ui, "导出音频", &mut close);
                         egui::Frame::new()
-                            .inner_margin(egui::Margin::same(12))
+                            .inner_margin(egui::Margin {
+                                left: 12,
+                                right: 12,
+                                top: 0,
+                                bottom: 12,
+                            })
                             .show(ui, |ui| {
                                 ui.set_max_width(280.0);
                                 ui.vertical_centered(|ui| {
@@ -1297,7 +1327,12 @@ impl App {
                         .show_inside(vctx, |ui| {
                         crate::chrome::dialog::title_bar(ui, "无法打开文件", &mut close);
                         egui::Frame::new()
-                            .inner_margin(egui::Margin::same(12))
+                            .inner_margin(egui::Margin {
+                                left: 12,
+                                right: 12,
+                                top: 0,
+                                bottom: 12,
+                            })
                             .show(ui, |ui| {
                                 ui.set_max_width(420.0);
                                 ui.label(&msg);
