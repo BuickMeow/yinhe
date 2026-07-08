@@ -1,4 +1,4 @@
-use yinhe_types::{AutomationTarget, TimelineViewBase};
+use crate::{AutomationTarget, TimelineViewBase};
 
 /// Default panel height in pixels.
 pub const DEFAULT_PANEL_HEIGHT: f32 = 80.0;
@@ -86,7 +86,7 @@ impl AutomationPanelView {
     /// Hash of all fields that affect GPU rendering output.
     /// Used as cache key for GPU layers.
     pub fn render_hash(&self) -> u64 {
-        let h = yinhe_wgpu::hash_f32s(&[
+        let h = crate::hash::hash_f32s(&[
             self.base.pixels_per_tick,
             self.base.scroll_x,
             self.base.left_panel_width,

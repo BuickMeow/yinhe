@@ -3,7 +3,7 @@ mod view_ui;
 
 use eframe::egui;
 
-use yinhe_arrangement::ArrangementView;
+use yinhe_types::ArrangementView;
 
 use yinhe_editor_core::document::Document;
 use crate::render_context::RenderContext;

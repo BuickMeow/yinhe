@@ -1,7 +1,7 @@
 use eframe::egui;
 
-use yinhe_arrangement::instances as arrangement_instances;
-use yinhe_arrangement::{ArrangementView, NoteSource};
+use yinhe_arrangement::{build_decor, build_grid, build_notes};
+use yinhe_types::{ArrangementView, NoteSource};
 use yinhe_wgpu::{InstanceRenderer, Uniforms, TrackColorsUniform, MAX_TRACKS};
 use yinhe_types::TimeSigEvent;
 use yinhe_wgpu::layer_cache_key;
@@ -141,7 +141,7 @@ pub fn show(
     };
     let decor_key = layer_cache_key(&[vh, wh, tv_hash]);
     renderer.upload_layer(0, decor_key, |out| {
-        arrangement_instances::build_decor(
+        build_decor(
             out,
             w as f32,
             h as f32,
@@ -171,7 +171,7 @@ pub fn show(
         {
             let (def_num, def_den) = midi.time_sig_default();
             let sig_events = midi.time_sig_events();
-            arrangement_instances::build_grid(
+            build_grid(
                 out, w as f32, h as f32, view, tpb, def_num, def_den, sig_events, scroll_x_pos, &theme,
             );
         }
@@ -181,7 +181,7 @@ pub fn show(
     let notes_key = layer_cache_key(&[vh, wh, tv_hash, midi_version]);
     renderer.upload_note_layer(2, notes_key, |out| {
         if let Some(midi) = midi {
-            arrangement_instances::build_notes(
+            build_notes(
                 out,
                 w as f32,
                 h as f32,

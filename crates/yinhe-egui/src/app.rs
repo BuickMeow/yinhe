@@ -10,8 +10,7 @@ use crate::dialogs::system_monitor::SystemMonitor;
 use yinhe_editor_core::document::Document;
 use crate::render_context::RenderContext;
 use crate::chrome::mode_bar::ViewMode;
-use yinhe_arrangement::ArrangementView;
-use yinhe_pianoroll::PianoRollView;
+use yinhe_types::{ArrangementView, PianoRollView};
 
 pub struct App {
     // ── Pianoroll (shared GPU resources + global view state) ──

@@ -1,4 +1,4 @@
-use crate::AutomationPanelView;
+use yinhe_types::AutomationPanelView;
 use rayon::prelude::*;
 use yinhe_theme::GpuTheme;
 use yinhe_types::{key_notes_in_range, NoteSource, TRACK_PALETTE};

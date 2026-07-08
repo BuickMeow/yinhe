@@ -1,4 +1,4 @@
-use yinhe_types::TimelineViewBase;
+use crate::TimelineViewBase;
 
 /// Piano roll view state: manages coordinate transforms between
 /// tick/key space and screen pixel space.
@@ -57,7 +57,7 @@ impl PianoRollView {
     /// change the visual output — adding a new field here is mandatory
     /// when it affects rendering.
     pub fn render_hash(&self) -> u64 {
-        yinhe_wgpu::hash_f32s(&[
+        crate::hash::hash_f32s(&[
             self.base.pixels_per_tick,
             self.base.scroll_x,
             self.base.scroll_y,

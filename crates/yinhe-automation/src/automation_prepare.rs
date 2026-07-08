@@ -7,7 +7,7 @@ use crate::ghost;
 use crate::tempo;
 use crate::velocity_bars;
 use crate::InstanceRenderer;
-use crate::AutomationPanelView;
+use yinhe_types::AutomationPanelView;
 use crate::Uniforms;
 use yinhe_wgpu::layer_cache_key;
 

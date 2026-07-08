@@ -1,6 +1,5 @@
 use yinhe_types::view_base::TimelineViewBase;
-use yinhe_pianoroll::PianoRollView;
-use yinhe_arrangement::ArrangementView;
+use yinhe_types::{ArrangementView, PianoRollView};
 use yinhe_editor_core::follow::{FollowMode, compute_follow_scroll, total_ticks_padded};
 use yinhe_editor_core::quantize::QuantizePreset;
 

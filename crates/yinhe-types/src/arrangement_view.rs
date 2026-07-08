@@ -1,4 +1,4 @@
-use yinhe_types::TimelineViewBase;
+use crate::TimelineViewBase;
 
 /// Arrangement view state: manages coordinate transforms between
 /// tick/track-space and screen pixel space.
@@ -113,7 +113,7 @@ impl ArrangementView {
     /// Hash of all fields that affect GPU rendering output.
     /// Used as cache key for GPU layers.
     pub fn render_hash(&self) -> u64 {
-        yinhe_wgpu::hash_f32s(&[
+        crate::hash::hash_f32s(&[
             self.base.pixels_per_tick,
             self.base.scroll_x,
             self.base.scroll_y,

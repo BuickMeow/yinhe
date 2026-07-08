@@ -1,4 +1,4 @@
-use crate::AutomationPanelView;
+use yinhe_types::AutomationPanelView;
 use yinhe_theme::GpuTheme;
 use yinhe_wgpu::{pack_props, pack_rgba, DrawInstance};
 

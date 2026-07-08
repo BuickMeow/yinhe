@@ -1,6 +1,6 @@
 use yinhe_types::Note;
-use yinhe_pianoroll::instances;
-use yinhe_pianoroll::PianoRollView;
+use yinhe_pianoroll::build_notes;
+use yinhe_types::PianoRollView;
 use yinhe_core::YinModel;
 
 use yinhe_test_helpers::*;
@@ -20,7 +20,7 @@ fn build_notes_output_count_matches_input() {
     let hidden = std::collections::HashSet::new();
 
     let mut out = Vec::new();
-    instances::build_notes(&mut out, 800.0, 600.0, &m, &view, &hidden, &visible);
+    build_notes(&mut out, 800.0, 600.0, &m, &view, &hidden, &visible);
     assert_eq!(out.len(), m.note_count as usize);
 }
 
@@ -32,7 +32,7 @@ fn build_notes_empty_source() {
     let hidden = std::collections::HashSet::new();
 
     let mut out = Vec::new();
-    instances::build_notes(&mut out, 800.0, 600.0, &m, &view, &hidden, &visible);
+    build_notes(&mut out, 800.0, 600.0, &m, &view, &hidden, &visible);
     assert!(out.is_empty());
 }
 
@@ -47,7 +47,7 @@ fn build_notes_with_selection() {
     let hidden = std::collections::HashSet::new();
 
     let mut out = Vec::new();
-    instances::build_notes(&mut out, 800.0, 600.0, &m, &view, &hidden, &visible);
+    build_notes(&mut out, 800.0, 600.0, &m, &view, &hidden, &visible);
     assert_eq!(out.len(), 4);
 }
 
@@ -60,7 +60,7 @@ fn build_notes_visibility_filter() {
     let hidden = std::collections::HashSet::new();
 
     let mut out = Vec::new();
-    instances::build_notes(&mut out, 800.0, 600.0, &m, &view, &hidden, &visible);
+    build_notes(&mut out, 800.0, 600.0, &m, &view, &hidden, &visible);
     // Track 0 has 2 notes, track 1 has 1, track 2 has 1
     // Hiding track 0 should leave 2 notes
     assert_eq!(out.len(), 2);
@@ -74,7 +74,7 @@ fn build_notes_visible_range_culling() {
     let hidden = std::collections::HashSet::new();
 
     let mut out = Vec::new();
-    instances::build_notes(&mut out, 800.0, 600.0, &m, &view, &hidden, &visible);
+    build_notes(&mut out, 800.0, 600.0, &m, &view, &hidden, &visible);
     // Default view shows all notes
     assert_eq!(out.len(), 4);
 }
@@ -87,7 +87,7 @@ fn build_notes_empty_data() {
     let hidden = std::collections::HashSet::new();
 
     let mut out = Vec::new();
-    instances::build_notes(&mut out, 800.0, 600.0, &m, &view, &hidden, &visible);
+    build_notes(&mut out, 800.0, 600.0, &m, &view, &hidden, &visible);
     assert!(out.is_empty());
 }
 
@@ -101,6 +101,6 @@ fn build_notes_stress_many_tracks() {
     let hidden = std::collections::HashSet::new();
 
     let mut out = Vec::new();
-    instances::build_notes(&mut out, 800.0, 600.0, &m, &view, &hidden, &visible);
+    build_notes(&mut out, 800.0, 600.0, &m, &view, &hidden, &visible);
     assert_eq!(out.len(), 800);
 }

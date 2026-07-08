@@ -1,7 +1,7 @@
 use rayon::prelude::*;
 use yinhe_types::{key_notes_in_range, NoteSource, TimeSigEvent};
 
-use crate::view::ArrangementView;
+use yinhe_types::ArrangementView;
 use yinhe_wgpu::grid;
 use yinhe_wgpu::vertex::{DrawInstance, NoteInstance, pack_props, pack_rgba};
 

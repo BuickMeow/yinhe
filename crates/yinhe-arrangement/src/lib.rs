@@ -1,5 +1,4 @@
 pub mod instances;
-mod view;
+pub use instances::{build_decor, build_grid, build_notes};
 
-pub use view::ArrangementView;
-pub use yinhe_types::{Note, NoteSource};
+pub use yinhe_types::{ArrangementView, Note, NoteSource};

@@ -7,7 +7,8 @@ use yinhe_editor_core::quantize::QuantizePreset;
 use yinhe_types::{AutomationLane, AutomationTarget, SegmentShape, TimeSigEvent};
 use yinhe_types::time_format::format_tick_bar_beat_with_time_sig;
 
-use yinhe_automation::{AutomationGhost, AutomationPanelView, build_lane_override, prepare_automation};
+use yinhe_automation::{AutomationGhost, build_lane_override, prepare_automation};
+use yinhe_types::AutomationPanelView;
 use yinhe_wgpu::InstanceRenderer;
 
 use crate::widgets::tools_panel::Tool;
@@ -249,8 +250,8 @@ pub fn show_panels(
         if handle_resp.dragged() {
             let delta = handle_resp.drag_delta().y;
             let new_h = (panel.panel_height - delta).clamp(
-                yinhe_automation::automation_view::MIN_PANEL_HEIGHT,
-                yinhe_automation::automation_view::MAX_PANEL_HEIGHT,
+                yinhe_types::automation_panel_view::MIN_PANEL_HEIGHT,
+                yinhe_types::automation_panel_view::MAX_PANEL_HEIGHT,
             );
             panel.panel_height = new_h;
             panel.dirty = true;

@@ -5,7 +5,7 @@ use yinhe_types::NoteSource;
 use crate::InstanceRenderer;
 use crate::instances;
 use crate::vertex::{Uniforms, TrackColorsUniform, SelectionUniform, MAX_TRACKS, MAX_SEL_RECTS};
-use crate::view::PianoRollView;
+use yinhe_types::PianoRollView;
 
 use yinhe_wgpu::layer_cache_key;
 

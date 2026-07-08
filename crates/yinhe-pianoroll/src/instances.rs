@@ -5,7 +5,7 @@ use yinhe_types::{key_notes_in_range, NoteSource, TimeSigEvent, is_black_key};
 use crate::grid;
 use crate::keyboard;
 use crate::vertex::{DrawInstance, NoteInstance, pack_props, pack_rgba};
-use crate::view::PianoRollView;
+use yinhe_types::PianoRollView;
 
 /// Build background + black-key row instances (layer 0).
 /// Dependencies: scroll_y, key_height, h

@@ -1,4 +1,4 @@
-use crate::AutomationPanelView;
+use yinhe_types::AutomationPanelView;
 use crate::grid;
 use yinhe_theme::GpuTheme;
 use yinhe_types::{AutomationLane, TimeSigEvent};
