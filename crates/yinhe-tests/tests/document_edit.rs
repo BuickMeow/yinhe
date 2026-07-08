@@ -32,10 +32,12 @@ fn first_note_key48(doc: &Document) -> (u16, u32, u8, u32) {
 }
 
 #[test]
-fn document_empty_has_one_track() {
+fn document_empty_has_conductor_and_16_tracks() {
     let doc = Document::empty();
-    assert_eq!(doc.data.model.tracks.len(), 1);
-    assert_eq!(doc.track_names(), &["Track 1"]);
+    assert_eq!(doc.data.model.tracks.len(), 17);
+    assert_eq!(doc.track_names()[0], "Conductor");
+    assert_eq!(doc.track_names()[1], "A1");
+    assert_eq!(doc.track_names()[16], "A16");
 }
 
 #[test]

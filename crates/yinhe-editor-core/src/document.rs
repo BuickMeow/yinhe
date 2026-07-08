@@ -64,21 +64,28 @@ impl Document {
                 time_sig: vec![yinhe_types::TimeSigEvent {
                     tick: 0,
                     numerator: 4,
-                    denominator: 2,
+                    denominator: 4,
                 }],
             }),
-            tracks: vec![Arc::new({
+            tracks: {
+                let mut tracks: Vec<Arc<TrackData>> = Vec::with_capacity(17);
                 let mut t = TrackData::new(0, 0);
-                t.name = "Track 1".to_string();
-                t
-            })],
+                t.name = "Conductor".to_string();
+                tracks.push(Arc::new(t));
+                for ch in 0..16u8 {
+                    let mut t = TrackData::new(0, ch);
+                    t.name = format!("A{}", ch + 1);
+                    tracks.push(Arc::new(t));
+                }
+                tracks
+            },
             ..Default::default()
         };
         model.rebuild();
 
         let track_names = model.tracks.iter().map(|t| t.name.clone()).collect();
         let num_tracks = model.tracks.len();
-        let conductor_track_idx = None;
+        let conductor_track_idx = Some(0);
 
         let data = ProjectData::new(
             Arc::new(model),
@@ -91,9 +98,9 @@ impl Document {
         Document {
             data,
             edit: EditState {
-                track_visible: vec![true],
-                track_pianoroll_visible: vec![true],
-                track_overrides: vec![TrackOverride::default()],
+                track_visible: vec![true; num_tracks],
+                track_pianoroll_visible: vec![true; num_tracks],
+                track_overrides: (0..num_tracks).map(|_| TrackOverride::default()).collect(),
                 track_info_cache,
                 track_colors_cache: (0..num_tracks)
                     .map(|i| track_color(i, conductor_track_idx))
@@ -611,16 +618,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn empty_creates_valid_document_with_one_track() {
+    fn empty_creates_valid_document_with_conductor_and_16_tracks() {
         let doc = Document::empty();
-        assert_eq!(doc.model().tracks.len(), 1);
-        assert_eq!(doc.model().tracks[0].name, "Track 1");
-        assert_eq!(doc.track_names().len(), 1);
-        assert_eq!(doc.track_names()[0], "Track 1");
-        assert!(doc.edit.conductor_track_idx.is_none());
-        assert_eq!(doc.edit.track_visible.len(), 1);
-        assert_eq!(doc.edit.track_pianoroll_visible.len(), 1);
+        assert_eq!(doc.model().tracks.len(), 17);
+        assert_eq!(doc.model().tracks[0].name, "Conductor");
+        assert_eq!(doc.model().tracks[1].name, "A1");
+        assert_eq!(doc.model().tracks[16].name, "A16");
+        assert_eq!(doc.track_names().len(), 17);
+        assert_eq!(doc.edit.conductor_track_idx, Some(0));
+        assert_eq!(doc.edit.track_visible.len(), 17);
+        assert_eq!(doc.edit.track_pianoroll_visible.len(), 17);
         assert_eq!(doc.file_name, "Untitled");
+        // Conductor track channels: A1 on ch0, A16 on ch15
+        assert_eq!(doc.model().tracks[1].channel, 0);
+        assert_eq!(doc.model().tracks[16].channel, 15);
     }
 
     #[test]
