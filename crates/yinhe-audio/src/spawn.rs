@@ -309,7 +309,7 @@ pub fn spawn_cpal_audio(
 
     let stream = device
         .build_output_stream(
-            &config,
+            config,
             move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
                 yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Audio, || {
                     let generation = reset_generation.load(Ordering::Acquire);
