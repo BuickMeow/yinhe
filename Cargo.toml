@@ -50,3 +50,10 @@ debug = 1                           # 行号表（函数名+行号），支持 b
 strip = "none"                      # 保留符号用于调试分析（体积换调试能力）
 panic = "abort"                    # 使用 abort 而非 unwind（减少生成的代码量）
 incremental = true                 # 启用增量编译（对多次构建友好）
+
+[profile.release]
+opt-level = "z"         # 优化大小
+lto = true               # 链接时优化，能消除大量死代码
+codegen-units = 1        # 单代码生成单元，让 LTO 效果最大化
+strip = true             # 自动 strip 符号
+panic = "abort"          # 不用 unwind，减少体积
