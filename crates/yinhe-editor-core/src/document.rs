@@ -64,7 +64,7 @@ impl Document {
                 time_sig: vec![yinhe_types::TimeSigEvent {
                     tick: 0,
                     numerator: 4,
-                    denominator: 4,
+                    denominator: 2,
                 }],
             }),
             tracks: {
@@ -292,9 +292,6 @@ impl Document {
             return None;
         }
         if Some(track_idx) == self.edit.conductor_track_idx {
-            return None;
-        }
-        if self.data.model.track_note_count.get(t).copied().unwrap_or(0) == 0 {
             return None;
         }
         let key = note.key;
