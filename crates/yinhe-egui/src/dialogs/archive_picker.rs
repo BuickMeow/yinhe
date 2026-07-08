@@ -167,12 +167,17 @@ pub(crate) fn show(
                         }
                         if response.double_clicked() {
                             let entry = picker.entries[entry_idx].clone();
-                            let archive = std::mem::replace(
-                                &mut picker.archive,
-                                yinhe_archive::Archive::open(&picker.path).unwrap(),
-                            );
-                            action = ArchivePickerAction::LoadFile { archive, entry };
-                            return;
+                            match yinhe_archive::Archive::open(&picker.path) {
+                                Ok(new_archive) => {
+                                    let archive = std::mem::replace(&mut picker.archive, new_archive);
+                                    action = ArchivePickerAction::LoadFile { archive, entry };
+                                    return;
+                                }
+                                Err(e) => {
+                                    action = ArchivePickerAction::Error(format!("无法打开归档文件: {}", e));
+                                    return;
+                                }
+                            }
                         }
 
                         let response_rect = response.rect;
@@ -217,11 +222,15 @@ pub(crate) fn show(
                     if ui.add_enabled(confirm_enabled, eframe::egui::Button::new("确认")).clicked() {
                         if let Some(idx) = picker.selected_idx {
                             let entry = picker.entries[idx].clone();
-                            let archive = std::mem::replace(
-                                &mut picker.archive,
-                                yinhe_archive::Archive::open(&picker.path).unwrap(),
-                            );
-                            action = ArchivePickerAction::LoadFile { archive, entry };
+                            match yinhe_archive::Archive::open(&picker.path) {
+                                Ok(new_archive) => {
+                                    let archive = std::mem::replace(&mut picker.archive, new_archive);
+                                    action = ArchivePickerAction::LoadFile { archive, entry };
+                                }
+                                Err(e) => {
+                                    action = ArchivePickerAction::Error(format!("无法打开归档文件: {}", e));
+                                }
+                            }
                         }
                     }
                 });

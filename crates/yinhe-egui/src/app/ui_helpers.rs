@@ -829,7 +829,9 @@ impl App {
                 },
             );
 
-            if let Some(s) = std::rc::Rc::into_inner(settings).unwrap().into_inner() {
+            if let Some(s) = std::rc::Rc::into_inner(settings)
+                .and_then(|rc| rc.into_inner())
+            {
                 self.audio_settings = s;
                 // Sync haptic settings to the engine
                 self.haptic_engine.apply_settings(
@@ -1063,23 +1065,27 @@ impl App {
                 },
             );
 
-            *state = std::rc::Rc::into_inner(taken_state).unwrap().into_inner();
-
-            match std::rc::Rc::into_inner(action).unwrap().into_inner() {
-                archive_picker::ArchivePickerAction::LoadFile { archive, entry } => {
-                    self.file_loader.start_load_from_archive(archive, entry);
-                    self.file_loader.archive_picker = None;
-                }
-                archive_picker::ArchivePickerAction::Cancel => {
-                    self.file_loader.archive_picker = None;
-                }
-                archive_picker::ArchivePickerAction::Error(msg) => {
-                    self.load_error = Some(msg);
-                    self.file_loader.archive_picker = None;
-                }
-                archive_picker::ArchivePickerAction::None => {}
+            if let Some(taken_state) = std::rc::Rc::into_inner(taken_state) {
+                *state = taken_state.into_inner();
             }
-            ctx.request_repaint();
+
+            if let Some(action) = std::rc::Rc::into_inner(action) {
+                match action.into_inner() {
+                    archive_picker::ArchivePickerAction::LoadFile { archive, entry } => {
+                        self.file_loader.start_load_from_archive(archive, entry);
+                        self.file_loader.archive_picker = None;
+                    }
+                    archive_picker::ArchivePickerAction::Cancel => {
+                        self.file_loader.archive_picker = None;
+                    }
+                    archive_picker::ArchivePickerAction::Error(msg) => {
+                        self.load_error = Some(msg);
+                        self.file_loader.archive_picker = None;
+                    }
+                    archive_picker::ArchivePickerAction::None => {}
+                }
+                ctx.request_repaint();
+            }
         }
 
         // ── Export progress overlay (independent window) ──

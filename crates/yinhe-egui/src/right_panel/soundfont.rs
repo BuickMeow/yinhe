@@ -223,19 +223,12 @@ fn project_panel(ui: &mut egui::Ui, doc: &mut Document) -> bool {
     doc.edit.soundfont_selected_port = selected_port as u8;
     let port = used_ports[selected_port];
 
-    let has_entries = doc
+    if let Some(idx) = doc
         .edit.project_sf
         .overrides
         .iter()
-        .any(|(p, _)| *p == port);
-
-    if has_entries {
-        let idx = doc
-            .edit.project_sf
-            .overrides
-            .iter()
-            .position(|(p, _)| *p == port)
-            .unwrap();
+        .position(|(p, _)| *p == port)
+    {
         let entries = &mut doc.edit.project_sf.overrides[idx].1;
         changed |= super::sf_list::sf_list(ui, entries);
 

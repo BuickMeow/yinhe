@@ -73,21 +73,23 @@ pub fn show(
             .rect_filled(ui.max_rect(), 0.0, crate::theme::APP_BG);
 
         // ── Content ──
-        match tab.unwrap() {
-            RightTab::Info => {
-                changed |= info_panel::show(ui, doc, audio);
-            }
-            RightTab::SoundFont => {
-                changed |= soundfont::show(ui, audio_settings, doc);
-            }
-            RightTab::Project => {
-                project_info::show(ui, doc);
-            }
-            RightTab::Channels => {
-                channels_panel::show(ui, doc, audio_settings);
-            }
-            RightTab::EventBrowser => {
-                event_browser::show(ui, doc, event_browser_state);
+        if let Some(tab) = tab {
+            match tab {
+                RightTab::Info => {
+                    changed |= info_panel::show(ui, doc, audio);
+                }
+                RightTab::SoundFont => {
+                    changed |= soundfont::show(ui, audio_settings, doc);
+                }
+                RightTab::Project => {
+                    project_info::show(ui, doc);
+                }
+                RightTab::Channels => {
+                    channels_panel::show(ui, doc, audio_settings);
+                }
+                RightTab::EventBrowser => {
+                    event_browser::show(ui, doc, event_browser_state);
+                }
             }
         }
     });
