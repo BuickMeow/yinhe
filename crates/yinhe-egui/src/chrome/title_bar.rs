@@ -28,7 +28,7 @@ pub(crate) fn show(
             outer_margin: egui::Margin::ZERO,
             ..Default::default()
         })
-        .show_inside(ui, |ui| {
+        .show(ui, |ui| {
             let bar_rect = ui.max_rect();
             let painter = ui.painter();
 

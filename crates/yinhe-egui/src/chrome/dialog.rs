@@ -120,7 +120,7 @@ pub(crate) fn title_bar(ui: &mut egui::Ui, title: &str, close: &mut bool) {
 /// Returns `true` if the user requested to close the dialog.
 pub(crate) fn show_dialog(
     ctx: &egui::Context,
-    id: impl std::hash::Hash,
+    id: impl std::hash::Hash + std::fmt::Debug,
     title: &str,
     size: [f32; 2],
     resizable: bool,
@@ -141,7 +141,7 @@ pub(crate) fn show_dialog(
                     fill: crate::theme::APP_BG,
                     ..Default::default()
                 })
-                .show_inside(vctx, |ui| {
+                .show(vctx, |ui| {
                     title_bar(ui, title, &mut c);
                     egui::Frame::new()
                         .inner_margin(egui::Margin {

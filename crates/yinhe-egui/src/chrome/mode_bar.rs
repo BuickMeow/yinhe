@@ -78,7 +78,7 @@ pub fn show(
             fill: crate::theme::APP_BG,
             ..Default::default()
         })
-        .show_inside(ui, |ui| {
+        .show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.add_space(2.0);
 

@@ -798,7 +798,7 @@ impl App {
                                 fill: crate::theme::APP_BG,
                                 ..Default::default()
                             })
-                            .show_inside(vctx, |ui| {
+                            .show(vctx, |ui| {
                             crate::chrome::dialog::title_bar(ui, "设置", &mut close);
                             egui::Frame::new()
                                 .inner_margin(egui::Margin {
@@ -877,7 +877,7 @@ impl App {
                             fill: crate::theme::APP_BG,
                             ..Default::default()
                         })
-                        .show_inside(vctx, |ui| {
+                        .show(vctx, |ui| {
                         crate::chrome::dialog::title_bar(
                             ui,
                             "内存占用详情",
@@ -963,7 +963,7 @@ impl App {
                             fill: crate::theme::APP_BG,
                             ..Default::default()
                         })
-                        .show_inside(vctx, |ui| {
+                        .show(vctx, |ui| {
                         let mut close = false;
                         crate::chrome::dialog::title_bar(ui, "正在加载", &mut close);
                         egui::Frame::new()
@@ -1038,7 +1038,7 @@ impl App {
                             fill: crate::theme::APP_BG,
                             ..Default::default()
                         })
-                        .show_inside(vctx, |ui| {
+                        .show(vctx, |ui| {
                             let mut close = close_requested;
                             crate::chrome::dialog::title_bar(ui, "选择 MIDI 文件", &mut close);
                             if close {
@@ -1109,7 +1109,7 @@ impl App {
                             fill: crate::theme::APP_BG,
                             ..Default::default()
                         })
-                        .show_inside(vctx, |ui| {
+                        .show(vctx, |ui| {
                         let mut close = false;
                         crate::chrome::dialog::title_bar(ui, "导出音频", &mut close);
                         egui::Frame::new()
@@ -1174,7 +1174,7 @@ impl App {
                             fill: crate::theme::APP_BG,
                             ..Default::default()
                         })
-                        .show_inside(vctx, |ui| {
+                        .show(vctx, |ui| {
                         crate::chrome::dialog::title_bar(ui, "导出音频", &mut close);
                         egui::Frame::new()
                             .inner_margin(egui::Margin {
@@ -1330,7 +1330,7 @@ impl App {
                             fill: crate::theme::APP_BG,
                             ..Default::default()
                         })
-                        .show_inside(vctx, |ui| {
+                        .show(vctx, |ui| {
                         crate::chrome::dialog::title_bar(ui, "无法打开文件", &mut close);
                         egui::Frame::new()
                             .inner_margin(egui::Margin {

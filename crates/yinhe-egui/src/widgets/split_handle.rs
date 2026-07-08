@@ -7,7 +7,7 @@ use crate::theme;
 /// Returns the `Response` so the caller can inspect `dragged()`, `drag_delta()`, etc.
 pub fn horizontal(
     ui: &mut egui::Ui,
-    id_salt: impl std::hash::Hash,
+    id_salt: impl std::hash::Hash + std::fmt::Debug,
     rect: egui::Rect,
 ) -> egui::Response {
     let resp = ui.interact(rect, ui.id().with(id_salt), egui::Sense::click_and_drag());
@@ -31,7 +31,7 @@ pub fn horizontal(
 /// Returns the `Response` so the caller can inspect `dragged()`, `drag_delta()`, etc.
 pub fn vertical(
     ui: &mut egui::Ui,
-    id_salt: impl std::hash::Hash,
+    id_salt: impl std::hash::Hash + std::fmt::Debug,
     rect: egui::Rect,
 ) -> egui::Response {
     let resp = ui.interact(rect, ui.id().with(id_salt), egui::Sense::click_and_drag());

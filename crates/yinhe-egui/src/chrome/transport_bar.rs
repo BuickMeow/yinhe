@@ -68,7 +68,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
             stroke: egui::Stroke::NONE,
             ..Default::default()
         })
-        .show_inside(ui, |ui| {
+        .show(ui, |ui| {
             // Taller buttons for the transport bar
             ui.spacing_mut().interact_size.y = 32.0;
 
