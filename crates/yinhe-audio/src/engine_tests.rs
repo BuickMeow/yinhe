@@ -227,9 +227,9 @@ fn test_render_dispatches_note_inside_large_buffer_at_exact_sample() {
     engine.playing = true;
 
     // Note at key 60, start_tick=960, velocity=100 → should dispatch at sample 48000.
-    assert_eq!(engine.next_event_sample(0, 60000), Some(48000));
-    engine.dispatch_cc_until(48000);
-    engine.dispatch_notes_at(48000);
+    let next = engine.dispatch_and_find_next(48000, 60000);
+    // NoteOff at tick1440 = 72000 samples > block_end 60000, so no next event in range.
+    assert_eq!(next, None);
 
     assert_eq!(engine.note_cursor[60], 1);
     assert_eq!(engine.active_notes.len(), 1);
@@ -305,9 +305,9 @@ fn test_audible_index_filters_vel_and_inactive_channel() {
 
     assert_eq!(engine.note_cursor[60], 0);
     // Note at key 60, start_tick=960, velocity=100 → should dispatch at sample 44100.
-    assert_eq!(engine.next_event_sample(0, 60000), Some(44100));
-    engine.dispatch_cc_until(44100);
-    engine.dispatch_notes_at(44100);
+    let next = engine.dispatch_and_find_next(44100, 60000);
+    // Next note (other track) starts at tick1440 = 132300 > block_end, so no next event.
+    assert_eq!(next, None);
     // Cursor = 3: 2 low-vel skipped + 1 dispatched (4th note's start_sample > 44100).
     assert_eq!(engine.note_cursor[60], 3);
     assert_eq!(engine.active_notes.len(), 1);
@@ -329,10 +329,11 @@ fn test_audible_index_empty_when_all_filtered() {
     engine.load_model(&model);
 
     // All notes have velocity ≤ 1 → no events should dispatch.
-    assert_eq!(engine.next_event_sample(0, 60000), None);
-    for key in 0..128usize {
-        assert_eq!(engine.note_cursor[key], 0);
-    }
+    let next = engine.dispatch_and_find_next(0, 60000);
+    assert_eq!(next, None);
+    // Cursors advance past skipped notes (vel ≤ 1) even though nothing dispatched.
+    assert_eq!(engine.note_cursor[60], 1);
+    assert_eq!(engine.note_cursor[61], 1);
 }
 
 #[test]
@@ -379,16 +380,29 @@ fn test_audible_index_uses_per_key_tempo_cursor() {
 
     // Note at key 0, start_tick=2000 → ~150000 samples at 48000 Hz (120→60 BPM at tick 1000).
     // Note at key 60, start_tick=480 → 24000 samples at 48000 Hz.
-    assert_eq!(engine.next_event_sample(0, 200000), Some(24000));
-    engine.dispatch_cc_until(24000);
-    engine.dispatch_notes_at(24000);
+    let next = engine.dispatch_and_find_next(24000, 200000);
+    // NoteOff at end_tick=960 = 48000 samples is the next event (before key 0 at 150000).
+    assert_eq!(next, Some(48000));
     assert_eq!(engine.note_cursor[60], 1);
     assert_eq!(engine.active_notes.len(), 1);
-    engine.dispatch_cc_until(150000);
-    engine.dispatch_notes_at(150000);
+
+    let next = engine.dispatch_and_find_next(48000, 200000);
+    // After dispatching NoteOff at 48000, next event is key 0 NoteOn at ~150000.
+    assert_eq!(next, Some(150000));
+    // key 60 ended, so only key 0 is active.
+    assert_eq!(engine.active_notes.len(), 0);
+
+    let next = engine.dispatch_and_find_next(150000, 200000);
+    // After dispatching key 0 NoteOn, NoteOff at end_tick=2480 = 198000 samples.
+    assert_eq!(next, Some(198000));
     assert_eq!(engine.note_cursor[0], 1);
-    // Note at key 60 ended at sample 48000, so only key 0 is active.
+    // key 0 is active.
     assert_eq!(engine.active_notes.len(), 1);
+
+    let next = engine.dispatch_and_find_next(198000, 200000);
+    // No more events in [198000, 200000).
+    assert_eq!(next, None);
+    assert_eq!(engine.active_notes.len(), 0);
 }
 
 #[test]
