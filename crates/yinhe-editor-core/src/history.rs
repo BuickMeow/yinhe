@@ -70,6 +70,15 @@ pub enum UndoAction {
     ProjectDescription { old: String, new: String },
     ProjectPpq { old: u32, new: u32 },
     CompressionLevel { old: i32, new: i32 },
+    /// Track structure changed (add/remove/move track).
+    /// Stores full before/after track lists (metadata only, no notes) and
+    /// a remap table: `note_remap[old_track_idx] = new_track_idx` (or u16::MAX if deleted).
+    TrackStructure {
+        tracks_before: Vec<std::sync::Arc<yinhe_core::TrackData>>,
+        tracks_after: Vec<std::sync::Arc<yinhe_core::TrackData>>,
+        note_remap: Vec<u16>,  // old_track → new_track (u16::MAX = deleted)
+        note_remap_inverse: Vec<u16>,  // new_track → old_track (for undo)
+    },
 }
 
 impl UndoAction {
@@ -100,6 +109,47 @@ impl UndoAction {
             UndoAction::CompressionLevel { old: _, new } => {
                 doc.data.compression_level = *new;
             }
+            UndoAction::TrackStructure {
+                tracks_before: _,
+                tracks_after,
+                note_remap,
+                note_remap_inverse: _,
+            } => {
+                let model = std::sync::Arc::make_mut(&mut doc.data.model);
+                model.tracks = tracks_after.clone();
+                for bucket in model.notes.iter_mut() {
+                    let bucket = std::sync::Arc::make_mut(bucket);
+                    bucket.retain(|n| note_remap[n.track as usize] != u16::MAX);
+                    for note in bucket.iter_mut() {
+                        note.track = note_remap[note.track as usize];
+                    }
+                }
+                model.rebuild();
+                doc.data.midi_version = doc.data.midi_version.wrapping_add(1);
+                doc.edit.track_info_cache = doc.data.track_info();
+                let num_tracks = doc.data.model.tracks.len();
+                doc.edit.track_colors_cache = (0..num_tracks)
+                    .map(|i| crate::document::track_color(i, doc.edit.conductor_track_idx))
+                    .collect();
+                while doc.edit.track_visible.len() < num_tracks {
+                    doc.edit.track_visible.push(true);
+                }
+                while doc.edit.track_pianoroll_visible.len() < num_tracks {
+                    doc.edit.track_pianoroll_visible.push(true);
+                }
+                while doc.edit.track_overrides.len() < num_tracks {
+                    doc.edit.track_overrides.push(Default::default());
+                }
+                while doc.edit.track_visible.len() > num_tracks {
+                    doc.edit.track_visible.pop();
+                }
+                while doc.edit.track_pianoroll_visible.len() > num_tracks {
+                    doc.edit.track_pianoroll_visible.pop();
+                }
+                while doc.edit.track_overrides.len() > num_tracks {
+                    doc.edit.track_overrides.pop();
+                }
+            }
         }
     }
 
@@ -129,6 +179,47 @@ impl UndoAction {
             }
             UndoAction::CompressionLevel { old, new: _ } => {
                 doc.data.compression_level = *old;
+            }
+            UndoAction::TrackStructure {
+                tracks_before,
+                tracks_after: _,
+                note_remap: _,
+                note_remap_inverse,
+            } => {
+                let model = std::sync::Arc::make_mut(&mut doc.data.model);
+                model.tracks = tracks_before.clone();
+                for bucket in model.notes.iter_mut() {
+                    let bucket = std::sync::Arc::make_mut(bucket);
+                    bucket.retain(|n| note_remap_inverse[n.track as usize] != u16::MAX);
+                    for note in bucket.iter_mut() {
+                        note.track = note_remap_inverse[note.track as usize];
+                    }
+                }
+                model.rebuild();
+                doc.data.midi_version = doc.data.midi_version.wrapping_add(1);
+                doc.edit.track_info_cache = doc.data.track_info();
+                let num_tracks = doc.data.model.tracks.len();
+                doc.edit.track_colors_cache = (0..num_tracks)
+                    .map(|i| crate::document::track_color(i, doc.edit.conductor_track_idx))
+                    .collect();
+                while doc.edit.track_visible.len() < num_tracks {
+                    doc.edit.track_visible.push(true);
+                }
+                while doc.edit.track_pianoroll_visible.len() < num_tracks {
+                    doc.edit.track_pianoroll_visible.push(true);
+                }
+                while doc.edit.track_overrides.len() < num_tracks {
+                    doc.edit.track_overrides.push(Default::default());
+                }
+                while doc.edit.track_visible.len() > num_tracks {
+                    doc.edit.track_visible.pop();
+                }
+                while doc.edit.track_pianoroll_visible.len() > num_tracks {
+                    doc.edit.track_pianoroll_visible.pop();
+                }
+                while doc.edit.track_overrides.len() > num_tracks {
+                    doc.edit.track_overrides.pop();
+                }
             }
         }
     }
@@ -170,6 +261,17 @@ impl UndoAction {
             UndoAction::CompressionLevel { old, new } => UndoAction::CompressionLevel {
                 old: *new,
                 new: *old,
+            },
+            UndoAction::TrackStructure {
+                tracks_before,
+                tracks_after,
+                note_remap,
+                note_remap_inverse,
+            } => UndoAction::TrackStructure {
+                tracks_before: tracks_after.clone(),
+                tracks_after: tracks_before.clone(),
+                note_remap: note_remap_inverse.clone(),
+                note_remap_inverse: note_remap.clone(),
             },
         }
     }

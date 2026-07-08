@@ -144,7 +144,7 @@ pub fn show(
             }
         }
 
-        let audio_dirty = track_panel::show(
+        let (audio_dirty, track_actions) = track_panel::show(
             ui,
             &doc.edit.track_info_cache,
             &doc.edit.track_visible,
@@ -160,6 +160,47 @@ pub fn show(
 
         if audio_dirty {
             crate::right_panel::info_panel::send_skip_tracks(doc, audio);
+        }
+
+        // Handle track management actions (add/remove/move)
+        for action in track_actions {
+            let (undo_action, label) = match &action {
+                track_panel::TrackAction::AddTrack { after_idx } => {
+                    let idx = after_idx.unwrap_or(doc.data.model.tracks.len() - 1);
+                    (doc.add_track(idx), "Add track")
+                }
+                track_panel::TrackAction::RemoveTrack { idx } => {
+                    (doc.remove_track(*idx), "Remove track")
+                }
+                track_panel::TrackAction::MoveUp { idx } => {
+                    if *idx > 0 {
+                        (doc.move_track(*idx, *idx - 1), "Move track up")
+                    } else {
+                        (None, "")
+                    }
+                }
+                track_panel::TrackAction::MoveDown { idx } => {
+                    if *idx + 1 < doc.data.model.tracks.len() {
+                        (doc.move_track(*idx, *idx + 1), "Move track down")
+                    } else {
+                        (None, "")
+                    }
+                }
+            };
+            if let Some(action) = undo_action {
+                doc.history.push(yinhe_editor_core::history::UndoEntry {
+                    action,
+                    label,
+                    selected: doc.edit.selected.clone(),
+                    track_selected: doc.edit.track_selected.clone(),
+                    sel_rect: doc.edit.sel_rect.clone(),
+                });
+                if let Some(ref audio) = audio {
+                    let _ = audio.handle.send(yinhe_audio::AudioCommand::ReloadNotes {
+                        model: doc.data.model.clone(),
+                    });
+                }
+            }
         }
 
         arr_view.base.scroll_y = arr_view.base.track_panel_scroll_y;

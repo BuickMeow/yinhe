@@ -6,12 +6,25 @@ use yinhe_core::TrackInfo;
 
 use yinhe_editor_core::document::TrackOverride;
 
+/// Actions requested by the track panel that need Document access.
+#[derive(Clone, Debug)]
+pub(crate) enum TrackAction {
+    /// Add a new track after the given index (or at end if None)
+    AddTrack { after_idx: Option<usize> },
+    /// Remove the track at the given index
+    RemoveTrack { idx: usize },
+    /// Move a track up (swap with previous)
+    MoveUp { idx: usize },
+    /// Move a track down (swap with next)
+    MoveDown { idx: usize },
+}
+
 /// Render the track list using a painter (unified component for both
 /// pianoroll and transport contexts).
 ///
-/// Returns `true` if the user toggled a Mute or Solo button this frame, in
-/// which case the caller should send `AudioCommand::SkipTracks` to the audio
-/// engine.
+/// Returns `(audio_dirty, actions)` where `audio_dirty` is `true` if the user
+/// toggled a Mute or Solo button this frame, and `actions` is a list of
+/// track-management actions (add/remove/move) for the caller to apply.
 #[must_use]
 pub(crate) fn show(
     ui: &mut egui::Ui,
@@ -25,15 +38,17 @@ pub(crate) fn show(
     row_height: &mut f32,
     scroll_y: &mut f32,
     request_pianoroll: &mut bool,
-) -> bool {
+) -> (bool, Vec<TrackAction>) {
     let panel_rect = ui.max_rect();
     let panel_w = panel_rect.width();
     let panel_h = panel_rect.height();
     let num_tracks = track_info.len();
 
     if num_tracks == 0 || panel_w < 1.0 || panel_h < 1.0 {
-        return false;
+        return (false, Vec::new());
     }
+
+    let mut actions = Vec::new();
 
     let show_details = *row_height >= 30.0;
 
@@ -204,6 +219,45 @@ pub(crate) fn show(
         }
     }
 
+    // ── "Add track" button at the bottom ──
+    {
+        let btn_h = 24.0_f32;
+        let btn_rect = egui::Rect::from_min_size(
+            egui::pos2(panel_rect.min.x, panel_rect.max.y - btn_h),
+            egui::vec2(panel_w, btn_h),
+        );
+        let btn_resp = ui.interact(btn_rect, egui::Id::new("track_panel_add_btn"), egui::Sense::click());
+        let hovered = btn_resp.hovered();
+
+        // Background
+        let bg = if hovered {
+            egui::Color32::from_gray(60)
+        } else {
+            egui::Color32::from_gray(40)
+        };
+        painter.rect_filled(btn_rect, 0.0, bg);
+
+        // Centered "+" icon using Material Icons
+        use egui_material_icons::icons::ICON_ADD;
+        let icon_font = egui::FontId::new(18.0, ICON_ADD.font_family());
+        let icon_color = if hovered {
+            egui::Color32::from_rgb(0x4C, 0xAF, 0x50)  // green accent on hover
+        } else {
+            egui::Color32::from_gray(160)
+        };
+        painter.text(
+            btn_rect.center(),
+            egui::Align2::CENTER_CENTER,
+            ICON_ADD.codepoint,
+            icon_font,
+            icon_color,
+        );
+
+        if btn_resp.clicked() {
+            actions.push(TrackAction::AddTrack { after_idx: None });
+        }
+    }
+
     // ── Click handling ──
     let hit = |pos: egui::Pos2| -> Option<usize> {
         let rel_y = pos.y - panel_rect.min.y + *scroll_y;
@@ -257,6 +311,120 @@ pub(crate) fn show(
         }
     }
 
+    // ── Right-click context menu ──
+    // On secondary click, select the track under the cursor and record its
+    // index in egui temp data so the context_menu closure (which may run on
+    // subsequent frames while the menu stays open) can recover it.
+    let ctx_menu_idx_id = egui::Id::new("track_ctx_menu_idx");
+    if resp.secondary_clicked() {
+        if let Some(pos) = resp.interact_pointer_pos() {
+            if let Some(idx) = hit(pos) {
+                let track_idx = track_info[idx].index;
+                if !track_selected.contains(&track_idx) {
+                    track_selected.clear();
+                    track_selected.insert(track_idx);
+                    *selection_anchor = Some(track_idx);
+                }
+                ui.ctx().data_mut(|d| d.insert_temp(ctx_menu_idx_id, idx));
+            }
+        }
+    }
+
+    resp.context_menu(|ui| {
+        let idx = ui
+            .ctx()
+            .data(|d| d.get_temp::<usize>(ctx_menu_idx_id))
+            .unwrap_or(0);
+        let track_idx = track_info.get(idx).map(|t| t.index).unwrap_or(0);
+        let is_conductor = conductor_track_idx == Some(track_idx);
+
+        if !is_conductor {
+            if ui.button("在此轨道下方添加").clicked() {
+                actions.push(TrackAction::AddTrack { after_idx: Some(idx) });
+                ui.close();
+            }
+            if ui.button("在此轨道上方添加").clicked() {
+                actions.push(TrackAction::AddTrack { after_idx: Some(idx.saturating_sub(1)) });
+                ui.close();
+            }
+            ui.separator();
+            if idx > 0 && conductor_track_idx != Some((idx - 1) as u16) {
+                if ui.button("上移").clicked() {
+                    actions.push(TrackAction::MoveUp { idx });
+                    ui.close();
+                }
+            }
+            if idx < num_tracks - 1 {
+                if ui.button("下移").clicked() {
+                    actions.push(TrackAction::MoveDown { idx });
+                    ui.close();
+                }
+            }
+            ui.separator();
+            if ui.button("删除轨道").clicked() {
+                actions.push(TrackAction::RemoveTrack { idx });
+                ui.close();
+            }
+        } else {
+            // Conductor track: only allow adding after
+            if ui.button("在此轨道下方添加").clicked() {
+                actions.push(TrackAction::AddTrack { after_idx: Some(idx) });
+                ui.close();
+            }
+        }
+    });
+
+    // ── Up/Down arrow key navigation ──
+    if resp.has_focus()
+        || panel_rect.contains(ui.input(|i| i.pointer.hover_pos().unwrap_or_default()))
+    {
+        if ui.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
+            if let Some(&current) = track_selected.iter().next() {
+                let new_idx = current.saturating_sub(1);
+                // Skip invisible tracks
+                let mut found = None;
+                for i in (0..new_idx as usize).rev() {
+                    if track_visible.get(i).copied().unwrap_or(true) {
+                        found = Some(i as u16);
+                        break;
+                    }
+                }
+                if let Some(target) = found {
+                    track_selected.clear();
+                    track_selected.insert(target);
+                    *selection_anchor = Some(target);
+                }
+            } else if !track_info.is_empty() {
+                let last = track_info.len() - 1;
+                track_selected.clear();
+                track_selected.insert(last as u16);
+                *selection_anchor = Some(last as u16);
+            }
+        }
+        if ui.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
+            if let Some(&current) = track_selected.iter().next() {
+                let new_idx = (current as usize + 1).min(num_tracks - 1);
+                // Skip invisible tracks
+                let mut found = None;
+                for i in new_idx..num_tracks {
+                    if track_visible.get(i).copied().unwrap_or(true) {
+                        found = Some(i as u16);
+                        break;
+                    }
+                }
+                if let Some(target) = found {
+                    track_selected.clear();
+                    track_selected.insert(target);
+                    *selection_anchor = Some(target);
+                }
+            } else if !track_info.is_empty() {
+                track_selected.clear();
+                track_selected.insert(0);
+                *selection_anchor = Some(0);
+            }
+        }
+    }
+
     if resp.hovered() {
         let scroll_delta = ui.input(|i| i.smooth_scroll_delta);
         if scroll_delta.y.abs() > 0.5 {
@@ -264,7 +432,7 @@ pub(crate) fn show(
         }
     }
 
-    audio_dirty
+    (audio_dirty, actions)
 }
 
 /// Paint an 18x18 inline button with a one-letter label and click handling.
