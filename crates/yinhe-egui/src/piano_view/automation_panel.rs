@@ -4,6 +4,7 @@ use eframe::egui;
 use egui_material_icons::icons::*;
 
 use yinhe_editor_core::quantize::QuantizePreset;
+pub use yinhe_editor_core::document::AutomationEdit;
 use yinhe_types::{AutomationLane, AutomationTarget, SegmentShape, TimeSigEvent};
 use yinhe_types::time_format::format_tick_bar_beat_with_time_sig;
 
@@ -31,36 +32,6 @@ const AUTOMATION_TARGETS: &[AutomationTarget] = &[
 
 /// 锚点命中半径（像素）。鼠标在此半径内点击视为选中该锚点。
 const ANCHOR_HIT_PX: f32 = 10.0;
-
-/// 用户在 automation 面板上的编辑操作。
-///
-/// 由 `show_panels` 返回，由上层（ui_helpers）应用到 Document。
-#[derive(Clone, Debug)]
-pub enum AutomationEdit {
-    /// 添加新事件。如果 lane 不存在会自动创建。
-    /// `shape` = 新事件的 shape。
-    Add {
-        track_idx: u16,
-        target: AutomationTarget,
-        tick: u32,
-        value: u16,
-        shape: SegmentShape,
-    },
-    /// 移动已有事件。
-    Move {
-        track_idx: u16,
-        lane_idx: usize,
-        old_tick: u32,
-        new_tick: u32,
-        new_value: u16,
-    },
-    /// 切换已有事件的 shape（双击）。
-    CycleShape {
-        track_idx: u16,
-        lane_idx: usize,
-        tick: u32,
-    },
-}
 
 /// 交互上下文：打包 `show_panels` 处理编辑所需的全部外部信息。
 ///

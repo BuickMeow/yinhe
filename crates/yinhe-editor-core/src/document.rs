@@ -1,13 +1,57 @@
 use std::sync::Arc;
 
 use yinhe_core::{NoteEvent, TrackData, YinModel};
-use yinhe_types::TRACK_PALETTE;
+use yinhe_types::{AutomationTarget, SegmentShape, TRACK_PALETTE};
 use yinhe_yin::{MappingFile, ProjectFile};
 
 use crate::edit_state::EditState;
 use crate::history::{NoteDelta, UndoAction, UndoEntry, UndoStack};
 use crate::project_data::ProjectData;
 use crate::quantize::QuantizePreset;
+
+// ---------------------------------------------------------------------------
+// Enums moved from yinhe-egui (P0 refactoring)
+// ---------------------------------------------------------------------------
+
+/// Pencil-tool drag output for modifying existing notes.
+#[derive(Clone, Debug)]
+pub enum PencilNoteDrag {
+    /// Moving a single note by (delta_ticks, delta_keys) from its original position.
+    Move { track: u16, start_tick: u32, key: u8, delta_ticks: i64, delta_keys: i32 },
+    /// Resizing the right edge of a note.
+    ResizeRight { track: u16, start_tick: u32, key: u8, new_end_tick: u32 },
+    /// Resizing the left edge of a note.
+    ResizeLeft { track: u16, start_tick: u32, key: u8, new_start_tick: u32 },
+}
+
+/// 用户在 automation 面板上的编辑操作。
+///
+/// 由 automation 面板产生，由 `Document::apply_automation_edits` 应用。
+#[derive(Clone, Debug)]
+pub enum AutomationEdit {
+    /// 添加新事件。如果 lane 不存在会自动创建。
+    Add {
+        track_idx: u16,
+        target: AutomationTarget,
+        tick: u32,
+        value: u16,
+        shape: SegmentShape,
+    },
+    /// 移动已有事件。
+    Move {
+        track_idx: u16,
+        lane_idx: usize,
+        old_tick: u32,
+        new_tick: u32,
+        new_value: u16,
+    },
+    /// 切换已有事件的 shape（双击）。
+    CycleShape {
+        track_idx: u16,
+        lane_idx: usize,
+        tick: u32,
+    },
+}
 
 /// Per-track mutable overrides (mute, solo).
 #[derive(Clone)]
@@ -582,6 +626,202 @@ impl Document {
     ) -> Option<usize> {
         let track = self.data.model.tracks.get(track_idx)?;
         track.automation_lanes.iter().position(|l| &l.target == target)
+    }
+
+    // -----------------------------------------------------------------------
+    // P0 refactoring: editing logic moved from yinhe-egui::ui_helpers
+    // -----------------------------------------------------------------------
+
+    /// Move all selected notes by (delta_ticks, delta_keys).
+    ///
+    /// Returns an `UndoAction` if any notes were moved. The caller is
+    /// responsible for pushing it to the history stack, marking the view
+    /// dirty, and sending `AudioCommand::ReloadNotes`.
+    pub fn move_selected_notes(&mut self, delta_ticks: i64, delta_keys: i32) -> Option<UndoAction> {
+        if self.edit.selected.is_empty() {
+            return None;
+        }
+        if delta_ticks == 0 && delta_keys == 0 {
+            return None;
+        }
+
+        let model = Arc::make_mut(&mut self.data.model);
+
+        // Batch removal + collect removed notes.
+        let originals = crate::batch_ops::remove_selected(model, &self.edit.selected);
+
+        // Batch insert: group by destination key, extend.
+        let mut new_by_key: std::collections::HashMap<u8, Vec<yinhe_types::Note>> = std::collections::HashMap::new();
+        for (note, old_key) in &originals {
+            let new_key = ((*old_key as i32) + delta_keys).clamp(0, 127) as u8;
+            let new_tick = (note.start_tick as i64 + delta_ticks).max(0) as u32;
+            let length = note.end_tick - note.start_tick;
+            let moved = yinhe_types::Note {
+                start_tick: new_tick,
+                end_tick: new_tick + length,
+                velocity: note.velocity,
+                dup_index: 0,
+                track: note.track,
+            };
+            new_by_key.entry(new_key).or_default().push(moved);
+        }
+        let after: Vec<(yinhe_types::Note, u8)> = new_by_key
+            .iter()
+            .flat_map(|(key, notes)| notes.iter().map(|n| (*n, *key)))
+            .collect();
+        crate::batch_ops::insert_batch(model, new_by_key);
+
+        // Offset selection rects to follow the moved notes.
+        self.edit.selected.offset(delta_ticks, delta_keys);
+        model.rebuild_dirty();
+        self.data.midi_version = self.data.midi_version.wrapping_add(1);
+
+        Some(UndoAction::Notes(NoteDelta {
+            before: originals,
+            after,
+        }))
+    }
+
+    /// Apply a pencil-tool drag operation (move or resize a single note).
+    ///
+    /// Returns an `UndoAction` if the note was modified. The caller is
+    /// responsible for pushing it to the history stack, marking the view
+    /// dirty, and sending `AudioCommand::ReloadNotes`.
+    pub fn pencil_drag_note(&mut self, drag: &PencilNoteDrag) -> Option<UndoAction> {
+        match drag {
+            PencilNoteDrag::Move { track, start_tick, key, delta_ticks, delta_keys } => {
+                let model = &self.data.model;
+                let k = *key as usize;
+                let note = model.notes[k].iter().find(|n| {
+                    n.track == *track && n.start_tick == *start_tick
+                })?;
+                let orig_note = *note;
+                let new_key = ((*key as i32) + delta_keys).clamp(0, 127) as u8;
+                let new_tick = (orig_note.start_tick as i64 + delta_ticks).max(0) as u32;
+
+                if *delta_ticks != 0 || *delta_keys != 0 {
+                    let model = Arc::make_mut(&mut self.data.model);
+                    // Remove original from old key bucket
+                    let ok = *key as usize;
+                    Arc::make_mut(&mut model.notes[ok]).retain(|n| {
+                        !(n.track == *track && n.start_tick == orig_note.start_tick && n.dup_index == orig_note.dup_index)
+                    });
+                    model.mark_dirty(*key);
+                    // Insert moved note at new key bucket
+                    let length = orig_note.end_tick - orig_note.start_tick;
+                    let moved = yinhe_types::Note {
+                        start_tick: new_tick,
+                        end_tick: new_tick + length,
+                        velocity: orig_note.velocity,
+                        dup_index: 0,
+                        track: *track,
+                    };
+                    let nk = new_key as usize;
+                    let insert_pos = model.notes[nk].partition_point(|n| n.start_tick < moved.start_tick);
+                    Arc::make_mut(&mut model.notes[nk]).insert(insert_pos, moved);
+                    model.mark_dirty(new_key);
+                    model.rebuild_dirty();
+                    self.data.midi_version = self.data.midi_version.wrapping_add(1);
+                    return Some(UndoAction::Notes(NoteDelta {
+                        before: vec![(orig_note, *key)],
+                        after: vec![(moved, new_key)],
+                    }));
+                }
+                None
+            }
+            PencilNoteDrag::ResizeRight { track, start_tick, key, new_end_tick } => {
+                let model = &self.data.model;
+                let k = *key as usize;
+                let note = model.notes[k].iter().find(|n| {
+                    n.track == *track && n.start_tick == *start_tick
+                })?;
+                if *new_end_tick != note.end_tick {
+                    let before = *note;
+                    let model = Arc::make_mut(&mut self.data.model);
+                    if let Some(n) = Arc::make_mut(&mut model.notes[k]).iter_mut().find(|n| {
+                        n.track == *track && n.start_tick == *start_tick
+                    }) {
+                        n.end_tick = (*new_end_tick).max(n.start_tick + 1);
+                        let after = *n;
+                        model.mark_dirty(*key);
+                        model.rebuild_dirty();
+                        self.data.midi_version = self.data.midi_version.wrapping_add(1);
+                        return Some(UndoAction::Notes(NoteDelta {
+                            before: vec![(before, *key)],
+                            after: vec![(after, *key)],
+                        }));
+                    }
+                }
+                None
+            }
+            PencilNoteDrag::ResizeLeft { track, start_tick, key, new_start_tick } => {
+                let model = &self.data.model;
+                let k = *key as usize;
+                let note = model.notes[k].iter().find(|n| {
+                    n.track == *track && n.start_tick == *start_tick
+                })?;
+                if *new_start_tick != note.start_tick {
+                    let before = *note;
+                    let model = Arc::make_mut(&mut self.data.model);
+                    if let Some(n) = Arc::make_mut(&mut model.notes[k]).iter_mut().find(|n| {
+                        n.track == *track && n.start_tick == *start_tick
+                    }) {
+                        n.start_tick = (*new_start_tick).min(n.end_tick - 1);
+                        let after = *n;
+                        model.mark_dirty(*key);
+                        model.rebuild_dirty();
+                        self.data.midi_version = self.data.midi_version.wrapping_add(1);
+                        return Some(UndoAction::Notes(NoteDelta {
+                            before: vec![(before, *key)],
+                            after: vec![(after, *key)],
+                        }));
+                    }
+                }
+                None
+            }
+        }
+    }
+
+    /// Apply a batch of automation edits (add / move / cycle-shape).
+    ///
+    /// Returns a `Vec<UndoAction>` for all successfully applied edits.
+    /// The caller is responsible for pushing them to the history stack,
+    /// marking the view dirty, and sending `AudioCommand::ReloadNotes`.
+    pub fn apply_automation_edits(&mut self, edits: Vec<AutomationEdit>) -> Vec<UndoAction> {
+        let mut actions = Vec::new();
+        for edit in edits {
+            let action = match edit {
+                AutomationEdit::Add { track_idx, target, tick, value, shape } => {
+                    let event = yinhe_types::AutomationEvent { tick, value, shape };
+                    match self.add_automation_event(track_idx as usize, target, event) {
+                        Some((_, _, action)) => Some(action),
+                        None => None,
+                    }
+                }
+                AutomationEdit::Move { track_idx, lane_idx, old_tick, new_tick, new_value } => {
+                    self.move_automation_event(track_idx as usize, lane_idx, old_tick, new_tick, new_value)
+                }
+                AutomationEdit::CycleShape { track_idx, lane_idx, tick } => {
+                    // Step ↔ Curve{tension:0}
+                    let track = self.data.model.tracks.get(track_idx as usize);
+                    let lane = track.and_then(|t| t.automation_lanes.get(lane_idx));
+                    let evt = lane.and_then(|l| l.events.iter().find(|e| e.tick == tick));
+                    if let Some(evt) = evt {
+                        let next = match evt.shape {
+                            yinhe_types::SegmentShape::Step => yinhe_types::SegmentShape::Curve { tension: 0 },
+                            yinhe_types::SegmentShape::Curve { .. } => yinhe_types::SegmentShape::Step,
+                        };
+                        self.set_automation_shape(track_idx as usize, lane_idx, tick, next)
+                    } else {
+                        None
+                    }
+                }
+            };
+            if let Some(action) = action {
+                actions.push(action);
+            }
+        }
+        actions
     }
 }
 

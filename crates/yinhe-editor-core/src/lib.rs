@@ -11,7 +11,7 @@ pub mod project_data;
 pub mod quantize;
 
 pub use config::{ProjectSfConfig, SfEntry};
-pub use document::{Document, TrackOverride};
+pub use document::{AutomationEdit, Document, PencilNoteDrag, TrackOverride};
 pub use edit_state::EditState;
 pub use yinhe_core::Selection;
 pub use history::{PendingEdits, UndoAction, UndoEntry, UndoStack};

@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use eframe::egui;
 
 use crate::app::App;
@@ -423,58 +421,13 @@ impl App {
         &mut self,
         edits: Vec<crate::piano_view::automation_panel::AutomationEdit>,
     ) {
-        use crate::piano_view::automation_panel::AutomationEdit;
         let Some(idx) = self.active_doc else { return };
         let doc = &mut self.documents[idx];
 
-        let mut model_changed = false;
-        for edit in &edits {
-            println!("[auto_debug] handle_automation_edits: {:?}", edit);
-        }
-        for edit in edits {
-            let action = match edit {
-                AutomationEdit::Add { track_idx, target, tick, value, shape } => {
-                    let event = yinhe_types::AutomationEvent { tick, value, shape };
-                    match doc.add_automation_event(track_idx as usize, target, event) {
-                        Some((_, _, action)) => {
-                            model_changed = true;
-                            Some(action)
-                        }
-                        None => None,
-                    }
-                }
-                AutomationEdit::Move { track_idx, lane_idx, old_tick, new_tick, new_value } => {
-                    match doc.move_automation_event(track_idx as usize, lane_idx, old_tick, new_tick, new_value) {
-                        Some(action) => {
-                            model_changed = true;
-                            Some(action)
-                        }
-                        None => None,
-                    }
-                }
-                AutomationEdit::CycleShape { track_idx, lane_idx, tick } => {
-                    // Step ↔ Curve{tension:0}
-                    let track = doc.data.model.tracks.get(track_idx as usize);
-                    let lane = track.and_then(|t| t.automation_lanes.get(lane_idx));
-                    let evt = lane.and_then(|l| l.events.iter().find(|e| e.tick == tick));
-                    if let Some(evt) = evt {
-                        let next = match evt.shape {
-                            yinhe_types::SegmentShape::Step => yinhe_types::SegmentShape::Curve { tension: 0 },
-                            yinhe_types::SegmentShape::Curve { .. } => yinhe_types::SegmentShape::Step,
-                        };
-                        match doc.set_automation_shape(track_idx as usize, lane_idx, tick, next) {
-                            Some(action) => {
-                                model_changed = true;
-                                Some(action)
-                            }
-                            None => None,
-                        }
-                    } else {
-                        None
-                    }
-                }
-            };
-            if let Some(action) = action {
+        let actions = doc.apply_automation_edits(edits);
+        if !actions.is_empty() {
+            self.pianoroll_view.base.dirty = true;
+            for action in actions {
                 doc.history.push(yinhe_editor_core::history::UndoEntry {
                     action,
                     label: "Edit automation",
@@ -483,10 +436,6 @@ impl App {
                     sel_rect: doc.edit.sel_rect.clone(),
                 });
             }
-        }
-
-        if model_changed {
-            self.pianoroll_view.base.dirty = true;
             if let Some(ref audio) = self.audio {
                 let _ = audio.handle.send(yinhe_audio::AudioCommand::ReloadNotes { model: doc.data.model.clone() });
             }
@@ -498,196 +447,41 @@ impl App {
         if let Some((delta_ticks, delta_keys)) = note_drag_delta {
             let Some(idx) = self.active_doc else { return };
             let doc = &mut self.documents[idx];
-            if doc.edit.selected.is_empty() {
-                return;
-            }
-            if delta_ticks == 0 && delta_keys == 0 {
-                return;
-            }
-
-            let model = Arc::make_mut(&mut doc.data.model);
-
-            // Batch removal + collect removed notes.
-            let originals = yinhe_editor_core::batch_ops::remove_selected(model, &doc.edit.selected);
-
-            // Batch insert: group by destination key, extend.
-            let mut new_by_key: std::collections::HashMap<u8, Vec<yinhe_types::Note>> = std::collections::HashMap::new();
-            for (note, old_key) in &originals {
-                let new_key = ((*old_key as i32) + delta_keys).clamp(0, 127) as u8;
-                let new_tick = (note.start_tick as i64 + delta_ticks).max(0) as u32;
-                let length = note.end_tick - note.start_tick;
-                let moved = yinhe_types::Note {
-                    start_tick: new_tick,
-                    end_tick: new_tick + length,
-                    velocity: note.velocity,
-                    dup_index: 0,
-                    track: note.track,
-                };
-                new_by_key.entry(new_key).or_default().push(moved);
-            }
-            let after: Vec<(yinhe_types::Note, u8)> = new_by_key
-                .iter()
-                .flat_map(|(key, notes)| notes.iter().map(|n| (*n, *key)))
-                .collect();
-            yinhe_editor_core::batch_ops::insert_batch(model, new_by_key);
-
-            // Offset selection rects to follow the moved notes.
-            doc.edit.selected.offset(delta_ticks, delta_keys);
-            model.rebuild_dirty();
-            doc.data.midi_version = doc.data.midi_version.wrapping_add(1);
-            self.pianoroll_view.base.dirty = true;
-            doc.history.push(yinhe_editor_core::history::UndoEntry {
-                action: yinhe_editor_core::history::UndoAction::Notes(
-                    yinhe_editor_core::history::NoteDelta {
-                        before: originals,
-                        after,
-                    },
-                ),
-                label: "Move notes",
-                selected: doc.edit.selected.clone(),
-                track_selected: doc.edit.track_selected.clone(),
-                sel_rect: doc.edit.sel_rect.clone(),
-            });
-            if let Some(ref audio) = self.audio {
-                let _ = audio.handle.send(yinhe_audio::AudioCommand::ReloadNotes { model: doc.data.model.clone() });
+            if let Some(action) = doc.move_selected_notes(delta_ticks, delta_keys) {
+                self.pianoroll_view.base.dirty = true;
+                doc.history.push(yinhe_editor_core::history::UndoEntry {
+                    action,
+                    label: "Move notes",
+                    selected: doc.edit.selected.clone(),
+                    track_selected: doc.edit.track_selected.clone(),
+                    sel_rect: doc.edit.sel_rect.clone(),
+                });
+                if let Some(ref audio) = self.audio {
+                    let _ = audio.handle.send(yinhe_audio::AudioCommand::ReloadNotes { model: doc.data.model.clone() });
+                }
             }
         }
     }
 
     /// Handle pencil note drag updates (move or resize a single note).
     fn handle_pencil_note_drag(&mut self, drag: Option<crate::piano_view::PencilNoteDrag>) {
-        use crate::piano_view::PencilNoteDrag;
+        let Some(drag) = drag else { return };
         let Some(idx) = self.active_doc else { return };
         let doc = &mut self.documents[idx];
-
-        match drag {
-            Some(PencilNoteDrag::Move { track, start_tick, key, delta_ticks, delta_keys }) => {
-                // Called once on release — find the note and move it.
-                let model = &doc.data.model;
-                let k = key as usize;
-                if let Some(note) = model.notes[k].iter().find(|n| {
-                    n.track == track && n.start_tick == start_tick
-                }) {
-                    let orig_note = *note;
-                    let new_key = ((key as i32) + delta_keys).clamp(0, 127) as u8;
-                    let new_tick = (orig_note.start_tick as i64 + delta_ticks).max(0) as u32;
-
-                    if delta_ticks != 0 || delta_keys != 0 {
-                        let model = Arc::make_mut(&mut doc.data.model);
-                        // Remove original
-                        let ok = key as usize;
-                        Arc::make_mut(&mut model.notes[ok]).retain(|n| {
-                            !(n.track == track && n.start_tick == orig_note.start_tick && n.dup_index == orig_note.dup_index)
-                        });
-                        model.mark_dirty(key);
-                        // Insert moved
-                        let length = orig_note.end_tick - orig_note.start_tick;
-                        let moved = yinhe_types::Note {
-                            start_tick: new_tick,
-                            end_tick: new_tick + length,
-                            velocity: orig_note.velocity,
-                            dup_index: 0,
-                            track,
-                        };
-                        let nk = new_key as usize;
-                        let insert_pos = model.notes[nk].partition_point(|n| n.start_tick < moved.start_tick);
-                        Arc::make_mut(&mut model.notes[nk]).insert(insert_pos, moved);
-                        model.mark_dirty(new_key);
-                        model.rebuild_dirty();
-                        doc.data.midi_version = doc.data.midi_version.wrapping_add(1);
-                        self.pianoroll_view.base.dirty = true;
-                        doc.history.push(yinhe_editor_core::history::UndoEntry {
-                            action: yinhe_editor_core::history::UndoAction::Notes(
-                                yinhe_editor_core::history::NoteDelta {
-                                    before: vec![(orig_note, key)],
-                                    after: vec![(moved, new_key)],
-                                },
-                            ),
-                            label: "Move note",
-                            selected: doc.edit.selected.clone(),
-                            track_selected: doc.edit.track_selected.clone(),
-                            sel_rect: doc.edit.sel_rect.clone(),
-                        });
-                    }
-                }
-            }
-            Some(PencilNoteDrag::ResizeRight { track, start_tick, key, new_end_tick }) => {
-                // Called once on release — find the note and resize it.
-                let model = &doc.data.model;
-                let k = key as usize;
-                if let Some(note) = model.notes[k].iter().find(|n| {
-                    n.track == track && n.start_tick == start_tick
-                }) {
-                    if new_end_tick != note.end_tick {
-                        let before = *note;
-                        let model = Arc::make_mut(&mut doc.data.model);
-                        if let Some(n) = Arc::make_mut(&mut model.notes[k]).iter_mut().find(|n| {
-                            n.track == track && n.start_tick == start_tick
-                        }) {
-                            n.end_tick = new_end_tick.max(n.start_tick + 1);
-                            let after = *n;
-                            model.mark_dirty(key);
-                            model.rebuild_dirty();
-                            doc.data.midi_version = doc.data.midi_version.wrapping_add(1);
-                            self.pianoroll_view.base.dirty = true;
-                            doc.history.push(yinhe_editor_core::history::UndoEntry {
-                                action: yinhe_editor_core::history::UndoAction::Notes(
-                                    yinhe_editor_core::history::NoteDelta {
-                                        before: vec![(before, key)],
-                                        after: vec![(after, key)],
-                                    },
-                                ),
-                                label: "Resize note",
-                                selected: doc.edit.selected.clone(),
-                                track_selected: doc.edit.track_selected.clone(),
-                                sel_rect: doc.edit.sel_rect.clone(),
-                            });
-                        }
-                    }
-                }
-            }
-            Some(PencilNoteDrag::ResizeLeft { track, start_tick, key, new_start_tick }) => {
-                // Called once on release — find the note and resize it.
-                let model = &doc.data.model;
-                let k = key as usize;
-                if let Some(note) = model.notes[k].iter().find(|n| {
-                    n.track == track && n.start_tick == start_tick
-                }) {
-                    if new_start_tick != note.start_tick {
-                        let before = *note;
-                        let model = Arc::make_mut(&mut doc.data.model);
-                        if let Some(n) = Arc::make_mut(&mut model.notes[k]).iter_mut().find(|n| {
-                            n.track == track && n.start_tick == start_tick
-                        }) {
-                            n.start_tick = new_start_tick.min(n.end_tick - 1);
-                            let after = *n;
-                            model.mark_dirty(key);
-                            model.rebuild_dirty();
-                            doc.data.midi_version = doc.data.midi_version.wrapping_add(1);
-                            self.pianoroll_view.base.dirty = true;
-                            doc.history.push(yinhe_editor_core::history::UndoEntry {
-                                action: yinhe_editor_core::history::UndoAction::Notes(
-                                    yinhe_editor_core::history::NoteDelta {
-                                        before: vec![(before, key)],
-                                        after: vec![(after, key)],
-                                    },
-                                ),
-                                label: "Resize note",
-                                selected: doc.edit.selected.clone(),
-                                track_selected: doc.edit.track_selected.clone(),
-                                sel_rect: doc.edit.sel_rect.clone(),
-                            });
-                        }
-                    }
-                }
-            }
-            None => {
-                // Drag ended — nothing to do.
-                // Each drag operation (Move/ResizeLeft/ResizeRight) already
-                // calls rebuild_model, increments midi_version, and sends
-                // ReloadNotes on release.  Calling them again here on every
-                // frame where drag is None would cause a full model reload
-                // every frame, breaking audio playback.
+        if let Some(action) = doc.pencil_drag_note(&drag) {
+            self.pianoroll_view.base.dirty = true;
+            doc.history.push(yinhe_editor_core::history::UndoEntry {
+                action,
+                label: match &drag {
+                    crate::piano_view::PencilNoteDrag::Move { .. } => "Move note",
+                    _ => "Resize note",
+                },
+                selected: doc.edit.selected.clone(),
+                track_selected: doc.edit.track_selected.clone(),
+                sel_rect: doc.edit.sel_rect.clone(),
+            });
+            if let Some(ref audio) = self.audio {
+                let _ = audio.handle.send(yinhe_audio::AudioCommand::ReloadNotes { model: doc.data.model.clone() });
             }
         }
     }
