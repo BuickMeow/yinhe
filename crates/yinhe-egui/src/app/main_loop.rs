@@ -4,7 +4,6 @@ use crate::app::App;
 use crate::chrome::title_bar;
 
 use crate::chrome::mode_bar;
-use crate::theme;
 use crate::chrome::transport_bar;
 
 // ── Panic-safe take guard ──

@@ -31,7 +31,6 @@ pub(crate) trait ViewInteraction {
     fn x_to_tick(&self, x: f32) -> f64;
     fn zoom_around_x(&mut self, pointer_x: f32, factor: f32);
     fn zoom_around_y(&mut self, pointer_y: f32, factor: f32, height: f32);
-    fn reset_to_default(&mut self);
 }
 
 impl ViewInteraction for yinhe_pianoroll::PianoRollView {
@@ -53,9 +52,6 @@ impl ViewInteraction for yinhe_pianoroll::PianoRollView {
     fn zoom_around_y(&mut self, pointer_y: f32, factor: f32, height: f32) {
         self.zoom_around_y(pointer_y, factor, height);
     }
-    fn reset_to_default(&mut self) {
-        *self = Self::default();
-    }
 }
 
 impl ViewInteraction for yinhe_arrangement::ArrangementView {
@@ -76,9 +72,6 @@ impl ViewInteraction for yinhe_arrangement::ArrangementView {
     }
     fn zoom_around_y(&mut self, pointer_y: f32, factor: f32, _height: f32) {
         self.zoom_lane_height(pointer_y, factor);
-    }
-    fn reset_to_default(&mut self) {
-        *self = Self::default();
     }
 }
 

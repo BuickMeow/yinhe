@@ -251,22 +251,6 @@ impl RenderContext {
         self.shrink_to_fit_on_next_size = false;
     }
 
-    /// Grow the offscreen texture to the requested capacity, but never shrink.
-    pub fn reserve_size(&mut self, width: u32, height: u32) {
-        if width == 0 || height == 0 {
-            return;
-        }
-
-        if width > self.width || height > self.height {
-            self.recreate_target(width, height);
-        }
-    }
-
-    /// Shrink to the next requested logical size after a temporary oversize allocation.
-    pub fn request_shrink_to_fit(&mut self) {
-        self.shrink_to_fit_on_next_size = true;
-    }
-
     pub fn preview_texture_id(&self) -> egui::TextureId {
         self.texture_id
     }

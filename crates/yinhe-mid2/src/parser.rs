@@ -475,7 +475,7 @@ fn parse_track(
 
     // Flush pending bank values that were NOT consumed by a ProgramChange.
     // These become plain CC events so nothing is lost.
-    for (ch_idx, bank) in pending_bank.iter().enumerate() {
+    for (_ch_idx, bank) in pending_bank.iter().enumerate() {
         if let Some((val, tick)) = bank.msb {
             auto_events.push((
                 AutomationTarget::CC { controller: 0 },
@@ -509,8 +509,8 @@ fn parse_track(
 /// Group sorted (target, event) pairs into AutomationLane vecs.
 fn group_automation_events(
     events: Vec<(AutomationTarget, AutomationEvent)>,
-    port: u8,
-    channel: u8,
+    _port: u8,
+    _channel: u8,
     track_idx: usize,
 ) -> Vec<AutomationLane> {
     if events.is_empty() {

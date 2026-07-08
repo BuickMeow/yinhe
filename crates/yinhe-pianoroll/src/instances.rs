@@ -4,7 +4,7 @@ use yinhe_types::{key_notes_in_range, NoteSource, TimeSigEvent, is_black_key};
 
 use crate::grid;
 use crate::keyboard;
-use crate::vertex::{DrawInstance, NoteInstance, pack_props, pack_rgba};
+use crate::vertex::{DrawInstance, NoteInstance};
 use yinhe_types::PianoRollView;
 
 /// Build background + black-key row instances (layer 0).
@@ -160,29 +160,6 @@ pub fn build_ghost_note(
         packed: NoteInstance::pack(key, track, 0),
         reserved: 0,
     });
-}
-
-/// Build only the cursor line instance (O(1) work).
-pub fn build_cursor_instance(
-    instances: &mut Vec<DrawInstance>,
-    cursor_tick: Option<f64>,
-    view: &PianoRollView,
-    width: u32,
-    height: u32,
-    theme: &GpuTheme,
-) {
-    if let Some(ct) = cursor_tick {
-        let kb_w = view.keyboard_width();
-        let w = width as f32;
-        let h = height as f32;
-        let cx = view.tick_to_x(ct);
-        if cx >= kb_w && cx <= w {
-            instances.push(DrawInstance::solid_rect(
-                cx, 0.0, 2.0, h,
-                [theme.pr_playhead.0, theme.pr_playhead.1, theme.pr_playhead.2, theme.pr_playhead.3],
-            ));
-        }
-    }
 }
 
 #[cfg(test)]
@@ -387,46 +364,6 @@ mod tests {
             out.is_empty(),
             "note fully off-screen-left must be culled"
         );
-    }
-
-    #[test]
-    fn test_build_cursor_instance_visible() {
-        let mut out = Vec::new();
-        let view = make_view();
-        let theme = make_theme();
-        build_cursor_instance(&mut out, Some(480.0), &view, 800, 500, &theme);
-        assert_eq!(out.len(), 1);
-        let cursor = &out[0];
-        assert!((cursor.x - 132.0).abs() < 0.01);
-        assert_eq!(cursor.w, 2.0);
-        assert_eq!(cursor.h, 500.0);
-    }
-
-    #[test]
-    fn test_build_cursor_instance_none() {
-        let mut out = Vec::new();
-        let view = make_view();
-        let theme = make_theme();
-        build_cursor_instance(&mut out, None, &view, 800, 500, &theme);
-        assert!(out.is_empty());
-    }
-
-    #[test]
-    fn test_build_cursor_instance_off_screen_left() {
-        let mut out = Vec::new();
-        let view = make_view();
-        let theme = make_theme();
-        build_cursor_instance(&mut out, Some(0.0), &view, 800, 500, &theme);
-        assert_eq!(out.len(), 1);
-    }
-
-    #[test]
-    fn test_build_cursor_instance_off_screen_right() {
-        let mut out = Vec::new();
-        let view = make_view();
-        let theme = make_theme();
-        build_cursor_instance(&mut out, Some(99999.0), &view, 800, 500, &theme);
-        assert!(out.is_empty(), "cursor off-screen right should be skipped");
     }
 
 }

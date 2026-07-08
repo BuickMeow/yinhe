@@ -3,7 +3,6 @@
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use serde::ser::SerializeTuple;
 
 use yinhe_types::{PcEvent, TempoEvent};
 use crate::events::NoteEvent;

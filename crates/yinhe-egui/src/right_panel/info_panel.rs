@@ -208,7 +208,7 @@ pub fn show(
         let port_options: Vec<String> = (0..16)
             .map(|p| format!("Port {}", (b'A' + p) as char))
             .collect();
-        let port_sel = egui::ComboBox::from_id_salt("track_port")
+        let _port_sel = egui::ComboBox::from_id_salt("track_port")
             .selected_text(format!("Port {}", (b'A' + ti.port) as char))
             .width(70.0)
             .show_ui(ui, |ui| {

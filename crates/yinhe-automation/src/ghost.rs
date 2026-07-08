@@ -3,7 +3,7 @@ use crate::AutomationGhost;
 use yinhe_types::AutomationPanelView;
 use yinhe_theme::GpuTheme;
 use yinhe_types::{AutomationEvent, AutomationLane};
-use yinhe_wgpu::{pack_props, pack_rgba, DrawInstance};
+use yinhe_wgpu::DrawInstance;
 
 /// ghost 锚点半径（像素）。
 const GHOST_RADIUS: f32 = 4.0;

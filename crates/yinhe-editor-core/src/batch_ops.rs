@@ -39,7 +39,7 @@ pub fn remove_selected(model: &mut YinModel, selection: &Selection) -> Vec<(Note
             }
 
             if start_idx < end_idx {
-                let mut bucket = Arc::make_mut(&mut model.notes[k]);
+                let bucket = Arc::make_mut(&mut model.notes[k]);
                 // Fast path: all tracks selected → contiguous drain (memmove).
                 // Slow path: track-filtered → retain (full scan).
                 if track_lo == 0 && track_hi == u16::MAX {

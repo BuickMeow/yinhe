@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use xsynth_core::channel::{ChannelAudioEvent, ChannelConfigEvent, ChannelEvent, ControlEvent};
+use xsynth_core::channel::{ChannelAudioEvent, ChannelConfigEvent, ChannelEvent};
 use xsynth_core::channel_group::SynthEvent;
 use xsynth_core::soundfont::SoundfontBase;
 
@@ -9,7 +9,6 @@ use yinhe_core::YinModel;
 use crate::audio_model::{ActiveNote, AudioModel, PreparedModel, flatten_automation_to_cc_events, tick_to_sample};
 use crate::channel::ChannelState;
 use crate::engine::AudioEngine;
-use crate::spawn::track_global_channel;
 
 impl AudioEngine {
     pub(crate) fn load_model(&mut self, model: &Arc<YinModel>) {

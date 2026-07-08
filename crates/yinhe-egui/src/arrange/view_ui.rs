@@ -388,7 +388,7 @@ fn sel_drag_frame_arrange(
         );
 
         if pointer.primary_released() {
-            if let (Some(midi_ref), Some((_, end))) = (midi, drag) {
+            if let (Some(_midi_ref), Some((_, end))) = (midi, drag) {
                 let drag_dist = (end - start_pixel).length();
 
                 if drag_dist < 3.0 {

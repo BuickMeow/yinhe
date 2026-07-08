@@ -165,9 +165,8 @@ pub fn prepare(
     });
 
     // Layer 1: grid lines
-    let mut grid_key = layer_cache_key(&[vh, wh]);
     let sig_hash = yinhe_wgpu::hash_time_sigs(time_sig_events);
-    grid_key = layer_cache_key(&[vh, wh, sig_hash]);
+    let grid_key = layer_cache_key(&[vh, wh, sig_hash]);
     renderer.upload_layer(1, grid_key, |out| {
         decor::build_grid(
             out, w, h, view, tpb, default_num, default_den, time_sig_events, scroll_x_pos, &theme,

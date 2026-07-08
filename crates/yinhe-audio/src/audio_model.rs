@@ -26,7 +26,6 @@ pub(crate) struct PreparedModel {
     pub yin_model: Arc<YinModel>,
     pub cc_events: Vec<SortedCC>,
     pub duration_samples: u64,
-    pub skip_track: Vec<bool>,
 }
 
 /// Lightweight per-track snapshot the audio engine actually needs.

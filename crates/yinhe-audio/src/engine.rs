@@ -110,10 +110,6 @@ impl AudioEngine {
         self.playing
     }
 
-    pub(crate) fn sample_rate_hz(&self) -> u32 {
-        self.sample_rate
-    }
-
     pub(crate) fn duration_samples(&self) -> u64 {
         self.duration_samples
     }

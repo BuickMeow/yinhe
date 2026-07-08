@@ -3,7 +3,7 @@ use yinhe_types::{key_notes_in_range, NoteSource, TimeSigEvent};
 
 use yinhe_types::ArrangementView;
 use yinhe_wgpu::grid;
-use yinhe_wgpu::vertex::{DrawInstance, NoteInstance, pack_props, pack_rgba};
+use yinhe_wgpu::vertex::{DrawInstance, NoteInstance};
 
 /// Build background + track lane instances (layer 0).
 /// Dependencies: scroll_y, lane_height, track_visible

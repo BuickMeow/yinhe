@@ -10,7 +10,7 @@ use yinhe_wgpu::{pack_props, pack_rgba, DrawInstance};
 pub fn build_velocity_bars(
     out: &mut Vec<DrawInstance>,
     w: f32,
-    h: f32,
+    _h: f32,
     midi: &dyn NoteSource,
     view: &AutomationPanelView,
     track_visible: &[bool],

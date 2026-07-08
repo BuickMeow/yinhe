@@ -43,7 +43,7 @@ impl AudioEngine {
                 let start = offset_frames * STEREO_CHANNELS;
                 let end = (offset_frames + segment_frames) * STEREO_CHANNELS;
                 self.channel_group.read_samples(&mut output[start..end]);
-                rendered_until = block_end;
+                let _ = block_end;
                 break;
             }
         }

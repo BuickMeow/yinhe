@@ -446,7 +446,7 @@ fn show_event_detail(ui: &mut egui::Ui, item: &SelectedItem, doc: &Document, bar
             });
         }
         SelectedItem::Notes { track } => {
-            let t = *track as usize;
+            let _t = *track as usize;
             let model = &doc.data.model;
             let mut notes: Vec<(yinhe_core::NoteEvent, u8, u16)> = {
                 let mut v = Vec::new();

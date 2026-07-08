@@ -2,13 +2,7 @@ use yinhe_types::AutomationPanelView;
 use crate::grid;
 use yinhe_theme::GpuTheme;
 use yinhe_types::{AutomationLane, TimeSigEvent};
-use yinhe_wgpu::{pack_props, pack_rgba, DrawInstance};
-
-/// 折线绘制时的子段像素步长。Linear/Curve 段会按这个步长采样并连成多条 1px 短线，
-/// 在保证视觉平滑的同时让 GPU 实例数可控（每段最多 `segment_pixel_len / STEP` 个）。
-const CURVE_SUBSAMPLE_PX: f32 = 2.0;
-/// 锚点（pencil 工具下显示）的半径，像素。
-const ANCHOR_RADIUS: f32 = 3.0;
+use yinhe_wgpu::DrawInstance;
 
 /// Build background + center line instances (layer 0).
 /// Dependencies: none (background is static), lane target (center line)

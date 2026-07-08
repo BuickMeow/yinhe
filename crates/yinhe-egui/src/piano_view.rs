@@ -708,7 +708,7 @@ fn sel_drag_frame(
     cursor_tick: &mut Option<f64>,
     note_drag_delta: &mut Option<(i64, i32)>,
     sel_rect: &mut yinhe_editor_core::edit_state::SelRectState,
-    track_colors: &[[f32; 3]],
+    _track_colors: &[[f32; 3]],
     track_visible: &[bool],
     track_selected: &std::collections::HashSet<u16>,
 ) -> (Vec<(f64, f64, u8, u16)>, Vec<(u16, u32, u8)>) {
@@ -780,7 +780,7 @@ fn sel_drag_frame(
                 // Add track_selected + track_visible filters to align ghost with
                 // the note layer (build_notes).
                 let sel = &*selected;
-                drag_notes = Some(sel.rects.iter().flat_map(|&(ts, te, kl, kh, tl, th)| {
+                drag_notes = Some(sel.rects.iter().flat_map(|&(ts, te, kl, kh, _tl, _th)| {
                     (kl..=kh).flat_map(move |key| {
                         midi.map(|m| {
                             key_notes_in_range(m.key_notes(key), ts, te).iter()
@@ -887,7 +887,7 @@ fn sel_drag_frame(
                     &mut view.base,
                     music_rect,
                     pos,
-                    |base, w, h| {
+                    |base, w, _h| {
                         base.clamp_scroll_x(w, total_ticks);
                         base.scroll_y = base.scroll_y.max(0.0);
                     },
@@ -903,7 +903,7 @@ fn sel_drag_frame(
 
         // Release -> hit test
         if pointer.primary_released() {
-            if let (Some(midi_ref), Some((start, end))) = (midi, drag) {
+            if let (Some(_midi_ref), Some((start, end))) = (midi, drag) {
                 let drag_dist = (end - start).length();
 
                 if drag_dist < 3.0 {
@@ -1053,7 +1053,7 @@ fn pencil_frame(
     track_selected: &std::collections::HashSet<u16>,
     conductor_idx: Option<u16>,
     midi: Option<&dyn yinhe_pianoroll::NoteSource>,
-    track_colors: &[[f32; 3]],
+    _track_colors: &[[f32; 3]],
 ) -> (Option<yinhe_core::NoteEvent>, Vec<(f64, f64, u8, u16)>, Vec<(u16, u32, u8)>, Option<PencilNoteDrag>) {
     let pencil_id = ui.id().with("pencil_drag");
     let drag_state: Option<PencilDrag> =
@@ -1252,7 +1252,7 @@ fn pencil_frame(
                 }
             }
         }
-        Some(PencilDrag::ResizeRight(trk, orig_tick, orig_end, orig_key)) => {
+        Some(PencilDrag::ResizeRight(trk, orig_tick, _orig_end, orig_key)) => {
             if let Some((tick, _)) = preview {
                 let interval = quantize.tick_interval(ppq) as f64;
                 let snapped = crate::view_interaction::snap_tick_ceil(

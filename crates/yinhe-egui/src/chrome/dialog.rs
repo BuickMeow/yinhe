@@ -1,4 +1,5 @@
 use eframe::egui;
+#[cfg(not(target_os = "macos"))]
 use egui_material_icons::icons::*;
 
 /// Build a `ViewportBuilder` for a dialog window, matching the main window's
@@ -105,68 +106,4 @@ pub(crate) fn title_bar(ui: &mut egui::Ui, title: &str, close: &mut bool) {
 
     // Reserve space
     ui.allocate_space(egui::vec2(0.0, height));
-}
-
-/// Show a dialog in an independent viewport window.
-///
-/// Handles:
-/// - ViewportBuilder creation (transparent, custom chrome)
-/// - CentralPanel with APP_BG fill
-/// - Title bar via [`title_bar`]
-/// - Content padding (12px on all sides)
-/// - Optional vertical scrolling
-/// - Close button / Escape / window close button
-///
-/// Returns `true` if the user requested to close the dialog.
-pub(crate) fn show_dialog(
-    ctx: &egui::Context,
-    id: impl std::hash::Hash + std::fmt::Debug,
-    title: &str,
-    size: [f32; 2],
-    resizable: bool,
-    scrollable: bool,
-    content: impl FnOnce(&mut egui::Ui, &mut bool) + 'static,
-) -> bool {
-    let close = std::rc::Rc::new(std::cell::Cell::new(false));
-    let close_cb = close.clone();
-    let content = std::rc::Rc::new(std::cell::RefCell::new(Some(content)));
-
-    ctx.show_viewport_immediate(
-        egui::ViewportId::from_hash_of(id),
-        viewport_builder(title, size, resizable),
-        move |vctx, _class| {
-            let mut c = vctx.input(|i| i.viewport().close_requested());
-            egui::CentralPanel::default()
-                .frame(egui::Frame {
-                    fill: crate::theme::APP_BG,
-                    ..Default::default()
-                })
-                .show(vctx, |ui| {
-                    title_bar(ui, title, &mut c);
-                    egui::Frame::new()
-                        .inner_margin(egui::Margin {
-                            left: 12,
-                            right: 12,
-                            top: 0,
-                            bottom: 12,
-                        })
-                        .show(ui, |ui| {
-                            if scrollable {
-                                egui::ScrollArea::vertical()
-                                    .auto_shrink([false; 2])
-                                    .show(ui, |ui| {
-                                        if let Some(content) = content.borrow_mut().take() {
-                                            content(ui, &mut c);
-                                        }
-                                    });
-                            } else if let Some(content) = content.borrow_mut().take() {
-                                content(ui, &mut c);
-                            }
-                        });
-                });
-            close_cb.set(c);
-        },
-    );
-
-    close.take()
 }

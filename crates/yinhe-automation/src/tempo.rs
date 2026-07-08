@@ -1,6 +1,6 @@
 use yinhe_types::AutomationPanelView;
 use yinhe_theme::GpuTheme;
-use yinhe_wgpu::{pack_props, pack_rgba, DrawInstance};
+use yinhe_wgpu::DrawInstance;
 
 /// Build stepped-line instances for tempo curve (layer 2).
 ///
@@ -10,7 +10,7 @@ use yinhe_wgpu::{pack_props, pack_rgba, DrawInstance};
 pub fn build_tempo_lines(
     out: &mut Vec<DrawInstance>,
     w: f32,
-    h: f32,
+    _h: f32,
     view: &AutomationPanelView,
     tempo_events: &[(u32, f64)],
     _theme: &GpuTheme,

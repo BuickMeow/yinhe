@@ -96,13 +96,6 @@ impl AudioRingProducer {
 }
 
 impl AudioRingConsumer {
-    #[inline]
-    pub(crate) fn len(&self) -> usize {
-        let write = self.inner.write.load(Ordering::Acquire);
-        let read = self.inner.read.load(Ordering::Relaxed);
-        write.wrapping_sub(read)
-    }
-
     pub(crate) fn pop_into(&mut self, output: &mut [f32]) -> usize {
         let write = self.inner.write.load(Ordering::Acquire);
         let read = self.inner.read.load(Ordering::Relaxed);

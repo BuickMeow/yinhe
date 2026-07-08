@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use crate::app::App;
 use yinhe_editor_core::progress;
 
