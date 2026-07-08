@@ -162,8 +162,8 @@ fn build_track<'a>(track: &'a TrackData, track_idx: u16, model: &'a YinModel) ->
                             value: u7::new(data_msb),
                         },
                     }));
-                    // CC38 (Data Entry LSB) only if non-zero
-                    if data_lsb != 0 {
+                    // CC38 (Data Entry LSB) — only for 14-bit targets with non-zero LSB
+                    if data_lsb != 0 && lane.target.is_14bit() {
                         events.push((ev.tick, TrackEventKind::Midi {
                             channel: ch,
                             message: MidiMessage::Controller {
@@ -217,8 +217,34 @@ fn build_track<'a>(track: &'a TrackData, track_idx: u16, model: &'a YinModel) ->
         }
     }
 
-    // Program change
+    // Program change + Bank Select
     for ev in &track.program_change {
+        // Bank Select MSB (CC 0) — only if set (0xFF = unset)
+        if ev.bank_msb != 0xFF {
+            events.push((
+                ev.tick,
+                TrackEventKind::Midi {
+                    channel: ch,
+                    message: MidiMessage::Controller {
+                        controller: u7::new(0),
+                        value: u7::new(ev.bank_msb & 0x7F),
+                    },
+                },
+            ));
+        }
+        // Bank Select LSB (CC 32) — only if set
+        if ev.bank_lsb != 0xFF {
+            events.push((
+                ev.tick,
+                TrackEventKind::Midi {
+                    channel: ch,
+                    message: MidiMessage::Controller {
+                        controller: u7::new(32),
+                        value: u7::new(ev.bank_lsb & 0x7F),
+                    },
+                },
+            ));
+        }
         events.push((
             ev.tick,
             TrackEventKind::Midi {
@@ -227,6 +253,25 @@ fn build_track<'a>(track: &'a TrackData, track_idx: u16, model: &'a YinModel) ->
                     program: u7::new(ev.program & 0x7F),
                 },
             },
+        ));
+    }
+
+    // MidiPort meta (FF 21) — preserves port info on roundtrip
+    if track.port != 0 {
+        events.push((
+            0,
+            TrackEventKind::Meta(MetaMessage::MidiPort(midly::num::u7::new(
+                track.port & 0x7F,
+            ))),
+        ));
+    }
+    // MidiChannel meta (FF 20) — preserves channel prefix on roundtrip
+    if let Some(ch) = track.channel_prefix {
+        events.push((
+            0,
+            TrackEventKind::Meta(MetaMessage::MidiChannel(midly::num::u4::new(
+                ch & 0x0F,
+            ))),
         ));
     }
 
