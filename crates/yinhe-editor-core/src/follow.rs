@@ -27,11 +27,13 @@ impl FollowMode {
     }
 }
 
-/// Total timeline length in ticks with 20% padding, or a sensible default
-/// when the source has no notes.
-pub fn total_ticks_padded(tick_length: u64) -> f64 {
+/// Total timeline length in ticks with 64 bars of padding after the last
+/// note, or 0 when the source has no notes.
+///
+/// Assumes 4/4 time (ticks_per_bar = ppq * 4) for the padding calculation.
+pub fn total_ticks_padded(tick_length: u64, ppq: u32) -> f64 {
     if tick_length > 0 {
-        tick_length as f64 * 1.2
+        (tick_length + 64 * ppq as u64 * 4) as f64
     } else {
         0.0
     }
@@ -133,13 +135,15 @@ mod tests {
 
     #[test]
     fn total_ticks_padded_positive() {
-        assert!((total_ticks_padded(1000) - 1200.0).abs() < 0.01);
-        assert!((total_ticks_padded(480) - 576.0).abs() < 0.01);
+        let ppq = 480;
+        let bars = 64 * ppq as u64 * 4;
+        assert_eq!(total_ticks_padded(1000, ppq), (1000 + bars) as f64);
+        assert_eq!(total_ticks_padded(480, ppq), (480 + bars) as f64);
     }
 
     #[test]
     fn total_ticks_padded_zero() {
-        assert_eq!(total_ticks_padded(0), 0.0);
+        assert_eq!(total_ticks_padded(0, 480), 0.0);
     }
 
     #[test]

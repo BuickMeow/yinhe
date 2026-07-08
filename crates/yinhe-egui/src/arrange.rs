@@ -69,7 +69,7 @@ pub fn show(
     // show unclamped positions while the GPU content (clamped inside
     // arrangement_view_ui::show) stays at the boundary — producing a visible
     // "bounce-back" effect on the ruler labels.
-    let total_ticks = crate::view_interaction::total_ticks_padded(doc.data.model.tick_length);
+    let total_ticks = crate::view_interaction::total_ticks_padded(doc.data.model.tick_length, doc.data.model.meta.ppq);
     let num_tracks = doc.edit.track_visible.len();
     arr_view.clamp_scroll(gpu_rect.width(), gpu_rect.height(), total_ticks, num_tracks);
 

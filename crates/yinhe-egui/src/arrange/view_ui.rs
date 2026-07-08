@@ -59,6 +59,7 @@ pub fn show(
 
     let total_ticks = crate::view_interaction::total_ticks_padded(
         midi.and_then(|m| m.tick_length()).unwrap_or(0),
+        ppq,
     );
     let num_tracks = track_visible.len();
     view.clamp_scroll(w as f32, h as f32, total_ticks, num_tracks);
