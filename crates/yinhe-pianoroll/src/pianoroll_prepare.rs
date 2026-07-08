@@ -43,13 +43,7 @@ pub fn prepare(
     let scroll_y = view.base.scroll_y;
     let ppu = view.base.pixels_per_tick;
     let scroll_x = view.base.scroll_x;
-    let (scroll_x_pos, scroll_frac) = match scroll_mode {
-        0 => (scroll_x, 0.0),
-        _ => {
-            let f = scroll_x.floor();
-            (f, scroll_x - f)
-        },
-    };
+    let (scroll_x_pos, scroll_frac) = yinhe_wgpu::compute_scroll_frac(scroll_x, scroll_mode);
 
     // Build track colors uniform — allocate on heap to avoid 1MB stack overflow
     let track_count = track_colors.len().min(MAX_TRACKS) as u32;
@@ -106,12 +100,7 @@ pub fn prepare(
     let mut grid_key = layer_cache_key(&[vh, wh]);
     if let Some(midi) = midi {
         let sig_events = midi.time_sig_events();
-        let mut sig_hash = 0u64;
-        for ev in sig_events {
-            sig_hash = sig_hash.wrapping_mul(31).wrapping_add(ev.tick as u64);
-            sig_hash = sig_hash.wrapping_mul(31).wrapping_add(ev.numerator as u64);
-            sig_hash = sig_hash.wrapping_mul(31).wrapping_add(ev.denominator as u64);
-        }
+        let sig_hash = yinhe_wgpu::hash_time_sigs(sig_events);
         grid_key = layer_cache_key(&[vh, wh, sig_hash]);
     }
     renderer.upload_layer(1, grid_key, |out| {

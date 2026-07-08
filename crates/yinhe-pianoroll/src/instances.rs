@@ -12,21 +12,10 @@ use crate::view::PianoRollView;
 pub fn build_decor(out: &mut Vec<DrawInstance>, w: f32, h: f32, kb_w: f32, kh: f32, scroll_y: f32, theme: &GpuTheme) {
     let bottom = 128.0 * kh - scroll_y;
 
-    out.push(DrawInstance {
-        x: kb_w,
-        y: 0.0,
-        w: w - kb_w,
-        h,
-        rgba_packed: pack_rgba(
-            theme.pr_bg.0,
-            theme.pr_bg.1,
-            theme.pr_bg.2,
-            1.0,
-        ),
-        props_packed: pack_props(0.0, 0.0),
-        velocity: 0,
-        tag: 0,
-    });
+    out.push(DrawInstance::solid_rect(
+        kb_w, 0.0, w - kb_w, h,
+        [theme.pr_bg.0, theme.pr_bg.1, theme.pr_bg.2, 1.0],
+    ));
     for key in 0u8..128 {
         if !is_black_key(key) {
             continue;
@@ -35,21 +24,10 @@ pub fn build_decor(out: &mut Vec<DrawInstance>, w: f32, h: f32, kb_w: f32, kh: f
         if y + kh < 0.0 || y > h {
             continue;
         }
-        out.push(DrawInstance {
-            x: kb_w,
-            y,
-            w: w - kb_w,
-            h: kh,
-            rgba_packed: pack_rgba(
-                theme.pr_black_key_row.0,
-                theme.pr_black_key_row.1,
-                theme.pr_black_key_row.2,
-                1.0,
-            ),
-            props_packed: pack_props(0.0, 0.0),
-            velocity: 0,
-            tag: 0,
-        });
+        out.push(DrawInstance::solid_rect(
+            kb_w, y, w - kb_w, kh,
+            [theme.pr_black_key_row.0, theme.pr_black_key_row.1, theme.pr_black_key_row.2, 1.0],
+        ));
     }
 }
 
@@ -155,9 +133,7 @@ pub fn build_notes(
         })
         .collect();
 
-    for mut local in results {
-        out.append(&mut local);
-    }
+    out.extend(results.into_iter().flatten());
 }
 
 /// Build keyboard instances (layer 3).
@@ -201,21 +177,10 @@ pub fn build_cursor_instance(
         let h = height as f32;
         let cx = view.tick_to_x(ct);
         if cx >= kb_w && cx <= w {
-            instances.push(DrawInstance {
-                x: cx,
-                y: 0.0,
-                w: 2.0,
-                h,
-                rgba_packed: pack_rgba(
-                    theme.pr_playhead.0,
-                    theme.pr_playhead.1,
-                    theme.pr_playhead.2,
-                    theme.pr_playhead.3,
-                ),
-                props_packed: pack_props(0.0, 0.0),
-                velocity: 0,
-                tag: 0,
-            });
+            instances.push(DrawInstance::solid_rect(
+                cx, 0.0, 2.0, h,
+                [theme.pr_playhead.0, theme.pr_playhead.1, theme.pr_playhead.2, theme.pr_playhead.3],
+            ));
         }
     }
 }

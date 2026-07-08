@@ -6428,6 +6428,7 @@ dependencies = [
 name = "yinhe-automation"
 version = "0.1.0"
 dependencies = [
+ "rayon",
  "yinhe-theme",
  "yinhe-types",
  "yinhe-wgpu",

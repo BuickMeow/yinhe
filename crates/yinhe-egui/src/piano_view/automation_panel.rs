@@ -7,7 +7,7 @@ use yinhe_editor_core::quantize::QuantizePreset;
 use yinhe_types::{AutomationLane, AutomationTarget, SegmentShape, TimeSigEvent};
 use yinhe_types::time_format::format_tick_bar_beat_with_time_sig;
 
-use yinhe_automation::{AutomationGhost, AutomationPanelView, automation_instances, prepare_automation};
+use yinhe_automation::{AutomationGhost, AutomationPanelView, build_lane_override, prepare_automation};
 use yinhe_wgpu::InstanceRenderer;
 
 use crate::widgets::tools_panel::Tool;
@@ -994,7 +994,7 @@ fn handle_automation_interaction(
                         // 构造 ghost 用于本帧渲染（防止松手瞬间旧线段闪现）
                         // 用 build_lane_override 生成覆盖后的完整 lane，由 ghost 层整 lane 绘制
                         if let Some(l) = lane {
-                            let override_lane = automation_instances::build_lane_override(l, old_tick, new_tick, new_value);
+                            let override_lane = build_lane_override(l, old_tick, new_tick, new_value);
                             return (edits, Some(AutomationGhost::Move { lane: override_lane, color: track_color }), None);
                         }
                     }
@@ -1113,7 +1113,7 @@ fn handle_automation_interaction(
                 // 用 build_lane_override 生成覆盖后的完整 lane，ghost 层整 lane 绘制。
                 // 这样无论锚点如何跨越、插入、拖到末尾，都只需要正常画线逻辑。
                 lane.map(|l| {
-                    let override_lane = automation_instances::build_lane_override(l, old_tick, cur_tick, cur_value);
+                    let override_lane = build_lane_override(l, old_tick, cur_tick, cur_value);
                     AutomationGhost::Move { lane: override_lane, color: track_color }
                 })
             }

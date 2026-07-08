@@ -1,7 +1,12 @@
+use rayon::prelude::*;
 use yinhe_types::{AutomationLane, AutomationTarget, NoteSource, SegmentShape, TimeSigEvent};
 
+use crate::data_lines;
+use crate::decor;
+use crate::ghost;
+use crate::tempo;
+use crate::velocity_bars;
 use crate::InstanceRenderer;
-use crate::automation_instances;
 use crate::AutomationPanelView;
 use crate::Uniforms;
 use yinhe_wgpu::layer_cache_key;
@@ -65,15 +70,19 @@ fn hash_lanes_excluding(lanes: &[&AutomationLane], ghost: Option<&AutomationGhos
         Some(AutomationGhost::Move { lane, .. }) => Some((lane.track, lane.target.clone())),
         _ => None,
     };
-    let mut h: u64 = 0;
-    for lane in lanes {
-        // 通过 track + target 跳过被 ghost 覆盖的 lane
-        if ghost_lane_key.as_ref() == Some(&(lane.track, lane.target.clone())) {
-            continue;
-        }
-        h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(hash_lane(lane));
-    }
-    h
+    lanes
+        .par_iter()
+        .fold(
+            || 0u64,
+            |h, lane| {
+                if ghost_lane_key.as_ref() == Some(&(lane.track, lane.target.clone())) {
+                    h
+                } else {
+                    h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(hash_lane(lane))
+                }
+            },
+        )
+        .reduce(|| 0u64, |a, b| a ^ b)
 }
 
 /// Prepare an automation panel for rendering using the layered cache API.
@@ -111,13 +120,7 @@ pub fn prepare(
     let w = width as f32;
     let h = height as f32;
     let scroll_x = view.base.scroll_x;
-    let (scroll_x_pos, scroll_frac) = match scroll_mode {
-        0 => (scroll_x, 0.0),
-        _ => {
-            let f = scroll_x.floor();
-            (f, scroll_x - f)
-        },
-    };
+    let (scroll_x_pos, scroll_frac) = yinhe_wgpu::compute_scroll_frac(scroll_x, scroll_mode);
 
     let uniforms = Uniforms {
         width: w,
@@ -158,20 +161,15 @@ pub fn prepare(
     let decor_key = layer_cache_key(&[vh, wh, center_line_hash, target_hash(&view.selected_target)]);
     let theme = renderer.theme.clone();
     renderer.upload_layer(0, decor_key, |out| {
-        automation_instances::build_decor(out, w, h, view, lanes, &theme);
+        decor::build_decor(out, w, h, view, lanes, &theme);
     });
 
     // Layer 1: grid lines
     let mut grid_key = layer_cache_key(&[vh, wh]);
-    let mut sig_hash = 0u64;
-    for ev in time_sig_events {
-        sig_hash = sig_hash.wrapping_mul(31).wrapping_add(ev.tick as u64);
-        sig_hash = sig_hash.wrapping_mul(31).wrapping_add(ev.numerator as u64);
-        sig_hash = sig_hash.wrapping_mul(31).wrapping_add(ev.denominator as u64);
-    }
+    let sig_hash = yinhe_wgpu::hash_time_sigs(time_sig_events);
     grid_key = layer_cache_key(&[vh, wh, sig_hash]);
     renderer.upload_layer(1, grid_key, |out| {
-        automation_instances::build_grid(
+        decor::build_grid(
             out, w, h, view, tpb, default_num, default_den, time_sig_events, scroll_x_pos, &theme,
         );
     });
@@ -202,10 +200,10 @@ pub fn prepare(
     let ghost_for_layer2 = ghost.clone();
     renderer.upload_layer(2, bars_key, |out| {
         if is_tempo {
-            automation_instances::build_tempo_lines(out, w, h, view, tempo_events, &theme);
+            tempo::build_tempo_lines(out, w, h, view, tempo_events, &theme);
         } else if is_velocity {
             if let Some(midi) = midi {
-                automation_instances::build_velocity_bars(
+                velocity_bars::build_velocity_bars(
                     out, w, h, midi, view, track_visible, track_colors, velocity_display_mode, &theme,
                 );
             }
@@ -215,7 +213,7 @@ pub fn prepare(
                 Some(AutomationGhost::Move { ref lane, .. }) => Some(lane),
                 _ => None,
             };
-            automation_instances::build_data_lines(
+            data_lines::build_data_lines(
                 out, w, h, view, lanes, track_visible, track_colors, show_anchors, skip_lane, &theme,
             );
         }
@@ -224,7 +222,7 @@ pub fn prepare(
     // Layer 3: ghost (拖拽预览，无缓存，每帧重建)
     renderer.upload_layer_force(3, |out| {
         if let Some(g) = ghost {
-            automation_instances::build_ghost(out, g, w, view, show_anchors, &theme);
+            ghost::build_ghost(out, g, w, view, show_anchors, &theme);
         }
     });
 

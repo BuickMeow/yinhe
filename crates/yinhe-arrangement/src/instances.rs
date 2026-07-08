@@ -19,21 +19,10 @@ pub fn build_decor(
 ) {
     let num_tracks = track_visible.len();
 
-    out.push(DrawInstance {
-        x: lb_w,
-        y: 0.0,
-        w: w - lb_w,
-        h,
-        rgba_packed: pack_rgba(
-            theme.ar_bg.0,
-            theme.ar_bg.1,
-            theme.ar_bg.2,
-            1.0,
-        ),
-        props_packed: pack_props(0.0, 0.0),
-        velocity: 0,
-        tag: 0,
-    });
+    out.push(DrawInstance::solid_rect(
+        lb_w, 0.0, w - lb_w, h,
+        [theme.ar_bg.0, theme.ar_bg.1, theme.ar_bg.2, 1.0],
+    ));
 
     if num_tracks > 0 {
         let (trk_first, trk_last) = ArrangementView::visible_track_range_static(scroll_y, h, lh, num_tracks);
@@ -47,16 +36,10 @@ pub fn build_decor(
             } else {
                 theme.ar_lane_odd
             };
-            out.push(DrawInstance {
-                x: lb_w,
-                y,
-                w: w - lb_w,
-                h: lh,
-                rgba_packed: pack_rgba(col.0, col.1, col.2, 1.0),
-                props_packed: pack_props(0.0, 0.0),
-                velocity: 0,
-                tag: 0,
-            });
+            out.push(DrawInstance::solid_rect(
+                lb_w, y, w - lb_w, lh,
+                [col.0, col.1, col.2, 1.0],
+            ));
         }
     }
 }
@@ -196,9 +179,7 @@ pub fn build_notes(
         })
         .collect();
 
-    for mut local in note_instances {
-        out.append(&mut local);
-    }
+    out.extend(note_instances.into_iter().flatten());
 }
 
 /// Build the playhead cursor instance (a single vertical line).
