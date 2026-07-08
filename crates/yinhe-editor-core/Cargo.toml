@@ -10,10 +10,10 @@ yinhe-mid2 = { path = "../yinhe-mid2" }
 yinhe-yin = { path = "../yinhe-yin" }
 yinhe-automation = { path = "../yinhe-automation" }
 yinhe-memtrace = { path = "../yinhe-memtrace" }
-dirs = "6"
-uuid = { version = "1", features = ["v4"] }
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+dirs = { workspace = true }
+uuid = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 tracing = { workspace = true }
 zstd = "0.13"
 bincode = "1"

@@ -11,7 +11,7 @@ midly = { workspace = true }
 rayon = { workspace = true }
 thiserror = { workspace = true }
 encoding_rs = "0.8"
-serde = { version = "1", features = ["derive"] }
-uuid = { version = "1", features = ["v4"] }
+serde = { workspace = true }
+uuid = { workspace = true }
 
 [dev-dependencies]

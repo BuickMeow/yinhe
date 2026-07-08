@@ -19,10 +19,10 @@ yinhe-audio = { path = "../yinhe-audio" }
 yinhe-memtrace = { path = "../yinhe-memtrace" }
 yinhe-haptic = { path = "../yinhe-haptic" }
 yinhe-editor-core = { path = "../yinhe-editor-core" }
-cpal = "0.17"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-dirs = "6"
+cpal = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+dirs = { workspace = true }
 eframe = { workspace = true }
 egui = { workspace = true }
 egui_extras = { workspace = true }
