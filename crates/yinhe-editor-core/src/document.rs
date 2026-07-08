@@ -1,57 +1,13 @@
 use std::sync::Arc;
 
 use yinhe_core::{NoteEvent, TrackData, YinModel};
-use yinhe_types::{AutomationTarget, SegmentShape, TRACK_PALETTE};
+use yinhe_types::{AutomationEdit, PencilNoteDrag, TRACK_PALETTE};
 use yinhe_yin::{MappingFile, ProjectFile};
 
 use crate::edit_state::EditState;
 use crate::history::{NoteDelta, UndoAction, UndoEntry, UndoStack};
 use crate::project_data::ProjectData;
 use crate::quantize::QuantizePreset;
-
-// ---------------------------------------------------------------------------
-// Enums moved from yinhe-egui (P0 refactoring)
-// ---------------------------------------------------------------------------
-
-/// Pencil-tool drag output for modifying existing notes.
-#[derive(Clone, Debug)]
-pub enum PencilNoteDrag {
-    /// Moving a single note by (delta_ticks, delta_keys) from its original position.
-    Move { track: u16, start_tick: u32, key: u8, delta_ticks: i64, delta_keys: i32 },
-    /// Resizing the right edge of a note.
-    ResizeRight { track: u16, start_tick: u32, key: u8, new_end_tick: u32 },
-    /// Resizing the left edge of a note.
-    ResizeLeft { track: u16, start_tick: u32, key: u8, new_start_tick: u32 },
-}
-
-/// 用户在 automation 面板上的编辑操作。
-///
-/// 由 automation 面板产生，由 `Document::apply_automation_edits` 应用。
-#[derive(Clone, Debug)]
-pub enum AutomationEdit {
-    /// 添加新事件。如果 lane 不存在会自动创建。
-    Add {
-        track_idx: u16,
-        target: AutomationTarget,
-        tick: u32,
-        value: u16,
-        shape: SegmentShape,
-    },
-    /// 移动已有事件。
-    Move {
-        track_idx: u16,
-        lane_idx: usize,
-        old_tick: u32,
-        new_tick: u32,
-        new_value: u16,
-    },
-    /// 切换已有事件的 shape（双击）。
-    CycleShape {
-        track_idx: u16,
-        lane_idx: usize,
-        tick: u32,
-    },
-}
 
 /// Per-track mutable overrides (mute, solo).
 #[derive(Clone)]

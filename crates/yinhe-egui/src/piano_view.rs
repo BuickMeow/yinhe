@@ -5,7 +5,7 @@ use eframe::egui;
 use yinhe_types::{key_notes_in_range, AutomationLane, TimeSigEvent};
 
 use yinhe_editor_core::quantize::QuantizePreset;
-pub use yinhe_editor_core::document::PencilNoteDrag;
+pub use yinhe_types::PencilNoteDrag;
 use crate::widgets::tools_panel::Tool;
 use crate::widgets::selection_actions::SelectionAction;
 

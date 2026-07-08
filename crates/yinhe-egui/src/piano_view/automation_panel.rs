@@ -4,7 +4,7 @@ use eframe::egui;
 use egui_material_icons::icons::*;
 
 use yinhe_editor_core::quantize::QuantizePreset;
-pub use yinhe_editor_core::document::AutomationEdit;
+pub use yinhe_types::AutomationEdit;
 use yinhe_types::{AutomationLane, AutomationTarget, SegmentShape, TimeSigEvent};
 use yinhe_types::time_format::format_tick_bar_beat_with_time_sig;
 

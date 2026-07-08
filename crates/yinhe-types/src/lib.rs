@@ -14,7 +14,7 @@ pub mod time_format;
 pub mod view_base;
 
 pub use arrangement_view::ArrangementView;
-pub use automation::{AutomationEvent, AutomationLane, AutomationTarget, SegmentShape};
+pub use automation::{AutomationEdit, AutomationEvent, AutomationLane, AutomationTarget, PencilNoteDrag, SegmentShape};
 pub use automation_panel_view::AutomationPanelView;
 pub use hash::*;
 pub use note::{Note, TimeSigEvent};
