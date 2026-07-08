@@ -118,8 +118,10 @@ pub(crate) fn show(
     ui.painter().rect_filled(rect_rect, 2.0, rect_color);
 
     // ── Cursor ──
-    if left_hovered || right_hovered {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+    if left_hovered {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeWest);
+    } else if right_hovered {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeEast);
     } else if middle_hovered || middle_resp.dragged() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
     }
