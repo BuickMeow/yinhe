@@ -1,6 +1,7 @@
 use super::*;
 use std::collections::BTreeMap;
 use xsynth_core::channel::ControlEvent;
+use xsynth_core::channel_group::ParallelismOptions;
 use yinhe_core::{
     ConductorData, NoteEvent, PcEvent, ProjectMeta, TempoEvent, TrackData, YinModel,
 };
@@ -645,4 +646,128 @@ fn test_engine_channel_map_multiple_active() {
     assert_eq!(engine.channel_map[1], u32::MAX);
     assert_eq!(engine.channel_map[2], 1);
     assert_eq!(engine.channel_map[10], 2);
+}
+
+/// 创建一个包含多轨道、多音符的大型模型用于性能基准测试。
+fn make_bench_model(tracks: usize, notes_per_track: usize) -> YinModel {
+    let conductor = ConductorData {
+        tempo: vec![TempoEvent { tick: 0, bpm: 120.0 }],
+        time_sig: Vec::new(),
+    };
+    let meta = ProjectMeta {
+        ppq: 480,
+        ..ProjectMeta::default()
+    };
+
+    let mut per_track_notes: Vec<Vec<NoteEvent>> = Vec::with_capacity(tracks);
+    let mut track_list = Vec::with_capacity(tracks);
+
+    for t in 0..tracks {
+        let ch = (t % 16) as u8;
+        track_list.push(Arc::new(TrackData::new(0, ch)));
+        let mut notes = Vec::with_capacity(notes_per_track);
+        for n in 0..notes_per_track {
+            let key = (n % 128) as u8;
+            let start_tick = (n * 480) as u32;
+            let end_tick = start_tick + 240;
+            notes.push(NoteEvent {
+                start_tick,
+                end_tick,
+                key,
+                velocity: 100,
+                dup_index: 0,
+            });
+        }
+        per_track_notes.push(notes);
+    }
+
+    let mut model = YinModel {
+        conductor: Arc::new(conductor),
+        tracks: track_list,
+        meta,
+        ..Default::default()
+    };
+    model.load_track_notes(per_track_notes);
+    model.rebuild();
+    model
+}
+
+/// 基准测试：对比不同 xsynth 并行配置下的渲染性能。
+///
+/// 测试三种配置：
+/// - `AUTO_PER_CHANNEL`（当前默认）：通道间并行，key 间串行
+/// - `AUTO_PER_KEY`：通道间 + key 间都并行
+/// - `Sequential`：全串行（baseline）
+///
+/// 输出渲染 1 秒音频所需的微秒数。
+#[test]
+fn bench_parallelism_configs() {
+    const SAMPLE_RATE: u32 = 44100;
+    const RENDER_SECONDS: u64 = 2;
+    const RENDER_SAMPLES: usize = RENDER_SECONDS as usize * SAMPLE_RATE as usize * 2;
+    const TRACKS: usize = 16;
+    const NOTES_PER_TRACK: usize = 500;
+
+    let model = Arc::new(make_bench_model(TRACKS, NOTES_PER_TRACK));
+    let (_num_ch, active_mask) = crate::spawn::channels_for_model(&model);
+
+    let mut output = vec![0.0f32; RENDER_SAMPLES];
+
+    struct Config {
+        name: &'static str,
+        parallelism: ParallelismOptions,
+    }
+
+    let configs = [
+        Config {
+            name: "AUTO_PER_CHANNEL",
+            parallelism: ParallelismOptions::AUTO_PER_CHANNEL,
+        },
+        Config {
+            name: "AUTO_PER_KEY",
+            parallelism: ParallelismOptions::AUTO_PER_KEY,
+        },
+        Config {
+            name: "Sequential",
+            parallelism: ParallelismOptions {
+                channel: xsynth_core::channel_group::ThreadCount::None,
+                key: xsynth_core::channel_group::ThreadCount::None,
+            },
+        },
+    ];
+
+    let mut results: Vec<(&str, u128)> = Vec::new();
+    for cfg in &configs {
+        // 预热：先跑一次不记录时间
+        {
+            let mut engine = AudioEngine::with_parallelism(SAMPLE_RATE, 16, active_mask.clone(), cfg.parallelism);
+            engine.handle_command(AudioCommand::LoadModel { model: Arc::clone(&model) });
+            engine.handle_command(AudioCommand::Play { from_sample: 0 });
+            engine.render(&mut output);
+        }
+
+        // 正式测量
+        let mut engine = AudioEngine::with_parallelism(SAMPLE_RATE, 16, active_mask.clone(), cfg.parallelism);
+        engine.handle_command(AudioCommand::LoadModel { model: Arc::clone(&model) });
+        engine.handle_command(AudioCommand::Play { from_sample: 0 });
+
+        let start = std::time::Instant::now();
+        engine.render(&mut output);
+        let elapsed = start.elapsed().as_micros();
+
+        results.push((cfg.name, elapsed));
+        eprintln!(
+            "  {:<20} → {:>8} µs ({}x real-time)",
+            cfg.name,
+            elapsed,
+            (RENDER_SECONDS as u128 * 1_000_000) / elapsed.max(1)
+        );
+    }
+
+    // 确保每个配置都跑了（不做具体数值断言，避免 CI 环境波动）
+    assert!(results.iter().all(|(_, t)| *t > 0), "all configs returned 0 time");
+    eprintln!();
+    eprintln!("Summary:");
+    eprintln!("  AUTO_PER_CHANNEL 是当前默认配置，AUTO_PER_KEY 添加了 per-key 并行化开销。");
+    eprintln!("  Sequential 是单线程 baseline，用于对比并行化收益。");
 }

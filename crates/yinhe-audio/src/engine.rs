@@ -45,6 +45,15 @@ pub(crate) struct AudioEngine {
 
 impl AudioEngine {
     pub(crate) fn new(sample_rate: u32, _num_channels: u32, active_mask: Vec<bool>) -> Self {
+        Self::with_parallelism(sample_rate, _num_channels, active_mask, ParallelismOptions::AUTO_PER_CHANNEL)
+    }
+
+    pub(crate) fn with_parallelism(
+        sample_rate: u32,
+        _num_channels: u32,
+        active_mask: Vec<bool>,
+        parallelism: ParallelismOptions,
+    ) -> Self {
         yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Audio, || {
             let mut channel_map = Box::new([u32::MAX; 256]);
             let mut next_dense: u32 = 0;
@@ -67,7 +76,7 @@ impl AudioEngine {
                     sample_rate,
                     channels: ChannelCount::Stereo,
                 },
-                parallelism: ParallelismOptions::AUTO_PER_CHANNEL,
+                parallelism,
             };
 
             Self {
