@@ -357,9 +357,10 @@ pub fn show(
     });
 
     // ── Clamp scroll after all interactions ──
-    let total_ticks = midi
-        .map(|m| m.tick_length().unwrap_or(0) as f64)
-        .unwrap_or(0.0);
+    let total_ticks = super::view_interaction::total_ticks_padded(
+        midi.map(|m| m.tick_length().unwrap_or(0)).unwrap_or(0),
+        ppq,
+    );
     view.clamp_scroll(w as f32, h as f32, total_ticks);
 
     // ── Haptic boundary feedback ──
