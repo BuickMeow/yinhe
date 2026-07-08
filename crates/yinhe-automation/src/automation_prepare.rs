@@ -116,6 +116,7 @@ pub fn prepare(
     show_anchors: bool,
     tempo_events: &[(u32, f64)],
     ghost: Option<AutomationGhost>,
+    midi_version: u64,
 ) -> bool {
     let w = width as f32;
     let h = height as f32;
@@ -195,6 +196,7 @@ pub fn prepare(
         tempo_hash(tempo_events),
         fixed_lanes_hash,
         ghost_lane_hash,
+        midi_version,
     ]);
     let ghost_for_layer2 = ghost.clone();
     renderer.upload_layer(2, bars_key, |out| {

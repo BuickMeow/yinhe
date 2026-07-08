@@ -589,6 +589,7 @@ pub fn show(
             velocity_display_mode,
             edit_ctx.as_ref(),
             tempo_events,
+            midi_version,
         );
         for edit in auto_edits {
             auto_edit_events.push(edit);

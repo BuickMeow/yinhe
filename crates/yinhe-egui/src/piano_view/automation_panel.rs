@@ -180,6 +180,7 @@ pub fn show_panels(
     velocity_display_mode: &mut u32,
     edit_ctx: Option<&AutomationEditCtx<'_>>,
     tempo_events: &[(u32, f64)],
+    midi_version: u64,
 ) -> (f32, Vec<AutomationEdit>, PanelPianorollFeedback) {
     let mut edits = Vec::new();
     let mut feedback = PanelPianorollFeedback::default();
@@ -476,6 +477,7 @@ pub fn show_panels(
                     show_anchors,
                     tempo_events,
                     panel_ghost,
+                    midi_version,
                 );
 
                 let content_changed = panel.dirty || gpu_dirty;
