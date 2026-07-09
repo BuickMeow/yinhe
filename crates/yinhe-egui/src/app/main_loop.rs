@@ -155,8 +155,10 @@ impl eframe::App for App {
         self.poll_async_operations();
 
         // ── Handle deferred exit ──
+        // 不重置 should_exit：保持 true 直到窗口真正关闭，
+        // 这样下一帧 close_requested 为 true 时，
+        // 守卫 !self.should_exit 为 false，不会重新拦截并弹窗。
         if self.should_exit {
-            self.should_exit = false;
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
         }
 
