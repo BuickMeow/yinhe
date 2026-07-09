@@ -341,7 +341,7 @@ pub(crate) fn show(
             let new_idx = current.saturating_sub(1);
             // Skip invisible tracks
             let mut found = None;
-            for i in (0..new_idx as usize).rev() {
+            for i in (0..=new_idx as usize).rev() {
                 if track_visible.get(i).copied().unwrap_or(true) {
                     found = Some(i as u16);
                     break;
