@@ -174,29 +174,40 @@ impl FileLoader {
         let path_for_thread = path_str.clone();
         let progress = self.load_progress.clone();
         std::thread::spawn(move || {
-            progress::set_stage(&progress, 0, StageStatus::Active);
-            let tx_inner = tx.clone();
-            let result = yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Midi, || {
-                let data = match std::fs::read(&path_for_thread) {
-                    Ok(d) => d,
-                    Err(e) => return Err(yinhe_mid2::MidiError::Io(e)),
-                };
-                yinhe_mid2::parse_bytes_with_encoding(&data, encoding, |p| {
-                    let _ = tx_inner.send(MidiLoadEvent::Progress(p));
-                })
-            });
-            progress::set_stage(&progress, 0, StageStatus::Done);
-            // Stage 1 used to be archive pre-conversion that always discarded
-            // its result. Removed in Phase 4b: mark done immediately.
-            progress::set_stage(&progress, 1, StageStatus::Done);
-            progress::set_visible(&progress, false);
-            let _ = tx.send(MidiLoadEvent::Complete(Box::new(result)));
+            let data = match std::fs::read(&path_for_thread) {
+                Ok(d) => d,
+                Err(e) => {
+                    let _ = tx.send(MidiLoadEvent::Complete(Box::new(Err(yinhe_mid2::MidiError::Io(e)))));
+                    return;
+                }
+            };
+            Self::parse_midi_and_report(data, encoding, tx, progress);
         });
         self.midi_loader = Some(MidiLoader {
             path: path_str,
             rx,
             current_progress: None,
         });
+    }
+
+    /// Parse MIDI bytes in the current thread and report progress/result via channel.
+    fn parse_midi_and_report(
+        data: Vec<u8>,
+        encoding: MidiImportEncoding,
+        tx: mpsc::Sender<MidiLoadEvent>,
+        progress: SharedProgress,
+    ) {
+        progress::set_stage(&progress, 0, StageStatus::Active);
+        let tx_inner = tx.clone();
+        let result = yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Midi, || {
+            yinhe_mid2::parse_bytes_with_encoding(&data, encoding, |p| {
+                let _ = tx_inner.send(MidiLoadEvent::Progress(p));
+            })
+        });
+        progress::set_stage(&progress, 0, StageStatus::Done);
+        progress::set_stage(&progress, 1, StageStatus::Done);
+        progress::set_visible(&progress, false);
+        let _ = tx.send(MidiLoadEvent::Complete(Box::new(result)));
     }
 }
 
@@ -317,29 +328,19 @@ impl FileLoader {
         let entry_name = entry.name.clone();
         progress::set_visible(&self.load_progress, true);
         std::thread::spawn(move || {
-            progress::set_stage(&progress, 0, StageStatus::Active);
-            let read_result = archive.read_file(&entry_name).map_err(|e| {
-                yinhe_mid2::MidiError::Io(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    e.to_string(),
-                ))
-            });
-            match read_result {
-                Ok(data) => {
-                    let load_result = yinhe_mid2::parse_bytes_with_encoding(
-                        &data,
-                        MidiImportEncoding::Utf8,
-                        |_p| {},
-                    );
-                    progress::set_stage(&progress, 0, StageStatus::Done);
-                    progress::set_stage(&progress, 1, StageStatus::Done);
-                    progress::set_visible(&progress, false);
-                    let _ = tx.send(MidiLoadEvent::Complete(Box::new(load_result)));
-                }
+            let data = match archive.read_file(&entry_name) {
+                Ok(d) => d,
                 Err(e) => {
-                    let _ = tx.send(MidiLoadEvent::Complete(Box::new(Err(e))));
+                    let _ = tx.send(MidiLoadEvent::Complete(Box::new(Err(
+                        yinhe_mid2::MidiError::Io(std::io::Error::new(
+                            std::io::ErrorKind::Other,
+                            e.to_string(),
+                        )),
+                    ))));
+                    return;
                 }
-            }
+            };
+            Self::parse_midi_and_report(data, MidiImportEncoding::Utf8, tx, progress);
         });
         self.midi_loader = Some(MidiLoader {
             path: entry.name,

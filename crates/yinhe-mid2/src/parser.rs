@@ -312,99 +312,8 @@ fn parse_track(
                                 // Bank LSB: buffer for potential PC folding
                                 pending_bank[ch_idx].lsb = Some((val, current_tick));
                             }
-                            6 => {
-                                // Data Entry MSB
-                                let rpn = rpn_state[ch_idx];
-                                let nrpn = nrpn_state[ch_idx];
-                                if let (Some(msb), Some(lsb)) = (rpn.msb, rpn.lsb) {
-                                    let parameter = ((msb as u16) << 8) | lsb as u16;
-                                    let target = AutomationTarget::Rpn { parameter };
-                                    let value = if target.is_14bit() {
-                                        (val as u16) << 7
-                                    } else {
-                                        val as u16
-                                    };
-                                    auto_events.push((
-                                        target,
-                                        AutomationEvent { tick: current_tick, value, ..Default::default() },
-                                    ));
-                                } else if let (Some(msb), Some(lsb)) = (nrpn.msb, nrpn.lsb) {
-                                    let parameter = ((msb as u16) << 8) | lsb as u16;
-                                    auto_events.push((
-                                        AutomationTarget::Nrpn { parameter },
-                                        AutomationEvent {
-                                            tick: current_tick,
-                                            value: (val as u16) << 7,
-                                            ..Default::default()
-                                        },
-                                    ));
-                                } else {
-                                    // No RPN/NRPN selected — store as plain CC6
-                                    auto_events.push((
-                                        AutomationTarget::CC { controller: 6 },
-                                        AutomationEvent {
-                                            tick: current_tick,
-                                            value: val as u16,
-                                            ..Default::default()
-                                        },
-                                    ));
-                                }
-                            }
-                            38 => {
-                                // Data Entry LSB: append low 7 bits to most recent value
-                                let rpn = rpn_state[ch_idx];
-                                let nrpn = nrpn_state[ch_idx];
-                                if let (Some(msb), Some(lsb)) = (rpn.msb, rpn.lsb) {
-                                    let parameter = ((msb as u16) << 8) | lsb as u16;
-                                    let target = AutomationTarget::Rpn { parameter };
-                                    if target.is_14bit() {
-                                        // 14-bit target: combine LSB with MSB
-                                        if let Some((_, last)) = auto_events.iter_mut()
-                                            .rfind(|(t, e)| *t == target && e.tick == current_tick)
-                                        {
-                                            last.value = (last.value & 0xFF80) | (val as u16);
-                                        } else {
-                                            auto_events.push((
-                                                target,
-                                                AutomationEvent { tick: current_tick, value: val as u16, ..Default::default() },
-                                            ));
-                                        }
-                                    } else {
-                                        // 7-bit target (RPN 0/2): LSB is fractional, store as plain CC38
-                                        auto_events.push((
-                                            AutomationTarget::CC { controller: 38 },
-                                            AutomationEvent { tick: current_tick, value: val as u16, ..Default::default() },
-                                        ));
-                                    }
-                                } else if let (Some(msb), Some(lsb)) = (nrpn.msb, nrpn.lsb) {
-                                    let parameter = ((msb as u16) << 8) | lsb as u16;
-                                    let target = AutomationTarget::Nrpn { parameter };
-                                    if let Some((_, last)) = auto_events.iter_mut()
-                                        .rfind(|(t, e)| *t == target && e.tick == current_tick)
-                                    {
-                                        last.value = (last.value & 0xFF80) | (val as u16);
-                                    } else {
-                                        auto_events.push((
-                                            target,
-                                            AutomationEvent {
-                                                tick: current_tick,
-                                                value: val as u16,
-                                                ..Default::default()
-                                            },
-                                        ));
-                                    }
-                                } else {
-                                    // No RPN/NRPN selected — store as plain CC38
-                                    auto_events.push((
-                                        AutomationTarget::CC { controller: 38 },
-                                        AutomationEvent {
-                                            tick: current_tick,
-                                            value: val as u16,
-                                            ..Default::default()
-                                        },
-                                    ));
-                                }
-                            }
+                            6 => handle_cc6(val, ch_idx, current_tick, &rpn_state, &nrpn_state, &mut auto_events),
+                            38 => handle_cc38(val, ch_idx, current_tick, &rpn_state, &nrpn_state, &mut auto_events),
                             _ => {
                                 // All other CC → AutomationTarget::CC
                                 auto_events.push((
@@ -535,6 +444,113 @@ fn group_automation_events(
         });
     }
     lanes
+}
+
+/// Handle CC 6 (Data Entry MSB) with RPN/NRPN state machine.
+fn handle_cc6(
+    val: u8,
+    ch_idx: usize,
+    current_tick: u32,
+    rpn_state: &[RpnState; 16],
+    nrpn_state: &[RpnState; 16],
+    auto_events: &mut Vec<(AutomationTarget, AutomationEvent)>,
+) {
+    let rpn = rpn_state[ch_idx];
+    let nrpn = nrpn_state[ch_idx];
+    if let (Some(msb), Some(lsb)) = (rpn.msb, rpn.lsb) {
+        let parameter = ((msb as u16) << 8) | lsb as u16;
+        let target = AutomationTarget::Rpn { parameter };
+        let value = if target.is_14bit() {
+            (val as u16) << 7
+        } else {
+            val as u16
+        };
+        auto_events.push((
+            target,
+            AutomationEvent { tick: current_tick, value, ..Default::default() },
+        ));
+    } else if let (Some(msb), Some(lsb)) = (nrpn.msb, nrpn.lsb) {
+        let parameter = ((msb as u16) << 8) | lsb as u16;
+        auto_events.push((
+            AutomationTarget::Nrpn { parameter },
+            AutomationEvent {
+                tick: current_tick,
+                value: (val as u16) << 7,
+                ..Default::default()
+            },
+        ));
+    } else {
+        auto_events.push((
+            AutomationTarget::CC { controller: 6 },
+            AutomationEvent {
+                tick: current_tick,
+                value: val as u16,
+                ..Default::default()
+            },
+        ));
+    }
+}
+
+/// Handle CC 38 (Data Entry LSB) with RPN/NRPN state machine.
+fn handle_cc38(
+    val: u8,
+    ch_idx: usize,
+    current_tick: u32,
+    rpn_state: &[RpnState; 16],
+    nrpn_state: &[RpnState; 16],
+    auto_events: &mut Vec<(AutomationTarget, AutomationEvent)>,
+) {
+    let rpn = rpn_state[ch_idx];
+    let nrpn = nrpn_state[ch_idx];
+    if let (Some(msb), Some(lsb)) = (rpn.msb, rpn.lsb) {
+        let parameter = ((msb as u16) << 8) | lsb as u16;
+        let target = AutomationTarget::Rpn { parameter };
+        if target.is_14bit() {
+            if let Some((_, last)) = auto_events
+                .iter_mut()
+                .rfind(|(t, e)| *t == target && e.tick == current_tick)
+            {
+                last.value = (last.value & 0xFF80) | (val as u16);
+            } else {
+                auto_events.push((
+                    target,
+                    AutomationEvent { tick: current_tick, value: val as u16, ..Default::default() },
+                ));
+            }
+        } else {
+            auto_events.push((
+                AutomationTarget::CC { controller: 38 },
+                AutomationEvent { tick: current_tick, value: val as u16, ..Default::default() },
+            ));
+        }
+    } else if let (Some(msb), Some(lsb)) = (nrpn.msb, nrpn.lsb) {
+        let parameter = ((msb as u16) << 8) | lsb as u16;
+        let target = AutomationTarget::Nrpn { parameter };
+        if let Some((_, last)) = auto_events
+            .iter_mut()
+            .rfind(|(t, e)| *t == target && e.tick == current_tick)
+        {
+            last.value = (last.value & 0xFF80) | (val as u16);
+        } else {
+            auto_events.push((
+                target,
+                AutomationEvent {
+                    tick: current_tick,
+                    value: val as u16,
+                    ..Default::default()
+                },
+            ));
+        }
+    } else {
+        auto_events.push((
+            AutomationTarget::CC { controller: 38 },
+            AutomationEvent {
+                tick: current_tick,
+                value: val as u16,
+                ..Default::default()
+            },
+        ));
+    }
 }
 
 /// Match a NoteOff (or NoteOn vel=0) to the most recent matching NoteOn.
