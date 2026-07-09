@@ -65,6 +65,12 @@ impl Document {
         self.history.mark_saved();
     }
 
+    /// Mark that this document was loaded from a file.
+    /// Called after loading MIDI/.yin to indicate it's not a fresh empty doc.
+    pub fn mark_loaded(&mut self) {
+        self.history.mark_loaded();
+    }
+
     pub fn empty() -> Self {
         let mut model = YinModel {
             conductor: Arc::new(yinhe_core::ConductorData {

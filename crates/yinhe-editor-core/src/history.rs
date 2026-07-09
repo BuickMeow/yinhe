@@ -363,6 +363,11 @@ pub struct UndoStack {
     /// Length of `past` at the time of the last save.
     /// `is_dirty()` compares current `past.len()` against this value.
     pub(crate) saved_past_len: usize,
+    /// Whether the document has an established "saved base state".
+    /// - `true` for a fresh empty document (closing without save is fine)
+    /// - `false` after loading a file (closing without save should prompt)
+    /// - Set to `true` after first save or mark_loaded()
+    pub(crate) has_saved_base: bool,
 }
 
 impl UndoStack {
@@ -371,17 +376,31 @@ impl UndoStack {
             past: Vec::new(),
             future: Vec::new(),
             saved_past_len: 0,
+            // New empty document is considered "saved base" — closing without save is fine.
+            has_saved_base: true,
         }
     }
 
-    /// Whether the document has been modified since the last save.
+    /// Whether the document has unsaved changes.
+    /// Returns true if:
+    /// - There are edits since last save (`past.len() != saved_past_len`), OR
+    /// - The document was loaded from a file but never saved (`!has_saved_base`)
     pub fn is_dirty(&self) -> bool {
-        self.past.len() != self.saved_past_len
+        self.past.len() != self.saved_past_len || !self.has_saved_base
     }
 
     /// Mark the current state as saved (called after a successful save).
     pub fn mark_saved(&mut self) {
         self.saved_past_len = self.past.len();
+        self.has_saved_base = true;
+    }
+
+    /// Mark that this document was loaded from a file (not a fresh empty doc).
+    /// Called after loading MIDI/.yin. Sets `has_saved_base = false` so that
+    /// closing without save will prompt the user.
+    pub fn mark_loaded(&mut self) {
+        self.saved_past_len = 0;
+        self.has_saved_base = false;
     }
 
     /// Record an undo entry (called *after* the edit is done).
@@ -405,6 +424,7 @@ impl UndoStack {
         self.past.clear();
         self.future.clear();
         self.saved_past_len = 0;
+        self.has_saved_base = true; // Reset to "fresh empty document" state
     }
 }
 

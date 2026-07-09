@@ -15,7 +15,8 @@ impl App {
                     .map(|doc| (doc.edit.quantize_arrange, doc.edit.quantize_pianoroll))
                     .unwrap_or((QuantizePreset::Fraction(1, 4), QuantizePreset::Fraction(1, 16)));
                 match Document::from_model(&path, model, quantize_arrange, quantize_pianoroll, yinhe_yin::ProjectFile::default(), yinhe_yin::MappingFile::default()) {
-                    Ok(doc) => {
+                    Ok(mut doc) => {
+                        doc.mark_loaded(); // Loaded from file, not a fresh empty doc
                         let insert_idx = self.documents.len();
                         self.documents.push(doc);
                         self.active_doc = Some(insert_idx);
@@ -47,6 +48,7 @@ impl App {
                     .ok()
                     .map(|mut d| {
                         d.file_path = Some(path.clone());
+                        d.mark_loaded(); // Loaded from file, not a fresh empty doc
 
                         d.edit.project_sf.overrides = sf
                             .overrides
