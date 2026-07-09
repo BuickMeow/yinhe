@@ -218,43 +218,43 @@ fn total_ticks_padded_zero() {
 
 #[test]
 fn quantize_tick_interval_quarter() {
-    let interval = QuantizePreset::Quarter.tick_interval(480);
+    let interval = QuantizePreset::Fraction(1, 4).tick_interval(480);
     assert_eq!(interval, 480);
 }
 
 #[test]
 fn quantize_tick_interval_eighth() {
-    let interval = QuantizePreset::Eighth.tick_interval(480);
+    let interval = QuantizePreset::Fraction(1, 8).tick_interval(480);
     assert_eq!(interval, 240);
 }
 
 #[test]
 fn quantize_tick_interval_sixteenth() {
-    let interval = QuantizePreset::Sixteenth.tick_interval(480);
+    let interval = QuantizePreset::Fraction(1, 16).tick_interval(480);
     assert_eq!(interval, 120);
 }
 
 #[test]
 fn quantize_snap_tick() {
-    let snapped = QuantizePreset::Quarter.snap_tick(500.0, 480);
+    let snapped = QuantizePreset::Fraction(1, 4).snap_tick(500.0, 480);
     assert_eq!(snapped, 480.0);
 }
 
 #[test]
 fn quantize_snap_tick_at_boundary() {
-    let snapped = QuantizePreset::Quarter.snap_tick(480.0, 480);
+    let snapped = QuantizePreset::Fraction(1, 4).snap_tick(480.0, 480);
     assert_eq!(snapped, 480.0);
 }
 
 #[test]
 fn quantize_label_not_empty() {
-    assert!(!QuantizePreset::Quarter.label().is_empty());
-    assert!(!QuantizePreset::Sixteenth.label().is_empty());
+    assert!(!QuantizePreset::Fraction(1, 4).label().is_empty());
+    assert!(!QuantizePreset::Fraction(1, 16).label().is_empty());
 }
 
 #[test]
 fn quantize_button_text_not_empty() {
-    assert!(!QuantizePreset::Quarter.button_text().is_empty());
+    assert!(!QuantizePreset::Fraction(1, 4).button_text().is_empty());
 }
 
 // ── Time formatting (yinhe-types) ──

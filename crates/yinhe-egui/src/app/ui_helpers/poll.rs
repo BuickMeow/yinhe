@@ -13,7 +13,7 @@ impl App {
                     .active_doc
                     .and_then(|idx| self.documents.get(idx))
                     .map(|doc| (doc.edit.quantize_arrange, doc.edit.quantize_pianoroll))
-                    .unwrap_or((QuantizePreset::Quarter, QuantizePreset::Sixteenth));
+                    .unwrap_or((QuantizePreset::Fraction(1, 4), QuantizePreset::Fraction(1, 16)));
                 match Document::from_model(&path, model, quantize_arrange, quantize_pianoroll, yinhe_yin::ProjectFile::default(), yinhe_yin::MappingFile::default()) {
                     Ok(doc) => {
                         let insert_idx = self.documents.len();
@@ -37,7 +37,7 @@ impl App {
                     .active_doc
                     .and_then(|idx| self.documents.get(idx))
                     .map(|doc| (doc.edit.quantize_arrange, doc.edit.quantize_pianoroll))
-                    .unwrap_or((QuantizePreset::Quarter, QuantizePreset::Sixteenth));
+                    .unwrap_or((QuantizePreset::Fraction(1, 4), QuantizePreset::Fraction(1, 16)));
                 let project_file = yinhe_yin::ProjectFile::from_meta_with_sf(
                     &model.meta,
                     sf.mode,

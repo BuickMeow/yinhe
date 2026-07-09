@@ -146,8 +146,10 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                     let (arr_q, pr_q) = ctx
                         .doc
                         .map(|d| (d.edit.quantize_arrange, d.edit.quantize_pianoroll))
-                        .unwrap_or((QuantizePreset::Quarter, QuantizePreset::Sixteenth));
+                        .unwrap_or((QuantizePreset::Fraction(1, 4), QuantizePreset::Fraction(1, 16)));
                     let q_font = egui::FontId::proportional(12.0);
+                    let old_btn_pad = ui.spacing_mut().button_padding;
+                    ui.spacing_mut().button_padding = egui::vec2(6.0, -3.0);
 
                     let arr_text = format!("AR\n{}", arr_q.button_text());
                     let arr_resp = ui.add(
@@ -167,12 +169,12 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                             }
                         }
                         ui.separator();
-                        let is_custom = matches!(arr_q, QuantizePreset::Custom(_, _));
+                        let is_custom = matches!(arr_q, QuantizePreset::Fraction(_, _));
                         if ui
                             .add(egui::Button::selectable(is_custom, "Custom"))
                             .clicked()
                         {
-                            pending_quantize_arrange = Some(QuantizePreset::Custom(1, 4));
+                            pending_quantize_arrange = Some(QuantizePreset::Fraction(1, 4));
                             ui.close();
                         }
                     });
@@ -195,15 +197,17 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                             }
                         }
                         ui.separator();
-                        let is_custom = matches!(pr_q, QuantizePreset::Custom(_, _));
+                        let is_custom = matches!(pr_q, QuantizePreset::Fraction(_, _));
                         if ui
                             .add(egui::Button::selectable(is_custom, "Custom"))
                             .clicked()
                         {
-                            pending_quantize_pianoroll = Some(QuantizePreset::Custom(1, 4));
+                            pending_quantize_pianoroll = Some(QuantizePreset::Fraction(1, 4));
                             ui.close();
                         }
                     });
+
+                    ui.spacing_mut().button_padding = old_btn_pad;
                 }
 
                 if let Some(doc) = ctx.doc {
