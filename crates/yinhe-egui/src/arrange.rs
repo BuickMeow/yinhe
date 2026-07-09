@@ -265,10 +265,12 @@ pub fn show(
 
     // ── "+" track add button in the corner (below track panel, left of scrollbar) ──
     {
-        let btn_rect = egui::Rect::from_min_size(
+        let corner_rect = egui::Rect::from_min_size(
             egui::pos2(arr_rect.min.x, arr_rect.max.y - crate::widgets::scrollbar::SCROLLBAR_H),
             egui::vec2(tp_w, crate::widgets::scrollbar::SCROLLBAR_H),
         );
+        let btn_size = 20.0;
+        let btn_rect = egui::Rect::from_center_size(corner_rect.center(), egui::vec2(btn_size, btn_size));
         let btn_resp = ui.interact(btn_rect, egui::Id::new("arr_add_track_btn"), egui::Sense::click());
         let hovered = btn_resp.hovered();
 
