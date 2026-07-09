@@ -12,7 +12,7 @@ impl MenuBarInner {
         Self { _rx: rx }
     }
 
-    pub fn poll(&self) -> Vec<MenuAction> {
+    pub fn poll(&mut self) -> Vec<MenuAction> {
         Vec::new()
     }
 }

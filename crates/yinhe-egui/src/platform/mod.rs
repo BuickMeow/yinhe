@@ -31,7 +31,7 @@ impl MenuBar {
     }
 
     /// Poll for pending menu actions.
-    pub fn poll(&self) -> Vec<MenuAction> {
+    pub fn poll(&mut self) -> Vec<MenuAction> {
         self.inner.poll()
     }
 }
