@@ -593,5 +593,105 @@ impl App {
                 self.load_error = None;
             }
         }
+
+        // ── Unsaved changes confirmation (independent window) ──
+        if self.pending_unsaved.is_some() && self.save_rx.is_none() {
+            let ctx = ui.ctx().clone();
+            let ctx_clone = ctx.clone();
+
+            // Use Rc<RefCell> to communicate the button action back from the closure
+            let action_rc: std::rc::Rc<std::cell::RefCell<Option<UnsavedDialogAction>>> =
+                std::rc::Rc::new(std::cell::RefCell::new(None));
+            let action_cb = action_rc.clone();
+
+            ctx_clone.show_viewport_immediate(
+                egui::ViewportId::from_hash_of("unsaved_dialog"),
+                crate::chrome::dialog::viewport_builder("尚未保存", [380.0, 170.0], false),
+                move |vctx, _class| {
+                    let mut close = false;
+                    if vctx.input(|i| i.viewport().close_requested()) {
+                        *action_cb.borrow_mut() = Some(UnsavedDialogAction::Cancel);
+                        close = true;
+                    }
+                    egui::CentralPanel::default()
+                        .frame(egui::Frame {
+                            fill: crate::theme::APP_BG,
+                            ..Default::default()
+                        })
+                        .show(vctx, |ui| {
+                            crate::chrome::dialog::title_bar(ui, "尚未保存", &mut close);
+                            egui::Frame::new()
+                                .inner_margin(egui::Margin {
+                                    left: 12,
+                                    right: 12,
+                                    top: 0,
+                                    bottom: 12,
+                                })
+                                .show(ui, |ui| {
+                                    ui.set_max_width(360.0);
+                                    ui.label("当前工程尚未保存，是否保存？");
+                                    ui.add_space(16.0);
+                                    ui.horizontal(|ui| {
+                                        if ui
+                                            .button("保存")
+                                            .clicked()
+                                        {
+                                            *action_cb.borrow_mut() =
+                                                Some(UnsavedDialogAction::Save);
+                                            close = true;
+                                        }
+                                        ui.add_space(8.0);
+                                        let discard_btn =
+                                            ui.button(egui::RichText::new("不保存").color(egui::Color32::from_rgb(255, 80, 80)));
+                                        if discard_btn.clicked() {
+                                            *action_cb.borrow_mut() =
+                                                Some(UnsavedDialogAction::Discard);
+                                            close = true;
+                                        }
+                                        ui.add_space(8.0);
+                                        if ui.button("返回").clicked() {
+                                            *action_cb.borrow_mut() =
+                                                Some(UnsavedDialogAction::Cancel);
+                                            close = true;
+                                        }
+                                    });
+                                });
+                        });
+                    if close {
+                        vctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+                    }
+                },
+            );
+
+            // Process the button action outside the closure
+            if let Some(action) = action_rc.borrow_mut().take() {
+                match action {
+                    UnsavedDialogAction::Save => {
+                        if let Some(idx) = self.active_doc {
+                            if let Some(path) = self.documents[idx].file_path.clone() {
+                                self.save_project_async(idx, path);
+                            } else {
+                                self.save_as_dialog();
+                            }
+                        }
+                        // pending_unsaved stays — will be executed after save completes
+                    }
+                    UnsavedDialogAction::Discard => {
+                        let ctx = ui.ctx().clone();
+                        self.execute_pending_file_action(&ctx);
+                    }
+                    UnsavedDialogAction::Cancel => {
+                        self.pending_unsaved = None;
+                    }
+                }
+            }
+        }
     }
+}
+
+/// Internal: which button was pressed in the unsaved dialog.
+enum UnsavedDialogAction {
+    Save,
+    Discard,
+    Cancel,
 }

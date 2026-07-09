@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
 use yinhe_core::{NoteEvent, TrackData, YinModel};
-use yinhe_types::{AutomationEdit, PencilNoteDrag, TRACK_PALETTE};
+use yinhe_types::{AutomationEdit, AutomationEvent, PencilNoteDrag, TRACK_PALETTE};
 use yinhe_yin::{MappingFile, ProjectFile};
 
 use crate::edit_state::EditState;
-use crate::history::{NoteDelta, UndoAction, UndoEntry, UndoStack};
+use crate::history::{AutomationDelta, NoteDelta, UndoAction, UndoEntry, UndoStack};
 use crate::project_data::ProjectData;
 use crate::quantize::QuantizePreset;
 
@@ -55,6 +55,14 @@ impl Document {
 
     pub fn track_info_cache(&self) -> &[yinhe_core::TrackInfo] {
         &self.edit.track_info_cache
+    }
+
+    pub fn is_dirty(&self) -> bool {
+        self.history.is_dirty()
+    }
+
+    pub fn mark_saved(&mut self) {
+        self.history.mark_saved();
     }
 
     pub fn empty() -> Self {
@@ -639,6 +647,76 @@ impl Document {
             before: originals,
             after,
         }))
+    }
+
+    /// Move all automation events that fall within the current selection rects
+    /// by `delta_ticks`. Returns a Vec of AutomationDelta undo actions (one per
+    /// affected lane). Returns an empty Vec if no automation events were moved.
+    pub fn move_selected_automation(&mut self, delta_ticks: i64) -> Vec<UndoAction> {
+        if delta_ticks == 0 || self.edit.selected.is_empty() {
+            return Vec::new();
+        }
+
+        let mut actions: Vec<UndoAction> = Vec::new();
+
+        let model = Arc::make_mut(&mut self.data.model);
+        let rects = self.edit.selected.rects.clone();
+
+        for &(tick_start, tick_end, _key_lo, _key_hi, track_lo, track_hi) in &rects {
+            for track_idx in track_lo..=track_hi {
+                let track_idx = track_idx as usize;
+                if track_idx >= model.tracks.len() {
+                    continue;
+                }
+                let track = Arc::make_mut(&mut model.tracks[track_idx]);
+                let num_lanes = track.automation_lanes.len();
+                if num_lanes == 0 {
+                    continue;
+                }
+                for lane_idx in 0..num_lanes {
+                    let lane = &mut track.automation_lanes[lane_idx];
+                    let before = lane.events.clone();
+
+                    // Partition events: those in range vs those outside
+                    let mut in_range: Vec<AutomationEvent> = Vec::new();
+                    let mut out_of_range: Vec<AutomationEvent> = Vec::new();
+                    for evt in lane.events.drain(..) {
+                        if evt.tick >= tick_start && evt.tick < tick_end {
+                            let mut moved = evt;
+                            moved.tick = (moved.tick as i64 + delta_ticks).max(0) as u32;
+                            in_range.push(moved);
+                        } else {
+                            out_of_range.push(evt);
+                        }
+                    }
+
+                    if in_range.is_empty() {
+                        // Restore and continue
+                        lane.events = before;
+                        continue;
+                    }
+
+                    // Merge and re-sort
+                    lane.events = out_of_range;
+                    lane.events.extend(in_range);
+                    lane.events.sort_by_key(|e| e.tick);
+
+                    let after = lane.events.clone();
+                    actions.push(UndoAction::Automation(AutomationDelta {
+                        track_idx,
+                        lane_idx,
+                        before,
+                        after,
+                    }));
+                }
+            }
+        }
+
+        if !actions.is_empty() {
+            self.data.midi_version = self.data.midi_version.wrapping_add(1);
+        }
+
+        actions
     }
 
     /// Apply a pencil-tool drag operation (move or resize a single note).

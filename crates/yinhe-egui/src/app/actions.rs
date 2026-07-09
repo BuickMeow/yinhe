@@ -2,7 +2,7 @@ use std::sync::mpsc;
 
 use eframe::egui;
 
-use crate::app::App;
+use crate::app::{App, PendingFileAction};
 use yinhe_editor_core::document::Document;
 use crate::chrome::transport_bar;
 
@@ -176,11 +176,47 @@ impl App {
 
 impl App {
     /// Handle file menu actions from the transport bar.
+    /// Checks for unsaved changes before destructive actions (New, Open, Close, Exit).
     pub(crate) fn handle_file_action(
         &mut self,
         action: transport_bar::FileAction,
         ctx: &egui::Context,
     ) {
+        // Actions that never need the unsaved dialog
+        match action {
+            transport_bar::FileAction::Save
+            | transport_bar::FileAction::SaveAs
+            | transport_bar::FileAction::ExportMidi
+            | transport_bar::FileAction::ExportAudio
+            | transport_bar::FileAction::Settings => {
+                self.execute_file_action(action, ctx);
+                return;
+            }
+            _ => {}
+        }
+
+        // Check for unsaved changes
+        if let Some(idx) = self.active_doc
+            && self.documents[idx].is_dirty()
+        {
+            let pending = match action {
+                transport_bar::FileAction::NewProject => PendingFileAction::NewProject,
+                transport_bar::FileAction::Open => PendingFileAction::Open,
+                transport_bar::FileAction::CloseDocument => {
+                    PendingFileAction::CloseDocument(idx)
+                }
+                transport_bar::FileAction::Exit => PendingFileAction::Exit,
+                _ => unreachable!(), // filtered above
+            };
+            self.pending_unsaved = Some(pending);
+            return;
+        }
+
+        self.execute_file_action(action, ctx);
+    }
+
+    /// Execute a file action immediately without checking for unsaved changes.
+    fn execute_file_action(&mut self, action: transport_bar::FileAction, ctx: &egui::Context) {
         match action {
             transport_bar::FileAction::NewProject => {
                 self.documents.push(Document::empty());
@@ -223,8 +259,29 @@ impl App {
         }
     }
 
+    /// Execute the deferred pending action (called after save completes or on discard).
+    pub(crate) fn execute_pending_file_action(&mut self, _ctx: &egui::Context) {
+        let Some(pending) = self.pending_unsaved.take() else { return };
+        match pending {
+            PendingFileAction::NewProject => {
+                self.documents.push(Document::empty());
+                self.active_doc = Some(self.documents.len() - 1);
+                self.teardown_audio();
+            }
+            PendingFileAction::Open => {
+                self.file_loader.pick_file(self.audio_settings.midi_import_encoding);
+            }
+            PendingFileAction::CloseDocument(idx) => {
+                self.close_document(idx);
+            }
+            PendingFileAction::Exit => {
+                self.should_exit = true;
+            }
+        }
+    }
+
     /// Spawn a background thread to save the project.
-    fn save_project_async(&mut self, idx: usize, path: String) {
+    pub(crate) fn save_project_async(&mut self, idx: usize, path: String) {
         let doc = &mut self.documents[idx];
         doc.data.sync_project_file();
         doc.data.sync_mapping_file();
@@ -274,7 +331,7 @@ impl App {
         self.save_rx = Some(rx);
     }
 
-    fn save_as_dialog(&mut self) {
+    pub(crate) fn save_as_dialog(&mut self) {
         let default_name = if let Some(idx) = self.active_doc {
             format!("{}.yin", self.documents[idx].file_name)
         } else {

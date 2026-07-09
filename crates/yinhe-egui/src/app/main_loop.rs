@@ -1,6 +1,6 @@
 use eframe::egui;
 
-use crate::app::App;
+use crate::app::{App, PendingFileAction};
 use crate::chrome::title_bar;
 
 use crate::chrome::mode_bar;
@@ -69,7 +69,11 @@ impl eframe::App for App {
             &mut self.title_bar_press_pos,
         );
         if let Some(title_bar::TitleBarAction::CloseDocument(idx)) = title_bar_action {
-            self.close_document(idx);
+            if self.documents.get(idx).map_or(false, |d| d.is_dirty()) {
+                self.pending_unsaved = Some(PendingFileAction::CloseDocument(idx));
+            } else {
+                self.close_document(idx);
+            }
         }
 
         // ── Defensive: ensure active_doc is always in bounds ──
@@ -109,6 +113,12 @@ impl eframe::App for App {
 
         // ── Poll async operations ──
         self.poll_async_operations();
+
+        // ── Handle deferred exit ──
+        if self.should_exit {
+            self.should_exit = false;
+            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+        }
 
         // ── Ensure audio engine is loaded for the active document ──
         self.rebuild_audio_if_needed();

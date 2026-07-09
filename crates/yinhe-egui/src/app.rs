@@ -12,6 +12,15 @@ use crate::render_context::RenderContext;
 use crate::chrome::mode_bar::ViewMode;
 use yinhe_types::{ArrangementView, PianoRollView};
 
+/// A file action that was deferred because the current document has unsaved changes.
+#[derive(Clone, Debug)]
+pub(crate) enum PendingFileAction {
+    NewProject,
+    Open,
+    CloseDocument(usize),
+    Exit,
+}
+
 pub struct App {
     // ── Pianoroll (shared GPU resources + global view state) ──
     pub(crate) render_ctx: RenderContext,
@@ -39,6 +48,12 @@ pub struct App {
 
     // ── Async save ──
     pub(crate) save_rx: Option<mpsc::Receiver<()>>,
+
+    // ── Unsaved changes confirmation ──
+    /// A file action deferred until the user chooses save/discard/cancel.
+    pub(crate) pending_unsaved: Option<PendingFileAction>,
+    /// Set to true when the user chose to exit without saving.
+    pub(crate) should_exit: bool,
 
     // ── View mode ──
     pub(crate) view_mode: ViewMode,
@@ -188,6 +203,8 @@ impl App {
             file_loader: FileLoader::new(load_progress.clone()),
             load_error: None,
             save_rx: None,
+            pending_unsaved: None,
+            should_exit: false,
             export_rx: None,
             export_progress: crate::dialogs::export::ExportProgress::new(),
             show_export_bit_depth: false,

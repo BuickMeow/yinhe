@@ -360,6 +360,9 @@ pub struct UndoEntry {
 pub struct UndoStack {
     pub(crate) past: Vec<UndoEntry>,
     pub(crate) future: Vec<UndoEntry>,
+    /// Length of `past` at the time of the last save.
+    /// `is_dirty()` compares current `past.len()` against this value.
+    pub(crate) saved_past_len: usize,
 }
 
 impl UndoStack {
@@ -367,7 +370,18 @@ impl UndoStack {
         Self {
             past: Vec::new(),
             future: Vec::new(),
+            saved_past_len: 0,
         }
+    }
+
+    /// Whether the document has been modified since the last save.
+    pub fn is_dirty(&self) -> bool {
+        self.past.len() != self.saved_past_len
+    }
+
+    /// Mark the current state as saved (called after a successful save).
+    pub fn mark_saved(&mut self) {
+        self.saved_past_len = self.past.len();
     }
 
     /// Record an undo entry (called *after* the edit is done).
@@ -390,6 +404,7 @@ impl UndoStack {
     pub fn clear(&mut self) {
         self.past.clear();
         self.future.clear();
+        self.saved_past_len = 0;
     }
 }
 

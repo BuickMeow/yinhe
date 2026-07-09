@@ -90,6 +90,15 @@ impl App {
         if let Some(rx) = &self.save_rx {
             if rx.try_recv().is_ok() {
                 self.save_rx = None;
+                // Mark the active document as saved
+                if let Some(idx) = self.active_doc {
+                    self.documents[idx].mark_saved();
+                }
+                // If there's a deferred action, execute it now
+                if self.pending_unsaved.is_some() {
+                    let ctx = egui::Context::default();
+                    self.execute_pending_file_action(&ctx);
+                }
             }
         }
 
