@@ -1,6 +1,7 @@
 use crate::app::App;
 use crate::file_loader::LoadResult;
 use yinhe_editor_core::document::Document;
+use yinhe_editor_core::quantize::QuantizePreset;
 
 impl App {
     /// Poll all async operations: file loading, save completion, export completion.
@@ -8,12 +9,12 @@ impl App {
         // Poll async file loading
         match self.file_loader.poll_loading() {
             LoadResult::ModelLoaded { path, model } => {
-                let quantize = self
+                let (quantize_arrange, quantize_pianoroll) = self
                     .active_doc
                     .and_then(|idx| self.documents.get(idx))
-                    .map(|doc| doc.edit.quantize)
-                    .unwrap_or_default();
-                match Document::from_model(&path, model, quantize, yinhe_yin::ProjectFile::default(), yinhe_yin::MappingFile::default()) {
+                    .map(|doc| (doc.edit.quantize_arrange, doc.edit.quantize_pianoroll))
+                    .unwrap_or((QuantizePreset::Quarter, QuantizePreset::Sixteenth));
+                match Document::from_model(&path, model, quantize_arrange, quantize_pianoroll, yinhe_yin::ProjectFile::default(), yinhe_yin::MappingFile::default()) {
                     Ok(doc) => {
                         let insert_idx = self.documents.len();
                         self.documents.push(doc);
@@ -32,17 +33,17 @@ impl App {
                 sf,
                 mapping,
             } => {
-                let quantize = self
+                let (quantize_arrange, quantize_pianoroll) = self
                     .active_doc
                     .and_then(|idx| self.documents.get(idx))
-                    .map(|doc| doc.edit.quantize)
-                    .unwrap_or_default();
+                    .map(|doc| (doc.edit.quantize_arrange, doc.edit.quantize_pianoroll))
+                    .unwrap_or((QuantizePreset::Quarter, QuantizePreset::Sixteenth));
                 let project_file = yinhe_yin::ProjectFile::from_meta_with_sf(
                     &model.meta,
                     sf.mode,
                     sf.overrides.clone(),
                 );
-                let result = Document::from_model(&path, model, quantize, project_file, mapping)
+                let result = Document::from_model(&path, model, quantize_arrange, quantize_pianoroll, project_file, mapping)
                     .ok()
                     .map(|mut d| {
                         d.file_path = Some(path.clone());

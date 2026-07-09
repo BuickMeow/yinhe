@@ -138,10 +138,16 @@ impl eframe::App for App {
         self.interpolate_playback_cursor();
 
         if let (Some(idx), Some(new_preset)) =
-            (self.active_doc, transport_response.pending_quantize)
+            (self.active_doc, transport_response.pending_quantize_arrange)
             && let Some(doc) = self.documents.get_mut(idx)
         {
-            doc.edit.quantize = new_preset;
+            doc.edit.quantize_arrange = new_preset;
+        }
+        if let (Some(idx), Some(new_preset)) =
+            (self.active_doc, transport_response.pending_quantize_pianoroll)
+            && let Some(doc) = self.documents.get_mut(idx)
+        {
+            doc.edit.quantize_pianoroll = new_preset;
         }
 
         // ── Handle file menu actions ──

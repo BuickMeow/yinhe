@@ -120,7 +120,8 @@ impl Document {
     pub fn from_model(
         path: &str,
         model: YinModel,
-        quantize: QuantizePreset,
+        quantize_arrange: QuantizePreset,
+        quantize_pianoroll: QuantizePreset,
         project_file: ProjectFile,
         mapping_file: MappingFile,
     ) -> Result<Self, String> {
@@ -176,7 +177,8 @@ impl Document {
             Ok(Document {
                 data,
                 edit: EditState {
-                    quantize,
+                    quantize_arrange,
+                    quantize_pianoroll,
                     track_visible: vec![true; num_tracks],
                     track_pianoroll_visible: vec![true; num_tracks],
                     track_overrides: (0..num_tracks).map(|_| TrackOverride::default()).collect(),
@@ -196,7 +198,8 @@ impl Document {
     /// Load a `.yin` file. Returns `(Document, soundfont_project_mode)`.
     pub fn from_yin_path(
         path: &str,
-        quantize: QuantizePreset,
+        quantize_arrange: QuantizePreset,
+        quantize_pianoroll: QuantizePreset,
     ) -> std::io::Result<(Self, bool)> {
         let (model, sf, mapping) = yinhe_yin::load_yin_with_sf(path).map_err(|e| match e {
             yinhe_yin::YinError::Io(io) => io,
@@ -207,7 +210,7 @@ impl Document {
             sf.mode,
             sf.overrides.clone(),
         );
-        let mut doc = Self::from_model(path, model, quantize, project_file, mapping).map_err(|e| {
+        let mut doc = Self::from_model(path, model, quantize_arrange, quantize_pianoroll, project_file, mapping).map_err(|e| {
             std::io::Error::new(std::io::ErrorKind::InvalidData, e)
         })?;
         doc.file_path = Some(path.to_string());

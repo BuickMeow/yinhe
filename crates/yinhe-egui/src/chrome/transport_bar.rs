@@ -43,7 +43,8 @@ pub struct TransportResponse {
     pub toggle_play: bool,
     pub pause_return: bool,
     pub stop_play: bool,
-    pub pending_quantize: Option<QuantizePreset>,
+    pub pending_quantize_arrange: Option<QuantizePreset>,
+    pub pending_quantize_pianoroll: Option<QuantizePreset>,
     pub pending_file_action: Option<FileAction>,
 }
 
@@ -53,7 +54,8 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
     let mut toggle_play = false;
     let mut pause_return = false;
     let mut stop_play = false;
-    let mut pending_quantize = None;
+    let mut pending_quantize_arrange = None;
+    let mut pending_quantize_pianoroll = None;
     let mut pending_file_action = None;
 
     egui::Panel::top("transport_bar")
@@ -139,82 +141,69 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                     }
                     follow_resp.on_hover_text(ctx.follow_mode.tooltip());
 
-                    // ── Quantization preset button + popup ──
+                    // ── Quantization preset buttons (AR + PR) ──
                     let ppq = ctx.doc.map(|d| d.data.model.meta.ppq).unwrap_or(480);
-                    let q_label = ctx
+                    let (arr_q, pr_q) = ctx
                         .doc
-                        .map(|d| d.edit.quantize.button_text())
-                        .unwrap_or_default();
-                    let q_resp = ui.add(
-                        egui::Button::new(q_label.as_str())
-                            .min_size(egui::vec2(44.0, 32.0))
+                        .map(|d| (d.edit.quantize_arrange, d.edit.quantize_pianoroll))
+                        .unwrap_or((QuantizePreset::Quarter, QuantizePreset::Sixteenth));
+                    let q_font = egui::FontId::proportional(12.0);
+
+                    let arr_text = format!("AR\n{}", arr_q.button_text());
+                    let arr_resp = ui.add(
+                        egui::Button::new(egui::RichText::new(arr_text).font(q_font.clone()))
+                            .min_size(egui::vec2(40.0, 26.0))
                             .corner_radius(btn_rounding),
                     );
-
-                    egui::Popup::menu(&q_resp).show(|ui| {
+                    egui::Popup::menu(&arr_resp).show(|ui| {
                         ui.set_min_width(120.0);
                         for preset in QuantizePreset::ALL {
-                            let active = ctx.doc.map(|d| *preset == d.edit.quantize).unwrap_or(false);
                             if ui
-                                .add(egui::Button::selectable(active, preset.display_item(ppq)))
+                                .add(egui::Button::selectable(*preset == arr_q, preset.display_item(ppq)))
                                 .clicked()
                             {
-                                pending_quantize = Some(*preset);
+                                pending_quantize_arrange = Some(*preset);
                                 ui.close();
                             }
                         }
-
                         ui.separator();
-
-                        let is_custom = ctx
-                            .doc
-                            .map(|d| matches!(d.edit.quantize, QuantizePreset::Custom(_, _)))
-                            .unwrap_or(false);
+                        let is_custom = matches!(arr_q, QuantizePreset::Custom(_, _));
                         if ui
                             .add(egui::Button::selectable(is_custom, "Custom"))
                             .clicked()
                         {
-                            pending_quantize = Some(QuantizePreset::Custom(1, 4));
+                            pending_quantize_arrange = Some(QuantizePreset::Custom(1, 4));
                             ui.close();
                         }
                     });
 
-                    // ── Custom fraction editor (visible only when Custom is selected) ──
-                    if let Some(doc) = ctx.doc
-                        && let QuantizePreset::Custom(ref num, ref den) = doc.edit.quantize
-                    {
-                        let mut edit_num = *num;
-                        let mut edit_den = *den;
-
-                        ui.add_space(2.0);
-                        ui.label("n:");
-                        let num_resp = ui.add(
-                            egui::DragValue::new(&mut edit_num)
-                                .range(1..=9999)
-                                .speed(0.5)
-                                .prefix("")
-                                .max_decimals(0)
-                                .fixed_decimals(0),
-                        );
-                        ui.label("d:");
-                        let den_resp = ui.add(
-                            egui::DragValue::new(&mut edit_den)
-                                .range(1..=9999)
-                                .speed(0.5)
-                                .prefix("")
-                                .max_decimals(0)
-                                .fixed_decimals(0),
-                        );
-
-                        if num_resp.dragged()
-                            || den_resp.dragged()
-                            || num_resp.changed()
-                            || den_resp.changed()
-                        {
-                            let edit_den = edit_den.max(1);
-                            pending_quantize = Some(QuantizePreset::Custom(edit_num, edit_den));
+                    let pr_text = format!("PR\n{}", pr_q.button_text());
+                    let pr_resp = ui.add(
+                        egui::Button::new(egui::RichText::new(pr_text).font(q_font))
+                            .min_size(egui::vec2(40.0, 26.0))
+                            .corner_radius(btn_rounding),
+                    );
+                    egui::Popup::menu(&pr_resp).show(|ui| {
+                        ui.set_min_width(120.0);
+                        for preset in QuantizePreset::ALL {
+                            if ui
+                                .add(egui::Button::selectable(*preset == pr_q, preset.display_item(ppq)))
+                                .clicked()
+                            {
+                                pending_quantize_pianoroll = Some(*preset);
+                                ui.close();
+                            }
                         }
-                    }
+                        ui.separator();
+                        let is_custom = matches!(pr_q, QuantizePreset::Custom(_, _));
+                        if ui
+                            .add(egui::Button::selectable(is_custom, "Custom"))
+                            .clicked()
+                        {
+                            pending_quantize_pianoroll = Some(QuantizePreset::Custom(1, 4));
+                            ui.close();
+                        }
+                    });
                 }
 
                 if let Some(doc) = ctx.doc {
@@ -266,7 +255,8 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
         toggle_play,
         pause_return,
         stop_play,
-        pending_quantize,
+        pending_quantize_arrange,
+        pending_quantize_pianoroll,
         pending_file_action,
     }
 }

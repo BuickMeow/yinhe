@@ -250,7 +250,7 @@ impl App {
                         &doc.edit.track_colors_cache,
                         &mut doc.edit.cursor_tick,
                         is_playing,
-                        doc.edit.quantize,
+                        doc.edit.quantize_pianoroll,
                         tpb,
                         Some((tpb, ts_num, ts_den, &ts_events)),
                         &mut self.piano_last_cursor_tick,

@@ -1,4 +1,5 @@
 use eframe::egui;
+use egui_material_icons::icons::*;
 
 use crate::app::App;
 
@@ -214,11 +215,11 @@ impl App {
                                 for stage in &p.stages {
                                     ui.horizontal(|ui| {
                                         let icon = match stage.status {
-                                            yinhe_editor_core::progress::StageStatus::Done => "✅",
-                                            yinhe_editor_core::progress::StageStatus::Active => "⏳",
-                                            yinhe_editor_core::progress::StageStatus::Pending => "⬜",
+                                            yinhe_editor_core::progress::StageStatus::Done => ICON_CHECK_CIRCLE,
+                                            yinhe_editor_core::progress::StageStatus::Active => ICON_SYNC,
+                                            yinhe_editor_core::progress::StageStatus::Pending => ICON_RADIO_BUTTON_UNCHECKED,
                                         };
-                                        ui.label(icon);
+                                        ui.label(icon.rich_text().size(14.0));
                                         ui.add(
                                             egui::ProgressBar::new(stage.progress)
                                                 .desired_width(200.0)

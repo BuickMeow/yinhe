@@ -680,19 +680,19 @@ pub fn show_panels(
                             }
                         }
                         ui.add_space(4.0);
-                        // Tick
+                        // Tick（只有 lost_focus 即按 Enter 才提交，拖拽不触发 undo）
                         ui.horizontal(|ui| {
                             ui.label("Tick:");
                             let resp = ui.add(egui::DragValue::new(&mut new_tick).range(0..=u32::MAX as i64).speed(1.0));
-                            if resp.changed() || resp.lost_focus() {
+                            if resp.lost_focus() {
                                 submitted = true;
                             }
                         });
-                        // Value
+                        // Value（同上）
                         ui.horizontal(|ui| {
                             ui.label("Value:");
                             let resp = ui.add(egui::DragValue::new(&mut new_value).range(0..=max_val as i64).speed(1.0));
-                            if resp.changed() || resp.lost_focus() {
+                            if resp.lost_focus() {
                                 submitted = true;
                             }
                         });
@@ -725,13 +725,25 @@ pub fn show_panels(
                 });
             }
 
-            // 弹窗外点击 → 关闭弹窗（跳过首帧，避免右键打开弹窗时立即关闭）
+            // 弹窗外点击 → 提交最终值然后关闭弹窗（跳过首帧，避免右键打开弹窗时立即关闭）
             let was_open_id = ui.id().with("auto_right_was_open").with(i);
             let was_open = ui.ctx().data(|d| d.get_temp::<bool>(was_open_id)).unwrap_or(false);
             ui.ctx().data_mut(|d| d.insert_temp(was_open_id, true));
             if was_open && area_response.response.clicked_elsewhere() {
+                // 仅值有变化时提交（ghost 模式：最终值一次性提交，不产生中间 undo）
+                if new_tick as u32 != anchor.old_tick || new_value as u16 != anchor.old_value {
+                    edits.push(AutomationEdit::Move {
+                        track_idx: anchor.track_idx,
+                        lane_idx: anchor.lane_idx,
+                        old_tick: anchor.old_tick,
+                        new_tick: new_tick as u32,
+                        new_value: new_value as u16,
+                    });
+                }
                 ui.ctx().data_mut(|d| {
                     d.remove::<RightClickAnchor>(right_click_id);
+                    d.remove::<f64>(edit_tick_id);
+                    d.remove::<f64>(edit_value_id);
                     d.remove::<bool>(was_open_id);
                 });
             }
@@ -1075,7 +1087,7 @@ fn handle_automation_interaction(
     // ── Ghost 计算（panel 局部坐标，传给 wgpu Layer 3 绘制）──
     // 重新读取 drag_state：press 分支可能刚设置过，release 分支已 return。
     let drag_now = ui.ctx().data(|d| d.get_temp::<AutoDrag>(drag_id));
-    let ghost = if let Some(drag) = drag_now
+    let mut ghost = if let Some(drag) = drag_now
         && let Some((_, cur_tick, cur_value)) = mouse_info
     {
         // panel 局部坐标，与 build_data_lines 一致：x = x_offset + tick*ppu
@@ -1100,6 +1112,25 @@ fn handle_automation_interaction(
     } else {
         None
     };
+
+    // 右键弹窗 ghost：弹窗打开且值有变化时，显示预览（不产生 undo）
+    if ghost.is_none() {
+        let right_click_id = ui.id().with("auto_right_click").with(panel_index);
+        if let Some(anchor) = ui.ctx().data(|d| d.get_temp::<RightClickAnchor>(right_click_id)) {
+            let edit_tick_id = ui.id().with("auto_right_tick").with(panel_index);
+            let edit_value_id = ui.id().with("auto_right_value").with(panel_index);
+            let new_tick = ui.ctx().data(|d| d.get_temp::<f64>(edit_tick_id)).unwrap_or(anchor.old_tick as f64);
+            let new_value = ui.ctx().data(|d| d.get_temp::<f64>(edit_value_id)).unwrap_or(anchor.old_value as f64);
+            let new_tick_u32 = new_tick as u32;
+            let new_value_u16 = new_value as u16;
+            if new_tick_u32 != anchor.old_tick || new_value_u16 != anchor.old_value {
+                ghost = lane.map(|l| {
+                    let override_lane = build_lane_override(l, anchor.old_tick, new_tick_u32, new_value_u16);
+                    AutomationGhost::Move { lane: override_lane, color: track_color }
+                });
+            }
+        }
+    }
 
     // 拖拽中返回拖拽信息用于 tooltip
     let drag_info = if ghost.is_some() {

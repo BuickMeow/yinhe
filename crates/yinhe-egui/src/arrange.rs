@@ -94,7 +94,7 @@ pub fn show(
             |tick| {
                 crate::view_interaction::snap_tick(
                     tick,
-                    doc.edit.quantize,
+                    doc.edit.quantize_arrange,
                     tpb,
                     Some((tpb, def_num, def_den, sig_events)),
                 )
@@ -222,7 +222,7 @@ pub fn show(
             &doc.edit.track_visible,
             &doc.edit.track_colors_cache,
             &mut doc.edit.cursor_tick,
-            doc.edit.quantize,
+            doc.edit.quantize_arrange,
             doc.data.model.meta.ppq,
             Some({
                 let model = &doc.data.model;

@@ -43,7 +43,7 @@ fn document_empty_has_conductor_and_16_tracks() {
 #[test]
 fn document_from_model() {
     let m = make_test_model();
-    let doc = Document::from_model("test.mid", m, QuantizePreset::default(), Default::default(), Default::default())
+    let doc = Document::from_model("test.mid", m, QuantizePreset::Quarter, QuantizePreset::Sixteenth, Default::default(), Default::default())
         .expect("from_model failed");
     assert_eq!(doc.data.model.note_count, 4);
     assert_eq!(doc.file_name, "test");
@@ -243,7 +243,7 @@ fn undo_stack_push_and_undo_redo() {
 #[test]
 fn document_recode_track_names() {
     let m = make_test_model();
-    let mut doc = Document::from_model("test.mid", m, QuantizePreset::default(), Default::default(), Default::default())
+    let mut doc = Document::from_model("test.mid", m, QuantizePreset::Quarter, QuantizePreset::Sixteenth, Default::default(), Default::default())
         .expect("from_model failed");
     let original_names = doc.data.track_names.clone();
     doc.recode_track_names(MidiImportEncoding::Utf8);
