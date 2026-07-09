@@ -33,7 +33,7 @@ fn parse_minimal_midi() {
     let model = parse_bytes(&bytes).expect("parse failed");
 
     assert_eq!(model.meta.ppq, 480);
-    assert_eq!(model.tracks.len(), 1);
+    assert_eq!(model.tracks.len(), 2);
     assert_eq!(model.note_count, 1);
     let n = &model.notes[60][0];
     assert_eq!(n.start_tick, 0);
@@ -153,11 +153,12 @@ fn roundtrip_complex_model_preserves_everything() {
     let bytes = write_to_bytes(&model1).unwrap();
     let model2 = parse_bytes(&bytes).unwrap();
 
-    assert_eq!(model2.tracks.len(), model1.tracks.len());
+    // Parser inserts a conductor track, so model2 has one more track.
+    assert_eq!(model2.tracks.len(), model1.tracks.len() + 1);
 
     let l1 = &model1.tracks[0];
-    let l2 = &model2.tracks[0];
-    assert_eq!(model1.track_note_count[0], model2.track_note_count[0], "note count mismatch");
+    let l2 = &model2.tracks[1];
+    assert_eq!(model1.track_note_count[0], model2.track_note_count[1], "note count mismatch");
     assert_eq!(l2.name, "Lead");
     // Notes equal as a multiset of (start_tick, end_tick, key, velocity).
     // dup_index is a local-stable ordering and may differ across SMF
@@ -171,7 +172,7 @@ fn roundtrip_complex_model_preserves_everything() {
     }
     let mut s2: Vec<_> = Vec::new();
     for (key, bucket) in model2.notes.iter().enumerate() {
-        for n in bucket.iter().filter(|n| n.track == 0) {
+        for n in bucket.iter().filter(|n| n.track == 1) {
             s2.push((n.start_tick, n.end_tick, key as u8, n.velocity));
         }
     }
@@ -200,8 +201,8 @@ fn roundtrip_complex_model_preserves_everything() {
     assert_eq!(model2.conductor.time_sig.len(), 2);
 
     let b1 = &model1.tracks[1];
-    let b2 = &model2.tracks[1];
-    assert_eq!(model2.track_note_count[1], model1.track_note_count[1]);
+    let b2 = &model2.tracks[2];
+    assert_eq!(model2.track_note_count[2], model1.track_note_count[1]);
     assert_eq!(b2.channel, 1);
 }
 
@@ -228,10 +229,10 @@ fn build_overlap_midi_bytes() -> Vec<u8> {
 fn dup_index_assigned_for_overlapping_notes() {
     let bytes = build_overlap_midi_bytes();
     let model = parse_bytes(&bytes).expect("parse failed");
-    assert_eq!(model.tracks.len(), 1);
+    assert_eq!(model.tracks.len(), 2);
     let key60_at_0: Vec<&yinhe_core::Note> = model.notes[60]
         .iter()
-        .filter(|n| n.track == 0 && n.start_tick == 0)
+        .filter(|n| n.track == 1 && n.start_tick == 0)
         .collect();
     assert_eq!(key60_at_0.len(), 2, "expected two overlapping notes at tick 0");
     let dups: Vec<u8> = key60_at_0.iter().map(|n| n.dup_index).collect();
@@ -264,8 +265,8 @@ fn build_rpn_midi_bytes() -> Vec<u8> {
 fn rpn_sequence_decodes_to_rpn_event() {
     let bytes = build_rpn_midi_bytes();
     let model = parse_bytes(&bytes).expect("parse failed");
-    assert_eq!(model.tracks.len(), 1);
-    let t = &model.tracks[0];
+    assert_eq!(model.tracks.len(), 2);
+    let t = &model.tracks[1];
     // CC101/100/6 should NOT appear as plain CC lanes
     assert!(t.automation_lanes.iter().all(|l| match &l.target {
         AutomationTarget::CC { controller } => *controller != 101 && *controller != 100 && *controller != 6,
@@ -308,7 +309,7 @@ fn build_port_channel_midi() -> Vec<u8> {
 fn port_and_channel_prefix_captured() {
     let bytes = build_port_channel_midi();
     let model = parse_bytes(&bytes).unwrap();
-    let t = &model.tracks[0];
+    let t = &model.tracks[1];
     assert_eq!(t.port, 2);
     assert_eq!(t.channel_prefix, Some(5));
     // First MIDI event uses channel 3 (raw); td.channel reflects that
