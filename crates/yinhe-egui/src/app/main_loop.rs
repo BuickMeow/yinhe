@@ -53,7 +53,7 @@ impl eframe::App for App {
 
         // ── Intercept native close (macOS traffic light, Alt+F4, etc.) ──
         let close_requested = ui.ctx().input(|i| i.viewport().close_requested());
-        if close_requested {
+        if close_requested && !self.should_exit {
             let any_dirty = self.documents.iter().any(|d| d.is_dirty());
             if any_dirty {
                 // Cancel the close and show the unsaved dialog instead
