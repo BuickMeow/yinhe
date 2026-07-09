@@ -157,27 +157,11 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                             .min_size(egui::vec2(40.0, 26.0))
                             .corner_radius(btn_rounding),
                     );
-                    egui::Popup::menu(&arr_resp).show(|ui| {
-                        ui.set_min_width(120.0);
-                        for preset in QuantizePreset::ALL {
-                            if ui
-                                .add(egui::Button::selectable(*preset == arr_q, preset.display_item(ppq)))
-                                .clicked()
-                            {
-                                pending_quantize_arrange = Some(*preset);
-                                ui.close();
-                            }
-                        }
-                        ui.separator();
-                        let is_custom = matches!(arr_q, QuantizePreset::Fraction(_, _));
-                        if ui
-                            .add(egui::Button::selectable(is_custom, "Custom"))
-                            .clicked()
-                        {
-                            pending_quantize_arrange = Some(QuantizePreset::Fraction(1, 4));
-                            ui.close();
-                        }
-                    });
+                    egui::Popup::from_toggle_button_response(&arr_resp)
+                        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                        .show(|ui| {
+                            quantize_popup(ui, ppq, arr_q, &mut pending_quantize_arrange);
+                        });
 
                     let pr_text = format!("PR\n{}", pr_q.button_text());
                     let pr_resp = ui.add(
@@ -185,27 +169,11 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                             .min_size(egui::vec2(40.0, 26.0))
                             .corner_radius(btn_rounding),
                     );
-                    egui::Popup::menu(&pr_resp).show(|ui| {
-                        ui.set_min_width(120.0);
-                        for preset in QuantizePreset::ALL {
-                            if ui
-                                .add(egui::Button::selectable(*preset == pr_q, preset.display_item(ppq)))
-                                .clicked()
-                            {
-                                pending_quantize_pianoroll = Some(*preset);
-                                ui.close();
-                            }
-                        }
-                        ui.separator();
-                        let is_custom = matches!(pr_q, QuantizePreset::Fraction(_, _));
-                        if ui
-                            .add(egui::Button::selectable(is_custom, "Custom"))
-                            .clicked()
-                        {
-                            pending_quantize_pianoroll = Some(QuantizePreset::Fraction(1, 4));
-                            ui.close();
-                        }
-                    });
+                    egui::Popup::from_toggle_button_response(&pr_resp)
+                        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                        .show(|ui| {
+                            quantize_popup(ui, ppq, pr_q, &mut pending_quantize_pianoroll);
+                        });
 
                     ui.spacing_mut().button_padding = old_btn_pad;
                 }
@@ -262,6 +230,75 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
         pending_quantize_arrange,
         pending_quantize_pianoroll,
         pending_file_action,
+    }
+}
+
+/// Quantization popup menu: common presets + custom fraction + custom tick.
+fn quantize_popup(
+    ui: &mut egui::Ui,
+    ppq: u32,
+    current: QuantizePreset,
+    pending: &mut Option<QuantizePreset>,
+) {
+    ui.set_min_width(120.0);
+    for preset in QuantizePreset::ALL {
+        if ui
+            .add(egui::Button::selectable(*preset == current, preset.display_item(ppq)))
+            .clicked()
+        {
+            *pending = Some(*preset);
+            ui.close();
+        }
+    }
+    ui.separator();
+
+    // ── 自定义时值 ──
+    let is_frac = matches!(current, QuantizePreset::Fraction(_, _));
+    if ui
+        .add(egui::Button::selectable(is_frac, "自定义时值"))
+        .clicked()
+    {
+        *pending = Some(QuantizePreset::Fraction(1, 1));
+    }
+    if let QuantizePreset::Fraction(num, den) = current {
+        ui.horizontal(|ui| {
+            ui.label("n:");
+            let mut n = num;
+            if ui
+                .add(egui::DragValue::new(&mut n).range(1..=9999).speed(0.5))
+                .changed()
+            {
+                *pending = Some(QuantizePreset::Fraction(n, den));
+            }
+            ui.label("d:");
+            let mut d = den;
+            if ui
+                .add(egui::DragValue::new(&mut d).range(1..=9999).speed(0.5))
+                .changed()
+            {
+                *pending = Some(QuantizePreset::Fraction(num, d.max(1)));
+            }
+        });
+    }
+
+    ui.separator();
+
+    // ── 自定义Tick ──
+    let is_abs = matches!(current, QuantizePreset::Absolute(_));
+    if ui
+        .add(egui::Button::selectable(is_abs, "自定义Tick"))
+        .clicked()
+    {
+        *pending = Some(QuantizePreset::Absolute(1));
+    }
+    if let QuantizePreset::Absolute(n) = current {
+        let mut val = n;
+        if ui
+            .add(egui::DragValue::new(&mut val).range(1..=99999).speed(0.5))
+            .changed()
+        {
+            *pending = Some(QuantizePreset::Absolute(val));
+        }
     }
 }
 
