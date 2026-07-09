@@ -206,19 +206,6 @@ pub fn show(
         arr_view.base.scroll_y = arr_view.base.track_panel_scroll_y;
     });
 
-    // ── Vertical splitter handle ──
-    // Full height: covers ruler area above and scrollbar area below
-    // so the handle is always reachable regardless of cursor position.
-    let v_handle = egui::Rect::from_min_max(
-        egui::pos2(arr_rect.min.x + tp_w, arr_rect.min.y),
-        egui::pos2(arr_rect.min.x + tp_w + 4.0, arr_rect.max.y),
-    );
-    let v_resp = crate::widgets::split_handle::vertical(ui, "__v_split__", v_handle);
-    if v_resp.dragged() {
-        *transport_panel_width =
-            (*transport_panel_width + v_resp.drag_delta().x).clamp(60.0, arr_total_w - 60.0);
-    }
-
     // ── Arrangement GPU view (below ruler) ──
     let arr_midi: Option<&dyn yinhe_arrangement::NoteSource> =
         Some(&*doc.data.model as &dyn yinhe_arrangement::NoteSource);
@@ -280,30 +267,22 @@ pub fn show(
     {
         let btn_rect = egui::Rect::from_min_size(
             egui::pos2(arr_rect.min.x, arr_rect.max.y - crate::widgets::scrollbar::SCROLLBAR_H),
-            egui::vec2(tp_w + 4.0, crate::widgets::scrollbar::SCROLLBAR_H),
+            egui::vec2(tp_w, crate::widgets::scrollbar::SCROLLBAR_H),
         );
         let btn_resp = ui.interact(btn_rect, egui::Id::new("arr_add_track_btn"), egui::Sense::click());
         let hovered = btn_resp.hovered();
-        let bg = if hovered {
-            egui::Color32::from_gray(50)
-        } else {
-            crate::theme::APP_BG
-        };
-        let painter = ui.painter();
-        painter.rect_filled(btn_rect, 0.0, bg);
 
         use egui_material_icons::icons::ICON_ADD;
-        let icon_font = egui::FontId::new(18.0, ICON_ADD.font_family());
         let icon_color = if hovered {
-            egui::Color32::from_rgb(0x4C, 0xAF, 0x50)
+            crate::theme::ACCENT_ACTIVE
         } else {
             egui::Color32::from_gray(160)
         };
-        painter.text(
+        ui.painter().text(
             btn_rect.center(),
             egui::Align2::CENTER_CENTER,
             ICON_ADD.codepoint,
-            icon_font,
+            egui::FontId::new(18.0, ICON_ADD.font_family()),
             icon_color,
         );
 
@@ -324,5 +303,16 @@ pub fn show(
                 }
             }
         }
+    }
+
+    // ── Vertical splitter handle (drawn last so it sits on top) ──
+    let v_handle = egui::Rect::from_min_max(
+        egui::pos2(arr_rect.min.x + tp_w, arr_rect.min.y),
+        egui::pos2(arr_rect.min.x + tp_w + 4.0, arr_rect.max.y),
+    );
+    let v_resp = crate::widgets::split_handle::vertical(ui, "__v_split__", v_handle);
+    if v_resp.dragged() {
+        *transport_panel_width =
+            (*transport_panel_width + v_resp.drag_delta().x).clamp(60.0, arr_total_w - 60.0);
     }
 }
