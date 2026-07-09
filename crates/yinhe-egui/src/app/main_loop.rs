@@ -51,6 +51,18 @@ impl eframe::App for App {
         ui.painter()
             .rect_filled(ui.ctx().viewport_rect(), 0.0, crate::theme::APP_BG);
 
+        // ── Intercept native close (macOS traffic light, Alt+F4, etc.) ──
+        let close_requested = ui.ctx().input(|i| i.viewport().close_requested());
+        if close_requested {
+            let any_dirty = self.documents.iter().any(|d| d.is_dirty());
+            if any_dirty {
+                // Cancel the close and show the unsaved dialog instead
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                self.pending_unsaved = Some(PendingFileAction::Exit);
+            }
+            // If no dirty documents, let the close proceed normally
+        }
+
         // ── Detect document switch → invalidate GPU caches ──
         if self.active_doc != self.prev_active_doc {
             self.arrange_view.base.dirty = true;
