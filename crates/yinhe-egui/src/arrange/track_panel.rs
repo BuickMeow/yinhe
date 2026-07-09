@@ -219,45 +219,6 @@ pub(crate) fn show(
         }
     }
 
-    // ── "Add track" button at the bottom ──
-    {
-        let btn_h = 24.0_f32;
-        let btn_rect = egui::Rect::from_min_size(
-            egui::pos2(panel_rect.min.x, panel_rect.max.y - btn_h),
-            egui::vec2(panel_w, btn_h),
-        );
-        let btn_resp = ui.interact(btn_rect, egui::Id::new("track_panel_add_btn"), egui::Sense::click());
-        let hovered = btn_resp.hovered();
-
-        // Background
-        let bg = if hovered {
-            egui::Color32::from_gray(60)
-        } else {
-            egui::Color32::from_gray(40)
-        };
-        painter.rect_filled(btn_rect, 0.0, bg);
-
-        // Centered "+" icon using Material Icons
-        use egui_material_icons::icons::ICON_ADD;
-        let icon_font = egui::FontId::new(18.0, ICON_ADD.font_family());
-        let icon_color = if hovered {
-            egui::Color32::from_rgb(0x4C, 0xAF, 0x50)  // green accent on hover
-        } else {
-            egui::Color32::from_gray(160)
-        };
-        painter.text(
-            btn_rect.center(),
-            egui::Align2::CENTER_CENTER,
-            ICON_ADD.codepoint,
-            icon_font,
-            icon_color,
-        );
-
-        if btn_resp.clicked() {
-            actions.push(TrackAction::AddTrack { after_idx: None });
-        }
-    }
-
     // ── Click handling ──
     let hit = |pos: egui::Pos2| -> Option<usize> {
         let rel_y = pos.y - panel_rect.min.y + *scroll_y;
@@ -375,53 +336,49 @@ pub(crate) fn show(
     });
 
     // ── Up/Down arrow key navigation ──
-    if resp.has_focus()
-        || panel_rect.contains(ui.input(|i| i.pointer.hover_pos().unwrap_or_default()))
-    {
-        if ui.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
-            if let Some(&current) = track_selected.iter().next() {
-                let new_idx = current.saturating_sub(1);
-                // Skip invisible tracks
-                let mut found = None;
-                for i in (0..new_idx as usize).rev() {
-                    if track_visible.get(i).copied().unwrap_or(true) {
-                        found = Some(i as u16);
-                        break;
-                    }
+    if ui.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
+        if let Some(&current) = track_selected.iter().next() {
+            let new_idx = current.saturating_sub(1);
+            // Skip invisible tracks
+            let mut found = None;
+            for i in (0..new_idx as usize).rev() {
+                if track_visible.get(i).copied().unwrap_or(true) {
+                    found = Some(i as u16);
+                    break;
                 }
-                if let Some(target) = found {
-                    track_selected.clear();
-                    track_selected.insert(target);
-                    *selection_anchor = Some(target);
-                }
-            } else if !track_info.is_empty() {
-                let last = track_info.len() - 1;
-                track_selected.clear();
-                track_selected.insert(last as u16);
-                *selection_anchor = Some(last as u16);
             }
+            if let Some(target) = found {
+                track_selected.clear();
+                track_selected.insert(target);
+                *selection_anchor = Some(target);
+            }
+        } else if !track_info.is_empty() {
+            let last = track_info.len() - 1;
+            track_selected.clear();
+            track_selected.insert(last as u16);
+            *selection_anchor = Some(last as u16);
         }
-        if ui.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
-            if let Some(&current) = track_selected.iter().next() {
-                let new_idx = (current as usize + 1).min(num_tracks - 1);
-                // Skip invisible tracks
-                let mut found = None;
-                for i in new_idx..num_tracks {
-                    if track_visible.get(i).copied().unwrap_or(true) {
-                        found = Some(i as u16);
-                        break;
-                    }
+    }
+    if ui.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
+        if let Some(&current) = track_selected.iter().next() {
+            let new_idx = (current as usize + 1).min(num_tracks - 1);
+            // Skip invisible tracks
+            let mut found = None;
+            for i in new_idx..num_tracks {
+                if track_visible.get(i).copied().unwrap_or(true) {
+                    found = Some(i as u16);
+                    break;
                 }
-                if let Some(target) = found {
-                    track_selected.clear();
-                    track_selected.insert(target);
-                    *selection_anchor = Some(target);
-                }
-            } else if !track_info.is_empty() {
-                track_selected.clear();
-                track_selected.insert(0);
-                *selection_anchor = Some(0);
             }
+            if let Some(target) = found {
+                track_selected.clear();
+                track_selected.insert(target);
+                *selection_anchor = Some(target);
+            }
+        } else if !track_info.is_empty() {
+            track_selected.clear();
+            track_selected.insert(0);
+            *selection_anchor = Some(0);
         }
     }
 

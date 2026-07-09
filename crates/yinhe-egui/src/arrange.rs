@@ -275,4 +275,54 @@ pub fn show(
             &mut arr_view.base.dirty,
         );
     }
+
+    // ── "+" track add button in the corner (below track panel, left of scrollbar) ──
+    {
+        let btn_rect = egui::Rect::from_min_size(
+            egui::pos2(arr_rect.min.x, arr_rect.max.y - crate::widgets::scrollbar::SCROLLBAR_H),
+            egui::vec2(tp_w + 4.0, crate::widgets::scrollbar::SCROLLBAR_H),
+        );
+        let btn_resp = ui.interact(btn_rect, egui::Id::new("arr_add_track_btn"), egui::Sense::click());
+        let hovered = btn_resp.hovered();
+        let bg = if hovered {
+            egui::Color32::from_gray(50)
+        } else {
+            crate::theme::APP_BG
+        };
+        let painter = ui.painter();
+        painter.rect_filled(btn_rect, 0.0, bg);
+
+        use egui_material_icons::icons::ICON_ADD;
+        let icon_font = egui::FontId::new(18.0, ICON_ADD.font_family());
+        let icon_color = if hovered {
+            egui::Color32::from_rgb(0x4C, 0xAF, 0x50)
+        } else {
+            egui::Color32::from_gray(160)
+        };
+        painter.text(
+            btn_rect.center(),
+            egui::Align2::CENTER_CENTER,
+            ICON_ADD.codepoint,
+            icon_font,
+            icon_color,
+        );
+
+        if btn_resp.clicked() {
+            let idx = doc.data.model.tracks.len() - 1;
+            if let Some(action) = doc.add_track(idx) {
+                doc.history.push(yinhe_editor_core::history::UndoEntry {
+                    action,
+                    label: "Add track",
+                    selected: doc.edit.selected.clone(),
+                    track_selected: doc.edit.track_selected.clone(),
+                    sel_rect: doc.edit.sel_rect.clone(),
+                });
+                if let Some(ref audio) = audio {
+                    let _ = audio.handle.send(yinhe_audio::AudioCommand::ReloadNotes {
+                        model: doc.data.model.clone(),
+                    });
+                }
+            }
+        }
+    }
 }
