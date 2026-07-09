@@ -131,6 +131,11 @@ pub struct App {
     pub(crate) export_bit_depth: yinhe_audio::export::WavBitDepth,
     pub(crate) export_layer_count: u32,
     pub(crate) export_sample_rate: u32, // 0 = 跟随全局设置
+
+    // ── macOS platform integrations ──
+    pub(crate) menu_bar: crate::platform::MenuBar,
+    /// Tracks the last `is_dirty` state to avoid redundant `setDocumentEdited` calls.
+    pub(crate) last_dirty_state: bool,
 }
 
 impl App {
@@ -247,6 +252,9 @@ impl App {
             show_mem_breakdown: false,
 
             event_browser_state: crate::right_panel::event_browser::EventBrowserState::default(),
+
+            menu_bar: crate::platform::MenuBar::new(),
+            last_dirty_state: false,
         };
 
         // Sync haptic settings from persisted config

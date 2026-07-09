@@ -18,6 +18,7 @@ mod selection;
 mod view_interaction;
 mod chrome;
 mod widgets;
+mod platform;
 
 fn main() {
     tracing_subscriber::fmt()

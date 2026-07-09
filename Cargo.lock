@@ -2931,6 +2931,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a12a8ed07aefc768292f076dc3ac8c48f3781c8f2d5851dd3d98950e8c5a89f"
 dependencies = [
  "objc2-encode",
+ "objc2-proc-macros",
 ]
 
 [[package]]
@@ -3199,6 +3200,12 @@ dependencies = [
  "objc2-core-foundation",
  "objc2-foundation 0.3.2",
 ]
+
+[[package]]
+name = "objc2-proc-macros"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7c42034b8cee04579dfb1fc264762ac9cbc84b03fdd00850d2ea45b356f1297e"
 
 [[package]]
 name = "objc2-quartz-core"
@@ -6343,8 +6350,10 @@ dependencies = [
  "egui_material_icons",
  "embed-resource",
  "image",
+ "objc2 0.6.4",
  "objc2-metal 0.3.2",
  "pollster",
+ "raw-window-handle",
  "rfd",
  "serde",
  "serde_json",

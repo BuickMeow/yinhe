@@ -40,7 +40,7 @@ impl<'a, T> Drop for ReplaceGuard<'a, T> {
 }
 
 impl eframe::App for App {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let _ui_total_start = if yinhe_memtrace::perf_probe::enabled() {
             Some(std::time::Instant::now())
         } else {
@@ -61,6 +61,34 @@ impl eframe::App for App {
                 self.pending_unsaved = Some(PendingFileAction::Exit);
             }
             // If no dirty documents, let the close proceed normally
+        }
+
+        // ── macOS: update document-edited dot in traffic light ──
+        let any_dirty = self.documents.iter().any(|d| d.is_dirty());
+        if any_dirty != self.last_dirty_state {
+            self.last_dirty_state = any_dirty;
+            crate::platform::set_document_edited(frame, any_dirty);
+        }
+
+        // ── macOS: poll native menu bar actions ──
+        for action in self.menu_bar.poll() {
+            use crate::platform::MenuAction;
+            let file_action = match action {
+                MenuAction::NewProject => transport_bar::FileAction::NewProject,
+                MenuAction::Open => transport_bar::FileAction::Open,
+                MenuAction::Save => transport_bar::FileAction::Save,
+                MenuAction::SaveAs => transport_bar::FileAction::SaveAs,
+                MenuAction::CloseDocument => transport_bar::FileAction::CloseDocument,
+                MenuAction::Undo => {
+                    self.undo();
+                    continue;
+                }
+                MenuAction::Redo => {
+                    self.redo();
+                    continue;
+                }
+            };
+            self.handle_file_action(file_action, ui.ctx());
         }
 
         // ── Detect document switch → invalidate GPU caches ──
