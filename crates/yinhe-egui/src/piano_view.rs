@@ -729,7 +729,7 @@ fn marquee_drag_frame(
     id_suffix: &'static str,
 ) -> Option<MarqueeDragResult> {
     let sel_id = ui.id().with(id_suffix);
-    let mut drag: Option<(egui::Pos2, egui::Pos2)> =
+    let mut drag: Option<((f64, f32), egui::Pos2)> =
         ui.data_mut(|d| d.get_persisted(sel_id)).unwrap_or(None);
 
     let pointer = ui.input(|i| i.pointer.clone());
@@ -750,12 +750,19 @@ fn marquee_drag_frame(
         && music_rect.contains(pos)
     {
         let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
-        drag = Some((local, local));
+        let start_tick = view.x_to_tick(local.x);
+        let start_content_y = local.y + view.base.scroll_y;
+        drag = Some(((start_tick, start_content_y), local));
         on_press();
     }
 
-    // Move → update with auto-scroll
-    if let Some((start, _)) = drag {
+    // Recompute start pixel from music coords each frame (immune to scroll/zoom)
+    let start_pixel = drag.map(|((tick, content_y), _)| {
+        egui::pos2(view.tick_to_x(tick), content_y - view.base.scroll_y)
+    });
+
+    // Move -> update with auto-scroll
+    if let (Some(start_px), Some((start_music, _))) = (start_pixel, drag) {
         if pointer.primary_down() && !pointer.primary_pressed() {
             if let Some(pos) = pointer.hover_pos() {
                 let clamped = pos.clamp(music_rect.min, music_rect.max);
@@ -763,11 +770,11 @@ fn marquee_drag_frame(
                     clamped.x - content_rect.min.x,
                     clamped.y - content_rect.min.y,
                 );
-                drag = Some((start, local));
+                drag = Some((start_music, local));
 
                 // ── Auto-scroll when dragging near the edge ──
-                let pre_scroll_x = view.base.scroll_x;
-                let pre_scroll_y = view.base.scroll_y;
+                // No scroll compensation needed: start is in music coords, so it
+                // automatically follows the content.
                 crate::selection::drag::auto_scroll_on_drag(
                     ui,
                     &mut view.base,
@@ -779,22 +786,17 @@ fn marquee_drag_frame(
                     },
                 );
                 view.clamp_scroll(content_rect.width(), content_rect.height(), total_ticks);
-                let actual_dx = view.base.scroll_x - pre_scroll_x;
-                let actual_dy = view.base.scroll_y - pre_scroll_y;
-                if actual_dx != 0.0 || actual_dy != 0.0 {
-                    drag = drag.map(|(s, e)| (egui::pos2(s.x - actual_dx, s.y - actual_dy), e));
-                }
             }
         }
 
         // Release → compute snapped bounds
         if pointer.primary_released() {
-            let result = drag.and_then(|(start, end)| {
-                if (end - start).length() >= 3.0 {
+            let result = drag.and_then(|(_, end)| {
+                if (end - start_px).length() >= 3.0 {
                     let (
                         sx, ex, sy, ey,
                         t_start, t_end, key_lo, key_hi,
-                    ) = piano_snapped_bounds(start, end, view, quantize, ppq, bar_line_data);
+                    ) = piano_snapped_bounds(start_px, end, view, quantize, ppq, bar_line_data);
                     let kb_w = music_rect.min.x - content_rect.min.x;
                     let snapped_view_rect = egui::Rect::from_min_max(
                         egui::pos2(sx.min(ex) - kb_w, sy.min(ey)),
@@ -805,7 +807,7 @@ fn marquee_drag_frame(
                     None
                 }
             });
-            ui.data_mut(|d| d.insert_persisted(sel_id, Option::<(egui::Pos2, egui::Pos2)>::None));
+            ui.data_mut(|d| d.insert_persisted(sel_id, Option::<((f64, f32), egui::Pos2)>::None));
             view.base.dirty = true;
             return result;
         }
@@ -1013,10 +1015,11 @@ fn sel_draw_box(
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
 ) {
     let sel_id = ui.id().with("sel_drag");
-    let drag: Option<(egui::Pos2, egui::Pos2)> =
+    let drag: Option<((f64, f32), egui::Pos2)> =
         ui.data_mut(|d| d.get_persisted(sel_id)).unwrap_or(None);
 
-    if let Some((start, end)) = drag {
+    if let Some((start_music, end)) = drag {
+        let start = egui::pos2(view.tick_to_x(start_music.0), start_music.1 - view.base.scroll_y);
         if (end - start).length() < 3.0 {
             return;
         }
@@ -1075,10 +1078,11 @@ fn eraser_draw_box(
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
 ) {
     let drag_id = ui.id().with("eraser_drag");
-    let drag: Option<(egui::Pos2, egui::Pos2)> =
+    let drag: Option<((f64, f32), egui::Pos2)> =
         ui.data_mut(|d| d.get_persisted(drag_id)).unwrap_or(None);
 
-    if let Some((start, end)) = drag {
+    if let Some((start_music, end)) = drag {
+        let start = egui::pos2(view.tick_to_x(start_music.0), start_music.1 - view.base.scroll_y);
         if (end - start).length() < 3.0 {
             return;
         }
