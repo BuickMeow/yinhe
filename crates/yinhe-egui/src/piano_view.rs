@@ -977,24 +977,31 @@ fn sel_drag_frame(
     }
 
     // ── Marquee selection (shared with Eraser tool) ──
-    let mut on_press = || {
-        if !cmd {
-            selected.clear();
+    // Only start a marquee if no note drag is active (click was NOT inside selection).
+    if note_drag_origin.is_some() {
+        // Note drag active → clear any stale marquee state and skip marquee.
+        let sel_id = ui.id().with("sel_drag");
+        ui.data_mut(|d| d.insert_persisted(sel_id, Option::<((f64, f32), egui::Pos2)>::None));
+    } else {
+        let mut on_press = || {
+            if !cmd {
+                selected.clear();
+            }
+            sel_rect.rect = None;
+        };
+        if let Some(result) = marquee_drag_frame(
+            ui, content_rect, music_rect, view, quantize, ppq, bar_line_data, total_ticks,
+            &mut on_press, "sel_drag",
+        ) {
+            let track_lo = track_selected.iter().min().copied().unwrap_or(0);
+            let track_hi = track_selected.iter().max().copied().unwrap_or(u16::MAX);
+            selected.add_rect_track(
+                result.t_start as u32, result.t_end as u32,
+                result.key_lo, result.key_hi,
+                track_lo, track_hi,
+            );
+            sel_rect.rect = Some((result.t_start, result.t_end, result.key_lo, result.key_hi));
         }
-        sel_rect.rect = None;
-    };
-    if let Some(result) = marquee_drag_frame(
-        ui, content_rect, music_rect, view, quantize, ppq, bar_line_data, total_ticks,
-        &mut on_press, "sel_drag",
-    ) {
-        let track_lo = track_selected.iter().min().copied().unwrap_or(0);
-        let track_hi = track_selected.iter().max().copied().unwrap_or(u16::MAX);
-        selected.add_rect_track(
-            result.t_start as u32, result.t_end as u32,
-            result.key_lo, result.key_hi,
-            track_lo, track_hi,
-        );
-        sel_rect.rect = Some((result.t_start, result.t_end, result.key_lo, result.key_hi));
     }
 
     ui.data_mut(|d| d.insert_persisted(note_drag_id, note_drag_origin));
