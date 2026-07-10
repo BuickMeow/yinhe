@@ -77,8 +77,10 @@ pub enum UndoAction {
         tracks_before: Vec<std::sync::Arc<yinhe_core::TrackData>>,
         tracks_after: Vec<std::sync::Arc<yinhe_core::TrackData>>,
         note_remap: Vec<u16>,  // old_track → new_track (u16::MAX = deleted)
-        note_remap_inverse: Vec<u16>,  // new_track → old_track (for undo)
+        note_remap_inverse: Vec<u16>,  // new_track -> old_track (for undo)
     },
+    /// Multiple actions applied atomically (undo/redo as a single step).
+    Composite(Vec<UndoAction>),
 }
 
 impl UndoAction {
@@ -148,6 +150,11 @@ impl UndoAction {
                 }
                 while doc.edit.track_overrides.len() > num_tracks {
                     doc.edit.track_overrides.pop();
+                }
+            }
+            UndoAction::Composite(actions) => {
+                for action in actions {
+                    action.redo(doc);
                 }
             }
         }
@@ -221,6 +228,12 @@ impl UndoAction {
                     doc.edit.track_overrides.pop();
                 }
             }
+            UndoAction::Composite(actions) => {
+                // Undo in reverse order
+                for action in actions.iter().rev() {
+                    action.undo(doc);
+                }
+            }
         }
     }
 
@@ -272,6 +285,9 @@ impl UndoAction {
                 tracks_after: tracks_before.clone(),
                 note_remap: note_remap_inverse.clone(),
                 note_remap_inverse: note_remap.clone(),
+            },
+            UndoAction::Composite(actions) => {
+                UndoAction::Composite(actions.iter().map(|a| a.reversed()).collect())
             },
         }
     }

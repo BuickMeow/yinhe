@@ -395,6 +395,7 @@ impl App {
     }
 
     /// Handle AR drag: move selected notes + automation events by `(delta_ticks, delta_tracks)`.
+    /// Single atomic operation = single undo step.
     fn handle_arr_drag(&mut self, delta_ticks: i64, delta_tracks: i32) {
         if delta_ticks == 0 && delta_tracks == 0 {
             return;
@@ -402,45 +403,15 @@ impl App {
         let Some(idx) = self.active_doc else { return };
         let doc = &mut self.documents[idx];
 
-        let mut actions: Vec<yinhe_editor_core::history::UndoAction> = Vec::new();
-
-        // Move selected notes (horizontal)
-        if !doc.edit.selected.is_empty() {
-            if let Some(action) = doc.move_selected_notes(delta_ticks, 0) {
-                actions.push(action);
-            }
-            // If vertical track movement is also needed, move notes by track
-            if delta_tracks != 0 {
-                let track_actions = doc.move_selected_notes_by_track(delta_tracks);
-                actions.extend(track_actions);
-            }
-        }
-
-        // Move selected automation events (horizontal + vertical)
-        let auto_actions = doc.move_selected_automation(delta_ticks, delta_tracks);
-        actions.extend(auto_actions);
-
-        // Always offset the selection to stay in sync with arr_sel_rect.
-        // move_selected_notes(delta_ticks, 0) skips offset when delta_ticks == 0,
-        // and move_selected_notes_by_track doesn't offset the selection's track range.
-        if delta_ticks != 0 || delta_tracks != 0 {
-            doc.edit.selected.offset_ticks(delta_ticks);
-            if delta_tracks != 0 {
-                doc.edit.selected.offset_tracks(delta_tracks);
-            }
-        }
-
-        if !actions.is_empty() {
+        if let Some(action) = doc.move_selected_arrange(delta_ticks, delta_tracks) {
             self.arrange_view.base.dirty = true;
-            for action in actions {
-                doc.history.push(yinhe_editor_core::history::UndoEntry {
-                    action,
-                    label: "Move in arrange",
-                    selected: doc.edit.selected.clone(),
-                    track_selected: doc.edit.track_selected.clone(),
-                    sel_rect: doc.edit.sel_rect.clone(),
-                });
-            }
+            doc.history.push(yinhe_editor_core::history::UndoEntry {
+                action,
+                label: "Move in arrange",
+                selected: doc.edit.selected.clone(),
+                track_selected: doc.edit.track_selected.clone(),
+                sel_rect: doc.edit.sel_rect.clone(),
+            });
             if let Some(ref audio) = self.audio {
                 let _ = audio.handle.send(yinhe_audio::AudioCommand::ReloadNotes {
                     model: doc.data.model.clone(),

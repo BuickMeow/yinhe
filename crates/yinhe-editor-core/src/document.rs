@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use yinhe_core::{NoteEvent, TrackData, YinModel};
-use yinhe_types::{AutomationEdit, AutomationEvent, Note, PencilNoteDrag, TRACK_PALETTE};
+use yinhe_types::{AutomationEdit, AutomationEvent, PencilNoteDrag, TRACK_PALETTE};
 use yinhe_yin::{MappingFile, ProjectFile};
 
 use crate::edit_state::EditState;
@@ -655,26 +655,60 @@ impl Document {
         }))
     }
 
-    /// Move all automation events that fall within the current selection rects
-    /// by `(delta_ticks, delta_tracks)`. Returns a Vec of AutomationDelta undo
-    /// actions (one per affected lane). Returns an empty Vec if no automation
-    /// events were moved.
+    /// Move all selected notes and automation events by `(delta_ticks, delta_tracks)`.
     ///
-    /// When `delta_tracks != 0`, events are moved from source tracks' lanes to
-    /// the corresponding target tracks' lanes (same AutomationTarget).
-    pub fn move_selected_automation(&mut self, delta_ticks: i64, delta_tracks: i32) -> Vec<UndoAction> {
-        if (delta_ticks == 0 && delta_tracks == 0) || self.edit.selected.is_empty() {
-            return Vec::new();
+    /// This is the single atomic operation for AR arrange drag. It:
+    /// 1. Collects all notes in the selection (using original selection rects)
+    /// 2. Removes them from the model
+    /// 3. Re-inserts them at new tick + new track
+    /// 4. Moves automation events (same track or cross-track)
+    /// 5. Offsets the selection rects to follow
+    ///
+    /// Returns a single `Composite` UndoAction (or None if nothing moved).
+    pub fn move_selected_arrange(&mut self, delta_ticks: i64, delta_tracks: i32) -> Option<UndoAction> {
+        if self.edit.selected.is_empty() {
+            return None;
+        }
+        if delta_ticks == 0 && delta_tracks == 0 {
+            return None;
         }
 
-        let mut actions: Vec<UndoAction> = Vec::new();
-
+        let mut sub_actions: Vec<UndoAction> = Vec::new();
         let model = Arc::make_mut(&mut self.data.model);
+        let num_tracks = model.tracks.len() as i32;
         let rects = self.edit.selected.rects.clone();
-        let num_tracks = model.tracks.len();
 
-        // Collect per-lane moves: (src_track, lane_idx, AutomationTarget, moved_events)
-        // We build them first, then apply after iterating to avoid borrow conflicts.
+        // ── 1. Move notes (tick + track in one pass) ──
+        // Collect originals, remove from model, re-insert at new positions.
+        let originals = crate::batch_ops::remove_selected(model, &self.edit.selected);
+        if !originals.is_empty() {
+            let mut new_by_key: std::collections::HashMap<u8, Vec<yinhe_types::Note>> = std::collections::HashMap::new();
+            for (note, old_key) in &originals {
+                let new_tick = (note.start_tick as i64 + delta_ticks).max(0) as u32;
+                let new_track = (note.track as i32 + delta_tracks).clamp(0, num_tracks - 1) as u16;
+                let length = note.end_tick - note.start_tick;
+                let moved = yinhe_types::Note {
+                    start_tick: new_tick,
+                    end_tick: new_tick + length,
+                    velocity: note.velocity,
+                    dup_index: 0,
+                    track: new_track,
+                };
+                new_by_key.entry(*old_key).or_default().push(moved);
+            }
+            let after: Vec<(yinhe_types::Note, u8)> = new_by_key
+                .iter()
+                .flat_map(|(key, notes)| notes.iter().map(|n| (*n, *key)))
+                .collect();
+            crate::batch_ops::insert_batch(model, new_by_key);
+            sub_actions.push(UndoAction::Notes(NoteDelta {
+                before: originals,
+                after,
+            }));
+        }
+
+        // ── 2. Move automation events (tick + track in one pass) ──
+        // Collect per-lane: (src_track, lane_idx, target, moved_events, remaining_events)
         struct LaneMove {
             src_track: usize,
             lane_idx: usize,
@@ -682,21 +716,16 @@ impl Document {
             events: Vec<AutomationEvent>,
             remaining: Vec<AutomationEvent>,
         }
-
         let mut lane_moves: Vec<LaneMove> = Vec::new();
 
         for &(tick_start, tick_end, _key_lo, _key_hi, track_lo, track_hi) in &rects {
             for track_idx in track_lo..=track_hi {
                 let track_idx = track_idx as usize;
-                if track_idx >= num_tracks {
+                if track_idx >= model.tracks.len() {
                     continue;
                 }
                 let track = Arc::make_mut(&mut model.tracks[track_idx]);
-                let num_lanes = track.automation_lanes.len();
-                if num_lanes == 0 {
-                    continue;
-                }
-                for lane_idx in 0..num_lanes {
+                for lane_idx in 0..track.automation_lanes.len() {
                     let lane = &track.automation_lanes[lane_idx];
                     let mut in_range: Vec<AutomationEvent> = Vec::new();
                     let mut out_of_range: Vec<AutomationEvent> = Vec::new();
@@ -722,18 +751,19 @@ impl Document {
             }
         }
 
-        if lane_moves.is_empty() {
-            return Vec::new();
-        }
-
-        // Apply moves: remove events from source lanes, add to target lanes
         for lm in &lane_moves {
-            // Source lane: replace with remaining events
+            // Source lane: replace with remaining
             let src_track = Arc::make_mut(&mut model.tracks[lm.src_track]);
             let src_lane = &mut src_track.automation_lanes[lm.lane_idx];
             let before_src = src_lane.events.clone();
             src_lane.events = lm.remaining.clone();
-            actions.push(UndoAction::Automation(AutomationDelta {
+
+            if delta_tracks == 0 {
+                // Same lane: add moved events back with offset ticks
+                src_lane.events.extend(lm.events.iter().copied());
+                src_lane.events.sort_by_key(|e| e.tick);
+            }
+            sub_actions.push(UndoAction::Automation(AutomationDelta {
                 track_idx: lm.src_track,
                 lane_idx: lm.lane_idx,
                 before: before_src,
@@ -741,18 +771,15 @@ impl Document {
             }));
         }
 
-        // Determine target track for each move
         if delta_tracks != 0 {
-            // Move events to different tracks
+            // Cross-track: add moved events to destination tracks
             for lm in &lane_moves {
                 let dst_track_idx = (lm.src_track as i32 + delta_tracks)
-                    .clamp(0, num_tracks as i32 - 1) as usize;
+                    .clamp(0, num_tracks - 1) as usize;
                 if dst_track_idx == lm.src_track {
-                    // Same track: handled by the horizontal move below
-                    continue;
+                    continue; // clamped to same track, events already in source lane
                 }
                 let dst_track = Arc::make_mut(&mut model.tracks[dst_track_idx]);
-                // Find or create lane with same target
                 let dst_lane_idx = match dst_track.automation_lanes.iter().position(|l| l.target == lm.target) {
                     Some(idx) => idx,
                     None => {
@@ -768,107 +795,31 @@ impl Document {
                 let before_dst = dst_lane.events.clone();
                 dst_lane.events.extend(lm.events.iter().copied());
                 dst_lane.events.sort_by_key(|e| e.tick);
-                let after_dst = dst_lane.events.clone();
-                // Note: AutomationEvent does not implement PartialEq, always push delta
-                actions.push(UndoAction::Automation(AutomationDelta {
+                sub_actions.push(UndoAction::Automation(AutomationDelta {
                     track_idx: dst_track_idx,
                     lane_idx: dst_lane_idx,
                     before: before_dst,
-                    after: after_dst,
+                    after: dst_lane.events.clone(),
                 }));
             }
-        } else {
-            // Same track: just re-sort (events tick already offset)
-            for lm in &lane_moves {
-                let track = Arc::make_mut(&mut model.tracks[lm.src_track]);
-                let lane = &mut track.automation_lanes[lm.lane_idx];
-                // Already replaced remaining, now add moved events back
-                lane.events.extend(lm.events.iter().copied());
-                lane.events.sort_by_key(|e| e.tick);
-                // Update the "after" in the existing action
-                if let Some(action) = actions.iter_mut().find(|a| {
-                    matches!(a, UndoAction::Automation(d) if d.track_idx == lm.src_track && d.lane_idx == lm.lane_idx)
-                }) {
-                    if let UndoAction::Automation(d) = action {
-                        d.after = lane.events.clone();
-                    }
-                }
-            }
         }
 
-        self.data.midi_version = self.data.midi_version.wrapping_add(1);
-        actions
-    }
-
-    /// Move all selected notes' `track` field by `delta_tracks`.
-    /// Returns a Vec of UndoAction (one NoteDelta) if any notes were moved.
-    pub fn move_selected_notes_by_track(&mut self, delta_tracks: i32) -> Vec<UndoAction> {
-        if delta_tracks == 0 || self.edit.selected.is_empty() {
-            return Vec::new();
-        }
-
-        let model = Arc::make_mut(&mut self.data.model);
-        let num_tracks = model.tracks.len() as i32;
-        let rects = self.edit.selected.rects.clone();
-
-        let mut originals: Vec<(Note, u8)> = Vec::new();
-        let mut after: Vec<(Note, u8)> = Vec::new();
-
-        for &(tick_start, tick_end, key_lo, key_hi, track_lo, track_hi) in &rects {
-            for key in key_lo..=key_hi {
-                let k = key as usize;
-                let start_idx = model.notes[k].partition_point(|n| n.start_tick < tick_start);
-                let end_idx = model.notes[k].partition_point(|n| n.start_tick < tick_end);
-
-                for n in &model.notes[k][start_idx..end_idx] {
-                    if n.track >= track_lo && n.track <= track_hi {
-                        originals.push((*n, key));
-                        let new_track = (n.track as i32 + delta_tracks).clamp(0, num_tracks - 1) as u16;
-                        if new_track != n.track {
-                            let mut moved = *n;
-                            moved.track = new_track;
-                            after.push((moved, key));
-                        }
-                    }
-                }
-            }
-        }
-
-        if after.is_empty() {
-            return Vec::new();
-        }
-
-        // Apply changes: update track field on all affected notes
-        for &(tick_start, tick_end, key_lo, key_hi, track_lo, track_hi) in &rects {
-            for key in key_lo..=key_hi {
-                let k = key as usize;
-                let bucket = Arc::make_mut(&mut model.notes[k]);
-                let start_idx = bucket.partition_point(|n| n.start_tick < tick_start);
-                let end_idx = bucket.partition_point(|n| n.start_tick < tick_end);
-
-                let mut changed = false;
-                for n in bucket[start_idx..end_idx].iter_mut() {
-                    if n.track >= track_lo && n.track <= track_hi {
-                        let new_track = (n.track as i32 + delta_tracks).clamp(0, num_tracks - 1) as u16;
-                        if new_track != n.track {
-                            n.track = new_track;
-                            changed = true;
-                        }
-                    }
-                }
-                if changed {
-                    model.mark_dirty(key);
-                }
-            }
+        // ── 3. Offset selection rects to follow ──
+        self.edit.selected.offset_ticks(delta_ticks);
+        if delta_tracks != 0 {
+            self.edit.selected.offset_tracks(delta_tracks);
         }
 
         model.rebuild_dirty();
         self.data.midi_version = self.data.midi_version.wrapping_add(1);
 
-        vec![UndoAction::Notes(NoteDelta {
-            before: originals,
-            after,
-        })]
+        if sub_actions.is_empty() {
+            None
+        } else if sub_actions.len() == 1 {
+            sub_actions.into_iter().next()
+        } else {
+            Some(UndoAction::Composite(sub_actions))
+        }
     }
 
     /// Apply a pencil-tool drag operation (move or resize a single note).
