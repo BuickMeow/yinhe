@@ -59,6 +59,8 @@ impl eframe::App for App {
                 // Cancel the close and show the unsaved dialog instead
                 ui.ctx().send_viewport_cmd(egui::ViewportCommand::CancelClose);
                 self.pending_unsaved = Some(PendingFileAction::Exit);
+                // 让 Dock 栏图标跳动，提示用户注意
+                crate::platform::request_user_attention();
             }
             // If no dirty documents, let the close proceed normally
         }

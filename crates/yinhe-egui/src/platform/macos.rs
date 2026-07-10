@@ -36,6 +36,19 @@ unsafe fn retain_leak(obj: &AnyObject) -> &'static AnyObject {
     unsafe { &*ptr }
 }
 
+// ── Dock icon bounce ───────────────────────────────────────────────────────
+
+/// 让 Dock 栏图标跳动，提示用户注意（例如关闭未保存文档时）。
+pub(crate) fn request_user_attention() {
+    let ns_app_class = match cls(cstr!("NSApplication")) {
+        Some(c) => c,
+        None => return,
+    };
+    let ns_app: &AnyObject = unsafe { objc2::msg_send![ns_app_class, sharedApplication] };
+    // NSInformationalRequest = 10，让 Dock 图标跳动一次
+    let _: () = unsafe { objc2::msg_send![ns_app, requestUserAttention: 10i64] };
+}
+
 // ── setDocumentEdited ──────────────────────────────────────────────────────
 
 /// Set the document-edited indicator (dot in the red traffic-light button).
