@@ -22,7 +22,16 @@ pub fn snapped_to_screen(content_rect: egui::Rect, snapped_view_rect: egui::Rect
 /// (before offsetting by `content_rect.min`).
 /// The function converts to screen coordinates, clips, and draws fill +
 /// strokes on edges that were **not** clipped by the content boundary.
-pub fn draw(painter: &egui::Painter, content_rect: egui::Rect, snapped_view_rect: egui::Rect) {
+///
+/// `fill_color` / `stroke_color` — base colors (alpha will be applied via
+/// `gamma_multiply`).
+pub fn draw(
+    painter: &egui::Painter,
+    content_rect: egui::Rect,
+    snapped_view_rect: egui::Rect,
+    fill_color: egui::Color32,
+    stroke_color: egui::Color32,
+) {
     let sel = snapped_to_screen(content_rect, snapped_view_rect);
     // Reconstruct raw rect for clip detection
     let sel_raw = egui::Rect::from_min_max(
@@ -50,10 +59,10 @@ pub fn draw(painter: &egui::Painter, content_rect: egui::Rect, snapped_view_rect
     ];
 
     // Fill
-    painter.rect_filled(sel, 0.0, egui::Color32::WHITE.gamma_multiply(0.15));
+    painter.rect_filled(sel, 0.0, fill_color.gamma_multiply(0.15));
 
     // Strokes — only draw edges that weren't clipped
-    let stroke = egui::Stroke::new(1.0, egui::Color32::WHITE.gamma_multiply(0.40));
+    let stroke = egui::Stroke::new(1.0, stroke_color.gamma_multiply(0.40));
     let [t, r, b, l] = clipped;
     if !t {
         painter.line_segment(

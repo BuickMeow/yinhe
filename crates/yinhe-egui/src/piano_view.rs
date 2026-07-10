@@ -469,7 +469,8 @@ pub fn show(
         sel_rect.apply_pending();
 
         // Draw active drag box (if any)
-        sel_draw_box(ui, content_rect, music_rect, view, quantize, ppq, bar_line_data);
+        draw_marquee_box(ui, content_rect, music_rect, view, quantize, ppq, bar_line_data,
+            "sel_drag", egui::Color32::WHITE, egui::Color32::WHITE);
 
         // Draw persisted selection rect (remains after mouse release).
         // Compute pixel rect from music coordinates each frame so it follows
@@ -492,7 +493,7 @@ pub fn show(
                 egui::pos2(rect.max.x - kb_w, rect.max.y),
             );
             if shifted.intersects(music_rect_local) {
-                crate::selection::draw::draw(&ui.painter(), music_rect, shifted);
+                crate::selection::draw::draw(&ui.painter(), music_rect, shifted, egui::Color32::WHITE, egui::Color32::WHITE);
             }
         }
 
@@ -504,7 +505,8 @@ pub fn show(
         }
     } else if *active_tool == Tool::Eraser {
         // Draw eraser marquee box in red
-        eraser_draw_box(ui, content_rect, music_rect, view, quantize, ppq, bar_line_data);
+        draw_marquee_box(ui, content_rect, music_rect, view, quantize, ppq, bar_line_data,
+            "eraser_drag", egui::Color32::RED, egui::Color32::RED);
     }
 
     // ── Time ruler ──
@@ -1009,10 +1011,11 @@ fn sel_drag_frame(
     (ghost_notes, hidden_notes)
 }
 
-/// Check if a local coordinate hits any selected note.
-/// Draws the active marquee selection box on top of GPU content.
+/// Draw the active marquee box on top of GPU content.
 /// Must be called AFTER `render_ctx.paint` so the box is not covered by the texture.
-fn sel_draw_box(
+/// `id_suffix` — persisted drag state key (e.g. "sel_drag" or "eraser_drag").
+/// `fill_color` / `stroke_color` — base colors for the marquee.
+fn draw_marquee_box(
     ui: &mut egui::Ui,
     content_rect: egui::Rect,
     music_rect: egui::Rect,
@@ -1020,10 +1023,13 @@ fn sel_draw_box(
     quantize: QuantizePreset,
     ppq: u32,
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
+    id_suffix: &'static str,
+    fill_color: egui::Color32,
+    stroke_color: egui::Color32,
 ) {
-    let sel_id = ui.id().with("sel_drag");
+    let drag_id = ui.id().with(id_suffix);
     let drag: Option<((f64, f32), egui::Pos2)> =
-        ui.data_mut(|d| d.get_persisted(sel_id)).unwrap_or(None);
+        ui.data_mut(|d| d.get_persisted(drag_id)).unwrap_or(None);
 
     if let Some((start_music, end)) = drag {
         let start = egui::pos2(view.tick_to_x(start_music.0), start_music.1 - view.base.scroll_y);
@@ -1037,7 +1043,7 @@ fn sel_draw_box(
             egui::pos2(vx.min(vy) - kb_w, vw.min(vh)),
             egui::pos2(vx.max(vy) - kb_w, vw.max(vh)),
         );
-        crate::selection::draw::draw(&ui.painter(), music_rect, snapped);
+        crate::selection::draw::draw(&ui.painter(), music_rect, snapped, fill_color, stroke_color);
     }
 }
 
@@ -1071,44 +1077,6 @@ fn eraser_drag_frame(
         track_lo,
         track_hi,
     })
-}
-
-/// Draw the eraser marquee box in red on top of GPU content.
-/// Must be called AFTER `render_ctx.paint`.
-fn eraser_draw_box(
-    ui: &mut egui::Ui,
-    content_rect: egui::Rect,
-    music_rect: egui::Rect,
-    view: &yinhe_pianoroll::PianoRollView,
-    quantize: QuantizePreset,
-    ppq: u32,
-    bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
-) {
-    let drag_id = ui.id().with("eraser_drag");
-    let drag: Option<((f64, f32), egui::Pos2)> =
-        ui.data_mut(|d| d.get_persisted(drag_id)).unwrap_or(None);
-
-    if let Some((start_music, end)) = drag {
-        let start = egui::pos2(view.tick_to_x(start_music.0), start_music.1 - view.base.scroll_y);
-        if (end - start).length() < 3.0 {
-            return;
-        }
-        let (vx, vy, vw, vh, _, _, _, _) =
-            piano_snapped_bounds(start, end, view, quantize, ppq, bar_line_data);
-        let kb_w = music_rect.min.x - content_rect.min.x;
-        let snapped = egui::Rect::from_min_max(
-            egui::pos2(vx.min(vy) - kb_w, vw.min(vh)),
-            egui::pos2(vx.max(vy) - kb_w, vw.max(vh)),
-        );
-        let sel = crate::selection::draw::snapped_to_screen(music_rect, snapped);
-        if !sel.is_positive() {
-            return;
-        }
-        // Red fill
-        ui.painter().rect_filled(sel, 0.0, egui::Color32::RED.gamma_multiply(0.15));
-        // Red border (solid)
-        ui.painter().rect_stroke(sel, 0.0, egui::Stroke::new(1.0, egui::Color32::RED.gamma_multiply(0.40)), egui::StrokeKind::Middle);
-    }
 }
 
 /// Compute snapped selection bounds for piano roll.

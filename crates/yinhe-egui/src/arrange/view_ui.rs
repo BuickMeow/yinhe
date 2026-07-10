@@ -269,7 +269,7 @@ pub fn show(
             egui::pos2(view_sx.min(view_ex), view_sy.min(view_ey)),
             egui::pos2(view_sx.max(view_ex), view_sy.max(view_ey)),
         );
-        crate::selection::draw::draw(&ui.painter(), rect, snapped);
+        crate::selection::draw::draw(&ui.painter(), rect, snapped, egui::Color32::WHITE, egui::Color32::WHITE);
     }
 
     // Draw eraser marquee box in red (active during drag)
@@ -289,11 +289,7 @@ pub fn show(
                     egui::pos2(vx.min(vy), vw.min(vh)),
                     egui::pos2(vx.max(vy), vw.max(vh)),
                 );
-                let sel = crate::selection::draw::snapped_to_screen(rect, snapped);
-                if sel.is_positive() {
-                    ui.painter().rect_filled(sel, 0.0, egui::Color32::RED.gamma_multiply(0.15));
-                    ui.painter().rect_stroke(sel, 0.0, egui::Stroke::new(1.0, egui::Color32::RED.gamma_multiply(0.40)), egui::StrokeKind::Middle);
-                }
+                crate::selection::draw::draw(&ui.painter(), rect, snapped, egui::Color32::RED, egui::Color32::RED);
             }
         }
     }
@@ -536,7 +532,7 @@ fn sel_drag_frame_arrange(
                 egui::pos2(sx.min(ex), sy.min(ey)),
                 egui::pos2(sx.max(ex), sy.max(ey)),
             );
-            crate::selection::draw::draw(&ui.painter(), content_rect, snapped);
+            crate::selection::draw::draw(&ui.painter(), content_rect, snapped, egui::Color32::WHITE, egui::Color32::WHITE);
         }
     }
 
@@ -612,7 +608,7 @@ fn sel_drag_frame_arrange(
                     egui::pos2(vx.min(vy), vw.min(vh)),
                     egui::pos2(vx.max(vy), vw.max(vh)),
                 );
-                crate::selection::draw::draw(&ui.painter(), content_rect, snapped);
+                crate::selection::draw::draw(&ui.painter(), content_rect, snapped, egui::Color32::WHITE, egui::Color32::WHITE);
             }
         }
     }
