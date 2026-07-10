@@ -404,7 +404,7 @@ impl App {
 
         let mut actions: Vec<yinhe_editor_core::history::UndoAction> = Vec::new();
 
-        // Move selected notes
+        // Move selected notes (horizontal)
         if !doc.edit.selected.is_empty() {
             if let Some(action) = doc.move_selected_notes(delta_ticks, 0) {
                 actions.push(action);
@@ -419,6 +419,16 @@ impl App {
         // Move selected automation events (horizontal + vertical)
         let auto_actions = doc.move_selected_automation(delta_ticks, delta_tracks);
         actions.extend(auto_actions);
+
+        // Always offset the selection to stay in sync with arr_sel_rect.
+        // move_selected_notes(delta_ticks, 0) skips offset when delta_ticks == 0,
+        // and move_selected_notes_by_track doesn't offset the selection's track range.
+        if delta_ticks != 0 || delta_tracks != 0 {
+            doc.edit.selected.offset_ticks(delta_ticks);
+            if delta_tracks != 0 {
+                doc.edit.selected.offset_tracks(delta_tracks);
+            }
+        }
 
         if !actions.is_empty() {
             self.arrange_view.base.dirty = true;

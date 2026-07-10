@@ -71,6 +71,28 @@ impl Selection {
         }
     }
 
+    /// Offset only the tick range of all rects (used by AR arrange drag).
+    pub fn offset_ticks(&mut self, delta_ticks: i64) {
+        for rect in &mut self.rects {
+            let (ts, te, kl, kh, tl, th) = *rect;
+            let new_ts = (ts as i64 + delta_ticks).max(0) as u32;
+            let new_te = (te as i64 + delta_ticks).max(0) as u32;
+            if new_te > new_ts {
+                *rect = (new_ts, new_te, kl, kh, tl, th);
+            }
+        }
+    }
+
+    /// Offset only the track range of all rects (used by AR arrange drag).
+    pub fn offset_tracks(&mut self, delta_tracks: i32) {
+        for rect in &mut self.rects {
+            let (ts, te, kl, kh, tl, th) = *rect;
+            let new_tl = (tl as i32 + delta_tracks).max(0) as u16;
+            let new_th = (th as i32 + delta_tracks).max(0) as u16;
+            *rect = (ts, te, kl, kh, new_tl, new_th);
+        }
+    }
+
     /// Compute an order-independent XOR hash of all rects (for GPU cache keys).
     pub fn hash(&self) -> u64 {
         let mut h: u64 = 0;
