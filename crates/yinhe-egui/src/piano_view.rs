@@ -15,7 +15,7 @@ pub mod automation_panel;
 pub enum PianoViewEvent {
     SelectionAction(SelectionAction),
     AddNote { track: u16, note: yinhe_core::NoteEvent },
-    EraserDelete { t_start: u32, t_end: u32, key_lo: u8, key_hi: u8 },
+    EraserDelete { t_start: u32, t_end: u32, key_lo: u8, key_hi: u8, track_lo: u16, track_hi: u16 },
 }
 
 /// Internal pencil-tool drag mode persisted across frames.
@@ -249,6 +249,7 @@ pub fn show(
     } else if *active_tool == Tool::Eraser {
         eraser_event = eraser_drag_frame(
             ui, content_rect, music_rect, view, quantize, ppq, bar_line_data, total_ticks,
+            track_selected,
         );
     }
 
@@ -1043,17 +1044,22 @@ fn eraser_drag_frame(
     ppq: u32,
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
     total_ticks: f64,
+    track_selected: &std::collections::HashSet<u16>,
 ) -> Option<PianoViewEvent> {
     let result = marquee_drag_frame(
         ui, content_rect, music_rect, view, quantize, ppq, bar_line_data, total_ticks,
         &mut || {}, // no-op on press for eraser
         "eraser_drag",
     )?;
+    let track_lo = track_selected.iter().min().copied().unwrap_or(0);
+    let track_hi = track_selected.iter().max().copied().unwrap_or(u16::MAX);
     Some(PianoViewEvent::EraserDelete {
         t_start: result.t_start as u32,
         t_end: result.t_end as u32,
         key_lo: result.key_lo,
         key_hi: result.key_hi,
+        track_lo,
+        track_hi,
     })
 }
 

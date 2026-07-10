@@ -83,9 +83,10 @@ impl App {
         let mut follow_mode = self.follow_mode;
 
         // Arrangement view
-        let arr_drag_delta: Option<(i64, i32)> = if self.show_transport {
+        let (arr_drag_delta, arr_eraser_rect): (Option<(i64, i32)>, Option<(f64, f64, usize, usize)>) = if self.show_transport {
             let mut request_pianoroll = false;
             let mut arr_drag_delta: Option<(i64, i32)> = None;
+            let mut arr_eraser_rect: Option<(f64, f64, usize, usize)> = None;
             let mut guard = crate::app::main_loop::ReplaceGuard::new(&mut self.documents[idx]);
             arrange::show(
                 ui,
@@ -108,15 +109,25 @@ impl App {
                 Some(&self.haptic_engine),
                 &mut self.arr_sel_rect,
                 &mut arr_drag_delta,
+                &mut arr_eraser_rect,
             );
             if request_pianoroll {
                 self.show_pianoroll = true;
                 self.show_pianoroll_in_arrange = true;
             }
-            arr_drag_delta // dropped guard releases the borrow
+            (arr_drag_delta, arr_eraser_rect) // guard dropped here
         } else {
-            None
+            (None, None)
         };
+
+        // Handle AR eraser (guard is dropped, no outstanding borrow on self.documents)
+        if let Some((t_start, t_end, track_lo, track_hi)) = arr_eraser_rect {
+            let mut sel = yinhe_core::Selection::default();
+            sel.add_rect_track(t_start as u32, t_end as u32, 0, 127, track_lo as u16, track_hi as u16);
+            let Some(idx) = self.active_doc else { return };
+            self.documents[idx].edit.selected = sel;
+            self.with_undo("Eraser delete (arrange)", |doc| doc.delete_selected());
+        }
 
         // Handle AR drag after guard is dropped (no outstanding borrow on self.documents)
         if let Some((delta_ticks, delta_tracks)) = arr_drag_delta {
@@ -309,10 +320,10 @@ impl App {
                 PianoViewEvent::AddNote { track, note } => {
                     self.add_note_with_undo(track, note);
                 }
-                PianoViewEvent::EraserDelete { t_start, t_end, key_lo, key_hi } => {
+                PianoViewEvent::EraserDelete { t_start, t_end, key_lo, key_hi, track_lo, track_hi } => {
                     let Some(idx) = self.active_doc else { return };
                     let mut sel = yinhe_core::Selection::default();
-                    sel.add_rect_track(t_start, t_end, key_lo, key_hi, 0, u16::MAX);
+                    sel.add_rect_track(t_start, t_end, key_lo, key_hi, track_lo, track_hi);
                     self.documents[idx].edit.selected = sel;
                     self.with_undo("Eraser delete", |doc| doc.delete_selected());
                 }

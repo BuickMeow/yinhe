@@ -34,6 +34,7 @@ pub fn show(
     haptic_engine: Option<&yinhe_haptic::HapticEngine>,
     arr_sel_rect: &mut Option<(f64, f64, usize, usize)>,
     arr_drag_delta: &mut Option<(i64, i32)>,
+    arr_eraser_rect: &mut Option<(f64, f64, usize, usize)>,
 ) {
     *last_cursor_tick = doc.edit.cursor_tick;
 
@@ -245,6 +246,7 @@ pub fn show(
             doc.data.midi_version,
             arr_sel_rect,
             arr_drag_delta,
+            arr_eraser_rect,
         );
     });
 

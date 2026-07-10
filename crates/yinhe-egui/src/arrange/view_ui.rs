@@ -42,6 +42,7 @@ pub fn show(
     midi_version: u64,
     arr_sel_rect: &mut Option<(f64, f64, usize, usize)>,
     arr_drag_delta: &mut Option<(i64, i32)>,
+    arr_eraser_rect: &mut Option<(f64, f64, usize, usize)>,
 ) {
     let _arrange_total_start = if yinhe_memtrace::perf_probe::enabled() {
         Some(std::time::Instant::now())
@@ -225,7 +226,7 @@ pub fn show(
         }
     }
 
-    // Selection drag runs BEFORE handle_input to avoid pointer-capture conflicts
+    // ── Tool dispatch ──
     if *active_tool == Tool::Select {
         sel_drag_frame_arrange(
             ui,
@@ -242,6 +243,18 @@ pub fn show(
             arr_sel_rect,
             arr_drag_delta,
         );
+    } else if *active_tool == Tool::Eraser {
+        eraser_drag_frame_arrange(
+            ui,
+            rect,
+            view,
+            quantize,
+            ppq,
+            bar_line_data,
+            total_ticks,
+            num_tracks,
+            arr_eraser_rect,
+        );
     }
 
     // Draw persisted selection rect (remains after mouse release).
@@ -257,6 +270,32 @@ pub fn show(
             egui::pos2(view_sx.max(view_ex), view_sy.max(view_ey)),
         );
         crate::selection::draw::draw(&ui.painter(), rect, snapped);
+    }
+
+    // Draw eraser marquee box in red (active during drag)
+    if *active_tool == Tool::Eraser {
+        let drag_id = ui.id().with("eraser_drag_arr");
+        let drag: Option<((f64, f32), egui::Pos2)> =
+            ui.data_mut(|d| d.get_persisted(drag_id)).unwrap_or(None);
+        if let Some((start_music, end)) = drag {
+            let start_pixel = egui::pos2(
+                view.tick_to_x(start_music.0),
+                start_music.1 * view.lane_height - view.base.scroll_y,
+            );
+            if (end - start_pixel).length() >= 3.0 {
+                let (vx, vy, vw, vh, _, _, _, _) =
+                    arrange_snapped_bounds(start_pixel, end, view, quantize, ppq, bar_line_data);
+                let snapped = egui::Rect::from_min_max(
+                    egui::pos2(vx.min(vy), vw.min(vh)),
+                    egui::pos2(vx.max(vy), vw.max(vh)),
+                );
+                let sel = crate::selection::draw::snapped_to_screen(rect, snapped);
+                if sel.is_positive() {
+                    ui.painter().rect_filled(sel, 0.0, egui::Color32::RED.gamma_multiply(0.15));
+                    ui.painter().rect_stroke(sel, 0.0, egui::Stroke::new(1.0, egui::Color32::RED.gamma_multiply(0.40)), egui::StrokeKind::Middle);
+                }
+            }
+        }
     }
 
     // Save scroll state before input for haptic boundary detection
@@ -581,6 +620,94 @@ fn sel_drag_frame_arrange(
     ui.data_mut(|d| d.insert_persisted(sel_id, drag));
     ui.data_mut(|d| d.insert_persisted(move_drag_id, move_drag));
     ui.data_mut(|d| d.insert_persisted(move_orig_id, move_orig_sel));
+}
+
+// ── Arrangement eraser tool ──
+
+/// Eraser-tool marquee drag for the arrangement view.
+/// On release, sets `arr_eraser_rect` which triggers deletion in the caller.
+fn eraser_drag_frame_arrange(
+    ui: &mut egui::Ui,
+    content_rect: egui::Rect,
+    view: &mut ArrangementView,
+    quantize: QuantizePreset,
+    ppq: u32,
+    bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
+    total_ticks: f64,
+    num_tracks: usize,
+    arr_eraser_rect: &mut Option<(f64, f64, usize, usize)>,
+) {
+    let drag_id = ui.id().with("eraser_drag_arr");
+    let mut drag: Option<((f64, f32), egui::Pos2)> =
+        ui.data_mut(|d| d.get_persisted(drag_id)).unwrap_or(None);
+
+    let pointer = ui.input(|i| i.pointer.clone());
+
+    // Clear stale drag state
+    if drag.is_some() && !pointer.primary_down() && !pointer.primary_released() {
+        drag = None;
+    }
+
+    if crate::view_interaction::pointer_over_popup(ui.ctx()) {
+        ui.data_mut(|d| d.insert_persisted(drag_id, drag));
+        return;
+    }
+
+    // Press → start drag (store music coordinates: (tick, track_f))
+    if pointer.primary_pressed()
+        && let Some(pos) = pointer.hover_pos()
+        && content_rect.contains(pos)
+    {
+        let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
+        let start_tick = view.x_to_tick(local.x);
+        let start_track_f = (local.y + view.base.scroll_y) / view.lane_height;
+        drag = Some(((start_tick, start_track_f), local));
+        *arr_eraser_rect = None;
+    }
+
+    // Move → update with auto-scroll
+    if let Some((start_music, _)) = drag {
+        if pointer.primary_down() && !pointer.primary_pressed() {
+            if let Some(pos) = pointer.hover_pos() {
+                let clamped = pos.clamp(content_rect.min, content_rect.max);
+                let local = egui::pos2(
+                    clamped.x - content_rect.min.x,
+                    clamped.y - content_rect.min.y,
+                );
+                drag = Some((start_music, local));
+
+                let lane_height = view.lane_height;
+                crate::selection::drag::auto_scroll_on_drag(
+                    ui, &mut view.base, content_rect, pos,
+                    |base, w, h| {
+                        base.clamp_scroll_x(w, total_ticks);
+                        let max_scroll_y = (num_tracks as f32 * lane_height - h).max(0.0);
+                        base.scroll_y = base.scroll_y.clamp(0.0, max_scroll_y);
+                    },
+                );
+            }
+        }
+
+        let start_pixel = egui::pos2(
+            view.tick_to_x(start_music.0),
+            start_music.1 * view.lane_height - view.base.scroll_y,
+        );
+
+        // Release → compute snapped bounds, set eraser rect
+        if pointer.primary_released() {
+            if let Some((_, end)) = drag {
+                if (end - start_pixel).length() >= 3.0 {
+                    let (_, _, _, _, t_start, t_end, track_lo, track_hi) =
+                        arrange_snapped_bounds(start_pixel, end, view, quantize, ppq, bar_line_data);
+                    *arr_eraser_rect = Some((t_start, t_end, track_lo, track_hi));
+                }
+                view.base.dirty = true;
+            }
+            drag = None;
+        }
+    }
+
+    ui.data_mut(|d| d.insert_persisted(drag_id, drag));
 }
 
 /// Compute snapped selection bounds for arrangement.
