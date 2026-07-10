@@ -83,8 +83,9 @@ impl App {
         let mut follow_mode = self.follow_mode;
 
         // Arrangement view
-        if self.show_transport {
+        let arr_drag_delta: Option<(i64, i32)> = if self.show_transport {
             let mut request_pianoroll = false;
+            let mut arr_drag_delta: Option<(i64, i32)> = None;
             let mut guard = crate::app::main_loop::ReplaceGuard::new(&mut self.documents[idx]);
             arrange::show(
                 ui,
@@ -106,11 +107,20 @@ impl App {
                 self.audio_settings.min_border_width,
                 Some(&self.haptic_engine),
                 &mut self.arr_sel_rect,
+                &mut arr_drag_delta,
             );
             if request_pianoroll {
                 self.show_pianoroll = true;
                 self.show_pianoroll_in_arrange = true;
             }
+            arr_drag_delta // dropped guard releases the borrow
+        } else {
+            None
+        };
+
+        // Handle AR drag after guard is dropped (no outstanding borrow on self.documents)
+        if let Some((delta_ticks, delta_tracks)) = arr_drag_delta {
+            self.handle_arr_drag(delta_ticks, delta_tracks);
         }
 
         // Pianoroll area
@@ -380,6 +390,51 @@ impl App {
             });
             if let Some(ref audio) = self.audio {
                 let _ = audio.handle.send(yinhe_audio::AudioCommand::ReloadNotes { model: doc.data.model.clone() });
+            }
+        }
+    }
+
+    /// Handle AR drag: move selected notes + automation events by `(delta_ticks, delta_tracks)`.
+    fn handle_arr_drag(&mut self, delta_ticks: i64, delta_tracks: i32) {
+        if delta_ticks == 0 && delta_tracks == 0 {
+            return;
+        }
+        let Some(idx) = self.active_doc else { return };
+        let doc = &mut self.documents[idx];
+
+        let mut actions: Vec<yinhe_editor_core::history::UndoAction> = Vec::new();
+
+        // Move selected notes
+        if !doc.edit.selected.is_empty() {
+            if let Some(action) = doc.move_selected_notes(delta_ticks, 0) {
+                actions.push(action);
+            }
+            // If vertical track movement is also needed, move notes by track
+            if delta_tracks != 0 {
+                let track_actions = doc.move_selected_notes_by_track(delta_tracks);
+                actions.extend(track_actions);
+            }
+        }
+
+        // Move selected automation events (horizontal + vertical)
+        let auto_actions = doc.move_selected_automation(delta_ticks, delta_tracks);
+        actions.extend(auto_actions);
+
+        if !actions.is_empty() {
+            self.arrange_view.base.dirty = true;
+            for action in actions {
+                doc.history.push(yinhe_editor_core::history::UndoEntry {
+                    action,
+                    label: "Move in arrange",
+                    selected: doc.edit.selected.clone(),
+                    track_selected: doc.edit.track_selected.clone(),
+                    sel_rect: doc.edit.sel_rect.clone(),
+                });
+            }
+            if let Some(ref audio) = self.audio {
+                let _ = audio.handle.send(yinhe_audio::AudioCommand::ReloadNotes {
+                    model: doc.data.model.clone(),
+                });
             }
         }
     }

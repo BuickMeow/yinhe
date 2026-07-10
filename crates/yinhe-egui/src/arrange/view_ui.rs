@@ -14,6 +14,10 @@ use crate::widgets::tools_panel::Tool;
 ///
 /// Uses the layered cache API: decor (layer 0), grid (layer 1), notes (layer 2).
 /// The playhead cursor is drawn by egui on top of the wgpu texture.
+///
+/// `arr_drag_delta` is set on mouse release after dragging an existing selection
+/// (moving notes + automation events in the selected track/time range).
+/// `(delta_ticks, delta_tracks)` — ticks are horizontal, tracks are vertical.
 pub fn show(
     ui: &mut egui::Ui,
     available: egui::Vec2,
@@ -37,6 +41,7 @@ pub fn show(
     haptic_engine: Option<&yinhe_haptic::HapticEngine>,
     midi_version: u64,
     arr_sel_rect: &mut Option<(f64, f64, usize, usize)>,
+    arr_drag_delta: &mut Option<(i64, i32)>,
 ) {
     let _arrange_total_start = if yinhe_memtrace::perf_probe::enabled() {
         Some(std::time::Instant::now())
@@ -235,6 +240,7 @@ pub fn show(
             num_tracks,
             cursor_tick,
             arr_sel_rect,
+            arr_drag_delta,
         );
     }
 
@@ -317,6 +323,7 @@ fn sel_drag_frame_arrange(
     num_tracks: usize,
     cursor_tick: &mut Option<f64>,
     arr_sel_rect: &mut Option<(f64, f64, usize, usize)>,
+    arr_drag_delta: &mut Option<(i64, i32)>,
 ) {
     let sel_id = ui.id().with("sel_drag_arr");
     // 拖框起始点存音乐坐标 (start_tick, start_track_y)，免疫任何滚动
@@ -324,49 +331,99 @@ fn sel_drag_frame_arrange(
     let mut drag: Option<((f64, f32), egui::Pos2)> =
         ui.data_mut(|d| d.get_persisted(sel_id)).unwrap_or(None);
 
+    // Move-drag state: ((origin_tick, origin_track_f), (current_tick, current_track_f))
+    // Stores both tick (horizontal) and track-float (vertical) music coordinates.
+    let move_drag_id = ui.id().with("arr_move_drag");
+    let mut move_drag: Option<((f64, f32), (f64, f32))> =
+        ui.data_mut(|d| d.get_persisted(move_drag_id)).unwrap_or(None);
+    // Saved original arr_sel_rect at drag start (so we can hide the original during drag)
+    let move_orig_id = ui.id().with("arr_move_orig_sel");
+    let mut move_orig_sel: Option<(f64, f64, usize, usize)> =
+        ui.data_mut(|d| d.get_persisted(move_orig_id)).unwrap_or(None);
+
     let pointer = ui.input(|i| i.pointer.clone());
     let cmd = ui.input(|i| i.modifiers.command || i.modifiers.ctrl);
 
-    // Clear stale drag state (e.g. lost window focus mid-drag)
+    // Clear stale drag states (e.g. lost window focus mid-drag)
     if drag.is_some() && !pointer.primary_down() && !pointer.primary_released() {
         drag = None;
+    }
+    if move_drag.is_some() && !pointer.primary_down() && !pointer.primary_released() {
+        move_drag = None;
+        move_orig_sel = None;
     }
 
     // 弹窗打开时跳过所有 pointer 处理，避免点击穿透
     if crate::view_interaction::pointer_over_popup(ui.ctx()) {
-        // Persist drag state before returning
         ui.data_mut(|d| d.insert_persisted(sel_id, drag));
+        ui.data_mut(|d| d.insert_persisted(move_drag_id, move_drag));
+        ui.data_mut(|d| d.insert_persisted(move_orig_id, move_orig_sel));
         return;
     }
 
+    // ── Check if mouse is inside the existing selection rect (for Move cursor + drag) ──
+    let inside_sel_rect = if let Some((t_start, t_end, track_lo, track_hi)) = *arr_sel_rect {
+        pointer.hover_pos().is_some_and(|pos| {
+            let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
+            let lh = view.lane_height;
+            let scroll_y = view.base.scroll_y;
+            let sy = track_lo as f32 * lh - scroll_y;
+            let ey = (track_hi as f32 + 1.0) * lh - scroll_y;
+            let sx = view.tick_to_x(t_start);
+            let ex = view.tick_to_x(t_end);
+            let rect = egui::Rect::from_min_max(
+                egui::pos2(sx.min(ex), sy.min(ey)),
+                egui::pos2(sx.max(ex), sy.max(ey)),
+            );
+            rect.contains(local)
+        })
+    } else {
+        false
+    };
+
+    // Show Move cursor when hovering over the selection rect (only when not currently dragging)
+    if inside_sel_rect && move_drag.is_none() && drag.is_none() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Move);
+    }
+
+    // ── Primary press handling ──
     if pointer.primary_pressed()
         && let Some(pos) = pointer.hover_pos()
         && content_rect.contains(pos)
     {
         let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
-        let start_tick = view.x_to_tick(local.x);
-        let start_track_y = (local.y + view.base.scroll_y) / view.lane_height;
-        drag = Some(((start_tick, start_track_y), local));
-        // 立即清除上一个选框，避免拖动期间同时出现两个选框
-        *arr_sel_rect = None;
-        if !cmd {
-            selected.clear();
+        let click_tick = view.x_to_tick(local.x);
+        let click_track_f = (local.y + view.base.scroll_y) / view.lane_height;
+
+        if inside_sel_rect && !cmd {
+            // Start move-drag of existing selection
+            // Save original rect and clear it (so show() doesn't draw the original during drag)
+            move_orig_sel = *arr_sel_rect;
+            *arr_sel_rect = None;
+            let origin = (click_tick, click_track_f);
+            move_drag = Some((origin, origin));
+            drag = None;
+        } else {
+            // Start new selection marquee
+            let start_track_y = (local.y + view.base.scroll_y) / view.lane_height;
+            drag = Some(((click_tick, start_track_y), local));
+            *arr_sel_rect = None;
+            if !cmd {
+                selected.clear();
+            }
         }
     }
 
-    if let Some((start_music, _)) = drag {
-        // Only update end on frames after the initial press
+    // ── Move-drag handling ──
+    if let Some((origin, _)) = move_drag {
         if pointer.primary_down() && !pointer.primary_pressed() {
             if let Some(pos) = pointer.hover_pos() {
-                let clamped = pos.clamp(content_rect.min, content_rect.max);
-                let local = egui::pos2(
-                    clamped.x - content_rect.min.x,
-                    clamped.y - content_rect.min.y,
-                );
-                drag = Some((start_music, local));
+                let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
+                let current_tick = view.x_to_tick(local.x);
+                let current_track_f = (local.y + view.base.scroll_y) / view.lane_height;
+                move_drag = Some((origin, (current_tick, current_track_f)));
 
-                // Auto-scroll when dragging near the edge.
-                // 起始点用音乐坐标存储，滚动后转回像素自动正确，无需补偿。
+                // Auto-scroll when dragging near the edge
                 let lane_height = view.lane_height;
                 crate::selection::drag::auto_scroll_on_drag(
                     ui,
@@ -382,7 +439,94 @@ fn sel_drag_frame_arrange(
             }
         }
 
-        // Convert music start to pixel (after any auto-scroll modified view)
+        if pointer.primary_released() {
+            if let Some(((origin_t, origin_tr), (current_t, current_tr))) = move_drag {
+                // Snap ticks to grid for quantized horizontal delta
+                let snapped_origin = crate::view_interaction::snap_tick(origin_t, quantize, ppq, bar_line_data);
+                let snapped_current = crate::view_interaction::snap_tick(current_t, quantize, ppq, bar_line_data);
+                let delta_ticks = (snapped_current - snapped_origin).round() as i64;
+                // Vertical: round to nearest integer track
+                let delta_tracks = (current_tr - origin_tr).round() as i32;
+
+                let has_moved = delta_ticks != 0 || delta_tracks != 0;
+
+                if has_moved {
+                    *arr_drag_delta = Some((delta_ticks, delta_tracks));
+
+                    // Restore arr_sel_rect from saved original, offset by delta
+                    if let Some((t_start, t_end, track_lo, track_hi)) = move_orig_sel {
+                        let new_lo = (track_lo as i32 + delta_tracks).max(0) as usize;
+                        let new_hi = (track_hi as i32 + delta_tracks).max(0) as usize;
+                        *arr_sel_rect = Some((
+                            t_start + delta_ticks as f64,
+                            t_end + delta_ticks as f64,
+                            new_lo,
+                            new_hi,
+                        ));
+                    }
+                    view.base.dirty = true;
+                } else {
+                    // No move: restore original rect
+                    *arr_sel_rect = move_orig_sel;
+                }
+            }
+            move_drag = None;
+            move_orig_sel = None;
+        }
+
+        // Draw offset selection rect during drag (using saved original)
+        if let (Some((origin, current)), Some((t_start, t_end, track_lo, track_hi))) =
+            (move_drag, move_orig_sel)
+        {
+            // Snap for display too
+            let (origin_t, origin_tr) = origin;
+            let (current_t, current_tr) = current;
+            let snapped_origin = crate::view_interaction::snap_tick(origin_t, quantize, ppq, bar_line_data);
+            let snapped_current = crate::view_interaction::snap_tick(current_t, quantize, ppq, bar_line_data);
+            let display_dt = snapped_current - snapped_origin;
+            let display_dtr = (current_tr - origin_tr).round() as i32;
+            let lh = view.lane_height;
+            let scroll_y = view.base.scroll_y;
+            let new_track_lo = (track_lo as i32 + display_dtr).max(0) as usize;
+            let new_track_hi = (track_hi as i32 + display_dtr).max(0) as usize;
+            let sy = new_track_lo as f32 * lh - scroll_y;
+            let ey = (new_track_hi as f32 + 1.0) * lh - scroll_y;
+            let sx = view.tick_to_x(t_start + display_dt);
+            let ex = view.tick_to_x(t_end + display_dt);
+            let snapped = egui::Rect::from_min_max(
+                egui::pos2(sx.min(ex), sy.min(ey)),
+                egui::pos2(sx.max(ex), sy.max(ey)),
+            );
+            crate::selection::draw::draw(&ui.painter(), content_rect, snapped);
+        }
+    }
+
+    // ── Selection marquee drag handling ──
+    if let Some((start_music, _)) = drag {
+        if pointer.primary_down() && !pointer.primary_pressed() {
+            if let Some(pos) = pointer.hover_pos() {
+                let clamped = pos.clamp(content_rect.min, content_rect.max);
+                let local = egui::pos2(
+                    clamped.x - content_rect.min.x,
+                    clamped.y - content_rect.min.y,
+                );
+                drag = Some((start_music, local));
+
+                let lane_height = view.lane_height;
+                crate::selection::drag::auto_scroll_on_drag(
+                    ui,
+                    &mut view.base,
+                    content_rect,
+                    pos,
+                    |base, w, h| {
+                        base.clamp_scroll_x(w, total_ticks);
+                        let max_scroll_y = (num_tracks as f32 * lane_height - h).max(0.0);
+                        base.scroll_y = base.scroll_y.clamp(0.0, max_scroll_y);
+                    },
+                );
+            }
+        }
+
         let start_pixel = egui::pos2(
             view.tick_to_x(start_music.0),
             start_music.1 * view.lane_height - view.base.scroll_y,
@@ -393,14 +537,12 @@ fn sel_drag_frame_arrange(
                 let drag_dist = (end - start_pixel).length();
 
                 if drag_dist < 3.0 {
-                    // Click (no meaningful drag) — set cursor, clear selection
                     let tick = view.x_to_tick(start_pixel.x);
                     let snapped = crate::view_interaction::snap_tick(tick, quantize, ppq, bar_line_data);
                     selected.clear();
                     *arr_sel_rect = None;
                     *cursor_tick = Some(snapped.max(0.0));
                 } else {
-                    // Drag — existing marquee behavior
                     let (
                         _screen_sx,
                         _screen_ex,
@@ -423,7 +565,6 @@ fn sel_drag_frame_arrange(
             drag = None;
         }
 
-        // Draw snapped selection rect
         if let Some((_, end)) = drag {
             if (end - start_pixel).length() >= 3.0 {
                 let (vx, vy, vw, vh, _, _, _, _) =
@@ -438,6 +579,8 @@ fn sel_drag_frame_arrange(
     }
 
     ui.data_mut(|d| d.insert_persisted(sel_id, drag));
+    ui.data_mut(|d| d.insert_persisted(move_drag_id, move_drag));
+    ui.data_mut(|d| d.insert_persisted(move_orig_id, move_orig_sel));
 }
 
 /// Compute snapped selection bounds for arrangement.
