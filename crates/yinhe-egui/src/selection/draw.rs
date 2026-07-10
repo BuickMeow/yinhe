@@ -1,12 +1,8 @@
 use eframe::egui;
 
-/// Draw a selection rectangle with conditional edge strokes.
-///
-/// `snapped_view_rect` — snapped selection bounds in **view-local** pixels
-/// (before offsetting by `content_rect.min`).
-/// The function converts to screen coordinates, clips, and draws fill +
-/// strokes on edges that were **not** clipped by the content boundary.
-pub fn draw(painter: &egui::Painter, content_rect: egui::Rect, snapped_view_rect: egui::Rect) {
+/// Convert a snapped view-local rect to screen-space rect (clipped to content).
+/// Shared by both Select and Eraser tool drawing.
+pub fn snapped_to_screen(content_rect: egui::Rect, snapped_view_rect: egui::Rect) -> egui::Rect {
     let sel_raw = egui::Rect::from_min_max(
         egui::pos2(
             content_rect.min.x + snapped_view_rect.min.x,
@@ -17,7 +13,28 @@ pub fn draw(painter: &egui::Painter, content_rect: egui::Rect, snapped_view_rect
             content_rect.min.y + snapped_view_rect.max.y,
         ),
     );
-    let sel = sel_raw.intersect(content_rect);
+    sel_raw.intersect(content_rect)
+}
+
+/// Draw a selection rectangle with conditional edge strokes.
+///
+/// `snapped_view_rect` — snapped selection bounds in **view-local** pixels
+/// (before offsetting by `content_rect.min`).
+/// The function converts to screen coordinates, clips, and draws fill +
+/// strokes on edges that were **not** clipped by the content boundary.
+pub fn draw(painter: &egui::Painter, content_rect: egui::Rect, snapped_view_rect: egui::Rect) {
+    let sel = snapped_to_screen(content_rect, snapped_view_rect);
+    // Reconstruct raw rect for clip detection
+    let sel_raw = egui::Rect::from_min_max(
+        egui::pos2(
+            content_rect.min.x + snapped_view_rect.min.x,
+            content_rect.min.y + snapped_view_rect.min.y,
+        ),
+        egui::pos2(
+            content_rect.min.x + snapped_view_rect.max.x,
+            content_rect.min.y + snapped_view_rect.max.y,
+        ),
+    );
 
     // 选框完全在 content 区域之外时，交集退化为零面积矩形，跳过绘制
     if !sel.is_positive() {

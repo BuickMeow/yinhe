@@ -309,6 +309,13 @@ impl App {
                 PianoViewEvent::AddNote { track, note } => {
                     self.add_note_with_undo(track, note);
                 }
+                PianoViewEvent::EraserDelete { t_start, t_end, key_lo, key_hi } => {
+                    let Some(idx) = self.active_doc else { return };
+                    let mut sel = yinhe_core::Selection::default();
+                    sel.add_rect_track(t_start, t_end, key_lo, key_hi, 0, u16::MAX);
+                    self.documents[idx].edit.selected = sel;
+                    self.with_undo("Eraser delete", |doc| doc.delete_selected());
+                }
             }
         }
 

@@ -15,6 +15,7 @@ pub mod automation_panel;
 pub enum PianoViewEvent {
     SelectionAction(SelectionAction),
     AddNote { track: u16, note: yinhe_core::NoteEvent },
+    EraserDelete { t_start: u32, t_end: u32, key_lo: u8, key_hi: u8 },
 }
 
 /// Internal pencil-tool drag mode persisted across frames.
@@ -199,6 +200,7 @@ pub fn show(
     // Update state BEFORE handle_input to avoid egui pointer-capture conflicts.
     let mut sel_action = None;
     let mut pencil_event: Option<PianoViewEvent> = None;
+    let mut eraser_event: Option<PianoViewEvent> = None;
     let mut ghost_notes: Vec<(f64, f64, u8, u16)> = Vec::new();
     let mut hidden_notes: std::collections::HashSet<(u16, u32, u8)> = std::collections::HashSet::new();
     if *active_tool == Tool::Select {
@@ -244,6 +246,10 @@ pub fn show(
                 pencil_event = Some(PianoViewEvent::AddNote { track, note });
             }
         }
+    } else if *active_tool == Tool::Eraser {
+        eraser_event = eraser_drag_frame(
+            ui, content_rect, music_rect, view, quantize, ppq, bar_line_data, total_ticks,
+        );
     }
 
     // ── Hover cursor: show Move when over selection rect ──
@@ -495,6 +501,9 @@ pub fn show(
         {
             sel_action = Some(action);
         }
+    } else if *active_tool == Tool::Eraser {
+        // Draw eraser marquee box in red
+        eraser_draw_box(ui, content_rect, music_rect, view, quantize, ppq, bar_line_data);
     }
 
     // ── Time ruler ──
@@ -682,7 +691,127 @@ pub fn show(
         });
     }
 
-    sel_action.map(PianoViewEvent::SelectionAction).or(pencil_event)
+    sel_action
+        .map(PianoViewEvent::SelectionAction)
+        .or(pencil_event)
+        .or(eraser_event)
+}
+
+// ── Shared marquee drag state machine ──
+
+/// Result of a completed marquee drag (distance >= 3px).
+struct MarqueeDragResult {
+    t_start: f64,
+    t_end: f64,
+    key_lo: u8,
+    key_hi: u8,
+    /// view-local pixel rect of the snapped marquee (for drawing).
+    #[allow(dead_code)]
+    snapped_view_rect: egui::Rect,
+}
+
+/// Shared marquee drag lifecycle: press → move (with auto-scroll) → release.
+///
+/// `on_press` is called once when the drag starts, allowing the caller to
+/// clear or prepare state (e.g. clear selection for Select tool, no-op for Eraser).
+/// Returns `Some(MarqueeDragResult)` on a valid drag release (>= 3px), `None` otherwise.
+fn marquee_drag_frame(
+    ui: &mut egui::Ui,
+    content_rect: egui::Rect,
+    music_rect: egui::Rect,
+    view: &mut yinhe_pianoroll::PianoRollView,
+    quantize: QuantizePreset,
+    ppq: u32,
+    bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
+    total_ticks: f64,
+    on_press: &mut dyn FnMut(),
+    id_suffix: &'static str,
+) -> Option<MarqueeDragResult> {
+    let sel_id = ui.id().with(id_suffix);
+    let mut drag: Option<(egui::Pos2, egui::Pos2)> =
+        ui.data_mut(|d| d.get_persisted(sel_id)).unwrap_or(None);
+
+    let pointer = ui.input(|i| i.pointer.clone());
+
+    // Clear stale drag state
+    if drag.is_some() && !pointer.primary_down() && !pointer.primary_released() {
+        drag = None;
+    }
+
+    // 弹窗打开时跳过所有 pointer 处理，避免点击穿透
+    if crate::view_interaction::pointer_over_popup(ui.ctx()) {
+        return None;
+    }
+
+    // Press → start drag
+    if pointer.primary_pressed()
+        && let Some(pos) = pointer.hover_pos()
+        && music_rect.contains(pos)
+    {
+        let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
+        drag = Some((local, local));
+        on_press();
+    }
+
+    // Move → update with auto-scroll
+    if let Some((start, _)) = drag {
+        if pointer.primary_down() && !pointer.primary_pressed() {
+            if let Some(pos) = pointer.hover_pos() {
+                let clamped = pos.clamp(music_rect.min, music_rect.max);
+                let local = egui::pos2(
+                    clamped.x - content_rect.min.x,
+                    clamped.y - content_rect.min.y,
+                );
+                drag = Some((start, local));
+
+                // ── Auto-scroll when dragging near the edge ──
+                let pre_scroll_x = view.base.scroll_x;
+                let pre_scroll_y = view.base.scroll_y;
+                crate::selection::drag::auto_scroll_on_drag(
+                    ui,
+                    &mut view.base,
+                    music_rect,
+                    pos,
+                    |base, w, _h| {
+                        base.clamp_scroll_x(w, total_ticks);
+                        base.scroll_y = base.scroll_y.max(0.0);
+                    },
+                );
+                view.clamp_scroll(content_rect.width(), content_rect.height(), total_ticks);
+                let actual_dx = view.base.scroll_x - pre_scroll_x;
+                let actual_dy = view.base.scroll_y - pre_scroll_y;
+                if actual_dx != 0.0 || actual_dy != 0.0 {
+                    drag = drag.map(|(s, e)| (egui::pos2(s.x - actual_dx, s.y - actual_dy), e));
+                }
+            }
+        }
+
+        // Release → compute snapped bounds
+        if pointer.primary_released() {
+            let result = drag.and_then(|(start, end)| {
+                if (end - start).length() >= 3.0 {
+                    let (
+                        sx, ex, sy, ey,
+                        t_start, t_end, key_lo, key_hi,
+                    ) = piano_snapped_bounds(start, end, view, quantize, ppq, bar_line_data);
+                    let kb_w = music_rect.min.x - content_rect.min.x;
+                    let snapped_view_rect = egui::Rect::from_min_max(
+                        egui::pos2(sx.min(ex) - kb_w, sy.min(ey)),
+                        egui::pos2(sx.max(ex) - kb_w, sy.max(ey)),
+                    );
+                    Some(MarqueeDragResult { t_start, t_end, key_lo, key_hi, snapped_view_rect })
+                } else {
+                    None
+                }
+            });
+            ui.data_mut(|d| d.insert_persisted(sel_id, Option::<(egui::Pos2, egui::Pos2)>::None));
+            view.base.dirty = true;
+            return result;
+        }
+    }
+
+    ui.data_mut(|d| d.insert_persisted(sel_id, drag));
+    None
 }
 
 // ── Selection drag logic ──
@@ -698,17 +827,13 @@ fn sel_drag_frame(
     ppq: u32,
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
     total_ticks: f64,
-    cursor_tick: &mut Option<f64>,
+    _cursor_tick: &mut Option<f64>,
     note_drag_delta: &mut Option<(i64, i32)>,
     sel_rect: &mut yinhe_editor_core::edit_state::SelRectState,
     _track_colors: &[[f32; 3]],
     track_visible: &[bool],
     track_selected: &std::collections::HashSet<u16>,
 ) -> (Vec<(f64, f64, u8, u16)>, Vec<(u16, u32, u8)>) {
-    let sel_id = ui.id().with("sel_drag");
-    let mut drag: Option<(egui::Pos2, egui::Pos2)> =
-        ui.data_mut(|d| d.get_persisted(sel_id)).unwrap_or(None);
-
     let note_drag_id = ui.id().with("note_drag_origin");
     let mut note_drag_origin: Option<(f64, f64)> =
         ui.data_mut(|d| d.get_persisted(note_drag_id)).unwrap_or(None);
@@ -721,10 +846,7 @@ fn sel_drag_frame(
     let pointer = ui.input(|i| i.pointer.clone());
     let cmd = ui.input(|i| i.modifiers.command || i.modifiers.ctrl);
 
-    // Clear stale drag state
-    if drag.is_some() && !pointer.primary_down() && !pointer.primary_released() {
-        drag = None;
-    }
+    // Clear stale note drag state
     if note_drag_origin.is_some() && !pointer.primary_down() && !pointer.primary_released() {
         note_drag_origin = None;
         drag_notes = None;
@@ -736,7 +858,7 @@ fn sel_drag_frame(
         return (Vec::new(), Vec::new());
     }
 
-    // Start drag
+    // Start drag (note drag only — marquee is handled by shared function below)
     if pointer.primary_pressed()
         && let Some(pos) = pointer.hover_pos()
         && music_rect.contains(pos)
@@ -790,13 +912,6 @@ fn sel_drag_frame(
                         }).unwrap_or_default()
                     })
                 }).collect());
-            } else {
-                // Not on selection rect → marquee selection
-                drag = Some((local, local));
-                if !cmd {
-                    selected.clear();
-                }
-                sel_rect.rect = None;
             }
         }
     }
@@ -858,83 +973,27 @@ fn sel_drag_frame(
         }
     }
 
-    // Marquee drag: update end on frames after the initial press
-    if let Some((start, _)) = drag {
-        if pointer.primary_down() && !pointer.primary_pressed() {
-            if let Some(pos) = pointer.hover_pos() {
-                let clamped = pos.clamp(music_rect.min, music_rect.max);
-                let local = egui::pos2(
-                    clamped.x - content_rect.min.x,
-                    clamped.y - content_rect.min.y,
-                );
-                drag = Some((start, local));
-
-                // ── Auto-scroll when dragging near the edge ──
-                // 记录滚动前的位置，在所有 clamp 之后用实际差值补偿拖拽起点，
-                // 避免 auto_scroll_on_drag 返回值与后续 view.clamp_scroll 不一致
-                // 导致最小缩放时上边界向上漂移。
-                let pre_scroll_x = view.base.scroll_x;
-                let pre_scroll_y = view.base.scroll_y;
-                crate::selection::drag::auto_scroll_on_drag(
-                    ui,
-                    &mut view.base,
-                    music_rect,
-                    pos,
-                    |base, w, _h| {
-                        base.clamp_scroll_x(w, total_ticks);
-                        base.scroll_y = base.scroll_y.max(0.0);
-                    },
-                );
-                view.clamp_scroll(content_rect.width(), content_rect.height(), total_ticks);
-                let actual_dx = view.base.scroll_x - pre_scroll_x;
-                let actual_dy = view.base.scroll_y - pre_scroll_y;
-                if actual_dx != 0.0 || actual_dy != 0.0 {
-                    drag = drag.map(|(s, e)| (egui::pos2(s.x - actual_dx, s.y - actual_dy), e));
-                }
-            }
+    // ── Marquee selection (shared with Eraser tool) ──
+    let mut on_press = || {
+        if !cmd {
+            selected.clear();
         }
-
-        // Release -> hit test
-        if pointer.primary_released() {
-            if let (Some(_midi_ref), Some((start, end))) = (midi, drag) {
-                let drag_dist = (end - start).length();
-
-                if drag_dist < 3.0 {
-                    let tick = view.x_to_tick(start.x);
-                    let snapped = crate::view_interaction::snap_tick(tick, quantize, ppq, bar_line_data);
-                    selected.clear();
-                    *cursor_tick = Some(snapped.max(0.0));
-                    sel_rect.rect = None;
-                } else {
-                    let (
-                        _snapped_sx,
-                        _snapped_ex,
-                        _snapped_sy,
-                        _snapped_ey,
-                        t_start,
-                        t_end,
-                        key_lo,
-                        key_hi,
-                    ) = piano_snapped_bounds(start, end, view, quantize, ppq, bar_line_data);
-
-                    if !cmd {
-                        selected.clear();
-                    }
-                    // Limit selection to visible tracks. If no tracks are selected,
-                    // default to all tracks (u16::MAX = all).
-                    let track_lo = track_selected.iter().min().copied().unwrap_or(0);
-                    let track_hi = track_selected.iter().max().copied().unwrap_or(u16::MAX);
-                    selected.add_rect_track(t_start as u32, t_end as u32, key_lo, key_hi, track_lo, track_hi);
-
-                    sel_rect.rect = Some((t_start, t_end, key_lo, key_hi));
-                }
-                view.base.dirty = true;
-            }
-            drag = None;
-        }
+        sel_rect.rect = None;
+    };
+    if let Some(result) = marquee_drag_frame(
+        ui, content_rect, music_rect, view, quantize, ppq, bar_line_data, total_ticks,
+        &mut on_press, "sel_drag",
+    ) {
+        let track_lo = track_selected.iter().min().copied().unwrap_or(0);
+        let track_hi = track_selected.iter().max().copied().unwrap_or(u16::MAX);
+        selected.add_rect_track(
+            result.t_start as u32, result.t_end as u32,
+            result.key_lo, result.key_hi,
+            track_lo, track_hi,
+        );
+        sel_rect.rect = Some((result.t_start, result.t_end, result.key_lo, result.key_hi));
     }
 
-    ui.data_mut(|d| d.insert_persisted(sel_id, drag));
     ui.data_mut(|d| d.insert_persisted(note_drag_id, note_drag_origin));
     ui.data_mut(|d| d.insert_persisted(drag_notes_id, drag_notes));
     (ghost_notes, hidden_notes)
@@ -968,6 +1027,70 @@ fn sel_draw_box(
             egui::pos2(vx.max(vy) - kb_w, vw.max(vh)),
         );
         crate::selection::draw::draw(&ui.painter(), music_rect, snapped);
+    }
+}
+
+// ── Eraser tool ──
+
+/// Eraser-tool input: uses the shared marquee drag, then returns an
+/// `EraserDelete` event on release. No selection persistence.
+fn eraser_drag_frame(
+    ui: &mut egui::Ui,
+    content_rect: egui::Rect,
+    music_rect: egui::Rect,
+    view: &mut yinhe_pianoroll::PianoRollView,
+    quantize: QuantizePreset,
+    ppq: u32,
+    bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
+    total_ticks: f64,
+) -> Option<PianoViewEvent> {
+    let result = marquee_drag_frame(
+        ui, content_rect, music_rect, view, quantize, ppq, bar_line_data, total_ticks,
+        &mut || {}, // no-op on press for eraser
+        "eraser_drag",
+    )?;
+    Some(PianoViewEvent::EraserDelete {
+        t_start: result.t_start as u32,
+        t_end: result.t_end as u32,
+        key_lo: result.key_lo,
+        key_hi: result.key_hi,
+    })
+}
+
+/// Draw the eraser marquee box in red on top of GPU content.
+/// Must be called AFTER `render_ctx.paint`.
+fn eraser_draw_box(
+    ui: &mut egui::Ui,
+    content_rect: egui::Rect,
+    music_rect: egui::Rect,
+    view: &yinhe_pianoroll::PianoRollView,
+    quantize: QuantizePreset,
+    ppq: u32,
+    bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
+) {
+    let drag_id = ui.id().with("eraser_drag");
+    let drag: Option<(egui::Pos2, egui::Pos2)> =
+        ui.data_mut(|d| d.get_persisted(drag_id)).unwrap_or(None);
+
+    if let Some((start, end)) = drag {
+        if (end - start).length() < 3.0 {
+            return;
+        }
+        let (vx, vy, vw, vh, _, _, _, _) =
+            piano_snapped_bounds(start, end, view, quantize, ppq, bar_line_data);
+        let kb_w = music_rect.min.x - content_rect.min.x;
+        let snapped = egui::Rect::from_min_max(
+            egui::pos2(vx.min(vy) - kb_w, vw.min(vh)),
+            egui::pos2(vx.max(vy) - kb_w, vw.max(vh)),
+        );
+        let sel = crate::selection::draw::snapped_to_screen(music_rect, snapped);
+        if !sel.is_positive() {
+            return;
+        }
+        // Red fill
+        ui.painter().rect_filled(sel, 0.0, egui::Color32::RED.gamma_multiply(0.15));
+        // Red border (solid)
+        ui.painter().rect_stroke(sel, 0.0, egui::Stroke::new(1.0, egui::Color32::RED.gamma_multiply(0.40)), egui::StrokeKind::Middle);
     }
 }
 
