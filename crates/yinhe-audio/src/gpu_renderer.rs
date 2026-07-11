@@ -637,4 +637,61 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn real_midi_full_export_timing() {
+        let midi_path = "/Users/jieneng/Music/MIDIs/Mesmerizer.mid";
+        let sfz_path = "/Users/jieneng/Music/Soundfonts/Starry Studio Grand v2.7~/Presets/A_Standard/Studio Grand - Standard (No Hammer).sfz";
+
+        if !std::path::Path::new(midi_path).exists() || !std::path::Path::new(sfz_path).exists() {
+            eprintln!("Files not found, skipping");
+            return;
+        }
+
+        let model = Arc::new(yinhe_mid2::parse_path(midi_path).unwrap());
+        let sfz_str = sfz_path.to_string();
+        let skip: Vec<bool> = vec![false; model.tracks.len()];
+        let sample_rate = 48000u32;
+
+        eprintln!("=== Full Export Timing ===");
+        eprintln!("MIDI: {} notes, {} tracks, {:.1}s",
+            model.notes.iter().map(|n| n.len()).sum::<usize>(),
+            model.tracks.len(),
+            model.tick_length as f64 / model.tempo_map.ticks_per_beat as f64 / 120.0 * 60.0,
+        );
+
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let t_start = std::time::Instant::now();
+        let result = crate::export::export_wav(
+            Arc::clone(&model),
+            sample_rate,
+            &[(0, vec![sfz_str])],
+            &skip,
+            tmp.path(),
+            crate::export::WavBitDepth::Bit24,
+            None, // unlimited layers
+            |_pct, _msg| {},
+            None,
+            None,
+        );
+        let elapsed = t_start.elapsed();
+
+        match result {
+            Ok(()) => {
+                let file_size = std::fs::metadata(tmp.path()).unwrap().len();
+                let audio_secs = model.tick_length as f64 / model.tempo_map.ticks_per_beat as f64 / 120.0 * 60.0;
+                let rtf = audio_secs / elapsed.as_secs_f64();
+                eprintln!(
+                    "=== DONE === time={:.2?} file={}MB rtf={:.1}x audio={:.1}s",
+                    elapsed,
+                    file_size / 1024 / 1024,
+                    rtf,
+                    audio_secs,
+                );
+            }
+            Err(e) => {
+                eprintln!("Export failed: {e}");
+            }
+        }
+    }
 }

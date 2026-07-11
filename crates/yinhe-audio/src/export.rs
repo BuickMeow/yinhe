@@ -172,9 +172,6 @@ pub fn export_wav(
     let mut rendered: u64 = 0;
     let mut prev_rendered_secs: f64 = 0.0;
     let mut prev_instant = Instant::now();
-    let mut block_count: u64 = 0;
-    let mut total_render_time: u128 = 0;
-    let mut max_voice: u64 = 0;
 
     // ── Phase 1: render the main content (notes + CC events) ──
     while rendered < main_duration {
@@ -183,21 +180,7 @@ pub fn export_wav(
         }
         let frames = ((main_duration - rendered) as usize).min(RENDER_CHUNK_FRAMES);
         let buf = &mut chunk[..frames * STEREO_CHANNELS];
-        let t_render = Instant::now();
         engine.render(buf);
-        total_render_time += t_render.elapsed().as_micros();
-        block_count += 1;
-        let vc = engine.voice_count();
-        if vc > max_voice {
-            max_voice = vc;
-        }
-        if block_count % 200 == 0 {
-            let avg_us = total_render_time / block_count as u128;
-            let rendered_secs = rendered as f64 / sample_rate as f64;
-            eprintln!(
-                "[export] block={block_count} rendered={rendered_secs:.1}s voices={vc} avg_block={avg_us}µs"
-            );
-        }
         if use_limiter {
             limiter.limit(buf);
         }
@@ -208,24 +191,27 @@ pub fn export_wav(
         let pct = 0.05 + (rendered as f32 / main_duration as f32) * 0.85;
         progress(pct, &format!("渲染中 {:.0}%", pct * 100.0));
 
+        // Update export progress every ~100 blocks to reduce lock overhead
         if let Some(ref ep) = export_progress {
-            if let Ok(mut p) = ep.lock() {
-                p.rendered_secs = rendered as f64 / sample_rate as f64;
-                p.voice_count = engine.voice_count();
-                let now = Instant::now();
-                let dt_wall = prev_instant.elapsed().as_secs_f64();
-                let dt_rendered = p.rendered_secs - prev_rendered_secs;
-                if dt_wall > 0.0 {
-                    p.render_speed = dt_rendered / dt_wall;
-                }
-                if let Some(start) = p.started_at {
-                    let elapsed = start.elapsed().as_secs_f64();
-                    if elapsed > 0.0 {
-                        p.overall_speed = p.rendered_secs / elapsed;
+            if rendered % (RENDER_CHUNK_FRAMES as u64 * 100) < RENDER_CHUNK_FRAMES as u64 {
+                if let Ok(mut p) = ep.lock() {
+                    p.rendered_secs = rendered as f64 / sample_rate as f64;
+                    p.voice_count = engine.voice_count();
+                    let now = Instant::now();
+                    let dt_wall = prev_instant.elapsed().as_secs_f64();
+                    let dt_rendered = p.rendered_secs - prev_rendered_secs;
+                    if dt_wall > 0.0 {
+                        p.render_speed = dt_rendered / dt_wall;
                     }
+                    if let Some(start) = p.started_at {
+                        let elapsed = start.elapsed().as_secs_f64();
+                        if elapsed > 0.0 {
+                            p.overall_speed = p.rendered_secs / elapsed;
+                        }
+                    }
+                    prev_rendered_secs = p.rendered_secs;
+                    prev_instant = now;
                 }
-                prev_rendered_secs = p.rendered_secs;
-                prev_instant = now;
             }
         }
     }
@@ -294,9 +280,8 @@ pub fn export_wav(
     progress(1.0, "导出完成");
 
     eprintln!(
-        "[export_wav timing] model={:.2?} sf={:.2?} render={:.2?} total={:.2?} blocks={block_count} avg_block={avg_block}µs max_voice={max_voice}",
+        "[export_wav timing] model={:.2?} sf={:.2?} render={:.2?} total={:.2?}",
         t_model, t_sf, t_render, t_total,
-        avg_block = if block_count > 0 { total_render_time / block_count as u128 } else { 0 },
     );
 
     Ok(())
