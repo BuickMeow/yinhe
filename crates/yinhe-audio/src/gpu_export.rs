@@ -8,7 +8,7 @@ use std::time::Instant;
 use crate::audio_model::{AudioModel, tick_to_sample};
 use crate::export::{ExportError, WavBitDepth, write_samples};
 use crate::gpu_renderer::{GpuAudioRenderer, GpuVoiceState};
-use crate::sfz_parser::SfzSoundfont;
+use crate::sfz_parser;
 use yinhe_core::YinModel;
 
 /// Active voice state tracked on the CPU side.
@@ -51,10 +51,9 @@ pub fn export_wav_gpu(
 
     // ── 1. Parse SFZ ──
     progress(0.0, "解析 SFZ...");
-    let sfz = SfzSoundfont::parse(sfz_path)
+    let key_map = sfz_parser::build_key_map_from_sfz(sfz_path)
         .map_err(|e| ExportError::Render(format!("SFZ parse error: {}", e)))?;
-    let key_map = sfz.build_key_map();
-    eprintln!("[gpu] SFZ parsed: {} regions, {:.2?}", sfz.regions.len(), t_start.elapsed());
+    eprintln!("[gpu] SFZ parsed: {} keys, {:.2?}", key_map.len(), t_start.elapsed());
 
     // ── 2. Load WAV samples ──
     progress(0.02, "加载采样...");
