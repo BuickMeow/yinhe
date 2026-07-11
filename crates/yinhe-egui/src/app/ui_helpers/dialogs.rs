@@ -10,6 +10,7 @@ impl App {
 
         // ── Settings dialog (independent window) ──
         if self.audio_settings.show_settings {
+            let prev_xsynth_layers = self.audio_settings.xsynth_layers;
             let settings = std::rc::Rc::new(std::cell::RefCell::new(Some(std::mem::take(&mut self.audio_settings))));
             let ctx_clone = ctx.clone();
             let settings_cb = settings.clone();
@@ -69,6 +70,18 @@ impl App {
                     self.audio_settings.haptic_enabled,
                     self.audio_settings.haptic_intensity,
                 );
+                // Apply XSynth layer count change immediately so the user
+                // can hear the difference without closing the dialog.
+                if self.audio_settings.xsynth_layers != prev_xsynth_layers {
+                    if let Some(ref audio) = self.audio {
+                        let count = if self.audio_settings.xsynth_layers == 0 {
+                            None
+                        } else {
+                            Some(self.audio_settings.xsynth_layers as usize)
+                        };
+                        audio.handle.send(yinhe_audio::AudioCommand::SetLayerCount { count });
+                    }
+                }
                 if !self.audio_settings.show_settings {
                     self.teardown_audio();
                 }
