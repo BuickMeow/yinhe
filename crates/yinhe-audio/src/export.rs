@@ -172,6 +172,9 @@ pub fn export_wav(
     let mut rendered: u64 = 0;
     let mut prev_rendered_secs: f64 = 0.0;
     let mut prev_instant = Instant::now();
+    let mut block_count: u64 = 0;
+    let mut total_render_time: u128 = 0;
+    let mut max_voice: u64 = 0;
 
     // ── Phase 1: render the main content (notes + CC events) ──
     while rendered < main_duration {
@@ -180,7 +183,21 @@ pub fn export_wav(
         }
         let frames = ((main_duration - rendered) as usize).min(RENDER_CHUNK_FRAMES);
         let buf = &mut chunk[..frames * STEREO_CHANNELS];
+        let t_render = Instant::now();
         engine.render(buf);
+        total_render_time += t_render.elapsed().as_micros();
+        block_count += 1;
+        let vc = engine.voice_count();
+        if vc > max_voice {
+            max_voice = vc;
+        }
+        if block_count % 200 == 0 {
+            let avg_us = total_render_time / block_count as u128;
+            let rendered_secs = rendered as f64 / sample_rate as f64;
+            eprintln!(
+                "[export] block={block_count} rendered={rendered_secs:.1}s voices={vc} avg_block={avg_us}µs"
+            );
+        }
         if use_limiter {
             limiter.limit(buf);
         }
@@ -277,8 +294,9 @@ pub fn export_wav(
     progress(1.0, "导出完成");
 
     eprintln!(
-        "[export_wav timing] model={:.2?} sf={:.2?} render={:.2?} total={:.2?}",
-        t_model, t_sf, t_render, t_total
+        "[export_wav timing] model={:.2?} sf={:.2?} render={:.2?} total={:.2?} blocks={block_count} avg_block={avg_block}µs max_voice={max_voice}",
+        t_model, t_sf, t_render, t_total,
+        avg_block = if block_count > 0 { total_render_time / block_count as u128 } else { 0 },
     );
 
     Ok(())

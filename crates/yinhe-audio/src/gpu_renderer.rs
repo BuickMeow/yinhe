@@ -557,9 +557,7 @@ mod tests {
         );
 
         // CPU export benchmark
-        let tmp = tempfile::NamedTempFile::new().unwrap();
         let sfz_str = sfz_path.to_string();
-        let port_sfs: [(u8, Vec<String>); 1] = [(0, vec![sfz_str.clone()])];
         let skip: Vec<bool> = vec![false; model.tracks.len()];
         let sample_rate = 48000u32;
 
@@ -567,7 +565,7 @@ mod tests {
         eprintln!("Setting up engine + loading SFZ...");
         let t_engine = std::time::Instant::now();
         let (_num_ch, active_mask) = crate::spawn::channels_for_model(&model);
-        let mut engine = crate::engine::AudioEngine::new(sample_rate, 0, active_mask);
+        let mut engine = crate::engine::AudioEngine::new(sample_rate, 0, active_mask.clone());
         engine.handle_command(crate::spawn::AudioCommand::LoadModel {
             model: Arc::clone(&model),
         });
@@ -581,58 +579,62 @@ mod tests {
         eprintln!("  LoadSoundFont: {:.2?}", t_sf.elapsed());
         eprintln!("  Total engine setup: {:.2?}", t_engine.elapsed());
 
-        let cpu_start = std::time::Instant::now();
-        let result = crate::export::export_wav(
-            Arc::clone(&model),
-            sample_rate,
-            &port_sfs,
-            &skip,
-            tmp.path(),
-            crate::export::WavBitDepth::Bit24,
-            None, // unlimited layers
-            |pct, msg| {
-                // suppress progress output
-            },
-            None,
-            None,
-        );
-        let cpu_elapsed = cpu_start.elapsed();
+        // Render a few blocks to measure per-block time (don't do full export)
+        let main_duration = engine.duration_samples();
+        eprintln!("  duration_samples={main_duration} ({}s @ {}Hz)", main_duration as f64 / sample_rate as f64, sample_rate);
 
-        match result {
-            Ok(()) => {
-                let file_size = std::fs::metadata(tmp.path()).unwrap().len();
-                eprintln!(
-                    "CPU export: {:.2?} (file size: {} MB)",
-                    cpu_elapsed,
-                    file_size / 1024 / 1024
-                );
-            }
-            Err(e) => {
-                eprintln!("CPU export failed: {e}");
-            }
-        }
+        engine.handle_command(crate::spawn::AudioCommand::Play { from_sample: 0 });
 
-        // Also time the GPU synthetic benchmark at the same voice count
-        // to estimate potential speedup.
-        if let Some(mut renderer) = setup_gpu() {
-            let sample_len = 4096u32;
-            // We don't know the exact voice count from the MIDI, but we can
-            // estimate from the export. For now, benchmark at various counts.
-            for &vc in &[256, 1024, 4096, 15000] {
-                let voices = make_voices(sample_len, vc, 1.0);
-                for _ in 0..3 {
-                    let _ = renderer.render_block(&voices, 1024, sample_rate);
-                }
-                let n = 10;
-                let gpu_start = std::time::Instant::now();
-                for _ in 0..n {
-                    let _ = renderer.render_block(&voices, 1024, sample_rate);
-                }
-                let gpu_per_block = gpu_start.elapsed() / n;
-                eprintln!(
-                    "  GPU @ {vc} voices: {gpu_per_block:.2?}/block (1024 frames)"
-                );
+        let blocks_to_test = [1024, 2048, 4096, 8192];
+
+        for &block_size in &blocks_to_test {
+            let mut engine2 = crate::engine::AudioEngine::new(sample_rate, 0, active_mask.clone());
+            engine2.handle_command(crate::spawn::AudioCommand::LoadModel { model: Arc::clone(&model) });
+            engine2.handle_command(crate::spawn::AudioCommand::LoadSoundFont { port: 0, paths: vec![sfz_path.to_string()] });
+            engine2.handle_command(crate::spawn::AudioCommand::SkipTracks { skip: skip.clone() });
+
+            // Start from middle of the song (60s in) where notes are active
+            let start_sample = (60 * sample_rate as u64).min(main_duration.saturating_sub(block_size as u64 * 20));
+            engine2.handle_command(crate::spawn::AudioCommand::Play { from_sample: start_sample });
+
+            let mut chunk2 = vec![0.0f32; block_size * 2];
+            let n_blocks = 20u64;
+
+            // Warm up
+            for _ in 0..3 {
+                let frames = block_size.min(main_duration.saturating_sub(start_sample) as usize);
+                if frames == 0 { break; }
+                let buf = &mut chunk2[..frames * 2];
+                engine2.render(buf);
             }
+
+            // Measure
+            let mut total_us: u128 = 0;
+            let mut max_vc: u64 = 0;
+            let mut sum_vc: u64 = 0;
+            let mut min_vc: u64 = u64::MAX;
+            let mut measured = 0u64;
+            let t_start = std::time::Instant::now();
+            for _ in 0..n_blocks {
+                let frames = block_size.min(main_duration.saturating_sub(start_sample + measured * block_size as u64) as usize);
+                if frames == 0 { break; }
+                let buf = &mut chunk2[..frames * 2];
+                let t = std::time::Instant::now();
+                engine2.render(buf);
+                total_us += t.elapsed().as_micros();
+                measured += 1;
+                let vc = engine2.voice_count();
+                sum_vc += vc;
+                if vc > max_vc { max_vc = vc; }
+                if vc < min_vc { min_vc = vc; }
+            }
+            let elapsed = t_start.elapsed();
+            let avg_us = if measured > 0 { total_us / measured as u128 } else { 0 };
+            let avg_vc = if measured > 0 { sum_vc / measured } else { 0 };
+            let rtf = (measured as u128 * block_size as u128 * 1_000_000) / (sample_rate as u128 * elapsed.as_micros().max(1));
+            eprintln!(
+                "  block={block_size:>5}: avg={avg_us:>8}µs avg_vc={avg_vc:>5} max_vc={max_vc:>5} rtf={rtf:>3}x"
+            );
         }
     }
 }
