@@ -232,11 +232,15 @@ pub fn export_wav_gpu(
         // ── 7b. Build GPU voice states ──
         gpu_voices.clear();
         for v in &active_voices {
-            // Calculate gain from velocity (simple linear mapping)
             let gain = v.velocity as f32 / 127.0;
-            // Calculate current time in the sample
-            let sample_offset = (rendered).saturating_sub(v.start_sample) as f32;
-            let time = sample_offset * v.speed;
+            // Time offset within this block:
+            // - If voice started BEFORE this block: time = 0 (play from sample start)
+            // - If voice started WITHIN this block: time = (start - rendered) * speed
+            let time = if v.start_sample > rendered {
+                (v.start_sample - rendered) as f32 * v.speed
+            } else {
+                0.0
+            };
 
             gpu_voices.push(GpuVoiceState {
                 sample_offset: v.sample_offset,
@@ -244,8 +248,8 @@ pub fn export_wav_gpu(
                 speed: v.speed,
                 gain,
                 time,
-                envelope: 0.0,  // will be set by GPU shader (attack)
-                env_stage: 0,   // attack
+                envelope: 0.0,
+                env_stage: 0,
                 env_level: gain,
                 _pad: 0,
             });
