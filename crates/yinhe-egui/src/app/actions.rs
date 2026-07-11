@@ -436,6 +436,7 @@ impl App {
             self.audio_settings.sample_rate
         };
         let port_sf = self.resolve_sf_config(doc);
+        eprintln!("[export] port_sf = {:?}", port_sf);
         let has_solo = doc.edit.track_overrides.iter().any(|t| t.soloed);
         let skip: Vec<bool> = doc
             .edit
@@ -463,17 +464,23 @@ impl App {
 
         // Try GPU export first — use the app's existing wgpu Device/Queue.
         #[cfg(feature = "gpu")]
-        let gpu_device = self.render_ctx.device().clone();
+        let gpu_device = std::sync::Arc::new(self.render_ctx.device().clone());
         #[cfg(feature = "gpu")]
-        let gpu_queue = self.render_ctx.queue().clone();
+        let gpu_queue = std::sync::Arc::new(self.render_ctx.queue().clone());
         // Extract SFZ path from port_sf for GPU export.
         #[cfg(feature = "gpu")]
         let gpu_sfz = port_sf.first().and_then(|(_, paths)| paths.first()).cloned();
+        #[cfg(feature = "gpu")]
+        eprintln!("[export] gpu_sfz = {:?}", gpu_sfz);
+        #[cfg(not(feature = "gpu"))]
+        eprintln!("[export] GPU feature NOT enabled");
 
         std::thread::spawn(move || {
+            eprintln!("[export] Thread started");
             // Prefer GPU export when feature is enabled and SFZ path is available.
             #[cfg(feature = "gpu")]
             let result = if let Some(ref sfz) = gpu_sfz {
+                eprintln!("[export] Using GPU path, SFZ: {}", sfz);
                 yinhe_audio::gpu_export::export_wav_gpu(
                     model,
                     sr,
@@ -494,6 +501,7 @@ impl App {
                 )
             } else {
                 // No SFZ path — fall back to CPU.
+                eprintln!("[export] No SFZ path found, using CPU path. port_sf={:?}", gpu_sfz);
                 yinhe_audio::export::export_wav(
                     model,
                     sr,
