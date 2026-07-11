@@ -80,36 +80,58 @@ fn sample_at(global_idx: u32) -> f32 {
     }
 }
 
-/// 根据voice的初始状态和frame偏移，计算该frame的envelope值。
-/// 与CPU advance_voices 完全对应。
+/// 用解析公式计算 frame_offset 处的 envelope 值。
+/// ADSR 每个阶段都是线性斜坡，通过计算阶段转折帧数来直接得出结果。
 fn envelope_at(
     initial_env: f32, initial_stage: u32, env_level: f32,
     attack_rate: f32, decay_rate: f32, sustain_level: f32, release_rate: f32,
     frame_offset: u32,
 ) -> f32 {
+    if frame_offset == 0u { return initial_env; }
+
     var env = initial_env;
-    var stage = initial_stage;
-    for (var i: u32 = 0u; i < frame_offset; i++) {
-        if stage >= 4u { break; }
-        switch stage {
-            case 0u: {
-                env += attack_rate;
-                if env >= env_level { env = env_level; stage = 1u; }
-            }
-            case 1u: {
-                env -= decay_rate;
-                let sus = sustain_level * env_level;
-                if env <= sus { env = sus; stage = 2u; }
-            }
-            case 2u: { }
-            case 3u: {
-                env -= release_rate;
-                if env <= 0.0 { env = 0.0; stage = 4u; }
-            }
-            default: { break; }
+    var remaining = f32(frame_offset);
+
+    // Attack: 从 env 上升到 env_level
+    if initial_stage <= 0u {
+        let env_to_peak = max(env_level - env, 0.0);
+        let attack_frames = env_to_peak / attack_rate;
+        if remaining <= attack_frames {
+            return env + attack_rate * remaining;
         }
+        env = env_level;
+        remaining -= attack_frames;
     }
-    return env;
+
+    // Decay: 从 env_level 下降到 sustain * env_level
+    if initial_stage <= 1u {
+        let sus = sustain_level * env_level;
+        let env_to_sus = max(env - sus, 0.0);
+        let decay_frames = env_to_sus / decay_rate;
+        if remaining <= decay_frames {
+            return env - decay_rate * remaining;
+        }
+        env = sus;
+        remaining -= decay_frames;
+    }
+
+    // Sustain: 保持不变
+    if initial_stage <= 2u {
+        let sus = sustain_level * env_level;
+        if initial_stage == 2u {
+            return sus; // sustain 永远不变（release 由 NoteOff 触发）
+        }
+        // 刚从 decay 进入 sustain
+        return sus;
+    }
+
+    // Release: 从 env 下降到 0
+    // initial_stage == 3
+    let release_frames = env / release_rate;
+    if remaining <= release_frames {
+        return env - release_rate * remaining;
+    }
+    return 0.0;
 }
 
 @compute @workgroup_size(256)

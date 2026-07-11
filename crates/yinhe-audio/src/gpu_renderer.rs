@@ -509,10 +509,11 @@ mod tests {
         // Force recreate buffers
         renderer.buffers = None;
 
+        // voice 在 sustain 阶段: envelope = sustain_level * env_level = 1.0 * 1.0 = 1.0
         let gpu_voices = vec![GpuVoiceState {
             sample_offset: 0, sample_length: 1024, speed: 1.0,
             gain: 1.0, time: 0.0, envelope: 1.0, env_stage: 2, env_level: 1.0, start_offset: 0,
-            attack_rate: 0.01, decay_rate: 0.005, sustain_level: 0.7, release_rate: 0.02,
+            attack_rate: 0.01, decay_rate: 0.005, sustain_level: 1.0, release_rate: 0.02,
             pan_left: 1.0, pan_right: 1.0,
         }];
         let gpu_out = renderer.render_block(&gpu_voices, 8, 44100);
@@ -540,7 +541,7 @@ mod tests {
             contents: bytemuck::cast_slice(&[GpuVoiceState {
                 sample_offset: 0, sample_length: 1024, speed: 1.0,
                 gain: 1.0, time: 0.0, envelope: 1.0, env_stage: 2, env_level: 1.0, start_offset: 0,
-                attack_rate: 0.01, decay_rate: 0.005, sustain_level: 0.7, release_rate: 0.02,
+                attack_rate: 0.01, decay_rate: 0.005, sustain_level: 1.0, release_rate: 0.02,
                 pan_left: 1.0, pan_right: 1.0,
             }]),
             usage: wgpu::BufferUsages::STORAGE,
