@@ -88,7 +88,9 @@ pub fn export_wav_gpu(
             }
         }
     }
-    eprintln!("[gpu] Loaded {} samples ({} frames, {:.2?})",
+    eprintln!("[gpu] sample_data.len()={} frames, first 5 values: {:?}", sample_data.len(),
+        &sample_data.iter().take(5).collect::<Vec<_>>());
+    eprintln!("[gpu] Loaded {} unique samples ({} total frames, {:.2?})",
         key_map.iter().filter(|(p, _, _)| !p.to_string_lossy().contains("missing")).count(),
         sample_data.len(),
         t_load.elapsed(),
@@ -177,6 +179,7 @@ pub fn export_wav_gpu(
     progress(0.08, "GPU 渲染中...");
     let t_render = Instant::now();
     let block_size: u64 = 1024;
+    let mut has_compared = false;
     let mut rendered: u64 = 0;
     let mut event_cursor: usize = 0;
     let mut active_voices: Vec<ActiveVoice> = Vec::new();
@@ -259,11 +262,25 @@ pub fn export_wav_gpu(
         output.fill(0.0);
         if !gpu_voices.is_empty() {
             let gpu_out = renderer.render_block(&gpu_voices, frames as u32, sample_rate);
-            // Copy GPU output to our buffer (handling frame count mismatch)
             let copy_frames = frames.min(gpu_out.len() / 2);
             for i in 0..copy_frames {
                 output[i * 2] = gpu_out[i * 2];
                 output[i * 2 + 1] = gpu_out[i * 2 + 1];
+            }
+            // Debug: compare GPU vs CPU for first block with many voices
+            if gpu_voices.len() > 100 && !has_compared {
+                let mut cpu_voices = gpu_voices.clone();
+                let cpu_out = crate::gpu_renderer::cpu_render_voices(
+                    &sample_data, &mut cpu_voices, frames as u32,
+                );
+                let mut max_diff = 0.0f32;
+                for i in 0..(frames * 2).min(2048) {
+                    let d = (output[i] - cpu_out[i]).abs();
+                    if d > max_diff { max_diff = d; }
+                }
+                eprintln!("[gpu] Block at sample {}: max_diff={:.6} gpu[0]={:.6} cpu[0]={:.6}",
+                    rendered, max_diff, output[0], cpu_out[0]);
+                has_compared = true;
             }
         }
 

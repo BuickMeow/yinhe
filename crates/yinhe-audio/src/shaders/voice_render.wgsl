@@ -41,6 +41,7 @@ const CHUNK_SIZE: u32 = 30000000u; // 30M f32 = 120MB per chunk
 
 struct ChunkOffsets {
     o0: u32, o1: u32, o2: u32, o3: u32, o4: u32, total: u32,
+    _pad0: u32, _pad1: u32, // pad to 32 bytes (16-byte alignment)
 };
 
 @group(0) @binding(8) var<uniform> chunk_off: ChunkOffsets;
