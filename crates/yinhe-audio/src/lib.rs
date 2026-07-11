@@ -6,6 +6,8 @@ pub mod engine;
 mod engine_render;
 mod engine_state;
 pub mod export;
+#[cfg(feature = "gpu")]
+pub mod gpu_renderer;
 mod prepare_model;
 pub mod soundfont;
 pub mod spawn;

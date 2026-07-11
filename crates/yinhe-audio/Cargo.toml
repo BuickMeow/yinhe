@@ -3,6 +3,10 @@ name = "yinhe-audio"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = []
+gpu = ["wgpu", "dep:bytemuck"]
+
 [dependencies]
 xsynth-core = "0.4"
 xsynth-soundfonts = "0.4"
@@ -12,8 +16,13 @@ xsynth-soundfonts = "0.4"
 cpal = { workspace = true }
 hound = "3.5"
 crossbeam-channel = "0.5"
+wgpu = { workspace = true, optional = true, features = ["wgsl"] }
+bytemuck = { workspace = true, optional = true }
 #tracing = "0.1"
 
 yinhe-types = { path = "../yinhe-types" }
 yinhe-core = { path = "../yinhe-core" }
 yinhe-memtrace = { path = "../yinhe-memtrace" }
+
+[dev-dependencies]
+pollster = { workspace = true }

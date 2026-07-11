@@ -410,7 +410,7 @@ fn test_audible_index_uses_per_key_tempo_cursor() {
 fn test_engine_accessors() {
     let mask = vec![true; 16];
     let engine = AudioEngine::new(44100, 16, mask);
-    assert_eq!(engine.sample_rate_hz(), 44100);
+    assert_eq!(engine.sample_rate, 44100);
     assert_eq!(engine.sample_position(), 0);
     assert!(!engine.playing());
 }
