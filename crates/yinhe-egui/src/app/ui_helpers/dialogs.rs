@@ -382,15 +382,19 @@ impl App {
 
         // ── Export settings dialog (independent window) ──
         if self.show_export_bit_depth {
-            let mut bit_depth = self.export_bit_depth;
-            let mut layer_count = self.export_layer_count;
-            let mut sample_rate = self.export_sample_rate;
             let global_sr = self.audio_settings.sample_rate;
+            // Use Rc<Cell> so the move closure can write settings back
+            let bit_depth = std::rc::Rc::new(std::cell::Cell::new(self.export_bit_depth));
+            let layer_count = std::rc::Rc::new(std::cell::Cell::new(self.export_layer_count));
+            let sample_rate = std::rc::Rc::new(std::cell::Cell::new(self.export_sample_rate));
             let open = std::rc::Rc::new(std::cell::RefCell::new(true));
             let started = std::rc::Rc::new(std::cell::RefCell::new(false));
             let ctx_clone = ctx.clone();
             let open_cb = open.clone();
             let started_cb = started.clone();
+            let bd_cb = bit_depth.clone();
+            let lc_cb = layer_count.clone();
+            let sr_cb = sample_rate.clone();
 
             ctx_clone.show_viewport_immediate(
                 egui::ViewportId::from_hash_of("export_settings_dialog"),
@@ -421,7 +425,8 @@ impl App {
 
                                     ui.horizontal(|ui| {
                                         ui.label("位深度：");
-                                        let current = match &bit_depth {
+                                        let bd = bd_cb.get();
+                                        let current = match bd {
                                             yinhe_audio::export::WavBitDepth::Bit16 => "16-bit",
                                             yinhe_audio::export::WavBitDepth::Bit24 => "24-bit",
                                             yinhe_audio::export::WavBitDepth::Bit32Float => "32-bit float",
@@ -431,64 +436,55 @@ impl App {
                                             .show_ui(ui, |ui| {
                                                 if ui
                                                     .selectable_label(
-                                                        matches!(
-                                                            bit_depth,
-                                                            yinhe_audio::export::WavBitDepth::Bit16
-                                                        ),
+                                                        bd == yinhe_audio::export::WavBitDepth::Bit16,
                                                         "16-bit",
                                                     )
                                                     .clicked()
                                                 {
-                                                    bit_depth = yinhe_audio::export::WavBitDepth::Bit16;
+                                                    bd_cb.set(yinhe_audio::export::WavBitDepth::Bit16);
                                                 }
                                                 if ui
                                                     .selectable_label(
-                                                        matches!(
-                                                            bit_depth,
-                                                            yinhe_audio::export::WavBitDepth::Bit24
-                                                        ),
+                                                        bd == yinhe_audio::export::WavBitDepth::Bit24,
                                                         "24-bit",
                                                     )
                                                     .clicked()
                                                 {
-                                                    bit_depth = yinhe_audio::export::WavBitDepth::Bit24;
+                                                    bd_cb.set(yinhe_audio::export::WavBitDepth::Bit24);
                                                 }
                                                 if ui
                                                     .selectable_label(
-                                                        matches!(
-                                                            bit_depth,
-                                                            yinhe_audio::export::WavBitDepth::Bit32Float
-                                                        ),
+                                                        bd == yinhe_audio::export::WavBitDepth::Bit32Float,
                                                         "32-bit float",
                                                     )
                                                     .clicked()
                                                 {
-                                                    bit_depth =
-                                                        yinhe_audio::export::WavBitDepth::Bit32Float;
+                                                    bd_cb.set(yinhe_audio::export::WavBitDepth::Bit32Float);
                                                 }
                                             });
                                     });
 
                                     ui.horizontal(|ui| {
                                         ui.label("采样率：");
-                                        let sr_text = if sample_rate == 0 {
+                                        let sr = sr_cb.get();
+                                        let sr_text = if sr == 0 {
                                             format!("跟随全局 ({} Hz)", global_sr)
                                         } else {
-                                            format!("{} Hz", sample_rate)
+                                            format!("{} Hz", sr)
                                         };
                                         let sample_rates: [u32; 5] = [0, 44100, 48000, 96000, 192000];
                                         egui::ComboBox::from_id_salt("export_sample_rate")
                                             .selected_text(&sr_text)
                                             .show_ui(ui, |ui| {
-                                                for &sr in &sample_rates {
-                                                    let label = if sr == 0 {
+                                                for &rate in &sample_rates {
+                                                    let label = if rate == 0 {
                                                         format!("跟随全局 ({} Hz)", global_sr)
                                                     } else {
-                                                        format!("{} Hz", sr)
+                                                        format!("{} Hz", rate)
                                                     };
-                                                    let selected = sample_rate == sr;
+                                                    let selected = sr == rate;
                                                     if ui.selectable_label(selected, label).clicked() {
-                                                        sample_rate = sr;
+                                                        sr_cb.set(rate);
                                                     }
                                                 }
                                             });
@@ -496,14 +492,14 @@ impl App {
 
                                     ui.horizontal(|ui| {
                                         ui.label("XSynth层数：");
-                                        let mut layers = layer_count as usize;
+                                        let mut layers = lc_cb.get() as usize;
                                         ui.add(
                                             egui::DragValue::new(&mut layers)
                                                 .range(0..=128)
                                                 .speed(1.0),
                                         );
-                                        layer_count = layers as u32;
-                                        if layer_count == 0 {
+                                        lc_cb.set(layers as u32);
+                                        if lc_cb.get() == 0 {
                                             ui.label("无限制");
                                         }
                                     });
@@ -530,9 +526,9 @@ impl App {
             if !*open.borrow() {
                 self.show_export_bit_depth = false;
             }
-            self.export_bit_depth = bit_depth;
-            self.export_layer_count = layer_count;
-            self.export_sample_rate = sample_rate;
+            self.export_bit_depth = bit_depth.get();
+            self.export_layer_count = layer_count.get();
+            self.export_sample_rate = sample_rate.get();
 
             if *started.borrow() {
                 self.start_export();
