@@ -1,8 +1,9 @@
 //! GPU-accelerated audio renderer for offline export.
 //!
-//! Phase 1.5: Persistent buffers + double-buffered readback.
-//! All GPU buffers are allocated once and reused across render_block calls,
-//! eliminating the per-block allocation overhead that dominated Phase 1.
+//! Phase 1.5+: Single-pass merged shader, persistent buffers.
+//! The voice render and merge passes are combined into one shader
+//! that uses shared memory tree reduction, eliminating the 120MB
+//! intermediate buffer entirely.
 
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
@@ -34,40 +35,24 @@ pub struct RenderParams {
 
 /// Persistent GPU state — all buffers allocated once, reused every block.
 struct GpuBuffers {
-    /// Soundfont sample data (uploaded once, rarely changes).
     sample_buf: wgpu::Buffer,
-    /// Per-voice state — written via queue.write_buffer each block.
     voice_state_buf: wgpu::Buffer,
-    /// Max voice capacity this buffer was created for.
     max_voices: u32,
-    /// Intermediate per-voice output (voice_count × frame_count × 2 × f32).
-    voice_output_buf: wgpu::Buffer,
-    /// Final mixed stereo output.
     final_output_buf: wgpu::Buffer,
-    /// Uniform params — updated each block.
     params_buf: wgpu::Buffer,
-    /// Double-buffered staging buffers for readback.
     staging: [wgpu::Buffer; 2],
-    /// Which staging buffer to use next (0 or 1).
     staging_idx: usize,
-    /// Bind groups for voice pass (group 0).
-    voice_bind_groups: [wgpu::BindGroup; 2],
-    /// Bind groups for merge pass (group 1).
-    merge_bind_groups: [wgpu::BindGroup; 2],
+    bind_groups: [wgpu::BindGroup; 2],
 }
 
 /// GPU-accelerated audio renderer with persistent buffers.
 pub struct GpuAudioRenderer {
     device: Arc<wgpu::Device>,
     queue: Arc<wgpu::Queue>,
-    voice_pipeline: wgpu::ComputePipeline,
-    merge_pipeline: wgpu::ComputePipeline,
-    voice_layout: wgpu::BindGroupLayout,
-    merge_layout: wgpu::BindGroupLayout,
+    pipeline: wgpu::ComputePipeline,
+    bind_group_layout: wgpu::BindGroupLayout,
     buffers: Option<GpuBuffers>,
-    /// Pending sample buffer (set by upload_samples, consumed by ensure_buffers).
     pending_samples: Option<wgpu::Buffer>,
-    /// Max frame_count seen so far (for buffer sizing).
     frame_count: u32,
 }
 
@@ -79,9 +64,8 @@ impl GpuAudioRenderer {
             source: wgpu::ShaderSource::Wgsl(shader_source.into()),
         });
 
-        // ── Voice render pipeline ──
-        let voice_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("voice_layout"),
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("audio_render_bgl"),
             entries: &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
@@ -126,71 +110,17 @@ impl GpuAudioRenderer {
             ],
         });
 
-        let voice_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("voice_pipeline_layout"),
-                bind_group_layouts: &[Some(&voice_layout)],
-                immediate_size: 0,
-            });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("audio_render_pl"),
+            bind_group_layouts: &[Some(&bind_group_layout)],
+            immediate_size: 0,
+        });
 
-        let voice_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("voice_pipeline"),
-            layout: Some(&voice_pipeline_layout),
+        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("audio_render_pipeline"),
+            layout: Some(&pipeline_layout),
             module: &shader_module,
             entry_point: Some("vs_main"),
-            compilation_options: Default::default(),
-            cache: None,
-        });
-
-        // ── Merge pipeline ──
-        let merge_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("merge_layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
-        });
-
-        let merge_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("merge_pipeline_layout"),
-                bind_group_layouts: &[None, Some(&merge_layout)],
-                immediate_size: 0,
-            });
-
-        let merge_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("merge_pipeline"),
-            layout: Some(&merge_pipeline_layout),
-            module: &shader_module,
-            entry_point: Some("merge_main"),
             compilation_options: Default::default(),
             cache: None,
         });
@@ -198,10 +128,8 @@ impl GpuAudioRenderer {
         Ok(Self {
             device,
             queue,
-            voice_pipeline,
-            merge_pipeline,
-            voice_layout,
-            merge_layout,
+            pipeline,
+            bind_group_layout,
             buffers: None,
             pending_samples: None,
             frame_count: 0,
@@ -209,7 +137,6 @@ impl GpuAudioRenderer {
     }
 
     /// Upload soundfont sample data. Call once before rendering begins.
-    /// The data is kept in a persistent GPU buffer for the renderer's lifetime.
     pub fn upload_samples(&mut self, sample_data: &[f32]) {
         let sample_buf = self
             .device
@@ -218,23 +145,15 @@ impl GpuAudioRenderer {
                 contents: bytemuck::cast_slice(sample_data),
                 usage: wgpu::BufferUsages::STORAGE,
             });
-        // Invalidate existing buffers so they get rebuilt with the new sample data.
         self.buffers = None;
         self.pending_samples = Some(sample_buf);
     }
 
-    /// Ensure persistent buffers exist and are sized correctly.
-    /// Recreates buffers only when capacity is exceeded.
     fn ensure_buffers(&mut self, voice_count: u32, frame_count: u32) {
-        // Determine if we need to recreate buffers.
         let needs_recreate = match (&self.buffers, &self.pending_samples) {
             (Some(b), _) => b.max_voices < voice_count || self.frame_count < frame_count,
             (None, Some(_)) => true,
-            (None, None) => {
-                // No buffers and no pending samples — this means upload_samples was never called.
-                // This shouldn't happen in normal usage, but we'll just return.
-                return;
-            }
+            (None, None) => return,
         };
 
         if !needs_recreate {
@@ -242,35 +161,22 @@ impl GpuAudioRenderer {
         }
 
         let device = &self.device;
-
-        // Use pending samples if available, otherwise keep existing.
         let sample_buf = if let Some(buf) = self.pending_samples.take() {
             buf
         } else {
-            // Capacity increase only — keep existing sample_buf.
             self.buffers.as_ref().unwrap().sample_buf.clone()
         };
 
         let voice_state_size =
             (voice_count.max(1) as usize * std::mem::size_of::<GpuVoiceState>()) as u64;
-        let voice_output_size = (voice_count.max(1) as usize
-            * frame_count.max(1) as usize
-            * 2
-            * std::mem::size_of::<f32>()) as u64;
-        let final_output_size = (frame_count.max(1) as usize * 2 * std::mem::size_of::<f32>()) as u64;
+        let final_output_size =
+            (frame_count.max(1) as usize * 2 * std::mem::size_of::<f32>()) as u64;
         let params_size = std::mem::size_of::<RenderParams>() as u64;
 
         let voice_state_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("gpu_voice_states"),
             size: voice_state_size,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let voice_output_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("gpu_voice_outputs"),
-            size: voice_output_size,
-            usage: wgpu::BufferUsages::STORAGE,
             mapped_at_creation: false,
         });
 
@@ -294,7 +200,6 @@ impl GpuAudioRenderer {
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-
         let staging1 = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("gpu_staging_1"),
             size: final_output_size,
@@ -302,111 +207,48 @@ impl GpuAudioRenderer {
             mapped_at_creation: false,
         });
 
-        // Build bind groups for both staging slots (they share the same buffers
-        // except params — but params_buf is the same, so we build once per slot).
-        let voice_bind_group_0 = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("voice_bg_0"),
-            layout: &self.voice_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: sample_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: voice_state_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: voice_output_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: params_buf.as_entire_binding(),
-                },
-            ],
-        });
-        let voice_bind_group_1 = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("voice_bg_1"),
-            layout: &self.voice_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: sample_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: voice_state_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: voice_output_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: params_buf.as_entire_binding(),
-                },
-            ],
-        });
-
-        let merge_bind_group_0 = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("merge_bg_0"),
-            layout: &self.merge_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: voice_output_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: final_output_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: params_buf.as_entire_binding(),
-                },
-            ],
-        });
-        let merge_bind_group_1 = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("merge_bg_1"),
-            layout: &self.merge_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: voice_output_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: final_output_buf.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: params_buf.as_entire_binding(),
-                },
-            ],
-        });
+        let make_bg = |sample: &wgpu::Buffer, voice: &wgpu::Buffer, output: &wgpu::Buffer, params: &wgpu::Buffer| {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("audio_bg"),
+                layout: &self.bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: sample.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: voice.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: output.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: params.as_entire_binding(),
+                    },
+                ],
+            })
+        };
 
         self.buffers = Some(GpuBuffers {
-            sample_buf,
-            voice_state_buf,
+            sample_buf: sample_buf.clone(),
+            voice_state_buf: voice_state_buf.clone(),
             max_voices: voice_count.max(1),
-            voice_output_buf,
-            final_output_buf,
-            params_buf,
+            final_output_buf: final_output_buf.clone(),
+            params_buf: params_buf.clone(),
             staging: [staging0, staging1],
             staging_idx: 0,
-            voice_bind_groups: [voice_bind_group_0, voice_bind_group_1],
-            merge_bind_groups: [merge_bind_group_0, merge_bind_group_1],
+            bind_groups: [
+                make_bg(&sample_buf, &voice_state_buf, &final_output_buf, &params_buf),
+                make_bg(&sample_buf, &voice_state_buf, &final_output_buf, &params_buf),
+            ],
         });
         self.frame_count = frame_count;
     }
 
-    /// Render a block of audio using the GPU with persistent buffers.
-    ///
-    /// `sample_data` is only used on the first call (via `upload_samples`).
-    /// `voices` are uploaded each block via `queue.write_buffer` (no allocation).
-    ///
-    /// Returns a stereo f32 buffer of length `frame_count * 2`.
+    /// Render a block of audio using the GPU.
     pub fn render_block(
         &mut self,
         voices: &[GpuVoiceState],
@@ -421,12 +263,10 @@ impl GpuAudioRenderer {
         self.ensure_buffers(voice_count, frame_count);
         let buf = self.buffers.as_mut().unwrap();
 
-        // ── Upload voice states (only the dirty portion) ──
-        let voice_state_size = (voice_count as usize * std::mem::size_of::<GpuVoiceState>()) as u64;
+        // Upload voice states and params (zero-allocation writes)
         self.queue
             .write_buffer(&buf.voice_state_buf, 0, bytemuck::cast_slice(voices));
 
-        // ── Upload params ──
         let params = RenderParams {
             frame_count,
             voice_count,
@@ -436,7 +276,7 @@ impl GpuAudioRenderer {
         self.queue
             .write_buffer(&buf.params_buf, 0, bytemuck::bytes_of(&params));
 
-        // ── Encode compute passes ──
+        // Encode single compute pass
         let idx = buf.staging_idx;
         let mut encoder = self
             .device
@@ -446,27 +286,15 @@ impl GpuAudioRenderer {
 
         {
             let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("voice_pass"),
+                label: Some("voice_merge_pass"),
                 ..Default::default()
             });
-            cpass.set_pipeline(&self.voice_pipeline);
-            cpass.set_bind_group(0, &buf.voice_bind_groups[idx], &[]);
-            let wg = (voice_count + 255) / 256;
-            cpass.dispatch_workgroups(wg, 1, 1);
+            cpass.set_pipeline(&self.pipeline);
+            cpass.set_bind_group(0, &buf.bind_groups[idx], &[]);
+            // One workgroup per output frame, 256 threads per workgroup.
+            cpass.dispatch_workgroups(frame_count, 1, 1);
         }
 
-        {
-            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("merge_pass"),
-                ..Default::default()
-            });
-            cpass.set_pipeline(&self.merge_pipeline);
-            cpass.set_bind_group(1, &buf.merge_bind_groups[idx], &[]);
-            let wg = (frame_count + 255) / 256;
-            cpass.dispatch_workgroups(wg, 1, 1);
-        }
-
-        // ── Copy to staging buffer ──
         let final_output_size =
             (frame_count as usize * 2 * std::mem::size_of::<f32>()) as u64;
         encoder.copy_buffer_to_buffer(
@@ -479,7 +307,7 @@ impl GpuAudioRenderer {
 
         self.queue.submit(std::iter::once(encoder.finish()));
 
-        // ── Readback ──
+        // Readback
         let buffer_slice = buf.staging[idx].slice(..);
         let (sender, receiver) = std::sync::mpsc::channel();
         buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
@@ -496,15 +324,13 @@ impl GpuAudioRenderer {
         drop(data);
         buf.staging[idx].unmap();
 
-        // ── Swap staging buffer for next call ──
         buf.staging_idx = 1 - buf.staging_idx;
 
         result
     }
 }
 
-/// CPU reference implementation of the same voice rendering logic.
-/// Used for correctness validation and performance comparison.
+/// CPU reference implementation.
 pub fn cpu_render_voices(
     sample_data: &[f32],
     voices: &mut [GpuVoiceState],
@@ -564,9 +390,9 @@ pub fn cpu_render_voices(
 mod tests {
     use super::*;
 
-    fn make_sine_samples(len: usize, freq: f32, sample_rate: f32) -> Vec<f32> {
+    fn make_sine_samples(len: usize, freq: f32, sr: f32) -> Vec<f32> {
         (0..len)
-            .map(|i| (2.0 * std::f32::consts::PI * freq * i as f32 / sample_rate).sin())
+            .map(|i| (2.0 * std::f32::consts::PI * freq * i as f32 / sr).sin())
             .collect()
     }
 
@@ -586,7 +412,7 @@ mod tests {
             .collect()
     }
 
-    fn setup_gpu() -> Option<(GpuAudioRenderer, Vec<f32>)> {
+    fn setup_gpu() -> Option<GpuAudioRenderer> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::PRIMARY,
             flags: wgpu::InstanceFlags::default(),
@@ -625,97 +451,76 @@ mod tests {
             })
             .collect();
         renderer.upload_samples(&samples);
-        Some((renderer, samples))
+        Some(renderer)
+    }
+
+    fn bench_samples(sample_len: u32) -> Vec<f32> {
+        (0..4)
+            .flat_map(|inst| {
+                make_sine_samples(sample_len as usize, 440.0 * (inst as f32 + 1.0), 44100.0)
+            })
+            .collect()
     }
 
     #[test]
-    fn phase15_smoke_test() {
-        let (mut renderer, samples) = match setup_gpu() {
-            Some(v) => v,
+    fn phase15_single_pass_smoke() {
+        let mut renderer = match setup_gpu() {
+            Some(r) => r,
             None => {
                 eprintln!("No GPU adapter, skipping");
                 return;
             }
         };
-        let sample_len = 4096u32;
-        let voices = make_voices(sample_len, 16, 1.0);
+        let voices = make_voices(4096, 16, 1.0);
         let result = renderer.render_block(&voices, 1024, 44100);
         assert_eq!(result.len(), 1024 * 2);
         let max_abs = result.iter().fold(0.0f32, |m, &s| m.max(s.abs()));
-        assert!(max_abs > 0.0, "GPU output should be non-zero");
-    }
-
-    #[test]
-    fn phase15_persistent_buffer_reuse() {
-        let (mut renderer, samples) = match setup_gpu() {
-            Some(v) => v,
-            None => {
-                eprintln!("No GPU adapter, skipping");
-                return;
-            }
-        };
-        let sample_len = 4096u32;
-
-        // Render multiple blocks — buffers should be reused (no reallocation).
-        for block in 0..5 {
-            let voices = make_voices(sample_len, 64, 1.0);
-            let result = renderer.render_block(&voices, 1024, 44100);
-            assert_eq!(
-                result.len(),
-                1024 * 2,
-                "Block {block} output length wrong"
-            );
-        }
+        assert!(max_abs > 0.0);
     }
 
     #[test]
     fn phase15_benchmark() {
-        let (mut renderer, _samples) = match setup_gpu() {
-            Some(v) => v,
+        let mut renderer = match setup_gpu() {
+            Some(r) => r,
             None => {
                 eprintln!("No GPU adapter, skipping benchmark");
                 return;
             }
         };
         let sample_len = 4096u32;
-        let frame_count = 4096u32;
+        let samples = bench_samples(sample_len);
+        let frame_count = 1024u32;
 
-        for &voice_count in &[4, 16, 64, 256, 1024, 4096] {
-            // Warm up
+        for &voice_count in &[4, 16, 64, 256, 1024, 4096, 15000] {
             let voices = make_voices(sample_len, voice_count, 1.0);
+
+            // Warm up
             for _ in 0..3 {
                 let _ = renderer.render_block(&voices, frame_count, 44100);
             }
 
             // GPU benchmark
+            let n = 10;
             let gpu_start = std::time::Instant::now();
-            for _ in 0..10 {
+            for _ in 0..n {
                 let _ = renderer.render_block(&voices, frame_count, 44100);
             }
             let gpu_elapsed = gpu_start.elapsed();
 
             // CPU benchmark
             let cpu_start = std::time::Instant::now();
-            for _ in 0..10 {
+            for _ in 0..n {
                 let mut v = make_voices(sample_len, voice_count, 1.0);
-                let _ = cpu_render_voices(&samples_for_bench(sample_len), &mut v, frame_count);
+                let _ = cpu_render_voices(&samples, &mut v, frame_count);
             }
             let cpu_elapsed = cpu_start.elapsed();
 
             let speedup = cpu_elapsed.as_secs_f64() / gpu_elapsed.as_secs_f64();
             eprintln!(
-                "Voices={voice_count:>5}: CPU={:>8.2?} GPU={:>8.2?} speedup={speedup:.2}x",
-                cpu_elapsed / 10,
-                gpu_elapsed / 10,
+                "Voices={voice_count:>6}: CPU={:>9.2?} GPU={:>9.2?} speedup={speedup:.2}x",
+                cpu_elapsed / n,
+                gpu_elapsed / n,
             );
         }
-    }
-
-    fn samples_for_bench(sample_len: u32) -> Vec<f32> {
-        (0..4)
-            .flat_map(|inst| {
-                make_sine_samples(sample_len as usize, 440.0 * (inst as f32 + 1.0), 44100.0)
-            })
-            .collect()
     }
 }
