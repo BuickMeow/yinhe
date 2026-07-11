@@ -373,8 +373,7 @@ impl App {
                                     ui.add_space(12.0);
                                     ui.add(
                                         egui::ProgressBar::new(state.progress)
-                                            .desired_width(240.0)
-                                            .fill(egui::Color32::from_rgb(0x4C, 0xAF, 0x50)),
+                                            .desired_width(240.0),
                                     );
                                     ui.add_space(8.0);
                                     if !state.status.is_empty() {
