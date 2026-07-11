@@ -59,13 +59,20 @@ pub fn export_wav_gpu(
     // ── 2. Load WAV samples ──
     progress(0.02, "加载采样...");
     let t_load = Instant::now();
+    // Deduplicate samples: many keys share the same WAV file.
+    let mut sample_cache: std::collections::HashMap<std::path::PathBuf, (u32, u32)> = std::collections::HashMap::new();
     let mut sample_data: Vec<f32> = Vec::new();
-    let mut sample_offsets: Vec<u32> = vec![0; 128]; // offset per key
+    let mut sample_offsets: Vec<u32> = vec![0; 128];
     let mut sample_lengths: Vec<u32> = vec![0; 128];
 
     for key in 0..128u8 {
         let (ref sample_path, _pkc, _release) = key_map[key as usize];
         if sample_path.to_string_lossy() == "missing" {
+            continue;
+        }
+        if let Some(&(offset, len)) = sample_cache.get(sample_path) {
+            sample_offsets[key as usize] = offset;
+            sample_lengths[key as usize] = len;
             continue;
         }
         let offset = sample_data.len() as u32;
@@ -75,6 +82,7 @@ pub fn export_wav_gpu(
                 sample_data.extend_from_slice(&samples);
                 sample_offsets[key as usize] = offset;
                 sample_lengths[key as usize] = len;
+                sample_cache.insert(sample_path.clone(), (offset, len));
             }
             Err(e) => {
                 eprintln!("[gpu] Warning: failed to load {:?}: {}", sample_path, e);
@@ -100,6 +108,7 @@ pub fn export_wav_gpu(
     // ── 4. Build sorted event list ──
     progress(0.06, "构建事件列表...");
     let t_events = Instant::now();
+    eprintln!("[gpu] Phase 4: building events...");
 
     // Collect all note events (on + off) sorted by sample position
     let mut events: Vec<(u64, u8, u8, u8, bool)> = Vec::new(); // (sample, key, velocity, channel, is_on)
@@ -167,6 +176,7 @@ pub fn export_wav_gpu(
 
     // ── 7. Render loop ──
     progress(0.08, "GPU 渲染中...");
+    let t_render = Instant::now();
     let block_size: u64 = 1024;
     let mut rendered: u64 = 0;
     let mut event_cursor: usize = 0;
@@ -271,6 +281,7 @@ pub fn export_wav_gpu(
     writer.finalize()?;
     let total = t_start.elapsed();
     let rtf = audio_secs / total.as_secs_f64();
+    eprintln!("[gpu] Render loop: {:.2?}", t_render.elapsed());
     eprintln!("[gpu] Export done: {:.2?} (rtf={:.1}x, audio={:.1}s)", total, rtf, audio_secs);
     progress(1.0, "导出完成");
 
