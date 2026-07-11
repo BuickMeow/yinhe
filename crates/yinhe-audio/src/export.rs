@@ -18,7 +18,10 @@ pub struct ExportProgress {
     pub rendered_secs: f64,
     pub started_at: Option<Instant>,
     pub voice_count: u64,
+    /// Real-time speed of the most recent render chunk.
     pub render_speed: f64,
+    /// Overall average speed since rendering started.
+    pub overall_speed: f64,
 }
 
 impl ExportProgress {
@@ -32,6 +35,7 @@ impl ExportProgress {
             started_at: None,
             voice_count: 0,
             render_speed: 0.0,
+            overall_speed: 0.0,
         }))
     }
 
@@ -44,6 +48,7 @@ impl ExportProgress {
         self.started_at = Some(Instant::now());
         self.voice_count = 0;
         self.render_speed = 0.0;
+        self.overall_speed = 0.0;
     }
 }
 
@@ -158,6 +163,8 @@ pub fn export_wav(
 
     let mut chunk = vec![0.0f32; RENDER_CHUNK_FRAMES * STEREO_CHANNELS];
     let mut rendered: u64 = 0;
+    let mut prev_rendered_secs: f64 = 0.0;
+    let mut prev_instant = Instant::now();
 
     // ── Phase 1: render the main content (notes + CC events) ──
     while rendered < main_duration {
@@ -178,12 +185,20 @@ pub fn export_wav(
             if let Ok(mut p) = ep.lock() {
                 p.rendered_secs = rendered as f64 / sample_rate as f64;
                 p.voice_count = engine.voice_count();
+                let now = Instant::now();
+                let dt_wall = prev_instant.elapsed().as_secs_f64();
+                let dt_rendered = p.rendered_secs - prev_rendered_secs;
+                if dt_wall > 0.0 {
+                    p.render_speed = dt_rendered / dt_wall;
+                }
                 if let Some(start) = p.started_at {
                     let elapsed = start.elapsed().as_secs_f64();
                     if elapsed > 0.0 {
-                        p.render_speed = p.rendered_secs / elapsed;
+                        p.overall_speed = p.rendered_secs / elapsed;
                     }
                 }
+                prev_rendered_secs = p.rendered_secs;
+                prev_instant = now;
             }
         }
     }
@@ -224,12 +239,20 @@ pub fn export_wav(
             if let Ok(mut p) = ep.lock() {
                 p.rendered_secs = (rendered + tail_rendered) as f64 / sample_rate as f64;
                 p.voice_count = vc;
+                let now = Instant::now();
+                let dt_wall = prev_instant.elapsed().as_secs_f64();
+                let dt_rendered = p.rendered_secs - prev_rendered_secs;
+                if dt_wall > 0.0 {
+                    p.render_speed = dt_rendered / dt_wall;
+                }
                 if let Some(start) = p.started_at {
                     let elapsed = start.elapsed().as_secs_f64();
                     if elapsed > 0.0 {
-                        p.render_speed = p.rendered_secs / elapsed;
+                        p.overall_speed = p.rendered_secs / elapsed;
                     }
                 }
+                prev_rendered_secs = p.rendered_secs;
+                prev_instant = now;
             }
         }
     }

@@ -339,7 +339,7 @@ impl App {
 
             ctx_clone.show_viewport_immediate(
                 egui::ViewportId::from_hash_of("export_progress_dialog"),
-                crate::chrome::dialog::viewport_builder("导出音频中", [320.0, 280.0], false),
+                crate::chrome::dialog::viewport_builder("导出音频中", [320.0, 310.0], false),
                 move |vctx, _class| {
                     let state = match export_progress.lock() {
                         Ok(s) => s.clone(),
@@ -400,10 +400,19 @@ impl App {
                                             ui.label(format!("{}", state.voice_count));
                                             ui.end_row();
 
-                                            // 渲染倍速
-                                            ui.label("渲染倍速");
+                                            // 实时倍速
+                                            ui.label("实时倍速");
                                             if state.render_speed > 0.0 {
                                                 ui.label(format!("{:.2}x", state.render_speed));
+                                            } else {
+                                                ui.label("—");
+                                            }
+                                            ui.end_row();
+
+                                            // 整体倍速
+                                            ui.label("整体倍速");
+                                            if state.overall_speed > 0.0 {
+                                                ui.label(format!("{:.2}x", state.overall_speed));
                                             } else {
                                                 ui.label("—");
                                             }
