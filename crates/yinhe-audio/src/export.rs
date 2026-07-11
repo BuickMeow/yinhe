@@ -287,7 +287,7 @@ pub fn export_wav(
     Ok(())
 }
 
-fn write_samples(
+pub(crate) fn write_samples(
     writer: &mut hound::WavWriter<std::io::BufWriter<std::fs::File>>,
     buf: &[f32],
     bit_depth: WavBitDepth,

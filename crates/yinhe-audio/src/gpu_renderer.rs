@@ -136,6 +136,39 @@ impl GpuAudioRenderer {
         })
     }
 
+    /// Create a renderer with its own wgpu device/queue (for standalone use).
+    pub fn new_default() -> Result<Self, String> {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::PRIMARY,
+            flags: wgpu::InstanceFlags::default(),
+            memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
+            backend_options: wgpu::BackendOptions::default(),
+            display: None,
+        });
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        }))
+        .map_err(|_| "No GPU adapter found")?;
+        let (device, queue) = pollster::block_on(adapter.request_device(
+            &wgpu::DeviceDescriptor {
+                label: Some("gpu_audio"),
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits {
+                    max_storage_buffer_binding_size: 512 * 1024 * 1024,
+                    max_buffer_size: 512 * 1024 * 1024,
+                    ..wgpu::Limits::default()
+                },
+                memory_hints: wgpu::MemoryHints::default(),
+                experimental_features: wgpu::ExperimentalFeatures::disabled(),
+                trace: wgpu::Trace::Off,
+            },
+        ))
+        .map_err(|e| format!("Failed to create device: {}", e))?;
+        Self::new(Arc::new(device), Arc::new(queue))
+    }
+
     /// Upload soundfont sample data. Call once before rendering begins.
     pub fn upload_samples(&mut self, sample_data: &[f32]) {
         let sample_buf = self
@@ -432,7 +465,11 @@ mod tests {
             &wgpu::DeviceDescriptor {
                 label: Some("test"),
                 required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::default(),
+                required_limits: wgpu::Limits {
+                    max_storage_buffer_binding_size: 512 * 1024 * 1024,
+                    max_buffer_size: 512 * 1024 * 1024,
+                    ..wgpu::Limits::default()
+                },
                 memory_hints: wgpu::MemoryHints::default(),
                 experimental_features: wgpu::ExperimentalFeatures::disabled(),
                 trace: wgpu::Trace::Off,

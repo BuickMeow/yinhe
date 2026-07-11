@@ -8,7 +8,11 @@ mod engine_state;
 pub mod export;
 #[cfg(feature = "gpu")]
 pub mod gpu_renderer;
+#[cfg(feature = "gpu")]
+pub mod gpu_export;
 mod prepare_model;
+#[cfg(feature = "gpu")]
+pub mod sfz_parser;
 pub mod soundfont;
 pub mod spawn;
 
