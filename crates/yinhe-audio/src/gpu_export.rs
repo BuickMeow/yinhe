@@ -1,5 +1,7 @@
-//! GPU-accelerated audio export — replaces CPU xsynth rendering with
-//! direct SFZ loading + MIDI event dispatch + GPU compute shader rendering.
+//! GPU-accelerated audio export — bypasses xsynth, loads SFZ samples directly,
+//! dispatches MIDI events, and renders via GPU compute shader.
+//!
+//! Voice 状态（time/envelope/env_stage）跨块在 CPU 端维护，GPU shader 只读。
 
 use std::path::Path;
 use std::sync::Arc;
@@ -7,25 +9,9 @@ use std::time::Instant;
 
 use crate::audio_model::{AudioModel, tick_to_sample};
 use crate::export::{ExportError, WavBitDepth, write_samples};
-use crate::gpu_renderer::{GpuAudioRenderer, GpuVoiceState};
+use crate::gpu_renderer::{GpuAudioRenderer, GpuVoiceState, advance_voices};
 use crate::sfz_parser;
 use yinhe_core::YinModel;
-
-/// Active voice state tracked on the CPU side.
-struct ActiveVoice {
-    key: u8,
-    velocity: u8,
-    channel: u8,
-    sample_offset: u32,
-    sample_length: u32,
-    pitch_keycenter: u8,
-    release_time: f32,
-    start_sample: u64,
-    end_sample: u64,
-    /// Current time in the sample (for GPU state sync).
-    time: f32,
-    speed: f32,
-}
 
 /// Convert MIDI note number to pitch ratio relative to pitch_keycenter.
 fn pitch_ratio(midi_note: u8, pitch_keycenter: u8) -> f32 {
@@ -33,9 +19,6 @@ fn pitch_ratio(midi_note: u8, pitch_keycenter: u8) -> f32 {
 }
 
 /// Render audio using GPU acceleration.
-///
-/// This bypasses xsynth entirely: loads SFZ samples directly, dispatches
-/// MIDI events, builds GPU voice states, and renders via compute shader.
 pub fn export_wav_gpu(
     model: Arc<YinModel>,
     sample_rate: u32,
@@ -58,7 +41,6 @@ pub fn export_wav_gpu(
     // ── 2. Load WAV samples ──
     progress(0.02, "加载采样...");
     let t_load = Instant::now();
-    // Deduplicate samples: many keys share the same WAV file.
     let mut sample_cache: std::collections::HashMap<std::path::PathBuf, (u32, u32)> = std::collections::HashMap::new();
     let mut sample_data: Vec<f32> = Vec::new();
     let mut sample_offsets: Vec<u32> = vec![0; 128];
@@ -88,12 +70,9 @@ pub fn export_wav_gpu(
             }
         }
     }
-    eprintln!("[gpu] sample_data.len()={} frames, first 5 values: {:?}", sample_data.len(),
-        &sample_data.iter().take(5).collect::<Vec<_>>());
     eprintln!("[gpu] Loaded {} unique samples ({} total frames, {:.2?})",
         key_map.iter().filter(|(p, _, _)| !p.to_string_lossy().contains("missing")).count(),
-        sample_data.len(),
-        t_load.elapsed(),
+        sample_data.len(), t_load.elapsed(),
     );
 
     let audio_model = AudioModel::from_model(&model);
@@ -109,9 +88,6 @@ pub fn export_wav_gpu(
     // ── 4. Build sorted event list ──
     progress(0.06, "构建事件列表...");
     let t_events = Instant::now();
-    eprintln!("[gpu] Phase 4: building events...");
-
-    // Collect all note events (on + off) sorted by sample position
     let mut events: Vec<(u64, u8, u8, u8, bool)> = Vec::new(); // (sample, key, velocity, channel, is_on)
     let segments = &model.tempo_map.tempo_segments;
     let tpb = model.tempo_map.ticks_per_beat;
@@ -119,13 +95,9 @@ pub fn export_wav_gpu(
 
     for key in 0..128usize {
         for note in model.notes[key].iter() {
-            if note.velocity <= 1 {
-                continue;
-            }
+            if note.velocity <= 1 { continue; }
             let track = note.track as usize;
-            if track < skip_tracks.len() && skip_tracks[track] {
-                continue;
-            }
+            if track < skip_tracks.len() && skip_tracks[track] { continue; }
             let ch = audio_model.track_channel(track);
             let start_sample = tick_to_sample(note.start_tick as u64, segments, tpb, sr);
             let end_sample = tick_to_sample(note.end_tick as u64, segments, tpb, sr);
@@ -141,21 +113,15 @@ pub fn export_wav_gpu(
         let mut max_sample = 0u64;
         for key in 0..128usize {
             if let Some(last_note) = model.notes[key].last() {
-                let end = tick_to_sample(
-                    last_note.end_tick as u64, segments, tpb, sr,
-                );
-                if end > max_sample {
-                    max_sample = end;
-                }
+                let end = tick_to_sample(last_note.end_tick as u64, segments, tpb, sr);
+                if end > max_sample { max_sample = end; }
             }
         }
         max_sample
     };
-
     if main_duration == 0 {
         return Err(ExportError::Render("歌曲时长为零".into()));
     }
-
     let audio_secs = main_duration as f64 / sample_rate as f64;
     eprintln!("[gpu] Duration: {:.1}s, {} blocks", audio_secs, main_duration / 1024);
 
@@ -179,118 +145,84 @@ pub fn export_wav_gpu(
     progress(0.08, "GPU 渲染中...");
     let t_render = Instant::now();
     let block_size: u64 = 1024;
-    let mut has_compared = false;
     let mut rendered: u64 = 0;
     let mut event_cursor: usize = 0;
-    let mut active_voices: Vec<ActiveVoice> = Vec::new();
+
+    // 持久 voice 状态：跨块维护 time/envelope/env_stage
+    let mut voices: Vec<GpuVoiceState> = Vec::new();
+    let mut voice_keys: Vec<u8> = Vec::new(); // 每个 voice 对应的 MIDI key
     let mut output = vec![0.0f32; block_size as usize * 2];
-    let mut gpu_voices: Vec<GpuVoiceState> = Vec::new();
 
     while rendered < main_duration {
         let block_end = (rendered + block_size).min(main_duration);
-        let frames = (block_end - rendered) as usize;
+        let frames = (block_end - rendered) as u32;
 
-        // ── 7a. Dispatch events in this block ──
-        // NoteOn events
+        // ── 7a. Dispatch events ──
         while event_cursor < events.len() {
-            let (sample, key, vel, ch, is_on) = events[event_cursor];
-            if sample > block_end {
-                break;
-            }
+            let (sample, key, vel, _ch, is_on) = events[event_cursor];
+            if sample > block_end { break; }
             if sample >= rendered {
                 if is_on {
-                    // Find sample data for this key
                     let offset = sample_offsets[key as usize];
                     let length = sample_lengths[key as usize];
                     if length > 0 {
-                        let (_, pkc, release) = key_map[key as usize];
+                        let (_, pkc, _release) = key_map[key as usize];
                         let speed = pitch_ratio(key, pkc);
-                        active_voices.push(ActiveVoice {
-                            key,
-                            velocity: vel,
-                            channel: ch,
+                        let gain = vel as f32 / 127.0;
+                        let start_offset = (sample - rendered) as u32;
+                        voices.push(GpuVoiceState {
                             sample_offset: offset,
                             sample_length: length,
-                            pitch_keycenter: pkc,
-                            release_time: release,
-                            start_sample: sample,
-                            end_sample: 0, // will be set by NoteOff
-                            time: 0.0,
                             speed,
+                            gain,
+                            time: 0.0,
+                            envelope: 0.0,
+                            env_stage: 0,
+                            env_level: gain,
+                            start_offset,
                         });
+                        voice_keys.push(key);
                     }
                 } else {
-                    // NoteOff — find and remove matching voice
-                    if let Some(pos) = active_voices.iter().position(|v| v.key == key && v.end_sample == 0) {
-                        active_voices[pos].end_sample = sample;
+                    // NoteOff → 触发 release（匹配最近的同 key voice）
+                    for i in (0..voices.len()).rev() {
+                        if voice_keys[i] == key && voices[i].env_stage < 3u32 {
+                            voices[i].env_stage = 3;
+                            break;
+                        }
                     }
                 }
             }
             event_cursor += 1;
         }
 
-        // Remove voices that have ended
-        active_voices.retain(|v| v.end_sample == 0 || v.end_sample > rendered);
-
-        // ── 7b. Build GPU voice states ──
-        gpu_voices.clear();
-        for v in &active_voices {
-            let gain = v.velocity as f32 / 127.0;
-            // Time offset within this block:
-            // - If voice started BEFORE this block: time = 0 (play from sample start)
-            // - If voice started WITHIN this block: time = (start - rendered) * speed
-            let time = if v.start_sample > rendered {
-                (v.start_sample - rendered) as f32 * v.speed
+        // ── 7b. 移除已结束的 voice ──
+        let mut i = 0;
+        while i < voices.len() {
+            if voices[i].env_stage >= 4 || (voices[i].time as u32) >= voices[i].sample_length {
+                voices.swap_remove(i);
+                voice_keys.swap_remove(i);
             } else {
-                0.0
-            };
-
-            gpu_voices.push(GpuVoiceState {
-                sample_offset: v.sample_offset,
-                sample_length: v.sample_length,
-                speed: v.speed,
-                gain,
-                time,
-                envelope: 0.0,
-                env_stage: 0,
-                env_level: gain,
-                _pad: 0,
-            });
+                i += 1;
+            }
         }
 
         // ── 7c. GPU render ──
         output.fill(0.0);
-        if !gpu_voices.is_empty() {
-            let gpu_out = renderer.render_block(&gpu_voices, frames as u32, sample_rate);
-            let copy_frames = frames.min(gpu_out.len() / 2);
-            for i in 0..copy_frames {
-                output[i * 2] = gpu_out[i * 2];
-                output[i * 2 + 1] = gpu_out[i * 2 + 1];
-            }
-            // Debug: compare GPU vs CPU for first block with many voices
-            if gpu_voices.len() > 100 && !has_compared {
-                let mut cpu_voices = gpu_voices.clone();
-                let cpu_out = crate::gpu_renderer::cpu_render_voices(
-                    &sample_data, &mut cpu_voices, frames as u32,
-                );
-                let mut max_diff = 0.0f32;
-                for i in 0..(frames * 2).min(2048) {
-                    let d = (output[i] - cpu_out[i]).abs();
-                    if d > max_diff { max_diff = d; }
-                }
-                eprintln!("[gpu] Block at sample {}: max_diff={:.6} gpu[0]={:.6} cpu[0]={:.6}",
-                    rendered, max_diff, output[0], cpu_out[0]);
-                has_compared = true;
-            }
+        if !voices.is_empty() {
+            let gpu_out = renderer.render_block(&voices, frames, sample_rate);
+            output[..frames as usize * 2].copy_from_slice(&gpu_out[..frames as usize * 2]);
         }
 
-        // ── 7d. Write to WAV ──
-        let buf = &output[..frames * 2];
+        // ── 7d. 推进 voice 状态 ──
+        advance_voices(&mut voices, frames);
+
+        // ── 7e. Write to WAV ──
+        let buf = &output[..frames as usize * 2];
         write_samples(&mut writer, buf, bit_depth)?;
 
         rendered = block_end;
 
-        // Progress update every ~100 blocks
         if rendered % (block_size * 100) < block_size {
             let pct = 0.08 + (rendered as f32 / main_duration as f32) * 0.90;
             progress(pct, &format!("GPU 渲染中 {:.0}%", pct * 100.0));
@@ -314,11 +246,8 @@ mod tests {
 
     #[test]
     fn pitch_ratio_test() {
-        // Middle C (60) relative to itself should be 1.0
         assert!((pitch_ratio(60, 60) - 1.0).abs() < 0.001);
-        // One octave up should be 2.0
         assert!((pitch_ratio(72, 60) - 2.0).abs() < 0.001);
-        // One octave down should be 0.5
         assert!((pitch_ratio(48, 60) - 0.5).abs() < 0.001);
     }
 
@@ -339,7 +268,6 @@ mod tests {
         eprintln!("=== GPU Export Benchmark ===");
         let tmp = tempfile::NamedTempFile::new().unwrap();
 
-        // Create GPU device/queue
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::PRIMARY,
             flags: wgpu::InstanceFlags::default(),
@@ -390,10 +318,7 @@ mod tests {
                 let rtf = audio_secs / elapsed.as_secs_f64();
                 eprintln!(
                     "=== GPU DONE === time={:.2?} file={}MB rtf={:.1}x audio={:.1}s",
-                    elapsed,
-                    file_size / 1024 / 1024,
-                    rtf,
-                    audio_secs,
+                    elapsed, file_size / 1024 / 1024, rtf, audio_secs,
                 );
             }
             Err(e) => {

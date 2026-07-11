@@ -1,5 +1,5 @@
-// GPU audio voice rendering — single-pass, TILE=1, multi-chunk samples.
-// 8 storage buffer limit: voice_states + final_output + chunk_offsets(uniform) + 5 sample chunks.
+// GPU audio voice rendering — single-pass, per-frame workgroup, read-only voice states.
+// 每个workgroup渲染一个frame，所有voice state只读，无数据竞争。
 
 struct RenderParams {
     frame_count: u32,
@@ -17,17 +17,18 @@ struct VoiceState {
     envelope: f32,
     env_stage: u32,
     env_level: f32,
-    _pad2: u32,
+    start_offset: u32,
 };
 
-// Bindings (8 storage buffers max):
-// 0: params (uniform) + chunk_offsets (packed after params)
-// 1: voice_states (storage read_write)
+// Bindings:
+// 0: params (uniform)
+// 1: voice_states (storage read_only — CPU跨块维护)
 // 2: final_output (storage read_write)
 // 3-7: 5 sample chunks (storage read)
+// 8: chunk_offsets (uniform)
 
 @group(0) @binding(0) var<uniform> params: RenderParams;
-@group(0) @binding(1) var<storage, read_write> voice_states: array<VoiceState>;
+@group(0) @binding(1) var<storage, read> voice_states: array<VoiceState>;
 @group(0) @binding(2) var<storage, read_write> final_output: array<f32>;
 @group(0) @binding(3) var<storage, read> chunk_0: array<f32>;
 @group(0) @binding(4) var<storage, read> chunk_1: array<f32>;
@@ -35,13 +36,12 @@ struct VoiceState {
 @group(0) @binding(6) var<storage, read> chunk_3: array<f32>;
 @group(0) @binding(7) var<storage, read> chunk_4: array<f32>;
 
-// Chunk offsets in a uniform struct (max 5 chunks + 1 sentinel = 6 u32)
 const MAX_CHUNKS: u32 = 5u;
-const CHUNK_SIZE: u32 = 30000000u; // 30M f32 = 120MB per chunk
+const CHUNK_SIZE: u32 = 30000000u;
 
 struct ChunkOffsets {
     o0: u32, o1: u32, o2: u32, o3: u32, o4: u32, total: u32,
-    _pad0: u32, _pad1: u32, // pad to 32 bytes (16-byte alignment)
+    _pad0: u32, _pad1: u32,
 };
 
 @group(0) @binding(8) var<uniform> chunk_off: ChunkOffsets;
@@ -85,10 +85,37 @@ fn sample_at(global_idx: u32) -> f32 {
     }
 }
 
+/// 根据voice的初始状态和frame偏移，计算该frame的envelope值。
+/// 与CPU实现完全对应：每帧推进ADSR。
+fn envelope_at(initial_env: f32, initial_stage: u32, env_level: f32, frame_offset: u32) -> f32 {
+    var env = initial_env;
+    var stage = initial_stage;
+    for (var i: u32 = 0u; i < frame_offset; i++) {
+        if stage >= 4u { break; }
+        switch stage {
+            case 0u: {
+                env += ATTACK_RATE;
+                if env >= env_level { env = env_level; stage = 1u; }
+            }
+            case 1u: {
+                env -= DECAY_RATE;
+                if env <= SUSTAIN_LEVEL { env = SUSTAIN_LEVEL; stage = 2u; }
+            }
+            case 2u: { }
+            case 3u: {
+                env -= RELEASE_RATE;
+                if env <= 0.0 { env = 0.0; stage = 4u; }
+            }
+            default: { break; }
+        }
+    }
+    return env;
+}
+
 @compute @workgroup_size(256)
-fn vs_main(@builtin(global_invocation_id) gid: vec3<u32>,
+fn vs_main(@builtin(workgroup_id) wid: vec3<u32>,
            @builtin(local_invocation_id) lid: vec3<u32>) {
-    let fi = gid.x;
+    let fi = wid.x;  // frame index = workgroup id
     let fc = params.frame_count;
     let vc = params.voice_count;
     if fi >= fc { return; }
@@ -104,30 +131,30 @@ fn vs_main(@builtin(global_invocation_id) gid: vec3<u32>,
         let voice = &voice_states[v];
         if (*voice).env_stage >= 4u { continue; }
 
-        switch (*voice).env_stage {
-            case 0u: { (*voice).envelope += ATTACK_RATE; if (*voice).envelope >= (*voice).env_level { (*voice).envelope = (*voice).env_level; (*voice).env_stage = 1u; } }
-            case 1u: { (*voice).envelope -= DECAY_RATE; if (*voice).envelope <= SUSTAIN_LEVEL { (*voice).envelope = SUSTAIN_LEVEL; (*voice).env_stage = 2u; } }
-            case 2u: { }
-            case 3u: { (*voice).envelope -= RELEASE_RATE; if (*voice).envelope <= 0.0 { (*voice).envelope = 0.0; (*voice).env_stage = 4u; } }
-            default: { continue; }
-        }
+        // 跳过voice尚未开始的帧
+        if fi < (*voice).start_offset { continue; }
+        let frame_in_voice = fi - (*voice).start_offset;
 
-        let t = (*voice).time;
+        // 计算当前frame的采样位置
+        let t = (*voice).time + f32(frame_in_voice) * (*voice).speed;
         let idx = u32(t);
         let frac = t - f32(idx);
         let max_idx = (*voice).sample_length - 1u;
+        if idx >= (*voice).sample_length { continue; }
+
         let a = sample_at((*voice).sample_offset + min(idx, max_idx));
         let b = sample_at((*voice).sample_offset + min(idx + 1u, max_idx));
-        let s = mix(a, b, frac) * (*voice).gain * (*voice).envelope;
+        let env = envelope_at((*voice).envelope, (*voice).env_stage, (*voice).env_level, frame_in_voice);
+        let s = mix(a, b, frac) * (*voice).gain * env;
         my_left += s;
         my_right += s;
-        (*voice).time += (*voice).speed;
     }
 
     shared_left[lid.x] = my_left;
     shared_right[lid.x] = my_right;
     workgroupBarrier();
 
+    // 树形归约
     var stride = 128u;
     while stride > 0u {
         if lid.x < stride {
