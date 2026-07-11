@@ -14,7 +14,10 @@ pub struct SfzKeyInfo {
     pub volume: f32,       // dB → 线性增益
     pub pan: f32,          // -1 (左) .. +1 (右)
     pub offset: u32,       // 采样起始偏移
+    pub ampeg_start: f32,  // envelope 起始值 (0..1)
+    pub ampeg_delay: f32,
     pub ampeg_attack: f32,
+    pub ampeg_hold: f32,
     pub ampeg_decay: f32,
     pub ampeg_sustain: f32,   // 0..1 (SFZ 是 0..100，已转换)
     pub ampeg_release: f32,
@@ -24,6 +27,7 @@ pub struct SfzKeyInfo {
     pub loop_start: u32,
     pub loop_end: u32,
     pub amp_veltrack: f32,
+    pub sample_rate: u32,  // 采样文件的原始采样率
 }
 
 /// 采样循环模式（与 xsynth LoopMode 对应）
@@ -44,7 +48,10 @@ impl Default for SfzKeyInfo {
             volume: 1.0,
             pan: 0.0,
             offset: 0,
+            ampeg_start: 0.0,
+            ampeg_delay: 0.0,
             ampeg_attack: 0.01,
+            ampeg_hold: 0.0,
             ampeg_decay: 0.0,
             ampeg_sustain: 1.0,
             ampeg_release: 0.01,
@@ -54,6 +61,7 @@ impl Default for SfzKeyInfo {
             loop_start: 0,
             loop_end: 0,
             amp_veltrack: 100.0,
+            sample_rate: 44100,
         }
     }
 }
@@ -91,7 +99,10 @@ pub fn build_key_map_from_sfz(sfz_path: &Path) -> Result<Vec<Vec<SfzKeyInfo>>, S
             volume: vol_linear,
             pan: pan_norm,
             offset: region.offset,
+            ampeg_start: region.ampeg_envelope.ampeg_start,
+            ampeg_delay: region.ampeg_envelope.ampeg_delay,
             ampeg_attack: region.ampeg_envelope.ampeg_attack.max(0.001),
+            ampeg_hold: region.ampeg_envelope.ampeg_hold,
             ampeg_decay: region.ampeg_envelope.ampeg_decay.max(0.001),
             ampeg_sustain: sustain_norm,
             ampeg_release: region.ampeg_envelope.ampeg_release.max(0.001),
@@ -101,6 +112,7 @@ pub fn build_key_map_from_sfz(sfz_path: &Path) -> Result<Vec<Vec<SfzKeyInfo>>, S
             loop_start: region.loop_start,
             loop_end: region.loop_end,
             amp_veltrack: region.amp_veltrack,
+            sample_rate: 44100, // 默认值，load_wav_as_f32 会更新
         };
 
         for key in region.keyrange.clone() {
@@ -137,7 +149,8 @@ pub fn select_key_info<'a>(key_map: &'a [Vec<SfzKeyInfo>], key: u8, velocity: u8
 }
 
 /// Load a WAV file as f32 samples (mono, normalized to -1..1).
-pub fn load_wav_as_f32(path: &Path) -> Result<Vec<f32>, String> {
+/// 返回 (samples, sample_rate)。
+pub fn load_wav_as_f32(path: &Path) -> Result<(Vec<f32>, u32), String> {
     let mut reader = hound::WavReader::open(path)
         .map_err(|e| format!("Failed to open WAV {:?}: {}", path, e))?;
 
@@ -161,8 +174,8 @@ pub fn load_wav_as_f32(path: &Path) -> Result<Vec<f32>, String> {
         _ => return Err(format!("Unsupported bit depth: {}", spec.bits_per_sample)),
     };
 
-    if spec.channels == 2 {
-        let mono: Vec<f32> = samples
+    let mono: Vec<f32> = if spec.channels == 2 {
+        samples
             .chunks(2)
             .map(|pair| {
                 if pair.len() == 2 {
@@ -171,9 +184,10 @@ pub fn load_wav_as_f32(path: &Path) -> Result<Vec<f32>, String> {
                     pair[0]
                 }
             })
-            .collect();
-        Ok(mono)
+            .collect()
     } else {
-        Ok(samples)
-    }
+        samples
+    };
+
+    Ok((mono, spec.sample_rate))
 }

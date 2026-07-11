@@ -1,6 +1,6 @@
 // GPU audio voice rendering — single-pass, per-frame workgroup, read-only voice states.
-// 每个workgroup渲染一个frame，所有voice state只读，无数据竞争。
-// ADSR/pan/volume 参数从 SFZ 读取，通过 voice state 传入。
+// 7 阶段 envelope: Delay→Attack→Hold→Decay→Sustain→Release→Finished
+// Attack=线性, Decay/Release=指数(1-t)^8（与 XSynth 默认一致）
 
 struct RenderParams {
     frame_count: u32,
@@ -10,24 +10,34 @@ struct RenderParams {
 };
 
 struct VoiceState {
+    // Sample playback
     sample_offset: u32,
     sample_length: u32,
     speed: f32,
     gain: f32,
     time: f32,
-    envelope: f32,
-    env_stage: u32,
-    env_level: f32,
     start_offset: u32,
-    attack_rate: f32,
-    decay_rate: f32,
+    // Envelope state at start of block
+    envelope: f32,
+    env_stage: u32,      // 0=Delay..6=Finished
+    stage_progress: f32,
+    // Envelope parameters
+    env_level: f32,
     sustain_level: f32,
-    release_rate: f32,
+    env_start: f32,
+    // Stage durations (frames)
+    delay_frames: f32,
+    attack_frames: f32,
+    hold_frames: f32,
+    decay_frames: f32,
+    release_frames: f32,
+    // Pan
     pan_left: f32,
     pan_right: f32,
+    // Loop
     loop_start: u32,
     loop_end: u32,
-    loop_mode: u32,  // 0=NoLoop, 1=LoopContinuous, 2=LoopSustain, 3=OneShot
+    loop_mode: u32,
 };
 
 @group(0) @binding(0) var<uniform> params: RenderParams;
@@ -38,9 +48,6 @@ struct VoiceState {
 @group(0) @binding(5) var<storage, read> chunk_2: array<f32>;
 @group(0) @binding(6) var<storage, read> chunk_3: array<f32>;
 @group(0) @binding(7) var<storage, read> chunk_4: array<f32>;
-
-const MAX_CHUNKS: u32 = 5u;
-const CHUNK_SIZE: u32 = 30000000u;
 
 struct ChunkOffsets {
     o0: u32, o1: u32, o2: u32, o3: u32, o4: u32, total: u32,
@@ -83,58 +90,37 @@ fn sample_at(global_idx: u32) -> f32 {
     }
 }
 
-/// 用解析公式计算 frame_offset 处的 envelope 值。
-/// ADSR 每个阶段都是线性斜坡，通过计算阶段转折帧数来直接得出结果。
+/// 用解析公式计算 frame_offset 处的 envelope 值（内联到调用处）。
+/// 7 阶段: 0=Delay, 1=Attack(线性), 2=Hold, 3=Decay(指数), 4=Sustain, 5=Release(指数), 6=Finished
 fn envelope_at(
-    initial_env: f32, initial_stage: u32, env_level: f32,
-    attack_rate: f32, decay_rate: f32, sustain_level: f32, release_rate: f32,
-    frame_offset: u32,
+    stage: u32, progress: f32,
+    env_start: f32, env_level: f32, sustain_level: f32,
+    delay_frames: f32, attack_frames: f32, hold_frames: f32,
+    decay_frames: f32, release_frames: f32,
 ) -> f32 {
-    if frame_offset == 0u { return initial_env; }
+    if stage >= 6u { return 0.0; }
 
-    var env = initial_env;
-    var remaining = f32(frame_offset);
+    let peak = env_level;
+    let sus = sustain_level * peak;
 
-    // Attack: 从 env 上升到 env_level
-    if initial_stage <= 0u {
-        let env_to_peak = max(env_level - env, 0.0);
-        let attack_frames = env_to_peak / attack_rate;
-        if remaining <= attack_frames {
-            return env + attack_rate * remaining;
+    switch stage {
+        case 0u: { return env_start; } // Delay
+        case 1u: { // Attack: 线性
+            let t = select(1.0, progress / attack_frames, attack_frames > 0.0);
+            return env_start + (peak - env_start) * min(t, 1.0);
         }
-        env = env_level;
-        remaining -= attack_frames;
-    }
-
-    // Decay: 从 env_level 下降到 sustain * env_level
-    if initial_stage <= 1u {
-        let sus = sustain_level * env_level;
-        let env_to_sus = max(env - sus, 0.0);
-        let decay_frames = env_to_sus / decay_rate;
-        if remaining <= decay_frames {
-            return env - decay_rate * remaining;
+        case 2u: { return peak; } // Hold
+        case 3u: { // Decay: 指数 (1-t)^8
+            let t = select(1.0, progress / decay_frames, decay_frames > 0.0);
+            return sus + (peak - sus) * pow(1.0 - min(t, 1.0), 8.0);
         }
-        env = sus;
-        remaining -= decay_frames;
-    }
-
-    // Sustain: 保持不变
-    if initial_stage <= 2u {
-        let sus = sustain_level * env_level;
-        if initial_stage == 2u {
-            return sus; // sustain 永远不变（release 由 NoteOff 触发）
+        case 4u: { return sus; } // Sustain
+        case 5u: { // Release: 指数 (1-t)^8，从 release 起始值衰减到 0
+            let t = select(1.0, progress / release_frames, release_frames > 0.0);
+            return env_start * pow(1.0 - min(t, 1.0), 8.0);
         }
-        // 刚从 decay 进入 sustain
-        return sus;
+        default: { return 0.0; }
     }
-
-    // Release: 从 env 下降到 0
-    // initial_stage == 3
-    let release_frames = env / release_rate;
-    if remaining <= release_frames {
-        return env - release_rate * remaining;
-    }
-    return 0.0;
 }
 
 @compute @workgroup_size(256)
@@ -154,17 +140,18 @@ fn vs_main(@builtin(workgroup_id) wid: vec3<u32>,
         let v = lid.x + iter * threads;
         if v >= vc { break; }
         let voice = &voice_states[v];
-        if (*voice).env_stage >= 4u { continue; }
+        if (*voice).env_stage >= 6u { continue; }
 
         if fi < (*voice).start_offset { continue; }
         let frame_in_voice = fi - (*voice).start_offset;
+        let progress = (*voice).stage_progress + f32(frame_in_voice);
 
         let t = (*voice).time + f32(frame_in_voice) * (*voice).speed;
         var idx = u32(t);
         let frac = t - f32(idx);
         let max_idx = (*voice).sample_length - 1u;
 
-        // 循环处理：loop_mode != 0 且 loop_end > loop_start
+        // 循环处理
         let has_loop = (*voice).loop_mode > 0u && (*voice).loop_end > (*voice).loop_start;
         if has_loop && idx >= (*voice).loop_end {
             let loop_len = (*voice).loop_end - (*voice).loop_start;
@@ -178,10 +165,10 @@ fn vs_main(@builtin(workgroup_id) wid: vec3<u32>,
         let a = sample_at((*voice).sample_offset + min(idx, max_idx));
         let b = sample_at((*voice).sample_offset + min(idx + 1u, max_idx));
         let env = envelope_at(
-            (*voice).envelope, (*voice).env_stage, (*voice).env_level,
-            (*voice).attack_rate, (*voice).decay_rate,
-            (*voice).sustain_level, (*voice).release_rate,
-            frame_in_voice,
+            (*voice).env_stage, progress,
+            (*voice).env_start, (*voice).env_level, (*voice).sustain_level,
+            (*voice).delay_frames, (*voice).attack_frames, (*voice).hold_frames,
+            (*voice).decay_frames, (*voice).release_frames,
         );
         let s = mix(a, b, frac) * (*voice).gain * env;
         my_left += s * (*voice).pan_left;
@@ -203,10 +190,7 @@ fn vs_main(@builtin(workgroup_id) wid: vec3<u32>,
     }
 
     if lid.x == 0u {
-        // hard clip 限幅
-        let l = clamp(shared_left[0], -1.0, 1.0);
-        let r = clamp(shared_right[0], -1.0, 1.0);
-        final_output[fi * 2u] = l;
-        final_output[fi * 2u + 1u] = r;
+        final_output[fi * 2u] = shared_left[0];
+        final_output[fi * 2u + 1u] = shared_right[0];
     }
 }

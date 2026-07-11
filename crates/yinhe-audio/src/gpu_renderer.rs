@@ -14,25 +14,33 @@ const CHUNK_SIZE: usize = 30_000_000; // 30M f32 = 120MB per chunk
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct GpuVoiceState {
+    // Sample playback
     pub sample_offset: u32,
     pub sample_length: u32,
     pub speed: f32,
-    pub gain: f32,          // velocity * volume * amp_veltrack 综合增益
+    pub gain: f32,
     pub time: f32,
-    pub envelope: f32,
-    pub env_stage: u32,
-    pub env_level: f32,     // = gain
     pub start_offset: u32,  // 块内起始帧偏移
-    // ADSR 参数（从 SFZ 读取，以"每帧增量"形式存储）
-    pub attack_rate: f32,   // 1/(attack*sample_rate)
-    pub decay_rate: f32,    // (1-sustain)/(decay*sample_rate)
-    pub sustain_level: f32, // 0..1
-    pub release_rate: f32,  // 1/(release*sample_rate)
-    pub pan_left: f32,      // 声像左增益
-    pub pan_right: f32,     // 声像右增益
-    // Loop 参数
-    pub loop_start: u32,    // 循环起始（0 = 无循环）
-    pub loop_end: u32,      // 循环结束（0 = 无循环）
+    // Envelope state at start of block
+    pub envelope: f32,       // 当前 envelope 值
+    pub env_stage: u32,      // 0=Delay,1=Attack,2=Hold,3=Decay,4=Sustain,5=Release,6=Finished
+    pub stage_progress: f32, // 当前阶段已用帧数
+    // Envelope parameters
+    pub env_level: f32,      // peak = gain
+    pub sustain_level: f32,  // 0..1
+    pub env_start: f32,      // ampeg_start (0..1)
+    // Stage durations (frames)
+    pub delay_frames: f32,
+    pub attack_frames: f32,
+    pub hold_frames: f32,
+    pub decay_frames: f32,
+    pub release_frames: f32,
+    // Pan
+    pub pan_left: f32,
+    pub pan_right: f32,
+    // Loop
+    pub loop_start: u32,
+    pub loop_end: u32,
     pub loop_mode: u32,     // 0=NoLoop, 1=LoopContinuous, 2=LoopSustain, 3=OneShot
 }
 
@@ -46,13 +54,13 @@ pub struct RenderParams {
     pub sample_chunk_count: u32,
 }
 
-/// CPU 端推进 voice 状态：time 和 envelope 推进实际活跃帧数。
-/// 在每个 render_block 之后调用，为下一个块准备状态。
+/// CPU 端推进 voice 状态：用解析公式直接计算，不逐帧迭代。
+/// 7 阶段: 0=Delay, 1=Attack(线性), 2=Hold, 3=Decay(指数), 4=Sustain, 5=Release(指数), 6=Finished
 pub fn advance_voices(voices: &mut [GpuVoiceState], frame_count: u32) {
     for voice in voices.iter_mut() {
         let active_frames = frame_count.saturating_sub(voice.start_offset);
         voice.start_offset = 0;
-        if voice.env_stage >= 4 { continue; }
+        if voice.env_stage >= 6 || active_frames == 0 { continue; }
         voice.time += voice.speed * active_frames as f32;
 
         // 循环回绕
@@ -64,23 +72,76 @@ pub fn advance_voices(voices: &mut [GpuVoiceState], frame_count: u32) {
             }
         }
 
-        for _ in 0..active_frames {
+        let peak = voice.env_level;
+        let sus = voice.sustain_level * peak;
+        let mut remaining = active_frames as f32;
+
+        while remaining > 0.0 && voice.env_stage < 6 {
             match voice.env_stage {
-                0 => {
-                    voice.envelope += voice.attack_rate;
-                    if voice.envelope >= voice.env_level { voice.envelope = voice.env_level; voice.env_stage = 1; }
-                }
-                1 => {
-                    voice.envelope -= voice.decay_rate;
-                    if voice.envelope <= voice.sustain_level * voice.env_level {
-                        voice.envelope = voice.sustain_level * voice.env_level;
-                        voice.env_stage = 2;
+                0 => { // Delay
+                    let dur = voice.delay_frames - voice.stage_progress;
+                    if remaining < dur {
+                        voice.stage_progress += remaining;
+                        remaining = 0.0;
+                    } else {
+                        remaining -= dur;
+                        voice.env_stage = 1;
+                        voice.stage_progress = 0.0;
                     }
                 }
-                2 => {}
-                3 => {
-                    voice.envelope -= voice.release_rate;
-                    if voice.envelope <= 0.0 { voice.envelope = 0.0; voice.env_stage = 4; }
+                1 => { // Attack: 线性
+                    let dur = voice.attack_frames - voice.stage_progress;
+                    if remaining < dur {
+                        let t = (voice.stage_progress + remaining) / voice.attack_frames;
+                        voice.envelope = voice.env_start + (peak - voice.env_start) * t;
+                        voice.stage_progress += remaining;
+                        remaining = 0.0;
+                    } else {
+                        voice.envelope = peak;
+                        remaining -= dur;
+                        voice.env_stage = 2;
+                        voice.stage_progress = 0.0;
+                    }
+                }
+                2 => { // Hold
+                    let dur = voice.hold_frames - voice.stage_progress;
+                    if remaining < dur {
+                        voice.stage_progress += remaining;
+                        remaining = 0.0;
+                    } else {
+                        remaining -= dur;
+                        voice.env_stage = 3;
+                        voice.stage_progress = 0.0;
+                    }
+                }
+                3 => { // Decay: 指数 (1-t)^8
+                    let dur = voice.decay_frames - voice.stage_progress;
+                    if remaining < dur {
+                        let t = (voice.stage_progress + remaining) / voice.decay_frames;
+                        voice.envelope = sus + (peak - sus) * (1.0 - t).powi(8);
+                        voice.stage_progress += remaining;
+                        remaining = 0.0;
+                    } else {
+                        voice.envelope = sus;
+                        remaining -= dur;
+                        voice.env_stage = 4;
+                        voice.stage_progress = 0.0;
+                    }
+                }
+                4 => { remaining = 0.0; } // Sustain: 无限
+                5 => { // Release: 指数 (1-t)^8
+                    let dur = voice.release_frames - voice.stage_progress;
+                    if remaining < dur {
+                        let t = (voice.stage_progress + remaining) / voice.release_frames;
+                        voice.envelope = voice.env_start * (1.0 - t).powi(8);
+                        voice.stage_progress += remaining;
+                        remaining = 0.0;
+                    } else {
+                        voice.envelope = 0.0;
+                        remaining -= dur;
+                        voice.env_stage = 6;
+                        voice.stage_progress = 0.0;
+                    }
                 }
                 _ => break,
             }
@@ -404,6 +465,7 @@ impl GpuAudioRenderer {
 }
 
 /// CPU reference implementation (与 GPU shader 逻辑完全对应).
+/// 7 阶段: 0=Delay, 1=Attack, 2=Hold, 3=Decay, 4=Sustain, 5=Release, 6=Finished
 pub fn cpu_render_voices(
     sample_data: &[f32],
     voices: &mut [GpuVoiceState],
@@ -412,18 +474,33 @@ pub fn cpu_render_voices(
     let mut output = vec![0.0f32; frame_count as usize * 2];
     for voice in voices.iter_mut() {
         for fi in 0..frame_count as usize {
-            if voice.env_stage >= 4 { continue; }
+            if voice.env_stage >= 6 { continue; }
             if fi < voice.start_offset as usize { continue; }
             let frame_in_voice = fi - voice.start_offset as usize;
 
-            // ADSR 推进
-            match voice.env_stage {
-                0 => { voice.envelope += voice.attack_rate; if voice.envelope >= voice.env_level { voice.envelope = voice.env_level; voice.env_stage = 1; } }
-                1 => { voice.envelope -= voice.decay_rate; if voice.envelope <= voice.sustain_level * voice.env_level { voice.envelope = voice.sustain_level * voice.env_level; voice.env_stage = 2; } }
-                2 => {}
-                3 => { voice.envelope -= voice.release_rate; if voice.envelope <= 0.0 { voice.envelope = 0.0; voice.env_stage = 4; } }
-                _ => {}
-            }
+            let peak = voice.env_level;
+            let sus = voice.sustain_level * peak;
+            let progress = voice.stage_progress + frame_in_voice as f32;
+
+            // 解析计算 envelope
+            let env = match voice.env_stage {
+                0 => voice.env_start, // Delay
+                1 => { // Attack: 线性
+                    let t = if voice.attack_frames > 0.0 { (progress / voice.attack_frames).min(1.0) } else { 1.0 };
+                    voice.env_start + (peak - voice.env_start) * t
+                }
+                2 => peak, // Hold
+                3 => { // Decay: 指数 (1-t)^8
+                    let t = if voice.decay_frames > 0.0 { (progress / voice.decay_frames).min(1.0) } else { 1.0 };
+                    sus + (peak - sus) * (1.0 - t).powi(8)
+                }
+                4 => sus, // Sustain
+                5 => { // Release: 指数 (1-t)^8
+                    let t = if voice.release_frames > 0.0 { (progress / voice.release_frames).min(1.0) } else { 1.0 };
+                    voice.env_start * (1.0 - t).powi(8)
+                }
+                _ => 0.0,
+            };
 
             let t = voice.time + frame_in_voice as f32 * voice.speed;
             let mut idx = t as u32;
@@ -443,7 +520,7 @@ pub fn cpu_render_voices(
             let a = sample_data[voice.sample_offset as usize + (idx as usize).min(max_idx as usize)];
             let b = sample_data[voice.sample_offset as usize + ((idx + 1) as usize).min(max_idx as usize)];
             let sample = a + (b - a) * frac;
-            let out = sample * voice.gain * voice.envelope;
+            let out = sample * voice.gain * env;
             output[fi * 2] += out * voice.pan_left;
             output[fi * 2 + 1] += out * voice.pan_right;
         }
@@ -451,6 +528,8 @@ pub fn cpu_render_voices(
         voice.time += voice.speed * active_frames as f32;
         voice.start_offset = 0;
     }
+    // advance_voices handles the state progression
+    advance_voices(voices, frame_count);
     output
 }
 
@@ -465,8 +544,11 @@ mod tests {
     fn make_voices(sample_len: u32, count: u32, speed: f32) -> Vec<GpuVoiceState> {
         (0..count).map(|i| GpuVoiceState {
             sample_offset: (i % 4) * sample_len, sample_length: sample_len,
-            speed, gain: 0.5, time: 0.0, envelope: 0.0, env_stage: 0, env_level: 1.0, start_offset: 0,
-            attack_rate: 0.01, decay_rate: 0.005, sustain_level: 0.7, release_rate: 0.02,
+            speed, gain: 0.5, time: 0.0, start_offset: 0,
+            envelope: 0.0, env_stage: 4, stage_progress: 0.0,
+            env_level: 1.0, sustain_level: 1.0, env_start: 0.0,
+            delay_frames: 0.0, attack_frames: 1.0, hold_frames: 0.0,
+            decay_frames: 1.0, release_frames: 1.0,
             pan_left: 1.0, pan_right: 1.0,
             loop_start: 0, loop_end: 0, loop_mode: 0,
         }).collect()
@@ -537,8 +619,11 @@ mod tests {
         // voice 在 sustain 阶段: envelope = sustain_level * env_level = 1.0 * 1.0 = 1.0
         let gpu_voices = vec![GpuVoiceState {
             sample_offset: 0, sample_length: 1024, speed: 1.0,
-            gain: 1.0, time: 0.0, envelope: 1.0, env_stage: 2, env_level: 1.0, start_offset: 0,
-            attack_rate: 0.01, decay_rate: 0.005, sustain_level: 1.0, release_rate: 0.02,
+            gain: 1.0, time: 0.0, start_offset: 0,
+            envelope: 1.0, env_stage: 4, stage_progress: 0.0,
+            env_level: 1.0, sustain_level: 1.0, env_start: 0.0,
+            delay_frames: 0.0, attack_frames: 1.0, hold_frames: 0.0,
+            decay_frames: 1.0, release_frames: 1.0,
             pan_left: 1.0, pan_right: 1.0,
             loop_start: 0, loop_end: 0, loop_mode: 0,
         }];
@@ -566,8 +651,11 @@ mod tests {
             label: Some("fresh_voice"),
             contents: bytemuck::cast_slice(&[GpuVoiceState {
                 sample_offset: 0, sample_length: 1024, speed: 1.0,
-                gain: 1.0, time: 0.0, envelope: 1.0, env_stage: 2, env_level: 1.0, start_offset: 0,
-                attack_rate: 0.01, decay_rate: 0.005, sustain_level: 1.0, release_rate: 0.02,
+                gain: 1.0, time: 0.0, start_offset: 0,
+                envelope: 1.0, env_stage: 4, stage_progress: 0.0,
+                env_level: 1.0, sustain_level: 1.0, env_start: 0.0,
+                delay_frames: 0.0, attack_frames: 1.0, hold_frames: 0.0,
+                decay_frames: 1.0, release_frames: 1.0,
                 pan_left: 1.0, pan_right: 1.0,
                 loop_start: 0, loop_end: 0, loop_mode: 0,
             }]),

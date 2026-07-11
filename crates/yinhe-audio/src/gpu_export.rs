@@ -51,7 +51,14 @@ pub fn export_wav_gpu(
             if sample_cache.contains_key(&info.sample_path) { continue; }
             let offset = sample_data.len() as u32;
             match crate::sfz_parser::load_wav_as_f32(&info.sample_path) {
-                Ok(samples) => {
+                Ok((samples, src_sr)) => {
+                    let samples = if src_sr != sample_rate {
+                        // sinc 重采样到目标采样率（与 xsynth 一致）
+                        eprintln!("[gpu] Resampling {:?}: {} → {}Hz", info.sample_path.file_name(), src_sr, sample_rate);
+                        xsynth_soundfonts::resample::resample_vec(samples, src_sr as f32, sample_rate as f32).to_vec()
+                    } else {
+                        samples
+                    };
                     let len = samples.len() as u32;
                     sample_data.extend_from_slice(&samples);
                     sample_cache.insert(info.sample_path.clone(), (offset, len));
@@ -144,6 +151,9 @@ pub fn export_wav_gpu(
     let mut voice_keys: Vec<u8> = Vec::new(); // 每个 voice 对应的 MIDI key
     let mut output = vec![0.0f32; block_size as usize * 2];
 
+    // XSynth 风格动态限幅器（跨块维护 loudness 状态）
+    let mut limiter = xsynth_core::effects::VolumeLimiter::new(2);
+
     while rendered < main_duration {
         let block_end = (rendered + block_size).min(main_duration);
         let frames = (block_end - rendered) as u32;
@@ -185,10 +195,13 @@ pub fn export_wav_gpu(
                                 (angle.cos(), angle.sin())
                             };
 
-                            // ADSR rates: 每帧增量
-                            let attack_rate = 1.0 / (info.ampeg_attack * sr);
-                            let decay_rate = (1.0 - info.ampeg_sustain) / (info.ampeg_decay * sr);
-                            let release_rate = 1.0 / (info.ampeg_release * sr);
+                            // ADSR 帧数
+                            let sr_f = sample_rate as f32;
+                            let delay_frames = info.ampeg_delay * sr_f;
+                            let attack_frames = info.ampeg_attack * sr_f;
+                            let hold_frames = info.ampeg_hold * sr_f;
+                            let decay_frames = info.ampeg_decay * sr_f;
+                            let release_frames = info.ampeg_release * sr_f;
 
                             let start_offset = (sample - rendered) as u32;
                             voices.push(GpuVoiceState {
@@ -197,14 +210,18 @@ pub fn export_wav_gpu(
                                 speed,
                                 gain,
                                 time: 0.0,
-                                envelope: 0.0,
-                                env_stage: 0,
-                                env_level: gain,
                                 start_offset,
-                                attack_rate,
-                                decay_rate,
+                                envelope: info.ampeg_start,
+                                env_stage: 0, // Delay
+                                stage_progress: 0.0,
+                                env_level: gain,
                                 sustain_level: info.ampeg_sustain,
-                                release_rate,
+                                env_start: info.ampeg_start,
+                                delay_frames,
+                                attack_frames,
+                                hold_frames,
+                                decay_frames,
+                                release_frames,
                                 pan_left: pan_l,
                                 pan_right: pan_r,
                                 loop_start: info.loop_start,
@@ -217,8 +234,11 @@ pub fn export_wav_gpu(
                 } else {
                     // NoteOff → 触发 release（匹配最近的同 key voice）
                     for i in (0..voices.len()).rev() {
-                        if voice_keys[i] == key && voices[i].env_stage < 3u32 {
-                            voices[i].env_stage = 3;
+                        if voice_keys[i] == key && voices[i].env_stage < 5u32 {
+                            // 保存当前 envelope 值作为 release 起始值
+                            voices[i].env_start = voices[i].envelope;
+                            voices[i].env_stage = 5; // Release
+                            voices[i].stage_progress = 0.0;
                             break;
                         }
                     }
@@ -230,7 +250,7 @@ pub fn export_wav_gpu(
         // ── 7b. 移除已结束的 voice ──
         let mut i = 0;
         while i < voices.len() {
-            if voices[i].env_stage >= 4 || (voices[i].time as u32) >= voices[i].sample_length {
+            if voices[i].env_stage >= 6 || (voices[i].time as u32) >= voices[i].sample_length {
                 voices.swap_remove(i);
                 voice_keys.swap_remove(i);
             } else {
@@ -248,8 +268,11 @@ pub fn export_wav_gpu(
         // ── 7d. 推进 voice 状态 ──
         advance_voices(&mut voices, frames);
 
-        // ── 7e. Write to WAV ──
-        let buf = &output[..frames as usize * 2];
+        // ── 7e. 动态限幅（与 XSynth VolumeLimiter 一致）──
+        let buf = &mut output[..frames as usize * 2];
+        limiter.limit(buf);
+
+        // ── 7f. Write to WAV ──
         write_samples(&mut writer, buf, bit_depth)?;
 
         rendered = block_end;
