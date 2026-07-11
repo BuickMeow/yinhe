@@ -523,4 +523,116 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn real_midi_export_benchmark() {
+        let midi_path = "/Users/jieneng/Music/MIDIs/Mesmerizer.mid";
+        let sfz_path = "/Users/jieneng/Music/Soundfonts/Starry Studio Grand v2.7~/Presets/A_Standard/Studio Grand - Standard (No Hammer).sfz";
+
+        if !std::path::Path::new(midi_path).exists() {
+            eprintln!("MIDI file not found, skipping");
+            return;
+        }
+        if !std::path::Path::new(sfz_path).exists() {
+            eprintln!("SFZ file not found, skipping");
+            return;
+        }
+
+        // Parse MIDI
+        eprintln!("Parsing MIDI...");
+        let t0 = std::time::Instant::now();
+        let model = match yinhe_mid2::parse_path(midi_path) {
+            Ok(m) => Arc::new(m),
+            Err(e) => {
+                eprintln!("Failed to parse MIDI: {e}");
+                return;
+            }
+        };
+        eprintln!("  MIDI parsed in {:.2?}", t0.elapsed());
+        eprintln!(
+            "  tick_length={}, tracks={}, notes_est={}",
+            model.tick_length,
+            model.tracks.len(),
+            model.notes.iter().map(|n| n.len()).sum::<usize>()
+        );
+
+        // CPU export benchmark
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let sfz_str = sfz_path.to_string();
+        let port_sfs: [(u8, Vec<String>); 1] = [(0, vec![sfz_str.clone()])];
+        let skip: Vec<bool> = vec![false; model.tracks.len()];
+        let sample_rate = 48000u32;
+
+        // Time the engine setup + SFZ loading separately
+        eprintln!("Setting up engine + loading SFZ...");
+        let t_engine = std::time::Instant::now();
+        let (_num_ch, active_mask) = crate::spawn::channels_for_model(&model);
+        let mut engine = crate::engine::AudioEngine::new(sample_rate, 0, active_mask);
+        engine.handle_command(crate::spawn::AudioCommand::LoadModel {
+            model: Arc::clone(&model),
+        });
+        eprintln!("  LoadModel: {:.2?}", t_engine.elapsed());
+
+        let t_sf = std::time::Instant::now();
+        engine.handle_command(crate::spawn::AudioCommand::LoadSoundFont {
+            port: 0,
+            paths: vec![sfz_str.clone()],
+        });
+        eprintln!("  LoadSoundFont: {:.2?}", t_sf.elapsed());
+        eprintln!("  Total engine setup: {:.2?}", t_engine.elapsed());
+
+        let cpu_start = std::time::Instant::now();
+        let result = crate::export::export_wav(
+            Arc::clone(&model),
+            sample_rate,
+            &port_sfs,
+            &skip,
+            tmp.path(),
+            crate::export::WavBitDepth::Bit24,
+            None, // unlimited layers
+            |pct, msg| {
+                // suppress progress output
+            },
+            None,
+            None,
+        );
+        let cpu_elapsed = cpu_start.elapsed();
+
+        match result {
+            Ok(()) => {
+                let file_size = std::fs::metadata(tmp.path()).unwrap().len();
+                eprintln!(
+                    "CPU export: {:.2?} (file size: {} MB)",
+                    cpu_elapsed,
+                    file_size / 1024 / 1024
+                );
+            }
+            Err(e) => {
+                eprintln!("CPU export failed: {e}");
+            }
+        }
+
+        // Also time the GPU synthetic benchmark at the same voice count
+        // to estimate potential speedup.
+        if let Some(mut renderer) = setup_gpu() {
+            let sample_len = 4096u32;
+            // We don't know the exact voice count from the MIDI, but we can
+            // estimate from the export. For now, benchmark at various counts.
+            for &vc in &[256, 1024, 4096, 15000] {
+                let voices = make_voices(sample_len, vc, 1.0);
+                for _ in 0..3 {
+                    let _ = renderer.render_block(&voices, 1024, sample_rate);
+                }
+                let n = 10;
+                let gpu_start = std::time::Instant::now();
+                for _ in 0..n {
+                    let _ = renderer.render_block(&voices, 1024, sample_rate);
+                }
+                let gpu_per_block = gpu_start.elapsed() / n;
+                eprintln!(
+                    "  GPU @ {vc} voices: {gpu_per_block:.2?}/block (1024 frames)"
+                );
+            }
+        }
+    }
 }

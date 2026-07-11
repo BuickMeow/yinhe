@@ -101,6 +101,7 @@ pub fn export_wav(
     export_progress: Option<Arc<Mutex<ExportProgress>>>,
     cancel: Option<Arc<AtomicBool>>,
 ) -> Result<(), ExportError> {
+    let t_start = Instant::now();
     let (_num_ch, active_mask) = channels_for_model(&model);
 
     let mut engine = AudioEngine::new(sample_rate, 0, active_mask);
@@ -109,6 +110,7 @@ pub fn export_wav(
     engine.handle_command(crate::spawn::AudioCommand::LoadModel {
         model: Arc::clone(&model),
     });
+    let t_model = t_start.elapsed();
 
     engine.set_layer_count(layer_count);
 
@@ -127,6 +129,7 @@ pub fn export_wav(
             });
         }
     }
+    let t_sf = t_start.elapsed() - t_model;
 
     progress(0.05, "应用音轨静音");
     engine.handle_command(crate::spawn::AudioCommand::SkipTracks {
@@ -268,8 +271,15 @@ pub fn export_wav(
     }
 
     progress(0.99, "写入文件");
+    let t_render = t_start.elapsed() - t_sf - t_model;
     writer.finalize()?;
+    let t_total = t_start.elapsed();
     progress(1.0, "导出完成");
+
+    eprintln!(
+        "[export_wav timing] model={:.2?} sf={:.2?} render={:.2?} total={:.2?}",
+        t_model, t_sf, t_render, t_total
+    );
 
     Ok(())
 }

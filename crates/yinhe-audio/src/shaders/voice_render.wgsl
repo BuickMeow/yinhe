@@ -1,7 +1,7 @@
-// GPU audio voice rendering — single-pass merged shader.
+// GPU audio voice rendering — single-pass, TILE=1.
 // Each workgroup handles 1 output frame. 256 threads cooperate
-// to accumulate all voices for that frame, then tree-reduce
-// via shared memory. No intermediate buffer needed.
+// to sum all voices for that frame via shared memory tree reduction.
+// This minimizes synchronization overhead (1 barrier per workgroup).
 
 struct RenderParams {
     frame_count: u32,
@@ -32,7 +32,6 @@ const DECAY_RATE: f32 = 0.005;
 const SUSTAIN_LEVEL: f32 = 0.7;
 const RELEASE_RATE: f32 = 0.02;
 
-// Shared memory for workgroup-level tree reduction.
 var<workgroup> shared_left: array<f32, 256>;
 var<workgroup> shared_right: array<f32, 256>;
 
@@ -47,9 +46,8 @@ fn vs_main(@builtin(global_invocation_id) gid: vec3<u32>,
         return;
     }
 
-    // Each thread accumulates a striped subset of voices.
     var my_left: f32 = 0.0;
-    var right: f32 = 0.0;
+    var my_right: f32 = 0.0;
 
     let threads = 256u;
     let iterations = (vc + threads - 1u) / threads;
@@ -65,7 +63,6 @@ fn vs_main(@builtin(global_invocation_id) gid: vec3<u32>,
             continue;
         }
 
-        // Envelope
         switch (*voice).env_stage {
             case 0u: {
                 (*voice).envelope += ATTACK_RATE;
@@ -92,7 +89,6 @@ fn vs_main(@builtin(global_invocation_id) gid: vec3<u32>,
             default: { continue; }
         }
 
-        // Sample lookup + linear interpolation
         let t = (*voice).time;
         let idx = u32(t);
         let frac = t - f32(idx);
@@ -102,17 +98,15 @@ fn vs_main(@builtin(global_invocation_id) gid: vec3<u32>,
         let s = mix(a, b, frac) * (*voice).gain * (*voice).envelope;
 
         my_left += s;
-        right += s;
+        my_right += s;
 
         (*voice).time += (*voice).speed;
     }
 
-    // Write partial sums to shared memory
     shared_left[lid.x] = my_left;
-    shared_right[lid.x] = right;
+    shared_right[lid.x] = my_right;
     workgroupBarrier();
 
-    // Tree reduction
     var stride = 128u;
     while stride > 0u {
         if lid.x < stride {
@@ -123,7 +117,6 @@ fn vs_main(@builtin(global_invocation_id) gid: vec3<u32>,
         stride /= 2u;
     }
 
-    // Thread 0 writes final result
     if lid.x == 0u {
         final_output[fi * 2u] = shared_left[0];
         final_output[fi * 2u + 1u] = shared_right[0];
