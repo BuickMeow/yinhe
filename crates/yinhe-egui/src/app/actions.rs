@@ -460,7 +460,62 @@ impl App {
         }
 
         let (tx, rx) = mpsc::channel();
+
+        // Try GPU export first — use the app's existing wgpu Device/Queue.
+        #[cfg(feature = "gpu")]
+        let gpu_device = self.render_ctx.device().clone();
+        #[cfg(feature = "gpu")]
+        let gpu_queue = self.render_ctx.queue().clone();
+        // Extract SFZ path from port_sf for GPU export.
+        #[cfg(feature = "gpu")]
+        let gpu_sfz = port_sf.first().and_then(|(_, paths)| paths.first()).cloned();
+
         std::thread::spawn(move || {
+            // Prefer GPU export when feature is enabled and SFZ path is available.
+            #[cfg(feature = "gpu")]
+            let result = if let Some(ref sfz) = gpu_sfz {
+                yinhe_audio::gpu_export::export_wav_gpu(
+                    model,
+                    sr,
+                    std::path::Path::new(sfz),
+                    &skip,
+                    std::path::Path::new(&path_str),
+                    bit_depth,
+                    |pct, msg| {
+                        if let Ok(mut p) = export_progress.lock() {
+                            p.progress = pct;
+                            if !msg.is_empty() {
+                                p.status = msg.to_string();
+                            }
+                        }
+                    },
+                    gpu_device,
+                    gpu_queue,
+                )
+            } else {
+                // No SFZ path — fall back to CPU.
+                yinhe_audio::export::export_wav(
+                    model,
+                    sr,
+                    &port_sf,
+                    &skip,
+                    std::path::Path::new(&path_str),
+                    bit_depth,
+                    layer_count,
+                    |pct, msg| {
+                        if let Ok(mut p) = export_progress.lock() {
+                            p.progress = pct;
+                            if !msg.is_empty() {
+                                p.status = msg.to_string();
+                            }
+                        }
+                    },
+                    Some(export_progress.clone()),
+                    Some(cancel_flag),
+                )
+            };
+
+            #[cfg(not(feature = "gpu"))]
             let result = yinhe_audio::export::export_wav(
                 model,
                 sr,

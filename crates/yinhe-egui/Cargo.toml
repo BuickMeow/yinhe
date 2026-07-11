@@ -15,7 +15,7 @@ yinhe-pianoroll = { path = "../yinhe-pianoroll" }
 yinhe-automation = { path = "../yinhe-automation" }
 yinhe-arrangement = { path = "../yinhe-arrangement" }
 yinhe-wgpu = { path = "../yinhe-wgpu" }
-yinhe-audio = { path = "../yinhe-audio" }
+yinhe-audio = { path = "../yinhe-audio", features = ["gpu"] }
 yinhe-memtrace = { path = "../yinhe-memtrace" }
 yinhe-haptic = { path = "../yinhe-haptic" }
 yinhe-editor-core = { path = "../yinhe-editor-core" }

@@ -44,6 +44,8 @@ pub fn export_wav_gpu(
     path: &Path,
     bit_depth: WavBitDepth,
     progress: impl Fn(f32, &str),
+    device: Arc<wgpu::Device>,
+    queue: Arc<wgpu::Queue>,
 ) -> Result<(), ExportError> {
     let t_start = Instant::now();
 
@@ -90,7 +92,7 @@ pub fn export_wav_gpu(
     // ── 3. Upload samples to GPU ──
     progress(0.05, "上传采样到 GPU...");
     let t_gpu = Instant::now();
-    let mut renderer = GpuAudioRenderer::new_default()
+    let mut renderer = GpuAudioRenderer::new(device, queue)
         .map_err(|e| ExportError::Render(format!("GPU init error: {}", e)))?;
     renderer.upload_samples(&sample_data);
     eprintln!("[gpu] GPU init + sample upload: {:.2?}", t_gpu.elapsed());
@@ -305,6 +307,37 @@ mod tests {
 
         eprintln!("=== GPU Export Benchmark ===");
         let tmp = tempfile::NamedTempFile::new().unwrap();
+
+        // Create GPU device/queue
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::PRIMARY,
+            flags: wgpu::InstanceFlags::default(),
+            memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
+            backend_options: wgpu::BackendOptions::default(),
+            display: None,
+        });
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            compatible_surface: None,
+            force_fallback_adapter: false,
+        })).unwrap();
+        let (device, queue) = pollster::block_on(adapter.request_device(
+            &wgpu::DeviceDescriptor {
+                label: Some("gpu_export_test"),
+                required_features: wgpu::Features::empty(),
+                required_limits: wgpu::Limits {
+                    max_storage_buffer_binding_size: 512 * 1024 * 1024,
+                    max_buffer_size: 512 * 1024 * 1024,
+                    ..wgpu::Limits::default()
+                },
+                memory_hints: wgpu::MemoryHints::default(),
+                experimental_features: wgpu::ExperimentalFeatures::disabled(),
+                trace: wgpu::Trace::Off,
+            },
+        )).unwrap();
+        let device = Arc::new(device);
+        let queue = Arc::new(queue);
+
         let t_start = std::time::Instant::now();
         let result = export_wav_gpu(
             Arc::clone(&model),
@@ -314,6 +347,8 @@ mod tests {
             tmp.path(),
             crate::export::WavBitDepth::Bit24,
             |_pct, _msg| {},
+            device,
+            queue,
         );
         let elapsed = t_start.elapsed();
 
