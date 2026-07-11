@@ -450,6 +450,8 @@ impl App {
             Some(self.export_layer_count as usize)
         };
         let export_progress = self.export_progress.clone();
+        let cancel_flag = self.export_cancel.clone();
+        cancel_flag.store(false, std::sync::atomic::Ordering::Relaxed);
 
         // Reset progress state
         {
@@ -476,6 +478,7 @@ impl App {
                     }
                 },
                 Some(export_progress.clone()),
+                Some(cancel_flag),
             );
             // Capture final stats before hiding the progress window.
             let (elapsed, speed) = {
@@ -487,10 +490,18 @@ impl App {
             if let Ok(mut p) = export_progress.lock() {
                 p.visible = false;
             }
-            let _ = tx.send(match result {
-                Ok(()) => Ok((path_str, elapsed, speed)),
-                Err(e) => Err(e.to_string()),
-            });
+            match result {
+                Ok(()) => {
+                    let _ = tx.send(Ok((path_str, elapsed, speed)));
+                }
+                Err(yinhe_audio::export::ExportError::Cancelled) => {
+                    // User cancelled — hide progress silently, don't send error.
+                    drop(tx);
+                }
+                Err(e) => {
+                    let _ = tx.send(Err(e.to_string()));
+                }
+            }
         });
 
         self.export_rx = Some(rx);

@@ -1,4 +1,5 @@
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, mpsc};
 
 use yinhe_core::YinModel;
 use yinhe_mid2::{LoadProgress, MidiImportEncoding};
@@ -27,6 +28,7 @@ pub(crate) struct MidiLoader {
     pub path: String,
     pub rx: mpsc::Receiver<MidiLoadEvent>,
     pub current_progress: Option<LoadProgress>,
+    pub cancel: Arc<AtomicBool>,
 }
 
 pub(crate) struct YinLoader {
@@ -85,6 +87,18 @@ impl FileLoader {
 
     pub fn load_progress(&self) -> &SharedProgress {
         &self.load_progress
+    }
+
+    /// Cancel any in-progress loading. Sets the cancel flag so background
+    /// threads stop reporting progress, and clears the loader state.
+    pub fn cancel_loading(&mut self) {
+        if let Some(ref loader) = self.midi_loader {
+            loader.cancel.store(true, Ordering::Relaxed);
+        }
+        self.midi_loader = None;
+        self.yin_loader = None;
+        self.archive_loader = None;
+        progress::set_visible(&self.load_progress, false);
     }
 
     /// Show file dialog and start loading in a background thread.
@@ -173,6 +187,8 @@ impl FileLoader {
         let (tx, rx) = mpsc::channel();
         let path_for_thread = path_str.clone();
         let progress = self.load_progress.clone();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let cancel_for_thread = cancel.clone();
         std::thread::spawn(move || {
             let data = match std::fs::read(&path_for_thread) {
                 Ok(d) => d,
@@ -181,12 +197,13 @@ impl FileLoader {
                     return;
                 }
             };
-            Self::parse_midi_and_report(data, encoding, tx, progress);
+            Self::parse_midi_and_report(data, encoding, tx, progress, cancel_for_thread);
         });
         self.midi_loader = Some(MidiLoader {
             path: path_str,
             rx,
             current_progress: None,
+            cancel,
         });
     }
 
@@ -196,11 +213,15 @@ impl FileLoader {
         encoding: MidiImportEncoding,
         tx: mpsc::Sender<MidiLoadEvent>,
         progress: SharedProgress,
+        cancel: Arc<AtomicBool>,
     ) {
         progress::set_stage(&progress, 0, StageStatus::Active);
         let tx_inner = tx.clone();
         let result = yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Midi, || {
             yinhe_mid2::parse_bytes_with_encoding(&data, encoding, |p| {
+                if cancel.load(Ordering::Relaxed) {
+                    return;
+                }
                 let _ = tx_inner.send(MidiLoadEvent::Progress(p));
             })
         });
@@ -326,6 +347,8 @@ impl FileLoader {
         let (tx, rx) = mpsc::channel();
         let progress = self.load_progress.clone();
         let entry_name = entry.name.clone();
+        let cancel = Arc::new(AtomicBool::new(false));
+        let cancel_for_thread = cancel.clone();
         progress::set_visible(&self.load_progress, true);
         std::thread::spawn(move || {
             let data = match archive.read_file(&entry_name) {
@@ -340,12 +363,13 @@ impl FileLoader {
                     return;
                 }
             };
-            Self::parse_midi_and_report(data, MidiImportEncoding::Utf8, tx, progress);
+            Self::parse_midi_and_report(data, MidiImportEncoding::Utf8, tx, progress, cancel_for_thread);
         });
         self.midi_loader = Some(MidiLoader {
             path: entry.name,
             rx,
             current_progress: None,
+            cancel,
         });
     }
 

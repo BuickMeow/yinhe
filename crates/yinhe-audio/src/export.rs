@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -63,6 +64,7 @@ pub enum WavBitDepth {
 pub enum ExportError {
     Io(String),
     Render(String),
+    Cancelled,
 }
 
 impl std::fmt::Display for ExportError {
@@ -70,6 +72,7 @@ impl std::fmt::Display for ExportError {
         match self {
             ExportError::Io(msg) => write!(f, "IO error: {}", msg),
             ExportError::Render(msg) => write!(f, "Render error: {}", msg),
+            ExportError::Cancelled => write!(f, "Export cancelled"),
         }
     }
 }
@@ -96,6 +99,7 @@ pub fn export_wav(
     layer_count: Option<usize>,
     progress: impl Fn(f32, &str),
     export_progress: Option<Arc<Mutex<ExportProgress>>>,
+    cancel: Option<Arc<AtomicBool>>,
 ) -> Result<(), ExportError> {
     let (_num_ch, active_mask) = channels_for_model(&model);
 
@@ -168,6 +172,9 @@ pub fn export_wav(
 
     // ── Phase 1: render the main content (notes + CC events) ──
     while rendered < main_duration {
+        if cancel.as_ref().map_or(false, |c| c.load(Ordering::Relaxed)) {
+            return Err(ExportError::Cancelled);
+        }
         let frames = ((main_duration - rendered) as usize).min(RENDER_CHUNK_FRAMES);
         let buf = &mut chunk[..frames * STEREO_CHANNELS];
         engine.render(buf);
@@ -208,6 +215,9 @@ pub fn export_wav(
     let mut tail_rendered: u64 = 0;
 
     loop {
+        if cancel.as_ref().map_or(false, |c| c.load(Ordering::Relaxed)) {
+            return Err(ExportError::Cancelled);
+        }
         let frames = RENDER_CHUNK_FRAMES.min((max_tail_samples - tail_rendered) as usize);
         if frames == 0 {
             break;

@@ -197,18 +197,21 @@ impl App {
         if self.file_loader.is_loading() {
             let progress = self.file_loader.load_progress().clone();
             let ctx_clone = ctx.clone();
+            let cancel_flag = std::rc::Rc::new(std::cell::Cell::new(false));
+            let cancel_cb = cancel_flag.clone();
 
             ctx_clone.show_viewport_immediate(
                 egui::ViewportId::from_hash_of("loading_overlay_dialog"),
                 crate::chrome::dialog::viewport_builder("正在加载", [380.0, 160.0], false),
                 move |vctx, _class| {
+                    let close_requested = vctx.input(|i| i.viewport().close_requested());
+                    let mut close = close_requested;
                     egui::CentralPanel::default()
                         .frame(egui::Frame {
                             fill: crate::theme::APP_BG,
                             ..Default::default()
                         })
                         .show(vctx, |ui| {
-                        let mut close = false;
                         crate::chrome::dialog::title_bar(ui, "正在加载", &mut close);
                         egui::Frame::new()
                             .inner_margin(egui::Margin {
@@ -250,8 +253,16 @@ impl App {
                                 }
                             });
                     });
+                    if close {
+                        cancel_cb.set(true);
+                        vctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+                    }
                 },
             );
+
+            if cancel_flag.get() {
+                self.file_loader.cancel_loading();
+            }
 
             ctx.request_repaint();
         }
@@ -335,6 +346,7 @@ impl App {
         // ── Export progress overlay (independent window) ──
         if self.export_rx.is_some() {
             let export_progress = self.export_progress.clone();
+            let cancel_flag = self.export_cancel.clone();
             let ctx_clone = ctx.clone();
 
             ctx_clone.show_viewport_immediate(
@@ -348,13 +360,14 @@ impl App {
                     if !state.visible {
                         return;
                     }
+                    let close_requested = vctx.input(|i| i.viewport().close_requested());
+                    let mut close = close_requested;
                     egui::CentralPanel::default()
                         .frame(egui::Frame {
                             fill: crate::theme::APP_BG,
                             ..Default::default()
                         })
                         .show(vctx, |ui| {
-                        let mut close = false;
                         crate::chrome::dialog::title_bar(ui, "导出音频中", &mut close);
                         egui::Frame::new()
                             .inner_margin(egui::Margin {
@@ -430,6 +443,10 @@ impl App {
                                 });
                             });
                     });
+                    if close {
+                        cancel_flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                        vctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+                    }
                 },
             );
 
