@@ -1,5 +1,6 @@
 // GPU audio voice rendering — single-pass, per-frame workgroup, read-only voice states.
 // 每个workgroup渲染一个frame，所有voice state只读，无数据竞争。
+// ADSR/pan/volume 参数从 SFZ 读取，通过 voice state 传入。
 
 struct RenderParams {
     frame_count: u32,
@@ -18,14 +19,13 @@ struct VoiceState {
     env_stage: u32,
     env_level: f32,
     start_offset: u32,
+    attack_rate: f32,
+    decay_rate: f32,
+    sustain_level: f32,
+    release_rate: f32,
+    pan_left: f32,
+    pan_right: f32,
 };
-
-// Bindings:
-// 0: params (uniform)
-// 1: voice_states (storage read_only — CPU跨块维护)
-// 2: final_output (storage read_write)
-// 3-7: 5 sample chunks (storage read)
-// 8: chunk_offsets (uniform)
 
 @group(0) @binding(0) var<uniform> params: RenderParams;
 @group(0) @binding(1) var<storage, read> voice_states: array<VoiceState>;
@@ -45,11 +45,6 @@ struct ChunkOffsets {
 };
 
 @group(0) @binding(8) var<uniform> chunk_off: ChunkOffsets;
-
-const ATTACK_RATE: f32 = 0.01;
-const DECAY_RATE: f32 = 0.005;
-const SUSTAIN_LEVEL: f32 = 0.7;
-const RELEASE_RATE: f32 = 0.02;
 
 var<workgroup> shared_left: array<f32, 256>;
 var<workgroup> shared_right: array<f32, 256>;
@@ -86,24 +81,29 @@ fn sample_at(global_idx: u32) -> f32 {
 }
 
 /// 根据voice的初始状态和frame偏移，计算该frame的envelope值。
-/// 与CPU实现完全对应：每帧推进ADSR。
-fn envelope_at(initial_env: f32, initial_stage: u32, env_level: f32, frame_offset: u32) -> f32 {
+/// 与CPU advance_voices 完全对应。
+fn envelope_at(
+    initial_env: f32, initial_stage: u32, env_level: f32,
+    attack_rate: f32, decay_rate: f32, sustain_level: f32, release_rate: f32,
+    frame_offset: u32,
+) -> f32 {
     var env = initial_env;
     var stage = initial_stage;
     for (var i: u32 = 0u; i < frame_offset; i++) {
         if stage >= 4u { break; }
         switch stage {
             case 0u: {
-                env += ATTACK_RATE;
+                env += attack_rate;
                 if env >= env_level { env = env_level; stage = 1u; }
             }
             case 1u: {
-                env -= DECAY_RATE;
-                if env <= SUSTAIN_LEVEL { env = SUSTAIN_LEVEL; stage = 2u; }
+                env -= decay_rate;
+                let sus = sustain_level * env_level;
+                if env <= sus { env = sus; stage = 2u; }
             }
             case 2u: { }
             case 3u: {
-                env -= RELEASE_RATE;
+                env -= release_rate;
                 if env <= 0.0 { env = 0.0; stage = 4u; }
             }
             default: { break; }
@@ -115,7 +115,7 @@ fn envelope_at(initial_env: f32, initial_stage: u32, env_level: f32, frame_offse
 @compute @workgroup_size(256)
 fn vs_main(@builtin(workgroup_id) wid: vec3<u32>,
            @builtin(local_invocation_id) lid: vec3<u32>) {
-    let fi = wid.x;  // frame index = workgroup id
+    let fi = wid.x;
     let fc = params.frame_count;
     let vc = params.voice_count;
     if fi >= fc { return; }
@@ -131,11 +131,9 @@ fn vs_main(@builtin(workgroup_id) wid: vec3<u32>,
         let voice = &voice_states[v];
         if (*voice).env_stage >= 4u { continue; }
 
-        // 跳过voice尚未开始的帧
         if fi < (*voice).start_offset { continue; }
         let frame_in_voice = fi - (*voice).start_offset;
 
-        // 计算当前frame的采样位置
         let t = (*voice).time + f32(frame_in_voice) * (*voice).speed;
         let idx = u32(t);
         let frac = t - f32(idx);
@@ -144,17 +142,21 @@ fn vs_main(@builtin(workgroup_id) wid: vec3<u32>,
 
         let a = sample_at((*voice).sample_offset + min(idx, max_idx));
         let b = sample_at((*voice).sample_offset + min(idx + 1u, max_idx));
-        let env = envelope_at((*voice).envelope, (*voice).env_stage, (*voice).env_level, frame_in_voice);
+        let env = envelope_at(
+            (*voice).envelope, (*voice).env_stage, (*voice).env_level,
+            (*voice).attack_rate, (*voice).decay_rate,
+            (*voice).sustain_level, (*voice).release_rate,
+            frame_in_voice,
+        );
         let s = mix(a, b, frac) * (*voice).gain * env;
-        my_left += s;
-        my_right += s;
+        my_left += s * (*voice).pan_left;
+        my_right += s * (*voice).pan_right;
     }
 
     shared_left[lid.x] = my_left;
     shared_right[lid.x] = my_right;
     workgroupBarrier();
 
-    // 树形归约
     var stride = 128u;
     while stride > 0u {
         if lid.x < stride {
@@ -166,7 +168,10 @@ fn vs_main(@builtin(workgroup_id) wid: vec3<u32>,
     }
 
     if lid.x == 0u {
-        final_output[fi * 2u] = shared_left[0];
-        final_output[fi * 2u + 1u] = shared_right[0];
+        // hard clip 限幅
+        let l = clamp(shared_left[0], -1.0, 1.0);
+        let r = clamp(shared_right[0], -1.0, 1.0);
+        final_output[fi * 2u] = l;
+        final_output[fi * 2u + 1u] = r;
     }
 }

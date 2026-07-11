@@ -43,36 +43,29 @@ pub fn export_wav_gpu(
     let t_load = Instant::now();
     let mut sample_cache: std::collections::HashMap<std::path::PathBuf, (u32, u32)> = std::collections::HashMap::new();
     let mut sample_data: Vec<f32> = Vec::new();
-    let mut sample_offsets: Vec<u32> = vec![0; 128];
-    let mut sample_lengths: Vec<u32> = vec![0; 128];
 
     for key in 0..128u8 {
-        let (ref sample_path, _pkc, _release) = key_map[key as usize];
-        if sample_path.to_string_lossy() == "missing" {
+        let info = &key_map[key as usize];
+        if info.sample_path.to_string_lossy() == "missing" {
             continue;
         }
-        if let Some(&(offset, len)) = sample_cache.get(sample_path) {
-            sample_offsets[key as usize] = offset;
-            sample_lengths[key as usize] = len;
+        if sample_cache.contains_key(&info.sample_path) {
             continue;
         }
         let offset = sample_data.len() as u32;
-        match crate::sfz_parser::load_wav_as_f32(sample_path) {
+        match crate::sfz_parser::load_wav_as_f32(&info.sample_path) {
             Ok(samples) => {
                 let len = samples.len() as u32;
                 sample_data.extend_from_slice(&samples);
-                sample_offsets[key as usize] = offset;
-                sample_lengths[key as usize] = len;
-                sample_cache.insert(sample_path.clone(), (offset, len));
+                sample_cache.insert(info.sample_path.clone(), (offset, len));
             }
             Err(e) => {
-                eprintln!("[gpu] Warning: failed to load {:?}: {}", sample_path, e);
+                eprintln!("[gpu] Warning: failed to load {:?}: {}", info.sample_path, e);
             }
         }
     }
     eprintln!("[gpu] Loaded {} unique samples ({} total frames, {:.2?})",
-        key_map.iter().filter(|(p, _, _)| !p.to_string_lossy().contains("missing")).count(),
-        sample_data.len(), t_load.elapsed(),
+        sample_cache.len(), sample_data.len(), t_load.elapsed(),
     );
 
     let audio_model = AudioModel::from_model(&model);
@@ -163,25 +156,58 @@ pub fn export_wav_gpu(
             if sample > block_end { break; }
             if sample >= rendered {
                 if is_on {
-                    let offset = sample_offsets[key as usize];
-                    let length = sample_lengths[key as usize];
-                    if length > 0 {
-                        let (_, pkc, _release) = key_map[key as usize];
-                        let speed = pitch_ratio(key, pkc);
-                        let gain = vel as f32 / 127.0;
-                        let start_offset = (sample - rendered) as u32;
-                        voices.push(GpuVoiceState {
-                            sample_offset: offset,
-                            sample_length: length,
-                            speed,
-                            gain,
-                            time: 0.0,
-                            envelope: 0.0,
-                            env_stage: 0,
-                            env_level: gain,
-                            start_offset,
-                        });
-                        voice_keys.push(key);
+                    let info = &key_map[key as usize];
+                    if let Some(&(offset, length)) = sample_cache.get(&info.sample_path) {
+                        if length > 0 {
+                            let sr = sample_rate as f32;
+                            // pitch ratio: (key - pitch_keycenter + tune/100) / 12
+                            let pitch_semitones = (key as f32 - info.pitch_keycenter as f32)
+                                + info.tune as f32 / 100.0;
+                            let speed = 2.0f32.powf(pitch_semitones / 12.0);
+
+                            // 力度增益: amp_veltrack 曲线
+                            // vel_norm = vel/127, gain = vel_norm^(100/amp_veltrack) 当 amp_veltrack>0
+                            let vel_norm = vel as f32 / 127.0;
+                            let vel_gain = if info.amp_veltrack >= 100.0 {
+                                vel_norm
+                            } else {
+                                vel_norm.powf(100.0 / info.amp_veltrack.max(1.0))
+                            };
+                            let gain = vel_gain * info.volume;
+
+                            // pan → left/right gain (等功率声像)
+                            let (pan_l, pan_r) = if info.pan == 0.0 {
+                                (1.0, 1.0)
+                            } else {
+                                let angle = info.pan * std::f32::consts::FRAC_PI_4;
+                                (angle.cos(), angle.sin())
+                            };
+
+                            // ADSR rates: 每帧增量
+                            let attack_rate = 1.0 / (info.ampeg_attack * sr);
+                            let decay_rate = (1.0 - info.ampeg_sustain) / (info.ampeg_decay * sr);
+                            let release_rate = 1.0 / (info.ampeg_release * sr);
+
+                            let start_offset = (sample - rendered) as u32;
+                            voices.push(GpuVoiceState {
+                                sample_offset: offset + info.offset,
+                                sample_length: length - info.offset.min(length),
+                                speed,
+                                gain,
+                                time: 0.0,
+                                envelope: 0.0,
+                                env_stage: 0,
+                                env_level: gain,
+                                start_offset,
+                                attack_rate,
+                                decay_rate,
+                                sustain_level: info.ampeg_sustain,
+                                release_rate,
+                                pan_left: pan_l,
+                                pan_right: pan_r,
+                            });
+                            voice_keys.push(key);
+                        }
                     }
                 } else {
                     // NoteOff → 触发 release（匹配最近的同 key voice）

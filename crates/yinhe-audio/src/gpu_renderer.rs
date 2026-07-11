@@ -10,18 +10,26 @@ const MAX_CHUNKS: usize = 5;
 const CHUNK_SIZE: usize = 30_000_000; // 30M f32 = 120MB per chunk
 
 /// Per-voice state that is uploaded to the GPU each block.
+/// 布局必须与 WGSL 的 VoiceState 结构体严格对应。
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct GpuVoiceState {
     pub sample_offset: u32,
     pub sample_length: u32,
     pub speed: f32,
-    pub gain: f32,
+    pub gain: f32,          // velocity * volume * amp_veltrack 综合增益
     pub time: f32,
     pub envelope: f32,
     pub env_stage: u32,
-    pub env_level: f32,
-    pub start_offset: u32, // 块内起始帧偏移（voice在块中间开始时>0）
+    pub env_level: f32,     // = gain
+    pub start_offset: u32,  // 块内起始帧偏移
+    // ADSR 参数（从 SFZ 读取，以"每帧增量"形式存储）
+    pub attack_rate: f32,   // 1/(attack*sample_rate)
+    pub decay_rate: f32,    // (1-sustain)/(decay*sample_rate)
+    pub sustain_level: f32, // 0..1
+    pub release_rate: f32,  // 1/(release*sample_rate)
+    pub pan_left: f32,      // 声像左增益
+    pub pan_right: f32,     // 声像右增益
 }
 
 /// Uniform buffer for render parameters.
@@ -34,45 +42,31 @@ pub struct RenderParams {
     pub sample_chunk_count: u32,
 }
 
-/// ADSR 常量（与 shader 一致）
-const ATTACK_RATE: f32 = 0.01;
-const DECAY_RATE: f32 = 0.005;
-const SUSTAIN_LEVEL: f32 = 0.7;
-const RELEASE_RATE: f32 = 0.02;
-
 /// CPU 端推进 voice 状态：time 和 envelope 推进实际活跃帧数。
 /// 在每个 render_block 之后调用，为下一个块准备状态。
 pub fn advance_voices(voices: &mut [GpuVoiceState], frame_count: u32) {
     for voice in voices.iter_mut() {
         let active_frames = frame_count.saturating_sub(voice.start_offset);
-        voice.start_offset = 0; // 下一个块从头开始
+        voice.start_offset = 0;
         if voice.env_stage >= 4 { continue; }
-        // 推进采样位置
         voice.time += voice.speed * active_frames as f32;
-        // 推进 ADSR envelope
         for _ in 0..active_frames {
             match voice.env_stage {
                 0 => {
-                    voice.envelope += ATTACK_RATE;
-                    if voice.envelope >= voice.env_level {
-                        voice.envelope = voice.env_level;
-                        voice.env_stage = 1;
-                    }
+                    voice.envelope += voice.attack_rate;
+                    if voice.envelope >= voice.env_level { voice.envelope = voice.env_level; voice.env_stage = 1; }
                 }
                 1 => {
-                    voice.envelope -= DECAY_RATE;
-                    if voice.envelope <= SUSTAIN_LEVEL {
-                        voice.envelope = SUSTAIN_LEVEL;
+                    voice.envelope -= voice.decay_rate;
+                    if voice.envelope <= voice.sustain_level * voice.env_level {
+                        voice.envelope = voice.sustain_level * voice.env_level;
                         voice.env_stage = 2;
                     }
                 }
                 2 => {}
                 3 => {
-                    voice.envelope -= RELEASE_RATE;
-                    if voice.envelope <= 0.0 {
-                        voice.envelope = 0.0;
-                        voice.env_stage = 4;
-                    }
+                    voice.envelope -= voice.release_rate;
+                    if voice.envelope <= 0.0 { voice.envelope = 0.0; voice.env_stage = 4; }
                 }
                 _ => break,
             }
@@ -395,7 +389,7 @@ impl GpuAudioRenderer {
     }
 }
 
-/// CPU reference implementation.
+/// CPU reference implementation (与 GPU shader 逻辑完全对应).
 pub fn cpu_render_voices(
     sample_data: &[f32],
     voices: &mut [GpuVoiceState],
@@ -405,16 +399,15 @@ pub fn cpu_render_voices(
     for voice in voices.iter_mut() {
         for fi in 0..frame_count as usize {
             if voice.env_stage >= 4 { continue; }
-            // 跳过voice尚未开始的帧
             if fi < voice.start_offset as usize { continue; }
             let frame_in_voice = fi - voice.start_offset as usize;
 
-            // 推进 ADSR envelope
+            // ADSR 推进
             match voice.env_stage {
-                0 => { voice.envelope += ATTACK_RATE; if voice.envelope >= voice.env_level { voice.envelope = voice.env_level; voice.env_stage = 1; } }
-                1 => { voice.envelope -= DECAY_RATE; if voice.envelope <= SUSTAIN_LEVEL { voice.envelope = SUSTAIN_LEVEL; voice.env_stage = 2; } }
+                0 => { voice.envelope += voice.attack_rate; if voice.envelope >= voice.env_level { voice.envelope = voice.env_level; voice.env_stage = 1; } }
+                1 => { voice.envelope -= voice.decay_rate; if voice.envelope <= voice.sustain_level * voice.env_level { voice.envelope = voice.sustain_level * voice.env_level; voice.env_stage = 2; } }
                 2 => {}
-                3 => { voice.envelope -= RELEASE_RATE; if voice.envelope <= 0.0 { voice.envelope = 0.0; voice.env_stage = 4; } }
+                3 => { voice.envelope -= voice.release_rate; if voice.envelope <= 0.0 { voice.envelope = 0.0; voice.env_stage = 4; } }
                 _ => {}
             }
 
@@ -427,10 +420,9 @@ pub fn cpu_render_voices(
             let b = sample_data[voice.sample_offset as usize + ((idx + 1) as usize).min(max_idx as usize)];
             let sample = a + (b - a) * frac;
             let out = sample * voice.gain * voice.envelope;
-            output[fi * 2] += out;
-            output[fi * 2 + 1] += out;
+            output[fi * 2] += out * voice.pan_left;
+            output[fi * 2 + 1] += out * voice.pan_right;
         }
-        // 推进采样位置
         let active_frames = frame_count.saturating_sub(voice.start_offset);
         voice.time += voice.speed * active_frames as f32;
         voice.start_offset = 0;
@@ -450,6 +442,8 @@ mod tests {
         (0..count).map(|i| GpuVoiceState {
             sample_offset: (i % 4) * sample_len, sample_length: sample_len,
             speed, gain: 0.5, time: 0.0, envelope: 0.0, env_stage: 0, env_level: 1.0, start_offset: 0,
+            attack_rate: 0.01, decay_rate: 0.005, sustain_level: 0.7, release_rate: 0.02,
+            pan_left: 1.0, pan_right: 1.0,
         }).collect()
     }
 
@@ -518,6 +512,8 @@ mod tests {
         let gpu_voices = vec![GpuVoiceState {
             sample_offset: 0, sample_length: 1024, speed: 1.0,
             gain: 1.0, time: 0.0, envelope: 1.0, env_stage: 2, env_level: 1.0, start_offset: 0,
+            attack_rate: 0.01, decay_rate: 0.005, sustain_level: 0.7, release_rate: 0.02,
+            pan_left: 1.0, pan_right: 1.0,
         }];
         let gpu_out = renderer.render_block(&gpu_voices, 8, 44100);
 
@@ -544,6 +540,8 @@ mod tests {
             contents: bytemuck::cast_slice(&[GpuVoiceState {
                 sample_offset: 0, sample_length: 1024, speed: 1.0,
                 gain: 1.0, time: 0.0, envelope: 1.0, env_stage: 2, env_level: 1.0, start_offset: 0,
+                attack_rate: 0.01, decay_rate: 0.005, sustain_level: 0.7, release_rate: 0.02,
+                pan_left: 1.0, pan_right: 1.0,
             }]),
             usage: wgpu::BufferUsages::STORAGE,
         });
