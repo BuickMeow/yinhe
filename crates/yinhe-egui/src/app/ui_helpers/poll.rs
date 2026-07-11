@@ -108,8 +108,17 @@ impl App {
         if let Some(rx) = &self.export_rx {
             if let Ok(result) = rx.try_recv() {
                 self.export_rx = None;
-                if let Err(e) = result {
-                    self.load_error = Some(e);
+                match result {
+                    Ok((path, elapsed, speed)) => {
+                        self.export_completed = Some(crate::dialogs::export::ExportCompleted {
+                            file_path: path,
+                            elapsed_secs: elapsed,
+                            overall_speed: speed,
+                        });
+                    }
+                    Err(e) => {
+                        self.load_error = Some(e);
+                    }
                 }
             }
         }

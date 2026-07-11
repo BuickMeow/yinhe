@@ -477,11 +477,20 @@ impl App {
                 },
                 Some(export_progress.clone()),
             );
+            // Capture final stats before hiding the progress window.
+            let (elapsed, speed) = {
+                let p = export_progress.lock().unwrap();
+                let elapsed = p.started_at.map(|t| t.elapsed().as_secs_f64()).unwrap_or(0.0);
+                (elapsed, p.overall_speed)
+            };
             // Mark done
             if let Ok(mut p) = export_progress.lock() {
                 p.visible = false;
             }
-            let _ = tx.send(result.map_err(|e| e.to_string()));
+            let _ = tx.send(match result {
+                Ok(()) => Ok((path_str, elapsed, speed)),
+                Err(e) => Err(e.to_string()),
+            });
         });
 
         self.export_rx = Some(rx);

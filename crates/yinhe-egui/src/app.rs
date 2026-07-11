@@ -125,8 +125,9 @@ pub struct App {
     pub(crate) load_progress: yinhe_editor_core::progress::SharedProgress,
 
     // ── Async audio export ──
-    pub(crate) export_rx: Option<mpsc::Receiver<Result<(), String>>>,
+    pub(crate) export_rx: Option<mpsc::Receiver<Result<(String, f64, f64), String>>>,
     pub(crate) export_progress: Arc<Mutex<crate::dialogs::export::ExportProgress>>,
+    pub(crate) export_completed: Option<crate::dialogs::export::ExportCompleted>,
     pub(crate) show_export_bit_depth: bool,
     pub(crate) export_bit_depth: yinhe_audio::export::WavBitDepth,
     pub(crate) export_layer_count: u32,
@@ -212,6 +213,7 @@ impl App {
             should_exit: false,
             export_rx: None,
             export_progress: crate::dialogs::export::ExportProgress::new(),
+            export_completed: None,
             show_export_bit_depth: false,
             export_bit_depth: yinhe_audio::export::WavBitDepth::Bit24,
             export_layer_count: 4,

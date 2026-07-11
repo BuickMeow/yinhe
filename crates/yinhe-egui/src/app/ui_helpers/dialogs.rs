@@ -436,6 +436,93 @@ impl App {
             ctx.request_repaint();
         }
 
+        // ── Export completed dialog (independent window) ──
+        if let Some(ref completed) = self.export_completed {
+            let file_path = completed.file_path.clone();
+            let elapsed = completed.elapsed_secs;
+            let speed = completed.overall_speed;
+            let ctx_clone = ctx.clone();
+            let open = std::rc::Rc::new(std::cell::RefCell::new(true));
+            let open_cb = open.clone();
+
+            ctx_clone.show_viewport_immediate(
+                egui::ViewportId::from_hash_of("export_completed_dialog"),
+                crate::chrome::dialog::viewport_builder("导出完成", [320.0, 200.0], false),
+                move |vctx, _class| {
+                    let mut close = false;
+                    if vctx.input(|i| i.viewport().close_requested()) {
+                        close = true;
+                    }
+                    egui::CentralPanel::default()
+                        .frame(egui::Frame {
+                            fill: crate::theme::APP_BG,
+                            ..Default::default()
+                        })
+                        .show(vctx, |ui| {
+                        crate::chrome::dialog::title_bar(ui, "导出完成", &mut close);
+                        egui::Frame::new()
+                            .inner_margin(egui::Margin {
+                                left: 12,
+                                right: 12,
+                                top: 0,
+                                bottom: 12,
+                            })
+                            .show(ui, |ui| {
+                                ui.vertical_centered(|ui| {
+                                    ui.add_space(4.0);
+                                    egui::Grid::new("export_completed_grid")
+                                        .num_columns(2)
+                                        .spacing([12.0, 6.0])
+                                        .show(ui, |ui| {
+                                            ui.label("已用时间");
+                                            ui.label(format_duration(elapsed));
+                                            ui.end_row();
+
+                                            ui.label("整体倍速");
+                                            if speed > 0.0 {
+                                                ui.label(format!("{:.2}x", speed));
+                                            } else {
+                                                ui.label("—");
+                                            }
+                                            ui.end_row();
+                                        });
+
+                                    ui.add_space(12.0);
+                                    if ui.button("打开所在文件夹").clicked() {
+                                        let parent = std::path::Path::new(&file_path)
+                                            .parent()
+                                            .map(|p| p.to_path_buf());
+                                        if let Some(dir) = parent {
+                                            #[cfg(target_os = "macos")]
+                                            let _ = std::process::Command::new("open")
+                                                .arg(&dir)
+                                                .spawn();
+                                            #[cfg(target_os = "windows")]
+                                            let _ = std::process::Command::new("explorer")
+                                                .arg(&dir)
+                                                .spawn();
+                                            #[cfg(target_os = "linux")]
+                                            let _ = std::process::Command::new("xdg-open")
+                                                .arg(&dir)
+                                                .spawn();
+                                        }
+                                    }
+                                    ui.add_space(4.0);
+                                });
+                            });
+                    });
+                    if close {
+                        vctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+                        *open_cb.borrow_mut() = false;
+                    }
+                },
+            );
+
+            if !*open.borrow() {
+                self.export_completed = None;
+            }
+        }
+
         // ── Export settings dialog (independent window) ──
         if self.show_export_bit_depth {
             let global_sr = self.audio_settings.sample_rate;
