@@ -339,7 +339,7 @@ impl App {
 
             ctx_clone.show_viewport_immediate(
                 egui::ViewportId::from_hash_of("export_progress_dialog"),
-                crate::chrome::dialog::viewport_builder("导出音频", [300.0, 160.0], false),
+                crate::chrome::dialog::viewport_builder("导出音频中", [320.0, 280.0], false),
                 move |vctx, _class| {
                     let state = match export_progress.lock() {
                         Ok(s) => s.clone(),
@@ -355,7 +355,7 @@ impl App {
                         })
                         .show(vctx, |ui| {
                         let mut close = false;
-                        crate::chrome::dialog::title_bar(ui, "导出音频", &mut close);
+                        crate::chrome::dialog::title_bar(ui, "导出音频中", &mut close);
                         egui::Frame::new()
                             .inner_margin(egui::Margin {
                                 left: 12,
@@ -365,21 +365,56 @@ impl App {
                             })
                             .show(ui, |ui| {
                                 ui.vertical_centered(|ui| {
-                                    ui.label(
-                                        egui::RichText::new("导出音频中…")
-                                            .size(18.0)
-                                            .color(egui::Color32::WHITE),
-                                    );
-                                    ui.add_space(12.0);
+                                    ui.add_space(4.0);
                                     ui.add(
                                         egui::ProgressBar::new(state.progress)
-                                            .desired_width(240.0),
+                                            .desired_width(280.0),
                                     );
                                     ui.add_space(8.0);
+
+                                    egui::Grid::new("export_progress_grid")
+                                        .num_columns(2)
+                                        .spacing([12.0, 4.0])
+                                        .show(ui, |ui| {
+                                            // 总时长
+                                            ui.label("总时长");
+                                            ui.label(format_duration(state.total_duration_secs));
+                                            ui.end_row();
+
+                                            // 已渲染
+                                            ui.label("已渲染");
+                                            ui.label(format_duration(state.rendered_secs));
+                                            ui.end_row();
+
+                                            // 已用时间
+                                            ui.label("已用时间");
+                                            let elapsed = state
+                                                .started_at
+                                                .map(|t| t.elapsed().as_secs_f64())
+                                                .unwrap_or(0.0);
+                                            ui.label(format_duration(elapsed));
+                                            ui.end_row();
+
+                                            // 复音数
+                                            ui.label("复音数");
+                                            ui.label(format!("{}", state.voice_count));
+                                            ui.end_row();
+
+                                            // 渲染倍速
+                                            ui.label("渲染倍速");
+                                            if state.render_speed > 0.0 {
+                                                ui.label(format!("{:.2}x", state.render_speed));
+                                            } else {
+                                                ui.label("—");
+                                            }
+                                            ui.end_row();
+                                        });
+
+                                    ui.add_space(4.0);
                                     if !state.status.is_empty() {
                                         ui.label(
                                             egui::RichText::new(&state.status)
-                                                .size(13.0)
+                                                .size(12.0)
                                                 .color(egui::Color32::LIGHT_GRAY),
                                         );
                                     }
@@ -702,4 +737,20 @@ enum UnsavedDialogAction {
     Save,
     Discard,
     Cancel,
+}
+
+/// Format seconds as `MM:SS` or `HH:MM:SS`.
+fn format_duration(secs: f64) -> String {
+    if secs < 0.0 {
+        return "—".into();
+    }
+    let total = secs as u64;
+    let h = total / 3600;
+    let m = (total % 3600) / 60;
+    let s = total % 60;
+    if h > 0 {
+        format!("{:02}:{:02}:{:02}", h, m, s)
+    } else {
+        format!("{:02}:{:02}", m, s)
+    }
 }

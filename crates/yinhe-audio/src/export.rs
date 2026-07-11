@@ -1,11 +1,51 @@
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use xsynth_core::effects::VolumeLimiter;
 use yinhe_core::YinModel;
 
 use crate::engine::AudioEngine;
 use crate::spawn::channels_for_model;
+
+/// Shared export progress state, updated from the background thread.
+#[derive(Clone)]
+pub struct ExportProgress {
+    pub visible: bool,
+    pub progress: f32,
+    pub status: String,
+    pub total_duration_secs: f64,
+    pub rendered_secs: f64,
+    pub started_at: Option<Instant>,
+    pub voice_count: u64,
+    pub render_speed: f64,
+}
+
+impl ExportProgress {
+    pub fn new() -> Arc<Mutex<Self>> {
+        Arc::new(Mutex::new(Self {
+            visible: false,
+            progress: 0.0,
+            status: String::new(),
+            total_duration_secs: 0.0,
+            rendered_secs: 0.0,
+            started_at: None,
+            voice_count: 0,
+            render_speed: 0.0,
+        }))
+    }
+
+    pub fn reset(&mut self) {
+        self.visible = true;
+        self.progress = 0.0;
+        self.status = "准备中…".into();
+        self.total_duration_secs = 0.0;
+        self.rendered_secs = 0.0;
+        self.started_at = Some(Instant::now());
+        self.voice_count = 0;
+        self.render_speed = 0.0;
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum WavBitDepth {
@@ -50,6 +90,7 @@ pub fn export_wav(
     bit_depth: WavBitDepth,
     layer_count: Option<usize>,
     progress: impl Fn(f32, &str),
+    export_progress: Option<Arc<Mutex<ExportProgress>>>,
 ) -> Result<(), ExportError> {
     let (_num_ch, active_mask) = channels_for_model(&model);
 
@@ -86,6 +127,12 @@ pub fn export_wav(
     let main_duration = engine.duration_samples();
     if main_duration == 0 {
         return Err(ExportError::Render("歌曲时长为零，没有可导出的内容".into()));
+    }
+
+    if let Some(ref ep) = export_progress {
+        if let Ok(mut p) = ep.lock() {
+            p.total_duration_secs = main_duration as f64 / sample_rate as f64;
+        }
     }
 
     let spec = hound::WavSpec {
@@ -126,6 +173,19 @@ pub fn export_wav(
         rendered += frames as u64;
         let pct = 0.05 + (rendered as f32 / main_duration as f32) * 0.85;
         progress(pct, &format!("渲染中 {:.0}%", pct * 100.0));
+
+        if let Some(ref ep) = export_progress {
+            if let Ok(mut p) = ep.lock() {
+                p.rendered_secs = rendered as f64 / sample_rate as f64;
+                p.voice_count = engine.voice_count();
+                if let Some(start) = p.started_at {
+                    let elapsed = start.elapsed().as_secs_f64();
+                    if elapsed > 0.0 {
+                        p.render_speed = p.rendered_secs / elapsed;
+                    }
+                }
+            }
+        }
     }
 
     // ── Phase 2: tail — let release tails decay naturally ──
@@ -148,7 +208,8 @@ pub fn export_wav(
         tail_rendered += frames as u64;
 
         // Check if all voices have finished (including release phase)
-        if engine.voice_count() == 0 {
+        let vc = engine.voice_count();
+        if vc == 0 {
             break;
         }
 
@@ -156,11 +217,21 @@ pub fn export_wav(
         let overall = 0.90 + tail_pct * 0.09;
         progress(
             overall,
-            &format!(
-                "余韵衰减中 (剩余 {} 音色)",
-                engine.voice_count()
-            ),
+            &format!("余韵衰减中 (剩余 {} 音色)", vc),
         );
+
+        if let Some(ref ep) = export_progress {
+            if let Ok(mut p) = ep.lock() {
+                p.rendered_secs = (rendered + tail_rendered) as f64 / sample_rate as f64;
+                p.voice_count = vc;
+                if let Some(start) = p.started_at {
+                    let elapsed = start.elapsed().as_secs_f64();
+                    if elapsed > 0.0 {
+                        p.render_speed = p.rendered_secs / elapsed;
+                    }
+                }
+            }
+        }
     }
 
     progress(0.99, "写入文件");

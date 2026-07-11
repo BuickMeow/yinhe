@@ -454,9 +454,7 @@ impl App {
         // Reset progress state
         {
             let mut p = export_progress.lock().unwrap();
-            p.visible = true;
-            p.progress = 0.0;
-            p.status = "准备中…".into();
+            p.reset();
         }
 
         let (tx, rx) = mpsc::channel();
@@ -477,6 +475,7 @@ impl App {
                         }
                     }
                 },
+                Some(export_progress.clone()),
             );
             // Mark done
             if let Ok(mut p) = export_progress.lock() {
