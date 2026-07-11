@@ -44,23 +44,21 @@ pub fn export_wav_gpu(
     let mut sample_cache: std::collections::HashMap<std::path::PathBuf, (u32, u32)> = std::collections::HashMap::new();
     let mut sample_data: Vec<f32> = Vec::new();
 
-    for key in 0..128u8 {
-        let info = &key_map[key as usize];
-        if info.sample_path.to_string_lossy() == "missing" {
-            continue;
-        }
-        if sample_cache.contains_key(&info.sample_path) {
-            continue;
-        }
-        let offset = sample_data.len() as u32;
-        match crate::sfz_parser::load_wav_as_f32(&info.sample_path) {
-            Ok(samples) => {
-                let len = samples.len() as u32;
-                sample_data.extend_from_slice(&samples);
-                sample_cache.insert(info.sample_path.clone(), (offset, len));
-            }
-            Err(e) => {
-                eprintln!("[gpu] Warning: failed to load {:?}: {}", info.sample_path, e);
+    // 收集所有 key 的所有 velocity layer 的采样文件
+    for key_layers in &key_map {
+        for info in key_layers {
+            if info.sample_path.to_string_lossy() == "missing" { continue; }
+            if sample_cache.contains_key(&info.sample_path) { continue; }
+            let offset = sample_data.len() as u32;
+            match crate::sfz_parser::load_wav_as_f32(&info.sample_path) {
+                Ok(samples) => {
+                    let len = samples.len() as u32;
+                    sample_data.extend_from_slice(&samples);
+                    sample_cache.insert(info.sample_path.clone(), (offset, len));
+                }
+                Err(e) => {
+                    eprintln!("[gpu] Warning: failed to load {:?}: {}", info.sample_path, e);
+                }
             }
         }
     }
@@ -156,7 +154,11 @@ pub fn export_wav_gpu(
             if sample > block_end { break; }
             if sample >= rendered {
                 if is_on {
-                    let info = &key_map[key as usize];
+                    // 根据 key + velocity 选择对应的 SFZ region（力度分层）
+                    let info = match sfz_parser::select_key_info(&key_map, key, vel) {
+                        Some(i) => i,
+                        None => { event_cursor += 1; continue; }
+                    };
                     if let Some(&(offset, length)) = sample_cache.get(&info.sample_path) {
                         if length > 0 {
                             let sr = sample_rate as f32;
@@ -205,6 +207,9 @@ pub fn export_wav_gpu(
                                 release_rate,
                                 pan_left: pan_l,
                                 pan_right: pan_r,
+                                loop_start: info.loop_start,
+                                loop_end: info.loop_end,
+                                loop_mode: info.loop_mode as u32,
                             });
                             voice_keys.push(key);
                         }

@@ -58,18 +58,15 @@ impl Default for SfzKeyInfo {
     }
 }
 
-/// Build a lookup table: MIDI key → SfzKeyInfo.
-/// 选择 keyrange 最窄的 region（最精确匹配）。
-pub fn build_key_map_from_sfz(sfz_path: &Path) -> Result<Vec<SfzKeyInfo>, String> {
+/// Build a lookup table: MIDI key → Vec<SfzKeyInfo>（按力度分层）。
+/// 同一个 key 可能有多个 region（不同 lovel/hivel 对应不同采样）。
+pub fn build_key_map_from_sfz(sfz_path: &Path) -> Result<Vec<Vec<SfzKeyInfo>>, String> {
     let regions = xsynth_soundfonts::sfz::parse_soundfont(sfz_path)
         .map_err(|e| format!("SFZ parse error: {}", e))?;
 
-    let mut key_map: Vec<Option<(SfzKeyInfo, u8)>> = vec![None; 128]; // (info, range_width)
+    let mut key_map: Vec<Vec<SfzKeyInfo>> = vec![Vec::new(); 128];
 
     for region in &regions {
-        let pkc = region.pitch_keycenter as u8;
-        let range_width = (*region.keyrange.end() as i16 - *region.keyrange.start() as i16).unsigned_abs() as u8;
-
         // volume: dB → 线性
         let vol_linear = 10.0f32.powf(region.volume as f32 / 20.0);
 
@@ -89,7 +86,7 @@ pub fn build_key_map_from_sfz(sfz_path: &Path) -> Result<Vec<SfzKeyInfo>, String
 
         let info = SfzKeyInfo {
             sample_path: region.sample_path.clone(),
-            pitch_keycenter: pkc,
+            pitch_keycenter: region.pitch_keycenter as u8,
             tune: region.tune,
             volume: vol_linear,
             pan: pan_norm,
@@ -109,21 +106,34 @@ pub fn build_key_map_from_sfz(sfz_path: &Path) -> Result<Vec<SfzKeyInfo>, String
         for key in region.keyrange.clone() {
             let k = key as usize;
             if k < 128 {
-                let replace = match &key_map[k] {
-                    None => true,
-                    Some((_, prev_width)) => range_width < *prev_width,
-                };
-                if replace {
-                    key_map[k] = Some((info.clone(), range_width));
-                }
+                key_map[k].push(info.clone());
             }
         }
     }
 
-    Ok(key_map
-        .into_iter()
-        .map(|opt| opt.map(|(info, _)| info).unwrap_or_default())
-        .collect())
+    // 每个 key 的 velocity layers 按 lovel 排序（方便二分查找）
+    for layers in key_map.iter_mut() {
+        layers.sort_by_key(|info| info.lovel);
+    }
+
+    Ok(key_map)
+}
+
+/// 根据 key 和 velocity 选择对应的 SfzKeyInfo（力度分层）。
+pub fn select_key_info<'a>(key_map: &'a [Vec<SfzKeyInfo>], key: u8, velocity: u8) -> Option<&'a SfzKeyInfo> {
+    let layers = &key_map[key as usize];
+    if layers.is_empty() { return None; }
+    // 找到 lovel <= velocity 且 hivel >= velocity 的 layer
+    for info in layers {
+        if velocity >= info.lovel && velocity <= info.hivel {
+            return Some(info);
+        }
+    }
+    // fallback: 取最接近的
+    layers.iter().min_by_key(|info| {
+        (velocity as i16 - info.lovel as i16).unsigned_abs()
+            .min((velocity as i16 - info.hivel as i16).unsigned_abs())
+    })
 }
 
 /// Load a WAV file as f32 samples (mono, normalized to -1..1).

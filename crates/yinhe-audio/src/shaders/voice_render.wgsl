@@ -25,6 +25,9 @@ struct VoiceState {
     release_rate: f32,
     pan_left: f32,
     pan_right: f32,
+    loop_start: u32,
+    loop_end: u32,
+    loop_mode: u32,  // 0=NoLoop, 1=LoopContinuous, 2=LoopSustain, 3=OneShot
 };
 
 @group(0) @binding(0) var<uniform> params: RenderParams;
@@ -157,9 +160,19 @@ fn vs_main(@builtin(workgroup_id) wid: vec3<u32>,
         let frame_in_voice = fi - (*voice).start_offset;
 
         let t = (*voice).time + f32(frame_in_voice) * (*voice).speed;
-        let idx = u32(t);
+        var idx = u32(t);
         let frac = t - f32(idx);
         let max_idx = (*voice).sample_length - 1u;
+
+        // 循环处理：loop_mode != 0 且 loop_end > loop_start
+        let has_loop = (*voice).loop_mode > 0u && (*voice).loop_end > (*voice).loop_start;
+        if has_loop && idx >= (*voice).loop_end {
+            let loop_len = (*voice).loop_end - (*voice).loop_start;
+            if loop_len > 0u {
+                idx = (*voice).loop_start + ((idx - (*voice).loop_start) % loop_len);
+            }
+        }
+
         if idx >= (*voice).sample_length { continue; }
 
         let a = sample_at((*voice).sample_offset + min(idx, max_idx));

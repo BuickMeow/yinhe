@@ -30,6 +30,10 @@ pub struct GpuVoiceState {
     pub release_rate: f32,  // 1/(release*sample_rate)
     pub pan_left: f32,      // 声像左增益
     pub pan_right: f32,     // 声像右增益
+    // Loop 参数
+    pub loop_start: u32,    // 循环起始（0 = 无循环）
+    pub loop_end: u32,      // 循环结束（0 = 无循环）
+    pub loop_mode: u32,     // 0=NoLoop, 1=LoopContinuous, 2=LoopSustain, 3=OneShot
 }
 
 /// Uniform buffer for render parameters.
@@ -50,6 +54,16 @@ pub fn advance_voices(voices: &mut [GpuVoiceState], frame_count: u32) {
         voice.start_offset = 0;
         if voice.env_stage >= 4 { continue; }
         voice.time += voice.speed * active_frames as f32;
+
+        // 循环回绕
+        let has_loop = voice.loop_mode > 0 && voice.loop_end > voice.loop_start;
+        if has_loop && voice.time >= voice.loop_end as f32 {
+            let loop_len = (voice.loop_end - voice.loop_start) as f32;
+            if loop_len > 0.0 {
+                voice.time = voice.loop_start as f32 + ((voice.time - voice.loop_start as f32) % loop_len);
+            }
+        }
+
         for _ in 0..active_frames {
             match voice.env_stage {
                 0 => {
@@ -412,9 +426,19 @@ pub fn cpu_render_voices(
             }
 
             let t = voice.time + frame_in_voice as f32 * voice.speed;
-            let idx = t as u32;
+            let mut idx = t as u32;
             let frac = t - idx as f32;
             let max_idx = voice.sample_length.saturating_sub(1);
+
+            // 循环回绕
+            let has_loop = voice.loop_mode > 0 && voice.loop_end > voice.loop_start;
+            if has_loop && idx >= voice.loop_end {
+                let loop_len = voice.loop_end - voice.loop_start;
+                if loop_len > 0 {
+                    idx = voice.loop_start + ((idx - voice.loop_start) % loop_len);
+                }
+            }
+
             if idx >= voice.sample_length { continue; }
             let a = sample_data[voice.sample_offset as usize + (idx as usize).min(max_idx as usize)];
             let b = sample_data[voice.sample_offset as usize + ((idx + 1) as usize).min(max_idx as usize)];
@@ -444,6 +468,7 @@ mod tests {
             speed, gain: 0.5, time: 0.0, envelope: 0.0, env_stage: 0, env_level: 1.0, start_offset: 0,
             attack_rate: 0.01, decay_rate: 0.005, sustain_level: 0.7, release_rate: 0.02,
             pan_left: 1.0, pan_right: 1.0,
+            loop_start: 0, loop_end: 0, loop_mode: 0,
         }).collect()
     }
 
@@ -515,6 +540,7 @@ mod tests {
             gain: 1.0, time: 0.0, envelope: 1.0, env_stage: 2, env_level: 1.0, start_offset: 0,
             attack_rate: 0.01, decay_rate: 0.005, sustain_level: 1.0, release_rate: 0.02,
             pan_left: 1.0, pan_right: 1.0,
+            loop_start: 0, loop_end: 0, loop_mode: 0,
         }];
         let gpu_out = renderer.render_block(&gpu_voices, 8, 44100);
 
@@ -543,6 +569,7 @@ mod tests {
                 gain: 1.0, time: 0.0, envelope: 1.0, env_stage: 2, env_level: 1.0, start_offset: 0,
                 attack_rate: 0.01, decay_rate: 0.005, sustain_level: 1.0, release_rate: 0.02,
                 pan_left: 1.0, pan_right: 1.0,
+                loop_start: 0, loop_end: 0, loop_mode: 0,
             }]),
             usage: wgpu::BufferUsages::STORAGE,
         });
