@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use rayon::prelude::*;
 use yinhe_types::{key_notes_in_range, NoteSource, TimeSigEvent};
 
@@ -92,6 +94,7 @@ pub fn build_notes(
     midi: &dyn NoteSource,
     view: &ArrangementView,
     track_visible: &[bool],
+    hidden_notes: &HashSet<(u16, u32, u8)>,
 ) {
     let ppu = view.base.pixels_per_tick;
     let num_tracks = track_visible.len();
@@ -150,6 +153,9 @@ pub fn build_notes(
                 if !track_visible.get(ti).copied().unwrap_or(true) {
                     continue;
                 }
+                if hidden_notes.contains(&(note.track, note.start_tick, key)) {
+                    continue;
+                }
                 track_buckets[ti].push((note.start_tick, note.end_tick, note.velocity));
             }
 
@@ -180,6 +186,29 @@ pub fn build_notes(
         .collect();
 
     out.extend(note_instances.into_iter().flatten());
+}
+
+/// Build ghost note instances for move-drag preview (layer 3, no cache).
+///
+/// Each ghost is `(start_tick, end_tick, key, track)`. Positions are in
+/// absolute tick/key space — the GPU shader converts to pixels.
+pub fn build_ghost_notes(
+    out: &mut Vec<NoteInstance>,
+    ghost_notes: &[(f64, f64, u8, u16)],
+) {
+    for &(start_tick, end_tick, key, track) in ghost_notes {
+        let s = start_tick.max(0.0) as u32;
+        let e = end_tick.max(start_tick).max(0.0) as u32;
+        if s >= e {
+            continue;
+        }
+        out.push(NoteInstance {
+            start_tick: s,
+            end_tick: e,
+            packed: NoteInstance::pack(key, track.min(65535) as u16, 0),
+            reserved: 0,
+        });
+    }
 }
 
 /// Build the playhead cursor instance (a single vertical line).

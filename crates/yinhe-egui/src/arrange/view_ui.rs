@@ -1,7 +1,9 @@
+use std::collections::HashSet;
+
 use eframe::egui;
 
-use yinhe_arrangement::{build_decor, build_grid, build_notes};
-use yinhe_types::{ArrangementView, NoteSource};
+use yinhe_arrangement::{build_decor, build_ghost_notes, build_grid, build_notes};
+use yinhe_types::{ArrangementView, NoteSource, key_notes_in_range};
 use yinhe_wgpu::{InstanceRenderer, Uniforms, TrackColorsUniform, MAX_TRACKS};
 use yinhe_types::TimeSigEvent;
 use yinhe_wgpu::layer_cache_key;
@@ -12,8 +14,9 @@ use crate::widgets::tools_panel::Tool;
 
 /// Display the arrangement view texture with zoom/pan interaction.
 ///
-/// Uses the layered cache API: decor (layer 0), grid (layer 1), notes (layer 2).
-/// The playhead cursor is drawn by egui on top of the wgpu texture.
+/// Uses the layered cache API: decor (layer 0), grid (layer 1), notes (layer 2),
+/// ghost notes (layer 3, no cache).  The playhead cursor is drawn by egui on top
+/// of the wgpu texture.
 ///
 /// `arr_drag_delta` is set on mouse release after dragging an existing selection
 /// (moving notes + automation events in the selected track/time range).
@@ -120,7 +123,7 @@ pub fn show(
         sel_rect_count: 0, // unused in AR mode
         note_selection_highlight: 0, // AR mode: no note selection highlight
         lane_height: view.lane_height, // AR: per-track lane height
-        note_alpha: 0.85, // AR notes semi-transparent
+        note_alpha: 1.0,
     };
 
     view.base.dirty = false;
@@ -128,7 +131,31 @@ pub fn show(
     let theme = renderer.theme().clone();
     renderer.upload_uniforms(uniforms);
     renderer.upload_track_colors(tc_uniform);
-    renderer.ensure_layers(3);
+    renderer.ensure_layers(4);
+
+    // ── Select tool dispatch (BEFORE layer building to get ghost notes) ──
+    // Like PR's sel_drag_frame, this returns ghost_notes/hidden_notes generated
+    // from the CURRENT frame's mouse position, enabling zero-delay ghost preview.
+    let (ghost_notes, hidden_notes, drag_rect) = if *active_tool == Tool::Select {
+        sel_drag_frame_arrange(
+            ui,
+            rect,
+            view,
+            midi,
+            selected,
+            track_visible,
+            quantize,
+            ppq,
+            bar_line_data,
+            total_ticks,
+            num_tracks,
+            cursor_tick,
+            arr_sel_rect,
+            arr_drag_delta,
+        )
+    } else {
+        (Vec::new(), HashSet::new(), None)
+    };
 
     let vh = view.render_hash();
     let wh = {
@@ -185,7 +212,7 @@ pub fn show(
     });
 
     // Layer 2: notes (16B NoteInstance — shader computes pixel positions from uniforms)
-    let notes_key = layer_cache_key(&[vh, wh, tv_hash, midi_version]);
+    let notes_key = layer_cache_key(&[vh, wh, tv_hash, midi_version, hidden_notes.len() as u64]);
     renderer.upload_note_layer(2, notes_key, |out| {
         if let Some(midi) = midi {
             build_notes(
@@ -195,8 +222,14 @@ pub fn show(
                 midi,
                 view,
                 track_visible,
+                &hidden_notes,
             );
         }
+    });
+
+    // Layer 3: ghost notes (no cache — rebuilt every frame during drag)
+    renderer.upload_note_layer_force(3, |out| {
+        build_ghost_notes(out, &ghost_notes);
     });
 
     let content_changed = true;
@@ -226,24 +259,13 @@ pub fn show(
         }
     }
 
-    // ── Tool dispatch ──
-    if *active_tool == Tool::Select {
-        sel_drag_frame_arrange(
-            ui,
-            rect,
-            view,
-            midi,
-            selected,
-            quantize,
-            ppq,
-            bar_line_data,
-            total_ticks,
-            num_tracks,
-            cursor_tick,
-            arr_sel_rect,
-            arr_drag_delta,
-        );
-    } else if *active_tool == Tool::Eraser {
+    // ── Draw drag selection rect (move-drag offset or marquee) on top of GPU texture ──
+    if let Some(dr) = drag_rect {
+        crate::selection::draw::draw(&ui.painter(), rect, dr, egui::Color32::WHITE, egui::Color32::WHITE);
+    }
+
+    // ── Eraser tool dispatch (after GPU texture, before eraser marquee drawing) ──
+    if *active_tool == Tool::Eraser {
         eraser_drag_frame_arrange(
             ui,
             rect,
@@ -345,12 +367,19 @@ pub fn show(
 
 // ── Arrangement selection drag ──
 
+/// Returns `(ghost_notes, hidden_notes, drag_rect)` for move-drag preview.
+///
+/// `ghost_notes`: `(start_tick, end_tick, key, track)` — preview notes at new positions.
+/// `hidden_notes`: `(track, start_tick, key)` — original notes to hide during drag.
+/// `drag_rect`: the selection rect to draw on top of the GPU texture (move-drag offset
+///   rect or marquee rect). `None` on release (arr_sel_rect takes over).
 fn sel_drag_frame_arrange(
     ui: &mut egui::Ui,
     content_rect: egui::Rect,
     view: &mut ArrangementView,
     midi: Option<&dyn NoteSource>,
     selected: &mut yinhe_core::Selection,
+    track_visible: &[bool],
     quantize: QuantizePreset,
     ppq: u32,
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
@@ -359,7 +388,11 @@ fn sel_drag_frame_arrange(
     cursor_tick: &mut Option<f64>,
     arr_sel_rect: &mut Option<(f64, f64, usize, usize)>,
     arr_drag_delta: &mut Option<(i64, i32)>,
-) {
+) -> (Vec<(f64, f64, u8, u16)>, HashSet<(u16, u32, u8)>, Option<egui::Rect>) {
+    let mut ghost_notes: Vec<(f64, f64, u8, u16)> = Vec::new();
+    let mut hidden_notes: HashSet<(u16, u32, u8)> = HashSet::new();
+    let mut drag_rect: Option<egui::Rect> = None;
+
     let sel_id = ui.id().with("sel_drag_arr");
     // 拖框起始点存音乐坐标 (start_tick, start_track_y)，免疫任何滚动
     // （触摸板滚动、自动滚动、中键拖拽都不会改变音乐坐标）
@@ -393,7 +426,7 @@ fn sel_drag_frame_arrange(
         ui.data_mut(|d| d.insert_persisted(sel_id, drag));
         ui.data_mut(|d| d.insert_persisted(move_drag_id, move_drag));
         ui.data_mut(|d| d.insert_persisted(move_orig_id, move_orig_sel));
-        return;
+        return (ghost_notes, hidden_notes, drag_rect);
     }
 
     // ── Check if mouse is inside the existing selection rect (for Move cursor + drag) ──
@@ -449,7 +482,7 @@ fn sel_drag_frame_arrange(
         }
     }
 
-    // ── Move-drag handling ──
+    // ── Move-drag: update current position ──
     if let Some((origin, _)) = move_drag {
         if pointer.primary_down() && !pointer.primary_pressed() {
             if let Some(pos) = pointer.hover_pos() {
@@ -473,67 +506,98 @@ fn sel_drag_frame_arrange(
                 );
             }
         }
+    }
 
-        if pointer.primary_released() {
-            if let Some(((origin_t, origin_tr), (current_t, current_tr))) = move_drag {
-                // Snap ticks to grid for quantized horizontal delta
-                let snapped_origin = crate::view_interaction::snap_tick(origin_t, quantize, ppq, bar_line_data);
-                let snapped_current = crate::view_interaction::snap_tick(current_t, quantize, ppq, bar_line_data);
-                let delta_ticks = (snapped_current - snapped_origin).round() as i64;
-                // Vertical: round to nearest integer track
-                let delta_tracks = (current_tr - origin_tr).round() as i32;
-
-                let has_moved = delta_ticks != 0 || delta_tracks != 0;
-
-                if has_moved {
-                    *arr_drag_delta = Some((delta_ticks, delta_tracks));
-
-                    // Restore arr_sel_rect from saved original, offset by delta
-                    if let Some((t_start, t_end, track_lo, track_hi)) = move_orig_sel {
-                        let new_lo = (track_lo as i32 + delta_tracks).max(0) as usize;
-                        let new_hi = (track_hi as i32 + delta_tracks).max(0) as usize;
-                        *arr_sel_rect = Some((
-                            t_start + delta_ticks as f64,
-                            t_end + delta_ticks as f64,
-                            new_lo,
-                            new_hi,
-                        ));
-                    }
-                    view.base.dirty = true;
-                } else {
-                    // No move: restore original rect
-                    *arr_sel_rect = move_orig_sel;
-                }
-            }
-            move_drag = None;
-            move_orig_sel = None;
-        }
-
-        // Draw offset selection rect during drag (using saved original)
-        if let (Some((origin, current)), Some((t_start, t_end, track_lo, track_hi))) =
-            (move_drag, move_orig_sel)
-        {
-            // Snap for display too
-            let (origin_t, origin_tr) = origin;
-            let (current_t, current_tr) = current;
+    // ── Generate ghost notes + drag_rect from current move_drag (BEFORE release) ──
+    // Ghost notes must be generated before release clears move_drag, so the ghost
+    // stays visible on the release frame (preventing flicker before model update).
+    if let Some(((origin_t, origin_tr), (current_t, current_tr))) = move_drag {
+        if let Some((t_start, t_end, track_lo, track_hi)) = move_orig_sel {
             let snapped_origin = crate::view_interaction::snap_tick(origin_t, quantize, ppq, bar_line_data);
             let snapped_current = crate::view_interaction::snap_tick(current_t, quantize, ppq, bar_line_data);
-            let display_dt = snapped_current - snapped_origin;
-            let display_dtr = (current_tr - origin_tr).round() as i32;
+            let dt = (snapped_current - snapped_origin).round() as i64;
+            let dtr = (current_tr - origin_tr).round() as i32;
+
+            // Compute drag_rect (offset selection rect) for display
             let lh = view.lane_height;
             let scroll_y = view.base.scroll_y;
-            let new_track_lo = (track_lo as i32 + display_dtr).max(0) as usize;
-            let new_track_hi = (track_hi as i32 + display_dtr).max(0) as usize;
+            let new_track_lo = (track_lo as i32 + dtr).max(0) as usize;
+            let new_track_hi = (track_hi as i32 + dtr).max(0) as usize;
             let sy = new_track_lo as f32 * lh - scroll_y;
             let ey = (new_track_hi as f32 + 1.0) * lh - scroll_y;
-            let sx = view.tick_to_x(t_start + display_dt);
-            let ex = view.tick_to_x(t_end + display_dt);
-            let snapped = egui::Rect::from_min_max(
+            let sx = view.tick_to_x(t_start + dt as f64);
+            let ex = view.tick_to_x(t_end + dt as f64);
+            drag_rect = Some(egui::Rect::from_min_max(
                 egui::pos2(sx.min(ex), sy.min(ey)),
                 egui::pos2(sx.max(ex), sy.max(ey)),
-            );
-            crate::selection::draw::draw(&ui.painter(), content_rect, snapped, egui::Color32::WHITE, egui::Color32::WHITE);
+            ));
+
+            // Generate ghost notes at new positions + hide originals
+            if dt != 0 || dtr != 0 {
+                let ts = t_start as u32;
+                let te = t_end as u32;
+                let tl = track_lo as u16;
+                let th = track_hi as u16;
+                let max_track = (num_tracks as i32 - 1).max(0) as u16;
+
+                if let Some(midi) = midi {
+                    for key in 0u8..128u8 {
+                        let notes = key_notes_in_range(midi.key_notes(key), ts, te);
+                        for note in notes {
+                            if note.track < tl || note.track > th {
+                                continue;
+                            }
+                            if !track_visible.get(note.track as usize).copied().unwrap_or(true) {
+                                continue;
+                            }
+                            let new_tick = (note.start_tick as i64 + dt).max(0) as u32;
+                            let length = note.end_tick - note.start_tick;
+                            let new_track = (note.track as i32 + dtr).max(0).min(max_track as i32) as u16;
+                            ghost_notes.push((
+                                new_tick as f64,
+                                (new_tick + length) as f64,
+                                key,
+                                new_track,
+                            ));
+                            hidden_notes.insert((note.track, note.start_tick, key));
+                        }
+                    }
+                }
+            }
         }
+    }
+
+    // ── Move-drag: release handling ──
+    if move_drag.is_some() && pointer.primary_released() {
+        if let Some(((origin_t, origin_tr), (current_t, current_tr))) = move_drag {
+            let snapped_origin = crate::view_interaction::snap_tick(origin_t, quantize, ppq, bar_line_data);
+            let snapped_current = crate::view_interaction::snap_tick(current_t, quantize, ppq, bar_line_data);
+            let delta_ticks = (snapped_current - snapped_origin).round() as i64;
+            let delta_tracks = (current_tr - origin_tr).round() as i32;
+
+            let has_moved = delta_ticks != 0 || delta_tracks != 0;
+
+            if has_moved {
+                *arr_drag_delta = Some((delta_ticks, delta_tracks));
+
+                if let Some((t_start, t_end, track_lo, track_hi)) = move_orig_sel {
+                    let new_lo = (track_lo as i32 + delta_tracks).max(0) as usize;
+                    let new_hi = (track_hi as i32 + delta_tracks).max(0) as usize;
+                    *arr_sel_rect = Some((
+                        t_start + delta_ticks as f64,
+                        t_end + delta_ticks as f64,
+                        new_lo,
+                        new_hi,
+                    ));
+                }
+                view.base.dirty = true;
+            } else {
+                *arr_sel_rect = move_orig_sel;
+            }
+        }
+        move_drag = None;
+        move_orig_sel = None;
+        drag_rect = None; // arr_sel_rect takes over on release
     }
 
     // ── Selection marquee drag handling ──
@@ -567,6 +631,18 @@ fn sel_drag_frame_arrange(
             start_music.1 * view.lane_height - view.base.scroll_y,
         );
 
+        // Compute marquee drag_rect (BEFORE release, same pattern as move-drag)
+        if let Some((_, end)) = drag {
+            if (end - start_pixel).length() >= 3.0 {
+                let (vx, vy, vw, vh, _, _, _, _) =
+                    arrange_snapped_bounds(start_pixel, end, view, quantize, ppq, bar_line_data);
+                drag_rect = Some(egui::Rect::from_min_max(
+                    egui::pos2(vx.min(vy), vw.min(vh)),
+                    egui::pos2(vx.max(vy), vw.max(vh)),
+                ));
+            }
+        }
+
         if pointer.primary_released() {
             if let (Some(_midi_ref), Some((_, end))) = (midi, drag) {
                 let drag_dist = (end - start_pixel).length();
@@ -598,24 +674,15 @@ fn sel_drag_frame_arrange(
                 view.base.dirty = true;
             }
             drag = None;
-        }
-
-        if let Some((_, end)) = drag {
-            if (end - start_pixel).length() >= 3.0 {
-                let (vx, vy, vw, vh, _, _, _, _) =
-                    arrange_snapped_bounds(start_pixel, end, view, quantize, ppq, bar_line_data);
-                let snapped = egui::Rect::from_min_max(
-                    egui::pos2(vx.min(vy), vw.min(vh)),
-                    egui::pos2(vx.max(vy), vw.max(vh)),
-                );
-                crate::selection::draw::draw(&ui.painter(), content_rect, snapped, egui::Color32::WHITE, egui::Color32::WHITE);
-            }
+            drag_rect = None; // arr_sel_rect takes over on release
         }
     }
 
     ui.data_mut(|d| d.insert_persisted(sel_id, drag));
     ui.data_mut(|d| d.insert_persisted(move_drag_id, move_drag));
     ui.data_mut(|d| d.insert_persisted(move_orig_id, move_orig_sel));
+
+    (ghost_notes, hidden_notes, drag_rect)
 }
 
 // ── Arrangement eraser tool ──
