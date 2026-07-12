@@ -277,5 +277,8 @@ impl App {
             }
             _ => {}
         }
+
+        // 归还 jemalloc arena 中已释放的内存给 OS，防止 RSS 不下降
+        yinhe_memtrace::purge_free_pages();
     }
 }
