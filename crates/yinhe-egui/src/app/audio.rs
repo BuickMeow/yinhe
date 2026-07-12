@@ -77,7 +77,14 @@ impl App {
             cpal::BufferSize::Fixed(self.audio_settings.buffer_size)
         };
 
-        match yinhe_audio::spawn_cpal_audio(sr, num_ch, active_mask, buffer_size) {
+        match yinhe_audio::spawn_cpal_audio(
+            sr,
+            num_ch,
+            active_mask,
+            buffer_size,
+            #[cfg(feature = "gpu")]
+            self.audio_settings.use_gpu_synth,
+        ) {
             Ok(audio) => {
                 progress::set_stage(&self.load_progress, 2, progress::StageStatus::Done);
 

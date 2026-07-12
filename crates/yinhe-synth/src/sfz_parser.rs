@@ -1,25 +1,31 @@
-//! SFZ key-map builder using xsynth-soundfonts' standard parser.
+//! SoundFont 解析器 — 统一支持 SFZ 和 SF2 格式。
 //!
-//! 委托 xsynth-soundfonts 解析 SFZ（处理 <group>/<master>/#include/继承等），
-//! 然后提取每个 key 所需的合成参数。
+//! 委托 xsynth-soundfonts 解析 SFZ/SF2，然后提取每个 key 所需的合成参数。
+//! SFZ: 采样数据从 WAV 文件加载
+//! SF2: 采样数据内嵌在文件中，已解析为 f32
 
 use std::path::{Path, PathBuf};
 
-/// 每个 MIDI key 对应的 SFZ 合成参数。
+/// 每个 MIDI key 对应的合成参数。
 #[derive(Clone, Debug)]
-pub struct SfzKeyInfo {
-    pub sample_path: PathBuf,
+pub struct KeyInfo {
+    // 采样数据来源（二选一）
+    pub sample_path: Option<PathBuf>,    // SFZ: WAV 文件路径
+    pub sample_data: Option<Vec<f32>>,   // SF2: 内嵌采样数据
+    pub sample_rate: u32,
+
+    // 合成参数
     pub pitch_keycenter: u8,
     pub tune: i16,
     pub volume: f32,       // dB → 线性增益
     pub pan: f32,          // -1 (左) .. +1 (右)
     pub offset: u32,       // 采样起始偏移
-    pub ampeg_start: f32,  // envelope 起始值 (0..1)
+    pub ampeg_start: f32,
     pub ampeg_delay: f32,
     pub ampeg_attack: f32,
     pub ampeg_hold: f32,
     pub ampeg_decay: f32,
-    pub ampeg_sustain: f32,   // 0..1 (SFZ 是 0..100，已转换)
+    pub ampeg_sustain: f32,   // 0..1
     pub ampeg_release: f32,
     pub lovel: u8,
     pub hivel: u8,
@@ -27,10 +33,9 @@ pub struct SfzKeyInfo {
     pub loop_start: u32,
     pub loop_end: u32,
     pub amp_veltrack: f32,
-    pub sample_rate: u32,  // 采样文件的原始采样率
 }
 
-/// 采样循环模式（与 xsynth LoopMode 对应）
+/// 采样循环模式
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum LoopMode {
     NoLoop,
@@ -39,10 +44,12 @@ pub enum LoopMode {
     OneShot,
 }
 
-impl Default for SfzKeyInfo {
+impl Default for KeyInfo {
     fn default() -> Self {
         Self {
-            sample_path: PathBuf::from("missing"),
+            sample_path: None,
+            sample_data: None,
+            sample_rate: 44100,
             pitch_keycenter: 60,
             tune: 0,
             volume: 1.0,
@@ -61,39 +68,54 @@ impl Default for SfzKeyInfo {
             loop_start: 0,
             loop_end: 0,
             amp_veltrack: 100.0,
-            sample_rate: 44100,
         }
     }
 }
 
-/// Build a lookup table: MIDI key → Vec<SfzKeyInfo>（按力度分层）。
-/// 同一个 key 可能有多个 region（不同 lovel/hivel 对应不同采样）。
-pub fn build_key_map_from_sfz(sfz_path: &Path) -> Result<Vec<Vec<SfzKeyInfo>>, String> {
+/// 根据文件扩展名自动检测格式并构建 key map。
+/// 支持 .sfz 和 .sf2 格式。
+pub fn build_key_map(path: &Path) -> Result<Vec<Vec<KeyInfo>>, String> {
+    let ext = path.extension().and_then(|e| e.to_str()).map(|e| e.to_lowercase());
+    match ext.as_deref() {
+        Some("sfz") => build_key_map_from_sfz(path),
+        Some("sf2") => build_key_map_from_sf2(path),
+        _ => Err(format!("Unsupported soundfont format: {:?}", path)),
+    }
+}
+
+/// 根据 key 和 velocity 选择对应的 KeyInfo（力度分层）。
+pub fn select_key_info<'a>(key_map: &'a [Vec<KeyInfo>], key: u8, velocity: u8) -> Option<&'a KeyInfo> {
+    let layers = &key_map[key as usize];
+    if layers.is_empty() { return None; }
+    for info in layers {
+        if velocity >= info.lovel && velocity <= info.hivel {
+            return Some(info);
+        }
+    }
+    layers.iter().min_by_key(|info| {
+        (velocity as i16 - info.lovel as i16).unsigned_abs()
+            .min((velocity as i16 - info.hivel as i16).unsigned_abs())
+    })
+}
+
+// ── SFZ ──
+
+fn build_key_map_from_sfz(sfz_path: &Path) -> Result<Vec<Vec<KeyInfo>>, String> {
     let regions = xsynth_soundfonts::sfz::parse_soundfont(sfz_path)
         .map_err(|e| format!("SFZ parse error: {}", e))?;
 
-    let mut key_map: Vec<Vec<SfzKeyInfo>> = vec![Vec::new(); 128];
+    let mut key_map: Vec<Vec<KeyInfo>> = vec![Vec::new(); 128];
 
     for region in &regions {
-        // volume: dB → 线性
         let vol_linear = 10.0f32.powf(region.volume as f32 / 20.0);
-
-        // pan: -100..100 → -1..1
         let pan_norm = (region.pan as f32 / 100.0).clamp(-1.0, 1.0);
-
-        // ampeg_sustain: SFZ 0..100 → 0..1
         let sustain_norm = (region.ampeg_envelope.ampeg_sustain / 100.0).clamp(0.0, 1.0);
+        let loop_mode = convert_loop_mode(region.loop_mode);
 
-        // loop_mode 转换
-        let loop_mode = match region.loop_mode {
-            xsynth_soundfonts::LoopMode::NoLoop => LoopMode::NoLoop,
-            xsynth_soundfonts::LoopMode::LoopContinuous => LoopMode::LoopContinuous,
-            xsynth_soundfonts::LoopMode::LoopSustain => LoopMode::LoopSustain,
-            xsynth_soundfonts::LoopMode::OneShot => LoopMode::OneShot,
-        };
-
-        let info = SfzKeyInfo {
-            sample_path: region.sample_path.clone(),
+        let info = KeyInfo {
+            sample_path: Some(region.sample_path.clone()),
+            sample_data: None,
+            sample_rate: 44100,
             pitch_keycenter: region.pitch_keycenter as u8,
             tune: region.tune,
             volume: vol_linear,
@@ -112,40 +134,89 @@ pub fn build_key_map_from_sfz(sfz_path: &Path) -> Result<Vec<Vec<SfzKeyInfo>>, S
             loop_start: region.loop_start,
             loop_end: region.loop_end,
             amp_veltrack: region.amp_veltrack,
-            sample_rate: 44100, // 默认值，load_wav_as_f32 会更新
         };
 
         for key in region.keyrange.clone() {
             let k = key as usize;
-            if k < 128 {
-                key_map[k].push(info.clone());
-            }
+            if k < 128 { key_map[k].push(info.clone()); }
         }
     }
 
-    // 每个 key 的 velocity layers 按 lovel 排序（方便二分查找）
     for layers in key_map.iter_mut() {
         layers.sort_by_key(|info| info.lovel);
     }
-
     Ok(key_map)
 }
 
-/// 根据 key 和 velocity 选择对应的 SfzKeyInfo（力度分层）。
-pub fn select_key_info<'a>(key_map: &'a [Vec<SfzKeyInfo>], key: u8, velocity: u8) -> Option<&'a SfzKeyInfo> {
-    let layers = &key_map[key as usize];
-    if layers.is_empty() { return None; }
-    // 找到 lovel <= velocity 且 hivel >= velocity 的 layer
-    for info in layers {
-        if velocity >= info.lovel && velocity <= info.hivel {
-            return Some(info);
+// ── SF2 ──
+
+fn build_key_map_from_sf2(sf2_path: &Path) -> Result<Vec<Vec<KeyInfo>>, String> {
+    // SF2 需要目标采样率来解码采样数据
+    // 这里用 44100 作为默认值，实际使用时会重采样到目标采样率
+    let presets = xsynth_soundfonts::sf2::load_soundfont(sf2_path, 44100)
+        .map_err(|e| format!("SF2 parse error: {}", e))?;
+
+    let mut key_map: Vec<Vec<KeyInfo>> = vec![Vec::new(); 128];
+
+    // 取第一个 preset（后续可扩展为用户选择 preset）
+    let preset = presets.first().ok_or("SF2: no presets found")?;
+
+    for region in &preset.regions {
+        let vol_linear = 10.0f32.powf(region.volume / 20.0);
+        let pan_norm = (region.pan as f32 / 100.0).clamp(-1.0, 1.0);
+        let sustain_norm = (region.ampeg_envelope.ampeg_sustain / 100.0).clamp(0.0, 1.0);
+        let loop_mode = convert_loop_mode(region.loop_mode);
+
+        // SF2 采样数据已内嵌为 f32（可能是多通道，取第一个）
+        let sample_data: Vec<f32> = region.sample.iter().flat_map(|ch| ch.iter().copied()).collect();
+
+        let tune = region.fine_tune.wrapping_add(region.coarse_tune.wrapping_mul(100));
+
+        let info = KeyInfo {
+            sample_path: None,
+            sample_data: Some(sample_data),
+            sample_rate: region.sample_rate,
+            pitch_keycenter: region.root_key,
+            tune,
+            volume: vol_linear,
+            pan: pan_norm,
+            offset: region.offset,
+            ampeg_start: region.ampeg_envelope.ampeg_start,
+            ampeg_delay: region.ampeg_envelope.ampeg_delay,
+            ampeg_attack: region.ampeg_envelope.ampeg_attack.max(0.001),
+            ampeg_hold: region.ampeg_envelope.ampeg_hold,
+            ampeg_decay: region.ampeg_envelope.ampeg_decay.max(0.001),
+            ampeg_sustain: sustain_norm,
+            ampeg_release: region.ampeg_envelope.ampeg_release.max(0.001),
+            lovel: *region.velrange.start(),
+            hivel: *region.velrange.end(),
+            loop_mode,
+            loop_start: region.loop_start,
+            loop_end: region.loop_end,
+            amp_veltrack: 100.0, // SF2 默认
+        };
+
+        for key in region.keyrange.clone() {
+            let k = key as usize;
+            if k < 128 { key_map[k].push(info.clone()); }
         }
     }
-    // fallback: 取最接近的
-    layers.iter().min_by_key(|info| {
-        (velocity as i16 - info.lovel as i16).unsigned_abs()
-            .min((velocity as i16 - info.hivel as i16).unsigned_abs())
-    })
+
+    for layers in key_map.iter_mut() {
+        layers.sort_by_key(|info| info.lovel);
+    }
+    Ok(key_map)
+}
+
+// ── 工具函数 ──
+
+fn convert_loop_mode(mode: xsynth_soundfonts::LoopMode) -> LoopMode {
+    match mode {
+        xsynth_soundfonts::LoopMode::NoLoop => LoopMode::NoLoop,
+        xsynth_soundfonts::LoopMode::LoopContinuous => LoopMode::LoopContinuous,
+        xsynth_soundfonts::LoopMode::LoopSustain => LoopMode::LoopSustain,
+        xsynth_soundfonts::LoopMode::OneShot => LoopMode::OneShot,
+    }
 }
 
 /// Load a WAV file as f32 samples (mono, normalized to -1..1).
@@ -178,11 +249,7 @@ pub fn load_wav_as_f32(path: &Path) -> Result<(Vec<f32>, u32), String> {
         samples
             .chunks(2)
             .map(|pair| {
-                if pair.len() == 2 {
-                    (pair[0] + pair[1]) * 0.5
-                } else {
-                    pair[0]
-                }
+                if pair.len() == 2 { (pair[0] + pair[1]) * 0.5 } else { pair[0] }
             })
             .collect()
     } else {

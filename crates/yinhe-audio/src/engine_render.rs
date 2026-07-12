@@ -16,6 +16,15 @@ impl AudioEngine {
             return;
         }
 
+        // GPU 路径：GpuSynth 管理自己的事件列表和 voice 状态
+        #[cfg(feature = "gpu")]
+        if let Some(ref mut synth) = self.gpu_synth {
+            synth.render(output);
+            self.sample_position = synth.sample_position();
+            return;
+        }
+
+        // CPU 路径：xsynth 逐段分发+渲染
         let block_start = self.sample_position;
         let block_end = block_start + frames as u64;
         let mut rendered_until = block_start;

@@ -6436,6 +6436,7 @@ dependencies = [
  "pollster",
  "tempfile",
  "wgpu",
+ "xsynth-core",
  "xsynth-soundfonts",
 ]
 

@@ -47,6 +47,9 @@ struct AudioRenderer {
     prepared_rx: Receiver<WorkerResult>,
     shutdown: Arc<AtomicBool>,
     scratch: Vec<f32>,
+    /// 是否启用 GPU 合成器。启用后加载音色库时初始化 GpuSynth，渲染走 engine.gpu_synth。
+    #[cfg(feature = "gpu")]
+    use_gpu_synth: bool,
 }
 
 impl AudioRenderer {
@@ -59,6 +62,7 @@ impl AudioRenderer {
         worker_tx: Sender<WorkerCmd>,
         prepared_rx: Receiver<WorkerResult>,
         shutdown: Arc<AtomicBool>,
+        #[cfg(feature = "gpu")] use_gpu_synth: bool,
     ) -> Self {
         Self {
             engine,
@@ -70,6 +74,8 @@ impl AudioRenderer {
             prepared_rx,
             shutdown,
             scratch: vec![0.0; RENDER_CHUNK_FRAMES * STEREO_CHANNELS],
+            #[cfg(feature = "gpu")]
+            use_gpu_synth,
         }
     }
 
@@ -120,6 +126,11 @@ impl AudioRenderer {
                         AudioCommand::Play { from_sample } => {
                             if self.engine.model_loaded() {
                                 self.engine.handle_command(AudioCommand::Play { from_sample });
+                                // GPU 路径：同步 GpuSynth 位置
+                                #[cfg(feature = "gpu")]
+                                if let Some(ref mut synth) = self.engine.gpu_synth {
+                                    synth.seek(from_sample);
+                                }
                                 self.clear_buffered_audio();
                             } else {
                                 self.engine.set_pending_play(from_sample);
@@ -127,10 +138,18 @@ impl AudioRenderer {
                         }
                         AudioCommand::Seek { sample } => {
                             self.engine.handle_command(AudioCommand::Seek { sample });
+                            #[cfg(feature = "gpu")]
+                            if let Some(ref mut synth) = self.engine.gpu_synth {
+                                synth.seek(sample);
+                            }
                             self.clear_buffered_audio();
                         }
                         AudioCommand::Stop => {
                             self.engine.handle_command(AudioCommand::Stop);
+                            #[cfg(feature = "gpu")]
+                            if let Some(ref mut synth) = self.engine.gpu_synth {
+                                synth.seek(0);
+                            }
                             self.clear_buffered_audio();
                         }
                         AudioCommand::SetAutomationDensity { density } => {
@@ -176,6 +195,9 @@ impl AudioRenderer {
                         .duration_samples
                         .store(prepared.duration_samples, Ordering::Relaxed);
                     self.engine.apply_prepared_model(prepared);
+                    // GPU 路径：模型应用后同步事件到 GpuSynth
+                    #[cfg(feature = "gpu")]
+                    self.sync_gpu_synth_events();
                     self.clear_buffered_audio();
                     self.state.initialized.store(true, Ordering::Release);
                     did_work = true;
@@ -184,9 +206,36 @@ impl AudioRenderer {
                     port,
                     soundfonts,
                     dense_channels,
+                    paths,
                 }) => {
                     self.engine
                         .apply_loaded_soundfont_for_port(port, soundfonts, &dense_channels);
+                    // GPU 路径：首次加载音色库时初始化 GpuSynth
+                    #[cfg(feature = "gpu")]
+                    if self.use_gpu_synth && self.engine.gpu_synth.is_none() {
+                        if let Some(first_path) = paths.first() {
+                            let sr = self.engine.sample_rate;
+                            match yinhe_synth::GpuSynth::new_default(
+                                std::path::Path::new(first_path),
+                                sr,
+                            ) {
+                                Ok(mut synth) => {
+                                    // 加载当前模型的事件
+                                    let events = self.build_gpu_synth_events();
+                                    synth.load_events(events);
+                                    synth.seek(self.engine.sample_position());
+                                    self.engine.gpu_synth = Some(synth);
+                                    eprintln!("[gpu] GpuSynth initialized from {}", first_path);
+                                }
+                                Err(e) => {
+                                    eprintln!("[gpu] Failed to init GpuSynth: {}", e);
+                                }
+                            }
+                        }
+                    }
+                    // 非 GPU feature 下 paths 不使用，显式标记避免 warning
+                    #[cfg(not(feature = "gpu"))]
+                    let _ = paths;
                     self.clear_buffered_audio();
                     did_work = true;
                 }
@@ -195,6 +244,70 @@ impl AudioRenderer {
             }
         }
         did_work
+    }
+
+    /// GPU 路径：从 engine 当前模型构建事件列表并加载到 GpuSynth
+    #[cfg(feature = "gpu")]
+    fn sync_gpu_synth_events(&mut self) {
+        if self.engine.gpu_synth.is_none() {
+            return;
+        }
+        // 先构建事件列表（需要借用 engine 的数据）
+        let events = self.build_gpu_synth_events();
+        // 再加载到 synth（需要可变借用 engine.gpu_synth）
+        let pos = self.engine.sample_position();
+        if let Some(ref mut synth) = self.engine.gpu_synth {
+            synth.load_events(events);
+            synth.seek(pos);
+        }
+    }
+
+    /// 从 engine 的当前 model 构建 SynthEvent 列表
+    #[cfg(feature = "gpu")]
+    fn build_gpu_synth_events(&self) -> Vec<yinhe_synth::SynthEvent> {
+        use crate::audio_model::tick_to_sample;
+
+        let yin_model = match self.engine.yin_model.as_ref() {
+            Some(m) => m,
+            None => return Vec::new(),
+        };
+        let audio_model = match self.engine.model.as_ref() {
+            Some(m) => m,
+            None => return Vec::new(),
+        };
+
+        let segments = &yin_model.tempo_map.tempo_segments;
+        let tpb = yin_model.tempo_map.ticks_per_beat;
+        let sr = self.engine.sample_rate as f64;
+
+        let mut events: Vec<yinhe_synth::SynthEvent> = Vec::new();
+        for key in 0..128usize {
+            for note in yin_model.notes[key].iter() {
+                if note.velocity <= 1 { continue; }
+                let track = note.track as usize;
+                if self.engine.skip_track.get(track).copied().unwrap_or(false) { continue; }
+                let ch = audio_model.track_channel(track) as usize;
+                if !self.engine.active_mask.get(ch).copied().unwrap_or(false) { continue; }
+
+                let start_sample = tick_to_sample(note.start_tick as u64, segments, tpb, sr);
+                let end_sample = tick_to_sample(note.end_tick as u64, segments, tpb, sr);
+
+                events.push(yinhe_synth::SynthEvent {
+                    sample: start_sample,
+                    key: key as u8,
+                    velocity: note.velocity,
+                    is_on: true,
+                });
+                events.push(yinhe_synth::SynthEvent {
+                    sample: end_sample,
+                    key: key as u8,
+                    velocity: 0,
+                    is_on: false,
+                });
+            }
+        }
+        events.sort_by_key(|e| e.sample);
+        events
     }
 
     fn render_if_needed(&mut self) -> bool {
@@ -218,8 +331,19 @@ impl AudioRenderer {
             return false;
         }
 
+        // 统一渲染路径：engine.render() 内部根据 gpu_synth 是否存在自动选择 GPU/CPU
+        // GPU 路径：GpuSynth.render() → 限幅由 GpuSynth 内部完成
+        // CPU 路径：xsynth → 需要外部限幅
         self.engine.render(&mut self.scratch);
+
+        // GPU 路径在 GpuSynth::render 内部已做限幅；CPU 路径需要外部限幅
+        #[cfg(feature = "gpu")]
+        if self.engine.gpu_synth.is_none() {
+            self.limiter.limit(&mut self.scratch);
+        }
+        #[cfg(not(feature = "gpu"))]
         self.limiter.limit(&mut self.scratch);
+
         let pushed = self.ring.push_slice(&self.scratch);
         debug_assert_eq!(pushed, self.scratch.len());
         true
@@ -257,6 +381,7 @@ pub(crate) fn spawn_renderer(
     worker_tx: Sender<WorkerCmd>,
     prepared_rx: Receiver<WorkerResult>,
     shutdown: Arc<AtomicBool>,
+    #[cfg(feature = "gpu")] use_gpu_synth: bool,
 ) -> JoinHandle<()> {
     thread::Builder::new()
         .name("audio-renderer".into())
@@ -270,6 +395,8 @@ pub(crate) fn spawn_renderer(
                 worker_tx,
                 prepared_rx,
                 shutdown,
+                #[cfg(feature = "gpu")]
+                use_gpu_synth,
             );
             renderer.run();
         })

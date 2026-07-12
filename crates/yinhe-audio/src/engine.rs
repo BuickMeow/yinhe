@@ -41,6 +41,10 @@ pub(crate) struct AudioEngine {
     pub(crate) pending_play_from_sample: Option<u64>,
     /// Linear/Curve 自动化段播放时的中间事件 tick 间隔（默认 1）。
     pub(crate) automation_density: u32,
+
+    /// GPU 合成器 — 启用后渲染走 GpuSynth 而非 xsynth
+    #[cfg(feature = "gpu")]
+    pub(crate) gpu_synth: Option<yinhe_synth::GpuSynth>,
 }
 
 impl AudioEngine {
@@ -98,6 +102,8 @@ impl AudioEngine {
                 skip_track: Vec::new(),
                 pending_play_from_sample: None,
                 automation_density: 1,
+                #[cfg(feature = "gpu")]
+                gpu_synth: None,
             }
         })
     }

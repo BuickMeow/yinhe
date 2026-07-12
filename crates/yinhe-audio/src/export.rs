@@ -287,6 +287,158 @@ pub fn export_wav(
     Ok(())
 }
 
+// ── GPU 导出路径 ──
+
+/// 使用 GPU 合成器（GpuSynth）导出 WAV。
+///
+/// 与 `export_wav` 统一代码路径：创建 GpuSynth → 构建 SynthEvent → render 循环。
+#[cfg(feature = "gpu")]
+pub fn export_wav_gpu(
+    model: Arc<YinModel>,
+    sample_rate: u32,
+    sfz_path: &Path,
+    skip_tracks: &[bool],
+    path: &Path,
+    bit_depth: WavBitDepth,
+    progress: impl Fn(f32, &str),
+    device: Arc<yinhe_synth::wgpu::Device>,
+    queue: Arc<yinhe_synth::wgpu::Queue>,
+) -> Result<(), ExportError> {
+    let t_start = Instant::now();
+
+    // ── 1. 初始化 GpuSynth ──
+    progress(0.0, "初始化 GPU 合成器...");
+    let mut synth = yinhe_synth::GpuSynth::new(device, queue, sfz_path, sample_rate)
+        .map_err(|e| ExportError::Render(format!("GpuSynth 初始化失败: {}", e)))?;
+    eprintln!("[gpu-export] GpuSynth initialized: {:.2?}", t_start.elapsed());
+
+    // ── 2. 构建 SynthEvent 列表 ──
+    progress(0.02, "构建事件列表...");
+    let t_events = Instant::now();
+    let audio_model = crate::audio_model::AudioModel::from_model(&model);
+    let segments = &model.tempo_map.tempo_segments;
+    let tpb = model.tempo_map.ticks_per_beat;
+    let sr = sample_rate as f64;
+    let (_num_ch, active_mask) = crate::spawn::channels_for_model(&model);
+
+    let mut events: Vec<yinhe_synth::SynthEvent> = Vec::new();
+    for key in 0..128usize {
+        for note in model.notes[key].iter() {
+            if note.velocity <= 1 { continue; }
+            let track = note.track as usize;
+            if track < skip_tracks.len() && skip_tracks[track] { continue; }
+            let ch = audio_model.track_channel(track) as usize;
+            if !active_mask.get(ch).copied().unwrap_or(false) { continue; }
+
+            let start_sample = crate::audio_model::tick_to_sample(note.start_tick as u64, segments, tpb, sr);
+            let end_sample = crate::audio_model::tick_to_sample(note.end_tick as u64, segments, tpb, sr);
+
+            events.push(yinhe_synth::SynthEvent {
+                sample: start_sample,
+                key: key as u8,
+                velocity: note.velocity,
+                is_on: true,
+            });
+            events.push(yinhe_synth::SynthEvent {
+                sample: end_sample,
+                key: key as u8,
+                velocity: 0,
+                is_on: false,
+            });
+        }
+    }
+    events.sort_by_key(|e| e.sample);
+    eprintln!("[gpu-export] Built {} events in {:.2?}", events.len(), t_events.elapsed());
+
+    // ── 3. 加载事件到合成器 ──
+    progress(0.04, "加载事件到 GPU 合成器...");
+    synth.load_events(events);
+
+    // ── 4. 计算总时长 ──
+    let main_duration = {
+        let mut max_sample = 0u64;
+        for key in 0..128usize {
+            if let Some(last_note) = model.notes[key].last() {
+                let end = crate::audio_model::tick_to_sample(last_note.end_tick as u64, segments, tpb, sr);
+                if end > max_sample { max_sample = end; }
+            }
+        }
+        max_sample
+    };
+    if main_duration == 0 {
+        return Err(ExportError::Render("歌曲时长为零，没有可导出的内容".into()));
+    }
+    let audio_secs = main_duration as f64 / sample_rate as f64;
+
+    // ── 5. 设置 WAV 写入器 ──
+    progress(0.05, "准备写入 WAV...");
+    let spec = hound::WavSpec {
+        channels: 2,
+        sample_rate,
+        bits_per_sample: match bit_depth {
+            WavBitDepth::Bit16 => 16,
+            WavBitDepth::Bit24 => 24,
+            WavBitDepth::Bit32Float => 32,
+        },
+        sample_format: match bit_depth {
+            WavBitDepth::Bit32Float => hound::SampleFormat::Float,
+            _ => hound::SampleFormat::Int,
+        },
+    };
+    let mut writer = hound::WavWriter::create(path, spec).map_err(ExportError::from)?;
+
+    // ── 6. 渲染循环 ──
+    progress(0.06, "GPU 渲染中...");
+    let _t_render = Instant::now();
+    let mut chunk = vec![0.0f32; RENDER_CHUNK_FRAMES * STEREO_CHANNELS];
+    let mut rendered: u64 = 0;
+
+    while rendered < main_duration {
+        let frames = ((main_duration - rendered) as usize).min(RENDER_CHUNK_FRAMES);
+        let buf = &mut chunk[..frames * STEREO_CHANNELS];
+        synth.render(buf);
+        // GpuSynth::render 内部已经做了限幅
+        write_samples(&mut writer, buf, bit_depth)?;
+
+        rendered = synth.sample_position();
+        let pct = 0.06 + (rendered as f32 / main_duration as f32) * 0.90;
+        if rendered % (RENDER_CHUNK_FRAMES as u64 * 50) < RENDER_CHUNK_FRAMES as u64 {
+            progress(pct, &format!("GPU 渲染中 {:.0}%", pct * 100.0));
+        }
+    }
+
+    // ── 7. 余韵衰减（让 release 尾音自然消失）──
+    let max_tail_samples = (MAX_TAIL_SECONDS * sample_rate as f64) as u64;
+    let mut tail_rendered: u64 = 0;
+
+    loop {
+        let frames = RENDER_CHUNK_FRAMES.min((max_tail_samples - tail_rendered) as usize);
+        if frames == 0 { break; }
+        let buf = &mut chunk[..frames * STEREO_CHANNELS];
+        synth.render(buf);
+        write_samples(&mut writer, buf, bit_depth)?;
+
+        tail_rendered += frames as u64;
+        // GpuSynth 没有 voice_count()，用余韵时长上限判断
+        let tail_pct = tail_rendered as f32 / max_tail_samples as f32;
+        let overall = 0.96 + tail_pct * 0.03;
+        progress(overall, "余韵衰减中...");
+
+        if tail_rendered >= max_tail_samples {
+            break;
+        }
+    }
+
+    progress(0.99, "写入文件...");
+    writer.finalize()?;
+    let total = t_start.elapsed();
+    let rtf = audio_secs / total.as_secs_f64();
+    eprintln!("[gpu-export] Done: {:.2?} (rtf={:.1}x, audio={:.1}s)", total, rtf, audio_secs);
+    progress(1.0, "导出完成");
+
+    Ok(())
+}
+
 pub(crate) fn write_samples(
     writer: &mut hound::WavWriter<std::io::BufWriter<std::fs::File>>,
     buf: &[f32],

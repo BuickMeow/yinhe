@@ -295,11 +295,13 @@ impl GpuAudioRenderer {
     }
 
     fn ensure_buffers(&mut self, voice_count: u32, frame_count: u32) {
+        // 幂增长策略：向上取整到 2 的幂次，避免每个 block 都重建缓冲区
+        let rounded_voices = voice_count.max(64).next_power_of_two();
         let needs_recreate = if self.sample_chunks.is_empty() {
             return;
         } else {
             match &self.buffers {
-                Some(b) => b.max_voices < voice_count || self.frame_count < frame_count,
+                Some(b) => b.max_voices < rounded_voices || self.frame_count < frame_count,
                 None => true,
             }
         };
@@ -327,7 +329,6 @@ impl GpuAudioRenderer {
             acc += chunk.len() as u32;
         }
         offsets.push(acc); // total = sentinel
-        eprintln!("[gpu] ensure_buffers: sample_chunks.len()={} offsets={:?}", self.sample_chunks.len(), &offsets);
         // Pad to exactly 8 entries for WGSL struct alignment
         while offsets.len() < 8 {
             offsets.push(0);
@@ -338,8 +339,8 @@ impl GpuAudioRenderer {
             usage: wgpu::BufferUsages::UNIFORM,
         });
 
-        // Other persistent buffers
-        let voice_state_size = (voice_count.max(1) as usize * std::mem::size_of::<GpuVoiceState>()) as u64;
+        // Other persistent buffers（用 rounded_voices 分配，和 max_voices 一致）
+        let voice_state_size = (rounded_voices as usize * std::mem::size_of::<GpuVoiceState>()) as u64;
         let final_output_size = (frame_count.max(1) as usize * 2 * std::mem::size_of::<f32>()) as u64;
         let params_size = std::mem::size_of::<RenderParams>() as u64;
 
@@ -397,7 +398,7 @@ impl GpuAudioRenderer {
             chunk_offsets_buf,
             chunk_count,
             voice_state_buf,
-            max_voices: voice_count.max(1),
+            max_voices: rounded_voices,
             final_output_buf,
             params_buf,
             staging: [staging0, staging1],

@@ -452,6 +452,7 @@ impl App {
         };
         let export_progress = self.export_progress.clone();
         let cancel_flag = self.export_cancel.clone();
+        let use_gpu_synth = self.audio_settings.use_gpu_synth;
         cancel_flag.store(false, std::sync::atomic::Ordering::Relaxed);
 
         // Reset progress state
@@ -477,31 +478,54 @@ impl App {
 
         std::thread::spawn(move || {
             eprintln!("[export] Thread started");
-            // Prefer GPU export when feature is enabled and SFZ path is available.
+            // 根据设置选择导出引擎：GPU 还是 CPU
             #[cfg(feature = "gpu")]
-            let result = if let Some(ref sfz) = gpu_sfz {
-                eprintln!("[export] Using GPU path, SFZ: {}", sfz);
-                yinhe_audio::gpu_export::export_wav_gpu(
-                    model,
-                    sr,
-                    std::path::Path::new(sfz),
-                    &skip,
-                    std::path::Path::new(&path_str),
-                    bit_depth,
-                    |pct, msg| {
-                        if let Ok(mut p) = export_progress.lock() {
-                            p.progress = pct;
-                            if !msg.is_empty() {
-                                p.status = msg.to_string();
+            let result = if use_gpu_synth {
+                if let Some(ref sfz) = gpu_sfz {
+                    eprintln!("[export] Using GPU path (GpuSynth), SFZ: {}", sfz);
+                    yinhe_audio::export::export_wav_gpu(
+                        model,
+                        sr,
+                        std::path::Path::new(sfz),
+                        &skip,
+                        std::path::Path::new(&path_str),
+                        bit_depth,
+                        |pct, msg| {
+                            if let Ok(mut p) = export_progress.lock() {
+                                p.progress = pct;
+                                if !msg.is_empty() {
+                                    p.status = msg.to_string();
+                                }
                             }
-                        }
-                    },
-                    gpu_device,
-                    gpu_queue,
-                )
+                        },
+                        gpu_device,
+                        gpu_queue,
+                    )
+                } else {
+                    eprintln!("[export] GPU selected but no SFZ path, fallback to CPU.");
+                    yinhe_audio::export::export_wav(
+                        model,
+                        sr,
+                        &port_sf,
+                        &skip,
+                        std::path::Path::new(&path_str),
+                        bit_depth,
+                        layer_count,
+                        |pct, msg| {
+                            if let Ok(mut p) = export_progress.lock() {
+                                p.progress = pct;
+                                if !msg.is_empty() {
+                                    p.status = msg.to_string();
+                                }
+                            }
+                        },
+                        Some(export_progress.clone()),
+                        Some(cancel_flag),
+                    )
+                }
             } else {
-                // No SFZ path — fall back to CPU.
-                eprintln!("[export] No SFZ path found, using CPU path. port_sf={:?}", gpu_sfz);
+                // 用户选择 CPU 引擎 — 使用 xsynth 导出。
+                eprintln!("[export] Using CPU path (xsynth).");
                 yinhe_audio::export::export_wav(
                     model,
                     sr,

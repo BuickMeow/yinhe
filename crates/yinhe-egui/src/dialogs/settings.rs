@@ -104,6 +104,22 @@ pub fn show_content(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
                 ui.label(layer_label);
             }
             ui.end_row();
+
+            ui.label("合成引擎");
+            let engine_names = ["XSynth (CPU)", "Yinhe-Synth (GPU)"];
+            let current_engine = if settings.use_gpu_synth { 1 } else { 0 };
+            egui::ComboBox::from_id_salt("synth_engine")
+                .selected_text(engine_names[current_engine])
+                .show_ui(ui, |ui| {
+                    for (i, name) in engine_names.iter().enumerate() {
+                        let selected = (i == 1) == settings.use_gpu_synth;
+                        if ui.selectable_label(selected, *name).clicked() {
+                            settings.use_gpu_synth = i == 1;
+                            changed = true;
+                        }
+                    }
+                });
+            ui.end_row();
         });
 
     ui.add_space(16.0);

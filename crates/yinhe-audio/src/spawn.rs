@@ -157,6 +157,8 @@ pub(crate) enum WorkerResult {
         port: u8,
         soundfonts: Vec<Arc<dyn SoundfontBase>>,
         dense_channels: Vec<u32>,
+        /// 原始路径列表 — GPU 路径用其初始化 GpuPlayer
+        paths: Vec<String>,
     },
 }
 
@@ -216,6 +218,7 @@ pub(crate) fn spawn_worker(
                                             port,
                                             soundfonts,
                                             dense_channels,
+                                            paths,
                                         });
                                     }
                                 }
@@ -235,6 +238,7 @@ pub(crate) fn spawn_worker(
                                 port,
                                 soundfonts,
                                 dense_channels,
+                                paths,
                             });
                         }
                     }
@@ -256,6 +260,7 @@ pub fn spawn_cpal_audio(
     num_channels: u32,
     active_mask: Vec<bool>,
     buffer_size: cpal::BufferSize,
+    #[cfg(feature = "gpu")] use_gpu_synth: bool,
 ) -> Result<CpalAudioHandle, String> {
     let (cmd_tx, cmd_rx) = unbounded::<AudioCommand>();
     let sample_position = Arc::new(AtomicU64::new(0));
@@ -299,6 +304,8 @@ pub fn spawn_cpal_audio(
         worker_tx,
         prepared_rx,
         Arc::clone(&shutdown),
+        #[cfg(feature = "gpu")]
+        use_gpu_synth,
     );
 
     let sp = Arc::clone(&sample_position);
