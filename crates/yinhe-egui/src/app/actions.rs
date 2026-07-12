@@ -27,7 +27,7 @@ impl App {
         let mut actions = KeyboardActions::default();
 
         let is_playing_any = self
-            .audio
+            .audio_state.handle
             .as_ref()
             .map(|a| a.handle.is_playing())
             .unwrap_or(false);

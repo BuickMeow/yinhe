@@ -129,7 +129,7 @@ impl App {
         let density = self.audio_settings.automation_event_density;
         if density != self.last_automation_density {
             self.last_automation_density = density;
-            if let Some(audio) = &self.audio {
+            if let Some(audio) = &self.audio_state.handle {
                 audio.handle.send(yinhe_audio::AudioCommand::SetAutomationDensity {
                     density,
                 });

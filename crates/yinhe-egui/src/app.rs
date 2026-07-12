@@ -2,6 +2,7 @@ use std::sync::{Arc, Mutex, mpsc};
 
 pub(crate) mod actions;
 pub(crate) mod audio;
+pub(crate) mod audio_state;
 pub(crate) mod dialog_dispatch;
 pub(crate) mod export_state;
 pub(crate) mod layout;
@@ -93,17 +94,7 @@ pub struct App {
     pub(crate) follow_mode: crate::view_interaction::FollowMode,
 
     // ── Audio engine ──
-    pub(crate) audio: Option<yinhe_audio::CpalAudioHandle>,
-    pub(crate) audio_active_doc: Option<usize>,
-
-    // ── Playback cursor interpolation ──
-    /// Last known sample position from the audio engine, and the instant we read it.
-    /// Used to interpolate cursor position between callback updates.
-    pub(crate) playback_anchor: Option<(u64, std::time::Instant)>,
-
-    /// Set when Play/Resume is sent but the audio thread hasn't acknowledged yet.
-    /// Ensures request_repaint() keeps firing until is_playing() returns true.
-    pub(crate) pending_playback: bool,
+    pub(crate) audio_state: audio_state::AudioState,
 
     // ── Settings ──
     pub(crate) audio_settings: crate::audio_settings::AudioSettings,
@@ -229,10 +220,7 @@ impl App {
 
             follow_mode: crate::view_interaction::FollowMode::Page,
 
-            audio: None,
-            audio_active_doc: None,
-            playback_anchor: None,
-            pending_playback: false,
+            audio_state: audio_state::AudioState::new(),
 
             audio_settings,
             last_midi_encoding: yinhe_mid2::MidiImportEncoding::Utf8,

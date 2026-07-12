@@ -4,7 +4,7 @@ use yinhe_editor_core::progress;
 impl App {
     /// Notify the audio engine that the active document's model has changed.
     pub(crate) fn notify_audio_model_changed(&self) {
-        if let (Some(idx), Some(audio)) = (self.active_doc, &self.audio) {
+        if let (Some(idx), Some(audio)) = (self.active_doc, &self.audio_state.handle) {
             audio.reload_notes(self.documents[idx].data.model.clone());
         }
     }
@@ -64,7 +64,7 @@ impl App {
             None => return,
         };
 
-        let needs_rebuild = self.audio_active_doc != Some(idx) || self.audio.is_none();
+        let needs_rebuild = self.audio_state.active_doc != Some(idx) || self.audio_state.handle.is_none();
         if !needs_rebuild {
             return;
         }
@@ -73,7 +73,7 @@ impl App {
         progress::set_stage(&self.load_progress, 2, progress::StageStatus::Active);
 
         // Drop old audio (stops cpal stream, frees engine)
-        self.audio = None;
+        self.audio_state.handle = None;
 
         let doc = &self.documents[idx];
         let sr = self.audio_settings.sample_rate;
@@ -153,8 +153,8 @@ impl App {
                     .handle
                     .send(yinhe_audio::AudioCommand::SkipTracks { skip });
 
-                self.audio = Some(audio);
-                self.audio_active_doc = Some(idx);
+                self.audio_state.handle = Some(audio);
+                self.audio_state.active_doc = Some(idx);
 
                 progress::set_visible(&self.load_progress, false);
             }
@@ -172,7 +172,7 @@ impl App {
         pause_return: bool,
         stop_play: bool,
     ) {
-        let (idx, audio) = match (self.active_doc, &self.audio) {
+        let (idx, audio) = match (self.active_doc, &self.audio_state.handle) {
             (Some(idx), Some(audio)) => (idx, audio),
             _ => return,
         };
@@ -183,7 +183,7 @@ impl App {
         if toggle_play {
             if handle.is_playing() {
                 handle.send(yinhe_audio::AudioCommand::Pause);
-                self.pending_playback = false;
+                self.audio_state.pending_playback = false;
                 let sample = handle.sample_position();
                 let time = sample as f64 / audio.sample_rate as f64;
                 doc.edit.cursor_tick = Some(doc.data.model.tempo_map.tick_at_time(time));
@@ -201,13 +201,13 @@ impl App {
                         from_sample: cursor_sample,
                     });
                 }
-                self.pending_playback = true;
+                self.audio_state.pending_playback = true;
                 doc.edit.playback.toggle_play(tick, &doc.data.model);
             }
         }
         if pause_return {
             handle.send(yinhe_audio::AudioCommand::Pause);
-            self.pending_playback = false;
+            self.audio_state.pending_playback = false;
             let sample = handle.sample_position();
             let time = sample as f64 / audio.sample_rate as f64;
             doc.edit.cursor_tick = Some(doc.data.model.tempo_map.tick_at_time(time));
@@ -215,7 +215,7 @@ impl App {
         }
         if stop_play {
             handle.send(yinhe_audio::AudioCommand::Stop);
-            self.pending_playback = false;
+            self.audio_state.pending_playback = false;
             doc.edit.cursor_tick = Some(0.0);
             doc.edit.playback.stop();
         }
@@ -228,15 +228,15 @@ impl App {
     /// using the last known anchor + elapsed wall-clock time.
     /// Call this every frame during playback for smooth cursor motion.
     pub(crate) fn interpolate_playback_cursor(&mut self) {
-        let (idx, audio) = match (self.active_doc, &self.audio) {
+        let (idx, audio) = match (self.active_doc, &self.audio_state.handle) {
             (Some(idx), Some(audio)) => (idx, audio),
             _ => return,
         };
         let handle = &audio.handle;
         if !handle.is_playing() {
-            self.playback_anchor = None;
+            self.audio_state.playback_anchor = None;
             // Clear pending flag once the audio thread has caught up
-            if self.pending_playback {
+            if self.audio_state.pending_playback {
                 // Audio thread hasn't processed the Play command yet.
                 // Keep the flag set so request_repaint() keeps firing.
                 return;
@@ -244,7 +244,7 @@ impl App {
             return;
         }
         // Audio is confirmed playing — clear the pending flag.
-        self.pending_playback = false;
+        self.audio_state.pending_playback = false;
 
         let sr = audio.sample_rate as f64;
         let doc = match self.documents.get_mut(idx) {
@@ -261,7 +261,7 @@ impl App {
         // since the audio callback last advanced the position.  Resetting the
         // anchor every frame would collapse `elapsed` to a single frame and
         // kill the interpolation (cursor would step once per callback).
-        let interpolated_sample = match self.playback_anchor {
+        let interpolated_sample = match self.audio_state.playback_anchor {
             Some((anchor_sample, anchor_time)) if engine_sample == anchor_sample => {
                 // Atomic unchanged — extrapolate from the anchor.
                 let elapsed = now.saturating_duration_since(anchor_time);
@@ -269,7 +269,7 @@ impl App {
             }
             _ => {
                 // Atomic advanced (or first frame) — re-anchor to it.
-                self.playback_anchor = Some((engine_sample, now));
+                self.audio_state.playback_anchor = Some((engine_sample, now));
                 engine_sample as f64
             }
         };
@@ -281,7 +281,7 @@ impl App {
             handle.send(yinhe_audio::AudioCommand::Stop);
             doc.edit.cursor_tick = Some(0.0);
             doc.edit.playback.stop();
-            self.playback_anchor = None;
+            self.audio_state.playback_anchor = None;
         } else {
             doc.edit.cursor_tick = Some(tick.max(0.0));
         }
@@ -289,7 +289,7 @@ impl App {
 
     /// Tear down audio (e.g. on new project or settings change).
     pub(crate) fn teardown_audio(&mut self) {
-        self.audio = None;
-        self.audio_active_doc = None;
+        self.audio_state.handle = None;
+        self.audio_state.active_doc = None;
     }
 }

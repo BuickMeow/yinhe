@@ -12,7 +12,7 @@ impl App {
             &ctx,
             &mut self.audio_settings,
             &mut self.haptic_engine,
-            &self.audio,
+            &self.audio_state.handle,
         ) {
             self.teardown_audio();
         }

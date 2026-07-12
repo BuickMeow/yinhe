@@ -76,7 +76,7 @@ impl App {
         };
 
         let is_playing = self
-            .audio
+            .audio_state.handle
             .as_ref()
             .map(|a| a.handle.is_playing())
             .unwrap_or(false);
@@ -101,7 +101,7 @@ impl App {
                 is_playing,
                 &mut follow_mode,
                 &self.active_tool,
-                self.audio.as_ref(),
+                self.audio_state.handle.as_ref(),
                 &mut request_pianoroll,
                 &mut self.track_selection_anchor,
                 self.audio_settings.scroll_mode,
@@ -477,7 +477,7 @@ impl App {
                 &mut self.right_tab,
                 &mut self.audio_settings,
                 doc,
-                self.audio.as_ref(),
+                self.audio_state.handle.as_ref(),
                 &mut self.event_browser_state,
             );
             if changed {
@@ -487,11 +487,11 @@ impl App {
 
         // Request repaint during playback (or while waiting for audio thread to start)
         let is_audio_playing = self
-            .audio
+            .audio_state.handle
             .as_ref()
             .map(|a| a.handle.is_playing())
             .unwrap_or(false);
-        if is_audio_playing || self.pending_playback {
+        if is_audio_playing || self.audio_state.pending_playback {
             ui.ctx().request_repaint();
         }
     }
