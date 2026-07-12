@@ -150,10 +150,12 @@ fn build_key_map_from_sfz(sfz_path: &Path) -> Result<Vec<Vec<KeyInfo>>, String> 
 
 // ── SF2 ──
 
+/// 根据文件扩展名自动检测格式并构建 key map 时，SF2 需要目标采样率。
+/// 这里用 44100 让 load_soundfont 做重采样，后续 GpuSynth 会再次重采样到目标。
+const SF2_LOAD_SAMPLE_RATE: u32 = 44100;
+
 fn build_key_map_from_sf2(sf2_path: &Path) -> Result<Vec<Vec<KeyInfo>>, String> {
-    // SF2 需要目标采样率来解码采样数据
-    // 这里用 44100 作为默认值，实际使用时会重采样到目标采样率
-    let presets = xsynth_soundfonts::sf2::load_soundfont(sf2_path, 44100)
+    let presets = xsynth_soundfonts::sf2::load_soundfont(sf2_path, SF2_LOAD_SAMPLE_RATE)
         .map_err(|e| format!("SF2 parse error: {}", e))?;
 
     let mut key_map: Vec<Vec<KeyInfo>> = vec![Vec::new(); 128];
@@ -162,23 +164,42 @@ fn build_key_map_from_sf2(sf2_path: &Path) -> Result<Vec<Vec<KeyInfo>>, String> 
     let preset = presets.first().ok_or("SF2: no presets found")?;
 
     for region in &preset.regions {
-        let vol_linear = 10.0f32.powf(region.volume / 20.0);
-        let pan_norm = (region.pan as f32 / 100.0).clamp(-1.0, 1.0);
-        let sustain_norm = (region.ampeg_envelope.ampeg_sustain / 100.0).clamp(0.0, 1.0);
         let loop_mode = convert_loop_mode(region.loop_mode);
 
-        // SF2 采样数据已内嵌为 f32（可能是多通道，取第一个）
-        let sample_data: Vec<f32> = region.sample.iter().flat_map(|ch| ch.iter().copied()).collect();
+        // SF2 sample 是 Arc<[Arc<[f32]>]>：单声道=1通道，立体声=2通道
+        // GPU 渲染器是单声道的，立体声样本取左右平均
+        let sample_data: Vec<f32> = if region.sample.len() == 2 {
+            // 立体声：左右平均为单声道
+            let left = &region.sample[0];
+            let right = &region.sample[1];
+            let len = left.len().min(right.len());
+            (0..len).map(|i| (left[i] + right[i]) * 0.5).collect()
+        } else if region.sample.len() == 1 {
+            region.sample[0].to_vec()
+        } else {
+            continue;
+        };
 
-        let tune = region.fine_tune.wrapping_add(region.coarse_tune.wrapping_mul(100));
+        // volume 已经是线性值（10^(-attenuation/200)），不需要再转换
+        // pan 是 i16（-500..+500），归一化到 -1..+1
+        let pan_norm = (region.pan as f32 / 500.0).clamp(-1.0, 1.0);
+        // sustain 已经是百分比（0..100），归一化到 0..1
+        let sustain_norm = (region.ampeg_envelope.ampeg_sustain / 100.0).clamp(0.0, 1.0);
+
+        let tune = region.fine_tune.wrapping_add(
+            (region.coarse_tune.wrapping_mul(100))
+        );
 
         let info = KeyInfo {
             sample_path: None,
             sample_data: Some(sample_data),
-            sample_rate: region.sample_rate,
+            // load_soundfont 传入 SF2_LOAD_SAMPLE_RATE 后数据已被重采样，
+            // 但 Sf2Region.sample_rate 仍是原始采样率。
+            // 因为数据已经是重采样后的，用 SF2_LOAD_SAMPLE_RATE
+            sample_rate: SF2_LOAD_SAMPLE_RATE,
             pitch_keycenter: region.root_key,
             tune,
-            volume: vol_linear,
+            volume: region.volume,
             pan: pan_norm,
             offset: region.offset,
             ampeg_start: region.ampeg_envelope.ampeg_start,
@@ -193,7 +214,7 @@ fn build_key_map_from_sf2(sf2_path: &Path) -> Result<Vec<Vec<KeyInfo>>, String> 
             loop_mode,
             loop_start: region.loop_start,
             loop_end: region.loop_end,
-            amp_veltrack: 100.0, // SF2 默认
+            amp_veltrack: 100.0,
         };
 
         for key in region.keyrange.clone() {

@@ -408,15 +408,19 @@ impl GpuAudioRenderer {
     }
 
     /// Render a block of audio using the GPU.
-    pub fn render_block(
+    /// 渲染一块音频。输出写入 `output`（长度 = frame_count * 2，立体声交错）。
+    /// 返回实际 voice 数量（0 表示静音）。
+    pub fn render_into(
         &mut self,
         voices: &[GpuVoiceState],
-        frame_count: u32,
+        output: &mut [f32],
         sample_rate: u32,
-    ) -> Vec<f32> {
+    ) -> u32 {
+        let frame_count = (output.len() / 2) as u32;
         let voice_count = voices.len() as u32;
         if voice_count == 0 || frame_count == 0 {
-            return vec![0.0; frame_count as usize * 2];
+            output.fill(0.0);
+            return 0;
         }
 
         self.ensure_buffers(voice_count, frame_count);
@@ -456,12 +460,25 @@ impl GpuAudioRenderer {
         receiver.recv().unwrap().unwrap();
 
         let data = buffer_slice.get_mapped_range();
-        let result: Vec<f32> = bytemuck::cast_slice(&data).to_vec();
+        let gpu_output: &[f32] = bytemuck::cast_slice(&data);
+        output[..gpu_output.len()].copy_from_slice(gpu_output);
         drop(data);
         buf.staging[idx].unmap();
         buf.staging_idx = 1 - buf.staging_idx;
 
-        result
+        voice_count
+    }
+
+    /// 渲染一块音频（返回新分配的 Vec，兼容旧接口）。
+    pub fn render_block(
+        &mut self,
+        voices: &[GpuVoiceState],
+        frame_count: u32,
+        sample_rate: u32,
+    ) -> Vec<f32> {
+        let mut output = vec![0.0; frame_count as usize * 2];
+        self.render_into(voices, &mut output, sample_rate);
+        output
     }
 }
 

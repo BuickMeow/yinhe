@@ -44,6 +44,8 @@ pub struct GpuSynth {
     key_map: Vec<Vec<sfz_parser::KeyInfo>>,
     sample_offsets: HashMap<String, (u32, u32)>,
     voices: Vec<Voice>,
+    /// 预分配的 voice states 缓冲区，避免每帧分配
+    states_buf: Vec<GpuVoiceState>,
     limiter: VolumeLimiter,
     sample_rate: u32,
     /// 排序好的事件列表（导出/Seek 用）
@@ -137,6 +139,7 @@ impl GpuSynth {
             key_map,
             sample_offsets,
             voices: Vec::new(),
+            states_buf: Vec::new(),
             limiter: VolumeLimiter::new(2),
             sample_rate,
             events: Vec::new(),
@@ -188,21 +191,15 @@ impl GpuSynth {
             self.event_cursor += 1;
         }
 
-        // GPU 渲染
+        // GPU 渲染：提取 voice states 到预分配缓冲区，零额外堆分配
         if !self.voices.is_empty() {
-            // 提取纯 GpuVoiceState 列表给渲染器（零拷贝不可行，Voice 不是 Pod）
-            let states: Vec<GpuVoiceState> = self.voices.iter().map(|v| v.state).collect();
-            let gpu_output = self.renderer.render_block(
-                &states,
-                frames as u32,
-                self.sample_rate,
-            );
-            for i in 0..frames * 2 {
-                output[i] += gpu_output[i];
-            }
+            self.states_buf.clear();
+            self.states_buf.extend(self.voices.iter().map(|v| v.state));
+            // 直接写入 output，避免中间 Vec 分配
+            self.renderer.render_into(&self.states_buf, output, self.sample_rate);
         }
 
-        // 原地推进 voice 状态（避免额外 Vec 分配）
+        // 原地推进 voice 状态
         for v in &mut self.voices {
             advance_voices(std::slice::from_mut(&mut v.state), frames as u32);
         }
