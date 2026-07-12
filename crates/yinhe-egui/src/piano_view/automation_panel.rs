@@ -588,11 +588,8 @@ pub fn show_panels(
         let font_id = egui::FontId::proportional(10.0);
         let pad_x = 4.0;
 
-        let (top_val, mid_val, bot_val) = if panel.show_velocity {
-            // Velocity: 固定 0~127，不受 zoom/scroll 影响
-            ("127".to_string(), "64".to_string(), "0".to_string())
-        } else if panel.show_tempo {
-            // Tempo: 根据垂直 zoom/scroll 计算实际显示范围
+        let (top_val, mid_val, bot_val) = if panel.show_tempo || panel.show_velocity {
+            // Velocity / Tempo: 根据垂直 zoom/scroll 计算实际显示范围
             let h = panel_rect.height();
             let top_f = panel.y_to_value(0.0, max_val_f).round() as u32;
             let mid_f = panel.y_to_value(h * 0.5, max_val_f).round() as u32;
