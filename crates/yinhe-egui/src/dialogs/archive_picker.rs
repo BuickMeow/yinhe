@@ -245,6 +245,71 @@ pub(crate) fn show(
     }
 }
 
+pub(crate) fn show_viewport(ctx: &eframe::egui::Context, state: &mut Option<ArchivePickerState>) -> ArchivePickerAction {
+    if state.is_none() {
+        return ArchivePickerAction::None;
+    }
+
+    let taken_state = std::rc::Rc::new(std::cell::RefCell::new(
+        std::mem::replace(
+            state.as_mut().unwrap(),
+            ArchivePickerState::Opening {
+                path: String::new(),
+                rx: std::sync::mpsc::channel().1,
+            },
+        ),
+    ));
+    let action = std::rc::Rc::new(std::cell::RefCell::new(ArchivePickerAction::None));
+    let ctx_clone = ctx.clone();
+    let taken_state_cb = taken_state.clone();
+    let action_cb = action.clone();
+
+    ctx_clone.show_viewport_immediate(
+        eframe::egui::ViewportId::from_hash_of("archive_picker_dialog"),
+        crate::chrome::dialog::viewport_builder("选择 MIDI 文件", [500.0, 400.0], true),
+        move |vctx, _class| {
+            let close_requested = vctx.input(|i| i.viewport().close_requested());
+            let vctx_cmd = vctx.clone();
+            eframe::egui::CentralPanel::default()
+                .frame(eframe::egui::Frame {
+                    fill: crate::theme::APP_BG,
+                    ..Default::default()
+                })
+                .show(vctx, |ui| {
+                    let mut close = close_requested;
+                    crate::chrome::dialog::title_bar(ui, "选择 MIDI 文件", &mut close);
+                    if close {
+                        vctx_cmd.send_viewport_cmd(eframe::egui::ViewportCommand::Visible(false));
+                        *action_cb.borrow_mut() = ArchivePickerAction::Cancel;
+                    } else {
+                        eframe::egui::Frame::new()
+                            .inner_margin(eframe::egui::Margin {
+                                left: 12,
+                                right: 12,
+                                top: 0,
+                                bottom: 12,
+                            })
+                            .show(ui, |ui| {
+                                let result = show(
+                                    &mut *taken_state_cb.borrow_mut(),
+                                    ui,
+                                );
+                                *action_cb.borrow_mut() = result;
+                            });
+                    }
+                });
+        },
+    );
+
+    if let Some(taken_state) = std::rc::Rc::into_inner(taken_state) {
+        *state = Some(taken_state.into_inner());
+    }
+
+    std::rc::Rc::into_inner(action)
+        .map(|rc| rc.into_inner())
+        .unwrap_or(ArchivePickerAction::None)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

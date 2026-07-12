@@ -288,3 +288,88 @@ pub fn show_content(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
 
     changed
 }
+
+pub(crate) fn show_viewport(
+    ctx: &eframe::egui::Context,
+    settings: &mut AudioSettings,
+    haptic_engine: &mut yinhe_haptic::HapticEngine,
+    audio: &Option<yinhe_audio::CpalAudioHandle>,
+) -> bool {
+    if !settings.show_settings {
+        return false;
+    }
+
+    let prev_xsynth_layers = settings.xsynth_layers;
+    let settings_rc = std::rc::Rc::new(std::cell::RefCell::new(Some(std::mem::take(settings))));
+    let ctx_clone = ctx.clone();
+    let settings_cb = settings_rc.clone();
+
+    ctx_clone.show_viewport_immediate(
+        eframe::egui::ViewportId::from_hash_of("settings_dialog"),
+        crate::chrome::dialog::viewport_builder("设置", [480.0, 520.0], true),
+        move |vctx, _class| {
+            let mut slot = settings_cb.borrow_mut().take();
+            if let Some(ref mut s) = slot {
+                let mut close = false;
+                if vctx.input(|i| i.viewport().close_requested()) {
+                    close = true;
+                }
+                eframe::egui::CentralPanel::default()
+                    .frame(eframe::egui::Frame {
+                        fill: crate::theme::APP_BG,
+                        ..Default::default()
+                    })
+                    .show(vctx, |ui| {
+                        crate::chrome::dialog::title_bar(ui, "设置", &mut close);
+                        eframe::egui::Frame::new()
+                            .inner_margin(eframe::egui::Margin {
+                                left: 12,
+                                right: 12,
+                                top: 0,
+                                bottom: 12,
+                            })
+                            .show(ui, |ui| {
+                                eframe::egui::ScrollArea::vertical()
+                                    .auto_shrink([false; 2])
+                                    .show(ui, |ui| {
+                                        let changed = show_content(ui, s);
+                                        if changed {
+                                            s.save();
+                                        }
+                                    });
+                            });
+                    });
+                if close {
+                    vctx.send_viewport_cmd(eframe::egui::ViewportCommand::Visible(false));
+                    s.show_settings = false;
+                }
+            }
+            *settings_cb.borrow_mut() = slot;
+        },
+    );
+
+    let should_teardown = if let Some(s) = std::rc::Rc::into_inner(settings_rc)
+        .and_then(|rc| rc.into_inner())
+    {
+        *settings = s;
+        haptic_engine.apply_settings(
+            settings.haptic_enabled,
+            settings.haptic_intensity,
+        );
+        if settings.xsynth_layers != prev_xsynth_layers {
+            if let Some(audio) = audio {
+                let count = if settings.xsynth_layers == 0 {
+                    None
+                } else {
+                    Some(settings.xsynth_layers as usize)
+                };
+                audio.handle.send(yinhe_audio::AudioCommand::SetLayerCount { count });
+            }
+        }
+        !settings.show_settings
+    } else {
+        false
+    };
+
+    should_teardown
+}
