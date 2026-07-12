@@ -6281,18 +6281,17 @@ dependencies = [
 name = "yinhe-audio"
 version = "0.1.0"
 dependencies = [
- "bytemuck",
  "cpal",
  "crossbeam-channel",
  "hound",
  "pollster",
  "tempfile",
- "wgpu",
  "xsynth-core",
  "xsynth-soundfonts",
  "yinhe-core",
  "yinhe-memtrace",
  "yinhe-mid2",
+ "yinhe-synth",
  "yinhe-types",
 ]
 
@@ -6426,6 +6425,18 @@ dependencies = [
  "yinhe-theme",
  "yinhe-types",
  "yinhe-wgpu",
+]
+
+[[package]]
+name = "yinhe-synth"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "hound",
+ "pollster",
+ "tempfile",
+ "wgpu",
+ "xsynth-soundfonts",
 ]
 
 [[package]]

@@ -12,6 +12,7 @@ members = [
     "crates/yinhe-automation",
     "crates/yinhe-arrangement",
     "crates/yinhe-audio",
+    "crates/yinhe-synth",
     "crates/yinhe-editor-core",
     "crates/yinhe-egui",
     "crates/yinhe-memtrace",

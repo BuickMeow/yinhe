@@ -9,8 +9,8 @@ use std::time::Instant;
 
 use crate::audio_model::{AudioModel, tick_to_sample};
 use crate::export::{ExportError, WavBitDepth, write_samples};
-use crate::gpu_renderer::{GpuAudioRenderer, GpuVoiceState, advance_voices};
-use crate::sfz_parser;
+use yinhe_synth::{GpuAudioRenderer, GpuVoiceState, advance_voices, sfz_parser};
+use yinhe_synth::wgpu;
 use yinhe_core::YinModel;
 
 /// Convert MIDI note number to pitch ratio relative to pitch_keycenter.
@@ -50,7 +50,7 @@ pub fn export_wav_gpu(
             if info.sample_path.to_string_lossy() == "missing" { continue; }
             if sample_cache.contains_key(&info.sample_path) { continue; }
             let offset = sample_data.len() as u32;
-            match crate::sfz_parser::load_wav_as_f32(&info.sample_path) {
+            match sfz_parser::load_wav_as_f32(&info.sample_path) {
                 Ok((samples, src_sr)) => {
                     let samples = if src_sr != sample_rate {
                         // sinc 重采样到目标采样率（与 xsynth 一致）

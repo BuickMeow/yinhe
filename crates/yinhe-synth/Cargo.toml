@@ -1,0 +1,14 @@
+[package]
+name = "yinhe-synth"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+wgpu = { workspace = true, features = ["wgsl"] }
+bytemuck = { workspace = true }
+pollster = { workspace = true }
+xsynth-soundfonts = "0.4"
+hound = "3.5"
+
+[dev-dependencies]
+tempfile = { workspace = true }

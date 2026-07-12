@@ -5,21 +5,16 @@ edition = "2024"
 
 [features]
 default = []
-gpu = ["wgpu", "dep:bytemuck", "dep:pollster"]
+gpu = ["yinhe-synth"]
 
 [dependencies]
 xsynth-core = "0.4"
 xsynth-soundfonts = "0.4"
-#xsynth-core = { git = "https://github.com/buickmeow/xsynth" }
-#xsynth-soundfonts = { git = "https://github.com/buickmeow/xsynth" }
 
 cpal = { workspace = true }
 hound = "3.5"
 crossbeam-channel = "0.5"
-wgpu = { workspace = true, optional = true, features = ["wgsl"] }
-bytemuck = { workspace = true, optional = true }
-pollster = { workspace = true, optional = true }
-#tracing = "0.1"
+yinhe-synth = { path = "../yinhe-synth", optional = true }
 
 yinhe-types = { path = "../yinhe-types" }
 yinhe-core = { path = "../yinhe-core" }
