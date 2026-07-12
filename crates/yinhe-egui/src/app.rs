@@ -268,5 +268,14 @@ impl App {
                 self.active_doc = Some(active.min(self.documents.len() - 1));
             }
         }
+
+        // 同步 audio_state：关闭音频绑定的文档时释放引擎，否则修正索引
+        match self.audio_state.active_doc {
+            Some(audio_idx) if audio_idx == index => self.teardown_audio(),
+            Some(audio_idx) if audio_idx > index => {
+                self.audio_state.active_doc = Some(audio_idx - 1);
+            }
+            _ => {}
+        }
     }
 }
