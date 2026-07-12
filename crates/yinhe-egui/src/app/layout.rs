@@ -362,9 +362,7 @@ impl App {
                     sel_rect: doc.edit.sel_rect.clone(),
                 });
             }
-            if let Some(ref audio) = self.audio {
-                let _ = audio.handle.send(yinhe_audio::AudioCommand::ReloadNotes { model: doc.data.model.clone() });
-            }
+            self.notify_audio_model_changed();
         }
     }
 
@@ -382,9 +380,7 @@ impl App {
                     track_selected: doc.edit.track_selected.clone(),
                     sel_rect: doc.edit.sel_rect.clone(),
                 });
-                if let Some(ref audio) = self.audio {
-                    let _ = audio.handle.send(yinhe_audio::AudioCommand::ReloadNotes { model: doc.data.model.clone() });
-                }
+                self.notify_audio_model_changed();
             }
         }
     }
@@ -406,9 +402,7 @@ impl App {
                 track_selected: doc.edit.track_selected.clone(),
                 sel_rect: doc.edit.sel_rect.clone(),
             });
-            if let Some(ref audio) = self.audio {
-                let _ = audio.handle.send(yinhe_audio::AudioCommand::ReloadNotes { model: doc.data.model.clone() });
-            }
+            self.notify_audio_model_changed();
         }
     }
 
@@ -430,11 +424,7 @@ impl App {
                 track_selected: doc.edit.track_selected.clone(),
                 sel_rect: doc.edit.sel_rect.clone(),
             });
-            if let Some(ref audio) = self.audio {
-                let _ = audio.handle.send(yinhe_audio::AudioCommand::ReloadNotes {
-                    model: doc.data.model.clone(),
-                });
-            }
+            self.notify_audio_model_changed();
         }
     }
 

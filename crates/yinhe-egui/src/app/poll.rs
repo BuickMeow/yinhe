@@ -136,4 +136,9 @@ impl App {
             }
         }
     }
+
+    /// Refresh system resource monitoring (CPU, memory) if enough time has elapsed.
+    pub(crate) fn refresh_system_stats(&mut self) {
+        self.sys_monitor.refresh_if_needed();
+    }
 }

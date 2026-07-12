@@ -140,9 +140,7 @@ impl App {
         doc.history.push(entry);
         doc.data.bump_version();
         self.pianoroll_view.base.dirty = true;
-        if let Some(ref audio) = self.audio {
-            let _ = audio.handle.send(yinhe_audio::AudioCommand::ReloadNotes { model: doc.data.model.clone() });
-        }
+        self.notify_audio_model_changed();
     }
 
     /// Restore the previous state on the active document's history stack.
@@ -153,9 +151,7 @@ impl App {
         if changed {
             doc.data.bump_version();
             self.pianoroll_view.base.dirty = true;
-            if let Some(ref audio) = self.audio {
-                let _ = audio.handle.send(yinhe_audio::AudioCommand::ReloadNotes { model: doc.data.model.clone() });
-            }
+            self.notify_audio_model_changed();
         }
     }
 
@@ -167,9 +163,7 @@ impl App {
         if changed {
             doc.data.bump_version();
             self.pianoroll_view.base.dirty = true;
-            if let Some(ref audio) = self.audio {
-                let _ = audio.handle.send(yinhe_audio::AudioCommand::ReloadNotes { model: doc.data.model.clone() });
-            }
+            self.notify_audio_model_changed();
         }
     }
 }

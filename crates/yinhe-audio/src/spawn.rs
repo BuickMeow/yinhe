@@ -94,6 +94,13 @@ pub struct CpalAudioHandle {
     pub(crate) _stream: cpal::Stream,
 }
 
+impl CpalAudioHandle {
+    /// Notify the audio thread that the MIDI model has changed.
+    pub fn reload_notes(&self, model: Arc<YinModel>) {
+        let _ = self.handle.send(AudioCommand::ReloadNotes { model });
+    }
+}
+
 /// Compute the global channel byte for a track: `(port << 4) | channel`.
 #[inline]
 pub(crate) fn track_global_channel(model: &YinModel, track_idx: usize) -> u8 {

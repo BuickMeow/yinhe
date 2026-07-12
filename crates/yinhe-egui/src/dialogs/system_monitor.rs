@@ -2,8 +2,6 @@ use std::time::Instant;
 
 use sysinfo::{CpuRefreshKind, Pid, ProcessesToUpdate, System};
 
-use crate::app::App;
-
 pub(crate) struct SystemMonitor {
     sysinfo: System,
     self_pid: Option<Pid>,
@@ -41,11 +39,5 @@ impl SystemMonitor {
             }
             self.last_refresh = Instant::now();
         }
-    }
-}
-
-impl App {
-    pub(crate) fn refresh_system_stats(&mut self) {
-        self.sys_monitor.refresh_if_needed();
     }
 }

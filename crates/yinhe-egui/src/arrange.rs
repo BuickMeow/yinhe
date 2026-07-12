@@ -198,9 +198,7 @@ pub fn show(
                     sel_rect: doc.edit.sel_rect.clone(),
                 });
                 if let Some(ref audio) = audio {
-                    let _ = audio.handle.send(yinhe_audio::AudioCommand::ReloadNotes {
-                        model: doc.data.model.clone(),
-                    });
+                    audio.reload_notes(doc.data.model.clone());
                 }
             }
         }
@@ -303,9 +301,7 @@ pub fn show(
                     sel_rect: doc.edit.sel_rect.clone(),
                 });
                 if let Some(ref audio) = audio {
-                    let _ = audio.handle.send(yinhe_audio::AudioCommand::ReloadNotes {
-                        model: doc.data.model.clone(),
-                    });
+                    audio.reload_notes(doc.data.model.clone());
                 }
             }
         }

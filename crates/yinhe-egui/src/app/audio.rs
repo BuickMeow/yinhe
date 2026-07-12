@@ -2,6 +2,13 @@ use crate::app::App;
 use yinhe_editor_core::progress;
 
 impl App {
+    /// Notify the audio engine that the active document's model has changed.
+    pub(crate) fn notify_audio_model_changed(&self) {
+        if let (Some(idx), Some(audio)) = (self.active_doc, &self.audio) {
+            audio.reload_notes(self.documents[idx].data.model.clone());
+        }
+    }
+
     /// Resolve the merged SF configuration for the given document.
     ///
     /// Returns a list of `(port, paths)` for every port the MIDI uses.
