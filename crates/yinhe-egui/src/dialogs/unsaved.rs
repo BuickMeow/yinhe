@@ -48,27 +48,30 @@ pub(crate) fn show_viewport(
                         })
                         .show(ui, |ui| {
                             ui.set_max_width(360.0);
-                            ui.label("当前工程尚未保存，是否保存？");
-                            ui.add_space(16.0);
-                            ui.horizontal(|ui| {
-                                if ui.button("保存").clicked() {
-                                    *action_cb.borrow_mut() = Some(Action::Save);
-                                    close = true;
-                                }
+                            ui.vertical_centered(|ui| {
                                 ui.add_space(8.0);
-                                let discard_btn = ui.button(
-                                    egui::RichText::new("不保存")
-                                        .color(egui::Color32::from_rgb(255, 80, 80)),
-                                );
-                                if discard_btn.clicked() {
-                                    *action_cb.borrow_mut() = Some(Action::Discard);
-                                    close = true;
-                                }
-                                ui.add_space(8.0);
-                                if ui.button("返回").clicked() {
-                                    *action_cb.borrow_mut() = Some(Action::Cancel);
-                                    close = true;
-                                }
+                                ui.label("当前工程尚未保存，是否保存？");
+                                ui.add_space(20.0);
+                                ui.horizontal(|ui| {
+                                    if ui.button("保存").clicked() {
+                                        *action_cb.borrow_mut() = Some(Action::Save);
+                                        close = true;
+                                    }
+                                    ui.add_space(8.0);
+                                    let discard_btn = ui.button(
+                                        egui::RichText::new("不保存")
+                                            .color(egui::Color32::from_rgb(255, 80, 80)),
+                                    );
+                                    if discard_btn.clicked() {
+                                        *action_cb.borrow_mut() = Some(Action::Discard);
+                                        close = true;
+                                    }
+                                    ui.add_space(8.0);
+                                    if ui.button("返回").clicked() {
+                                        *action_cb.borrow_mut() = Some(Action::Cancel);
+                                        close = true;
+                                    }
+                                });
                             });
                         });
                 });

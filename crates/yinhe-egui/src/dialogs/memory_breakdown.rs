@@ -94,9 +94,12 @@ pub(crate) fn show_viewport(
                                          不纳入此项统计。",
                                     );
 
-                                    if ui.button("关闭").clicked() {
-                                        close = true;
-                                    }
+                                    ui.add_space(8.0);
+                                    ui.vertical_centered(|ui| {
+                                        if ui.button("关闭").clicked() {
+                                            close = true;
+                                        }
+                                    });
                                 });
                         });
                 });

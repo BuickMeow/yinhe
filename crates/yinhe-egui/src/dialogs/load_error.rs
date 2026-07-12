@@ -34,9 +34,10 @@ pub(crate) fn show_viewport(ctx: &egui::Context, error: &mut Option<String>) {
                         })
                         .show(ui, |ui| {
                             ui.set_max_width(420.0);
-                            ui.label(&msg);
-                            ui.add_space(8.0);
-                            ui.horizontal(|ui| {
+                            ui.vertical_centered(|ui| {
+                                ui.add_space(8.0);
+                                ui.label(&msg);
+                                ui.add_space(16.0);
                                 if ui.button("确定").clicked() {
                                     close = true;
                                 }

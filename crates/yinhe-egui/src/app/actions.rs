@@ -182,7 +182,8 @@ impl App {
             | transport_bar::FileAction::SaveAs
             | transport_bar::FileAction::ExportMidi
             | transport_bar::FileAction::ExportAudio
-            | transport_bar::FileAction::Settings => {
+            | transport_bar::FileAction::Settings
+            | transport_bar::FileAction::Open => {
                 self.execute_file_action(action, ctx);
                 return;
             }
