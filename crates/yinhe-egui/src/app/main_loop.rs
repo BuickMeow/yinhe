@@ -176,7 +176,7 @@ impl eframe::App for App {
                 file_loader: &mut self.file_loader,
                 doc: active_doc,
                 cpu_usage: self.sys_monitor.cpu_usage,
-                mem_mb: self.sys_monitor.mem_mb,
+                mem_mb: yinhe_memtrace::Snapshot::capture().total_mb(),
                 follow_mode: &mut self.follow_mode,
                 show_mem_breakdown: &mut self.show_mem_breakdown,
             },
