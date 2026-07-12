@@ -49,11 +49,11 @@ pub(crate) fn show_viewport(
                             egui::ScrollArea::vertical()
                                 .auto_shrink([false; 2])
                                 .show(ui, |ui| {
-                                    ui.label(format!("系统统计总内存: {:.1} MB", mem_mb));
                                     ui.label(format!(
                                         "分配器追踪内存: {:.1} MB",
                                         snapshot.total_mb()
                                     ));
+                                    ui.label(format!("系统统计总内存 (RSS): {:.1} MB", mem_mb));
                                     ui.label(format!(
                                         "wgpu 显式 GPU 资源: {:.1} MB",
                                         snapshot.gpu_mb()
