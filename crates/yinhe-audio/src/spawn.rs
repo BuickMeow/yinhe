@@ -92,6 +92,14 @@ pub struct CpalAudioHandle {
     pub handle: AudioHandle,
     pub sample_rate: u32,
     pub(crate) _stream: cpal::Stream,
+    /// 设置为 true 时通知 renderer 线程退出。
+    pub(crate) shutdown: Arc<AtomicBool>,
+}
+
+impl Drop for CpalAudioHandle {
+    fn drop(&mut self) {
+        self.shutdown.store(true, Ordering::Release);
+    }
 }
 
 impl CpalAudioHandle {
@@ -368,5 +376,6 @@ pub fn spawn_cpal_audio(
         },
         sample_rate,
         _stream: stream,
+        shutdown,
     })
 }
