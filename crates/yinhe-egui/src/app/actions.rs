@@ -389,12 +389,12 @@ impl App {
             return;
         }
 
-        if self.export_rx.is_some() {
+        if self.export.rx.is_some() {
             return; // already exporting
         }
 
         // Show export settings dialog first
-        self.show_export_bit_depth = true;
+        self.export.show_bit_depth = true;
     }
 
     /// Called after the bit-depth dialog is confirmed.
@@ -424,8 +424,8 @@ impl App {
 
         // Collect render inputs
         let model = doc.data.model.clone();
-        let sr = if self.export_sample_rate > 0 {
-            self.export_sample_rate
+        let sr = if self.export.sample_rate > 0 {
+            self.export.sample_rate
         } else {
             self.audio_settings.sample_rate
         };
@@ -438,14 +438,14 @@ impl App {
             .iter()
             .map(|ov| if has_solo { !ov.soloed } else { ov.muted })
             .collect();
-        let bit_depth = self.export_bit_depth;
-        let layer_count = if self.export_layer_count == 0 {
+        let bit_depth = self.export.bit_depth;
+        let layer_count = if self.export.layer_count == 0 {
             None
         } else {
-            Some(self.export_layer_count as usize)
+            Some(self.export.layer_count as usize)
         };
-        let export_progress = self.export_progress.clone();
-        let cancel_flag = self.export_cancel.clone();
+        let export_progress = self.export.progress.clone();
+        let cancel_flag = self.export.cancel.clone();
         let use_gpu_synth = self.audio_settings.use_gpu_synth;
         cancel_flag.store(false, std::sync::atomic::Ordering::Relaxed);
 
@@ -585,6 +585,6 @@ impl App {
             }
         });
 
-        self.export_rx = Some(rx);
+        self.export.rx = Some(rx);
     }
 }

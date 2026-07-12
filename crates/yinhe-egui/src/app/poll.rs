@@ -105,12 +105,12 @@ impl App {
         }
 
         // Poll async export completion
-        if let Some(rx) = &self.export_rx {
+        if let Some(rx) = &self.export.rx {
             if let Ok(result) = rx.try_recv() {
-                self.export_rx = None;
+                self.export.rx = None;
                 match result {
                     Ok((path, elapsed, speed)) => {
-                        self.export_completed = Some(crate::dialogs::export::ExportCompleted {
+                        self.export.completed = Some(crate::dialogs::export::ExportCompleted {
                             file_path: path,
                             elapsed_secs: elapsed,
                             overall_speed: speed,

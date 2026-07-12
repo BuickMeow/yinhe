@@ -67,23 +67,23 @@ impl App {
         }
 
         // ── Export progress ──
-        if self.export_rx.is_some() {
-            let export_progress = self.export_progress.clone();
-            let cancel_flag = self.export_cancel.clone();
+        if self.export.rx.is_some() {
+            let export_progress = self.export.progress.clone();
+            let cancel_flag = self.export.cancel.clone();
             crate::dialogs::export::show_progress_viewport(&ctx, export_progress, cancel_flag);
         }
 
         // ── Export completed ──
-        crate::dialogs::export::show_completed_viewport(&ctx, &mut self.export_completed);
+        crate::dialogs::export::show_completed_viewport(&ctx, &mut self.export.completed);
 
         // ── Export settings ──
         if crate::dialogs::export::show_settings_viewport(
             &ctx,
-            &mut self.show_export_bit_depth,
+            &mut self.export.show_bit_depth,
             self.audio_settings.sample_rate,
-            &mut self.export_bit_depth,
-            &mut self.export_layer_count,
-            &mut self.export_sample_rate,
+            &mut self.export.bit_depth,
+            &mut self.export.layer_count,
+            &mut self.export.sample_rate,
         ) {
             self.start_export();
         }

@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex, mpsc};
 pub(crate) mod actions;
 pub(crate) mod audio;
 pub(crate) mod dialog_dispatch;
+pub(crate) mod export_state;
 pub(crate) mod layout;
 pub(crate) mod main_loop;
 pub(crate) mod poll;
@@ -127,14 +128,7 @@ pub struct App {
     pub(crate) load_progress: yinhe_editor_core::progress::SharedProgress,
 
     // ── Async audio export ──
-    pub(crate) export_rx: Option<mpsc::Receiver<Result<(String, f64, f64), String>>>,
-    pub(crate) export_progress: Arc<Mutex<crate::dialogs::export::ExportProgress>>,
-    pub(crate) export_cancel: Arc<std::sync::atomic::AtomicBool>,
-    pub(crate) export_completed: Option<crate::dialogs::export::ExportCompleted>,
-    pub(crate) show_export_bit_depth: bool,
-    pub(crate) export_bit_depth: yinhe_audio::export::WavBitDepth,
-    pub(crate) export_layer_count: u32,
-    pub(crate) export_sample_rate: u32, // 0 = 跟随全局设置
+    pub(crate) export: export_state::ExportState,
 
     // ── macOS platform integrations ──
     pub(crate) menu_bar: crate::platform::MenuBar,
@@ -214,14 +208,7 @@ impl App {
             save_rx: None,
             pending_unsaved: None,
             should_exit: false,
-            export_rx: None,
-            export_progress: crate::dialogs::export::ExportProgress::new(),
-            export_cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            export_completed: None,
-            show_export_bit_depth: false,
-            export_bit_depth: yinhe_audio::export::WavBitDepth::Bit24,
-            export_layer_count: 0,
-            export_sample_rate: 0,
+            export: export_state::ExportState::new(),
 
             view_mode: ViewMode::Arrange,
             show_pianoroll_in_arrange: false,
