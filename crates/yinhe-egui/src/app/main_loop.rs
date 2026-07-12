@@ -109,6 +109,7 @@ impl eframe::App for App {
             &self.documents,
             &mut self.active_doc,
             &mut self.title_bar_press_pos,
+            &mut self.tab_scroll_offset,
         );
         if let Some(title_bar::TitleBarAction::CloseDocument(idx)) = title_bar_action {
             if self.documents.get(idx).map_or(false, |d| d.is_dirty()) {

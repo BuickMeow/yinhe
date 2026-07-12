@@ -13,6 +13,7 @@ pub const ACCENT_ACTIVE: Color32 = Color32::from_rgb(100, 180, 255);
 // ── Tab colors ──
 pub const TAB_ACTIVE_BG: Color32 = Color32::from_rgb(55, 55, 60);
 pub const TAB_INACTIVE_BG: Color32 = Color32::from_rgb(35, 35, 38);
+pub const TAB_HOVER_BG: Color32 = Color32::from_rgb(48, 48, 52);
 
 // ── Close / danger hover ──
 pub const DANGER_HOVER: Color32 = Color32::from_rgb(200, 50, 50);

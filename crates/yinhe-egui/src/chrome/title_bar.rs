@@ -18,6 +18,7 @@ pub(crate) fn show(
     documents: &[Document],
     active_doc: &mut Option<usize>,
     title_bar_press_pos: &mut Option<egui::Pos2>,
+    tab_scroll_offset: &mut f32,
 ) -> Option<TitleBarAction> {
     let mut action = None;
     egui::Panel::top("title_bar")
@@ -42,12 +43,11 @@ pub(crate) fn show(
             // ── Draw tabs (left side) ──
             let tab_h = 24.0;
             let tab_y = bar_rect.center().y - tab_h / 2.0;
-            let mut tab_x = bar_rect.min.x + left_padding;
 
-            let tmp_docs: Vec<(bool, &str)> = documents
+            let tmp_docs: Vec<(&Document, bool)> = documents
                 .iter()
                 .enumerate()
-                .map(|(i, d)| (*active_doc == Some(i), d.file_name.as_str()))
+                .map(|(i, d)| (d, *active_doc == Some(i)))
                 .collect();
 
             // Collect tab_rects and close_rects for manual click detection
@@ -55,51 +55,112 @@ pub(crate) fn show(
 
             let font_id = egui::FontId::proportional(12.0);
             let close_w = 20.0;
-            let padding = 8.0;
+            let padding = 6.0;
+            let tab_gap = 2.0;
 
-            // Compute uniform tab width: text area capped at 160px, min 40px
-            let max_text_w = tmp_docs
-                .iter()
-                .map(|(_, name)| {
-                    painter
-                        .layout_no_wrap((*name).to_string(), font_id.clone(), egui::Color32::WHITE)
-                        .size()
-                        .x
-                })
-                .fold(0.0f32, f32::max)
-                .max(40.0)
-                .min(160.0);
-            let tab_w = max_text_w + padding * 2.0 + close_w;
+            // Uniform tab width: fixed 120px for compact tabs
+            let tab_w = 120.0;
             let text_max_w = tab_w - close_w - padding * 2.0;
 
-            for (i, (is_active, file_name)) in tmp_docs.iter().enumerate() {
+            // ── Handle mouse wheel / trackpad scroll for tab overflow ──
+            let pointer_in_bar = ui.input(|i| {
+                i.pointer
+                    .hover_pos()
+                    .is_some_and(|p| bar_rect.contains(p))
+            });
+            if pointer_in_bar {
+                let scroll_delta = ui.input(|i| i.smooth_scroll_delta);
+                let zoom_delta = ui.input(|i| i.zoom_delta());
+
+                // Mouse wheel horizontal scroll: Cmd+scroll or plain horizontal scroll
+                let cmd = ui.input(|i| i.modifiers.command || i.modifiers.ctrl);
+                if cmd && scroll_delta.y.abs() > 0.5 {
+                    // Cmd+vertical scroll → tab horizontal scroll
+                    *tab_scroll_offset -= scroll_delta.y * 2.0;
+                } else if scroll_delta.x.abs() > 0.5 {
+                    // Trackpad horizontal swipe → tab scroll
+                    *tab_scroll_offset -= scroll_delta.x;
+                } else if (zoom_delta - 1.0).abs() > 0.001 {
+                    // Trackpad pinch → tab scroll (zoom gesture repurposed for tab scroll)
+                    *tab_scroll_offset -= (zoom_delta - 1.0) * 100.0;
+                } else if !cmd && scroll_delta.y.abs() > 0.5 && cfg!(target_os = "macos") {
+                    // Plain vertical scroll on macOS → also scroll tabs if overflow
+                    *tab_scroll_offset -= scroll_delta.y * 2.0;
+                }
+
+                // Clamp scroll offset
+                let total_tab_w = tmp_docs.len() as f32 * (tab_w + tab_gap);
+                let available_w = bar_rect.width() - left_padding;
+                let max_offset = (total_tab_w - available_w).max(0.0);
+                *tab_scroll_offset = tab_scroll_offset.clamp(0.0, max_offset);
+
+                if scroll_delta != egui::Vec2::ZERO || (zoom_delta - 1.0).abs() > 0.001 {
+                    ui.ctx().request_repaint();
+                }
+            }
+
+            // ── Draw title BEHIND tabs (lower z-order) ──
+            painter.text(
+                egui::pos2(bar_rect.center().x, bar_rect.center().y),
+                egui::Align2::CENTER_CENTER,
+                "Yinhe MIDI Editor",
+                egui::FontId::proportional(13.0),
+                egui::Color32::from_gray(180),
+            );
+
+            let mut tab_x = bar_rect.min.x + left_padding - *tab_scroll_offset;
+
+            let hover_pos = ui.input(|i| i.pointer.hover_pos()).unwrap_or_default();
+
+            for (i, (doc, is_active)) in tmp_docs.iter().enumerate() {
                 let tab_rect = egui::Rect::from_min_max(
                     egui::pos2(tab_x, tab_y),
                     egui::pos2(tab_x + tab_w, tab_y + tab_h),
                 );
 
-                // Tab background
+                // Skip tabs entirely outside the visible area
+                if tab_rect.max.x < bar_rect.min.x + left_padding || tab_rect.min.x > bar_rect.max.x {
+                    click_targets.push((i, tab_rect, egui::Rect::NOTHING));
+                    tab_x += tab_w + tab_gap;
+                    continue;
+                }
+
+                // Tab background — active / hover / inactive
+                let is_hovered = tab_rect.contains(hover_pos) && !*is_active;
                 let bg = if *is_active {
                     crate::theme::TAB_ACTIVE_BG
+                } else if is_hovered {
+                    crate::theme::TAB_HOVER_BG
                 } else {
                     crate::theme::TAB_INACTIVE_BG
                 };
                 painter.rect_filled(tab_rect, 4.0, bg);
 
+                // Build display name with dirty indicator
+                let file_name = doc.file_name.as_str();
+                let display_name = if doc.is_dirty() {
+                    format!("*{}", file_name)
+                } else {
+                    file_name.to_string()
+                };
+
                 // Tab text with ellipsis truncation
-                let text_color = egui::Color32::from_gray(200);
+                let text_color = if *is_active {
+                    egui::Color32::from_gray(220)
+                } else {
+                    egui::Color32::from_gray(180)
+                };
                 let text_to_draw = {
                     let full_w = painter
-                        .layout_no_wrap((*file_name).to_string(), font_id.clone(), text_color)
+                        .layout_no_wrap(display_name.clone(), font_id.clone(), text_color)
                         .size()
                         .x;
                     if full_w <= text_max_w {
-                        file_name.to_string()
+                        display_name
                     } else {
-                        // Truncate with "..." suffix
                         let ellipsis = "\u{2026}";
                         let mut truncated = String::new();
-                        for c in file_name.chars() {
+                        for c in display_name.chars() {
                             let test_w = painter
                                 .layout_no_wrap(
                                     format!("{}{}{}", truncated, c, ellipsis),
@@ -130,8 +191,7 @@ pub(crate) fn show(
                     egui::pos2(tab_rect.max.x - close_w, tab_rect.min.y),
                     egui::vec2(close_w, tab_h),
                 );
-                let close_hover = tab_close_rect
-                    .contains(ui.input(|i| i.pointer.hover_pos()).unwrap_or_default());
+                let close_hover = tab_close_rect.contains(hover_pos);
                 if close_hover {
                     painter.rect_filled(tab_close_rect, 4.0, crate::theme::DANGER_HOVER);
                 }
@@ -149,7 +209,7 @@ pub(crate) fn show(
 
                 click_targets.push((i, tab_rect, tab_close_rect));
 
-                tab_x += tab_w + 4.0;
+                tab_x += tab_w + tab_gap;
             }
 
             // ── Window button rects (non-macOS) for manual click detection ──
@@ -190,6 +250,9 @@ pub(crate) fn show(
                 if dist < 8.0 {
                     // Check document tab buttons
                     for &(idx, tab_rect, tab_close_rect) in click_targets.iter().rev() {
+                        if tab_close_rect == egui::Rect::NOTHING {
+                            continue;
+                        }
                         if tab_close_rect.contains(press) && tab_close_rect.contains(release) {
                             action = Some(TitleBarAction::CloseDocument(idx));
                             break;
@@ -221,15 +284,6 @@ pub(crate) fn show(
                 }
             }
 
-            // ── Draw centered title ──
-            painter.text(
-                egui::pos2(bar_rect.center().x, bar_rect.center().y),
-                egui::Align2::CENTER_CENTER,
-                "Yinhe MIDI Editor",
-                egui::FontId::proportional(13.0),
-                egui::Color32::from_gray(180),
-            );
-
             // ── Paint window buttons (non-macOS, visual only) ──
             #[cfg(not(target_os = "macos"))]
             {
@@ -256,8 +310,6 @@ pub(crate) fn show(
             }
 
             // Double-click title bar drag area to toggle maximize/restore
-            // Manual click-timestamp tracking avoids egui's button_double_clicked()
-            // misfiring on the first click when the window regains focus.
             const DOUBLE_CLICK_MS: f64 = 400.0;
             let dbl_id = ui.id().with("title_bar_dbl_click");
             if ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Primary))
@@ -332,7 +384,6 @@ fn paint_window_buttons(
     let mcx = maximize_rect.center();
     let m_size = 9.0;
     if maximized {
-        // Restore icon (two overlapping rectangles)
         let r1 = egui::Rect::from_center_size(
             egui::pos2(mcx.x - 2.0, mcx.y - 2.0),
             egui::vec2(m_size - 2.0, m_size - 2.0),
@@ -344,7 +395,6 @@ fn paint_window_buttons(
         painter.rect_stroke(r1, 1.0, (1.5, max_color), egui::StrokeKind::Middle);
         painter.rect_stroke(r2, 1.0, (1.5, max_color), egui::StrokeKind::Middle);
     } else {
-        // Maximize icon (single square)
         let r = egui::Rect::from_center_size(mcx, egui::vec2(m_size, m_size));
         painter.rect_stroke(r, 1.0, (1.5, max_color), egui::StrokeKind::Middle);
     }
@@ -372,5 +422,3 @@ fn paint_window_buttons(
         (1.5, min_color),
     );
 }
-
-

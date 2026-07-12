@@ -160,8 +160,9 @@ pub(crate) fn handle_input(
                 *view.scroll_x() -= scroll.x;
                 *view.scroll_y() -= scroll.y;
                 *view.dirty() = true;
-                // Manual scroll during playback escapes follow mode.
-                if is_playing && *follow_mode != FollowMode::None {
+                // Manual horizontal scroll during playback escapes follow mode.
+                // Pure vertical scroll does not break follow.
+                if is_playing && *follow_mode != FollowMode::None && scroll.x.abs() > 0.5 {
                     *follow_mode = FollowMode::None;
                 }
             }

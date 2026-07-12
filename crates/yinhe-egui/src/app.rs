@@ -79,6 +79,8 @@ pub struct App {
 
     // ── Manual click tracking for title bar tabs ──
     pub(crate) title_bar_press_pos: Option<egui::Pos2>,
+    /// Horizontal scroll offset for title bar tabs (pixels).
+    pub(crate) tab_scroll_offset: f32,
 
     // ── Cursor tick tracking for cross-view sync ──
     pub(crate) last_cursor_tick: Option<f64>,
@@ -213,6 +215,7 @@ impl App {
             active_tool: crate::widgets::tools_panel::Tool::Select,
 
             title_bar_press_pos: None,
+            tab_scroll_offset: 0.0,
 
             last_cursor_tick: None,
             piano_last_cursor_tick: None,
