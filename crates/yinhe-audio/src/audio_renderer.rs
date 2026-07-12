@@ -399,6 +399,10 @@ pub(crate) fn spawn_renderer(
                 use_gpu_synth,
             );
             renderer.run();
+            // 显式 drop AudioRenderer，释放 AudioEngine（含 Arc<YinModel> 和 SoundFont），
+            // 然后 purge jemalloc arena 归还内存给 OS。
+            drop(renderer);
+            yinhe_memtrace::purge_free_pages();
         })
         .expect("Failed to spawn audio renderer thread")
 }
