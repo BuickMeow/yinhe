@@ -16,7 +16,7 @@ pub(crate) fn raise_viewport(ctx: &egui::Context, id: egui::ViewportId) {
 }
 
 /// Build a `ViewportBuilder` for a dialog window, matching the main window's
-/// custom chrome style (no native title bar, transparent background).
+/// custom chrome style (no native title bar).
 pub(crate) fn viewport_builder(
     title: &str,
     size: [f32; 2],
@@ -25,8 +25,7 @@ pub(crate) fn viewport_builder(
     let mut vb = egui::ViewportBuilder::default()
         .with_title(title)
         .with_inner_size(size)
-        .with_resizable(resizable)
-        .with_transparent(true);
+        .with_resizable(resizable);
 
     #[cfg(target_os = "macos")]
     {
