@@ -19,6 +19,7 @@ struct Uniforms {
     track_count: u32, // number of valid tracks in track_colors
     sel_rect_count: u32, // number of valid selection rects
     note_selection_highlight: u32, // 0=off (no color change), 1=on
+    note_outline: u32, // 0=no outline (skips border calc, saves fill rate), 1=on
     lane_height: f32, // AR: per-track lane height (PR unused)
     note_alpha: f32, // note alpha override (PR=1.0, AR=0.85)
 }
@@ -197,7 +198,7 @@ fn vs_main(
     if u.mode == 1u && vel > 0u {
         // PR notes: no rounded corners, border based on key height
         radius = 0.0;
-        border_width = max(0.1 * pixel_h, u.min_border_width);
+        border_width = select(0.0, max(0.1 * pixel_h, u.min_border_width), u.note_outline != 0u);
     }
 
     out.radius = radius;
@@ -312,7 +313,7 @@ fn vs_main_note(
 
     // No rounded corners; border based on vertical dimension (key/lane height)
     out.radius = 0.0;
-    out.border_width = max(0.1 * pixel_h, u.min_border_width);
+    out.border_width = select(0.0, max(0.1 * pixel_h, u.min_border_width), u.note_outline != 0u);
 
     out.uv = uv[vertex_index];
     out.half_size = vec2<f32>(pixel_w, pixel_h) * 0.5;

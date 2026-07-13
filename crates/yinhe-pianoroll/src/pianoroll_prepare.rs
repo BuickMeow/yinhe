@@ -35,6 +35,7 @@ pub fn prepare(
     midi_version: u64,
     ghost_notes: &[(f64, f64, u8, u16)], // (start_tick, end_tick, key, track) for pencil preview
     note_selection_highlight: bool,
+    note_outline: bool,
 ) -> yinhe_wgpu::PrepareTimings {
     let w = width as f32;
     let h = height as f32;
@@ -77,6 +78,7 @@ pub fn prepare(
         track_count,
         sel_rect_count,
         note_selection_highlight: if note_selection_highlight { 1 } else { 0 },
+        note_outline: if note_outline { 1 } else { 0 },
         lane_height: 0.0, // PR unused (shader uses key_height)
         note_alpha: 1.0,  // PR notes fully opaque
     };

@@ -23,6 +23,8 @@ pub struct AudioSettings {
     pub automation_event_density: u32,
     /// 选中音符是否变色（默认关闭，仅靠选框标识选中状态）
     pub note_selection_highlight: bool,
+    /// 音符描边开关（关闭可减少 GPU fill rate，提高性能）
+    pub note_outline: bool,
     pub scroll_mode: u32,
     /// 最小边框宽度(像素), 0=不设下限
     pub min_border_width: f32,
@@ -58,6 +60,7 @@ impl Default for AudioSettings {
             velocity_display_mode: 0,
             automation_event_density: 1,
             note_selection_highlight: false,
+            note_outline: true, // outline on by default (existing behavior)
             haptic_enabled: true,
             haptic_intensity: 0.5,
             use_gpu_synth: false,

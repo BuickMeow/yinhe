@@ -122,6 +122,7 @@ pub fn show(
         track_count, // AR notes now use track_colors uniform for coloring
         sel_rect_count: 0, // unused in AR mode
         note_selection_highlight: 0, // AR mode: no note selection highlight
+        note_outline: 1, // AR mode: outline always on
         lane_height: view.lane_height, // AR: per-track lane height
         note_alpha: 1.0,
     };
