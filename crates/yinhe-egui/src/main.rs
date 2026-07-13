@@ -30,8 +30,15 @@ fn main() {
         .init();
 
     let mut viewport = eframe::egui::ViewportBuilder::default()
-        .with_inner_size([1400.0, 900.0])
-        .with_transparent(true); // Avoid white flash before first frame
+        .with_inner_size([1400.0, 900.0]);
+
+    // macOS: with_transparent + fullsize_content_view avoids a white flash and
+    // allows the traffic-light buttons to overlay the content area.
+    // Windows: with_transparent causes a severe white flash; skip it.
+    #[cfg(target_os = "macos")]
+    {
+        viewport = viewport.with_transparent(true);
+    }
 
     let icon_data = yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Ui, || {
         let icon = image::load_from_memory(include_bytes!("../../../assets/icon.png"))

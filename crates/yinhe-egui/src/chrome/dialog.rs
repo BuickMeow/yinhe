@@ -30,6 +30,7 @@ pub(crate) fn viewport_builder(
     #[cfg(target_os = "macos")]
     {
         vb = vb
+            .with_transparent(true)
             .with_fullsize_content_view(true)
             .with_titlebar_shown(false)
             .with_title_shown(false);
