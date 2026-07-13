@@ -182,24 +182,34 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
             }
 
             // ── Drag transport bar blank area to move the window ──
-            // Only blank areas (between buttons and timecode, after timecode) are draggable.
-            // Buttons and the timecode display are excluded.
+            // Uses manual pointer tracking (no ui.interact) to avoid consuming
+            // button clicks. Only starts a drag if the press began in a blank area
+            // (outside buttons and timecode display).
             let bar_rect = ui.max_rect();
-            let drag_resp = ui.interact(bar_rect, ui.id().with("transport_bar_drag"), egui::Sense::drag());
-            if drag_resp.dragged_by(egui::PointerButton::Primary) {
-                // Only start drag if the press origin is in a blank area.
-                if let Some(pos) = ui.input(|i| i.pointer.press_origin()) {
-                    let in_timecode = timecode_rect
-                        .map(|r: egui::Rect| r.contains(pos))
-                        .unwrap_or(false);
-                    let in_buttons = button_right
-                        .map(|r: f32| pos.x >= bar_rect.min.x && pos.x < r)
-                        .unwrap_or(false);
-                    if !in_timecode && !in_buttons {
-                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+            let drag_id = ui.id().with("tb_drag_started");
+            let mut drag_started: bool = ui.data_mut(|d| d.get_temp(drag_id)).unwrap_or(false);
+
+            if ui.input(|i| i.pointer.primary_down()) {
+                if !drag_started {
+                    if let Some(pos) = ui.input(|i| i.pointer.press_origin()) {
+                        let in_bar = bar_rect.contains(pos);
+                        let in_timecode = timecode_rect
+                            .map(|r: egui::Rect| r.contains(pos))
+                            .unwrap_or(false);
+                        let in_buttons = button_right
+                            .map(|r: f32| pos.x >= bar_rect.min.x && pos.x < r)
+                            .unwrap_or(false);
+                        if in_bar && !in_timecode && !in_buttons {
+                            drag_started = true;
+                            ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+                        }
                     }
                 }
+            } else {
+                drag_started = false;
             }
+
+            ui.data_mut(|d| d.insert_temp(drag_id, drag_started));
         });
 
     TransportResponse {
