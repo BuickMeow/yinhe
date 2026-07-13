@@ -7,6 +7,12 @@ use yinhe_types::ArrangementView;
 use yinhe_wgpu::grid;
 use yinhe_wgpu::vertex::{DrawInstance, NoteInstance};
 
+/// Stack red zone threshold. When stack usage exceeds this, `stacker` will
+/// allocate a new stack segment before calling the closure.
+const STACK_RED_ZONE: usize = 32 * 1024;
+/// New stack segment size to allocate when the red zone is exceeded.
+const STACK_SIZE: usize = 1024 * 1024; // 1MB per segment
+
 /// Build background + track lane instances (layer 0).
 /// Dependencies: scroll_y, lane_height, track_visible
 pub fn build_decor(
@@ -87,6 +93,9 @@ pub fn build_grid(
 /// as PR notes).
 ///
 /// GPU clips off-screen notes.
+///
+/// Uses `stacker::maybe_grow` to dynamically allocate new stack segments
+/// when the current stack is close to overflowing.
 pub fn build_notes(
     out: &mut Vec<NoteInstance>,
     w: f32,
@@ -104,84 +113,87 @@ pub fn build_notes(
     let note_instances: Vec<Vec<NoteInstance>> = (0u8..128)
         .into_par_iter()
         .filter_map(|key| {
-            let notes = key_notes_in_range(midi.key_notes(key), tick_start as u32, tick_end as u32);
-            if notes.is_empty() {
-                return None;
-            }
+            // Wrap key processing in stacker to get fresh stack segments on demand.
+            stacker::maybe_grow(STACK_RED_ZONE, STACK_SIZE, || {
+                let notes = key_notes_in_range(midi.key_notes(key), tick_start as u32, tick_end as u32);
+                if notes.is_empty() {
+                    return None;
+                }
 
-            let mut local = Vec::new();
+                let mut local = Vec::new();
 
-            let flush_merge =
-                |local: &mut Vec<NoteInstance>, ti: usize, start: u32, end: u32, vel: u8| {
-                    let s = (start as f64).max(tick_start) as u32;
-                    let e = (end as f64).min(tick_end).max(start as f64) as u32;
-                    if s >= e {
-                        return;
+                let flush_merge =
+                    |local: &mut Vec<NoteInstance>, ti: usize, start: u32, end: u32, vel: u8| {
+                        let s = (start as f64).max(tick_start) as u32;
+                        let e = (end as f64).min(tick_end).max(start as f64) as u32;
+                        if s >= e {
+                            return;
+                        }
+                        if ti < trk_first || ti >= trk_last {
+                            return;
+                        }
+                        if !track_visible.get(ti).copied().unwrap_or(true) {
+                            return;
+                        }
+                        // 16B NoteInstance: shader computes pixel_y from
+                        // lane_height + scroll_y + key + track, and fetches color
+                        // from track_colors storage buffer via track index.
+                        // ti is usize; saturate to u16 (MAX_TRACKS=65536).
+                        local.push(NoteInstance {
+                            start_tick: s,
+                            end_tick: e,
+                            packed: NoteInstance::pack(key, ti.min(65535) as u16, vel),
+                            reserved: 0,
+                        });
+                    };
+
+                let merge_gap_ticks = (1.0 / ppu).ceil() as u32;
+
+                let mut track_buckets: Vec<Vec<(u32, u32, u8)>> = vec![Vec::new(); num_tracks];
+                for note in notes {
+                    if note.start_tick as f64 > tick_end {
+                        break;
                     }
+                    if (note.end_tick as f64) < tick_start {
+                        continue;
+                    }
+                    let ti = note.track as usize;
                     if ti < trk_first || ti >= trk_last {
-                        return;
+                        continue;
                     }
                     if !track_visible.get(ti).copied().unwrap_or(true) {
-                        return;
+                        continue;
                     }
-                    // 16B NoteInstance: shader computes pixel_y from
-                    // lane_height + scroll_y + key + track, and fetches color
-                    // from track_colors storage buffer via track index.
-                    // ti is usize; saturate to u16 (MAX_TRACKS=65536).
-                    local.push(NoteInstance {
-                        start_tick: s,
-                        end_tick: e,
-                        packed: NoteInstance::pack(key, ti.min(65535) as u16, vel),
-                        reserved: 0,
-                    });
-                };
-
-            let merge_gap_ticks = (1.0 / ppu).ceil() as u32;
-
-            let mut track_buckets: Vec<Vec<(u32, u32, u8)>> = vec![Vec::new(); num_tracks];
-            for note in notes {
-                if note.start_tick as f64 > tick_end {
-                    break;
-                }
-                if (note.end_tick as f64) < tick_start {
-                    continue;
-                }
-                let ti = note.track as usize;
-                if ti < trk_first || ti >= trk_last {
-                    continue;
-                }
-                if !track_visible.get(ti).copied().unwrap_or(true) {
-                    continue;
-                }
-                if hidden_notes.contains(&(note.track, note.start_tick, key)) {
-                    continue;
-                }
-                track_buckets[ti].push((note.start_tick, note.end_tick, note.velocity));
-            }
-
-            for (ti, notes_in_track) in track_buckets.iter().enumerate() {
-                if notes_in_track.is_empty() {
-                    continue;
-                }
-                let mut merge_start = notes_in_track[0].0;
-                let mut merge_end = notes_in_track[0].1;
-                let mut merge_vel = notes_in_track[0].2;
-
-                for &(s, e, v) in &notes_in_track[1..] {
-                    if s <= merge_end + merge_gap_ticks {
-                        merge_end = merge_end.max(e);
-                        merge_vel = merge_vel.max(v);
-                    } else {
-                        flush_merge(&mut local, ti, merge_start, merge_end, merge_vel);
-                        merge_start = s;
-                        merge_end = e;
-                        merge_vel = v;
+                    if hidden_notes.contains(&(note.track, note.start_tick, key)) {
+                        continue;
                     }
+                    track_buckets[ti].push((note.start_tick, note.end_tick, note.velocity));
                 }
-                flush_merge(&mut local, ti, merge_start, merge_end, merge_vel);
-            }
 
-            if local.is_empty() { None } else { Some(local) }
+                for (ti, notes_in_track) in track_buckets.iter().enumerate() {
+                    if notes_in_track.is_empty() {
+                        continue;
+                    }
+                    let mut merge_start = notes_in_track[0].0;
+                    let mut merge_end = notes_in_track[0].1;
+                    let mut merge_vel = notes_in_track[0].2;
+
+                    for &(s, e, v) in &notes_in_track[1..] {
+                        if s <= merge_end + merge_gap_ticks {
+                            merge_end = merge_end.max(e);
+                            merge_vel = merge_vel.max(v);
+                        } else {
+                            flush_merge(&mut local, ti, merge_start, merge_end, merge_vel);
+                            merge_start = s;
+                            merge_end = e;
+                            merge_vel = v;
+                        }
+                    }
+                    flush_merge(&mut local, ti, merge_start, merge_end, merge_vel);
+                }
+
+                if local.is_empty() { None } else { Some(local) }
+            })
         })
         .collect();
 

@@ -10,6 +10,7 @@ yinhe-types = { path = "../yinhe-types" }
 yinhe-wgpu = { path = "../yinhe-wgpu" }
 rayon = { workspace = true }
 bytemuck = { workspace = true }
+stacker = "0.1"
 
 [dev-dependencies]
 yinhe-test-helpers = { path = "../yinhe-test-helpers" }

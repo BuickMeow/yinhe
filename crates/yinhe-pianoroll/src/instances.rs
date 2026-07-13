@@ -7,6 +7,13 @@ use crate::keyboard;
 use crate::vertex::{DrawInstance, NoteInstance};
 use yinhe_types::PianoRollView;
 
+/// Stack red zone threshold. When stack usage exceeds this, `stacker` will
+/// allocate a new stack segment before calling the closure.
+/// 32KB should be enough for a single key's note iteration.
+const STACK_RED_ZONE: usize = 32 * 1024;
+/// New stack segment size to allocate when the red zone is exceeded.
+const STACK_SIZE: usize = 1024 * 1024; // 1MB per segment
+
 /// Build background + black-key row instances (layer 0).
 /// Dependencies: scroll_y, key_height, h
 pub fn build_decor(out: &mut Vec<DrawInstance>, w: f32, h: f32, kb_w: f32, kh: f32, scroll_y: f32, theme: &GpuTheme) {
@@ -70,6 +77,11 @@ pub fn build_grid(
 ///
 /// Padding: one screen width on each side of the visible tick range,
 /// so fast scrolling doesn't flash empty space before the cache rebuilds.
+///
+/// Uses `stacker::maybe_grow` to dynamically allocate new stack segments
+/// when the current stack is close to overflowing. This prevents
+/// STATUS_STACK_BUFFER_OVERRUN on Windows when rendering millions of notes
+/// at very low zoom levels.
 pub fn build_notes(
     out: &mut Vec<NoteInstance>,
     w: f32,
@@ -88,48 +100,53 @@ pub fn build_notes(
     let range_start = tick_start.max(0.0);
     let range_end = tick_end;
 
+    // Use stacker to protect against stack overflow when processing many notes.
+    // Each parallel iteration runs in a separate stack segment if needed.
     let results: Vec<Vec<NoteInstance>> = (key_lo..=key_hi)
         .into_par_iter()
         .filter_map(|key| {
-            let notes = key_notes_in_range(midi.key_notes(key), range_start as u32, range_end as u32);
-            if notes.is_empty() {
-                return None;
-            }
-
-            let mut local = Vec::new();
-
-            for note in notes {
-                if note.start_tick as f64 > range_end {
-                    break;
-                }
-                if (note.end_tick as f64) < range_start {
-                    continue;
-                }
-                if !track_visible
-                    .get(note.track as usize)
-                    .copied()
-                    .unwrap_or(true)
-                {
-                    continue;
+            // Wrap key processing in stacker to get fresh stack segments on demand.
+            stacker::maybe_grow(STACK_RED_ZONE, STACK_SIZE, || {
+                let notes = key_notes_in_range(midi.key_notes(key), range_start as u32, range_end as u32);
+                if notes.is_empty() {
+                    return None;
                 }
 
-                // Skip hidden notes (being dragged)
-                if hidden_notes.contains(&(note.track, note.start_tick, key)) {
-                    continue;
+                let mut local = Vec::new();
+
+                for note in notes {
+                    if note.start_tick as f64 > range_end {
+                        break;
+                    }
+                    if (note.end_tick as f64) < range_start {
+                        continue;
+                    }
+                    if !track_visible
+                        .get(note.track as usize)
+                        .copied()
+                        .unwrap_or(true)
+                    {
+                        continue;
+                    }
+
+                    // Skip hidden notes (being dragged)
+                    if hidden_notes.contains(&(note.track, note.start_tick, key)) {
+                        continue;
+                    }
+
+                    // 16B NoteInstance: shader fetches color from track_colors
+                    // storage buffer via track index, and computes pixel positions
+                    // from uniforms. track is u16 (0..65535).
+                    local.push(NoteInstance {
+                        start_tick: note.start_tick,
+                        end_tick: note.end_tick,
+                        packed: NoteInstance::pack(key, note.track, note.velocity),
+                        reserved: 0,
+                    });
                 }
 
-                // 16B NoteInstance: shader fetches color from track_colors
-                // storage buffer via track index, and computes pixel positions
-                // from uniforms. track is u16 (0..65535).
-                local.push(NoteInstance {
-                    start_tick: note.start_tick,
-                    end_tick: note.end_tick,
-                    packed: NoteInstance::pack(key, note.track, note.velocity),
-                    reserved: 0,
-                });
-            }
-
-            if local.is_empty() { None } else { Some(local) }
+                if local.is_empty() { None } else { Some(local) }
+            })
         })
         .collect();
 
