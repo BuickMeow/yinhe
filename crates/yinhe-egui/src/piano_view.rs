@@ -18,6 +18,7 @@ pub enum PianoViewEvent {
     SelectionAction(SelectionAction),
     AddNote { track: u16, note: yinhe_core::NoteEvent },
     EraserDelete { t_start: u32, t_end: u32, key_lo: u8, key_hi: u8, track_lo: u16, track_hi: u16 },
+    QuantizePreset(QuantizePreset),
 }
 
 /// Height of the time ruler band at the top of the pianoroll view.
@@ -659,8 +660,50 @@ pub fn show(
         });
     }
 
+    // ── PR quantize button in the top-left corner (left of ruler, above keyboard) ──
+    let mut pr_quantize_event: Option<PianoViewEvent> = None;
+    {
+        let corner_rect = egui::Rect::from_min_size(
+            egui::pos2(rect.min.x, ruler_band_y),
+            egui::vec2(kb_w, RULER_H),
+        );
+        let btn_size = 20.0;
+        let btn_rect = egui::Rect::from_center_size(corner_rect.center(), egui::vec2(btn_size, btn_size));
+        let btn_resp = ui.interact(btn_rect, egui::Id::new("pr_quantize_btn"), egui::Sense::click());
+        let hovered = btn_resp.hovered();
+
+        let icon_color = if hovered {
+            crate::theme::ACCENT_ACTIVE
+        } else {
+            egui::Color32::from_gray(160)
+        };
+        ui.painter().text(
+            btn_rect.center(),
+            egui::Align2::CENTER_CENTER,
+            "PR",
+            egui::FontId::proportional(13.0),
+            icon_color,
+        );
+
+        let mut pending_q = None;
+        egui::Popup::from_toggle_button_response(&btn_resp)
+            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+            .show(|ui| {
+                crate::chrome::transport_bar::quantize_popup(
+                    ui,
+                    ppq,
+                    quantize,
+                    &mut pending_q,
+                );
+            });
+        if let Some(new_preset) = pending_q {
+            pr_quantize_event = Some(PianoViewEvent::QuantizePreset(new_preset));
+        }
+    }
+
     sel_action
         .map(PianoViewEvent::SelectionAction)
         .or(pencil_event)
         .or(eraser_event)
+        .or(pr_quantize_event)
 }

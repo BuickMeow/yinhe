@@ -335,6 +335,10 @@ impl App {
                     self.documents[idx].edit.selected = sel;
                     self.with_undo("Eraser delete", |doc| doc.delete_selected());
                 }
+                PianoViewEvent::QuantizePreset(preset) => {
+                    let Some(idx) = self.active_doc else { return };
+                    self.documents[idx].edit.quantize_pianoroll = preset;
+                }
             }
         }
 
