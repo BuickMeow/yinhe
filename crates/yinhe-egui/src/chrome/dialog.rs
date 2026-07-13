@@ -33,7 +33,8 @@ pub(crate) fn viewport_builder(
             .with_transparent(true)
             .with_fullsize_content_view(true)
             .with_titlebar_shown(false)
-            .with_title_shown(false);
+            .with_title_shown(false)
+            .with_visible(false); // 首帧渲染前隐藏，避免交通灯按钮闪白
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -58,20 +59,32 @@ pub(crate) fn title_bar(ui: &mut egui::Ui, title: &str, close: &mut bool) {
     let _ = close;
 
     let height = crate::theme::TITLE_BAR_H;
-    let bar_rect = ui.max_rect();
+    let screen_rect = ui.ctx().viewport_rect();
 
-    // Background strip
+    // Background strip — draw from the very top of the window so the
+    // traffic-light buttons (which sit in the outer_margin area) have the
+    // correct APP_BG backdrop instead of seeing through to the white CALayer.
     ui.painter().rect_filled(
-        egui::Rect::from_min_size(bar_rect.min, egui::vec2(bar_rect.max.x, height)),
+        egui::Rect::from_min_size(
+            egui::pos2(screen_rect.min.x, screen_rect.min.y),
+            egui::vec2(screen_rect.max.x, height),
+        ),
         0.0,
         crate::theme::APP_BG,
     );
+
+    // macOS: the window was created hidden (with_visible(false)) to avoid a
+    // white flash.  Send Visible(true) so it shows up after the first frame is
+    // painted.
+    #[cfg(target_os = "macos")]
+    ui.ctx()
+        .send_viewport_cmd(egui::ViewportCommand::Visible(true));
 
     // ── Close button (right side, non-macOS only) ──
     #[cfg(not(target_os = "macos"))]
     {
         let close_rect = egui::Rect::from_min_size(
-            egui::pos2(bar_rect.max.x - height, bar_rect.min.y),
+            egui::pos2(screen_rect.max.x - height, screen_rect.min.y),
             egui::vec2(height, height),
         );
         let close_hover =
@@ -100,7 +113,7 @@ pub(crate) fn title_bar(ui: &mut egui::Ui, title: &str, close: &mut bool) {
 
     // ── Centered title (both platforms) ──
     ui.painter().text(
-        egui::pos2(bar_rect.center().x, bar_rect.min.y + height / 2.0),
+        egui::pos2(screen_rect.center().x, screen_rect.min.y + height / 2.0),
         egui::Align2::CENTER_CENTER,
         title,
         egui::FontId::proportional(13.0),
@@ -109,8 +122,8 @@ pub(crate) fn title_bar(ui: &mut egui::Ui, title: &str, close: &mut bool) {
 
     // ── Drag region (both platforms) ──
     let drag_rect = egui::Rect::from_min_max(
-        egui::pos2(bar_rect.min.x, bar_rect.min.y),
-        egui::pos2(bar_rect.max.x, bar_rect.min.y + height),
+        egui::pos2(screen_rect.min.x, screen_rect.min.y),
+        egui::pos2(screen_rect.max.x, screen_rect.min.y + height),
     );
     let drag_resp = ui.interact(drag_rect, ui.next_auto_id(), egui::Sense::drag());
     if drag_resp.dragged_by(egui::PointerButton::Primary) {
