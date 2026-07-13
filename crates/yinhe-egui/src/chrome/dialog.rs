@@ -2,6 +2,19 @@ use eframe::egui;
 #[cfg(not(target_os = "macos"))]
 use egui_material_icons::icons::*;
 
+/// Bring a child viewport to the front if it already exists.
+///
+/// egui does not automatically raise an existing sub-viewport when the user
+/// clicks the "open window" button again (e.g. after the sub-window was hidden
+/// behind the main window). This helper sends `Visible(true)` + `Focus` to the
+/// given viewport, which on all platforms activates and raises the window.
+///
+/// Safe to call every frame; idempotent.
+pub(crate) fn raise_viewport(ctx: &egui::Context, id: egui::ViewportId) {
+    ctx.send_viewport_cmd_to(id, egui::ViewportCommand::Visible(true));
+    ctx.send_viewport_cmd_to(id, egui::ViewportCommand::Focus);
+}
+
 /// Build a `ViewportBuilder` for a dialog window, matching the main window's
 /// custom chrome style (no native title bar, transparent background).
 pub(crate) fn viewport_builder(

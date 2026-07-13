@@ -215,9 +215,11 @@ pub(crate) fn show_settings_viewport(
     layer_count: &mut u32,
     export_sample_rate: &mut u32,
 ) -> bool {
+    let viewport_id = egui::ViewportId::from_hash_of("export_settings_dialog");
     if !*show {
         return false;
     }
+    crate::chrome::dialog::raise_viewport(ctx, viewport_id);
 
     let bd = std::rc::Rc::new(std::cell::Cell::new(*bit_depth));
     let lc = std::rc::Rc::new(std::cell::Cell::new(*layer_count));
@@ -232,7 +234,7 @@ pub(crate) fn show_settings_viewport(
     let sr_cb = sr.clone();
 
     ctx_clone.show_viewport_immediate(
-        egui::ViewportId::from_hash_of("export_settings_dialog"),
+        viewport_id,
         crate::chrome::dialog::viewport_builder("导出音频", [320.0, 260.0], false),
         move |vctx, _class| {
             let mut close = false;

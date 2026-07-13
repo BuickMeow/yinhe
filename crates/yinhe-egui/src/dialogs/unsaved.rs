@@ -17,6 +17,8 @@ pub(crate) fn show_viewport(
     if pending_unsaved.is_none() || save_rx.is_some() {
         return Action::None;
     }
+    let viewport_id = egui::ViewportId::from_hash_of("unsaved_dialog");
+    crate::chrome::dialog::raise_viewport(ctx, viewport_id);
 
     let action_rc: std::rc::Rc<std::cell::RefCell<Option<Action>>> =
         std::rc::Rc::new(std::cell::RefCell::new(None));
@@ -24,7 +26,7 @@ pub(crate) fn show_viewport(
     let ctx_clone = ctx.clone();
 
     ctx_clone.show_viewport_immediate(
-        egui::ViewportId::from_hash_of("unsaved_dialog"),
+        viewport_id,
         crate::chrome::dialog::viewport_builder("尚未保存", [380.0, 170.0], false),
         move |vctx, _class| {
             let mut close = false;

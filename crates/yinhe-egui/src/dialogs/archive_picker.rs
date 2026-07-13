@@ -249,6 +249,8 @@ pub(crate) fn show_viewport(ctx: &eframe::egui::Context, state: &mut Option<Arch
     if state.is_none() {
         return ArchivePickerAction::None;
     }
+    let viewport_id = eframe::egui::ViewportId::from_hash_of("archive_picker_dialog");
+    crate::chrome::dialog::raise_viewport(ctx, viewport_id);
 
     let taken_state = std::rc::Rc::new(std::cell::RefCell::new(
         std::mem::replace(
@@ -265,7 +267,7 @@ pub(crate) fn show_viewport(ctx: &eframe::egui::Context, state: &mut Option<Arch
     let action_cb = action.clone();
 
     ctx_clone.show_viewport_immediate(
-        eframe::egui::ViewportId::from_hash_of("archive_picker_dialog"),
+        viewport_id,
         crate::chrome::dialog::viewport_builder("选择 MIDI 文件", [500.0, 400.0], true),
         move |vctx, _class| {
             let close_requested = vctx.input(|i| i.viewport().close_requested());

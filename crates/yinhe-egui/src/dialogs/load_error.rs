@@ -5,13 +5,15 @@ pub(crate) fn show_viewport(ctx: &egui::Context, error: &mut Option<String>) {
         Some(m) => m.clone(),
         None => return,
     };
+    let viewport_id = egui::ViewportId::from_hash_of("load_error_dialog");
+    crate::chrome::dialog::raise_viewport(ctx, viewport_id);
 
     let open = std::rc::Rc::new(std::cell::RefCell::new(true));
     let open_cb = open.clone();
     let ctx_clone = ctx.clone();
 
     ctx_clone.show_viewport_immediate(
-        egui::ViewportId::from_hash_of("load_error_dialog"),
+        viewport_id,
         crate::chrome::dialog::viewport_builder("无法打开文件", [420.0, 120.0], false),
         move |vctx, _class| {
             let mut close = false;

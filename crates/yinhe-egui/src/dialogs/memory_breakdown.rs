@@ -6,9 +6,13 @@ pub(crate) fn show_viewport(
     mem_mb: f64,
     metal_size: u64,
 ) {
+    let viewport_id = egui::ViewportId::from_hash_of("memory_breakdown_dialog");
     if !*open {
         return;
     }
+    // Raise existing window (e.g. when user re-clicks the toolbar button after
+    // the dialog was hidden behind the main window).
+    crate::chrome::dialog::raise_viewport(ctx, viewport_id);
 
     let snapshot = yinhe_memtrace::Snapshot::capture();
     let open_rc = std::rc::Rc::new(std::cell::RefCell::new(true));
@@ -16,7 +20,7 @@ pub(crate) fn show_viewport(
     let open_cb = open_rc.clone();
 
     ctx_clone.show_viewport_immediate(
-        egui::ViewportId::from_hash_of("memory_breakdown_dialog"),
+        viewport_id,
         crate::chrome::dialog::viewport_builder(
             "内存占用详情",
             crate::theme::MEM_POPUP_SIZE,

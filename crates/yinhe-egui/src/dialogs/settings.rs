@@ -301,9 +301,11 @@ pub(crate) fn show_viewport(
     haptic_engine: &mut yinhe_haptic::HapticEngine,
     audio: &Option<yinhe_audio::CpalAudioHandle>,
 ) -> bool {
+    let viewport_id = eframe::egui::ViewportId::from_hash_of("settings_dialog");
     if !settings.show_settings {
         return false;
     }
+    crate::chrome::dialog::raise_viewport(ctx, viewport_id);
 
     let prev_xsynth_layers = settings.xsynth_layers;
     let settings_rc = std::rc::Rc::new(std::cell::RefCell::new(Some(std::mem::take(settings))));
@@ -311,7 +313,7 @@ pub(crate) fn show_viewport(
     let settings_cb = settings_rc.clone();
 
     ctx_clone.show_viewport_immediate(
-        eframe::egui::ViewportId::from_hash_of("settings_dialog"),
+        viewport_id,
         crate::chrome::dialog::viewport_builder("设置", [480.0, 520.0], true),
         move |vctx, _class| {
             let mut slot = settings_cb.borrow_mut().take();
