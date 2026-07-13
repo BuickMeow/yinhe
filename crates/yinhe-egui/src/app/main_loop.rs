@@ -192,19 +192,6 @@ impl eframe::App for App {
         // ── Smooth cursor interpolation between audio callback updates ──
         self.interpolate_playback_cursor();
 
-        if let (Some(idx), Some(new_preset)) =
-            (self.active_doc, transport_response.pending_quantize_arrange)
-            && let Some(doc) = self.documents.get_mut(idx)
-        {
-            doc.edit.quantize_arrange = new_preset;
-        }
-        if let (Some(idx), Some(new_preset)) =
-            (self.active_doc, transport_response.pending_quantize_pianoroll)
-            && let Some(doc) = self.documents.get_mut(idx)
-        {
-            doc.edit.quantize_pianoroll = new_preset;
-        }
-
         // ── Handle file menu actions ──
         if let Some(action) = transport_response.pending_file_action {
             self.handle_file_action(action, ui.ctx());

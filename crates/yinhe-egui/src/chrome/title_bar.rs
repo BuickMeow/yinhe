@@ -291,28 +291,39 @@ pub(crate) fn show(
                 paint_window_buttons(ui, &win_btn_rects, maximized);
             }
 
+            // ── Collect all tab rects for drag-exclusion ──
+            let tab_rects: Vec<egui::Rect> = click_targets
+                .iter()
+                .map(|(_, tab_rect, _)| *tab_rect)
+                .collect();
+
             // ── Window drag region (after the tabs, excluding window buttons) ──
-            let drag_rect_left = tab_x.max(bar_rect.min.x + left_padding);
+            // Use manual pointer check to ensure clicks on tab rects never start a drag.
             let drag_right = if cfg!(target_os = "macos") {
                 bar_rect.max.x
             } else {
                 bar_rect.max.x - 138.0
             };
             let drag_rect = egui::Rect::from_min_max(
-                egui::pos2(drag_rect_left, bar_rect.min.y),
+                egui::pos2(bar_rect.min.x + left_padding, bar_rect.min.y),
                 egui::pos2(drag_right, bar_rect.max.y),
             );
 
-            let drag_resp = ui.interact(drag_rect, ui.next_auto_id(), egui::Sense::drag());
-
-            if drag_resp.dragged_by(egui::PointerButton::Primary) {
-                ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+            // Only start drag if press position is not inside any tab rect.
+            let press_pos = ui.input(|i| i.pointer.press_origin());
+            let on_tab = press_pos.is_some_and(|pos| tab_rects.iter().any(|r| r.contains(pos)));
+            if !on_tab {
+                let drag_resp = ui.interact(drag_rect, ui.next_auto_id(), egui::Sense::drag());
+                if drag_resp.dragged_by(egui::PointerButton::Primary) {
+                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+                }
             }
 
             // Double-click title bar drag area to toggle maximize/restore
             const DOUBLE_CLICK_MS: f64 = 400.0;
             let dbl_id = ui.id().with("title_bar_dbl_click");
-            if ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Primary))
+            if !on_tab
+                && ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Primary))
                 && let Some(pos) = ui.input(|i| i.pointer.interact_pos())
                 && drag_rect.contains(pos)
             {

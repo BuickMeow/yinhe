@@ -3,10 +3,8 @@ use egui_material_icons::icons::*;
 
 use crate::file_loader::FileLoader;
 use yinhe_editor_core::document::Document;
-use yinhe_editor_core::quantize::QuantizePreset;
 use crate::view_interaction::{FollowMode, FollowModeExt};
 use yinhe_types::time_format;
-use crate::widgets::quantize_popup;
 
 /// Actions triggered from the file menu dropdown.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -44,8 +42,6 @@ pub struct TransportResponse {
     pub toggle_play: bool,
     pub pause_return: bool,
     pub stop_play: bool,
-    pub pending_quantize_arrange: Option<QuantizePreset>,
-    pub pending_quantize_pianoroll: Option<QuantizePreset>,
     pub pending_file_action: Option<FileAction>,
 }
 
@@ -55,8 +51,6 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
     let mut toggle_play = false;
     let mut pause_return = false;
     let mut stop_play = false;
-    let mut pending_quantize_arrange = None;
-    let mut pending_quantize_pianoroll = None;
     let mut pending_file_action = None;
 
     egui::Panel::top("transport_bar")
@@ -141,42 +135,6 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                         *ctx.follow_mode = ctx.follow_mode.next();
                     }
                     follow_resp.on_hover_text(ctx.follow_mode.tooltip());
-
-                    // ── Quantization preset buttons (AR + PR) ──
-                    let ppq = ctx.doc.map(|d| d.data.model.meta.ppq).unwrap_or(480);
-                    let (arr_q, pr_q) = ctx
-                        .doc
-                        .map(|d| (d.edit.quantize_arrange, d.edit.quantize_pianoroll))
-                        .unwrap_or((QuantizePreset::Fraction(1, 4), QuantizePreset::Fraction(1, 16)));
-                    let q_font = egui::FontId::proportional(12.0);
-                    let old_btn_pad = ui.spacing_mut().button_padding;
-                    ui.spacing_mut().button_padding = egui::vec2(6.0, -3.0);
-
-                    let arr_text = format!("AR\n{}", arr_q.button_text());
-                    let arr_resp = ui.add(
-                        egui::Button::new(egui::RichText::new(arr_text).font(q_font.clone()))
-                            .min_size(egui::vec2(40.0, 26.0))
-                            .corner_radius(btn_rounding),
-                    );
-                    egui::Popup::from_toggle_button_response(&arr_resp)
-                        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-                        .show(|ui| {
-                            quantize_popup::show(ui, ppq, arr_q, &mut pending_quantize_arrange);
-                        });
-
-                    let pr_text = format!("PR\n{}", pr_q.button_text());
-                    let pr_resp = ui.add(
-                        egui::Button::new(egui::RichText::new(pr_text).font(q_font))
-                            .min_size(egui::vec2(40.0, 26.0))
-                            .corner_radius(btn_rounding),
-                    );
-                    egui::Popup::from_toggle_button_response(&pr_resp)
-                        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-                        .show(|ui| {
-                            quantize_popup::show(ui, ppq, pr_q, &mut pending_quantize_pianoroll);
-                        });
-
-                    ui.spacing_mut().button_padding = old_btn_pad;
                 }
 
                 if let Some(doc) = ctx.doc {
@@ -222,14 +180,32 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                     }
                 }
             }
+
+            // ── Drag transport bar blank area to move the window ──
+            // Only blank areas (between buttons and timecode, after timecode) are draggable.
+            // Buttons and the timecode display are excluded.
+            let bar_rect = ui.max_rect();
+            let drag_resp = ui.interact(bar_rect, ui.id().with("transport_bar_drag"), egui::Sense::drag());
+            if drag_resp.dragged_by(egui::PointerButton::Primary) {
+                // Only start drag if the press origin is in a blank area.
+                if let Some(pos) = ui.input(|i| i.pointer.press_origin()) {
+                    let in_timecode = timecode_rect
+                        .map(|r: egui::Rect| r.contains(pos))
+                        .unwrap_or(false);
+                    let in_buttons = button_right
+                        .map(|r: f32| pos.x >= bar_rect.min.x && pos.x < r)
+                        .unwrap_or(false);
+                    if !in_timecode && !in_buttons {
+                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+                    }
+                }
+            }
         });
 
     TransportResponse {
         toggle_play,
         pause_return,
         stop_play,
-        pending_quantize_arrange,
-        pending_quantize_pianoroll,
         pending_file_action,
     }
 }
