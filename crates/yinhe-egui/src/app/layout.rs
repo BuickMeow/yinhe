@@ -83,12 +83,12 @@ impl App {
         let mut follow_mode = self.follow_mode;
 
         // Arrangement view
-        let (arr_drag_delta, arr_eraser_rect): (Option<(i64, i32)>, Option<(f64, f64, usize, usize)>) = if self.show_transport {
+        let (arr_drag_delta, arr_eraser_rect, arr_quantize): (Option<(i64, i32)>, Option<(f64, f64, usize, usize)>, Option<yinhe_editor_core::quantize::QuantizePreset>) = if self.show_transport {
             let mut request_pianoroll = false;
             let mut arr_drag_delta: Option<(i64, i32)> = None;
             let mut arr_eraser_rect: Option<(f64, f64, usize, usize)> = None;
             let mut guard = crate::app::main_loop::ReplaceGuard::new(&mut self.documents[idx]);
-            arrange::show(
+            let arr_quantize = arrange::show(
                 ui,
                 guard.as_mut(),
                 &mut self.arrange_view,
@@ -115,9 +115,9 @@ impl App {
                 self.show_pianoroll = true;
                 self.show_pianoroll_in_arrange = true;
             }
-            (arr_drag_delta, arr_eraser_rect) // guard dropped here
+            (arr_drag_delta, arr_eraser_rect, arr_quantize) // guard dropped here
         } else {
-            (None, None)
+            (None, None, None)
         };
 
         // Handle AR eraser (guard is dropped, no outstanding borrow on self.documents)
@@ -132,6 +132,13 @@ impl App {
         // Handle AR drag after guard is dropped (no outstanding borrow on self.documents)
         if let Some((delta_ticks, delta_tracks)) = arr_drag_delta {
             self.handle_arr_drag(delta_ticks, delta_tracks);
+        }
+
+        // Handle AR quantize preset change from corner button
+        if let Some(new_preset) = arr_quantize {
+            if let Some(doc) = self.documents.get_mut(idx) {
+                doc.edit.quantize_arrange = new_preset;
+            }
         }
 
         // Pianoroll area

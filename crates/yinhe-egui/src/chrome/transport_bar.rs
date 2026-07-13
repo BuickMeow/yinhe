@@ -234,7 +234,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
 }
 
 /// Quantization popup menu: common presets + custom fraction + custom tick.
-fn quantize_popup(
+pub fn quantize_popup(
     ui: &mut egui::Ui,
     ppq: u32,
     current: QuantizePreset,

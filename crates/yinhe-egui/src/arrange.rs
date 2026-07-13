@@ -6,6 +6,7 @@ use eframe::egui;
 use yinhe_types::ArrangementView;
 
 use yinhe_editor_core::document::Document;
+use yinhe_editor_core::quantize::QuantizePreset;
 use crate::render_context::RenderContext;
 use crate::widgets::tools_panel::Tool;
 
@@ -13,6 +14,8 @@ use crate::widgets::tools_panel::Tool;
 use crate::theme;
 const RULER_H: f32 = theme::RULER_H;
 
+/// Returns `Some(new_preset)` if the user picked a new quantize preset
+/// from the corner AR button.
 pub fn show(
     ui: &mut egui::Ui,
     doc: &mut Document,
@@ -265,6 +268,44 @@ pub fn show(
         );
     }
 
+    // ── AR quantize button in the top-left corner (left of ruler, above track panel) ──
+    let mut pending_quantize = None;
+    {
+        let corner_rect = egui::Rect::from_min_size(
+            egui::pos2(arr_rect.min.x, arr_rect.min.y),
+            egui::vec2(tp_w, RULER_H),
+        );
+        let btn_size = 20.0;
+        let btn_rect = egui::Rect::from_center_size(corner_rect.center(), egui::vec2(btn_size, btn_size));
+        let btn_resp = ui.interact(btn_rect, egui::Id::new("arr_quantize_btn"), egui::Sense::click());
+        let hovered = btn_resp.hovered();
+
+        let icon_color = if hovered {
+            crate::theme::ACCENT_ACTIVE
+        } else {
+            egui::Color32::from_gray(160)
+        };
+        ui.painter().text(
+            btn_rect.center(),
+            egui::Align2::CENTER_CENTER,
+            "AR",
+            egui::FontId::proportional(13.0),
+            icon_color,
+        );
+
+        egui::Popup::from_toggle_button_response(&btn_resp)
+            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+            .show(|ui| {
+                let ppq = doc.data.model.meta.ppq;
+                crate::chrome::transport_bar::quantize_popup(
+                    ui,
+                    ppq,
+                    doc.edit.quantize_arrange,
+                    &mut pending_quantize,
+                );
+            });
+    }
+
     // ── "+" track add button in the corner (below track panel, left of scrollbar) ──
     {
         let corner_rect = egui::Rect::from_min_size(
@@ -317,4 +358,6 @@ pub fn show(
         *transport_panel_width =
             (*transport_panel_width + v_resp.drag_delta().x).clamp(60.0, arr_total_w - 60.0);
     }
+
+    pending_quantize
 }
