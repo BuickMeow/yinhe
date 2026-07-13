@@ -288,8 +288,8 @@ pub fn show(
         ui.painter().text(
             btn_rect.center(),
             egui::Align2::CENTER_CENTER,
-            "AR",
-            egui::FontId::proportional(13.0),
+            doc.edit.quantize_arrange.button_text(),
+            egui::FontId::proportional(11.0),
             icon_color,
         );
 
