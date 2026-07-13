@@ -93,13 +93,6 @@ pub(crate) fn show_viewport(
                                          驱动层额外开销（swapchain、depth、pipeline cache 等）\
                                          不纳入此项统计。",
                                     );
-
-                                    ui.add_space(8.0);
-                                    ui.vertical_centered(|ui| {
-                                        if ui.button("关闭").clicked() {
-                                            close = true;
-                                        }
-                                    });
                                 });
                         });
                 });

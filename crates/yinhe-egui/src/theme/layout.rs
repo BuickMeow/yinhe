@@ -27,4 +27,4 @@ pub const AUTO_PANEL_COMBO_WIDTH_RATIO: f32 = 1.0;
 
 // ── System monitoring ──
 pub const SYS_REFRESH_INTERVAL_SECS: f64 = 0.5;
-pub const MEM_POPUP_SIZE: [f32; 2] = [360.0, 260.0];
+pub const MEM_POPUP_SIZE: [f32; 2] = [280.0, 380.0];
