@@ -38,7 +38,7 @@ pub fn show(
     arr_sel_rect: &mut Option<(f64, f64, usize, usize)>,
     arr_drag_delta: &mut Option<(i64, i32)>,
     arr_eraser_rect: &mut Option<(f64, f64, usize, usize)>,
-) {
+) -> Option<QuantizePreset> {
     *last_cursor_tick = doc.edit.cursor_tick;
 
     let arr_total_w = remaining.width();
@@ -297,7 +297,7 @@ pub fn show(
             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
             .show(|ui| {
                 let ppq = doc.data.model.meta.ppq;
-                crate::chrome::transport_bar::quantize_popup(
+                crate::widgets::quantize_popup::show(
                     ui,
                     ppq,
                     doc.edit.quantize_arrange,

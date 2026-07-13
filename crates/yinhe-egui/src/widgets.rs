@@ -4,3 +4,4 @@ pub mod selection_actions;
 pub mod split_handle;
 pub mod time_ruler;
 pub mod tools_panel;
+pub mod quantize_popup;

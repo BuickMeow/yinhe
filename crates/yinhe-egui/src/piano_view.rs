@@ -689,7 +689,7 @@ pub fn show(
         egui::Popup::from_toggle_button_response(&btn_resp)
             .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
             .show(|ui| {
-                crate::chrome::transport_bar::quantize_popup(
+                crate::widgets::quantize_popup::show(
                     ui,
                     ppq,
                     quantize,
