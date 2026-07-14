@@ -95,7 +95,7 @@ fn show_anchor_info(
     });
     ui.add_space(4.0);
 
-    // ── Tick（可编辑，DragValue，实时同步） ──
+    // ── Tick（可编辑，DragValue，拖动时实时提交） ──
     let mut edit_tick = tick as f64;
     ui.horizontal(|ui| {
         ui.label(
@@ -104,7 +104,7 @@ fn show_anchor_info(
                 .color(egui::Color32::GRAY),
         );
         let resp = ui.add(egui::DragValue::new(&mut edit_tick).range(0..=u32::MAX as i64).speed(1.0));
-        if resp.lost_focus() {
+        if resp.changed() {
             let new_tick = edit_tick as u32;
             if new_tick != tick {
                 let actions = doc.apply_automation_edits(vec![
@@ -117,7 +117,6 @@ fn show_anchor_info(
                     },
                 ]);
                 push_undo(doc, actions, "Edit automation anchor tick");
-                // 更新 info_content 中的 tick（下帧会从模型读取新 tick 处的锚点）
                 *info_content = Some(InfoContent::Anchor {
                     track_idx, lane_idx,
                     tick: new_tick,
@@ -128,7 +127,7 @@ fn show_anchor_info(
     });
     ui.add_space(4.0);
 
-    // ── Value（可编辑，DragValue，实时同步） ──
+    // ── Value（可编辑，DragValue，拖动时实时提交） ──
     let mut edit_value = value as f64;
     ui.horizontal(|ui| {
         ui.label(
@@ -137,7 +136,7 @@ fn show_anchor_info(
                 .color(egui::Color32::GRAY),
         );
         let resp = ui.add(egui::DragValue::new(&mut edit_value).range(0..=max_val as i64).speed(1.0));
-        if resp.lost_focus() {
+        if resp.changed() {
             let new_value = edit_value as u16;
             if new_value != value {
                 let actions = doc.apply_automation_edits(vec![

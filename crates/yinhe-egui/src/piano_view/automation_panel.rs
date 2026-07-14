@@ -370,6 +370,8 @@ pub fn show_panels(
                         ctx,
                         i,
                         track_colors,
+                        info_content,
+                        right_tab,
                     );
                     edits.extend(panel_edits);
                     panel_ghost = ghost;

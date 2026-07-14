@@ -6,6 +6,7 @@ use yinhe_types::{AutomationLane, AutomationTarget, SegmentShape};
 use yinhe_types::AutomationPanelView;
 use yinhe_automation::{AutomationGhost, build_lane_override};
 
+use crate::right_panel::{InfoContent, RightTab};
 use crate::widgets::tools_panel::Tool;
 use super::{AutomationEditCtx, ANCHOR_HIT_PX};
 
@@ -80,6 +81,8 @@ pub(crate) fn handle_automation_interaction(
     ctx: &AutomationEditCtx<'_>,
     panel_index: usize,
     track_colors: &[[f32; 3]],
+    info_content: &mut Option<InfoContent>,
+    right_tab: &mut Option<RightTab>,
 ) -> (Vec<yinhe_types::AutomationEdit>, Option<AutomationGhost>, Option<(u32, u16)>) {
     let mut edits = Vec::new();
     let target = &panel.selected_target;
@@ -194,7 +197,17 @@ pub(crate) fn handle_automation_interaction(
             // release 不检查 in_grid——用户可能拖到边缘（值=127/0）时鼠标移出 grid，
             // 但 mouse_info 仍有效（y_in_panel 已 clamp），不应丢失这次编辑。
             if pointer_pressed && in_grid {
-                if let Some((_, tick)) = hit_anchor {
+                if let Some((_hit_idx, tick)) = hit_anchor {
+                    // 左键点击锚点 → 选中它（信息面板显示该锚点）
+                    if let Some(lidx) = lane_idx {
+                        *info_content = Some(InfoContent::Anchor {
+                            track_idx,
+                            lane_idx: lidx,
+                            tick,
+                            target: target.clone(),
+                        });
+                        *right_tab = Some(RightTab::Info);
+                    }
                     // 记录锚点原始位置，用于判断是否实际拖动过
                     let anchor_value = lane
                         .and_then(|l| l.events.iter().find(|e| e.tick == tick))
