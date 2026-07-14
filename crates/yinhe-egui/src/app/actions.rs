@@ -18,6 +18,9 @@ pub(crate) struct KeyboardActions {
     pub transpose_down: bool,
     pub undo: bool,
     pub redo: bool,
+    pub copy: bool,
+    pub paste: bool,
+    pub select_all: bool,
 }
 
 impl App {
@@ -76,6 +79,19 @@ impl App {
             if cmd && i.key_pressed(egui::Key::Y) {
                 actions.redo = true;
             }
+
+            // Cmd/Ctrl+C — copy selection
+            if cmd && i.key_pressed(egui::Key::C) {
+                actions.copy = true;
+            }
+            // Cmd/Ctrl+V — paste
+            if cmd && i.key_pressed(egui::Key::V) {
+                actions.paste = true;
+            }
+            // Cmd/Ctrl+A — select all
+            if cmd && i.key_pressed(egui::Key::A) {
+                actions.select_all = true;
+            }
         });
 
         actions
@@ -109,6 +125,37 @@ impl App {
             "Transpose down"
         };
         self.with_undo(label, |doc| doc.transpose_selected(semitones));
+    }
+
+    // ── Copy / Paste / Select All ──
+
+    /// Copy current selection rects to clipboard (no note data, just rects).
+    pub(crate) fn copy_selection(&mut self) {
+        let Some(idx) = self.active_doc else { return };
+        self.clipboard = self.documents[idx].edit.selected.clone();
+    }
+
+    /// Paste notes from clipboard at cursor position.
+    pub(crate) fn paste_clipboard(&mut self) {
+        let clipboard = self.clipboard.clone();
+        let Some(idx) = self.active_doc else { return };
+        let cursor_tick = self.documents[idx].edit.cursor_tick.unwrap_or(0.0);
+        self.with_undo("Paste", |doc| doc.paste_from_selection(&clipboard, cursor_tick));
+    }
+
+    /// Select all notes — PR or AR depending on current view mode.
+    pub(crate) fn select_all(&mut self) {
+        let Some(idx) = self.active_doc else { return };
+        let is_pr = self.view_mode == crate::chrome::mode_bar::ViewMode::Edit;
+        let doc = &mut self.documents[idx];
+        if is_pr {
+            doc.select_all_pr();
+        } else {
+            doc.select_all_ar();
+        }
+        doc.data.bump_version();
+        self.pianoroll_view.base.dirty = true;
+        self.arrange_view.base.dirty = true;
     }
 
     /// Add a single note to the given track and record an undo entry.

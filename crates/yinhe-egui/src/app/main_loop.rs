@@ -150,6 +150,15 @@ impl eframe::App for App {
         if kb.redo {
             self.redo();
         }
+        if kb.copy {
+            self.copy_selection();
+        }
+        if kb.paste {
+            self.paste_clipboard();
+        }
+        if kb.select_all {
+            self.select_all();
+        }
 
         // ── System resource monitoring ──
         self.refresh_system_stats();

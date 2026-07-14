@@ -130,6 +130,9 @@ pub struct App {
     pub(crate) menu_bar: crate::platform::MenuBar,
     /// Tracks the last `is_dirty` state to avoid redundant `setDocumentEdited` calls.
     pub(crate) last_dirty_state: bool,
+
+    // ── Clipboard (selection-rect based, not note data) ──
+    pub(crate) clipboard: yinhe_core::Selection,
 }
 
 impl App {
@@ -244,6 +247,8 @@ impl App {
 
             menu_bar: crate::platform::MenuBar::new(),
             last_dirty_state: false,
+
+            clipboard: yinhe_core::Selection::default(),
         };
 
         // Sync haptic settings from persisted config

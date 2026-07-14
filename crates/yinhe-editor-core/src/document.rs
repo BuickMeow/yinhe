@@ -448,6 +448,148 @@ impl Document {
         Some(UndoAction::Notes(NoteDelta { before, after }))
     }
 
+    // ── Select All ──
+
+    /// Select all notes in the currently selected track(s) for Piano Roll.
+    /// Range: tick 0 → last note end in those tracks, keys 0–127.
+    pub fn select_all_pr(&mut self) {
+        let model = &self.data.model;
+        let conductor = self.edit.conductor_track_idx;
+        let tracks: Vec<u16> = self.edit.track_selected.iter().copied().collect();
+        if tracks.is_empty() {
+            return;
+        }
+
+        self.edit.selected.clear();
+        for &track_idx in &tracks {
+            if Some(track_idx) == conductor {
+                continue;
+            }
+            // Find max end_tick for this track across all key buckets.
+            let mut max_end: u32 = 0;
+            for bucket in model.notes.iter() {
+                for n in bucket.iter() {
+                    if n.track == track_idx && n.end_tick > max_end {
+                        max_end = n.end_tick;
+                    }
+                }
+            }
+            if max_end > 0 {
+                self.edit.selected.add_rect_track(0, max_end + 1, 0, 127, track_idx, track_idx);
+            }
+        }
+
+        // Update visual sel_rect to match (PR uses f64 ticks).
+        if let Some(&(ts, te, kl, kh, _, _)) = self.edit.selected.rects.first() {
+            self.edit.sel_rect.rect = Some((ts as f64, te as f64, kl, kh));
+        }
+    }
+
+    /// Select all notes across all tracks for Arrange.
+    /// Range: tick 0 → global last note end, keys 0–127, all tracks except conductor.
+    pub fn select_all_ar(&mut self) {
+        let model = &self.data.model;
+        let max_end = model.tick_length as u32;
+        if max_end == 0 {
+            return;
+        }
+        let conductor = self.edit.conductor_track_idx;
+        let num_tracks = model.tracks.len() as u16;
+
+        self.edit.selected.clear();
+        // One rect per non-conductor track range is overkill; use a single
+        // broad rect and rely on conductor guard in add_note / move_selected.
+        // But to be precise, split into: tracks before conductor, tracks after.
+        match conductor {
+            Some(c) if c > 0 => {
+                self.edit.selected.add_rect_track(0, max_end + 1, 0, 127, 0, c - 1);
+            }
+            _ => {}
+        }
+        let after = conductor.map(|c| c + 1).unwrap_or(0);
+        if after < num_tracks {
+            self.edit.selected.add_rect_track(0, max_end + 1, 0, 127, after, num_tracks - 1);
+        }
+    }
+
+    // ── Paste from clipboard ──
+
+    /// Paste notes from a clipboard selection at the cursor position.
+    ///
+    /// The clipboard stores selection rects (not note data). Notes within
+    /// those rects are queried from the current model, then duplicated at
+    /// an offset so the earliest note starts at `cursor_tick`.
+    pub fn paste_from_selection(
+        &mut self,
+        clipboard: &yinhe_core::Selection,
+        cursor_tick: f64,
+    ) -> Option<UndoAction> {
+        if clipboard.is_empty() {
+            return None;
+        }
+
+        let model = Arc::make_mut(&mut self.data.model);
+
+        // Collect notes within clipboard rects.
+        let notes = crate::batch_ops::collect_selected(model, clipboard);
+        if notes.is_empty() {
+            return None;
+        }
+
+        // Calculate offset: cursor - min start_tick of clipboard notes.
+        let min_start = notes.iter().map(|(n, _)| n.start_tick).min().unwrap_or(0);
+        let offset = (cursor_tick as i64 - min_start as i64).max(0) as u32;
+
+        let conductor = self.edit.conductor_track_idx;
+
+        let mut new_by_key: std::collections::HashMap<u8, Vec<yinhe_types::Note>> =
+            std::collections::HashMap::new();
+        for (note, key) in &notes {
+            // Skip notes that would land on conductor track.
+            if Some(note.track) == conductor {
+                continue;
+            }
+            let new_note = yinhe_types::Note {
+                start_tick: note.start_tick + offset,
+                end_tick: note.end_tick + offset,
+                velocity: note.velocity,
+                dup_index: 0,
+                track: note.track,
+            };
+            new_by_key.entry(*key).or_default().push(new_note);
+        }
+
+        if new_by_key.is_empty() {
+            return None;
+        }
+
+        let after: Vec<(yinhe_types::Note, u8)> = new_by_key
+            .iter()
+            .flat_map(|(key, notes)| notes.iter().map(|n| (*n, *key)))
+            .collect();
+
+        crate::batch_ops::insert_batch(model, new_by_key);
+
+        // Update selection to cover pasted notes.
+        self.edit.selected.clear();
+        let max_end = after.iter().map(|(n, _)| n.end_tick).max().unwrap_or(0);
+        let min_tick = after.iter().map(|(n, _)| n.start_tick).min().unwrap_or(0);
+        // Build per-track rects for the pasted notes.
+        let mut track_lo = u16::MAX;
+        let mut track_hi = 0u16;
+        for (n, _) in &after {
+            track_lo = track_lo.min(n.track);
+            track_hi = track_hi.max(n.track);
+        }
+        self.edit.selected.add_rect_track(min_tick, max_end + 1, 0, 127, track_lo, track_hi);
+
+        self.data.rebuild_model_dirty();
+        Some(UndoAction::Notes(NoteDelta {
+            before: vec![],
+            after,
+        }))
+    }
+
     /// 在指定 track 的指定 lane 上添加一个 automation 事件。
     ///
     /// 如果该 track 没有 target 对应的 lane，会先创建。
