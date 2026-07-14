@@ -6877,7 +6877,6 @@ dependencies = [
 name = "yinhe-editor-core"
 version = "0.1.0"
 dependencies = [
- "bincode",
  "dirs",
  "serde",
  "serde_json",
@@ -6889,7 +6888,6 @@ dependencies = [
  "yinhe-mid2",
  "yinhe-types",
  "yinhe-yin",
- "zstd",
 ]
 
 [[package]]
@@ -6908,7 +6906,6 @@ dependencies = [
  "muda",
  "objc2 0.6.4",
  "objc2-metal 0.3.2",
- "pollster",
  "raw-window-handle",
  "rfd",
  "serde",

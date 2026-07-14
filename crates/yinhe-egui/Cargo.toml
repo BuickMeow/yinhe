@@ -32,7 +32,7 @@ egui = { workspace = true }
 egui_extras = { workspace = true }
 wgpu = { workspace = true }
 rfd = { workspace = true }
-pollster = { workspace = true }
+#pollster = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
 sysinfo = { workspace = true }

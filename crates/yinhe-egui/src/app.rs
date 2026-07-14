@@ -66,6 +66,8 @@ pub struct App {
     pub(crate) right_panel_width: f32,
     pub(crate) right_tab: Option<crate::right_panel::RightTab>,
     pub(crate) info_content: Option<crate::right_panel::InfoContent>,
+    /// 拖拽锚点时的 ghost 值（tick, value），供信息面板实时显示
+    pub(crate) automation_drag_ghost: Option<(u32, u16)>,
 
     // ── Tool palette ──
     pub(crate) active_tool: crate::widgets::tools_panel::Tool,
@@ -213,6 +215,7 @@ impl App {
             right_panel_width: crate::theme::RIGHT_PANEL_DEFAULT_WIDTH,
             right_tab: None,
             info_content: None,
+            automation_drag_ghost: None,
 
             active_tool: crate::widgets::tools_panel::Tool::Select,
 

@@ -305,6 +305,7 @@ impl App {
                         &mut auto_edit_events,
                         &mut self.info_content,
                         &mut self.right_tab,
+                        &mut self.automation_drag_ghost,
                     );
                     if let Some(t0) = _piano_total_start {
                         yinhe_memtrace::perf_probe::record_piano_total(t0.elapsed());
@@ -494,6 +495,7 @@ impl App {
                 self.audio_state.handle.as_ref(),
                 &mut self.event_browser_state,
                 &mut self.info_content,
+                self.automation_drag_ghost,
             );
             if changed {
                 self.teardown_audio();

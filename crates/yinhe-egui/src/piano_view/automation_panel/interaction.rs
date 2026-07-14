@@ -197,13 +197,13 @@ pub(crate) fn handle_automation_interaction(
             // release 不检查 in_grid——用户可能拖到边缘（值=127/0）时鼠标移出 grid，
             // 但 mouse_info 仍有效（y_in_panel 已 clamp），不应丢失这次编辑。
             if pointer_pressed && in_grid {
-                if let Some((_hit_idx, tick)) = hit_anchor {
+                if let Some((event_idx, tick)) = hit_anchor {
                     // 左键点击锚点 → 选中它（信息面板显示该锚点）
                     if let Some(lidx) = lane_idx {
                         *info_content = Some(InfoContent::Anchor {
                             track_idx,
                             lane_idx: lidx,
-                            tick,
+                            event_idx,
                             target: target.clone(),
                         });
                         *right_tab = Some(RightTab::Info);

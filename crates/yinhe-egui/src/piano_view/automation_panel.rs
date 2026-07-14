@@ -157,11 +157,12 @@ pub fn show_panels(
     midi_version: u64,
     info_content: &mut Option<InfoContent>,
     right_tab: &mut Option<RightTab>,
-) -> (f32, Vec<AutomationEdit>, PanelPianorollFeedback) {
+) -> (f32, Vec<AutomationEdit>, PanelPianorollFeedback, Option<(u32, u16)>) {
     let mut edits = Vec::new();
     let mut feedback = PanelPianorollFeedback::default();
+    let mut all_drag_info: Option<(u32, u16)> = None;
     if !*show_panels || panels.is_empty() {
-        return (0.0, edits, feedback);
+        return (0.0, edits, feedback, None);
     }
 
     // 派生 show_anchors：Pencil 或 Curve 工具下都显示锚点
@@ -375,6 +376,9 @@ pub fn show_panels(
                     );
                     edits.extend(panel_edits);
                     panel_ghost = ghost;
+                    if drag_info.is_some() {
+                        all_drag_info = drag_info;
+                    }
 
                     // 拖拽 tooltip：鼠标指针右侧显示位置和值
                     if let Some((tick, value)) = drag_info {
@@ -436,10 +440,16 @@ pub fn show_panels(
                     .filter(|l| l.target == panel.selected_target)
                     .collect();
 
-                // 从 info_content 提取高亮锚点 tick
+                // 从 info_content 提取高亮锚点 tick（基于选中状态）
                 let highlight_tick = match info_content {
-                    Some(InfoContent::Anchor { target: anchor_target, tick: anchor_tick, .. })
-                        if *anchor_target == panel.selected_target => Some(*anchor_tick),
+                    Some(InfoContent::Anchor { target: anchor_target, lane_idx: anchor_lane_idx, event_idx, .. })
+                        if *anchor_target == panel.selected_target => {
+                        // 通过 event_idx 定位锚点的实际 tick
+                        lanes.iter()
+                            .find(|l| l.target == panel.selected_target)
+                            .and_then(|l| l.events.get(*event_idx))
+                            .map(|e| e.tick)
+                    }
                     _ => None,
                 };
 
@@ -668,10 +678,17 @@ pub fn show_panels(
     for i in 0..panels.len() {
         let right_click_id = ui.id().with("auto_right_click").with(i);
         if let Some(anchor) = ui.ctx().data(|d| d.get_temp::<interaction::RightClickAnchor>(right_click_id)) {
+            // 通过 tick 查找 event_idx
+            let event_idx = automation_lanes
+                .iter()
+                .find(|l| l.target == anchor.target)
+                .and_then(|l| l.events.iter().position(|e| e.tick == anchor.old_tick))
+                .unwrap_or(0);
+
             *info_content = Some(InfoContent::Anchor {
                 track_idx: anchor.track_idx,
                 lane_idx: anchor.lane_idx,
-                tick: anchor.old_tick,
+                event_idx,
                 target: anchor.target.clone(),
             });
             *right_tab = Some(RightTab::Info);
@@ -689,7 +706,7 @@ pub fn show_panels(
         }
     }
 
-    (panels_visible_h, edits, feedback)
+    (panels_visible_h, edits, feedback, all_drag_info)
 }
 
 /// Show the toggle / add / remove buttons horizontally.

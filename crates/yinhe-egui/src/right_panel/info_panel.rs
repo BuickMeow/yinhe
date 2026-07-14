@@ -18,6 +18,7 @@ pub fn show(
     doc: Option<&mut Document>,
     _audio: Option<&yinhe_audio::CpalAudioHandle>,
     info_content: &mut Option<InfoContent>,
+    automation_drag_ghost: Option<(u32, u16)>,
 ) -> bool {
     let Some(doc) = doc else {
         ui.add_space(8.0);
@@ -32,18 +33,24 @@ pub fn show(
     // ── 锚点信息编辑 ──
     if let Some(content) = info_content.clone() {
         match content {
-            InfoContent::Anchor { track_idx, lane_idx, tick, target } => {
-                // 从模型实时读取锚点最新状态
+            InfoContent::Anchor { track_idx, lane_idx, event_idx, target } => {
+                // 从模型实时读取锚点最新状态（通过 event_idx 定位）
                 let track = doc.data.model.tracks.get(track_idx as usize);
                 let lane = track.and_then(|t| t.automation_lanes.get(lane_idx));
                 let live_event = lane
-                    .and_then(|l| l.events.iter().find(|e| e.tick == tick));
+                    .and_then(|l| l.events.get(event_idx));
 
                 if let Some(evt) = live_event {
+                    // 拖拽时优先使用 ghost 值
+                    let (live_tick, live_value) = if let Some((g_tick, g_value)) = automation_drag_ghost {
+                        (g_tick, g_value)
+                    } else {
+                        (evt.tick, evt.value)
+                    };
                     // 锚点仍存在，用最新值渲染
-                    show_anchor_info(ui, doc, track_idx, lane_idx, tick, evt.value, evt.shape, &target, info_content);
+                    show_anchor_info(ui, doc, track_idx, lane_idx, event_idx, live_tick, live_value, evt.shape, &target, info_content);
                 } else {
-                    // 锚点已被删除，清除选择
+                    // 锚点已被删除或索引越界，清除选择
                     *info_content = None;
                 }
                 return false;
@@ -62,6 +69,7 @@ fn show_anchor_info(
     doc: &mut Document,
     track_idx: u16,
     lane_idx: usize,
+    event_idx: usize,
     tick: u32,
     value: u16,
     shape: SegmentShape,
@@ -133,11 +141,7 @@ fn show_anchor_info(
                         new_value: value,
                     },
                 ]);
-                *info_content = Some(InfoContent::Anchor {
-                    track_idx, lane_idx,
-                    tick: new_tick,
-                    target: target.clone(),
-                });
+                // event_idx 不变（Move 不增删事件），info_content 无需更新
             }
         }
 
@@ -204,11 +208,7 @@ fn show_anchor_info(
                         new_value,
                     },
                 ]);
-                *info_content = Some(InfoContent::Anchor {
-                    track_idx, lane_idx,
-                    tick,
-                    target: target.clone(),
-                });
+                // event_idx 不变
             }
         }
 

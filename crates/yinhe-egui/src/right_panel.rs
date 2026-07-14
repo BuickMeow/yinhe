@@ -23,11 +23,12 @@ pub enum RightTab {
 /// 信息面板中展示的内容类型（多合一设计）。
 #[derive(Clone, Debug)]
 pub enum InfoContent {
-    /// 右键选中的自动化锚点（value/shape 从模型实时读取，此处只存 tick 定位）
+    /// 选中的自动化锚点，通过 event_idx 在 lane.events 中的索引定位。
+    /// value/tick/shape 从模型实时读取，锚点移动/undo 后索引仍能跟踪。
     Anchor {
         track_idx: u16,
         lane_idx: usize,
-        tick: u32,
+        event_idx: usize,
         target: AutomationTarget,
     },
 }
@@ -47,6 +48,7 @@ pub fn show(
     audio: Option<&yinhe_audio::CpalAudioHandle>,
     event_browser_state: &mut event_browser::EventBrowserState,
     info_content: &mut Option<InfoContent>,
+    automation_drag_ghost: Option<(u32, u16)>,
 ) -> bool {
     let tab = *right_tab;
     if tab.is_none() {
@@ -90,7 +92,7 @@ pub fn show(
         if let Some(tab) = tab {
             match tab {
                 RightTab::Info => {
-                    changed |= info_panel::show(ui, doc, audio, info_content);
+                    changed |= info_panel::show(ui, doc, audio, info_content, automation_drag_ghost);
                 }
                 RightTab::SoundFont => {
                     changed |= soundfont::show(ui, audio_settings, doc);

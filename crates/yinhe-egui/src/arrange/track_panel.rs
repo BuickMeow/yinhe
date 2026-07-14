@@ -422,12 +422,6 @@ fn draw_inline_button(
     };
 
     painter.rect_filled(rect, 3.0, fill);
-    painter.rect_stroke(
-        rect,
-        3.0,
-        egui::Stroke::new(1.0, egui::Color32::from_gray(90)),
-        egui::StrokeKind::Inside,
-    );
     painter.text(
         rect.center(),
         egui::Align2::CENTER_CENTER,

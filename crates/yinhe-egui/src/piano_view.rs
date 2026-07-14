@@ -80,6 +80,7 @@ pub fn show(
     auto_edit_events: &mut Vec<crate::piano_view::automation_panel::AutomationEdit>,
     info_content: &mut Option<crate::right_panel::InfoContent>,
     right_tab: &mut Option<crate::right_panel::RightTab>,
+    automation_drag_ghost: &mut Option<(u32, u16)>,
 ) -> Option<PianoViewEvent> {
     // Sense::hover() — no drag ownership. All drag is handled by dedicated
     // ui.interact calls below, each inside its own push_id scope.
@@ -534,7 +535,7 @@ pub fn show(
             None
         };
 
-        let (_h, auto_edits, auto_feedback) = automation_panel::show_panels(
+        let (_h, auto_edits, auto_feedback, auto_drag_info) = automation_panel::show_panels(
             ui,
             panels,
             renderers,
@@ -575,6 +576,9 @@ pub fn show(
         if (auto_feedback.zoom_factor - 1.0).abs() > 0.001 {
             view.zoom_around_x(auto_feedback.zoom_center_x, auto_feedback.zoom_factor);
         }
+
+        // 存储 ghost drag info 供信息面板实时显示
+        *automation_drag_ghost = auto_drag_info;
 
         if midi.is_some() {
             let sb_y = rect.min.y + rect.height() - crate::widgets::scrollbar::SCROLLBAR_H;
