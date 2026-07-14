@@ -466,11 +466,18 @@ impl YinModel {
             return;
         }
 
-        // 1. Sort only dirty buckets (Arc::make_mut only for these).
-        for k in &dirty_indices {
-            Arc::make_mut(&mut self.notes[*k]).sort_by_key(|n| n.start_tick);
-            self.dirty_keys[*k] = false;
-        }
+        // 1. Sort only dirty buckets in parallel (Arc::make_mut only for these).
+        use rayon::prelude::*;
+        let dirty = self.dirty_keys; // Copy 128 bools
+        self.notes
+            .par_iter_mut()
+            .enumerate()
+            .for_each(|(k, bucket)| {
+                if dirty[k] {
+                    Arc::make_mut(bucket).sort_by_key(|n| n.start_tick);
+                }
+            });
+        self.dirty_keys = [false; 128];
 
         // 2. Incremental stats: subtract old per-bucket counts, add new ones.
         let mut delta_note_count: i64 = 0;
