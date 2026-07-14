@@ -548,6 +548,9 @@ fn sel_drag_frame_arrange(
                             if note.track < tl || note.track > th {
                                 continue;
                             }
+                            if !selected.contains(note.track, note.start_tick, key) {
+                                continue;
+                            }
                             if !track_visible.get(note.track as usize).copied().unwrap_or(true) {
                                 continue;
                             }

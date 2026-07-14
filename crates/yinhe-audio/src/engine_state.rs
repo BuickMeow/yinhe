@@ -22,9 +22,9 @@ impl AudioEngine {
         self.duration_samples = (model.tempo_map.tick_to_seconds(model.tick_length) * self.sample_rate as f64) as u64;
 
         self.skip_track = model
-            .track_has_audio_cache
+            .track_audible_count
             .iter()
-            .map(|&has| !has)
+            .map(|&c| c == 0)
             .collect();
 
         self.note_cursor = [0; 128];

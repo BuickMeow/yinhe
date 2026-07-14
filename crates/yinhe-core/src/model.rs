@@ -1,5 +1,6 @@
 //! YinModel + TrackData + ConductorData + ProjectMeta + rebuild logic.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -134,8 +135,9 @@ pub struct YinModel {
     pub tick_length: u64,
     /// Per-track note count cache (avoids scanning 128 buckets for stats).
     pub track_note_count: Vec<u64>,
-    /// Per-track "has audible notes" cache (velocity > 1).
-    pub track_has_audio_cache: Vec<bool>,
+    /// Per-track audible note count (velocity > 1). `> 0` means the track
+    /// has at least one audible note. Replaces the old `track_has_audio_cache: Vec<bool>`.
+    pub track_audible_count: Vec<u64>,
 
     /// Dirty bucket tracking: `dirty_keys[k]` is true when bucket k has been
     /// modified and needs sorting. Use `mark_dirty()` to set, `rebuild_dirty()`
@@ -145,6 +147,13 @@ pub struct YinModel {
     /// Per-bucket note count cache for O(D) incremental stats in `rebuild_dirty()`.
     /// Updated by `rebuild()`, `load_track_notes()`, and `rebuild_dirty()`.
     pub bucket_note_count: [u64; 128],
+
+    /// Per-bucket per-track (total, audible) counts. Sparse: each bucket
+    /// only stores tracks that actually have notes in it. Enables
+    /// O(dirty bucket size) incremental `track_note_count` /
+    /// `track_audible_count` updates in `rebuild_dirty()` instead of
+    /// rescanning all 128 buckets.
+    pub bucket_track_stats: [HashMap<u16, (u64, u64)>; 128],
 
     /// Monotonically increasing version counter bumped whenever conductor
     /// (tempo/time_sig) changes. `rebuild_dirty()` skips tempo_map rebuild
@@ -209,9 +218,10 @@ impl<'de> Deserialize<'de> for YinModel {
                     note_count: 0,
                     tick_length: 0,
                     track_note_count: Vec::new(),
-                    track_has_audio_cache: Vec::new(),
+                    track_audible_count: Vec::new(),
                     dirty_keys: [false; 128],
                     bucket_note_count: [0; 128],
+                    bucket_track_stats: core::array::from_fn(|_| HashMap::new()),
                     conductor_version,
                 };
                 model.rebuild();
@@ -233,9 +243,10 @@ impl Default for YinModel {
             note_count: 0,
             tick_length: 0,
             track_note_count: Vec::new(),
-            track_has_audio_cache: Vec::new(),
+            track_audible_count: Vec::new(),
             dirty_keys: [false; 128],
             bucket_note_count: [0; 128],
+            bucket_track_stats: core::array::from_fn(|_| HashMap::new()),
             conductor_version: 0,
         }
     }
@@ -320,7 +331,7 @@ impl YinModel {
         let mut note_count: u64 = 0;
         let mut max_tick: u64 = 0;
         let mut track_counts: Vec<u64> = vec![0u64; self.tracks.len()];
-        let mut track_has_audio: Vec<bool> = vec![false; self.tracks.len()];
+        let mut track_audible: Vec<u64> = vec![0u64; self.tracks.len()];
 
         for (track_idx, notes) in per_track_notes.into_iter().enumerate() {
             for note in notes {
@@ -331,10 +342,8 @@ impl YinModel {
                 note_count += 1;
                 if (track_idx as usize) < track_counts.len() {
                     track_counts[track_idx as usize] += 1;
-                }
-                if note.velocity > 1 {
-                    if (track_idx as usize) < track_has_audio.len() {
-                        track_has_audio[track_idx as usize] = true;
+                    if note.velocity > 1 {
+                        track_audible[track_idx as usize] += 1;
                     }
                 }
                 key_notes[note.key as usize].push(yinhe_types::Note {
@@ -351,10 +360,19 @@ impl YinModel {
         self.note_count = note_count;
         self.tick_length = max_tick;
         self.track_note_count = track_counts;
-        self.track_has_audio_cache = track_has_audio;
-        // Initialize per-bucket counts.
+        self.track_audible_count = track_audible;
+        // Initialize per-bucket counts and per-bucket per-track stats.
         for (k, bucket) in self.notes.iter().enumerate() {
             self.bucket_note_count[k] = bucket.len() as u64;
+            let mut stats: HashMap<u16, (u64, u64)> = HashMap::new();
+            for n in bucket.iter() {
+                let e = stats.entry(n.track).or_insert((0, 0));
+                e.0 += 1;
+                if n.velocity > 1 {
+                    e.1 += 1;
+                }
+            }
+            self.bucket_track_stats[k] = stats;
         }
     }
 
@@ -376,13 +394,17 @@ impl YinModel {
             .par_iter_mut()
             .for_each(|bucket| Arc::make_mut(bucket).sort_by_key(|n| n.start_tick));
 
-        // Recompute note_count, max_tick, track_note_count, track_has_audio_cache
+        // Recompute note_count, max_tick, track_note_count, track_audible_count
         // (may have changed after edits or track insertions).
         let mut note_count: u64 = 0;
         let mut max_tick: u64 = 0;
         let mut track_counts: Vec<u64> = vec![0u64; self.tracks.len()];
-        let mut track_has_audio: Vec<bool> = vec![false; self.tracks.len()];
-        for bucket in self.notes.iter() {
+        let mut track_audible: Vec<u64> = vec![0u64; self.tracks.len()];
+        // Per-bucket per-track stats — recomputed in the same pass so
+        // rebuild_dirty() can do incremental updates later.
+        let mut bucket_stats: [HashMap<u16, (u64, u64)>; 128] =
+            core::array::from_fn(|_| HashMap::new());
+        for (k, bucket) in self.notes.iter().enumerate() {
             note_count += bucket.len() as u64;
             for n in bucket.iter() {
                 let end = n.end_tick as u64;
@@ -391,21 +413,25 @@ impl YinModel {
                 }
                 if (n.track as usize) < track_counts.len() {
                     track_counts[n.track as usize] += 1;
-                }
-                if n.velocity > 1 {
-                    if (n.track as usize) < track_has_audio.len() {
-                        track_has_audio[n.track as usize] = true;
+                    if n.velocity > 1 {
+                        track_audible[n.track as usize] += 1;
                     }
+                }
+                let e = bucket_stats[k].entry(n.track).or_insert((0, 0));
+                e.0 += 1;
+                if n.velocity > 1 {
+                    e.1 += 1;
                 }
             }
         }
         self.note_count = note_count;
         self.tick_length = max_tick;
         self.track_note_count = track_counts;
-        self.track_has_audio_cache = track_has_audio;
-        // Re-initialize per-bucket counts.
+        self.track_audible_count = track_audible;
+        // Re-initialize per-bucket counts and per-bucket per-track stats.
         for (k, bucket) in self.notes.iter().enumerate() {
             self.bucket_note_count[k] = bucket.len() as u64;
+            self.bucket_track_stats[k] = bucket_stats[k].clone();
         }
 
         // Rebuild tempo_map (depends on tick_length we just computed).
@@ -466,23 +492,44 @@ impl YinModel {
         self.note_count = (self.note_count as i64 + delta_note_count) as u64;
         self.tick_length = new_tick_length;
 
-        // Track-level stats still do a full scan — acceptable for now.
-        let mut track_counts: Vec<u64> = vec![0u64; self.tracks.len()];
-        let mut track_has_audio: Vec<bool> = vec![false; self.tracks.len()];
-        for bucket in self.notes.iter() {
-            for n in bucket.iter() {
-                if (n.track as usize) < track_counts.len() {
-                    track_counts[n.track as usize] += 1;
+        // 3. Incremental track stats: subtract old per-track contributions
+        //    for each dirty bucket, recompute the bucket's stats, and add
+        //    the new contributions back. O(dirty bucket size) per edit
+        //    instead of O(total notes).
+        for &k in &dirty_indices {
+            // Subtract old contributions from per-track totals.
+            for (&track, &(total, audible)) in &self.bucket_track_stats[k] {
+                if let Some(t) = self.track_note_count.get_mut(track as usize) {
+                    *t = t.saturating_sub(total);
                 }
-                if n.velocity > 1 && (n.track as usize) < track_has_audio.len() {
-                    track_has_audio[n.track as usize] = true;
+                if let Some(a) = self.track_audible_count.get_mut(track as usize) {
+                    *a = a.saturating_sub(audible);
                 }
             }
-        }
-        self.track_note_count = track_counts;
-        self.track_has_audio_cache = track_has_audio;
 
-        // 3. Only rebuild tempo_map if conductor changed (notes-only edits skip it).
+            // Recompute this bucket's per-track stats from current notes.
+            let mut new_stats: HashMap<u16, (u64, u64)> = HashMap::new();
+            for n in self.notes[k].iter() {
+                let e = new_stats.entry(n.track).or_insert((0, 0));
+                e.0 += 1;
+                if n.velocity > 1 {
+                    e.1 += 1;
+                }
+            }
+
+            // Add new contributions back to per-track totals.
+            for (&track, &(total, audible)) in &new_stats {
+                if let Some(t) = self.track_note_count.get_mut(track as usize) {
+                    *t += total;
+                }
+                if let Some(a) = self.track_audible_count.get_mut(track as usize) {
+                    *a += audible;
+                }
+            }
+            self.bucket_track_stats[k] = new_stats;
+        }
+
+        // 4. Only rebuild tempo_map if conductor changed (notes-only edits skip it).
         //    The caller is responsible for bumping `conductor_version` when
         //    conductor.tempo or conductor.time_sig is modified.
         self.tempo_map = Arc::new(self.build_tempo_map());
@@ -500,10 +547,11 @@ impl YinModel {
 
     /// Check if a track has any audible notes (velocity > 1).
     pub fn track_has_audio(&self, track_idx: u16) -> bool {
-        self.track_has_audio_cache
+        self.track_audible_count
             .get(track_idx as usize)
             .copied()
-            .unwrap_or(false)
+            .unwrap_or(0)
+            > 0
     }
 }
 
@@ -620,6 +668,124 @@ mod tests {
         let a = TrackData::new(0, 0);
         let b = TrackData::new(0, 0);
         assert_ne!(a.uuid, b.uuid);
+    }
+
+    /// Verify `rebuild_dirty` keeps `track_note_count` / `track_audible_count`
+    /// consistent when notes are added/removed/edited. We compare the
+    /// incremental update path against a full `rebuild()` from scratch.
+    fn note_audible(start: u32, end: u32, key: u8) -> NoteEvent {
+        NoteEvent {
+            start_tick: start,
+            end_tick: end,
+            key,
+            velocity: 100,
+            dup_index: 0,
+        }
+    }
+
+    fn note_silent(start: u32, end: u32, key: u8) -> NoteEvent {
+        NoteEvent {
+            start_tick: start,
+            end_tick: end,
+            key,
+            velocity: 0, // silent — must not count toward `track_audible_count`
+            dup_index: 0,
+        }
+    }
+
+    #[test]
+    fn rebuild_dirty_keeps_track_stats_consistent() {
+        // Build a model with 2 tracks and 4 notes, then mutate it and
+        // compare `rebuild_dirty`'s incremental track stats against a
+        // full `rebuild()` of the same final state.
+        let per_track = vec![
+            vec![note_audible(0, 480, 60), note_audible(480, 960, 64)],
+            vec![note_silent(0, 480, 60), note_audible(0, 240, 62)],
+        ];
+        let mut base = YinModel {
+            tracks: vec![Arc::new(TrackData::new(0, 0)), Arc::new(TrackData::new(0, 1))],
+            ..Default::default()
+        };
+        base.load_track_notes(per_track);
+
+        // Final desired state: same notes as `base` plus one new silent
+        // note in bucket 60 (track 1) and one new audible note in
+        // bucket 62 (track 1). We compute this in two ways and compare.
+        let mut m_inc = base.clone();
+        {
+            let model = Arc::make_mut(&mut m_inc.notes[60]);
+            model.push(yinhe_types::Note {
+                start_tick: 960,
+                end_tick: 1440,
+                velocity: 0,
+                dup_index: 0,
+                track: 1,
+            });
+        }
+        {
+            let model = Arc::make_mut(&mut m_inc.notes[62]);
+            model.push(yinhe_types::Note {
+                start_tick: 240,
+                end_tick: 480,
+                velocity: 80,
+                dup_index: 0,
+                track: 1,
+            });
+        }
+        m_inc.mark_dirty(60);
+        m_inc.mark_dirty(62);
+        m_inc.rebuild_dirty();
+
+        let mut m_full = base.clone();
+        {
+            let model = Arc::make_mut(&mut m_full.notes[60]);
+            model.push(yinhe_types::Note {
+                start_tick: 960,
+                end_tick: 1440,
+                velocity: 0,
+                dup_index: 0,
+                track: 1,
+            });
+        }
+        {
+            let model = Arc::make_mut(&mut m_full.notes[62]);
+            model.push(yinhe_types::Note {
+                start_tick: 240,
+                end_tick: 480,
+                velocity: 80,
+                dup_index: 0,
+                track: 1,
+            });
+        }
+        m_full.rebuild();
+
+        assert_eq!(m_inc.track_note_count, m_full.track_note_count, "track_note_count drift");
+        assert_eq!(m_inc.track_audible_count, m_full.track_audible_count, "track_audible_count drift");
+        assert_eq!(m_inc.note_count, m_full.note_count);
+        assert_eq!(m_inc.tick_length, m_full.tick_length);
+
+        // Sanity: track 0 = 2 audible, 0 silent. track 1 = 2 audible, 2 silent.
+        assert_eq!(m_full.track_note_count, vec![2, 4]);
+        assert_eq!(m_full.track_audible_count, vec![2, 2]);
+
+        // Now test removal: remove a note from bucket 60 in track 0.
+        let mut m_del = m_full.clone();
+        {
+            let model = Arc::make_mut(&mut m_del.notes[60]);
+            model.retain(|n| !(n.track == 0 && n.start_tick == 0));
+        }
+        m_del.mark_dirty(60);
+        m_del.rebuild_dirty();
+
+        let mut m_del_ref = m_full.clone();
+        {
+            let model = Arc::make_mut(&mut m_del_ref.notes[60]);
+            model.retain(|n| !(n.track == 0 && n.start_tick == 0));
+        }
+        m_del_ref.rebuild();
+
+        assert_eq!(m_del.track_note_count, m_del_ref.track_note_count, "track_note_count drift after remove");
+        assert_eq!(m_del.track_audible_count, m_del_ref.track_audible_count, "track_audible_count drift after remove");
     }
 }
 

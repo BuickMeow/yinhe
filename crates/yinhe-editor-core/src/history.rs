@@ -306,13 +306,19 @@ fn apply_note_delta(doc: &mut Document, remove: &[(Note, u8)], insert: &[(Note, 
     }
     let model = std::sync::Arc::make_mut(&mut doc.data.model);
 
-    // Remove notes matching `remove`.
+    // Remove notes matching `remove`, grouped by key for a single retain per bucket.
+    // Previous per-note retain was O(R × B); this is O(R + B).
+    let mut remove_by_key: HashMap<u8, HashSet<(u16, u32, u8)>> = HashMap::new();
     for (note, key) in remove {
+        remove_by_key
+            .entry(*key)
+            .or_default()
+            .insert((note.track, note.start_tick, note.dup_index));
+    }
+    for (key, to_remove) in &remove_by_key {
         let k = *key as usize;
         std::sync::Arc::make_mut(&mut model.notes[k]).retain(|n| {
-            !(n.track == note.track
-                && n.start_tick == note.start_tick
-                && n.dup_index == note.dup_index)
+            !to_remove.contains(&(n.track, n.start_tick, n.dup_index))
         });
         model.mark_dirty(*key);
     }
