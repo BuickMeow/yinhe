@@ -229,7 +229,8 @@ fn render_tree(
     state: &mut EventBrowserState,
 ) {
     let model = &doc.data.model;
-    let groups = group_tracks_by_port_channel(model);
+    let conductor_idx = doc.edit.conductor_track_idx;
+    let groups = group_tracks_by_port_channel(model, conductor_idx);
 
     render_leaf_item(ui, "project.json", ICON_DESCRIPTION, 0, SelectedItem::ProjectJson, state);
     render_leaf_item(ui, "mapping.json", ICON_DESCRIPTION, 0, SelectedItem::MappingJson, state);
@@ -642,7 +643,7 @@ fn show_overview(ui: &mut egui::Ui, model: &yinhe_core::YinModel) {
     ui.colored_label(egui::Color32::from_gray(120), format!("作者: {}", artist));
     ui.colored_label(egui::Color32::from_gray(120), format!("PPQ: {}", model.meta.ppq));
     ui.colored_label(egui::Color32::from_gray(120), format!("zstd 等级: {}", model.meta.compression_level));
-    let groups = group_tracks_by_port_channel(model);
+    let groups = group_tracks_by_port_channel(model, None);
     ui.colored_label(egui::Color32::from_gray(120), format!("活跃 port 数: {}", groups.len()));
     ui.colored_label(egui::Color32::from_gray(120), format!("轨道: {} 个", model.tracks.len()));
     ui.colored_label(egui::Color32::from_gray(120), format!("音符: {} 个", model.note_count));
@@ -817,10 +818,14 @@ fn cell_text(row: &mut egui_extras::TableRow, text: impl Into<String>) {
 
 fn group_tracks_by_port_channel(
     model: &yinhe_core::YinModel,
+    conductor_idx: Option<u16>,
 ) -> std::collections::BTreeMap<u8, std::collections::BTreeMap<u8, Vec<u16>>> {
     let mut out: std::collections::BTreeMap<u8, std::collections::BTreeMap<u8, Vec<u16>>> =
         std::collections::BTreeMap::new();
     for (i, t) in model.tracks.iter().enumerate() {
+        if Some(i as u16) == conductor_idx {
+            continue;
+        }
         out.entry(t.port)
             .or_default()
             .entry(t.channel)
@@ -926,7 +931,7 @@ mod tests {
             ..Default::default()
         };
 
-        let groups = group_tracks_by_port_channel(&model);
+        let groups = group_tracks_by_port_channel(&model, None);
         assert_eq!(groups.len(), 2);
         let p0 = &groups[&0];
         assert_eq!(p0.len(), 2);

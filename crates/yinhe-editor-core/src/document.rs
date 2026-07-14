@@ -685,7 +685,19 @@ impl Document {
             let mut new_by_key: std::collections::HashMap<u8, Vec<yinhe_types::Note>> = std::collections::HashMap::new();
             for (note, old_key) in &originals {
                 let new_tick = (note.start_tick as i64 + delta_ticks).max(0) as u32;
-                let new_track = (note.track as i32 + delta_tracks).clamp(0, num_tracks - 1) as u16;
+                let raw_track = (note.track as i32 + delta_tracks).clamp(0, num_tracks - 1);
+                // Skip over conductor track: notes cannot land on it.
+                let new_track = if Some(raw_track as u16) == self.edit.conductor_track_idx {
+                    if delta_tracks < 0 {
+                        // Moving up: clamp to first non-conductor track
+                        (raw_track + 1).min(num_tracks - 1) as u16
+                    } else {
+                        // Moving down: clamp to last track before conductor (or stay)
+                        (raw_track - 1).max(0) as u16
+                    }
+                } else {
+                    raw_track as u16
+                };
                 let length = note.end_tick - note.start_tick;
                 let moved = yinhe_types::Note {
                     start_tick: new_tick,
@@ -774,8 +786,18 @@ impl Document {
         if delta_tracks != 0 {
             // Cross-track: add moved events to destination tracks
             for lm in &lane_moves {
-                let dst_track_idx = (lm.src_track as i32 + delta_tracks)
-                    .clamp(0, num_tracks - 1) as usize;
+                let raw_dst = (lm.src_track as i32 + delta_tracks)
+                    .clamp(0, num_tracks - 1);
+                // Skip over conductor track: automation cannot land on it.
+                let dst_track_idx = if Some(raw_dst as u16) == self.edit.conductor_track_idx {
+                    if delta_tracks < 0 {
+                        (raw_dst + 1).min(num_tracks - 1) as usize
+                    } else {
+                        (raw_dst - 1).max(0) as usize
+                    }
+                } else {
+                    raw_dst as usize
+                };
                 if dst_track_idx == lm.src_track {
                     continue; // clamped to same track, events already in source lane
                 }
