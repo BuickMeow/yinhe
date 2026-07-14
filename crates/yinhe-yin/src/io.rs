@@ -45,29 +45,6 @@ struct TrackPayload {
     program_change: Vec<PcEvent>,
 }
 
-impl TrackPayload {
-    fn from_track(t: &TrackData, track_idx: u16, model: &YinModel) -> Self {
-        let mut notes: Vec<NoteEvent> = Vec::new();
-        for (key, bucket) in model.notes.iter().enumerate() {
-            for n in bucket.iter().filter(|n| n.track == track_idx) {
-                notes.push(NoteEvent {
-                    start_tick: n.start_tick,
-                    end_tick: n.end_tick,
-                    key: key as u8,
-                    velocity: n.velocity,
-                    dup_index: n.dup_index,
-                });
-            }
-        }
-        Self {
-            uuid: t.uuid.clone(),
-            notes,
-            automation_lanes: t.automation_lanes.clone(),
-            program_change: t.program_change.clone(),
-        }
-    }
-}
-
 // =========================================================
 //  Save
 // =========================================================
@@ -96,20 +73,39 @@ fn save_yin_bytes_with_files_inner(
     let mapping_json = serde_json::to_vec_pretty(mapping)?;
 
     // data.bin: bincode(ModelData) → zstd
-    let mut tracks_payload = Vec::with_capacity(model.tracks.len());
+    // Build per-track notes in a single O(N) pass instead of O(T×N).
+    let num_tracks = model.tracks.len();
+    let mut per_track_notes: Vec<Vec<NoteEvent>> = vec![Vec::new(); num_tracks];
+    for (key, bucket) in model.notes.iter().enumerate() {
+        for n in bucket.iter() {
+            if (n.track as usize) < num_tracks {
+                per_track_notes[n.track as usize].push(NoteEvent {
+                    start_tick: n.start_tick,
+                    end_tick: n.end_tick,
+                    key: key as u8,
+                    velocity: n.velocity,
+                    dup_index: n.dup_index,
+                });
+            }
+        }
+    }
+
+    let mut tracks_payload = Vec::with_capacity(num_tracks);
     {
         let mut by_uuid: std::collections::HashMap<&str, usize> =
-            std::collections::HashMap::with_capacity(model.tracks.len());
+            std::collections::HashMap::with_capacity(num_tracks);
         for (i, t) in model.tracks.iter().enumerate() {
             by_uuid.insert(&t.uuid, i);
         }
         for (_port, _ch, tm) in mapping.flat_tracks() {
             if let Some(&track_idx) = by_uuid.get(tm.uuid.as_str()) {
-                tracks_payload.push(TrackPayload::from_track(
-                    &model.tracks[track_idx],
-                    track_idx as u16,
-                    model,
-                ));
+                let t = &model.tracks[track_idx];
+                tracks_payload.push(TrackPayload {
+                    uuid: t.uuid.clone(),
+                    notes: std::mem::take(&mut per_track_notes[track_idx]),
+                    automation_lanes: t.automation_lanes.clone(),
+                    program_change: t.program_change.clone(),
+                });
             }
         }
     }

@@ -161,77 +161,6 @@ pub struct YinModel {
     pub conductor_version: u64,
 }
 
-// ── Manual Serialize/Deserialize for YinModel ──
-// We use manual impls because `[Arc<Vec<Note>>; 128]` exceeds serde's
-// default array-size limit (32). The notes array is serialized as a
-// sequence of 128 buckets. Cached/derived fields are skipped on
-// serialization and reconstructed on deserialization.
-
-impl Serialize for YinModel {
-    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        use serde::ser::SerializeTuple;
-        let note_buckets: Vec<Vec<yinhe_types::Note>> = self.notes.iter()
-            .map(|bucket| bucket.as_ref().clone())
-            .collect();
-        let mut t = s.serialize_tuple(5)?;
-        t.serialize_element(&self.conductor)?;
-        t.serialize_element(&self.tracks)?;
-        t.serialize_element(&self.meta)?;
-        t.serialize_element(&note_buckets)?;
-        t.serialize_element(&self.conductor_version)?;
-        t.end()
-    }
-}
-
-impl<'de> Deserialize<'de> for YinModel {
-    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        struct YinModelVisitor;
-        impl<'de> serde::de::Visitor<'de> for YinModelVisitor {
-            type Value = YinModel;
-            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-                f.write_str("YinModel")
-            }
-            fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
-                let conductor: Arc<ConductorData> = seq.next_element()?
-                    .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
-                let tracks: Vec<Arc<TrackData>> = seq.next_element()?
-                    .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
-                let meta: ProjectMeta = seq.next_element()?
-                    .ok_or_else(|| serde::de::Error::invalid_length(2, &self))?;
-                let note_buckets: Vec<Vec<yinhe_types::Note>> = seq.next_element()?
-                    .ok_or_else(|| serde::de::Error::invalid_length(3, &self))?;
-                let conductor_version: u64 = seq.next_element()?
-                    .ok_or_else(|| serde::de::Error::invalid_length(4, &self))?;
-
-                let mut arr: Box<[Arc<Vec<yinhe_types::Note>>; 128]> = Box::new(core::array::from_fn(|_| Arc::new(Vec::new())));
-                for (i, bucket) in note_buckets.into_iter().enumerate() {
-                    if i < 128 {
-                        arr[i] = Arc::new(bucket);
-                    }
-                }
-                let mut model = YinModel {
-                    conductor,
-                    tracks,
-                    tempo_map: Arc::new(TempoMap::default()),
-                    meta,
-                    notes: arr,
-                    note_count: 0,
-                    tick_length: 0,
-                    track_note_count: Vec::new(),
-                    track_audible_count: Vec::new(),
-                    dirty_keys: [false; 128],
-                    bucket_note_count: [0; 128],
-                    bucket_track_stats: core::array::from_fn(|_| HashMap::new()),
-                    conductor_version,
-                };
-                model.rebuild();
-                Ok(model)
-            }
-        }
-        d.deserialize_tuple(5, YinModelVisitor)
-    }
-}
-
 impl Default for YinModel {
     fn default() -> Self {
         Self {
@@ -332,6 +261,8 @@ impl YinModel {
         let mut max_tick: u64 = 0;
         let mut track_counts: Vec<u64> = vec![0u64; self.tracks.len()];
         let mut track_audible: Vec<u64> = vec![0u64; self.tracks.len()];
+        let mut bucket_stats: [HashMap<u16, (u64, u64)>; 128] =
+            core::array::from_fn(|_| HashMap::new());
 
         for (track_idx, notes) in per_track_notes.into_iter().enumerate() {
             for note in notes {
@@ -346,13 +277,19 @@ impl YinModel {
                         track_audible[track_idx as usize] += 1;
                     }
                 }
-                key_notes[note.key as usize].push(yinhe_types::Note {
+                let key = note.key as usize;
+                key_notes[key].push(yinhe_types::Note {
                     start_tick: note.start_tick,
                     end_tick: note.end_tick,
                     velocity: note.velocity,
                     dup_index: note.dup_index,
                     track: track_idx as u16,
                 });
+                let e = bucket_stats[key].entry(track_idx as u16).or_insert((0, 0));
+                e.0 += 1;
+                if note.velocity > 1 {
+                    e.1 += 1;
+                }
             }
         }
 
@@ -361,18 +298,9 @@ impl YinModel {
         self.tick_length = max_tick;
         self.track_note_count = track_counts;
         self.track_audible_count = track_audible;
-        // Initialize per-bucket counts and per-bucket per-track stats.
         for (k, bucket) in self.notes.iter().enumerate() {
             self.bucket_note_count[k] = bucket.len() as u64;
-            let mut stats: HashMap<u16, (u64, u64)> = HashMap::new();
-            for n in bucket.iter() {
-                let e = stats.entry(n.track).or_insert((0, 0));
-                e.0 += 1;
-                if n.velocity > 1 {
-                    e.1 += 1;
-                }
-            }
-            self.bucket_track_stats[k] = stats;
+            self.bucket_track_stats[k] = std::mem::take(&mut bucket_stats[k]);
         }
     }
 
@@ -428,10 +356,9 @@ impl YinModel {
         self.tick_length = max_tick;
         self.track_note_count = track_counts;
         self.track_audible_count = track_audible;
-        // Re-initialize per-bucket counts and per-bucket per-track stats.
-        for (k, bucket) in self.notes.iter().enumerate() {
-            self.bucket_note_count[k] = bucket.len() as u64;
-            self.bucket_track_stats[k] = bucket_stats[k].clone();
+        for k in 0..128 {
+            self.bucket_note_count[k] = self.notes[k].len() as u64;
+            self.bucket_track_stats[k] = std::mem::take(&mut bucket_stats[k]);
         }
 
         // Rebuild tempo_map (depends on tick_length we just computed).

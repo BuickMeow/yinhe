@@ -9,7 +9,7 @@ use yinhe_yin::{MappingFile, ProjectFile};
 ///
 /// `Arc<YinModel>` ensures snapshot clone is O(1) — actual data copy
 /// only happens on `Arc::make_mut` (copy-on-write).
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Clone)]
 pub struct ProjectData {
     pub model: Arc<YinModel>,
     /// Authoritative, editable track names. Mirrored into `track_info_cache`.
