@@ -38,6 +38,7 @@ pub fn show(
     arr_sel_rect: &mut Option<(f64, f64, usize, usize)>,
     arr_drag_delta: &mut Option<(i64, i32)>,
     arr_eraser_rect: &mut Option<(f64, f64, usize, usize)>,
+    info_content: &mut Option<crate::right_panel::InfoContent>,
 ) -> Option<QuantizePreset> {
     *last_cursor_tick = doc.edit.cursor_tick;
 
@@ -161,6 +162,7 @@ pub fn show(
             &mut arr_view.base.track_panel_row_height,
             &mut arr_view.base.track_panel_scroll_y,
             request_pianoroll,
+            info_content,
         );
 
         if audio_dirty {

@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use eframe::egui;
 
 use yinhe_editor_core::document::Document;
@@ -8,15 +10,12 @@ use super::InfoContent;
 
 /// Show the Info panel.
 ///
-/// When `info_content` is `Some(InfoContent::Anchor { .. })`, shows anchor
-/// editing controls. Otherwise falls back to showing project settings.
-///
 /// Returns `true` if the port or channel was changed (caller should tear
 /// down the audio engine so it gets rebuilt with the new channel map).
 pub fn show(
     ui: &mut egui::Ui,
     doc: Option<&mut Document>,
-    _audio: Option<&yinhe_audio::CpalAudioHandle>,
+    audio: Option<&yinhe_audio::CpalAudioHandle>,
     info_content: &mut Option<InfoContent>,
     automation_drag_ghost: Option<(u32, u16)>,
 ) -> bool {
@@ -30,40 +29,402 @@ pub fn show(
         return false;
     };
 
-    // ── 锚点信息编辑 ──
-    if let Some(content) = info_content.clone() {
-        match content {
-            InfoContent::Anchor { track_idx, lane_idx, event_idx, target } => {
-                // 从模型实时读取锚点最新状态（通过 event_idx 定位）
-                let track = doc.data.model.tracks.get(track_idx as usize);
-                let lane = track.and_then(|t| t.automation_lanes.get(lane_idx));
-                let live_event = lane
-                    .and_then(|l| l.events.get(event_idx));
+    match info_content.clone() {
+        // ── 锚点信息 ──
+        Some(InfoContent::Anchor { track_idx, lane_idx, event_idx, target }) => {
+            let track = doc.data.model.tracks.get(track_idx as usize);
+            let lane = track.and_then(|t| t.automation_lanes.get(lane_idx));
+            let live_event = lane.and_then(|l| l.events.get(event_idx));
 
-                if let Some(evt) = live_event {
-                    // 拖拽时优先使用 ghost 值
-                    let (live_tick, live_value) = if let Some((g_tick, g_value)) = automation_drag_ghost {
-                        (g_tick, g_value)
-                    } else {
-                        (evt.tick, evt.value)
-                    };
-                    // 锚点仍存在，用最新值渲染
-                    show_anchor_info(ui, doc, track_idx, lane_idx, event_idx, live_tick, live_value, evt.shape, &target, info_content);
+            if let Some(evt) = live_event {
+                let (live_tick, live_value) = if let Some((g_tick, g_value)) = automation_drag_ghost {
+                    (g_tick, g_value)
                 } else {
-                    // 锚点已被删除或索引越界，清除选择
-                    *info_content = None;
-                }
-                return false;
+                    (evt.tick, evt.value)
+                };
+                show_anchor_info(ui, doc, track_idx, lane_idx, event_idx, live_tick, live_value, evt.shape, &target, info_content);
+            } else {
+                *info_content = None;
             }
+            false
+        }
+
+        // ── 音轨信息 ──
+        Some(InfoContent::Track) => {
+            show_track_info(ui, doc, audio, info_content)
+        }
+
+        // ── 无选择 → 项目设置 ──
+        None => {
+            super::project_info::show(ui, Some(doc));
+            false
         }
     }
+}
 
-    // ── 无选择内容时，回退到项目设置 ──
-    super::project_info::show(ui, Some(doc));
+// ────────────────────────────────────────────────────────────────
+// 音轨信息
+// ────────────────────────────────────────────────────────────────
+
+fn show_track_info(
+    ui: &mut egui::Ui,
+    doc: &mut Document,
+    audio: Option<&yinhe_audio::CpalAudioHandle>,
+    info_content: &mut Option<InfoContent>,
+) -> bool {
+    let num_tracks = doc.data.model.tracks.len();
+    if num_tracks == 0 {
+        ui.add_space(8.0);
+        ui.label(
+            egui::RichText::new("（无音轨）")
+                .color(egui::Color32::from_gray(100))
+                .size(12.0),
+        );
+        return false;
+    }
+
+    // ── Track selector ──
+    let track_names: Vec<String> = doc
+        .data
+        .track_names
+        .iter()
+        .enumerate()
+        .map(|(i, name)| format!("{:03} – {}", i + 1, name))
+        .collect();
+
+    let sel_idx = doc
+        .edit
+        .track_selected
+        .iter()
+        .next()
+        .copied()
+        .map(|i| (i as usize).min(num_tracks - 1))
+        .unwrap_or(0);
+
+    egui::ComboBox::from_id_salt("info_track_sel")
+        .selected_text(&track_names[sel_idx])
+        .show_ui(ui, |ui| {
+            for (i, tn) in track_names.iter().enumerate() {
+                if ui.selectable_label(i == sel_idx, tn).clicked() {
+                    doc.edit.track_selected.clear();
+                    doc.edit.track_selected.insert(i as u16);
+                }
+            }
+        });
+
+    ui.add_space(6.0);
+
+    // ── 多选汇总 ──
+    if doc.edit.track_selected.len() > 1 {
+        ui.add_space(4.0);
+        ui.label(
+            egui::RichText::new(format!("已选 {} 个音轨", doc.edit.track_selected.len()))
+                .strong()
+                .size(14.0)
+                .color(egui::Color32::from_gray(220)),
+        );
+        ui.add_space(2.0);
+
+        let total_notes: u64 = doc.edit.track_selected.iter()
+            .map(|&idx| doc.edit.track_info_cache.get(idx as usize).map(|ti| ti.note_count).unwrap_or(0))
+            .sum();
+        let total_events: u64 = doc.edit.track_selected.iter()
+            .map(|&idx| doc.edit.track_info_cache.get(idx as usize).map(|ti| ti.event_count).unwrap_or(0))
+            .sum();
+
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("总音符数:").size(11.0).color(egui::Color32::GRAY));
+            ui.label(egui::RichText::new(format!("{}", total_notes)).size(11.0));
+        });
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("总事件数:").size(11.0).color(egui::Color32::GRAY));
+            ui.label(egui::RichText::new(format!("{}", total_events)).size(11.0));
+        });
+        ui.add_space(4.0);
+        ui.label(
+            egui::RichText::new("（多选模式：卷帘将显示所有选中音轨的音符）")
+                .size(11.0)
+                .color(egui::Color32::GRAY),
+        );
+
+        ui.add_space(8.0);
+        ui.separator();
+        ui.add_space(6.0);
+        if ui.add(egui::Button::new(egui::RichText::new("清除选择").size(12.0))).clicked() {
+            *info_content = None;
+        }
+        return false;
+    }
+
+    let Some(&track_idx) = doc.edit.track_selected.iter().next() else {
+        ui.add_space(8.0);
+        ui.label(
+            egui::RichText::new("（未选中音轨）")
+                .color(egui::Color32::from_gray(100))
+                .size(12.0),
+        );
+        return false;
+    };
+    let track_idx = track_idx as usize;
+    let track_idx = track_idx.min(num_tracks - 1);
+
+    // ── Conductor track ──
+    if Some(track_idx as u16) == doc.edit.conductor_track_idx {
+        ui.add_space(4.0);
+        ui.label(
+            egui::RichText::new("Conductor")
+                .strong()
+                .size(14.0)
+                .color(egui::Color32::from_gray(220)),
+        );
+        ui.add_space(2.0);
+        ui.label(
+            egui::RichText::new("（指挥轨：tempo / time-sig 等全局元事件）")
+                .size(11.0)
+                .color(egui::Color32::GRAY),
+        );
+        ui.add_space(8.0);
+
+        if !doc.data.project_name.is_empty() {
+            ui.horizontal(|ui| {
+                ui.label("歌曲标题:");
+                ui.label(
+                    egui::RichText::new(&doc.data.project_name)
+                        .color(egui::Color32::from_gray(200))
+                        .size(13.0),
+                );
+            });
+            ui.add_space(2.0);
+        }
+
+        ui.horizontal(|ui| {
+            ui.label("Tempo 数:");
+            ui.label(
+                egui::RichText::new(format!("{}", doc.data.model.conductor.tempo.len()))
+                    .color(egui::Color32::from_gray(180))
+                    .size(13.0),
+            );
+        });
+        ui.horizontal(|ui| {
+            ui.label("Time-sig 数:");
+            ui.label(
+                egui::RichText::new(format!("{}", doc.data.model.conductor.time_sig.len()))
+                    .color(egui::Color32::from_gray(180))
+                    .size(13.0),
+            );
+        });
+
+        ui.add_space(8.0);
+        ui.separator();
+        ui.add_space(6.0);
+        if ui.add(egui::Button::new(egui::RichText::new("清除选择").size(12.0))).clicked() {
+            *info_content = None;
+        }
+        return false;
+    }
+
+    // ── Track name ──
+    let mut name_change: Option<String> = None;
+    let mut name_resp_id: Option<egui::Id> = None;
+    let mut name_gained_focus = false;
+    let mut name_lost_focus = false;
+    ui.horizontal(|ui| {
+        ui.label("音轨名称:");
+        let mut name = doc.data.track_names[track_idx].clone();
+        let resp = ui.add_sized(
+            egui::vec2(ui.available_width().max(60.0), 18.0),
+            egui::TextEdit::singleline(&mut name).id_salt(("track_name", track_idx)),
+        );
+        if resp.changed() {
+            name_change = Some(name);
+        }
+        name_resp_id = Some(resp.id);
+        name_gained_focus = resp.gained_focus();
+        name_lost_focus = resp.lost_focus();
+    });
+    if let Some(id) = name_resp_id {
+        if name_gained_focus {
+            yinhe_editor_core::history::begin_edit(
+                &mut doc.edit.pending_edits,
+                id.value(),
+                &doc.data.track_names[track_idx],
+            );
+        }
+        if let Some(new_name) = name_change {
+            doc.data.track_names[track_idx] = new_name.clone();
+            if let Some(ti_mut) = doc.edit.track_info_cache.get_mut(track_idx) {
+                ti_mut.name = new_name;
+            }
+        }
+        if name_lost_focus {
+            yinhe_editor_core::history::commit_track_name(
+                &mut doc.history,
+                &mut doc.edit.pending_edits,
+                id.value(),
+                track_idx,
+                &doc.data.track_names[track_idx],
+                doc.edit.selected.clone(),
+                doc.edit.track_selected.clone(),
+                doc.edit.sel_rect.clone(),
+            );
+        }
+    }
+    let ti = &doc.edit.track_info_cache[track_idx];
+
+    ui.add_space(4.0);
+
+    // ── Port / Channel ──
+    let mut port_changed = false;
+    let mut new_port = ti.port;
+    let mut new_ch = ti.channel;
+
+    ui.horizontal(|ui| {
+        ui.label("端口/通道:");
+
+        let port_options: Vec<String> = (0..16)
+            .map(|p| format!("Port {}", (b'A' + p) as char))
+            .collect();
+        let _port_sel = egui::ComboBox::from_id_salt("track_port")
+            .selected_text(format!("Port {}", (b'A' + ti.port) as char))
+            .width(70.0)
+            .show_ui(ui, |ui| {
+                for (i, label) in port_options.iter().enumerate() {
+                    if ui.selectable_label(i == ti.port as usize, label).clicked() {
+                        new_port = i as u8;
+                        port_changed = true;
+                    }
+                }
+            });
+
+        ui.add_space(4.0);
+
+        let ch_options: Vec<String> = (1..=16).map(|c| format!("{:02}", c)).collect();
+        let _ch_sel = egui::ComboBox::from_id_salt("track_channel")
+            .selected_text(format!("{:02}", ti.channel))
+            .width(50.0)
+            .show_ui(ui, |ui| {
+                for (i, label) in ch_options.iter().enumerate() {
+                    if ui.selectable_label(i + 1 == ti.channel as usize, label).clicked() {
+                        new_ch = (i + 1) as u8;
+                        port_changed = true;
+                    }
+                }
+            });
+    });
+
+    if port_changed {
+        {
+            let model = Arc::make_mut(&mut doc.data.model);
+            if track_idx < model.tracks.len() {
+                let td = Arc::make_mut(&mut model.tracks[track_idx]);
+                td.port = new_port;
+                td.channel = new_ch.saturating_sub(1);
+            }
+        }
+        doc.data.rebuild_model();
+        doc.edit.track_info_cache = doc.data.track_info();
+        doc.edit.pc_map_cache = doc.data.pc_map_cache();
+        doc.data.bump_version();
+        return true;
+    }
+
+    ui.add_space(6.0);
+
+    // ── Mute / Solo ──
+    while doc.edit.track_overrides.len() <= track_idx {
+        doc.edit.track_overrides
+            .push(yinhe_editor_core::document::TrackOverride::default());
+    }
+
+    let muted = doc.edit.track_overrides[track_idx].muted;
+    let soloed = doc.edit.track_overrides[track_idx].soloed;
+
+    let mut mute_clicked = false;
+    let mut solo_clicked = false;
+
+    ui.horizontal(|ui| {
+        let mute_label = if muted { "🔇 静音" } else { "🔊 静音" };
+        let mute_color = if muted {
+            crate::theme::MUTE_ACTIVE
+        } else {
+            egui::Color32::from_gray(140)
+        };
+        let r1 = ui.add(
+            egui::Button::new(egui::RichText::new(mute_label).color(mute_color).size(12.0))
+                .min_size(egui::vec2(60.0, 22.0)),
+        );
+
+        ui.add_space(4.0);
+
+        let solo_label = if soloed { "🔊 独奏" } else { "🔈 独奏" };
+        let solo_color = if soloed {
+            crate::theme::SOLO_ACTIVE
+        } else {
+            egui::Color32::from_gray(140)
+        };
+        let r2 = ui.add(
+            egui::Button::new(egui::RichText::new(solo_label).color(solo_color).size(12.0))
+                .min_size(egui::vec2(60.0, 22.0)),
+        );
+
+        mute_clicked = r1.clicked();
+        solo_clicked = r2.clicked();
+    });
+
+    if mute_clicked || solo_clicked {
+        while doc.edit.track_overrides.len() <= track_idx {
+            doc.edit.track_overrides
+                .push(yinhe_editor_core::document::TrackOverride::default());
+        }
+        if mute_clicked {
+            doc.edit.track_overrides[track_idx].muted = !muted;
+        }
+        if solo_clicked {
+            doc.edit.track_overrides[track_idx].soloed = !soloed;
+        }
+        send_skip_tracks(doc, audio);
+    }
+
+    ui.add_space(8.0);
+
+    // ── 摘要 ──
+    ui.separator();
+    ui.add_space(4.0);
+    ui.label(egui::RichText::new("属性摘要").size(11.0).strong());
+    ui.add_space(2.0);
+
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new("音符数:").size(11.0).color(egui::Color32::GRAY));
+        ui.label(egui::RichText::new(format!("{}", ti.note_count)).size(11.0));
+    });
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new("事件数:").size(11.0).color(egui::Color32::GRAY));
+        ui.label(egui::RichText::new(format!("{}", ti.event_count)).size(11.0));
+    });
+
+    // Program Change
+    let global_ch = ti.port as u32 * 16 + (ti.channel as u32 - 1);
+    if let Some(pc) = doc.edit.pc_map_cache.get(&(global_ch as u8)) {
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("音色:").size(11.0).color(egui::Color32::GRAY));
+            ui.label(egui::RichText::new(format!("PC {}", pc)).size(11.0));
+        });
+    }
+
+    ui.add_space(8.0);
+    ui.separator();
+    ui.add_space(6.0);
+    if ui.add(egui::Button::new(egui::RichText::new("清除选择").size(12.0))).clicked() {
+        *info_content = None;
+    }
+
     false
 }
 
-/// 渲染锚点信息编辑界面。
+// ────────────────────────────────────────────────────────────────
+// 锚点信息
+// ────────────────────────────────────────────────────────────────
+
 fn show_anchor_info(
     ui: &mut egui::Ui,
     doc: &mut Document,
@@ -104,7 +465,7 @@ fn show_anchor_info(
     });
     ui.add_space(4.0);
 
-    // ── Tick（可编辑，DragValue，拖动时实时修改模型，松手时存 undo） ──
+    // ── Tick（DragValue，拖动时实时修改模型，松手时存 undo） ──
     let tick_drag_id = ui.id().with("info_anchor_tick_drag");
     let before_tick_id = ui.id().with("info_anchor_before_tick_events");
     let mut edit_tick = tick as f64;
@@ -120,7 +481,6 @@ fn show_anchor_info(
         let was_dragging = ui.ctx().data(|d| d.get_temp::<bool>(tick_drag_id)).unwrap_or(false);
 
         if dragging && !was_dragging {
-            // 拖动开始：快照 before
             let before = snapshot_lane_events(doc, track_idx, lane_idx);
             ui.ctx().data_mut(|d| {
                 d.insert_temp(before_tick_id, before);
@@ -131,7 +491,6 @@ fn show_anchor_info(
         if resp.changed() {
             let new_tick = edit_tick as u32;
             if new_tick != tick {
-                // 拖动中：只修改模型，不存 undo
                 let _actions = doc.apply_automation_edits(vec![
                     yinhe_types::AutomationEdit::Move {
                         track_idx,
@@ -141,12 +500,10 @@ fn show_anchor_info(
                         new_value: value,
                     },
                 ]);
-                // event_idx 不变（Move 不增删事件），info_content 无需更新
             }
         }
 
         if !dragging && was_dragging {
-            // 拖动结束：用 before/after 快照存一次 undo
             let before = ui.ctx().data(|d| d.get_temp::<Vec<AutomationEvent>>(before_tick_id));
             if let Some(before) = before {
                 let after = snapshot_lane_events(doc, track_idx, lane_idx);
@@ -173,7 +530,7 @@ fn show_anchor_info(
     });
     ui.add_space(4.0);
 
-    // ── Value（可编辑，DragValue，拖动时实时修改模型，松手时存 undo） ──
+    // ── Value（DragValue，拖动时实时修改模型，松手时存 undo） ──
     let val_drag_id = ui.id().with("info_anchor_val_drag");
     let before_val_id = ui.id().with("info_anchor_before_val_events");
     let mut edit_value = value as f64;
@@ -208,7 +565,6 @@ fn show_anchor_info(
                         new_value,
                     },
                 ]);
-                // event_idx 不变
             }
         }
 
@@ -260,12 +616,9 @@ fn show_anchor_info(
                 },
             ]);
             push_undo(doc, actions, "Toggle anchor shape");
-            // CycleShape 会自动在 Step ↔ Curve{tension:0} 间切换
-            // 不需要手动更新 info_content，下帧会从模型读取
         }
     });
 
-    // 显示当前 shape 描述
     let shape_desc = match shape {
         SegmentShape::Step => "离散 (Step) — 值在下一个锚点前保持恒定",
         SegmentShape::Curve { tension } => {
@@ -288,16 +641,14 @@ fn show_anchor_info(
     ui.separator();
     ui.add_space(6.0);
 
-    // ── 清除选择按钮 ──
-    if ui
-        .add(egui::Button::new(
-            egui::RichText::new("清除选择").size(12.0),
-        ))
-        .clicked()
-    {
+    if ui.add(egui::Button::new(egui::RichText::new("清除选择").size(12.0))).clicked() {
         *info_content = None;
     }
 }
+
+// ────────────────────────────────────────────────────────────────
+// 工具函数
+// ────────────────────────────────────────────────────────────────
 
 fn push_undo(
     doc: &mut Document,
@@ -315,7 +666,6 @@ fn push_undo(
     }
 }
 
-/// 快照当前 lane 的 events，用于 undo before/after。
 fn snapshot_lane_events(doc: &Document, track_idx: u16, lane_idx: usize) -> Vec<AutomationEvent> {
     doc.data.model.tracks
         .get(track_idx as usize)

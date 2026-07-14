@@ -729,6 +729,7 @@ pub struct TrackInfo {
     pub index: u16,
     pub name: String,
     pub note_count: u64,
+    pub event_count: u64,
     pub port: u8,
     pub channel: u8,
 }

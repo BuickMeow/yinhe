@@ -72,6 +72,7 @@ impl ProjectData {
                 index: i as u16,
                 name: track.name.clone(),
                 note_count: self.model.track_note_count.get(i).copied().unwrap_or(0),
+                event_count: track.automation_lanes.iter().map(|l| l.events.len() as u64).sum(),
                 port: track.port,
                 channel: track.channel,
             })

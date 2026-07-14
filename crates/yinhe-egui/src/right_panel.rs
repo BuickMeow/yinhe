@@ -31,6 +31,8 @@ pub enum InfoContent {
         event_idx: usize,
         target: AutomationTarget,
     },
+    /// 选中的音轨（由 doc.edit.track_selected 决定哪些音轨）
+    Track,
 }
 
 /// Render the right panel (if a tab is active).

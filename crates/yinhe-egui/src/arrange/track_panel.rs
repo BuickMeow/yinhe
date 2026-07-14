@@ -38,6 +38,7 @@ pub(crate) fn show(
     row_height: &mut f32,
     scroll_y: &mut f32,
     request_pianoroll: &mut bool,
+    info_content: &mut Option<crate::right_panel::InfoContent>,
 ) -> (bool, Vec<TrackAction>) {
     let panel_rect = ui.max_rect();
     let panel_w = panel_rect.width();
@@ -268,6 +269,7 @@ pub(crate) fn show(
                     track_selected.insert(track_idx);
                     *selection_anchor = Some(track_idx);
                 }
+                *info_content = Some(crate::right_panel::InfoContent::Track);
             }
         }
     }
@@ -286,6 +288,7 @@ pub(crate) fn show(
                     track_selected.insert(track_idx);
                     *selection_anchor = Some(track_idx);
                 }
+                *info_content = Some(crate::right_panel::InfoContent::Track);
                 ui.ctx().data_mut(|d| d.insert_temp(ctx_menu_idx_id, idx));
             }
         }
@@ -339,7 +342,6 @@ pub(crate) fn show(
     if ui.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
         if let Some(&current) = track_selected.iter().next() {
             let new_idx = current.saturating_sub(1);
-            // Skip invisible tracks
             let mut found = None;
             for i in (0..=new_idx as usize).rev() {
                 if track_visible.get(i).copied().unwrap_or(true) {
@@ -358,11 +360,11 @@ pub(crate) fn show(
             track_selected.insert(last as u16);
             *selection_anchor = Some(last as u16);
         }
+        *info_content = Some(crate::right_panel::InfoContent::Track);
     }
     if ui.input(|i| i.key_pressed(egui::Key::ArrowDown)) {
         if let Some(&current) = track_selected.iter().next() {
             let new_idx = (current as usize + 1).min(num_tracks - 1);
-            // Skip invisible tracks
             let mut found = None;
             for i in new_idx..num_tracks {
                 if track_visible.get(i).copied().unwrap_or(true) {
@@ -380,6 +382,7 @@ pub(crate) fn show(
             track_selected.insert(0);
             *selection_anchor = Some(0);
         }
+        *info_content = Some(crate::right_panel::InfoContent::Track);
     }
 
     if resp.hovered() {

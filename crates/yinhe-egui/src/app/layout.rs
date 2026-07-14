@@ -110,6 +110,7 @@ impl App {
                 &mut self.arr_sel_rect,
                 &mut arr_drag_delta,
                 &mut arr_eraser_rect,
+                &mut self.info_content,
             );
             if request_pianoroll {
                 self.show_pianoroll = true;
