@@ -44,9 +44,10 @@ bytemuck = { workspace = true }
 embed-resource = "3"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-objc2 = { version = "0.6", features = ["unstable-static-class"] }
+objc2 = "0.6"
 objc2-metal = "0.3.2"
 raw-window-handle = "0.6"
+muda = "0.19"
 
 [package.metadata.bundle]
 name = "Yinhe"
