@@ -1,7 +1,8 @@
 use eframe::egui;
 
 use yinhe_editor_core::document::Document;
-use yinhe_types::{AutomationTarget, SegmentShape};
+use yinhe_editor_core::history::{AutomationDelta, UndoAction, UndoEntry};
+use yinhe_types::{AutomationEvent, AutomationTarget, SegmentShape};
 
 use super::InfoContent;
 
@@ -95,7 +96,8 @@ fn show_anchor_info(
     });
     ui.add_space(4.0);
 
-    // ── Tick（可编辑，DragValue，拖动时实时提交） ──
+    // ── Tick（可编辑，DragValue，拖动时实时修改模型，松手时存 undo） ──
+    let before_id = ui.id().with("info_anchor_before_events");
     let mut edit_tick = tick as f64;
     ui.horizontal(|ui| {
         ui.label(
@@ -104,10 +106,16 @@ fn show_anchor_info(
                 .color(egui::Color32::GRAY),
         );
         let resp = ui.add(egui::DragValue::new(&mut edit_tick).range(0..=u32::MAX as i64).speed(1.0));
+        if resp.gained_focus() {
+            // 快照当前 lane.events 作为 before
+            let before = snapshot_lane_events(doc, track_idx, lane_idx);
+            ui.ctx().data_mut(|d| d.insert_temp(before_id, before));
+        }
         if resp.changed() {
             let new_tick = edit_tick as u32;
             if new_tick != tick {
-                let actions = doc.apply_automation_edits(vec![
+                // 拖动中：只修改模型，不存 undo
+                let _actions = doc.apply_automation_edits(vec![
                     yinhe_types::AutomationEdit::Move {
                         track_idx,
                         lane_idx,
@@ -116,7 +124,6 @@ fn show_anchor_info(
                         new_value: value,
                     },
                 ]);
-                push_undo(doc, actions, "Edit automation anchor tick");
                 *info_content = Some(InfoContent::Anchor {
                     track_idx, lane_idx,
                     tick: new_tick,
@@ -124,10 +131,33 @@ fn show_anchor_info(
                 });
             }
         }
+        if resp.lost_focus() {
+            // 松手：用 before/after 快照存一次 undo
+            let before = ui.ctx().data(|d| d.get_temp::<Vec<AutomationEvent>>(before_id));
+            if let Some(before) = before {
+                let after = snapshot_lane_events(doc, track_idx, lane_idx);
+                if before != after {
+                    doc.history.push(UndoEntry {
+                        action: UndoAction::Automation(AutomationDelta {
+                            track_idx: track_idx as usize,
+                            lane_idx,
+                            before,
+                            after,
+                        }),
+                        label: "Edit automation anchor tick",
+                        selected: doc.edit.selected.clone(),
+                        track_selected: doc.edit.track_selected.clone(),
+                        sel_rect: doc.edit.sel_rect.clone(),
+                    });
+                }
+            }
+            ui.ctx().data_mut(|d| d.remove::<Vec<AutomationEvent>>(before_id));
+        }
     });
     ui.add_space(4.0);
 
-    // ── Value（可编辑，DragValue，拖动时实时提交） ──
+    // ── Value（可编辑，DragValue，拖动时实时修改模型，松手时存 undo） ──
+    let before_val_id = ui.id().with("info_anchor_before_val_events");
     let mut edit_value = value as f64;
     ui.horizontal(|ui| {
         ui.label(
@@ -136,10 +166,14 @@ fn show_anchor_info(
                 .color(egui::Color32::GRAY),
         );
         let resp = ui.add(egui::DragValue::new(&mut edit_value).range(0..=max_val as i64).speed(1.0));
+        if resp.gained_focus() {
+            let before = snapshot_lane_events(doc, track_idx, lane_idx);
+            ui.ctx().data_mut(|d| d.insert_temp(before_val_id, before));
+        }
         if resp.changed() {
             let new_value = edit_value as u16;
             if new_value != value {
-                let actions = doc.apply_automation_edits(vec![
+                let _actions = doc.apply_automation_edits(vec![
                     yinhe_types::AutomationEdit::Move {
                         track_idx,
                         lane_idx,
@@ -148,13 +182,33 @@ fn show_anchor_info(
                         new_value,
                     },
                 ]);
-                push_undo(doc, actions, "Edit automation anchor value");
                 *info_content = Some(InfoContent::Anchor {
                     track_idx, lane_idx,
                     tick,
                     target: target.clone(),
                 });
             }
+        }
+        if resp.lost_focus() {
+            let before = ui.ctx().data(|d| d.get_temp::<Vec<AutomationEvent>>(before_val_id));
+            if let Some(before) = before {
+                let after = snapshot_lane_events(doc, track_idx, lane_idx);
+                if before != after {
+                    doc.history.push(UndoEntry {
+                        action: UndoAction::Automation(AutomationDelta {
+                            track_idx: track_idx as usize,
+                            lane_idx,
+                            before,
+                            after,
+                        }),
+                        label: "Edit automation anchor value",
+                        selected: doc.edit.selected.clone(),
+                        track_selected: doc.edit.track_selected.clone(),
+                        sel_rect: doc.edit.sel_rect.clone(),
+                    });
+                }
+            }
+            ui.ctx().data_mut(|d| d.remove::<Vec<AutomationEvent>>(before_val_id));
         }
     });
     ui.add_space(6.0);
@@ -233,6 +287,15 @@ fn push_undo(
             sel_rect: doc.edit.sel_rect.clone(),
         });
     }
+}
+
+/// 快照当前 lane 的 events，用于 undo before/after。
+fn snapshot_lane_events(doc: &Document, track_idx: u16, lane_idx: usize) -> Vec<AutomationEvent> {
+    doc.data.model.tracks
+        .get(track_idx as usize)
+        .and_then(|t| t.automation_lanes.get(lane_idx))
+        .map(|l| l.events.clone())
+        .unwrap_or_default()
 }
 
 /// Compute the per-track skip mask and send it to the audio engine.
