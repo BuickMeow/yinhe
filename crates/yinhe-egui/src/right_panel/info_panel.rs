@@ -97,7 +97,8 @@ fn show_anchor_info(
     ui.add_space(4.0);
 
     // ── Tick（可编辑，DragValue，拖动时实时修改模型，松手时存 undo） ──
-    let before_id = ui.id().with("info_anchor_before_events");
+    let tick_drag_id = ui.id().with("info_anchor_tick_drag");
+    let before_tick_id = ui.id().with("info_anchor_before_tick_events");
     let mut edit_tick = tick as f64;
     ui.horizontal(|ui| {
         ui.label(
@@ -106,11 +107,19 @@ fn show_anchor_info(
                 .color(egui::Color32::GRAY),
         );
         let resp = ui.add(egui::DragValue::new(&mut edit_tick).range(0..=u32::MAX as i64).speed(1.0));
-        if resp.gained_focus() {
-            // 快照当前 lane.events 作为 before
+
+        let dragging = resp.dragged();
+        let was_dragging = ui.ctx().data(|d| d.get_temp::<bool>(tick_drag_id)).unwrap_or(false);
+
+        if dragging && !was_dragging {
+            // 拖动开始：快照 before
             let before = snapshot_lane_events(doc, track_idx, lane_idx);
-            ui.ctx().data_mut(|d| d.insert_temp(before_id, before));
+            ui.ctx().data_mut(|d| {
+                d.insert_temp(before_tick_id, before);
+                d.insert_temp(tick_drag_id, true);
+            });
         }
+
         if resp.changed() {
             let new_tick = edit_tick as u32;
             if new_tick != tick {
@@ -131,9 +140,10 @@ fn show_anchor_info(
                 });
             }
         }
-        if resp.lost_focus() {
-            // 松手：用 before/after 快照存一次 undo
-            let before = ui.ctx().data(|d| d.get_temp::<Vec<AutomationEvent>>(before_id));
+
+        if !dragging && was_dragging {
+            // 拖动结束：用 before/after 快照存一次 undo
+            let before = ui.ctx().data(|d| d.get_temp::<Vec<AutomationEvent>>(before_tick_id));
             if let Some(before) = before {
                 let after = snapshot_lane_events(doc, track_idx, lane_idx);
                 if before != after {
@@ -151,12 +161,16 @@ fn show_anchor_info(
                     });
                 }
             }
-            ui.ctx().data_mut(|d| d.remove::<Vec<AutomationEvent>>(before_id));
+            ui.ctx().data_mut(|d| {
+                d.remove::<Vec<AutomationEvent>>(before_tick_id);
+                d.insert_temp(tick_drag_id, false);
+            });
         }
     });
     ui.add_space(4.0);
 
     // ── Value（可编辑，DragValue，拖动时实时修改模型，松手时存 undo） ──
+    let val_drag_id = ui.id().with("info_anchor_val_drag");
     let before_val_id = ui.id().with("info_anchor_before_val_events");
     let mut edit_value = value as f64;
     ui.horizontal(|ui| {
@@ -166,10 +180,18 @@ fn show_anchor_info(
                 .color(egui::Color32::GRAY),
         );
         let resp = ui.add(egui::DragValue::new(&mut edit_value).range(0..=max_val as i64).speed(1.0));
-        if resp.gained_focus() {
+
+        let dragging = resp.dragged();
+        let was_dragging = ui.ctx().data(|d| d.get_temp::<bool>(val_drag_id)).unwrap_or(false);
+
+        if dragging && !was_dragging {
             let before = snapshot_lane_events(doc, track_idx, lane_idx);
-            ui.ctx().data_mut(|d| d.insert_temp(before_val_id, before));
+            ui.ctx().data_mut(|d| {
+                d.insert_temp(before_val_id, before);
+                d.insert_temp(val_drag_id, true);
+            });
         }
+
         if resp.changed() {
             let new_value = edit_value as u16;
             if new_value != value {
@@ -189,7 +211,8 @@ fn show_anchor_info(
                 });
             }
         }
-        if resp.lost_focus() {
+
+        if !dragging && was_dragging {
             let before = ui.ctx().data(|d| d.get_temp::<Vec<AutomationEvent>>(before_val_id));
             if let Some(before) = before {
                 let after = snapshot_lane_events(doc, track_idx, lane_idx);
@@ -208,7 +231,10 @@ fn show_anchor_info(
                     });
                 }
             }
-            ui.ctx().data_mut(|d| d.remove::<Vec<AutomationEvent>>(before_val_id));
+            ui.ctx().data_mut(|d| {
+                d.remove::<Vec<AutomationEvent>>(before_val_id);
+                d.insert_temp(val_drag_id, false);
+            });
         }
     });
     ui.add_space(6.0);
