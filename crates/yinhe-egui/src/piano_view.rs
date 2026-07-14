@@ -78,6 +78,8 @@ pub fn show(
     haptic_engine: Option<&yinhe_haptic::HapticEngine>,
     pencil_note_drag: &mut Option<PencilNoteDrag>,
     auto_edit_events: &mut Vec<crate::piano_view::automation_panel::AutomationEdit>,
+    info_content: &mut Option<crate::right_panel::InfoContent>,
+    right_tab: &mut Option<crate::right_panel::RightTab>,
 ) -> Option<PianoViewEvent> {
     // Sense::hover() — no drag ownership. All drag is handled by dedicated
     // ui.interact calls below, each inside its own push_id scope.
@@ -558,6 +560,8 @@ pub fn show(
             edit_ctx.as_ref(),
             tempo_events,
             midi_version,
+            info_content,
+            right_tab,
         );
         for edit in auto_edits {
             auto_edit_events.push(edit);

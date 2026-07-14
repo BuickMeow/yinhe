@@ -65,6 +65,7 @@ pub struct App {
     // ── Right panel ──
     pub(crate) right_panel_width: f32,
     pub(crate) right_tab: Option<crate::right_panel::RightTab>,
+    pub(crate) info_content: Option<crate::right_panel::InfoContent>,
 
     // ── Tool palette ──
     pub(crate) active_tool: crate::widgets::tools_panel::Tool,
@@ -211,6 +212,7 @@ impl App {
 
             right_panel_width: crate::theme::RIGHT_PANEL_DEFAULT_WIDTH,
             right_tab: None,
+            info_content: None,
 
             active_tool: crate::widgets::tools_panel::Tool::Select,
 

@@ -303,6 +303,8 @@ impl App {
                         Some(&self.haptic_engine),
                         &mut pencil_note_drag,
                         &mut auto_edit_events,
+                        &mut self.info_content,
+                        &mut self.right_tab,
                     );
                     if let Some(t0) = _piano_total_start {
                         yinhe_memtrace::perf_probe::record_piano_total(t0.elapsed());
@@ -491,6 +493,7 @@ impl App {
                 doc,
                 self.audio_state.handle.as_ref(),
                 &mut self.event_browser_state,
+                &mut self.info_content,
             );
             if changed {
                 self.teardown_audio();

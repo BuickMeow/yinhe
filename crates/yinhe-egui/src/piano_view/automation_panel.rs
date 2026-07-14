@@ -5,13 +5,14 @@ use egui_material_icons::icons::*;
 
 use yinhe_editor_core::quantize::QuantizePreset;
 pub use yinhe_types::AutomationEdit;
-use yinhe_types::{AutomationLane, AutomationTarget, SegmentShape, TimeSigEvent};
+use yinhe_types::{AutomationLane, AutomationTarget, TimeSigEvent};
 use yinhe_types::time_format::format_tick_bar_beat_with_time_sig;
 
-use yinhe_automation::{AutomationGhost, build_lane_override, prepare_automation};
+use yinhe_automation::{AutomationGhost, prepare_automation};
 use yinhe_types::AutomationPanelView;
 use yinhe_wgpu::InstanceRenderer;
 
+use crate::right_panel::{InfoContent, RightTab};
 use crate::widgets::tools_panel::Tool;
 
 mod interaction;
@@ -154,6 +155,8 @@ pub fn show_panels(
     edit_ctx: Option<&AutomationEditCtx<'_>>,
     tempo_events: &[(u32, f64)],
     midi_version: u64,
+    info_content: &mut Option<InfoContent>,
+    right_tab: &mut Option<RightTab>,
 ) -> (f32, Vec<AutomationEdit>, PanelPianorollFeedback) {
     let mut edits = Vec::new();
     let mut feedback = PanelPianorollFeedback::default();
@@ -431,6 +434,13 @@ pub fn show_panels(
                     .filter(|l| l.target == panel.selected_target)
                     .collect();
 
+                // 从 info_content 提取高亮锚点 tick
+                let highlight_tick = match info_content {
+                    Some(InfoContent::Anchor { target: anchor_target, tick: anchor_tick, .. })
+                        if *anchor_target == panel.selected_target => Some(*anchor_tick),
+                    _ => None,
+                };
+
                 let gpu_dirty = prepare_automation(
                     renderer,
                     gw,
@@ -451,6 +461,7 @@ pub fn show_panels(
                     tempo_events,
                     panel_ghost,
                     midi_version,
+                    highlight_tick,
                 );
 
                 let content_changed = panel.dirty || gpu_dirty;
@@ -651,101 +662,28 @@ pub fn show_panels(
     // Restore clip rect
     ui.set_clip_rect(old_clip);
 
-    // ── 右键锚点编辑弹窗 ──
+    // ── 右键锚点：设置 info_content 打开信息面板 ──
     for i in 0..panels.len() {
         let right_click_id = ui.id().with("auto_right_click").with(i);
         if let Some(anchor) = ui.ctx().data(|d| d.get_temp::<interaction::RightClickAnchor>(right_click_id)) {
-            let max_val = anchor.target.max_value();
+            *info_content = Some(InfoContent::Anchor {
+                track_idx: anchor.track_idx,
+                lane_idx: anchor.lane_idx,
+                tick: anchor.old_tick,
+                target: anchor.target.clone(),
+            });
+            *right_tab = Some(RightTab::Info);
+
+            // 清理 temp data
             let edit_tick_id = ui.id().with("auto_right_tick").with(i);
             let edit_value_id = ui.id().with("auto_right_value").with(i);
-            let mut new_tick = ui.ctx().data(|d| d.get_temp::<f64>(edit_tick_id)).unwrap_or(anchor.old_tick as f64);
-            let mut new_value = ui.ctx().data(|d| d.get_temp::<f64>(edit_value_id)).unwrap_or(anchor.old_value as f64);
-            let mut submitted = false;
-
-            let area_id = ui.id().with("auto_right_edit_area").with(i);
-            let area_pos = anchor.anchor_pos + egui::Vec2::new(16.0, -8.0);
-            let area_response = egui::Area::new(area_id)
-                .order(egui::Order::Foreground)
-                .fixed_pos(area_pos)
-                .show(ui.ctx(), |ui| {
-                    let frame = egui::Frame::popup(ui.style());
-                    frame.show(ui, |ui| {
-                        ui.set_min_width(160.0);
-                        // 只读位置显示
-                        if let Some(ctx) = edit_ctx {
-                            if let Some((ppq, num, den, ts_events)) = ctx.bar_line_data {
-                                let pos_str = format_tick_bar_beat_with_time_sig(anchor.old_tick as f64, ppq, ts_events, num, den);
-                                ui.label(egui::RichText::new(pos_str).size(11.0).color(egui::Color32::GRAY));
-                            }
-                        }
-                        ui.add_space(4.0);
-                        // Tick（只有 lost_focus 即按 Enter 才提交，拖拽不触发 undo）
-                        ui.horizontal(|ui| {
-                            ui.label("Tick:");
-                            let resp = ui.add(egui::DragValue::new(&mut new_tick).range(0..=u32::MAX as i64).speed(1.0));
-                            if resp.lost_focus() {
-                                submitted = true;
-                            }
-                        });
-                        // Value（同上）
-                        ui.horizontal(|ui| {
-                            ui.label("Value:");
-                            let resp = ui.add(egui::DragValue::new(&mut new_value).range(0..=max_val as i64).speed(1.0));
-                            if resp.lost_focus() {
-                                submitted = true;
-                            }
-                        });
-                    });
-                });
-
-            // 保存编辑中的值，跨帧保持
-            ui.ctx().data_mut(|d| {
-                d.insert_temp(edit_tick_id, new_tick);
-                d.insert_temp(edit_value_id, new_value);
-            });
-
-            if submitted {
-                // 提交编辑
-                println!("[auto_debug] popup submit: old_tick={}, new_tick={}, new_value={}", anchor.old_tick, new_tick as u32, new_value as u16);
-                edits.push(AutomationEdit::Move {
-                    track_idx: anchor.track_idx,
-                    lane_idx: anchor.lane_idx,
-                    old_tick: anchor.old_tick,
-                    new_tick: new_tick as u32,
-                    new_value: new_value as u16,
-                });
-                // 更新 interaction::RightClickAnchor 的 old_tick/old_value，使后续 edit 使用新位置
-                ui.ctx().data_mut(|d| {
-                    if let Some(mut a) = d.get_temp::<interaction::RightClickAnchor>(right_click_id) {
-                        a.old_tick = new_tick as u32;
-                        a.old_value = new_value as u16;
-                        d.insert_temp(right_click_id, a);
-                    }
-                });
-            }
-
-            // 弹窗外点击 → 提交最终值然后关闭弹窗（跳过首帧，避免右键打开弹窗时立即关闭）
             let was_open_id = ui.id().with("auto_right_was_open").with(i);
-            let was_open = ui.ctx().data(|d| d.get_temp::<bool>(was_open_id)).unwrap_or(false);
-            ui.ctx().data_mut(|d| d.insert_temp(was_open_id, true));
-            if was_open && area_response.response.clicked_elsewhere() {
-                // 仅值有变化时提交（ghost 模式：最终值一次性提交，不产生中间 undo）
-                if new_tick as u32 != anchor.old_tick || new_value as u16 != anchor.old_value {
-                    edits.push(AutomationEdit::Move {
-                        track_idx: anchor.track_idx,
-                        lane_idx: anchor.lane_idx,
-                        old_tick: anchor.old_tick,
-                        new_tick: new_tick as u32,
-                        new_value: new_value as u16,
-                    });
-                }
-                ui.ctx().data_mut(|d| {
-                    d.remove::<interaction::RightClickAnchor>(right_click_id);
-                    d.remove::<f64>(edit_tick_id);
-                    d.remove::<f64>(edit_value_id);
-                    d.remove::<bool>(was_open_id);
-                });
-            }
+            ui.ctx().data_mut(|d| {
+                d.remove::<interaction::RightClickAnchor>(right_click_id);
+                d.remove::<f64>(edit_tick_id);
+                d.remove::<f64>(edit_value_id);
+                d.remove::<bool>(was_open_id);
+            });
         }
     }
 

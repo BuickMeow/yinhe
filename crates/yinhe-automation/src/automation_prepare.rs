@@ -97,6 +97,7 @@ fn hash_lanes_excluding(lanes: &[&AutomationLane], ghost: Option<&AutomationGhos
 ///
 /// `show_anchors`: 在每个事件位置画圆形锚点（铅笔工具下显示）。
 /// `ghost`: 拖拽预览（Layer 3，每帧重建，无缓存）。
+/// `highlight_tick`: 如果非 None，该 tick 位置的锚点渲染为白色高亮（选中锚点）。
 pub fn prepare(
     renderer: &mut InstanceRenderer,
     width: u32,
@@ -117,6 +118,7 @@ pub fn prepare(
     tempo_events: &[(u32, f64)],
     ghost: Option<AutomationGhost>,
     midi_version: u64,
+    highlight_tick: Option<u32>,
 ) -> bool {
     let w = width as f32;
     let h = height as f32;
@@ -198,8 +200,10 @@ pub fn prepare(
         fixed_lanes_hash,
         ghost_lane_hash,
         midi_version,
+        highlight_tick.unwrap_or(u32::MAX) as u64,
     ]);
     let ghost_for_layer2 = ghost.clone();
+    let highlight_tick_for_layer2 = highlight_tick;
     renderer.upload_layer(2, bars_key, |out| {
         if is_tempo {
             tempo::build_tempo_lines(out, w, h, view, tempo_events, &theme);
@@ -216,7 +220,7 @@ pub fn prepare(
                 _ => None,
             };
             data_lines::build_data_lines(
-                out, w, h, view, lanes, track_visible, track_colors, show_anchors, skip_lane, &theme,
+                out, w, h, view, lanes, track_visible, track_colors, show_anchors, skip_lane, highlight_tick_for_layer2, &theme,
             );
         }
     });

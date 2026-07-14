@@ -956,6 +956,9 @@ impl Document {
                         None
                     }
                 }
+                AutomationEdit::Delete { track_idx, lane_idx, tick } => {
+                    self.delete_automation_event(track_idx as usize, lane_idx, tick)
+                }
             };
             if let Some(action) = action {
                 actions.push(action);

@@ -283,6 +283,12 @@ pub enum AutomationEdit {
         lane_idx: usize,
         tick: u32,
     },
+    /// 删除已有事件。
+    Delete {
+        track_idx: u16,
+        lane_idx: usize,
+        tick: u32,
+    },
 }
 
 /// Pencil-tool drag output for modifying existing notes.

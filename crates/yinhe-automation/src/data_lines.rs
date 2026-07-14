@@ -104,9 +104,10 @@ pub fn build_data_lines(
     view: &AutomationPanelView,
     lanes: &[&AutomationLane],
     track_visible: &[bool],
-    track_colors: &[[f32; 3]],
+    track_color: &[[f32; 3]],
     show_anchors: bool,
     skip_lane: Option<&AutomationLane>,
+    highlight_tick: Option<u32>,
     _theme: &GpuTheme,
 ) {
     if lanes.is_empty() {
@@ -135,7 +136,7 @@ pub fn build_data_lines(
         if !track_visible.get(trk_idx).copied().unwrap_or(true) {
             continue;
         }
-        let color = track_colors
+        let color = track_color
             .get(trk_idx)
             .copied()
             .unwrap_or_else(|| TRACK_PALETTE[trk_idx % TRACK_PALETTE.len()]);
@@ -152,10 +153,16 @@ pub fn build_data_lines(
             for evt in visible_events {
                 let x = x_offset + evt.tick as f32 * ppu;
                 let y = view.value_to_y(evt.value as f32, max_val);
+                // 选中锚点渲染为白色高亮
+                let anchor_color = if highlight_tick == Some(evt.tick) {
+                    [1.0, 1.0, 1.0, 1.0]
+                } else {
+                    [color[0], color[1], color[2], 1.0]
+                };
                 out.push(DrawInstance::with_props(
                     x - ANCHOR_RADIUS, y - ANCHOR_RADIUS,
                     2.0 * ANCHOR_RADIUS, 2.0 * ANCHOR_RADIUS,
-                    [color[0], color[1], color[2], 1.0],
+                    anchor_color,
                     ANCHOR_RADIUS, 0.0,
                 ));
             }

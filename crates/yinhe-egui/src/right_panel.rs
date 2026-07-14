@@ -9,6 +9,7 @@ use eframe::egui;
 
 use crate::audio_settings::AudioSettings;
 use yinhe_editor_core::document::Document;
+use yinhe_types::AutomationTarget;
 
 #[derive(PartialEq, Clone, Copy)]
 pub enum RightTab {
@@ -17,6 +18,18 @@ pub enum RightTab {
     Project,
     Channels,
     EventBrowser,
+}
+
+/// 信息面板中展示的内容类型（多合一设计）。
+#[derive(Clone, Debug)]
+pub enum InfoContent {
+    /// 右键选中的自动化锚点（value/shape 从模型实时读取，此处只存 tick 定位）
+    Anchor {
+        track_idx: u16,
+        lane_idx: usize,
+        tick: u32,
+        target: AutomationTarget,
+    },
 }
 
 /// Render the right panel (if a tab is active).
@@ -33,6 +46,7 @@ pub fn show(
     doc: Option<&mut Document>,
     audio: Option<&yinhe_audio::CpalAudioHandle>,
     event_browser_state: &mut event_browser::EventBrowserState,
+    info_content: &mut Option<InfoContent>,
 ) -> bool {
     let tab = *right_tab;
     if tab.is_none() {
@@ -76,7 +90,7 @@ pub fn show(
         if let Some(tab) = tab {
             match tab {
                 RightTab::Info => {
-                    changed |= info_panel::show(ui, doc, audio);
+                    changed |= info_panel::show(ui, doc, audio, info_content);
                 }
                 RightTab::SoundFont => {
                     changed |= soundfont::show(ui, audio_settings, doc);
