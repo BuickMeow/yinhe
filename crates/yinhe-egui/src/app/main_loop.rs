@@ -179,6 +179,19 @@ impl eframe::App for App {
             self.select_all();
         }
 
+        // ── Live FPS (real, EMA-smoothed from egui frame delta) ──
+        let dt = ui.input(|i| i.stable_dt);
+        let inst_fps = if dt > 0.0 { 1.0 / dt } else { 0.0 };
+        // Reset EMA when frames were paused (e.g. UI was idle), otherwise a
+        // stale high value (like 140 fps from quick mouse movement) would
+        // take tens of frames to decay back to the real rate (~60 fps).
+        let stale = dt > 0.1 || self.fps <= 0.0;
+        self.fps = if stale {
+            inst_fps
+        } else {
+            self.fps * 0.9 + inst_fps * 0.1
+        };
+
         // ── System resource monitoring ──
         self.refresh_system_stats();
 
@@ -203,12 +216,12 @@ impl eframe::App for App {
             &mut transport_bar::TransportContext {
                 file_loader: &mut self.file_loader,
                 doc: active_doc,
-                cpu_usage: self.sys_monitor.cpu_usage,
-                mem_mb: yinhe_memtrace::Snapshot::capture().total_mb(),
                 follow_mode: &mut self.follow_mode,
-                show_mem_breakdown: &mut self.show_mem_breakdown,
             },
         );
+
+        // Heap snapshot for the mode-bar resource metrics (captured once per frame).
+        let mem_mb = yinhe_memtrace::Snapshot::capture().total_mb();
 
         // ── Handle playback actions ──
         self.handle_playback(
@@ -245,6 +258,10 @@ impl eframe::App for App {
             &mut self.show_transport,
             &mut self.show_pianoroll,
             &mut self.right_tab,
+            self.sys_monitor.cpu_usage,
+            mem_mb,
+            self.fps,
+            &mut self.show_mem_breakdown,
         );
 
         // ── Main content area ──

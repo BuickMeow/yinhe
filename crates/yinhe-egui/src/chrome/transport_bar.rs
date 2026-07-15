@@ -31,10 +31,7 @@ struct MenuItem {
 pub struct TransportContext<'a> {
     pub file_loader: &'a mut FileLoader,
     pub doc: Option<&'a Document>,
-    pub cpu_usage: f32,
-    pub mem_mb: f64,
     pub follow_mode: &'a mut FollowMode,
-    pub show_mem_breakdown: &'a mut bool,
 }
 
 /// Output from the transport bar — replaces `&mut bool` out-parameters.
@@ -142,9 +139,6 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                     timecode_rect = Some(show_timecode_display(
                         ui,
                         doc,
-                        ctx.cpu_usage,
-                        ctx.mem_mb,
-                        ctx.show_mem_breakdown,
                     ));
                 }
             });
@@ -336,13 +330,7 @@ fn show_file_menu(
 }
 
 /// Show the timecode display panel. Returns the allocated rect.
-fn show_timecode_display(
-    ui: &mut egui::Ui,
-    doc: &Document,
-    cpu_usage: f32,
-    mem_mb: f64,
-    show_mem_breakdown: &mut bool,
-) -> egui::Rect {
+fn show_timecode_display(ui: &mut egui::Ui, doc: &Document) -> egui::Rect {
     let tick = doc.edit.cursor_tick.unwrap_or(0.0);
     let model = &doc.data.model;
     let seconds = model.tempo_map.tick_to_seconds(tick as u64);
@@ -365,7 +353,7 @@ fn show_timecode_display(
         model.tempo_map.time_sig_default.1,
     );
 
-    let col_widths = [70.0, 76.0, 90.0];
+    let col_widths = [76.0, 90.0];
     let rect_h = 36.0;
     let rect_w = col_widths.iter().sum::<f32>();
     let bar_cx = ui.max_rect().center().x;
@@ -382,11 +370,11 @@ fn show_timecode_display(
     ui.painter()
         .rect_filled(rect, egui::CornerRadius::same(8), egui::Color32::BLACK);
 
-    let texts_top = [format!("{:.1}%", cpu_usage), bpm_str, pos_str];
-    let texts_bot = [format!("{:.1} MB", mem_mb), ts_str, time_str];
+    let texts_top = [bpm_str, pos_str];
+    let texts_bot = [ts_str, time_str];
 
     let mut col_x = rect.min.x;
-    for i in 0..3 {
+    for i in 0..2 {
         let cx = col_x + col_widths[i] * 0.5;
         if i > 0 {
             ui.painter().line_segment(
@@ -410,17 +398,6 @@ fn show_timecode_display(
             font.clone(),
             c,
         );
-        if i == 0 {
-            let click_rect = egui::Rect::from_center_size(
-                bot_pos,
-                egui::vec2(col_widths[i] - 4.0, rect_h * 0.45),
-            );
-            let resp = ui.interact(click_rect, ui.id().with("mem_text"), egui::Sense::click());
-            if resp.clicked() {
-                *show_mem_breakdown = true;
-            }
-            resp.on_hover_text("点击打开内存占用详情");
-        }
         col_x += col_widths[i];
     }
 

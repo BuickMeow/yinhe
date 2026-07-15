@@ -64,6 +64,70 @@ fn right_icon_button(
     }
 }
 
+/// A compact "LABEL value" readout. Labels at 8.5, values at `MODE_LABEL_FONT`.
+fn metric(ui: &mut egui::Ui, label: &str, value: &str) {
+    metric_with_value_sz(ui, label, value, crate::theme::MODE_LABEL_FONT);
+}
+
+fn metric_with_value_sz(ui: &mut egui::Ui, label: &str, value: &str, value_sz: f32) {
+    ui.add(
+        egui::Label::new(
+            egui::RichText::new(label)
+                .size(8.5)
+                .color(egui::Color32::GRAY),
+        )
+        .selectable(false),
+    );
+    ui.add(
+        egui::Label::new(
+            egui::RichText::new(value)
+                .size(value_sz)
+                .color(crate::theme::ACCENT_ACTIVE),
+        )
+        .selectable(false),
+    );
+}
+
+/// Like [`metric`], but the value is clickable (e.g. to open a detail popup).
+fn metric_clickable(
+    ui: &mut egui::Ui,
+    label: &str,
+    value: &str,
+    on_click: impl FnOnce(),
+) {
+    metric_clickable_with_value_sz(ui, label, value, crate::theme::MODE_LABEL_FONT, on_click);
+}
+
+fn metric_clickable_with_value_sz(
+    ui: &mut egui::Ui,
+    label: &str,
+    value: &str,
+    value_sz: f32,
+    on_click: impl FnOnce(),
+) {
+    ui.add(
+        egui::Label::new(
+            egui::RichText::new(label)
+                .size(8.5)
+                .color(egui::Color32::GRAY),
+        )
+        .selectable(false),
+    );
+    let resp = ui.add(
+        egui::Label::new(
+            egui::RichText::new(value)
+                .size(value_sz)
+                .color(crate::theme::ACCENT_ACTIVE),
+        )
+        .sense(egui::Sense::click())
+        .selectable(false),
+    );
+    let resp = resp.on_hover_text("点击打开内存占用详情");
+    if resp.clicked() {
+        on_click();
+    }
+}
+
 pub fn show(
     ui: &mut egui::Ui,
     view_mode: &mut ViewMode,
@@ -71,6 +135,10 @@ pub fn show(
     show_transport: &mut bool,
     show_pianoroll: &mut bool,
     right_tab: &mut Option<RightTab>,
+    cpu_usage: f32,
+    mem_mb: f64,
+    fps: f32,
+    show_mem_breakdown: &mut bool,
 ) {
     egui::Panel::bottom("bottom_bar")
         .frame(egui::Frame {
@@ -209,6 +277,21 @@ pub fn show(
                             };
                         },
                     );
+
+                    // ── Resource metrics (CPU / MEM / FPS) — left of the right icons ──
+                    ui.separator();
+                    ui.add_space(8.0);
+
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 4.0;
+                        metric(ui, "CPU", &format!("{:.1}%", cpu_usage));
+                        ui.add_space(12.0);
+                        metric_clickable(ui, "MEM", &format!("{:.1} MB", mem_mb), || {
+                            *show_mem_breakdown = true;
+                        });
+                        ui.add_space(12.0);
+                        metric(ui, "FPS", &format!("{:.1}", fps));
+                    });
                 });
             });
         });

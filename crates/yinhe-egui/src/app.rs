@@ -113,6 +113,8 @@ pub struct App {
 
     // ── System resource monitoring ──
     pub(crate) sys_monitor: SystemMonitor,
+    /// Live FPS (real, EMA-smoothed from egui frame delta).
+    pub(crate) fps: f32,
 
     // ── Memory breakdown popup state ──
     pub(crate) show_mem_breakdown: bool,
@@ -243,6 +245,7 @@ impl App {
             haptic_engine: yinhe_haptic::HapticEngine::new(),
 
             sys_monitor: SystemMonitor::new(),
+            fps: 0.0,
 
             show_mem_breakdown: false,
 
