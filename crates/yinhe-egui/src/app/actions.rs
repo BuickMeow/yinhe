@@ -165,13 +165,20 @@ impl App {
     pub(crate) fn select_all(&mut self) {
         let Some(idx) = self.active_doc else { return };
         let is_pr = self.view_mode == crate::chrome::mode_bar::ViewMode::Edit;
-        let doc = &mut self.documents[idx];
         if is_pr {
-            doc.select_all_pr();
+            self.documents[idx].select_all_pr();
         } else {
-            doc.select_all_ar();
+            self.documents[idx].select_all_ar();
+            // AR 视图的选框绘制读的是 arr_sel_rect，不是 doc.edit.sel_rect，
+            // 所以需要同步设置。
+            let model = &self.documents[idx].data.model;
+            let max_end = model.tick_length as u32;
+            if max_end > 0 {
+                let num_tracks = model.tracks.len();
+                self.arr_sel_rect = Some((0.0, max_end as f64 + 1.0, 0, num_tracks - 1));
+            }
         }
-        doc.data.bump_version();
+        self.documents[idx].data.bump_version();
         self.pianoroll_view.base.dirty = true;
         self.arrange_view.base.dirty = true;
     }

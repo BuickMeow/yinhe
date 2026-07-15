@@ -512,9 +512,6 @@ impl Document {
         if after < num_tracks {
             self.edit.selected.add_rect_track(0, max_end + 1, 0, 127, after, num_tracks - 1);
         }
-
-        // Update visual sel_rect to show full range (Arrange uses f64 ticks).
-        self.edit.sel_rect.rect = Some((0.0, max_end as f64 + 1.0, 0, 127));
     }
 
     // ── Paste from clipboard ──
