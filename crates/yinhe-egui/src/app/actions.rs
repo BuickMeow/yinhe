@@ -19,6 +19,7 @@ pub(crate) struct KeyboardActions {
     pub undo: bool,
     pub redo: bool,
     pub copy: bool,
+    pub cut: bool,
     pub paste: bool,
     pub select_all: bool,
 }
@@ -36,6 +37,11 @@ impl App {
             .unwrap_or(false);
 
         ui.input(|i| {
+            // Skip text-editing shortcuts when a widget (e.g. TextEdit) has focus.
+            let text_focused = i.events.iter().any(|e| {
+                matches!(e, egui::Event::Copy | egui::Event::Paste(_))
+            }) || ui.ctx().memory(|m| m.focused().is_some());
+
             if i.key_pressed(egui::Key::Space) {
                 if is_playing_any {
                     actions.pause_return = true;
@@ -47,17 +53,17 @@ impl App {
                 actions.stop_play = true;
             }
 
-            // Delete / Backspace — delete selected notes
+            // Delete / Backspace - delete selected notes
             if i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace) {
                 actions.delete_selected = true;
             }
 
-            // Ctrl+D / Cmd+D — duplicate selected notes
+            // Ctrl+D / Cmd+D - duplicate selected notes
             if (i.modifiers.command || i.modifiers.ctrl) && i.key_pressed(egui::Key::D) {
                 actions.duplicate_selected = true;
             }
 
-            // Shift+↑ / Shift+↓ — transpose octave
+            // Shift+↑ / Shift+↓ - transpose octave
             if i.modifiers.shift {
                 if i.key_pressed(egui::Key::ArrowUp) {
                     actions.transpose_up = true;
@@ -67,7 +73,7 @@ impl App {
                 }
             }
 
-            // Cmd/Ctrl+Z — undo;  Cmd/Ctrl+Shift+Z or Cmd/Ctrl+Y — redo.
+            // Cmd/Ctrl+Z - undo;  Cmd/Ctrl+Shift+Z or Cmd/Ctrl+Y - redo.
             let cmd = i.modifiers.command || i.modifiers.ctrl;
             if cmd && i.key_pressed(egui::Key::Z) {
                 if i.modifiers.shift {
@@ -80,17 +86,20 @@ impl App {
                 actions.redo = true;
             }
 
-            // Cmd/Ctrl+C — copy selection
-            if cmd && i.key_pressed(egui::Key::C) {
-                actions.copy = true;
-            }
-            // Cmd/Ctrl+V — paste
-            if cmd && i.key_pressed(egui::Key::V) {
-                actions.paste = true;
-            }
-            // Cmd/Ctrl+A — select all
-            if cmd && i.key_pressed(egui::Key::A) {
-                actions.select_all = true;
+            // Copy / Cut / Paste / Select All - skip when TextEdit has focus.
+            if !text_focused {
+                if cmd && i.key_pressed(egui::Key::C) {
+                    actions.copy = true;
+                }
+                if cmd && i.key_pressed(egui::Key::X) {
+                    actions.cut = true;
+                }
+                if cmd && i.key_pressed(egui::Key::V) {
+                    actions.paste = true;
+                }
+                if cmd && i.key_pressed(egui::Key::A) {
+                    actions.select_all = true;
+                }
             }
         });
 
@@ -127,12 +136,20 @@ impl App {
         self.with_undo(label, |doc| doc.transpose_selected(semitones));
     }
 
-    // ── Copy / Paste / Select All ──
+    // ── Copy / Cut / Paste / Select All ──
 
-    /// Copy current selection rects to clipboard (no note data, just rects).
+    /// Copy selection rects to clipboard (no note data, just rects).
     pub(crate) fn copy_selection(&mut self) {
         let Some(idx) = self.active_doc else { return };
         self.clipboard = self.documents[idx].edit.selected.clone();
+    }
+
+    /// Cut: copy rects to clipboard, then delete selected notes.
+    /// Paste after cut works via undo bridge (paste falls back to
+    /// the most recent undo entry when model query returns empty).
+    pub(crate) fn cut_selection(&mut self) {
+        self.copy_selection();
+        self.delete_selected_notes();
     }
 
     /// Paste notes from clipboard at cursor position.
@@ -187,6 +204,7 @@ impl App {
         doc.history.push(entry);
         doc.data.bump_version();
         self.pianoroll_view.base.dirty = true;
+        self.arrange_view.base.dirty = true;
         self.notify_audio_model_changed();
     }
 

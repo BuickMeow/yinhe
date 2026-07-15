@@ -153,6 +153,9 @@ impl eframe::App for App {
         if kb.copy {
             self.copy_selection();
         }
+        if kb.cut {
+            self.cut_selection();
+        }
         if kb.paste {
             self.paste_clipboard();
         }

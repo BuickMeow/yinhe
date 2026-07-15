@@ -514,11 +514,12 @@ impl Document {
 
     // ── Paste from clipboard ──
 
-    /// Paste notes from a clipboard selection at the cursor position.
+    /// Paste notes from clipboard (selection rects) at the cursor position.
     ///
-    /// The clipboard stores selection rects (not note data). Notes within
-    /// those rects are queried from the current model, then duplicated at
-    /// an offset so the earliest note starts at `cursor_tick`.
+    /// Clipboard stores only selection rects (not note data) for performance.
+    /// Notes are queried from the model at paste time. If the notes have been
+    /// deleted (e.g. after cut), falls back to the most recent undo entry
+    /// which contains the deleted notes in its `before` field.
     pub fn paste_from_selection(
         &mut self,
         clipboard: &yinhe_core::Selection,
@@ -528,24 +529,40 @@ impl Document {
             return None;
         }
 
-        let model = Arc::make_mut(&mut self.data.model);
+        // Try querying the model first (normal copy-paste).
+        let model = &self.data.model;
+        let mut notes = crate::batch_ops::collect_selected(model, clipboard);
 
-        // Collect notes within clipboard rects.
-        let notes = crate::batch_ops::collect_selected(model, clipboard);
+        // Undo bridge: if model query returned nothing (notes were cut/deleted),
+        // fall back to the most recent undo entry's `before` notes.
+        if notes.is_empty() {
+            if let Some(entry) = self.history.past.last() {
+                if let UndoAction::Notes(delta) = &entry.action {
+                    if !delta.before.is_empty() {
+                        // Filter to notes that fall within clipboard rects.
+                        notes = delta.before.iter()
+                            .filter(|(n, key)| clipboard.contains(n.track, n.start_tick, *key))
+                            .cloned()
+                            .collect();
+                    }
+                }
+            }
+        }
+
         if notes.is_empty() {
             return None;
         }
 
-        // Calculate offset: cursor - min start_tick of clipboard notes.
+        // Calculate offset: cursor - min start_tick.
         let min_start = notes.iter().map(|(n, _)| n.start_tick).min().unwrap_or(0);
         let offset = (cursor_tick as i64 - min_start as i64).max(0) as u32;
 
         let conductor = self.edit.conductor_track_idx;
+        let model = Arc::make_mut(&mut self.data.model);
 
         let mut new_by_key: std::collections::HashMap<u8, Vec<yinhe_types::Note>> =
             std::collections::HashMap::new();
         for (note, key) in &notes {
-            // Skip notes that would land on conductor track.
             if Some(note.track) == conductor {
                 continue;
             }
@@ -574,7 +591,6 @@ impl Document {
         self.edit.selected.clear();
         let max_end = after.iter().map(|(n, _)| n.end_tick).max().unwrap_or(0);
         let min_tick = after.iter().map(|(n, _)| n.start_tick).min().unwrap_or(0);
-        // Build per-track rects for the pasted notes.
         let mut track_lo = u16::MAX;
         let mut track_hi = 0u16;
         for (n, _) in &after {

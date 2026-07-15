@@ -150,7 +150,7 @@ pub(crate) fn sel_drag_frame(
     ppq: u32,
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
     total_ticks: f64,
-    _cursor_tick: &mut Option<f64>,
+    cursor_tick: &mut Option<f64>,
     note_drag_delta: &mut Option<(i64, i32)>,
     sel_rect: &mut yinhe_editor_core::edit_state::SelRectState,
     _track_colors: &[[f32; 3]],
@@ -321,6 +321,16 @@ pub(crate) fn sel_drag_frame(
                 track_lo, track_hi,
             );
             sel_rect.rect = Some((result.t_start, result.t_end, result.key_lo, result.key_hi));
+        } else if ui.input(|i| i.pointer.primary_released()) {
+            // Simple click (no marquee) - set cursor to click position for paste.
+            if let Some(pos) = ui.input(|i| i.pointer.hover_pos()) {
+                if music_rect.contains(pos) {
+                    let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
+                    let tick = view.x_to_tick(local.x);
+                    let snapped = crate::view_interaction::snap_tick(tick, quantize, ppq, bar_line_data);
+                    *cursor_tick = Some(snapped.max(0.0));
+                }
+            }
         }
     }
 
