@@ -451,9 +451,18 @@ impl Document {
     // ── Select All ──
 
     /// Select all notes in the currently selected track(s) for Piano Roll.
-    /// Range: tick 0 → last note end in those tracks, keys 0–127.
+    /// Range: tick 0 → last note end (global), keys 0–127.
+    ///
+    /// Uses `model.tick_length` (O(1)) instead of scanning all key buckets (O(N)).
+    /// Sets `sel_rect.rect` to the full global range so the visual selection box
+    /// covers 0 → tick_length, keys 0–127.
     pub fn select_all_pr(&mut self) {
         let model = &self.data.model;
+        let max_end = model.tick_length as u32;
+        if max_end == 0 {
+            return;
+        }
+
         let conductor = self.edit.conductor_track_idx;
         let tracks: Vec<u16> = if self.edit.track_selected.is_empty() {
             // 没有预选 track 时，全选所有非 conductor track
@@ -471,24 +480,11 @@ impl Document {
             if Some(track_idx) == conductor {
                 continue;
             }
-            // Find max end_tick for this track across all key buckets.
-            let mut max_end: u32 = 0;
-            for bucket in model.notes.iter() {
-                for n in bucket.iter() {
-                    if n.track == track_idx && n.end_tick > max_end {
-                        max_end = n.end_tick;
-                    }
-                }
-            }
-            if max_end > 0 {
-                self.edit.selected.add_rect_track(0, max_end + 1, 0, 127, track_idx, track_idx);
-            }
+            self.edit.selected.add_rect_track(0, max_end + 1, 0, 127, track_idx, track_idx);
         }
 
-        // Update visual sel_rect to match (PR uses f64 ticks).
-        if let Some(&(ts, te, kl, kh, _, _)) = self.edit.selected.rects.first() {
-            self.edit.sel_rect.rect = Some((ts as f64, te as f64, kl, kh));
-        }
+        // Update visual sel_rect to show full range (PR uses f64 ticks).
+        self.edit.sel_rect.rect = Some((0.0, max_end as f64 + 1.0, 0, 127));
     }
 
     /// Select all notes across all tracks for Arrange.
@@ -516,6 +512,9 @@ impl Document {
         if after < num_tracks {
             self.edit.selected.add_rect_track(0, max_end + 1, 0, 127, after, num_tracks - 1);
         }
+
+        // Update visual sel_rect to show full range (Arrange uses f64 ticks).
+        self.edit.sel_rect.rect = Some((0.0, max_end as f64 + 1.0, 0, 127));
     }
 
     // ── Paste from clipboard ──
