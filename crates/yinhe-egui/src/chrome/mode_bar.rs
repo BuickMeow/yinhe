@@ -64,7 +64,7 @@ fn right_icon_button(
     }
 }
 
-/// A compact "LABEL value" readout. Labels at 8.5, values at `MODE_LABEL_FONT`.
+/// A compact "LABEL value" readout. Both label and value at `MODE_LABEL_FONT`.
 fn metric(ui: &mut egui::Ui, label: &str, value: &str) {
     metric_with_value_sz(ui, label, value, crate::theme::MODE_LABEL_FONT);
 }
@@ -73,7 +73,7 @@ fn metric_with_value_sz(ui: &mut egui::Ui, label: &str, value: &str, value_sz: f
     ui.add(
         egui::Label::new(
             egui::RichText::new(label)
-                .size(8.5)
+                .size(crate::theme::MODE_LABEL_FONT)
                 .color(egui::Color32::GRAY),
         )
         .selectable(false),
@@ -108,7 +108,7 @@ fn metric_clickable_with_value_sz(
     ui.add(
         egui::Label::new(
             egui::RichText::new(label)
-                .size(8.5)
+                .size(crate::theme::MODE_LABEL_FONT)
                 .color(egui::Color32::GRAY),
         )
         .selectable(false),
