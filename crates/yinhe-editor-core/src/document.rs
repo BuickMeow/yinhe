@@ -455,7 +455,13 @@ impl Document {
     pub fn select_all_pr(&mut self) {
         let model = &self.data.model;
         let conductor = self.edit.conductor_track_idx;
-        let tracks: Vec<u16> = self.edit.track_selected.iter().copied().collect();
+        let tracks: Vec<u16> = if self.edit.track_selected.is_empty() {
+            // 没有预选 track 时，全选所有非 conductor track
+            let num_tracks = model.tracks.len() as u16;
+            (0..num_tracks).filter(|&t| Some(t) != conductor).collect()
+        } else {
+            self.edit.track_selected.iter().copied().collect()
+        };
         if tracks.is_empty() {
             return;
         }
@@ -536,11 +542,13 @@ impl Document {
 
         // Undo bridge: if model query returned nothing (notes were cut/deleted),
         // fall back to the correct undo entry identified by cut_past_len.
+        //
+        // cut_past_len was captured as past.len() BEFORE the delete was pushed.
+        // After push, the delete entry sits at index `cut_past_len` (push appends
+        // at the end, so old length = new entry's index).
         if notes.is_empty() {
             let entry = cut_past_len
-                .and_then(|len| {
-                    if len > 0 { self.history.past.get(len - 1) } else { None }
-                })
+                .and_then(|len| self.history.past.get(len))
                 .or_else(|| self.history.past.last());
             if let Some(entry) = entry {
                 if let UndoAction::Notes(delta) = &entry.action {

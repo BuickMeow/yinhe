@@ -89,6 +89,22 @@ impl eframe::App for App {
                     self.redo();
                     continue;
                 }
+                MenuAction::Cut => {
+                    self.cut_selection();
+                    continue;
+                }
+                MenuAction::Copy => {
+                    self.copy_selection();
+                    continue;
+                }
+                MenuAction::Paste => {
+                    self.paste_clipboard();
+                    continue;
+                }
+                MenuAction::SelectAll => {
+                    self.select_all();
+                    continue;
+                }
             };
             self.handle_file_action(file_action, ui.ctx());
         }

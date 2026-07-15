@@ -16,6 +16,10 @@ pub enum MenuAction {
     CloseDocument,
     Undo,
     Redo,
+    Cut,
+    Copy,
+    Paste,
+    SelectAll,
 }
 
 /// Handle to the native menu bar and its action receiver.

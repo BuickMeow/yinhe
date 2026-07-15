@@ -147,7 +147,44 @@ fn init_native_menu() -> muda::Result<()> {
     ));
     map.insert(redo_item.id().clone(), MenuAction::Redo);
 
-    let edit_menu = Submenu::with_items("编辑", true, &[undo_item.as_ref(), redo_item.as_ref()])?;
+    let cut_item = Box::new(MenuItem::new(
+        "剪切",
+        true,
+        Some(Accelerator::new(Some(cmd), Code::KeyX)),
+    ));
+    map.insert(cut_item.id().clone(), MenuAction::Cut);
+
+    let copy_item = Box::new(MenuItem::new(
+        "拷贝",
+        true,
+        Some(Accelerator::new(Some(cmd), Code::KeyC)),
+    ));
+    map.insert(copy_item.id().clone(), MenuAction::Copy);
+
+    let paste_item = Box::new(MenuItem::new(
+        "粘贴",
+        true,
+        Some(Accelerator::new(Some(cmd), Code::KeyV)),
+    ));
+    map.insert(paste_item.id().clone(), MenuAction::Paste);
+
+    let select_all_item = Box::new(MenuItem::new(
+        "全选",
+        true,
+        Some(Accelerator::new(Some(cmd), Code::KeyA)),
+    ));
+    map.insert(select_all_item.id().clone(), MenuAction::SelectAll);
+
+    let edit_menu = Submenu::with_items("编辑", true, &[
+        undo_item.as_ref(),
+        redo_item.as_ref(),
+        &PredefinedMenuItem::separator(),
+        cut_item.as_ref(),
+        copy_item.as_ref(),
+        paste_item.as_ref(),
+        &PredefinedMenuItem::separator(),
+        select_all_item.as_ref(),
+    ])?;
 
     let menu = Menu::with_items(&[&file_menu, &edit_menu])?;
     menu.init_for_nsapp();
@@ -160,6 +197,10 @@ fn init_native_menu() -> muda::Result<()> {
     items.push(close_item);
     items.push(undo_item);
     items.push(redo_item);
+    items.push(cut_item);
+    items.push(copy_item);
+    items.push(paste_item);
+    items.push(select_all_item);
     items.push(Box::new(file_menu));
     items.push(Box::new(edit_menu));
 
