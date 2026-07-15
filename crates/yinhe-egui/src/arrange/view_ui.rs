@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use eframe::egui;
 
 use yinhe_arrangement::{build_decor, build_ghost_notes, build_grid, build_notes};
+use yinhe_core::TrackInfo;
 use yinhe_types::{ArrangementView, NoteSource, key_notes_in_range};
 use yinhe_wgpu::{InstanceRenderer, Uniforms, TrackColorsUniform, MAX_TRACKS};
 use yinhe_types::TimeSigEvent;
@@ -31,6 +32,7 @@ pub fn show(
     selected: &mut yinhe_core::Selection,
     track_visible: &[bool],
     track_colors: &[[f32; 3]],
+    track_info: &[TrackInfo],
     cursor_tick: &mut Option<f64>,
     quantize: QuantizePreset,
     ppq: u32,
@@ -46,6 +48,9 @@ pub fn show(
     arr_sel_rect: &mut Option<(f64, f64, usize, usize)>,
     arr_drag_delta: &mut Option<(i64, i32)>,
     arr_eraser_rect: &mut Option<(f64, f64, usize, usize)>,
+    track_selected: &mut HashSet<u16>,
+    selection_anchor: &mut Option<u16>,
+    info_content: &mut Option<crate::right_panel::InfoContent>,
 ) {
     let _arrange_total_start = if yinhe_memtrace::perf_probe::enabled() {
         Some(std::time::Instant::now())
@@ -145,6 +150,7 @@ pub fn show(
             midi,
             selected,
             track_visible,
+            track_info,
             quantize,
             ppq,
             bar_line_data,
@@ -153,6 +159,9 @@ pub fn show(
             cursor_tick,
             arr_sel_rect,
             arr_drag_delta,
+            track_selected,
+            selection_anchor,
+            info_content,
         )
     } else {
         (Vec::new(), HashSet::new(), None)
@@ -381,6 +390,7 @@ fn sel_drag_frame_arrange(
     midi: Option<&dyn NoteSource>,
     selected: &mut yinhe_core::Selection,
     track_visible: &[bool],
+    track_info: &[TrackInfo],
     quantize: QuantizePreset,
     ppq: u32,
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
@@ -389,6 +399,9 @@ fn sel_drag_frame_arrange(
     cursor_tick: &mut Option<f64>,
     arr_sel_rect: &mut Option<(f64, f64, usize, usize)>,
     arr_drag_delta: &mut Option<(i64, i32)>,
+    track_selected: &mut HashSet<u16>,
+    selection_anchor: &mut Option<u16>,
+    info_content: &mut Option<crate::right_panel::InfoContent>,
 ) -> (Vec<(f64, f64, u8, u16)>, HashSet<(u16, u32, u8)>, Option<egui::Rect>) {
     let mut ghost_notes: Vec<(f64, f64, u8, u16)> = Vec::new();
     let mut hidden_notes: HashSet<(u16, u32, u8)> = HashSet::new();
@@ -657,6 +670,16 @@ fn sel_drag_frame_arrange(
                     selected.clear();
                     *arr_sel_rect = None;
                     *cursor_tick = Some(snapped.max(0.0));
+
+                    // 点击时同时选中对应音轨
+                    let track_arr_idx = start_music.1.floor() as usize;
+                    if track_arr_idx < num_tracks {
+                        let track_idx = track_info[track_arr_idx].index;
+                        track_selected.clear();
+                        track_selected.insert(track_idx);
+                        *selection_anchor = Some(track_idx);
+                        *info_content = Some(crate::right_panel::InfoContent::Track);
+                    }
                 } else {
                     let (
                         _screen_sx,

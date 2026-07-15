@@ -231,6 +231,7 @@ pub fn show(
             &mut doc.edit.selected,
             &doc.edit.track_visible,
             &doc.edit.track_colors_cache,
+            &doc.edit.track_info_cache,
             &mut doc.edit.cursor_tick,
             doc.edit.quantize_arrange,
             doc.data.model.meta.ppq,
@@ -255,6 +256,9 @@ pub fn show(
             arr_sel_rect,
             arr_drag_delta,
             arr_eraser_rect,
+            &mut doc.edit.track_selected,
+            selection_anchor,
+            info_content,
         );
     });
 
