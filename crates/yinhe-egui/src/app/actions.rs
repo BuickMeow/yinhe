@@ -36,9 +36,6 @@ impl App {
             .map(|a| a.handle.is_playing())
             .unwrap_or(false);
 
-        // Compute focus check outside ui.input() to avoid deadlock on Context lock.
-        let text_focused = ui.ctx().memory(|m| m.focused().is_some());
-
         ui.input(|i| {
             if i.key_pressed(egui::Key::Space) {
                 if is_playing_any {
@@ -84,20 +81,18 @@ impl App {
                 actions.redo = true;
             }
 
-            // Copy / Cut / Paste / Select All - skip when TextEdit has focus.
-            if !text_focused {
-                if cmd && i.key_pressed(egui::Key::C) {
-                    actions.copy = true;
-                }
-                if cmd && i.key_pressed(egui::Key::X) {
-                    actions.cut = true;
-                }
-                if cmd && i.key_pressed(egui::Key::V) {
-                    actions.paste = true;
-                }
-                if cmd && i.key_pressed(egui::Key::A) {
-                    actions.select_all = true;
-                }
+            // Copy / Cut / Paste / Select All
+            if cmd && i.key_pressed(egui::Key::C) {
+                actions.copy = true;
+            }
+            if cmd && i.key_pressed(egui::Key::X) {
+                actions.cut = true;
+            }
+            if cmd && i.key_pressed(egui::Key::V) {
+                actions.paste = true;
+            }
+            if cmd && i.key_pressed(egui::Key::A) {
+                actions.select_all = true;
             }
         });
 
