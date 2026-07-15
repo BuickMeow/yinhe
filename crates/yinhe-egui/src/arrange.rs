@@ -89,7 +89,7 @@ pub fn show(
         let tpb = model.meta.ppq;
         let (def_num, def_den) = model.tempo_map.time_sig_default;
         let sig_events = model.tempo_map.time_sig_events.as_slice();
-        crate::widgets::time_ruler::interactive_ruler(
+        let ruler_jumped = crate::widgets::time_ruler::interactive_ruler(
             ui,
             ruler_rect,
             arr_view,
@@ -108,6 +108,11 @@ pub fn show(
             "arrange_ruler",
             &mut doc.edit.cursor_tick,
         );
+        // 点击/拖动时间标尺跳转位置时，取消已选择的选框（含框选与全选）。
+        if ruler_jumped {
+            doc.edit.selected.clear();
+            *arr_sel_rect = None;
+        }
     }
 
     // ── Track panel content ──

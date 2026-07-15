@@ -488,7 +488,7 @@ pub fn show(
         );
         let (def_num, def_den) = midi.time_sig_default();
         let sig_events = midi.time_sig_events();
-        crate::widgets::time_ruler::interactive_ruler(
+        let ruler_jumped = crate::widgets::time_ruler::interactive_ruler(
             ui,
             ruler_rect,
             view,
@@ -500,6 +500,11 @@ pub fn show(
             "piano_ruler",
             cursor_tick,
         );
+        // 点击/拖动时间标尺跳转位置时，取消已选择的选框（含框选与全选）。
+        if ruler_jumped {
+            selected.clear();
+            sel_rect.rect = None;
+        }
     }
 
     // ── Automation panels ──

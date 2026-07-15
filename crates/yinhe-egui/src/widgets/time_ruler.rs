@@ -78,6 +78,9 @@ fn paint_background(painter: &egui::Painter, rect: egui::Rect) {
 /// `snap` receives the raw tick under the pointer and should return the snapped tick.
 /// `id_salt` must be unique for each ruler in the same UI scope (e.g. "piano_ruler"
 /// vs "arrange_ruler").
+///
+/// Returns `true` if the ruler was clicked or dragged this frame (the caller
+/// typically uses this to clear any active selection box).
 pub(crate) fn interactive_ruler(
     ui: &mut egui::Ui,
     ruler_rect: egui::Rect,
@@ -89,7 +92,7 @@ pub(crate) fn interactive_ruler(
     snap: impl Fn(f64) -> f64,
     id_salt: &str,
     cursor_tick: &mut Option<f64>,
-) {
+) -> bool {
     let painter = ui.painter_at(ruler_rect);
     paint_background(&painter, ruler_rect);
     paint_labels(
@@ -107,6 +110,7 @@ pub(crate) fn interactive_ruler(
         ui.id().with(id_salt),
         egui::Sense::click_and_drag(),
     );
+    let mut jumped = false;
     if (ruler_resp.clicked() || ruler_resp.dragged())
         && let Some(pos) = ruler_resp.interact_pointer_pos()
     {
@@ -114,7 +118,9 @@ pub(crate) fn interactive_ruler(
         let tick = view.x_to_tick(view_x);
         *cursor_tick = Some(snap(tick).max(0.0));
         ui.ctx().request_repaint();
+        jumped = true;
     }
+    jumped
 }
 
 // ── Label painting ──
