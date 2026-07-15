@@ -36,12 +36,10 @@ impl App {
             .map(|a| a.handle.is_playing())
             .unwrap_or(false);
 
-        ui.input(|i| {
-            // Skip text-editing shortcuts when a widget (e.g. TextEdit) has focus.
-            let text_focused = i.events.iter().any(|e| {
-                matches!(e, egui::Event::Copy | egui::Event::Paste(_))
-            }) || ui.ctx().memory(|m| m.focused().is_some());
+        // Compute focus check outside ui.input() to avoid deadlock on Context lock.
+        let text_focused = ui.ctx().memory(|m| m.focused().is_some());
 
+        ui.input(|i| {
             if i.key_pressed(egui::Key::Space) {
                 if is_playing_any {
                     actions.pause_return = true;
