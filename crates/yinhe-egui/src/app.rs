@@ -133,6 +133,9 @@ pub struct App {
 
     // ── Clipboard (selection-rect based, not note data) ──
     pub(crate) clipboard: yinhe_core::Selection,
+    /// Length of `doc.history.past` at the time of the last cut.
+    /// Used by paste to locate the correct undo entry (undo bridge).
+    pub(crate) cut_past_len: Option<usize>,
 }
 
 impl App {
@@ -249,6 +252,7 @@ impl App {
             last_dirty_state: false,
 
             clipboard: yinhe_core::Selection::default(),
+            cut_past_len: None,
         };
 
         // Sync haptic settings from persisted config

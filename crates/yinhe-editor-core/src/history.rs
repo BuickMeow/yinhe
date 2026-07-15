@@ -438,6 +438,11 @@ impl UndoStack {
         !self.past.is_empty()
     }
 
+    /// Number of entries in the undo stack (public read access).
+    pub fn past_len(&self) -> usize {
+        self.past.len()
+    }
+
     pub fn can_redo(&self) -> bool {
         !self.future.is_empty()
     }

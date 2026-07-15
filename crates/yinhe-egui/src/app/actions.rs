@@ -139,25 +139,33 @@ impl App {
     // ── Copy / Cut / Paste / Select All ──
 
     /// Copy selection rects to clipboard (no note data, just rects).
+    /// Resets cut_past_len since a new copy invalidates the cut undo bridge.
     pub(crate) fn copy_selection(&mut self) {
         let Some(idx) = self.active_doc else { return };
         self.clipboard = self.documents[idx].edit.selected.clone();
+        self.cut_past_len = None;
     }
 
     /// Cut: copy rects to clipboard, then delete selected notes.
-    /// Paste after cut works via undo bridge (paste falls back to
-    /// the most recent undo entry when model query returns empty).
+    /// Stores the current undo stack length so paste can locate the
+    /// correct undo entry (undo bridge) even if intervening edits occur.
     pub(crate) fn cut_selection(&mut self) {
         self.copy_selection();
+        // cut_past_len is reset by copy_selection; set it before delete pushes.
+        let Some(idx) = self.active_doc else { return };
+        self.cut_past_len = Some(self.documents[idx].history.past_len());
         self.delete_selected_notes();
     }
 
     /// Paste notes from clipboard at cursor position.
     pub(crate) fn paste_clipboard(&mut self) {
         let clipboard = self.clipboard.clone();
+        let cut_past_len = self.cut_past_len;
         let Some(idx) = self.active_doc else { return };
         let cursor_tick = self.documents[idx].edit.cursor_tick.unwrap_or(0.0);
-        self.with_undo("Paste", |doc| doc.paste_from_selection(&clipboard, cursor_tick));
+        self.with_undo("Paste", |doc| {
+            doc.paste_from_selection(&clipboard, cursor_tick, cut_past_len)
+        });
     }
 
     /// Select all notes — PR or AR depending on current view mode.

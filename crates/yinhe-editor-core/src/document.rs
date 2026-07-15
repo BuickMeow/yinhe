@@ -518,12 +518,13 @@ impl Document {
     ///
     /// Clipboard stores only selection rects (not note data) for performance.
     /// Notes are queried from the model at paste time. If the notes have been
-    /// deleted (e.g. after cut), falls back to the most recent undo entry
-    /// which contains the deleted notes in its `before` field.
+    /// deleted (e.g. after cut), falls back to the undo entry identified by
+    /// `cut_past_len` which contains the deleted notes in its `before` field.
     pub fn paste_from_selection(
         &mut self,
         clipboard: &yinhe_core::Selection,
         cursor_tick: f64,
+        cut_past_len: Option<usize>,
     ) -> Option<UndoAction> {
         if clipboard.is_empty() {
             return None;
@@ -534,12 +535,16 @@ impl Document {
         let mut notes = crate::batch_ops::collect_selected(model, clipboard);
 
         // Undo bridge: if model query returned nothing (notes were cut/deleted),
-        // fall back to the most recent undo entry's `before` notes.
+        // fall back to the correct undo entry identified by cut_past_len.
         if notes.is_empty() {
-            if let Some(entry) = self.history.past.last() {
+            let entry = cut_past_len
+                .and_then(|len| {
+                    if len > 0 { self.history.past.get(len - 1) } else { None }
+                })
+                .or_else(|| self.history.past.last());
+            if let Some(entry) = entry {
                 if let UndoAction::Notes(delta) = &entry.action {
                     if !delta.before.is_empty() {
-                        // Filter to notes that fall within clipboard rects.
                         notes = delta.before.iter()
                             .filter(|(n, key)| clipboard.contains(n.track, n.start_tick, *key))
                             .cloned()
