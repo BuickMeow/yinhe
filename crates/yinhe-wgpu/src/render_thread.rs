@@ -88,6 +88,7 @@ impl RenderThreadHandle {
 
         std::thread::Builder::new()
             .name("yinhe-render".into())
+            .stack_size(32 * 1024 * 1024) // 32 MB — TrackColorsUniform 等大结构压栈需要
             .spawn(move || {
                 tracing::info!("Render thread started");
                 loop {
