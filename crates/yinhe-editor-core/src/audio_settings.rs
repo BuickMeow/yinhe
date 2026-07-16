@@ -21,8 +21,6 @@ pub struct AudioSettings {
     /// Linear/Curve 自动化播放时，按多少 tick 间隔生成一个中间 MIDI 事件。
     /// 默认 1（每 tick 一个事件，最平滑）。值越大文件越小但越阶梯化。
     pub automation_event_density: u32,
-    /// 选中音符是否变色（默认关闭，仅靠选框标识选中状态）
-    pub note_selection_highlight: bool,
     /// 音符描边开关（关闭可减少 GPU fill rate，提高性能）
     pub note_outline: bool,
     pub scroll_mode: u32,
@@ -59,7 +57,6 @@ impl Default for AudioSettings {
             midi_import_encoding: MidiImportEncoding::Utf8,
             velocity_display_mode: 0,
             automation_event_density: 1,
-            note_selection_highlight: false,
             note_outline: true, // outline on by default (existing behavior)
             haptic_enabled: true,
             haptic_intensity: 0.5,

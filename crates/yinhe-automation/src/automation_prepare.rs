@@ -139,7 +139,6 @@ pub fn prepare(
         min_border_width,
         track_count: 0, // unused in pixel mode
         sel_rect_count: 0, // unused in pixel mode
-        note_selection_highlight: 0, // automation: no note selection highlight
         note_outline: 1, // unused in pixel mode
         lane_height: 0.0, // unused in pixel mode
         note_alpha: 1.0, // unused in pixel mode (decor uses packed rgba)

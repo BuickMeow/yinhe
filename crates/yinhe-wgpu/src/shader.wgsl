@@ -1,6 +1,5 @@
 // ── Rendering constants ───────────────────────────────────────────────────
 const BORDER_DARKEN_FACTOR: f32 = 0.4;
-const SELECTED_DARKEN_FACTOR: f32 = 0.15;
 const MAX_TRACKS: u32 = 65536u;
 const MAX_SEL_RECTS: u32 = 32u;
 
@@ -18,8 +17,7 @@ struct Uniforms {
     min_border_width: f32,
     track_count: u32, // number of valid tracks in track_colors
     sel_rect_count: u32, // number of valid selection rects
-    note_selection_highlight: u32, // 0=off (no color change), 1=on
-    note_outline: u32, // 0=no outline (skips border calc, saves fill rate), 1=on
+    note_outline: u32, // 0=no outline (saves fill rate), 1=on
     lane_height: f32, // AR: per-track lane height (PR unused)
     note_alpha: f32, // note alpha override (PR=1.0, AR=0.85)
 }
@@ -48,7 +46,6 @@ struct VertexOutput {
     @location(2) half_size: vec2<f32>,
     @location(3) radius: f32,
     @location(4) border_width: f32,
-    @location(5) sel_flag: u32, // 1 = selected note
 }
 
 @group(0) @binding(0)
@@ -59,27 +56,6 @@ var<storage> tc: TrackColorsUniform;
 
 @group(0) @binding(2)
 var<uniform> sel: SelectionUniform;
-
-// Check if a note (track, start_tick, key) is within any selection rect.
-fn is_selected(track: u32, start_tick: u32, key: u32) -> bool {
-    let count = u.sel_rect_count;
-    for (var i = 0u; i < count; i++) {
-        let r0 = sel.rects[i * 2u];
-        let r1 = sel.rects[i * 2u + 1u];
-        let tick_start = r0.x;
-        let tick_end = r0.y;
-        let key_lo = r0.z;
-        let key_hi = r0.w;
-        let track_lo = r1.x;
-        let track_hi = r1.y;
-        if (track >= track_lo && track <= track_hi
-            && key >= key_lo && key <= key_hi
-            && start_tick >= tick_start && start_tick < tick_end) {
-            return true;
-        }
-    }
-    return false;
-}
 
 @vertex
 fn vs_main(
@@ -207,19 +183,6 @@ fn vs_main(
     out.uv = uv[vertex_index];
     out.half_size = vec2<f32>(pixel_w, pixel_h) * 0.5;
 
-    // Selection: mode=1 (PR notes) checks selection uniform via track_index
-    // mode=2 (AR notes) or decor/grid/keyboard: sel_flag = 0
-    // Color change is gated by u.note_selection_highlight — when off, sel_flag
-    // stays 0 so selected notes render with the same color as unselected ones.
-    if u.mode == 1u && vel > 0u && u.note_selection_highlight != 0u {
-        let track_idx = tag;
-        let start_tick = instance.xywh.x;  // stored as tick
-        let key = instance.xywh.y;          // stored as key number
-        out.sel_flag = select(0u, 1u, is_selected(track_idx, u32(start_tick), u32(key)));
-    } else {
-        out.sel_flag = 0u;
-    }
-
     return out;
 }
 
@@ -318,13 +281,6 @@ fn vs_main_note(
     out.uv = uv[vertex_index];
     out.half_size = vec2<f32>(pixel_w, pixel_h) * 0.5;
 
-    // Selection: only PR mode (mode==1) checks selection uniform
-    if u.mode == 1u && u.note_selection_highlight != 0u {
-        out.sel_flag = select(0u, 1u, is_selected(track, start_tick, key));
-    } else {
-        out.sel_flag = 0u;
-    }
-
     return out;
 }
 
@@ -335,13 +291,12 @@ fn sd_rounded_box(p: vec2<f32>, half_size: vec2<f32>, r: f32) -> f32 {
 }
 
 // Border + fill alpha compositing
-fn composite_border_fill(fill_a: f32, border_a: f32, base_color: vec4<f32>, sel_flag: u32) -> vec4<f32> {
+fn composite_border_fill(fill_a: f32, border_a: f32, base_color: vec4<f32>) -> vec4<f32> {
     let total_a = fill_a + border_a;
-    let fill_color = select(base_color.rgb, base_color.rgb * SELECTED_DARKEN_FACTOR, sel_flag != 0u);
-    let border_color = select(base_color.rgb * BORDER_DARKEN_FACTOR, base_color.rgb, sel_flag != 0u);
+    let border_color = base_color.rgb * BORDER_DARKEN_FACTOR;
     var rgb = border_color;
     if fill_a > 0.0 {
-        rgb = (fill_color * fill_a + border_color * border_a) / total_a;
+        rgb = (base_color.rgb * fill_a + border_color * border_a) / total_a;
     }
     return vec4(rgb, base_color.a * total_a);
 }
@@ -368,7 +323,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             border_a = outer_a - inner_a;
         }
 
-        return composite_border_fill(fill_a, border_a, base_color, in.sel_flag);
+        return composite_border_fill(fill_a, border_a, base_color);
     }
 
     // Slow path: SDF rounded rectangle
@@ -388,5 +343,5 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         border_a = outer_a - inner_a;
     }
 
-    return composite_border_fill(fill_a, border_a, base_color, in.sel_flag);
+    return composite_border_fill(fill_a, border_a, base_color);
 }

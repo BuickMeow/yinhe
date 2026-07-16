@@ -179,12 +179,6 @@ pub fn show_content(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
             }
             ui.end_row();
 
-            ui.label("选中音符变色");
-            if ui.checkbox(&mut settings.note_selection_highlight, "").changed() {
-                changed = true;
-            }
-            ui.end_row();
-
             ui.label("音符描边");
             if ui.checkbox(&mut settings.note_outline, "").changed() {
                 changed = true;

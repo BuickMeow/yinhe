@@ -67,7 +67,6 @@ pub fn show(
     scroll_mode: u32,
     min_border_width: f32,
     velocity_display_mode: &mut u32,
-    note_selection_highlight: bool,
     note_outline: bool,
     tempo_events: &[(u32, f64)],
     note_drag_delta: &mut Option<(i64, i32)>,
@@ -381,7 +380,6 @@ pub fn show(
         min_border_width,
         midi_version,
         &ghost_notes,
-        note_selection_highlight,
         note_outline,
     );
 
