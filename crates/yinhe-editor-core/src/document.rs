@@ -565,7 +565,7 @@ impl Document {
 
         // Calculate offset: cursor - min start_tick.
         let min_start = notes.iter().map(|(n, _)| n.start_tick).min().unwrap_or(0);
-        let offset = (cursor_tick as i64 - min_start as i64).max(0) as u32;
+        let offset = cursor_tick as i64 - min_start as i64;
 
         // Calculate track offset: first selected track - min source track.
         // If no track is selected, keep original track positions.
@@ -587,8 +587,8 @@ impl Document {
                 continue;
             }
             let new_note = yinhe_types::Note {
-                start_tick: note.start_tick + offset,
-                end_tick: note.end_tick + offset,
+                start_tick: (note.start_tick as i64 + offset).max(0) as u32,
+                end_tick: (note.end_tick as i64 + offset).max(0) as u32,
                 velocity: note.velocity,
                 dup_index: 0,
                 track: ((note.track as i32 + track_offset).clamp(0, u16::MAX as i32) as u16),
