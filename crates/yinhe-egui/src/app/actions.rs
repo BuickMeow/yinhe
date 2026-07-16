@@ -156,8 +156,9 @@ impl App {
         let cut_past_len = self.cut_past_len;
         let Some(idx) = self.active_doc else { return };
         let cursor_tick = self.documents[idx].edit.cursor_tick.unwrap_or(0.0);
+        let track_selected = self.documents[idx].edit.track_selected.clone();
         self.with_undo("Paste", |doc| {
-            doc.paste_from_selection(&clipboard, cursor_tick, cut_past_len)
+            doc.paste_from_selection(&clipboard, cursor_tick, cut_past_len, &track_selected)
         });
     }
 

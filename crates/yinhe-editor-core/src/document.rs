@@ -527,6 +527,7 @@ impl Document {
         clipboard: &yinhe_core::Selection,
         cursor_tick: f64,
         cut_past_len: Option<usize>,
+        track_selected: &std::collections::HashSet<u16>,
     ) -> Option<UndoAction> {
         if clipboard.is_empty() {
             return None;
@@ -566,6 +567,16 @@ impl Document {
         let min_start = notes.iter().map(|(n, _)| n.start_tick).min().unwrap_or(0);
         let offset = (cursor_tick as i64 - min_start as i64).max(0) as u32;
 
+        // Calculate track offset: first selected track - min source track.
+        // If no track is selected, keep original track positions.
+        let track_offset: i32 = if !track_selected.is_empty() {
+            let src_min_track = notes.iter().map(|(n, _)| n.track).min().unwrap_or(0);
+            let first_selected = track_selected.iter().min().copied().unwrap_or(0);
+            first_selected as i32 - src_min_track as i32
+        } else {
+            0
+        };
+
         let conductor = self.edit.conductor_track_idx;
         let model = Arc::make_mut(&mut self.data.model);
 
@@ -580,7 +591,7 @@ impl Document {
                 end_tick: note.end_tick + offset,
                 velocity: note.velocity,
                 dup_index: 0,
-                track: note.track,
+                track: ((note.track as i32 + track_offset).clamp(0, u16::MAX as i32) as u16),
             };
             new_by_key.entry(*key).or_default().push(new_note);
         }
