@@ -272,6 +272,7 @@ impl App {
                         ui.available_size(),
                         &mut self.pianoroll,
                         &mut self.render_ctx,
+                        self.render_thread.as_ref(),
                         &mut self.pianoroll_view,
                         midi_source,
                         &mut doc.edit.selected,

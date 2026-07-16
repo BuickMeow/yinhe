@@ -7034,6 +7034,7 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "half",
+ "tracing",
  "wgpu",
  "yinhe-memtrace",
  "yinhe-theme",

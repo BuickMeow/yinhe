@@ -29,6 +29,7 @@ pub struct App {
     // ── Pianoroll (shared GPU resources + global view state) ──
     pub(crate) render_ctx: RenderContext,
     pub(crate) pianoroll: yinhe_wgpu::InstanceRenderer,
+    pub(crate) render_thread: Option<yinhe_wgpu::RenderThreadHandle>,
     pub(crate) pianoroll_view: PianoRollView,
 
     // ── Arrangement (shared GPU resources + global view state) ──
@@ -192,6 +193,7 @@ impl App {
                 queue.clone(),
                 format,
             ),
+            render_thread: None,
             pianoroll_view: PianoRollView::default(),
 
             arr_render_ctx,
@@ -257,6 +259,18 @@ impl App {
             clipboard: yinhe_core::Selection::default(),
             cut_past_len: None,
         };
+
+        // Spawn the independent render thread for pianoroll GPU rendering.
+        {
+            let device = app.render_ctx.device().clone();
+            let queue = app.render_ctx.queue().clone();
+            let format = app.render_ctx.target_format();
+            let view = app.render_ctx.preview_view().clone();
+            let handle = yinhe_wgpu::RenderThreadHandle::spawn(
+                device, queue, format, view, default_w, default_h,
+            );
+            app.render_thread = Some(handle);
+        }
 
         // Sync haptic settings from persisted config
         app.haptic_engine.apply_settings(

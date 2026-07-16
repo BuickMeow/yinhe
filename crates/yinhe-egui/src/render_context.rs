@@ -282,7 +282,12 @@ impl RenderContext {
         &self.view
     }
 
-    /// Render to the offscreen texture (if needed) and paint it into egui.
+    /// Render to the offscreen texture and paint it into egui.
+    ///
+    /// When `render_thread` is `Some`, GPU rendering is done asynchronously
+    /// by the render thread and `paint()` only displays the latest texture.
+    /// When `render_thread` is `None`, rendering happens synchronously on the
+    /// calling thread (legacy mode).
     ///
     /// `content_changed`: caller signals whether CPU-side data (instances,
     /// uniforms, viewport) has changed since the last frame. If false AND the
@@ -322,6 +327,31 @@ impl RenderContext {
             self.queue().submit(std::iter::once(encoder.finish()));
             self.needs_render = false;
         }
+
+        let texture_id = self.preview_texture_id();
+        painter.image(
+            texture_id,
+            rect,
+            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), uv_max),
+            egui::Color32::WHITE,
+        );
+    }
+
+    /// Paint the offscreen texture into egui **without** doing any GPU work.
+    ///
+    /// Used when a `RenderThreadHandle` is performing the GPU rendering
+    /// asynchronously.  This method only displays the latest texture content.
+    pub fn paint_texture_only(
+        &self,
+        width: u32,
+        height: u32,
+        painter: &egui::Painter,
+        rect: egui::Rect,
+    ) {
+        let uv_max = egui::pos2(
+            width as f32 / self.width as f32,
+            height as f32 / self.height as f32,
+        );
 
         let texture_id = self.preview_texture_id();
         painter.image(

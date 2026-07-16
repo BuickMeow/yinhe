@@ -10,3 +10,4 @@ yinhe-theme = { path = "../yinhe-theme" }
 wgpu = { workspace = true }
 bytemuck = { workspace = true }
 half = { workspace = true }
+tracing = { workspace = true }

@@ -2,12 +2,12 @@ use std::collections::HashSet;
 
 use yinhe_types::NoteSource;
 
-use crate::InstanceRenderer;
 use crate::instances;
 use crate::vertex::{Uniforms, TrackColorsUniform, SelectionUniform, MAX_TRACKS, MAX_SEL_RECTS};
 use yinhe_types::PianoRollView;
 
 use yinhe_wgpu::layer_cache_key;
+use yinhe_wgpu::{DecorLayerData, NoteLayerData, RenderJob};
 
 /// Prepare the pianoroll for rendering using the layered cache API.
 ///
@@ -21,7 +21,7 @@ use yinhe_wgpu::layer_cache_key;
 /// Each layer is cached independently so that playback (scroll_x changes)
 /// only invalidates the grid layer.
 pub fn prepare(
-    renderer: &mut InstanceRenderer,
+    renderer: &mut crate::InstanceRenderer,
     width: u32,
     height: u32,
     midi: Option<&dyn NoteSource>,
@@ -36,6 +36,86 @@ pub fn prepare(
     ghost_notes: &[(f64, f64, u8, u16)], // (start_tick, end_tick, key, track) for pencil preview
     note_outline: bool,
 ) -> yinhe_wgpu::PrepareTimings {
+    let job = build_render_job(
+        width, height, midi, view, selected, hidden_notes, track_visible,
+        track_colors, scroll_mode, min_border_width, midi_version, ghost_notes, note_outline,
+        &renderer.theme,
+    );
+
+    let t = std::time::Instant::now();
+    renderer.upload_uniforms(job.uniforms);
+    renderer.upload_track_colors(&job.track_colors);
+    renderer.upload_selection(&job.selection);
+    renderer.ensure_layers(job.decor_layers.len() + job.note_layers.len());
+
+    let mut layer_idx = 0;
+    for dl in &job.decor_layers {
+        let cache_key = dl.cache_key;
+        let instances = &dl.instances;
+        renderer.upload_layer(layer_idx, cache_key, |out| {
+            out.extend_from_slice(instances);
+        });
+        layer_idx += 1;
+    }
+    for nl in &job.note_layers {
+        let cache_key = nl.cache_key;
+        let instances = &nl.instances;
+        if nl.force {
+            renderer.upload_note_layer_force(layer_idx, |out| {
+                out.extend_from_slice(instances);
+            });
+        } else {
+            renderer.upload_note_layer(layer_idx, cache_key, |out| {
+                out.extend_from_slice(instances);
+            });
+        }
+        layer_idx += 1;
+    }
+
+    let dur = t.elapsed();
+
+    yinhe_wgpu::PrepareTimings {
+        build_static: job.build_time + dur,
+        instance_count: renderer.total_layer_instances(),
+    }
+}
+
+/// Extended render job that also carries track_colors and selection uniforms
+/// (needed by the synchronous `prepare()` path).
+pub struct PianorollRenderJob {
+    pub width: u32,
+    pub height: u32,
+    pub uniforms: Uniforms,
+    pub track_colors: TrackColorsUniform,
+    pub selection: SelectionUniform,
+    pub decor_layers: Vec<DecorLayerData>,
+    pub note_layers: Vec<NoteLayerData>,
+    pub build_time: std::time::Duration,
+}
+
+/// Build a `PianorollRenderJob` containing all instance data and uniforms.
+///
+/// This does the CPU-heavy work (building instances via rayon) without
+/// touching any GPU resources. The result can be sent to a render thread
+/// for async upload + draw + submit.
+pub fn build_render_job(
+    width: u32,
+    height: u32,
+    midi: Option<&dyn NoteSource>,
+    view: &PianoRollView,
+    selected: &yinhe_core::Selection,
+    hidden_notes: &HashSet<(u16, u32, u8)>,
+    track_visible: &[bool],
+    track_colors: &[[f32; 3]],
+    scroll_mode: u32,
+    min_border_width: f32,
+    midi_version: u64,
+    ghost_notes: &[(f64, f64, u8, u16)],
+    note_outline: bool,
+    theme: &yinhe_wgpu::GpuTheme,
+) -> PianorollRenderJob {
+    let t = std::time::Instant::now();
+
     let w = width as f32;
     let h = height as f32;
     let kb_w = view.keyboard_width();
@@ -81,20 +161,12 @@ pub fn prepare(
         note_alpha: 1.0,  // PR notes fully opaque
     };
 
-    let t = std::time::Instant::now();
-    let theme = renderer.theme.clone();
-    renderer.upload_uniforms(uniforms);
-    renderer.upload_track_colors(tc_uniform);
-    renderer.upload_selection(&sel_uniform);
-    renderer.ensure_layers(5);
-
     // Layer 0: decor (background + black-key rows)
     let vh = view.render_hash();
     let wh = yinhe_wgpu::hash_f32s(&[w, h]);
     let decor_key = layer_cache_key(&[vh, wh]);
-    renderer.upload_layer(0, decor_key, |out| {
-        instances::build_decor(out, w, h, kb_w, kh, scroll_y, &theme);
-    });
+    let mut decor_0 = Vec::new();
+    instances::build_decor(&mut decor_0, w, h, kb_w, kh, scroll_y, theme);
 
     // Layer 1: grid lines
     let mut grid_key = layer_cache_key(&[vh, wh]);
@@ -103,21 +175,16 @@ pub fn prepare(
         let sig_hash = yinhe_wgpu::hash_time_sigs(sig_events);
         grid_key = layer_cache_key(&[vh, wh, sig_hash]);
     }
-    renderer.upload_layer(1, grid_key, |out| {
-        if let Some(midi) = midi
-            && let Some(tpb) = midi.ticks_per_beat()
-        {
-            let (def_num, def_den) = midi.time_sig_default();
-            let sig_events = midi.time_sig_events();
-            instances::build_grid(out, w, h, view, tpb, def_num, def_den, sig_events, scroll_x_pos, &theme);
-        }
-    });
+    let mut decor_1 = Vec::new();
+    if let Some(midi) = midi
+        && let Some(tpb) = midi.ticks_per_beat()
+    {
+        let (def_num, def_den) = midi.time_sig_default();
+        let sig_events = midi.time_sig_events();
+        instances::build_grid(&mut decor_1, w, h, view, tpb, def_num, def_den, sig_events, scroll_x_pos, theme);
+    }
 
     // Layer 2: notes
-    // Notes layer no longer depends on selection or track_colors (handled in shader)
-    // Only depends on: viewport, track_visible, hidden_notes, midi_version
-    // 顺序哈希：位置敏感，[true,false] ≠ [false,true]
-    // 之前用 XOR 导致只算奇偶校验位，切换轨道时哈希不变，缓存不失效
     let tv_hash = yinhe_wgpu::hash_bools(track_visible);
     let hidden_hash = hidden_notes.iter().fold(0u64, |acc, &(trk, tick, key)| {
         let mut h: u64 = 0;
@@ -127,34 +194,41 @@ pub fn prepare(
         acc ^ h
     });
     let notes_key = layer_cache_key(&[vh, wh, tv_hash, midi_version, hidden_hash]);
-    renderer.upload_note_layer(2, notes_key, |out| {
-        if let Some(midi) = midi {
-            instances::build_notes(out, w, h, midi, view, hidden_notes, track_visible);
-        }
-    });
+    let mut notes_2 = Vec::new();
+    if let Some(midi) = midi {
+        instances::build_notes(&mut notes_2, w, h, midi, view, hidden_notes, track_visible);
+    }
 
     // Layer 3: keyboard
     let kb_key = layer_cache_key(&[vh, wh]);
-    renderer.upload_layer(3, kb_key, |out| {
-        instances::build_keyboard(out, kb_w, kh, scroll_y, h, &theme);
-    });
+    let mut decor_3 = Vec::new();
+    instances::build_keyboard(&mut decor_3, kb_w, kh, scroll_y, h, theme);
 
     // Layer 4: ghost notes (no cache — rebuilt every frame)
+    let mut notes_4 = Vec::new();
     if !ghost_notes.is_empty() {
-        renderer.upload_note_layer_force(4, |out| {
-            for &(start_tick, end_tick, key, track) in ghost_notes {
-                instances::build_ghost_note(out, start_tick, end_tick, key, track, &theme);
-            }
-        });
-    } else {
-        // Clear the ghost layer when there's no preview
-        renderer.upload_note_layer_force(4, |_| {});
+        for &(start_tick, end_tick, key, track) in ghost_notes {
+            instances::build_ghost_note(&mut notes_4, start_tick, end_tick, key, track, theme);
+        }
     }
 
-    let dur = t.elapsed();
+    let build_time = t.elapsed();
 
-    yinhe_wgpu::PrepareTimings {
-        build_static: dur,
-        instance_count: renderer.total_layer_instances(),
+    PianorollRenderJob {
+        width,
+        height,
+        uniforms,
+        track_colors: *tc_uniform,
+        selection: sel_uniform,
+        decor_layers: vec![
+            DecorLayerData { instances: decor_0, cache_key: decor_key },
+            DecorLayerData { instances: decor_1, cache_key: grid_key },
+            DecorLayerData { instances: decor_3, cache_key: kb_key },
+        ],
+        note_layers: vec![
+            NoteLayerData { instances: notes_2, cache_key: notes_key, force: false },
+            NoteLayerData { instances: notes_4, cache_key: 0, force: true },
+        ],
+        build_time,
     }
 }

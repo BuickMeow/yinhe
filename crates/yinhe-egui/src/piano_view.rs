@@ -40,6 +40,7 @@ pub fn show(
     available: egui::Vec2,
     pianoroll: &mut yinhe_wgpu::InstanceRenderer,
     render_ctx: &mut super::render_context::RenderContext,
+    render_thread: Option<&yinhe_wgpu::RenderThreadHandle>,
     view: &mut yinhe_pianoroll::PianoRollView,
     midi: Option<&dyn yinhe_pianoroll::NoteSource>,
     selected: &mut yinhe_core::Selection,
@@ -136,6 +137,11 @@ pub fn show(
 
     // Resize render target if needed — texture_id may change after this
     render_ctx.ensure_size(pw, ph);
+
+    // Update render thread's target view if texture was recreated
+    if let Some(rt) = render_thread {
+        rt.update_target(render_ctx.preview_view().clone(), pw, ph);
+    }
 
     // Clamp scroll — add some extra space beyond the last note
     let total_ticks = super::view_interaction::total_ticks_padded(
@@ -366,22 +372,30 @@ pub fn show(
     };
 
     // Prepare GPU data
-    let prep_timings = yinhe_pianoroll::prepare(
-        pianoroll,
-        w,
-        h,
-        midi,
-        view,
-        &*selected,
-        &hidden_notes,
-        track_visible,
-        track_colors,
-        scroll_mode,
-        min_border_width,
-        midi_version,
-        &ghost_notes,
-        note_outline,
-    );
+    if let Some(rt) = render_thread {
+        // Async path: build instances on this thread, send to render thread
+        let job = yinhe_pianoroll::build_render_job(
+            w, h, midi, view, &*selected, &hidden_notes, track_visible,
+            track_colors, scroll_mode, min_border_width, midi_version,
+            &ghost_notes, note_outline, &pianoroll.theme(),
+        );
+        rt.send_job(yinhe_wgpu::RenderJob {
+            width: job.width,
+            height: job.height,
+            uniforms: job.uniforms,
+            track_colors: job.track_colors,
+            selection: job.selection,
+            decor_layers: job.decor_layers,
+            note_layers: job.note_layers,
+        });
+    } else {
+        // Sync path: prepare + upload + draw + submit on this thread
+        yinhe_pianoroll::prepare(
+            pianoroll, w, h, midi, view, &*selected, &hidden_notes,
+            track_visible, track_colors, scroll_mode, min_border_width,
+            midi_version, &ghost_notes, note_outline,
+        );
+    }
 
     let t_prepare_end = if perf_on {
         Some(std::time::Instant::now())
@@ -391,18 +405,14 @@ pub fn show(
 
     // Static cache was removed — every frame rebuilds + uploads, so always paint.
     view.base.dirty = false;
-    let content_changed = true;
 
     // Paint wgpu content into the content_rect
-    render_ctx.paint(
-        pianoroll,
-        pw,
-        ph,
-        "pianoroll_frame",
-        &painter,
-        content_rect,
-        content_changed,
-    );
+    if render_thread.is_some() {
+        // Render thread handles GPU work — just display the latest texture
+        render_ctx.paint_texture_only(pw, ph, &painter, content_rect);
+    } else {
+        render_ctx.paint(pianoroll, pw, ph, "pianoroll_frame", &painter, content_rect, true);
+    }
 
     let t_paint_end = if perf_on {
         Some(std::time::Instant::now())
@@ -638,22 +648,17 @@ pub fn show(
         let prepare_total = t2.saturating_duration_since(t1);
         let paint = t3.saturating_duration_since(t2);
         let misc = t_end.saturating_duration_since(t3);
-        // prep_static should ≈ prepare_total. The residual (closure dispatch,
-        // hashing, etc.) goes into misc by omitting it from this sample's
-        // prep_* fields.
-        let prepare_overhead = prepare_total.saturating_sub(prep_timings.build_static);
-        let follow_name = match follow_mode {
-            super::view_interaction::FollowMode::None => "None",
-            super::view_interaction::FollowMode::Page => "Page",
-            super::view_interaction::FollowMode::Continuous => "Continuous",
-        };
         yinhe_memtrace::perf_probe::submit(yinhe_memtrace::perf_probe::FrameSample {
             input,
-            prep_static: prep_timings.build_static,
+            prep_static: prepare_total,
             paint,
-            misc: misc + prepare_overhead,
-            instance_count: prep_timings.instance_count,
-            follow_mode: follow_name,
+            misc,
+            instance_count: 0,
+            follow_mode: match follow_mode {
+                super::view_interaction::FollowMode::None => "None",
+                super::view_interaction::FollowMode::Page => "Page",
+                super::view_interaction::FollowMode::Continuous => "Continuous",
+            },
             total_notes: midi
                 .map(|m| {
                     let mut sum = 0u64;
