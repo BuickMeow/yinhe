@@ -388,7 +388,10 @@ pub fn show(
             .wrapping_mul(6364136223846793005)
             .wrapping_add(key as u64)
     });
-    let all_notes_key = revision ^ hidden_hash;
+    // track_visible must be in the key: switching track display changes which
+    // notes are built into all_notes_buffer, even when revision/hidden are same.
+    let tv_hash = yinhe_wgpu::hash_bools(track_visible);
+    let all_notes_key = revision ^ hidden_hash ^ tv_hash;
     if all_notes_key != *last_cull_revision {
         if let Some(midi_src) = midi {
             // Check if only hidden_notes changed (revision same, hidden_hash different)
