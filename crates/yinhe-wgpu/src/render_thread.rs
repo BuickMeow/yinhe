@@ -20,7 +20,7 @@ pub struct RenderJob {
     pub width: u32,
     pub height: u32,
     pub uniforms: Uniforms,
-    pub track_colors: crate::vertex::TrackColorsUniform,
+    pub track_colors: Box<crate::vertex::TrackColorsUniform>,
     pub selection: crate::vertex::SelectionUniform,
     pub decor_layers: Vec<DecorLayerData>,
     pub note_layers: Vec<NoteLayerData>,

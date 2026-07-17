@@ -12,7 +12,7 @@ pub struct PianorollRenderJob {
     pub width: u32,
     pub height: u32,
     pub uniforms: Uniforms,
-    pub track_colors: TrackColorsUniform,
+    pub track_colors: Box<TrackColorsUniform>,
     pub selection: SelectionUniform,
     pub decor_layers: Vec<DecorLayerData>,
     pub build_time: std::time::Duration,
@@ -112,7 +112,7 @@ pub fn build_render_job(
         width,
         height,
         uniforms,
-        track_colors: *tc_uniform,
+        track_colors: Box::new(*tc_uniform),
         selection: sel_uniform,
         decor_layers: vec![
             DecorLayerData { instances: decor_0, cache_key: decor_key },
