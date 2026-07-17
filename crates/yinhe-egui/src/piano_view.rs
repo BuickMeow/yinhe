@@ -876,6 +876,16 @@ pub fn show(
             egui::pos2(rect.min.x, ruler_band_y),
             egui::vec2(kb_w, RULER_H),
         );
+        // 背景矩形：与 ruler 带对齐，画在键盘之上（本块在键盘绘制之后执行）
+        ui.painter().rect_filled(corner_rect, 0.0, crate::theme::RULER_BG);
+        // 右侧分隔线（与 ruler 对齐）
+        ui.painter().line_segment(
+            [
+                egui::pos2(corner_rect.max.x, corner_rect.min.y),
+                egui::pos2(corner_rect.max.x, corner_rect.max.y),
+            ],
+            egui::Stroke::new(1.0, crate::theme::RULER_DIVIDER),
+        );
         let btn_size = 20.0;
         let btn_rect = egui::Rect::from_center_size(corner_rect.center(), egui::vec2(btn_size, btn_size));
         let btn_resp = ui.interact(btn_rect, egui::Id::new("pr_quantize_btn"), egui::Sense::click());
