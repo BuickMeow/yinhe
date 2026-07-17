@@ -21,4 +21,4 @@ pub use vertex::{DrawInstance, NoteInstance, Uniforms, TrackColorsUniform, MAX_T
 // Re-export types that were previously provided by the separate crates
 pub use pianoroll::{build_render_job, PianorollRenderJob, build_notes, build_all_notes, build_key_notes, build_ghost_note};
 pub use automation::{prepare_automation, AutomationGhost, build_lane_override};
-pub use arrangement::{build_decor as build_arr_decor, build_grid as build_arr_grid, build_ghost_notes, build_notes as build_arr_notes, build_arrangement_cursor};
+pub use arrangement::{build_grid as build_arr_grid, build_ghost_notes, build_notes as build_arr_notes};

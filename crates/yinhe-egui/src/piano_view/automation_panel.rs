@@ -480,6 +480,39 @@ pub fn show_panels(
                 panel.dirty = false;
 
                 let painter = ui.painter();
+
+                // ── Background + center line (drawn by egui before wgpu texture) ──
+                let theme = renderer.theme();
+                let (r, g, b) = theme.pr_bg;
+                painter.rect_filled(
+                    grid_rect,
+                    0.0,
+                    egui::Color32::from_rgb((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8),
+                );
+                // Center line (only for targets that have one)
+                if let Some(lane) = lanes.first() {
+                    let target = &lane.target;
+                    let max_val = target.max_value() as f32;
+                    if max_val > 0.0 && target.has_center_line() {
+                        let center_val = target.default_value() as f32;
+                        let y_center = panel.value_to_y(center_val, max_val);
+                        let (cr, cg, cb, ca) = theme.center_line;
+                        painter.rect_filled(
+                            egui::Rect::from_min_size(
+                                egui::pos2(grid_rect.min.x, grid_rect.min.y + y_center - 0.5),
+                                egui::vec2(grid_rect.width(), 1.0),
+                            ),
+                            0.0,
+                            egui::Color32::from_rgba_unmultiplied(
+                                (cr * 255.0) as u8,
+                                (cg * 255.0) as u8,
+                                (cb * 255.0) as u8,
+                                (ca * 255.0) as u8,
+                            ),
+                        );
+                    }
+                }
+
                 render_ctx.paint(
                     renderer,
                     gpw,

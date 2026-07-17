@@ -13,46 +13,7 @@ const STACK_RED_ZONE: usize = 32 * 1024;
 /// New stack segment size to allocate when the red zone is exceeded.
 const STACK_SIZE: usize = 1024 * 1024; // 1MB per segment
 
-/// Build background + track lane instances (layer 0).
-/// Dependencies: scroll_y, lane_height, track_visible
-pub fn build_decor(
-    out: &mut Vec<DrawInstance>,
-    w: f32,
-    h: f32,
-    lb_w: f32,
-    lh: f32,
-    scroll_y: f32,
-    track_visible: &[bool],
-    theme: &yinhe_theme::GpuTheme,
-) {
-    let num_tracks = track_visible.len();
-
-    out.push(DrawInstance::solid_rect(
-        lb_w, 0.0, w - lb_w, h,
-        [theme.ar_bg.0, theme.ar_bg.1, theme.ar_bg.2, 1.0],
-    ));
-
-    if num_tracks > 0 {
-        let (trk_first, trk_last) = ArrangementView::visible_track_range_static(scroll_y, h, lh, num_tracks);
-        for idx in trk_first..trk_last {
-            if !track_visible.get(idx).copied().unwrap_or(true) {
-                continue;
-            }
-            let y = ArrangementView::lane_y_static(idx, scroll_y, lh);
-            let col = if idx % 2 == 0 {
-                theme.ar_lane_even
-            } else {
-                theme.ar_lane_odd
-            };
-            out.push(DrawInstance::solid_rect(
-                lb_w, y, w - lb_w, lh,
-                [col.0, col.1, col.2, 1.0],
-            ));
-        }
-    }
-}
-
-/// Build grid line instances (layer 1).
+/// Build grid line instances (layer 0).
 /// Dependencies: scroll_x, pixels_per_tick, time_sig
 pub fn build_grid(
     out: &mut Vec<DrawInstance>,
@@ -220,27 +181,6 @@ pub fn build_ghost_notes(
             packed: NoteInstance::pack(key, track.min(65535) as u16, 0),
             reserved: 0,
         });
-    }
-}
-
-/// Build the playhead cursor instance (a single vertical line).
-pub fn build_arrangement_cursor(
-    instances: &mut Vec<DrawInstance>,
-    cursor_tick: Option<f64>,
-    view: &ArrangementView,
-    width: u32,
-    height: u32,
-    theme: &yinhe_theme::GpuTheme,
-) {
-    let w = width as f32;
-    let h = height as f32;
-    let lb_w = view.base.left_panel_width;
-
-    if let Some(ct) = cursor_tick {
-        let cx = view.tick_to_x(ct);
-        if cx >= lb_w && cx <= w {
-            grid::push_grid_line(instances, cx, h, 2.0, theme.ar_playhead, 0);
-        }
     }
 }
 

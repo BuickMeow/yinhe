@@ -1,6 +1,6 @@
 use rayon::prelude::*;
 use yinhe_theme::GpuTheme;
-use yinhe_types::{key_notes_in_range, NoteSource, TimeSigEvent, is_black_key};
+use yinhe_types::{key_notes_in_range, NoteSource, TimeSigEvent};
 
 use crate::grid;
 use crate::vertex::{DrawInstance, NoteInstance};
@@ -13,31 +13,7 @@ const STACK_RED_ZONE: usize = 32 * 1024;
 /// New stack segment size to allocate when the red zone is exceeded.
 const STACK_SIZE: usize = 1024 * 1024; // 1MB per segment
 
-/// Build background + black-key row instances (layer 0).
-/// Dependencies: scroll_y, key_height, h
-pub fn build_decor(out: &mut Vec<DrawInstance>, w: f32, h: f32, kb_w: f32, kh: f32, scroll_y: f32, theme: &GpuTheme) {
-    let bottom = 128.0 * kh - scroll_y;
-
-    out.push(DrawInstance::solid_rect(
-        kb_w, 0.0, w - kb_w, h,
-        [theme.pr_bg.0, theme.pr_bg.1, theme.pr_bg.2, 1.0],
-    ));
-    for key in 0u8..128 {
-        if !is_black_key(key) {
-            continue;
-        }
-        let y = bottom - (key as f32 + 1.0) * kh;
-        if y + kh < 0.0 || y > h {
-            continue;
-        }
-        out.push(DrawInstance::solid_rect(
-            kb_w, y, w - kb_w, kh,
-            [theme.pr_black_key_row.0, theme.pr_black_key_row.1, theme.pr_black_key_row.2, 1.0],
-        ));
-    }
-}
-
-/// Build grid line instances (layer 1).
+/// Build grid line instances (layer 0).
 /// Dependencies: scroll_x, pixels_per_tick, time_sig
 pub fn build_grid(
     out: &mut Vec<DrawInstance>,
@@ -290,45 +266,6 @@ mod tests {
 
     fn make_theme() -> GpuTheme {
         GpuTheme::default()
-    }
-
-    #[test]
-    fn test_build_decor_background() {
-        let mut out = Vec::new();
-        let theme = make_theme();
-        build_decor(&mut out, 800.0, 500.0, 60.0, 12.0, 0.0, &theme);
-        assert!(!out.is_empty());
-        let bg = &out[0];
-        assert_eq!(bg.x, 60.0);
-        assert_eq!(bg.y, 0.0);
-        assert_eq!(bg.w, 740.0);
-        assert_eq!(bg.h, 500.0);
-    }
-
-    #[test]
-    fn test_build_decor_black_key_rows() {
-        let mut out = Vec::new();
-        let theme = make_theme();
-        build_decor(&mut out, 800.0, 500.0, 60.0, 12.0, 0.0, &theme);
-        let black_rows = &out[1..];
-        assert!(!black_rows.is_empty());
-        for row in black_rows {
-            assert_eq!(row.x, 60.0);
-            assert_eq!(row.w, 740.0);
-            assert_eq!(row.h, 12.0);
-        }
-    }
-
-    #[test]
-    fn test_build_decor_scrolled() {
-        let mut out = Vec::new();
-        let theme = make_theme();
-        build_decor(&mut out, 800.0, 500.0, 60.0, 12.0, 1000.0, &theme);
-        assert!(!out.is_empty());
-        for inst in &out[1..] {
-            assert!(inst.y + inst.h > 0.0, "row should be on screen");
-            assert!(inst.y < 500.0, "row should be on screen");
-        }
     }
 
     #[test]

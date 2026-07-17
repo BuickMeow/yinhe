@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use eframe::egui;
 
-use yinhe_wgpu::{build_arr_decor, build_ghost_notes, build_arr_grid, build_arr_notes};
+use yinhe_wgpu::{build_ghost_notes, build_arr_grid, build_arr_notes};
 use yinhe_core::TrackInfo;
 use yinhe_types::{ArrangementView, NoteSource, key_notes_in_range};
 use yinhe_wgpu::{InstanceRenderer, Uniforms, TrackColorsUniform, MAX_TRACKS};
@@ -136,7 +136,7 @@ pub fn show(
     let theme = renderer.theme().clone();
     renderer.upload_uniforms(uniforms);
     renderer.upload_track_colors(tc_uniform);
-    renderer.ensure_layers(4);
+    renderer.ensure_layers(3);
 
     // ── Select tool dispatch (BEFORE layer building to get ghost notes) ──
     // Like PR's sel_drag_frame, this returns ghost_notes/hidden_notes generated
@@ -174,7 +174,7 @@ pub fn show(
         hash
     };
 
-    // Layer 0: decor (background + track lanes)
+    // tv_hash still needed for notes layer cache key
     let tv_hash = {
         let mut h = 0u64;
         for &v in track_visible {
@@ -182,21 +182,8 @@ pub fn show(
         }
         h
     };
-    let decor_key = layer_cache_key(&[vh, wh, tv_hash]);
-    renderer.upload_layer(0, decor_key, |out| {
-        build_arr_decor(
-            out,
-            w as f32,
-            h as f32,
-            view.base.left_panel_width,
-            view.lane_height,
-            view.base.scroll_y,
-            track_visible,
-            &theme,
-        );
-    });
 
-    // Layer 1: grid lines
+    // Layer 0: grid lines (background + track lanes now drawn by egui)
     let mut grid_key = layer_cache_key(&[vh, wh]);
     if let Some(midi) = midi {
         let sig_events = midi.time_sig_events();
@@ -208,7 +195,7 @@ pub fn show(
         }
         grid_key = layer_cache_key(&[grid_key, sig_hash]);
     }
-    renderer.upload_layer(1, grid_key, |out| {
+    renderer.upload_layer(0, grid_key, |out| {
         if let Some(midi) = midi
             && let Some(tpb) = midi.ticks_per_beat()
         {
@@ -220,9 +207,9 @@ pub fn show(
         }
     });
 
-    // Layer 2: notes (16B NoteInstance — shader computes pixel positions from uniforms)
+    // Layer 1: notes (16B NoteInstance — shader computes pixel positions from uniforms)
     let notes_key = layer_cache_key(&[vh, wh, tv_hash, revision, hidden_notes.len() as u64]);
-    renderer.upload_note_layer(2, notes_key, |out| {
+    renderer.upload_note_layer(1, notes_key, |out| {
         if let Some(midi) = midi {
             build_arr_notes(
                 out,
@@ -236,12 +223,43 @@ pub fn show(
         }
     });
 
-    // Layer 3: ghost notes (no cache — rebuilt every frame during drag)
-    renderer.upload_note_layer(3, 0, |out| {
+    // Layer 2: ghost notes (no cache — rebuilt every frame during drag)
+    renderer.upload_note_layer(2, 0, |out| {
         build_ghost_notes(out, &ghost_notes);
     });
 
     let content_changed = true;
+
+    // ── Background + track lanes (drawn by egui before wgpu texture) ──
+    let lb_w = view.base.left_panel_width;
+    let (r, g, b) = theme.ar_bg;
+    painter.rect_filled(
+        rect,
+        0.0,
+        egui::Color32::from_rgb((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8),
+    );
+    let lh = view.lane_height;
+    let scroll_y = view.base.scroll_y;
+    let num_tracks = track_visible.len();
+    if num_tracks > 0 {
+        let (trk_first, trk_last) = ArrangementView::visible_track_range_static(scroll_y, h as f32, lh, num_tracks);
+        for idx in trk_first..trk_last {
+            if !track_visible.get(idx).copied().unwrap_or(true) {
+                continue;
+            }
+            let y = rect.min.y + ArrangementView::lane_y_static(idx, scroll_y, lh);
+            let col = if idx % 2 == 0 { theme.ar_lane_even } else { theme.ar_lane_odd };
+            painter.rect_filled(
+                egui::Rect::from_min_size(
+                    egui::pos2(rect.min.x + lb_w, y),
+                    egui::vec2(w as f32 - lb_w, lh),
+                ),
+                0.0,
+                egui::Color32::from_rgb((col.0 * 255.0) as u8, (col.1 * 255.0) as u8, (col.2 * 255.0) as u8),
+            );
+        }
+    }
+
     render_ctx.paint(
         renderer,
         pw,

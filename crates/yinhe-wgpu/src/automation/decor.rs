@@ -1,39 +1,9 @@
 use yinhe_types::AutomationPanelView;
 use crate::grid;
-use yinhe_theme::GpuTheme;
-use yinhe_types::{AutomationLane, TimeSigEvent};
+use yinhe_types::TimeSigEvent;
 use crate::vertex::DrawInstance;
 
-/// Build background + center line instances (layer 0).
-/// Dependencies: none (background is static), lane target (center line)
-pub fn build_decor(
-    out: &mut Vec<DrawInstance>,
-    w: f32,
-    h: f32,
-    view: &AutomationPanelView,
-    lanes: &[&AutomationLane],
-    theme: &GpuTheme,
-) {
-    out.push(DrawInstance::solid_rect(
-        0.0, 0.0, w, h,
-        [theme.pr_bg.0, theme.pr_bg.1, theme.pr_bg.2, 1.0],
-    ));
-
-    if let Some(lane) = lanes.first() {
-        let target = &lane.target;
-        let max_val = target.max_value() as f32;
-        if max_val > 0.0 && target.has_center_line() {
-            let center_val = target.default_value() as f32;
-            let y_center = view.value_to_y(center_val, max_val);
-            out.push(DrawInstance::solid_rect(
-                0.0, y_center - 0.5, w, 1.0,
-                [theme.center_line.0, theme.center_line.1, theme.center_line.2, theme.center_line.3],
-            ));
-        }
-    }
-}
-
-/// Build grid line instances (layer 1).
+/// Build grid line instances (layer 0).
 /// Dependencies: scroll_x, pixels_per_tick, time_sig
 pub fn build_grid(
     out: &mut Vec<DrawInstance>,

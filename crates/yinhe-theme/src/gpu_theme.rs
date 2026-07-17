@@ -12,7 +12,6 @@ pub struct GpuTheme {
     pub pr_black_key_row: (f32, f32, f32),
     pub pr_white_key: (f32, f32, f32),
     pub pr_black_key: (f32, f32, f32),
-    pub pr_playhead: (f32, f32, f32, f32),
 
     // ── Arrangement ──
     pub ar_bg: (f32, f32, f32),
@@ -20,7 +19,6 @@ pub struct GpuTheme {
     pub ar_lane_odd: (f32, f32, f32),
     pub ar_measure_line: (f32, f32, f32, f32),
     pub ar_beat_line: (f32, f32, f32, f32),
-    pub ar_playhead: (f32, f32, f32, f32),
 
     // ── Automation ──
     pub center_line: (f32, f32, f32, f32),
@@ -37,7 +35,6 @@ impl Default for GpuTheme {
             pr_black_key_row: (0.10, 0.10, 0.12),
             pr_white_key: (0.70, 0.70, 0.70),
             pr_black_key: (0.16, 0.16, 0.17),
-            pr_playhead: (1.0, 1.0, 1.0, 0.8),
 
             // Arrangement
             ar_bg: (0.14, 0.14, 0.16),
@@ -45,7 +42,6 @@ impl Default for GpuTheme {
             ar_lane_odd: (0.13, 0.13, 0.15),
             ar_measure_line: (0.30, 0.30, 0.35, 1.0),
             ar_beat_line: (0.20, 0.20, 0.23, 1.0),
-            ar_playhead: (1.0, 1.0, 1.0, 0.8),
 
             // Automation
             center_line: (0.30, 0.30, 0.35, 0.6),

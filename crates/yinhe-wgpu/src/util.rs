@@ -68,10 +68,10 @@ pub(super) fn begin_pianoroll_pass<'a>(
             depth_slice: None,
             ops: Operations {
                 load: LoadOp::Clear(Color {
-                    r: 0.12,
-                    g: 0.12,
-                    b: 0.14,
-                    a: 1.0,
+                    r: 0.0,
+                    g: 0.0,
+                    b: 0.0,
+                    a: 0.0,
                 }),
                 store: StoreOp::Store,
             },

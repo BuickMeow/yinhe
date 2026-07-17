@@ -501,7 +501,43 @@ pub fn show(
     // Static cache was removed — every frame rebuilds + uploads, so always paint.
     view.base.dirty = false;
 
-    // Paint wgpu content into the content_rect
+    // ── Background (drawn by egui before wgpu texture) ──
+    let theme = pianoroll.theme();
+    let (r, g, b) = theme.pr_bg;
+    painter.rect_filled(
+        content_rect,
+        0.0,
+        egui::Color32::from_rgb((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8),
+    );
+
+    // ── Black key rows (drawn by egui before wgpu texture) ──
+    let kh = view.key_height;
+    let scroll_y = view.base.scroll_y;
+    let h_f32 = h as f32;
+    let bottom = 128.0 * kh - scroll_y;
+    let (bkr, bkg, bkb) = theme.pr_black_key_row;
+    let bk_color = egui::Color32::from_rgb((bkr * 255.0) as u8, (bkg * 255.0) as u8, (bkb * 255.0) as u8);
+    let kb_w = view.keyboard_width();
+    for key in 0u8..128 {
+        if !yinhe_types::is_black_key(key) {
+            continue;
+        }
+        let y = bottom - (key as f32 + 1.0) * kh;
+        if y + kh < 0.0 || y > h_f32 {
+            continue;
+        }
+        let screen_y = content_rect.min.y + y;
+        painter.rect_filled(
+            egui::Rect::from_min_size(
+                egui::pos2(content_rect.min.x + kb_w, screen_y),
+                egui::vec2(content_rect.width() - kb_w, kh),
+            ),
+            0.0,
+            bk_color,
+        );
+    }
+
+    // Paint wgpu content into the content_rect (transparent background, grid + notes only)
     if cull_ready {
         // GPU cull path: draw directly (no render thread needed — cull makes GPU work fast)
         render_ctx.paint(pianoroll, pw, ph, "pianoroll_frame", &painter, content_rect, true);
@@ -517,14 +553,6 @@ pub fn show(
     };
 
     // ── Keyboard (drawn by egui on top of the wgpu texture) ──
-    let kb_w = view.keyboard_width();
-    let kh = view.key_height;
-    let scroll_y = view.base.scroll_y;
-    let _ppu = view.base.pixels_per_tick;
-    let h_f32 = h as f32;
-    let bottom = 128.0 * kh - scroll_y;
-    let theme = pianoroll.theme();
-
     // White keys
     for key in 0u8..128 {
         if yinhe_types::is_black_key(key) {

@@ -88,15 +88,16 @@ fn hash_lanes_excluding(lanes: &[&AutomationLane], ghost: Option<&AutomationGhos
 /// Prepare an automation panel for rendering using the layered cache API.
 ///
 /// Layers:
-///   0 = decor (background + center line)
-///   1 = grid lines
-///   2 = data lines (or velocity bars when target is Velocity, or tempo curve)
+///   0 = grid lines
+///   1 = data lines (or velocity bars when target is Velocity, or tempo curve)
+///
+/// Background + center line are now drawn by egui before the wgpu texture.
 ///
 /// When `lanes` is empty and the panel target is Velocity, velocity bars are
 /// rendered directly from `midi` instead of from an automation lane.
 ///
 /// `show_anchors`: 在每个事件位置画圆形锚点（铅笔工具下显示）。
-/// `ghost`: 拖拽预览（Layer 3，每帧重建，无缓存）。
+/// `ghost`: 拖拽预览（Layer 2，每帧重建，无缓存）。
 /// `highlight_tick`: 如果非 None，该 tick 位置的锚点渲染为白色高亮（选中锚点）。
 pub fn prepare(
     renderer: &mut InstanceRenderer,
@@ -145,42 +146,26 @@ pub fn prepare(
     };
 
     renderer.upload_uniforms(uniforms);
-    renderer.ensure_layers(4);
+    renderer.ensure_layers(3);
 
     let vh = view.render_hash();
     let wh = crate::hash_f32s(&[w, h]);
 
-    // Layer 0: decor (background + center line)
-    let center_line_hash = lanes
-        .first()
-        .map(|l| {
-            if l.target.max_value() > 0 && l.target.has_center_line() {
-                l.target.default_value() as u64
-            } else {
-                0
-            }
-        })
-        .unwrap_or(0);
-    let decor_key = layer_cache_key(&[vh, wh, center_line_hash, target_hash(&view.selected_target)]);
-    let theme = renderer.theme.clone();
-    renderer.upload_layer(0, decor_key, |out| {
-        decor::build_decor(out, w, h, view, lanes, &theme);
-    });
-
-    // Layer 1: grid lines
+    // Layer 0: grid lines (background + center line now drawn by egui)
     let sig_hash = crate::hash_time_sigs(time_sig_events);
     let grid_key = layer_cache_key(&[vh, wh, sig_hash]);
-    renderer.upload_layer(1, grid_key, |out| {
+    let theme = renderer.theme.clone();
+    renderer.upload_layer(0, grid_key, |out| {
         decor::build_grid(
             out, w, h, view, tpb, default_num, default_den, time_sig_events, scroll_x_pos, &theme,
         );
     });
 
-    // Layer 2: data lines (or velocity bars when show_velocity is true, or tempo curve)
+    // Layer 1: data lines (or velocity bars when show_velocity is true, or tempo curve)
     let is_velocity = view.show_velocity;
     let is_tempo = view.show_tempo;
     let tv_hash = crate::hash_bools(track_visible);
-    // ghost_lane_hash：被 ghost 覆盖的 lane 内容变化时触发 Layer 2 重建。
+    // ghost_lane_hash：被 ghost 覆盖的 lane 内容变化时触发 Layer 1 重建。
     // 这样开始/结束拖拽时固定层会隐藏/恢复该 lane。
     let ghost_lane_hash = ghost.as_ref().map(|g| match g {
         AutomationGhost::Move { lane, .. } => hash_lane(lane),
@@ -201,9 +186,9 @@ pub fn prepare(
         revision,
         highlight_tick.unwrap_or(u32::MAX) as u64,
     ]);
-    let ghost_for_layer2 = ghost.clone();
-    let highlight_tick_for_layer2 = highlight_tick;
-    renderer.upload_layer(2, bars_key, |out| {
+    let ghost_for_layer1 = ghost.clone();
+    let highlight_tick_for_layer1 = highlight_tick;
+    renderer.upload_layer(1, bars_key, |out| {
         if is_tempo {
             tempo::build_tempo_lines(out, w, h, view, tempo_events, &theme);
         } else if is_velocity {
@@ -214,18 +199,18 @@ pub fn prepare(
             }
         } else {
             // 固定层跳过被 ghost 覆盖的 lane
-            let skip_lane = match ghost_for_layer2 {
+            let skip_lane = match ghost_for_layer1 {
                 Some(AutomationGhost::Move { ref lane, .. }) => Some(lane),
                 _ => None,
             };
             data_lines::build_data_lines(
-                out, w, h, view, lanes, track_visible, track_colors, show_anchors, skip_lane, highlight_tick_for_layer2, &theme,
+                out, w, h, view, lanes, track_visible, track_colors, show_anchors, skip_lane, highlight_tick_for_layer1, &theme,
             );
         }
     });
 
-    // Layer 3: ghost (拖拽预览，无缓存，每帧重建)
-    renderer.upload_layer(3, 0, |out| {
+    // Layer 2: ghost (拖拽预览，无缓存，每帧重建)
+    renderer.upload_layer(2, 0, |out| {
         if let Some(g) = ghost {
             ghost::build_ghost(out, g, w, view, show_anchors, &theme);
         }

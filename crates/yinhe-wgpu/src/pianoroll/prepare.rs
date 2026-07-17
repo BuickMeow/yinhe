@@ -83,27 +83,22 @@ pub fn build_render_job(
         note_alpha: 1.0,  // PR notes fully opaque
     };
 
-    // Layer 0: decor (background + black-key rows)
+    // Layer 0: grid lines (background + black-key rows now drawn by egui)
     let vh = view.render_hash();
     let wh = crate::hash_f32s(&[w, h]);
-    let decor_key = layer_cache_key(&[vh, wh]);
-    let mut decor_0 = Vec::new();
-    instances::build_decor(&mut decor_0, w, h, kb_w, kh, scroll_y, theme);
-
-    // Layer 1: grid lines
     let mut grid_key = layer_cache_key(&[vh, wh]);
     if let Some(midi) = midi {
         let sig_events = midi.time_sig_events();
         let sig_hash = crate::hash_time_sigs(sig_events);
         grid_key = layer_cache_key(&[vh, wh, sig_hash]);
     }
-    let mut decor_1 = Vec::new();
+    let mut grid_instances = Vec::new();
     if let Some(midi) = midi
         && let Some(tpb) = midi.ticks_per_beat()
     {
         let (def_num, def_den) = midi.time_sig_default();
         let sig_events = midi.time_sig_events();
-        instances::build_grid(&mut decor_1, w, h, view, tpb, def_num, def_den, sig_events, scroll_x_pos, theme);
+        instances::build_grid(&mut grid_instances, w, h, view, tpb, def_num, def_den, sig_events, scroll_x_pos, theme);
     }
 
     let build_time = t.elapsed();
@@ -115,8 +110,7 @@ pub fn build_render_job(
         track_colors: Box::new(*tc_uniform),
         selection: sel_uniform,
         decor_layers: vec![
-            DecorLayerData { instances: decor_0, cache_key: decor_key },
-            DecorLayerData { instances: decor_1, cache_key: grid_key },
+            DecorLayerData { instances: grid_instances, cache_key: grid_key },
         ],
         build_time,
     }
