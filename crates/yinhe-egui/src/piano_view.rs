@@ -381,22 +381,12 @@ pub fn show(
     // - revision changed, per-key revision matches → skip (already uploaded)
     // - revision changed, some keys differ → try incremental (count must match)
     // - revision changed, count mismatch → full upload
-    let hidden_hash = hidden_notes.iter().fold(0u64, |acc, &(trk, tick, key)| {
-        acc.wrapping_add(trk as u64)
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(tick as u64)
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(key as u64)
-    });
-    // track_visible must be in the key: switching track display changes which
-    // notes are built into all_notes_buffer, even when revision/hidden are same.
-    let tv_hash = yinhe_wgpu::hash_bools(track_visible);
-    let all_notes_key = revision ^ hidden_hash ^ tv_hash;
-    if all_notes_key != *last_cull_revision {
+    let note_key = yinhe_wgpu::NoteBufferKey::new(revision, track_visible, &hidden_notes);
+    if note_key.value() != *last_cull_revision {
         if let Some(midi_src) = midi {
             // Check if only hidden_notes changed (revision same, hidden_hash different)
             let revision_changed = revision != *last_cull_revision_only;
-            let hidden_changed = hidden_hash != *last_hidden_hash;
+            let hidden_changed = yinhe_wgpu::hash_hidden(&hidden_notes) != *last_hidden_hash;
 
             if hidden_changed && !revision_changed {
                 // Only hidden_notes changed → must full upload
@@ -439,9 +429,9 @@ pub fn show(
                 }
             }
         }
-        *last_cull_revision = all_notes_key;
+        *last_cull_revision = note_key.value();
         *last_cull_revision_only = revision;
-        *last_hidden_hash = hidden_hash;
+        *last_hidden_hash = yinhe_wgpu::hash_hidden(&hidden_notes);
     }
 
     // Prepare GPU data (ghost notes are handled separately as a transient overlay)
