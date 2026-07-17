@@ -14,10 +14,10 @@ pub mod time_format;
 pub mod view_base;
 
 pub use arrangement_view::ArrangementView;
-pub use automation::{AutomationEdit, AutomationEvent, AutomationLane, AutomationTarget, PencilNoteDrag, SegmentShape};
+pub use automation::{AutomationEdit, AutomationEvent, AutomationLane, AutomationTarget, SegmentShape};
 pub use automation_panel_view::AutomationPanelView;
 pub use hash::*;
-pub use note::{Note, TimeSigEvent};
+pub use note::{Note, PencilNoteDrag, TimeSigEvent};
 pub use palette::TRACK_PALETTE;
 pub use pc_event::PcEvent;
 pub use piano_roll_view::PianoRollView;
