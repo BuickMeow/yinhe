@@ -40,6 +40,12 @@ impl ProjectData {
         self.revision = self.revision.wrapping_add(1);
     }
 
+    /// Per-key note revision counters from the model. Consumers compare these
+    /// to detect which key buckets need incremental GPU re-upload.
+    pub fn note_revisions(&self) -> &[u64; 128] {
+        &self.model.note_revisions
+    }
+
     /// Rebuild derived indices on the YinModel after mutations.
     ///
     /// O(N) where N = total notes. Call after `Arc::make_mut`.

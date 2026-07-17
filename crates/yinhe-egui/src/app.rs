@@ -32,6 +32,8 @@ pub struct App {
     pub(crate) render_thread: Option<yinhe_wgpu::RenderThreadHandle>,
     pub(crate) pianoroll_view: PianoRollView,
     pub(crate) last_cull_revision: u64, // revision ^ hidden_hash
+    pub(crate) last_cull_revision_only: u64, // last revision (for incremental detection)
+    pub(crate) last_hidden_hash: u64, // last hidden_hash (for incremental detection)
 
     // ── Arrangement (shared GPU resources + global view state) ──
     pub(crate) arr_render_ctx: RenderContext,
@@ -197,6 +199,8 @@ impl App {
             render_thread: None,
             pianoroll_view: PianoRollView::default(),
             last_cull_revision: 0,
+            last_cull_revision_only: 0,
+            last_hidden_hash: 0,
 
             arr_render_ctx,
             arr_renderer: yinhe_wgpu::InstanceRenderer::new(device, queue, format),

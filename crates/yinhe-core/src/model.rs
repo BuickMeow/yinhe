@@ -144,6 +144,12 @@ pub struct YinModel {
     /// to clear. Public for struct construction via `..Default::default()`.
     pub dirty_keys: [bool; 128],
 
+    /// Per-key note revision counter. Bumped every time `mark_dirty(k)` is
+    /// called, **not** cleared by `rebuild_dirty()`. Consumers (e.g. GPU cull
+    /// buffer upload) compare these to detect which keys need incremental
+    /// re-upload without rescanning all 128 buckets.
+    pub note_revisions: [u64; 128],
+
     /// Per-bucket note count cache for O(D) incremental stats in `rebuild_dirty()`.
     /// Updated by `rebuild()`, `load_track_notes()`, and `rebuild_dirty()`.
     pub bucket_note_count: [u64; 128],
@@ -174,6 +180,7 @@ impl Default for YinModel {
             track_note_count: Vec::new(),
             track_audible_count: Vec::new(),
             dirty_keys: [false; 128],
+            note_revisions: [0; 128],
             bucket_note_count: [0; 128],
             bucket_track_stats: core::array::from_fn(|_| HashMap::new()),
             conductor_version: 0,
@@ -322,6 +329,11 @@ impl YinModel {
             .par_iter_mut()
             .for_each(|bucket| Arc::make_mut(bucket).sort_by_key(|n| n.start_tick));
 
+        // Bump all note_revisions (full rebuild = all keys changed).
+        for r in &mut self.note_revisions {
+            *r = r.wrapping_add(1);
+        }
+
         // Recompute note_count, max_tick, track_note_count, track_audible_count
         // (may have changed after edits or track insertions).
         let mut note_count: u64 = 0;
@@ -367,8 +379,10 @@ impl YinModel {
 
     /// Mark a bucket as dirty (modified and needs sorting).
     /// Call this before or after modifying `self.notes[key]`.
+    /// Also bumps `note_revisions[key]` for incremental GPU upload tracking.
     pub fn mark_dirty(&mut self, key: u8) {
         self.dirty_keys[key as usize] = true;
+        self.note_revisions[key as usize] = self.note_revisions[key as usize].wrapping_add(1);
     }
 
     /// Rebuild only the dirty buckets and update statistics incrementally.

@@ -159,18 +159,22 @@ pub fn build_notes(
 /// Filters by `track_visible` and `hidden_notes` on the CPU so the GPU
 /// buffer doesn't contain invisible notes (saving memory and draw calls).
 /// When `track_visible`/`hidden_notes` change, call this again to re-upload.
+///
+/// Returns `(notes, per_key_offsets)` where `per_key_offsets[k]` is the
+/// start index of key k's notes in the flat buffer, and `per_key_offsets[128]`
+/// is the total count.
 pub fn build_all_notes(
     midi: &dyn NoteSource,
     hidden_notes: &std::collections::HashSet<(u16, u32, u8)>,
     track_visible: &[bool],
-) -> Vec<NoteInstance> {
+) -> (Vec<NoteInstance>, [u32; 129]) {
     let results: Vec<Vec<NoteInstance>> = (0u8..=127)
         .into_par_iter()
-        .filter_map(|key| {
+        .map(|key| {
             stacker::maybe_grow(STACK_RED_ZONE, STACK_SIZE, || {
                 let notes = midi.key_notes(key);
                 if notes.is_empty() {
-                    return None;
+                    return Vec::new();
                 }
 
                 let mut local = Vec::new();
@@ -193,12 +197,52 @@ pub fn build_all_notes(
                     });
                 }
 
-                if local.is_empty() { None } else { Some(local) }
+                local
             })
         })
         .collect();
 
-    results.into_iter().flatten().collect()
+    let mut offsets = [0u32; 129];
+    let mut total = 0u32;
+    let mut all = Vec::new();
+    for (k, bucket) in results.into_iter().enumerate() {
+        offsets[k] = total;
+        total += bucket.len() as u32;
+        all.extend(bucket);
+    }
+    offsets[128] = total;
+    (all, offsets)
+}
+
+/// Build note instances for a single key bucket (for incremental upload).
+/// Same filtering logic as `build_all_notes` but scoped to one key.
+pub fn build_key_notes(
+    midi: &dyn NoteSource,
+    key: u8,
+    hidden_notes: &std::collections::HashSet<(u16, u32, u8)>,
+    track_visible: &[bool],
+) -> Vec<NoteInstance> {
+    let notes = midi.key_notes(key);
+    let mut local = Vec::new();
+    for note in notes {
+        if !track_visible
+            .get(note.track as usize)
+            .copied()
+            .unwrap_or(true)
+        {
+            continue;
+        }
+        if hidden_notes.contains(&(note.track, note.start_tick, key)) {
+            continue;
+        }
+        local.push(NoteInstance {
+            start_tick: note.start_tick,
+            end_tick: note.end_tick,
+            packed: NoteInstance::pack(key, note.track, note.velocity),
+            reserved: 0,
+        });
+    }
+    local
 }
 
 

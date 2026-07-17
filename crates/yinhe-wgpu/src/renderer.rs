@@ -70,6 +70,18 @@ struct CullState {
     visible_notes_buffer: Buffer,
     indirect_args_buffer: Buffer,
     cull_info_buffer: Buffer,
+
+    /// Per-key offset in all_notes_buffer (in NoteInstance units).
+    /// `per_key_offsets[k]` = start index of key k's notes.
+    /// `per_key_offsets[128]` = total count. Updated on full upload.
+    per_key_offsets: [u32; 129],
+
+    /// Per-key note count at last full upload.
+    per_key_counts: [u32; 128],
+
+    /// Per-key revision at last upload (full or incremental).
+    /// Compared with model.note_revisions to detect incremental re-upload needs.
+    uploaded_key_revisions: [u64; 128],
 }
 
 impl CullState {
@@ -188,10 +200,20 @@ impl CullState {
             visible_notes_buffer,
             indirect_args_buffer,
             cull_info_buffer,
+            per_key_offsets: [0; 129],
+            per_key_counts: [0; 128],
+            uploaded_key_revisions: [0; 128],
         }
     }
 
-    fn upload_all_notes(&mut self, device: &Device, queue: &Queue, notes: &[NoteInstance]) {
+    fn upload_all_notes(
+        &mut self,
+        device: &Device,
+        queue: &Queue,
+        notes: &[NoteInstance],
+        per_key_offsets: &[u32; 129],
+        key_revisions: &[u64; 128],
+    ) {
         let needed = notes.len() as u64 * std::mem::size_of::<NoteInstance>() as u64;
 
         let recreate = match &self.all_notes_buffer {
@@ -226,7 +248,28 @@ impl CullState {
             bytemuck::bytes_of(&[self.all_notes_count, 0u32, 0u32, 0u32]),
         );
 
+        // Track per-key layout for future incremental uploads.
+        self.per_key_offsets = *per_key_offsets;
+        for k in 0..128 {
+            self.per_key_counts[k] = per_key_offsets[k + 1] - per_key_offsets[k];
+        }
+        self.uploaded_key_revisions = *key_revisions;
+
         // (bind group is recreated by InstanceRenderer::recreate_cull_bind_group)
+    }
+
+    /// Incrementally update a single key's notes in the GPU buffer.
+    /// Only valid when the key's note count hasn't changed (same offset layout).
+    /// Caller must verify count matches `per_key_counts[key]` before calling.
+    fn upload_key_notes(&mut self, queue: &Queue, key: u8, notes: &[NoteInstance], revision: u64) {
+        let offset_bytes = self.per_key_offsets[key as usize] as u64
+            * std::mem::size_of::<NoteInstance>() as u64;
+        if let Some(ref buf) = self.all_notes_buffer {
+            if !notes.is_empty() {
+                queue.write_buffer(buf, offset_bytes, bytemuck::cast_slice(notes));
+            }
+        }
+        self.uploaded_key_revisions[key as usize] = revision;
     }
 
     fn is_ready(&self) -> bool {
@@ -419,12 +462,43 @@ impl InstanceRenderer {
 
     /// Upload ALL note instances to the persistent GPU buffer for compute cull.
     /// Call this once on MIDI load/change, NOT every frame.
-    pub fn upload_all_notes_for_cull(&mut self, notes: &[NoteInstance]) {
-        self.cull.upload_all_notes(&self.device, &self.queue, notes);
+    /// Also records per-key offsets and revisions for future incremental uploads.
+    pub fn upload_all_notes_for_cull(
+        &mut self,
+        notes: &[NoteInstance],
+        per_key_offsets: &[u32; 129],
+        key_revisions: &[u64; 128],
+    ) {
+        self.cull.upload_all_notes(&self.device, &self.queue, notes, per_key_offsets, key_revisions);
         // Recreate bind group with the render pipeline's uniform buffer
         if self.cull.all_notes_buffer.is_some() {
             self.recreate_cull_bind_group();
         }
+    }
+
+    /// Try incremental upload for a single key. Returns true if successful.
+    /// Only works when the key's note count matches the last full upload
+    /// (i.e. notes were modified but not added/removed).
+    pub fn try_incremental_key_upload(
+        &mut self,
+        key: u8,
+        notes: &[NoteInstance],
+        revision: u64,
+    ) -> bool {
+        if self.cull.all_notes_buffer.is_none() {
+            return false;
+        }
+        // Count must match — otherwise offsets would shift and we'd need full upload.
+        if notes.len() as u32 != self.cull.per_key_counts[key as usize] {
+            return false;
+        }
+        self.cull.upload_key_notes(&self.queue, key, notes, revision);
+        true
+    }
+
+    /// Get the uploaded key revisions for comparison with model.
+    pub fn uploaded_key_revisions(&self) -> &[u64; 128] {
+        &self.cull.uploaded_key_revisions
     }
 
     /// Recreate the cull bind group so that binding 0 points to the
