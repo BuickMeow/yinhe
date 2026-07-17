@@ -31,6 +31,7 @@ pub struct App {
     pub(crate) pianoroll: yinhe_wgpu::InstanceRenderer,
     pub(crate) render_thread: Option<yinhe_wgpu::RenderThreadHandle>,
     pub(crate) pianoroll_view: PianoRollView,
+    pub(crate) last_cull_midi_version: u64,
 
     // ── Arrangement (shared GPU resources + global view state) ──
     pub(crate) arr_render_ctx: RenderContext,
@@ -195,6 +196,7 @@ impl App {
             ),
             render_thread: None,
             pianoroll_view: PianoRollView::default(),
+            last_cull_midi_version: 0,
 
             arr_render_ctx,
             arr_renderer: yinhe_wgpu::InstanceRenderer::new(device, queue, format),

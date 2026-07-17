@@ -42,6 +42,7 @@ pub fn show(
     render_ctx: &mut super::render_context::RenderContext,
     render_thread: Option<&yinhe_wgpu::RenderThreadHandle>,
     view: &mut yinhe_pianoroll::PianoRollView,
+    last_cull_midi_version: &mut u64,
     midi: Option<&dyn yinhe_pianoroll::NoteSource>,
     selected: &mut yinhe_core::Selection,
     track_visible: &[bool],
@@ -371,13 +372,42 @@ pub fn show(
         None
     };
 
+    // ── Upload all notes to GPU cull buffer if MIDI changed ──
+    if midi_version != *last_cull_midi_version {
+        if let Some(midi_src) = midi {
+            let all_notes = yinhe_pianoroll::build_all_notes(
+                midi_src, &hidden_notes, track_visible,
+            );
+            pianoroll.upload_all_notes_for_cull(&all_notes);
+        }
+        *last_cull_midi_version = midi_version;
+    }
+
     // Prepare GPU data
-    if let Some(rt) = render_thread {
-        // Async path: build instances on this thread, send to render thread
+    let cull_ready = pianoroll.cull_ready();
+    if cull_ready {
+        // GPU cull path: only upload decor layers + uniforms (no note layer)
         let job = yinhe_pianoroll::build_render_job(
             w, h, midi, view, &*selected, &hidden_notes, track_visible,
             track_colors, scroll_mode, min_border_width, midi_version,
-            &ghost_notes, note_outline, &pianoroll.theme(),
+            note_outline, &pianoroll.theme(),
+        );
+        pianoroll.upload_uniforms(job.uniforms);
+        pianoroll.upload_track_colors(&job.track_colors);
+        pianoroll.upload_selection(&job.selection);
+        // Upload decor layers only (skip note layer — GPU cull handles notes)
+        pianoroll.ensure_layers(job.decor_layers.len());
+        for (i, dl) in job.decor_layers.iter().enumerate() {
+            pianoroll.upload_layer(i, dl.cache_key, |out| {
+                out.extend_from_slice(&dl.instances);
+            });
+        }
+    } else if let Some(rt) = render_thread {
+        // Async path (no cull): build instances on this thread, send to render thread
+        let job = yinhe_pianoroll::build_render_job(
+            w, h, midi, view, &*selected, &hidden_notes, track_visible,
+            track_colors, scroll_mode, min_border_width, midi_version,
+            note_outline, &pianoroll.theme(),
         );
         rt.send_job(yinhe_wgpu::RenderJob {
             width: job.width,
@@ -389,11 +419,11 @@ pub fn show(
             note_layers: job.note_layers,
         });
     } else {
-        // Sync path: prepare + upload + draw + submit on this thread
+        // Sync path (no cull): prepare + upload + draw + submit on this thread
         yinhe_pianoroll::prepare(
             pianoroll, w, h, midi, view, &*selected, &hidden_notes,
             track_visible, track_colors, scroll_mode, min_border_width,
-            midi_version, &ghost_notes, note_outline,
+            midi_version, note_outline,
         );
     }
 
@@ -407,7 +437,10 @@ pub fn show(
     view.base.dirty = false;
 
     // Paint wgpu content into the content_rect
-    if render_thread.is_some() {
+    if cull_ready {
+        // GPU cull path: draw directly (no render thread needed — cull makes GPU work fast)
+        render_ctx.paint(pianoroll, pw, ph, "pianoroll_frame", &painter, content_rect, true);
+    } else if render_thread.is_some() {
         // Render thread handles GPU work — just display the latest texture
         render_ctx.paint_texture_only(pw, ph, &painter, content_rect);
     } else {
@@ -419,6 +452,91 @@ pub fn show(
     } else {
         None
     };
+
+    // ── Keyboard (drawn by egui on top of the wgpu texture) ──
+    let kb_w = view.keyboard_width();
+    let kh = view.key_height;
+    let scroll_y = view.base.scroll_y;
+    let ppu = view.base.pixels_per_tick;
+    let h_f32 = h as f32;
+    let bottom = 128.0 * kh - scroll_y;
+    let theme = pianoroll.theme();
+
+    // White keys
+    for key in 0u8..128 {
+        if yinhe_pianoroll::is_black_key(key) {
+            continue;
+        }
+        let y = bottom - (key as f32 + 1.0) * kh;
+        if y + kh < 0.0 || y > h_f32 {
+            continue;
+        }
+        let screen_y = content_rect.min.y + y;
+        let (r, g, b) = theme.pr_white_key;
+        painter.rect_filled(
+            egui::Rect::from_min_size(
+                egui::pos2(content_rect.min.x, screen_y),
+                egui::vec2(kb_w, kh),
+            ),
+            2.0,
+            egui::Color32::from_rgb(
+                (r * 255.0) as u8,
+                (g * 255.0) as u8,
+                (b * 255.0) as u8,
+            ),
+        );
+    }
+
+    // Black keys on top
+    for key in 0u8..128 {
+        if !yinhe_pianoroll::is_black_key(key) {
+            continue;
+        }
+        let y = bottom - (key as f32 + 1.0) * kh;
+        if y + kh < 0.0 || y > h_f32 {
+            continue;
+        }
+        let screen_y = content_rect.min.y + y;
+        let (r, g, b) = theme.pr_black_key;
+        painter.rect_filled(
+            egui::Rect::from_min_size(
+                egui::pos2(content_rect.min.x, screen_y),
+                egui::vec2(kb_w, kh),
+            ),
+            1.5,
+            egui::Color32::from_rgb(
+                (r * 255.0) as u8,
+                (g * 255.0) as u8,
+                (b * 255.0) as u8,
+            ),
+        );
+    }
+
+    // ── Ghost notes (drawn by egui on top of keyboard) ──
+    // Pencil/selection drag preview — simple filled rects with track color + alpha
+    for &(start_tick, end_tick, key, track) in &ghost_notes {
+        let x = view.tick_to_x(start_tick);
+        let ghost_w = ((end_tick - start_tick) as f32 * ppu).max(1.0);
+        let y = view.key_to_y(key);
+        if y + kh < 0.0 || y > h_f32 || x + ghost_w < kb_w || x > w as f32 {
+            continue;
+        }
+        // Ghost color: track color with 50% alpha
+        let [tr, tg, tb] = track_colors.get(track as usize).copied().unwrap_or([1.0, 1.0, 1.0]);
+        painter.rect_filled(
+            egui::Rect::from_min_size(
+                egui::pos2(content_rect.min.x + x, content_rect.min.y + y),
+                egui::vec2(ghost_w, kh),
+            ),
+            0.0,
+            egui::Color32::from_rgba_premultiplied(
+                (tr * 255.0) as u8,
+                (tg * 255.0) as u8,
+                (tb * 255.0) as u8,
+                128,
+            ),
+        );
+    }
 
     // ── Playback cursor (drawn by egui on top of the wgpu texture) ──
     // Decoupled from the wgpu pipeline so cursor movement during playback

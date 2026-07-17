@@ -7,7 +7,7 @@ use crate::vertex::{Uniforms, TrackColorsUniform, SelectionUniform, MAX_TRACKS, 
 use yinhe_types::PianoRollView;
 
 use yinhe_wgpu::layer_cache_key;
-use yinhe_wgpu::{DecorLayerData, NoteLayerData, RenderJob};
+use yinhe_wgpu::{DecorLayerData, NoteLayerData};
 
 /// Prepare the pianoroll for rendering using the layered cache API.
 ///
@@ -15,8 +15,6 @@ use yinhe_wgpu::{DecorLayerData, NoteLayerData, RenderJob};
 ///   0 = decor (background + black-key rows)
 ///   1 = grid lines
 ///   2 = notes
-///   3 = keyboard
-///   4 = pencil ghost note (optional, rebuilt every frame)
 ///
 /// Each layer is cached independently so that playback (scroll_x changes)
 /// only invalidates the grid layer.
@@ -33,12 +31,11 @@ pub fn prepare(
     scroll_mode: u32,
     min_border_width: f32,
     midi_version: u64,
-    ghost_notes: &[(f64, f64, u8, u16)], // (start_tick, end_tick, key, track) for pencil preview
     note_outline: bool,
 ) -> yinhe_wgpu::PrepareTimings {
     let job = build_render_job(
         width, height, midi, view, selected, hidden_notes, track_visible,
-        track_colors, scroll_mode, min_border_width, midi_version, ghost_notes, note_outline,
+        track_colors, scroll_mode, min_border_width, midi_version, note_outline,
         &renderer.theme,
     );
 
@@ -110,7 +107,6 @@ pub fn build_render_job(
     scroll_mode: u32,
     min_border_width: f32,
     midi_version: u64,
-    ghost_notes: &[(f64, f64, u8, u16)],
     note_outline: bool,
     theme: &yinhe_wgpu::GpuTheme,
 ) -> PianorollRenderJob {
@@ -199,19 +195,6 @@ pub fn build_render_job(
         instances::build_notes(&mut notes_2, w, h, midi, view, hidden_notes, track_visible);
     }
 
-    // Layer 3: keyboard
-    let kb_key = layer_cache_key(&[vh, wh]);
-    let mut decor_3 = Vec::new();
-    instances::build_keyboard(&mut decor_3, kb_w, kh, scroll_y, h, theme);
-
-    // Layer 4: ghost notes (no cache — rebuilt every frame)
-    let mut notes_4 = Vec::new();
-    if !ghost_notes.is_empty() {
-        for &(start_tick, end_tick, key, track) in ghost_notes {
-            instances::build_ghost_note(&mut notes_4, start_tick, end_tick, key, track, theme);
-        }
-    }
-
     let build_time = t.elapsed();
 
     PianorollRenderJob {
@@ -223,11 +206,9 @@ pub fn build_render_job(
         decor_layers: vec![
             DecorLayerData { instances: decor_0, cache_key: decor_key },
             DecorLayerData { instances: decor_1, cache_key: grid_key },
-            DecorLayerData { instances: decor_3, cache_key: kb_key },
         ],
         note_layers: vec![
             NoteLayerData { instances: notes_2, cache_key: notes_key, force: false },
-            NoteLayerData { instances: notes_4, cache_key: 0, force: true },
         ],
         build_time,
     }

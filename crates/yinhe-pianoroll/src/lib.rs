@@ -1,6 +1,6 @@
 pub(crate) mod instances;
 pub use instances::build_notes;
-pub mod keyboard;
+pub use instances::build_all_notes;
 mod pianoroll_prepare;
 
 // Re-export from yinhe-wgpu (crate-local only, used by internal modules)

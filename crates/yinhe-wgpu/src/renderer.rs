@@ -226,31 +226,7 @@ impl CullState {
             bytemuck::bytes_of(&[self.all_notes_count, 0u32, 0u32, 0u32]),
         );
 
-        // Recreate bind group with correct uniform buffer from render pipeline
-        // (passed via a separate method since we don't own it here)
-        self.recreate_bind_group(device);
-    }
-
-    /// Recreate bind group. Must be called after upload_all_notes and
-    /// after the render pipeline's uniform buffer is available.
-    fn recreate_bind_group(&mut self, device: &Device) {
-        let all_buf = match &self.all_notes_buffer {
-            Some(b) => b,
-            None => return,
-        };
-
-        self.bind_group = Some(device.create_bind_group(&BindGroupDescriptor {
-            label: Some("cull_bind_group"),
-            layout: &self.bind_group_layout,
-            entries: &[
-                // binding 0: Uniforms — will be overridden per-frame via a separate bind group
-                BindGroupEntry { binding: 0, resource: all_buf.as_entire_binding() },
-                BindGroupEntry { binding: 1, resource: self.cull_info_buffer.as_entire_binding() },
-                BindGroupEntry { binding: 2, resource: all_buf.as_entire_binding() },
-                BindGroupEntry { binding: 3, resource: self.visible_notes_buffer.as_entire_binding() },
-                BindGroupEntry { binding: 4, resource: self.indirect_args_buffer.as_entire_binding() },
-            ],
-        }));
+        // (bind group is recreated by InstanceRenderer::recreate_cull_bind_group)
     }
 
     fn is_ready(&self) -> bool {
@@ -493,7 +469,9 @@ impl InstanceRenderer {
         }
     }
 
-    /// Legacy draw: iterate all layers, switch pipelines per layer kind.
+    /// Legacy draw (no GPU cull): draw all decor layers then all note layers.
+    ///
+    /// Z-order: decor (bg + grid) → notes
     fn draw_legacy(
         &self,
         encoder: &mut CommandEncoder,
@@ -505,22 +483,26 @@ impl InstanceRenderer {
             encoder, target, &self.render.pipeline, &self.render.bind_group, width, height,
         );
 
-        let mut current_kind: Option<LayerKind> = None;
+        // Step 1: all decor layers (background + grid)
         for layer in &self.layers {
-            let kind = layer.kind();
-            if current_kind != Some(kind) {
-                match kind {
-                    LayerKind::Decor => pass.set_pipeline(&self.render.pipeline),
-                    LayerKind::Note => pass.set_pipeline(&self.render.note_pipeline),
-                }
-                current_kind = Some(kind);
+            if layer.kind() == LayerKind::Decor {
+                pass.set_pipeline(&self.render.pipeline);
+                layer.draw(&mut pass, 0);
             }
-            layer.draw(&mut pass, 0);
+        }
+
+        // Step 2: all note layers
+        for layer in &self.layers {
+            if layer.kind() == LayerKind::Note {
+                pass.set_pipeline(&self.render.note_pipeline);
+                layer.draw(&mut pass, 0);
+            }
         }
     }
 
-    /// GPU compute cull draw: dispatch cull pass, then draw layers in correct Z-order:
-    /// background + grid → culled notes → keyboard → ghost notes.
+    /// GPU compute cull draw: dispatch cull pass, then draw layers.
+    ///
+    /// Z-order: decor (bg + grid) → culled notes.
     fn draw_with_cull(
         &self,
         encoder: &mut CommandEncoder,
@@ -531,39 +513,21 @@ impl InstanceRenderer {
         // Phase 1: Compute cull
         self.cull.dispatch_cull(&self.queue, encoder, &self.render.uniform_buffer);
 
-        // Phase 2: Single render pass, multiple layers with pipeline switches
+        // Phase 2: Single render pass
         let mut pass = crate::util::begin_pianoroll_pass(
             encoder, target, &self.render.pipeline, &self.render.bind_group, width, height,
         );
 
-        // Layout: 0=decor, 1=grid, 2=notes(skip), 3=keyboard, 4=ghost
-        // Z-order: decor + grid → culled notes → keyboard → ghost notes
-        let decor_layers: Vec<_> = self.layers.iter().filter(|l| l.kind() == LayerKind::Decor).collect();
-        let note_layers: Vec<_> = self.layers.iter().filter(|l| l.kind() == LayerKind::Note).collect();
-
-        // Step 1: background + grid (first 2 decor layers)
-        for (i, layer) in decor_layers.iter().enumerate() {
-            if i < 2 {
+        // Step 1: all decor layers (background + grid)
+        for layer in &self.layers {
+            if layer.kind() == LayerKind::Decor {
                 pass.set_pipeline(&self.render.pipeline);
                 layer.draw(&mut pass, 0);
             }
         }
 
-        // Step 2: culled notes
+        // Step 2: culled notes (from GPU compute cull buffer)
         self.cull.draw_visible_notes(&mut pass, &self.render.note_pipeline, &self.render.bind_group);
-
-        // Step 3: keyboard (3rd decor layer, if any) — on top of notes
-        if decor_layers.len() >= 3 {
-            pass.set_pipeline(&self.render.pipeline);
-            decor_layers[2].draw(&mut pass, 0);
-        }
-
-        // Step 4: ghost notes (last note layer only, if any)
-        // Skip note layer 0 (it was replaced by GPU cull); only draw ghost layer
-        if note_layers.len() > 1 {
-            pass.set_pipeline(&self.render.note_pipeline);
-            note_layers[note_layers.len() - 1].draw(&mut pass, 0);
-        }
     }
 
     /// Total instances across all layers.

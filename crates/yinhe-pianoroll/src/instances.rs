@@ -3,7 +3,6 @@ use yinhe_theme::GpuTheme;
 use yinhe_types::{key_notes_in_range, NoteSource, TimeSigEvent, is_black_key};
 
 use crate::grid;
-use crate::keyboard;
 use crate::vertex::{DrawInstance, NoteInstance};
 use yinhe_types::PianoRollView;
 
@@ -153,11 +152,56 @@ pub fn build_notes(
     out.extend(results.into_iter().flatten());
 }
 
-/// Build keyboard instances (layer 3).
-/// Dependencies: scroll_y, key_height, h
-pub fn build_keyboard(out: &mut Vec<DrawInstance>, kb_w: f32, kh: f32, scroll_y: f32, h: f32, theme: &GpuTheme) {
-    keyboard::append_keyboard_instances(out, kb_w, kh, scroll_y, h, theme);
+/// Build ALL note instances (no viewport culling) for GPU compute cull.
+/// Upload once on MIDI load/change; the GPU cull shader handles per-frame
+/// viewport culling.
+///
+/// Filters by `track_visible` and `hidden_notes` on the CPU so the GPU
+/// buffer doesn't contain invisible notes (saving memory and draw calls).
+/// When `track_visible`/`hidden_notes` change, call this again to re-upload.
+pub fn build_all_notes(
+    midi: &dyn NoteSource,
+    hidden_notes: &std::collections::HashSet<(u16, u32, u8)>,
+    track_visible: &[bool],
+) -> Vec<NoteInstance> {
+    let results: Vec<Vec<NoteInstance>> = (0u8..=127)
+        .into_par_iter()
+        .filter_map(|key| {
+            stacker::maybe_grow(STACK_RED_ZONE, STACK_SIZE, || {
+                let notes = midi.key_notes(key);
+                if notes.is_empty() {
+                    return None;
+                }
+
+                let mut local = Vec::new();
+                for note in notes {
+                    if !track_visible
+                        .get(note.track as usize)
+                        .copied()
+                        .unwrap_or(true)
+                    {
+                        continue;
+                    }
+                    if hidden_notes.contains(&(note.track, note.start_tick, key)) {
+                        continue;
+                    }
+                    local.push(NoteInstance {
+                        start_tick: note.start_tick,
+                        end_tick: note.end_tick,
+                        packed: NoteInstance::pack(key, note.track, note.velocity),
+                        reserved: 0,
+                    });
+                }
+
+                if local.is_empty() { None } else { Some(local) }
+            })
+        })
+        .collect();
+
+    results.into_iter().flatten().collect()
 }
+
+
 
 /// Build a single ghost note instance for the pencil tool preview (layer 4).
 /// Uses the note's track color at full opacity so it appears as a solid preview

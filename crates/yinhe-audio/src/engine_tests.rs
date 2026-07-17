@@ -771,3 +771,61 @@ fn bench_parallelism_configs() {
     eprintln!("  AUTO_PER_CHANNEL 是当前默认配置，AUTO_PER_KEY 添加了 per-key 并行化开销。");
     eprintln!("  Sequential 是单线程 baseline，用于对比并行化收益。");
 }
+
+/// 真实 MIDI 性能测试：用 Night Voyager.mid 对比 AUTO_PER_CHANNEL vs AUTO_PER_KEY。
+#[test]
+#[ignore = "需要本地 MIDI 和 SoundFont 文件"]
+fn prof_night_voyager_parallelism() {
+    let midi_path = "/Users/jieneng/Music/MIDIs/Night Voyager.mid";
+    let sf_path =
+        "/Users/jieneng/Music/Soundfonts/Starry Studio Grand v2.7~/Presets/A_Standard/Studio Grand - Standard (No Hammer).sfz";
+
+    use std::time::Instant;
+
+    let model = std::sync::Arc::new(
+        yinhe_mid2::parse_path(midi_path).unwrap(),
+    );
+    let (_num_ch, active_mask) = crate::spawn::channels_for_model(&model);
+
+    let configs = [
+        ("AUTO_PER_CHANNEL", ParallelismOptions::AUTO_PER_CHANNEL),
+        ("AUTO_PER_KEY", ParallelismOptions::AUTO_PER_KEY),
+    ];
+
+    let render_secs = 30u64;
+    let render_samples = render_secs * 44100 * 2;
+    let chunk_frames = 512;
+    let chunk_samples = chunk_frames * 2;
+
+    for (name, parallelism) in &configs {
+        let mut engine = AudioEngine::with_parallelism(44100, 0, active_mask.clone(), *parallelism);
+
+        engine.handle_command(AudioCommand::LoadModel {
+            model: std::sync::Arc::clone(&model),
+        });
+        engine.handle_command(AudioCommand::LoadSoundFont {
+            port: 0,
+            paths: vec![sf_path.into()],
+        });
+        engine.handle_command(AudioCommand::Play { from_sample: 0 });
+
+        let mut buf = vec![0.0f32; chunk_samples];
+        let t0 = Instant::now();
+        let mut rendered = 0u64;
+        while rendered < render_samples {
+            let frames = ((render_samples - rendered) as usize / 2).min(chunk_frames);
+            let buf_slice = &mut buf[..frames * 2];
+            engine.render(buf_slice);
+            rendered += (frames * 2) as u64;
+        }
+        let elapsed = t0.elapsed();
+        let elapsed_us = elapsed.as_micros() as u64;
+        eprintln!(
+            "  {:<20} → {:>8} µs ({}x real-time, max voice count: {})",
+            name,
+            elapsed_us,
+            (render_secs * 1_000_000) / elapsed_us.max(1),
+            engine.voice_count(),
+        );
+    }
+}
