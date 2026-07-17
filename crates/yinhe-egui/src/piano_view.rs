@@ -270,7 +270,9 @@ pub fn show(
         active_tool,
     );
 
-    // ── Keyboard area: vertical zoom (pinch / cmd+scroll) ──
+    // ── Keyboard area: vertical zoom (pinch / scroll / cmd+scroll) ──
+    // 键盘区原本是滚轮死区（handle_input 作用于 music_rect，不含键盘列），
+    // 因此纯滚轮直接做垂直缩放，不影响卷帘区的平移语义。
     ui.push_id("kb_zoom", |ui| {
         let kb_rect = egui::Rect::from_min_max(
             egui::pos2(rect.min.x, content_y),
@@ -278,18 +280,16 @@ pub fn show(
         );
         let pointer_in_kb = ui.input(|i| i.pointer.hover_pos().is_some_and(|p| kb_rect.contains(p)));
         if pointer_in_kb {
+            let pointer_y = ui.input(|i| i.pointer.hover_pos().unwrap_or_default()).y - content_y;
             let zoom_delta = ui.input(|i| i.zoom_delta());
             if (zoom_delta - 1.0).abs() > 0.001 {
-                let pointer_y = ui.input(|i| i.pointer.hover_pos().unwrap_or_default()).y - content_y;
                 view.zoom_around_y(pointer_y, zoom_delta, content_h);
                 view.base.dirty = true;
                 ui.ctx().request_repaint();
             }
-            let cmd = ui.input(|i| i.modifiers.command || i.modifiers.ctrl);
             let scroll = ui.input(|i| i.smooth_scroll_delta);
-            if cmd && scroll.y.abs() > 0.5 {
+            if scroll.y.abs() > 0.5 {
                 let factor = if scroll.y > 0.0 { 1.1 } else { 1.0 / 1.1 };
-                let pointer_y = ui.input(|i| i.pointer.hover_pos().unwrap_or_default()).y - content_y;
                 view.zoom_around_y(pointer_y, factor, content_h);
                 view.base.dirty = true;
                 ui.ctx().request_repaint();
