@@ -582,8 +582,8 @@ pub fn show(
             let octave = key / 12;
             let label = format!("C{}", octave);
             painter.text(
-                egui::pos2(content_rect.min.x + 3.0, screen_y + 2.0),
-                egui::Align2::LEFT_TOP,
+                egui::pos2(content_rect.min.x + 3.0, screen_y + kh / 2.0),
+                egui::Align2::LEFT_CENTER,
                 label,
                 egui::FontId::proportional((kh * 0.5).clamp(8.0, 14.0)),
                 egui::Color32::from_gray(90),
