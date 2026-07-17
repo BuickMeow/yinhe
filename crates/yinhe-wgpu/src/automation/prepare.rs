@@ -161,7 +161,7 @@ pub fn prepare(
         );
     });
 
-    // Layer 1: data lines (or velocity bars when show_velocity is true, or tempo curve)
+    // Layer 1: data lines (curve pipeline) — or velocity bars / tempo curve (decor pipeline)
     let is_velocity = view.show_velocity;
     let is_tempo = view.show_tempo;
     let tv_hash = crate::hash_bools(track_visible);
@@ -188,17 +188,24 @@ pub fn prepare(
     ]);
     let ghost_for_layer1 = ghost.clone();
     let highlight_tick_for_layer1 = highlight_tick;
-    renderer.upload_layer(1, bars_key, |out| {
-        if is_tempo {
+
+    if is_tempo {
+        // Tempo: staircase lines via decor pipeline (DrawInstance)
+        renderer.upload_layer(1, bars_key, |out| {
             tempo::build_tempo_lines(out, w, h, view, tempo_events, &theme);
-        } else if is_velocity {
-            if let Some(midi) = midi {
+        });
+    } else if is_velocity {
+        // Velocity bars via decor pipeline (DrawInstance)
+        if let Some(midi) = midi {
+            renderer.upload_layer(1, bars_key, |out| {
                 velocity_bars::build_velocity_bars(
                     out, w, h, midi, view, track_visible, track_colors, velocity_display_mode, &theme,
                 );
-            }
-        } else {
-            // 固定层跳过被 ghost 覆盖的 lane
+            });
+        }
+    } else {
+        // Data lines + anchors via curve pipeline (CurveInstance)
+        renderer.upload_curve_layer(1, bars_key, |out| {
             let skip_lane = match ghost_for_layer1 {
                 Some(AutomationGhost::Move { ref lane, .. }) => Some(lane),
                 _ => None,
@@ -206,11 +213,11 @@ pub fn prepare(
             data_lines::build_data_lines(
                 out, w, h, view, lanes, track_visible, track_colors, show_anchors, skip_lane, highlight_tick_for_layer1, &theme,
             );
-        }
-    });
+        });
+    }
 
-    // Layer 2: ghost (拖拽预览，无缓存，每帧重建)
-    renderer.upload_layer(2, 0, |out| {
+    // Layer 2: ghost (拖拽预览，无缓存，每帧重建) — curve pipeline
+    renderer.upload_curve_layer(2, 0, |out| {
         if let Some(g) = ghost {
             ghost::build_ghost(out, g, w, view, show_anchors, &theme);
         }

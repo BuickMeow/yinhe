@@ -3,12 +3,14 @@ use super::prepare::AutomationGhost;
 use yinhe_types::AutomationPanelView;
 use yinhe_theme::GpuTheme;
 use yinhe_types::{AutomationEvent, AutomationLane};
-use crate::vertex::DrawInstance;
+use crate::vertex::CurveInstance;
 
 /// ghost 锚点半径（像素）。
 const GHOST_RADIUS: f32 = 4.0;
 /// ghost 不透明度。
 const GHOST_ALPHA: f32 = 0.9;
+/// ghost 预览线宽（SDF 半宽）。
+const GHOST_LINE_THICKNESS: f32 = 0.5;
 
 /// 构造一条覆盖后的 lane：删除 `old_tick` 处的事件，在 `new_tick` 处插入新事件。
 ///
@@ -52,23 +54,21 @@ pub fn build_lane_override(
     }
 }
 
-/// Build ghost preview instances (layer 3, rebuilt every frame).
+/// Build ghost preview instances (layer 2, rebuilt every frame).
 ///
 /// `AutomationGhost` 坐标为 panel 局部像素坐标。
 pub fn build_ghost(
-    out: &mut Vec<DrawInstance>,
+    out: &mut Vec<CurveInstance>,
     ghost: AutomationGhost,
     w: f32,
     view: &AutomationPanelView,
     show_anchors: bool,
     _theme: &GpuTheme,
 ) {
-    let push_anchor = |out: &mut Vec<DrawInstance>, x: f32, y: f32, color: [f32; 3]| {
-        out.push(DrawInstance::with_props(
-            x - GHOST_RADIUS, y - GHOST_RADIUS,
-            2.0 * GHOST_RADIUS, 2.0 * GHOST_RADIUS,
+    let push_anchor = |out: &mut Vec<CurveInstance>, x: f32, y: f32, color: [f32; 3]| {
+        out.push(CurveInstance::circle(
+            x, y, GHOST_RADIUS,
             [color[0], color[1], color[2], GHOST_ALPHA],
-            GHOST_RADIUS, 0.0,
         ));
     };
 
@@ -79,7 +79,11 @@ pub fn build_ghost(
         }
         AutomationGhost::Curve { start_x, start_y, cur_x, cur_y, color } => {
             push_anchor(out, start_x, start_y, color);
-            data_lines::push_polyline(out, start_x, start_y, cur_x, cur_y, |t| t, color);
+            // 直线预览：从 start 到 cur，tension=0
+            out.push(CurveInstance::line(
+                start_x, start_y, cur_x, cur_y, GHOST_LINE_THICKNESS,
+                [color[0], color[1], color[2], GHOST_ALPHA],
+            ));
             push_anchor(out, cur_x, cur_y, color);
         }
     }

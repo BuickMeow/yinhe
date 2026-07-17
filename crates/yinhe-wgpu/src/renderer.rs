@@ -2,7 +2,7 @@ use wgpu::*;
 
 use crate::layer::LayerSlot;
 use crate::pipeline::RenderPipelineState;
-use crate::vertex::{DrawInstance, NoteInstance, Uniforms, TrackColorsUniform, SelectionUniform};
+use crate::vertex::{CurveInstance, DrawInstance, NoteInstance, Uniforms, TrackColorsUniform, SelectionUniform};
 
 /// Maximum visible note instances the cull output buffer can hold.
 /// 1M instances × 16B = 16MB — enough for any screen at any zoom.
@@ -17,17 +17,20 @@ pub struct PrepareTimings {
     pub instance_count: usize,
 }
 
-/// Layer kind: decor (32B `DrawInstance`) or note (16B `NoteInstance`).
+/// Layer kind: decor (32B `DrawInstance`), note (16B `NoteInstance`),
+/// or curve (32B `CurveInstance` — automation SDF lines/curves).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LayerKind {
     Decor,
     Note,
+    Curve,
 }
 
-/// Type-erased layer slot that can hold either `DrawInstance` or `NoteInstance`.
+/// Type-erased layer slot that can hold `DrawInstance`, `NoteInstance`, or `CurveInstance`.
 pub enum AnyLayer {
     Decor(LayerSlot<DrawInstance>),
     Note(LayerSlot<NoteInstance>),
+    Curve(LayerSlot<CurveInstance>),
 }
 
 impl AnyLayer {
@@ -35,6 +38,7 @@ impl AnyLayer {
         match kind {
             LayerKind::Decor => AnyLayer::Decor(LayerSlot::new(device)),
             LayerKind::Note => AnyLayer::Note(LayerSlot::new(device)),
+            LayerKind::Curve => AnyLayer::Curve(LayerSlot::new(device)),
         }
     }
 
@@ -42,6 +46,7 @@ impl AnyLayer {
         match self {
             AnyLayer::Decor(_) => LayerKind::Decor,
             AnyLayer::Note(_) => LayerKind::Note,
+            AnyLayer::Curve(_) => LayerKind::Curve,
         }
     }
 
@@ -49,6 +54,7 @@ impl AnyLayer {
         match self {
             AnyLayer::Decor(l) => l.draw(pass, vertex_slot),
             AnyLayer::Note(l) => l.draw(pass, vertex_slot),
+            AnyLayer::Curve(l) => l.draw(pass, vertex_slot),
         }
     }
 }
@@ -302,8 +308,9 @@ impl CullState {
 
 /// Generic wgpu renderer for instanced rectangle drawing.
 ///
-/// Manages two pipelines sharing one uniform buffer:
-///   - **decor pipeline** (32B `DrawInstance`, `vs_main`): decor, grid, keyboard, cursor, automation
+/// Manages three pipelines sharing one uniform buffer:
+///   - **decor pipeline** (32B `DrawInstance`, `vs_main`): decor, grid, keyboard, cursor
+///   - **curve pipeline** (32B `CurveInstance`, `vs_main_curve`): automation SDF lines/curves
 ///   - **note pipeline** (16B `NoteInstance`, `vs_main_note`): PR notes, AR notes, ghost notes
 ///
 /// With GPU compute cull enabled, notes are uploaded once to a persistent
@@ -437,6 +444,28 @@ impl InstanceRenderer {
         }
     }
 
+    /// Upload a curve layer (automation SDF lines/curves).
+    /// Skips rebuild when `cache_key` matches the previous value.
+    /// Pass `cache_key: 0` to force upload (always rebuilds, used for ghost layer).
+    pub fn upload_curve_layer(
+        &mut self,
+        index: usize,
+        cache_key: u64,
+        build: impl FnOnce(&mut Vec<CurveInstance>),
+    ) -> bool {
+        self.ensure_layer(index, LayerKind::Curve);
+        if let AnyLayer::Curve(slot) = &mut self.layers[index] {
+            if cache_key == 0 {
+                slot.upload_force(&self.device, &self.queue, build);
+                true
+            } else {
+                slot.upload(&self.device, &self.queue, cache_key, build)
+            }
+        } else {
+            unreachable!()
+        }
+    }
+
     /// Upload ALL note instances to the persistent GPU buffer for compute cull.
     /// Call this once on MIDI load/change, NOT every frame.
     /// Also records per-key offsets and revisions for future incremental uploads.
@@ -522,7 +551,7 @@ impl InstanceRenderer {
 
     /// Legacy draw (no GPU cull): draw all decor layers then all note layers.
     ///
-    /// Z-order: decor (bg + grid) → notes
+    /// Z-order: decor (bg + grid) → curve (automation) → notes
     fn draw_legacy(
         &self,
         encoder: &mut CommandEncoder,
@@ -542,7 +571,15 @@ impl InstanceRenderer {
             }
         }
 
-        // Step 2: all note layers
+        // Step 2: all curve layers (automation SDF lines/curves)
+        for layer in &self.layers {
+            if layer.kind() == LayerKind::Curve {
+                pass.set_pipeline(&self.render.curve_pipeline);
+                layer.draw(&mut pass, 0);
+            }
+        }
+
+        // Step 3: all note layers
         for layer in &self.layers {
             if layer.kind() == LayerKind::Note {
                 pass.set_pipeline(&self.render.note_pipeline);
@@ -553,7 +590,7 @@ impl InstanceRenderer {
 
     /// GPU compute cull draw: dispatch cull pass, then draw layers.
     ///
-    /// Z-order: decor (bg + grid) → culled notes → ghost notes.
+    /// Z-order: decor (bg + grid) → curve (automation) → culled notes → ghost notes.
     fn draw_with_cull(
         &self,
         encoder: &mut CommandEncoder,
@@ -577,10 +614,18 @@ impl InstanceRenderer {
             }
         }
 
-        // Step 2: culled notes (from GPU compute cull buffer)
+        // Step 2: all curve layers (automation SDF lines/curves)
+        for layer in &self.layers {
+            if layer.kind() == LayerKind::Curve {
+                pass.set_pipeline(&self.render.curve_pipeline);
+                layer.draw(&mut pass, 0);
+            }
+        }
+
+        // Step 3: culled notes (from GPU compute cull buffer)
         self.cull.draw_visible_notes(&mut pass, &self.render.note_pipeline, &self.render.bind_group);
 
-        // Step 3: ghost notes (last note layer, if any) — on top of everything
+        // Step 4: ghost notes (last note layer, if any) — on top of everything
         let ghost = self.layers.iter().filter(|l| l.kind() == LayerKind::Note).last();
         if let Some(ghost) = ghost {
             pass.set_pipeline(&self.render.note_pipeline);

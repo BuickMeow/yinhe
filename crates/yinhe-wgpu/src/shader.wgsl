@@ -39,6 +39,26 @@ struct NoteInstance {
     @location(0) data: vec4<u32>,  // x=start_tick, y=end_tick, z=packed(key|track|vel), w=reserved
 }
 
+/// Curve/line/anchor instance (32 bytes).
+/// See `CurveInstance` in vertex.rs for the CPU-side layout.
+struct CurveInstance {
+    @location(0) endp: vec4<f32>,    // (x1, y1, x2, y2)
+    @location(1) params: vec2<f32>,  // (thickness, tension_norm)
+    @location(2) rgba: u32,          // UNORM8: R|G<<8|B<<16|A<<24
+    @location(3) shape: u32,         // 0 = line/curve, 1 = filled circle
+}
+
+struct CurveOutput {
+    @builtin(position) clip_position: vec4<f32>,
+    @location(0) local: vec2<f32>,     // pixel-space position
+    @location(1) p1: vec2<f32>,
+    @location(2) p2: vec2<f32>,
+    @location(3) thickness: f32,
+    @location(4) tension: f32,
+    @location(5) color: vec4<f32>,
+    @location(6) shape: u32,
+}
+
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) color: vec4<f32>,
@@ -344,4 +364,122 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
 
     return composite_border_fill(fill_a, border_a, base_color);
+}
+
+// ── Curve / line pipeline ─────────────────────────────────────────────────
+// Renders automation segments as parameterized curves with per-pixel SDF.
+// CPU pushes one CurveInstance per segment; the fragment shader numerically
+// solves the nearest point on the curve via 4 Newton iterations.
+
+/// Distance from point `p` to line segment `a → b`.
+fn sd_line(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>) -> f32 {
+    let pa = p - a;
+    let ba = b - a;
+    let h = clamp(dot(pa, ba) / max(dot(ba, ba), 1e-8), 0.0, 1.0);
+    return length(pa - ba * h);
+}
+
+/// Distance from point `p` to the parametric curve
+///   P(t) = (a.x + dx·t,  a.y + dy·f(t))
+/// where  f(t) = k·t² + (1-k)·t,   t ∈ [0, 1].
+///
+/// Uses 4 Newton iterations on d/dt[|P(t)-p|²] = 0, seeded by projecting p
+/// onto the linear segment. The seed is exact for k=0; for k≠0 four Newton
+/// steps are well within visual tolerance for any automation curve.
+fn sd_curve(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>, k: f32) -> f32 {
+    let dx = b.x - a.x;
+    let dy = b.y - a.y;
+    let ba = b - a;
+    var t = clamp(dot(p - a, ba) / max(dot(ba, ba), 1e-8), 0.0, 1.0);
+
+    // f(t)  = k·t² + (1-k)·t
+    // f'(t) = 2k·t + (1-k)
+    // P'(t) = (dx, dy·f'(t))
+    // P''(t)= (0, dy·2k)
+    // g(t)  = (P(t)-p) · P'(t) = 0
+    // g'(t) = P'(t)·P'(t) + (P(t)-p)·P''(t)
+    for (var i = 0; i < 4; i = i + 1) {
+        let ft = k * t * t + (1.0 - k) * t;
+        let fpt = 2.0 * k * t + (1.0 - k);
+        let rx = a.x + dx * t - p.x;
+        let ry = a.y + dy * ft - p.y;
+        let px_dt = dx;
+        let py_dt = dy * fpt;
+        let g = rx * px_dt + ry * py_dt;
+        let g_dt = px_dt * px_dt + py_dt * py_dt + ry * (dy * 2.0 * k);
+        t = t - g / max(g_dt, 1e-6);
+        t = clamp(t, 0.0, 1.0);
+    }
+
+    let ft = k * t * t + (1.0 - k) * t;
+    return length(p - vec2<f32>(a.x + dx * t, a.y + dy * ft));
+}
+
+@vertex
+fn vs_main_curve(
+    @builtin(vertex_index) vertex_index: u32,
+    instance: CurveInstance,
+) -> CurveOutput {
+    // Bounding box: AABB of endpoints, padded by thickness + 1px AA.
+    // For circle (shape==1), endpoints collapse to the center; AABB is then
+    // center ± (radius + 1), which is exactly what we want.
+    let pad = instance.params.x + 1.0;
+    let min_x = min(instance.endp.x, instance.endp.z) - pad;
+    let max_x = max(instance.endp.x, instance.endp.z) + pad;
+    let min_y = min(instance.endp.y, instance.endp.w) - pad;
+    let max_y = max(instance.endp.y, instance.endp.w) + pad;
+
+    var pos = array<vec2<f32>, 6>(
+        vec2<f32>(max_x, min_y),
+        vec2<f32>(max_x, max_y),
+        vec2<f32>(min_x, min_y),
+        vec2<f32>(max_x, max_y),
+        vec2<f32>(min_x, max_y),
+        vec2<f32>(min_x, min_y),
+    );
+
+    let p = pos[vertex_index];
+    let ndc_offset = select(0.0, u.scroll_frac, u.scroll_mode == 2u);
+    let ndc_x = ((p.x - ndc_offset) / u.width) * 2.0 - 1.0;
+    let ndc_y = 1.0 - (p.y / u.height) * 2.0;
+
+    var out: CurveOutput;
+    out.clip_position = vec4<f32>(ndc_x, ndc_y, 0.0, 1.0);
+    out.local = p;
+    out.p1 = instance.endp.xy;
+    out.p2 = instance.endp.zw;
+    out.thickness = instance.params.x;
+    out.tension = instance.params.y;
+    out.shape = instance.shape;
+
+    let rgba = instance.rgba;
+    out.color = vec4<f32>(
+        f32((rgba >> 0u)  & 0xFFu) / 255.0,
+        f32((rgba >> 8u)  & 0xFFu) / 255.0,
+        f32((rgba >> 16u) & 0xFFu) / 255.0,
+        f32((rgba >> 24u) & 0xFFu) / 255.0,
+    );
+    return out;
+}
+
+@fragment
+fn fs_main_curve(in: CurveOutput) -> @location(0) vec4<f32> {
+    let p = in.local;
+
+    var d: f32;
+    if (in.shape == 1u) {
+        // Filled circle: distance from center minus radius.
+        d = length(p - in.p1) - in.thickness;
+    } else if (abs(in.tension) > 1e-4) {
+        // Quadratic curve.
+        d = sd_curve(p, in.p1, in.p2, in.tension);
+    } else {
+        // Straight line (tension ≈ 0).
+        d = sd_line(p, in.p1, in.p2);
+    }
+
+    // 1px anti-aliased stroke around `thickness`.
+    let aa = 1.0;
+    let alpha = 1.0 - smoothstep(in.thickness - aa, in.thickness + aa, d);
+    return vec4<f32>(in.color.rgb, in.color.a * alpha);
 }

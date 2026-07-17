@@ -1,16 +1,19 @@
 use wgpu::*;
 
-use crate::vertex::{DrawInstance, NoteInstance, Uniforms, TrackColorsUniform, SelectionUniform};
+use crate::vertex::{CurveInstance, DrawInstance, NoteInstance, Uniforms, TrackColorsUniform, SelectionUniform};
 
 /// Owns the render pipelines and their shared uniform buffers / bind group.
 ///
-/// Two pipelines share the same uniform buffer, track-colors buffer, selection
+/// Three pipelines share the same uniform buffer, track-colors buffer, selection
 /// buffer, and bind group:
 ///   - `pipeline`: decor pipeline (32-byte `DrawInstance` vertex layout, `vs_main`)
 ///   - `note_pipeline`: note pipeline (16-byte `NoteInstance` vertex layout, `vs_main_note`)
+///   - `curve_pipeline`: automation curve pipeline (32-byte `CurveInstance` vertex layout,
+///     `vs_main_curve`/`fs_main_curve` — per-pixel SDF line/curve)
 pub struct RenderPipelineState {
     pub pipeline: RenderPipeline,
     pub note_pipeline: RenderPipeline,
+    pub curve_pipeline: RenderPipeline,
     pub uniform_buffer: Buffer,
     pub track_colors_buffer: Buffer,
     pub selection_buffer: Buffer,
@@ -184,9 +187,50 @@ impl RenderPipelineState {
             cache: None,
         });
 
+        // Curve pipeline: 32-byte CurveInstance vertex layout, shares uniforms/bind group.
+        // Renders automation segments as per-pixel SDF lines/curves.
+        let curve_pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
+            label: Some("curve_pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: VertexState {
+                module: render_shader,
+                entry_point: Some("vs_main_curve"),
+                buffers: &[VertexBufferLayout {
+                    array_stride: std::mem::size_of::<CurveInstance>() as u64,
+                    step_mode: VertexStepMode::Instance,
+                    attributes: &vertex_attr_array![
+                        0 => Float32x4,  // endp (x1, y1, x2, y2) @ offset 0
+                        1 => Float32x2,  // params (thickness, tension) @ offset 16
+                        2 => Uint32,     // rgba_packed @ offset 24
+                        3 => Uint32,     // shape @ offset 28
+                    ],
+                }],
+                compilation_options: PipelineCompilationOptions::default(),
+            },
+            fragment: Some(FragmentState {
+                module: render_shader,
+                entry_point: Some("fs_main_curve"),
+                targets: &[Some(ColorTargetState {
+                    format,
+                    blend: Some(BlendState::ALPHA_BLENDING),
+                    write_mask: ColorWrites::ALL,
+                })],
+                compilation_options: PipelineCompilationOptions::default(),
+            }),
+            primitive: PrimitiveState {
+                topology: PrimitiveTopology::TriangleList,
+                ..PrimitiveState::default()
+            },
+            depth_stencil: None,
+            multisample: MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+
         Self {
             pipeline,
             note_pipeline,
+            curve_pipeline,
             uniform_buffer,
             track_colors_buffer,
             selection_buffer,

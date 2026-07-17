@@ -1,13 +1,15 @@
 use yinhe_types::AutomationPanelView;
 use yinhe_theme::GpuTheme;
 use yinhe_types::{AutomationLane, SegmentShape, TRACK_PALETTE};
-use crate::vertex::DrawInstance;
+use crate::vertex::CurveInstance;
 
-/// 折线绘制时的子段像素步长。Linear/Curve 段会按这个步长采样并连成多条 1px 短线，
-/// 在保证视觉平滑的同时让 GPU 实例数可控（每段最多 `segment_pixel_len / STEP` 个）。
-const CURVE_SUBSAMPLE_PX: f32 = 2.0;
+/// 自动化曲线的线宽（SDF 半宽，像素）。视觉宽度 ≈ 2×thickness + 1px AA。
+/// 0.5 ≈ 原 1px 矩形拟合的视觉宽度，但带 AA 抗锯齿。
+const LINE_THICKNESS: f32 = 0.5;
 /// 锚点（pencil 工具下显示）的半径，像素。
 const ANCHOR_RADIUS: f32 = 3.0;
+/// 自动化线段的不透明度。
+const LINE_ALPHA: f32 = 0.85;
 
 /// 一个需要绘制的线段（panel 局部像素坐标）。
 ///
@@ -93,12 +95,12 @@ fn collect_segments(
     segs
 }
 
-/// Build data line instances (layer 2).
+/// Build data line instances (layer 1, curve pipeline).
 ///
 /// 渲染每条 lane 的线段和锚点。被 ghost 覆盖的 lane 由调用方通过 `skip_lane`
 /// 跳过，本函数只画未被覆盖的 lane。
 pub fn build_data_lines(
-    out: &mut Vec<DrawInstance>,
+    out: &mut Vec<CurveInstance>,
     w: f32,
     _h: f32,
     view: &AutomationPanelView,
@@ -159,12 +161,7 @@ pub fn build_data_lines(
                 } else {
                     [color[0], color[1], color[2], 1.0]
                 };
-                out.push(DrawInstance::with_props(
-                    x - ANCHOR_RADIUS, y - ANCHOR_RADIUS,
-                    2.0 * ANCHOR_RADIUS, 2.0 * ANCHOR_RADIUS,
-                    anchor_color,
-                    ANCHOR_RADIUS, 0.0,
-                ));
+                out.push(CurveInstance::circle(x, y, ANCHOR_RADIUS, anchor_color));
             }
         }
     }
@@ -172,7 +169,7 @@ pub fn build_data_lines(
 
 /// 画单条 lane 的线段和锚点（用于 ghost 层）。
 pub(crate) fn build_lane_instances(
-    out: &mut Vec<DrawInstance>,
+    out: &mut Vec<CurveInstance>,
     w: f32,
     view: &AutomationPanelView,
     lane: &AutomationLane,
@@ -202,19 +199,17 @@ pub(crate) fn build_lane_instances(
         for evt in visible_events {
             let x = x_offset + evt.tick as f32 * ppu;
             let y = view.value_to_y(evt.value as f32, max_val);
-            out.push(DrawInstance::with_props(
-                x - ANCHOR_RADIUS, y - ANCHOR_RADIUS,
-                2.0 * ANCHOR_RADIUS, 2.0 * ANCHOR_RADIUS,
-                [color[0], color[1], color[2], 1.0],
-                ANCHOR_RADIUS, 0.0,
-            ));
+            out.push(CurveInstance::circle(x, y, ANCHOR_RADIUS, [color[0], color[1], color[2], 1.0]));
         }
     }
 }
 
 /// 渲染从 `(x1, y1)` 到 `(x2, y2)` 的一段自动化曲线，按 shape 决定形状。
+///
+/// - `Step` → push 两个 line instance：水平段 + 竖直跳变段
+/// - `Curve{tension}` → push 一个 curve instance（tension=0 时退化为直线）
 fn render_segment(
-    out: &mut Vec<DrawInstance>,
+    out: &mut Vec<CurveInstance>,
     x1: f32,
     y1: f32,
     x2: f32,
@@ -222,16 +217,13 @@ fn render_segment(
     shape: SegmentShape,
     color: [f32; 3],
 ) {
-    let line_alpha = 0.85;
+    let line_color = [color[0], color[1], color[2], LINE_ALPHA];
     let dx = x2 - x1;
     if dx <= 0.0 {
         // 同一 tick 的多事件：只画竖直跳变
         let dy = y2 - y1;
         if dy.abs() > 0.0 {
-            out.push(DrawInstance::solid_rect(
-                x2 - 0.5, y1.min(y2), 1.0, dy.abs(),
-                [color[0], color[1], color[2], line_alpha],
-            ));
+            out.push(CurveInstance::line(x1, y1, x2, y2, LINE_THICKNESS, line_color));
         }
         return;
     }
@@ -239,71 +231,18 @@ fn render_segment(
     match shape {
         SegmentShape::Step => {
             // 横线（保持 v1）+ 竖直跳变
-            out.push(DrawInstance::solid_rect(
-                x1, y1, dx, 1.0,
-                [color[0], color[1], color[2], line_alpha],
-            ));
+            out.push(CurveInstance::line(x1, y1, x2, y1, LINE_THICKNESS, line_color));
             let dy = y2 - y1;
             if dy.abs() > 0.0 {
-                out.push(DrawInstance::solid_rect(
-                    x2 - 0.5, y1.min(y2), 1.0, dy.abs(),
-                    [color[0], color[1], color[2], line_alpha],
-                ));
+                out.push(CurveInstance::line(x2, y1, x2, y2, LINE_THICKNESS, line_color));
             }
         }
-        SegmentShape::Curve { tension: _ } => {
-            // Curve{tension:0} = 直线，tension≠0 = 弯曲。统一用 interpolate 子采样。
-            push_polyline(out, x1, y1, x2, y2, |t| shape.interpolate(t), color);
+        SegmentShape::Curve { tension } => {
+            // tension=0 → 直线；tension≠0 → 二次曲线。统一用一个 curve instance。
+            let tension_norm = (tension as f32) / 127.0;
+            out.push(CurveInstance::curve(
+                x1, y1, x2, y2, LINE_THICKNESS, tension_norm, line_color,
+            ));
         }
-    }
-}
-
-/// 沿 `(x1,y1) → (x2,y2)` 用 `factor_fn(t)` 控制插值因子，按像素步长子采样并画折线。
-pub(crate) fn push_polyline(
-    out: &mut Vec<DrawInstance>,
-    x1: f32,
-    y1: f32,
-    x2: f32,
-    y2: f32,
-    factor_fn: impl Fn(f32) -> f32,
-    color: [f32; 3],
-) {
-    let line_alpha = 0.85;
-    let dx = x2 - x1;
-    let dy = y2 - y1;
-    let pixel_len = dx.hypot(dy);
-    if pixel_len < 1.0 {
-        return;
-    }
-    let steps = ((pixel_len / CURVE_SUBSAMPLE_PX).ceil() as usize).max(1);
-    let inv = 1.0 / steps as f32;
-    let mut px = x1;
-    let mut py = y1;
-    for i in 1..=steps {
-        let t = i as f32 * inv;
-        let f = factor_fn(t);
-        let nx = x1 + dx * t;
-        let ny = y1 + dy * f;
-        // 画 (px,py) → (nx,ny) 的 1px 线段
-        let seg_dx = nx - px;
-        let seg_dy = ny - py;
-        let len = seg_dx.hypot(seg_dy);
-        if len > 0.5 {
-            // 用一个细矩形表示该子段。角度通过近似水平/垂直分解表达：
-            // 简单起见，按主导方向画一条水平或竖直短线（像素级足够平滑）。
-            if seg_dx.abs() >= seg_dy.abs() {
-                out.push(DrawInstance::solid_rect(
-                    px.min(nx), py - 0.5, seg_dx.abs().max(1.0), 1.0,
-                    [color[0], color[1], color[2], line_alpha],
-                ));
-            } else {
-                out.push(DrawInstance::solid_rect(
-                    px - 0.5, py.min(ny), 1.0, seg_dy.abs().max(1.0),
-                    [color[0], color[1], color[2], line_alpha],
-                ));
-            }
-        }
-        px = nx;
-        py = ny;
     }
 }

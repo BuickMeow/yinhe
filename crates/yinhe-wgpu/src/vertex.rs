@@ -93,6 +93,77 @@ impl NoteInstance {
     }
 }
 
+/// Curve/line/anchor instance: 32 bytes.
+///
+/// One instance renders one of:
+/// - **Line/curve segment** (`shape == 0`): parameterized curve whose x is
+///   linear in t and y follows `f(t) = k·t² + (1-k)·t` (k = tension_norm).
+///   - `tension == 0.0` → straight line (shader fast path via `sd_line`)
+///   - `tension != 0.0` → quadratic curve (shader numerically solves nearest t)
+///   For `SegmentShape::Step`, CPU pushes **two** instances: a horizontal
+///   segment (y1→y1) plus a vertical segment (x2,x2 with y1→y2).
+/// - **Filled circle** (`shape == 1`): anchor point at (x1, y1) with
+///   `thickness` = radius. `x2/y2/tension` ignored.
+///
+/// Layout (matches `vs_main_curve` in shader.wgsl):
+///   - `@location(0)`: Float32x4 = (x1, y1, x2, y2)
+///   - `@location(1)`: Float32x4 = (thickness, tension_norm, shape, _)
+///   - `@location(2)`: Uint32    = rgba UNORM8 (R|G<<8|B<<16|A<<24)
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct CurveInstance {
+    pub x1: f32,
+    pub y1: f32,
+    pub x2: f32,
+    pub y2: f32,
+    pub thickness: f32,
+    /// 归一化张力 ∈ [-1, 1]，= `i8_tension / 127.0`。circle 时忽略。
+    pub tension: f32,
+    pub rgba_packed: u32,
+    /// 0 = line/curve segment, 1 = filled circle (anchor).
+    pub shape: u32,
+}
+
+impl CurveInstance {
+    /// Construct a straight-line segment instance.
+    pub fn line(x1: f32, y1: f32, x2: f32, y2: f32, thickness: f32, color: [f32; 4]) -> Self {
+        CurveInstance {
+            x1, y1, x2, y2,
+            thickness,
+            tension: 0.0,
+            rgba_packed: pack_rgba(color[0], color[1], color[2], color[3]),
+            shape: 0,
+        }
+    }
+
+    /// Construct a quadratic-curve segment instance.
+    /// `tension_norm` ∈ [-1, 1] (= `i8_tension / 127.0`).
+    pub fn curve(
+        x1: f32, y1: f32, x2: f32, y2: f32,
+        thickness: f32, tension_norm: f32, color: [f32; 4],
+    ) -> Self {
+        CurveInstance {
+            x1, y1, x2, y2,
+            thickness,
+            tension: tension_norm,
+            rgba_packed: pack_rgba(color[0], color[1], color[2], color[3]),
+            shape: 0,
+        }
+    }
+
+    /// Construct a filled-circle anchor instance at `(cx, cy)` with `radius`.
+    pub fn circle(cx: f32, cy: f32, radius: f32, color: [f32; 4]) -> Self {
+        CurveInstance {
+            x1: cx, y1: cy,
+            x2: cx, y2: cy,  // AABB collapses to a single point; pad handles the rest
+            thickness: radius,
+            tension: 0.0,
+            rgba_packed: pack_rgba(color[0], color[1], color[2], color[3]),
+            shape: 1,
+        }
+    }
+}
+
 impl DrawInstance {
     /// Construct a solid-filled rectangle with no rounded corners, no border.
     pub fn solid_rect(x: f32, y: f32, w: f32, h: f32, color: [f32; 4]) -> Self {
@@ -196,6 +267,7 @@ mod tests {
     fn test_note_instance_size() {
         assert_eq!(std::mem::size_of::<DrawInstance>(), 32);
         assert_eq!(std::mem::size_of::<NoteInstance>(), 16);
+        assert_eq!(std::mem::size_of::<CurveInstance>(), 32);
     }
 
     #[test]
@@ -204,5 +276,6 @@ mod tests {
         assert_pod::<Uniforms>();
         assert_pod::<DrawInstance>();
         assert_pod::<NoteInstance>();
+        assert_pod::<CurveInstance>();
     }
 }
