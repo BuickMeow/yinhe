@@ -553,6 +553,10 @@ pub fn show(
     };
 
     // ── Keyboard (drawn by egui on top of the wgpu texture) ──
+    // 细节描边颜色（暗色，1px）
+    let stroke_color = egui::Color32::from_gray(60);
+    let stroke = egui::Stroke::new(1.0, stroke_color);
+
     // White keys
     for key in 0u8..128 {
         if yinhe_types::is_black_key(key) {
@@ -564,18 +568,27 @@ pub fn show(
         }
         let screen_y = content_rect.min.y + y;
         let (r, g, b) = theme.pr_white_key;
-        painter.rect_filled(
-            egui::Rect::from_min_size(
-                egui::pos2(content_rect.min.x, screen_y),
-                egui::vec2(kb_w, kh),
-            ),
-            2.0,
-            egui::Color32::from_rgb(
-                (r * 255.0) as u8,
-                (g * 255.0) as u8,
-                (b * 255.0) as u8,
-            ),
+        let key_rect = egui::Rect::from_min_size(
+            egui::pos2(content_rect.min.x, screen_y),
+            egui::vec2(kb_w, kh),
         );
+        painter.rect_filled(key_rect, 0.0, egui::Color32::from_rgb(
+            (r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8,
+        ));
+        painter.rect_stroke(key_rect, 0.0, stroke, egui::StrokeKind::Inside);
+
+        // C 位置标注音名（中央 C = C4 = key 60）
+        if key % 12 == 0 {
+            let octave = key / 12;
+            let label = format!("C{}", octave);
+            painter.text(
+                egui::pos2(content_rect.min.x + 3.0, screen_y + 2.0),
+                egui::Align2::LEFT_TOP,
+                label,
+                egui::FontId::proportional((kh * 0.5).clamp(8.0, 14.0)),
+                egui::Color32::from_gray(90),
+            );
+        }
     }
 
     // Black keys on top
@@ -589,18 +602,14 @@ pub fn show(
         }
         let screen_y = content_rect.min.y + y;
         let (r, g, b) = theme.pr_black_key;
-        painter.rect_filled(
-            egui::Rect::from_min_size(
-                egui::pos2(content_rect.min.x, screen_y),
-                egui::vec2(kb_w, kh),
-            ),
-            1.5,
-            egui::Color32::from_rgb(
-                (r * 255.0) as u8,
-                (g * 255.0) as u8,
-                (b * 255.0) as u8,
-            ),
+        let key_rect = egui::Rect::from_min_size(
+            egui::pos2(content_rect.min.x, screen_y),
+            egui::vec2(kb_w, kh),
         );
+        painter.rect_filled(key_rect, 0.0, egui::Color32::from_rgb(
+            (r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8,
+        ));
+        painter.rect_stroke(key_rect, 0.0, stroke, egui::StrokeKind::Inside);
     }
 
 
