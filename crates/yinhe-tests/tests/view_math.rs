@@ -253,8 +253,8 @@ fn quantize_label_not_empty() {
 }
 
 #[test]
-fn quantize_button_text_not_empty() {
-    assert!(!QuantizePreset::Fraction(1, 4).button_text().is_empty());
+fn quantize_label_not_empty() {
+    assert!(!QuantizePreset::Fraction(1, 4).label().is_empty());
 }
 
 // ── Time formatting (yinhe-types) ──

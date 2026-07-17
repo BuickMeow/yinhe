@@ -769,16 +769,6 @@ impl Document {
         }))
     }
 
-    /// 查找指定 track 上 target 对应的 lane 索引。
-    pub fn find_automation_lane(
-        &self,
-        track_idx: usize,
-        target: &yinhe_types::AutomationTarget,
-    ) -> Option<usize> {
-        let track = self.data.model.tracks.get(track_idx)?;
-        track.automation_lanes.iter().position(|l| &l.target == target)
-    }
-
     // -----------------------------------------------------------------------
     // P0 refactoring: editing logic moved from yinhe-egui::ui_helpers
     // -----------------------------------------------------------------------

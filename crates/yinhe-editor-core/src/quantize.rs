@@ -92,19 +92,6 @@ impl QuantizePreset {
             }
         }
     }
-
-    /// Return `(numerator, denominator)` for fraction presets, or `(n, 1)` for absolute.
-    pub fn as_fraction(&self) -> (u32, u32) {
-        match self {
-            QuantizePreset::Fraction(num, den) => (*num, *den),
-            QuantizePreset::Absolute(n) => (*n, 1),
-        }
-    }
-
-    /// Human-friendly short text for the button.
-    pub fn button_text(&self) -> String {
-        self.label()
-    }
 }
 
 impl Default for QuantizePreset {
@@ -172,13 +159,6 @@ mod tests {
     }
 
     #[test]
-    fn test_as_fraction() {
-        assert_eq!(QuantizePreset::Fraction(1, 4).as_fraction(), (1, 4));
-        assert_eq!(QuantizePreset::Fraction(3, 8).as_fraction(), (3, 8));
-        assert_eq!(QuantizePreset::Absolute(3).as_fraction(), (3, 1));
-    }
-
-    #[test]
     fn test_triplet_intervals() {
         let ppq = 480;
         assert_eq!(QuantizePreset::Fraction(1, 6).tick_interval(ppq), 320);
@@ -191,7 +171,6 @@ mod tests {
         assert_eq!(QuantizePreset::Absolute(3).tick_interval(480), 3);
         assert_eq!(QuantizePreset::Absolute(3).tick_interval(1), 3);
         assert_eq!(QuantizePreset::Absolute(3).label(), "3 tick");
-        assert_eq!(QuantizePreset::Absolute(3).button_text(), "3 tick");
     }
 
     #[test]
@@ -206,13 +185,6 @@ mod tests {
     fn test_label_not_empty() {
         for preset in QuantizePreset::ALL {
             assert!(!preset.label().is_empty(), "label should not be empty for {:?}", preset);
-        }
-    }
-
-    #[test]
-    fn test_button_text_not_empty() {
-        for preset in QuantizePreset::ALL {
-            assert!(!preset.button_text().is_empty(), "button_text should not be empty for {:?}", preset);
         }
     }
 

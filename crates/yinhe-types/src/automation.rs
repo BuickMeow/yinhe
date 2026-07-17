@@ -220,13 +220,6 @@ pub struct AutomationEvent {
     pub shape: SegmentShape,
 }
 
-impl AutomationEvent {
-    /// 构造一个使用目标默认 shape 的事件。
-    pub fn with_default_shape(tick: u32, value: u16, target: &AutomationTarget) -> Self {
-        Self { tick, value, shape: target.default_shape() }
-    }
-}
-
 /// A sorted lane of automation events for one parameter on one track.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AutomationLane {
@@ -245,14 +238,6 @@ impl AutomationLane {
         let lo = self.events.partition_point(|e| e.tick < start_tick);
         let hi = self.events.partition_point(|e| e.tick < end_tick);
         &self.events[lo..hi]
-    }
-
-    /// Chase: find the last event before `target_tick`.
-    ///
-    /// Returns `None` if no event exists before the target tick.
-    pub fn chase_value(&self, target_tick: u32) -> Option<u16> {
-        let idx = self.events.partition_point(|e| e.tick < target_tick);
-        if idx > 0 { Some(self.events[idx - 1].value) } else { None }
     }
 }
 
@@ -337,46 +322,6 @@ mod tests {
     fn test_events_in_range_empty() {
         let lane = make_lane(AutomationTarget::CC { controller: 7 }, &[100, 200]);
         assert!(lane.events_in_range(300, 400).is_empty());
-    }
-
-    #[test]
-    fn test_chase_value_found() {
-        let lane = AutomationLane {
-            target: AutomationTarget::CC { controller: 7 },
-            track: 0,
-            events: vec![
-                AutomationEvent { tick: 100, value: 80, shape: SegmentShape::Step },
-                AutomationEvent { tick: 200, value: 100, shape: SegmentShape::Step },
-                AutomationEvent { tick: 300, value: 60, shape: SegmentShape::Step },
-            ],
-        };
-        // Chase at tick 250 → should return value 100 (event at tick 200)
-        assert_eq!(lane.chase_value(250), Some(100));
-        // Chase at tick 300 → should return value 100 (event before 300, not at 300)
-        assert_eq!(lane.chase_value(300), Some(100));
-    }
-
-    #[test]
-    fn test_chase_value_none() {
-        let lane = make_lane(AutomationTarget::CC { controller: 7 }, &[200, 300]);
-        // Chase at tick 100 → no events before
-        assert_eq!(lane.chase_value(100), None);
-    }
-
-    #[test]
-    fn test_chase_value_exact_tick() {
-        let lane = AutomationLane {
-            target: AutomationTarget::CC { controller: 7 },
-            track: 0,
-            events: vec![
-                AutomationEvent { tick: 100, value: 80, shape: SegmentShape::Step },
-                AutomationEvent { tick: 200, value: 100, shape: SegmentShape::Step },
-            ],
-        };
-        // Chase at tick 100 → event at tick 100 is NOT before tick 100
-        assert_eq!(lane.chase_value(100), None);
-        // Chase at tick 101 → event at tick 100 is before tick 101
-        assert_eq!(lane.chase_value(101), Some(80));
     }
 
     #[test]
@@ -499,24 +444,5 @@ mod tests {
         let small = SegmentShape::Curve { tension: 30 }.interpolate(0.5);
         let big = SegmentShape::Curve { tension: 127 }.interpolate(0.5);
         assert!(big < small, "stronger tension should produce smaller midpoint factor");
-    }
-
-    #[test]
-    fn test_automation_event_with_default_shape() {
-        let evt = AutomationEvent::with_default_shape(
-            100,
-            64,
-            &AutomationTarget::CC { controller: 7 },
-        );
-        assert_eq!(evt.tick, 100);
-        assert_eq!(evt.value, 64);
-        assert_eq!(evt.shape, SegmentShape::Curve { tension: 0 });
-
-        let evt2 = AutomationEvent::with_default_shape(
-            100,
-            0,
-            &AutomationTarget::CC { controller: 64 },
-        );
-        assert_eq!(evt2.shape, SegmentShape::Step);
     }
 }

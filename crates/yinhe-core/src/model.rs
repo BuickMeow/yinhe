@@ -160,11 +160,6 @@ pub struct YinModel {
     /// `track_audible_count` updates in `rebuild_dirty()` instead of
     /// rescanning all 128 buckets.
     pub bucket_track_stats: [HashMap<u16, (u64, u64)>; 128],
-
-    /// Monotonically increasing version counter bumped whenever conductor
-    /// (tempo/time_sig) changes. `rebuild_dirty()` skips tempo_map rebuild
-    /// when this hasn't changed, avoiding an unnecessary O(segments) pass.
-    pub conductor_version: u64,
 }
 
 impl Default for YinModel {
@@ -183,7 +178,6 @@ impl Default for YinModel {
             note_revisions: [0; 128],
             bucket_note_count: [0; 128],
             bucket_track_stats: core::array::from_fn(|_| HashMap::new()),
-            conductor_version: 0,
         }
     }
 }
@@ -477,9 +471,7 @@ impl YinModel {
             self.bucket_track_stats[k] = new_stats;
         }
 
-        // 4. Only rebuild tempo_map if conductor changed (notes-only edits skip it).
-        //    The caller is responsible for bumping `conductor_version` when
-        //    conductor.tempo or conductor.time_sig is modified.
+        // 4. Rebuild tempo_map.
         self.tempo_map = Arc::new(self.build_tempo_map());
     }
 

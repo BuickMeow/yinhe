@@ -299,7 +299,7 @@ pub fn show(
         ui.painter().text(
             btn_rect.center(),
             egui::Align2::CENTER_CENTER,
-            doc.edit.quantize_arrange.button_text(),
+            doc.edit.quantize_arrange.label(),
             egui::FontId::proportional(11.0),
             icon_color,
         );
