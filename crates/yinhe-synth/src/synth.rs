@@ -151,7 +151,9 @@ pub fn advance_voices(voices: &mut [GpuVoiceState], frame_count: u32) {
 
 /// Persistent GPU state — all buffers allocated once, reused every block.
 struct GpuBuffers {
+    #[allow(dead_code)]
     sample_chunks: Vec<wgpu::Buffer>,
+    #[allow(dead_code)]
     chunk_offsets_buf: wgpu::Buffer,
     chunk_count: u32,
     voice_state_buf: wgpu::Buffer,
@@ -168,6 +170,7 @@ pub struct GpuAudioRenderer {
     device: Arc<wgpu::Device>,
     queue: Arc<wgpu::Queue>,
     pipeline: wgpu::ComputePipeline,
+    #[allow(dead_code)]
     pipeline_layout: wgpu::PipelineLayout,
     bind_group_layout: wgpu::BindGroupLayout,
     dummy_buf: wgpu::Buffer,

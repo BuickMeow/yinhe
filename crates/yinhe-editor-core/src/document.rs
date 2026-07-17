@@ -7,7 +7,7 @@ use yinhe_types::TRACK_PALETTE;
 use yinhe_yin::{MappingFile, ProjectFile};
 
 use crate::edit_state::EditState;
-use crate::history::{UndoAction, UndoEntry, UndoStack};
+use crate::history::{UndoEntry, UndoStack};
 use crate::project_data::ProjectData;
 use crate::quantize::QuantizePreset;
 

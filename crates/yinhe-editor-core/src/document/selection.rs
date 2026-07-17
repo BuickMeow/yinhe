@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use crate::batch_ops;
-use crate::history::{NoteDelta, UndoAction, UndoStack};
+use crate::history::{NoteDelta, UndoAction};
 
 use super::Document;
 

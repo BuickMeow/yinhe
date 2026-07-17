@@ -520,7 +520,7 @@ pub fn show(
     let kb_w = view.keyboard_width();
     let kh = view.key_height;
     let scroll_y = view.base.scroll_y;
-    let ppu = view.base.pixels_per_tick;
+    let _ppu = view.base.pixels_per_tick;
     let h_f32 = h as f32;
     let bottom = 128.0 * kh - scroll_y;
     let theme = pianoroll.theme();

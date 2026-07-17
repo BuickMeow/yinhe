@@ -206,12 +206,13 @@ fn compute_follow_scroll_page_mode_no_scroll_in_center() {
 
 #[test]
 fn total_ticks_padded_positive() {
-    assert!((total_ticks_padded(1000) - 1200.0).abs() < 0.01);
+    // 1000 + 64 * 480 * 4 = 123880
+    assert!((total_ticks_padded(1000, 480) - 123880.0).abs() < 0.01);
 }
 
 #[test]
 fn total_ticks_padded_zero() {
-    assert_eq!(total_ticks_padded(0), 0.0);
+    assert_eq!(total_ticks_padded(0, 480), (64 * 480 * 4) as f64);
 }
 
 // ── QuantizePreset ──
@@ -250,11 +251,6 @@ fn quantize_snap_tick_at_boundary() {
 fn quantize_label_not_empty() {
     assert!(!QuantizePreset::Fraction(1, 4).label().is_empty());
     assert!(!QuantizePreset::Fraction(1, 16).label().is_empty());
-}
-
-#[test]
-fn quantize_label_not_empty() {
-    assert!(!QuantizePreset::Fraction(1, 4).label().is_empty());
 }
 
 // ── Time formatting (yinhe-types) ──

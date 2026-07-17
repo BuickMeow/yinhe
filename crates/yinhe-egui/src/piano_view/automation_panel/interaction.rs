@@ -332,7 +332,7 @@ pub(crate) fn handle_automation_interaction(
         if let Some((_, tick)) = hit_anchor {
             if let Some(lidx) = lane_idx {
                 if let Some(l) = lane {
-                    if let Some(evt) = l.events.iter().find(|e| e.tick == tick) {
+                    if let Some(_evt) = l.events.iter().find(|e| e.tick == tick) {
                         // 清除旧编辑值，确保新锚点使用自己的初始值
                         let edit_tick_id = ui.id().with("auto_right_tick").with(panel_index);
                         let edit_value_id = ui.id().with("auto_right_value").with(panel_index);

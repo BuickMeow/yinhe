@@ -186,9 +186,7 @@ fn build_key_map_from_sf2(sf2_path: &Path) -> Result<Vec<Vec<KeyInfo>>, String> 
         // sustain 已经是百分比（0..100），归一化到 0..1
         let sustain_norm = (region.ampeg_envelope.ampeg_sustain / 100.0).clamp(0.0, 1.0);
 
-        let tune = region.fine_tune.wrapping_add(
-            (region.coarse_tune.wrapping_mul(100))
-        );
+        let tune = region.fine_tune.wrapping_add(region.coarse_tune.wrapping_mul(100));
 
         let info = KeyInfo {
             sample_path: None,

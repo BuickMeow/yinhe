@@ -430,7 +430,7 @@ fn show_anchor_info(
     doc: &mut Document,
     track_idx: u16,
     lane_idx: usize,
-    event_idx: usize,
+    _event_idx: usize,
     tick: u32,
     value: u16,
     shape: SegmentShape,

@@ -2,7 +2,7 @@
 
 use eframe::egui;
 
-use yinhe_types::{key_notes_in_range, AutomationLane, TimeSigEvent};
+use yinhe_types::{key_notes_in_range, TimeSigEvent};
 use yinhe_editor_core::quantize::QuantizePreset;
 
 use super::PianoViewEvent;

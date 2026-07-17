@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex, mpsc};
+use std::sync::mpsc;
 
 pub(crate) mod actions;
 pub(crate) mod audio;

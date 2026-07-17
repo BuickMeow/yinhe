@@ -39,9 +39,4 @@ impl ExportState {
             sample_rate: 0,
         }
     }
-
-    /// Returns `true` if an export is currently in progress.
-    pub fn is_exporting(&self) -> bool {
-        self.rx.is_some()
-    }
 }

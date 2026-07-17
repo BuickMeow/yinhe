@@ -45,13 +45,6 @@ impl AnyLayer {
         }
     }
 
-    pub fn instance_count(&self) -> usize {
-        match self {
-            AnyLayer::Decor(l) => l.instance_count(),
-            AnyLayer::Note(l) => l.instance_count(),
-        }
-    }
-
     fn draw<'a>(&self, pass: &mut RenderPass<'a>, vertex_slot: u32) {
         match self {
             AnyLayer::Decor(l) => l.draw(pass, vertex_slot),
