@@ -217,8 +217,8 @@ pub fn show(
     });
 
     // ── Arrangement GPU view (below ruler) ──
-    let arr_midi: Option<&dyn yinhe_arrangement::NoteSource> =
-        Some(&*doc.data.model as &dyn yinhe_arrangement::NoteSource);
+    let arr_midi: Option<&dyn yinhe_types::NoteSource> =
+        Some(&*doc.data.model as &dyn yinhe_types::NoteSource);
     let gpu_size = gpu_rect.size();
     ui.scope_builder(egui::UiBuilder::new().max_rect(gpu_rect), |ui| {
         view_ui::show(

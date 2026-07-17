@@ -41,11 +41,11 @@ pub fn show(
     pianoroll: &mut yinhe_wgpu::InstanceRenderer,
     render_ctx: &mut super::render_context::RenderContext,
     render_thread: Option<&yinhe_wgpu::RenderThreadHandle>,
-    view: &mut yinhe_pianoroll::PianoRollView,
+    view: &mut yinhe_types::PianoRollView,
     last_cull_revision: &mut u64, // revision ^ hidden_hash — triggers all_notes re-upload
     last_cull_revision_only: &mut u64, // last revision for incremental detection
     last_hidden_hash: &mut u64, // last hidden_hash for incremental detection
-    midi: Option<&dyn yinhe_pianoroll::NoteSource>,
+    midi: Option<&dyn yinhe_types::NoteSource>,
     selected: &mut yinhe_core::Selection,
     track_visible: &[bool],
     track_colors: &[[f32; 3]],
@@ -58,7 +58,7 @@ pub fn show(
     follow_mode: &mut super::view_interaction::FollowMode,
     active_tool: &Tool,
     // Automation panel data (all-or-nothing)
-    auto_panels: Option<&mut Vec<yinhe_automation::AutomationPanelView>>,
+    auto_panels: Option<&mut Vec<yinhe_types::AutomationPanelView>>,
     auto_renderers: Option<
         &mut Vec<(
             yinhe_wgpu::InstanceRenderer,
@@ -390,7 +390,7 @@ pub fn show(
 
             if hidden_changed && !revision_changed {
                 // Only hidden_notes changed → must full upload
-                let (all_notes, offsets) = yinhe_pianoroll::build_all_notes(
+                let (all_notes, offsets) = yinhe_wgpu::build_all_notes(
                     midi_src, &hidden_notes, track_visible,
                 );
                 pianoroll.upload_all_notes_for_cull(&all_notes, &offsets, note_revisions);
@@ -408,7 +408,7 @@ pub fn show(
                     // Try incremental: build + upload each dirty key
                     let mut all_ok = true;
                     for &key in &dirty_keys {
-                        let key_notes = yinhe_pianoroll::build_key_notes(
+                        let key_notes = yinhe_wgpu::build_key_notes(
                             midi_src, key, &hidden_notes, track_visible,
                         );
                         if !pianoroll.try_incremental_key_upload(
@@ -421,7 +421,7 @@ pub fn show(
 
                     if !all_ok {
                         // Fallback: full upload (some key's count changed)
-                        let (all_notes, offsets) = yinhe_pianoroll::build_all_notes(
+                        let (all_notes, offsets) = yinhe_wgpu::build_all_notes(
                             midi_src, &hidden_notes, track_visible,
                         );
                         pianoroll.upload_all_notes_for_cull(&all_notes, &offsets, note_revisions);
@@ -439,7 +439,7 @@ pub fn show(
     let cull_ready = pianoroll.cull_ready();
     if cull_ready {
         // GPU cull path: upload decor layers + ghost layer (GPU cull handles notes)
-        let job = yinhe_pianoroll::build_render_job(
+        let job = yinhe_wgpu::build_render_job(
             w, h, midi, view, &*selected,
             track_colors, scroll_mode, min_border_width,
             note_outline, &theme,
@@ -458,12 +458,12 @@ pub fn show(
         let ghost_idx = job.decor_layers.len();
         pianoroll.upload_note_layer(ghost_idx, 0, |out| {
             for &(start_tick, end_tick, key, track) in &ghost_notes {
-                yinhe_pianoroll::build_ghost_note(out, start_tick, end_tick, key, track, &theme);
+                yinhe_wgpu::build_ghost_note(out, start_tick, end_tick, key, track, &theme);
             }
         });
     } else if let Some(rt) = render_thread {
         // Async path (no cull): build instances on this thread, send to render thread
-        let job = yinhe_pianoroll::build_render_job(
+        let job = yinhe_wgpu::build_render_job(
             w, h, midi, view, &*selected,
             track_colors, scroll_mode, min_border_width,
             note_outline, &theme,
@@ -471,11 +471,11 @@ pub fn show(
         // Build note instances + ghost overlay as note layers for the render thread.
         let mut notes_instances = Vec::new();
         if let Some(midi) = midi {
-            yinhe_pianoroll::build_notes(&mut notes_instances, w as f32, h as f32, midi, view, &hidden_notes, track_visible);
+            yinhe_wgpu::build_notes(&mut notes_instances, w as f32, h as f32, midi, view, &hidden_notes, track_visible);
         }
         let mut ghost_instances = Vec::new();
         for &(start_tick, end_tick, key, track) in &ghost_notes {
-            yinhe_pianoroll::build_ghost_note(&mut ghost_instances, start_tick, end_tick, key, track, &theme);
+            yinhe_wgpu::build_ghost_note(&mut ghost_instances, start_tick, end_tick, key, track, &theme);
         }
         let note_layers = vec![
             yinhe_wgpu::NoteLayerData { instances: notes_instances, cache_key: 0, force: false },
@@ -527,7 +527,7 @@ pub fn show(
 
     // White keys
     for key in 0u8..128 {
-        if yinhe_pianoroll::is_black_key(key) {
+        if yinhe_types::is_black_key(key) {
             continue;
         }
         let y = bottom - (key as f32 + 1.0) * kh;
@@ -552,7 +552,7 @@ pub fn show(
 
     // Black keys on top
     for key in 0u8..128 {
-        if !yinhe_pianoroll::is_black_key(key) {
+        if !yinhe_types::is_black_key(key) {
             continue;
         }
         let y = bottom - (key as f32 + 1.0) * kh;
@@ -765,7 +765,7 @@ pub fn show(
                     let mut count = panels.len();
                     automation_panel::show_toggle_buttons(ui, show, &mut count);
                     while panels.len() < count {
-                        panels.push(yinhe_automation::AutomationPanelView::default());
+                        panels.push(yinhe_types::AutomationPanelView::default());
                     }
                     while panels.len() > count {
                         panels.pop();

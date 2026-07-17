@@ -209,7 +209,7 @@ impl App {
         let (piano_event, note_drag_delta, pencil_note_drag) = {
             let mut guard = crate::app::main_loop::ReplaceGuard::new(&mut self.documents[idx]);
             let doc = guard.as_mut();
-            let midi_source: Option<&dyn yinhe_pianoroll::NoteSource> =
+            let midi_source: Option<&dyn yinhe_types::NoteSource> =
                 Some(doc.data.model.as_ref());
             let piano_rect = egui::Rect::from_min_max(
                 egui::pos2(layout.remaining.min.x, layout.bottom_y),

@@ -1,6 +1,6 @@
 use yinhe_types::AutomationPanelView;
 use yinhe_theme::GpuTheme;
-use yinhe_wgpu::DrawInstance;
+use crate::vertex::DrawInstance;
 
 /// Build stepped-line instances for tempo curve (layer 2).
 ///

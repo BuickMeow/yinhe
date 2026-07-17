@@ -1,7 +1,7 @@
 use yinhe_types::AutomationPanelView;
 use yinhe_theme::GpuTheme;
 use yinhe_types::{AutomationLane, SegmentShape, TRACK_PALETTE};
-use yinhe_wgpu::DrawInstance;
+use crate::vertex::DrawInstance;
 
 /// 折线绘制时的子段像素步长。Linear/Curve 段会按这个步长采样并连成多条 1px 短线，
 /// 在保证视觉平滑的同时让 GPU 实例数可控（每段最多 `segment_pixel_len / STEP` 个）。

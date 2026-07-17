@@ -1,15 +1,15 @@
 use rayon::prelude::*;
 use yinhe_types::{AutomationLane, AutomationTarget, NoteSource, SegmentShape, TimeSigEvent};
 
-use crate::data_lines;
-use crate::decor;
-use crate::ghost;
-use crate::tempo;
-use crate::velocity_bars;
-use crate::InstanceRenderer;
+use super::data_lines;
+use super::decor;
+use super::ghost;
+use super::tempo;
+use super::velocity_bars;
+use crate::renderer::InstanceRenderer;
 use yinhe_types::AutomationPanelView;
-use crate::Uniforms;
-use yinhe_wgpu::layer_cache_key;
+use crate::vertex::Uniforms;
+use crate::layer::layer_cache_key;
 
 /// 拖拽预览（ghost）。由交互层每帧计算，传给 wgpu 在 ghost 层绘制。
 ///
@@ -123,7 +123,7 @@ pub fn prepare(
     let w = width as f32;
     let h = height as f32;
     let scroll_x = view.base.scroll_x;
-    let (scroll_x_pos, scroll_frac) = yinhe_wgpu::compute_scroll_frac(scroll_x, scroll_mode);
+    let (scroll_x_pos, scroll_frac) = crate::compute_scroll_frac(scroll_x, scroll_mode);
 
     let uniforms = Uniforms {
         width: w,
@@ -148,7 +148,7 @@ pub fn prepare(
     renderer.ensure_layers(4);
 
     let vh = view.render_hash();
-    let wh = yinhe_wgpu::hash_f32s(&[w, h]);
+    let wh = crate::hash_f32s(&[w, h]);
 
     // Layer 0: decor (background + center line)
     let center_line_hash = lanes
@@ -168,7 +168,7 @@ pub fn prepare(
     });
 
     // Layer 1: grid lines
-    let sig_hash = yinhe_wgpu::hash_time_sigs(time_sig_events);
+    let sig_hash = crate::hash_time_sigs(time_sig_events);
     let grid_key = layer_cache_key(&[vh, wh, sig_hash]);
     renderer.upload_layer(1, grid_key, |out| {
         decor::build_grid(
@@ -179,7 +179,7 @@ pub fn prepare(
     // Layer 2: data lines (or velocity bars when show_velocity is true, or tempo curve)
     let is_velocity = view.show_velocity;
     let is_tempo = view.show_tempo;
-    let tv_hash = yinhe_wgpu::hash_bools(track_visible);
+    let tv_hash = crate::hash_bools(track_visible);
     // ghost_lane_hash：被 ghost 覆盖的 lane 内容变化时触发 Layer 2 重建。
     // 这样开始/结束拖拽时固定层会隐藏/恢复该 lane。
     let ghost_lane_hash = ghost.as_ref().map(|g| match g {

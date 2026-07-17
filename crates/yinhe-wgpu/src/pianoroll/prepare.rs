@@ -1,9 +1,9 @@
-use crate::instances;
+use super::instances;
 use crate::vertex::{Uniforms, TrackColorsUniform, SelectionUniform, MAX_TRACKS, MAX_SEL_RECTS};
 use yinhe_types::PianoRollView;
 
-use yinhe_wgpu::layer_cache_key;
-use yinhe_wgpu::DecorLayerData;
+use crate::layer_cache_key;
+use crate::DecorLayerData;
 
 /// Render job data: uniforms + decor layers built on CPU, sent to GPU for upload.
 /// Note layers are NOT included — the GPU compute cull path handles notes,
@@ -34,7 +34,7 @@ pub fn build_render_job(
     scroll_mode: u32,
     min_border_width: f32,
     note_outline: bool,
-    theme: &yinhe_wgpu::GpuTheme,
+    theme: &crate::GpuTheme,
 ) -> PianorollRenderJob {
     let t = std::time::Instant::now();
 
@@ -45,7 +45,7 @@ pub fn build_render_job(
     let scroll_y = view.base.scroll_y;
     let ppu = view.base.pixels_per_tick;
     let scroll_x = view.base.scroll_x;
-    let (scroll_x_pos, scroll_frac) = yinhe_wgpu::compute_scroll_frac(scroll_x, scroll_mode);
+    let (scroll_x_pos, scroll_frac) = crate::compute_scroll_frac(scroll_x, scroll_mode);
 
     // Build track colors uniform — allocate on heap to avoid 1MB stack overflow
     let track_count = track_colors.len().min(MAX_TRACKS) as u32;
@@ -85,7 +85,7 @@ pub fn build_render_job(
 
     // Layer 0: decor (background + black-key rows)
     let vh = view.render_hash();
-    let wh = yinhe_wgpu::hash_f32s(&[w, h]);
+    let wh = crate::hash_f32s(&[w, h]);
     let decor_key = layer_cache_key(&[vh, wh]);
     let mut decor_0 = Vec::new();
     instances::build_decor(&mut decor_0, w, h, kb_w, kh, scroll_y, theme);
@@ -94,7 +94,7 @@ pub fn build_render_job(
     let mut grid_key = layer_cache_key(&[vh, wh]);
     if let Some(midi) = midi {
         let sig_events = midi.time_sig_events();
-        let sig_hash = yinhe_wgpu::hash_time_sigs(sig_events);
+        let sig_hash = crate::hash_time_sigs(sig_events);
         grid_key = layer_cache_key(&[vh, wh, sig_hash]);
     }
     let mut decor_1 = Vec::new();

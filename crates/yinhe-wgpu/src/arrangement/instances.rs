@@ -4,8 +4,8 @@ use rayon::prelude::*;
 use yinhe_types::{key_notes_in_range, NoteSource, TimeSigEvent};
 
 use yinhe_types::ArrangementView;
-use yinhe_wgpu::grid;
-use yinhe_wgpu::vertex::{DrawInstance, NoteInstance};
+use crate::grid;
+use crate::vertex::{DrawInstance, NoteInstance};
 
 /// Stack red zone threshold. When stack usage exceeds this, `stacker` will
 /// allocate a new stack segment before calling the closure.

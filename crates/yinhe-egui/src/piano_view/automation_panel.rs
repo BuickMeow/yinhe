@@ -8,7 +8,7 @@ pub use yinhe_types::AutomationEdit;
 use yinhe_types::{AutomationLane, AutomationTarget, TimeSigEvent};
 use yinhe_types::time_format::format_tick_bar_beat_with_time_sig;
 
-use yinhe_automation::{AutomationGhost, prepare_automation};
+use yinhe_wgpu::{AutomationGhost, prepare_automation};
 use yinhe_types::AutomationPanelView;
 use yinhe_wgpu::InstanceRenderer;
 
@@ -150,7 +150,7 @@ pub fn show_panels(
     track_colors: &[[f32; 3]],
     scroll_mode: u32,
     min_border_width: f32,
-    midi: Option<&dyn yinhe_automation::NoteSource>,
+    midi: Option<&dyn yinhe_types::NoteSource>,
     velocity_display_mode: &mut u32,
     edit_ctx: Option<&AutomationEditCtx<'_>>,
     tempo_events: &[(u32, f64)],

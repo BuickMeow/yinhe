@@ -2,7 +2,7 @@ use yinhe_types::AutomationPanelView;
 use crate::grid;
 use yinhe_theme::GpuTheme;
 use yinhe_types::{AutomationLane, TimeSigEvent};
-use yinhe_wgpu::DrawInstance;
+use crate::vertex::DrawInstance;
 
 /// Build background + center line instances (layer 0).
 /// Dependencies: none (background is static), lane target (center line)

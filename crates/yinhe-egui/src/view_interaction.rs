@@ -33,7 +33,7 @@ pub(crate) trait ViewInteraction {
     fn zoom_around_y(&mut self, pointer_y: f32, factor: f32, height: f32);
 }
 
-impl ViewInteraction for yinhe_pianoroll::PianoRollView {
+impl ViewInteraction for yinhe_types::PianoRollView {
     fn scroll_x(&mut self) -> &mut f32 {
         &mut self.base.scroll_x
     }
@@ -54,7 +54,7 @@ impl ViewInteraction for yinhe_pianoroll::PianoRollView {
     }
 }
 
-impl ViewInteraction for yinhe_arrangement::ArrangementView {
+impl ViewInteraction for yinhe_types::ArrangementView {
     fn scroll_x(&mut self) -> &mut f32 {
         &mut self.base.scroll_x
     }

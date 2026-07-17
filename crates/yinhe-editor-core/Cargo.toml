@@ -8,7 +8,6 @@ yinhe-types = { path = "../yinhe-types" }
 yinhe-core = { path = "../yinhe-core" }
 yinhe-mid2 = { path = "../yinhe-mid2" }
 yinhe-yin = { path = "../yinhe-yin" }
-yinhe-automation = { path = "../yinhe-automation" }
 yinhe-memtrace = { path = "../yinhe-memtrace" }
 dirs = { workspace = true }
 uuid = { workspace = true }

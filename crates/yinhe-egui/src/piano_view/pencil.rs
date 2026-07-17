@@ -60,13 +60,13 @@ pub(crate) fn pencil_frame(
     ui: &mut egui::Ui,
     content_rect: egui::Rect,
     music_rect: egui::Rect,
-    view: &mut yinhe_pianoroll::PianoRollView,
+    view: &mut yinhe_types::PianoRollView,
     quantize: QuantizePreset,
     ppq: u32,
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
     track_selected: &std::collections::HashSet<u16>,
     conductor_idx: Option<u16>,
-    midi: Option<&dyn yinhe_pianoroll::NoteSource>,
+    midi: Option<&dyn yinhe_types::NoteSource>,
     _track_colors: &[[f32; 3]],
 ) -> (Option<yinhe_core::NoteEvent>, Vec<(f64, f64, u8, u16)>, Vec<(u16, u32, u8)>, Option<PencilNoteDrag>) {
     let pencil_id = ui.id().with("pencil_drag");

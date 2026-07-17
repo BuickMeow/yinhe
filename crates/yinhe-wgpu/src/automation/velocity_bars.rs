@@ -2,7 +2,7 @@ use yinhe_types::AutomationPanelView;
 use rayon::prelude::*;
 use yinhe_theme::GpuTheme;
 use yinhe_types::{key_notes_in_range, NoteSource, TRACK_PALETTE};
-use yinhe_wgpu::{pack_props, pack_rgba, DrawInstance};
+use crate::vertex::{DrawInstance, pack_props, pack_rgba};
 
 /// Stack red zone threshold for stacker.
 const STACK_RED_ZONE: usize = 32 * 1024;

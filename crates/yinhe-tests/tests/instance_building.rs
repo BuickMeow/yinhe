@@ -1,5 +1,5 @@
 use yinhe_types::Note;
-use yinhe_pianoroll::build_notes;
+use yinhe_wgpu::build_notes;
 use yinhe_types::PianoRollView;
 use yinhe_core::YinModel;
 

@@ -1,6 +1,9 @@
+pub mod arrangement;
+pub mod automation;
 pub mod grid;
 pub mod layer;
 pub mod note_buffer_key;
+pub mod pianoroll;
 pub mod pipeline;
 pub mod render_thread;
 mod renderer;
@@ -14,3 +17,8 @@ pub use renderer::{InstanceRenderer, PrepareTimings};
 pub use util::{hash_f64s, hash_f32s, hash_bools, hash_time_sigs, compute_scroll_frac};
 pub use yinhe_theme::GpuTheme;
 pub use vertex::{DrawInstance, NoteInstance, Uniforms, TrackColorsUniform, MAX_TRACKS, pack_props, pack_rgba};
+
+// Re-export types that were previously provided by the separate crates
+pub use pianoroll::{build_render_job, PianorollRenderJob, build_notes, build_all_notes, build_key_notes, build_ghost_note};
+pub use automation::{prepare_automation, AutomationGhost, build_lane_override};
+pub use arrangement::{build_decor as build_arr_decor, build_grid as build_arr_grid, build_ghost_notes, build_notes as build_arr_notes, build_arrangement_cursor};

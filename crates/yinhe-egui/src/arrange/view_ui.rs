@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use eframe::egui;
 
-use yinhe_arrangement::{build_decor, build_ghost_notes, build_grid, build_notes};
+use yinhe_wgpu::{build_arr_decor, build_ghost_notes, build_arr_grid, build_arr_notes};
 use yinhe_core::TrackInfo;
 use yinhe_types::{ArrangementView, NoteSource, key_notes_in_range};
 use yinhe_wgpu::{InstanceRenderer, Uniforms, TrackColorsUniform, MAX_TRACKS};
@@ -184,7 +184,7 @@ pub fn show(
     };
     let decor_key = layer_cache_key(&[vh, wh, tv_hash]);
     renderer.upload_layer(0, decor_key, |out| {
-        build_decor(
+        build_arr_decor(
             out,
             w as f32,
             h as f32,
@@ -214,7 +214,7 @@ pub fn show(
         {
             let (def_num, def_den) = midi.time_sig_default();
             let sig_events = midi.time_sig_events();
-            build_grid(
+            build_arr_grid(
                 out, w as f32, h as f32, view, tpb, def_num, def_den, sig_events, scroll_x_pos, &theme,
             );
         }
@@ -224,7 +224,7 @@ pub fn show(
     let notes_key = layer_cache_key(&[vh, wh, tv_hash, revision, hidden_notes.len() as u64]);
     renderer.upload_note_layer(2, notes_key, |out| {
         if let Some(midi) = midi {
-            build_notes(
+            build_arr_notes(
                 out,
                 w as f32,
                 h as f32,

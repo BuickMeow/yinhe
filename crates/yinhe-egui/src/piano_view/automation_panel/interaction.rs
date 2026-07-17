@@ -4,7 +4,7 @@ use eframe::egui;
 
 use yinhe_types::{AutomationLane, AutomationTarget, SegmentShape};
 use yinhe_types::AutomationPanelView;
-use yinhe_automation::{AutomationGhost, build_lane_override};
+use yinhe_wgpu::{AutomationGhost, build_lane_override};
 
 use crate::right_panel::{InfoContent, RightTab};
 use crate::widgets::tools_panel::Tool;

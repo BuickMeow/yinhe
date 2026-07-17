@@ -19,7 +19,7 @@ pub(crate) trait TimeRulerView {
     fn content_left(&self) -> f32;
 }
 
-impl TimeRulerView for yinhe_pianoroll::PianoRollView {
+impl TimeRulerView for yinhe_types::PianoRollView {
     fn tick_to_x(&self, tick: f64) -> f32 {
         self.tick_to_x(tick)
     }
@@ -34,7 +34,7 @@ impl TimeRulerView for yinhe_pianoroll::PianoRollView {
     }
 }
 
-impl TimeRulerView for yinhe_arrangement::ArrangementView {
+impl TimeRulerView for yinhe_types::ArrangementView {
     fn tick_to_x(&self, tick: f64) -> f32 {
         self.tick_to_x(tick)
     }

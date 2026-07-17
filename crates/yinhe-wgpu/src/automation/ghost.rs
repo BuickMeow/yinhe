@@ -1,9 +1,9 @@
-use crate::data_lines;
-use crate::AutomationGhost;
+use super::data_lines;
+use super::prepare::AutomationGhost;
 use yinhe_types::AutomationPanelView;
 use yinhe_theme::GpuTheme;
 use yinhe_types::{AutomationEvent, AutomationLane};
-use yinhe_wgpu::DrawInstance;
+use crate::vertex::DrawInstance;
 
 /// ghost 锚点半径（像素）。
 const GHOST_RADIUS: f32 = 4.0;

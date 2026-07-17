@@ -6816,18 +6816,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "yinhe-arrangement"
-version = "0.1.0"
-dependencies = [
- "rayon",
- "stacker",
- "yinhe-test-helpers",
- "yinhe-theme",
- "yinhe-types",
- "yinhe-wgpu",
-]
-
-[[package]]
 name = "yinhe-audio"
 version = "0.1.0"
 dependencies = [
@@ -6843,17 +6831,6 @@ dependencies = [
  "yinhe-mid2",
  "yinhe-synth",
  "yinhe-types",
-]
-
-[[package]]
-name = "yinhe-automation"
-version = "0.1.0"
-dependencies = [
- "rayon",
- "stacker",
- "yinhe-theme",
- "yinhe-types",
- "yinhe-wgpu",
 ]
 
 [[package]]
@@ -6882,7 +6859,6 @@ dependencies = [
  "serde_json",
  "tracing",
  "uuid",
- "yinhe-automation",
  "yinhe-core",
  "yinhe-memtrace",
  "yinhe-mid2",
@@ -6915,16 +6891,13 @@ dependencies = [
  "tracing-subscriber",
  "wgpu",
  "yinhe-archive",
- "yinhe-arrangement",
  "yinhe-audio",
- "yinhe-automation",
  "yinhe-core",
  "yinhe-dms",
  "yinhe-editor-core",
  "yinhe-haptic",
  "yinhe-memtrace",
  "yinhe-mid2",
- "yinhe-pianoroll",
  "yinhe-theme",
  "yinhe-types",
  "yinhe-wgpu",
@@ -6964,20 +6937,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "yinhe-pianoroll"
-version = "0.1.0"
-dependencies = [
- "bytemuck",
- "rayon",
- "stacker",
- "yinhe-core",
- "yinhe-test-helpers",
- "yinhe-theme",
- "yinhe-types",
- "yinhe-wgpu",
-]
-
-[[package]]
 name = "yinhe-synth"
 version = "0.1.0"
 dependencies = [
@@ -7004,14 +6963,13 @@ name = "yinhe-tests"
 version = "0.1.0"
 dependencies = [
  "tempfile",
- "yinhe-arrangement",
  "yinhe-core",
  "yinhe-editor-core",
  "yinhe-mid2",
- "yinhe-pianoroll",
  "yinhe-test-helpers",
  "yinhe-theme",
  "yinhe-types",
+ "yinhe-wgpu",
 ]
 
 [[package]]
@@ -7034,9 +6992,13 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "half",
+ "rayon",
+ "stacker",
  "tracing",
  "wgpu",
+ "yinhe-core",
  "yinhe-memtrace",
+ "yinhe-test-helpers",
  "yinhe-theme",
  "yinhe-types",
 ]

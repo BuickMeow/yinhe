@@ -4,10 +4,16 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+yinhe-core = { path = "../yinhe-core" }
 yinhe-types = { path = "../yinhe-types" }
 yinhe-memtrace = { path = "../yinhe-memtrace" }
 yinhe-theme = { path = "../yinhe-theme" }
 wgpu = { workspace = true }
 bytemuck = { workspace = true }
 half = { workspace = true }
+rayon = { workspace = true }
+stacker = "0.1"
 tracing = { workspace = true }
+
+[dev-dependencies]
+yinhe-test-helpers = { path = "../yinhe-test-helpers" }
