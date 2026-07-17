@@ -237,7 +237,7 @@ pub fn show(
     });
 
     // Layer 3: ghost notes (no cache — rebuilt every frame during drag)
-    renderer.upload_note_layer_force(3, |out| {
+    renderer.upload_note_layer(3, 0, |out| {
         build_ghost_notes(out, &ghost_notes);
     });
 

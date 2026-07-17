@@ -139,19 +139,13 @@ impl RenderThreadHandle {
                         layer_idx += 1;
                     }
 
-                    // Upload note layers
+                    // Upload note layers (cache_key=0 means force)
                     for nl in &job.note_layers {
                         let cache_key = nl.cache_key;
                         let instances = &nl.instances;
-                        if nl.force {
-                            renderer.upload_note_layer_force(layer_idx, |out| {
-                                out.extend_from_slice(instances);
-                            });
-                        } else {
-                            renderer.upload_note_layer(layer_idx, cache_key, |out| {
-                                out.extend_from_slice(instances);
-                            });
-                        }
+                        renderer.upload_note_layer(layer_idx, if nl.force { 0 } else { cache_key }, |out| {
+                            out.extend_from_slice(instances);
+                        });
                         layer_idx += 1;
                     }
 

@@ -1,85 +1,13 @@
-use std::collections::HashSet;
-
-use yinhe_types::NoteSource;
-
 use crate::instances;
 use crate::vertex::{Uniforms, TrackColorsUniform, SelectionUniform, MAX_TRACKS, MAX_SEL_RECTS};
 use yinhe_types::PianoRollView;
 
 use yinhe_wgpu::layer_cache_key;
-use yinhe_wgpu::{DecorLayerData, NoteLayerData};
+use yinhe_wgpu::DecorLayerData;
 
-/// Prepare the pianoroll for rendering using the layered cache API.
-///
-/// Layers:
-///   0 = decor (background + black-key rows)
-///   1 = grid lines
-///   2 = notes
-///
-/// Ghost notes are NOT included — they are a transient overlay handled
-/// separately by the caller. Each layer is cached independently so that
-/// playback (scroll_x changes) only invalidates the grid layer.
-pub fn prepare(
-    renderer: &mut crate::InstanceRenderer,
-    width: u32,
-    height: u32,
-    midi: Option<&dyn NoteSource>,
-    view: &PianoRollView,
-    selected: &yinhe_core::Selection,
-    hidden_notes: &HashSet<(u16, u32, u8)>,
-    track_visible: &[bool],
-    track_colors: &[[f32; 3]],
-    scroll_mode: u32,
-    min_border_width: f32,
-    revision: u64,
-    note_outline: bool,
-) -> yinhe_wgpu::PrepareTimings {
-    let job = build_render_job(
-        width, height, midi, view, selected, hidden_notes, track_visible,
-        track_colors, scroll_mode, min_border_width, revision, note_outline,
-        &renderer.theme,
-    );
-
-    let t = std::time::Instant::now();
-    renderer.upload_uniforms(job.uniforms);
-    renderer.upload_track_colors(&job.track_colors);
-    renderer.upload_selection(&job.selection);
-    renderer.ensure_layers(job.decor_layers.len() + job.note_layers.len());
-
-    let mut layer_idx = 0;
-    for dl in &job.decor_layers {
-        let cache_key = dl.cache_key;
-        let instances = &dl.instances;
-        renderer.upload_layer(layer_idx, cache_key, |out| {
-            out.extend_from_slice(instances);
-        });
-        layer_idx += 1;
-    }
-    for nl in &job.note_layers {
-        let cache_key = nl.cache_key;
-        let instances = &nl.instances;
-        if nl.force {
-            renderer.upload_note_layer_force(layer_idx, |out| {
-                out.extend_from_slice(instances);
-            });
-        } else {
-            renderer.upload_note_layer(layer_idx, cache_key, |out| {
-                out.extend_from_slice(instances);
-            });
-        }
-        layer_idx += 1;
-    }
-
-    let dur = t.elapsed();
-
-    yinhe_wgpu::PrepareTimings {
-        build_static: job.build_time + dur,
-        instance_count: renderer.total_layer_instances(),
-    }
-}
-
-/// Extended render job that also carries track_colors and selection uniforms
-/// (needed by the synchronous `prepare()` path).
+/// Render job data: uniforms + decor layers built on CPU, sent to GPU for upload.
+/// Note layers are NOT included — the GPU compute cull path handles notes,
+/// and ghost notes are built separately by the caller.
 pub struct PianorollRenderJob {
     pub width: u32,
     pub height: u32,
@@ -87,11 +15,10 @@ pub struct PianorollRenderJob {
     pub track_colors: TrackColorsUniform,
     pub selection: SelectionUniform,
     pub decor_layers: Vec<DecorLayerData>,
-    pub note_layers: Vec<NoteLayerData>,
     pub build_time: std::time::Duration,
 }
 
-/// Build a `PianorollRenderJob` containing all instance data and uniforms.
+/// Build a `PianorollRenderJob` containing decor instance data and uniforms.
 ///
 /// This does the CPU-heavy work (building instances via rayon) without
 /// touching any GPU resources. The result can be sent to a render thread
@@ -100,15 +27,12 @@ pub struct PianorollRenderJob {
 pub fn build_render_job(
     width: u32,
     height: u32,
-    midi: Option<&dyn NoteSource>,
+    midi: Option<&dyn yinhe_types::NoteSource>,
     view: &PianoRollView,
     selected: &yinhe_core::Selection,
-    hidden_notes: &HashSet<(u16, u32, u8)>,
-    track_visible: &[bool],
     track_colors: &[[f32; 3]],
     scroll_mode: u32,
     min_border_width: f32,
-    revision: u64,
     note_outline: bool,
     theme: &yinhe_wgpu::GpuTheme,
 ) -> PianorollRenderJob {
@@ -182,21 +106,6 @@ pub fn build_render_job(
         instances::build_grid(&mut decor_1, w, h, view, tpb, def_num, def_den, sig_events, scroll_x_pos, theme);
     }
 
-    // Layer 2: notes
-    let tv_hash = yinhe_wgpu::hash_bools(track_visible);
-    let hidden_hash = hidden_notes.iter().fold(0u64, |acc, &(trk, tick, key)| {
-        let mut h: u64 = 0;
-        h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(trk as u64);
-        h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(tick as u64);
-        h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(key as u64);
-        acc ^ h
-    });
-    let notes_key = layer_cache_key(&[vh, wh, tv_hash, revision, hidden_hash]);
-    let mut notes_2 = Vec::new();
-    if let Some(midi) = midi {
-        instances::build_notes(&mut notes_2, w, h, midi, view, hidden_notes, track_visible);
-    }
-
     let build_time = t.elapsed();
 
     PianorollRenderJob {
@@ -208,9 +117,6 @@ pub fn build_render_job(
         decor_layers: vec![
             DecorLayerData { instances: decor_0, cache_key: decor_key },
             DecorLayerData { instances: decor_1, cache_key: grid_key },
-        ],
-        note_layers: vec![
-            NoteLayerData { instances: notes_2, cache_key: notes_key, force: false },
         ],
         build_time,
     }

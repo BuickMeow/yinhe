@@ -225,7 +225,7 @@ pub fn prepare(
     });
 
     // Layer 3: ghost (拖拽预览，无缓存，每帧重建)
-    renderer.upload_layer_force(3, |out| {
+    renderer.upload_layer(3, 0, |out| {
         if let Some(g) = ghost {
             ghost::build_ghost(out, g, w, view, show_anchors, &theme);
         }

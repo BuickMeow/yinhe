@@ -402,7 +402,8 @@ impl InstanceRenderer {
         }
     }
 
-    /// Upload a decor layer with cache: skips rebuild when `cache_key` matches.
+    /// Upload a decor layer. Skips rebuild when `cache_key` matches the previous value.
+    /// Pass `cache_key: 0` to force upload (always rebuilds).
     pub fn upload_layer(
         &mut self,
         index: usize,
@@ -411,27 +412,19 @@ impl InstanceRenderer {
     ) -> bool {
         self.ensure_layer(index, LayerKind::Decor);
         if let AnyLayer::Decor(slot) = &mut self.layers[index] {
-            slot.upload(&self.device, &self.queue, cache_key, build)
+            if cache_key == 0 {
+                slot.upload_force(&self.device, &self.queue, build);
+                true
+            } else {
+                slot.upload(&self.device, &self.queue, cache_key, build)
+            }
         } else {
             unreachable!()
         }
     }
 
-    /// Upload a decor layer without cache (always rebuilds).
-    pub fn upload_layer_force(
-        &mut self,
-        index: usize,
-        build: impl FnOnce(&mut Vec<DrawInstance>),
-    ) {
-        self.ensure_layer(index, LayerKind::Decor);
-        if let AnyLayer::Decor(slot) = &mut self.layers[index] {
-            slot.upload_force(&self.device, &self.queue, build);
-        } else {
-            unreachable!()
-        }
-    }
-
-    /// Upload a note layer with cache: skips rebuild when `cache_key` matches.
+    /// Upload a note layer. Skips rebuild when `cache_key` matches the previous value.
+    /// Pass `cache_key: 0` to force upload (always rebuilds).
     pub fn upload_note_layer(
         &mut self,
         index: usize,
@@ -440,21 +433,12 @@ impl InstanceRenderer {
     ) -> bool {
         self.ensure_layer(index, LayerKind::Note);
         if let AnyLayer::Note(slot) = &mut self.layers[index] {
-            slot.upload(&self.device, &self.queue, cache_key, build)
-        } else {
-            unreachable!()
-        }
-    }
-
-    /// Upload a note layer without cache (always rebuilds).
-    pub fn upload_note_layer_force(
-        &mut self,
-        index: usize,
-        build: impl FnOnce(&mut Vec<NoteInstance>),
-    ) {
-        self.ensure_layer(index, LayerKind::Note);
-        if let AnyLayer::Note(slot) = &mut self.layers[index] {
-            slot.upload_force(&self.device, &self.queue, build);
+            if cache_key == 0 {
+                slot.upload_force(&self.device, &self.queue, build);
+                true
+            } else {
+                slot.upload(&self.device, &self.queue, cache_key, build)
+            }
         } else {
             unreachable!()
         }
@@ -609,11 +593,6 @@ impl InstanceRenderer {
             pass.set_pipeline(&self.render.note_pipeline);
             ghost.draw(&mut pass, 0);
         }
-    }
-
-    /// Total instances across all layers.
-    pub fn total_layer_instances(&self) -> usize {
-        self.layers.iter().map(|l| l.instance_count()).sum()
     }
 
     pub fn theme(&self) -> &yinhe_theme::GpuTheme {

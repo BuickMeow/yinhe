@@ -447,8 +447,8 @@ pub fn show(
     if cull_ready {
         // GPU cull path: upload decor layers + ghost layer (GPU cull handles notes)
         let job = yinhe_pianoroll::build_render_job(
-            w, h, midi, view, &*selected, &hidden_notes, track_visible,
-            track_colors, scroll_mode, min_border_width, revision,
+            w, h, midi, view, &*selected,
+            track_colors, scroll_mode, min_border_width,
             note_outline, &theme,
         );
         pianoroll.upload_uniforms(job.uniforms);
@@ -463,7 +463,7 @@ pub fn show(
         // Ghost note overlay: built and uploaded independently.
         // Always upload (even when empty) to clear stale ghost data from the previous frame.
         let ghost_idx = job.decor_layers.len();
-        pianoroll.upload_note_layer_force(ghost_idx, |out| {
+        pianoroll.upload_note_layer(ghost_idx, 0, |out| {
             for &(start_tick, end_tick, key, track) in &ghost_notes {
                 yinhe_pianoroll::build_ghost_note(out, start_tick, end_tick, key, track, &theme);
             }
@@ -471,18 +471,23 @@ pub fn show(
     } else if let Some(rt) = render_thread {
         // Async path (no cull): build instances on this thread, send to render thread
         let job = yinhe_pianoroll::build_render_job(
-            w, h, midi, view, &*selected, &hidden_notes, track_visible,
-            track_colors, scroll_mode, min_border_width, revision,
+            w, h, midi, view, &*selected,
+            track_colors, scroll_mode, min_border_width,
             note_outline, &theme,
         );
-        // Build ghost overlay as an extra note layer for the render thread.
-        // Always include it (even when empty) so the render thread clears stale ghost data.
+        // Build note instances + ghost overlay as note layers for the render thread.
+        let mut notes_instances = Vec::new();
+        if let Some(midi) = midi {
+            yinhe_pianoroll::build_notes(&mut notes_instances, w as f32, h as f32, midi, view, &hidden_notes, track_visible);
+        }
         let mut ghost_instances = Vec::new();
         for &(start_tick, end_tick, key, track) in &ghost_notes {
             yinhe_pianoroll::build_ghost_note(&mut ghost_instances, start_tick, end_tick, key, track, &theme);
         }
-        let mut note_layers = job.note_layers;
-        note_layers.push(yinhe_wgpu::NoteLayerData { instances: ghost_instances, cache_key: 0, force: true });
+        let note_layers = vec![
+            yinhe_wgpu::NoteLayerData { instances: notes_instances, cache_key: 0, force: false },
+            yinhe_wgpu::NoteLayerData { instances: ghost_instances, cache_key: 0, force: true },
+        ];
         rt.send_job(yinhe_wgpu::RenderJob {
             width: job.width,
             height: job.height,
@@ -491,21 +496,6 @@ pub fn show(
             selection: job.selection,
             decor_layers: job.decor_layers,
             note_layers,
-        });
-    } else {
-        // Sync path (no cull): prepare + upload + draw + submit on this thread
-        yinhe_pianoroll::prepare(
-            pianoroll, w, h, midi, view, &*selected, &hidden_notes,
-            track_visible, track_colors, scroll_mode, min_border_width,
-            revision, note_outline,
-        );
-        // Ghost note overlay: built and uploaded independently after prepare.
-        // Always upload (even when empty) to clear stale ghost data from the previous frame.
-        // Layer index = 2 decor + 1 notes = 3
-        pianoroll.upload_note_layer_force(3, |out| {
-            for &(start_tick, end_tick, key, track) in &ghost_notes {
-                yinhe_pianoroll::build_ghost_note(out, start_tick, end_tick, key, track, &theme);
-            }
         });
     }
 
@@ -522,11 +512,9 @@ pub fn show(
     if cull_ready {
         // GPU cull path: draw directly (no render thread needed — cull makes GPU work fast)
         render_ctx.paint(pianoroll, pw, ph, "pianoroll_frame", &painter, content_rect, true);
-    } else if render_thread.is_some() {
+    } else {
         // Render thread handles GPU work — just display the latest texture
         render_ctx.paint_texture_only(pw, ph, &painter, content_rect);
-    } else {
-        render_ctx.paint(pianoroll, pw, ph, "pianoroll_frame", &painter, content_rect, true);
     }
 
     let t_paint_end = if perf_on {
