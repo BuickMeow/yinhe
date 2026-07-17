@@ -437,173 +437,113 @@ pub fn begin_edit(pending: &mut PendingEdits, id: u64, old_value: &str) {
     pending.begin(id, old_value);
 }
 
-/// Commit a track-name edit.
-pub fn commit_track_name(
+/// Generic commit: take old value from pending, compare with new, push undo entry if changed.
+fn commit_field<T: PartialEq>(
     stack: &mut UndoStack,
     pending: &mut PendingEdits,
     id: u64,
-    track_idx: usize,
-    new_name: &str,
+    new_value: T,
+    parse_old: impl FnOnce(&str) -> T,
+    make_action: impl FnOnce(T, T) -> UndoAction,
+    label: &'static str,
     selected: Selection,
     track_selected: HashSet<u16>,
     sel_rect: SelRectState,
 ) {
-    let Some(old) = pending.take(id) else {
-        return;
-    };
-    if old == new_name {
-        return;
-    }
+    let Some(old_str) = pending.take(id) else { return; };
+    let old = parse_old(&old_str);
+    if old == new_value { return; }
     stack.push(UndoEntry {
-        action: UndoAction::TrackName {
-            track_idx,
-            old,
-            new: new_name.to_string(),
-        },
-        label: "Edit track name",
+        action: make_action(old, new_value),
+        label,
         selected,
         track_selected,
         sel_rect,
     });
+}
+
+/// Commit a track-name edit.
+pub fn commit_track_name(
+    stack: &mut UndoStack, pending: &mut PendingEdits, id: u64,
+    track_idx: usize, new_name: &str,
+    selected: Selection, track_selected: HashSet<u16>, sel_rect: SelRectState,
+) {
+    commit_field(
+        stack, pending, id, new_name.to_string(),
+        |s| s.to_string(),
+        |old, new| UndoAction::TrackName { track_idx, old, new },
+        "Edit track name", selected, track_selected, sel_rect,
+    );
 }
 
 /// Commit a project-name edit.
 pub fn commit_project_name(
-    stack: &mut UndoStack,
-    pending: &mut PendingEdits,
-    id: u64,
+    stack: &mut UndoStack, pending: &mut PendingEdits, id: u64,
     new_value: &str,
-    selected: Selection,
-    track_selected: HashSet<u16>,
-    sel_rect: SelRectState,
+    selected: Selection, track_selected: HashSet<u16>, sel_rect: SelRectState,
 ) {
-    let Some(old) = pending.take(id) else {
-        return;
-    };
-    if old == new_value {
-        return;
-    }
-    stack.push(UndoEntry {
-        action: UndoAction::ProjectName {
-            old,
-            new: new_value.to_string(),
-        },
-        label: "Edit project name",
-        selected,
-        track_selected,
-        sel_rect,
-    });
+    commit_field(
+        stack, pending, id, new_value.to_string(),
+        |s| s.to_string(),
+        |old, new| UndoAction::ProjectName { old, new },
+        "Edit project name", selected, track_selected, sel_rect,
+    );
 }
 
 /// Commit an artist edit.
 pub fn commit_artist(
-    stack: &mut UndoStack,
-    pending: &mut PendingEdits,
-    id: u64,
+    stack: &mut UndoStack, pending: &mut PendingEdits, id: u64,
     new_value: &str,
-    selected: Selection,
-    track_selected: HashSet<u16>,
-    sel_rect: SelRectState,
+    selected: Selection, track_selected: HashSet<u16>, sel_rect: SelRectState,
 ) {
-    let Some(old) = pending.take(id) else {
-        return;
-    };
-    if old == new_value {
-        return;
-    }
-    stack.push(UndoEntry {
-        action: UndoAction::ProjectArtist {
-            old,
-            new: new_value.to_string(),
-        },
-        label: "Edit artist",
-        selected,
-        track_selected,
-        sel_rect,
-    });
+    commit_field(
+        stack, pending, id, new_value.to_string(),
+        |s| s.to_string(),
+        |old, new| UndoAction::ProjectArtist { old, new },
+        "Edit artist", selected, track_selected, sel_rect,
+    );
 }
 
 /// Commit a description edit.
 pub fn commit_description(
-    stack: &mut UndoStack,
-    pending: &mut PendingEdits,
-    id: u64,
+    stack: &mut UndoStack, pending: &mut PendingEdits, id: u64,
     new_value: &str,
-    selected: Selection,
-    track_selected: HashSet<u16>,
-    sel_rect: SelRectState,
+    selected: Selection, track_selected: HashSet<u16>, sel_rect: SelRectState,
 ) {
-    let Some(old) = pending.take(id) else {
-        return;
-    };
-    if old == new_value {
-        return;
-    }
-    stack.push(UndoEntry {
-        action: UndoAction::ProjectDescription {
-            old,
-            new: new_value.to_string(),
-        },
-        label: "Edit description",
-        selected,
-        track_selected,
-        sel_rect,
-    });
+    commit_field(
+        stack, pending, id, new_value.to_string(),
+        |s| s.to_string(),
+        |old, new| UndoAction::ProjectDescription { old, new },
+        "Edit description", selected, track_selected, sel_rect,
+    );
 }
 
 /// Commit a PPQ edit.
 pub fn commit_ppq(
-    stack: &mut UndoStack,
-    pending: &mut PendingEdits,
-    id: u64,
+    stack: &mut UndoStack, pending: &mut PendingEdits, id: u64,
     new_value: u32,
-    selected: Selection,
-    track_selected: HashSet<u16>,
-    sel_rect: SelRectState,
+    selected: Selection, track_selected: HashSet<u16>, sel_rect: SelRectState,
 ) {
-    let Some(old_str) = pending.take(id) else {
-        return;
-    };
-    let old: u32 = old_str.parse().unwrap_or(480);
-    if old == new_value {
-        return;
-    }
-    stack.push(UndoEntry {
-        action: UndoAction::ProjectPpq { old, new: new_value },
-        label: "Edit PPQ",
-        selected,
-        track_selected,
-        sel_rect,
-    });
+    commit_field(
+        stack, pending, id, new_value,
+        |s| s.parse().unwrap_or(480),
+        |old, new| UndoAction::ProjectPpq { old, new },
+        "Edit PPQ", selected, track_selected, sel_rect,
+    );
 }
 
 /// Commit a compression-level edit.
 pub fn commit_compression_level(
-    stack: &mut UndoStack,
-    pending: &mut PendingEdits,
-    id: u64,
+    stack: &mut UndoStack, pending: &mut PendingEdits, id: u64,
     new_value: i32,
-    selected: Selection,
-    track_selected: HashSet<u16>,
-    sel_rect: SelRectState,
+    selected: Selection, track_selected: HashSet<u16>, sel_rect: SelRectState,
 ) {
-    let Some(old_str) = pending.take(id) else {
-        return;
-    };
-    let old: i32 = old_str.parse().unwrap_or(3);
-    if old == new_value {
-        return;
-    }
-    stack.push(UndoEntry {
-        action: UndoAction::CompressionLevel {
-            old,
-            new: new_value,
-        },
-        label: "Edit zstd level",
-        selected,
-        track_selected,
-        sel_rect,
-    });
+    commit_field(
+        stack, pending, id, new_value,
+        |s| s.parse().unwrap_or(3),
+        |old, new| UndoAction::CompressionLevel { old, new },
+        "Edit zstd level", selected, track_selected, sel_rect,
+    );
 }
 
 // ---------------------------------------------------------------------------
