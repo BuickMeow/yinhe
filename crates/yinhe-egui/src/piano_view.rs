@@ -460,15 +460,14 @@ pub fn show(
                 out.extend_from_slice(&dl.instances);
             });
         }
-        // Ghost note overlay: built and uploaded independently
-        if !ghost_notes.is_empty() {
-            let ghost_idx = job.decor_layers.len();
-            pianoroll.upload_note_layer_force(ghost_idx, |out| {
-                for &(start_tick, end_tick, key, track) in &ghost_notes {
-                    yinhe_pianoroll::build_ghost_note(out, start_tick, end_tick, key, track, &theme);
-                }
-            });
-        }
+        // Ghost note overlay: built and uploaded independently.
+        // Always upload (even when empty) to clear stale ghost data from the previous frame.
+        let ghost_idx = job.decor_layers.len();
+        pianoroll.upload_note_layer_force(ghost_idx, |out| {
+            for &(start_tick, end_tick, key, track) in &ghost_notes {
+                yinhe_pianoroll::build_ghost_note(out, start_tick, end_tick, key, track, &theme);
+            }
+        });
     } else if let Some(rt) = render_thread {
         // Async path (no cull): build instances on this thread, send to render thread
         let job = yinhe_pianoroll::build_render_job(
@@ -476,20 +475,14 @@ pub fn show(
             track_colors, scroll_mode, min_border_width, revision,
             note_outline, &theme,
         );
-        // Build ghost overlay as an extra note layer for the render thread
-        let ghost_layer = if ghost_notes.is_empty() {
-            None
-        } else {
-            let mut ghost_instances = Vec::new();
-            for &(start_tick, end_tick, key, track) in &ghost_notes {
-                yinhe_pianoroll::build_ghost_note(&mut ghost_instances, start_tick, end_tick, key, track, &theme);
-            }
-            Some(ghost_instances)
-        };
-        let mut note_layers = job.note_layers;
-        if let Some(ghost) = ghost_layer {
-            note_layers.push(yinhe_wgpu::NoteLayerData { instances: ghost, cache_key: 0, force: true });
+        // Build ghost overlay as an extra note layer for the render thread.
+        // Always include it (even when empty) so the render thread clears stale ghost data.
+        let mut ghost_instances = Vec::new();
+        for &(start_tick, end_tick, key, track) in &ghost_notes {
+            yinhe_pianoroll::build_ghost_note(&mut ghost_instances, start_tick, end_tick, key, track, &theme);
         }
+        let mut note_layers = job.note_layers;
+        note_layers.push(yinhe_wgpu::NoteLayerData { instances: ghost_instances, cache_key: 0, force: true });
         rt.send_job(yinhe_wgpu::RenderJob {
             width: job.width,
             height: job.height,
@@ -506,15 +499,14 @@ pub fn show(
             track_visible, track_colors, scroll_mode, min_border_width,
             revision, note_outline,
         );
-        // Ghost note overlay: built and uploaded independently after prepare
+        // Ghost note overlay: built and uploaded independently after prepare.
+        // Always upload (even when empty) to clear stale ghost data from the previous frame.
         // Layer index = 2 decor + 1 notes = 3
-        if !ghost_notes.is_empty() {
-            pianoroll.upload_note_layer_force(3, |out| {
-                for &(start_tick, end_tick, key, track) in &ghost_notes {
-                    yinhe_pianoroll::build_ghost_note(out, start_tick, end_tick, key, track, &theme);
-                }
-            });
-        }
+        pianoroll.upload_note_layer_force(3, |out| {
+            for &(start_tick, end_tick, key, track) in &ghost_notes {
+                yinhe_pianoroll::build_ghost_note(out, start_tick, end_tick, key, track, &theme);
+            }
+        });
     }
 
     let t_prepare_end = if perf_on {
