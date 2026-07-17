@@ -128,29 +128,7 @@ impl UndoAction {
                 }
                 model.rebuild();
                 doc.data.bump_revision();
-                doc.edit.track_info_cache = doc.data.track_info();
-                let num_tracks = doc.data.model.tracks.len();
-                doc.edit.track_colors_cache = (0..num_tracks)
-                    .map(|i| crate::document::track_color(i, doc.edit.conductor_track_idx))
-                    .collect();
-                while doc.edit.track_visible.len() < num_tracks {
-                    doc.edit.track_visible.push(true);
-                }
-                while doc.edit.track_pianoroll_visible.len() < num_tracks {
-                    doc.edit.track_pianoroll_visible.push(true);
-                }
-                while doc.edit.track_overrides.len() < num_tracks {
-                    doc.edit.track_overrides.push(Default::default());
-                }
-                while doc.edit.track_visible.len() > num_tracks {
-                    doc.edit.track_visible.pop();
-                }
-                while doc.edit.track_pianoroll_visible.len() > num_tracks {
-                    doc.edit.track_pianoroll_visible.pop();
-                }
-                while doc.edit.track_overrides.len() > num_tracks {
-                    doc.edit.track_overrides.pop();
-                }
+                doc.sync_track_caches();
             }
             UndoAction::Composite(actions) => {
                 for action in actions {

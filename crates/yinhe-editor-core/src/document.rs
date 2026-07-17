@@ -302,6 +302,35 @@ impl Document {
 }
 
 impl Document {
+    /// Rebuild track_info_cache, track_colors_cache, and resize track_visible/
+    /// track_pianoroll_visible/track_overrides to match current track count.
+    /// Called after track structure changes (add/remove/move/undo/redo).
+    pub(crate) fn sync_track_caches(&mut self) {
+        self.edit.track_info_cache = self.data.track_info();
+        let num_tracks = self.data.model.tracks.len();
+        self.edit.track_colors_cache = (0..num_tracks)
+            .map(|i| track_color(i, self.edit.conductor_track_idx))
+            .collect();
+        while self.edit.track_visible.len() < num_tracks {
+            self.edit.track_visible.push(true);
+        }
+        while self.edit.track_pianoroll_visible.len() < num_tracks {
+            self.edit.track_pianoroll_visible.push(true);
+        }
+        while self.edit.track_overrides.len() < num_tracks {
+            self.edit.track_overrides.push(Default::default());
+        }
+        while self.edit.track_visible.len() > num_tracks {
+            self.edit.track_visible.pop();
+        }
+        while self.edit.track_pianoroll_visible.len() > num_tracks {
+            self.edit.track_pianoroll_visible.pop();
+        }
+        while self.edit.track_overrides.len() > num_tracks {
+            self.edit.track_overrides.pop();
+        }
+    }
+
     /// Add a single note. Returns an `UndoAction` if the note was added.
     pub fn add_note(&mut self, track_idx: u16, note: NoteEvent) -> Option<UndoAction> {
         let t = track_idx as usize;
@@ -1202,17 +1231,10 @@ impl Document {
         }
 
         model.rebuild();
-        let num_tracks = model.tracks.len();
         self.data.bump_revision();
 
         // Update edit state
-        self.edit.track_visible.push(true);
-        self.edit.track_pianoroll_visible.push(true);
-        self.edit.track_overrides.push(crate::document::TrackOverride::default());
-        self.edit.track_info_cache = self.data.track_info();
-        self.edit.track_colors_cache = (0..num_tracks)
-            .map(|i| crate::document::track_color(i, self.edit.conductor_track_idx))
-            .collect();
+        self.sync_track_caches();
         self.edit.track_selected.clear();
         self.edit.track_selected.insert(insert_idx as u16);
 
@@ -1271,13 +1293,7 @@ impl Document {
         self.data.bump_revision();
 
         // Update edit state
-        self.edit.track_visible.remove(idx);
-        self.edit.track_pianoroll_visible.remove(idx);
-        self.edit.track_overrides.remove(idx);
-        self.edit.track_info_cache = self.data.track_info();
-        self.edit.track_colors_cache = (0..num_tracks)
-            .map(|i| crate::document::track_color(i, self.edit.conductor_track_idx))
-            .collect();
+        self.sync_track_caches();
         self.edit.track_selected.clear();
         // Select the track that took its place (or last track)
         let new_sel = idx.min(num_tracks - 1) as u16;
