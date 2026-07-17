@@ -267,6 +267,19 @@ impl RenderContext {
         self.wgpu_state.target_format
     }
 
+    /// 查询 GPU device 是否已丢失（驱动 TDR、热拔显示器、显存耗尽等）。
+    ///
+    /// 一旦置位就不会清零：当前没有重建 device 的路径，UI 应在每帧检测到
+    /// `true` 时弹出"需要重启"对话框（见 `dialogs::gpu_device_lost`）。
+    ///
+    /// 注意：`wgpu::Device::set_device_lost_callback` 会替换前一个回调，
+    /// 同一个 `wgpu_state.device` 上后注册的 RenderContext 会"抢"掉先注册的。
+    /// 因此实际使用时通常需要 OR 多个 RenderContext 的结果，或者让
+    /// `RenderContext::new` / `from_render_state` 共享同一个 `Arc<AtomicBool>`。
+    pub fn device_lost(&self) -> bool {
+        self.device_lost.load(Ordering::Relaxed)
+    }
+
     /// Query the underlying Metal driver's current allocated size (macOS only).
     #[cfg(target_os = "macos")]
     pub fn metal_allocated_size(&self) -> Option<u64> {

@@ -1,6 +1,6 @@
 //! Undo stack, pending-edit tracking, and convenience commit helpers.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use yinhe_core::Selection;
 
@@ -30,7 +30,9 @@ pub struct UndoEntry {
 /// Each entry stores only the delta, so memory usage is proportional to
 /// the number of affected notes, not the total model size.
 pub struct UndoStack {
-    pub(crate) past: Vec<UndoEntry>,
+    /// `VecDeque` 而非 `Vec`：`push` 超过 `MAX_DEPTH` 时需要弹出最旧条目，
+    /// `VecDeque::pop_front` 是 O(1)，`Vec::remove(0)` 是 O(n)。
+    pub(crate) past: VecDeque<UndoEntry>,
     pub(crate) future: Vec<UndoEntry>,
     /// Length of `past` at the time of the last save.
     /// `is_dirty()` compares current `past.len()` against this value.
@@ -45,7 +47,7 @@ pub struct UndoStack {
 impl UndoStack {
     pub fn new() -> Self {
         Self {
-            past: Vec::new(),
+            past: VecDeque::new(),
             future: Vec::new(),
             saved_past_len: 0,
             // New empty document is considered "saved base" — closing without save is fine.
@@ -78,9 +80,9 @@ impl UndoStack {
     /// Record an undo entry (called *after* the edit is done).
     pub fn push(&mut self, entry: UndoEntry) {
         if self.past.len() >= super::MAX_DEPTH {
-            self.past.remove(0);
+            self.past.pop_front();
         }
-        self.past.push(entry);
+        self.past.push_back(entry);
         self.future.clear();
     }
 

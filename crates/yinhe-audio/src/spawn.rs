@@ -14,6 +14,11 @@ use crate::audio_model::PreparedModel;
 
 const STEREO_CHANNELS: usize = 2;
 const RING_BUFFER_FRAMES: usize = 16_384;
+/// 编译期保证 `AudioRing` 的容量是 2 的幂（`AudioRing::new` 依赖此不变量做位运算取模）。
+/// 任何修改 `RING_BUFFER_FRAMES` / `STEREO_CHANNELS` 或去掉 `.next_power_of_two()` 的改动
+/// 都会在编译期触发 assert，而不是等到运行期才 panic。
+const RING_CAPACITY: usize = (RING_BUFFER_FRAMES * STEREO_CHANNELS).next_power_of_two();
+const _: () = assert!(RING_CAPACITY.is_power_of_two(), "RING_CAPACITY must be a power of two");
 
 /// Command sent from UI thread to the audio renderer thread.
 pub enum AudioCommand {
@@ -59,11 +64,17 @@ pub struct AudioHandle {
     sample_position: Arc<AtomicU64>,
     playing: Arc<AtomicBool>,
     duration_samples: Arc<AtomicU64>,
+    /// 由 cpal 流错误回调置位。UI 每帧查询，若为 true 应弹窗提示用户重启。
+    stream_error: Arc<AtomicBool>,
 }
 
 impl AudioHandle {
     pub fn send(&self, cmd: AudioCommand) {
-        let _ = self.cmd_tx.send(cmd);
+        if let Err(e) = self.cmd_tx.send(cmd) {
+            // renderer 线程已退出，命令无法送达。仅记日志，不 panic：
+            // 渲染线程死亡不应该让 UI 也跟着崩。
+            tracing::warn!("AudioHandle::send failed: {e}");
+        }
     }
 
     pub fn sample_position(&self) -> u64 {
@@ -84,6 +95,12 @@ impl AudioHandle {
 
     pub fn duration_samples(&self) -> u64 {
         self.duration_samples.load(Ordering::Relaxed)
+    }
+
+    /// 查询 cpal 流是否已报错（设备热拔、驱动崩溃等）。
+    /// 一旦置位就不会清零，UI 应弹出"需要重启"对话框。
+    pub fn stream_error(&self) -> bool {
+        self.stream_error.load(Ordering::Relaxed)
     }
 }
 
@@ -179,11 +196,14 @@ pub(crate) enum WorkerResult {
 
 /// Spawn a background worker thread that processes heavy commands
 /// (model preparation, soundfont loading) off the renderer thread.
+///
+/// 返回 `Err` 而非 `.expect()`：线程 spawn 失败属于环境/资源问题（ulimit、线程数上限等），
+/// 调用方应给出用户可见的错误，而不是直接 abort 进程。
 pub(crate) fn spawn_worker(
     sample_rate: u32,
     active_mask: Vec<bool>,
     channel_map: Box<[u32; 256]>,
-) -> (Sender<WorkerCmd>, crossbeam_channel::Receiver<WorkerResult>) {
+) -> Result<(Sender<WorkerCmd>, crossbeam_channel::Receiver<WorkerResult>), std::io::Error> {
     let (cmd_tx, cmd_rx) = unbounded::<WorkerCmd>();
     let (result_tx, result_rx) = bounded::<WorkerResult>(1);
 
@@ -260,9 +280,12 @@ pub(crate) fn spawn_worker(
                 }
             }
         })
-        .expect("Failed to spawn audio worker thread");
+        .map_err(|e| {
+            tracing::error!("Failed to spawn audio worker thread: {e}");
+            e
+        })?;
 
-    (cmd_tx, result_rx)
+    Ok((cmd_tx, result_rx))
 }
 
 /// Spawn a CPAL audio stream backed by a producer/consumer audio FIFO.
@@ -281,6 +304,7 @@ pub fn spawn_cpal_audio(
     let sample_position = Arc::new(AtomicU64::new(0));
     let playing = Arc::new(AtomicBool::new(false));
     let duration_samples = Arc::new(AtomicU64::new(0));
+    let stream_error = Arc::new(AtomicBool::new(false));
 
     let host = cpal::default_host();
     let device = host.default_output_device().ok_or("No output device")?;
@@ -296,10 +320,10 @@ pub fn spawn_cpal_audio(
     let engine = crate::engine::AudioEngine::new(sample_rate, num_channels, active_mask);
     let channel_map = engine.channel_map_clone();
     let (worker_tx, prepared_rx) =
-        spawn_worker(sample_rate, engine.active_mask().to_vec(), channel_map);
+        spawn_worker(sample_rate, engine.active_mask().to_vec(), channel_map)
+            .map_err(|e| format!("Failed to spawn audio worker thread: {e}"))?;
 
-    let ring_capacity = (RING_BUFFER_FRAMES * STEREO_CHANNELS).next_power_of_two();
-    let (ring_producer, mut ring_consumer) = AudioRing::new(ring_capacity).split();
+    let (ring_producer, mut ring_consumer) = AudioRing::new(RING_CAPACITY).split();
 
     let renderer_state = RendererSharedState::new();
     let renderer_position = Arc::clone(&renderer_state.producer_sample_position);
@@ -321,7 +345,8 @@ pub fn spawn_cpal_audio(
         Arc::clone(&shutdown),
         #[cfg(feature = "gpu")]
         use_gpu_synth,
-    );
+    )
+    .map_err(|e| format!("Failed to spawn audio renderer thread: {e}"))?;
 
     let sp = Arc::clone(&sample_position);
     let pl = Arc::clone(&playing);
@@ -329,6 +354,9 @@ pub fn spawn_cpal_audio(
     let mut consumer_sample_position = 0u64;
     let mut acknowledged_generation = 0u64;
 
+    // cpal 流错误回调：用 tracing 而不是 eprintln!，同时置 stream_error 标志，
+    // UI 每帧查询后弹出"需要重启"对话框。错误不可逆，置位后不再清零。
+    let stream_error_flag = Arc::clone(&stream_error);
     let stream = device
         .build_output_stream(
             config,
@@ -358,7 +386,10 @@ pub fn spawn_cpal_audio(
                     dur.store(renderer_duration.load(Ordering::Relaxed), Ordering::Relaxed);
                 })
             },
-            |err| eprintln!("Audio stream error: {}", err),
+            move |err| {
+                tracing::error!("Audio stream error: {err}");
+                stream_error_flag.store(true, Ordering::Release);
+            },
             None,
         )
         .map_err(|e| format!("Failed to build stream: {e}"))?;
@@ -373,6 +404,7 @@ pub fn spawn_cpal_audio(
             sample_position,
             playing,
             duration_samples,
+            stream_error,
         },
         sample_rate,
         _stream: stream,

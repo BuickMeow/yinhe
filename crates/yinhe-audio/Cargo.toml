@@ -14,6 +14,7 @@ xsynth-soundfonts = "0.4"
 cpal = { workspace = true }
 hound = "3.5"
 crossbeam-channel = "0.5"
+tracing = { workspace = true }
 yinhe-synth = { path = "../yinhe-synth", optional = true }
 
 yinhe-types = { path = "../yinhe-types" }

@@ -256,7 +256,7 @@ impl Document {
 impl Document {
     /// Undo the most recent operation. Returns true if something was undone.
     pub fn undo(&mut self) -> bool {
-        let Some(entry) = self.history.past.pop() else {
+        let Some(entry) = self.history.past.pop_back() else {
             return false;
         };
 
@@ -301,7 +301,7 @@ impl Document {
         self.edit.track_selected = entry.track_selected;
         self.edit.sel_rect = entry.sel_rect;
 
-        self.history.past.push(UndoEntry {
+        self.history.past.push_back(UndoEntry {
             action: entry.action.reversed(),
             label: entry.label,
             selected: current_selected,

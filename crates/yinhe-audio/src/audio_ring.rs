@@ -29,8 +29,10 @@ pub(crate) struct AudioRingConsumer {
 
 impl AudioRing {
     pub(crate) fn new(capacity: usize) -> Self {
-        assert!(capacity.is_power_of_two());
-        assert!(capacity > 0);
+        // 调用方（spawn.rs::RING_CAPACITY）已经在编译期用 const 断言保证 power-of-two，
+        // 这里仅保留 dev 构建下的防御性检查；release 下为零开销。
+        debug_assert!(capacity.is_power_of_two());
+        debug_assert!(capacity > 0);
         let data = (0..capacity)
             .map(|_| UnsafeCell::new(0.0))
             .collect::<Vec<_>>()

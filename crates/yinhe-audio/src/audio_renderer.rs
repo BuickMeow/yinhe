@@ -382,7 +382,7 @@ pub(crate) fn spawn_renderer(
     prepared_rx: Receiver<WorkerResult>,
     shutdown: Arc<AtomicBool>,
     #[cfg(feature = "gpu")] use_gpu_synth: bool,
-) -> JoinHandle<()> {
+) -> Result<JoinHandle<()>, std::io::Error> {
     thread::Builder::new()
         .name("audio-renderer".into())
         .spawn(move || {
@@ -404,5 +404,8 @@ pub(crate) fn spawn_renderer(
             drop(renderer);
             yinhe_memtrace::purge_free_pages();
         })
-        .expect("Failed to spawn audio renderer thread")
+        .map_err(|e| {
+            tracing::error!("Failed to spawn audio renderer thread: {e}");
+            e
+        })
 }

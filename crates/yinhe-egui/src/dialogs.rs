@@ -1,5 +1,6 @@
 pub mod archive_picker;
 pub mod export;
+pub mod gpu_device_lost;
 pub mod loading_overlay;
 pub mod load_error;
 pub mod memory_breakdown;

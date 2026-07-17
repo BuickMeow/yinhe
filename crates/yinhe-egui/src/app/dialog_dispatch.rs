@@ -7,6 +7,22 @@ impl App {
     pub(in crate::app) fn show_dialogs(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
 
+        // ── GPU device-lost / audio stream-error 重启提示 ──
+        // 任一 RenderContext 报告 device lost 都触发：同一 device 上后注册的回调
+        // 会替换先注册的，所以需要 OR 多个 RenderContext 的结果。详见
+        // `RenderContext::device_lost` 的文档。
+        // cpal 流错误（设备热拔 / 驱动崩溃）也走同一对话框：renderer 已经死了，没救。
+        let device_lost = self.render_ctx.device_lost() || self.arr_render_ctx.device_lost();
+        let audio_dead = self
+            .audio_state
+            .handle
+            .as_ref()
+            .map(|h| h.handle.stream_error())
+            .unwrap_or(false);
+        if (device_lost || audio_dead) && crate::dialogs::gpu_device_lost::show_viewport(&ctx) {
+            self.should_exit = true;
+        }
+
         // ── Settings dialog ──
         if crate::dialogs::settings::show_viewport(
             &ctx,

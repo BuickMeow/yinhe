@@ -6824,6 +6824,7 @@ dependencies = [
  "hound",
  "pollster",
  "tempfile",
+ "tracing",
  "xsynth-core",
  "xsynth-soundfonts",
  "yinhe-core",

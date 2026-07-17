@@ -102,7 +102,7 @@ impl Document {
         if notes.is_empty() {
             let entry = cut_past_len
                 .and_then(|len| self.history.past.get(len))
-                .or_else(|| self.history.past.last());
+                .or_else(|| self.history.past.back());
             if let Some(entry) = entry {
                 if let UndoAction::Notes(delta) = &entry.action {
                     if !delta.before.is_empty() {
