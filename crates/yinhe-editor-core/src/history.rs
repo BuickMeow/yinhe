@@ -161,80 +161,12 @@ impl UndoAction {
     }
 
     /// Apply the reverse action (used by undo).
+    ///
+    /// Delegates to `self.reversed().redo(doc)` — the `reversed()` method
+    /// swaps before/after (and reverses Composite order), so redo on the
+    /// reversed action is equivalent to undo on the original.
     pub fn undo(&self, doc: &mut Document) {
-        match self {
-            UndoAction::Notes(delta) => apply_note_delta(doc, &delta.after, &delta.before),
-            UndoAction::Automation(delta) => apply_automation_delta(doc, delta.track_idx, delta.lane_idx, &delta.before),
-            UndoAction::TrackName { track_idx, old, new: _ } => {
-                let model = std::sync::Arc::make_mut(&mut doc.data.model);
-                if let Some(track) = model.tracks.get_mut(*track_idx) {
-                    let track = std::sync::Arc::make_mut(track);
-                    track.name = old.clone();
-                }
-            }
-            UndoAction::ProjectName { old, new: _ } => {
-                doc.data.project_name = old.clone();
-            }
-            UndoAction::ProjectArtist { old, new: _ } => {
-                doc.data.project_artist = old.clone();
-            }
-            UndoAction::ProjectDescription { old, new: _ } => {
-                doc.data.project_description = old.clone();
-            }
-            UndoAction::ProjectPpq { old, new: _ } => {
-                doc.data.project_ppq = *old;
-            }
-            UndoAction::CompressionLevel { old, new: _ } => {
-                doc.data.compression_level = *old;
-            }
-            UndoAction::TrackStructure {
-                tracks_before,
-                tracks_after: _,
-                note_remap: _,
-                note_remap_inverse,
-            } => {
-                let model = std::sync::Arc::make_mut(&mut doc.data.model);
-                model.tracks = tracks_before.clone();
-                for bucket in model.notes.iter_mut() {
-                    let bucket = std::sync::Arc::make_mut(bucket);
-                    bucket.retain(|n| note_remap_inverse[n.track as usize] != u16::MAX);
-                    for note in bucket.iter_mut() {
-                        note.track = note_remap_inverse[note.track as usize];
-                    }
-                }
-                model.rebuild();
-                doc.data.bump_revision();
-                doc.edit.track_info_cache = doc.data.track_info();
-                let num_tracks = doc.data.model.tracks.len();
-                doc.edit.track_colors_cache = (0..num_tracks)
-                    .map(|i| crate::document::track_color(i, doc.edit.conductor_track_idx))
-                    .collect();
-                while doc.edit.track_visible.len() < num_tracks {
-                    doc.edit.track_visible.push(true);
-                }
-                while doc.edit.track_pianoroll_visible.len() < num_tracks {
-                    doc.edit.track_pianoroll_visible.push(true);
-                }
-                while doc.edit.track_overrides.len() < num_tracks {
-                    doc.edit.track_overrides.push(Default::default());
-                }
-                while doc.edit.track_visible.len() > num_tracks {
-                    doc.edit.track_visible.pop();
-                }
-                while doc.edit.track_pianoroll_visible.len() > num_tracks {
-                    doc.edit.track_pianoroll_visible.pop();
-                }
-                while doc.edit.track_overrides.len() > num_tracks {
-                    doc.edit.track_overrides.pop();
-                }
-            }
-            UndoAction::Composite(actions) => {
-                // Undo in reverse order
-                for action in actions.iter().rev() {
-                    action.undo(doc);
-                }
-            }
-        }
+        self.reversed().redo(doc);
     }
 
     /// Return the inverse action (swap before/after, old/new).
@@ -287,7 +219,9 @@ impl UndoAction {
                 note_remap_inverse: note_remap.clone(),
             },
             UndoAction::Composite(actions) => {
-                UndoAction::Composite(actions.iter().map(|a| a.reversed()).collect())
+                // Reverse order so that reversed().redo() undoes in reverse order,
+                // matching the original undo() semantics.
+                UndoAction::Composite(actions.iter().rev().map(|a| a.reversed()).collect())
             },
         }
     }
