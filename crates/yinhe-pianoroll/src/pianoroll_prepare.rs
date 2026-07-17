@@ -31,12 +31,12 @@ pub fn prepare(
     track_colors: &[[f32; 3]],
     scroll_mode: u32,
     min_border_width: f32,
-    midi_version: u64,
+    revision: u64,
     note_outline: bool,
 ) -> yinhe_wgpu::PrepareTimings {
     let job = build_render_job(
         width, height, midi, view, selected, hidden_notes, track_visible,
-        track_colors, scroll_mode, min_border_width, midi_version, note_outline,
+        track_colors, scroll_mode, min_border_width, revision, note_outline,
         &renderer.theme,
     );
 
@@ -108,7 +108,7 @@ pub fn build_render_job(
     track_colors: &[[f32; 3]],
     scroll_mode: u32,
     min_border_width: f32,
-    midi_version: u64,
+    revision: u64,
     note_outline: bool,
     theme: &yinhe_wgpu::GpuTheme,
 ) -> PianorollRenderJob {
@@ -191,7 +191,7 @@ pub fn build_render_job(
         h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(key as u64);
         acc ^ h
     });
-    let notes_key = layer_cache_key(&[vh, wh, tv_hash, midi_version, hidden_hash]);
+    let notes_key = layer_cache_key(&[vh, wh, tv_hash, revision, hidden_hash]);
     let mut notes_2 = Vec::new();
     if let Some(midi) = midi {
         instances::build_notes(&mut notes_2, w, h, midi, view, hidden_notes, track_visible);

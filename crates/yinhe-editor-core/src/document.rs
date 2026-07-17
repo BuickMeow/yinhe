@@ -233,7 +233,7 @@ impl Document {
 
     pub fn recode_track_names(&mut self, _encoding: yinhe_mid2::MidiImportEncoding) {
         // TODO: implement track name re-encoding for YinModel
-        self.data.bump_version();
+        self.data.bump_revision();
     }
 }
 
@@ -659,7 +659,7 @@ impl Document {
         lane.events.insert(insert_pos, event);
         let after = lane.events.clone();
 
-        self.data.midi_version = self.data.midi_version.wrapping_add(1);
+        self.data.bump_revision();
         Some((track_idx, lane_idx, UndoAction::Automation(crate::history::AutomationDelta {
             track_idx,
             lane_idx,
@@ -702,7 +702,7 @@ impl Document {
         }
         let after = lane.events.clone();
 
-        self.data.midi_version = self.data.midi_version.wrapping_add(1);
+        self.data.bump_revision();
         Some(UndoAction::Automation(crate::history::AutomationDelta {
             track_idx,
             lane_idx,
@@ -730,7 +730,7 @@ impl Document {
         }
         let after = lane.events.clone();
 
-        self.data.midi_version = self.data.midi_version.wrapping_add(1);
+        self.data.bump_revision();
         Some(UndoAction::Automation(crate::history::AutomationDelta {
             track_idx,
             lane_idx,
@@ -760,7 +760,7 @@ impl Document {
         evt.shape = shape;
         let after = lane.events.clone();
 
-        self.data.midi_version = self.data.midi_version.wrapping_add(1);
+        self.data.bump_revision();
         Some(UndoAction::Automation(crate::history::AutomationDelta {
             track_idx,
             lane_idx,
@@ -825,7 +825,7 @@ impl Document {
         // Offset selection rects to follow the moved notes.
         self.edit.selected.offset(delta_ticks, delta_keys);
         model.rebuild_dirty();
-        self.data.midi_version = self.data.midi_version.wrapping_add(1);
+        self.data.bump_revision();
 
         Some(UndoAction::Notes(NoteDelta {
             before: originals,
@@ -1011,7 +1011,7 @@ impl Document {
         }
 
         model.rebuild_dirty();
-        self.data.midi_version = self.data.midi_version.wrapping_add(1);
+        self.data.bump_revision();
 
         if sub_actions.is_empty() {
             None
@@ -1061,7 +1061,7 @@ impl Document {
                     Arc::make_mut(&mut model.notes[nk]).insert(insert_pos, moved);
                     model.mark_dirty(new_key);
                     model.rebuild_dirty();
-                    self.data.midi_version = self.data.midi_version.wrapping_add(1);
+                    self.data.bump_revision();
                     return Some(UndoAction::Notes(NoteDelta {
                         before: vec![(orig_note, *key)],
                         after: vec![(moved, new_key)],
@@ -1085,7 +1085,7 @@ impl Document {
                         let after = *n;
                         model.mark_dirty(*key);
                         model.rebuild_dirty();
-                        self.data.midi_version = self.data.midi_version.wrapping_add(1);
+                        self.data.bump_revision();
                         return Some(UndoAction::Notes(NoteDelta {
                             before: vec![(before, *key)],
                             after: vec![(after, *key)],
@@ -1110,7 +1110,7 @@ impl Document {
                         let after = *n;
                         model.mark_dirty(*key);
                         model.rebuild_dirty();
-                        self.data.midi_version = self.data.midi_version.wrapping_add(1);
+                        self.data.bump_revision();
                         return Some(UndoAction::Notes(NoteDelta {
                             before: vec![(before, *key)],
                             after: vec![(after, *key)],
@@ -1212,10 +1212,10 @@ impl Document {
         }
 
         model.rebuild();
-        self.data.midi_version = self.data.midi_version.wrapping_add(1);
+        let num_tracks = model.tracks.len();
+        self.data.bump_revision();
 
         // Update edit state
-        let num_tracks = model.tracks.len();
         self.edit.track_visible.push(true);
         self.edit.track_pianoroll_visible.push(true);
         self.edit.track_overrides.push(crate::document::TrackOverride::default());
@@ -1277,13 +1277,13 @@ impl Document {
             model.mark_dirty(k as u8);
         }
         model.rebuild();
-        self.data.midi_version = self.data.midi_version.wrapping_add(1);
+        let num_tracks = model.tracks.len();
+        self.data.bump_revision();
 
         // Update edit state
         self.edit.track_visible.remove(idx);
         self.edit.track_pianoroll_visible.remove(idx);
         self.edit.track_overrides.remove(idx);
-        let num_tracks = model.tracks.len();
         self.edit.track_info_cache = self.data.track_info();
         self.edit.track_colors_cache = (0..num_tracks)
             .map(|i| crate::document::track_color(i, self.edit.conductor_track_idx))
@@ -1349,7 +1349,7 @@ impl Document {
         }
 
         model.rebuild();
-        self.data.midi_version = self.data.midi_version.wrapping_add(1);
+        self.data.bump_revision();
 
         // Update edit state
         self.edit.track_info_cache = self.data.track_info();

@@ -117,7 +117,7 @@ pub fn prepare(
     show_anchors: bool,
     tempo_events: &[(u32, f64)],
     ghost: Option<AutomationGhost>,
-    midi_version: u64,
+    revision: u64,
     highlight_tick: Option<u32>,
 ) -> bool {
     let w = width as f32;
@@ -198,7 +198,7 @@ pub fn prepare(
         tempo_hash(tempo_events),
         fixed_lanes_hash,
         ghost_lane_hash,
-        midi_version,
+        revision,
         highlight_tick.unwrap_or(u32::MAX) as u64,
     ]);
     let ghost_for_layer2 = ghost.clone();

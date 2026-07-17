@@ -154,7 +154,7 @@ pub fn show_panels(
     velocity_display_mode: &mut u32,
     edit_ctx: Option<&AutomationEditCtx<'_>>,
     tempo_events: &[(u32, f64)],
-    midi_version: u64,
+    revision: u64,
     info_content: &mut Option<InfoContent>,
     right_tab: &mut Option<RightTab>,
 ) -> (f32, Vec<AutomationEdit>, PanelPianorollFeedback, Option<(u32, u16)>) {
@@ -472,7 +472,7 @@ pub fn show_panels(
                     show_anchors,
                     tempo_events,
                     panel_ghost,
-                    midi_version,
+                    revision,
                     highlight_tick,
                 );
 

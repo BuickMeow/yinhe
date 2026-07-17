@@ -142,7 +142,7 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>, state: &mut EventBrow
     let ts = ts_changes(model);
     let bar_lookup = BarLookup::build(ppq, default_num, &ts);
 
-    let fingerprint = doc.data.midi_version;
+    let fingerprint = doc.data.revision;
     if state.fingerprint != Some(fingerprint) {
         if state.fingerprint.is_none() {
             state.expanded_keys.clear();

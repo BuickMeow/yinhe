@@ -42,7 +42,7 @@ pub fn show(
     render_ctx: &mut super::render_context::RenderContext,
     render_thread: Option<&yinhe_wgpu::RenderThreadHandle>,
     view: &mut yinhe_pianoroll::PianoRollView,
-    last_cull_key: &mut u64, // midi_version ^ hidden_hash — triggers all_notes re-upload
+    last_cull_revision: &mut u64, // revision ^ hidden_hash — triggers all_notes re-upload
     midi: Option<&dyn yinhe_pianoroll::NoteSource>,
     selected: &mut yinhe_core::Selection,
     track_visible: &[bool],
@@ -75,7 +75,7 @@ pub fn show(
     sel_rect: &mut yinhe_editor_core::edit_state::SelRectState,
     track_selected: &std::collections::HashSet<u16>,
     conductor_idx: Option<u16>,
-    midi_version: u64,
+    revision: u64,
     haptic_engine: Option<&yinhe_haptic::HapticEngine>,
     pencil_note_drag: &mut Option<PencilNoteDrag>,
     auto_edit_events: &mut Vec<crate::piano_view::automation_panel::AutomationEdit>,
@@ -373,10 +373,10 @@ pub fn show(
     };
 
     // ── Upload all notes to GPU cull buffer if MIDI or hidden_notes changed ──
-    // Combine midi_version and hidden_hash: when either changes, re-upload.
+    // Combine revision and hidden_hash: when either changes, re-upload.
     // This prevents stale all_notes in GPU cull buffer after undo (where
-    // midi_version bumps while hidden_notes is empty, then user starts dragging
-    // again with the same midi_version but newly non-empty hidden_notes).
+    // revision bumps while hidden_notes is empty, then user starts dragging
+    // again with the same revision but newly non-empty hidden_notes).
     let hidden_hash = hidden_notes.iter().fold(0u64, |acc, &(trk, tick, key)| {
         acc.wrapping_add(trk as u64)
             .wrapping_mul(6364136223846793005)
@@ -384,15 +384,15 @@ pub fn show(
             .wrapping_mul(6364136223846793005)
             .wrapping_add(key as u64)
     });
-    let all_notes_key = midi_version ^ hidden_hash;
-    if all_notes_key != *last_cull_key {
+    let all_notes_key = revision ^ hidden_hash;
+    if all_notes_key != *last_cull_revision {
         if let Some(midi_src) = midi {
             let all_notes = yinhe_pianoroll::build_all_notes(
                 midi_src, &hidden_notes, track_visible,
             );
             pianoroll.upload_all_notes_for_cull(&all_notes);
         }
-        *last_cull_key = all_notes_key;
+        *last_cull_revision = all_notes_key;
     }
 
     // Prepare GPU data (ghost notes are handled separately as a transient overlay)
@@ -402,7 +402,7 @@ pub fn show(
         // GPU cull path: upload decor layers + ghost layer (GPU cull handles notes)
         let job = yinhe_pianoroll::build_render_job(
             w, h, midi, view, &*selected, &hidden_notes, track_visible,
-            track_colors, scroll_mode, min_border_width, midi_version,
+            track_colors, scroll_mode, min_border_width, revision,
             note_outline, &theme,
         );
         pianoroll.upload_uniforms(job.uniforms);
@@ -427,7 +427,7 @@ pub fn show(
         // Async path (no cull): build instances on this thread, send to render thread
         let job = yinhe_pianoroll::build_render_job(
             w, h, midi, view, &*selected, &hidden_notes, track_visible,
-            track_colors, scroll_mode, min_border_width, midi_version,
+            track_colors, scroll_mode, min_border_width, revision,
             note_outline, &theme,
         );
         // Build ghost overlay as an extra note layer for the render thread
@@ -458,7 +458,7 @@ pub fn show(
         yinhe_pianoroll::prepare(
             pianoroll, w, h, midi, view, &*selected, &hidden_notes,
             track_visible, track_colors, scroll_mode, min_border_width,
-            midi_version, note_outline,
+            revision, note_outline,
         );
         // Ghost note overlay: built and uploaded independently after prepare
         // Layer index = 2 decor + 1 notes = 3
@@ -710,7 +710,7 @@ pub fn show(
             velocity_display_mode,
             edit_ctx.as_ref(),
             tempo_events,
-            midi_version,
+            revision,
             info_content,
             right_tab,
         );

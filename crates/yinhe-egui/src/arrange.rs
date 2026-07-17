@@ -252,7 +252,7 @@ pub fn show(
             scroll_mode,
             min_border_width,
             haptic_engine,
-            doc.data.midi_version,
+            doc.data.revision,
             arr_sel_rect,
             arr_drag_delta,
             arr_eraser_rect,

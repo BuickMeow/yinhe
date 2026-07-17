@@ -31,13 +31,13 @@ pub struct ProjectData {
 
     /// Monotonic counter bumped on every YinModel mutation or snapshot restore.
     /// Used as pianoroll layer-cache key so GPU re-renders when data changes.
-    pub midi_version: u64,
+    pub revision: u64,
 }
 
 impl ProjectData {
-    /// Bump the version counter to invalidate GPU layer caches.
-    pub fn bump_version(&mut self) {
-        self.midi_version = self.midi_version.wrapping_add(1);
+    /// Bump the revision counter to invalidate GPU layer caches.
+    pub fn bump_revision(&mut self) {
+        self.revision = self.revision.wrapping_add(1);
     }
 
     /// Rebuild derived indices on the YinModel after mutations.
@@ -127,7 +127,7 @@ impl ProjectData {
             project_description,
             project_ppq,
             compression_level,
-            midi_version: 0,
+            revision: 0,
         }
     }
 }

@@ -44,7 +44,7 @@ pub fn show(
     scroll_mode: u32,
     min_border_width: f32,
     haptic_engine: Option<&yinhe_haptic::HapticEngine>,
-    midi_version: u64,
+    revision: u64,
     arr_sel_rect: &mut Option<(f64, f64, usize, usize)>,
     arr_drag_delta: &mut Option<(i64, i32)>,
     arr_eraser_rect: &mut Option<(f64, f64, usize, usize)>,
@@ -221,7 +221,7 @@ pub fn show(
     });
 
     // Layer 2: notes (16B NoteInstance — shader computes pixel positions from uniforms)
-    let notes_key = layer_cache_key(&[vh, wh, tv_hash, midi_version, hidden_notes.len() as u64]);
+    let notes_key = layer_cache_key(&[vh, wh, tv_hash, revision, hidden_notes.len() as u64]);
     renderer.upload_note_layer(2, notes_key, |out| {
         if let Some(midi) = midi {
             build_notes(

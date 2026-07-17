@@ -127,7 +127,7 @@ impl UndoAction {
                     }
                 }
                 model.rebuild();
-                doc.data.midi_version = doc.data.midi_version.wrapping_add(1);
+                doc.data.bump_revision();
                 doc.edit.track_info_cache = doc.data.track_info();
                 let num_tracks = doc.data.model.tracks.len();
                 doc.edit.track_colors_cache = (0..num_tracks)
@@ -203,7 +203,7 @@ impl UndoAction {
                     }
                 }
                 model.rebuild();
-                doc.data.midi_version = doc.data.midi_version.wrapping_add(1);
+                doc.data.bump_revision();
                 doc.edit.track_info_cache = doc.data.track_info();
                 let num_tracks = doc.data.model.tracks.len();
                 doc.edit.track_colors_cache = (0..num_tracks)
@@ -335,7 +335,7 @@ fn apply_note_delta(doc: &mut Document, remove: &[(Note, u8)], insert: &[(Note, 
     }
 
     model.rebuild_dirty();
-    doc.data.midi_version = doc.data.midi_version.wrapping_add(1);
+    doc.data.bump_revision();
 }
 
 /// Replace the event list of `track_idx`'s `lane_idx` with `events`.
@@ -355,7 +355,7 @@ fn apply_automation_delta(
             lane.events.sort_by_key(|e| e.tick);
         }
     }
-    doc.data.midi_version = doc.data.midi_version.wrapping_add(1);
+    doc.data.bump_revision();
 }
 
 // ---------------------------------------------------------------------------

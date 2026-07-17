@@ -179,7 +179,7 @@ impl App {
                 self.arr_sel_rect = Some((0.0, max_end as f64 + 1.0, 0, num_tracks - 1));
             }
         }
-        self.documents[idx].data.bump_version();
+        self.documents[idx].data.bump_revision();
         self.pianoroll_view.base.dirty = true;
         self.arrange_view.base.dirty = true;
     }
@@ -211,7 +211,7 @@ impl App {
             sel_rect: doc.edit.sel_rect.clone(),
         };
         doc.history.push(entry);
-        doc.data.bump_version();
+        doc.data.bump_revision();
         self.pianoroll_view.base.dirty = true;
         self.arrange_view.base.dirty = true;
         self.notify_audio_model_changed();
@@ -223,7 +223,7 @@ impl App {
         let doc: &mut Document = &mut self.documents[idx];
         let changed = doc.undo();
         if changed {
-            doc.data.bump_version();
+            doc.data.bump_revision();
             self.pianoroll_view.base.dirty = true;
             self.notify_audio_model_changed();
         }
@@ -235,7 +235,7 @@ impl App {
         let doc: &mut Document = &mut self.documents[idx];
         let changed = doc.redo();
         if changed {
-            doc.data.bump_version();
+            doc.data.bump_revision();
             self.pianoroll_view.base.dirty = true;
             self.notify_audio_model_changed();
         }
