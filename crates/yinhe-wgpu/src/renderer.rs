@@ -502,7 +502,7 @@ impl InstanceRenderer {
 
     /// GPU compute cull draw: dispatch cull pass, then draw layers.
     ///
-    /// Z-order: decor (bg + grid) → culled notes.
+    /// Z-order: decor (bg + grid) → culled notes → ghost notes.
     fn draw_with_cull(
         &self,
         encoder: &mut CommandEncoder,
@@ -528,6 +528,13 @@ impl InstanceRenderer {
 
         // Step 2: culled notes (from GPU compute cull buffer)
         self.cull.draw_visible_notes(&mut pass, &self.render.note_pipeline, &self.render.bind_group);
+
+        // Step 3: ghost notes (last note layer, if any) — on top of everything
+        let ghost = self.layers.iter().filter(|l| l.kind() == LayerKind::Note).last();
+        if let Some(ghost) = ghost {
+            pass.set_pipeline(&self.render.note_pipeline);
+            ghost.draw(&mut pass, 0);
+        }
     }
 
     /// Total instances across all layers.

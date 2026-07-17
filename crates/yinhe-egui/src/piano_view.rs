@@ -42,7 +42,7 @@ pub fn show(
     render_ctx: &mut super::render_context::RenderContext,
     render_thread: Option<&yinhe_wgpu::RenderThreadHandle>,
     view: &mut yinhe_pianoroll::PianoRollView,
-    last_cull_midi_version: &mut u64,
+    last_cull_key: &mut u64, // midi_version ^ hidden_hash — triggers all_notes re-upload
     midi: Option<&dyn yinhe_pianoroll::NoteSource>,
     selected: &mut yinhe_core::Selection,
     track_visible: &[bool],
@@ -372,34 +372,55 @@ pub fn show(
         None
     };
 
-    // ── Upload all notes to GPU cull buffer if MIDI changed ──
-    if midi_version != *last_cull_midi_version {
+    // ── Upload all notes to GPU cull buffer if MIDI or hidden_notes changed ──
+    // Combine midi_version and hidden_hash: when either changes, re-upload.
+    // This prevents stale all_notes in GPU cull buffer after undo (where
+    // midi_version bumps while hidden_notes is empty, then user starts dragging
+    // again with the same midi_version but newly non-empty hidden_notes).
+    let hidden_hash = hidden_notes.iter().fold(0u64, |acc, &(trk, tick, key)| {
+        acc.wrapping_add(trk as u64)
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(tick as u64)
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(key as u64)
+    });
+    let all_notes_key = midi_version ^ hidden_hash;
+    if all_notes_key != *last_cull_key {
         if let Some(midi_src) = midi {
             let all_notes = yinhe_pianoroll::build_all_notes(
                 midi_src, &hidden_notes, track_visible,
             );
             pianoroll.upload_all_notes_for_cull(&all_notes);
         }
-        *last_cull_midi_version = midi_version;
+        *last_cull_key = all_notes_key;
     }
 
-    // Prepare GPU data
+    // Prepare GPU data (ghost notes are handled separately as a transient overlay)
+    let theme = pianoroll.theme().clone();
     let cull_ready = pianoroll.cull_ready();
     if cull_ready {
-        // GPU cull path: only upload decor layers + uniforms (no note layer)
+        // GPU cull path: upload decor layers + ghost layer (GPU cull handles notes)
         let job = yinhe_pianoroll::build_render_job(
             w, h, midi, view, &*selected, &hidden_notes, track_visible,
             track_colors, scroll_mode, min_border_width, midi_version,
-            note_outline, &pianoroll.theme(),
+            note_outline, &theme,
         );
         pianoroll.upload_uniforms(job.uniforms);
         pianoroll.upload_track_colors(&job.track_colors);
         pianoroll.upload_selection(&job.selection);
-        // Upload decor layers only (skip note layer — GPU cull handles notes)
         pianoroll.ensure_layers(job.decor_layers.len());
         for (i, dl) in job.decor_layers.iter().enumerate() {
             pianoroll.upload_layer(i, dl.cache_key, |out| {
                 out.extend_from_slice(&dl.instances);
+            });
+        }
+        // Ghost note overlay: built and uploaded independently
+        if !ghost_notes.is_empty() {
+            let ghost_idx = job.decor_layers.len();
+            pianoroll.upload_note_layer_force(ghost_idx, |out| {
+                for &(start_tick, end_tick, key, track) in &ghost_notes {
+                    yinhe_pianoroll::build_ghost_note(out, start_tick, end_tick, key, track, &theme);
+                }
             });
         }
     } else if let Some(rt) = render_thread {
@@ -407,8 +428,22 @@ pub fn show(
         let job = yinhe_pianoroll::build_render_job(
             w, h, midi, view, &*selected, &hidden_notes, track_visible,
             track_colors, scroll_mode, min_border_width, midi_version,
-            note_outline, &pianoroll.theme(),
+            note_outline, &theme,
         );
+        // Build ghost overlay as an extra note layer for the render thread
+        let ghost_layer = if ghost_notes.is_empty() {
+            None
+        } else {
+            let mut ghost_instances = Vec::new();
+            for &(start_tick, end_tick, key, track) in &ghost_notes {
+                yinhe_pianoroll::build_ghost_note(&mut ghost_instances, start_tick, end_tick, key, track, &theme);
+            }
+            Some(ghost_instances)
+        };
+        let mut note_layers = job.note_layers;
+        if let Some(ghost) = ghost_layer {
+            note_layers.push(yinhe_wgpu::NoteLayerData { instances: ghost, cache_key: 0, force: true });
+        }
         rt.send_job(yinhe_wgpu::RenderJob {
             width: job.width,
             height: job.height,
@@ -416,7 +451,7 @@ pub fn show(
             track_colors: job.track_colors,
             selection: job.selection,
             decor_layers: job.decor_layers,
-            note_layers: job.note_layers,
+            note_layers,
         });
     } else {
         // Sync path (no cull): prepare + upload + draw + submit on this thread
@@ -425,6 +460,15 @@ pub fn show(
             track_visible, track_colors, scroll_mode, min_border_width,
             midi_version, note_outline,
         );
+        // Ghost note overlay: built and uploaded independently after prepare
+        // Layer index = 2 decor + 1 notes = 3
+        if !ghost_notes.is_empty() {
+            pianoroll.upload_note_layer_force(3, |out| {
+                for &(start_tick, end_tick, key, track) in &ghost_notes {
+                    yinhe_pianoroll::build_ghost_note(out, start_tick, end_tick, key, track, &theme);
+                }
+            });
+        }
     }
 
     let t_prepare_end = if perf_on {
@@ -512,31 +556,6 @@ pub fn show(
         );
     }
 
-    // ── Ghost notes (drawn by egui on top of keyboard) ──
-    // Pencil/selection drag preview — simple filled rects with track color + alpha
-    for &(start_tick, end_tick, key, track) in &ghost_notes {
-        let x = view.tick_to_x(start_tick);
-        let ghost_w = ((end_tick - start_tick) as f32 * ppu).max(1.0);
-        let y = view.key_to_y(key);
-        if y + kh < 0.0 || y > h_f32 || x + ghost_w < kb_w || x > w as f32 {
-            continue;
-        }
-        // Ghost color: track color with 50% alpha
-        let [tr, tg, tb] = track_colors.get(track as usize).copied().unwrap_or([1.0, 1.0, 1.0]);
-        painter.rect_filled(
-            egui::Rect::from_min_size(
-                egui::pos2(content_rect.min.x + x, content_rect.min.y + y),
-                egui::vec2(ghost_w, kh),
-            ),
-            0.0,
-            egui::Color32::from_rgba_premultiplied(
-                (tr * 255.0) as u8,
-                (tg * 255.0) as u8,
-                (tb * 255.0) as u8,
-                128,
-            ),
-        );
-    }
 
     // ── Playback cursor (drawn by egui on top of the wgpu texture) ──
     // Decoupled from the wgpu pipeline so cursor movement during playback

@@ -16,8 +16,9 @@ use yinhe_wgpu::{DecorLayerData, NoteLayerData};
 ///   1 = grid lines
 ///   2 = notes
 ///
-/// Each layer is cached independently so that playback (scroll_x changes)
-/// only invalidates the grid layer.
+/// Ghost notes are NOT included — they are a transient overlay handled
+/// separately by the caller. Each layer is cached independently so that
+/// playback (scroll_x changes) only invalidates the grid layer.
 pub fn prepare(
     renderer: &mut crate::InstanceRenderer,
     width: u32,
@@ -94,7 +95,8 @@ pub struct PianorollRenderJob {
 ///
 /// This does the CPU-heavy work (building instances via rayon) without
 /// touching any GPU resources. The result can be sent to a render thread
-/// for async upload + draw + submit.
+/// for async upload + draw + submit. Ghost notes are NOT included —
+/// they are a transient overlay built and uploaded separately.
 pub fn build_render_job(
     width: u32,
     height: u32,

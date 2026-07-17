@@ -274,7 +274,7 @@ impl App {
                         &mut self.render_ctx,
                         self.render_thread.as_ref(),
                         &mut self.pianoroll_view,
-                        &mut self.last_cull_midi_version,
+                        &mut self.last_cull_key,
                         midi_source,
                         &mut doc.edit.selected,
                         &pr_visible,
