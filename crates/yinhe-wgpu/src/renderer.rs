@@ -558,10 +558,11 @@ impl InstanceRenderer {
             decor_layers[2].draw(&mut pass, 0);
         }
 
-        // Step 4: ghost notes (note layer, if any)
-        for layer in &note_layers {
+        // Step 4: ghost notes (last note layer only, if any)
+        // Skip note layer 0 (it was replaced by GPU cull); only draw ghost layer
+        if note_layers.len() > 1 {
             pass.set_pipeline(&self.render.note_pipeline);
-            layer.draw(&mut pass, 0);
+            note_layers[note_layers.len() - 1].draw(&mut pass, 0);
         }
     }
 
