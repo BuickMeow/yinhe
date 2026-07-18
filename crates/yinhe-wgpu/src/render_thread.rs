@@ -20,7 +20,9 @@ pub struct RenderJob {
     pub width: u32,
     pub height: u32,
     pub uniforms: Uniforms,
-    pub track_colors: Box<crate::vertex::TrackColorsUniform>,
+    /// Track colors as raw bytes (`Vec<u8>`, not `Box<TrackColorsUniform>`).
+    /// See `PianorollRenderJob::track_colors` for why we avoid `Box`.
+    pub track_colors: Vec<u8>,
     pub selection: crate::vertex::SelectionUniform,
     pub decor_layers: Vec<DecorLayerData>,
     pub note_layers: Vec<NoteLayerData>,
@@ -88,7 +90,7 @@ impl RenderThreadHandle {
 
         std::thread::Builder::new()
             .name("yinhe-render".into())
-            .stack_size(32 * 1024 * 1024) // 32 MB — TrackColorsUniform 等大结构压栈需要
+            .stack_size(32 * 1024 * 1024) // 32 MB - 大缓冲区/深度调用栈的安全余量
             .spawn(move || {
                 tracing::info!("Render thread started");
                 loop {
@@ -121,7 +123,9 @@ impl RenderThreadHandle {
 
                     // Upload uniforms
                     renderer.upload_uniforms(job.uniforms);
-                    renderer.upload_track_colors(&job.track_colors);
+                    let tc: &crate::vertex::TrackColorsUniform =
+                        bytemuck::from_bytes(&job.track_colors);
+                    renderer.upload_track_colors(tc);
                     renderer.upload_selection(&job.selection);
 
                     // Ensure enough layers

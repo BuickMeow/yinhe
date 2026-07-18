@@ -6,13 +6,19 @@ use crate::layer_cache_key;
 use crate::DecorLayerData;
 
 /// Render job data: uniforms + decor layers built on CPU, sent to GPU for upload.
-/// Note layers are NOT included — the GPU compute cull path handles notes,
+/// Note layers are NOT included - the GPU compute cull path handles notes,
 /// and ghost notes are built separately by the caller.
 pub struct PianorollRenderJob {
     pub width: u32,
     pub height: u32,
     pub uniforms: Uniforms,
-    pub track_colors: Box<TrackColorsUniform>,
+    /// Track colors as raw bytes (heap-allocated `Vec<u8>`, NOT `Box<TrackColorsUniform>`).
+    ///
+    /// `TrackColorsUniform` is 1MB (`MAX_TRACKS=65536` × 16B). Using
+    /// `Box<TrackColorsUniform>` would require `Box::new(*ref)` which creates
+    /// a 1MB stack temporary, overflowing the 1MB default stack on Windows.
+    /// Keeping it as `Vec<u8>` avoids any stack copy entirely.
+    pub track_colors: Vec<u8>,
     pub selection: SelectionUniform,
     pub decor_layers: Vec<DecorLayerData>,
     pub build_time: std::time::Duration,
@@ -47,7 +53,10 @@ pub fn build_render_job(
     let scroll_x = view.base.scroll_x;
     let (scroll_x_pos, scroll_frac) = crate::compute_scroll_frac(scroll_x, scroll_mode);
 
-    // Build track colors uniform — allocate on heap to avoid 1MB stack overflow
+    // Build track colors uniform - allocate on heap to avoid 1MB stack overflow.
+    // `TrackColorsUniform` is 1MB; `Box::new(*tc_uniform)` would create a 1MB
+    // stack copy and overflow the 1MB default stack on Windows. We keep the
+    // data as `Vec<u8>` and move it directly into the job (zero stack copy).
     let track_count = track_colors.len().min(MAX_TRACKS) as u32;
     let mut tc_buf: Vec<u8> = vec![0u8; std::mem::size_of::<TrackColorsUniform>()];
     let tc_uniform: &mut TrackColorsUniform = bytemuck::from_bytes_mut(&mut tc_buf);
@@ -107,7 +116,7 @@ pub fn build_render_job(
         width,
         height,
         uniforms,
-        track_colors: Box::new(*tc_uniform),
+        track_colors: tc_buf,
         selection: sel_uniform,
         decor_layers: vec![
             DecorLayerData { instances: grid_instances, cache_key: grid_key },
