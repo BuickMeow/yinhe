@@ -112,6 +112,16 @@ impl VelocityBarInstance {
     pub fn pack(track: u16, velocity: u8) -> u32 {
         track as u32 | ((velocity as u32) << 16)
     }
+
+    #[inline]
+    pub fn track(&self) -> u16 {
+        (self.packed & 0xFFFF) as u16
+    }
+
+    #[inline]
+    pub fn velocity(&self) -> u8 {
+        ((self.packed >> 16) & 0xFF) as u8
+    }
 }
 
 /// Curve/line/anchor instance: 32 bytes.

@@ -62,11 +62,16 @@ pub fn build_velocity_bars(
         })
         .collect();
 
-    // Deterministic order: sort by (tick, packed) so output is stable across frames.
+    // Deterministic order: sort by (tick ASC, velocity DESC, track ASC).
     // rayon parallel collection order is non-deterministic; this sort fixes it.
-    // Within same (tick, track) the order is unspecified — overlapping bars at
-    // the same tick+track are rare and border mode ensures visibility regardless.
-    bars.sort_by(|a, b| a.tick.cmp(&b.tick).then(a.packed.cmp(&b.packed)));
+    // Same-tick bars: louder notes drawn first (covered), softer notes drawn last
+    // (visible on top) — softer notes are typically the ones users want to see
+    // when adjusting dynamics, so they should never be hidden by louder bars.
+    bars.sort_by(|a, b| {
+        a.tick.cmp(&b.tick)
+            .then(b.velocity().cmp(&a.velocity()))
+            .then(a.track().cmp(&b.track()))
+    });
 
     out.extend(bars);
 }

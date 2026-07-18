@@ -390,10 +390,10 @@ fn vs_main_velocity(
     }
     out.color = base_color;
 
-    // Unified border width: follows x-axis zoom (ppu) so border stays proportional
-    // to bar width at any zoom level. min_border_width acts as floor.
+    // Unified border width: fixed 1px, independent of zoom level
+    // so users can scale freely without border thickness changing.
     out.radius = 0.0;
-    out.border_width = max(u.pixels_per_tick, u.min_border_width);
+    out.border_width = 1.0;
 
     out.uv = uv[vertex_index];
     out.half_size = vec2<f32>(pixel_w, pixel_h) * 0.5;
