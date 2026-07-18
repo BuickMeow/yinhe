@@ -169,9 +169,23 @@ pub(crate) fn flatten_automation_to_cc_events(
         }
     }
 
-    cc_events.sort_by_key(|e| e.sample);
+    // 排序：同 sample 同 channel 下，RPN/参数类事件必须排在 PitchBendValue 之前。
+    // 原因：xsynth 收到 PitchBendValue 时会按当前 PBS 立即计算弯音并作用于已响 voice，
+    // 若 PBS 尚未更新，PB 会用旧 PBS 算出错误音高。见 commit 3490e02。
+    // sort_by_key 稳定，同 priority 仍按插入顺序。
+    cc_events.sort_by_key(|e| (e.sample, e.channel, dispatch_priority(&e.event)));
     cc_events.dedup_by(|a, b| a.channel == b.channel && a.event == b.event);
     Arc::new(cc_events)
+}
+
+/// 同 sample 同 channel 内的分发优先级：0 = 参数/控制类（RPN、CC、PC），
+/// 1 = PitchBendValue。数值小的先发，保证 PBS/FineTune/CoarseTune 等 RPN
+/// 参数在 PB 使用它们之前就位。
+fn dispatch_priority(event: &ChannelAudioEvent) -> u8 {
+    match event {
+        ChannelAudioEvent::Control(ControlEvent::PitchBendValue(_)) => 1,
+        _ => 0,
+    }
 }
 
 /// 将单个 automation 值转换成 XSynth 事件并推入 `out`。
@@ -251,5 +265,228 @@ fn emit_automation_event(
                 out.push(SortedCC { sample, channel, event: ChannelAudioEvent::Control(ControlEvent::Raw(38, data_lsb)) });
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use yinhe_core::{ConductorData, ProjectMeta, TempoEvent, TrackData, YinModel};
+    use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, SegmentShape};
+
+    /// 构建 1 轨道模型，给定 automation lanes。
+    fn model_with_lanes(lanes: Vec<AutomationLane>) -> YinModel {
+        let conductor = ConductorData {
+            tempo: vec![TempoEvent { tick: 0, bpm: 120.0 }],
+            time_sig: Vec::new(),
+        };
+        let mut t = TrackData::new(0, 0);
+        t.automation_lanes = lanes;
+        let mut model = YinModel {
+            conductor: Arc::new(conductor),
+            tracks: vec![Arc::new(t)],
+            meta: ProjectMeta { ppq: 480, ..ProjectMeta::default() },
+            ..Default::default()
+        };
+        model.rebuild();
+        model
+    }
+
+    /// 在 `cc_events` 中找第一个匹配 `pred` 事件的索引。
+    fn index_of<F>(events: &[SortedCC], pred: F) -> Option<usize>
+    where
+        F: Fn(&ChannelAudioEvent) -> bool,
+    {
+        events.iter().position(|e| pred(&e.event))
+    }
+
+    /// 回归测试：同 tick 上 RPN 0 (PBS) 必须排在 PitchBend 之前。
+    /// 见 commit 3490e02：若 PB 先于 PBS，PB 会用旧 PBS 计算弯音，导致音高异常。
+    #[test]
+    fn rpn_pbs_must_precede_pitch_bend_at_same_tick() {
+        let lanes = vec![
+            AutomationLane {
+                target: AutomationTarget::PitchBend,
+                track: 0,
+                events: vec![AutomationEvent {
+                    tick: 0,
+                    value: 16383,
+                    shape: SegmentShape::Step,
+                }],
+            },
+            AutomationLane {
+                target: AutomationTarget::Rpn { parameter: 0 },
+                track: 0,
+                events: vec![AutomationEvent {
+                    tick: 0,
+                    value: 24,
+                    shape: SegmentShape::Step,
+                }],
+            },
+        ];
+        let model = model_with_lanes(lanes);
+        let events = flatten_automation_to_cc_events(&model, 44100, 1);
+
+        let pbs_idx = index_of(&events, |e| {
+            matches!(e, ChannelAudioEvent::Control(ControlEvent::PitchBendSensitivity(_)))
+        });
+        let pb_idx = index_of(&events, |e| {
+            matches!(e, ChannelAudioEvent::Control(ControlEvent::PitchBendValue(_)))
+        });
+
+        let pbs_idx = pbs_idx.expect("PBS event should exist");
+        let pb_idx = pb_idx.expect("PitchBend event should exist");
+        assert!(
+            pbs_idx < pb_idx,
+            "PBS (index {}) must precede PitchBend (index {}) at the same tick, \
+             otherwise PB uses stale PBS and pitch is wrong (regression of 3490e02)",
+            pbs_idx,
+            pb_idx
+        );
+    }
+
+    /// 覆盖非标准 RPN（走 raw CC101/100/6 序列）：同 tick 上 RPN 选择 + DataEntry
+    /// 也必须排在 PB 之前。
+    #[test]
+    fn nonstandard_rpn_cc_sequence_must_precede_pitch_bend() {
+        let lanes = vec![
+            AutomationLane {
+                target: AutomationTarget::PitchBend,
+                track: 0,
+                events: vec![AutomationEvent {
+                    tick: 0,
+                    value: 16383,
+                    shape: SegmentShape::Step,
+                }],
+            },
+            // RPN 5（非标准）→ 走 raw CC101/100/6 序列
+            AutomationLane {
+                target: AutomationTarget::Rpn { parameter: 5 },
+                track: 0,
+                events: vec![AutomationEvent {
+                    tick: 0,
+                    value: 100,
+                    shape: SegmentShape::Step,
+                }],
+            },
+        ];
+        let model = model_with_lanes(lanes);
+        let events = flatten_automation_to_cc_events(&model, 44100, 1);
+
+        let rpn_cc101_idx = index_of(&events, |e| {
+            matches!(e, ChannelAudioEvent::Control(ControlEvent::Raw(101, _)))
+        });
+        let pb_idx = index_of(&events, |e| {
+            matches!(e, ChannelAudioEvent::Control(ControlEvent::PitchBendValue(_)))
+        });
+
+        let rpn_cc101_idx = rpn_cc101_idx.expect("RPN CC101 selector should exist");
+        let pb_idx = pb_idx.expect("PitchBend event should exist");
+        assert!(
+            rpn_cc101_idx < pb_idx,
+            "RPN selector CC101 (index {}) must precede PitchBend (index {}) at the same tick",
+            rpn_cc101_idx,
+            pb_idx
+        );
+    }
+
+    /// 覆盖 NRPN：同 tick 上 NRPN 的 CC99/98/6 序列也必须排在 PB 之前。
+    #[test]
+    fn nrpn_cc_sequence_must_precede_pitch_bend() {
+        let lanes = vec![
+            AutomationLane {
+                target: AutomationTarget::PitchBend,
+                track: 0,
+                events: vec![AutomationEvent {
+                    tick: 0,
+                    value: 16383,
+                    shape: SegmentShape::Step,
+                }],
+            },
+            AutomationLane {
+                target: AutomationTarget::Nrpn { parameter: 10 },
+                track: 0,
+                events: vec![AutomationEvent {
+                    tick: 0,
+                    value: 100,
+                    shape: SegmentShape::Step,
+                }],
+            },
+        ];
+        let model = model_with_lanes(lanes);
+        let events = flatten_automation_to_cc_events(&model, 44100, 1);
+
+        let nrpn_cc99_idx = index_of(&events, |e| {
+            matches!(e, ChannelAudioEvent::Control(ControlEvent::Raw(99, _)))
+        });
+        let pb_idx = index_of(&events, |e| {
+            matches!(e, ChannelAudioEvent::Control(ControlEvent::PitchBendValue(_)))
+        });
+
+        let nrpn_cc99_idx = nrpn_cc99_idx.expect("NRPN CC99 selector should exist");
+        let pb_idx = pb_idx.expect("PitchBend event should exist");
+        assert!(
+            nrpn_cc99_idx < pb_idx,
+            "NRPN selector CC99 (index {}) must precede PitchBend (index {}) at the same tick",
+            nrpn_cc99_idx,
+            pb_idx
+        );
+    }
+
+    /// 同 tick 上 FineTune (RPN 1) / CoarseTune (RPN 2) 也应排在 PB 前。
+    #[test]
+    fn rpn_fine_and_coarse_tune_precede_pitch_bend() {
+        let lanes = vec![
+            AutomationLane {
+                target: AutomationTarget::PitchBend,
+                track: 0,
+                events: vec![AutomationEvent {
+                    tick: 0,
+                    value: 16383,
+                    shape: SegmentShape::Step,
+                }],
+            },
+            AutomationLane {
+                target: AutomationTarget::Rpn { parameter: 1 },
+                track: 0,
+                events: vec![AutomationEvent {
+                    tick: 0,
+                    value: 9000,
+                    shape: SegmentShape::Step,
+                }],
+            },
+            AutomationLane {
+                target: AutomationTarget::Rpn { parameter: 2 },
+                track: 0,
+                events: vec![AutomationEvent {
+                    tick: 0,
+                    value: 70,
+                    shape: SegmentShape::Step,
+                }],
+            },
+        ];
+        let model = model_with_lanes(lanes);
+        let events = flatten_automation_to_cc_events(&model, 44100, 1);
+
+        let fine_idx = index_of(&events, |e| {
+            matches!(e, ChannelAudioEvent::Control(ControlEvent::FineTune(_)))
+        });
+        let coarse_idx = index_of(&events, |e| {
+            matches!(e, ChannelAudioEvent::Control(ControlEvent::CoarseTune(_)))
+        });
+        let pb_idx = index_of(&events, |e| {
+            matches!(e, ChannelAudioEvent::Control(ControlEvent::PitchBendValue(_)))
+        });
+
+        let fine_idx = fine_idx.expect("FineTune event should exist");
+        let coarse_idx = coarse_idx.expect("CoarseTune event should exist");
+        let pb_idx = pb_idx.expect("PitchBend event should exist");
+        assert!(
+            fine_idx < pb_idx && coarse_idx < pb_idx,
+            "FineTune (idx {}) and CoarseTune (idx {}) must precede PitchBend (idx {}) at the same tick",
+            fine_idx,
+            coarse_idx,
+            pb_idx
+        );
     }
 }
