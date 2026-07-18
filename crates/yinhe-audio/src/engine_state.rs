@@ -6,9 +6,10 @@ use xsynth_core::soundfont::SoundfontBase;
 
 use yinhe_core::YinModel;
 
-use crate::audio_model::{ActiveNote, AudioModel, PreparedModel, flatten_automation_to_cc_events, tick_to_sample};
+use crate::audio_model::{ActiveNote, AudioModel, PreparedModel, flatten_automation_to_cc_events};
 use crate::channel::ChannelState;
 use crate::engine::AudioEngine;
+use crate::prepare_model::build_audible_notes;
 
 impl AudioEngine {
     pub(crate) fn load_model(&mut self, model: &Arc<YinModel>) {
@@ -29,6 +30,7 @@ impl AudioEngine {
 
         self.note_cursor = [0; 128];
         self.yin_model = Some(Arc::clone(model));
+        self.audible_notes = build_audible_notes(model, self.sample_rate);
         self.model = Some(audio_model);
     }
 
@@ -40,6 +42,7 @@ impl AudioEngine {
         self.duration_samples = prepared.duration_samples;
         // Skip is ignored here — we keep whatever the user set via SkipTracks.
         self.yin_model = Some(prepared.yin_model);
+        self.audible_notes = prepared.audible_notes;
         self.model = Some(prepared.model);
 
         // Seek to current playback position to avoid triggering all notes
@@ -154,52 +157,47 @@ impl AudioEngine {
 
         self.cc_cursor = self.cc_events.partition_point(|cc| cc.sample < sample);
 
-        // Reset note cursors to the correct position based on tick→sample conversion.
-        if let Some(ref yin_model) = self.yin_model {
-            let segments = &yin_model.tempo_map.tempo_segments;
-            let tpb = yin_model.tempo_map.ticks_per_beat;
-            let sr = self.sample_rate as f64;
-            for key in 0..128usize {
-                let notes = yin_model.notes[key].as_slice();
-                let cursor = notes.partition_point(|n| {
-                    if n.velocity <= 1 {
-                        return false;
-                    }
-                    tick_to_sample(n.start_tick as u64, segments, tpb, sr) < sample
-                });
-                self.note_cursor[key] = cursor;
+        // Reset note cursors to the correct position based on pre-built audible_notes.
+        // 桶内 start_sample 严格升序，partition_point 谓词单调，结果正确（修 P0-2）。
+        for key in 0..128usize {
+            let notes = self.audible_notes[key].as_slice();
+            let cursor = notes.partition_point(|n| n.start_sample < sample);
+            self.note_cursor[key] = cursor;
 
-                // If the note just before cursor is a long note that started
-                // before seek but hasn't ended yet, start it now.
-                if cursor > 0 {
-                    let prev = &notes[cursor - 1];
-                    if prev.velocity > 1 {
-                        let end_sample = tick_to_sample(prev.end_tick as u64, segments, tpb, sr);
-                        if end_sample > sample {
-                            let track = prev.track as usize;
-                            let ch = self.model.as_ref().map(|m| m.track_channel(track) as usize).unwrap_or(0);
-                            if self.active_mask.get(ch).copied().unwrap_or(false)
-                                && !self.skip_track.get(track).copied().unwrap_or(false)
-                            {
-                                let dense = self.channel_map.get(ch).copied().unwrap_or(u32::MAX);
-                                if dense != u32::MAX {
-                                    self.channel_group.send_event(SynthEvent::Channel(
-                                        dense,
-                                        ChannelEvent::Audio(ChannelAudioEvent::NoteOn {
-                                            key: key as u8,
-                                            vel: prev.velocity,
-                                        }),
-                                    ));
-                                    self.active_notes.push(ActiveNote {
-                                        key: key as u8,
-                                        channel: ch as u8,
-                                        end_sample,
-                                    });
-                                }
-                            }
-                        }
-                    }
+            // 扫描 seek 点之前开始、seek 点之后才结束的所有音符，全部重启（修 P2-10）。
+            // 桶按 start_sample 升序，但 end_sample 不保证有序，必须线性扫 [..cursor]。
+            // 黑乐谱叠层场景下 cursor 前通常有几十个跨点音符，O(cursor) 完全可接受。
+            for n in &notes[..cursor] {
+                if n.end_sample <= sample {
+                    continue;
                 }
+                let track = n.track as usize;
+                let ch = self
+                    .model
+                    .as_ref()
+                    .map(|m| m.track_channel(track) as usize)
+                    .unwrap_or(0);
+                if !self.active_mask.get(ch).copied().unwrap_or(false)
+                    || self.skip_track.get(track).copied().unwrap_or(false)
+                {
+                    continue;
+                }
+                let dense = self.channel_map.get(ch).copied().unwrap_or(u32::MAX);
+                if dense == u32::MAX {
+                    continue;
+                }
+                self.channel_group.send_event(SynthEvent::Channel(
+                    dense,
+                    ChannelEvent::Audio(ChannelAudioEvent::NoteOn {
+                        key: key as u8,
+                        vel: n.velocity,
+                    }),
+                ));
+                self.active_notes.push(ActiveNote {
+                    key: key as u8,
+                    channel: ch as u8,
+                    end_sample: n.end_sample,
+                });
             }
         }
 

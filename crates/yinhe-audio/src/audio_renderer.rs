@@ -262,44 +262,30 @@ impl AudioRenderer {
         }
     }
 
-    /// 从 engine 的当前 model 构建 SynthEvent 列表
+    /// 从 engine 的当前 audible_notes 构建 SynthEvent 列表（GPU 路径）
     #[cfg(feature = "gpu")]
     fn build_gpu_synth_events(&self) -> Vec<yinhe_synth::SynthEvent> {
-        use crate::audio_model::tick_to_sample;
-
-        let yin_model = match self.engine.yin_model.as_ref() {
-            Some(m) => m,
-            None => return Vec::new(),
-        };
         let audio_model = match self.engine.model.as_ref() {
             Some(m) => m,
             None => return Vec::new(),
         };
 
-        let segments = &yin_model.tempo_map.tempo_segments;
-        let tpb = yin_model.tempo_map.ticks_per_beat;
-        let sr = self.engine.sample_rate as f64;
-
         let mut events: Vec<yinhe_synth::SynthEvent> = Vec::new();
         for key in 0..128usize {
-            for note in yin_model.notes[key].iter() {
-                if note.velocity <= 1 { continue; }
+            for note in self.engine.audible_notes[key].iter() {
                 let track = note.track as usize;
                 if self.engine.skip_track.get(track).copied().unwrap_or(false) { continue; }
                 let ch = audio_model.track_channel(track) as usize;
                 if !self.engine.active_mask.get(ch).copied().unwrap_or(false) { continue; }
 
-                let start_sample = tick_to_sample(note.start_tick as u64, segments, tpb, sr);
-                let end_sample = tick_to_sample(note.end_tick as u64, segments, tpb, sr);
-
                 events.push(yinhe_synth::SynthEvent {
-                    sample: start_sample,
+                    sample: note.start_sample,
                     key: key as u8,
                     velocity: note.velocity,
                     is_on: true,
                 });
                 events.push(yinhe_synth::SynthEvent {
-                    sample: end_sample,
+                    sample: note.end_sample,
                     key: key as u8,
                     velocity: 0,
                     is_on: false,

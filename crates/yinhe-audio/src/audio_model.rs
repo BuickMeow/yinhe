@@ -19,12 +19,30 @@ pub(crate) struct ActiveNote {
     pub(crate) end_sample: u64,
 }
 
+/// 音频线程消费的可听音事件（vel > 1），tick 已预转换为 sample。
+/// 桶内按 `start_sample` 严格升序排列（YinModel.notes[key] 本身按 start_tick 升序，
+/// tick→sample 单调，所以转换后保持有序）。
+///
+/// `key` 不存（桶索引即 key）。`id` 用于 undo/redo 后跨 prepared model
+/// 引用同一音符（暂未使用，预留）。
+#[repr(C)]
+pub(crate) struct AudibleNote {
+    pub start_sample: u64,
+    pub end_sample: u64,
+    pub id: u32,
+    pub track: u16,
+    pub velocity: u8,
+}
+
 /// Pre-computed model data, built on a worker thread and applied
 /// atomically on the audio thread.
 pub(crate) struct PreparedModel {
     pub model: AudioModel,
     pub yin_model: Arc<YinModel>,
     pub cc_events: Vec<SortedCC>,
+    /// 128 个 key 桶的可听音（vel > 1），tick 已转 sample。
+    /// 音频线程的 seek / dispatch 只读这份列表，不再访问 YinModel.notes。
+    pub audible_notes: Box<[Vec<AudibleNote>; 128]>,
     pub duration_samples: u64,
 }
 

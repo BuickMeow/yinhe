@@ -2,7 +2,7 @@ use xsynth_core::channel::{ChannelAudioEvent, ChannelEvent};
 use xsynth_core::channel_group::SynthEvent;
 use xsynth_core::AudioPipe;
 
-use crate::audio_model::{ActiveNote, tick_to_sample};
+use crate::audio_model::ActiveNote;
 use crate::engine::AudioEngine;
 
 /// Number of output channels (stereo).
@@ -64,7 +64,7 @@ impl AudioEngine {
     /// 同时返回 `(sample, block_end)` 范围内下一个事件的位置。
     ///
     /// 合并了原来 `next_event_sample`、`dispatch_cc_until`、`dispatch_notes_at`
-    /// 三个函数的职责，128 桶只扫描一次，消除重复的 `tick_to_sample` 计算。
+    /// 三个函数的职责，128 桶只扫描一次。所有 tick→sample 已由 worker 线程预转换。
     pub(crate) fn dispatch_and_find_next(&mut self, sample: u64, block_end: u64) -> Option<u64> {
         let mut next: Option<u64> = None;
 
@@ -92,86 +92,73 @@ impl AudioEngine {
         }
 
         // ── NoteOn + 找下一个 NoteOn 边界（单次 128 桶扫描）──
-        if let Some(ref yin_model) = self.yin_model {
-            let segments = &yin_model.tempo_map.tempo_segments;
-            let tpb = yin_model.tempo_map.ticks_per_beat;
-            let sr = self.sample_rate as f64;
+        // audible_notes 桶内 start_sample 升序，桶里只有 vel>1 的音符，无需运行时过滤。
+        for key in 0..128usize {
+            let notes = self.audible_notes[key].as_slice();
+            let mut cursor = self.note_cursor[key];
 
-            for key in 0..128usize {
-                let notes = yin_model.notes[key].as_slice();
-                let mut cursor = self.note_cursor[key];
-
-                while cursor < notes.len() {
-                    let note = &notes[cursor];
-                    if note.velocity <= 1 {
-                        cursor += 1;
-                        continue;
+            while cursor < notes.len() {
+                let note = &notes[cursor];
+                if note.start_sample > sample {
+                    // 该桶下一个待处理音符 → 记录为边界候选
+                    if note.start_sample < block_end {
+                        next = Some(next.map_or(note.start_sample, |s| s.min(note.start_sample)));
                     }
-                    let start_sample =
-                        tick_to_sample(note.start_tick as u64, segments, tpb, sr);
-                    if start_sample > sample {
-                        // 该桶下一个待处理音符 → 记录为边界候选
-                        if start_sample < block_end {
-                            next = Some(next.map_or(start_sample, |s| s.min(start_sample)));
-                        }
-                        break;
-                    }
-                    // start_sample ≤ sample → dispatch NoteOn
-                    let track = note.track as usize;
-                    let ch = self
-                        .model
-                        .as_ref()
-                        .map(|m| m.track_channel(track) as usize)
-                        .unwrap_or(0);
-                    if self.active_mask.get(ch).copied().unwrap_or(false)
-                        && !self.skip_track.get(track).copied().unwrap_or(false)
-                    {
-                        let dense =
-                            self.channel_map.get(ch).copied().unwrap_or(u32::MAX);
-                        if dense != u32::MAX {
-                            self.channel_group.send_event(SynthEvent::Channel(
-                                dense,
-                                ChannelEvent::Audio(ChannelAudioEvent::NoteOn {
-                                    key: key as u8,
-                                    vel: note.velocity,
-                                }),
-                            ));
-                            let end_sample =
-                                tick_to_sample(note.end_tick as u64, segments, tpb, sr);
-                            self.active_notes.push(ActiveNote {
-                                key: key as u8,
-                                channel: ch as u8,
-                                end_sample,
-                            });
-                        }
-                    }
-                    cursor += 1;
+                    break;
                 }
-                self.note_cursor[key] = cursor;
-            }
-
-            // ── NoteOff + 找下一个 NoteOff 边界（单次 active_notes 遍历）──
-            let channel_map = &self.channel_map;
-            self.ended_notes.clear();
-            self.active_notes.retain(|an| {
-                if an.end_sample <= sample {
-                    self.ended_notes.push(*an);
-                    false
-                } else {
-                    if an.end_sample < block_end {
-                        next = Some(next.map_or(an.end_sample, |s| s.min(an.end_sample)));
-                    }
-                    true
-                }
-            });
-            for an in &self.ended_notes {
-                if let Some(&dense) = channel_map.get(an.channel as usize) {
+                // start_sample ≤ sample → dispatch NoteOn
+                let track = note.track as usize;
+                let ch = self
+                    .model
+                    .as_ref()
+                    .map(|m| m.track_channel(track) as usize)
+                    .unwrap_or(0);
+                if self.active_mask.get(ch).copied().unwrap_or(false)
+                    && !self.skip_track.get(track).copied().unwrap_or(false)
+                {
+                    let dense =
+                        self.channel_map.get(ch).copied().unwrap_or(u32::MAX);
                     if dense != u32::MAX {
                         self.channel_group.send_event(SynthEvent::Channel(
                             dense,
-                            ChannelEvent::Audio(ChannelAudioEvent::NoteOff { key: an.key }),
+                            ChannelEvent::Audio(ChannelAudioEvent::NoteOn {
+                                key: key as u8,
+                                vel: note.velocity,
+                            }),
                         ));
+                        self.active_notes.push(ActiveNote {
+                            key: key as u8,
+                            channel: ch as u8,
+                            end_sample: note.end_sample,
+                        });
                     }
+                }
+                cursor += 1;
+            }
+            self.note_cursor[key] = cursor;
+        }
+
+        // ── NoteOff + 找下一个 NoteOff 边界（单次 active_notes 遍历）──
+        let channel_map = &self.channel_map;
+        self.ended_notes.clear();
+        self.active_notes.retain(|an| {
+            if an.end_sample <= sample {
+                self.ended_notes.push(*an);
+                false
+            } else {
+                if an.end_sample < block_end {
+                    next = Some(next.map_or(an.end_sample, |s| s.min(an.end_sample)));
+                }
+                true
+            }
+        });
+        for an in &self.ended_notes {
+            if let Some(&dense) = channel_map.get(an.channel as usize) {
+                if dense != u32::MAX {
+                    self.channel_group.send_event(SynthEvent::Channel(
+                        dense,
+                        ChannelEvent::Audio(ChannelAudioEvent::NoteOff { key: an.key }),
+                    ));
                 }
             }
         }

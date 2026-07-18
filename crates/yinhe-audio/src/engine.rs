@@ -10,7 +10,7 @@ use xsynth_core::{AudioStreamParams, ChannelCount};
 
 use yinhe_core::YinModel;
 
-use crate::audio_model::{ActiveNote, AudioModel, SortedCC};
+use crate::audio_model::{ActiveNote, AudioModel, AudibleNote, SortedCC};
 use crate::soundfont::SoundFontManager;
 use crate::spawn::AudioCommand;
 
@@ -27,9 +27,12 @@ pub(crate) struct AudioEngine {
     pub(crate) duration_samples: u64,
 
     pub(crate) note_cursor: [usize; 128],
-    /// Reference to the full YinModel (notes are read directly from
-    /// `yin_model.notes[key]` with real-time tick→sample conversion).
+    /// Reference to the full YinModel. 保留供 GPU 路径和 PrepareModel 命令合并使用；
+    /// 音频 dispatch/seek 改读 `audible_notes`（已过滤 vel≤1 + tick→sample 预转换）。
     pub(crate) yin_model: Option<Arc<YinModel>>,
+    /// 128 个 key 桶的可听音事件（vel > 1），由 worker 线程预构建。
+    /// 音频线程的 seek / dispatch 只读这份列表。
+    pub(crate) audible_notes: Box<[Vec<AudibleNote>; 128]>,
 
     pub(crate) cc_events: Vec<SortedCC>,
     pub(crate) cc_cursor: usize,
@@ -94,6 +97,7 @@ impl AudioEngine {
                 duration_samples: 0,
                 note_cursor: [0; 128],
                 yin_model: None,
+                audible_notes: Box::new(core::array::from_fn(|_| Vec::new())),
                 cc_events: Vec::new(),
                 cc_cursor: 0,
                 active_notes: Vec::new(),

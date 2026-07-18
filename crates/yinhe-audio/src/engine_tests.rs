@@ -309,8 +309,9 @@ fn test_audible_index_filters_vel_and_inactive_channel() {
     let next = engine.dispatch_and_find_next(44100, 60000);
     // Next note (other track) starts at tick1440 = 132300 > block_end, so no next event.
     assert_eq!(next, None);
-    // Cursor = 3: 2 low-vel skipped + 1 dispatched (4th note's start_sample > 44100).
-    assert_eq!(engine.note_cursor[60], 3);
+    // audible_notes 桶里只有 vel>1 的音符（哑音在 worker 线程已剔除）。
+    // key 60 桶：1 个 vel=100 音符（start=44100），dispatch 后 cursor=1。
+    assert_eq!(engine.note_cursor[60], 1);
     assert_eq!(engine.active_notes.len(), 1);
     for key in 0..128usize {
         if key != 60 {
@@ -332,9 +333,9 @@ fn test_audible_index_empty_when_all_filtered() {
     // All notes have velocity ≤ 1 → no events should dispatch.
     let next = engine.dispatch_and_find_next(0, 60000);
     assert_eq!(next, None);
-    // Cursors advance past skipped notes (vel ≤ 1) even though nothing dispatched.
-    assert_eq!(engine.note_cursor[60], 1);
-    assert_eq!(engine.note_cursor[61], 1);
+    // audible_notes 桶为空（哑音在 worker 线程已剔除），cursor 保持 0。
+    assert_eq!(engine.note_cursor[60], 0);
+    assert_eq!(engine.note_cursor[61], 0);
 }
 
 #[test]
