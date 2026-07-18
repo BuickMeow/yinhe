@@ -80,11 +80,11 @@ fn save_yin_bytes_with_files_inner(
         for n in bucket.iter() {
             if (n.track as usize) < num_tracks {
                 per_track_notes[n.track as usize].push(NoteEvent {
+                    id: n.id,
                     start_tick: n.start_tick,
                     end_tick: n.end_tick,
                     key: key as u8,
                     velocity: n.velocity,
-                    dup_index: n.dup_index,
                 });
             }
         }

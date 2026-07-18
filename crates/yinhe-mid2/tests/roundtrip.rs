@@ -39,7 +39,7 @@ fn parse_minimal_midi() {
     assert_eq!(n.start_tick, 0);
     assert_eq!(n.end_tick, 320);
     assert_eq!(n.velocity, 100);
-    assert_eq!(n.dup_index, 0);
+    assert_eq!(n.id, 1); // 首个 id 从 1 开始
 
     assert_eq!(model.conductor.tempo.len(), 1);
     assert!((model.conductor.tempo[0].bpm - 120.0).abs() < 0.5);
@@ -84,10 +84,10 @@ fn build_complex_model() -> YinModel {
     let mut t0 = TrackData::new(0, 0);
     t0.name = "Lead".to_string();
     let t0_notes = vec![
-        NoteEvent { start_tick: 0, end_tick: 480, key: 60, velocity: 100, dup_index: 0 },
-        NoteEvent { start_tick: 480, end_tick: 960, key: 64, velocity: 90, dup_index: 0 },
-        NoteEvent { start_tick: 1000, end_tick: 1500, key: 60, velocity: 80, dup_index: 0 },
-        NoteEvent { start_tick: 1000, end_tick: 1400, key: 60, velocity: 70, dup_index: 1 },
+        NoteEvent { id: 0, start_tick: 0, end_tick: 480, key: 60, velocity: 100 },
+        NoteEvent { id: 0, start_tick: 480, end_tick: 960, key: 64, velocity: 90 },
+        NoteEvent { id: 0, start_tick: 1000, end_tick: 1500, key: 60, velocity: 80 },
+        NoteEvent { id: 0, start_tick: 1000, end_tick: 1400, key: 60, velocity: 70 },
     ];
     t0.automation_lanes = vec![
         AutomationLane {
@@ -123,11 +123,11 @@ fn build_complex_model() -> YinModel {
     let mut t1 = TrackData::new(0, 1);
     t1.name = "Bass".to_string();
     let t1_notes = vec![NoteEvent {
+        id: 0,
         start_tick: 0,
         end_tick: 1920,
         key: 36,
         velocity: 110,
-        dup_index: 0,
     }];
 
     let per_track_notes = vec![t0_notes, t1_notes];
@@ -161,9 +161,8 @@ fn roundtrip_complex_model_preserves_everything() {
     assert_eq!(model1.track_note_count[0], model2.track_note_count[1], "note count mismatch");
     assert_eq!(l2.name, "Lead");
     // Notes equal as a multiset of (start_tick, end_tick, key, velocity).
-    // dup_index is a local-stable ordering and may differ across SMF
-    // round-trips because the MIDI encoding doesn't preserve which note
-    // was "first" among same-tick same-key onsets.
+    // id 在每次解析时由 YinModel 重新分配，SMF round-trip 后具体 id 值可能不同，
+    // 所以这里不比较 id，只比较音乐内容。
     let mut s1: Vec<_> = Vec::new();
     for (key, bucket) in model1.notes.iter().enumerate() {
         for n in bucket.iter().filter(|n| n.track == 0) {
@@ -226,7 +225,8 @@ fn build_overlap_midi_bytes() -> Vec<u8> {
 }
 
 #[test]
-fn dup_index_assigned_for_overlapping_notes() {
+fn overlapping_notes_get_distinct_ids() {
+    // 取代旧的 dup_index 测试：重叠音符现在靠全局唯一 id 区分。
     let bytes = build_overlap_midi_bytes();
     let model = parse_bytes(&bytes).expect("parse failed");
     assert_eq!(model.tracks.len(), 2);
@@ -235,9 +235,9 @@ fn dup_index_assigned_for_overlapping_notes() {
         .filter(|n| n.track == 1 && n.start_tick == 0)
         .collect();
     assert_eq!(key60_at_0.len(), 2, "expected two overlapping notes at tick 0");
-    let dups: Vec<u8> = key60_at_0.iter().map(|n| n.dup_index).collect();
-    assert!(dups.contains(&0));
-    assert!(dups.contains(&1));
+    let ids: Vec<u32> = key60_at_0.iter().map(|n| n.id).collect();
+    assert_ne!(ids[0], ids[1], "overlapping notes must have distinct ids");
+    assert!(ids.iter().all(|&id| id != 0), "ids must be assigned (non-zero)");
 }
 
 /// Build SMF bytes with a CC101+CC100+CC6 RPN sequence.

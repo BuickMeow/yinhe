@@ -436,8 +436,7 @@ fn parse_track(
         }
     }
 
-    // Assign dup_index for any (key, start_tick) collisions.
-    assign_dup_indices(&mut td.notes);
+    // NoteEvent.id 由 YinModel::load_track_notes 统一分配，这里不需要预分配。
 
     td.program_change.sort_by_key(|e| e.tick);
 
@@ -604,28 +603,11 @@ fn resolve_note_off(
     {
         let n = active.swap_remove(idx);
         notes.push(NoteEvent {
+            id: 0, // 由 YinModel::load_track_notes 统一分配
             start_tick: n.start_tick,
             end_tick,
             key: n.key,
             velocity: n.velocity,
-            dup_index: 0, // assigned later
         });
-    }
-}
-
-/// Walk notes and assign `dup_index` for any colliding `(key, start_tick)`.
-///
-/// Notes are inserted in NoteOff order, but dup_index should be insertion
-/// order. We use a std::collections::BTreeMap<(key, start_tick), u8> counter.
-fn assign_dup_indices(notes: &mut [NoteEvent]) {
-    use std::collections::BTreeMap;
-    let mut counter: BTreeMap<(u8, u32), u8> = BTreeMap::new();
-    // Sort first by start_tick so we assign dup_index in start order.
-    notes.sort_by_key(|n| (n.start_tick, n.key));
-    for n in notes.iter_mut() {
-        let k = (n.key, n.start_tick);
-        let entry = counter.entry(k).or_insert(0);
-        n.dup_index = *entry;
-        *entry = entry.saturating_add(1);
     }
 }

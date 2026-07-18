@@ -402,11 +402,11 @@ mod tests {
             ..Default::default()
         };
         model.load_track_notes(vec![vec![yinhe_core::NoteEvent {
+            id: 0,
             start_tick: 0,
             end_tick: 480,
             key: 60,
             velocity: 100,
-            dup_index: 0,
         }]]);
         model.rebuild();
         assert_eq!(detect_conductor_from_model(&model), None);
@@ -423,11 +423,11 @@ mod tests {
             ..Default::default()
         };
         model.load_track_notes(vec![vec![], vec![yinhe_core::NoteEvent {
+            id: 0,
             start_tick: 0,
             end_tick: 480,
             key: 60,
             velocity: 100,
-            dup_index: 0,
         }]]);
         model.rebuild();
         assert_eq!(detect_conductor_from_model(&model), Some(0));

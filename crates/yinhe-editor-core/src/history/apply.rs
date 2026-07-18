@@ -84,7 +84,7 @@ impl UndoAction {
 
 /// Remove `remove` notes and insert `insert` notes into the model.
 ///
-/// Notes in `remove` are matched by (track, start_tick, key, dup_index).
+/// Notes in `remove` are matched by their全局唯一 `id`。
 pub(crate) fn apply_note_delta(doc: &mut Document, remove: &[(Note, u8)], insert: &[(Note, u8)]) {
     if remove.is_empty() && insert.is_empty() {
         return;
@@ -92,19 +92,13 @@ pub(crate) fn apply_note_delta(doc: &mut Document, remove: &[(Note, u8)], insert
     let model = Arc::make_mut(&mut doc.data.model);
 
     // Remove notes matching `remove`, grouped by key for a single retain per bucket.
-    // Previous per-note retain was O(R × B); this is O(R + B).
-    let mut remove_by_key: HashMap<u8, HashSet<(u16, u32, u8)>> = HashMap::new();
+    let mut remove_by_key: HashMap<u8, HashSet<u32>> = HashMap::new();
     for (note, key) in remove {
-        remove_by_key
-            .entry(*key)
-            .or_default()
-            .insert((note.track, note.start_tick, note.dup_index));
+        remove_by_key.entry(*key).or_default().insert(note.id);
     }
     for (key, to_remove) in &remove_by_key {
         let k = *key as usize;
-        Arc::make_mut(&mut model.notes[k]).retain(|n| {
-            !to_remove.contains(&(n.track, n.start_tick, n.dup_index))
-        });
+        Arc::make_mut(&mut model.notes[k]).retain(|n| !to_remove.contains(&n.id));
         model.mark_dirty(*key);
     }
 

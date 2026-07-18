@@ -21,12 +21,16 @@ impl Document {
             return None;
         }
         let key = note.key;
-        let typed_note = yinhe_types::Note {
-            start_tick: note.start_tick,
-            end_tick: note.end_tick,
-            velocity: note.velocity,
-            dup_index: note.dup_index,
-            track: track_idx,
+        let typed_note = {
+            let model = Arc::make_mut(&mut self.data.model);
+            let id = model.alloc_note_id();
+            yinhe_types::Note {
+                id,
+                start_tick: note.start_tick,
+                end_tick: note.end_tick,
+                velocity: note.velocity,
+                track: track_idx,
+            }
         };
         {
             let model = Arc::make_mut(&mut self.data.model);
@@ -86,10 +90,10 @@ impl Document {
                 std::collections::HashMap::new();
             for (note, key) in &selected_data {
                 let new_note = yinhe_types::Note {
+                    id: model.alloc_note_id(),
                     start_tick: note.start_tick + offset,
                     end_tick: note.end_tick + offset,
                     velocity: note.velocity,
-                    dup_index: 0,
                     track: note.track,
                 };
                 new_by_key.entry(*key).or_default().push(new_note);
@@ -132,10 +136,10 @@ impl Document {
             for (note, old_key) in &moved_data {
                 let new_key = ((*old_key as i16) + (semitones as i16)).clamp(0, 127) as u8;
                 let new_note = yinhe_types::Note {
+                    id: note.id,
                     start_tick: note.start_tick,
                     end_tick: note.end_tick,
                     velocity: note.velocity,
-                    dup_index: 0,
                     track: note.track,
                 };
                 new_by_key.entry(new_key).or_default().push(new_note);
@@ -182,10 +186,10 @@ impl Document {
             let new_tick = (note.start_tick as i64 + delta_ticks).max(0) as u32;
             let length = note.end_tick - note.start_tick;
             let moved = yinhe_types::Note {
+                id: note.id,
                 start_tick: new_tick,
                 end_tick: new_tick + length,
                 velocity: note.velocity,
-                dup_index: 0,
                 track: note.track,
             };
             new_by_key.entry(new_key).or_default().push(moved);
@@ -226,19 +230,17 @@ impl Document {
 
                 if *delta_ticks != 0 || *delta_keys != 0 {
                     let model = Arc::make_mut(&mut self.data.model);
-                    // Remove original from old key bucket
+                    // Remove original from old key bucket by id
                     let ok = *key as usize;
-                    Arc::make_mut(&mut model.notes[ok]).retain(|n| {
-                        !(n.track == *track && n.start_tick == orig_note.start_tick && n.dup_index == orig_note.dup_index)
-                    });
+                    Arc::make_mut(&mut model.notes[ok]).retain(|n| n.id != orig_note.id);
                     model.mark_dirty(*key);
-                    // Insert moved note at new key bucket
+                    // Insert moved note at new key bucket（保留原 id）
                     let length = orig_note.end_tick - orig_note.start_tick;
                     let moved = yinhe_types::Note {
+                        id: orig_note.id,
                         start_tick: new_tick,
                         end_tick: new_tick + length,
                         velocity: orig_note.velocity,
-                        dup_index: 0,
                         track: *track,
                     };
                     let nk = new_key as usize;
@@ -264,7 +266,7 @@ impl Document {
                     let before = *note;
                     let model = Arc::make_mut(&mut self.data.model);
                     if let Some(n) = Arc::make_mut(&mut model.notes[k]).iter_mut().find(|n| {
-                        n.track == *track && n.start_tick == *start_tick
+                        n.id == before.id
                     }) {
                         n.end_tick = (*new_end_tick).max(n.start_tick + 1);
                         let after = *n;
@@ -289,7 +291,7 @@ impl Document {
                     let before = *note;
                     let model = Arc::make_mut(&mut self.data.model);
                     if let Some(n) = Arc::make_mut(&mut model.notes[k]).iter_mut().find(|n| {
-                        n.track == *track && n.start_tick == *start_tick
+                        n.id == before.id
                     }) {
                         n.start_tick = (*new_start_tick).min(n.end_tick - 1);
                         let after = *n;

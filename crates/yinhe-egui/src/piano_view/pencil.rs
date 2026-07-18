@@ -227,11 +227,11 @@ pub(crate) fn pencil_frame(
                         *s_tick + interval
                     };
                     result = Some(yinhe_core::NoteEvent {
+                        id: 0, // 由 Document::add_note 分配
                         start_tick: *s_tick as u32,
                         end_tick: end_tick as u32,
                         key: *s_key,
                         velocity: 100,
-                        dup_index: 0,
                     });
                 }
                 ui.data_mut(|d| d.insert_persisted(pencil_id, Option::<PencilDrag>::None));

@@ -143,10 +143,10 @@ impl Document {
                 continue;
             }
             let new_note = yinhe_types::Note {
+                id: model.alloc_note_id(),
                 start_tick: (note.start_tick as i64 + offset).max(0) as u32,
                 end_tick: (note.end_tick as i64 + offset).max(0) as u32,
                 velocity: note.velocity,
-                dup_index: 0,
                 track: ((note.track as i32 + track_offset).clamp(0, u16::MAX as i32) as u16),
             };
             new_by_key.entry(*key).or_default().push(new_note);

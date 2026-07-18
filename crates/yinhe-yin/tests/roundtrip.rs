@@ -26,10 +26,10 @@ fn build_complex_model() -> YinModel {
     t0.muted = false;
     t0.soloed = true;
     let t0_notes = vec![
-        NoteEvent { start_tick: 0, end_tick: 480, key: 60, velocity: 100, dup_index: 0 },
-        NoteEvent { start_tick: 480, end_tick: 960, key: 64, velocity: 90, dup_index: 0 },
-        NoteEvent { start_tick: 1000, end_tick: 1500, key: 60, velocity: 80, dup_index: 0 },
-        NoteEvent { start_tick: 1000, end_tick: 1400, key: 60, velocity: 70, dup_index: 1 },
+        NoteEvent { id: 0, start_tick: 0, end_tick: 480, key: 60, velocity: 100 },
+        NoteEvent { id: 0, start_tick: 480, end_tick: 960, key: 64, velocity: 90 },
+        NoteEvent { id: 0, start_tick: 1000, end_tick: 1500, key: 60, velocity: 80 },
+        NoteEvent { id: 0, start_tick: 1000, end_tick: 1400, key: 60, velocity: 70 },
     ];
     t0.automation_lanes = vec![
         AutomationLane {
@@ -81,18 +81,18 @@ fn build_complex_model() -> YinModel {
     t1.name = "Bass".to_string();
     t1.color = [0.2, 0.5, 0.9];
     let t1_notes = vec![NoteEvent {
+        id: 0,
         start_tick: 0,
         end_tick: 1920,
         key: 36,
         velocity: 110,
-        dup_index: 0,
     }];
 
     let mut t2 = TrackData::new(1, 9);
     t2.name = "Drums".to_string();
     let t2_notes = vec![
-        NoteEvent { start_tick: 0, end_tick: 60, key: 36, velocity: 127, dup_index: 0 },
-        NoteEvent { start_tick: 240, end_tick: 300, key: 38, velocity: 100, dup_index: 0 },
+        NoteEvent { id: 0, start_tick: 0, end_tick: 60, key: 36, velocity: 127 },
+        NoteEvent { id: 0, start_tick: 240, end_tick: 300, key: 38, velocity: 100 },
     ];
 
     let per_track_notes = vec![t0_notes, t1_notes, t2_notes];
@@ -273,11 +273,11 @@ fn dense_score_compresses_well() {
     let t = TrackData::new(0, 0);
     let per_track_notes: Vec<Vec<NoteEvent>> = vec![(0..100_000u32)
         .map(|i| NoteEvent {
+            id: 0,
             start_tick: i * 10,
             end_tick: i * 10 + 5,
             key: 60,
             velocity: 100,
-            dup_index: 0,
         })
         .collect()];
     let mut model = YinModel {
@@ -289,11 +289,12 @@ fn dense_score_compresses_well() {
     model.rebuild();
 
     let bytes = save_yin_bytes(&model).unwrap();
-    // 100k * 13B = ~1.3 MB raw bincode. zstd should at least beat 50%
-    // for highly repetitive data (same key/vel, monotonic ticks).
+    // 100k * 16B = ~1.6 MB raw bincode（Note 含 id:u32 后）。
+    // zstd 应至少压到 50% 以下：id 序列高度可压缩（差分=常量 1），
+    // key/vel 都是常量，tick 单调递增。
     assert!(
-        bytes.len() < 600_000,
-        ".yin compression unexpectedly poor: {} bytes (raw ~1.3 MB)",
+        bytes.len() < 800_000,
+        ".yin compression unexpectedly poor: {} bytes (raw ~1.6 MB)",
         bytes.len()
     );
 

@@ -25,7 +25,7 @@ fn make_model_with_notes(notes: Vec<(u8, u32, u32, u8, u8)>) -> YinModel {
             end_tick: end,
             key,
             velocity: vel,
-            dup_index: 0,
+            id: 0,
         })
         .collect()];
     let meta = ProjectMeta {
@@ -65,21 +65,21 @@ fn make_model_3_tracks() -> YinModel {
             end_tick: 480,
             key: 60,
             velocity: 100,
-            dup_index: 0,
+            id: 0,
         }],
         vec![NoteEvent {
             start_tick: 0,
             end_tick: 480,
             key: 64,
             velocity: 100,
-            dup_index: 0,
+            id: 0,
         }],
         vec![NoteEvent {
             start_tick: 0,
             end_tick: 480,
             key: 67,
             velocity: 100,
-            dup_index: 0,
+            id: 0,
         }],
     ];
     let mut model = YinModel {
@@ -121,14 +121,14 @@ fn test_channels_for_model_multi_port() {
             end_tick: 480,
             key: 60,
             velocity: 100,
-            dup_index: 0,
+            id: 0,
         }],
         vec![NoteEvent {
             start_tick: 0,
             end_tick: 480,
             key: 60,
             velocity: 100,
-            dup_index: 0,
+            id: 0,
         }],
     ];
     let mut model = YinModel {
@@ -261,21 +261,21 @@ fn test_audible_index_filters_vel_and_inactive_channel() {
                 end_tick: 480,
                 key: 60,
                 velocity: 0,
-                dup_index: 0,
+                id: 0,
             },
             NoteEvent {
                 start_tick: 480,
                 end_tick: 960,
                 key: 60,
                 velocity: 1,
-                dup_index: 0,
+                id: 0,
             },
             NoteEvent {
                 start_tick: 960,
                 end_tick: 1440,
                 key: 60,
                 velocity: 100,
-                dup_index: 0,
+                id: 0,
             },
         ],
         vec![NoteEvent {
@@ -283,7 +283,7 @@ fn test_audible_index_filters_vel_and_inactive_channel() {
             end_tick: 1920,
             key: 60,
             velocity: 100,
-            dup_index: 0,
+            id: 0,
         }],
     ];
     let mut model = YinModel {
@@ -353,14 +353,14 @@ fn test_audible_index_uses_per_key_tempo_cursor() {
             end_tick: 2480,
             key: 0,
             velocity: 100,
-            dup_index: 0,
+            id: 0,
         },
         NoteEvent {
             start_tick: 480,
             end_tick: 960,
             key: 60,
             velocity: 100,
-            dup_index: 0,
+            id: 0,
         },
     ]];
     let mut model = YinModel {
@@ -675,7 +675,7 @@ fn make_bench_model(tracks: usize, notes_per_track: usize) -> YinModel {
                 end_tick,
                 key,
                 velocity: 100,
-                dup_index: 0,
+                id: 0,
             });
         }
         per_track_notes.push(notes);

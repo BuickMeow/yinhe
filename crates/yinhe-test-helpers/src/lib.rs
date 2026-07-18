@@ -30,14 +30,16 @@ impl NoteSource for MockMidi {
 pub fn make_midi(notes: Vec<(u8, u32, u32, u16, u8)>) -> MockMidi {
     let mut key_notes: [Vec<Note>; 128] = core::array::from_fn(|_| Vec::new());
     let mut max_tick: u64 = 0;
+    let mut next_id: u32 = 1;
     for (key, start_tick, end_tick, track, vel) in notes {
         let n = Note {
+            id: next_id,
             start_tick,
             end_tick,
             velocity: vel,
-            dup_index: 0,
             track,
         };
+        next_id = next_id.wrapping_add(1);
         if (end_tick as u64) > max_tick {
             max_tick = end_tick as u64;
         }
@@ -88,14 +90,14 @@ pub fn make_test_model() -> YinModel {
 
     let per_track_notes: Vec<Vec<NoteEvent>> = vec![
         vec![
-            NoteEvent { start_tick: 0, end_tick: 480, key: 60, velocity: 100, dup_index: 0 },
-            NoteEvent { start_tick: 480, end_tick: 960, key: 60, velocity: 100, dup_index: 0 },
+            NoteEvent { id: 0, start_tick: 0, end_tick: 480, key: 60, velocity: 100 },
+            NoteEvent { id: 0, start_tick: 480, end_tick: 960, key: 60, velocity: 100 },
         ],
         vec![
-            NoteEvent { start_tick: 0, end_tick: 1920, key: 48, velocity: 90, dup_index: 0 },
+            NoteEvent { id: 0, start_tick: 0, end_tick: 1920, key: 48, velocity: 90 },
         ],
         vec![
-            NoteEvent { start_tick: 0, end_tick: 240, key: 36, velocity: 120, dup_index: 0 },
+            NoteEvent { id: 0, start_tick: 0, end_tick: 240, key: 36, velocity: 120 },
         ],
     ];
 
@@ -134,11 +136,11 @@ pub fn make_stress_model(track_count: u16, notes_per_track: u32) -> YinModel {
                 let key = (n % 128) as u8;
                 let start = n * 120;
                 notes.push(NoteEvent {
+                    id: 0,
                     start_tick: start,
                     end_tick: start + 100,
                     key,
                     velocity: 80,
-                    dup_index: 0,
                 });
             }
             notes

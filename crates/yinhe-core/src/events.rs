@@ -8,17 +8,17 @@ use serde::{Deserialize, Serialize};
 /// Memory representation uses `start_tick + end_tick` (rather than tick + duration)
 /// for fast playback scheduling without addition.
 ///
-/// `dup_index` distinguishes overlapping notes at the same `(key, start_tick)`.
-/// 99% of notes have `dup_index == 0`. Selection identity is the compound key
-/// `(track_idx, key, start_tick, dup_index)` — no separate UUID required.
+/// `id` 是全局唯一身份（由 YinModel 发号器分配，0 = 未分配）。
+/// MIDI 解析时填 0，由 `YinModel::load_track_notes` 统一发号；
+/// `.yin` 序列化保留 id，加载时若 id=0 则重新分配。
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 #[repr(C)]
 pub struct NoteEvent {
+    pub id: u32,
     pub start_tick: u32,
     pub end_tick: u32,
     pub key: u8,
     pub velocity: u8,
-    pub dup_index: u8,
 }
 
 

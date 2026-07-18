@@ -55,10 +55,10 @@ impl Document {
                 };
                 let length = note.end_tick - note.start_tick;
                 let moved = yinhe_types::Note {
+                    id: note.id,
                     start_tick: new_tick,
                     end_tick: new_tick + length,
                     velocity: note.velocity,
-                    dup_index: 0,
                     track: new_track,
                 };
                 new_by_key.entry(*old_key).or_default().push(moved);

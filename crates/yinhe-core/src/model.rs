@@ -29,7 +29,7 @@ pub struct ConductorData {
 /// One MIDI track's complete data.
 ///
 /// Channel/track are held here, not in individual events. NoteEvent is
-/// looked up by `(track_idx, key, start_tick, dup_index)`.
+/// looked up by `(track_idx, key, note.id)`.
 ///
 /// Control events (CC, PitchBend, RPN, NRPN) are unified into
 /// `automation_lanes` — one lane per parameter per track. Program Change
@@ -128,7 +128,7 @@ pub struct YinModel {
     pub meta: ProjectMeta,
 
     /// Single authoritative note store: `notes[key]` = all notes at that key,
-    /// sorted by start_tick. Each note carries its track index and dup_index.
+    /// sorted by start_tick. Each note carries its track index and全局唯一 id。
     /// Compatible with `yinhe_types::NoteSource`.
     pub notes: Box<[Arc<Vec<yinhe_types::Note>>; 128]>,
     pub note_count: u64,
@@ -160,6 +160,11 @@ pub struct YinModel {
     /// `track_audible_count` updates in `rebuild_dirty()` instead of
     /// rescanning all 128 buckets.
     pub bucket_track_stats: [HashMap<u16, (u64, u64)>; 128],
+
+    /// 全局音符 id 发号器（下一个待分配的 id）。
+    /// 0 保留为"未分配"哨兵，实际 id 从 1 开始。
+    /// 编辑时调 `alloc_note_id()`，加载时由 `load_track_notes` 统一分配。
+    pub next_note_id: u32,
 }
 
 impl Default for YinModel {
@@ -178,6 +183,7 @@ impl Default for YinModel {
             note_revisions: [0; 128],
             bucket_note_count: [0; 128],
             bucket_track_stats: core::array::from_fn(|_| HashMap::new()),
+            next_note_id: 1,
         }
     }
 }
@@ -245,6 +251,10 @@ impl YinModel {
     /// holds notes — the by-key `self.notes` is the single source.
     /// Also computes `note_count`, `tick_length`, and `track_note_count`
     /// in the same pass (avoids a second full scan in `rebuild()`).
+    ///
+    /// 音符 id 分配：输入 NoteEvent.id == 0 表示未分配（MIDI 解析路径），
+    /// 由本方法从 `next_note_id` 起顺序发号；非 0 表示外部已分配（.yin 加载），
+    /// 保留原 id 并推进 `next_note_id` 到 max+1。
     pub fn load_track_notes(&mut self, per_track_notes: Vec<Vec<NoteEvent>>) {
         // Count per key for exact allocation.
         let mut per_key_count = [0u32; 128];
@@ -264,6 +274,7 @@ impl YinModel {
         let mut track_audible: Vec<u64> = vec![0u64; self.tracks.len()];
         let mut bucket_stats: [HashMap<u16, (u64, u64)>; 128] =
             core::array::from_fn(|_| HashMap::new());
+        let mut max_id_seen: u32 = 0;
 
         for (track_idx, notes) in per_track_notes.into_iter().enumerate() {
             for note in notes {
@@ -278,12 +289,23 @@ impl YinModel {
                         track_audible[track_idx as usize] += 1;
                     }
                 }
+                // id 分配：0 = 未分配，从发号器取；非 0 = 外部分配，保留并跟踪 max。
+                let id = if note.id == 0 {
+                    let id = self.next_note_id;
+                    self.next_note_id = self.next_note_id.wrapping_add(1);
+                    id
+                } else {
+                    if note.id > max_id_seen {
+                        max_id_seen = note.id;
+                    }
+                    note.id
+                };
                 let key = note.key as usize;
                 key_notes[key].push(yinhe_types::Note {
+                    id,
                     start_tick: note.start_tick,
                     end_tick: note.end_tick,
                     velocity: note.velocity,
-                    dup_index: note.dup_index,
                     track: track_idx as u16,
                 });
                 let e = bucket_stats[key].entry(track_idx as u16).or_insert((0, 0));
@@ -292,6 +314,11 @@ impl YinModel {
                     e.1 += 1;
                 }
             }
+        }
+
+        // 若加载了外部分配的 id，确保发号器在 max+1 之上，避免后续冲突。
+        if max_id_seen + 1 > self.next_note_id {
+            self.next_note_id = max_id_seen + 1;
         }
 
         self.notes = Box::new(key_notes.map(|v| Arc::new(v)));
@@ -303,6 +330,13 @@ impl YinModel {
             self.bucket_note_count[k] = bucket.len() as u64;
             self.bucket_track_stats[k] = std::mem::take(&mut bucket_stats[k]);
         }
+    }
+
+    /// 分配一个新的全局唯一音符 id。编辑路径（新增/粘贴/复制）调用。
+    pub fn alloc_note_id(&mut self) -> u32 {
+        let id = self.next_note_id;
+        self.next_note_id = self.next_note_id.wrapping_add(1);
+        id
     }
 
     /// Rebuild all derived data from scratch.
@@ -501,11 +535,11 @@ mod tests {
 
     fn note(start: u32, end: u32, key: u8) -> NoteEvent {
         NoteEvent {
+            id: 0,
             start_tick: start,
             end_tick: end,
             key,
             velocity: 100,
-            dup_index: 0,
         }
     }
 
@@ -615,21 +649,21 @@ mod tests {
     /// incremental update path against a full `rebuild()` from scratch.
     fn note_audible(start: u32, end: u32, key: u8) -> NoteEvent {
         NoteEvent {
+            id: 0,
             start_tick: start,
             end_tick: end,
             key,
             velocity: 100,
-            dup_index: 0,
         }
     }
 
     fn note_silent(start: u32, end: u32, key: u8) -> NoteEvent {
         NoteEvent {
+            id: 0,
             start_tick: start,
             end_tick: end,
             key,
             velocity: 0, // silent — must not count toward `track_audible_count`
-            dup_index: 0,
         }
     }
 
@@ -655,20 +689,20 @@ mod tests {
         {
             let model = Arc::make_mut(&mut m_inc.notes[60]);
             model.push(yinhe_types::Note {
+                id: 0,
                 start_tick: 960,
                 end_tick: 1440,
                 velocity: 0,
-                dup_index: 0,
                 track: 1,
             });
         }
         {
             let model = Arc::make_mut(&mut m_inc.notes[62]);
             model.push(yinhe_types::Note {
+                id: 0,
                 start_tick: 240,
                 end_tick: 480,
                 velocity: 80,
-                dup_index: 0,
                 track: 1,
             });
         }
@@ -680,20 +714,20 @@ mod tests {
         {
             let model = Arc::make_mut(&mut m_full.notes[60]);
             model.push(yinhe_types::Note {
+                id: 0,
                 start_tick: 960,
                 end_tick: 1440,
                 velocity: 0,
-                dup_index: 0,
                 track: 1,
             });
         }
         {
             let model = Arc::make_mut(&mut m_full.notes[62]);
             model.push(yinhe_types::Note {
+                id: 0,
                 start_tick: 240,
                 end_tick: 480,
                 velocity: 80,
-                dup_index: 0,
                 track: 1,
             });
         }

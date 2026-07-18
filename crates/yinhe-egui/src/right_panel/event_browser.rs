@@ -455,11 +455,11 @@ fn show_event_detail(ui: &mut egui::Ui, item: &SelectedItem, doc: &Document, bar
                     for n in bucket.iter().filter(|n| n.track == *track) {
                         v.push((
                             yinhe_core::NoteEvent {
+                                id: n.id,
                                 start_tick: n.start_tick,
                                 end_tick: n.end_tick,
                                 key: key as u8,
                                 velocity: n.velocity,
-                                dup_index: n.dup_index,
                             },
                             key as u8,
                             *track,
@@ -472,9 +472,10 @@ fn show_event_detail(ui: &mut egui::Ui, item: &SelectedItem, doc: &Document, bar
             ui.add_space(4.0);
             ui.label(egui::RichText::new(format!("音符 ({} 个)", notes.len())).size(12.0).strong());
             ui.add_space(2.0);
-            build_table(ui, "eb_notes", &[("#", 40.0), ("tick", 70.0), ("位置", 80.0), ("结束 tick", 80.0), ("结束位置", 90.0), ("键位", 50.0), ("力度", 50.0)], notes.len(), |i, row| {
+            build_table(ui, "eb_notes", &[("#", 40.0), ("id", 70.0), ("tick", 70.0), ("位置", 80.0), ("结束 tick", 80.0), ("结束位置", 90.0), ("键位", 50.0), ("力度", 50.0)], notes.len(), |i, row| {
                 let (n, _key, _trk) = &notes[i];
                 cell_text(row, format!("{}", i + 1));
+                cell_text(row, format!("#{}", n.id));
                 cell_text(row, format!("{}", n.start_tick));
                 cell_text(row, bar_lookup.format(n.start_tick));
                 cell_text(row, format!("{}", n.end_tick));

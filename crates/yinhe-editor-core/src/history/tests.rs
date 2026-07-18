@@ -119,20 +119,20 @@ fn note_delta_undo_redo() {
     let mut doc = make_doc("test");
     // Add a note
     let note = NoteEvent {
+        id: 0,
         start_tick: 0,
         end_tick: 480,
         key: 60,
         velocity: 100,
-        dup_index: 0,
     };
     let key = 60;
     {
         let model = Arc::make_mut(&mut doc.data.model);
         Arc::make_mut(&mut model.notes[key as usize]).push(yinhe_types::Note {
+            id: 0,
             start_tick: note.start_tick,
             end_tick: note.end_tick,
             velocity: note.velocity,
-            dup_index: note.dup_index,
             track: 0,
         });
         model.mark_dirty(key);

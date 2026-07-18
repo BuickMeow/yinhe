@@ -12,12 +12,12 @@ pub struct TimeSigEvent {
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 #[repr(C)]
 pub struct Note {
+    /// 全局唯一身份（由 YinModel 发号器分配，0 = 未分配）。
+    /// 跨 track 移动/缩放保持不变；新建/粘贴/复制由发号器发新 id。
+    pub id: u32,
     pub start_tick: u32,
     pub end_tick: u32,
     pub velocity: u8,
-    /// Distinguishes overlapping notes at the same (track, key, start_tick).
-    /// 99% of notes have dup_index == 0.
-    pub dup_index: u8,
     pub track: u16,
 }
 

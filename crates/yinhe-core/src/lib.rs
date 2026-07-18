@@ -5,7 +5,7 @@
 //!
 //! 设计要点：
 //! - NoteEvent 不带 channel/track，由所属 TrackData 隐含
-//! - 同 (key, start_tick) 重叠音符用 dup_index: u8 区分
+//! - 每个音符由全局唯一 id: u32 区分（由 YinModel 发号器分配）
 //! - 内存用 start_tick + end_tick（播放友好），无 length 加法
 //! - C1 模式：tracks 为 Vec<Arc<TrackData>>，编辑时只 clone 受影响的 track
 //! - 派生索引 (key_notes_cache 等) 在 rebuild() 时全量重建
