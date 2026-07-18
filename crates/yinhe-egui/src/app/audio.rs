@@ -166,6 +166,45 @@ impl App {
         }
     }
 
+    /// 切换音频输出设备（由"音频设备切换"对话框触发）。
+    ///
+    /// 流程：保存当前 sample_position → 更新设置 → drop 旧 handle →
+    /// `rebuild_audio_if_needed` 用新设备名 spawn → 发 Seek 恢复位置。
+    ///
+    /// spawn 成功：清 `device_switch_pending`，对话框下帧消失。
+    /// spawn 失败：保留 `device_switch_pending`，把错误塞进 `device_switch_error`，
+    /// 对话框保持打开让用户重选。
+    pub(crate) fn switch_audio_device(&mut self, device_name: String) {
+        let saved_sample = self
+            .audio_state
+            .handle
+            .as_ref()
+            .map(|h| h.handle.sample_position())
+            .unwrap_or(0);
+
+        self.audio_settings.output_device_name = Some(device_name);
+        self.audio_settings.save();
+
+        // drop 旧 handle（Drop trait 会通知 renderer 线程退出），强制 rebuild
+        self.audio_state.handle = None;
+
+        // 用新设备名重建（rebuild_audio_if_needed 会读 output_device_name）
+        self.rebuild_audio_if_needed();
+
+        if let Some(audio) = &self.audio_state.handle {
+            // spawn 成功 —— 恢复播放位置，关对话框
+            audio
+                .handle
+                .send(yinhe_audio::AudioCommand::Seek { sample: saved_sample });
+            self.audio_state.device_switch_pending = false;
+            self.audio_state.device_switch_error = None;
+        } else {
+            // spawn 失败 —— 保留对话框，显示错误
+            self.audio_state.device_switch_error =
+                Some("无法在该设备上创建音频流，请选另一个设备".to_string());
+        }
+    }
+
     /// Handle playback toggle/pause/stop and cursor sync.
     pub(crate) fn handle_playback(
         &mut self,

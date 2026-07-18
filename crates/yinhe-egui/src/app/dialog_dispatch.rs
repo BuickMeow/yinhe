@@ -7,19 +7,48 @@ impl App {
     pub(in crate::app) fn show_dialogs(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
 
-        // ── GPU device-lost / audio stream-error 重启提示 ──
+        // ── GPU device-lost 重启提示 ──
         // 任一 RenderContext 报告 device lost 都触发：同一 device 上后注册的回调
         // 会替换先注册的，所以需要 OR 多个 RenderContext 的结果。详见
-        // `RenderContext::device_lost` 的文档。
-        // cpal 流错误（设备热拔 / 驱动崩溃）也走同一对话框：renderer 已经死了，没救。
+        // `RenderContext::device_lost` 的文档。GPU device lost 不可恢复，只能退出。
         let device_lost = self.render_ctx.device_lost() || self.arr_render_ctx.device_lost();
+
+        // ── 音频流错误 → 设备切换对话框 ──
+        // cpal `stream_error` 一旦置位就不可恢复，但和 GPU device lost 不一样：
+        // 音频可以换一个输出设备重建流。所以分流到"音频设备切换"对话框，
+        // 让用户挑新设备；只有 GPU device lost 才走"需要重启"退出对话框。
         let audio_dead = self
             .audio_state
             .handle
             .as_ref()
             .map(|h| h.handle.stream_error())
             .unwrap_or(false);
-        if (device_lost || audio_dead) && crate::dialogs::gpu_device_lost::show_viewport(&ctx) {
+        if audio_dead && !self.audio_state.device_switch_pending {
+            // 首次检测到音频流断开 —— 弹设备切换对话框
+            self.audio_state.device_switch_pending = true;
+            self.audio_state.device_switch_error = None;
+        }
+        if self.audio_state.device_switch_pending {
+            use crate::dialogs::audio_device_switch::AudioDeviceSwitchAction;
+            match crate::dialogs::audio_device_switch::show_viewport(
+                &ctx,
+                &self.audio_settings.available_devices,
+                self.audio_state.device_switch_error.as_deref(),
+            ) {
+                AudioDeviceSwitchAction::None => {}
+                AudioDeviceSwitchAction::Switch(name) => {
+                    self.switch_audio_device(name);
+                }
+                AudioDeviceSwitchAction::Refresh => {
+                    self.audio_settings.available_devices = yinhe_audio::list_output_devices();
+                }
+                AudioDeviceSwitchAction::Exit => {
+                    self.should_exit = true;
+                }
+            }
+        }
+
+        if device_lost && crate::dialogs::gpu_device_lost::show_viewport(&ctx) {
             self.should_exit = true;
         }
 

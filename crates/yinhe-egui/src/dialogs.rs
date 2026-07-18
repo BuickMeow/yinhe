@@ -1,4 +1,5 @@
 pub mod archive_picker;
+pub mod audio_device_switch;
 pub mod export;
 pub mod gpu_device_lost;
 pub mod loading_overlay;

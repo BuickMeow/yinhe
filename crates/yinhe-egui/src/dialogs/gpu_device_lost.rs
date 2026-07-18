@@ -1,12 +1,13 @@
 use eframe::egui;
 
-/// 不可恢复的硬件/驱动错误提示对话框。
+/// 不可恢复的 GPU 硬件/驱动错误提示对话框。
 ///
-/// 触发条件（在 `App::show_dialogs` 中 OR 起来）：
-/// - `RenderContext::device_lost()` 为 true（GPU 驱动 TDR、设备热拔、显存耗尽等）
-/// - `AudioHandle::stream_error()` 为 true（cpal 流错误回调被触发，音频 renderer 已无法工作）
+/// 触发条件（在 `App::show_dialogs` 中）：任一 `RenderContext::device_lost()`
+/// 为 true（GPU 驱动 TDR、设备热拔、显存耗尽等）。
 ///
-/// 这两种情况都属于"硬件/驱动层已挂，应用层无重建路径"，唯一选择是退出并让用户重启。
+/// GPU device lost 应用层无重建路径，唯一选择是退出并让用户重启。
+/// 音频流错误（cpal `stream_error`）不走这里 —— 那个可以换设备重建，
+/// 走 `dialogs::audio_device_switch`。
 ///
 /// 调用方每帧调用：只要触发条件成立就持续显示，用户点击"退出"后由调用方
 /// 设置 `should_exit = true`，下一帧 main_loop 会发送 `ViewportCommand::Close`。
@@ -47,9 +48,9 @@ pub(crate) fn show_viewport(ctx: &egui::Context) -> bool {
                             ui.vertical_centered(|ui| {
                                 ui.add_space(8.0);
                                 ui.label(
-                                    "GPU 设备或音频流已不可恢复地丢失\n\
-                                     （驱动 TDR / 设备热拔 / 显存耗尽 / 音频设备错误等）。\n\
-                                     钢琴卷帘和音频渲染已永久停止，继续操作也无法恢复。",
+                                    "GPU 设备已不可恢复地丢失\n\
+                                     （驱动 TDR / 设备热拔 / 显存耗尽等）。\n\
+                                     钢琴卷帘渲染已永久停止，继续操作也无法恢复。",
                                 );
                                 ui.add_space(4.0);
                                 ui.label("请保存当前工程并退出程序后重新启动。");
