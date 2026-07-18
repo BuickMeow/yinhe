@@ -390,12 +390,13 @@ impl AudioRenderer {
     }
 
     fn clear_buffered_audio(&mut self) {
-        self.ring.clear();
+        // 不直接调 `self.ring.clear()`：它和 cpal 回调的 `pop_into` 并发时会
+        // 把 cpal 刚推进的 read 指针覆盖回 write，下次回调会把旧数据当新数据读出 → 杂音。
+        // 改用 `reset_generation` 通知 cpal 回调自己 clear（spawn.rs:517-522），
+        // cpal 回调入口是单线程的，clear 和后续 pop_into 串行，无竞态。
         self.state
             .producer_sample_position
             .store(self.engine.sample_position(), Ordering::Release);
-        // 推 generation，cpal 回调入口看到新 generation 会 clear ring 并对齐位置。
-        // 不等 ack —— cpal 回调停了的话，等 ack 会永久卡死 renderer（P0-3 修复）。
         self.state.reset_generation.fetch_add(1, Ordering::AcqRel);
     }
 

@@ -160,6 +160,11 @@ impl GpuSynth {
         self.sample_position
     }
 
+    /// 当前活跃 voice 数量（含 release 阶段）。导出余韵循环用它早退。
+    pub fn voice_count(&self) -> usize {
+        self.voices.len()
+    }
+
     /// Seek 到指定位置
     pub fn seek(&mut self, sample: u64) {
         self.sample_position = sample;

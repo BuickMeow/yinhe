@@ -408,6 +408,8 @@ pub fn export_wav_gpu(
     }
 
     // ── 7. 余韵衰减（让 release 尾音自然消失）──
+    // 与 CPU 路径 (export_wav) 对齐：用 voice_count 早退，MAX_TAIL_SECONDS 仅作安全网
+    // 防 voice 卡死导致无限循环。
     let max_tail_samples = (MAX_TAIL_SECONDS * sample_rate as f64) as u64;
     let mut tail_rendered: u64 = 0;
 
@@ -419,12 +421,12 @@ pub fn export_wav_gpu(
         write_samples(&mut writer, buf, bit_depth)?;
 
         tail_rendered += frames as u64;
-        // GpuSynth 没有 voice_count()，用余韵时长上限判断
         let tail_pct = tail_rendered as f32 / max_tail_samples as f32;
         let overall = 0.96 + tail_pct * 0.03;
         progress(overall, "余韵衰减中...");
 
-        if tail_rendered >= max_tail_samples {
+        // 所有 voice（含 release）都已结束 → 自然完成
+        if synth.voice_count() == 0 {
             break;
         }
     }

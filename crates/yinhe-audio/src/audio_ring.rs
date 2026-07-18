@@ -90,11 +90,6 @@ impl AudioRingProducer {
         self.inner.write.store(write.wrapping_add(count), Ordering::Release);
         count
     }
-
-    pub(crate) fn clear(&mut self) {
-        let write = self.inner.write.load(Ordering::Relaxed);
-        self.inner.read.store(write, Ordering::Release);
-    }
 }
 
 impl AudioRingConsumer {
