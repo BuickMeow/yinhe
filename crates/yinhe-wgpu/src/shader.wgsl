@@ -393,7 +393,7 @@ fn vs_main_velocity(
     // Unified border width: fixed 1px, independent of zoom level
     // so users can scale freely without border thickness changing.
     out.radius = 0.0;
-    out.border_width = 1.0;
+    out.border_width = 0.5;
 
     out.uv = uv[vertex_index];
     out.half_size = vec2<f32>(pixel_w, pixel_h) * 0.5;
