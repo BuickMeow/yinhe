@@ -15,6 +15,17 @@ use crate::channel::ChannelState;
 
 const STEREO_CHANNELS: usize = 2;
 const RING_BUFFER_FRAMES: usize = 16_384;
+
+/// UI → renderer 命令通道容量。
+///
+/// 16 足够吸收任何合理的用户操作突发（按钮连点、设置切换、文档切换序列），
+/// 同时硬性防止 renderer 卡死时命令无限堆积导致内存爆炸 + 鬼畜执行。
+///
+/// 队列满时 `AudioHandle::send` 走 `try_send` 丢弃新命令并记日志 ——
+/// 不阻塞 UI 线程。renderer 已对 `ReloadNotes`/`UpdateNotes` 做同类型合并，
+/// worker 对 `PrepareModel`/`PrepareNotes`/`PrepareChase` 也做合并，
+/// 因此偶发丢弃只会导致短暂的 UI/音频错位，下一次用户操作即重新同步。
+const AUDIO_CMD_CHANNEL_CAPACITY: usize = 16;
 /// 编译期保证 `AudioRing` 的容量是 2 的幂（`AudioRing::new` 依赖此不变量做位运算取模）。
 /// 任何修改 `RING_BUFFER_FRAMES` / `STEREO_CHANNELS` 或去掉 `.next_power_of_two()` 的改动
 /// 都会在编译期触发 assert，而不是等到运行期才 panic。
@@ -79,11 +90,24 @@ pub struct AudioHandle {
 }
 
 impl AudioHandle {
+    /// 发命令给 renderer 线程。
+    ///
+    /// 通道容量 `AUDIO_CMD_CHANNEL_CAPACITY`（16）。满时 `try_send` 失败 →
+    /// 丢弃新命令 + `warn!` 日志，绝不阻塞 UI 线程。
+    /// - `Full`：renderer 处理不过来。renderer 已对 `ReloadNotes`/`UpdateNotes`
+    ///   做同类型合并，worker 对 `PrepareModel`/`PrepareNotes`/`PrepareChase`
+    ///   也做合并，因此偶发丢弃只造成短暂 UI/音频错位，下一次操作即重新同步。
+    /// - `Disconnected`：renderer 线程已退出。仅记日志，不 panic ——
+    ///   渲染线程死亡不应该让 UI 也跟着崩。
     pub fn send(&self, cmd: AudioCommand) {
-        if let Err(e) = self.cmd_tx.send(cmd) {
-            // renderer 线程已退出，命令无法送达。仅记日志，不 panic：
-            // 渲染线程死亡不应该让 UI 也跟着崩。
-            tracing::warn!("AudioHandle::send failed: {e}");
+        match self.cmd_tx.try_send(cmd) {
+            Ok(()) => {}
+            Err(crossbeam_channel::TrySendError::Full(_)) => {
+                tracing::warn!("AudioHandle::send: channel full, dropping command");
+            }
+            Err(crossbeam_channel::TrySendError::Disconnected(_)) => {
+                tracing::warn!("AudioHandle::send: channel disconnected, dropping command");
+            }
         }
     }
 
@@ -420,7 +444,7 @@ pub fn spawn_cpal_audio(
     device_name: Option<&str>,
     #[cfg(feature = "gpu")] use_gpu_synth: bool,
 ) -> Result<CpalAudioHandle, String> {
-    let (cmd_tx, cmd_rx) = unbounded::<AudioCommand>();
+    let (cmd_tx, cmd_rx) = bounded::<AudioCommand>(AUDIO_CMD_CHANNEL_CAPACITY);
     let sample_position = Arc::new(AtomicU64::new(0));
     let playing = Arc::new(AtomicBool::new(false));
     let duration_samples = Arc::new(AtomicU64::new(0));
