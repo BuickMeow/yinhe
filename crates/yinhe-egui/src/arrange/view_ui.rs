@@ -141,7 +141,7 @@ pub fn show(
     // ── Select tool dispatch (BEFORE layer building to get ghost notes) ──
     // Like PR's sel_drag_frame, this returns ghost_notes/hidden_notes generated
     // from the CURRENT frame's mouse position, enabling zero-delay ghost preview.
-    let (ghost_notes, hidden_notes, drag_rect) = if *active_tool == Tool::Select {
+    let (mut ghost_notes, hidden_notes, drag_rect) = if *active_tool == Tool::Select {
         sel_drag_frame_arrange(
             ui,
             rect,
@@ -225,7 +225,7 @@ pub fn show(
 
     // Layer 2: ghost notes (no cache — rebuilt every frame during drag)
     renderer.upload_note_layer(2, 0, |out| {
-        build_ghost_notes(out, &ghost_notes);
+        build_ghost_notes(out, &mut ghost_notes, w as f32, h as f32, view, track_visible);
     });
 
     let content_changed = true;
