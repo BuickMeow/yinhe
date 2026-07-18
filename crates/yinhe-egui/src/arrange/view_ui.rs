@@ -5,7 +5,7 @@ use eframe::egui;
 use yinhe_wgpu::{build_ghost_notes, build_arr_grid, build_arr_notes};
 use yinhe_core::TrackInfo;
 use yinhe_types::{ArrangementView, NoteSource, key_notes_in_range};
-use yinhe_wgpu::{InstanceRenderer, Uniforms, TrackColorsUniform, MAX_TRACKS};
+use yinhe_wgpu::{InstanceRenderer, Uniforms, MAX_TRACKS};
 use yinhe_types::TimeSigEvent;
 use yinhe_wgpu::layer_cache_key;
 
@@ -104,13 +104,13 @@ pub fn show(
         },
     };
 
-    // Build track colors uniform — allocate on heap to avoid 1MB stack overflow
+    // Build track colors — dynamic Vec, no fixed 1MB allocation.
     let track_count = track_colors.len().min(MAX_TRACKS) as u32;
-    let mut tc_buf: Vec<u8> = vec![0u8; std::mem::size_of::<TrackColorsUniform>()];
-    let tc_uniform: &mut TrackColorsUniform = bytemuck::from_bytes_mut(&mut tc_buf);
-    for (i, color) in track_colors.iter().enumerate().take(MAX_TRACKS) {
-        tc_uniform.colors[i] = [color[0], color[1], color[2], 1.0];
-    }
+    let tc_colors: Vec<[f32; 4]> = track_colors
+        .iter()
+        .take(MAX_TRACKS)
+        .map(|c| [c[0], c[1], c[2], 1.0])
+        .collect();
 
     let uniforms = Uniforms {
         width: w as f32,
@@ -128,14 +128,13 @@ pub fn show(
         sel_rect_count: 0, // unused in AR mode
         note_outline: 1, // AR mode: outline always on
         lane_height: view.lane_height, // AR: per-track lane height
-        note_alpha: 1.0,
     };
 
     view.base.dirty = false;
 
     let theme = renderer.theme().clone();
     renderer.upload_uniforms(uniforms);
-    renderer.upload_track_colors(tc_uniform);
+    renderer.upload_track_colors(&tc_colors);
     renderer.ensure_layers(3);
 
     // ── Select tool dispatch (BEFORE layer building to get ghost notes) ──

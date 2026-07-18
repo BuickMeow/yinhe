@@ -1,5 +1,5 @@
 use super::instances;
-use crate::vertex::{Uniforms, TrackColorsUniform, SelectionUniform, MAX_TRACKS, MAX_SEL_RECTS};
+use crate::vertex::{Uniforms, SelectionUniform, MAX_TRACKS, MAX_SEL_RECTS};
 use yinhe_types::PianoRollView;
 
 use crate::layer_cache_key;
@@ -12,13 +12,9 @@ pub struct PianorollRenderJob {
     pub width: u32,
     pub height: u32,
     pub uniforms: Uniforms,
-    /// Track colors as raw bytes (heap-allocated `Vec<u8>`, NOT `Box<TrackColorsUniform>`).
-    ///
-    /// `TrackColorsUniform` is 1MB (`MAX_TRACKS=65536` × 16B). Using
-    /// `Box<TrackColorsUniform>` would require `Box::new(*ref)` which creates
-    /// a 1MB stack temporary, overflowing the 1MB default stack on Windows.
-    /// Keeping it as `Vec<u8>` avoids any stack copy entirely.
-    pub track_colors: Vec<u8>,
+    /// Track colors as `Vec<[f32; 4]>` (RGBA per track).
+    /// The GPU storage buffer is allocated dynamically to this length.
+    pub track_colors: Vec<[f32; 4]>,
     pub selection: SelectionUniform,
     pub decor_layers: Vec<DecorLayerData>,
     pub build_time: std::time::Duration,
@@ -53,16 +49,13 @@ pub fn build_render_job(
     let scroll_x = view.base.scroll_x;
     let (scroll_x_pos, scroll_frac) = crate::compute_scroll_frac(scroll_x, scroll_mode);
 
-    // Build track colors uniform - allocate on heap to avoid 1MB stack overflow.
-    // `TrackColorsUniform` is 1MB; `Box::new(*tc_uniform)` would create a 1MB
-    // stack copy and overflow the 1MB default stack on Windows. We keep the
-    // data as `Vec<u8>` and move it directly into the job (zero stack copy).
+    // Build track colors — dynamic Vec, no fixed 1MB allocation.
     let track_count = track_colors.len().min(MAX_TRACKS) as u32;
-    let mut tc_buf: Vec<u8> = vec![0u8; std::mem::size_of::<TrackColorsUniform>()];
-    let tc_uniform: &mut TrackColorsUniform = bytemuck::from_bytes_mut(&mut tc_buf);
-    for (i, color) in track_colors.iter().enumerate().take(MAX_TRACKS) {
-        tc_uniform.colors[i] = [color[0], color[1], color[2], 1.0];
-    }
+    let tc_colors: Vec<[f32; 4]> = track_colors
+        .iter()
+        .take(MAX_TRACKS)
+        .map(|c| [c[0], c[1], c[2], 1.0])
+        .collect();
 
     // Build selection rects uniform
     let sel_rect_count = selected.rects.len().min(MAX_SEL_RECTS) as u32;
@@ -89,7 +82,6 @@ pub fn build_render_job(
         sel_rect_count,
         note_outline: if note_outline { 1 } else { 0 },
         lane_height: 0.0, // PR unused (shader uses key_height)
-        note_alpha: 1.0,  // PR notes fully opaque
     };
 
     // Layer 0: grid lines (background + black-key rows now drawn by egui)
@@ -116,7 +108,7 @@ pub fn build_render_job(
         width,
         height,
         uniforms,
-        track_colors: tc_buf,
+        track_colors: tc_colors,
         selection: sel_uniform,
         decor_layers: vec![
             DecorLayerData { instances: grid_instances, cache_key: grid_key },

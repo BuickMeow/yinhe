@@ -1,6 +1,5 @@
 // ── Rendering constants ───────────────────────────────────────────────────
 const BORDER_DARKEN_FACTOR: f32 = 0.4;
-const MAX_TRACKS: u32 = 65536u;
 const MAX_SEL_RECTS: u32 = 32u;
 
 struct Uniforms {
@@ -19,12 +18,12 @@ struct Uniforms {
     sel_rect_count: u32, // number of valid selection rects
     note_outline: u32, // 0=no outline (saves fill rate), 1=on
     lane_height: f32, // AR: per-track lane height (PR unused)
-    note_alpha: f32, // note alpha override (PR=1.0, AR=0.85)
 }
 
-struct TrackColorsUniform {
-    colors: array<vec4<f32>, MAX_TRACKS>, // RGBA for each track
-}
+// Track colors: runtime-sized storage buffer (allocated dynamically to actual
+// track count, see pipeline.rs / renderer.rs).
+@group(0) @binding(1)
+var<storage> tc: array<vec4<f32>>;
 
 struct SelectionUniform {
     rects: array<vec4<u32>, MAX_SEL_RECTS * 2u>, // 2 vec4 per rect: (tick_start, tick_end, key_lo, key_hi) + (track_lo, track_hi, 0, 0)
@@ -71,8 +70,7 @@ struct VertexOutput {
 @group(0) @binding(0)
 var<uniform> u: Uniforms;
 
-@group(0) @binding(1)
-var<storage> tc: TrackColorsUniform;
+// binding(1): track colors — declared above as `var<storage> tc: array<vec4<f32>>`.
 
 @group(0) @binding(2)
 var<uniform> sel: SelectionUniform;
@@ -167,7 +165,7 @@ fn vs_main(
         // PR notes: get color from track_colors uniform via track_index (tag)
         let track_idx = tag;
         if track_idx < u.track_count {
-            base_color = tc.colors[track_idx];
+            base_color = tc[track_idx];
         } else {
             // Fallback: use packed rgba if track_index out of range
             let rgba = instance.packed.x;
@@ -210,7 +208,7 @@ fn vs_main(
 // Handles PR notes (mode==1) and AR notes (mode==2).
 // CPU only stores semantic data (start_tick, end_tick, key, track);
 // all pixel positions are computed here from uniforms.
-// Color is fetched from track_colors uniform; alpha is overridden by note_alpha.
+// Color is fetched from track_colors storage buffer.
 @vertex
 fn vs_main_note(
     @builtin(vertex_index) vertex_index: u32,
@@ -284,14 +282,13 @@ fn vs_main_note(
 
     out.clip_position = vec4<f32>(ndc_x, ndc_y, 0.0, 1.0);
 
-    // Color: from track_colors uniform, alpha overridden by note_alpha
+    // Color: from track_colors storage buffer
     var base_color: vec4<f32>;
     if track < u.track_count {
-        base_color = tc.colors[track];
+        base_color = tc[track];
     } else {
         base_color = vec4<f32>(0.5, 0.5, 0.5, 1.0);
     }
-    base_color.a = u.note_alpha;
     out.color = base_color;
 
     // No rounded corners; border based on vertical dimension (key/lane height)

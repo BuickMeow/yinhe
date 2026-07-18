@@ -20,9 +20,8 @@ pub struct RenderJob {
     pub width: u32,
     pub height: u32,
     pub uniforms: Uniforms,
-    /// Track colors as raw bytes (`Vec<u8>`, not `Box<TrackColorsUniform>`).
-    /// See `PianorollRenderJob::track_colors` for why we avoid `Box`.
-    pub track_colors: Vec<u8>,
+    /// Track colors as `Vec<[f32; 4]>` (RGBA per track).
+    pub track_colors: Vec<[f32; 4]>,
     pub selection: crate::vertex::SelectionUniform,
     pub decor_layers: Vec<DecorLayerData>,
     pub note_layers: Vec<NoteLayerData>,
@@ -123,9 +122,7 @@ impl RenderThreadHandle {
 
                     // Upload uniforms
                     renderer.upload_uniforms(job.uniforms);
-                    let tc: &crate::vertex::TrackColorsUniform =
-                        bytemuck::from_bytes(&job.track_colors);
-                    renderer.upload_track_colors(tc);
+                    renderer.upload_track_colors(&job.track_colors);
                     renderer.upload_selection(&job.selection);
 
                     // Ensure enough layers

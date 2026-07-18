@@ -23,7 +23,6 @@ struct Uniforms {
     sel_rect_count: u32,
     note_outline: u32,
     lane_height: f32,
-    note_alpha: f32,
 };
 
 struct NoteInstance {

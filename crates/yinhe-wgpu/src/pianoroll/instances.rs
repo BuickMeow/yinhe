@@ -246,7 +246,7 @@ pub fn build_ghost_note(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use yinhe_test_helpers::{MockMidi, make_midi};
+    use yinhe_test_helpers::make_midi;
     use yinhe_types::TimelineViewBase;
 
     fn make_view() -> PianoRollView {

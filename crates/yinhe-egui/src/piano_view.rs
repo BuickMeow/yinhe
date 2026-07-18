@@ -445,8 +445,7 @@ pub fn show(
             note_outline, &theme,
         );
         pianoroll.upload_uniforms(job.uniforms);
-        let tc: &yinhe_wgpu::TrackColorsUniform = bytemuck::from_bytes(&job.track_colors);
-        pianoroll.upload_track_colors(tc);
+        pianoroll.upload_track_colors(&job.track_colors);
         pianoroll.upload_selection(&job.selection);
         pianoroll.ensure_layers(job.decor_layers.len());
         for (i, dl) in job.decor_layers.iter().enumerate() {

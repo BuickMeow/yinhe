@@ -2,7 +2,7 @@ use wgpu::*;
 
 use crate::layer::LayerSlot;
 use crate::pipeline::RenderPipelineState;
-use crate::vertex::{CurveInstance, DrawInstance, NoteInstance, Uniforms, TrackColorsUniform, SelectionUniform};
+use crate::vertex::{CurveInstance, DrawInstance, NoteInstance, Uniforms, SelectionUniform};
 
 /// Maximum visible note instances the cull output buffer can hold.
 /// 1M instances × 16B = 16MB — enough for any screen at any zoom.
@@ -323,7 +323,7 @@ pub struct InstanceRenderer {
     queue: Queue,
     render: RenderPipelineState,
     cached_uniforms: Option<Uniforms>,
-    cached_track_colors: Option<Vec<u8>>,
+    cached_track_colors: Option<Vec<[f32; 4]>>,
     cached_selection: Option<SelectionUniform>,
     layers: Vec<AnyLayer>,
     cull: CullState,
@@ -366,12 +366,44 @@ impl InstanceRenderer {
     }
 
     /// Upload track colors to the GPU.  Skips the write when the value is unchanged.
-    pub fn upload_track_colors(&mut self, colors: &TrackColorsUniform) {
-        let new_bytes = bytemuck::bytes_of(colors);
-        if self.cached_track_colors.as_deref() != Some(new_bytes) {
-            self.queue.write_buffer(&self.render.track_colors_buffer, 0, new_bytes);
-            self.cached_track_colors = Some(new_bytes.to_vec());
+    pub fn upload_track_colors(&mut self, colors: &[[f32; 4]]) {
+        self.ensure_track_colors_capacity(colors.len());
+        if self.cached_track_colors.as_deref() != Some(colors) {
+            let bytes = bytemuck::cast_slice(colors);
+            self.queue.write_buffer(&self.render.track_colors_buffer, 0, bytes);
+            self.cached_track_colors = Some(colors.to_vec());
         }
+    }
+
+    /// Grow the track_colors storage buffer when `count` exceeds current capacity.
+    /// Recreates the buffer + bind group (cheap, happens only when track count grows).
+    fn ensure_track_colors_capacity(&mut self, count: usize) {
+        if count <= self.render.track_colors_capacity as usize {
+            return;
+        }
+        let new_capacity = count.max(1) as u32;
+        let new_size = new_capacity as u64 * 16;
+        let new_buffer = self.device.create_buffer(&BufferDescriptor {
+            label: Some("track_colors"),
+            size: new_size,
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        yinhe_memtrace::add_gpu_resource(new_size);
+        self.render.track_colors_buffer = new_buffer;
+        self.render.track_colors_capacity = new_capacity;
+        // Recreate bind group with the new buffer.
+        self.render.bind_group = self.device.create_bind_group(&BindGroupDescriptor {
+            label: Some("render_bind_group"),
+            layout: &self.render.bind_group_layout,
+            entries: &[
+                BindGroupEntry { binding: 0, resource: self.render.uniform_buffer.as_entire_binding() },
+                BindGroupEntry { binding: 1, resource: self.render.track_colors_buffer.as_entire_binding() },
+                BindGroupEntry { binding: 2, resource: self.render.selection_buffer.as_entire_binding() },
+            ],
+        });
+        // Invalidate cache to force re-upload with the new buffer.
+        self.cached_track_colors = None;
     }
 
     /// Upload selection rects to the GPU.  Skips the write when the value is unchanged.

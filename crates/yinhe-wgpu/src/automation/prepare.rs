@@ -142,7 +142,6 @@ pub fn prepare(
         sel_rect_count: 0, // unused in pixel mode
         note_outline: 1, // unused in pixel mode
         lane_height: 0.0, // unused in pixel mode
-        note_alpha: 1.0, // unused in pixel mode (decor uses packed rgba)
     };
 
     renderer.upload_uniforms(uniforms);

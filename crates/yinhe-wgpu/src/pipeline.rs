@@ -1,6 +1,6 @@
 use wgpu::*;
 
-use crate::vertex::{CurveInstance, DrawInstance, NoteInstance, Uniforms, TrackColorsUniform, SelectionUniform};
+use crate::vertex::{CurveInstance, DrawInstance, NoteInstance, Uniforms, SelectionUniform};
 
 /// Owns the render pipelines and their shared uniform buffers / bind group.
 ///
@@ -16,8 +16,11 @@ pub struct RenderPipelineState {
     pub curve_pipeline: RenderPipeline,
     pub uniform_buffer: Buffer,
     pub track_colors_buffer: Buffer,
+    /// Current capacity (in vec4 entries) of `track_colors_buffer`.
+    pub track_colors_capacity: u32,
     pub selection_buffer: Buffer,
     pub bind_group: BindGroup,
+    pub bind_group_layout: BindGroupLayout,
 }
 
 impl RenderPipelineState {
@@ -32,9 +35,10 @@ impl RenderPipelineState {
         });
         yinhe_memtrace::add_gpu_resource(uniform_size);
 
-        // Track colors buffer — 1MB at MAX_TRACKS=65536, so use storage buffer
-        // (uniform buffers are typically capped at 16-64KB).
-        let track_colors_size = std::mem::size_of::<TrackColorsUniform>() as u64;
+        // Track colors buffer — dynamically sized to actual track count.
+        // Start with 1 entry (16B); grows on demand via `ensure_track_colors_capacity`.
+        // Bound as a read-only storage buffer (runtime-sized array in WGSL).
+        let track_colors_size = 16; // 1 × vec4<f32>
         let track_colors_buffer = device.create_buffer(&BufferDescriptor {
             label: Some("track_colors"),
             size: track_colors_size,
@@ -233,8 +237,10 @@ impl RenderPipelineState {
             curve_pipeline,
             uniform_buffer,
             track_colors_buffer,
+            track_colors_capacity: 1,
             selection_buffer,
             bind_group,
+            bind_group_layout,
         }
     }
 }

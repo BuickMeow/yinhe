@@ -130,7 +130,7 @@ pub fn make_stress_model(track_count: u16, notes_per_track: u32) -> YinModel {
         .collect();
 
     let per_track_notes: Vec<Vec<NoteEvent>> = (0..track_count)
-        .map(|t| {
+        .map(|_| {
             let mut notes = Vec::with_capacity(notes_per_track as usize);
             for n in 0..notes_per_track {
                 let key = (n % 128) as u8;

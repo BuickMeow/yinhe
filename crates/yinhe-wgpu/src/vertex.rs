@@ -15,27 +15,17 @@ pub struct Uniforms {
     pub min_border_width: f32,
     pub track_count: u32, // number of valid tracks in track_colors
     pub sel_rect_count: u32, // number of valid selection rects
-    pub note_outline: u32, // 0=no outline (saves GPU fill rate), 1=outline on
+    pub note_outline: u32, // 0=no outline (saves fill rate), 1=on
     pub lane_height: f32, // AR: per-track lane height (PR unused, set to 0)
-    pub note_alpha: f32, // note alpha override (PR=1.0, AR=0.85)
 }
 
-/// Maximum number of tracks supported in track_colors storage buffer.
-/// 65536 × 16B = 1MB — exceeds typical uniform buffer limits, so we bind it
-/// as a read-only storage buffer (see pipeline.rs).
+/// Maximum number of tracks supported. Track indices are u16, so 65536 is the
+/// hard cap. The track_colors storage buffer is allocated dynamically to the
+/// actual track count (see pipeline.rs / renderer.rs).
 pub const MAX_TRACKS: usize = 65536;
 
 /// Maximum number of selection rects supported in uniform buffer.
 pub const MAX_SEL_RECTS: usize = 32;
-
-/// Track colors buffer: array of vec4<f32> (RGBA).
-/// Each entry is (r, g, b, a) in 0.0-1.0 range.
-/// Bound as a read-only storage buffer (1MB at MAX_TRACKS=65536).
-#[repr(C)]
-#[derive(Clone, Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct TrackColorsUniform {
-    pub colors: [[f32; 4]; MAX_TRACKS],
-}
 
 /// Selection rects uniform buffer: array of vec4<u32>.
 /// Each rect uses 2 vec4 entries:
