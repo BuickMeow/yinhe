@@ -17,6 +17,10 @@ pub struct Uniforms {
     pub sel_rect_count: u32, // number of valid selection rects
     pub note_outline: u32, // 0=no outline (saves fill rate), 1=on
     pub lane_height: f32, // AR: per-track lane height (PR unused, set to 0)
+    /// Automation panel: vertical zoom factor (1.0 = full range visible).
+    pub value_zoom: f32,
+    /// Automation panel: vertical scroll offset in value space.
+    pub value_scroll: f32,
 }
 
 /// Maximum number of tracks supported. Track indices are u16, so 65536 is the
@@ -83,6 +87,33 @@ impl NoteInstance {
     }
 }
 
+/// Velocity bar instance: 16 bytes = vec4<u32>.
+/// Used by the velocity pipeline (automation panel velocity bars).
+///
+/// All pixel positions are computed in the GPU vertex shader from uniforms;
+/// the CPU only stores semantic data (tick, length, track, velocity).
+///
+/// Layout:
+///   d0 = tick      (u32) — start tick position
+///   d1 = length    (u32) — note length in ticks (determines bar width)
+///   d2 = packed: track(u16, bits 0..16) | velocity(u8, bits 16..24) | reserved(u8, bits 24..32)
+///   d3 = reserved  (u32)
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct VelocityBarInstance {
+    pub tick: u32,
+    pub length: u32,
+    /// track(u16, bits 0..16) | velocity(u8, bits 16..24) | reserved(u8, bits 24..32)
+    pub packed: u32,
+    pub reserved: u32,
+}
+
+impl VelocityBarInstance {
+    pub fn pack(track: u16, velocity: u8) -> u32 {
+        track as u32 | ((velocity as u32) << 16)
+    }
+}
+
 /// Curve/line/anchor instance: 32 bytes.
 ///
 /// One instance renders one of:
@@ -107,7 +138,7 @@ pub struct CurveInstance {
     pub x2: f32,
     pub y2: f32,
     pub thickness: f32,
-    /// 归一化张力 ∈ [-1, 1]，= `i8_tension / 127.0`。circle 时忽略。
+    /// 归一化张力 ∈ [-1, 1]，0.0 = 直线。circle 时忽略。
     pub tension: f32,
     pub rgba_packed: u32,
     /// 0 = line/curve segment, 1 = filled circle (anchor).
@@ -127,15 +158,15 @@ impl CurveInstance {
     }
 
     /// Construct a quadratic-curve segment instance.
-    /// `tension_norm` ∈ [-1, 1] (= `i8_tension / 127.0`).
+    /// `tension` ∈ [-1, 1] (0.0 = straight line).
     pub fn curve(
         x1: f32, y1: f32, x2: f32, y2: f32,
-        thickness: f32, tension_norm: f32, color: [f32; 4],
+        thickness: f32, tension: f32, color: [f32; 4],
     ) -> Self {
         CurveInstance {
             x1, y1, x2, y2,
             thickness,
-            tension: tension_norm,
+            tension,
             rgba_packed: pack_rgba(color[0], color[1], color[2], color[3]),
             shape: 0,
         }
@@ -257,6 +288,7 @@ mod tests {
     fn test_note_instance_size() {
         assert_eq!(std::mem::size_of::<DrawInstance>(), 32);
         assert_eq!(std::mem::size_of::<NoteInstance>(), 16);
+        assert_eq!(std::mem::size_of::<VelocityBarInstance>(), 16);
         assert_eq!(std::mem::size_of::<CurveInstance>(), 32);
     }
 
@@ -266,6 +298,7 @@ mod tests {
         assert_pod::<Uniforms>();
         assert_pod::<DrawInstance>();
         assert_pod::<NoteInstance>();
+        assert_pod::<VelocityBarInstance>();
         assert_pod::<CurveInstance>();
     }
 }

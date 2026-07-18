@@ -16,8 +16,6 @@ pub struct AudioSettings {
     pub xsynth_layers: u32,
     /// Audio buffer size in frames. 0 = system default (~512 on macOS).
     pub buffer_size: u32,
-    /// 0=柱状(2px竖条), 1=矩形(填充), 2=空心矩形(边框)
-    pub velocity_display_mode: u32,
     /// Linear/Curve 自动化播放时，按多少 tick 间隔生成一个中间 MIDI 事件。
     /// 默认 1（每 tick 一个事件，最平滑）。值越大文件越小但越阶梯化。
     pub automation_event_density: u32,
@@ -55,7 +53,6 @@ impl Default for AudioSettings {
             scroll_mode: 0,
             min_border_width: 0.0,
             midi_import_encoding: MidiImportEncoding::Utf8,
-            velocity_display_mode: 0,
             automation_event_density: 1,
             note_outline: true, // outline on by default (existing behavior)
             haptic_enabled: true,

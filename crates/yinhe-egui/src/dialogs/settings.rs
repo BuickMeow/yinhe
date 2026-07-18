@@ -149,22 +149,6 @@ pub fn show_content(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
                 });
             ui.end_row();
 
-            ui.label("Velocity显示");
-            let vel_names = ["柱状", "矩形", "空心矩形"];
-            let current_vel = settings.velocity_display_mode as usize;
-            egui::ComboBox::from_id_salt("velocity_display_mode")
-                .selected_text(vel_names[current_vel])
-                .show_ui(ui, |ui| {
-                    for (i, name) in vel_names.iter().enumerate() {
-                        let selected = settings.velocity_display_mode == i as u32;
-                        if ui.selectable_label(selected, *name).clicked() {
-                            settings.velocity_display_mode = i as u32;
-                            changed = true;
-                        }
-                    }
-                });
-            ui.end_row();
-
             ui.label("自动化事件密度");
             let mut density = settings.automation_event_density as i32;
             let drag = ui.add(

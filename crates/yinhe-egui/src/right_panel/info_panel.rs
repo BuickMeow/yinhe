@@ -622,9 +622,9 @@ fn show_anchor_info(
     let shape_desc = match shape {
         SegmentShape::Step => "离散 (Step) — 值在下一个锚点前保持恒定",
         SegmentShape::Curve { tension } => {
-            if tension == 0 {
+            if tension == 0.0 {
                 "曲线 (Linear) — 线性插值"
-            } else if tension > 0 {
+            } else if tension > 0.0 {
                 "曲线 (缓入) — 加速变化"
             } else {
                 "曲线 (缓出) — 减速变化"

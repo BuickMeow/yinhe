@@ -296,7 +296,6 @@ impl App {
                         Some(&auto_wgpu_state),
                         self.audio_settings.scroll_mode,
                         self.audio_settings.min_border_width,
-                        &mut self.audio_settings.velocity_display_mode,
                         self.audio_settings.note_outline,
                         &tempo_events,
                         &mut note_drag_delta,

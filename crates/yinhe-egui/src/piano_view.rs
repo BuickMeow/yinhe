@@ -70,7 +70,6 @@ pub fn show(
     auto_wgpu_state: Option<&Arc<eframe::egui_wgpu::RenderState>>,
     scroll_mode: u32,
     min_border_width: f32,
-    velocity_display_mode: &mut u32,
     note_outline: bool,
     tempo_events: &[(u32, f64)],
     note_drag_delta: &mut Option<(i64, i32)>,
@@ -178,7 +177,7 @@ pub fn show(
     let mut sel_action = None;
     let mut pencil_event: Option<PianoViewEvent> = None;
     let mut eraser_event: Option<PianoViewEvent> = None;
-    let mut ghost_notes: Vec<(f64, f64, u8, u16)> = Vec::new();
+    let mut ghost_notes: Vec<(u32, u32, u8, u16)> = Vec::new();
     let mut hidden_notes: std::collections::HashSet<(u16, u32, u8)> = std::collections::HashSet::new();
     if *active_tool == Tool::Select {
         let (sel_ghosts, sel_hidden) = drag::sel_drag_frame(
@@ -763,7 +762,6 @@ pub fn show(
             scroll_mode,
             min_border_width,
             midi,
-            velocity_display_mode,
             edit_ctx.as_ref(),
             tempo_events,
             revision,

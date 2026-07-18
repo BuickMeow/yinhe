@@ -23,6 +23,8 @@ struct Uniforms {
     sel_rect_count: u32,
     note_outline: u32,
     lane_height: f32,
+    value_zoom: f32,
+    value_scroll: f32,
 };
 
 struct NoteInstance {

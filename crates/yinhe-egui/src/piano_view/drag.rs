@@ -156,7 +156,7 @@ pub(crate) fn sel_drag_frame(
     _track_colors: &[[f32; 3]],
     track_visible: &[bool],
     track_selected: &std::collections::HashSet<u16>,
-) -> (Vec<(f64, f64, u8, u16)>, Vec<(u16, u32, u8)>) {
+) -> (Vec<(u32, u32, u8, u16)>, Vec<(u16, u32, u8)>) {
     let note_drag_id = ui.id().with("note_drag_origin");
     let mut note_drag_origin: Option<(f64, f64)> =
         ui.data_mut(|d| d.get_persisted(note_drag_id)).unwrap_or(None);
@@ -240,7 +240,7 @@ pub(crate) fn sel_drag_frame(
     }
 
     // Note drag: use pre-computed data for ghost/hidden, store delta only on release
-    let mut ghost_notes: Vec<(f64, f64, u8, u16)> = Vec::new();
+    let mut ghost_notes: Vec<(u32, u32, u8, u16)> = Vec::new();
     let mut hidden_notes: Vec<(u16, u32, u8)> = Vec::new();
     if let Some((origin_tick, origin_key)) = note_drag_origin {
         if let Some(ref notes) = drag_notes {
@@ -259,7 +259,7 @@ pub(crate) fn sel_drag_frame(
                         let new_tick = (info.start_tick as i64 + dt).max(0) as u32;
                         let new_key = ((info.key as i32) + dk).clamp(0, 127) as u8;
                         let length = info.end_tick - info.start_tick;
-                        ghost_notes.push((new_tick as f64, (new_tick + length) as f64, new_key, info.track));
+                        ghost_notes.push((new_tick, new_tick + length, new_key, info.track));
                         hidden_notes.push((info.track, info.start_tick, info.key));
                     }
 
@@ -285,7 +285,7 @@ pub(crate) fn sel_drag_frame(
                         let new_tick = (info.start_tick as i64 + dt).max(0) as u32;
                         let new_key = ((info.key as i32) + dk).clamp(0, 127) as u8;
                         let length = info.end_tick - info.start_tick;
-                        ghost_notes.push((new_tick as f64, (new_tick + length) as f64, new_key, info.track));
+                        ghost_notes.push((new_tick, new_tick + length, new_key, info.track));
                         hidden_notes.push((info.track, info.start_tick, info.key));
                     }
                 }

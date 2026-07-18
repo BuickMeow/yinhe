@@ -82,6 +82,8 @@ pub fn build_render_job(
         sel_rect_count,
         note_outline: if note_outline { 1 } else { 0 },
         lane_height: 0.0, // PR unused (shader uses key_height)
+        value_zoom: 0.0, // PR unused (automation panel only)
+        value_scroll: 0.0, // PR unused (automation panel only)
     };
 
     // Layer 0: grid lines (background + black-key rows now drawn by egui)

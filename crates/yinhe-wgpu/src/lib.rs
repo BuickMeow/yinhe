@@ -16,7 +16,7 @@ pub use render_thread::{RenderJob, DecorLayerData, NoteLayerData, RenderThreadHa
 pub use renderer::{InstanceRenderer, PrepareTimings};
 pub use util::{hash_f64s, hash_f32s, hash_bools, hash_time_sigs, compute_scroll_frac};
 pub use yinhe_theme::GpuTheme;
-pub use vertex::{DrawInstance, NoteInstance, Uniforms, MAX_TRACKS, pack_props, pack_rgba};
+pub use vertex::{DrawInstance, NoteInstance, VelocityBarInstance, Uniforms, MAX_TRACKS, pack_props, pack_rgba};
 
 // Re-export types that were previously provided by the separate crates
 pub use pianoroll::{build_render_job, PianorollRenderJob, build_notes, build_all_notes, build_key_notes, build_ghost_note};

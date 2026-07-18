@@ -53,7 +53,7 @@ pub(crate) fn valid_pencil_track(
 /// Pencil-tool input handling: hover preview, click to write a note, drag to lengthen,
 /// or hover over / drag existing notes to move or resize them.
 /// Returns `(note_event, ghost_notes, hidden_notes, pencil_note_drag)`.
-/// ghost_notes are (start_tick, end_tick, key, track) — color fetched from uniform in shader.
+/// ghost_notes are (start_tick, end_tick, key, track) as u32/u8/u16 — color fetched from storage buffer in shader.
 /// hidden_notes are (track, start_tick, key) for notes being dragged.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn pencil_frame(
@@ -68,7 +68,7 @@ pub(crate) fn pencil_frame(
     conductor_idx: Option<u16>,
     midi: Option<&dyn yinhe_types::NoteSource>,
     _track_colors: &[[f32; 3]],
-) -> (Option<yinhe_core::NoteEvent>, Vec<(f64, f64, u8, u16)>, Vec<(u16, u32, u8)>, Option<PencilNoteDrag>) {
+) -> (Option<yinhe_core::NoteEvent>, Vec<(u32, u32, u8, u16)>, Vec<(u16, u32, u8)>, Option<PencilNoteDrag>) {
     let pencil_id = ui.id().with("pencil_drag");
     let drag_state: Option<PencilDrag> =
         ui.data_mut(|d| d.get_persisted(pencil_id)).unwrap_or(None);
@@ -168,14 +168,14 @@ pub(crate) fn pencil_frame(
     }
 
     // ── Ghost notes: only when not over an existing note ──
-    let mut ghost_notes: Vec<(f64, f64, u8, u16)> = Vec::new();
+    let mut ghost_notes: Vec<(u32, u32, u8, u16)> = Vec::new();
     let mut hidden_notes: Vec<(u16, u32, u8)> = Vec::new();
     if can_write && drag_state.is_none() && hit_note.is_none() {
         if let Some((tick, key)) = preview {
             let interval = quantize.tick_interval(ppq) as f64;
             // Not dragging (drag_state is None due to the outer condition),
             // show preview at hover position
-            ghost_notes.push((tick, tick + interval, key, track_idx));
+            ghost_notes.push((tick as u32, (tick + interval) as u32, key, track_idx));
         }
     }
 
@@ -207,7 +207,7 @@ pub(crate) fn pencil_frame(
                 if let Some((tick, _)) = preview {
                     let interval = quantize.tick_interval(ppq) as f64;
                     let current_end = tick.max(*s_tick + interval);
-                    ghost_notes.push((*s_tick, current_end, *s_key, track_idx));
+                    ghost_notes.push((*s_tick as u32, current_end as u32, *s_key, track_idx));
                 }
             }
             // Release -> commit note.
@@ -246,7 +246,7 @@ pub(crate) fn pencil_frame(
                 // The original note stays in place until release.
                 let new_start = (*orig_tick as i64 + dt).max(0) as u32;
                 let new_end = new_start + (*orig_end - *orig_tick);
-                ghost_notes.push((new_start as f64, new_end as f64, key, *trk));
+                ghost_notes.push((new_start, new_end, key, *trk));
                 hidden_notes.push((*trk, *orig_tick, *orig_key));
 
                 // Only output drag on release — do NOT modify the model during drag.
@@ -278,7 +278,7 @@ pub(crate) fn pencil_frame(
                 let new_end = snapped.max(*orig_tick as f64 + interval).min(u32::MAX as f64) as u32;
 
                 // Show ghost and hide original note
-                ghost_notes.push((*orig_tick as f64, new_end as f64, *orig_key, *trk));
+                ghost_notes.push((*orig_tick, new_end, *orig_key, *trk));
                 hidden_notes.push((*trk, *orig_tick, *orig_key));
 
                 // Only output on release
@@ -312,7 +312,7 @@ pub(crate) fn pencil_frame(
                 let new_start = new_start.min(max_start);
 
                 // Show ghost and hide original note
-                ghost_notes.push((new_start as f64, *orig_end as f64, *orig_key, *trk));
+                ghost_notes.push((new_start, *orig_end, *orig_key, *trk));
                 hidden_notes.push((*trk, *orig_tick, *orig_key));
 
                 // Only output on release

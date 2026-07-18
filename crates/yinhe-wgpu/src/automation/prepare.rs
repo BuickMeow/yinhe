@@ -56,7 +56,7 @@ fn hash_lane(lane: &AutomationLane) -> u64 {
         h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(e.value as u64);
         let shape_bits = match e.shape {
             SegmentShape::Step => 0u64,
-            SegmentShape::Curve { tension } => 1 + (tension as u8 as u64),
+            SegmentShape::Curve { tension } => 1 + (tension.to_bits() as u64),
         };
         h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(shape_bits);
     }
@@ -114,7 +114,6 @@ pub fn prepare(
     track_colors: &[[f32; 3]],
     scroll_mode: u32,
     min_border_width: f32,
-    velocity_display_mode: u32,
     show_anchors: bool,
     tempo_events: &[(u32, f64)],
     ghost: Option<AutomationGhost>,
@@ -125,6 +124,14 @@ pub fn prepare(
     let h = height as f32;
     let scroll_x = view.base.scroll_x;
     let (scroll_x_pos, scroll_frac) = crate::compute_scroll_frac(scroll_x, scroll_mode);
+
+    // Build track colors in GPU format (vec4) — needed for velocity pipeline
+    // which fetches color via `tc[track]` in the shader.
+    let tc_colors: Vec<[f32; 4]> = track_colors
+        .iter()
+        .map(|c| [c[0], c[1], c[2], 1.0])
+        .collect();
+    let track_count = tc_colors.len() as u32;
 
     let uniforms = Uniforms {
         width: w,
@@ -138,13 +145,16 @@ pub fn prepare(
         scroll_frac,
         scroll_mode,
         min_border_width,
-        track_count: 0, // unused in pixel mode
+        track_count, // used by velocity pipeline for tc[track] bounds check
         sel_rect_count: 0, // unused in pixel mode
         note_outline: 1, // unused in pixel mode
         lane_height: 0.0, // unused in pixel mode
+        value_zoom: view.value_zoom,
+        value_scroll: view.value_scroll,
     };
 
     renderer.upload_uniforms(uniforms);
+    renderer.upload_track_colors(&tc_colors);
     renderer.ensure_layers(3);
 
     let vh = view.render_hash();
@@ -174,7 +184,6 @@ pub fn prepare(
     let fixed_lanes_hash = hash_lanes_excluding(lanes, ghost.as_ref());
     let bars_key = layer_cache_key(&[
         vh, wh, tv_hash,
-        velocity_display_mode as u64,
         target_hash(&view.selected_target),
         show_anchors as u64,
         view.show_velocity as u64,
@@ -194,12 +203,10 @@ pub fn prepare(
             tempo::build_tempo_lines(out, w, h, view, tempo_events, &theme);
         });
     } else if is_velocity {
-        // Velocity bars via decor pipeline (DrawInstance)
+        // Velocity bars via velocity pipeline (VelocityBarInstance, 16B)
         if let Some(midi) = midi {
-            renderer.upload_layer(1, bars_key, |out| {
-                velocity_bars::build_velocity_bars(
-                    out, w, h, midi, view, track_visible, track_colors, velocity_display_mode, &theme,
-                );
+            renderer.upload_velocity_layer(1, bars_key, |out| {
+                velocity_bars::build_velocity_bars(out, w, midi, view, track_visible);
             });
         }
     } else {

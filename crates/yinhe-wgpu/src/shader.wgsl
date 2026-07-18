@@ -18,6 +18,8 @@ struct Uniforms {
     sel_rect_count: u32, // number of valid selection rects
     note_outline: u32, // 0=no outline (saves fill rate), 1=on
     lane_height: f32, // AR: per-track lane height (PR unused)
+    value_zoom: f32, // Automation panel: vertical zoom
+    value_scroll: f32, // Automation panel: vertical scroll in value space
 }
 
 // Track colors: runtime-sized storage buffer (allocated dynamically to actual
@@ -36,6 +38,10 @@ struct DrawInstance {
 
 struct NoteInstance {
     @location(0) data: vec4<u32>,  // x=start_tick, y=end_tick, z=packed(key|track|vel), w=reserved
+}
+
+struct VelocityBarInstance {
+    @location(0) data: vec4<u32>,  // x=tick, y=length, z=packed(track|velocity), w=reserved
 }
 
 /// Curve/line/anchor instance (32 bytes).
@@ -294,6 +300,96 @@ fn vs_main_note(
     // No rounded corners; border based on vertical dimension (key/lane height)
     out.radius = 0.0;
     out.border_width = select(0.0, max(0.1 * pixel_h, u.min_border_width), u.note_outline != 0u);
+
+    out.uv = uv[vertex_index];
+    out.half_size = vec2<f32>(pixel_w, pixel_h) * 0.5;
+
+    return out;
+}
+
+// ── Velocity bar pipeline vertex shader ───────────────────────────────────
+// Renders velocity bars in the automation panel.
+// CPU stores semantic data (tick, length, track, velocity);
+// GPU computes pixel positions from uniforms.
+// Color is fetched from track_colors storage buffer.
+// Unified border-based mode: fill + border (like notes), border width = min_border_width.
+@vertex
+fn vs_main_velocity(
+    @builtin(vertex_index) vertex_index: u32,
+    instance: VelocityBarInstance,
+) -> VertexOutput {
+    var out: VertexOutput;
+
+    let tick = instance.data.x;
+    let length = instance.data.y;
+    let packed = instance.data.z;
+    let track = packed & 0xFFFFu;
+    let velocity = (packed >> 16u) & 0xFFu;
+
+    let ppu = u.pixels_per_tick;
+    let x_offset = u.keyboard_width - u.scroll_x;
+
+    var pixel_x = x_offset + f32(tick) * ppu;
+    var pixel_w = max(f32(length) * ppu, 2.0);
+
+    // Y from velocity: value_to_y(vel) = h - (vel - scroll) * zoom / 127 * h
+    // Bar top = value_to_y(velocity), bar bottom = value_to_y(0)
+    let panel_h = u.height;
+    let vel_f = f32(velocity);
+    let y_top = panel_h - (vel_f - u.value_scroll) * u.value_zoom / 127.0 * panel_h;
+    let y_bottom = panel_h - (0.0 - u.value_scroll) * u.value_zoom / 127.0 * panel_h;
+    var pixel_y = y_top;
+    var pixel_h = max(y_bottom - y_top, 1.0);
+
+    // Snap to integer pixels to prevent sub-pixel jitter.
+    if u.scroll_mode != 0u {
+        let raw_x = pixel_x;
+        let raw_right = pixel_x + pixel_w;
+        pixel_x = floor(raw_x + 0.5);
+        let raw_y = pixel_y;
+        let raw_bottom = pixel_y + pixel_h;
+        pixel_y = floor(raw_y + 0.5);
+        pixel_w = max(floor(raw_right + 0.5) - floor(raw_x + 0.5), 1.0);
+        pixel_h = max(floor(raw_bottom + 0.5) - floor(raw_y + 0.5), 1.0);
+    }
+
+    var pos = array<vec2<f32>, 6>(
+        vec2<f32>(pixel_x + pixel_w, pixel_y),
+        vec2<f32>(pixel_x + pixel_w, pixel_y + pixel_h),
+        vec2<f32>(pixel_x,           pixel_y),
+        vec2<f32>(pixel_x + pixel_w, pixel_y + pixel_h),
+        vec2<f32>(pixel_x,           pixel_y + pixel_h),
+        vec2<f32>(pixel_x,           pixel_y),
+    );
+
+    var uv = array<vec2<f32>, 6>(
+        vec2<f32>(1.0, 0.0),
+        vec2<f32>(1.0, 1.0),
+        vec2<f32>(0.0, 0.0),
+        vec2<f32>(1.0, 1.0),
+        vec2<f32>(0.0, 1.0),
+        vec2<f32>(0.0, 0.0),
+    );
+
+    let pixel_pos = pos[vertex_index];
+    let ndc_offset = select(0.0, u.scroll_frac, u.scroll_mode == 2u);
+    let ndc_x = ((pixel_pos.x - ndc_offset) / u.width) * 2.0 - 1.0;
+    let ndc_y = 1.0 - (pixel_pos.y / u.height) * 2.0;
+
+    out.clip_position = vec4<f32>(ndc_x, ndc_y, 0.0, 1.0);
+
+    // Color: from track_colors storage buffer
+    var base_color: vec4<f32>;
+    if track < u.track_count {
+        base_color = tc[track];
+    } else {
+        base_color = vec4<f32>(0.5, 0.5, 0.5, 1.0);
+    }
+    out.color = base_color;
+
+    // Unified border width (no rounded corners)
+    out.radius = 0.0;
+    out.border_width = u.min_border_width;
 
     out.uv = uv[vertex_index];
     out.half_size = vec2<f32>(pixel_w, pixel_h) * 0.5;

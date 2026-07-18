@@ -299,7 +299,7 @@ pub(crate) fn handle_automation_interaction(
                                 target: target.clone(),
                                 tick: t1.min(t2),
                                 value: v1,
-                                shape: SegmentShape::Curve { tension: 0 },
+                                shape: SegmentShape::Curve { tension: 0.0 },
                             });
                             edits.push(yinhe_types::AutomationEdit::Add {
                                 track_idx,
@@ -315,7 +315,7 @@ pub(crate) fn handle_automation_interaction(
                                 target: target.clone(),
                                 tick: t2,
                                 value: v2,
-                                shape: SegmentShape::Curve { tension: 0 },
+                                shape: SegmentShape::Curve { tension: 0.0 },
                             });
                         }
                     }

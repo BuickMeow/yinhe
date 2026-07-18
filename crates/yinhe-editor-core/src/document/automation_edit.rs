@@ -178,7 +178,7 @@ impl Document {
                     let evt = lane.and_then(|l| l.events.iter().find(|e| e.tick == tick));
                     if let Some(evt) = evt {
                         let next = match evt.shape {
-                            yinhe_types::SegmentShape::Step => yinhe_types::SegmentShape::Curve { tension: 0 },
+                            yinhe_types::SegmentShape::Step => yinhe_types::SegmentShape::Curve { tension: 0.0 },
                             yinhe_types::SegmentShape::Curve { .. } => yinhe_types::SegmentShape::Step,
                         };
                         self.set_automation_shape(track_idx as usize, lane_idx, tick, next)

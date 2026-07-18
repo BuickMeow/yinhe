@@ -198,7 +198,7 @@ pub fn build_notes(
 /// (key, track, start_tick) 排序以供合并。vel 恒为 0（AR 不使用 velocity）。
 pub fn build_ghost_notes(
     out: &mut Vec<NoteInstance>,
-    ghost_notes: &mut [(f64, f64, u8, u16)],
+    ghost_notes: &mut [(u32, u32, u8, u16)],
     w: f32,
     h: f32,
     view: &ArrangementView,
@@ -217,7 +217,7 @@ pub fn build_ghost_notes(
     ghost_notes.sort_by(|a, b| {
         a.2.cmp(&b.2)
             .then(a.3.cmp(&b.3))
-            .then(a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal))
+            .then(a.0.cmp(&b.0))
     });
 
     // 遍历每个 (key, track) 分组，合并 + 裁剪 + push。
@@ -230,9 +230,7 @@ pub fn build_ghost_notes(
             j += 1;
         }
         let bucket = ghost_notes[i..j].iter().map(|&(s, e, _, _)| {
-            let s = s.max(0.0) as u32;
-            let e = e.max(s as f64).max(0.0) as u32;
-            (s, e, 0u8)
+            (s, e.max(s), 0u8)
         });
         flush_track_bucket(
             out,

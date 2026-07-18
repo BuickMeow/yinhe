@@ -229,15 +229,15 @@ pub fn build_key_notes(
 /// buffer in the shader (same as regular notes).
 pub fn build_ghost_note(
     out: &mut Vec<NoteInstance>,
-    start_tick: f64,
-    end_tick: f64,
+    start_tick: u32,
+    end_tick: u32,
     key: u8,
     track: u16,
     _theme: &GpuTheme,
 ) {
     out.push(NoteInstance {
-        start_tick: start_tick as u32,
-        end_tick: end_tick as u32,
+        start_tick,
+        end_tick,
         packed: NoteInstance::pack(key, track, 0),
         reserved: 0,
     });

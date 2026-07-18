@@ -5,16 +5,16 @@ use serde::{Deserialize, Serialize};
 /// Stored per-event on `AutomationEvent::shape`, describing the segment
 /// that *starts* at this event. The last event's shape has no effect
 /// (no segment after it).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub enum SegmentShape {
     /// 离散：保持当前值，直到下个事件才瞬间跳变。MIDI CC 的原生语义。
     Step,
     /// 曲线：tension 控制曲线弯曲方向与程度。
-    /// - `0` 等价于直线
+    /// - `0.0` 等价于直线
     /// - `> 0` 慢起快落（ease-in）
     /// - `< 0` 快起慢落（ease-out）
-    /// 范围 -127..=127。
-    Curve { tension: i8 },
+    /// 范围 [-1.0, 1.0]。
+    Curve { tension: f32 },
 }
 
 impl Default for SegmentShape {
@@ -34,7 +34,7 @@ impl SegmentShape {
         match self {
             SegmentShape::Step => 0.0, // Step: hold v1 until next event; segment value = v1
             SegmentShape::Curve { tension } => {
-                let k = (tension as f32) / 127.0; // [-1, 1]
+                let k = tension.clamp(-1.0, 1.0);
                 if k >= 0.0 {
                     // 慢起快落: 线性 → x²
                     (1.0 - k) * t + k * t * t
@@ -133,11 +133,11 @@ impl AutomationTarget {
         match self {
             AutomationTarget::CC { controller } => match controller {
                 64 | 65 | 66 | 67 | 68 => SegmentShape::Step,
-                _ => SegmentShape::Curve { tension: 0 },
+                _ => SegmentShape::Curve { tension: 0.0 },
             },
-            AutomationTarget::PitchBend => SegmentShape::Curve { tension: 0 },
-            AutomationTarget::Rpn { parameter: _ } => SegmentShape::Curve { tension: 0 },
-            AutomationTarget::Nrpn { parameter: _ } => SegmentShape::Curve { tension: 0 },
+            AutomationTarget::PitchBend => SegmentShape::Curve { tension: 0.0 },
+            AutomationTarget::Rpn { parameter: _ } => SegmentShape::Curve { tension: 0.0 },
+            AutomationTarget::Nrpn { parameter: _ } => SegmentShape::Curve { tension: 0.0 },
         }
     }
 
@@ -208,7 +208,7 @@ fn cc_name(cc: u8) -> &'static str {
 ///
 /// Channel and track are not stored here — they are implied by the
 /// owning `AutomationLane` (which mirrors `TrackData`'s per-track design).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct AutomationEvent {
     pub tick: u32,
     /// Raw value. Range depends on the target (0–127 for CC, 0–16383 for PB, etc.).
@@ -384,19 +384,19 @@ mod tests {
                 "CC {cc} should default to Step"
             );
         }
-        // 连续量 CC → Curve{tension:0}（=直线）
+        // 连续量 CC → Curve{tension:0.0}（=直线）
         for cc in [0u8, 1, 7, 10, 11, 71, 74] {
             assert_eq!(
                 AutomationTarget::CC { controller: cc }.default_shape(),
-                SegmentShape::Curve { tension: 0 },
-                "CC {cc} should default to Curve{{tension:0}}"
+                SegmentShape::Curve { tension: 0.0 },
+                "CC {cc} should default to Curve{{tension:0.0}}"
             );
         }
-        // PB / RPN / NRPN → Curve{tension:0}
-        assert_eq!(AutomationTarget::PitchBend.default_shape(), SegmentShape::Curve { tension: 0 });
-        assert_eq!(AutomationTarget::Rpn { parameter: 0 }.default_shape(), SegmentShape::Curve { tension: 0 });
-        assert_eq!(AutomationTarget::Rpn { parameter: 1 }.default_shape(), SegmentShape::Curve { tension: 0 });
-        assert_eq!(AutomationTarget::Nrpn { parameter: 5 }.default_shape(), SegmentShape::Curve { tension: 0 });
+        // PB / RPN / NRPN → Curve{tension:0.0}
+        assert_eq!(AutomationTarget::PitchBend.default_shape(), SegmentShape::Curve { tension: 0.0 });
+        assert_eq!(AutomationTarget::Rpn { parameter: 0 }.default_shape(), SegmentShape::Curve { tension: 0.0 });
+        assert_eq!(AutomationTarget::Rpn { parameter: 1 }.default_shape(), SegmentShape::Curve { tension: 0.0 });
+        assert_eq!(AutomationTarget::Nrpn { parameter: 5 }.default_shape(), SegmentShape::Curve { tension: 0.0 });
     }
 
     #[test]
@@ -406,32 +406,32 @@ mod tests {
         assert_eq!(SegmentShape::Step.interpolate(0.5), 0.0);
         assert_eq!(SegmentShape::Step.interpolate(1.0), 0.0);
 
-        // Curve{tension:0} 端点（=直线）
-        let lin0 = SegmentShape::Curve { tension: 0 };
+        // Curve{tension:0.0} 端点（=直线）
+        let lin0 = SegmentShape::Curve { tension: 0.0 };
         assert_eq!(lin0.interpolate(0.0), 0.0);
         assert_eq!(lin0.interpolate(1.0), 1.0);
         assert!((lin0.interpolate(0.5) - 0.5).abs() < 1e-6);
 
         // Curve 端点
-        assert_eq!(SegmentShape::Curve { tension: 100 }.interpolate(0.0), 0.0);
-        assert_eq!(SegmentShape::Curve { tension: 100 }.interpolate(1.0), 1.0);
-        assert_eq!(SegmentShape::Curve { tension: -100 }.interpolate(0.0), 0.0);
-        assert_eq!(SegmentShape::Curve { tension: -100 }.interpolate(1.0), 1.0);
+        assert_eq!(SegmentShape::Curve { tension: 0.8 }.interpolate(0.0), 0.0);
+        assert_eq!(SegmentShape::Curve { tension: 0.8 }.interpolate(1.0), 1.0);
+        assert_eq!(SegmentShape::Curve { tension: -0.8 }.interpolate(0.0), 0.0);
+        assert_eq!(SegmentShape::Curve { tension: -0.8 }.interpolate(1.0), 1.0);
     }
 
     #[test]
     fn test_segment_shape_curve_direction() {
         // tension > 0（慢起快落）: t=0.5 时插值因子应 < 0.5
-        let ease_in = SegmentShape::Curve { tension: 127 }.interpolate(0.5);
+        let ease_in = SegmentShape::Curve { tension: 1.0 }.interpolate(0.5);
         assert!(ease_in < 0.5, "positive tension should be < 0.5 at midpoint, got {ease_in}");
 
         // tension < 0（快起慢落）: t=0.5 时插值因子应 > 0.5
-        let ease_out = SegmentShape::Curve { tension: -127 }.interpolate(0.5);
+        let ease_out = SegmentShape::Curve { tension: -1.0 }.interpolate(0.5);
         assert!(ease_out > 0.5, "negative tension should be > 0.5 at midpoint, got {ease_out}");
 
         // tension 越大，ease-in 越强
-        let small = SegmentShape::Curve { tension: 30 }.interpolate(0.5);
-        let big = SegmentShape::Curve { tension: 127 }.interpolate(0.5);
+        let small = SegmentShape::Curve { tension: 0.3 }.interpolate(0.5);
+        let big = SegmentShape::Curve { tension: 1.0 }.interpolate(0.5);
         assert!(big < small, "stronger tension should produce smaller midpoint factor");
     }
 }

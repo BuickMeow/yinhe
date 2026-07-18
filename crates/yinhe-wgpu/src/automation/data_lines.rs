@@ -239,9 +239,8 @@ fn render_segment(
         }
         SegmentShape::Curve { tension } => {
             // tension=0 → 直线；tension≠0 → 二次曲线。统一用一个 curve instance。
-            let tension_norm = (tension as f32) / 127.0;
             out.push(CurveInstance::curve(
-                x1, y1, x2, y2, LINE_THICKNESS, tension_norm, line_color,
+                x1, y1, x2, y2, LINE_THICKNESS, tension, line_color,
             ));
         }
     }

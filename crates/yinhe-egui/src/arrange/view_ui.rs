@@ -128,6 +128,8 @@ pub fn show(
         sel_rect_count: 0, // unused in AR mode
         note_outline: 1, // AR mode: outline always on
         lane_height: view.lane_height, // AR: per-track lane height
+        value_zoom: 0.0, // AR unused (automation panel only)
+        value_scroll: 0.0, // AR unused (automation panel only)
     };
 
     view.base.dirty = false;
@@ -418,8 +420,8 @@ fn sel_drag_frame_arrange(
     track_selected: &mut HashSet<u16>,
     selection_anchor: &mut Option<u16>,
     info_content: &mut Option<crate::right_panel::InfoContent>,
-) -> (Vec<(f64, f64, u8, u16)>, HashSet<(u16, u32, u8)>, Option<egui::Rect>) {
-    let mut ghost_notes: Vec<(f64, f64, u8, u16)> = Vec::new();
+) -> (Vec<(u32, u32, u8, u16)>, HashSet<(u16, u32, u8)>, Option<egui::Rect>) {
+    let mut ghost_notes: Vec<(u32, u32, u8, u16)> = Vec::new();
     let mut hidden_notes: HashSet<(u16, u32, u8)> = HashSet::new();
     let mut drag_rect: Option<egui::Rect> = None;
 
@@ -587,8 +589,8 @@ fn sel_drag_frame_arrange(
                             let length = note.end_tick - note.start_tick;
                             let new_track = (note.track as i32 + dtr).max(0).min(max_track as i32) as u16;
                             ghost_notes.push((
-                                new_tick as f64,
-                                (new_tick + length) as f64,
+                                new_tick,
+                                new_tick + length,
                                 key,
                                 new_track,
                             ));
