@@ -220,8 +220,13 @@ impl eframe::App for App {
             },
         );
 
-        // Heap snapshot for the mode-bar resource metrics (captured once per frame).
-        let mem_mb = yinhe_memtrace::Snapshot::capture().total_mb();
+        // mode_bar 的 MEM 数字：memtrace 开启时用分类追踪的堆内存，
+        // 关闭时用系统 RSS（sys_monitor）。
+        let mem_mb = if yinhe_memtrace::enabled() {
+            yinhe_memtrace::Snapshot::capture().total_mb()
+        } else {
+            self.sys_monitor.mem_mb
+        };
 
         // ── Handle playback actions ──
         self.handle_playback(

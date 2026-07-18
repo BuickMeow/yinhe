@@ -3,6 +3,11 @@ name = "yinhe-memtrace"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+# 启用后 TaggedAlloc 包装全局分配器做分类统计（有性能开销）。
+# 默认关闭 —— 关闭时 TaggedAlloc = 后端分配器（jemalloc/mimalloc），零开销。
+memtrace = []
+
 [dependencies]
 tracing = { workspace = true }
 

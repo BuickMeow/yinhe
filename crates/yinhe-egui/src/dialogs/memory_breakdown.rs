@@ -50,10 +50,19 @@ pub(crate) fn show_viewport(
                             egui::ScrollArea::vertical()
                                 .auto_shrink([false; 2])
                                 .show(ui, |ui| {
-                                    ui.label(format!(
-                                        "分配器追踪内存: {:.1} MB",
-                                        snapshot.total_mb()
-                                    ));
+                                    if yinhe_memtrace::enabled() {
+                                        ui.label(format!(
+                                            "分配器追踪内存: {:.1} MB",
+                                            snapshot.total_mb()
+                                        ));
+                                    } else {
+                                        ui.label(
+                                            egui::RichText::new(
+                                                "内存分类追踪未启用（用 --features memtrace 编译开启）",
+                                            )
+                                            .color(egui::Color32::from_gray(140)),
+                                        );
+                                    }
                                     ui.label(format!("系统统计总内存 (RSS): {:.1} MB", mem_mb));
                                     ui.label(format!(
                                         "wgpu 显式 GPU 资源: {:.1} MB",
@@ -66,27 +75,28 @@ pub(crate) fn show_viewport(
                                         metal_size as f64 / 1_048_576.0
                                     ));
 
-                                    ui.separator();
-
-                                    ui.heading("按子系统分类");
-                                    egui::Grid::new("mem_breakdown_grid")
-                                        .num_columns(2)
-                                        .spacing([12.0, 8.0])
-                                        .show(ui, |ui| {
-                                            for tag in yinhe_memtrace::AllocTag::ALL {
-                                                if tag == yinhe_memtrace::AllocTag::Unknown
-                                                    && snapshot.get(tag) <= 0
-                                                {
-                                                    continue;
+                                    if yinhe_memtrace::enabled() {
+                                        ui.separator();
+                                        ui.heading("按子系统分类");
+                                        egui::Grid::new("mem_breakdown_grid")
+                                            .num_columns(2)
+                                            .spacing([12.0, 8.0])
+                                            .show(ui, |ui| {
+                                                for tag in yinhe_memtrace::AllocTag::ALL {
+                                                    if tag == yinhe_memtrace::AllocTag::Unknown
+                                                        && snapshot.get(tag) <= 0
+                                                    {
+                                                        continue;
+                                                    }
+                                                    ui.label(tag.name());
+                                                    ui.label(format!(
+                                                        "{:.1} MB",
+                                                        snapshot.mb(tag)
+                                                    ));
+                                                    ui.end_row();
                                                 }
-                                                ui.label(tag.name());
-                                                ui.label(format!(
-                                                    "{:.1} MB",
-                                                    snapshot.mb(tag)
-                                                ));
-                                                ui.end_row();
-                                            }
-                                        });
+                                            });
+                                    }
 
                                     ui.separator();
                                     ui.small(

@@ -1,5 +1,4 @@
 use std::alloc::{GlobalAlloc, Layout};
-use std::cell::Cell;
 use std::sync::atomic::{AtomicIsize, Ordering};
 
 // ---------------------------------------------------------------------------
@@ -9,21 +8,29 @@ use std::sync::atomic::{AtomicIsize, Ordering};
 //        keeping RSS close to the true live allocation size.
 // Other platforms (Linux, Windows): mimalloc — excellent performance and
 //        low fragmentation, with acceptable RSS behaviour on those OSes.
+//
+// BackendAlloc 始终 pub use —— feature "memtrace" 关闭时 TaggedAlloc 就是它，
+// main.rs 的 #[global_allocator] 不需要任何改动。
 // ---------------------------------------------------------------------------
 
 #[cfg(target_os = "macos")]
-use tikv_jemallocator::Jemalloc;
+pub use tikv_jemallocator::Jemalloc as BackendAlloc;
+
+#[cfg(not(target_os = "macos"))]
+pub use mimalloc::MiMalloc as BackendAlloc;
 
 #[cfg(target_os = "macos")]
-const BACKEND: Jemalloc = Jemalloc;
+const BACKEND: BackendAlloc = BackendAlloc;
 
 #[cfg(not(target_os = "macos"))]
-use mimalloc::MiMalloc;
-
-#[cfg(not(target_os = "macos"))]
-const BACKEND: MiMalloc = MiMalloc;
+const BACKEND: BackendAlloc = BackendAlloc;
 
 pub mod perf_probe;
+
+/// 内存追踪是否启用（编译期决定）。
+pub fn enabled() -> bool {
+    cfg!(feature = "memtrace")
+}
 
 /// Allocation tag used to attribute heap memory to a subsystem.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -64,95 +71,35 @@ impl AllocTag {
     }
 }
 
-#[repr(C, align(16))]
-struct Header {
-    tag: u8,
-    _pad: [u8; 7],
-    user_size: usize,
-    user_align: usize,
-}
+// ---------------------------------------------------------------------------
+// GPU resource tracking —— 独立于全局分配器，始终启用。
+// 追踪 wgpu Texture/Buffer 的显式大小，不走 Rust 堆。
+// ---------------------------------------------------------------------------
 
-const HEADER_SIZE: usize = std::mem::size_of::<Header>();
-const OFFSET_BACKUP_SIZE: usize = std::mem::size_of::<usize>();
-
-/// Round `n` up to the next multiple of `align`.
-/// `align` must be a power of two and non-zero.
-const fn round_up(n: usize, align: usize) -> usize {
-    debug_assert!(align > 0 && align.is_power_of_two());
-    (n + align - 1) & !(align - 1)
-}
-
-/// Compute the offset from the base allocation pointer to the user pointer.
-/// The user pointer will satisfy the requested `user_align`, and there is
-/// room for both the `Header` at the base and an offset-backup word just
-/// before the user pointer.
-const fn user_offset(user_align: usize) -> usize {
-    round_up(HEADER_SIZE + OFFSET_BACKUP_SIZE, user_align)
-}
-
-static COUNTERS: [AtomicIsize; AllocTag::COUNT] = [
-    AtomicIsize::new(0),
-    AtomicIsize::new(0),
-    AtomicIsize::new(0),
-    AtomicIsize::new(0),
-    AtomicIsize::new(0),
-    AtomicIsize::new(0),
-    AtomicIsize::new(0),
-];
-
-/// Tracks GPU resource memory that does not go through the Rust global
-/// allocator (e.g. wgpu textures/buffers allocated by the graphics driver).
 static GPU_RESOURCE_BYTES: AtomicIsize = AtomicIsize::new(0);
 
-thread_local! {
-    static CURRENT_TAG: Cell<AllocTag> = const { Cell::new(AllocTag::Unknown) };
-}
-
-/// Add `bytes` to the GPU resource counter. Called when a wgpu Texture or
-/// Buffer is created.
 pub fn add_gpu_resource(bytes: u64) {
     GPU_RESOURCE_BYTES.fetch_add(bytes as isize, Ordering::Relaxed);
 }
 
-/// Subtract `bytes` from the GPU resource counter. Called when a wgpu Texture
-/// or Buffer is dropped/replaced.
 pub fn sub_gpu_resource(bytes: u64) {
     GPU_RESOURCE_BYTES.fetch_sub(bytes as isize, Ordering::Relaxed);
 }
 
-/// Current GPU resource memory in bytes.
 pub fn gpu_resource_bytes() -> isize {
     GPU_RESOURCE_BYTES.load(Ordering::Relaxed)
 }
 
-/// Current GPU resource memory in megabytes.
 pub fn gpu_resource_mb() -> f64 {
     gpu_resource_bytes() as f64 / 1_048_576.0
 }
 
-fn current_tag() -> AllocTag {
-    CURRENT_TAG.with(|c| c.get())
-}
+// ---------------------------------------------------------------------------
+// purge_free_pages —— 独立于追踪，始终启用。
+// ---------------------------------------------------------------------------
 
-/// Run `f` with the current thread's allocation tag set to `tag`.
-/// The previous tag is restored when `f` returns.
-pub fn with_tag<T>(tag: AllocTag, f: impl FnOnce() -> T) -> T {
-    CURRENT_TAG.with(|c| {
-        let old = c.get();
-        c.set(tag);
-        let result = f();
-        c.set(old);
-        result
-    })
-}
-
-/// Hint to the backend allocator to purge free pages back to the OS.
-/// Call after a batch of large allocations is dropped (e.g. after MIDI
-/// parsing completes) to reduce RSS without affecting future allocations.
 #[cfg(target_os = "macos")]
 pub fn purge_free_pages() {
-    // jemalloc: force immediate decay of dirty/muzzy pages via mallctl.
-    // 遍历所有 arena 进行 purge，否则只清理 arena 0 效果有限。
     use tikv_jemalloc_ctl::{arenas, epoch, raw};
     let _ = epoch::advance();
     if let Ok(narenas) = arenas::narenas::read() {
@@ -165,19 +112,19 @@ pub fn purge_free_pages() {
     }
 }
 
-/// Hint to the backend allocator to purge free pages back to the OS.
-/// Call after a batch of large allocations is dropped (e.g. after MIDI
-/// parsing completes) to reduce RSS without affecting future allocations.
 #[cfg(not(target_os = "macos"))]
 pub fn purge_free_pages() {
-    // mimalloc: direct FFI call to mi_collect.
     unsafe extern "C" {
         fn mi_collect(force: bool);
     }
     unsafe { mi_collect(true) };
 }
 
-/// Snapshot of memory attributed to each tag, plus GPU resources.
+// ---------------------------------------------------------------------------
+// Snapshot —— 结构体定义和字段读取方法始终存在；
+// capture() 在 feature off 时返回全零（heap 部分），GPU 部分仍有效。
+// ---------------------------------------------------------------------------
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Snapshot {
     pub bytes: [isize; AllocTag::COUNT],
@@ -185,13 +132,22 @@ pub struct Snapshot {
 }
 
 impl Snapshot {
+    #[cfg(feature = "memtrace")]
     pub fn capture() -> Self {
         let mut bytes = [0; AllocTag::COUNT];
-        for (i, counter) in COUNTERS.iter().enumerate() {
+        for (i, counter) in memtrace_impl::COUNTERS.iter().enumerate() {
             bytes[i] = counter.load(Ordering::Relaxed);
         }
         Self {
             bytes,
+            gpu_resources: gpu_resource_bytes(),
+        }
+    }
+
+    #[cfg(not(feature = "memtrace"))]
+    pub fn capture() -> Self {
+        Self {
+            bytes: [0; AllocTag::COUNT],
             gpu_resources: gpu_resource_bytes(),
         }
     }
@@ -204,7 +160,6 @@ impl Snapshot {
         self.bytes.iter().sum()
     }
 
-    /// Total tracked memory including GPU resources.
     pub fn total_with_gpu(&self) -> isize {
         self.total_tracked().saturating_add(self.gpu_resources)
     }
@@ -226,11 +181,94 @@ impl Snapshot {
     }
 }
 
-/// Global allocator that attributes every allocation to the current thread's tag.
+// ===========================================================================
+// 以下全部是 memtrace feature 开启时的追踪实现。
+// feature 关闭时这些代码不编译，TaggedAlloc 直接是 BackendAlloc 的别名。
+// ===========================================================================
+
+#[cfg(feature = "memtrace")]
+mod memtrace_impl {
+    use super::*;
+    use std::cell::Cell;
+
+    #[repr(C, align(16))]
+    pub(crate) struct Header {
+        pub(crate) tag: u8,
+        _pad: [u8; 7],
+        pub(crate) user_size: usize,
+        pub(crate) user_align: usize,
+    }
+
+    pub(crate) const HEADER_SIZE: usize = std::mem::size_of::<Header>();
+    pub(crate) const OFFSET_BACKUP_SIZE: usize = std::mem::size_of::<usize>();
+
+    pub(crate) const fn round_up(n: usize, align: usize) -> usize {
+        debug_assert!(align > 0 && align.is_power_of_two());
+        (n + align - 1) & !(align - 1)
+    }
+
+    pub(crate) const fn user_offset(user_align: usize) -> usize {
+        round_up(HEADER_SIZE + OFFSET_BACKUP_SIZE, user_align)
+    }
+
+    pub(crate) static COUNTERS: [AtomicIsize; AllocTag::COUNT] = [
+        AtomicIsize::new(0),
+        AtomicIsize::new(0),
+        AtomicIsize::new(0),
+        AtomicIsize::new(0),
+        AtomicIsize::new(0),
+        AtomicIsize::new(0),
+        AtomicIsize::new(0),
+    ];
+
+    thread_local! {
+        pub(crate) static CURRENT_TAG: Cell<AllocTag> = const { Cell::new(AllocTag::Unknown) };
+    }
+
+    pub(crate) fn current_tag() -> AllocTag {
+        CURRENT_TAG.with(|c| c.get())
+    }
+}
+
+/// Run `f` with the current thread's allocation tag set to `tag`.
+///
+/// feature "memtrace" 关闭时是 no-op（直接调用 f），零开销。
+#[cfg(feature = "memtrace")]
+pub fn with_tag<T>(tag: AllocTag, f: impl FnOnce() -> T) -> T {
+    memtrace_impl::CURRENT_TAG.with(|c| {
+        let old = c.get();
+        c.set(tag);
+        let result = f();
+        c.set(old);
+        result
+    })
+}
+
+#[cfg(not(feature = "memtrace"))]
+pub fn with_tag<T>(_tag: AllocTag, f: impl FnOnce() -> T) -> T {
+    f()
+}
+
+// ---------------------------------------------------------------------------
+// TaggedAlloc —— feature on: 包装分配器；feature off: 后端别名
+// ---------------------------------------------------------------------------
+
+/// Global allocator.
+///
+/// feature "memtrace" 开启时：包装 BackendAlloc，在每块分配前加 Header 记录
+/// tag/size/align，维护 7 个分类计数器。有性能开销（+24B/alloc、废掉 realloc
+/// 原地扩容、cacheline 乒乓）。
+///
+/// feature "memtrace" 关闭时：就是 BackendAlloc（jemalloc/mimalloc）的别名，
+/// 零开销。main.rs 的 `#[global_allocator] static GLOBAL_ALLOC: TaggedAlloc`
+/// 无需改动。
+#[cfg(feature = "memtrace")]
 pub struct TaggedAlloc;
 
+#[cfg(feature = "memtrace")]
 unsafe impl GlobalAlloc for TaggedAlloc {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        use memtrace_impl::*;
         let tag = current_tag() as u8;
         let user_size = layout.size();
         let user_align = layout.align();
@@ -257,8 +295,6 @@ unsafe impl GlobalAlloc for TaggedAlloc {
             (*header).user_align = user_align;
         }
 
-        // Store the offset just before the user pointer so dealloc can locate
-        // the header without needing to know the original alignment.
         let offset_backup_ptr = unsafe { ptr.add(offset - OFFSET_BACKUP_SIZE) as *mut usize };
         unsafe { *offset_backup_ptr = offset; }
 
@@ -268,6 +304,7 @@ unsafe impl GlobalAlloc for TaggedAlloc {
     }
 
     unsafe fn dealloc(&self, ptr: *mut u8, _layout: Layout) {
+        use memtrace_impl::*;
         let offset = unsafe { *(ptr.sub(OFFSET_BACKUP_SIZE) as *const usize) };
         let header_ptr = unsafe { ptr.sub(offset) as *mut Header };
         let header = unsafe { &*header_ptr };
@@ -309,50 +346,31 @@ unsafe impl GlobalAlloc for TaggedAlloc {
     }
 }
 
+/// feature "memtrace" 关闭时：TaggedAlloc 是 thin delegate，直接转发给
+/// BackendAlloc（包括 realloc 原地扩容），零追踪开销。保持 unit struct
+/// 这样 main.rs 的 `= TaggedAlloc` 在两种模式下都能用。
+#[cfg(not(feature = "memtrace"))]
+pub struct TaggedAlloc;
+
+#[cfg(not(feature = "memtrace"))]
+unsafe impl GlobalAlloc for TaggedAlloc {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        unsafe { BACKEND.alloc(layout) }
+    }
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        unsafe { BACKEND.dealloc(ptr, layout) }
+    }
+    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+        unsafe { BACKEND.realloc(ptr, layout, new_size) }
+    }
+    unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
+        unsafe { BACKEND.alloc_zeroed(layout) }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn round_up_boundary_cases() {
-        assert_eq!(round_up(0, 16), 0);
-        assert_eq!(round_up(1, 16), 16);
-        assert_eq!(round_up(16, 16), 16);
-        assert_eq!(round_up(17, 16), 32);
-    }
-
-    #[test]
-    fn round_up_small_aligns() {
-        assert_eq!(round_up(0, 1), 0);
-        assert_eq!(round_up(1, 1), 1);
-        assert_eq!(round_up(2, 1), 2);
-        assert_eq!(round_up(3, 2), 4);
-        assert_eq!(round_up(3, 4), 4);
-        assert_eq!(round_up(5, 8), 8);
-    }
-
-    #[test]
-    fn user_offset_minimum_and_alignment() {
-        for &align in &[1, 2, 4, 8, 16, 32, 64, 128] {
-            let off = user_offset(align);
-            // Must have room for Header + OFFSET_BACKUP_SIZE
-            assert!(
-                off >= HEADER_SIZE + OFFSET_BACKUP_SIZE,
-                "user_offset({}) = {} < HEADER_SIZE + OFFSET_BACKUP_SIZE = {}",
-                align,
-                off,
-                HEADER_SIZE + OFFSET_BACKUP_SIZE
-            );
-            // Must be a multiple of the requested alignment
-            assert_eq!(
-                off % align,
-                0,
-                "user_offset({}) = {} not aligned",
-                align,
-                off
-            );
-        }
-    }
 
     #[test]
     fn snapshot_capture_does_not_panic() {
@@ -372,25 +390,57 @@ mod tests {
     }
 
     #[test]
+    fn with_tag_returns_value() {
+        let result = with_tag(AllocTag::Audio, || 42);
+        assert_eq!(result, 42);
+    }
+
+    #[cfg(feature = "memtrace")]
+    #[test]
     fn with_tag_sets_and_restores() {
-        let original = current_tag();
+        let original = memtrace_impl::current_tag();
         let result = with_tag(AllocTag::Audio, || {
-            assert_eq!(current_tag(), AllocTag::Audio);
+            assert_eq!(memtrace_impl::current_tag(), AllocTag::Audio);
             "done"
         });
         assert_eq!(result, "done");
-        assert_eq!(current_tag(), original);
+        assert_eq!(memtrace_impl::current_tag(), original);
     }
 
+    #[cfg(feature = "memtrace")]
     #[test]
     fn with_tag_nested() {
-        let original = current_tag();
+        let original = memtrace_impl::current_tag();
         with_tag(AllocTag::Gpu, || {
             with_tag(AllocTag::Audio, || {
-                assert_eq!(current_tag(), AllocTag::Audio);
+                assert_eq!(memtrace_impl::current_tag(), AllocTag::Audio);
             });
-            assert_eq!(current_tag(), AllocTag::Gpu);
+            assert_eq!(memtrace_impl::current_tag(), AllocTag::Gpu);
         });
-        assert_eq!(current_tag(), original);
+        assert_eq!(memtrace_impl::current_tag(), original);
+    }
+
+    #[cfg(feature = "memtrace")]
+    #[test]
+    fn round_up_boundary_cases() {
+        assert_eq!(memtrace_impl::round_up(0, 16), 0);
+        assert_eq!(memtrace_impl::round_up(1, 16), 16);
+        assert_eq!(memtrace_impl::round_up(16, 16), 16);
+        assert_eq!(memtrace_impl::round_up(17, 16), 32);
+    }
+
+    #[cfg(feature = "memtrace")]
+    #[test]
+    fn user_offset_minimum_and_alignment() {
+        for &align in &[1, 2, 4, 8, 16, 32, 64, 128] {
+            let off = memtrace_impl::user_offset(align);
+            assert!(
+                off >= memtrace_impl::HEADER_SIZE + memtrace_impl::OFFSET_BACKUP_SIZE,
+                "user_offset({}) = {} < minimum",
+                align,
+                off,
+            );
+            assert_eq!(off % align, 0, "user_offset({}) = {} not aligned", align, off);
+        }
     }
 }

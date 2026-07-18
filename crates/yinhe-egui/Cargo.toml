@@ -6,6 +6,9 @@ edition = "2024"
 [features]
 default = ["gpu"]
 gpu = ["yinhe-audio/gpu"]
+# 启用 yinhe-memtrace 的分类内存追踪（有性能开销，默认关闭）。
+# `cargo build --features memtrace` 开启。
+memtrace = ["yinhe-memtrace/memtrace"]
 
 [dependencies]
 yinhe-theme = { path = "../yinhe-theme", features = ["egui"] }
