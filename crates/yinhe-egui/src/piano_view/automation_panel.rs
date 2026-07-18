@@ -19,6 +19,7 @@ mod interaction;
 
 /// Curated list of known automation targets shown in the dropdown.
 const AUTOMATION_TARGETS: &[AutomationTarget] = &[
+    AutomationTarget::Tempo,
     AutomationTarget::PitchBend,
     AutomationTarget::CC { controller: 7 },  // Volume
     AutomationTarget::CC { controller: 10 }, // Pan
@@ -83,12 +84,12 @@ impl Default for PanelPianorollFeedback {
 /// - Tempo: 60_000_000 BPM
 /// - CC/PB/RPN/NRPN: max_value()
 fn value_upper_bound(panel: &AutomationPanelView) -> f32 {
-    if panel.show_tempo {
-        TEMPO_UPPER_BOUND
-    } else if panel.show_velocity {
+    if panel.show_velocity {
         127.0
+    } else if panel.selected_target == AutomationTarget::Tempo {
+        TEMPO_UPPER_BOUND
     } else {
-        panel.selected_target.max_value() as f32
+        panel.selected_target.max_value()
     }
 }
 
@@ -152,14 +153,14 @@ pub fn show_panels(
     min_border_width: f32,
     midi: Option<&dyn yinhe_types::NoteSource>,
     edit_ctx: Option<&AutomationEditCtx<'_>>,
-    tempo_events: &[(u32, f64)],
+    tempo_lane: &AutomationLane,
     revision: u64,
     info_content: &mut Option<InfoContent>,
     right_tab: &mut Option<RightTab>,
-) -> (f32, Vec<AutomationEdit>, PanelPianorollFeedback, Option<(u32, u16)>) {
+) -> (f32, Vec<AutomationEdit>, PanelPianorollFeedback, Option<(u32, f32)>) {
     let mut edits = Vec::new();
     let mut feedback = PanelPianorollFeedback::default();
-    let mut all_drag_info: Option<(u32, u16)> = None;
+    let mut all_drag_info: Option<(u32, f32)> = None;
     if !*show_panels || panels.is_empty() {
         return (0.0, edits, feedback, None);
     }
@@ -285,12 +286,12 @@ pub fn show_panels(
         let zoom_delta = ui.input(|i| i.zoom_delta());
         let cmd = ui.input(|i| i.modifiers.command || i.modifiers.ctrl);
         let upper_bound = value_upper_bound(panel);
-        let max_val_f = if panel.show_tempo {
-            tempo_events.iter().map(|(_, b)| *b as f32).fold(0.0_f32, f32::max).max(1.0)
-        } else if panel.show_velocity {
+        let max_val_f = if panel.show_velocity {
             127.0
+        } else if panel.selected_target == AutomationTarget::Tempo {
+            tempo_lane.events.iter().map(|e| e.value).fold(0.0_f32, f32::max).max(1.0)
         } else {
-            panel.selected_target.max_value() as f32
+            panel.selected_target.max_value()
         };
         let zoom_min = min_value_zoom(max_val_f, upper_bound);
 
@@ -356,9 +357,10 @@ pub fn show_panels(
 
         // 先处理交互，得到 ghost（传给 wgpu Layer 3 绘制）+ edits。
         // 必须在 prepare_automation 之前，这样 ghost 能当帧渲染。
+        // Tempo / CC / PB / RPN / NRPN 都进入编辑；Velocity 无 lane 编辑。
         let mut panel_ghost: Option<AutomationGhost> = None;
         if let Some(ctx) = edit_ctx {
-            if !panel.show_velocity && !panel.show_tempo {
+            if !panel.show_velocity {
                 if let Some(track) = ctx.active_track {
                     let (panel_edits, ghost, drag_info) = interaction::handle_automation_interaction(
                         ui,
@@ -366,6 +368,7 @@ pub fn show_panels(
                         panel_rect,
                         panel,
                         automation_lanes,
+                        tempo_lane,
                         track,
                         ctx,
                         i,
@@ -387,10 +390,13 @@ pub fn show_panels(
                             } else {
                                 format!("{}", tick)
                             };
-                            let val_str = if panel.show_tempo {
-                                format!("{:.2} BPM", value as f32)
+                            let val_str = if panel.show_velocity {
+                                format!("{}", value.round() as i32)
+                            } else if panel.selected_target == AutomationTarget::Tempo {
+                                format!("{:.2} BPM", value)
                             } else {
-                                format!("{}", value)
+                                // CC/PB/RPN/NRPN: 整数显示
+                                format!("{}", value.round() as i32)
                             };
                             let painter = ui.ctx().debug_painter();
                             let font_id = egui::FontId::monospace(12.0);
@@ -434,10 +440,15 @@ pub fn show_panels(
             if let Some((renderer, render_ctx)) = renderers.get_mut(i) {
                 render_ctx.ensure_size(gpw, gph);
 
-                let lanes: Vec<&AutomationLane> = automation_lanes
-                    .iter()
-                    .filter(|l| l.target == panel.selected_target)
-                    .collect();
+                // Tempo 模式：lanes 只包含 conductor.tempo；其他模式按 selected_target 过滤。
+                let lanes: Vec<&AutomationLane> = if panel.selected_target == AutomationTarget::Tempo {
+                    vec![tempo_lane]
+                } else {
+                    automation_lanes
+                        .iter()
+                        .filter(|l| l.target == panel.selected_target)
+                        .collect()
+                };
 
                 // 从 info_content 提取高亮锚点 tick（基于选中状态）
                 let highlight_tick = match info_content {
@@ -468,7 +479,7 @@ pub fn show_panels(
                     scroll_mode,
                     min_border_width,
                     show_anchors,
-                    tempo_events,
+                    max_val_f,
                     panel_ghost,
                     revision,
                     highlight_tick,
@@ -490,9 +501,9 @@ pub fn show_panels(
                 // Center line (only for targets that have one)
                 if let Some(lane) = lanes.first() {
                     let target = &lane.target;
-                    let max_val = target.max_value() as f32;
+                    let max_val = target.max_value();
                     if max_val > 0.0 && target.has_center_line() {
-                        let center_val = target.default_value() as f32;
+                        let center_val = target.default_value();
                         let y_center = panel.value_to_y(center_val, max_val);
                         let (cr, cg, cb, ca) = theme.center_line;
                         painter.rect_filled(
@@ -572,26 +583,16 @@ pub fn show_panels(
                                 let vel_selected = panel.show_velocity;
                                 if ui.add(egui::Button::selectable(vel_selected, "Velocity")).clicked() {
                                     panel.show_velocity = true;
-                                    panel.show_tempo = false;
-                                    panel.dirty = true;
-                                    ui.ctx().data_mut(|d| d.insert_persisted(popup_id, false));
-                                }
-                                // Tempo (special: renders from conductor tempo events)
-                                let tempo_selected = panel.show_tempo;
-                                if ui.add(egui::Button::selectable(tempo_selected, "Tempo")).clicked() {
-                                    panel.show_tempo = true;
-                                    panel.show_velocity = false;
                                     panel.dirty = true;
                                     ui.ctx().data_mut(|d| d.insert_persisted(popup_id, false));
                                 }
                                 ui.separator();
                                 for target in AUTOMATION_TARGETS {
                                     let name = target.display_name();
-                                    let selected = !panel.show_velocity && !panel.show_tempo && panel.selected_target == *target;
+                                    let selected = !panel.show_velocity && panel.selected_target == *target;
                                     if ui.add(egui::Button::selectable(selected, &name)).clicked() {
                                         panel.selected_target = target.clone();
                                         panel.show_velocity = false;
-                                        panel.show_tempo = false;
                                         panel.dirty = true;
                                         ui.ctx().data_mut(|d| d.insert_persisted(popup_id, false));
                                     }
@@ -607,7 +608,6 @@ pub fn show_panels(
                                 if cc_input != old_cc {
                                     panel.selected_target = AutomationTarget::CC { controller: cc_input as u8 };
                                     panel.show_velocity = false;
-                                    panel.show_tempo = false;
                                     panel.dirty = true;
                                 }
                             });
@@ -633,8 +633,6 @@ pub fn show_panels(
         // ── Grid overlay: value labels + target name ──
         let name = if panel.show_velocity {
             "Velocity".to_string()
-        } else if panel.show_tempo {
-            "Tempo".to_string()
         } else {
             panel.selected_target.display_name()
         };
@@ -642,7 +640,7 @@ pub fn show_panels(
         let font_id = egui::FontId::proportional(10.0);
         let pad_x = 4.0;
 
-        let (top_val, mid_val, bot_val) = if panel.show_tempo || panel.show_velocity {
+        let (top_val, mid_val, bot_val) = if panel.show_velocity || panel.selected_target == AutomationTarget::Tempo {
             // Velocity / Tempo: 根据垂直 zoom/scroll 计算实际显示范围
             let h = panel_rect.height();
             let top_f = panel.y_to_value(0.0, max_val_f).round() as u32;
@@ -651,8 +649,7 @@ pub fn show_panels(
             (top_f.to_string(), mid_f.to_string(), bot_f.to_string())
         } else {
             let target = &panel.selected_target;
-            let max = target.max_value();
-            let max_f = max as f32;
+            let max_f = target.max_value();
             // 根据垂直 zoom/scroll 计算面板顶部、中部、底部的实际值
             let h = panel_rect.height();
             let top_val_f = panel.y_to_value(0.0, max_f).round() as u32;

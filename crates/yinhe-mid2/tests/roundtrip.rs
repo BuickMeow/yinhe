@@ -1,7 +1,7 @@
 //! Round-trip tests: bytes -> YinModel -> bytes -> YinModel
 
 use yinhe_core::{
-    ConductorData, NoteEvent, PcEvent, ProjectMeta, TempoEvent, TrackData, YinModel,
+    ConductorData, NoteEvent, PcEvent, ProjectMeta, TrackData, YinModel,
 };
 use yinhe_types::TimeSigEvent;
 use yinhe_mid2::{parse_bytes, write_to_bytes};
@@ -41,8 +41,8 @@ fn parse_minimal_midi() {
     assert_eq!(n.velocity, 100);
     assert_eq!(n.id, 1); // 首个 id 从 1 开始
 
-    assert_eq!(model.conductor.tempo.len(), 1);
-    assert!((model.conductor.tempo[0].bpm - 120.0).abs() < 0.5);
+    assert_eq!(model.conductor.tempo.events.len(), 1);
+    assert!((model.conductor.tempo.events[0].value - 120.0).abs() < 0.5);
 
     assert_eq!(model.note_count, 1);
     assert_eq!(model.tick_length, 320);
@@ -64,17 +64,21 @@ fn roundtrip_minimal_midi() {
     assert_eq!(n2.start_tick, n1.start_tick);
     assert_eq!(n2.end_tick, n1.end_tick);
     assert_eq!(n2.velocity, n1.velocity);
-    assert_eq!(model2.conductor.tempo.len(), model1.conductor.tempo.len());
+    assert_eq!(model2.conductor.tempo.events.len(), model1.conductor.tempo.events.len());
 }
 
 fn build_complex_model() -> YinModel {
     use std::sync::Arc;
 
     let conductor = ConductorData {
-        tempo: vec![
-            TempoEvent { tick: 0, bpm: 120.0 },
-            TempoEvent { tick: 1920, bpm: 60.0 },
-        ],
+        tempo: AutomationLane {
+            target: AutomationTarget::Tempo,
+            track: 0,
+            events: vec![
+                AutomationEvent { tick: 0, value: 120.0, shape: SegmentShape::Step },
+                AutomationEvent { tick: 1920, value: 60.0, shape: SegmentShape::Step },
+            ],
+        },
         time_sig: vec![
             TimeSigEvent { tick: 0, numerator: 4, denominator: 2 },
             TimeSigEvent { tick: 3840, numerator: 3, denominator: 2 },
@@ -94,22 +98,22 @@ fn build_complex_model() -> YinModel {
             target: AutomationTarget::CC { controller: 7 },
             track: 0,
             events: vec![
-                AutomationEvent { tick: 0, value: 100, shape: SegmentShape::Step },
-                AutomationEvent { tick: 480, value: 80, shape: SegmentShape::Step },
+                AutomationEvent { tick: 0, value: 100.0, shape: SegmentShape::Step },
+                AutomationEvent { tick: 480, value: 80.0, shape: SegmentShape::Step },
             ],
         },
         AutomationLane {
             target: AutomationTarget::PitchBend,
             track: 0,
             events: vec![
-                AutomationEvent { tick: 200, value: 2000, shape: SegmentShape::Step },
+                AutomationEvent { tick: 200, value: 2000.0, shape: SegmentShape::Step },
             ],
         },
         AutomationLane {
             target: AutomationTarget::Rpn { parameter: 0x0000 },
             track: 0,
             events: vec![
-                AutomationEvent { tick: 100, value: 2, shape: SegmentShape::Step },
+                AutomationEvent { tick: 100, value: 2.0, shape: SegmentShape::Step },
             ],
         },
     ];
@@ -184,19 +188,19 @@ fn roundtrip_complex_model_preserves_everything() {
     };
     let cc7 = find_lane(&AutomationTarget::CC { controller: 7 }).expect("CC 7 lane");
     assert_eq!(cc7.events.len(), 2);
-    assert_eq!(cc7.events[0].value, 100);
-    assert_eq!(cc7.events[1].value, 80);
+    assert_eq!(cc7.events[0].value, 100.0);
+    assert_eq!(cc7.events[1].value, 80.0);
     let pb = find_lane(&AutomationTarget::PitchBend).expect("PitchBend lane");
     assert_eq!(pb.events.len(), 1);
-    assert_eq!(pb.events[0].value, 2000);
+    assert_eq!(pb.events[0].value, 2000.0);
     let rpn = find_lane(&AutomationTarget::Rpn { parameter: 0x0000 }).expect("RPN 0 lane");
     assert_eq!(rpn.events.len(), 1);
-    assert_eq!(rpn.events[0].value, 2);
+    assert_eq!(rpn.events[0].value, 2.0);
     assert_eq!(l2.program_change.len(), 1);
     assert_eq!(l2.program_change[0].program, 5);
 
-    assert_eq!(model2.conductor.tempo.len(), 2);
-    assert!((model2.conductor.tempo[1].bpm - 60.0).abs() < 0.5);
+    assert_eq!(model2.conductor.tempo.events.len(), 2);
+    assert!((model2.conductor.tempo.events[1].value - 60.0).abs() < 0.5);
     assert_eq!(model2.conductor.time_sig.len(), 2);
 
     let b1 = &model1.tracks[1];
@@ -280,7 +284,7 @@ fn rpn_sequence_decodes_to_rpn_event() {
         .expect("RPN 0 lane");
     assert_eq!(rpn_lane.events.len(), 1);
     // CC6=2 is stored as 7-bit value: 2 (Pitch Bend Sensitivity, semitones)
-    assert_eq!(rpn_lane.events[0].value, 2);
+    assert_eq!(rpn_lane.events[0].value, 2.0);
 }
 
 /// Build SMF with port + channel-prefix metas

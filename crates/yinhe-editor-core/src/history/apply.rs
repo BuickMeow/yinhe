@@ -18,7 +18,13 @@ impl UndoAction {
     pub fn redo(&self, doc: &mut Document) {
         match self {
             UndoAction::Notes(delta) => apply_note_delta(doc, &delta.before, &delta.after),
-            UndoAction::Automation(delta) => apply_automation_delta(doc, delta.track_idx, delta.lane_idx, &delta.after),
+            UndoAction::Automation(delta) => apply_automation_delta(
+                doc,
+                delta.track_idx,
+                delta.lane_idx,
+                &delta.target,
+                &delta.after,
+            ),
             UndoAction::TrackName { track_idx, old: _, new } => {
                 let model = Arc::make_mut(&mut doc.data.model);
                 if let Some(track) = model.tracks.get_mut(*track_idx) {
@@ -118,14 +124,24 @@ pub(crate) fn apply_note_delta(doc: &mut Document, remove: &[(Note, u8)], insert
 }
 
 /// Replace the event list of `track_idx`'s `lane_idx` with `events`.
+///
+/// Tempo 走 `conductor.tempo` 路径（`track_idx`/`lane_idx` 被忽略）；
+/// 其他 target 走 `track.automation_lanes[lane_idx]` 路径。
 pub(crate) fn apply_automation_delta(
     doc: &mut Document,
     track_idx: usize,
     lane_idx: usize,
+    target: &yinhe_types::AutomationTarget,
     events: &[AutomationEvent],
 ) {
     let model = Arc::make_mut(&mut doc.data.model);
-    if let Some(track) = model.tracks.get_mut(track_idx) {
+    if matches!(target, yinhe_types::AutomationTarget::Tempo) {
+        let conductor = Arc::make_mut(&mut model.conductor);
+        let lane = &mut conductor.tempo;
+        lane.events.clear();
+        lane.events.extend_from_slice(events);
+        lane.events.sort_by_key(|e| e.tick);
+    } else if let Some(track) = model.tracks.get_mut(track_idx) {
         let track = Arc::make_mut(track);
         if let Some(lane) = track.automation_lanes.get_mut(lane_idx) {
             lane.events.clear();

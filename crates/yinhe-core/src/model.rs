@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use yinhe_types::{PcEvent, TempoEvent};
+use yinhe_types::{AutomationLane, AutomationTarget, PcEvent};
 use crate::events::NoteEvent;
 use crate::tempo_map::{
     DEFAULT_MPQ, TempoMap, TempoSegment, mpq_from_bpm, recompute_tempo_start_times,
@@ -16,10 +16,25 @@ use crate::tempo_map::{
 // =========================================================
 
 /// Global score-level events.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ConductorData {
-    pub tempo: Vec<TempoEvent>,
+    /// Tempo 走 AutomationLane（与 CC/PB/RPN 一致），存于 `target == AutomationTarget::Tempo`。
+    /// `events[i].value` 直接装 bpm（f32）。
+    pub tempo: AutomationLane,
     pub time_sig: Vec<yinhe_types::TimeSigEvent>,
+}
+
+impl Default for ConductorData {
+    fn default() -> Self {
+        Self {
+            tempo: AutomationLane {
+                target: AutomationTarget::Tempo,
+                track: 0,
+                events: Vec::new(),
+            },
+            time_sig: Vec::new(),
+        }
+    }
 }
 
 // =========================================================
@@ -193,8 +208,8 @@ impl YinModel {
     fn build_tempo_map(&self) -> TempoMap {
         let ppq = self.meta.ppq;
 
-        // Convert TempoEvent -> TempoSegment, sorted by tick.
-        let mut segments: Vec<TempoSegment> = if self.conductor.tempo.is_empty() {
+        // Convert AutomationEvent -> TempoSegment, sorted by tick.
+        let mut segments: Vec<TempoSegment> = if self.conductor.tempo.events.is_empty() {
             vec![TempoSegment {
                 start_tick: 0,
                 start_time: 0.0,
@@ -204,11 +219,12 @@ impl YinModel {
             let mut segs: Vec<TempoSegment> = self
                 .conductor
                 .tempo
+                .events
                 .iter()
                 .map(|t| TempoSegment {
                     start_tick: t.tick,
                     start_time: 0.0,
-                    micros_per_quarter: mpq_from_bpm(t.bpm as f32),
+                    micros_per_quarter: mpq_from_bpm(t.value),
                 })
                 .collect();
             segs.sort_by_key(|s| s.start_tick);
@@ -599,8 +615,8 @@ mod tests {
     #[test]
     fn rebuild_builds_tempo_map_from_conductor() {
         let mut conductor = ConductorData::default();
-        conductor.tempo.push(TempoEvent { tick: 0, bpm: 120.0 });
-        conductor.tempo.push(TempoEvent { tick: 1920, bpm: 60.0 });
+        conductor.tempo.events.push(yinhe_types::AutomationEvent { tick: 0, value: 120.0, shape: yinhe_types::SegmentShape::Step });
+        conductor.tempo.events.push(yinhe_types::AutomationEvent { tick: 1920, value: 60.0, shape: yinhe_types::SegmentShape::Step });
 
         let mut m = YinModel {
             conductor: Arc::new(conductor),
@@ -619,7 +635,7 @@ mod tests {
         // segment at tick 0 (default 120 BPM) so lookups before the first
         // tempo find something.
         let mut conductor = ConductorData::default();
-        conductor.tempo.push(TempoEvent { tick: 1920, bpm: 60.0 });
+        conductor.tempo.events.push(yinhe_types::AutomationEvent { tick: 1920, value: 60.0, shape: yinhe_types::SegmentShape::Step });
 
         let mut m = YinModel {
             conductor: Arc::new(conductor),

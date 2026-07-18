@@ -9,7 +9,6 @@ pub mod palette;
 pub mod pc_event;
 pub mod piano_roll_view;
 mod source;
-pub mod tempo_event;
 pub mod time_format;
 pub mod view_base;
 
@@ -22,7 +21,6 @@ pub use palette::TRACK_PALETTE;
 pub use pc_event::PcEvent;
 pub use piano_roll_view::PianoRollView;
 pub use source::{key_notes_in_range, NoteSource};
-pub use tempo_event::TempoEvent;
 pub use time_format::{build_time_sig_segments, measure_ticks};
 pub use view_base::TimelineViewBase;
 

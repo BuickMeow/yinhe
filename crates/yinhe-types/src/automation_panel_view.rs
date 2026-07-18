@@ -17,11 +17,10 @@ pub struct AutomationPanelView {
     pub panel_height: f32,
     /// The automation target currently displayed in this panel.
     /// When `show_velocity` is true, this field is ignored for data rendering.
+    /// `AutomationTarget::Tempo` 时显示 conductor.tempo lane。
     pub selected_target: AutomationTarget,
     /// When true, render velocity bars from note data instead of automation lanes.
     pub show_velocity: bool,
-    /// When true, render tempo curve from conductor tempo events.
-    pub show_tempo: bool,
     /// Cached index into `MidiFile.automation_lanes` for fast lookup.
     pub lane_index: usize,
     /// Whether the panel content needs to be rebuilt.
@@ -49,7 +48,6 @@ impl Default for AutomationPanelView {
             panel_height: DEFAULT_PANEL_HEIGHT,
             selected_target: AutomationTarget::CC { controller: 7 },
             show_velocity: true,
-            show_tempo: false,
             lane_index: 0,
             dirty: true,
             value_zoom: 1.0,
@@ -84,17 +82,16 @@ impl AutomationPanelView {
     }
 
     /// Hash of all fields that affect GPU rendering output.
-    /// Used as cache key for GPU layers.
+    /// Used as cache key for GPU layers (Layer 0 grid only depends on geometry).
     pub fn render_hash(&self) -> u64 {
-        let h = crate::hash::hash_f32s(&[
+        crate::hash::hash_f32s(&[
             self.base.pixels_per_tick,
             self.base.scroll_x,
             self.base.left_panel_width,
             self.panel_height,
             self.value_zoom,
             self.value_scroll,
-        ]);
-        h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(self.show_tempo as u64)
+        ])
     }
 
     /// 将自动化值转换为面板局部 Y 坐标（像素，0=顶部）。
@@ -138,7 +135,6 @@ mod tests {
         let view = AutomationPanelView::default();
         assert_eq!(view.panel_height, DEFAULT_PANEL_HEIGHT);
         assert!(view.show_velocity);
-        assert!(!view.show_tempo);
         assert_eq!(view.lane_index, 0);
         assert!(view.dirty);
         assert_eq!(view.base.pixels_per_tick, 0.15);

@@ -17,7 +17,7 @@ pub fn show(
     doc: Option<&mut Document>,
     audio: Option<&yinhe_audio::CpalAudioHandle>,
     info_content: &mut Option<InfoContent>,
-    automation_drag_ghost: Option<(u32, u16)>,
+    automation_drag_ghost: Option<(u32, f32)>,
 ) -> bool {
     let Some(doc) = doc else {
         ui.add_space(8.0);
@@ -200,7 +200,7 @@ fn show_track_info(
         ui.horizontal(|ui| {
             ui.label("Tempo 数:");
             ui.label(
-                egui::RichText::new(format!("{}", doc.data.model.conductor.tempo.len()))
+                egui::RichText::new(format!("{}", doc.data.model.conductor.tempo.events.len()))
                     .color(egui::Color32::from_gray(180))
                     .size(13.0),
             );
@@ -432,7 +432,7 @@ fn show_anchor_info(
     lane_idx: usize,
     _event_idx: usize,
     tick: u32,
-    value: u16,
+    value: f32,
     shape: SegmentShape,
     target: &AutomationTarget,
     info_content: &mut Option<InfoContent>,
@@ -481,7 +481,7 @@ fn show_anchor_info(
         let was_dragging = ui.ctx().data(|d| d.get_temp::<bool>(tick_drag_id)).unwrap_or(false);
 
         if dragging && !was_dragging {
-            let before = snapshot_lane_events(doc, track_idx, lane_idx);
+            let before = snapshot_lane_events(doc, track_idx, lane_idx, target);
             ui.ctx().data_mut(|d| {
                 d.insert_temp(before_tick_id, before);
                 d.insert_temp(tick_drag_id, true);
@@ -495,6 +495,7 @@ fn show_anchor_info(
                     yinhe_types::AutomationEdit::Move {
                         track_idx,
                         lane_idx,
+                        target: target.clone(),
                         old_tick: tick,
                         new_tick,
                         new_value: value,
@@ -506,12 +507,13 @@ fn show_anchor_info(
         if !dragging && was_dragging {
             let before = ui.ctx().data(|d| d.get_temp::<Vec<AutomationEvent>>(before_tick_id));
             if let Some(before) = before {
-                let after = snapshot_lane_events(doc, track_idx, lane_idx);
+                let after = snapshot_lane_events(doc, track_idx, lane_idx, target);
                 if before != after {
                     doc.history.push(UndoEntry {
                         action: UndoAction::Automation(AutomationDelta {
                             track_idx: track_idx as usize,
                             lane_idx,
+                            target: target.clone(),
                             before,
                             after,
                         }),
@@ -540,13 +542,13 @@ fn show_anchor_info(
                 .size(11.0)
                 .color(egui::Color32::GRAY),
         );
-        let resp = ui.add(egui::DragValue::new(&mut edit_value).range(0..=max_val as i64).speed(1.0));
+        let resp = ui.add(egui::DragValue::new(&mut edit_value).range(0.0..=max_val as f64).speed(1.0));
 
         let dragging = resp.dragged();
         let was_dragging = ui.ctx().data(|d| d.get_temp::<bool>(val_drag_id)).unwrap_or(false);
 
         if dragging && !was_dragging {
-            let before = snapshot_lane_events(doc, track_idx, lane_idx);
+            let before = snapshot_lane_events(doc, track_idx, lane_idx, target);
             ui.ctx().data_mut(|d| {
                 d.insert_temp(before_val_id, before);
                 d.insert_temp(val_drag_id, true);
@@ -554,12 +556,13 @@ fn show_anchor_info(
         }
 
         if resp.changed() {
-            let new_value = edit_value as u16;
+            let new_value = edit_value as f32;
             if new_value != value {
                 let _actions = doc.apply_automation_edits(vec![
                     yinhe_types::AutomationEdit::Move {
                         track_idx,
                         lane_idx,
+                        target: target.clone(),
                         old_tick: tick,
                         new_tick: tick,
                         new_value,
@@ -571,12 +574,13 @@ fn show_anchor_info(
         if !dragging && was_dragging {
             let before = ui.ctx().data(|d| d.get_temp::<Vec<AutomationEvent>>(before_val_id));
             if let Some(before) = before {
-                let after = snapshot_lane_events(doc, track_idx, lane_idx);
+                let after = snapshot_lane_events(doc, track_idx, lane_idx, target);
                 if before != after {
                     doc.history.push(UndoEntry {
                         action: UndoAction::Automation(AutomationDelta {
                             track_idx: track_idx as usize,
                             lane_idx,
+                            target: target.clone(),
                             before,
                             after,
                         }),
@@ -612,6 +616,7 @@ fn show_anchor_info(
                 yinhe_types::AutomationEdit::CycleShape {
                     track_idx,
                     lane_idx,
+                    target: target.clone(),
                     tick,
                 },
             ]);
@@ -666,12 +671,21 @@ fn push_undo(
     }
 }
 
-fn snapshot_lane_events(doc: &Document, track_idx: u16, lane_idx: usize) -> Vec<AutomationEvent> {
-    doc.data.model.tracks
-        .get(track_idx as usize)
-        .and_then(|t| t.automation_lanes.get(lane_idx))
-        .map(|l| l.events.clone())
-        .unwrap_or_default()
+fn snapshot_lane_events(
+    doc: &Document,
+    track_idx: u16,
+    lane_idx: usize,
+    target: &AutomationTarget,
+) -> Vec<AutomationEvent> {
+    if matches!(target, AutomationTarget::Tempo) {
+        doc.data.model.conductor.tempo.events.clone()
+    } else {
+        doc.data.model.tracks
+            .get(track_idx as usize)
+            .and_then(|t| t.automation_lanes.get(lane_idx))
+            .map(|l| l.events.clone())
+            .unwrap_or_default()
+    }
 }
 
 /// Compute the per-track skip mask and send it to the audio engine.

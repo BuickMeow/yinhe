@@ -1,7 +1,6 @@
 pub(crate) mod data_lines;
 pub(crate) mod decor;
 pub(crate) mod ghost;
-pub(crate) mod tempo;
 mod prepare;
 pub(crate) mod velocity_bars;
 

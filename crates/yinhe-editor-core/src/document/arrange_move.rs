@@ -133,6 +133,7 @@ impl Document {
             sub_actions.push(UndoAction::Automation(AutomationDelta {
                 track_idx: lm.src_track,
                 lane_idx: lm.lane_idx,
+                target: lm.target.clone(),
                 before: before_src,
                 after: src_lane.events.clone(),
             }));
@@ -175,6 +176,7 @@ impl Document {
                 sub_actions.push(UndoAction::Automation(AutomationDelta {
                     track_idx: dst_track_idx,
                     lane_idx: dst_lane_idx,
+                    target: lm.target.clone(),
                     before: before_dst,
                     after: dst_lane.events.clone(),
                 }));

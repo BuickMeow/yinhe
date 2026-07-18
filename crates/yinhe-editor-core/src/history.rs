@@ -46,10 +46,14 @@ pub struct NoteDelta {
 /// Stores the full event list of the affected lane before and after the edit.
 /// Automation lanes typically contain few events (hundreds at most), so
 /// full-snapshot undo is simpler and cheaper than per-event deltas.
+///
+/// `target` 让 `apply_automation_delta` 可以分派到 `track.automation_lanes`
+/// 或 `conductor.tempo`：Tempo 走 conductor 路径，其他走 track 路径。
 #[derive(Clone, Debug)]
 pub struct AutomationDelta {
     pub track_idx: usize,
     pub lane_idx: usize,
+    pub target: yinhe_types::AutomationTarget,
     pub before: Vec<AutomationEvent>,
     pub after: Vec<AutomationEvent>,
 }
@@ -101,6 +105,7 @@ impl UndoAction {
             UndoAction::Automation(delta) => UndoAction::Automation(AutomationDelta {
                 track_idx: delta.track_idx,
                 lane_idx: delta.lane_idx,
+                target: delta.target.clone(),
                 before: delta.after.clone(),
                 after: delta.before.clone(),
             }),

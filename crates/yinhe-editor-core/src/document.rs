@@ -86,7 +86,15 @@ impl Document {
     pub fn empty() -> Self {
         let mut model = YinModel {
             conductor: Arc::new(yinhe_core::ConductorData {
-                tempo: vec![yinhe_core::TempoEvent { tick: 0, bpm: 120.0 }],
+                tempo: yinhe_types::AutomationLane {
+                    target: yinhe_types::AutomationTarget::Tempo,
+                    track: 0,
+                    events: vec![yinhe_types::AutomationEvent {
+                        tick: 0,
+                        value: 120.0,
+                        shape: yinhe_types::SegmentShape::Step,
+                    }],
+                },
                 time_sig: vec![yinhe_types::TimeSigEvent {
                     tick: 0,
                     numerator: 4,

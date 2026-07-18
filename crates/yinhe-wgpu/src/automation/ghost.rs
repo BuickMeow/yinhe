@@ -20,7 +20,7 @@ pub fn build_lane_override(
     lane: &AutomationLane,
     old_tick: u32,
     new_tick: u32,
-    new_value: u16,
+    new_value: f32,
 ) -> AutomationLane {
     let mut events = lane.events.clone();
 
@@ -62,6 +62,7 @@ pub fn build_ghost(
     ghost: AutomationGhost,
     w: f32,
     view: &AutomationPanelView,
+    max_val: f32,
     show_anchors: bool,
     _theme: &GpuTheme,
 ) {
@@ -75,7 +76,7 @@ pub fn build_ghost(
     match ghost {
         AutomationGhost::Move { lane, color } => {
             // 整条 lane 作为 ghost 重新绘制
-            data_lines::build_lane_instances(out, w, view, &lane, color, show_anchors);
+            data_lines::build_lane_instances(out, w, view, &lane, max_val, color, show_anchors);
         }
         AutomationGhost::Curve { start_x, start_y, cur_x, cur_y, color } => {
             push_anchor(out, start_x, start_y, color);

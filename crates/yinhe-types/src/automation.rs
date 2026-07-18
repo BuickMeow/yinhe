@@ -51,7 +51,7 @@ impl SegmentShape {
 /// Identifies an automatable parameter.
 ///
 /// This enum is the unified key for all automation data — CC, PitchBend,
-/// RPN, NRPN, and future VST parameters. Each variant maps to a lane
+/// RPN, NRPN, Tempo, and future VST parameters. Each variant maps to a lane
 /// of `(tick, value)` events sorted by tick.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum AutomationTarget {
@@ -63,6 +63,10 @@ pub enum AutomationTarget {
     Rpn { parameter: u16 },
     /// NRPN (Non-Registered Parameter Number), 14-bit parameter address 0–16383.
     Nrpn { parameter: u16 },
+    /// Tempo (BPM). 全局唯一一条 lane，存于 `ConductorData.tempo`。
+    /// `value` 直接装 bpm（f32）。`max_value` 仅作 fallback，
+    /// panel 层会按实际事件动态计算最大值。
+    Tempo,
 }
 
 impl AutomationTarget {
@@ -80,33 +84,38 @@ impl AutomationTarget {
     }
 
     /// Maximum raw value for this target (used to normalize bar heights).
-    pub fn max_value(&self) -> u16 {
+    ///
+    /// `Tempo` 返回的 240.0 仅作 fallback；panel 层会按实际事件动态
+    /// 计算最大值（Tempo 的实际范围由项目内的事件决定，可能 120 也可能 200）。
+    pub fn max_value(&self) -> f32 {
         match self {
-            AutomationTarget::CC { .. } => 127,
-            AutomationTarget::PitchBend => 16383,
+            AutomationTarget::CC { .. } => 127.0,
+            AutomationTarget::PitchBend => 16383.0,
             AutomationTarget::Rpn { parameter } => match parameter {
-                0 => 127,    // Pitch Bend Sensitivity (semitones)
-                2 => 127,    // Coarse Tune (semitones, -64..+63 stored as 0..127)
-                _ => 16383,  // Fine Tune (14-bit)
+                0 => 127.0,    // Pitch Bend Sensitivity (semitones)
+                2 => 127.0,    // Coarse Tune (semitones, -64..+63 stored as 0..127)
+                _ => 16383.0,  // Fine Tune (14-bit)
             },
-            AutomationTarget::Nrpn { .. } => 16383,
+            AutomationTarget::Nrpn { .. } => 16383.0,
+            AutomationTarget::Tempo => 240.0,
         }
     }
 
     /// Default / center value (used to draw a reference line).
-    pub fn default_value(&self) -> u16 {
+    pub fn default_value(&self) -> f32 {
         match self {
             AutomationTarget::CC { controller } => match controller {
-                10 | 71 | 72 | 73 | 74 => 64,
-                _ => 0,
+                10 | 71 | 72 | 73 | 74 => 64.0,
+                _ => 0.0,
             },
-            AutomationTarget::PitchBend => 8192,
+            AutomationTarget::PitchBend => 8192.0,
             AutomationTarget::Rpn { parameter } => match parameter {
-                0 => 2,     // Pitch Bend Sensitivity (2 semitones)
-                1 => 8192,  // Fine Tune (center of 14-bit range)
-                _ => 0,
+                0 => 2.0,     // Pitch Bend Sensitivity (2 semitones)
+                1 => 8192.0,  // Fine Tune (center of 14-bit range)
+                _ => 0.0,
             },
-            AutomationTarget::Nrpn { .. } => 0,
+            AutomationTarget::Nrpn { .. } => 0.0,
+            AutomationTarget::Tempo => 120.0,
         }
     }
 
@@ -127,7 +136,7 @@ impl AutomationTarget {
     /// 用户在编辑器里新建事件时，本目标默认采用的插值形状。
     ///
     /// - 开关类 CC（Sustain/Sostenuto/Soft/Legato/Portamento）默认 `Step`
-    /// - 其他连续量（Volume/Pan/PB/FineTune/...）默认 `Curve { tension: 0 }`（=直线）
+    /// - 其他连续量（Volume/Pan/PB/FineTune/Tempo/...）默认 `Curve { tension: 0 }`（=直线）
     /// - MIDI 导入时一律使用 `Step`（保留 MIDI 原生语义），见 parser
     pub fn default_shape(&self) -> SegmentShape {
         match self {
@@ -138,6 +147,7 @@ impl AutomationTarget {
             AutomationTarget::PitchBend => SegmentShape::Curve { tension: 0.0 },
             AutomationTarget::Rpn { parameter: _ } => SegmentShape::Curve { tension: 0.0 },
             AutomationTarget::Nrpn { parameter: _ } => SegmentShape::Curve { tension: 0.0 },
+            AutomationTarget::Tempo => SegmentShape::Curve { tension: 0.0 },
         }
     }
 
@@ -164,6 +174,7 @@ impl AutomationTarget {
             AutomationTarget::Nrpn { parameter } => {
                 format!("NRPN {}", parameter)
             }
+            AutomationTarget::Tempo => "Tempo".into(),
         }
     }
 }
@@ -211,8 +222,9 @@ fn cc_name(cc: u8) -> &'static str {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct AutomationEvent {
     pub tick: u32,
-    /// Raw value. Range depends on the target (0–127 for CC, 0–16383 for PB, etc.).
-    pub value: u16,
+    /// 原始值的浮点表示。CC/PB/RPN 仍装原始整数值（如 CC 64.0 = CC=64），
+    /// Tempo 装 bpm（如 120.0）。未来浮点自动化可直接存小数。
+    pub value: f32,
     /// 描述"从本事件到下一事件"的插值形状。
     /// 默认 `Step`（保留 MIDI 原生语义），编辑器新建事件时由
     /// `AutomationTarget::default_shape()` 提供更合适的默认。
@@ -244,6 +256,10 @@ impl AutomationLane {
 /// 用户在 automation 面板上的编辑操作。
 ///
 /// 由 automation 面板产生，由 `Document::apply_automation_edits` 应用。
+///
+/// `target` 字段在所有变体上都存在，让 `apply_automation_edits` 可以直接
+/// 根据 target 分派到 `track.automation_lanes` 或 `conductor.tempo`，
+/// 不依赖 `lane_idx` 来推断存储位置。
 #[derive(Clone, Debug)]
 pub enum AutomationEdit {
     /// 添加新事件。如果 lane 不存在会自动创建。
@@ -251,27 +267,30 @@ pub enum AutomationEdit {
         track_idx: u16,
         target: AutomationTarget,
         tick: u32,
-        value: u16,
+        value: f32,
         shape: SegmentShape,
     },
     /// 移动已有事件。
     Move {
         track_idx: u16,
         lane_idx: usize,
+        target: AutomationTarget,
         old_tick: u32,
         new_tick: u32,
-        new_value: u16,
+        new_value: f32,
     },
     /// 切换已有事件的 shape（双击）。
     CycleShape {
         track_idx: u16,
         lane_idx: usize,
+        target: AutomationTarget,
         tick: u32,
     },
     /// 删除已有事件。
     Delete {
         track_idx: u16,
         lane_idx: usize,
+        target: AutomationTarget,
         tick: u32,
     },
 }
@@ -288,7 +307,7 @@ mod tests {
                 .iter()
                 .map(|&t| AutomationEvent {
                     tick: t,
-                    value: 64,
+                    value: 64.0,
                     shape: SegmentShape::Step,
                 })
                 .collect(),
@@ -348,30 +367,30 @@ mod tests {
 
     #[test]
     fn test_max_and_default_values() {
-        assert_eq!(AutomationTarget::CC { controller: 0 }.max_value(), 127);
-        assert_eq!(AutomationTarget::CC { controller: 0 }.default_value(), 0);
-        assert_eq!(AutomationTarget::CC { controller: 10 }.default_value(), 64);
-        assert_eq!(AutomationTarget::CC { controller: 71 }.default_value(), 64);
-        assert_eq!(AutomationTarget::CC { controller: 72 }.default_value(), 64);
-        assert_eq!(AutomationTarget::CC { controller: 73 }.default_value(), 64);
-        assert_eq!(AutomationTarget::CC { controller: 74 }.default_value(), 64);
-        assert_eq!(AutomationTarget::PitchBend.max_value(), 16383);
-        assert_eq!(AutomationTarget::PitchBend.default_value(), 8192);
+        assert_eq!(AutomationTarget::CC { controller: 0 }.max_value(), 127.0);
+        assert_eq!(AutomationTarget::CC { controller: 0 }.default_value(), 0.0);
+        assert_eq!(AutomationTarget::CC { controller: 10 }.default_value(), 64.0);
+        assert_eq!(AutomationTarget::CC { controller: 71 }.default_value(), 64.0);
+        assert_eq!(AutomationTarget::CC { controller: 72 }.default_value(), 64.0);
+        assert_eq!(AutomationTarget::CC { controller: 73 }.default_value(), 64.0);
+        assert_eq!(AutomationTarget::CC { controller: 74 }.default_value(), 64.0);
+        assert_eq!(AutomationTarget::PitchBend.max_value(), 16383.0);
+        assert_eq!(AutomationTarget::PitchBend.default_value(), 8192.0);
         assert!(AutomationTarget::PitchBend.has_center_line());
         assert!(!AutomationTarget::CC { controller: 0 }.has_center_line());
         assert!(AutomationTarget::CC { controller: 10 }.has_center_line());
         assert!(AutomationTarget::CC { controller: 71 }.has_center_line());
         assert!(!AutomationTarget::CC { controller: 7 }.has_center_line());
-        assert_eq!(AutomationTarget::Rpn { parameter: 0 }.max_value(), 127);
-        assert_eq!(AutomationTarget::Rpn { parameter: 0 }.default_value(), 2);
-        assert_eq!(AutomationTarget::Rpn { parameter: 1 }.max_value(), 16383);
-        assert_eq!(AutomationTarget::Rpn { parameter: 1 }.default_value(), 8192);
+        assert_eq!(AutomationTarget::Rpn { parameter: 0 }.max_value(), 127.0);
+        assert_eq!(AutomationTarget::Rpn { parameter: 0 }.default_value(), 2.0);
+        assert_eq!(AutomationTarget::Rpn { parameter: 1 }.max_value(), 16383.0);
+        assert_eq!(AutomationTarget::Rpn { parameter: 1 }.default_value(), 8192.0);
         assert!(AutomationTarget::Rpn { parameter: 1 }.has_center_line());
-        assert_eq!(AutomationTarget::Rpn { parameter: 2 }.max_value(), 127);
-        assert_eq!(AutomationTarget::Rpn { parameter: 2 }.default_value(), 0);
+        assert_eq!(AutomationTarget::Rpn { parameter: 2 }.max_value(), 127.0);
+        assert_eq!(AutomationTarget::Rpn { parameter: 2 }.default_value(), 0.0);
         assert!(!AutomationTarget::Rpn { parameter: 2 }.has_center_line());
-        assert_eq!(AutomationTarget::Nrpn { parameter: 5 }.max_value(), 16383);
-        assert_eq!(AutomationTarget::Nrpn { parameter: 5 }.default_value(), 0);
+        assert_eq!(AutomationTarget::Nrpn { parameter: 5 }.max_value(), 16383.0);
+        assert_eq!(AutomationTarget::Nrpn { parameter: 5 }.default_value(), 0.0);
     }
 
     #[test]

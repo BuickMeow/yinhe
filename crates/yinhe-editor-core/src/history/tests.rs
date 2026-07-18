@@ -1,8 +1,8 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use yinhe_core::{ConductorData, NoteEvent, TempoEvent, TrackData, YinModel};
-use yinhe_types::TimeSigEvent;
+use yinhe_core::{ConductorData, NoteEvent, TrackData, YinModel};
+use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, SegmentShape, TimeSigEvent};
 
 use crate::edit_state::SelRectState;
 use crate::document::Document;
@@ -13,7 +13,11 @@ use yinhe_core::Selection;
 fn make_doc(name: &str) -> Document {
     let model = YinModel {
         conductor: Arc::new(ConductorData {
-            tempo: vec![TempoEvent { tick: 0, bpm: 120.0 }],
+            tempo: AutomationLane {
+                target: AutomationTarget::Tempo,
+                track: 0,
+                events: vec![AutomationEvent { tick: 0, value: 120.0, shape: SegmentShape::Step }],
+            },
             time_sig: vec![TimeSigEvent {
                 tick: 0,
                 numerator: 4,

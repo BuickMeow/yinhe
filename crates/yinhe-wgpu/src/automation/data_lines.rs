@@ -45,8 +45,8 @@ fn collect_segments(
     // 无可见事件：在 chase 值处画一条横贯网格的横线
     if visible_events.is_empty() {
         let idx = lane.events.partition_point(|e| e.tick < pad_start);
-        let val = if idx > 0 { lane.events[idx - 1].value } else { 0 };
-        let y = view.value_to_y(val as f32, max_val);
+        let val = if idx > 0 { lane.events[idx - 1].value } else { 0.0 };
+        let y = view.value_to_y(val, max_val);
         if w > grid_left_x {
             segs.push(SegSpan { x1: grid_left_x, y1: y, shape: SegmentShape::Step, x2: w, y2: y });
         }
@@ -55,10 +55,10 @@ fn collect_segments(
 
     // chase 值（第一个可见事件之前的值）
     let prev_idx = lane.events.partition_point(|e| e.tick < visible_events[0].tick);
-    let chase_val = if prev_idx > 0 { lane.events[prev_idx - 1].value } else { 0 };
+    let chase_val = if prev_idx > 0 { lane.events[prev_idx - 1].value } else { 0.0 };
     let first_tick = visible_events[0].tick;
     let first_x = x_offset + first_tick as f32 * ppu;
-    let chase_y = view.value_to_y(chase_val as f32, max_val);
+    let chase_y = view.value_to_y(chase_val, max_val);
 
     // chase 段：grid_left → first_event
     if first_x > grid_left_x {
@@ -72,7 +72,7 @@ fn collect_segments(
 
     for evt in visible_events {
         let x2 = x_offset + evt.tick as f32 * ppu;
-        let y2 = view.value_to_y(evt.value as f32, max_val);
+        let y2 = view.value_to_y(evt.value, max_val);
         segs.push(SegSpan { x1: prev_x, y1: prev_y, shape: prev_shape, x2, y2 });
 
         prev_shape = evt.shape;
@@ -99,12 +99,16 @@ fn collect_segments(
 ///
 /// 渲染每条 lane 的线段和锚点。被 ghost 覆盖的 lane 由调用方通过 `skip_lane`
 /// 跳过，本函数只画未被覆盖的 lane。
+///
+/// `max_val` 由调用方传入：Tempo 时为实际事件的最大值（动态），其他 target
+/// 时为 `target.max_value()`。所有 lane 必须共享同一 max_val。
 pub fn build_data_lines(
     out: &mut Vec<CurveInstance>,
     w: f32,
     _h: f32,
     view: &AutomationPanelView,
     lanes: &[&AutomationLane],
+    max_val: f32,
     track_visible: &[bool],
     track_color: &[[f32; 3]],
     show_anchors: bool,
@@ -112,12 +116,7 @@ pub fn build_data_lines(
     highlight_tick: Option<u32>,
     _theme: &GpuTheme,
 ) {
-    if lanes.is_empty() {
-        return;
-    }
-    let target = &lanes[0].target;
-    let max_val = target.max_value() as f32;
-    if max_val <= 0.0 {
+    if lanes.is_empty() || max_val <= 0.0 {
         return;
     }
 
@@ -154,7 +153,7 @@ pub fn build_data_lines(
             let visible_events = lane.events_in_range(pad_start, pad_end);
             for evt in visible_events {
                 let x = x_offset + evt.tick as f32 * ppu;
-                let y = view.value_to_y(evt.value as f32, max_val);
+                let y = view.value_to_y(evt.value, max_val);
                 // 选中锚点渲染为白色高亮
                 let anchor_color = if highlight_tick == Some(evt.tick) {
                     [1.0, 1.0, 1.0, 1.0]
@@ -173,11 +172,10 @@ pub(crate) fn build_lane_instances(
     w: f32,
     view: &AutomationPanelView,
     lane: &AutomationLane,
+    max_val: f32,
     color: [f32; 3],
     show_anchors: bool,
 ) {
-    let target = &lane.target;
-    let max_val = target.max_value() as f32;
     if max_val <= 0.0 {
         return;
     }
@@ -198,7 +196,7 @@ pub(crate) fn build_lane_instances(
         let visible_events = lane.events_in_range(pad_start, pad_end);
         for evt in visible_events {
             let x = x_offset + evt.tick as f32 * ppu;
-            let y = view.value_to_y(evt.value as f32, max_val);
+            let y = view.value_to_y(evt.value, max_val);
             out.push(CurveInstance::circle(x, y, ANCHOR_RADIUS, [color[0], color[1], color[2], 1.0]));
         }
     }

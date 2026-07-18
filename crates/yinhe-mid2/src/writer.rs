@@ -46,9 +46,10 @@ pub fn write_to_bytes(model: &YinModel) -> Result<Vec<u8>, MidiError> {
 fn build_conductor_track<'a>(model: &'a YinModel) -> Vec<TrackEvent<'a>> {
     let mut events: Vec<(u32, TrackEventKind<'a>)> = Vec::new();
 
-    for ev in &model.conductor.tempo {
-        let mpq = if ev.bpm > 0.0 {
-            (60_000_000.0 / ev.bpm).round() as u32
+    for ev in &model.conductor.tempo.events {
+        let bpm = ev.value as f64;
+        let mpq = if bpm > 0.0 {
+            (60_000_000.0 / bpm).round() as u32
         } else {
             500_000
         };
@@ -106,6 +107,8 @@ fn build_track<'a>(track: &'a TrackData, track_idx: u16, model: &'a YinModel) ->
     // Automation lanes → MIDI events
     for lane in &track.automation_lanes {
         for ev in &lane.events {
+            // f32 → u16 一次，所有位运算都用这个整数
+            let v = ev.value.round() as u16;
             match &lane.target {
                 AutomationTarget::CC { controller } => {
                     events.push((
@@ -114,7 +117,7 @@ fn build_track<'a>(track: &'a TrackData, track_idx: u16, model: &'a YinModel) ->
                             channel: ch,
                             message: MidiMessage::Controller {
                                 controller: u7::new(*controller & 0x7F),
-                                value: u7::new((ev.value & 0x7F) as u8),
+                                value: u7::new((v & 0x7F) as u8),
                             },
                         },
                     ));
@@ -125,7 +128,7 @@ fn build_track<'a>(track: &'a TrackData, track_idx: u16, model: &'a YinModel) ->
                         TrackEventKind::Midi {
                             channel: ch,
                             message: MidiMessage::PitchBend {
-                                bend: PitchBend(midly::num::u14::new(ev.value)),
+                                bend: PitchBend(midly::num::u14::new(v)),
                             },
                         },
                     ));
@@ -134,9 +137,9 @@ fn build_track<'a>(track: &'a TrackData, track_idx: u16, model: &'a YinModel) ->
                     let msb = ((parameter >> 8) & 0x7F) as u8;
                     let lsb = (parameter & 0x7F) as u8;
                     let (data_msb, data_lsb) = if lane.target.is_14bit() {
-                        (((ev.value >> 7) & 0x7F) as u8, (ev.value & 0x7F) as u8)
+                        (((v >> 7) & 0x7F) as u8, (v & 0x7F) as u8)
                     } else {
-                        (ev.value as u8, 0u8)
+                        (v as u8, 0u8)
                     };
                     // CC101 (RPN MSB)
                     events.push((ev.tick, TrackEventKind::Midi {
@@ -176,8 +179,8 @@ fn build_track<'a>(track: &'a TrackData, track_idx: u16, model: &'a YinModel) ->
                 AutomationTarget::Nrpn { parameter } => {
                     let msb = ((parameter >> 8) & 0x7F) as u8;
                     let lsb = (parameter & 0x7F) as u8;
-                    let data_msb = ((ev.value >> 7) & 0x7F) as u8;
-                    let data_lsb = (ev.value & 0x7F) as u8;
+                    let data_msb = ((v >> 7) & 0x7F) as u8;
+                    let data_lsb = (v & 0x7F) as u8;
                     // CC99 (NRPN MSB)
                     events.push((ev.tick, TrackEventKind::Midi {
                         channel: ch,
@@ -213,6 +216,9 @@ fn build_track<'a>(track: &'a TrackData, track_idx: u16, model: &'a YinModel) ->
                         }));
                     }
                 }
+                // Tempo 走 `conductor.tempo`（已在 build_conductor_track 写出），
+                // 不应出现在 track.automation_lanes 里。
+                AutomationTarget::Tempo => {}
             }
         }
     }

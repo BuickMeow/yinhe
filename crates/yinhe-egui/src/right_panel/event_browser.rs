@@ -235,7 +235,7 @@ fn render_tree(
     render_leaf_item(ui, "project.json", ICON_DESCRIPTION, 0, SelectedItem::ProjectJson, state);
     render_leaf_item(ui, "mapping.json", ICON_DESCRIPTION, 0, SelectedItem::MappingJson, state);
 
-    let has_tempo = !model.conductor.tempo.is_empty();
+    let has_tempo = !model.conductor.tempo.events.is_empty();
     let has_ts = !model.conductor.time_sig.is_empty();
     if has_tempo || has_ts {
         let cond_expanded = state.expanded_keys.contains(&ArchiveKey::Conductor);
@@ -245,7 +245,7 @@ fn render_tree(
         }
         if cond_expanded {
             if has_tempo {
-                render_leaf_item(ui, &format!("Tempo ({})", model.conductor.tempo.len()), ICON_SPEED, 1, SelectedItem::Tempo, state);
+                render_leaf_item(ui, &format!("Tempo ({})", model.conductor.tempo.events.len()), ICON_SPEED, 1, SelectedItem::Tempo, state);
             }
             if has_ts {
                 render_leaf_item(ui, &format!("TimeSig ({})", model.conductor.time_sig.len()), ICON_SCHEDULE, 1, SelectedItem::TimeSig, state);
@@ -418,7 +418,7 @@ fn show_event_detail(ui: &mut egui::Ui, item: &SelectedItem, doc: &Document, bar
             return;
         }
         SelectedItem::Tempo => {
-            let mut sorted: Vec<&yinhe_core::TempoEvent> = model.conductor.tempo.iter().collect();
+            let mut sorted: Vec<&yinhe_types::AutomationEvent> = model.conductor.tempo.events.iter().collect();
             sorted.sort_by_key(|e| e.tick);
             ui.add_space(4.0);
             ui.label(egui::RichText::new(format!("Tempo ({} 个)", sorted.len())).size(12.0).strong());
@@ -428,7 +428,7 @@ fn show_event_detail(ui: &mut egui::Ui, item: &SelectedItem, doc: &Document, bar
                 cell_text(row, format!("{}", i + 1));
                 cell_text(row, format!("{}", s.tick));
                 cell_text(row, bar_lookup.format(s.tick as u32));
-                cell_text(row, format!("{:.2}", s.bpm));
+                cell_text(row, format!("{:.2}", s.value));
             });
         }
         SelectedItem::TimeSig => {
@@ -503,7 +503,7 @@ fn show_event_detail(ui: &mut egui::Ui, item: &SelectedItem, doc: &Document, bar
                 cell_text(row, format!("{}", i + 1));
                 cell_text(row, format!("{}", e.tick));
                 cell_text(row, bar_lookup.format(e.tick));
-                cell_text(row, format!("{}", e.value));
+                cell_text(row, format!("{}", e.value.round() as i32));
             });
         }
         SelectedItem::PitchBend { track } => {
@@ -525,7 +525,7 @@ fn show_event_detail(ui: &mut egui::Ui, item: &SelectedItem, doc: &Document, bar
                 cell_text(row, format!("{}", i + 1));
                 cell_text(row, format!("{}", e.tick));
                 cell_text(row, bar_lookup.format(e.tick));
-                cell_text(row, format!("{}", e.value));
+                cell_text(row, format!("{}", e.value.round() as i32));
             });
         }
         SelectedItem::ProgramChange { track } => {
@@ -664,7 +664,7 @@ fn show_overview(ui: &mut egui::Ui, model: &yinhe_core::YinModel) {
     ui.colored_label(egui::Color32::from_gray(120), format!("CC: {} 个", cc));
     ui.colored_label(egui::Color32::from_gray(120), format!("弯音: {} 个", pb));
     ui.colored_label(egui::Color32::from_gray(120), format!("音色变更: {} 个", pc));
-    ui.colored_label(egui::Color32::from_gray(120), format!("Tempo: {} 个", model.conductor.tempo.len()));
+    ui.colored_label(egui::Color32::from_gray(120), format!("Tempo: {} 个", model.conductor.tempo.events.len()));
     ui.colored_label(egui::Color32::from_gray(120), format!("拍号: {} 个", model.conductor.time_sig.len()));
     ui.add_space(8.0);
     ui.colored_label(egui::Color32::from_gray(100), "← 点击左侧条目查看详情");
@@ -717,6 +717,8 @@ fn show_track_detail(ui: &mut egui::Ui, idx: u16, track: &yinhe_core::TrackData,
             }
             AutomationTarget::PitchBend => pb_total += lane.events.len(),
             AutomationTarget::Rpn { .. } | AutomationTarget::Nrpn { .. } => rpn_total += lane.events.len(),
+            // Tempo 在 conductor.tempo，不出现在 track.automation_lanes 里。
+            AutomationTarget::Tempo => {}
         }
     }
     if !cc_controllers.is_empty() {
@@ -948,7 +950,11 @@ mod tests {
         use yinhe_types::TimeSigEvent;
 
         let conductor = ConductorData {
-            tempo: vec![],
+            tempo: yinhe_types::AutomationLane {
+                target: yinhe_types::AutomationTarget::Tempo,
+                track: 0,
+                events: vec![],
+            },
             time_sig: vec![
                 TimeSigEvent { tick: 0, numerator: 4, denominator: 2 },
                 TimeSigEvent { tick: 1920, numerator: 3, denominator: 2 },

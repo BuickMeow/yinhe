@@ -50,7 +50,7 @@ pub fn show(
     audio: Option<&yinhe_audio::CpalAudioHandle>,
     event_browser_state: &mut event_browser::EventBrowserState,
     info_content: &mut Option<InfoContent>,
-    automation_drag_ghost: Option<(u32, u16)>,
+    automation_drag_ghost: Option<(u32, f32)>,
 ) -> bool {
     let tab = *right_tab;
     if tab.is_none() {

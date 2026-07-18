@@ -15,9 +15,9 @@ use super::{AutomationEditCtx, ANCHOR_HIT_PX};
 pub(crate) enum AutoDrag {
     /// Pencil 拖拽锚点：`old_tick` 是原始位置，`start_tick/start_value` 是按下时的锚点原始值
     /// （用于判断是否实际移动过，避免单击时产生空 Move）
-    MoveAnchor { old_tick: u32, start_tick: u32, start_value: u16 },
+    MoveAnchor { old_tick: u32, start_tick: u32, start_value: f32 },
     /// Curve 拖拽：起点已固定
-    CurveDraw { start_tick: u32, start_value: u16 },
+    CurveDraw { start_tick: u32, start_value: f32 },
 }
 
 /// 右键点击锚点时记录的编辑信息。
@@ -58,7 +58,7 @@ pub(crate) fn hit_line_on_lane(
         (tick - left.tick) as f32 / (right.tick - left.tick) as f32
     };
     let interp = left.shape.interpolate(t);
-    let interp_value = left.value as f32 + interp * (right.value as f32 - left.value as f32);
+    let interp_value = left.value + interp * (right.value - left.value);
 
     // 转换为像素坐标并检查距离
     let interp_y = panel.value_to_y(interp_value, max_val);
@@ -70,6 +70,8 @@ pub(crate) fn hit_line_on_lane(
 ///
 /// **Ghost 模式**：拖拽中不写模型，只返回 ghost 几何（由 wgpu Layer 3 绘制），
 /// 释放时才提交编辑。
+///
+/// `tempo_lane`：`conductor.tempo`。当 `selected_target == Tempo` 时用作编辑目标。
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn handle_automation_interaction(
     ui: &mut egui::Ui,
@@ -77,17 +79,24 @@ pub(crate) fn handle_automation_interaction(
     panel_rect: egui::Rect,
     panel: &AutomationPanelView,
     automation_lanes: &[AutomationLane],
+    tempo_lane: &AutomationLane,
     track_idx: u16,
     ctx: &AutomationEditCtx<'_>,
     panel_index: usize,
     track_colors: &[[f32; 3]],
     info_content: &mut Option<InfoContent>,
     right_tab: &mut Option<RightTab>,
-) -> (Vec<yinhe_types::AutomationEdit>, Option<AutomationGhost>, Option<(u32, u16)>) {
+) -> (Vec<yinhe_types::AutomationEdit>, Option<AutomationGhost>, Option<(u32, f32)>) {
     let mut edits = Vec::new();
-    let target = &panel.selected_target;
-    let max_val = target.max_value();
-    if max_val == 0 {
+    // target 直接来自 selected_target（Tempo 也是 selected_target 的一种）。
+    let target = panel.selected_target.clone();
+    // Tempo 的 max_val 由实际事件动态计算；其他用 target.max_value()。
+    let max_val = if target == yinhe_types::AutomationTarget::Tempo {
+        tempo_lane.events.iter().map(|e| e.value).fold(0.0_f32, f32::max).max(1.0)
+    } else {
+        target.max_value()
+    };
+    if max_val == 0.0 {
         return (edits, None, None);
     }
 
@@ -125,18 +134,20 @@ pub(crate) fn handle_automation_interaction(
             ctx.bar_line_data,
         ).max(0.0) as u32;
         let y_in_panel = (p.y - panel_rect.min.y).clamp(0.0, panel_rect.height());
-        let value = panel.y_to_value(y_in_panel, max_val as f32)
-            .round()
-            .clamp(0.0, max_val as f32) as u16;
+        let value = panel.y_to_value(y_in_panel, max_val).clamp(0.0, max_val);
         (p, snapped_tick, value)
     });
 
     // 鼠标是否在 grid 区域内
     let in_grid = pos.is_some_and(|p| grid_area.contains(p));
 
-    // 找当前 lane
-    let lane_idx = automation_lanes.iter().position(|l| l.target == *target);
-    let lane = lane_idx.and_then(|i| automation_lanes.get(i));
+    // 找当前 lane：Tempo 模式直接用 tempo_lane；其他模式从 automation_lanes 查。
+    let (lane_idx, lane): (Option<usize>, Option<&AutomationLane>) = if target == yinhe_types::AutomationTarget::Tempo {
+        (Some(0), Some(tempo_lane))
+    } else {
+        let idx = automation_lanes.iter().position(|l| l.target == target);
+        (idx, idx.and_then(|i| automation_lanes.get(i)))
+    };
 
     // 命中检测：找距离鼠标最近的锚点
     let hit_anchor = lane.and_then(|l| {
@@ -148,7 +159,7 @@ pub(crate) fn handle_automation_interaction(
             .and_then(|(i, e)| {
                 let (p, _, _) = mouse_info?;
                 let ex = grid_area.min.x + (e.tick as f32) * ppu - scroll_x;
-                let ey = panel_rect.min.y + panel.value_to_y(e.value as f32, max_val as f32);
+                let ey = panel_rect.min.y + panel.value_to_y(e.value, max_val);
                 let dist = ((ex - p.x).powi(2) + (ey - p.y).powi(2)).sqrt();
                 if dist <= ANCHOR_HIT_PX {
                     Some((i, e.tick))
@@ -175,6 +186,7 @@ pub(crate) fn handle_automation_interaction(
                         edits.push(yinhe_types::AutomationEdit::Delete {
                             track_idx,
                             lane_idx: lidx,
+                            target: target.clone(),
                             tick,
                         });
                     }
@@ -212,7 +224,7 @@ pub(crate) fn handle_automation_interaction(
                     let anchor_value = lane
                         .and_then(|l| l.events.iter().find(|e| e.tick == tick))
                         .map(|e| e.value)
-                        .unwrap_or(0);
+                        .unwrap_or(0.0);
                     ui.ctx().data_mut(|d| {
                         d.insert_temp(drag_id, AutoDrag::MoveAnchor { old_tick: tick, start_tick: tick, start_value: anchor_value });
                     });
@@ -220,7 +232,7 @@ pub(crate) fn handle_automation_interaction(
                     // 不在锚点上：检查是否在线段上，是则添加锚点并开始拖拽
                     if let Some(l) = lane {
                         if let Some((_, tick, value)) = mouse_info {
-                            if hit_line_on_lane(l, tick, value as f32, ppu, scroll_x, grid_area.min.x, panel_rect.min.y, panel, max_val as f32) {
+                            if hit_line_on_lane(l, tick, value, ppu, scroll_x, grid_area.min.x, panel_rect.min.y, panel, max_val) {
                                 edits.push(yinhe_types::AutomationEdit::Add {
                                     track_idx,
                                     target: target.clone(),
@@ -247,6 +259,7 @@ pub(crate) fn handle_automation_interaction(
                                 edits.push(yinhe_types::AutomationEdit::Move {
                                     track_idx,
                                     lane_idx: lidx,
+                                    target: target.clone(),
                                     old_tick,
                                     new_tick,
                                     new_value,
@@ -363,7 +376,7 @@ pub(crate) fn handle_automation_interaction(
         // panel 局部坐标，与 build_data_lines 一致：x = x_offset + tick*ppu
         let x_offset = panel.base.left_panel_width - scroll_x;
         let cur_x = x_offset + cur_tick as f32 * ppu;
-        let cur_y = panel.value_to_y(cur_value as f32, max_val as f32);
+        let cur_y = panel.value_to_y(cur_value, max_val);
         match drag {
             AutoDrag::MoveAnchor { old_tick, start_tick: _, start_value: _ } => {
                 // 用 build_lane_override 生成覆盖后的完整 lane，ghost 层整 lane 绘制。
@@ -375,7 +388,7 @@ pub(crate) fn handle_automation_interaction(
             }
             AutoDrag::CurveDraw { start_tick, start_value } => {
                 let start_x = x_offset + start_tick as f32 * ppu;
-                let start_y = panel.value_to_y(start_value as f32, max_val as f32);
+                let start_y = panel.value_to_y(start_value, max_val);
                 Some(AutomationGhost::Curve { start_x, start_y, cur_x, cur_y, color: track_color })
             }
         }

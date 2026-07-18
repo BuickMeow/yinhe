@@ -3,16 +3,17 @@ use std::collections::BTreeMap;
 use xsynth_core::channel::ControlEvent;
 use xsynth_core::channel_group::ParallelismOptions;
 use yinhe_core::{
-    ConductorData, NoteEvent, PcEvent, ProjectMeta, TempoEvent, TrackData, YinModel,
+    ConductorData, NoteEvent, PcEvent, ProjectMeta, TrackData, YinModel,
 };
 use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, SegmentShape};
 
 fn make_model_with_notes(notes: Vec<(u8, u32, u32, u8, u8)>) -> YinModel {
     let conductor = ConductorData {
-        tempo: vec![TempoEvent {
-            tick: 0,
-            bpm: 120.0,
-        }],
+        tempo: AutomationLane {
+            target: AutomationTarget::Tempo,
+            track: 0,
+            events: vec![AutomationEvent { tick: 0, value: 120.0, shape: SegmentShape::Step }],
+        },
         time_sig: Vec::new(),
     };
     let first_ch = notes.first().map(|n| n.4).unwrap_or(0);
@@ -45,10 +46,11 @@ fn make_model_with_notes(notes: Vec<(u8, u32, u32, u8, u8)>) -> YinModel {
 
 fn make_model_3_tracks() -> YinModel {
     let conductor = ConductorData {
-        tempo: vec![TempoEvent {
-            tick: 0,
-            bpm: 120.0,
-        }],
+        tempo: AutomationLane {
+            target: AutomationTarget::Tempo,
+            track: 0,
+            events: vec![AutomationEvent { tick: 0, value: 120.0, shape: SegmentShape::Step }],
+        },
         time_sig: Vec::new(),
     };
     let mk = |ch: u8, _key: u8| {
@@ -107,10 +109,11 @@ fn test_channels_for_model_basic() {
 #[test]
 fn test_channels_for_model_multi_port() {
     let conductor = ConductorData {
-        tempo: vec![TempoEvent {
-            tick: 0,
-            bpm: 120.0,
-        }],
+        tempo: AutomationLane {
+            target: AutomationTarget::Tempo,
+            track: 0,
+            events: vec![AutomationEvent { tick: 0, value: 120.0, shape: SegmentShape::Step }],
+        },
         time_sig: Vec::new(),
     };
     let t1 = TrackData::new(0, 0);
@@ -167,7 +170,7 @@ fn test_channels_for_model_cc_activates_channel() {
     t.automation_lanes = vec![AutomationLane {
         target: AutomationTarget::CC { controller: 7 },
         track: 0,
-        events: vec![AutomationEvent { tick: 0, value: 100, shape: SegmentShape::Step }],
+        events: vec![AutomationEvent { tick: 0, value: 100.0, shape: SegmentShape::Step }],
     }];
     let mut model = YinModel {
         conductor: Arc::new(conductor),
@@ -246,10 +249,11 @@ fn test_active_mask_length() {
 #[test]
 fn test_audible_index_filters_vel_and_inactive_channel() {
     let conductor = ConductorData {
-        tempo: vec![TempoEvent {
-            tick: 0,
-            bpm: 120.0,
-        }],
+        tempo: AutomationLane {
+            target: AutomationTarget::Tempo,
+            track: 0,
+            events: vec![AutomationEvent { tick: 0, value: 120.0, shape: SegmentShape::Step }],
+        },
         time_sig: Vec::new(),
     };
     let t0 = TrackData::new(0, 0);
@@ -341,10 +345,14 @@ fn test_audible_index_empty_when_all_filtered() {
 #[test]
 fn test_audible_index_uses_per_key_tempo_cursor() {
     let conductor = ConductorData {
-        tempo: vec![
-            TempoEvent { tick: 0, bpm: 120.0 },
-            TempoEvent { tick: 1000, bpm: 60.0 },
-        ],
+        tempo: AutomationLane {
+            target: AutomationTarget::Tempo,
+            track: 0,
+            events: vec![
+                AutomationEvent { tick: 0, value: 120.0, shape: SegmentShape::Step },
+                AutomationEvent { tick: 1000, value: 60.0, shape: SegmentShape::Step },
+            ],
+        },
         time_sig: Vec::new(),
     };
     let t = TrackData::new(0, 0);
@@ -475,10 +483,14 @@ fn make_model_with_controls(
     cc: Vec<(u8, u32, u8)>,
     pb: Vec<(u32, i16)>,
     pc: Vec<(u32, u8)>,
-    rpn: Vec<(u16, u32, u16)>,
+    rpn: Vec<(u16, u32, f32)>,
 ) -> YinModel {
     let conductor = ConductorData {
-        tempo: vec![TempoEvent { tick: 0, bpm: 120.0 }],
+        tempo: AutomationLane {
+            target: AutomationTarget::Tempo,
+            track: 0,
+            events: vec![AutomationEvent { tick: 0, value: 120.0, shape: SegmentShape::Step }],
+        },
         time_sig: Vec::new(),
     };
     let mut t = TrackData::new(0, 0);
@@ -493,7 +505,7 @@ fn make_model_with_controls(
                 .or_default()
                 .push(AutomationEvent {
                     tick,
-                    value: value as u16,
+                    value: value as f32,
                     shape: SegmentShape::Step,
                 });
         }
@@ -512,7 +524,7 @@ fn make_model_with_controls(
             .into_iter()
             .map(|(tick, value)| AutomationEvent {
                 tick,
-                value: (value + 8192) as u16,
+                value: (value + 8192) as f32,
                 shape: SegmentShape::Step,
             })
             .collect();
@@ -600,7 +612,7 @@ fn test_reload_notes_rebuilds_cc_pb_pc_rpn() {
         ],
         vec![(120, 4096), (600, -2048)],
         vec![(0, 1), (480, 2)],
-        vec![(0x0000, 240, 0x0200)],
+        vec![(0x0000, 240, 0x0200 as f32)],
     ));
     engine.handle_command(AudioCommand::ReloadNotes { model: model_b });
 
@@ -652,7 +664,11 @@ fn test_engine_channel_map_multiple_active() {
 /// 创建一个包含多轨道、多音符的大型模型用于性能基准测试。
 fn make_bench_model(tracks: usize, notes_per_track: usize) -> YinModel {
     let conductor = ConductorData {
-        tempo: vec![TempoEvent { tick: 0, bpm: 120.0 }],
+        tempo: AutomationLane {
+            target: AutomationTarget::Tempo,
+            track: 0,
+            events: vec![AutomationEvent { tick: 0, value: 120.0, shape: SegmentShape::Step }],
+        },
         time_sig: Vec::new(),
     };
     let meta = ProjectMeta {

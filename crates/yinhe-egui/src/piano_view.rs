@@ -71,7 +71,7 @@ pub fn show(
     scroll_mode: u32,
     min_border_width: f32,
     note_outline: bool,
-    tempo_events: &[(u32, f64)],
+    tempo_lane: &AutomationLane,
     note_drag_delta: &mut Option<(i64, i32)>,
     sel_rect: &mut yinhe_editor_core::edit_state::SelRectState,
     track_selected: &std::collections::HashSet<u16>,
@@ -83,7 +83,7 @@ pub fn show(
     auto_edit_events: &mut Vec<crate::piano_view::automation_panel::AutomationEdit>,
     info_content: &mut Option<crate::right_panel::InfoContent>,
     right_tab: &mut Option<crate::right_panel::RightTab>,
-    automation_drag_ghost: &mut Option<(u32, u16)>,
+    automation_drag_ghost: &mut Option<(u32, f32)>,
 ) -> Option<PianoViewEvent> {
     // Sense::hover() — no drag ownership. All drag is handled by dedicated
     // ui.interact calls below, each inside its own push_id scope.
@@ -763,7 +763,7 @@ pub fn show(
             min_border_width,
             midi,
             edit_ctx.as_ref(),
-            tempo_events,
+            tempo_lane,
             revision,
             info_content,
             right_tab,

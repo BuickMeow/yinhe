@@ -4,7 +4,6 @@ use yinhe_types::{AutomationLane, AutomationTarget, NoteSource, SegmentShape, Ti
 use super::data_lines;
 use super::decor;
 use super::ghost;
-use super::tempo;
 use super::velocity_bars;
 use crate::renderer::InstanceRenderer;
 use yinhe_types::AutomationPanelView;
@@ -34,16 +33,8 @@ fn target_hash(target: &AutomationTarget) -> u64 {
         AutomationTarget::PitchBend => 1,
         AutomationTarget::Rpn { parameter } => 2 + *parameter as u64,
         AutomationTarget::Nrpn { parameter } => 2 + 0x10000 + *parameter as u64,
+        AutomationTarget::Tempo => u64::MAX,
     }
-}
-
-fn tempo_hash(tempo_events: &[(u32, f64)]) -> u64 {
-    let mut h: u64 = 0;
-    for (tick, bpm) in tempo_events {
-        h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(*tick as u64);
-        h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(bpm.to_bits());
-    }
-    h
 }
 
 /// Hash automation lane 事件内容（tick + value + shape）。
@@ -53,7 +44,7 @@ fn hash_lane(lane: &AutomationLane) -> u64 {
     h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(lane.events.len() as u64);
     for e in &lane.events {
         h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(e.tick as u64);
-        h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(e.value as u64);
+        h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(e.value.to_bits() as u64);
         let shape_bits = match e.shape {
             SegmentShape::Step => 0u64,
             SegmentShape::Curve { tension } => 1 + (tension.to_bits() as u64),
@@ -99,6 +90,9 @@ fn hash_lanes_excluding(lanes: &[&AutomationLane], ghost: Option<&AutomationGhos
 /// `show_anchors`: 在每个事件位置画圆形锚点（铅笔工具下显示）。
 /// `ghost`: 拖拽预览（Layer 2，每帧重建，无缓存）。
 /// `highlight_tick`: 如果非 None，该 tick 位置的锚点渲染为白色高亮（选中锚点）。
+///
+/// `max_val`: 当前 panel 的值域上界。Tempo 由调用方按实际事件动态计算，
+///            其他 target 直接传 `target.max_value()`。
 pub fn prepare(
     renderer: &mut InstanceRenderer,
     width: u32,
@@ -115,7 +109,7 @@ pub fn prepare(
     scroll_mode: u32,
     min_border_width: f32,
     show_anchors: bool,
-    tempo_events: &[(u32, f64)],
+    max_val: f32,
     ghost: Option<AutomationGhost>,
     revision: u64,
     highlight_tick: Option<u32>,
@@ -170,9 +164,10 @@ pub fn prepare(
         );
     });
 
-    // Layer 1: data lines (curve pipeline) — or velocity bars / tempo curve (decor pipeline)
+    // Layer 1: data lines (curve pipeline) — or velocity bars (velocity pipeline)
+    // Tempo 走和 CC/PB/RPN 一样的 curve pipeline，由调用方在 `lanes` 中
+    // 传入 `conductor.tempo` lane。
     let is_velocity = view.show_velocity;
-    let is_tempo = view.show_tempo;
     let tv_hash = crate::hash_bools(track_visible);
     // ghost_lane_hash：被 ghost 覆盖的 lane 内容变化时触发 Layer 1 重建。
     // 这样开始/结束拖拽时固定层会隐藏/恢复该 lane。
@@ -182,13 +177,13 @@ pub fn prepare(
     }).unwrap_or(0);
     // 固定层排除 ghost lane 后计算 lanes_hash（避免拖拽时 lane 原数据未变但 key 变化）
     let fixed_lanes_hash = hash_lanes_excluding(lanes, ghost.as_ref());
+    // Tempo lane：当 selected_target=Tempo 时 lanes 已包含 tempo_lane，fixed_lanes_hash 覆盖；
+    // 其他 target 时 lanes 不含 tempo_lane，不需要 hash（target_hash 已区分模式）。
     let bars_key = layer_cache_key(&[
         vh, wh, tv_hash,
         target_hash(&view.selected_target),
         show_anchors as u64,
         view.show_velocity as u64,
-        view.show_tempo as u64,
-        tempo_hash(tempo_events),
         fixed_lanes_hash,
         ghost_lane_hash,
         revision,
@@ -197,12 +192,7 @@ pub fn prepare(
     let ghost_for_layer1 = ghost.clone();
     let highlight_tick_for_layer1 = highlight_tick;
 
-    if is_tempo {
-        // Tempo: staircase lines via decor pipeline (DrawInstance)
-        renderer.upload_layer(1, bars_key, |out| {
-            tempo::build_tempo_lines(out, w, h, view, tempo_events, &theme);
-        });
-    } else if is_velocity {
+    if is_velocity {
         // Velocity bars via velocity pipeline (VelocityBarInstance, 16B)
         if let Some(midi) = midi {
             renderer.upload_velocity_layer(1, bars_key, |out| {
@@ -211,13 +201,14 @@ pub fn prepare(
         }
     } else {
         // Data lines + anchors via curve pipeline (CurveInstance)
+        // Tempo 与 CC/PB/RPN 共用此路径；max_val 由调用方传入。
         renderer.upload_curve_layer(1, bars_key, |out| {
             let skip_lane = match ghost_for_layer1 {
                 Some(AutomationGhost::Move { ref lane, .. }) => Some(lane),
                 _ => None,
             };
             data_lines::build_data_lines(
-                out, w, h, view, lanes, track_visible, track_colors, show_anchors, skip_lane, highlight_tick_for_layer1, &theme,
+                out, w, h, view, lanes, max_val, track_visible, track_colors, show_anchors, skip_lane, highlight_tick_for_layer1, &theme,
             );
         });
     }
@@ -225,7 +216,7 @@ pub fn prepare(
     // Layer 2: ghost (拖拽预览，无缓存，每帧重建) — curve pipeline
     renderer.upload_curve_layer(2, 0, |out| {
         if let Some(g) = ghost {
-            ghost::build_ghost(out, g, w, view, show_anchors, &theme);
+            ghost::build_ghost(out, g, w, view, max_val, show_anchors, &theme);
         }
     });
 

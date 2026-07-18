@@ -74,7 +74,7 @@ impl AudioModel {
                 t.automation_lanes
                     .iter()
                     .find(|l| matches!(l.target, yinhe_types::AutomationTarget::CC { controller: 0 }))
-                    .map(|lane| lane.events.iter().map(|e| (e.value & 0x7F) as u8).collect())
+                    .map(|lane| lane.events.iter().map(|e| (e.value.round() as u16 & 0x7F) as u8).collect())
                     .unwrap_or_default()
             })
             .collect();
@@ -140,14 +140,14 @@ pub(crate) fn flatten_automation_to_cc_events(
                     let tick1 = e.tick;
                     let tick2 = next.tick;
                     if tick2 > tick1 && !matches!(e.shape, SegmentShape::Step) {
-                        let v1 = e.value as f32;
-                        let v2 = next.value as f32;
+                        let v1 = e.value;
+                        let v2 = next.value;
                         let span = (tick2 - tick1) as f32;
                         let mut t = tick1.saturating_add(density);
                         while t < tick2 {
                             let frac = (t - tick1) as f32 / span;
                             let f = e.shape.interpolate(frac);
-                            let v = (v1 + (v2 - v1) * f).round() as u16;
+                            let v = v1 + (v2 - v1) * f;
                             let s = (model.tempo_map.tick_to_seconds(t as u64) * sr) as u64;
                             emit_automation_event(&lane.target, v, s, channel, &mut cc_events);
                             t = t.saturating_add(density);
@@ -191,17 +191,19 @@ fn dispatch_priority(event: &ChannelAudioEvent) -> u8 {
 /// 将单个 automation 值转换成 XSynth 事件并推入 `out`。
 fn emit_automation_event(
     target: &AutomationTarget,
-    value: u16,
+    value: f32,
     sample: u64,
     channel: u32,
     out: &mut Vec<SortedCC>,
 ) {
+    // f32 → u16 一次，所有位运算都用这个整数
+    let v = value.round() as u16;
     match target {
         AutomationTarget::CC { controller } => {
             out.push(SortedCC {
                 sample, channel,
                 event: ChannelAudioEvent::Control(ControlEvent::Raw(
-                    *controller, (value & 0x7F) as u8,
+                    *controller, (v & 0x7F) as u8,
                 )),
             });
         }
@@ -209,7 +211,7 @@ fn emit_automation_event(
             out.push(SortedCC {
                 sample, channel,
                 event: ChannelAudioEvent::Control(ControlEvent::PitchBendValue(
-                    (value as f32 - 8192.0) / 8192.0,
+                    (value - 8192.0) / 8192.0,
                 )),
             });
         }
@@ -218,18 +220,18 @@ fn emit_automation_event(
                 0 => {
                     out.push(SortedCC {
                         sample, channel,
-                        event: ChannelAudioEvent::Control(ControlEvent::PitchBendSensitivity(value as f32)),
+                        event: ChannelAudioEvent::Control(ControlEvent::PitchBendSensitivity(value)),
                     });
                 }
                 1 => {
-                    let fine = (value as f32 - 8192.0) / 8192.0 * 100.0;
+                    let fine = (value - 8192.0) / 8192.0 * 100.0;
                     out.push(SortedCC {
                         sample, channel,
                         event: ChannelAudioEvent::Control(ControlEvent::FineTune(fine)),
                     });
                 }
                 2 => {
-                    let coarse = value as f32 - 64.0;
+                    let coarse = value - 64.0;
                     out.push(SortedCC {
                         sample, channel,
                         event: ChannelAudioEvent::Control(ControlEvent::CoarseTune(coarse)),
@@ -240,9 +242,9 @@ fn emit_automation_event(
                     let msb = ((parameter >> 8) & 0x7F) as u8;
                     let lsb = (parameter & 0x7F) as u8;
                     let (data_msb, data_lsb) = if target.is_14bit() {
-                        (((value >> 7) & 0x7F) as u8, (value & 0x7F) as u8)
+                        (((v >> 7) & 0x7F) as u8, (v & 0x7F) as u8)
                     } else {
-                        (value as u8, 0u8)
+                        (v as u8, 0u8)
                     };
                     out.push(SortedCC { sample, channel, event: ChannelAudioEvent::Control(ControlEvent::Raw(101, msb)) });
                     out.push(SortedCC { sample, channel, event: ChannelAudioEvent::Control(ControlEvent::Raw(100, lsb)) });
@@ -256,8 +258,8 @@ fn emit_automation_event(
         AutomationTarget::Nrpn { parameter } => {
             let msb = ((parameter >> 8) & 0x7F) as u8;
             let lsb = (parameter & 0x7F) as u8;
-            let data_msb = ((value >> 7) & 0x7F) as u8;
-            let data_lsb = (value & 0x7F) as u8;
+            let data_msb = ((v >> 7) & 0x7F) as u8;
+            let data_lsb = (v & 0x7F) as u8;
             out.push(SortedCC { sample, channel, event: ChannelAudioEvent::Control(ControlEvent::Raw(99, msb)) });
             out.push(SortedCC { sample, channel, event: ChannelAudioEvent::Control(ControlEvent::Raw(98, lsb)) });
             out.push(SortedCC { sample, channel, event: ChannelAudioEvent::Control(ControlEvent::Raw(6, data_msb)) });
@@ -265,19 +267,26 @@ fn emit_automation_event(
                 out.push(SortedCC { sample, channel, event: ChannelAudioEvent::Control(ControlEvent::Raw(38, data_lsb)) });
             }
         }
+        // Tempo 走 `conductor.tempo` 而非 `track.automation_lanes`，
+        // 由 `build_tempo_map` 消费，不进入 CC 事件流。
+        AutomationTarget::Tempo => {}
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use yinhe_core::{ConductorData, ProjectMeta, TempoEvent, TrackData, YinModel};
+    use yinhe_core::{ConductorData, ProjectMeta, TrackData, YinModel};
     use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, SegmentShape};
 
     /// 构建 1 轨道模型，给定 automation lanes。
     fn model_with_lanes(lanes: Vec<AutomationLane>) -> YinModel {
         let conductor = ConductorData {
-            tempo: vec![TempoEvent { tick: 0, bpm: 120.0 }],
+            tempo: AutomationLane {
+                target: AutomationTarget::Tempo,
+                track: 0,
+                events: vec![AutomationEvent { tick: 0, value: 120.0, shape: SegmentShape::Step }],
+            },
             time_sig: Vec::new(),
         };
         let mut t = TrackData::new(0, 0);
@@ -310,7 +319,7 @@ mod tests {
                 track: 0,
                 events: vec![AutomationEvent {
                     tick: 0,
-                    value: 16383,
+                    value: 16383.0,
                     shape: SegmentShape::Step,
                 }],
             },
@@ -319,7 +328,7 @@ mod tests {
                 track: 0,
                 events: vec![AutomationEvent {
                     tick: 0,
-                    value: 24,
+                    value: 24.0,
                     shape: SegmentShape::Step,
                 }],
             },
@@ -355,7 +364,7 @@ mod tests {
                 track: 0,
                 events: vec![AutomationEvent {
                     tick: 0,
-                    value: 16383,
+                    value: 16383.0,
                     shape: SegmentShape::Step,
                 }],
             },
@@ -365,7 +374,7 @@ mod tests {
                 track: 0,
                 events: vec![AutomationEvent {
                     tick: 0,
-                    value: 100,
+                    value: 100.0,
                     shape: SegmentShape::Step,
                 }],
             },
@@ -399,7 +408,7 @@ mod tests {
                 track: 0,
                 events: vec![AutomationEvent {
                     tick: 0,
-                    value: 16383,
+                    value: 16383.0,
                     shape: SegmentShape::Step,
                 }],
             },
@@ -408,7 +417,7 @@ mod tests {
                 track: 0,
                 events: vec![AutomationEvent {
                     tick: 0,
-                    value: 100,
+                    value: 100.0,
                     shape: SegmentShape::Step,
                 }],
             },
@@ -442,7 +451,7 @@ mod tests {
                 track: 0,
                 events: vec![AutomationEvent {
                     tick: 0,
-                    value: 16383,
+                    value: 16383.0,
                     shape: SegmentShape::Step,
                 }],
             },
@@ -451,7 +460,7 @@ mod tests {
                 track: 0,
                 events: vec![AutomationEvent {
                     tick: 0,
-                    value: 9000,
+                    value: 9000.0,
                     shape: SegmentShape::Step,
                 }],
             },
@@ -460,7 +469,7 @@ mod tests {
                 track: 0,
                 events: vec![AutomationEvent {
                     tick: 0,
-                    value: 70,
+                    value: 70.0,
                     shape: SegmentShape::Step,
                 }],
             },

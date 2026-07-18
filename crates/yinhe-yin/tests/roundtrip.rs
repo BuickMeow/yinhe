@@ -3,17 +3,21 @@
 use std::sync::Arc;
 
 use yinhe_core::{
-    ConductorData, NoteEvent, PcEvent, ProjectMeta, TempoEvent, TrackData, YinModel,
+    ConductorData, NoteEvent, PcEvent, ProjectMeta, TrackData, YinModel,
 };
 use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, SegmentShape, TimeSigEvent};
 use yinhe_yin::{load_yin, load_yin_bytes, save_yin, save_yin_bytes};
 
 fn build_complex_model() -> YinModel {
     let conductor = ConductorData {
-        tempo: vec![
-            TempoEvent { tick: 0, bpm: 120.0 },
-            TempoEvent { tick: 1920, bpm: 60.0 },
-        ],
+        tempo: AutomationLane {
+            target: AutomationTarget::Tempo,
+            track: 0,
+            events: vec![
+                AutomationEvent { tick: 0, value: 120.0, shape: SegmentShape::Step },
+                AutomationEvent { tick: 1920, value: 60.0, shape: SegmentShape::Step },
+            ],
+        },
         time_sig: vec![
             TimeSigEvent { tick: 0, numerator: 4, denominator: 2 },
             TimeSigEvent { tick: 3840, numerator: 3, denominator: 2 },
@@ -36,37 +40,37 @@ fn build_complex_model() -> YinModel {
             target: AutomationTarget::CC { controller: 7 },
             track: 0,
             events: vec![
-                AutomationEvent { tick: 0, value: 100, shape: SegmentShape::Step },
-                AutomationEvent { tick: 480, value: 80, shape: SegmentShape::Step },
+                AutomationEvent { tick: 0, value: 100.0, shape: SegmentShape::Step },
+                AutomationEvent { tick: 480, value: 80.0, shape: SegmentShape::Step },
             ],
         },
         AutomationLane {
             target: AutomationTarget::CC { controller: 11 },
             track: 0,
             events: vec![
-                AutomationEvent { tick: 100, value: 64, shape: SegmentShape::Step },
+                AutomationEvent { tick: 100, value: 64.0, shape: SegmentShape::Step },
             ],
         },
         AutomationLane {
             target: AutomationTarget::PitchBend,
             track: 0,
             events: vec![
-                AutomationEvent { tick: 200, value: 2000, shape: SegmentShape::Step },
-                AutomationEvent { tick: 400, value: 1000, shape: SegmentShape::Step }, // 8192 - 1000 = 7192 → 1000
+                AutomationEvent { tick: 200, value: 2000.0, shape: SegmentShape::Step },
+                AutomationEvent { tick: 400, value: 1000.0, shape: SegmentShape::Step }, // 8192 - 1000 = 7192 → 1000
             ],
         },
         AutomationLane {
             target: AutomationTarget::Rpn { parameter: 0x0000 },
             track: 0,
             events: vec![
-                AutomationEvent { tick: 100, value: 2, shape: SegmentShape::Step },
+                AutomationEvent { tick: 100, value: 2.0, shape: SegmentShape::Step },
             ],
         },
         AutomationLane {
             target: AutomationTarget::Rpn { parameter: 0x0001 },
             track: 0,
             events: vec![
-                AutomationEvent { tick: 200, value: 8192, shape: SegmentShape::Step },
+                AutomationEvent { tick: 200, value: 8192.0, shape: SegmentShape::Step },
             ],
         },
     ];
@@ -126,8 +130,8 @@ fn roundtrip_in_memory() {
     assert_eq!(m2.meta.artist, "Jieneng");
     assert_eq!(m2.meta.ppq, 480);
 
-    assert_eq!(m2.conductor.tempo.len(), 2);
-    assert!((m2.conductor.tempo[1].bpm - 60.0).abs() < 1e-6);
+    assert_eq!(m2.conductor.tempo.events.len(), 2);
+    assert!((m2.conductor.tempo.events[1].value - 60.0).abs() < 1e-6);
     assert_eq!(m2.conductor.time_sig.len(), 2);
 
     assert_eq!(m2.tracks.len(), 3);
@@ -160,7 +164,7 @@ fn roundtrip_in_memory() {
         .find(|l| l.target == AutomationTarget::PitchBend)
         .expect("PitchBend lane");
     assert_eq!(pb.events.len(), 2);
-    assert_eq!(pb.events[1].value, 1000);
+    assert_eq!(pb.events[1].value, 1000.0);
 
     assert_eq!(lead.program_change.len(), 1);
     assert_eq!(lead.program_change[0].program, 5);
@@ -178,7 +182,7 @@ fn roundtrip_in_memory() {
         .iter()
         .find(|l| l.target == AutomationTarget::Rpn { parameter: 0x0001 })
         .expect("RPN 0x0001 lane");
-    assert_eq!(rpn1.events[0].value, 8192);
+    assert_eq!(rpn1.events[0].value, 8192.0);
 
     let bass = m2.tracks.iter().find(|t| t.name == "Bass").expect("Bass");
     let bass_idx = m2.tracks.iter().position(|t| t.name == "Bass").unwrap() as u16;

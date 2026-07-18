@@ -15,9 +15,9 @@ use std::sync::Arc;
 use rayon::prelude::*;
 
 use yinhe_core::{
-    ConductorData, NoteEvent, PcEvent, ProjectMeta, TempoEvent, TrackData, YinModel,
+    ConductorData, NoteEvent, PcEvent, ProjectMeta, TrackData, YinModel,
 };
-use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, TimeSigEvent};
+use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, SegmentShape, TimeSigEvent};
 
 use crate::encoding::MidiImportEncoding;
 use crate::error::MidiError;
@@ -167,7 +167,7 @@ fn ensure_conductor_track(model: &mut YinModel) {
 // =========================================================
 
 fn collect_conductor(track_iter: midly::TrackIter) -> Result<ConductorData, MidiError> {
-    let mut tempo: Vec<TempoEvent> = Vec::new();
+    let mut tempo_events: Vec<AutomationEvent> = Vec::new();
     let mut time_sig: Vec<TimeSigEvent> = Vec::new();
 
     for track_result in track_iter {
@@ -184,7 +184,12 @@ fn collect_conductor(track_iter: midly::TrackIter) -> Result<ConductorData, Midi
                     } else {
                         60_000_000.0 / mpq as f64
                     };
-                    tempo.push(TempoEvent { tick, bpm });
+                    // MIDI 导入一律使用 Step（保留 MIDI 原生语义）。
+                    tempo_events.push(AutomationEvent {
+                        tick,
+                        value: bpm as f32,
+                        shape: SegmentShape::Step,
+                    });
                 }
                 midly::TrackEventKind::Meta(midly::MetaMessage::TimeSignature(num, den, _, _)) => {
                     time_sig.push(TimeSigEvent {
@@ -198,12 +203,19 @@ fn collect_conductor(track_iter: midly::TrackIter) -> Result<ConductorData, Midi
         }
     }
 
-    tempo.sort_by_key(|e| e.tick);
-    tempo.dedup_by_key(|e| e.tick);
+    tempo_events.sort_by_key(|e| e.tick);
+    tempo_events.dedup_by_key(|e| e.tick);
     time_sig.sort_by_key(|e| e.tick);
     time_sig.dedup_by_key(|e| e.tick);
 
-    Ok(ConductorData { tempo, time_sig })
+    Ok(ConductorData {
+        tempo: AutomationLane {
+            target: AutomationTarget::Tempo,
+            track: 0,
+            events: tempo_events,
+        },
+        time_sig,
+    })
 }
 
 // =========================================================
@@ -357,7 +369,7 @@ fn parse_track(
                                     AutomationTarget::CC { controller: cc },
                                     AutomationEvent {
                                         tick: current_tick,
-                                        value: val as u16,
+                                        value: val as f32,
                                         ..Default::default()
                                     },
                                 ));
@@ -395,7 +407,7 @@ fn parse_track(
                             AutomationTarget::PitchBend,
                             AutomationEvent {
                                 tick: current_tick,
-                                value: bend.0.as_int(), // raw 0–16383
+                                value: bend.0.as_int() as f32, // raw 0–16383
                                 ..Default::default()
                             },
                         ));
@@ -425,13 +437,13 @@ fn parse_track(
         if let Some((val, tick)) = bank.msb {
             auto_events.push((
                 AutomationTarget::CC { controller: 0 },
-                AutomationEvent { tick, value: val as u16, ..Default::default() },
+                AutomationEvent { tick, value: val as f32, ..Default::default() },
             ));
         }
         if let Some((val, tick)) = bank.lsb {
             auto_events.push((
                 AutomationTarget::CC { controller: 32 },
-                AutomationEvent { tick, value: val as u16, ..Default::default() },
+                AutomationEvent { tick, value: val as f32, ..Default::default() },
             ));
         }
     }
@@ -497,9 +509,9 @@ fn handle_cc6(
         let parameter = ((msb as u16) << 8) | lsb as u16;
         let target = AutomationTarget::Rpn { parameter };
         let value = if target.is_14bit() {
-            (val as u16) << 7
+            ((val as u16) << 7) as f32
         } else {
-            val as u16
+            val as f32
         };
         auto_events.push((
             target,
@@ -511,7 +523,7 @@ fn handle_cc6(
             AutomationTarget::Nrpn { parameter },
             AutomationEvent {
                 tick: current_tick,
-                value: (val as u16) << 7,
+                value: ((val as u16) << 7) as f32,
                 ..Default::default()
             },
         ));
@@ -520,7 +532,7 @@ fn handle_cc6(
             AutomationTarget::CC { controller: 6 },
             AutomationEvent {
                 tick: current_tick,
-                value: val as u16,
+                value: val as f32,
                 ..Default::default()
             },
         ));
@@ -546,17 +558,19 @@ fn handle_cc38(
                 .iter_mut()
                 .rfind(|(t, e)| *t == target && e.tick == current_tick)
             {
-                last.value = (last.value & 0xFF80) | (val as u16);
+                // 把已有的 14-bit 高 7 位 OR 上当前 7-bit 低字节
+                let v = last.value.round() as u16;
+                last.value = ((v & 0xFF80) | (val as u16)) as f32;
             } else {
                 auto_events.push((
                     target,
-                    AutomationEvent { tick: current_tick, value: val as u16, ..Default::default() },
+                    AutomationEvent { tick: current_tick, value: val as f32, ..Default::default() },
                 ));
             }
         } else {
             auto_events.push((
                 AutomationTarget::CC { controller: 38 },
-                AutomationEvent { tick: current_tick, value: val as u16, ..Default::default() },
+                AutomationEvent { tick: current_tick, value: val as f32, ..Default::default() },
             ));
         }
     } else if let (Some(msb), Some(lsb)) = (nrpn.msb, nrpn.lsb) {
@@ -566,13 +580,14 @@ fn handle_cc38(
             .iter_mut()
             .rfind(|(t, e)| *t == target && e.tick == current_tick)
         {
-            last.value = (last.value & 0xFF80) | (val as u16);
+            let v = last.value.round() as u16;
+            last.value = ((v & 0xFF80) | (val as u16)) as f32;
         } else {
             auto_events.push((
                 target,
                 AutomationEvent {
                     tick: current_tick,
-                    value: val as u16,
+                    value: val as f32,
                     ..Default::default()
                 },
             ));
@@ -582,7 +597,7 @@ fn handle_cc38(
             AutomationTarget::CC { controller: 38 },
             AutomationEvent {
                 tick: current_tick,
-                value: val as u16,
+                value: val as f32,
                 ..Default::default()
             },
         ));
