@@ -297,9 +297,12 @@ fn vs_main_note(
     }
     out.color = base_color;
 
-    // No rounded corners; border based on vertical dimension (key/lane height)
+    // No rounded corners; border based on vertical dimension (key/lane height).
+    // PR (mode==1): border = 0.05 * pixel_h (narrowed from 0.1).
+    // AR (mode==2): border = 0.1 * pixel_h (unchanged).
     out.radius = 0.0;
-    out.border_width = select(0.0, max(0.1 * pixel_h, u.min_border_width), u.note_outline != 0u);
+    let border_factor = select(0.1, 0.05, u.mode == 1u);
+    out.border_width = select(0.0, max(border_factor * pixel_h, u.min_border_width), u.note_outline != 0u);
 
     out.uv = uv[vertex_index];
     out.half_size = vec2<f32>(pixel_w, pixel_h) * 0.5;
@@ -387,9 +390,10 @@ fn vs_main_velocity(
     }
     out.color = base_color;
 
-    // Unified border width (no rounded corners)
+    // Unified border width: follows x-axis zoom (ppu) so border stays proportional
+    // to bar width at any zoom level. min_border_width acts as floor.
     out.radius = 0.0;
-    out.border_width = u.min_border_width;
+    out.border_width = max(u.pixels_per_tick, u.min_border_width);
 
     out.uv = uv[vertex_index];
     out.half_size = vec2<f32>(pixel_w, pixel_h) * 0.5;
