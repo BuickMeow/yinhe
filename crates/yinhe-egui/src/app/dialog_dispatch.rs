@@ -7,11 +7,6 @@ impl App {
     pub(in crate::app) fn show_dialogs(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
 
-        // 记录用户手动触发的对话框打开状态，用于"再次点击按钮→前台"的行为
-        let prev_settings = self.audio_settings.show_settings;
-        let prev_mem = self.show_mem_breakdown;
-        let prev_export_settings = self.export.show_bit_depth;
-
         // ── GPU device-lost 重启提示 ──
         // 任一 RenderContext 报告 device lost 都触发：同一 device 上后注册的回调
         // 会替换先注册的，所以需要 OR 多个 RenderContext 的结果。详见
@@ -186,27 +181,6 @@ impl App {
             &mut self.export.sample_rate,
         ) {
             self.start_export();
-        }
-
-        // ── 用户手动触发对话框的首次打开 → raise_to_front ──
-        // 不自动每帧置顶，仅在按钮点击后的第一帧发送 raise 命令。
-        if self.audio_settings.show_settings && !prev_settings {
-            crate::chrome::dialog::raise_viewport(
-                &ctx,
-                egui::ViewportId::from_hash_of("settings_dialog"),
-            );
-        }
-        if self.show_mem_breakdown && !prev_mem {
-            crate::chrome::dialog::raise_viewport(
-                &ctx,
-                egui::ViewportId::from_hash_of("memory_breakdown_dialog"),
-            );
-        }
-        if self.export.show_bit_depth && !prev_export_settings {
-            crate::chrome::dialog::raise_viewport(
-                &ctx,
-                egui::ViewportId::from_hash_of("export_settings_dialog"),
-            );
         }
     }
 

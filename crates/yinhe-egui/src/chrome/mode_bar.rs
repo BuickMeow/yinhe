@@ -286,8 +286,13 @@ pub fn show(
                         ui.spacing_mut().item_spacing.x = 4.0;
                         metric(ui, "CPU", &format!("{:.1}%", cpu_usage));
                         ui.add_space(12.0);
+                        let ctx_clone = ui.ctx().clone();
                         metric_clickable(ui, "MEM", &format!("{:.1} MB", mem_mb), || {
                             *show_mem_breakdown = true;
+                            crate::chrome::dialog::raise_viewport(
+                                &ctx_clone,
+                                egui::ViewportId::from_hash_of("memory_breakdown_dialog"),
+                            );
                         });
                         ui.add_space(12.0);
                         metric(ui, "FPS", &format!("{:.1}", fps));

@@ -317,13 +317,17 @@ impl App {
                 self.export_midi_dialog();
             }
             transport_bar::FileAction::ExportAudio => {
-                self.export_audio_dialog();
+                self.export_audio_dialog(ctx);
             }
             transport_bar::FileAction::Exit => {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             }
             transport_bar::FileAction::Settings => {
                 self.audio_settings.show_settings = true;
+                crate::chrome::dialog::raise_viewport(
+                    ctx,
+                    egui::ViewportId::from_hash_of("settings_dialog"),
+                );
             }
         }
     }
@@ -459,7 +463,7 @@ impl App {
         }
     }
 
-    fn export_audio_dialog(&mut self) {
+    fn export_audio_dialog(&mut self, ctx: &egui::Context) {
         if self.active_doc.is_none() {
             return;
         }
@@ -470,6 +474,10 @@ impl App {
 
         // Show export settings dialog first
         self.export.show_bit_depth = true;
+        crate::chrome::dialog::raise_viewport(
+            ctx,
+            egui::ViewportId::from_hash_of("export_settings_dialog"),
+        );
     }
 
     /// Called after the bit-depth dialog is confirmed.
