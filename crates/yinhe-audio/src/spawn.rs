@@ -331,7 +331,6 @@ pub fn spawn_cpal_audio(
     let renderer_duration = Arc::clone(&renderer_state.duration_samples);
     let initialized = Arc::clone(&renderer_state.initialized);
     let reset_generation = Arc::clone(&renderer_state.reset_generation);
-    let reset_ack = Arc::clone(&renderer_state.reset_ack);
 
     let shutdown = Arc::new(AtomicBool::new(false));
     let _renderer_handle = spawn_renderer(
@@ -355,7 +354,7 @@ pub fn spawn_cpal_audio(
     let mut acknowledged_generation = 0u64;
 
     // cpal 流错误回调：用 tracing 而不是 eprintln!，同时置 stream_error 标志，
-    // UI 每帧查询后弹出"需要重启"对话框。错误不可逆，置位后不再清零。
+    // UI 每帧查询后弹出对话框。错误不可逆，置位后不再清零。
     let stream_error_flag = Arc::clone(&stream_error);
     let stream = device
         .build_output_stream(
@@ -367,7 +366,6 @@ pub fn spawn_cpal_audio(
                         ring_consumer.clear();
                         consumer_sample_position = renderer_position.load(Ordering::Acquire);
                         acknowledged_generation = generation;
-                        reset_ack.store(generation, Ordering::Release);
                     }
 
                     if initialized.load(Ordering::Acquire) {

@@ -20,8 +20,10 @@ pub(crate) struct RendererSharedState {
     pub(crate) playing: Arc<AtomicBool>,
     pub(crate) duration_samples: Arc<AtomicU64>,
     pub(crate) initialized: Arc<AtomicBool>,
+    /// 每次 seek/reload 等需要让 cpal 回调清 ring 的操作都会 `fetch_add(1)`。
+    /// cpal 回调入口对比自己记录的 acknowledged_generation，不一致就 clear ring。
+    /// 生产者**不再等 ack** —— cpal 回调停了的话，等 ack 会永久卡死 renderer（P0-3）。
     pub(crate) reset_generation: Arc<AtomicU64>,
-    pub(crate) reset_ack: Arc<AtomicU64>,
 }
 
 impl RendererSharedState {
@@ -32,7 +34,6 @@ impl RendererSharedState {
             duration_samples: Arc::new(AtomicU64::new(0)),
             initialized: Arc::new(AtomicBool::new(false)),
             reset_generation: Arc::new(AtomicU64::new(0)),
-            reset_ack: Arc::new(AtomicU64::new(0)),
         }
     }
 }
@@ -301,12 +302,6 @@ impl AudioRenderer {
             return false;
         }
 
-        if self.state.reset_generation.load(Ordering::Acquire)
-            != self.state.reset_ack.load(Ordering::Acquire)
-        {
-            return false;
-        }
-
         let target_samples = TARGET_BUFFER_FRAMES * STEREO_CHANNELS;
         if self.ring.len() >= target_samples {
             return false;
@@ -340,12 +335,9 @@ impl AudioRenderer {
         self.state
             .producer_sample_position
             .store(self.engine.sample_position(), Ordering::Release);
-        let generation = self.state.reset_generation.fetch_add(1, Ordering::AcqRel) + 1;
-        while self.state.reset_ack.load(Ordering::Acquire) != generation
-            && !self.shutdown.load(Ordering::Relaxed)
-        {
-            thread::sleep(WAKE_SLEEP);
-        }
+        // 推 generation，cpal 回调入口看到新 generation 会 clear ring 并对齐位置。
+        // 不等 ack —— cpal 回调停了的话，等 ack 会永久卡死 renderer（P0-3 修复）。
+        self.state.reset_generation.fetch_add(1, Ordering::AcqRel);
     }
 
     fn publish_state(&self) {
