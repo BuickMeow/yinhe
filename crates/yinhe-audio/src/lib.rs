@@ -14,4 +14,7 @@ pub mod spawn;
 #[cfg(feature = "gpu")]
 pub use yinhe_synth as synth;
 
-pub use spawn::{AudioCommand, AudioHandle, CpalAudioHandle, channels_for_model, spawn_cpal_audio};
+pub use spawn::{
+    AudioCommand, AudioHandle, CpalAudioHandle, channels_for_model, list_output_devices,
+    spawn_cpal_audio,
+};

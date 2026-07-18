@@ -89,6 +89,7 @@ impl App {
             num_ch,
             active_mask,
             buffer_size,
+            self.audio_settings.output_device_name.as_deref(),
             #[cfg(feature = "gpu")]
             self.audio_settings.use_gpu_synth,
         ) {

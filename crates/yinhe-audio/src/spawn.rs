@@ -288,16 +288,35 @@ pub(crate) fn spawn_worker(
     Ok((cmd_tx, result_rx))
 }
 
+/// 列出系统所有可用输出设备的描述名（cpal `Device::description()`）。
+///
+/// 用于设置面板和"音频设备切换"对话框。任何错误都被吞掉返回空 Vec ——
+/// 列设备是 UI 辅助，失败不应阻塞音频引擎本身。
+pub fn list_output_devices() -> Vec<String> {
+    let host = cpal::default_host();
+    host.output_devices()
+        .map(|devices| {
+            devices
+                .filter_map(|d| d.description().ok().map(|desc| desc.to_string()))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
 /// Spawn a CPAL audio stream backed by a producer/consumer audio FIFO.
 ///
 /// The CPAL callback only consumes already-rendered contiguous samples from the
 /// ring buffer. All command processing, model application and XSynth rendering
 /// live on the renderer thread.
+///
+/// `device_name`: 指定输出设备名（来自 `list_output_devices()`）。`None` 表示用
+/// 系统默认输出设备。设备热拔后用户在切换对话框里挑一个名字传进来重建流。
 pub fn spawn_cpal_audio(
     sample_rate: u32,
     num_channels: u32,
     active_mask: Vec<bool>,
     buffer_size: cpal::BufferSize,
+    device_name: Option<&str>,
     #[cfg(feature = "gpu")] use_gpu_synth: bool,
 ) -> Result<CpalAudioHandle, String> {
     let (cmd_tx, cmd_rx) = unbounded::<AudioCommand>();
@@ -307,7 +326,16 @@ pub fn spawn_cpal_audio(
     let stream_error = Arc::new(AtomicBool::new(false));
 
     let host = cpal::default_host();
-    let device = host.default_output_device().ok_or("No output device")?;
+    let device = match device_name {
+        Some(name) => host
+            .output_devices()
+            .map_err(|e| format!("Failed to enumerate output devices: {e}"))?
+            .find(|d| d.description().ok().is_some_and(|desc| desc.to_string() == name))
+            .ok_or_else(|| format!("Output device not found: {name}"))?,
+        None => host
+            .default_output_device()
+            .ok_or("No output device")?,
+    };
     let supported = device.default_output_config().map_err(|e| e.to_string())?;
     let channels = supported.channels() as usize;
 
