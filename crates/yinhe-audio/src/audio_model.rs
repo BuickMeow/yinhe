@@ -39,7 +39,10 @@ pub(crate) struct AudibleNote {
 pub(crate) struct PreparedModel {
     pub model: AudioModel,
     pub yin_model: Arc<YinModel>,
-    pub cc_events: Vec<SortedCC>,
+    /// `Arc` so the same cc_events can be shared between the renderer thread
+    /// (for seek/chase dispatch) and the worker thread (for chase computation)
+    /// without cloning the (potentially hundreds of thousands of) events.
+    pub cc_events: Arc<Vec<SortedCC>>,
     /// 128 个 key 桶的可听音（vel > 1），tick 已转 sample。
     /// 音频线程的 seek / dispatch 只读这份列表，不再访问 YinModel.notes。
     pub audible_notes: Box<[Vec<AudibleNote>; 128]>,
@@ -110,11 +113,14 @@ pub(crate) fn tick_to_sample(tick: u64, segments: &[yinhe_core::TempoSegment], t
 ///
 /// `density`: Linear/Curve 段在播放时按多少 tick 间隔展开中间事件。1 = 每 tick 一个事件
 /// （最平滑），值越大中间事件越少。Step 段不受影响（保持值到下一点）。
+///
+/// Returns `Arc<Vec>` so the same events can be shared between the renderer and
+/// the worker thread (for chase computation) without cloning.
 pub(crate) fn flatten_automation_to_cc_events(
     model: &YinModel,
     sample_rate: u32,
     density: u32,
-) -> Vec<SortedCC> {
+) -> Arc<Vec<SortedCC>> {
     let sr = sample_rate as f64;
     let density = density.max(1);
     let mut cc_events = Vec::new();
@@ -165,7 +171,7 @@ pub(crate) fn flatten_automation_to_cc_events(
 
     cc_events.sort_by_key(|e| e.sample);
     cc_events.dedup_by(|a, b| a.channel == b.channel && a.event == b.event);
-    cc_events
+    Arc::new(cc_events)
 }
 
 /// 将单个 automation 值转换成 XSynth 事件并推入 `out`。

@@ -6,7 +6,7 @@ use xsynth_core::soundfont::SoundfontBase;
 
 use yinhe_core::YinModel;
 
-use crate::audio_model::{ActiveNote, AudioModel, PreparedModel, flatten_automation_to_cc_events};
+use crate::audio_model::{ActiveNote, AudioModel, AudibleNote, PreparedModel, flatten_automation_to_cc_events};
 use crate::channel::ChannelState;
 use crate::engine::AudioEngine;
 use crate::prepare_model::build_audible_notes;
@@ -17,6 +17,7 @@ impl AudioEngine {
         self.setup_percussion(&audio_model);
 
         self.cc_events = flatten_automation_to_cc_events(model, self.sample_rate, self.automation_density);
+        self.chase_generation = self.chase_generation.wrapping_add(1);
         self.cc_cursor = 0;
         self.active_notes.clear();
 
@@ -39,6 +40,8 @@ impl AudioEngine {
         self.setup_percussion(&prepared.model);
 
         self.cc_events = prepared.cc_events;
+        // cc_events 变了，旧 generation 的 chase 结果必须丢弃
+        self.chase_generation = self.chase_generation.wrapping_add(1);
         self.duration_samples = prepared.duration_samples;
         // Skip is ignored here — we keep whatever the user set via SkipTracks.
         self.yin_model = Some(prepared.yin_model);
@@ -47,6 +50,8 @@ impl AudioEngine {
 
         // Seek to current playback position to avoid triggering all notes
         // before the current position (which would cause voice stealing).
+        // 方案 B：seek_to 不再同步 chase —— renderer 在 apply_prepared_model 返回后
+        // 发 PrepareChase 给 worker 异步计算 channel state。
         let current_sample = self.sample_position;
         self.seek_to(current_sample);
 
@@ -54,6 +59,50 @@ impl AudioEngine {
         if let Some(from_sample) = self.pending_play_from_sample.take() {
             self.seek_to(from_sample);
             self.playing = true;
+        }
+    }
+
+    /// 方案 A：只应用音符更新（`UpdateNotes` 路径）。
+    /// 不重建 cc_events，不 seek，不 chase —— 保持当前播放位置和 channel state。
+    /// 只替换 `audible_notes` 和 `model`，影响后续音符 dispatch。
+    pub(crate) fn apply_notes_only(
+        &mut self,
+        model: AudioModel,
+        yin_model: Arc<YinModel>,
+        audible_notes: Box<[Vec<AudibleNote>; 128]>,
+        duration_samples: u64,
+    ) {
+        self.setup_percussion(&model);
+        self.duration_samples = duration_samples;
+        self.yin_model = Some(yin_model);
+        self.audible_notes = audible_notes;
+        self.model = Some(model);
+
+        // 重新计算 note_cursor：保持当前 sample_position，重新找每个 key 桶的游标。
+        // 不需要 AllNotesOff / ResetControl / chase —— 当前活跃音符和 channel state 不变。
+        let sample = self.sample_position;
+        for key in 0..128usize {
+            self.note_cursor[key] = self.audible_notes[key].partition_point(|n| n.start_sample < sample);
+        }
+    }
+
+    /// 方案 B：应用 worker 线程异步算好的 256 通道状态快照。
+    /// 在 `seek_to` 之后由 renderer 收到 `ChaseResult` 时调用，恢复各通道的
+    /// volume / pan / program / pitch bend / RPN 等控制器值。
+    pub(crate) fn apply_chase_result(&mut self, states: Box<[ChannelState; 256]>) {
+        for ch in 0..256u32 {
+            if !self.active_mask.get(ch as usize).copied().unwrap_or(false) {
+                continue;
+            }
+            let dense = self
+                .channel_map
+                .get(ch as usize)
+                .copied()
+                .unwrap_or(u32::MAX);
+            if dense == u32::MAX {
+                continue;
+            }
+            states[ch as usize].send_to(dense, &mut self.channel_group);
         }
     }
 
@@ -201,35 +250,9 @@ impl AudioEngine {
             }
         }
 
-        self.inject_chase(sample);
-    }
-
-    fn inject_chase(&mut self, target_sample: u64) {
-        let mut state = [ChannelState::default(); 256];
-        for cc in &self.cc_events {
-            if cc.sample >= target_sample {
-                break;
-            }
-            let ch = cc.channel as usize;
-            if ch >= 256 {
-                continue;
-            }
-            state[ch].apply(&cc.event);
-        }
-
-        for ch in 0..256u32 {
-            if !self.active_mask.get(ch as usize).copied().unwrap_or(false) {
-                continue;
-            }
-            let dense = self
-                .channel_map
-                .get(ch as usize)
-                .copied()
-                .unwrap_or(u32::MAX);
-            if dense == u32::MAX {
-                continue;
-            }
-            state[ch as usize].send_to(dense, &mut self.channel_group);
-        }
+        // 方案 B：chase（恢复 CC/PitchBend/RPN 等控制器值）移到 worker 线程异步计算。
+        // renderer 在 seek_to 返回后发 PrepareChase，worker 算完回传 ChaseResult，
+        // 由 apply_chase_result 应用。期间 channel state 是 ResetControl 后的初始值，
+        // 渲染短暂静音 —— 比 renderer 线程同步阻塞几十万次 ChannelState::apply 更好。
     }
 }

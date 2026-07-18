@@ -400,7 +400,8 @@ impl App {
                     track_selected: doc.edit.track_selected.clone(),
                     sel_rect: doc.edit.sel_rect.clone(),
                 });
-                self.notify_audio_model_changed();
+                // 纯音符移动：只更新 audible_notes，不重建 CC，不 chase
+                self.notify_notes_changed();
             }
         }
     }
@@ -422,7 +423,8 @@ impl App {
                 track_selected: doc.edit.track_selected.clone(),
                 sel_rect: doc.edit.sel_rect.clone(),
             });
-            self.notify_audio_model_changed();
+            // 纯音符拖动/缩放：只更新 audible_notes，不重建 CC，不 chase
+            self.notify_notes_changed();
         }
     }
 

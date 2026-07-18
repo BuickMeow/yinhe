@@ -214,7 +214,11 @@ impl App {
         doc.data.bump_revision();
         self.pianoroll_view.base.dirty = true;
         self.arrange_view.base.dirty = true;
-        self.notify_audio_model_changed();
+        // 所有 with_undo 调用方目前都是纯音符操作（delete/duplicate/transpose/
+        // paste/add_note/eraser/recode_track_names），不触碰 automation lanes，
+        // 所以用便宜的 UpdateNotes 路径（不重建 CC，不 chase）。
+        // 如果未来有自动化编辑走 with_undo，需要改用 notify_audio_model_changed。
+        self.notify_notes_changed();
     }
 
     /// Restore the previous state on the active document's history stack.

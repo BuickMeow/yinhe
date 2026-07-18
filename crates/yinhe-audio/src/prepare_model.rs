@@ -32,6 +32,26 @@ pub(crate) fn prepare_model(
     }
 }
 
+/// Notes-only prepare: rebuild `audible_notes` + `duration_samples` + `AudioModel`
+/// without touching cc_events. Used by `UpdateNotes` for pure note edits.
+///
+/// 比 `prepare_model` 便宜：跳过 `flatten_automation_to_cc_events`（自动化多的
+/// 曲子这步可能产生几十万条 CC 事件）。
+pub(crate) fn prepare_notes(
+    model: &Arc<YinModel>,
+    sample_rate: u32,
+) -> (AudioModel, Arc<YinModel>, Box<[Vec<AudibleNote>; 128]>, u64) {
+    let duration_samples =
+        (model.tempo_map.tick_to_seconds(model.tick_length) * sample_rate as f64) as u64;
+    let audible_notes = build_audible_notes(model, sample_rate);
+    (
+        AudioModel::from_model(model),
+        Arc::clone(model),
+        audible_notes,
+        duration_samples,
+    )
+}
+
 /// 遍历 YinModel 128 个 key 桶，过滤 vel > 1 的音符，将 tick 预转换为 sample。
 /// 桶内天然升序（YinModel.notes[key] 按 start_tick 升序，tick→sample 单调）。
 pub(crate) fn build_audible_notes(

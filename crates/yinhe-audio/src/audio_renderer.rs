@@ -97,6 +97,7 @@ impl AudioRenderer {
     fn process_commands(&mut self) -> bool {
         let mut did_work = false;
         let mut pending_reload: Option<Arc<yinhe_core::YinModel>> = None;
+        let mut pending_update_notes: Option<Arc<yinhe_core::YinModel>> = None;
         let mut pending_density_rebuild: bool = false;
 
         loop {
@@ -112,7 +113,15 @@ impl AudioRenderer {
                             let _ = self.worker_tx.send(WorkerCmd::PrepareModel(model, density));
                         }
                         AudioCommand::ReloadNotes { model } => {
+                            // 全量重建优先于只更新音符 —— 丢弃 pending UpdateNotes
+                            pending_update_notes = None;
                             pending_reload = Some(model);
+                        }
+                        AudioCommand::UpdateNotes { model } => {
+                            // 只在没有 pending ReloadNotes 时记录（ReloadNotes 包含 audible_notes）
+                            if pending_reload.is_none() {
+                                pending_update_notes = Some(model);
+                            }
                         }
                         AudioCommand::LoadSoundFont { port, paths } => {
                             let dense_channels = self.engine.dense_channels_for_port(port);
@@ -133,6 +142,8 @@ impl AudioRenderer {
                                     synth.seek(from_sample);
                                 }
                                 self.clear_buffered_audio();
+                                // 方案 B：seek 后异步 chase
+                                self.request_chase(from_sample);
                             } else {
                                 self.engine.set_pending_play(from_sample);
                             }
@@ -144,6 +155,8 @@ impl AudioRenderer {
                                 synth.seek(sample);
                             }
                             self.clear_buffered_audio();
+                            // 方案 B：seek 后异步 chase
+                            self.request_chase(sample);
                         }
                         AudioCommand::Stop => {
                             self.engine.handle_command(AudioCommand::Stop);
@@ -152,6 +165,8 @@ impl AudioRenderer {
                                 synth.seek(0);
                             }
                             self.clear_buffered_audio();
+                            // 方案 B：Stop 也 seek 到 0，需要 chase 恢复初始 channel state
+                            self.request_chase(0);
                         }
                         AudioCommand::SetAutomationDensity { density } => {
                             self.engine.automation_density = density.max(1);
@@ -175,6 +190,10 @@ impl AudioRenderer {
             let density = self.engine.automation_density;
             let _ = self.worker_tx.send(WorkerCmd::PrepareModel(model, density));
             did_work = true;
+        } else if let Some(model) = pending_update_notes {
+            // 只更新音符，不重建 cc_events，不 chase
+            let _ = self.worker_tx.send(WorkerCmd::PrepareNotes(model));
+            did_work = true;
         } else if pending_density_rebuild {
             // density 改变后用当前模型重建 cc_events
             if let Some(model) = self.engine.yin_model.clone() {
@@ -185,6 +204,19 @@ impl AudioRenderer {
         }
 
         did_work
+    }
+
+    /// 方案 B：发 `PrepareChase` 给 worker 线程异步计算 256 通道状态快照。
+    /// worker 完成后回传 `ChaseResult`，`process_worker_results` 应用。
+    /// `chase_generation` 用于丢弃过期结果（cc_events 被 PrepareModel 替换后）。
+    fn request_chase(&self, target_sample: u64) {
+        let cc_events = Arc::clone(&self.engine.cc_events);
+        let generation = self.engine.chase_generation;
+        let _ = self.worker_tx.send(WorkerCmd::PrepareChase {
+            cc_events,
+            target_sample,
+            generation,
+        });
     }
 
     fn process_worker_results(&mut self) -> bool {
@@ -201,7 +233,34 @@ impl AudioRenderer {
                     self.sync_gpu_synth_events();
                     self.clear_buffered_audio();
                     self.state.initialized.store(true, Ordering::Release);
+                    // 方案 B：apply_prepared_model 内部 seek_to 不再 chase，
+                    // 这里发 PrepareChase 让 worker 异步算 channel state
+                    self.request_chase(self.engine.sample_position());
                     did_work = true;
+                }
+                Ok(WorkerResult::PreparedNotes {
+                    model,
+                    yin_model,
+                    audible_notes,
+                    duration_samples,
+                }) => {
+                    self.state
+                        .duration_samples
+                        .store(duration_samples, Ordering::Relaxed);
+                    self.engine.apply_notes_only(model, yin_model, audible_notes, duration_samples);
+                    // GPU 路径：音符变化后同步事件到 GpuSynth
+                    #[cfg(feature = "gpu")]
+                    self.sync_gpu_synth_events();
+                    self.clear_buffered_audio();
+                    self.state.initialized.store(true, Ordering::Release);
+                    did_work = true;
+                }
+                Ok(WorkerResult::ChaseResult { states, generation }) => {
+                    // 丢弃过期结果：cc_events 已被新 PrepareModel 替换
+                    if generation == self.engine.chase_generation {
+                        self.engine.apply_chase_result(states);
+                        did_work = true;
+                    }
                 }
                 Ok(WorkerResult::LoadedSoundFont {
                     port,

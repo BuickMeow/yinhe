@@ -10,7 +10,8 @@ use yinhe_core::YinModel;
 
 use crate::audio_renderer::{RendererSharedState, spawn_renderer};
 use crate::audio_ring::AudioRing;
-use crate::audio_model::PreparedModel;
+use crate::audio_model::{AudibleNote, PreparedModel, SortedCC};
+use crate::channel::ChannelState;
 
 const STEREO_CHANNELS: usize = 2;
 const RING_BUFFER_FRAMES: usize = 16_384;
@@ -36,7 +37,16 @@ pub enum AudioCommand {
     },
     /// Like LoadModel but does NOT stop playback.
     /// Replaces the model reference and resets note cursors.
+    /// Full rebuild: cc_events + audible_notes + chase.
+    /// Used for automation edits / undo / redo / arrange drag (notes+automation).
     ReloadNotes {
+        model: Arc<YinModel>,
+    },
+    /// Only rebuild `audible_notes` — no CC rebuild, no chase.
+    /// Used for pure note edits (move/drag/add/delete/paste/duplicate/transpose)
+    /// where automation lanes are untouched. Keeps current playback position and
+    /// channel state intact, only affects future note dispatch.
+    UpdateNotes {
         model: Arc<YinModel>,
     },
     LoadSoundFont {
@@ -120,9 +130,16 @@ impl Drop for CpalAudioHandle {
 }
 
 impl CpalAudioHandle {
-    /// Notify the audio thread that the MIDI model has changed.
+    /// Notify the audio thread that the MIDI model has changed (full rebuild:
+    /// cc_events + audible_notes + chase). Use for automation edits / undo / redo.
     pub fn reload_notes(&self, model: Arc<YinModel>) {
         let _ = self.handle.send(AudioCommand::ReloadNotes { model });
+    }
+
+    /// Notify the audio thread that only notes have changed (no automation, no
+    /// chase). Use for pure note edits — keeps current channel state intact.
+    pub fn update_notes(&self, model: Arc<YinModel>) {
+        let _ = self.handle.send(AudioCommand::UpdateNotes { model });
     }
 }
 
@@ -175,7 +192,18 @@ pub fn channels_for_model(model: &YinModel) -> (u32, Vec<bool>) {
 
 /// Internal command sent from the renderer thread to the worker thread.
 pub(crate) enum WorkerCmd {
+    /// Full prepare: cc_events + audible_notes + duration (LoadModel / ReloadNotes).
     PrepareModel(Arc<YinModel>, u32),
+    /// Notes-only prepare: audible_notes + duration (UpdateNotes). No cc_events rebuild.
+    PrepareNotes(Arc<YinModel>),
+    /// Compute channel-state snapshot at `target_sample` by linear-scanning `cc_events`.
+    /// `generation` matches `AudioEngine::chase_generation` so the renderer can
+    /// discard stale results after a PrepareModel replaces cc_events.
+    PrepareChase {
+        cc_events: Arc<Vec<SortedCC>>,
+        target_sample: u64,
+        generation: u64,
+    },
     LoadSoundFont {
         port: u8,
         paths: Vec<String>,
@@ -185,6 +213,18 @@ pub(crate) enum WorkerCmd {
 
 pub(crate) enum WorkerResult {
     PreparedModel(PreparedModel),
+    /// Result of `PrepareNotes` — only audible_notes + duration + model refs.
+    PreparedNotes {
+        model: crate::audio_model::AudioModel,
+        yin_model: Arc<YinModel>,
+        audible_notes: Box<[Vec<AudibleNote>; 128]>,
+        duration_samples: u64,
+    },
+    /// Result of `PrepareChase` — 256-channel state snapshot.
+    ChaseResult {
+        states: Box<[ChannelState; 256]>,
+        generation: u64,
+    },
     LoadedSoundFont {
         port: u8,
         soundfonts: Vec<Arc<dyn SoundfontBase>>,
@@ -210,12 +250,23 @@ pub(crate) fn spawn_worker(
     thread::Builder::new()
         .name("audio-worker".into())
         .spawn(move || {
-            while let Ok(cmd) = cmd_rx.recv() {
+            // 内部 pending 缓冲：处理某个命令时，try_recv 到的非同类型命令存这里。
+            // 下次循环优先从 pending 取，避免饿死后续命令。
+            let mut pending: std::collections::VecDeque<WorkerCmd> =
+                std::collections::VecDeque::new();
+            loop {
+                let cmd = match pending.pop_front() {
+                    Some(c) => c,
+                    None => match cmd_rx.recv() {
+                        Ok(c) => c,
+                        Err(_) => break,
+                    },
+                };
                 match cmd {
                     WorkerCmd::PrepareModel(model, density) => {
+                        // 合并连续 PrepareModel，只保留最新
                         let mut latest = model;
                         let mut latest_density = density;
-                        let mut pending_other: Option<WorkerCmd> = None;
                         while let Ok(next) = cmd_rx.try_recv() {
                             match next {
                                 WorkerCmd::PrepareModel(m, d) => {
@@ -223,8 +274,7 @@ pub(crate) fn spawn_worker(
                                     latest_density = d;
                                 }
                                 other => {
-                                    pending_other = Some(other);
-                                    break;
+                                    pending.push_back(other);
                                 }
                             }
                         }
@@ -236,36 +286,69 @@ pub(crate) fn spawn_worker(
                             &channel_map,
                         );
                         let _ = result_tx.send(WorkerResult::PreparedModel(prepared));
-                        if let Some(other) = pending_other {
-                            match other {
-                                WorkerCmd::LoadSoundFont {
-                                    port,
-                                    paths,
-                                    dense_channels,
-                                } => {
-                                    if let Ok(soundfonts) =
-                                        crate::engine::AudioEngine::load_soundfont_paths(
-                                            sample_rate,
-                                            &paths,
-                                        )
-                                    {
-                                        let _ = result_tx.send(WorkerResult::LoadedSoundFont {
-                                            port,
-                                            soundfonts,
-                                            dense_channels,
-                                            paths,
-                                        });
-                                    }
+                    }
+                    WorkerCmd::PrepareNotes(model) => {
+                        // 合并连续 PrepareNotes，只保留最新
+                        let mut latest = model;
+                        while let Ok(next) = cmd_rx.try_recv() {
+                            match next {
+                                WorkerCmd::PrepareNotes(m) => {
+                                    latest = m;
                                 }
-                                WorkerCmd::PrepareModel(_, _) => unreachable!(),
+                                other => {
+                                    pending.push_back(other);
+                                }
                             }
                         }
+                        let (audio_model, yin_model, audible_notes, duration_samples) =
+                            crate::prepare_model::prepare_notes(&latest, sample_rate);
+                        let _ = result_tx.send(WorkerResult::PreparedNotes {
+                            model: audio_model,
+                            yin_model,
+                            audible_notes,
+                            duration_samples,
+                        });
+                    }
+                    WorkerCmd::PrepareChase {
+                        cc_events,
+                        target_sample,
+                        generation,
+                    } => {
+                        // 合并连续 PrepareChase，只保留最新（同 generation 或不同 generation 都只留最新）
+                        let mut latest_cc = cc_events;
+                        let mut latest_target = target_sample;
+                        let mut latest_gen = generation;
+                        while let Ok(next) = cmd_rx.try_recv() {
+                            match next {
+                                WorkerCmd::PrepareChase {
+                                    cc_events,
+                                    target_sample,
+                                    generation,
+                                } => {
+                                    latest_cc = cc_events;
+                                    latest_target = target_sample;
+                                    latest_gen = generation;
+                                }
+                                other => {
+                                    pending.push_back(other);
+                                }
+                            }
+                        }
+                        let states = compute_chase_states(&latest_cc, latest_target);
+                        let _ = result_tx.send(WorkerResult::ChaseResult {
+                            states,
+                            generation: latest_gen,
+                        });
                     }
                     WorkerCmd::LoadSoundFont {
                         port,
                         paths,
                         dense_channels,
                     } => {
+                        // 不合并，但把 try_recv 到的命令存到 pending 避免饿死
+                        while let Ok(next) = cmd_rx.try_recv() {
+                            pending.push_back(next);
+                        }
                         if let Ok(soundfonts) =
                             crate::engine::AudioEngine::load_soundfont_paths(sample_rate, &paths)
                         {
@@ -286,6 +369,24 @@ pub(crate) fn spawn_worker(
         })?;
 
     Ok((cmd_tx, result_rx))
+}
+
+/// 在 worker 线程上从 `cc_events[0]` 线性扫到 `target_sample`，构建 256 通道状态快照。
+/// 这部分计算从 renderer 线程移出来（方案 B），避免 seek 时 renderer 阻塞几十万次
+/// `ChannelState::apply`。结果由 renderer 的 `apply_chase_result` 直接 `send_to`。
+fn compute_chase_states(cc_events: &[SortedCC], target_sample: u64) -> Box<[ChannelState; 256]> {
+    let mut states: Box<[ChannelState; 256]> = Box::new([ChannelState::default(); 256]);
+    for cc in cc_events {
+        if cc.sample >= target_sample {
+            break;
+        }
+        let ch = cc.channel as usize;
+        if ch >= 256 {
+            continue;
+        }
+        states[ch].apply(&cc.event);
+    }
+    states
 }
 
 /// 列出系统所有可用输出设备的描述名（cpal `Device::description()`）。

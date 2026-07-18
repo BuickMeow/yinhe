@@ -2,10 +2,22 @@ use crate::app::App;
 use yinhe_editor_core::progress;
 
 impl App {
-    /// Notify the audio engine that the active document's model has changed.
+    /// Notify the audio engine that the active document's model has changed (full
+    /// rebuild: cc_events + audible_notes + chase). Use for automation edits,
+    /// undo / redo, or any edit that may have touched automation lanes.
     pub(crate) fn notify_audio_model_changed(&self) {
         if let (Some(idx), Some(audio)) = (self.active_doc, &self.audio_state.handle) {
             audio.reload_notes(self.documents[idx].data.model.clone());
+        }
+    }
+
+    /// Notify the audio engine that only notes have changed (no automation, no
+    /// chase). Cheaper than `notify_audio_model_changed` — skips the expensive
+    /// `flatten_automation_to_cc_events` rebuild and the linear chase scan.
+    /// Use for pure note edits (move/drag/add/delete/paste/duplicate/transpose).
+    pub(crate) fn notify_notes_changed(&self) {
+        if let (Some(idx), Some(audio)) = (self.active_doc, &self.audio_state.handle) {
+            audio.update_notes(self.documents[idx].data.model.clone());
         }
     }
 

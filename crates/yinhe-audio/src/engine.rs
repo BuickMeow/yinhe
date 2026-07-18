@@ -34,7 +34,8 @@ pub(crate) struct AudioEngine {
     /// 音频线程的 seek / dispatch 只读这份列表。
     pub(crate) audible_notes: Box<[Vec<AudibleNote>; 128]>,
 
-    pub(crate) cc_events: Vec<SortedCC>,
+    /// `Arc` 共享给 worker 线程做 chase 计算，避免每次 Seek clone 几十万条 CC。
+    pub(crate) cc_events: Arc<Vec<SortedCC>>,
     pub(crate) cc_cursor: usize,
     pub(crate) active_notes: Vec<ActiveNote>,
     pub(crate) ended_notes: Vec<ActiveNote>,
@@ -44,6 +45,11 @@ pub(crate) struct AudioEngine {
     pub(crate) pending_play_from_sample: Option<u64>,
     /// Linear/Curve 自动化段播放时的中间事件 tick 间隔（默认 1）。
     pub(crate) automation_density: u32,
+    /// 每次 `apply_prepared_model` / `load_model` 替换 cc_events 时 `+1`。
+    /// renderer 发 `PrepareChase` 时带上当前 generation，worker 回传的
+    /// `ChaseResult` 也带 generation，renderer 据此丢弃过期的 chase 结果
+    ///（cc_events 已被新 PrepareModel 替换的旧结果）。
+    pub(crate) chase_generation: u64,
 
     /// GPU 合成器 — 启用后渲染走 GpuSynth 而非 xsynth
     #[cfg(feature = "gpu")]
@@ -98,7 +104,7 @@ impl AudioEngine {
                 note_cursor: [0; 128],
                 yin_model: None,
                 audible_notes: Box::new(core::array::from_fn(|_| Vec::new())),
-                cc_events: Vec::new(),
+                cc_events: Arc::new(Vec::new()),
                 cc_cursor: 0,
                 active_notes: Vec::new(),
                 ended_notes: Vec::new(),
@@ -106,6 +112,7 @@ impl AudioEngine {
                 skip_track: Vec::new(),
                 pending_play_from_sample: None,
                 automation_density: 1,
+                chase_generation: 0,
                 #[cfg(feature = "gpu")]
                 gpu_synth: None,
             }
@@ -184,6 +191,12 @@ impl AudioEngine {
             AudioCommand::ReloadNotes { model } => {
                 self.send_all_notes_off();
                 self.active_notes.clear();
+                self.load_model(&model);
+            }
+            AudioCommand::UpdateNotes { model } => {
+                // 只更新音符，不重建 cc_events，不 chase。
+                // `apply_notes_only` 由 renderer 在收到 `PreparedNotes` 时调用，
+                // 这里只在直接 handle_command 时退化成 load_model（测试路径）。
                 self.load_model(&model);
             }
             AudioCommand::LoadSoundFont { port, paths } => {
