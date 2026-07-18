@@ -219,7 +219,6 @@ pub(crate) fn show_settings_viewport(
     if !*show {
         return false;
     }
-    crate::chrome::dialog::raise_viewport(ctx, viewport_id);
 
     let bd = std::rc::Rc::new(std::cell::Cell::new(*bit_depth));
     let lc = std::rc::Rc::new(std::cell::Cell::new(*layer_count));

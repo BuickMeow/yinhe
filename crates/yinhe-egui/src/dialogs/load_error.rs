@@ -6,7 +6,6 @@ pub(crate) fn show_viewport(ctx: &egui::Context, error: &mut Option<String>) {
         None => return,
     };
     let viewport_id = egui::ViewportId::from_hash_of("load_error_dialog");
-    crate::chrome::dialog::raise_viewport(ctx, viewport_id);
 
     let open = std::rc::Rc::new(std::cell::RefCell::new(true));
     let open_cb = open.clone();

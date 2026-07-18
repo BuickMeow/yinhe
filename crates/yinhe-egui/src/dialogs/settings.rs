@@ -299,7 +299,6 @@ pub(crate) fn show_viewport(
     if !settings.show_settings {
         return false;
     }
-    crate::chrome::dialog::raise_viewport(ctx, viewport_id);
 
     let prev_xsynth_layers = settings.xsynth_layers;
     let settings_rc = std::rc::Rc::new(std::cell::RefCell::new(Some(std::mem::take(settings))));

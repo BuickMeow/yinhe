@@ -15,7 +15,6 @@ use eframe::egui;
 /// 返回 true 表示用户选择了退出。
 pub(crate) fn show_viewport(ctx: &egui::Context) -> bool {
     let viewport_id = egui::ViewportId::from_hash_of("gpu_device_lost_dialog");
-    crate::chrome::dialog::raise_viewport(ctx, viewport_id);
 
     let exit_cb = std::rc::Rc::new(std::cell::RefCell::new(false));
     let exit_capture = exit_cb.clone();

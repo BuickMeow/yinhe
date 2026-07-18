@@ -18,7 +18,6 @@ pub(crate) fn show_viewport(
         return Action::None;
     }
     let viewport_id = egui::ViewportId::from_hash_of("unsaved_dialog");
-    crate::chrome::dialog::raise_viewport(ctx, viewport_id);
 
     let action_rc: std::rc::Rc<std::cell::RefCell<Option<Action>>> =
         std::rc::Rc::new(std::cell::RefCell::new(None));

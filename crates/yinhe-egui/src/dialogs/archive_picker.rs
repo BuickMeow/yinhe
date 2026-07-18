@@ -250,7 +250,6 @@ pub(crate) fn show_viewport(ctx: &eframe::egui::Context, state: &mut Option<Arch
         return ArchivePickerAction::None;
     }
     let viewport_id = eframe::egui::ViewportId::from_hash_of("archive_picker_dialog");
-    crate::chrome::dialog::raise_viewport(ctx, viewport_id);
 
     let taken_state = std::rc::Rc::new(std::cell::RefCell::new(
         std::mem::replace(

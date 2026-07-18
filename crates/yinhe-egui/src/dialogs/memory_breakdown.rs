@@ -10,9 +10,6 @@ pub(crate) fn show_viewport(
     if !*open {
         return;
     }
-    // Raise existing window (e.g. when user re-clicks the toolbar button after
-    // the dialog was hidden behind the main window).
-    crate::chrome::dialog::raise_viewport(ctx, viewport_id);
 
     let snapshot = yinhe_memtrace::Snapshot::capture();
     let open_rc = std::rc::Rc::new(std::cell::RefCell::new(true));

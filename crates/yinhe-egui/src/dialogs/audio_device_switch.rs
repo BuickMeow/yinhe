@@ -32,7 +32,6 @@ pub(crate) fn show_viewport(
     allow_keep_current: bool,
 ) -> AudioDeviceSwitchAction {
     let viewport_id = egui::ViewportId::from_hash_of("audio_device_switch_dialog");
-    crate::chrome::dialog::raise_viewport(ctx, viewport_id);
 
     let action_rc = std::rc::Rc::new(std::cell::RefCell::new(AudioDeviceSwitchAction::None));
     let action_capture = action_rc.clone();
@@ -44,8 +43,6 @@ pub(crate) fn show_viewport(
         viewport_id,
         crate::chrome::dialog::viewport_builder("音频设备切换", [460.0, 440.0], false),
         move |vctx, _class| {
-            // 用户点关闭按钮也关不掉 —— 下帧 raise_viewport 会重新拉起来。
-            // 只有真正选了设备 / 保持当前 / 退出才隐藏本帧。
             let mut hide = false;
             if vctx.input(|i| i.viewport().close_requested()) {
                 hide = true;
@@ -81,7 +78,7 @@ pub(crate) fn show_viewport(
                                 ui.add_space(8.0);
                             });
 
-                            // 设备列表 —— 点一下就切换，比 ComboBox + 确定更直接。
+                            // 设备列表 —— 用 radio button 替代宽按钮
                             egui::ScrollArea::vertical()
                                 .max_height(220.0)
                                 .show(ui, |ui| {
@@ -95,9 +92,8 @@ pub(crate) fn show_viewport(
                                         });
                                     }
                                     for name in &devices_vec {
-                                        let resp = ui.add_sized(
-                                            [ui.available_width(), 28.0],
-                                            egui::Button::new(name),
+                                        let resp = ui.add(
+                                            egui::RadioButton::new(false, name),
                                         );
                                         if resp.clicked() {
                                             *action_capture.borrow_mut() =
