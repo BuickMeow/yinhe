@@ -9,22 +9,27 @@ pub(crate) enum AudioDeviceSwitchAction {
     Switch(String),
     /// 用户点了"刷新设备列表"。
     Refresh,
+    /// 用户点了"保持当前设备"（仅在 `allow_keep_current = true` 时出现）。
+    KeepCurrent,
     /// 用户点了"退出 yinhe"。
     Exit,
 }
 
-/// 显示"音频设备已断开"对话框，让用户选一个新的输出设备。
+/// 显示"音频设备已断开/变更"对话框，让用户选一个新的输出设备。
 ///
 /// `devices` 是当前系统可用的设备名列表（由调用方从
 /// `yinhe_audio::list_output_devices()` 拉取，刷新时也由调用方更新）。
 /// `error` 是上一次 spawn 失败的错误信息（如果有），用来在对话框底部红字提示。
+/// `allow_keep_current` = true 时显示"保持当前设备"按钮（设备列表变更场景，
+/// 流还活着）；= false 时不显示（stream_error 场景，流已死必须切换）。
 ///
-/// 对话框不能被标题栏关闭按钮关掉 —— 用户必须选一个设备或点"退出"。
+/// 对话框不能被标题栏关闭按钮关掉 —— 用户必须选一个设备、保持当前或点"退出"。
 /// 每帧 `raise_viewport` 会把它重新拉到前台。
 pub(crate) fn show_viewport(
     ctx: &egui::Context,
     devices: &[String],
     error: Option<&str>,
+    allow_keep_current: bool,
 ) -> AudioDeviceSwitchAction {
     let viewport_id = egui::ViewportId::from_hash_of("audio_device_switch_dialog");
     crate::chrome::dialog::raise_viewport(ctx, viewport_id);
@@ -40,7 +45,7 @@ pub(crate) fn show_viewport(
         crate::chrome::dialog::viewport_builder("音频设备切换", [460.0, 440.0], false),
         move |vctx, _class| {
             // 用户点关闭按钮也关不掉 —— 下帧 raise_viewport 会重新拉起来。
-            // 只有真正选了设备 / 退出才隐藏本帧。
+            // 只有真正选了设备 / 保持当前 / 退出才隐藏本帧。
             let mut hide = false;
             if vctx.input(|i| i.viewport().close_requested()) {
                 hide = true;
@@ -64,9 +69,15 @@ pub(crate) fn show_viewport(
 
                             ui.vertical_centered(|ui| {
                                 ui.add_space(8.0);
-                                ui.label("音频流已断开（设备热拔或驱动错误）。");
-                                ui.add_space(4.0);
-                                ui.label("请选择一个新的输出设备：");
+                                if allow_keep_current {
+                                    ui.label("检测到音频设备列表变更。");
+                                    ui.add_space(4.0);
+                                    ui.label("选择一个新的输出设备，或保持当前设备：");
+                                } else {
+                                    ui.label("音频流已断开（设备热拔或驱动错误）。");
+                                    ui.add_space(4.0);
+                                    ui.label("请选择一个新的输出设备：");
+                                }
                                 ui.add_space(8.0);
                             });
 
@@ -102,6 +113,15 @@ pub(crate) fn show_viewport(
                                 if ui.button("刷新设备列表").clicked() {
                                     *action_capture.borrow_mut() =
                                         AudioDeviceSwitchAction::Refresh;
+                                }
+
+                                if allow_keep_current {
+                                    ui.add_space(8.0);
+                                    if ui.button("保持当前设备").clicked() {
+                                        *action_capture.borrow_mut() =
+                                            AudioDeviceSwitchAction::KeepCurrent;
+                                        hide = true;
+                                    }
                                 }
 
                                 if let Some(err) = &error_str {

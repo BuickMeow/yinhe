@@ -13,10 +13,18 @@ impl App {
         // `RenderContext::device_lost` 的文档。GPU device lost 不可恢复，只能退出。
         let device_lost = self.render_ctx.device_lost() || self.arr_render_ctx.device_lost();
 
-        // ── 音频流错误 → 设备切换对话框 ──
-        // cpal `stream_error` 一旦置位就不可恢复，但和 GPU device lost 不一样：
-        // 音频可以换一个输出设备重建流。所以分流到"音频设备切换"对话框，
-        // 让用户挑新设备；只有 GPU device lost 才走"需要重启"退出对话框。
+        // ── 音频设备切换检测 ──
+        // 两种触发场景，都走同一个"音频设备切换"对话框：
+        //
+        // 1. cpal `stream_error`（设备热拔/驱动崩溃，流已死）→ 必须切换，不显示"保持当前"按钮
+        // 2. 设备列表变更（插拔耳机，流还活着）→ 可选切换，显示"保持当前"按钮
+        //
+        // 为什么用轮询而不是 cpal 的 error callback：
+        // cpal 的 `Output` 模式（绑定具体设备）只有 `DisconnectManager`，
+        // 监听 `kAudioDevicePropertyDeviceIsAlive`（设备是否活着），不监听默认设备变更。
+        // 插耳机时扬声器仍活着，所以 `stream_error` 不会触发。
+        // 只有用 `DefaultOutput` 模式才会有 `DefaultOutputMonitor`，但那会自动 reroute，
+        // 不符合"弹对话框手动选"的期望。所以这里自己轮询设备列表。
         let audio_dead = self
             .audio_state
             .handle
@@ -24,23 +32,63 @@ impl App {
             .map(|h| h.handle.stream_error())
             .unwrap_or(false);
         if audio_dead && !self.audio_state.device_switch_pending {
-            // 首次检测到音频流断开 —— 弹设备切换对话框
+            // 场景 1：流已死，必须切换
             self.audio_state.device_switch_pending = true;
+            self.audio_state.device_switch_required = true;
             self.audio_state.device_switch_error = None;
+        } else if !self.audio_state.device_switch_pending {
+            // 场景 2：轮询设备列表变更（每秒一次，避免每帧调 cpal 枚举）
+            let now = std::time::Instant::now();
+            let should_poll = self
+                .audio_state
+                .last_device_poll
+                .map(|t| now.duration_since(t) >= std::time::Duration::from_secs(1))
+                .unwrap_or(true);
+            if should_poll {
+                let devices = yinhe_audio::list_output_devices();
+                // 首次轮询只记录，不触发（last_known_devices 为空表示还没初始化）
+                if !self.audio_state.last_known_devices.is_empty()
+                    && devices != self.audio_state.last_known_devices
+                {
+                    self.audio_state.device_switch_pending = true;
+                    self.audio_state.device_switch_required = false;
+                    self.audio_state.device_switch_error = None;
+                }
+                self.audio_state.last_known_devices = devices.clone();
+                self.audio_settings.available_devices = devices;
+                self.audio_state.last_device_poll = Some(now);
+                // 轮询到变更后，1 秒后再次轮询以刷新列表
+                ctx.request_repaint_after(std::time::Duration::from_secs(1));
+            } else {
+                // 没到轮询时间，1 秒后再来
+                ctx.request_repaint_after(std::time::Duration::from_secs(1));
+            }
         }
+
         if self.audio_state.device_switch_pending {
             use crate::dialogs::audio_device_switch::AudioDeviceSwitchAction;
             match crate::dialogs::audio_device_switch::show_viewport(
                 &ctx,
                 &self.audio_settings.available_devices,
                 self.audio_state.device_switch_error.as_deref(),
+                !self.audio_state.device_switch_required,
             ) {
                 AudioDeviceSwitchAction::None => {}
                 AudioDeviceSwitchAction::Switch(name) => {
                     self.switch_audio_device(name);
                 }
                 AudioDeviceSwitchAction::Refresh => {
-                    self.audio_settings.available_devices = yinhe_audio::list_output_devices();
+                    let devices = yinhe_audio::list_output_devices();
+                    self.audio_state.last_known_devices = devices.clone();
+                    self.audio_settings.available_devices = devices;
+                }
+                AudioDeviceSwitchAction::KeepCurrent => {
+                    // 用户选择保持当前设备：关闭对话框，更新 last_known_devices
+                    // 避免下帧轮询又触发
+                    self.audio_state.device_switch_pending = false;
+                    self.audio_state.device_switch_error = None;
+                    self.audio_state.last_known_devices =
+                        self.audio_settings.available_devices.clone();
                 }
                 AudioDeviceSwitchAction::Exit => {
                     self.should_exit = true;
