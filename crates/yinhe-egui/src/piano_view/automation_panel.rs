@@ -362,7 +362,7 @@ pub fn show_panels(
         if let Some(ctx) = edit_ctx {
             if !panel.show_velocity {
                 if let Some(track) = ctx.active_track {
-                    let (panel_edits, ghost, drag_info) = interaction::handle_automation_interaction(
+                    let (panel_edits, ghost, drag_info, hover_info) = interaction::handle_automation_interaction(
                         ui,
                         grid_area,
                         panel_rect,
@@ -382,55 +382,71 @@ pub fn show_panels(
                         all_drag_info = drag_info;
                     }
 
-                    // 拖拽 tooltip：鼠标指针右侧显示位置和值
-                    if let Some((tick, value)) = drag_info {
-                        if let Some(pos) = pointer_pos {
-                            let pos_str = if let Some((ppq, num, den, ts_events)) = ctx.bar_line_data {
-                                format_tick_bar_beat_with_time_sig(tick as f64, ppq, ts_events, num, den)
-                            } else {
-                                format!("{}", tick)
-                            };
-                            let val_str = if panel.show_velocity {
-                                // Velocity 是整数语义
-                                format!("{}", value.round() as i32)
-                            } else if panel.selected_target == AutomationTarget::Tempo {
-                                format!("{:.2} BPM", value)
-                            } else {
-                                // CC/PB/RPN/NRPN: 浮点显示
-                                format!("{:.2}", value)
-                            };
-                            let painter = ui.ctx().debug_painter();
-                            let font_id = egui::FontId::monospace(12.0);
-                            let gap = 8.0;
-                            let tooltip_x = pos.x + gap;
-                            let tooltip_y = pos.y - 24.0;
-                            // 两行文本
-                            let lines = [pos_str.as_str(), val_str.as_str()];
-                            let mut max_w = 0.0_f32;
-                            let mut total_h = 0.0;
-                            let line_h = 16.0;
-                            for line in &lines {
-                                let galley = painter.layout_no_wrap(line.to_string(), font_id.clone(), egui::Color32::WHITE);
-                                max_w = max_w.max(galley.rect.width());
-                                total_h += line_h;
-                            }
-                            let pad = 6.0;
-                            let bg_rect = egui::Rect::from_min_size(
-                                egui::pos2(tooltip_x - pad, tooltip_y - pad),
-                                egui::vec2(max_w + pad * 2.0, total_h + pad * 2.0),
+                    // tooltip：拖拽中显示 drag_info，否则 hover 锚点超时显示 hover_info。
+                    // 拖拽时跟随鼠标；hover 时贴在锚点上方。
+                    let tooltip_data = drag_info.or(hover_info).map(|(tick, value)| {
+                        // 拖拽时跟随鼠标，hover 时贴在锚点上方
+                        let (anchor_x, anchor_y) = if drag_info.is_some() {
+                            // 拖拽：用鼠标位置
+                            (pointer_pos.map(|p| p.x), pointer_pos.map(|p| p.y))
+                        } else {
+                            // hover：用锚点像素位置
+                            let ppu = panel.base.pixels_per_tick;
+                            let scroll_x = panel.base.scroll_x;
+                            let x_offset = panel.base.left_panel_width - scroll_x;
+                            let ax = x_offset + tick as f32 * ppu;
+                            let ay = panel.value_to_y(value, max_val_f) + panel_rect.min.y;
+                            (Some(ax), Some(ay))
+                        };
+                        (tick, value, anchor_x, anchor_y)
+                    });
+
+                    if let Some((tick, value, Some(x), Some(y))) = tooltip_data {
+                        let pos_str = if let Some((ppq, num, den, ts_events)) = ctx.bar_line_data {
+                            format_tick_bar_beat_with_time_sig(tick as f64, ppq, ts_events, num, den)
+                        } else {
+                            format!("{}", tick)
+                        };
+                        let val_str = if panel.show_velocity {
+                            // Velocity 是整数语义
+                            format!("{}", value.round() as i32)
+                        } else if panel.selected_target == AutomationTarget::Tempo {
+                            format!("{:.2} BPM", value)
+                        } else {
+                            // CC/PB/RPN/NRPN: 浮点显示
+                            format!("{:.2}", value)
+                        };
+                        let painter = ui.ctx().debug_painter();
+                        let font_id = egui::FontId::monospace(12.0);
+                        let gap = 8.0;
+                        let tooltip_x = x + gap;
+                        let tooltip_y = y - 24.0;
+                        // 两行文本
+                        let lines = [pos_str.as_str(), val_str.as_str()];
+                        let mut max_w = 0.0_f32;
+                        let mut total_h = 0.0;
+                        let line_h = 16.0;
+                        for line in &lines {
+                            let galley = painter.layout_no_wrap(line.to_string(), font_id.clone(), egui::Color32::WHITE);
+                            max_w = max_w.max(galley.rect.width());
+                            total_h += line_h;
+                        }
+                        let pad = 6.0;
+                        let bg_rect = egui::Rect::from_min_size(
+                            egui::pos2(tooltip_x - pad, tooltip_y - pad),
+                            egui::vec2(max_w + pad * 2.0, total_h + pad * 2.0),
+                        );
+                        painter.rect_filled(bg_rect, 4.0, egui::Color32::from_black_alpha(180));
+                        let mut ly = tooltip_y;
+                        for line in &lines {
+                            painter.text(
+                                egui::pos2(tooltip_x, ly),
+                                egui::Align2::LEFT_TOP,
+                                *line,
+                                font_id.clone(),
+                                egui::Color32::WHITE,
                             );
-                            painter.rect_filled(bg_rect, 4.0, egui::Color32::from_black_alpha(180));
-                            let mut ly = tooltip_y;
-                            for line in &lines {
-                                painter.text(
-                                    egui::pos2(tooltip_x, ly),
-                                    egui::Align2::LEFT_TOP,
-                                    *line,
-                                    font_id.clone(),
-                                    egui::Color32::WHITE,
-                                );
-                                ly += line_h;
-                            }
+                            ly += line_h;
                         }
                     }
                 }

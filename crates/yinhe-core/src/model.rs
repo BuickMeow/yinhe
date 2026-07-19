@@ -525,6 +525,16 @@ impl YinModel {
         self.tempo_map = Arc::new(self.build_tempo_map());
     }
 
+    /// Only rebuild `tempo_map` from `conductor.tempo` / `conductor.time_sig`.
+    ///
+    /// Use after editing Tempo automation events when notes are untouched.
+    /// O(tempo_events + time_sig_events), typically < 100 events — near-instant
+    /// even for 100M-note projects. Cheaper than `rebuild()` / `rebuild_dirty()`
+    /// which also sort/rescan note buckets.
+    pub fn rebuild_tempo_map(&mut self) {
+        self.tempo_map = Arc::new(self.build_tempo_map());
+    }
+
     /// Iterate all notes belonging to a specific track.
     ///
     /// Scans all 128 key buckets and yields notes where `note.track == track_idx`.

@@ -29,6 +29,7 @@ impl Document {
             let insert_pos = lane.events.partition_point(|e| e.tick < event.tick);
             lane.events.insert(insert_pos, event);
             let after = lane.events.clone();
+            self.data.rebuild_tempo_map();
             self.data.bump_revision();
             return Some((0, 0, UndoAction::Automation(AutomationDelta {
                 track_idx: 0,
@@ -114,6 +115,9 @@ impl Document {
         }
         let after = events.clone();
 
+        if matches!(target, yinhe_types::AutomationTarget::Tempo) {
+            self.data.rebuild_tempo_map();
+        }
         self.data.bump_revision();
         Some(UndoAction::Automation(AutomationDelta {
             track_idx,
@@ -152,6 +156,9 @@ impl Document {
         }
         let after = events.clone();
 
+        if matches!(target, yinhe_types::AutomationTarget::Tempo) {
+            self.data.rebuild_tempo_map();
+        }
         self.data.bump_revision();
         Some(UndoAction::Automation(AutomationDelta {
             track_idx,
@@ -192,6 +199,9 @@ impl Document {
         evt.shape = shape;
         let after = events.clone();
 
+        if matches!(target, yinhe_types::AutomationTarget::Tempo) {
+            self.data.rebuild_tempo_map();
+        }
         self.data.bump_revision();
         Some(UndoAction::Automation(AutomationDelta {
             track_idx,

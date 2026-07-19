@@ -10,6 +10,9 @@ use crate::right_panel::{InfoContent, RightTab};
 use crate::widgets::tools_panel::Tool;
 use super::{AutomationEditCtx, ANCHOR_HIT_PX};
 
+/// 悬停在锚点上多久后显示 tooltip（秒）。
+const HOVER_DELAY: f64 = 0.6;
+
 /// 拖拽状态（ghost）。存在 egui data 中，跨帧保持。
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum AutoDrag {
@@ -86,7 +89,7 @@ pub(crate) fn handle_automation_interaction(
     track_colors: &[[f32; 3]],
     info_content: &mut Option<InfoContent>,
     right_tab: &mut Option<RightTab>,
-) -> (Vec<yinhe_types::AutomationEdit>, Option<AutomationGhost>, Option<(u32, f32)>) {
+) -> (Vec<yinhe_types::AutomationEdit>, Option<AutomationGhost>, Option<(u32, f32)>, Option<(u32, f32)>) {
     let mut edits = Vec::new();
     // target 直接来自 selected_target（Tempo 也是 selected_target 的一种）。
     let target = panel.selected_target.clone();
@@ -97,7 +100,7 @@ pub(crate) fn handle_automation_interaction(
         target.max_value()
     };
     if max_val == 0.0 {
-        return (edits, None, None);
+        return (edits, None, None, None);
     }
 
     let ppu = panel.base.pixels_per_tick;
@@ -202,7 +205,7 @@ pub(crate) fn handle_automation_interaction(
                         shape: SegmentShape::Step,
                     });
                 }
-                return (edits, None, None);
+                return (edits, None, None, None);
             }
 
             // 拖拽锚点：press 记录，release 提交
@@ -268,12 +271,12 @@ pub(crate) fn handle_automation_interaction(
                             // 构造 ghost 用于本帧渲染（防止松手瞬间旧线段闪现）
                             if let Some(l) = lane {
                                 let override_lane = build_lane_override(l, old_tick, new_tick, new_value);
-                                return (edits, Some(AutomationGhost::Move { lane: override_lane, color: track_color }), None);
+                                return (edits, Some(AutomationGhost::Move { lane: override_lane, color: track_color }), None, None);
                             }
                         }
                     }
                 }
-                return (edits, None, None);
+                return (edits, None, None, None);
             }
 
             // 点击空白（非拖拽）：添加新锚点（shape = Step）
@@ -287,7 +290,7 @@ pub(crate) fn handle_automation_interaction(
                         shape: SegmentShape::Step,
                     });
                 }
-                return (edits, None, None);
+                return (edits, None, None, None);
             }
         }
         Tool::Curve => {
@@ -333,7 +336,7 @@ pub(crate) fn handle_automation_interaction(
                         }
                     }
                 }
-                return (edits, None, None);
+                return (edits, None, None, None);
             }
         }
         _ => {}
@@ -403,5 +406,39 @@ pub(crate) fn handle_automation_interaction(
         None
     };
 
-    (edits, ghost, drag_info)
+    // ── Hover tooltip：悬停在锚点上 HOVER_DELAY 秒后显示 tooltip ──
+    // 仅在非拖拽时触发（拖拽时 drag_info 已覆盖）。
+    let hover_info: Option<(u32, f32)> = if drag_info.is_none() && in_grid {
+        let hover_id = ui.id().with("auto_hover_anchor").with(panel_index);
+        let now = ui.input(|i| i.time);
+        if mouse_info.is_some() && let Some((_, anchor_tick)) = hit_anchor {
+            // 鼠标必须在锚点命中半径内（hit_anchor 已保证），记录锚点 tick 和首次 hover 时间
+            let prev: Option<(u32, f64)> = ui.ctx().data(|d| d.get_temp::<(u32, f64)>(hover_id));
+            let entry = prev.unwrap_or((anchor_tick, now));
+            if entry.0 != anchor_tick {
+                // 锚点变了，重置计时
+                ui.ctx().data_mut(|d| d.insert_temp(hover_id, (anchor_tick, now)));
+                None
+            } else if now - entry.1 >= HOVER_DELAY {
+                // 超过延迟，返回锚点的 (tick, value)
+                let anchor_value = lane
+                    .and_then(|l| l.events.iter().find(|e| e.tick == anchor_tick))
+                    .map(|e| e.value);
+                anchor_value.map(|v| (anchor_tick, v))
+            } else {
+                // 等待延迟
+                ui.ctx().request_repaint();
+                None
+            }
+        } else {
+            // 鼠标不在锚点上，清除
+            ui.ctx().data_mut(|d| d.remove::<(u32, f64)>(hover_id));
+            None
+        }
+    } else {
+        // 拖拽中不显示 hover tooltip
+        None
+    };
+
+    (edits, ghost, drag_info, hover_info)
 }

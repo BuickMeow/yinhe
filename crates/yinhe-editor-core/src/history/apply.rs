@@ -150,5 +150,9 @@ pub(crate) fn apply_automation_delta(
             lane.events.sort_by_key(|e| e.tick);
         }
     }
+    // Tempo 改了要重建 tempo_map（否则音频引擎和播放光标都用旧 tempo）
+    if matches!(target, yinhe_types::AutomationTarget::Tempo) {
+        doc.data.rebuild_tempo_map();
+    }
     doc.data.bump_revision();
 }

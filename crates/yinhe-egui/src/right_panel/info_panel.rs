@@ -29,6 +29,26 @@ pub fn show(
         return false;
     };
 
+    // 记录初始 revision：编辑 automation / shape / tension 后会 bump_revision，
+    // 退出时若发现 revision 变了就通知音频线程 reload。
+    let rev_before = doc.data.revision;
+    let port_changed = render(ui, doc, audio, info_content, automation_drag_ghost);
+    let rev_after = doc.data.revision;
+    if rev_after != rev_before {
+        if let Some(audio) = audio {
+            audio.reload_notes(doc.data.model.clone());
+        }
+    }
+    port_changed
+}
+
+fn render(
+    ui: &mut egui::Ui,
+    doc: &mut Document,
+    audio: Option<&yinhe_audio::CpalAudioHandle>,
+    info_content: &mut Option<InfoContent>,
+    automation_drag_ghost: Option<(u32, f32)>,
+) -> bool {
     match info_content.clone() {
         // ── 锚点信息 ──
         Some(InfoContent::Anchor { track_idx, lane_idx, event_idx, target }) => {
@@ -630,6 +650,70 @@ fn show_anchor_info(
             push_undo(doc, actions, "Toggle anchor shape");
         }
     });
+
+    // ── Tension（仅 Curve 模式下显示） ──
+    if let SegmentShape::Curve { tension } = shape {
+        let tension_focus_id = ui.id().with("info_anchor_tension_focus");
+        let before_tension_id = ui.id().with("info_anchor_before_tension_events");
+        let mut edit_tension = tension;
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new("Tension:")
+                    .size(11.0)
+                    .color(egui::Color32::GRAY),
+            );
+            let resp = ui.add(
+                egui::DragValue::new(&mut edit_tension)
+                    .range(-1.0..=1.0)
+                    .speed(0.02)
+                    .fixed_decimals(2),
+            );
+
+            let gained = resp.gained_focus();
+            let lost = resp.lost_focus();
+            if gained {
+                let before = snapshot_lane_events(doc, track_idx, lane_idx, target);
+                ui.ctx().data_mut(|d| {
+                    d.insert_temp(before_tension_id, before);
+                    d.insert_temp(tension_focus_id, true);
+                });
+            }
+            if resp.changed() && edit_tension != tension {
+                let _action = doc.set_automation_shape(
+                    track_idx as usize,
+                    lane_idx,
+                    target,
+                    tick,
+                    SegmentShape::Curve { tension: edit_tension },
+                );
+            }
+            if lost {
+                let before = ui.ctx().data(|d| d.get_temp::<Vec<AutomationEvent>>(before_tension_id));
+                if let Some(before) = before {
+                    let after = snapshot_lane_events(doc, track_idx, lane_idx, target);
+                    if before != after {
+                        doc.history.push(UndoEntry {
+                            action: UndoAction::Automation(AutomationDelta {
+                                track_idx: track_idx as usize,
+                                lane_idx,
+                                target: target.clone(),
+                                before,
+                                after,
+                            }),
+                            label: "Edit automation anchor tension",
+                            selected: doc.edit.selected.clone(),
+                            track_selected: doc.edit.track_selected.clone(),
+                            sel_rect: doc.edit.sel_rect.clone(),
+                        });
+                    }
+                }
+                ui.ctx().data_mut(|d| {
+                    d.remove::<Vec<AutomationEvent>>(before_tension_id);
+                    d.remove::<bool>(tension_focus_id);
+                });
+            }
+        });
+    }
 
     let shape_desc = match shape {
         SegmentShape::Step => "离散 (Step) — 值在下一个锚点前保持恒定",

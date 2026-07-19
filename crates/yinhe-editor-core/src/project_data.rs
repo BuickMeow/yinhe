@@ -54,13 +54,22 @@ impl ProjectData {
         model.rebuild();
     }
 
-    /// Rebuild only dirty buckets on the YinModel.
+    /// Rebuild only the dirty buckets on the YinModel.
     ///
     /// Much cheaper than `rebuild_model()` when only a few buckets changed.
     /// Skips `Arc::make_mut` on unmodified buckets, avoiding deep clones.
     pub fn rebuild_model_dirty(&mut self) {
         let model = Arc::make_mut(&mut self.model);
         model.rebuild_dirty();
+    }
+
+    /// Rebuild only `tempo_map` from `conductor.tempo` / `conductor.time_sig`.
+    ///
+    /// Use after Tempo automation edits (notes untouched). O(tempo_events),
+    /// near-instant even for 100M-note projects.
+    pub fn rebuild_tempo_map(&mut self) {
+        let model = Arc::make_mut(&mut self.model);
+        model.rebuild_tempo_map();
     }
 
     /// Get a reference to the YinModel.
