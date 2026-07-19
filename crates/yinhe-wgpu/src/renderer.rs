@@ -138,7 +138,7 @@ impl CullState {
                     visibility: ShaderStages::COMPUTE,
                     ty: BindingType::Buffer {
                         ty: BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: true,
+                        has_dynamic_offset: false,
                         min_binding_size: None,
                     },
                     count: None,
@@ -264,7 +264,9 @@ impl CullState {
     }
 
     /// Recreate the bind group for a single key (after its buffer grew).
-    /// Binds: uniform, all_notes[k], visible_notes[k], indirect_args (dynamic offset = k*256).
+    /// Binds: uniform, all_notes[k], visible_notes[k], indirect_args slot k
+    /// (256-byte slice at offset k*256 — no dynamic offset needed since each
+    /// key has its own bind group).
     fn recreate_cull_bind_group(&mut self, device: &Device, uniform_buffer: &Buffer, key: u8) {
         let all_buf = match &self.per_key_buffers[key as usize] {
             Some(b) => b.clone(),
@@ -274,6 +276,8 @@ impl CullState {
             Some(b) => b.clone(),
             None => return,
         };
+        let slot_offset = key as u64 * 256;
+        let slot_size = 256u64;
         self.per_key_bind_groups[key as usize] = Some(device.create_bind_group(&BindGroupDescriptor {
             label: Some("cull_bind_group"),
             layout: &self.bind_group_layout,
@@ -281,7 +285,14 @@ impl CullState {
                 BindGroupEntry { binding: 0, resource: uniform_buffer.as_entire_binding() },
                 BindGroupEntry { binding: 1, resource: all_buf.as_entire_binding() },
                 BindGroupEntry { binding: 2, resource: vis_buf.as_entire_binding() },
-                BindGroupEntry { binding: 3, resource: self.indirect_args_buffer.as_entire_binding() },
+                BindGroupEntry {
+                    binding: 3,
+                    resource: BindingResource::Buffer(BufferBinding {
+                        buffer: &self.indirect_args_buffer,
+                        offset: slot_offset,
+                        size: Some(std::num::NonZeroU64::new(slot_size).unwrap()),
+                    }),
+                },
             ],
         }));
     }
@@ -310,8 +321,9 @@ impl CullState {
             let Some(bg) = &self.per_key_bind_groups[key as usize] else { continue };
             let count = self.per_key_counts[key as usize];
             if count == 0 { continue; }
-            // Dynamic offset for indirect_args slot k = k * 256 (aligned to 256).
-            cull_pass.set_bind_group(0, bg, &[key as u32 * 256]);
+            // Each key's bind group already binds its own indirect_args slot
+            // (256-byte slice at offset k*256), so no dynamic offset is needed.
+            cull_pass.set_bind_group(0, bg, &[]);
             // 2D dispatch to support >65535 workgroups per key (extreme black-score
             // cases where one key holds >16.7M notes). Shader already indexes via
             // global_id.x + global_id.y * (65535*256).
