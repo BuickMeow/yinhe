@@ -159,10 +159,12 @@ impl CullState {
             cache: None,
         });
 
-        // DrawIndirectArgs: 128 slots × 20 bytes each.
-        // Each slot: [vertex_count=6, instance_count=0, first_vertex=0, first_instance=0, pad=0]
-        // Slot k is at byte offset k * 20. draw_indirect reads 16 bytes from a slot.
-        let indirect_args_size = 128 * 20;
+        // DrawIndirectArgs: 128 slots × 256 bytes each.
+        // Each slot: [vertex_count=6, instance_count=0, first_vertex=0, first_instance=0] (16 bytes)
+        // + 240 bytes padding to satisfy min_storage_buffer_offset_alignment (typically 256).
+        // Slot k is at byte offset k * 256. draw_indirect reads 16 bytes from a slot.
+        let indirect_args_stride = 256;
+        let indirect_args_size = 128 * indirect_args_stride;
         let indirect_args_buffer = device.create_buffer(&BufferDescriptor {
             label: Some("indirect_args"),
             size: indirect_args_size,
@@ -289,9 +291,13 @@ impl CullState {
     /// Reset all 128 indirect-args slots, then dispatch the cull pass per key.
     /// Each key writes into its own visible buffer + indirect-args slot.
     fn dispatch_cull(&self, queue: &Queue, encoder: &mut CommandEncoder) {
-        // Reset all 128 slots: each = [vertex_count=6, instance_count=0, first_vertex=0, first_instance=0, pad=0]
-        let reset_data: [[u32; 5]; 128] = [[6, 0, 0, 0, 0]; 128];
-        queue.write_buffer(&self.indirect_args_buffer, 0, bytemuck::bytes_of(&reset_data));
+        // Reset all 128 slots: each slot is 256 bytes (64 u32s).
+        // First u32 = 6 (vertex_count), rest = 0.
+        let mut reset_data = [[0u32; 64]; 128];
+        for slot in &mut reset_data {
+            slot[0] = 6; // vertex_count
+        }
+        queue.write_buffer(&self.indirect_args_buffer, 0, bytemuck::cast_slice(&reset_data));
 
         let mut cull_pass = encoder.begin_compute_pass(&ComputePassDescriptor {
             label: Some("note_cull"),
@@ -302,8 +308,8 @@ impl CullState {
             let Some(bg) = &self.per_key_bind_groups[key as usize] else { continue };
             let count = self.per_key_counts[key as usize];
             if count == 0 { continue; }
-            // Dynamic offset for indirect_args slot k = k * 20 bytes.
-            cull_pass.set_bind_group(0, bg, &[key as u32 * 20]);
+            // Dynamic offset for indirect_args slot k = k * 256 (aligned to 256).
+            cull_pass.set_bind_group(0, bg, &[key as u32 * 256]);
             // 2D dispatch to support >65535 workgroups per key (extreme black-score
             // cases where one key holds >16.7M notes). Shader already indexes via
             // global_id.x + global_id.y * (65535*256).
@@ -324,7 +330,7 @@ impl CullState {
             let count = self.per_key_counts[key as usize];
             if count == 0 { continue; }
             pass.set_vertex_buffer(0, vis_buf.slice(..));
-            pass.draw_indirect(&self.indirect_args_buffer, key as u64 * 20);
+            pass.draw_indirect(&self.indirect_args_buffer, key as u64 * 256);
         }
     }
 }

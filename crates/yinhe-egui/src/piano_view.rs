@@ -383,6 +383,11 @@ pub fn show(
     // - revision changed, some keys differ → try incremental (count must match)
     // - revision changed, count mismatch → full upload
     if use_gpu_cull {
+        // If cull isn't ready yet (e.g. just enabled, or MIDI just loaded),
+        // force a full upload by invalidating the last revision.
+        if !pianoroll.cull_ready() {
+            *last_cull_revision = 0;
+        }
         let note_key = yinhe_wgpu::NoteBufferKey::new(revision, track_visible, &hidden_notes);
         if note_key.value() != *last_cull_revision {
             if let Some(midi_src) = midi {
