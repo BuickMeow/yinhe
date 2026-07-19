@@ -1,11 +1,15 @@
 // GPU compute cull for NoteInstance (16 bytes each).
 //
-// Input:  all_instances — full note buffer (uploaded once on MIDI load)
-// Output: visible_instances — compacted visible-only buffer (tiny, fits screen)
-//         indirect_args — DrawIndirectArgs for draw_indirect()
+// Architecture: per-key dispatch.
+//   Each MIDI key (0..127) has its own `all_notes` storage buffer, grown on
+//   demand. The host dispatches this shader once per key, binding that key's
+//   buffer. This keeps every binding under wgpu's `max_storage_buffer_binding_size`
+//   (128MB) even when the project holds tens of millions of notes — a single
+//   global buffer would exceed the limit at ~8M notes (H2O.mid has 13.8M).
 //
-// Visibility test mirrors the vertex shader's tick→pixel math,
-// but only checks AABB overlap with the viewport — no rounding needed.
+// Input:  all_instances - one key's note buffer (bound per-dispatch)
+// Output: visible_instances - shared compacted buffer (atomicAppend across keys)
+//         indirect_args - shared DrawIndirectArgs (instance_count accumulates)
 
 struct Uniforms {
     width: f32,
@@ -31,13 +35,6 @@ struct NoteInstance {
     data: vec4<u32>, // start_tick, end_tick, packed(key|track|vel), reserved
 };
 
-struct CullInfo {
-    instance_count: u32,
-    _pad0: u32,
-    _pad1: u32,
-    _pad2: u32,
-};
-
 struct DrawIndirectArgs {
     vertex_count: u32,     // 6 (two triangles per note)
     instance_count: atomic<u32>,
@@ -46,10 +43,9 @@ struct DrawIndirectArgs {
 };
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
-@group(0) @binding(1) var<uniform> cull_info: CullInfo;
-@group(0) @binding(2) var<storage, read> all_instances: array<NoteInstance>;
-@group(0) @binding(3) var<storage, read_write> visible_instances: array<NoteInstance>;
-@group(0) @binding(4) var<storage, read_write> indirect_args: DrawIndirectArgs;
+@group(0) @binding(1) var<storage, read> all_instances: array<NoteInstance>;
+@group(0) @binding(2) var<storage, read_write> visible_instances: array<NoteInstance>;
+@group(0) @binding(3) var<storage, read_write> indirect_args: DrawIndirectArgs;
 
 // Workgroup shared memory for batched atomic
 var<workgroup> wg_count: atomic<u32>;
@@ -64,7 +60,7 @@ fn main(
 ) {
     let MAX_X_THREADS: u32 = 65535u * 256u;
     let index = global_id.x + global_id.y * MAX_X_THREADS;
-    let in_range = index < cull_info.instance_count && index < arrayLength(&all_instances);
+    let in_range = index < arrayLength(&all_instances);
 
     var is_visible = false;
 
@@ -117,7 +113,8 @@ fn main(
     }
     workgroupBarrier();
 
-    // Phase 2: thread 0 does one global atomicAdd for the whole workgroup
+    // Phase 2: thread 0 does one global atomicAdd for the whole workgroup.
+    // Accumulates across all keys (shared indirect_args buffer).
     if local_id.x == 0u {
         let n = atomicLoad(&wg_count);
         wg_total = n;

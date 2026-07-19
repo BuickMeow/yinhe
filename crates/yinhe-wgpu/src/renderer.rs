@@ -64,23 +64,26 @@ impl AnyLayer {
     }
 }
 
-/// GPU compute cull state: pipeline, buffers, and bind group for note culling.
+/// GPU compute cull state: pipeline, per-key buffers, and shared output buffers.
+///
+/// Architecture: each MIDI key owns its own `all_notes` storage buffer + bind
+/// group. The cull dispatch loops over keys, binding one buffer at a time.
+/// This keeps every binding well under wgpu's `max_storage_buffer_binding_size`
+/// (128MB) regardless of total note count - a single global buffer would
+/// exceed the limit at ~8M notes and panic in `create_bind_group`.
 struct CullState {
     pipeline: ComputePipeline,
     bind_group_layout: BindGroupLayout,
-    bind_group: Option<BindGroup>,
-    all_notes_buffer: Option<Buffer>,
-    all_notes_count: u32,
+    /// Per-key bind groups (128 slots). `None` until the key is first uploaded.
+    per_key_bind_groups: Vec<Option<BindGroup>>,
+    /// Per-key all-notes storage buffers, grown on demand.
+    per_key_buffers: Vec<Option<Buffer>>,
+    /// Shared compacted visible-notes buffer (all keys append into this).
     visible_notes_buffer: Buffer,
+    /// Shared DrawIndirectArgs buffer (`instance_count` accumulates across keys).
     indirect_args_buffer: Buffer,
-    cull_info_buffer: Buffer,
 
-    /// Per-key offset in all_notes_buffer (in NoteInstance units).
-    /// `per_key_offsets[k]` = start index of key k's notes.
-    /// `per_key_offsets[128]` = total count. Updated on full upload.
-    per_key_offsets: [u32; 129],
-
-    /// Per-key note count at last full upload.
+    /// Per-key note count at last upload (in NoteInstance units).
     per_key_counts: [u32; 128],
 
     /// Per-key revision at last upload (full or incremental).
@@ -112,7 +115,7 @@ impl CullState {
                     binding: 1,
                     visibility: ShaderStages::COMPUTE,
                     ty: BindingType::Buffer {
-                        ty: BufferBindingType::Uniform,
+                        ty: BufferBindingType::Storage { read_only: true },
                         has_dynamic_offset: false,
                         min_binding_size: None,
                     },
@@ -122,16 +125,6 @@ impl CullState {
                     binding: 2,
                     visibility: ShaderStages::COMPUTE,
                     ty: BindingType::Buffer {
-                        ty: BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: ShaderStages::COMPUTE,
-                    ty: BindingType::Buffer {
                         ty: BufferBindingType::Storage { read_only: false },
                         has_dynamic_offset: false,
                         min_binding_size: None,
@@ -139,7 +132,7 @@ impl CullState {
                     count: None,
                 },
                 BindGroupLayoutEntry {
-                    binding: 4,
+                    binding: 3,
                     visibility: ShaderStages::COMPUTE,
                     ty: BindingType::Buffer {
                         ty: BufferBindingType::Storage { read_only: false },
@@ -187,119 +180,126 @@ impl CullState {
         });
         yinhe_memtrace::add_gpu_resource(20);
 
-        let cull_info_buffer = device.create_buffer(&BufferDescriptor {
-            label: Some("cull_info"),
-            size: 16,
-            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        yinhe_memtrace::add_gpu_resource(16);
-
         Self {
             pipeline,
             bind_group_layout,
-            bind_group: None,
-            all_notes_buffer: None,
-            all_notes_count: 0,
+            per_key_bind_groups: (0..128).map(|_| None).collect(),
+            per_key_buffers: (0..128).map(|_| None).collect(),
             visible_notes_buffer,
             indirect_args_buffer,
-            cull_info_buffer,
-            per_key_offsets: [0; 129],
             per_key_counts: [0; 128],
             uploaded_key_revisions: [0; 128],
         }
     }
 
+    /// Upload notes for all 128 keys. `notes` is a flat buffer; `per_key_offsets`
+    /// slices it into per-key segments. Each key gets its own storage buffer
+    /// (grown on demand) and bind group, keeping every binding under the
+    /// `max_storage_buffer_binding_size` limit regardless of total note count.
     fn upload_all_notes(
         &mut self,
         device: &Device,
         queue: &Queue,
+        uniform_buffer: &Buffer,
         notes: &[NoteInstance],
         per_key_offsets: &[u32; 129],
         key_revisions: &[u64; 128],
     ) {
+        for key in 0u8..128 {
+            let start = per_key_offsets[key as usize] as usize;
+            let end = per_key_offsets[key as usize + 1] as usize;
+            let key_notes = &notes[start..end];
+            self.upload_one_key(device, queue, uniform_buffer, key, key_notes);
+            self.uploaded_key_revisions[key as usize] = key_revisions[key as usize];
+        }
+    }
+
+    /// Grow (if needed) + write + bind-group-recreate (if buffer grew) for one key.
+    fn upload_one_key(
+        &mut self,
+        device: &Device,
+        queue: &Queue,
+        uniform_buffer: &Buffer,
+        key: u8,
+        notes: &[NoteInstance],
+    ) {
         let needed = notes.len() as u64 * std::mem::size_of::<NoteInstance>() as u64;
 
-        let recreate = match &self.all_notes_buffer {
+        let need_recreate = match &self.per_key_buffers[key as usize] {
             None => true,
             Some(buf) => buf.size() < needed,
         };
-
-        if recreate {
-            if let Some(ref buf) = self.all_notes_buffer {
+        if need_recreate {
+            if let Some(ref buf) = self.per_key_buffers[key as usize] {
                 yinhe_memtrace::sub_gpu_resource(buf.size());
             }
             let size = needed.max(4096);
             let buffer = device.create_buffer(&BufferDescriptor {
-                label: Some("all_notes"),
+                label: Some("all_notes_key"),
                 size,
                 usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
             yinhe_memtrace::add_gpu_resource(size);
-            self.all_notes_buffer = Some(buffer);
+            self.per_key_buffers[key as usize] = Some(buffer);
+            self.recreate_cull_bind_group(device, uniform_buffer, key);
         }
 
         if !notes.is_empty() {
-            if let Some(ref buf) = self.all_notes_buffer {
+            if let Some(ref buf) = self.per_key_buffers[key as usize] {
                 queue.write_buffer(buf, 0, bytemuck::cast_slice(notes));
             }
         }
-
-        self.all_notes_count = notes.len() as u32;
-        queue.write_buffer(
-            &self.cull_info_buffer, 0,
-            bytemuck::bytes_of(&[self.all_notes_count, 0u32, 0u32, 0u32]),
-        );
-
-        // Track per-key layout for future incremental uploads.
-        self.per_key_offsets = *per_key_offsets;
-        for k in 0..128 {
-            self.per_key_counts[k] = per_key_offsets[k + 1] - per_key_offsets[k];
-        }
-        self.uploaded_key_revisions = *key_revisions;
-
-        // (bind group is recreated by InstanceRenderer::recreate_cull_bind_group)
+        self.per_key_counts[key as usize] = notes.len() as u32;
     }
 
-    /// Incrementally update a single key's notes in the GPU buffer.
-    /// Only valid when the key's note count hasn't changed (same offset layout).
-    /// Caller must verify count matches `per_key_counts[key]` before calling.
-    fn upload_key_notes(&mut self, queue: &Queue, key: u8, notes: &[NoteInstance], revision: u64) {
-        let offset_bytes = self.per_key_offsets[key as usize] as u64
-            * std::mem::size_of::<NoteInstance>() as u64;
-        if let Some(ref buf) = self.all_notes_buffer {
-            if !notes.is_empty() {
-                queue.write_buffer(buf, offset_bytes, bytemuck::cast_slice(notes));
-            }
-        }
-        self.uploaded_key_revisions[key as usize] = revision;
+    /// Recreate the bind group for a single key (after its buffer grew).
+    fn recreate_cull_bind_group(&mut self, device: &Device, uniform_buffer: &Buffer, key: u8) {
+        let all_buf = match &self.per_key_buffers[key as usize] {
+            Some(b) => b.clone(),
+            None => return,
+        };
+        self.per_key_bind_groups[key as usize] = Some(device.create_bind_group(&BindGroupDescriptor {
+            label: Some("cull_bind_group"),
+            layout: &self.bind_group_layout,
+            entries: &[
+                BindGroupEntry { binding: 0, resource: uniform_buffer.as_entire_binding() },
+                BindGroupEntry { binding: 1, resource: all_buf.as_entire_binding() },
+                BindGroupEntry { binding: 2, resource: self.visible_notes_buffer.as_entire_binding() },
+                BindGroupEntry { binding: 3, resource: self.indirect_args_buffer.as_entire_binding() },
+            ],
+        }));
     }
 
     fn is_ready(&self) -> bool {
-        self.bind_group.is_some() && self.all_notes_count > 0
+        self.per_key_bind_groups.iter().any(|bg| bg.is_some())
     }
 
-    /// Reset indirect args and dispatch the compute cull pass.
-    fn dispatch_cull(&self, queue: &Queue, encoder: &mut CommandEncoder, _uniform_buffer: &Buffer) {
+    /// Reset indirect args once, then dispatch the cull pass per key.
+    /// `instance_count` accumulates across all keys via atomicAdd in the shader.
+    fn dispatch_cull(&self, queue: &Queue, encoder: &mut CommandEncoder) {
         // Reset indirect args: [vertex_count=6, instance_count=0, first_vertex=0, first_instance=0, pad=0]
         let reset_data: [u32; 5] = [6, 0, 0, 0, 0];
         queue.write_buffer(&self.indirect_args_buffer, 0, bytemuck::bytes_of(&reset_data));
-
-        // Create a per-frame bind group that uses the current uniform buffer
-        // (binding 0 must point to the render pipeline's uniform buffer)
-        // We can't create this here since we don't have the device.
-        // Instead, we rely on the bind group created in recreate_bind_group_with_uniforms.
-        let bg = self.bind_group.as_ref().unwrap();
 
         let mut cull_pass = encoder.begin_compute_pass(&ComputePassDescriptor {
             label: Some("note_cull"),
             timestamp_writes: None,
         });
         cull_pass.set_pipeline(&self.pipeline);
-        cull_pass.set_bind_group(0, bg, &[]);
-        let wg = (self.all_notes_count + 255) / 256;
-        cull_pass.dispatch_workgroups(wg, 1, 1);
+        for key in 0u8..128 {
+            let Some(bg) = &self.per_key_bind_groups[key as usize] else { continue };
+            let count = self.per_key_counts[key as usize];
+            if count == 0 { continue; }
+            cull_pass.set_bind_group(0, bg, &[]);
+            // 2D dispatch to support >65535 workgroups per key (extreme black-score
+            // cases where one key holds >16.7M notes). Shader already indexes via
+            // global_id.x + global_id.y * (65535*256).
+            let wg = (count as u64).div_ceil(256);
+            let wg_x = wg.min(65535) as u32;
+            let wg_y = wg.div_ceil(65535) as u32;
+            cull_pass.dispatch_workgroups(wg_x, wg_y, 1);
+        }
         drop(cull_pass);
     }
 
@@ -534,56 +534,35 @@ impl InstanceRenderer {
         per_key_offsets: &[u32; 129],
         key_revisions: &[u64; 128],
     ) {
-        self.cull.upload_all_notes(&self.device, &self.queue, notes, per_key_offsets, key_revisions);
-        // Recreate bind group with the render pipeline's uniform buffer
-        if self.cull.all_notes_buffer.is_some() {
-            self.recreate_cull_bind_group();
-        }
+        self.cull.upload_all_notes(
+            &self.device, &self.queue, &self.render.uniform_buffer,
+            notes, per_key_offsets, key_revisions,
+        );
     }
 
-    /// Try incremental upload for a single key. Returns true if successful.
-    /// Only works when the key's note count matches the last full upload
-    /// (i.e. notes were modified but not added/removed).
+    /// Incrementally upload a single key's notes. Grows the key's buffer and
+    /// recreates its bind group on demand, so this handles count changes too.
+    /// Returns false only if the key was never uploaded before (caller should
+    /// fall back to `upload_all_notes_for_cull`).
     pub fn try_incremental_key_upload(
         &mut self,
         key: u8,
         notes: &[NoteInstance],
         revision: u64,
     ) -> bool {
-        if self.cull.all_notes_buffer.is_none() {
+        if self.cull.per_key_buffers[key as usize].is_none() {
             return false;
         }
-        // Count must match — otherwise offsets would shift and we'd need full upload.
-        if notes.len() as u32 != self.cull.per_key_counts[key as usize] {
-            return false;
-        }
-        self.cull.upload_key_notes(&self.queue, key, notes, revision);
+        self.cull.upload_one_key(
+            &self.device, &self.queue, &self.render.uniform_buffer, key, notes,
+        );
+        self.cull.uploaded_key_revisions[key as usize] = revision;
         true
     }
 
     /// Get the uploaded key revisions for comparison with model.
     pub fn uploaded_key_revisions(&self) -> &[u64; 128] {
         &self.cull.uploaded_key_revisions
-    }
-
-    /// Recreate the cull bind group so that binding 0 points to the
-    /// render pipeline's uniform buffer (which gets updated every frame).
-    fn recreate_cull_bind_group(&mut self) {
-        let all_buf = match &self.cull.all_notes_buffer {
-            Some(b) => b.clone(),
-            None => return,
-        };
-        self.cull.bind_group = Some(self.device.create_bind_group(&BindGroupDescriptor {
-            label: Some("cull_bind_group"),
-            layout: &self.cull.bind_group_layout,
-            entries: &[
-                BindGroupEntry { binding: 0, resource: self.render.uniform_buffer.as_entire_binding() },
-                BindGroupEntry { binding: 1, resource: self.cull.cull_info_buffer.as_entire_binding() },
-                BindGroupEntry { binding: 2, resource: all_buf.as_entire_binding() },
-                BindGroupEntry { binding: 3, resource: self.cull.visible_notes_buffer.as_entire_binding() },
-                BindGroupEntry { binding: 4, resource: self.cull.indirect_args_buffer.as_entire_binding() },
-            ],
-        }));
     }
 
     /// Whether GPU compute cull is ready (all notes have been uploaded).
@@ -666,7 +645,7 @@ impl InstanceRenderer {
         height: u32,
     ) {
         // Phase 1: Compute cull
-        self.cull.dispatch_cull(&self.queue, encoder, &self.render.uniform_buffer);
+        self.cull.dispatch_cull(&self.queue, encoder);
 
         // Phase 2: Single render pass
         let mut pass = crate::util::begin_pianoroll_pass(
