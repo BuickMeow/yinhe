@@ -31,8 +31,8 @@ impl App {
 
         let right_panel_total_w = if self.right_tab.is_some() {
             let max_w = (remaining.width() - 60.0).max(crate::theme::RIGHT_PANEL_MIN_WIDTH + 4.0);
-            let pw =
-                (self.right_panel_width + 4.0).clamp(crate::theme::RIGHT_PANEL_MIN_WIDTH + 4.0, max_w);
+            let pw = (self.right_panel_width + 4.0)
+                .clamp(crate::theme::RIGHT_PANEL_MIN_WIDTH + 4.0, max_w);
             self.right_panel_width = (pw - 4.0).max(crate::theme::RIGHT_PANEL_MIN_WIDTH);
             pw
         } else {
@@ -76,7 +76,8 @@ impl App {
         };
 
         let is_playing = self
-            .audio_state.handle
+            .audio_state
+            .handle
             .as_ref()
             .map(|a| a.handle.is_playing())
             .unwrap_or(false);
@@ -84,7 +85,11 @@ impl App {
 
         // Arrangement view
         let mut needs_audio_rebuild = false;
-        let (arr_drag_delta, arr_eraser_rect, arr_quantize): (Option<(i64, i32)>, Option<(f64, f64, usize, usize)>, Option<yinhe_editor_core::quantize::QuantizePreset>) = if self.show_transport {
+        let (arr_drag_delta, arr_eraser_rect, arr_quantize): (
+            Option<(i64, i32)>,
+            Option<(f64, f64, usize, usize)>,
+            Option<yinhe_editor_core::quantize::QuantizePreset>,
+        ) = if self.show_transport {
             let mut request_pianoroll = false;
             let mut arr_drag_delta: Option<(i64, i32)> = None;
             let mut arr_eraser_rect: Option<(f64, f64, usize, usize)> = None;
@@ -134,7 +139,14 @@ impl App {
         // Handle AR eraser (guard is dropped, no outstanding borrow on self.documents)
         if let Some((t_start, t_end, track_lo, track_hi)) = arr_eraser_rect {
             let mut sel = yinhe_core::Selection::default();
-            sel.add_rect_track(t_start as u32, t_end as u32, 0, 127, track_lo as u16, track_hi as u16);
+            sel.add_rect_track(
+                t_start as u32,
+                t_end as u32,
+                0,
+                127,
+                track_lo as u16,
+                track_hi as u16,
+            );
             let Some(idx) = self.active_doc else { return };
             self.documents[idx].edit.selected = sel;
             self.with_undo("Eraser delete (arrange)", |doc| doc.delete_selected());
@@ -173,7 +185,10 @@ impl App {
         if self.show_transport {
             let split_right = layout.remaining.max.x + layout.tools_panel_w;
             let h_split_rect = egui::Rect::from_min_max(
-                egui::pos2(layout.remaining.min.x, layout.remaining.min.y + layout.arr_h),
+                egui::pos2(
+                    layout.remaining.min.x,
+                    layout.remaining.min.y + layout.arr_h,
+                ),
                 egui::pos2(
                     split_right,
                     layout.remaining.min.y + layout.arr_h + crate::theme::SPLIT_GAP,
@@ -214,13 +229,13 @@ impl App {
             self.controller_renderers.push(Vec::new());
         }
 
-        let mut auto_edit_events: Vec<crate::piano_view::automation_panel::AutomationEdit> = Vec::new();
+        let mut auto_edit_events: Vec<crate::piano_view::automation_panel::AutomationEdit> =
+            Vec::new();
 
         let (piano_event, note_drag_delta, pencil_note_drag) = {
             let mut guard = crate::app::main_loop::ReplaceGuard::new(&mut self.documents[idx]);
             let doc = guard.as_mut();
-            let midi_source: Option<&dyn yinhe_types::NoteSource> =
-                Some(doc.data.model.as_ref());
+            let midi_source: Option<&dyn yinhe_types::NoteSource> = Some(doc.data.model.as_ref());
             let piano_rect = egui::Rect::from_min_max(
                 egui::pos2(layout.remaining.min.x, layout.bottom_y),
                 layout.remaining.max,
@@ -229,99 +244,125 @@ impl App {
             let mut event = None;
             let mut note_drag_delta: Option<(i64, i32)> = None;
             let mut pencil_note_drag: Option<crate::piano_view::PencilNoteDrag> = None;
-            ui.scope_builder(
-                egui::UiBuilder::new().max_rect(piano_rect),
-                |ui| {
-                    let _piano_total_start = if yinhe_memtrace::perf_probe::enabled() {
-                        Some(std::time::Instant::now())
-                    } else {
-                        None
-                    };
-                    let show_all = doc
-                        .edit
-                        .conductor_track_idx
-                        .map(|c| doc.edit.track_selected.contains(&c))
-                        .unwrap_or(false);
-                    let pr_visible: Vec<bool> = (0..doc.edit.track_visible.len())
-                        .map(|i| {
-                            if show_all {
-                                doc.edit.track_visible[i]
-                            } else {
-                                doc.edit.track_visible[i]
-                                    && doc.edit.track_selected.contains(&(i as u16))
-                            }
-                        })
-                        .collect();
-                    let tpb = doc.data.model.meta.ppq;
-                    let ts_num = doc.data.model.conductor.time_sig.first().map(|t| t.numerator).unwrap_or(4);
-                    let ts_den = doc.data.model.conductor.time_sig.first().map(|t| t.denominator).unwrap_or(2);
-                    let ts_events: Vec<yinhe_types::TimeSigEvent> = doc.data.model.conductor.time_sig.iter().map(|t| yinhe_types::TimeSigEvent {
+            ui.scope_builder(egui::UiBuilder::new().max_rect(piano_rect), |ui| {
+                let _piano_total_start = if yinhe_memtrace::perf_probe::enabled() {
+                    Some(std::time::Instant::now())
+                } else {
+                    None
+                };
+                let show_all = doc
+                    .edit
+                    .conductor_track_idx
+                    .map(|c| doc.edit.track_selected.contains(&c))
+                    .unwrap_or(false);
+                let pr_visible: Vec<bool> = (0..doc.edit.track_visible.len())
+                    .map(|i| {
+                        if show_all {
+                            doc.edit.track_visible[i]
+                        } else {
+                            doc.edit.track_visible[i]
+                                && doc.edit.track_selected.contains(&(i as u16))
+                        }
+                    })
+                    .collect();
+                let tpb = doc.data.model.meta.ppq;
+                let ts_num = doc
+                    .data
+                    .model
+                    .conductor
+                    .time_sig
+                    .first()
+                    .map(|t| t.numerator)
+                    .unwrap_or(4);
+                let ts_den = doc
+                    .data
+                    .model
+                    .conductor
+                    .time_sig
+                    .first()
+                    .map(|t| t.denominator)
+                    .unwrap_or(2);
+                let ts_events: Vec<yinhe_types::TimeSigEvent> = doc
+                    .data
+                    .model
+                    .conductor
+                    .time_sig
+                    .iter()
+                    .map(|t| yinhe_types::TimeSigEvent {
                         tick: t.tick,
                         numerator: t.numerator,
                         denominator: t.denominator,
-                    }).collect();
-                    // Get automation lanes: conductor → all tracks; otherwise → first selected
-                    let automation_lanes: Vec<yinhe_types::AutomationLane> = {
-                        if show_all {
-                            doc.data.model.tracks.iter()
-                                .flat_map(|t| t.automation_lanes.iter().cloned())
-                                .collect()
-                        } else {
-                            let first_track = doc.edit.track_selected.iter().next().copied().unwrap_or(0) as usize;
-                            doc.data.model.tracks.get(first_track)
-                                .map(|t| t.automation_lanes.clone())
-                                .unwrap_or_default()
-                        }
-                    };
-                    event = piano_view::show(
-                        ui,
-                        ui.available_size(),
-                        &mut self.pianoroll,
-                        &mut self.render_ctx,
-                        self.render_thread.as_ref(),
-                        &mut self.pianoroll_view,
-                        &mut self.last_cull_revision,
-                        &mut self.last_cull_revision_only,
-                        &mut self.last_hidden_hash,
-                        midi_source,
-                        &mut doc.edit.selected,
-                        &pr_visible,
-                        &doc.edit.track_colors_cache,
-                        &mut doc.edit.cursor_tick,
-                        is_playing,
-                        doc.edit.quantize_pianoroll,
-                        tpb,
-                        Some((tpb, ts_num, ts_den, &ts_events)),
-                        &mut self.piano_last_cursor_tick,
-                        follow_mode,
-                        &self.active_tool,
-                        Some(&mut doc.edit.controller_panels),
-                        Some(&mut self.controller_renderers[idx]),
-                        Some(&automation_lanes),
-                        Some(&mut doc.edit.show_controller_panels),
-                        Some(&auto_wgpu_state),
-                        self.audio_settings.scroll_mode,
-                        self.audio_settings.min_border_width,
-                        self.audio_settings.note_outline,
-                        &doc.data.model.conductor.tempo,
-                        &mut note_drag_delta,
-                        &mut doc.edit.sel_rect,
-                        &doc.edit.track_selected,
-                        doc.edit.conductor_track_idx,
-                        doc.data.revision,
-                        doc.data.note_revisions(),
-                        Some(&self.haptic_engine),
-                        &mut pencil_note_drag,
-                        &mut auto_edit_events,
-                        &mut self.info_content,
-                        &mut self.right_tab,
-                        &mut self.automation_drag_ghost,
-                    );
-                    if let Some(t0) = _piano_total_start {
-                        yinhe_memtrace::perf_probe::record_piano_total(t0.elapsed());
+                    })
+                    .collect();
+                // Get automation lanes: conductor → all tracks; otherwise → first selected
+                let automation_lanes: Vec<yinhe_types::AutomationLane> = {
+                    if show_all {
+                        doc.data
+                            .model
+                            .tracks
+                            .iter()
+                            .flat_map(|t| t.automation_lanes.iter().cloned())
+                            .collect()
+                    } else {
+                        let first_track =
+                            doc.edit.track_selected.iter().next().copied().unwrap_or(0) as usize;
+                        doc.data
+                            .model
+                            .tracks
+                            .get(first_track)
+                            .map(|t| t.automation_lanes.clone())
+                            .unwrap_or_default()
                     }
-                },
-            );
+                };
+                event = piano_view::show(
+                    ui,
+                    ui.available_size(),
+                    &mut self.pianoroll,
+                    &mut self.render_ctx,
+                    self.render_thread.as_ref(),
+                    &mut self.pianoroll_view,
+                    &mut self.last_cull_revision,
+                    &mut self.last_cull_revision_only,
+                    &mut self.last_hidden_hash,
+                    midi_source,
+                    &mut doc.edit.selected,
+                    &pr_visible,
+                    &doc.edit.track_colors_cache,
+                    &mut doc.edit.cursor_tick,
+                    is_playing,
+                    doc.edit.quantize_pianoroll,
+                    tpb,
+                    Some((tpb, ts_num, ts_den, &ts_events)),
+                    &mut self.piano_last_cursor_tick,
+                    follow_mode,
+                    &self.active_tool,
+                    Some(&mut doc.edit.controller_panels),
+                    Some(&mut self.controller_renderers[idx]),
+                    Some(&automation_lanes),
+                    Some(&mut doc.edit.show_controller_panels),
+                    Some(&auto_wgpu_state),
+                    self.audio_settings.scroll_mode,
+                    self.audio_settings.min_border_width,
+                    self.audio_settings.note_outline,
+                    self.audio_settings.use_gpu_cull,
+                    &doc.data.model.conductor.tempo,
+                    &mut note_drag_delta,
+                    &mut doc.edit.sel_rect,
+                    &doc.edit.track_selected,
+                    doc.edit.conductor_track_idx,
+                    doc.data.revision,
+                    doc.data.note_revisions(),
+                    Some(&self.haptic_engine),
+                    &mut pencil_note_drag,
+                    &mut auto_edit_events,
+                    &mut self.info_content,
+                    &mut self.right_tab,
+                    &mut self.automation_drag_ghost,
+                );
+                if let Some(t0) = _piano_total_start {
+                    yinhe_memtrace::perf_probe::record_piano_total(t0.elapsed());
+                }
+            });
             (event, note_drag_delta, pencil_note_drag)
         };
 
@@ -341,7 +382,14 @@ impl App {
                 PianoViewEvent::AddNote { track, note } => {
                     self.add_note_with_undo(track, note);
                 }
-                PianoViewEvent::EraserDelete { t_start, t_end, key_lo, key_hi, track_lo, track_hi } => {
+                PianoViewEvent::EraserDelete {
+                    t_start,
+                    t_end,
+                    key_lo,
+                    key_hi,
+                    track_lo,
+                    track_hi,
+                } => {
                     let Some(idx) = self.active_doc else { return };
                     let mut sel = yinhe_core::Selection::default();
                     sel.add_rect_track(t_start, t_end, key_lo, key_hi, track_lo, track_hi);
@@ -456,7 +504,11 @@ impl App {
     }
 
     /// Show tool panels, right panel, and request repaint if playing.
-    pub(in crate::app) fn show_panels_and_overlays(&mut self, ui: &mut egui::Ui, layout: &LayoutInfo) {
+    pub(in crate::app) fn show_panels_and_overlays(
+        &mut self,
+        ui: &mut egui::Ui,
+        layout: &LayoutInfo,
+    ) {
         let tools_x = layout.remaining.max.x;
 
         // Tool panels
@@ -494,9 +546,7 @@ impl App {
                 egui::pos2(tools_x + layout.tools_panel_w, layout.remaining.min.y),
                 egui::vec2(layout.right_panel_total_w, layout.remaining.height()),
             );
-            let doc = self
-                .active_doc
-                .and_then(|idx| self.documents.get_mut(idx));
+            let doc = self.active_doc.and_then(|idx| self.documents.get_mut(idx));
             let changed = crate::right_panel::show(
                 ui,
                 right_rect,
@@ -516,7 +566,8 @@ impl App {
 
         // Request repaint during playback (or while waiting for audio thread to start)
         let is_audio_playing = self
-            .audio_state.handle
+            .audio_state
+            .handle
             .as_ref()
             .map(|a| a.handle.is_playing())
             .unwrap_or(false);

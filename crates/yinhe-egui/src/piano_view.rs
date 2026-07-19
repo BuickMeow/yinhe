@@ -71,6 +71,7 @@ pub fn show(
     scroll_mode: u32,
     min_border_width: f32,
     note_outline: bool,
+    use_gpu_cull: bool,
     tempo_lane: &AutomationLane,
     note_drag_delta: &mut Option<(i64, i32)>,
     sel_rect: &mut yinhe_editor_core::edit_state::SelRectState,
@@ -375,67 +376,70 @@ pub fn show(
     };
 
     // ── Upload all notes to GPU cull buffer ──
+    // Only when GPU cull mode is enabled. CPU build mode skips this entirely.
     // Strategy: try incremental per-key upload first, fallback to full upload.
     // - hidden_notes changed → must full upload (affects per-key content)
     // - revision changed, per-key revision matches → skip (already uploaded)
     // - revision changed, some keys differ → try incremental (count must match)
     // - revision changed, count mismatch → full upload
-    let note_key = yinhe_wgpu::NoteBufferKey::new(revision, track_visible, &hidden_notes);
-    if note_key.value() != *last_cull_revision {
-        if let Some(midi_src) = midi {
-            // Check if only hidden_notes changed (revision same, hidden_hash different)
-            let revision_changed = revision != *last_cull_revision_only;
-            let hidden_changed = yinhe_wgpu::hash_hidden(&hidden_notes) != *last_hidden_hash;
+    if use_gpu_cull {
+        let note_key = yinhe_wgpu::NoteBufferKey::new(revision, track_visible, &hidden_notes);
+        if note_key.value() != *last_cull_revision {
+            if let Some(midi_src) = midi {
+                // Check if only hidden_notes changed (revision same, hidden_hash different)
+                let revision_changed = revision != *last_cull_revision_only;
+                let hidden_changed = yinhe_wgpu::hash_hidden(&hidden_notes) != *last_hidden_hash;
 
-            if hidden_changed && !revision_changed {
-                // Only hidden_notes changed → must full upload
-                let (all_notes, offsets) = yinhe_wgpu::build_all_notes(
-                    midi_src, &hidden_notes, track_visible,
-                );
-                pianoroll.upload_all_notes_for_cull(&all_notes, &offsets, note_revisions);
-            } else if revision_changed {
-                // Revision changed → try incremental per-key upload
-                let uploaded = pianoroll.uploaded_key_revisions();
-                let dirty_keys: Vec<u8> = (0u8..128)
-                    .filter(|&k| note_revisions[k as usize] != uploaded[k as usize])
-                    .collect();
+                if hidden_changed && !revision_changed {
+                    // Only hidden_notes changed → must full upload
+                    let (all_notes, offsets) = yinhe_wgpu::build_all_notes(
+                        midi_src, &hidden_notes, track_visible,
+                    );
+                    pianoroll.upload_all_notes_for_cull(&all_notes, &offsets, note_revisions);
+                } else if revision_changed {
+                    // Revision changed → try incremental per-key upload
+                    let uploaded = pianoroll.uploaded_key_revisions();
+                    let dirty_keys: Vec<u8> = (0u8..128)
+                        .filter(|&k| note_revisions[k as usize] != uploaded[k as usize])
+                        .collect();
 
-                if dirty_keys.is_empty() {
-                    // Revision bumped but no key revisions changed (e.g. conductor-only edit)
-                    // Just update tracking, no re-upload needed.
-                } else {
-                    // Try incremental: build + upload each dirty key
-                    let mut all_ok = true;
-                    for &key in &dirty_keys {
-                        let key_notes = yinhe_wgpu::build_key_notes(
-                            midi_src, key, &hidden_notes, track_visible,
-                        );
-                        if !pianoroll.try_incremental_key_upload(
-                            key, &key_notes, note_revisions[key as usize],
-                        ) {
-                            all_ok = false;
-                            break;
+                    if dirty_keys.is_empty() {
+                        // Revision bumped but no key revisions changed (e.g. conductor-only edit)
+                        // Just update tracking, no re-upload needed.
+                    } else {
+                        // Try incremental: build + upload each dirty key
+                        let mut all_ok = true;
+                        for &key in &dirty_keys {
+                            let key_notes = yinhe_wgpu::build_key_notes(
+                                midi_src, key, &hidden_notes, track_visible,
+                            );
+                            if !pianoroll.try_incremental_key_upload(
+                                key, &key_notes, note_revisions[key as usize],
+                            ) {
+                                all_ok = false;
+                                break;
+                            }
                         }
-                    }
 
-                    if !all_ok {
-                        // Fallback: full upload (some key's count changed)
-                        let (all_notes, offsets) = yinhe_wgpu::build_all_notes(
-                            midi_src, &hidden_notes, track_visible,
-                        );
-                        pianoroll.upload_all_notes_for_cull(&all_notes, &offsets, note_revisions);
+                        if !all_ok {
+                            // Fallback: full upload (some key's count changed)
+                            let (all_notes, offsets) = yinhe_wgpu::build_all_notes(
+                                midi_src, &hidden_notes, track_visible,
+                            );
+                            pianoroll.upload_all_notes_for_cull(&all_notes, &offsets, note_revisions);
+                        }
                     }
                 }
             }
+            *last_cull_revision = note_key.value();
+            *last_cull_revision_only = revision;
+            *last_hidden_hash = yinhe_wgpu::hash_hidden(&hidden_notes);
         }
-        *last_cull_revision = note_key.value();
-        *last_cull_revision_only = revision;
-        *last_hidden_hash = yinhe_wgpu::hash_hidden(&hidden_notes);
     }
 
     // Prepare GPU data (ghost notes are handled separately as a transient overlay)
     let theme = pianoroll.theme().clone();
-    let cull_ready = pianoroll.cull_ready();
+    let cull_ready = use_gpu_cull && pianoroll.cull_ready();
     if cull_ready {
         // GPU cull path: upload decor layers + ghost layer (GPU cull handles notes)
         let job = yinhe_wgpu::build_render_job(
@@ -476,8 +480,21 @@ pub fn show(
         for &(start_tick, end_tick, key, track) in &ghost_notes {
             yinhe_wgpu::build_ghost_note(&mut ghost_instances, start_tick, end_tick, key, track, &theme);
         }
+        // Cache key for notes: includes viewport tick/key range, revision,
+        // hidden_notes, and track_visible — anything that affects which notes
+        // are built. When none of these change (e.g. steady state, no scroll/
+        // edit), the render thread skips GPU upload entirely.
+        let (tick_start, tick_end) = view.visible_tick_range(w as f32);
+        let (key_lo, key_hi) = view.visible_key_range(h as f32);
+        let tv_hash = yinhe_wgpu::hash_bools(track_visible);
+        let hidden_hash = yinhe_wgpu::hash_hidden(&hidden_notes);
+        let notes_cache_key = yinhe_wgpu::layer_cache_key(&[
+            tick_start.to_bits(), tick_end.to_bits(),
+            key_lo as u64, key_hi as u64,
+            tv_hash, revision, hidden_hash,
+        ]);
         let note_layers = vec![
-            yinhe_wgpu::NoteLayerData { instances: notes_instances, cache_key: 0, force: false },
+            yinhe_wgpu::NoteLayerData { instances: notes_instances, cache_key: notes_cache_key, force: false },
             yinhe_wgpu::NoteLayerData { instances: ghost_instances, cache_key: 0, force: true },
         ];
         rt.send_job(yinhe_wgpu::RenderJob {

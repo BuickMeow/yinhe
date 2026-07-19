@@ -179,6 +179,12 @@ pub fn show_content(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
                 changed = true;
             }
             ui.end_row();
+
+            ui.label("GPU 裁剪");
+            if ui.checkbox(&mut settings.use_gpu_cull, "").changed() {
+                changed = true;
+            }
+            ui.end_row();
         });
 
     ui.add_space(16.0);

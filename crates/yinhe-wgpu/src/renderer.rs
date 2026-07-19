@@ -5,8 +5,11 @@ use crate::pipeline::RenderPipelineState;
 use crate::vertex::{CurveInstance, DrawInstance, NoteInstance, Uniforms, SelectionUniform, VelocityBarInstance};
 
 /// Maximum visible note instances the cull output buffer can hold.
-/// 1M instances × 16B = 16MB — enough for any screen at any zoom.
-const MAX_VISIBLE_NOTES: u64 = 1_000_000;
+/// 8M instances × 16B = 128MB — the wgpu `max_storage_buffer_binding_size` limit.
+/// Beyond this, `create_bind_group` will panic. If more than 8M notes are
+/// visible simultaneously (extreme black-score at minimum zoom), the excess
+/// is silently dropped by the cull shader.
+const MAX_VISIBLE_NOTES: u64 = 8_000_000;
 
 /// Per-frame timing breakdown returned by `prepare`.
 #[derive(Clone, Copy, Debug, Default)]

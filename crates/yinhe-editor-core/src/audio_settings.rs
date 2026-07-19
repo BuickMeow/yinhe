@@ -33,6 +33,11 @@ pub struct AudioSettings {
     /// 实时播放是否使用 GPU 合成器（yinhe-synth）替代 xsynth。
     /// 默认关闭，仍使用 xsynth。开启后会在加载音色库时初始化 GPU 渲染路径。
     pub use_gpu_synth: bool,
+    /// PR 视图音符渲染模式：true=GPU 裁剪（compute shader 做视口裁剪），
+    /// false=CPU 构建（CPU 端构建视口内音符实例）。
+    /// GPU 裁剪适合音符量极大的场景，但有同屏 800 万音符上限；
+    /// CPU 构建无上限，但缩到最小时每帧重建开销大。
+    pub use_gpu_cull: bool,
     #[serde(skip)]
     pub show_settings: bool,
     #[serde(skip)]
@@ -58,6 +63,7 @@ impl Default for AudioSettings {
             haptic_enabled: true,
             haptic_intensity: 0.5,
             use_gpu_synth: false,
+            use_gpu_cull: false, // 默认 CPU 构建
             show_settings: false,
             available_devices: Vec::new(),
             available_sample_rates: Vec::new(),
