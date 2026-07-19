@@ -79,8 +79,10 @@ struct CullState {
     /// Per-key visible-notes storage buffers (cull output + draw vertex source).
     /// Same size as the corresponding `per_key_buffers` slot (visible ≤ all).
     per_key_visible_buffers: Vec<Option<Buffer>>,
-    /// Shared indirect-args buffer: 128 slots × 20 bytes (DrawIndirectArgs + pad).
-    /// Slot k is at byte offset k * 20. Reset to [6,0,0,0,0] before each dispatch.
+    /// Shared indirect-args buffer: 128 slots × 256 bytes (DrawIndirectArgs + pad).
+    /// Slot k is at byte offset k * 256. 256-byte stride satisfies
+    /// `min_storage_buffer_offset_alignment` (typically 256). Reset to
+    /// [6,0,0,0,0] before each dispatch.
     indirect_args_buffer: Buffer,
 
     /// Per-key note count at last upload (in NoteInstance units).
@@ -262,7 +264,7 @@ impl CullState {
     }
 
     /// Recreate the bind group for a single key (after its buffer grew).
-    /// Binds: uniform, all_notes[k], visible_notes[k], indirect_args (dynamic offset = k*20).
+    /// Binds: uniform, all_notes[k], visible_notes[k], indirect_args (dynamic offset = k*256).
     fn recreate_cull_bind_group(&mut self, device: &Device, uniform_buffer: &Buffer, key: u8) {
         let all_buf = match &self.per_key_buffers[key as usize] {
             Some(b) => b.clone(),
