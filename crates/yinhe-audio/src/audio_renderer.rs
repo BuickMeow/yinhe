@@ -336,7 +336,7 @@ impl AudioRenderer {
                 let track = note.track as usize;
                 if self.engine.skip_track.get(track).copied().unwrap_or(false) { continue; }
                 let ch = audio_model.track_channel(track) as usize;
-                if !self.engine.active_mask.get(ch).copied().unwrap_or(false) { continue; }
+                if self.engine.channel_layout.dense_for(ch) == u32::MAX { continue; }
 
                 events.push(yinhe_synth::SynthEvent {
                     sample: note.start_sample,

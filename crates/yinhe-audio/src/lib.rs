@@ -2,6 +2,7 @@ mod audio_model;
 mod audio_renderer;
 mod audio_ring;
 mod channel;
+pub mod channel_layout;
 pub mod engine;
 mod engine_render;
 mod engine_state;

@@ -6828,6 +6828,7 @@ dependencies = [
  "xsynth-core",
  "xsynth-soundfonts",
  "yinhe-core",
+ "yinhe-editor-core",
  "yinhe-memtrace",
  "yinhe-mid2",
  "yinhe-synth",

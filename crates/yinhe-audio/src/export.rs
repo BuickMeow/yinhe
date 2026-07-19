@@ -102,9 +102,9 @@ pub fn export_wav(
     cancel: Option<Arc<AtomicBool>>,
 ) -> Result<(), ExportError> {
     let t_start = Instant::now();
-    let (_num_ch, active_mask) = channels_for_model(&model);
+    let layout = channels_for_model(&model);
 
-    let mut engine = AudioEngine::new(sample_rate, 0, active_mask);
+    let mut engine = AudioEngine::new(sample_rate, layout);
 
     progress(0.0, "加载 MIDI");
     engine.handle_command(crate::spawn::AudioCommand::LoadModel {
@@ -319,7 +319,7 @@ pub fn export_wav_gpu(
     let segments = &model.tempo_map.tempo_segments;
     let tpb = model.tempo_map.ticks_per_beat;
     let sr = sample_rate as f64;
-    let (_num_ch, active_mask) = crate::spawn::channels_for_model(&model);
+    let layout = crate::spawn::channels_for_model(&model);
 
     let mut events: Vec<yinhe_synth::SynthEvent> = Vec::new();
     for key in 0..128usize {
@@ -328,7 +328,7 @@ pub fn export_wav_gpu(
             let track = note.track as usize;
             if track < skip_tracks.len() && skip_tracks[track] { continue; }
             let ch = audio_model.track_channel(track) as usize;
-            if !active_mask.get(ch).copied().unwrap_or(false) { continue; }
+            if layout.dense_for(ch) == u32::MAX { continue; }
 
             let start_sample = crate::audio_model::tick_to_sample(note.start_tick as u64, segments, tpb, sr);
             let end_sample = crate::audio_model::tick_to_sample(note.end_tick as u64, segments, tpb, sr);

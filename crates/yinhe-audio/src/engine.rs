@@ -11,15 +11,16 @@ use xsynth_core::{AudioStreamParams, ChannelCount};
 use yinhe_core::YinModel;
 
 use crate::audio_model::{ActiveNote, AudioModel, AudibleNote, SortedCC};
+use crate::channel_layout::ChannelLayout;
 use crate::soundfont::SoundFontManager;
 use crate::spawn::AudioCommand;
 
 /// Core MIDI synthesis engine.  Owned by the renderer thread.
 pub(crate) struct AudioEngine {
     pub(crate) channel_group: ChannelGroup,
-    /// Map: source MIDI channel (0..256) → compacted XSynth channel index.
-    pub(crate) channel_map: Box<[u32; 256]>,
-    pub(crate) active_mask: Vec<bool>,
+    /// 不可变通道布局：active_mask + channel_map + num_channels。
+    /// 创建后定型，若 model 结构变化必须 teardown + 重建引擎。
+    pub(crate) channel_layout: ChannelLayout,
     pub(crate) sf_manager: SoundFontManager,
     pub(crate) sample_rate: u32,
     pub(crate) sample_position: u64,
@@ -57,26 +58,17 @@ pub(crate) struct AudioEngine {
 }
 
 impl AudioEngine {
-    pub(crate) fn new(sample_rate: u32, _num_channels: u32, active_mask: Vec<bool>) -> Self {
-        Self::with_parallelism(sample_rate, _num_channels, active_mask, ParallelismOptions::AUTO_PER_CHANNEL)
+    pub(crate) fn new(sample_rate: u32, layout: ChannelLayout) -> Self {
+        Self::with_parallelism(sample_rate, layout, ParallelismOptions::AUTO_PER_CHANNEL)
     }
 
     pub(crate) fn with_parallelism(
         sample_rate: u32,
-        _num_channels: u32,
-        active_mask: Vec<bool>,
+        layout: ChannelLayout,
         parallelism: ParallelismOptions,
     ) -> Self {
         yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Audio, || {
-            let mut channel_map = Box::new([u32::MAX; 256]);
-            let mut next_dense: u32 = 0;
-            for (src, &alive) in active_mask.iter().enumerate().take(256) {
-                if alive {
-                    channel_map[src] = next_dense;
-                    next_dense += 1;
-                }
-            }
-            let compacted_channels = next_dense.max(1);
+            let compacted_channels = layout.compacted_channels();
 
             let config = ChannelGroupConfig {
                 channel_init_options: ChannelInitOptions {
@@ -94,8 +86,7 @@ impl AudioEngine {
 
             Self {
                 channel_group: ChannelGroup::new(config),
-                channel_map,
-                active_mask,
+                channel_layout: layout,
                 sf_manager: SoundFontManager::new(sample_rate),
                 sample_rate,
                 sample_position: 0,
@@ -135,12 +126,8 @@ impl AudioEngine {
         self.channel_group.voice_count()
     }
 
-    pub(crate) fn channel_map_clone(&self) -> Box<[u32; 256]> {
-        self.channel_map.clone()
-    }
-
-    pub(crate) fn active_mask(&self) -> &[bool] {
-        &self.active_mask
+    pub(crate) fn channel_layout(&self) -> &ChannelLayout {
+        &self.channel_layout
     }
 
     pub(crate) fn model_loaded(&self) -> bool {

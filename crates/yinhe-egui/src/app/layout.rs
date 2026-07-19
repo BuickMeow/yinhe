@@ -83,6 +83,7 @@ impl App {
         let mut follow_mode = self.follow_mode;
 
         // Arrangement view
+        let mut needs_audio_rebuild = false;
         let (arr_drag_delta, arr_eraser_rect, arr_quantize): (Option<(i64, i32)>, Option<(f64, f64, usize, usize)>, Option<yinhe_editor_core::quantize::QuantizePreset>) = if self.show_transport {
             let mut request_pianoroll = false;
             let mut arr_drag_delta: Option<(i64, i32)> = None;
@@ -111,6 +112,7 @@ impl App {
                 &mut arr_drag_delta,
                 &mut arr_eraser_rect,
                 &mut self.info_content,
+                &mut needs_audio_rebuild,
             );
             if request_pianoroll {
                 self.show_pianoroll = true;
@@ -120,6 +122,14 @@ impl App {
         } else {
             (None, None, None)
         };
+        // 方案 A：音轨结构变化（add/remove track）→ drop 旧引擎。
+        // ChannelLayout 在引擎创建时冻结，旧引擎无法 dispatch 新增通道。
+        // 必须在 guard 被释放后调用 —— teardown_audio 借用 &mut self，
+        // 与 ReplaceGuard 借用的 &mut self.documents[idx] 冲突。
+        // 下一帧 rebuild_audio_if_needed 会用新 model 重新 spawn 引擎和 ChannelLayout。
+        if needs_audio_rebuild {
+            self.teardown_audio();
+        }
 
         // Handle AR eraser (guard is dropped, no outstanding borrow on self.documents)
         if let Some((t_start, t_end, track_lo, track_hi)) = arr_eraser_rect {

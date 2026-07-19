@@ -12,6 +12,7 @@ use crate::audio_renderer::{RendererSharedState, spawn_renderer};
 use crate::audio_ring::AudioRing;
 use crate::audio_model::{AudibleNote, PreparedModel, SortedCC};
 use crate::channel::ChannelState;
+use crate::channel_layout::ChannelLayout;
 
 const STEREO_CHANNELS: usize = 2;
 const RING_BUFFER_FRAMES: usize = 16_384;
@@ -177,41 +178,15 @@ pub(crate) fn track_global_channel(model: &YinModel, track_idx: usize) -> u8 {
     (t.port & 0x0F) << 4 | (t.channel & 0x0F)
 }
 
-/// Analyse a YinModel and return (num_channels, active_mask).
+/// Analyse a YinModel and return the `ChannelLayout` (active_mask + channel_map).
 ///
 /// A channel is "active" if any note with vel>1 lives on it, OR any
 /// non-note control event is present on the owning track.
-pub fn channels_for_model(model: &YinModel) -> (u32, Vec<bool>) {
-    let mut ch_active = [0u32; 256];
-
-    for bucket in model.notes.iter() {
-        for n in bucket.iter() {
-            if n.velocity > 1 {
-                let ch = track_global_channel(model, n.track as usize) as usize;
-                if ch < 256 {
-                    ch_active[ch] = ch_active[ch].saturating_add(1);
-                }
-            }
-        }
-    }
-
-    for (track_idx, track) in model.tracks.iter().enumerate() {
-        let ch = track_global_channel(model, track_idx) as usize;
-        let has_ctrl = !track.automation_lanes.is_empty()
-            || !track.program_change.is_empty();
-        if has_ctrl && ch < 256 {
-            ch_active[ch] = ch_active[ch].max(1);
-        }
-    }
-
-    let max_active_ch = ch_active.iter().rposition(|&c| c > 0).unwrap_or(0);
-    let num_channels = (max_active_ch + 1).max(1) as u32;
-
-    let active_mask: Vec<bool> = ch_active[..num_channels as usize]
-        .iter()
-        .map(|&c| c > 0)
-        .collect();
-    (num_channels, active_mask)
+///
+/// 返回的 `ChannelLayout` 在 `AudioEngine` 创建时定型，之后不可变。
+/// 若 model 结构变化（增减音轨、改 channel/port），必须 teardown + 重建引擎。
+pub fn channels_for_model(model: &YinModel) -> ChannelLayout {
+    ChannelLayout::from_model(model)
 }
 
 /// Internal command sent from the renderer thread to the worker thread.
@@ -265,8 +240,7 @@ pub(crate) enum WorkerResult {
 /// 调用方应给出用户可见的错误，而不是直接 abort 进程。
 pub(crate) fn spawn_worker(
     sample_rate: u32,
-    active_mask: Vec<bool>,
-    channel_map: Box<[u32; 256]>,
+    layout: ChannelLayout,
 ) -> Result<(Sender<WorkerCmd>, crossbeam_channel::Receiver<WorkerResult>), std::io::Error> {
     let (cmd_tx, cmd_rx) = unbounded::<WorkerCmd>();
     let (result_tx, result_rx) = bounded::<WorkerResult>(1);
@@ -306,8 +280,8 @@ pub(crate) fn spawn_worker(
                             &latest,
                             sample_rate,
                             latest_density,
-                            &active_mask,
-                            &channel_map,
+                            layout.active_mask(),
+                            layout.channel_map(),
                         );
                         let _ = result_tx.send(WorkerResult::PreparedModel(prepared));
                     }
@@ -438,8 +412,7 @@ pub fn list_output_devices() -> Vec<String> {
 /// 系统默认输出设备。设备热拔后用户在切换对话框里挑一个名字传进来重建流。
 pub fn spawn_cpal_audio(
     sample_rate: u32,
-    num_channels: u32,
-    active_mask: Vec<bool>,
+    layout: ChannelLayout,
     buffer_size: cpal::BufferSize,
     device_name: Option<&str>,
     #[cfg(feature = "gpu")] use_gpu_synth: bool,
@@ -470,10 +443,9 @@ pub fn spawn_cpal_audio(
         buffer_size,
     };
 
-    let engine = crate::engine::AudioEngine::new(sample_rate, num_channels, active_mask);
-    let channel_map = engine.channel_map_clone();
+    let engine = crate::engine::AudioEngine::new(sample_rate, layout);
     let (worker_tx, prepared_rx) =
-        spawn_worker(sample_rate, engine.active_mask().to_vec(), channel_map)
+        spawn_worker(sample_rate, engine.channel_layout().clone())
             .map_err(|e| format!("Failed to spawn audio worker thread: {e}"))?;
 
     let (ring_producer, mut ring_consumer) = AudioRing::new(RING_CAPACITY).split();

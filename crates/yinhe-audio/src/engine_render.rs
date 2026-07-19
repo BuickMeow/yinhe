@@ -72,11 +72,7 @@ impl AudioEngine {
             && self.cc_events[self.cc_cursor].sample <= sample
         {
             let cc = &self.cc_events[self.cc_cursor];
-            let dense = self
-                .channel_map
-                .get(cc.channel as usize)
-                .copied()
-                .unwrap_or(u32::MAX);
+            let dense = self.channel_layout.dense_for(cc.channel as usize);
             if dense != u32::MAX {
                 self.channel_group
                     .send_event(SynthEvent::Channel(dense, ChannelEvent::Audio(cc.event)));
@@ -112,11 +108,8 @@ impl AudioEngine {
                     .as_ref()
                     .map(|m| m.track_channel(track) as usize)
                     .unwrap_or(0);
-                if self.active_mask.get(ch).copied().unwrap_or(false)
-                    && !self.skip_track.get(track).copied().unwrap_or(false)
-                {
-                    let dense =
-                        self.channel_map.get(ch).copied().unwrap_or(u32::MAX);
+                if !self.skip_track.get(track).copied().unwrap_or(false) {
+                    let dense = self.channel_layout.dense_for(ch);
                     if dense != u32::MAX {
                         self.channel_group.send_event(SynthEvent::Channel(
                             dense,
@@ -138,7 +131,6 @@ impl AudioEngine {
         }
 
         // ── NoteOff + 找下一个 NoteOff 边界（单次 active_notes 遍历）──
-        let channel_map = &self.channel_map;
         self.ended_notes.clear();
         self.active_notes.retain(|an| {
             if an.end_sample <= sample {
@@ -152,13 +144,12 @@ impl AudioEngine {
             }
         });
         for an in &self.ended_notes {
-            if let Some(&dense) = channel_map.get(an.channel as usize) {
-                if dense != u32::MAX {
-                    self.channel_group.send_event(SynthEvent::Channel(
-                        dense,
-                        ChannelEvent::Audio(ChannelAudioEvent::NoteOff { key: an.key }),
-                    ));
-                }
+            let dense = self.channel_layout.dense_for(an.channel as usize);
+            if dense != u32::MAX {
+                self.channel_group.send_event(SynthEvent::Channel(
+                    dense,
+                    ChannelEvent::Audio(ChannelAudioEvent::NoteOff { key: an.key }),
+                ));
             }
         }
 

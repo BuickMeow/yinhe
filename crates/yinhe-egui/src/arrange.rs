@@ -39,6 +39,10 @@ pub fn show(
     arr_drag_delta: &mut Option<(i64, i32)>,
     arr_eraser_rect: &mut Option<(f64, f64, usize, usize)>,
     info_content: &mut Option<crate::right_panel::InfoContent>,
+    // 音轨结构变化（add/remove track）需要 teardown + 重建音频引擎。
+    // 由调用方 layout.rs 读取后调 `App::teardown_audio()`，下一帧
+    // `rebuild_audio_if_needed` 会用新 model 重新 spawn 引擎和 ChannelLayout。
+    needs_audio_rebuild: &mut bool,
 ) -> Option<QuantizePreset> {
     *last_cursor_tick = doc.edit.cursor_tick;
 
@@ -207,9 +211,10 @@ pub fn show(
                     track_selected: doc.edit.track_selected.clone(),
                     sel_rect: doc.edit.sel_rect.clone(),
                 });
-                if let Some(ref audio) = audio {
-                    audio.reload_notes(doc.data.model.clone());
-                }
+                // 方案 A：音轨结构变化（add/remove/move）→ teardown + 下帧重建。
+                // 不再调 audio.reload_notes —— ChannelLayout 在引擎创建时冻结，
+                // reload_notes 不会更新 active_mask/channel_map，旧引擎无法 dispatch 新通道。
+                *needs_audio_rebuild = true;
             }
         }
 
@@ -352,9 +357,8 @@ pub fn show(
                     track_selected: doc.edit.track_selected.clone(),
                     sel_rect: doc.edit.sel_rect.clone(),
                 });
-                if let Some(ref audio) = audio {
-                    audio.reload_notes(doc.data.model.clone());
-                }
+                // 方案 A：add_track → teardown + 下帧重建（同 track_actions 分支）。
+                *needs_audio_rebuild = true;
             }
         }
     }

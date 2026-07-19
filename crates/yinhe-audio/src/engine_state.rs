@@ -91,14 +91,7 @@ impl AudioEngine {
     /// volume / pan / program / pitch bend / RPN 等控制器值。
     pub(crate) fn apply_chase_result(&mut self, states: Box<[ChannelState; 256]>) {
         for ch in 0..256u32 {
-            if !self.active_mask.get(ch as usize).copied().unwrap_or(false) {
-                continue;
-            }
-            let dense = self
-                .channel_map
-                .get(ch as usize)
-                .copied()
-                .unwrap_or(u32::MAX);
+            let dense = self.channel_layout.dense_for(ch as usize);
             if dense == u32::MAX {
                 continue;
             }
@@ -108,11 +101,8 @@ impl AudioEngine {
 
     fn setup_percussion(&mut self, model: &AudioModel) {
         // Drum channels in GM are channel 9 of each port (port*16 + 9).
-        for (src_ch, &alive) in self.active_mask.iter().enumerate().take(256) {
-            if !alive || src_ch % 16 != 9 {
-                continue;
-            }
-            let dense = self.channel_map[src_ch];
+        for src_ch in (9..256).step_by(16) {
+            let dense = self.channel_layout.dense_for(src_ch);
             if dense == u32::MAX {
                 continue;
             }
@@ -131,7 +121,7 @@ impl AudioEngine {
             if src_ch >= 256 {
                 continue;
             }
-            let dense = self.channel_map[src_ch];
+            let dense = self.channel_layout.dense_for(src_ch);
             if dense == u32::MAX {
                 continue;
             }
@@ -158,18 +148,7 @@ impl AudioEngine {
     }
 
     pub(crate) fn dense_channels_for_port(&self, port: u8) -> Vec<u32> {
-        let base_src = (port as u32 * 16) as usize;
-        let end_src = (base_src + 16).min(256);
-        let mut dense_channels: Vec<u32> = Vec::with_capacity(16);
-        for src in base_src..end_src {
-            if self.active_mask.get(src).copied().unwrap_or(false) {
-                let dense = self.channel_map[src];
-                if dense != u32::MAX {
-                    dense_channels.push(dense);
-                }
-            }
-        }
-        dense_channels
+        self.channel_layout.dense_channels_for_port(port)
     }
 
     pub(crate) fn apply_loaded_soundfont_for_port(
@@ -226,12 +205,10 @@ impl AudioEngine {
                     .as_ref()
                     .map(|m| m.track_channel(track) as usize)
                     .unwrap_or(0);
-                if !self.active_mask.get(ch).copied().unwrap_or(false)
-                    || self.skip_track.get(track).copied().unwrap_or(false)
-                {
+                if self.skip_track.get(track).copied().unwrap_or(false) {
                     continue;
                 }
-                let dense = self.channel_map.get(ch).copied().unwrap_or(u32::MAX);
+                let dense = self.channel_layout.dense_for(ch);
                 if dense == u32::MAX {
                     continue;
                 }

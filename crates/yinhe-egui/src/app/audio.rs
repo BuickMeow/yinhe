@@ -25,8 +25,8 @@ impl App {
     ///
     /// Returns a list of `(port, paths)` for every port the MIDI uses.
     pub(crate) fn resolve_sf_config(&self, doc: &yinhe_editor_core::document::Document) -> Vec<(u8, Vec<String>)> {
-        let num_ch = yinhe_audio::channels_for_model(&doc.data.model).0;
-        let num_ports = (num_ch.div_ceil(16) as u8).max(1);
+        let layout = yinhe_audio::channels_for_model(&doc.data.model);
+        let num_ports = (layout.num_channels().div_ceil(16) as u8).max(1);
         let global = &self.audio_settings.global_sf_config;
         let project = &doc.edit.project_sf;
 
@@ -89,7 +89,7 @@ impl App {
 
         let doc = &self.documents[idx];
         let sr = self.audio_settings.sample_rate;
-        let (num_ch, active_mask) = yinhe_audio::channels_for_model(&doc.data.model);
+        let layout = yinhe_audio::channels_for_model(&doc.data.model);
         let buffer_size = if self.audio_settings.buffer_size == 0 {
             cpal::BufferSize::Default
         } else {
@@ -98,8 +98,7 @@ impl App {
 
         match yinhe_audio::spawn_cpal_audio(
             sr,
-            num_ch,
-            active_mask,
+            layout,
             buffer_size,
             self.audio_settings.output_device_name.as_deref(),
             #[cfg(feature = "gpu")]
@@ -108,63 +107,7 @@ impl App {
             Ok(audio) => {
                 progress::set_stage(&self.load_progress, 2, progress::StageStatus::Done);
 
-                // Apply automation density before LoadModel so the first prepare uses it
-                audio.handle.send(yinhe_audio::AudioCommand::SetAutomationDensity {
-                    density: self.audio_settings.automation_event_density,
-                });
-
-                // Load MIDI
-                audio.handle.send(yinhe_audio::AudioCommand::LoadModel {
-                    model: doc.data.model.clone(),
-                });
-
-                // Apply XSynth layer count
-                let layers = if self.audio_settings.xsynth_layers == 0 {
-                    None
-                } else {
-                    Some(self.audio_settings.xsynth_layers as usize)
-                };
-                audio
-                    .handle
-                    .send(yinhe_audio::AudioCommand::SetLayerCount { count: layers });
-
-                // Load SoundFonts — resolved from global + project config
-                let port_configs = self.resolve_sf_config(doc);
-                let total_sf: usize = port_configs.iter().map(|(_, p)| p.len()).sum();
-                progress::set_stage_progress(
-                    &self.load_progress,
-                    3,
-                    0.0,
-                    format!("0/{}", total_sf),
-                );
-                let mut loaded = 0usize;
-                for (port, paths) in &port_configs {
-                    for _p in paths {
-                        loaded += 1;
-                        progress::set_stage_progress(
-                            &self.load_progress,
-                            3,
-                            loaded as f32 / total_sf.max(1) as f32,
-                            format!("{}/{}", loaded, total_sf),
-                        );
-                    }
-                    audio.handle.send(yinhe_audio::AudioCommand::LoadSoundFont {
-                        port: *port,
-                        paths: paths.clone(),
-                    });
-                }
-                progress::set_stage(&self.load_progress, 3, progress::StageStatus::Done);
-
-                // Send initial mute/solo state
-                let has_solo = doc.edit.track_overrides.iter().any(|t| t.soloed);
-                let skip: Vec<bool> = doc
-                    .edit.track_overrides
-                    .iter()
-                    .map(|ov| if has_solo { !ov.soloed } else { ov.muted })
-                    .collect();
-                audio
-                    .handle
-                    .send(yinhe_audio::AudioCommand::SkipTracks { skip });
+                self.send_initial_audio_state(&audio, doc);
 
                 self.audio_state.handle = Some(audio);
                 self.audio_state.active_doc = Some(idx);
@@ -176,6 +119,70 @@ impl App {
                 progress::set_visible(&self.load_progress, false);
             }
         }
+    }
+
+    /// Send the initial state to a freshly spawned audio handle:
+    /// automation density, model, layer count, soundfonts, mute/solo.
+    ///
+    /// 拆分自 `rebuild_audio_if_needed`，让 spawn 路径与初始状态注入解耦。
+    fn send_initial_audio_state(&self, audio: &yinhe_audio::CpalAudioHandle, doc: &yinhe_editor_core::document::Document) {
+        // Apply automation density before LoadModel so the first prepare uses it
+        audio.handle.send(yinhe_audio::AudioCommand::SetAutomationDensity {
+            density: self.audio_settings.automation_event_density,
+        });
+
+        // Load MIDI
+        audio.handle.send(yinhe_audio::AudioCommand::LoadModel {
+            model: doc.data.model.clone(),
+        });
+
+        // Apply XSynth layer count
+        let layers = if self.audio_settings.xsynth_layers == 0 {
+            None
+        } else {
+            Some(self.audio_settings.xsynth_layers as usize)
+        };
+        audio
+            .handle
+            .send(yinhe_audio::AudioCommand::SetLayerCount { count: layers });
+
+        // Load SoundFonts — resolved from global + project config
+        let port_configs = self.resolve_sf_config(doc);
+        let total_sf: usize = port_configs.iter().map(|(_, p)| p.len()).sum();
+        progress::set_stage_progress(
+            &self.load_progress,
+            3,
+            0.0,
+            format!("0/{}", total_sf),
+        );
+        let mut loaded = 0usize;
+        for (port, paths) in &port_configs {
+            for _p in paths {
+                loaded += 1;
+                progress::set_stage_progress(
+                    &self.load_progress,
+                    3,
+                    loaded as f32 / total_sf.max(1) as f32,
+                    format!("{}/{}", loaded, total_sf),
+                );
+            }
+            audio.handle.send(yinhe_audio::AudioCommand::LoadSoundFont {
+                port: *port,
+                paths: paths.clone(),
+            });
+        }
+        progress::set_stage(&self.load_progress, 3, progress::StageStatus::Done);
+
+        // Send initial mute/solo state
+        let has_solo = doc.edit.track_overrides.iter().any(|t| t.soloed);
+        let skip: Vec<bool> = doc
+            .edit.track_overrides
+            .iter()
+            .map(|ov| if has_solo { !ov.soloed } else { ov.muted })
+            .collect();
+        audio
+            .handle
+            .send(yinhe_audio::AudioCommand::SkipTracks { skip });
     }
 
     /// 切换音频输出设备（由"音频设备切换"对话框触发）。

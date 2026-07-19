@@ -5,7 +5,10 @@ use xsynth_core::channel_group::ParallelismOptions;
 use yinhe_core::{
     ConductorData, NoteEvent, PcEvent, ProjectMeta, TrackData, YinModel,
 };
+use yinhe_editor_core::document::Document;
 use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, SegmentShape};
+
+use crate::channel_layout::ChannelLayout;
 
 fn make_model_with_notes(notes: Vec<(u8, u32, u32, u8, u8)>) -> YinModel {
     let conductor = ConductorData {
@@ -44,157 +47,6 @@ fn make_model_with_notes(notes: Vec<(u8, u32, u32, u8, u8)>) -> YinModel {
     model
 }
 
-fn make_model_3_tracks() -> YinModel {
-    let conductor = ConductorData {
-        tempo: AutomationLane {
-            target: AutomationTarget::Tempo,
-            track: 0,
-            events: vec![AutomationEvent { tick: 0, value: 120.0, shape: SegmentShape::Step }],
-        },
-        time_sig: Vec::new(),
-    };
-    let mk = |ch: u8, _key: u8| {
-        let t = TrackData::new(0, ch);
-        Arc::new(t)
-    };
-    let meta = ProjectMeta {
-        ppq: 480,
-        ..ProjectMeta::default()
-    };
-    let per_track_notes: Vec<Vec<NoteEvent>> = vec![
-        vec![NoteEvent {
-            start_tick: 0,
-            end_tick: 480,
-            key: 60,
-            velocity: 100,
-            id: 0,
-        }],
-        vec![NoteEvent {
-            start_tick: 0,
-            end_tick: 480,
-            key: 64,
-            velocity: 100,
-            id: 0,
-        }],
-        vec![NoteEvent {
-            start_tick: 0,
-            end_tick: 480,
-            key: 67,
-            velocity: 100,
-            id: 0,
-        }],
-    ];
-    let mut model = YinModel {
-        conductor: Arc::new(conductor),
-        tracks: vec![mk(0, 60), mk(1, 64), mk(9, 67)],
-        meta,
-        ..Default::default()
-    };
-    model.load_track_notes(per_track_notes);
-    model.rebuild();
-    model
-}
-
-#[test]
-fn test_channels_for_model_basic() {
-    let model = make_model_3_tracks();
-    let (num_ch, mask) = crate::spawn::channels_for_model(&model);
-    assert_eq!(num_ch, 10);
-    assert!(mask[0]);
-    assert!(mask[1]);
-    assert!(mask[9]);
-    assert!(!mask[2]);
-}
-
-#[test]
-fn test_channels_for_model_multi_port() {
-    let conductor = ConductorData {
-        tempo: AutomationLane {
-            target: AutomationTarget::Tempo,
-            track: 0,
-            events: vec![AutomationEvent { tick: 0, value: 120.0, shape: SegmentShape::Step }],
-        },
-        time_sig: Vec::new(),
-    };
-    let t1 = TrackData::new(0, 0);
-    let t2 = TrackData::new(1, 0);
-    let per_track_notes: Vec<Vec<NoteEvent>> = vec![
-        vec![NoteEvent {
-            start_tick: 0,
-            end_tick: 480,
-            key: 60,
-            velocity: 100,
-            id: 0,
-        }],
-        vec![NoteEvent {
-            start_tick: 0,
-            end_tick: 480,
-            key: 60,
-            velocity: 100,
-            id: 0,
-        }],
-    ];
-    let mut model = YinModel {
-        conductor: Arc::new(conductor),
-        tracks: vec![Arc::new(t1), Arc::new(t2)],
-        meta: ProjectMeta {
-            ppq: 480,
-            ..ProjectMeta::default()
-        },
-        ..Default::default()
-    };
-    model.load_track_notes(per_track_notes);
-    model.rebuild();
-    let (num_ch, mask) = crate::spawn::channels_for_model(&model);
-    assert_eq!(num_ch, 17);
-    assert!(mask[0]);
-    assert!(mask[16]);
-    assert!(!mask[15]);
-}
-
-#[test]
-fn test_channels_for_model_skips_velocity_0_1() {
-    let model = make_model_with_notes(vec![
-        (60, 0, 480, 0, 0),
-        (61, 0, 480, 1, 0),
-        (62, 0, 480, 2, 0),
-    ]);
-    let (_num_ch, mask) = crate::spawn::channels_for_model(&model);
-    assert!(mask[0]);
-}
-
-#[test]
-fn test_channels_for_model_cc_activates_channel() {
-    let conductor = ConductorData::default();
-    let mut t = TrackData::new(0, 5);
-    t.automation_lanes = vec![AutomationLane {
-        target: AutomationTarget::CC { controller: 7 },
-        track: 0,
-        events: vec![AutomationEvent { tick: 0, value: 100.0, shape: SegmentShape::Step }],
-    }];
-    let mut model = YinModel {
-        conductor: Arc::new(conductor),
-        tracks: vec![Arc::new(t)],
-        meta: ProjectMeta {
-            ppq: 480,
-            ..ProjectMeta::default()
-        },
-        ..Default::default()
-    };
-    model.rebuild();
-    let (num_ch, mask) = crate::spawn::channels_for_model(&model);
-    assert_eq!(num_ch, 6);
-    assert!(mask[5]);
-}
-
-#[test]
-fn test_channels_for_model_empty() {
-    let model = YinModel::default();
-    let (num_ch, mask) = crate::spawn::channels_for_model(&model);
-    assert_eq!(num_ch, 1);
-    assert!(mask.iter().all(|&b| !b));
-}
-
 #[test]
 fn test_sorted_cc_ordering() {
     let mut cc = vec![
@@ -226,7 +78,7 @@ fn test_render_dispatches_note_inside_large_buffer_at_exact_sample() {
     assert_eq!(model.notes[60].len(), 1);
     let model = Arc::new(model);
     let mask = vec![true; 16];
-    let mut engine = AudioEngine::new(48000, 16, mask);
+    let mut engine = AudioEngine::new(48000, ChannelLayout::from_mask(mask));
     engine.load_model(&model);
     engine.playing = true;
 
@@ -243,7 +95,7 @@ fn test_render_dispatches_note_inside_large_buffer_at_exact_sample() {
 #[test]
 fn test_active_mask_length() {
     let mask = vec![false; 16];
-    let _engine = AudioEngine::new(44100, 16, mask);
+    let _engine = AudioEngine::new(44100, ChannelLayout::from_mask(mask));
 }
 
 #[test]
@@ -305,7 +157,7 @@ fn test_audible_index_filters_vel_and_inactive_channel() {
 
     let mut mask = vec![false; 16];
     mask[0] = true;
-    let mut engine = AudioEngine::new(44100, 16, mask);
+    let mut engine = AudioEngine::new(44100, ChannelLayout::from_mask(mask));
     engine.load_model(&model);
 
     assert_eq!(engine.note_cursor[60], 0);
@@ -331,7 +183,7 @@ fn test_audible_index_empty_when_all_filtered() {
         (61, 0, 480, 1, 0),
     ]));
     let mask = vec![true; 16];
-    let mut engine = AudioEngine::new(44100, 16, mask);
+    let mut engine = AudioEngine::new(44100, ChannelLayout::from_mask(mask));
     engine.load_model(&model);
 
     // All notes have velocity ≤ 1 → no events should dispatch.
@@ -385,7 +237,7 @@ fn test_audible_index_uses_per_key_tempo_cursor() {
     model.rebuild();
 
     let mask = vec![true; 16];
-    let mut engine = AudioEngine::new(48000, 16, mask);
+    let mut engine = AudioEngine::new(48000, ChannelLayout::from_mask(mask));
     engine.load_model(&Arc::new(model));
 
     // Note at key 0, start_tick=2000 → ~150000 samples at 48000 Hz (120→60 BPM at tick 1000).
@@ -418,7 +270,7 @@ fn test_audible_index_uses_per_key_tempo_cursor() {
 #[test]
 fn test_engine_accessors() {
     let mask = vec![true; 16];
-    let engine = AudioEngine::new(44100, 16, mask);
+    let engine = AudioEngine::new(44100, ChannelLayout::from_mask(mask));
     assert_eq!(engine.sample_rate, 44100);
     assert_eq!(engine.sample_position(), 0);
     assert!(!engine.playing());
@@ -427,7 +279,7 @@ fn test_engine_accessors() {
 #[test]
 fn test_engine_handle_command_play_pause_stop() {
     let mask = vec![true; 16];
-    let mut engine = AudioEngine::new(44100, 16, mask);
+    let mut engine = AudioEngine::new(44100, ChannelLayout::from_mask(mask));
 
     engine.handle_command(AudioCommand::Play { from_sample: 0 });
     assert!(engine.playing());
@@ -447,7 +299,7 @@ fn test_engine_handle_command_play_pause_stop() {
 #[test]
 fn test_engine_handle_command_seek() {
     let mask = vec![true; 16];
-    let mut engine = AudioEngine::new(44100, 16, mask);
+    let mut engine = AudioEngine::new(44100, ChannelLayout::from_mask(mask));
     engine.handle_command(AudioCommand::Seek { sample: 44100 });
     assert_eq!(engine.sample_position(), 44100);
 }
@@ -455,7 +307,7 @@ fn test_engine_handle_command_seek() {
 #[test]
 fn test_engine_handle_command_skip_tracks() {
     let mask = vec![true; 16];
-    let mut engine = AudioEngine::new(44100, 16, mask);
+    let mut engine = AudioEngine::new(44100, ChannelLayout::from_mask(mask));
     let skip = vec![false, true, false];
     engine.handle_command(AudioCommand::SkipTracks { skip });
     assert_eq!(engine.skip_track, vec![false, true, false]);
@@ -464,7 +316,7 @@ fn test_engine_handle_command_skip_tracks() {
 #[test]
 fn test_engine_render_not_playing() {
     let mask = vec![true; 16];
-    let mut engine = AudioEngine::new(44100, 16, mask);
+    let mut engine = AudioEngine::new(44100, ChannelLayout::from_mask(mask));
     let mut output = vec![1.0f32; 100];
     engine.render(&mut output);
     assert!(output.iter().all(|&s| s == 0.0));
@@ -473,7 +325,7 @@ fn test_engine_render_not_playing() {
 #[test]
 fn test_engine_render_zero_frames() {
     let mask = vec![true; 16];
-    let mut engine = AudioEngine::new(44100, 16, mask);
+    let mut engine = AudioEngine::new(44100, ChannelLayout::from_mask(mask));
     engine.handle_command(AudioCommand::Play { from_sample: 0 });
     let mut output: Vec<f32> = Vec::new();
     engine.render(&mut output);
@@ -571,7 +423,7 @@ fn make_model_with_controls(
 fn test_engine_load_model_and_reload() {
     let model = Arc::new(make_model_with_notes(vec![(60, 0, 480, 100, 0)]));
     let mask = vec![true; 16];
-    let mut engine = AudioEngine::new(44100, 16, mask);
+    let mut engine = AudioEngine::new(44100, ChannelLayout::from_mask(mask));
 
     engine.handle_command(AudioCommand::LoadModel {
         model: model.clone(),
@@ -590,7 +442,7 @@ fn test_engine_load_model_and_reload() {
 #[test]
 fn test_reload_notes_rebuilds_cc_pb_pc_rpn() {
     let mask = vec![true; 16];
-    let mut engine = AudioEngine::new(44100, 16, mask);
+    let mut engine = AudioEngine::new(44100, ChannelLayout::from_mask(mask));
 
     let model_a = Arc::new(make_model_with_controls(
         vec![(7, 0, 100), (10, 0, 64)],
@@ -640,25 +492,14 @@ fn test_reload_notes_rebuilds_cc_pb_pc_rpn() {
 }
 
 #[test]
-fn test_engine_channel_map_inactive_channel() {
+fn test_engine_channel_layout_dense_for_smoke() {
+    // 烟雾测试：通过 AudioEngine 访问 ChannelLayout 与直接构造结果一致。
+    // ChannelLayout 的完整单元测试在 channel_layout.rs。
     let mut mask = vec![false; 16];
     mask[5] = true;
-    let engine = AudioEngine::new(44100, 16, mask);
-    assert_eq!(engine.channel_map[5], 0);
-    assert_eq!(engine.channel_map[0], u32::MAX);
-}
-
-#[test]
-fn test_engine_channel_map_multiple_active() {
-    let mut mask = vec![false; 256];
-    mask[0] = true;
-    mask[2] = true;
-    mask[10] = true;
-    let engine = AudioEngine::new(44100, 256, mask);
-    assert_eq!(engine.channel_map[0], 0);
-    assert_eq!(engine.channel_map[1], u32::MAX);
-    assert_eq!(engine.channel_map[2], 1);
-    assert_eq!(engine.channel_map[10], 2);
+    let engine = AudioEngine::new(44100, ChannelLayout::from_mask(mask));
+    assert_eq!(engine.channel_layout.dense_for(5), 0);
+    assert_eq!(engine.channel_layout.dense_for(0), u32::MAX);
 }
 
 /// 创建一个包含多轨道、多音符的大型模型用于性能基准测试。
@@ -726,7 +567,9 @@ fn bench_parallelism_configs() {
     const NOTES_PER_TRACK: usize = 500;
 
     let model = Arc::new(make_bench_model(TRACKS, NOTES_PER_TRACK));
-    let (_num_ch, active_mask) = crate::spawn::channels_for_model(&model);
+    let active_mask = crate::spawn::channels_for_model(&model)
+        .active_mask()
+        .to_vec();
 
     let mut output = vec![0.0f32; RENDER_SAMPLES];
 
@@ -757,14 +600,22 @@ fn bench_parallelism_configs() {
     for cfg in &configs {
         // 预热：先跑一次不记录时间
         {
-            let mut engine = AudioEngine::with_parallelism(SAMPLE_RATE, 16, active_mask.clone(), cfg.parallelism);
+            let mut engine = AudioEngine::with_parallelism(
+                SAMPLE_RATE,
+                ChannelLayout::from_mask(active_mask.clone()),
+                cfg.parallelism,
+            );
             engine.handle_command(AudioCommand::LoadModel { model: Arc::clone(&model) });
             engine.handle_command(AudioCommand::Play { from_sample: 0 });
             engine.render(&mut output);
         }
 
         // 正式测量
-        let mut engine = AudioEngine::with_parallelism(SAMPLE_RATE, 16, active_mask.clone(), cfg.parallelism);
+        let mut engine = AudioEngine::with_parallelism(
+            SAMPLE_RATE,
+            ChannelLayout::from_mask(active_mask.clone()),
+            cfg.parallelism,
+        );
         engine.handle_command(AudioCommand::LoadModel { model: Arc::clone(&model) });
         engine.handle_command(AudioCommand::Play { from_sample: 0 });
 
@@ -802,7 +653,9 @@ fn prof_night_voyager_parallelism() {
     let model = std::sync::Arc::new(
         yinhe_mid2::parse_path(midi_path).unwrap(),
     );
-    let (_num_ch, active_mask) = crate::spawn::channels_for_model(&model);
+    let active_mask = crate::spawn::channels_for_model(&model)
+        .active_mask()
+        .to_vec();
 
     let configs = [
         ("AUTO_PER_CHANNEL", ParallelismOptions::AUTO_PER_CHANNEL),
@@ -815,7 +668,11 @@ fn prof_night_voyager_parallelism() {
     let chunk_samples = chunk_frames * 2;
 
     for (name, parallelism) in &configs {
-        let mut engine = AudioEngine::with_parallelism(44100, 0, active_mask.clone(), *parallelism);
+        let mut engine = AudioEngine::with_parallelism(
+            44100,
+            ChannelLayout::from_mask(active_mask.clone()),
+            *parallelism,
+        );
 
         engine.handle_command(AudioCommand::LoadModel {
             model: std::sync::Arc::clone(&model),
@@ -845,4 +702,214 @@ fn prof_night_voyager_parallelism() {
             engine.voice_count(),
         );
     }
+}
+
+/// 回归测试：空 model 创建引擎后，加音符应通过 teardown + 重建恢复发声。
+///
+/// 这是"新建工程写音符不发声"bug 的核心防护：
+/// 1. 空 model → ChannelLayout 全 false → 引擎创建时无激活通道
+/// 2. 后续 add_note 无法更新已冻结的 ChannelLayout
+/// 3. 方案 A：add_track/remove_track 触发 teardown，下帧重建
+/// 4. 重建时 from_model 重新扫描，新音符的通道被激活
+#[test]
+fn test_teardown_rebuild_reactivates_channels() {
+    // 1. 空 model → 全 false
+    let empty = YinModel::default();
+    let layout_empty = crate::spawn::channels_for_model(&empty);
+    assert!(!layout_empty.is_active(0));
+    let engine = AudioEngine::new(44100, layout_empty);
+    assert_eq!(engine.channel_layout.dense_for(0), u32::MAX);
+
+    // 2. 加音符后重建 → 通道 0 激活
+    let with_notes = make_model_with_notes(vec![(60, 0, 480, 100, 0)]);
+    let layout_with = crate::spawn::channels_for_model(&with_notes);
+    assert!(layout_with.is_active(0));
+    assert_eq!(layout_with.dense_for(0), 0);
+    assert_eq!(layout_with.compacted_channels(), 1);
+
+    // 3. teardown 旧引擎，用新 layout 重建
+    let model = Arc::new(with_notes);
+    let mut engine = AudioEngine::new(44100, layout_with);
+    engine.load_model(&model);
+    engine.playing = true;
+
+    // 4. dispatch 应能触发 NoteOn（之前在空 layout 下会被 dense_for=MAX 跳过）
+    let next = engine.dispatch_and_find_next(0, 60000);
+    // NoteOff at tick 480 = 1 beat @ 120 BPM @ 44100 Hz = 22050 samples.
+    assert_eq!(next, Some(22050));
+    assert_eq!(engine.note_cursor[60], 1);
+    assert_eq!(engine.active_notes.len(), 1);
+}
+
+// ---------------------------------------------------------------------------
+// 方案 A 集成测试：用 Document 模拟真实编辑流程
+// ---------------------------------------------------------------------------
+
+/// 用当前 model 的 ChannelLayout spawn 引擎，模拟 App 的 rebuild_audio_if_needed。
+fn spawn_engine_for_doc(doc: &Document, sample_rate: u32) -> AudioEngine {
+    let layout = crate::spawn::channels_for_model(&doc.data.model);
+    let mut engine = AudioEngine::new(sample_rate, layout);
+    engine.handle_command(AudioCommand::LoadModel {
+        model: Arc::clone(&doc.data.model),
+    });
+    engine
+}
+
+/// 完整 bug 复现 + 修复验证：空 Document → 加音符 → 旧引擎无声 → teardown + 重建 → 有声。
+#[test]
+fn test_teardown_rebuild_fixes_silent_note_bug_via_document() {
+    let sample_rate = 44100u32;
+    let mut doc = Document::empty();
+
+    // 1. 空 model → spawn 引擎 A（layout 全 false）
+    let mut engine_a = spawn_engine_for_doc(&doc, sample_rate);
+    engine_a.playing = true;
+
+    // 2. 加音符（track 1 = channel 0）
+    doc.add_note(
+        1,
+        NoteEvent {
+            start_tick: 0,
+            end_tick: 480,
+            key: 60,
+            velocity: 100,
+            id: 0,
+        },
+    );
+    doc.data.bump_revision();
+
+    // 3. 旧引擎 A dispatch —— 通道 0 未激活 → NoteOn 被跳过（bug 复现）
+    let next_a = engine_a.dispatch_and_find_next(0, 60000);
+    assert_eq!(next_a, None, "旧引擎 layout 未激活通道 0 → 无声");
+    assert_eq!(engine_a.active_notes.len(), 0);
+
+    // 4. teardown 引擎 A，用新 model 重建引擎 B（方案 A）
+    drop(engine_a);
+    let mut engine_b = spawn_engine_for_doc(&doc, sample_rate);
+    engine_b.playing = true;
+
+    // 5. 新引擎 B 的 layout 已激活通道 0 → NoteOn 正常 dispatch
+    let next_b = engine_b.dispatch_and_find_next(0, 60000);
+    assert_eq!(next_b, Some(22050));
+    assert_eq!(engine_b.note_cursor[60], 1);
+    assert_eq!(engine_b.active_notes.len(), 1);
+}
+
+/// add_track 后新通道在重建的 layout 中被激活。
+///
+/// 空 Document 已用满 0-15 通道，所以先 remove_track(16) 释放 channel 15，
+/// 再 add_track 让新 track 分配到 channel 15。
+#[test]
+fn test_add_track_then_rebuild_activates_new_channel() {
+    let sample_rate = 44100u32;
+    let mut doc = Document::empty();
+
+    // 1. 释放 channel 15：移除 track 16（A16）
+    doc.remove_track(16);
+
+    // 2. track 1（通道 0）加一个音符
+    doc.add_note(
+        1,
+        NoteEvent {
+            start_tick: 0,
+            end_tick: 480,
+            key: 60,
+            velocity: 100,
+            id: 0,
+        },
+    );
+    doc.data.bump_revision();
+
+    // 3. 初始 layout：只有通道 0 激活
+    let layout_before = crate::spawn::channels_for_model(&doc.data.model);
+    assert!(layout_before.is_active(0));
+    assert!(!layout_before.is_active(15));
+    assert_eq!(layout_before.compacted_channels(), 1);
+
+    // 4. add_track(1)：新 track 在 idx 2，channel 15（第一个空闲）
+    doc.add_track(1);
+    doc.data.bump_revision();
+
+    // 5. 在新 track（idx 2）上加音符 → channel 15
+    doc.add_note(
+        2,
+        NoteEvent {
+            start_tick: 0,
+            end_tick: 480,
+            key: 64,
+            velocity: 100,
+            id: 0,
+        },
+    );
+    doc.data.bump_revision();
+
+    // 6. 新 layout：通道 0 和 15 都激活
+    let layout_after = crate::spawn::channels_for_model(&doc.data.model);
+    assert!(layout_after.is_active(0), "channel 0 still active");
+    assert!(layout_after.is_active(15), "channel 15 now active");
+    assert_eq!(layout_after.compacted_channels(), 2);
+
+    // 7. 重建引擎 → 两个音符都能 dispatch
+    let mut engine = spawn_engine_for_doc(&doc, sample_rate);
+    engine.playing = true;
+    let next = engine.dispatch_and_find_next(0, 60000);
+    assert_eq!(next, Some(22050));
+    assert_eq!(engine.note_cursor[60], 1);
+    assert_eq!(engine.note_cursor[64], 1);
+    assert_eq!(engine.active_notes.len(), 2);
+}
+
+/// remove_track 后被移除通道的音符不再 dispatch。
+#[test]
+fn test_remove_track_then_rebuild_deactivates_channel() {
+    let sample_rate = 44100u32;
+    let mut doc = Document::empty();
+
+    // 1. track 1（通道 0）和 track 2（通道 1）各加一个音符
+    doc.add_note(
+        1,
+        NoteEvent {
+            start_tick: 0,
+            end_tick: 480,
+            key: 60,
+            velocity: 100,
+            id: 0,
+        },
+    );
+    doc.add_note(
+        2,
+        NoteEvent {
+            start_tick: 0,
+            end_tick: 480,
+            key: 64,
+            velocity: 100,
+            id: 0,
+        },
+    );
+    doc.data.bump_revision();
+
+    // 2. 初始 layout：通道 0 和 1 都激活
+    let layout_before = crate::spawn::channels_for_model(&doc.data.model);
+    assert!(layout_before.is_active(0));
+    assert!(layout_before.is_active(1));
+    assert_eq!(layout_before.compacted_channels(), 2);
+
+    // 3. remove track 2（通道 1 的音符随之删除）
+    doc.remove_track(2);
+    doc.data.bump_revision();
+
+    // 4. 新 layout：只有通道 0 激活
+    let layout_after = crate::spawn::channels_for_model(&doc.data.model);
+    assert!(layout_after.is_active(0));
+    assert!(!layout_after.is_active(1));
+    assert_eq!(layout_after.compacted_channels(), 1);
+
+    // 5. 重建引擎 → 只有通道 0 的音符 dispatch
+    let mut engine = spawn_engine_for_doc(&doc, sample_rate);
+    engine.playing = true;
+    let next = engine.dispatch_and_find_next(0, 60000);
+    assert_eq!(next, Some(22050));
+    assert_eq!(engine.note_cursor[60], 1);
+    assert_eq!(engine.note_cursor[64], 0);
+    assert_eq!(engine.active_notes.len(), 1);
 }
