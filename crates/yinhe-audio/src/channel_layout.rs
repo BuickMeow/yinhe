@@ -127,6 +127,30 @@ impl ChannelLayout {
         }
         dense_channels
     }
+
+    /// 检测当前 layout 与给定 channel 计数是否在激活状态上有差异。
+    ///
+    /// 用于音频引擎在音符/automation 编辑后判断是否需要 teardown + 重建：
+    /// `ChannelLayout` 创建后不可变，只有激活状态翻转（0→1 / 1→0）才必须重建。
+    /// 若仅音符数变化但激活状态不变（如已激活 channel 加/删非末音符），
+    /// 返回 false，调用方可走便宜的 `UpdateNotes` 路径。
+    ///
+    /// 激活语义与 `from_model` 完全对齐：
+    /// `active(ch) = note_count[ch] > 0 || ctrl_count[ch] > 0`
+    pub fn differs_from_counts(
+        &self,
+        note_counts: &[u32; 256],
+        ctrl_counts: &[u32; 256],
+    ) -> bool {
+        for ch in 0..256 {
+            let was_active = self.is_active(ch);
+            let now_active = note_counts[ch] > 0 || ctrl_counts[ch] > 0;
+            if was_active != now_active {
+                return true;
+            }
+        }
+        false
+    }
 }
 
 #[cfg(test)]
@@ -344,5 +368,132 @@ mod tests {
         assert!(layout_with.is_active(0));
         assert_eq!(layout_with.dense_for(0), 0);
         assert_eq!(layout_with.compacted_channels(), 1);
+    }
+
+    // -----------------------------------------------------------------------
+    // differs_from_counts 测试：flip 检测的核心逻辑
+    // -----------------------------------------------------------------------
+    // 这是选项 Z 的关键：用 per-channel 计数器判断 ChannelLayout 是否需要重建。
+    // - 加首 audible 音符 → 0→1 翻转 → differs = true → teardown
+    // - 删末 audible 音符 → 1→0 翻转 → differs = true → teardown
+    // - 已激活 channel 加/删非末音符 → 不翻转 → differs = false → 走 UpdateNotes
+
+    #[test]
+    fn differs_from_counts_no_flip_when_adding_non_first_note() {
+        // layout: ch 0 已激活（有 1 个 audible 音符）
+        // counts: ch 0 有 2 个 audible → 仍然激活，无翻转
+        let mut mask = vec![false; 16];
+        mask[0] = true;
+        let layout = ChannelLayout::from_mask(mask);
+
+        let mut notes = [0u32; 256];
+        notes[0] = 2; // ch 0 有 2 个 audible
+        let ctrls = [0u32; 256];
+
+        assert!(!layout.differs_from_counts(&notes, &ctrls), "ch 0 仍然激活，无翻转");
+    }
+
+    #[test]
+    fn differs_from_counts_flip_when_first_note_added() {
+        // layout: ch 0 未激活（空 model 创建的）
+        // counts: ch 0 有 1 个 audible → 0→1 翻转
+        let mut mask = vec![false; 16];
+        mask[0] = false;
+        let layout = ChannelLayout::from_mask(mask);
+
+        let mut notes = [0u32; 256];
+        notes[0] = 1; // 首 audible 音符
+        let ctrls = [0u32; 256];
+
+        assert!(layout.differs_from_counts(&notes, &ctrls), "ch 0 0→1 翻转");
+    }
+
+    #[test]
+    fn differs_from_counts_flip_when_last_note_removed() {
+        // layout: ch 0 已激活
+        // counts: ch 0 = 0 → 1→0 翻转
+        let mut mask = vec![false; 16];
+        mask[0] = true;
+        let layout = ChannelLayout::from_mask(mask);
+
+        let notes = [0u32; 256]; // ch 0 = 0（末音符被删）
+        let ctrls = [0u32; 256];
+
+        assert!(layout.differs_from_counts(&notes, &ctrls), "ch 0 1→0 翻转");
+    }
+
+    #[test]
+    fn differs_from_counts_ctrl_only_channel() {
+        // layout: ch 5 未激活
+        // counts: ch 5 note=0 但 ctrl=1 → 0→1 翻转（automation 激活 channel）
+        let mask = vec![false; 16];
+        let layout = ChannelLayout::from_mask(mask);
+
+        let notes = [0u32; 256];
+        let mut ctrls = [0u32; 256];
+        ctrls[5] = 1;
+
+        assert!(layout.differs_from_counts(&notes, &ctrls), "ch 5 由 automation 激活");
+    }
+
+    #[test]
+    fn differs_from_counts_multi_port_flip() {
+        // layout: ch 0 (port 0) 和 ch 16 (port 1) 激活
+        // counts: ch 0 仍激活，ch 16 失活，ch 32 (port 2) 新激活
+        let mut mask = vec![false; 48];
+        mask[0] = true;
+        mask[16] = true;
+        let layout = ChannelLayout::from_mask(mask);
+
+        let mut notes = [0u32; 256];
+        notes[0] = 1;   // ch 0 仍激活
+        notes[16] = 0;  // ch 16 失活
+        notes[32] = 1;  // ch 32 新激活
+        let ctrls = [0u32; 256];
+
+        assert!(layout.differs_from_counts(&notes, &ctrls), "多 port 翻转");
+    }
+
+    #[test]
+    fn differs_from_counts_all_inactive() {
+        // layout: 全 false（空 model）
+        // counts: 全 0 → 无翻转
+        let mask = vec![false; 16];
+        let layout = ChannelLayout::from_mask(mask);
+
+        let notes = [0u32; 256];
+        let ctrls = [0u32; 256];
+
+        assert!(!layout.differs_from_counts(&notes, &ctrls), "全未激活，无翻转");
+    }
+
+    /// 集成测试：完整复现 bug 场景，验证 flip 检测触发 teardown。
+    ///
+    /// 场景：空 model spawn 引擎 → 加首 audible 音符 →
+    /// `differs_from_counts` 必须返回 true（检测到 0→1 翻转）→
+    /// App 应 teardown，下一帧用新 model 重建。
+    #[test]
+    fn differs_from_counts_detects_silent_note_bug_scenario() {
+        // 1. 空 model → layout 全 false
+        let empty = YinModel::default();
+        let layout = ChannelLayout::from_model(&empty);
+
+        // 2. 加首 audible 音符后，model 的 channel_note_count[0] = 1
+        let with_note = make_model_with_notes(vec![(60, 0, 480, 100, 0)]);
+        // with_note 已经 rebuild 过，channel_note_count 是新鲜的
+        assert_eq!(with_note.channel_note_count[0], 1);
+
+        // 3. 旧 layout 检测新 counts → 必须报告翻转
+        assert!(
+            layout.differs_from_counts(&with_note.channel_note_count, &with_note.channel_ctrl_count),
+            "旧 layout（全 false）检测到 ch 0 0→1 翻转"
+        );
+
+        // 4. 用新 model 重建 layout → 与新 counts 一致，不再翻转
+        let new_layout = ChannelLayout::from_model(&with_note);
+        assert!(
+            !new_layout.differs_from_counts(&with_note.channel_note_count, &with_note.channel_ctrl_count),
+            "新 layout 与新 counts 一致，无翻转"
+        );
     }
 }

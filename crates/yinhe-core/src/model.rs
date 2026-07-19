@@ -154,6 +154,16 @@ pub struct YinModel {
     /// has at least one audible note. Replaces the old `track_has_audio_cache: Vec<bool>`.
     pub track_audible_count: Vec<u64>,
 
+    /// Per-global-channel audible note count (velocity > 1).
+    /// `channel_note_count[ch] > 0` 表示源通道 ch 上有至少一个发声音符。
+    /// 用于音频引擎检测 ChannelLayout 激活状态翻转（0→1 / 1→0），
+    /// 触发 teardown + 重建。索引 = `TrackData::global_channel()`。
+    pub channel_note_count: Box<[u32; 256]>,
+    /// Per-global-channel 控制事件计数（automation_lanes 或 program_change 非空的轨道数）。
+    /// 与 `channel_note_count` 一起决定 channel 是否激活：
+    /// `active(ch) = channel_note_count[ch] > 0 || channel_ctrl_count[ch] > 0`。
+    pub channel_ctrl_count: Box<[u32; 256]>,
+
     /// Dirty bucket tracking: `dirty_keys[k]` is true when bucket k has been
     /// modified and needs sorting. Use `mark_dirty()` to set, `rebuild_dirty()`
     /// to clear. Public for struct construction via `..Default::default()`.
@@ -194,6 +204,8 @@ impl Default for YinModel {
             tick_length: 0,
             track_note_count: Vec::new(),
             track_audible_count: Vec::new(),
+            channel_note_count: Box::new([0u32; 256]),
+            channel_ctrl_count: Box::new([0u32; 256]),
             dirty_keys: [false; 128],
             note_revisions: [0; 128],
             bucket_note_count: [0; 128],
@@ -346,6 +358,7 @@ impl YinModel {
             self.bucket_note_count[k] = bucket.len() as u64;
             self.bucket_track_stats[k] = std::mem::take(&mut bucket_stats[k]);
         }
+        self.recompute_channel_counts();
     }
 
     /// 分配一个新的全局唯一音符 id。编辑路径（新增/粘贴/复制）调用。
@@ -353,6 +366,35 @@ impl YinModel {
         let id = self.next_note_id;
         self.next_note_id = self.next_note_id.wrapping_add(1);
         id
+    }
+
+    /// 从 `track_audible_count` + `tracks` 重新派生 per-channel 计数。
+    ///
+    /// 成本 O(tracks)，通常 17-100 个 track，几乎免费。在 `rebuild` /
+    /// `rebuild_dirty` 末尾调用，保持 `channel_note_count` /
+    /// `channel_ctrl_count` 与 `track_audible_count` 一致。
+    ///
+    /// 激活语义与 `ChannelLayout::from_model` 完全对齐：
+    /// - note_count[ch] > 0 ⟺ ch 上至少一个 vel > 1 的音符
+    /// - ctrl_count[ch] > 0 ⟺ ch 上至少一个 track 有 automation / PC
+    fn recompute_channel_counts(&mut self) {
+        let mut note_counts = [0u32; 256];
+        let mut ctrl_counts = [0u32; 256];
+        for (track_idx, track) in self.tracks.iter().enumerate() {
+            let ch = track.global_channel() as usize;
+            // channel_note_count: 累加该 track 的发声音符数（与 ChannelLayout::from_model 的 saturating_add 一致）
+            if let Some(&audible) = self.track_audible_count.get(track_idx) {
+                if audible > 0 {
+                    note_counts[ch] = note_counts[ch].saturating_add(audible as u32);
+                }
+            }
+            // channel_ctrl_count: 该 track 有 automation_lanes 或 program_change 就 +1
+            if !track.automation_lanes.is_empty() || !track.program_change.is_empty() {
+                ctrl_counts[ch] = ctrl_counts[ch].saturating_add(1);
+            }
+        }
+        self.channel_note_count = Box::new(note_counts);
+        self.channel_ctrl_count = Box::new(ctrl_counts);
     }
 
     /// Rebuild all derived data from scratch.
@@ -419,6 +461,9 @@ impl YinModel {
 
         // Rebuild tempo_map (depends on tick_length we just computed).
         self.tempo_map = Arc::new(self.build_tempo_map());
+
+        // 派生 per-channel 计数（用于音频引擎检测 ChannelLayout 翻转）。
+        self.recompute_channel_counts();
     }
 
     /// Mark a bucket as dirty (modified and needs sorting).
@@ -523,6 +568,9 @@ impl YinModel {
 
         // 4. Rebuild tempo_map.
         self.tempo_map = Arc::new(self.build_tempo_map());
+
+        // 5. 派生 per-channel 计数（与 rebuild() 末尾一致）。
+        self.recompute_channel_counts();
     }
 
     /// Only rebuild `tempo_map` from `conductor.tempo` / `conductor.time_sig`.
@@ -786,6 +834,164 @@ mod tests {
 
         assert_eq!(m_del.track_note_count, m_del_ref.track_note_count, "track_note_count drift after remove");
         assert_eq!(m_del.track_audible_count, m_del_ref.track_audible_count, "track_audible_count drift after remove");
+    }
+
+    // -----------------------------------------------------------------------
+    // channel_note_count / channel_ctrl_count 测试
+    // -----------------------------------------------------------------------
+    // 这些计数器是音频引擎做 ChannelLayout flip 检测的关键依据：
+    // active(ch) = channel_note_count[ch] > 0 || channel_ctrl_count[ch] > 0
+    // 任何 channel 的 active 翻转（0→1 / 1→0）都意味着 ChannelLayout 变了，
+    // 必须 teardown + 重建引擎。
+
+    #[test]
+    fn channel_counts_empty_model() {
+        let m = YinModel::default();
+        assert!(m.channel_note_count.iter().all(|&c| c == 0));
+        assert!(m.channel_ctrl_count.iter().all(|&c| c == 0));
+    }
+
+    #[test]
+    fn channel_counts_after_load_track_notes() {
+        // track 0 (ch 0): 2 audible + 1 silent
+        // track 1 (ch 1): 1 audible
+        // track 2 (ch 9): 1 audible
+        let per_track = vec![
+            vec![note_audible(0, 480, 60), note_audible(480, 960, 64), note_silent(0, 480, 60)],
+            vec![note_audible(0, 480, 60)],
+            vec![note_audible(0, 480, 60)],
+        ];
+        let mut m = YinModel {
+            tracks: vec![
+                Arc::new(TrackData::new(0, 0)),
+                Arc::new(TrackData::new(0, 1)),
+                Arc::new(TrackData::new(0, 9)),
+            ],
+            ..Default::default()
+        };
+        m.load_track_notes(per_track);
+
+        assert_eq!(m.channel_note_count[0], 2, "ch 0: 2 audible (silent 不计)");
+        assert_eq!(m.channel_note_count[1], 1);
+        assert_eq!(m.channel_note_count[9], 1);
+        assert!(m.channel_ctrl_count.iter().all(|&c| c == 0), "无 automation / PC");
+    }
+
+    #[test]
+    fn channel_counts_rebuild_dirty_matches_rebuild() {
+        // 增量 rebuild_dirty 算出的 channel counts 必须与全量 rebuild 一致。
+        let mut base = YinModel {
+            tracks: vec![
+                Arc::new(TrackData::new(0, 0)),
+                Arc::new(TrackData::new(0, 1)),
+            ],
+            ..Default::default()
+        };
+        base.load_track_notes(vec![
+            vec![note_audible(0, 480, 60)],
+            vec![note_audible(0, 480, 64)],
+        ]);
+
+        // 改动：在 bucket 60 加一个 track 0 的 audible 音符 + 一个 silent 音符
+        let mut m_inc = base.clone();
+        {
+            let bucket = Arc::make_mut(&mut m_inc.notes[60]);
+            bucket.push(yinhe_types::Note {
+                id: 0, start_tick: 960, end_tick: 1440, velocity: 80, track: 0,
+            });
+            bucket.push(yinhe_types::Note {
+                id: 0, start_tick: 1440, end_tick: 1920, velocity: 0, track: 0,
+            });
+        }
+        m_inc.mark_dirty(60);
+        m_inc.rebuild_dirty();
+
+        let mut m_full = base.clone();
+        {
+            let bucket = Arc::make_mut(&mut m_full.notes[60]);
+            bucket.push(yinhe_types::Note {
+                id: 0, start_tick: 960, end_tick: 1440, velocity: 80, track: 0,
+            });
+            bucket.push(yinhe_types::Note {
+                id: 0, start_tick: 1440, end_tick: 1920, velocity: 0, track: 0,
+            });
+        }
+        m_full.rebuild();
+
+        assert_eq!(
+            m_inc.channel_note_count, m_full.channel_note_count,
+            "channel_note_count 增量 vs 全量不一致"
+        );
+        assert_eq!(
+            m_inc.channel_ctrl_count, m_full.channel_ctrl_count,
+            "channel_ctrl_count 增量 vs 全量不一致"
+        );
+        // ch 0 现在 2 个 audible（base 1 个 + 新增 1 个），silent 不计
+        assert_eq!(m_full.channel_note_count[0], 2);
+    }
+
+    #[test]
+    fn channel_counts_ctrl_tracks() {
+        // track 0 (ch 0): 无音符，但有 automation_lanes → ctrl_count[0] = 1
+        // track 1 (ch 5): 无音符，但有 program_change → ctrl_count[5] = 1
+        use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, PcEvent, SegmentShape};
+        let mut t0 = TrackData::new(0, 0);
+        t0.automation_lanes = vec![AutomationLane {
+            target: AutomationTarget::CC { controller: 7 },
+            track: 0,
+            events: vec![AutomationEvent { tick: 0, value: 100.0, shape: SegmentShape::Step }],
+        }];
+        let mut t1 = TrackData::new(0, 5);
+        t1.program_change = vec![PcEvent { tick: 0, program: 5, bank_msb: 0, bank_lsb: 0 }];
+        let mut m = YinModel {
+            tracks: vec![Arc::new(t0), Arc::new(t1)],
+            ..Default::default()
+        };
+        m.rebuild();
+
+        assert_eq!(m.channel_ctrl_count[0], 1, "ch 0 有 automation");
+        assert_eq!(m.channel_ctrl_count[5], 1, "ch 5 有 PC");
+        assert!(m.channel_note_count.iter().all(|&c| c == 0), "无音符");
+    }
+
+    #[test]
+    fn channel_counts_first_audible_note_addition() {
+        // 模拟 bug 复现场景：空 model 加第一个 audible 音符 → channel_note_count[0] 从 0→1
+        let mut m = YinModel {
+            tracks: vec![Arc::new(TrackData::new(0, 0))],
+            ..Default::default()
+        };
+        m.rebuild();
+        assert_eq!(m.channel_note_count[0], 0, "空 model: ch 0 未激活");
+
+        // 加一个 audible 音符
+        let bucket = Arc::make_mut(&mut m.notes[60]);
+        bucket.push(yinhe_types::Note {
+            id: 0, start_tick: 0, end_tick: 480, velocity: 100, track: 0,
+        });
+        m.mark_dirty(60);
+        m.rebuild_dirty();
+
+        assert_eq!(m.channel_note_count[0], 1, "加首 audible 音符后: ch 0 激活");
+    }
+
+    #[test]
+    fn channel_counts_last_audible_note_removal() {
+        // ch 0 上唯一一个 audible 音符被删 → channel_note_count[0] 从 1→0
+        let mut m = YinModel {
+            tracks: vec![Arc::new(TrackData::new(0, 0))],
+            ..Default::default()
+        };
+        m.load_track_notes(vec![vec![note_audible(0, 480, 60)]]);
+        assert_eq!(m.channel_note_count[0], 1);
+
+        // 删掉这个音符
+        let bucket = Arc::make_mut(&mut m.notes[60]);
+        bucket.clear();
+        m.mark_dirty(60);
+        m.rebuild_dirty();
+
+        assert_eq!(m.channel_note_count[0], 0, "删末 audible 音符后: ch 0 失活");
     }
 }
 

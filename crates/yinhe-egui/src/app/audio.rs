@@ -5,8 +5,16 @@ impl App {
     /// Notify the audio engine that the active document's model has changed (full
     /// rebuild: cc_events + audible_notes + chase). Use for automation edits,
     /// undo / redo, or any edit that may have touched automation lanes.
-    pub(crate) fn notify_audio_model_changed(&self) {
-        if let (Some(idx), Some(audio)) = (self.active_doc, &self.audio_state.handle) {
+    ///
+    /// 若 channel 激活状态翻转（首/末发声音符添加/删除，或 automation/PC 增删），
+    /// 自动 teardown 引擎——`ChannelLayout` 创建后不可变，必须重建才能让新通道
+    /// 被 dispatch。下一帧 `rebuild_audio_if_needed` 会用新 model 重新 spawn。
+    pub(crate) fn notify_audio_model_changed(&mut self) {
+        let Some(idx) = self.active_doc else { return };
+        if self.audio_state.handle.is_none() { return; }
+        if self.channel_layout_flipped_for_doc(idx) {
+            self.teardown_audio();
+        } else if let Some(audio) = &self.audio_state.handle {
             audio.reload_notes(self.documents[idx].data.model.clone());
         }
     }
@@ -15,10 +23,38 @@ impl App {
     /// chase). Cheaper than `notify_audio_model_changed` — skips the expensive
     /// `flatten_automation_to_cc_events` rebuild and the linear chase scan.
     /// Use for pure note edits (move/drag/add/delete/paste/duplicate/transpose).
-    pub(crate) fn notify_notes_changed(&self) {
-        if let (Some(idx), Some(audio)) = (self.active_doc, &self.audio_state.handle) {
+    ///
+    /// 若 channel 激活状态翻转（首/末发声音符添加/删除），自动 teardown 引擎
+    /// 并下一帧重建——同 `notify_audio_model_changed`。
+    pub(crate) fn notify_notes_changed(&mut self) {
+        let Some(idx) = self.active_doc else { return };
+        if self.audio_state.handle.is_none() { return; }
+        if self.channel_layout_flipped_for_doc(idx) {
+            self.teardown_audio();
+        } else if let Some(audio) = &self.audio_state.handle {
             audio.update_notes(self.documents[idx].data.model.clone());
         }
+    }
+
+    /// 检测 doc idx 的当前 model 是否与引擎持有的 `ChannelLayout` 在激活状态上有差异。
+    ///
+    /// 返回 true 表示有 channel 的激活状态翻转了（0→1 或 1→0），必须 teardown。
+    /// 返回 false 表示激活状态没变（如已激活 channel 加/删非末音符），可走便宜路径。
+    ///
+    /// 若引擎绑定的 doc 与 idx 不一致（tab 切换后的 1 帧延迟），也返回 true
+    /// ——必须 teardown 重建以绑定到新 doc。
+    fn channel_layout_flipped_for_doc(&self, idx: usize) -> bool {
+        let Some(layout) = &self.audio_state.last_channel_layout else {
+            return true; // 引擎未 spawn 过，让 rebuild 处理
+        };
+        if self.audio_state.active_doc != Some(idx) {
+            return true; // 绑定的 doc 不一致，必须重建
+        }
+        let model = &self.documents[idx].data.model;
+        layout.differs_from_counts(
+            &model.channel_note_count,
+            &model.channel_ctrl_count,
+        )
     }
 
     /// Resolve the merged SF configuration for the given document.
@@ -90,6 +126,9 @@ impl App {
         let doc = &self.documents[idx];
         let sr = self.audio_settings.sample_rate;
         let layout = yinhe_audio::channels_for_model(&doc.data.model);
+        // spawn_cpal_audio 消费 layout，提前克隆一份作为快照，
+        // 供后续 notify_notes_changed / notify_audio_model_changed 做 flip 检测。
+        let layout_snapshot = layout.clone();
         let buffer_size = if self.audio_settings.buffer_size == 0 {
             cpal::BufferSize::Default
         } else {
@@ -111,6 +150,7 @@ impl App {
 
                 self.audio_state.handle = Some(audio);
                 self.audio_state.active_doc = Some(idx);
+                self.audio_state.last_channel_layout = Some(layout_snapshot);
 
                 progress::set_visible(&self.load_progress, false);
             }
@@ -350,5 +390,6 @@ impl App {
     pub(crate) fn teardown_audio(&mut self) {
         self.audio_state.handle = None;
         self.audio_state.active_doc = None;
+        self.audio_state.last_channel_layout = None;
     }
 }

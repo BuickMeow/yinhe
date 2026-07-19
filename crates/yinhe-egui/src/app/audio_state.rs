@@ -1,5 +1,7 @@
 //! Audio subsystem state — fields related to the audio engine and playback.
 
+use yinhe_audio::channel_layout::ChannelLayout;
+
 /// All audio-engine-related state, extracted from `App` to reduce the God Object.
 pub(crate) struct AudioState {
     /// The active audio backend handle (None if not initialized yet).
@@ -7,6 +9,16 @@ pub(crate) struct AudioState {
     /// Which document index the audio engine is currently bound to.
     /// Used to detect document switches that require an audio rebuild.
     pub active_doc: Option<usize>,
+    /// 当前引擎创建时使用的 `ChannelLayout` 快照。
+    ///
+    /// 用于在 `notify_notes_changed` / `notify_audio_model_changed` 里检测
+    /// channel 激活状态是否翻转：若 `layout.differs_from_counts(model)` 为 true，
+    /// 说明有 channel 的激活状态变了（0→1 或 1→0），必须 teardown + 重建引擎。
+    /// 否则可走便宜的 `UpdateNotes` / `ReloadNotes` 路径。
+    ///
+    /// `None` 表示引擎尚未 spawn，下一帧 `rebuild_audio_if_needed` 会用新 model
+    /// 重新算 layout 并填入此字段。
+    pub last_channel_layout: Option<ChannelLayout>,
     /// Last known sample position from the audio engine, and the instant we read it.
     /// Used to interpolate cursor position between callback updates.
     pub playback_anchor: Option<(u64, std::time::Instant)>,
@@ -39,6 +51,7 @@ impl AudioState {
         Self {
             handle: None,
             active_doc: None,
+            last_channel_layout: None,
             playback_anchor: None,
             pending_playback: false,
             device_switch_pending: false,
