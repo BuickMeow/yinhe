@@ -32,9 +32,16 @@ pub fn show(
     match info_content.clone() {
         // ── 锚点信息 ──
         Some(InfoContent::Anchor { track_idx, lane_idx, event_idx, target }) => {
-            let track = doc.data.model.tracks.get(track_idx as usize);
-            let lane = track.and_then(|t| t.automation_lanes.get(lane_idx));
-            let live_event = lane.and_then(|l| l.events.get(event_idx));
+            // Tempo 走 conductor.tempo；其他走 track.automation_lanes
+            let lane_events: Option<&[AutomationEvent]> = if matches!(target, AutomationTarget::Tempo) {
+                Some(&doc.data.model.conductor.tempo.events)
+            } else {
+                doc.data.model.tracks
+                    .get(track_idx as usize)
+                    .and_then(|t| t.automation_lanes.get(lane_idx))
+                    .map(|l| l.events.as_slice())
+            };
+            let live_event = lane_events.and_then(|events| events.get(event_idx));
 
             if let Some(evt) = live_event {
                 let (live_tick, live_value) = if let Some((g_tick, g_value)) = automation_drag_ghost {
@@ -465,8 +472,8 @@ fn show_anchor_info(
     });
     ui.add_space(4.0);
 
-    // ── Tick（DragValue，拖动时实时修改模型，松手时存 undo） ──
-    let tick_drag_id = ui.id().with("info_anchor_tick_drag");
+    // ── Tick（DragValue，gained_focus 记录 before，lost_focus 提交 undo） ──
+    let tick_focus_id = ui.id().with("info_anchor_tick_focus");
     let before_tick_id = ui.id().with("info_anchor_before_tick_events");
     let mut edit_tick = tick as f64;
     ui.horizontal(|ui| {
@@ -477,14 +484,14 @@ fn show_anchor_info(
         );
         let resp = ui.add(egui::DragValue::new(&mut edit_tick).range(0..=u32::MAX as i64).speed(1.0));
 
-        let dragging = resp.dragged();
-        let was_dragging = ui.ctx().data(|d| d.get_temp::<bool>(tick_drag_id)).unwrap_or(false);
+        let gained = resp.gained_focus();
+        let lost = resp.lost_focus();
 
-        if dragging && !was_dragging {
+        if gained {
             let before = snapshot_lane_events(doc, track_idx, lane_idx, target);
             ui.ctx().data_mut(|d| {
                 d.insert_temp(before_tick_id, before);
-                d.insert_temp(tick_drag_id, true);
+                d.insert_temp(tick_focus_id, true);
             });
         }
 
@@ -504,7 +511,7 @@ fn show_anchor_info(
             }
         }
 
-        if !dragging && was_dragging {
+        if lost {
             let before = ui.ctx().data(|d| d.get_temp::<Vec<AutomationEvent>>(before_tick_id));
             if let Some(before) = before {
                 let after = snapshot_lane_events(doc, track_idx, lane_idx, target);
@@ -526,14 +533,14 @@ fn show_anchor_info(
             }
             ui.ctx().data_mut(|d| {
                 d.remove::<Vec<AutomationEvent>>(before_tick_id);
-                d.insert_temp(tick_drag_id, false);
+                d.remove::<bool>(tick_focus_id);
             });
         }
     });
     ui.add_space(4.0);
 
-    // ── Value（DragValue，拖动时实时修改模型，松手时存 undo） ──
-    let val_drag_id = ui.id().with("info_anchor_val_drag");
+    // ── Value（DragValue，gained_focus 记录 before，lost_focus 提交 undo） ──
+    let val_focus_id = ui.id().with("info_anchor_val_focus");
     let before_val_id = ui.id().with("info_anchor_before_val_events");
     let mut edit_value = value as f64;
     ui.horizontal(|ui| {
@@ -544,14 +551,14 @@ fn show_anchor_info(
         );
         let resp = ui.add(egui::DragValue::new(&mut edit_value).range(0.0..=max_val as f64).speed(1.0));
 
-        let dragging = resp.dragged();
-        let was_dragging = ui.ctx().data(|d| d.get_temp::<bool>(val_drag_id)).unwrap_or(false);
+        let gained = resp.gained_focus();
+        let lost = resp.lost_focus();
 
-        if dragging && !was_dragging {
+        if gained {
             let before = snapshot_lane_events(doc, track_idx, lane_idx, target);
             ui.ctx().data_mut(|d| {
                 d.insert_temp(before_val_id, before);
-                d.insert_temp(val_drag_id, true);
+                d.insert_temp(val_focus_id, true);
             });
         }
 
@@ -571,7 +578,7 @@ fn show_anchor_info(
             }
         }
 
-        if !dragging && was_dragging {
+        if lost {
             let before = ui.ctx().data(|d| d.get_temp::<Vec<AutomationEvent>>(before_val_id));
             if let Some(before) = before {
                 let after = snapshot_lane_events(doc, track_idx, lane_idx, target);
@@ -593,7 +600,7 @@ fn show_anchor_info(
             }
             ui.ctx().data_mut(|d| {
                 d.remove::<Vec<AutomationEvent>>(before_val_id);
-                d.insert_temp(val_drag_id, false);
+                d.remove::<bool>(val_focus_id);
             });
         }
     });

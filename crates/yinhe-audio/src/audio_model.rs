@@ -74,7 +74,7 @@ impl AudioModel {
                 t.automation_lanes
                     .iter()
                     .find(|l| matches!(l.target, yinhe_types::AutomationTarget::CC { controller: 0 }))
-                    .map(|lane| lane.events.iter().map(|e| (e.value.round() as u16 & 0x7F) as u8).collect())
+                    .map(|lane| lane.events.iter().map(|e| e.value.round().clamp(0.0, 127.0) as u8).collect())
                     .unwrap_or_default()
             })
             .collect();
@@ -196,14 +196,12 @@ fn emit_automation_event(
     channel: u32,
     out: &mut Vec<SortedCC>,
 ) {
-    // f32 → u16 一次，所有位运算都用这个整数
-    let v = value.round() as u16;
     match target {
         AutomationTarget::CC { controller } => {
             out.push(SortedCC {
                 sample, channel,
                 event: ChannelAudioEvent::Control(ControlEvent::Raw(
-                    *controller, (v & 0x7F) as u8,
+                    *controller, value.round().clamp(0.0, 127.0) as u8,
                 )),
             });
         }
@@ -242,9 +240,10 @@ fn emit_automation_event(
                     let msb = ((parameter >> 8) & 0x7F) as u8;
                     let lsb = (parameter & 0x7F) as u8;
                     let (data_msb, data_lsb) = if target.is_14bit() {
+                        let v = value.round().clamp(0.0, 16383.0) as u16;
                         (((v >> 7) & 0x7F) as u8, (v & 0x7F) as u8)
                     } else {
-                        (v as u8, 0u8)
+                        (value.round().clamp(0.0, 127.0) as u8, 0u8)
                     };
                     out.push(SortedCC { sample, channel, event: ChannelAudioEvent::Control(ControlEvent::Raw(101, msb)) });
                     out.push(SortedCC { sample, channel, event: ChannelAudioEvent::Control(ControlEvent::Raw(100, lsb)) });
@@ -258,6 +257,7 @@ fn emit_automation_event(
         AutomationTarget::Nrpn { parameter } => {
             let msb = ((parameter >> 8) & 0x7F) as u8;
             let lsb = (parameter & 0x7F) as u8;
+            let v = value.round().clamp(0.0, 16383.0) as u16;
             let data_msb = ((v >> 7) & 0x7F) as u8;
             let data_lsb = (v & 0x7F) as u8;
             out.push(SortedCC { sample, channel, event: ChannelAudioEvent::Control(ControlEvent::Raw(99, msb)) });

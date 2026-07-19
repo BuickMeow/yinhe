@@ -391,12 +391,13 @@ pub fn show_panels(
                                 format!("{}", tick)
                             };
                             let val_str = if panel.show_velocity {
+                                // Velocity 是整数语义
                                 format!("{}", value.round() as i32)
                             } else if panel.selected_target == AutomationTarget::Tempo {
                                 format!("{:.2} BPM", value)
                             } else {
-                                // CC/PB/RPN/NRPN: 整数显示
-                                format!("{}", value.round() as i32)
+                                // CC/PB/RPN/NRPN: 浮点显示
+                                format!("{:.2}", value)
                             };
                             let painter = ui.ctx().debug_painter();
                             let font_id = egui::FontId::monospace(12.0);
