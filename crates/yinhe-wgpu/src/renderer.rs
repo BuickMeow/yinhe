@@ -4,13 +4,6 @@ use crate::layer::LayerSlot;
 use crate::pipeline::RenderPipelineState;
 use crate::vertex::{CurveInstance, DrawInstance, NoteInstance, Uniforms, SelectionUniform, VelocityBarInstance};
 
-/// Maximum visible note instances the cull output buffer can hold.
-/// 8M instances × 16B = 128MB — the wgpu `max_storage_buffer_binding_size` limit.
-/// Beyond this, `create_bind_group` will panic. If more than 8M notes are
-/// visible simultaneously (extreme black-score at minimum zoom), the excess
-/// is silently dropped by the cull shader.
-const MAX_VISIBLE_NOTES: u64 = 8_000_000;
-
 /// Per-frame timing breakdown returned by `prepare`.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct PrepareTimings {
@@ -67,23 +60,27 @@ impl AnyLayer {
     }
 }
 
-/// GPU compute cull state: pipeline, per-key buffers, and shared output buffers.
+/// GPU compute cull state: pipeline + per-key input/output buffers.
 ///
-/// Architecture: each MIDI key owns its own `all_notes` storage buffer + bind
-/// group. The cull dispatch loops over keys, binding one buffer at a time.
-/// This keeps every binding well under wgpu's `max_storage_buffer_binding_size`
-/// (128MB) regardless of total note count - a single global buffer would
-/// exceed the limit at ~8M notes and panic in `create_bind_group`.
+/// Architecture: each MIDI key owns its own `all_notes` (input), `visible_notes`
+/// (output), and a slot in the shared `indirect_args` buffer. The cull dispatch
+/// loops over keys; each key's visible capacity = its all-notes capacity, so
+/// there is no global visible-note cap.
+///
+/// Memory: all_notes + visible_notes ≈ 2 × total notes × 16B (worst case:
+/// minimum zoom, every note visible). H2O.mid (13.8M) ≈ 374MB; 100M ≈ 3.2GB.
 struct CullState {
     pipeline: ComputePipeline,
     bind_group_layout: BindGroupLayout,
     /// Per-key bind groups (128 slots). `None` until the key is first uploaded.
     per_key_bind_groups: Vec<Option<BindGroup>>,
-    /// Per-key all-notes storage buffers, grown on demand.
+    /// Per-key all-notes storage buffers (cull input), grown on demand.
     per_key_buffers: Vec<Option<Buffer>>,
-    /// Shared compacted visible-notes buffer (all keys append into this).
-    visible_notes_buffer: Buffer,
-    /// Shared DrawIndirectArgs buffer (`instance_count` accumulates across keys).
+    /// Per-key visible-notes storage buffers (cull output + draw vertex source).
+    /// Same size as the corresponding `per_key_buffers` slot (visible ≤ all).
+    per_key_visible_buffers: Vec<Option<Buffer>>,
+    /// Shared indirect-args buffer: 128 slots × 20 bytes (DrawIndirectArgs + pad).
+    /// Slot k is at byte offset k * 20. Reset to [6,0,0,0,0] before each dispatch.
     indirect_args_buffer: Buffer,
 
     /// Per-key note count at last upload (in NoteInstance units).
@@ -139,7 +136,7 @@ impl CullState {
                     visibility: ShaderStages::COMPUTE,
                     ty: BindingType::Buffer {
                         ty: BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
+                        has_dynamic_offset: true,
                         min_binding_size: None,
                     },
                     count: None,
@@ -162,33 +159,24 @@ impl CullState {
             cache: None,
         });
 
-        let visible_size = MAX_VISIBLE_NOTES * std::mem::size_of::<NoteInstance>() as u64;
-        let visible_notes_buffer = device.create_buffer(&BufferDescriptor {
-            label: Some("visible_notes"),
-            size: visible_size,
-            usage: BufferUsages::STORAGE | BufferUsages::VERTEX,
-            mapped_at_creation: false,
-        });
-        yinhe_memtrace::add_gpu_resource(visible_size);
-
-        // DrawIndirectArgs: vertex_count(6) + instance_count + first_vertex(0) + first_instance(0) = 16 bytes
-        // Plus 4 bytes padding for the _padding field in the shader struct = 20 bytes total.
-        // But wgpu draw_indirect only reads 16 bytes (the standard DrawIndirectArgs).
-        // We make it 20 to match the shader struct, but draw_indirect only reads first 16.
+        // DrawIndirectArgs: 128 slots × 20 bytes each.
+        // Each slot: [vertex_count=6, instance_count=0, first_vertex=0, first_instance=0, pad=0]
+        // Slot k is at byte offset k * 20. draw_indirect reads 16 bytes from a slot.
+        let indirect_args_size = 128 * 20;
         let indirect_args_buffer = device.create_buffer(&BufferDescriptor {
             label: Some("indirect_args"),
-            size: 20,
+            size: indirect_args_size,
             usage: BufferUsages::STORAGE | BufferUsages::INDIRECT | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        yinhe_memtrace::add_gpu_resource(20);
+        yinhe_memtrace::add_gpu_resource(indirect_args_size);
 
         Self {
             pipeline,
             bind_group_layout,
             per_key_bind_groups: (0..128).map(|_| None).collect(),
             per_key_buffers: (0..128).map(|_| None).collect(),
-            visible_notes_buffer,
+            per_key_visible_buffers: (0..128).map(|_| None).collect(),
             indirect_args_buffer,
             per_key_counts: [0; 128],
             uploaded_key_revisions: [0; 128],
@@ -218,6 +206,7 @@ impl CullState {
     }
 
     /// Grow (if needed) + write + bind-group-recreate (if buffer grew) for one key.
+    /// Also grows the per-key visible buffer to match (visible ≤ all).
     fn upload_one_key(
         &mut self,
         device: &Device,
@@ -245,6 +234,20 @@ impl CullState {
             });
             yinhe_memtrace::add_gpu_resource(size);
             self.per_key_buffers[key as usize] = Some(buffer);
+
+            // Visible buffer matches all-notes size (worst case: all visible).
+            if let Some(ref buf) = self.per_key_visible_buffers[key as usize] {
+                yinhe_memtrace::sub_gpu_resource(buf.size());
+            }
+            let vis_buffer = device.create_buffer(&BufferDescriptor {
+                label: Some("visible_notes_key"),
+                size,
+                usage: BufferUsages::STORAGE | BufferUsages::VERTEX,
+                mapped_at_creation: false,
+            });
+            yinhe_memtrace::add_gpu_resource(size);
+            self.per_key_visible_buffers[key as usize] = Some(vis_buffer);
+
             self.recreate_cull_bind_group(device, uniform_buffer, key);
         }
 
@@ -257,8 +260,13 @@ impl CullState {
     }
 
     /// Recreate the bind group for a single key (after its buffer grew).
+    /// Binds: uniform, all_notes[k], visible_notes[k], indirect_args (dynamic offset = k*20).
     fn recreate_cull_bind_group(&mut self, device: &Device, uniform_buffer: &Buffer, key: u8) {
         let all_buf = match &self.per_key_buffers[key as usize] {
+            Some(b) => b.clone(),
+            None => return,
+        };
+        let vis_buf = match &self.per_key_visible_buffers[key as usize] {
             Some(b) => b.clone(),
             None => return,
         };
@@ -268,7 +276,7 @@ impl CullState {
             entries: &[
                 BindGroupEntry { binding: 0, resource: uniform_buffer.as_entire_binding() },
                 BindGroupEntry { binding: 1, resource: all_buf.as_entire_binding() },
-                BindGroupEntry { binding: 2, resource: self.visible_notes_buffer.as_entire_binding() },
+                BindGroupEntry { binding: 2, resource: vis_buf.as_entire_binding() },
                 BindGroupEntry { binding: 3, resource: self.indirect_args_buffer.as_entire_binding() },
             ],
         }));
@@ -278,11 +286,11 @@ impl CullState {
         self.per_key_bind_groups.iter().any(|bg| bg.is_some())
     }
 
-    /// Reset indirect args once, then dispatch the cull pass per key.
-    /// `instance_count` accumulates across all keys via atomicAdd in the shader.
+    /// Reset all 128 indirect-args slots, then dispatch the cull pass per key.
+    /// Each key writes into its own visible buffer + indirect-args slot.
     fn dispatch_cull(&self, queue: &Queue, encoder: &mut CommandEncoder) {
-        // Reset indirect args: [vertex_count=6, instance_count=0, first_vertex=0, first_instance=0, pad=0]
-        let reset_data: [u32; 5] = [6, 0, 0, 0, 0];
+        // Reset all 128 slots: each = [vertex_count=6, instance_count=0, first_vertex=0, first_instance=0, pad=0]
+        let reset_data: [[u32; 5]; 128] = [[6, 0, 0, 0, 0]; 128];
         queue.write_buffer(&self.indirect_args_buffer, 0, bytemuck::bytes_of(&reset_data));
 
         let mut cull_pass = encoder.begin_compute_pass(&ComputePassDescriptor {
@@ -294,7 +302,8 @@ impl CullState {
             let Some(bg) = &self.per_key_bind_groups[key as usize] else { continue };
             let count = self.per_key_counts[key as usize];
             if count == 0 { continue; }
-            cull_pass.set_bind_group(0, bg, &[]);
+            // Dynamic offset for indirect_args slot k = k * 20 bytes.
+            cull_pass.set_bind_group(0, bg, &[key as u32 * 20]);
             // 2D dispatch to support >65535 workgroups per key (extreme black-score
             // cases where one key holds >16.7M notes). Shader already indexes via
             // global_id.x + global_id.y * (65535*256).
@@ -309,8 +318,14 @@ impl CullState {
     fn draw_visible_notes(&self, pass: &mut RenderPass<'_>, note_pipeline: &RenderPipeline, bind_group: &BindGroup) {
         pass.set_pipeline(note_pipeline);
         pass.set_bind_group(0, bind_group, &[]);
-        pass.set_vertex_buffer(0, self.visible_notes_buffer.slice(..));
-        pass.draw_indirect(&self.indirect_args_buffer, 0);
+        // Draw each key's visible notes via its own indirect-args slot.
+        for key in 0u8..128 {
+            let Some(vis_buf) = &self.per_key_visible_buffers[key as usize] else { continue };
+            let count = self.per_key_counts[key as usize];
+            if count == 0 { continue; }
+            pass.set_vertex_buffer(0, vis_buf.slice(..));
+            pass.draw_indirect(&self.indirect_args_buffer, key as u64 * 20);
+        }
     }
 }
 

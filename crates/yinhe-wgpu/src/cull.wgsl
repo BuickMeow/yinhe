@@ -1,15 +1,13 @@
 // GPU compute cull for NoteInstance (16 bytes each).
 //
-// Architecture: per-key dispatch.
-//   Each MIDI key (0..127) has its own `all_notes` storage buffer, grown on
-//   demand. The host dispatches this shader once per key, binding that key's
-//   buffer. This keeps every binding under wgpu's `max_storage_buffer_binding_size`
-//   (128MB) even when the project holds tens of millions of notes — a single
-//   global buffer would exceed the limit at ~8M notes (H2O.mid has 13.8M).
+// Per-key architecture: each MIDI key (0..127) has its own `all_notes` and
+// `visible_notes` storage buffer. The host dispatches this shader once per
+// key, binding that key's buffers. This removes any global visible-note
+// cap — the total visible capacity equals the total note count.
 //
-// Input:  all_instances - one key's note buffer (bound per-dispatch)
-// Output: visible_instances - shared compacted buffer (atomicAppend across keys)
-//         indirect_args - shared DrawIndirectArgs (instance_count accumulates)
+// Input:  all_instances   - one key's note buffer (bound per-dispatch)
+// Output: visible_instances - that key's visible-notes buffer (bound per-dispatch)
+//         indirect_args   - that key's DrawIndirectArgs (bound per-dispatch)
 
 struct Uniforms {
     width: f32,
@@ -47,22 +45,13 @@ struct DrawIndirectArgs {
 @group(0) @binding(2) var<storage, read_write> visible_instances: array<NoteInstance>;
 @group(0) @binding(3) var<storage, read_write> indirect_args: DrawIndirectArgs;
 
-// Workgroup shared memory for batched atomic
-var<workgroup> wg_count: atomic<u32>;
-var<workgroup> wg_indices: array<u32, 256>;
-var<workgroup> wg_global_base: u32;
-var<workgroup> wg_total: u32;
-
 @compute @workgroup_size(256)
 fn main(
     @builtin(global_invocation_id) global_id: vec3<u32>,
-    @builtin(local_invocation_id) local_id: vec3<u32>,
 ) {
     let MAX_X_THREADS: u32 = 65535u * 256u;
     let index = global_id.x + global_id.y * MAX_X_THREADS;
     let in_range = index < arrayLength(&all_instances);
-
-    var is_visible = false;
 
     if in_range {
         let inst = all_instances[index];
@@ -100,35 +89,14 @@ fn main(
                 }
 
                 if pixel_bottom >= 0.0 && pixel_y <= u.height {
-                    is_visible = true;
+                    // Visible: atomically reserve a slot and write.
+                    // No cross-key contention — each key has its own indirect_args.
+                    let dst = atomicAdd(&indirect_args.instance_count, 1u);
+                    if dst < arrayLength(&visible_instances) {
+                        visible_instances[dst] = inst;
+                    }
                 }
             }
-        }
-    }
-
-    // Phase 1: workgroup-local count
-    if is_visible {
-        let slot = atomicAdd(&wg_count, 1u);
-        wg_indices[slot] = index;
-    }
-    workgroupBarrier();
-
-    // Phase 2: thread 0 does one global atomicAdd for the whole workgroup.
-    // Accumulates across all keys (shared indirect_args buffer).
-    if local_id.x == 0u {
-        let n = atomicLoad(&wg_count);
-        wg_total = n;
-        wg_global_base = atomicAdd(&indirect_args.instance_count, n);
-    }
-    workgroupBarrier();
-
-    // Phase 3: write visible instances
-    if local_id.x < wg_total {
-        let src_idx = wg_indices[local_id.x];
-        let inst = all_instances[src_idx];
-        let dst = wg_global_base + local_id.x;
-        if dst < arrayLength(&visible_instances) {
-            visible_instances[dst] = inst;
         }
     }
 }
