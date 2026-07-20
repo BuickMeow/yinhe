@@ -44,24 +44,26 @@ struct VelocityBarInstance {
     @location(0) data: vec4<u32>,  // x=tick, y=length, z=packed(track|velocity), w=reserved
 }
 
-/// Curve/line/anchor instance (36 bytes).
+/// Curve/line/anchor instance (44 bytes).
 /// See `CurveInstance` in vertex.rs for the CPU-side layout.
 struct CurveInstance {
-    @location(0) endp: vec4<f32>,    // (x1, y1, x2, y2)
-    @location(1) params: vec3<f32>,  // (thickness, ctrl_x, ctrl_y)
-    @location(2) rgba: u32,          // UNORM8: R|G<<8|B<<16|A<<24
-    @location(3) shape: u32,         // 0 = bezier, 1 = filled circle, 2 = filled square, 3 = hollow circle
+    @location(0) endp: vec4<f32>,      // (x1, y1, x2, y2) — P0, P3 端点
+    @location(1) params: vec4<f32>,    // (thickness, ctrl_x1, ctrl_y1, ctrl_x2)
+    @location(2) ctrl_y2: f32,         // 第二控制点 y 分量
+    @location(3) rgba: u32,            // UNORM8: R|G<<8|B<<16|A<<24
+    @location(4) shape: u32,           // 0 = bezier, 1 = filled circle, 2 = filled square, 3 = hollow circle
 }
 
 struct CurveOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) local: vec2<f32>,     // pixel-space position
-    @location(1) p1: vec2<f32>,
-    @location(2) p2: vec2<f32>,
+    @location(1) p0: vec2<f32>,
+    @location(2) p3: vec2<f32>,
     @location(3) thickness: f32,
-    @location(4) ctrl: vec2<f32>,      // (ctrl_x, ctrl_y)
-    @location(5) color: vec4<f32>,
-    @location(6) shape: u32,
+    @location(4) ctrl1: vec2<f32>,     // 第一控制点（屏幕坐标）
+    @location(5) ctrl2: vec2<f32>,     // 第二控制点（屏幕坐标）
+    @location(6) color: vec4<f32>,
+    @location(7) shape: u32,
 }
 
 struct VertexOutput {
@@ -476,23 +478,25 @@ fn sd_line(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>) -> f32 {
     return length(pa - ba * h);
 }
 
-/// Distance from point `p` to the quadratic Bézier curve `(a, b, c)`.
+/// Distance from point `p` to the cubic Bézier curve `(p0, p1, p2, p3)`.
 ///
-///   B(u) = (1-u)²·a + 2(1-u)u·b + u²·c,   u ∈ [0, 1]
-///   B'(u) = 2(1-u)·(b-a) + 2u·(c-b)
-///   B''(u) = 2·(a - 2b + c)
+///   B(u)  = (1-u)³·p0 + 3(1-u)²u·p1 + 3(1-u)u²·p2 + u³·p3,  u ∈ [0, 1]
+///   B'(u) = 3(1-u)²·(p1-p0) + 6(1-u)u·(p2-p1) + 3u²·(p3-p2)
+///   B''(u)= 6(1-u)·(p2-2p1+p0) + 6u·(p3-2p2+p1)
 ///
 /// Minimizes |B(u) - p|² via 6 Newton iterations on its derivative.
-/// Seeded by projecting p onto the chord a→c (exact when b is on the chord).
-fn sd_bezier(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>, c: vec2<f32>) -> f32 {
-    let chord = c - a;
-    var u = clamp(dot(p - a, chord) / max(dot(chord, chord), 1e-8), 0.0, 1.0);
+/// Seeded by projecting p onto the chord p0→p3 (exact for line).
+fn sd_bezier(p: vec2<f32>, p0: vec2<f32>, p1: vec2<f32>, p2: vec2<f32>, p3: vec2<f32>) -> f32 {
+    let chord = p3 - p0;
+    var u = clamp(dot(p - p0, chord) / max(dot(chord, chord), 1e-8), 0.0, 1.0);
 
     for (var i = 0; i < 6; i = i + 1) {
         let u1 = 1.0 - u;
-        let bu = u1 * u1 * a + 2.0 * u1 * u * b + u * u * c;
-        let du = 2.0 * u1 * (b - a) + 2.0 * u * (c - b);
-        let ddu = 2.0 * (a - 2.0 * b + c);
+        let u1sq = u1 * u1;
+        let usq = u * u;
+        let bu = u1sq * u1 * p0 + 3.0 * u1sq * u * p1 + 3.0 * u1 * usq * p2 + usq * u * p3;
+        let du = 3.0 * u1sq * (p1 - p0) + 6.0 * u1 * u * (p2 - p1) + 3.0 * usq * (p3 - p2);
+        let ddu = 6.0 * u1 * (p2 - 2.0 * p1 + p0) + 6.0 * u * (p3 - 2.0 * p2 + p1);
         let f = bu - p;
         // g(u)  = d/du |f|² = 2 · f · f'
         // g'(u) = 2 · (f'·f' + f·f'')
@@ -504,7 +508,9 @@ fn sd_bezier(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>, c: vec2<f32>) -> f32 {
     }
 
     let u1 = 1.0 - u;
-    let bu = u1 * u1 * a + 2.0 * u1 * u * b + u * u * c;
+    let u1sq = u1 * u1;
+    let usq = u * u;
+    let bu = u1sq * u1 * p0 + 3.0 * u1sq * u * p1 + 3.0 * u1 * usq * p2 + usq * u * p3;
     return length(bu - p);
 }
 
@@ -513,20 +519,24 @@ fn vs_main_curve(
     @builtin(vertex_index) vertex_index: u32,
     instance: CurveInstance,
 ) -> CurveOutput {
-    let p1 = instance.endp.xy;  // P0
-    let p2 = instance.endp.zw;  // P2
-    // 控制点绝对位置（归一化 ctrl_x/ctrl_y → 屏幕坐标）
-    let ctrl_pt = vec2<f32>(
-        p1.x + (p2.x - p1.x) * instance.params.y,
-        p1.y + (p2.y - p1.y) * instance.params.z,
+    let p0 = instance.endp.xy;  // P0
+    let p3 = instance.endp.zw;  // P3
+    // 两个控制点绝对位置（归一化 ctrl_x1/y1/x2/y2 → 屏幕坐标）
+    let c1 = vec2<f32>(
+        p0.x + (p3.x - p0.x) * instance.params.y,
+        p0.y + (p3.y - p0.y) * instance.params.z,
+    );
+    let c2 = vec2<f32>(
+        p0.x + (p3.x - p0.x) * instance.params.w,
+        p0.y + (p3.y - p0.y) * instance.ctrl_y2,
     );
 
-    // AABB 包含 P0, P2, 控制点（对 circle/square/hollow，P0==P2 且 ctrl_pt 落在 P0）
+    // AABB 包含 P0, P3, 两个控制点（对 circle/square/hollow，全部重合）
     let pad = instance.params.x + 1.0;
-    let min_x = min(min(p1.x, p2.x), ctrl_pt.x) - pad;
-    let max_x = max(max(p1.x, p2.x), ctrl_pt.x) + pad;
-    let min_y = min(min(p1.y, p2.y), ctrl_pt.y) - pad;
-    let max_y = max(max(p1.y, p2.y), ctrl_pt.y) + pad;
+    let min_x = min(min(min(p0.x, p3.x), c1.x), c2.x) - pad;
+    let max_x = max(max(max(p0.x, p3.x), c1.x), c2.x) + pad;
+    let min_y = min(min(min(p0.y, p3.y), c1.y), c2.y) - pad;
+    let max_y = max(max(max(p0.y, p3.y), c1.y), c2.y) + pad;
 
     var pos = array<vec2<f32>, 6>(
         vec2<f32>(max_x, min_y),
@@ -545,10 +555,11 @@ fn vs_main_curve(
     var out: CurveOutput;
     out.clip_position = vec4<f32>(ndc_x, ndc_y, 0.0, 1.0);
     out.local = p;
-    out.p1 = p1;
-    out.p2 = p2;
+    out.p0 = p0;
+    out.p3 = p3;
     out.thickness = instance.params.x;
-    out.ctrl = instance.params.yz;
+    out.ctrl1 = c1;
+    out.ctrl2 = c2;
     out.shape = instance.shape;
 
     let rgba = instance.rgba;
@@ -568,30 +579,25 @@ fn fs_main_curve(in: CurveOutput) -> @location(0) vec4<f32> {
     var d: f32;
     if (in.shape == 1u) {
         // Filled circle: distance from center minus radius.
-        d = length(p - in.p1) - in.thickness;
+        d = length(p - in.p0) - in.thickness;
     } else if (in.shape == 2u) {
         // Filled square (axis-aligned box SDF).
-        let q = abs(p - in.p1) - in.thickness;
+        let q = abs(p - in.p0) - in.thickness;
         d = length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0);
     } else if (in.shape == 3u) {
         // Hollow circle (ring): outer radius = thickness, ring width = 1.5px.
-        let r = length(p - in.p1);
+        let r = length(p - in.p0);
         let ring_width = 1.5;
         let inner = in.thickness - ring_width;
         d = max(r - in.thickness, inner - r);
     } else {
-        // shape == 0: bezier curve segment.
-        let is_linear = abs(in.ctrl.x - 0.5) < 1e-4 && abs(in.ctrl.y - 0.5) < 1e-4;
+        // shape == 0: cubic Bézier curve segment.
+        // 直线判定：cubic-bezier(0,0,1,1) 时 c1=p0, c2=p3
+        let is_linear = all(in.ctrl1 == in.p0) && all(in.ctrl2 == in.p3);
         if (is_linear) {
-            // Straight line fast path.
-            d = sd_line(p, in.p1, in.p2);
+            d = sd_line(p, in.p0, in.p3);
         } else {
-            // Quadratic Bézier. Reconstruct control point in screen space.
-            let ctrl_pt = vec2<f32>(
-                in.p1.x + (in.p2.x - in.p1.x) * in.ctrl.x,
-                in.p1.y + (in.p2.y - in.p1.y) * in.ctrl.y,
-            );
-            d = sd_bezier(p, in.p1, ctrl_pt, in.p2);
+            d = sd_bezier(p, in.p0, in.ctrl1, in.ctrl2, in.p3);
         }
     }
 

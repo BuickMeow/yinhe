@@ -18,8 +18,17 @@ const HOVER_DELAY: f64 = 0.6;
 pub(crate) enum HoverTooltip {
     /// 锚点（或拖拽锚点）：显示 tick（小节:拍:tick）+ automation value
     Anchor { tick: u32, value: f32, pos: egui::Pos2 },
-    /// 贝塞尔控制点（或拖拽控制点）：显示 ctrl_x / ctrl_y（归一化 [0,1]）
-    ControlPoint { ctrl_x: f32, ctrl_y: f32, pos: egui::Pos2 },
+    /// 贝塞尔控制点（或拖拽控制点）：显示 CSS 风格 4 值 (x1, y1, x2, y2)
+    ControlPoint { x1: f32, y1: f32, x2: f32, y2: f32, pos: egui::Pos2 },
+}
+
+/// 控制点端别：cubic Bézier 有两个控制点，分别是 P1（起点出）和 P2（终点入）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum CtrlEnd {
+    /// 第一控制点 P1 = P0 + (P3-P0) * (x1, y1)，对应 CSS `cubic-bezier(x1, y1, _, _)`
+    Out,
+    /// 第二控制点 P2 = P0 + (P3-P0) * (x2, y2)，对应 CSS `cubic-bezier(_, _, x2, y2)`
+    In,
 }
 
 /// 拖拽状态（ghost）。存在 egui data 中，跨帧保持。
@@ -30,10 +39,11 @@ pub(crate) enum AutoDrag {
     MoveAnchor { old_tick: u32, start_tick: u32, start_value: f32 },
     /// Curve 拖拽：起点已固定
     CurveDraw { start_tick: u32, start_value: f32 },
-    /// 拖拽 Curve 段中间的空心圆控制点。
+    /// 拖拽 Curve 段的某个控制点。
     /// `prev_tick`：被拖段的前驱事件 tick（段的起点，shape 存于此事件）。
-    /// `start_ctrl_x/y`：按下时的控制点位置，用于判断是否实际移动过。
-    DragControlPoint { prev_tick: u32, start_ctrl_x: f32, start_ctrl_y: f32 },
+    /// `which`：拖的是 P1（Out）还是 P2（In）。
+    /// `start`：按下时该控制点的归一化 (x, y) 位置，用于判断是否实际移动过。
+    DragControlPoint { prev_tick: u32, which: CtrlEnd, start_x: f32, start_y: f32 },
 }
 
 /// 右键点击锚点时记录的编辑信息。
@@ -82,10 +92,10 @@ pub(crate) fn hit_line_on_lane(
     (interp_y - mouse_y).abs() <= 8.0
 }
 
-/// 检测鼠标是否悬停在 Curve 段中间的空心圆控制点上。
+/// 检测鼠标是否悬停在 Curve 段的两个空心圆控制点之一上。
 ///
-/// 遍历所有 Curve 段（非直线），计算控制点屏幕位置，
-/// 返回最近控制点所属段的前驱事件 tick + 原始 ctrl_x/ctrl_y + 控制点像素位置。
+/// 遍历所有 Curve 段（非直线），计算两个控制点屏幕位置，
+/// 返回最近控制点所属段的前驱事件 tick + 端别 + 该段的 4 个 ctrl 值 + 控制点像素位置。
 pub(crate) fn hit_control_point_on_lane(
     lane: &AutomationLane,
     mouse: egui::Pos2,
@@ -95,38 +105,49 @@ pub(crate) fn hit_control_point_on_lane(
     panel_rect: egui::Rect,
     panel: &AutomationPanelView,
     max_val: f32,
-) -> Option<(u32, f32, f32, egui::Pos2)> {
+) -> Option<(u32, CtrlEnd, f32, f32, f32, f32, egui::Pos2)> {
     let x_offset = grid_area.min.x - scroll_x;
     let hit_sq = ANCHOR_HIT_PX * ANCHOR_HIT_PX;
-    let mut best: Option<(u32, f32, f32, egui::Pos2, f32)> = None; // (prev_tick, ctrl_x, ctrl_y, pos, dist_sq)
+    // (prev_tick, which, x1, y1, x2, y2, pos, dist_sq)
+    let mut best: Option<(u32, CtrlEnd, f32, f32, f32, f32, egui::Pos2, f32)> = None;
     for i in 1..lane.events.len() {
         let prev = &lane.events[i - 1];
         let cur = &lane.events[i];
-        let SegmentShape::Curve { ctrl_x, ctrl_y } = prev.shape else { continue; };
+        let SegmentShape::Curve { x1, y1, x2, y2 } = prev.shape else { continue; };
         if prev.shape.is_linear() { continue; }
 
-        let x0 = x_offset + prev.tick as f32 * ppu;
-        let y0 = panel_rect.min.y + panel.value_to_y(prev.value, max_val);
-        let x1 = x_offset + cur.tick as f32 * ppu;
-        let y1 = panel_rect.min.y + panel.value_to_y(cur.value, max_val);
+        let px0 = x_offset + prev.tick as f32 * ppu;
+        let py0 = panel_rect.min.y + panel.value_to_y(prev.value, max_val);
+        let px3 = x_offset + cur.tick as f32 * ppu;
+        let py3 = panel_rect.min.y + panel.value_to_y(cur.value, max_val);
 
-        let cx = x0 + (x1 - x0) * ctrl_x;
-        let cy = y0 + (y1 - y0) * ctrl_y;
+        // 两个控制点屏幕坐标
+        let c1x = px0 + (px3 - px0) * x1;
+        let c1y = py0 + (py3 - py0) * y1;
+        let c2x = px0 + (px3 - px0) * x2;
+        let c2y = py0 + (py3 - py0) * y2;
 
-        let dist_sq = (cx - mouse.x).powi(2) + (cy - mouse.y).powi(2);
-        if dist_sq <= hit_sq
-            && best.as_ref().map(|(_, _, _, _, d)| dist_sq < *d).unwrap_or(true)
+        // 分别检测两个控制点
+        let d1 = (c1x - mouse.x).powi(2) + (c1y - mouse.y).powi(2);
+        let d2 = (c2x - mouse.x).powi(2) + (c2y - mouse.y).powi(2);
+        if d1 <= hit_sq
+            && best.as_ref().map(|(_, _, _, _, _, _, _, d)| d1 < *d).unwrap_or(true)
         {
-            best = Some((prev.tick, ctrl_x, ctrl_y, egui::pos2(cx, cy), dist_sq));
+            best = Some((prev.tick, CtrlEnd::Out, x1, y1, x2, y2, egui::pos2(c1x, c1y), d1));
+        }
+        if d2 <= hit_sq
+            && best.as_ref().map(|(_, _, _, _, _, _, _, d)| d2 < *d).unwrap_or(true)
+        {
+            best = Some((prev.tick, CtrlEnd::In, x1, y1, x2, y2, egui::pos2(c2x, c2y), d2));
         }
     }
-    best.map(|(t, cx, cy, p, _)| (t, cx, cy, p))
+    best.map(|(t, w, x1, y1, x2, y2, p, _)| (t, w, x1, y1, x2, y2, p))
 }
 
-/// 从鼠标屏幕位置反推 Curve 段的 `(ctrl_x, ctrl_y)`（归一化 [0,1]）。
+/// 从鼠标屏幕位置反推 Curve 段某一端控制点的归一化位置 `(x, y)`。
 ///
 /// 段由 `prev_tick` 定位（前驱事件），下一个事件为段的终点。
-/// 段水平或竖直时（dx/dy ≈ 0），对应分量为 0.5（中点，无意义）。
+/// 段水平或竖直时（dx/dy ≈ 0），对应分量为 0（与直线控制点对齐）。
 /// 返回 `None` 表示 `prev_tick` 不存在或没有下一个事件。
 fn compute_ctrl_from_mouse(
     lane: &AutomationLane,
@@ -149,17 +170,19 @@ fn compute_ctrl_from_mouse(
     let y1 = panel_rect.min.y + panel.value_to_y(next.value, max_val);
     let dx = x1 - x0;
     let dy = y1 - y0;
-    let new_ctrl_x = if dx.abs() < 1e-3 {
-        0.5
+    // 时间方向 (x) 不允许回卷：clamp 到 [0, 1]。
+    // 值方向 (y) 允许略超出 [0, 1]（ease 缓动），clamp 到 [-2, 2] 避免极端值。
+    let new_x = if dx.abs() < 1e-3 {
+        0.0
     } else {
         ((mouse.x - x0) / dx).clamp(0.0, 1.0)
     };
-    let new_ctrl_y = if dy.abs() < 1e-3 {
-        0.5
+    let new_y = if dy.abs() < 1e-3 {
+        0.0
     } else {
-        ((mouse.y - y0) / dy).clamp(0.0, 1.0)
+        ((mouse.y - y0) / dy).clamp(-2.0, 2.0)
     };
-    Some((new_ctrl_x, new_ctrl_y))
+    Some((new_x, new_y))
 }
 
 /// 处理 automation 面板上的鼠标交互。
@@ -338,13 +361,18 @@ pub(crate) fn handle_automation_interaction(
                     ui.ctx().data_mut(|d| {
                         d.insert_temp(drag_id, AutoDrag::MoveAnchor { old_tick: tick, start_tick: tick, start_value: anchor_value });
                     });
-                } else if let Some((prev_tick, ctrl_x, ctrl_y, _)) = hit_ctrl {
-                    // 命中控制点：开始拖拽控制点
+                } else if let Some((prev_tick, which, x1, y1, x2, y2, _)) = hit_ctrl {
+                    // 命中控制点：开始拖拽该端控制点
+                    let (start_x, start_y) = match which {
+                        CtrlEnd::Out => (x1, y1),
+                        CtrlEnd::In => (x2, y2),
+                    };
                     ui.ctx().data_mut(|d| {
                         d.insert_temp(drag_id, AutoDrag::DragControlPoint {
                             prev_tick,
-                            start_ctrl_x: ctrl_x,
-                            start_ctrl_y: ctrl_y,
+                            which,
+                            start_x,
+                            start_y,
                         });
                     });
                 } else if drag_state.is_none() {
@@ -393,8 +421,8 @@ pub(crate) fn handle_automation_interaction(
                             }
                         }
                     }
-                    Some(AutoDrag::DragControlPoint { prev_tick, start_ctrl_x, start_ctrl_y }) => {
-                        // 提交控制点拖拽：从鼠标位置反推新 ctrl_x/ctrl_y
+                    Some(AutoDrag::DragControlPoint { prev_tick, which, start_x, start_y }) => {
+                        // 提交控制点拖拽：从鼠标位置反推新 (x, y)，并按端别合并到 shape
                         if let Some(l) = lane
                             && let Some((p, _, _)) = mouse_info
                             && let Some(lidx) = lane_idx
@@ -402,13 +430,24 @@ pub(crate) fn handle_automation_interaction(
                             if let Some(new_ctrl) = compute_ctrl_from_mouse(
                                 l, prev_tick, p, ppu, scroll_x, grid_area, panel_rect, panel, max_val,
                             ) {
-                                if new_ctrl.0 != start_ctrl_x || new_ctrl.1 != start_ctrl_y {
+                                if new_ctrl.0 != start_x || new_ctrl.1 != start_y {
+                                    // 读取当前 shape，按端别更新对应分量
+                                    let new_shape = l.events.iter()
+                                        .find(|e| e.tick == prev_tick)
+                                        .map(|e| match e.shape {
+                                            SegmentShape::Curve { x1, y1, x2, y2 } => match which {
+                                                CtrlEnd::Out => SegmentShape::Curve { x1: new_ctrl.0, y1: new_ctrl.1, x2, y2 },
+                                                CtrlEnd::In  => SegmentShape::Curve { x1, y1, x2: new_ctrl.0, y2: new_ctrl.1 },
+                                            },
+                                            SegmentShape::Step => SegmentShape::Step,
+                                        })
+                                        .unwrap_or(SegmentShape::Step);
                                     edits.push(yinhe_types::AutomationEdit::SetShape {
                                         track_idx,
                                         lane_idx: lidx,
                                         target: target.clone(),
                                         tick: prev_tick,
-                                        shape: SegmentShape::Curve { ctrl_x: new_ctrl.0, ctrl_y: new_ctrl.1 },
+                                        shape: new_shape,
                                     });
                                 }
                             }
@@ -455,10 +494,7 @@ pub(crate) fn handle_automation_interaction(
                                 target: target.clone(),
                                 tick: t1.min(t2),
                                 value: v1,
-                                shape: SegmentShape::Curve {
-                                    ctrl_x: SegmentShape::LINEAR_CTRL_X,
-                                    ctrl_y: SegmentShape::LINEAR_CTRL_Y,
-                                },
+                                shape: SegmentShape::linear_curve(),
                             });
                             edits.push(yinhe_types::AutomationEdit::Add {
                                 track_idx,
@@ -474,10 +510,7 @@ pub(crate) fn handle_automation_interaction(
                                 target: target.clone(),
                                 tick: t2,
                                 value: v2,
-                                shape: SegmentShape::Curve {
-                                    ctrl_x: SegmentShape::LINEAR_CTRL_X,
-                                    ctrl_y: SegmentShape::LINEAR_CTRL_Y,
-                                },
+                                shape: SegmentShape::linear_curve(),
                             });
                         }
                     }
@@ -540,14 +573,24 @@ pub(crate) fn handle_automation_interaction(
                 let start_y = panel.value_to_y(start_value, max_val);
                 Some(AutomationGhost::Curve { start_x, start_y, cur_x, cur_y, color: track_color })
             }
-            AutoDrag::DragControlPoint { prev_tick, .. } => {
-                // 用原始鼠标位置（不 snap）反推 ctrl_x/ctrl_y，
-                // 生成覆盖后的 lane（前驱事件 shape 已更新）。
+            AutoDrag::DragControlPoint { prev_tick, which, .. } => {
+                // 用原始鼠标位置（不 snap）反推该端控制点的 (x, y)，
+                // 合并到现有 shape 后生成覆盖 lane。
                 lane.and_then(|l| {
                     let new_ctrl = compute_ctrl_from_mouse(
                         l, prev_tick, p, ppu, scroll_x, grid_area, panel_rect, panel, max_val,
                     )?;
-                    let new_shape = SegmentShape::Curve { ctrl_x: new_ctrl.0, ctrl_y: new_ctrl.1 };
+                    // 读现有 shape，按端别替换对应分量
+                    let new_shape = l.events.iter()
+                        .find(|e| e.tick == prev_tick)
+                        .map(|e| match e.shape {
+                            SegmentShape::Curve { x1, y1, x2, y2 } => match which {
+                                CtrlEnd::Out => SegmentShape::Curve { x1: new_ctrl.0, y1: new_ctrl.1, x2, y2 },
+                                CtrlEnd::In  => SegmentShape::Curve { x1, y1, x2: new_ctrl.0, y2: new_ctrl.1 },
+                            },
+                            SegmentShape::Step => SegmentShape::Step,
+                        })
+                        .unwrap_or(SegmentShape::Step);
                     let override_lane = build_lane_shape_override(l, prev_tick, new_shape);
                     Some(AutomationGhost::Move { lane: override_lane, color: track_color })
                 })
@@ -560,16 +603,24 @@ pub(crate) fn handle_automation_interaction(
     // 拖拽中返回拖拽信息用于 tooltip
     let drag_info: Option<HoverTooltip> = if ghost.is_some() {
         match drag_now {
-            Some(AutoDrag::DragControlPoint { prev_tick, .. }) => {
-                // 拖控制点：从鼠标位置反推 ctrl_x/ctrl_y
+            Some(AutoDrag::DragControlPoint { prev_tick, which, .. }) => {
+                // 拖控制点：从鼠标位置反推 (x, y)，与现有 shape 合并后显示完整 4 值
                 lane.and_then(|l| {
                     let (p, _, _) = mouse_info?;
                     let new_ctrl = compute_ctrl_from_mouse(
                         l, prev_tick, p, ppu, scroll_x, grid_area, panel_rect, panel, max_val,
                     )?;
-                    Some(HoverTooltip::ControlPoint {
-                        ctrl_x: new_ctrl.0, ctrl_y: new_ctrl.1, pos: p,
-                    })
+                    let (x1, y1, x2, y2) = l.events.iter()
+                        .find(|e| e.tick == prev_tick)
+                        .map(|e| match e.shape {
+                            SegmentShape::Curve { x1, y1, x2, y2 } => (x1, y1, x2, y2),
+                            SegmentShape::Step => (0.0, 0.0, 1.0, 1.0),
+                        })?;
+                    let (x1, y1, x2, y2) = match which {
+                        CtrlEnd::Out => (new_ctrl.0, new_ctrl.1, x2, y2),
+                        CtrlEnd::In  => (x1, y1, new_ctrl.0, new_ctrl.1),
+                    };
+                    Some(HoverTooltip::ControlPoint { x1, y1, x2, y2, pos: p })
                 })
             }
             _ => {
@@ -615,7 +666,7 @@ pub(crate) fn handle_automation_interaction(
                 ui.ctx().request_repaint();
                 None
             }
-        } else if let Some((prev_tick, ctrl_x, ctrl_y, ctrl_pos)) = hit_ctrl {
+        } else if let Some((prev_tick, _which, x1, y1, x2, y2, ctrl_pos)) = hit_ctrl {
             // 控制点 hover：清除锚点计时
             ui.ctx().data_mut(|d| d.remove::<(u32, f64)>(hover_anchor_id));
             let prev: Option<(u32, f64)> = ui.ctx().data(|d| d.get_temp::<(u32, f64)>(hover_ctrl_id));
@@ -628,7 +679,7 @@ pub(crate) fn handle_automation_interaction(
                 }
             };
             if now - entry.1 >= HOVER_DELAY {
-                Some(HoverTooltip::ControlPoint { ctrl_x, ctrl_y, pos: ctrl_pos })
+                Some(HoverTooltip::ControlPoint { x1, y1, x2, y2, pos: ctrl_pos })
             } else {
                 ui.ctx().request_repaint();
                 None

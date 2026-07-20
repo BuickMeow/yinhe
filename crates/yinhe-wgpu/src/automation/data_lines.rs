@@ -10,6 +10,10 @@ const LINE_THICKNESS: f32 = 0.5;
 const ANCHOR_RADIUS: f32 = 3.0;
 /// 贝塞尔控制点（空心圆）外半径，像素。
 const CTRL_POINT_RADIUS: f32 = 4.0;
+/// 控制点到锚点的连线线宽。
+const CTRL_HANDLE_THICKNESS: f32 = 0.5;
+/// 控制点连线的不透明度（比锚点淡）。
+const CTRL_HANDLE_ALPHA: f32 = 0.5;
 /// 自动化线段的不透明度。
 const LINE_ALPHA: f32 = 0.85;
 
@@ -218,10 +222,11 @@ pub(crate) fn build_lane_instances(
 }
 
 /// 为 lane 中每个 Curve 段（前一个事件 → 当前事件，shape=Curve 且非直线）
-/// 在控制点位置画一个空心圆。
+/// 在两个控制点位置各画一个空心圆，并从锚点画线段连接到对应控制点（CSS 风格 handle）。
 ///
 /// 段的 shape 取自前一个事件（包括 chase 段的虚拟前驱）。控制点位置：
-///   ctrl_pt = P0 + (P2 - P0) * (ctrl_x, ctrl_y)
+///   c1 = P0 + (P3 - P0) * (x1, y1)  — 起点的"出"控制点
+///   c2 = P0 + (P3 - P0) * (x2, y2)  — 终点的"入"控制点
 fn push_curve_control_points(
     out: &mut Vec<CurveInstance>,
     lane: &AutomationLane,
@@ -233,6 +238,7 @@ fn push_curve_control_points(
     color: [f32; 3],
 ) {
     let ctrl_color = [color[0], color[1], color[2], 1.0];
+    let handle_color = [color[0], color[1], color[2], CTRL_HANDLE_ALPHA];
     // 前驱事件（visible 之前最后一个事件，作为 chase 段的起点）
     let first_tick = visible_events.first().map(|e| e.tick).unwrap_or(0);
     let prev_idx = lane.events.partition_point(|e| e.tick < first_tick);
@@ -243,17 +249,25 @@ fn push_curve_control_points(
     };
     for evt in visible_events {
         if let Some(p) = prev
-            && let SegmentShape::Curve { ctrl_x, ctrl_y } = p.shape
+            && let SegmentShape::Curve { x1, y1, x2, y2 } = p.shape
             && !p.shape.is_linear()
         {
-            // 段 p → evt
-            let x0 = x_offset + p.tick as f32 * ppu;
-            let y0 = view.value_to_y(p.value, max_val);
-            let x1 = x_offset + evt.tick as f32 * ppu;
-            let y1 = view.value_to_y(evt.value, max_val);
-            let cx = x0 + (x1 - x0) * ctrl_x;
-            let cy = y0 + (y1 - y0) * ctrl_y;
-            out.push(CurveInstance::hollow_circle(cx, cy, CTRL_POINT_RADIUS, ctrl_color));
+            // 段 p → evt：P0=p, P3=evt
+            let px0 = x_offset + p.tick as f32 * ppu;
+            let py0 = view.value_to_y(p.value, max_val);
+            let px3 = x_offset + evt.tick as f32 * ppu;
+            let py3 = view.value_to_y(evt.value, max_val);
+            // 两个控制点屏幕坐标
+            let c1x = px0 + (px3 - px0) * x1;
+            let c1y = py0 + (py3 - py0) * y1;
+            let c2x = px0 + (px3 - px0) * x2;
+            let c2y = py0 + (py3 - py0) * y2;
+            // 锚点 → 控制点的连线（handle）
+            out.push(CurveInstance::line(px0, py0, c1x, c1y, CTRL_HANDLE_THICKNESS, handle_color));
+            out.push(CurveInstance::line(px3, py3, c2x, c2y, CTRL_HANDLE_THICKNESS, handle_color));
+            // 两个空心圆控制点
+            out.push(CurveInstance::hollow_circle(c1x, c1y, CTRL_POINT_RADIUS, ctrl_color));
+            out.push(CurveInstance::hollow_circle(c2x, c2y, CTRL_POINT_RADIUS, ctrl_color));
         }
         prev = Some(evt);
     }
@@ -262,7 +276,7 @@ fn push_curve_control_points(
 /// 渲染从 `(x1, y1)` 到 `(x2, y2)` 的一段自动化曲线，按 shape 决定形状。
 ///
 /// - `Step` → push 两个 line instance：水平段 + 竖直跳变段
-/// - `Curve{ctrl_x, ctrl_y}` → push 一个 bezier instance（ctrl=(0.5, 0.5) 时退化为直线）
+/// - `Curve{x1,y1,x2,y2}` → push 一个 cubic bezier instance（(0,0,1,1) 时退化为直线）
 fn render_segment(
     out: &mut Vec<CurveInstance>,
     x1: f32,
@@ -292,10 +306,10 @@ fn render_segment(
                 out.push(CurveInstance::line(x2, y1, x2, y2, LINE_THICKNESS, line_color));
             }
         }
-        SegmentShape::Curve { ctrl_x, ctrl_y } => {
-            // ctrl=(0.5, 0.5) → 直线；否则 → 二次贝塞尔。统一用一个 bezier instance。
+        SegmentShape::Curve { x1: cx1, y1: cy1, x2: cx2, y2: cy2 } => {
+            // (0,0,1,1) → 直线；否则 → 三次贝塞尔。统一用一个 bezier instance。
             out.push(CurveInstance::bezier(
-                x1, y1, x2, y2, LINE_THICKNESS, ctrl_x, ctrl_y, line_color,
+                x1, y1, x2, y2, LINE_THICKNESS, cx1, cy1, cx2, cy2, line_color,
             ));
         }
     }

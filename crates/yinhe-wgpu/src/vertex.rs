@@ -124,27 +124,32 @@ impl VelocityBarInstance {
     }
 }
 
-/// Curve/line/anchor instance: 36 bytes.
+/// Curve/line/anchor instance: 44 bytes.
 ///
 /// One instance renders one of:
-/// - **Bezier curve segment** (`shape == 0`): quadratic Bézier from (x1,y1)
-///   to (x2,y2) with control point at `(x1 + (x2-x1)*ctrl_x, y1 + (y2-y1)*ctrl_y)`
-///   in normalized space. `ctrl_x = ctrl_y = 0.5` → straight line (shader fast
-///   path via `sd_line`).
+/// - **Cubic Bézier curve segment** (`shape == 0`): cubic Bézier from P0=(x1,y1)
+///   to P3=(x2,y2) with two control points P1, P2 in normalized space:
+///     P1 = P0 + (P3-P0) * (x1, y1)
+///     P2 = P0 + (P3-P0) * (x2, y2)
+///   `(x1,y1,x2,y2) = (0,0,1,1)` → straight line (shader fast path via `sd_line`).
 ///   For `SegmentShape::Step`, CPU pushes **two** instances: a horizontal
 ///   segment (y1→y1) plus a vertical segment (x2,x2 with y1→y2).
 /// - **Filled circle** (`shape == 1`): Curve 锚点 at (x1, y1) with
-///   `thickness` = radius. `x2/y2/ctrl_*` ignored.
+///   `thickness` = radius. Other fields ignored.
 /// - **Filled square** (`shape == 2`): Step 锚点 at (x1, y1) with
-///   `thickness` = half-size. `x2/y2/ctrl_*` ignored.
+///   `thickness` = half-size. Other fields ignored.
 /// - **Hollow circle** (`shape == 3`): 贝塞尔控制点 at (x1, y1) with
-///   `thickness` = outer radius. `x2/y2/ctrl_*` ignored.
+///   `thickness` = outer radius. Other fields ignored.
 ///
 /// Layout (matches `vs_main_curve` in shader.wgsl):
-///   - `@location(0)`: Float32x4 = (x1, y1, x2, y2)
-///   - `@location(1)`: Float32x3 = (thickness, ctrl_x, ctrl_y)
-///   - `@location(2)`: Uint32    = rgba UNORM8 (R|G<<8|B<<16|A<<24)
-///   - `@location(3)`: Uint32    = shape tag
+///   - `@location(0)`: Float32x4 = (x1, y1, x2, y2)   — P0, P3 端点
+///   - `@location(1)`: Float32x4 = (thickness, x1, y1, x2) — thickness + 控制点归一化位置
+///   - `@location(2)`: Float32x1 = (y2)                — 第二控制点 y 分量（单独放，对齐 16B 边界）
+///   - `@location(3)`: Uint32    = rgba UNORM8 (R|G<<8|B<<16|A<<24)
+///   - `@location(4)`: Uint32    = shape tag
+///
+/// 注：`params.y/z/w` 即 (x1, y1, x2)，`ctrl2_y` 即 y2。命名遵循 CSS
+/// `cubic-bezier(x1, y1, x2, y2)` 习惯。
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct CurveInstance {
@@ -153,39 +158,51 @@ pub struct CurveInstance {
     pub x2: f32,
     pub y2: f32,
     pub thickness: f32,
-    /// 控制点 x 归一化位置 ∈ [0, 1]（0.5 = 中点）。仅 shape==0 时使用。
-    pub ctrl_x: f32,
-    /// 控制点 y 归一化位置（0.5 = 中点，直线）。仅 shape==0 时使用。
-    pub ctrl_y: f32,
+    /// 第一控制点归一化位置 P1 = P0 + (P3-P0) * (x1, y1)。仅 shape==0 时使用。
+    pub ctrl_x1: f32,
+    pub ctrl_y1: f32,
+    /// 第二控制点归一化位置 P2 = P0 + (P3-P0) * (x2, y2)。
+    pub ctrl_x2: f32,
+    /// 第二控制点 y 分量。单独字段是为了让 attribute 能按 16 字节边界对齐
+    /// （location(1) = vec4 (thickness, x1, y1, x2)，location(2) = scalar y2）。
+    pub ctrl_y2: f32,
     pub rgba_packed: u32,
     /// 0 = bezier curve, 1 = filled circle, 2 = filled square, 3 = hollow circle.
     pub shape: u32,
 }
 
 impl CurveInstance {
+    /// 直线参数：`cubic-bezier(0,0,1,1)`。
+    const LINEAR: [f32; 4] = [0.0, 0.0, 1.0, 1.0];
+
     /// Construct a straight-line segment instance.
     pub fn line(x1: f32, y1: f32, x2: f32, y2: f32, thickness: f32, color: [f32; 4]) -> Self {
         CurveInstance {
             x1, y1, x2, y2,
             thickness,
-            ctrl_x: 0.5,
-            ctrl_y: 0.5,
+            ctrl_x1: Self::LINEAR[0],
+            ctrl_y1: Self::LINEAR[1],
+            ctrl_x2: Self::LINEAR[2],
+            ctrl_y2: Self::LINEAR[3],
             rgba_packed: pack_rgba(color[0], color[1], color[2], color[3]),
             shape: 0,
         }
     }
 
-    /// Construct a quadratic Bézier segment instance.
-    /// `ctrl_x`, `ctrl_y` ∈ [0, 1] 是控制点在归一化空间中的位置（0.5 = 中点 = 直线）。
+    /// Construct a cubic Bézier segment instance.
+    /// `(x1, y1, x2, y2)` 是 CSS `cubic-bezier` 风格的两个控制点归一化位置。
+    /// `(0, 0, 1, 1)` = 直线。
     pub fn bezier(
         x1: f32, y1: f32, x2: f32, y2: f32,
-        thickness: f32, ctrl_x: f32, ctrl_y: f32, color: [f32; 4],
+        thickness: f32, ctrl_x1: f32, ctrl_y1: f32, ctrl_x2: f32, ctrl_y2: f32, color: [f32; 4],
     ) -> Self {
         CurveInstance {
             x1, y1, x2, y2,
             thickness,
-            ctrl_x,
-            ctrl_y,
+            ctrl_x1,
+            ctrl_y1,
+            ctrl_x2,
+            ctrl_y2,
             rgba_packed: pack_rgba(color[0], color[1], color[2], color[3]),
             shape: 0,
         }
@@ -197,8 +214,10 @@ impl CurveInstance {
             x1: cx, y1: cy,
             x2: cx, y2: cy,  // AABB collapses to a single point; pad handles the rest
             thickness: radius,
-            ctrl_x: 0.5,
-            ctrl_y: 0.5,
+            ctrl_x1: Self::LINEAR[0],
+            ctrl_y1: Self::LINEAR[1],
+            ctrl_x2: Self::LINEAR[2],
+            ctrl_y2: Self::LINEAR[3],
             rgba_packed: pack_rgba(color[0], color[1], color[2], color[3]),
             shape: 1,
         }
@@ -210,8 +229,10 @@ impl CurveInstance {
             x1: cx, y1: cy,
             x2: cx, y2: cy,
             thickness: half_size,
-            ctrl_x: 0.5,
-            ctrl_y: 0.5,
+            ctrl_x1: Self::LINEAR[0],
+            ctrl_y1: Self::LINEAR[1],
+            ctrl_x2: Self::LINEAR[2],
+            ctrl_y2: Self::LINEAR[3],
             rgba_packed: pack_rgba(color[0], color[1], color[2], color[3]),
             shape: 2,
         }
@@ -224,8 +245,10 @@ impl CurveInstance {
             x1: cx, y1: cy,
             x2: cx, y2: cy,
             thickness: radius,
-            ctrl_x: 0.5,
-            ctrl_y: 0.5,
+            ctrl_x1: Self::LINEAR[0],
+            ctrl_y1: Self::LINEAR[1],
+            ctrl_x2: Self::LINEAR[2],
+            ctrl_y2: Self::LINEAR[3],
             rgba_packed: pack_rgba(color[0], color[1], color[2], color[3]),
             shape: 3,
         }
@@ -336,8 +359,8 @@ mod tests {
         assert_eq!(std::mem::size_of::<DrawInstance>(), 32);
         assert_eq!(std::mem::size_of::<NoteInstance>(), 16);
         assert_eq!(std::mem::size_of::<VelocityBarInstance>(), 16);
-        // 4×f32 (endp) + 3×f32 (params) + u32 (rgba) + u32 (shape) = 16+12+4+4 = 36
-        assert_eq!(std::mem::size_of::<CurveInstance>(), 36);
+        // 4×f32 (endp) + 5×f32 (thickness+4×ctrl) + u32 (rgba) + u32 (shape) = 16+20+4+4 = 44
+        assert_eq!(std::mem::size_of::<CurveInstance>(), 44);
     }
 
     #[test]

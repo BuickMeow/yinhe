@@ -207,9 +207,10 @@ impl RenderPipelineState {
                     step_mode: VertexStepMode::Instance,
                     attributes: &vertex_attr_array![
                         0 => Float32x4,  // endp (x1, y1, x2, y2) @ offset 0
-                        1 => Float32x3,  // params (thickness, ctrl_x, ctrl_y) @ offset 16
-                        2 => Uint32,     // rgba_packed @ offset 28
-                        3 => Uint32,     // shape @ offset 32
+                        1 => Float32x4,  // params (thickness, ctrl_x1, ctrl_y1, ctrl_x2) @ offset 16
+                        2 => Float32,    // ctrl_y2 @ offset 32
+                        3 => Uint32,     // rgba_packed @ offset 36
+                        4 => Uint32,     // shape @ offset 40
                     ],
                 }],
                 compilation_options: PipelineCompilationOptions::default(),

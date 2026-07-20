@@ -385,7 +385,7 @@ pub fn show_panels(
 
                     // tooltip：拖拽中显示 drag_info，否则 hover 锚点/控制点超时显示 hover_info。
                     if let Some(tip) = drag_info.or(hover_info) {
-                        let (lines, x, y) = match tip {
+                        let (lines, x, y): (Vec<String>, f32, f32) = match tip {
                             interaction::HoverTooltip::Anchor { tick, value, pos } => {
                                 let pos_str = if let Some((ppq, num, den, ts_events)) = ctx.bar_line_data {
                                     format_tick_bar_beat_with_time_sig(tick as f64, ppq, ts_events, num, den)
@@ -399,11 +399,16 @@ pub fn show_panels(
                                 } else {
                                     format!("{:.2}", value)
                                 };
-                                ([pos_str, val_str], pos.x, pos.y)
+                                (vec![pos_str, val_str], pos.x, pos.y)
                             }
-                            interaction::HoverTooltip::ControlPoint { ctrl_x, ctrl_y, pos } => {
+                            interaction::HoverTooltip::ControlPoint { x1, y1, x2, y2, pos } => {
                                 (
-                                    [format!("Ctrl X: {:.2}", ctrl_x), format!("Ctrl Y: {:.2}", ctrl_y)],
+                                    vec![
+                                        format!("X1: {:.2}", x1),
+                                        format!("Y1: {:.2}", y1),
+                                        format!("X2: {:.2}", x2),
+                                        format!("Y2: {:.2}", y2),
+                                    ],
                                     pos.x,
                                     pos.y,
                                 )

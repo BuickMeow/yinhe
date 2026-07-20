@@ -1,6 +1,6 @@
 //! 自动化锚点信息面板。
 //!
-//! 显示选中锚点的 Tick / Value / Shape / Ctrl X / Ctrl Y 编辑器，
+//! 显示选中锚点的 Tick / Value / Shape / X1 / Y1 / X2 / Y2 编辑器，
 //! 并通过 [`LaneUndoGuard`] 统一管理 DragValue 的 focus/before/after undo 模式。
 
 use eframe::egui;
@@ -123,14 +123,17 @@ pub(super) fn show_anchor_info(
         }
     });
 
-    // ── Ctrl X / Ctrl Y（仅 Curve 模式下显示） ──
-    // 二次贝塞尔归一化控制点位置：ctrl=(0.5, 0.5) 为直线，拉满时逼近直角。
-    if let SegmentShape::Curve { ctrl_x, ctrl_y } = shape {
-        // Ctrl X
-        let guard = LaneUndoGuard::new(ui, "ctrl_x", track_idx, lane_idx, target);
-        let mut edit = ctrl_x;
+    // ── X1 / Y1 / X2 / Y2（仅 Curve 模式下显示） ──
+    // CSS `cubic-bezier(x1, y1, x2, y2)` 风格：起点 P0=(0,0)、终点 P3=(1,1)，
+    // 两个控制点 P1=(x1,y1)（起点出）、P2=(x2,y2)（终点入）。
+    // x ∈ [0,1]（时间方向不可回卷），y ∈ [-2,2]（允许 ease 缓动超出 [0,1]）。
+    // 直线为 (0,0,1,1)。
+    if let SegmentShape::Curve { x1, y1, x2, y2 } = shape {
+        // X1
+        let guard = LaneUndoGuard::new(ui, "x1", track_idx, lane_idx, target);
+        let mut edit = x1;
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("Ctrl X:").size(11.0).color(egui::Color32::GRAY));
+            ui.label(egui::RichText::new("X1:").size(11.0).color(egui::Color32::GRAY));
             let resp = ui.add(
                 egui::DragValue::new(&mut edit)
                     .range(0.0..=1.0)
@@ -140,26 +143,55 @@ pub(super) fn show_anchor_info(
             if resp.gained_focus() {
                 guard.gained(ui, doc);
             }
-            if resp.changed() && edit != ctrl_x {
+            if resp.changed() && edit != x1 {
                 doc.set_automation_shape(
                     track_idx as usize,
                     lane_idx,
                     target,
                     tick,
-                    SegmentShape::Curve { ctrl_x: edit, ctrl_y },
+                    SegmentShape::Curve { x1: edit, y1, x2, y2 },
                 );
             }
             if resp.lost_focus() {
-                guard.lost(ui, doc, "Edit automation anchor ctrl_x");
+                guard.lost(ui, doc, "Edit automation anchor x1");
             }
         });
         ui.add_space(2.0);
 
-        // Ctrl Y
-        let guard = LaneUndoGuard::new(ui, "ctrl_y", track_idx, lane_idx, target);
-        let mut edit = ctrl_y;
+        // Y1
+        let guard = LaneUndoGuard::new(ui, "y1", track_idx, lane_idx, target);
+        let mut edit = y1;
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("Ctrl Y:").size(11.0).color(egui::Color32::GRAY));
+            ui.label(egui::RichText::new("Y1:").size(11.0).color(egui::Color32::GRAY));
+            let resp = ui.add(
+                egui::DragValue::new(&mut edit)
+                    .range(-2.0..=2.0)
+                    .speed(0.02)
+                    .fixed_decimals(2),
+            );
+            if resp.gained_focus() {
+                guard.gained(ui, doc);
+            }
+            if resp.changed() && edit != y1 {
+                doc.set_automation_shape(
+                    track_idx as usize,
+                    lane_idx,
+                    target,
+                    tick,
+                    SegmentShape::Curve { x1, y1: edit, x2, y2 },
+                );
+            }
+            if resp.lost_focus() {
+                guard.lost(ui, doc, "Edit automation anchor y1");
+            }
+        });
+        ui.add_space(2.0);
+
+        // X2
+        let guard = LaneUndoGuard::new(ui, "x2", track_idx, lane_idx, target);
+        let mut edit = x2;
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("X2:").size(11.0).color(egui::Color32::GRAY));
             let resp = ui.add(
                 egui::DragValue::new(&mut edit)
                     .range(0.0..=1.0)
@@ -169,17 +201,46 @@ pub(super) fn show_anchor_info(
             if resp.gained_focus() {
                 guard.gained(ui, doc);
             }
-            if resp.changed() && edit != ctrl_y {
+            if resp.changed() && edit != x2 {
                 doc.set_automation_shape(
                     track_idx as usize,
                     lane_idx,
                     target,
                     tick,
-                    SegmentShape::Curve { ctrl_x, ctrl_y: edit },
+                    SegmentShape::Curve { x1, y1, x2: edit, y2 },
                 );
             }
             if resp.lost_focus() {
-                guard.lost(ui, doc, "Edit automation anchor ctrl_y");
+                guard.lost(ui, doc, "Edit automation anchor x2");
+            }
+        });
+        ui.add_space(2.0);
+
+        // Y2
+        let guard = LaneUndoGuard::new(ui, "y2", track_idx, lane_idx, target);
+        let mut edit = y2;
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("Y2:").size(11.0).color(egui::Color32::GRAY));
+            let resp = ui.add(
+                egui::DragValue::new(&mut edit)
+                    .range(-2.0..=2.0)
+                    .speed(0.02)
+                    .fixed_decimals(2),
+            );
+            if resp.gained_focus() {
+                guard.gained(ui, doc);
+            }
+            if resp.changed() && edit != y2 {
+                doc.set_automation_shape(
+                    track_idx as usize,
+                    lane_idx,
+                    target,
+                    tick,
+                    SegmentShape::Curve { x1, y1, x2, y2: edit },
+                );
+            }
+            if resp.lost_focus() {
+                guard.lost(ui, doc, "Edit automation anchor y2");
             }
         });
         ui.add_space(6.0);
@@ -221,7 +282,7 @@ pub(super) fn show_anchor_info(
 /// - [`LaneUndoGuard::lost`] 在 `resp.lost_focus()` 时调用，比较 after 与 before，
 ///   差异时 push undo entry
 ///
-/// 消除了 Tick / Value / Ctrl X / Ctrl Y 四处重复的 undo 样板代码。
+/// 消除了 Tick / Value / X1 / Y1 / X2 / Y2 六处重复的 undo 样板代码。
 struct LaneUndoGuard {
     focus_id: egui::Id,
     before_id: egui::Id,
