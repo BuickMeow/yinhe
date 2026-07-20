@@ -382,18 +382,15 @@ pub(crate) fn show_vertical_value(
         return;
     }
 
-    // visible_range 必须小于 total_value 才有滚动需求
     let visible_range = total_value / *value_zoom;
-    if visible_range >= total_value {
-        return;
-    }
 
     // Clamp value_scroll
     let max_scroll = (total_value - visible_range).max(0.0);
     *value_scroll = value_scroll.clamp(0.0, max_scroll);
 
     // Scale: scrollbar pixels per value unit.
-    let scale = sb_h / total_value;
+    // 当 visible_range >= total_value（zoomed out）时用 visible_range 作分母，让 thumb 占满整个滚动条。
+    let scale = sb_h / total_value.max(visible_range);
 
     // ── Rectangle position and size ──
     // value 0 在底部，total_value 在顶部（与面板渲染一致：value_to_y 中 h - (...)）
@@ -467,8 +464,8 @@ pub(crate) fn show_vertical_value(
 
     // ── Interaction ──
 
-    // Drag middle → pan value_scroll
-    if middle_resp.dragged() {
+    // Drag middle → pan value_scroll（仅当 max_scroll > 0 时有效）
+    if middle_resp.dragged() && max_scroll > 0.0 {
         let delta = middle_resp.drag_delta().y;
         // y 增加 = 向下滚 = value_scroll 减小
         *value_scroll = (*value_scroll - delta / scale).clamp(0.0, max_scroll);

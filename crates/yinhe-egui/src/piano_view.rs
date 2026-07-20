@@ -786,7 +786,7 @@ pub fn show(
             combo_w,
             view.base.scroll_x,
             view.base.pixels_per_tick,
-            content_right_x,
+            rect.max.x,
             panels_y,
             panels_total_h,
             midi.and_then(|m| m.ticks_per_beat()),
