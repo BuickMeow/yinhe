@@ -498,7 +498,8 @@ fn sd_bezier(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>, c: vec2<f32>) -> f32 {
         // g'(u) = 2 · (f'·f' + f·f'')
         let g = dot(f, du);
         let g_dt = 2.0 * (dot(du, du) + dot(f, ddu));
-        u = u - g / max(g_dt, 1e-6);
+        // 用 abs(g_dt) 防止 g_dt 为负时 Newton 方向反向（控制点拉远时可能发生）。
+        u = u - g / max(abs(g_dt), 1e-6);
         u = clamp(u, 0.0, 1.0);
     }
 
@@ -594,8 +595,16 @@ fn fs_main_curve(in: CurveOutput) -> @location(0) vec4<f32> {
         }
     }
 
-    // 1px anti-aliased stroke around `thickness`.
+    // 1px anti-aliased stroke.
+    // shape 0（曲线/线段）: d 是到曲线的 unsigned 距离（≥0），AA 在 [thickness-1, thickness+1]。
+    // shape 1/2/3（圆/方/环）: d 是 signed distance（d=0 在几何边界），AA 在 [-1, +1]。
+    //   否则 ANCHOR_RADIUS=3 的圆会渲染成半径≈thickness+1 的实心圆盘，像素化后看起来像方形。
     let aa = 1.0;
-    let alpha = 1.0 - smoothstep(in.thickness - aa, in.thickness + aa, d);
+    var alpha: f32;
+    if (in.shape == 0u) {
+        alpha = 1.0 - smoothstep(in.thickness - aa, in.thickness + aa, d);
+    } else {
+        alpha = 1.0 - smoothstep(-aa, aa, d);
+    }
     return vec4<f32>(in.color.rgb, in.color.a * alpha);
 }
