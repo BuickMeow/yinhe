@@ -1,6 +1,6 @@
 use yinhe_types::AutomationPanelView;
 use yinhe_theme::GpuTheme;
-use yinhe_types::{AutomationLane, SegmentShape, TRACK_PALETTE};
+use yinhe_types::{AutomationEvent, AutomationLane, SegmentShape, TRACK_PALETTE};
 use crate::vertex::CurveInstance;
 
 /// 自动化曲线的线宽（SDF 半宽，像素）。视觉宽度 ≈ 2×thickness + 1px AA。
@@ -33,31 +33,6 @@ struct SegSpan {
     v2: f32,
 }
 
-/// 找“窗口内需要考虑的相邻对下标范围”。
-///
-/// 渲染 automation 曲线时，段 shape 存储在前一个事件上。如果只取窗口内的
-/// visible_events，会跳过窗口外的中间事件，导致曲线形状和控制点位置错误。
-/// 所以 window 应该包含：
-/// - `start`：`pad_start` 前最后一个事件的下标（或 0）
-/// - `end`：`pad_end` 后第一个事件的下标（或 events.len()-1）
-///
-/// 返回的 `start..=end` 是闭区间，且 `start < events.len()`。如果 lane 为空或
-/// 只有一个事件，返回 `None`。
-fn event_window(lane: &AutomationLane, pad_start: u32, pad_end: u32) -> Option<(usize, usize)> {
-    let n = lane.events.len();
-    if n < 2 {
-        return None;
-    }
-    let start = lane.events.partition_point(|e| e.tick < pad_start);
-    let start = if start > 0 { start - 1 } else { 0 };
-    let mut end = lane.events.partition_point(|e| e.tick <= pad_end);
-    if end >= n {
-        end = n - 1;
-    }
-    // 至少保证 start < end，这样才有“段”
-    if start >= end { None } else { Some((start, end)) }
-}
-
 /// 把 lane.events 转换成需要绘制的段列表。
 ///
 /// # 段的类型
@@ -65,9 +40,9 @@ fn event_window(lane: &AutomationLane, pad_start: u32, pad_end: u32) -> Option<(
 /// - **event 段**：从一个事件到下一个事件（用前一个事件的 shape）
 /// - **right 段**：从最后一个事件到右边界（Step shape，保持最后值）
 ///
-/// **关键**：遍历 `lane.events` 中完整的相邻对（包括窗口外但 shape 在窗口内
-/// 生效的事件），而不是仅遍历 visible_events。否则不可见事件的 shape 会被
-/// 跳过，曲线会被错误地用可见事件之间的直线/Step 替代。
+/// 单锚点情况下，visible_events 只有 1 个事件，循环第一次迭代产生
+/// dx=0 的竖直跳变段（chase_y → evt.value），render_segment 走 dx<=0 分支
+/// 正确画竖线；right 段从锚点画到右边界，保持锚点值。
 fn collect_segments(
     lane: &AutomationLane,
     view: &AutomationPanelView,
@@ -79,10 +54,11 @@ fn collect_segments(
     grid_left_x: f32,
 ) -> Vec<SegSpan> {
     let ppu = view.base.pixels_per_tick;
+    let visible_events = lane.events_in_range(pad_start, pad_end);
     let mut segs = Vec::new();
 
-    let Some((win_start, win_end)) = event_window(lane, pad_start, pad_end) else {
-        // 没有相邻事件：在 chase 值处画一条横贯网格的横线
+    // 无可见事件：在 chase 值处画一条横贯网格的横线
+    if visible_events.is_empty() {
         let idx = lane.events.partition_point(|e| e.tick < pad_start);
         let val = if idx > 0 { lane.events[idx - 1].value } else { 0.0 };
         let y = view.value_to_y(val, max_val);
@@ -90,12 +66,13 @@ fn collect_segments(
             segs.push(SegSpan { x1: grid_left_x, y1: y, shape: SegmentShape::Step, x2: w, y2: y, tick1: 0, tick2: 0, v1: 0.0, v2: 0.0 });
         }
         return segs;
-    };
+    }
 
-    // chase 值（窗口起点之前的值）
-    let chase_val = if win_start > 0 { lane.events[win_start - 1].value } else { 0.0 };
-    let first = &lane.events[win_start];
-    let first_x = x_offset + first.tick as f32 * ppu;
+    // chase 值（第一个可见事件之前的值）
+    let prev_idx = lane.events.partition_point(|e| e.tick < visible_events[0].tick);
+    let chase_val = if prev_idx > 0 { lane.events[prev_idx - 1].value } else { 0.0 };
+    let first_tick = visible_events[0].tick;
+    let first_x = x_offset + first_tick as f32 * ppu;
     let chase_y = view.value_to_y(chase_val, max_val);
 
     // chase 段：grid_left → first_event
@@ -103,28 +80,40 @@ fn collect_segments(
         segs.push(SegSpan { x1: grid_left_x, y1: chase_y, shape: SegmentShape::Step, x2: first_x, y2: chase_y, tick1: 0, tick2: 0, v1: 0.0, v2: 0.0 });
     }
 
-    // 事件段：遍历窗口内所有相邻对
-    for i in win_start..win_end {
-        let prev = &lane.events[i];
-        let cur = &lane.events[i + 1];
-        let x1 = x_offset + prev.tick as f32 * ppu;
-        let y1 = view.value_to_y(prev.value, max_val);
-        let x2 = x_offset + cur.tick as f32 * ppu;
-        let y2 = view.value_to_y(cur.value, max_val);
-        segs.push(SegSpan { x1, y1, shape: prev.shape, x2, y2, tick1: prev.tick, tick2: cur.tick, v1: prev.value, v2: cur.value });
+    // 事件段：prev → cur（prev 从虚拟 chase 段尾端开始，每次迭代后 prev = evt）
+    let mut prev_x = first_x;
+    let mut prev_y = chase_y;
+    let mut prev_shape = SegmentShape::Step;
+    let mut prev_tick: u32 = 0;
+    let mut prev_value = chase_val;
+
+    for evt in visible_events {
+        let x2 = x_offset + evt.tick as f32 * ppu;
+        let y2 = view.value_to_y(evt.value, max_val);
+        segs.push(SegSpan {
+            x1: prev_x, y1: prev_y, shape: prev_shape, x2, y2,
+            tick1: prev_tick, tick2: evt.tick, v1: prev_value, v2: evt.value,
+        });
+        prev_shape = evt.shape;
+        prev_x = x2;
+        prev_y = y2;
+        prev_tick = evt.tick;
+        prev_value = evt.value;
     }
 
-    // right 段：从窗口最后一个事件画到右边界
-    let last = &lane.events[win_end];
-    let last_x = x_offset + last.tick as f32 * ppu;
-    let last_y = view.value_to_y(last.value, max_val);
-    let right_bound = if win_end + 1 < lane.events.len() {
-        x_offset + lane.events[win_end + 1].tick as f32 * ppu
+    // right 段：last_event → right_bound
+    let last_visible_tick = visible_events[visible_events.len() - 1].tick;
+    let next_idx = lane.events.partition_point(|e| e.tick <= last_visible_tick);
+    let right_bound = if next_idx < lane.events.len() {
+        x_offset + lane.events[next_idx].tick as f32 * ppu
     } else {
         w
     };
-    if right_bound > last_x {
-        segs.push(SegSpan { x1: last_x, y1: last_y, shape: SegmentShape::Step, x2: right_bound, y2: last_y, tick1: 0, tick2: 0, v1: 0.0, v2: 0.0 });
+    if right_bound > prev_x {
+        segs.push(SegSpan {
+            x1: prev_x, y1: prev_y, shape: SegmentShape::Step, x2: right_bound, y2: prev_y,
+            tick1: prev_tick, tick2: 0, v1: prev_value, v2: 0.0,
+        });
     }
 
     segs
@@ -202,7 +191,7 @@ pub fn build_data_lines(
                 }
             }
             // 曲线段中间的空心控制点（仅 Curve 段，非直线时才画）
-            push_curve_control_points(out, lane, view, max_val, pad_start, pad_end, x_offset, ppu, color);
+            push_curve_control_points(out, lane, &visible_events, view, max_val, x_offset, ppu, color);
         }
     }
 }
@@ -244,55 +233,61 @@ pub(crate) fn build_lane_instances(
                 SegmentShape::Curve { .. } => out.push(CurveInstance::circle(x, y, ANCHOR_RADIUS, anchor_color)),
             }
         }
-        push_curve_control_points(out, lane, view, max_val, pad_start, pad_end, x_offset, ppu, color);
+        push_curve_control_points(out, lane, &visible_events, view, max_val, x_offset, ppu, color);
     }
 }
 
 /// 为 lane 中每个 Curve 段（前一个事件 → 当前事件，shape=Curve 且非直线）
 /// 在两个控制点位置各画一个空心圆，并从锚点画线段连接到对应控制点（CSS 风格 handle）。
 ///
-/// 段的 shape 取自前一个事件（包括 chase 段的虚拟前驱）。偏移量参数化（内部 *4 放大）：
+/// 段的 shape 取自前一个事件。前驱从 `visible_events[0]` 在 `lane.events` 中的
+/// 前一个事件开始（可能是窗口外的 chase 事件，控制点位置可能在窗口外但会被
+/// GPU 裁剪）。偏移量参数化（内部 *4 放大）：
 ///   c1 = P0 + (P3 - P0) · (x1·4, y1·4)  — P1 相对 P0（起点出）
 ///   c2 = P3 + (P3 - P0) · (x2·4, y2·4)  — P2 相对 P3（终点入）
 fn push_curve_control_points(
     out: &mut Vec<CurveInstance>,
     lane: &AutomationLane,
+    visible_events: &[AutomationEvent],
     view: &AutomationPanelView,
     max_val: f32,
-    pad_start: u32,
-    pad_end: u32,
     x_offset: f32,
     ppu: f32,
     color: [f32; 3],
 ) {
     let ctrl_color = [color[0], color[1], color[2], 1.0];
     let handle_color = [color[0], color[1], color[2], CTRL_HANDLE_ALPHA];
-    let Some((win_start, win_end)) = event_window(lane, pad_start, pad_end) else {
-        return;
+    // 前驱事件（visible 之前最后一个事件，作为 chase 段的起点）
+    let first_tick = visible_events.first().map(|e| e.tick).unwrap_or(0);
+    let prev_idx = lane.events.partition_point(|e| e.tick < first_tick);
+    let mut prev: Option<&AutomationEvent> = if prev_idx > 0 {
+        Some(&lane.events[prev_idx - 1])
+    } else {
+        None
     };
-
-    for i in win_start..win_end {
-        let p = &lane.events[i];
-        let evt = &lane.events[i + 1];
-        let SegmentShape::Curve { x1, y1, x2, y2 } = p.shape else { continue };
-        if p.shape.is_linear() { continue; }
-
-        // 段 p → evt：P0=p, P3=evt
-        let px0 = x_offset + p.tick as f32 * ppu;
-        let py0 = view.value_to_y(p.value, max_val);
-        let px3 = x_offset + evt.tick as f32 * ppu;
-        let py3 = view.value_to_y(evt.value, max_val);
-        // 两个控制点屏幕坐标（偏移量 *4 放大）
-        let c1x = px0 + (px3 - px0) * x1 * 4.0;
-        let c1y = py0 + (py3 - py0) * y1 * 4.0;
-        let c2x = px3 + (px3 - px0) * x2 * 4.0;
-        let c2y = py3 + (py3 - py0) * y2 * 4.0;
-        // 锚点 → 控制点的连线（handle）
-        out.push(CurveInstance::line(px0, py0, c1x, c1y, CTRL_HANDLE_THICKNESS, handle_color));
-        out.push(CurveInstance::line(px3, py3, c2x, c2y, CTRL_HANDLE_THICKNESS, handle_color));
-        // 两个空心圆控制点
-        out.push(CurveInstance::hollow_circle(c1x, c1y, CTRL_POINT_RADIUS, ctrl_color));
-        out.push(CurveInstance::hollow_circle(c2x, c2y, CTRL_POINT_RADIUS, ctrl_color));
+    for evt in visible_events {
+        if let Some(p) = prev
+            && let SegmentShape::Curve { x1, y1, x2, y2 } = p.shape
+            && !p.shape.is_linear()
+        {
+            // 段 p → evt：P0=p, P3=evt
+            let px0 = x_offset + p.tick as f32 * ppu;
+            let py0 = view.value_to_y(p.value, max_val);
+            let px3 = x_offset + evt.tick as f32 * ppu;
+            let py3 = view.value_to_y(evt.value, max_val);
+            // 两个控制点屏幕坐标（偏移量 *4 放大）
+            let c1x = px0 + (px3 - px0) * x1 * 4.0;
+            let c1y = py0 + (py3 - py0) * y1 * 4.0;
+            let c2x = px3 + (px3 - px0) * x2 * 4.0;
+            let c2y = py3 + (py3 - py0) * y2 * 4.0;
+            // 锚点 → 控制点的连线（handle）
+            out.push(CurveInstance::line(px0, py0, c1x, c1y, CTRL_HANDLE_THICKNESS, handle_color));
+            out.push(CurveInstance::line(px3, py3, c2x, c2y, CTRL_HANDLE_THICKNESS, handle_color));
+            // 两个空心圆控制点
+            out.push(CurveInstance::hollow_circle(c1x, c1y, CTRL_POINT_RADIUS, ctrl_color));
+            out.push(CurveInstance::hollow_circle(c2x, c2y, CTRL_POINT_RADIUS, ctrl_color));
+        }
+        prev = Some(evt);
     }
 }
 
