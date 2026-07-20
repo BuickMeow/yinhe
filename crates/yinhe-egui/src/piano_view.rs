@@ -215,7 +215,6 @@ pub fn show(
             ppq,
             bar_line_data,
             editing_track,
-            track_selected,
             track_visible,
             conductor_idx,
             midi,
@@ -225,7 +224,7 @@ pub fn show(
         hidden_notes.extend(hidden);
         *pencil_note_drag = pencil_drag;
         if let Some(note) = note_event {
-            if let Some(track) = pencil::valid_pencil_track(editing_track, track_selected, track_visible, conductor_idx) {
+            if let Some(track) = pencil::valid_pencil_track(editing_track, track_visible, conductor_idx) {
                 pencil_event = Some(PianoViewEvent::AddNote { track, note });
             }
         }
@@ -760,9 +759,9 @@ pub fn show(
 
         // automation 编辑上下文：Pencil/Curve 工具时启用。
         // active_track 由 editing_track 决定（与 pencil 一致），
-        // 允许 conductor（用于 Tempo automation）。必须可见+被选。
+        // 允许 conductor（用于 Tempo automation）。只需可见即可
+        // （editing_track 已常驻 PR 显示，不再要求 track_selected）。
         let active_track = editing_track
-            .filter(|&t| track_selected.contains(&t))
             .filter(|&t| track_visible.get(t as usize).copied().unwrap_or(false));
         let edit_ctx = if *active_tool == Tool::Pencil || *active_tool == Tool::Curve {
             Some(automation_panel::AutomationEditCtx {

@@ -37,20 +37,17 @@ pub(crate) enum HitMode {
 
 /// Returns the single valid target track for the Pencil tool, if any.
 ///
-/// 规则：editing_track 必须存在、可见、被选择，且不能是 conductor
+/// 规则：editing_track 必须存在、可见，且不能是 conductor
 /// （conductor 不能放音符，只能编辑 Tempo automation）。
-/// 单击切换选择不会改变 editing_track；用户必须双击 track 才能切换编辑目标。
+/// editing_track 一旦设置就常驻 PR 显示（见 layout.rs pr_visible），
+/// 不再额外要求 track_selected —— 旧判断已退役。
 pub(crate) fn valid_pencil_track(
     editing_track: Option<u16>,
-    track_selected: &std::collections::HashSet<u16>,
     track_visible: &[bool],
     conductor_idx: Option<u16>,
 ) -> Option<u16> {
     let track = editing_track?;
     if Some(track) == conductor_idx {
-        return None;
-    }
-    if !track_selected.contains(&track) {
         return None;
     }
     if !track_visible.get(track as usize).copied().unwrap_or(false) {
@@ -74,7 +71,6 @@ pub(crate) fn pencil_frame(
     ppq: u32,
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
     editing_track: Option<u16>,
-    track_selected: &std::collections::HashSet<u16>,
     track_visible: &[bool],
     conductor_idx: Option<u16>,
     midi: Option<&dyn yinhe_types::NoteSource>,
@@ -97,8 +93,8 @@ pub(crate) fn pencil_frame(
     }
 
     let hover_pos = pointer.hover_pos();
-    let can_write = valid_pencil_track(editing_track, track_selected, track_visible, conductor_idx).is_some();
-    let track = valid_pencil_track(editing_track, track_selected, track_visible, conductor_idx);
+    let can_write = valid_pencil_track(editing_track, track_visible, conductor_idx).is_some();
+    let track = valid_pencil_track(editing_track, track_visible, conductor_idx);
     let track_idx = track.unwrap_or(0);
 
     // Hover / drag preview.

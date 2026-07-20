@@ -256,10 +256,15 @@ pub(crate) fn show(
     if resp.double_clicked() {
         if let Some(pos) = resp.interact_pointer_pos() {
             if let Some(idx) = hit(pos) {
-                // 双击：打开 PR 并把此 track 设为 pencil/automation 的编辑目标。
-                // 单击切换选择不会改变 editing_track（ICON 只在双击时切换）。
-                *editing_track = Some(track_info[idx].index);
-                *request_pianoroll = true;
+                // 双击 toggle：已经是 editing_track 则清除（关闭编辑），
+                // 否则设为新 editing_track（打开 PR 并切换编辑目标）。
+                let track_idx = track_info[idx].index;
+                if *editing_track == Some(track_idx) {
+                    *editing_track = None;
+                } else {
+                    *editing_track = Some(track_idx);
+                    *request_pianoroll = true;
+                }
             }
         }
     } else if resp.clicked() {

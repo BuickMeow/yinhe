@@ -255,14 +255,15 @@ impl App {
                     .conductor_track_idx
                     .map(|c| doc.edit.track_selected.contains(&c))
                     .unwrap_or(false);
+                // PR 显示音轨 = 选中音轨（含 Conductor 意为全选）∪ editing_track。
+                // 有铅笔图标的音轨就像被选择了一样，一直显示在 PR 上。
+                let editing = doc.edit.editing_track;
                 let pr_visible: Vec<bool> = (0..doc.edit.track_visible.len())
                     .map(|i| {
-                        if show_all {
-                            doc.edit.track_visible[i]
-                        } else {
-                            doc.edit.track_visible[i]
-                                && doc.edit.track_selected.contains(&(i as u16))
-                        }
+                        let selected = show_all
+                            || doc.edit.track_selected.contains(&(i as u16));
+                        let is_editing = editing == Some(i as u16);
+                        doc.edit.track_visible[i] && (selected || is_editing)
                     })
                     .collect();
                 let tpb = doc.data.model.meta.ppq;
@@ -296,12 +297,12 @@ impl App {
                     .collect();
                 // Get automation lanes：以 editing_track 为唯一编辑目标。
                 // Conductor 不在此处提供 lanes（Tempo 由单独的 tempo_lane 传入）。
-                // editing_track 缺失/不可见/未选/是 conductor 时返回空 Vec。
+                // editing_track 缺失/不可见/是 conductor 时返回空 Vec。
+                // （editing_track 已常驻 PR 显示，不再要求 track_selected。）
                 let automation_lanes: Vec<yinhe_types::AutomationLane> = {
                     let edit_trk = doc
                         .edit
                         .editing_track
-                        .filter(|&t| doc.edit.track_selected.contains(&t))
                         .filter(|&t| {
                             doc.edit.track_visible.get(t as usize).copied().unwrap_or(true)
                         })
