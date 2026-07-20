@@ -129,9 +129,9 @@ impl VelocityBarInstance {
 /// One instance renders one of:
 /// - **Cubic Bézier curve segment** (`shape == 0`): cubic Bézier from P0=(x1,y1)
 ///   to P3=(x2,y2) with two control points P1, P2 in normalized space:
-///     P1 = P0 + (P3-P0) * (x1, y1)
-///     P2 = P0 + (P3-P0) * (x2, y2)
-///   `(x1,y1,x2,y2) = (0,0,1,1)` → straight line (shader fast path via `sd_line`).
+///   P1 = P0 + (P3-P0) * (x1, y1) * 4.0
+///   P2 = P3 + (P3-P0) * (x2, y2) * 4.0
+///   `(x1,y1,x2,y2) = (0,0,0,0)` → straight line (shader fast path via `sd_line`).
 ///   For `SegmentShape::Step`, CPU pushes **two** instances: a horizontal
 ///   segment (y1→y1) plus a vertical segment (x2,x2 with y1→y2).
 /// - **Filled circle** (`shape == 1`): Curve 锚点 at (x1, y1) with
@@ -172,8 +172,8 @@ pub struct CurveInstance {
 }
 
 impl CurveInstance {
-    /// 直线参数：`cubic-bezier(0,0,1,1)`。
-    const LINEAR: [f32; 4] = [0.0, 0.0, 1.0, 1.0];
+    /// 直线参数：偏移量参数化下 `(0,0,0,0)` 表示 P1=P0、P2=P3。
+    const LINEAR: [f32; 4] = [0.0, 0.0, 0.0, 0.0];
 
     /// Construct a straight-line segment instance.
     pub fn line(x1: f32, y1: f32, x2: f32, y2: f32, thickness: f32, color: [f32; 4]) -> Self {
@@ -190,8 +190,8 @@ impl CurveInstance {
     }
 
     /// Construct a cubic Bézier segment instance.
-    /// `(x1, y1, x2, y2)` 是 CSS `cubic-bezier` 风格的两个控制点归一化位置。
-    /// `(0, 0, 1, 1)` = 直线。
+    /// `(x1, y1, x2, y2)` 是偏移量参数化的两个控制点（内部 *4 放大）。
+    /// `(0, 0, 0, 0)` = 直线。
     pub fn bezier(
         x1: f32, y1: f32, x2: f32, y2: f32,
         thickness: f32, ctrl_x1: f32, ctrl_y1: f32, ctrl_x2: f32, ctrl_y2: f32, color: [f32; 4],

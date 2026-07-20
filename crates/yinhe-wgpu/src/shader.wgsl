@@ -594,7 +594,7 @@ fn fs_main_curve(in: CurveOutput) -> @location(0) vec4<f32> {
         d = max(r - in.thickness, inner - r);
     } else {
         // shape == 0: cubic Bézier curve segment.
-        // 直线判定：cubic-bezier(0,0,1,1) 时 c1=p0, c2=p3
+        // 直线判定：偏移量 (0,0,0,0) 时 c1=p0, c2=p3
         let is_linear = all(in.ctrl1 == in.p0) && all(in.ctrl2 == in.p3);
         if (is_linear) {
             d = sd_line(p, in.p0, in.p3);

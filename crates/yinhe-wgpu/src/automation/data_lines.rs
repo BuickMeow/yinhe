@@ -276,7 +276,7 @@ fn push_curve_control_points(
 /// 渲染从 `(x1, y1)` 到 `(x2, y2)` 的一段自动化曲线，按 shape 决定形状。
 ///
 /// - `Step` → push 两个 line instance：水平段 + 竖直跳变段
-/// - `Curve{x1,y1,x2,y2}` → push 一个 cubic bezier instance（(0,0,1,1) 时退化为直线）
+/// - `Curve{x1,y1,x2,y2}` → push 一个 cubic bezier instance（(0,0,0,0) 时退化为直线）
 fn render_segment(
     out: &mut Vec<CurveInstance>,
     x1: f32,
@@ -307,7 +307,7 @@ fn render_segment(
             }
         }
         SegmentShape::Curve { x1: cx1, y1: cy1, x2: cx2, y2: cy2 } => {
-            // (0,0,1,1) → 直线；否则 → 三次贝塞尔。统一用一个 bezier instance。
+            // (0,0,0,0) → 直线；否则 → 三次贝塞尔。统一用一个 bezier instance。
             out.push(CurveInstance::bezier(
                 x1, y1, x2, y2, LINE_THICKNESS, cx1, cy1, cx2, cy2, line_color,
             ));

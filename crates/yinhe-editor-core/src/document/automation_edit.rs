@@ -232,7 +232,7 @@ impl Document {
                     self.move_automation_event(track_idx as usize, lane_idx, &target, old_tick, new_tick, new_value)
                 }
                 AutomationEdit::CycleShape { track_idx, lane_idx, target, tick } => {
-                    // Step ↔ Curve 直线（cubic-bezier(0,0,1,1)）
+                    // Step ↔ Curve 直线（偏移量 0,0,0,0）
                     let lane = if matches!(target, yinhe_types::AutomationTarget::Tempo) {
                         Some(&self.data.model.conductor.tempo)
                     } else {

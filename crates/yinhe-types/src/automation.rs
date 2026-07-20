@@ -206,7 +206,7 @@ impl AutomationTarget {
     /// 用户在编辑器里新建事件时，本目标默认采用的插值形状。
     ///
     /// - 开关类 CC（Sustain/Sostenuto/Soft/Legato/Portamento）默认 `Step`
-    /// - 其他连续量（Volume/Pan/PB/FineTune/Tempo/...）默认 `Curve` 直线（cubic-bezier(0,0,1,1)）
+    /// - 其他连续量（Volume/Pan/PB/FineTune/Tempo/...）默认 `Curve` 直线（偏移量 0,0,0,0）
     /// - MIDI 导入时一律使用 `Step`（保留 MIDI 原生语义），见 parser
     pub fn default_shape(&self) -> SegmentShape {
         match self {
@@ -481,7 +481,7 @@ mod tests {
                 "CC {cc} should default to Step"
             );
         }
-        // 连续量 CC → Curve 直线（cubic-bezier(0,0,1,1)）
+        // 连续量 CC → Curve 直线（偏移量 0,0,0,0）
         let linear = SegmentShape::linear_curve();
         for cc in [0u8, 1, 7, 10, 11, 71, 74] {
             assert_eq!(
