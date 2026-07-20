@@ -194,8 +194,9 @@ impl RenderPipelineState {
             cache: None,
         });
 
-        // Curve pipeline: 36-byte CurveInstance vertex layout, shares uniforms/bind group.
-        // Renders automation segments as per-pixel SDF Bézier curves / anchors.
+        // Curve pipeline: 28-byte CurveInstance vertex layout, shares uniforms/bind group.
+        // Renders automation segments as per-pixel SDF lines / anchors.
+        // Bézier curves are flattened into a polyline of line instances on the CPU.
         let curve_pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
             label: Some("curve_pipeline"),
             layout: Some(&pipeline_layout),
@@ -207,10 +208,9 @@ impl RenderPipelineState {
                     step_mode: VertexStepMode::Instance,
                     attributes: &vertex_attr_array![
                         0 => Float32x4,  // endp (x1, y1, x2, y2) @ offset 0
-                        1 => Float32x4,  // params (thickness, ctrl_x1, ctrl_y1, ctrl_x2) @ offset 16
-                        2 => Float32,    // ctrl_y2 @ offset 32
-                        3 => Uint32,     // rgba_packed @ offset 36
-                        4 => Uint32,     // shape @ offset 40
+                        1 => Float32,    // thickness @ offset 16
+                        2 => Uint32,     // rgba_packed @ offset 20
+                        3 => Uint32,     // shape @ offset 24
                     ],
                 }],
                 compilation_options: PipelineCompilationOptions::default(),

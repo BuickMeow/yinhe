@@ -44,14 +44,13 @@ struct VelocityBarInstance {
     @location(0) data: vec4<u32>,  // x=tick, y=length, z=packed(track|velocity), w=reserved
 }
 
-/// Curve/line/anchor instance (44 bytes).
+/// Curve/line/anchor instance (28 bytes).
 /// See `CurveInstance` in vertex.rs for the CPU-side layout.
 struct CurveInstance {
     @location(0) endp: vec4<f32>,      // (x1, y1, x2, y2) — P0, P3 端点
-    @location(1) params: vec4<f32>,    // (thickness, ctrl_x1, ctrl_y1, ctrl_x2)
-    @location(2) ctrl_y2: f32,         // 第二控制点 y 分量
-    @location(3) rgba: u32,            // UNORM8: R|G<<8|B<<16|A<<24
-    @location(4) shape: u32,           // 0 = bezier, 1 = filled circle, 2 = filled square, 3 = hollow circle
+    @location(1) thickness: f32,       // line thickness / anchor radius
+    @location(2) rgba: u32,             // UNORM8: R|G<<8|B<<16|A<<24
+    @location(3) shape: u32,            // 0 = line, 1 = filled circle, 2 = filled square, 3 = hollow circle
 }
 
 struct CurveOutput {
@@ -60,10 +59,8 @@ struct CurveOutput {
     @location(1) p0: vec2<f32>,
     @location(2) p3: vec2<f32>,
     @location(3) thickness: f32,
-    @location(4) ctrl1: vec2<f32>,     // 第一控制点（屏幕坐标）
-    @location(5) ctrl2: vec2<f32>,     // 第二控制点（屏幕坐标）
-    @location(6) color: vec4<f32>,
-    @location(7) shape: u32,
+    @location(4) color: vec4<f32>,
+    @location(5) shape: u32,
 }
 
 struct VertexOutput {
@@ -466,9 +463,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 }
 
 // ── Curve / line pipeline ─────────────────────────────────────────────────
-// Renders automation segments as parameterized curves with per-pixel SDF.
-// CPU pushes one CurveInstance per segment; the fragment shader numerically
-// solves the nearest point on the curve via 4 Newton iterations.
+// Renders automation segments as per-pixel SDF lines / anchors.
+// CPU pushes one CurveInstance per segment; the fragment shader computes
+// the per-pixel distance to the line segment via sd_line.
+// Bézier curves are flattened into a polyline of line instances on the CPU
+// (one per screen pixel column), so no GPU-side curve evaluation is needed.
 
 /// Distance from point `p` to line segment `a → b`.
 fn sd_line(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>) -> f32 {
@@ -478,67 +477,6 @@ fn sd_line(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>) -> f32 {
     return length(pa - ba * h);
 }
 
-/// Distance from point `p` to the cubic Bézier curve `(p0, p1, p2, p3)`.
-///
-///   B(u)  = (1-u)³·p0 + 3(1-u)²u·p1 + 3(1-u)u²·p2 + u³·p3,  u ∈ [0, 1]
-///   B'(u) = 3(1-u)²·(p1-p0) + 6(1-u)u·(p2-p1) + 3u²·(p3-p2)
-///   B''(u)= 6(1-u)·(p2-2p1+p0) + 6u·(p3-2p2+p1)
-///
-/// 算法：8 段均匀采样找最近段 + Newton 4 次精修。
-///
-/// 为什么不用单一 chord 投影 + Newton？因为 |B(u)-p|² 是 6 次多项式，最多 3 个
-/// 局部极小。弯度大的曲线，chord 投影初值可能落到错误极小盆地，导致像素缺失、
-/// 曲线断断续续。Premiere 等软件用细分折线或解析求根避免此问题。
-///
-/// 8 段 sd_line 覆盖整个 [0,1] 区间，先粗找最近段（best_u = 段中点），
-/// 再在 best_u 附近 Newton 精修让边缘锐利。
-fn sd_bezier(p: vec2<f32>, p0: vec2<f32>, p1: vec2<f32>, p2: vec2<f32>, p3: vec2<f32>) -> f32 {
-    // 8 段均匀采样：用 sd_line 计算到每段折线的距离，找最近段
-    var best_d = 1e10;
-    var best_u = 0.5;
-    var prev_u = 0.0;
-    var prev_p = p0;
-    for (var i = 1; i <= 8; i = i + 1) {
-        let u = f32(i) / 8.0;
-        let u1 = 1.0 - u;
-        let u1sq = u1 * u1;
-        let usq = u * u;
-        let cur_p = u1sq * u1 * p0 + 3.0 * u1sq * u * p1 + 3.0 * u1 * usq * p2 + usq * u * p3;
-        let d = sd_line(p, prev_p, cur_p);
-        if (d < best_d) {
-            best_d = d;
-            best_u = (prev_u + u) * 0.5;
-        }
-        prev_u = u;
-        prev_p = cur_p;
-    }
-
-    // 在最近段中点附近 Newton 精修 4 次
-    var u = best_u;
-    for (var i = 0; i < 4; i = i + 1) {
-        let u1 = 1.0 - u;
-        let u1sq = u1 * u1;
-        let usq = u * u;
-        let bu = u1sq * u1 * p0 + 3.0 * u1sq * u * p1 + 3.0 * u1 * usq * p2 + usq * u * p3;
-        let du = 3.0 * u1sq * (p1 - p0) + 6.0 * u1 * u * (p2 - p1) + 3.0 * usq * (p3 - p2);
-        let ddu = 6.0 * u1 * (p2 - 2.0 * p1 + p0) + 6.0 * u * (p3 - 2.0 * p2 + p1);
-        let f = bu - p;
-        // g(u)  = d/du |f|² = 2 · f · f'
-        // g'(u) = 2 · (f'·f' + f·f'')
-        let g = dot(f, du);
-        let g_dt = 2.0 * (dot(du, du) + dot(f, ddu));
-        // 用 abs(g_dt) 防止 g_dt 为负时 Newton 方向反向（控制点拉远时可能发生）。
-        u = u - g / max(abs(g_dt), 1e-6);
-        u = clamp(u, 0.0, 1.0);
-    }
-
-    let u1 = 1.0 - u;
-    let u1sq = u1 * u1;
-    let usq = u * u;
-    let bu = u1sq * u1 * p0 + 3.0 * u1sq * u * p1 + 3.0 * u1 * usq * p2 + usq * u * p3;
-    return length(bu - p);
-}
-
 @vertex
 fn vs_main_curve(
     @builtin(vertex_index) vertex_index: u32,
@@ -546,24 +484,13 @@ fn vs_main_curve(
 ) -> CurveOutput {
     let p0 = instance.endp.xy;  // P0
     let p3 = instance.endp.zw;  // P3
-    // 控制点实际位置（偏移量参数化，内部 *4 放大）：
-    //   P1 = P0 + (P3-P0)·(ctrl1·4)  — P1 相对 P0
-    //   P2 = P3 + (P3-P0)·(ctrl2·4)  — P2 相对 P3
-    let c1 = vec2<f32>(
-        p0.x + (p3.x - p0.x) * instance.params.y * 4.0,
-        p0.y + (p3.y - p0.y) * instance.params.z * 4.0,
-    );
-    let c2 = vec2<f32>(
-        p3.x + (p3.x - p0.x) * instance.params.w * 4.0,
-        p3.y + (p3.y - p0.y) * instance.ctrl_y2 * 4.0,
-    );
 
-    // AABB 包含 P0, P3, 两个控制点（对 circle/square/hollow，全部重合）
-    let pad = instance.params.x + 1.0;
-    let min_x = min(min(min(p0.x, p3.x), c1.x), c2.x) - pad;
-    let max_x = max(max(max(p0.x, p3.x), c1.x), c2.x) + pad;
-    let min_y = min(min(min(p0.y, p3.y), c1.y), c2.y) - pad;
-    let max_y = max(max(max(p0.y, p3.y), c1.y), c2.y) + pad;
+    // AABB 包含 P0, P3（对 circle/square/hollow，全部重合）
+    let pad = instance.thickness + 1.0;
+    let min_x = min(p0.x, p3.x) - pad;
+    let max_x = max(p0.x, p3.x) + pad;
+    let min_y = min(p0.y, p3.y) - pad;
+    let max_y = max(p0.y, p3.y) + pad;
 
     var pos = array<vec2<f32>, 6>(
         vec2<f32>(max_x, min_y),
@@ -584,9 +511,7 @@ fn vs_main_curve(
     out.local = p;
     out.p0 = p0;
     out.p3 = p3;
-    out.thickness = instance.params.x;
-    out.ctrl1 = c1;
-    out.ctrl2 = c2;
+    out.thickness = instance.thickness;
     out.shape = instance.shape;
 
     let rgba = instance.rgba;
@@ -618,14 +543,8 @@ fn fs_main_curve(in: CurveOutput) -> @location(0) vec4<f32> {
         let inner = in.thickness - ring_width;
         d = max(r - in.thickness, inner - r);
     } else {
-        // shape == 0: cubic Bézier curve segment.
-        // 直线判定：偏移量 (0,0,0,0) 时 c1=p0, c2=p3
-        let is_linear = all(in.ctrl1 == in.p0) && all(in.ctrl2 == in.p3);
-        if (is_linear) {
-            d = sd_line(p, in.p0, in.p3);
-        } else {
-            d = sd_bezier(p, in.p0, in.ctrl1, in.ctrl2, in.p3);
-        }
+        // shape == 0: line segment (Bézier curves are flattened on CPU).
+        d = sd_line(p, in.p0, in.p3);
     }
 
     // 1px anti-aliased stroke.

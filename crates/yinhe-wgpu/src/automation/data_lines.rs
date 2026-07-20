@@ -26,6 +26,11 @@ struct SegSpan {
     shape: SegmentShape,
     x2: f32,
     y2: f32,
+    /// Curve 段采样所需（Step/chase/right 段填 0，不用）
+    tick1: u32,
+    tick2: u32,
+    v1: f32,
+    v2: f32,
 }
 
 /// 找“窗口内需要考虑的相邻对下标范围”。
@@ -82,7 +87,7 @@ fn collect_segments(
         let val = if idx > 0 { lane.events[idx - 1].value } else { 0.0 };
         let y = view.value_to_y(val, max_val);
         if w > grid_left_x {
-            segs.push(SegSpan { x1: grid_left_x, y1: y, shape: SegmentShape::Step, x2: w, y2: y });
+            segs.push(SegSpan { x1: grid_left_x, y1: y, shape: SegmentShape::Step, x2: w, y2: y, tick1: 0, tick2: 0, v1: 0.0, v2: 0.0 });
         }
         return segs;
     };
@@ -95,7 +100,7 @@ fn collect_segments(
 
     // chase 段：grid_left → first_event
     if first_x > grid_left_x {
-        segs.push(SegSpan { x1: grid_left_x, y1: chase_y, shape: SegmentShape::Step, x2: first_x, y2: chase_y });
+        segs.push(SegSpan { x1: grid_left_x, y1: chase_y, shape: SegmentShape::Step, x2: first_x, y2: chase_y, tick1: 0, tick2: 0, v1: 0.0, v2: 0.0 });
     }
 
     // 事件段：遍历窗口内所有相邻对
@@ -106,7 +111,7 @@ fn collect_segments(
         let y1 = view.value_to_y(prev.value, max_val);
         let x2 = x_offset + cur.tick as f32 * ppu;
         let y2 = view.value_to_y(cur.value, max_val);
-        segs.push(SegSpan { x1, y1, shape: prev.shape, x2, y2 });
+        segs.push(SegSpan { x1, y1, shape: prev.shape, x2, y2, tick1: prev.tick, tick2: cur.tick, v1: prev.value, v2: cur.value });
     }
 
     // right 段：从窗口最后一个事件画到右边界
@@ -119,7 +124,7 @@ fn collect_segments(
         w
     };
     if right_bound > last_x {
-        segs.push(SegSpan { x1: last_x, y1: last_y, shape: SegmentShape::Step, x2: right_bound, y2: last_y });
+        segs.push(SegSpan { x1: last_x, y1: last_y, shape: SegmentShape::Step, x2: right_bound, y2: last_y, tick1: 0, tick2: 0, v1: 0.0, v2: 0.0 });
     }
 
     segs
@@ -175,7 +180,7 @@ pub fn build_data_lines(
         // 收集并绘制所有段
         let segs = collect_segments(lane, view, max_val, w, pad_start, pad_end, x_offset, grid_left_x);
         for seg in &segs {
-            render_segment(out, seg.x1, seg.y1, seg.x2, seg.y2, seg.shape, color);
+            render_segment(out, seg, view, max_val, color);
         }
 
         // 画锚点 + 曲线段的控制点
@@ -225,7 +230,7 @@ pub(crate) fn build_lane_instances(
 
     let segs = collect_segments(lane, view, max_val, w, pad_start, pad_end, x_offset, grid_left_x);
     for seg in &segs {
-        render_segment(out, seg.x1, seg.y1, seg.x2, seg.y2, seg.shape, color);
+        render_segment(out, seg, view, max_val, color);
     }
 
     if show_anchors {
@@ -294,41 +299,74 @@ fn push_curve_control_points(
 /// 渲染从 `(x1, y1)` 到 `(x2, y2)` 的一段自动化曲线，按 shape 决定形状。
 ///
 /// - `Step` → push 两个 line instance：水平段 + 竖直跳变段
-/// - `Curve{x1,y1,x2,y2}` → push 一个 cubic bezier instance（(0,0,0,0) 时退化为直线）
+/// - `Curve` → 按 DAW 标准做法 CPU 采样生成折线（render_curve_polyline）
 fn render_segment(
     out: &mut Vec<CurveInstance>,
-    x1: f32,
-    y1: f32,
-    x2: f32,
-    y2: f32,
-    shape: SegmentShape,
+    seg: &SegSpan,
+    view: &AutomationPanelView,
+    max_val: f32,
     color: [f32; 3],
 ) {
     let line_color = [color[0], color[1], color[2], LINE_ALPHA];
-    let dx = x2 - x1;
+    let dx = seg.x2 - seg.x1;
     if dx <= 0.0 {
         // 同一 tick 的多事件：只画竖直跳变
-        let dy = y2 - y1;
+        let dy = seg.y2 - seg.y1;
         if dy.abs() > 0.0 {
-            out.push(CurveInstance::line(x1, y1, x2, y2, LINE_THICKNESS, line_color));
+            out.push(CurveInstance::line(seg.x1, seg.y1, seg.x2, seg.y2, LINE_THICKNESS, line_color));
         }
         return;
     }
 
-    match shape {
+    match seg.shape {
         SegmentShape::Step => {
             // 横线（保持 v1）+ 竖直跳变
-            out.push(CurveInstance::line(x1, y1, x2, y1, LINE_THICKNESS, line_color));
-            let dy = y2 - y1;
+            out.push(CurveInstance::line(seg.x1, seg.y1, seg.x2, seg.y1, LINE_THICKNESS, line_color));
+            let dy = seg.y2 - seg.y1;
             if dy.abs() > 0.0 {
-                out.push(CurveInstance::line(x2, y1, x2, y2, LINE_THICKNESS, line_color));
+                out.push(CurveInstance::line(seg.x2, seg.y1, seg.x2, seg.y2, LINE_THICKNESS, line_color));
             }
         }
-        SegmentShape::Curve { x1: cx1, y1: cy1, x2: cx2, y2: cy2 } => {
-            // (0,0,0,0) → 直线；否则 → 三次贝塞尔。统一用一个 bezier instance。
-            out.push(CurveInstance::bezier(
-                x1, y1, x2, y2, LINE_THICKNESS, cx1, cy1, cx2, cy2, line_color,
-            ));
+        SegmentShape::Curve { .. } => {
+            render_curve_polyline(out, seg, view, max_val, line_color);
         }
+    }
+}
+
+/// 按 DAW 标准做法：对每个屏幕像素列调一次 interpolate，生成折线。
+/// 曲线在时间轴上单调（x1/x2 clamp 到 CSS 区间），保证 interpolate 语义正确。
+/// 直线段（is_linear）或段宽 < 2px 时退化成单条 line。
+fn render_curve_polyline(
+    out: &mut Vec<CurveInstance>,
+    seg: &SegSpan,
+    view: &AutomationPanelView,
+    max_val: f32,
+    line_color: [f32; 4],
+) {
+    let px0 = seg.x1;
+    let px3 = seg.x2;
+    let dx = px3 - px0;
+    let span = seg.tick2.saturating_sub(seg.tick1) as f32;
+    // 直线或段宽不足：退化成单条 line
+    if seg.shape.is_linear() || span <= 0.0 || dx < 2.0 {
+        out.push(CurveInstance::line(px0, seg.y1, px3, seg.y2, LINE_THICKNESS, line_color));
+        return;
+    }
+
+    // 按屏幕像素列采样 interpolate
+    let first_px = px0.floor() as i32;
+    let last_px = px3.ceil() as i32;
+    let n = (last_px - first_px).max(1);
+    let mut prev_x = px0;
+    let mut prev_y = seg.y1;
+    for i in 1..=n {
+        let px = if i == n { px3 } else { (first_px + i) as f32 };
+        let t = ((px - px0) / dx).clamp(0.0, 1.0);
+        let f = seg.shape.interpolate(t);
+        let v = seg.v1 + (seg.v2 - seg.v1) * f;
+        let y = view.value_to_y(v, max_val);
+        out.push(CurveInstance::line(prev_x, prev_y, px, y, LINE_THICKNESS, line_color));
+        prev_x = px;
+        prev_y = y;
     }
 }

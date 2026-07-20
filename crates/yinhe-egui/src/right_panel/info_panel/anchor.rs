@@ -136,7 +136,7 @@ pub(super) fn show_anchor_info(
             ui.label(egui::RichText::new("X1:").size(11.0).color(egui::Color32::GRAY));
             let resp = ui.add(
                 egui::DragValue::new(&mut edit)
-                    .range(-0.5..=0.5)
+                    .range(0.0..=0.25)
                     .speed(0.01)
                     .fixed_decimals(2),
             );
@@ -194,7 +194,7 @@ pub(super) fn show_anchor_info(
             ui.label(egui::RichText::new("X2:").size(11.0).color(egui::Color32::GRAY));
             let resp = ui.add(
                 egui::DragValue::new(&mut edit)
-                    .range(-0.5..=0.5)
+                    .range(-0.25..=0.0)
                     .speed(0.01)
                     .fixed_decimals(2),
             );

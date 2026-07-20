@@ -180,12 +180,19 @@ fn compute_ctrl_from_mouse(
         CtrlEnd::Out => (px0, py0),
         CtrlEnd::In => (px3, py3),
     };
-    // offset = (mouse - ref) / seg / 4，clamp 到 [-0.5, 0.5]
+    // offset = (mouse - ref) / seg / 4。
+    // x 方向 clamp 到 CSS 单调区间：P1.x ∈ [0,1] → x1 ∈ [0, 0.25]；
+    // P2.x ∈ [0,1] → x2 ∈ [-0.25, 0]。保证 x(u) 单调，渲染=音频=命中三者一致。
+    let x_range = match which {
+        CtrlEnd::Out => (0.0, 0.25),
+        CtrlEnd::In => (-0.25, 0.0),
+    };
     let new_x = if dx.abs() < 1e-3 {
         0.0
     } else {
-        ((mouse.x - rx) / dx / 4.0).clamp(-0.5, 0.5)
+        ((mouse.x - rx) / dx / 4.0).clamp(x_range.0, x_range.1)
     };
+    // y 方向不限单调（automation 值可任意变化），clamp 到 [-0.5, 0.5]
     let new_y = if dy.abs() < 1e-3 {
         0.0
     } else {
