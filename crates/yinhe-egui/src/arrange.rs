@@ -290,6 +290,8 @@ pub fn show(
 
     // ── Vertical scrollbar (right of GPU content, full AR height minus ruler) ──
     //    像素空间：num_cells = num_tracks，cell_size = lane_height
+    //    注意：lane_height 与 base.track_panel_row_height 是同一物理量的两份拷贝
+    //    （见 view_base.rs 的注释），此处必须同步，否则 track_panel 仍用旧 row_height 渲染。
     {
         let vsb_rect = egui::Rect::from_min_max(
             egui::pos2(gpu_rect.max.x, arr_rect.min.y + RULER_H),
@@ -308,6 +310,8 @@ pub fn show(
                 &mut arr_view.base.dirty,
             );
         });
+        // 同步 lane_height → track_panel_row_height（与 zoom_lane_height / track_panel 缩放路径一致）
+        arr_view.base.track_panel_row_height = arr_view.lane_height;
     }
 
     // ── AR quantize button in the top-left corner (left of ruler, above track panel) ──
