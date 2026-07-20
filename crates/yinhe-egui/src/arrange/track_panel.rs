@@ -221,7 +221,7 @@ pub(crate) fn show(
                     egui::Align2::CENTER_CENTER,
                     ICON_EDIT.codepoint,
                     egui::FontId::new(14.0, ICON_EDIT.font_family()),
-                    crate::theme::ACCENT_ACTIVE,
+                    egui::Color32::WHITE,
                 );
             }
         } else {
