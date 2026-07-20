@@ -186,48 +186,49 @@ pub(crate) fn show(
 
 /// 垂直滚动条（像素空间）：用于 AR（lane_height + scroll_y）和 PR（key_height + scroll_y）。
 ///
-/// 总范围 = `total_pixels`（如 `num_tracks * lane_height` 或 `128 * key_height`）。
+/// 总范围 = `num_cells * cell_size`（如 `num_tracks * lane_height` 或 `128 * key_height`）。
 /// 视口 = `view_height` 像素。`cell_size` = 每个单元的像素高度（lane_height / key_height）。
 ///
 /// 三区交互（与水平滚动条对称）：
 /// - 中间拖动 → 平移 scroll_y
-/// - 顶边拖动 → 缩放 cell_size，锚定底边
-/// - 底边拖动 → 缩放 cell_size，锚定顶边
+/// - 顶边拖动 → 缩放 cell_size，锚定 thumb 底边 sb 位置
+/// - 底边拖动 → 缩放 cell_size，锚定 thumb 顶边 sb 位置
 ///
 /// `cell_min` / `cell_max` = cell_size 的最小/最大值。
 /// `scroll_y` / `cell_size` 会被原地修改；`dirty` 标记视图为脏。
 ///
-/// 当 `total_pixels <= view_height`（内容能一屏装下）时，不绘制任何内容。
+/// 即使 `total_pixels <= view_height`（内容一屏装下），也会绘制占满滚动条的 thumb，
+/// 用户仍可拖动边缘缩放。只有 `max_scroll_y == 0` 时 pan 无效。
 pub(crate) fn show_vertical(
     ui: &mut egui::Ui,
     rect: egui::Rect,
     view_height: f32,
     scroll_y: &mut f32,
     cell_size: &mut f32,
-    total_pixels: f32,
+    num_cells: usize,
     cell_min: f32,
     cell_max: f32,
     dirty: &mut bool,
 ) {
     let sb_h = rect.height();
-    if sb_h <= 0.0 || view_height <= 0.0 || total_pixels <= view_height {
+    if sb_h <= 0.0 || view_height <= 0.0 || num_cells == 0 {
         return;
     }
 
-    // Clamp scroll_y BEFORE computing the rectangle visual.
-    // max_scroll_y 只与 total_pixels 和 view_height 相关（与 cell_size 无关）。
+    let num_cells_f = num_cells as f32;
+    let total_pixels = num_cells_f * *cell_size;
+
+    // max_scroll_y：当 total_pixels <= view_height 时为 0（无滚动空间，但仍然绘制 thumb）
     let max_scroll_y = (total_pixels - view_height).max(0.0);
     *scroll_y = scroll_y.clamp(0.0, max_scroll_y);
 
     // Scale: scrollbar pixels per content pixel.
-    let scale = sb_h / total_pixels;
+    // 当 total_pixels < view_height 时用 view_height 作为分母，让 thumb 占满整个滚动条。
+    let scale = sb_h / total_pixels.max(view_height);
 
     // ── Rectangle position and size (derived from current view state) ──
-    let start_pixel = *scroll_y;
-    let viewport_pixels = view_height;
-
-    let rect_top = (start_pixel * scale).max(0.0);
-    let rect_height = (viewport_pixels * scale).min(sb_h - rect_top);
+    let rect_top = (*scroll_y * scale).clamp(0.0, sb_h);
+    let rect_height = (view_height * scale).min(sb_h - rect_top);
     let rect_bottom = rect_top + rect_height;
 
     // Paint background bar
@@ -295,48 +296,60 @@ pub(crate) fn show_vertical(
     }
 
     // ── Interaction ──
+    //
+    // 像素空间核心公式：thumb_height × cell_size = view_height × sb_h / num_cells = K
+    // 因为 thumb_height = view_height × scale = view_height × sb_h / total_pixels
+    //                  = view_height × sb_h / (num_cells × cell_size) = K / cell_size
+    // 所以 cell_size 变化与 thumb_height 变化成反比。
+    //
+    // 拖边缘时，直接用 thumb_height 反比计算 new_cell_size，
+    // 避免把 thumb 像素变化等同于 viewport_pixels 变化（那是 bug）。
+    let k_constant = view_height * sb_h / num_cells_f;
 
-    // Drag middle → pan
-    if middle_resp.dragged() {
+    // Drag middle → pan（仅当 max_scroll_y > 0 时有效）
+    if middle_resp.dragged() && max_scroll_y > 0.0 {
         let delta = middle_resp.drag_delta().y;
-        *scroll_y = (*scroll_y + delta) .clamp(0.0, max_scroll_y);
+        *scroll_y = (*scroll_y + delta).clamp(0.0, max_scroll_y);
         *dirty = true;
         ui.ctx().request_repaint();
         return;
     }
 
-    // Apply zoom: 新的 cell_size 和 scroll_y，确保 thumb 不超出滚动条。
-    // 锚定策略：拖顶边时固定底边内容位置；拖底边时固定顶边内容位置。
-    // 注意：cell_size 改变后 total_pixels 也会变（因为 total_pixels = num_cells * cell_size），
-    // 但我们在调用前已经传入当前的 total_pixels，所以这里只用 clamping 防止 scroll_y 越界。
-    let mut apply_zoom = |scroll_y: &mut f32, cs: &mut f32, new_start_pixel: f32, new_viewport_pixels: f32| {
-        let new_cs = (view_height / new_viewport_pixels).clamp(cell_min, cell_max);
-        // 缩放后总像素可能变化，重新计算 scroll_y
-        let new_scroll_y = new_start_pixel.clamp(0.0, max_scroll_y);
-        *cs = new_cs;
-        *scroll_y = new_scroll_y;
-        *dirty = true;
-    };
-
-    // Drag top edge → zoom, anchoring at bottom edge
+    // Drag top edge → zoom，锚定 thumb 底边 sb 位置（rect_bottom 不动）
     if top_resp.dragged() {
-        let new_top =
-            (rect_top + top_resp.drag_delta().y).clamp(0.0, rect_bottom - 2.0 * EDGE_WIDTH);
-        let new_start_pixel = new_top / scale;
-        let bottom_pixel = start_pixel + viewport_pixels;
-        let new_viewport_pixels = (bottom_pixel - new_start_pixel).max(1.0);
-        apply_zoom(scroll_y, cell_size, new_start_pixel, new_viewport_pixels);
+        let new_thumb_top_sb = (rect_top + top_resp.drag_delta().y)
+            .clamp(0.0, rect_bottom - 2.0 * EDGE_WIDTH);
+        let new_thumb_height_sb = (rect_bottom - new_thumb_top_sb).max(2.0 * EDGE_WIDTH);
+        let new_cs = (k_constant / new_thumb_height_sb).clamp(cell_min, cell_max);
+        // 重新计算（clamp 可能调整 cell_size）
+        let new_scale = sb_h / (num_cells_f * new_cs);
+        // 锚定 thumb 底边 sb 位置 = rect_bottom
+        // (new_scroll_y + view_height) × new_scale = rect_bottom
+        let new_scroll_y = rect_bottom / new_scale - view_height;
+        let new_total_pixels = num_cells_f * new_cs;
+        let max_sy = (new_total_pixels - view_height).max(0.0);
+        *cell_size = new_cs;
+        *scroll_y = new_scroll_y.clamp(0.0, max_sy);
+        *dirty = true;
         ui.ctx().request_repaint();
         return;
     }
 
-    // Drag bottom edge → zoom, anchoring at top edge
+    // Drag bottom edge → zoom，锚定 thumb 顶边 sb 位置（rect_top 不动）
     if bottom_resp.dragged() {
-        let new_bottom =
-            (rect_bottom + bottom_resp.drag_delta().y).clamp(rect_top + 2.0 * EDGE_WIDTH, sb_h);
-        let new_bottom_pixel = new_bottom / scale;
-        let new_viewport_pixels = (new_bottom_pixel - start_pixel).max(1.0);
-        apply_zoom(scroll_y, cell_size, start_pixel, new_viewport_pixels);
+        let new_thumb_bottom_sb = (rect_bottom + bottom_resp.drag_delta().y)
+            .clamp(rect_top + 2.0 * EDGE_WIDTH, sb_h);
+        let new_thumb_height_sb = (new_thumb_bottom_sb - rect_top).max(2.0 * EDGE_WIDTH);
+        let new_cs = (k_constant / new_thumb_height_sb).clamp(cell_min, cell_max);
+        let new_scale = sb_h / (num_cells_f * new_cs);
+        // 锚定 thumb 顶边 sb 位置 = rect_top
+        // new_scroll_y × new_scale = rect_top
+        let new_scroll_y = rect_top / new_scale;
+        let new_total_pixels = num_cells_f * new_cs;
+        let max_sy = (new_total_pixels - view_height).max(0.0);
+        *cell_size = new_cs;
+        *scroll_y = new_scroll_y.clamp(0.0, max_sy);
+        *dirty = true;
         ui.ctx().request_repaint();
     }
 }

@@ -289,14 +289,12 @@ pub fn show(
     }
 
     // ── Vertical scrollbar (right of GPU content, full AR height minus ruler) ──
-    //    像素空间：total_pixels = num_tracks * lane_height
+    //    像素空间：num_cells = num_tracks，cell_size = lane_height
     {
         let vsb_rect = egui::Rect::from_min_max(
             egui::pos2(gpu_rect.max.x, arr_rect.min.y + RULER_H),
             egui::pos2(arr_rect.max.x, gpu_rect.max.y),
         );
-        // 快照 lane_height 避免 borrow 冲突
-        let total_pixels = num_tracks as f32 * arr_view.lane_height;
         ui.push_id("arr_vscroll", |ui| {
             crate::widgets::scrollbar::show_vertical(
                 ui,
@@ -304,7 +302,7 @@ pub fn show(
                 gpu_rect.height(),
                 &mut arr_view.base.scroll_y,
                 &mut arr_view.lane_height,
-                total_pixels,
+                num_tracks,
                 16.0,
                 120.0,
                 &mut arr_view.base.dirty,

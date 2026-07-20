@@ -867,15 +867,14 @@ pub fn show(
     });
 
     // ── Vertical scrollbar ──
-    // PR 像素空间：total_pixels = 128 * key_height。
-    // 仅当 max_scroll_y > 0（即 key_height 放大致使 128 键超出视口）时显示。
+    // PR 像素空间：num_cells = 128，cell_size = key_height。
+    // 滚动条范围 = PR 内容区 [content_y, content_y + content_h]，不超过 PR/AM 分割线。
+    // 即使缩到最小（key_height = cell_min，128 键一屏装下），仍然显示占满滚动条的 thumb。
     {
         let vsb_rect = egui::Rect::from_min_max(
             egui::pos2(content_right_x, content_y),
-            egui::pos2(rect.max.x, sb_y),
+            egui::pos2(rect.max.x, content_y + content_h),
         );
-        // 快照 key_height 避免 borrow 冲突
-        let total_pixels = 128.0 * view.key_height;
         let cell_min = content_rect.height() / 128.0;
         ui.push_id("piano_vscroll", |ui| {
             crate::widgets::scrollbar::show_vertical(
@@ -884,7 +883,7 @@ pub fn show(
                 content_rect.height(),
                 &mut view.base.scroll_y,
                 &mut view.key_height,
-                total_pixels,
+                128,
                 cell_min,
                 60.0,
                 &mut view.base.dirty,
