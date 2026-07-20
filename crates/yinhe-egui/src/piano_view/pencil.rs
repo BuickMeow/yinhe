@@ -36,15 +36,24 @@ pub(crate) enum HitMode {
 }
 
 /// Returns the single valid target track for the Pencil tool, if any.
+///
+/// 规则：editing_track 必须存在、可见、被选择，且不能是 conductor
+/// （conductor 不能放音符，只能编辑 Tempo automation）。
+/// 单击切换选择不会改变 editing_track；用户必须双击 track 才能切换编辑目标。
 pub(crate) fn valid_pencil_track(
+    editing_track: Option<u16>,
     track_selected: &std::collections::HashSet<u16>,
+    track_visible: &[bool],
     conductor_idx: Option<u16>,
 ) -> Option<u16> {
-    if track_selected.len() != 1 {
+    let track = editing_track?;
+    if Some(track) == conductor_idx {
         return None;
     }
-    let &track = track_selected.iter().next()?;
-    if Some(track) == conductor_idx {
+    if !track_selected.contains(&track) {
+        return None;
+    }
+    if !track_visible.get(track as usize).copied().unwrap_or(false) {
         return None;
     }
     Some(track)
@@ -64,7 +73,9 @@ pub(crate) fn pencil_frame(
     quantize: QuantizePreset,
     ppq: u32,
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
+    editing_track: Option<u16>,
     track_selected: &std::collections::HashSet<u16>,
+    track_visible: &[bool],
     conductor_idx: Option<u16>,
     midi: Option<&dyn yinhe_types::NoteSource>,
     _track_colors: &[[f32; 3]],
@@ -86,8 +97,8 @@ pub(crate) fn pencil_frame(
     }
 
     let hover_pos = pointer.hover_pos();
-    let can_write = valid_pencil_track(track_selected, conductor_idx).is_some();
-    let track = valid_pencil_track(track_selected, conductor_idx);
+    let can_write = valid_pencil_track(editing_track, track_selected, track_visible, conductor_idx).is_some();
+    let track = valid_pencil_track(editing_track, track_selected, track_visible, conductor_idx);
     let track_idx = track.unwrap_or(0);
 
     // Hover / drag preview.
@@ -123,9 +134,15 @@ pub(crate) fn pencil_frame(
             let mouse_local_y = mouse_screen.y - music_rect.min.y;
             let key = view.y_to_key(mouse_local_y);
             let midi = midi?;
+            let active_track = track?;
             let notes = key_notes_in_range(midi.key_notes(key), 0, u32::MAX);
 
             for note in notes {
+                // 只命中正在编辑的 track，避免跨 track 误触（即使其他 track
+                // 的音符在 PR 中不可见，数据中仍存在）。
+                if note.track != active_track {
+                    continue;
+                }
                 let note_left = view.tick_to_x(note.start_tick as f64) - kb_w;
                 let note_right = view.tick_to_x(note.end_tick as f64) - kb_w;
                 let note_top = view.key_to_y(key);

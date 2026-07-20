@@ -294,24 +294,27 @@ impl App {
                         denominator: t.denominator,
                     })
                     .collect();
-                // Get automation lanes: conductor → all tracks; otherwise → first selected
+                // Get automation lanes：以 editing_track 为唯一编辑目标。
+                // Conductor 不在此处提供 lanes（Tempo 由单独的 tempo_lane 传入）。
+                // editing_track 缺失/不可见/未选/是 conductor 时返回空 Vec。
                 let automation_lanes: Vec<yinhe_types::AutomationLane> = {
-                    if show_all {
-                        doc.data
+                    let edit_trk = doc
+                        .edit
+                        .editing_track
+                        .filter(|&t| doc.edit.track_selected.contains(&t))
+                        .filter(|&t| {
+                            doc.edit.track_visible.get(t as usize).copied().unwrap_or(true)
+                        })
+                        .filter(|&t| Some(t) != doc.edit.conductor_track_idx);
+                    match edit_trk {
+                        Some(trk_idx) => doc
+                            .data
                             .model
                             .tracks
-                            .iter()
-                            .flat_map(|t| t.automation_lanes.iter().cloned())
-                            .collect()
-                    } else {
-                        let first_track =
-                            doc.edit.track_selected.iter().next().copied().unwrap_or(0) as usize;
-                        doc.data
-                            .model
-                            .tracks
-                            .get(first_track)
+                            .get(trk_idx as usize)
                             .map(|t| t.automation_lanes.clone())
-                            .unwrap_or_default()
+                            .unwrap_or_default(),
+                        None => Vec::new(),
                     }
                 };
                 event = piano_view::show(
@@ -350,6 +353,7 @@ impl App {
                     &mut doc.edit.sel_rect,
                     &doc.edit.track_selected,
                     doc.edit.conductor_track_idx,
+                    doc.edit.editing_track,
                     doc.data.revision,
                     doc.data.note_revisions(),
                     Some(&self.haptic_engine),

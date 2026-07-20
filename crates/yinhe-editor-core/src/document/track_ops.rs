@@ -58,6 +58,12 @@ impl Document {
         self.sync_track_caches();
         self.edit.track_selected.clear();
         self.edit.track_selected.insert(insert_idx as u16);
+        // 新增 track 后，editing_track 后面的索引要 +1
+        if let Some(t) = self.edit.editing_track {
+            if (t as usize) >= insert_idx {
+                self.edit.editing_track = Some(t + 1);
+            }
+        }
 
         Some(UndoAction::TrackStructure {
             tracks_before,
@@ -119,6 +125,14 @@ impl Document {
         // Select the track that took its place (or last track)
         let new_sel = idx.min(num_tracks - 1) as u16;
         self.edit.track_selected.insert(new_sel);
+        // 删除 track 后，editing_track 同步调整：
+        //  - 等于被删 track：清空
+        //  - 大于被删 track：-1
+        match self.edit.editing_track {
+            Some(t) if t as usize == idx => self.edit.editing_track = None,
+            Some(t) if (t as usize) > idx => self.edit.editing_track = Some(t - 1),
+            _ => {}
+        }
 
         Some(UndoAction::TrackStructure {
             tracks_before,
@@ -182,6 +196,20 @@ impl Document {
         self.edit.track_info_cache = self.data.track_info();
         self.edit.track_selected.clear();
         self.edit.track_selected.insert(to_idx as u16);
+        // 移动 track 后，editing_track 用同样的 remap 规则更新
+        if let Some(t) = self.edit.editing_track {
+            let t_usize = t as usize;
+            let new_t = if t_usize == from_idx {
+                to_idx
+            } else if from_idx < to_idx && t_usize > from_idx && t_usize <= to_idx {
+                t_usize - 1
+            } else if from_idx > to_idx && t_usize >= to_idx && t_usize < from_idx {
+                t_usize + 1
+            } else {
+                t_usize
+            };
+            self.edit.editing_track = Some(new_t as u16);
+        }
 
         Some(UndoAction::TrackStructure {
             tracks_before,

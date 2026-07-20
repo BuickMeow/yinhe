@@ -171,6 +171,7 @@ pub fn show(
             &mut arr_view.base.track_panel_row_height,
             &mut arr_view.base.track_panel_scroll_y,
             request_pianoroll,
+            &mut doc.edit.editing_track,
             info_content,
         );
 

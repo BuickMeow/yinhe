@@ -105,6 +105,10 @@ pub struct EditState {
     pub pc_map_cache: HashMap<u8, u8>,
     /// Index of the conductor track, if detected.
     pub conductor_track_idx: Option<u16>,
+    /// 当前被铅笔工具编辑的轨道（双击 track 设置）。
+    /// 同时只能有一个；可见且被选择时才允许编辑。
+    /// Conductor 也可被设为 editing_track（仅用于 Tempo automation）。
+    pub editing_track: Option<u16>,
     /// Selection rectangle state.
     pub sel_rect: SelRectState,
 }
@@ -131,6 +135,7 @@ impl Default for EditState {
             track_info_cache: Vec::new(),
             pc_map_cache: HashMap::new(),
             conductor_track_idx: None,
+            editing_track: None,
             sel_rect: SelRectState::default(),
         }
     }

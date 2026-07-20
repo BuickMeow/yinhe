@@ -77,6 +77,7 @@ pub fn show(
     sel_rect: &mut yinhe_editor_core::edit_state::SelRectState,
     track_selected: &std::collections::HashSet<u16>,
     conductor_idx: Option<u16>,
+    editing_track: Option<u16>,
     revision: u64,
     note_revisions: &[u64; 128],
     haptic_engine: Option<&yinhe_haptic::HapticEngine>,
@@ -210,7 +211,9 @@ pub fn show(
             quantize,
             ppq,
             bar_line_data,
+            editing_track,
             track_selected,
+            track_visible,
             conductor_idx,
             midi,
             track_colors,
@@ -219,7 +222,7 @@ pub fn show(
         hidden_notes.extend(hidden);
         *pencil_note_drag = pencil_drag;
         if let Some(note) = note_event {
-            if let Some(track) = pencil::valid_pencil_track(track_selected, conductor_idx) {
+            if let Some(track) = pencil::valid_pencil_track(editing_track, track_selected, track_visible, conductor_idx) {
                 pencil_event = Some(PianoViewEvent::AddNote { track, note });
             }
         }
@@ -753,14 +756,11 @@ pub fn show(
         let combo_w = kb_w * theme::AUTO_PANEL_COMBO_WIDTH_RATIO;
 
         // automation 编辑上下文：Pencil/Curve 工具时启用。
-        // active_track 与 automation_lanes 用同样的逻辑：第一个选中 track（排除 conductor），
-        // 没有选中时用 track 0。不要求"唯一选中"。
-        let active_track = track_selected
-            .iter()
-            .next()
-            .copied()
-            .filter(|&t| Some(t) != conductor_idx)
-            .or(Some(0));
+        // active_track 由 editing_track 决定（与 pencil 一致），
+        // 允许 conductor（用于 Tempo automation）。必须可见+被选。
+        let active_track = editing_track
+            .filter(|&t| track_selected.contains(&t))
+            .filter(|&t| track_visible.get(t as usize).copied().unwrap_or(false));
         let edit_ctx = if *active_tool == Tool::Pencil || *active_tool == Tool::Curve {
             Some(automation_panel::AutomationEditCtx {
                 active_tool: *active_tool,

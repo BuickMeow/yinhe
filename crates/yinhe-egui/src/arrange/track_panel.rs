@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use eframe::egui;
+use egui_material_icons::icons::ICON_EDIT;
 
 use yinhe_core::TrackInfo;
 
@@ -38,6 +39,7 @@ pub(crate) fn show(
     row_height: &mut f32,
     scroll_y: &mut f32,
     request_pianoroll: &mut bool,
+    editing_track: &mut Option<u16>,
     info_content: &mut Option<crate::right_panel::InfoContent>,
 ) -> (bool, Vec<TrackAction>) {
     let panel_rect = ui.max_rect();
@@ -198,6 +200,30 @@ pub(crate) fn show(
                     }
                 }
             }
+
+            // 铅笔 ICON：双击 track 后显示，表示该 track 是 pencil/automation 的编辑目标。
+            // 非 conductor：在 M/S 按钮左侧；conductor：在行右侧（无 M/S 按钮）。
+            if *editing_track == Some(ti.index) {
+                let gap = 2.0;
+                let total_btn_w = 2.0 * btn_size.x + gap;
+                let icon_x = if !is_conductor {
+                    row_rect.max.x - total_btn_w - 6.0 - gap - btn_size.x
+                } else {
+                    row_rect.max.x - 6.0 - btn_size.x
+                };
+                let icon_y = badge_rect.center().y - btn_size.y * 0.5;
+                let icon_rect = egui::Rect::from_min_size(
+                    egui::pos2(icon_x, icon_y),
+                    btn_size,
+                );
+                painter.text(
+                    icon_rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    ICON_EDIT.codepoint,
+                    egui::FontId::new(14.0, ICON_EDIT.font_family()),
+                    crate::theme::ACCENT_ACTIVE,
+                );
+            }
         } else {
             let font = egui::FontId::proportional((*row_height * 0.45).clamp(8.0, 14.0));
             painter.text(
@@ -229,7 +255,10 @@ pub(crate) fn show(
 
     if resp.double_clicked() {
         if let Some(pos) = resp.interact_pointer_pos() {
-            if hit(pos).is_some() {
+            if let Some(idx) = hit(pos) {
+                // 双击：打开 PR 并把此 track 设为 pencil/automation 的编辑目标。
+                // 单击切换选择不会改变 editing_track（ICON 只在双击时切换）。
+                *editing_track = Some(track_info[idx].index);
                 *request_pianoroll = true;
             }
         }
