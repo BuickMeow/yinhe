@@ -13,6 +13,15 @@ use super::{AutomationEditCtx, ANCHOR_HIT_PX};
 /// 悬停在锚点上多久后显示 tooltip（秒）。
 const HOVER_DELAY: f64 = 0.6;
 
+/// Hover/drag tooltip 数据。锚点和控制点用不同的显示内容。
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum HoverTooltip {
+    /// 锚点（或拖拽锚点）：显示 tick（小节:拍:tick）+ automation value
+    Anchor { tick: u32, value: f32, pos: egui::Pos2 },
+    /// 贝塞尔控制点（或拖拽控制点）：显示 ctrl_x / ctrl_y（归一化 [0,1]）
+    ControlPoint { ctrl_x: f32, ctrl_y: f32, pos: egui::Pos2 },
+}
+
 /// 拖拽状态（ghost）。存在 egui data 中，跨帧保持。
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum AutoDrag {
@@ -76,7 +85,7 @@ pub(crate) fn hit_line_on_lane(
 /// 检测鼠标是否悬停在 Curve 段中间的空心圆控制点上。
 ///
 /// 遍历所有 Curve 段（非直线），计算控制点屏幕位置，
-/// 返回最近控制点所属段的前驱事件 tick + 原始 ctrl_x/ctrl_y。
+/// 返回最近控制点所属段的前驱事件 tick + 原始 ctrl_x/ctrl_y + 控制点像素位置。
 pub(crate) fn hit_control_point_on_lane(
     lane: &AutomationLane,
     mouse: egui::Pos2,
@@ -86,10 +95,10 @@ pub(crate) fn hit_control_point_on_lane(
     panel_rect: egui::Rect,
     panel: &AutomationPanelView,
     max_val: f32,
-) -> Option<(u32, f32, f32)> {
+) -> Option<(u32, f32, f32, egui::Pos2)> {
     let x_offset = grid_area.min.x - scroll_x;
     let hit_sq = ANCHOR_HIT_PX * ANCHOR_HIT_PX;
-    let mut best: Option<(u32, f32, f32, f32)> = None; // (prev_tick, ctrl_x, ctrl_y, dist_sq)
+    let mut best: Option<(u32, f32, f32, egui::Pos2, f32)> = None; // (prev_tick, ctrl_x, ctrl_y, pos, dist_sq)
     for i in 1..lane.events.len() {
         let prev = &lane.events[i - 1];
         let cur = &lane.events[i];
@@ -106,12 +115,12 @@ pub(crate) fn hit_control_point_on_lane(
 
         let dist_sq = (cx - mouse.x).powi(2) + (cy - mouse.y).powi(2);
         if dist_sq <= hit_sq
-            && best.map(|(_, _, _, d)| dist_sq < d).unwrap_or(true)
+            && best.as_ref().map(|(_, _, _, _, d)| dist_sq < *d).unwrap_or(true)
         {
-            best = Some((prev.tick, ctrl_x, ctrl_y, dist_sq));
+            best = Some((prev.tick, ctrl_x, ctrl_y, egui::pos2(cx, cy), dist_sq));
         }
     }
-    best.map(|(t, cx, cy, _)| (t, cx, cy))
+    best.map(|(t, cx, cy, p, _)| (t, cx, cy, p))
 }
 
 /// 从鼠标屏幕位置反推 Curve 段的 `(ctrl_x, ctrl_y)`（归一化 [0,1]）。
@@ -173,7 +182,7 @@ pub(crate) fn handle_automation_interaction(
     track_colors: &[[f32; 3]],
     info_content: &mut Option<InfoContent>,
     right_tab: &mut Option<RightTab>,
-) -> (Vec<yinhe_types::AutomationEdit>, Option<AutomationGhost>, Option<(u32, f32)>, Option<(u32, f32)>) {
+) -> (Vec<yinhe_types::AutomationEdit>, Option<AutomationGhost>, Option<HoverTooltip>, Option<HoverTooltip>) {
     let mut edits = Vec::new();
     // target 直接来自 selected_target（Tempo 也是 selected_target 的一种）。
     let target = panel.selected_target.clone();
@@ -329,7 +338,7 @@ pub(crate) fn handle_automation_interaction(
                     ui.ctx().data_mut(|d| {
                         d.insert_temp(drag_id, AutoDrag::MoveAnchor { old_tick: tick, start_tick: tick, start_value: anchor_value });
                     });
-                } else if let Some((prev_tick, ctrl_x, ctrl_y)) = hit_ctrl {
+                } else if let Some((prev_tick, ctrl_x, ctrl_y, _)) = hit_ctrl {
                     // 命中控制点：开始拖拽控制点
                     ui.ctx().data_mut(|d| {
                         d.insert_temp(drag_id, AutoDrag::DragControlPoint {
@@ -549,48 +558,89 @@ pub(crate) fn handle_automation_interaction(
     };
 
     // 拖拽中返回拖拽信息用于 tooltip
-    let drag_info = if ghost.is_some() {
-        mouse_info.map(|(_, tick, value)| (tick, value))
+    let drag_info: Option<HoverTooltip> = if ghost.is_some() {
+        match drag_now {
+            Some(AutoDrag::DragControlPoint { prev_tick, .. }) => {
+                // 拖控制点：从鼠标位置反推 ctrl_x/ctrl_y
+                lane.and_then(|l| {
+                    let (p, _, _) = mouse_info?;
+                    let new_ctrl = compute_ctrl_from_mouse(
+                        l, prev_tick, p, ppu, scroll_x, grid_area, panel_rect, panel, max_val,
+                    )?;
+                    Some(HoverTooltip::ControlPoint {
+                        ctrl_x: new_ctrl.0, ctrl_y: new_ctrl.1, pos: p,
+                    })
+                })
+            }
+            _ => {
+                // 拖锚点 / CurveDraw：显示 (tick, value)，位置跟随鼠标
+                mouse_info.map(|(p, tick, value)| HoverTooltip::Anchor { tick, value, pos: p })
+            }
+        }
     } else {
         None
     };
 
-    // ── Hover tooltip：悬停在锚点上 HOVER_DELAY 秒后显示 tooltip ──
+    // ── Hover tooltip：悬停在锚点/控制点上 HOVER_DELAY 秒后显示 tooltip ──
     // 仅在非拖拽时触发（拖拽时 drag_info 已覆盖）。
-    let hover_info: Option<(u32, f32)> = if drag_info.is_none() && in_grid {
-        let hover_id = ui.id().with("auto_hover_anchor").with(panel_index);
+    let hover_info: Option<HoverTooltip> = if drag_info.is_none() && in_grid {
+        let hover_anchor_id = ui.id().with("auto_hover_anchor").with(panel_index);
+        let hover_ctrl_id = ui.id().with("auto_hover_ctrl").with(panel_index);
         let now = ui.input(|i| i.time);
-        if mouse_info.is_some() && let Some((_, anchor_tick)) = hit_anchor {
-            // 鼠标必须在锚点命中半径内（hit_anchor 已保证），记录锚点 tick 和首次 hover 时间
-            let prev: Option<(u32, f64)> = ui.ctx().data(|d| d.get_temp::<(u32, f64)>(hover_id));
-            // 关键：首次进入时 prev=None，必须立即把 (tick, now) 写回 ctx，
-            // 否则下一帧 prev 还是 None，计时永远归零，tooltip 永远不弹。
+        if let Some((_, anchor_tick)) = hit_anchor {
+            // 锚点 hover：清除控制点计时
+            ui.ctx().data_mut(|d| d.remove::<(u32, f64)>(hover_ctrl_id));
+            let prev: Option<(u32, f64)> = ui.ctx().data(|d| d.get_temp::<(u32, f64)>(hover_anchor_id));
             let entry = match prev {
                 Some(e) if e.0 == anchor_tick => e,
                 _ => {
                     let new_entry = (anchor_tick, now);
-                    ui.ctx().data_mut(|d| d.insert_temp(hover_id, new_entry));
+                    ui.ctx().data_mut(|d| d.insert_temp(hover_anchor_id, new_entry));
                     new_entry
                 }
             };
             if now - entry.1 >= HOVER_DELAY {
-                // 超过延迟，返回锚点的 (tick, value)
+                // 从 tick + value 算锚点像素位置
                 let anchor_value = lane
                     .and_then(|l| l.events.iter().find(|e| e.tick == anchor_tick))
                     .map(|e| e.value);
-                anchor_value.map(|v| (anchor_tick, v))
+                if let Some(v) = anchor_value {
+                    let ax = grid_area.min.x + anchor_tick as f32 * ppu - scroll_x;
+                    let ay = panel_rect.min.y + panel.value_to_y(v, max_val);
+                    Some(HoverTooltip::Anchor { tick: anchor_tick, value: v, pos: egui::pos2(ax, ay) })
+                } else {
+                    None
+                }
             } else {
-                // 等待延迟
+                ui.ctx().request_repaint();
+                None
+            }
+        } else if let Some((prev_tick, ctrl_x, ctrl_y, ctrl_pos)) = hit_ctrl {
+            // 控制点 hover：清除锚点计时
+            ui.ctx().data_mut(|d| d.remove::<(u32, f64)>(hover_anchor_id));
+            let prev: Option<(u32, f64)> = ui.ctx().data(|d| d.get_temp::<(u32, f64)>(hover_ctrl_id));
+            let entry = match prev {
+                Some(e) if e.0 == prev_tick => e,
+                _ => {
+                    let new_entry = (prev_tick, now);
+                    ui.ctx().data_mut(|d| d.insert_temp(hover_ctrl_id, new_entry));
+                    new_entry
+                }
+            };
+            if now - entry.1 >= HOVER_DELAY {
+                Some(HoverTooltip::ControlPoint { ctrl_x, ctrl_y, pos: ctrl_pos })
+            } else {
                 ui.ctx().request_repaint();
                 None
             }
         } else {
-            // 鼠标不在锚点上，清除
-            ui.ctx().data_mut(|d| d.remove::<(u32, f64)>(hover_id));
+            ui.ctx().data_mut(|d| {
+                d.remove::<(u32, f64)>(hover_anchor_id);
+                d.remove::<(u32, f64)>(hover_ctrl_id);
+            });
             None
         }
     } else {
-        // 拖拽中不显示 hover tooltip
         None
     };
 
