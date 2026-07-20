@@ -307,9 +307,10 @@ pub(crate) fn show_vertical(
     let k_constant = view_height * sb_h / num_cells_f;
 
     // Drag middle → pan（仅当 max_scroll_y > 0 时有效）
+    // delta 是滚动条像素，需除以 scale 转换为内容像素，否则越放大鼠标越跟不上。
     if middle_resp.dragged() && max_scroll_y > 0.0 {
         let delta = middle_resp.drag_delta().y;
-        *scroll_y = (*scroll_y + delta).clamp(0.0, max_scroll_y);
+        *scroll_y = (*scroll_y + delta / scale).clamp(0.0, max_scroll_y);
         *dirty = true;
         ui.ctx().request_repaint();
         return;
