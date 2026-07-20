@@ -521,14 +521,16 @@ fn vs_main_curve(
 ) -> CurveOutput {
     let p0 = instance.endp.xy;  // P0
     let p3 = instance.endp.zw;  // P3
-    // 两个控制点绝对位置（归一化 ctrl_x1/y1/x2/y2 → 屏幕坐标）
+    // 控制点实际位置（偏移量参数化，内部 *4 放大）：
+    //   P1 = P0 + (P3-P0)·(ctrl1·4)  — P1 相对 P0
+    //   P2 = P3 + (P3-P0)·(ctrl2·4)  — P2 相对 P3
     let c1 = vec2<f32>(
-        p0.x + (p3.x - p0.x) * instance.params.y,
-        p0.y + (p3.y - p0.y) * instance.params.z,
+        p0.x + (p3.x - p0.x) * instance.params.y * 4.0,
+        p0.y + (p3.y - p0.y) * instance.params.z * 4.0,
     );
     let c2 = vec2<f32>(
-        p0.x + (p3.x - p0.x) * instance.params.w,
-        p0.y + (p3.y - p0.y) * instance.ctrl_y2,
+        p3.x + (p3.x - p0.x) * instance.params.w * 4.0,
+        p3.y + (p3.y - p0.y) * instance.ctrl_y2 * 4.0,
     );
 
     // AABB 包含 P0, P3, 两个控制点（对 circle/square/hollow，全部重合）

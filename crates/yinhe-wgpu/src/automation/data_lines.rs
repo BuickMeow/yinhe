@@ -224,9 +224,9 @@ pub(crate) fn build_lane_instances(
 /// 为 lane 中每个 Curve 段（前一个事件 → 当前事件，shape=Curve 且非直线）
 /// 在两个控制点位置各画一个空心圆，并从锚点画线段连接到对应控制点（CSS 风格 handle）。
 ///
-/// 段的 shape 取自前一个事件（包括 chase 段的虚拟前驱）。控制点位置：
-///   c1 = P0 + (P3 - P0) * (x1, y1)  — 起点的"出"控制点
-///   c2 = P0 + (P3 - P0) * (x2, y2)  — 终点的"入"控制点
+/// 段的 shape 取自前一个事件（包括 chase 段的虚拟前驱）。偏移量参数化（内部 *4 放大）：
+///   c1 = P0 + (P3 - P0) · (x1·4, y1·4)  — P1 相对 P0（起点出）
+///   c2 = P3 + (P3 - P0) · (x2·4, y2·4)  — P2 相对 P3（终点入）
 fn push_curve_control_points(
     out: &mut Vec<CurveInstance>,
     lane: &AutomationLane,
@@ -257,11 +257,11 @@ fn push_curve_control_points(
             let py0 = view.value_to_y(p.value, max_val);
             let px3 = x_offset + evt.tick as f32 * ppu;
             let py3 = view.value_to_y(evt.value, max_val);
-            // 两个控制点屏幕坐标
-            let c1x = px0 + (px3 - px0) * x1;
-            let c1y = py0 + (py3 - py0) * y1;
-            let c2x = px0 + (px3 - px0) * x2;
-            let c2y = py0 + (py3 - py0) * y2;
+            // 两个控制点屏幕坐标（偏移量 *4 放大）
+            let c1x = px0 + (px3 - px0) * x1 * 4.0;
+            let c1y = py0 + (py3 - py0) * y1 * 4.0;
+            let c2x = px3 + (px3 - px0) * x2 * 4.0;
+            let c2y = py3 + (py3 - py0) * y2 * 4.0;
             // 锚点 → 控制点的连线（handle）
             out.push(CurveInstance::line(px0, py0, c1x, c1y, CTRL_HANDLE_THICKNESS, handle_color));
             out.push(CurveInstance::line(px3, py3, c2x, c2y, CTRL_HANDLE_THICKNESS, handle_color));

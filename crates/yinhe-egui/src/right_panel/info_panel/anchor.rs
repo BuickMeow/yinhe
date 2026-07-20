@@ -124,10 +124,10 @@ pub(super) fn show_anchor_info(
     });
 
     // ── X1 / Y1 / X2 / Y2（仅 Curve 模式下显示） ──
-    // CSS `cubic-bezier(x1, y1, x2, y2)` 风格：起点 P0=(0,0)、终点 P3=(1,1)，
-    // 两个控制点 P1=(x1,y1)（起点出）、P2=(x2,y2)（终点入）。
-    // x ∈ [0,1]（时间方向不可回卷），y ∈ [-2,2]（允许 ease 缓动超出 [0,1]）。
-    // 直线为 (0,0,1,1)。
+    // 偏移量参数化（CSS handle 风格）：
+    // - (x1, y1): P1 相对 P0 的偏移，内部 *4 得到实际参数
+    // - (x2, y2): P2 相对 P3 的偏移，内部 *4 得到实际参数
+    // 每个分量 ∈ [-0.5, 0.5]，0 = 直线（中性）。直线 = (0, 0, 0, 0)。
     if let SegmentShape::Curve { x1, y1, x2, y2 } = shape {
         // X1
         let guard = LaneUndoGuard::new(ui, "x1", track_idx, lane_idx, target);
@@ -136,8 +136,8 @@ pub(super) fn show_anchor_info(
             ui.label(egui::RichText::new("X1:").size(11.0).color(egui::Color32::GRAY));
             let resp = ui.add(
                 egui::DragValue::new(&mut edit)
-                    .range(0.0..=1.0)
-                    .speed(0.02)
+                    .range(-0.5..=0.5)
+                    .speed(0.01)
                     .fixed_decimals(2),
             );
             if resp.gained_focus() {
@@ -165,8 +165,8 @@ pub(super) fn show_anchor_info(
             ui.label(egui::RichText::new("Y1:").size(11.0).color(egui::Color32::GRAY));
             let resp = ui.add(
                 egui::DragValue::new(&mut edit)
-                    .range(-2.0..=2.0)
-                    .speed(0.02)
+                    .range(-0.5..=0.5)
+                    .speed(0.01)
                     .fixed_decimals(2),
             );
             if resp.gained_focus() {
@@ -194,8 +194,8 @@ pub(super) fn show_anchor_info(
             ui.label(egui::RichText::new("X2:").size(11.0).color(egui::Color32::GRAY));
             let resp = ui.add(
                 egui::DragValue::new(&mut edit)
-                    .range(0.0..=1.0)
-                    .speed(0.02)
+                    .range(-0.5..=0.5)
+                    .speed(0.01)
                     .fixed_decimals(2),
             );
             if resp.gained_focus() {
@@ -223,8 +223,8 @@ pub(super) fn show_anchor_info(
             ui.label(egui::RichText::new("Y2:").size(11.0).color(egui::Color32::GRAY));
             let resp = ui.add(
                 egui::DragValue::new(&mut edit)
-                    .range(-2.0..=2.0)
-                    .speed(0.02)
+                    .range(-0.5..=0.5)
+                    .speed(0.01)
                     .fixed_decimals(2),
             );
             if resp.gained_focus() {

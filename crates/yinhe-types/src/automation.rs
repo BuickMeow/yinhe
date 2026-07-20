@@ -9,13 +9,18 @@ use serde::{Deserialize, Serialize};
 pub enum SegmentShape {
     /// 离散：保持当前值，直到下个事件才瞬间跳变。MIDI CC 的原生语义。
     Step,
-    /// 三次贝塞尔曲线（CSS `cubic-bezier` 风格）。
-    /// - 归一化空间：起点 P0=(0,0) 对应本事件 (tick, value)，终点 P3=(1,1) 对应下一事件。
-    /// - 两个控制点：P1=(x1,y1), P2=(x2,y2)，均在归一化空间。
-    /// - `x1, x2 ∈ [0, 1]`：控制点的 tick 归一化位置（时间方向不可回卷）
-    /// - `y1, y2`：控制点的 value 归一化位置（可略超出 [0,1] 产生 ease 缓动效果）
-    /// - 直线（退化）：`(x1,y1,x2,y2) = (0, 0, 1, 1)`
-    /// - S 形缓动：例如 `(0.25, 0.1, 0.25, 1)`（ease）、`(0.42, 0, 0.58, 1)`（ease-in-out）
+    /// 三次贝塞尔曲线（CSS handle 风格，偏移量参数化）。
+    ///
+    /// 归一化空间：起点 P0=(0,0) 对应本事件 (tick, value)，终点 P3=(1,1) 对应下一事件。
+    /// 存储值为控制点相对各自锚点的归一化偏移量，内部 `*4` 放大得到实际贝塞尔参数：
+    ///
+    /// - `(x1, y1)`：P1 相对 P0 的偏移，实际位置 P1 = P0 + (P3-P0)·(x1·4, y1·4)
+    /// - `(x2, y2)`：P2 相对 P3 的偏移，实际位置 P2 = P3 + (P3-P0)·(x2·4, y2·4)
+    ///
+    /// 每个分量 `∈ [-0.5, 0.5]`（DragValue/拖拽范围），内部 `*4` 后实际参数范围 `[-2, 2]`。
+    /// 直线（退化）：`(0, 0, 0, 0)` — 0 为中性，偏离 0 即弯曲。
+    ///
+    /// 两个 handle 从各自锚点指出（P1 从 P0，P2 从 P3），符合 CSS 动画编辑器的视觉直觉。
     Curve { x1: f32, y1: f32, x2: f32, y2: f32 },
 }
 
@@ -27,11 +32,14 @@ impl Default for SegmentShape {
 }
 
 impl SegmentShape {
-    /// 直线 Curve 的默认控制点位置（CSS `linear`：`cubic-bezier(0,0,1,1)`）。
+    /// 偏移量参数化的放大系数：存储值 `[-0.5, 0.5]` × 4 = 实际参数 `[-2, 2]`。
+    pub const SCALE: f32 = 4.0;
+
+    /// 直线 Curve 的默认偏移量：全部为 0（中性）。
     pub const LINEAR_X1: f32 = 0.0;
     pub const LINEAR_Y1: f32 = 0.0;
-    pub const LINEAR_X2: f32 = 1.0;
-    pub const LINEAR_Y2: f32 = 1.0;
+    pub const LINEAR_X2: f32 = 0.0;
+    pub const LINEAR_Y2: f32 = 0.0;
 
     /// 直线 Curve 的快捷构造。
     pub const fn linear_curve() -> Self {
@@ -58,16 +66,18 @@ impl SegmentShape {
                 if Self::is_linear_impl(x1, y1, x2, y2) {
                     return t;
                 }
-                // 三次贝塞尔：B(u) = (1-u)³·0 + 3(1-u)²u·x1 + 3(1-u)u²·x2 + u³·1
-                // 给定 B_x(u) = t，用 Newton 迭代求 u（一般 5-8 次足够），再返回 B_y(u)
+                // 实际控制点（归一化空间，P0=(0,0), P3=(1,1)）：
+                // P1 = (x1*4, y1*4), P2 = (1+x2*4, 1+y2*4)
                 let u = solve_cubic_bezier_u_for_x(t, x1, x2);
                 let u1 = 1.0 - u;
-                3.0 * u1 * u1 * u * y1 + 3.0 * u1 * u * u * y2 + u * u * u
+                let p1y = y1 * Self::SCALE;
+                let p2y = 1.0 + y2 * Self::SCALE;
+                3.0 * u1 * u1 * u * p1y + 3.0 * u1 * u * u * p2y + u * u * u
             }
         }
     }
 
-    /// 是否为直线（Curve 且 (x1,y1,x2,y2) ≈ (0,0,1,1)）。
+    /// 是否为直线（Curve 且偏移量全部 ≈ 0）。
     #[inline]
     pub fn is_linear(self) -> bool {
         matches!(self, SegmentShape::Curve { x1, y1, x2, y2 }
@@ -78,24 +88,27 @@ impl SegmentShape {
     fn is_linear_impl(x1: f32, y1: f32, x2: f32, y2: f32) -> bool {
         x1.abs() < 1e-4
             && y1.abs() < 1e-4
-            && (x2 - 1.0).abs() < 1e-4
-            && (y2 - 1.0).abs() < 1e-4
+            && x2.abs() < 1e-4
+            && y2.abs() < 1e-4
     }
 }
 
 /// 解三次贝塞尔方程 B_x(u) = t 求 u（Newton 迭代）。
 ///
-/// `B_x(u) = 3(1-u)²u·x1 + 3(1-u)u²·x2 + u³`
-/// `B_x'(u) = 3(1-u)²·x1 + 6(1-u)u·(x2-x1) + 3u²·(1-x2)`
+/// 偏移量参数化：P1.x = x1·4，P2.x = 1 + x2·4。
+/// `B_x(u) = 3(1-u)²u·(x1·4) + 3(1-u)u²·(1+x2·4) + u³`
+/// `B_x'(u) = 3(1-u)²·(x1·4) + 6(1-u)u·(1+x2·4 - x1·4) + 3u²·(1 - (1+x2·4))`
 ///
 /// 初值用 u=t（直线时精确）。6 次迭代对 [0,1] 范围足够收敛。
 #[inline]
 fn solve_cubic_bezier_u_for_x(t: f32, x1: f32, x2: f32) -> f32 {
+    let p1x = x1 * SegmentShape::SCALE;
+    let p2x = 1.0 + x2 * SegmentShape::SCALE;
     let mut u = t.clamp(0.0, 1.0);
     for _ in 0..6 {
         let u1 = 1.0 - u;
-        let f = 3.0 * u1 * u1 * u * x1 + 3.0 * u1 * u * u * x2 + u * u * u - t;
-        let df = 3.0 * u1 * u1 * x1 + 6.0 * u1 * u * (x2 - x1) + 3.0 * u * u * (1.0 - x2);
+        let f = 3.0 * u1 * u1 * u * p1x + 3.0 * u1 * u * u * p2x + u * u * u - t;
+        let df = 3.0 * u1 * u1 * p1x + 6.0 * u1 * u * (p2x - p1x) + 3.0 * u * u * (1.0 - p2x);
         if df.abs() < 1e-6 {
             break;
         }
@@ -491,45 +504,51 @@ mod tests {
         assert_eq!(SegmentShape::Step.interpolate(0.5), 0.0);
         assert_eq!(SegmentShape::Step.interpolate(1.0), 0.0);
 
-        // 直线 Curve（cubic-bezier(0,0,1,1)）端点和中点
+        // 直线 Curve（偏移量全 0）端点和中点
         let lin = SegmentShape::linear_curve();
         assert_eq!(lin.interpolate(0.0), 0.0);
         assert_eq!(lin.interpolate(1.0), 1.0);
         assert!((lin.interpolate(0.5) - 0.5).abs() < 1e-6);
 
         // 贝塞尔端点：无论控制点位置，端点始终为 0 和 1
-        assert_eq!(SegmentShape::Curve { x1: 0.3, y1: 0.8, x2: 0.6, y2: 0.2 }.interpolate(0.0), 0.0);
-        assert_eq!(SegmentShape::Curve { x1: 0.3, y1: 0.8, x2: 0.6, y2: 0.2 }.interpolate(1.0), 1.0);
-        assert_eq!(SegmentShape::Curve { x1: 0.7, y1: -0.5, x2: 0.4, y2: 1.5 }.interpolate(0.0), 0.0);
-        assert_eq!(SegmentShape::Curve { x1: 0.7, y1: -0.5, x2: 0.4, y2: 1.5 }.interpolate(1.0), 1.0);
+        // 偏移量 (x1,y1,x2,y2)：P1=(x1*4,y1*4), P2=(1+x2*4, 1+y2*4)
+        assert_eq!(SegmentShape::Curve { x1: 0.1, y1: 0.2, x2: -0.1, y2: -0.2 }.interpolate(0.0), 0.0);
+        assert_eq!(SegmentShape::Curve { x1: 0.1, y1: 0.2, x2: -0.1, y2: -0.2 }.interpolate(1.0), 1.0);
+        assert_eq!(SegmentShape::Curve { x1: 0.25, y1: -0.5, x2: -0.25, y2: 0.5 }.interpolate(0.0), 0.0);
+        assert_eq!(SegmentShape::Curve { x1: 0.25, y1: -0.5, x2: -0.25, y2: 0.5 }.interpolate(1.0), 1.0);
     }
 
     #[test]
     fn test_segment_shape_bezier_midpoint() {
-        // 三次贝塞尔中点 (u=0.5)：
-        //   B_y(0.5) = 3·0.25·0.5·y1 + 3·0.5·0.25·y2 + 0.125 = 0.375·y1 + 0.375·y2 + 0.125
-        // 直线 y1=0,y2=1: 0.375*0 + 0.375*1 + 0.125 = 0.5 ✓
+        // 直线（偏移量全 0）：B_y(0.5) = 0.5
         assert!((SegmentShape::linear_curve().interpolate(0.5) - 0.5).abs() < 1e-6);
 
-        // ease-in-out 近似 cubic-bezier(0.42, 0, 0.58, 1)：u(0.5) 非精确 0.5，但 B_y(0.5) 接近 0.5
-        let ease_io = SegmentShape::Curve { x1: 0.42, y1: 0.0, x2: 0.58, y2: 1.0 };
+        // ease-in-out 近似 CSS cubic-bezier(0.42, 0, 0.58, 1)
+        // → 偏移量 (x1=0.42/4, y1=0, x2=(0.58-1)/4, y2=(1-1)/4) = (0.105, 0, -0.105, 0)
+        // B_y(0.5) 接近 0.5
+        let ease_io = SegmentShape::Curve { x1: 0.105, y1: 0.0, x2: -0.105, y2: 0.0 };
         let v = ease_io.interpolate(0.5);
         assert!((v - 0.5).abs() < 0.02, "ease-in-out mid expected ~0.5, got {v}");
 
-        // 控制点全部偏到 v_end（y1=y2=1）：B_y(0.5) = 0.375 + 0.375 + 0.125 = 0.875
-        let v_end = SegmentShape::Curve { x1: 0.3, y1: 1.0, x2: 0.7, y2: 1.0 }.interpolate(0.5);
+        // 控制点全部偏到 v_end（实际 y1=y2=1）：
+        // P1.y = y1*4 = 1 → y1 = 0.25；P2.y = 1 + y2*4 = 1 → y2 = 0
+        // B_y(0.5) = 0.375*1 + 0.375*1 + 0.125 = 0.875
+        let v_end = SegmentShape::Curve { x1: 0.075, y1: 0.25, x2: -0.075, y2: 0.0 }.interpolate(0.5);
         assert!((v_end - 0.875).abs() < 1e-6, "expected 0.875, got {v_end}");
 
-        // 控制点全部偏到 v_start（y1=y2=0）：B_y(0.5) = 0.125
-        let v_start = SegmentShape::Curve { x1: 0.3, y1: 0.0, x2: 0.7, y2: 0.0 }.interpolate(0.5);
+        // 控制点全部偏到 v_start（实际 y1=y2=0）：
+        // P1.y = y1*4 = 0 → y1 = 0；P2.y = 1 + y2*4 = 0 → y2 = -0.25
+        // B_y(0.5) = 0.125
+        let v_start = SegmentShape::Curve { x1: 0.075, y1: 0.0, x2: -0.075, y2: -0.25 }.interpolate(0.5);
         assert!((v_start - 0.125).abs() < 1e-6, "expected 0.125, got {v_start}");
     }
 
     #[test]
     fn test_segment_shape_is_linear() {
         assert!(SegmentShape::linear_curve().is_linear());
-        assert!(!SegmentShape::Curve { x1: 0.0, y1: 0.1, x2: 1.0, y2: 1.0 }.is_linear());
-        assert!(!SegmentShape::Curve { x1: 0.1, y1: 0.0, x2: 1.0, y2: 1.0 }.is_linear());
+        assert!(!SegmentShape::Curve { x1: 0.0, y1: 0.1, x2: 0.0, y2: 0.0 }.is_linear());
+        assert!(!SegmentShape::Curve { x1: 0.1, y1: 0.0, x2: 0.0, y2: 0.0 }.is_linear());
+        assert!(!SegmentShape::Curve { x1: 0.0, y1: 0.0, x2: 0.1, y2: 0.0 }.is_linear());
         assert!(!SegmentShape::Step.is_linear());
     }
 }

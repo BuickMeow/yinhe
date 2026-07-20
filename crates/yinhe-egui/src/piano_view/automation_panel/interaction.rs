@@ -94,8 +94,9 @@ pub(crate) fn hit_line_on_lane(
 
 /// 检测鼠标是否悬停在 Curve 段的两个空心圆控制点之一上。
 ///
-/// 遍历所有 Curve 段（非直线），计算两个控制点屏幕位置，
-/// 返回最近控制点所属段的前驱事件 tick + 端别 + 该段的 4 个 ctrl 值 + 控制点像素位置。
+/// 遍历所有 Curve 段（非直线），计算两个控制点屏幕位置（偏移量 *4 放大，
+/// P1 相对 P0、P2 相对 P3），返回最近控制点所属段的前驱事件 tick + 端别 +
+/// 该段的 4 个 ctrl 值 + 控制点像素位置。
 pub(crate) fn hit_control_point_on_lane(
     lane: &AutomationLane,
     mouse: egui::Pos2,
@@ -121,11 +122,11 @@ pub(crate) fn hit_control_point_on_lane(
         let px3 = x_offset + cur.tick as f32 * ppu;
         let py3 = panel_rect.min.y + panel.value_to_y(cur.value, max_val);
 
-        // 两个控制点屏幕坐标
-        let c1x = px0 + (px3 - px0) * x1;
-        let c1y = py0 + (py3 - py0) * y1;
-        let c2x = px0 + (px3 - px0) * x2;
-        let c2y = py0 + (py3 - py0) * y2;
+        // 两个控制点屏幕坐标（偏移量 *4：P1 相对 P0，P2 相对 P3）
+        let c1x = px0 + (px3 - px0) * x1 * 4.0;
+        let c1y = py0 + (py3 - py0) * y1 * 4.0;
+        let c2x = px3 + (px3 - px0) * x2 * 4.0;
+        let c2y = py3 + (py3 - py0) * y2 * 4.0;
 
         // 分别检测两个控制点
         let d1 = (c1x - mouse.x).powi(2) + (c1y - mouse.y).powi(2);
@@ -144,14 +145,18 @@ pub(crate) fn hit_control_point_on_lane(
     best.map(|(t, w, x1, y1, x2, y2, p, _)| (t, w, x1, y1, x2, y2, p))
 }
 
-/// 从鼠标屏幕位置反推 Curve 段某一端控制点的归一化位置 `(x, y)`。
+/// 从鼠标屏幕位置反推 Curve 段某一端控制点的偏移量 `(x, y) ∈ [-0.5, 0.5]`。
 ///
-/// 段由 `prev_tick` 定位（前驱事件），下一个事件为段的终点。
+/// 偏移量参数化（内部 *4 放大）：
+/// - `Out`（P1）：相对 P0，`offset = (mouse - P0) / (P3 - P0) / 4`
+/// - `In`（P2）：相对 P3，`offset = (mouse - P3) / (P3 - P0) / 4`
+///
 /// 段水平或竖直时（dx/dy ≈ 0），对应分量为 0（与直线控制点对齐）。
 /// 返回 `None` 表示 `prev_tick` 不存在或没有下一个事件。
 fn compute_ctrl_from_mouse(
     lane: &AutomationLane,
     prev_tick: u32,
+    which: CtrlEnd,
     mouse: egui::Pos2,
     ppu: f32,
     scroll_x: f32,
@@ -164,23 +169,27 @@ fn compute_ctrl_from_mouse(
     let prev = &lane.events[prev_idx];
     let next = lane.events.get(prev_idx + 1)?;
     let x_offset = grid_area.min.x - scroll_x;
-    let x0 = x_offset + prev.tick as f32 * ppu;
-    let y0 = panel_rect.min.y + panel.value_to_y(prev.value, max_val);
-    let x1 = x_offset + next.tick as f32 * ppu;
-    let y1 = panel_rect.min.y + panel.value_to_y(next.value, max_val);
-    let dx = x1 - x0;
-    let dy = y1 - y0;
-    // 时间方向 (x) 不允许回卷：clamp 到 [0, 1]。
-    // 值方向 (y) 允许略超出 [0, 1]（ease 缓动），clamp 到 [-2, 2] 避免极端值。
+    let px0 = x_offset + prev.tick as f32 * ppu;
+    let py0 = panel_rect.min.y + panel.value_to_y(prev.value, max_val);
+    let px3 = x_offset + next.tick as f32 * ppu;
+    let py3 = panel_rect.min.y + panel.value_to_y(next.value, max_val);
+    let dx = px3 - px0;
+    let dy = py3 - py0;
+    // 参考点：Out 用 P0，In 用 P3
+    let (rx, ry) = match which {
+        CtrlEnd::Out => (px0, py0),
+        CtrlEnd::In => (px3, py3),
+    };
+    // offset = (mouse - ref) / seg / 4，clamp 到 [-0.5, 0.5]
     let new_x = if dx.abs() < 1e-3 {
         0.0
     } else {
-        ((mouse.x - x0) / dx).clamp(0.0, 1.0)
+        ((mouse.x - rx) / dx / 4.0).clamp(-0.5, 0.5)
     };
     let new_y = if dy.abs() < 1e-3 {
         0.0
     } else {
-        ((mouse.y - y0) / dy).clamp(-2.0, 2.0)
+        ((mouse.y - ry) / dy / 4.0).clamp(-0.5, 0.5)
     };
     Some((new_x, new_y))
 }
@@ -428,7 +437,7 @@ pub(crate) fn handle_automation_interaction(
                             && let Some(lidx) = lane_idx
                         {
                             if let Some(new_ctrl) = compute_ctrl_from_mouse(
-                                l, prev_tick, p, ppu, scroll_x, grid_area, panel_rect, panel, max_val,
+                                l, prev_tick, which, p, ppu, scroll_x, grid_area, panel_rect, panel, max_val,
                             ) {
                                 if new_ctrl.0 != start_x || new_ctrl.1 != start_y {
                                     // 读取当前 shape，按端别更新对应分量
@@ -583,7 +592,7 @@ pub(crate) fn handle_automation_interaction(
                 // 合并到现有 shape 后生成覆盖 lane。
                 lane.and_then(|l| {
                     let new_ctrl = compute_ctrl_from_mouse(
-                        l, prev_tick, p, ppu, scroll_x, grid_area, panel_rect, panel, max_val,
+                        l, prev_tick, which, p, ppu, scroll_x, grid_area, panel_rect, panel, max_val,
                     )?;
                     // 读现有 shape，按端别替换对应分量
                     let new_shape = l.events.iter()
@@ -613,13 +622,13 @@ pub(crate) fn handle_automation_interaction(
                 lane.and_then(|l| {
                     let (p, _, _) = mouse_info?;
                     let new_ctrl = compute_ctrl_from_mouse(
-                        l, prev_tick, p, ppu, scroll_x, grid_area, panel_rect, panel, max_val,
+                        l, prev_tick, which, p, ppu, scroll_x, grid_area, panel_rect, panel, max_val,
                     )?;
                     let (x1, y1, x2, y2) = l.events.iter()
                         .find(|e| e.tick == prev_tick)
                         .map(|e| match e.shape {
                             SegmentShape::Curve { x1, y1, x2, y2 } => (x1, y1, x2, y2),
-                            SegmentShape::Step => (0.0, 0.0, 1.0, 1.0),
+                            SegmentShape::Step => (0.0, 0.0, 0.0, 0.0),
                         })?;
                     let (x1, y1, x2, y2) = match which {
                         CtrlEnd::Out => (new_ctrl.0, new_ctrl.1, x2, y2),
