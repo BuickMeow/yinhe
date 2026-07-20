@@ -484,13 +484,38 @@ fn sd_line(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>) -> f32 {
 ///   B'(u) = 3(1-u)²·(p1-p0) + 6(1-u)u·(p2-p1) + 3u²·(p3-p2)
 ///   B''(u)= 6(1-u)·(p2-2p1+p0) + 6u·(p3-2p2+p1)
 ///
-/// Minimizes |B(u) - p|² via 6 Newton iterations on its derivative.
-/// Seeded by projecting p onto the chord p0→p3 (exact for line).
+/// 算法：8 段均匀采样找最近段 + Newton 4 次精修。
+///
+/// 为什么不用单一 chord 投影 + Newton？因为 |B(u)-p|² 是 6 次多项式，最多 3 个
+/// 局部极小。弯度大的曲线，chord 投影初值可能落到错误极小盆地，导致像素缺失、
+/// 曲线断断续续。Premiere 等软件用细分折线或解析求根避免此问题。
+///
+/// 8 段 sd_line 覆盖整个 [0,1] 区间，先粗找最近段（best_u = 段中点），
+/// 再在 best_u 附近 Newton 精修让边缘锐利。
 fn sd_bezier(p: vec2<f32>, p0: vec2<f32>, p1: vec2<f32>, p2: vec2<f32>, p3: vec2<f32>) -> f32 {
-    let chord = p3 - p0;
-    var u = clamp(dot(p - p0, chord) / max(dot(chord, chord), 1e-8), 0.0, 1.0);
+    // 8 段均匀采样：用 sd_line 计算到每段折线的距离，找最近段
+    var best_d = 1e10;
+    var best_u = 0.5;
+    var prev_u = 0.0;
+    var prev_p = p0;
+    for (var i = 1; i <= 8; i = i + 1) {
+        let u = f32(i) / 8.0;
+        let u1 = 1.0 - u;
+        let u1sq = u1 * u1;
+        let usq = u * u;
+        let cur_p = u1sq * u1 * p0 + 3.0 * u1sq * u * p1 + 3.0 * u1 * usq * p2 + usq * u * p3;
+        let d = sd_line(p, prev_p, cur_p);
+        if (d < best_d) {
+            best_d = d;
+            best_u = (prev_u + u) * 0.5;
+        }
+        prev_u = u;
+        prev_p = cur_p;
+    }
 
-    for (var i = 0; i < 6; i = i + 1) {
+    // 在最近段中点附近 Newton 精修 4 次
+    var u = best_u;
+    for (var i = 0; i < 4; i = i + 1) {
         let u1 = 1.0 - u;
         let u1sq = u1 * u1;
         let usq = u * u;
