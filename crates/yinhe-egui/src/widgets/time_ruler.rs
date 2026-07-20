@@ -17,6 +17,10 @@ pub(crate) trait TimeRulerView {
     fn pixels_per_tick(&self) -> f32;
     /// Minimum x where content (and ruler labels) should appear.
     fn content_left(&self) -> f32;
+    /// 水平缩放（围绕指定 x，x 已转换为 view 局部坐标）。
+    fn zoom_around_x(&mut self, pointer_x: f32, factor: f32);
+    /// 标记 view 为 dirty，触发重绘。
+    fn mark_dirty(&mut self);
 }
 
 impl TimeRulerView for yinhe_types::PianoRollView {
@@ -32,6 +36,12 @@ impl TimeRulerView for yinhe_types::PianoRollView {
     fn content_left(&self) -> f32 {
         self.base.left_panel_width
     }
+    fn zoom_around_x(&mut self, pointer_x: f32, factor: f32) {
+        self.zoom_around_x(pointer_x, factor);
+    }
+    fn mark_dirty(&mut self) {
+        self.base.dirty = true;
+    }
 }
 
 impl TimeRulerView for yinhe_types::ArrangementView {
@@ -46,6 +56,12 @@ impl TimeRulerView for yinhe_types::ArrangementView {
     }
     fn content_left(&self) -> f32 {
         self.base.left_panel_width
+    }
+    fn zoom_around_x(&mut self, pointer_x: f32, factor: f32) {
+        self.zoom_around_x(pointer_x, factor);
+    }
+    fn mark_dirty(&mut self) {
+        self.base.dirty = true;
     }
 }
 
@@ -84,7 +100,7 @@ fn paint_background(painter: &egui::Painter, rect: egui::Rect) {
 pub(crate) fn interactive_ruler(
     ui: &mut egui::Ui,
     ruler_rect: egui::Rect,
-    view: &impl TimeRulerView,
+    view: &mut impl TimeRulerView,
     tpb: u32,
     default_num: u8,
     default_den: u8,
@@ -120,6 +136,36 @@ pub(crate) fn interactive_ruler(
         ui.ctx().request_repaint();
         jumped = true;
     }
+
+    // ── 滚轮 / 触摸板上下滑动 → 水平缩放 ──
+    // 时间标尺专属：纯滚轮即可触发水平缩放（无需 Cmd 修饰键），
+    // 与内容区的 Cmd+滚轮 缩放语义分离，避免冲突。
+    // pinch（zoom_delta）也联动水平缩放。
+    let pointer_in_ruler = ui
+        .input(|i| i.pointer.hover_pos())
+        .is_some_and(|p| ruler_rect.contains(p));
+    if pointer_in_ruler {
+        let pointer_x_view = ui.input(|i| i.pointer.hover_pos().unwrap_or_default()).x
+            - (ruler_rect.min.x - view.content_left());
+
+        // pinch → 水平缩放
+        let zoom_delta = ui.input(|i| i.zoom_delta());
+        if (zoom_delta - 1.0).abs() > 0.001 {
+            view.zoom_around_x(pointer_x_view, zoom_delta);
+            view.mark_dirty();
+            ui.ctx().request_repaint();
+        }
+
+        // 滚轮 / 触摸板上下滑动 → 水平缩放（无需 Cmd）
+        let scroll = ui.input(|i| i.smooth_scroll_delta);
+        if scroll.y.abs() > 0.5 {
+            let factor = if scroll.y > 0.0 { 1.1 } else { 1.0 / 1.1 };
+            view.zoom_around_x(pointer_x_view, factor);
+            view.mark_dirty();
+            ui.ctx().request_repaint();
+        }
+    }
+
     jumped
 }
 
