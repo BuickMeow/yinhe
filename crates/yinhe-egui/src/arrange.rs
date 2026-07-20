@@ -64,11 +64,12 @@ pub fn show(
         ),
     );
 
-    // ── GPU area: shifted down by RULER_H, shifted up by SCROLLBAR_H to leave room for the scrollbar ──
+    // ── GPU area: shifted down by RULER_H, shifted up by SCROLLBAR_H,
+    //    shifted left by SCROLLBAR_W to leave room for the vertical scrollbar ──
     let gpu_rect = egui::Rect::from_min_max(
         egui::pos2(arr_rect.min.x + tp_w + 4.0, arr_rect.min.y + RULER_H),
         egui::pos2(
-            arr_rect.max.x,
+            arr_rect.max.x - crate::widgets::scrollbar::SCROLLBAR_W,
             arr_rect.max.y - crate::widgets::scrollbar::SCROLLBAR_H,
         ),
     );
@@ -84,10 +85,11 @@ pub fn show(
     arr_view.clamp_scroll(gpu_rect.width(), gpu_rect.height(), total_ticks, num_tracks);
 
     // ── Ruler: top-right band, drawn with parent painter ──
+    //    ruler 右边界对齐 gpu_rect.max.x，让出垂直滚动条空间
     {
         let ruler_rect = egui::Rect::from_min_max(
             egui::pos2(arr_rect.min.x + tp_w + 4.0, arr_rect.min.y),
-            egui::pos2(arr_rect.max.x, arr_rect.min.y + RULER_H),
+            egui::pos2(gpu_rect.max.x, arr_rect.min.y + RULER_H),
         );
         let model = &doc.data.model;
         let tpb = model.meta.ppq;
@@ -269,10 +271,11 @@ pub fn show(
     });
 
     // ── Horizontal scrollbar (right of track panel, below GPU content) ──
+    //    让出右下角 SCROLLBAR_W × SCROLLBAR_H 给垂直滚动条+水平滚动条的交叠区
     {
         let sb_rect = egui::Rect::from_min_max(
             egui::pos2(arr_rect.min.x + tp_w + 4.0, gpu_rect.max.y),
-            egui::pos2(arr_rect.max.x, arr_rect.max.y),
+            egui::pos2(gpu_rect.max.x, arr_rect.max.y),
         );
         crate::widgets::scrollbar::show(
             ui,
@@ -283,6 +286,30 @@ pub fn show(
             total_ticks,
             &mut arr_view.base.dirty,
         );
+    }
+
+    // ── Vertical scrollbar (right of GPU content, full AR height minus ruler) ──
+    //    像素空间：total_pixels = num_tracks * lane_height
+    {
+        let vsb_rect = egui::Rect::from_min_max(
+            egui::pos2(gpu_rect.max.x, arr_rect.min.y + RULER_H),
+            egui::pos2(arr_rect.max.x, gpu_rect.max.y),
+        );
+        // 快照 lane_height 避免 borrow 冲突
+        let total_pixels = num_tracks as f32 * arr_view.lane_height;
+        ui.push_id("arr_vscroll", |ui| {
+            crate::widgets::scrollbar::show_vertical(
+                ui,
+                vsb_rect,
+                gpu_rect.height(),
+                &mut arr_view.base.scroll_y,
+                &mut arr_view.lane_height,
+                total_pixels,
+                16.0,
+                120.0,
+                &mut arr_view.base.dirty,
+            );
+        });
     }
 
     // ── AR quantize button in the top-left corner (left of ruler, above track panel) ──

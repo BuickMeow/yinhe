@@ -241,9 +241,11 @@ pub fn show_panels(
         let panel_h = orig_heights[i];
         let panel_top = y_offset;
         let panel_bottom = y_offset + panel_h;
+        // 右边界让出 SCROLLBAR_W 给垂直滚动条
+        let panel_right = content_rect_right - crate::widgets::scrollbar::SCROLLBAR_W;
         let panel_rect = egui::Rect::from_min_max(
             egui::pos2(0.0, panel_top),
-            egui::pos2(content_rect_right, panel_bottom),
+            egui::pos2(panel_right, panel_bottom),
         );
 
         // Skip heavy rendering for panels entirely outside the visible area
@@ -548,6 +550,29 @@ pub fn show_panels(
                     content_changed,
                 );
             }
+        }
+
+        // ── 垂直滚动条（值空间） ──
+        // 占用面板右侧 SCROLLBAR_W 宽度。仅在 visible_range < upper_bound 时显示。
+        // tempo 模式下 upper_bound 是 TEMPO_UPPER_BOUND；其他模式用 max_value()。
+        {
+            let vsb_rect = egui::Rect::from_min_max(
+                egui::pos2(panel_right, panel_top),
+                egui::pos2(content_rect_right, panel_bottom),
+            );
+            ui.push_id(format!("auto_vscroll_{}", i), |ui| {
+                crate::widgets::scrollbar::show_vertical_value(
+                    ui,
+                    vsb_rect,
+                    panel.panel_height,
+                    &mut panel.value_scroll,
+                    &mut panel.value_zoom,
+                    upper_bound,
+                    zoom_min,
+                    8.0,
+                    &mut panel.dirty,
+                );
+            });
         }
 
         // ── Left side: target selector + display mode buttons ──

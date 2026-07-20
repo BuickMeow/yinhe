@@ -109,18 +109,21 @@ pub fn show(
     let panels_max_h = (avail_h * 0.65).max(0.0);
     let panels_total_h = panels_natural_h.min(panels_max_h);
 
+    // 内容右边界：让出 SCROLLBAR_W 给垂直滚动条
+    let content_right_x = rect.max.x - crate::widgets::scrollbar::SCROLLBAR_W;
+
     // Layout: ruler | pianoroll content | automation panels | scrollbar
     let ruler_band_y = rect.min.y;
     let content_y = rect.min.y + RULER_H;
     let content_h = (avail_h - panels_total_h).max(0.0);
     let content_rect = egui::Rect::from_min_max(
         egui::pos2(rect.min.x, content_y),
-        egui::pos2(rect.max.x, content_y + content_h),
+        egui::pos2(content_right_x, content_y + content_h),
     );
     let kb_w = view.keyboard_width();
     let music_rect = egui::Rect::from_min_max(
         egui::pos2(rect.min.x + kb_w, content_y),
-        egui::pos2(rect.max.x, content_y + content_h),
+        egui::pos2(content_right_x, content_y + content_h),
     );
     let ppp = ui.ctx().pixels_per_point();
     let w = content_rect.width() as u32;
@@ -720,7 +723,7 @@ pub fn show(
     {
         let ruler_rect = egui::Rect::from_min_max(
             egui::pos2(rect.min.x + view.keyboard_width(), ruler_band_y),
-            egui::pos2(rect.max.x, ruler_band_y + RULER_H),
+            egui::pos2(content_right_x, ruler_band_y + RULER_H),
         );
         let (def_num, def_den) = midi.time_sig_default();
         let sig_events = midi.time_sig_events();
@@ -783,7 +786,7 @@ pub fn show(
             combo_w,
             view.base.scroll_x,
             view.base.pixels_per_tick,
-            rect.max.x,
+            content_right_x,
             panels_y,
             panels_total_h,
             midi.and_then(|m| m.ticks_per_beat()),
@@ -848,7 +851,7 @@ pub fn show(
     let sb_y = rect.min.y + rect.height() - crate::widgets::scrollbar::SCROLLBAR_H;
     let sb_rect = egui::Rect::from_min_max(
         egui::pos2(rect.min.x + kb_w, sb_y),
-        egui::pos2(rect.max.x, sb_y + crate::widgets::scrollbar::SCROLLBAR_H),
+        egui::pos2(content_right_x, sb_y + crate::widgets::scrollbar::SCROLLBAR_H),
     );
 
     ui.push_id("piano_scrollbar", |ui| {
@@ -862,6 +865,32 @@ pub fn show(
             &mut view.base.dirty,
         );
     });
+
+    // ── Vertical scrollbar ──
+    // PR 像素空间：total_pixels = 128 * key_height。
+    // 仅当 max_scroll_y > 0（即 key_height 放大致使 128 键超出视口）时显示。
+    {
+        let vsb_rect = egui::Rect::from_min_max(
+            egui::pos2(content_right_x, content_y),
+            egui::pos2(rect.max.x, sb_y),
+        );
+        // 快照 key_height 避免 borrow 冲突
+        let total_pixels = 128.0 * view.key_height;
+        let cell_min = content_rect.height() / 128.0;
+        ui.push_id("piano_vscroll", |ui| {
+            crate::widgets::scrollbar::show_vertical(
+                ui,
+                vsb_rect,
+                content_rect.height(),
+                &mut view.base.scroll_y,
+                &mut view.key_height,
+                total_pixels,
+                cell_min,
+                60.0,
+                &mut view.base.dirty,
+            );
+        });
+    }
 
     // ── Perf probe: submit per-frame sample ──
     if let (Some(t0), Some(t1), Some(t2), Some(t3)) =

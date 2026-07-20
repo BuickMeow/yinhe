@@ -2,6 +2,8 @@
 pub const TITLE_BAR_H: f32 = 32.0;
 pub const RULER_H: f32 = 24.0;
 pub const SCROLLBAR_H: f32 = 24.0;
+/// 垂直滚动条宽度（与水平滚动条高度一致，对称设计）。
+pub const SCROLLBAR_W: f32 = 24.0;
 pub const SPLIT_GAP: f32 = 4.0;
 pub const MODE_LABEL_FONT: f32 = 9.5;
 pub const TRANSPORT_BTN_SIZE: f32 = 32.0;
