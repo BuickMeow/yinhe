@@ -5,9 +5,10 @@ use crate::TimelineViewBase;
 #[derive(Clone, Debug)]
 pub struct ArrangementView {
     /// Shared horizontal timeline state.
+    ///
+    /// Lane height (AR vertical scale) is `base.track_panel_row_height`,
+    /// the single source of truth shared with the track panel.
     pub base: TimelineViewBase,
-    /// Height of each track lane in pixels.
-    pub lane_height: f32,
 }
 
 impl Default for ArrangementView {
@@ -22,8 +23,15 @@ impl Default for ArrangementView {
                 track_panel_row_height: 40.0,
                 track_panel_scroll_y: 0.0,
             },
-            lane_height: 40.0,
         }
+    }
+}
+
+impl ArrangementView {
+    /// Lane height in pixels (single source of truth shared with the track panel).
+    #[inline]
+    pub fn lane_height(&self) -> f32 {
+        self.base.track_panel_row_height
     }
 }
 
@@ -42,7 +50,7 @@ impl ArrangementView {
 
     /// Get the screen y coordinate for a track lane.
     pub fn lane_y(&self, track_idx: usize) -> f32 {
-        track_idx as f32 * self.lane_height - self.base.scroll_y
+        track_idx as f32 * self.lane_height() - self.base.scroll_y
     }
 
     /// The tick range visible on screen.
@@ -53,7 +61,7 @@ impl ArrangementView {
 
     /// The track range visible on screen.
     pub fn visible_track_range(&self, height: f32, num_tracks: usize) -> (usize, usize) {
-        Self::visible_track_range_static(self.base.scroll_y, height, self.lane_height, num_tracks)
+        Self::visible_track_range_static(self.base.scroll_y, height, self.lane_height(), num_tracks)
     }
 
     /// Static version of `visible_track_range` — no view reference needed.
@@ -84,7 +92,7 @@ impl ArrangementView {
         self.base.clamp_scroll_x(width, total_ticks);
 
         // Vertical
-        let max_scroll_y = (num_tracks as f32 * self.lane_height - height).max(0.0);
+        let max_scroll_y = (num_tracks as f32 * self.lane_height() - height).max(0.0);
         self.base.scroll_y = self.base.scroll_y.clamp(0.0, max_scroll_y);
 
         if old_x != self.base.scroll_x || old_y != self.base.scroll_y {
@@ -100,12 +108,12 @@ impl ArrangementView {
 
     /// Zoom lane height around a pointer y position (vertical).
     pub fn zoom_lane_height(&mut self, pointer_y: f32, factor: f32) {
-        let old = self.lane_height;
-        self.lane_height = (self.lane_height * factor).clamp(16.0, 120.0);
-        self.base.track_panel_row_height = self.lane_height;
+        let old = self.lane_height();
+        let new_h = (old * factor).clamp(16.0, 120.0);
+        self.base.track_panel_row_height = new_h;
 
         let track_frac = (pointer_y + self.base.scroll_y) / old;
-        self.base.scroll_y = track_frac * self.lane_height - pointer_y;
+        self.base.scroll_y = track_frac * new_h - pointer_y;
         self.base.scroll_y = self.base.scroll_y.max(0.0);
         self.base.dirty = true;
     }
@@ -118,7 +126,7 @@ impl ArrangementView {
             self.base.scroll_x,
             self.base.scroll_y,
             self.base.left_panel_width,
-            self.lane_height,
+            self.lane_height(),
         ])
     }
 }

@@ -109,7 +109,7 @@ pub(crate) fn show(
         let text_x = badge_rect.max.x + 6.0;
         let track_num_text = format!("{:03}", ti.index);
 
-        if show_details && *row_height >= 30.0 {
+        if show_details {
             let font = egui::FontId::proportional((*row_height * 0.25).clamp(8.0, 13.0));
 
             painter.text(

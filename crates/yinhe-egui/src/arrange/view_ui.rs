@@ -127,7 +127,7 @@ pub fn show(
         track_count, // AR notes now use track_colors uniform for coloring
         sel_rect_count: 0, // unused in AR mode
         note_outline: 1, // AR mode: outline always on
-        lane_height: view.lane_height, // AR: per-track lane height
+        lane_height: view.lane_height(), // AR: per-track lane height
         value_zoom: 0.0, // AR unused (automation panel only)
         value_scroll: 0.0, // AR unused (automation panel only)
     };
@@ -239,7 +239,7 @@ pub fn show(
         0.0,
         egui::Color32::from_rgb((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8),
     );
-    let lh = view.lane_height;
+    let lh = view.lane_height();
     let scroll_y = view.base.scroll_y;
     let num_tracks = track_visible.len();
     if num_tracks > 0 {
@@ -309,7 +309,7 @@ pub fn show(
 
     // Draw persisted selection rect (remains after mouse release).
     if let Some((t_start, t_end, track_lo, track_hi)) = *arr_sel_rect {
-        let lh = view.lane_height;
+        let lh = view.lane_height();
         let scroll_y = view.base.scroll_y;
         let view_sy = track_lo as f32 * lh - scroll_y;
         let view_ey = (track_hi as f32 + 1.0) * lh - scroll_y;
@@ -330,7 +330,7 @@ pub fn show(
         if let Some((start_music, end)) = drag {
             let start_pixel = egui::pos2(
                 view.tick_to_x(start_music.0),
-                start_music.1 * view.lane_height - view.base.scroll_y,
+                start_music.1 * view.lane_height() - view.base.scroll_y,
             );
             if (end - start_pixel).length() >= 3.0 {
                 if let Some((vx, vy, vw, vh, _, _, _, _)) =
@@ -367,7 +367,7 @@ pub fn show(
     // Clamp scroll after input and check for haptic boundary
     view.clamp_scroll(w as f32, h as f32, total_ticks, num_tracks);
     let max_sx = (total_ticks as f32 * view.base.pixels_per_tick - (w as f32 - view.base.left_panel_width)).max(0.0);
-    let max_sy = (num_tracks as f32 * view.lane_height - h as f32).max(0.0);
+    let max_sy = (num_tracks as f32 * view.lane_height() - h as f32).max(0.0);
     crate::view_interaction::notify_haptic_boundary(
         yinhe_haptic::HapticSlot::Arrangement,
         pre_scroll_x,
@@ -382,7 +382,7 @@ pub fn show(
     crate::view_interaction::notify_haptic_zoom(
         yinhe_haptic::HapticSlot::Arrangement,
         view.base.pixels_per_tick,
-        view.lane_height,
+        view.lane_height(),
         0.001,
         10.0,
         16.0,
@@ -467,7 +467,7 @@ fn sel_drag_frame_arrange(
     let inside_sel_rect = if let Some((t_start, t_end, track_lo, track_hi)) = *arr_sel_rect {
         pointer.hover_pos().is_some_and(|pos| {
             let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
-            let lh = view.lane_height;
+            let lh = view.lane_height();
             let scroll_y = view.base.scroll_y;
             let sy = track_lo as f32 * lh - scroll_y;
             let ey = (track_hi as f32 + 1.0) * lh - scroll_y;
@@ -495,7 +495,7 @@ fn sel_drag_frame_arrange(
     {
         let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
         let click_tick = view.x_to_tick(local.x);
-        let click_track_f = (local.y + view.base.scroll_y) / view.lane_height;
+        let click_track_f = (local.y + view.base.scroll_y) / view.lane_height();
 
         if inside_sel_rect && !cmd {
             // Start move-drag of existing selection
@@ -507,7 +507,7 @@ fn sel_drag_frame_arrange(
             drag = None;
         } else {
             // Start new selection marquee
-            let start_track_y = (local.y + view.base.scroll_y) / view.lane_height;
+            let start_track_y = (local.y + view.base.scroll_y) / view.lane_height();
             drag = Some(((click_tick, start_track_y), local));
             *arr_sel_rect = None;
             if !cmd {
@@ -522,11 +522,11 @@ fn sel_drag_frame_arrange(
             if let Some(pos) = pointer.hover_pos() {
                 let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
                 let current_tick = view.x_to_tick(local.x);
-                let current_track_f = (local.y + view.base.scroll_y) / view.lane_height;
+                let current_track_f = (local.y + view.base.scroll_y) / view.lane_height();
                 move_drag = Some((origin, (current_tick, current_track_f)));
 
                 // Auto-scroll when dragging near the edge
-                let lane_height = view.lane_height;
+                let lh = view.lane_height();
                 crate::selection::drag::auto_scroll_on_drag(
                     ui,
                     &mut view.base,
@@ -534,7 +534,7 @@ fn sel_drag_frame_arrange(
                     pos,
                     |base, w, h| {
                         base.clamp_scroll_x(w, total_ticks);
-                        let max_scroll_y = (num_tracks as f32 * lane_height - h).max(0.0);
+                        let max_scroll_y = (num_tracks as f32 * lh - h).max(0.0);
                         base.scroll_y = base.scroll_y.clamp(0.0, max_scroll_y);
                     },
                 );
@@ -553,7 +553,7 @@ fn sel_drag_frame_arrange(
             let dtr = (current_tr - origin_tr).round() as i32;
 
             // Compute drag_rect (offset selection rect) for display
-            let lh = view.lane_height;
+            let lh = view.lane_height();
             let scroll_y = view.base.scroll_y;
             let new_track_lo = (track_lo as i32 + dtr).max(0) as usize;
             let new_track_hi = (track_hi as i32 + dtr).max(0) as usize;
@@ -648,7 +648,7 @@ fn sel_drag_frame_arrange(
                 );
                 drag = Some((start_music, local));
 
-                let lane_height = view.lane_height;
+                let lh = view.lane_height();
                 crate::selection::drag::auto_scroll_on_drag(
                     ui,
                     &mut view.base,
@@ -656,7 +656,7 @@ fn sel_drag_frame_arrange(
                     pos,
                     |base, w, h| {
                         base.clamp_scroll_x(w, total_ticks);
-                        let max_scroll_y = (num_tracks as f32 * lane_height - h).max(0.0);
+                        let max_scroll_y = (num_tracks as f32 * lh - h).max(0.0);
                         base.scroll_y = base.scroll_y.clamp(0.0, max_scroll_y);
                     },
                 );
@@ -665,7 +665,7 @@ fn sel_drag_frame_arrange(
 
         let start_pixel = egui::pos2(
             view.tick_to_x(start_music.0),
-            start_music.1 * view.lane_height - view.base.scroll_y,
+            start_music.1 * view.lane_height() - view.base.scroll_y,
         );
 
         // Compute marquee drag_rect (BEFORE release, same pattern as move-drag)
@@ -769,7 +769,7 @@ fn eraser_drag_frame_arrange(
     {
         let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
         let start_tick = view.x_to_tick(local.x);
-        let start_track_f = (local.y + view.base.scroll_y) / view.lane_height;
+        let start_track_f = (local.y + view.base.scroll_y) / view.lane_height();
         drag = Some(((start_tick, start_track_f), local));
         *arr_eraser_rect = None;
     }
@@ -785,12 +785,12 @@ fn eraser_drag_frame_arrange(
                 );
                 drag = Some((start_music, local));
 
-                let lane_height = view.lane_height;
+                let lh = view.lane_height();
                 crate::selection::drag::auto_scroll_on_drag(
                     ui, &mut view.base, content_rect, pos,
                     |base, w, h| {
                         base.clamp_scroll_x(w, total_ticks);
-                        let max_scroll_y = (num_tracks as f32 * lane_height - h).max(0.0);
+                        let max_scroll_y = (num_tracks as f32 * lh - h).max(0.0);
                         base.scroll_y = base.scroll_y.clamp(0.0, max_scroll_y);
                     },
                 );
@@ -799,7 +799,7 @@ fn eraser_drag_frame_arrange(
 
         let start_pixel = egui::pos2(
             view.tick_to_x(start_music.0),
-            start_music.1 * view.lane_height - view.base.scroll_y,
+            start_music.1 * view.lane_height() - view.base.scroll_y,
         );
 
         // Release → compute snapped bounds, set eraser rect
@@ -851,7 +851,7 @@ fn arrange_snapped_bounds(
         t_end = t_start + interval.max(1.0);
     }
 
-    let lh = view.lane_height;
+    let lh = view.lane_height();
     let scroll_y = view.base.scroll_y;
     let track_lo_raw = ((scroll_y + sy) / lh).floor().max(0.0) as usize;
     let track_hi_raw = ((scroll_y + ey) / lh).floor().max(0.0) as usize;
@@ -873,4 +873,3 @@ fn arrange_snapped_bounds(
 
     Some((view_sx, view_ex, view_sy, view_ey, t_start, t_end, track_lo, track_hi))
 }
-
