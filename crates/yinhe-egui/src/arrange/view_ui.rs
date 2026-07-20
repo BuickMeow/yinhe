@@ -333,13 +333,15 @@ pub fn show(
                 start_music.1 * view.lane_height - view.base.scroll_y,
             );
             if (end - start_pixel).length() >= 3.0 {
-                let (vx, vy, vw, vh, _, _, _, _) =
-                    arrange_snapped_bounds(start_pixel, end, view, quantize, ppq, bar_line_data);
-                let snapped = egui::Rect::from_min_max(
-                    egui::pos2(vx.min(vy), vw.min(vh)),
-                    egui::pos2(vx.max(vy), vw.max(vh)),
-                );
-                crate::selection::draw::draw(&ui.painter(), rect, snapped, egui::Color32::RED, egui::Color32::RED);
+                if let Some((vx, vy, vw, vh, _, _, _, _)) =
+                    arrange_snapped_bounds(start_pixel, end, view, quantize, ppq, bar_line_data, num_tracks)
+                {
+                    let snapped = egui::Rect::from_min_max(
+                        egui::pos2(vx.min(vy), vw.min(vh)),
+                        egui::pos2(vx.max(vy), vw.max(vh)),
+                    );
+                    crate::selection::draw::draw(&ui.painter(), rect, snapped, egui::Color32::RED, egui::Color32::RED);
+                }
             }
         }
     }
@@ -669,12 +671,14 @@ fn sel_drag_frame_arrange(
         // Compute marquee drag_rect (BEFORE release, same pattern as move-drag)
         if let Some((_, end)) = drag {
             if (end - start_pixel).length() >= 3.0 {
-                let (vx, vy, vw, vh, _, _, _, _) =
-                    arrange_snapped_bounds(start_pixel, end, view, quantize, ppq, bar_line_data);
-                drag_rect = Some(egui::Rect::from_min_max(
-                    egui::pos2(vx.min(vy), vw.min(vh)),
-                    egui::pos2(vx.max(vy), vw.max(vh)),
-                ));
+                if let Some((vx, vy, vw, vh, _, _, _, _)) =
+                    arrange_snapped_bounds(start_pixel, end, view, quantize, ppq, bar_line_data, num_tracks)
+                {
+                    drag_rect = Some(egui::Rect::from_min_max(
+                        egui::pos2(vx.min(vy), vw.min(vh)),
+                        egui::pos2(vx.max(vy), vw.max(vh)),
+                    ));
+                }
             }
         }
 
@@ -699,22 +703,19 @@ fn sel_drag_frame_arrange(
                         *info_content = Some(crate::right_panel::InfoContent::Track);
                     }
                 } else {
-                    let (
-                        _screen_sx,
-                        _screen_ex,
-                        _screen_sy,
-                        _screen_ey,
-                        t_start,
-                        t_end,
-                        track_lo,
-                        track_hi,
-                    ) = arrange_snapped_bounds(start_pixel, end, view, quantize, ppq, bar_line_data);
-
-                    if !cmd {
+                    if let Some((_, _, _, _, t_start, t_end, track_lo, track_hi)) =
+                        arrange_snapped_bounds(start_pixel, end, view, quantize, ppq, bar_line_data, num_tracks)
+                    {
+                        if !cmd {
+                            selected.clear();
+                        }
+                        selected.add_rect_track(t_start as u32, t_end as u32, 0, 127, track_lo as u16, track_hi as u16);
+                        *arr_sel_rect = Some((t_start, t_end, track_lo, track_hi));
+                    } else if !cmd {
+                        // 选框完全在空白区域：清空选区
                         selected.clear();
+                        *arr_sel_rect = None;
                     }
-                    selected.add_rect_track(t_start as u32, t_end as u32, 0, 127, track_lo as u16, track_hi as u16);
-                    *arr_sel_rect = Some((t_start, t_end, track_lo, track_hi));
                 }
                 view.base.dirty = true;
             }
@@ -805,9 +806,11 @@ fn eraser_drag_frame_arrange(
         if pointer.primary_released() {
             if let Some((_, end)) = drag {
                 if (end - start_pixel).length() >= 3.0 {
-                    let (_, _, _, _, t_start, t_end, track_lo, track_hi) =
-                        arrange_snapped_bounds(start_pixel, end, view, quantize, ppq, bar_line_data);
-                    *arr_eraser_rect = Some((t_start, t_end, track_lo, track_hi));
+                    if let Some((_, _, _, _, t_start, t_end, track_lo, track_hi)) =
+                        arrange_snapped_bounds(start_pixel, end, view, quantize, ppq, bar_line_data, num_tracks)
+                    {
+                        *arr_eraser_rect = Some((t_start, t_end, track_lo, track_hi));
+                    }
                 }
                 view.base.dirty = true;
             }
@@ -828,7 +831,8 @@ fn arrange_snapped_bounds(
     quantize: QuantizePreset,
     ppq: u32,
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
-) -> (f32, f32, f32, f32, f64, f64, usize, usize) {
+    num_tracks: usize,
+) -> Option<(f32, f32, f32, f32, f64, f64, usize, usize)> {
     let sx = start.x.min(end.x);
     let ex = start.x.max(end.x);
     let sy = start.y.min(end.y);
@@ -849,8 +853,17 @@ fn arrange_snapped_bounds(
 
     let lh = view.lane_height;
     let scroll_y = view.base.scroll_y;
-    let track_lo = ((scroll_y + sy) / lh).floor().max(0.0) as usize;
-    let track_hi = ((scroll_y + ey) / lh).floor().max(0.0) as usize;
+    let track_lo_raw = ((scroll_y + sy) / lh).floor().max(0.0) as usize;
+    let track_hi_raw = ((scroll_y + ey) / lh).floor().max(0.0) as usize;
+
+    // 边界判断：选框必须与实际音轨区域有重叠，否则不纳入选择范围。
+    // track_lo_raw >= num_tracks 表示选框完全在音轨区域下方（空白处）。
+    if num_tracks == 0 || track_lo_raw >= num_tracks {
+        return None;
+    }
+    // track_hi clamp 到最后一个音轨索引，避免越界选区。
+    let track_lo = track_lo_raw;
+    let track_hi = track_hi_raw.min(num_tracks - 1);
 
     let view_sy = track_lo as f32 * lh - scroll_y;
     let view_ey = (track_hi as f32 + 1.0) * lh - scroll_y;
@@ -858,8 +871,6 @@ fn arrange_snapped_bounds(
     let view_sx = view.tick_to_x(t_start);
     let view_ex = view.tick_to_x(t_end);
 
-    (
-        view_sx, view_ex, view_sy, view_ey, t_start, t_end, track_lo, track_hi,
-    )
+    Some((view_sx, view_ex, view_sy, view_ey, t_start, t_end, track_lo, track_hi))
 }
 
