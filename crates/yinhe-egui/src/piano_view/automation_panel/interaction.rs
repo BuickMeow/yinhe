@@ -449,6 +449,11 @@ pub(crate) fn handle_automation_interaction(
                                         tick: prev_tick,
                                         shape: new_shape,
                                     });
+                                    // 构造 ghost 用于本帧渲染（防止松手瞬间旧曲线闪现）
+                                    // 与 MoveAnchor 同样的修复模式：release 这一帧 Layer 1 还未
+                                    // 用新 shape 重建，需用 ghost 覆盖该 lane 一帧。
+                                    let override_lane = build_lane_shape_override(l, prev_tick, new_shape);
+                                    return (edits, Some(AutomationGhost::Move { lane: override_lane, color: track_color }), None, None);
                                 }
                             }
                         }
