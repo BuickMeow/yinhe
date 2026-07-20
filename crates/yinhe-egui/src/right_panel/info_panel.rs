@@ -29,7 +29,7 @@ pub fn show(
         return false;
     };
 
-    // 记录初始 revision：编辑 automation / shape / tension 后会 bump_revision，
+    // 记录初始 revision：编辑 automation / shape / ctrl 后会 bump_revision，
     // 退出时若发现 revision 变了就通知音频线程 reload。
     let rev_before = doc.data.revision;
     let port_changed = render(ui, doc, audio, info_content, automation_drag_ghost);
@@ -651,79 +651,34 @@ fn show_anchor_info(
         }
     });
 
-    // ── Tension（仅 Curve 模式下显示） ──
-    if let SegmentShape::Curve { tension } = shape {
-        let tension_focus_id = ui.id().with("info_anchor_tension_focus");
-        let before_tension_id = ui.id().with("info_anchor_before_tension_events");
-        let mut edit_tension = tension;
-        ui.horizontal(|ui| {
-            ui.label(
-                egui::RichText::new("Tension:")
-                    .size(11.0)
-                    .color(egui::Color32::GRAY),
-            );
-            let resp = ui.add(
-                egui::DragValue::new(&mut edit_tension)
-                    .range(-1.0..=1.0)
-                    .speed(0.02)
-                    .fixed_decimals(2),
-            );
-
-            let gained = resp.gained_focus();
-            let lost = resp.lost_focus();
-            if gained {
-                let before = snapshot_lane_events(doc, track_idx, lane_idx, target);
-                ui.ctx().data_mut(|d| {
-                    d.insert_temp(before_tension_id, before);
-                    d.insert_temp(tension_focus_id, true);
-                });
-            }
-            if resp.changed() && edit_tension != tension {
-                let _action = doc.set_automation_shape(
-                    track_idx as usize,
-                    lane_idx,
-                    target,
-                    tick,
-                    SegmentShape::Curve { tension: edit_tension },
-                );
-            }
-            if lost {
-                let before = ui.ctx().data(|d| d.get_temp::<Vec<AutomationEvent>>(before_tension_id));
-                if let Some(before) = before {
-                    let after = snapshot_lane_events(doc, track_idx, lane_idx, target);
-                    if before != after {
-                        doc.history.push(UndoEntry {
-                            action: UndoAction::Automation(AutomationDelta {
-                                track_idx: track_idx as usize,
-                                lane_idx,
-                                target: target.clone(),
-                                before,
-                                after,
-                            }),
-                            label: "Edit automation anchor tension",
-                            selected: doc.edit.selected.clone(),
-                            track_selected: doc.edit.track_selected.clone(),
-                            sel_rect: doc.edit.sel_rect.clone(),
-                        });
-                    }
-                }
-                ui.ctx().data_mut(|d| {
-                    d.remove::<Vec<AutomationEvent>>(before_tension_id);
-                    d.remove::<bool>(tension_focus_id);
-                });
-            }
-        });
+    // ── Ctrl X / Ctrl Y（仅 Curve 模式下显示） ──
+    // 二次贝塞尔归一化控制点位置：ctrl=(0.5, 0.5) 为直线，拉满时逼近直角。
+    if let SegmentShape::Curve { ctrl_x, ctrl_y } = shape {
+        let focus_base = ui.id().with("info_anchor_ctrl_focus");
+        let before_base = ui.id().with("info_anchor_before_ctrl_events");
+        dragvalue_curve_ctrl(
+            ui, "Ctrl X:", ctrl_x,
+            focus_base.with("x"), before_base.with("x"),
+            doc, track_idx, lane_idx, target, tick,
+            ctrl_y, true, "Edit automation anchor ctrl_x",
+        );
+        ui.add_space(2.0);
+        dragvalue_curve_ctrl(
+            ui, "Ctrl Y:", ctrl_y,
+            focus_base.with("y"), before_base.with("y"),
+            doc, track_idx, lane_idx, target, tick,
+            ctrl_x, false, "Edit automation anchor ctrl_y",
+        );
+        ui.add_space(6.0);
     }
 
     let shape_desc = match shape {
         SegmentShape::Step => "离散 (Step) — 值在下一个锚点前保持恒定",
-        SegmentShape::Curve { tension } => {
-            if tension == 0.0 {
+        SegmentShape::Curve { .. } => {
+            if shape.is_linear() {
                 "曲线 (Linear) — 线性插值"
-            } else if tension > 0.0 {
-                "曲线 (缓入) — 加速变化"
             } else {
-                "曲线 (缓出) — 减速变化"
+                "曲线 (Bézier) — 拖动锚点间的空心圆调整曲率"
             }
         }
     };
@@ -777,6 +732,95 @@ fn snapshot_lane_events(
             .map(|l| l.events.clone())
             .unwrap_or_default()
     }
+}
+
+/// Curve 控制点 DragValue 编辑器（ctrl_x 或 ctrl_y）。
+///
+/// 共享 Tick/Value 的 focus/before/after undo 模式：
+/// - gained_focus → 记录 before
+/// - changed      → 实时 set_automation_shape（拖动时持续生效）
+/// - lost_focus   → 比较 after 与 before，差异时 push undo
+///
+/// `other_ctrl` 为另一个 ctrl 分量的当前值，用于构造完整 `SegmentShape::Curve`。
+/// `is_ctrl_x == true` 编辑 ctrl_x，否则编辑 ctrl_y。
+fn dragvalue_curve_ctrl(
+    ui: &mut egui::Ui,
+    label: &str,
+    current: f32,
+    focus_id: egui::Id,
+    before_id: egui::Id,
+    doc: &mut Document,
+    track_idx: u16,
+    lane_idx: usize,
+    target: &AutomationTarget,
+    tick: u32,
+    other_ctrl: f32,
+    is_ctrl_x: bool,
+    undo_label: &'static str,
+) {
+    let mut edit = current;
+    ui.horizontal(|ui| {
+        ui.label(
+            egui::RichText::new(label)
+                .size(11.0)
+                .color(egui::Color32::GRAY),
+        );
+        let resp = ui.add(
+            egui::DragValue::new(&mut edit)
+                .range(0.0..=1.0)
+                .speed(0.02)
+                .fixed_decimals(2),
+        );
+
+        let gained = resp.gained_focus();
+        let lost = resp.lost_focus();
+        if gained {
+            let before = snapshot_lane_events(doc, track_idx, lane_idx, target);
+            ui.ctx().data_mut(|d| {
+                d.insert_temp(before_id, before);
+                d.insert_temp(focus_id, true);
+            });
+        }
+        if resp.changed() && edit != current {
+            let new_shape = if is_ctrl_x {
+                SegmentShape::Curve { ctrl_x: edit, ctrl_y: other_ctrl }
+            } else {
+                SegmentShape::Curve { ctrl_x: other_ctrl, ctrl_y: edit }
+            };
+            let _action = doc.set_automation_shape(
+                track_idx as usize,
+                lane_idx,
+                target,
+                tick,
+                new_shape,
+            );
+        }
+        if lost {
+            let before = ui.ctx().data(|d| d.get_temp::<Vec<AutomationEvent>>(before_id));
+            if let Some(before) = before {
+                let after = snapshot_lane_events(doc, track_idx, lane_idx, target);
+                if before != after {
+                    doc.history.push(UndoEntry {
+                        action: UndoAction::Automation(AutomationDelta {
+                            track_idx: track_idx as usize,
+                            lane_idx,
+                            target: target.clone(),
+                            before,
+                            after,
+                        }),
+                        label: undo_label,
+                        selected: doc.edit.selected.clone(),
+                        track_selected: doc.edit.track_selected.clone(),
+                        sel_rect: doc.edit.sel_rect.clone(),
+                    });
+                }
+            }
+            ui.ctx().data_mut(|d| {
+                d.remove::<Vec<AutomationEvent>>(before_id);
+                d.remove::<bool>(focus_id);
+            });
+        }
+    });
 }
 
 /// Compute the per-track skip mask and send it to the audio engine.

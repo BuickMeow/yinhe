@@ -44,13 +44,13 @@ struct VelocityBarInstance {
     @location(0) data: vec4<u32>,  // x=tick, y=length, z=packed(track|velocity), w=reserved
 }
 
-/// Curve/line/anchor instance (32 bytes).
+/// Curve/line/anchor instance (36 bytes).
 /// See `CurveInstance` in vertex.rs for the CPU-side layout.
 struct CurveInstance {
     @location(0) endp: vec4<f32>,    // (x1, y1, x2, y2)
-    @location(1) params: vec2<f32>,  // (thickness, tension_norm)
+    @location(1) params: vec3<f32>,  // (thickness, ctrl_x, ctrl_y)
     @location(2) rgba: u32,          // UNORM8: R|G<<8|B<<16|A<<24
-    @location(3) shape: u32,         // 0 = line/curve, 1 = filled circle
+    @location(3) shape: u32,         // 0 = bezier, 1 = filled circle, 2 = filled square, 3 = hollow circle
 }
 
 struct CurveOutput {
@@ -59,7 +59,7 @@ struct CurveOutput {
     @location(1) p1: vec2<f32>,
     @location(2) p2: vec2<f32>,
     @location(3) thickness: f32,
-    @location(4) tension: f32,
+    @location(4) ctrl: vec2<f32>,      // (ctrl_x, ctrl_y)
     @location(5) color: vec4<f32>,
     @location(6) shape: u32,
 }
@@ -476,40 +476,35 @@ fn sd_line(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>) -> f32 {
     return length(pa - ba * h);
 }
 
-/// Distance from point `p` to the parametric curve
-///   P(t) = (a.x + dx·t,  a.y + dy·f(t))
-/// where  f(t) = k·t² + (1-k)·t,   t ∈ [0, 1].
+/// Distance from point `p` to the quadratic Bézier curve `(a, b, c)`.
 ///
-/// Uses 4 Newton iterations on d/dt[|P(t)-p|²] = 0, seeded by projecting p
-/// onto the linear segment. The seed is exact for k=0; for k≠0 four Newton
-/// steps are well within visual tolerance for any automation curve.
-fn sd_curve(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>, k: f32) -> f32 {
-    let dx = b.x - a.x;
-    let dy = b.y - a.y;
-    let ba = b - a;
-    var t = clamp(dot(p - a, ba) / max(dot(ba, ba), 1e-8), 0.0, 1.0);
+///   B(u) = (1-u)²·a + 2(1-u)u·b + u²·c,   u ∈ [0, 1]
+///   B'(u) = 2(1-u)·(b-a) + 2u·(c-b)
+///   B''(u) = 2·(a - 2b + c)
+///
+/// Minimizes |B(u) - p|² via 6 Newton iterations on its derivative.
+/// Seeded by projecting p onto the chord a→c (exact when b is on the chord).
+fn sd_bezier(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>, c: vec2<f32>) -> f32 {
+    let chord = c - a;
+    var u = clamp(dot(p - a, chord) / max(dot(chord, chord), 1e-8), 0.0, 1.0);
 
-    // f(t)  = k·t² + (1-k)·t
-    // f'(t) = 2k·t + (1-k)
-    // P'(t) = (dx, dy·f'(t))
-    // P''(t)= (0, dy·2k)
-    // g(t)  = (P(t)-p) · P'(t) = 0
-    // g'(t) = P'(t)·P'(t) + (P(t)-p)·P''(t)
-    for (var i = 0; i < 4; i = i + 1) {
-        let ft = k * t * t + (1.0 - k) * t;
-        let fpt = 2.0 * k * t + (1.0 - k);
-        let rx = a.x + dx * t - p.x;
-        let ry = a.y + dy * ft - p.y;
-        let px_dt = dx;
-        let py_dt = dy * fpt;
-        let g = rx * px_dt + ry * py_dt;
-        let g_dt = px_dt * px_dt + py_dt * py_dt + ry * (dy * 2.0 * k);
-        t = t - g / max(g_dt, 1e-6);
-        t = clamp(t, 0.0, 1.0);
+    for (var i = 0; i < 6; i = i + 1) {
+        let u1 = 1.0 - u;
+        let bu = u1 * u1 * a + 2.0 * u1 * u * b + u * u * c;
+        let du = 2.0 * u1 * (b - a) + 2.0 * u * (c - b);
+        let ddu = 2.0 * (a - 2.0 * b + c);
+        let f = bu - p;
+        // g(u)  = d/du |f|² = 2 · f · f'
+        // g'(u) = 2 · (f'·f' + f·f'')
+        let g = dot(f, du);
+        let g_dt = 2.0 * (dot(du, du) + dot(f, ddu));
+        u = u - g / max(g_dt, 1e-6);
+        u = clamp(u, 0.0, 1.0);
     }
 
-    let ft = k * t * t + (1.0 - k) * t;
-    return length(p - vec2<f32>(a.x + dx * t, a.y + dy * ft));
+    let u1 = 1.0 - u;
+    let bu = u1 * u1 * a + 2.0 * u1 * u * b + u * u * c;
+    return length(bu - p);
 }
 
 @vertex
@@ -517,14 +512,20 @@ fn vs_main_curve(
     @builtin(vertex_index) vertex_index: u32,
     instance: CurveInstance,
 ) -> CurveOutput {
-    // Bounding box: AABB of endpoints, padded by thickness + 1px AA.
-    // For circle (shape==1), endpoints collapse to the center; AABB is then
-    // center ± (radius + 1), which is exactly what we want.
+    let p1 = instance.endp.xy;  // P0
+    let p2 = instance.endp.zw;  // P2
+    // 控制点绝对位置（归一化 ctrl_x/ctrl_y → 屏幕坐标）
+    let ctrl_pt = vec2<f32>(
+        p1.x + (p2.x - p1.x) * instance.params.y,
+        p1.y + (p2.y - p1.y) * instance.params.z,
+    );
+
+    // AABB 包含 P0, P2, 控制点（对 circle/square/hollow，P0==P2 且 ctrl_pt 落在 P0）
     let pad = instance.params.x + 1.0;
-    let min_x = min(instance.endp.x, instance.endp.z) - pad;
-    let max_x = max(instance.endp.x, instance.endp.z) + pad;
-    let min_y = min(instance.endp.y, instance.endp.w) - pad;
-    let max_y = max(instance.endp.y, instance.endp.w) + pad;
+    let min_x = min(min(p1.x, p2.x), ctrl_pt.x) - pad;
+    let max_x = max(max(p1.x, p2.x), ctrl_pt.x) + pad;
+    let min_y = min(min(p1.y, p2.y), ctrl_pt.y) - pad;
+    let max_y = max(max(p1.y, p2.y), ctrl_pt.y) + pad;
 
     var pos = array<vec2<f32>, 6>(
         vec2<f32>(max_x, min_y),
@@ -543,10 +544,10 @@ fn vs_main_curve(
     var out: CurveOutput;
     out.clip_position = vec4<f32>(ndc_x, ndc_y, 0.0, 1.0);
     out.local = p;
-    out.p1 = instance.endp.xy;
-    out.p2 = instance.endp.zw;
+    out.p1 = p1;
+    out.p2 = p2;
     out.thickness = instance.params.x;
-    out.tension = instance.params.y;
+    out.ctrl = instance.params.yz;
     out.shape = instance.shape;
 
     let rgba = instance.rgba;
@@ -567,12 +568,30 @@ fn fs_main_curve(in: CurveOutput) -> @location(0) vec4<f32> {
     if (in.shape == 1u) {
         // Filled circle: distance from center minus radius.
         d = length(p - in.p1) - in.thickness;
-    } else if (abs(in.tension) > 1e-4) {
-        // Quadratic curve.
-        d = sd_curve(p, in.p1, in.p2, in.tension);
+    } else if (in.shape == 2u) {
+        // Filled square (axis-aligned box SDF).
+        let q = abs(p - in.p1) - in.thickness;
+        d = length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0);
+    } else if (in.shape == 3u) {
+        // Hollow circle (ring): outer radius = thickness, ring width = 1.5px.
+        let r = length(p - in.p1);
+        let ring_width = 1.5;
+        let inner = in.thickness - ring_width;
+        d = max(r - in.thickness, inner - r);
     } else {
-        // Straight line (tension ≈ 0).
-        d = sd_line(p, in.p1, in.p2);
+        // shape == 0: bezier curve segment.
+        let is_linear = abs(in.ctrl.x - 0.5) < 1e-4 && abs(in.ctrl.y - 0.5) < 1e-4;
+        if (is_linear) {
+            // Straight line fast path.
+            d = sd_line(p, in.p1, in.p2);
+        } else {
+            // Quadratic Bézier. Reconstruct control point in screen space.
+            let ctrl_pt = vec2<f32>(
+                in.p1.x + (in.p2.x - in.p1.x) * in.ctrl.x,
+                in.p1.y + (in.p2.y - in.p1.y) * in.ctrl.y,
+            );
+            d = sd_bezier(p, in.p1, ctrl_pt, in.p2);
+        }
     }
 
     // 1px anti-aliased stroke around `thickness`.

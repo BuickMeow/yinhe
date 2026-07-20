@@ -232,7 +232,7 @@ impl Document {
                     self.move_automation_event(track_idx as usize, lane_idx, &target, old_tick, new_tick, new_value)
                 }
                 AutomationEdit::CycleShape { track_idx, lane_idx, target, tick } => {
-                    // Step ↔ Curve{tension:0}
+                    // Step ↔ Curve 直线（ctrl=(0.5, 0.5)）
                     let lane = if matches!(target, yinhe_types::AutomationTarget::Tempo) {
                         Some(&self.data.model.conductor.tempo)
                     } else {
@@ -242,13 +242,19 @@ impl Document {
                     let evt = lane.and_then(|l| l.events.iter().find(|e| e.tick == tick));
                     if let Some(evt) = evt {
                         let next = match evt.shape {
-                            yinhe_types::SegmentShape::Step => yinhe_types::SegmentShape::Curve { tension: 0.0 },
+                            yinhe_types::SegmentShape::Step => yinhe_types::SegmentShape::Curve {
+                                ctrl_x: yinhe_types::SegmentShape::LINEAR_CTRL_X,
+                                ctrl_y: yinhe_types::SegmentShape::LINEAR_CTRL_Y,
+                            },
                             yinhe_types::SegmentShape::Curve { .. } => yinhe_types::SegmentShape::Step,
                         };
                         self.set_automation_shape(track_idx as usize, lane_idx, &target, tick, next)
                     } else {
                         None
                     }
+                }
+                AutomationEdit::SetShape { track_idx, lane_idx, target, tick, shape } => {
+                    self.set_automation_shape(track_idx as usize, lane_idx, &target, tick, shape)
                 }
                 AutomationEdit::Delete { track_idx, lane_idx, target, tick } => {
                     self.delete_automation_event(track_idx as usize, lane_idx, &target, tick)

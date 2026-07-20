@@ -1,13 +1,15 @@
 use yinhe_types::AutomationPanelView;
 use yinhe_theme::GpuTheme;
-use yinhe_types::{AutomationLane, SegmentShape, TRACK_PALETTE};
+use yinhe_types::{AutomationEvent, AutomationLane, SegmentShape, TRACK_PALETTE};
 use crate::vertex::CurveInstance;
 
 /// 自动化曲线的线宽（SDF 半宽，像素）。视觉宽度 ≈ 2×thickness + 1px AA。
 /// 0.5 ≈ 原 1px 矩形拟合的视觉宽度，但带 AA 抗锯齿。
 const LINE_THICKNESS: f32 = 0.5;
-/// 锚点（pencil 工具下显示）的半径，像素。
+/// 锚点（pencil 工具下显示）的半径/半边长，像素。
 const ANCHOR_RADIUS: f32 = 3.0;
+/// 贝塞尔控制点（空心圆）外半径，像素。
+const CTRL_POINT_RADIUS: f32 = 4.0;
 /// 自动化线段的不透明度。
 const LINE_ALPHA: f32 = 0.85;
 
@@ -148,9 +150,10 @@ pub fn build_data_lines(
             render_segment(out, seg.x1, seg.y1, seg.x2, seg.y2, seg.shape, color);
         }
 
-        // 画锚点
+        // 画锚点 + 曲线段的控制点
         if show_anchors {
             let visible_events = lane.events_in_range(pad_start, pad_end);
+            // 锚点形状按 shape 分派：Step → 方形，Curve → 圆形
             for evt in visible_events {
                 let x = x_offset + evt.tick as f32 * ppu;
                 let y = view.value_to_y(evt.value, max_val);
@@ -160,8 +163,15 @@ pub fn build_data_lines(
                 } else {
                     [color[0], color[1], color[2], 1.0]
                 };
-                out.push(CurveInstance::circle(x, y, ANCHOR_RADIUS, anchor_color));
+                match evt.shape {
+                    SegmentShape::Step => out.push(CurveInstance::square(x, y, ANCHOR_RADIUS, anchor_color)),
+                    SegmentShape::Curve { .. } => out.push(CurveInstance::circle(x, y, ANCHOR_RADIUS, anchor_color)),
+                }
             }
+            // 曲线段中间的空心控制点（仅 Curve 段，非直线时才画）
+            // 控制点位置 = P0 + (P2-P0) * ctrl
+            // 由于段是前一个事件 → 当前事件，shape 取前一个事件的 shape
+            push_curve_control_points(out, lane, &visible_events, view, max_val, x_offset, ppu, color);
         }
     }
 }
@@ -197,15 +207,62 @@ pub(crate) fn build_lane_instances(
         for evt in visible_events {
             let x = x_offset + evt.tick as f32 * ppu;
             let y = view.value_to_y(evt.value, max_val);
-            out.push(CurveInstance::circle(x, y, ANCHOR_RADIUS, [color[0], color[1], color[2], 1.0]));
+            let anchor_color = [color[0], color[1], color[2], 1.0];
+            match evt.shape {
+                SegmentShape::Step => out.push(CurveInstance::square(x, y, ANCHOR_RADIUS, anchor_color)),
+                SegmentShape::Curve { .. } => out.push(CurveInstance::circle(x, y, ANCHOR_RADIUS, anchor_color)),
+            }
         }
+        push_curve_control_points(out, lane, &visible_events, view, max_val, x_offset, ppu, color);
+    }
+}
+
+/// 为 lane 中每个 Curve 段（前一个事件 → 当前事件，shape=Curve 且非直线）
+/// 在控制点位置画一个空心圆。
+///
+/// 段的 shape 取自前一个事件（包括 chase 段的虚拟前驱）。控制点位置：
+///   ctrl_pt = P0 + (P2 - P0) * (ctrl_x, ctrl_y)
+fn push_curve_control_points(
+    out: &mut Vec<CurveInstance>,
+    lane: &AutomationLane,
+    visible_events: &[AutomationEvent],
+    view: &AutomationPanelView,
+    max_val: f32,
+    x_offset: f32,
+    ppu: f32,
+    color: [f32; 3],
+) {
+    let ctrl_color = [color[0], color[1], color[2], 1.0];
+    // 前驱事件（visible 之前最后一个事件，作为 chase 段的起点）
+    let first_tick = visible_events.first().map(|e| e.tick).unwrap_or(0);
+    let prev_idx = lane.events.partition_point(|e| e.tick < first_tick);
+    let mut prev: Option<&AutomationEvent> = if prev_idx > 0 {
+        Some(&lane.events[prev_idx - 1])
+    } else {
+        None
+    };
+    for evt in visible_events {
+        if let Some(p) = prev
+            && let SegmentShape::Curve { ctrl_x, ctrl_y } = p.shape
+            && !p.shape.is_linear()
+        {
+            // 段 p → evt
+            let x0 = x_offset + p.tick as f32 * ppu;
+            let y0 = view.value_to_y(p.value, max_val);
+            let x1 = x_offset + evt.tick as f32 * ppu;
+            let y1 = view.value_to_y(evt.value, max_val);
+            let cx = x0 + (x1 - x0) * ctrl_x;
+            let cy = y0 + (y1 - y0) * ctrl_y;
+            out.push(CurveInstance::hollow_circle(cx, cy, CTRL_POINT_RADIUS, ctrl_color));
+        }
+        prev = Some(evt);
     }
 }
 
 /// 渲染从 `(x1, y1)` 到 `(x2, y2)` 的一段自动化曲线，按 shape 决定形状。
 ///
 /// - `Step` → push 两个 line instance：水平段 + 竖直跳变段
-/// - `Curve{tension}` → push 一个 curve instance（tension=0 时退化为直线）
+/// - `Curve{ctrl_x, ctrl_y}` → push 一个 bezier instance（ctrl=(0.5, 0.5) 时退化为直线）
 fn render_segment(
     out: &mut Vec<CurveInstance>,
     x1: f32,
@@ -235,10 +292,10 @@ fn render_segment(
                 out.push(CurveInstance::line(x2, y1, x2, y2, LINE_THICKNESS, line_color));
             }
         }
-        SegmentShape::Curve { tension } => {
-            // tension=0 → 直线；tension≠0 → 二次曲线。统一用一个 curve instance。
-            out.push(CurveInstance::curve(
-                x1, y1, x2, y2, LINE_THICKNESS, tension, line_color,
+        SegmentShape::Curve { ctrl_x, ctrl_y } => {
+            // ctrl=(0.5, 0.5) → 直线；否则 → 二次贝塞尔。统一用一个 bezier instance。
+            out.push(CurveInstance::bezier(
+                x1, y1, x2, y2, LINE_THICKNESS, ctrl_x, ctrl_y, line_color,
             ));
         }
     }

@@ -2,7 +2,7 @@ use super::data_lines;
 use super::prepare::AutomationGhost;
 use yinhe_types::AutomationPanelView;
 use yinhe_theme::GpuTheme;
-use yinhe_types::{AutomationEvent, AutomationLane};
+use yinhe_types::{AutomationEvent, AutomationLane, SegmentShape};
 use crate::vertex::CurveInstance;
 
 /// ghost 锚点半径（像素）。
@@ -54,6 +54,26 @@ pub fn build_lane_override(
     }
 }
 
+/// 构造一条覆盖后的 lane：把 `prev_tick` 处事件的 shape 改为 `new_shape`。
+///
+/// 用于控制点拖拽 ghost：被拖段的前驱事件 shape 临时更新，
+/// 其余事件保持不变。如果 `prev_tick` 不存在，返回原 lane 的克隆。
+pub fn build_lane_shape_override(
+    lane: &AutomationLane,
+    prev_tick: u32,
+    new_shape: SegmentShape,
+) -> AutomationLane {
+    let mut events = lane.events.clone();
+    if let Some(evt) = events.iter_mut().find(|e| e.tick == prev_tick) {
+        evt.shape = new_shape;
+    }
+    AutomationLane {
+        target: lane.target.clone(),
+        track: lane.track,
+        events,
+    }
+}
+
 /// Build ghost preview instances (layer 2, rebuilt every frame).
 ///
 /// `AutomationGhost` 坐标为 panel 局部像素坐标。
@@ -80,7 +100,7 @@ pub fn build_ghost(
         }
         AutomationGhost::Curve { start_x, start_y, cur_x, cur_y, color } => {
             push_anchor(out, start_x, start_y, color);
-            // 直线预览：从 start 到 cur，tension=0
+            // 直线预览：从 start 到 cur（line 即 ctrl=(0.5,0.5) 的退化贝塞尔）
             out.push(CurveInstance::line(
                 start_x, start_y, cur_x, cur_y, GHOST_LINE_THICKNESS,
                 [color[0], color[1], color[2], GHOST_ALPHA],

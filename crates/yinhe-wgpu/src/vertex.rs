@@ -124,22 +124,27 @@ impl VelocityBarInstance {
     }
 }
 
-/// Curve/line/anchor instance: 32 bytes.
+/// Curve/line/anchor instance: 36 bytes.
 ///
 /// One instance renders one of:
-/// - **Line/curve segment** (`shape == 0`): parameterized curve whose x is
-///   linear in t and y follows `f(t) = k·t² + (1-k)·t` (k = tension_norm).
-///   - `tension == 0.0` → straight line (shader fast path via `sd_line`)
-///   - `tension != 0.0` → quadratic curve (shader numerically solves nearest t)
+/// - **Bezier curve segment** (`shape == 0`): quadratic Bézier from (x1,y1)
+///   to (x2,y2) with control point at `(x1 + (x2-x1)*ctrl_x, y1 + (y2-y1)*ctrl_y)`
+///   in normalized space. `ctrl_x = ctrl_y = 0.5` → straight line (shader fast
+///   path via `sd_line`).
 ///   For `SegmentShape::Step`, CPU pushes **two** instances: a horizontal
 ///   segment (y1→y1) plus a vertical segment (x2,x2 with y1→y2).
-/// - **Filled circle** (`shape == 1`): anchor point at (x1, y1) with
-///   `thickness` = radius. `x2/y2/tension` ignored.
+/// - **Filled circle** (`shape == 1`): Curve 锚点 at (x1, y1) with
+///   `thickness` = radius. `x2/y2/ctrl_*` ignored.
+/// - **Filled square** (`shape == 2`): Step 锚点 at (x1, y1) with
+///   `thickness` = half-size. `x2/y2/ctrl_*` ignored.
+/// - **Hollow circle** (`shape == 3`): 贝塞尔控制点 at (x1, y1) with
+///   `thickness` = outer radius. `x2/y2/ctrl_*` ignored.
 ///
 /// Layout (matches `vs_main_curve` in shader.wgsl):
 ///   - `@location(0)`: Float32x4 = (x1, y1, x2, y2)
-///   - `@location(1)`: Float32x4 = (thickness, tension_norm, shape, _)
+///   - `@location(1)`: Float32x3 = (thickness, ctrl_x, ctrl_y)
 ///   - `@location(2)`: Uint32    = rgba UNORM8 (R|G<<8|B<<16|A<<24)
+///   - `@location(3)`: Uint32    = shape tag
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct CurveInstance {
@@ -148,10 +153,12 @@ pub struct CurveInstance {
     pub x2: f32,
     pub y2: f32,
     pub thickness: f32,
-    /// 归一化张力 ∈ [-1, 1]，0.0 = 直线。circle 时忽略。
-    pub tension: f32,
+    /// 控制点 x 归一化位置 ∈ [0, 1]（0.5 = 中点）。仅 shape==0 时使用。
+    pub ctrl_x: f32,
+    /// 控制点 y 归一化位置（0.5 = 中点，直线）。仅 shape==0 时使用。
+    pub ctrl_y: f32,
     pub rgba_packed: u32,
-    /// 0 = line/curve segment, 1 = filled circle (anchor).
+    /// 0 = bezier curve, 1 = filled circle, 2 = filled square, 3 = hollow circle.
     pub shape: u32,
 }
 
@@ -161,22 +168,24 @@ impl CurveInstance {
         CurveInstance {
             x1, y1, x2, y2,
             thickness,
-            tension: 0.0,
+            ctrl_x: 0.5,
+            ctrl_y: 0.5,
             rgba_packed: pack_rgba(color[0], color[1], color[2], color[3]),
             shape: 0,
         }
     }
 
-    /// Construct a quadratic-curve segment instance.
-    /// `tension` ∈ [-1, 1] (0.0 = straight line).
-    pub fn curve(
+    /// Construct a quadratic Bézier segment instance.
+    /// `ctrl_x`, `ctrl_y` ∈ [0, 1] 是控制点在归一化空间中的位置（0.5 = 中点 = 直线）。
+    pub fn bezier(
         x1: f32, y1: f32, x2: f32, y2: f32,
-        thickness: f32, tension: f32, color: [f32; 4],
+        thickness: f32, ctrl_x: f32, ctrl_y: f32, color: [f32; 4],
     ) -> Self {
         CurveInstance {
             x1, y1, x2, y2,
             thickness,
-            tension,
+            ctrl_x,
+            ctrl_y,
             rgba_packed: pack_rgba(color[0], color[1], color[2], color[3]),
             shape: 0,
         }
@@ -188,9 +197,37 @@ impl CurveInstance {
             x1: cx, y1: cy,
             x2: cx, y2: cy,  // AABB collapses to a single point; pad handles the rest
             thickness: radius,
-            tension: 0.0,
+            ctrl_x: 0.5,
+            ctrl_y: 0.5,
             rgba_packed: pack_rgba(color[0], color[1], color[2], color[3]),
             shape: 1,
+        }
+    }
+
+    /// Construct a filled-square anchor instance at `(cx, cy)` with `half_size`.
+    pub fn square(cx: f32, cy: f32, half_size: f32, color: [f32; 4]) -> Self {
+        CurveInstance {
+            x1: cx, y1: cy,
+            x2: cx, y2: cy,
+            thickness: half_size,
+            ctrl_x: 0.5,
+            ctrl_y: 0.5,
+            rgba_packed: pack_rgba(color[0], color[1], color[2], color[3]),
+            shape: 2,
+        }
+    }
+
+    /// Construct a hollow-circle (ring) instance at `(cx, cy)` with outer `radius`.
+    /// 内环厚度固定为 1px（由 shader 处理）。
+    pub fn hollow_circle(cx: f32, cy: f32, radius: f32, color: [f32; 4]) -> Self {
+        CurveInstance {
+            x1: cx, y1: cy,
+            x2: cx, y2: cy,
+            thickness: radius,
+            ctrl_x: 0.5,
+            ctrl_y: 0.5,
+            rgba_packed: pack_rgba(color[0], color[1], color[2], color[3]),
+            shape: 3,
         }
     }
 }
@@ -299,7 +336,8 @@ mod tests {
         assert_eq!(std::mem::size_of::<DrawInstance>(), 32);
         assert_eq!(std::mem::size_of::<NoteInstance>(), 16);
         assert_eq!(std::mem::size_of::<VelocityBarInstance>(), 16);
-        assert_eq!(std::mem::size_of::<CurveInstance>(), 32);
+        // 4×f32 (endp) + 3×f32 (params) + u32 (rgba) + u32 (shape) = 16+12+4+4 = 36
+        assert_eq!(std::mem::size_of::<CurveInstance>(), 36);
     }
 
     #[test]

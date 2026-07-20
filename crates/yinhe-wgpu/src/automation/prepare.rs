@@ -47,7 +47,10 @@ fn hash_lane(lane: &AutomationLane) -> u64 {
         h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(e.value.to_bits() as u64);
         let shape_bits = match e.shape {
             SegmentShape::Step => 0u64,
-            SegmentShape::Curve { tension } => 1 + (tension.to_bits() as u64),
+            SegmentShape::Curve { ctrl_x, ctrl_y } => {
+                1 + (ctrl_x.to_bits() as u64).wrapping_mul(0x9e3779b97f4a7c15)
+                  .wrapping_add(ctrl_y.to_bits() as u64)
+            }
         };
         h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(shape_bits);
     }
