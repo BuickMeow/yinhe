@@ -512,8 +512,11 @@ pub fn show_panels(
                     egui::Color32::from_rgb((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8),
                 );
                 // Center line (only for targets that have one)
-                if let Some(lane) = lanes.first() {
-                    let target = &lane.target;
+                // 直接基于 panel.selected_target 判断，不依赖 lanes 是否非空：
+                // 即使该 target 没有任何锚点事件（lanes 为空），中线也应照常显示。
+                // velocity 模式下不画中线（velocity 没有 center 概念）。
+                if !panel.show_velocity {
+                    let target = &panel.selected_target;
                     let max_val = target.max_value();
                     if max_val > 0.0 && target.has_center_line() {
                         let center_val = target.default_value();
