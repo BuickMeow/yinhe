@@ -155,7 +155,22 @@ impl Document {
                     raw_dst as usize
                 };
                 if dst_track_idx == lm.src_track {
-                    continue; // clamped to same track, events already in source lane
+                    // 被夹回原轨：phase 1 已把被拖事件从源 lane 剔除（换成 remaining），
+                    // 必须把它们加回源 lane，否则事件蒸发。补一个 AutomationDelta
+                    // 记录这次"加回"，使 undo/redo 双向一致。
+                    let src_track = Arc::make_mut(&mut model.tracks[lm.src_track]);
+                    let src_lane = &mut src_track.automation_lanes[lm.lane_idx];
+                    let before_readd = src_lane.events.clone();
+                    src_lane.events.extend(lm.events.iter().copied());
+                    src_lane.events.sort_by_key(|e| e.tick);
+                    sub_actions.push(UndoAction::Automation(AutomationDelta {
+                        track_idx: lm.src_track,
+                        lane_idx: lm.lane_idx,
+                        target: lm.target.clone(),
+                        before: before_readd,
+                        after: src_lane.events.clone(),
+                    }));
+                    continue;
                 }
                 let dst_track = Arc::make_mut(&mut model.tracks[dst_track_idx]);
                 let dst_lane_idx = match dst_track.automation_lanes.iter().position(|l| l.target == lm.target) {

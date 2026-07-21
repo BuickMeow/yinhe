@@ -491,4 +491,67 @@ mod tests {
         assert_eq!(doc.model().tracks.len(), 16);
         assert_eq!(doc.model().note_count, 0, "redo 后音符应再次清零");
     }
+
+    /// 回归测试：跨轨拖 automation 被 clamp 回原轨时事件不能蒸发。
+    /// 之前 arrange_move.rs:157 在 dst==src 时 continue，但 phase 1 已把
+    /// 被拖事件从源 lane 剔除，导致事件彻底丢失。修复后会把事件加回源 lane。
+    #[test]
+    fn arrange_move_automation_clamped_to_source_preserves_events() {
+        use crate::edit_state::SelRectState;
+        use crate::history::UndoEntry;
+        use std::collections::HashSet;
+        use yinhe_core::Selection;
+        use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, SegmentShape};
+
+        let mut doc = Document::empty();
+        // conductor 在 track 0，给 track 1 加一条 CC7 lane，含 2 个事件
+        {
+            let model = Arc::make_mut(&mut doc.data.model);
+            let track = Arc::make_mut(&mut model.tracks[1]);
+            track.automation_lanes.push(AutomationLane {
+                target: AutomationTarget::CC { controller: 7 },
+                track: 1,
+                events: vec![
+                    AutomationEvent { tick: 0, value: 64.0, shape: SegmentShape::Step },
+                    AutomationEvent { tick: 480, value: 80.0, shape: SegmentShape::Step },
+                ],
+            });
+        }
+
+        // 选区覆盖 track 1 的 tick 0..481（半开区间，包含 tick 0 和 480 两个事件）
+        doc.edit.selected = Selection::default();
+        doc.edit.selected.add_rect_track(0, 481, 0, 127, 1, 1);
+
+        // 跨轨上移 1：raw_dst=0 是 conductor，被 clamp 回 track 1
+        let action = doc.move_selected_arrange(100, -1)
+            .expect("move_selected_arrange should return an action");
+        doc.history.push(UndoEntry {
+            action,
+            label: "arrange_move",
+            selected: Default::default(),
+            track_selected: HashSet::new(),
+            sel_rect: SelRectState::default(),
+        });
+
+        // 关键断言：事件不能蒸发，应该在 track 1 的 CC7 lane 里
+        let lane = &doc.model().tracks[1].automation_lanes[0];
+        assert_eq!(lane.events.len(), 2, "事件数量必须保持 2（bug 修复点：之前变 0）");
+        // delta_ticks=100 已应用
+        assert_eq!(lane.events[0].tick, 100, "第一个事件 tick 应偏移 +100");
+        assert_eq!(lane.events[1].tick, 580, "第二个事件 tick 应偏移 +100");
+
+        // Undo：事件回到原 tick
+        assert!(doc.undo());
+        let lane = &doc.model().tracks[1].automation_lanes[0];
+        assert_eq!(lane.events.len(), 2, "undo 后事件数量仍为 2");
+        assert_eq!(lane.events[0].tick, 0, "undo 后第一个事件回到 tick 0");
+        assert_eq!(lane.events[1].tick, 480, "undo 后第二个事件回到 tick 480");
+
+        // Redo：事件再次偏移
+        assert!(doc.redo());
+        let lane = &doc.model().tracks[1].automation_lanes[0];
+        assert_eq!(lane.events.len(), 2, "redo 后事件数量仍为 2");
+        assert_eq!(lane.events[0].tick, 100);
+        assert_eq!(lane.events[1].tick, 580);
+    }
 }
