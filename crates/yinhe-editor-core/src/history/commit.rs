@@ -237,15 +237,18 @@ pub fn commit_description(
 }
 
 /// Commit a PPQ edit.
+///
+/// `rescale` = true 表示此次 PPQ 变更同时 rescale 了所有音符/automation 的 tick，
+/// undo/redo 需要反向 rescale 还原。
 pub fn commit_ppq(
     stack: &mut UndoStack, pending: &mut PendingEdits, id: u64,
-    new_value: u32,
+    new_value: u32, rescale: bool,
     selected: Selection, track_selected: HashSet<u16>, sel_rect: SelRectState,
 ) {
     commit_field(
         stack, pending, id, new_value,
         |s| s.parse().unwrap_or(480),
-        |old, new| UndoAction::ProjectPpq { old, new },
+        |old, new| UndoAction::ProjectPpq { old, new, rescale },
         "Edit PPQ", selected, track_selected, sel_rect,
     );
 }

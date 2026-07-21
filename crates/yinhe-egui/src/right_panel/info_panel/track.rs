@@ -103,12 +103,8 @@ pub(super) fn show_track_info(
     }
 
     let Some(&track_idx) = doc.edit.track_selected.iter().next() else {
-        ui.add_space(8.0);
-        ui.label(
-            egui::RichText::new("（未选中音轨）")
-                .color(egui::Color32::from_gray(100))
-                .size(12.0),
-        );
+        // 未选中音轨 → 回退到项目设置（由父级 None 分支处理）。
+        *info_content = None;
         return false;
     };
     let track_idx = track_idx as usize;
@@ -131,11 +127,11 @@ pub(super) fn show_track_info(
         );
         ui.add_space(8.0);
 
-        if !doc.data.project_name.is_empty() {
+        if !doc.data.model.meta.name.is_empty() {
             ui.horizontal(|ui| {
                 ui.label("歌曲标题:");
                 ui.label(
-                    egui::RichText::new(&doc.data.project_name)
+                    egui::RichText::new(&doc.data.model.meta.name)
                         .color(egui::Color32::from_gray(200))
                         .size(13.0),
                 );

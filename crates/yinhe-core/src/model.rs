@@ -601,6 +601,76 @@ impl YinModel {
             .unwrap_or(0)
             > 0
     }
+
+    /// Change PPQ and rescale all tick data to preserve absolute timing.
+    ///
+    /// Scales every tick-bearing field (notes, automation events, tempo events,
+    /// time signature events, program changes) by `new_ppq / old_ppq`.
+    /// For integer ratios (e.g. 480→960, ×2) the result is exact; for
+    /// non-integer ratios rounding may introduce sub-tick discrepancies.
+    ///
+    /// Sets `meta.ppq = new_ppq` and calls `rebuild()` to recompute derived
+    /// data (tempo_map, tick_length, statistics).
+    ///
+    /// O(N) where N = total notes + automation events. Triggers `Arc::make_mut`
+    /// deep-clones on every bucket that is shared with an undo snapshot.
+    pub fn rescale_ppq(&mut self, new_ppq: u32) {
+        let old_ppq = self.meta.ppq;
+        if old_ppq == new_ppq || old_ppq == 0 {
+            return;
+        }
+        let scale = new_ppq as f64 / old_ppq as f64;
+        let scale_tick = |t: u32| -> u32 {
+            let v = (t as f64 * scale).round();
+            // 防御性 clamp：避免极端输入溢出。u32::MAX 已经远超任何合理 tick。
+            if v > u32::MAX as f64 { u32::MAX } else { v as u32 }
+        };
+
+        // 1. Notes (128 buckets, parallel)
+        use rayon::prelude::*;
+        self.notes.par_iter_mut().for_each(|bucket| {
+            let bucket = Arc::make_mut(bucket);
+            for n in bucket.iter_mut() {
+                n.start_tick = scale_tick(n.start_tick);
+                n.end_tick = scale_tick(n.end_tick);
+                // 维持 end >= start 的不变量（极端 round 情况下可能相等）
+                if n.end_tick < n.start_tick {
+                    n.end_tick = n.start_tick;
+                }
+            }
+            bucket.sort_by_key(|n| n.start_tick);
+        });
+
+        // 2. Conductor: tempo events + time signature events
+        let conductor = Arc::make_mut(&mut self.conductor);
+        for ev in conductor.tempo.events.iter_mut() {
+            ev.tick = scale_tick(ev.tick);
+        }
+        conductor.tempo.events.sort_by_key(|e| e.tick);
+        for ts in conductor.time_sig.iter_mut() {
+            ts.tick = scale_tick(ts.tick);
+        }
+        conductor.time_sig.sort_by_key(|e| e.tick);
+
+        // 3. Track automation lanes + program changes
+        for track in self.tracks.iter_mut() {
+            let track = Arc::make_mut(track);
+            for lane in track.automation_lanes.iter_mut() {
+                for ev in lane.events.iter_mut() {
+                    ev.tick = scale_tick(ev.tick);
+                }
+                lane.events.sort_by_key(|e| e.tick);
+            }
+            for pc in track.program_change.iter_mut() {
+                pc.tick = scale_tick(pc.tick);
+            }
+            track.program_change.sort_by_key(|e| e.tick);
+        }
+
+        // 4. Update ppq + rebuild derived data
+        self.meta.ppq = new_ppq;
+        self.rebuild();
+    }
 }
 
 #[cfg(test)]
@@ -992,6 +1062,120 @@ mod tests {
         m.rebuild_dirty();
 
         assert_eq!(m.channel_note_count[0], 0, "删末 audible 音符后: ch 0 失活");
+    }
+
+    // -----------------------------------------------------------------------
+    // rescale_ppq 测试
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn rescale_ppq_doubles_ticks_for_integer_ratio() {
+        // 480 → 960：所有 tick ×2，整数比例，精确。
+        let per_track = vec![vec![note(0, 480, 60), note(480, 960, 64)]];
+        let mut m = YinModel {
+            tracks: vec![Arc::new(TrackData::new(0, 0))],
+            ..Default::default()
+        };
+        m.load_track_notes(per_track);
+        m.rebuild();
+        assert_eq!(m.meta.ppq, 480);
+
+        m.rescale_ppq(960);
+        assert_eq!(m.meta.ppq, 960);
+        assert_eq!(m.notes[60][0].start_tick, 0);
+        assert_eq!(m.notes[60][0].end_tick, 960);
+        assert_eq!(m.notes[64][0].start_tick, 960);
+        assert_eq!(m.notes[64][0].end_tick, 1920);
+        assert_eq!(m.tick_length, 1920);
+        assert_eq!(m.tempo_map.ticks_per_beat, 960);
+    }
+
+    #[test]
+    fn rescale_ppq_halves_ticks() {
+        // 960 → 480：所有 tick ÷2，整数比例，精确。
+        let per_track = vec![vec![note(0, 960, 60), note(960, 1920, 64)]];
+        let mut m = YinModel {
+            tracks: vec![Arc::new(TrackData::new(0, 0))],
+            meta: ProjectMeta { ppq: 960, ..Default::default() },
+            ..Default::default()
+        };
+        m.load_track_notes(per_track);
+        m.rebuild();
+
+        m.rescale_ppq(480);
+        assert_eq!(m.meta.ppq, 480);
+        assert_eq!(m.notes[60][0].start_tick, 0);
+        assert_eq!(m.notes[60][0].end_tick, 480);
+        assert_eq!(m.notes[64][0].start_tick, 480);
+        assert_eq!(m.notes[64][0].end_tick, 960);
+    }
+
+    #[test]
+    fn rescale_ppq_scales_automation_and_conductor() {
+        // 验证 conductor.tempo / time_sig / track automation / pc 的 tick 也被缩放。
+        use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, PcEvent, SegmentShape, TimeSigEvent};
+        let mut conductor = ConductorData::default();
+        conductor.tempo.events.push(AutomationEvent { tick: 480, value: 120.0, shape: SegmentShape::Step });
+        conductor.time_sig.push(TimeSigEvent { tick: 960, numerator: 4, denominator: 2 });
+
+        let mut t0 = TrackData::new(0, 0);
+        t0.automation_lanes = vec![AutomationLane {
+            target: AutomationTarget::CC { controller: 7 },
+            track: 0,
+            events: vec![AutomationEvent { tick: 240, value: 100.0, shape: SegmentShape::Step }],
+        }];
+        t0.program_change = vec![PcEvent { tick: 120, program: 5, bank_msb: 0, bank_lsb: 0 }];
+
+        let mut m = YinModel {
+            conductor: Arc::new(conductor),
+            tracks: vec![Arc::new(t0)],
+            ..Default::default()
+        };
+        m.rebuild();
+
+        m.rescale_ppq(960);
+        // 480→960: ×2
+        assert_eq!(m.conductor.tempo.events[0].tick, 960);
+        assert_eq!(m.conductor.time_sig[0].tick, 1920);
+        assert_eq!(m.tracks[0].automation_lanes[0].events[0].tick, 480);
+        assert_eq!(m.tracks[0].program_change[0].tick, 240);
+    }
+
+    #[test]
+    fn rescale_ppq_noop_when_same() {
+        let per_track = vec![vec![note(0, 480, 60)]];
+        let mut m = YinModel {
+            tracks: vec![Arc::new(TrackData::new(0, 0))],
+            ..Default::default()
+        };
+        m.load_track_notes(per_track);
+        m.rebuild();
+        let before = m.clone();
+        m.rescale_ppq(480);
+        assert_eq!(m.notes[60][0].start_tick, before.notes[60][0].start_tick);
+        assert_eq!(m.notes[60][0].end_tick, before.notes[60][0].end_tick);
+    }
+
+    #[test]
+    fn rescale_ppq_round_trip_restores_original() {
+        // 480 → 960 → 480：整数比例下 round-trip 精确还原。
+        let per_track = vec![vec![note(0, 480, 60), note(480, 960, 64)]];
+        let mut m = YinModel {
+            tracks: vec![Arc::new(TrackData::new(0, 0))],
+            ..Default::default()
+        };
+        m.load_track_notes(per_track);
+        m.rebuild();
+        let original = m.clone();
+
+        m.rescale_ppq(960);
+        m.rescale_ppq(480);
+
+        assert_eq!(m.meta.ppq, 480);
+        assert_eq!(m.notes[60][0].start_tick, original.notes[60][0].start_tick);
+        assert_eq!(m.notes[60][0].end_tick, original.notes[60][0].end_tick);
+        assert_eq!(m.notes[64][0].start_tick, original.notes[64][0].start_tick);
+        assert_eq!(m.notes[64][0].end_tick, original.notes[64][0].end_tick);
     }
 }
 

@@ -122,9 +122,9 @@ impl Document {
         let conductor_track_idx = Some(0);
 
         let data = ProjectData::new(
-            Arc::new(model),
+            Arc::new(model.clone()),
             track_names,
-            ProjectFile::default(),
+            ProjectFile::from_meta(&model.meta),
             MappingFile::default(),
         );
         let track_info_cache = data.track_info();

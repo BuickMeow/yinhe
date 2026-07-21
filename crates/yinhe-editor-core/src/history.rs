@@ -79,7 +79,7 @@ pub enum UndoAction {
     ProjectName { old: String, new: String },
     ProjectArtist { old: String, new: String },
     ProjectDescription { old: String, new: String },
-    ProjectPpq { old: u32, new: u32 },
+    ProjectPpq { old: u32, new: u32, rescale: bool },
     CompressionLevel { old: i32, new: i32 },
     /// Track structure changed (add/remove/move track).
     /// Stores full before/after track lists (metadata only, no notes) and
@@ -126,9 +126,10 @@ impl UndoAction {
                 old: new.clone(),
                 new: old.clone(),
             },
-            UndoAction::ProjectPpq { old, new } => UndoAction::ProjectPpq {
+            UndoAction::ProjectPpq { old, new, rescale } => UndoAction::ProjectPpq {
                 old: *new,
                 new: *old,
+                rescale: *rescale,
             },
             UndoAction::CompressionLevel { old, new } => UndoAction::CompressionLevel {
                 old: *new,

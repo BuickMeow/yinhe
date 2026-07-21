@@ -9,25 +9,21 @@ use yinhe_yin::{MappingFile, ProjectFile};
 ///
 /// `Arc<YinModel>` ensures snapshot clone is O(1) — actual data copy
 /// only happens on `Arc::make_mut` (copy-on-write).
+///
+/// 项目元数据（name / artist / description / ppq / compression_level）
+/// 只存一份在 `model.meta` 中，UI 直接读写，不再维护平行副本。
+/// `ProjectFile` 仅在 save/load 时与 `model.meta` 互转。
 #[derive(Clone)]
 pub struct ProjectData {
     pub model: Arc<YinModel>,
     /// Authoritative, editable track names. Mirrored into `track_info_cache`.
     pub track_names: Vec<String>,
 
-    /// The original `project.json` structure, preserved for faithful round-tripping.
+    /// The original `project.json` structure, preserved for faithful round-tripping
+    /// (保留 SoundFont 等非 meta 字段)。meta 字段在 save 时从 `model.meta` 重建。
     pub project_file: ProjectFile,
     /// The original `mapping.json` structure, preserved for faithful round-tripping.
     pub mapping_file: MappingFile,
-
-    // ── Convenience mirrors of project_file fields ──
-    // These are the editable copies used by the UI. On save, they are
-    // synced back into `project_file` before serialization.
-    pub project_name: String,
-    pub project_artist: String,
-    pub project_description: String,
-    pub project_ppq: u32,
-    pub compression_level: i32,
 
     /// Monotonic counter bumped on every YinModel mutation or snapshot restore.
     /// Used as pianoroll layer-cache key so GPU re-renders when data changes.
@@ -105,13 +101,17 @@ impl ProjectData {
         pc_map
     }
 
-    /// Sync convenience fields back into `project_file` before saving.
+    /// Sync `model.meta` back into `project_file` before saving.
+    ///
+    /// 只同步 meta 字段（name/artist/description/ppq/compression_level），
+    /// 保留 `project_file` 中的非 meta 字段（SoundFont 配置等）。
     pub fn sync_project_file(&mut self) {
-        self.project_file.name = self.project_name.clone();
-        self.project_file.artist = self.project_artist.clone();
-        self.project_file.description = self.project_description.clone();
-        self.project_file.ppq = self.project_ppq;
-        self.project_file.compression_level = self.compression_level;
+        let meta = &self.model.meta;
+        self.project_file.name = meta.name.clone();
+        self.project_file.artist = meta.artist.clone();
+        self.project_file.description = meta.description.clone();
+        self.project_file.ppq = meta.ppq;
+        self.project_file.compression_level = meta.compression_level;
     }
 
     /// Rebuild `mapping_file` from current model tracks.
@@ -126,22 +126,11 @@ impl ProjectData {
         project_file: ProjectFile,
         mapping_file: MappingFile,
     ) -> Self {
-        let project_name = project_file.name.clone();
-        let project_artist = project_file.artist.clone();
-        let project_description = project_file.description.clone();
-        let project_ppq = project_file.ppq;
-        let compression_level = project_file.compression_level;
-
         Self {
             model,
             track_names,
             project_file,
             mapping_file,
-            project_name,
-            project_artist,
-            project_description,
-            project_ppq,
-            compression_level,
             revision: 0,
         }
     }

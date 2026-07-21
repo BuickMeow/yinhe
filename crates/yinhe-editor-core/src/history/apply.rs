@@ -33,19 +33,30 @@ impl UndoAction {
                 }
             }
             UndoAction::ProjectName { old: _, new } => {
-                doc.data.project_name = new.clone();
+                let model = Arc::make_mut(&mut doc.data.model);
+                model.meta.name = new.clone();
             }
             UndoAction::ProjectArtist { old: _, new } => {
-                doc.data.project_artist = new.clone();
+                let model = Arc::make_mut(&mut doc.data.model);
+                model.meta.artist = new.clone();
             }
             UndoAction::ProjectDescription { old: _, new } => {
-                doc.data.project_description = new.clone();
+                let model = Arc::make_mut(&mut doc.data.model);
+                model.meta.description = new.clone();
             }
-            UndoAction::ProjectPpq { old: _, new } => {
-                doc.data.project_ppq = *new;
+            UndoAction::ProjectPpq { old: _, new, rescale } => {
+                let model = Arc::make_mut(&mut doc.data.model);
+                if *rescale {
+                    model.rescale_ppq(*new);
+                    doc.data.bump_revision();
+                } else {
+                    model.meta.ppq = *new;
+                    model.rebuild_tempo_map();
+                }
             }
             UndoAction::CompressionLevel { old: _, new } => {
-                doc.data.compression_level = *new;
+                let model = Arc::make_mut(&mut doc.data.model);
+                model.meta.compression_level = *new;
             }
             UndoAction::TrackStructure {
                 tracks_before: _,
