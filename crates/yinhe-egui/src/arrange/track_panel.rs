@@ -298,9 +298,14 @@ pub(crate) fn show(
                     }
                     *selection_anchor = Some(track_idx);
                 } else {
-                    // Plain click: replace selection.
-                    track_selected.clear();
-                    track_selected.insert(track_idx);
+                    // Plain click: 如果点击的音轨已是唯一选中的，则取消选择；
+                    // 否则替换选择（清除旧选择，选中此音轨）。
+                    if track_selected.len() == 1 && track_selected.contains(&track_idx) {
+                        track_selected.clear();
+                    } else {
+                        track_selected.clear();
+                        track_selected.insert(track_idx);
+                    }
                     *selection_anchor = Some(track_idx);
                 }
                 *info_content = Some(crate::right_panel::InfoContent::Track);
