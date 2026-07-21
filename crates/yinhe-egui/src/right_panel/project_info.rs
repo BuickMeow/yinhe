@@ -2,6 +2,7 @@ use eframe::egui;
 
 use yinhe_editor_core::document::Document;
 use yinhe_editor_core::history::{begin_edit, commit_project_name, commit_artist, commit_description, commit_ppq, commit_compression_level};
+use crate::app::rescale_state::{RESCALE_REQUEST_ID, RescaleRequest};
 
 /// 弹框确认 ID：PPQ 修改后是否 rescale 音符。
 const PPQ_RESCALE_DIALOG_ID: &str = "ppq_rescale_dialog";
@@ -253,31 +254,35 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
         if should_close {
             if let Some(rescale) = user_choice {
                 if rescale {
-                    // 执行 rescale（已经在 DragValue.changed() 中改了 meta.ppq，
-                    // 这里调用 rescale_ppq 会用当前 meta.ppq 作为 new_ppq）
+                    // 异步 rescale：先把 meta.ppq 还原为 old_val（子线程需要用 old_ppq
+                    // 作为基准），然后通过 ctx memory 写出请求，main_loop 检测到
+                    // 后会 clone model 并 spawn 子线程执行 rescale。
+                    // commit_ppq 在 poll.rs 检测到子线程完成后才调用。
                     let model = std::sync::Arc::make_mut(&mut doc.data.model);
-                    // rescale_ppq 用 old_ppq = 当前 meta.ppq 之前的值？
-                    // 不对：DragValue 已经把 meta.ppq 改成 new_val 了，rescale_ppq 会用 new_val 作为 old_ppq。
-                    // 需要先把 meta.ppq 还原为 old_val，再调 rescale_ppq(new_val)。
                     model.meta.ppq = old_val;
-                    model.rescale_ppq(new_val);
-                    doc.data.bump_revision();
+                    ui.ctx().data_mut(|d| d.insert_temp(
+                        egui::Id::new(RESCALE_REQUEST_ID),
+                        RescaleRequest {
+                            old_ppq: old_val,
+                            new_ppq: new_val,
+                            dragvalue_id,
+                        },
+                    ));
                 } else {
                     // 不 rescale，但要 rebuild_tempo_map（meta.ppq 已是 new_val）
                     let model = std::sync::Arc::make_mut(&mut doc.data.model);
                     model.rebuild_tempo_map();
+                    commit_ppq(
+                        &mut doc.history,
+                        &mut doc.edit.pending_edits,
+                        dragvalue_id,
+                        new_val,
+                        false,
+                        doc.edit.selected.clone(),
+                        doc.edit.track_selected.clone(),
+                        doc.edit.sel_rect.clone(),
+                    );
                 }
-                // commit undo（带 rescale 标志）
-                commit_ppq(
-                    &mut doc.history,
-                    &mut doc.edit.pending_edits,
-                    dragvalue_id,
-                    new_val,
-                    rescale,
-                    doc.edit.selected.clone(),
-                    doc.edit.track_selected.clone(),
-                    doc.edit.sel_rect.clone(),
-                );
             }
             ui.ctx().data_mut(|d| d.remove::<(u32, u32, u64)>(
                 egui::Id::new(PPQ_RESCALE_PENDING_ID),

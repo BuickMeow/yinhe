@@ -196,6 +196,9 @@ impl eframe::App for App {
         self.refresh_system_stats();
 
         // ── Poll async operations ──
+        // 先检测是否有 rescale 请求待启动（由 project_info 弹框确认后写入），
+        // 再 poll 现有异步操作（包括 rescale 完成检测）。
+        self.start_rescale_if_requested(ui.ctx());
         self.poll_async_operations();
 
         // ── Handle deferred exit ──

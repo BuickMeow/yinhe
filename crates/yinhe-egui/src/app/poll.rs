@@ -122,6 +122,9 @@ impl App {
                 }
             }
         }
+
+        // Poll async PPQ rescale completion
+        self.poll_rescale_completion();
     }
 
     /// Sync `automation_event_density` to the audio engine when it changes.

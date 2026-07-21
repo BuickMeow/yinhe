@@ -168,6 +168,13 @@ impl App {
             crate::dialogs::export::show_progress_viewport(&ctx, export_progress, cancel_flag);
         }
 
+        // ── PPQ rescale progress ──
+        if self.rescale.rx.is_some() {
+            let rescale_progress = self.rescale.progress.clone();
+            let cancel_flag = self.rescale.cancel.clone();
+            crate::dialogs::rescale_overlay::show_viewport(&ctx, rescale_progress, cancel_flag);
+        }
+
         // ── Export completed ──
         crate::dialogs::export::show_completed_viewport(&ctx, &mut self.export.completed);
 

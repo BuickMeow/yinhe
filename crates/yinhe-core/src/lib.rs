@@ -19,6 +19,7 @@ mod tempo_map;
 
 pub use events::NoteEvent;
 pub use model::{ConductorData, ProjectMeta, TrackData, TrackInfo, YinModel};
+pub use model_stats::RescaleProgress;
 pub use selection::Selection;
 pub use yinhe_types::{Note, PcEvent};
 pub use tempo_map::{

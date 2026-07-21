@@ -337,6 +337,9 @@ impl YinModel {
     ///
     /// O(N) where N = total notes + automation events. Triggers `Arc::make_mut`
     /// deep-clones on every bucket that is shared with an undo snapshot.
+    ///
+    /// 同步版本：在主线程调用，无进度报告。适用于音符数较少或已知不会卡顿的场景。
+    /// 大工程（百万级音符）应使用 [`Self::rescale_ppq_with_progress`] 在子线程执行。
     pub fn rescale_ppq(&mut self, new_ppq: u32) {
         let old_ppq = self.meta.ppq;
         if old_ppq == new_ppq || old_ppq == 0 {
@@ -394,4 +397,122 @@ impl YinModel {
         self.meta.ppq = new_ppq;
         self.rebuild();
     }
+
+    /// 异步版本 of [`Self::rescale_ppq`]：在子线程中执行，带进度报告和取消支持。
+    ///
+    /// 调用方传入 model 的 clone（不修改原 model），返回 rescale 后的新 model。
+    /// 若 `cancel` 在处理过程中被设为 true，提前返回 `Err("已取消")`。
+    ///
+    /// 进度报告：
+    /// - 阶段 1（0..90%）：缩放 128 个音符 bucket，每个 bucket 完成后更新进度
+    /// - 阶段 2（90..95%）：缩放 conductor（tempo + time_sig）
+    /// - 阶段 3（95..100%）：缩放 track automation + PC + rebuild
+    ///
+    /// rayon 并行处理音符 bucket，但 cancel 只能让未开始的任务跳过，
+    /// 正在执行的 bucket 不能中断（最坏情况需等一个 bucket sort 完成）。
+    pub fn rescale_ppq_with_progress(
+        mut model: YinModel,
+        new_ppq: u32,
+        progress: std::sync::Arc<std::sync::Mutex<RescaleProgress>>,
+        cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> Result<YinModel, String> {
+        use std::sync::atomic::{AtomicU32, Ordering};
+
+        let old_ppq = model.meta.ppq;
+        if old_ppq == new_ppq || old_ppq == 0 {
+            return Ok(model);
+        }
+        let scale = new_ppq as f64 / old_ppq as f64;
+        let scale_tick = |t: u32| -> u32 {
+            let v = (t as f64 * scale).round();
+            if v > u32::MAX as f64 { u32::MAX } else { v as u32 }
+        };
+
+        // ── 阶段 1：缩放音符（90%）──
+        // rayon 并行 + AtomicU32 计数已完成 bucket 数。
+        // cancel 检测在每个 bucket 开始前；正在跑的不能中断。
+        use rayon::prelude::*;
+        let done = std::sync::Arc::new(AtomicU32::new(0));
+        let progress_clone = progress.clone();
+        let cancel_clone = cancel.clone();
+        model.notes.par_iter_mut().for_each(|bucket| {
+            if cancel_clone.load(Ordering::Relaxed) {
+                return;
+            }
+            let bucket = Arc::make_mut(bucket);
+            for n in bucket.iter_mut() {
+                n.start_tick = scale_tick(n.start_tick);
+                n.end_tick = scale_tick(n.end_tick);
+                if n.end_tick < n.start_tick {
+                    n.end_tick = n.start_tick;
+                }
+            }
+            bucket.sort_by_key(|n| n.start_tick);
+            let d = done.fetch_add(1, Ordering::Relaxed) + 1;
+            if let Ok(mut p) = progress_clone.lock() {
+                p.progress = d as f32 / 128.0 * 0.9;
+                p.label = format!("缩放音符 {}/128", d);
+            }
+        });
+        if cancel.load(Ordering::Relaxed) {
+            return Err("已取消".to_string());
+        }
+
+        // ── 阶段 2：缩放 conductor（95%）──
+        {
+            let conductor = Arc::make_mut(&mut model.conductor);
+            for ev in conductor.tempo.events.iter_mut() {
+                ev.tick = scale_tick(ev.tick);
+            }
+            conductor.tempo.events.sort_by_key(|e| e.tick);
+            for ts in conductor.time_sig.iter_mut() {
+                ts.tick = scale_tick(ts.tick);
+            }
+            conductor.time_sig.sort_by_key(|e| e.tick);
+        }
+        if let Ok(mut p) = progress.lock() {
+            p.progress = 0.95;
+            p.label = "缩放 conductor".to_string();
+        }
+
+        // ── 阶段 3：缩放 track automation + PC（99%）──
+        for track in model.tracks.iter_mut() {
+            if cancel.load(Ordering::Relaxed) {
+                return Err("已取消".to_string());
+            }
+            let track = Arc::make_mut(track);
+            for lane in track.automation_lanes.iter_mut() {
+                for ev in lane.events.iter_mut() {
+                    ev.tick = scale_tick(ev.tick);
+                }
+                lane.events.sort_by_key(|e| e.tick);
+            }
+            for pc in track.program_change.iter_mut() {
+                pc.tick = scale_tick(pc.tick);
+            }
+            track.program_change.sort_by_key(|e| e.tick);
+        }
+
+        // ── 阶段 4：更新 ppq + rebuild（100%）──
+        model.meta.ppq = new_ppq;
+        model.rebuild();
+        if let Ok(mut p) = progress.lock() {
+            p.progress = 1.0;
+            p.label = "完成".to_string();
+        }
+
+        Ok(model)
+    }
+}
+
+/// 异步 rescale 的进度报告结构。
+///
+/// 与 `yinhe_editor_core::progress::LoadProgress` 独立，
+/// 因为 rescale 是单阶段任务，不需要多 stage 数组。
+#[derive(Clone, Default)]
+pub struct RescaleProgress {
+    /// 0.0..1.0
+    pub progress: f32,
+    /// 当前阶段标签（如 "缩放音符 42/128"）。
+    pub label: String,
 }

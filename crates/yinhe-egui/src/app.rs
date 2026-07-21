@@ -8,6 +8,7 @@ pub(crate) mod export_state;
 pub(crate) mod layout;
 pub(crate) mod main_loop;
 pub(crate) mod poll;
+pub(crate) mod rescale_state;
 
 use crate::file_loader::FileLoader;
 use crate::dialogs::system_monitor::SystemMonitor;
@@ -132,6 +133,9 @@ pub struct App {
     // ── Async audio export ──
     pub(crate) export: export_state::ExportState,
 
+    // ── Async PPQ rescale ──
+    pub(crate) rescale: rescale_state::RescaleState,
+
     // ── macOS platform integrations ──
     pub(crate) menu_bar: crate::platform::MenuBar,
     /// Tracks the last `is_dirty` state to avoid redundant `setDocumentEdited` calls.
@@ -221,6 +225,7 @@ impl App {
             pending_unsaved: None,
             should_exit: false,
             export: export_state::ExportState::new(),
+            rescale: rescale_state::RescaleState::new(),
 
             view_mode: ViewMode::Arrange,
             show_pianoroll_in_arrange: false,
