@@ -175,6 +175,11 @@ impl App {
             crate::dialogs::rescale_overlay::show_viewport(&ctx, rescale_progress, cancel_flag);
         }
 
+        // ── PPQ rescale 确认对话框（标准 viewport 形式）──
+        // project_info.rs 检测到 PPQ 变更且有音符时，写入 ctx memory pending。
+        // 这里每帧检测 pending，弹出独立 viewport 确认框，用户选择后执行操作。
+        self.show_ppq_rescale_confirm(&ctx);
+
         // ── Export completed ──
         crate::dialogs::export::show_completed_viewport(&ctx, &mut self.export.completed);
 
@@ -223,5 +228,72 @@ impl App {
             }
             crate::dialogs::unsaved::Action::None => {}
         }
+    }
+
+    /// 检测 ctx memory 中的 PPQ rescale pending，弹出独立 viewport 确认框。
+    ///
+    /// 用户选择后执行对应操作并清除 pending：
+    /// - **Rescale**：还原 meta.ppq = old，写出 `RescaleRequest`（main_loop 启动异步线程）。
+    /// - **NoRescale**：rebuild_tempo_map + commit_ppq(rescale=false)。
+    /// - **Cancel**：还原 meta.ppq = old，清除 pending edit（不推 undo）。
+    fn show_ppq_rescale_confirm(&mut self, ctx: &egui::Context) {
+        let pending: Option<(u32, u32, u64)> = ctx.data(|d| {
+            d.get_temp(egui::Id::new(crate::right_panel::project_info::PPQ_RESCALE_PENDING_ID))
+        });
+        let Some((old_val, new_val, dragvalue_id)) = pending else { return };
+
+        let action = crate::dialogs::ppq_rescale_confirm::show_viewport(ctx, old_val, new_val);
+        if action == crate::dialogs::ppq_rescale_confirm::PpqRescaleAction::None {
+            return; // 用户还没选择，保持弹框打开
+        }
+
+        let Some(doc_idx) = self.active_doc else { return };
+        let Some(doc) = self.documents.get_mut(doc_idx) else { return };
+
+        use crate::dialogs::ppq_rescale_confirm::PpqRescaleAction;
+        match action {
+            PpqRescaleAction::Rescale => {
+                // 异步 rescale：先把 meta.ppq 还原为 old_val（子线程用 old_ppq 作基准），
+                // 再写出 RescaleRequest 让 main_loop 启动子线程。
+                // commit_ppq 在 poll.rs 检测到子线程完成后才调用。
+                let model = std::sync::Arc::make_mut(&mut doc.data.model);
+                model.meta.ppq = old_val;
+                ctx.data_mut(|d| d.insert_temp(
+                    egui::Id::new(crate::app::rescale_state::RESCALE_REQUEST_ID),
+                    crate::app::rescale_state::RescaleRequest {
+                        old_ppq: old_val,
+                        new_ppq: new_val,
+                        dragvalue_id,
+                    },
+                ));
+            }
+            PpqRescaleAction::NoRescale => {
+                // 不 rescale，但 rebuild_tempo_map（meta.ppq 已是 new_val）。
+                let model = std::sync::Arc::make_mut(&mut doc.data.model);
+                model.rebuild_tempo_map();
+                yinhe_editor_core::history::commit_ppq(
+                    &mut doc.history,
+                    &mut doc.edit.pending_edits,
+                    dragvalue_id,
+                    new_val,
+                    false,
+                    doc.edit.selected.clone(),
+                    doc.edit.track_selected.clone(),
+                    doc.edit.sel_rect.clone(),
+                );
+            }
+            PpqRescaleAction::Cancel => {
+                // 取消：还原 meta.ppq = old_val，清掉 pending edit（不推 undo）。
+                let model = std::sync::Arc::make_mut(&mut doc.data.model);
+                model.meta.ppq = old_val;
+                doc.edit.pending_edits.take(dragvalue_id);
+            }
+            PpqRescaleAction::None => unreachable!(),
+        }
+
+        // 清除 pending（dialog_dispatch 已处理完，避免下帧重复弹）。
+        ctx.data_mut(|d| d.remove::<(u32, u32, u64)>(
+            egui::Id::new(crate::right_panel::project_info::PPQ_RESCALE_PENDING_ID),
+        ));
     }
 }

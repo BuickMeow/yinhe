@@ -2,12 +2,13 @@ use eframe::egui;
 
 use yinhe_editor_core::document::Document;
 use yinhe_editor_core::history::{begin_edit, commit_project_name, commit_artist, commit_description, commit_ppq, commit_compression_level};
-use crate::app::rescale_state::{RESCALE_REQUEST_ID, RescaleRequest};
 
-/// 弹框确认 ID：PPQ 修改后是否 rescale 音符。
-const PPQ_RESCALE_DIALOG_ID: &str = "ppq_rescale_dialog";
-/// 暂存待确认的 PPQ 修改（old, new, dragvalue_id）。
-const PPQ_RESCALE_PENDING_ID: &str = "ppq_rescale_pending";
+/// ctx memory 中暂存待确认的 PPQ 修改（old, new, dragvalue_id）。
+///
+/// `project_info.rs` 在 DragValue 失焦且 old != new && has_notes 时写入，
+/// `dialog_dispatch.rs` 每帧检测此 Id 并弹出独立 viewport 确认框。
+/// 用户选择后 `dialog_dispatch.rs` 清除此 Id。
+pub(crate) const PPQ_RESCALE_PENDING_ID: &str = "ppq_rescale_pending";
 
 /// Show the Project Info panel for editing project metadata.
 pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
@@ -88,9 +89,11 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
     ui.add_space(6.0);
 
     // ── PPQ ──
-    // 修改 PPQ 后，若 old != new 会弹框问用户是否 rescale 已有音符以保留时值。
-    // - 选"是"：调用 model.rescale_ppq() 批量缩放所有 tick，undo 用反向 rescale。
-    // - 选"否"：只改 meta.ppq + rebuild_tempo_map，音符 tick 不变。
+    // 修改 PPQ 后，若有音符且 old != new，写入 ctx memory 让 dialog_dispatch
+    // 弹出独立 viewport 确认框（标准 dialog 形式，不受面板开关影响）。
+    // - 选"是"：异步 rescale（main_loop 检测 RESCALE_REQUEST_ID 启动子线程）。
+    // - 选"否"：rebuild_tempo_map + commit_ppq(rescale=false)。
+    // - 选"取消"：还原 meta.ppq = old。
     ui.label(
         egui::RichText::new("PPQ (每拍节拍数)")
             .color(egui::Color32::from_gray(160))
@@ -115,7 +118,7 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
         let old_val: u32 = old_str.as_deref().and_then(|s| s.parse().ok()).unwrap_or(new_val);
         let has_notes = doc.data.model.note_count > 0;
         if old_val != new_val && has_notes {
-            // 暂存待确认信息，弹框询问是否 rescale
+            // 暂存待确认信息，由 dialog_dispatch 弹出独立 viewport 确认框。
             ui.ctx().data_mut(|d| d.insert_temp(
                 egui::Id::new(PPQ_RESCALE_PENDING_ID),
                 (old_val, new_val, resp.id.value()),
@@ -198,95 +201,5 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
             doc.edit.track_selected.clone(),
             doc.edit.sel_rect.clone(),
         );
-    }
-
-    // ── PPQ rescale 确认弹框 ──
-    let pending: Option<(u32, u32, u64)> = ui
-        .ctx()
-        .data(|d| d.get_temp(egui::Id::new(PPQ_RESCALE_PENDING_ID)));
-    if let Some((old_val, new_val, dragvalue_id)) = pending {
-        let dialog_id = egui::Id::new(PPQ_RESCALE_DIALOG_ID);
-        let mut should_close = false;
-        let mut user_choice: Option<bool> = None; // Some(true)=rescale, Some(false)=不rescale
-
-        egui::Window::new("PPQ 变更")
-            .id(dialog_id)
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-            .show(ui.ctx(), |ui| {
-                ui.set_width(360.0);
-                ui.add_space(6.0);
-                ui.label(format!(
-                    "PPQ 将从 {} 变为 {}。",
-                    old_val, new_val
-                ));
-                ui.add_space(4.0);
-                ui.label("是否同时缩放已有音符与自动化事件，以保留绝对时值？");
-                ui.add_space(4.0);
-                ui.label(
-                    egui::RichText::new("• 是：所有 tick 按比例缩放（推荐）\n• 否：仅改 PPQ，音符位置不变（时值会改变）")
-                        .color(egui::Color32::from_gray(140))
-                        .size(11.0),
-                );
-                ui.add_space(10.0);
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().button_padding = egui::vec2(10.0, 4.0);
-                    if ui.button("是（缩放音符）").clicked() {
-                        user_choice = Some(true);
-                        should_close = true;
-                    }
-                    if ui.button("否（保持音符）").clicked() {
-                        user_choice = Some(false);
-                        should_close = true;
-                    }
-                    if ui.button("取消").clicked() {
-                        // 取消：把 PPQ 还原为 old_val
-                        let model = std::sync::Arc::make_mut(&mut doc.data.model);
-                        model.meta.ppq = old_val;
-                        // 清掉 pending edit（不推 undo）
-                        doc.edit.pending_edits.take(dragvalue_id);
-                        should_close = true;
-                    }
-                });
-            });
-
-        if should_close {
-            if let Some(rescale) = user_choice {
-                if rescale {
-                    // 异步 rescale：先把 meta.ppq 还原为 old_val（子线程需要用 old_ppq
-                    // 作为基准），然后通过 ctx memory 写出请求，main_loop 检测到
-                    // 后会 clone model 并 spawn 子线程执行 rescale。
-                    // commit_ppq 在 poll.rs 检测到子线程完成后才调用。
-                    let model = std::sync::Arc::make_mut(&mut doc.data.model);
-                    model.meta.ppq = old_val;
-                    ui.ctx().data_mut(|d| d.insert_temp(
-                        egui::Id::new(RESCALE_REQUEST_ID),
-                        RescaleRequest {
-                            old_ppq: old_val,
-                            new_ppq: new_val,
-                            dragvalue_id,
-                        },
-                    ));
-                } else {
-                    // 不 rescale，但要 rebuild_tempo_map（meta.ppq 已是 new_val）
-                    let model = std::sync::Arc::make_mut(&mut doc.data.model);
-                    model.rebuild_tempo_map();
-                    commit_ppq(
-                        &mut doc.history,
-                        &mut doc.edit.pending_edits,
-                        dragvalue_id,
-                        new_val,
-                        false,
-                        doc.edit.selected.clone(),
-                        doc.edit.track_selected.clone(),
-                        doc.edit.sel_rect.clone(),
-                    );
-                }
-            }
-            ui.ctx().data_mut(|d| d.remove::<(u32, u32, u64)>(
-                egui::Id::new(PPQ_RESCALE_PENDING_ID),
-            ));
-        }
     }
 }

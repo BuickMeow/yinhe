@@ -5,6 +5,7 @@ pub mod gpu_device_lost;
 pub mod loading_overlay;
 pub mod load_error;
 pub mod memory_breakdown;
+pub mod ppq_rescale_confirm;
 pub mod rescale_overlay;
 pub mod settings;
 pub mod system_monitor;
