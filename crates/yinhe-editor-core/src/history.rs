@@ -82,13 +82,20 @@ pub enum UndoAction {
     ProjectPpq { old: u32, new: u32, rescale: bool },
     CompressionLevel { old: i32, new: i32 },
     /// Track structure changed (add/remove/move track).
-    /// Stores full before/after track lists (metadata only, no notes) and
+    /// Stores full before/after track lists (metadata only) and
     /// a remap table: `note_remap[old_track_idx] = new_track_idx` (or u16::MAX if deleted).
+    ///
+    /// `deleted_notes` 捕获 remove_track 时被物理删除的音符（含其所在 key），
+    /// 用于 undo 时把它们插回模型。add_track / move_track 该字段为空。
+    /// 不参与 `reversed()` 的 before/after 交换——方向由 `tracks_after` 与
+    /// `tracks_before` 的长度差决定（undo remove_track 时 tracks_after 更长，
+    /// 此时才需要把 deleted_notes 插回）。
     TrackStructure {
         tracks_before: Vec<Arc<yinhe_core::TrackData>>,
         tracks_after: Vec<Arc<yinhe_core::TrackData>>,
         note_remap: Vec<u16>,  // old_track → new_track (u16::MAX = deleted)
         note_remap_inverse: Vec<u16>,  // new_track -> old_track (for undo)
+        deleted_notes: Vec<(Note, u8)>,  // 被 remove_track 删掉的音符（含 key），用于 undo 恢复
     },
     /// Multiple actions applied atomically (undo/redo as a single step).
     Composite(Vec<UndoAction>),
@@ -140,11 +147,15 @@ impl UndoAction {
                 tracks_after,
                 note_remap,
                 note_remap_inverse,
+                deleted_notes,
             } => UndoAction::TrackStructure {
                 tracks_before: tracks_after.clone(),
                 tracks_after: tracks_before.clone(),
                 note_remap: note_remap_inverse.clone(),
                 note_remap_inverse: note_remap.clone(),
+                // deleted_notes 不交换：它记录的是 remove_track 删掉的音符，
+                // 在 undo（tracks_after.len() > tracks_before.len()）时插回。
+                deleted_notes: deleted_notes.clone(),
             },
             UndoAction::Composite(actions) => {
                 // Reverse order so that reversed().redo() undoes in reverse order,

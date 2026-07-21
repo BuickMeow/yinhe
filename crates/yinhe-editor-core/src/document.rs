@@ -432,4 +432,63 @@ mod tests {
         let color = track_color(1, Some(0));
         assert_eq!(color, TRACK_PALETTE[0]);
     }
+
+    /// 回归测试：删除轨道后 undo 必须恢复被删轨道上的音符。
+    /// 之前 TrackStructure 只存轨道元数据，被删音符在 retain 中物理消失，
+    /// undo 时彻底丢失。修复后 deleted_notes 字段携带被删音符供 undo 恢复。
+    #[test]
+    fn remove_track_undo_restores_deleted_notes() {
+        use crate::edit_state::SelRectState;
+        use crate::history::UndoEntry;
+        use std::collections::HashSet;
+        use yinhe_core::NoteEvent;
+
+        let mut doc = Document::empty();
+        // conductor 在 track 0，A1 在 track 1。给 track 1 加 2 个音符。
+        let notes_to_add = vec![
+            NoteEvent { id: 0, start_tick: 0, end_tick: 480, key: 60, velocity: 100 },
+            NoteEvent { id: 0, start_tick: 480, end_tick: 960, key: 64, velocity: 80 },
+        ];
+        for n in notes_to_add {
+            let action = doc.add_note(1, n).expect("add_note should succeed");
+            doc.history.push(UndoEntry {
+                action,
+                label: "add_note",
+                selected: Default::default(),
+                track_selected: HashSet::new(),
+                sel_rect: SelRectState::default(),
+            });
+        }
+        assert_eq!(doc.model().note_count, 2, "添加后应有 2 个音符");
+        assert_eq!(doc.model().track_note_count[1], 2, "track 1 应有 2 个音符");
+
+        // 删除 track 1（其上的 2 个音符应被物理删除）
+        let action = doc.remove_track(1).expect("remove_track should succeed");
+        doc.history.push(UndoEntry {
+            action,
+            label: "remove_track",
+            selected: Default::default(),
+            track_selected: HashSet::new(),
+            sel_rect: SelRectState::default(),
+        });
+        assert_eq!(doc.model().note_count, 0, "删除轨道后音符应清零");
+        // 删除后原 track 2..N 各自前移 1，track_note_count 长度也少了 1
+        assert_eq!(doc.model().tracks.len(), 16, "轨道数应减 1");
+
+        // Undo：必须恢复被删轨道上的音符
+        assert!(doc.undo(), "undo 应成功");
+        assert_eq!(doc.model().tracks.len(), 17, "undo 后轨道数应恢复");
+        assert_eq!(doc.model().note_count, 2, "undo 后音符数必须恢复（这是 bug 修复点）");
+        assert_eq!(doc.model().track_note_count[1], 2, "track 1 的音符必须恢复");
+        // 具体音符内容也要核对（start_tick + key）
+        assert_eq!(doc.model().notes[60].len(), 1);
+        assert_eq!(doc.model().notes[60][0].start_tick, 0);
+        assert_eq!(doc.model().notes[64].len(), 1);
+        assert_eq!(doc.model().notes[64][0].start_tick, 480);
+
+        // Redo：再次删除，音符应再次清零
+        assert!(doc.redo(), "redo 应成功");
+        assert_eq!(doc.model().tracks.len(), 16);
+        assert_eq!(doc.model().note_count, 0, "redo 后音符应再次清零");
+    }
 }

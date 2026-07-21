@@ -70,6 +70,7 @@ impl Document {
             tracks_after,
             note_remap,
             note_remap_inverse,
+            deleted_notes: Vec::new(),
         })
     }
 
@@ -89,6 +90,20 @@ impl Document {
         }
 
         let tracks_before: Vec<Arc<yinhe_core::TrackData>> = model.tracks.clone();
+
+        // 先捕获被删轨道上的音符（含 key），供 undo 恢复。
+        // 必须在 make_mut + retain 之前从只读 model 读取，否则音符已被删。
+        let deleted_notes: Vec<(yinhe_types::Note, u8)> = model
+            .notes
+            .iter()
+            .enumerate()
+            .flat_map(|(key, bucket)| {
+                bucket
+                    .iter()
+                    .filter(|n| n.track as usize == idx)
+                    .map(move |n| (*n, key as u8))
+            })
+            .collect();
 
         let model = Arc::make_mut(&mut self.data.model);
         model.tracks.remove(idx);
@@ -139,6 +154,7 @@ impl Document {
             tracks_after,
             note_remap,
             note_remap_inverse,
+            deleted_notes,
         })
     }
 
@@ -216,6 +232,7 @@ impl Document {
             tracks_after,
             note_remap,
             note_remap_inverse,
+            deleted_notes: Vec::new(),
         })
     }
 }

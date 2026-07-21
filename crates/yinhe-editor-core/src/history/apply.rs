@@ -59,10 +59,11 @@ impl UndoAction {
                 model.meta.compression_level = *new;
             }
             UndoAction::TrackStructure {
-                tracks_before: _,
+                tracks_before,
                 tracks_after,
                 note_remap,
                 note_remap_inverse: _,
+                deleted_notes,
             } => {
                 let model = Arc::make_mut(&mut doc.data.model);
                 model.tracks = tracks_after.clone();
@@ -71,6 +72,20 @@ impl UndoAction {
                     bucket.retain(|n| note_remap[n.track as usize] != u16::MAX);
                     for note in bucket.iter_mut() {
                         note.track = note_remap[note.track as usize];
+                    }
+                }
+                // undo remove_track 时 tracks_after 比 tracks_before 长，
+                // 此时需要把先前被物理删除的音符插回模型。
+                // add_track 的 undo（tracks_after 更短）与 move_track（等长）
+                // 都不会进入此分支，deleted_notes 为空时也安全。
+                if tracks_after.len() > tracks_before.len() && !deleted_notes.is_empty() {
+                    let mut by_key: HashMap<u8, Vec<Note>> = HashMap::new();
+                    for (note, key) in deleted_notes {
+                        by_key.entry(*key).or_default().push(*note);
+                    }
+                    for (key, notes) in by_key {
+                        let k = key as usize;
+                        Arc::make_mut(&mut model.notes[k]).extend(notes);
                     }
                 }
                 model.rebuild();
