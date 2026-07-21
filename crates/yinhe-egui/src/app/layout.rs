@@ -9,10 +9,7 @@ pub(in crate::app) struct LayoutInfo {
     pub remaining: egui::Rect,
     pub arr_h: f32,
     pub bottom_y: f32,
-    pub tools_panel_w: f32,
     pub right_panel_total_w: f32,
-    pub has_arr: bool,
-    pub has_piano: bool,
 }
 
 impl App {
@@ -22,12 +19,6 @@ impl App {
 
         let has_arr = self.show_transport && self.active_doc.is_some();
         let has_piano = self.show_pianoroll && self.active_doc.is_some();
-        let tools_panel_w = if has_arr || has_piano {
-            crate::widgets::tools_panel::TOOLS_PANEL_W
-        } else {
-            0.0
-        };
-        remaining.max.x -= tools_panel_w;
 
         let right_panel_total_w = if self.right_tab.is_some() {
             let max_w = (remaining.width() - 60.0).max(crate::theme::RIGHT_PANEL_MIN_WIDTH + 4.0);
@@ -41,8 +32,8 @@ impl App {
         remaining.max.x -= right_panel_total_w;
 
         let total = remaining.size();
-        let arr_h = if self.show_transport && self.active_doc.is_some() {
-            if self.show_pianoroll {
+        let arr_h = if has_arr {
+            if has_piano {
                 (total.y * self.arr_split).max(crate::theme::MIN_ARR_HEIGHT)
             } else {
                 total.y
@@ -52,7 +43,7 @@ impl App {
         };
         let bottom_y = remaining.min.y
             + arr_h
-            + if self.show_transport && self.show_pianoroll && self.active_doc.is_some() {
+            + if has_arr && has_piano {
                 crate::theme::SPLIT_GAP
             } else {
                 0.0
@@ -62,10 +53,7 @@ impl App {
             remaining,
             arr_h,
             bottom_y,
-            tools_panel_w,
             right_panel_total_w,
-            has_arr,
-            has_piano,
         }
     }
 
@@ -183,7 +171,7 @@ impl App {
     ) {
         // Horizontal splitter
         if self.show_transport {
-            let split_right = layout.remaining.max.x + layout.tools_panel_w;
+            let split_right = layout.remaining.max.x;
             let h_split_rect = egui::Rect::from_min_max(
                 egui::pos2(
                     layout.remaining.min.x,
@@ -508,47 +496,16 @@ impl App {
         }
     }
 
-    /// Show tool panels, right panel, and request repaint if playing.
+    /// Show right panel, and request repaint if playing.
     pub(in crate::app) fn show_panels_and_overlays(
         &mut self,
         ui: &mut egui::Ui,
         layout: &LayoutInfo,
     ) {
-        let tools_x = layout.remaining.max.x;
-
-        // Tool panels
-        if layout.has_arr {
-            let rect = egui::Rect::from_min_size(
-                egui::pos2(tools_x, layout.remaining.min.y),
-                egui::vec2(layout.tools_panel_w, layout.arr_h),
-            );
-            crate::widgets::tools_panel::show(
-                ui,
-                rect,
-                &mut self.active_tool,
-                &crate::widgets::tools_panel::ALL_TOOLS,
-            );
-        }
-        if layout.has_piano {
-            let rect = egui::Rect::from_min_size(
-                egui::pos2(tools_x, layout.bottom_y),
-                egui::vec2(
-                    layout.tools_panel_w,
-                    layout.remaining.max.y - layout.bottom_y,
-                ),
-            );
-            crate::widgets::tools_panel::show(
-                ui,
-                rect,
-                &mut self.active_tool,
-                &crate::widgets::tools_panel::ALL_TOOLS,
-            );
-        }
-
         // Right panel
         if self.right_tab.is_some() {
             let right_rect = egui::Rect::from_min_size(
-                egui::pos2(tools_x + layout.tools_panel_w, layout.remaining.min.y),
+                egui::pos2(layout.remaining.max.x, layout.remaining.min.y),
                 egui::vec2(layout.right_panel_total_w, layout.remaining.height()),
             );
             let doc = self.active_doc.and_then(|idx| self.documents.get_mut(idx));

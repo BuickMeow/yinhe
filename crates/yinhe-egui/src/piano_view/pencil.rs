@@ -75,6 +75,7 @@ pub(crate) fn pencil_frame(
     conductor_idx: Option<u16>,
     midi: Option<&dyn yinhe_types::NoteSource>,
     _track_colors: &[[f32; 3]],
+    total_ticks: f64,
 ) -> (Option<yinhe_core::NoteEvent>, Vec<(u32, u32, u8, u16)>, Vec<(u16, u32, u8)>, Option<PencilNoteDrag>) {
     let pencil_id = ui.id().with("pencil_drag");
     let drag_state: Option<PencilDrag> =
@@ -98,19 +99,22 @@ pub(crate) fn pencil_frame(
     let track_idx = track.unwrap_or(0);
 
     // Hover / drag preview.
-    let preview = if let Some(pos) = hover_pos {
-        if music_rect.contains(pos) {
-            let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
-            let raw_tick = view.x_to_tick(local.x);
-            let tick = crate::view_interaction::snap_tick(raw_tick, quantize, ppq, bar_line_data);
-            let key = view.y_to_key(local.y);
-            Some((tick.max(0.0), key))
+    // 拖拽中：允许鼠标越出 music_rect，用 clamp 限定位置 + 触发 auto-scroll。
+    // 非拖拽：严格要求 music_rect.contains（hit-test 和创建前 hover 预览）。
+    let preview = hover_pos.and_then(|pos| {
+        let pos = if drag_state.is_some() {
+            pos.clamp(music_rect.min, music_rect.max)
+        } else if music_rect.contains(pos) {
+            pos
         } else {
-            None
-        }
-    } else {
-        None
-    };
+            return None;
+        };
+        let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
+        let raw_tick = view.x_to_tick(local.x);
+        let tick = crate::view_interaction::snap_tick(raw_tick, quantize, ppq, bar_line_data);
+        let key = view.y_to_key(local.y);
+        Some((tick.max(0.0), key))
+    });
 
     // ── Hit-test existing notes (only when not dragging) ──
     // Returns the closest note under cursor with its hit mode.
@@ -217,6 +221,20 @@ pub(crate) fn pencil_frame(
         Some(PencilDrag::Create(s_tick, s_key)) => {
             // Show ghost while dragging (before release)
             if pointer.primary_down() && !pointer.primary_released() {
+                // auto-scroll：让长音符能拖出屏幕（pos 未 clamp）
+                if let Some(pos) = hover_pos {
+                    crate::selection::drag::auto_scroll_on_drag(
+                        ui,
+                        &mut view.base,
+                        music_rect,
+                        pos,
+                        |base, w, _h| {
+                            base.clamp_scroll_x(w, total_ticks);
+                            base.scroll_y = base.scroll_y.max(0.0);
+                        },
+                    );
+                    view.clamp_scroll(content_rect.width(), content_rect.height(), total_ticks);
+                }
                 if let Some((tick, _)) = preview {
                     let interval = quantize.tick_interval(ppq) as f64;
                     let current_end = tick.max(*s_tick + interval);
@@ -251,6 +269,22 @@ pub(crate) fn pencil_frame(
             }
         }
         Some(PencilDrag::Move(trk, orig_tick, orig_key, orig_end, press_tick)) => {
+            // auto-scroll：让音符能拖出屏幕（pos 未 clamp）
+            if pointer.primary_down() && !pointer.primary_released() {
+                if let Some(pos) = hover_pos {
+                    crate::selection::drag::auto_scroll_on_drag(
+                        ui,
+                        &mut view.base,
+                        music_rect,
+                        pos,
+                        |base, w, _h| {
+                            base.clamp_scroll_x(w, total_ticks);
+                            base.scroll_y = base.scroll_y.max(0.0);
+                        },
+                    );
+                    view.clamp_scroll(content_rect.width(), content_rect.height(), total_ticks);
+                }
+            }
             if let Some((tick, key)) = preview {
                 let dt = (tick as i64) - (*press_tick as i64);
                 let dk = (key as i32) - (*orig_key as i32);
@@ -280,6 +314,22 @@ pub(crate) fn pencil_frame(
             }
         }
         Some(PencilDrag::ResizeRight(trk, orig_tick, _orig_end, orig_key)) => {
+            // auto-scroll：右边缘能拖出屏幕
+            if pointer.primary_down() && !pointer.primary_released() {
+                if let Some(pos) = hover_pos {
+                    crate::selection::drag::auto_scroll_on_drag(
+                        ui,
+                        &mut view.base,
+                        music_rect,
+                        pos,
+                        |base, w, _h| {
+                            base.clamp_scroll_x(w, total_ticks);
+                            base.scroll_y = base.scroll_y.max(0.0);
+                        },
+                    );
+                    view.clamp_scroll(content_rect.width(), content_rect.height(), total_ticks);
+                }
+            }
             if let Some((tick, _)) = preview {
                 let interval = quantize.tick_interval(ppq) as f64;
                 let snapped = crate::view_interaction::snap_tick_ceil(
@@ -311,6 +361,22 @@ pub(crate) fn pencil_frame(
             }
         }
         Some(PencilDrag::ResizeLeft(trk, orig_tick, orig_end, orig_key)) => {
+            // auto-scroll：左边缘能拖出屏幕
+            if pointer.primary_down() && !pointer.primary_released() {
+                if let Some(pos) = hover_pos {
+                    crate::selection::drag::auto_scroll_on_drag(
+                        ui,
+                        &mut view.base,
+                        music_rect,
+                        pos,
+                        |base, w, _h| {
+                            base.clamp_scroll_x(w, total_ticks);
+                            base.scroll_y = base.scroll_y.max(0.0);
+                        },
+                    );
+                    view.clamp_scroll(content_rect.width(), content_rect.height(), total_ticks);
+                }
+            }
             if let Some((tick, _)) = preview {
                 let interval = quantize.tick_interval(ppq) as f64;
                 let snapped = crate::view_interaction::snap_tick_floor(

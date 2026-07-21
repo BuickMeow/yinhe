@@ -246,8 +246,23 @@ pub(crate) fn sel_drag_frame(
         if let Some(ref notes) = drag_notes {
             if pointer.primary_down() && !pointer.primary_pressed() {
                 if let Some(pos) = pointer.hover_pos() {
-                    let local_x = pos.x - content_rect.min.x;
-                    let local_y = pos.y - content_rect.min.y;
+                    // auto-scroll：拖拽音符能推出屏幕（pos 未 clamp）
+                    crate::selection::drag::auto_scroll_on_drag(
+                        ui,
+                        &mut view.base,
+                        music_rect,
+                        pos,
+                        |base, w, _h| {
+                            base.clamp_scroll_x(w, total_ticks);
+                            base.scroll_y = base.scroll_y.max(0.0);
+                        },
+                    );
+                    view.clamp_scroll(content_rect.width(), content_rect.height(), total_ticks);
+
+                    // 位置 clamp 到 music_rect，避免鼠标飞出后产生异常值
+                    let clamped = pos.clamp(music_rect.min, music_rect.max);
+                    let local_x = clamped.x - content_rect.min.x;
+                    let local_y = clamped.y - content_rect.min.y;
                     let raw_tick = view.x_to_tick(local_x);
                     let snapped_tick = crate::view_interaction::snap_tick(raw_tick, quantize, ppq, bar_line_data);
                     let current_key = view.y_to_key(local_y) as f64;
@@ -269,8 +284,9 @@ pub(crate) fn sel_drag_frame(
             }
             if pointer.primary_released() {
                 if let Some(pos) = pointer.hover_pos() {
-                    let local_x = pos.x - content_rect.min.x;
-                    let local_y = pos.y - content_rect.min.y;
+                    let clamped = pos.clamp(music_rect.min, music_rect.max);
+                    let local_x = clamped.x - content_rect.min.x;
+                    let local_y = clamped.y - content_rect.min.y;
                     let raw_tick = view.x_to_tick(local_x);
                     let snapped_tick = crate::view_interaction::snap_tick(raw_tick, quantize, ppq, bar_line_data);
                     let current_key = view.y_to_key(local_y) as f64;

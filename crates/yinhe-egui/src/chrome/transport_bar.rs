@@ -2,6 +2,7 @@ use eframe::egui;
 use egui_material_icons::icons::*;
 
 use crate::file_loader::FileLoader;
+use crate::widgets::tools_panel::{ALL_TOOLS, Tool};
 use yinhe_editor_core::document::Document;
 use crate::view_interaction::{FollowMode, FollowModeExt};
 use yinhe_types::time_format;
@@ -32,6 +33,7 @@ pub struct TransportContext<'a> {
     pub file_loader: &'a mut FileLoader,
     pub doc: Option<&'a Document>,
     pub follow_mode: &'a mut FollowMode,
+    pub active_tool: &'a mut Tool,
 }
 
 /// Output from the transport bar — replaces `&mut bool` out-parameters.
@@ -135,11 +137,49 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                 }
 
                 if let Some(doc) = ctx.doc {
-                    button_right = Some(ui.cursor().min.x);
                     timecode_rect = Some(show_timecode_display(
                         ui,
                         doc,
                     ));
+
+                    // ── 工具按钮：黑色矩形右侧，水平排列 ──
+                    // 无按钮外框（透明背景），与旧 toolbar 风格一致：
+                    // Label + Sense::click + hover_highlight。
+                    // 字号与 transport 其他按钮一致（TRANSPORT_BTN_FONT）。
+                    ui.add_space(4.0);
+                    for tool in ALL_TOOLS {
+                        let is_active = *ctx.active_tool == tool;
+                        let color = if is_active {
+                            crate::theme::ACCENT_ACTIVE
+                        } else {
+                            egui::Color32::GRAY
+                        };
+                        let icon = tool.icon();
+                        let resp = ui.add(
+                            egui::Label::new(
+                                icon.rich_text()
+                                    .size(crate::theme::TRANSPORT_BTN_FONT)
+                                    .color(color),
+                            )
+                            .sense(egui::Sense::click())
+                            .selectable(false),
+                        );
+                        crate::widgets::hover::hover_highlight(
+                            ui,
+                            &resp,
+                            icon.codepoint,
+                            egui::FontId::new(crate::theme::TRANSPORT_BTN_FONT, icon.font_family()),
+                            is_active,
+                        );
+                        if resp.clicked() {
+                            *ctx.active_tool = tool;
+                        }
+                        resp.on_hover_text(tool.label());
+                        ui.add_space(2.0);
+                    }
+                    // 把左侧按钮 + 右侧工具按钮都纳入"按钮区"，
+                    // 避免双击/拖拽误触发窗口最大化或拖动。
+                    button_right = Some(ui.cursor().min.x);
                 }
             });
 

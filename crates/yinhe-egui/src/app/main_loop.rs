@@ -217,6 +217,7 @@ impl eframe::App for App {
                 file_loader: &mut self.file_loader,
                 doc: active_doc,
                 follow_mode: &mut self.follow_mode,
+                active_tool: &mut self.active_tool,
             },
         );
 

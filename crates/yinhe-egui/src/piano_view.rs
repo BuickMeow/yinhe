@@ -219,6 +219,7 @@ pub fn show(
             conductor_idx,
             midi,
             track_colors,
+            total_ticks,
         );
         ghost_notes = ghost;
         hidden_notes.extend(hidden);
