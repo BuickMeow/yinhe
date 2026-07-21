@@ -102,10 +102,11 @@ impl GpuSynth {
 
                 if let Some(ref data) = info.sample_data {
                     let offset = sample_data.len() as u32;
-                    let samples = if info.sample_rate != sample_rate {
-                        xsynth_soundfonts::resample::resample_vec(data.clone(), info.sample_rate as f32, sample_rate as f32).to_vec()
+                    // data 是 Arc<[f32]>，sample_rate 匹配时零拷贝共享
+                    let samples: Arc<[f32]> = if info.sample_rate != sample_rate {
+                        xsynth_soundfonts::resample::resample_vec(data.to_vec(), info.sample_rate as f32, sample_rate as f32)
                     } else {
-                        data.clone()
+                        Arc::clone(data)
                     };
                     let len = samples.len() as u32;
                     sample_data.extend_from_slice(&samples);

@@ -5,13 +5,14 @@
 //! SF2: 采样数据内嵌在文件中，已解析为 f32
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 /// 每个 MIDI key 对应的合成参数。
 #[derive(Clone, Debug)]
 pub struct KeyInfo {
     // 采样数据来源（二选一）
     pub sample_path: Option<PathBuf>,    // SFZ: WAV 文件路径
-    pub sample_data: Option<Vec<f32>>,   // SF2: 内嵌采样数据
+    pub sample_data: Option<Arc<[f32]>>, // SF2: 内嵌采样数据（Arc 共享，clone 零拷贝）
     pub sample_rate: u32,
 
     // 合成参数
@@ -168,14 +169,16 @@ fn build_key_map_from_sf2(sf2_path: &Path) -> Result<Vec<Vec<KeyInfo>>, String> 
 
         // SF2 sample 是 Arc<[Arc<[f32]>]>：单声道=1通道，立体声=2通道
         // GPU 渲染器是单声道的，立体声样本取左右平均
-        let sample_data: Vec<f32> = if region.sample.len() == 2 {
-            // 立体声：左右平均为单声道
+        // 用 Arc<[f32]> 共享底层数据，88 个 key 引用同一份采样零拷贝
+        let sample_data: Arc<[f32]> = if region.sample.len() == 2 {
+            // 立体声：左右平均为单声道（必须新分配）
             let left = &region.sample[0];
             let right = &region.sample[1];
             let len = left.len().min(right.len());
             (0..len).map(|i| (left[i] + right[i]) * 0.5).collect()
         } else if region.sample.len() == 1 {
-            region.sample[0].to_vec()
+            // 单声道：直接 Arc clone，零拷贝共享
+            Arc::clone(&region.sample[0])
         } else {
             continue;
         };
