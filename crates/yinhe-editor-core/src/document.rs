@@ -84,37 +84,7 @@ impl Document {
     }
 
     pub fn empty() -> Self {
-        let mut model = YinModel {
-            conductor: Arc::new(yinhe_core::ConductorData {
-                tempo: yinhe_types::AutomationLane {
-                    target: yinhe_types::AutomationTarget::Tempo,
-                    track: 0,
-                    events: vec![yinhe_types::AutomationEvent {
-                        tick: 0,
-                        value: 120.0,
-                        shape: yinhe_types::SegmentShape::Step,
-                    }],
-                },
-                time_sig: vec![yinhe_types::TimeSigEvent {
-                    tick: 0,
-                    numerator: 4,
-                    denominator: 2,
-                }],
-            }),
-            tracks: {
-                let mut tracks: Vec<Arc<TrackData>> = Vec::with_capacity(17);
-                let mut t = TrackData::new(0, 0);
-                t.name = "Conductor".to_string();
-                tracks.push(Arc::new(t));
-                for ch in 0..16u8 {
-                    let mut t = TrackData::new(0, ch);
-                    t.name = format!("A{}", ch + 1);
-                    tracks.push(Arc::new(t));
-                }
-                tracks
-            },
-            ..Default::default()
-        };
+        let mut model = YinModel::new_empty_with_16_tracks();
         model.rebuild();
 
         let track_names = model.tracks.iter().map(|t| t.name.clone()).collect();

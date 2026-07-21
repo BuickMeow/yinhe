@@ -12,6 +12,7 @@
 
 mod events;
 mod model;
+mod model_stats;
 mod selection;
 mod source;
 mod tempo_map;
