@@ -117,17 +117,19 @@ pub fn export_wav(
     let total_sf: usize = port_soundfonts.iter().map(|(_, p)| p.len()).sum();
     let mut sf_loaded = 0usize;
     for (port, paths) in port_soundfonts {
-        for (i, _p) in paths.iter().enumerate() {
+        // 每个端口一次性下发全部 paths——LoadSoundFont 会整体替换该端口的
+        // soundfont 列表，逐个下发会导致后面覆盖前面，最终只剩最后一个 SF。
+        for _p in paths {
             sf_loaded += 1;
             progress(
                 sf_loaded as f32 / total_sf.max(1) as f32 * 0.05,
                 &format!("加载音色库 {}/{} …", sf_loaded, total_sf),
             );
-            engine.handle_command(crate::spawn::AudioCommand::LoadSoundFont {
-                port: *port,
-                paths: paths[i..i + 1].to_vec(),
-            });
         }
+        engine.handle_command(crate::spawn::AudioCommand::LoadSoundFont {
+            port: *port,
+            paths: paths.clone(),
+        });
     }
     let t_sf = t_start.elapsed() - t_model;
 
