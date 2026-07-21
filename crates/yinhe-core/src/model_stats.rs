@@ -42,6 +42,7 @@ impl YinModel {
         let mut track_audible: Vec<u64> = vec![0u64; self.tracks.len()];
         let mut bucket_stats: [HashMap<u16, (u64, u64)>; 128] =
             core::array::from_fn(|_| HashMap::new());
+        let mut bucket_max_end: [u64; 128] = [0; 128];
         let mut max_id_seen: u32 = 0;
 
         for (track_idx, notes) in per_track_notes.into_iter().enumerate() {
@@ -76,6 +77,9 @@ impl YinModel {
                     velocity: note.velocity,
                     track: track_idx as u16,
                 });
+                if end > bucket_max_end[key] {
+                    bucket_max_end[key] = end;
+                }
                 let e = bucket_stats[key].entry(track_idx as u16).or_insert((0, 0));
                 e.0 += 1;
                 if note.velocity > 1 {
@@ -96,6 +100,7 @@ impl YinModel {
         self.track_audible_count = track_audible;
         for (k, bucket) in self.notes.iter().enumerate() {
             self.bucket_note_count[k] = bucket.len() as u64;
+            self.bucket_max_end_tick[k] = bucket_max_end[k];
             self.bucket_track_stats[k] = std::mem::take(&mut bucket_stats[k]);
         }
         self.recompute_channel_counts();
@@ -178,12 +183,16 @@ impl YinModel {
         // rebuild_dirty() can do incremental updates later.
         let mut bucket_stats: [HashMap<u16, (u64, u64)>; 128] =
             core::array::from_fn(|_| HashMap::new());
+        let mut bucket_max_end: [u64; 128] = [0; 128];
         for (k, bucket) in self.notes.iter().enumerate() {
             note_count += bucket.len() as u64;
             for n in bucket.iter() {
                 let end = n.end_tick as u64;
                 if end > max_tick {
                     max_tick = end;
+                }
+                if end > bucket_max_end[k] {
+                    bucket_max_end[k] = end;
                 }
                 if (n.track as usize) < track_counts.len() {
                     track_counts[n.track as usize] += 1;
@@ -204,6 +213,7 @@ impl YinModel {
         self.track_audible_count = track_audible;
         for k in 0..128 {
             self.bucket_note_count[k] = self.notes[k].len() as u64;
+            self.bucket_max_end_tick[k] = bucket_max_end[k];
             self.bucket_track_stats[k] = std::mem::take(&mut bucket_stats[k]);
         }
 
@@ -257,23 +267,30 @@ impl YinModel {
         self.dirty_keys = [false; 128];
 
         // 2. Incremental stats: subtract old per-bucket counts, add new ones.
+        //    Recompute bucket_max_end_tick for dirty buckets, then derive
+        //    tick_length as max over all 128 buckets — shrink-aware.
         let mut delta_note_count: i64 = 0;
-        let mut new_tick_length = self.tick_length;
         for &k in &dirty_indices {
             let old = self.bucket_note_count[k] as i64;
             let new = self.notes[k].len() as i64;
             delta_note_count += new - old;
             self.bucket_note_count[k] = new as u64;
 
-            // Update tick_length: scan dirty buckets for max end_tick.
+            // Recompute this dirty bucket's max end_tick.
+            let mut bucket_max: u64 = 0;
             for n in self.notes[k].iter() {
                 let end = n.end_tick as u64;
-                if end > new_tick_length {
-                    new_tick_length = end;
+                if end > bucket_max {
+                    bucket_max = end;
                 }
             }
+            self.bucket_max_end_tick[k] = bucket_max;
         }
         self.note_count = (self.note_count as i64 + delta_note_count) as u64;
+        // tick_length = max over all 128 buckets of bucket_max_end_tick.
+        // O(128) scan — cheap, and correctly handles shrinkage when the
+        // last note was deleted/shortened in a dirty bucket.
+        let new_tick_length = self.bucket_max_end_tick.iter().copied().max().unwrap_or(0);
         self.tick_length = new_tick_length;
 
         // 3. Incremental track stats: subtract old per-track contributions

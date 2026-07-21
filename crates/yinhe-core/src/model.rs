@@ -179,6 +179,11 @@ pub struct YinModel {
     /// Updated by `rebuild()`, `load_track_notes()`, and `rebuild_dirty()`.
     pub bucket_note_count: [u64; 128],
 
+    /// Per-bucket max end_tick cache. Enables correct incremental `tick_length`
+    /// in `rebuild_dirty()`: shrink-aware (max over all 128 buckets) without
+    /// O(N) full scan. Updated by `rebuild()`, `load_track_notes()`, and `rebuild_dirty()`.
+    pub bucket_max_end_tick: [u64; 128],
+
     /// Per-bucket per-track (total, audible) counts. Sparse: each bucket
     /// only stores tracks that actually have notes in it. Enables
     /// O(dirty bucket size) incremental `track_note_count` /
@@ -209,6 +214,7 @@ impl Default for YinModel {
             dirty_keys: [false; 128],
             note_revisions: [0; 128],
             bucket_note_count: [0; 128],
+            bucket_max_end_tick: [0; 128],
             bucket_track_stats: core::array::from_fn(|_| HashMap::new()),
             next_note_id: 1,
         }
@@ -575,6 +581,46 @@ mod tests {
 
         assert_eq!(m_del.track_note_count, m_del_ref.track_note_count, "track_note_count drift after remove");
         assert_eq!(m_del.track_audible_count, m_del_ref.track_audible_count, "track_audible_count drift after remove");
+    }
+
+    /// 回归测试：删除全曲最后一个音符（max end_tick 所在音符）后，
+    /// `rebuild_dirty` 必须收缩 `tick_length`。
+    /// 之前 bug：`new_tick_length` 从 `self.tick_length` 起步只取 max，
+    /// 永远不会缩小，导致 select_all_pr/ar 范围、播放结束判定错误。
+    #[test]
+    fn rebuild_dirty_tick_length_shrinks_after_deleting_last_note() {
+        let per_track = vec![
+            // track 0: 两个音符，end_tick 分别为 480 和 1920（末尾）
+            vec![note_audible(0, 480, 60), note_audible(480, 1920, 62)],
+        ];
+        let mut m = YinModel::default();
+        m.tracks = vec![Arc::new(super::TrackData::new(0, 0))];
+        m.load_track_notes(per_track);
+        m.rebuild();
+        assert_eq!(m.tick_length, 1920, "初始 tick_length 应为末尾音符 end_tick");
+
+        // 删除 end_tick=1920 的末尾音符
+        {
+            let bucket = Arc::make_mut(&mut m.notes[62]);
+            bucket.retain(|n| !(n.start_tick == 480 && n.end_tick == 1920));
+        }
+        m.mark_dirty(62);
+        m.rebuild_dirty();
+
+        // tick_length 必须收缩到 480（剩下的音符 end_tick）
+        assert_eq!(
+            m.tick_length, 480,
+            "删除末尾音符后 tick_length 必须收缩（bug C-3 回归）"
+        );
+
+        // 再删掉剩下的音符 → tick_length 应为 0
+        {
+            let bucket = Arc::make_mut(&mut m.notes[60]);
+            bucket.clear();
+        }
+        m.mark_dirty(60);
+        m.rebuild_dirty();
+        assert_eq!(m.tick_length, 0, "清空所有音符后 tick_length 必须为 0");
     }
 
     // -----------------------------------------------------------------------
