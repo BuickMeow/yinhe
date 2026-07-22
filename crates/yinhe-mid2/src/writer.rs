@@ -11,7 +11,7 @@ use midly::{
 };
 
 use yinhe_core::{TrackData, YinModel};
-use yinhe_types::AutomationTarget;
+use yinhe_types::{AutomationTarget, Note};
 
 use crate::error::MidiError;
 
@@ -24,9 +24,22 @@ pub fn write_to_bytes(model: &YinModel) -> Result<Vec<u8>, MidiError> {
     // Track 0: conductor (tempo + time signature)
     tracks.push(build_conductor_track(model));
 
+    // 单遍 O(N) 分发：把 128 桶的音符按 track 索引分发到 per_track_notes。
+    // 之前 build_track 每 track 扫一遍 128 桶 → O(T×N)，16 轨 × 1亿音符 = 16 亿次迭代。
+    let num_tracks = model.tracks.len();
+    let mut per_track_notes: Vec<Vec<(Note, u8)>> = vec![Vec::new(); num_tracks];
+    for (key, bucket) in model.notes.iter().enumerate() {
+        for n in bucket.iter() {
+            let t = n.track as usize;
+            if t < num_tracks {
+                per_track_notes[t].push((*n, key as u8));
+            }
+        }
+    }
+
     // Tracks 1..N+1: per-track event streams
     for (i, t) in model.tracks.iter().enumerate() {
-        tracks.push(build_track(t, i as u16, model));
+        tracks.push(build_track(t, &per_track_notes[i]));
     }
 
     let smf = Smf {
@@ -74,34 +87,33 @@ fn build_conductor_track<'a>(model: &'a YinModel) -> Vec<TrackEvent<'a>> {
     flatten_to_track(events, None)
 }
 
-fn build_track<'a>(track: &'a TrackData, track_idx: u16, model: &'a YinModel) -> Vec<TrackEvent<'a>> {
+fn build_track<'a>(track: &'a TrackData, notes: &[(Note, u8)]) -> Vec<TrackEvent<'a>> {
     let ch = u4::new(track.channel & 0x0F);
     let mut events: Vec<(u32, TrackEventKind<'a>)> = Vec::new();
 
     // Notes → NoteOn + NoteOff pairs
-    for (key, bucket) in model.notes.iter().enumerate() {
-        for n in bucket.iter().filter(|n| n.track == track_idx) {
-            events.push((
-                n.start_tick,
-                TrackEventKind::Midi {
-                    channel: ch,
-                    message: MidiMessage::NoteOn {
-                        key: u7::new((key as u8) & 0x7F),
-                        vel: u7::new(n.velocity & 0x7F),
-                    },
+    // notes 已由 write_to_bytes 单遍 O(N) 分发好，这里只扫当前 track 的音符。
+    for (n, key) in notes {
+        events.push((
+            n.start_tick,
+            TrackEventKind::Midi {
+                channel: ch,
+                message: MidiMessage::NoteOn {
+                    key: u7::new((*key) & 0x7F),
+                    vel: u7::new(n.velocity & 0x7F),
                 },
-            ));
-            events.push((
-                n.end_tick,
-                TrackEventKind::Midi {
-                    channel: ch,
-                    message: MidiMessage::NoteOff {
-                        key: u7::new((key as u8) & 0x7F),
-                        vel: u7::new(0),
-                    },
+            },
+        ));
+        events.push((
+            n.end_tick,
+            TrackEventKind::Midi {
+                channel: ch,
+                message: MidiMessage::NoteOff {
+                    key: u7::new((*key) & 0x7F),
+                    vel: u7::new(0),
                 },
-            ));
-        }
+            },
+        ));
     }
 
     // Automation lanes → MIDI events
