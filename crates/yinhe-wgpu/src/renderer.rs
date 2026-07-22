@@ -303,7 +303,11 @@ impl CullState {
 
     /// Reset all 128 indirect-args slots, then dispatch the cull pass per key.
     /// Each key writes into its own visible buffer + indirect-args slot.
-    fn dispatch_cull(&self, queue: &Queue, encoder: &mut CommandEncoder) {
+    ///
+    /// Only keys in `key_lo..=key_hi` are dispatched — off-screen keys would
+    /// produce zero visible instances anyway, so skipping them saves both CPU
+    /// dispatch overhead and GPU compute work.
+    fn dispatch_cull(&self, queue: &Queue, encoder: &mut CommandEncoder, key_lo: u8, key_hi: u8) {
         // Reset all 128 slots: each slot is 256 bytes (64 u32s).
         // First u32 = 6 (vertex_count), rest = 0.
         let mut reset_data = [[0u32; 64]; 128];
@@ -317,7 +321,7 @@ impl CullState {
             timestamp_writes: None,
         });
         cull_pass.set_pipeline(&self.pipeline);
-        for key in 0u8..128 {
+        for key in key_lo..=key_hi {
             let Some(bg) = &self.per_key_bind_groups[key as usize] else { continue };
             let count = self.per_key_counts[key as usize];
             if count == 0 { continue; }
@@ -335,11 +339,11 @@ impl CullState {
         drop(cull_pass);
     }
 
-    fn draw_visible_notes(&self, pass: &mut RenderPass<'_>, note_pipeline: &RenderPipeline, bind_group: &BindGroup) {
+    fn draw_visible_notes(&self, pass: &mut RenderPass<'_>, note_pipeline: &RenderPipeline, bind_group: &BindGroup, key_lo: u8, key_hi: u8) {
         pass.set_pipeline(note_pipeline);
         pass.set_bind_group(0, bind_group, &[]);
         // Draw each key's visible notes via its own indirect-args slot.
-        for key in 0u8..128 {
+        for key in key_lo..=key_hi {
             let Some(vis_buf) = &self.per_key_visible_buffers[key as usize] else { continue };
             let count = self.per_key_counts[key as usize];
             if count == 0 { continue; }
@@ -672,6 +676,33 @@ impl InstanceRenderer {
         }
     }
 
+    /// Compute the visible key range from cached uniforms (PR mode only).
+    /// Returns `(lo, hi)` inclusive. For non-PR modes, returns `(0, 127)` since
+    /// the Y position depends on both key and track (can't skip by key alone).
+    ///
+    /// Adds 1 key of padding on each side to handle notes whose top/bottom edge
+    /// peeks into the viewport due to sub-pixel rounding.
+    fn visible_key_range(&self) -> (u8, u8) {
+        let u = match &self.cached_uniforms {
+            Some(u) => u,
+            None => return (0, 127),
+        };
+        if u.mode != 1 || u.key_height <= 0.0 {
+            return (0, 127);
+        }
+        // PR: bottom = 128 * key_height - scroll_y
+        // y_to_key(y) = ceil((bottom - y) / key_height) - 1, clamped to 0..127
+        let bottom = 128.0 * u.key_height - u.scroll_y;
+        let top_key = ((bottom / u.key_height).ceil() as i32 - 1).clamp(0, 127);
+        let bottom_key = (((bottom - u.height) / u.key_height).ceil() as i32 - 1).clamp(0, 127);
+        let lo = bottom_key.min(top_key);
+        let hi = bottom_key.max(top_key);
+        // 1-key padding for sub-pixel edge cases.
+        let lo = lo.saturating_sub(1).clamp(0, 127);
+        let hi = hi.saturating_add(1).clamp(0, 127);
+        (lo as u8, hi as u8)
+    }
+
     /// GPU compute cull draw: dispatch cull pass, then draw layers.
     ///
     /// Z-order: decor (bg + grid) → velocity bars → curve (automation) → culled notes → ghost notes.
@@ -682,8 +713,9 @@ impl InstanceRenderer {
         width: u32,
         height: u32,
     ) {
+        let (key_lo, key_hi) = self.visible_key_range();
         // Phase 1: Compute cull
-        self.cull.dispatch_cull(&self.queue, encoder);
+        self.cull.dispatch_cull(&self.queue, encoder, key_lo, key_hi);
 
         // Phase 2: Single render pass
         let mut pass = crate::util::begin_pianoroll_pass(
@@ -715,7 +747,7 @@ impl InstanceRenderer {
         }
 
         // Step 4: culled notes (from GPU compute cull buffer)
-        self.cull.draw_visible_notes(&mut pass, &self.render.note_pipeline, &self.render.bind_group);
+        self.cull.draw_visible_notes(&mut pass, &self.render.note_pipeline, &self.render.bind_group, key_lo, key_hi);
 
         // Step 5: ghost notes (last note layer, if any) — on top of everything
         let ghost = self.layers.iter().filter(|l| l.kind() == LayerKind::Note).last();
