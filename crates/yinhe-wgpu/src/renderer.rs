@@ -104,6 +104,12 @@ struct CullState {
     /// Per-key note count at last upload (in NoteInstance units).
     per_key_counts: [u32; 128],
 
+    /// Per-key dispatch args buffer: 128 × DispatchIndirectArgs (12 bytes each).
+    /// Pre-computed at upload time so `dispatch_cull` can use
+    /// `dispatch_workgroups_indirect` instead of computing wg_x/wg_y per frame.
+    /// Slot k is at byte offset k * 12.
+    dispatch_args_buffer: Buffer,
+
     /// Per-key revision at last upload (full or incremental).
     /// Compared with model.note_revisions to detect incremental re-upload needs.
     uploaded_key_revisions: [u64; 128],
@@ -202,6 +208,17 @@ impl CullState {
         });
         yinhe_memtrace::add_gpu_resource(indirect_args_size);
 
+        // DispatchIndirectArgs: 128 × 12 bytes (x, y, z as u32).
+        // Written at upload time; read by dispatch_workgroups_indirect.
+        let dispatch_args_size = 128 * 12;
+        let dispatch_args_buffer = device.create_buffer(&BufferDescriptor {
+            label: Some("cull_dispatch_args"),
+            size: dispatch_args_size,
+            usage: BufferUsages::INDIRECT | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        yinhe_memtrace::add_gpu_resource(dispatch_args_size);
+
         Self {
             pipeline,
             bind_group_layout,
@@ -210,6 +227,7 @@ impl CullState {
             per_key_visible_buffers: (0..128).map(|_| None).collect(),
             indirect_args_buffer,
             per_key_counts: [0; 128],
+            dispatch_args_buffer,
             uploaded_key_revisions: [0; 128],
             last_cull_uniforms: None,
             notes_dirty: false,
@@ -291,6 +309,12 @@ impl CullState {
             }
         }
         self.per_key_counts[key as usize] = notes.len() as u32;
+
+        // Pre-compute dispatch args for this key (used by dispatch_workgroups_indirect).
+        let wg = (notes.len() as u64).div_ceil(256);
+        let args = [wg.min(65535) as u32, wg.div_ceil(65535) as u32, 1u32];
+        queue.write_buffer(&self.dispatch_args_buffer, key as u64 * 12, bytemuck::cast_slice(&args));
+
         self.notes_dirty = true;
     }
 
@@ -379,13 +403,9 @@ impl CullState {
             // Each key's bind group already binds its own indirect_args slot
             // (256-byte slice at offset k*256), so no dynamic offset is needed.
             cull_pass.set_bind_group(0, bg, &[]);
-            // 2D dispatch to support >65535 workgroups per key (extreme black-score
-            // cases where one key holds >16.7M notes). Shader already indexes via
-            // global_id.x + global_id.y * (65535*256).
-            let wg = (count as u64).div_ceil(256);
-            let wg_x = wg.min(65535) as u32;
-            let wg_y = wg.div_ceil(65535) as u32;
-            cull_pass.dispatch_workgroups(wg_x, wg_y, 1);
+            // Dispatch args (wg_x, wg_y, 1) were pre-computed at upload time
+            // and stored in dispatch_args_buffer. This avoids per-frame div_ceil.
+            cull_pass.dispatch_workgroups_indirect(&self.dispatch_args_buffer, key as u64 * 12);
         }
         drop(cull_pass);
 
