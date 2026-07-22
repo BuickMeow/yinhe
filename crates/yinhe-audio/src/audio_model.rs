@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::sync::Arc;
 
 use xsynth_core::channel::{ChannelAudioEvent, ControlEvent};
@@ -12,11 +13,38 @@ pub(crate) struct SortedCC {
     pub(crate) event: ChannelAudioEvent,
 }
 
+/// 活跃音符（已 NoteOn 待 NoteOff）。
+///
+/// `Ord` 按 `end_sample` 升序，相同 end_sample 再按 (key, channel) 区分。
+/// 配合 `BinaryHeap<Reverse<ActiveNote>>` 用作 min-heap，让最早结束的音符在堆顶，
+/// NoteOff 检测从 O(V) retain 全扫降到 O(ended × log V) 逐个 pop。
 #[derive(Clone, Copy)]
 pub(crate) struct ActiveNote {
     pub(crate) key: u8,
     pub(crate) channel: u8,
     pub(crate) end_sample: u64,
+}
+
+impl PartialEq for ActiveNote {
+    fn eq(&self, other: &Self) -> bool {
+        self.end_sample == other.end_sample
+            && self.key == other.key
+            && self.channel == other.channel
+    }
+}
+impl Eq for ActiveNote {}
+impl PartialOrd for ActiveNote {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for ActiveNote {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.end_sample
+            .cmp(&other.end_sample)
+            .then(self.key.cmp(&other.key))
+            .then(self.channel.cmp(&other.channel))
+    }
 }
 
 /// 音频线程消费的可听音事件（vel > 1），tick 已预转换为 sample。

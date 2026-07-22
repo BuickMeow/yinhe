@@ -219,11 +219,11 @@ impl AudioEngine {
                         vel: n.velocity,
                     }),
                 ));
-                self.active_notes.push(ActiveNote {
+                self.active_notes.push(std::cmp::Reverse(ActiveNote {
                     key: key as u8,
                     channel: ch as u8,
                     end_sample: n.end_sample,
-                });
+                }));
             }
         }
 

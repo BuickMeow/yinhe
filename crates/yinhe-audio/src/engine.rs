@@ -1,3 +1,5 @@
+use std::collections::BinaryHeap;
+use std::cmp::Reverse;
 use std::sync::Arc;
 
 use xsynth_core::channel::ChannelInitOptions;
@@ -38,7 +40,9 @@ pub(crate) struct AudioEngine {
     /// `Arc` 共享给 worker 线程做 chase 计算，避免每次 Seek clone 几十万条 CC。
     pub(crate) cc_events: Arc<Vec<SortedCC>>,
     pub(crate) cc_cursor: usize,
-    pub(crate) active_notes: Vec<ActiveNote>,
+    /// min-heap by end_sample：堆顶是最早结束的音符。
+    /// NoteOff 检测从 O(V) retain 全扫降到 O(ended × log V) 逐个 pop。
+    pub(crate) active_notes: BinaryHeap<Reverse<ActiveNote>>,
     pub(crate) ended_notes: Vec<ActiveNote>,
     pub(crate) model: Option<AudioModel>,
     pub(crate) skip_track: Vec<bool>,
@@ -97,7 +101,7 @@ impl AudioEngine {
                 audible_notes: Box::new(core::array::from_fn(|_| Vec::new())),
                 cc_events: Arc::new(Vec::new()),
                 cc_cursor: 0,
-                active_notes: Vec::new(),
+                active_notes: BinaryHeap::new(),
                 ended_notes: Vec::new(),
                 model: None,
                 skip_track: Vec::new(),

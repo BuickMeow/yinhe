@@ -1,3 +1,5 @@
+use std::cmp::Reverse;
+
 use xsynth_core::channel::{ChannelAudioEvent, ChannelEvent};
 use xsynth_core::channel_group::SynthEvent;
 use xsynth_core::AudioPipe;
@@ -118,11 +120,11 @@ impl AudioEngine {
                                 vel: note.velocity,
                             }),
                         ));
-                        self.active_notes.push(ActiveNote {
+                        self.active_notes.push(Reverse(ActiveNote {
                             key: key as u8,
                             channel: ch as u8,
                             end_sample: note.end_sample,
-                        });
+                        }));
                     }
                 }
                 cursor += 1;
@@ -130,19 +132,24 @@ impl AudioEngine {
             self.note_cursor[key] = cursor;
         }
 
-        // ── NoteOff + 找下一个 NoteOff 边界（单次 active_notes 遍历）──
+        // ── NoteOff + 找下一个 NoteOff 边界（min-heap 逐个 pop）──
+        // 堆顶 = end_sample 最小的活跃音符。
+        // ended 个音符每个 O(log V) pop，未结束的堆顶 O(1) peek 得下一边界。
+        // 之前是 Vec::retain 全扫 O(V_active)，高密度段 V 大时被多次调用形成 O(k×V) 正反馈。
         self.ended_notes.clear();
-        self.active_notes.retain(|an| {
-            if an.end_sample <= sample {
-                self.ended_notes.push(*an);
-                false
-            } else {
-                if an.end_sample < block_end {
-                    next = Some(next.map_or(an.end_sample, |s| s.min(an.end_sample)));
-                }
-                true
+        while let Some(Reverse(an)) = self.active_notes.peek() {
+            if an.end_sample > sample {
+                break;
             }
-        });
+            self.ended_notes.push(*an);
+            self.active_notes.pop();
+        }
+        // peek 堆顶（最早结束的未结束音符）作为下一 NoteOff 边界候选
+        if let Some(Reverse(an)) = self.active_notes.peek() {
+            if an.end_sample < block_end {
+                next = Some(next.map_or(an.end_sample, |s| s.min(an.end_sample)));
+            }
+        }
         for an in &self.ended_notes {
             let dense = self.channel_layout.dense_for(an.channel as usize);
             if dense != u32::MAX {
