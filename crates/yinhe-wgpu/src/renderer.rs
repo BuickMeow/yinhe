@@ -4,6 +4,22 @@ use crate::layer::LayerSlot;
 use crate::pipeline::RenderPipelineState;
 use crate::vertex::{CurveInstance, DrawInstance, NoteInstance, Uniforms, SelectionUniform, VelocityBarInstance};
 
+/// Compare only the uniform fields that affect GPU culling (read by `cull.wgsl`).
+/// Non-culling fields (scroll_frac, scroll_mode, track_count, sel_rect_count,
+/// note_outline, value_zoom, value_scroll, min_border_width) are excluded so
+/// that irrelevant changes don't trigger a re-cull.
+fn culling_relevant_eq(a: &Uniforms, b: &Uniforms) -> bool {
+    a.width == b.width
+        && a.height == b.height
+        && a.scroll_x == b.scroll_x
+        && a.keyboard_width == b.keyboard_width
+        && a.pixels_per_tick == b.pixels_per_tick
+        && a.key_height == b.key_height
+        && a.scroll_y == b.scroll_y
+        && a.mode == b.mode
+        && a.lane_height == b.lane_height
+}
+
 /// Per-frame timing breakdown returned by `prepare`.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct PrepareTimings {
@@ -91,6 +107,17 @@ struct CullState {
     /// Per-key revision at last upload (full or incremental).
     /// Compared with model.note_revisions to detect incremental re-upload needs.
     uploaded_key_revisions: [u64; 128],
+
+    /// Uniforms snapshot from the last cull dispatch. When the culling-relevant
+    /// fields match and `notes_dirty` is false, the previous frame's
+    /// `visible_notes` + `indirect_args` are still valid and the dispatch can
+    /// be skipped entirely.
+    last_cull_uniforms: Option<Uniforms>,
+
+    /// True when note data has been uploaded (full or incremental) since the
+    /// last cull dispatch. Set by `upload_all_notes` / `upload_one_key`;
+    /// cleared by `dispatch_cull`.
+    notes_dirty: bool,
 }
 
 impl CullState {
@@ -184,6 +211,8 @@ impl CullState {
             indirect_args_buffer,
             per_key_counts: [0; 128],
             uploaded_key_revisions: [0; 128],
+            last_cull_uniforms: None,
+            notes_dirty: false,
         }
     }
 
@@ -207,6 +236,7 @@ impl CullState {
             self.upload_one_key(device, queue, uniform_buffer, key, key_notes);
             self.uploaded_key_revisions[key as usize] = key_revisions[key as usize];
         }
+        self.notes_dirty = true;
     }
 
     /// Grow (if needed) + write + bind-group-recreate (if buffer grew) for one key.
@@ -261,6 +291,7 @@ impl CullState {
             }
         }
         self.per_key_counts[key as usize] = notes.len() as u32;
+        self.notes_dirty = true;
     }
 
     /// Recreate the bind group for a single key (after its buffer grew).
@@ -307,7 +338,27 @@ impl CullState {
     /// Only keys in `key_lo..=key_hi` are dispatched — off-screen keys would
     /// produce zero visible instances anyway, so skipping them saves both CPU
     /// dispatch overhead and GPU compute work.
-    fn dispatch_cull(&self, queue: &Queue, encoder: &mut CommandEncoder, key_lo: u8, key_hi: u8) {
+    ///
+    /// **Skip optimization**: if no notes were re-uploaded (`!notes_dirty`) and
+    /// the culling-relevant uniform fields match the last dispatch, the previous
+    /// frame's `visible_notes` + `indirect_args` are still valid and the entire
+    /// reset + dispatch is skipped. This makes idle frames (no scroll, no edit)
+    /// cost zero GPU compute work.
+    fn dispatch_cull(
+        &mut self,
+        queue: &Queue,
+        encoder: &mut CommandEncoder,
+        key_lo: u8,
+        key_hi: u8,
+        uniforms: &Uniforms,
+    ) {
+        // Skip if nothing changed since last cull.
+        if !self.notes_dirty
+            && self.last_cull_uniforms.as_ref().is_some_and(|last| culling_relevant_eq(last, uniforms))
+        {
+            return;
+        }
+
         // Reset all 128 slots: each slot is 256 bytes (64 u32s).
         // First u32 = 6 (vertex_count), rest = 0.
         let mut reset_data = [[0u32; 64]; 128];
@@ -337,6 +388,9 @@ impl CullState {
             cull_pass.dispatch_workgroups(wg_x, wg_y, 1);
         }
         drop(cull_pass);
+
+        self.last_cull_uniforms = Some(*uniforms);
+        self.notes_dirty = false;
     }
 
     fn draw_visible_notes(&self, pass: &mut RenderPass<'_>, note_pipeline: &RenderPipeline, bind_group: &BindGroup, key_lo: u8, key_hi: u8) {
@@ -616,7 +670,7 @@ impl InstanceRenderer {
     /// Uses GPU compute cull for note layers if available, otherwise falls back
     /// to CPU-built layer data.
     pub fn draw(
-        &self,
+        &mut self,
         encoder: &mut CommandEncoder,
         target: &TextureView,
         width: u32,
@@ -707,15 +761,16 @@ impl InstanceRenderer {
     ///
     /// Z-order: decor (bg + grid) → velocity bars → curve (automation) → culled notes → ghost notes.
     fn draw_with_cull(
-        &self,
+        &mut self,
         encoder: &mut CommandEncoder,
         target: &TextureView,
         width: u32,
         height: u32,
     ) {
         let (key_lo, key_hi) = self.visible_key_range();
-        // Phase 1: Compute cull
-        self.cull.dispatch_cull(&self.queue, encoder, key_lo, key_hi);
+        // Phase 1: Compute cull (skipped if uniforms + notes unchanged since last frame)
+        let uniforms = self.cached_uniforms.unwrap_or_default();
+        self.cull.dispatch_cull(&self.queue, encoder, key_lo, key_hi, &uniforms);
 
         // Phase 2: Single render pass
         let mut pass = crate::util::begin_pianoroll_pass(

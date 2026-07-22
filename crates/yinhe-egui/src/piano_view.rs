@@ -540,7 +540,7 @@ pub fn show(
     view.base.dirty = false;
 
     // ── Background (drawn by egui before wgpu texture) ──
-    let theme = pianoroll.theme();
+    let theme = pianoroll.theme().clone();
     let (r, g, b) = theme.pr_bg;
     painter.rect_filled(
         content_rect,
