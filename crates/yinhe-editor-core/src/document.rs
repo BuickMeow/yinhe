@@ -243,8 +243,9 @@ impl Document {
         let current_track_selected = self.edit.track_selected.clone();
         let current_sel_rect = self.edit.sel_rect.clone();
 
-        // Apply reverse action.
-        entry.action.undo(self);
+        // 反转 action（消耗 entry.action，零克隆），apply 一次后再 move 进 redo 栈。
+        let reversed = entry.action.reversed();
+        reversed.redo(self);
 
         // Restore selection from the undo entry.
         self.edit.selected = entry.selected;
@@ -253,7 +254,7 @@ impl Document {
 
         // Push reversed action onto the redo stack.
         self.history.future.push(UndoEntry {
-            action: entry.action.reversed(),
+            action: reversed,
             label: entry.label,
             selected: current_selected,
             track_selected: current_track_selected,
@@ -273,14 +274,16 @@ impl Document {
         let current_track_selected = self.edit.track_selected.clone();
         let current_sel_rect = self.edit.sel_rect.clone();
 
-        entry.action.undo(self);
+        // future 栈里存的是 reversed action，再反转一次回到原始方向并 apply。
+        let reversed = entry.action.reversed();
+        reversed.redo(self);
 
         self.edit.selected = entry.selected;
         self.edit.track_selected = entry.track_selected;
         self.edit.sel_rect = entry.sel_rect;
 
         self.history.past.push_back(UndoEntry {
-            action: entry.action.reversed(),
+            action: reversed,
             label: entry.label,
             selected: current_selected,
             track_selected: current_track_selected,

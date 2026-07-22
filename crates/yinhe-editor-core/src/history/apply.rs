@@ -99,15 +99,6 @@ impl UndoAction {
             }
         }
     }
-
-    /// Apply the reverse action (used by undo).
-    ///
-    /// Delegates to `self.reversed().redo(doc)` — the `reversed()` method
-    /// swaps before/after (and reverses Composite order), so redo on the
-    /// reversed action is equivalent to undo on the original.
-    pub fn undo(&self, doc: &mut Document) {
-        self.reversed().redo(doc);
-    }
 }
 
 // ---------------------------------------------------------------------------

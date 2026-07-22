@@ -103,65 +103,72 @@ pub enum UndoAction {
 
 impl UndoAction {
     /// Return the inverse action (swap before/after, old/new).
-    pub fn reversed(&self) -> Self {
+    ///
+    /// 消耗 self 并用 `mem::swap` 交换 before/after，零克隆。
+    /// 调用方应先取出 entry，再 `let rev = action.reversed(); rev.redo(doc);`
+    /// 最后把 `rev` move 进对端栈。
+    pub fn reversed(self) -> Self {
         match self {
-            UndoAction::Notes(delta) => UndoAction::Notes(NoteDelta {
-                before: delta.after.clone(),
-                after: delta.before.clone(),
-            }),
-            UndoAction::Automation(delta) => UndoAction::Automation(AutomationDelta {
-                track_idx: delta.track_idx,
-                lane_idx: delta.lane_idx,
-                target: delta.target.clone(),
-                before: delta.after.clone(),
-                after: delta.before.clone(),
-            }),
-            UndoAction::TrackName { track_idx, old, new } => UndoAction::TrackName {
-                track_idx: *track_idx,
-                old: new.clone(),
-                new: old.clone(),
-            },
-            UndoAction::ProjectName { old, new } => UndoAction::ProjectName {
-                old: new.clone(),
-                new: old.clone(),
-            },
-            UndoAction::ProjectArtist { old, new } => UndoAction::ProjectArtist {
-                old: new.clone(),
-                new: old.clone(),
-            },
-            UndoAction::ProjectDescription { old, new } => UndoAction::ProjectDescription {
-                old: new.clone(),
-                new: old.clone(),
-            },
+            UndoAction::Notes(mut delta) => {
+                std::mem::swap(&mut delta.before, &mut delta.after);
+                UndoAction::Notes(delta)
+            }
+            UndoAction::Automation(mut delta) => {
+                std::mem::swap(&mut delta.before, &mut delta.after);
+                UndoAction::Automation(delta)
+            }
+            UndoAction::TrackName { track_idx, mut old, mut new } => {
+                std::mem::swap(&mut old, &mut new);
+                UndoAction::TrackName { track_idx, old, new }
+            }
+            UndoAction::ProjectName { mut old, mut new } => {
+                std::mem::swap(&mut old, &mut new);
+                UndoAction::ProjectName { old, new }
+            }
+            UndoAction::ProjectArtist { mut old, mut new } => {
+                std::mem::swap(&mut old, &mut new);
+                UndoAction::ProjectArtist { old, new }
+            }
+            UndoAction::ProjectDescription { mut old, mut new } => {
+                std::mem::swap(&mut old, &mut new);
+                UndoAction::ProjectDescription { old, new }
+            }
             UndoAction::ProjectPpq { old, new, rescale } => UndoAction::ProjectPpq {
-                old: *new,
-                new: *old,
-                rescale: *rescale,
+                old: new,
+                new: old,
+                rescale,
             },
             UndoAction::CompressionLevel { old, new } => UndoAction::CompressionLevel {
-                old: *new,
-                new: *old,
+                old: new,
+                new: old,
             },
             UndoAction::TrackStructure {
-                tracks_before,
-                tracks_after,
-                note_remap,
-                note_remap_inverse,
+                mut tracks_before,
+                mut tracks_after,
+                mut note_remap,
+                mut note_remap_inverse,
                 deleted_notes,
-            } => UndoAction::TrackStructure {
-                tracks_before: tracks_after.clone(),
-                tracks_after: tracks_before.clone(),
-                note_remap: note_remap_inverse.clone(),
-                note_remap_inverse: note_remap.clone(),
+            } => {
+                // 交换前后 + 交换 remap / inverse_remap。
                 // deleted_notes 不交换：它记录的是 remove_track 删掉的音符，
                 // 在 undo（tracks_after.len() > tracks_before.len()）时插回。
-                deleted_notes: deleted_notes.clone(),
-            },
+                std::mem::swap(&mut tracks_before, &mut tracks_after);
+                std::mem::swap(&mut note_remap, &mut note_remap_inverse);
+                UndoAction::TrackStructure {
+                    tracks_before,
+                    tracks_after,
+                    note_remap,
+                    note_remap_inverse,
+                    deleted_notes,
+                }
+            }
             UndoAction::Composite(actions) => {
                 // Reverse order so that reversed().redo() undoes in reverse order,
                 // matching the original undo() semantics.
-                UndoAction::Composite(actions.iter().rev().map(|a| a.reversed()).collect())
-            },
+                UndoAction::Composite(
+                    actions.into_iter().rev().map(|a| a.reversed()).collect(),
+                )
+            }
         }
     }
 }
