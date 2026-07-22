@@ -1,6 +1,8 @@
 use bytemuck::Pod;
 use wgpu::*;
 
+use crate::vertex::{CurveInstance, DrawInstance, NoteInstance, VelocityBarInstance};
+
 const MIN_CAPACITY: usize = 4096;
 /// Maximum instances per GPU buffer chunk.
 /// 4M × 32 bytes = 128 MB, well under the 256 MB wgpu limit.
@@ -176,4 +178,53 @@ pub fn layer_cache_key(parts: &[u64]) -> u64 {
         h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(p);
     }
     h
+}
+
+// ── Type-erased layer ──
+
+/// Layer kind: decor (32B `DrawInstance`), note (16B `NoteInstance`),
+/// velocity (16B `VelocityBarInstance`), or curve (32B `CurveInstance` — automation SDF lines/curves).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LayerKind {
+    Decor,
+    Note,
+    Velocity,
+    Curve,
+}
+
+/// Type-erased layer slot that can hold `DrawInstance`, `NoteInstance`, `VelocityBarInstance`, or `CurveInstance`.
+pub enum AnyLayer {
+    Decor(LayerSlot<DrawInstance>),
+    Note(LayerSlot<NoteInstance>),
+    Velocity(LayerSlot<VelocityBarInstance>),
+    Curve(LayerSlot<CurveInstance>),
+}
+
+impl AnyLayer {
+    pub(crate) fn new(device: &Device, kind: LayerKind) -> Self {
+        match kind {
+            LayerKind::Decor => AnyLayer::Decor(LayerSlot::new(device)),
+            LayerKind::Note => AnyLayer::Note(LayerSlot::new(device)),
+            LayerKind::Velocity => AnyLayer::Velocity(LayerSlot::new(device)),
+            LayerKind::Curve => AnyLayer::Curve(LayerSlot::new(device)),
+        }
+    }
+
+    pub(crate) fn kind(&self) -> LayerKind {
+        match self {
+            AnyLayer::Decor(_) => LayerKind::Decor,
+            AnyLayer::Note(_) => LayerKind::Note,
+            AnyLayer::Velocity(_) => LayerKind::Velocity,
+            AnyLayer::Curve(_) => LayerKind::Curve,
+        }
+    }
+
+    pub(crate) fn draw<'a>(&self, pass: &mut RenderPass<'a>, vertex_slot: u32) {
+        match self {
+            AnyLayer::Decor(l) => l.draw(pass, vertex_slot),
+            AnyLayer::Note(l) => l.draw(pass, vertex_slot),
+            AnyLayer::Velocity(l) => l.draw(pass, vertex_slot),
+            AnyLayer::Curve(l) => l.draw(pass, vertex_slot),
+        }
+    }
 }
