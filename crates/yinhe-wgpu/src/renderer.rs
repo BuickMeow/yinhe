@@ -88,6 +88,10 @@ impl AnyLayer {
 struct CullState {
     pipeline: ComputePipeline,
     bind_group_layout: BindGroupLayout,
+    /// Reset pipeline: zeros all 128 indirect_args slots in one dispatch.
+    /// Eliminates the CPU-side 32KB write_buffer per frame.
+    reset_pipeline: ComputePipeline,
+    reset_bind_group: BindGroup,
     /// Per-key bind groups (128 slots). `None` until the key is first uploaded.
     per_key_bind_groups: Vec<Option<BindGroup>>,
     /// Per-key all-notes storage buffers (cull input), grown on demand.
@@ -219,9 +223,50 @@ impl CullState {
         });
         yinhe_memtrace::add_gpu_resource(dispatch_args_size);
 
+        // Reset pipeline: zeros all 128 indirect_args slots in one dispatch.
+        // Uses a separate bind group layout that binds the full indirect_args
+        // buffer as a flat array<u32> (the cull bind group only binds a 256-byte
+        // slice per key).
+        let reset_bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+            label: Some("cull_reset_bind_group_layout"),
+            entries: &[BindGroupLayoutEntry {
+                binding: 0,
+                visibility: ShaderStages::COMPUTE,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Storage { read_only: false },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+        let reset_pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
+            label: Some("cull_reset_pipeline_layout"),
+            bind_group_layouts: &[Some(&reset_bind_group_layout)],
+            immediate_size: 0,
+        });
+        let reset_pipeline = device.create_compute_pipeline(&ComputePipelineDescriptor {
+            label: Some("cull_reset_pipeline"),
+            layout: Some(&reset_pipeline_layout),
+            module: &cull_shader,
+            entry_point: Some("reset_indirect_args"),
+            compilation_options: PipelineCompilationOptions::default(),
+            cache: None,
+        });
+        let reset_bind_group = device.create_bind_group(&BindGroupDescriptor {
+            label: Some("cull_reset_bind_group"),
+            layout: &reset_bind_group_layout,
+            entries: &[BindGroupEntry {
+                binding: 0,
+                resource: indirect_args_buffer.as_entire_binding(),
+            }],
+        });
+
         Self {
             pipeline,
             bind_group_layout,
+            reset_pipeline,
+            reset_bind_group,
             per_key_bind_groups: (0..128).map(|_| None).collect(),
             per_key_buffers: (0..128).map(|_| None).collect(),
             per_key_visible_buffers: (0..128).map(|_| None).collect(),
@@ -370,7 +415,6 @@ impl CullState {
     /// cost zero GPU compute work.
     fn dispatch_cull(
         &mut self,
-        queue: &Queue,
         encoder: &mut CommandEncoder,
         key_lo: u8,
         key_hi: u8,
@@ -383,18 +427,19 @@ impl CullState {
             return;
         }
 
-        // Reset all 128 slots: each slot is 256 bytes (64 u32s).
-        // First u32 = 6 (vertex_count), rest = 0.
-        let mut reset_data = [[0u32; 64]; 128];
-        for slot in &mut reset_data {
-            slot[0] = 6; // vertex_count
-        }
-        queue.write_buffer(&self.indirect_args_buffer, 0, bytemuck::cast_slice(&reset_data));
-
         let mut cull_pass = encoder.begin_compute_pass(&ComputePassDescriptor {
             label: Some("note_cull"),
             timestamp_writes: None,
         });
+
+        // Phase 0: GPU-side reset of all 128 indirect_args slots.
+        // One dispatch of 128 threads; thread k writes [6,0,0,0] to slot k.
+        // Replaces the old CPU-side 32KB write_buffer.
+        cull_pass.set_pipeline(&self.reset_pipeline);
+        cull_pass.set_bind_group(0, &self.reset_bind_group, &[]);
+        cull_pass.dispatch_workgroups(1, 1, 1);
+
+        // Phase 1: per-key cull dispatches.
         cull_pass.set_pipeline(&self.pipeline);
         for key in key_lo..=key_hi {
             let Some(bg) = &self.per_key_bind_groups[key as usize] else { continue };
@@ -790,7 +835,7 @@ impl InstanceRenderer {
         let (key_lo, key_hi) = self.visible_key_range();
         // Phase 1: Compute cull (skipped if uniforms + notes unchanged since last frame)
         let uniforms = self.cached_uniforms.unwrap_or_default();
-        self.cull.dispatch_cull(&self.queue, encoder, key_lo, key_hi, &uniforms);
+        self.cull.dispatch_cull(encoder, key_lo, key_hi, &uniforms);
 
         // Phase 2: Single render pass
         let mut pass = crate::util::begin_pianoroll_pass(

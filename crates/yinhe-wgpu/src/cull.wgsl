@@ -142,3 +142,18 @@ fn main(
         }
     }
 }
+
+// ── Reset pass: zero all 128 indirect_args slots in one dispatch ──
+// Each slot is 256 bytes (64 u32s). Thread k resets slot k:
+//   vertex_count = 6, instance_count = 0, first_vertex = 0, first_instance = 0.
+// This replaces the CPU-side 32KB write_buffer and eliminates the CPU→GPU transfer.
+@group(0) @binding(0) var<storage, read_write> indirect_args_full: array<u32>;
+
+@compute @workgroup_size(128)
+fn reset_indirect_args(@builtin(local_invocation_id) lid: vec3<u32>) {
+    let base = lid.x * 64u;
+    indirect_args_full[base] = 6u;       // vertex_count
+    indirect_args_full[base + 1u] = 0u;  // instance_count
+    indirect_args_full[base + 2u] = 0u;  // first_vertex
+    indirect_args_full[base + 3u] = 0u;  // first_instance
+}
