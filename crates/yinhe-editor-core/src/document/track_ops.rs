@@ -47,7 +47,8 @@ impl Document {
         for bucket in model.notes.iter_mut() {
             let bucket = Arc::make_mut(bucket);
             for note in bucket.iter_mut() {
-                note.track = note_remap[note.track as usize];
+                // 越界音符按删除处理（unwrap_or(u16::MAX)），避免 panic（规则 17）。
+                note.track = note_remap.get(note.track as usize).copied().unwrap_or(u16::MAX);
             }
         }
 
@@ -121,9 +122,10 @@ impl Document {
         // Apply remap: delete notes on removed track, shift others
         for bucket in model.notes.iter_mut() {
             let bucket = Arc::make_mut(bucket);
-            bucket.retain(|n| note_remap[n.track as usize] != u16::MAX);
+            // 越界音符按删除处理（unwrap_or(u16::MAX)），避免 panic（规则 17）。
+            bucket.retain(|n| note_remap.get(n.track as usize).copied().unwrap_or(u16::MAX) != u16::MAX);
             for note in bucket.iter_mut() {
-                note.track = note_remap[note.track as usize];
+                note.track = note_remap.get(note.track as usize).copied().unwrap_or(u16::MAX);
             }
         }
         // Mark all buckets dirty since we may have removed notes from any
@@ -201,7 +203,8 @@ impl Document {
         for bucket in model.notes.iter_mut() {
             let bucket = Arc::make_mut(bucket);
             for note in bucket.iter_mut() {
-                note.track = note_remap[note.track as usize];
+                // 越界音符按删除处理（unwrap_or(u16::MAX)），避免 panic（规则 17）。
+                note.track = note_remap.get(note.track as usize).copied().unwrap_or(u16::MAX);
             }
         }
 

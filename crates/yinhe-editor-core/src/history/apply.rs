@@ -69,9 +69,10 @@ impl UndoAction {
                 model.tracks = tracks_after.clone();
                 for bucket in model.notes.iter_mut() {
                     let bucket = Arc::make_mut(bucket);
-                    bucket.retain(|n| note_remap[n.track as usize] != u16::MAX);
+                    // 越界音符（track 字段 >= note_remap.len()）按删除处理，避免 panic（规则 17）。
+                    bucket.retain(|n| note_remap.get(n.track as usize).copied().unwrap_or(u16::MAX) != u16::MAX);
                     for note in bucket.iter_mut() {
-                        note.track = note_remap[note.track as usize];
+                        note.track = note_remap.get(note.track as usize).copied().unwrap_or(u16::MAX);
                     }
                 }
                 // undo remove_track 时 tracks_after 比 tracks_before 长，
