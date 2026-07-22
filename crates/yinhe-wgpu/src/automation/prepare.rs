@@ -1,4 +1,3 @@
-use rayon::prelude::*;
 use yinhe_types::{AutomationLane, AutomationTarget, NoteSource, SegmentShape, TimeSigEvent};
 
 use super::data_lines;
@@ -38,7 +37,8 @@ fn target_hash(target: &AutomationTarget) -> u64 {
 }
 
 /// Hash automation lane 事件内容（tick + value + shape）。
-/// 用于 Layer 2 cache key：任何 Add/Move/Delete/CycleShape 后 key 变化 → 重建。
+/// 用于 ghost_lane_hash：拖拽过程中 ghost lane 不通过 Document 编辑，
+/// revision 不会 bump，所以需要单独 hash ghost 自身内容来触发 Layer 1 重建。
 fn hash_lane(lane: &AutomationLane) -> u64 {
     let mut h: u64 = 0;
     h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(lane.events.len() as u64);
@@ -59,28 +59,6 @@ fn hash_lane(lane: &AutomationLane) -> u64 {
         h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(shape_bits);
     }
     h
-}
-
-/// 计算 lanes 的 hash，但排除被 ghost 覆盖的 lane。
-/// 这样拖拽过程中固定层 key 不变，只在开始/结束拖拽时变化。
-fn hash_lanes_excluding(lanes: &[&AutomationLane], ghost: Option<&AutomationGhost>) -> u64 {
-    let ghost_lane_key = match ghost {
-        Some(AutomationGhost::Move { lane, .. }) => Some((lane.track, lane.target.clone())),
-        _ => None,
-    };
-    lanes
-        .par_iter()
-        .fold(
-            || 0u64,
-            |h, lane| {
-                if ghost_lane_key.as_ref() == Some(&(lane.track, lane.target.clone())) {
-                    h
-                } else {
-                    h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(hash_lane(lane))
-                }
-            },
-        )
-        .reduce(|| 0u64, |a, b| a ^ b)
 }
 
 /// Prepare an automation panel for rendering using the layered cache API.
@@ -177,21 +155,20 @@ pub fn prepare(
     let is_velocity = view.show_velocity;
     let tv_hash = crate::hash_bools(track_visible);
     // ghost_lane_hash：被 ghost 覆盖的 lane 内容变化时触发 Layer 1 重建。
-    // 这样开始/结束拖拽时固定层会隐藏/恢复该 lane。
+    // 拖拽过程中 ghost 不通过 Document 编辑，revision 不会 bump，所以需要单独 hash。
     let ghost_lane_hash = ghost.as_ref().map(|g| match g {
         AutomationGhost::Move { lane, .. } => hash_lane(lane),
         AutomationGhost::Curve { .. } => 1,
     }).unwrap_or(0);
-    // 固定层排除 ghost lane 后计算 lanes_hash（避免拖拽时 lane 原数据未变但 key 变化）
-    let fixed_lanes_hash = hash_lanes_excluding(lanes, ghost.as_ref());
-    // Tempo lane：当 selected_target=Tempo 时 lanes 已包含 tempo_lane，fixed_lanes_hash 覆盖；
-    // 其他 target 时 lanes 不含 tempo_lane，不需要 hash（target_hash 已区分模式）。
+    // 固定层 lane 内容变化由 revision 检测：所有 lane 编辑路径
+    // (add/move/delete/set_shape/arrange_move/apply_automation_delta) 都 bump revision。
+    // 拖拽 ghost 时 revision 不变，固定层 cache 复用——正是想要的行为。
+    // 之前这里有 O(全事件数) 的 fixed_lanes_hash，与 revision 双重检测，纯冗余，已删除。
     let bars_key = layer_cache_key(&[
         vh, wh, tv_hash,
         target_hash(&view.selected_target),
         show_anchors as u64,
         view.show_velocity as u64,
-        fixed_lanes_hash,
         ghost_lane_hash,
         revision,
         highlight_tick.unwrap_or(u32::MAX) as u64,
