@@ -422,6 +422,12 @@ mod tests {
 
 // ── Hover tooltip ──
 
+/// 格式化带符号的数值：正用 `+`，负用 `-`。
+pub(crate) fn format_signed(label: &str, v: i64) -> String {
+    let sign = if v >= 0 { "+" } else { "-" };
+    format!("{} {} {}", sign, v.abs(), label)
+}
+
 /// 在屏幕坐标 `(x, y)` 右上方绘制多行悬浮提示。
 ///
 /// 复用于 automation panel / 选框工具 / 铅笔工具。

@@ -307,12 +307,10 @@ pub(crate) fn pencil_frame(
                 ghost_notes.push((new_start, new_end, key, *trk));
                 hidden_notes.push((*trk, *orig_tick, *orig_key));
 
-                // ── Tooltip：显示 key / tick / gate ──
-                let gate = *orig_end - *orig_tick;
+                // ── Tooltip：显示 ±key / ±tick（已按量化 snap）──
                 let lines = vec![
-                    format!("Key {}", key),
-                    format!("Tick {}", new_start),
-                    format!("Gate {}", gate),
+                    crate::view_interaction::format_signed("tick", dt),
+                    crate::view_interaction::format_signed("key", dk as i64),
                 ];
                 if let Some(pos) = hover_pos {
                     crate::view_interaction::draw_hover_tooltip(ui.ctx(), &lines, pos.x, pos.y);
@@ -335,7 +333,7 @@ pub(crate) fn pencil_frame(
                 }
             }
         }
-        Some(PencilDrag::ResizeRight(trk, orig_tick, _orig_end, orig_key)) => {
+        Some(PencilDrag::ResizeRight(trk, orig_tick, orig_end, orig_key)) => {
             // auto-scroll：右边缘能拖出屏幕
             if pointer.primary_down() && !pointer.primary_released() {
                 if let Some(pos) = hover_pos {
@@ -366,12 +364,11 @@ pub(crate) fn pencil_frame(
                 ghost_notes.push((*orig_tick, new_end, *orig_key, *trk));
                 hidden_notes.push((*trk, *orig_tick, *orig_key));
 
-                // ── Tooltip：显示 key / tick / gate ──
-                let gate = new_end.saturating_sub(*orig_tick);
+                // ── Tooltip：显示 ±gate（新长度 - 原长度）──
+                let orig_gate = *orig_end as i64 - *orig_tick as i64;
+                let new_gate = new_end as i64 - *orig_tick as i64;
                 let lines = vec![
-                    format!("Key {}", orig_key),
-                    format!("Tick {}", orig_tick),
-                    format!("Gate {}", gate),
+                    crate::view_interaction::format_signed("gate", new_gate - orig_gate),
                 ];
                 if let Some(pos) = hover_pos {
                     crate::view_interaction::draw_hover_tooltip(ui.ctx(), &lines, pos.x, pos.y);
@@ -427,12 +424,13 @@ pub(crate) fn pencil_frame(
                 ghost_notes.push((new_start, *orig_end, *orig_key, *trk));
                 hidden_notes.push((*trk, *orig_tick, *orig_key));
 
-                // ── Tooltip：显示 key / tick / gate ──
-                let gate = *orig_end - new_start;
+                // ── Tooltip：显示 ±tick / ±gate（左端变化量 + 长度变化量）──
+                let dt = new_start as i64 - *orig_tick as i64;
+                let orig_gate = *orig_end as i64 - *orig_tick as i64;
+                let new_gate = *orig_end as i64 - new_start as i64;
                 let lines = vec![
-                    format!("Key {}", orig_key),
-                    format!("Tick {}", new_start),
-                    format!("Gate {}", gate),
+                    crate::view_interaction::format_signed("tick", dt),
+                    crate::view_interaction::format_signed("gate", new_gate - orig_gate),
                 ];
                 if let Some(pos) = hover_pos {
                     crate::view_interaction::draw_hover_tooltip(ui.ctx(), &lines, pos.x, pos.y);

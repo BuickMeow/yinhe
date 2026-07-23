@@ -96,16 +96,19 @@ pub(crate) fn marquee_drag_frame(
                 );
                 view.clamp_scroll(content_rect.width(), content_rect.height(), total_ticks);
 
-                // ── Tooltip：显示 Δtick / Δkey ──
+                // ── Tooltip：显示 ±tick / ±key（tick 按量化 snap）──
                 let (s_tick, s_content_y) = start_music;
-                let cur_tick = view.x_to_tick(local.x);
-                let dt = cur_tick as i64 - s_tick as i64;
+                let raw_cur = view.x_to_tick(local.x);
+                let snapped_cur = crate::view_interaction::snap_tick(
+                    raw_cur, quantize, ppq, bar_line_data,
+                );
+                let dt = (snapped_cur - s_tick).round() as i64;
                 let s_key = view.y_to_key(s_content_y - view.base.scroll_y);
                 let cur_key = view.y_to_key(local.y);
                 let dk = cur_key as i32 - s_key as i32;
                 let lines = vec![
-                    format!("±{} tick", dt),
-                    format!("±{} key", dk),
+                    crate::view_interaction::format_signed("tick", dt),
+                    crate::view_interaction::format_signed("key", dk as i64),
                 ];
                 crate::view_interaction::draw_hover_tooltip(ui.ctx(), &lines, pos.x, pos.y);
             }
@@ -292,6 +295,13 @@ pub(crate) fn sel_drag_frame(
                     }
 
                     sel_rect.update_drag(dt, dk);
+
+                    // ── Tooltip：显示 ±tick / ±key（已按量化 snap）──
+                    let lines = vec![
+                        crate::view_interaction::format_signed("tick", dt),
+                        crate::view_interaction::format_signed("key", dk as i64),
+                    ];
+                    crate::view_interaction::draw_hover_tooltip(ui.ctx(), &lines, pos.x, pos.y);
                     ui.ctx().request_repaint();
                 }
             }
