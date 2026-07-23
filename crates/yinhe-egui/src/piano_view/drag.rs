@@ -59,7 +59,10 @@ pub(crate) fn marquee_drag_frame(
         && music_rect.contains(pos)
     {
         let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
-        let start_tick = view.x_to_tick(local.x);
+        let raw_tick = view.x_to_tick(local.x);
+        let start_tick = crate::view_interaction::snap_tick(
+            raw_tick, quantize, ppq, bar_line_data,
+        );
         let start_content_y = local.y + view.base.scroll_y;
         drag = Some(((start_tick, start_content_y), local));
         on_press();
