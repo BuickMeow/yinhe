@@ -239,6 +239,17 @@ pub(crate) fn pencil_frame(
                     let interval = quantize.tick_interval(ppq) as f64;
                     let current_end = tick.max(*s_tick + interval);
                     ghost_notes.push((*s_tick as u32, current_end as u32, *s_key, track_idx));
+
+                    // ── Tooltip：显示 key / tick / gate ──
+                    let gate = (current_end - *s_tick) as u32;
+                    let lines = vec![
+                        format!("Key {}", s_key),
+                        format!("Tick {}", *s_tick as u32),
+                        format!("Gate {}", gate),
+                    ];
+                    if let Some(pos) = hover_pos {
+                        crate::view_interaction::draw_hover_tooltip(ui.ctx(), &lines, pos.x, pos.y);
+                    }
                 }
             }
             // Release -> commit note.
@@ -296,6 +307,17 @@ pub(crate) fn pencil_frame(
                 ghost_notes.push((new_start, new_end, key, *trk));
                 hidden_notes.push((*trk, *orig_tick, *orig_key));
 
+                // ── Tooltip：显示 key / tick / gate ──
+                let gate = *orig_end - *orig_tick;
+                let lines = vec![
+                    format!("Key {}", key),
+                    format!("Tick {}", new_start),
+                    format!("Gate {}", gate),
+                ];
+                if let Some(pos) = hover_pos {
+                    crate::view_interaction::draw_hover_tooltip(ui.ctx(), &lines, pos.x, pos.y);
+                }
+
                 // Only output drag on release — do NOT modify the model during drag.
                 if pointer.primary_released() {
                     pencil_note_drag = Some(PencilNoteDrag::Move {
@@ -343,6 +365,17 @@ pub(crate) fn pencil_frame(
                 // Show ghost and hide original note
                 ghost_notes.push((*orig_tick, new_end, *orig_key, *trk));
                 hidden_notes.push((*trk, *orig_tick, *orig_key));
+
+                // ── Tooltip：显示 key / tick / gate ──
+                let gate = new_end.saturating_sub(*orig_tick);
+                let lines = vec![
+                    format!("Key {}", orig_key),
+                    format!("Tick {}", orig_tick),
+                    format!("Gate {}", gate),
+                ];
+                if let Some(pos) = hover_pos {
+                    crate::view_interaction::draw_hover_tooltip(ui.ctx(), &lines, pos.x, pos.y);
+                }
 
                 // Only output on release
                 if pointer.primary_released() {
@@ -393,6 +426,17 @@ pub(crate) fn pencil_frame(
                 // Show ghost and hide original note
                 ghost_notes.push((new_start, *orig_end, *orig_key, *trk));
                 hidden_notes.push((*trk, *orig_tick, *orig_key));
+
+                // ── Tooltip：显示 key / tick / gate ──
+                let gate = *orig_end - new_start;
+                let lines = vec![
+                    format!("Key {}", orig_key),
+                    format!("Tick {}", new_start),
+                    format!("Gate {}", gate),
+                ];
+                if let Some(pos) = hover_pos {
+                    crate::view_interaction::draw_hover_tooltip(ui.ctx(), &lines, pos.x, pos.y);
+                }
 
                 // Only output on release
                 if pointer.primary_released() {

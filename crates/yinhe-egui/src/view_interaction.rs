@@ -419,3 +419,41 @@ mod tests {
         assert_eq!(result, 99840.0);
     }
 }
+
+// ── Hover tooltip ──
+
+/// 在屏幕坐标 `(x, y)` 右上方绘制多行悬浮提示。
+///
+/// 复用于 automation panel / 选框工具 / 铅笔工具。
+/// 各工具自行计算要显示的行内容，这里只负责绘制。
+pub(crate) fn draw_hover_tooltip(ctx: &egui::Context, lines: &[String], x: f32, y: f32) {
+    let painter = ctx.debug_painter();
+    let font_id = egui::FontId::monospace(12.0);
+    let gap = 8.0;
+    let tooltip_x = x + gap;
+    let tooltip_y = y - 24.0;
+    let mut max_w = 0.0_f32;
+    let line_h = 16.0;
+    for line in lines {
+        let galley = painter.layout_no_wrap(line.clone(), font_id.clone(), egui::Color32::WHITE);
+        max_w = max_w.max(galley.rect.width());
+    }
+    let total_h = line_h * lines.len() as f32;
+    let pad = 6.0;
+    let bg_rect = egui::Rect::from_min_size(
+        egui::pos2(tooltip_x - pad, tooltip_y - pad),
+        egui::vec2(max_w + pad * 2.0, total_h + pad * 2.0),
+    );
+    painter.rect_filled(bg_rect, 4.0, egui::Color32::from_black_alpha(180));
+    let mut ly = tooltip_y;
+    for line in lines {
+        painter.text(
+            egui::pos2(tooltip_x, ly),
+            egui::Align2::LEFT_TOP,
+            line,
+            font_id.clone(),
+            egui::Color32::WHITE,
+        );
+        ly += line_h;
+    }
+}

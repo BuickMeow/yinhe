@@ -95,6 +95,19 @@ pub(crate) fn marquee_drag_frame(
                     },
                 );
                 view.clamp_scroll(content_rect.width(), content_rect.height(), total_ticks);
+
+                // ── Tooltip：显示 Δtick / Δkey ──
+                let (s_tick, s_content_y) = start_music;
+                let cur_tick = view.x_to_tick(local.x);
+                let dt = cur_tick as i64 - s_tick as i64;
+                let s_key = view.y_to_key(s_content_y - view.base.scroll_y);
+                let cur_key = view.y_to_key(local.y);
+                let dk = cur_key as i32 - s_key as i32;
+                let lines = vec![
+                    format!("±{} tick", dt),
+                    format!("±{} key", dk),
+                ];
+                crate::view_interaction::draw_hover_tooltip(ui.ctx(), &lines, pos.x, pos.y);
             }
         }
 
