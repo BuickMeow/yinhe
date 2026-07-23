@@ -17,8 +17,8 @@ impl App {
     pub(in crate::app) fn compute_layout(&mut self, ui: &mut egui::Ui) -> LayoutInfo {
         let mut remaining = ui.available_rect_before_wrap();
 
-        let has_arr = self.show_transport && self.active_doc.is_some();
-        let has_piano = self.show_pianoroll && self.active_doc.is_some();
+        let has_arr = self.view_mode.show_transport() && self.active_doc.is_some();
+        let has_piano = self.view_mode.show_pianoroll(self.show_pianoroll_in_arrange) && self.active_doc.is_some();
 
         let right_panel_total_w = if self.right_tab.is_some() {
             let max_w = (remaining.width() - 60.0).max(crate::theme::RIGHT_PANEL_MIN_WIDTH + 4.0);
@@ -77,7 +77,7 @@ impl App {
             Option<(i64, i32)>,
             Option<(f64, f64, usize, usize)>,
             Option<yinhe_editor_core::quantize::QuantizePreset>,
-        ) = if self.show_transport {
+        ) = if self.view_mode.show_transport() {
             let mut request_pianoroll = false;
             let mut arr_drag_delta: Option<(i64, i32)> = None;
             let mut arr_eraser_rect: Option<(f64, f64, usize, usize)> = None;
@@ -108,7 +108,6 @@ impl App {
                 &mut needs_audio_rebuild,
             );
             if request_pianoroll {
-                self.show_pianoroll = true;
                 self.show_pianoroll_in_arrange = true;
             }
             (arr_drag_delta, arr_eraser_rect, arr_quantize) // guard dropped here
@@ -153,7 +152,7 @@ impl App {
         }
 
         // Pianoroll area
-        if self.show_pianoroll {
+        if self.view_mode.show_pianoroll(self.show_pianoroll_in_arrange) {
             self.show_pianoroll_split(ui, layout, idx, is_playing, &mut follow_mode);
         }
 
@@ -170,7 +169,7 @@ impl App {
         follow_mode: &mut crate::view_interaction::FollowMode,
     ) {
         // Horizontal splitter
-        if self.show_transport {
+        if self.view_mode.show_transport() {
             let split_right = layout.remaining.max.x;
             let h_split_rect = egui::Rect::from_min_max(
                 egui::pos2(
@@ -306,6 +305,21 @@ impl App {
                         None => Vec::new(),
                     }
                 };
+                let auto_ctx = Some(piano_view::AutomationPanelsCtx {
+                    panels: &mut doc.edit.controller_panels,
+                    renderers: &mut self.controller_renderers[idx],
+                    lanes: &automation_lanes,
+                    show: &mut doc.edit.show_controller_panels,
+                    wgpu_state: &auto_wgpu_state,
+                });
+                let mut feedback = piano_view::PianoViewFeedback {
+                    auto_edit_events: &mut auto_edit_events,
+                    info_content: &mut self.info_content,
+                    right_tab: &mut self.right_tab,
+                    automation_drag_ghost: &mut self.automation_drag_ghost,
+                    note_drag_delta: &mut note_drag_delta,
+                    pencil_note_drag: &mut pencil_note_drag,
+                };
                 event = piano_view::show(
                     ui,
                     ui.available_size(),
@@ -328,17 +342,12 @@ impl App {
                     &mut self.piano_last_cursor_tick,
                     follow_mode,
                     &self.active_tool,
-                    Some(&mut doc.edit.controller_panels),
-                    Some(&mut self.controller_renderers[idx]),
-                    Some(&automation_lanes),
-                    Some(&mut doc.edit.show_controller_panels),
-                    Some(&auto_wgpu_state),
+                    auto_ctx,
                     self.audio_settings.scroll_mode,
                     self.audio_settings.min_border_width,
                     self.audio_settings.note_outline,
                     self.audio_settings.use_gpu_cull,
                     &doc.data.model.conductor.tempo,
-                    &mut note_drag_delta,
                     &mut doc.edit.sel_rect,
                     &doc.edit.track_selected,
                     doc.edit.conductor_track_idx,
@@ -346,11 +355,7 @@ impl App {
                     doc.data.revision,
                     doc.data.note_revisions(),
                     Some(&self.haptic_engine),
-                    &mut pencil_note_drag,
-                    &mut auto_edit_events,
-                    &mut self.info_content,
-                    &mut self.right_tab,
-                    &mut self.automation_drag_ghost,
+                    &mut feedback,
                 );
                 if let Some(t0) = _piano_total_start {
                     yinhe_memtrace::perf_probe::record_piano_total(t0.elapsed());
@@ -437,10 +442,8 @@ impl App {
     /// 切 editing_track（音符/automation 事件）、滚动到中心、启动闪烁动画。
     fn handle_jump_request(&mut self, req: crate::right_panel::event_browser::JumpRequest, layout: &LayoutInfo) {
         // 1. 切到 piano roll 视图（如果当前不在）
-        if !self.show_pianoroll {
+        if !self.view_mode.show_pianoroll(self.show_pianoroll_in_arrange) {
             self.view_mode = crate::chrome::mode_bar::ViewMode::Edit;
-            self.show_transport = false;
-            self.show_pianoroll = true;
         }
 
         // 2. 切 editing_track（音符/CC/PB/PC 事件需要）

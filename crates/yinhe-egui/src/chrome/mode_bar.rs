@@ -10,6 +10,25 @@ pub enum ViewMode {
     Edit,
 }
 
+impl ViewMode {
+    /// 是否显示 arrange（transport）区域。
+    #[inline]
+    pub fn show_transport(&self) -> bool {
+        matches!(self, ViewMode::Arrange)
+    }
+
+    /// 是否显示 piano roll 区域。
+    /// `show_pianoroll_in_arrange` 是用户偏好：Arrange 模式下是否同时显示 PR。
+    #[inline]
+    pub fn show_pianoroll(&self, show_pianoroll_in_arrange: bool) -> bool {
+        match self {
+            ViewMode::Arrange => show_pianoroll_in_arrange,
+            ViewMode::Mix => false,
+            ViewMode::Edit => true,
+        }
+    }
+}
+
 fn mode_button(ui: &mut egui::Ui, label: &str, is_selected: bool, on_click: impl FnOnce()) {
     let resp = ui.add(
         egui::Label::new(
@@ -132,8 +151,6 @@ pub fn show(
     ui: &mut egui::Ui,
     view_mode: &mut ViewMode,
     show_pianoroll_in_arrange: &mut bool,
-    show_transport: &mut bool,
-    show_pianoroll: &mut bool,
     right_tab: &mut Option<RightTab>,
     cpu_usage: f32,
     mem_mb: f64,
@@ -152,24 +169,18 @@ pub fn show(
 
                 mode_button(ui, "ARRANGE", *view_mode == ViewMode::Arrange, || {
                     *view_mode = ViewMode::Arrange;
-                    *show_transport = true;
-                    *show_pianoroll = *show_pianoroll_in_arrange;
                 });
 
                 ui.add_space(2.0);
 
                 mode_button(ui, "MIX", *view_mode == ViewMode::Mix, || {
                     *view_mode = ViewMode::Mix;
-                    *show_transport = false;
-                    *show_pianoroll = false;
                 });
 
                 ui.add_space(2.0);
 
                 mode_button(ui, "EDIT", *view_mode == ViewMode::Edit, || {
                     *view_mode = ViewMode::Edit;
-                    *show_transport = false;
-                    *show_pianoroll = true;
                 });
 
                 // ── Piano roll toggle ──
@@ -197,7 +208,6 @@ pub fn show(
                     );
                     if piano_resp.clicked() {
                         *show_pianoroll_in_arrange = !*show_pianoroll_in_arrange;
-                        *show_pianoroll = *show_pianoroll_in_arrange;
                     }
                 }
 

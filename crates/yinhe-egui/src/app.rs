@@ -78,9 +78,6 @@ pub struct App {
     pub(crate) active_tool: crate::widgets::tools_panel::Tool,
     pub(crate) show_pianoroll_in_arrange: bool,
 
-    // ── Visibility toggles (derived from view_mode) ──
-    pub(crate) show_transport: bool,
-    pub(crate) show_pianoroll: bool,
     /// Anchor for shift-click range selection in the track panel.
     /// Set on every non-shift click; consumed on shift-click.
     pub(crate) track_selection_anchor: Option<u16>,
@@ -231,8 +228,6 @@ impl App {
 
             view_mode: ViewMode::Arrange,
             show_pianoroll_in_arrange: false,
-            show_transport: true,
-            show_pianoroll: false,
             track_selection_anchor: None,
 
             right_panel_width: crate::theme::RIGHT_PANEL_DEFAULT_WIDTH,

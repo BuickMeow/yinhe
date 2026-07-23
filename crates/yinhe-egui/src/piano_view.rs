@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use eframe::egui;
 
 use yinhe_types::{AutomationLane, TimeSigEvent};
@@ -19,6 +17,27 @@ pub enum PianoViewEvent {
     AddNote { track: u16, note: yinhe_core::NoteEvent },
     EraserDelete { t_start: u32, t_end: u32, key_lo: u8, key_hi: u8, track_lo: u16, track_hi: u16 },
     QuantizePreset(QuantizePreset),
+}
+
+/// Automation panel 上下文（all-or-nothing：要么全 Some 要么全 None）。
+/// 合并 5 个 auto_* 参数，减少 piano_view::show 的参数数量。
+pub struct AutomationPanelsCtx<'a> {
+    pub panels: &'a mut Vec<yinhe_types::AutomationPanelView>,
+    pub renderers:
+        &'a mut Vec<(yinhe_wgpu::InstanceRenderer, crate::render_context::RenderContext)>,
+    pub lanes: &'a [yinhe_types::AutomationLane],
+    pub show: &'a mut bool,
+    pub wgpu_state: &'a std::sync::Arc<eframe::egui_wgpu::RenderState>,
+}
+
+/// piano_view 给外部的反馈通道（合并多个 &mut 出参）。
+pub struct PianoViewFeedback<'a> {
+    pub auto_edit_events: &'a mut Vec<crate::piano_view::automation_panel::AutomationEdit>,
+    pub info_content: &'a mut Option<crate::right_panel::InfoContent>,
+    pub right_tab: &'a mut Option<crate::right_panel::RightTab>,
+    pub automation_drag_ghost: &'a mut Option<(u32, f32)>,
+    pub note_drag_delta: &'a mut Option<(i64, i32, bool)>,
+    pub pencil_note_drag: &'a mut Option<PencilNoteDrag>,
 }
 
 /// Height of the time ruler band at the top of the pianoroll view.
@@ -58,22 +77,12 @@ pub fn show(
     follow_mode: &mut super::view_interaction::FollowMode,
     active_tool: &Tool,
     // Automation panel data (all-or-nothing)
-    auto_panels: Option<&mut Vec<yinhe_types::AutomationPanelView>>,
-    auto_renderers: Option<
-        &mut Vec<(
-            yinhe_wgpu::InstanceRenderer,
-            super::render_context::RenderContext,
-        )>,
-    >,
-    auto_lanes: Option<&[AutomationLane]>,
-    auto_show: Option<&mut bool>,
-    auto_wgpu_state: Option<&Arc<eframe::egui_wgpu::RenderState>>,
+    mut auto_ctx: Option<AutomationPanelsCtx<'_>>,
     scroll_mode: u32,
     min_border_width: f32,
     note_outline: bool,
     use_gpu_cull: bool,
     tempo_lane: &AutomationLane,
-    note_drag_delta: &mut Option<(i64, i32, bool)>,
     sel_rect: &mut yinhe_editor_core::edit_state::SelRectState,
     track_selected: &std::collections::HashSet<u16>,
     conductor_idx: Option<u16>,
@@ -81,11 +90,7 @@ pub fn show(
     revision: u64,
     note_revisions: &[u64; 128],
     haptic_engine: Option<&yinhe_haptic::HapticEngine>,
-    pencil_note_drag: &mut Option<PencilNoteDrag>,
-    auto_edit_events: &mut Vec<crate::piano_view::automation_panel::AutomationEdit>,
-    info_content: &mut Option<crate::right_panel::InfoContent>,
-    right_tab: &mut Option<crate::right_panel::RightTab>,
-    automation_drag_ghost: &mut Option<(u32, f32)>,
+    feedback: &mut PianoViewFeedback<'_>,
 ) -> Option<PianoViewEvent> {
     // Sense::hover() — no drag ownership. All drag is handled by dedicated
     // ui.interact calls below, each inside its own push_id scope.
@@ -94,10 +99,10 @@ pub fn show(
 
     // Compute automation panel natural total height.
     // First panel has no leading handle; subsequent panels have SPLIT_H above them.
-    let panels_natural_h: f32 = match (&auto_panels, &auto_show) {
-        (Some(panels), Some(show)) if **show && !panels.is_empty() => {
-            panels.iter().map(|p| p.panel_height).sum::<f32>()
-                + (panels.len() as f32 * automation_panel::SPLIT_H)
+    let panels_natural_h: f32 = match &auto_ctx {
+        Some(ctx) if *ctx.show && !ctx.panels.is_empty() => {
+            ctx.panels.iter().map(|p| p.panel_height).sum::<f32>()
+                + (ctx.panels.len() as f32 * automation_panel::SPLIT_H)
         }
         _ => 0.0,
     };
@@ -197,7 +202,7 @@ pub fn show(
             bar_line_data,
             total_ticks,
             cursor_tick,
-            note_drag_delta,
+            feedback.note_drag_delta,
             sel_rect,
             track_colors,
             track_visible,
@@ -223,7 +228,7 @@ pub fn show(
         );
         ghost_notes = ghost;
         hidden_notes.extend(hidden);
-        *pencil_note_drag = pencil_drag;
+        *feedback.pencil_note_drag = pencil_drag;
         if let Some(note) = note_event {
             if let Some(track) = pencil::valid_pencil_track(editing_track, track_visible, conductor_idx) {
                 pencil_event = Some(PianoViewEvent::AddNote { track, note });
@@ -748,13 +753,7 @@ pub fn show(
 
     // ── Automation panels ──
     let panels_y = content_rect.max.y;
-    if let (Some(panels), Some(renderers), Some(lanes), Some(show), Some(wgpu_state)) = (
-        auto_panels,
-        auto_renderers,
-        auto_lanes,
-        auto_show,
-        auto_wgpu_state,
-    ) {
+    if let Some(ctx) = auto_ctx.as_mut() {
         let kb_w = view.keyboard_width();
         let combo_w = kb_w * theme::AUTO_PANEL_COMBO_WIDTH_RATIO;
 
@@ -778,11 +777,11 @@ pub fn show(
 
         let (_h, auto_edits, auto_feedback, auto_drag_info) = automation_panel::show_panels(
             ui,
-            panels,
-            renderers,
-            lanes,
-            show,
-            wgpu_state,
+            ctx.panels,
+            ctx.renderers,
+            ctx.lanes,
+            ctx.show,
+            ctx.wgpu_state,
             combo_w,
             view.base.scroll_x,
             view.base.pixels_per_tick,
@@ -801,11 +800,11 @@ pub fn show(
             edit_ctx.as_ref(),
             tempo_lane,
             revision,
-            info_content,
-            right_tab,
+            feedback.info_content,
+            feedback.right_tab,
         );
         for edit in auto_edits {
-            auto_edit_events.push(edit);
+            feedback.auto_edit_events.push(edit);
         }
 
         // 应用 automation 面板的 pianoroll 联动反馈（水平滚动/缩放）
@@ -818,7 +817,7 @@ pub fn show(
         }
 
         // 存储 ghost drag info 供信息面板实时显示
-        *automation_drag_ghost = auto_drag_info;
+        *feedback.automation_drag_ghost = auto_drag_info;
 
         if midi.is_some() {
             let sb_y = rect.min.y + rect.height() - crate::widgets::scrollbar::SCROLLBAR_H;
@@ -833,13 +832,13 @@ pub fn show(
                 .rect_filled(sb_left_blank, 0.0, theme::SCROLLBAR_BG);
             ui.scope_builder(egui::UiBuilder::new().max_rect(sb_left_blank), |ui| {
                 ui.horizontal_centered(|ui| {
-                    let mut count = panels.len();
-                    automation_panel::show_toggle_buttons(ui, show, &mut count);
-                    while panels.len() < count {
-                        panels.push(yinhe_types::AutomationPanelView::default());
+                    let mut count = ctx.panels.len();
+                    automation_panel::show_toggle_buttons(ui, ctx.show, &mut count);
+                    while ctx.panels.len() < count {
+                        ctx.panels.push(yinhe_types::AutomationPanelView::default());
                     }
-                    while panels.len() > count {
-                        panels.pop();
+                    while ctx.panels.len() > count {
+                        ctx.panels.pop();
                     }
                 });
             });

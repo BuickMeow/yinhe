@@ -280,8 +280,6 @@ impl eframe::App for App {
             ui,
             &mut self.view_mode,
             &mut self.show_pianoroll_in_arrange,
-            &mut self.show_transport,
-            &mut self.show_pianoroll,
             &mut self.right_tab,
             self.sys_monitor.cpu_usage,
             mem_mb,

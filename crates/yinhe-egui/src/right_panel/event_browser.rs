@@ -484,30 +484,52 @@ fn show_event_detail(ui: &mut egui::Ui, item: &SelectedItem, doc: &Document, bar
             });
         }
         SelectedItem::Notes { track } => {
-            let _t = *track as usize;
             let model = &doc.data.model;
-            let mut notes: Vec<(yinhe_core::NoteEvent, u8, u16)> = {
-                let mut v = Vec::new();
-                for (key, bucket) in model.notes.iter().enumerate() {
-                    for n in bucket.iter().filter(|n| n.track == *track) {
-                        v.push((
-                            yinhe_core::NoteEvent {
-                                id: n.id,
-                                start_tick: n.start_tick,
-                                end_tick: n.end_tick,
-                                key: key as u8,
-                                velocity: n.velocity,
-                            },
-                            key as u8,
-                            *track,
-                        ));
-                    }
+            // 优化：用 bucket_track_stats 跳过没有该 track 音符的 bucket，
+            // 避免全量扫描 128 个桶。预分配容量减少 realloc。
+            // 1 亿音符场景下，稀疏分布时能大幅减少扫描量。
+            const MAX_DISPLAY_ROWS: usize = 5000;
+            let track_count = model.track_note_count
+                .get(*track as usize)
+                .copied()
+                .unwrap_or(0) as usize;
+            let mut notes: Vec<(yinhe_core::NoteEvent, u8, u16)> = Vec::with_capacity(
+                track_count.min(MAX_DISPLAY_ROWS)
+            );
+            for (key, bucket) in model.notes.iter().enumerate() {
+                // 跳过没有该 track 音符的 bucket
+                if !model.bucket_track_stats[key].contains_key(track) {
+                    continue;
                 }
-                v
-            };
+                for n in bucket.iter().filter(|n| n.track == *track) {
+                    if notes.len() >= MAX_DISPLAY_ROWS {
+                        break;
+                    }
+                    notes.push((
+                        yinhe_core::NoteEvent {
+                            id: n.id,
+                            start_tick: n.start_tick,
+                            end_tick: n.end_tick,
+                            key: key as u8,
+                            velocity: n.velocity,
+                        },
+                        key as u8,
+                        *track,
+                    ));
+                }
+                if notes.len() >= MAX_DISPLAY_ROWS {
+                    break;
+                }
+            }
             notes.sort_by_key(|(n, _, _)| n.start_tick);
+            let truncated = track_count > notes.len();
             ui.add_space(4.0);
-            ui.label(egui::RichText::new(format!("音符 ({} 个)", notes.len())).size(12.0).strong());
+            let label = if truncated {
+                format!("音符 ({} 个，仅显示前 {} 个)", track_count, notes.len())
+            } else {
+                format!("音符 ({} 个)", notes.len())
+            };
+            ui.label(egui::RichText::new(label).size(12.0).strong());
             ui.add_space(2.0);
             build_table(ui, "eb_notes", &[("#", 40.0), ("id", 70.0), ("tick", 70.0), ("位置", 80.0), ("结束 tick", 80.0), ("结束位置", 90.0), ("键位", 50.0), ("力度", 50.0)], notes.len(), |i, row| {
                 let (n, _key, _trk) = &notes[i];
@@ -869,7 +891,12 @@ fn build_table<F>(ui: &mut egui::Ui, id_salt: &str, headers: &[(&str, f32)], row
 where F: FnMut(usize, &mut egui_extras::TableRow) {
     let ctx = ui.ctx().clone();
     let click_key = ui.id().with(("row_click", id_salt));
-    let mut tb = TableBuilder::new(ui).id_salt(id_salt).striped(true).resizable(true).cell_layout(egui::Layout::left_to_right(egui::Align::Center));
+    let mut tb = TableBuilder::new(ui)
+        .id_salt(id_salt)
+        .striped(true)
+        .resizable(true)
+        .sense(egui::Sense::click())
+        .cell_layout(egui::Layout::left_to_right(egui::Align::Center));
     for (_, min_w) in headers { tb = tb.column(Column::initial(*min_w).at_least(40.0).clip(true)); }
     tb.header(20.0, |mut h| {
         for (label, _) in headers { h.col(|ui| { ui.label(egui::RichText::new(*label).strong().size(11.0)); }); }
@@ -877,7 +904,7 @@ where F: FnMut(usize, &mut egui_extras::TableRow) {
         body.rows(18.0, rows, move |mut row| {
             let i = row.index();
             row_cb(i, &mut row);
-            // 行点击：通过 row.response() 检测点击
+            // 行点击：sense(click) 让整行可点击，row.response() 是所有 cell 的联合
             if row.response().clicked() {
                 ctx.memory_mut(|m| m.data.insert_temp(click_key, i));
             }
@@ -897,7 +924,10 @@ fn take_row_click(ui: &egui::Ui, id_salt: &str) -> Option<usize> {
 
 fn cell_text(row: &mut egui_extras::TableRow, text: impl Into<String>) {
     let s: String = text.into();
-    row.col(|ui| { ui.label(egui::RichText::new(s).size(11.0).monospace()); });
+    row.col(|ui| {
+        // selectable(false)：避免文字选中消费点击事件，让整行点击生效
+        ui.add(egui::Label::new(egui::RichText::new(s).size(11.0).monospace()).selectable(false));
+    });
 }
 
 // ── Group tracks by port/channel ──
