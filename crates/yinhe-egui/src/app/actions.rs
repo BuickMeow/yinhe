@@ -518,13 +518,7 @@ impl App {
         };
         let port_sf = self.resolve_sf_config(doc);
         eprintln!("[export] port_sf = {:?}", port_sf);
-        let has_solo = doc.edit.track_overrides.iter().any(|t| t.soloed);
-        let skip: Vec<bool> = doc
-            .edit
-            .track_overrides
-            .iter()
-            .map(|ov| if has_solo { !ov.soloed } else { ov.muted })
-            .collect();
+        let skip = doc.compute_skip_mask();
         let bit_depth = self.export.bit_depth;
         let layer_count = if self.export.layer_count == 0 {
             None

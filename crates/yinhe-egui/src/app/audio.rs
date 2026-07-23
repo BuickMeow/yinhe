@@ -214,12 +214,7 @@ impl App {
         progress::set_stage(&self.load_progress, 3, progress::StageStatus::Done);
 
         // Send initial mute/solo state
-        let has_solo = doc.edit.track_overrides.iter().any(|t| t.soloed);
-        let skip: Vec<bool> = doc
-            .edit.track_overrides
-            .iter()
-            .map(|ov| if has_solo { !ov.soloed } else { ov.muted })
-            .collect();
+        let skip = doc.compute_skip_mask();
         audio
             .handle
             .send(yinhe_audio::AudioCommand::SkipTracks { skip });

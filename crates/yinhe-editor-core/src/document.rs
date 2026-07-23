@@ -321,6 +321,19 @@ impl Document {
             self.edit.track_overrides.pop();
         }
     }
+
+    /// 合并 mute/solo 状态为音频引擎用的 skip mask。
+    ///
+    /// 规则：有任意 solo 时，只有 soloed 轨道不 skip；无 solo 时，muted 轨道 skip。
+    /// 音频引擎读此 mask 过滤音符和自动化事件。
+    pub fn compute_skip_mask(&self) -> Vec<bool> {
+        let has_solo = self.edit.track_overrides.iter().any(|t| t.soloed);
+        self.edit
+            .track_overrides
+            .iter()
+            .map(|ov| if has_solo { !ov.soloed } else { ov.muted })
+            .collect()
+    }
 }
 
 // ---------------------------------------------------------------------------

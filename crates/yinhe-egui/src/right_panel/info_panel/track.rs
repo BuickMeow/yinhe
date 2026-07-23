@@ -361,14 +361,7 @@ pub(super) fn show_track_info(
 
 /// 计算每轨 skip mask 并发给音频引擎。
 pub(crate) fn send_skip_tracks(doc: &Document, audio: Option<&yinhe_audio::CpalAudioHandle>) {
-    let has_solo = doc.edit.track_overrides.iter().any(|t| t.soloed);
-    let skip: Vec<bool> = doc
-        .edit
-        .track_overrides
-        .iter()
-        .map(|ov| if has_solo { !ov.soloed } else { ov.muted })
-        .collect();
-
+    let skip = doc.compute_skip_mask();
     if let Some(audio) = audio {
         audio
             .handle
