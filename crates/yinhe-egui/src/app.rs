@@ -126,6 +126,8 @@ pub struct App {
 
     // ── Event browser ──
     pub(crate) event_browser_state: crate::right_panel::event_browser::EventBrowserState,
+    /// 事件浏览器跳转后的闪烁高亮（None = 无动画在跑）。
+    pub(crate) jump_pulse: Option<crate::view_interaction::JumpPulse>,
 
     // ── Multi-stage loading progress ──
     pub(crate) load_progress: yinhe_editor_core::progress::SharedProgress,
@@ -263,6 +265,7 @@ impl App {
             show_mem_breakdown: false,
 
             event_browser_state: crate::right_panel::event_browser::EventBrowserState::default(),
+            jump_pulse: None,
 
             menu_bar: crate::platform::MenuBar::new(),
             last_dirty_state: false,

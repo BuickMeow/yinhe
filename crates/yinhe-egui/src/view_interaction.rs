@@ -3,6 +3,37 @@ use eframe::egui;
 use yinhe_types::TimeSigEvent;
 
 use yinhe_editor_core::quantize::QuantizePreset;
+
+// ── Jump pulse (event browser 跳转后的闪烁高亮) ──
+
+/// 闪烁高亮动画状态。由 App 在收到 JumpRequest 后创建，
+/// piano_view 渲染时读取并绘制，动画结束后清除。
+#[derive(Clone, Debug)]
+pub(crate) struct JumpPulse {
+    pub tick: u32,
+    /// 音符事件：Some(key)；其他事件：None。
+    pub key: Option<u8>,
+    pub kind: crate::right_panel::event_browser::PulseKind,
+    pub start_time: std::time::Instant,
+}
+
+impl JumpPulse {
+    /// 600ms ease-out 动画时长。
+    pub const DURATION_MS: u64 = 600;
+
+    /// 返回 [0, 1] 的进度，1 = 刚开始，0 = 结束。
+    pub fn progress(&self) -> f32 {
+        let elapsed = self.start_time.elapsed().as_millis() as f32;
+        let t = (elapsed / Self::DURATION_MS as f32).clamp(0.0, 1.0);
+        // ease-out: 1 - (1-t)^2
+        1.0 - (1.0 - t).powi(2)
+    }
+
+    /// 动画是否已结束。
+    pub fn finished(&self) -> bool {
+        self.start_time.elapsed().as_millis() as u32 >= Self::DURATION_MS as u32
+    }
+}
 use crate::widgets::tools_panel::Tool;
 
 pub use yinhe_editor_core::follow::{FollowMode, compute_follow_scroll, total_ticks_padded};

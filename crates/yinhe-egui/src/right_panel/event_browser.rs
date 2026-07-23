@@ -7,6 +7,29 @@ use yinhe_types::AutomationTarget;
 use crate::widgets::split_handle;
 use crate::theme;
 
+// ── Jump request (event browser → App → piano_view) ──
+
+/// 事件浏览器表格行点击时产生的跳转请求。
+///
+/// Step 1：音符/TimeSig 携带 PulseKind，App 据此启动闪烁动画；
+/// automation 类（CC/PB/PC/Tempo）只跳转不闪烁（PulseKind = None）。
+#[derive(Clone, Debug)]
+pub struct JumpRequest {
+    pub tick: u32,
+    /// 音符事件：Some((track, key))；其他事件：None。
+    pub note: Option<(u16, u8)>,
+    /// 闪烁高亮类型：None = 仅跳转不闪烁；Some = Step 1 支持的闪烁形状。
+    pub pulse: Option<PulseKind>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PulseKind {
+    /// 音符矩形闪烁（piano roll 内画白色描边矩形）
+    NoteRect,
+    /// TimeSig 竖线闪烁（贯穿 piano roll 高度的白色竖线）
+    TimesigLine,
+}
+
 // ── State types ──
 
 pub struct EventBrowserState {
@@ -125,7 +148,7 @@ fn ts_changes(model: &yinhe_core::YinModel) -> Vec<(u32, u8)> {
 //  Main entry — unified view
 // ═══════════════════════════════════════════════════════════════
 
-pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>, state: &mut EventBrowserState) {
+pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>, state: &mut EventBrowserState) -> Option<JumpRequest> {
     let Some(doc) = doc else {
         ui.add_space(8.0);
         ui.label(
@@ -133,7 +156,7 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>, state: &mut EventBrow
                 .color(egui::Color32::from_gray(100))
                 .size(12.0),
         );
-        return;
+        return None;
     };
 
     let model = &doc.data.model;
@@ -159,7 +182,7 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>, state: &mut EventBrow
     }
 
     let frame_bg = egui::Frame::NONE
-        .fill(egui::Color32::from_gray(16))
+        .fill(theme::APP_BG)
         .inner_margin(egui::Margin::symmetric(4, 2));
 
     let total_rect = ui.available_rect_before_wrap();
@@ -196,6 +219,7 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>, state: &mut EventBrow
         state.split_ratio = new_ratio;
     }
 
+    let mut jump_request: Option<JumpRequest> = None;
     ui.scope_builder(egui::UiBuilder::new().max_rect(bot_rect), |ui| {
         egui::ScrollArea::both()
             .id_salt("eb_detail")
@@ -204,7 +228,7 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>, state: &mut EventBrow
                 frame_bg.show(ui, |ui| {
                     ui.set_min_width(ui.available_width());
                     if let Some(sel) = &state.selected_item {
-                        show_event_detail(ui, sel, doc, &bar_lookup);
+                        jump_request = show_event_detail(ui, sel, doc, &bar_lookup);
                     } else if let Some(idx) = state.selected_track {
                         if let Some(track) = model.tracks.get(idx as usize) {
                             show_track_detail(ui, idx, track, model);
@@ -217,6 +241,7 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>, state: &mut EventBrow
                 });
             });
     });
+    jump_request
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -406,16 +431,16 @@ fn render_track_row(
 //  Detail panels
 // ═══════════════════════════════════════════════════════════════
 
-fn show_event_detail(ui: &mut egui::Ui, item: &SelectedItem, doc: &Document, bar_lookup: &BarLookup) {
+fn show_event_detail(ui: &mut egui::Ui, item: &SelectedItem, doc: &Document, bar_lookup: &BarLookup) -> Option<JumpRequest> {
     let model = &doc.data.model;
     match item {
         SelectedItem::ProjectJson => {
             show_project_json(ui, doc);
-            return;
+            return None;
         }
         SelectedItem::MappingJson => {
             show_mapping_json(ui, doc);
-            return;
+            return None;
         }
         SelectedItem::Tempo => {
             let mut sorted: Vec<&yinhe_types::AutomationEvent> = model.conductor.tempo.events.iter().collect();
@@ -429,6 +454,12 @@ fn show_event_detail(ui: &mut egui::Ui, item: &SelectedItem, doc: &Document, bar
                 cell_text(row, format!("{}", s.tick));
                 cell_text(row, bar_lookup.format(s.tick as u32));
                 cell_text(row, format!("{:.2}", s.value));
+            });
+            // Tempo：仅跳转，不闪烁（Step 2 再做 automation panel 圆点闪烁）
+            return take_row_click(ui, "eb_tempo").map(|i| JumpRequest {
+                tick: sorted[i].tick,
+                note: None,
+                pulse: None,
             });
         }
         SelectedItem::TimeSig => {
@@ -444,6 +475,12 @@ fn show_event_detail(ui: &mut egui::Ui, item: &SelectedItem, doc: &Document, bar
                 cell_text(row, format!("{}", e.tick));
                 cell_text(row, bar_lookup.format(e.tick));
                 cell_text(row, format!("{}/{}", e.numerator, denom));
+            });
+            // TimeSig：竖线闪烁，无需跳转音轨
+            return take_row_click(ui, "eb_ts").map(|i| JumpRequest {
+                tick: sorted[i].tick,
+                note: None,
+                pulse: Some(PulseKind::TimesigLine),
             });
         }
         SelectedItem::Notes { track } => {
@@ -483,6 +520,15 @@ fn show_event_detail(ui: &mut egui::Ui, item: &SelectedItem, doc: &Document, bar
                 cell_text(row, format!("{}", n.key));
                 cell_text(row, format!("{}", n.velocity));
             });
+            // 音符：矩形闪烁 + 切到音符所在 track
+            return take_row_click(ui, "eb_notes").map(|i| {
+                let (n, _key, _trk) = &notes[i];
+                JumpRequest {
+                    tick: n.start_tick,
+                    note: Some((*track, n.key)),
+                    pulse: Some(PulseKind::NoteRect),
+                }
+            });
         }
         SelectedItem::Cc { track, controller } => {
             let t = *track as usize;
@@ -504,6 +550,12 @@ fn show_event_detail(ui: &mut egui::Ui, item: &SelectedItem, doc: &Document, bar
                 cell_text(row, format!("{}", e.tick));
                 cell_text(row, bar_lookup.format(e.tick));
                 cell_text(row, format!("{}", e.value.round() as i32));
+            });
+            // CC：切到所在 track，仅跳转不闪烁（Step 2 再做圆点闪烁）
+            return take_row_click(ui, "eb_cc").map(|i| JumpRequest {
+                tick: events[i].tick,
+                note: Some((*track, 0)),
+                pulse: None,
             });
         }
         SelectedItem::PitchBend { track } => {
@@ -527,6 +579,12 @@ fn show_event_detail(ui: &mut egui::Ui, item: &SelectedItem, doc: &Document, bar
                 cell_text(row, bar_lookup.format(e.tick));
                 cell_text(row, format!("{}", e.value.round() as i32));
             });
+            // PB：切到所在 track，仅跳转不闪烁
+            return take_row_click(ui, "eb_pb").map(|i| JumpRequest {
+                tick: events[i].tick,
+                note: Some((*track, 0)),
+                pulse: None,
+            });
         }
         SelectedItem::ProgramChange { track } => {
             let t = *track as usize;
@@ -543,6 +601,12 @@ fn show_event_detail(ui: &mut egui::Ui, item: &SelectedItem, doc: &Document, bar
                 cell_text(row, format!("{}", e.tick));
                 cell_text(row, bar_lookup.format(e.tick));
                 cell_text(row, format!("{}", e.program));
+            });
+            // PC：切到所在 track，仅跳转不闪烁
+            return take_row_click(ui, "eb_pc").map(|i| JumpRequest {
+                tick: events[i].tick,
+                note: Some((*track, 0)),
+                pulse: None,
             });
         }
     }
@@ -803,13 +867,32 @@ fn render_leaf_item(ui: &mut egui::Ui, name: &str, icon: egui_material_icons::Ma
 
 fn build_table<F>(ui: &mut egui::Ui, id_salt: &str, headers: &[(&str, f32)], rows: usize, mut row_cb: F)
 where F: FnMut(usize, &mut egui_extras::TableRow) {
+    let ctx = ui.ctx().clone();
+    let click_key = ui.id().with(("row_click", id_salt));
     let mut tb = TableBuilder::new(ui).id_salt(id_salt).striped(true).resizable(true).cell_layout(egui::Layout::left_to_right(egui::Align::Center));
     for (_, min_w) in headers { tb = tb.column(Column::initial(*min_w).at_least(40.0).clip(true)); }
     tb.header(20.0, |mut h| {
         for (label, _) in headers { h.col(|ui| { ui.label(egui::RichText::new(*label).strong().size(11.0)); }); }
-    }).body(|body| {
-        body.rows(18.0, rows, |mut row| { let i = row.index(); row_cb(i, &mut row); });
+    }).body(move |body| {
+        body.rows(18.0, rows, move |mut row| {
+            let i = row.index();
+            row_cb(i, &mut row);
+            // 行点击：通过 row.response() 检测点击
+            if row.response().clicked() {
+                ctx.memory_mut(|m| m.data.insert_temp(click_key, i));
+            }
+        });
     });
+}
+
+/// 取出 build_table 写入 memory 的行点击索引（若存在）。
+fn take_row_click(ui: &egui::Ui, id_salt: &str) -> Option<usize> {
+    let key = ui.id().with(("row_click", id_salt));
+    let v = ui.memory(|m| m.data.get_temp::<usize>(key));
+    if v.is_some() {
+        ui.memory_mut(|m| m.data.remove::<usize>(key));
+    }
+    v
 }
 
 fn cell_text(row: &mut egui_extras::TableRow, text: impl Into<String>) {

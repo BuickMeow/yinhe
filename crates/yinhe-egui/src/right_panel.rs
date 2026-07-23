@@ -51,10 +51,10 @@ pub fn show(
     event_browser_state: &mut event_browser::EventBrowserState,
     info_content: &mut Option<InfoContent>,
     automation_drag_ghost: Option<(u32, f32)>,
-) -> bool {
+) -> (bool, Option<event_browser::JumpRequest>) {
     let tab = *right_tab;
     if tab.is_none() {
-        return false;
+        return (false, None);
     }
 
     let theme = crate::theme::RIGHT_PANEL_MIN_WIDTH;
@@ -82,6 +82,7 @@ pub fn show(
     );
 
     let mut changed = false;
+    let mut jump_request: Option<event_browser::JumpRequest> = None;
 
     ui.scope_builder(egui::UiBuilder::new().max_rect(content_rect), |ui| {
         ui.set_clip_rect(content_rect);
@@ -106,11 +107,11 @@ pub fn show(
                     channels_panel::show(ui, doc, audio_settings);
                 }
                 RightTab::EventBrowser => {
-                    event_browser::show(ui, doc, event_browser_state);
+                    jump_request = event_browser::show(ui, doc, event_browser_state);
                 }
             }
         }
     });
 
-    changed
+    (changed, jump_request)
 }

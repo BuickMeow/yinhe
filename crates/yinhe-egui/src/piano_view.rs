@@ -979,6 +979,49 @@ pub fn show(
         }
     }
 
+    // ── Jump pulse：事件浏览器跳转后的闪烁高亮 ──
+    // 通过 ctx memory 读取（App 在 main_loop 每帧写入）。
+    // 动画结束后清除，避免无效重绘。
+    let pulse_key = egui::Id::new("jump_pulse");
+    let pulse: Option<crate::view_interaction::JumpPulse> =
+        ui.ctx().memory(|m| m.data.get_temp(pulse_key));
+    if let Some(p) = &pulse {
+        if p.finished() {
+            ui.ctx().memory_mut(|m| m.data.remove::<crate::view_interaction::JumpPulse>(pulse_key));
+        } else {
+            let alpha = p.progress(); // 1 → 0
+            let x = view.tick_to_x(p.tick as f64);
+            use crate::right_panel::event_browser::PulseKind;
+            match p.kind {
+                PulseKind::NoteRect => {
+                    if let Some(key) = p.key {
+                        // 在音符位置画白色描边矩形，不透明度随动画衰减
+                        let y_top = view.key_to_y(key);
+                        let h = view.key_height;
+                        // 矩形宽度：用默认量化间隔，或固定 30px
+                        let w = 30.0;
+                        let rect = egui::Rect::from_min_size(
+                            egui::pos2(music_rect.min.x + x, y_top),
+                            egui::vec2(w, h),
+                        );
+                        let stroke = egui::Stroke::new(2.0, egui::Color32::WHITE.gamma_multiply(alpha));
+                        ui.painter().rect_stroke(rect, 2.0, stroke, egui::StrokeKind::Middle);
+                    }
+                }
+                PulseKind::TimesigLine => {
+                    // 贯穿 music_rect 高度的白色竖线
+                    let stroke = egui::Stroke::new(2.0, egui::Color32::WHITE.gamma_multiply(alpha));
+                    ui.painter().line_segment(
+                        [egui::pos2(music_rect.min.x + x, music_rect.min.y),
+                         egui::pos2(music_rect.min.x + x, music_rect.max.y)],
+                        stroke,
+                    );
+                }
+            }
+            ui.ctx().request_repaint();
+        }
+    }
+
     sel_action
         .map(PianoViewEvent::SelectionAction)
         .or(pencil_event)

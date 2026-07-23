@@ -433,6 +433,47 @@ impl App {
     }
 
     /// Handle note drag — called once on release.
+    /// 处理事件浏览器的跳转请求：设置 cursor_tick、切到 piano roll 视图、
+    /// 切 editing_track（音符/automation 事件）、滚动到中心、启动闪烁动画。
+    fn handle_jump_request(&mut self, req: crate::right_panel::event_browser::JumpRequest, layout: &LayoutInfo) {
+        // 1. 切到 piano roll 视图（如果当前不在）
+        if !self.show_pianoroll {
+            self.view_mode = crate::chrome::mode_bar::ViewMode::Edit;
+            self.show_transport = false;
+            self.show_pianoroll = true;
+        }
+
+        // 2. 切 editing_track（音符/CC/PB/PC 事件需要）
+        if let Some((track, _key)) = req.note {
+            if let Some(idx) = self.active_doc {
+                self.documents[idx].edit.editing_track = Some(track);
+            }
+        }
+
+        // 3. 设置 cursor_tick
+        if let Some(idx) = self.active_doc {
+            self.documents[idx].edit.cursor_tick = Some(req.tick as f64);
+        }
+
+        // 4. 滚动到中心（参考 follow.rs Page 模式公式）
+        let view = &mut self.pianoroll_view;
+        let viewport_w = layout.remaining.width() - layout.right_panel_total_w;
+        let content_w = viewport_w - view.base.left_panel_width;
+        let target_x = req.tick as f32 * view.base.pixels_per_tick;
+        view.base.scroll_x = (target_x - content_w * 0.5).max(0.0);
+        view.base.dirty = true;
+
+        // 5. 启动闪烁动画
+        if let Some(kind) = req.pulse {
+            self.jump_pulse = Some(crate::view_interaction::JumpPulse {
+                tick: req.tick,
+                key: req.note.map(|(_, k)| k),
+                kind,
+                start_time: std::time::Instant::now(),
+            });
+        }
+    }
+
     fn handle_note_drag(&mut self, note_drag_delta: Option<(i64, i32, bool)>) {
         if let Some((delta_ticks, delta_keys, alt)) = note_drag_delta {
             let Some(idx) = self.active_doc else { return };
@@ -514,7 +555,7 @@ impl App {
                 egui::vec2(layout.right_panel_total_w, layout.remaining.height()),
             );
             let doc = self.active_doc.and_then(|idx| self.documents.get_mut(idx));
-            let changed = crate::right_panel::show(
+            let (changed, jump_request) = crate::right_panel::show(
                 ui,
                 right_rect,
                 &mut self.right_panel_width,
@@ -528,6 +569,9 @@ impl App {
             );
             if changed {
                 self.teardown_audio();
+            }
+            if let Some(req) = jump_request {
+                self.handle_jump_request(req, layout);
             }
         }
 

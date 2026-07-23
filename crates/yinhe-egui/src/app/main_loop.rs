@@ -291,11 +291,25 @@ impl eframe::App for App {
 
         // ── Main content area ──
         let layout = self.compute_layout(ui);
+        // 把 jump_pulse 写入 ctx memory，供 piano_view 读取绘制。
+        // 注意：piano_view 用 ui.id().with("jump_pulse") 作为 key，
+        // 这里用同样的 key（piano_view 的 ui 是 show_main_content 内部分配的，
+        // 但 ctx memory 是全局的，用固定字面量 key 避免依赖 ui.id）。
+        if let Some(p) = &self.jump_pulse {
+            ui.ctx().memory_mut(|m| m.data.insert_temp(egui::Id::new("jump_pulse"), p.clone()));
+        }
         self.show_main_content(ui, &layout);
         self.show_panels_and_overlays(ui, &layout);
         self.show_dialogs(ui);
         self.show_load_error_modal(ui);
         self.sync_automation_density();
+
+        // 清理已结束的 jump_pulse 动画
+        if let Some(p) = &self.jump_pulse {
+            if p.finished() {
+                self.jump_pulse = None;
+            }
+        }
 
         if let Some(t0) = _ui_total_start {
             yinhe_memtrace::perf_probe::record_ui_total(t0.elapsed());
