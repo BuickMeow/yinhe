@@ -230,7 +230,7 @@ impl App {
             );
 
             let mut event = None;
-            let mut note_drag_delta: Option<(i64, i32)> = None;
+            let mut note_drag_delta: Option<(i64, i32, bool)> = None;
             let mut pencil_note_drag: Option<crate::piano_view::PencilNoteDrag> = None;
             ui.scope_builder(egui::UiBuilder::new().max_rect(piano_rect), |ui| {
                 let _piano_total_start = if yinhe_memtrace::perf_probe::enabled() {
@@ -433,20 +433,25 @@ impl App {
     }
 
     /// Handle note drag — called once on release.
-    fn handle_note_drag(&mut self, note_drag_delta: Option<(i64, i32)>) {
-        if let Some((delta_ticks, delta_keys)) = note_drag_delta {
+    fn handle_note_drag(&mut self, note_drag_delta: Option<(i64, i32, bool)>) {
+        if let Some((delta_ticks, delta_keys, alt)) = note_drag_delta {
             let Some(idx) = self.active_doc else { return };
             let doc = &mut self.documents[idx];
-            if let Some(action) = doc.move_selected_notes(delta_ticks, delta_keys) {
+            let (action, label) = if alt {
+                (doc.duplicate_selected_to(delta_ticks, delta_keys), "Duplicate notes")
+            } else {
+                (doc.move_selected_notes(delta_ticks, delta_keys), "Move notes")
+            };
+            if let Some(action) = action {
                 self.pianoroll_view.base.dirty = true;
                 doc.history.push(yinhe_editor_core::history::UndoEntry {
                     action,
-                    label: "Move notes",
+                    label,
                     selected: doc.edit.selected.clone(),
                     track_selected: doc.edit.track_selected.clone(),
                     sel_rect: doc.edit.sel_rect.clone(),
                 });
-                // 纯音符移动：只更新 audible_notes，不重建 CC，不 chase
+                // 纯音符移动/复制：只更新 audible_notes，不重建 CC，不 chase
                 self.notify_notes_changed();
             }
         }

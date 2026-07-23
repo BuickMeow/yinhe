@@ -170,14 +170,14 @@ pub(crate) fn sel_drag_frame(
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
     total_ticks: f64,
     cursor_tick: &mut Option<f64>,
-    note_drag_delta: &mut Option<(i64, i32)>,
+    note_drag_delta: &mut Option<(i64, i32, bool)>,
     sel_rect: &mut yinhe_editor_core::edit_state::SelRectState,
     _track_colors: &[[f32; 3]],
     track_visible: &[bool],
     track_selected: &std::collections::HashSet<u16>,
 ) -> (Vec<(u32, u32, u8, u16)>, Vec<(u16, u32, u8)>) {
     let note_drag_id = ui.id().with("note_drag_origin");
-    let mut note_drag_origin: Option<(f64, f64)> =
+    let mut note_drag_origin: Option<(f64, f64, bool)> =
         ui.data_mut(|d| d.get_persisted(note_drag_id)).unwrap_or(None);
 
     // Pre-computed drag note info — built once at drag start, reused every frame.
@@ -228,7 +228,10 @@ pub(crate) fn sel_drag_frame(
                 let raw_tick = view.x_to_tick(local.x);
                 let tick = crate::view_interaction::snap_tick(raw_tick, quantize, ppq, bar_line_data);
                 let key = view.y_to_key(local.y) as f64;
-                note_drag_origin = Some((tick, key));
+                // Alt（Option）按下时进入复制模式：原音符保留，拖出副本。
+                // press 时锁定 alt 状态，拖拽中切换不影响本次操作。
+                let alt = ui.input(|i| i.modifiers.alt);
+                note_drag_origin = Some((tick, key, alt));
                 sel_rect.start_drag();
 
                 // Pre-compute all selected note info from rects + midi.
@@ -261,7 +264,7 @@ pub(crate) fn sel_drag_frame(
     // Note drag: use pre-computed data for ghost/hidden, store delta only on release
     let mut ghost_notes: Vec<(u32, u32, u8, u16)> = Vec::new();
     let mut hidden_notes: Vec<(u16, u32, u8)> = Vec::new();
-    if let Some((origin_tick, origin_key)) = note_drag_origin {
+    if let Some((origin_tick, origin_key, alt)) = note_drag_origin {
         if let Some(ref notes) = drag_notes {
             if pointer.primary_down() && !pointer.primary_pressed() {
                 if let Some(pos) = pointer.hover_pos() {
@@ -289,12 +292,15 @@ pub(crate) fn sel_drag_frame(
                     let dk = (current_key - origin_key).round() as i32;
 
                     // O(N) — just apply delta to pre-computed data, no midi lookup.
+                    // Alt（复制模式）：原音符保留可见，不 push hidden_notes。
                     for info in notes {
                         let new_tick = (info.start_tick as i64 + dt).max(0) as u32;
                         let new_key = ((info.key as i32) + dk).clamp(0, 127) as u8;
                         let length = info.end_tick - info.start_tick;
                         ghost_notes.push((new_tick, new_tick + length, new_key, info.track));
-                        hidden_notes.push((info.track, info.start_tick, info.key));
+                        if !alt {
+                            hidden_notes.push((info.track, info.start_tick, info.key));
+                        }
                     }
 
                     sel_rect.update_drag(dt, dk);
@@ -318,7 +324,7 @@ pub(crate) fn sel_drag_frame(
                     let current_key = view.y_to_key(local_y) as f64;
                     let dt = (snapped_tick - origin_tick).round() as i64;
                     let dk = (current_key - origin_key).round() as i32;
-                    *note_drag_delta = Some((dt, dk));
+                    *note_drag_delta = Some((dt, dk, alt));
                     sel_rect.update_drag(dt, dk);
 
                     // Keep ghost/hidden alive on the release frame so the original
@@ -328,7 +334,9 @@ pub(crate) fn sel_drag_frame(
                         let new_key = ((info.key as i32) + dk).clamp(0, 127) as u8;
                         let length = info.end_tick - info.start_tick;
                         ghost_notes.push((new_tick, new_tick + length, new_key, info.track));
-                        hidden_notes.push((info.track, info.start_tick, info.key));
+                        if !alt {
+                            hidden_notes.push((info.track, info.start_tick, info.key));
+                        }
                     }
                 }
                 sel_rect.end_drag();

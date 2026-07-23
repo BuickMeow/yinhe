@@ -105,6 +105,22 @@ impl eframe::App for App {
                     self.select_all();
                     continue;
                 }
+                MenuAction::Duplicate => {
+                    self.duplicate_selected_notes();
+                    continue;
+                }
+                MenuAction::Delete => {
+                    self.delete_selected_notes();
+                    continue;
+                }
+                MenuAction::TransposeUp => {
+                    self.transpose_selected_notes(12);
+                    continue;
+                }
+                MenuAction::TransposeDown => {
+                    self.transpose_selected_notes(-12);
+                    continue;
+                }
             };
             self.handle_file_action(file_action, ui.ctx());
         }

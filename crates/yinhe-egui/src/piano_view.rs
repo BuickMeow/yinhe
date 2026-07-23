@@ -73,7 +73,7 @@ pub fn show(
     note_outline: bool,
     use_gpu_cull: bool,
     tempo_lane: &AutomationLane,
-    note_drag_delta: &mut Option<(i64, i32)>,
+    note_drag_delta: &mut Option<(i64, i32, bool)>,
     sel_rect: &mut yinhe_editor_core::edit_state::SelRectState,
     track_selected: &std::collections::HashSet<u16>,
     conductor_idx: Option<u16>,

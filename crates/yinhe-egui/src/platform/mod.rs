@@ -20,6 +20,10 @@ pub enum MenuAction {
     Copy,
     Paste,
     SelectAll,
+    Duplicate,
+    Delete,
+    TransposeUp,
+    TransposeDown,
 }
 
 /// Handle to the native menu bar and its action receiver.

@@ -175,6 +175,34 @@ fn init_native_menu() -> muda::Result<()> {
     ));
     map.insert(select_all_item.id().clone(), MenuAction::SelectAll);
 
+    let duplicate_item = Box::new(MenuItem::new(
+        "重复",
+        true,
+        Some(Accelerator::new(Some(cmd), Code::KeyD)),
+    ));
+    map.insert(duplicate_item.id().clone(), MenuAction::Duplicate);
+
+    let delete_item = Box::new(MenuItem::new(
+        "删除",
+        true,
+        Some(Accelerator::new(None, Code::Delete)),
+    ));
+    map.insert(delete_item.id().clone(), MenuAction::Delete);
+
+    let transpose_up_item = Box::new(MenuItem::new(
+        "升八度",
+        true,
+        Some(Accelerator::new(Some(Modifiers::SHIFT), Code::ArrowUp)),
+    ));
+    map.insert(transpose_up_item.id().clone(), MenuAction::TransposeUp);
+
+    let transpose_down_item = Box::new(MenuItem::new(
+        "降八度",
+        true,
+        Some(Accelerator::new(Some(Modifiers::SHIFT), Code::ArrowDown)),
+    ));
+    map.insert(transpose_down_item.id().clone(), MenuAction::TransposeDown);
+
     let edit_menu = Submenu::with_items("编辑", true, &[
         undo_item.as_ref(),
         redo_item.as_ref(),
@@ -184,6 +212,11 @@ fn init_native_menu() -> muda::Result<()> {
         paste_item.as_ref(),
         &PredefinedMenuItem::separator(),
         select_all_item.as_ref(),
+        duplicate_item.as_ref(),
+        delete_item.as_ref(),
+        &PredefinedMenuItem::separator(),
+        transpose_up_item.as_ref(),
+        transpose_down_item.as_ref(),
     ])?;
 
     let menu = Menu::with_items(&[&file_menu, &edit_menu])?;
@@ -201,6 +234,10 @@ fn init_native_menu() -> muda::Result<()> {
     items.push(copy_item);
     items.push(paste_item);
     items.push(select_all_item);
+    items.push(duplicate_item);
+    items.push(delete_item);
+    items.push(transpose_up_item);
+    items.push(transpose_down_item);
     items.push(Box::new(file_menu));
     items.push(Box::new(edit_menu));
 
