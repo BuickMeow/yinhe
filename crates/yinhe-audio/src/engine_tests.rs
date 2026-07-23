@@ -53,16 +53,19 @@ fn test_sorted_cc_ordering() {
         SortedCC {
             sample: 100,
             channel: 0,
+            track: 0,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 80)),
         },
         SortedCC {
             sample: 50,
             channel: 0,
+            track: 0,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 100)),
         },
         SortedCC {
             sample: 200,
             channel: 0,
+            track: 0,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 60)),
         },
     ];
@@ -912,4 +915,88 @@ fn test_remove_track_then_rebuild_deactivates_channel() {
     assert_eq!(engine.note_cursor[60], 1);
     assert_eq!(engine.note_cursor[64], 0);
     assert_eq!(engine.active_notes.len(), 1);
+}
+
+/// mute 轨道的自动化事件（CC）在 dispatch 时应被跳过，
+/// 不发送到合成器，使同 channel 上其他非 mute 轨道不受影响。
+#[test]
+fn test_muted_track_cc_skipped_in_dispatch() {
+    use crate::audio_model::SortedCC;
+    use xsynth_core::channel::{ChannelAudioEvent, ControlEvent};
+
+    let sample_rate = 44100u32;
+    let mut doc = Document::empty();
+    // track 1 → channel 0
+    doc.add_note(
+        1,
+        NoteEvent {
+            start_tick: 0,
+            end_tick: 480,
+            key: 60,
+            velocity: 100,
+            id: 0,
+        },
+    );
+    doc.data.bump_revision();
+
+    let mut engine = spawn_engine_for_doc(&doc, sample_rate);
+    engine.playing = true;
+
+    // 注入两条 CC 事件：track 0（mute）和 track 1（非 mute），同 channel 0
+    engine.cc_events = Arc::new(vec![
+        SortedCC {
+            sample: 0,
+            channel: 0,
+            track: 0,
+            event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 40)),
+        },
+        SortedCC {
+            sample: 0,
+            channel: 0,
+            track: 1,
+            event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 100)),
+        },
+    ]);
+    engine.cc_cursor = 0;
+    // mute track 0
+    engine.skip_track = vec![true, false];
+
+    // dispatch 应跳过 track 0 的 CC，只发 track 1 的
+    engine.dispatch_and_find_next(0, 60000);
+    // cc_cursor 推进到末尾（两条都处理了，但只发了一条）
+    assert_eq!(engine.cc_cursor, 2);
+}
+
+/// chase 计算时跳过 mute 轨道的 CC：
+/// mute 轨道的 CC 不参与 channel state 快照构建。
+#[test]
+fn test_muted_track_cc_skipped_in_chase() {
+    use crate::audio_model::SortedCC;
+    use xsynth_core::channel::{ChannelAudioEvent, ControlEvent};
+
+    let cc_events = vec![
+        // track 0（将被 mute）的 CC7=40
+        SortedCC {
+            sample: 100,
+            channel: 0,
+            track: 0,
+            event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 40)),
+        },
+        // track 1（非 mute）的 CC7=100
+        SortedCC {
+            sample: 200,
+            channel: 0,
+            track: 1,
+            event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 100)),
+        },
+    ];
+
+    // chase 到 sample 300，skip track 0
+    let states = crate::spawn::compute_chase_states_for_test(&cc_events, 300, &[true, false]);
+    // track 0 的 CC7=40 被跳过，只有 track 1 的 CC7=100 生效
+    // CC7 映射到 ChannelState.volume
+    assert_eq!(
+        states[0].volume, 100,
+        "muted track's CC7=40 should be skipped; only track 1's CC7=100 should apply"
+    );
 }

@@ -74,10 +74,14 @@ impl AudioEngine {
             && self.cc_events[self.cc_cursor].sample <= sample
         {
             let cc = &self.cc_events[self.cc_cursor];
-            let dense = self.channel_layout.dense_for(cc.channel as usize);
-            if dense != u32::MAX {
-                self.channel_group
-                    .send_event(SynthEvent::Channel(dense, ChannelEvent::Audio(cc.event)));
+            // mute 的音轨：跳过其自动化事件（CC/PB/RPN/NRPN/PC），
+            // 使同 channel 上其他非 mute 轨道不受影响。
+            if !self.skip_track.get(cc.track as usize).copied().unwrap_or(false) {
+                let dense = self.channel_layout.dense_for(cc.channel as usize);
+                if dense != u32::MAX {
+                    self.channel_group
+                        .send_event(SynthEvent::Channel(dense, ChannelEvent::Audio(cc.event)));
+                }
             }
             self.cc_cursor += 1;
         }

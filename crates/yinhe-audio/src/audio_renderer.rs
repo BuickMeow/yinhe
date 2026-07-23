@@ -175,6 +175,14 @@ impl AudioRenderer {
                                 pending_density_rebuild = true;
                             }
                         }
+                        AudioCommand::SkipTracks { skip } => {
+                            self.engine.skip_track = skip;
+                            // mute 状态变了，chase 结果需要更新：
+                            // unmute 的轨道的 CC 需要恢复，mute 的轨道的 CC 不再参与。
+                            if self.engine.model_loaded() {
+                                self.request_chase(self.engine.sample_position());
+                            }
+                        }
                         other => self.engine.handle_command(other),
                     }
                 }
@@ -212,10 +220,12 @@ impl AudioRenderer {
     fn request_chase(&self, target_sample: u64) {
         let cc_events = Arc::clone(&self.engine.cc_events);
         let generation = self.engine.chase_generation;
+        let skip_mask = self.engine.skip_track.clone();
         let _ = self.worker_tx.send(WorkerCmd::PrepareChase {
             cc_events,
             target_sample,
             generation,
+            skip_mask,
         });
     }
 

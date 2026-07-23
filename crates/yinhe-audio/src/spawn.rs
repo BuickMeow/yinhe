@@ -202,6 +202,8 @@ pub(crate) enum WorkerCmd {
         cc_events: Arc<Vec<SortedCC>>,
         target_sample: u64,
         generation: u64,
+        /// 当前 skip_track 快照，chase 时跳过 mute 轨道的 CC。
+        skip_mask: Vec<bool>,
     },
     LoadSoundFont {
         port: u8,
@@ -311,28 +313,32 @@ pub(crate) fn spawn_worker(
                         cc_events,
                         target_sample,
                         generation,
+                        skip_mask,
                     } => {
                         // 合并连续 PrepareChase，只保留最新（同 generation 或不同 generation 都只留最新）
                         let mut latest_cc = cc_events;
                         let mut latest_target = target_sample;
                         let mut latest_gen = generation;
+                        let mut latest_mask = skip_mask;
                         while let Ok(next) = cmd_rx.try_recv() {
                             match next {
                                 WorkerCmd::PrepareChase {
                                     cc_events,
                                     target_sample,
                                     generation,
+                                    skip_mask,
                                 } => {
                                     latest_cc = cc_events;
                                     latest_target = target_sample;
                                     latest_gen = generation;
+                                    latest_mask = skip_mask;
                                 }
                                 other => {
                                     pending.push_back(other);
                                 }
                             }
                         }
-                        let states = compute_chase_states(&latest_cc, latest_target);
+                        let states = compute_chase_states(&latest_cc, latest_target, &latest_mask);
                         let _ = result_tx.send(WorkerResult::ChaseResult {
                             states,
                             generation: latest_gen,
@@ -372,11 +378,21 @@ pub(crate) fn spawn_worker(
 /// 在 worker 线程上从 `cc_events[0]` 线性扫到 `target_sample`，构建 256 通道状态快照。
 /// 这部分计算从 renderer 线程移出来（方案 B），避免 seek 时 renderer 阻塞几十万次
 /// `ChannelState::apply`。结果由 renderer 的 `apply_chase_result` 直接 `send_to`。
-fn compute_chase_states(cc_events: &[SortedCC], target_sample: u64) -> Box<[ChannelState; 256]> {
+///
+/// `skip_mask`：mute 的音轨的 CC 不参与 chase，使其不影响同 channel 上其他轨道。
+fn compute_chase_states(
+    cc_events: &[SortedCC],
+    target_sample: u64,
+    skip_mask: &[bool],
+) -> Box<[ChannelState; 256]> {
     let mut states: Box<[ChannelState; 256]> = Box::new([ChannelState::default(); 256]);
     for cc in cc_events {
         if cc.sample >= target_sample {
             break;
+        }
+        // mute 轨道的 CC 不参与 chase
+        if skip_mask.get(cc.track as usize).copied().unwrap_or(false) {
+            continue;
         }
         let ch = cc.channel as usize;
         if ch >= 256 {
@@ -385,6 +401,16 @@ fn compute_chase_states(cc_events: &[SortedCC], target_sample: u64) -> Box<[Chan
         states[ch].apply(&cc.event);
     }
     states
+}
+
+/// 测试用包装：暴露 `compute_chase_states` 给单元测试。
+#[cfg(test)]
+pub(crate) fn compute_chase_states_for_test(
+    cc_events: &[SortedCC],
+    target_sample: u64,
+    skip_mask: &[bool],
+) -> Box<[ChannelState; 256]> {
+    compute_chase_states(cc_events, target_sample, skip_mask)
 }
 
 /// 列出系统所有可用输出设备的描述名（cpal `Device::description()`）。

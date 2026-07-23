@@ -10,6 +10,8 @@ use crate::spawn::track_global_channel;
 pub(crate) struct SortedCC {
     pub(crate) sample: u64,
     pub(crate) channel: u32,
+    /// 源音轨索引，用于 mute 时过滤自动化事件。
+    pub(crate) track: u16,
     pub(crate) event: ChannelAudioEvent,
 }
 
@@ -154,13 +156,14 @@ pub(crate) fn flatten_automation_to_cc_events(
     let mut cc_events = Vec::new();
 
     for (track_idx, track) in model.tracks.iter().enumerate() {
+        let track_idx_u16 = track_idx as u16;
         let channel = track_global_channel(model, track_idx) as u32;
 
         for lane in &track.automation_lanes {
             let n = lane.events.len();
             for (i, e) in lane.events.iter().enumerate() {
                 let sample = (model.tempo_map.tick_to_seconds(e.tick as u64) * sr) as u64;
-                emit_automation_event(&lane.target, e.value, sample, channel, &mut cc_events);
+                emit_automation_event(&lane.target, e.value, sample, channel, track_idx_u16, &mut cc_events);
 
                 // Linear/Curve 段：在当前事件与下一事件之间按 density 间隔展开中间事件
                 if i + 1 < n {
@@ -177,7 +180,7 @@ pub(crate) fn flatten_automation_to_cc_events(
                             let f = e.shape.interpolate(frac);
                             let v = v1 + (v2 - v1) * f;
                             let s = (model.tempo_map.tick_to_seconds(t as u64) * sr) as u64;
-                            emit_automation_event(&lane.target, v, s, channel, &mut cc_events);
+                            emit_automation_event(&lane.target, v, s, channel, track_idx_u16, &mut cc_events);
                             t = t.saturating_add(density);
                         }
                     }
@@ -188,12 +191,12 @@ pub(crate) fn flatten_automation_to_cc_events(
         for e in &track.program_change {
             let sample = (model.tempo_map.tick_to_seconds(e.tick as u64) * sr) as u64;
             if e.bank_msb != 0xFF {
-                cc_events.push(SortedCC { sample, channel, event: ChannelAudioEvent::Control(ControlEvent::Raw(0, e.bank_msb)) });
+                cc_events.push(SortedCC { sample, channel, track: track_idx_u16, event: ChannelAudioEvent::Control(ControlEvent::Raw(0, e.bank_msb)) });
             }
             if e.bank_lsb != 0xFF {
-                cc_events.push(SortedCC { sample, channel, event: ChannelAudioEvent::Control(ControlEvent::Raw(32, e.bank_lsb)) });
+                cc_events.push(SortedCC { sample, channel, track: track_idx_u16, event: ChannelAudioEvent::Control(ControlEvent::Raw(32, e.bank_lsb)) });
             }
-            cc_events.push(SortedCC { sample, channel, event: ChannelAudioEvent::ProgramChange(e.program) });
+            cc_events.push(SortedCC { sample, channel, track: track_idx_u16, event: ChannelAudioEvent::ProgramChange(e.program) });
         }
     }
 
@@ -222,12 +225,13 @@ fn emit_automation_event(
     value: f32,
     sample: u64,
     channel: u32,
+    track: u16,
     out: &mut Vec<SortedCC>,
 ) {
     match target {
         AutomationTarget::CC { controller } => {
             out.push(SortedCC {
-                sample, channel,
+                sample, channel, track,
                 event: ChannelAudioEvent::Control(ControlEvent::Raw(
                     *controller, value.round().clamp(0.0, 127.0) as u8,
                 )),
@@ -235,7 +239,7 @@ fn emit_automation_event(
         }
         AutomationTarget::PitchBend => {
             out.push(SortedCC {
-                sample, channel,
+                sample, channel, track,
                 event: ChannelAudioEvent::Control(ControlEvent::PitchBendValue(
                     (value - 8192.0) / 8192.0,
                 )),
@@ -245,21 +249,21 @@ fn emit_automation_event(
             match parameter {
                 0 => {
                     out.push(SortedCC {
-                        sample, channel,
+                        sample, channel, track,
                         event: ChannelAudioEvent::Control(ControlEvent::PitchBendSensitivity(value)),
                     });
                 }
                 1 => {
                     let fine = (value - 8192.0) / 8192.0 * 100.0;
                     out.push(SortedCC {
-                        sample, channel,
+                        sample, channel, track,
                         event: ChannelAudioEvent::Control(ControlEvent::FineTune(fine)),
                     });
                 }
                 2 => {
                     let coarse = value - 64.0;
                     out.push(SortedCC {
-                        sample, channel,
+                        sample, channel, track,
                         event: ChannelAudioEvent::Control(ControlEvent::CoarseTune(coarse)),
                     });
                 }
@@ -273,11 +277,11 @@ fn emit_automation_event(
                     } else {
                         (value.round().clamp(0.0, 127.0) as u8, 0u8)
                     };
-                    out.push(SortedCC { sample, channel, event: ChannelAudioEvent::Control(ControlEvent::Raw(101, msb)) });
-                    out.push(SortedCC { sample, channel, event: ChannelAudioEvent::Control(ControlEvent::Raw(100, lsb)) });
-                    out.push(SortedCC { sample, channel, event: ChannelAudioEvent::Control(ControlEvent::Raw(6, data_msb)) });
+                    out.push(SortedCC { sample, channel, track, event: ChannelAudioEvent::Control(ControlEvent::Raw(101, msb)) });
+                    out.push(SortedCC { sample, channel, track, event: ChannelAudioEvent::Control(ControlEvent::Raw(100, lsb)) });
+                    out.push(SortedCC { sample, channel, track, event: ChannelAudioEvent::Control(ControlEvent::Raw(6, data_msb)) });
                     if data_lsb != 0 {
-                        out.push(SortedCC { sample, channel, event: ChannelAudioEvent::Control(ControlEvent::Raw(38, data_lsb)) });
+                        out.push(SortedCC { sample, channel, track, event: ChannelAudioEvent::Control(ControlEvent::Raw(38, data_lsb)) });
                     }
                 }
             }
@@ -288,11 +292,11 @@ fn emit_automation_event(
             let v = value.round().clamp(0.0, 16383.0) as u16;
             let data_msb = ((v >> 7) & 0x7F) as u8;
             let data_lsb = (v & 0x7F) as u8;
-            out.push(SortedCC { sample, channel, event: ChannelAudioEvent::Control(ControlEvent::Raw(99, msb)) });
-            out.push(SortedCC { sample, channel, event: ChannelAudioEvent::Control(ControlEvent::Raw(98, lsb)) });
-            out.push(SortedCC { sample, channel, event: ChannelAudioEvent::Control(ControlEvent::Raw(6, data_msb)) });
+            out.push(SortedCC { sample, channel, track, event: ChannelAudioEvent::Control(ControlEvent::Raw(99, msb)) });
+            out.push(SortedCC { sample, channel, track, event: ChannelAudioEvent::Control(ControlEvent::Raw(98, lsb)) });
+            out.push(SortedCC { sample, channel, track, event: ChannelAudioEvent::Control(ControlEvent::Raw(6, data_msb)) });
             if data_lsb != 0 {
-                out.push(SortedCC { sample, channel, event: ChannelAudioEvent::Control(ControlEvent::Raw(38, data_lsb)) });
+                out.push(SortedCC { sample, channel, track, event: ChannelAudioEvent::Control(ControlEvent::Raw(38, data_lsb)) });
             }
         }
         // Tempo 走 `conductor.tempo` 而非 `track.automation_lanes`，
