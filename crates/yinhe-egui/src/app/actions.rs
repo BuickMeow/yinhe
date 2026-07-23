@@ -360,6 +360,7 @@ impl App {
     /// Spawn a background thread to save the project.
     pub(crate) fn save_project_async(&mut self, idx: usize, path: String) {
         let doc = &mut self.documents[idx];
+        doc.sync_overrides_to_model();
         doc.data.sync_project_file();
         doc.data.sync_mapping_file();
 

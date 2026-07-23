@@ -104,7 +104,11 @@ impl Document {
             edit: EditState {
                 track_visible: vec![true; num_tracks],
                 track_pianoroll_visible: vec![true; num_tracks],
-                track_overrides: (0..num_tracks).map(|_| TrackOverride::default()).collect(),
+                track_overrides: model
+                    .tracks
+                    .iter()
+                    .map(|t| TrackOverride { muted: t.muted, soloed: t.soloed })
+                    .collect(),
                 track_info_cache,
                 track_colors_cache: (0..num_tracks)
                     .map(|i| track_color(i, conductor_track_idx))
@@ -177,6 +181,12 @@ impl Document {
 
             let track_info_cache = data.track_info();
             let pc_map_cache = data.pc_map_cache();
+            let track_overrides: Vec<TrackOverride> = data
+                .model
+                .tracks
+                .iter()
+                .map(|t| TrackOverride { muted: t.muted, soloed: t.soloed })
+                .collect();
 
             Ok(Document {
                 data,
@@ -185,7 +195,7 @@ impl Document {
                     quantize_pianoroll,
                     track_visible: vec![true; num_tracks],
                     track_pianoroll_visible: vec![true; num_tracks],
-                    track_overrides: (0..num_tracks).map(|_| TrackOverride::default()).collect(),
+                    track_overrides,
                     track_info_cache,
                     pc_map_cache,
                     track_colors_cache,
@@ -333,6 +343,22 @@ impl Document {
             .iter()
             .map(|ov| if has_solo { !ov.soloed } else { ov.muted })
             .collect()
+    }
+
+    /// 保存前把运行时 mute/solo 状态写回 model.tracks，
+    /// 使 `sync_mapping_file` 能读到正确的持久化值。
+    ///
+    /// `TrackData` 是 `Arc`，用 `Arc::make_mut` 做 copy-on-write，
+    /// 不影响 undo/redo 快照持有的旧 Arc。
+    pub fn sync_overrides_to_model(&mut self) {
+        let model = Arc::make_mut(&mut self.data.model);
+        for (i, ov) in self.edit.track_overrides.iter().enumerate() {
+            if let Some(td) = model.tracks.get_mut(i) {
+                let td = Arc::make_mut(td);
+                td.muted = ov.muted;
+                td.soloed = ov.soloed;
+            }
+        }
     }
 }
 
