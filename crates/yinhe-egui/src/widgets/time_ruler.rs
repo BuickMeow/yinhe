@@ -1,5 +1,5 @@
 use eframe::egui;
-use yinhe_types::{build_time_sig_segments, measure_ticks, TimeSigEvent};
+use yinhe_types::{build_time_sig_segments, compute_measure_divisor, measure_ticks, TimeSigEvent};
 
 // ── Constants ──
 
@@ -223,8 +223,6 @@ fn paint_labels(
     let font_id = egui::FontId::new(10.0, egui::FontFamily::Monospace);
     let text_y_center = rect.min.y + rect.height() / 2.0;
 
-    let sub_f = ticks_per_sub as f64;
-
     for i in 0..segments.len() {
         let (seg_start, num, den) = segments[i];
         let seg_end = segments.get(i + 1).map_or(u32::MAX, |&(t, _, _)| t);
@@ -237,19 +235,34 @@ fn paint_labels(
         let ticks_per_beat = ticks_per_measure / num as u32;
         let bar_offset = bar_offsets[i];
 
-        // ── Sub-beat granularity loop ──
+        // 多小节合并：缩很小时 measure label 太密，按 2/4/8… 小节合并，
+        // 只在合并后的边界显示小节号（如 4 小节一条线时显示 1, 5, 9…）。
+        let pixels_per_measure = ticks_per_measure as f32 * ppu;
+        let measure_divisor = compute_measure_divisor(pixels_per_measure, MIN_LABEL_SPACING);
+        let merged_measure_ticks = ticks_per_measure.saturating_mul(measure_divisor);
+
+        // 主循环步长：显示 beat/sub 时仍用 ticks_per_sub 遍历，
+        // 否则用合并步长以减少遍历量。
+        let main_step = if show_beat || show_sub {
+            ticks_per_sub
+        } else {
+            merged_measure_ticks.max(1)
+        };
+
+        // ── Main label loop ──
         let first_tick_f = seg_start_f.max(tick_start);
-        let first_sub = ((first_tick_f / sub_f).floor() as u32)
-            .saturating_mul(ticks_per_sub)
+        let step_f = main_step as f64;
+        let first = ((first_tick_f / step_f).floor() as u32)
+            .saturating_mul(main_step)
             .max(seg_start);
 
-        let mut tick = first_sub;
+        let mut tick = first;
         while (tick as f64) <= tick_end && tick < seg_end {
             let local = tick - seg_start;
             let x = offset_x + view.tick_to_x(tick as f64);
 
             if x >= left && x <= right {
-                let is_measure = local % ticks_per_measure == 0;
+                let is_measure = local % merged_measure_ticks == 0;
                 let is_beat = if !is_measure {
                     (local % ticks_per_measure).is_multiple_of(ticks_per_beat)
                 } else {
@@ -277,14 +290,14 @@ fn paint_labels(
                         (format!("{}.{}.{}", bar, beat, sub), theme::SUB_BEAT_LABEL)
                     }
                 } else {
-                    tick += ticks_per_sub;
+                    tick += main_step;
                     continue;
                 };
 
                 draw_label(painter, &font_id, x, text_y_center, &label, color);
             }
 
-            tick += ticks_per_sub;
+            tick += main_step;
         }
 
         // ── Fine-tick loop: label individual ticks between sub-beat lines ──

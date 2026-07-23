@@ -39,6 +39,7 @@ pub fn build_grid(
         theme.pr_measure_line,
         theme.pr_beat_line,
         Some(theme.pr_sub_beat_line),
+        Some(theme.pr_tick_line),
         scroll_x_pixel,
     );
 }

@@ -81,6 +81,31 @@ pub fn measure_ticks(tpb: u32, numerator: u8, denominator_power: u8) -> u32 {
     ((tpb as f64 * num / den * 4.0).round() as u32).max(1)
 }
 
+/// 多小节合并的步长倍数上限，避免无限翻倍。
+const MAX_MEASURE_DIVISOR: u32 = 64;
+
+/// 计算多小节合并的步长倍数。
+///
+/// 当 `pixels_per_measure < min_px` 时，按 2 的幂次合并相邻小节，
+/// 直到合并后的间距 >= `min_px` 或达到上限（64）。
+/// 返回值始终 >= 1。
+///
+/// 网格线和时间标尺共用此逻辑，各自传入合适的 `min_px`：
+/// 网格线较细可用较小阈值，标尺 label 需要更大间距。
+pub fn compute_measure_divisor(pixels_per_measure: f32, min_px: f32) -> u32 {
+    if pixels_per_measure >= min_px {
+        return 1;
+    }
+    let mut divisor = 1u32;
+    while (pixels_per_measure * divisor as f32) < min_px {
+        divisor *= 2;
+        if divisor >= MAX_MEASURE_DIVISOR {
+            break;
+        }
+    }
+    divisor
+}
+
 /// Build sorted time-signature segments starting from tick 0.
 ///
 /// Returns `Vec<(start_tick, numerator, denominator_power)>` sorted by tick.

@@ -1,7 +1,20 @@
 /// Shared grid-building utilities used by both pianoroll and arrangement instances.
-use yinhe_types::{build_time_sig_segments, measure_ticks, TimeSigEvent, TimelineViewBase};
+use yinhe_types::{
+    build_time_sig_segments, compute_measure_divisor, measure_ticks, TimeSigEvent,
+    TimelineViewBase,
+};
 
 use crate::vertex::{DrawInstance, pack_props, pack_rgba};
+
+// ── Grid density thresholds (pixels) ──
+/// measure 线最小像素间距；低于此值则按 2/4/8… 小节合并显示。
+const MIN_MEASURE_PX: f32 = 20.0;
+/// beat 线最小像素间距。
+const MIN_BEAT_PX: f32 = 8.0;
+/// sub-beat 线最小像素间距。
+const MIN_SUB_BEAT_PX: f32 = 3.0;
+/// tick 线最小像素间距（放大到每个 tick 可见时才画）。
+const MIN_TICK_PX: f32 = 2.0;
 
 /// Given a tick and time signature info, return the previous and next
 /// bar-line positions.  Respects time-signature changes.
@@ -32,9 +45,21 @@ pub fn measure_bounds_at_tick(
     (prev_bar as f64, next_bar as f64)
 }
 
+/// 计算多小节合并的步长倍数（委托给 yinhe_types 共享实现）。
+fn measure_divisor_for(pixels_per_measure: f32) -> u32 {
+    compute_measure_divisor(pixels_per_measure, MIN_MEASURE_PX)
+}
+
 /// Build timeline grid lines shared by pianoroll and arrangement views.
 ///
-/// `sub_beat_color`: if Some, render sub-beat lines when `pixels_per_sub >= 2.0`.
+/// 显示分级（根据 `pixels_per_tick` 自适应）：
+/// - 缩很小时：measure 线按 2/4/8… 小节合并，避免过密
+/// - 正常：measure 线 + beat 线 + sub-beat 线
+/// - 放很大：额外画出每个 tick 的分界线
+///
+/// `sub_beat_color` / `tick_color`: `Some` 时才考虑对应级别的线，
+/// 最终是否绘制还取决于像素间距是否达标。
+///
 /// `scroll_x_pixel`: the integer-scrolled scroll_x used for pixel positions.
 ///   This should be `floor(scroll_x)` so grid lines are stable across frames;
 ///   the fractional part is applied as a uniform NDC offset in the shader.
@@ -50,6 +75,7 @@ pub fn build_timeline_grid(
     measure_color: (f32, f32, f32, f32),
     beat_color: (f32, f32, f32, f32),
     sub_beat_color: Option<(f32, f32, f32, f32)>,
+    tick_color: Option<(f32, f32, f32, f32)>,
     scroll_x_pixel: f32,
 ) {
     let ppu = base.pixels_per_tick;
@@ -63,7 +89,6 @@ pub fn build_timeline_grid(
     let sub_beat_div = 4u32;
     let ticks_per_sub = (tpb / sub_beat_div).max(1);
     let segments = build_time_sig_segments(time_sig_events, default_num, default_den);
-    let sub_f = ticks_per_sub as f64;
 
     for i in 0..segments.len() {
         let (seg_start, num, den) = segments[i];
@@ -74,15 +99,36 @@ pub fn build_timeline_grid(
         }
 
         let ticks_per_measure = measure_ticks(tpb, num, den);
-        let ticks_per_beat = ticks_per_measure / num as u32;
+        let ticks_per_beat = (ticks_per_measure / num as u32).max(1);
 
+        let pixels_per_measure = ticks_per_measure as f32 * ppu;
+        let pixels_per_beat = ticks_per_beat as f32 * ppu;
         let pixels_per_sub = ticks_per_sub as f32 * ppu;
-        let show_sub_beat = sub_beat_color.is_some() && pixels_per_sub >= 2.0;
-        let show_beat = pixels_per_sub >= 1.0;
+
+        // 多小节合并
+        let measure_divisor = measure_divisor_for(pixels_per_measure);
+        let merged_measure_ticks = ticks_per_measure.saturating_mul(measure_divisor);
+
+        // 各级别是否绘制
+        let show_tick = tick_color.is_some() && ppu >= MIN_TICK_PX;
+        let show_sub_beat = sub_beat_color.is_some() && pixels_per_sub >= MIN_SUB_BEAT_PX;
+        let show_beat = pixels_per_beat >= MIN_BEAT_PX;
+
+        // 遍历步长 = 当前最细可见级别的步长，保证遍历量始终可控
+        let step = if show_tick {
+            1u32
+        } else if show_sub_beat {
+            ticks_per_sub
+        } else if show_beat {
+            ticks_per_beat
+        } else {
+            merged_measure_ticks.max(1)
+        };
 
         let first_tick = seg_start_f.max(tick_start);
-        let first = ((first_tick / sub_f).floor() as u32)
-            .saturating_mul(ticks_per_sub)
+        let step_f = step as f64;
+        let first = ((first_tick / step_f).floor() as u32)
+            .saturating_mul(step)
             .max(seg_start);
 
         let mut tick = first;
@@ -91,22 +137,22 @@ pub fn build_timeline_grid(
 
             let x = x_origin + tick as f32 * ppu;
             if x >= left_w && x <= w {
-                let is_measure = local % ticks_per_measure == 0;
-                let is_beat = if !is_measure {
-                    let beat_local = local % ticks_per_measure;
-                    beat_local.is_multiple_of(ticks_per_beat) && beat_local > 0
-                } else {
-                    false
-                };
+                let is_measure = local % merged_measure_ticks == 0;
+                let beat_local = local % ticks_per_measure;
+                let is_beat_pos = beat_local.is_multiple_of(ticks_per_beat) && beat_local > 0;
+                let is_sub_pos = local % ticks_per_sub == 0;
+
                 if is_measure {
                     push_grid_line(out, x, h, 2.0, measure_color, tick);
-                } else if is_beat && show_beat {
+                } else if show_beat && is_beat_pos {
                     push_grid_line(out, x, h, 1.0, beat_color, tick);
-                } else if show_sub_beat {
+                } else if show_sub_beat && is_sub_pos {
                     push_grid_line(out, x, h, 1.0, sub_beat_color.unwrap(), tick);
+                } else if show_tick {
+                    push_grid_line(out, x, h, 1.0, tick_color.unwrap(), tick);
                 }
             }
-            tick += ticks_per_sub;
+            tick += step;
         }
     }
 }
@@ -258,7 +304,7 @@ mod tests {
             track_panel_scroll_y: 0.0,
         };
         build_timeline_grid(&mut out, 800.0, 500.0, &base, 480, 4, 2, &[],
-            (0.3, 0.3, 0.35, 1.0), (0.2, 0.2, 0.25, 1.0), Some((0.16, 0.16, 0.18, 1.0)), 0.0);
+            (0.3, 0.3, 0.35, 1.0), (0.2, 0.2, 0.25, 1.0), Some((0.16, 0.16, 0.18, 1.0)), Some((0.13, 0.13, 0.15, 0.6)), 0.0);
         assert!(!out.is_empty(), "grid should produce lines");
         for inst in &out {
             assert!(inst.x >= 0.0, "line should be within viewport");
@@ -280,7 +326,7 @@ mod tests {
             track_panel_scroll_y: 0.0,
         };
         build_timeline_grid(&mut out, 800.0, 500.0, &base, 480, 4, 2, &[],
-            (0.3, 0.3, 0.35, 1.0), (0.2, 0.2, 0.25, 1.0), Some((0.16, 0.16, 0.18, 1.0)), 0.0);
+            (0.3, 0.3, 0.35, 1.0), (0.2, 0.2, 0.25, 1.0), Some((0.16, 0.16, 0.18, 1.0)), Some((0.13, 0.13, 0.15, 0.6)), 0.0);
         assert!(out.is_empty(), "no grid lines when ppu is 0");
     }
 
@@ -301,7 +347,7 @@ mod tests {
             TimeSigEvent { tick: 1920, numerator: 3, denominator: 2 },
         ];
         build_timeline_grid(&mut out, 800.0, 500.0, &base, 480, 4, 2, &events,
-            (0.3, 0.3, 0.35, 1.0), (0.2, 0.2, 0.25, 1.0), Some((0.16, 0.16, 0.18, 1.0)), 0.0);
+            (0.3, 0.3, 0.35, 1.0), (0.2, 0.2, 0.25, 1.0), Some((0.16, 0.16, 0.18, 1.0)), Some((0.13, 0.13, 0.15, 0.6)), 0.0);
         assert!(!out.is_empty());
     }
 
@@ -318,7 +364,86 @@ mod tests {
             track_panel_scroll_y: 0.0,
         };
         build_timeline_grid(&mut out, 800.0, 500.0, &base, 480, 4, 2, &[],
-            (0.3, 0.3, 0.35, 1.0), (0.2, 0.2, 0.25, 1.0), None, 0.0);
+            (0.3, 0.3, 0.35, 1.0), (0.2, 0.2, 0.25, 1.0), None, None, 0.0);
         assert!(!out.is_empty());
+    }
+
+    fn make_base(ppu: f32) -> TimelineViewBase {
+        TimelineViewBase {
+            pixels_per_tick: ppu,
+            scroll_x: 0.0,
+            scroll_y: 0.0,
+            left_panel_width: 60.0,
+            dirty: false,
+            track_panel_row_height: 40.0,
+            track_panel_scroll_y: 0.0,
+        }
+    }
+
+    #[test]
+    fn test_compute_measure_divisor_no_merge() {
+        // pixels_per_measure = 1920 * 0.1 = 192 >= 20 → 不合并
+        assert_eq!(measure_divisor_for(192.0), 1);
+        assert_eq!(measure_divisor_for(20.0), 1);
+    }
+
+    #[test]
+    fn test_compute_measure_divisor_merge() {
+        // 10px → 需要 2x → 20px（刚好达标）
+        assert_eq!(measure_divisor_for(10.0), 2);
+        // 5px → 4x → 20px
+        assert_eq!(measure_divisor_for(5.0), 4);
+        // 3px → 8x → 24px
+        assert_eq!(measure_divisor_for(3.0), 8);
+        // 0.3px → 64x（上限）
+        assert_eq!(measure_divisor_for(0.3), 64);
+    }
+
+    #[test]
+    fn test_build_timeline_grid_multi_measure_merge() {
+        // 缩到极小：pixels_per_measure = 1920 * 0.005 = 9.6 < 20 → 合并为 2 小节
+        let mut out = Vec::new();
+        let base = make_base(0.005);
+        build_timeline_grid(&mut out, 800.0, 500.0, &base, 480, 4, 2, &[],
+            (0.3, 0.3, 0.35, 1.0), (0.2, 0.2, 0.25, 1.0), Some((0.16, 0.16, 0.18, 1.0)), None, 0.0);
+        // 合并后 measure 线间距 = 1920*2 * 0.005 = 19.2px，仍 < 20，实际会合并到 4 小节
+        // 4 小节间距 = 1920*4 * 0.005 = 38.4px >= 20
+        let measure_ticks: Vec<u32> = out.iter()
+            .filter(|i| i.w == 2.0) // measure 线宽 2.0
+            .map(|i| i.tag)
+            .collect();
+        // 第一条在 tick 0，下一条应在 tick 1920*4 = 7680
+        assert!(measure_ticks.iter().any(|&t| t == 0), "first measure at tick 0");
+        assert!(measure_ticks.iter().any(|&t| t == 7680), "merged measure at tick 7680 (4 bars)");
+        // 不应有 tick 1920 的 measure 线（被合并掉）
+        assert!(!measure_ticks.iter().any(|&t| t == 1920), "tick 1920 should be merged away");
+    }
+
+    #[test]
+    fn test_build_timeline_grid_tick_lines() {
+        // 放到极大：pixels_per_tick = 3.0 >= 2.0 → 显示 tick 线
+        let mut out = Vec::new();
+        let base = make_base(3.0);
+        // left_panel_width=60, 视口 800，可见 tick 范围约 0..246
+        build_timeline_grid(&mut out, 800.0, 500.0, &base, 480, 4, 2, &[],
+            (0.3, 0.3, 0.35, 1.0), (0.2, 0.2, 0.25, 1.0), Some((0.16, 0.16, 0.18, 1.0)), Some((0.13, 0.13, 0.15, 0.6)), 0.0);
+        // 应该有 tick 线（tag 不是 measure/beat/sub-beat 倍数的线）
+        let has_tick_line = out.iter().any(|i| {
+            let t = i.tag;
+            t % 120 != 0 // 非 sub-beat 倍数
+        });
+        assert!(has_tick_line, "should have tick-level grid lines at high zoom");
+    }
+
+    #[test]
+    fn test_build_timeline_grid_no_tick_lines_when_too_dense() {
+        // 中等缩放：pixels_per_tick = 0.5 < 2.0 → 不显示 tick 线
+        let mut out = Vec::new();
+        let base = make_base(0.5);
+        build_timeline_grid(&mut out, 800.0, 500.0, &base, 480, 4, 2, &[],
+            (0.3, 0.3, 0.35, 1.0), (0.2, 0.2, 0.25, 1.0), Some((0.16, 0.16, 0.18, 1.0)), Some((0.13, 0.13, 0.15, 0.6)), 0.0);
+        // 不应有 tick 线（所有线的 tag 都应是 sub-beat 的倍数）
+        let all_aligned = out.iter().all(|i| i.tag % 120 == 0);
+        assert!(all_aligned, "no tick lines when pixels_per_tick < MIN_TICK_PX");
     }
 }

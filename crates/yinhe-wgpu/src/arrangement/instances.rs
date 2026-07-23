@@ -39,6 +39,7 @@ pub fn build_grid(
         theme.ar_measure_line,
         theme.ar_beat_line,
         None,
+        None,
         scroll_x_pixel,
     );
 }
