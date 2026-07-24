@@ -696,7 +696,7 @@ fn paginate<'a, T>(state: &mut EventBrowserState, items: &'a [T]) -> (usize, usi
 /// 渲染翻页控件（右对齐），返回 `Some(新页码)` 如果用户改变了页码（0-based）。
 ///
 /// 用 `TextEdit` + chevron 图标按钮：点击输入页码，左右箭头翻页。
-/// 所有元素字号统一 11px，高度统一 14px，视觉对齐。
+/// 所有元素用自然高度，靠 right_to_left 布局的 Center 对齐垂直居中。
 /// 输入框用 `ui.memory()` 存临时文本，失焦时解析；按钮翻页时输入框下一帧自动同步。
 fn render_pager(ui: &mut egui::Ui, page: usize, total_pages: usize) -> Option<usize> {
     let mut new_page = None;
@@ -704,21 +704,20 @@ fn render_pager(ui: &mut egui::Ui, page: usize, total_pages: usize) -> Option<us
         // right_to_left：先放的在最右
         // 下一页按钮
         let next_enabled = page + 1 < total_pages;
-        if ui.add_enabled(next_enabled, egui::Label::new(ICON_CHEVRON_RIGHT.rich_text().size(11.0).color(egui::Color32::from_gray(200))).sense(egui::Sense::click())).clicked() {
+        if ui.add_enabled(next_enabled, egui::Label::new(ICON_CHEVRON_RIGHT.rich_text().size(14.0).color(egui::Color32::from_gray(200))).sense(egui::Sense::click())).clicked() {
             new_page = Some(page + 1);
         }
         // 总页数
         ui.label(egui::RichText::new(format!("/ {}", total_pages)).size(11.0).color(egui::Color32::from_gray(140)));
-        // 页码输入框（1-based 显示）
+        // 页码输入框（1-based 显示）—— 用 memory 存临时文本，避免输入时被重置
         let mem_key = ui.id().with("eb_page_input");
         let buf: String = ui.memory(|m| m.data.get_temp(mem_key).unwrap_or_else(|| (page + 1).to_string()));
         let mut buf = buf;
-        let resp = ui.add_sized(
-            [22.0, 14.0],
+        let resp = ui.add(
             egui::TextEdit::singleline(&mut buf)
+                .desired_width(28.0)
                 .font(egui::FontId::proportional(11.0))
-                .horizontal_align(egui::Align::Center)
-                .vertical_align(egui::Align::Center),
+                .horizontal_align(egui::Align::Center),
         );
         if resp.lost_focus() {
             if let Ok(n) = buf.trim().parse::<usize>() {
@@ -732,7 +731,7 @@ fn render_pager(ui: &mut egui::Ui, page: usize, total_pages: usize) -> Option<us
         }
         // 上一页按钮
         let prev_enabled = page > 0;
-        if ui.add_enabled(prev_enabled, egui::Label::new(ICON_CHEVRON_LEFT.rich_text().size(11.0).color(egui::Color32::from_gray(200))).sense(egui::Sense::click())).clicked() {
+        if ui.add_enabled(prev_enabled, egui::Label::new(ICON_CHEVRON_LEFT.rich_text().size(14.0).color(egui::Color32::from_gray(200))).sense(egui::Sense::click())).clicked() {
             new_page = Some(page - 1);
         }
     });
