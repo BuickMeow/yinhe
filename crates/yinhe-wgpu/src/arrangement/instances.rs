@@ -1,48 +1,16 @@
 use std::collections::HashSet;
 
 use rayon::prelude::*;
-use yinhe_types::{key_notes_in_range, NoteSource, TimeSigEvent};
+use yinhe_types::{key_notes_in_range, NoteSource};
 
 use yinhe_types::ArrangementView;
-use crate::grid;
-use crate::vertex::{DrawInstance, NoteInstance};
+use crate::vertex::NoteInstance;
 
 /// Stack red zone threshold. When stack usage exceeds this, `stacker` will
 /// allocate a new stack segment before calling the closure.
 const STACK_RED_ZONE: usize = 32 * 1024;
 /// New stack segment size to allocate when the red zone is exceeded.
 const STACK_SIZE: usize = 1024 * 1024; // 1MB per segment
-
-/// Build grid line instances (layer 0).
-/// Dependencies: scroll_x, pixels_per_tick, time_sig
-pub fn build_grid(
-    out: &mut Vec<DrawInstance>,
-    w: f32,
-    h: f32,
-    view: &ArrangementView,
-    tpb: u32,
-    default_num: u8,
-    default_den: u8,
-    time_sig_events: &[TimeSigEvent],
-    scroll_x_pixel: f32,
-    theme: &yinhe_theme::GpuTheme,
-) {
-    grid::build_timeline_grid(
-        out,
-        w,
-        h,
-        &view.base,
-        tpb,
-        default_num,
-        default_den,
-        time_sig_events,
-        theme.ar_measure_line,
-        theme.ar_beat_line,
-        None,
-        None,
-        scroll_x_pixel,
-    );
-}
 
 /// 子像素合并 + 视口裁剪 + track_visible 过滤，输出 NoteInstance。
 ///
@@ -246,62 +214,5 @@ pub fn build_ghost_notes(
             merge_gap_ticks,
         );
         i = j;
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use yinhe_test_helpers::make_midi;
-
-    #[test]
-    fn test_no_duplicate_grid_lines_at_time_sig_boundary() {
-        let _mock = make_midi(vec![(60, 0, 480, 0, 100)]);
-        let tpb = 480;
-        let mut view = ArrangementView::default();
-        view.base.pixels_per_tick = 0.5;
-        view.base.left_panel_width = 0.0;
-        view.base.scroll_x = 0.0;
-        view.base.dirty = true;
-
-        let events = vec![
-            TimeSigEvent {
-                tick: 0,
-                numerator: 4,
-                denominator: 2,
-            },
-            TimeSigEvent {
-                tick: 1920,
-                numerator: 7,
-                denominator: 2,
-            },
-        ];
-
-        let mut grid_lines = Vec::new();
-        build_grid(&mut grid_lines, 2000.0, 400.0, &view, tpb, 4, 2, &events, 0.0, &yinhe_theme::GpuTheme::default());
-
-        let ticks: Vec<u32> = grid_lines.iter().map(|i| i.tag).collect();
-
-        let mut sorted = ticks.clone();
-        sorted.sort();
-        let deduped = {
-            let mut d = sorted.clone();
-            d.dedup();
-            d
-        };
-        assert_eq!(
-            sorted.len(),
-            deduped.len(),
-            "Duplicate grid lines at same tick!\n  ticks: {:?}\n  sorted: {:?}",
-            ticks,
-            sorted,
-        );
-
-        let count_1920 = ticks.iter().filter(|&&t| t == 1920).count();
-        assert_eq!(
-            count_1920, 1,
-            "Boundary tick 1920 must appear exactly once, got {}",
-            count_1920
-        );
     }
 }

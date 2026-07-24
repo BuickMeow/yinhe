@@ -30,6 +30,15 @@ pub const BEAT_LABEL: Color32 = Color32::from_rgb(0x77, 0x77, 0x7C);
 pub const SUB_BEAT_LABEL: Color32 = Color32::from_rgb(0x55, 0x55, 0x5A);
 pub const TICK_LABEL: Color32 = Color32::from_rgb(0x44, 0x44, 0x49);
 
+// ── Grid line colors（pianoroll / automation 共用 pr_*，arrangement 用 ar_*）──
+// 从 GpuTheme 迁移而来，统一用 Color32。alpha 直接编进 Color32。
+pub const PR_MEASURE_LINE: Color32 = Color32::from_rgb(0x59, 0x59, 0x66);   // (0.35,0.35,0.40,1.0)
+pub const PR_BEAT_LINE: Color32 = Color32::from_rgb(0x38, 0x38, 0x40);       // (0.22,0.22,0.25,1.0)
+pub const PR_SUB_BEAT_LINE: Color32 = Color32::from_rgb(0x29, 0x29, 0x2E);   // (0.16,0.16,0.18,1.0)
+pub const PR_TICK_LINE: Color32 = Color32::from_rgba_premultiplied(0x21, 0x21, 0x26, 0x99); // (0.13,0.13,0.15,0.6)
+pub const AR_MEASURE_LINE: Color32 = Color32::from_rgb(0x4D, 0x4D, 0x59);     // (0.30,0.30,0.35,1.0)
+pub const AR_BEAT_LINE: Color32 = Color32::from_rgb(0x33, 0x33, 0x3B);        // (0.20,0.20,0.23,1.0)
+
 // ── Scrollbar colors ──
 pub const SCROLLBAR_BG: Color32 = Color32::from_rgb(0x14, 0x14, 0x18);
 pub const SCROLLBAR_RECT: Color32 = Color32::from_rgb(0x50, 0x50, 0x58);

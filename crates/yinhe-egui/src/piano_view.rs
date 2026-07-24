@@ -468,25 +468,20 @@ pub fn show(
     let theme = pianoroll.theme().clone();
     let cull_ready = use_gpu_cull && pianoroll.cull_ready();
     if cull_ready {
-        // GPU cull path: upload decor layers + ghost layer (GPU cull handles notes)
+        // GPU cull path: upload ghost layer (GPU cull handles notes)
         let job = yinhe_wgpu::build_render_job(
-            w, h, midi, view, &*selected,
+            w, h, view, &*selected,
             track_colors, scroll_mode, min_border_width,
-            note_outline, &theme,
+            note_outline,
         );
         pianoroll.upload_uniforms(job.uniforms);
         pianoroll.upload_track_colors(&job.track_colors);
         pianoroll.upload_selection(&job.selection);
-        pianoroll.ensure_layers(job.decor_layers.len());
-        for (i, dl) in job.decor_layers.iter().enumerate() {
-            pianoroll.upload_layer(i, dl.cache_key, |out| {
-                out.extend_from_slice(&dl.instances);
-            });
-        }
+        // Grid 已迁移到 egui，wgpu 只剩 ghost note overlay 一层。
+        pianoroll.ensure_layers(1);
         // Ghost note overlay: built and uploaded independently.
         // Always upload (even when empty) to clear stale ghost data from the previous frame.
-        let ghost_idx = job.decor_layers.len();
-        pianoroll.upload_note_layer(ghost_idx, 0, |out| {
+        pianoroll.upload_note_layer(0, 0, |out| {
             for &(start_tick, end_tick, key, track) in &ghost_notes {
                 yinhe_wgpu::build_ghost_note(out, start_tick, end_tick, key, track, &theme);
             }
@@ -494,9 +489,9 @@ pub fn show(
     } else if let Some(rt) = render_thread {
         // Async path (no cull): build instances on this thread, send to render thread
         let job = yinhe_wgpu::build_render_job(
-            w, h, midi, view, &*selected,
+            w, h, view, &*selected,
             track_colors, scroll_mode, min_border_width,
-            note_outline, &theme,
+            note_outline,
         );
         // Build note instances + ghost overlay as note layers for the render thread.
         let mut notes_instances = Vec::new();
@@ -530,7 +525,6 @@ pub fn show(
             uniforms: job.uniforms,
             track_colors: job.track_colors,
             selection: job.selection,
-            decor_layers: job.decor_layers,
             note_layers,
         });
     }
@@ -580,7 +574,24 @@ pub fn show(
         );
     }
 
-    // Paint wgpu content into the content_rect (transparent background, grid + notes only)
+    // ── Grid lines (drawn by egui before wgpu texture) ──
+    // 替代原 wgpu grid layer。与 time_ruler 共用 MIN_SPACING 阈值，保证"有线就有标签"。
+    if let Some(midi) = midi
+        && let Some(tpb) = midi.ticks_per_beat()
+    {
+        let (def_num, def_den) = midi.time_sig_default();
+        let sig_events = midi.time_sig_events();
+        let grid_rect = egui::Rect::from_min_max(
+            egui::pos2(content_rect.min.x + view.keyboard_width(), content_rect.min.y),
+            content_rect.max,
+        );
+        crate::widgets::grid_lines::paint_grid_lines(
+            &painter, grid_rect, &view.base, tpb, def_num, def_den, sig_events,
+            &crate::widgets::grid_lines::GridColors::pianoroll(),
+        );
+    }
+
+    // Paint wgpu content into the content_rect (notes only — grid moved to egui)
     if cull_ready {
         // GPU cull path: draw directly (no render thread needed — cull makes GPU work fast)
         render_ctx.paint(pianoroll, pw, ph, "pianoroll_frame", &painter, content_rect, true);
@@ -788,10 +799,6 @@ pub fn show(
             rect.max.x,
             panels_y,
             panels_total_h,
-            midi.and_then(|m| m.ticks_per_beat()),
-            bar_line_data.map(|b| b.1).unwrap_or(4),
-            bar_line_data.map(|b| b.2).unwrap_or(4),
-            bar_line_data.map(|b| b.3).unwrap_or(&[]),
             track_visible,
             track_colors,
             scroll_mode,

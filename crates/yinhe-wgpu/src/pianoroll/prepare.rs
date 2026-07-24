@@ -1,10 +1,7 @@
-use super::instances;
 use crate::vertex::{Uniforms, SelectionUniform, MAX_TRACKS, MAX_SEL_RECTS};
 use yinhe_types::PianoRollView;
 
-use crate::DecorLayerData;
-
-/// Render job data: uniforms + decor layers built on CPU, sent to GPU for upload.
+/// Render job data: uniforms built on CPU, sent to GPU for upload.
 /// Note layers are NOT included - the GPU compute cull path handles notes,
 /// and ghost notes are built separately by the caller.
 pub struct PianorollRenderJob {
@@ -15,11 +12,10 @@ pub struct PianorollRenderJob {
     /// The GPU storage buffer is allocated dynamically to this length.
     pub track_colors: Vec<[f32; 4]>,
     pub selection: SelectionUniform,
-    pub decor_layers: Vec<DecorLayerData>,
     pub build_time: std::time::Duration,
 }
 
-/// Build a `PianorollRenderJob` containing decor instance data and uniforms.
+/// Build a `PianorollRenderJob` containing uniforms.
 ///
 /// This does the CPU-heavy work (building instances via rayon) without
 /// touching any GPU resources. The result can be sent to a render thread
@@ -28,14 +24,12 @@ pub struct PianorollRenderJob {
 pub fn build_render_job(
     width: u32,
     height: u32,
-    midi: Option<&dyn yinhe_types::NoteSource>,
     view: &PianoRollView,
     selected: &yinhe_core::Selection,
     track_colors: &[[f32; 3]],
     scroll_mode: u32,
     min_border_width: f32,
     note_outline: bool,
-    theme: &crate::GpuTheme,
 ) -> PianorollRenderJob {
     let t = std::time::Instant::now();
 
@@ -85,16 +79,7 @@ pub fn build_render_job(
         value_scroll: 0.0, // PR unused (automation panel only)
     };
 
-    // Layer 0: grid lines (background + black-key rows now drawn by egui)
-    // 网格构建成本极低（O(可见 tick 数)），移除缓存每帧重建，避免缓存键遗漏字段导致 stale。
-    let mut grid_instances = Vec::new();
-    if let Some(midi) = midi
-        && let Some(tpb) = midi.ticks_per_beat()
-    {
-        let (def_num, def_den) = midi.time_sig_default();
-        let sig_events = midi.time_sig_events();
-        instances::build_grid(&mut grid_instances, w, h, view, tpb, def_num, def_den, sig_events, scroll_x_pos, theme);
-    }
+    // Grid lines 已迁移到 egui（widgets::grid_lines），wgpu 只负责 notes 层。
 
     let build_time = t.elapsed();
 
@@ -104,9 +89,6 @@ pub fn build_render_job(
         uniforms,
         track_colors: tc_colors,
         selection: sel_uniform,
-        decor_layers: vec![
-            DecorLayerData { instances: grid_instances, cache_key: 0 },
-        ],
         build_time,
     }
 }

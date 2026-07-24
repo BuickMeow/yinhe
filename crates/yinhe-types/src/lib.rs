@@ -21,7 +21,7 @@ pub use palette::TRACK_PALETTE;
 pub use pc_event::PcEvent;
 pub use piano_roll_view::PianoRollView;
 pub use source::{key_notes_in_range, NoteSource};
-pub use time_format::{build_time_sig_segments, compute_measure_divisor, measure_ticks};
+pub use time_format::{build_time_sig_segments, compute_measure_divisor, measure_bounds_at_tick, measure_ticks};
 pub use view_base::TimelineViewBase;
 
 /// Returns true if the given MIDI key (0–127) is a black key on a piano.

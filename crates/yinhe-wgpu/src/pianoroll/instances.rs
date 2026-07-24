@@ -1,48 +1,16 @@
 use rayon::prelude::*;
 use yinhe_theme::GpuTheme;
-use yinhe_types::{key_notes_in_range, NoteSource, TimeSigEvent};
+use yinhe_types::{key_notes_in_range, NoteSource};
 
-use crate::grid;
-use crate::vertex::{DrawInstance, NoteInstance};
+use crate::vertex::NoteInstance;
 use yinhe_types::PianoRollView;
 
-/// Stack red zone threshold. When stack usage exceeds this, `stacker` will
+/// Stack red zone threshold. When stack usage exceeds this, the `stacker` will
 /// allocate a new stack segment before calling the closure.
 /// 32KB should be enough for a single key's note iteration.
 const STACK_RED_ZONE: usize = 32 * 1024;
 /// New stack segment size to allocate when the red zone is exceeded.
 const STACK_SIZE: usize = 1024 * 1024; // 1MB per segment
-
-/// Build grid line instances (layer 0).
-/// Dependencies: scroll_x, pixels_per_tick, time_sig
-pub fn build_grid(
-    out: &mut Vec<DrawInstance>,
-    w: f32,
-    h: f32,
-    view: &PianoRollView,
-    tpb: u32,
-    default_num: u8,
-    default_den: u8,
-    time_sig_events: &[TimeSigEvent],
-    scroll_x_pixel: f32,
-    theme: &GpuTheme,
-) {
-    grid::build_timeline_grid(
-        out,
-        w,
-        h,
-        &view.base,
-        tpb,
-        default_num,
-        default_den,
-        time_sig_events,
-        theme.pr_measure_line,
-        theme.pr_beat_line,
-        Some(theme.pr_sub_beat_line),
-        Some(theme.pr_tick_line),
-        scroll_x_pixel,
-    );
-}
 
 /// Build note instances (layer 2).
 /// Dependencies: selection, track_visible, tick range (scroll_x)
@@ -267,35 +235,6 @@ mod tests {
 
     fn make_theme() -> GpuTheme {
         GpuTheme::default()
-    }
-
-    #[test]
-    fn test_build_grid_basic() {
-        let mut out = Vec::new();
-        let view = make_view();
-        let theme = make_theme();
-        build_grid(&mut out, 800.0, 500.0, &view, 480, 4, 2, &[], 0.0, &theme);
-        assert!(!out.is_empty(), "grid should produce lines");
-        for inst in &out {
-            // Grid lines are centered: x = tick_x - line_width/2
-            // First line at tick 0 has tick_x = 60.0, line_width = 2.0 → x = 59.0
-            assert!(inst.x >= 58.0, "grid line should be near keyboard boundary");
-            assert!(inst.x <= 800.0, "grid line should be within viewport");
-            assert_eq!(inst.h, 500.0);
-        }
-    }
-
-    #[test]
-    fn test_build_grid_with_time_sig_change() {
-        let mut out = Vec::new();
-        let view = make_view();
-        let theme = make_theme();
-        let sigs = vec![
-            TimeSigEvent { tick: 0, numerator: 4, denominator: 2 },
-            TimeSigEvent { tick: 1920, numerator: 3, denominator: 2 },
-        ];
-        build_grid(&mut out, 800.0, 500.0, &view, 480, 4, 2, &sigs, 0.0, &theme);
-        assert!(!out.is_empty());
     }
 
     #[test]

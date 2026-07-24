@@ -324,7 +324,7 @@ pub fn snap_tick(
 ) -> f64 {
     if let Some((tpb, num, den, events)) = bar_line_data {
         let (bar_start, next_bar) =
-            yinhe_wgpu::grid::measure_bounds_at_tick(tick, tpb, num, den, events);
+            yinhe_types::measure_bounds_at_tick(tick, tpb, num, den, events);
         let offset = tick - bar_start;
         let snapped_offset = quantize.snap_tick(offset, ppq);
         let grid_tick = bar_start + snapped_offset;
@@ -348,7 +348,7 @@ pub fn snap_tick_ceil(
 ) -> f64 {
     if let Some((tpb, num, den, events)) = bar_line_data {
         let (bar_start, next_bar) =
-            yinhe_wgpu::grid::measure_bounds_at_tick(tick, tpb, num, den, events);
+            yinhe_types::measure_bounds_at_tick(tick, tpb, num, den, events);
         let offset = tick - bar_start;
         let snapped_offset = quantize.snap_tick_ceil(offset, ppq);
         let grid_tick = bar_start + snapped_offset;
@@ -372,7 +372,7 @@ pub fn snap_tick_floor(
 ) -> f64 {
     if let Some((tpb, num, den, events)) = bar_line_data {
         let (bar_start, next_bar) =
-            yinhe_wgpu::grid::measure_bounds_at_tick(tick, tpb, num, den, events);
+            yinhe_types::measure_bounds_at_tick(tick, tpb, num, den, events);
         let offset = tick - bar_start;
         let snapped_offset = quantize.snap_tick_floor(offset, ppq);
         let grid_tick = bar_start + snapped_offset;

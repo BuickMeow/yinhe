@@ -23,14 +23,7 @@ pub struct RenderJob {
     /// Track colors as `Vec<[f32; 4]>` (RGBA per track).
     pub track_colors: Vec<[f32; 4]>,
     pub selection: crate::vertex::SelectionUniform,
-    pub decor_layers: Vec<DecorLayerData>,
     pub note_layers: Vec<NoteLayerData>,
-}
-
-/// Pre-built decor layer data (32B DrawInstance).
-pub struct DecorLayerData {
-    pub instances: Vec<crate::vertex::DrawInstance>,
-    pub cache_key: u64,
 }
 
 /// Pre-built note layer data (16B NoteInstance).
@@ -126,21 +119,11 @@ impl RenderThreadHandle {
                     renderer.upload_selection(&job.selection);
 
                     // Ensure enough layers
-                    let total_layers = job.decor_layers.len() + job.note_layers.len();
+                    let total_layers = job.note_layers.len();
                     renderer.ensure_layers(total_layers);
 
-                    // Upload decor layers
-                    let mut layer_idx = 0;
-                    for dl in &job.decor_layers {
-                        let cache_key = dl.cache_key;
-                        let instances = &dl.instances;
-                        renderer.upload_layer(layer_idx, cache_key, |out| {
-                            out.extend_from_slice(instances);
-                        });
-                        layer_idx += 1;
-                    }
-
                     // Upload note layers (cache_key=0 means force)
+                    let mut layer_idx = 0;
                     for nl in &job.note_layers {
                         let cache_key = nl.cache_key;
                         let instances = &nl.instances;

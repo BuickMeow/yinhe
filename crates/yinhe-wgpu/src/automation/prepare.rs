@@ -1,7 +1,6 @@
-use yinhe_types::{AutomationLane, AutomationTarget, NoteSource, SegmentShape, TimeSigEvent};
+use yinhe_types::{AutomationLane, AutomationTarget, NoteSource, SegmentShape};
 
 use super::data_lines;
-use super::decor;
 use super::ghost;
 use super::velocity_bars;
 use crate::renderer::InstanceRenderer;
@@ -64,16 +63,18 @@ fn hash_lane(lane: &AutomationLane) -> u64 {
 /// Prepare an automation panel for rendering using the layered cache API.
 ///
 /// Layers:
-///   0 = grid lines
-///   1 = data lines (or velocity bars when target is Velocity, or tempo curve)
+///   0 = data lines (or velocity bars when target is Velocity, or tempo curve)
+///   1 = ghost (拖拽预览)
 ///
-/// Background + center line are now drawn by egui before the wgpu texture.
+/// Grid lines 不再由 automation 面板绘制：automation 共享 pianoroll 顶部的时间标尺，
+/// 标尺已经提供了"线 + 标签"的视觉锚点，面板内不再补 grid。
+/// Background + center line 由 egui 在 wgpu 纹理前绘制。
 ///
 /// When `lanes` is empty and the panel target is Velocity, velocity bars are
 /// rendered directly from `midi` instead of from an automation lane.
 ///
 /// `show_anchors`: 在每个事件位置画圆形锚点（铅笔工具下显示）。
-/// `ghost`: 拖拽预览（Layer 2，每帧重建，无缓存）。
+/// `ghost`: 拖拽预览（Layer 1，每帧重建，无缓存）。
 /// `highlight_tick`: 如果非 None，该 tick 位置的锚点渲染为白色高亮（选中锚点）。
 ///
 /// `max_val`: 当前 panel 的值域上界。Tempo 由调用方按实际事件动态计算，
@@ -85,10 +86,6 @@ pub fn prepare(
     view: &AutomationPanelView,
     lanes: &[&AutomationLane],
     midi: Option<&dyn NoteSource>,
-    tpb: Option<u32>,
-    default_num: u8,
-    default_den: u8,
-    time_sig_events: &[TimeSigEvent],
     track_visible: &[bool],
     track_colors: &[[f32; 3]],
     scroll_mode: u32,
@@ -134,26 +131,19 @@ pub fn prepare(
 
     renderer.upload_uniforms(uniforms);
     renderer.upload_track_colors(&tc_colors);
-    renderer.ensure_layers(3);
+    // Grid 已迁移到 egui（automation 面板不补 grid，共享 pianoroll 顶部 ruler），
+    // wgpu 只剩 data + ghost 两层。
+    renderer.ensure_layers(2);
 
     let vh = view.render_hash();
     let wh = crate::hash_f32s(&[w, h]);
 
-    // Layer 0: grid lines (background + center line now drawn by egui)
-    // 网格构建成本极低，移除缓存每帧重建，避免缓存键遗漏 tpb 等字段导致 stale。
-    let theme = renderer.theme.clone();
-    renderer.upload_layer(0, 0, |out| {
-        decor::build_grid(
-            out, w, h, view, tpb, default_num, default_den, time_sig_events, scroll_x_pos, &theme,
-        );
-    });
-
-    // Layer 1: data lines (curve pipeline) — or velocity bars (velocity pipeline)
+    // Layer 0: data lines (curve pipeline) — or velocity bars (velocity pipeline)
     // Tempo 走和 CC/PB/RPN 一样的 curve pipeline，由调用方在 `lanes` 中
     // 传入 `conductor.tempo` lane。
     let is_velocity = view.show_velocity;
     let tv_hash = crate::hash_bools(track_visible);
-    // ghost_lane_hash：被 ghost 覆盖的 lane 内容变化时触发 Layer 1 重建。
+    // ghost_lane_hash：被 ghost 覆盖的 lane 内容变化时触发 Layer 0 重建。
     // 拖拽过程中 ghost 不通过 Document 编辑，revision 不会 bump，所以需要单独 hash。
     let ghost_lane_hash = ghost.as_ref().map(|g| match g {
         AutomationGhost::Move { lane, .. } => hash_lane(lane),
@@ -172,32 +162,33 @@ pub fn prepare(
         revision,
         highlight_tick.unwrap_or(u32::MAX) as u64,
     ]);
-    let ghost_for_layer1 = ghost.clone();
-    let highlight_tick_for_layer1 = highlight_tick;
+    let ghost_for_layer0 = ghost.clone();
+    let highlight_tick_for_layer0 = highlight_tick;
+    let theme = renderer.theme.clone();
 
     if is_velocity {
         // Velocity bars via velocity pipeline (VelocityBarInstance, 16B)
         if let Some(midi) = midi {
-            renderer.upload_velocity_layer(1, bars_key, |out| {
+            renderer.upload_velocity_layer(0, bars_key, |out| {
                 velocity_bars::build_velocity_bars(out, w, midi, view, track_visible);
             });
         }
     } else {
         // Data lines + anchors via curve pipeline (CurveInstance)
         // Tempo 与 CC/PB/RPN 共用此路径；max_val 由调用方传入。
-        renderer.upload_curve_layer(1, bars_key, |out| {
-            let skip_lane = match ghost_for_layer1 {
+        renderer.upload_curve_layer(0, bars_key, |out| {
+            let skip_lane = match ghost_for_layer0 {
                 Some(AutomationGhost::Move { ref lane, .. }) => Some(lane),
                 _ => None,
             };
             data_lines::build_data_lines(
-                out, w, h, view, lanes, max_val, track_visible, track_colors, show_anchors, skip_lane, highlight_tick_for_layer1, &theme,
+                out, w, h, view, lanes, max_val, track_visible, track_colors, show_anchors, skip_lane, highlight_tick_for_layer0, &theme,
             );
         });
     }
 
-    // Layer 2: ghost (拖拽预览，无缓存，每帧重建) — curve pipeline
-    renderer.upload_curve_layer(2, 0, |out| {
+    // Layer 1: ghost (拖拽预览，无缓存，每帧重建) — curve pipeline
+    renderer.upload_curve_layer(1, 0, |out| {
         if let Some(g) = ghost {
             ghost::build_ghost(out, g, w, view, max_val, show_anchors, &theme);
         }

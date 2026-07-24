@@ -16,7 +16,7 @@ use wgpu::*;
 use crate::cull::CullState;
 use crate::layer::{AnyLayer, LayerKind};
 use crate::pipeline::RenderPipelineState;
-use crate::vertex::{CurveInstance, DrawInstance, NoteInstance, Uniforms, SelectionUniform, VelocityBarInstance};
+use crate::vertex::{CurveInstance, NoteInstance, Uniforms, SelectionUniform, VelocityBarInstance};
 
 /// Per-frame timing breakdown returned by `prepare`.
 #[derive(Clone, Copy, Debug, Default)]
@@ -170,7 +170,6 @@ impl InstanceRenderer {
         }
     }
 
-    impl_upload_layer!(upload_layer, Decor, Decor, DrawInstance);
     impl_upload_layer!(upload_note_layer, Note, Note, NoteInstance);
     impl_upload_layer!(upload_curve_layer, Curve, Curve, CurveInstance);
     impl_upload_layer!(upload_velocity_layer, Velocity, Velocity, VelocityBarInstance);

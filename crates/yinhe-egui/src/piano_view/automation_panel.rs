@@ -143,10 +143,6 @@ pub fn show_panels(
     content_rect_right: f32,
     content_top_y: f32,
     panels_visible_h: f32,
-    tpb: Option<u32>,
-    default_num: u8,
-    default_den: u8,
-    time_sig_events: &[yinhe_types::TimeSigEvent],
     track_visible: &[bool],
     track_colors: &[[f32; 3]],
     scroll_mode: u32,
@@ -456,10 +452,6 @@ pub fn show_panels(
                     panel,
                     &lanes,
                     midi,
-                    tpb,
-                    default_num,
-                    default_den,
-                    time_sig_events,
                     track_visible,
                     track_colors,
                     scroll_mode,
@@ -509,6 +501,29 @@ pub fn show_panels(
                             ),
                         );
                     }
+                }
+
+                // ── Grid lines (egui, before wgpu texture) ──
+                // automation 不补 ruler（共享 pianoroll 顶部 ruler），但网格线需要画。
+                if let Some(midi) = midi
+                    && let Some(tpb) = midi.ticks_per_beat()
+                {
+                    let (def_num, def_den) = midi.time_sig_default();
+                    let sig_events = midi.time_sig_events();
+                    let grid_draw_rect = egui::Rect::from_min_max(
+                        egui::pos2(grid_rect.min.x + combo_width, grid_rect.min.y),
+                        grid_rect.max,
+                    );
+                    crate::widgets::grid_lines::paint_grid_lines(
+                        painter,
+                        grid_draw_rect,
+                        &panel.base,
+                        tpb,
+                        def_num,
+                        def_den,
+                        sig_events,
+                        &crate::widgets::grid_lines::GridColors::pianoroll(),
+                    );
                 }
 
                 render_ctx.paint(

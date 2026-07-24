@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use eframe::egui;
 
-use yinhe_wgpu::{build_ghost_notes, build_arr_grid, build_arr_notes};
+use yinhe_wgpu::{build_ghost_notes, build_arr_notes};
 use yinhe_core::TrackInfo;
 use yinhe_types::{ArrangementView, NoteSource, key_notes_in_range};
 use yinhe_wgpu::{InstanceRenderer, Uniforms, MAX_TRACKS};
@@ -137,7 +137,8 @@ pub fn show(
     let theme = renderer.theme().clone();
     renderer.upload_uniforms(uniforms);
     renderer.upload_track_colors(&tc_colors);
-    renderer.ensure_layers(3);
+    // Grid 已迁移到 egui（widgets::grid_lines），wgpu 只剩 notes + ghost notes 两层。
+    renderer.ensure_layers(2);
 
     // ── Select tool dispatch (BEFORE layer building to get ghost notes) ──
     // Like PR's sel_drag_frame, this returns ghost_notes/hidden_notes generated
@@ -184,23 +185,11 @@ pub fn show(
         h
     };
 
-    // Layer 0: grid lines (background + track lanes now drawn by egui)
-    // 网格构建成本极低，移除缓存每帧重建，避免缓存键遗漏 tpb 等字段导致 stale。
-    renderer.upload_layer(0, 0, |out| {
-        if let Some(midi) = midi
-            && let Some(tpb) = midi.ticks_per_beat()
-        {
-            let (def_num, def_den) = midi.time_sig_default();
-            let sig_events = midi.time_sig_events();
-            build_arr_grid(
-                out, w as f32, h as f32, view, tpb, def_num, def_den, sig_events, scroll_x_pos, &theme,
-            );
-        }
-    });
+    // Grid lines 已迁移到 egui（见下方 paint_grid_lines 调用），wgpu 不再构建 grid layer。
 
-    // Layer 1: notes (16B NoteInstance — shader computes pixel positions from uniforms)
+    // Layer 0: notes (16B NoteInstance — shader computes pixel positions from uniforms)
     let notes_key = layer_cache_key(&[vh, wh, tv_hash, revision, hidden_notes.len() as u64]);
-    renderer.upload_note_layer(1, notes_key, |out| {
+    renderer.upload_note_layer(0, notes_key, |out| {
         if let Some(midi) = midi {
             build_arr_notes(
                 out,
@@ -214,8 +203,8 @@ pub fn show(
         }
     });
 
-    // Layer 2: ghost notes (no cache — rebuilt every frame during drag)
-    renderer.upload_note_layer(2, 0, |out| {
+    // Layer 1: ghost notes (no cache — rebuilt every frame during drag)
+    renderer.upload_note_layer(1, 0, |out| {
         build_ghost_notes(out, &mut ghost_notes, w as f32, h as f32, view, track_visible);
     });
 
@@ -249,6 +238,23 @@ pub fn show(
                 egui::Color32::from_rgb((col.0 * 255.0) as u8, (col.1 * 255.0) as u8, (col.2 * 255.0) as u8),
             );
         }
+    }
+
+    // ── Grid lines (drawn by egui before wgpu texture) ──
+    // 替代原 wgpu grid layer。与 time_ruler 共用 MIN_SPACING 阈值，保证"有线就有标签"。
+    if let Some(midi) = midi
+        && let Some(tpb) = midi.ticks_per_beat()
+    {
+        let (def_num, def_den) = midi.time_sig_default();
+        let sig_events = midi.time_sig_events();
+        let grid_rect = egui::Rect::from_min_max(
+            egui::pos2(rect.min.x + view.base.left_panel_width, rect.min.y),
+            rect.max,
+        );
+        crate::widgets::grid_lines::paint_grid_lines(
+            &painter, grid_rect, &view.base, tpb, def_num, def_den, sig_events,
+            &crate::widgets::grid_lines::GridColors::arrangement(),
+        );
     }
 
     render_ctx.paint(
