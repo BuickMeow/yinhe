@@ -700,17 +700,20 @@ fn paginate<'a, T>(state: &mut EventBrowserState, items: &'a [T]) -> (usize, usi
 /// 输入框用 `ui.memory()` 存临时文本，失焦时解析；按钮翻页时输入框下一帧自动同步。
 fn render_pager(ui: &mut egui::Ui, page: usize, total_pages: usize) -> Option<usize> {
     let mut new_page = None;
+    // mem_key 提到外面：chevron 点击时也要能清掉，避免下一帧用旧 buf
+    let mem_key = ui.id().with("eb_page_input");
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         // right_to_left：先放的在最右
         // 下一页按钮
         let next_enabled = page + 1 < total_pages;
         if ui.add_enabled(next_enabled, egui::Label::new(ICON_CHEVRON_RIGHT.rich_text().size(14.0).color(egui::Color32::from_gray(200))).sense(egui::Sense::click())).clicked() {
             new_page = Some(page + 1);
+            // 清掉缓存，让输入框下一帧用新的 (page+1).to_string()
+            ui.memory_mut(|m| m.data.remove::<String>(mem_key));
         }
         // 总页数
         ui.label(egui::RichText::new(format!("/ {}", total_pages)).size(11.0).color(egui::Color32::from_gray(140)));
         // 页码输入框（1-based 显示）—— 用 memory 存临时文本，避免输入时被重置
-        let mem_key = ui.id().with("eb_page_input");
         let buf: String = ui.memory(|m| m.data.get_temp(mem_key).unwrap_or_else(|| (page + 1).to_string()));
         let mut buf = buf;
         let resp = ui.add(
@@ -733,6 +736,7 @@ fn render_pager(ui: &mut egui::Ui, page: usize, total_pages: usize) -> Option<us
         let prev_enabled = page > 0;
         if ui.add_enabled(prev_enabled, egui::Label::new(ICON_CHEVRON_LEFT.rich_text().size(14.0).color(egui::Color32::from_gray(200))).sense(egui::Sense::click())).clicked() {
             new_page = Some(page - 1);
+            ui.memory_mut(|m| m.data.remove::<String>(mem_key));
         }
     });
     new_page
