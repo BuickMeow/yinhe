@@ -146,11 +146,25 @@ pub struct CpalAudioHandle {
     pub(crate) _stream: cpal::Stream,
     /// 设置为 true 时通知 renderer 线程退出。
     pub(crate) shutdown: Arc<AtomicBool>,
+    /// renderer 线程的 JoinHandle。
+    ///
+    /// Drop 时同步 join，确保 AudioEngine（含 rayon 线程池）完全释放。
+    /// 不 join 会导致反复 teardown+rebuild（如蓝牙耳机抖动触发设备切换）时
+    /// rayon 工作线程累积，最终触发 EAGAIN (code 35) panic。
+    pub(crate) renderer_handle: Option<std::thread::JoinHandle<()>>,
 }
 
 impl Drop for CpalAudioHandle {
     fn drop(&mut self) {
         self.shutdown.store(true, Ordering::Release);
+        // 同步 join renderer 线程。WAKE_SLEEP=1ms，renderer 最多 1ms 后退出，
+        // join 阻塞时间可忽略。确保 AudioEngine → ChannelGroup → 2 个 rayon::ThreadPool
+        // 在返回前被 drop，避免线程泄漏。
+        if let Some(handle) = self.renderer_handle.take() {
+            if let Err(payload) = handle.join() {
+                tracing::error!("Audio renderer thread panicked during shutdown: {payload:?}");
+            }
+        }
     }
 }
 
@@ -469,7 +483,21 @@ pub fn spawn_cpal_audio(
         buffer_size,
     };
 
-    let engine = crate::engine::AudioEngine::new(sample_rate, layout);
+    // catch_unwind 包住 AudioEngine::new：ChannelGroup::new 内部
+    // `rayon::ThreadPoolBuilder::build().unwrap()` 在进程线程数超限时会 panic
+    // （macOS EAGAIN / code 35）。捕获后返回 Err，让上层弹对话框而不是 abort 进程。
+    let engine = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        crate::engine::AudioEngine::new(sample_rate, layout)
+    })) {
+        Ok(engine) => engine,
+        Err(payload) => {
+            let msg = payload
+                .downcast_ref::<String>().map(|s| s.as_str())
+                .or_else(|| payload.downcast_ref::<&str>().map(|s| *s))
+                .unwrap_or("unknown panic");
+            return Err(format!("AudioEngine initialization failed: {msg}"));
+        }
+    };
     let (worker_tx, prepared_rx) =
         spawn_worker(sample_rate, engine.channel_layout().clone())
             .map_err(|e| format!("Failed to spawn audio worker thread: {e}"))?;
@@ -484,7 +512,7 @@ pub fn spawn_cpal_audio(
     let reset_generation = Arc::clone(&renderer_state.reset_generation);
 
     let shutdown = Arc::new(AtomicBool::new(false));
-    let _renderer_handle = spawn_renderer(
+    let renderer_handle = spawn_renderer(
         engine,
         ring_producer,
         renderer_state,
@@ -507,45 +535,56 @@ pub fn spawn_cpal_audio(
     // cpal 流错误回调：用 tracing 而不是 eprintln!，同时置 stream_error 标志，
     // UI 每帧查询后弹出对话框。错误不可逆，置位后不再清零。
     let stream_error_flag = Arc::clone(&stream_error);
-    let stream = device
-        .build_output_stream(
-            config,
-            move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Audio, || {
-                    let generation = reset_generation.load(Ordering::Acquire);
-                    if generation != acknowledged_generation {
-                        ring_consumer.clear();
-                        consumer_sample_position = renderer_position.load(Ordering::Acquire);
-                        acknowledged_generation = generation;
+    let stream = match device.build_output_stream(
+        config,
+        move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+            yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Audio, || {
+                let generation = reset_generation.load(Ordering::Acquire);
+                if generation != acknowledged_generation {
+                    ring_consumer.clear();
+                    consumer_sample_position = renderer_position.load(Ordering::Acquire);
+                    acknowledged_generation = generation;
+                }
+
+                if initialized.load(Ordering::Acquire) {
+                    let popped = ring_consumer.pop_into(data);
+                    if popped < data.len() {
+                        data[popped..].fill(0.0);
                     }
+                    consumer_sample_position = consumer_sample_position
+                        .saturating_add((popped / STEREO_CHANNELS) as u64);
+                } else {
+                    data.fill(0.0);
+                }
 
-                    if initialized.load(Ordering::Acquire) {
-                        let popped = ring_consumer.pop_into(data);
-                        if popped < data.len() {
-                            data[popped..].fill(0.0);
-                        }
-                        consumer_sample_position = consumer_sample_position
-                            .saturating_add((popped / STEREO_CHANNELS) as u64);
-                    } else {
-                        data.fill(0.0);
-                    }
+                sp.store(consumer_sample_position, Ordering::Relaxed);
+                pl.store(renderer_playing.load(Ordering::Relaxed), Ordering::Relaxed);
+                dur.store(renderer_duration.load(Ordering::Relaxed), Ordering::Relaxed);
+            })
+        },
+        move |err| {
+            tracing::error!("Audio stream error: {err}");
+            stream_error_flag.store(true, Ordering::Release);
+        },
+        None,
+    ) {
+        Ok(s) => s,
+        Err(e) => {
+            // build stream 失败 —— 清理已 spawn 的 renderer 线程，避免泄漏
+            shutdown.store(true, Ordering::Release);
+            let _ = renderer_handle.join();
+            return Err(format!("Failed to build stream: {e}"));
+        }
+    };
 
-                    sp.store(consumer_sample_position, Ordering::Relaxed);
-                    pl.store(renderer_playing.load(Ordering::Relaxed), Ordering::Relaxed);
-                    dur.store(renderer_duration.load(Ordering::Relaxed), Ordering::Relaxed);
-                })
-            },
-            move |err| {
-                tracing::error!("Audio stream error: {err}");
-                stream_error_flag.store(true, Ordering::Release);
-            },
-            None,
-        )
-        .map_err(|e| format!("Failed to build stream: {e}"))?;
-
-    stream
-        .play()
-        .map_err(|e| format!("Failed to start stream: {e}"))?;
+    match stream.play() {
+        Ok(()) => {}
+        Err(e) => {
+            shutdown.store(true, Ordering::Release);
+            let _ = renderer_handle.join();
+            return Err(format!("Failed to start stream: {e}"));
+        }
+    }
 
     Ok(CpalAudioHandle {
         handle: AudioHandle {
@@ -558,5 +597,6 @@ pub fn spawn_cpal_audio(
         sample_rate,
         _stream: stream,
         shutdown,
+        renderer_handle: Some(renderer_handle),
     })
 }

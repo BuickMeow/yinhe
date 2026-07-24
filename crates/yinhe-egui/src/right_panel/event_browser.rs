@@ -36,6 +36,8 @@ pub struct EventBrowserState {
     pub expanded_keys: std::collections::HashSet<ArchiveKey>,
     pub selected_item: Option<SelectedItem>,
     pub selected_track: Option<u16>,
+    /// 音符列表当前页码（0-based）。切换 selected_item 时重置为 0。
+    pub note_page: usize,
     fingerprint: Option<u64>,
     split_ratio: f32,
 }
@@ -66,6 +68,7 @@ impl Default for EventBrowserState {
             expanded_keys: Default::default(),
             selected_item: None,
             selected_track: None,
+            note_page: 0,
             fingerprint: None,
             split_ratio: 0.45,
         }
@@ -227,9 +230,13 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>, state: &mut EventBrow
             .show(ui, |ui| {
                 frame_bg.show(ui, |ui| {
                     ui.set_min_width(ui.available_width());
-                    if let Some(sel) = &state.selected_item {
-                        jump_request = show_event_detail(ui, sel, doc, &bar_lookup);
-                    } else if let Some(idx) = state.selected_track {
+                    // 先 clone selected_item，避免在调用 show_event_detail 时
+                    // 同时持有 state 的不可变借用和可变借用
+                    let sel = state.selected_item.clone();
+                    let track_idx = state.selected_track;
+                    if let Some(ref sel) = sel {
+                        jump_request = show_event_detail(ui, sel, doc, &bar_lookup, state);
+                    } else if let Some(idx) = track_idx {
                         if let Some(track) = model.tracks.get(idx as usize) {
                             show_track_detail(ui, idx, track, model);
                         } else {
@@ -431,7 +438,7 @@ fn render_track_row(
 //  Detail panels
 // ═══════════════════════════════════════════════════════════════
 
-fn show_event_detail(ui: &mut egui::Ui, item: &SelectedItem, doc: &Document, bar_lookup: &BarLookup) -> Option<JumpRequest> {
+fn show_event_detail(ui: &mut egui::Ui, item: &SelectedItem, doc: &Document, bar_lookup: &BarLookup, state: &mut EventBrowserState) -> Option<JumpRequest> {
     let model = &doc.data.model;
     match item {
         SelectedItem::ProjectJson => {
@@ -487,24 +494,17 @@ fn show_event_detail(ui: &mut egui::Ui, item: &SelectedItem, doc: &Document, bar
             let model = &doc.data.model;
             // 优化：用 bucket_track_stats 跳过没有该 track 音符的 bucket，
             // 避免全量扫描 128 个桶。预分配容量减少 realloc。
-            // 1 亿音符场景下，稀疏分布时能大幅减少扫描量。
-            const MAX_DISPLAY_ROWS: usize = 5000;
+            const PAGE_SIZE: usize = 100;
             let track_count = model.track_note_count
                 .get(*track as usize)
                 .copied()
                 .unwrap_or(0) as usize;
-            let mut notes: Vec<(yinhe_core::NoteEvent, u8, u16)> = Vec::with_capacity(
-                track_count.min(MAX_DISPLAY_ROWS)
-            );
+            let mut notes: Vec<(yinhe_core::NoteEvent, u8, u16)> = Vec::with_capacity(track_count);
             for (key, bucket) in model.notes.iter().enumerate() {
-                // 跳过没有该 track 音符的 bucket
                 if !model.bucket_track_stats[key].contains_key(track) {
                     continue;
                 }
                 for n in bucket.iter().filter(|n| n.track == *track) {
-                    if notes.len() >= MAX_DISPLAY_ROWS {
-                        break;
-                    }
                     notes.push((
                         yinhe_core::NoteEvent {
                             id: n.id,
@@ -517,23 +517,65 @@ fn show_event_detail(ui: &mut egui::Ui, item: &SelectedItem, doc: &Document, bar
                         *track,
                     ));
                 }
-                if notes.len() >= MAX_DISPLAY_ROWS {
-                    break;
-                }
             }
             notes.sort_by_key(|(n, _, _)| n.start_tick);
-            let truncated = track_count > notes.len();
+
+            let total = notes.len();
+            let total_pages = total.div_ceil(PAGE_SIZE).max(1);
+            // 防止越界（音符删除后页码可能超界）
+            if state.note_page >= total_pages {
+                state.note_page = total_pages - 1;
+            }
+            let page = state.note_page;
+            let start = page * PAGE_SIZE;
+            let end = (start + PAGE_SIZE).min(total);
+            let page_notes = &notes[start..end];
+
             ui.add_space(4.0);
-            let label = if truncated {
-                format!("音符 ({} 个，仅显示前 {} 个)", track_count, notes.len())
-            } else {
-                format!("音符 ({} 个)", notes.len())
-            };
-            ui.label(egui::RichText::new(label).size(12.0).strong());
+            // 标题行：左边 "音符 N 个"，右边翻页控件
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(format!("音符 {} 个", total)).size(12.0).strong());
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    // right_to_left：先放的在最右
+                    // 下一页按钮
+                    let next_enabled = page + 1 < total_pages;
+                    if ui.add_enabled(next_enabled, egui::Label::new(ICON_CHEVRON_RIGHT.rich_text().size(14.0).color(egui::Color32::from_gray(200))).sense(egui::Sense::click())).clicked() {
+                        state.note_page = page + 1;
+                    }
+                    // 总页数
+                    ui.label(egui::RichText::new(format!("/ {}", total_pages)).size(11.0).color(egui::Color32::from_gray(140)));
+                    // 页码输入框 —— 用 memory 存临时文本，避免输入时被重置
+                    let mem_key = ui.id().with("eb_page_input");
+                    let buf: String = ui.memory(|m| m.data.get_temp(mem_key).unwrap_or_else(|| (page + 1).to_string()));
+                    let mut buf = buf;
+                    let resp = ui.add(
+                        egui::TextEdit::singleline(&mut buf)
+                            .desired_width(28.0)
+                            .font(egui::FontId::proportional(11.0))
+                            .horizontal_align(egui::Align::Center),
+                    );
+                    if resp.lost_focus() {
+                        if let Ok(n) = buf.trim().parse::<usize>() {
+                            if n >= 1 && n <= total_pages {
+                                state.note_page = n - 1;
+                            }
+                        }
+                        ui.memory_mut(|m| m.data.remove::<String>(mem_key));
+                    } else {
+                        ui.memory_mut(|m| m.data.insert_temp(mem_key, buf));
+                    }
+                    // 上一页按钮
+                    let prev_enabled = page > 0;
+                    if ui.add_enabled(prev_enabled, egui::Label::new(ICON_CHEVRON_LEFT.rich_text().size(14.0).color(egui::Color32::from_gray(200))).sense(egui::Sense::click())).clicked() {
+                        state.note_page = page - 1;
+                    }
+                });
+            });
             ui.add_space(2.0);
-            build_table(ui, "eb_notes", &[("#", 40.0), ("id", 70.0), ("tick", 70.0), ("位置", 80.0), ("结束 tick", 80.0), ("结束位置", 90.0), ("键位", 50.0), ("力度", 50.0)], notes.len(), |i, row| {
-                let (n, _key, _trk) = &notes[i];
-                cell_text(row, format!("{}", i + 1));
+            let page_start = start;
+            build_table(ui, "eb_notes", &[("#", 40.0), ("id", 70.0), ("tick", 70.0), ("位置", 80.0), ("结束 tick", 80.0), ("结束位置", 90.0), ("键位", 50.0), ("力度", 50.0)], page_notes.len(), |i, row| {
+                let (n, _key, _trk) = &page_notes[i];
+                cell_text(row, format!("{}", page_start + i + 1));
                 cell_text(row, format!("#{}", n.id));
                 cell_text(row, format!("{}", n.start_tick));
                 cell_text(row, bar_lookup.format(n.start_tick));
@@ -544,7 +586,7 @@ fn show_event_detail(ui: &mut egui::Ui, item: &SelectedItem, doc: &Document, bar
             });
             // 音符：矩形闪烁 + 切到音符所在 track
             return take_row_click(ui, "eb_notes").map(|i| {
-                let (n, _key, _trk) = &notes[i];
+                let (n, _key, _trk) = &page_notes[i];
                 JumpRequest {
                     tick: n.start_tick,
                     note: Some((*track, n.key)),
@@ -882,6 +924,7 @@ fn render_leaf_item(ui: &mut egui::Ui, name: &str, icon: egui_material_icons::Ma
     if frame_r.response.interact(egui::Sense::click()).clicked() {
         state.selected_item = Some(item);
         state.selected_track = None;
+        state.note_page = 0;
     }
 }
 
