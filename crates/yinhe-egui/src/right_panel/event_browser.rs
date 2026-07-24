@@ -36,8 +36,8 @@ pub struct EventBrowserState {
     pub expanded_keys: std::collections::HashSet<ArchiveKey>,
     pub selected_item: Option<SelectedItem>,
     pub selected_track: Option<u16>,
-    /// 音符列表当前页码（0-based）。切换 selected_item 时重置为 0。
-    pub note_page: usize,
+    /// 事件列表当前页码（0-based）。切换 selected_item 时重置为 0。
+    pub event_page: usize,
     fingerprint: Option<u64>,
     split_ratio: f32,
 }
@@ -68,7 +68,7 @@ impl Default for EventBrowserState {
             expanded_keys: Default::default(),
             selected_item: None,
             selected_track: None,
-            note_page: 0,
+            event_page: 0,
             fingerprint: None,
             split_ratio: 0.45,
         }
@@ -452,19 +452,26 @@ fn show_event_detail(ui: &mut egui::Ui, item: &SelectedItem, doc: &Document, bar
         SelectedItem::Tempo => {
             let mut sorted: Vec<&yinhe_types::AutomationEvent> = model.conductor.tempo.events.iter().collect();
             sorted.sort_by_key(|e| e.tick);
+            let (page, page_start, page_items) = paginate(state, &sorted);
+            let total = sorted.len();
             ui.add_space(4.0);
-            ui.label(egui::RichText::new(format!("Tempo ({} 个)", sorted.len())).size(12.0).strong());
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(format!("Tempo {} 个", total)).size(12.0).strong());
+                if let Some(np) = render_pager(ui, page, total_pages(total)) {
+                    state.event_page = np;
+                }
+            });
             ui.add_space(2.0);
-            build_table(ui, "eb_tempo", &[("#", 40.0), ("tick", 70.0), ("位置", 80.0), ("BPM", 70.0)], sorted.len(), |i, row| {
-                let s = sorted[i];
-                cell_text(row, format!("{}", i + 1));
+            build_table(ui, "eb_tempo", &[("#", 40.0), ("tick", 70.0), ("位置", 80.0), ("BPM", 70.0)], page_items.len(), |i, row| {
+                let s = page_items[i];
+                cell_text(row, format!("{}", page_start + i + 1));
                 cell_text(row, format!("{}", s.tick));
                 cell_text(row, bar_lookup.format(s.tick as u32));
                 cell_text(row, format!("{:.2}", s.value));
             });
             // Tempo：仅跳转，不闪烁（Step 2 再做 automation panel 圆点闪烁）
             return take_row_click(ui, "eb_tempo").map(|i| JumpRequest {
-                tick: sorted[i].tick,
+                tick: page_items[i].tick,
                 note: None,
                 pulse: None,
             });
@@ -472,20 +479,27 @@ fn show_event_detail(ui: &mut egui::Ui, item: &SelectedItem, doc: &Document, bar
         SelectedItem::TimeSig => {
             let mut sorted: Vec<&yinhe_types::TimeSigEvent> = model.conductor.time_sig.iter().collect();
             sorted.sort_by_key(|e| e.tick);
+            let (page, page_start, page_items) = paginate(state, &sorted);
+            let total = sorted.len();
             ui.add_space(4.0);
-            ui.label(egui::RichText::new(format!("拍号 ({} 个)", sorted.len())).size(12.0).strong());
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(format!("拍号 {} 个", total)).size(12.0).strong());
+                if let Some(np) = render_pager(ui, page, total_pages(total)) {
+                    state.event_page = np;
+                }
+            });
             ui.add_space(2.0);
-            build_table(ui, "eb_ts", &[("#", 40.0), ("tick", 70.0), ("位置", 80.0), ("拍号", 80.0)], sorted.len(), |i, row| {
-                let e = sorted[i];
+            build_table(ui, "eb_ts", &[("#", 40.0), ("tick", 70.0), ("位置", 80.0), ("拍号", 80.0)], page_items.len(), |i, row| {
+                let e = page_items[i];
                 let denom = 1u32 << e.denominator as u32;
-                cell_text(row, format!("{}", i + 1));
+                cell_text(row, format!("{}", page_start + i + 1));
                 cell_text(row, format!("{}", e.tick));
                 cell_text(row, bar_lookup.format(e.tick));
                 cell_text(row, format!("{}/{}", e.numerator, denom));
             });
             // TimeSig：竖线闪烁，无需跳转音轨
             return take_row_click(ui, "eb_ts").map(|i| JumpRequest {
-                tick: sorted[i].tick,
+                tick: page_items[i].tick,
                 note: None,
                 pulse: Some(PulseKind::TimesigLine),
             });
@@ -494,7 +508,6 @@ fn show_event_detail(ui: &mut egui::Ui, item: &SelectedItem, doc: &Document, bar
             let model = &doc.data.model;
             // 优化：用 bucket_track_stats 跳过没有该 track 音符的 bucket，
             // 避免全量扫描 128 个桶。预分配容量减少 realloc。
-            const PAGE_SIZE: usize = 100;
             let track_count = model.track_note_count
                 .get(*track as usize)
                 .copied()
@@ -519,60 +532,16 @@ fn show_event_detail(ui: &mut egui::Ui, item: &SelectedItem, doc: &Document, bar
                 }
             }
             notes.sort_by_key(|(n, _, _)| n.start_tick);
-
+            let (page, page_start, page_notes) = paginate(state, &notes);
             let total = notes.len();
-            let total_pages = total.div_ceil(PAGE_SIZE).max(1);
-            // 防止越界（音符删除后页码可能超界）
-            if state.note_page >= total_pages {
-                state.note_page = total_pages - 1;
-            }
-            let page = state.note_page;
-            let start = page * PAGE_SIZE;
-            let end = (start + PAGE_SIZE).min(total);
-            let page_notes = &notes[start..end];
-
             ui.add_space(4.0);
-            // 标题行：左边 "音符 N 个"，右边翻页控件
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new(format!("音符 {} 个", total)).size(12.0).strong());
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    // right_to_left：先放的在最右
-                    // 下一页按钮
-                    let next_enabled = page + 1 < total_pages;
-                    if ui.add_enabled(next_enabled, egui::Label::new(ICON_CHEVRON_RIGHT.rich_text().size(14.0).color(egui::Color32::from_gray(200))).sense(egui::Sense::click())).clicked() {
-                        state.note_page = page + 1;
-                    }
-                    // 总页数
-                    ui.label(egui::RichText::new(format!("/ {}", total_pages)).size(11.0).color(egui::Color32::from_gray(140)));
-                    // 页码输入框 —— 用 memory 存临时文本，避免输入时被重置
-                    let mem_key = ui.id().with("eb_page_input");
-                    let buf: String = ui.memory(|m| m.data.get_temp(mem_key).unwrap_or_else(|| (page + 1).to_string()));
-                    let mut buf = buf;
-                    let resp = ui.add(
-                        egui::TextEdit::singleline(&mut buf)
-                            .desired_width(28.0)
-                            .font(egui::FontId::proportional(11.0))
-                            .horizontal_align(egui::Align::Center),
-                    );
-                    if resp.lost_focus() {
-                        if let Ok(n) = buf.trim().parse::<usize>() {
-                            if n >= 1 && n <= total_pages {
-                                state.note_page = n - 1;
-                            }
-                        }
-                        ui.memory_mut(|m| m.data.remove::<String>(mem_key));
-                    } else {
-                        ui.memory_mut(|m| m.data.insert_temp(mem_key, buf));
-                    }
-                    // 上一页按钮
-                    let prev_enabled = page > 0;
-                    if ui.add_enabled(prev_enabled, egui::Label::new(ICON_CHEVRON_LEFT.rich_text().size(14.0).color(egui::Color32::from_gray(200))).sense(egui::Sense::click())).clicked() {
-                        state.note_page = page - 1;
-                    }
-                });
+                if let Some(np) = render_pager(ui, page, total_pages(total)) {
+                    state.event_page = np;
+                }
             });
             ui.add_space(2.0);
-            let page_start = start;
             build_table(ui, "eb_notes", &[("#", 40.0), ("id", 70.0), ("tick", 70.0), ("位置", 80.0), ("结束 tick", 80.0), ("结束位置", 90.0), ("键位", 50.0), ("力度", 50.0)], page_notes.len(), |i, row| {
                 let (n, _key, _trk) = &page_notes[i];
                 cell_text(row, format!("{}", page_start + i + 1));
@@ -605,19 +574,27 @@ fn show_event_detail(ui: &mut egui::Ui, item: &SelectedItem, doc: &Document, bar
                 }
             }
             events.sort_by_key(|e| e.tick);
+            let (page, page_start, page_items) = paginate(state, &events);
+            let total = events.len();
+            let title = format!("CC {} {} {} 个", controller, cc_label(*controller), total);
             ui.add_space(4.0);
-            ui.label(egui::RichText::new(format!("CC {} {} ({} 个)", controller, cc_label(*controller), events.len())).size(12.0).strong());
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(title).size(12.0).strong());
+                if let Some(np) = render_pager(ui, page, total_pages(total)) {
+                    state.event_page = np;
+                }
+            });
             ui.add_space(2.0);
-            build_table(ui, "eb_cc", &[("#", 40.0), ("tick", 70.0), ("位置", 80.0), ("值", 60.0)], events.len(), |i, row| {
-                let e = events[i];
-                cell_text(row, format!("{}", i + 1));
+            build_table(ui, "eb_cc", &[("#", 40.0), ("tick", 70.0), ("位置", 80.0), ("值", 60.0)], page_items.len(), |i, row| {
+                let e = page_items[i];
+                cell_text(row, format!("{}", page_start + i + 1));
                 cell_text(row, format!("{}", e.tick));
                 cell_text(row, bar_lookup.format(e.tick));
                 cell_text(row, format!("{}", e.value.round() as i32));
             });
             // CC：切到所在 track，仅跳转不闪烁（Step 2 再做圆点闪烁）
             return take_row_click(ui, "eb_cc").map(|i| JumpRequest {
-                tick: events[i].tick,
+                tick: page_items[i].tick,
                 note: Some((*track, 0)),
                 pulse: None,
             });
@@ -633,19 +610,26 @@ fn show_event_detail(ui: &mut egui::Ui, item: &SelectedItem, doc: &Document, bar
                 }
             }
             events.sort_by_key(|e| e.tick);
+            let (page, page_start, page_items) = paginate(state, &events);
+            let total = events.len();
             ui.add_space(4.0);
-            ui.label(egui::RichText::new(format!("弯音事件 ({} 个)", events.len())).size(12.0).strong());
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(format!("弯音事件 {} 个", total)).size(12.0).strong());
+                if let Some(np) = render_pager(ui, page, total_pages(total)) {
+                    state.event_page = np;
+                }
+            });
             ui.add_space(2.0);
-            build_table(ui, "eb_pb", &[("#", 40.0), ("tick", 70.0), ("位置", 80.0), ("值", 70.0)], events.len(), |i, row| {
-                let e = events[i];
-                cell_text(row, format!("{}", i + 1));
+            build_table(ui, "eb_pb", &[("#", 40.0), ("tick", 70.0), ("位置", 80.0), ("值", 70.0)], page_items.len(), |i, row| {
+                let e = page_items[i];
+                cell_text(row, format!("{}", page_start + i + 1));
                 cell_text(row, format!("{}", e.tick));
                 cell_text(row, bar_lookup.format(e.tick));
                 cell_text(row, format!("{}", e.value.round() as i32));
             });
             // PB：切到所在 track，仅跳转不闪烁
             return take_row_click(ui, "eb_pb").map(|i| JumpRequest {
-                tick: events[i].tick,
+                tick: page_items[i].tick,
                 note: Some((*track, 0)),
                 pulse: None,
             });
@@ -656,24 +640,97 @@ fn show_event_detail(ui: &mut egui::Ui, item: &SelectedItem, doc: &Document, bar
                 .map(|td| td.program_change.iter().collect())
                 .unwrap_or_default();
             events.sort_by_key(|e| e.tick);
+            let (page, page_start, page_items) = paginate(state, &events);
+            let total = events.len();
             ui.add_space(4.0);
-            ui.label(egui::RichText::new(format!("音色变更 ({} 个)", events.len())).size(12.0).strong());
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(format!("音色变更 {} 个", total)).size(12.0).strong());
+                if let Some(np) = render_pager(ui, page, total_pages(total)) {
+                    state.event_page = np;
+                }
+            });
             ui.add_space(2.0);
-            build_table(ui, "eb_pc", &[("#", 40.0), ("tick", 70.0), ("位置", 80.0), ("音色", 50.0)], events.len(), |i, row| {
-                let e = events[i];
-                cell_text(row, format!("{}", i + 1));
+            build_table(ui, "eb_pc", &[("#", 40.0), ("tick", 70.0), ("位置", 80.0), ("音色", 50.0)], page_items.len(), |i, row| {
+                let e = page_items[i];
+                cell_text(row, format!("{}", page_start + i + 1));
                 cell_text(row, format!("{}", e.tick));
                 cell_text(row, bar_lookup.format(e.tick));
                 cell_text(row, format!("{}", e.program));
             });
             // PC：切到所在 track，仅跳转不闪烁
             return take_row_click(ui, "eb_pc").map(|i| JumpRequest {
-                tick: events[i].tick,
+                tick: page_items[i].tick,
                 note: Some((*track, 0)),
                 pulse: None,
             });
         }
     }
+}
+
+/// 每页行数。100 行在常规字体下约填满半屏~一屏，翻页频率适中。
+const EVENT_PAGE_SIZE: usize = 100;
+
+/// 计算总页数（至少 1 页）。
+fn total_pages(total: usize) -> usize {
+    total.div_ceil(EVENT_PAGE_SIZE).max(1)
+}
+
+/// 根据当前 `state.event_page` 切片出当前页。
+///
+/// 返回 `(page, page_start, page_slice)`：
+/// - `page`：0-based 页码（已做越界保护，删除数据后自动夹回末页）
+/// - `page_start`：当前页起始索引（`page * EVENT_PAGE_SIZE`）
+/// - `page_slice`：当前页的切片
+fn paginate<'a, T>(state: &mut EventBrowserState, items: &'a [T]) -> (usize, usize, &'a [T]) {
+    let total = items.len();
+    let tp = total_pages(total);
+    if state.event_page >= tp {
+        state.event_page = tp - 1;
+    }
+    let page = state.event_page;
+    let start = page * EVENT_PAGE_SIZE;
+    let end = (start + EVENT_PAGE_SIZE).min(total);
+    (page, start, &items[start..end])
+}
+
+/// 渲染翻页控件（右对齐），返回 `Some(新页码)` 如果用户改变了页码（0-based）。
+///
+/// 用 `DragValue`（info_panel 同款）：可左右拖动改变页码，也可点击输入。
+/// 每帧用当前 `page` 重新初始化局部变量，所以按钮翻页后输入框实时同步。
+fn render_pager(ui: &mut egui::Ui, page: usize, total_pages: usize) -> Option<usize> {
+    let mut new_page = None;
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        // right_to_left：先放的在最右
+        // 下一页按钮
+        let next_enabled = page + 1 < total_pages;
+        if ui.add_enabled(next_enabled, egui::Label::new(ICON_CHEVRON_RIGHT.rich_text().size(14.0).color(egui::Color32::from_gray(200))).sense(egui::Sense::click())).clicked() {
+            new_page = Some(page + 1);
+        }
+        // 总页数
+        ui.label(egui::RichText::new(format!("/ {}", total_pages)).size(11.0).color(egui::Color32::from_gray(140)));
+        // 页码 DragValue（1-based 显示，拖动+输入）
+        let mut edit = (page + 1) as i64;
+        let resp = ui.add_sized(
+            [28.0, 14.0],
+            egui::DragValue::new(&mut edit)
+                .range(1..=total_pages.max(1) as i64)
+                .speed(0.2)
+                .clamp_existing_to_range(true)
+                .max_decimals(0),
+        );
+        if resp.changed() {
+            let n = edit as usize;
+            if n >= 1 && n <= total_pages && n - 1 != page {
+                new_page = Some(n - 1);
+            }
+        }
+        // 上一页按钮
+        let prev_enabled = page > 0;
+        if ui.add_enabled(prev_enabled, egui::Label::new(ICON_CHEVRON_LEFT.rich_text().size(14.0).color(egui::Color32::from_gray(200))).sense(egui::Sense::click())).clicked() {
+            new_page = Some(page - 1);
+        }
+    });
+    new_page
 }
 
 fn show_project_json(ui: &mut egui::Ui, doc: &Document) {
@@ -924,7 +981,7 @@ fn render_leaf_item(ui: &mut egui::Ui, name: &str, icon: egui_material_icons::Ma
     if frame_r.response.interact(egui::Sense::click()).clicked() {
         state.selected_item = Some(item);
         state.selected_track = None;
-        state.note_page = 0;
+        state.event_page = 0;
     }
 }
 
