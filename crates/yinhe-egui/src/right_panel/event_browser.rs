@@ -710,14 +710,18 @@ fn render_pager(ui: &mut egui::Ui, page: usize, total_pages: usize) -> Option<us
         ui.label(egui::RichText::new(format!("/ {}", total_pages)).size(11.0).color(egui::Color32::from_gray(140)));
         // 页码 DragValue（1-based 显示，拖动+输入）
         let mut edit = (page + 1) as i64;
-        let resp = ui.add_sized(
-            [28.0, 14.0],
-            egui::DragValue::new(&mut edit)
-                .range(1..=total_pages.max(1) as i64)
-                .speed(0.2)
-                .clamp_existing_to_range(true)
-                .max_decimals(0),
-        );
+        // 用 scope 缩小 DragValue 字号，使其与周围的 11px 标签一致
+        let resp = egui::Frame::default().inner_margin(egui::Margin::ZERO).show(ui, |ui| {
+            ui.style_mut().override_text_style = Some(egui::TextStyle::Small);
+            ui.add_sized(
+                [22.0, 14.0],
+                egui::DragValue::new(&mut edit)
+                    .range(1..=total_pages.max(1) as i64)
+                    .speed(0.2)
+                    .clamp_existing_to_range(true)
+                    .max_decimals(0),
+            )
+        }).inner;
         if resp.changed() {
             let n = edit as usize;
             if n >= 1 && n <= total_pages && n - 1 != page {
