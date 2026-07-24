@@ -141,7 +141,7 @@ fn undo_redo_delete() {
     // Undo via UndoStack
     doc.history.push(UndoEntry {
         action,
-        label: "delete",
+        label: "delete".to_string(),
         selected: doc.edit.selected.clone(),
         track_selected: doc.edit.track_selected.clone(),
         sel_rect: doc.edit.sel_rect.clone(),
@@ -164,7 +164,7 @@ fn undo_redo_transpose() {
 
     doc.history.push(UndoEntry {
         action,
-        label: "transpose",
+        label: "transpose".to_string(),
         selected: doc.edit.selected.clone(),
         track_selected: doc.edit.track_selected.clone(),
         sel_rect: doc.edit.sel_rect.clone(),
@@ -184,7 +184,7 @@ fn undo_redo_duplicate() {
 
     doc.history.push(UndoEntry {
         action,
-        label: "duplicate",
+        label: "duplicate".to_string(),
         selected: doc.edit.selected.clone(),
         track_selected: doc.edit.track_selected.clone(),
         sel_rect: doc.edit.sel_rect.clone(),
@@ -204,7 +204,7 @@ fn undo_stack_push_and_undo_redo() {
             old: "Track 1".into(),
             new: "Edited".into(),
         },
-        label: "edit1",
+        label: "edit1".to_string(),
         selected: Default::default(),
         track_selected: Default::default(),
         sel_rect: Default::default(),
@@ -222,7 +222,7 @@ fn undo_stack_push_and_undo_redo() {
             old: "Edited".into(),
             new: "Edited2".into(),
         },
-        label: "edit2",
+        label: "edit2".to_string(),
         selected: Default::default(),
         track_selected: Default::default(),
         sel_rect: Default::default(),
@@ -319,7 +319,7 @@ fn delete_then_undo_restores_notes() {
 
     doc.history.push(UndoEntry {
         action,
-        label: "delete",
+        label: "delete".to_string(),
         selected: doc.edit.selected.clone(),
         track_selected: doc.edit.track_selected.clone(),
         sel_rect: doc.edit.sel_rect.clone(),
@@ -344,14 +344,14 @@ fn consecutive_operations() {
     // Undo both
     doc.history.push(UndoEntry {
         action: action1,
-        label: "delete",
+        label: "delete".to_string(),
         selected: doc.edit.selected.clone(),
         track_selected: doc.edit.track_selected.clone(),
         sel_rect: doc.edit.sel_rect.clone(),
     });
     doc.history.push(UndoEntry {
         action: action2,
-        label: "transpose",
+        label: "transpose".to_string(),
         selected: doc.edit.selected.clone(),
         track_selected: doc.edit.track_selected.clone(),
         sel_rect: doc.edit.sel_rect.clone(),
