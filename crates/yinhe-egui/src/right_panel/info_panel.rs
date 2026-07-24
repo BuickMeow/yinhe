@@ -10,6 +10,7 @@ mod track;
 
 use eframe::egui;
 
+use rust_i18n::t;
 use yinhe_editor_core::document::Document;
 use yinhe_types::{AutomationEvent, AutomationTarget};
 
@@ -32,7 +33,7 @@ pub fn show(
     let Some(doc) = doc else {
         ui.add_space(8.0);
         ui.label(
-            egui::RichText::new("（未打开文档）")
+            egui::RichText::new(t!("common.no_document").as_ref())
                 .color(egui::Color32::from_gray(100))
                 .size(12.0),
         );

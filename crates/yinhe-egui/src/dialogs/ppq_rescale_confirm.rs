@@ -4,6 +4,7 @@
 //! 独立 viewport，不受主窗口 tab/面板开关影响。
 
 use eframe::egui;
+use rust_i18n::t;
 
 /// 用户选择。
 #[derive(Clone, Copy, PartialEq)]
@@ -32,7 +33,7 @@ pub(crate) fn show_viewport(ctx: &egui::Context, old: u32, new: u32) -> PpqResca
 
     ctx_clone.show_viewport_immediate(
         viewport_id,
-        crate::chrome::dialog::viewport_builder("PPQ 变更", [380.0, 200.0], false),
+        crate::chrome::dialog::viewport_builder(t!("dialog.ppq_rescale.title").as_ref(), [380.0, 200.0], false),
         move |vctx, _class| {
             let mut close = false;
             if vctx.input(|i| i.viewport().close_requested()) {
@@ -45,7 +46,7 @@ pub(crate) fn show_viewport(ctx: &egui::Context, old: u32, new: u32) -> PpqResca
                     ..Default::default()
                 })
                 .show(vctx, |ui| {
-                    crate::chrome::dialog::title_bar(ui, "PPQ 变更", &mut close);
+                    crate::chrome::dialog::title_bar(ui, t!("dialog.ppq_rescale.title").as_ref(), &mut close);
                     egui::Frame::new()
                         .inner_margin(egui::Margin {
                             left: 12,
@@ -56,13 +57,13 @@ pub(crate) fn show_viewport(ctx: &egui::Context, old: u32, new: u32) -> PpqResca
                         .show(ui, |ui| {
                             ui.set_max_width(360.0);
                             ui.add_space(6.0);
-                            ui.label(format!("PPQ 将从 {} 变为 {}。", old, new));
+                            ui.label(t!("dialog.ppq_rescale.desc", old = old, new = new).as_ref());
                             ui.add_space(4.0);
-                            ui.label("是否同时缩放已有音符与自动化事件，以保留绝对时值？");
+                            ui.label(t!("dialog.ppq_rescale.question").as_ref());
                             ui.add_space(6.0);
                             ui.label(
                                 egui::RichText::new(
-                                    "• 是：所有 tick 按比例缩放（推荐）\n• 否：仅改 PPQ，音符位置不变（时值会改变）",
+                                    t!("dialog.ppq_rescale.hint").as_ref(),
                                 )
                                 .color(egui::Color32::from_gray(140))
                                 .size(11.0),
@@ -70,17 +71,17 @@ pub(crate) fn show_viewport(ctx: &egui::Context, old: u32, new: u32) -> PpqResca
                             ui.add_space(12.0);
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().button_padding = egui::vec2(10.0, 4.0);
-                                if ui.button("是（缩放音符）").clicked() {
+                                if ui.button(t!("dialog.ppq_rescale.yes").as_ref()).clicked() {
                                     *action_cb.borrow_mut() = Some(PpqRescaleAction::Rescale);
                                     close = true;
                                 }
                                 ui.add_space(4.0);
-                                if ui.button("否（保持音符）").clicked() {
+                                if ui.button(t!("dialog.ppq_rescale.no").as_ref()).clicked() {
                                     *action_cb.borrow_mut() = Some(PpqRescaleAction::NoRescale);
                                     close = true;
                                 }
                                 ui.add_space(4.0);
-                                if ui.button("取消").clicked() {
+                                if ui.button(t!("common.cancel").as_ref()).clicked() {
                                     *action_cb.borrow_mut() = Some(PpqRescaleAction::Cancel);
                                     close = true;
                                 }

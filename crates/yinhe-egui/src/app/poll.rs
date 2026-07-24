@@ -1,5 +1,6 @@
 use crate::app::App;
 use crate::file_loader::LoadResult;
+use rust_i18n::t;
 use yinhe_editor_core::document::Document;
 use yinhe_editor_core::quantize::QuantizePreset;
 
@@ -76,10 +77,10 @@ impl App {
                     self.active_doc = Some(insert_idx);
                     self.teardown_audio();
                 } else {
-                    self.load_error = Some(format!(
-                        "无法打开「{}」：可能不是有效的 .yin 文件，或其内嵌 MIDI 缺少 Conductor 轨道。",
-                        file_name
-                    ));
+                    self.load_error = Some(t!(
+                        "file_dialog.open_failed",
+                        name = file_name
+                    ).to_string());
                 }
             }
             LoadResult::ArchiveError(msg) => {

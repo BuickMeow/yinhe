@@ -9,6 +9,8 @@ use eframe::egui;
 
 use yinhe_editor_core::document::Document;
 
+use rust_i18n::t;
+
 use super::InfoContent;
 
 /// 显示音轨信息编辑器。返回 `true` 表示端口/通道改变（需重建音频引擎）。
@@ -22,7 +24,7 @@ pub(super) fn show_track_info(
     if num_tracks == 0 {
         ui.add_space(8.0);
         ui.label(
-            egui::RichText::new("（无音轨）")
+            egui::RichText::new(t!("track.no_tracks").as_ref())
                 .color(egui::Color32::from_gray(100))
                 .size(12.0),
         );
@@ -64,7 +66,7 @@ pub(super) fn show_track_info(
     if doc.edit.track_selected.len() > 1 {
         ui.add_space(4.0);
         ui.label(
-            egui::RichText::new(format!("已选 {} 个音轨", doc.edit.track_selected.len()))
+            egui::RichText::new(t!("track.selected_count", n = doc.edit.track_selected.len()).as_ref())
                 .strong()
                 .size(14.0)
                 .color(egui::Color32::from_gray(220)),
@@ -79,16 +81,16 @@ pub(super) fn show_track_info(
             .sum();
 
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("总音符数:").size(11.0).color(egui::Color32::GRAY));
+            ui.label(egui::RichText::new(t!("track.total_notes").as_ref()).size(11.0).color(egui::Color32::GRAY));
             ui.label(egui::RichText::new(format!("{}", total_notes)).size(11.0));
         });
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("总事件数:").size(11.0).color(egui::Color32::GRAY));
+            ui.label(egui::RichText::new(t!("track.total_events").as_ref()).size(11.0).color(egui::Color32::GRAY));
             ui.label(egui::RichText::new(format!("{}", total_events)).size(11.0));
         });
         ui.add_space(4.0);
         ui.label(
-            egui::RichText::new("（多选模式：卷帘将显示所有选中音轨的音符）")
+            egui::RichText::new(t!("track.multi_select_hint").as_ref())
                 .size(11.0)
                 .color(egui::Color32::GRAY),
         );
@@ -96,7 +98,7 @@ pub(super) fn show_track_info(
         ui.add_space(8.0);
         ui.separator();
         ui.add_space(6.0);
-        if ui.add(egui::Button::new(egui::RichText::new("清除选择").size(12.0))).clicked() {
+        if ui.add(egui::Button::new(egui::RichText::new(t!("common.clear_selection").as_ref()).size(12.0))).clicked() {
             *info_content = None;
         }
         return false;
@@ -114,14 +116,14 @@ pub(super) fn show_track_info(
     if Some(track_idx as u16) == doc.edit.conductor_track_idx {
         ui.add_space(4.0);
         ui.label(
-            egui::RichText::new("Conductor")
+            egui::RichText::new(t!("track.conductor").as_ref())
                 .strong()
                 .size(14.0)
                 .color(egui::Color32::from_gray(220)),
         );
         ui.add_space(2.0);
         ui.label(
-            egui::RichText::new("（指挥轨：tempo / time-sig 等全局元事件）")
+            egui::RichText::new(t!("track.conductor_hint").as_ref())
                 .size(11.0)
                 .color(egui::Color32::GRAY),
         );
@@ -129,7 +131,7 @@ pub(super) fn show_track_info(
 
         if !doc.data.model.meta.name.is_empty() {
             ui.horizontal(|ui| {
-                ui.label("歌曲标题:");
+                ui.label(t!("track.song_title").as_ref());
                 ui.label(
                     egui::RichText::new(&doc.data.model.meta.name)
                         .color(egui::Color32::from_gray(200))
@@ -140,7 +142,7 @@ pub(super) fn show_track_info(
         }
 
         ui.horizontal(|ui| {
-            ui.label("Tempo 数:");
+            ui.label(t!("track.tempo_count").as_ref());
             ui.label(
                 egui::RichText::new(format!("{}", doc.data.model.conductor.tempo.events.len()))
                     .color(egui::Color32::from_gray(180))
@@ -148,7 +150,7 @@ pub(super) fn show_track_info(
             );
         });
         ui.horizontal(|ui| {
-            ui.label("Time-sig 数:");
+            ui.label(t!("track.timesig_count").as_ref());
             ui.label(
                 egui::RichText::new(format!("{}", doc.data.model.conductor.time_sig.len()))
                     .color(egui::Color32::from_gray(180))
@@ -159,7 +161,7 @@ pub(super) fn show_track_info(
         ui.add_space(8.0);
         ui.separator();
         ui.add_space(6.0);
-        if ui.add(egui::Button::new(egui::RichText::new("清除选择").size(12.0))).clicked() {
+        if ui.add(egui::Button::new(egui::RichText::new(t!("common.clear_selection").as_ref()).size(12.0))).clicked() {
             *info_content = None;
         }
         return false;
@@ -171,7 +173,7 @@ pub(super) fn show_track_info(
     let mut name_gained_focus = false;
     let mut name_lost_focus = false;
     ui.horizontal(|ui| {
-        ui.label("音轨名称:");
+        ui.label(t!("track.name").as_ref());
         let mut name = doc.data.track_names[track_idx].clone();
         let resp = ui.add_sized(
             egui::vec2(ui.available_width().max(60.0), 18.0),

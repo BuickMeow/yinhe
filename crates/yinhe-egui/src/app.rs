@@ -190,6 +190,7 @@ impl App {
         let load_progress = yinhe_editor_core::progress::new_shared();
 
         let audio_settings = crate::audio_settings::load_audio_settings();
+        rust_i18n::set_locale(&audio_settings.locale);
         let last_automation_density = audio_settings.automation_event_density;
 
         let mut app = Self {

@@ -38,6 +38,8 @@ pub struct AudioSettings {
     /// GPU 裁剪适合音符量极大的场景，但有同屏 800 万音符上限；
     /// CPU 构建无上限，但缩到最小时每帧重建开销大。
     pub use_gpu_cull: bool,
+    /// UI 语言代码，如 "zh-CN"、"en"、"ja"、"ko"。
+    pub locale: String,
     #[serde(skip)]
     pub show_settings: bool,
     #[serde(skip)]
@@ -64,6 +66,7 @@ impl Default for AudioSettings {
             haptic_intensity: 0.5,
             use_gpu_synth: false,
             use_gpu_cull: false, // 默认 CPU 构建
+            locale: "zh-CN".to_string(),
             show_settings: false,
             available_devices: Vec::new(),
             available_sample_rates: Vec::new(),

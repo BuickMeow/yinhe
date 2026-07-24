@@ -495,7 +495,7 @@ mod tests {
             let action = doc.add_note(1, n).expect("add_note should succeed");
             doc.history.push(UndoEntry {
                 action,
-                label: "add_note",
+                label: "add_note".to_string(),
                 selected: Default::default(),
                 track_selected: HashSet::new(),
                 sel_rect: SelRectState::default(),
@@ -508,7 +508,7 @@ mod tests {
         let action = doc.remove_track(1).expect("remove_track should succeed");
         doc.history.push(UndoEntry {
             action,
-            label: "remove_track",
+            label: "remove_track".to_string(),
             selected: Default::default(),
             track_selected: HashSet::new(),
             sel_rect: SelRectState::default(),
@@ -569,7 +569,7 @@ mod tests {
             .expect("move_selected_arrange should return an action");
         doc.history.push(UndoEntry {
             action,
-            label: "arrange_move",
+            label: "arrange_move".to_string(),
             selected: Default::default(),
             track_selected: HashSet::new(),
             sel_rect: SelRectState::default(),

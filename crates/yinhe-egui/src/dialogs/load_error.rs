@@ -1,4 +1,5 @@
 use eframe::egui;
+use rust_i18n::t;
 
 pub(crate) fn show_viewport(ctx: &egui::Context, error: &mut Option<String>) {
     let msg = match error {
@@ -13,7 +14,7 @@ pub(crate) fn show_viewport(ctx: &egui::Context, error: &mut Option<String>) {
 
     ctx_clone.show_viewport_immediate(
         viewport_id,
-        crate::chrome::dialog::viewport_builder("无法打开文件", [420.0, 120.0], false),
+        crate::chrome::dialog::viewport_builder(t!("dialog.load_error.title").as_ref(), [420.0, 120.0], false),
         move |vctx, _class| {
             let mut close = false;
             if vctx.input(|i| i.viewport().close_requested()) {
@@ -25,7 +26,7 @@ pub(crate) fn show_viewport(ctx: &egui::Context, error: &mut Option<String>) {
                     ..Default::default()
                 })
                 .show(vctx, |ui| {
-                    crate::chrome::dialog::title_bar(ui, "无法打开文件", &mut close);
+                    crate::chrome::dialog::title_bar(ui, t!("dialog.load_error.title").as_ref(), &mut close);
                     egui::Frame::new()
                         .inner_margin(egui::Margin {
                             left: 12,
@@ -39,7 +40,7 @@ pub(crate) fn show_viewport(ctx: &egui::Context, error: &mut Option<String>) {
                                 ui.add_space(8.0);
                                 ui.label(&msg);
                                 ui.add_space(16.0);
-                                if ui.button("确定").clicked() {
+                                if ui.button(t!("dialog.load_error.ok").as_ref()).clicked() {
                                     close = true;
                                 }
                             });

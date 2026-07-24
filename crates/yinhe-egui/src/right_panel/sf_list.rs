@@ -1,4 +1,5 @@
 use eframe::egui;
+use rust_i18n::t;
 
 use yinhe_editor_core::config::SfEntry;
 
@@ -182,16 +183,16 @@ fn sf_row(
     let mut action: Option<SfAction> = None;
     resp.context_menu(|ui| {
         ui.set_min_width(100.0);
-        if index > 0 && ui.button("上移").clicked() {
+        if index > 0 && ui.button(t!("sf_list.move_up").as_ref()).clicked() {
             action = Some(SfAction::MoveUp);
             ui.close();
         }
-        if index < total - 1 && ui.button("下移").clicked() {
+        if index < total - 1 && ui.button(t!("sf_list.move_down").as_ref()).clicked() {
             action = Some(SfAction::MoveDown);
             ui.close();
         }
         ui.separator();
-        if ui.button("删除").clicked() {
+        if ui.button(t!("sf_list.delete").as_ref()).clicked() {
             action = Some(SfAction::Remove);
             ui.close();
         }

@@ -1,4 +1,5 @@
 use eframe::egui;
+use rust_i18n::t;
 
 use crate::app::App;
 use crate::arrange;
@@ -136,7 +137,7 @@ impl App {
             );
             let Some(idx) = self.active_doc else { return };
             self.documents[idx].edit.selected = sel;
-            self.with_undo("橡皮擦删除 (编排)", |doc| doc.delete_selected());
+            self.with_undo(t!("undo.eraser_arrange").as_ref(), |doc| doc.delete_selected());
         }
 
         // Handle AR drag after guard is dropped (no outstanding borrow on self.documents)
@@ -392,7 +393,7 @@ impl App {
                     let mut sel = yinhe_core::Selection::default();
                     sel.add_rect_track(t_start, t_end, key_lo, key_hi, track_lo, track_hi);
                     self.documents[idx].edit.selected = sel;
-                    self.with_undo("橡皮擦删除", |doc| doc.delete_selected());
+                    self.with_undo(t!("undo.eraser_delete").as_ref(), |doc| doc.delete_selected());
                 }
                 PianoViewEvent::QuantizePreset(preset) => {
                     let Some(idx) = self.active_doc else { return };
@@ -427,7 +428,7 @@ impl App {
             for action in actions {
                 doc.history.push(yinhe_editor_core::history::UndoEntry {
                     action,
-                    label: "编辑自动化",
+                    label: t!("undo.edit_automation").to_string(),
                     selected: doc.edit.selected.clone(),
                     track_selected: doc.edit.track_selected.clone(),
                     sel_rect: doc.edit.sel_rect.clone(),
@@ -482,9 +483,9 @@ impl App {
             let Some(idx) = self.active_doc else { return };
             let doc = &mut self.documents[idx];
             let (action, label) = if alt {
-                (doc.duplicate_selected_to(delta_ticks, delta_keys), "重复音符")
+                (doc.duplicate_selected_to(delta_ticks, delta_keys), t!("undo.duplicate_move").to_string())
             } else {
-                (doc.move_selected_notes(delta_ticks, delta_keys), "移动音符")
+                (doc.move_selected_notes(delta_ticks, delta_keys), t!("undo.move_notes").to_string())
             };
             if let Some(action) = action {
                 self.pianoroll_view.base.dirty = true;
@@ -511,8 +512,8 @@ impl App {
             doc.history.push(yinhe_editor_core::history::UndoEntry {
                 action,
                 label: match &drag {
-                    crate::piano_view::PencilNoteDrag::Move { .. } => "移动音符",
-                    _ => "调整音符长度",
+                    crate::piano_view::PencilNoteDrag::Move { .. } => t!("undo.move_note").to_string(),
+                    _ => t!("undo.resize_note").to_string(),
                 },
                 selected: doc.edit.selected.clone(),
                 track_selected: doc.edit.track_selected.clone(),
@@ -536,7 +537,7 @@ impl App {
             self.arrange_view.base.dirty = true;
             doc.history.push(yinhe_editor_core::history::UndoEntry {
                 action,
-                label: "在编排中移动",
+                label: t!("undo.move_in_arrange").to_string(),
                 selected: doc.edit.selected.clone(),
                 track_selected: doc.edit.track_selected.clone(),
                 sel_rect: doc.edit.sel_rect.clone(),

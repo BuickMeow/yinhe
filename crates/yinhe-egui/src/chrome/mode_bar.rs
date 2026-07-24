@@ -1,5 +1,6 @@
 use eframe::egui;
 use egui_material_icons::icons::*;
+use rust_i18n::t;
 
 use crate::right_panel::RightTab;
 
@@ -167,19 +168,19 @@ pub fn show(
             ui.horizontal(|ui| {
                 ui.add_space(2.0);
 
-                mode_button(ui, "编排", *view_mode == ViewMode::Arrange, || {
+                mode_button(ui, t!("mode.arrange").as_ref(), *view_mode == ViewMode::Arrange, || {
                     *view_mode = ViewMode::Arrange;
                 });
 
                 ui.add_space(2.0);
 
-                mode_button(ui, "混音", *view_mode == ViewMode::Mix, || {
+                mode_button(ui, t!("mode.mix").as_ref(), *view_mode == ViewMode::Mix, || {
                     *view_mode = ViewMode::Mix;
                 });
 
                 ui.add_space(2.0);
 
-                mode_button(ui, "编辑", *view_mode == ViewMode::Edit, || {
+                mode_button(ui, t!("mode.edit").as_ref(), *view_mode == ViewMode::Edit, || {
                     *view_mode = ViewMode::Edit;
                 });
 

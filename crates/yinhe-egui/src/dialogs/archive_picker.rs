@@ -1,5 +1,7 @@
 use std::sync::mpsc;
 
+use rust_i18n::t;
+
 /// State of the archive picker dialog.
 pub(crate) enum ArchivePickerState {
     /// Background thread is opening the archive.
@@ -75,7 +77,7 @@ pub(crate) fn show(
                 Ok(Ok((archive, entries))) => {
                     if entries.is_empty() {
                         return ArchivePickerAction::Error(
-                            "压缩包中没有找到 MIDI 文件".to_string(),
+                            t!("dialog.archive.no_midi").to_string(),
                         );
                     }
                     if entries.len() == 1 {
@@ -94,12 +96,12 @@ pub(crate) fn show(
                     *state = ArchivePickerState::Opened(picker);
                     ArchivePickerAction::None
                 }
-                Ok(Err(e)) => ArchivePickerAction::Error(format!("打开压缩包失败: {}", e)),
+                Ok(Err(e)) => ArchivePickerAction::Error(t!("dialog.archive.open_failed", e = e).to_string()),
                 Err(_) => {
                     // Still loading — show spinner
                     ui.horizontal(|ui| {
                         ui.spinner();
-                        ui.label("正在扫描压缩包...");
+                        ui.label(t!("dialog.archive.scanning").as_ref());
                     });
                     ArchivePickerAction::None
                 }
@@ -113,7 +115,7 @@ pub(crate) fn show(
                 .map(|f| f.to_string_lossy().to_string())
                 .unwrap_or_else(|| picker.path.clone());
             ui.label(
-                eframe::egui::RichText::new(format!("来源: {}", filename))
+                eframe::egui::RichText::new(t!("dialog.archive.source", name = filename).as_ref())
                     .strong()
                     .size(13.0),
             );
@@ -123,7 +125,7 @@ pub(crate) fn show(
                 ui.label("🔍");
                 ui.add(
                     eframe::egui::TextEdit::singleline(&mut picker.search_query)
-                        .hint_text("搜索文件...")
+                        .hint_text(t!("dialog.archive.search_hint").as_ref())
                         .desired_width(f32::INFINITY),
                 )
             });
@@ -174,7 +176,7 @@ pub(crate) fn show(
                                     return;
                                 }
                                 Err(e) => {
-                                    action = ArchivePickerAction::Error(format!("无法打开归档文件: {}", e));
+                                    action = ArchivePickerAction::Error(t!("dialog.archive.archive_error", e = e).to_string());
                                     return;
                                 }
                             }
@@ -210,16 +212,16 @@ pub(crate) fn show(
             ui.separator();
             ui.horizontal(|ui| {
                 ui.label(
-                    eframe::egui::RichText::new(format!("{} 个文件", picker.filtered.len()))
+                    eframe::egui::RichText::new(t!("dialog.archive.file_count", n = picker.filtered.len()).as_ref())
                         .size(12.0)
                         .color(eframe::egui::Color32::GRAY),
                 );
                 ui.with_layout(eframe::egui::Layout::right_to_left(eframe::egui::Align::Center), |ui| {
-                    if ui.button("取消").clicked() {
+                    if ui.button(t!("common.cancel").as_ref()).clicked() {
                         action = ArchivePickerAction::Cancel;
                     }
                     let confirm_enabled = picker.selected_idx.is_some();
-                    if ui.add_enabled(confirm_enabled, eframe::egui::Button::new("确认")).clicked() {
+                    if ui.add_enabled(confirm_enabled, eframe::egui::Button::new(t!("common.confirm").as_ref())).clicked() {
                         if let Some(idx) = picker.selected_idx {
                             let entry = picker.entries[idx].clone();
                             match yinhe_archive::Archive::open(&picker.path) {
@@ -228,7 +230,7 @@ pub(crate) fn show(
                                     action = ArchivePickerAction::LoadFile { archive, entry };
                                 }
                                 Err(e) => {
-                                    action = ArchivePickerAction::Error(format!("无法打开归档文件: {}", e));
+                                    action = ArchivePickerAction::Error(t!("dialog.archive.archive_error", e = e).to_string());
                                 }
                             }
                         }
@@ -267,7 +269,7 @@ pub(crate) fn show_viewport(ctx: &eframe::egui::Context, state: &mut Option<Arch
 
     ctx_clone.show_viewport_immediate(
         viewport_id,
-        crate::chrome::dialog::viewport_builder("选择 MIDI 文件", [500.0, 400.0], true),
+        crate::chrome::dialog::viewport_builder(t!("dialog.archive.title").as_ref(), [500.0, 400.0], true),
         move |vctx, _class| {
             let close_requested = vctx.input(|i| i.viewport().close_requested());
             let vctx_cmd = vctx.clone();
@@ -278,7 +280,7 @@ pub(crate) fn show_viewport(ctx: &eframe::egui::Context, state: &mut Option<Arch
                 })
                 .show(vctx, |ui| {
                     let mut close = close_requested;
-                    crate::chrome::dialog::title_bar(ui, "选择 MIDI 文件", &mut close);
+                    crate::chrome::dialog::title_bar(ui, t!("dialog.archive.title").as_ref(), &mut close);
                     if close {
                         vctx_cmd.send_viewport_cmd(eframe::egui::ViewportCommand::Visible(false));
                         *action_cb.borrow_mut() = ArchivePickerAction::Cancel;

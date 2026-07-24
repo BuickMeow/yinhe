@@ -1,4 +1,5 @@
 use eframe::egui;
+use rust_i18n::t;
 
 pub(crate) fn show_viewport(
     ctx: &egui::Context,
@@ -19,7 +20,7 @@ pub(crate) fn show_viewport(
     ctx_clone.show_viewport_immediate(
         viewport_id,
         crate::chrome::dialog::viewport_builder(
-            "内存占用详情",
+            t!("dialog.memory.title").as_ref(),
             crate::theme::MEM_POPUP_SIZE,
             false,
         ),
@@ -36,7 +37,7 @@ pub(crate) fn show_viewport(
                 .show(vctx, |ui| {
                     crate::chrome::dialog::title_bar(
                         ui,
-                        "内存占用详情",
+                        t!("dialog.memory.title").as_ref(),
                         &mut close,
                     );
                     egui::Frame::new()
@@ -51,33 +52,32 @@ pub(crate) fn show_viewport(
                                 .auto_shrink([false; 2])
                                 .show(ui, |ui| {
                                     if yinhe_memtrace::enabled() {
-                                        ui.label(format!(
-                                            "分配器追踪内存: {:.1} MB",
-                                            snapshot.total_mb()
-                                        ));
+                                        ui.label(
+                                            t!("dialog.memory.allocator", n = format!("{:.1}", snapshot.total_mb())).as_ref(),
+                                        );
                                     } else {
                                         ui.label(
                                             egui::RichText::new(
-                                                "内存分类追踪未启用（用 --features memtrace 编译开启）",
+                                                t!("dialog.memory.not_enabled").as_ref(),
                                             )
                                             .color(egui::Color32::from_gray(140)),
                                         );
                                     }
-                                    ui.label(format!("系统统计总内存 (RSS): {:.1} MB", mem_mb));
-                                    ui.label(format!(
-                                        "wgpu 显式 GPU 资源: {:.1} MB",
-                                        snapshot.gpu_mb()
-                                    ));
+                                    ui.label(
+                                        t!("dialog.memory.rss", n = format!("{:.1}", mem_mb)).as_ref(),
+                                    );
+                                    ui.label(
+                                        t!("dialog.memory.gpu", n = format!("{:.1}", snapshot.gpu_mb())).as_ref(),
+                                    );
 
                                     #[cfg(target_os = "macos")]
-                                    ui.label(format!(
-                                        "Metal 驱动真实显存: {:.1} MB",
-                                        metal_size as f64 / 1_048_576.0
-                                    ));
+                                    ui.label(
+                                        t!("dialog.memory.metal", n = format!("{:.1}", metal_size as f64 / 1_048_576.0)).as_ref(),
+                                    );
 
                                     if yinhe_memtrace::enabled() {
                                         ui.separator();
-                                        ui.heading("按子系统分类");
+                                        ui.heading(t!("dialog.memory.by_subsystem").as_ref());
                                         egui::Grid::new("mem_breakdown_grid")
                                             .num_columns(2)
                                             .spacing([12.0, 8.0])
@@ -100,9 +100,7 @@ pub(crate) fn show_viewport(
 
                                     ui.separator();
                                     ui.small(
-                                        "注：GPU 资源计数反映应用显式创建的 wgpu Texture/Buffer 大小；\
-                                         驱动层额外开销（swapchain、depth、pipeline cache 等）\
-                                         不纳入此项统计。",
+                                        t!("dialog.memory.note").as_ref(),
                                     );
                                 });
                         });

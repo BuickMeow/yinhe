@@ -1,6 +1,8 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, mpsc};
 
+use rust_i18n::t;
+
 use yinhe_core::YinModel;
 use yinhe_mid2::{LoadProgress, MidiImportEncoding};
 use yinhe_yin::{MappingFile, ProjectSoundFonts};
@@ -109,12 +111,12 @@ impl FileLoader {
 
         if let Some(path) = rfd::FileDialog::new()
             .add_filter(
-                "所有支持的格式",
+                t!("file_dialog.all_supported").as_ref(),
                 &["mid", "midi", "yin", "zip", "7z", "tar", "gz", "xz", "tgz", "txz"],
             )
-            .add_filter("MIDI", &["mid", "midi"])
-            .add_filter("Yinhe 工程", &["yin"])
-            .add_filter("归档", &["zip", "7z", "tar", "gz", "xz", "tgz", "txz"])
+            .add_filter(t!("file_dialog.midi").as_ref(), &["mid", "midi"])
+            .add_filter(t!("file_dialog.yinhe_project").as_ref(), &["yin"])
+            .add_filter(t!("file_dialog.archive").as_ref(), &["zip", "7z", "tar", "gz", "xz", "tgz", "txz"])
             .pick_file()
         {
             let path_str = path.to_string_lossy().to_string();

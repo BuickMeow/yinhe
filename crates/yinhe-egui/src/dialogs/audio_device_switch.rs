@@ -1,4 +1,5 @@
 use eframe::egui;
+use rust_i18n::t;
 
 /// "音频设备切换"对话框的用户动作。
 ///
@@ -41,7 +42,7 @@ pub(crate) fn show_viewport(
 
     ctx_clone.show_viewport_immediate(
         viewport_id,
-        crate::chrome::dialog::viewport_builder("音频设备切换", [460.0, 440.0], false),
+        crate::chrome::dialog::viewport_builder(t!("dialog.audio_switch.title").as_ref(), [460.0, 440.0], false),
         move |vctx, _class| {
             let mut hide = false;
             if vctx.input(|i| i.viewport().close_requested()) {
@@ -53,7 +54,7 @@ pub(crate) fn show_viewport(
                     ..Default::default()
                 })
                 .show(vctx, |ui| {
-                    crate::chrome::dialog::title_bar(ui, "音频设备切换", &mut hide);
+                    crate::chrome::dialog::title_bar(ui, t!("dialog.audio_switch.title").as_ref(), &mut hide);
                     egui::Frame::new()
                         .inner_margin(egui::Margin {
                             left: 12,
@@ -67,13 +68,13 @@ pub(crate) fn show_viewport(
                             ui.vertical_centered(|ui| {
                                 ui.add_space(8.0);
                                 if allow_keep_current {
-                                    ui.label("检测到音频设备列表变更。");
+                                    ui.label(t!("dialog.audio_switch.devices_changed").as_ref());
                                     ui.add_space(4.0);
-                                    ui.label("选择一个新的输出设备，或保持当前设备：");
+                                    ui.label(t!("dialog.audio_switch.select_new").as_ref());
                                 } else {
-                                    ui.label("音频流已断开（设备热拔或驱动错误）。");
+                                    ui.label(t!("dialog.audio_switch.stream_error").as_ref());
                                     ui.add_space(4.0);
-                                    ui.label("请选择一个新的输出设备：");
+                                    ui.label(t!("dialog.audio_switch.select_device").as_ref());
                                 }
                                 ui.add_space(8.0);
                             });
@@ -86,7 +87,7 @@ pub(crate) fn show_viewport(
                                         ui.vertical_centered(|ui| {
                                             ui.add_space(12.0);
                                             ui.label(
-                                                egui::RichText::new("（未发现任何输出设备）")
+                                                egui::RichText::new(t!("dialog.audio_switch.no_devices").as_ref())
                                                     .color(egui::Color32::from_gray(140)),
                                             );
                                         });
@@ -106,14 +107,14 @@ pub(crate) fn show_viewport(
                             ui.add_space(8.0);
 
                             ui.vertical_centered(|ui| {
-                                if ui.button("刷新设备列表").clicked() {
+                                if ui.button(t!("settings.refresh_devices").as_ref()).clicked() {
                                     *action_capture.borrow_mut() =
                                         AudioDeviceSwitchAction::Refresh;
                                 }
 
                                 if allow_keep_current {
                                     ui.add_space(8.0);
-                                    if ui.button("保持当前设备").clicked() {
+                                    if ui.button(t!("dialog.audio_switch.keep_current").as_ref()).clicked() {
                                         *action_capture.borrow_mut() =
                                             AudioDeviceSwitchAction::KeepCurrent;
                                         hide = true;
@@ -129,7 +130,7 @@ pub(crate) fn show_viewport(
                                 }
 
                                 ui.add_space(16.0);
-                                if ui.button("退出 yinhe").clicked() {
+                                if ui.button(t!("common.exit_app").as_ref()).clicked() {
                                     *action_capture.borrow_mut() =
                                         AudioDeviceSwitchAction::Exit;
                                     hide = true;

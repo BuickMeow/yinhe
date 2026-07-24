@@ -2,6 +2,7 @@ mod track_panel;
 mod view_ui;
 
 use eframe::egui;
+use rust_i18n::t;
 
 use yinhe_types::ArrangementView;
 
@@ -185,23 +186,23 @@ pub fn show(
             let (undo_action, label) = match &action {
                 track_panel::TrackAction::AddTrack { after_idx } => {
                     let idx = after_idx.unwrap_or(doc.data.model.tracks.len() - 1);
-                    (doc.add_track(idx), "添加轨道")
+                    (doc.add_track(idx), t!("undo.add_track").to_string())
                 }
                 track_panel::TrackAction::RemoveTrack { idx } => {
-                    (doc.remove_track(*idx), "删除轨道")
+                    (doc.remove_track(*idx), t!("undo.remove_track").to_string())
                 }
                 track_panel::TrackAction::MoveUp { idx } => {
                     if *idx > 0 {
-                        (doc.move_track(*idx, *idx - 1), "上移轨道")
+                        (doc.move_track(*idx, *idx - 1), t!("undo.move_track_up").to_string())
                     } else {
-                        (None, "")
+                        (None, String::new())
                     }
                 }
                 track_panel::TrackAction::MoveDown { idx } => {
                     if *idx + 1 < doc.data.model.tracks.len() {
-                        (doc.move_track(*idx, *idx + 1), "下移轨道")
+                        (doc.move_track(*idx, *idx + 1), t!("undo.move_track_down").to_string())
                     } else {
-                        (None, "")
+                        (None, String::new())
                     }
                 }
             };
@@ -377,7 +378,7 @@ pub fn show(
             if let Some(action) = doc.add_track(idx) {
                 doc.history.push(yinhe_editor_core::history::UndoEntry {
                     action,
-                    label: "添加轨道",
+                    label: t!("undo.add_track").to_string(),
                     selected: doc.edit.selected.clone(),
                     track_selected: doc.edit.track_selected.clone(),
                     sel_rect: doc.edit.sel_rect.clone(),

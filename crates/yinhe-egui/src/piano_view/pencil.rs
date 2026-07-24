@@ -1,6 +1,7 @@
 //! Pencil-tool input handling for the piano-roll view.
 
 use eframe::egui;
+use rust_i18n::t;
 
 use yinhe_types::{key_notes_in_range, TimeSigEvent};
 use yinhe_editor_core::quantize::QuantizePreset;
@@ -243,9 +244,9 @@ pub(crate) fn pencil_frame(
                     // ── Tooltip：显示 key / tick / gate ──
                     let gate = (current_end - *s_tick) as u32;
                     let lines = vec![
-                        format!("键位 {}", s_key),
-                        format!("刻度 {}", *s_tick as u32),
-                        format!("时值 {}", gate),
+                        t!("pencil.key", n = s_key).to_string(),
+                        t!("pencil.tick", n = *s_tick as u32).to_string(),
+                        t!("pencil.gate", n = gate).to_string(),
                     ];
                     if let Some(pos) = hover_pos {
                         crate::view_interaction::draw_hover_tooltip(ui.ctx(), &lines, pos.x, pos.y);

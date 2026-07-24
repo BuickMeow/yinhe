@@ -2,6 +2,7 @@ use eframe::egui;
 use egui_extras::{Column, TableBuilder};
 use egui_material_icons::icons::*;
 
+use rust_i18n::t;
 use yinhe_editor_core::document::Document;
 use yinhe_types::AutomationTarget;
 use crate::widgets::split_handle;
@@ -289,7 +290,7 @@ fn render_tree(
         let port_key = ArchiveKey::Port(port);
         let port_expanded = state.expanded_keys.contains(&port_key);
         let port_track_count: usize = channels.values().map(|v| v.len()).sum();
-        let port_label = format!("Port {} ({} 轨道)", port_letter(port), port_track_count);
+        let port_label = t!("event_browser.port_tracks", port = port_letter(port), n = port_track_count).to_string();
         if render_dir_row(ui, &port_label, 0, port_expanded, channels.len()) {
             toggle_key(state, port_key);
         }
@@ -300,7 +301,7 @@ fn render_tree(
         for (&channel, track_indices) in channels {
             let ch_key = ArchiveKey::Channel(port, channel);
             let ch_expanded = state.expanded_keys.contains(&ch_key);
-            let ch_label = format!("Channel {} ({} tracks)", channel + 1, track_indices.len());
+            let ch_label = t!("event_browser.channel_tracks", ch = channel + 1, n = track_indices.len()).to_string();
             if render_dir_row(ui, &ch_label, 1, ch_expanded, track_indices.len()) {
                 toggle_key(state, ch_key);
             }
@@ -462,7 +463,7 @@ fn show_event_detail(ui: &mut egui::Ui, item: &SelectedItem, doc: &Document, bar
                 }
             });
             ui.add_space(2.0);
-            build_table(ui, "eb_tempo", &[("#", 40.0), ("刻度", 70.0), ("位置", 80.0), ("BPM", 70.0)], page_items.len(), |i, row| {
+            build_table(ui, "eb_tempo", &[("#", 40.0), (t!("event_browser.header.tick").as_ref(), 70.0), (t!("event_browser.header.position").as_ref(), 80.0), ("BPM", 70.0)], page_items.len(), |i, row| {
                 let s = page_items[i];
                 cell_text(row, format!("{}", page_start + i + 1));
                 cell_text(row, format!("{}", s.tick));
@@ -489,7 +490,7 @@ fn show_event_detail(ui: &mut egui::Ui, item: &SelectedItem, doc: &Document, bar
                 }
             });
             ui.add_space(2.0);
-            build_table(ui, "eb_ts", &[("#", 40.0), ("刻度", 70.0), ("位置", 80.0), ("拍号", 80.0)], page_items.len(), |i, row| {
+            build_table(ui, "eb_ts", &[("#", 40.0), (t!("event_browser.header.tick").as_ref(), 70.0), (t!("event_browser.header.position").as_ref(), 80.0), ("拍号", 80.0)], page_items.len(), |i, row| {
                 let e = page_items[i];
                 let denom = 1u32 << e.denominator as u32;
                 cell_text(row, format!("{}", page_start + i + 1));
@@ -542,7 +543,7 @@ fn show_event_detail(ui: &mut egui::Ui, item: &SelectedItem, doc: &Document, bar
                 }
             });
             ui.add_space(2.0);
-            build_table(ui, "eb_notes", &[("#", 40.0), ("id", 70.0), ("刻度", 70.0), ("位置", 80.0), ("结束刻度", 80.0), ("结束位置", 90.0), ("键位", 50.0), ("力度", 50.0)], page_notes.len(), |i, row| {
+            build_table(ui, "eb_notes", &[("#", 40.0), ("id", 70.0), (t!("event_browser.header.tick").as_ref(), 70.0), (t!("event_browser.header.position").as_ref(), 80.0), (t!("event_browser.header.end_tick").as_ref(), 80.0), ("结束位置", 90.0), ("键位", 50.0), ("力度", 50.0)], page_notes.len(), |i, row| {
                 let (n, _key, _trk) = &page_notes[i];
                 cell_text(row, format!("{}", page_start + i + 1));
                 cell_text(row, format!("#{}", n.id));
@@ -585,7 +586,7 @@ fn show_event_detail(ui: &mut egui::Ui, item: &SelectedItem, doc: &Document, bar
                 }
             });
             ui.add_space(2.0);
-            build_table(ui, "eb_cc", &[("#", 40.0), ("刻度", 70.0), ("位置", 80.0), ("值", 60.0)], page_items.len(), |i, row| {
+            build_table(ui, "eb_cc", &[("#", 40.0), (t!("event_browser.header.tick").as_ref(), 70.0), (t!("event_browser.header.position").as_ref(), 80.0), ("值", 60.0)], page_items.len(), |i, row| {
                 let e = page_items[i];
                 cell_text(row, format!("{}", page_start + i + 1));
                 cell_text(row, format!("{}", e.tick));
@@ -620,7 +621,7 @@ fn show_event_detail(ui: &mut egui::Ui, item: &SelectedItem, doc: &Document, bar
                 }
             });
             ui.add_space(2.0);
-            build_table(ui, "eb_pb", &[("#", 40.0), ("刻度", 70.0), ("位置", 80.0), ("值", 70.0)], page_items.len(), |i, row| {
+            build_table(ui, "eb_pb", &[("#", 40.0), (t!("event_browser.header.tick").as_ref(), 70.0), (t!("event_browser.header.position").as_ref(), 80.0), ("值", 70.0)], page_items.len(), |i, row| {
                 let e = page_items[i];
                 cell_text(row, format!("{}", page_start + i + 1));
                 cell_text(row, format!("{}", e.tick));
@@ -650,7 +651,7 @@ fn show_event_detail(ui: &mut egui::Ui, item: &SelectedItem, doc: &Document, bar
                 }
             });
             ui.add_space(2.0);
-            build_table(ui, "eb_pc", &[("#", 40.0), ("刻度", 70.0), ("位置", 80.0), ("音色", 50.0)], page_items.len(), |i, row| {
+            build_table(ui, "eb_pc", &[("#", 40.0), (t!("event_browser.header.tick").as_ref(), 70.0), (t!("event_browser.header.position").as_ref(), 80.0), ("音色", 50.0)], page_items.len(), |i, row| {
                 let e = page_items[i];
                 cell_text(row, format!("{}", page_start + i + 1));
                 cell_text(row, format!("{}", e.tick));
@@ -805,8 +806,8 @@ fn show_mapping_json(ui: &mut egui::Ui, doc: &Document) {
     for p in &mf.ports {
         for ch in &p.channels {
             for t in &ch.tracks {
-                let muted = if t.muted { " [静音]" } else { "" };
-                let soloed = if t.soloed { " [独奏]" } else { "" };
+                let muted = if t.muted { t!("event_browser.muted_badge").to_string() } else { String::new() };
+                let soloed = if t.soloed { t!("event_browser.solo_badge").to_string() } else { String::new() };
                 kv(ui, &format!("P{} Ch{}", p.port, ch.channel + 1),
                    format!("{} ({}){}{}", t.name, &t.uuid[..8], muted, soloed));
             }
@@ -870,9 +871,9 @@ fn show_overview(ui: &mut egui::Ui, model: &yinhe_core::YinModel) {
 fn show_track_detail(ui: &mut egui::Ui, idx: u16, track: &yinhe_core::TrackData, model: &yinhe_core::YinModel) {
     ui.add_space(4.0);
     let header = if track.name.is_empty() {
-        format!("轨道 #{} (未命名)", idx)
+        t!("event_browser.track_unnamed", n = idx).to_string()
     } else {
-        format!("轨道 #{} — {}", idx, track.name)
+        t!("event_browser.track_named", n = idx, name = &track.name).to_string()
     };
     ui.label(egui::RichText::new(header).size(13.0).strong());
     ui.add_space(4.0);
@@ -886,12 +887,12 @@ fn show_track_detail(ui: &mut egui::Ui, idx: u16, track: &yinhe_core::TrackData,
 
     kv(ui, "UUID", track.uuid.clone());
     kv(ui, "Port / Channel", format!("{} / {}", port_letter(track.port), track.channel + 1));
-    kv(ui, "Channel 前缀", match track.channel_prefix {
+    kv(ui, t!("event_browser.channel_prefix").as_ref(), match track.channel_prefix {
         Some(c) => format!("{}", c),
-        None => "(无)".to_string(),
+        None => t!("common.none").to_string(),
     });
-    kv(ui, "颜色", format!("[{:.2}, {:.2}, {:.2}]", track.color[0], track.color[1], track.color[2]));
-    kv(ui, "静音 / 独奏", format!("{} / {}", track.muted, track.soloed));
+    kv(ui, t!("event_browser.color").as_ref(), format!("[{:.2}, {:.2}, {:.2}]", track.color[0], track.color[1], track.color[2]));
+    kv(ui, t!("event_browser.muted_soloed").as_ref(), format!("{} / {}", track.muted, track.soloed));
     ui.add_space(6.0);
     ui.label(egui::RichText::new("事件计数").size(12.0).strong());
     kv(ui, "Notes", format!("{}", model.track_note_count.get(idx as usize).copied().unwrap_or(0)));
@@ -919,15 +920,15 @@ fn show_track_detail(ui: &mut egui::Ui, idx: u16, track: &yinhe_core::TrackData,
         }
     }
     if !cc_controllers.is_empty() {
-        kv(ui, "CC", format!("{} 个控制器，共 {} 个事件", cc_controllers.len(), cc_total));
+        kv(ui, "CC", t!("event_browser.cc_summary", controllers = cc_controllers.len(), events = cc_total).to_string());
         for (i, ctrl) in cc_controllers.iter().enumerate() {
-            kv(ui, &format!("  CC {} {}", ctrl, cc_label(*ctrl)), format!("{} 个事件", cc_counts[i]));
+            kv(ui, &format!("  CC {} {}", ctrl, cc_label(*ctrl)), t!("event_browser.cc_count", n = cc_counts[i]).to_string());
         }
     }
     kv(ui, "Pitch Bend", format!("{}", pb_total));
     kv(ui, "Program Change", format!("{}", track.program_change.len()));
     if rpn_total > 0 {
-        kv(ui, "RPN/NRPN", format!("共 {} 个事件", rpn_total));
+        kv(ui, "RPN/NRPN", t!("event_browser.rpn_summary", n = rpn_total).to_string());
     }
 }
 

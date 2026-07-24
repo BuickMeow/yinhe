@@ -1,4 +1,5 @@
 use eframe::egui;
+use rust_i18n::t;
 
 /// 不可恢复的 GPU 硬件/驱动错误提示对话框。
 ///
@@ -22,7 +23,7 @@ pub(crate) fn show_viewport(ctx: &egui::Context) -> bool {
 
     ctx_clone.show_viewport_immediate(
         viewport_id,
-        crate::chrome::dialog::viewport_builder("需要重启", [460.0, 200.0], false),
+        crate::chrome::dialog::viewport_builder(t!("dialog.gpu_lost.title").as_ref(), [460.0, 200.0], false),
         move |vctx, _class| {
             let mut close = false;
             if vctx.input(|i| i.viewport().close_requested()) {
@@ -34,7 +35,7 @@ pub(crate) fn show_viewport(ctx: &egui::Context) -> bool {
                     ..Default::default()
                 })
                 .show(vctx, |ui| {
-                    crate::chrome::dialog::title_bar(ui, "需要重启", &mut close);
+                    crate::chrome::dialog::title_bar(ui, t!("dialog.gpu_lost.title").as_ref(), &mut close);
                     egui::Frame::new()
                         .inner_margin(egui::Margin {
                             left: 12,
@@ -47,14 +48,12 @@ pub(crate) fn show_viewport(ctx: &egui::Context) -> bool {
                             ui.vertical_centered(|ui| {
                                 ui.add_space(8.0);
                                 ui.label(
-                                    "GPU 设备已不可恢复地丢失\n\
-                                     （驱动 TDR / 设备热拔 / 显存耗尽等）。\n\
-                                     钢琴卷帘渲染已永久停止，继续操作也无法恢复。",
+                                    t!("dialog.gpu_lost.message").as_ref(),
                                 );
                                 ui.add_space(4.0);
-                                ui.label("请保存当前工程并退出程序后重新启动。");
+                                ui.label(t!("dialog.gpu_lost.action").as_ref());
                                 ui.add_space(16.0);
-                                if ui.button("退出 yinhe").clicked() {
+                                if ui.button(t!("common.exit_app").as_ref()).clicked() {
                                     close = true;
                                     *exit_capture.borrow_mut() = true;
                                 }

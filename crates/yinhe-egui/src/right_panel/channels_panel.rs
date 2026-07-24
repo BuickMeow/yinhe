@@ -1,6 +1,7 @@
 use eframe::egui;
 use egui_extras::{Column, TableBuilder};
 
+use rust_i18n::t;
 use crate::audio_settings::AudioSettings;
 use yinhe_editor_core::document::Document;
 
@@ -13,7 +14,7 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>, settings: &AudioSetti
     let Some(doc) = doc else {
         ui.add_space(8.0);
         ui.label(
-            egui::RichText::new("（未打开文档）")
+            egui::RichText::new(t!("common.no_document").as_ref())
                 .color(egui::Color32::from_gray(100))
                 .size(12.0),
         );
@@ -21,7 +22,7 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>, settings: &AudioSetti
     };
 
     ui.add_space(4.0);
-    ui.label(egui::RichText::new("XSynth 通道映射").size(14.0).strong());
+    ui.label(egui::RichText::new(t!("channels.title").as_ref()).size(14.0).strong());
     ui.add_space(4.0);
 
     // Build active mask from the YinModel: a (port, channel) is active if
@@ -56,8 +57,8 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>, settings: &AudioSetti
     let compacted_channels = next_dense.max(16);
 
     ui.horizontal(|ui| {
-        ui.label(format!("MIDI 端口数: {}", num_ports));
-        ui.label(format!("XSynth 通道数: {}", compacted_channels));
+        ui.label(t!("channels.ports", n = num_ports).to_string());
+        ui.label(t!("channels.xsynth_channels", n = compacted_channels).to_string());
     });
     ui.add_space(4.0);
 
@@ -80,9 +81,9 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>, settings: &AudioSetti
         .column(Column::initial(140.0).at_least(60.0).clip(true))
         .header(20.0, |mut h| {
             h.col(|ui| { ui.label(egui::RichText::new("XSynth").strong().size(11.0)); });
-            h.col(|ui| { ui.label(egui::RichText::new("源通道").strong().size(11.0)); });
-            h.col(|ui| { ui.label(egui::RichText::new("活跃").strong().size(11.0)); });
-            h.col(|ui| { ui.label(egui::RichText::new("音色库").strong().size(11.0)); });
+            h.col(|ui| { ui.label(egui::RichText::new(t!("channels.header.source").as_ref()).strong().size(11.0)); });
+            h.col(|ui| { ui.label(egui::RichText::new(t!("channels.header.active").as_ref()).strong().size(11.0)); });
+            h.col(|ui| { ui.label(egui::RichText::new(t!("channels.header.soundfont").as_ref()).strong().size(11.0)); });
         })
         .body(|body| {
             body.rows(18.0, compacted_channels as usize, |mut row| {

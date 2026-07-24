@@ -1,4 +1,5 @@
 use crate::app::App;
+use rust_i18n::t;
 use yinhe_editor_core::progress;
 
 impl App {
@@ -255,7 +256,7 @@ impl App {
         } else {
             // spawn 失败 —— 保留对话框，显示错误
             self.audio_state.device_switch_error =
-                Some("无法在该设备上创建音频流，请选另一个设备".to_string());
+                Some(t!("dialog.audio_switch.stream_failed").to_string());
         }
     }
 

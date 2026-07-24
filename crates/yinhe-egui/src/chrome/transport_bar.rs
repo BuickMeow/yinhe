@@ -1,5 +1,6 @@
 use eframe::egui;
 use egui_material_icons::icons::*;
+use rust_i18n::t;
 
 use crate::file_loader::FileLoader;
 use crate::widgets::tools_panel::{ALL_TOOLS, Tool};
@@ -23,7 +24,7 @@ pub enum FileAction {
 
 struct MenuItem {
     icon: egui_material_icons::MaterialIcon,
-    label: &'static str,
+    label: String,
     action: FileAction,
     enabled: bool,
 }
@@ -300,31 +301,31 @@ fn show_file_menu(
         let items = [
             MenuItem {
                 icon: ICON_NOTE_ADD,
-                label: "新建工程",
+                label: t!("file.new_project").to_string(),
                 action: FileAction::NewProject,
                 enabled: !file_loader.is_loading(),
             },
             MenuItem {
                 icon: ICON_FOLDER_OPEN,
-                label: "打开",
+                label: t!("file.open").to_string(),
                 action: FileAction::Open,
                 enabled: !file_loader.is_loading(),
             },
             MenuItem {
                 icon: ICON_SAVE,
-                label: "保存",
+                label: t!("file.save").to_string(),
                 action: FileAction::Save,
                 enabled: has_active,
             },
             MenuItem {
                 icon: ICON_SAVE_ALT,
-                label: "另存为",
+                label: t!("file.save_as").to_string(),
                 action: FileAction::SaveAs,
                 enabled: has_active,
             },
             MenuItem {
                 icon: ICON_CLOSE,
-                label: "关闭",
+                label: t!("file.close").to_string(),
                 action: FileAction::CloseDocument,
                 enabled: has_active,
             },
@@ -336,13 +337,13 @@ fn show_file_menu(
         let export_items = [
             MenuItem {
                 icon: ICON_AUDIO_FILE,
-                label: "导出音频",
+                label: t!("file.export_audio").to_string(),
                 action: FileAction::ExportAudio,
                 enabled: has_active,
             },
             MenuItem {
                 icon: ICON_MUSIC_NOTE,
-                label: "导出MIDI",
+                label: t!("file.export_midi").to_string(),
                 action: FileAction::ExportMidi,
                 enabled: has_active,
             },
@@ -354,13 +355,13 @@ fn show_file_menu(
         let misc_items = [
             MenuItem {
                 icon: ICON_SETTINGS,
-                label: "设置",
+                label: t!("file.settings").to_string(),
                 action: FileAction::Settings,
                 enabled: true,
             },
             MenuItem {
                 icon: ICON_EXIT_TO_APP,
-                label: "退出",
+                label: t!("file.exit").to_string(),
                 action: FileAction::Exit,
                 enabled: true,
             },

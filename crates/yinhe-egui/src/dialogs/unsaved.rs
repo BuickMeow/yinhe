@@ -1,4 +1,5 @@
 use eframe::egui;
+use rust_i18n::t;
 
 use crate::app::PendingFileAction;
 
@@ -26,7 +27,7 @@ pub(crate) fn show_viewport(
 
     ctx_clone.show_viewport_immediate(
         viewport_id,
-        crate::chrome::dialog::viewport_builder("尚未保存", [380.0, 170.0], false),
+        crate::chrome::dialog::viewport_builder(t!("dialog.unsaved.title").as_ref(), [380.0, 170.0], false),
         move |vctx, _class| {
             let mut close = false;
             if vctx.input(|i| i.viewport().close_requested()) {
@@ -39,7 +40,7 @@ pub(crate) fn show_viewport(
                     ..Default::default()
                 })
                 .show(vctx, |ui| {
-                    crate::chrome::dialog::title_bar(ui, "尚未保存", &mut close);
+                    crate::chrome::dialog::title_bar(ui, t!("dialog.unsaved.title").as_ref(), &mut close);
                     egui::Frame::new()
                         .inner_margin(egui::Margin {
                             left: 12,
@@ -51,16 +52,16 @@ pub(crate) fn show_viewport(
                             ui.set_max_width(360.0);
                             ui.vertical_centered(|ui| {
                                 ui.add_space(8.0);
-                                ui.label("当前工程尚未保存，是否保存？");
+                                ui.label(t!("dialog.unsaved.message").as_ref());
                                 ui.add_space(20.0);
                                 ui.horizontal(|ui| {
-                                    if ui.button("保存").clicked() {
+                                    if ui.button(t!("dialog.unsaved.save").as_ref()).clicked() {
                                         *action_cb.borrow_mut() = Some(Action::Save);
                                         close = true;
                                     }
                                     ui.add_space(8.0);
                                     let discard_btn = ui.button(
-                                        egui::RichText::new("不保存")
+                                        egui::RichText::new(t!("dialog.unsaved.discard").as_ref())
                                             .color(egui::Color32::from_rgb(255, 80, 80)),
                                     );
                                     if discard_btn.clicked() {
@@ -68,7 +69,7 @@ pub(crate) fn show_viewport(
                                         close = true;
                                     }
                                     ui.add_space(8.0);
-                                    if ui.button("返回").clicked() {
+                                    if ui.button(t!("dialog.unsaved.back").as_ref()).clicked() {
                                         *action_cb.borrow_mut() = Some(Action::Cancel);
                                         close = true;
                                     }

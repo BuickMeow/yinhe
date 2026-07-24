@@ -39,6 +39,7 @@ sysinfo = { workspace = true }
 egui_material_icons = { workspace = true }
 image = { workspace = true }
 bytemuck = { workspace = true }
+rust-i18n = { workspace = true }
 
 [build-dependencies]
 embed-resource = "3"

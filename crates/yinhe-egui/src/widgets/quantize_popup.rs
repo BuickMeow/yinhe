@@ -1,4 +1,5 @@
 use eframe::egui;
+use rust_i18n::t;
 
 use yinhe_editor_core::quantize::QuantizePreset;
 
@@ -24,14 +25,14 @@ pub fn show(
     // ── 自定义时值 ──
     let is_frac = matches!(current, QuantizePreset::Fraction(_, _));
     if ui
-        .add(egui::Button::selectable(is_frac, "自定义时值"))
+        .add(egui::Button::selectable(is_frac, t!("quantize.custom_fraction").as_ref()))
         .clicked()
     {
         *pending = Some(QuantizePreset::Fraction(1, 1));
     }
     if let QuantizePreset::Fraction(num, den) = current {
         ui.horizontal(|ui| {
-            ui.label("n:");
+            ui.label(t!("quantize.numerator").as_ref());
             let mut n = num;
             if ui
                 .add(egui::DragValue::new(&mut n).range(1..=9999).speed(0.5))
@@ -39,7 +40,7 @@ pub fn show(
             {
                 *pending = Some(QuantizePreset::Fraction(n, den));
             }
-            ui.label("d:");
+            ui.label(t!("quantize.denominator").as_ref());
             let mut d = den;
             if ui
                 .add(egui::DragValue::new(&mut d).range(1..=9999).speed(0.5))
@@ -55,7 +56,7 @@ pub fn show(
     // ── 自定义Tick ──
     let is_abs = matches!(current, QuantizePreset::Absolute(_));
     if ui
-        .add(egui::Button::selectable(is_abs, "自定义Tick"))
+        .add(egui::Button::selectable(is_abs, t!("quantize.custom_tick").as_ref()))
         .clicked()
     {
         *pending = Some(QuantizePreset::Absolute(1));

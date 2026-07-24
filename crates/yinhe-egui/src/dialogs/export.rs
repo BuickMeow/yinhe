@@ -1,6 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use eframe::egui;
+use rust_i18n::t;
 
 pub use yinhe_audio::export::ExportProgress;
 
@@ -21,7 +22,7 @@ pub(crate) fn show_progress_viewport(
 
     ctx_clone.show_viewport_immediate(
         egui::ViewportId::from_hash_of("export_progress_dialog"),
-        crate::chrome::dialog::viewport_builder("导出音频中", [320.0, 310.0], false),
+        crate::chrome::dialog::viewport_builder(t!("dialog.export.progress_title").as_ref(), [320.0, 310.0], false),
         move |vctx, _class| {
             let state = match export_progress.lock() {
                 Ok(s) => s.clone(),
@@ -38,7 +39,7 @@ pub(crate) fn show_progress_viewport(
                     ..Default::default()
                 })
                 .show(vctx, |ui| {
-                    crate::chrome::dialog::title_bar(ui, "导出音频中", &mut close);
+                    crate::chrome::dialog::title_bar(ui, t!("dialog.export.progress_title").as_ref(), &mut close);
                     egui::Frame::new()
                         .inner_margin(egui::Margin {
                             left: 12,
@@ -59,15 +60,15 @@ pub(crate) fn show_progress_viewport(
                                     .num_columns(2)
                                     .spacing([12.0, 4.0])
                                     .show(ui, |ui| {
-                                        ui.label("总时长");
+                                        ui.label(t!("dialog.export.total_duration").as_ref());
                                         ui.label(format_duration(state.total_duration_secs));
                                         ui.end_row();
 
-                                        ui.label("已渲染");
+                                        ui.label(t!("dialog.export.rendered").as_ref());
                                         ui.label(format_duration(state.rendered_secs));
                                         ui.end_row();
 
-                                        ui.label("已用时间");
+                                        ui.label(t!("dialog.export.elapsed").as_ref());
                                         let elapsed = state
                                             .started_at
                                             .map(|t| t.elapsed().as_secs_f64())
@@ -75,11 +76,11 @@ pub(crate) fn show_progress_viewport(
                                         ui.label(format_duration(elapsed));
                                         ui.end_row();
 
-                                        ui.label("复音数");
+                                        ui.label(t!("dialog.export.voice_count").as_ref());
                                         ui.label(format!("{}", state.voice_count));
                                         ui.end_row();
 
-                                        ui.label("实时倍速");
+                                        ui.label(t!("dialog.export.realtime_speed").as_ref());
                                         if state.render_speed > 0.0 {
                                             ui.label(format!("{:.2}x", state.render_speed));
                                         } else {
@@ -87,7 +88,7 @@ pub(crate) fn show_progress_viewport(
                                         }
                                         ui.end_row();
 
-                                        ui.label("整体倍速");
+                                        ui.label(t!("dialog.export.overall_speed").as_ref());
                                         if state.overall_speed > 0.0 {
                                             ui.label(format!("{:.2}x", state.overall_speed));
                                         } else {
@@ -131,7 +132,7 @@ pub(crate) fn show_completed_viewport(ctx: &egui::Context, completed: &mut Optio
 
     ctx_clone.show_viewport_immediate(
         egui::ViewportId::from_hash_of("export_completed_dialog"),
-        crate::chrome::dialog::viewport_builder("导出完成", [320.0, 200.0], false),
+        crate::chrome::dialog::viewport_builder(t!("dialog.export.completed_title").as_ref(), [320.0, 200.0], false),
         move |vctx, _class| {
             let mut close = false;
             if vctx.input(|i| i.viewport().close_requested()) {
@@ -143,7 +144,7 @@ pub(crate) fn show_completed_viewport(ctx: &egui::Context, completed: &mut Optio
                     ..Default::default()
                 })
                 .show(vctx, |ui| {
-                    crate::chrome::dialog::title_bar(ui, "导出完成", &mut close);
+                    crate::chrome::dialog::title_bar(ui, t!("dialog.export.completed_title").as_ref(), &mut close);
                     egui::Frame::new()
                         .inner_margin(egui::Margin {
                             left: 12,
@@ -158,11 +159,11 @@ pub(crate) fn show_completed_viewport(ctx: &egui::Context, completed: &mut Optio
                                     .num_columns(2)
                                     .spacing([12.0, 6.0])
                                     .show(ui, |ui| {
-                                        ui.label("已用时间");
+                                        ui.label(t!("dialog.export.elapsed").as_ref());
                                         ui.label(format_duration(elapsed));
                                         ui.end_row();
 
-                                        ui.label("整体倍速");
+                                        ui.label(t!("dialog.export.overall_speed").as_ref());
                                         if speed > 0.0 {
                                             ui.label(format!("{:.2}x", speed));
                                         } else {
@@ -172,7 +173,7 @@ pub(crate) fn show_completed_viewport(ctx: &egui::Context, completed: &mut Optio
                                     });
 
                                 ui.add_space(12.0);
-                                if ui.button("打开所在文件夹").clicked() {
+                                if ui.button(t!("dialog.export.open_folder").as_ref()).clicked() {
                                     let parent = std::path::Path::new(&file_path)
                                         .parent()
                                         .map(|p| p.to_path_buf());
@@ -234,7 +235,7 @@ pub(crate) fn show_settings_viewport(
 
     ctx_clone.show_viewport_immediate(
         viewport_id,
-        crate::chrome::dialog::viewport_builder("导出音频", [320.0, 260.0], false),
+        crate::chrome::dialog::viewport_builder(t!("dialog.export.settings_title").as_ref(), [320.0, 260.0], false),
         move |vctx, _class| {
             let mut close = false;
             if vctx.input(|i| i.viewport().close_requested()) {
@@ -246,7 +247,7 @@ pub(crate) fn show_settings_viewport(
                     ..Default::default()
                 })
                 .show(vctx, |ui| {
-                    crate::chrome::dialog::title_bar(ui, "导出音频", &mut close);
+                    crate::chrome::dialog::title_bar(ui, t!("dialog.export.settings_title").as_ref(), &mut close);
                     egui::Frame::new()
                         .inner_margin(egui::Margin {
                             left: 12,
@@ -260,7 +261,7 @@ pub(crate) fn show_settings_viewport(
                                 ui.add_space(8.0);
 
                                 ui.horizontal(|ui| {
-                                    ui.label("位深度：");
+                                    ui.label(t!("dialog.export.bit_depth").as_ref());
                                     let bd = bd_cb.get();
                                     let current = match bd {
                                         yinhe_audio::export::WavBitDepth::Bit16 => "16-bit",
@@ -305,10 +306,10 @@ pub(crate) fn show_settings_viewport(
                                 });
 
                                 ui.horizontal(|ui| {
-                                    ui.label("采样率：");
+                                    ui.label(t!("dialog.export.sample_rate").as_ref());
                                     let r = sr_cb.get();
                                     let sr_text = if r == 0 {
-                                        format!("跟随全局 ({} Hz)", sample_rate)
+                                        t!("dialog.export.follow_global", n = sample_rate).to_string()
                                     } else {
                                         format!("{} Hz", r)
                                     };
@@ -318,10 +319,7 @@ pub(crate) fn show_settings_viewport(
                                         .show_ui(ui, |ui| {
                                             for &rate in &sample_rates {
                                                 let label = if rate == 0 {
-                                                    format!(
-                                                        "跟随全局 ({} Hz)",
-                                                        sample_rate
-                                                    )
+                                                    t!("dialog.export.follow_global", n = sample_rate).to_string()
                                                 } else {
                                                     format!("{} Hz", rate)
                                                 };
@@ -334,7 +332,7 @@ pub(crate) fn show_settings_viewport(
                                 });
 
                                 ui.horizontal(|ui| {
-                                    ui.label("XSynth层数：");
+                                    ui.label(t!("dialog.export.xsynth_layers").as_ref());
                                     let mut layers = lc_cb.get() as usize;
                                     ui.add(
                                         egui::DragValue::new(&mut layers)
@@ -343,13 +341,13 @@ pub(crate) fn show_settings_viewport(
                                     );
                                     lc_cb.set(layers as u32);
                                     if lc_cb.get() == 0 {
-                                        ui.label("无限制");
+                                        ui.label(t!("common.unlimited").as_ref());
                                     }
                                 });
 
                                 ui.add_space(12.0);
 
-                                if ui.button("导出").clicked() {
+                                if ui.button(t!("dialog.export.start").as_ref()).clicked() {
                                     *started_cb.borrow_mut() = true;
                                     close = true;
                                 }

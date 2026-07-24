@@ -9,6 +9,8 @@ use yinhe_editor_core::document::Document;
 use yinhe_editor_core::history::{AutomationDelta, UndoAction, UndoEntry};
 use yinhe_types::{AutomationEvent, AutomationTarget, SegmentShape};
 
+use rust_i18n::t;
+
 use super::InfoContent;
 
 /// 显示自动化锚点信息编辑器。
@@ -30,7 +32,7 @@ pub(super) fn show_anchor_info(
 
     // ── 标题 ──
     ui.label(
-        egui::RichText::new("自动化锚点")
+        egui::RichText::new(t!("anchor.title").as_ref())
             .strong()
             .size(14.0)
             .color(egui::Color32::from_gray(220)),
@@ -39,7 +41,7 @@ pub(super) fn show_anchor_info(
 
     // ── 目标名称（只读） ──
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("目标:").size(11.0).color(egui::Color32::GRAY));
+        ui.label(egui::RichText::new(t!("anchor.target").as_ref()).size(11.0).color(egui::Color32::GRAY));
         ui.label(
             egui::RichText::new(target.display_name())
                 .size(12.0)
@@ -52,7 +54,7 @@ pub(super) fn show_anchor_info(
     let guard = LaneUndoGuard::new(ui, "tick", track_idx, lane_idx, target);
     let mut edit_tick = tick as f64;
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("刻度:").size(11.0).color(egui::Color32::GRAY));
+        ui.label(egui::RichText::new(t!("anchor.tick").as_ref()).size(11.0).color(egui::Color32::GRAY));
         let resp = ui.add(egui::DragValue::new(&mut edit_tick).range(0..=u32::MAX as i64).speed(1.0));
         if resp.gained_focus() {
             guard.gained(ui, doc);
@@ -71,7 +73,7 @@ pub(super) fn show_anchor_info(
             }
         }
         if resp.lost_focus() {
-            guard.lost(ui, doc, "编辑自动化锚点刻度");
+            guard.lost(ui, doc, t!("undo.edit_anchor_tick").as_ref());
         }
     });
     ui.add_space(4.0);
@@ -80,7 +82,7 @@ pub(super) fn show_anchor_info(
     let guard = LaneUndoGuard::new(ui, "val", track_idx, lane_idx, target);
     let mut edit_value = value as f64;
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("值:").size(11.0).color(egui::Color32::GRAY));
+        ui.label(egui::RichText::new(t!("anchor.value").as_ref()).size(11.0).color(egui::Color32::GRAY));
         let resp = ui.add(egui::DragValue::new(&mut edit_value).range(0.0..=max_val as f64).speed(1.0));
         if resp.gained_focus() {
             guard.gained(ui, doc);
@@ -99,7 +101,7 @@ pub(super) fn show_anchor_info(
             }
         }
         if resp.lost_focus() {
-            guard.lost(ui, doc, "编辑自动化锚点值");
+            guard.lost(ui, doc, t!("undo.edit_anchor_value").as_ref());
         }
     });
     ui.add_space(6.0);
@@ -108,10 +110,10 @@ pub(super) fn show_anchor_info(
     ui.separator();
     ui.add_space(4.0);
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("曲线类型:").size(11.0).color(egui::Color32::GRAY));
+        ui.label(egui::RichText::new(t!("anchor.shape").as_ref()).size(11.0).color(egui::Color32::GRAY));
         let is_step = matches!(shape, SegmentShape::Step);
         let mut discrete = is_step;
-        let resp = ui.checkbox(&mut discrete, "离散 (Step)");
+        let resp = ui.checkbox(&mut discrete, t!("anchor.discrete").as_ref());
         if resp.changed() {
             let actions = doc.apply_automation_edits(vec![yinhe_types::AutomationEdit::CycleShape {
                 track_idx,
@@ -119,7 +121,7 @@ pub(super) fn show_anchor_info(
                 target: target.clone(),
                 tick,
             }]);
-            push_undo(doc, actions, "切换锚点形状");
+            push_undo(doc, actions, t!("undo.toggle_anchor_shape").as_ref());
         }
     });
 
@@ -133,7 +135,7 @@ pub(super) fn show_anchor_info(
         let guard = LaneUndoGuard::new(ui, "x1", track_idx, lane_idx, target);
         let mut edit = x1;
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("X1:").size(11.0).color(egui::Color32::GRAY));
+            ui.label(egui::RichText::new(t!("anchor.x1").as_ref()).size(11.0).color(egui::Color32::GRAY));
             let resp = ui.add(
                 egui::DragValue::new(&mut edit)
                     .range(0.0..=0.25)
@@ -153,7 +155,7 @@ pub(super) fn show_anchor_info(
                 );
             }
             if resp.lost_focus() {
-                guard.lost(ui, doc, "编辑自动化锚点 X1");
+                guard.lost(ui, doc, t!("undo.edit_anchor_x1").as_ref());
             }
         });
         ui.add_space(2.0);
@@ -162,7 +164,7 @@ pub(super) fn show_anchor_info(
         let guard = LaneUndoGuard::new(ui, "y1", track_idx, lane_idx, target);
         let mut edit = y1;
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("Y1:").size(11.0).color(egui::Color32::GRAY));
+            ui.label(egui::RichText::new(t!("anchor.y1").as_ref()).size(11.0).color(egui::Color32::GRAY));
             let resp = ui.add(
                 egui::DragValue::new(&mut edit)
                     .range(-0.5..=0.5)
@@ -182,7 +184,7 @@ pub(super) fn show_anchor_info(
                 );
             }
             if resp.lost_focus() {
-                guard.lost(ui, doc, "编辑自动化锚点 Y1");
+                guard.lost(ui, doc, t!("undo.edit_anchor_y1").as_ref());
             }
         });
         ui.add_space(2.0);
@@ -191,7 +193,7 @@ pub(super) fn show_anchor_info(
         let guard = LaneUndoGuard::new(ui, "x2", track_idx, lane_idx, target);
         let mut edit = x2;
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("X2:").size(11.0).color(egui::Color32::GRAY));
+            ui.label(egui::RichText::new(t!("anchor.x2").as_ref()).size(11.0).color(egui::Color32::GRAY));
             let resp = ui.add(
                 egui::DragValue::new(&mut edit)
                     .range(-0.25..=0.0)
@@ -211,7 +213,7 @@ pub(super) fn show_anchor_info(
                 );
             }
             if resp.lost_focus() {
-                guard.lost(ui, doc, "编辑自动化锚点 X2");
+                guard.lost(ui, doc, t!("undo.edit_anchor_x2").as_ref());
             }
         });
         ui.add_space(2.0);
@@ -220,7 +222,7 @@ pub(super) fn show_anchor_info(
         let guard = LaneUndoGuard::new(ui, "y2", track_idx, lane_idx, target);
         let mut edit = y2;
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("Y2:").size(11.0).color(egui::Color32::GRAY));
+            ui.label(egui::RichText::new(t!("anchor.y2").as_ref()).size(11.0).color(egui::Color32::GRAY));
             let resp = ui.add(
                 egui::DragValue::new(&mut edit)
                     .range(-0.5..=0.5)
@@ -240,24 +242,24 @@ pub(super) fn show_anchor_info(
                 );
             }
             if resp.lost_focus() {
-                guard.lost(ui, doc, "编辑自动化锚点 Y2");
+                guard.lost(ui, doc, t!("undo.edit_anchor_y2").as_ref());
             }
         });
         ui.add_space(6.0);
     }
 
     let shape_desc = match shape {
-        SegmentShape::Step => "离散 (Step) — 值在下一个锚点前保持恒定",
+        SegmentShape::Step => t!("anchor.shape_step_desc"),
         SegmentShape::Curve { .. } => {
             if shape.is_linear() {
-                "曲线 (Linear) — 线性插值"
+                t!("anchor.shape_linear_desc")
             } else {
-                "曲线 (Bézier) — 拖动锚点间的空心圆调整曲率"
+                t!("anchor.shape_bezier_desc")
             }
         }
     };
     ui.label(
-        egui::RichText::new(shape_desc)
+        egui::RichText::new(shape_desc.as_ref())
             .size(10.0)
             .color(egui::Color32::from_gray(140)),
     );
@@ -266,7 +268,7 @@ pub(super) fn show_anchor_info(
     ui.separator();
     ui.add_space(6.0);
 
-    if ui.add(egui::Button::new(egui::RichText::new("清除选择").size(12.0))).clicked() {
+    if ui.add(egui::Button::new(egui::RichText::new(t!("common.clear_selection").as_ref()).size(12.0))).clicked() {
         *info_content = None;
     }
 }
@@ -312,7 +314,7 @@ impl LaneUndoGuard {
     }
 
     /// 在 DragValue lost_focus 时调用：比较 after 与 before，差异时 push undo。
-    fn lost(&self, ui: &egui::Ui, doc: &mut Document, label: &'static str) {
+    fn lost(&self, ui: &egui::Ui, doc: &mut Document, label: &str) {
         let before = ui.ctx().data(|d| d.get_temp::<Vec<AutomationEvent>>(self.before_id));
         if let Some(before) = before {
             let after = snapshot_lane_events(doc, self.track_idx, self.lane_idx, &self.target);
@@ -325,7 +327,7 @@ impl LaneUndoGuard {
                         before,
                         after,
                     }),
-                    label,
+                    label: label.to_string(),
                     selected: doc.edit.selected.clone(),
                     track_selected: doc.edit.track_selected.clone(),
                     sel_rect: doc.edit.sel_rect.clone(),
@@ -340,11 +342,11 @@ impl LaneUndoGuard {
 }
 
 /// 把 `apply_automation_edits` 返回的 actions 包成 UndoEntry push 到 history。
-fn push_undo(doc: &mut Document, actions: Vec<UndoAction>, label: &'static str) {
+fn push_undo(doc: &mut Document, actions: Vec<UndoAction>, label: &str) {
     for action in actions {
         doc.history.push(UndoEntry {
             action,
-            label,
+            label: label.to_string(),
             selected: doc.edit.selected.clone(),
             track_selected: doc.edit.track_selected.clone(),
             sel_rect: doc.edit.sel_rect.clone(),

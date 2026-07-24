@@ -1,5 +1,6 @@
 use eframe::egui;
 
+use rust_i18n::t;
 use yinhe_editor_core::document::Document;
 use yinhe_editor_core::history::{begin_edit, commit_project_name, commit_artist, commit_description, commit_ppq, commit_compression_level};
 
@@ -15,7 +16,7 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
     let Some(doc) = doc else {
         ui.add_space(8.0);
         ui.label(
-            egui::RichText::new("（未打开文档）")
+            egui::RichText::new(t!("common.no_document").as_ref())
                 .color(egui::Color32::from_gray(100))
                 .size(12.0),
         );
@@ -26,7 +27,7 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
 
     // ── Project name ──
     ui.label(
-        egui::RichText::new("项目名称")
+        egui::RichText::new(t!("project.name").as_ref())
             .color(egui::Color32::from_gray(160))
             .size(11.0),
     );
@@ -58,7 +59,7 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
 
     // ── Artist ──
     ui.label(
-        egui::RichText::new("艺术家")
+        egui::RichText::new(t!("project.artist").as_ref())
             .color(egui::Color32::from_gray(160))
             .size(11.0),
     );
@@ -95,7 +96,7 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
     // - 选"否"：rebuild_tempo_map + commit_ppq(rescale=false)。
     // - 选"取消"：还原 meta.ppq = old。
     ui.label(
-        egui::RichText::new("PPQ (每拍节拍数)")
+        egui::RichText::new(t!("project.ppq").as_ref())
             .color(egui::Color32::from_gray(160))
             .size(11.0),
     );
@@ -143,7 +144,7 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
 
     // ── zstd compression level ──
     ui.label(
-        egui::RichText::new("压缩级别 (zstd)")
+        egui::RichText::new(t!("project.compression").as_ref())
             .color(egui::Color32::from_gray(160))
             .size(11.0),
     );
@@ -175,7 +176,7 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
 
     // ── Description ──
     ui.label(
-        egui::RichText::new("简介")
+        egui::RichText::new(t!("project.description").as_ref())
             .color(egui::Color32::from_gray(160))
             .size(11.0),
     );

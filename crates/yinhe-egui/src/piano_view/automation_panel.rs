@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use eframe::egui;
 use egui_material_icons::icons::*;
+use rust_i18n::t;
 
 use yinhe_editor_core::quantize::QuantizePreset;
 pub use yinhe_types::AutomationEdit;
@@ -608,7 +609,7 @@ pub fn show_panels(
                                 ui.set_min_width(120.0);
                                 // Velocity (special: not an AutomationTarget, renders from notes)
                                 let vel_selected = panel.show_velocity;
-                                if ui.add(egui::Button::selectable(vel_selected, "Velocity")).clicked() {
+                                if ui.add(egui::Button::selectable(vel_selected, t!("automation.velocity").as_ref())).clicked() {
                                     panel.show_velocity = true;
                                     panel.dirty = true;
                                     ui.ctx().data_mut(|d| d.insert_persisted(popup_id, false));
@@ -625,7 +626,7 @@ pub fn show_panels(
                                     }
                                 }
                                 ui.separator();
-                                ui.label("自定义 CC:");
+                                ui.label(t!("automation.custom_cc").as_ref());
                                 let mut cc_input = match &panel.selected_target {
                                     AutomationTarget::CC { controller } => *controller as i32,
                                     _ => 0,
@@ -659,7 +660,7 @@ pub fn show_panels(
 
         // ── Grid overlay: value labels + target name ──
         let name = if panel.show_velocity {
-            "Velocity".to_string()
+            t!("automation.velocity").to_string()
         } else {
             panel.selected_target.display_name()
         };

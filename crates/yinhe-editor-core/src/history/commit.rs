@@ -15,7 +15,7 @@ use super::UndoAction;
 /// A single entry on the undo/redo stack.
 pub struct UndoEntry {
     pub action: UndoAction,
-    pub label: &'static str,
+    pub label: String,
     pub selected: Selection,
     pub track_selected: HashSet<u16>,
     pub sel_rect: SelRectState,
@@ -163,7 +163,7 @@ fn commit_field<T: PartialEq>(
     new_value: T,
     parse_old: impl FnOnce(&str) -> T,
     make_action: impl FnOnce(T, T) -> UndoAction,
-    label: &'static str,
+    label: &str,
     selected: Selection,
     track_selected: HashSet<u16>,
     sel_rect: SelRectState,
@@ -173,7 +173,7 @@ fn commit_field<T: PartialEq>(
     if old == new_value { return; }
     stack.push(UndoEntry {
         action: make_action(old, new_value),
-        label,
+        label: label.to_string(),
         selected,
         track_selected,
         sel_rect,

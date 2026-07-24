@@ -2,6 +2,7 @@ use std::collections::HashSet;
 
 use eframe::egui;
 use egui_material_icons::icons::ICON_EDIT;
+use rust_i18n::t;
 
 use yinhe_core::TrackInfo;
 
@@ -342,35 +343,35 @@ pub(crate) fn show(
         let is_conductor = conductor_track_idx == Some(track_idx);
 
         if !is_conductor {
-            if ui.button("在此轨道下方添加").clicked() {
+            if ui.button(t!("arrange.add_below").as_ref()).clicked() {
                 actions.push(TrackAction::AddTrack { after_idx: Some(idx) });
                 ui.close();
             }
-            if ui.button("在此轨道上方添加").clicked() {
+            if ui.button(t!("arrange.add_above").as_ref()).clicked() {
                 actions.push(TrackAction::AddTrack { after_idx: Some(idx.saturating_sub(1)) });
                 ui.close();
             }
             ui.separator();
             if idx > 0 && conductor_track_idx != Some((idx - 1) as u16) {
-                if ui.button("上移").clicked() {
+                if ui.button(t!("arrange.move_up").as_ref()).clicked() {
                     actions.push(TrackAction::MoveUp { idx });
                     ui.close();
                 }
             }
             if idx < num_tracks - 1 {
-                if ui.button("下移").clicked() {
+                if ui.button(t!("arrange.move_down").as_ref()).clicked() {
                     actions.push(TrackAction::MoveDown { idx });
                     ui.close();
                 }
             }
             ui.separator();
-            if ui.button("删除轨道").clicked() {
+            if ui.button(t!("arrange.delete_track").as_ref()).clicked() {
                 actions.push(TrackAction::RemoveTrack { idx });
                 ui.close();
             }
         } else {
             // Conductor track: only allow adding after
-            if ui.button("在此轨道下方添加").clicked() {
+            if ui.button(t!("arrange.add_below").as_ref()).clicked() {
                 actions.push(TrackAction::AddTrack { after_idx: Some(idx) });
                 ui.close();
             }

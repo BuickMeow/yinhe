@@ -1,5 +1,6 @@
 use eframe::egui;
 
+use rust_i18n::t;
 use crate::audio_settings::AudioSettings;
 use yinhe_editor_core::document::Document;
 
@@ -24,7 +25,7 @@ pub fn show(
         // "全局音色库" button
         let resp_g = ui.add(
             egui::Label::new(
-                egui::RichText::new("全局音色库")
+                egui::RichText::new(t!("soundfont.global").as_ref())
                     .size(crate::theme::MODE_LABEL_FONT)
                     .color(if is_global {
                         crate::theme::ACCENT_ACTIVE
@@ -38,7 +39,7 @@ pub fn show(
         crate::widgets::hover::hover_highlight(
             ui,
             &resp_g,
-            "全局音色库",
+            t!("soundfont.global").as_ref(),
             egui::FontId::proportional(crate::theme::MODE_LABEL_FONT),
             is_global,
         );
@@ -52,7 +53,7 @@ pub fn show(
         // "歌曲音色库" button
         let resp_p = ui.add(
             egui::Label::new(
-                egui::RichText::new("歌曲音色库")
+                egui::RichText::new(t!("soundfont.project").as_ref())
                     .size(crate::theme::MODE_LABEL_FONT)
                     .color(if !is_global {
                         crate::theme::ACCENT_ACTIVE
@@ -66,7 +67,7 @@ pub fn show(
         crate::widgets::hover::hover_highlight(
             ui,
             &resp_p,
-            "歌曲音色库",
+            t!("soundfont.project").as_ref(),
             egui::FontId::proportional(crate::theme::MODE_LABEL_FONT),
             !is_global,
         );
@@ -83,7 +84,7 @@ pub fn show(
     // ── Panel content: only one visible at a time ──
     if settings.global_sf_config.global_enabled {
         ui.label(
-            egui::RichText::new("所有端口共享同一组音色库")
+            egui::RichText::new(t!("soundfont.global_hint").as_ref())
                 .color(egui::Color32::from_gray(140))
                 .size(12.0),
         );
@@ -93,7 +94,7 @@ pub fn show(
         if let Some(ref mut doc) = doc {
             changed |= project_panel(ui, doc);
         } else {
-            ui.label("（未打开文档）");
+            ui.label(t!("common.no_document").as_ref());
         }
     }
 
@@ -115,23 +116,21 @@ pub fn show(
                 .flat_map(|p| p.iter())
                 .filter(|e| e.enabled)
                 .count();
-            ui.label(format!("全局: {} SF 文件, {} 已启用", total, enabled));
+            ui.label(t!("soundfont.global_status", total = total, enabled = enabled).to_string());
         } else if let Some(ref doc) = doc {
             let proj_total: usize = doc.edit.project_sf.overrides.iter().map(|(_, e)| e.len()).sum();
             let proj_enabled: usize = doc
-                .edit.project_sf
+                .edit
+                .project_sf
                 .overrides
                 .iter()
                 .flat_map(|(_, e)| e.iter())
                 .filter(|e| e.enabled)
                 .count();
-            ui.label(format!(
-                "歌曲: {} SF 文件, {} 已启用",
-                proj_total, proj_enabled
-            ));
+            ui.label(t!("soundfont.project_status", total = proj_total, enabled = proj_enabled).to_string());
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui.button("重新加载音频").clicked() {
+            if ui.button(t!("soundfont.reload_audio").as_ref()).clicked() {
                 changed = true;
             }
         });
@@ -155,7 +154,7 @@ fn global_panel(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
 
     // Toolbar
     ui.horizontal(|ui| {
-        if ui.button("＋ 添加").clicked() {
+        if ui.button(t!("common.add").as_ref()).clicked() {
             if let Some(paths) = rfd::FileDialog::new()
                 .add_filter("SoundFont", &["sf2", "sf3", "sfz"])
                 .pick_files()
@@ -175,7 +174,7 @@ fn global_panel(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
                 changed = true;
             }
         }
-        if ui.button("清空").clicked() {
+        if ui.button(t!("common.clear").as_ref()).clicked() {
             entries.clear();
             changed = true;
         }
@@ -233,7 +232,7 @@ fn project_panel(ui: &mut egui::Ui, doc: &mut Document) -> bool {
         changed |= super::sf_list::sf_list(ui, entries);
 
         ui.horizontal(|ui| {
-            if ui.button("＋ 添加").clicked() {
+            if ui.button(t!("common.add").as_ref()).clicked() {
                 if let Some(paths) = rfd::FileDialog::new()
                     .add_filter("SoundFont", &["sf2", "sf3", "sfz"])
                     .pick_files()
@@ -255,18 +254,18 @@ fn project_panel(ui: &mut egui::Ui, doc: &mut Document) -> bool {
             }
         });
 
-        if ui.button("清空此 Port").clicked() {
+        if ui.button(t!("soundfont.clear_port").as_ref()).clicked() {
             doc.edit.project_sf.overrides[idx].1.clear();
             changed = true;
         }
     } else {
         ui.label(
-            egui::RichText::new("（未配置音色库）")
+            egui::RichText::new(t!("soundfont.not_configured").as_ref())
                 .color(egui::Color32::from_gray(100))
                 .size(12.0),
         );
         ui.add_space(4.0);
-        if ui.button("为此 Port 添加音色库").clicked() {
+        if ui.button(t!("soundfont.add_for_port").as_ref()).clicked() {
             doc.edit.project_sf.overrides.push((port, Vec::new()));
             changed = true;
         }

@@ -3,6 +3,7 @@ use std::rc::Rc;
 
 use eframe::egui;
 use egui_material_icons::icons::*;
+use rust_i18n::t;
 
 use yinhe_editor_core::progress::SharedProgress;
 
@@ -14,7 +15,7 @@ pub(crate) fn show_viewport(ctx: &egui::Context, progress: SharedProgress) -> bo
 
     ctx_clone.show_viewport_immediate(
         egui::ViewportId::from_hash_of("loading_overlay_dialog"),
-        crate::chrome::dialog::viewport_builder("正在加载", [380.0, 160.0], false),
+        crate::chrome::dialog::viewport_builder(t!("dialog.loading.title").as_ref(), [380.0, 160.0], false),
         move |vctx, _class| {
             let close_requested = vctx.input(|i| i.viewport().close_requested());
             let mut close = close_requested;
@@ -24,7 +25,7 @@ pub(crate) fn show_viewport(ctx: &egui::Context, progress: SharedProgress) -> bo
                     ..Default::default()
                 })
                 .show(vctx, |ui| {
-                    crate::chrome::dialog::title_bar(ui, "正在加载", &mut close);
+                    crate::chrome::dialog::title_bar(ui, t!("dialog.loading.title").as_ref(), &mut close);
                     egui::Frame::new()
                         .inner_margin(egui::Margin {
                             left: 12,
