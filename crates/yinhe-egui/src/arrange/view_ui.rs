@@ -185,18 +185,8 @@ pub fn show(
     };
 
     // Layer 0: grid lines (background + track lanes now drawn by egui)
-    let mut grid_key = layer_cache_key(&[vh, wh]);
-    if let Some(midi) = midi {
-        let sig_events = midi.time_sig_events();
-        let mut sig_hash = 0u64;
-        for ev in sig_events {
-            sig_hash = sig_hash.wrapping_mul(31).wrapping_add(ev.tick as u64);
-            sig_hash = sig_hash.wrapping_mul(31).wrapping_add(ev.numerator as u64);
-            sig_hash = sig_hash.wrapping_mul(31).wrapping_add(ev.denominator as u64);
-        }
-        grid_key = layer_cache_key(&[grid_key, sig_hash]);
-    }
-    renderer.upload_layer(0, grid_key, |out| {
+    // 网格构建成本极低，移除缓存每帧重建，避免缓存键遗漏 tpb 等字段导致 stale。
+    renderer.upload_layer(0, 0, |out| {
         if let Some(midi) = midi
             && let Some(tpb) = midi.ticks_per_beat()
         {

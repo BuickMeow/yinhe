@@ -446,4 +446,44 @@ mod tests {
         let all_aligned = out.iter().all(|i| i.tag % 120 == 0);
         assert!(all_aligned, "no tick lines when pixels_per_tick < MIN_TICK_PX");
     }
+
+    /// 回归测试：不同 tpb 必须产生不同的小节线位置。
+    ///
+    /// 背景：grid 缓存键曾遗漏 tpb 字段，导致两个 tpb 不同但拍号事件相同的 MIDI
+    /// 共享同一缓存键，加载新 MIDI 后网格线不更新。
+    /// 此测试验证 `build_timeline_grid` 本身正确响应 tpb 变化
+    /// （缓存已移除，但此测试仍作为网格构建正确性的回归保护）。
+    #[test]
+    fn test_grid_measure_lines_differ_by_tpb() {
+        let base = make_base(0.1);
+        let measure_color = (0.3, 0.3, 0.35, 1.0);
+        let beat_color = (0.2, 0.2, 0.25, 1.0);
+
+        // tpb=480, 4/4 → measure = 1920 ticks
+        let mut out_480 = Vec::new();
+        build_timeline_grid(&mut out_480, 800.0, 500.0, &base, 480, 4, 2, &[],
+            measure_color, beat_color, None, None, 0.0);
+        let measure_ticks_480: Vec<u32> = out_480.iter()
+            .filter(|i| i.w == 2.0)
+            .map(|i| i.tag)
+            .collect();
+
+        // tpb=960, 4/4 → measure = 3840 ticks
+        let mut out_960 = Vec::new();
+        build_timeline_grid(&mut out_960, 800.0, 500.0, &base, 960, 4, 2, &[],
+            measure_color, beat_color, None, None, 0.0);
+        let measure_ticks_960: Vec<u32> = out_960.iter()
+            .filter(|i| i.w == 2.0)
+            .map(|i| i.tag)
+            .collect();
+
+        // tpb=480 应在小节线 1920 处有线，tpb=960 不应有
+        assert!(measure_ticks_480.contains(&1920),
+            "tpb=480 should have a measure line at tick 1920, got {:?}", measure_ticks_480);
+        assert!(!measure_ticks_960.contains(&1920),
+            "tpb=960 should NOT have a measure line at tick 1920, got {:?}", measure_ticks_960);
+        // 两组小节线位置必须不同
+        assert_ne!(measure_ticks_480, measure_ticks_960,
+            "different tpb must produce different measure line positions");
+    }
 }

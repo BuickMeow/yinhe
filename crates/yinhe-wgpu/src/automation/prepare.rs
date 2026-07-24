@@ -140,10 +140,9 @@ pub fn prepare(
     let wh = crate::hash_f32s(&[w, h]);
 
     // Layer 0: grid lines (background + center line now drawn by egui)
-    let sig_hash = crate::hash_time_sigs(time_sig_events);
-    let grid_key = layer_cache_key(&[vh, wh, sig_hash]);
+    // 网格构建成本极低，移除缓存每帧重建，避免缓存键遗漏 tpb 等字段导致 stale。
     let theme = renderer.theme.clone();
-    renderer.upload_layer(0, grid_key, |out| {
+    renderer.upload_layer(0, 0, |out| {
         decor::build_grid(
             out, w, h, view, tpb, default_num, default_den, time_sig_events, scroll_x_pos, &theme,
         );

@@ -2,7 +2,6 @@ use super::instances;
 use crate::vertex::{Uniforms, SelectionUniform, MAX_TRACKS, MAX_SEL_RECTS};
 use yinhe_types::PianoRollView;
 
-use crate::layer_cache_key;
 use crate::DecorLayerData;
 
 /// Render job data: uniforms + decor layers built on CPU, sent to GPU for upload.
@@ -87,14 +86,7 @@ pub fn build_render_job(
     };
 
     // Layer 0: grid lines (background + black-key rows now drawn by egui)
-    let vh = view.render_hash();
-    let wh = crate::hash_f32s(&[w, h]);
-    let mut grid_key = layer_cache_key(&[vh, wh]);
-    if let Some(midi) = midi {
-        let sig_events = midi.time_sig_events();
-        let sig_hash = crate::hash_time_sigs(sig_events);
-        grid_key = layer_cache_key(&[vh, wh, sig_hash]);
-    }
+    // 网格构建成本极低（O(可见 tick 数)），移除缓存每帧重建，避免缓存键遗漏字段导致 stale。
     let mut grid_instances = Vec::new();
     if let Some(midi) = midi
         && let Some(tpb) = midi.ticks_per_beat()
@@ -113,7 +105,7 @@ pub fn build_render_job(
         track_colors: tc_colors,
         selection: sel_uniform,
         decor_layers: vec![
-            DecorLayerData { instances: grid_instances, cache_key: grid_key },
+            DecorLayerData { instances: grid_instances, cache_key: 0 },
         ],
         build_time,
     }

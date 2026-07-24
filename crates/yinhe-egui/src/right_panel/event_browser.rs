@@ -700,7 +700,6 @@ fn paginate<'a, T>(state: &mut EventBrowserState, items: &'a [T]) -> (usize, usi
 /// 输入框用 `ui.memory()` 存临时文本，失焦时解析；按钮翻页时输入框下一帧自动同步。
 fn render_pager(ui: &mut egui::Ui, page: usize, total_pages: usize) -> Option<usize> {
     let mut new_page = None;
-    // mem_key 提到外面：chevron 点击时也要能清掉，避免下一帧用旧 buf
     let mem_key = ui.id().with("eb_page_input");
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         // right_to_left：先放的在最右
@@ -708,12 +707,13 @@ fn render_pager(ui: &mut egui::Ui, page: usize, total_pages: usize) -> Option<us
         let next_enabled = page + 1 < total_pages;
         if ui.add_enabled(next_enabled, egui::Label::new(ICON_CHEVRON_RIGHT.rich_text().size(14.0).color(egui::Color32::from_gray(200))).sense(egui::Sense::click())).clicked() {
             new_page = Some(page + 1);
-            // 清掉缓存，让输入框下一帧用新的 (page+1).to_string()
-            ui.memory_mut(|m| m.data.remove::<String>(mem_key));
         }
         // 总页数
         ui.label(egui::RichText::new(format!("/ {}", total_pages)).size(11.0).color(egui::Color32::from_gray(140)));
-        // 页码输入框（1-based 显示）—— 用 memory 存临时文本，避免输入时被重置
+        // 页码输入框（1-based 显示）
+        // 关键：只在 TextEdit 有焦点时才写 mem_key，没焦点时不写。
+        // 这样 chevron 翻页后 state.event_page 更新，下一帧 mem_key 为 None，
+        // fallback 到 (page+1).to_string() 显示新页码；用户输入时 mem_key 保存临时文本不被覆盖。
         let buf: String = ui.memory(|m| m.data.get_temp(mem_key).unwrap_or_else(|| (page + 1).to_string()));
         let mut buf = buf;
         let resp = ui.add(
@@ -722,21 +722,24 @@ fn render_pager(ui: &mut egui::Ui, page: usize, total_pages: usize) -> Option<us
                 .font(egui::FontId::proportional(11.0))
                 .horizontal_align(egui::Align::Center),
         );
+        let edited_buf = buf.clone();
+        if resp.has_focus() {
+            // 用户正在输入，保存临时文本
+            ui.memory_mut(|m| m.data.insert_temp(mem_key, buf));
+        }
         if resp.lost_focus() {
-            if let Ok(n) = buf.trim().parse::<usize>() {
+            // 失焦：解析页码并清掉临时文本
+            if let Ok(n) = edited_buf.trim().parse::<usize>() {
                 if n >= 1 && n <= total_pages && n - 1 != page {
                     new_page = Some(n - 1);
                 }
             }
             ui.memory_mut(|m| m.data.remove::<String>(mem_key));
-        } else {
-            ui.memory_mut(|m| m.data.insert_temp(mem_key, buf));
         }
         // 上一页按钮
         let prev_enabled = page > 0;
         if ui.add_enabled(prev_enabled, egui::Label::new(ICON_CHEVRON_LEFT.rich_text().size(14.0).color(egui::Color32::from_gray(200))).sense(egui::Sense::click())).clicked() {
             new_page = Some(page - 1);
-            ui.memory_mut(|m| m.data.remove::<String>(mem_key));
         }
     });
     new_page
