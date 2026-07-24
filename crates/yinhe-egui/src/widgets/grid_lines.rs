@@ -150,16 +150,8 @@ pub fn paint_grid_lines(
                 let is_sub_pos = local % ticks_per_sub == 0;
 
                 if is_measure {
-                    if merged {
-                        // 合并小节：标签边界用粗线，中间用细线
-                        if local % merged_measure_ticks == 0 {
-                            paint_line(painter, x, top, bottom, 2.0, colors.measure);
-                        } else {
-                            paint_line(painter, x, top, bottom, 1.0, colors.measure);
-                        }
-                    } else {
-                        paint_line(painter, x, top, bottom, 2.0, colors.measure);
-                    }
+                    // 小节线统一粗线（2px），无论合并与否
+                    paint_line(painter, x, top, bottom, 2.0, colors.measure);
                 } else if show_beat && is_beat_pos {
                     paint_line(painter, x, top, bottom, 1.0, colors.beat);
                 } else if show_sub && is_sub_pos {

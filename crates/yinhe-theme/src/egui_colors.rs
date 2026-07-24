@@ -35,7 +35,7 @@ pub const TICK_LABEL: Color32 = Color32::from_rgb(0x44, 0x44, 0x49);
 pub const PR_MEASURE_LINE: Color32 = Color32::from_rgb(0x59, 0x59, 0x66);   // (0.35,0.35,0.40,1.0)
 pub const PR_BEAT_LINE: Color32 = Color32::from_rgb(0x38, 0x38, 0x40);       // (0.22,0.22,0.25,1.0)
 pub const PR_SUB_BEAT_LINE: Color32 = Color32::from_rgb(0x29, 0x29, 0x2E);   // (0.16,0.16,0.18,1.0)
-pub const PR_TICK_LINE: Color32 = Color32::from_rgba_premultiplied(0x21, 0x21, 0x26, 0x99); // (0.13,0.13,0.15,0.6)
+pub const PR_TICK_LINE: Color32 = Color32::from_rgb(0x25, 0x25, 0x2A);
 pub const AR_MEASURE_LINE: Color32 = Color32::from_rgb(0x4D, 0x4D, 0x59);     // (0.30,0.30,0.35,1.0)
 pub const AR_BEAT_LINE: Color32 = Color32::from_rgb(0x33, 0x33, 0x3B);        // (0.20,0.20,0.23,1.0)
 
