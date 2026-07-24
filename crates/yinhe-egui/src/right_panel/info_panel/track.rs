@@ -6,6 +6,7 @@
 use std::sync::Arc;
 
 use eframe::egui;
+use egui_material_icons::icons::{ICON_HEADPHONES, ICON_VOLUME_OFF};
 
 use yinhe_editor_core::document::Document;
 
@@ -287,28 +288,40 @@ pub(super) fn show_track_info(
     let mut solo_clicked = false;
 
     ui.horizontal(|ui| {
-        let mute_label = if muted { "🔇 静音" } else { "🔊 静音" };
+        // 静音：始终显示 ICON_VOLUME_OFF + 文字，颜色区分激活状态
         let mute_color = if muted {
             crate::theme::MUTE_ACTIVE
         } else {
             egui::Color32::from_gray(140)
         };
+        let mute_label = format!("{} {}", ICON_VOLUME_OFF.codepoint, t!("track.mute"));
         let r1 = ui.add(
-            egui::Button::new(egui::RichText::new(mute_label).color(mute_color).size(12.0))
-                .min_size(egui::vec2(60.0, 22.0)),
+            egui::Button::new(
+                egui::RichText::new(mute_label)
+                    .family(egui::FontFamily::Proportional)
+                    .color(mute_color)
+                    .size(12.0),
+            )
+            .min_size(egui::vec2(60.0, 22.0)),
         );
 
         ui.add_space(4.0);
 
-        let solo_label = if soloed { "🔊 独奏" } else { "🔈 独奏" };
+        // 独奏：始终显示 ICON_HEADPHONES + 文字，颜色区分激活状态
         let solo_color = if soloed {
             crate::theme::SOLO_ACTIVE
         } else {
             egui::Color32::from_gray(140)
         };
+        let solo_label = format!("{} {}", ICON_HEADPHONES.codepoint, t!("track.solo"));
         let r2 = ui.add(
-            egui::Button::new(egui::RichText::new(solo_label).color(solo_color).size(12.0))
-                .min_size(egui::vec2(60.0, 22.0)),
+            egui::Button::new(
+                egui::RichText::new(solo_label)
+                    .family(egui::FontFamily::Proportional)
+                    .color(solo_color)
+                    .size(12.0),
+            )
+            .min_size(egui::vec2(60.0, 22.0)),
         );
 
         mute_clicked = r1.clicked();

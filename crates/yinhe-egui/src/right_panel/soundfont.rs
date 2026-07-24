@@ -1,10 +1,20 @@
 use eframe::egui;
+use egui_material_icons::icons::ICON_ADD;
 
 use rust_i18n::t;
 use crate::audio_settings::AudioSettings;
 use yinhe_editor_core::document::Document;
 
 use yinhe_editor_core::config::SfEntry;
+
+/// 构造带 Material Icon 的 "添加" 按钮文本。
+/// material icons 字体已注册为 Proportional 的 fallback，ICON_ADD 码点会自动用图标字体渲染，
+/// 后续文字用普通字体渲染。
+fn add_button_text() -> egui::RichText {
+    let label = t!("common.add");
+    egui::RichText::new(format!("{} {}", ICON_ADD.codepoint, label.as_ref()))
+        .family(egui::FontFamily::Proportional)
+}
 
 /// Show the sound-bank (SoundFont) panel.
 ///
@@ -154,7 +164,7 @@ fn global_panel(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
 
     // Toolbar
     ui.horizontal(|ui| {
-        if ui.button(t!("common.add").as_ref()).clicked() {
+        if ui.button(add_button_text()).clicked() {
             if let Some(paths) = rfd::FileDialog::new()
                 .add_filter("SoundFont", &["sf2", "sf3", "sfz"])
                 .pick_files()
@@ -232,7 +242,7 @@ fn project_panel(ui: &mut egui::Ui, doc: &mut Document) -> bool {
         changed |= super::sf_list::sf_list(ui, entries);
 
         ui.horizontal(|ui| {
-            if ui.button(t!("common.add").as_ref()).clicked() {
+            if ui.button(add_button_text()).clicked() {
                 if let Some(paths) = rfd::FileDialog::new()
                     .add_filter("SoundFont", &["sf2", "sf3", "sfz"])
                     .pick_files()

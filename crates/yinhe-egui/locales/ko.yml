@@ -9,13 +9,11 @@ common.unlimited: "무제한"
 common.move_up: "위로"
 common.move_down: "아래로"
 common.clear: "지우기"
-common.add: "＋ 추가"
+common.add: "추가"
 common.exit_app: "yinhe 종료"
 
 # ── 모드 바 ──
-mode.arrange: "편곡"
-mode.mix: "믹스"
-mode.edit: "편집"
+# ARRANGE / MIX / EDIT는 원문 그대로 (번역하지 않음)
 
 # ── 도구 ──
 tool.select: "선택"
@@ -246,10 +244,8 @@ track.tempo_count: "템포 수:"
 track.timesig_count: "박자 기호 수:"
 track.name: "트랙 이름:"
 track.port_channel: "포트/채널:"
-track.mute: "🔇 뮤트"
-track.unmute: "🔊 뮤트"
-track.solo: "🔊 솔로"
-track.unsolo: "🔈 솔로"
+track.mute: "뮤트"
+track.solo: "솔로"
 track.properties: "속성"
 track.note_count: "노트 수:"
 track.event_count: "이벤트 수:"

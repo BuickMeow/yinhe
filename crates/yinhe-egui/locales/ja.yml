@@ -9,13 +9,11 @@ common.unlimited: "無制限"
 common.move_up: "上へ"
 common.move_down: "下へ"
 common.clear: "クリア"
-common.add: "＋ 追加"
+common.add: "追加"
 common.exit_app: "yinhe を終了"
 
 # ── モードバー ──
-mode.arrange: "アレンジ"
-mode.mix: "ミックス"
-mode.edit: "編集"
+# ARRANGE / MIX / EDIT は原文のまま（翻訳しない）
 
 # ── ツール ──
 tool.select: "選択"
@@ -246,10 +244,8 @@ track.tempo_count: "テンポ数:"
 track.timesig_count: "拍子記号数:"
 track.name: "トラック名:"
 track.port_channel: "ポート/チャネル:"
-track.mute: "🔇 ミュート"
-track.unmute: "🔊 ミュート"
-track.solo: "🔊 ソロ"
-track.unsolo: "🔈 ソロ"
+track.mute: "ミュート"
+track.solo: "ソロ"
 track.properties: "プロパティ"
 track.note_count: "ノート数:"
 track.event_count: "イベント数:"
