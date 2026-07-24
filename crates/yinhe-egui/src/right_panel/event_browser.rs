@@ -695,48 +695,44 @@ fn paginate<'a, T>(state: &mut EventBrowserState, items: &'a [T]) -> (usize, usi
 
 /// 渲染翻页控件（右对齐），返回 `Some(新页码)` 如果用户改变了页码（0-based）。
 ///
-/// 用 `DragValue`（info_panel 同款）：可左右拖动改变页码，也可点击输入。
-/// 每帧用当前 `page` 重新初始化局部变量，所以按钮翻页后输入框实时同步。
+/// 用 `TextEdit` + chevron 图标按钮：点击输入页码，左右箭头翻页。
+/// 所有元素字号统一 11px，高度统一 14px，视觉对齐。
+/// 输入框用 `ui.memory()` 存临时文本，失焦时解析；按钮翻页时输入框下一帧自动同步。
 fn render_pager(ui: &mut egui::Ui, page: usize, total_pages: usize) -> Option<usize> {
     let mut new_page = None;
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         // right_to_left：先放的在最右
         // 下一页按钮
         let next_enabled = page + 1 < total_pages;
-        if ui.add_enabled(next_enabled, egui::Label::new(ICON_CHEVRON_RIGHT.rich_text().size(14.0).color(egui::Color32::from_gray(200))).sense(egui::Sense::click())).clicked() {
+        if ui.add_enabled(next_enabled, egui::Label::new(ICON_CHEVRON_RIGHT.rich_text().size(11.0).color(egui::Color32::from_gray(200))).sense(egui::Sense::click())).clicked() {
             new_page = Some(page + 1);
         }
         // 总页数
         ui.label(egui::RichText::new(format!("/ {}", total_pages)).size(11.0).color(egui::Color32::from_gray(140)));
-        // 页码 DragValue（1-based 显示，拖动+输入）
-        let mut edit = (page + 1) as i64;
-        // egui 0.31.1 的 DragValue 强制使用 ui.style().drag_value_text_style，
-        // override_text_style 对它无效。这里临时把该样式改为我们项目里常用的 11px 字体。
-        let original_text_style = ui.style().drag_value_text_style.clone();
-        ui.style_mut().drag_value_text_style = egui::TextStyle::Name("small-pager".into());
-        // 给该自定义 text style 指定 11px 字体
-        ui.style_mut().text_styles.insert(
-            egui::TextStyle::Name("small-pager".into()),
-            egui::FontId::proportional(11.0),
-        );
+        // 页码输入框（1-based 显示）
+        let mem_key = ui.id().with("eb_page_input");
+        let buf: String = ui.memory(|m| m.data.get_temp(mem_key).unwrap_or_else(|| (page + 1).to_string()));
+        let mut buf = buf;
         let resp = ui.add_sized(
             [22.0, 14.0],
-            egui::DragValue::new(&mut edit)
-                .range(1..=total_pages.max(1) as i64)
-                .speed(0.2)
-                .clamp_existing_to_range(true)
-                .max_decimals(0),
+            egui::TextEdit::singleline(&mut buf)
+                .font(egui::FontId::proportional(11.0))
+                .horizontal_align(egui::Align::Center)
+                .vertical_align(egui::Align::Center),
         );
-        ui.style_mut().drag_value_text_style = original_text_style;
-        if resp.changed() {
-            let n = edit as usize;
-            if n >= 1 && n <= total_pages && n - 1 != page {
-                new_page = Some(n - 1);
+        if resp.lost_focus() {
+            if let Ok(n) = buf.trim().parse::<usize>() {
+                if n >= 1 && n <= total_pages && n - 1 != page {
+                    new_page = Some(n - 1);
+                }
             }
+            ui.memory_mut(|m| m.data.remove::<String>(mem_key));
+        } else {
+            ui.memory_mut(|m| m.data.insert_temp(mem_key, buf));
         }
         // 上一页按钮
         let prev_enabled = page > 0;
-        if ui.add_enabled(prev_enabled, egui::Label::new(ICON_CHEVRON_LEFT.rich_text().size(14.0).color(egui::Color32::from_gray(200))).sense(egui::Sense::click())).clicked() {
+        if ui.add_enabled(prev_enabled, egui::Label::new(ICON_CHEVRON_LEFT.rich_text().size(11.0).color(egui::Color32::from_gray(200))).sense(egui::Sense::click())).clicked() {
             new_page = Some(page - 1);
         }
     });
