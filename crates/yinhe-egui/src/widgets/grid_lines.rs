@@ -80,15 +80,16 @@ pub fn paint_grid_lines(
     let segments = build_time_sig_segments(time_sig_events, default_num, default_den);
 
     let pixels_per_beat = tpb as f32 * ppu;
-    let pixels_per_sub = ticks_per_sub as f32 * ppu;
 
     // 网格线 = 标签的下一级（用 MIN_SPACING 统一判定）：
-    // - measure 标签显示 → beat 线（measure 不合并时）
-    // - beat 标签显示    → sub-beat 线
-    // - sub-beat 标签显示 → tick 线
-    // - tick 标签显示    → 无下一级（1tick 太密集，除外）
-    let show_sub = colors.sub_beat.is_some() && pixels_per_beat >= MIN_SPACING;
-    let show_tick = colors.tick.is_some() && pixels_per_sub >= MIN_SPACING;
+    // - 合并 measure 标签（2/4/8… 小节合并）→ 每小节的 measure 线
+    // - 不合并 measure 标签 → beat 线
+    // - beat 标签显示       → sub-beat 线
+    // - sub-beat 标签显示   → tick 线（仅高缩放比，ppu≥6）
+    // - tick 标签显示       → 无下一级
+    // 注意：tick 线只在接近最大缩放比时显示，不做常规下一级。
+    // 最大 ppu=10.0，6.0 已是很高的缩放。
+    const TICK_PPU_THRESHOLD: f32 = 6.0;
 
     for i in 0..segments.len() {
         let (seg_start, num, den) = segments[i];
@@ -104,9 +105,13 @@ pub fn paint_grid_lines(
         // 多小节合并（缩很小时按 2/4/8… 小节合并显示）
         let pixels_per_measure = ticks_per_measure as f32 * ppu;
         let measure_divisor = compute_measure_divisor(pixels_per_measure, MIN_SPACING);
-        let merged_measure_ticks = ticks_per_measure.saturating_mul(measure_divisor);
-        // beat 线在 measure 不合并时显示（measure 标签不合并 → 画下一级 beat 线）
-        let show_beat = measure_divisor == 1;
+
+        // 网格级别判定：
+        // - measure_divisor > 1（合并）→ 画 measure 线（合并标签上一级→单个小节）
+        // - measure_divisor == 1       → 画 beat 线（measure 下一级），条件同 time_ruler
+        let show_beat = measure_divisor == 1 && pixels_per_beat >= MIN_SPACING;
+        let show_sub = colors.sub_beat.is_some() && show_beat;
+        let show_tick = colors.tick.is_some() && show_sub && ppu >= TICK_PPU_THRESHOLD;
 
         // 遍历步长 = 当前最细可见级别的步长
         let step = if show_tick {
@@ -116,7 +121,8 @@ pub fn paint_grid_lines(
         } else if show_beat {
             ticks_per_beat
         } else {
-            merged_measure_ticks.max(1)
+            // 合并时仍以 ticks_per_measure 遍历，画出每条小节线
+            ticks_per_measure.max(1)
         };
 
         let first_tick = seg_start_f.max(tick_start);
@@ -131,7 +137,8 @@ pub fn paint_grid_lines(
             let x = offset_x + base.tick_to_x(tick as f64);
 
             if x >= left && x <= right {
-                let is_measure = local % merged_measure_ticks == 0;
+                // 小节线：始终在每小节的边界（不合并），保证合并时也有单小节线
+                let is_measure = local % ticks_per_measure == 0;
                 let beat_local = local % ticks_per_measure;
                 let is_beat_pos = beat_local.is_multiple_of(ticks_per_beat) && beat_local > 0;
                 let is_sub_pos = local % ticks_per_sub == 0;
