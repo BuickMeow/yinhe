@@ -243,9 +243,9 @@ pub(crate) fn pencil_frame(
                     // ── Tooltip：显示 key / tick / gate ──
                     let gate = (current_end - *s_tick) as u32;
                     let lines = vec![
-                        format!("Key {}", s_key),
-                        format!("Tick {}", *s_tick as u32),
-                        format!("Gate {}", gate),
+                        format!("键位 {}", s_key),
+                        format!("刻度 {}", *s_tick as u32),
+                        format!("时值 {}", gate),
                     ];
                     if let Some(pos) = hover_pos {
                         crate::view_interaction::draw_hover_tooltip(ui.ctx(), &lines, pos.x, pos.y);

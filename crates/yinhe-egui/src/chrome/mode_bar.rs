@@ -167,19 +167,19 @@ pub fn show(
             ui.horizontal(|ui| {
                 ui.add_space(2.0);
 
-                mode_button(ui, "ARRANGE", *view_mode == ViewMode::Arrange, || {
+                mode_button(ui, "编排", *view_mode == ViewMode::Arrange, || {
                     *view_mode = ViewMode::Arrange;
                 });
 
                 ui.add_space(2.0);
 
-                mode_button(ui, "MIX", *view_mode == ViewMode::Mix, || {
+                mode_button(ui, "混音", *view_mode == ViewMode::Mix, || {
                     *view_mode = ViewMode::Mix;
                 });
 
                 ui.add_space(2.0);
 
-                mode_button(ui, "EDIT", *view_mode == ViewMode::Edit, || {
+                mode_button(ui, "编辑", *view_mode == ViewMode::Edit, || {
                     *view_mode = ViewMode::Edit;
                 });
 

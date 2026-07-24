@@ -185,21 +185,21 @@ pub fn show(
             let (undo_action, label) = match &action {
                 track_panel::TrackAction::AddTrack { after_idx } => {
                     let idx = after_idx.unwrap_or(doc.data.model.tracks.len() - 1);
-                    (doc.add_track(idx), "Add track")
+                    (doc.add_track(idx), "添加轨道")
                 }
                 track_panel::TrackAction::RemoveTrack { idx } => {
-                    (doc.remove_track(*idx), "Remove track")
+                    (doc.remove_track(*idx), "删除轨道")
                 }
                 track_panel::TrackAction::MoveUp { idx } => {
                     if *idx > 0 {
-                        (doc.move_track(*idx, *idx - 1), "Move track up")
+                        (doc.move_track(*idx, *idx - 1), "上移轨道")
                     } else {
                         (None, "")
                     }
                 }
                 track_panel::TrackAction::MoveDown { idx } => {
                     if *idx + 1 < doc.data.model.tracks.len() {
-                        (doc.move_track(*idx, *idx + 1), "Move track down")
+                        (doc.move_track(*idx, *idx + 1), "下移轨道")
                     } else {
                         (None, "")
                     }
@@ -377,7 +377,7 @@ pub fn show(
             if let Some(action) = doc.add_track(idx) {
                 doc.history.push(yinhe_editor_core::history::UndoEntry {
                     action,
-                    label: "Add track",
+                    label: "添加轨道",
                     selected: doc.edit.selected.clone(),
                     track_selected: doc.edit.track_selected.clone(),
                     sel_rect: doc.edit.sel_rect.clone(),

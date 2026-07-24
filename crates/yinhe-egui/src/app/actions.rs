@@ -101,13 +101,13 @@ impl App {
 
     /// Delete all selected notes from the active document.
     pub(crate) fn delete_selected_notes(&mut self) {
-        self.with_undo("Delete notes", |doc| doc.delete_selected());
+        self.with_undo("删除音符", |doc| doc.delete_selected());
     }
 
     /// Duplicate all selected notes (Ctrl+D / Cmd+D).
     /// New notes are placed after the original selection, offset by the selection duration.
     pub(crate) fn duplicate_selected_notes(&mut self) {
-        self.with_undo("Duplicate notes", |doc| {
+        self.with_undo("重复音符", |doc| {
             let action = doc.duplicate_selected();
             if action.is_some() {
                 doc.edit.sel_rect.pending_delta = action.as_ref().and_then(|_| {
@@ -122,9 +122,9 @@ impl App {
     /// Transpose selected notes by `semitones` (e.g. +12 for up an octave, -12 for down).
     pub(crate) fn transpose_selected_notes(&mut self, semitones: i8) {
         let label = if semitones >= 0 {
-            "Transpose up"
+            "升调"
         } else {
-            "Transpose down"
+            "降调"
         };
         self.with_undo(label, |doc| doc.transpose_selected(semitones));
     }
@@ -157,7 +157,7 @@ impl App {
         let Some(idx) = self.active_doc else { return };
         let cursor_tick = self.documents[idx].edit.cursor_tick.unwrap_or(0.0);
         let track_selected = self.documents[idx].edit.track_selected.clone();
-        self.with_undo("Paste", |doc| {
+        self.with_undo("粘贴", |doc| {
             doc.paste_from_selection(&clipboard, cursor_tick, cut_past_len, &track_selected)
         });
     }
@@ -186,7 +186,7 @@ impl App {
 
     /// Add a single note to the given track and record an undo entry.
     pub(crate) fn add_note_with_undo(&mut self, track_idx: u16, note: yinhe_core::NoteEvent) {
-        self.with_undo("Add note", |doc| doc.add_note(track_idx, note));
+        self.with_undo("添加音符", |doc| doc.add_note(track_idx, note));
     }
 
     /// Run an edit closure, recording an undo entry from the returned action
@@ -413,10 +413,10 @@ impl App {
         let default_name = if let Some(idx) = self.active_doc {
             format!("{}.yin", self.documents[idx].file_name)
         } else {
-            "Untitled.yin".to_string()
+            "未命名.yin".to_string()
         };
         if let Some(path) = rfd::FileDialog::new()
-            .add_filter("Yinhe Project", &["yin"])
+            .add_filter("Yinhe 工程", &["yin"])
             .set_file_name(&default_name)
             .save_file()
         {
@@ -444,7 +444,7 @@ impl App {
         let default_name = if let Some(idx) = self.active_doc {
             format!("{}.mid", self.documents[idx].file_name)
         } else {
-            "export.mid".to_string()
+            "导出.mid".to_string()
         };
         if let Some(path) = rfd::FileDialog::new()
             .add_filter("MIDI", &["mid", "midi"])

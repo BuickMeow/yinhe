@@ -52,7 +52,7 @@ pub(super) fn show_anchor_info(
     let guard = LaneUndoGuard::new(ui, "tick", track_idx, lane_idx, target);
     let mut edit_tick = tick as f64;
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("Tick:").size(11.0).color(egui::Color32::GRAY));
+        ui.label(egui::RichText::new("刻度:").size(11.0).color(egui::Color32::GRAY));
         let resp = ui.add(egui::DragValue::new(&mut edit_tick).range(0..=u32::MAX as i64).speed(1.0));
         if resp.gained_focus() {
             guard.gained(ui, doc);
@@ -71,7 +71,7 @@ pub(super) fn show_anchor_info(
             }
         }
         if resp.lost_focus() {
-            guard.lost(ui, doc, "Edit automation anchor tick");
+            guard.lost(ui, doc, "编辑自动化锚点刻度");
         }
     });
     ui.add_space(4.0);
@@ -80,7 +80,7 @@ pub(super) fn show_anchor_info(
     let guard = LaneUndoGuard::new(ui, "val", track_idx, lane_idx, target);
     let mut edit_value = value as f64;
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("Value:").size(11.0).color(egui::Color32::GRAY));
+        ui.label(egui::RichText::new("值:").size(11.0).color(egui::Color32::GRAY));
         let resp = ui.add(egui::DragValue::new(&mut edit_value).range(0.0..=max_val as f64).speed(1.0));
         if resp.gained_focus() {
             guard.gained(ui, doc);
@@ -99,7 +99,7 @@ pub(super) fn show_anchor_info(
             }
         }
         if resp.lost_focus() {
-            guard.lost(ui, doc, "Edit automation anchor value");
+            guard.lost(ui, doc, "编辑自动化锚点值");
         }
     });
     ui.add_space(6.0);
@@ -119,7 +119,7 @@ pub(super) fn show_anchor_info(
                 target: target.clone(),
                 tick,
             }]);
-            push_undo(doc, actions, "Toggle anchor shape");
+            push_undo(doc, actions, "切换锚点形状");
         }
     });
 
@@ -153,7 +153,7 @@ pub(super) fn show_anchor_info(
                 );
             }
             if resp.lost_focus() {
-                guard.lost(ui, doc, "Edit automation anchor x1");
+                guard.lost(ui, doc, "编辑自动化锚点 X1");
             }
         });
         ui.add_space(2.0);
@@ -182,7 +182,7 @@ pub(super) fn show_anchor_info(
                 );
             }
             if resp.lost_focus() {
-                guard.lost(ui, doc, "Edit automation anchor y1");
+                guard.lost(ui, doc, "编辑自动化锚点 Y1");
             }
         });
         ui.add_space(2.0);
@@ -211,7 +211,7 @@ pub(super) fn show_anchor_info(
                 );
             }
             if resp.lost_focus() {
-                guard.lost(ui, doc, "Edit automation anchor x2");
+                guard.lost(ui, doc, "编辑自动化锚点 X2");
             }
         });
         ui.add_space(2.0);
@@ -240,7 +240,7 @@ pub(super) fn show_anchor_info(
                 );
             }
             if resp.lost_focus() {
-                guard.lost(ui, doc, "Edit automation anchor y2");
+                guard.lost(ui, doc, "编辑自动化锚点 Y2");
             }
         });
         ui.add_space(6.0);

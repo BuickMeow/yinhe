@@ -35,7 +35,7 @@ impl QuantizePreset {
     pub fn label(&self) -> String {
         match self {
             QuantizePreset::Fraction(num, den) => format!("{}/{}", num, den),
-            QuantizePreset::Absolute(n) => format!("{} tick", n),
+            QuantizePreset::Absolute(n) => format!("{} 刻度", n),
         }
     }
 
@@ -80,15 +80,15 @@ impl QuantizePreset {
         (tick / interval).floor() * interval
     }
 
-    /// Display string for the dropdown list, e.g. `"1/8  (60 tick)"` or `"3 tick"`.
+    /// Display string for the dropdown list, e.g. `"1/8  (60 刻度)"` or `"3 刻度"`.
     pub fn display_item(&self, ppq: u32) -> String {
         match self {
             QuantizePreset::Fraction(_, _) => {
                 let ticks = self.tick_interval(ppq);
-                format!("{}  ({} tick)", self.label(), ticks)
+                format!("{}  ({} 刻度)", self.label(), ticks)
             }
             QuantizePreset::Absolute(n) => {
-                format!("{} tick", n)
+                format!("{} 刻度", n)
             }
         }
     }

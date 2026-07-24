@@ -268,7 +268,7 @@ impl eframe::App for App {
         if new_enc != self.last_midi_encoding {
             self.last_midi_encoding = new_enc;
             if self.active_doc.is_some() {
-                self.with_undo("Recode track names", |doc| {
+                self.with_undo("重新编码轨道名", |doc| {
                     doc.recode_track_names(new_enc);
                     None::<yinhe_editor_core::history::UndoAction>
                 });

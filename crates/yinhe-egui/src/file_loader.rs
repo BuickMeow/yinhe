@@ -109,12 +109,12 @@ impl FileLoader {
 
         if let Some(path) = rfd::FileDialog::new()
             .add_filter(
-                "All supported",
+                "所有支持的格式",
                 &["mid", "midi", "yin", "zip", "7z", "tar", "gz", "xz", "tgz", "txz"],
             )
             .add_filter("MIDI", &["mid", "midi"])
-            .add_filter("Yinhe Project", &["yin"])
-            .add_filter("Archive", &["zip", "7z", "tar", "gz", "xz", "tgz", "txz"])
+            .add_filter("Yinhe 工程", &["yin"])
+            .add_filter("归档", &["zip", "7z", "tar", "gz", "xz", "tgz", "txz"])
             .pick_file()
         {
             let path_str = path.to_string_lossy().to_string();
