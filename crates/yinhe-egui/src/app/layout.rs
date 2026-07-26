@@ -4,6 +4,7 @@ use rust_i18n::t;
 use crate::app::App;
 use crate::arrange;
 use crate::piano_view;
+use crate::right_panel::automation_undo::push_automation_actions;
 
 /// Layout geometry computed once per frame, shared by arrangement and pianoroll.
 pub(in crate::app) struct LayoutInfo {
@@ -425,15 +426,7 @@ impl App {
         let actions = doc.apply_automation_edits(edits);
         if !actions.is_empty() {
             self.pianoroll_view.base.dirty = true;
-            for action in actions {
-                doc.history.push(yinhe_editor_core::history::UndoEntry {
-                    action,
-                    label: t!("undo.edit_automation").to_string(),
-                    selected: doc.edit.selected.clone(),
-                    track_selected: doc.edit.track_selected.clone(),
-                    sel_rect: doc.edit.sel_rect.clone(),
-                });
-            }
+            push_automation_actions(doc, actions, t!("undo.edit_automation").as_ref());
             self.notify_audio_model_changed();
         }
     }

@@ -1,3 +1,4 @@
+pub mod automation_undo;
 pub mod channels_panel;
 pub mod event_browser;
 pub mod info_panel;

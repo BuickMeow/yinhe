@@ -6,10 +6,13 @@
 use eframe::egui;
 
 use yinhe_editor_core::document::Document;
-use yinhe_editor_core::history::{AutomationDelta, UndoAction, UndoEntry};
 use yinhe_types::{AutomationEvent, AutomationTarget, SegmentShape};
 
 use rust_i18n::t;
+
+use crate::right_panel::automation_undo::{
+    push_automation_actions, push_automation_undo, snapshot_lane_events,
+};
 
 use super::InfoContent;
 
@@ -121,7 +124,7 @@ pub(super) fn show_anchor_info(
                 target: target.clone(),
                 tick,
             }]);
-            push_undo(doc, actions, t!("undo.toggle_anchor_shape").as_ref());
+            push_automation_actions(doc, actions, t!("undo.toggle_anchor_shape").as_ref());
         }
     });
 
@@ -318,56 +321,11 @@ impl LaneUndoGuard {
         let before = ui.ctx().data(|d| d.get_temp::<Vec<AutomationEvent>>(self.before_id));
         if let Some(before) = before {
             let after = snapshot_lane_events(doc, self.track_idx, self.lane_idx, &self.target);
-            if before != after {
-                doc.history.push(UndoEntry {
-                    action: UndoAction::Automation(AutomationDelta {
-                        track_idx: self.track_idx as usize,
-                        lane_idx: self.lane_idx,
-                        target: self.target.clone(),
-                        before,
-                        after,
-                    }),
-                    label: label.to_string(),
-                    selected: doc.edit.selected.clone(),
-                    track_selected: doc.edit.track_selected.clone(),
-                    sel_rect: doc.edit.sel_rect.clone(),
-                });
-            }
+            push_automation_undo(doc, self.track_idx, self.lane_idx, &self.target, before, after, label);
         }
         ui.ctx().data_mut(|d| {
             d.remove::<Vec<AutomationEvent>>(self.before_id);
             d.remove::<bool>(self.focus_id);
         });
-    }
-}
-
-/// 把 `apply_automation_edits` 返回的 actions 包成 UndoEntry push 到 history。
-fn push_undo(doc: &mut Document, actions: Vec<UndoAction>, label: &str) {
-    for action in actions {
-        doc.history.push(UndoEntry {
-            action,
-            label: label.to_string(),
-            selected: doc.edit.selected.clone(),
-            track_selected: doc.edit.track_selected.clone(),
-            sel_rect: doc.edit.sel_rect.clone(),
-        });
-    }
-}
-
-/// 按 target 取 lane events 快照（Tempo 走 conductor，其他走 track.automation_lanes）。
-fn snapshot_lane_events(
-    doc: &Document,
-    track_idx: u16,
-    lane_idx: usize,
-    target: &AutomationTarget,
-) -> Vec<AutomationEvent> {
-    if matches!(target, AutomationTarget::Tempo) {
-        doc.data.model.conductor.tempo.events.clone()
-    } else {
-        doc.data.model.tracks
-            .get(track_idx as usize)
-            .and_then(|t| t.automation_lanes.get(lane_idx))
-            .map(|l| l.events.clone())
-            .unwrap_or_default()
     }
 }

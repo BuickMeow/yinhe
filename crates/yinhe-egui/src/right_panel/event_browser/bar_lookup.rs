@@ -1,0 +1,129 @@
+//! Tick → 拍号位置格式化（"小节/拍内 tick"）。
+//!
+//! 支持变拍号：根据 `conductor.time_sig` 的变化分段计算。
+
+use yinhe_core::YinModel;
+
+pub(super) struct BarLookup {
+    segs: Vec<BarSeg>,
+}
+
+struct BarSeg {
+    tick_start: u32,
+    bar_start: u32,
+    ticks_per_bar: u32,
+}
+
+impl BarLookup {
+    pub(super) fn build(ppq: u32, default_num: u8, ts_changes: &[(u32, u8)]) -> Self {
+        let mut points: Vec<(u32, u8)> = Vec::new();
+        if ts_changes.first().map(|e| e.0).unwrap_or(u32::MAX) != 0 {
+            points.push((0, default_num));
+        }
+        for &(tick, num) in ts_changes {
+            points.push((tick, num));
+        }
+        let mut segs = Vec::with_capacity(points.len());
+        let mut cum_bars: u32 = 0;
+        for (i, &(tick, num)) in points.iter().enumerate() {
+            let ticks_per_bar = ppq.saturating_mul(num.max(1) as u32);
+            segs.push(BarSeg {
+                tick_start: tick,
+                bar_start: cum_bars,
+                ticks_per_bar,
+            });
+            if let Some(&(next_tick, _)) = points.get(i + 1) {
+                let span = next_tick.saturating_sub(tick);
+                cum_bars = cum_bars.saturating_add(span / ticks_per_bar.max(1));
+            }
+        }
+        if segs.is_empty() {
+            segs.push(BarSeg {
+                tick_start: 0,
+                bar_start: 0,
+                ticks_per_bar: ppq.saturating_mul(4),
+            });
+        }
+        BarLookup { segs }
+    }
+
+    pub(super) fn format(&self, tick: u32) -> String {
+        if self.segs.is_empty() {
+            return "?".into();
+        }
+        let idx = match self.segs.binary_search_by_key(&tick, |s| s.tick_start) {
+            Ok(i) => i,
+            Err(i) => i.saturating_sub(1),
+        };
+        let seg = &self.segs[idx];
+        let local = tick.saturating_sub(seg.tick_start);
+        let tpb = seg.ticks_per_bar.max(1);
+        let bar_offset = local / tpb;
+        let tick_in_bar = local % tpb;
+        let bar_1 = seg.bar_start + bar_offset + 1;
+        format!("{}/{}", bar_1, tick_in_bar)
+    }
+}
+
+pub(super) fn ts_changes(model: &YinModel) -> Vec<(u32, u8)> {
+    model
+        .conductor
+        .time_sig
+        .iter()
+        .map(|e| (e.tick, e.numerator))
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bar_lookup_single_segment() {
+        let bl = BarLookup::build(480, 4, &[]);
+        assert_eq!(bl.format(0), "1/0");
+        assert_eq!(bl.format(480), "1/480");
+        assert_eq!(bl.format(1920), "2/0");
+    }
+
+    #[test]
+    fn bar_lookup_with_time_sig() {
+        let bl = BarLookup::build(480, 4, &[(0, 4)]);
+        assert_eq!(bl.format(0), "1/0");
+        assert_eq!(bl.format(480), "1/480");
+    }
+
+    #[test]
+    fn bar_lookup_time_sig_change() {
+        let bl = BarLookup::build(480, 4, &[(0, 4), (1920, 3)]);
+        assert_eq!(bl.format(0), "1/0");
+        assert_eq!(bl.format(1920), "2/0");
+        assert_eq!(bl.format(2400), "2/480");
+    }
+
+    #[test]
+    fn bar_lookup_format_tick_zero() {
+        let bl = BarLookup::build(480, 4, &[]);
+        assert_eq!(bl.format(0), "1/0");
+    }
+
+    #[test]
+    fn bar_lookup_default_time_sig() {
+        let bl = BarLookup::build(480, 4, &[]);
+        assert_eq!(bl.format(960), "1/960");
+    }
+
+    #[test]
+    fn bar_lookup_format_bar_start() {
+        let bl = BarLookup::build(480, 4, &[]);
+        assert_eq!(bl.format(1920), "2/0");
+        assert_eq!(bl.format(3840), "3/0");
+    }
+
+    #[test]
+    fn bar_lookup_first_ts_after_zero_uses_default() {
+        let bl = BarLookup::build(480, 4, &[(1920, 3)]);
+        assert_eq!(bl.format(0), "1/0");
+        assert_eq!(bl.format(1920), "2/0");
+    }
+}
