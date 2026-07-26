@@ -182,6 +182,11 @@ event_browser.channel_tracks: "Channel %{ch} (%{n} 트랙)"
 event_browser.header.tick: "틱"
 event_browser.header.position: "위치"
 event_browser.header.end_tick: "종료 틱"
+event_browser.header.value: "값"
+event_browser.header.shape: "형상"
+event_browser.edit_value: "값 편집"
+event_browser.edit_shape: "형상 편집"
+event_browser.shape_step: "이산 (Step)"
 
 # ── 앵커 패널 ──
 anchor.tick: "틱:"

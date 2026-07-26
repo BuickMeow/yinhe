@@ -4,7 +4,7 @@ use egui_material_icons::icons::*;
 
 use rust_i18n::t;
 use yinhe_editor_core::document::Document;
-use yinhe_types::AutomationTarget;
+use yinhe_types::{AutomationTarget, SegmentShape};
 use crate::widgets::split_handle;
 use crate::theme;
 
@@ -163,22 +163,28 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>, state: &mut EventBrow
         return None;
     };
 
-    let model = &doc.data.model;
-    let ppq = model.meta.ppq;
-    let default_num = model.tempo_map.time_sig_default.0;
-    let ts = ts_changes(model);
+    // 提前取出构造 BarLookup 所需的数据，避免 model 借用阻塞后续 &mut doc。
+    let (ppq, default_num, ts, tracks_len) = {
+        let m = &doc.data.model;
+        (
+            m.meta.ppq,
+            m.tempo_map.time_sig_default.0,
+            ts_changes(m),
+            m.tracks.len(),
+        )
+    };
     let bar_lookup = BarLookup::build(ppq, default_num, &ts);
 
     let fingerprint = doc.data.revision;
     if state.fingerprint != Some(fingerprint) {
         if state.fingerprint.is_none() {
             state.expanded_keys.clear();
-            for t in &model.tracks {
+            for t in &doc.data.model.tracks {
                 state.expanded_keys.insert(ArchiveKey::Port(t.port));
             }
         }
         if let Some(idx) = state.selected_track {
-            if idx as usize >= model.tracks.len() {
+            if idx as usize >= tracks_len {
                 state.selected_track = None;
             }
         }
@@ -231,19 +237,19 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>, state: &mut EventBrow
             .show(ui, |ui| {
                 frame_bg.show(ui, |ui| {
                     ui.set_min_width(ui.available_width());
-                    // 先 clone selected_item，避免在调用 show_event_detail 时
-                    // 同时持有 state 的不可变借用和可变借用
                     let sel = state.selected_item.clone();
                     let track_idx = state.selected_track;
                     if let Some(ref sel) = sel {
                         jump_request = show_event_detail(ui, sel, doc, &bar_lookup, state);
                     } else if let Some(idx) = track_idx {
+                        let model = &doc.data.model;
                         if let Some(track) = model.tracks.get(idx as usize) {
                             show_track_detail(ui, idx, track, model);
                         } else {
                             show_overview(ui, model);
                         }
                     } else {
+                        let model = &doc.data.model;
                         show_overview(ui, model);
                     }
                 });
@@ -439,8 +445,7 @@ fn render_track_row(
 //  Detail panels
 // ═══════════════════════════════════════════════════════════════
 
-fn show_event_detail(ui: &mut egui::Ui, item: &SelectedItem, doc: &Document, bar_lookup: &BarLookup, state: &mut EventBrowserState) -> Option<JumpRequest> {
-    let model = &doc.data.model;
+fn show_event_detail(ui: &mut egui::Ui, item: &SelectedItem, doc: &mut Document, bar_lookup: &BarLookup, state: &mut EventBrowserState) -> Option<JumpRequest> {
     match item {
         SelectedItem::ProjectJson => {
             show_project_json(ui, doc);
@@ -451,7 +456,10 @@ fn show_event_detail(ui: &mut egui::Ui, item: &SelectedItem, doc: &Document, bar
             return None;
         }
         SelectedItem::Tempo => {
-            let mut sorted: Vec<&yinhe_types::AutomationEvent> = model.conductor.tempo.events.iter().collect();
+            // 先 clone 出 owned 数据，避免不可变借用阻塞后续 &mut doc 编辑
+            let mut sorted: Vec<AutomationEventOwned> = doc.data.model.conductor.tempo.events.iter().map(|e| AutomationEventOwned {
+                tick: e.tick, value: e.value, shape: e.shape,
+            }).collect();
             sorted.sort_by_key(|e| e.tick);
             let (page, page_start, page_items) = paginate(state, &sorted);
             let total = sorted.len();
@@ -463,13 +471,26 @@ fn show_event_detail(ui: &mut egui::Ui, item: &SelectedItem, doc: &Document, bar
                 }
             });
             ui.add_space(2.0);
-            build_table(ui, "eb_tempo", &[("#", 40.0), (t!("event_browser.header.tick").as_ref(), 70.0), (t!("event_browser.header.position").as_ref(), 80.0), ("BPM", 70.0)], page_items.len(), |i, row| {
-                let s = page_items[i];
+            build_table(ui, "eb_tempo", &[
+                ("#", 40.0),
+                (t!("event_browser.header.tick").as_ref(), 70.0),
+                (t!("event_browser.header.position").as_ref(), 80.0),
+                ("BPM", 70.0),
+                (t!("event_browser.header.shape").as_ref(), 130.0),
+            ], page_items.len(), |i, row| {
+                let s = &page_items[i];
                 cell_text(row, format!("{}", page_start + i + 1));
                 cell_text(row, format!("{}", s.tick));
                 cell_text(row, bar_lookup.format(s.tick as u32));
-                cell_text(row, format!("{:.2}", s.value));
+                let max_val = AutomationTarget::Tempo.max_value();
+                cell_value_editable(row, "eb_tempo_val", i, s.tick, s.value, max_val);
+                cell_shape_editable(row, "eb_tempo_shape", i, s.tick, s.shape);
             });
+            // 应用 popup 编辑（value / shape）
+            let track_idx = 0u16;
+            let lane_idx = 0usize;
+            let target = AutomationTarget::Tempo;
+            apply_automation_popups(ui, doc, "eb_tempo_val", "eb_tempo_shape", track_idx, lane_idx, &target, page_items);
             // Tempo：仅跳转，不闪烁（Step 2 再做 automation panel 圆点闪烁）
             return take_row_click(ui, "eb_tempo").map(|i| JumpRequest {
                 tick: page_items[i].tick,
@@ -478,6 +499,7 @@ fn show_event_detail(ui: &mut egui::Ui, item: &SelectedItem, doc: &Document, bar
             });
         }
         SelectedItem::TimeSig => {
+            let model = &doc.data.model;
             let mut sorted: Vec<&yinhe_types::TimeSigEvent> = model.conductor.time_sig.iter().collect();
             sorted.sort_by_key(|e| e.tick);
             let (page, page_start, page_items) = paginate(state, &sorted);
@@ -566,11 +588,18 @@ fn show_event_detail(ui: &mut egui::Ui, item: &SelectedItem, doc: &Document, bar
         }
         SelectedItem::Cc { track, controller } => {
             let t = *track as usize;
-            let mut events: Vec<&yinhe_types::AutomationEvent> = Vec::new();
-            if let Some(td) = model.tracks.get(t) {
-                for lane in &td.automation_lanes {
+            // 查找 lane_idx，编辑时需要
+            let target = AutomationTarget::CC { controller: *controller };
+            let mut lane_idx = 0usize;
+            let mut events: Vec<AutomationEventOwned> = Vec::new();
+            if let Some(td) = doc.data.model.tracks.get(t) {
+                for (li, lane) in td.automation_lanes.iter().enumerate() {
                     if matches!(lane.target, AutomationTarget::CC { controller: c } if c == *controller) {
-                        events.extend(lane.events.iter());
+                        lane_idx = li;
+                        events.extend(lane.events.iter().map(|e| AutomationEventOwned {
+                            tick: e.tick, value: e.value, shape: e.shape,
+                        }));
+                        break;
                     }
                 }
             }
@@ -586,13 +615,22 @@ fn show_event_detail(ui: &mut egui::Ui, item: &SelectedItem, doc: &Document, bar
                 }
             });
             ui.add_space(2.0);
-            build_table(ui, "eb_cc", &[("#", 40.0), (t!("event_browser.header.tick").as_ref(), 70.0), (t!("event_browser.header.position").as_ref(), 80.0), ("值", 60.0)], page_items.len(), |i, row| {
-                let e = page_items[i];
+            let max_val = target.max_value();
+            build_table(ui, "eb_cc", &[
+                ("#", 40.0),
+                (t!("event_browser.header.tick").as_ref(), 70.0),
+                (t!("event_browser.header.position").as_ref(), 80.0),
+                (t!("event_browser.header.value").as_ref(), 60.0),
+                (t!("event_browser.header.shape").as_ref(), 130.0),
+            ], page_items.len(), |i, row| {
+                let e = &page_items[i];
                 cell_text(row, format!("{}", page_start + i + 1));
                 cell_text(row, format!("{}", e.tick));
                 cell_text(row, bar_lookup.format(e.tick));
-                cell_text(row, format!("{}", e.value.round() as i32));
+                cell_value_editable(row, "eb_cc_val", i, e.tick, e.value, max_val);
+                cell_shape_editable(row, "eb_cc_shape", i, e.tick, e.shape);
             });
+            apply_automation_popups(ui, doc, "eb_cc_val", "eb_cc_shape", *track, lane_idx, &target, page_items);
             // CC：切到所在 track，仅跳转不闪烁（Step 2 再做圆点闪烁）
             return take_row_click(ui, "eb_cc").map(|i| JumpRequest {
                 tick: page_items[i].tick,
@@ -602,11 +640,17 @@ fn show_event_detail(ui: &mut egui::Ui, item: &SelectedItem, doc: &Document, bar
         }
         SelectedItem::PitchBend { track } => {
             let t = *track as usize;
-            let mut events: Vec<&yinhe_types::AutomationEvent> = Vec::new();
-            if let Some(td) = model.tracks.get(t) {
-                for lane in &td.automation_lanes {
+            let target = AutomationTarget::PitchBend;
+            let mut lane_idx = 0usize;
+            let mut events: Vec<AutomationEventOwned> = Vec::new();
+            if let Some(td) = doc.data.model.tracks.get(t) {
+                for (li, lane) in td.automation_lanes.iter().enumerate() {
                     if lane.target == AutomationTarget::PitchBend {
-                        events.extend(lane.events.iter());
+                        lane_idx = li;
+                        events.extend(lane.events.iter().map(|e| AutomationEventOwned {
+                            tick: e.tick, value: e.value, shape: e.shape,
+                        }));
+                        break;
                     }
                 }
             }
@@ -621,13 +665,22 @@ fn show_event_detail(ui: &mut egui::Ui, item: &SelectedItem, doc: &Document, bar
                 }
             });
             ui.add_space(2.0);
-            build_table(ui, "eb_pb", &[("#", 40.0), (t!("event_browser.header.tick").as_ref(), 70.0), (t!("event_browser.header.position").as_ref(), 80.0), ("值", 70.0)], page_items.len(), |i, row| {
-                let e = page_items[i];
+            let max_val = target.max_value();
+            build_table(ui, "eb_pb", &[
+                ("#", 40.0),
+                (t!("event_browser.header.tick").as_ref(), 70.0),
+                (t!("event_browser.header.position").as_ref(), 80.0),
+                (t!("event_browser.header.value").as_ref(), 70.0),
+                (t!("event_browser.header.shape").as_ref(), 130.0),
+            ], page_items.len(), |i, row| {
+                let e = &page_items[i];
                 cell_text(row, format!("{}", page_start + i + 1));
                 cell_text(row, format!("{}", e.tick));
                 cell_text(row, bar_lookup.format(e.tick));
-                cell_text(row, format!("{}", e.value.round() as i32));
+                cell_value_editable(row, "eb_pb_val", i, e.tick, e.value, max_val);
+                cell_shape_editable(row, "eb_pb_shape", i, e.tick, e.shape);
             });
+            apply_automation_popups(ui, doc, "eb_pb_val", "eb_pb_shape", *track, lane_idx, &target, page_items);
             // PB：切到所在 track，仅跳转不闪烁
             return take_row_click(ui, "eb_pb").map(|i| JumpRequest {
                 tick: page_items[i].tick,
@@ -637,7 +690,7 @@ fn show_event_detail(ui: &mut egui::Ui, item: &SelectedItem, doc: &Document, bar
         }
         SelectedItem::ProgramChange { track } => {
             let t = *track as usize;
-            let mut events: Vec<&yinhe_core::PcEvent> = model.tracks.get(t)
+            let mut events: Vec<&yinhe_core::PcEvent> = doc.data.model.tracks.get(t)
                 .map(|td| td.program_change.iter().collect())
                 .unwrap_or_default();
             events.sort_by_key(|e| e.tick);
@@ -1040,6 +1093,286 @@ fn cell_text(row: &mut egui_extras::TableRow, text: impl Into<String>) {
     row.col(|ui| {
         // selectable(false)：避免文字选中消费点击事件，让整行点击生效
         ui.add(egui::Label::new(egui::RichText::new(s).size(11.0).monospace()).selectable(false));
+    });
+}
+
+// ── Automation 单元格右键编辑 helpers ──
+
+/// owned 副本，避免不可变借用阻塞后续 &mut doc 编辑。
+#[derive(Clone, Copy)]
+struct AutomationEventOwned {
+    tick: u32,
+    value: f32,
+    shape: SegmentShape,
+}
+
+/// 把 SegmentShape 格式化为表格单元格文本（数值型）。
+fn shape_text(shape: SegmentShape) -> String {
+    match shape {
+        SegmentShape::Step => "Step".to_string(),
+        SegmentShape::Curve { x1, y1, x2, y2 } => {
+            if shape.is_linear() {
+                "Linear".to_string()
+            } else {
+                format!("{:.2},{:.2},{:.2},{:.2}", x1, y1, x2, y2)
+            }
+        }
+    }
+}
+
+/// 渲染值单元格：显示数值，右键时记录 (row_index, tick, value) 到 memory，由 apply_automation_popups 弹 popup。
+fn cell_value_editable(row: &mut egui_extras::TableRow, id_salt: &str, row_idx: usize, tick: u32, value: f32, _max_val: f32) {
+    row.col(|ui| {
+        let resp = ui.add(
+            egui::Label::new(
+                egui::RichText::new(format!("{}", value.round() as i32))
+                    .size(11.0)
+                    .monospace(),
+            )
+            .selectable(false)
+            .sense(egui::Sense::click()),
+        );
+        if resp.secondary_clicked() {
+            let key = ui.id().with((id_salt, "edit"));
+            ui.ctx().memory_mut(|m| {
+                m.data.insert_temp(key, (row_idx, tick, value));
+            });
+        }
+    });
+}
+
+/// 渲染形状单元格：显示形状文本，右键时记录 (row_index, tick, shape) 到 memory。
+fn cell_shape_editable(row: &mut egui_extras::TableRow, id_salt: &str, row_idx: usize, tick: u32, shape: SegmentShape) {
+    row.col(|ui| {
+        let resp = ui.add(
+            egui::Label::new(
+                egui::RichText::new(shape_text(shape))
+                    .size(11.0)
+                    .monospace(),
+            )
+            .selectable(false)
+            .sense(egui::Sense::click()),
+        );
+        if resp.secondary_clicked() {
+            let key = ui.id().with((id_salt, "edit"));
+            ui.ctx().memory_mut(|m| {
+                m.data.insert_temp(key, (row_idx, tick, shape));
+            });
+        }
+    });
+}
+
+/// 在表格下方检测是否有待编辑的单元格，弹出 popup 编辑 value / shape 并应用到 doc。
+///
+/// `val_salt` / `shape_salt` 与 cell_*_editable 用的 id_salt 一致。
+/// 用 `egui::Area` + popup 方式实现，popup 内容由 DragValue 实时驱动，丢失焦点时 push undo。
+fn apply_automation_popups(
+    ui: &mut egui::Ui,
+    doc: &mut Document,
+    val_salt: &str,
+    shape_salt: &str,
+    track_idx: u16,
+    lane_idx: usize,
+    target: &AutomationTarget,
+    _page_items: &[AutomationEventOwned],
+) {
+    let val_key = ui.id().with((val_salt, "edit"));
+    let shape_key = ui.id().with((shape_salt, "edit"));
+
+    // ── 值 popup ──
+    let val_req: Option<(usize, u32, f32)> = ui.memory(|m| m.data.get_temp(val_key));
+    if let Some((row_idx, tick, value)) = val_req {
+        let max_val = target.max_value();
+        let popup_id = ui.id().with((val_salt, "popup")).with(row_idx);
+        let mut edit = value as f64;
+        let mut open = true;
+        let popup_pos = ui.clip_rect().min + egui::vec2(20.0, 20.0);
+        egui::Area::new(popup_id)
+            .order(egui::Order::Foreground)
+            .fixed_pos(popup_pos)
+            .show(ui.ctx(), |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    ui.set_min_width(180.0);
+                    ui.label(egui::RichText::new(t!("event_browser.edit_value").as_ref()).strong().size(11.0));
+                    ui.add_space(2.0);
+                    let resp = ui.add(
+                        egui::DragValue::new(&mut edit)
+                            .range(0.0..=max_val as f64)
+                            .speed(1.0),
+                    );
+                    if resp.gained_focus() {
+                        // 记录 before 快照（lane events）
+                        let before = snapshot_lane_events_view(doc, track_idx, lane_idx, target);
+                        ui.ctx().memory_mut(|m| m.data.insert_temp(popup_id.with("before"), before));
+                    }
+                    if resp.changed() && (edit as f32) != value {
+                        doc.apply_automation_edits(vec![yinhe_types::AutomationEdit::Move {
+                            track_idx,
+                            lane_idx,
+                            target: target.clone(),
+                            old_tick: tick,
+                            new_tick: tick,
+                            new_value: edit as f32,
+                        }]);
+                    }
+                    if resp.lost_focus() {
+                        let before: Option<Vec<yinhe_types::AutomationEvent>> = ui.memory(|m| m.data.get_temp(popup_id.with("before")));
+                        if let Some(before) = before {
+                            let after = snapshot_lane_events_view(doc, track_idx, lane_idx, target);
+                            if before != after {
+                                push_automation_undo(doc, track_idx, lane_idx, target, before, after, t!("undo.edit_anchor_value").as_ref());
+                            }
+                        }
+                        open = false;
+                    }
+                    ui.add_space(2.0);
+                    if ui.button(t!("common.confirm").as_ref()).clicked() {
+                        open = false;
+                    }
+                });
+            });
+        if !open {
+            ui.memory_mut(|m| {
+                m.data.remove::<(usize, u32, f32)>(val_key);
+                m.data.remove::<Vec<yinhe_types::AutomationEvent>>(popup_id.with("before"));
+            });
+        }
+    }
+
+    // ── 形状 popup ──
+    let shape_req: Option<(usize, u32, SegmentShape)> = ui.memory(|m| m.data.get_temp(shape_key));
+    if let Some((row_idx, tick, shape)) = shape_req {
+        let popup_id = ui.id().with((shape_salt, "popup")).with(row_idx);
+        let popup_pos = ui.clip_rect().min + egui::vec2(20.0, 20.0);
+        let mut open = true;
+
+        // 工作副本：编辑过程中实时变化的 shape
+        let work_id = popup_id.with("work");
+        let work_shape: SegmentShape = ui.memory(|m| m.data.get_temp(work_id).unwrap_or(shape));
+
+        // before 快照
+        let before_id = popup_id.with("before");
+        let before: Option<Vec<yinhe_types::AutomationEvent>> = ui.memory(|m| m.data.get_temp(before_id));
+        if before.is_none() {
+            let b = snapshot_lane_events_view(doc, track_idx, lane_idx, target);
+            ui.ctx().memory_mut(|m| m.data.insert_temp(before_id, b));
+        }
+
+        egui::Area::new(popup_id)
+            .order(egui::Order::Foreground)
+            .fixed_pos(popup_pos)
+            .show(ui.ctx(), |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    ui.set_min_width(220.0);
+                    ui.label(egui::RichText::new(t!("event_browser.edit_shape").as_ref()).strong().size(11.0));
+                    ui.add_space(2.0);
+
+                    let mut is_step = matches!(work_shape, SegmentShape::Step);
+                    if ui.checkbox(&mut is_step, t!("event_browser.shape_step").as_ref()).changed() {
+                        let new_shape = if is_step { SegmentShape::Step } else { SegmentShape::linear_curve() };
+                        doc.set_automation_shape(track_idx as usize, lane_idx, target, tick, new_shape);
+                        ui.ctx().memory_mut(|m| m.data.insert_temp(work_id, new_shape));
+                    }
+
+                    if let SegmentShape::Curve { x1, y1, x2, y2 } = work_shape {
+                        ui.add_space(2.0);
+                        // ranges 与 anchor.rs 一致：x1 ∈ [0, 0.25], y1/y2 ∈ [-0.5, 0.5], x2 ∈ [-0.25, 0]
+                        let ranges: [(f32, f32); 4] = [
+                            (0.0, 0.25),
+                            (-0.5, 0.5),
+                            (-0.25, 0.0),
+                            (-0.5, 0.5),
+                        ];
+                        let labels = ["X1", "Y1", "X2", "Y2"];
+                        let mut vals = [x1, y1, x2, y2];
+                        for i in 0..4 {
+                            ui.horizontal(|ui| {
+                                ui.label(egui::RichText::new(labels[i]).size(11.0).color(egui::Color32::GRAY));
+                                let resp = ui.add(
+                                    egui::DragValue::new(&mut vals[i])
+                                        .range(ranges[i].0 as f64..=ranges[i].1 as f64)
+                                        .speed(0.01)
+                                        .fixed_decimals(2),
+                                );
+                                if resp.changed() {
+                                    let ns = match i {
+                                        0 => SegmentShape::Curve { x1: vals[0], y1, x2, y2 },
+                                        1 => SegmentShape::Curve { x1, y1: vals[1], x2, y2 },
+                                        2 => SegmentShape::Curve { x1, y1, x2: vals[2], y2 },
+                                        _ => SegmentShape::Curve { x1, y1, x2, y2: vals[3] },
+                                    };
+                                    doc.set_automation_shape(track_idx as usize, lane_idx, target, tick, ns);
+                                    ui.ctx().memory_mut(|m| m.data.insert_temp(work_id, ns));
+                                }
+                            });
+                        }
+                    }
+
+                    ui.add_space(2.0);
+                    if ui.button(t!("common.confirm").as_ref()).clicked() {
+                        open = false;
+                    }
+                });
+            });
+        if !open {
+            // 关闭时比较 before/after 并 push undo
+            let before: Option<Vec<yinhe_types::AutomationEvent>> = ui.memory(|m| m.data.get_temp(before_id));
+            if let Some(before) = before {
+                let after = snapshot_lane_events_view(doc, track_idx, lane_idx, target);
+                if before != after {
+                    push_automation_undo(doc, track_idx, lane_idx, target, before, after, t!("undo.toggle_anchor_shape").as_ref());
+                }
+            }
+            ui.memory_mut(|m| {
+                m.data.remove::<(usize, u32, SegmentShape)>(shape_key);
+                m.data.remove::<SegmentShape>(work_id);
+                m.data.remove::<Vec<yinhe_types::AutomationEvent>>(before_id);
+            });
+        }
+    }
+}
+
+/// 取 lane events 的 owned 快照（Tempo 走 conductor，其他走 track.automation_lanes）。
+fn snapshot_lane_events_view(
+    doc: &Document,
+    track_idx: u16,
+    lane_idx: usize,
+    target: &AutomationTarget,
+) -> Vec<yinhe_types::AutomationEvent> {
+    if matches!(target, AutomationTarget::Tempo) {
+        doc.data.model.conductor.tempo.events.clone()
+    } else {
+        doc.data.model.tracks
+            .get(track_idx as usize)
+            .and_then(|t| t.automation_lanes.get(lane_idx))
+            .map(|l| l.events.clone())
+            .unwrap_or_default()
+    }
+}
+
+/// push 一个 AutomationDelta undo entry。
+fn push_automation_undo(
+    doc: &mut Document,
+    track_idx: u16,
+    lane_idx: usize,
+    target: &AutomationTarget,
+    before: Vec<yinhe_types::AutomationEvent>,
+    after: Vec<yinhe_types::AutomationEvent>,
+    label: &str,
+) {
+    use yinhe_editor_core::history::{AutomationDelta, UndoAction, UndoEntry};
+    doc.history.push(UndoEntry {
+        action: UndoAction::Automation(AutomationDelta {
+            track_idx: track_idx as usize,
+            lane_idx,
+            target: target.clone(),
+            before,
+            after,
+        }),
+        label: label.to_string(),
+        selected: doc.edit.selected.clone(),
+        track_selected: doc.edit.track_selected.clone(),
+        sel_rect: doc.edit.sel_rect.clone(),
     });
 }
 

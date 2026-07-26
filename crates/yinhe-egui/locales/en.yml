@@ -183,6 +183,11 @@ event_browser.channel_tracks: "Channel %{ch} (%{n} tracks)"
 event_browser.header.tick: "Tick"
 event_browser.header.position: "Position"
 event_browser.header.end_tick: "End Tick"
+event_browser.header.value: "Value"
+event_browser.header.shape: "Shape"
+event_browser.edit_value: "Edit Value"
+event_browser.edit_shape: "Edit Shape"
+event_browser.shape_step: "Step (Discrete)"
 
 # ── Anchor panel ──
 anchor.title: "Automation Anchor"

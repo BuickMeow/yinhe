@@ -182,6 +182,11 @@ event_browser.channel_tracks: "Channel %{ch} (%{n} トラック)"
 event_browser.header.tick: "ティック"
 event_browser.header.position: "位置"
 event_browser.header.end_tick: "終了ティック"
+event_browser.header.value: "値"
+event_browser.header.shape: "形状"
+event_browser.edit_value: "値を編集"
+event_browser.edit_shape: "形状を編集"
+event_browser.shape_step: "離散 (Step)"
 
 # ── アンカーパネル ──
 anchor.tick: "ティック:"
