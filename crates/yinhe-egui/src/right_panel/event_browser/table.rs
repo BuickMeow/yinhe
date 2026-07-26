@@ -105,7 +105,14 @@ pub(super) fn shape_text(shape: SegmentShape) -> String {
 
 /// 渲染值单元格：显示数值，左键跳转，右键记录到 memory 触发编辑 popup。
 ///
-/// **关键**：edit key 用 `egui::Id::new((id_salt, "edit"))` 全局 id，**不**用 `ui.id()`。
+/// **右键检测**：**不**用 `resp.secondary_clicked()`，改用 `ui.input(button_clicked(Secondary))`
+/// + `resp.rect.contains(pointer_pos)`。
+/// 原因：egui 的 first-wins 机制下，`Response::secondary_clicked()` 依赖
+/// `Flags::CLICKED`，该 flag 只在 widget 被判定为 `interact_widgets.clicked` 时设置；
+/// TableBuilder/ScrollArea 等父级若先 claim 事件，cell 的 Label 拿不到该 flag，
+/// 导致右键永远不触发。这与 `automation_panel/interaction.rs` 的处理方式一致。
+///
+/// **edit key**：用 `egui::Id::new((id_salt, "edit"))` 全局 id，**不**用 `ui.id()`。
 /// 原因：cell 内的 `ui.id()` 与 `apply_automation_popups` 调用处的 `ui.id()` 不同
 /// （cell 是 child ui），用 `ui.id()` 会导致 write/read key 不匹配，popup 永远不触发。
 pub(super) fn cell_value_editable(
@@ -130,8 +137,10 @@ pub(super) fn cell_value_editable(
         if resp.clicked() {
             ui.ctx().memory_mut(|m| m.data.insert_temp(click_key, row_idx));
         }
-        if resp.secondary_clicked() {
-            // 全局 key：与 apply_automation_popups 的 Id::new((val_salt, "edit")) 对齐
+        // 右键：用全局输入 + rect 命中检测，绕过 first-wins 的 CLICKED flag 依赖
+        let sec_clicked = ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Secondary));
+        let hover_pos = ui.input(|i| i.pointer.hover_pos());
+        if sec_clicked && hover_pos.is_some_and(|p| resp.rect.contains(p)) {
             ui.ctx().memory_mut(|m| {
                 m.data.insert_temp(egui::Id::new((id_salt, "edit")), (row_idx, tick, value));
             });
@@ -141,7 +150,7 @@ pub(super) fn cell_value_editable(
 
 /// 渲染形状单元格：显示形状文本，左键跳转，右键记录到 memory 触发编辑 popup。
 ///
-/// edit key 同样用 `egui::Id::new((id_salt, "edit"))` 全局 id，与 `cell_value_editable` 同理。
+/// 右键检测与 edit key 的处理与 [`cell_value_editable`] 一致。
 pub(super) fn cell_shape_editable(
     row: &mut TableRow,
     id_salt: &str,
@@ -159,7 +168,9 @@ pub(super) fn cell_shape_editable(
         if resp.clicked() {
             ui.ctx().memory_mut(|m| m.data.insert_temp(click_key, row_idx));
         }
-        if resp.secondary_clicked() {
+        let sec_clicked = ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Secondary));
+        let hover_pos = ui.input(|i| i.pointer.hover_pos());
+        if sec_clicked && hover_pos.is_some_and(|p| resp.rect.contains(p)) {
             ui.ctx().memory_mut(|m| {
                 m.data.insert_temp(egui::Id::new((id_salt, "edit")), (row_idx, tick, shape));
             });
