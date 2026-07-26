@@ -449,6 +449,19 @@ fn parse_track(
     }
 
     // NoteEvent.id 由 YinModel::load_track_notes 统一分配，这里不需要预分配。
+    // 在发号前按确定性顺序排序，使 ID 顺序不依赖 MIDI 字节流细节：
+    //   1. start_tick 升序（位置）
+    //   2. key 升序
+    //   3. end_tick 降序（长度从大到小）
+    //   4. velocity 降序
+    //   5. 全都相同则保持原顺序（稳定排序，平级）
+    td.notes.sort_by(|a, b| {
+        a.start_tick
+            .cmp(&b.start_tick)
+            .then_with(|| a.key.cmp(&b.key))
+            .then_with(|| b.end_tick.cmp(&a.end_tick))
+            .then_with(|| b.velocity.cmp(&a.velocity))
+    });
 
     td.program_change.sort_by_key(|e| e.tick);
 
