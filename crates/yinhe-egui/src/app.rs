@@ -154,7 +154,7 @@ impl App {
             let mut fonts = egui::FontDefinitions::default();
             fonts.font_data.insert(
                 "Pretendard".to_owned(),
-                egui::FontData::from_static(include_bytes!("../../../assets/Pretendard-SemiBold.otf"))
+                egui::FontData::from_static(include_bytes!("../../../assets/Pretendard-Medium.otf"))
                     .into(),
             );
             fonts.font_data.insert(
