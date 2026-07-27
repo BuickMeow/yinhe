@@ -6,7 +6,7 @@ use rust_i18n::t;
 
 use yinhe_editor_core::quantize::QuantizePreset;
 pub use yinhe_types::AutomationEdit;
-use yinhe_types::{AutomationLane, AutomationTarget, TimeSigEvent};
+use yinhe_types::{AutomationLane, AutomationTarget, TimeSigEvent, VelocityEdit};
 use yinhe_types::time_format::format_tick_bar_beat_with_time_sig;
 
 use yinhe_wgpu::{AutomationGhost, prepare_automation};
@@ -17,6 +17,7 @@ use crate::right_panel::{InfoContent, RightTab};
 use crate::widgets::tools_panel::Tool;
 
 mod interaction;
+mod velocity;
 
 /// Curated list of known automation targets shown in the dropdown.
 const AUTOMATION_TARGETS: &[AutomationTarget] = &[
@@ -154,12 +155,13 @@ pub fn show_panels(
     revision: u64,
     info_content: &mut Option<InfoContent>,
     right_tab: &mut Option<RightTab>,
-) -> (f32, Vec<AutomationEdit>, PanelPianorollFeedback, Option<(u32, f32)>) {
+) -> (f32, Vec<AutomationEdit>, Vec<VelocityEdit>, PanelPianorollFeedback, Option<(u32, f32)>) {
     let mut edits = Vec::new();
+    let mut velocity_edits = Vec::new();
     let mut feedback = PanelPianorollFeedback::default();
     let mut all_drag_info: Option<(u32, f32)> = None;
     if !*show_panels || panels.is_empty() {
-        return (0.0, edits, feedback, None);
+        return (0.0, edits, velocity_edits, feedback, None);
     }
 
     // 派生 show_anchors：Pencil 或 Curve 工具下都显示锚点
@@ -356,67 +358,94 @@ pub fn show_panels(
 
         // 先处理交互，得到 ghost（传给 wgpu Layer 3 绘制）+ edits。
         // 必须在 prepare_automation 之前，这样 ghost 能当帧渲染。
-        // Tempo / CC / PB / RPN / NRPN 都进入编辑；Velocity 无 lane 编辑。
+        // Tempo / CC / PB / RPN / NRPN 走 lane 编辑；Velocity 走铅笔笔划（改音符力度）。
         let mut panel_ghost: Option<AutomationGhost> = None;
+        let mut velocity_preview: Option<velocity::VelocityPreview> = None;
+        let mut tooltip: Option<interaction::HoverTooltip> = None;
         if let Some(ctx) = edit_ctx {
-            if !panel.show_velocity {
-                if let Some(track) = ctx.active_track {
-                    let (panel_edits, ghost, drag_info, hover_info) = interaction::handle_automation_interaction(
+            if panel.show_velocity {
+                // Velocity：铅笔笔划修改力度条（命中 noteon，只作用于 active_track）
+                if ctx.active_tool == Tool::Pencil
+                    && let Some(track) = ctx.active_track
+                    && let Some(midi_src) = midi
+                {
+                    let track_color = track_colors
+                        .get(track as usize)
+                        .copied()
+                        .unwrap_or([0.8, 0.8, 0.8]);
+                    let (vel_edits, preview, tip) = velocity::handle_velocity_interaction(
                         ui,
                         grid_area,
                         panel_rect,
                         panel,
-                        automation_lanes,
-                        tempo_lane,
+                        midi_src,
                         track,
-                        ctx,
+                        track_color,
                         i,
-                        track_colors,
-                        info_content,
-                        right_tab,
                     );
-                    edits.extend(panel_edits);
-                    panel_ghost = ghost;
-                    // all_drag_info 只跟锚点拖拽（InfoPanel 用它显示实时 tick/value）
-                    if let Some(interaction::HoverTooltip::Anchor { tick, value, .. }) = drag_info {
-                        all_drag_info = Some((tick, value));
-                    }
-
-                    // tooltip：拖拽中显示 drag_info，否则 hover 锚点/控制点超时显示 hover_info。
-                    if let Some(tip) = drag_info.or(hover_info) {
-                        let (lines, x, y): (Vec<String>, f32, f32) = match tip {
-                            interaction::HoverTooltip::Anchor { tick, value, pos } => {
-                                let pos_str = if let Some((ppq, num, den, ts_events)) = ctx.bar_line_data {
-                                    format_tick_bar_beat_with_time_sig(tick as f64, ppq, ts_events, num, den)
-                                } else {
-                                    format!("{}", tick)
-                                };
-                                let val_str = if panel.show_velocity {
-                                    format!("{}", value.round() as i32)
-                                } else if panel.selected_target == AutomationTarget::Tempo {
-                                    format!("{:.2} BPM", value)
-                                } else {
-                                    format!("{:.2}", value)
-                                };
-                                (vec![pos_str, val_str], pos.x, pos.y)
-                            }
-                            interaction::HoverTooltip::ControlPoint { x1, y1, x2, y2, pos } => {
-                                (
-                                    vec![
-                                        format!("X1: {:.2}", x1),
-                                        format!("Y1: {:.2}", y1),
-                                        format!("X2: {:.2}", x2),
-                                        format!("Y2: {:.2}", y2),
-                                    ],
-                                    pos.x,
-                                    pos.y,
-                                )
-                            }
-                        };
-                        crate::view_interaction::draw_hover_tooltip(ui.ctx(), &lines, x, y);
-                    }
+                    velocity_edits.extend(vel_edits);
+                    velocity_preview = preview;
+                    tooltip = tip.map(|(tick, value, pos)| {
+                        interaction::HoverTooltip::Anchor { tick, value, pos }
+                    });
                 }
+            } else if let Some(track) = ctx.active_track {
+                let (panel_edits, ghost, drag_info, hover_info) = interaction::handle_automation_interaction(
+                    ui,
+                    grid_area,
+                    panel_rect,
+                    panel,
+                    automation_lanes,
+                    tempo_lane,
+                    track,
+                    ctx,
+                    i,
+                    track_colors,
+                    info_content,
+                    right_tab,
+                );
+                edits.extend(panel_edits);
+                panel_ghost = ghost;
+                // all_drag_info 只跟锚点拖拽（InfoPanel 用它显示实时 tick/value）
+                if let Some(interaction::HoverTooltip::Anchor { tick, value, .. }) = drag_info {
+                    all_drag_info = Some((tick, value));
+                }
+                tooltip = drag_info.or(hover_info);
             }
+        }
+
+        // tooltip：拖拽中显示 drag_info，否则 hover 锚点/控制点超时显示 hover_info。
+        if let (Some(tip), Some(ctx)) = (tooltip, edit_ctx) {
+            let (lines, x, y): (Vec<String>, f32, f32) = match tip {
+                interaction::HoverTooltip::Anchor { tick, value, pos } => {
+                    let pos_str = if let Some((ppq, num, den, ts_events)) = ctx.bar_line_data {
+                        format_tick_bar_beat_with_time_sig(tick as f64, ppq, ts_events, num, den)
+                    } else {
+                        format!("{}", tick)
+                    };
+                    let val_str = if panel.show_velocity {
+                        format!("{}", value.round() as i32)
+                    } else if panel.selected_target == AutomationTarget::Tempo {
+                        format!("{:.2} BPM", value)
+                    } else {
+                        format!("{:.2}", value)
+                    };
+                    (vec![pos_str, val_str], pos.x, pos.y)
+                }
+                interaction::HoverTooltip::ControlPoint { x1, y1, x2, y2, pos } => {
+                    (
+                        vec![
+                            format!("X1: {:.2}", x1),
+                            format!("Y1: {:.2}", y1),
+                            format!("X2: {:.2}", x2),
+                            format!("Y2: {:.2}", y2),
+                        ],
+                        pos.x,
+                        pos.y,
+                    )
+                }
+            };
+            crate::view_interaction::draw_hover_tooltip(ui.ctx(), &lines, x, y);
         }
 
         if gw > 0 && gh > 0 {
@@ -536,6 +565,18 @@ pub fn show_panels(
                     grid_rect,
                     content_changed,
                 );
+
+                // ── velocity 笔划预览（画在 wgpu 纹理之上）──
+                if let Some(preview) = &velocity_preview {
+                    for bar in &preview.bars {
+                        painter.rect_filled(*bar, 0.0, preview.color.gamma_multiply(0.85));
+                        // 顶部亮线标示新高度
+                        painter.line_segment(
+                            [bar.left_top(), bar.right_top()],
+                            egui::Stroke::new(1.0, egui::Color32::WHITE),
+                        );
+                    }
+                }
             }
         }
 
@@ -762,7 +803,7 @@ pub fn show_panels(
         }
     }
 
-    (panels_visible_h, edits, feedback, all_drag_info)
+    (panels_visible_h, edits, velocity_edits, feedback, all_drag_info)
 }
 
 /// Show the toggle / add / remove buttons horizontally.

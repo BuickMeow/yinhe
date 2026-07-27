@@ -38,6 +38,7 @@ pub struct PianoViewFeedback<'a> {
     pub automation_drag_ghost: &'a mut Option<(u32, f32)>,
     pub note_drag_delta: &'a mut Option<(i64, i32, bool)>,
     pub pencil_note_drag: &'a mut Option<PencilNoteDrag>,
+    pub velocity_edits: &'a mut Vec<yinhe_types::VelocityEdit>,
 }
 
 /// Height of the time ruler band at the top of the pianoroll view.
@@ -786,7 +787,7 @@ pub fn show(
             None
         };
 
-        let (_h, auto_edits, auto_feedback, auto_drag_info) = automation_panel::show_panels(
+        let (_h, auto_edits, velocity_edits, auto_feedback, auto_drag_info) = automation_panel::show_panels(
             ui,
             ctx.panels,
             ctx.renderers,
@@ -813,6 +814,7 @@ pub fn show(
         for edit in auto_edits {
             feedback.auto_edit_events.push(edit);
         }
+        feedback.velocity_edits.extend(velocity_edits);
 
         // 应用 automation 面板的 pianoroll 联动反馈（水平滚动/缩放）
         if auto_feedback.scroll_x_delta != 0.0 {

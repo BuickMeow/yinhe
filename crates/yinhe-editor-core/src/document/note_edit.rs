@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use yinhe_core::NoteEvent;
-use yinhe_types::PencilNoteDrag;
+use yinhe_types::{PencilNoteDrag, VelocityEdit};
 
 use crate::batch_ops;
 use crate::history::{NoteDelta, UndoAction};
@@ -370,31 +370,61 @@ impl Document {
         key: u8,
         new_velocity: u8,
     ) -> Option<UndoAction> {
-        let model = &self.data.model;
-        let k = key as usize;
-        let note = model.notes[k].iter().find(|n| {
-            n.track == track_idx && n.start_tick == start_tick
-        })?;
-        if note.velocity == new_velocity {
+        self.set_notes_velocity(&[VelocityEdit {
+            track: track_idx,
+            start_tick,
+            key,
+            velocity: new_velocity,
+        }])
+    }
+
+    /// 批量修改多个音符的 velocity（一笔 velocity 笔划 = 一个 undo entry）。
+    ///
+    /// 与 [`set_note_velocity`] 同一实现：未命中的 (track, start_tick, key)
+    /// 和 velocity 未变化的条目会被跳过；全部被跳过时返回 `None`。
+    pub fn set_notes_velocity(&mut self, edits: &[VelocityEdit]) -> Option<UndoAction> {
+        // 先定位目标音符并记录原值（只读，按 start_tick 二分）。
+        let mut targets: Vec<(u8, u32, u8, u8)> = Vec::new(); // (key, id, old_vel, new_vel)
+        {
+            let model = &self.data.model;
+            for e in edits {
+                let bucket = &model.notes[e.key as usize];
+                let lo = bucket.partition_point(|n| n.start_tick < e.start_tick);
+                let note = bucket[lo..]
+                    .iter()
+                    .take_while(|n| n.start_tick == e.start_tick)
+                    .find(|n| n.track == e.track);
+                if let Some(n) = note {
+                    if n.velocity != e.velocity {
+                        targets.push((e.key, n.id, n.velocity, e.velocity));
+                    }
+                }
+            }
+        }
+        if targets.is_empty() {
             return None;
         }
-        let before = *note;
         let model = Arc::make_mut(&mut self.data.model);
-        if let Some(n) = Arc::make_mut(&mut model.notes[k])
-            .iter_mut()
-            .find(|n| n.id == before.id)
-        {
-            n.velocity = new_velocity;
-            let after = *n;
-            model.mark_dirty(key);
-            model.rebuild_dirty();
-            self.data.bump_revision();
-            return Some(UndoAction::Notes(NoteDelta {
-                before: vec![(before, key)],
-                after: vec![(after, key)],
-            }));
+        let mut before = Vec::with_capacity(targets.len());
+        let mut after = Vec::with_capacity(targets.len());
+        for (key, id, old_vel, new_vel) in targets {
+            let k = key as usize;
+            if let Some(n) = Arc::make_mut(&mut model.notes[k])
+                .iter_mut()
+                .find(|n| n.id == id)
+            {
+                n.velocity = new_vel;
+                before.push((yinhe_types::Note { velocity: old_vel, ..*n }, key));
+                after.push((*n, key));
+                model.mark_dirty(key);
+            }
         }
-        None
+        if before.is_empty() {
+            return None;
+        }
+        model.rebuild_dirty();
+        self.data.bump_revision();
+        Some(UndoAction::Notes(NoteDelta { before, after }))
     }
 }
 
@@ -534,5 +564,47 @@ mod tests {
         assert!(doc.set_note_velocity(99, 100, 60, 80).is_none());
         // 不存在的 key
         assert!(doc.set_note_velocity(0, 100, 99, 80).is_none());
+    }
+
+    #[test]
+    fn set_notes_velocity_batch_single_undo_entry() {
+        let mut doc = make_doc_with_note();
+        doc.add_note(0, NoteEvent { id: 0, start_tick: 300, end_tick: 400, key: 64, velocity: 90 });
+        let edits = [
+            VelocityEdit { track: 0, start_tick: 100, key: 60, velocity: 80 },
+            VelocityEdit { track: 0, start_tick: 300, key: 64, velocity: 70 },
+        ];
+        let action = doc.set_notes_velocity(&edits).expect("应产生 UndoAction");
+        assert_eq!(doc.data.model.notes[60][0].velocity, 80);
+        assert_eq!(doc.data.model.notes[64][0].velocity, 70);
+        match action {
+            UndoAction::Notes(delta) => {
+                assert_eq!(delta.before.len(), 2, "一笔批量修改合并为一个 undo entry");
+                assert_eq!(delta.after.len(), 2);
+            }
+            _ => panic!("期望 UndoAction::Notes"),
+        }
+    }
+
+    #[test]
+    fn set_notes_velocity_skips_missing_and_unchanged() {
+        let mut doc = make_doc_with_note();
+        // 全部无效：未命中 + 值未变化
+        let edits = [
+            VelocityEdit { track: 0, start_tick: 9999, key: 60, velocity: 80 },
+            VelocityEdit { track: 0, start_tick: 100, key: 60, velocity: 100 },
+        ];
+        assert!(doc.set_notes_velocity(&edits).is_none());
+        // 部分有效：只应用有效的那条
+        let edits = [
+            VelocityEdit { track: 1, start_tick: 100, key: 60, velocity: 80 },
+            VelocityEdit { track: 0, start_tick: 100, key: 60, velocity: 55 },
+        ];
+        let action = doc.set_notes_velocity(&edits).expect("部分有效应产生 UndoAction");
+        assert_eq!(doc.data.model.notes[60][0].velocity, 55);
+        match action {
+            UndoAction::Notes(delta) => assert_eq!(delta.before.len(), 1),
+            _ => panic!("期望 UndoAction::Notes"),
+        }
     }
 }

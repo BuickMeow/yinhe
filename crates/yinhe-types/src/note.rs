@@ -21,6 +21,16 @@ pub struct Note {
     pub track: u16,
 }
 
+/// automation 面板 velocity 笔划输出：修改单个音符的 velocity。
+/// 按 (track, start_tick, key) 寻址，与 `Document::set_notes_velocity` 对应。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VelocityEdit {
+    pub track: u16,
+    pub start_tick: u32,
+    pub key: u8,
+    pub velocity: u8,
+}
+
 /// Pencil-tool drag output for modifying existing notes.
 #[derive(Clone, Debug)]
 pub enum PencilNoteDrag {

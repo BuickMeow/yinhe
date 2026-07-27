@@ -220,6 +220,7 @@ impl App {
 
         let mut auto_edit_events: Vec<crate::piano_view::automation_panel::AutomationEdit> =
             Vec::new();
+        let mut velocity_edits: Vec<yinhe_types::VelocityEdit> = Vec::new();
 
         let (piano_event, note_drag_delta, pencil_note_drag) = {
             let mut guard = crate::app::main_loop::ReplaceGuard::new(&mut self.documents[idx]);
@@ -321,6 +322,7 @@ impl App {
                     automation_drag_ghost: &mut self.automation_drag_ghost,
                     note_drag_delta: &mut note_drag_delta,
                     pencil_note_drag: &mut pencil_note_drag,
+                    velocity_edits: &mut velocity_edits,
                 };
                 event = piano_view::show(
                     ui,
@@ -412,6 +414,29 @@ impl App {
         // Handle automation edits
         if !auto_edit_events.is_empty() {
             self.handle_automation_edits(auto_edit_events);
+        }
+
+        // Handle velocity stroke edits
+        if !velocity_edits.is_empty() {
+            self.handle_velocity_edits(&velocity_edits);
+        }
+    }
+
+    /// 把 automation 面板 velocity 笔划产生的编辑应用到 Document（一笔 = 一个 undo entry）。
+    fn handle_velocity_edits(&mut self, edits: &[yinhe_types::VelocityEdit]) {
+        let Some(idx) = self.active_doc else { return };
+        let doc = &mut self.documents[idx];
+        if let Some(action) = doc.set_notes_velocity(edits) {
+            self.pianoroll_view.base.dirty = true;
+            doc.history.push(yinhe_editor_core::history::UndoEntry {
+                action,
+                label: t!("undo.edit_velocity").to_string(),
+                selected: doc.edit.selected.clone(),
+                track_selected: doc.edit.track_selected.clone(),
+                sel_rect: doc.edit.sel_rect.clone(),
+            });
+            // 纯音符 velocity 修改：只更新 audible_notes，不重建 CC，不 chase
+            self.notify_notes_changed();
         }
     }
 

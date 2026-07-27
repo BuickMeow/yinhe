@@ -16,7 +16,7 @@ pub use arrangement_view::ArrangementView;
 pub use automation::{AutomationEdit, AutomationEvent, AutomationLane, AutomationTarget, SegmentShape};
 pub use automation_panel_view::AutomationPanelView;
 pub use hash::*;
-pub use note::{Note, PencilNoteDrag, TimeSigEvent};
+pub use note::{Note, PencilNoteDrag, TimeSigEvent, VelocityEdit};
 pub use palette::TRACK_PALETTE;
 pub use pc_event::PcEvent;
 pub use piano_roll_view::PianoRollView;
