@@ -18,6 +18,7 @@ common.clear_selection: "清除选择"
 
 # ── 工具栏 ──
 tool.select: "选择"
+tool.select_vertical: "垂直选择"
 tool.pan: "手形"
 tool.pencil: "铅笔"
 tool.curve: "曲线"

@@ -210,6 +210,7 @@ pub(crate) fn handle_input(
         && pointer_in_rect
         && drag_dist < 3.0
         && *active_tool != Tool::Select
+        && *active_tool != Tool::SelectVertical
         && *active_tool != Tool::Pencil
         && *active_tool != Tool::Curve
         && *active_tool != Tool::Pan

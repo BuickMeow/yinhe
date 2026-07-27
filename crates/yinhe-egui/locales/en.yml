@@ -18,6 +18,7 @@ common.clear_selection: "Clear Selection"
 
 # ── Tools ──
 tool.select: "Select"
+tool.select_vertical: "Vertical Select"
 tool.pan: "Pan"
 tool.pencil: "Pencil"
 tool.curve: "Curve"

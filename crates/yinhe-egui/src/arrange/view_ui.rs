@@ -143,7 +143,8 @@ pub fn show(
     // ── Select tool dispatch (BEFORE layer building to get ghost notes) ──
     // Like PR's sel_drag_frame, this returns ghost_notes/hidden_notes generated
     // from the CURRENT frame's mouse position, enabling zero-delay ghost preview.
-    let (mut ghost_notes, hidden_notes, drag_rect) = if *active_tool == Tool::Select {
+    let (mut ghost_notes, hidden_notes, drag_rect) = if *active_tool == Tool::Select || *active_tool == Tool::SelectVertical {
+        let vertical = *active_tool == Tool::SelectVertical;
         sel_drag_frame_arrange(
             ui,
             rect,
@@ -163,6 +164,7 @@ pub fn show(
             track_selected,
             selection_anchor,
             info_content,
+            vertical,
         )
     } else {
         (Vec::new(), HashSet::new(), None)
@@ -330,7 +332,7 @@ pub fn show(
             );
             if (end - start_pixel).length() >= 3.0 {
                 if let Some((vx, vy, vw, vh, _, _, _, _)) =
-                    arrange_snapped_bounds(start_pixel, end, view, quantize, ppq, bar_line_data, num_tracks)
+                    arrange_snapped_bounds(start_pixel, end, view, quantize, ppq, bar_line_data, num_tracks, false)
                 {
                     let snapped = egui::Rect::from_min_max(
                         egui::pos2(vx.min(vy), vw.min(vh)),
@@ -418,6 +420,7 @@ fn sel_drag_frame_arrange(
     track_selected: &mut HashSet<u16>,
     selection_anchor: &mut Option<u16>,
     info_content: &mut Option<crate::right_panel::InfoContent>,
+    vertical: bool,
 ) -> (Vec<(u32, u32, u8, u16)>, HashSet<(u16, u32, u8)>, Option<egui::Rect>) {
     let mut ghost_notes: Vec<(u32, u32, u8, u16)> = Vec::new();
     let mut hidden_notes: HashSet<(u16, u32, u8)> = HashSet::new();
@@ -668,7 +671,7 @@ fn sel_drag_frame_arrange(
         if let Some((_, end)) = drag {
             if (end - start_pixel).length() >= 3.0 {
                 if let Some((vx, vy, vw, vh, _, _, _, _)) =
-                    arrange_snapped_bounds(start_pixel, end, view, quantize, ppq, bar_line_data, num_tracks)
+                    arrange_snapped_bounds(start_pixel, end, view, quantize, ppq, bar_line_data, num_tracks, vertical)
                 {
                     drag_rect = Some(egui::Rect::from_min_max(
                         egui::pos2(vx.min(vy), vw.min(vh)),
@@ -700,7 +703,7 @@ fn sel_drag_frame_arrange(
                     }
                 } else {
                     if let Some((_, _, _, _, t_start, t_end, track_lo, track_hi)) =
-                        arrange_snapped_bounds(start_pixel, end, view, quantize, ppq, bar_line_data, num_tracks)
+                        arrange_snapped_bounds(start_pixel, end, view, quantize, ppq, bar_line_data, num_tracks, vertical)
                     {
                         if !cmd {
                             selected.clear();
@@ -803,7 +806,7 @@ fn eraser_drag_frame_arrange(
             if let Some((_, end)) = drag {
                 if (end - start_pixel).length() >= 3.0 {
                     if let Some((_, _, _, _, t_start, t_end, track_lo, track_hi)) =
-                        arrange_snapped_bounds(start_pixel, end, view, quantize, ppq, bar_line_data, num_tracks)
+                        arrange_snapped_bounds(start_pixel, end, view, quantize, ppq, bar_line_data, num_tracks, false)
                     {
                         *arr_eraser_rect = Some((t_start, t_end, track_lo, track_hi));
                     }
@@ -828,11 +831,10 @@ fn arrange_snapped_bounds(
     ppq: u32,
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
     num_tracks: usize,
+    vertical: bool,
 ) -> Option<(f32, f32, f32, f32, f64, f64, usize, usize)> {
     let sx = start.x.min(end.x);
     let ex = start.x.max(end.x);
-    let sy = start.y.min(end.y);
-    let ey = start.y.max(end.y);
 
     let tick_s = view.x_to_tick(sx);
     let tick_e = view.x_to_tick(ex);
@@ -847,22 +849,32 @@ fn arrange_snapped_bounds(
         t_end = t_start + interval.max(1.0);
     }
 
-    let lh = view.lane_height();
-    let scroll_y = view.base.scroll_y;
-    let track_lo_raw = ((scroll_y + sy) / lh).floor().max(0.0) as usize;
-    let track_hi_raw = ((scroll_y + ey) / lh).floor().max(0.0) as usize;
-
-    // 边界判断：选框必须与实际音轨区域有重叠，否则不纳入选择范围。
-    // track_lo_raw >= num_tracks 表示选框完全在音轨区域下方（空白处）。
-    if num_tracks == 0 || track_lo_raw >= num_tracks {
+    if num_tracks == 0 {
         return None;
     }
-    // track_hi clamp 到最后一个音轨索引，避免越界选区。
-    let track_lo = track_lo_raw;
-    let track_hi = track_hi_raw.min(num_tracks - 1);
 
-    let view_sy = track_lo as f32 * lh - scroll_y;
-    let view_ey = (track_hi as f32 + 1.0) * lh - scroll_y;
+    let lh = view.lane_height();
+    let scroll_y = view.base.scroll_y;
+
+    // 垂直全选模式：track 范围固定 0..num_tracks-1，忽略鼠标 y
+    let (track_lo, track_hi, view_sy, view_ey) = if vertical {
+        let th = num_tracks - 1;
+        (0, th, 0.0, num_tracks as f32 * lh - scroll_y)
+    } else {
+        let sy = start.y.min(end.y);
+        let ey = start.y.max(end.y);
+        let track_lo_raw = ((scroll_y + sy) / lh).floor().max(0.0) as usize;
+        let track_hi_raw = ((scroll_y + ey) / lh).floor().max(0.0) as usize;
+        // 边界判断：选框必须与实际音轨区域有重叠，否则不纳入选择范围。
+        if track_lo_raw >= num_tracks {
+            return None;
+        }
+        let track_lo = track_lo_raw;
+        let track_hi = track_hi_raw.min(num_tracks - 1);
+        let view_sy = track_lo as f32 * lh - scroll_y;
+        let view_ey = (track_hi as f32 + 1.0) * lh - scroll_y;
+        (track_lo, track_hi, view_sy, view_ey)
+    };
 
     let view_sx = view.tick_to_x(t_start);
     let view_ex = view.tick_to_x(t_end);

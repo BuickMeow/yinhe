@@ -175,6 +175,7 @@ pub(crate) fn sel_drag_frame(
     _track_colors: &[[f32; 3]],
     track_visible: &[bool],
     track_selected: &std::collections::HashSet<u16>,
+    vertical: bool,
 ) -> (Vec<(u32, u32, u8, u16)>, Vec<(u16, u32, u8)>) {
     let note_drag_id = ui.id().with("note_drag_origin");
     let mut note_drag_origin: Option<(f64, f64, bool)> =
@@ -365,12 +366,14 @@ pub(crate) fn sel_drag_frame(
         ) {
             let track_lo = track_selected.iter().min().copied().unwrap_or(0);
             let track_hi = track_selected.iter().max().copied().unwrap_or(u16::MAX);
+            // 垂直全选模式：key 范围固定 0..127，忽略鼠标 y
+            let (key_lo, key_hi) = if vertical { (0, 127) } else { (result.key_lo, result.key_hi) };
             selected.add_rect_track(
                 result.t_start as u32, result.t_end as u32,
-                result.key_lo, result.key_hi,
+                key_lo, key_hi,
                 track_lo, track_hi,
             );
-            sel_rect.rect = Some((result.t_start, result.t_end, result.key_lo, result.key_hi));
+            sel_rect.rect = Some((result.t_start, result.t_end, key_lo, key_hi));
         } else if ui.input(|i| i.pointer.primary_released()) {
             // Simple click (no marquee) - set cursor to click position for paste.
             if let Some(pos) = ui.input(|i| i.pointer.hover_pos()) {
@@ -404,6 +407,7 @@ pub(crate) fn draw_marquee_box(
     id_suffix: &'static str,
     fill_color: egui::Color32,
     stroke_color: egui::Color32,
+    vertical: bool,
 ) {
     let drag_id = ui.id().with(id_suffix);
     let drag: Option<((f64, f32), egui::Pos2)> =
@@ -417,10 +421,18 @@ pub(crate) fn draw_marquee_box(
         let (vx, vy, vw, vh, _, _, _, _) =
             piano_snapped_bounds(start, end, view, quantize, ppq, bar_line_data);
         let kb_w = music_rect.min.x - content_rect.min.x;
-        let snapped = egui::Rect::from_min_max(
-            egui::pos2(vx.min(vy) - kb_w, vw.min(vh)),
-            egui::pos2(vx.max(vy) - kb_w, vw.max(vh)),
-        );
+        // 垂直全选模式：y 范围用 music_rect 全高，x 范围不变
+        let snapped = if vertical {
+            egui::Rect::from_min_max(
+                egui::pos2(vx.min(vy) - kb_w, 0.0),
+                egui::pos2(vx.max(vy) - kb_w, music_rect.height()),
+            )
+        } else {
+            egui::Rect::from_min_max(
+                egui::pos2(vx.min(vy) - kb_w, vw.min(vh)),
+                egui::pos2(vx.max(vy) - kb_w, vw.max(vh)),
+            )
+        };
         crate::selection::draw::draw(&ui.painter(), music_rect, snapped, fill_color, stroke_color);
     }
 }

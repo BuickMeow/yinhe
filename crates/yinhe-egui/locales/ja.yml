@@ -17,6 +17,7 @@ common.exit_app: "yinhe を終了"
 
 # ── ツール ──
 tool.select: "選択"
+tool.select_vertical: "縦選択"
 tool.pan: "手のひら"
 tool.pencil: "鉛筆"
 tool.curve: "曲線"

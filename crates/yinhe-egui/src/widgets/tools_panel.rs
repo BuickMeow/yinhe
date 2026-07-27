@@ -4,6 +4,7 @@ use rust_i18n::t;
 #[derive(PartialEq, Clone, Copy, Debug)]
 pub enum Tool {
     Select,
+    SelectVertical,
     Pan,
     Pencil,
     Curve,
@@ -12,8 +13,9 @@ pub enum Tool {
 }
 
 /// All currently available tools — shown on the transport bar (right of the timecode).
-pub const ALL_TOOLS: [Tool; 6] = [
+pub const ALL_TOOLS: [Tool; 7] = [
     Tool::Select,
+    Tool::SelectVertical,
     Tool::Pan,
     Tool::Pencil,
     Tool::Curve,
@@ -25,6 +27,7 @@ impl Tool {
     pub fn icon(self) -> egui_material_icons::MaterialIcon {
         match self {
             Tool::Select => ICON_SELECT,
+            Tool::SelectVertical => ICON_TEXT_SELECT_START,
             Tool::Pan => ICON_PAN_TOOL,
             Tool::Pencil => ICON_EDIT,
             Tool::Curve => ICON_DRAW,
@@ -36,6 +39,7 @@ impl Tool {
     pub fn label(self) -> String {
         match self {
             Tool::Select => t!("tool.select").to_string(),
+            Tool::SelectVertical => t!("tool.select_vertical").to_string(),
             Tool::Pan => t!("tool.pan").to_string(),
             Tool::Pencil => t!("tool.pencil").to_string(),
             Tool::Curve => t!("tool.curve").to_string(),

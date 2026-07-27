@@ -193,7 +193,8 @@ pub fn show(
     let mut eraser_event: Option<PianoViewEvent> = None;
     let mut ghost_notes: Vec<(u32, u32, u8, u16)> = Vec::new();
     let mut hidden_notes: std::collections::HashSet<(u16, u32, u8)> = std::collections::HashSet::new();
-    if *active_tool == Tool::Select {
+    if *active_tool == Tool::Select || *active_tool == Tool::SelectVertical {
+        let vertical = *active_tool == Tool::SelectVertical;
         let (sel_ghosts, sel_hidden) = drag::sel_drag_frame(
             ui,
             content_rect,
@@ -211,6 +212,7 @@ pub fn show(
             track_colors,
             track_visible,
             track_selected,
+            vertical,
         );
         ghost_notes = sel_ghosts;
         hidden_notes = sel_hidden.into_iter().collect();
@@ -246,7 +248,7 @@ pub fn show(
     }
 
     // ── Hover cursor: show Move when over selection rect ──
-    if *active_tool == Tool::Select
+    if (*active_tool == Tool::Select || *active_tool == Tool::SelectVertical)
         && !crate::view_interaction::pointer_over_popup(ui.ctx())
     {
         if let Some(pos) = ui.input(|i| i.pointer.hover_pos()) {
@@ -692,13 +694,14 @@ pub fn show(
     // ── Draw selection box on TOP of GPU content ──
     // State was already updated by sel_drag_frame above; this just draws the box
     // after the GPU paint so it's not covered by the texture.
-    if *active_tool == Tool::Select {
+    if *active_tool == Tool::Select || *active_tool == Tool::SelectVertical {
+        let vertical = *active_tool == Tool::SelectVertical;
         // Apply pending sel_rect delta from duplicate/transpose
         sel_rect.apply_pending();
 
         // Draw active drag box (if any)
         drag::draw_marquee_box(ui, content_rect, music_rect, view, quantize, ppq, bar_line_data,
-            "sel_drag", egui::Color32::WHITE, egui::Color32::WHITE);
+            "sel_drag", egui::Color32::WHITE, egui::Color32::WHITE, vertical);
 
         // Draw persisted selection rect (remains after mouse release).
         // Compute pixel rect from music coordinates each frame so it follows
@@ -734,7 +737,7 @@ pub fn show(
     } else if *active_tool == Tool::Eraser {
         // Draw eraser marquee box in red
         drag::draw_marquee_box(ui, content_rect, music_rect, view, quantize, ppq, bar_line_data,
-            "eraser_drag", egui::Color32::RED, egui::Color32::RED);
+            "eraser_drag", egui::Color32::RED, egui::Color32::RED, false);
     }
 
     // ── Time ruler ──
