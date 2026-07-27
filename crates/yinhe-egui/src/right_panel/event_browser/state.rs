@@ -3,7 +3,7 @@
 //! `SelectedItem::Automation` 统一覆盖 CC / PitchBend / RPN / NRPN / Tempo，
 //! 通过 `AutomationTarget` 区分具体类型，避免为每种自动化写单独变体。
 
-use yinhe_types::AutomationTarget;
+use yinhe_types::{AutomationTarget, SegmentShape};
 
 /// 事件浏览器表格行点击时产生的跳转请求。
 ///
@@ -56,6 +56,44 @@ pub enum ArchiveKey {
     Port(u8),
     Channel(u8, u8),
     Track(u16),
+}
+
+/// 音符引用：足够定位一个音符的所有字段。
+///
+/// `id` 用于 `Arc::make_mut` 后的 retain，`start_tick` / `key` / `track` 用于
+/// `pencil_drag_note` 寻址。`end_tick` / `velocity` 是当前值，便于 popup 实时显示。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct NoteRef {
+    pub id: u32,
+    pub start_tick: u32,
+    pub end_tick: u32,
+    pub key: u8,
+    pub velocity: u8,
+    pub track: u16,
+}
+
+/// 右键编辑请求：cell 上右键时写入 egui memory，由 `apply_edit_popups` 取出分派。
+///
+/// 一个全局 key `egui::Id::new((salt, "edit"))` 存 `EditRequest`，**不**用 `ui.id()`
+/// （cell 是 child ui，`ui.id()` 与 popup 调用处不同）。
+#[derive(Clone, Debug, PartialEq)]
+pub enum EditRequest {
+    /// Automation 的 tick 编辑（位置移动）
+    AutoTick { tick: u32, value: f32 },
+    /// Automation 的 value 编辑
+    AutoValue { tick: u32, value: f32 },
+    /// Automation 的 shape 编辑
+    AutoShape { tick: u32, shape: SegmentShape },
+    /// 音符 start_tick 编辑（保持 gate 不变，end_tick 跟随平移）
+    NoteStartTick { note: NoteRef },
+    /// 音符 end_tick 编辑（gate 随之变化）
+    NoteEndTick { note: NoteRef },
+    /// 音符 gate（长度）编辑（实际改 end_tick = start_tick + gate）
+    NoteGate { note: NoteRef },
+    /// 音符 key 编辑
+    NoteKey { note: NoteRef },
+    /// 音符 velocity 编辑
+    NoteVelocity { note: NoteRef },
 }
 
 impl Default for EventBrowserState {

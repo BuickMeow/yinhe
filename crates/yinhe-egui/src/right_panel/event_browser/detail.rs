@@ -10,10 +10,10 @@ use yinhe_editor_core::document::Document;
 use yinhe_types::AutomationTarget;
 
 use super::bar_lookup::BarLookup;
-use super::edit::apply_automation_popups;
-use super::state::{EventBrowserState, JumpRequest, PulseKind, SelectedItem};
+use super::edit::{apply_automation_popups, apply_note_popups};
+use super::state::{EditRequest, EventBrowserState, JumpRequest, NoteRef, PulseKind, SelectedItem};
 use super::table::{
-    build_table, cell_shape_editable, cell_text, cell_value_editable,
+    build_table, cell_editable, cell_text, shape_text,
     paginate, render_pager, take_row_click, total_pages, AutomationEventOwned,
 };
 
@@ -94,7 +94,6 @@ fn show_automation_detail(
     });
     ui.add_space(2.0);
 
-    let max_val = target.max_value();
     build_table(ui, "eb_auto", &[
         ("#", 40.0),
         (t!("event_browser.header.tick").as_ref(), 70.0),
@@ -104,13 +103,16 @@ fn show_automation_detail(
     ], page_items.len(), |i, row, click_key| {
         let e = &page_items[i];
         cell_text(row, format!("{}", page_start + i + 1), click_key, i);
-        cell_text(row, format!("{}", e.tick), click_key, i);
+        cell_editable(row, "eb_auto_edit", i, format!("{}", e.tick),
+            EditRequest::AutoTick { tick: e.tick, value: e.value }, click_key);
         cell_text(row, bar_lookup.format(e.tick), click_key, i);
-        cell_value_editable(row, "eb_auto_val", i, e.tick, e.value, max_val, click_key);
-        cell_shape_editable(row, "eb_auto_shape", i, e.tick, e.shape, click_key);
+        cell_editable(row, "eb_auto_edit", i, format!("{}", e.value),
+            EditRequest::AutoValue { tick: e.tick, value: e.value }, click_key);
+        cell_editable(row, "eb_auto_edit", i, shape_text(e.shape),
+            EditRequest::AutoShape { tick: e.tick, shape: e.shape }, click_key);
     });
 
-    apply_automation_popups(ui, doc, "eb_auto_val", "eb_auto_shape", track, lane_idx, target);
+    apply_automation_popups(ui, doc, "eb_auto_edit", track, lane_idx, target);
 
     // Automation：仅跳转不闪烁；Tempo 不切 track（note=None）
     let note = if matches!(target, AutomationTarget::Tempo) { None } else { Some((track, 0)) };
@@ -209,21 +211,38 @@ fn show_notes_detail(
         ("id", 70.0),
         (t!("event_browser.header.tick").as_ref(), 70.0),
         (t!("event_browser.header.position").as_ref(), 80.0),
+        ("gate", 60.0),
         (t!("event_browser.header.end_tick").as_ref(), 80.0),
         ("结束位置", 90.0),
         ("键位", 50.0),
         ("力度", 50.0),
     ], page_notes.len(), |i, row, click_key| {
         let (n, _key, _trk) = &page_notes[i];
+        let note_ref = NoteRef {
+            id: n.id,
+            start_tick: n.start_tick,
+            end_tick: n.end_tick,
+            key: n.key,
+            velocity: n.velocity,
+            track,
+        };
+        let gate = n.end_tick.saturating_sub(n.start_tick);
         cell_text(row, format!("{}", page_start + i + 1), click_key, i);
         cell_text(row, format!("#{}", n.id), click_key, i);
-        cell_text(row, format!("{}", n.start_tick), click_key, i);
+        cell_editable(row, "eb_notes_edit", i, format!("{}", n.start_tick),
+            EditRequest::NoteStartTick { note: note_ref }, click_key);
         cell_text(row, bar_lookup.format(n.start_tick), click_key, i);
-        cell_text(row, format!("{}", n.end_tick), click_key, i);
+        cell_editable(row, "eb_notes_edit", i, format!("{}", gate),
+            EditRequest::NoteGate { note: note_ref }, click_key);
+        cell_editable(row, "eb_notes_edit", i, format!("{}", n.end_tick),
+            EditRequest::NoteEndTick { note: note_ref }, click_key);
         cell_text(row, bar_lookup.format(n.end_tick), click_key, i);
-        cell_text(row, format!("{}", n.key), click_key, i);
-        cell_text(row, format!("{}", n.velocity), click_key, i);
+        cell_editable(row, "eb_notes_edit", i, format!("{}", n.key),
+            EditRequest::NoteKey { note: note_ref }, click_key);
+        cell_editable(row, "eb_notes_edit", i, format!("{}", n.velocity),
+            EditRequest::NoteVelocity { note: note_ref }, click_key);
     });
+    apply_note_popups(ui, doc, "eb_notes_edit");
     // 音符：矩形闪烁 + 切到音符所在 track
     take_row_click(ui, "eb_notes").map(|i| {
         let (n, _key, _trk) = &page_notes[i];
