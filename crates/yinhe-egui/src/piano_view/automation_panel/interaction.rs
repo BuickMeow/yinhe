@@ -8,7 +8,7 @@ use yinhe_wgpu::{AutomationGhost, build_lane_override, build_lane_shape_override
 
 use crate::right_panel::{InfoContent, RightTab};
 use crate::widgets::tools_panel::Tool;
-use super::{AutomationEditCtx, ANCHOR_HIT_PX};
+use super::{panel_max_val, AutomationEditCtx, ANCHOR_HIT_PX};
 
 /// 悬停在锚点上多久后显示 tooltip（秒）。
 const HOVER_DELAY: f64 = 0.6;
@@ -201,6 +201,27 @@ fn compute_ctrl_from_mouse(
     Some((new_x, new_y))
 }
 
+/// 把拖拽出的控制点 (x, y) 按端别合并进 `prev_tick` 事件的 shape。
+/// 释放提交与 ghost 预览共用，保证两者生成的 shape 完全一致。
+fn merge_ctrl_shape(
+    lane: &AutomationLane,
+    prev_tick: u32,
+    which: CtrlEnd,
+    new_ctrl: (f32, f32),
+) -> SegmentShape {
+    lane.events
+        .iter()
+        .find(|e| e.tick == prev_tick)
+        .map(|e| match e.shape {
+            SegmentShape::Curve { x1, y1, x2, y2 } => match which {
+                CtrlEnd::Out => SegmentShape::Curve { x1: new_ctrl.0, y1: new_ctrl.1, x2, y2 },
+                CtrlEnd::In => SegmentShape::Curve { x1, y1, x2: new_ctrl.0, y2: new_ctrl.1 },
+            },
+            SegmentShape::Step => SegmentShape::Step,
+        })
+        .unwrap_or(SegmentShape::Step)
+}
+
 /// 处理 automation 面板上的鼠标交互。
 ///
 /// **Ghost 模式**：拖拽中不写模型，只返回 ghost 几何（由 wgpu Layer 3 绘制），
@@ -225,12 +246,8 @@ pub(crate) fn handle_automation_interaction(
     let mut edits = Vec::new();
     // target 直接来自 selected_target（Tempo 也是 selected_target 的一种）。
     let target = panel.selected_target.clone();
-    // Tempo 的 max_val 由实际事件动态计算；其他用 target.max_value()。
-    let max_val = if target == yinhe_types::AutomationTarget::Tempo {
-        tempo_lane.events.iter().map(|e| e.value).fold(0.0_f32, f32::max).max(1.0)
-    } else {
-        target.max_value()
-    };
+    // max_val 与 show_panels 共用同一计算（Tempo 由实际事件动态计算）。
+    let max_val = panel_max_val(panel, tempo_lane);
     if max_val == 0.0 {
         return (edits, None, None, None);
     }
@@ -448,16 +465,7 @@ pub(crate) fn handle_automation_interaction(
                             ) {
                                 if new_ctrl.0 != start_x || new_ctrl.1 != start_y {
                                     // 读取当前 shape，按端别更新对应分量
-                                    let new_shape = l.events.iter()
-                                        .find(|e| e.tick == prev_tick)
-                                        .map(|e| match e.shape {
-                                            SegmentShape::Curve { x1, y1, x2, y2 } => match which {
-                                                CtrlEnd::Out => SegmentShape::Curve { x1: new_ctrl.0, y1: new_ctrl.1, x2, y2 },
-                                                CtrlEnd::In  => SegmentShape::Curve { x1, y1, x2: new_ctrl.0, y2: new_ctrl.1 },
-                                            },
-                                            SegmentShape::Step => SegmentShape::Step,
-                                        })
-                                        .unwrap_or(SegmentShape::Step);
+                                    let new_shape = merge_ctrl_shape(l, prev_tick, which, new_ctrl);
                                     edits.push(yinhe_types::AutomationEdit::SetShape {
                                         track_idx,
                                         lane_idx: lidx,
@@ -602,16 +610,7 @@ pub(crate) fn handle_automation_interaction(
                         l, prev_tick, which, p, ppu, scroll_x, grid_area, panel_rect, panel, max_val,
                     )?;
                     // 读现有 shape，按端别替换对应分量
-                    let new_shape = l.events.iter()
-                        .find(|e| e.tick == prev_tick)
-                        .map(|e| match e.shape {
-                            SegmentShape::Curve { x1, y1, x2, y2 } => match which {
-                                CtrlEnd::Out => SegmentShape::Curve { x1: new_ctrl.0, y1: new_ctrl.1, x2, y2 },
-                                CtrlEnd::In  => SegmentShape::Curve { x1, y1, x2: new_ctrl.0, y2: new_ctrl.1 },
-                            },
-                            SegmentShape::Step => SegmentShape::Step,
-                        })
-                        .unwrap_or(SegmentShape::Step);
+                    let new_shape = merge_ctrl_shape(l, prev_tick, which, new_ctrl);
                     let override_lane = build_lane_shape_override(l, prev_tick, new_shape);
                     Some(AutomationGhost::Move { lane: override_lane, color: track_color })
                 })

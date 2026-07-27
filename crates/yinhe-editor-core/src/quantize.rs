@@ -35,7 +35,7 @@ impl QuantizePreset {
     pub fn label(&self) -> String {
         match self {
             QuantizePreset::Fraction(num, den) => format!("{}/{}", num, den),
-            QuantizePreset::Absolute(n) => format!("{} 刻度", n),
+            QuantizePreset::Absolute(n) => format!("{} tick", n),
         }
     }
 

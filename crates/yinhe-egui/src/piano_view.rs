@@ -26,6 +26,9 @@ pub struct AutomationPanelsCtx<'a> {
     pub renderers:
         &'a mut Vec<(yinhe_wgpu::InstanceRenderer, crate::render_context::RenderContext)>,
     pub lanes: &'a [yinhe_types::AutomationLane],
+    /// 渲染用 lanes：所有 PR 可见音轨的 lanes（与音符显示逻辑一致）。
+    /// `lanes` 仅为 editing_track 的编辑目标，渲染不受其限制。
+    pub render_lanes: &'a [&'a yinhe_types::AutomationLane],
     pub show: &'a mut bool,
     pub wgpu_state: &'a std::sync::Arc<eframe::egui_wgpu::RenderState>,
 }
@@ -792,6 +795,7 @@ pub fn show(
             ctx.panels,
             ctx.renderers,
             ctx.lanes,
+            ctx.render_lanes,
             ctx.show,
             ctx.wgpu_state,
             combo_w,

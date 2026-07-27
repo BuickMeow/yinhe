@@ -308,10 +308,22 @@ impl App {
                         None => Vec::new(),
                     }
                 };
+                // 渲染 lanes：所有 PR 可见音轨的 lanes（引用，零拷贝）。
+                // 与音符显示逻辑一致（选中音轨 ∪ editing_track，Conductor 选中 = 全部）。
+                let automation_render_lanes: Vec<&yinhe_types::AutomationLane> = doc
+                    .data
+                    .model
+                    .tracks
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| pr_visible.get(*i).copied().unwrap_or(false))
+                    .flat_map(|(_, t)| t.automation_lanes.iter())
+                    .collect();
                 let auto_ctx = Some(piano_view::AutomationPanelsCtx {
                     panels: &mut doc.edit.controller_panels,
                     renderers: &mut self.controller_renderers[idx],
                     lanes: &automation_lanes,
+                    render_lanes: &automation_render_lanes,
                     show: &mut doc.edit.show_controller_panels,
                     wgpu_state: &auto_wgpu_state,
                 });

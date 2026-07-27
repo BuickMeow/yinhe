@@ -95,6 +95,18 @@ fn value_upper_bound(panel: &AutomationPanelView) -> f32 {
     }
 }
 
+/// 面板当前 target 的值上限（velocity=127；Tempo 由实际事件动态计算；其他 max_value()）。
+/// show_panels（zoom/scroll/标签）与 interaction（y↔value 换算）共用。
+pub(crate) fn panel_max_val(panel: &AutomationPanelView, tempo_lane: &AutomationLane) -> f32 {
+    if panel.show_velocity {
+        127.0
+    } else if panel.selected_target == AutomationTarget::Tempo {
+        tempo_lane.events.iter().map(|e| e.value).fold(0.0_f32, f32::max).max(1.0)
+    } else {
+        panel.selected_target.max_value()
+    }
+}
+
 /// 计算 value_zoom 的下限，使得 visible_range 不超过 upper_bound。
 fn min_value_zoom(max_val: f32, upper_bound: f32) -> f32 {
     if upper_bound <= 0.0 {
@@ -137,6 +149,7 @@ pub fn show_panels(
     panels: &mut Vec<AutomationPanelView>,
     renderers: &mut Vec<(InstanceRenderer, RenderContext)>,
     automation_lanes: &[AutomationLane],
+    render_lanes: &[&AutomationLane],
     show_panels: &mut bool,
     wgpu_state: &Arc<eframe::egui_wgpu::RenderState>,
     combo_width: f32,
@@ -222,18 +235,7 @@ pub fn show_panels(
             egui::pos2(0.0, y_offset),
             egui::pos2(content_rect_right, y_offset + SPLIT_H),
         );
-        let handle_resp =
-            crate::widgets::split_handle::horizontal(ui, format!("auto_handle_{}", i), handle_rect);
-        if handle_resp.dragged() {
-            let delta = handle_resp.drag_delta().y;
-            let new_h = (panel.panel_height - delta).clamp(
-                yinhe_types::automation_panel_view::MIN_PANEL_HEIGHT,
-                yinhe_types::automation_panel_view::MAX_PANEL_HEIGHT,
-            );
-            panel.panel_height = new_h;
-            panel.dirty = true;
-            ui.ctx().request_repaint();
-        }
+        handle_split_drag(ui, panel, handle_rect, i);
         y_offset += SPLIT_H;
 
         // Render at original height (consistent with pre-computed layout)
@@ -282,205 +284,57 @@ pub fn show_panels(
             panel_rect.min,
             egui::pos2(panel_rect.min.x + combo_width, panel_rect.max.y),
         );
-        let pointer_pos = ui.input(|i| i.pointer.hover_pos());
-        let scroll_delta = ui.input(|i| i.smooth_scroll_delta);
-        let zoom_delta = ui.input(|i| i.zoom_delta());
-        let cmd = ui.input(|i| i.modifiers.command || i.modifiers.ctrl);
         let upper_bound = value_upper_bound(panel);
-        let max_val_f = if panel.show_velocity {
-            127.0
-        } else if panel.selected_target == AutomationTarget::Tempo {
-            tempo_lane.events.iter().map(|e| e.value).fold(0.0_f32, f32::max).max(1.0)
-        } else {
-            panel.selected_target.max_value()
-        };
+        let max_val_f = panel_max_val(panel, tempo_lane);
         let zoom_min = min_value_zoom(max_val_f, upper_bound);
-
-        // 垂直缩放辅助闭包
-        let apply_vertical_zoom = |panel: &mut AutomationPanelView, factor: f32| {
-            panel.value_zoom = (panel.value_zoom * factor).clamp(zoom_min, 8.0);
-            panel.clamp_value_scroll(max_val_f);
-            panel.dirty = true;
-            ui.ctx().request_repaint();
-        };
-
-        if let Some(p) = pointer_pos {
-            let in_grid = grid_area.contains(p);
-            let in_combo = combo_area.contains(p);
-            if in_grid {
-                // 触控板捏合 → 水平缩放（联动 pianoroll）
-                if (zoom_delta - 1.0).abs() > 0.001 {
-                    feedback.zoom_factor = zoom_delta;
-                    feedback.zoom_center_x = p.x - panel_rect.min.x;
-                }
-                // Cmd+滚轮 → 水平缩放（联动 pianoroll）
-                if cmd && scroll_delta.y.abs() > 0.5 {
-                    let factor = if scroll_delta.y > 0.0 { 1.1 } else { 1.0 / 1.1 };
-                    feedback.zoom_factor = factor;
-                    feedback.zoom_center_x = p.x - panel_rect.min.x;
-                }
-                // 触控板水平滑动 → pianoroll 水平滚动
-                if !cmd && scroll_delta.x.abs() > 0.5 {
-                    feedback.scroll_x_delta += scroll_delta.x;
-                }
-                // 触控板垂直滑动 → value_scroll（仅单面板时）
-                if !cmd && scroll_delta.y.abs() > 0.5 && max_scroll <= 0.0 {
-                    let visible_range = max_val_f / panel.value_zoom;
-                    let scroll_amount = (scroll_delta.y / 100.0) * visible_range * 0.2;
-                    let max_scroll_val = (max_val_f - visible_range).max(0.0);
-                    panel.value_scroll = (panel.value_scroll + scroll_amount).clamp(0.0, max_scroll_val);
-                    panel.dirty = true;
-                    ui.ctx().request_repaint();
-                }
-                // 中键拖拽 → 水平 pan + value_scroll
-                if ui.input(|i| i.pointer.middle_down()) {
-                    let delta = ui.input(|i| i.pointer.delta());
-                    feedback.scroll_x_delta += delta.x;
-                    let visible_range = max_val_f / panel.value_zoom;
-                    let scroll_amount = -delta.y / panel_rect.height() * visible_range;
-                    let max_scroll_val = (max_val_f - visible_range).max(0.0);
-                    panel.value_scroll = (panel.value_scroll + scroll_amount).clamp(0.0, max_scroll_val);
-                    panel.dirty = true;
-                    ui.ctx().request_repaint();
-                }
-            } else if in_combo {
-                // 左侧面板：触控板捏合 → 垂直缩放
-                if (zoom_delta - 1.0).abs() > 0.001 {
-                    apply_vertical_zoom(panel, zoom_delta);
-                }
-                // Cmd+滚轮 → 垂直缩放
-                if cmd && scroll_delta.y.abs() > 0.5 {
-                    let factor = if scroll_delta.y > 0.0 { 1.1 } else { 1.0 / 1.1 };
-                    apply_vertical_zoom(panel, factor);
-                }
-            }
-        }
+        handle_panel_scroll_zoom(
+            ui,
+            panel,
+            grid_area,
+            combo_area,
+            panel_rect,
+            max_val_f,
+            zoom_min,
+            max_scroll,
+            &mut feedback,
+        );
 
         // 先处理交互，得到 ghost（传给 wgpu Layer 3 绘制）+ edits。
         // 必须在 prepare_automation 之前，这样 ghost 能当帧渲染。
-        // Tempo / CC / PB / RPN / NRPN 走 lane 编辑；Velocity 走铅笔笔划（改音符力度）。
-        let mut panel_ghost: Option<AutomationGhost> = None;
-        let mut velocity_preview: Option<velocity::VelocityPreview> = None;
-        let mut tooltip: Option<interaction::HoverTooltip> = None;
-        if let Some(ctx) = edit_ctx {
-            if panel.show_velocity {
-                // Velocity：铅笔笔划修改力度条（命中 noteon，只作用于 active_track）
-                if ctx.active_tool == Tool::Pencil
-                    && let Some(track) = ctx.active_track
-                    && let Some(midi_src) = midi
-                {
-                    let track_color = track_colors
-                        .get(track as usize)
-                        .copied()
-                        .unwrap_or([0.8, 0.8, 0.8]);
-                    let (vel_edits, preview, tip) = velocity::handle_velocity_interaction(
-                        ui,
-                        grid_area,
-                        panel_rect,
-                        panel,
-                        midi_src,
-                        track,
-                        track_color,
-                        i,
-                    );
-                    velocity_edits.extend(vel_edits);
-                    velocity_preview = preview;
-                    tooltip = tip.map(|(tick, value, pos)| {
-                        interaction::HoverTooltip::Anchor { tick, value, pos }
-                    });
-                }
-            } else if let Some(track) = ctx.active_track {
-                let (panel_edits, ghost, drag_info, hover_info) = interaction::handle_automation_interaction(
-                    ui,
-                    grid_area,
-                    panel_rect,
-                    panel,
-                    automation_lanes,
-                    tempo_lane,
-                    track,
-                    ctx,
-                    i,
-                    track_colors,
-                    info_content,
-                    right_tab,
-                );
-                edits.extend(panel_edits);
-                panel_ghost = ghost;
-                // all_drag_info 只跟锚点拖拽（InfoPanel 用它显示实时 tick/value）
-                if let Some(interaction::HoverTooltip::Anchor { tick, value, .. }) = drag_info {
-                    all_drag_info = Some((tick, value));
-                }
-                tooltip = drag_info.or(hover_info);
-            }
+        let out = dispatch_edit_interaction(
+            ui,
+            grid_area,
+            panel_rect,
+            panel,
+            automation_lanes,
+            tempo_lane,
+            midi,
+            edit_ctx,
+            i,
+            track_colors,
+            info_content,
+            right_tab,
+        );
+        edits.extend(out.automation_edits);
+        velocity_edits.extend(out.velocity_edits);
+        if out.anchor_drag.is_some() {
+            all_drag_info = out.anchor_drag;
         }
-
-        // tooltip：拖拽中显示 drag_info，否则 hover 锚点/控制点超时显示 hover_info。
-        if let (Some(tip), Some(ctx)) = (tooltip, edit_ctx) {
-            let (lines, x, y): (Vec<String>, f32, f32) = match tip {
-                interaction::HoverTooltip::Anchor { tick, value, pos } => {
-                    let pos_str = if let Some((ppq, num, den, ts_events)) = ctx.bar_line_data {
-                        format_tick_bar_beat_with_time_sig(tick as f64, ppq, ts_events, num, den)
-                    } else {
-                        format!("{}", tick)
-                    };
-                    let val_str = if panel.show_velocity {
-                        format!("{}", value.round() as i32)
-                    } else if panel.selected_target == AutomationTarget::Tempo {
-                        format!("{:.2} BPM", value)
-                    } else {
-                        format!("{:.2}", value)
-                    };
-                    (vec![pos_str, val_str], pos.x, pos.y)
-                }
-                interaction::HoverTooltip::ControlPoint { x1, y1, x2, y2, pos } => {
-                    (
-                        vec![
-                            format!("X1: {:.2}", x1),
-                            format!("Y1: {:.2}", y1),
-                            format!("X2: {:.2}", x2),
-                            format!("Y2: {:.2}", y2),
-                        ],
-                        pos.x,
-                        pos.y,
-                    )
-                }
-            };
-            crate::view_interaction::draw_hover_tooltip(ui.ctx(), &lines, x, y);
-        }
+        let panel_ghost = out.ghost;
+        let velocity_preview = out.preview;
 
         if gw > 0 && gh > 0 {
             if let Some((renderer, render_ctx)) = renderers.get_mut(i) {
-                render_ctx.ensure_size(gpw, gph);
-
-                // Tempo 模式：lanes 只包含 conductor.tempo；其他模式按 selected_target 过滤。
-                let lanes: Vec<&AutomationLane> = if panel.selected_target == AutomationTarget::Tempo {
-                    vec![tempo_lane]
-                } else {
-                    automation_lanes
-                        .iter()
-                        .filter(|l| l.target == panel.selected_target)
-                        .collect()
-                };
-
-                // 从 info_content 提取高亮锚点 tick（基于选中状态）
-                let highlight_tick = match info_content {
-                    Some(InfoContent::Anchor { target: anchor_target, lane_idx: anchor_lane_idx, event_idx, .. })
-                        if *anchor_target == panel.selected_target => {
-                        // 通过 event_idx 定位锚点的实际 tick
-                        lanes.iter()
-                            .find(|l| l.target == panel.selected_target)
-                            .and_then(|l| l.events.get(*event_idx))
-                            .map(|e| e.tick)
-                    }
-                    _ => None,
-                };
-
-                let gpu_dirty = prepare_automation(
+                render_panel_content(
+                    ui,
                     renderer,
-                    gw,
-                    gh,
+                    render_ctx,
                     panel,
-                    &lanes,
+                    grid_rect,
+                    gpw,
+                    gph,
+                    render_lanes,
+                    tempo_lane,
                     midi,
                     track_visible,
                     track_colors,
@@ -490,84 +344,13 @@ pub fn show_panels(
                     max_val_f,
                     panel_ghost,
                     revision,
-                    highlight_tick,
+                    info_content,
+                    i,
+                    combo_width,
                 );
-
-                let content_changed = panel.dirty || gpu_dirty;
-                panel.dirty = false;
-
-                let painter = ui.painter();
-
-                // ── Background + center line (drawn by egui before wgpu texture) ──
-                let theme = renderer.theme();
-                let (r, g, b) = theme.pr_bg;
-                painter.rect_filled(
-                    grid_rect,
-                    0.0,
-                    egui::Color32::from_rgb((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8),
-                );
-                // Center line (only for targets that have one)
-                // 直接基于 panel.selected_target 判断，不依赖 lanes 是否非空：
-                // 即使该 target 没有任何锚点事件（lanes 为空），中线也应照常显示。
-                // velocity 模式下不画中线（velocity 没有 center 概念）。
-                if !panel.show_velocity {
-                    let target = &panel.selected_target;
-                    let max_val = target.max_value();
-                    if max_val > 0.0 && target.has_center_line() {
-                        let center_val = target.default_value();
-                        let y_center = panel.value_to_y(center_val, max_val);
-                        let (cr, cg, cb, ca) = theme.center_line;
-                        painter.rect_filled(
-                            egui::Rect::from_min_size(
-                                egui::pos2(grid_rect.min.x, grid_rect.min.y + y_center - 0.5),
-                                egui::vec2(grid_rect.width(), 1.0),
-                            ),
-                            0.0,
-                            egui::Color32::from_rgba_unmultiplied(
-                                (cr * 255.0) as u8,
-                                (cg * 255.0) as u8,
-                                (cb * 255.0) as u8,
-                                (ca * 255.0) as u8,
-                            ),
-                        );
-                    }
-                }
-
-                // ── Grid lines (egui, before wgpu texture) ──
-                // automation 不补 ruler（共享 pianoroll 顶部 ruler），但网格线需要画。
-                if let Some(midi) = midi
-                    && let Some(tpb) = midi.ticks_per_beat()
-                {
-                    let (def_num, def_den) = midi.time_sig_default();
-                    let sig_events = midi.time_sig_events();
-                    let grid_draw_rect = egui::Rect::from_min_max(
-                        egui::pos2(grid_rect.min.x + combo_width, grid_rect.min.y),
-                        grid_rect.max,
-                    );
-                    crate::widgets::grid_lines::paint_grid_lines(
-                        painter,
-                        grid_draw_rect,
-                        &panel.base,
-                        tpb,
-                        def_num,
-                        def_den,
-                        sig_events,
-                        &crate::widgets::grid_lines::GridColors::pianoroll(),
-                    );
-                }
-
-                render_ctx.paint(
-                    renderer,
-                    gpw,
-                    gph,
-                    &format!("auto_panel_{}", i),
-                    painter,
-                    grid_rect,
-                    content_changed,
-                );
-
                 // ── velocity 笔划预览（画在 wgpu 纹理之上）──
                 if let Some(preview) = &velocity_preview {
+                    let painter = ui.painter();
                     for bar in &preview.bars {
                         painter.rect_filled(*bar, 0.0, preview.color.gamma_multiply(0.85));
                         // 顶部亮线标示新高度
@@ -583,121 +366,30 @@ pub fn show_panels(
         // ── 垂直滚动条（值空间） ──
         // 占用面板右侧 SCROLLBAR_W 宽度。仅在 visible_range < upper_bound 时显示。
         // tempo 模式下 upper_bound 是 TEMPO_UPPER_BOUND；其他模式用 max_value()。
-        {
-            let vsb_rect = egui::Rect::from_min_max(
-                egui::pos2(panel_right, panel_top),
-                egui::pos2(content_rect_right, panel_bottom),
+        let vsb_rect = egui::Rect::from_min_max(
+            egui::pos2(panel_right, panel_top),
+            egui::pos2(content_rect_right, panel_bottom),
+        );
+        ui.push_id(format!("auto_vscroll_{}", i), |ui| {
+            crate::widgets::scrollbar::show_vertical_value(
+                ui,
+                vsb_rect,
+                panel.panel_height,
+                &mut panel.value_scroll,
+                &mut panel.value_zoom,
+                upper_bound,
+                zoom_min,
+                8.0,
+                &mut panel.dirty,
             );
-            ui.push_id(format!("auto_vscroll_{}", i), |ui| {
-                crate::widgets::scrollbar::show_vertical_value(
-                    ui,
-                    vsb_rect,
-                    panel.panel_height,
-                    &mut panel.value_scroll,
-                    &mut panel.value_zoom,
-                    upper_bound,
-                    zoom_min,
-                    8.0,
-                    &mut panel.dirty,
-                );
-            });
-        }
+        });
 
         // ── Left side: target selector + display mode buttons ──
         let combo_rect = egui::Rect::from_min_max(
             panel_rect.min,
             egui::pos2(panel_rect.min.x + combo_width, panel_rect.max.y),
         );
-
-        // Draw left panel background (covers the grid underneath)
-        ui.painter().rect_filled(combo_rect, 0.0, theme::APP_BG);
-
-        let combo_inner = combo_rect.shrink(4.0);
-
-        ui.scope_builder(egui::UiBuilder::new().max_rect(combo_inner), |ui| {
-            ui.set_clip_rect(combo_inner.intersect(panels_area_rect));
-            let layout = egui::Layout::top_down(egui::Align::Center);
-            ui.with_layout(layout, |ui| {
-                // ── Target selector button (tools panel style) ──
-                let target_resp = ui.add(
-                    egui::Label::new(ICON_AUTOMATION.rich_text().size(14.0).color(egui::Color32::GRAY))
-                        .sense(egui::Sense::click())
-                        .selectable(false),
-                );
-                crate::widgets::hover::hover_highlight(
-                    ui,
-                    &target_resp,
-                    ICON_AUTOMATION.codepoint,
-                    egui::FontId::new(14.0, ICON_AUTOMATION.font_family()),
-                    false,
-                );
-
-                // ── Popup menu (manually managed Area to support DragValue interaction) ──
-                let popup_id = ui.id().with("auto_target_popup");
-                let is_open = ui.data_mut(|d| d.get_persisted::<bool>(popup_id)).unwrap_or(false);
-
-                if target_resp.clicked() {
-                    ui.data_mut(|d| d.insert_persisted(popup_id, !is_open));
-                }
-
-                if is_open {
-                    let popup_pos = egui::pos2(target_resp.rect.left(), target_resp.rect.bottom());
-                    let area_resp = egui::Area::new(popup_id)
-                        .order(egui::Order::Foreground)
-                        .fixed_pos(popup_pos)
-                        .show(ui.ctx(), |ui| {
-                            egui::Frame::menu(ui.style()).show(ui, |ui| {
-                                ui.set_min_width(120.0);
-                                // Velocity (special: not an AutomationTarget, renders from notes)
-                                let vel_selected = panel.show_velocity;
-                                if ui.add(egui::Button::selectable(vel_selected, t!("automation.velocity").as_ref())).clicked() {
-                                    panel.show_velocity = true;
-                                    panel.dirty = true;
-                                    ui.ctx().data_mut(|d| d.insert_persisted(popup_id, false));
-                                }
-                                ui.separator();
-                                for target in AUTOMATION_TARGETS {
-                                    let name = target.display_name();
-                                    let selected = !panel.show_velocity && panel.selected_target == *target;
-                                    if ui.add(egui::Button::selectable(selected, &name)).clicked() {
-                                        panel.selected_target = target.clone();
-                                        panel.show_velocity = false;
-                                        panel.dirty = true;
-                                        ui.ctx().data_mut(|d| d.insert_persisted(popup_id, false));
-                                    }
-                                }
-                                ui.separator();
-                                ui.label(t!("automation.custom_cc").as_ref());
-                                let mut cc_input = match &panel.selected_target {
-                                    AutomationTarget::CC { controller } => *controller as i32,
-                                    _ => 0,
-                                };
-                                let old_cc = cc_input;
-                                ui.add(egui::DragValue::new(&mut cc_input).range(0..=127).speed(1));
-                                if cc_input != old_cc {
-                                    panel.selected_target = AutomationTarget::CC { controller: cc_input as u8 };
-                                    panel.show_velocity = false;
-                                    panel.dirty = true;
-                                }
-                            });
-                        });
-
-                    // Close only when clicking outside the popup area (not on any interactive element)
-                    if ui.input(|i| i.pointer.any_pressed()) {
-                        if let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
-                            if !area_resp.response.rect.contains(pos) && !target_resp.rect.contains(pos) {
-                                ui.data_mut(|d| d.insert_persisted(popup_id, false));
-                            }
-                        }
-                    }
-                }
-
-                ui.add_space(4.0);
-
-                // 自动化渲染模式按钮已删除：默认使用折线图，
-                // 锚点显示由当前工具决定（铅笔工具下显示）。
-            });
-        });
+        show_target_combo(ui, panel, combo_rect, panels_area_rect);
 
         // ── Grid overlay: value labels + target name ──
         let name = if panel.show_velocity {
@@ -709,23 +401,21 @@ pub fn show_panels(
         let font_id = egui::FontId::proportional(10.0);
         let pad_x = 4.0;
 
-        let (top_val, mid_val, bot_val) = if panel.show_velocity || panel.selected_target == AutomationTarget::Tempo {
-            // Velocity / Tempo: 根据垂直 zoom/scroll 计算实际显示范围
-            let h = panel_rect.height();
-            let top_f = panel.y_to_value(0.0, max_val_f).round() as u32;
-            let mid_f = panel.y_to_value(h * 0.5, max_val_f).round() as u32;
-            let bot_f = panel.y_to_value(h, max_val_f).round() as u32;
-            (top_f.to_string(), mid_f.to_string(), bot_f.to_string())
+        // Velocity / Tempo 用面板级 max_val_f；其他用 target 固定 max_value()
+        let label_max = if panel.show_velocity || panel.selected_target == AutomationTarget::Tempo {
+            max_val_f
         } else {
-            let target = &panel.selected_target;
-            let max_f = target.max_value();
-            // 根据垂直 zoom/scroll 计算面板顶部、中部、底部的实际值
-            let h = panel_rect.height();
-            let top_val_f = panel.y_to_value(0.0, max_f).round() as u32;
-            let mid_val_f = panel.y_to_value(h * 0.5, max_f).round() as u32;
-            let bot_val_f = panel.y_to_value(h, max_f).round() as u32;
-            (top_val_f.to_string(), mid_val_f.to_string(), bot_val_f.to_string())
+            panel.selected_target.max_value()
         };
+        // 根据垂直 zoom/scroll 计算面板顶部、中部、底部的实际值
+        let h = panel_rect.height();
+        let (top_val, mid_val, bot_val) = (
+            panel.y_to_value(0.0, label_max).round() as u32,
+            panel.y_to_value(h * 0.5, label_max).round() as u32,
+            panel.y_to_value(h, label_max).round() as u32,
+        );
+        let (top_val, mid_val, bot_val) =
+            (top_val.to_string(), mid_val.to_string(), bot_val.to_string());
 
         let text_x = panel_rect.min.x + combo_width + pad_x;
         let top_y = panel_rect.min.y + 4.0;
@@ -772,7 +462,495 @@ pub fn show_panels(
     ui.set_clip_rect(old_clip);
 
     // ── 右键锚点：设置 info_content 打开信息面板 ──
-    for i in 0..panels.len() {
+    apply_right_click_anchor(ui, panels.len(), automation_lanes, info_content, right_tab);
+
+    (panels_visible_h, edits, velocity_edits, feedback, all_drag_info)
+}
+
+/// 分割条拖拽：调整面板高度。写入下一帧生效，避免帧内布局抖动。
+fn handle_split_drag(
+    ui: &mut egui::Ui,
+    panel: &mut AutomationPanelView,
+    handle_rect: egui::Rect,
+    index: usize,
+) {
+    let handle_resp =
+        crate::widgets::split_handle::horizontal(ui, format!("auto_handle_{}", index), handle_rect);
+    if handle_resp.dragged() {
+        let delta = handle_resp.drag_delta().y;
+        panel.panel_height = (panel.panel_height - delta).clamp(
+            yinhe_types::automation_panel_view::MIN_PANEL_HEIGHT,
+            yinhe_types::automation_panel_view::MAX_PANEL_HEIGHT,
+        );
+        panel.dirty = true;
+        ui.ctx().request_repaint();
+    }
+}
+
+/// 面板的滚动/缩放交互。
+/// 内容区（grid_area）：
+///   触控板双指滑动 x → pianoroll 水平滚动（feedback）
+///   触控板双指滑动 y → value_scroll（仅单面板时；多面板时面板间滚动已在上方处理）
+///   触控板捏合 (zoom_delta) → pianoroll 水平缩放（feedback）
+///   Cmd+滚轮 → pianoroll 水平缩放（feedback）
+///   中键拖拽 → 水平 pan (feedback) + value_scroll
+/// 左侧面板（combo_area）：
+///   触控板捏合 / Cmd+滚轮 → 垂直缩放
+///   普通滚轮 → 不操作
+#[allow(clippy::too_many_arguments)]
+fn handle_panel_scroll_zoom(
+    ui: &mut egui::Ui,
+    panel: &mut AutomationPanelView,
+    grid_area: egui::Rect,
+    combo_area: egui::Rect,
+    panel_rect: egui::Rect,
+    max_val_f: f32,
+    zoom_min: f32,
+    max_scroll: f32,
+    feedback: &mut PanelPianorollFeedback,
+) {
+    let pointer_pos = ui.input(|i| i.pointer.hover_pos());
+    let scroll_delta = ui.input(|i| i.smooth_scroll_delta);
+    let zoom_delta = ui.input(|i| i.zoom_delta());
+    let cmd = ui.input(|i| i.modifiers.command || i.modifiers.ctrl);
+
+    // 垂直缩放辅助闭包
+    let apply_vertical_zoom = |panel: &mut AutomationPanelView, factor: f32| {
+        panel.value_zoom = (panel.value_zoom * factor).clamp(zoom_min, 8.0);
+        panel.clamp_value_scroll(max_val_f);
+        panel.dirty = true;
+        ui.ctx().request_repaint();
+    };
+
+    let Some(p) = pointer_pos else { return };
+    if grid_area.contains(p) {
+        // 触控板捏合 → 水平缩放（联动 pianoroll）
+        if (zoom_delta - 1.0).abs() > 0.001 {
+            feedback.zoom_factor = zoom_delta;
+            feedback.zoom_center_x = p.x - panel_rect.min.x;
+        }
+        // Cmd+滚轮 → 水平缩放（联动 pianoroll）
+        if cmd && scroll_delta.y.abs() > 0.5 {
+            let factor = if scroll_delta.y > 0.0 { 1.1 } else { 1.0 / 1.1 };
+            feedback.zoom_factor = factor;
+            feedback.zoom_center_x = p.x - panel_rect.min.x;
+        }
+        // 触控板水平滑动 → pianoroll 水平滚动
+        if !cmd && scroll_delta.x.abs() > 0.5 {
+            feedback.scroll_x_delta += scroll_delta.x;
+        }
+        // 触控板垂直滑动 → value_scroll（仅单面板时）
+        if !cmd && scroll_delta.y.abs() > 0.5 && max_scroll <= 0.0 {
+            let visible_range = max_val_f / panel.value_zoom;
+            let scroll_amount = (scroll_delta.y / 100.0) * visible_range * 0.2;
+            let max_scroll_val = (max_val_f - visible_range).max(0.0);
+            panel.value_scroll = (panel.value_scroll + scroll_amount).clamp(0.0, max_scroll_val);
+            panel.dirty = true;
+            ui.ctx().request_repaint();
+        }
+        // 中键拖拽 → 水平 pan + value_scroll
+        if ui.input(|i| i.pointer.middle_down()) {
+            let delta = ui.input(|i| i.pointer.delta());
+            feedback.scroll_x_delta += delta.x;
+            let visible_range = max_val_f / panel.value_zoom;
+            let scroll_amount = -delta.y / panel_rect.height() * visible_range;
+            let max_scroll_val = (max_val_f - visible_range).max(0.0);
+            panel.value_scroll = (panel.value_scroll + scroll_amount).clamp(0.0, max_scroll_val);
+            panel.dirty = true;
+            ui.ctx().request_repaint();
+        }
+    } else if combo_area.contains(p) {
+        // 左侧面板：触控板捏合 → 垂直缩放
+        if (zoom_delta - 1.0).abs() > 0.001 {
+            apply_vertical_zoom(panel, zoom_delta);
+        }
+        // Cmd+滚轮 → 垂直缩放
+        if cmd && scroll_delta.y.abs() > 0.5 {
+            let factor = if scroll_delta.y > 0.0 { 1.1 } else { 1.0 / 1.1 };
+            apply_vertical_zoom(panel, factor);
+        }
+    }
+}
+
+/// 单个面板的编辑交互输出。
+struct PanelInteractionOut {
+    automation_edits: Vec<AutomationEdit>,
+    velocity_edits: Vec<VelocityEdit>,
+    /// wgpu Layer 3 的 lane ghost（仅 lane 编辑）
+    ghost: Option<AutomationGhost>,
+    /// velocity 笔划预览（仅 velocity 模式）
+    preview: Option<velocity::VelocityPreview>,
+    /// 锚点拖拽的实时 (tick, value)，供 InfoPanel 显示
+    anchor_drag: Option<(u32, f32)>,
+}
+
+/// 按面板模式分派编辑交互：Tempo / CC / PB / RPN / NRPN 走 lane 编辑；
+/// Velocity 走铅笔笔划（改音符力度）。同时负责绘制 hover/drag tooltip。
+#[allow(clippy::too_many_arguments)]
+fn dispatch_edit_interaction(
+    ui: &mut egui::Ui,
+    grid_area: egui::Rect,
+    panel_rect: egui::Rect,
+    panel: &AutomationPanelView,
+    automation_lanes: &[AutomationLane],
+    tempo_lane: &AutomationLane,
+    midi: Option<&dyn yinhe_types::NoteSource>,
+    edit_ctx: Option<&AutomationEditCtx<'_>>,
+    panel_index: usize,
+    track_colors: &[[f32; 3]],
+    info_content: &mut Option<InfoContent>,
+    right_tab: &mut Option<RightTab>,
+) -> PanelInteractionOut {
+    let mut out = PanelInteractionOut {
+        automation_edits: Vec::new(),
+        velocity_edits: Vec::new(),
+        ghost: None,
+        preview: None,
+        anchor_drag: None,
+    };
+    let mut tooltip: Option<interaction::HoverTooltip> = None;
+    if let Some(ctx) = edit_ctx {
+        if panel.show_velocity {
+            // Velocity：铅笔笔划修改力度条（命中 noteon，只作用于 active_track）
+            if ctx.active_tool == Tool::Pencil
+                && let Some(track) = ctx.active_track
+                && let Some(midi_src) = midi
+            {
+                let track_color = track_colors
+                    .get(track as usize)
+                    .copied()
+                    .unwrap_or([0.8, 0.8, 0.8]);
+                let (vel_edits, preview, tip) = velocity::handle_velocity_interaction(
+                    ui,
+                    grid_area,
+                    panel_rect,
+                    panel,
+                    midi_src,
+                    track,
+                    track_color,
+                    panel_index,
+                );
+                out.velocity_edits = vel_edits;
+                out.preview = preview;
+                tooltip = tip
+                    .map(|(tick, value, pos)| interaction::HoverTooltip::Anchor { tick, value, pos });
+            }
+        } else if let Some(track) = ctx.active_track {
+            let (panel_edits, ghost, drag_info, hover_info) =
+                interaction::handle_automation_interaction(
+                    ui,
+                    grid_area,
+                    panel_rect,
+                    panel,
+                    automation_lanes,
+                    tempo_lane,
+                    track,
+                    ctx,
+                    panel_index,
+                    track_colors,
+                    info_content,
+                    right_tab,
+                );
+            out.automation_edits = panel_edits;
+            out.ghost = ghost;
+            // anchor_drag 只跟锚点拖拽（InfoPanel 用它显示实时 tick/value）
+            if let Some(interaction::HoverTooltip::Anchor { tick, value, .. }) = drag_info {
+                out.anchor_drag = Some((tick, value));
+            }
+            tooltip = drag_info.or(hover_info);
+        }
+    }
+
+    // tooltip：拖拽中显示 drag_info，否则 hover 锚点/控制点超时显示 hover_info。
+    if let (Some(tip), Some(ctx)) = (tooltip, edit_ctx) {
+        let (lines, x, y): (Vec<String>, f32, f32) = match tip {
+            interaction::HoverTooltip::Anchor { tick, value, pos } => {
+                let pos_str = if let Some((ppq, num, den, ts_events)) = ctx.bar_line_data {
+                    format_tick_bar_beat_with_time_sig(tick as f64, ppq, ts_events, num, den)
+                } else {
+                    format!("{}", tick)
+                };
+                let val_str = if panel.show_velocity {
+                    format!("{}", value.round() as i32)
+                } else if panel.selected_target == AutomationTarget::Tempo {
+                    format!("{:.2} BPM", value)
+                } else {
+                    format!("{:.2}", value)
+                };
+                (vec![pos_str, val_str], pos.x, pos.y)
+            }
+            interaction::HoverTooltip::ControlPoint { x1, y1, x2, y2, pos } => (
+                vec![
+                    format!("X1: {:.2}", x1),
+                    format!("Y1: {:.2}", y1),
+                    format!("X2: {:.2}", x2),
+                    format!("Y2: {:.2}", y2),
+                ],
+                pos.x,
+                pos.y,
+            ),
+        };
+        crate::view_interaction::draw_hover_tooltip(ui.ctx(), &lines, x, y);
+    }
+    out
+}
+
+/// 渲染单个面板的 wgpu 内容：prepare（含 ghost）+ 背景/中线/网格 + paint。
+#[allow(clippy::too_many_arguments)]
+fn render_panel_content(
+    ui: &mut egui::Ui,
+    renderer: &mut InstanceRenderer,
+    render_ctx: &mut RenderContext,
+    panel: &mut AutomationPanelView,
+    grid_rect: egui::Rect,
+    gpw: u32,
+    gph: u32,
+    render_lanes: &[&AutomationLane],
+    tempo_lane: &AutomationLane,
+    midi: Option<&dyn yinhe_types::NoteSource>,
+    track_visible: &[bool],
+    track_colors: &[[f32; 3]],
+    scroll_mode: u32,
+    min_border_width: f32,
+    show_anchors: bool,
+    max_val_f: f32,
+    panel_ghost: Option<AutomationGhost>,
+    revision: u64,
+    info_content: &Option<InfoContent>,
+    panel_index: usize,
+    combo_width: f32,
+) {
+    let gw = grid_rect.width() as u32;
+    let gh = grid_rect.height() as u32;
+    render_ctx.ensure_size(gpw, gph);
+
+    // Tempo 模式：lanes 只包含 conductor.tempo；其他模式按 selected_target 过滤。
+    let lanes: Vec<&AutomationLane> = if panel.selected_target == AutomationTarget::Tempo {
+        vec![tempo_lane]
+    } else {
+        render_lanes
+            .iter()
+            .filter(|l| l.target == panel.selected_target)
+            .copied()
+            .collect()
+    };
+
+    // 从 info_content 提取高亮锚点 tick（基于选中状态）。
+    // render_lanes 可能含多个音轨：按 track 匹配锚点所属 lane；
+    // Tempo 的 conductor lane track 恒为 0（语义占位），不参与 track 匹配。
+    let highlight_tick = match info_content {
+        Some(InfoContent::Anchor { target: anchor_target, track_idx, event_idx, .. })
+            if *anchor_target == panel.selected_target =>
+        {
+            // 通过 event_idx 定位锚点的实际 tick
+            lanes
+                .iter()
+                .find(|l| {
+                    l.target == panel.selected_target
+                        && (l.target == AutomationTarget::Tempo || l.track == *track_idx)
+                })
+                .and_then(|l| l.events.get(*event_idx))
+                .map(|e| e.tick)
+        }
+        _ => None,
+    };
+
+    let gpu_dirty = prepare_automation(
+        renderer,
+        gw,
+        gh,
+        panel,
+        &lanes,
+        midi,
+        track_visible,
+        track_colors,
+        scroll_mode,
+        min_border_width,
+        show_anchors,
+        max_val_f,
+        panel_ghost,
+        revision,
+        highlight_tick,
+    );
+
+    let content_changed = panel.dirty || gpu_dirty;
+    panel.dirty = false;
+
+    let painter = ui.painter();
+
+    // ── Background + center line (drawn by egui before wgpu texture) ──
+    let theme = renderer.theme();
+    let (r, g, b) = theme.pr_bg;
+    painter.rect_filled(
+        grid_rect,
+        0.0,
+        egui::Color32::from_rgb((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8),
+    );
+    // Center line (only for targets that have one)
+    // 直接基于 panel.selected_target 判断，不依赖 lanes 是否非空：
+    // 即使该 target 没有任何锚点事件（lanes 为空），中线也应照常显示。
+    // velocity 模式下不画中线（velocity 没有 center 概念）。
+    if !panel.show_velocity {
+        let target = &panel.selected_target;
+        let max_val = target.max_value();
+        if max_val > 0.0 && target.has_center_line() {
+            let center_val = target.default_value();
+            let y_center = panel.value_to_y(center_val, max_val);
+            let (cr, cg, cb, ca) = theme.center_line;
+            painter.rect_filled(
+                egui::Rect::from_min_size(
+                    egui::pos2(grid_rect.min.x, grid_rect.min.y + y_center - 0.5),
+                    egui::vec2(grid_rect.width(), 1.0),
+                ),
+                0.0,
+                egui::Color32::from_rgba_unmultiplied(
+                    (cr * 255.0) as u8,
+                    (cg * 255.0) as u8,
+                    (cb * 255.0) as u8,
+                    (ca * 255.0) as u8,
+                ),
+            );
+        }
+    }
+
+    // ── Grid lines (egui, before wgpu texture) ──
+    // automation 不补 ruler（共享 pianoroll 顶部 ruler），但网格线需要画。
+    if let Some(midi) = midi
+        && let Some(tpb) = midi.ticks_per_beat()
+    {
+        let (def_num, def_den) = midi.time_sig_default();
+        let sig_events = midi.time_sig_events();
+        let grid_draw_rect = egui::Rect::from_min_max(
+            egui::pos2(grid_rect.min.x + combo_width, grid_rect.min.y),
+            grid_rect.max,
+        );
+        crate::widgets::grid_lines::paint_grid_lines(
+            painter,
+            grid_draw_rect,
+            &panel.base,
+            tpb,
+            def_num,
+            def_den,
+            sig_events,
+            &crate::widgets::grid_lines::GridColors::pianoroll(),
+        );
+    }
+
+    render_ctx.paint(
+        renderer,
+        gpw,
+        gph,
+        &format!("auto_panel_{}", panel_index),
+        painter,
+        grid_rect,
+        content_changed,
+    );
+}
+
+/// 左侧 target 选择器：图标按钮 + 弹出菜单（velocity / curated targets / 自定义 CC）。
+fn show_target_combo(
+    ui: &mut egui::Ui,
+    panel: &mut AutomationPanelView,
+    combo_rect: egui::Rect,
+    panels_area_rect: egui::Rect,
+) {
+    // Draw left panel background (covers the grid underneath)
+    ui.painter().rect_filled(combo_rect, 0.0, theme::APP_BG);
+
+    let combo_inner = combo_rect.shrink(4.0);
+
+    ui.scope_builder(egui::UiBuilder::new().max_rect(combo_inner), |ui| {
+        ui.set_clip_rect(combo_inner.intersect(panels_area_rect));
+        let layout = egui::Layout::top_down(egui::Align::Center);
+        ui.with_layout(layout, |ui| {
+            // ── Target selector button (tools panel style) ──
+            let target_resp = ui.add(
+                egui::Label::new(ICON_AUTOMATION.rich_text().size(14.0).color(egui::Color32::GRAY))
+                    .sense(egui::Sense::click())
+                    .selectable(false),
+            );
+            crate::widgets::hover::hover_highlight(
+                ui,
+                &target_resp,
+                ICON_AUTOMATION.codepoint,
+                egui::FontId::new(14.0, ICON_AUTOMATION.font_family()),
+                false,
+            );
+
+            // ── Popup menu (manually managed Area to support DragValue interaction) ──
+            let popup_id = ui.id().with("auto_target_popup");
+            let is_open = ui.data_mut(|d| d.get_persisted::<bool>(popup_id)).unwrap_or(false);
+
+            if target_resp.clicked() {
+                ui.data_mut(|d| d.insert_persisted(popup_id, !is_open));
+            }
+
+            if is_open {
+                let popup_pos = egui::pos2(target_resp.rect.left(), target_resp.rect.bottom());
+                let area_resp = egui::Area::new(popup_id)
+                    .order(egui::Order::Foreground)
+                    .fixed_pos(popup_pos)
+                    .show(ui.ctx(), |ui| {
+                        egui::Frame::menu(ui.style()).show(ui, |ui| {
+                            ui.set_min_width(120.0);
+                            // Velocity (special: not an AutomationTarget, renders from notes)
+                            let vel_selected = panel.show_velocity;
+                            if ui.add(egui::Button::selectable(vel_selected, t!("automation.velocity").as_ref())).clicked() {
+                                panel.show_velocity = true;
+                                panel.dirty = true;
+                                ui.ctx().data_mut(|d| d.insert_persisted(popup_id, false));
+                            }
+                            ui.separator();
+                            for target in AUTOMATION_TARGETS {
+                                let name = target.display_name();
+                                let selected = !panel.show_velocity && panel.selected_target == *target;
+                                if ui.add(egui::Button::selectable(selected, &name)).clicked() {
+                                    panel.selected_target = target.clone();
+                                    panel.show_velocity = false;
+                                    panel.dirty = true;
+                                    ui.ctx().data_mut(|d| d.insert_persisted(popup_id, false));
+                                }
+                            }
+                            ui.separator();
+                            ui.label(t!("automation.custom_cc").as_ref());
+                            let mut cc_input = match &panel.selected_target {
+                                AutomationTarget::CC { controller } => *controller as i32,
+                                _ => 0,
+                            };
+                            let old_cc = cc_input;
+                            ui.add(egui::DragValue::new(&mut cc_input).range(0..=127).speed(1));
+                            if cc_input != old_cc {
+                                panel.selected_target = AutomationTarget::CC { controller: cc_input as u8 };
+                                panel.show_velocity = false;
+                                panel.dirty = true;
+                            }
+                        });
+                    });
+
+                // Close only when clicking outside the popup area (not on any interactive element)
+                if ui.input(|i| i.pointer.any_pressed()) {
+                    if let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
+                        if !area_resp.response.rect.contains(pos) && !target_resp.rect.contains(pos) {
+                            ui.data_mut(|d| d.insert_persisted(popup_id, false));
+                        }
+                    }
+                }
+            }
+
+            ui.add_space(4.0);
+        });
+    });
+}
+
+/// 右键锚点：设置 info_content 打开信息面板，并清理 interaction 记录的 temp data。
+fn apply_right_click_anchor(
+    ui: &mut egui::Ui,
+    panel_count: usize,
+    automation_lanes: &[AutomationLane],
+    info_content: &mut Option<InfoContent>,
+    right_tab: &mut Option<RightTab>,
+) {
+    for i in 0..panel_count {
         let right_click_id = ui.id().with("auto_right_click").with(i);
         if let Some(anchor) = ui.ctx().data(|d| d.get_temp::<interaction::RightClickAnchor>(right_click_id)) {
             // 通过 tick 查找 event_idx
@@ -802,8 +980,6 @@ pub fn show_panels(
             });
         }
     }
-
-    (panels_visible_h, edits, velocity_edits, feedback, all_drag_info)
 }
 
 /// Show the toggle / add / remove buttons horizontally.
