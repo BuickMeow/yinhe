@@ -149,9 +149,14 @@ pub struct App {
 
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        // ── Load MiSans font ──
+        // ── Load fonts: Pretendard-SemiBold primary, MiSans fallback ──
         yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Ui, || {
             let mut fonts = egui::FontDefinitions::default();
+            fonts.font_data.insert(
+                "Pretendard".to_owned(),
+                egui::FontData::from_static(include_bytes!("../../../assets/Pretendard-SemiBold.otf"))
+                    .into(),
+            );
             fonts.font_data.insert(
                 "MiSans".to_owned(),
                 egui::FontData::from_static(include_bytes!("../../../assets/MiSans-Medium.otf"))
@@ -161,12 +166,14 @@ impl App {
                 .families
                 .entry(egui::FontFamily::Proportional)
                 .or_default();
-            props.insert(0, "MiSans".to_owned());
+            props.insert(0, "Pretendard".to_owned());
+            props.insert(1, "MiSans".to_owned());
             let mono = fonts
                 .families
                 .entry(egui::FontFamily::Monospace)
                 .or_default();
-            mono.insert(0, "MiSans".to_owned());
+            mono.insert(0, "Pretendard".to_owned());
+            mono.insert(1, "MiSans".to_owned());
             cc.egui_ctx.set_fonts(fonts);
 
             // Initialize Material Icons font with adjusted metrics
