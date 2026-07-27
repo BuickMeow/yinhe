@@ -75,7 +75,7 @@ fn hash_lane(lane: &AutomationLane) -> u64 {
 ///
 /// `show_anchors`: 在每个事件位置画圆形锚点（铅笔工具下显示）。
 /// `ghost`: 拖拽预览（Layer 1，每帧重建，无缓存）。
-/// `highlight_tick`: 如果非 None，该 tick 位置的锚点渲染为白色高亮（选中锚点）。
+/// `highlight_ticks`: 这些 tick 位置的锚点渲染为白色高亮（选中锚点，可多选）。
 ///
 /// `max_val`: 当前 panel 的值域上界。Tempo 由调用方按实际事件动态计算，
 ///            其他 target 直接传 `target.max_value()`。
@@ -94,7 +94,7 @@ pub fn prepare(
     max_val: f32,
     ghost: Option<AutomationGhost>,
     revision: u64,
-    highlight_tick: Option<u32>,
+    highlight_ticks: &[u32],
 ) -> bool {
     let w = width as f32;
     let h = height as f32;
@@ -160,10 +160,10 @@ pub fn prepare(
         view.show_velocity as u64,
         ghost_lane_hash,
         revision,
-        highlight_tick.unwrap_or(u32::MAX) as u64,
+        highlight_ticks.iter().fold(0u64, |acc, &t| acc.wrapping_mul(31).wrapping_add(t as u64)),
     ]);
     let ghost_for_layer0 = ghost.clone();
-    let highlight_tick_for_layer0 = highlight_tick;
+    let highlight_ticks_for_layer0 = highlight_ticks;
     let theme = renderer.theme.clone();
 
     if is_velocity {
@@ -182,7 +182,7 @@ pub fn prepare(
                 _ => None,
             };
             data_lines::build_data_lines(
-                out, w, h, view, lanes, max_val, track_visible, track_colors, show_anchors, skip_lane, highlight_tick_for_layer0, &theme,
+                out, w, h, view, lanes, max_val, track_visible, track_colors, show_anchors, skip_lane, highlight_ticks_for_layer0, &theme,
             );
         });
     }

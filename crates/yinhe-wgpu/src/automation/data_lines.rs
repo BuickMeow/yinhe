@@ -137,7 +137,7 @@ pub fn build_data_lines(
     track_color: &[[f32; 3]],
     show_anchors: bool,
     skip_lane: Option<&AutomationLane>,
-    highlight_tick: Option<u32>,
+    highlight_ticks: &[u32],
     _theme: &GpuTheme,
 ) {
     if lanes.is_empty() || max_val <= 0.0 {
@@ -180,7 +180,7 @@ pub fn build_data_lines(
                 let x = x_offset + evt.tick as f32 * ppu;
                 let y = view.value_to_y(evt.value, max_val);
                 // 选中锚点渲染为白色高亮
-                let anchor_color = if highlight_tick == Some(evt.tick) {
+                let anchor_color = if highlight_ticks.contains(&evt.tick) {
                     [1.0, 1.0, 1.0, 1.0]
                 } else {
                     [color[0], color[1], color[2], 1.0]

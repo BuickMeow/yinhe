@@ -74,6 +74,8 @@ impl eframe::App for App {
         }
 
         // ── macOS: poll native menu bar actions ──
+        // 路由：Select/SelectVertical 工具且有锚点选中时，copy/paste/duplicate/delete 作用于自动化锚点
+        let route_to_automation = self.has_selected_automation_anchors();
         for action in self.menu_bar.poll() {
             use crate::platform::MenuAction;
             let file_action = match action {
@@ -95,11 +97,19 @@ impl eframe::App for App {
                     continue;
                 }
                 MenuAction::Copy => {
-                    self.copy_selection();
+                    if route_to_automation {
+                        self.copy_automation_anchors();
+                    } else {
+                        self.copy_selection();
+                    }
                     continue;
                 }
                 MenuAction::Paste => {
-                    self.paste_clipboard();
+                    if route_to_automation {
+                        self.paste_automation_anchors();
+                    } else {
+                        self.paste_clipboard();
+                    }
                     continue;
                 }
                 MenuAction::SelectAll => {
@@ -107,11 +117,19 @@ impl eframe::App for App {
                     continue;
                 }
                 MenuAction::Duplicate => {
-                    self.duplicate_selected_notes();
+                    if route_to_automation {
+                        self.duplicate_automation_anchors();
+                    } else {
+                        self.duplicate_selected_notes();
+                    }
                     continue;
                 }
                 MenuAction::Delete => {
-                    self.delete_selected_notes();
+                    if route_to_automation {
+                        self.delete_automation_anchors();
+                    } else {
+                        self.delete_selected_notes();
+                    }
                     continue;
                 }
                 MenuAction::TransposeUp => {
@@ -165,11 +183,21 @@ impl eframe::App for App {
 
         // ── Keyboard shortcuts ──
         let kb = self.handle_keyboard_shortcuts(ui);
+        // 路由：Select/SelectVertical 工具且有锚点选中时，copy/paste/duplicate/delete 作用于自动化锚点
+        let route_to_automation = self.has_selected_automation_anchors();
         if kb.delete_selected {
-            self.delete_selected_notes();
+            if route_to_automation {
+                self.delete_automation_anchors();
+            } else {
+                self.delete_selected_notes();
+            }
         }
         if kb.duplicate_selected {
-            self.duplicate_selected_notes();
+            if route_to_automation {
+                self.duplicate_automation_anchors();
+            } else {
+                self.duplicate_selected_notes();
+            }
         }
         if kb.transpose_up {
             self.transpose_selected_notes(12);
@@ -184,13 +212,21 @@ impl eframe::App for App {
             self.redo();
         }
         if kb.copy {
-            self.copy_selection();
+            if route_to_automation {
+                self.copy_automation_anchors();
+            } else {
+                self.copy_selection();
+            }
         }
         if kb.cut {
             self.cut_selection();
         }
         if kb.paste {
-            self.paste_clipboard();
+            if route_to_automation {
+                self.paste_automation_anchors();
+            } else {
+                self.paste_clipboard();
+            }
         }
         if kb.select_all {
             self.select_all();

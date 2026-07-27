@@ -1,10 +1,12 @@
 //! Automation panel mouse interaction logic (pencil/curve tools, right-click).
 
+use std::collections::HashSet;
+
 use eframe::egui;
 
 use yinhe_types::{AutomationLane, AutomationTarget, SegmentShape};
 use yinhe_types::AutomationPanelView;
-use yinhe_wgpu::{AutomationGhost, build_lane_override, build_lane_shape_override};
+use yinhe_wgpu::{AutomationGhost, build_lane_override, build_lane_shape_override, build_lane_multi_move, build_lane_multi_copy};
 
 use crate::right_panel::{InfoContent, RightTab};
 use crate::widgets::tools_panel::Tool;
@@ -12,6 +14,8 @@ use super::{panel_max_val, AutomationEditCtx, ANCHOR_HIT_PX};
 
 /// 悬停在锚点上多久后显示 tooltip（秒）。
 const HOVER_DELAY: f64 = 0.6;
+/// 选框拖拽触发阈值（像素）。小于此距离视为点击，不触发选区清空。
+const MARQUEE_THRESHOLD: f32 = 3.0;
 
 /// Hover/drag tooltip 数据。锚点和控制点用不同的显示内容。
 #[derive(Clone, Copy, Debug)]
@@ -44,6 +48,23 @@ pub(crate) enum AutoDrag {
     /// `which`：拖的是 P1（Out）还是 P2（In）。
     /// `start`：按下时该控制点的归一化 (x, y) 位置，用于判断是否实际移动过。
     DragControlPoint { prev_tick: u32, which: CtrlEnd, start_x: f32, start_y: f32 },
+    /// Select 工具拖拽多个选中锚点。`start_tick/start_value` 是按下时鼠标的 snapped 位置，
+    /// 用于计算 delta。`alt` = Option 拖拽（复制而非移动）。
+    MoveAnchors { start_tick: u32, start_value: f32, alt: bool },
+    /// Select 工具框选锚点。
+    /// `start_pos`：按下时的屏幕位置，用于 3px 阈值判断 + 框选矩形计算。
+    MarqueeSelect { start_pos: egui::Pos2 },
+}
+
+/// Select 工具的选区变更操作（由 interaction 返回，caller 应用到 `panel.selected_anchor_ticks`）。
+#[derive(Clone, Debug)]
+pub(crate) enum SelOp {
+    /// 替换整个选区
+    Replace(HashSet<u32>),
+    /// 切换某 tick 的选中状态（Shift/Cmd+点击）
+    Toggle(u32),
+    /// 添加多个 tick 到选区（Shift/Cmd+框选）
+    Extend(HashSet<u32>),
 }
 
 /// 右键点击锚点时记录的编辑信息。
@@ -228,7 +249,14 @@ fn merge_ctrl_shape(
 /// 释放时才提交编辑。
 ///
 /// `tempo_lane`：`conductor.tempo`。当 `selected_target == Tempo` 时用作编辑目标。
-#[allow(clippy::too_many_arguments)]
+///
+/// 返回值：
+/// - `edits`：提交到 Document 的 AutomationEdit 列表。
+/// - `ghost`：拖拽预览（wgpu Layer 1）。
+/// - `drag_info` / `hover_info`：tooltip 数据。
+/// - `marquee_rect`：Select 工具框选矩形（用于 egui painter 绘制 + 渲染层高亮预览）。
+/// - `sel_op`：选区变更操作（caller 应用到 `panel.selected_anchor_ticks`）。
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(crate) fn handle_automation_interaction(
     ui: &mut egui::Ui,
     grid_area: egui::Rect,
@@ -242,14 +270,21 @@ pub(crate) fn handle_automation_interaction(
     track_colors: &[[f32; 3]],
     info_content: &mut Option<InfoContent>,
     right_tab: &mut Option<RightTab>,
-) -> (Vec<yinhe_types::AutomationEdit>, Option<AutomationGhost>, Option<HoverTooltip>, Option<HoverTooltip>) {
+) -> (
+    Vec<yinhe_types::AutomationEdit>,
+    Option<AutomationGhost>,
+    Option<HoverTooltip>,
+    Option<HoverTooltip>,
+    Option<egui::Rect>,
+    Option<SelOp>,
+) {
     let mut edits = Vec::new();
     // target 直接来自 selected_target（Tempo 也是 selected_target 的一种）。
     let target = panel.selected_target.clone();
     // max_val 与 show_panels 共用同一计算（Tempo 由实际事件动态计算）。
     let max_val = panel_max_val(panel, tempo_lane);
     if max_val == 0.0 {
-        return (edits, None, None, None);
+        return (edits, None, None, None, None, None);
     }
 
     let ppu = panel.base.pixels_per_tick;
@@ -343,6 +378,11 @@ pub(crate) fn handle_automation_interaction(
         ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
     }
 
+    // Select 工具的框选矩形（拖拽中每帧更新，用于 egui painter 绘制 + 渲染层高亮预览）。
+    let mut marquee_rect: Option<egui::Rect> = None;
+    // Select 工具的选区变更操作（caller 应用到 `panel.selected_anchor_ticks`）。
+    let mut sel_op: Option<SelOp> = None;
+
     match ctx.active_tool {
         Tool::Pencil => {
             // 双击：删除锚点（在锚点上）或新建锚点（空白处）
@@ -368,7 +408,7 @@ pub(crate) fn handle_automation_interaction(
                         shape: SegmentShape::Step,
                     });
                 }
-                return (edits, None, None, None);
+                return (edits, None, None, None, None, None);
             }
 
             // 拖拽锚点：press 记录，release 提交
@@ -449,7 +489,7 @@ pub(crate) fn handle_automation_interaction(
                                 // 构造 ghost 用于本帧渲染（防止松手瞬间旧线段闪现）
                                 if let Some(l) = lane {
                                     let override_lane = build_lane_override(l, old_tick, new_tick, new_value);
-                                    return (edits, Some(AutomationGhost::Move { lane: override_lane, color: track_color }), None, None);
+                                    return (edits, Some(AutomationGhost::Move { lane: override_lane, color: track_color }), None, None, None, None);
                                 }
                             }
                         }
@@ -477,14 +517,14 @@ pub(crate) fn handle_automation_interaction(
                                     // 与 MoveAnchor 同样的修复模式：release 这一帧 Layer 1 还未
                                     // 用新 shape 重建，需用 ghost 覆盖该 lane 一帧。
                                     let override_lane = build_lane_shape_override(l, prev_tick, new_shape);
-                                    return (edits, Some(AutomationGhost::Move { lane: override_lane, color: track_color }), None, None);
+                                    return (edits, Some(AutomationGhost::Move { lane: override_lane, color: track_color }), None, None, None, None);
                                 }
                             }
                         }
                     }
                     _ => {}
                 }
-                return (edits, None, None, None);
+                return (edits, None, None, None, None, None);
             }
 
             // 点击空白（非拖拽，非控制点）：添加新锚点（shape = Step）
@@ -498,7 +538,7 @@ pub(crate) fn handle_automation_interaction(
                         shape: SegmentShape::Step,
                     });
                 }
-                return (edits, None, None, None);
+                return (edits, None, None, None, None, None);
             }
         }
         Tool::Curve => {
@@ -544,7 +584,147 @@ pub(crate) fn handle_automation_interaction(
                         }
                     }
                 }
-                return (edits, None, None, None);
+                return (edits, None, None, None, None, None);
+            }
+        }
+        Tool::Select | Tool::SelectVertical => {
+            let cmd = ui.input(|i| i.modifiers.command || i.modifiers.ctrl);
+            let alt = ui.input(|i| i.modifiers.alt);
+            let shift = ui.input(|i| i.modifiers.shift);
+
+            // ── 按下：点击锚点或开始框选 ──
+            if pointer_pressed && in_grid {
+                if let Some((_, tick)) = hit_anchor {
+                    if cmd || shift {
+                        // Shift/Cmd+点击：切换选中状态，不开始拖拽
+                        sel_op = Some(SelOp::Toggle(tick));
+                    } else {
+                        // 普通点击：若未选中则替换选区为 {tick}，并开始 MoveAnchors 拖拽
+                        if !panel.selected_anchor_ticks.contains(&tick) {
+                            sel_op = Some(SelOp::Replace(HashSet::from([tick])));
+                        }
+                        if let Some((_, _, value)) = mouse_info {
+                            ui.ctx().data_mut(|d| {
+                                d.insert_temp(drag_id, AutoDrag::MoveAnchors {
+                                    start_tick: tick,
+                                    start_value: value,
+                                    alt,
+                                });
+                            });
+                        }
+                    }
+                } else if let Some((p, _tick, _value)) = mouse_info {
+                    // 空白处：开始框选（3px 阈值在拖拽中判断）
+                    ui.ctx().data_mut(|d| {
+                        d.insert_temp(drag_id, AutoDrag::MarqueeSelect {
+                            start_pos: p,
+                        });
+                    });
+                }
+            }
+
+            // ── 拖拽中：更新 marquee_rect ──
+            if let Some(AutoDrag::MarqueeSelect { start_pos, .. }) = drag_state {
+                if let Some(p) = pos {
+                    let dist = (p - start_pos).length();
+                    if dist >= MARQUEE_THRESHOLD {
+                        // 计算框选矩形（屏幕坐标，clamp 到 grid_area）
+                        let min = egui::pos2(start_pos.x.min(p.x), start_pos.y.min(p.y));
+                        let max = egui::pos2(start_pos.x.max(p.x), start_pos.y.max(p.y));
+                        let rect = egui::Rect::from_min_max(min, max).intersect(grid_area);
+                        marquee_rect = Some(rect);
+                        // 无修饰键时清空选区（让用户看到选区被清空）
+                        if !cmd && !shift {
+                            sel_op = Some(SelOp::Replace(HashSet::new()));
+                        }
+                    }
+                }
+            }
+
+            // ── 释放：提交选区或拖拽 ──
+            if pointer_released {
+                let drag = ui.ctx().data(|d| d.get_temp::<AutoDrag>(drag_id));
+                ui.ctx().data_mut(|d| d.remove::<AutoDrag>(drag_id));
+                match drag {
+                    Some(AutoDrag::MarqueeSelect { start_pos, .. }) => {
+                        let dist = pos.map(|p| (p - start_pos).length()).unwrap_or(0.0);
+                        if dist >= MARQUEE_THRESHOLD {
+                            // 框选完成：计算 rect 内的锚点
+                            if let Some((p, _, _)) = mouse_info
+                                && let Some(l) = lane
+                            {
+                                let min_x = start_pos.x.min(p.x);
+                                let max_x = start_pos.x.max(p.x);
+                                let min_y = start_pos.y.min(p.y);
+                                let max_y = start_pos.y.max(p.y);
+                                let mut in_rect: HashSet<u32> = HashSet::new();
+                                for e in &l.events {
+                                    let ex = grid_area.min.x + (e.tick as f32) * ppu - scroll_x;
+                                    let ey = panel_rect.min.y + panel.value_to_y(e.value, max_val);
+                                    if ex >= min_x && ex <= max_x && ey >= min_y && ey <= max_y {
+                                        in_rect.insert(e.tick);
+                                    }
+                                }
+                                if cmd || shift {
+                                    sel_op = Some(SelOp::Extend(in_rect));
+                                } else {
+                                    sel_op = Some(SelOp::Replace(in_rect));
+                                }
+                            }
+                        }
+                        // dist < 3px：视为点击，不清空选区（3px 保护）
+                    }
+                    Some(AutoDrag::MoveAnchors { start_tick, start_value, alt, .. }) => {
+                        // 提交移动或复制
+                        if let Some((_, cur_tick, cur_value)) = mouse_info
+                            && let Some(l) = lane
+                            && let Some(lidx) = lane_idx
+                        {
+                            let d_tick = cur_tick as i64 - start_tick as i64;
+                            let d_value = cur_value - start_value;
+                            if d_tick != 0 || d_value.abs() > 1e-6 {
+                                // 实际移动过：提交编辑
+                                if alt {
+                                    // Alt = 复制：为每个选中锚点生成 Add
+                                    for &tick in &panel.selected_anchor_ticks {
+                                        if let Some(e) = l.events.iter().find(|e| e.tick == tick) {
+                                            let new_tick = (tick as i64 + d_tick).max(0) as u32;
+                                            let new_value = (e.value + d_value).clamp(0.0, max_val);
+                                            edits.push(yinhe_types::AutomationEdit::Add {
+                                                track_idx,
+                                                target: target.clone(),
+                                                tick: new_tick,
+                                                value: new_value,
+                                                shape: e.shape,
+                                            });
+                                        }
+                                    }
+                                } else {
+                                    // 移动：为每个选中锚点生成 Move
+                                    for &tick in &panel.selected_anchor_ticks {
+                                        if let Some(e) = l.events.iter().find(|e| e.tick == tick) {
+                                            let new_tick = (tick as i64 + d_tick).max(0) as u32;
+                                            let new_value = (e.value + d_value).clamp(0.0, max_val);
+                                            if new_tick != tick || (new_value - e.value).abs() > 1e-6 {
+                                                edits.push(yinhe_types::AutomationEdit::Move {
+                                                    track_idx,
+                                                    lane_idx: lidx,
+                                                    target: target.clone(),
+                                                    old_tick: tick,
+                                                    new_tick,
+                                                    new_value,
+                                                });
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            // delta == 0：视为点击，不提交编辑
+                        }
+                    }
+                    _ => {}
+                }
+                return (edits, None, None, None, marquee_rect, sel_op);
             }
         }
         _ => {}
@@ -614,6 +794,42 @@ pub(crate) fn handle_automation_interaction(
                     let override_lane = build_lane_shape_override(l, prev_tick, new_shape);
                     Some(AutomationGhost::Move { lane: override_lane, color: track_color })
                 })
+            }
+            AutoDrag::MoveAnchors { start_tick, start_value, alt, .. } => {
+                // Select 工具拖拽多个选中锚点：构建 multi-move 或 multi-copy ghost lane。
+                // 选中锚点的原始 (tick, value) 从 lane.events 读取（拖拽中模型不变）。
+                let d_tick = cur_tick as i64 - start_tick as i64;
+                let d_value = cur_value - start_value;
+                // 未实际移动时不产生 ghost
+                if d_tick == 0 && d_value.abs() <= 1e-6 {
+                    None
+                } else {
+                    lane.and_then(|l| {
+                        let moves: Vec<(u32, u32, f32)> = panel.selected_anchor_ticks.iter()
+                            .filter_map(|&tick| {
+                                let e = l.events.iter().find(|e| e.tick == tick)?;
+                                let new_tick = (tick as i64 + d_tick).max(0) as u32;
+                                let new_value = (e.value + d_value).clamp(0.0, max_val);
+                                Some((tick, new_tick, new_value))
+                            })
+                            .collect();
+                        if moves.is_empty() {
+                            return None;
+                        }
+                        let override_lane = if alt {
+                            // Alt = 复制：原事件保留 + 副本
+                            build_lane_multi_copy(l, &moves)
+                        } else {
+                            // 移动：原事件移到新位置
+                            build_lane_multi_move(l, &moves)
+                        };
+                        Some(AutomationGhost::Move { lane: override_lane, color: track_color })
+                    })
+                }
+            }
+            AutoDrag::MarqueeSelect { .. } => {
+                // 框选不产生 ghost（marquee_rect 由 egui painter 绘制）
+                None
             }
         }
     } else {
@@ -715,5 +931,5 @@ pub(crate) fn handle_automation_interaction(
         None
     };
 
-    (edits, ghost, drag_info, hover_info)
+    (edits, ghost, drag_info, hover_info, marquee_rect, sel_op)
 }

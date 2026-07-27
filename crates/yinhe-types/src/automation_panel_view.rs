@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use crate::{AutomationTarget, TimelineViewBase};
 
 /// Default panel height in pixels.
@@ -31,6 +33,9 @@ pub struct AutomationPanelView {
     /// 垂直滚动偏移（值空间单位，如 CC 的 0~127）。
     /// 面板顶部对应的值 = `value_scroll`。
     pub value_scroll: f32,
+    /// 当前面板选中的锚点 tick 集合（Select 工具）。
+    /// 切换面板 target 时自动清空（仅当前面板 target）。
+    pub selected_anchor_ticks: HashSet<u32>,
 }
 
 impl Default for AutomationPanelView {
@@ -52,6 +57,7 @@ impl Default for AutomationPanelView {
             dirty: true,
             value_zoom: 1.0,
             value_scroll: 0.0,
+            selected_anchor_ticks: HashSet::new(),
         }
     }
 }

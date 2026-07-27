@@ -22,8 +22,10 @@ pub(crate) struct MarqueeDragResult {
 
 /// Shared marquee drag lifecycle: press → move (with auto-scroll) → release.
 ///
-/// `on_press` is called once when the drag starts, allowing the caller to
+/// `on_press` is called once when the drag **exceeds 3px**, allowing the caller to
 /// clear or prepare state (e.g. clear selection for Select tool, no-op for Eraser).
+/// A click that stays within 3px never fires `on_press` — the caller can treat it
+/// as a plain cursor-position click (set cursor_tick etc.).
 /// Returns `Some(MarqueeDragResult)` on a valid drag release (>= 3px), `None` otherwise.
 pub(crate) fn marquee_drag_frame(
     ui: &mut egui::Ui,
@@ -38,7 +40,8 @@ pub(crate) fn marquee_drag_frame(
     id_suffix: &'static str,
 ) -> Option<MarqueeDragResult> {
     let sel_id = ui.id().with(id_suffix);
-    let mut drag: Option<((f64, f32), egui::Pos2)> =
+    // drag = (start_music, current_pos, on_press_fired)
+    let mut drag: Option<((f64, f32), egui::Pos2, bool)> =
         ui.data_mut(|d| d.get_persisted(sel_id)).unwrap_or(None);
 
     let pointer = ui.input(|i| i.pointer.clone());
@@ -53,7 +56,7 @@ pub(crate) fn marquee_drag_frame(
         return None;
     }
 
-    // Press → start drag
+    // Press → start drag (don't fire on_press yet — wait until > 3px)
     if pointer.primary_pressed()
         && let Some(pos) = pointer.hover_pos()
         && music_rect.contains(pos)
@@ -64,17 +67,16 @@ pub(crate) fn marquee_drag_frame(
             raw_tick, quantize, ppq, bar_line_data,
         );
         let start_content_y = local.y + view.base.scroll_y;
-        drag = Some(((start_tick, start_content_y), local));
-        on_press();
+        drag = Some(((start_tick, start_content_y), local, false));
     }
 
     // Recompute start pixel from music coords each frame (immune to scroll/zoom)
-    let start_pixel = drag.map(|((tick, content_y), _)| {
+    let start_pixel = drag.map(|((tick, content_y), _, _)| {
         egui::pos2(view.tick_to_x(tick), content_y - view.base.scroll_y)
     });
 
     // Move -> update with auto-scroll
-    if let (Some(start_px), Some((start_music, _))) = (start_pixel, drag) {
+    if let (Some(start_px), Some((start_music, _, _))) = (start_pixel, drag) {
         if pointer.primary_down() && !pointer.primary_pressed() {
             if let Some(pos) = pointer.hover_pos() {
                 let clamped = pos.clamp(music_rect.min, music_rect.max);
@@ -82,7 +84,15 @@ pub(crate) fn marquee_drag_frame(
                     clamped.x - content_rect.min.x,
                     clamped.y - content_rect.min.y,
                 );
-                drag = Some((start_music, local));
+
+                // 3px 阈值保护：拖拽超过 3px 才触发 on_press（清空选区），
+                // 避免误触 1px 就清空已有选区。
+                let dist = (local - start_px).length();
+                let fired = drag.as_ref().map(|(_, _, f)| *f).unwrap_or(false);
+                if !fired && dist >= 3.0 {
+                    on_press();
+                }
+                drag = Some((start_music, local, fired || dist >= 3.0));
 
                 // ── Auto-scroll when dragging near the edge ──
                 // No scroll compensation needed: start is in music coords, so it
@@ -119,7 +129,7 @@ pub(crate) fn marquee_drag_frame(
 
         // Release → compute snapped bounds
         if pointer.primary_released() {
-            let result = drag.and_then(|(_, end)| {
+            let result = drag.and_then(|(_, end, _)| {
                 if (end - start_px).length() >= 3.0 {
                     let (
                         sx, ex, sy, ey,
@@ -135,7 +145,7 @@ pub(crate) fn marquee_drag_frame(
                     None
                 }
             });
-            ui.data_mut(|d| d.insert_persisted(sel_id, Option::<((f64, f32), egui::Pos2)>::None));
+            ui.data_mut(|d| d.insert_persisted(sel_id, Option::<((f64, f32), egui::Pos2, bool)>::None));
             view.base.dirty = true;
             return result;
         }
@@ -352,7 +362,7 @@ pub(crate) fn sel_drag_frame(
     if note_drag_origin.is_some() {
         // Note drag active → clear any stale marquee state and skip marquee.
         let sel_id = ui.id().with("sel_drag");
-        ui.data_mut(|d| d.insert_persisted(sel_id, Option::<((f64, f32), egui::Pos2)>::None));
+        ui.data_mut(|d| d.insert_persisted(sel_id, Option::<((f64, f32), egui::Pos2, bool)>::None));
     } else {
         let mut on_press = || {
             if !cmd {
@@ -410,10 +420,10 @@ pub(crate) fn draw_marquee_box(
     vertical: bool,
 ) {
     let drag_id = ui.id().with(id_suffix);
-    let drag: Option<((f64, f32), egui::Pos2)> =
+    let drag: Option<((f64, f32), egui::Pos2, bool)> =
         ui.data_mut(|d| d.get_persisted(drag_id)).unwrap_or(None);
 
-    if let Some((start_music, end)) = drag {
+    if let Some((start_music, end, _)) = drag {
         let start = egui::pos2(view.tick_to_x(start_music.0), start_music.1 - view.base.scroll_y);
         if (end - start).length() < 3.0 {
             return;

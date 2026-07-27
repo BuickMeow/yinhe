@@ -177,9 +177,9 @@ pub fn show_panels(
         return (0.0, edits, velocity_edits, feedback, None);
     }
 
-    // 派生 show_anchors：Pencil 或 Curve 工具下都显示锚点
+    // 派生 show_anchors：Pencil/Curve/Select/SelectVertical 工具下显示锚点
     let active_tool = edit_ctx.map(|c| c.active_tool).unwrap_or(Tool::Select);
-    let show_anchors = active_tool == Tool::Pencil || active_tool == Tool::Curve;
+    let show_anchors = matches!(active_tool, Tool::Pencil | Tool::Curve | Tool::Select | Tool::SelectVertical);
 
     // Sync scroll state from pianoroll
     for panel in panels.iter_mut() {
@@ -322,6 +322,29 @@ pub fn show_panels(
         }
         let panel_ghost = out.ghost;
         let velocity_preview = out.preview;
+        let marquee_rect = out.marquee_rect;
+        // 应用 Select 工具的选区变更
+        if let Some(op) = out.sel_op {
+            use interaction::SelOp;
+            match op {
+                SelOp::Replace(set) => {
+                    panel.selected_anchor_ticks = set;
+                    panel.dirty = true;
+                }
+                SelOp::Toggle(tick) => {
+                    if panel.selected_anchor_ticks.contains(&tick) {
+                        panel.selected_anchor_ticks.remove(&tick);
+                    } else {
+                        panel.selected_anchor_ticks.insert(tick);
+                    }
+                    panel.dirty = true;
+                }
+                SelOp::Extend(adds) => {
+                    panel.selected_anchor_ticks.extend(adds);
+                    panel.dirty = true;
+                }
+            }
+        }
 
         if gw > 0 && gh > 0 {
             if let Some((renderer, render_ctx)) = renderers.get_mut(i) {
@@ -359,6 +382,21 @@ pub fn show_panels(
                             egui::Stroke::new(1.0, egui::Color32::WHITE),
                         );
                     }
+                }
+                // ── Select 工具框选矩形（画在 wgpu 纹理之上）──
+                if let Some(rect) = marquee_rect {
+                    let painter = ui.painter();
+                    painter.rect_filled(
+                        rect,
+                        0.0,
+                        egui::Color32::from_rgba_unmultiplied(80, 140, 220, 50),
+                    );
+                    painter.rect_stroke(
+                        rect,
+                        0.0,
+                        egui::Stroke::new(1.0, egui::Color32::from_rgb(100, 160, 240)),
+                        egui::StrokeKind::Inside,
+                    );
                 }
             }
         }
@@ -582,6 +620,10 @@ struct PanelInteractionOut {
     preview: Option<velocity::VelocityPreview>,
     /// 锚点拖拽的实时 (tick, value)，供 InfoPanel 显示
     anchor_drag: Option<(u32, f32)>,
+    /// Select 工具框选矩形（egui painter 绘制 + 渲染层高亮预览）
+    marquee_rect: Option<egui::Rect>,
+    /// Select 工具选区变更操作（应用到 panel.selected_anchor_ticks）
+    sel_op: Option<interaction::SelOp>,
 }
 
 /// 按面板模式分派编辑交互：Tempo / CC / PB / RPN / NRPN 走 lane 编辑；
@@ -591,7 +633,7 @@ fn dispatch_edit_interaction(
     ui: &mut egui::Ui,
     grid_area: egui::Rect,
     panel_rect: egui::Rect,
-    panel: &AutomationPanelView,
+    panel: &mut AutomationPanelView,
     automation_lanes: &[AutomationLane],
     tempo_lane: &AutomationLane,
     midi: Option<&dyn yinhe_types::NoteSource>,
@@ -607,6 +649,8 @@ fn dispatch_edit_interaction(
         ghost: None,
         preview: None,
         anchor_drag: None,
+        marquee_rect: None,
+        sel_op: None,
     };
     let mut tooltip: Option<interaction::HoverTooltip> = None;
     if let Some(ctx) = edit_ctx {
@@ -636,7 +680,7 @@ fn dispatch_edit_interaction(
                     .map(|(tick, value, pos)| interaction::HoverTooltip::Anchor { tick, value, pos });
             }
         } else if let Some(track) = ctx.active_track {
-            let (panel_edits, ghost, drag_info, hover_info) =
+            let (panel_edits, ghost, drag_info, hover_info, marquee_rect, sel_op) =
                 interaction::handle_automation_interaction(
                     ui,
                     grid_area,
@@ -653,6 +697,8 @@ fn dispatch_edit_interaction(
                 );
             out.automation_edits = panel_edits;
             out.ghost = ghost;
+            out.marquee_rect = marquee_rect;
+            out.sel_op = sel_op;
             // anchor_drag 只跟锚点拖拽（InfoPanel 用它显示实时 tick/value）
             if let Some(interaction::HoverTooltip::Anchor { tick, value, .. }) = drag_info {
                 out.anchor_drag = Some((tick, value));
@@ -735,25 +781,28 @@ fn render_panel_content(
             .collect()
     };
 
-    // 从 info_content 提取高亮锚点 tick（基于选中状态）。
+    // 高亮锚点 tick 集合（Select 工具多选 + Pencil 工具单选 info_content）。
     // render_lanes 可能含多个音轨：按 track 匹配锚点所属 lane；
     // Tempo 的 conductor lane track 恒为 0（语义占位），不参与 track 匹配。
-    let highlight_tick = match info_content {
-        Some(InfoContent::Anchor { target: anchor_target, track_idx, event_idx, .. })
-            if *anchor_target == panel.selected_target =>
+    let mut highlight_ticks: Vec<u32> = panel.selected_anchor_ticks.iter().copied().collect();
+    if let Some(InfoContent::Anchor { target: anchor_target, track_idx, event_idx, .. }) = info_content
+        && *anchor_target == panel.selected_target
+    {
+        // 通过 event_idx 定位锚点的实际 tick
+        if let Some(tick) = lanes
+            .iter()
+            .find(|l| {
+                l.target == panel.selected_target
+                    && (l.target == AutomationTarget::Tempo || l.track == *track_idx)
+            })
+            .and_then(|l| l.events.get(*event_idx))
+            .map(|e| e.tick)
         {
-            // 通过 event_idx 定位锚点的实际 tick
-            lanes
-                .iter()
-                .find(|l| {
-                    l.target == panel.selected_target
-                        && (l.target == AutomationTarget::Tempo || l.track == *track_idx)
-                })
-                .and_then(|l| l.events.get(*event_idx))
-                .map(|e| e.tick)
+            if !highlight_ticks.contains(&tick) {
+                highlight_ticks.push(tick);
+            }
         }
-        _ => None,
-    };
+    }
 
     let gpu_dirty = prepare_automation(
         renderer,
@@ -770,7 +819,7 @@ fn render_panel_content(
         max_val_f,
         panel_ghost,
         revision,
-        highlight_tick,
+        &highlight_ticks,
     );
 
     let content_changed = panel.dirty || gpu_dirty;

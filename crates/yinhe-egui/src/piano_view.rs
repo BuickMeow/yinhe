@@ -775,13 +775,13 @@ pub fn show(
         let kb_w = view.keyboard_width();
         let combo_w = kb_w * theme::AUTO_PANEL_COMBO_WIDTH_RATIO;
 
-        // automation 编辑上下文：Pencil/Curve 工具时启用。
+        // automation 编辑上下文：Pencil/Curve/Select/SelectVertical 工具时启用。
         // active_track 由 editing_track 决定（与 pencil 一致），
         // 允许 conductor（用于 Tempo automation）。只需可见即可
         // （editing_track 已常驻 PR 显示，不再要求 track_selected）。
         let active_track = editing_track
             .filter(|&t| track_visible.get(t as usize).copied().unwrap_or(false));
-        let edit_ctx = if *active_tool == Tool::Pencil || *active_tool == Tool::Curve {
+        let edit_ctx = if matches!(*active_tool, Tool::Pencil | Tool::Curve | Tool::Select | Tool::SelectVertical) {
             Some(automation_panel::AutomationEditCtx {
                 active_tool: *active_tool,
                 active_track,

@@ -74,6 +74,86 @@ pub fn build_lane_shape_override(
     }
 }
 
+/// 构造一条覆盖后的 lane：批量移动多个锚点。
+///
+/// 用于 Select 工具拖拽多个选中锚点的 ghost 预览。
+/// `moves` = `[(old_tick, new_tick, new_value)]`。
+///
+/// 算法：先删除所有 `old_tick` 处的事件（保留各 shape），再按 `new_tick` 排序插入。
+/// `new_tick` 冲突时（多个 move 目标相同，或与未移动的旧事件冲突）后者覆盖前者。
+/// `new_tick == old_tick` 的项视为无操作（仅更新 value）。
+pub fn build_lane_multi_move(
+    lane: &AutomationLane,
+    moves: &[(u32, u32, f32)],
+) -> AutomationLane {
+    if moves.is_empty() {
+        return lane.clone();
+    }
+    let mut events = lane.events.clone();
+    // 收集每个 old_tick 对应的 shape
+    let mut shapes: Vec<(u32, SegmentShape)> = Vec::with_capacity(moves.len());
+    for (old_tick, _, _) in moves {
+        if let Some(idx) = events.iter().position(|e| e.tick == *old_tick) {
+            shapes.push((*old_tick, events.remove(idx).shape));
+        }
+    }
+    // 按 new_tick 排序后插入（冲突时后者覆盖）
+    let mut sorted_moves: Vec<(u32, u32, f32, SegmentShape)> = moves
+        .iter()
+        .zip(shapes.iter())
+        .map(|((old, new, val), (_, shape))| (*old, *new, *val, *shape))
+        .collect();
+    sorted_moves.sort_by_key(|(_, new, _, _)| *new);
+    for (_, new_tick, new_value, shape) in sorted_moves {
+        // 删除 new_tick 处可能存在的旧事件
+        if let Some(idx) = events.iter().position(|e| e.tick == new_tick) {
+            events.remove(idx);
+        }
+        let insert_idx = events.partition_point(|e| e.tick < new_tick);
+        events.insert(insert_idx, AutomationEvent { tick: new_tick, value: new_value, shape });
+    }
+    AutomationLane { target: lane.target.clone(), track: lane.track, events }
+}
+
+/// 构造一条覆盖后的 lane：保留所有原事件，批量添加副本。
+///
+/// 用于 Select 工具 Alt+拖拽复制的 ghost 预览。
+/// `copies` = `[(src_tick, new_tick, new_value)]`：从 `src_tick` 取 shape，
+/// 在 `new_tick` 处插入副本。`new_tick` 冲突时后者覆盖前者。
+pub fn build_lane_multi_copy(
+    lane: &AutomationLane,
+    copies: &[(u32, u32, f32)],
+) -> AutomationLane {
+    if copies.is_empty() {
+        return lane.clone();
+    }
+    let mut events = lane.events.clone();
+    // 收集每个 src_tick 对应的 shape
+    let mut shapes: Vec<SegmentShape> = Vec::with_capacity(copies.len());
+    for (src_tick, _, _) in copies {
+        let shape = lane.events.iter()
+            .find(|e| e.tick == *src_tick)
+            .map(|e| e.shape)
+            .unwrap_or_else(|| lane.target.default_shape());
+        shapes.push(shape);
+    }
+    // 按 new_tick 排序后插入
+    let mut sorted: Vec<(u32, f32, SegmentShape)> = copies
+        .iter()
+        .zip(shapes.iter())
+        .map(|((_, new, val), shape)| (*new, *val, *shape))
+        .collect();
+    sorted.sort_by_key(|(new, _, _)| *new);
+    for (new_tick, new_value, shape) in sorted {
+        if let Some(idx) = events.iter().position(|e| e.tick == new_tick) {
+            events.remove(idx);
+        }
+        let insert_idx = events.partition_point(|e| e.tick < new_tick);
+        events.insert(insert_idx, AutomationEvent { tick: new_tick, value: new_value, shape });
+    }
+    AutomationLane { target: lane.target.clone(), track: lane.track, events }
+}
+
 /// Build ghost preview instances (layer 2, rebuilt every frame).
 ///
 /// `AutomationGhost` 坐标为 panel 局部像素坐标。
