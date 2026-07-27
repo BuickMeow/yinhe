@@ -76,7 +76,12 @@ fn show_number_popup(ui: &mut egui::Ui, cfg: PopupConfig) -> PopupAction {
                     open = false;
                 }
                 ui.add_space(2.0);
-                if ui.button(t!("common.confirm").as_ref()).clicked() {
+                let confirm = ui.button(t!("common.confirm").as_ref());
+                if confirm.clicked() {
+                    open = false;
+                }
+                ui.add_space(2.0);
+                if ui.button(t!("common.cancel").as_ref()).clicked() {
                     open = false;
                 }
             });
@@ -279,7 +284,12 @@ fn show_auto_shape_popup(
                 }
 
                 ui.add_space(2.0);
-                if ui.button(t!("common.confirm").as_ref()).clicked() {
+                let confirm = ui.button(t!("common.confirm").as_ref());
+                if confirm.clicked() {
+                    open = false;
+                }
+                ui.add_space(2.0);
+                if ui.button(t!("common.cancel").as_ref()).clicked() {
                     open = false;
                 }
             });

@@ -186,6 +186,11 @@ event_browser.header.value: "값"
 event_browser.header.shape: "형상"
 event_browser.edit_value: "값 편집"
 event_browser.edit_shape: "형상 편집"
+event_browser.edit_tick: "틱 편집"
+event_browser.edit_end_tick: "종료 틱 편집"
+event_browser.edit_gate: "게이트 편집"
+event_browser.edit_key: "키 편집"
+event_browser.edit_velocity: "벨로시티 편집"
 event_browser.shape_step: "이산 (Step)"
 
 # ── 앵커 패널 ──

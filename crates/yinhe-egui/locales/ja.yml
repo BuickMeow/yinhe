@@ -186,6 +186,11 @@ event_browser.header.value: "値"
 event_browser.header.shape: "形状"
 event_browser.edit_value: "値を編集"
 event_browser.edit_shape: "形状を編集"
+event_browser.edit_tick: "ティックを編集"
+event_browser.edit_end_tick: "終了ティックを編集"
+event_browser.edit_gate: "ゲートを編集"
+event_browser.edit_key: "キーを編集"
+event_browser.edit_velocity: "ベロシティを編集"
 event_browser.shape_step: "離散 (Step)"
 
 # ── アンカーパネル ──

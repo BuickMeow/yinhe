@@ -187,6 +187,11 @@ event_browser.header.value: "Value"
 event_browser.header.shape: "Shape"
 event_browser.edit_value: "Edit Value"
 event_browser.edit_shape: "Edit Shape"
+event_browser.edit_tick: "Edit Tick"
+event_browser.edit_end_tick: "Edit End Tick"
+event_browser.edit_gate: "Edit Gate"
+event_browser.edit_key: "Edit Key"
+event_browser.edit_velocity: "Edit Velocity"
 event_browser.shape_step: "Step (Discrete)"
 
 # ── Anchor panel ──
