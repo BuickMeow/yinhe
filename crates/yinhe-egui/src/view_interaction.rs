@@ -203,14 +203,13 @@ pub(crate) fn handle_input(
 
     // Click to set cursor — pointer release + small drag distance.
     // Hover check here also uses raw rect containment for the same reason.
-    // Skip in Select and Pencil modes — those tools manage their own clicks.
+    // Skip in Pencil/Curve/Pan modes — those tools manage their own clicks.
+    // Select/SelectVertical 工具也支持点击跳转（< 3px 时，未命中锚点/音符时）。
     let released = ui.input(|i| i.pointer.primary_released());
     let drag_dist = content_resp.drag_delta().length();
     if released
         && pointer_in_rect
         && drag_dist < 3.0
-        && *active_tool != Tool::Select
-        && *active_tool != Tool::SelectVertical
         && *active_tool != Tool::Pencil
         && *active_tool != Tool::Curve
         && *active_tool != Tool::Pan

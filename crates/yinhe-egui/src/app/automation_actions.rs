@@ -3,13 +3,29 @@
 //! 当 Select/SelectVertical 工具激活且有锚点选中时，
 //! copy/paste/duplicate/delete 作用于自动化锚点而非音符。
 
-use std::collections::HashSet;
-
 use rust_i18n::t;
-use yinhe_types::{AutomationTarget, SegmentShape};
+use yinhe_types::{AutomationTarget, AnchorSelRect, SegmentShape};
 
 use crate::app::App;
 use crate::widgets::tools_panel::Tool;
+
+/// 根据锚点列表计算 sel_rect（用于 paste/duplicate 后设置选中范围）。
+/// `vertical` = true 时 value_range 为 None（垂直全选），否则取 value 的 min/max。
+fn sel_rect_from_anchors(anchors: &[(u32, f32)], vertical: bool) -> Option<AnchorSelRect> {
+    if anchors.is_empty() {
+        return None;
+    }
+    let tick_start = anchors.iter().map(|(t, _)| *t as f64).fold(f64::INFINITY, f64::min);
+    let tick_end = anchors.iter().map(|(t, _)| *t as f64).fold(f64::NEG_INFINITY, f64::max);
+    let value_range = if vertical {
+        None
+    } else {
+        let vmin = anchors.iter().map(|(_, v)| *v).fold(f32::INFINITY, f32::min);
+        let vmax = anchors.iter().map(|(_, v)| *v).fold(f32::NEG_INFINITY, f32::max);
+        Some((vmin, vmax))
+    };
+    Some(AnchorSelRect { tick_start, tick_end, value_range })
+}
 
 /// 自动化锚点剪贴板。
 ///
@@ -48,7 +64,7 @@ impl App {
             return false;
         }
         self.documents[idx].edit.controller_panels.iter()
-            .any(|p| !p.show_velocity && !p.selected_anchor_ticks.is_empty())
+            .any(|p| !p.show_velocity && p.anchor_sel_rect.is_some())
     }
 
     /// 复制选中锚点到剪贴板。
@@ -58,14 +74,13 @@ impl App {
 
         let Some(ctx) = Self::collect_anchor_ctx(doc) else { return };
         let panel = &doc.edit.controller_panels[ctx.panel_idx];
+        let Some(sel_rect) = panel.anchor_sel_rect else { return };
 
-        // 收集选中的锚点
-        let mut copied: Vec<(u32, f32, SegmentShape)> = Vec::new();
-        for &tick in &panel.selected_anchor_ticks {
-            if let Some((_, value, shape)) = ctx.events.iter().find(|(t, _, _)| *t == tick) {
-                copied.push((tick, *value, *shape));
-            }
-        }
+        // 收集 sel_rect 内的锚点
+        let mut copied: Vec<(u32, f32, SegmentShape)> = ctx.events.iter()
+            .filter(|(tick, value, _)| sel_rect.contains(*tick, *value))
+            .copied()
+            .collect();
         if copied.is_empty() {
             return;
         }
@@ -101,7 +116,7 @@ impl App {
         let offset = cursor_tick as i64 - min_tick as i64;
 
         let mut edits = Vec::with_capacity(clipboard.events.len());
-        let mut new_ticks: HashSet<u32> = HashSet::new();
+        let mut new_anchors: Vec<(u32, f32)> = Vec::new();
         for (tick, value, shape) in &clipboard.events {
             let new_tick = (*tick as i64 + offset).max(0) as u32;
             edits.push(yinhe_types::AutomationEdit::Add {
@@ -111,7 +126,7 @@ impl App {
                 value: *value,
                 shape: *shape,
             });
-            new_ticks.insert(new_tick);
+            new_anchors.push((new_tick, *value));
         }
 
         let actions = doc.apply_automation_edits(edits);
@@ -120,8 +135,10 @@ impl App {
             crate::right_panel::automation_undo::push_automation_actions(
                 doc, actions, t!("undo.paste_automation").as_ref(),
             );
-            doc.edit.controller_panels[panel_idx].selected_anchor_ticks = new_ticks;
-            doc.edit.controller_panels[panel_idx].anchor_sel_rect = None;
+            // 粘贴后选中改为根据新锚点范围设置 sel_rect
+            let vertical = self.active_tool == Tool::SelectVertical;
+            doc.edit.controller_panels[panel_idx].anchor_sel_rect =
+                sel_rect_from_anchors(&new_anchors, vertical);
             doc.edit.controller_panels[panel_idx].dirty = true;
             self.notify_audio_model_changed();
         }
@@ -135,21 +152,23 @@ impl App {
 
         let Some(ctx) = Self::collect_anchor_ctx(doc) else { return };
         let panel = &doc.edit.controller_panels[ctx.panel_idx];
+        let Some(sel_rect) = panel.anchor_sel_rect else { return };
         let ppq = doc.data.model.meta.ppq;
         let quantize = doc.edit.quantize_pianoroll;
 
-        let selected_ticks: Vec<u32> = {
-            let mut v: Vec<u32> = panel.selected_anchor_ticks.iter().copied().collect();
-            v.sort_unstable();
-            v
-        };
-        if selected_ticks.is_empty() {
+        // 收集 sel_rect 内的选中锚点（按 tick 升序）
+        let mut selected: Vec<(u32, f32, SegmentShape)> = ctx.events.iter()
+            .filter(|(tick, value, _)| sel_rect.contains(*tick, *value))
+            .copied()
+            .collect();
+        if selected.is_empty() {
             return;
         }
+        selected.sort_by_key(|(t, _, _)| *t);
 
         // 偏移：选区跨度，单锚点时用量化间隔
-        let min_tick = selected_ticks[0];
-        let max_tick = *selected_ticks.last().unwrap();
+        let min_tick = selected.first().map(|(t, _, _)| *t).unwrap_or(0);
+        let max_tick = selected.last().map(|(t, _, _)| *t).unwrap_or(0);
         let span = max_tick.saturating_sub(min_tick);
         let offset = if span == 0 {
             quantize.tick_interval(ppq).max(1)
@@ -157,26 +176,19 @@ impl App {
             span
         };
 
-        // 收集选中锚点的 (value, shape)
-        let mut copies: Vec<(u32, f32, SegmentShape)> = Vec::new();
-        for &tick in &selected_ticks {
-            if let Some((_, value, shape)) = ctx.events.iter().find(|(t, _, _)| *t == tick) {
-                let new_tick = (tick as i64 + offset as i64).max(0) as u32;
-                copies.push((new_tick, *value, *shape));
-            }
-        }
-
-        let mut edits = Vec::with_capacity(copies.len());
-        let mut new_ticks: HashSet<u32> = HashSet::new();
-        for (new_tick, value, shape) in &copies {
+        // 生成副本
+        let mut edits = Vec::with_capacity(selected.len());
+        let mut new_anchors: Vec<(u32, f32)> = Vec::new();
+        for (tick, value, shape) in &selected {
+            let new_tick = (*tick as i64 + offset as i64).max(0) as u32;
             edits.push(yinhe_types::AutomationEdit::Add {
                 track_idx: ctx.track_idx,
                 target: ctx.target.clone(),
-                tick: *new_tick,
+                tick: new_tick,
                 value: *value,
                 shape: *shape,
             });
-            new_ticks.insert(*new_tick);
+            new_anchors.push((new_tick, *value));
         }
 
         let actions = doc.apply_automation_edits(edits);
@@ -185,8 +197,10 @@ impl App {
             crate::right_panel::automation_undo::push_automation_actions(
                 doc, actions, t!("undo.duplicate_automation").as_ref(),
             );
-            doc.edit.controller_panels[ctx.panel_idx].selected_anchor_ticks = new_ticks;
-            doc.edit.controller_panels[ctx.panel_idx].anchor_sel_rect = None;
+            // 重复后选中改为根据新锚点范围设置 sel_rect
+            let vertical = self.active_tool == Tool::SelectVertical;
+            doc.edit.controller_panels[ctx.panel_idx].anchor_sel_rect =
+                sel_rect_from_anchors(&new_anchors, vertical);
             doc.edit.controller_panels[ctx.panel_idx].dirty = true;
             self.notify_audio_model_changed();
         }
@@ -199,15 +213,19 @@ impl App {
 
         let Some(ctx) = Self::collect_anchor_ctx(doc) else { return };
         let panel = &doc.edit.controller_panels[ctx.panel_idx];
+        let Some(sel_rect) = panel.anchor_sel_rect else { return };
 
+        // 收集 sel_rect 内的锚点 tick
         let mut edits = Vec::new();
-        for &tick in &panel.selected_anchor_ticks {
-            edits.push(yinhe_types::AutomationEdit::Delete {
-                track_idx: ctx.track_idx,
-                lane_idx: ctx.lane_idx,
-                target: ctx.target.clone(),
-                tick,
-            });
+        for (tick, value, _) in &ctx.events {
+            if sel_rect.contains(*tick, *value) {
+                edits.push(yinhe_types::AutomationEdit::Delete {
+                    track_idx: ctx.track_idx,
+                    lane_idx: ctx.lane_idx,
+                    target: ctx.target.clone(),
+                    tick: *tick,
+                });
+            }
         }
 
         let actions = doc.apply_automation_edits(edits);
@@ -216,7 +234,6 @@ impl App {
             crate::right_panel::automation_undo::push_automation_actions(
                 doc, actions, t!("undo.delete_automation").as_ref(),
             );
-            doc.edit.controller_panels[ctx.panel_idx].selected_anchor_ticks.clear();
             doc.edit.controller_panels[ctx.panel_idx].anchor_sel_rect = None;
             doc.edit.controller_panels[ctx.panel_idx].dirty = true;
             self.notify_audio_model_changed();
@@ -230,7 +247,7 @@ impl App {
     /// 找第一个有选中锚点的非 velocity 面板。返回 `None` 表示无可操作面板。
     fn collect_anchor_ctx(doc: &yinhe_editor_core::document::Document) -> Option<AnchorCtx> {
         let panel_idx = doc.edit.controller_panels.iter()
-            .position(|p| !p.show_velocity && !p.selected_anchor_ticks.is_empty())?;
+            .position(|p| !p.show_velocity && p.anchor_sel_rect.is_some())?;
         let panel = &doc.edit.controller_panels[panel_idx];
         let target = panel.selected_target.clone();
 

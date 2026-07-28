@@ -327,34 +327,14 @@ pub fn show_panels(
         if let Some(op) = out.sel_op {
             use interaction::{SelOp, SelRectOp};
             match op {
-                SelOp::Replace { ticks, rect } => {
-                    panel.selected_anchor_ticks = ticks;
-                    match rect {
-                        SelRectOp::Clear => panel.anchor_sel_rect = None,
-                        SelRectOp::Set(r) => panel.anchor_sel_rect = Some(r),
-                        SelRectOp::Keep => {}
-                    }
-                    panel.dirty = true;
-                }
-                SelOp::Toggle(tick) => {
-                    if panel.selected_anchor_ticks.contains(&tick) {
-                        panel.selected_anchor_ticks.remove(&tick);
-                    } else {
-                        panel.selected_anchor_ticks.insert(tick);
-                    }
-                    panel.dirty = true;
-                }
-                SelOp::Extend { ticks, rect } => {
-                    panel.selected_anchor_ticks.extend(ticks);
-                    match rect {
-                        SelRectOp::Clear => panel.anchor_sel_rect = None,
+                SelOp::Set(rect_op) => {
+                    match rect_op {
                         SelRectOp::Set(r) => panel.anchor_sel_rect = Some(r),
                         SelRectOp::Keep => {}
                     }
                     panel.dirty = true;
                 }
                 SelOp::Clear => {
-                    panel.selected_anchor_ticks.clear();
                     panel.anchor_sel_rect = None;
                     panel.dirty = true;
                 }
@@ -427,15 +407,16 @@ pub fn show_panels(
                             egui::pos2(x2, y2),
                         ).intersect(grid_area);
                         let painter = ui.painter();
+                        // 选框颜色与 PR/AR 一致：白色 + gamma_multiply
                         painter.rect_filled(
                             rect,
                             0.0,
-                            egui::Color32::from_rgba_unmultiplied(80, 140, 220, 30),
+                            egui::Color32::WHITE.gamma_multiply(0.15),
                         );
                         painter.rect_stroke(
                             rect,
                             0.0,
-                            egui::Stroke::new(1.0, egui::Color32::from_rgb(100, 160, 240)),
+                            egui::Stroke::new(1.0, egui::Color32::WHITE.gamma_multiply(0.40)),
                             egui::StrokeKind::Inside,
                         );
                     }
@@ -443,15 +424,16 @@ pub fn show_panels(
                 // ── Select 工具框选矩形（拖拽中的临时选框，画在最上层）──
                 if let Some(rect) = marquee_rect {
                     let painter = ui.painter();
+                    // 选框颜色与 PR/AR 一致：白色 + gamma_multiply（拖拽中略亮）
                     painter.rect_filled(
                         rect,
                         0.0,
-                        egui::Color32::from_rgba_unmultiplied(80, 140, 220, 50),
+                        egui::Color32::WHITE.gamma_multiply(0.20),
                     );
                     painter.rect_stroke(
                         rect,
                         0.0,
-                        egui::Stroke::new(1.0, egui::Color32::from_rgb(100, 160, 240)),
+                        egui::Stroke::new(1.0, egui::Color32::WHITE.gamma_multiply(0.40)),
                         egui::StrokeKind::Inside,
                     );
                 }
@@ -679,7 +661,7 @@ struct PanelInteractionOut {
     anchor_drag: Option<(u32, f32)>,
     /// Select 工具框选矩形（egui painter 绘制 + 渲染层高亮预览）
     marquee_rect: Option<egui::Rect>,
-    /// Select 工具选区变更操作（应用到 panel.selected_anchor_ticks）
+    /// Select 工具选区变更操作（应用到 panel.anchor_sel_rect）
     sel_op: Option<interaction::SelOp>,
 }
 
@@ -841,7 +823,17 @@ fn render_panel_content(
     // 高亮锚点 tick 集合（Select 工具多选 + Pencil 工具单选 info_content）。
     // render_lanes 可能含多个音轨：按 track 匹配锚点所属 lane；
     // Tempo 的 conductor lane track 恒为 0（语义占位），不参与 track 匹配。
-    let mut highlight_ticks: Vec<u32> = panel.selected_anchor_ticks.iter().copied().collect();
+    // Select 工具的选中状态由 anchor_sel_rect 决定：从 lanes 筛选落在 sel_rect 内的锚点。
+    let mut highlight_ticks: Vec<u32> = Vec::new();
+    if let Some(sel_rect) = panel.anchor_sel_rect {
+        for l in &lanes {
+            for e in &l.events {
+                if sel_rect.contains(e.tick, e.value) {
+                    highlight_ticks.push(e.tick);
+                }
+            }
+        }
+    }
     if let Some(InfoContent::Anchor { target: anchor_target, track_idx, event_idx, .. }) = info_content
         && *anchor_target == panel.selected_target
     {

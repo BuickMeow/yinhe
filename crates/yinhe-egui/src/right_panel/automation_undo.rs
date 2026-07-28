@@ -58,19 +58,23 @@ pub fn push_automation_undo(
     });
 }
 
-/// 把 `apply_automation_edits` 返回的 `UndoAction` 列表逐个 push 到 history。
+/// 把 `apply_automation_edits` 返回的 `UndoAction` 列表作为一个 undo entry push 到 history。
 ///
-/// 用于一次性操作（如 `CycleShape`），区别于 [`push_automation_undo`] 的 before/after 模式：
-/// - `push_automation_undo`：DragValue 持续编辑，gained 时记录 before，lost 时取 after 对比
-/// - `push_automation_actions`：单次操作，`apply_automation_edits` 已返回构造好的 actions
+/// 多个 action 用 `Composite` 合并，一次操作 = 一次 undo（避免逐个 undo）。
 pub fn push_automation_actions(doc: &mut Document, actions: Vec<UndoAction>, label: &str) {
-    for action in actions {
-        doc.history.push(UndoEntry {
-            action,
-            label: label.to_string(),
-            selected: doc.edit.selected.clone(),
-            track_selected: doc.edit.track_selected.clone(),
-            sel_rect: doc.edit.sel_rect.clone(),
-        });
+    if actions.is_empty() {
+        return;
     }
+    let action = if actions.len() == 1 {
+        actions.into_iter().next().unwrap()
+    } else {
+        UndoAction::Composite(actions)
+    };
+    doc.history.push(UndoEntry {
+        action,
+        label: label.to_string(),
+        selected: doc.edit.selected.clone(),
+        track_selected: doc.edit.track_selected.clone(),
+        sel_rect: doc.edit.sel_rect.clone(),
+    });
 }

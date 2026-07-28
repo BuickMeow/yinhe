@@ -1,5 +1,3 @@
-use std::collections::HashSet;
-
 use crate::{AutomationTarget, TimelineViewBase};
 
 /// Default panel height in pixels.
@@ -9,11 +7,12 @@ pub const MIN_PANEL_HEIGHT: f32 = 40.0;
 /// Maximum panel height when dragging.
 pub const MAX_PANEL_HEIGHT: f32 = 200.0;
 
-/// 持续化的锚点选框（音乐坐标）。
+/// 持久化的锚点选框（音乐坐标）。
 ///
 /// 框选完成后存储在 `AutomationPanelView::anchor_sel_rect` 中，用于：
 /// 1. 持续显示选框（视觉反馈，类似 PR/AR 的 sel_rect）
 /// 2. 点击选框内时触发拖拽（而非新框选）
+/// 3. 选中状态由锚点是否在此范围内决定
 ///
 /// 存储音乐坐标而非屏幕坐标，这样滚动/缩放后选框位置仍然正确。
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -24,6 +23,20 @@ pub struct AnchorSelRect {
     /// 选框的 value 范围。
     /// `None` = 垂直全选（y 范围用整个面板高度，SelectVertical 工具）
     pub value_range: Option<(f32, f32)>,
+}
+
+impl AnchorSelRect {
+    /// 判断锚点 (tick, value) 是否在选框范围内。
+    pub fn contains(&self, tick: u32, value: f32) -> bool {
+        let ts = self.tick_start.min(self.tick_end);
+        let te = self.tick_start.max(self.tick_end);
+        let tick_in = (tick as f64) >= ts && (tick as f64) <= te;
+        let value_in = match self.value_range {
+            None => true,
+            Some((vmin, vmax)) => value >= vmin && value <= vmax,
+        };
+        tick_in && value_in
+    }
 }
 
 /// View state for a single automation panel in the controller area below the pianoroll.
@@ -50,10 +63,8 @@ pub struct AutomationPanelView {
     /// 垂直滚动偏移（值空间单位，如 CC 的 0~127）。
     /// 面板顶部对应的值 = `value_scroll`。
     pub value_scroll: f32,
-    /// 当前面板选中的锚点 tick 集合（Select 工具）。
-    /// 切换面板 target 时自动清空（仅当前面板 target）。
-    pub selected_anchor_ticks: HashSet<u32>,
-    /// 持续化的锚点选框（音乐坐标）。
+    /// 持久化的锚点选框（音乐坐标）。
+    /// 选中状态由锚点是否在此范围内决定（类似 PR/AR 的 sel_rect）。
     /// 框选完成后设置，点击选框外或清空选区时清除。
     pub anchor_sel_rect: Option<AnchorSelRect>,
 }
@@ -77,7 +88,6 @@ impl Default for AutomationPanelView {
             dirty: true,
             value_zoom: 1.0,
             value_scroll: 0.0,
-            selected_anchor_ticks: HashSet::new(),
             anchor_sel_rect: None,
         }
     }
