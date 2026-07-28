@@ -121,6 +121,10 @@ impl ViewInteraction for yinhe_types::ArrangementView {
 ///
 /// `left_zone_width`: pixels from the left edge where vertical zoom is
 ///   allowed (piano_view uses `keyboard_width`, arrangement uses `0.0`).
+///   左区内：pinch/滚轮/cmd+scroll 均做垂直缩放；右区：pinch 水平缩放，
+///   cmd+scroll.y 水平缩放，纯滚轮平移。
+/// `rect` 必须是包含左区的完整 content rect（piano_view 传 content_rect，
+///   arrangement 传 rect），因为 `x_to_tick` 内部会减 `left_panel_width`。
 /// If `quantize` is provided, cursor placement snaps to the grid.
 /// `bar_line_data: (ticks_per_beat, default_num, default_den, &[TimeSigEvent])`
 pub(crate) fn handle_input(
@@ -173,21 +177,29 @@ pub(crate) fn handle_input(
             ui.ctx().request_repaint();
         }
 
-        // Cmd+scroll: horizontal zoom; plain scroll: pan
+        // Scroll handling:
+        // - 左区（left_zone_width > 0，如钢琴键盘）：滚轮做垂直缩放（合并原 kb_zoom 语义）
+        // - 右区 cmd+scroll.y: 水平缩放
+        // - 右区纯滚轮: 平移
         let cmd = ui.input(|i| i.modifiers.command || i.modifiers.ctrl);
         let scroll = ui.input(|i| i.smooth_scroll_delta);
 
         if scroll != egui::Vec2::ZERO {
-            if cmd {
+            let in_left_zone = pointer_x < left_zone_width;
+            if in_left_zone {
+                // 左区：滚轮垂直缩放（与原 kb_zoom 一致，cmd 不改变语义）
+                if scroll.y.abs() > 0.5 {
+                    let factor = if scroll.y > 0.0 { 1.1 } else { 1.0 / 1.1 };
+                    view.zoom_around_y(pointer_y, factor, rect.height());
+                }
+            } else if cmd {
+                // 右区 cmd+scroll.y: 水平缩放
                 if scroll.y.abs() > 0.5 {
                     let factor = if scroll.y > 0.0 { 1.1 } else { 1.0 / 1.1 };
                     view.zoom_around_x(pointer_x, factor);
                 }
-                if left_zone_width > 0.0 && scroll.x.abs() > 0.5 {
-                    let factor = if scroll.x > 0.0 { 1.1 } else { 1.0 / 1.1 };
-                    view.zoom_around_y(pointer_y, factor, rect.height());
-                }
             } else {
+                // 右区纯滚轮: 平移
                 *view.scroll_x() -= scroll.x;
                 *view.scroll_y() -= scroll.y;
                 *view.dirty() = true;

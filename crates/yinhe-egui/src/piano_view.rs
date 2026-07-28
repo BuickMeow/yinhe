@@ -269,16 +269,19 @@ pub fn show(
     }
 
     // ── Content interaction (zoom/pan/cursor/drag/reset) ──
+    // 传 content_rect（含键盘列）+ left_zone_width=kb_w，让 handle_input 统一处理
+    // 键盘区垂直缩放与卷帘区平移/水平缩放。x_to_tick 内部减 left_panel_width，
+    // 所以传入相对 content 的 x 才正确（之前传 music_rect 导致 kb_w 被减两次）。
     // Save scroll state before input for haptic boundary detection
     let pre_scroll_x = view.base.scroll_x;
     let pre_scroll_y = view.base.scroll_y;
     let raw_scroll = ui.input(|i| i.smooth_scroll_delta);
     crate::view_interaction::handle_input(
         ui,
-        music_rect,
+        content_rect,
         view,
         cursor_tick,
-        0.0,
+        kb_w,
         Some((quantize, ppq)),
         bar_line_data,
         None,
@@ -286,33 +289,6 @@ pub fn show(
         follow_mode,
         active_tool,
     );
-
-    // ── Keyboard area: vertical zoom (pinch / scroll / cmd+scroll) ──
-    // 键盘区原本是滚轮死区（handle_input 作用于 music_rect，不含键盘列），
-    // 因此纯滚轮直接做垂直缩放，不影响卷帘区的平移语义。
-    ui.push_id("kb_zoom", |ui| {
-        let kb_rect = egui::Rect::from_min_max(
-            egui::pos2(rect.min.x, content_y),
-            egui::pos2(rect.min.x + kb_w, content_y + content_h),
-        );
-        let pointer_in_kb = ui.input(|i| i.pointer.hover_pos().is_some_and(|p| kb_rect.contains(p)));
-        if pointer_in_kb {
-            let pointer_y = ui.input(|i| i.pointer.hover_pos().unwrap_or_default()).y - content_y;
-            let zoom_delta = ui.input(|i| i.zoom_delta());
-            if (zoom_delta - 1.0).abs() > 0.001 {
-                view.zoom_around_y(pointer_y, zoom_delta, content_h);
-                view.base.dirty = true;
-                ui.ctx().request_repaint();
-            }
-            let scroll = ui.input(|i| i.smooth_scroll_delta);
-            if scroll.y.abs() > 0.5 {
-                let factor = if scroll.y > 0.0 { 1.1 } else { 1.0 / 1.1 };
-                view.zoom_around_y(pointer_y, factor, content_h);
-                view.base.dirty = true;
-                ui.ctx().request_repaint();
-            }
-        }
-    });
 
     // ── Keyboard resize handle ──
     ui.push_id("kb_handle", |ui| {
