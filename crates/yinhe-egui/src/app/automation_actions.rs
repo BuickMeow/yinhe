@@ -121,6 +121,7 @@ impl App {
                 doc, actions, t!("undo.paste_automation").as_ref(),
             );
             doc.edit.controller_panels[panel_idx].selected_anchor_ticks = new_ticks;
+            doc.edit.controller_panels[panel_idx].anchor_sel_rect = None;
             doc.edit.controller_panels[panel_idx].dirty = true;
             self.notify_audio_model_changed();
         }
@@ -185,6 +186,7 @@ impl App {
                 doc, actions, t!("undo.duplicate_automation").as_ref(),
             );
             doc.edit.controller_panels[ctx.panel_idx].selected_anchor_ticks = new_ticks;
+            doc.edit.controller_panels[ctx.panel_idx].anchor_sel_rect = None;
             doc.edit.controller_panels[ctx.panel_idx].dirty = true;
             self.notify_audio_model_changed();
         }
@@ -215,6 +217,7 @@ impl App {
                 doc, actions, t!("undo.delete_automation").as_ref(),
             );
             doc.edit.controller_panels[ctx.panel_idx].selected_anchor_ticks.clear();
+            doc.edit.controller_panels[ctx.panel_idx].anchor_sel_rect = None;
             doc.edit.controller_panels[ctx.panel_idx].dirty = true;
             self.notify_audio_model_changed();
         }

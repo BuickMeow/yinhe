@@ -323,12 +323,17 @@ pub fn show_panels(
         let panel_ghost = out.ghost;
         let velocity_preview = out.preview;
         let marquee_rect = out.marquee_rect;
-        // 应用 Select 工具的选区变更
+        // 应用 Select 工具的选区变更 + 持续化选框
         if let Some(op) = out.sel_op {
-            use interaction::SelOp;
+            use interaction::{SelOp, SelRectOp};
             match op {
-                SelOp::Replace(set) => {
-                    panel.selected_anchor_ticks = set;
+                SelOp::Replace { ticks, rect } => {
+                    panel.selected_anchor_ticks = ticks;
+                    match rect {
+                        SelRectOp::Clear => panel.anchor_sel_rect = None,
+                        SelRectOp::Set(r) => panel.anchor_sel_rect = Some(r),
+                        SelRectOp::Keep => {}
+                    }
                     panel.dirty = true;
                 }
                 SelOp::Toggle(tick) => {
@@ -339,8 +344,18 @@ pub fn show_panels(
                     }
                     panel.dirty = true;
                 }
-                SelOp::Extend(adds) => {
-                    panel.selected_anchor_ticks.extend(adds);
+                SelOp::Extend { ticks, rect } => {
+                    panel.selected_anchor_ticks.extend(ticks);
+                    match rect {
+                        SelRectOp::Clear => panel.anchor_sel_rect = None,
+                        SelRectOp::Set(r) => panel.anchor_sel_rect = Some(r),
+                        SelRectOp::Keep => {}
+                    }
+                    panel.dirty = true;
+                }
+                SelOp::Clear => {
+                    panel.selected_anchor_ticks.clear();
+                    panel.anchor_sel_rect = None;
                     panel.dirty = true;
                 }
             }
@@ -383,7 +398,40 @@ pub fn show_panels(
                         );
                     }
                 }
-                // ── Select 工具框选矩形（画在 wgpu 纹理之上）──
+                // ── 持续化选框（框选完成后持续显示，画在 wgpu 纹理之上）──
+                if marquee_rect.is_none() {
+                    if let Some(sel_rect) = panel.anchor_sel_rect {
+                        let x_offset = grid_area.min.x - panel.base.scroll_x;
+                        let ppu = panel.base.pixels_per_tick;
+                        let x1 = x_offset + (sel_rect.tick_start.min(sel_rect.tick_end) as f32) * ppu;
+                        let x2 = x_offset + (sel_rect.tick_start.max(sel_rect.tick_end) as f32) * ppu;
+                        let (y1, y2) = match sel_rect.value_range {
+                            None => (grid_area.min.y, grid_area.max.y),
+                            Some((vmin, vmax)) => {
+                                let ya = panel_rect.min.y + panel.value_to_y(vmax, max_val_f);
+                                let yb = panel_rect.min.y + panel.value_to_y(vmin, max_val_f);
+                                (ya.min(yb), ya.max(yb))
+                            }
+                        };
+                        let rect = egui::Rect::from_min_max(
+                            egui::pos2(x1, y1),
+                            egui::pos2(x2, y2),
+                        ).intersect(grid_area);
+                        let painter = ui.painter();
+                        painter.rect_filled(
+                            rect,
+                            0.0,
+                            egui::Color32::from_rgba_unmultiplied(80, 140, 220, 30),
+                        );
+                        painter.rect_stroke(
+                            rect,
+                            0.0,
+                            egui::Stroke::new(1.0, egui::Color32::from_rgb(100, 160, 240)),
+                            egui::StrokeKind::Inside,
+                        );
+                    }
+                }
+                // ── Select 工具框选矩形（拖拽中的临时选框，画在最上层）──
                 if let Some(rect) = marquee_rect {
                     let painter = ui.painter();
                     painter.rect_filled(
