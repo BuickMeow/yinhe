@@ -22,11 +22,9 @@ pub(crate) struct MarqueeDragResult {
 
 /// Shared marquee drag lifecycle: press → move (with auto-scroll) → release.
 ///
-/// `on_press` is called once when the drag **exceeds 3px**, allowing the caller to
-/// clear or prepare state (e.g. clear selection for Select tool, no-op for Eraser).
-/// A click that stays within 3px never fires `on_press` — the caller can treat it
-/// as a plain cursor-position click (set cursor_tick etc.).
 /// Returns `Some(MarqueeDragResult)` on a valid drag release (>= 3px), `None` otherwise.
+/// A click that stays within 3px returns `None` — the caller can treat it as a
+/// plain cursor-position click (set cursor_tick etc.).
 pub(crate) fn marquee_drag_frame(
     ui: &mut egui::Ui,
     content_rect: egui::Rect,
@@ -36,15 +34,14 @@ pub(crate) fn marquee_drag_frame(
     ppq: u32,
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
     total_ticks: f64,
-    on_press: &mut dyn FnMut(),
     id_suffix: &'static str,
 ) -> Option<MarqueeDragResult> {
     let sel_id = ui.id().with(id_suffix);
-    // drag = (start_music, press_pos, current_pos, on_press_fired)
+    // drag = (start_music, press_pos, current_pos)
     // - start_music: (snapped_tick, content_y) — 量化后的起始音乐坐标，用于计算选区 bounds
     // - press_pos: 按下时的原始像素位置 — 用于 3px 阈值检查（不受量化偏移影响）
     // - current_pos: 当前鼠标位置 — 用于绘制选框 + auto-scroll
-    let mut drag: Option<((f64, f32), egui::Pos2, egui::Pos2, bool)> =
+    let mut drag: Option<((f64, f32), egui::Pos2, egui::Pos2)> =
         ui.data_mut(|d| d.get_persisted(sel_id)).unwrap_or(None);
 
     let pointer = ui.input(|i| i.pointer.clone());
@@ -59,7 +56,7 @@ pub(crate) fn marquee_drag_frame(
         return None;
     }
 
-    // Press → start drag (don't fire on_press yet — wait until > 3px)
+    // Press → start drag
     if pointer.primary_pressed()
         && let Some(pos) = pointer.hover_pos()
         && music_rect.contains(pos)
@@ -70,17 +67,17 @@ pub(crate) fn marquee_drag_frame(
             raw_tick, quantize, ppq, bar_line_data,
         );
         let start_content_y = local.y + view.base.scroll_y;
-        drag = Some(((start_tick, start_content_y), local, local, false));
+        drag = Some(((start_tick, start_content_y), local, local));
     }
 
     // Recompute start pixel from music coords each frame (immune to scroll/zoom).
     // 用于绘制选框时对齐量化网格。
-    let start_pixel = drag.map(|((tick, content_y), _, _, _)| {
+    let start_pixel = drag.map(|((tick, content_y), _, _)| {
         egui::pos2(view.tick_to_x(tick), content_y - view.base.scroll_y)
     });
 
     // Move -> update with auto-scroll
-    if let (Some(start_px), Some((start_music, press_pos, _, _))) = (start_pixel, drag) {
+    if let (Some(start_px), Some((start_music, press_pos, _))) = (start_pixel, drag) {
         if pointer.primary_down() && !pointer.primary_pressed() {
             if let Some(pos) = pointer.hover_pos() {
                 let clamped = pos.clamp(music_rect.min, music_rect.max);
@@ -89,16 +86,7 @@ pub(crate) fn marquee_drag_frame(
                     clamped.y - content_rect.min.y,
                 );
 
-                // 3px 阈值保护：拖拽超过 3px 才触发 on_press（清空选区），
-                // 用按下时的原始像素位置（press_pos）计算距离，而不是量化后的 start_pixel。
-                // 否则量化网格大时，点击网格中间，start_pixel 会 snap 到网格边界，
-                // 导致 dist 远大于实际移动距离，误触清空选区。
-                let dist = (local - press_pos).length();
-                let fired = drag.as_ref().map(|(_, _, _, f)| *f).unwrap_or(false);
-                if !fired && dist >= 3.0 {
-                    on_press();
-                }
-                drag = Some((start_music, press_pos, local, fired || dist >= 3.0));
+                drag = Some((start_music, press_pos, local));
 
                 // ── Auto-scroll when dragging near the edge ──
                 // No scroll compensation needed: start is in music coords, so it
@@ -135,7 +123,7 @@ pub(crate) fn marquee_drag_frame(
 
         // Release → compute snapped bounds
         if pointer.primary_released() {
-            let result = drag.and_then(|(_, press_pos, end, _)| {
+            let result = drag.and_then(|(_, press_pos, end)| {
                 // 3px 阈值用 press_pos（按下时的原始像素位置）
                 if (end - press_pos).length() >= 3.0 {
                     // 选区 bounds 用 start_px（量化后）和 end（当前鼠标）计算
@@ -153,7 +141,7 @@ pub(crate) fn marquee_drag_frame(
                     None
                 }
             });
-            ui.data_mut(|d| d.insert_persisted(sel_id, Option::<((f64, f32), egui::Pos2, egui::Pos2, bool)>::None));
+            ui.data_mut(|d| d.insert_persisted(sel_id, Option::<((f64, f32), egui::Pos2, egui::Pos2)>::None));
             view.base.dirty = true;
             return result;
         }
@@ -205,7 +193,7 @@ pub(crate) fn sel_drag_frame(
         ui.data_mut(|d| d.get_persisted(drag_notes_id)).unwrap_or(None);
 
     let pointer = ui.input(|i| i.pointer.clone());
-    let cmd = ui.input(|i| i.modifiers.command || i.modifiers.ctrl);
+    let additive = ui.input(|i| i.modifiers.shift || i.modifiers.command || i.modifiers.ctrl);
 
     // Clear stale note drag state
     if note_drag_origin.is_some() && !pointer.primary_down() && !pointer.primary_released() {
@@ -276,6 +264,11 @@ pub(crate) fn sel_drag_frame(
                         }).unwrap_or_default()
                     })
                 }).collect());
+            } else if !additive {
+                // 单击选框外（非加选模式）→ 立即清空选框与选区。
+                // 比 on_press 回调更早触发，覆盖 click（< 3px）的场景。
+                selected.clear();
+                sel_rect.clear();
             }
         }
     }
@@ -372,21 +365,11 @@ pub(crate) fn sel_drag_frame(
     if note_drag_origin.is_some() {
         // Note drag active → clear any stale marquee state and skip marquee.
         let sel_id = ui.id().with("sel_drag");
-        ui.data_mut(|d| d.insert_persisted(sel_id, Option::<((f64, f32), egui::Pos2, egui::Pos2, bool)>::None));
+        ui.data_mut(|d| d.insert_persisted(sel_id, Option::<((f64, f32), egui::Pos2, egui::Pos2)>::None));
     } else {
-        let shift = ui.input(|i| i.modifiers.shift);
-        let additive = shift || cmd; // shift/cmd 都是加选语义
-        let mut on_press = || {
-            // 加选模式（shift/cmd）：保留已有选区与选框，新框选会 append
-            // 非加选：清空 selected 与所有选框
-            if !additive {
-                selected.clear();
-                sel_rect.clear();
-            }
-        };
         if let Some(result) = marquee_drag_frame(
             ui, content_rect, music_rect, view, quantize, ppq, bar_line_data, total_ticks,
-            &mut on_press, "sel_drag",
+            "sel_drag",
         ) {
             let track_lo = track_selected.iter().min().copied().unwrap_or(0);
             let track_hi = track_selected.iter().max().copied().unwrap_or(u16::MAX);
@@ -400,6 +383,7 @@ pub(crate) fn sel_drag_frame(
             sel_rect.rects.push((result.t_start, result.t_end, key_lo, key_hi));
         } else if ui.input(|i| i.pointer.primary_released()) {
             // Simple click (no marquee) - set cursor to click position for paste.
+            // 选框清空已在 press 时完成（非加选模式），此处仅设置 cursor。
             if let Some(pos) = ui.input(|i| i.pointer.hover_pos()) {
                 if music_rect.contains(pos) {
                     let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
@@ -434,10 +418,10 @@ pub(crate) fn draw_marquee_box(
     vertical: bool,
 ) {
     let drag_id = ui.id().with(id_suffix);
-    let drag: Option<((f64, f32), egui::Pos2, egui::Pos2, bool)> =
+    let drag: Option<((f64, f32), egui::Pos2, egui::Pos2)> =
         ui.data_mut(|d| d.get_persisted(drag_id)).unwrap_or(None);
 
-    if let Some((start_music, press_pos, end, _)) = drag {
+    if let Some((start_music, press_pos, end)) = drag {
         // 3px 阈值检查用 press_pos（按下时的原始像素位置）
         if (end - press_pos).length() < 3.0 {
             return;
@@ -481,7 +465,6 @@ pub(crate) fn eraser_drag_frame(
 ) -> Option<PianoViewEvent> {
     let result = marquee_drag_frame(
         ui, content_rect, music_rect, view, quantize, ppq, bar_line_data, total_ticks,
-        &mut || {}, // no-op on press for eraser
         "eraser_drag",
     )?;
     let track_lo = track_selected.iter().min().copied().unwrap_or(0);
