@@ -309,6 +309,7 @@ impl App {
         if index >= self.documents.len() {
             return;
         }
+        let was_active = self.active_doc == Some(index);
         self.documents.remove(index);
         if index < self.controller_renderers.len() {
             self.controller_renderers.remove(index);
@@ -334,5 +335,45 @@ impl App {
 
         // 归还 jemalloc arena 中已释放的内存给 OS，防止 RSS 不下降
         yinhe_memtrace::purge_free_pages();
+
+        // 关闭的是活跃工程时，全局 GPU cull buffer 还残留旧工程音符数据，
+        // 必须清空 + 重置 cull 跟踪键，否则下一个活跃工程首帧会走增量路径
+        // 跳过 upload，渲染出旧工程音符（多 tab 切换的同根问题在 main_loop
+        // 的 document-switch 检测里统一处理）。
+        if was_active {
+            self.invalidate_cull_state();
+        }
+    }
+
+    /// 清空 pianoroll / arr_renderer 的 GPU cull buffer 并重置 cull 跟踪键，
+    /// 让下一次渲染走 full-upload 路径。在文档切换 / 关闭 / 替换时调用，
+    /// 防止前一个文档的音符数据残留到下一个文档的首帧。
+    pub(crate) fn invalidate_cull_state(&mut self) {
+        self.pianoroll.clear_cull();
+        self.arr_renderer.clear_cull();
+        self.last_cull_revision = 0;
+        self.last_cull_revision_only = 0;
+        self.last_hidden_hash = 0;
+    }
+
+    /// 判断打开 MIDI/.yin 时是否应替换当前标签页而非另开一个。
+    ///
+    /// 仅当当前是首次启动的 Untitled（`documents.len() == 1`、活跃在 idx 0、
+    /// `file_path.is_none()` 且未修改）时返回 true。用户手动 NewProject 后
+    /// `documents.len() > 1`，或已编辑/已保存的 Untitled 都不替换。
+    fn should_replace_initial_untitled(&self) -> bool {
+        self.active_doc == Some(0)
+            && self.documents.len() == 1
+            && self.documents[0].file_path.is_none()
+            && !self.documents[0].is_dirty()
+    }
+
+    /// 新建空白工程（Document::empty）并切换为活跃标签页。
+    /// `execute_file_action::NewProject` 与 `execute_pending_file_action::NewProject`
+    /// 共用此实现，避免两处重复 push + setup 代码。
+    fn new_project(&mut self) {
+        self.documents.push(Document::empty());
+        self.active_doc = Some(self.documents.len() - 1);
+        self.teardown_audio();
     }
 }

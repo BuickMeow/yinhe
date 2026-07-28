@@ -62,6 +62,12 @@ impl eframe::App for App {
                 self.pending_unsaved = Some(PendingFileAction::Exit);
                 // 让 Dock 栏图标跳动，提示用户注意
                 crate::platform::request_user_attention();
+                // 把 unsaved 弹窗拉到主窗口前台（取消/切换其他工程后再次触发时
+                // egui 不会自动 raise 已存在的 viewport，必须显式 raise 一次）
+                crate::chrome::dialog::raise_viewport(
+                    ui.ctx(),
+                    egui::ViewportId::from_hash_of("unsaved_dialog"),
+                );
             }
             // If no dirty documents, let the close proceed normally
         }
@@ -148,6 +154,10 @@ impl eframe::App for App {
         if self.active_doc != self.prev_active_doc {
             self.arrange_view.base.dirty = true;
             self.pianoroll_view.base.dirty = true;
+            // 全局 GPU cull buffer 是跨文档共享的，切换后必须清空 + 重置跟踪键，
+            // 否则下一个文档首帧可能因 revision/track_visible 巧合相等而跳过
+            // upload，渲染出上一个文档的音符（见 close_document 同根修复）。
+            self.invalidate_cull_state();
             self.prev_active_doc = self.active_doc;
         }
 
@@ -165,6 +175,12 @@ impl eframe::App for App {
         if let Some(title_bar::TitleBarAction::CloseDocument(idx)) = title_bar_action {
             if self.documents.get(idx).map_or(false, |d| d.is_dirty()) {
                 self.pending_unsaved = Some(PendingFileAction::CloseDocument(idx));
+                // 把 unsaved 弹窗拉到主窗口前台（用户点击 tab 关闭按钮是主动
+                // 操作，应该立刻看到弹窗）
+                crate::chrome::dialog::raise_viewport(
+                    ui.ctx(),
+                    egui::ViewportId::from_hash_of("unsaved_dialog"),
+                );
             } else {
                 self.close_document(idx);
             }

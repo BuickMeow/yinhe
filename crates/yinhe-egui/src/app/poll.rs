@@ -18,10 +18,22 @@ impl App {
                 match Document::from_model(&path, model, quantize_arrange, quantize_pianoroll, yinhe_yin::ProjectFile::default(), yinhe_yin::MappingFile::default()) {
                     Ok(mut doc) => {
                         doc.mark_loaded(); // Loaded from file, not a fresh empty doc
-                        let insert_idx = self.documents.len();
-                        self.documents.push(doc);
-                        self.active_doc = Some(insert_idx);
+                        // 仅首次启动的 Untitled（未修改且无 file_path）被替换，
+                        // 避免另开一个空标签页；用户手动 NewProject 或已修改/已保存
+                        // 的工程保持不动，照常 push 新标签页。
+                        if self.should_replace_initial_untitled() {
+                            self.documents[0] = doc;
+                            self.active_doc = Some(0);
+                        } else {
+                            let insert_idx = self.documents.len();
+                            self.documents.push(doc);
+                            self.active_doc = Some(insert_idx);
+                        }
                         self.teardown_audio();
+                        // 替换路径下 active_doc 不变，main_loop 的 switch 检测不到，
+                        // 必须主动清空 cull，否则旧 Untitled 的空 buffer 状态会让
+                        // 新工程首帧走错路径。
+                        self.invalidate_cull_state();
                     }
                     Err(msg) => {
                         self.load_error = Some(msg);
@@ -72,10 +84,16 @@ impl App {
                     });
                 if let Some((doc, sf_project_mode)) = result {
                     self.audio_settings.global_sf_config.global_enabled = !sf_project_mode;
-                    let insert_idx = self.documents.len();
-                    self.documents.push(doc);
-                    self.active_doc = Some(insert_idx);
+                    if self.should_replace_initial_untitled() {
+                        self.documents[0] = doc;
+                        self.active_doc = Some(0);
+                    } else {
+                        let insert_idx = self.documents.len();
+                        self.documents.push(doc);
+                        self.active_doc = Some(insert_idx);
+                    }
                     self.teardown_audio();
+                    self.invalidate_cull_state();
                 } else {
                     self.load_error = Some(t!(
                         "file_dialog.open_failed",

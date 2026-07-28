@@ -283,6 +283,12 @@ impl App {
                 _ => unreachable!(), // filtered above
             };
             self.pending_unsaved = Some(pending);
+            // 用户通过菜单/快捷键主动触发需要决策的操作，立刻把 unsaved 弹窗
+            // 拉到主窗口前台（防止之前取消后弹窗被遮挡在主窗口后方）
+            crate::chrome::dialog::raise_viewport(
+                ctx,
+                egui::ViewportId::from_hash_of("unsaved_dialog"),
+            );
             return;
         }
 
@@ -293,9 +299,7 @@ impl App {
     fn execute_file_action(&mut self, action: transport_bar::FileAction, ctx: &egui::Context) {
         match action {
             transport_bar::FileAction::NewProject => {
-                self.documents.push(Document::empty());
-                self.active_doc = Some(self.documents.len() - 1);
-                self.teardown_audio();
+                self.new_project();
             }
             transport_bar::FileAction::Open => {
                 self.file_loader.pick_file(self.audio_settings.midi_import_encoding);
@@ -342,9 +346,7 @@ impl App {
         let Some(pending) = self.pending_unsaved.take() else { return };
         match pending {
             PendingFileAction::NewProject => {
-                self.documents.push(Document::empty());
-                self.active_doc = Some(self.documents.len() - 1);
-                self.teardown_audio();
+                self.new_project();
             }
             PendingFileAction::Open => {
                 self.file_loader.pick_file(self.audio_settings.midi_import_encoding);

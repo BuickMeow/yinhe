@@ -219,6 +219,15 @@ impl InstanceRenderer {
         self.cull.is_ready()
     }
 
+    /// Drop all per-key GPU cull buffers and reset tracking so the next render
+    /// treats the document as fresh (forces full upload on the next frame).
+    ///
+    /// Call when the active document changes (close / switch / new project) so
+    /// note buffers from the previous document don't leak into the next render.
+    pub fn clear_cull(&mut self) {
+        self.cull.clear_cull();
+    }
+
     /// Draw all layers into the given render target.
     /// Uses GPU compute cull for note layers if available, otherwise falls back
     /// to CPU-built layer data.

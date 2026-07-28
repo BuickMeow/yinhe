@@ -349,6 +349,26 @@ impl CullState {
         self.per_key_bind_groups.iter().any(|bg| bg.is_some())
     }
 
+    /// Drop all per-key note buffers / bind groups and reset tracking state so
+    /// the next upload is forced down the full-upload path (cull_ready → false).
+    ///
+    /// Called when the active document changes (close / switch / new) to avoid
+    /// stale note data leaking from the previous document into the next render.
+    /// The shared `indirect_args_buffer` / `dispatch_args_buffer` are reused
+    /// (they'll be overwritten on the next `dispatch_cull`).
+    pub(crate) fn clear_cull(&mut self) {
+        for buf in self.per_key_buffers.iter_mut().chain(self.per_key_visible_buffers.iter_mut()) {
+            if let Some(b) = buf.take() {
+                yinhe_memtrace::sub_gpu_resource(b.size());
+            }
+        }
+        self.per_key_bind_groups.fill(None);
+        self.per_key_counts.fill(0);
+        self.uploaded_key_revisions.fill(0);
+        self.last_cull_uniforms = None;
+        self.notes_dirty = false;
+    }
+
     /// Reset all 128 indirect-args slots, then dispatch the cull pass per key.
     /// Each key writes into its own visible buffer + indirect-args slot.
     ///
