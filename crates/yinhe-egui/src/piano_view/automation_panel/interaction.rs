@@ -303,6 +303,8 @@ pub(crate) fn handle_automation_interaction(
     let ppu = panel.base.pixels_per_tick;
     let scroll_x = panel.base.scroll_x;
     let drag_id = ui.id().with("auto_drag").with(panel_index);
+    // MoveAnchors 拖拽偏移量写入此 id，供 automation_panel.rs 偏移持续化选框
+    let move_offset_id = ui.id().with("auto_move_offset").with(panel_index);
     // ghost 用 track color 而非黄色
     let track_color = track_colors
         .get(track_idx as usize)
@@ -383,12 +385,44 @@ pub(crate) fn handle_automation_interaction(
         None
     };
 
-    // 拖拽中：鼠标变捏合抓手
-    if drag_state.is_some() {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+    // 拖拽中：根据拖拽类型设置光标
+    if let Some(drag) = drag_state {
+        match drag {
+            AutoDrag::MoveAnchors { .. } => {
+                // 多锚点拖拽：显示移动光标（上下左右箭头）
+                ui.ctx().set_cursor_icon(egui::CursorIcon::Move);
+            }
+            AutoDrag::MarqueeSelect { .. } => {
+                // 框选：保持默认光标
+            }
+            _ => {
+                // 单锚点拖拽/控制点拖拽：捏合抓手
+                ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+            }
+        }
     } else if (hit_anchor.is_some() || hit_ctrl.is_some()) && in_grid {
         // 悬停在锚点或控制点上时，鼠标变抓手
         ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+    } else if matches!(ctx.active_tool, Tool::Select | Tool::SelectVertical)
+        && hit_anchor.is_none()
+        && in_grid
+        && panel.anchor_sel_rect.is_some()
+    {
+        // Select 工具下，悬停在持续化选框内（未命中锚点）：显示移动光标
+        let in_sel_rect = panel.anchor_sel_rect.is_some_and(|r| {
+            let Some((_, tick, value)) = mouse_info else { return false };
+            let ts = r.tick_start.min(r.tick_end);
+            let te = r.tick_start.max(r.tick_end);
+            let tick_in = (tick as f64) >= ts && (tick as f64) <= te;
+            let value_in = match r.value_range {
+                None => true,
+                Some((vmin, vmax)) => value >= vmin && value <= vmax,
+            };
+            tick_in && value_in
+        });
+        if in_sel_rect && !panel.selected_anchor_ticks.is_empty() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Move);
+        }
     }
 
     // Select 工具的框选矩形（拖拽中每帧更新，用于 egui painter 绘制 + 渲染层高亮预览）。
@@ -697,6 +731,10 @@ pub(crate) fn handle_automation_interaction(
             if pointer_released {
                 let drag = ui.ctx().data(|d| d.get_temp::<AutoDrag>(drag_id));
                 ui.ctx().data_mut(|d| d.remove::<AutoDrag>(drag_id));
+                // 清除 move_offset（拖拽结束）
+                ui.ctx().data_mut(|d| d.remove::<(i64, f32)>(move_offset_id));
+                // 释放时的 ghost（MoveAnchors 释放当帧仍需显示 ghost，避免闪烁）
+                let mut release_ghost: Option<AutomationGhost> = None;
                 match drag {
                     Some(AutoDrag::MarqueeSelect { start_pos, .. }) => {
                         let dist = pos.map(|p| (p - start_pos).length()).unwrap_or(0.0);
@@ -760,29 +798,36 @@ pub(crate) fn handle_automation_interaction(
                             let d_tick = cur_tick as i64 - start_tick as i64;
                             let d_value = cur_value - start_value;
                             if d_tick != 0 || d_value.abs() > 1e-6 {
-                                // 实际移动过：提交编辑
-                                if alt {
-                                    // Alt = 复制：为每个选中锚点生成 Add
-                                    for &tick in &panel.selected_anchor_ticks {
-                                        if let Some(e) = l.events.iter().find(|e| e.tick == tick) {
-                                            let new_tick = (tick as i64 + d_tick).max(0) as u32;
-                                            let new_value = (e.value + d_value).clamp(0.0, max_val);
+                                // 收集 moves（用于 edits + release ghost）
+                                // moves = (original_tick, new_tick, new_value)
+                                let moves: Vec<(u32, u32, f32)> = panel.selected_anchor_ticks.iter()
+                                    .filter_map(|&tick| {
+                                        let e = l.events.iter().find(|e| e.tick == tick)?;
+                                        let new_tick = (tick as i64 + d_tick).max(0) as u32;
+                                        let new_value = (e.value + d_value).clamp(0.0, max_val);
+                                        Some((tick, new_tick, new_value))
+                                    })
+                                    .collect();
+                                if !moves.is_empty() {
+                                    if alt {
+                                        // Alt = 复制：为每个选中锚点生成 Add（shape 从原始事件读取）
+                                        for &(tick, new_tick, new_value) in &moves {
+                                            let shape = l.events.iter()
+                                                .find(|e| e.tick == tick)
+                                                .map(|e| e.shape)
+                                                .unwrap_or(SegmentShape::Step);
                                             edits.push(yinhe_types::AutomationEdit::Add {
                                                 track_idx,
                                                 target: target.clone(),
                                                 tick: new_tick,
                                                 value: new_value,
-                                                shape: e.shape,
+                                                shape,
                                             });
                                         }
-                                    }
-                                } else {
-                                    // 移动：为每个选中锚点生成 Move
-                                    for &tick in &panel.selected_anchor_ticks {
-                                        if let Some(e) = l.events.iter().find(|e| e.tick == tick) {
-                                            let new_tick = (tick as i64 + d_tick).max(0) as u32;
-                                            let new_value = (e.value + d_value).clamp(0.0, max_val);
-                                            if new_tick != tick || (new_value - e.value).abs() > 1e-6 {
+                                    } else {
+                                        // 移动：为每个选中锚点生成 Move
+                                        for &(tick, new_tick, new_value) in &moves {
+                                            if new_tick != tick || (new_value - l.events.iter().find(|e| e.tick == tick).map(|e| e.value).unwrap_or(new_value)).abs() > 1e-6 {
                                                 edits.push(yinhe_types::AutomationEdit::Move {
                                                     track_idx,
                                                     lane_idx: lidx,
@@ -794,6 +839,35 @@ pub(crate) fn handle_automation_interaction(
                                             }
                                         }
                                     }
+                                    // 释放当帧仍显示 ghost（基于最终位置），
+                                    // 避免 edits 在 layout.rs apply 前显示旧曲线一帧
+                                    let ghost_lane = if alt {
+                                        build_lane_multi_copy(l, &moves)
+                                    } else {
+                                        build_lane_multi_move(l, &moves)
+                                    };
+                                    release_ghost = Some(AutomationGhost::Move { lane: ghost_lane, color: track_color });
+
+                                    // 更新选中锚点 + 持续化选框到新位置
+                                    let new_ticks: HashSet<u32> = moves.iter()
+                                        .map(|&(_, new_tick, _)| new_tick)
+                                        .collect();
+                                    let new_rect = panel.anchor_sel_rect.map(|r| AnchorSelRect {
+                                        tick_start: (r.tick_start + d_tick as f64).max(0.0),
+                                        tick_end: (r.tick_end + d_tick as f64).max(0.0),
+                                        value_range: r.value_range.map(|(vmin, vmax)| {
+                                            ((vmin + d_value).clamp(0.0, max_val),
+                                             (vmax + d_value).clamp(0.0, max_val))
+                                        }),
+                                    });
+                                    let rect_op = match new_rect {
+                                        Some(r) => SelRectOp::Set(r),
+                                        None => SelRectOp::Keep,
+                                    };
+                                    sel_op = Some(SelOp::Replace {
+                                        ticks: new_ticks,
+                                        rect: rect_op,
+                                    });
                                 }
                             }
                             // delta == 0：视为点击，不提交编辑
@@ -801,7 +875,7 @@ pub(crate) fn handle_automation_interaction(
                     }
                     _ => {}
                 }
-                return (edits, None, None, None, marquee_rect, sel_op);
+                return (edits, release_ghost, None, None, marquee_rect, sel_op);
             }
         }
         _ => {}
@@ -877,6 +951,8 @@ pub(crate) fn handle_automation_interaction(
                 // 选中锚点的原始 (tick, value) 从 lane.events 读取（拖拽中模型不变）。
                 let d_tick = cur_tick as i64 - start_tick as i64;
                 let d_value = cur_value - start_value;
+                // 写入 move_offset，供 automation_panel.rs 偏移持续化选框
+                ui.ctx().data_mut(|d| d.insert_temp(move_offset_id, (d_tick, d_value)));
                 // 未实际移动时不产生 ghost
                 if d_tick == 0 && d_value.abs() <= 1e-6 {
                     None

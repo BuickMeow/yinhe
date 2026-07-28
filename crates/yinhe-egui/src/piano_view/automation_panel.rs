@@ -403,13 +403,22 @@ pub fn show_panels(
                     if let Some(sel_rect) = panel.anchor_sel_rect {
                         let x_offset = grid_area.min.x - panel.base.scroll_x;
                         let ppu = panel.base.pixels_per_tick;
-                        let x1 = x_offset + (sel_rect.tick_start.min(sel_rect.tick_end) as f32) * ppu;
-                        let x2 = x_offset + (sel_rect.tick_start.max(sel_rect.tick_end) as f32) * ppu;
+                        // MoveAnchors 拖拽中偏移选框（跟随锚点移动）
+                        let move_offset_id = ui.id().with("auto_move_offset").with(i);
+                        let (d_tick, d_value) = ui.ctx()
+                            .data(|d| d.get_temp::<(i64, f32)>(move_offset_id))
+                            .unwrap_or((0, 0.0));
+                        let ts = (sel_rect.tick_start.min(sel_rect.tick_end) + d_tick as f64).max(0.0);
+                        let te = (sel_rect.tick_start.max(sel_rect.tick_end) + d_tick as f64).max(0.0);
+                        let x1 = x_offset + (ts as f32) * ppu;
+                        let x2 = x_offset + (te as f32) * ppu;
                         let (y1, y2) = match sel_rect.value_range {
                             None => (grid_area.min.y, grid_area.max.y),
                             Some((vmin, vmax)) => {
-                                let ya = panel_rect.min.y + panel.value_to_y(vmax, max_val_f);
-                                let yb = panel_rect.min.y + panel.value_to_y(vmin, max_val_f);
+                                let v1 = (vmin + d_value).clamp(0.0, max_val_f);
+                                let v2 = (vmax + d_value).clamp(0.0, max_val_f);
+                                let ya = panel_rect.min.y + panel.value_to_y(v2, max_val_f);
+                                let yb = panel_rect.min.y + panel.value_to_y(v1, max_val_f);
                                 (ya.min(yb), ya.max(yb))
                             }
                         };
