@@ -224,8 +224,8 @@ pub(crate) fn sel_drag_frame(
         && let Some(pos) = pointer.hover_pos()
         && music_rect.contains(pos)
     {
-        let eff = sel_rect.effective();
-        let on_bar = eff.is_some_and(|(t_start, t_end, key_lo, key_hi)| {
+        let eff_rects = sel_rect.effective_rects();
+        let on_bar = eff_rects.iter().any(|&(t_start, t_end, key_lo, key_hi)| {
             let pixel_rect = crate::selection::drag::music_sel_to_pixel_rect(
                 &view.base, view.key_height, t_start, t_end, key_lo, key_hi,
             );
@@ -237,7 +237,7 @@ pub(crate) fn sel_drag_frame(
             // Don't start drag, don't clear anything — let the button handle it.
         } else {
             let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
-            let in_sel_rect = eff.is_some_and(|(t_start, t_end, key_lo, key_hi)| {
+            let in_sel_rect = eff_rects.iter().any(|&(t_start, t_end, key_lo, key_hi)| {
                 let pixel_rect = crate::selection::drag::music_sel_to_pixel_rect(
                     &view.base, view.key_height, t_start, t_end, key_lo, key_hi,
                 );
@@ -374,11 +374,15 @@ pub(crate) fn sel_drag_frame(
         let sel_id = ui.id().with("sel_drag");
         ui.data_mut(|d| d.insert_persisted(sel_id, Option::<((f64, f32), egui::Pos2, egui::Pos2, bool)>::None));
     } else {
+        let shift = ui.input(|i| i.modifiers.shift);
+        let additive = shift || cmd; // shift/cmd 都是加选语义
         let mut on_press = || {
-            if !cmd {
+            // 加选模式（shift/cmd）：保留已有选区与选框，新框选会 append
+            // 非加选：清空 selected 与所有选框
+            if !additive {
                 selected.clear();
+                sel_rect.clear();
             }
-            sel_rect.rect = None;
         };
         if let Some(result) = marquee_drag_frame(
             ui, content_rect, music_rect, view, quantize, ppq, bar_line_data, total_ticks,
@@ -393,7 +397,7 @@ pub(crate) fn sel_drag_frame(
                 key_lo, key_hi,
                 track_lo, track_hi,
             );
-            sel_rect.rect = Some((result.t_start, result.t_end, key_lo, key_hi));
+            sel_rect.rects.push((result.t_start, result.t_end, key_lo, key_hi));
         } else if ui.input(|i| i.pointer.primary_released()) {
             // Simple click (no marquee) - set cursor to click position for paste.
             if let Some(pos) = ui.input(|i| i.pointer.hover_pos()) {

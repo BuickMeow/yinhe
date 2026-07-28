@@ -329,13 +329,15 @@ pub fn show_panels(
             match op {
                 SelOp::Set(rect_op) => {
                     match rect_op {
-                        SelRectOp::Set(r) => panel.anchor_sel_rect = Some(r),
+                        SelRectOp::Set(r) => panel.anchor_sel_rects = vec![r],
+                        SelRectOp::Append(r) => panel.anchor_sel_rects.push(r),
+                        SelRectOp::ReplaceAll(rects) => panel.anchor_sel_rects = rects,
                         SelRectOp::Keep => {}
                     }
                     panel.dirty = true;
                 }
                 SelOp::Clear => {
-                    panel.anchor_sel_rect = None;
+                    panel.anchor_sel_rects.clear();
                     panel.dirty = true;
                 }
             }
@@ -380,14 +382,15 @@ pub fn show_panels(
                 }
                 // ── 持续化选框（框选完成后持续显示，画在 wgpu 纹理之上）──
                 if marquee_rect.is_none() {
-                    if let Some(sel_rect) = panel.anchor_sel_rect {
-                        let x_offset = grid_area.min.x - panel.base.scroll_x;
-                        let ppu = panel.base.pixels_per_tick;
-                        // MoveAnchors 拖拽中偏移选框（跟随锚点移动）
-                        let move_offset_id = ui.id().with("auto_move_offset").with(i);
-                        let (d_tick, d_value) = ui.ctx()
-                            .data(|d| d.get_temp::<(i64, f32)>(move_offset_id))
-                            .unwrap_or((0, 0.0));
+                    let x_offset = grid_area.min.x - panel.base.scroll_x;
+                    let ppu = panel.base.pixels_per_tick;
+                    // MoveAnchors 拖拽中偏移选框（跟随锚点移动）
+                    let move_offset_id = ui.id().with("auto_move_offset").with(i);
+                    let (d_tick, d_value) = ui.ctx()
+                        .data(|d| d.get_temp::<(i64, f32)>(move_offset_id))
+                        .unwrap_or((0, 0.0));
+                    let painter = ui.painter();
+                    for sel_rect in &panel.anchor_sel_rects {
                         let ts = (sel_rect.tick_start.min(sel_rect.tick_end) + d_tick as f64).max(0.0);
                         let te = (sel_rect.tick_start.max(sel_rect.tick_end) + d_tick as f64).max(0.0);
                         let x1 = x_offset + (ts as f32) * ppu;
@@ -406,7 +409,6 @@ pub fn show_panels(
                             egui::pos2(x1, y1),
                             egui::pos2(x2, y2),
                         ).intersect(grid_area);
-                        let painter = ui.painter();
                         // 选框颜色与 PR/AR 一致：白色 + gamma_multiply
                         painter.rect_filled(
                             rect,
@@ -661,7 +663,7 @@ struct PanelInteractionOut {
     anchor_drag: Option<(u32, f32)>,
     /// Select 工具框选矩形（egui painter 绘制 + 渲染层高亮预览）
     marquee_rect: Option<egui::Rect>,
-    /// Select 工具选区变更操作（应用到 panel.anchor_sel_rect）
+    /// Select 工具选区变更操作（应用到 panel.anchor_sel_rects）
     sel_op: Option<interaction::SelOp>,
 }
 
@@ -823,14 +825,12 @@ fn render_panel_content(
     // 高亮锚点 tick 集合（Select 工具多选 + Pencil 工具单选 info_content）。
     // render_lanes 可能含多个音轨：按 track 匹配锚点所属 lane；
     // Tempo 的 conductor lane track 恒为 0（语义占位），不参与 track 匹配。
-    // Select 工具的选中状态由 anchor_sel_rect 决定：从 lanes 筛选落在 sel_rect 内的锚点。
+    // Select 工具的选中状态由 anchor_sel_rects 决定：从 lanes 筛选落在任一 sel_rect 内的锚点。
     let mut highlight_ticks: Vec<u32> = Vec::new();
-    if let Some(sel_rect) = panel.anchor_sel_rect {
-        for l in &lanes {
-            for e in &l.events {
-                if sel_rect.contains(e.tick, e.value) {
-                    highlight_ticks.push(e.tick);
-                }
+    for l in &lanes {
+        for e in &l.events {
+            if panel.anchor_sel_rects.iter().any(|r| r.contains(e.tick, e.value)) {
+                highlight_ticks.push(e.tick);
             }
         }
     }

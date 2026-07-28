@@ -63,10 +63,10 @@ pub struct AutomationPanelView {
     /// 垂直滚动偏移（值空间单位，如 CC 的 0~127）。
     /// 面板顶部对应的值 = `value_scroll`。
     pub value_scroll: f32,
-    /// 持久化的锚点选框（音乐坐标）。
-    /// 选中状态由锚点是否在此范围内决定（类似 PR/AR 的 sel_rect）。
-    /// 框选完成后设置，点击选框外或清空选区时清除。
-    pub anchor_sel_rect: Option<AnchorSelRect>,
+    /// 持久化的锚点选框列表（音乐坐标）。支持多选框：shift+框选时累加。
+    /// 选中状态由锚点是否在任一选框范围内决定（类似 PR/AR 的 sel_rect）。
+    /// 框选完成后追加，点击选框外或清空选区时清空全部。
+    pub anchor_sel_rects: Vec<AnchorSelRect>,
 }
 
 impl Default for AutomationPanelView {
@@ -88,7 +88,7 @@ impl Default for AutomationPanelView {
             dirty: true,
             value_zoom: 1.0,
             value_scroll: 0.0,
-            anchor_sel_rect: None,
+            anchor_sel_rects: Vec::new(),
         }
     }
 }

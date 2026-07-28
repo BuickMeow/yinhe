@@ -74,8 +74,12 @@ pub(crate) enum AutoDrag {
 /// 持续化选框变更操作。
 #[derive(Clone, Debug)]
 pub(crate) enum SelRectOp {
-    /// 设置新选框
+    /// 替换所有选框为单个新选框（非 shift 框选完成 / 点击锚点设置单点选框）
     Set(AnchorSelRect),
+    /// 追加一个新选框（shift+框选完成时累加）
+    Append(AnchorSelRect),
+    /// 替换所有选框为一组新选框（如多选框整体偏移后回写）
+    ReplaceAll(Vec<AnchorSelRect>),
     /// 保持现有选框
     Keep,
 }
@@ -277,7 +281,7 @@ fn merge_ctrl_shape(
 /// - `ghost`：拖拽预览（wgpu Layer 1）。
 /// - `drag_info` / `hover_info`：tooltip 数据。
 /// - `marquee_rect`：Select 工具框选矩形（用于 egui painter 绘制 + 渲染层高亮预览）。
-/// - `sel_op`：选区变更操作（caller 应用到 `panel.anchor_sel_rect`）。
+/// - `sel_op`：选区变更操作（caller 应用到 `panel.anchor_sel_rects`）。
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(crate) fn handle_automation_interaction(
     ui: &mut egui::Ui,
@@ -415,21 +419,21 @@ pub(crate) fn handle_automation_interaction(
     } else if matches!(ctx.active_tool, Tool::Select | Tool::SelectVertical)
         && hit_anchor.is_none()
         && in_grid
-        && panel.anchor_sel_rect.is_some()
+        && !panel.anchor_sel_rects.is_empty()
     {
         // Select 工具下，悬停在持续化选框内（未命中锚点）：显示移动光标
-        let in_sel_rect = panel.anchor_sel_rect.is_some_and(|r| {
+        let in_sel_rect = panel.anchor_sel_rects.iter().any(|r| {
             let Some((_, tick, value)) = mouse_info else { return false };
             r.contains(tick, value)
         });
-        if in_sel_rect && panel.anchor_sel_rect.is_some() {
+        if in_sel_rect {
             ui.ctx().set_cursor_icon(egui::CursorIcon::Move);
         }
     }
 
     // Select 工具的框选矩形（拖拽中每帧更新，用于 egui painter 绘制 + 渲染层高亮预览）。
     let mut marquee_rect: Option<egui::Rect> = None;
-    // Select 工具的选区变更操作（caller 应用到 `panel.anchor_sel_rect`）。
+    // Select 工具的选区变更操作（caller 应用到 `panel.anchor_sel_rects`）。
     let mut sel_op: Option<SelOp> = None;
 
     match ctx.active_tool {
@@ -643,7 +647,7 @@ pub(crate) fn handle_automation_interaction(
             let vertical = matches!(ctx.active_tool, Tool::SelectVertical);
 
             // 检测鼠标是否在持续化选框内（音乐坐标判断）
-            let in_sel_rect = panel.anchor_sel_rect.is_some_and(|r| {
+            let in_sel_rect = panel.anchor_sel_rects.iter().any(|r| {
                 let Some((_, tick, value)) = mouse_info else { return false };
                 r.contains(tick, value)
             });
@@ -656,16 +660,17 @@ pub(crate) fn handle_automation_interaction(
                         .and_then(|l| l.events.get(event_idx))
                         .map(|e| e.value)
                         .unwrap_or(0.0);
-                    let anchor_in_sel = panel.anchor_sel_rect
-                        .is_some_and(|r| r.contains(tick, anchor_value));
+                    let anchor_in_sel = panel.anchor_sel_rects
+                        .iter().any(|r| r.contains(tick, anchor_value));
                     if cmd || shift {
-                        // Shift/Cmd+点击：扩展 sel_rect 包含新锚点（union），不开始拖拽
+                        // Shift/Cmd+点击锚点：保持单选框语义，union 到最新选框（或新点 rect）
+                        // 用 Set 替换所有为 unioned rect（与原行为一致）
                         let point_rect = AnchorSelRect {
                             tick_start: tick as f64,
                             tick_end: tick as f64,
                             value_range: if vertical { None } else { Some((anchor_value, anchor_value)) },
                         };
-                        let final_rect = match panel.anchor_sel_rect {
+                        let final_rect = match panel.anchor_sel_rects.last().copied() {
                             Some(existing) => union_anchor_sel_rect(existing, point_rect),
                             None => point_rect,
                         };
@@ -691,7 +696,7 @@ pub(crate) fn handle_automation_interaction(
                             });
                         }
                     }
-                } else if in_sel_rect && panel.anchor_sel_rect.is_some() {
+                } else if in_sel_rect && !panel.anchor_sel_rects.is_empty() {
                     // 点击持续化选框内（未命中锚点）→ 拖拽选中的锚点
                     if let Some((_, tick, value)) = mouse_info {
                         ui.ctx().data_mut(|d| {
@@ -770,16 +775,12 @@ pub(crate) fn handle_automation_interaction(
                                         Some((v1.min(v2), v1.max(v2)))
                                     },
                                 };
-                                // Shift/Cmd+框选：扩展 sel_rect（union），否则替换
-                                let final_rect = if cmd || shift {
-                                    match panel.anchor_sel_rect {
-                                        Some(existing) => union_anchor_sel_rect(existing, new_rect),
-                                        None => new_rect,
-                                    }
+                                // Shift/Cmd+框选：追加新选框（多选框）；否则替换所有
+                                if cmd || shift {
+                                    sel_op = Some(SelOp::Set(SelRectOp::Append(new_rect)));
                                 } else {
-                                    new_rect
-                                };
-                                sel_op = Some(SelOp::Set(SelRectOp::Set(final_rect)));
+                                    sel_op = Some(SelOp::Set(SelRectOp::Set(new_rect)));
+                                }
                             }
                         } else {
                             // dist < 3px：视为点击，清空选框
@@ -793,17 +794,17 @@ pub(crate) fn handle_automation_interaction(
                         if let Some((_, cur_tick, cur_value)) = mouse_info
                             && let Some(l) = lane
                             && let Some(lidx) = lane_idx
-                            && let Some(sel_rect) = panel.anchor_sel_rect
+                            && !panel.anchor_sel_rects.is_empty()
                         {
                             let d_tick = cur_tick as i64 - start_tick as i64;
                             // 垂直工具：只能水平移动，d_value 强制为 0
                             let d_value = if vertical { 0.0 } else { cur_value - start_value };
                             if d_tick != 0 || d_value.abs() > 1e-6 {
-                                // 收集 moves：从 lane.events 筛选 sel_rect 内的锚点
+                                // 收集 moves：从 lane.events 筛选落在任一 sel_rect 内的锚点
                                 // moves = (original_tick, new_tick, new_value)
                                 let moves: Vec<(u32, u32, f32)> = l.events.iter()
                                     .filter_map(|e| {
-                                        if !sel_rect.contains(e.tick, e.value) {
+                                        if !panel.anchor_sel_rects.iter().any(|r| r.contains(e.tick, e.value)) {
                                             return None;
                                         }
                                         let new_tick = (e.tick as i64 + d_tick).max(0) as u32;
@@ -847,17 +848,19 @@ pub(crate) fn handle_automation_interaction(
                                         });
                                     }
 
-                                    // 更新 sel_rect 到新位置：tick += d_tick，value += d_value
+                                    // 所有选框一起偏移：tick += d_tick，value += d_value
                                     // 垂直工具 value_range 为 None 保持 None
-                                    let new_rect = AnchorSelRect {
-                                        tick_start: (sel_rect.tick_start + d_tick as f64).max(0.0),
-                                        tick_end: (sel_rect.tick_end + d_tick as f64).max(0.0),
-                                        value_range: sel_rect.value_range.map(|(vmin, vmax)| {
-                                            ((vmin + d_value).clamp(0.0, max_val),
-                                             (vmax + d_value).clamp(0.0, max_val))
-                                        }),
-                                    };
-                                    sel_op = Some(SelOp::Set(SelRectOp::Set(new_rect)));
+                                    let new_rects: Vec<AnchorSelRect> = panel.anchor_sel_rects.iter()
+                                        .map(|sel_rect| AnchorSelRect {
+                                            tick_start: (sel_rect.tick_start + d_tick as f64).max(0.0),
+                                            tick_end: (sel_rect.tick_end + d_tick as f64).max(0.0),
+                                            value_range: sel_rect.value_range.map(|(vmin, vmax)| {
+                                                ((vmin + d_value).clamp(0.0, max_val),
+                                                 (vmax + d_value).clamp(0.0, max_val))
+                                            }),
+                                        })
+                                        .collect();
+                                    sel_op = Some(SelOp::Set(SelRectOp::ReplaceAll(new_rects)));
                                 }
                             }
                             // delta == 0：视为点击，不提交编辑
@@ -950,11 +953,11 @@ pub(crate) fn handle_automation_interaction(
                     None
                 } else {
                     lane.and_then(|l| {
-                        let Some(sel_rect) = panel.anchor_sel_rect else { return None };
-                        // 从 lane.events 筛选 sel_rect 内的锚点
+                        if panel.anchor_sel_rects.is_empty() { return None; }
+                        // 从 lane.events 筛选落在任一 sel_rect 内的锚点
                         let moves: Vec<(u32, u32, f32)> = l.events.iter()
                             .filter_map(|e| {
-                                if !sel_rect.contains(e.tick, e.value) {
+                                if !panel.anchor_sel_rects.iter().any(|r| r.contains(e.tick, e.value)) {
                                     return None;
                                 }
                                 let new_tick = (e.tick as i64 + d_tick).max(0) as u32;

@@ -6,16 +6,20 @@ use crate::history::PendingEdits;
 use crate::playback::PlaybackState;
 use crate::quantize::QuantizePreset;
 
-/// Selection rectangle state. Single source of truth for the visual selection box.
+/// Selection rectangle state. Single source of truth for the visual selection boxes.
 /// Replaces scattered egui persisted data (sel_rect_persist, sel_drag_origin, last_delta).
+///
+/// 支持多选框：shift+框选时不清空已有选框，而是 append。
+/// 拖拽时所有选框一起偏移。
 #[derive(Clone, Default)]
 pub struct SelRectState {
-    /// Current committed selection rect: (t_start, t_end, key_lo, key_hi).
-    pub rect: Option<(f64, f64, u8, u8)>,
-    /// Saved rect at drag start; never modified during drag.
-    pub drag_origin: Option<(f64, f64, u8, u8)>,
+    /// Committed selection rects: (t_start, t_end, key_lo, key_hi).
+    /// 多选框时按 shift+框选顺序累加。
+    pub rects: Vec<(f64, f64, u8, u8)>,
+    /// Saved rects at drag start; never modified during drag.
+    drag_origins: Vec<(f64, f64, u8, u8)>,
     /// Current drag delta in (tick, key) units.
-    pub drag_delta: Option<(i64, i32)>,
+    drag_delta: Option<(i64, i32)>,
     /// Pending delta from duplicate/transpose; applied once then cleared.
     pub pending_delta: Option<(i64, i32)>,
 }
@@ -31,20 +35,30 @@ impl SelRectState {
         )
     }
 
-    /// Returns the effective selection rect:
-    /// - During drag: drag_origin + drag_delta
-    /// - Otherwise: rect
-    pub fn effective(&self) -> Option<(f64, f64, u8, u8)> {
-        if let (Some(origin), Some((dt, dk))) = (self.drag_origin, self.drag_delta) {
-            Some(Self::offset_rect(origin, dt, dk))
+    /// Returns the effective selection rects:
+    /// - During drag: drag_origins + drag_delta
+    /// - Otherwise: rects
+    pub fn effective_rects(&self) -> Vec<(f64, f64, u8, u8)> {
+        if let Some((dt, dk)) = self.drag_delta {
+            self.drag_origins.iter().map(|&r| Self::offset_rect(r, dt, dk)).collect()
         } else {
-            self.rect
+            self.rects.clone()
         }
     }
 
-    /// Begin dragging: save current rect as origin, clear delta.
+    /// 是否没有任何选框。
+    pub fn is_empty(&self) -> bool {
+        self.rects.is_empty()
+    }
+
+    /// 清空所有选框。
+    pub fn clear(&mut self) {
+        self.rects.clear();
+    }
+
+    /// Begin dragging: save current rects as origins, clear delta.
     pub fn start_drag(&mut self) {
-        self.drag_origin = self.rect;
+        self.drag_origins = self.rects.clone();
         self.drag_delta = None;
     }
 
@@ -53,25 +67,27 @@ impl SelRectState {
         self.drag_delta = Some((dt, dk));
     }
 
-    /// End drag: commit origin + delta to rect, clear drag state.
+    /// End drag: commit origins + delta to rects, clear drag state.
     pub fn end_drag(&mut self) {
-        if let (Some(origin), Some((dt, dk))) = (self.drag_origin, self.drag_delta) {
-            self.rect = Some(Self::offset_rect(origin, dt, dk));
+        if let Some((dt, dk)) = self.drag_delta {
+            self.rects = self.drag_origins.iter().map(|&r| Self::offset_rect(r, dt, dk)).collect();
         }
-        self.drag_origin = None;
+        self.drag_origins.clear();
         self.drag_delta = None;
     }
 
     /// Cancel drag without committing.
     pub fn cancel_drag(&mut self) {
-        self.drag_origin = None;
+        self.drag_origins.clear();
         self.drag_delta = None;
     }
 
-    /// Apply pending delta from duplicate/transpose to rect.
+    /// Apply pending delta from duplicate/transpose to all rects.
     pub fn apply_pending(&mut self) {
-        if let (Some(rect), Some((dt, dk))) = (self.rect, self.pending_delta) {
-            self.rect = Some(Self::offset_rect(rect, dt, dk));
+        if let Some((dt, dk)) = self.pending_delta {
+            for r in &mut self.rects {
+                *r = Self::offset_rect(*r, dt, dk);
+            }
         }
         self.pending_delta = None;
     }

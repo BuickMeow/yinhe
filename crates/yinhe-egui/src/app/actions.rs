@@ -177,7 +177,7 @@ impl App {
             let max_end = model.tick_length as u32;
             if max_end > 0 {
                 let num_tracks = model.tracks.len();
-                self.arr_sel_rect = Some((0.0, max_end as f64 + 1.0, 0, num_tracks - 1));
+                self.arr_sel_rect = vec![(0.0, max_end as f64 + 1.0, 0, num_tracks - 1)];
             }
         }
         self.documents[idx].data.bump_revision();

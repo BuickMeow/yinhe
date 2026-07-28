@@ -42,7 +42,7 @@ impl Document {
         }
 
         // Update visual sel_rect to show full range (PR uses f64 ticks).
-        self.edit.sel_rect.rect = Some((0.0, max_end as f64 + 1.0, 0, 127));
+        self.edit.sel_rect.rects = vec![(0.0, max_end as f64 + 1.0, 0, 127)];
     }
 
     /// Select all notes across all tracks for Arrange.

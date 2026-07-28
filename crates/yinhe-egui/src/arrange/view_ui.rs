@@ -45,7 +45,7 @@ pub fn show(
     min_border_width: f32,
     haptic_engine: Option<&yinhe_haptic::HapticEngine>,
     revision: u64,
-    arr_sel_rect: &mut Option<(f64, f64, usize, usize)>,
+    arr_sel_rect: &mut Vec<(f64, f64, usize, usize)>,
     arr_drag_delta: &mut Option<(i64, i32)>,
     arr_eraser_rect: &mut Option<(f64, f64, usize, usize)>,
     track_selected: &mut HashSet<u16>,
@@ -305,8 +305,8 @@ pub fn show(
         );
     }
 
-    // Draw persisted selection rect (remains after mouse release).
-    if let Some((t_start, t_end, track_lo, track_hi)) = *arr_sel_rect {
+    // Draw persisted selection rects (remains after mouse release, 支持多选框).
+    for &(t_start, t_end, track_lo, track_hi) in arr_sel_rect.iter() {
         let lh = view.lane_height();
         let scroll_y = view.base.scroll_y;
         let view_sy = track_lo as f32 * lh - scroll_y;
@@ -415,7 +415,7 @@ fn sel_drag_frame_arrange(
     total_ticks: f64,
     num_tracks: usize,
     cursor_tick: &mut Option<f64>,
-    arr_sel_rect: &mut Option<(f64, f64, usize, usize)>,
+    arr_sel_rect: &mut Vec<(f64, f64, usize, usize)>,
     arr_drag_delta: &mut Option<(i64, i32)>,
     track_selected: &mut HashSet<u16>,
     selection_anchor: &mut Option<u16>,
@@ -437,13 +437,15 @@ fn sel_drag_frame_arrange(
     let move_drag_id = ui.id().with("arr_move_drag");
     let mut move_drag: Option<((f64, f32), (f64, f32))> =
         ui.data_mut(|d| d.get_persisted(move_drag_id)).unwrap_or(None);
-    // Saved original arr_sel_rect at drag start (so we can hide the original during drag)
+    // 拖拽开始时保存原选框快照（多选框，所以是 Vec）
     let move_orig_id = ui.id().with("arr_move_orig_sel");
-    let mut move_orig_sel: Option<(f64, f64, usize, usize)> =
-        ui.data_mut(|d| d.get_persisted(move_orig_id)).unwrap_or(None);
+    let mut move_orig_sel: Vec<(f64, f64, usize, usize)> =
+        ui.data_mut(|d| d.get_persisted(move_orig_id)).unwrap_or_default();
 
     let pointer = ui.input(|i| i.pointer.clone());
     let cmd = ui.input(|i| i.modifiers.command || i.modifiers.ctrl);
+    // shift 或 cmd/ctrl 都表示累加模式（多选框）
+    let additive = cmd || ui.input(|i| i.modifiers.shift);
 
     // Clear stale drag states (e.g. lost window focus mid-drag)
     if drag.is_some() && !pointer.primary_down() && !pointer.primary_released() {
@@ -451,7 +453,7 @@ fn sel_drag_frame_arrange(
     }
     if move_drag.is_some() && !pointer.primary_down() && !pointer.primary_released() {
         move_drag = None;
-        move_orig_sel = None;
+        move_orig_sel.clear();
     }
 
     // 弹窗打开时跳过所有 pointer 处理，避免点击穿透
@@ -462,8 +464,8 @@ fn sel_drag_frame_arrange(
         return (ghost_notes, hidden_notes, drag_rect);
     }
 
-    // ── Check if mouse is inside the existing selection rect (for Move cursor + drag) ──
-    let inside_sel_rect = if let Some((t_start, t_end, track_lo, track_hi)) = *arr_sel_rect {
+    // ── Check if mouse is inside any existing selection rect (for Move cursor + drag) ──
+    let inside_sel_rect = arr_sel_rect.iter().any(|&(t_start, t_end, track_lo, track_hi)| {
         pointer.hover_pos().is_some_and(|pos| {
             let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
             let lh = view.lane_height();
@@ -478,9 +480,7 @@ fn sel_drag_frame_arrange(
             );
             rect.contains(local)
         })
-    } else {
-        false
-    };
+    });
 
     // Show Move cursor when hovering over the selection rect (only when not currently dragging)
     if inside_sel_rect && move_drag.is_none() && drag.is_none() {
@@ -496,11 +496,11 @@ fn sel_drag_frame_arrange(
         let click_tick = view.x_to_tick(local.x);
         let click_track_f = (local.y + view.base.scroll_y) / view.lane_height();
 
-        if inside_sel_rect && !cmd {
+        if inside_sel_rect && !additive {
             // Start move-drag of existing selection
-            // Save original rect and clear it (so show() doesn't draw the original during drag)
-            move_orig_sel = *arr_sel_rect;
-            *arr_sel_rect = None;
+            // 保存原选框快照并清空（拖拽中由 move_orig_sel 计算偏移后的选框显示）
+            move_orig_sel = arr_sel_rect.clone();
+            arr_sel_rect.clear();
             let origin = (click_tick, click_track_f);
             move_drag = Some((origin, origin));
             drag = None;
@@ -508,8 +508,9 @@ fn sel_drag_frame_arrange(
             // Start new selection marquee
             let start_track_y = (local.y + view.base.scroll_y) / view.lane_height();
             drag = Some(((click_tick, start_track_y), local));
-            *arr_sel_rect = None;
-            if !cmd {
+            // 累加模式下保留已有选框，否则清空
+            if !additive {
+                arr_sel_rect.clear();
                 selected.clear();
             }
         }
@@ -541,62 +542,60 @@ fn sel_drag_frame_arrange(
         }
     }
 
-    // ── Generate ghost notes + drag_rect from current move_drag (BEFORE release) ──
+    // ── Generate ghost notes + offset sel_rect from current move_drag (BEFORE release) ──
     // Ghost notes must be generated before release clears move_drag, so the ghost
     // stays visible on the release frame (preventing flicker before model update).
     if let Some(((origin_t, origin_tr), (current_t, current_tr))) = move_drag {
-        if let Some((t_start, t_end, track_lo, track_hi)) = move_orig_sel {
+        if !move_orig_sel.is_empty() {
             let snapped_origin = crate::view_interaction::snap_tick(origin_t, quantize, ppq, bar_line_data);
             let snapped_current = crate::view_interaction::snap_tick(current_t, quantize, ppq, bar_line_data);
             let dt = (snapped_current - snapped_origin).round() as i64;
             // 垂直选框工具：只能水平移动，dtr 强制为 0
             let dtr = if vertical { 0 } else { (current_tr - origin_tr).round() as i32 };
 
-            // Compute drag_rect (offset selection rect) for display
-            let lh = view.lane_height();
-            let scroll_y = view.base.scroll_y;
-            let new_track_lo = (track_lo as i32 + dtr).max(0) as usize;
-            let new_track_hi = (track_hi as i32 + dtr).max(0) as usize;
-            let sy = new_track_lo as f32 * lh - scroll_y;
-            let ey = (new_track_hi as f32 + 1.0) * lh - scroll_y;
-            let sx = view.tick_to_x(t_start + dt as f64);
-            let ex = view.tick_to_x(t_end + dt as f64);
-            drag_rect = Some(egui::Rect::from_min_max(
-                egui::pos2(sx.min(ex), sy.min(ey)),
-                egui::pos2(sx.max(ex), sy.max(ey)),
-            ));
+            // 拖拽中：把 arr_sel_rect 设为所有偏移后的选框，由 show() 统一绘制
+            *arr_sel_rect = move_orig_sel.iter().map(|&(t_start, t_end, track_lo, track_hi)| {
+                (
+                    t_start + dt as f64,
+                    t_end + dt as f64,
+                    track_lo.saturating_add_signed(dtr as isize),
+                    track_hi.saturating_add_signed(dtr as isize),
+                )
+            }).collect();
 
             // Generate ghost notes at new positions + hide originals
             if dt != 0 || dtr != 0 {
-                let ts = t_start as u32;
-                let te = t_end as u32;
-                let tl = track_lo as u16;
-                let th = track_hi as u16;
                 let max_track = (num_tracks as i32 - 1).max(0) as u16;
 
                 if let Some(midi) = midi {
-                    for key in 0u8..128u8 {
-                        let notes = key_notes_in_range(midi.key_notes(key), ts, te);
-                        for note in notes {
-                            if note.track < tl || note.track > th {
-                                continue;
+                    for &(t_start, t_end, track_lo, track_hi) in move_orig_sel.iter() {
+                        let ts = t_start as u32;
+                        let te = t_end as u32;
+                        let tl = track_lo as u16;
+                        let th = track_hi as u16;
+                        for key in 0u8..128u8 {
+                            let notes = key_notes_in_range(midi.key_notes(key), ts, te);
+                            for note in notes {
+                                if note.track < tl || note.track > th {
+                                    continue;
+                                }
+                                if !selected.contains(note.track, note.start_tick, key) {
+                                    continue;
+                                }
+                                if !track_visible.get(note.track as usize).copied().unwrap_or(true) {
+                                    continue;
+                                }
+                                let new_tick = (note.start_tick as i64 + dt).max(0) as u32;
+                                let length = note.end_tick - note.start_tick;
+                                let new_track = (note.track as i32 + dtr).max(0).min(max_track as i32) as u16;
+                                ghost_notes.push((
+                                    new_tick,
+                                    new_tick + length,
+                                    key,
+                                    new_track,
+                                ));
+                                hidden_notes.insert((note.track, note.start_tick, key));
                             }
-                            if !selected.contains(note.track, note.start_tick, key) {
-                                continue;
-                            }
-                            if !track_visible.get(note.track as usize).copied().unwrap_or(true) {
-                                continue;
-                            }
-                            let new_tick = (note.start_tick as i64 + dt).max(0) as u32;
-                            let length = note.end_tick - note.start_tick;
-                            let new_track = (note.track as i32 + dtr).max(0).min(max_track as i32) as u16;
-                            ghost_notes.push((
-                                new_tick,
-                                new_tick + length,
-                                key,
-                                new_track,
-                            ));
-                            hidden_notes.insert((note.track, note.start_tick, key));
                         }
                     }
                 }
@@ -618,23 +617,22 @@ fn sel_drag_frame_arrange(
             if has_moved {
                 *arr_drag_delta = Some((delta_ticks, delta_tracks));
 
-                if let Some((t_start, t_end, track_lo, track_hi)) = move_orig_sel {
-                    let new_lo = (track_lo as i32 + delta_tracks).max(0) as usize;
-                    let new_hi = (track_hi as i32 + delta_tracks).max(0) as usize;
-                    *arr_sel_rect = Some((
+                // 多选框：对所有原选框应用偏移
+                *arr_sel_rect = move_orig_sel.iter().map(|&(t_start, t_end, track_lo, track_hi)| {
+                    (
                         t_start + delta_ticks as f64,
                         t_end + delta_ticks as f64,
-                        new_lo,
-                        new_hi,
-                    ));
-                }
+                        track_lo.saturating_add_signed(delta_tracks as isize),
+                        track_hi.saturating_add_signed(delta_tracks as isize),
+                    )
+                }).collect();
                 view.base.dirty = true;
             } else {
-                *arr_sel_rect = move_orig_sel;
+                *arr_sel_rect = move_orig_sel.clone();
             }
         }
         move_drag = None;
-        move_orig_sel = None;
+        move_orig_sel.clear();
         drag_rect = None; // arr_sel_rect takes over on release
     }
 
@@ -691,7 +689,7 @@ fn sel_drag_frame_arrange(
                     let tick = view.x_to_tick(start_pixel.x);
                     let snapped = crate::view_interaction::snap_tick(tick, quantize, ppq, bar_line_data);
                     selected.clear();
-                    *arr_sel_rect = None;
+                    arr_sel_rect.clear();
                     *cursor_tick = Some(snapped.max(0.0));
 
                     // 点击时同时选中对应音轨
@@ -707,15 +705,17 @@ fn sel_drag_frame_arrange(
                     if let Some((_, _, _, _, t_start, t_end, track_lo, track_hi)) =
                         arrange_snapped_bounds(start_pixel, end, view, quantize, ppq, bar_line_data, num_tracks, vertical)
                     {
-                        if !cmd {
+                        // shift 或 cmd/ctrl 累加模式：保留已有选框；否则清空
+                        if !additive {
                             selected.clear();
+                            arr_sel_rect.clear();
                         }
                         selected.add_rect_track(t_start as u32, t_end as u32, 0, 127, track_lo as u16, track_hi as u16);
-                        *arr_sel_rect = Some((t_start, t_end, track_lo, track_hi));
-                    } else if !cmd {
+                        arr_sel_rect.push((t_start, t_end, track_lo, track_hi));
+                    } else if !additive {
                         // 选框完全在空白区域：清空选区
                         selected.clear();
-                        *arr_sel_rect = None;
+                        arr_sel_rect.clear();
                     }
                 }
                 view.base.dirty = true;

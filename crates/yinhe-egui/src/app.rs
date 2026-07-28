@@ -92,8 +92,8 @@ pub struct App {
     pub(crate) last_cursor_tick: Option<f64>,
     pub(crate) piano_last_cursor_tick: Option<f64>,
 
-    // ── Arrangement selection rect persistence ──
-    pub(crate) arr_sel_rect: Option<(f64, f64, usize, usize)>,
+    // ── Arrangement selection rect persistence (支持多选框，shift+框选累加) ──
+    pub(crate) arr_sel_rect: Vec<(f64, f64, usize, usize)>,
 
     // ── Document switch tracking ──
     pub(crate) prev_active_doc: Option<usize>,
@@ -255,7 +255,7 @@ impl App {
 
             last_cursor_tick: None,
             piano_last_cursor_tick: None,
-            arr_sel_rect: None,
+            arr_sel_rect: Vec::new(),
 
             follow_mode: crate::view_interaction::FollowMode::Page,
 

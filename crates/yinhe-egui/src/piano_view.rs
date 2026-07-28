@@ -254,8 +254,8 @@ pub fn show(
         if let Some(pos) = ui.input(|i| i.pointer.hover_pos()) {
             if music_rect.contains(pos) {
                 let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
-                let eff = sel_rect.effective();
-                let in_sel_rect = eff.is_some_and(|(t_start, t_end, key_lo, key_hi)| {
+                let eff_rects = sel_rect.effective_rects();
+                let in_sel_rect = eff_rects.iter().any(|&(t_start, t_end, key_lo, key_hi)| {
                     let pixel_rect = crate::selection::drag::music_sel_to_pixel_rect(
                         &view.base, view.key_height, t_start, t_end, key_lo, key_hi,
                     );
@@ -703,34 +703,37 @@ pub fn show(
         drag::draw_marquee_box(ui, content_rect, music_rect, view, quantize, ppq, bar_line_data,
             "sel_drag", egui::Color32::WHITE, egui::Color32::WHITE, vertical);
 
-        // Draw persisted selection rect (remains after mouse release).
+        // Draw persisted selection rects (remains after mouse release).
         // Compute pixel rect from music coordinates each frame so it follows
-        // scroll/zoom.
-        let eff = sel_rect.effective();
-        let persisted_pixel_rect = eff.map(|(t_start, t_end, key_lo, key_hi)| {
-            crate::selection::drag::music_sel_to_pixel_rect(
-                &view.base, view.key_height, t_start, t_end, key_lo, key_hi,
-            )
-        });
-        if let Some(rect) = persisted_pixel_rect {
-            // Only draw if at least partially visible
+        // scroll/zoom. 多选框时遍历所有 rects。
+        let eff_rects = sel_rect.effective_rects();
+        let persisted_pixel_rects: Vec<egui::Rect> = eff_rects.iter()
+            .map(|&(t_start, t_end, key_lo, key_hi)| {
+                crate::selection::drag::music_sel_to_pixel_rect(
+                    &view.base, view.key_height, t_start, t_end, key_lo, key_hi,
+                )
+            })
+            .collect();
+        {
             let kb_w = music_rect.min.x - content_rect.min.x;
             let music_rect_local = egui::Rect::from_min_max(
                 egui::pos2(0.0, 0.0),
                 egui::pos2(music_rect.width(), music_rect.height()),
             );
-            let shifted = egui::Rect::from_min_max(
-                egui::pos2(rect.min.x - kb_w, rect.min.y),
-                egui::pos2(rect.max.x - kb_w, rect.max.y),
-            );
-            if shifted.intersects(music_rect_local) {
-                crate::selection::draw::draw(&ui.painter(), music_rect, shifted, egui::Color32::WHITE, egui::Color32::WHITE);
+            for &rect in &persisted_pixel_rects {
+                let shifted = egui::Rect::from_min_max(
+                    egui::pos2(rect.min.x - kb_w, rect.min.y),
+                    egui::pos2(rect.max.x - kb_w, rect.max.y),
+                );
+                if shifted.intersects(music_rect_local) {
+                    crate::selection::draw::draw(&ui.painter(), music_rect, shifted, egui::Color32::WHITE, egui::Color32::WHITE);
+                }
             }
         }
 
-        // Show floating action bar next to the persisted selection rect
+        // Show floating action bar next to the latest persisted selection rect
         if let Some(action) =
-            crate::widgets::selection_actions::show(ui, music_rect, persisted_pixel_rect)
+            crate::widgets::selection_actions::show(ui, music_rect, persisted_pixel_rects.last().copied())
         {
             sel_action = Some(action);
         }
@@ -765,7 +768,7 @@ pub fn show(
         // 点击/拖动时间标尺跳转位置时，取消已选择的选框（含框选与全选）。
         if ruler_jumped {
             selected.clear();
-            sel_rect.rect = None;
+            sel_rect.clear();
         }
     }
 

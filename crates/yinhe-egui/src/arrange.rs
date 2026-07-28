@@ -36,7 +36,7 @@ pub fn show(
     scroll_mode: u32,
     min_border_width: f32,
     haptic_engine: Option<&yinhe_haptic::HapticEngine>,
-    arr_sel_rect: &mut Option<(f64, f64, usize, usize)>,
+    arr_sel_rect: &mut Vec<(f64, f64, usize, usize)>,
     arr_drag_delta: &mut Option<(i64, i32)>,
     arr_eraser_rect: &mut Option<(f64, f64, usize, usize)>,
     info_content: &mut Option<crate::right_panel::InfoContent>,
@@ -118,7 +118,7 @@ pub fn show(
         // 点击/拖动时间标尺跳转位置时，取消已选择的选框（含框选与全选）。
         if ruler_jumped {
             doc.edit.selected.clear();
-            *arr_sel_rect = None;
+            arr_sel_rect.clear();
         }
     }
 
