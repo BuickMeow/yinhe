@@ -812,6 +812,14 @@ pub(crate) fn handle_automation_interaction(
                                     })
                                     .collect();
                                 if !moves.is_empty() {
+                                    // 释放当帧仍显示 ghost（基于最终位置），
+                                    // 避免 edits 在 layout.rs apply 前显示旧曲线一帧
+                                    let ghost_lane = if alt {
+                                        build_lane_multi_copy(l, &moves)
+                                    } else {
+                                        build_lane_multi_move(l, &moves)
+                                    };
+                                    release_ghost = Some(AutomationGhost::Move { lane: ghost_lane, color: track_color });
                                     if alt {
                                         // Alt = 复制：为每个选中锚点生成 Add（shape 从原始事件读取）
                                         for &(tick, new_tick, new_value) in &moves {
@@ -828,28 +836,16 @@ pub(crate) fn handle_automation_interaction(
                                             });
                                         }
                                     } else {
-                                        // 移动：为每个选中锚点生成 Move
-                                        for &(tick, new_tick, new_value) in &moves {
-                                            if new_tick != tick || (new_value - l.events.iter().find(|e| e.tick == tick).map(|e| e.value).unwrap_or(new_value)).abs() > 1e-6 {
-                                                edits.push(yinhe_types::AutomationEdit::Move {
-                                                    track_idx,
-                                                    lane_idx: lidx,
-                                                    target: target.clone(),
-                                                    old_tick: tick,
-                                                    new_tick,
-                                                    new_value,
-                                                });
-                                            }
-                                        }
+                                        // 移动：用 MoveBatch 一次性提交所有锚点移动，
+                                        // 避免逐个 Move 导致链式覆盖
+                                        // （如 1→2, 2→3 时 1→2 会先删掉原 2）
+                                        edits.push(yinhe_types::AutomationEdit::MoveBatch {
+                                            track_idx,
+                                            lane_idx: lidx,
+                                            target: target.clone(),
+                                            moves,
+                                        });
                                     }
-                                    // 释放当帧仍显示 ghost（基于最终位置），
-                                    // 避免 edits 在 layout.rs apply 前显示旧曲线一帧
-                                    let ghost_lane = if alt {
-                                        build_lane_multi_copy(l, &moves)
-                                    } else {
-                                        build_lane_multi_move(l, &moves)
-                                    };
-                                    release_ghost = Some(AutomationGhost::Move { lane: ghost_lane, color: track_color });
 
                                     // 更新 sel_rect 到新位置：tick += d_tick，value += d_value
                                     // 垂直工具 value_range 为 None 保持 None

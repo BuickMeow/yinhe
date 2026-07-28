@@ -128,6 +128,76 @@ impl Document {
         }))
     }
 
+    /// 批量移动多个锚点（一次 undo 快照）。
+    ///
+    /// `moves = [(old_tick, new_tick, new_value)]`，所有锚点在同一 lane 上。
+    /// 先移除所有 old_tick 对应的事件，再按 new_tick 排序后插入，
+    /// 避免逐个 move 导致中间状态丢失锚点（如 1→2, 2→3 链式覆盖）。
+    pub fn move_automation_events_batch(
+        &mut self,
+        track_idx: usize,
+        lane_idx: usize,
+        target: &yinhe_types::AutomationTarget,
+        moves: &[(u32, u32, f32)],
+    ) -> Option<UndoAction> {
+        if moves.is_empty() {
+            return None;
+        }
+        let model = Arc::make_mut(&mut self.data.model);
+        let events = if matches!(target, yinhe_types::AutomationTarget::Tempo) {
+            let conductor = Arc::make_mut(&mut model.conductor);
+            &mut conductor.tempo.events
+        } else {
+            let track = model.tracks.get_mut(track_idx)?;
+            let track = Arc::make_mut(track);
+            &mut track.automation_lanes.get_mut(lane_idx)?.events
+        };
+
+        let before = events.clone();
+
+        // 收集每个 old_tick 对应的 shape，并从 events 移除
+        let mut shapes: Vec<yinhe_types::SegmentShape> = Vec::with_capacity(moves.len());
+        for (old_tick, _, _) in moves {
+            if let Some(idx) = events.iter().position(|e| e.tick == *old_tick) {
+                shapes.push(events.remove(idx).shape);
+            } else {
+                shapes.push(target.default_shape());
+            }
+        }
+        // 按 new_tick 排序后插入（冲突时后者覆盖）
+        let mut sorted: Vec<(u32, f32, yinhe_types::SegmentShape)> = moves
+            .iter()
+            .zip(shapes.iter())
+            .map(|((_, new, val), shape)| (*new, *val, *shape))
+            .collect();
+        sorted.sort_by_key(|(new, _, _)| *new);
+        for (new_tick, new_value, shape) in sorted {
+            // 移除 new_tick 处可能残留的旧事件
+            if let Some(idx) = events.iter().position(|e| e.tick == new_tick) {
+                events.remove(idx);
+            }
+            let insert_idx = events.partition_point(|e| e.tick < new_tick);
+            events.insert(insert_idx, yinhe_types::AutomationEvent {
+                tick: new_tick,
+                value: new_value,
+                shape,
+            });
+        }
+
+        let after = events.clone();
+        if matches!(target, yinhe_types::AutomationTarget::Tempo) {
+            self.data.rebuild_tempo_map();
+        }
+        self.data.bump_revision();
+        Some(UndoAction::Automation(AutomationDelta {
+            track_idx,
+            lane_idx,
+            target: target.clone(),
+            before,
+            after,
+        }))
+    }
+
     /// 删除指定 lane 上 tick=`tick` 的事件。
     ///
     /// 如果 `target` 是 `Tempo`，忽略 `track_idx`/`lane_idx`，直接操作
@@ -230,6 +300,9 @@ impl Document {
                 }
                 AutomationEdit::Move { track_idx, lane_idx, target, old_tick, new_tick, new_value } => {
                     self.move_automation_event(track_idx as usize, lane_idx, &target, old_tick, new_tick, new_value)
+                }
+                AutomationEdit::MoveBatch { track_idx, lane_idx, target, moves } => {
+                    self.move_automation_events_batch(track_idx as usize, lane_idx, &target, &moves)
                 }
                 AutomationEdit::CycleShape { track_idx, lane_idx, target, tick } => {
                     // Step ↔ Curve 直线（偏移量 0,0,0,0）

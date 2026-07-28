@@ -349,6 +349,18 @@ pub enum AutomationEdit {
         new_tick: u32,
         new_value: f32,
     },
+    /// 批量移动同一 lane 上的多个事件（一次 undo 快照）。
+    ///
+    /// `moves = [(old_tick, new_tick, new_value)]`。
+    /// 用于 Select 工具拖拽多个选中锚点：先移除所有 old_tick，
+    /// 再按 new_tick 排序后插入，避免逐个 Move 导致链式覆盖
+    /// （如 1→2, 2→3 时 1→2 会删掉原 2，2→3 找不到原 2）。
+    MoveBatch {
+        track_idx: u16,
+        lane_idx: usize,
+        target: AutomationTarget,
+        moves: Vec<(u32, u32, f32)>,
+    },
     /// 切换已有事件的 shape（双击）。
     CycleShape {
         track_idx: u16,

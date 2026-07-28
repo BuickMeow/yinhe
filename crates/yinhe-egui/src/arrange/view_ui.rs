@@ -549,7 +549,8 @@ fn sel_drag_frame_arrange(
             let snapped_origin = crate::view_interaction::snap_tick(origin_t, quantize, ppq, bar_line_data);
             let snapped_current = crate::view_interaction::snap_tick(current_t, quantize, ppq, bar_line_data);
             let dt = (snapped_current - snapped_origin).round() as i64;
-            let dtr = (current_tr - origin_tr).round() as i32;
+            // 垂直选框工具：只能水平移动，dtr 强制为 0
+            let dtr = if vertical { 0 } else { (current_tr - origin_tr).round() as i32 };
 
             // Compute drag_rect (offset selection rect) for display
             let lh = view.lane_height();
@@ -609,7 +610,8 @@ fn sel_drag_frame_arrange(
             let snapped_origin = crate::view_interaction::snap_tick(origin_t, quantize, ppq, bar_line_data);
             let snapped_current = crate::view_interaction::snap_tick(current_t, quantize, ppq, bar_line_data);
             let delta_ticks = (snapped_current - snapped_origin).round() as i64;
-            let delta_tracks = (current_tr - origin_tr).round() as i32;
+            // 垂直选框工具：只能水平移动，delta_tracks 强制为 0
+            let delta_tracks = if vertical { 0 } else { (current_tr - origin_tr).round() as i32 };
 
             let has_moved = delta_ticks != 0 || delta_tracks != 0;
 

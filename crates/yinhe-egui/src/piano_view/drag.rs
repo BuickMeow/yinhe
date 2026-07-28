@@ -308,7 +308,8 @@ pub(crate) fn sel_drag_frame(
                     let snapped_tick = crate::view_interaction::snap_tick(raw_tick, quantize, ppq, bar_line_data);
                     let current_key = view.y_to_key(local_y) as f64;
                     let dt = (snapped_tick - origin_tick).round() as i64;
-                    let dk = (current_key - origin_key).round() as i32;
+                    // 垂直选框工具：只能水平移动，dk 强制为 0
+                    let dk = if vertical { 0 } else { (current_key - origin_key).round() as i32 };
 
                     // O(N) — just apply delta to pre-computed data, no midi lookup.
                     // Alt（复制模式）：原音符保留可见，不 push hidden_notes。
@@ -342,7 +343,8 @@ pub(crate) fn sel_drag_frame(
                     let snapped_tick = crate::view_interaction::snap_tick(raw_tick, quantize, ppq, bar_line_data);
                     let current_key = view.y_to_key(local_y) as f64;
                     let dt = (snapped_tick - origin_tick).round() as i64;
-                    let dk = (current_key - origin_key).round() as i32;
+                    // 垂直选框工具：只能水平移动，dk 强制为 0
+                    let dk = if vertical { 0 } else { (current_key - origin_key).round() as i32 };
                     *note_drag_delta = Some((dt, dk, alt));
                     sel_rect.update_drag(dt, dk);
 
