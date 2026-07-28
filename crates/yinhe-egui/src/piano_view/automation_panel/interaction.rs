@@ -591,6 +591,7 @@ pub(crate) fn handle_automation_interaction(
             let cmd = ui.input(|i| i.modifiers.command || i.modifiers.ctrl);
             let alt = ui.input(|i| i.modifiers.alt);
             let shift = ui.input(|i| i.modifiers.shift);
+            let vertical = matches!(ctx.active_tool, Tool::SelectVertical);
 
             // ── 按下：点击锚点或开始框选 ──
             if pointer_pressed && in_grid {
@@ -629,9 +630,17 @@ pub(crate) fn handle_automation_interaction(
                     let dist = (p - start_pos).length();
                     if dist >= MARQUEE_THRESHOLD {
                         // 计算框选矩形（屏幕坐标，clamp 到 grid_area）
-                        let min = egui::pos2(start_pos.x.min(p.x), start_pos.y.min(p.y));
-                        let max = egui::pos2(start_pos.x.max(p.x), start_pos.y.max(p.y));
-                        let rect = egui::Rect::from_min_max(min, max).intersect(grid_area);
+                        let rect = if vertical {
+                            // 垂直选择：y 范围扩展到整个 grid_area，x 范围按鼠标
+                            egui::Rect::from_min_max(
+                                egui::pos2(start_pos.x.min(p.x), grid_area.min.y),
+                                egui::pos2(start_pos.x.max(p.x), grid_area.max.y),
+                            ).intersect(grid_area)
+                        } else {
+                            let min = egui::pos2(start_pos.x.min(p.x), start_pos.y.min(p.y));
+                            let max = egui::pos2(start_pos.x.max(p.x), start_pos.y.max(p.y));
+                            egui::Rect::from_min_max(min, max).intersect(grid_area)
+                        };
                         marquee_rect = Some(rect);
                         // 无修饰键时清空选区（让用户看到选区被清空）
                         if !cmd && !shift {
@@ -661,7 +670,13 @@ pub(crate) fn handle_automation_interaction(
                                 for e in &l.events {
                                     let ex = grid_area.min.x + (e.tick as f32) * ppu - scroll_x;
                                     let ey = panel_rect.min.y + panel.value_to_y(e.value, max_val);
-                                    if ex >= min_x && ex <= max_x && ey >= min_y && ey <= max_y {
+                                    // 垂直选择：只按 x 过滤（y 范围全选）
+                                    let hit = if vertical {
+                                        ex >= min_x && ex <= max_x
+                                    } else {
+                                        ex >= min_x && ex <= max_x && ey >= min_y && ey <= max_y
+                                    };
+                                    if hit {
                                         in_rect.insert(e.tick);
                                     }
                                 }

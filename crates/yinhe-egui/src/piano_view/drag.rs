@@ -40,8 +40,11 @@ pub(crate) fn marquee_drag_frame(
     id_suffix: &'static str,
 ) -> Option<MarqueeDragResult> {
     let sel_id = ui.id().with(id_suffix);
-    // drag = (start_music, current_pos, on_press_fired)
-    let mut drag: Option<((f64, f32), egui::Pos2, bool)> =
+    // drag = (start_music, press_pos, current_pos, on_press_fired)
+    // - start_music: (snapped_tick, content_y) — 量化后的起始音乐坐标，用于计算选区 bounds
+    // - press_pos: 按下时的原始像素位置 — 用于 3px 阈值检查（不受量化偏移影响）
+    // - current_pos: 当前鼠标位置 — 用于绘制选框 + auto-scroll
+    let mut drag: Option<((f64, f32), egui::Pos2, egui::Pos2, bool)> =
         ui.data_mut(|d| d.get_persisted(sel_id)).unwrap_or(None);
 
     let pointer = ui.input(|i| i.pointer.clone());
@@ -67,16 +70,17 @@ pub(crate) fn marquee_drag_frame(
             raw_tick, quantize, ppq, bar_line_data,
         );
         let start_content_y = local.y + view.base.scroll_y;
-        drag = Some(((start_tick, start_content_y), local, false));
+        drag = Some(((start_tick, start_content_y), local, local, false));
     }
 
-    // Recompute start pixel from music coords each frame (immune to scroll/zoom)
-    let start_pixel = drag.map(|((tick, content_y), _, _)| {
+    // Recompute start pixel from music coords each frame (immune to scroll/zoom).
+    // 用于绘制选框时对齐量化网格。
+    let start_pixel = drag.map(|((tick, content_y), _, _, _)| {
         egui::pos2(view.tick_to_x(tick), content_y - view.base.scroll_y)
     });
 
     // Move -> update with auto-scroll
-    if let (Some(start_px), Some((start_music, _, _))) = (start_pixel, drag) {
+    if let (Some(start_px), Some((start_music, press_pos, _, _))) = (start_pixel, drag) {
         if pointer.primary_down() && !pointer.primary_pressed() {
             if let Some(pos) = pointer.hover_pos() {
                 let clamped = pos.clamp(music_rect.min, music_rect.max);
@@ -86,13 +90,15 @@ pub(crate) fn marquee_drag_frame(
                 );
 
                 // 3px 阈值保护：拖拽超过 3px 才触发 on_press（清空选区），
-                // 避免误触 1px 就清空已有选区。
-                let dist = (local - start_px).length();
-                let fired = drag.as_ref().map(|(_, _, f)| *f).unwrap_or(false);
+                // 用按下时的原始像素位置（press_pos）计算距离，而不是量化后的 start_pixel。
+                // 否则量化网格大时，点击网格中间，start_pixel 会 snap 到网格边界，
+                // 导致 dist 远大于实际移动距离，误触清空选区。
+                let dist = (local - press_pos).length();
+                let fired = drag.as_ref().map(|(_, _, _, f)| *f).unwrap_or(false);
                 if !fired && dist >= 3.0 {
                     on_press();
                 }
-                drag = Some((start_music, local, fired || dist >= 3.0));
+                drag = Some((start_music, press_pos, local, fired || dist >= 3.0));
 
                 // ── Auto-scroll when dragging near the edge ──
                 // No scroll compensation needed: start is in music coords, so it
@@ -129,8 +135,10 @@ pub(crate) fn marquee_drag_frame(
 
         // Release → compute snapped bounds
         if pointer.primary_released() {
-            let result = drag.and_then(|(_, end, _)| {
-                if (end - start_px).length() >= 3.0 {
+            let result = drag.and_then(|(_, press_pos, end, _)| {
+                // 3px 阈值用 press_pos（按下时的原始像素位置）
+                if (end - press_pos).length() >= 3.0 {
+                    // 选区 bounds 用 start_px（量化后）和 end（当前鼠标）计算
                     let (
                         sx, ex, sy, ey,
                         t_start, t_end, key_lo, key_hi,
@@ -145,7 +153,7 @@ pub(crate) fn marquee_drag_frame(
                     None
                 }
             });
-            ui.data_mut(|d| d.insert_persisted(sel_id, Option::<((f64, f32), egui::Pos2, bool)>::None));
+            ui.data_mut(|d| d.insert_persisted(sel_id, Option::<((f64, f32), egui::Pos2, egui::Pos2, bool)>::None));
             view.base.dirty = true;
             return result;
         }
@@ -362,7 +370,7 @@ pub(crate) fn sel_drag_frame(
     if note_drag_origin.is_some() {
         // Note drag active → clear any stale marquee state and skip marquee.
         let sel_id = ui.id().with("sel_drag");
-        ui.data_mut(|d| d.insert_persisted(sel_id, Option::<((f64, f32), egui::Pos2, bool)>::None));
+        ui.data_mut(|d| d.insert_persisted(sel_id, Option::<((f64, f32), egui::Pos2, egui::Pos2, bool)>::None));
     } else {
         let mut on_press = || {
             if !cmd {
@@ -420,14 +428,16 @@ pub(crate) fn draw_marquee_box(
     vertical: bool,
 ) {
     let drag_id = ui.id().with(id_suffix);
-    let drag: Option<((f64, f32), egui::Pos2, bool)> =
+    let drag: Option<((f64, f32), egui::Pos2, egui::Pos2, bool)> =
         ui.data_mut(|d| d.get_persisted(drag_id)).unwrap_or(None);
 
-    if let Some((start_music, end, _)) = drag {
-        let start = egui::pos2(view.tick_to_x(start_music.0), start_music.1 - view.base.scroll_y);
-        if (end - start).length() < 3.0 {
+    if let Some((start_music, press_pos, end, _)) = drag {
+        // 3px 阈值检查用 press_pos（按下时的原始像素位置）
+        if (end - press_pos).length() < 3.0 {
             return;
         }
+        // 绘制用 start_music（量化后）和 end（当前鼠标）计算选区 bounds
+        let start = egui::pos2(view.tick_to_x(start_music.0), start_music.1 - view.base.scroll_y);
         let (vx, vy, vw, vh, _, _, _, _) =
             piano_snapped_bounds(start, end, view, quantize, ppq, bar_line_data);
         let kb_w = music_rect.min.x - content_rect.min.x;
