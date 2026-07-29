@@ -6,13 +6,13 @@
 
 use eframe::egui;
 
-use yinhe_types::{KeySigEvent, PianoRollView, ScaleType};
+use yinhe_theme::GpuTheme;
+use yinhe_types::{KeySigEvent, PianoRollView};
 
 /// 绘制调式背景 + 八度横线。
 ///
-/// 调号驱动：调内音用背景色（不画），调外音用 `PR_SCALE_OUTSIDE` 暗色，根音用 `PR_ROOT_NOTE` 深蓝。
-/// 无调号事件时默认 C 大调（root=0, scale=Major）。
-/// 按可见 tick 范围内的调号事件分段，每段独立渲染。
+/// 有调号事件时：调内音用背景色（不画），调外音用 `PR_SCALE_OUTSIDE` 暗色，根音用 `PR_ROOT_NOTE` 深蓝。
+/// 无调号事件时：回退标准钢琴布局（黑键行用 `pr_black_key_row` 色带），不画调式色块。
 pub fn paint(
     painter: &egui::Painter,
     content_rect: egui::Rect,
@@ -20,14 +20,15 @@ pub fn paint(
     kh: f32,
     view: &PianoRollView,
     key_sig_events: &[KeySigEvent],
+    theme: &GpuTheme,
 ) {
-    paint_scale_background(painter, content_rect, kb_w, kh, view, key_sig_events);
+    paint_scale_background(painter, content_rect, kb_w, kh, view, key_sig_events, theme);
     paint_octave_lines(painter, content_rect, kb_w, kh, view);
 }
 
 /// 按调号区间渲染 piano roll 背景条带。
 ///
-/// 无调号事件时默认 C 大调。
+/// 无调号事件时回退标准钢琴布局（黑键行色带），不画调式色块。
 fn paint_scale_background(
     painter: &egui::Painter,
     content_rect: egui::Rect,
@@ -35,8 +36,10 @@ fn paint_scale_background(
     kh: f32,
     view: &PianoRollView,
     key_sig_events: &[KeySigEvent],
+    theme: &GpuTheme,
 ) {
     let content_left = content_rect.min.x + kb_w;
+    let content_w = content_rect.width() - kb_w;
     let h = content_rect.height();
     let bottom = 128.0 * kh - view.base.scroll_y;
 
@@ -44,17 +47,34 @@ fn paint_scale_background(
     let key_lo = view.y_to_key(0.0).max(0) as u8;
     let key_hi = view.y_to_key(h).min(127) as u8;
 
-    // 无调号事件时默认 C 大调（root=0, scale=Major）
-    let default_keysig = KeySigEvent {
-        tick: 0,
-        root: 0,
-        scale: ScaleType::Major,
-    };
-    let key_sigs: &[KeySigEvent] = if key_sig_events.is_empty() {
-        std::slice::from_ref(&default_keysig)
-    } else {
-        key_sig_events
-    };
+    // 无调号事件：回退标准钢琴布局（画黑键行色带）
+    if key_sig_events.is_empty() {
+        let (bkr, bkg, bkb) = theme.pr_black_key_row;
+        let bk_color = egui::Color32::from_rgb(
+            (bkr * 255.0) as u8,
+            (bkg * 255.0) as u8,
+            (bkb * 255.0) as u8,
+        );
+        for key in key_lo..=key_hi {
+            if !yinhe_types::is_black_key(key) {
+                continue;
+            }
+            let y = bottom - (key as f32 + 1.0) * kh;
+            let screen_y = content_rect.min.y + y;
+            if screen_y + kh < content_rect.min.y || screen_y > content_rect.max.y {
+                continue;
+            }
+            painter.rect_filled(
+                egui::Rect::from_min_size(
+                    egui::pos2(content_left, screen_y),
+                    egui::vec2(content_w, kh),
+                ),
+                0.0,
+                bk_color,
+            );
+        }
+        return;
+    }
 
     // 有调号：按 tick 区间渲染
     let (tick_start, tick_end) = view.visible_tick_range(content_rect.width());
@@ -71,7 +91,7 @@ fn paint_scale_background(
 
     // 找到 tick_start 之前最后一个调号（当前生效的调号）
     let mut start_idx = 0usize;
-    for (i, ev) in key_sigs.iter().enumerate() {
+    for (i, ev) in key_sig_events.iter().enumerate() {
         if (ev.tick as f64) <= tick_start {
             start_idx = i;
         } else {
@@ -83,9 +103,9 @@ fn paint_scale_background(
     let mut seg_start = tick_start;
     let mut idx = start_idx;
     loop {
-        let (root, scale) = (key_sigs[idx].root, key_sigs[idx].scale);
-        let seg_end = if idx + 1 < key_sigs.len() {
-            (key_sigs[idx + 1].tick as f64).min(tick_end)
+        let (root, scale) = (key_sig_events[idx].root, key_sig_events[idx].scale);
+        let seg_end = if idx + 1 < key_sig_events.len() {
+            (key_sig_events[idx + 1].tick as f64).min(tick_end)
         } else {
             tick_end
         };
@@ -124,7 +144,7 @@ fn paint_scale_background(
             }
         }
 
-        if seg_end >= tick_end || idx + 1 >= key_sigs.len() {
+        if seg_end >= tick_end || idx + 1 >= key_sig_events.len() {
             break;
         }
         seg_start = seg_end;
