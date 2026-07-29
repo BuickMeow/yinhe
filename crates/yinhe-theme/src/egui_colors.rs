@@ -44,6 +44,8 @@ pub const PR_OCTAVE_LINE: Color32 = Color32::from_rgb(0x38, 0x38, 0x40);
 pub const PR_SCALE_OUTSIDE: Color32 = Color32::from_rgb(0x0E, 0x0E, 0x12);
 /// 根音行背景（深蓝色，比 pr_bg 明显一些）。
 pub const PR_ROOT_NOTE: Color32 = Color32::from_rgb(0x1E, 0x32, 0x5E);
+/// 无调号时的黑键行背景（与 GpuTheme::pr_black_key_row 一致）。
+pub const PR_BLACK_KEY_ROW: Color32 = Color32::from_rgb(0x1A, 0x1A, 0x1F);
 pub const AR_MEASURE_LINE: Color32 = Color32::from_rgb(0x4D, 0x4D, 0x59);     // (0.30,0.30,0.35,1.0)
 pub const AR_BEAT_LINE: Color32 = Color32::from_rgb(0x33, 0x33, 0x3B);        // (0.20,0.20,0.23,1.0)
 

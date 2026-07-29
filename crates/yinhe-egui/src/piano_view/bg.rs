@@ -6,13 +6,13 @@
 
 use eframe::egui;
 
-use yinhe_theme::GpuTheme;
 use yinhe_types::{KeySigEvent, PianoRollView};
 
 /// 绘制调式背景 + 八度横线。
 ///
 /// 有调号事件时：调内音用背景色（不画），调外音用 `PR_SCALE_OUTSIDE` 暗色，根音用 `PR_ROOT_NOTE` 深蓝。
-/// 无调号事件时：回退标准钢琴布局（黑键行用 `pr_black_key_row` 色带），不画调式色块。
+/// 无调号事件时：回退标准钢琴布局（黑键行用 `PR_BLACK_KEY_ROW` 色带），无根音蓝色。
+/// 按可见 tick 范围内的调号事件分段，每段独立渲染。
 pub fn paint(
     painter: &egui::Painter,
     content_rect: egui::Rect,
@@ -20,15 +20,16 @@ pub fn paint(
     kh: f32,
     view: &PianoRollView,
     key_sig_events: &[KeySigEvent],
-    theme: &GpuTheme,
 ) {
-    paint_scale_background(painter, content_rect, kb_w, kh, view, key_sig_events, theme);
+    if key_sig_events.is_empty() {
+        paint_black_key_rows(painter, content_rect, kb_w, kh, view);
+    } else {
+        paint_scale_background(painter, content_rect, kb_w, kh, view, key_sig_events);
+    }
     paint_octave_lines(painter, content_rect, kb_w, kh, view);
 }
 
 /// 按调号区间渲染 piano roll 背景条带。
-///
-/// 无调号事件时回退标准钢琴布局（黑键行色带），不画调式色块。
 fn paint_scale_background(
     painter: &egui::Painter,
     content_rect: egui::Rect,
@@ -36,47 +37,16 @@ fn paint_scale_background(
     kh: f32,
     view: &PianoRollView,
     key_sig_events: &[KeySigEvent],
-    theme: &GpuTheme,
 ) {
     let content_left = content_rect.min.x + kb_w;
-    let content_w = content_rect.width() - kb_w;
     let h = content_rect.height();
     let bottom = 128.0 * kh - view.base.scroll_y;
 
-    // 可见 key 范围
-    let key_lo = view.y_to_key(0.0).max(0) as u8;
-    let key_hi = view.y_to_key(h).min(127) as u8;
+    // 可见 key 范围：y_to_key(0.0)=顶部 key（大值），y_to_key(h)=底部 key（小值）
+    let key_hi = view.y_to_key(0.0).min(127) as u8;
+    let key_lo = view.y_to_key(h).max(0) as u8;
 
-    // 无调号事件：回退标准钢琴布局（画黑键行色带）
-    if key_sig_events.is_empty() {
-        let (bkr, bkg, bkb) = theme.pr_black_key_row;
-        let bk_color = egui::Color32::from_rgb(
-            (bkr * 255.0) as u8,
-            (bkg * 255.0) as u8,
-            (bkb * 255.0) as u8,
-        );
-        for key in key_lo..=key_hi {
-            if !yinhe_types::is_black_key(key) {
-                continue;
-            }
-            let y = bottom - (key as f32 + 1.0) * kh;
-            let screen_y = content_rect.min.y + y;
-            if screen_y + kh < content_rect.min.y || screen_y > content_rect.max.y {
-                continue;
-            }
-            painter.rect_filled(
-                egui::Rect::from_min_size(
-                    egui::pos2(content_left, screen_y),
-                    egui::vec2(content_w, kh),
-                ),
-                0.0,
-                bk_color,
-            );
-        }
-        return;
-    }
-
-    // 有调号：按 tick 区间渲染
+    // 按 tick 区间渲染
     let (tick_start, tick_end) = view.visible_tick_range(content_rect.width());
     let tick_start = tick_start.max(0.0);
     let tick_end = tick_end.max(tick_start);
@@ -149,6 +119,44 @@ fn paint_scale_background(
         }
         seg_start = seg_end;
         idx += 1;
+    }
+}
+
+/// 无调号时的标准钢琴布局：画黑键行色带（无根音蓝色）。
+fn paint_black_key_rows(
+    painter: &egui::Painter,
+    content_rect: egui::Rect,
+    kb_w: f32,
+    kh: f32,
+    view: &PianoRollView,
+) {
+    let content_left = content_rect.min.x + kb_w;
+    let content_w = content_rect.width() - kb_w;
+    let h = content_rect.height();
+    let bottom = 128.0 * kh - view.base.scroll_y;
+
+    // 可见 key 范围
+    let key_hi = view.y_to_key(0.0).min(127) as u8;
+    let key_lo = view.y_to_key(h).max(0) as u8;
+
+    let bk_color = crate::theme::PR_BLACK_KEY_ROW;
+    for key in key_lo..=key_hi {
+        if !yinhe_types::is_black_key(key) {
+            continue;
+        }
+        let y = bottom - (key as f32 + 1.0) * kh;
+        let screen_y = content_rect.min.y + y;
+        if screen_y + kh < content_rect.min.y || screen_y > content_rect.max.y {
+            continue;
+        }
+        painter.rect_filled(
+            egui::Rect::from_min_size(
+                egui::pos2(content_left, screen_y),
+                egui::vec2(content_w, kh),
+            ),
+            0.0,
+            bk_color,
+        );
     }
 }
 
