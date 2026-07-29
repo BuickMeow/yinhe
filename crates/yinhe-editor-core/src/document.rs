@@ -16,6 +16,7 @@ pub mod automation_edit;
 pub mod conductor_edit;
 pub mod note_edit;
 pub mod selection;
+pub mod track_meta_edit;
 pub mod track_ops;
 
 /// Per-track mutable overrides (mute, solo).

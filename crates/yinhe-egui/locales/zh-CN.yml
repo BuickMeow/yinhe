@@ -195,6 +195,9 @@ event_browser.edit_key: "编辑键位"
 event_browser.edit_velocity: "编辑力度"
 event_browser.edit_numerator: "编辑分子"
 event_browser.edit_denominator: "编辑分母(2^n)"
+event_browser.edit_keysig_sf: "编辑调号 (升降号数)"
+event_browser.edit_keysig_mi: "编辑调式 (0=大调, 1=小调)"
+event_browser.edit_text: "编辑文本"
 event_browser.shape_step: "离散 (Step)"
 
 # ── 锚点面板 ──
@@ -321,6 +324,8 @@ undo.edit_anchor_y1: "编辑自动化锚点 Y1"
 undo.edit_anchor_x2: "编辑自动化锚点 X2"
 undo.edit_anchor_y2: "编辑自动化锚点 Y2"
 undo.edit_timesig: "编辑拍号"
+undo.edit_keysig: "编辑调号"
+undo.edit_text_event: "编辑文本事件"
 
 # ── 文件对话框 ──
 file_dialog.all_supported: "所有支持的格式"

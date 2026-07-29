@@ -78,6 +78,34 @@ impl UndoAction {
                 doc.data.rebuild_tempo_map();
                 doc.data.bump_revision();
             }
+            UndoAction::KeySig { old: _, new } => {
+                let model = Arc::make_mut(&mut doc.data.model);
+                let conductor = Arc::make_mut(&mut model.conductor);
+                conductor.key_sig = new.clone();
+                doc.data.bump_revision();
+            }
+            UndoAction::Marker { old: _, new } => {
+                let model = Arc::make_mut(&mut doc.data.model);
+                let conductor = Arc::make_mut(&mut model.conductor);
+                conductor.markers = new.clone();
+                doc.data.bump_revision();
+            }
+            UndoAction::Lyrics { track, old: _, new } => {
+                let model = Arc::make_mut(&mut doc.data.model);
+                if let Some(t) = model.tracks.get_mut(*track as usize) {
+                    let t = Arc::make_mut(t);
+                    t.lyrics = new.clone();
+                }
+                doc.data.bump_revision();
+            }
+            UndoAction::Chord { track, old: _, new } => {
+                let model = Arc::make_mut(&mut doc.data.model);
+                if let Some(t) = model.tracks.get_mut(*track as usize) {
+                    let t = Arc::make_mut(t);
+                    t.chord = new.clone();
+                }
+                doc.data.bump_revision();
+            }
             UndoAction::TrackStructure {
                 tracks_before,
                 tracks_after,

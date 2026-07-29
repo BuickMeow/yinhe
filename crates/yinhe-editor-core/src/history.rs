@@ -87,6 +87,28 @@ pub enum UndoAction {
         old: Vec<yinhe_types::TimeSigEvent>,
         new: Vec<yinhe_types::TimeSigEvent>,
     },
+    /// 调号事件列表整体替换（conductor 级）。
+    KeySig {
+        old: Vec<yinhe_types::KeySigEvent>,
+        new: Vec<yinhe_types::KeySigEvent>,
+    },
+    /// 标记事件列表整体替换（conductor 级）。
+    Marker {
+        old: Vec<yinhe_types::MarkerEvent>,
+        new: Vec<yinhe_types::MarkerEvent>,
+    },
+    /// 歌词事件列表整体替换（per-track）。
+    Lyrics {
+        track: u16,
+        old: Vec<yinhe_types::LyricsEvent>,
+        new: Vec<yinhe_types::LyricsEvent>,
+    },
+    /// 和弦事件列表整体替换（per-track）。
+    Chord {
+        track: u16,
+        old: Vec<yinhe_types::ChordEvent>,
+        new: Vec<yinhe_types::ChordEvent>,
+    },
     /// Track structure changed (add/remove/move track).
     /// Stores full before/after track lists (metadata only) and
     /// a remap table: `note_remap[old_track_idx] = new_track_idx` (or u16::MAX if deleted).
@@ -151,6 +173,22 @@ impl UndoAction {
             UndoAction::TimeSig { mut old, mut new } => {
                 std::mem::swap(&mut old, &mut new);
                 UndoAction::TimeSig { old, new }
+            }
+            UndoAction::KeySig { mut old, mut new } => {
+                std::mem::swap(&mut old, &mut new);
+                UndoAction::KeySig { old, new }
+            }
+            UndoAction::Marker { mut old, mut new } => {
+                std::mem::swap(&mut old, &mut new);
+                UndoAction::Marker { old, new }
+            }
+            UndoAction::Lyrics { track, mut old, mut new } => {
+                std::mem::swap(&mut old, &mut new);
+                UndoAction::Lyrics { track, old, new }
+            }
+            UndoAction::Chord { track, mut old, mut new } => {
+                std::mem::swap(&mut old, &mut new);
+                UndoAction::Chord { track, old, new }
             }
             UndoAction::TrackStructure {
                 mut tracks_before,

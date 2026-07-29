@@ -10,8 +10,8 @@ use yinhe_editor_core::document::Document;
 use yinhe_types::AutomationTarget;
 
 use super::bar_lookup::BarLookup;
-use super::edit::{apply_automation_popups, apply_note_popups, apply_timesig_popups};
-use super::state::{EditRequest, EventBrowserState, JumpRequest, NoteRef, PulseKind, SelectedItem};
+use super::edit::{apply_automation_popups, apply_keysig_popups, apply_note_popups, apply_text_popups, apply_timesig_popups};
+use super::state::{EditRequest, EventBrowserState, JumpRequest, NoteRef, PulseKind, SelectedItem, TextEventKind};
 use super::table::{
     build_table, cell_editable, cell_text, shape_text,
     paginate, render_pager, take_row_click, total_pages, AutomationEventOwned,
@@ -37,9 +37,7 @@ pub(super) fn show_event_detail(
         SelectedItem::TimeSig => show_timesig_detail(ui, doc, bar_lookup, state),
         SelectedItem::KeySig => show_keysig_detail(ui, doc, bar_lookup, state),
         SelectedItem::Markers => {
-            let events: Vec<(u32, String)> = doc.data.model.conductor.markers
-                .iter().map(|e| (e.tick, e.text.clone())).collect();
-            show_text_events_detail(ui, bar_lookup, state, "eb_marker", "标记", events)
+            show_text_events_detail(ui, doc, bar_lookup, state, "eb_marker", "标记", TextEventKind::Marker)
         }
         SelectedItem::Notes { track } => show_notes_detail(ui, doc, bar_lookup, state, *track),
         SelectedItem::ProgramChange { track } => show_pc_detail(ui, doc, bar_lookup, state, *track),
@@ -47,18 +45,10 @@ pub(super) fn show_event_detail(
             show_automation_detail(ui, doc, bar_lookup, state, *track, target)
         }
         SelectedItem::Lyrics { track } => {
-            let events: Vec<(u32, String)> = doc.data.model.tracks
-                .get(*track as usize)
-                .map(|t| t.lyrics.iter().map(|e| (e.tick, e.text.clone())).collect())
-                .unwrap_or_default();
-            show_text_events_detail(ui, bar_lookup, state, "eb_lyrics", "歌词", events)
+            show_text_events_detail(ui, doc, bar_lookup, state, "eb_lyrics", "歌词", TextEventKind::Lyrics { track: *track })
         }
         SelectedItem::Chord { track } => {
-            let events: Vec<(u32, String)> = doc.data.model.tracks
-                .get(*track as usize)
-                .map(|t| t.chord.iter().map(|e| (e.tick, e.text.clone())).collect())
-                .unwrap_or_default();
-            show_text_events_detail(ui, bar_lookup, state, "eb_chord", "和弦", events)
+            show_text_events_detail(ui, doc, bar_lookup, state, "eb_chord", "和弦", TextEventKind::Chord { track: *track })
         }
     }
 }
@@ -199,8 +189,8 @@ fn show_keysig_detail(
     bar_lookup: &BarLookup,
     state: &mut EventBrowserState,
 ) -> Option<JumpRequest> {
-    let model = &doc.data.model;
-    let mut sorted: Vec<&yinhe_types::KeySigEvent> = model.conductor.key_sig.iter().collect();
+    // 先 clone 出 owned 数据，避免不可变借用阻塞后续 &mut doc 编辑
+    let mut sorted: Vec<yinhe_types::KeySigEvent> = doc.data.model.conductor.key_sig.clone();
     sorted.sort_by_key(|e| e.tick);
     let (page, page_start, page_items) = paginate(state, &sorted);
     let total = sorted.len();
@@ -217,13 +207,21 @@ fn show_keysig_detail(
         (t!("event_browser.header.tick").as_ref(), 70.0),
         (t!("event_browser.header.position").as_ref(), 80.0),
         ("调号", 100.0),
+        ("sf", 40.0),
+        ("mi", 40.0),
     ], page_items.len(), |i, row, click_key| {
-        let e = page_items[i];
+        let e = &page_items[i];
         cell_text(row, format!("{}", page_start + i + 1), click_key, i);
-        cell_text(row, format!("{}", e.tick), click_key, i);
+        cell_editable(row, "eb_ks_edit", i, format!("{}", e.tick),
+            EditRequest::KeySigTick { tick: e.tick }, click_key);
         cell_text(row, bar_lookup.format(e.tick), click_key, i);
         cell_text(row, keysig_text(e.sf, e.mi), click_key, i);
+        cell_editable(row, "eb_ks_edit", i, format!("{}", e.sf),
+            EditRequest::KeySigSf { tick: e.tick }, click_key);
+        cell_editable(row, "eb_ks_edit", i, format!("{}", e.mi),
+            EditRequest::KeySigMi { tick: e.tick }, click_key);
     });
+    apply_keysig_popups(ui, doc, "eb_ks_edit");
     take_row_click(ui, "eb_ks").map(|i| JumpRequest {
         tick: page_items[i].tick,
         note: None,
@@ -251,13 +249,24 @@ fn keysig_text(sf: i8, mi: u8) -> String {
 
 fn show_text_events_detail(
     ui: &mut egui::Ui,
+    doc: &mut Document,
     bar_lookup: &BarLookup,
     state: &mut EventBrowserState,
     table_id: &str,
     label: &str,
-    events: Vec<(u32, String)>,
+    kind: TextEventKind,
 ) -> Option<JumpRequest> {
-    let mut sorted = events;
+    // 先 clone 出 owned 数据，避免不可变借用阻塞后续 &mut doc 编辑
+    let mut sorted: Vec<(u32, String)> = match kind {
+        TextEventKind::Marker => doc.data.model.conductor.markers
+            .iter().map(|e| (e.tick, e.text.clone())).collect(),
+        TextEventKind::Lyrics { track } => doc.data.model.tracks.get(track as usize)
+            .map(|t| t.lyrics.iter().map(|e| (e.tick, e.text.clone())).collect())
+            .unwrap_or_default(),
+        TextEventKind::Chord { track } => doc.data.model.tracks.get(track as usize)
+            .map(|t| t.chord.iter().map(|e| (e.tick, e.text.clone())).collect())
+            .unwrap_or_default(),
+    };
     sorted.sort_by_key(|e| e.0);
     let (page, page_start, page_items) = paginate(state, &sorted);
     let total = sorted.len();
@@ -269,6 +278,7 @@ fn show_text_events_detail(
         }
     });
     ui.add_space(2.0);
+    let edit_salt = format!("{}_edit", table_id);
     build_table(ui, table_id, &[
         ("#", 40.0),
         (t!("event_browser.header.tick").as_ref(), 70.0),
@@ -277,10 +287,13 @@ fn show_text_events_detail(
     ], page_items.len(), |i, row, click_key| {
         let (tick, text) = &page_items[i];
         cell_text(row, format!("{}", page_start + i + 1), click_key, i);
-        cell_text(row, format!("{}", tick), click_key, i);
+        cell_editable(row, &edit_salt, i, format!("{}", tick),
+            EditRequest::TextEventTick { kind, tick: *tick }, click_key);
         cell_text(row, bar_lookup.format(*tick), click_key, i);
-        cell_text(row, text.clone(), click_key, i);
+        cell_editable(row, &edit_salt, i, text.clone(),
+            EditRequest::TextEventText { kind, tick: *tick }, click_key);
     });
+    apply_text_popups(ui, doc, &edit_salt);
     take_row_click(ui, table_id).map(|i| JumpRequest {
         tick: page_items[i].0,
         note: None,

@@ -194,6 +194,9 @@ event_browser.edit_key: "키 편집"
 event_browser.edit_velocity: "벨로시티 편집"
 event_browser.edit_numerator: "분자 편집"
 event_browser.edit_denominator: "분모 편집(2^n)"
+event_browser.edit_keysig_sf: "조표 편집 (升降기호 수)"
+event_browser.edit_keysig_mi: "조식 편집 (0=장조, 1=단조)"
+event_browser.edit_text: "텍스트 편집"
 event_browser.shape_step: "이산 (Step)"
 
 # ── 앵커 패널 ──
@@ -312,6 +315,8 @@ undo.edit_anchor_y1: "자동화 앵커 Y1 편집"
 undo.edit_anchor_x2: "자동화 앵커 X2 편집"
 undo.edit_anchor_y2: "자동화 앵커 Y2 편집"
 undo.edit_timesig: "박자표 편집"
+undo.edit_keysig: "조표 편집"
+undo.edit_text_event: "텍스트 이벤트 편집"
 
 # ── 파일 대화상자 ──
 file_dialog.all_supported: "지원되는 모든 형식"
