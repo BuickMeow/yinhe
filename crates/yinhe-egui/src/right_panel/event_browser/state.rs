@@ -114,10 +114,10 @@ pub enum EditRequest {
     TimeSigDenominator { tick: u32 },
     /// KeySig 的 tick 编辑
     KeySigTick { tick: u32 },
-    /// KeySig 的 sf 编辑（升降号数 -7..=7）
-    KeySigSf { tick: u32 },
-    /// KeySig 的 mi 编辑（0 = 大调，1 = 小调）
-    KeySigMi { tick: u32 },
+    /// KeySig 的 root 编辑（根音 pitch class 0-11）
+    KeySigRoot { tick: u32 },
+    /// KeySig 的 scale 编辑（音阶类型）
+    KeySigScale { tick: u32 },
     /// 文本类事件（Marker/Lyrics/Chord）的 tick 编辑
     TextEventTick { kind: TextEventKind, tick: u32 },
     /// 文本类事件的 text 编辑

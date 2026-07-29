@@ -207,10 +207,12 @@ fn collect_conductor(
                     });
                 }
                 midly::TrackEventKind::Meta(midly::MetaMessage::KeySignature(sf, minor)) => {
+                    let mi = if minor { 1 } else { 0 };
+                    let (root, scale) = yinhe_types::from_midi_sf_mi(sf, mi);
                     key_sig.push(yinhe_types::KeySigEvent {
                         tick,
-                        sf,
-                        mi: if minor { 1 } else { 0 },
+                        root,
+                        scale,
                     });
                 }
                 midly::TrackEventKind::Meta(midly::MetaMessage::Marker(text)) => {

@@ -82,11 +82,13 @@ fn build_conductor_track<'a>(model: &'a YinModel) -> Vec<TrackEvent<'a>> {
             )),
         ));
     }
-    // 调号 (FF 59)
+    // 调号 (FF 59)。yinhe 内部用 (root, scale) 存储更丰富的音阶信息，
+    // 导出 MIDI 时由 ScaleType::to_midi_sf_mi 降级为 (sf, mi)。
     for ev in &model.conductor.key_sig {
+        let (sf, mi) = ev.scale.to_midi_sf_mi(ev.root);
         events.push((
             ev.tick,
-            TrackEventKind::Meta(MetaMessage::KeySignature(ev.sf, ev.mi != 0)),
+            TrackEventKind::Meta(MetaMessage::KeySignature(sf, mi != 0)),
         ));
     }
     // 标记 (FF 06 Marker / FF 07 CuePoint)

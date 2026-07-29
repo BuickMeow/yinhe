@@ -1,15 +1,16 @@
-//! 调号的 tick / sf / mi 编辑 popup。
+//! 调号的 tick / root / scale 编辑 popup。
 
 use eframe::egui;
 
 use rust_i18n::t;
 use yinhe_editor_core::document::Document;
+use yinhe_types::ScaleType;
 
 use super::super::state::EditRequest;
 use super::super::table::{peek_edit_request, remove_edit_request, update_edit_request};
-use super::{PopupAction, PopupConfig, show_number_popup};
+use super::{ChoicePopupAction, PopupAction, PopupConfig, show_choice_popup, show_number_popup};
 
-/// 处理调号的 tick / sf / mi 编辑 popup。
+/// 处理调号的 tick / root / scale 编辑 popup。
 pub fn apply_keysig_popups(
     ui: &mut egui::Ui,
     doc: &mut Document,
@@ -18,8 +19,8 @@ pub fn apply_keysig_popups(
     let Some(req) = peek_edit_request(ui, salt) else { return };
     match req {
         EditRequest::KeySigTick { tick } => show_keysig_tick_popup(ui, doc, salt, tick),
-        EditRequest::KeySigSf { tick } => show_keysig_sf_popup(ui, doc, salt, tick),
-        EditRequest::KeySigMi { tick } => show_keysig_mi_popup(ui, doc, salt, tick),
+        EditRequest::KeySigRoot { tick } => show_keysig_root_popup(ui, doc, salt, tick),
+        EditRequest::KeySigScale { tick } => show_keysig_scale_popup(ui, doc, salt, tick),
         _ => {}
     }
 }
@@ -46,7 +47,7 @@ fn show_keysig_tick_popup(
             if new_tick != tick {
                 let model = &doc.data.model;
                 if let Some(e) = model.conductor.key_sig.iter().find(|e| e.tick == tick) {
-                    doc.set_keysig_event(tick, new_tick, e.sf, e.mi);
+                    doc.set_keysig_event(tick, new_tick, e.root, e.scale);
                 }
                 update_edit_request(ui, salt, EditRequest::KeySigTick { tick: new_tick });
             }
@@ -58,31 +59,31 @@ fn show_keysig_tick_popup(
     }
 }
 
-fn show_keysig_sf_popup(
+fn show_keysig_root_popup(
     ui: &mut egui::Ui,
     doc: &mut Document,
     salt: &str,
     tick: u32,
 ) {
     let before = record_keysig_before(ui, doc, salt);
-    let sf = doc.data.model.conductor.key_sig.iter()
-        .find(|e| e.tick == tick).map(|e| e.sf).unwrap_or(0);
+    let root = doc.data.model.conductor.key_sig.iter()
+        .find(|e| e.tick == tick).map(|e| e.root).unwrap_or(0);
     let action = show_number_popup(ui, PopupConfig {
         salt,
-        title: t!("event_browser.edit_keysig_sf").as_ref(),
-        initial: sf as f64,
-        range_min: -7.0,
-        range_max: 7.0,
+        title: t!("event_browser.edit_keysig_root").as_ref(),
+        initial: root as f64,
+        range_min: 0.0,
+        range_max: 11.0,
         speed: 1.0,
         fixed_decimals: None,
     });
     match action {
-        PopupAction::Changed(new_sf) => {
-            let new_sf = new_sf as i8;
-            if new_sf != sf {
+        PopupAction::Changed(new_root) => {
+            let new_root = new_root as u8;
+            if new_root != root {
                 let model = &doc.data.model;
                 if let Some(e) = model.conductor.key_sig.iter().find(|e| e.tick == tick) {
-                    doc.set_keysig_event(tick, tick, new_sf, e.mi);
+                    doc.set_keysig_event(tick, tick, new_root, e.scale);
                 }
             }
         }
@@ -93,38 +94,30 @@ fn show_keysig_sf_popup(
     }
 }
 
-fn show_keysig_mi_popup(
+fn show_keysig_scale_popup(
     ui: &mut egui::Ui,
     doc: &mut Document,
     salt: &str,
     tick: u32,
 ) {
     let before = record_keysig_before(ui, doc, salt);
-    let mi = doc.data.model.conductor.key_sig.iter()
-        .find(|e| e.tick == tick).map(|e| e.mi).unwrap_or(0);
-    let action = show_number_popup(ui, PopupConfig {
-        salt,
-        title: t!("event_browser.edit_keysig_mi").as_ref(),
-        initial: mi as f64,
-        range_min: 0.0,
-        range_max: 1.0,
-        speed: 1.0,
-        fixed_decimals: None,
-    });
+    let scale = doc.data.model.conductor.key_sig.iter()
+        .find(|e| e.tick == tick).map(|e| e.scale).unwrap_or(ScaleType::Major);
+    let action = show_choice_popup(ui, salt, t!("event_browser.edit_keysig_scale").as_ref(),
+        scale, ScaleType::ALL, |s| s.display_name().to_string());
     match action {
-        PopupAction::Changed(new_mi) => {
-            let new_mi = new_mi as u8;
-            if new_mi != mi {
+        ChoicePopupAction::Changed(new_scale) => {
+            if new_scale != scale {
                 let model = &doc.data.model;
                 if let Some(e) = model.conductor.key_sig.iter().find(|e| e.tick == tick) {
-                    doc.set_keysig_event(tick, tick, e.sf, new_mi);
+                    doc.set_keysig_event(tick, tick, e.root, new_scale);
                 }
             }
         }
-        PopupAction::Closed => {
+        ChoicePopupAction::Closed => {
             finalize_keysig_undo(ui, doc, salt, before, t!("undo.edit_keysig").as_ref());
         }
-        PopupAction::None => {}
+        ChoicePopupAction::None => {}
     }
 }
 

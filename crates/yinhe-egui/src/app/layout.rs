@@ -355,6 +355,7 @@ impl App {
                     doc.edit.quantize_pianoroll,
                     tpb,
                     Some((tpb, ts_num, ts_den, &ts_events)),
+                    &doc.data.model.conductor.key_sig,
                     &mut self.piano_last_cursor_tick,
                     follow_mode,
                     &self.active_tool,

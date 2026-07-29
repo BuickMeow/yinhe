@@ -36,6 +36,14 @@ pub const PR_MEASURE_LINE: Color32 = Color32::from_rgb(0x59, 0x59, 0x66);   // (
 pub const PR_BEAT_LINE: Color32 = Color32::from_rgb(0x38, 0x38, 0x40);       // (0.22,0.22,0.25,1.0)
 pub const PR_SUB_BEAT_LINE: Color32 = Color32::from_rgb(0x29, 0x29, 0x2E);   // (0.16,0.16,0.18,1.0)
 pub const PR_TICK_LINE: Color32 = Color32::from_rgb(0x25, 0x25, 0x2A);
+
+// ── Piano roll 横向：八度线 / 调号背景 ──
+/// 每个八度边界的横向细线（C 位置）。
+pub const PR_OCTAVE_LINE: Color32 = Color32::from_rgb(0x38, 0x38, 0x40);
+/// 调外音行背景（比 pr_bg 暗一点）。
+pub const PR_SCALE_OUTSIDE: Color32 = Color32::from_rgb(0x0E, 0x0E, 0x12);
+/// 根音行背景（深蓝色，比 pr_bg 明显一些）。
+pub const PR_ROOT_NOTE: Color32 = Color32::from_rgb(0x1E, 0x32, 0x5E);
 pub const AR_MEASURE_LINE: Color32 = Color32::from_rgb(0x4D, 0x4D, 0x59);     // (0.30,0.30,0.35,1.0)
 pub const AR_BEAT_LINE: Color32 = Color32::from_rgb(0x33, 0x33, 0x3B);        // (0.20,0.20,0.23,1.0)
 

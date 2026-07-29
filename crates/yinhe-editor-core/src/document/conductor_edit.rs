@@ -45,8 +45,8 @@ impl Document {
         &mut self,
         old_tick: u32,
         new_tick: u32,
-        new_sf: i8,
-        new_mi: u8,
+        new_root: u8,
+        new_scale: yinhe_types::ScaleType,
     ) {
         let model = Arc::make_mut(&mut self.data.model);
         let conductor = Arc::make_mut(&mut model.conductor);
@@ -54,8 +54,8 @@ impl Document {
         {
             let event = &mut conductor.key_sig[idx];
             event.tick = new_tick;
-            event.sf = new_sf;
-            event.mi = new_mi;
+            event.root = new_root;
+            event.scale = new_scale;
         }
         conductor.key_sig.sort_by_key(|e| e.tick);
         self.data.bump_revision();

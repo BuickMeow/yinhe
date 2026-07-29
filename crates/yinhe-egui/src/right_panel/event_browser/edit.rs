@@ -106,3 +106,68 @@ fn show_number_popup(ui: &mut egui::Ui, cfg: PopupConfig) -> PopupAction {
         action
     }
 }
+
+/// 下拉选择 popup 的动作。
+pub(super) enum ChoicePopupAction<T> {
+    None,
+    Changed(T),
+    Closed,
+}
+
+/// 渲染下拉选择 popup（Area + ComboBox + confirm）。
+///
+/// 选项状态持久化到 `egui::Id::new((salt, "choice"))`，每帧从 memory 读出。
+/// `label_of` 把选项值转为显示文本。
+fn show_choice_popup<T: Copy + PartialEq + Send + Sync + 'static>(
+    ui: &mut egui::Ui,
+    salt: &str,
+    title: &str,
+    initial: T,
+    options: &[T],
+    label_of: impl Fn(&T) -> String,
+) -> ChoicePopupAction<T> {
+    let state_id = egui::Id::new((salt, "choice"));
+    let popup_id = ui.id().with((salt, "choice_popup"));
+
+    let mut state = ui.memory(|m| m.data.get_temp::<T>(state_id).unwrap_or(initial));
+    let mut action = ChoicePopupAction::None;
+    let mut open = true;
+    let popup_pos = ui.clip_rect().min + egui::vec2(20.0, 20.0);
+
+    egui::Area::new(popup_id)
+        .order(egui::Order::Foreground)
+        .fixed_pos(popup_pos)
+        .show(ui.ctx(), |ui| {
+            egui::Frame::popup(ui.style()).show(ui, |ui| {
+                ui.set_min_width(180.0);
+                ui.label(egui::RichText::new(title).strong().size(11.0));
+                ui.add_space(2.0);
+                let resp = egui::ComboBox::from_id_salt(salt)
+                    .selected_text(label_of(&state))
+                    .show_ui(ui, |ui| {
+                        for opt in options {
+                            ui.selectable_value(&mut state, *opt, label_of(opt));
+                        }
+                    });
+                if resp.response.changed() {
+                    action = ChoicePopupAction::Changed(state);
+                    ui.memory_mut(|m| m.data.insert_temp(state_id, state));
+                }
+                ui.add_space(2.0);
+                if ui.button(t!("common.confirm").as_ref()).clicked() {
+                    open = false;
+                }
+                ui.add_space(2.0);
+                if ui.button(t!("common.cancel").as_ref()).clicked() {
+                    open = false;
+                }
+            });
+        });
+
+    if !open {
+        ui.memory_mut(|m| m.data.remove::<T>(state_id));
+        ChoicePopupAction::Closed
+    } else {
+        action
+    }
+}

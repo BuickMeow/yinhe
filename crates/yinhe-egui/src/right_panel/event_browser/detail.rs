@@ -213,19 +213,19 @@ fn show_keysig_detail(
         (t!("event_browser.header.tick").as_ref(), 70.0),
         (t!("event_browser.header.position").as_ref(), 80.0),
         ("调号", 100.0),
-        ("sf", 40.0),
-        ("mi", 40.0),
+        ("根音", 60.0),
+        ("音阶", 80.0),
     ], page_items.len(), |i, row, click_key| {
         let e = &page_items[i];
         cell_text(row, format!("{}", page_start + i + 1), click_key, i);
         cell_editable(row, "eb_ks_edit", i, format!("{}", e.tick),
             EditRequest::KeySigTick { tick: e.tick }, click_key);
         cell_text(row, bar_lookup.format(e.tick), click_key, i);
-        cell_text(row, keysig_text(e.sf, e.mi), click_key, i);
-        cell_editable(row, "eb_ks_edit", i, format!("{}", e.sf),
-            EditRequest::KeySigSf { tick: e.tick }, click_key);
-        cell_editable(row, "eb_ks_edit", i, format!("{}", e.mi),
-            EditRequest::KeySigMi { tick: e.tick }, click_key);
+        cell_text(row, keysig_text(e.root, e.scale), click_key, i);
+        cell_editable(row, "eb_ks_edit", i, format!("{} ({})", ROOT_NAMES[e.root as usize % 12], e.root),
+            EditRequest::KeySigRoot { tick: e.tick }, click_key);
+        cell_editable(row, "eb_ks_edit", i, e.scale.display_name(),
+            EditRequest::KeySigScale { tick: e.tick }, click_key);
     });
     apply_keysig_popups(ui, doc, "eb_ks_edit");
     take_row_click(ui, "eb_ks").map(|i| JumpRequest {
@@ -235,20 +235,15 @@ fn show_keysig_detail(
     })
 }
 
-/// 调号文本：sf = 升降号数 (-7..=7)，mi = 0 大调 / 1 小调。
-fn keysig_text(sf: i8, mi: u8) -> String {
-    let key_names = [
-        ["Cb", "Gb", "Db", "Ab", "Eb", "Bb", "F", "C", "G", "D", "A", "E", "B", "F#", "C#"],
-        ["Ab", "Eb", "Bb", "F", "C", "G", "D", "A", "E", "B", "F#", "C#", "G#", "D#", "A#"],
-    ];
-    let row = mi as usize;
-    let col = (sf as i16 + 7) as usize;
-    let name = key_names[row][col];
-    if mi == 0 {
-        format!("{} major", name)
-    } else {
-        format!("{} minor", name)
-    }
+/// 12 个 pitch class 的显示名（0=C, 1=C#/Db, ..., 11=B）。
+const ROOT_NAMES: [&str; 12] = [
+    "C", "C#/Db", "D", "D#/Eb", "E", "F", "F#/Gb", "G", "G#/Ab", "A", "A#/Bb", "B",
+];
+
+/// 调号文本：根音名 + 音阶名（如 "D 多利亚"）。
+fn keysig_text(root: u8, scale: yinhe_types::ScaleType) -> String {
+    let name = ROOT_NAMES[root as usize % 12];
+    format!("{} {}", name, scale.display_name())
 }
 
 // ── 通用文本事件（Marker / Lyrics / Chord） ──
