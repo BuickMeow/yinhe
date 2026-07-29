@@ -61,7 +61,7 @@ fn show_number_popup(ui: &mut egui::Ui, cfg: PopupConfig) -> PopupAction {
                 ui.set_min_width(180.0);
                 ui.label(egui::RichText::new(cfg.title).strong().size(11.0));
                 ui.add_space(2.0);
-                let mut dv = egui::DragValue::new(&mut state)
+                let mut dv = crate::widgets::numeric_input::decimal_drag_value(&mut state)
                     .range(cfg.range_min..=cfg.range_max)
                     .speed(cfg.speed);
                 if let Some(d) = cfg.fixed_decimals {
@@ -264,7 +264,7 @@ fn show_auto_shape_popup(
                         ui.horizontal(|ui| {
                             ui.label(egui::RichText::new(labels[i]).size(11.0).color(egui::Color32::GRAY));
                             let resp = ui.add(
-                                egui::DragValue::new(&mut vals[i])
+                                crate::widgets::numeric_input::decimal_drag_value(&mut vals[i])
                                     .range(ranges[i].0 as f64..=ranges[i].1 as f64)
                                     .speed(0.01)
                                     .fixed_decimals(2),

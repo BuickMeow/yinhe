@@ -122,7 +122,7 @@ pub fn show_content(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
             let mut layers = settings.xsynth_layers as usize;
             if ui
                 .add(
-                    egui::DragValue::new(&mut layers)
+                    crate::widgets::numeric_input::decimal_drag_value(&mut layers)
                         .range(0..=128)
                         .speed(1.0),
                 )
@@ -188,7 +188,7 @@ pub fn show_content(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
             ui.label(t!("settings.render.automation_density").as_ref());
             let mut density = settings.automation_event_density as i32;
             let drag = ui.add(
-                egui::DragValue::new(&mut density)
+                crate::widgets::numeric_input::decimal_drag_value(&mut density)
                     .range(1..=480)
                     .speed(0.2)
                     .suffix(" tick"),

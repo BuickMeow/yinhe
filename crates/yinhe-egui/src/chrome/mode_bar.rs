@@ -215,10 +215,9 @@ pub fn show(
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     // Right-most first (from right to left):
                     //  1. ICON_INFO
-                    //  2. ICON_ALBUM
-                    //  3. ICON_MUSIC_CAST
-                    //  4. ICON_SHUFFLE
-                    //  5. ICON_AUTO_STORIES (event browser)
+                    //  2. ICON_MUSIC_CAST
+                    //  3. ICON_SHUFFLE
+                    //  4. ICON_AUTO_STORIES (event browser)
 
                     right_icon_button(ui, ICON_INFO, *right_tab == Some(RightTab::Info), || {
                         *right_tab = if *right_tab == Some(RightTab::Info) {
@@ -227,21 +226,6 @@ pub fn show(
                             Some(RightTab::Info)
                         };
                     });
-
-                    ui.add_space(4.0);
-
-                    right_icon_button(
-                        ui,
-                        ICON_ALBUM,
-                        *right_tab == Some(RightTab::Project),
-                        || {
-                            *right_tab = if *right_tab == Some(RightTab::Project) {
-                                None
-                            } else {
-                                Some(RightTab::Project)
-                            };
-                        },
-                    );
 
                     ui.add_space(4.0);
 

@@ -103,7 +103,7 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
     let mut ppq = doc.data.model.meta.ppq as i32;
     let resp = ui.add_sized(
         egui::vec2(80.0, 20.0),
-        egui::DragValue::new(&mut ppq).range(1..=32767),
+        crate::widgets::numeric_input::decimal_drag_value(&mut ppq).range(1..=32767),
     );
     if resp.gained_focus() || (resp.drag_started() && !doc.edit.pending_edits.has(resp.id.value())) {
         begin_edit(&mut doc.edit.pending_edits, resp.id.value(), &doc.data.model.meta.ppq.to_string());
@@ -151,7 +151,7 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
     let mut zstd_level = doc.data.model.meta.compression_level as i32;
     let resp = ui.add_sized(
         egui::vec2(60.0, 20.0),
-        egui::DragValue::new(&mut zstd_level).range(0..=22),
+        crate::widgets::numeric_input::decimal_drag_value(&mut zstd_level).range(0..=22),
     );
     if resp.gained_focus() || (resp.drag_started() && !doc.edit.pending_edits.has(resp.id.value())) {
         begin_edit(&mut doc.edit.pending_edits, resp.id.value(), &doc.data.model.meta.compression_level.to_string());

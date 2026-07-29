@@ -58,7 +58,7 @@ pub(super) fn show_anchor_info(
     let mut edit_tick = tick as f64;
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new(t!("anchor.tick").as_ref()).size(11.0).color(egui::Color32::GRAY));
-        let resp = ui.add(egui::DragValue::new(&mut edit_tick).range(0..=u32::MAX as i64).speed(1.0));
+        let resp = ui.add(crate::widgets::numeric_input::decimal_drag_value(&mut edit_tick).range(0..=u32::MAX as i64).speed(1.0));
         if resp.gained_focus() {
             guard.gained(ui, doc);
         }
@@ -86,7 +86,7 @@ pub(super) fn show_anchor_info(
     let mut edit_value = value as f64;
     ui.horizontal(|ui| {
         ui.label(egui::RichText::new(t!("anchor.value").as_ref()).size(11.0).color(egui::Color32::GRAY));
-        let resp = ui.add(egui::DragValue::new(&mut edit_value).range(0.0..=max_val as f64).speed(1.0));
+        let resp = ui.add(crate::widgets::numeric_input::decimal_drag_value(&mut edit_value).range(0.0..=max_val as f64).speed(1.0));
         if resp.gained_focus() {
             guard.gained(ui, doc);
         }
@@ -140,7 +140,7 @@ pub(super) fn show_anchor_info(
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new(t!("anchor.x1").as_ref()).size(11.0).color(egui::Color32::GRAY));
             let resp = ui.add(
-                egui::DragValue::new(&mut edit)
+                crate::widgets::numeric_input::decimal_drag_value(&mut edit)
                     .range(0.0..=0.25)
                     .speed(0.01)
                     .fixed_decimals(2),
@@ -169,7 +169,7 @@ pub(super) fn show_anchor_info(
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new(t!("anchor.y1").as_ref()).size(11.0).color(egui::Color32::GRAY));
             let resp = ui.add(
-                egui::DragValue::new(&mut edit)
+                crate::widgets::numeric_input::decimal_drag_value(&mut edit)
                     .range(-0.5..=0.5)
                     .speed(0.01)
                     .fixed_decimals(2),
@@ -198,7 +198,7 @@ pub(super) fn show_anchor_info(
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new(t!("anchor.x2").as_ref()).size(11.0).color(egui::Color32::GRAY));
             let resp = ui.add(
-                egui::DragValue::new(&mut edit)
+                crate::widgets::numeric_input::decimal_drag_value(&mut edit)
                     .range(-0.25..=0.0)
                     .speed(0.01)
                     .fixed_decimals(2),
@@ -227,7 +227,7 @@ pub(super) fn show_anchor_info(
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new(t!("anchor.y2").as_ref()).size(11.0).color(egui::Color32::GRAY));
             let resp = ui.add(
-                egui::DragValue::new(&mut edit)
+                crate::widgets::numeric_input::decimal_drag_value(&mut edit)
                     .range(-0.5..=0.5)
                     .speed(0.01)
                     .fixed_decimals(2),

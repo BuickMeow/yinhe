@@ -16,7 +16,6 @@ use yinhe_types::AutomationTarget;
 pub enum RightTab {
     Info,
     SoundFont,
-    Project,
     Channels,
     EventBrowser,
 }
@@ -100,9 +99,6 @@ pub fn show(
                 }
                 RightTab::SoundFont => {
                     changed |= soundfont::show(ui, audio_settings, doc);
-                }
-                RightTab::Project => {
-                    project_info::show(ui, doc);
                 }
                 RightTab::Channels => {
                     channels_panel::show(ui, doc, audio_settings);

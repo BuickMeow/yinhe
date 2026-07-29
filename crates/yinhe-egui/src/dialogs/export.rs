@@ -335,7 +335,7 @@ pub(crate) fn show_settings_viewport(
                                     ui.label(t!("dialog.export.xsynth_layers").as_ref());
                                     let mut layers = lc_cb.get() as usize;
                                     ui.add(
-                                        egui::DragValue::new(&mut layers)
+                                        crate::widgets::numeric_input::decimal_drag_value(&mut layers)
                                             .range(0..=128)
                                             .speed(1.0),
                                     );

@@ -1,4 +1,5 @@
 pub(crate) mod hover;
+pub mod numeric_input;
 pub mod scrollbar;
 pub mod selection_actions;
 pub mod split_handle;

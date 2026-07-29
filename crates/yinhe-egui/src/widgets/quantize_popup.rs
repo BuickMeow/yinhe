@@ -35,7 +35,7 @@ pub fn show(
             ui.label(t!("quantize.numerator").as_ref());
             let mut n = num;
             if ui
-                .add(egui::DragValue::new(&mut n).range(1..=9999).speed(0.5))
+                .add(crate::widgets::numeric_input::decimal_drag_value(&mut n).range(1..=9999).speed(0.5))
                 .changed()
             {
                 *pending = Some(QuantizePreset::Fraction(n, den));
@@ -43,7 +43,7 @@ pub fn show(
             ui.label(t!("quantize.denominator").as_ref());
             let mut d = den;
             if ui
-                .add(egui::DragValue::new(&mut d).range(1..=9999).speed(0.5))
+                .add(crate::widgets::numeric_input::decimal_drag_value(&mut d).range(1..=9999).speed(0.5))
                 .changed()
             {
                 *pending = Some(QuantizePreset::Fraction(num, d.max(1)));
@@ -64,7 +64,7 @@ pub fn show(
     if let QuantizePreset::Absolute(n) = current {
         let mut val = n;
         if ui
-            .add(egui::DragValue::new(&mut val).range(1..=99999).speed(0.5))
+            .add(crate::widgets::numeric_input::decimal_drag_value(&mut val).range(1..=99999).speed(0.5))
             .changed()
         {
             *pending = Some(QuantizePreset::Absolute(val));

@@ -1016,7 +1016,7 @@ fn show_target_combo(
                                 _ => 0,
                             };
                             let old_cc = cc_input;
-                            ui.add(egui::DragValue::new(&mut cc_input).range(0..=127).speed(1));
+                            ui.add(crate::widgets::numeric_input::decimal_drag_value(&mut cc_input).range(0..=127).speed(1));
                             if cc_input != old_cc {
                                 panel.selected_target = AutomationTarget::CC { controller: cc_input as u8 };
                                 panel.show_velocity = false;
