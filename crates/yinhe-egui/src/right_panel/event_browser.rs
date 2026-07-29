@@ -14,6 +14,7 @@
 mod bar_lookup;
 mod detail;
 mod edit;
+mod edit_ops;
 mod state;
 mod table;
 mod tree;

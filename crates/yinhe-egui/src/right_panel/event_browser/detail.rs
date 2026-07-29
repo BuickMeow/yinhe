@@ -11,9 +11,15 @@ use yinhe_types::AutomationTarget;
 
 use super::bar_lookup::BarLookup;
 use super::edit::{apply_automation_popups, apply_keysig_popups, apply_note_popups, apply_text_popups, apply_timesig_popups};
+use super::edit_ops::{
+    apply_automation_ops, apply_chord_ops, apply_conductor_chord_ops, apply_conductor_lyrics_ops,
+    apply_keysig_ops, apply_lyrics_ops, apply_marker_ops, apply_notes_ops, apply_pc_ops,
+    apply_timesig_ops,
+};
 use super::state::{EditRequest, EventBrowserState, JumpRequest, NoteRef, PulseKind, SelectedItem, TextEventKind};
 use super::table::{
-    build_table, cell_editable, cell_text, shape_text,
+    build_table, cell_editable, cell_row_header, cell_text, empty_state_add_button,
+    handle_delete_key, shape_text,
     paginate, render_pager, take_row_click, total_pages, AutomationEventOwned,
 };
 
@@ -110,25 +116,32 @@ fn show_automation_detail(
     });
     ui.add_space(2.0);
 
-    build_table(ui, "eb_auto", &[
-        ("#", 40.0),
-        (t!("event_browser.header.tick").as_ref(), 70.0),
-        (t!("event_browser.header.position").as_ref(), 80.0),
-        (t!("event_browser.header.value").as_ref(), 60.0),
-        (t!("event_browser.header.shape").as_ref(), 130.0),
-    ], page_items.len(), |i, row, click_key| {
-        let e = &page_items[i];
-        cell_text(row, format!("{}", page_start + i + 1), click_key, i);
-        cell_editable(row, "eb_auto_edit", i, format!("{}", e.tick),
-            EditRequest::AutoTick { tick: e.tick, value: e.value }, click_key);
-        cell_text(row, bar_lookup.format(e.tick), click_key, i);
-        cell_editable(row, "eb_auto_edit", i, format!("{}", e.value),
-            EditRequest::AutoValue { tick: e.tick, value: e.value }, click_key);
-        cell_editable(row, "eb_auto_edit", i, shape_text(e.shape),
-            EditRequest::AutoShape { tick: e.tick, shape: e.shape }, click_key);
-    });
+    if total == 0 {
+        empty_state_add_button(ui, "eb_auto_edit");
+    } else {
+        let page_ticks: Vec<u32> = page_items.iter().map(|e| e.tick).collect();
+        build_table(ui, "eb_auto", &[
+            ("#", 40.0),
+            (t!("event_browser.header.tick").as_ref(), 70.0),
+            (t!("event_browser.header.position").as_ref(), 80.0),
+            (t!("event_browser.header.value").as_ref(), 60.0),
+            (t!("event_browser.header.shape").as_ref(), 130.0),
+        ], page_items.len(), |i, row, click_key| {
+            let e = &page_items[i];
+            cell_row_header(row, state, "eb_auto_edit", i, page_start, e.tick, &page_ticks, click_key);
+            cell_editable(row, "eb_auto_edit", i, format!("{}", e.tick),
+                EditRequest::AutoTick { tick: e.tick, value: e.value }, click_key);
+            cell_text(row, bar_lookup.format(e.tick), click_key, i);
+            cell_editable(row, "eb_auto_edit", i, format!("{}", e.value),
+                EditRequest::AutoValue { tick: e.tick, value: e.value }, click_key);
+            cell_editable(row, "eb_auto_edit", i, shape_text(e.shape),
+                EditRequest::AutoShape { tick: e.tick, shape: e.shape }, click_key);
+        });
+        handle_delete_key(ui, "eb_auto_edit", !state.selected_ticks.is_empty());
+    }
 
     apply_automation_popups(ui, doc, "eb_auto_edit", track, lane_idx, target);
+    apply_automation_ops(ui, doc, state, "eb_auto_edit", track, target);
 
     // Automation：仅跳转不闪烁；Tempo 不切 track（note=None）
     let note = if matches!(target, AutomationTarget::Tempo) { None } else { Some((track, 0)) };
@@ -160,25 +173,32 @@ fn show_timesig_detail(
         }
     });
     ui.add_space(2.0);
-    build_table(ui, "eb_ts", &[
-        ("#", 40.0),
-        (t!("event_browser.header.tick").as_ref(), 70.0),
-        (t!("event_browser.header.position").as_ref(), 80.0),
-        ("分子", 50.0),
-        ("分母", 50.0),
-    ], page_items.len(), |i, row, click_key| {
-        let e = &page_items[i];
-        let denom = 1u32 << e.denominator as u32;
-        cell_text(row, format!("{}", page_start + i + 1), click_key, i);
-        cell_editable(row, "eb_ts_edit", i, format!("{}", e.tick),
-            EditRequest::TimeSigTick { tick: e.tick }, click_key);
-        cell_text(row, bar_lookup.format(e.tick), click_key, i);
-        cell_editable(row, "eb_ts_edit", i, format!("{}", e.numerator),
-            EditRequest::TimeSigNumerator { tick: e.tick }, click_key);
-        cell_editable(row, "eb_ts_edit", i, format!("{}", denom),
-            EditRequest::TimeSigDenominator { tick: e.tick }, click_key);
-    });
+    if total == 0 {
+        empty_state_add_button(ui, "eb_ts_edit");
+    } else {
+        let page_ticks: Vec<u32> = page_items.iter().map(|e| e.tick).collect();
+        build_table(ui, "eb_ts", &[
+            ("#", 40.0),
+            (t!("event_browser.header.tick").as_ref(), 70.0),
+            (t!("event_browser.header.position").as_ref(), 80.0),
+            ("分子", 50.0),
+            ("分母", 50.0),
+        ], page_items.len(), |i, row, click_key| {
+            let e = &page_items[i];
+            let denom = 1u32 << e.denominator as u32;
+            cell_row_header(row, state, "eb_ts_edit", i, page_start, e.tick, &page_ticks, click_key);
+            cell_editable(row, "eb_ts_edit", i, format!("{}", e.tick),
+                EditRequest::TimeSigTick { tick: e.tick }, click_key);
+            cell_text(row, bar_lookup.format(e.tick), click_key, i);
+            cell_editable(row, "eb_ts_edit", i, format!("{}", e.numerator),
+                EditRequest::TimeSigNumerator { tick: e.tick }, click_key);
+            cell_editable(row, "eb_ts_edit", i, format!("{}", denom),
+                EditRequest::TimeSigDenominator { tick: e.tick }, click_key);
+        });
+        handle_delete_key(ui, "eb_ts_edit", !state.selected_ticks.is_empty());
+    }
     apply_timesig_popups(ui, doc, "eb_ts_edit");
+    apply_timesig_ops(ui, doc, state, "eb_ts_edit");
     // TimeSig：竖线闪烁
     take_row_click(ui, "eb_ts").map(|i| JumpRequest {
         tick: page_items[i].tick,
@@ -208,26 +228,33 @@ fn show_keysig_detail(
         }
     });
     ui.add_space(2.0);
-    build_table(ui, "eb_ks", &[
-        ("#", 40.0),
-        (t!("event_browser.header.tick").as_ref(), 70.0),
-        (t!("event_browser.header.position").as_ref(), 80.0),
-        ("调号", 100.0),
-        ("根音", 60.0),
-        ("音阶", 80.0),
-    ], page_items.len(), |i, row, click_key| {
-        let e = &page_items[i];
-        cell_text(row, format!("{}", page_start + i + 1), click_key, i);
-        cell_editable(row, "eb_ks_edit", i, format!("{}", e.tick),
-            EditRequest::KeySigTick { tick: e.tick }, click_key);
-        cell_text(row, bar_lookup.format(e.tick), click_key, i);
-        cell_text(row, keysig_text(e.root, e.scale), click_key, i);
-        cell_editable(row, "eb_ks_edit", i, format!("{} ({})", ROOT_NAMES[e.root as usize % 12], e.root),
-            EditRequest::KeySigRoot { tick: e.tick }, click_key);
-        cell_editable(row, "eb_ks_edit", i, e.scale.display_name(),
-            EditRequest::KeySigScale { tick: e.tick }, click_key);
-    });
+    if total == 0 {
+        empty_state_add_button(ui, "eb_ks_edit");
+    } else {
+        let page_ticks: Vec<u32> = page_items.iter().map(|e| e.tick).collect();
+        build_table(ui, "eb_ks", &[
+            ("#", 40.0),
+            (t!("event_browser.header.tick").as_ref(), 70.0),
+            (t!("event_browser.header.position").as_ref(), 80.0),
+            ("调号", 100.0),
+            ("根音", 60.0),
+            ("音阶", 80.0),
+        ], page_items.len(), |i, row, click_key| {
+            let e = &page_items[i];
+            cell_row_header(row, state, "eb_ks_edit", i, page_start, e.tick, &page_ticks, click_key);
+            cell_editable(row, "eb_ks_edit", i, format!("{}", e.tick),
+                EditRequest::KeySigTick { tick: e.tick }, click_key);
+            cell_text(row, bar_lookup.format(e.tick), click_key, i);
+            cell_text(row, keysig_text(e.root, e.scale), click_key, i);
+            cell_editable(row, "eb_ks_edit", i, format!("{} ({})", ROOT_NAMES[e.root as usize % 12], e.root),
+                EditRequest::KeySigRoot { tick: e.tick }, click_key);
+            cell_editable(row, "eb_ks_edit", i, e.scale.display_name(),
+                EditRequest::KeySigScale { tick: e.tick }, click_key);
+        });
+        handle_delete_key(ui, "eb_ks_edit", !state.selected_ticks.is_empty());
+    }
     apply_keysig_popups(ui, doc, "eb_ks_edit");
+    apply_keysig_ops(ui, doc, state, "eb_ks_edit");
     take_row_click(ui, "eb_ks").map(|i| JumpRequest {
         tick: page_items[i].tick,
         note: None,
@@ -284,21 +311,35 @@ fn show_text_events_detail(
     });
     ui.add_space(2.0);
     let edit_salt = format!("{}_edit", table_id);
-    build_table(ui, table_id, &[
-        ("#", 40.0),
-        (t!("event_browser.header.tick").as_ref(), 70.0),
-        (t!("event_browser.header.position").as_ref(), 80.0),
-        (label, 200.0),
-    ], page_items.len(), |i, row, click_key| {
-        let (tick, text) = &page_items[i];
-        cell_text(row, format!("{}", page_start + i + 1), click_key, i);
-        cell_editable(row, &edit_salt, i, format!("{}", tick),
-            EditRequest::TextEventTick { kind, tick: *tick }, click_key);
-        cell_text(row, bar_lookup.format(*tick), click_key, i);
-        cell_editable(row, &edit_salt, i, text.clone(),
-            EditRequest::TextEventText { kind, tick: *tick }, click_key);
-    });
+    if total == 0 {
+        empty_state_add_button(ui, &edit_salt);
+    } else {
+        let page_ticks: Vec<u32> = page_items.iter().map(|(t, _)| *t).collect();
+        build_table(ui, table_id, &[
+            ("#", 40.0),
+            (t!("event_browser.header.tick").as_ref(), 70.0),
+            (t!("event_browser.header.position").as_ref(), 80.0),
+            (label, 200.0),
+        ], page_items.len(), |i, row, click_key| {
+            let (tick, text) = &page_items[i];
+            cell_row_header(row, state, &edit_salt, i, page_start, *tick, &page_ticks, click_key);
+            cell_editable(row, &edit_salt, i, format!("{}", tick),
+                EditRequest::TextEventTick { kind, tick: *tick }, click_key);
+            cell_text(row, bar_lookup.format(*tick), click_key, i);
+            cell_editable(row, &edit_salt, i, text.clone(),
+                EditRequest::TextEventText { kind, tick: *tick }, click_key);
+        });
+        handle_delete_key(ui, &edit_salt, !state.selected_ticks.is_empty());
+    }
     apply_text_popups(ui, doc, &edit_salt);
+    // 分派删除/插入操作
+    match kind {
+        TextEventKind::Marker => apply_marker_ops(ui, doc, state, &edit_salt),
+        TextEventKind::ConductorLyrics => apply_conductor_lyrics_ops(ui, doc, state, &edit_salt),
+        TextEventKind::ConductorChord => apply_conductor_chord_ops(ui, doc, state, &edit_salt),
+        TextEventKind::Lyrics { track } => apply_lyrics_ops(ui, doc, state, &edit_salt, track),
+        TextEventKind::Chord { track } => apply_chord_ops(ui, doc, state, &edit_salt, track),
+    }
     take_row_click(ui, table_id).map(|i| JumpRequest {
         tick: page_items[i].0,
         note: None,
@@ -347,43 +388,50 @@ fn show_notes_detail(
         }
     });
     ui.add_space(2.0);
-    build_table(ui, "eb_notes", &[
-        ("#", 40.0),
-        ("id", 70.0),
-        (t!("event_browser.header.tick").as_ref(), 70.0),
-        (t!("event_browser.header.position").as_ref(), 80.0),
-        ("gate", 60.0),
-        (t!("event_browser.header.end_tick").as_ref(), 80.0),
-        ("结束位置", 90.0),
-        ("键位", 50.0),
-        ("力度", 50.0),
-    ], page_notes.len(), |i, row, click_key| {
-        let (n, _key, _trk) = &page_notes[i];
-        let note_ref = NoteRef {
-            id: n.id,
-            start_tick: n.start_tick,
-            end_tick: n.end_tick,
-            key: n.key,
-            velocity: n.velocity,
-            track,
-        };
-        let gate = n.end_tick.saturating_sub(n.start_tick);
-        cell_text(row, format!("{}", page_start + i + 1), click_key, i);
-        cell_text(row, format!("#{}", n.id), click_key, i);
-        cell_editable(row, "eb_notes_edit", i, format!("{}", n.start_tick),
-            EditRequest::NoteStartTick { note: note_ref }, click_key);
-        cell_text(row, bar_lookup.format(n.start_tick), click_key, i);
-        cell_editable(row, "eb_notes_edit", i, format!("{}", gate),
-            EditRequest::NoteGate { note: note_ref }, click_key);
-        cell_editable(row, "eb_notes_edit", i, format!("{}", n.end_tick),
-            EditRequest::NoteEndTick { note: note_ref }, click_key);
-        cell_text(row, bar_lookup.format(n.end_tick), click_key, i);
-        cell_editable(row, "eb_notes_edit", i, format!("{}", n.key),
-            EditRequest::NoteKey { note: note_ref }, click_key);
-        cell_editable(row, "eb_notes_edit", i, format!("{}", n.velocity),
-            EditRequest::NoteVelocity { note: note_ref }, click_key);
-    });
+    if total == 0 {
+        empty_state_add_button(ui, "eb_notes_edit");
+    } else {
+        let page_ticks: Vec<u32> = page_notes.iter().map(|(n, _, _)| n.start_tick).collect();
+        build_table(ui, "eb_notes", &[
+            ("#", 40.0),
+            ("id", 70.0),
+            (t!("event_browser.header.tick").as_ref(), 70.0),
+            (t!("event_browser.header.position").as_ref(), 80.0),
+            ("gate", 60.0),
+            (t!("event_browser.header.end_tick").as_ref(), 80.0),
+            ("结束位置", 90.0),
+            ("键位", 50.0),
+            ("力度", 50.0),
+        ], page_notes.len(), |i, row, click_key| {
+            let (n, _key, _trk) = &page_notes[i];
+            let note_ref = NoteRef {
+                id: n.id,
+                start_tick: n.start_tick,
+                end_tick: n.end_tick,
+                key: n.key,
+                velocity: n.velocity,
+                track,
+            };
+            let gate = n.end_tick.saturating_sub(n.start_tick);
+            cell_row_header(row, state, "eb_notes_edit", i, page_start, n.start_tick, &page_ticks, click_key);
+            cell_text(row, format!("#{}", n.id), click_key, i);
+            cell_editable(row, "eb_notes_edit", i, format!("{}", n.start_tick),
+                EditRequest::NoteStartTick { note: note_ref }, click_key);
+            cell_text(row, bar_lookup.format(n.start_tick), click_key, i);
+            cell_editable(row, "eb_notes_edit", i, format!("{}", gate),
+                EditRequest::NoteGate { note: note_ref }, click_key);
+            cell_editable(row, "eb_notes_edit", i, format!("{}", n.end_tick),
+                EditRequest::NoteEndTick { note: note_ref }, click_key);
+            cell_text(row, bar_lookup.format(n.end_tick), click_key, i);
+            cell_editable(row, "eb_notes_edit", i, format!("{}", n.key),
+                EditRequest::NoteKey { note: note_ref }, click_key);
+            cell_editable(row, "eb_notes_edit", i, format!("{}", n.velocity),
+                EditRequest::NoteVelocity { note: note_ref }, click_key);
+        });
+        handle_delete_key(ui, "eb_notes_edit", !state.selected_ticks.is_empty());
+    }
     apply_note_popups(ui, doc, "eb_notes_edit");
+    apply_notes_ops(ui, doc, state, "eb_notes_edit", track);
     // 音符：矩形闪烁 + 切到音符所在 track
     take_row_click(ui, "eb_notes").map(|i| {
         let (n, _key, _trk) = &page_notes[i];
@@ -405,8 +453,8 @@ fn show_pc_detail(
     track: u16,
 ) -> Option<JumpRequest> {
     let t = track as usize;
-    let mut events: Vec<&yinhe_core::PcEvent> = doc.data.model.tracks.get(t)
-        .map(|td| td.program_change.iter().collect())
+    let mut events: Vec<yinhe_types::PcEvent> = doc.data.model.tracks.get(t)
+        .map(|td| td.program_change.iter().copied().collect())
         .unwrap_or_default();
     events.sort_by_key(|e| e.tick);
     let (page, page_start, page_items) = paginate(state, &events);
@@ -419,18 +467,25 @@ fn show_pc_detail(
         }
     });
     ui.add_space(2.0);
-    build_table(ui, "eb_pc", &[
-        ("#", 40.0),
-        (t!("event_browser.header.tick").as_ref(), 70.0),
-        (t!("event_browser.header.position").as_ref(), 80.0),
-        ("音色", 50.0),
-    ], page_items.len(), |i, row, click_key| {
-        let e = page_items[i];
-        cell_text(row, format!("{}", page_start + i + 1), click_key, i);
-        cell_text(row, format!("{}", e.tick), click_key, i);
-        cell_text(row, bar_lookup.format(e.tick), click_key, i);
-        cell_text(row, format!("{}", e.program), click_key, i);
-    });
+    if total == 0 {
+        empty_state_add_button(ui, "eb_pc_edit");
+    } else {
+        let page_ticks: Vec<u32> = page_items.iter().map(|e| e.tick).collect();
+        build_table(ui, "eb_pc", &[
+            ("#", 40.0),
+            (t!("event_browser.header.tick").as_ref(), 70.0),
+            (t!("event_browser.header.position").as_ref(), 80.0),
+            ("音色", 50.0),
+        ], page_items.len(), |i, row, click_key| {
+            let e = page_items[i];
+            cell_row_header(row, state, "eb_pc_edit", i, page_start, e.tick, &page_ticks, click_key);
+            cell_text(row, format!("{}", e.tick), click_key, i);
+            cell_text(row, bar_lookup.format(e.tick), click_key, i);
+            cell_text(row, format!("{}", e.program), click_key, i);
+        });
+        handle_delete_key(ui, "eb_pc_edit", !state.selected_ticks.is_empty());
+    }
+    apply_pc_ops(ui, doc, state, "eb_pc_edit", track);
     // PC：切到所在 track，仅跳转不闪烁
     take_row_click(ui, "eb_pc").map(|i| JumpRequest {
         tick: page_items[i].tick,

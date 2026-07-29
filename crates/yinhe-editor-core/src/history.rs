@@ -119,6 +119,12 @@ pub enum UndoAction {
         old: Vec<yinhe_types::ChordEvent>,
         new: Vec<yinhe_types::ChordEvent>,
     },
+    /// Program Change 事件列表整体替换（per-track）。
+    ProgramChange {
+        track: u16,
+        old: Vec<yinhe_types::PcEvent>,
+        new: Vec<yinhe_types::PcEvent>,
+    },
     /// Track structure changed (add/remove/move track).
     /// Stores full before/after track lists (metadata only) and
     /// a remap table: `note_remap[old_track_idx] = new_track_idx` (or u16::MAX if deleted).
@@ -207,6 +213,10 @@ impl UndoAction {
             UndoAction::ConductorChord { mut old, mut new } => {
                 std::mem::swap(&mut old, &mut new);
                 UndoAction::ConductorChord { old, new }
+            }
+            UndoAction::ProgramChange { track, mut old, mut new } => {
+                std::mem::swap(&mut old, &mut new);
+                UndoAction::ProgramChange { track, old, new }
             }
             UndoAction::TrackStructure {
                 mut tracks_before,

@@ -10,12 +10,12 @@
 //!    用 `EditRequest` 枚举区分类型，由 `apply_edit_popups` 取出分派。
 
 use eframe::egui;
-use egui_material_icons::icons::{ICON_CHEVRON_LEFT as ICON_PREV, ICON_CHEVRON_RIGHT as ICON_NEXT};
+use egui_material_icons::icons::{ICON_CHEVRON_LEFT as ICON_PREV, ICON_CHEVRON_RIGHT as ICON_NEXT, ICON_ADD};
 use egui_extras::{Column, TableBuilder, TableRow};
 
 use yinhe_types::SegmentShape;
 
-use super::state::EditRequest;
+use super::state::{EditRequest, EventBrowserState};
 
 /// owned 副本，避免不可变借用阻塞后续 `&mut doc` 编辑。
 #[derive(Clone, Copy)]
@@ -97,6 +97,165 @@ pub(super) fn cell_text(
             ui.ctx().memory_mut(|m| m.data.insert_temp(click_key, row_idx));
         }
     });
+}
+
+/// 渲染行首"#"列：序号 + 行多选 + 右键菜单（上方插入/下方插入/删除）。
+///
+/// - 左键单击：选中该行（Ctrl 切换，Shift 范围选择），并触发跳转
+/// - 右键：弹出菜单（在上方插入 / 在下方插入 / 删除该行），同时选中该行
+///
+/// `tick`：该行事件 tick（用于多选状态记录）
+/// `all_ticks`：当前页所有行的 tick（用于 Shift 范围选择）
+pub(super) fn cell_row_header(
+    row: &mut TableRow,
+    state: &mut EventBrowserState,
+    id_salt: &str,
+    row_idx: usize,
+    page_start: usize,
+    tick: u32,
+    all_ticks: &[u32],
+    click_key: egui::Id,
+) {
+    row.col(|ui| {
+        let is_selected = state.selected_ticks.contains(&tick);
+        let label_color = if is_selected {
+            egui::Color32::WHITE
+        } else {
+            egui::Color32::from_gray(180)
+        };
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(format!("{}", page_start + row_idx + 1))
+                    .size(11.0)
+                    .monospace()
+                    .color(label_color),
+            )
+            .selectable(false),
+        );
+        let cell_rect = ui.max_rect();
+        let id = ui.id().with("rowhdr").with(row_idx);
+        let resp = ui.interact(cell_rect, id, egui::Sense::click());
+
+        // 左键：行选择（Ctrl/Shift 多选）
+        if resp.clicked() {
+            let modifiers = ui.ctx().input(|i| i.modifiers);
+            handle_row_click(state, tick, all_ticks, modifiers);
+            ui.ctx().memory_mut(|m| m.data.insert_temp(click_key, row_idx));
+        }
+
+        // 右键：选中该行 + 弹出菜单
+        if resp.secondary_clicked() {
+            if !state.selected_ticks.contains(&tick) {
+                handle_row_click(state, tick, all_ticks, egui::Modifiers::NONE);
+            }
+        }
+        let edit_key = egui::Id::new((id_salt, "edit"));
+        resp.context_menu(|ui| {
+            if ui.button("在上方插入").clicked() {
+                ui.ctx().memory_mut(|m| {
+                    m.data.insert_temp(edit_key, EditRequest::InsertAbove { tick });
+                });
+                ui.close();
+            }
+            if ui.button("在下方插入").clicked() {
+                ui.ctx().memory_mut(|m| {
+                    m.data.insert_temp(edit_key, EditRequest::InsertBelow { tick });
+                });
+                ui.close();
+            }
+            ui.separator();
+            if ui.button("删除").clicked() {
+                ui.ctx().memory_mut(|m| {
+                    m.data.insert_temp(edit_key, EditRequest::DeleteSelected);
+                });
+                ui.close();
+            }
+        });
+    });
+}
+
+/// 处理行点击的多选逻辑（Ctrl 切换、Shift 范围、普通单选）。
+fn handle_row_click(
+    state: &mut EventBrowserState,
+    tick: u32,
+    all_ticks: &[u32],
+    modifiers: egui::Modifiers,
+) {
+    if modifiers.ctrl || modifiers.command {
+        // Ctrl：切换该行选中
+        if state.selected_ticks.contains(&tick) {
+            state.selected_ticks.remove(&tick);
+        } else {
+            state.selected_ticks.insert(tick);
+        }
+        state.last_clicked_tick = Some(tick);
+    } else if modifiers.shift {
+        // Shift：范围选择（从上次点击到当前）
+        if let Some(anchor) = state.last_clicked_tick {
+            let (lo, hi) = if anchor <= tick { (anchor, tick) } else { (tick, anchor) };
+            // 在 all_ticks 中找范围内的所有 tick
+            for &t in all_ticks {
+                if t >= lo && t <= hi {
+                    state.selected_ticks.insert(t);
+                }
+            }
+        } else {
+            state.selected_ticks.clear();
+            state.selected_ticks.insert(tick);
+        }
+    } else {
+        // 普通单击：只选该行
+        state.selected_ticks.clear();
+        state.selected_ticks.insert(tick);
+        state.last_clicked_tick = Some(tick);
+    }
+}
+
+/// 空表格的加号按钮：点击新建第一个事件。
+///
+/// 返回 true 表示用户点击了加号（触发 `EditRequest::InsertFirst`）。
+pub(super) fn empty_state_add_button(ui: &mut egui::Ui, id_salt: &str) -> bool {
+    let mut clicked = false;
+    ui.vertical_centered(|ui| {
+        ui.add_space(40.0);
+        let btn = egui::Button::new(
+            egui::RichText::new(ICON_ADD).size(24.0).color(egui::Color32::from_gray(200)),
+        )
+        .fill(egui::Color32::TRANSPARENT)
+        .stroke(egui::Stroke::NONE);
+        if ui.add(btn).clicked() {
+            clicked = true;
+        }
+        ui.label(
+            egui::RichText::new("点击新建第一个事件")
+                .size(11.0)
+                .color(egui::Color32::from_gray(140)),
+        );
+    });
+    if clicked {
+        let edit_key = egui::Id::new((id_salt, "edit"));
+        ui.ctx().memory_mut(|m| m.data.insert_temp(edit_key, EditRequest::InsertFirst));
+    }
+    clicked
+}
+
+/// 处理 Delete/Backspace 键盘删除（当表格区域有焦点时）。
+///
+/// 返回 true 表示触发了删除。
+pub(super) fn handle_delete_key(ui: &egui::Ui, id_salt: &str, has_selection: bool) -> bool {
+    if !has_selection {
+        return false;
+    }
+    let delete_pressed = ui.ctx().input(|i| {
+        i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace)
+    });
+    if delete_pressed {
+        let edit_key = egui::Id::new((id_salt, "edit"));
+        ui.ctx().memory_mut(|m| m.data.insert_temp(edit_key, EditRequest::DeleteSelected));
+        true
+    } else {
+        false
+    }
 }
 
 /// 渲染可编辑文本单元格：左键跳转，右键写入 `EditRequest` 到 memory 触发 popup。

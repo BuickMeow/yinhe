@@ -32,6 +32,10 @@ pub struct EventBrowserState {
     pub selected_track: Option<u16>,
     /// 事件列表当前页码（0-based）。切换 selected_item 时重置为 0。
     pub event_page: usize,
+    /// 表格行多选：选中的事件 tick 集合。切换 selected_item 时自动清空。
+    pub selected_ticks: std::collections::HashSet<u32>,
+    /// 上次单击的 tick（用于 Shift 范围选择锚点）。
+    pub last_clicked_tick: Option<u32>,
     pub(super) fingerprint: Option<u64>,
     pub(super) split_ratio: f32,
 }
@@ -122,6 +126,14 @@ pub enum EditRequest {
     TextEventTick { kind: TextEventKind, tick: u32 },
     /// 文本类事件的 text 编辑
     TextEventText { kind: TextEventKind, tick: u32 },
+    /// 删除当前选中的事件（多选批量删除）
+    DeleteSelected,
+    /// 在指定 tick 上方插入新事件（复制该行 tick 的默认值）
+    InsertAbove { tick: u32 },
+    /// 在指定 tick 下方插入新事件（复制该行 tick 的默认值）
+    InsertBelow { tick: u32 },
+    /// 新建第一个事件（空表格加号触发）
+    InsertFirst,
 }
 
 /// 文本类事件种类：Marker / Lyrics / Chord，按归属区分 conductor 级 vs per-track。
@@ -149,6 +161,8 @@ impl Default for EventBrowserState {
             selected_item: None,
             selected_track: None,
             event_page: 0,
+            selected_ticks: Default::default(),
+            last_clicked_tick: None,
             fingerprint: None,
             split_ratio: 0.45,
         }

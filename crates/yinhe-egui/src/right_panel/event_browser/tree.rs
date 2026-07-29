@@ -21,85 +21,67 @@ pub(super) fn render_tree(ui: &mut egui::Ui, doc: &yinhe_editor_core::document::
     render_leaf_item(ui, "project.json", ICON_DESCRIPTION, 0, SelectedItem::ProjectJson, state);
     render_leaf_item(ui, "mapping.json", ICON_DESCRIPTION, 0, SelectedItem::MappingJson, state);
 
-    let has_tempo = !model.conductor.tempo.events.is_empty();
-    let has_ts = !model.conductor.time_sig.is_empty();
-    let has_key_sig = !model.conductor.key_sig.is_empty();
-    let has_markers = !model.conductor.markers.is_empty();
-    let has_cond_lyrics = !model.conductor.lyrics.is_empty();
-    let has_cond_chord = !model.conductor.chord.is_empty();
-    if has_tempo || has_ts || has_key_sig || has_markers || has_cond_lyrics || has_cond_chord {
-        let cond_expanded = state.expanded_keys.contains(&ArchiveKey::Conductor);
-        let child_count = has_tempo as usize
-            + has_ts as usize
-            + has_key_sig as usize
-            + has_markers as usize
-            + has_cond_lyrics as usize
-            + has_cond_chord as usize;
-        if render_dir_row(ui, "Conductor", 0, cond_expanded, child_count) {
-            toggle_key(state, ArchiveKey::Conductor);
-        }
-        if cond_expanded {
-            if has_tempo {
-                render_leaf_item(
-                    ui,
-                    &format!("Tempo ({})", model.conductor.tempo.events.len()),
-                    ICON_SPEED,
-                    1,
-                    SelectedItem::Automation { track: 0, target: AutomationTarget::Tempo },
-                    state,
-                );
-            }
-            if has_ts {
-                render_leaf_item(
-                    ui,
-                    &format!("TimeSig ({})", model.conductor.time_sig.len()),
-                    ICON_SCHEDULE,
-                    1,
-                    SelectedItem::TimeSig,
-                    state,
-                );
-            }
-            if has_key_sig {
-                render_leaf_item(
-                    ui,
-                    &format!("KeySig ({})", model.conductor.key_sig.len()),
-                    ICON_MUSIC_OFF,
-                    1,
-                    SelectedItem::KeySig,
-                    state,
-                );
-            }
-            if has_markers {
-                render_leaf_item(
-                    ui,
-                    &format!("Markers ({})", model.conductor.markers.len()),
-                    ICON_BOOKMARK,
-                    1,
-                    SelectedItem::Markers,
-                    state,
-                );
-            }
-            if has_cond_lyrics {
-                render_leaf_item(
-                    ui,
-                    &format!("Lyrics ({})", model.conductor.lyrics.len()),
-                    ICON_SUBTITLES,
-                    1,
-                    SelectedItem::ConductorLyrics,
-                    state,
-                );
-            }
-            if has_cond_chord {
-                render_leaf_item(
-                    ui,
-                    &format!("Chord ({})", model.conductor.chord.len()),
-                    ICON_LIBRARY_MUSIC,
-                    1,
-                    SelectedItem::ConductorChord,
-                    state,
-                );
-            }
-        }
+    // Conductor 级事件始终显示（即使为 0），方便用户新建第一个事件。
+    let tempo_count = model.conductor.tempo.events.len();
+    let ts_count = model.conductor.time_sig.len();
+    let key_sig_count = model.conductor.key_sig.len();
+    let markers_count = model.conductor.markers.len();
+    let cond_lyrics_count = model.conductor.lyrics.len();
+    let cond_chord_count = model.conductor.chord.len();
+    let cond_expanded = state.expanded_keys.contains(&ArchiveKey::Conductor);
+    let child_count = 6; // 始终 6 个子节点
+    if render_dir_row(ui, "Conductor", 0, cond_expanded, child_count) {
+        toggle_key(state, ArchiveKey::Conductor);
+    }
+    if cond_expanded {
+        render_leaf_item(
+            ui,
+            &format!("Tempo ({})", tempo_count),
+            ICON_SPEED,
+            1,
+            SelectedItem::Automation { track: 0, target: AutomationTarget::Tempo },
+            state,
+        );
+        render_leaf_item(
+            ui,
+            &format!("TimeSig ({})", ts_count),
+            ICON_SCHEDULE,
+            1,
+            SelectedItem::TimeSig,
+            state,
+        );
+        render_leaf_item(
+            ui,
+            &format!("KeySig ({})", key_sig_count),
+            ICON_MUSIC_OFF,
+            1,
+            SelectedItem::KeySig,
+            state,
+        );
+        render_leaf_item(
+            ui,
+            &format!("Markers ({})", markers_count),
+            ICON_BOOKMARK,
+            1,
+            SelectedItem::Markers,
+            state,
+        );
+        render_leaf_item(
+            ui,
+            &format!("Lyrics ({})", cond_lyrics_count),
+            ICON_SUBTITLES,
+            1,
+            SelectedItem::ConductorLyrics,
+            state,
+        );
+        render_leaf_item(
+            ui,
+            &format!("Chord ({})", cond_chord_count),
+            ICON_LIBRARY_MUSIC,
+            1,
+            SelectedItem::ConductorChord,
+            state,
+        );
     }
 
     for (&port, channels) in &groups {
@@ -207,9 +189,8 @@ fn render_track_row(ui: &mut egui::Ui, model: &YinModel, idx: u16, state: &mut E
     }
 
     if expanded {
-        if note_count > 0 {
-            render_leaf_item(ui, &format!("Notes ({})", note_count), ICON_MUSIC_NOTE, 3, SelectedItem::Notes { track: idx }, state);
-        }
+        // per-track 事件始终显示（即使为 0），方便用户新建第一个事件。
+        render_leaf_item(ui, &format!("Notes ({})", note_count), ICON_MUSIC_NOTE, 3, SelectedItem::Notes { track: idx }, state);
         // 所有 automation lane 都作为叶子显示（CC/PB/RPN/NRPN）
         for lane in &track.automation_lanes {
             let icon = automation_icon(&lane.target);
@@ -222,29 +203,23 @@ fn render_track_row(ui: &mut egui::Ui, model: &YinModel, idx: u16, state: &mut E
                 state,
             );
         }
-        if pc_count > 0 {
-            render_leaf_item(ui, &format!("Program Change ({})", pc_count), ICON_PALETTE, 3, SelectedItem::ProgramChange { track: idx }, state);
-        }
-        if !track.lyrics.is_empty() {
-            render_leaf_item(
-                ui,
-                &format!("Lyrics ({})", track.lyrics.len()),
-                ICON_SUBTITLES,
-                3,
-                SelectedItem::Lyrics { track: idx },
-                state,
-            );
-        }
-        if !track.chord.is_empty() {
-            render_leaf_item(
-                ui,
-                &format!("Chord ({})", track.chord.len()),
-                ICON_LIBRARY_MUSIC,
-                3,
-                SelectedItem::Chord { track: idx },
-                state,
-            );
-        }
+        render_leaf_item(ui, &format!("Program Change ({})", pc_count), ICON_PALETTE, 3, SelectedItem::ProgramChange { track: idx }, state);
+        render_leaf_item(
+            ui,
+            &format!("Lyrics ({})", track.lyrics.len()),
+            ICON_SUBTITLES,
+            3,
+            SelectedItem::Lyrics { track: idx },
+            state,
+        );
+        render_leaf_item(
+            ui,
+            &format!("Chord ({})", track.chord.len()),
+            ICON_LIBRARY_MUSIC,
+            3,
+            SelectedItem::Chord { track: idx },
+            state,
+        );
     }
 }
 
@@ -293,6 +268,9 @@ fn render_leaf_item(ui: &mut egui::Ui, name: &str, icon: egui_material_icons::Ma
         state.selected_item = Some(item);
         state.selected_track = None;
         state.event_page = 0;
+        // 切换选中条目时清空行多选状态
+        state.selected_ticks.clear();
+        state.last_clicked_tick = None;
     }
 }
 

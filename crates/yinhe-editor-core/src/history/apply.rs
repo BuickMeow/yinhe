@@ -118,6 +118,14 @@ impl UndoAction {
                 conductor.chord = new.clone();
                 doc.data.bump_revision();
             }
+            UndoAction::ProgramChange { track, old: _, new } => {
+                let model = Arc::make_mut(&mut doc.data.model);
+                if let Some(t) = model.tracks.get_mut(*track as usize) {
+                    let t = Arc::make_mut(t);
+                    t.program_change = new.clone();
+                }
+                doc.data.bump_revision();
+            }
             UndoAction::TrackStructure {
                 tracks_before,
                 tracks_after,
