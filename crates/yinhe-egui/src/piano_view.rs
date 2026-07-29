@@ -10,7 +10,12 @@ use crate::widgets::selection_actions::SelectionAction;
 pub mod automation_panel;
 mod bg;
 mod drag;
+mod gpu_upload;
+mod jump_pulse;
+mod keyboard;
+mod perf;
 mod pencil;
+mod quantize_button;
 
 /// Events emitted by the piano-roll view for the caller to act on.
 pub enum PianoViewEvent {
@@ -372,80 +377,19 @@ pub fn show(
 
     // ── Upload all notes to GPU cull buffer ──
     // Only when GPU cull mode is enabled. CPU build mode skips this entirely.
-    // Strategy: try incremental per-key upload first, fallback to full upload.
-    // - hidden_notes changed → must full upload (affects per-key content)
-    // - revision changed, per-key revision matches → skip (already uploaded)
-    // - revision changed, some keys differ → try incremental (count must match)
-    // - revision changed, count mismatch → full upload
+    // 增量 per-key 上传 → 失败回退全量上传。详见 gpu_upload 模块。
     if use_gpu_cull {
-        // If cull isn't ready yet (e.g. just enabled, or MIDI just loaded),
-        // force a full upload by invalidating the last revision.
-        let cull_was_ready = pianoroll.cull_ready();
-        if !cull_was_ready {
-            *last_cull_revision = 0;
-        }
-        let note_key = yinhe_wgpu::NoteBufferKey::new(revision, track_visible, &hidden_notes);
-        if note_key.value() != *last_cull_revision {
-            if let Some(midi_src) = midi {
-                if !cull_was_ready {
-                    // First-time upload or MIDI just loaded: force full upload.
-                    // (revision/hidden_notes may be unchanged from initial state,
-                    // so the incremental branches below wouldn't trigger.)
-                    let (all_notes, offsets) = yinhe_wgpu::build_all_notes(
-                        midi_src, &hidden_notes, track_visible,
-                    );
-                    pianoroll.upload_all_notes_for_cull(&all_notes, &offsets, note_revisions);
-                } else {
-                    // Check if only hidden_notes changed (revision same, hidden_hash different)
-                    let revision_changed = revision != *last_cull_revision_only;
-                    let hidden_changed = yinhe_wgpu::hash_hidden(&hidden_notes) != *last_hidden_hash;
-
-                    if hidden_changed && !revision_changed {
-                        // Only hidden_notes changed → must full upload
-                        let (all_notes, offsets) = yinhe_wgpu::build_all_notes(
-                            midi_src, &hidden_notes, track_visible,
-                        );
-                        pianoroll.upload_all_notes_for_cull(&all_notes, &offsets, note_revisions);
-                    } else if revision_changed {
-                        // Revision changed → try incremental per-key upload
-                        let uploaded = pianoroll.uploaded_key_revisions();
-                        let dirty_keys: Vec<u8> = (0u8..128)
-                            .filter(|&k| note_revisions[k as usize] != uploaded[k as usize])
-                            .collect();
-
-                        if dirty_keys.is_empty() {
-                            // Revision bumped but no key revisions changed (e.g. conductor-only edit)
-                            // Just update tracking, no re-upload needed.
-                        } else {
-                            // Try incremental: build + upload each dirty key
-                            let mut all_ok = true;
-                            for &key in &dirty_keys {
-                                let key_notes = yinhe_wgpu::build_key_notes(
-                                    midi_src, key, &hidden_notes, track_visible,
-                                );
-                                if !pianoroll.try_incremental_key_upload(
-                                    key, &key_notes, note_revisions[key as usize],
-                                ) {
-                                    all_ok = false;
-                                    break;
-                                }
-                            }
-
-                            if !all_ok {
-                                // Fallback: full upload (some key's count changed)
-                                let (all_notes, offsets) = yinhe_wgpu::build_all_notes(
-                                    midi_src, &hidden_notes, track_visible,
-                                );
-                                pianoroll.upload_all_notes_for_cull(&all_notes, &offsets, note_revisions);
-                            }
-                        }
-                    }
-                }
-            }
-            *last_cull_revision = note_key.value();
-            *last_cull_revision_only = revision;
-            *last_hidden_hash = yinhe_wgpu::hash_hidden(&hidden_notes);
-        }
+        gpu_upload::upload(gpu_upload::GpuUploadState {
+            pianoroll,
+            midi,
+            revision,
+            note_revisions,
+            track_visible,
+            hidden_notes: &hidden_notes,
+            last_cull_revision,
+            last_cull_revision_only,
+            last_hidden_hash,
+        });
     }
 
     // Prepare GPU data (ghost notes are handled separately as a transient overlay)
@@ -572,64 +516,7 @@ pub fn show(
     };
 
     // ── Keyboard (drawn by egui on top of the wgpu texture) ──
-    // 细节描边颜色（暗色，1px）
-    let stroke_color = egui::Color32::from_gray(60);
-    let stroke = egui::Stroke::new(1.0, stroke_color);
-
-    // White keys
-    for key in 0u8..128 {
-        if yinhe_types::is_black_key(key) {
-            continue;
-        }
-        let y = bottom - (key as f32 + 1.0) * kh;
-        if y + kh < 0.0 || y > h_f32 {
-            continue;
-        }
-        let screen_y = content_rect.min.y + y;
-        let (r, g, b) = theme.pr_white_key;
-        let key_rect = egui::Rect::from_min_size(
-            egui::pos2(content_rect.min.x, screen_y),
-            egui::vec2(kb_w, kh),
-        );
-        painter.rect_filled(key_rect, 0.0, egui::Color32::from_rgb(
-            (r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8,
-        ));
-        painter.rect_stroke(key_rect, 0.0, stroke, egui::StrokeKind::Inside);
-
-        // C 位置标注音名（中央 C = C4 = key 60）
-        if key % 12 == 0 {
-            let octave = key / 12;
-            let label = format!("C{}", octave);
-            painter.text(
-                egui::pos2(content_rect.min.x + 3.0, screen_y + kh / 2.0),
-                egui::Align2::LEFT_CENTER,
-                label,
-                egui::FontId::proportional((kh * 0.5).clamp(8.0, 14.0)),
-                egui::Color32::from_gray(90),
-            );
-        }
-    }
-
-    // Black keys on top
-    for key in 0u8..128 {
-        if !yinhe_types::is_black_key(key) {
-            continue;
-        }
-        let y = bottom - (key as f32 + 1.0) * kh;
-        if y + kh < 0.0 || y > h_f32 {
-            continue;
-        }
-        let screen_y = content_rect.min.y + y;
-        let (r, g, b) = theme.pr_black_key;
-        let key_rect = egui::Rect::from_min_size(
-            egui::pos2(content_rect.min.x, screen_y),
-            egui::vec2(kb_w, kh),
-        );
-        painter.rect_filled(key_rect, 0.0, egui::Color32::from_rgb(
-            (r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8,
-        ));
-        painter.rect_stroke(key_rect, 0.0, stroke, egui::StrokeKind::Inside);
-    }
+    keyboard::paint(&painter, content_rect, kb_w, kh, bottom, h_f32, &theme);
 
 
     // ── Playback cursor (drawn by egui on top of the wgpu texture) ──
@@ -869,135 +756,29 @@ pub fn show(
     }
 
     // ── Perf probe: submit per-frame sample ──
-    if let (Some(t0), Some(t1), Some(t2), Some(t3)) =
-        (t_show_start, t_input_end, t_prepare_end, t_paint_end)
-    {
-        let t_end = std::time::Instant::now();
-        let input = t1.saturating_duration_since(t0);
-        let prepare_total = t2.saturating_duration_since(t1);
-        let paint = t3.saturating_duration_since(t2);
-        let misc = t_end.saturating_duration_since(t3);
-        yinhe_memtrace::perf_probe::submit(yinhe_memtrace::perf_probe::FrameSample {
-            input,
-            prep_static: prepare_total,
-            paint,
-            misc,
-            instance_count: 0,
-            follow_mode: match follow_mode {
-                super::view_interaction::FollowMode::None => "None",
-                super::view_interaction::FollowMode::Page => "Page",
-                super::view_interaction::FollowMode::Continuous => "Continuous",
-            },
-            total_notes: midi
-                .map(|m| {
-                    let mut sum = 0u64;
-                    for k in 0..128u8 {
-                        sum += m.key_notes(k).len() as u64;
-                    }
-                    sum
-                })
-                .unwrap_or(0),
-            ppt: view.base.pixels_per_tick,
-            visible_ticks: {
-                let (s, e) = view.visible_tick_range(w as f32);
-                e - s
-            },
-        });
-    }
+    perf::submit(perf::PerfCtx {
+        t_show_start,
+        t_input_end,
+        t_prepare_end,
+        t_paint_end,
+        follow_mode,
+        midi,
+        view,
+        width: w as f32,
+    });
 
     // ── PR quantize button in the top-left corner (left of ruler, above keyboard) ──
-    let mut pr_quantize_event: Option<PianoViewEvent> = None;
-    {
-        let corner_rect = egui::Rect::from_min_size(
-            egui::pos2(rect.min.x, ruler_band_y),
-            egui::vec2(kb_w, RULER_H),
-        );
-        // 背景矩形：与 ruler 带对齐，画在键盘之上（本块在键盘绘制之后执行）
-        ui.painter().rect_filled(corner_rect, 0.0, crate::theme::RULER_BG);
-        // 右侧分隔线（与 ruler 对齐）
-        ui.painter().line_segment(
-            [
-                egui::pos2(corner_rect.max.x, corner_rect.min.y),
-                egui::pos2(corner_rect.max.x, corner_rect.max.y),
-            ],
-            egui::Stroke::new(1.0, crate::theme::RULER_DIVIDER),
-        );
-        let btn_size = 20.0;
-        let btn_rect = egui::Rect::from_center_size(corner_rect.center(), egui::vec2(btn_size, btn_size));
-        let btn_resp = ui.interact(btn_rect, egui::Id::new("pr_quantize_btn"), egui::Sense::click());
-        let hovered = btn_resp.hovered();
-
-        let icon_color = if hovered {
-            crate::theme::ACCENT_ACTIVE
-        } else {
-            egui::Color32::from_gray(160)
-        };
-        ui.painter().text(
-            btn_rect.center(),
-            egui::Align2::CENTER_CENTER,
-            quantize.label(),
-            egui::FontId::proportional(11.0),
-            icon_color,
-        );
-
-        let mut pending_q = None;
-        egui::Popup::from_toggle_button_response(&btn_resp)
-            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-            .show(|ui| {
-                crate::widgets::quantize_popup::show(
-                    ui,
-                    ppq,
-                    quantize,
-                    &mut pending_q,
-                );
-            });
-        if let Some(new_preset) = pending_q {
-            pr_quantize_event = Some(PianoViewEvent::QuantizePreset(new_preset));
-        }
-    }
+    let pr_quantize_event = quantize_button::show(ui, quantize_button::QuantizeBtnCtx {
+        rect_min_x: rect.min.x,
+        ruler_band_y,
+        kb_w,
+        ppq,
+        quantize,
+    });
 
     // ── Jump pulse：事件浏览器跳转后的闪烁高亮 ──
-    // 通过 ctx memory 读取（App 在 main_loop 每帧写入）。
-    // 动画结束后清除，避免无效重绘。
-    let pulse_key = egui::Id::new("jump_pulse");
-    let pulse: Option<crate::view_interaction::JumpPulse> =
-        ui.ctx().memory(|m| m.data.get_temp(pulse_key));
-    if let Some(p) = &pulse {
-        if p.finished() {
-            ui.ctx().memory_mut(|m| m.data.remove::<crate::view_interaction::JumpPulse>(pulse_key));
-        } else {
-            let alpha = p.progress(); // 1 → 0
-            let x = view.tick_to_x(p.tick as f64);
-            use crate::right_panel::event_browser::PulseKind;
-            match p.kind {
-                PulseKind::NoteRect => {
-                    if let Some(key) = p.key {
-                        // 在音符位置画白色描边矩形，不透明度随动画衰减
-                        let y_top = view.key_to_y(key);
-                        let h = view.key_height;
-                        // 矩形宽度：用默认量化间隔，或固定 30px
-                        let w = 30.0;
-                        let rect = egui::Rect::from_min_size(
-                            egui::pos2(music_rect.min.x + x, y_top),
-                            egui::vec2(w, h),
-                        );
-                        let stroke = egui::Stroke::new(2.0, egui::Color32::WHITE.gamma_multiply(alpha));
-                        ui.painter().rect_stroke(rect, 2.0, stroke, egui::StrokeKind::Middle);
-                    }
-                }
-                PulseKind::TimesigLine => {
-                    // 贯穿 music_rect 高度的白色竖线
-                    let stroke = egui::Stroke::new(2.0, egui::Color32::WHITE.gamma_multiply(alpha));
-                    ui.painter().line_segment(
-                        [egui::pos2(music_rect.min.x + x, music_rect.min.y),
-                         egui::pos2(music_rect.min.x + x, music_rect.max.y)],
-                        stroke,
-                    );
-                }
-            }
-            ui.ctx().request_repaint();
-        }
-    }
+    // 通过 ctx memory 读取（App 在 main_loop 每帧写入）。详见 jump_pulse 模块。
+    jump_pulse::paint(ui, view, music_rect);
 
     sel_action
         .map(PianoViewEvent::SelectionAction)
