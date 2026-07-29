@@ -192,6 +192,8 @@ event_browser.edit_end_tick: "終了ティックを編集"
 event_browser.edit_gate: "ゲートを編集"
 event_browser.edit_key: "キーを編集"
 event_browser.edit_velocity: "ベロシティを編集"
+event_browser.edit_numerator: "分子を編集"
+event_browser.edit_denominator: "分母を編集(2^n)"
 event_browser.shape_step: "離散 (Step)"
 
 # ── アンカーパネル ──
@@ -309,6 +311,7 @@ undo.edit_anchor_x1: "オートメーションアンカー X1を編集"
 undo.edit_anchor_y1: "オートメーションアンカー Y1を編集"
 undo.edit_anchor_x2: "オートメーションアンカー X2を編集"
 undo.edit_anchor_y2: "オートメーションアンカー Y2を編集"
+undo.edit_timesig: "拍子記号を編集"
 
 # ── ファイルダイアログ ──
 file_dialog.all_supported: "対応するすべての形式"

@@ -45,9 +45,17 @@ pub enum SelectedItem {
     ProjectJson,
     MappingJson,
     TimeSig,
+    /// 调号事件（全局，conductor 级）
+    KeySig,
+    /// 标记事件（全局，conductor 级）
+    Markers,
     Notes { track: u16 },
     ProgramChange { track: u16 },
     Automation { track: u16, target: AutomationTarget },
+    /// 歌词事件（per-track）
+    Lyrics { track: u16 },
+    /// 和弦事件（per-track）
+    Chord { track: u16 },
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -94,6 +102,12 @@ pub enum EditRequest {
     NoteKey { note: NoteRef },
     /// 音符 velocity 编辑
     NoteVelocity { note: NoteRef },
+    /// TimeSig 的 tick 编辑（按 tick 寻址，避免 sort 后 idx 失效）
+    TimeSigTick { tick: u32 },
+    /// TimeSig 的 numerator 编辑
+    TimeSigNumerator { tick: u32 },
+    /// TimeSig 的 denominator 编辑（2 的幂次：2 = 4, 3 = 8）
+    TimeSigDenominator { tick: u32 },
 }
 
 impl Default for EventBrowserState {

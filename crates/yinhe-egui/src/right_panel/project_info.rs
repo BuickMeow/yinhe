@@ -41,7 +41,11 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
     }
     if resp.changed() {
         let model = std::sync::Arc::make_mut(&mut doc.data.model);
-        model.meta.name = name;
+        model.meta.name = name.clone();
+        // SMF 标准：track 0 name = song title，同步更新
+        if let Some(track) = model.tracks.get_mut(0) {
+            std::sync::Arc::make_mut(track).name = name;
+        }
     }
     if resp.lost_focus() {
         commit_project_name(

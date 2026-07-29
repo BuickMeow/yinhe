@@ -30,11 +30,21 @@ impl UndoAction {
                 if let Some(track) = model.tracks.get_mut(*track_idx) {
                     let track = Arc::make_mut(track);
                     track.name = new.clone();
+                    // SMF 标准：track 0 的 TrackName = song title。
+                    // 编辑 track 0 name 时同步到 meta.name，保持一致。
+                    if *track_idx == 0 {
+                        model.meta.name = new.clone();
+                    }
                 }
             }
             UndoAction::ProjectName { old: _, new } => {
                 let model = Arc::make_mut(&mut doc.data.model);
                 model.meta.name = new.clone();
+                // SMF 标准：track 0 的 TrackName = song title。
+                // 编辑 project name 时同步到 track 0 name，保持一致。
+                if let Some(track) = model.tracks.get_mut(0) {
+                    Arc::make_mut(track).name = new.clone();
+                }
             }
             UndoAction::ProjectArtist { old: _, new } => {
                 let model = Arc::make_mut(&mut doc.data.model);
@@ -57,6 +67,16 @@ impl UndoAction {
             UndoAction::CompressionLevel { old: _, new } => {
                 let model = Arc::make_mut(&mut doc.data.model);
                 model.meta.compression_level = *new;
+            }
+            UndoAction::TimeSig { old: _, new } => {
+                {
+                    let model = Arc::make_mut(&mut doc.data.model);
+                    let conductor = Arc::make_mut(&mut model.conductor);
+                    conductor.time_sig = new.clone();
+                }
+                // TempoMap 依赖 time_sig，必须重建。
+                doc.data.rebuild_tempo_map();
+                doc.data.bump_revision();
             }
             UndoAction::TrackStructure {
                 tracks_before,

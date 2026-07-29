@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 /// A time signature event at a specific tick position.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TimeSigEvent {
     pub tick: u32,
     pub numerator: u8,

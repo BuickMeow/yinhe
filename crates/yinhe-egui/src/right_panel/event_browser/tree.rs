@@ -23,9 +23,14 @@ pub(super) fn render_tree(ui: &mut egui::Ui, doc: &yinhe_editor_core::document::
 
     let has_tempo = !model.conductor.tempo.events.is_empty();
     let has_ts = !model.conductor.time_sig.is_empty();
-    if has_tempo || has_ts {
+    let has_key_sig = !model.conductor.key_sig.is_empty();
+    let has_markers = !model.conductor.markers.is_empty();
+    if has_tempo || has_ts || has_key_sig || has_markers {
         let cond_expanded = state.expanded_keys.contains(&ArchiveKey::Conductor);
-        let child_count = has_tempo as usize + has_ts as usize;
+        let child_count = has_tempo as usize
+            + has_ts as usize
+            + has_key_sig as usize
+            + has_markers as usize;
         if render_dir_row(ui, "Conductor", 0, cond_expanded, child_count) {
             toggle_key(state, ArchiveKey::Conductor);
         }
@@ -47,6 +52,26 @@ pub(super) fn render_tree(ui: &mut egui::Ui, doc: &yinhe_editor_core::document::
                     ICON_SCHEDULE,
                     1,
                     SelectedItem::TimeSig,
+                    state,
+                );
+            }
+            if has_key_sig {
+                render_leaf_item(
+                    ui,
+                    &format!("KeySig ({})", model.conductor.key_sig.len()),
+                    ICON_MUSIC_OFF,
+                    1,
+                    SelectedItem::KeySig,
+                    state,
+                );
+            }
+            if has_markers {
+                render_leaf_item(
+                    ui,
+                    &format!("Markers ({})", model.conductor.markers.len()),
+                    ICON_BOOKMARK,
+                    1,
+                    SelectedItem::Markers,
                     state,
                 );
             }
@@ -175,6 +200,26 @@ fn render_track_row(ui: &mut egui::Ui, model: &YinModel, idx: u16, state: &mut E
         }
         if pc_count > 0 {
             render_leaf_item(ui, &format!("Program Change ({})", pc_count), ICON_PALETTE, 3, SelectedItem::ProgramChange { track: idx }, state);
+        }
+        if !track.lyrics.is_empty() {
+            render_leaf_item(
+                ui,
+                &format!("Lyrics ({})", track.lyrics.len()),
+                ICON_SUBTITLES,
+                3,
+                SelectedItem::Lyrics { track: idx },
+                state,
+            );
+        }
+        if !track.chord.is_empty() {
+            render_leaf_item(
+                ui,
+                &format!("Chord ({})", track.chord.len()),
+                ICON_LIBRARY_MUSIC,
+                3,
+                SelectedItem::Chord { track: idx },
+                state,
+            );
         }
     }
 }

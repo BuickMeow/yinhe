@@ -13,6 +13,7 @@ use crate::quantize::QuantizePreset;
 
 pub mod arrange_move;
 pub mod automation_edit;
+pub mod conductor_edit;
 pub mod note_edit;
 pub mod selection;
 pub mod track_ops;

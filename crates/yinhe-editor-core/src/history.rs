@@ -81,6 +81,12 @@ pub enum UndoAction {
     ProjectDescription { old: String, new: String },
     ProjectPpq { old: u32, new: u32, rescale: bool },
     CompressionLevel { old: i32, new: i32 },
+    /// 拍号事件列表整体替换（add/move/delete/edit field 都用全量快照，
+    /// 因为 time_sig 事件数量极少，全量快照成本可忽略）。
+    TimeSig {
+        old: Vec<yinhe_types::TimeSigEvent>,
+        new: Vec<yinhe_types::TimeSigEvent>,
+    },
     /// Track structure changed (add/remove/move track).
     /// Stores full before/after track lists (metadata only) and
     /// a remap table: `note_remap[old_track_idx] = new_track_idx` (or u16::MAX if deleted).
@@ -142,6 +148,10 @@ impl UndoAction {
                 old: new,
                 new: old,
             },
+            UndoAction::TimeSig { mut old, mut new } => {
+                std::mem::swap(&mut old, &mut new);
+                UndoAction::TimeSig { old, new }
+            }
             UndoAction::TrackStructure {
                 mut tracks_before,
                 mut tracks_after,
