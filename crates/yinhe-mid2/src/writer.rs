@@ -82,9 +82,32 @@ fn build_conductor_track<'a>(model: &'a YinModel) -> Vec<TrackEvent<'a>> {
             )),
         ));
     }
+    // 调号 (FF 59)
+    for ev in &model.conductor.key_sig {
+        events.push((
+            ev.tick,
+            TrackEventKind::Meta(MetaMessage::KeySignature(ev.sf, ev.mi != 0)),
+        ));
+    }
+    // 标记 (FF 06 Marker / FF 07 CuePoint)
+    // 统一写为 Marker，不区分 kind。
+    for ev in &model.conductor.markers {
+        events.push((
+            ev.tick,
+            TrackEventKind::Meta(MetaMessage::Marker(ev.text.as_bytes())),
+        ));
+    }
 
     events.sort_by_key(|e| e.0);
-    flatten_to_track(events, None)
+
+    // SMF 标准：track 0 的 TrackName (FF 03) = song title。
+    // 用 meta.name 作为 conductor track 的 TrackName 写出。
+    let song_title = if model.meta.name.is_empty() {
+        None
+    } else {
+        Some(model.meta.name.as_str())
+    };
+    flatten_to_track(events, song_title)
 }
 
 fn build_track<'a>(track: &'a TrackData, notes: &[(Note, u8)]) -> Vec<TrackEvent<'a>> {
@@ -290,6 +313,14 @@ fn build_track<'a>(track: &'a TrackData, notes: &[(Note, u8)]) -> Vec<TrackEvent
             TrackEventKind::Meta(MetaMessage::MidiChannel(midly::num::u4::new(
                 ch & 0x0F,
             ))),
+        ));
+    }
+
+    // 歌词 (FF 05 Lyric) — per-track
+    for ev in &track.lyrics {
+        events.push((
+            ev.tick,
+            TrackEventKind::Meta(MetaMessage::Lyric(ev.text.as_bytes())),
         ));
     }
 

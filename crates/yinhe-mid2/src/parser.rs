@@ -61,9 +61,9 @@ pub fn parse_bytes_with_encoding(
             midly::Timing::Timecode(_, _) => TIMECODE_FALLBACK_TPB,
         };
 
-        // Pass 1: collect conductor events (tempo + time-sig) across ALL tracks.
+        // Pass 1: collect conductor events (tempo + time-sig + key-sig + markers + song title) across ALL tracks.
         // 克隆一个惰性迭代器逐事件扫描，扫完即丢，常驻 O(1)。
-        let conductor = collect_conductor(track_iter.clone())?;
+        let (conductor, song_title) = collect_conductor(track_iter.clone(), encoding)?;
 
         // Pass 2: per-track parse → TrackData, run in parallel across tracks.
         // Each track parses independently (all state in parse_track is local),
@@ -103,6 +103,7 @@ pub fn parse_bytes_with_encoding(
         }
 
         let meta = ProjectMeta {
+            name: song_title.unwrap_or_default(),
             ppq: ticks_per_beat,
             ..ProjectMeta::default()
         };
@@ -166,11 +167,17 @@ fn ensure_conductor_track(model: &mut YinModel) {
 //  Conductor pass (across all tracks)
 // =========================================================
 
-fn collect_conductor(track_iter: midly::TrackIter) -> Result<ConductorData, MidiError> {
+fn collect_conductor(
+    track_iter: midly::TrackIter,
+    encoding: MidiImportEncoding,
+) -> Result<(ConductorData, Option<String>), MidiError> {
     let mut tempo_events: Vec<AutomationEvent> = Vec::new();
     let mut time_sig: Vec<TimeSigEvent> = Vec::new();
+    let mut key_sig: Vec<yinhe_types::KeySigEvent> = Vec::new();
+    let mut markers: Vec<yinhe_types::MarkerEvent> = Vec::new();
+    let mut song_title: Option<String> = None;
 
-    for track_result in track_iter {
+    for (track_idx, track_result) in track_iter.enumerate() {
         let events = track_result?;
         let mut tick: u32 = 0;
         for ev in events {
@@ -198,6 +205,33 @@ fn collect_conductor(track_iter: midly::TrackIter) -> Result<ConductorData, Midi
                         denominator: den,
                     });
                 }
+                midly::TrackEventKind::Meta(midly::MetaMessage::KeySignature(sf, minor)) => {
+                    key_sig.push(yinhe_types::KeySigEvent {
+                        tick,
+                        sf,
+                        mi: if minor { 1 } else { 0 },
+                    });
+                }
+                midly::TrackEventKind::Meta(midly::MetaMessage::Marker(text)) => {
+                    markers.push(yinhe_types::MarkerEvent {
+                        tick,
+                        text: encoding.decode(text),
+                    });
+                }
+                midly::TrackEventKind::Meta(midly::MetaMessage::CuePoint(text)) => {
+                    markers.push(yinhe_types::MarkerEvent {
+                        tick,
+                        text: encoding.decode(text),
+                    });
+                }
+                // SMF 标准：track 0 的 TrackName（FF 03）= song title。
+                // 读为 meta.name，避免被 parse_track 当作普通 track name
+                // 然后被 conductor 覆盖为 "Conductor" 而丢失。
+                midly::TrackEventKind::Meta(midly::MetaMessage::TrackName(name))
+                    if track_idx == 0 && song_title.is_none() =>
+                {
+                    song_title = Some(encoding.decode(name));
+                }
                 _ => {}
             }
         }
@@ -207,17 +241,23 @@ fn collect_conductor(track_iter: midly::TrackIter) -> Result<ConductorData, Midi
     tempo_events.dedup_by_key(|e| e.tick);
     time_sig.sort_by_key(|e| e.tick);
     time_sig.dedup_by_key(|e| e.tick);
+    key_sig.sort_by_key(|e| e.tick);
+    key_sig.dedup_by_key(|e| e.tick);
+    markers.sort_by_key(|e| e.tick);
 
-    Ok(ConductorData {
-        tempo: AutomationLane {
-            target: AutomationTarget::Tempo,
-            track: 0,
-            events: tempo_events,
+    Ok((
+        ConductorData {
+            tempo: AutomationLane {
+                target: AutomationTarget::Tempo,
+                track: 0,
+                events: tempo_events,
+            },
+            time_sig,
+            key_sig,
+            markers,
         },
-        time_sig,
-        key_sig: Vec::new(),  // P3 填充
-        markers: Vec::new(),  // P3 填充
-    })
+        song_title,
+    ))
 }
 
 // =========================================================
@@ -299,6 +339,12 @@ fn parse_track(
                 if td.name.is_empty() {
                     td.name = encoding.decode(name_bytes);
                 }
+            }
+            midly::TrackEventKind::Meta(midly::MetaMessage::Lyric(text)) => {
+                td.lyrics.push(yinhe_types::LyricsEvent {
+                    tick: current_tick,
+                    text: encoding.decode(text),
+                });
             }
             midly::TrackEventKind::Meta(midly::MetaMessage::MidiPort(port)) => {
                 current_port = port.as_int();
