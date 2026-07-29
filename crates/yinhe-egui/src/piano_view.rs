@@ -481,7 +481,7 @@ pub fn show(
     let h_f32 = h as f32;
     let bottom = 128.0 * kh - scroll_y;
     let kb_w = view.keyboard_width();
-    bg::paint(&painter, content_rect, kb_w, kh, view, key_sig_events, &theme);
+    bg::paint(&painter, content_rect, kb_w, kh, view, key_sig_events);
 
     // ── Grid lines (drawn by egui before wgpu texture) ──
     // 替代原 wgpu grid layer。与 time_ruler 共用 MIN_SPACING 阈值，保证"有线就有标签"。
