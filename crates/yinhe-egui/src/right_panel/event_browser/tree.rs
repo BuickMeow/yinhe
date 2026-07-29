@@ -25,12 +25,16 @@ pub(super) fn render_tree(ui: &mut egui::Ui, doc: &yinhe_editor_core::document::
     let has_ts = !model.conductor.time_sig.is_empty();
     let has_key_sig = !model.conductor.key_sig.is_empty();
     let has_markers = !model.conductor.markers.is_empty();
-    if has_tempo || has_ts || has_key_sig || has_markers {
+    let has_cond_lyrics = !model.conductor.lyrics.is_empty();
+    let has_cond_chord = !model.conductor.chord.is_empty();
+    if has_tempo || has_ts || has_key_sig || has_markers || has_cond_lyrics || has_cond_chord {
         let cond_expanded = state.expanded_keys.contains(&ArchiveKey::Conductor);
         let child_count = has_tempo as usize
             + has_ts as usize
             + has_key_sig as usize
-            + has_markers as usize;
+            + has_markers as usize
+            + has_cond_lyrics as usize
+            + has_cond_chord as usize;
         if render_dir_row(ui, "Conductor", 0, cond_expanded, child_count) {
             toggle_key(state, ArchiveKey::Conductor);
         }
@@ -72,6 +76,26 @@ pub(super) fn render_tree(ui: &mut egui::Ui, doc: &yinhe_editor_core::document::
                     ICON_BOOKMARK,
                     1,
                     SelectedItem::Markers,
+                    state,
+                );
+            }
+            if has_cond_lyrics {
+                render_leaf_item(
+                    ui,
+                    &format!("Lyrics ({})", model.conductor.lyrics.len()),
+                    ICON_SUBTITLES,
+                    1,
+                    SelectedItem::ConductorLyrics,
+                    state,
+                );
+            }
+            if has_cond_chord {
+                render_leaf_item(
+                    ui,
+                    &format!("Chord ({})", model.conductor.chord.len()),
+                    ICON_LIBRARY_MUSIC,
+                    1,
+                    SelectedItem::ConductorChord,
                     state,
                 );
             }

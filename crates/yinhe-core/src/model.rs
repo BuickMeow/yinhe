@@ -28,6 +28,14 @@ pub struct ConductorData {
     /// 标记事件（MIDI Meta FF 06/07）。全局级，放 conductor。
     #[serde(default)]
     pub markers: Vec<yinhe_types::MarkerEvent>,
+    /// 歌词事件（MIDI Meta FF 05）。SMF 允许歌词放在 track 0（conductor），
+    /// 也可放在普通轨。这里收集 track 0 的歌词；普通轨歌词仍在 TrackData.lyrics。
+    #[serde(default)]
+    pub lyrics: Vec<yinhe_types::LyricsEvent>,
+    /// 和弦事件（非 SMF 标准，仅在 .yin 格式存活）。
+    /// conductor 级和弦，per-track 和弦在 TrackData.chord。
+    #[serde(default)]
+    pub chord: Vec<yinhe_types::ChordEvent>,
 }
 
 impl Default for ConductorData {
@@ -41,6 +49,8 @@ impl Default for ConductorData {
             time_sig: Vec::new(),
             key_sig: Vec::new(),
             markers: Vec::new(),
+            lyrics: Vec::new(),
+            chord: Vec::new(),
         }
     }
 }
@@ -262,6 +272,8 @@ impl YinModel {
             }],
             key_sig: Vec::new(),
             markers: Vec::new(),
+            lyrics: Vec::new(),
+            chord: Vec::new(),
         });
 
         let mut tracks: Vec<Arc<TrackData>> = Vec::with_capacity(17);

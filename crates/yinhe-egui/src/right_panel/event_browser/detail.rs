@@ -39,6 +39,12 @@ pub(super) fn show_event_detail(
         SelectedItem::Markers => {
             show_text_events_detail(ui, doc, bar_lookup, state, "eb_marker", "标记", TextEventKind::Marker)
         }
+        SelectedItem::ConductorLyrics => {
+            show_text_events_detail(ui, doc, bar_lookup, state, "eb_cond_lyrics", "歌词", TextEventKind::ConductorLyrics)
+        }
+        SelectedItem::ConductorChord => {
+            show_text_events_detail(ui, doc, bar_lookup, state, "eb_cond_chord", "和弦", TextEventKind::ConductorChord)
+        }
         SelectedItem::Notes { track } => show_notes_detail(ui, doc, bar_lookup, state, *track),
         SelectedItem::ProgramChange { track } => show_pc_detail(ui, doc, bar_lookup, state, *track),
         SelectedItem::Automation { track, target } => {
@@ -259,6 +265,10 @@ fn show_text_events_detail(
     // 先 clone 出 owned 数据，避免不可变借用阻塞后续 &mut doc 编辑
     let mut sorted: Vec<(u32, String)> = match kind {
         TextEventKind::Marker => doc.data.model.conductor.markers
+            .iter().map(|e| (e.tick, e.text.clone())).collect(),
+        TextEventKind::ConductorLyrics => doc.data.model.conductor.lyrics
+            .iter().map(|e| (e.tick, e.text.clone())).collect(),
+        TextEventKind::ConductorChord => doc.data.model.conductor.chord
             .iter().map(|e| (e.tick, e.text.clone())).collect(),
         TextEventKind::Lyrics { track } => doc.data.model.tracks.get(track as usize)
             .map(|t| t.lyrics.iter().map(|e| (e.tick, e.text.clone())).collect())

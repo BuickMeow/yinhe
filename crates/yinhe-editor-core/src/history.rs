@@ -109,6 +109,16 @@ pub enum UndoAction {
         old: Vec<yinhe_types::ChordEvent>,
         new: Vec<yinhe_types::ChordEvent>,
     },
+    /// Conductor 级歌词事件列表整体替换（track 0 的 FF 05）。
+    ConductorLyrics {
+        old: Vec<yinhe_types::LyricsEvent>,
+        new: Vec<yinhe_types::LyricsEvent>,
+    },
+    /// Conductor 级和弦事件列表整体替换（仅 .yin 格式）。
+    ConductorChord {
+        old: Vec<yinhe_types::ChordEvent>,
+        new: Vec<yinhe_types::ChordEvent>,
+    },
     /// Track structure changed (add/remove/move track).
     /// Stores full before/after track lists (metadata only) and
     /// a remap table: `note_remap[old_track_idx] = new_track_idx` (or u16::MAX if deleted).
@@ -189,6 +199,14 @@ impl UndoAction {
             UndoAction::Chord { track, mut old, mut new } => {
                 std::mem::swap(&mut old, &mut new);
                 UndoAction::Chord { track, old, new }
+            }
+            UndoAction::ConductorLyrics { mut old, mut new } => {
+                std::mem::swap(&mut old, &mut new);
+                UndoAction::ConductorLyrics { old, new }
+            }
+            UndoAction::ConductorChord { mut old, mut new } => {
+                std::mem::swap(&mut old, &mut new);
+                UndoAction::ConductorChord { old, new }
             }
             UndoAction::TrackStructure {
                 mut tracks_before,

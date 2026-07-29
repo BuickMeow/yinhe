@@ -150,6 +150,10 @@ fn text_event_text(model: &yinhe_core::YinModel, kind: TextEventKind, tick: u32)
     match kind {
         TextEventKind::Marker => model.conductor.markers.iter()
             .find(|e| e.tick == tick).map(|e| e.text.clone()),
+        TextEventKind::ConductorLyrics => model.conductor.lyrics.iter()
+            .find(|e| e.tick == tick).map(|e| e.text.clone()),
+        TextEventKind::ConductorChord => model.conductor.chord.iter()
+            .find(|e| e.tick == tick).map(|e| e.text.clone()),
         TextEventKind::Lyrics { track } => model.tracks.get(track as usize)
             .and_then(|t| t.lyrics.iter().find(|e| e.tick == tick))
             .map(|e| e.text.clone()),
@@ -163,6 +167,8 @@ fn text_event_text(model: &yinhe_core::YinModel, kind: TextEventKind, tick: u32)
 fn apply_text_event_edit(doc: &mut Document, kind: TextEventKind, old_tick: u32, new_tick: u32, new_text: String) {
     match kind {
         TextEventKind::Marker => doc.set_marker_event(old_tick, new_tick, new_text),
+        TextEventKind::ConductorLyrics => doc.set_conductor_lyrics_event(old_tick, new_tick, new_text),
+        TextEventKind::ConductorChord => doc.set_conductor_chord_event(old_tick, new_tick, new_text),
         TextEventKind::Lyrics { track } => doc.set_lyrics_event(track, old_tick, new_tick, new_text),
         TextEventKind::Chord { track } => doc.set_chord_event(track, old_tick, new_tick, new_text),
     }
@@ -183,6 +189,10 @@ fn record_text_before(
     if !recorded {
         let before: Vec<(u32, String)> = match kind {
             TextEventKind::Marker => doc.data.model.conductor.markers
+                .iter().map(|e| (e.tick, e.text.clone())).collect(),
+            TextEventKind::ConductorLyrics => doc.data.model.conductor.lyrics
+                .iter().map(|e| (e.tick, e.text.clone())).collect(),
+            TextEventKind::ConductorChord => doc.data.model.conductor.chord
                 .iter().map(|e| (e.tick, e.text.clone())).collect(),
             TextEventKind::Lyrics { track } => doc.data.model.tracks.get(track as usize)
                 .map(|t| t.lyrics.iter().map(|e| (e.tick, e.text.clone())).collect())
@@ -215,6 +225,10 @@ fn finalize_text_undo(
         let after: Vec<(u32, String)> = match kind {
             TextEventKind::Marker => doc.data.model.conductor.markers
                 .iter().map(|e| (e.tick, e.text.clone())).collect(),
+            TextEventKind::ConductorLyrics => doc.data.model.conductor.lyrics
+                .iter().map(|e| (e.tick, e.text.clone())).collect(),
+            TextEventKind::ConductorChord => doc.data.model.conductor.chord
+                .iter().map(|e| (e.tick, e.text.clone())).collect(),
             TextEventKind::Lyrics { track } => doc.data.model.tracks.get(track as usize)
                 .map(|t| t.lyrics.iter().map(|e| (e.tick, e.text.clone())).collect())
                 .unwrap_or_default(),
@@ -228,6 +242,16 @@ fn finalize_text_undo(
                     let old: Vec<_> = before.into_iter().map(|(tick, text)| yinhe_types::MarkerEvent { tick, text }).collect();
                     let new: Vec<_> = after.into_iter().map(|(tick, text)| yinhe_types::MarkerEvent { tick, text }).collect();
                     UndoAction::Marker { old, new }
+                }
+                TextEventKind::ConductorLyrics => {
+                    let old: Vec<_> = before.into_iter().map(|(tick, text)| yinhe_types::LyricsEvent { tick, text }).collect();
+                    let new: Vec<_> = after.into_iter().map(|(tick, text)| yinhe_types::LyricsEvent { tick, text }).collect();
+                    UndoAction::ConductorLyrics { old, new }
+                }
+                TextEventKind::ConductorChord => {
+                    let old: Vec<_> = before.into_iter().map(|(tick, text)| yinhe_types::ChordEvent { tick, text }).collect();
+                    let new: Vec<_> = after.into_iter().map(|(tick, text)| yinhe_types::ChordEvent { tick, text }).collect();
+                    UndoAction::ConductorChord { old, new }
                 }
                 TextEventKind::Lyrics { track } => {
                     let old: Vec<_> = before.into_iter().map(|(tick, text)| yinhe_types::LyricsEvent { tick, text }).collect();

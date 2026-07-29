@@ -97,6 +97,15 @@ fn build_conductor_track<'a>(model: &'a YinModel) -> Vec<TrackEvent<'a>> {
             TrackEventKind::Meta(MetaMessage::Marker(ev.text.as_bytes())),
         ));
     }
+    // 歌词 (FF 05 Lyric)。SMF 允许歌词放在 track 0（conductor）。
+    // 普通轨的歌词在 build_track 里写。
+    for ev in &model.conductor.lyrics {
+        events.push((
+            ev.tick,
+            TrackEventKind::Meta(MetaMessage::Lyric(ev.text.as_bytes())),
+        ));
+    }
+    // Chord 不走 MIDI（非 SMF 标准），仅在 .yin 格式存活。
 
     events.sort_by_key(|e| e.0);
 

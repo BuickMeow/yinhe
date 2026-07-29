@@ -106,6 +106,18 @@ impl UndoAction {
                 }
                 doc.data.bump_revision();
             }
+            UndoAction::ConductorLyrics { old: _, new } => {
+                let model = Arc::make_mut(&mut doc.data.model);
+                let conductor = Arc::make_mut(&mut model.conductor);
+                conductor.lyrics = new.clone();
+                doc.data.bump_revision();
+            }
+            UndoAction::ConductorChord { old: _, new } => {
+                let model = Arc::make_mut(&mut doc.data.model);
+                let conductor = Arc::make_mut(&mut model.conductor);
+                conductor.chord = new.clone();
+                doc.data.bump_revision();
+            }
             UndoAction::TrackStructure {
                 tracks_before,
                 tracks_after,

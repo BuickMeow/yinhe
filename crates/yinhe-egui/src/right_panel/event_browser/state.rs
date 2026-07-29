@@ -49,6 +49,10 @@ pub enum SelectedItem {
     KeySig,
     /// 标记事件（全局，conductor 级）
     Markers,
+    /// 歌词事件（全局，conductor 级，track 0 的 FF 05）
+    ConductorLyrics,
+    /// 和弦事件（全局，conductor 级，仅 .yin 格式）
+    ConductorChord,
     Notes { track: u16 },
     ProgramChange { track: u16 },
     Automation { track: u16, target: AutomationTarget },
@@ -120,14 +124,21 @@ pub enum EditRequest {
     TextEventText { kind: TextEventKind, tick: u32 },
 }
 
-/// 文本类事件种类：Marker（conductor 级）/ Lyrics/Chord（per-track）。
+/// 文本类事件种类：Marker / Lyrics / Chord，按归属区分 conductor 级 vs per-track。
 ///
 /// 用于 `EditRequest::TextEventTick` / `TextEventText` 区分事件归属，
 /// 配合 `apply_text_popups` 分派到对应的 Document 方法。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum TextEventKind {
+    /// Marker：conductor 级
     Marker,
+    /// Conductor 级歌词（track 0 的 FF 05）
+    ConductorLyrics,
+    /// Conductor 级和弦（仅 .yin 格式）
+    ConductorChord,
+    /// Per-track 歌词
     Lyrics { track: u16 },
+    /// Per-track 和弦
     Chord { track: u16 },
 }
 

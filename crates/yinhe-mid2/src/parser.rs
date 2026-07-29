@@ -175,6 +175,7 @@ fn collect_conductor(
     let mut time_sig: Vec<TimeSigEvent> = Vec::new();
     let mut key_sig: Vec<yinhe_types::KeySigEvent> = Vec::new();
     let mut markers: Vec<yinhe_types::MarkerEvent> = Vec::new();
+    let mut lyrics: Vec<yinhe_types::LyricsEvent> = Vec::new();
     let mut song_title: Option<String> = None;
 
     for (track_idx, track_result) in track_iter.enumerate() {
@@ -232,6 +233,17 @@ fn collect_conductor(
                 {
                     song_title = Some(encoding.decode(name));
                 }
+                // SMF 允许歌词放在 track 0（conductor-only track）。
+                // 这些歌词在 parse_track 里会因为 track 0 无 MIDI 消息被丢弃，
+                // 因此这里在 collect_conductor 抢先收集到 ConductorData.lyrics。
+                midly::TrackEventKind::Meta(midly::MetaMessage::Lyric(text))
+                    if track_idx == 0 =>
+                {
+                    lyrics.push(yinhe_types::LyricsEvent {
+                        tick,
+                        text: encoding.decode(text),
+                    });
+                }
                 _ => {}
             }
         }
@@ -244,6 +256,7 @@ fn collect_conductor(
     key_sig.sort_by_key(|e| e.tick);
     key_sig.dedup_by_key(|e| e.tick);
     markers.sort_by_key(|e| e.tick);
+    lyrics.sort_by_key(|e| e.tick);
 
     Ok((
         ConductorData {
@@ -255,6 +268,8 @@ fn collect_conductor(
             time_sig,
             key_sig,
             markers,
+            lyrics,
+            chord: Vec::new(),
         },
         song_title,
     ))
