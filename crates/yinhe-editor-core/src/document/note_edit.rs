@@ -444,6 +444,8 @@ mod tests {
                     events: vec![AutomationEvent { tick: 0, value: 120.0, shape: SegmentShape::Step }],
                 },
                 time_sig: vec![TimeSigEvent { tick: 0, numerator: 4, denominator: 2 }],
+                key_sig: Vec::new(),
+                markers: Vec::new(),
             }),
             tracks: vec![Arc::new({
                 let mut t = TrackData::new(0, 0);

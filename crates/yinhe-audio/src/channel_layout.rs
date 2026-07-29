@@ -168,6 +168,8 @@ mod tests {
                 events: vec![AutomationEvent { tick: 0, value: 120.0, shape: SegmentShape::Step }],
             },
             time_sig: Vec::new(),
+            key_sig: Vec::new(),
+            markers: Vec::new(),
         };
         let first_ch = notes.first().map(|n| n.4).unwrap_or(0);
         let mut t = TrackData::new(0, first_ch);
@@ -205,6 +207,8 @@ mod tests {
                 events: vec![AutomationEvent { tick: 0, value: 120.0, shape: SegmentShape::Step }],
             },
             time_sig: Vec::new(),
+            key_sig: Vec::new(),
+            markers: Vec::new(),
         };
         let mk = |ch: u8, _key: u8| {
             let t = TrackData::new(0, ch);
@@ -250,6 +254,8 @@ mod tests {
                 events: vec![AutomationEvent { tick: 0, value: 120.0, shape: SegmentShape::Step }],
             },
             time_sig: Vec::new(),
+            key_sig: Vec::new(),
+            markers: Vec::new(),
         };
         let t1 = TrackData::new(0, 0);
         let t2 = TrackData::new(1, 0);

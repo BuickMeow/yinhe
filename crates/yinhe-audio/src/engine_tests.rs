@@ -18,6 +18,8 @@ fn make_model_with_notes(notes: Vec<(u8, u32, u32, u8, u8)>) -> YinModel {
             events: vec![AutomationEvent { tick: 0, value: 120.0, shape: SegmentShape::Step }],
         },
         time_sig: Vec::new(),
+        key_sig: Vec::new(),
+        markers: Vec::new(),
     };
     let first_ch = notes.first().map(|n| n.4).unwrap_or(0);
     let mut t = TrackData::new(0, first_ch);
@@ -110,6 +112,8 @@ fn test_audible_index_filters_vel_and_inactive_channel() {
             events: vec![AutomationEvent { tick: 0, value: 120.0, shape: SegmentShape::Step }],
         },
         time_sig: Vec::new(),
+        key_sig: Vec::new(),
+        markers: Vec::new(),
     };
     let t0 = TrackData::new(0, 0);
     let t1 = TrackData::new(0, 3);
@@ -209,6 +213,8 @@ fn test_audible_index_uses_per_key_tempo_cursor() {
             ],
         },
         time_sig: Vec::new(),
+        key_sig: Vec::new(),
+        markers: Vec::new(),
     };
     let t = TrackData::new(0, 0);
     let per_track_notes: Vec<Vec<NoteEvent>> = vec![vec![
@@ -347,6 +353,8 @@ fn make_model_with_controls(
             events: vec![AutomationEvent { tick: 0, value: 120.0, shape: SegmentShape::Step }],
         },
         time_sig: Vec::new(),
+        key_sig: Vec::new(),
+        markers: Vec::new(),
     };
     let mut t = TrackData::new(0, 0);
 
@@ -514,6 +522,8 @@ fn make_bench_model(tracks: usize, notes_per_track: usize) -> YinModel {
             events: vec![AutomationEvent { tick: 0, value: 120.0, shape: SegmentShape::Step }],
         },
         time_sig: Vec::new(),
+        key_sig: Vec::new(),
+        markers: Vec::new(),
     };
     let meta = ProjectMeta {
         ppq: 480,

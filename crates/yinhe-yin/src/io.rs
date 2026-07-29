@@ -43,6 +43,10 @@ struct TrackPayload {
     notes: Vec<NoteEvent>,
     automation_lanes: Vec<AutomationLane>,
     program_change: Vec<PcEvent>,
+    #[serde(default)]
+    lyrics: Vec<yinhe_types::LyricsEvent>,
+    #[serde(default)]
+    chord: Vec<yinhe_types::ChordEvent>,
 }
 
 // =========================================================
@@ -105,6 +109,8 @@ fn save_yin_bytes_with_files_inner(
                     notes: std::mem::take(&mut per_track_notes[track_idx]),
                     automation_lanes: t.automation_lanes.clone(),
                     program_change: t.program_change.clone(),
+                    lyrics: t.lyrics.clone(),
+                    chord: t.chord.clone(),
                 });
             }
         }
@@ -214,6 +220,8 @@ fn load_yin_bytes_inner(bytes: &[u8]) -> Result<(YinModel, ProjectFile, MappingF
             notes: Vec::new(), // notes loaded via load_track_notes
             automation_lanes: payload.automation_lanes,
             program_change: payload.program_change,
+            lyrics: payload.lyrics,
+            chord: payload.chord,
         };
         if td.uuid != payload.uuid {
             return Err(YinError::Io(std::io::Error::new(

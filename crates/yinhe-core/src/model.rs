@@ -22,6 +22,12 @@ pub struct ConductorData {
     /// `events[i].value` 直接装 bpm（f32）。
     pub tempo: AutomationLane,
     pub time_sig: Vec<yinhe_types::TimeSigEvent>,
+    /// 调号事件（MIDI Meta FF 59）。全局级，放 conductor。
+    #[serde(default)]
+    pub key_sig: Vec<yinhe_types::KeySigEvent>,
+    /// 标记事件（MIDI Meta FF 06/07）。全局级，放 conductor。
+    #[serde(default)]
+    pub markers: Vec<yinhe_types::MarkerEvent>,
 }
 
 impl Default for ConductorData {
@@ -33,6 +39,8 @@ impl Default for ConductorData {
                 events: Vec::new(),
             },
             time_sig: Vec::new(),
+            key_sig: Vec::new(),
+            markers: Vec::new(),
         }
     }
 }
@@ -72,6 +80,12 @@ pub struct TrackData {
     pub automation_lanes: Vec<yinhe_types::AutomationLane>,
     /// Program Change events (discrete, not automation).
     pub program_change: Vec<PcEvent>,
+    /// 歌词事件（MIDI Meta FF 05）。SMF 标准中歌词是 per-track 的。
+    #[serde(default)]
+    pub lyrics: Vec<yinhe_types::LyricsEvent>,
+    /// 和弦事件（非 SMF 标准，用 Text meta 存储）。per-track。
+    #[serde(default)]
+    pub chord: Vec<yinhe_types::ChordEvent>,
 }
 
 impl TrackData {
@@ -88,6 +102,8 @@ impl TrackData {
             notes: Vec::new(),
             automation_lanes: Vec::new(),
             program_change: Vec::new(),
+            lyrics: Vec::new(),
+            chord: Vec::new(),
         }
     }
 
@@ -244,6 +260,8 @@ impl YinModel {
                 numerator: 4,
                 denominator: 2,
             }],
+            key_sig: Vec::new(),
+            markers: Vec::new(),
         });
 
         let mut tracks: Vec<Arc<TrackData>> = Vec::with_capacity(17);

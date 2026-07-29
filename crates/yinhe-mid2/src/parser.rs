@@ -215,6 +215,8 @@ fn collect_conductor(track_iter: midly::TrackIter) -> Result<ConductorData, Midi
             events: tempo_events,
         },
         time_sig,
+        key_sig: Vec::new(),  // P3 填充
+        markers: Vec::new(),  // P3 填充
     })
 }
 

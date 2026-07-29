@@ -23,6 +23,8 @@ fn make_doc(name: &str) -> Document {
                 numerator: 4,
                 denominator: 2,
             }],
+            key_sig: Vec::new(),
+            markers: Vec::new(),
         }),
         tracks: vec![Arc::new({
             let mut t = TrackData::new(0, 0);

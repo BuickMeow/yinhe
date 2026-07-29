@@ -22,6 +22,8 @@ fn build_complex_model() -> YinModel {
             TimeSigEvent { tick: 0, numerator: 4, denominator: 2 },
             TimeSigEvent { tick: 3840, numerator: 3, denominator: 2 },
         ],
+        key_sig: Vec::new(),
+        markers: Vec::new(),
     };
 
     let mut t0 = TrackData::new(0, 0);

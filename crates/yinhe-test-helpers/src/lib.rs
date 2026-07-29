@@ -67,6 +67,8 @@ pub fn make_test_model() -> YinModel {
             TimeSigEvent { tick: 0, numerator: 4, denominator: 2 },
             TimeSigEvent { tick: 1920, numerator: 3, denominator: 2 },
         ],
+        key_sig: Vec::new(),
+        markers: Vec::new(),
     };
 
     let mut t0 = TrackData::new(0, 0); // port 0, ch 0
