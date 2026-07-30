@@ -127,6 +127,10 @@ dialog.archive.file_count: "%{n} ファイル"
 dialog.archive.no_midi: "アーカイブにMIDIファイルが見つかりません"
 dialog.archive.open_failed: "アーカイブを開けません: %{e}"
 dialog.archive.archive_error: "アーカイブを開けません: %{e}"
+dialog.archive.password_title: "パスワード入力"
+dialog.archive.password_prompt: "アーカイブ %{name} にはパスワードが必要です"
+dialog.archive.password_wrong: "パスワードが間違っています。再試行してください"
+dialog.archive.password_hint: "パスワードを入力"
 
 # ── PPQリスケール確認 ──
 dialog.ppq_rescale.title: "PPQ変更"

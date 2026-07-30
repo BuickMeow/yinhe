@@ -337,3 +337,195 @@ mod tests {
         assert_eq!(format_size(1024 * 1024 * 5), "5.0 MB");
     }
 }
+
+// ── 密码输入对话框 ──
+
+/// 密码输入对话框状态。
+pub(crate) struct PasswordPrompt {
+    pub path: String,
+    pub password: String,
+    /// `true` 表示之前提交的密码错误，需要重新输入。
+    pub wrong: bool,
+}
+
+impl PasswordPrompt {
+    pub(crate) fn new(path: String, wrong: bool) -> Self {
+        Self {
+            path,
+            password: String::new(),
+            wrong,
+        }
+    }
+}
+
+/// 密码输入对话框返回的动作。
+pub(crate) enum PasswordPromptAction {
+    None,
+    Cancel,
+    /// 用户确认密码，重新打开压缩包。
+    Confirm {
+        path: String,
+        password: String,
+    },
+}
+
+/// 显示密码输入对话框 viewport。
+pub(crate) fn show_password_prompt_viewport(
+    ctx: &eframe::egui::Context,
+    state: &mut Option<PasswordPrompt>,
+) -> PasswordPromptAction {
+    if state.is_none() {
+        return PasswordPromptAction::None;
+    }
+    let viewport_id = eframe::egui::ViewportId::from_hash_of("archive_password_prompt_dialog");
+
+    let taken_state = std::rc::Rc::new(std::cell::RefCell::new(
+        state.as_mut().unwrap().clone_state(),
+    ));
+    let action = std::rc::Rc::new(std::cell::RefCell::new(PasswordPromptAction::None));
+    let ctx_clone = ctx.clone();
+    let taken_state_cb = taken_state.clone();
+    let action_cb = action.clone();
+
+    ctx_clone.show_viewport_immediate(
+        viewport_id,
+        crate::chrome::dialog::viewport_builder(
+            t!("dialog.archive.password_title").as_ref(),
+            [400.0, 180.0],
+            false,
+        ),
+        move |vctx, _class| {
+            let close_requested = vctx.input(|i| i.viewport().close_requested());
+            let vctx_cmd = vctx.clone();
+            eframe::egui::CentralPanel::default()
+                .frame(eframe::egui::Frame {
+                    fill: crate::theme::APP_BG,
+                    ..Default::default()
+                })
+                .show(vctx, |ui| {
+                    let mut close = close_requested;
+                    crate::chrome::dialog::title_bar(
+                        ui,
+                        t!("dialog.archive.password_title").as_ref(),
+                        &mut close,
+                    );
+                    if close {
+                        vctx_cmd.send_viewport_cmd(eframe::egui::ViewportCommand::Visible(false));
+                        *action_cb.borrow_mut() = PasswordPromptAction::Cancel;
+                    } else {
+                        eframe::egui::Frame::new()
+                            .inner_margin(eframe::egui::Margin {
+                                left: 12,
+                                right: 12,
+                                top: 0,
+                                bottom: 12,
+                            })
+                            .show(ui, |ui| {
+                                let result = show_password_prompt(
+                                    &mut *taken_state_cb.borrow_mut(),
+                                    ui,
+                                );
+                                *action_cb.borrow_mut() = result;
+                            });
+                    }
+                });
+        },
+    );
+
+    // 把对话框中的状态写回（密码文本框内容）。
+    if let Some(taken_state) = std::rc::Rc::into_inner(taken_state) {
+        let inner = taken_state.into_inner();
+        if let Some(s) = state.as_mut() {
+            s.password = inner.password;
+            s.wrong = inner.wrong;
+        }
+    }
+
+    std::rc::Rc::into_inner(action)
+        .map(|rc| rc.into_inner())
+        .unwrap_or(PasswordPromptAction::None)
+}
+
+/// 渲染密码输入对话框内容。返回动作（None 表示对话框继续开启）。
+fn show_password_prompt(
+    prompt: &mut PasswordPrompt,
+    ui: &mut eframe::egui::Ui,
+) -> PasswordPromptAction {
+    let filename = std::path::Path::new(&prompt.path)
+        .file_name()
+        .map(|f| f.to_string_lossy().to_string())
+        .unwrap_or_else(|| prompt.path.clone());
+
+    ui.add_space(6.0);
+    ui.label(
+        eframe::egui::RichText::new(t!("dialog.archive.password_prompt", name = filename).as_ref())
+            .size(13.0),
+    );
+
+    if prompt.wrong {
+        ui.add_space(2.0);
+        ui.label(
+            eframe::egui::RichText::new(t!("dialog.archive.password_wrong").as_ref())
+                .size(12.0)
+                .color(eframe::egui::Color32::from_rgb(220, 80, 80)),
+        );
+    }
+
+    ui.add_space(6.0);
+    // 密码输入框：回车确认，Esc 取消
+    let resp = ui.add(
+        eframe::egui::TextEdit::singleline(&mut prompt.password)
+            .password(true)
+            .hint_text(t!("dialog.archive.password_hint").as_ref())
+            .desired_width(f32::INFINITY),
+    );
+    resp.request_focus();
+
+    ui.add_space(8.0);
+    ui.separator();
+    ui.add_space(4.0);
+
+    let mut action = PasswordPromptAction::None;
+    ui.horizontal(|ui| {
+        ui.with_layout(eframe::egui::Layout::right_to_left(eframe::egui::Align::Center), |ui| {
+            if ui.button(t!("common.cancel").as_ref()).clicked() {
+                action = PasswordPromptAction::Cancel;
+            }
+            let confirm_enabled = !prompt.password.is_empty();
+            if ui.add_enabled(
+                confirm_enabled,
+                eframe::egui::Button::new(t!("common.confirm").as_ref()),
+            ).clicked() {
+                action = PasswordPromptAction::Confirm {
+                    path: prompt.path.clone(),
+                    password: prompt.password.clone(),
+                };
+            }
+        });
+    });
+
+    // 回车确认
+    if ui.input(|i| i.key_pressed(eframe::egui::Key::Enter)) && !prompt.password.is_empty() {
+        action = PasswordPromptAction::Confirm {
+            path: prompt.path.clone(),
+            password: prompt.password.clone(),
+        };
+    }
+    // Esc 取消
+    if ui.input(|i| i.key_pressed(eframe::egui::Key::Escape)) {
+        action = PasswordPromptAction::Cancel;
+    }
+
+    action
+}
+
+/// 内部辅助：克隆 PasswordPrompt 的状态（仅 password + wrong，path 不变）。
+impl PasswordPrompt {
+    fn clone_state(&self) -> PasswordPrompt {
+        PasswordPrompt {
+            path: self.path.clone(),
+            password: self.password.clone(),
+            wrong: self.wrong,
+        }
+    }
+}

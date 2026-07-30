@@ -161,6 +161,28 @@ impl App {
             ctx.request_repaint();
         }
 
+        // ── Archive password prompt ──
+        let pwd_action = crate::dialogs::archive_picker::show_password_prompt_viewport(
+            &ctx,
+            &mut self.file_loader.password_prompt,
+        );
+        use crate::dialogs::archive_picker::PasswordPromptAction;
+        let pwd_handled = !matches!(pwd_action, PasswordPromptAction::None);
+        match pwd_action {
+            PasswordPromptAction::Confirm { path, password } => {
+                yinhe_editor_core::progress::set_visible(self.file_loader.load_progress(), true);
+                self.file_loader.start_archive(path, Some(password));
+                self.file_loader.password_prompt = None;
+            }
+            PasswordPromptAction::Cancel => {
+                self.file_loader.password_prompt = None;
+            }
+            PasswordPromptAction::None => {}
+        }
+        if pwd_handled {
+            ctx.request_repaint();
+        }
+
         // ── Export progress ──
         if self.export.rx.is_some() {
             let export_progress = self.export.progress.clone();

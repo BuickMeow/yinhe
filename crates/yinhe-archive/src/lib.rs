@@ -1,10 +1,9 @@
-use std::cell::RefCell;
 use std::collections::HashMap;
-use std::fs::File;
-use std::io::{self, Cursor, Read};
 use std::path::Path;
 
 use thiserror::Error;
+use unarc_rs::unified::{ArchiveFormat, ArchiveOptions, UnifiedArchive};
+use unarc_rs::ArchiveError as UnarcError;
 
 /// Error type for archive operations.
 #[derive(Debug, Error)]
@@ -15,17 +14,17 @@ pub enum ArchiveError {
     #[error("在压缩包中未找到文件: {0}")]
     FileNotFound(String),
 
+    #[error("压缩包需要密码")]
+    PasswordRequired,
+
+    #[error("密码错误")]
+    WrongPassword,
+
+    #[error("压缩包解析错误: {0}")]
+    Archive(String),
+
     #[error("IO 错误: {0}")]
-    Io(#[from] io::Error),
-
-    #[error("ZIP 解析错误: {0}")]
-    Zip(String),
-
-    #[error("7Z 错误: {0}")]
-    SevenZ(String),
-
-    #[error("TAR 错误: {0}")]
-    Tar(String),
+    Io(#[from] std::io::Error),
 }
 
 /// Information about an entry in the archive.
@@ -37,259 +36,121 @@ pub struct ArchiveEntry {
     pub size: u64,
 }
 
-/// Archive format detected from file extension.
-#[derive(Debug)]
-enum Format {
-    Zip,
-    #[cfg(feature = "sevenz")]
-    SevenZ,
-    #[cfg(feature = "tar-gz")]
-    TarGz,
-    #[cfg(feature = "tar-xz")]
-    TarXz,
-    Tar,
-}
-
 /// Archive reader supporting multiple compression formats.
+///
+/// 所有支持的格式（ZIP / 7z / RAR / TAR / TGZ / TBZ / LHA/LZH / ARJ / ZOO 等）
+/// 均通过 unarc-rs 统一处理：打开时一次性将 MIDI 文件解压到内存 HashMap，
+/// 后续 `list_midi_files` / `read_file` 都是 O(1) HashMap 查找。
 pub struct Archive {
-    inner: ArchiveInner,
-}
-
-enum ArchiveInner {
-    /// ZIP: lazy decompression with random access (RefCell for interior mutability).
-    Zip(RefCell<zip::ZipArchive<File>>),
-    /// 7z / TAR: fully decompressed into memory HashMap for O(1) random access.
-    Memory(HashMap<String, Vec<u8>>),
+    files: HashMap<String, Vec<u8>>,
 }
 
 impl Archive {
-    /// Open an archive file. Format is auto-detected from the file extension.
+    /// Open an archive file without a password. Format is auto-detected from
+    /// the file extension (falls back to magic-byte detection).
+    ///
+    /// 如果压缩包包含加密条目，返回 `ArchiveError::PasswordRequired`。
     pub fn open(path: impl AsRef<Path>) -> Result<Self, ArchiveError> {
-        let path = path.as_ref();
-        let format = Self::detect_format(path)?;
-        tracing::info!("打开压缩包: {:?} (格式: {:?})", path, format);
+        Self::open_with_password(path, None)
+    }
 
-        match format {
-            Format::Zip => Self::open_zip(path),
-            #[cfg(feature = "sevenz")]
-            Format::SevenZ => Self::open_sevenz(path),
-            #[cfg(feature = "tar-gz")]
-            Format::TarGz => Self::open_tar(path, Format::TarGz),
-            #[cfg(feature = "tar-xz")]
-            Format::TarXz => Self::open_tar(path, Format::TarXz),
-            Format::Tar => Self::open_tar(path, Format::Tar),
+    /// Open an archive file with an optional password.
+    pub fn open_with_password(
+        path: impl AsRef<Path>,
+        password: Option<&str>,
+    ) -> Result<Self, ArchiveError> {
+        let path = path.as_ref();
+        tracing::info!("打开压缩包: {:?}", path);
+
+        if ArchiveFormat::from_path(path).is_none() {
+            return Err(ArchiveError::UnsupportedFormat(format!("{:?}", path)));
         }
+
+        let options = match password {
+            Some(p) if !p.is_empty() => ArchiveOptions::new().with_password(p),
+            _ => ArchiveOptions::new(),
+        };
+
+        let mut archive = ArchiveFormat::open_path_with_options(path, options)
+            .map_err(|e| classify_open_error(&e))?;
+
+        let files = extract_midi_files(&mut archive)?;
+
+        Ok(Self { files })
     }
 
     /// List all MIDI files (.mid/.midi) in the archive, sorted by name A-Z.
     pub fn list_midi_files(&self) -> Vec<ArchiveEntry> {
-        match &self.inner {
-            ArchiveInner::Zip(zip) => self.list_midi_files_zip(&mut zip.borrow_mut()),
-            ArchiveInner::Memory(map) => {
-                let mut entries: Vec<ArchiveEntry> = map
-                    .keys()
-                    .filter(|name| is_midi_file(name))
-                    .map(|name| ArchiveEntry {
-                        name: name.clone(),
-                        size: map[name].len() as u64,
-                    })
-                    .collect();
-                entries.sort_by(|a, b| a.name.cmp(&b.name));
-                entries
-            }
-        }
-    }
-
-    /// Read a file from the archive by name.
-    pub fn read_file(&self, name: &str) -> Result<Vec<u8>, ArchiveError> {
-        match &self.inner {
-            ArchiveInner::Zip(zip) => self.read_file_zip(&mut zip.borrow_mut(), name),
-            ArchiveInner::Memory(map) => map
-                .get(name)
-                .cloned()
-                .ok_or_else(|| ArchiveError::FileNotFound(name.to_string())),
-        }
-    }
-
-    // ── ZIP implementation ──
-
-    fn open_zip(path: &Path) -> Result<Self, ArchiveError> {
-        let file = File::open(path).map_err(ArchiveError::Io)?;
-        let archive = zip::ZipArchive::new(file).map_err(|e| ArchiveError::Zip(e.to_string()))?;
-        Ok(Self {
-            inner: ArchiveInner::Zip(RefCell::new(archive)),
-        })
-    }
-
-    fn list_midi_files_zip(&self, zip: &mut zip::ZipArchive<File>) -> Vec<ArchiveEntry> {
-        let mut entries: Vec<ArchiveEntry> = Vec::new();
-        for i in 0..zip.len() {
-            if let Ok(file) = zip.by_index(i) {
-                let name = file.name().to_string();
-                if is_midi_file(&name) {
-                    entries.push(ArchiveEntry {
-                        name,
-                        size: file.size(),
-                    });
-                }
-            }
-        }
+        let mut entries: Vec<ArchiveEntry> = self
+            .files
+            .iter()
+            .map(|(name, data)| ArchiveEntry {
+                name: name.clone(),
+                size: data.len() as u64,
+            })
+            .collect();
         entries.sort_by(|a, b| a.name.cmp(&b.name));
         entries
     }
 
-    fn read_file_zip(&self, zip: &mut zip::ZipArchive<File>, name: &str) -> Result<Vec<u8>, ArchiveError> {
-        let mut file = zip.by_name(name).map_err(|e| ArchiveError::Zip(e.to_string()))?;
-        let mut buf = Vec::with_capacity(file.size() as usize);
-        file.read_to_end(&mut buf).map_err(ArchiveError::Io)?;
-        Ok(buf)
+    /// Read a file from the archive by name.
+    pub fn read_file(&self, name: &str) -> Result<Vec<u8>, ArchiveError> {
+        self.files
+            .get(name)
+            .cloned()
+            .ok_or_else(|| ArchiveError::FileNotFound(name.to_string()))
     }
+}
 
-    // ── 7Z implementation ──
+/// 遍历 archive 中的所有条目，将 MIDI 文件解压到 HashMap。
+fn extract_midi_files<R: std::io::Read + std::io::Seek>(
+    archive: &mut UnifiedArchive<R>,
+) -> Result<HashMap<String, Vec<u8>>, ArchiveError> {
+    let mut files = HashMap::new();
 
-    #[cfg(feature = "sevenz")]
-    fn open_sevenz(path: &Path) -> Result<Self, ArchiveError> {
-        let mut reader = sevenz_rust::SevenZReader::open(path, sevenz_rust::Password::empty())
-            .map_err(|e| ArchiveError::SevenZ(e.to_string()))?;
-
-        let mut map = HashMap::new();
-        reader
-            .for_each_entries(|entry, reader| {
-                let name = entry.name().to_string();
-                if is_midi_file(&name) {
-                    let mut buf = Vec::with_capacity(entry.size() as usize);
-                    reader.read_to_end(&mut buf)
-                        .map_err(sevenz_rust::Error::io)?;
-                    map.insert(name, buf);
-                }
-                Ok(true)
-            })
-            .map_err(|e| ArchiveError::SevenZ(e.to_string()))?;
-
-        Ok(Self {
-            inner: ArchiveInner::Memory(map),
-        })
-    }
-
-    // ── TAR implementation ──
-
-    #[cfg(any(feature = "tar-gz", feature = "tar-xz"))]
-    fn open_tar(path: &Path, format: Format) -> Result<Self, ArchiveError> {
-        let mut file = File::open(path).map_err(ArchiveError::Io)?;
-
-        // First, decompress the entire file into memory
-        let mut raw = Vec::new();
-        match format {
-            #[cfg(feature = "tar-gz")]
-            Format::TarGz => {
-                use flate2::read::GzDecoder;
-                let mut decoder = GzDecoder::new(&mut file);
-                decoder.read_to_end(&mut raw).map_err(ArchiveError::Io)?;
-            }
-            #[cfg(feature = "tar-xz")]
-            Format::TarXz => {
-                let mut compressed = Vec::new();
-                file.read_to_end(&mut compressed).map_err(ArchiveError::Io)?;
-                lzma_rs::xz_decompress(&mut compressed.as_slice(), &mut raw)
-                    .map_err(|e| ArchiveError::Tar(e.to_string()))?;
-            }
-            Format::Tar => {
-                file.read_to_end(&mut raw).map_err(ArchiveError::Io)?;
-            }
-            _ => unreachable!(),
+    while let Some(entry) = archive
+        .next_entry()
+        .map_err(|e| classify_read_error(&e))?
+    {
+        let name = entry.name().to_string();
+        if !is_midi_file(&name) {
+            // 跳过非 MIDI 条目，但仍需调用 skip 以推进流。
+            archive
+                .skip(&entry)
+                .map_err(|e| classify_read_error(&e))?;
+            continue;
         }
 
-        // Parse tar structure and extract MIDI files
-        let mut archive = tar::Archive::new(Cursor::new(&raw));
-        let mut map = HashMap::new();
-
-        for entry in archive.entries().map_err(|e| ArchiveError::Tar(e.to_string()))? {
-            let mut entry = entry.map_err(ArchiveError::Io)?;
-            let name = entry.path().map_err(ArchiveError::Io)?.to_string_lossy().to_string();
-
-            if is_midi_file(&name) {
-                let mut buf = Vec::with_capacity(entry.size() as usize);
-                entry.read_to_end(&mut buf).map_err(ArchiveError::Io)?;
-                map.insert(name, buf);
-            }
+        if entry.is_encrypted() && !archive.options().has_password() {
+            return Err(ArchiveError::PasswordRequired);
         }
 
-        Ok(Self {
-            inner: ArchiveInner::Memory(map),
-        })
+        let data = archive
+            .read(&entry)
+            .map_err(|e| classify_read_error(&e))?;
+        files.insert(name, data);
     }
 
-    // ── Format detection ──
+    Ok(files)
+}
 
-    fn detect_format(path: &Path) -> Result<Format, ArchiveError> {
-        let ext = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .map(|e| e.to_lowercase())
-            .unwrap_or_default();
+/// 将 unarc-rs 的打开阶段错误映射为 yinhe-archive 错误。
+fn classify_open_error(e: &UnarcError) -> ArchiveError {
+    let msg = e.to_string();
+    if msg.contains("password") || msg.contains("encrypted") {
+        ArchiveError::WrongPassword
+    } else {
+        ArchiveError::Archive(msg)
+    }
+}
 
-        let stem_ext = path
-            .file_name()
-            .and_then(|f| f.to_str())
-            .and_then(|f| {
-                let parts: Vec<&str> = f.rsplit('.').collect();
-                if parts.len() >= 2 {
-                    Some(parts[1].to_lowercase())
-                } else {
-                    None
-                }
-            });
-
-        match ext.as_str() {
-            "zip" => Ok(Format::Zip),
-            #[cfg(feature = "sevenz")]
-            "7z" => Ok(Format::SevenZ),
-            "gz" => {
-                #[cfg(feature = "tar-gz")]
-                {
-                    if stem_ext.as_deref() == Some("tar") {
-                        return Ok(Format::TarGz);
-                    }
-                }
-                Err(ArchiveError::UnsupportedFormat(format!(
-                    "不支持的 .gz 文件: {:?}",
-                    path
-                )))
-            }
-            "xz" => {
-                #[cfg(feature = "tar-xz")]
-                {
-                    if stem_ext.as_deref() == Some("tar") {
-                        return Ok(Format::TarXz);
-                    }
-                }
-                Err(ArchiveError::UnsupportedFormat(format!(
-                    "不支持的 .xz 文件: {:?}",
-                    path
-                )))
-            }
-            "tgz" => {
-                #[cfg(feature = "tar-gz")]
-                return Ok(Format::TarGz);
-                #[cfg(not(feature = "tar-gz"))]
-                Err(ArchiveError::UnsupportedFormat(
-                    "需要启用 tar-gz feature".to_string(),
-                ))
-            }
-            "txz" => {
-                #[cfg(feature = "tar-xz")]
-                return Ok(Format::TarXz);
-                #[cfg(not(feature = "tar-xz"))]
-                Err(ArchiveError::UnsupportedFormat(
-                    "需要启用 tar-xz feature".to_string(),
-                ))
-            }
-            "tar" => Ok(Format::Tar),
-            _ => Err(ArchiveError::UnsupportedFormat(format!(
-                "不支持的文件格式: {:?}",
-                path
-            ))),
-        }
+/// 将 unarc-rs 的读取阶段错误映射为 yinhe-archive 错误。
+fn classify_read_error(e: &UnarcError) -> ArchiveError {
+    let msg = e.to_string();
+    if msg.contains("password") || msg.contains("encrypted") {
+        ArchiveError::WrongPassword
+    } else {
+        ArchiveError::Archive(msg)
     }
 }
 
@@ -306,12 +167,33 @@ mod tests {
     use zip::write::SimpleFileOptions;
 
     #[test]
+    fn test_unsupported_format() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.unknown");
+        std::fs::write(&path, b"garbage").unwrap();
+
+        match Archive::open(&path) {
+            Err(ArchiveError::UnsupportedFormat(_)) => {}
+            Err(e) => panic!("expected UnsupportedFormat, got: {:?}", e),
+            Ok(_) => panic!("expected error"),
+        }
+    }
+
+    #[test]
+    fn test_nonexistent_file() {
+        let path = "/tmp/yinhe-archive-nonexistent-12345.zip";
+        match Archive::open(path) {
+            Err(_) => {}
+            Ok(_) => panic!("expected error for nonexistent file"),
+        }
+    }
+
+    #[test]
     fn test_zip_list_and_read() {
         let dir = tempfile::tempdir().unwrap();
         let zip_path = dir.path().join("test.zip");
 
-        // Create a ZIP with 2 MIDI files and 1 txt file
-        let zip_file = File::create(&zip_path).unwrap();
+        let zip_file = std::fs::File::create(&zip_path).unwrap();
         let mut zip = zip::ZipWriter::new(zip_file);
         let options = SimpleFileOptions::default()
             .compression_method(zip::CompressionMethod::Stored);
@@ -327,14 +209,12 @@ mod tests {
 
         zip.finish().unwrap();
 
-        // Test list_midi_files
         let archive = Archive::open(&zip_path).unwrap();
         let entries = archive.list_midi_files();
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].name, "track1.mid");
         assert_eq!(entries[1].name, "track2.midi");
 
-        // Test read_file
         let data = archive.read_file("track1.mid").unwrap();
         assert_eq!(data, b"MThd");
 
@@ -343,26 +223,11 @@ mod tests {
     }
 
     #[test]
-    fn test_unsupported_format() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("test.unknown");
-        File::create(&path).unwrap();
-
-        match Archive::open(&path) {
-            Err(ArchiveError::UnsupportedFormat(msg)) => {
-                assert!(msg.contains("不支持的文件格式"));
-            }
-            _ => panic!("expected UnsupportedFormat error"),
-        }
-    }
-
-    #[test]
     fn test_read_nonexistent() {
         let dir = tempfile::tempdir().unwrap();
         let zip_path = dir.path().join("test.zip");
 
-        // Create ZIP with one non-MIDI file
-        let zip_file = File::create(&zip_path).unwrap();
+        let zip_file = std::fs::File::create(&zip_path).unwrap();
         let mut zip = zip::ZipWriter::new(zip_file);
         let options = SimpleFileOptions::default()
             .compression_method(zip::CompressionMethod::Stored);

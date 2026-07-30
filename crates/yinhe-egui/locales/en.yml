@@ -128,6 +128,10 @@ dialog.archive.file_count: "%{n} files"
 dialog.archive.no_midi: "No MIDI files found in archive"
 dialog.archive.open_failed: "Failed to open archive: %{e}"
 dialog.archive.archive_error: "Cannot open archive: %{e}"
+dialog.archive.password_title: "Password Required"
+dialog.archive.password_prompt: "Archive %{name} requires a password"
+dialog.archive.password_wrong: "Wrong password, please try again"
+dialog.archive.password_hint: "Enter password"
 
 # ── PPQ rescale confirm ──
 dialog.ppq_rescale.title: "PPQ Change"

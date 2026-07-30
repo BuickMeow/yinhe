@@ -128,6 +128,10 @@ dialog.archive.file_count: "%{n} 个文件"
 dialog.archive.no_midi: "压缩包中没有找到 MIDI 文件"
 dialog.archive.open_failed: "打开压缩包失败: %{e}"
 dialog.archive.archive_error: "无法打开归档文件: %{e}"
+dialog.archive.password_title: "输入密码"
+dialog.archive.password_prompt: "压缩包 %{name} 需要密码"
+dialog.archive.password_wrong: "密码错误，请重试"
+dialog.archive.password_hint: "请输入密码"
 
 # ── PPQ 缩放确认 ──
 dialog.ppq_rescale.title: "PPQ 变更"

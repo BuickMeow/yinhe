@@ -7,7 +7,7 @@ use yinhe_core::YinModel;
 use yinhe_mid2::{LoadProgress, MidiImportEncoding};
 use yinhe_yin::{MappingFile, ProjectSoundFonts};
 
-use crate::dialogs::archive_picker::ArchivePickerState;
+use crate::dialogs::archive_picker::{ArchivePickerState, PasswordPrompt};
 use yinhe_editor_core::progress::{self, SharedProgress, StageStatus};
 
 /// Events sent from the background loading thread to the UI thread.
@@ -23,7 +23,7 @@ pub(crate) enum YinLoadEvent {
 
 /// Events for archive opening.
 pub(crate) enum ArchiveLoadEvent {
-    Complete(Result<(yinhe_archive::Archive, Vec<yinhe_archive::ArchiveEntry>), String>),
+    Complete(Result<(yinhe_archive::Archive, Vec<yinhe_archive::ArchiveEntry>), yinhe_archive::ArchiveError>),
 }
 
 pub(crate) struct MidiLoader {
@@ -66,6 +66,7 @@ pub(crate) struct FileLoader {
     yin_loader: Option<YinLoader>,
     archive_loader: Option<ArchiveLoader>,
     pub archive_picker: Option<ArchivePickerState>,
+    pub password_prompt: Option<PasswordPrompt>,
     load_progress: SharedProgress,
 }
 
@@ -76,6 +77,7 @@ impl FileLoader {
             yin_loader: None,
             archive_loader: None,
             archive_picker: None,
+            password_prompt: None,
             load_progress,
         }
     }
@@ -85,6 +87,7 @@ impl FileLoader {
             || self.yin_loader.is_some()
             || self.archive_loader.is_some()
             || self.archive_picker.is_some()
+            || self.password_prompt.is_some()
     }
 
     pub fn load_progress(&self) -> &SharedProgress {
@@ -100,6 +103,7 @@ impl FileLoader {
         self.midi_loader = None;
         self.yin_loader = None;
         self.archive_loader = None;
+        self.password_prompt = None;
         progress::set_visible(&self.load_progress, false);
     }
 
@@ -112,11 +116,11 @@ impl FileLoader {
         if let Some(path) = rfd::FileDialog::new()
             .add_filter(
                 t!("file_dialog.all_supported").as_ref(),
-                &["mid", "midi", "yin", "zip", "7z", "tar", "gz", "xz", "tgz", "txz"],
+                &["mid", "midi", "yin", "zip", "7z", "rar", "lzh", "lha", "tar", "gz", "xz", "tgz", "txz", "tbz", "bz2"],
             )
             .add_filter(t!("file_dialog.midi").as_ref(), &["mid", "midi"])
             .add_filter(t!("file_dialog.yinhe_project").as_ref(), &["yin"])
-            .add_filter(t!("file_dialog.archive").as_ref(), &["zip", "7z", "tar", "gz", "xz", "tgz", "txz"])
+            .add_filter(t!("file_dialog.archive").as_ref(), &["zip", "7z", "rar", "lzh", "lha", "tar", "gz", "xz", "tgz", "txz", "tbz", "bz2"])
             .pick_file()
         {
             let path_str = path.to_string_lossy().to_string();
@@ -130,7 +134,7 @@ impl FileLoader {
 
             match ext.as_str() {
                 "yin" => self.start_yin(path_str),
-                "zip" | "7z" | "tar" | "gz" | "xz" | "tgz" | "txz" => self.start_archive(path_str),
+                "zip" | "7z" | "rar" | "lzh" | "lha" | "tar" | "gz" | "xz" | "tgz" | "txz" | "tbz" | "bz2" => self.start_archive(path_str, None),
                 _ => self.start_midi(path_str, encoding),
             }
         }
@@ -167,16 +171,20 @@ impl FileLoader {
         });
     }
 
-    fn start_archive(&mut self, path_str: String) {
+    /// Start loading an archive with optional password.
+    /// `password == None` means no password; `Some("")` is treated as no password.
+    pub(crate) fn start_archive(&mut self, path_str: String, password: Option<String>) {
         let (tx, rx) = mpsc::channel();
         let path_for_thread = path_str.clone();
         std::thread::spawn(move || {
-            let result = yinhe_archive::Archive::open(&path_for_thread)
-                .map(|archive| {
-                    let entries = archive.list_midi_files();
-                    (archive, entries)
-                })
-                .map_err(|e| e.to_string());
+            let result = yinhe_archive::Archive::open_with_password(
+                &path_for_thread,
+                password.as_deref(),
+            )
+            .map(|archive| {
+                let entries = archive.list_midi_files();
+                (archive, entries)
+            });
             let _ = tx.send(ArchiveLoadEvent::Complete(result));
         });
         self.archive_loader = Some(ArchiveLoader {
@@ -329,7 +337,22 @@ impl FileLoader {
                         }
                         Err(e) => {
                             tracing::error!("打开压缩包失败: {}", e);
-                            return LoadResult::ArchiveError(format!("打开压缩包失败: {}", e));
+                            // 密码错误/缺失：弹出密码输入框而非直接报错
+                            match &e {
+                                yinhe_archive::ArchiveError::PasswordRequired => {
+                                    progress::set_visible(&self.load_progress, false);
+                                    self.password_prompt = Some(PasswordPrompt::new(loader.path.clone(), false));
+                                    return LoadResult::NotReady;
+                                }
+                                yinhe_archive::ArchiveError::WrongPassword => {
+                                    progress::set_visible(&self.load_progress, false);
+                                    self.password_prompt = Some(PasswordPrompt::new(loader.path.clone(), true));
+                                    return LoadResult::NotReady;
+                                }
+                                _ => {
+                                    return LoadResult::ArchiveError(format!("打开压缩包失败: {}", e));
+                                }
+                            }
                         }
                     },
                 }
