@@ -153,4 +153,26 @@ impl Document {
         td.program_change.sort_by_key(|e| e.tick);
         self.data.bump_revision();
     }
+
+    /// 按 `old_tick` 找到 `track.program_change` 事件并修改其 tick / program。
+    /// 未找到对应 tick 的事件时静默返回。bank_msb / bank_lsb 保持不变。
+    pub fn set_program_change_event(
+        &mut self,
+        track: u16,
+        old_tick: u32,
+        new_tick: u32,
+        new_program: u8,
+    ) {
+        let model = Arc::make_mut(&mut self.data.model);
+        let Some(td) = model.tracks.get_mut(track as usize) else { return };
+        let td = Arc::make_mut(td);
+        let Some(idx) = td.program_change.iter().position(|e| e.tick == old_tick) else { return };
+        {
+            let event = &mut td.program_change[idx];
+            event.tick = new_tick;
+            event.program = new_program;
+        }
+        td.program_change.sort_by_key(|e| e.tick);
+        self.data.bump_revision();
+    }
 }

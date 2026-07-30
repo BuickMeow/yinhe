@@ -5,19 +5,33 @@ use eframe::egui;
 use rust_i18n::t;
 use yinhe_editor_core::document::Document;
 
+use super::super::bar_lookup::BarLookup;
 use super::super::state::EditRequest;
-use super::super::table::{peek_edit_request, remove_edit_request, update_edit_request};
-use super::{PopupAction, PopupConfig, show_number_popup};
+use super::super::table::{
+    peek_edit_request, peek_pos_edit_request, remove_edit_request, remove_pos_edit_request,
+    update_edit_request, update_pos_edit_request,
+};
+use super::{PopupAction, PopupConfig, show_number_popup, show_tick_popup};
 
 /// 处理拍号的 tick / numerator / denominator 编辑 popup。
+///
+/// 优先响应位置编辑请求（`(salt, "edit_pos")` key），再响应普通编辑请求。
 pub fn apply_timesig_popups(
     ui: &mut egui::Ui,
     doc: &mut Document,
     salt: &str,
+    bar_lookup: &BarLookup,
 ) {
+    if let Some(req) = peek_pos_edit_request(ui, salt) {
+        match req {
+            EditRequest::TimeSigTick { tick } => show_timesig_tick_popup(ui, doc, salt, tick, Some(bar_lookup)),
+            _ => remove_pos_edit_request(ui, salt),
+        }
+        return;
+    }
     let Some(req) = peek_edit_request(ui, salt) else { return };
     match req {
-        EditRequest::TimeSigTick { tick } => show_timesig_tick_popup(ui, doc, salt, tick),
+        EditRequest::TimeSigTick { tick } => show_timesig_tick_popup(ui, doc, salt, tick, None),
         EditRequest::TimeSigNumerator { tick } => show_timesig_num_popup(ui, doc, salt, tick),
         EditRequest::TimeSigDenominator { tick } => show_timesig_den_popup(ui, doc, salt, tick),
         _ => {}
@@ -29,17 +43,10 @@ fn show_timesig_tick_popup(
     doc: &mut Document,
     salt: &str,
     tick: u32,
+    bar_lookup: Option<&BarLookup>,
 ) {
     let before = record_timesig_before(ui, doc, salt);
-    let action = show_number_popup(ui, PopupConfig {
-        salt,
-        title: t!("event_browser.edit_tick").as_ref(),
-        initial: tick as f64,
-        range_min: 0.0,
-        range_max: u32::MAX as f64,
-        speed: 1.0,
-        fixed_decimals: None,
-    });
+    let action = show_tick_popup(ui, salt, t!("event_browser.edit_tick").as_ref(), tick, 0, bar_lookup);
     match action {
         PopupAction::Changed(new_tick) => {
             let new_tick = new_tick as u32;
@@ -48,7 +55,12 @@ fn show_timesig_tick_popup(
                 if let Some(e) = model.conductor.time_sig.iter().find(|e| e.tick == tick) {
                     doc.set_time_sig_event(tick, new_tick, e.numerator, e.denominator);
                 }
-                update_edit_request(ui, salt, EditRequest::TimeSigTick { tick: new_tick });
+                let req = EditRequest::TimeSigTick { tick: new_tick };
+                if bar_lookup.is_some() {
+                    update_pos_edit_request(ui, salt, req);
+                } else {
+                    update_edit_request(ui, salt, req);
+                }
             }
         }
         PopupAction::Closed => {
@@ -176,4 +188,5 @@ fn finalize_timesig_undo(
         m.data.remove::<bool>(before_id.with("recorded"));
     });
     remove_edit_request(ui, salt);
+    remove_pos_edit_request(ui, salt);
 }

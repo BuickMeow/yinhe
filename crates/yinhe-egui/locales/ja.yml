@@ -196,6 +196,7 @@ event_browser.edit_numerator: "分子を編集"
 event_browser.edit_denominator: "分母を編集(2^n)"
 event_browser.edit_keysig_root: "ルート編集 (0-11, C=0)"
 event_browser.edit_keysig_scale: "スケール編集"
+event_browser.edit_program: "プログラム編集 (0-127)"
 event_browser.edit_text: "テキストを編集"
 event_browser.shape_step: "離散 (Step)"
 

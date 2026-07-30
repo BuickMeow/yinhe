@@ -6,20 +6,35 @@ use rust_i18n::t;
 use yinhe_editor_core::document::Document;
 use yinhe_types::PencilNoteDrag;
 
+use super::super::bar_lookup::BarLookup;
 use super::super::state::{EditRequest, NoteRef};
-use super::super::table::{peek_edit_request, remove_edit_request, update_edit_request};
-use super::{PopupAction, PopupConfig, show_number_popup};
+use super::super::table::{
+    peek_edit_request, peek_pos_edit_request, remove_edit_request, remove_pos_edit_request,
+    update_edit_request, update_pos_edit_request,
+};
+use super::{PopupAction, PopupConfig, show_number_popup, show_tick_popup};
 
 /// 处理音符的 start_tick / end_tick / gate / key / velocity 编辑 popup。
+///
+/// 优先响应位置编辑请求（`(salt, "edit_pos")` key），再响应普通编辑请求。
 pub fn apply_note_popups(
     ui: &mut egui::Ui,
     doc: &mut Document,
     salt: &str,
+    bar_lookup: &BarLookup,
 ) {
+    if let Some(req) = peek_pos_edit_request(ui, salt) {
+        match req {
+            EditRequest::NoteStartTick { note } => show_note_start_tick_popup(ui, doc, salt, note, Some(bar_lookup)),
+            EditRequest::NoteEndTick { note } => show_note_end_tick_popup(ui, doc, salt, note, Some(bar_lookup)),
+            _ => remove_pos_edit_request(ui, salt),
+        }
+        return;
+    }
     let Some(req) = peek_edit_request(ui, salt) else { return };
     match req {
-        EditRequest::NoteStartTick { note } => show_note_start_tick_popup(ui, doc, salt, note),
-        EditRequest::NoteEndTick { note } => show_note_end_tick_popup(ui, doc, salt, note),
+        EditRequest::NoteStartTick { note } => show_note_start_tick_popup(ui, doc, salt, note, None),
+        EditRequest::NoteEndTick { note } => show_note_end_tick_popup(ui, doc, salt, note, None),
         EditRequest::NoteGate { note } => show_note_gate_popup(ui, doc, salt, note),
         EditRequest::NoteKey { note } => show_note_key_popup(ui, doc, salt, note),
         EditRequest::NoteVelocity { note } => show_note_velocity_popup(ui, doc, salt, note),
@@ -32,17 +47,10 @@ fn show_note_start_tick_popup(
     doc: &mut Document,
     salt: &str,
     note: NoteRef,
+    bar_lookup: Option<&BarLookup>,
 ) {
     let before = record_note_before(ui, doc, salt, &note);
-    let action = show_number_popup(ui, PopupConfig {
-        salt,
-        title: t!("event_browser.edit_tick").as_ref(),
-        initial: note.start_tick as f64,
-        range_min: 0.0,
-        range_max: u32::MAX as f64,
-        speed: 1.0,
-        fixed_decimals: None,
-    });
+    let action = show_tick_popup(ui, salt, t!("event_browser.edit_tick").as_ref(), note.start_tick, 0, bar_lookup);
     match action {
         PopupAction::Changed(new_tick) => {
             let new_tick = new_tick as u32;
@@ -59,9 +67,14 @@ fn show_note_start_tick_popup(
                 let new_end = note.end_tick as i64 + delta_ticks;
                 let new_end = new_end.max(0) as u32;
                 // 更新 NoteRef，下次寻址用新值
-                update_edit_request(ui, salt, EditRequest::NoteStartTick {
+                let req = EditRequest::NoteStartTick {
                     note: NoteRef { start_tick: new_tick, end_tick: new_end, ..note },
-                });
+                };
+                if bar_lookup.is_some() {
+                    update_pos_edit_request(ui, salt, req);
+                } else {
+                    update_edit_request(ui, salt, req);
+                }
             }
         }
         PopupAction::Closed => {
@@ -76,17 +89,11 @@ fn show_note_end_tick_popup(
     doc: &mut Document,
     salt: &str,
     note: NoteRef,
+    bar_lookup: Option<&BarLookup>,
 ) {
     let before = record_note_before(ui, doc, salt, &note);
-    let action = show_number_popup(ui, PopupConfig {
-        salt,
-        title: t!("event_browser.edit_end_tick").as_ref(),
-        initial: note.end_tick as f64,
-        range_min: (note.start_tick + 1) as f64,
-        range_max: u32::MAX as f64,
-        speed: 1.0,
-        fixed_decimals: None,
-    });
+    let action = show_tick_popup(ui, salt, t!("event_browser.edit_end_tick").as_ref(),
+        note.end_tick, note.start_tick + 1, bar_lookup);
     match action {
         PopupAction::Changed(new_end) => {
             let new_end = new_end as u32;
@@ -97,9 +104,14 @@ fn show_note_end_tick_popup(
                     key: note.key,
                     new_end_tick: new_end,
                 });
-                update_edit_request(ui, salt, EditRequest::NoteEndTick {
+                let req = EditRequest::NoteEndTick {
                     note: NoteRef { end_tick: new_end, ..note },
-                });
+                };
+                if bar_lookup.is_some() {
+                    update_pos_edit_request(ui, salt, req);
+                } else {
+                    update_edit_request(ui, salt, req);
+                }
             }
         }
         PopupAction::Closed => {
@@ -296,4 +308,5 @@ fn finalize_note_undo(
         m.data.remove::<bool>(before_id.with("recorded"));
     });
     remove_edit_request(ui, salt);
+    remove_pos_edit_request(ui, salt);
 }

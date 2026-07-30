@@ -19,6 +19,7 @@
 mod automation;
 mod keysig;
 mod note;
+mod pc;
 mod text;
 mod timesig;
 
@@ -26,9 +27,12 @@ use eframe::egui;
 
 use rust_i18n::t;
 
+use super::bar_lookup::BarLookup;
+
 pub(super) use automation::apply_automation_popups;
 pub(super) use keysig::apply_keysig_popups;
 pub(super) use note::apply_note_popups;
+pub(super) use pc::apply_pc_popups;
 pub(super) use text::apply_text_popups;
 pub(super) use timesig::apply_timesig_popups;
 
@@ -61,6 +65,7 @@ fn show_number_popup(ui: &mut egui::Ui, cfg: PopupConfig) -> PopupAction {
     let popup_id = ui.id().with((cfg.salt, "popup"));
 
     let mut state = ui.memory(|m| m.data.get_temp::<f64>(state_id).unwrap_or(cfg.initial));
+    let old_state = state;
     let mut action = PopupAction::None;
     let mut open = true;
     let popup_pos = ui.clip_rect().min + egui::vec2(20.0, 20.0);
@@ -79,23 +84,24 @@ fn show_number_popup(ui: &mut egui::Ui, cfg: PopupConfig) -> PopupAction {
                 if let Some(d) = cfg.fixed_decimals {
                     dv = dv.fixed_decimals(d);
                 }
-                let resp = ui.add(dv);
-                if resp.changed() {
+                let _resp = ui.add(dv);
+                // 用直接比较替代 resp.changed()——后者在 Area 中的行为不稳定
+                if state != old_state {
                     action = PopupAction::Changed(state);
                     ui.memory_mut(|m| m.data.insert_temp(state_id, state));
                 }
-                if resp.lost_focus() {
+                if _resp.lost_focus() {
                     open = false;
                 }
                 ui.add_space(2.0);
-                let confirm = ui.button(t!("common.confirm").as_ref());
-                if confirm.clicked() {
-                    open = false;
-                }
-                ui.add_space(2.0);
-                if ui.button(t!("common.cancel").as_ref()).clicked() {
-                    open = false;
-                }
+                ui.horizontal(|ui| {
+                    if ui.button(t!("common.confirm").as_ref()).clicked() {
+                        open = false;
+                    }
+                    if ui.button(t!("common.cancel").as_ref()).clicked() {
+                        open = false;
+                    }
+                });
             });
         });
 
@@ -130,6 +136,7 @@ fn show_choice_popup<T: Copy + PartialEq + Send + Sync + 'static>(
     let popup_id = ui.id().with((salt, "choice_popup"));
 
     let mut state = ui.memory(|m| m.data.get_temp::<T>(state_id).unwrap_or(initial));
+    let old_state = state;
     let mut action = ChoicePopupAction::None;
     let mut open = true;
     let popup_pos = ui.clip_rect().min + egui::vec2(20.0, 20.0);
@@ -142,25 +149,27 @@ fn show_choice_popup<T: Copy + PartialEq + Send + Sync + 'static>(
                 ui.set_min_width(180.0);
                 ui.label(egui::RichText::new(title).strong().size(11.0));
                 ui.add_space(2.0);
-                let resp = egui::ComboBox::from_id_salt(salt)
+                let _resp = egui::ComboBox::from_id_salt(salt)
                     .selected_text(label_of(&state))
                     .show_ui(ui, |ui| {
                         for opt in options {
                             ui.selectable_value(&mut state, *opt, label_of(opt));
                         }
                     });
-                if resp.response.changed() {
+                // 用直接比较替代 resp.response.changed()——后者对 ComboBox 不可靠
+                if state != old_state {
                     action = ChoicePopupAction::Changed(state);
                     ui.memory_mut(|m| m.data.insert_temp(state_id, state));
                 }
                 ui.add_space(2.0);
-                if ui.button(t!("common.confirm").as_ref()).clicked() {
-                    open = false;
-                }
-                ui.add_space(2.0);
-                if ui.button(t!("common.cancel").as_ref()).clicked() {
-                    open = false;
-                }
+                ui.horizontal(|ui| {
+                    if ui.button(t!("common.confirm").as_ref()).clicked() {
+                        open = false;
+                    }
+                    if ui.button(t!("common.cancel").as_ref()).clicked() {
+                        open = false;
+                    }
+                });
             });
         });
 
@@ -168,6 +177,115 @@ fn show_choice_popup<T: Copy + PartialEq + Send + Sync + 'static>(
         ui.memory_mut(|m| m.data.remove::<T>(state_id));
         ChoicePopupAction::Closed
     } else {
+        action
+    }
+}
+
+/// tick 类 popup 的统一入口：根据请求来源选择位置 popup（双 DragValue）或数字 popup。
+///
+/// `bar_lookup` 为 `Some` 表示请求来自 position 列（`(salt, "edit_pos")` key），
+/// 弹位置编辑器；`None` 表示来自 tick 列，弹单数字编辑器。
+/// `min_tick` 约束最小 tick（如音符 end_tick 必须 > start_tick）。
+pub(super) fn show_tick_popup(
+    ui: &mut egui::Ui,
+    salt: &str,
+    title: &str,
+    tick: u32,
+    min_tick: u32,
+    bar_lookup: Option<&BarLookup>,
+) -> PopupAction {
+    match bar_lookup {
+        Some(bl) => show_position_popup(ui, salt, title, bl, tick, min_tick),
+        None => show_number_popup(ui, PopupConfig {
+            salt,
+            title,
+            initial: tick as f64,
+            range_min: min_tick as f64,
+            range_max: u32::MAX as f64,
+            speed: 1.0,
+            fixed_decimals: None,
+        }),
+    }
+}
+
+/// 渲染位置编辑 popup（Area + 小节/小节内 tick 两个 DragValue + confirm/cancel）。
+///
+/// 状态存当前 tick（f64）到 `(salt, "pos_state")`，每帧换算为 (小节, 小节内 tick)
+/// 显示；两个 DragValue 修改本地副本后用**值比较**检测变化（不依赖 `resp.changed()`，
+/// 后者在 Area 中不可靠），再经 `BarLookup::position_to_tick` 换算回 tick。
+/// 返回值与 `show_number_popup` 一致，各 tick popup 的 Changed 处理逻辑可复用。
+pub(super) fn show_position_popup(
+    ui: &mut egui::Ui,
+    salt: &str,
+    title: &str,
+    bar_lookup: &BarLookup,
+    current_tick: u32,
+    min_tick: u32,
+) -> PopupAction {
+    let state_id = egui::Id::new((salt, "pos_state"));
+    let popup_id = ui.id().with((salt, "pos_popup"));
+
+    let mut tick_f = ui.memory(|m| m.data.get_temp::<f64>(state_id).unwrap_or(current_tick as f64));
+    let old_tick = tick_f;
+    let mut action = PopupAction::None;
+    let mut open = true;
+    let popup_pos = ui.clip_rect().min + egui::vec2(20.0, 20.0);
+
+    egui::Area::new(popup_id)
+        .order(egui::Order::Foreground)
+        .fixed_pos(popup_pos)
+        .show(ui.ctx(), |ui| {
+            egui::Frame::popup(ui.style()).show(ui, |ui| {
+                ui.set_min_width(200.0);
+                ui.label(egui::RichText::new(title).strong().size(11.0));
+                ui.add_space(2.0);
+                let (bar, tick_in_bar) = bar_lookup.tick_to_position(tick_f.max(0.0) as u32);
+                let mut bar_f = bar as f64;
+                let mut tib_f = tick_in_bar as f64;
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("小节").size(11.0).color(egui::Color32::GRAY));
+                    ui.add(
+                        crate::widgets::numeric_input::decimal_drag_value(&mut bar_f)
+                            .range(1.0..=u32::MAX as f64)
+                            .speed(1.0)
+                            .fixed_decimals(0),
+                    );
+                    ui.label(egui::RichText::new("/").size(11.0).color(egui::Color32::GRAY));
+                    ui.add(
+                        crate::widgets::numeric_input::decimal_drag_value(&mut tib_f)
+                            .range(0.0..=u32::MAX as f64)
+                            .speed(1.0)
+                            .fixed_decimals(0),
+                    );
+                });
+                // 值比较：任一 dragvalue 变了就换算回 tick
+                if bar_f != bar as f64 || tib_f != tick_in_bar as f64 {
+                    tick_f = bar_lookup.position_to_tick(
+                        bar_f.max(1.0) as u32,
+                        tib_f.max(0.0) as u32,
+                    ) as f64;
+                    tick_f = tick_f.max(min_tick as f64);
+                }
+                ui.add_space(2.0);
+                ui.horizontal(|ui| {
+                    if ui.button(t!("common.confirm").as_ref()).clicked() {
+                        open = false;
+                    }
+                    if ui.button(t!("common.cancel").as_ref()).clicked() {
+                        open = false;
+                    }
+                });
+            });
+        });
+
+    if !open {
+        ui.memory_mut(|m| m.data.remove::<f64>(state_id));
+        PopupAction::Closed
+    } else {
+        if tick_f != old_tick {
+            ui.memory_mut(|m| m.data.insert_temp(state_id, tick_f));
+            action = PopupAction::Changed(tick_f);
+        }
         action
     }
 }

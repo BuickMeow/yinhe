@@ -325,6 +325,7 @@ undo.edit_anchor_x2: "Edit automation anchor X2"
 undo.edit_anchor_y2: "Edit automation anchor Y2"
 undo.edit_timesig: "Edit time signature"
 undo.edit_keysig: "Edit key signature"
+undo.edit_pc: "Edit program change"
 undo.edit_text_event: "Edit text event"
 
 # ── File dialogs ──

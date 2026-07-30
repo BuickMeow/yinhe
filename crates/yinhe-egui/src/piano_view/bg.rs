@@ -10,9 +10,11 @@ use yinhe_types::{KeySigEvent, PianoRollView};
 
 /// 绘制调式背景 + 八度横线。
 ///
-/// 有调号事件时：调内音用背景色（不画），调外音用 `PR_SCALE_OUTSIDE` 暗色，根音用 `PR_ROOT_NOTE` 深蓝。
-/// 无调号事件时：回退标准钢琴布局（黑键行用 `PR_BLACK_KEY_ROW` 色带），无根音蓝色。
-/// 按可见 tick 范围内的调号事件分段，每段独立渲染。
+/// 按可见 tick 范围分段渲染：
+/// - 第一个调号事件**之前**的区间：无调号模式（黑键行色带，无根音高亮）
+/// - 每个调号事件生效区间：调内音用背景色（不画），调外音用 `PR_SCALE_OUTSIDE` 暗色，
+///   根音用 `PR_ROOT_NOTE` 深蓝
+/// - 工程无任何调号事件：全部走无调号模式
 pub fn paint(
     painter: &egui::Painter,
     content_rect: egui::Rect,
@@ -21,15 +23,35 @@ pub fn paint(
     view: &PianoRollView,
     key_sig_events: &[KeySigEvent],
 ) {
-    if key_sig_events.is_empty() {
-        paint_black_key_rows(painter, content_rect, kb_w, kh, view);
-    } else {
-        paint_scale_background(painter, content_rect, kb_w, kh, view, key_sig_events);
+    let (tick_start, tick_end) = view.visible_tick_range(content_rect.width());
+    let tick_start = tick_start.max(0.0);
+    let tick_end = tick_end.max(tick_start);
+
+    match key_sig_events.first() {
+        None => {
+            paint_black_key_rows(painter, content_rect, kb_w, kh, view, tick_start, tick_end);
+        }
+        Some(first) => {
+            let first_tick = first.tick as f64;
+            // 第一个调号事件之前的区间：无调号模式
+            if tick_start < first_tick {
+                paint_black_key_rows(painter, content_rect, kb_w, kh, view,
+                    tick_start, first_tick.min(tick_end));
+            }
+            // 第一个调号事件起：调式分段
+            if tick_end > first_tick {
+                paint_scale_background(painter, content_rect, kb_w, kh, view, key_sig_events);
+            }
+        }
     }
     paint_octave_lines(painter, content_rect, kb_w, kh, view);
 }
 
 /// 按调号区间渲染 piano roll 背景条带。
+///
+/// 调用方保证 `key_sig_events` 非空且按 tick 有序（模型层 set/insert 后均 sort）。
+/// 渲染从 `max(tick_start, 第一个调号事件 tick)` 开始——之前的区间由调用方用
+/// 无调号模式绘制。
 fn paint_scale_background(
     painter: &egui::Painter,
     content_rect: egui::Rect,
@@ -50,19 +72,20 @@ fn paint_scale_background(
     let (tick_start, tick_end) = view.visible_tick_range(content_rect.width());
     let tick_start = tick_start.max(0.0);
     let tick_end = tick_end.max(tick_start);
-    if tick_end <= tick_start {
-        return;
-    }
 
     let outside_color = crate::theme::PR_SCALE_OUTSIDE;
     let root_color = crate::theme::PR_ROOT_NOTE;
     let ppt = view.base.pixels_per_tick;
     let scroll_x = view.base.scroll_x;
 
-    // 找到 tick_start 之前最后一个调号（当前生效的调号）
+    // 第一个调号事件之前的区间不归这里画，段起点从 first.tick 起算
+    let first_tick = key_sig_events[0].tick as f64;
+    let mut seg_start = tick_start.max(first_tick);
+
+    // 找到 seg_start 之前最后一个调号（当前生效的调号）
     let mut start_idx = 0usize;
     for (i, ev) in key_sig_events.iter().enumerate() {
-        if (ev.tick as f64) <= tick_start {
+        if (ev.tick as f64) <= seg_start {
             start_idx = i;
         } else {
             break;
@@ -70,7 +93,6 @@ fn paint_scale_background(
     }
 
     // 遍历可见调号区间
-    let mut seg_start = tick_start;
     let mut idx = start_idx;
     loop {
         let (root, scale) = (key_sig_events[idx].root, key_sig_events[idx].scale);
@@ -123,21 +145,35 @@ fn paint_scale_background(
 }
 
 /// 无调号时的标准钢琴布局：画黑键行色带（无根音蓝色）。
+///
+/// 仅画 `[seg_start, seg_end)` tick 区间对应的 x 范围（clamp 到可见区域）。
+/// 用于"工程无调号"或"第一个调号事件之前"的区间。
 fn paint_black_key_rows(
     painter: &egui::Painter,
     content_rect: egui::Rect,
     kb_w: f32,
     kh: f32,
     view: &PianoRollView,
+    seg_start: f64,
+    seg_end: f64,
 ) {
     let content_left = content_rect.min.x + kb_w;
-    let content_w = content_rect.width() - kb_w;
     let h = content_rect.height();
     let bottom = 128.0 * kh - view.base.scroll_y;
 
     // 可见 key 范围
     let key_hi = view.y_to_key(0.0).min(127) as u8;
     let key_lo = view.y_to_key(h).max(0) as u8;
+
+    // 区间 x 范围（clamp 到 content 区域）
+    let ppt = view.base.pixels_per_tick;
+    let scroll_x = view.base.scroll_x;
+    let x_start = (content_left + seg_start as f32 * ppt - scroll_x).max(content_left);
+    let x_end = (content_left + seg_end as f32 * ppt - scroll_x).min(content_rect.max.x);
+    let seg_w = x_end - x_start;
+    if seg_w <= 0.0 {
+        return;
+    }
 
     let bk_color = crate::theme::PR_BLACK_KEY_ROW;
     for key in key_lo..=key_hi {
@@ -151,8 +187,8 @@ fn paint_black_key_rows(
         }
         painter.rect_filled(
             egui::Rect::from_min_size(
-                egui::pos2(content_left, screen_y),
-                egui::vec2(content_w, kh),
+                egui::pos2(x_start, screen_y),
+                egui::vec2(seg_w, kh),
             ),
             0.0,
             bk_color,

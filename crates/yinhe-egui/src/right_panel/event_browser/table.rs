@@ -15,6 +15,7 @@ use egui_extras::{Column, TableBuilder, TableRow};
 
 use yinhe_types::SegmentShape;
 
+use super::bar_lookup::BarLookup;
 use super::state::{EditRequest, EventBrowserState};
 
 /// owned 副本，避免不可变借用阻塞后续 `&mut doc` 编辑。
@@ -95,6 +96,39 @@ pub(super) fn cell_text(
         let resp = ui.interact(cell_rect, id, egui::Sense::click());
         if resp.clicked() {
             ui.ctx().memory_mut(|m| m.data.insert_temp(click_key, row_idx));
+        }
+    });
+}
+
+/// 渲染只读位置单元格（"小节/小节内 tick" 文本）。
+///
+/// 左键跳转；右键写入 `EditRequest` 到 `(id_salt, "edit_pos")` key，
+/// 由 `apply_*_popups` 取出后弹出位置 popup（小节 + 小节内 tick 两个 DragValue）。
+/// 与普通 `(id_salt, "edit")` key 区分，让 popup 能选择位置编辑器而非单数字编辑器。
+pub(super) fn cell_position(
+    row: &mut TableRow,
+    bar_lookup: &BarLookup,
+    id_salt: &str,
+    row_idx: usize,
+    tick: u32,
+    tick_edit_request: impl Fn(u32) -> EditRequest,
+    click_key: egui::Id,
+) {
+    row.col(|ui| {
+        ui.add(
+            egui::Label::new(egui::RichText::new(bar_lookup.format(tick)).size(11.0).monospace())
+                .selectable(false),
+        );
+        let cell_rect = ui.max_rect();
+        let id = ui.id().with("poscell").with(row_idx);
+        let resp = ui.interact(cell_rect, id, egui::Sense::click());
+        if resp.clicked() {
+            ui.ctx().memory_mut(|m| m.data.insert_temp(click_key, row_idx));
+        }
+        if resp.secondary_clicked() {
+            ui.ctx().memory_mut(|m| {
+                m.data.insert_temp(egui::Id::new((id_salt, "edit_pos")), tick_edit_request(tick));
+            });
         }
     });
 }
@@ -213,17 +247,30 @@ fn handle_row_click(
 
 /// 空表格的加号按钮：点击新建第一个事件。
 ///
+/// 用 Label + interact + painter 叠加实现 hover 变蓝（同 mode_bar 风格），
+/// 避免 egui::Button 默认 hover 动画导致的跳动。
+///
 /// 返回 true 表示用户点击了加号（触发 `EditRequest::InsertFirst`）。
 pub(super) fn empty_state_add_button(ui: &mut egui::Ui, id_salt: &str) -> bool {
+    use crate::theme::ACCENT_ACTIVE;
     let mut clicked = false;
     ui.vertical_centered(|ui| {
         ui.add_space(40.0);
-        let btn = egui::Button::new(
-            egui::RichText::new(ICON_ADD).size(24.0).color(egui::Color32::from_gray(200)),
-        )
-        .fill(egui::Color32::TRANSPARENT)
-        .stroke(egui::Stroke::NONE);
-        if ui.add(btn).clicked() {
+        let icon_text = egui::RichText::new(ICON_ADD).size(24.0).color(egui::Color32::from_gray(200));
+        let resp = ui.add(
+            egui::Label::new(icon_text).selectable(false).sense(egui::Sense::click()),
+        );
+        // hover 时叠加蓝色图标（同 mode_bar 的 hover_highlight 机制）
+        if resp.hovered() {
+            ui.painter().text(
+                resp.rect.center(),
+                egui::Align2::CENTER_CENTER,
+                ICON_ADD.codepoint,
+                egui::FontId::proportional(24.0),
+                ACCENT_ACTIVE,
+            );
+        }
+        if resp.clicked() {
             clicked = true;
         }
         ui.label(
@@ -313,6 +360,24 @@ pub(super) fn update_edit_request(ui: &egui::Ui, id_salt: &str, new_req: EditReq
 /// 清除 `EditRequest`（popup 关闭时调用）。
 pub(super) fn remove_edit_request(ui: &egui::Ui, id_salt: &str) {
     let key = egui::Id::new((id_salt, "edit"));
+    ui.memory_mut(|m| m.data.remove::<EditRequest>(key));
+}
+
+/// 查看位置 cell 写入的 `EditRequest`（不删除）。与 `peek_edit_request` 平行。
+pub(super) fn peek_pos_edit_request(ui: &egui::Ui, id_salt: &str) -> Option<EditRequest> {
+    let key = egui::Id::new((id_salt, "edit_pos"));
+    ui.memory(|m| m.data.get_temp::<EditRequest>(key))
+}
+
+/// 更新位置编辑请求内容（popup 中修改 tick 后同步寻址字段）。
+pub(super) fn update_pos_edit_request(ui: &egui::Ui, id_salt: &str, new_req: EditRequest) {
+    let key = egui::Id::new((id_salt, "edit_pos"));
+    ui.memory_mut(|m| m.data.insert_temp(key, new_req));
+}
+
+/// 清除位置编辑请求（位置 popup 关闭时调用）。
+pub(super) fn remove_pos_edit_request(ui: &egui::Ui, id_salt: &str) {
+    let key = egui::Id::new((id_salt, "edit_pos"));
     ui.memory_mut(|m| m.data.remove::<EditRequest>(key));
 }
 

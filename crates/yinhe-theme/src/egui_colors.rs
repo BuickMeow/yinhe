@@ -10,6 +10,9 @@ pub const APP_BG: Color32 = Color32::from_rgb(25, 25, 28);
 // ── Active accent color ──
 pub const ACCENT_ACTIVE: Color32 = Color32::from_rgb(100, 180, 255);
 
+// ── Event browser 行选中底色（树形导航 / PR 根音行共用） ──
+pub const ROW_SELECTED_BG: Color32 = Color32::from_rgb(40, 50, 70);
+
 // ── Tab colors ──
 pub const TAB_ACTIVE_BG: Color32 = Color32::from_rgb(55, 55, 60);
 pub const TAB_INACTIVE_BG: Color32 = Color32::from_rgb(35, 35, 38);
@@ -40,10 +43,10 @@ pub const PR_TICK_LINE: Color32 = Color32::from_rgb(0x25, 0x25, 0x2A);
 // ── Piano roll 横向：八度线 / 调号背景 ──
 /// 每个八度边界的横向细线（C 位置）。
 pub const PR_OCTAVE_LINE: Color32 = Color32::from_rgb(0x38, 0x38, 0x40);
-/// 调外音行背景（比 pr_bg 暗一点）。
-pub const PR_SCALE_OUTSIDE: Color32 = Color32::from_rgb(0x0E, 0x0E, 0x12);
-/// 根音行背景（深蓝色，比 pr_bg 明显一些）。
-pub const PR_ROOT_NOTE: Color32 = Color32::from_rgb(0x1E, 0x32, 0x5E);
+/// 调外音行背景（与 `PR_BLACK_KEY_ROW` 同色，保证有/无调号时视觉一致）。
+pub const PR_SCALE_OUTSIDE: Color32 = Color32::from_rgb(0x1A, 0x1A, 0x1F);
+/// 根音行背景（与事件列表选中高亮蓝一致：RGB(40,50,70)）。
+pub const PR_ROOT_NOTE: Color32 = Color32::from_rgb(0x28, 0x32, 0x46);
 /// 无调号时的黑键行背景（与 GpuTheme::pr_black_key_row 一致）。
 pub const PR_BLACK_KEY_ROW: Color32 = Color32::from_rgb(0x1A, 0x1A, 0x1F);
 pub const AR_MEASURE_LINE: Color32 = Color32::from_rgb(0x4D, 0x4D, 0x59);     // (0.30,0.30,0.35,1.0)

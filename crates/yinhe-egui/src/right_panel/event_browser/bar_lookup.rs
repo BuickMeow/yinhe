@@ -48,8 +48,14 @@ impl BarLookup {
     }
 
     pub(super) fn format(&self, tick: u32) -> String {
+        let (bar, tick_in_bar) = self.tick_to_position(tick);
+        format!("{}/{}", bar, tick_in_bar)
+    }
+
+    /// tick → (小节号, 小节内 tick)。小节号从 1 开始。
+    pub(super) fn tick_to_position(&self, tick: u32) -> (u32, u32) {
         if self.segs.is_empty() {
-            return "?".into();
+            return (1, 0);
         }
         let idx = match self.segs.binary_search_by_key(&tick, |s| s.tick_start) {
             Ok(i) => i,
@@ -61,7 +67,24 @@ impl BarLookup {
         let bar_offset = local / tpb;
         let tick_in_bar = local % tpb;
         let bar_1 = seg.bar_start + bar_offset + 1;
-        format!("{}/{}", bar_1, tick_in_bar)
+        (bar_1, tick_in_bar)
+    }
+
+    /// (小节号, 小节内 tick) → tick。小节号从 1 开始。
+    /// bar < 1 视为 1。tick_in_bar 允许溢出（用户自由输入）。
+    pub(super) fn position_to_tick(&self, bar: u32, tick_in_bar: u32) -> u32 {
+        if self.segs.is_empty() {
+            return tick_in_bar;
+        }
+        let target_bar_0 = (bar.max(1) as i64 - 1).max(0); // 0-based
+        // 找 target_bar_0 所在的 segment：最后一个 bar_start <= target_bar_0 的 seg
+        let seg = self.segs.iter()
+            .take_while(|s| s.bar_start as i64 <= target_bar_0)
+            .last()
+            .unwrap_or(&self.segs[0]);
+        let bar_offset = target_bar_0 - seg.bar_start as i64;
+        let tick = seg.tick_start as i64 + bar_offset * seg.ticks_per_bar.max(1) as i64 + tick_in_bar as i64;
+        tick.max(0) as u32
     }
 }
 

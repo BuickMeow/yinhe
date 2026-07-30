@@ -131,7 +131,7 @@ fn render_track_row(ui: &mut egui::Ui, model: &YinModel, idx: u16, state: &mut E
     let summary = format!("{} notes \u{00b7} {} auto \u{00b7} {} PC", note_count, track.automation_lanes.len(), pc_count);
 
     let row_bg = if is_selected {
-        egui::Color32::from_rgb(40, 50, 70)
+        crate::theme::ROW_SELECTED_BG
     } else {
         egui::Color32::TRANSPARENT
     };
@@ -254,7 +254,7 @@ fn render_dir_row(ui: &mut egui::Ui, name: &str, depth: usize, expanded: bool, c
 
 fn render_leaf_item(ui: &mut egui::Ui, name: &str, icon: egui_material_icons::MaterialIcon, depth: usize, item: SelectedItem, state: &mut EventBrowserState) {
     let is_selected = state.selected_item.as_ref() == Some(&item);
-    let bg = if is_selected { egui::Color32::from_rgb(40, 50, 70) } else { egui::Color32::TRANSPARENT };
+    let bg = if is_selected { crate::theme::ROW_SELECTED_BG } else { egui::Color32::TRANSPARENT };
     let frame_r = egui::Frame::NONE.fill(bg).inner_margin(egui::Margin::symmetric(2, 1)).show(ui, |ui| {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 2.0;

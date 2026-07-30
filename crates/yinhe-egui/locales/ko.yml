@@ -316,6 +316,7 @@ undo.edit_anchor_x2: "자동화 앵커 X2 편집"
 undo.edit_anchor_y2: "자동화 앵커 Y2 편집"
 undo.edit_timesig: "박자표 편집"
 undo.edit_keysig: "조표 편집"
+undo.edit_pc: "프로그램 체인지 편집"
 undo.edit_text_event: "텍스트 이벤트 편집"
 
 # ── 파일 대화상자 ──

@@ -122,6 +122,10 @@ pub enum EditRequest {
     KeySigRoot { tick: u32 },
     /// KeySig 的 scale 编辑（音阶类型）
     KeySigScale { tick: u32 },
+    /// Program Change 的 tick 编辑
+    PcTick { tick: u32 },
+    /// Program Change 的 program 编辑
+    PcProgram { tick: u32 },
     /// 文本类事件（Marker/Lyrics/Chord）的 tick 编辑
     TextEventTick { kind: TextEventKind, tick: u32 },
     /// 文本类事件的 text 编辑

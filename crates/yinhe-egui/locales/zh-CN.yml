@@ -325,6 +325,7 @@ undo.edit_anchor_x2: "编辑自动化锚点 X2"
 undo.edit_anchor_y2: "编辑自动化锚点 Y2"
 undo.edit_timesig: "编辑拍号"
 undo.edit_keysig: "编辑调号"
+undo.edit_pc: "编辑音色变更"
 undo.edit_text_event: "编辑文本事件"
 
 # ── 文件对话框 ──
