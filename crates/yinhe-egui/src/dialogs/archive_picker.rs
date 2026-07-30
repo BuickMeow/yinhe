@@ -2,6 +2,16 @@ use std::sync::mpsc;
 
 use rust_i18n::t;
 
+/// 截断字符串到指定最大显示宽度（按字符数估算），超出部分替换为省略号。
+/// 返回值是截断后的字符串。注意这是近似值，不同字体宽度略有差异。
+fn truncate_name(name: &str, max_chars: usize) -> String {
+    if name.chars().count() <= max_chars {
+        return name.to_string();
+    }
+    let truncated: String = name.chars().take(max_chars.saturating_sub(1)).collect();
+    format!("{}…", truncated)
+}
+
 /// State of the archive picker dialog.
 pub(crate) enum ArchivePickerState {
     /// Background thread is opening the archive.
@@ -114,15 +124,20 @@ pub(crate) fn show(
                 .file_name()
                 .map(|f| f.to_string_lossy().to_string())
                 .unwrap_or_else(|| picker.path.clone());
-            ui.label(
-                eframe::egui::RichText::new(t!("dialog.archive.source", name = filename).as_ref())
+            let display_name = truncate_name(&filename, 45);
+            let source_resp = ui.label(
+                eframe::egui::RichText::new(t!("dialog.archive.source", name = display_name).as_ref())
                     .strong()
                     .size(13.0),
             );
+            if filename.len() != display_name.len() {
+                source_resp.on_hover_text(&filename);
+            }
             ui.add_space(4.0);
 
             let search_response = ui.horizontal(|ui| {
-                ui.label("🔍");
+                use egui_material_icons::icons::ICON_SEARCH;
+                ui.label(eframe::egui::RichText::new(ICON_SEARCH.codepoint).size(14.0).color(eframe::egui::Color32::GRAY));
                 ui.add(
                     eframe::egui::TextEdit::singleline(&mut picker.search_query)
                         .hint_text(t!("dialog.archive.search_hint").as_ref())
@@ -175,13 +190,12 @@ pub(crate) fn show(
 
                         let response_rect = response.rect;
                         let prefix = if is_selected { "▶ " } else { "  " };
-                        let text = format!("{}{}", prefix, entry.name);
+                        let display_name = truncate_name(&entry.name, 55);
+                        let text = format!("{}{}", prefix, display_name);
                         let size_text = format_size(entry.size);
 
-                        ui.painter().text(
-                            response_rect.left_center() + eframe::egui::vec2(8.0, 0.0),
-                            eframe::egui::Align2::LEFT_CENTER,
-                            &text,
+                        let name_galley = ui.painter().layout_no_wrap(
+                            text.clone(),
                             eframe::egui::FontId::proportional(13.0),
                             if is_selected {
                                 eframe::egui::Color32::WHITE
@@ -189,6 +203,16 @@ pub(crate) fn show(
                                 ui.visuals().text_color()
                             },
                         );
+                        let name_rect = eframe::egui::Rect::from_min_size(
+                            response_rect.left_center() + eframe::egui::vec2(8.0, 0.0),
+                            eframe::egui::vec2(name_galley.size().x, response_rect.height()),
+                        );
+                        ui.painter().galley(name_rect.min, name_galley, eframe::egui::Color32::WHITE);
+
+                        if display_name.len() != entry.name.len() {
+                            let name_resp = ui.interact(name_rect, ui.next_auto_id(), eframe::egui::Sense::hover());
+                            name_resp.on_hover_text(&entry.name);
+                        }
                         ui.painter().text(
                             response_rect.right_center() + eframe::egui::vec2(-8.0, 0.0),
                             eframe::egui::Align2::RIGHT_CENTER,
@@ -252,7 +276,7 @@ pub(crate) fn show_viewport(ctx: &eframe::egui::Context, state: &mut Option<Arch
 
     ctx_clone.show_viewport_immediate(
         viewport_id,
-        crate::chrome::dialog::viewport_builder(t!("dialog.archive.title").as_ref(), [500.0, 400.0], true),
+        crate::chrome::dialog::viewport_builder(t!("dialog.archive.title").as_ref(), [560.0, 400.0], true),
         move |vctx, _class| {
             let close_requested = vctx.input(|i| i.viewport().close_requested());
             let vctx_cmd = vctx.clone();
@@ -386,7 +410,7 @@ pub(crate) fn show_password_prompt_viewport(
         viewport_id,
         crate::chrome::dialog::viewport_builder(
             t!("dialog.archive.password_title").as_ref(),
-            [400.0, 180.0],
+            [460.0, 200.0],
             false,
         ),
         move |vctx, _class| {
@@ -452,10 +476,14 @@ fn show_password_prompt(
         .unwrap_or_else(|| prompt.path.clone());
 
     ui.add_space(6.0);
-    ui.label(
-        eframe::egui::RichText::new(t!("dialog.archive.password_prompt", name = filename).as_ref())
+    let display_name = truncate_name(&filename, 40);
+    let prompt_resp = ui.label(
+        eframe::egui::RichText::new(t!("dialog.archive.password_prompt", name = display_name).as_ref())
             .size(13.0),
     );
+    if filename.len() != display_name.len() {
+        prompt_resp.on_hover_text(&filename);
+    }
 
     if prompt.wrong {
         ui.add_space(2.0);
