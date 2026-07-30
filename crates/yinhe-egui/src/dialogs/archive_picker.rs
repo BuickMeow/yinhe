@@ -169,17 +169,8 @@ pub(crate) fn show(
                         }
                         if response.double_clicked() {
                             let entry = picker.entries[entry_idx].clone();
-                            match yinhe_archive::Archive::open(&picker.path) {
-                                Ok(new_archive) => {
-                                    let archive = std::mem::replace(&mut picker.archive, new_archive);
-                                    action = ArchivePickerAction::LoadFile { archive, entry };
-                                    return;
-                                }
-                                Err(e) => {
-                                    action = ArchivePickerAction::Error(t!("dialog.archive.archive_error", e = e).to_string());
-                                    return;
-                                }
-                            }
+                            action = ArchivePickerAction::LoadFile { archive: picker.archive.clone(), entry };
+                            return;
                         }
 
                         let response_rect = response.rect;
@@ -224,15 +215,7 @@ pub(crate) fn show(
                     if ui.add_enabled(confirm_enabled, eframe::egui::Button::new(t!("common.confirm").as_ref())).clicked() {
                         if let Some(idx) = picker.selected_idx {
                             let entry = picker.entries[idx].clone();
-                            match yinhe_archive::Archive::open(&picker.path) {
-                                Ok(new_archive) => {
-                                    let archive = std::mem::replace(&mut picker.archive, new_archive);
-                                    action = ArchivePickerAction::LoadFile { archive, entry };
-                                }
-                                Err(e) => {
-                                    action = ArchivePickerAction::Error(t!("dialog.archive.archive_error", e = e).to_string());
-                                }
-                            }
+                            action = ArchivePickerAction::LoadFile { archive: picker.archive.clone(), entry };
                         }
                     }
                 });
@@ -346,6 +329,8 @@ pub(crate) struct PasswordPrompt {
     pub password: String,
     /// `true` 表示之前提交的密码错误，需要重新输入。
     pub wrong: bool,
+    /// `true` 时明文显示密码，`false` 时圆点遮蔽。
+    pub show_password: bool,
 }
 
 impl PasswordPrompt {
@@ -354,6 +339,16 @@ impl PasswordPrompt {
             path,
             password: String::new(),
             wrong,
+            show_password: false,
+        }
+    }
+
+    fn clone_state(&self) -> PasswordPrompt {
+        PasswordPrompt {
+            path: self.path.clone(),
+            password: self.password.clone(),
+            wrong: self.wrong,
+            show_password: self.show_password,
         }
     }
 }
@@ -472,14 +467,30 @@ fn show_password_prompt(
     }
 
     ui.add_space(6.0);
-    // 密码输入框：回车确认，Esc 取消
-    let resp = ui.add(
-        eframe::egui::TextEdit::singleline(&mut prompt.password)
-            .password(true)
-            .hint_text(t!("dialog.archive.password_hint").as_ref())
-            .desired_width(f32::INFINITY),
-    );
-    resp.request_focus();
+    // 密码输入框 + 眼睛切换按钮：回车确认，Esc 取消
+    ui.horizontal(|ui| {
+        let resp = ui.add(
+            eframe::egui::TextEdit::singleline(&mut prompt.password)
+                .password(!prompt.show_password)
+                .hint_text(t!("dialog.archive.password_hint").as_ref())
+                .desired_width(f32::INFINITY),
+        );
+        resp.request_focus();
+
+        // 眼睛图标：切换明文/圆点显示
+        use egui_material_icons::icons::{ICON_VISIBILITY, ICON_VISIBILITY_OFF};
+        let icon = if prompt.show_password { ICON_VISIBILITY_OFF } else { ICON_VISIBILITY };
+        let icon_color = ui.visuals().text_color();
+        let btn_resp = ui.add(
+            eframe::egui::Button::new(
+                eframe::egui::RichText::new(icon).size(16.0).color(icon_color)
+            )
+            .frame(false),
+        );
+        if btn_resp.clicked() {
+            prompt.show_password = !prompt.show_password;
+        }
+    });
 
     ui.add_space(8.0);
     ui.separator();
@@ -517,15 +528,4 @@ fn show_password_prompt(
     }
 
     action
-}
-
-/// 内部辅助：克隆 PasswordPrompt 的状态（仅 password + wrong，path 不变）。
-impl PasswordPrompt {
-    fn clone_state(&self) -> PasswordPrompt {
-        PasswordPrompt {
-            path: self.path.clone(),
-            password: self.password.clone(),
-            wrong: self.wrong,
-        }
-    }
 }
