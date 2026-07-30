@@ -175,7 +175,7 @@ pub(crate) fn show(
                             ui.painter().rect_filled(
                                 rect,
                                 0.0,
-                                eframe::egui::Color32::from_rgba_premultiplied(255, 255, 255, 20),
+                                crate::theme::ROW_SELECTED_BG,
                             );
                         }
 

@@ -103,7 +103,7 @@ pub fn show(
     }
 
     // Draw background pill (rounded rect with semi-circle ends)
-    let bg_color = egui::Color32::from_rgba_premultiplied(30, 30, 35, 210);
+    let bg_color = egui::Color32::from_rgb(30, 30, 35);
     let corner_radius = bar_w / 2.0;
     ui.painter().rect_filled(bar_rect, corner_radius, bg_color);
 

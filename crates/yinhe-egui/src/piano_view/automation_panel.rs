@@ -993,7 +993,7 @@ fn show_target_combo(
                             ui.set_min_width(120.0);
                             // Velocity (special: not an AutomationTarget, renders from notes)
                             let vel_selected = panel.show_velocity;
-                            if ui.add(egui::Button::selectable(vel_selected, t!("automation.velocity").as_ref())).clicked() {
+                            if ui.add(egui::Button::selectable(vel_selected, t!("automation.velocity").as_ref()).frame(false)).clicked() {
                                 panel.show_velocity = true;
                                 panel.dirty = true;
                                 ui.ctx().data_mut(|d| d.insert_persisted(popup_id, false));
@@ -1002,7 +1002,7 @@ fn show_target_combo(
                             for target in AUTOMATION_TARGETS {
                                 let name = target.display_name();
                                 let selected = !panel.show_velocity && panel.selected_target == *target;
-                                if ui.add(egui::Button::selectable(selected, &name)).clicked() {
+                                if ui.add(egui::Button::selectable(selected, &name).frame(false)).clicked() {
                                     panel.selected_target = target.clone();
                                     panel.show_velocity = false;
                                     panel.dirty = true;
