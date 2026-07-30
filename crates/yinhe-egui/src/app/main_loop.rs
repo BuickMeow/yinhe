@@ -161,8 +161,16 @@ impl eframe::App for App {
             self.prev_active_doc = self.active_doc;
         }
 
-        // ── Force dark mode ──
-        ui.ctx().set_visuals(egui::Visuals::dark());
+        // ── Force dark mode + 统一主题色 ──
+        ui.ctx().set_visuals({
+            let mut visuals = egui::Visuals::dark();
+            // 弹窗/面板背景色统一为程序背景色（egui 默认 gray(27) 与主题不符）
+            visuals.window_fill = crate::theme::APP_BG;
+            visuals.panel_fill = crate::theme::APP_BG;
+            // 选中高亮色统一为 ROW_SELECTED_BG
+            visuals.selection.bg_fill = crate::theme::ROW_SELECTED_BG;
+            visuals
+        });
 
         // ── Custom title bar ──
         let title_bar_action = title_bar::show(
