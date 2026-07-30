@@ -993,71 +993,16 @@ fn show_target_combo(
                             ui.set_min_width(120.0);
                             // Velocity (special: not an AutomationTarget, renders from notes)
                             let vel_selected = panel.show_velocity;
-                            {
-                                let text = t!("automation.velocity").to_string();
-                                let text_color = if vel_selected {
-                                    ui.visuals().strong_text_color()
-                                } else {
-                                    ui.visuals().text_color()
-                                };
-                                let font = egui::FontId::proportional(13.0);
-                                let galley = ui.painter().layout_no_wrap(text, font, text_color);
-                                let btn_height = 22.0;
-                                let (rect, response) = ui.allocate_exact_size(
-                                    egui::vec2(ui.available_width(), btn_height),
-                                    egui::Sense::click(),
-                                );
-
-                                if response.hovered() && !vel_selected {
-                                    ui.painter().rect_filled(rect, 2.0, crate::theme::ROW_SELECTED_BG);
-                                }
-                                if vel_selected {
-                                    ui.painter().rect_filled(rect, 2.0, crate::theme::ROW_SELECTED_BG);
-                                }
-
-                                ui.painter().galley(
-                                    rect.left_center() + egui::vec2(8.0, 0.0),
-                                    galley,
-                                    egui::Color32::WHITE,
-                                );
-
-                                if response.clicked() {
-                                    panel.show_velocity = true;
-                                    panel.dirty = true;
-                                    ui.ctx().data_mut(|d| d.insert_persisted(popup_id, false));
-                                }
+                            if ui.add(egui::Button::selectable(vel_selected, t!("automation.velocity").as_ref())).clicked() {
+                                panel.show_velocity = true;
+                                panel.dirty = true;
+                                ui.ctx().data_mut(|d| d.insert_persisted(popup_id, false));
                             }
                             ui.separator();
                             for target in AUTOMATION_TARGETS {
                                 let name = target.display_name();
                                 let selected = !panel.show_velocity && panel.selected_target == *target;
-                                let text_color = if selected {
-                                    ui.visuals().strong_text_color()
-                                } else {
-                                    ui.visuals().text_color()
-                                };
-                                let font = egui::FontId::proportional(13.0);
-                                let galley = ui.painter().layout_no_wrap(name, font, text_color);
-                                let btn_height = 22.0;
-                                let (rect, response) = ui.allocate_exact_size(
-                                    egui::vec2(ui.available_width(), btn_height),
-                                    egui::Sense::click(),
-                                );
-
-                                if response.hovered() && !selected {
-                                    ui.painter().rect_filled(rect, 2.0, crate::theme::ROW_SELECTED_BG);
-                                }
-                                if selected {
-                                    ui.painter().rect_filled(rect, 2.0, crate::theme::ROW_SELECTED_BG);
-                                }
-
-                                ui.painter().galley(
-                                    rect.left_center() + egui::vec2(8.0, 0.0),
-                                    galley,
-                                    egui::Color32::WHITE,
-                                );
-
-                                if response.clicked() {
+                                if ui.add(egui::Button::selectable(selected, &name)).clicked() {
                                     panel.selected_target = target.clone();
                                     panel.show_velocity = false;
                                     panel.dirty = true;
