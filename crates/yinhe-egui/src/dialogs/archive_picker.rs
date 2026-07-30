@@ -160,7 +160,7 @@ pub(crate) fn show(
                         let is_selected = picker.selected_idx == Some(entry_idx);
 
                         let bg = if is_selected {
-                            eframe::egui::Color32::from_rgba_premultiplied(40, 80, 160, 200)
+                            crate::theme::ROW_SELECTED_BG
                         } else {
                             eframe::egui::Color32::TRANSPARENT
                         };
@@ -194,22 +194,19 @@ pub(crate) fn show(
                         let text = format!("{}{}", prefix, display_name);
                         let size_text = format_size(entry.size);
 
-                        let name_galley = ui.painter().layout_no_wrap(
-                            text.clone(),
-                            eframe::egui::FontId::proportional(13.0),
-                            if is_selected {
-                                eframe::egui::Color32::WHITE
-                            } else {
-                                ui.visuals().text_color()
-                            },
-                        );
-                        let name_rect = eframe::egui::Rect::from_min_size(
+                        ui.painter().text(
                             response_rect.left_center() + eframe::egui::vec2(8.0, 0.0),
-                            eframe::egui::vec2(name_galley.size().x, response_rect.height()),
+                            eframe::egui::Align2::LEFT_CENTER,
+                            &text,
+                            eframe::egui::FontId::proportional(13.0),
+                            ui.visuals().text_color(),
                         );
-                        ui.painter().galley(name_rect.min, name_galley, eframe::egui::Color32::WHITE);
 
                         if display_name.len() != entry.name.len() {
+                            let name_rect = eframe::egui::Rect::from_min_size(
+                                response_rect.left_center() + eframe::egui::vec2(8.0, 0.0),
+                                eframe::egui::vec2(response_rect.width() * 0.75, response_rect.height()),
+                            );
                             let name_resp = ui.interact(name_rect, ui.next_auto_id(), eframe::egui::Sense::hover());
                             name_resp.on_hover_text(&entry.name);
                         }
