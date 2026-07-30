@@ -13,12 +13,37 @@ pub fn show(
     ui.set_min_width(120.0);
     for preset in QuantizePreset::ALL {
         let is_sel = *preset == current;
-        let btn = egui::Button::selectable(is_sel, preset.display_item(ppq)).frame(false);
-        let resp = ui.add(btn);
-        if resp.hovered() && !is_sel {
-            ui.painter().rect_filled(resp.rect, 2.0, crate::theme::ROW_SELECTED_BG);
+        let text = preset.display_item(ppq);
+        let text_color = if is_sel {
+            ui.visuals().strong_text_color()
+        } else {
+            ui.visuals().text_color()
+        };
+        let font = egui::FontId::proportional(13.0);
+        let galley = ui.painter().layout_no_wrap(text.clone(), font, text_color);
+        let btn_height = 22.0;
+        let (rect, response) = ui.allocate_exact_size(
+            egui::vec2(ui.available_width(), btn_height),
+            egui::Sense::click(),
+        );
+
+        // hover 背景（在文字下方）
+        if response.hovered() && !is_sel {
+            ui.painter().rect_filled(rect, 2.0, crate::theme::ROW_SELECTED_BG);
         }
-        if resp.clicked() {
+        // 选中背景
+        if is_sel {
+            ui.painter().rect_filled(rect, 2.0, crate::theme::ROW_SELECTED_BG);
+        }
+
+        // 文字
+        ui.painter().galley(
+            rect.left_center() + egui::vec2(8.0, 0.0),
+            galley,
+            egui::Color32::WHITE,
+        );
+
+        if response.clicked() {
             *pending = Some(*preset);
             ui.close();
         }
@@ -27,14 +52,37 @@ pub fn show(
 
     // ── 自定义时值 ──
     let is_frac = matches!(current, QuantizePreset::Fraction(_, _));
-    let frac_btn = egui::Button::selectable(is_frac, t!("quantize.custom_fraction").as_ref()).frame(false);
-    let frac_resp = ui.add(frac_btn);
-    if frac_resp.hovered() && !is_frac {
-        ui.painter().rect_filled(frac_resp.rect, 2.0, crate::theme::ROW_SELECTED_BG);
-    }
-    if frac_resp.clicked()
     {
-        *pending = Some(QuantizePreset::Fraction(1, 1));
+        let text = t!("quantize.custom_fraction").to_string();
+        let text_color = if is_frac {
+            ui.visuals().strong_text_color()
+        } else {
+            ui.visuals().text_color()
+        };
+        let font = egui::FontId::proportional(13.0);
+        let galley = ui.painter().layout_no_wrap(text, font, text_color);
+        let btn_height = 22.0;
+        let (rect, response) = ui.allocate_exact_size(
+            egui::vec2(ui.available_width(), btn_height),
+            egui::Sense::click(),
+        );
+
+        if response.hovered() && !is_frac {
+            ui.painter().rect_filled(rect, 2.0, crate::theme::ROW_SELECTED_BG);
+        }
+        if is_frac {
+            ui.painter().rect_filled(rect, 2.0, crate::theme::ROW_SELECTED_BG);
+        }
+
+        ui.painter().galley(
+            rect.left_center() + egui::vec2(8.0, 0.0),
+            galley,
+            egui::Color32::WHITE,
+        );
+
+        if response.clicked() {
+            *pending = Some(QuantizePreset::Fraction(1, 1));
+        }
     }
     if let QuantizePreset::Fraction(num, den) = current {
         ui.horizontal(|ui| {
@@ -61,14 +109,37 @@ pub fn show(
 
     // ── 自定义Tick ──
     let is_abs = matches!(current, QuantizePreset::Absolute(_));
-    let abs_btn = egui::Button::selectable(is_abs, t!("quantize.custom_tick").as_ref()).frame(false);
-    let abs_resp = ui.add(abs_btn);
-    if abs_resp.hovered() && !is_abs {
-        ui.painter().rect_filled(abs_resp.rect, 2.0, crate::theme::ROW_SELECTED_BG);
-    }
-    if abs_resp.clicked()
     {
-        *pending = Some(QuantizePreset::Absolute(1));
+        let text = t!("quantize.custom_tick").to_string();
+        let text_color = if is_abs {
+            ui.visuals().strong_text_color()
+        } else {
+            ui.visuals().text_color()
+        };
+        let font = egui::FontId::proportional(13.0);
+        let galley = ui.painter().layout_no_wrap(text, font, text_color);
+        let btn_height = 22.0;
+        let (rect, response) = ui.allocate_exact_size(
+            egui::vec2(ui.available_width(), btn_height),
+            egui::Sense::click(),
+        );
+
+        if response.hovered() && !is_abs {
+            ui.painter().rect_filled(rect, 2.0, crate::theme::ROW_SELECTED_BG);
+        }
+        if is_abs {
+            ui.painter().rect_filled(rect, 2.0, crate::theme::ROW_SELECTED_BG);
+        }
+
+        ui.painter().galley(
+            rect.left_center() + egui::vec2(8.0, 0.0),
+            galley,
+            egui::Color32::WHITE,
+        );
+
+        if response.clicked() {
+            *pending = Some(QuantizePreset::Absolute(1));
+        }
     }
     if let QuantizePreset::Absolute(n) = current {
         let mut val = n;
