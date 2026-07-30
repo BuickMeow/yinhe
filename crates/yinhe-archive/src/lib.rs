@@ -149,23 +149,51 @@ fn collect_midi_entries<R: std::io::Read + std::io::Seek>(
 }
 
 /// 将 unarc-rs 的打开阶段错误映射为 yinhe-archive 错误。
+///
+/// 用结构化 match 处理 unarc-rs 的 `ArchiveError` 变体，而不是字符串匹配。
+/// 7z 等格式的加密错误在打开阶段（header 加密）就被底层库抛出，包裹在
+/// `ExternalLibrary` 变体中。
 fn classify_open_error(e: &UnarcError) -> ArchiveError {
-    let msg = e.to_string();
-    if msg.contains("password") || msg.contains("encrypted") {
-        ArchiveError::WrongPassword
-    } else {
-        ArchiveError::Archive(msg)
+    match e {
+        UnarcError::PasswordRequired { .. } => ArchiveError::PasswordRequired,
+        UnarcError::EncryptionRequired { .. } => ArchiveError::PasswordRequired,
+        UnarcError::InvalidPassword { .. } => ArchiveError::WrongPassword,
+        UnarcError::ExternalLibrary { library, message } => {
+            if is_password_related_message(message) {
+                // 底层库（sevenz-rust2 等）的密码错误，无法区分"需要密码"和"密码错误"
+                // 先按"需要密码"处理，让用户有机会输入；若密码错误下次会返回 WrongPassword。
+                ArchiveError::PasswordRequired
+            } else {
+                ArchiveError::Archive(format!("{} error: {}", library, message))
+            }
+        }
+        other => ArchiveError::Archive(other.to_string()),
     }
 }
 
 /// 将 unarc-rs 的读取阶段错误映射为 yinhe-archive 错误。
+///
+/// 读取阶段（next_entry / read / skip）的错误通常表示密码错误。
 fn classify_read_error(e: &UnarcError) -> ArchiveError {
-    let msg = e.to_string();
-    if msg.contains("password") || msg.contains("encrypted") {
-        ArchiveError::WrongPassword
-    } else {
-        ArchiveError::Archive(msg)
+    match e {
+        UnarcError::PasswordRequired { .. } => ArchiveError::PasswordRequired,
+        UnarcError::EncryptionRequired { .. } => ArchiveError::PasswordRequired,
+        UnarcError::InvalidPassword { .. } => ArchiveError::WrongPassword,
+        UnarcError::ExternalLibrary { library, message } => {
+            if is_password_related_message(message) {
+                ArchiveError::WrongPassword
+            } else {
+                ArchiveError::Archive(format!("{} error: {}", library, message))
+            }
+        }
+        other => ArchiveError::Archive(other.to_string()),
     }
+}
+
+/// 判断底层库的错误消息是否与密码相关（大小写不敏感）。
+fn is_password_related_message(msg: &str) -> bool {
+    let lower = msg.to_lowercase();
+    lower.contains("password") || lower.contains("encrypted") || lower.contains("crc failed")
 }
 
 /// Check if a filename is a MIDI file (case-insensitive).
