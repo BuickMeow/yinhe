@@ -1,13 +1,15 @@
 //! 右键编辑 popup：在表格的单元格上右键时弹出编辑器。
 //!
-//! 设计：
+//! 设计（pending + 关闭时一次性 apply）：
 //! - cell 右键时把 `EditRequest` 写到 `egui::Id::new((salt, "edit"))`（全局 key，
 //!   不用 `ui.id()`，因为 cell 是 child ui，`ui.id()` 与本函数调用处不同）
 //! - `apply_*_popups` 每帧 `peek_edit_request` 检查是否有请求，有就显示 popup
-//! - popup 内 DragValue 状态持久化到 `egui::Id::new((salt, "state"))`，
-//!   避免每帧重建 DragValue 导致拖动时数字不同步
-//! - popup 显示期间记录 before 快照，关闭时取 after 对比并 push undo
-//! - 音符编辑后更新 `NoteRef` 写回 `EditRequest`，避免下次寻址失效
+//! - popup 打开期间**不修改 Document**：DragValue 状态只写到 egui memory
+//!   中的 pending 状态，每帧读出以保持拖动时数字同步
+//! - 关闭时一次性 apply：
+//!   - `PopupAction::Closed(v)`（确认按钮 / lost_focus / Enter）→ 读 pending 值
+//!     应用到 Document，push undo
+//!   - `PopupAction::Cancelled`（取消按钮）→ 不碰 Document，不产生 undo，仅清理
 //!
 //! 按事件类型拆分为子模块：
 //! - `automation`: CC/PB/RPN/NRPN/Tempo 的 value/tick/shape
@@ -27,7 +29,11 @@ use eframe::egui;
 
 use rust_i18n::t;
 
+use yinhe_editor_core::document::Document;
+use yinhe_editor_core::history::{EventListDelta, EventListItem, EventListTarget, UndoAction, UndoEntry};
+
 use super::bar_lookup::BarLookup;
+use super::table::{remove_edit_request, remove_pos_edit_request};
 
 pub(super) use automation::apply_automation_popups;
 pub(super) use keysig::apply_keysig_popups;
@@ -36,14 +42,19 @@ pub(super) use pc::apply_pc_popups;
 pub(super) use text::apply_text_popups;
 pub(super) use timesig::apply_timesig_popups;
 
-/// popup 内 DragValue 的状态变化或关闭事件。
+/// popup 关闭事件。
+///
+/// 打开期间返回 `None`；关闭时区分两种语义：
+/// - `Closed(v)`：用户确认（确认按钮 / lost_focus / Enter），携带最终 pending 值，
+///   caller 一次性把 v 应用到 Document 并 push undo。
+/// - `Cancelled`：用户取消（取消按钮），不碰 Document，不产生 undo，仅清理。
 pub(super) enum PopupAction {
-    /// 本帧无变化
+    /// 本帧无变化（popup 仍打开）
     None,
-    /// DragValue 值变了（参数是新值）
-    Changed(f64),
-    /// popup 关闭（lost_focus 或 confirm 按钮）
-    Closed,
+    /// popup 关闭并确认，携带最终 pending 值
+    Closed(f64),
+    /// popup 取消，不 apply
+    Cancelled,
 }
 
 struct PopupConfig<'a> {
@@ -56,18 +67,18 @@ struct PopupConfig<'a> {
     fixed_decimals: Option<usize>,
 }
 
-/// 渲染数字编辑 popup（Area + DragValue + confirm）。
+/// 渲染数字编辑 popup（Area + DragValue + confirm/cancel）。
 ///
-/// DragValue 状态持久化到 `egui::Id::new((salt, "state"))`，每帧从 memory 读出。
-/// 这样拖动时 DragValue 内部数字会实时更新，不会因每帧重建而重置。
+/// DragValue 状态持久化到 `egui::Id::new((salt, "state"))`，每帧从 memory 读出，
+/// 拖动时实时更新（不修改 Document）。关闭时返回 `Closed(state)` 携带 pending 值，
+/// 或 `Cancelled`（取消按钮）。caller 负责把 pending 应用到 Document。
 fn show_number_popup(ui: &mut egui::Ui, cfg: PopupConfig) -> PopupAction {
     let state_id = egui::Id::new((cfg.salt, "state"));
     let popup_id = ui.id().with((cfg.salt, "popup"));
 
     let mut state = ui.memory(|m| m.data.get_temp::<f64>(state_id).unwrap_or(cfg.initial));
-    let old_state = state;
-    let mut action = PopupAction::None;
     let mut open = true;
+    let mut cancelled = false;
     let popup_pos = ui.clip_rect().min + egui::vec2(20.0, 20.0);
 
     egui::Area::new(popup_id)
@@ -84,13 +95,8 @@ fn show_number_popup(ui: &mut egui::Ui, cfg: PopupConfig) -> PopupAction {
                 if let Some(d) = cfg.fixed_decimals {
                     dv = dv.fixed_decimals(d);
                 }
-                let _resp = ui.add(dv);
-                // 用直接比较替代 resp.changed()——后者在 Area 中的行为不稳定
-                if state != old_state {
-                    action = PopupAction::Changed(state);
-                    ui.memory_mut(|m| m.data.insert_temp(state_id, state));
-                }
-                if _resp.lost_focus() {
+                let resp = ui.add(dv);
+                if resp.lost_focus() {
                     open = false;
                 }
                 ui.add_space(2.0);
@@ -100,6 +106,7 @@ fn show_number_popup(ui: &mut egui::Ui, cfg: PopupConfig) -> PopupAction {
                     }
                     if ui.button(t!("common.cancel").as_ref()).clicked() {
                         open = false;
+                        cancelled = true;
                     }
                 });
             });
@@ -107,23 +114,28 @@ fn show_number_popup(ui: &mut egui::Ui, cfg: PopupConfig) -> PopupAction {
 
     if !open {
         ui.memory_mut(|m| m.data.remove::<f64>(state_id));
-        PopupAction::Closed
+        if cancelled {
+            PopupAction::Cancelled
+        } else {
+            PopupAction::Closed(state)
+        }
     } else {
-        action
+        ui.memory_mut(|m| m.data.insert_temp(state_id, state));
+        PopupAction::None
     }
 }
 
-/// 下拉选择 popup 的动作。
+/// 下拉选择 popup 的关闭事件。语义与 `PopupAction` 一致。
 pub(super) enum ChoicePopupAction<T> {
     None,
-    Changed(T),
-    Closed,
+    Closed(T),
+    Cancelled,
 }
 
-/// 渲染下拉选择 popup（Area + ComboBox + confirm）。
+/// 渲染下拉选择 popup（Area + ComboBox + confirm/cancel）。
 ///
 /// 选项状态持久化到 `egui::Id::new((salt, "choice"))`，每帧从 memory 读出。
-/// `label_of` 把选项值转为显示文本。
+/// 关闭时返回 `Closed(state)` 携带 pending 选项，或 `Cancelled`。
 fn show_choice_popup<T: Copy + PartialEq + Send + Sync + 'static>(
     ui: &mut egui::Ui,
     salt: &str,
@@ -136,9 +148,8 @@ fn show_choice_popup<T: Copy + PartialEq + Send + Sync + 'static>(
     let popup_id = ui.id().with((salt, "choice_popup"));
 
     let mut state = ui.memory(|m| m.data.get_temp::<T>(state_id).unwrap_or(initial));
-    let old_state = state;
-    let mut action = ChoicePopupAction::None;
     let mut open = true;
+    let mut cancelled = false;
     let popup_pos = ui.clip_rect().min + egui::vec2(20.0, 20.0);
 
     egui::Area::new(popup_id)
@@ -156,11 +167,6 @@ fn show_choice_popup<T: Copy + PartialEq + Send + Sync + 'static>(
                             ui.selectable_value(&mut state, *opt, label_of(opt));
                         }
                     });
-                // 用直接比较替代 resp.response.changed()——后者对 ComboBox 不可靠
-                if state != old_state {
-                    action = ChoicePopupAction::Changed(state);
-                    ui.memory_mut(|m| m.data.insert_temp(state_id, state));
-                }
                 ui.add_space(2.0);
                 ui.horizontal(|ui| {
                     if ui.button(t!("common.confirm").as_ref()).clicked() {
@@ -168,6 +174,7 @@ fn show_choice_popup<T: Copy + PartialEq + Send + Sync + 'static>(
                     }
                     if ui.button(t!("common.cancel").as_ref()).clicked() {
                         open = false;
+                        cancelled = true;
                     }
                 });
             });
@@ -175,9 +182,14 @@ fn show_choice_popup<T: Copy + PartialEq + Send + Sync + 'static>(
 
     if !open {
         ui.memory_mut(|m| m.data.remove::<T>(state_id));
-        ChoicePopupAction::Closed
+        if cancelled {
+            ChoicePopupAction::Cancelled
+        } else {
+            ChoicePopupAction::Closed(state)
+        }
     } else {
-        action
+        ui.memory_mut(|m| m.data.insert_temp(state_id, state));
+        ChoicePopupAction::None
     }
 }
 
@@ -213,7 +225,7 @@ pub(super) fn show_tick_popup(
 /// 状态存当前 tick（f64）到 `(salt, "pos_state")`，每帧换算为 (小节, 小节内 tick)
 /// 显示；两个 DragValue 修改本地副本后用**值比较**检测变化（不依赖 `resp.changed()`，
 /// 后者在 Area 中不可靠），再经 `BarLookup::position_to_tick` 换算回 tick。
-/// 返回值与 `show_number_popup` 一致，各 tick popup 的 Changed 处理逻辑可复用。
+/// 关闭时返回 `Closed(tick)` 携带 pending tick，或 `Cancelled`。
 pub(super) fn show_position_popup(
     ui: &mut egui::Ui,
     salt: &str,
@@ -226,9 +238,8 @@ pub(super) fn show_position_popup(
     let popup_id = ui.id().with((salt, "pos_popup"));
 
     let mut tick_f = ui.memory(|m| m.data.get_temp::<f64>(state_id).unwrap_or(current_tick as f64));
-    let old_tick = tick_f;
-    let mut action = PopupAction::None;
     let mut open = true;
+    let mut cancelled = false;
     let popup_pos = ui.clip_rect().min + egui::vec2(20.0, 20.0);
 
     egui::Area::new(popup_id)
@@ -273,6 +284,7 @@ pub(super) fn show_position_popup(
                     }
                     if ui.button(t!("common.cancel").as_ref()).clicked() {
                         open = false;
+                        cancelled = true;
                     }
                 });
             });
@@ -280,12 +292,41 @@ pub(super) fn show_position_popup(
 
     if !open {
         ui.memory_mut(|m| m.data.remove::<f64>(state_id));
-        PopupAction::Closed
-    } else {
-        if tick_f != old_tick {
-            ui.memory_mut(|m| m.data.insert_temp(state_id, tick_f));
-            action = PopupAction::Changed(tick_f);
+        if cancelled {
+            PopupAction::Cancelled
+        } else {
+            PopupAction::Closed(tick_f)
         }
-        action
+    } else {
+        ui.memory_mut(|m| m.data.insert_temp(state_id, tick_f));
+        PopupAction::None
     }
+}
+
+// ---- 共享 helper（供各子模块复用，避免重复样板）----
+
+/// 构造并 push `UndoAction::EventList`（before != after 时才 push）。
+/// 供 keysig/timesig/text/pc 共用：它们的 undo 都是"某事件列表整体替换"。
+pub(super) fn push_event_list_undo(
+    doc: &mut Document,
+    target: EventListTarget,
+    before: Vec<EventListItem>,
+    after: Vec<EventListItem>,
+    label: &str,
+) {
+    if before != after {
+        doc.history.push(UndoEntry {
+            action: UndoAction::EventList(EventListDelta { target, old: before, new: after }),
+            label: label.to_string(),
+            selected: doc.edit.selected.clone(),
+            track_selected: doc.edit.track_selected.clone(),
+            sel_rect: doc.edit.sel_rect.clone(),
+        });
+    }
+}
+
+/// 清除 EditRequest（普通 + 位置）。popup 关闭（无论确认或取消）后调用。
+pub(super) fn cleanup_edit_request(ui: &egui::Ui, salt: &str) {
+    remove_edit_request(ui, salt);
+    remove_pos_edit_request(ui, salt);
 }

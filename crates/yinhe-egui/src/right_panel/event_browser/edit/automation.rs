@@ -1,4 +1,9 @@
 //! Automation 事件的 value / shape / tick 编辑 popup。
+//!
+//! popup 打开期间不修改 Document，pending 写到 egui memory。
+//! 关闭时（Closed）一次性 apply + push AutomationDelta undo；取消（Cancelled）仅清理。
+//! 注意：automation 用 `UndoAction::Automation(AutomationDelta)`，before/after 是
+//! `Vec<AutomationEvent>`，不是 EventListItem。
 
 use eframe::egui;
 
@@ -10,11 +15,8 @@ use crate::right_panel::automation_undo::{push_automation_undo, snapshot_lane_ev
 
 use super::super::bar_lookup::BarLookup;
 use super::super::state::EditRequest;
-use super::super::table::{
-    peek_edit_request, peek_pos_edit_request, remove_edit_request, remove_pos_edit_request,
-    update_edit_request, update_pos_edit_request,
-};
-use super::{PopupAction, PopupConfig, show_number_popup, show_tick_popup};
+use super::super::table::{peek_edit_request, peek_pos_edit_request, remove_pos_edit_request};
+use super::{PopupAction, PopupConfig, cleanup_edit_request, show_number_popup, show_tick_popup};
 
 /// Automation 编辑上下文：把 lane 寻址所需的 3 个字段打包，
 /// 避免 popup 函数超过 7 个参数（clippy `too_many_arguments`）。
@@ -72,7 +74,6 @@ fn show_auto_value_popup(
     value: f32,
     ctx: &AutoCtx,
 ) {
-    let before = record_lane_before(ui, doc, salt, ctx);
     let action = show_number_popup(ui, PopupConfig {
         salt,
         title: t!("event_browser.edit_value").as_ref(),
@@ -83,22 +84,23 @@ fn show_auto_value_popup(
         fixed_decimals: None,
     });
     match action {
-        PopupAction::Changed(new_val) => {
-            if (new_val as f32) != value {
-                doc.apply_automation_edits(vec![yinhe_types::AutomationEdit::Move {
-                    track_idx: ctx.track_idx,
-                    lane_idx: ctx.lane_idx,
-                    target: ctx.target.clone(),
-                    old_tick: tick,
-                    new_tick: tick,
-                    new_value: new_val as f32,
-                }]);
-            }
-        }
-        PopupAction::Closed => {
-            finalize_lane_undo(ui, doc, salt, before, ctx,
+        PopupAction::Closed(new_val_f) => {
+            let new_val = new_val_f as f32;
+            let before = snapshot_lane_events(doc, ctx.track_idx, ctx.lane_idx, ctx.target);
+            doc.apply_automation_edits(vec![yinhe_types::AutomationEdit::Move {
+                track_idx: ctx.track_idx,
+                lane_idx: ctx.lane_idx,
+                target: ctx.target.clone(),
+                old_tick: tick,
+                new_tick: tick,
+                new_value: new_val,
+            }]);
+            let after = snapshot_lane_events(doc, ctx.track_idx, ctx.lane_idx, ctx.target);
+            push_automation_undo(doc, ctx.track_idx, ctx.lane_idx, ctx.target, before, after,
                 t!("undo.edit_anchor_value").as_ref());
+            cleanup_edit_request(ui, salt);
         }
+        PopupAction::Cancelled => cleanup_edit_request(ui, salt),
         PopupAction::None => {}
     }
 }
@@ -112,33 +114,25 @@ fn show_auto_tick_popup(
     ctx: &AutoCtx,
     bar_lookup: Option<&BarLookup>,
 ) {
-    let before = record_lane_before(ui, doc, salt, ctx);
     let action = show_tick_popup(ui, salt, t!("event_browser.edit_tick").as_ref(), tick, 0, bar_lookup);
     match action {
-        PopupAction::Changed(new_tick) => {
-            let new_tick = new_tick as u32;
-            if new_tick != tick {
-                doc.apply_automation_edits(vec![yinhe_types::AutomationEdit::Move {
-                    track_idx: ctx.track_idx,
-                    lane_idx: ctx.lane_idx,
-                    target: ctx.target.clone(),
-                    old_tick: tick,
-                    new_tick,
-                    new_value: value,
-                }]);
-                // 更新 EditRequest 的 tick，避免下次寻址失效
-                let req = EditRequest::AutoTick { tick: new_tick, value };
-                if bar_lookup.is_some() {
-                    update_pos_edit_request(ui, salt, req);
-                } else {
-                    update_edit_request(ui, salt, req);
-                }
-            }
-        }
-        PopupAction::Closed => {
-            finalize_lane_undo(ui, doc, salt, before, ctx,
+        PopupAction::Closed(new_tick_f) => {
+            let new_tick = new_tick_f as u32;
+            let before = snapshot_lane_events(doc, ctx.track_idx, ctx.lane_idx, ctx.target);
+            doc.apply_automation_edits(vec![yinhe_types::AutomationEdit::Move {
+                track_idx: ctx.track_idx,
+                lane_idx: ctx.lane_idx,
+                target: ctx.target.clone(),
+                old_tick: tick,
+                new_tick,
+                new_value: value,
+            }]);
+            let after = snapshot_lane_events(doc, ctx.track_idx, ctx.lane_idx, ctx.target);
+            push_automation_undo(doc, ctx.track_idx, ctx.lane_idx, ctx.target, before, after,
                 t!("undo.edit_anchor_tick").as_ref());
+            cleanup_edit_request(ui, salt);
         }
+        PopupAction::Cancelled => cleanup_edit_request(ui, salt),
         PopupAction::None => {}
     }
 }
@@ -151,12 +145,11 @@ fn show_auto_shape_popup(
     shape: SegmentShape,
     ctx: &AutoCtx,
 ) {
-    let before = record_lane_before(ui, doc, salt, ctx);
-
     let popup_id = ui.id().with((salt, "popup"));
     let work_id = popup_id.with("work");
     let work_shape: SegmentShape = ui.memory(|m| m.data.get_temp(work_id).unwrap_or(shape));
     let mut open = true;
+    let mut cancelled = false;
     let popup_pos = ui.clip_rect().min + egui::vec2(20.0, 20.0);
 
     egui::Area::new(popup_id)
@@ -172,9 +165,9 @@ fn show_auto_shape_popup(
                 let was_step = is_step;
                 ui.checkbox(&mut is_step, t!("event_browser.shape_step").as_ref());
                 // 用直接比较替代 checkbox.changed()——Area 中 response 标记不可靠
+                // 只更新 pending（work_id），不调 doc.set_automation_shape
                 if is_step != was_step {
                     let new_shape = if is_step { SegmentShape::Step } else { SegmentShape::linear_curve() };
-                    doc.set_automation_shape(ctx.track_idx as usize, ctx.lane_idx, ctx.target, tick, new_shape);
                     ui.ctx().memory_mut(|m| m.data.insert_temp(work_id, new_shape));
                 }
 
@@ -202,9 +195,9 @@ fn show_auto_shape_popup(
                         });
                     }
                     // 用直接比较替代 resp.changed()——后者在 Area 中不可靠
+                    // 只更新 pending（work_id），不调 doc.set_automation_shape
                     if vals != old_vals {
                         let ns = SegmentShape::Curve { x1: vals[0], y1: vals[1], x2: vals[2], y2: vals[3] };
-                        doc.set_automation_shape(ctx.track_idx as usize, ctx.lane_idx, ctx.target, tick, ns);
                         ui.ctx().memory_mut(|m| m.data.insert_temp(work_id, ns));
                     }
                 }
@@ -216,58 +209,23 @@ fn show_auto_shape_popup(
                     }
                     if ui.button(t!("common.cancel").as_ref()).clicked() {
                         open = false;
+                        cancelled = true;
                     }
                 });
             });
         });
 
     if !open {
-        finalize_lane_undo(ui, doc, salt, before, ctx,
-            t!("undo.toggle_anchor_shape").as_ref());
+        if !cancelled {
+            // 读 pending shape，一次性 apply + push undo
+            let pending_shape = ui.memory(|m| m.data.get_temp::<SegmentShape>(work_id).unwrap_or(shape));
+            let before = snapshot_lane_events(doc, ctx.track_idx, ctx.lane_idx, ctx.target);
+            doc.set_automation_shape(ctx.track_idx as usize, ctx.lane_idx, ctx.target, tick, pending_shape);
+            let after = snapshot_lane_events(doc, ctx.track_idx, ctx.lane_idx, ctx.target);
+            push_automation_undo(doc, ctx.track_idx, ctx.lane_idx, ctx.target, before, after,
+                t!("undo.toggle_anchor_shape").as_ref());
+        }
         ui.memory_mut(|m| m.data.remove::<SegmentShape>(work_id));
+        cleanup_edit_request(ui, salt);
     }
-}
-
-/// popup 显示期间记录 lane events before 快照（仅第一次记录）。
-fn record_lane_before(
-    ui: &egui::Ui,
-    doc: &Document,
-    salt: &str,
-    ctx: &AutoCtx,
-) -> Option<Vec<yinhe_types::AutomationEvent>> {
-    let before_id = egui::Id::new((salt, "before"));
-    let recorded_id = before_id.with("recorded");
-    let recorded = ui.memory(|m| m.data.get_temp::<bool>(recorded_id).unwrap_or(false));
-    if !recorded {
-        let before = snapshot_lane_events(doc, ctx.track_idx, ctx.lane_idx, ctx.target);
-        ui.memory_mut(|m| {
-            m.data.insert_temp(before_id, before.clone());
-            m.data.insert_temp(recorded_id, true);
-        });
-        Some(before)
-    } else {
-        ui.memory(|m| m.data.get_temp::<Vec<yinhe_types::AutomationEvent>>(before_id))
-    }
-}
-
-/// popup 关闭时取 after 对比，push undo，清除所有 popup 状态。
-fn finalize_lane_undo(
-    ui: &egui::Ui,
-    doc: &mut Document,
-    salt: &str,
-    before: Option<Vec<yinhe_types::AutomationEvent>>,
-    ctx: &AutoCtx,
-    label: &str,
-) {
-    if let Some(before) = before {
-        let after = snapshot_lane_events(doc, ctx.track_idx, ctx.lane_idx, ctx.target);
-        push_automation_undo(doc, ctx.track_idx, ctx.lane_idx, ctx.target, before, after, label);
-    }
-    let before_id = egui::Id::new((salt, "before"));
-    ui.memory_mut(|m| {
-        m.data.remove::<Vec<yinhe_types::AutomationEvent>>(before_id);
-        m.data.remove::<bool>(before_id.with("recorded"));
-    });
-    remove_edit_request(ui, salt);
-    remove_pos_edit_request(ui, salt);
 }

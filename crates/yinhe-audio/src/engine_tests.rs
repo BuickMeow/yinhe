@@ -20,6 +20,8 @@ fn make_model_with_notes(notes: Vec<(u8, u32, u32, u8, u8)>) -> YinModel {
         time_sig: Vec::new(),
         key_sig: Vec::new(),
         markers: Vec::new(),
+        lyrics: Vec::new(),
+        chord: Vec::new(),
     };
     let first_ch = notes.first().map(|n| n.4).unwrap_or(0);
     let mut t = TrackData::new(0, first_ch);
@@ -114,6 +116,8 @@ fn test_audible_index_filters_vel_and_inactive_channel() {
         time_sig: Vec::new(),
         key_sig: Vec::new(),
         markers: Vec::new(),
+        lyrics: Vec::new(),
+        chord: Vec::new(),
     };
     let t0 = TrackData::new(0, 0);
     let t1 = TrackData::new(0, 3);
@@ -215,6 +219,8 @@ fn test_audible_index_uses_per_key_tempo_cursor() {
         time_sig: Vec::new(),
         key_sig: Vec::new(),
         markers: Vec::new(),
+        lyrics: Vec::new(),
+        chord: Vec::new(),
     };
     let t = TrackData::new(0, 0);
     let per_track_notes: Vec<Vec<NoteEvent>> = vec![vec![
@@ -355,6 +361,8 @@ fn make_model_with_controls(
         time_sig: Vec::new(),
         key_sig: Vec::new(),
         markers: Vec::new(),
+        lyrics: Vec::new(),
+        chord: Vec::new(),
     };
     let mut t = TrackData::new(0, 0);
 
@@ -524,6 +532,8 @@ fn make_bench_model(tracks: usize, notes_per_track: usize) -> YinModel {
         time_sig: Vec::new(),
         key_sig: Vec::new(),
         markers: Vec::new(),
+        lyrics: Vec::new(),
+        chord: Vec::new(),
     };
     let meta = ProjectMeta {
         ppq: 480,

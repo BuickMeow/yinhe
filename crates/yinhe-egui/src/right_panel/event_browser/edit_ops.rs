@@ -3,12 +3,19 @@
 //! 与 `edit/` 子模块（单字段编辑 popup）不同，本模块处理整行删除和插入。
 //! 每个 `apply_*_ops` 函数检查 `EditRequest::DeleteSelected` / `InsertAbove` /
 //! `InsertBelow` / `InsertFirst`，执行对应 Document 方法并 push undo。
+//!
+//! 所有事件列表共用 `UndoAction::EventList`，每个事件类型只需提供：
+//! - `target`：写入目标
+//! - `snapshot(doc) -> Vec<EventListItem>`：取当前事件列表快照
+//! - `delete(doc, &ticks)`：删除选中事件
+//! - `insert(doc, tick)`：在 tick 处插入新事件
 
 use eframe::egui;
 
 use yinhe_editor_core::document::Document;
-use yinhe_editor_core::history::{UndoAction, UndoEntry};
+use yinhe_editor_core::history::{EventListItem, EventListTarget, UndoAction, UndoEntry};
 
+use super::edit::push_event_list_undo;
 use super::state::{EditRequest, EventBrowserState};
 use super::table::{peek_edit_request, remove_edit_request};
 
@@ -24,460 +31,169 @@ fn cleanup(state: &mut EventBrowserState, ui: &egui::Ui, salt: &str) {
     remove_edit_request(ui, salt);
 }
 
-// ── TimeSig ──
-
-pub fn apply_timesig_ops(ui: &mut egui::Ui, doc: &mut Document, state: &mut EventBrowserState, salt: &str) {
+/// 事件列表删除/插入操作的统一分派。
+///
+/// `ctx` 封装了事件类型相关的 4 个回调，避免每个 `apply_*_ops` 写一遍样板。
+fn dispatch_ops(
+    ui: &mut egui::Ui,
+    doc: &mut Document,
+    state: &mut EventBrowserState,
+    salt: &str,
+    target: EventListTarget,
+    ctx: EventOpsCtx,
+) {
     let Some(req) = peek_edit_request(ui, salt) else { return };
     match req {
         EditRequest::DeleteSelected => {
             if !state.selected_ticks.is_empty() {
-                let (before, after) = doc.delete_time_sig_events(&state.selected_ticks);
-                if before != after {
-                    doc.history.push(UndoEntry {
-                        action: UndoAction::TimeSig { old: before, new: after },
-                        label: "删除拍号事件".to_string(),
-                        selected: doc.edit.selected.clone(),
-                        track_selected: doc.edit.track_selected.clone(),
-                        sel_rect: doc.edit.sel_rect.clone(),
-                    });
-                }
+                let before = (ctx.snapshot)(doc);
+                (ctx.delete)(doc, &state.selected_ticks);
+                let after = (ctx.snapshot)(doc);
+                push_event_list_undo(doc, target, before, after, ctx.delete_label);
                 cleanup(state, ui, salt);
             } else {
                 remove_edit_request(ui, salt);
             }
         }
         EditRequest::InsertAbove { tick } | EditRequest::InsertBelow { tick } => {
-            let before = doc.data.model.conductor.time_sig.clone();
-            doc.insert_time_sig_event(tick);
-            let after = doc.data.model.conductor.time_sig.clone();
-            if before != after {
-                doc.history.push(UndoEntry {
-                    action: UndoAction::TimeSig { old: before, new: after },
-                    label: "插入拍号事件".to_string(),
-                    selected: doc.edit.selected.clone(),
-                    track_selected: doc.edit.track_selected.clone(),
-                    sel_rect: doc.edit.sel_rect.clone(),
-                });
-            }
+            let before = (ctx.snapshot)(doc);
+            (ctx.insert)(doc, tick);
+            let after = (ctx.snapshot)(doc);
+            push_event_list_undo(doc, target, before, after, ctx.insert_label);
             remove_edit_request(ui, salt);
         }
         EditRequest::InsertFirst => {
             let tick = current_tick(doc);
-            let before = doc.data.model.conductor.time_sig.clone();
-            doc.insert_time_sig_event(tick);
-            let after = doc.data.model.conductor.time_sig.clone();
-            if before != after {
-                doc.history.push(UndoEntry {
-                    action: UndoAction::TimeSig { old: before, new: after },
-                    label: "新建拍号事件".to_string(),
-                    selected: doc.edit.selected.clone(),
-                    track_selected: doc.edit.track_selected.clone(),
-                    sel_rect: doc.edit.sel_rect.clone(),
-                });
-            }
+            let before = (ctx.snapshot)(doc);
+            (ctx.insert)(doc, tick);
+            let after = (ctx.snapshot)(doc);
+            push_event_list_undo(doc, target, before, after, ctx.first_label);
             remove_edit_request(ui, salt);
         }
         _ => {}
     }
+}
+
+/// 单个事件列表类型的操作上下文。
+///
+/// 使用 `Box<dyn Fn>` 而非 `fn` 指针，因为 per-track 类型需要在闭包中捕获 `track`。
+struct EventOpsCtx {
+    snapshot: Box<dyn Fn(&Document) -> Vec<EventListItem>>,
+    delete: Box<dyn Fn(&mut Document, &std::collections::HashSet<u32>)>,
+    insert: Box<dyn Fn(&mut Document, u32)>,
+    delete_label: &'static str,
+    insert_label: &'static str,
+    first_label: &'static str,
+}
+
+// ── TimeSig ──
+
+pub fn apply_timesig_ops(ui: &mut egui::Ui, doc: &mut Document, state: &mut EventBrowserState, salt: &str) {
+    dispatch_ops(ui, doc, state, salt, EventListTarget::TimeSig, EventOpsCtx {
+        snapshot: Box::new(|doc| doc.data.model.conductor.time_sig.iter().cloned().map(EventListItem::TimeSig).collect()),
+        delete: Box::new(|doc, ticks| { doc.delete_time_sig_events(ticks); }),
+        insert: Box::new(|doc, tick| doc.insert_time_sig_event(tick)),
+        delete_label: "删除拍号事件",
+        insert_label: "插入拍号事件",
+        first_label: "新建拍号事件",
+    });
 }
 
 // ── KeySig ──
 
 pub fn apply_keysig_ops(ui: &mut egui::Ui, doc: &mut Document, state: &mut EventBrowserState, salt: &str) {
-    let Some(req) = peek_edit_request(ui, salt) else { return };
-    match req {
-        EditRequest::DeleteSelected => {
-            if !state.selected_ticks.is_empty() {
-                let (before, after) = doc.delete_key_sig_events(&state.selected_ticks);
-                if before != after {
-                    doc.history.push(UndoEntry {
-                        action: UndoAction::KeySig { old: before, new: after },
-                        label: "删除调号事件".to_string(),
-                        selected: doc.edit.selected.clone(),
-                        track_selected: doc.edit.track_selected.clone(),
-                        sel_rect: doc.edit.sel_rect.clone(),
-                    });
-                }
-                cleanup(state, ui, salt);
-            } else {
-                remove_edit_request(ui, salt);
-            }
-        }
-        EditRequest::InsertAbove { tick } | EditRequest::InsertBelow { tick } => {
-            let before = doc.data.model.conductor.key_sig.clone();
-            doc.insert_key_sig_event(tick);
-            let after = doc.data.model.conductor.key_sig.clone();
-            if before != after {
-                doc.history.push(UndoEntry {
-                    action: UndoAction::KeySig { old: before, new: after },
-                    label: "插入调号事件".to_string(),
-                    selected: doc.edit.selected.clone(),
-                    track_selected: doc.edit.track_selected.clone(),
-                    sel_rect: doc.edit.sel_rect.clone(),
-                });
-            }
-            remove_edit_request(ui, salt);
-        }
-        EditRequest::InsertFirst => {
-            let tick = current_tick(doc);
-            let before = doc.data.model.conductor.key_sig.clone();
-            doc.insert_key_sig_event(tick);
-            let after = doc.data.model.conductor.key_sig.clone();
-            if before != after {
-                doc.history.push(UndoEntry {
-                    action: UndoAction::KeySig { old: before, new: after },
-                    label: "新建调号事件".to_string(),
-                    selected: doc.edit.selected.clone(),
-                    track_selected: doc.edit.track_selected.clone(),
-                    sel_rect: doc.edit.sel_rect.clone(),
-                });
-            }
-            remove_edit_request(ui, salt);
-        }
-        _ => {}
-    }
+    dispatch_ops(ui, doc, state, salt, EventListTarget::KeySig, EventOpsCtx {
+        snapshot: Box::new(|doc| doc.data.model.conductor.key_sig.iter().cloned().map(EventListItem::KeySig).collect()),
+        delete: Box::new(|doc, ticks| { doc.delete_key_sig_events(ticks); }),
+        insert: Box::new(|doc, tick| doc.insert_key_sig_event(tick)),
+        delete_label: "删除调号事件",
+        insert_label: "插入调号事件",
+        first_label: "新建调号事件",
+    });
 }
 
 // ── Marker ──
 
 pub fn apply_marker_ops(ui: &mut egui::Ui, doc: &mut Document, state: &mut EventBrowserState, salt: &str) {
-    let Some(req) = peek_edit_request(ui, salt) else { return };
-    match req {
-        EditRequest::DeleteSelected => {
-            if !state.selected_ticks.is_empty() {
-                let (before, after) = doc.delete_marker_events(&state.selected_ticks);
-                if before != after {
-                    doc.history.push(UndoEntry {
-                        action: UndoAction::Marker { old: before, new: after },
-                        label: "删除标记事件".to_string(),
-                        selected: doc.edit.selected.clone(),
-                        track_selected: doc.edit.track_selected.clone(),
-                        sel_rect: doc.edit.sel_rect.clone(),
-                    });
-                }
-                cleanup(state, ui, salt);
-            } else {
-                remove_edit_request(ui, salt);
-            }
-        }
-        EditRequest::InsertAbove { tick } | EditRequest::InsertBelow { tick } => {
-            let before = doc.data.model.conductor.markers.clone();
-            doc.insert_marker_event(tick);
-            let after = doc.data.model.conductor.markers.clone();
-            if before != after {
-                doc.history.push(UndoEntry {
-                    action: UndoAction::Marker { old: before, new: after },
-                    label: "插入标记事件".to_string(),
-                    selected: doc.edit.selected.clone(),
-                    track_selected: doc.edit.track_selected.clone(),
-                    sel_rect: doc.edit.sel_rect.clone(),
-                });
-            }
-            remove_edit_request(ui, salt);
-        }
-        EditRequest::InsertFirst => {
-            let tick = current_tick(doc);
-            let before = doc.data.model.conductor.markers.clone();
-            doc.insert_marker_event(tick);
-            let after = doc.data.model.conductor.markers.clone();
-            if before != after {
-                doc.history.push(UndoEntry {
-                    action: UndoAction::Marker { old: before, new: after },
-                    label: "新建标记事件".to_string(),
-                    selected: doc.edit.selected.clone(),
-                    track_selected: doc.edit.track_selected.clone(),
-                    sel_rect: doc.edit.sel_rect.clone(),
-                });
-            }
-            remove_edit_request(ui, salt);
-        }
-        _ => {}
-    }
+    dispatch_ops(ui, doc, state, salt, EventListTarget::Marker, EventOpsCtx {
+        snapshot: Box::new(|doc| doc.data.model.conductor.markers.iter().cloned().map(EventListItem::Marker).collect()),
+        delete: Box::new(|doc, ticks| { doc.delete_marker_events(ticks); }),
+        insert: Box::new(|doc, tick| doc.insert_marker_event(tick)),
+        delete_label: "删除标记事件",
+        insert_label: "插入标记事件",
+        first_label: "新建标记事件",
+    });
 }
 
 // ── Conductor Lyrics ──
 
 pub fn apply_conductor_lyrics_ops(ui: &mut egui::Ui, doc: &mut Document, state: &mut EventBrowserState, salt: &str) {
-    let Some(req) = peek_edit_request(ui, salt) else { return };
-    match req {
-        EditRequest::DeleteSelected => {
-            if !state.selected_ticks.is_empty() {
-                let (before, after) = doc.delete_conductor_lyrics_events(&state.selected_ticks);
-                if before != after {
-                    doc.history.push(UndoEntry {
-                        action: UndoAction::ConductorLyrics { old: before, new: after },
-                        label: "删除歌词事件".to_string(),
-                        selected: doc.edit.selected.clone(),
-                        track_selected: doc.edit.track_selected.clone(),
-                        sel_rect: doc.edit.sel_rect.clone(),
-                    });
-                }
-                cleanup(state, ui, salt);
-            } else {
-                remove_edit_request(ui, salt);
-            }
-        }
-        EditRequest::InsertAbove { tick } | EditRequest::InsertBelow { tick } => {
-            let before = doc.data.model.conductor.lyrics.clone();
-            doc.insert_conductor_lyrics_event(tick);
-            let after = doc.data.model.conductor.lyrics.clone();
-            if before != after {
-                doc.history.push(UndoEntry {
-                    action: UndoAction::ConductorLyrics { old: before, new: after },
-                    label: "插入歌词事件".to_string(),
-                    selected: doc.edit.selected.clone(),
-                    track_selected: doc.edit.track_selected.clone(),
-                    sel_rect: doc.edit.sel_rect.clone(),
-                });
-            }
-            remove_edit_request(ui, salt);
-        }
-        EditRequest::InsertFirst => {
-            let tick = current_tick(doc);
-            let before = doc.data.model.conductor.lyrics.clone();
-            doc.insert_conductor_lyrics_event(tick);
-            let after = doc.data.model.conductor.lyrics.clone();
-            if before != after {
-                doc.history.push(UndoEntry {
-                    action: UndoAction::ConductorLyrics { old: before, new: after },
-                    label: "新建歌词事件".to_string(),
-                    selected: doc.edit.selected.clone(),
-                    track_selected: doc.edit.track_selected.clone(),
-                    sel_rect: doc.edit.sel_rect.clone(),
-                });
-            }
-            remove_edit_request(ui, salt);
-        }
-        _ => {}
-    }
+    dispatch_ops(ui, doc, state, salt, EventListTarget::ConductorLyrics, EventOpsCtx {
+        snapshot: Box::new(|doc| doc.data.model.conductor.lyrics.iter().cloned().map(EventListItem::Lyrics).collect()),
+        delete: Box::new(|doc, ticks| { doc.delete_conductor_lyrics_events(ticks); }),
+        insert: Box::new(|doc, tick| doc.insert_conductor_lyrics_event(tick)),
+        delete_label: "删除歌词事件",
+        insert_label: "插入歌词事件",
+        first_label: "新建歌词事件",
+    });
 }
 
 // ── Conductor Chord ──
 
 pub fn apply_conductor_chord_ops(ui: &mut egui::Ui, doc: &mut Document, state: &mut EventBrowserState, salt: &str) {
-    let Some(req) = peek_edit_request(ui, salt) else { return };
-    match req {
-        EditRequest::DeleteSelected => {
-            if !state.selected_ticks.is_empty() {
-                let (before, after) = doc.delete_conductor_chord_events(&state.selected_ticks);
-                if before != after {
-                    doc.history.push(UndoEntry {
-                        action: UndoAction::ConductorChord { old: before, new: after },
-                        label: "删除和弦事件".to_string(),
-                        selected: doc.edit.selected.clone(),
-                        track_selected: doc.edit.track_selected.clone(),
-                        sel_rect: doc.edit.sel_rect.clone(),
-                    });
-                }
-                cleanup(state, ui, salt);
-            } else {
-                remove_edit_request(ui, salt);
-            }
-        }
-        EditRequest::InsertAbove { tick } | EditRequest::InsertBelow { tick } => {
-            let before = doc.data.model.conductor.chord.clone();
-            doc.insert_conductor_chord_event(tick);
-            let after = doc.data.model.conductor.chord.clone();
-            if before != after {
-                doc.history.push(UndoEntry {
-                    action: UndoAction::ConductorChord { old: before, new: after },
-                    label: "插入和弦事件".to_string(),
-                    selected: doc.edit.selected.clone(),
-                    track_selected: doc.edit.track_selected.clone(),
-                    sel_rect: doc.edit.sel_rect.clone(),
-                });
-            }
-            remove_edit_request(ui, salt);
-        }
-        EditRequest::InsertFirst => {
-            let tick = current_tick(doc);
-            let before = doc.data.model.conductor.chord.clone();
-            doc.insert_conductor_chord_event(tick);
-            let after = doc.data.model.conductor.chord.clone();
-            if before != after {
-                doc.history.push(UndoEntry {
-                    action: UndoAction::ConductorChord { old: before, new: after },
-                    label: "新建和弦事件".to_string(),
-                    selected: doc.edit.selected.clone(),
-                    track_selected: doc.edit.track_selected.clone(),
-                    sel_rect: doc.edit.sel_rect.clone(),
-                });
-            }
-            remove_edit_request(ui, salt);
-        }
-        _ => {}
-    }
+    dispatch_ops(ui, doc, state, salt, EventListTarget::ConductorChord, EventOpsCtx {
+        snapshot: Box::new(|doc| doc.data.model.conductor.chord.iter().cloned().map(EventListItem::Chord).collect()),
+        delete: Box::new(|doc, ticks| { doc.delete_conductor_chord_events(ticks); }),
+        insert: Box::new(|doc, tick| doc.insert_conductor_chord_event(tick)),
+        delete_label: "删除和弦事件",
+        insert_label: "插入和弦事件",
+        first_label: "新建和弦事件",
+    });
 }
 
 // ── Per-track Lyrics ──
 
 pub fn apply_lyrics_ops(ui: &mut egui::Ui, doc: &mut Document, state: &mut EventBrowserState, salt: &str, track: u16) {
-    let Some(req) = peek_edit_request(ui, salt) else { return };
-    match req {
-        EditRequest::DeleteSelected => {
-            if !state.selected_ticks.is_empty() {
-                let (before, after) = doc.delete_lyrics_events(track, &state.selected_ticks);
-                if before != after {
-                    doc.history.push(UndoEntry {
-                        action: UndoAction::Lyrics { track, old: before, new: after },
-                        label: "删除歌词事件".to_string(),
-                        selected: doc.edit.selected.clone(),
-                        track_selected: doc.edit.track_selected.clone(),
-                        sel_rect: doc.edit.sel_rect.clone(),
-                    });
-                }
-                cleanup(state, ui, salt);
-            } else {
-                remove_edit_request(ui, salt);
-            }
-        }
-        EditRequest::InsertAbove { tick } | EditRequest::InsertBelow { tick } => {
-            let before = doc.data.model.tracks.get(track as usize).map(|t| t.lyrics.clone()).unwrap_or_default();
-            doc.insert_lyrics_event(track, tick);
-            let after = doc.data.model.tracks.get(track as usize).map(|t| t.lyrics.clone()).unwrap_or_default();
-            if before != after {
-                doc.history.push(UndoEntry {
-                    action: UndoAction::Lyrics { track, old: before, new: after },
-                    label: "插入歌词事件".to_string(),
-                    selected: doc.edit.selected.clone(),
-                    track_selected: doc.edit.track_selected.clone(),
-                    sel_rect: doc.edit.sel_rect.clone(),
-                });
-            }
-            remove_edit_request(ui, salt);
-        }
-        EditRequest::InsertFirst => {
-            let tick = current_tick(doc);
-            let before = doc.data.model.tracks.get(track as usize).map(|t| t.lyrics.clone()).unwrap_or_default();
-            doc.insert_lyrics_event(track, tick);
-            let after = doc.data.model.tracks.get(track as usize).map(|t| t.lyrics.clone()).unwrap_or_default();
-            if before != after {
-                doc.history.push(UndoEntry {
-                    action: UndoAction::Lyrics { track, old: before, new: after },
-                    label: "新建歌词事件".to_string(),
-                    selected: doc.edit.selected.clone(),
-                    track_selected: doc.edit.track_selected.clone(),
-                    sel_rect: doc.edit.sel_rect.clone(),
-                });
-            }
-            remove_edit_request(ui, salt);
-        }
-        _ => {}
-    }
+    dispatch_ops(ui, doc, state, salt, EventListTarget::Lyrics { track }, EventOpsCtx {
+        snapshot: Box::new(move |doc| doc.data.model.tracks.get(track as usize)
+            .map(|t| t.lyrics.iter().cloned().map(EventListItem::Lyrics).collect())
+            .unwrap_or_default()),
+        delete: Box::new(move |doc, ticks| { doc.delete_lyrics_events(track, ticks); }),
+        insert: Box::new(move |doc, tick| doc.insert_lyrics_event(track, tick)),
+        delete_label: "删除歌词事件",
+        insert_label: "插入歌词事件",
+        first_label: "新建歌词事件",
+    });
 }
 
 // ── Per-track Chord ──
 
 pub fn apply_chord_ops(ui: &mut egui::Ui, doc: &mut Document, state: &mut EventBrowserState, salt: &str, track: u16) {
-    let Some(req) = peek_edit_request(ui, salt) else { return };
-    match req {
-        EditRequest::DeleteSelected => {
-            if !state.selected_ticks.is_empty() {
-                let (before, after) = doc.delete_chord_events(track, &state.selected_ticks);
-                if before != after {
-                    doc.history.push(UndoEntry {
-                        action: UndoAction::Chord { track, old: before, new: after },
-                        label: "删除和弦事件".to_string(),
-                        selected: doc.edit.selected.clone(),
-                        track_selected: doc.edit.track_selected.clone(),
-                        sel_rect: doc.edit.sel_rect.clone(),
-                    });
-                }
-                cleanup(state, ui, salt);
-            } else {
-                remove_edit_request(ui, salt);
-            }
-        }
-        EditRequest::InsertAbove { tick } | EditRequest::InsertBelow { tick } => {
-            let before = doc.data.model.tracks.get(track as usize).map(|t| t.chord.clone()).unwrap_or_default();
-            doc.insert_chord_event(track, tick);
-            let after = doc.data.model.tracks.get(track as usize).map(|t| t.chord.clone()).unwrap_or_default();
-            if before != after {
-                doc.history.push(UndoEntry {
-                    action: UndoAction::Chord { track, old: before, new: after },
-                    label: "插入和弦事件".to_string(),
-                    selected: doc.edit.selected.clone(),
-                    track_selected: doc.edit.track_selected.clone(),
-                    sel_rect: doc.edit.sel_rect.clone(),
-                });
-            }
-            remove_edit_request(ui, salt);
-        }
-        EditRequest::InsertFirst => {
-            let tick = current_tick(doc);
-            let before = doc.data.model.tracks.get(track as usize).map(|t| t.chord.clone()).unwrap_or_default();
-            doc.insert_chord_event(track, tick);
-            let after = doc.data.model.tracks.get(track as usize).map(|t| t.chord.clone()).unwrap_or_default();
-            if before != after {
-                doc.history.push(UndoEntry {
-                    action: UndoAction::Chord { track, old: before, new: after },
-                    label: "新建和弦事件".to_string(),
-                    selected: doc.edit.selected.clone(),
-                    track_selected: doc.edit.track_selected.clone(),
-                    sel_rect: doc.edit.sel_rect.clone(),
-                });
-            }
-            remove_edit_request(ui, salt);
-        }
-        _ => {}
-    }
+    dispatch_ops(ui, doc, state, salt, EventListTarget::Chord { track }, EventOpsCtx {
+        snapshot: Box::new(move |doc| doc.data.model.tracks.get(track as usize)
+            .map(|t| t.chord.iter().cloned().map(EventListItem::Chord).collect())
+            .unwrap_or_default()),
+        delete: Box::new(move |doc, ticks| { doc.delete_chord_events(track, ticks); }),
+        insert: Box::new(move |doc, tick| doc.insert_chord_event(track, tick)),
+        delete_label: "删除和弦事件",
+        insert_label: "插入和弦事件",
+        first_label: "新建和弦事件",
+    });
 }
 
 // ── Program Change ──
 
 pub fn apply_pc_ops(ui: &mut egui::Ui, doc: &mut Document, state: &mut EventBrowserState, salt: &str, track: u16) {
-    let Some(req) = peek_edit_request(ui, salt) else { return };
-    match req {
-        EditRequest::DeleteSelected => {
-            if !state.selected_ticks.is_empty() {
-                let (before, after) = doc.delete_program_change_events(track, &state.selected_ticks);
-                if before != after {
-                    doc.history.push(UndoEntry {
-                        action: UndoAction::ProgramChange { track, old: before, new: after },
-                        label: "删除音色变更事件".to_string(),
-                        selected: doc.edit.selected.clone(),
-                        track_selected: doc.edit.track_selected.clone(),
-                        sel_rect: doc.edit.sel_rect.clone(),
-                    });
-                }
-                cleanup(state, ui, salt);
-            } else {
-                remove_edit_request(ui, salt);
-            }
-        }
-        EditRequest::InsertAbove { tick } | EditRequest::InsertBelow { tick } => {
-            let before = doc.data.model.tracks.get(track as usize).map(|t| t.program_change.clone()).unwrap_or_default();
-            doc.insert_program_change_event(track, tick);
-            let after = doc.data.model.tracks.get(track as usize).map(|t| t.program_change.clone()).unwrap_or_default();
-            if before != after {
-                doc.history.push(UndoEntry {
-                    action: UndoAction::ProgramChange { track, old: before, new: after },
-                    label: "插入音色变更事件".to_string(),
-                    selected: doc.edit.selected.clone(),
-                    track_selected: doc.edit.track_selected.clone(),
-                    sel_rect: doc.edit.sel_rect.clone(),
-                });
-            }
-            remove_edit_request(ui, salt);
-        }
-        EditRequest::InsertFirst => {
-            let tick = current_tick(doc);
-            let before = doc.data.model.tracks.get(track as usize).map(|t| t.program_change.clone()).unwrap_or_default();
-            doc.insert_program_change_event(track, tick);
-            let after = doc.data.model.tracks.get(track as usize).map(|t| t.program_change.clone()).unwrap_or_default();
-            if before != after {
-                doc.history.push(UndoEntry {
-                    action: UndoAction::ProgramChange { track, old: before, new: after },
-                    label: "新建音色变更事件".to_string(),
-                    selected: doc.edit.selected.clone(),
-                    track_selected: doc.edit.track_selected.clone(),
-                    sel_rect: doc.edit.sel_rect.clone(),
-                });
-            }
-            remove_edit_request(ui, salt);
-        }
-        _ => {}
-    }
+    dispatch_ops(ui, doc, state, salt, EventListTarget::ProgramChange { track }, EventOpsCtx {
+        snapshot: Box::new(move |doc| doc.data.model.tracks.get(track as usize)
+            .map(|t| t.program_change.iter().cloned().map(EventListItem::ProgramChange).collect())
+            .unwrap_or_default()),
+        delete: Box::new(move |doc, ticks| { doc.delete_program_change_events(track, ticks); }),
+        insert: Box::new(move |doc, tick| doc.insert_program_change_event(track, tick)),
+        delete_label: "删除音色变更事件",
+        insert_label: "插入音色变更事件",
+        first_label: "新建音色变更事件",
+    });
 }
 
 // ── Notes ──

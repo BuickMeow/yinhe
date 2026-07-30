@@ -58,6 +58,42 @@ pub struct AutomationDelta {
     pub after: Vec<AutomationEvent>,
 }
 
+/// 事件列表的写入目标。一个变体对应 conductor 或某个 track 上的一个事件列表字段。
+///
+/// 取消了原先 8 个 `UndoAction` 变体（TimeSig/KeySig/Marker/Lyrics/Chord/
+/// ConductorLyrics/ConductorChord/ProgramChange）——它们全是同一模式：
+/// "把某事件列表整体替换为 new"。这里用一个 target 枚举 + 一份 old/new 即可表达。
+#[derive(Clone, Debug)]
+pub enum EventListTarget {
+    TimeSig,
+    KeySig,
+    Marker,
+    ConductorLyrics,
+    ConductorChord,
+    Lyrics { track: u16 },
+    Chord { track: u16 },
+    ProgramChange { track: u16 },
+}
+
+/// `EventList` 快照中的单个事件项。覆盖所有事件列表类型。
+#[derive(Clone, Debug, PartialEq)]
+pub enum EventListItem {
+    TimeSig(yinhe_types::TimeSigEvent),
+    KeySig(yinhe_types::KeySigEvent),
+    Marker(yinhe_types::MarkerEvent),
+    Lyrics(yinhe_types::LyricsEvent),
+    Chord(yinhe_types::ChordEvent),
+    ProgramChange(yinhe_types::PcEvent),
+}
+
+/// 事件列表整体替换的 before/after 快照。
+#[derive(Clone, Debug)]
+pub struct EventListDelta {
+    pub target: EventListTarget,
+    pub old: Vec<EventListItem>,
+    pub new: Vec<EventListItem>,
+}
+
 // ---------------------------------------------------------------------------
 // Action enum
 // ---------------------------------------------------------------------------
@@ -81,50 +117,9 @@ pub enum UndoAction {
     ProjectDescription { old: String, new: String },
     ProjectPpq { old: u32, new: u32, rescale: bool },
     CompressionLevel { old: i32, new: i32 },
-    /// 拍号事件列表整体替换（add/move/delete/edit field 都用全量快照，
-    /// 因为 time_sig 事件数量极少，全量快照成本可忽略）。
-    TimeSig {
-        old: Vec<yinhe_types::TimeSigEvent>,
-        new: Vec<yinhe_types::TimeSigEvent>,
-    },
-    /// 调号事件列表整体替换（conductor 级）。
-    KeySig {
-        old: Vec<yinhe_types::KeySigEvent>,
-        new: Vec<yinhe_types::KeySigEvent>,
-    },
-    /// 标记事件列表整体替换（conductor 级）。
-    Marker {
-        old: Vec<yinhe_types::MarkerEvent>,
-        new: Vec<yinhe_types::MarkerEvent>,
-    },
-    /// 歌词事件列表整体替换（per-track）。
-    Lyrics {
-        track: u16,
-        old: Vec<yinhe_types::LyricsEvent>,
-        new: Vec<yinhe_types::LyricsEvent>,
-    },
-    /// 和弦事件列表整体替换（per-track）。
-    Chord {
-        track: u16,
-        old: Vec<yinhe_types::ChordEvent>,
-        new: Vec<yinhe_types::ChordEvent>,
-    },
-    /// Conductor 级歌词事件列表整体替换（track 0 的 FF 05）。
-    ConductorLyrics {
-        old: Vec<yinhe_types::LyricsEvent>,
-        new: Vec<yinhe_types::LyricsEvent>,
-    },
-    /// Conductor 级和弦事件列表整体替换（仅 .yin 格式）。
-    ConductorChord {
-        old: Vec<yinhe_types::ChordEvent>,
-        new: Vec<yinhe_types::ChordEvent>,
-    },
-    /// Program Change 事件列表整体替换（per-track）。
-    ProgramChange {
-        track: u16,
-        old: Vec<yinhe_types::PcEvent>,
-        new: Vec<yinhe_types::PcEvent>,
-    },
+    /// 事件列表整体替换（time_sig / key_sig / marker / lyrics / chord / program_change
+    /// 等所有 conductor 级或 per-track 级事件列表共用）。具体目标由 `target` 指定。
+    EventList(EventListDelta),
     /// Track structure changed (add/remove/move track).
     /// Stores full before/after track lists (metadata only) and
     /// a remap table: `note_remap[old_track_idx] = new_track_idx` (or u16::MAX if deleted).
@@ -186,37 +181,9 @@ impl UndoAction {
                 old: new,
                 new: old,
             },
-            UndoAction::TimeSig { mut old, mut new } => {
-                std::mem::swap(&mut old, &mut new);
-                UndoAction::TimeSig { old, new }
-            }
-            UndoAction::KeySig { mut old, mut new } => {
-                std::mem::swap(&mut old, &mut new);
-                UndoAction::KeySig { old, new }
-            }
-            UndoAction::Marker { mut old, mut new } => {
-                std::mem::swap(&mut old, &mut new);
-                UndoAction::Marker { old, new }
-            }
-            UndoAction::Lyrics { track, mut old, mut new } => {
-                std::mem::swap(&mut old, &mut new);
-                UndoAction::Lyrics { track, old, new }
-            }
-            UndoAction::Chord { track, mut old, mut new } => {
-                std::mem::swap(&mut old, &mut new);
-                UndoAction::Chord { track, old, new }
-            }
-            UndoAction::ConductorLyrics { mut old, mut new } => {
-                std::mem::swap(&mut old, &mut new);
-                UndoAction::ConductorLyrics { old, new }
-            }
-            UndoAction::ConductorChord { mut old, mut new } => {
-                std::mem::swap(&mut old, &mut new);
-                UndoAction::ConductorChord { old, new }
-            }
-            UndoAction::ProgramChange { track, mut old, mut new } => {
-                std::mem::swap(&mut old, &mut new);
-                UndoAction::ProgramChange { track, old, new }
+            UndoAction::EventList(mut delta) => {
+                std::mem::swap(&mut delta.old, &mut delta.new);
+                UndoAction::EventList(delta)
             }
             UndoAction::TrackStructure {
                 mut tracks_before,

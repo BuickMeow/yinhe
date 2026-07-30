@@ -348,15 +348,6 @@ pub(super) fn peek_edit_request(ui: &egui::Ui, id_salt: &str) -> Option<EditRequ
     ui.memory(|m| m.data.get_temp::<EditRequest>(key))
 }
 
-/// 更新 `EditRequest` 内容。
-///
-/// popup 中修改 tick/start_tick 后，原 `EditRequest` 内的寻址字段失效，
-/// 需要更新到新值，下一帧 `peek_edit_request` 拿到的才是新值。
-pub(super) fn update_edit_request(ui: &egui::Ui, id_salt: &str, new_req: EditRequest) {
-    let key = egui::Id::new((id_salt, "edit"));
-    ui.memory_mut(|m| m.data.insert_temp(key, new_req));
-}
-
 /// 清除 `EditRequest`（popup 关闭时调用）。
 pub(super) fn remove_edit_request(ui: &egui::Ui, id_salt: &str) {
     let key = egui::Id::new((id_salt, "edit"));
@@ -367,12 +358,6 @@ pub(super) fn remove_edit_request(ui: &egui::Ui, id_salt: &str) {
 pub(super) fn peek_pos_edit_request(ui: &egui::Ui, id_salt: &str) -> Option<EditRequest> {
     let key = egui::Id::new((id_salt, "edit_pos"));
     ui.memory(|m| m.data.get_temp::<EditRequest>(key))
-}
-
-/// 更新位置编辑请求内容（popup 中修改 tick 后同步寻址字段）。
-pub(super) fn update_pos_edit_request(ui: &egui::Ui, id_salt: &str, new_req: EditRequest) {
-    let key = egui::Id::new((id_salt, "edit_pos"));
-    ui.memory_mut(|m| m.data.insert_temp(key, new_req));
 }
 
 /// 清除位置编辑请求（位置 popup 关闭时调用）。

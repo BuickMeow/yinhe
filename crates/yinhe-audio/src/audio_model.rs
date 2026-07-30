@@ -322,6 +322,8 @@ mod tests {
             time_sig: Vec::new(),
             key_sig: Vec::new(),
             markers: Vec::new(),
+            lyrics: Vec::new(),
+            chord: Vec::new(),
         };
         let mut t = TrackData::new(0, 0);
         t.automation_lanes = lanes;

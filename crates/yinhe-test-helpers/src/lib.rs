@@ -69,6 +69,8 @@ pub fn make_test_model() -> YinModel {
         ],
         key_sig: Vec::new(),
         markers: Vec::new(),
+        lyrics: Vec::new(),
+        chord: Vec::new(),
     };
 
     let mut t0 = TrackData::new(0, 0); // port 0, ch 0

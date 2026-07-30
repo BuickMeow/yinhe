@@ -25,6 +25,8 @@ fn make_doc(name: &str) -> Document {
             }],
             key_sig: Vec::new(),
             markers: Vec::new(),
+            lyrics: Vec::new(),
+            chord: Vec::new(),
         }),
         tracks: vec![Arc::new({
             let mut t = TrackData::new(0, 0);
