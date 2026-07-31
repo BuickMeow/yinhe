@@ -4,8 +4,8 @@ use eframe::egui;
 use rust_i18n::t;
 
 use crate::app::{App, PendingFileAction};
-use yinhe_editor_core::document::Document;
 use crate::chrome::transport_bar;
+use yinhe_editor_core::document::Document;
 
 /// Actions detected from keyboard input in the current frame.
 #[derive(Default)]
@@ -31,8 +31,15 @@ impl App {
     pub(crate) fn handle_keyboard_shortcuts(&self, ui: &egui::Ui) -> KeyboardActions {
         let mut actions = KeyboardActions::default();
 
+        // 文本输入焦点（TextEdit/DragValue 等）优先：全局快捷键让位给输入框，
+        // 与成熟 DAW 一致（Backspace/Delete/Cmd+C/V/Z 等作用于文本而非选区）。
+        if ui.ctx().egui_wants_keyboard_input() {
+            return actions;
+        }
+
         let is_playing_any = self
-            .audio_state.handle
+            .audio_state
+            .handle
             .as_ref()
             .map(|a| a.handle.is_playing())
             .unwrap_or(false);
@@ -102,7 +109,9 @@ impl App {
 
     /// Delete all selected notes from the active document.
     pub(crate) fn delete_selected_notes(&mut self) {
-        self.with_undo(t!("undo.delete_notes").as_ref(), |doc| doc.delete_selected());
+        self.with_undo(t!("undo.delete_notes").as_ref(), |doc| {
+            doc.delete_selected()
+        });
     }
 
     /// Duplicate all selected notes (Ctrl+D / Cmd+D).
@@ -180,7 +189,9 @@ impl App {
 
     /// Add a single note to the given track and record an undo entry.
     pub(crate) fn add_note_with_undo(&mut self, track_idx: u16, note: yinhe_core::NoteEvent) {
-        self.with_undo(t!("undo.add_note").as_ref(), |doc| doc.add_note(track_idx, note));
+        self.with_undo(t!("undo.add_note").as_ref(), |doc| {
+            doc.add_note(track_idx, note)
+        });
     }
 
     /// Run an edit closure, recording an undo entry from the returned action
@@ -270,9 +281,7 @@ impl App {
             let pending = match action {
                 transport_bar::FileAction::NewProject => PendingFileAction::NewProject,
                 transport_bar::FileAction::Open => PendingFileAction::Open,
-                transport_bar::FileAction::CloseDocument => {
-                    PendingFileAction::CloseDocument(idx)
-                }
+                transport_bar::FileAction::CloseDocument => PendingFileAction::CloseDocument(idx),
                 transport_bar::FileAction::Exit => PendingFileAction::Exit,
                 _ => unreachable!(), // filtered above
             };
@@ -296,7 +305,8 @@ impl App {
                 self.new_project();
             }
             transport_bar::FileAction::Open => {
-                self.file_loader.pick_file(self.audio_settings.midi_import_encoding);
+                self.file_loader
+                    .pick_file(self.audio_settings.midi_import_encoding);
             }
             transport_bar::FileAction::Save => {
                 if let Some(idx) = self.active_doc {
@@ -337,13 +347,16 @@ impl App {
 
     /// Execute the deferred pending action (called after save completes or on discard).
     pub(crate) fn execute_pending_file_action(&mut self, _ctx: &egui::Context) {
-        let Some(pending) = self.pending_unsaved.take() else { return };
+        let Some(pending) = self.pending_unsaved.take() else {
+            return;
+        };
         match pending {
             PendingFileAction::NewProject => {
                 self.new_project();
             }
             PendingFileAction::Open => {
-                self.file_loader.pick_file(self.audio_settings.midi_import_encoding);
+                self.file_loader
+                    .pick_file(self.audio_settings.midi_import_encoding);
             }
             PendingFileAction::CloseDocument(idx) => {
                 self.close_document(idx);
@@ -543,7 +556,10 @@ impl App {
         let gpu_queue = std::sync::Arc::new(self.render_ctx.queue().clone());
         // Extract SFZ path from port_sf for GPU export.
         #[cfg(feature = "gpu")]
-        let gpu_sfz = port_sf.first().and_then(|(_, paths)| paths.first()).cloned();
+        let gpu_sfz = port_sf
+            .first()
+            .and_then(|(_, paths)| paths.first())
+            .cloned();
         #[cfg(feature = "gpu")]
         eprintln!("[export] gpu_sfz = {:?}", gpu_sfz);
         #[cfg(not(feature = "gpu"))]
@@ -643,7 +659,10 @@ impl App {
             // Capture final stats before hiding the progress window.
             let (elapsed, speed) = {
                 let p = export_progress.lock().unwrap();
-                let elapsed = p.started_at.map(|t| t.elapsed().as_secs_f64()).unwrap_or(0.0);
+                let elapsed = p
+                    .started_at
+                    .map(|t| t.elapsed().as_secs_f64())
+                    .unwrap_or(0.0);
                 (elapsed, p.overall_speed)
             };
             // Mark done
