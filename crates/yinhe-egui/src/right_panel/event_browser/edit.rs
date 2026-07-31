@@ -321,6 +321,7 @@ pub(super) fn push_event_list_undo(
             selected: doc.edit.selected.clone(),
             track_selected: doc.edit.track_selected.clone(),
             sel_rect: doc.edit.sel_rect.clone(),
+            arr_sel_rect: doc.edit.arr_sel_rect.clone(),
         });
     }
 }

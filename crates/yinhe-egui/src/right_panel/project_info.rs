@@ -56,6 +56,7 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
             doc.edit.selected.clone(),
             doc.edit.track_selected.clone(),
             doc.edit.sel_rect.clone(),
+            doc.edit.arr_sel_rect.clone(),
         );
     }
 
@@ -88,6 +89,7 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
             doc.edit.selected.clone(),
             doc.edit.track_selected.clone(),
             doc.edit.sel_rect.clone(),
+            doc.edit.arr_sel_rect.clone(),
         );
     }
 
@@ -140,6 +142,7 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
                 doc.edit.selected.clone(),
                 doc.edit.track_selected.clone(),
                 doc.edit.sel_rect.clone(),
+                doc.edit.arr_sel_rect.clone(),
             );
         }
     }
@@ -173,6 +176,7 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
             doc.edit.selected.clone(),
             doc.edit.track_selected.clone(),
             doc.edit.sel_rect.clone(),
+            doc.edit.arr_sel_rect.clone(),
         );
     }
 
@@ -205,6 +209,7 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
             doc.edit.selected.clone(),
             doc.edit.track_selected.clone(),
             doc.edit.sel_rect.clone(),
+            doc.edit.arr_sel_rect.clone(),
         );
     }
 }

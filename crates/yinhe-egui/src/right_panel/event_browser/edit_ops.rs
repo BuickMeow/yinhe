@@ -216,6 +216,7 @@ pub fn apply_notes_ops(ui: &mut egui::Ui, doc: &mut Document, state: &mut EventB
                         selected: Default::default(),
                         track_selected: doc.edit.track_selected.clone(),
                         sel_rect: doc.edit.sel_rect.clone(),
+                        arr_sel_rect: doc.edit.arr_sel_rect.clone(),
                     });
                 }
                 cleanup(state, ui, salt);
@@ -240,6 +241,7 @@ pub fn apply_notes_ops(ui: &mut egui::Ui, doc: &mut Document, state: &mut EventB
                     selected: doc.edit.selected.clone(),
                     track_selected: doc.edit.track_selected.clone(),
                     sel_rect: doc.edit.sel_rect.clone(),
+                    arr_sel_rect: doc.edit.arr_sel_rect.clone(),
                 });
             }
             remove_edit_request(ui, salt);
@@ -261,6 +263,7 @@ pub fn apply_notes_ops(ui: &mut egui::Ui, doc: &mut Document, state: &mut EventB
                     selected: doc.edit.selected.clone(),
                     track_selected: doc.edit.track_selected.clone(),
                     sel_rect: doc.edit.sel_rect.clone(),
+                    arr_sel_rect: doc.edit.arr_sel_rect.clone(),
                 });
             }
             remove_edit_request(ui, salt);
@@ -305,6 +308,7 @@ pub fn apply_automation_ops(
                         selected: doc.edit.selected.clone(),
                         track_selected: doc.edit.track_selected.clone(),
                         sel_rect: doc.edit.sel_rect.clone(),
+                        arr_sel_rect: doc.edit.arr_sel_rect.clone(),
                     });
                 }
                 cleanup(state, ui, salt);
@@ -327,6 +331,7 @@ pub fn apply_automation_ops(
                     selected: doc.edit.selected.clone(),
                     track_selected: doc.edit.track_selected.clone(),
                     sel_rect: doc.edit.sel_rect.clone(),
+                    arr_sel_rect: doc.edit.arr_sel_rect.clone(),
                 });
             }
             remove_edit_request(ui, salt);
@@ -346,6 +351,7 @@ pub fn apply_automation_ops(
                     selected: doc.edit.selected.clone(),
                     track_selected: doc.edit.track_selected.clone(),
                     sel_rect: doc.edit.sel_rect.clone(),
+                    arr_sel_rect: doc.edit.arr_sel_rect.clone(),
                 });
             }
             remove_edit_request(ui, salt);

@@ -19,6 +19,8 @@ pub struct UndoEntry {
     pub selected: Selection,
     pub track_selected: HashSet<u16>,
     pub sel_rect: SelRectState,
+    /// AR 选框，与 sel_rect 一样随 undo 快照/恢复。
+    pub arr_sel_rect: Vec<(f64, f64, usize, usize)>,
 }
 
 // ---------------------------------------------------------------------------
@@ -167,6 +169,7 @@ fn commit_field<T: PartialEq>(
     selected: Selection,
     track_selected: HashSet<u16>,
     sel_rect: SelRectState,
+    arr_sel_rect: Vec<(f64, f64, usize, usize)>,
 ) {
     let Some(old_str) = pending.take(id) else { return; };
     let old = parse_old(&old_str);
@@ -177,6 +180,7 @@ fn commit_field<T: PartialEq>(
         selected,
         track_selected,
         sel_rect,
+        arr_sel_rect,
     });
 }
 
@@ -185,12 +189,13 @@ pub fn commit_track_name(
     stack: &mut UndoStack, pending: &mut PendingEdits, id: u64,
     track_idx: usize, new_name: &str,
     selected: Selection, track_selected: HashSet<u16>, sel_rect: SelRectState,
+    arr_sel_rect: Vec<(f64, f64, usize, usize)>,
 ) {
     commit_field(
         stack, pending, id, new_name.to_string(),
         |s| s.to_string(),
         |old, new| UndoAction::TrackName { track_idx, old, new },
-        "Edit track name", selected, track_selected, sel_rect,
+        "Edit track name", selected, track_selected, sel_rect, arr_sel_rect,
     );
 }
 
@@ -199,12 +204,13 @@ pub fn commit_project_name(
     stack: &mut UndoStack, pending: &mut PendingEdits, id: u64,
     new_value: &str,
     selected: Selection, track_selected: HashSet<u16>, sel_rect: SelRectState,
+    arr_sel_rect: Vec<(f64, f64, usize, usize)>,
 ) {
     commit_field(
         stack, pending, id, new_value.to_string(),
         |s| s.to_string(),
         |old, new| UndoAction::ProjectName { old, new },
-        "Edit project name", selected, track_selected, sel_rect,
+        "Edit project name", selected, track_selected, sel_rect, arr_sel_rect,
     );
 }
 
@@ -213,12 +219,13 @@ pub fn commit_artist(
     stack: &mut UndoStack, pending: &mut PendingEdits, id: u64,
     new_value: &str,
     selected: Selection, track_selected: HashSet<u16>, sel_rect: SelRectState,
+    arr_sel_rect: Vec<(f64, f64, usize, usize)>,
 ) {
     commit_field(
         stack, pending, id, new_value.to_string(),
         |s| s.to_string(),
         |old, new| UndoAction::ProjectArtist { old, new },
-        "Edit artist", selected, track_selected, sel_rect,
+        "Edit artist", selected, track_selected, sel_rect, arr_sel_rect,
     );
 }
 
@@ -227,12 +234,13 @@ pub fn commit_description(
     stack: &mut UndoStack, pending: &mut PendingEdits, id: u64,
     new_value: &str,
     selected: Selection, track_selected: HashSet<u16>, sel_rect: SelRectState,
+    arr_sel_rect: Vec<(f64, f64, usize, usize)>,
 ) {
     commit_field(
         stack, pending, id, new_value.to_string(),
         |s| s.to_string(),
         |old, new| UndoAction::ProjectDescription { old, new },
-        "Edit description", selected, track_selected, sel_rect,
+        "Edit description", selected, track_selected, sel_rect, arr_sel_rect,
     );
 }
 
@@ -244,12 +252,13 @@ pub fn commit_ppq(
     stack: &mut UndoStack, pending: &mut PendingEdits, id: u64,
     new_value: u32, rescale: bool,
     selected: Selection, track_selected: HashSet<u16>, sel_rect: SelRectState,
+    arr_sel_rect: Vec<(f64, f64, usize, usize)>,
 ) {
     commit_field(
         stack, pending, id, new_value,
         |s| s.parse().unwrap_or(480),
         |old, new| UndoAction::ProjectPpq { old, new, rescale },
-        "Edit PPQ", selected, track_selected, sel_rect,
+        "Edit PPQ", selected, track_selected, sel_rect, arr_sel_rect,
     );
 }
 
@@ -258,11 +267,12 @@ pub fn commit_compression_level(
     stack: &mut UndoStack, pending: &mut PendingEdits, id: u64,
     new_value: i32,
     selected: Selection, track_selected: HashSet<u16>, sel_rect: SelRectState,
+    arr_sel_rect: Vec<(f64, f64, usize, usize)>,
 ) {
     commit_field(
         stack, pending, id, new_value,
         |s| s.parse().unwrap_or(3),
         |old, new| UndoAction::CompressionLevel { old, new },
-        "Edit zstd level", selected, track_selected, sel_rect,
+        "Edit zstd level", selected, track_selected, sel_rect, arr_sel_rect,
     );
 }

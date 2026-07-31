@@ -145,6 +145,7 @@ fn undo_redo_delete() {
         selected: doc.edit.selected.clone(),
         track_selected: doc.edit.track_selected.clone(),
         sel_rect: doc.edit.sel_rect.clone(),
+        arr_sel_rect: doc.edit.arr_sel_rect.clone(),
     });
     assert!(doc.undo());
     assert_eq!(doc.data.model.note_count, note_count_before);
@@ -168,6 +169,7 @@ fn undo_redo_transpose() {
         selected: doc.edit.selected.clone(),
         track_selected: doc.edit.track_selected.clone(),
         sel_rect: doc.edit.sel_rect.clone(),
+        arr_sel_rect: doc.edit.arr_sel_rect.clone(),
     });
     assert!(doc.undo());
     assert!(doc.data.model.notes[67].is_empty());
@@ -188,6 +190,7 @@ fn undo_redo_duplicate() {
         selected: doc.edit.selected.clone(),
         track_selected: doc.edit.track_selected.clone(),
         sel_rect: doc.edit.sel_rect.clone(),
+        arr_sel_rect: doc.edit.arr_sel_rect.clone(),
     });
     assert!(doc.undo());
     assert_eq!(doc.data.model.notes[48].len(), count_before);
@@ -208,6 +211,7 @@ fn undo_stack_push_and_undo_redo() {
         selected: Default::default(),
         track_selected: Default::default(),
         sel_rect: Default::default(),
+        arr_sel_rect: doc.edit.arr_sel_rect.clone(),
     });
     // Apply the edit
     {
@@ -226,6 +230,7 @@ fn undo_stack_push_and_undo_redo() {
         selected: Default::default(),
         track_selected: Default::default(),
         sel_rect: Default::default(),
+        arr_sel_rect: doc.edit.arr_sel_rect.clone(),
     });
     {
         let model = std::sync::Arc::make_mut(&mut doc.data.model);
@@ -323,6 +328,7 @@ fn delete_then_undo_restores_notes() {
         selected: doc.edit.selected.clone(),
         track_selected: doc.edit.track_selected.clone(),
         sel_rect: doc.edit.sel_rect.clone(),
+        arr_sel_rect: doc.edit.arr_sel_rect.clone(),
     });
     assert!(doc.undo());
     assert_eq!(doc.data.model.note_count, note_count_before);
@@ -348,6 +354,7 @@ fn consecutive_operations() {
         selected: doc.edit.selected.clone(),
         track_selected: doc.edit.track_selected.clone(),
         sel_rect: doc.edit.sel_rect.clone(),
+        arr_sel_rect: doc.edit.arr_sel_rect.clone(),
     });
     doc.history.push(UndoEntry {
         action: action2,
@@ -355,6 +362,7 @@ fn consecutive_operations() {
         selected: doc.edit.selected.clone(),
         track_selected: doc.edit.track_selected.clone(),
         sel_rect: doc.edit.sel_rect.clone(),
+        arr_sel_rect: doc.edit.arr_sel_rect.clone(),
     });
 
     assert!(doc.undo());

@@ -170,15 +170,8 @@ impl App {
         if is_pr {
             self.documents[idx].select_all_pr();
         } else {
+            // select_all_ar 内部会同步设置 doc.edit.arr_sel_rect（AR 选框）。
             self.documents[idx].select_all_ar();
-            // AR 视图的选框绘制读的是 arr_sel_rect，不是 doc.edit.sel_rect，
-            // 所以需要同步设置。
-            let model = &self.documents[idx].data.model;
-            let max_end = model.tick_length as u32;
-            if max_end > 0 {
-                let num_tracks = model.tracks.len();
-                self.arr_sel_rect = vec![(0.0, max_end as f64 + 1.0, 0, num_tracks - 1)];
-            }
         }
         self.documents[idx].data.bump_revision();
         self.pianoroll_view.base.dirty = true;
@@ -210,6 +203,7 @@ impl App {
             selected: doc.edit.selected.clone(),
             track_selected: doc.edit.track_selected.clone(),
             sel_rect: doc.edit.sel_rect.clone(),
+            arr_sel_rect: doc.edit.arr_sel_rect.clone(),
         };
         doc.history.push(entry);
         doc.data.bump_revision();

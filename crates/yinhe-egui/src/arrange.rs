@@ -36,7 +36,6 @@ pub fn show(
     scroll_mode: u32,
     min_border_width: f32,
     haptic_engine: Option<&yinhe_haptic::HapticEngine>,
-    arr_sel_rect: &mut Vec<(f64, f64, usize, usize)>,
     arr_drag_delta: &mut Option<(i64, i32)>,
     arr_eraser_rect: &mut Option<(f64, f64, usize, usize)>,
     info_content: &mut Option<crate::right_panel::InfoContent>,
@@ -118,7 +117,7 @@ pub fn show(
         // 点击/拖动时间标尺跳转位置时，取消已选择的选框（含框选与全选）。
         if ruler_jumped {
             doc.edit.selected.clear();
-            arr_sel_rect.clear();
+            doc.edit.arr_sel_rect.clear();
         }
     }
 
@@ -213,6 +212,7 @@ pub fn show(
                     selected: doc.edit.selected.clone(),
                     track_selected: doc.edit.track_selected.clone(),
                     sel_rect: doc.edit.sel_rect.clone(),
+                    arr_sel_rect: doc.edit.arr_sel_rect.clone(),
                 });
                 // 方案 A：音轨结构变化（add/remove/move）→ teardown + 下帧重建。
                 // 不再调 audio.reload_notes —— ChannelLayout 在引擎创建时冻结，
@@ -261,7 +261,7 @@ pub fn show(
             min_border_width,
             haptic_engine,
             doc.data.revision,
-            arr_sel_rect,
+            &mut doc.edit.arr_sel_rect,
             arr_drag_delta,
             arr_eraser_rect,
             &mut doc.edit.track_selected,
@@ -382,6 +382,7 @@ pub fn show(
                     selected: doc.edit.selected.clone(),
                     track_selected: doc.edit.track_selected.clone(),
                     sel_rect: doc.edit.sel_rect.clone(),
+                    arr_sel_rect: doc.edit.arr_sel_rect.clone(),
                 });
                 // 方案 A：add_track → teardown + 下帧重建（同 track_actions 分支）。
                 *needs_audio_rebuild = true;

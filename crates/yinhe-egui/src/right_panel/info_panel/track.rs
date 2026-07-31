@@ -211,6 +211,7 @@ pub(super) fn show_track_info(
                 doc.edit.selected.clone(),
                 doc.edit.track_selected.clone(),
                 doc.edit.sel_rect.clone(),
+                doc.edit.arr_sel_rect.clone(),
             );
         }
     }

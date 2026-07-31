@@ -55,6 +55,7 @@ pub fn push_automation_undo(
         selected: doc.edit.selected.clone(),
         track_selected: doc.edit.track_selected.clone(),
         sel_rect: doc.edit.sel_rect.clone(),
+        arr_sel_rect: doc.edit.arr_sel_rect.clone(),
     });
 }
 
@@ -76,5 +77,6 @@ pub fn push_automation_actions(doc: &mut Document, actions: Vec<UndoAction>, lab
         selected: doc.edit.selected.clone(),
         track_selected: doc.edit.track_selected.clone(),
         sel_rect: doc.edit.sel_rect.clone(),
+        arr_sel_rect: doc.edit.arr_sel_rect.clone(),
     });
 }

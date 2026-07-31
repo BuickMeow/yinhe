@@ -66,6 +66,7 @@ fn push_stores_and_clears_redo() {
         selected: Selection::default(),
         track_selected: HashSet::new(),
         sel_rect: SelRectState::default(),
+        arr_sel_rect: vec![],
     });
     assert!(doc.history.can_undo());
     assert!(!doc.history.can_redo());
@@ -84,6 +85,7 @@ fn push_stores_and_clears_redo() {
         selected: Selection::default(),
         track_selected: HashSet::new(),
         sel_rect: SelRectState::default(),
+        arr_sel_rect: vec![],
     });
     assert!(!doc.history.can_redo());
     assert!(doc.history.can_undo());
@@ -102,6 +104,7 @@ fn undo_restores_track_name() {
         selected: Selection::default(),
         track_selected: HashSet::new(),
         sel_rect: SelRectState::default(),
+        arr_sel_rect: vec![],
     });
     // Apply the forward action manually (simulating the edit)
     {
@@ -169,6 +172,7 @@ fn note_delta_undo_redo() {
         selected: Selection::default(),
         track_selected: HashSet::new(),
         sel_rect: SelRectState::default(),
+        arr_sel_rect: vec![],
     });
 
     // Note should be gone
@@ -209,6 +213,7 @@ fn clear_wipes_everything() {
         selected: Selection::default(),
         track_selected: HashSet::new(),
         sel_rect: SelRectState::default(),
+        arr_sel_rect: vec![],
     });
     doc.undo();
     assert!(doc.history.can_undo() || doc.history.can_redo());

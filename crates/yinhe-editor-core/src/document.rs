@@ -255,6 +255,7 @@ impl Document {
         let current_selected = self.edit.selected.clone();
         let current_track_selected = self.edit.track_selected.clone();
         let current_sel_rect = self.edit.sel_rect.clone();
+        let current_arr_sel_rect = self.edit.arr_sel_rect.clone();
 
         // 反转 action（消耗 entry.action，零克隆），apply 一次后再 move 进 redo 栈。
         let reversed = entry.action.reversed();
@@ -264,6 +265,7 @@ impl Document {
         self.edit.selected = entry.selected;
         self.edit.track_selected = entry.track_selected;
         self.edit.sel_rect = entry.sel_rect;
+        self.edit.arr_sel_rect = entry.arr_sel_rect;
 
         // Push reversed action onto the redo stack.
         self.history.future.push(UndoEntry {
@@ -272,6 +274,7 @@ impl Document {
             selected: current_selected,
             track_selected: current_track_selected,
             sel_rect: current_sel_rect,
+            arr_sel_rect: current_arr_sel_rect,
         });
 
         true
@@ -286,6 +289,7 @@ impl Document {
         let current_selected = self.edit.selected.clone();
         let current_track_selected = self.edit.track_selected.clone();
         let current_sel_rect = self.edit.sel_rect.clone();
+        let current_arr_sel_rect = self.edit.arr_sel_rect.clone();
 
         // future 栈里存的是 reversed action，再反转一次回到原始方向并 apply。
         let reversed = entry.action.reversed();
@@ -294,6 +298,7 @@ impl Document {
         self.edit.selected = entry.selected;
         self.edit.track_selected = entry.track_selected;
         self.edit.sel_rect = entry.sel_rect;
+        self.edit.arr_sel_rect = entry.arr_sel_rect;
 
         self.history.past.push_back(UndoEntry {
             action: reversed,
@@ -301,6 +306,7 @@ impl Document {
             selected: current_selected,
             track_selected: current_track_selected,
             sel_rect: current_sel_rect,
+            arr_sel_rect: current_arr_sel_rect,
         });
 
         true
@@ -502,6 +508,7 @@ mod tests {
                 selected: Default::default(),
                 track_selected: HashSet::new(),
                 sel_rect: SelRectState::default(),
+                arr_sel_rect: vec![],
             });
         }
         assert_eq!(doc.model().note_count, 2, "添加后应有 2 个音符");
@@ -515,6 +522,7 @@ mod tests {
             selected: Default::default(),
             track_selected: HashSet::new(),
             sel_rect: SelRectState::default(),
+            arr_sel_rect: vec![],
         });
         assert_eq!(doc.model().note_count, 0, "删除轨道后音符应清零");
         // 删除后原 track 2..N 各自前移 1，track_note_count 长度也少了 1
@@ -576,6 +584,7 @@ mod tests {
             selected: Default::default(),
             track_selected: HashSet::new(),
             sel_rect: SelRectState::default(),
+            arr_sel_rect: vec![],
         });
 
         // 关键断言：事件不能蒸发，应该在 track 1 的 CC7 lane 里

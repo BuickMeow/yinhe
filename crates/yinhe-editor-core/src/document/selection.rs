@@ -70,6 +70,9 @@ impl Document {
         if after < num_tracks {
             self.edit.selected.add_rect_track(0, max_end + 1, 0, 127, after, num_tracks - 1);
         }
+        // AR 选框：全范围单矩形（含 conductor track），供 AR 视图绘制。
+        self.edit.arr_sel_rect =
+            vec![(0.0, (max_end + 1) as f64, 0, num_tracks as usize - 1)];
     }
 
     /// Paste notes from clipboard (selection rects) at the cursor position.

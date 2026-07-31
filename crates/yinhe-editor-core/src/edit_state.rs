@@ -193,6 +193,9 @@ pub struct EditState {
     pub editing_track: Option<u16>,
     /// Selection rectangle state.
     pub sel_rect: SelRectState,
+    /// AR 选框（钢琴卷帘/自动化的选框在 `sel_rect`/`anchor_sel_rects`）。
+    /// 与 sel_rect 一样参与 undo 快照，随文档切换。
+    pub arr_sel_rect: Vec<(f64, f64, usize, usize)>,
 }
 
 impl Default for EditState {
@@ -219,6 +222,7 @@ impl Default for EditState {
             conductor_track_idx: None,
             editing_track: None,
             sel_rect: SelRectState::default(),
+            arr_sel_rect: Vec::new(),
         }
     }
 }

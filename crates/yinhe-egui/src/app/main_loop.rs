@@ -161,20 +161,21 @@ impl eframe::App for App {
             self.prev_active_doc = self.active_doc;
             // 三视图选框互斥：切换文档后把 prev 计数对齐到新文档当前状态，
             // 避免把"已有选框"误判为"新创建的选框"而清除其他视图。
+            // 选框本身都存于 doc.edit，切文档后状态自然随文档走。
             match self.active_doc {
                 Some(i) => {
-                    self.prev_arr_count = self.arr_sel_rect.len();
-                    self.prev_pr_count = self.documents[i].edit.sel_rect.rects.len();
-                    self.prev_am_count = self.documents[i]
-                        .edit
+                    let edit = &self.documents[i].edit;
+                    self.prev_arr_count = edit.arr_sel_rect.len();
+                    self.prev_pr_count = edit.sel_rect.rects.len();
+                    self.prev_am_count = edit
                         .controller_panels
                         .iter()
                         .map(|p| p.anchor_sel_rects.len())
                         .sum();
-                    self.prev_selected_nonempty = !self.documents[i].edit.selected.is_empty();
+                    self.prev_selected_nonempty = !edit.selected.is_empty();
                 }
                 None => {
-                    self.prev_arr_count = self.arr_sel_rect.len();
+                    self.prev_arr_count = 0;
                     self.prev_pr_count = 0;
                     self.prev_am_count = 0;
                     self.prev_selected_nonempty = false;

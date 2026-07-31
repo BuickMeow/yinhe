@@ -105,7 +105,6 @@ impl App {
                 self.audio_settings.scroll_mode,
                 self.audio_settings.min_border_width,
                 Some(&self.haptic_engine),
-                &mut self.arr_sel_rect,
                 &mut arr_drag_delta,
                 &mut arr_eraser_rect,
                 &mut self.info_content,
@@ -176,7 +175,8 @@ impl App {
         let doc = &mut self.documents[idx];
 
         // 清除前先采集各视图选框快照（含 f64→整数转换），供精确移除共享 Selection 中的矩形。
-        let arr_rects: Vec<(u32, u32, u16, u16)> = self
+        let arr_rects: Vec<(u32, u32, u16, u16)> = doc
+            .edit
             .arr_sel_rect
             .iter()
             .map(|&(ts, te, tl, th)| (ts as u32, te as u32, tl as u16, th as u16))
@@ -189,7 +189,7 @@ impl App {
             .map(|&(ts, te, kl, kh)| (ts as u32, te as u32, kl, kh))
             .collect();
 
-        let arr_count = self.arr_sel_rect.len();
+        let arr_count = doc.edit.arr_sel_rect.len();
         let pr_count = doc.edit.sel_rect.rects.len();
         let am_count: usize = doc
             .edit
@@ -210,7 +210,7 @@ impl App {
         let clear_am = selection_cleared || arr_gained || pr_gained;
 
         if clear_arr {
-            self.arr_sel_rect.clear();
+            doc.edit.arr_sel_rect.clear();
             doc.edit.selected.remove_rects_track(&arr_rects);
         }
         if clear_pr {
@@ -224,7 +224,7 @@ impl App {
         }
 
         // 以清除后的状态更新 prev，供下一帧比较。
-        self.prev_arr_count = self.arr_sel_rect.len();
+        self.prev_arr_count = doc.edit.arr_sel_rect.len();
         self.prev_pr_count = doc.edit.sel_rect.rects.len();
         self.prev_am_count = doc
             .edit
@@ -526,6 +526,7 @@ impl App {
                 selected: doc.edit.selected.clone(),
                 track_selected: doc.edit.track_selected.clone(),
                 sel_rect: doc.edit.sel_rect.clone(),
+                arr_sel_rect: doc.edit.arr_sel_rect.clone(),
             });
             // 纯音符 velocity 修改：只更新 audible_notes，不重建 CC，不 chase
             self.notify_notes_changed();
@@ -605,6 +606,7 @@ impl App {
                     selected: doc.edit.selected.clone(),
                     track_selected: doc.edit.track_selected.clone(),
                     sel_rect: doc.edit.sel_rect.clone(),
+                    arr_sel_rect: doc.edit.arr_sel_rect.clone(),
                 });
                 // 纯音符移动/复制：只更新 audible_notes，不重建 CC，不 chase
                 self.notify_notes_changed();
@@ -626,6 +628,7 @@ impl App {
                     selected: doc.edit.selected.clone(),
                     track_selected: doc.edit.track_selected.clone(),
                     sel_rect: doc.edit.sel_rect.clone(),
+                    arr_sel_rect: doc.edit.arr_sel_rect.clone(),
                 });
                 self.notify_notes_changed();
             }
@@ -648,6 +651,7 @@ impl App {
                 selected: doc.edit.selected.clone(),
                 track_selected: doc.edit.track_selected.clone(),
                 sel_rect: doc.edit.sel_rect.clone(),
+                arr_sel_rect: doc.edit.arr_sel_rect.clone(),
             });
             // 纯音符拖动/缩放：只更新 audible_notes，不重建 CC，不 chase
             self.notify_notes_changed();
@@ -671,6 +675,7 @@ impl App {
                 selected: doc.edit.selected.clone(),
                 track_selected: doc.edit.track_selected.clone(),
                 sel_rect: doc.edit.sel_rect.clone(),
+                arr_sel_rect: doc.edit.arr_sel_rect.clone(),
             });
             self.notify_audio_model_changed();
         }

@@ -92,12 +92,10 @@ pub struct App {
     pub(crate) last_cursor_tick: Option<f64>,
     pub(crate) piano_last_cursor_tick: Option<f64>,
 
-    // ── Arrangement selection rect persistence (支持多选框，shift+框选累加) ──
-    pub(crate) arr_sel_rect: Vec<(f64, f64, usize, usize)>,
-
     // ── PR/AR/AM 三视图选框互斥 ──
     // 记录上一帧各视图的选框数量与共享选区状态，用于检测"新增选框/选区被清空"，
     // 从而在创建新选框时清除其他视图的选框（见 layout.rs enforce_sel_rect_exclusivity）。
+    // 选框本身都存于 doc.edit（sel_rect / arr_sel_rect / anchor_sel_rects）。
     pub(crate) prev_arr_count: usize,
     pub(crate) prev_pr_count: usize,
     pub(crate) prev_am_count: usize,
@@ -263,7 +261,6 @@ impl App {
 
             last_cursor_tick: None,
             piano_last_cursor_tick: None,
-            arr_sel_rect: Vec::new(),
             prev_arr_count: 0,
             prev_pr_count: 0,
             prev_am_count: 0,
