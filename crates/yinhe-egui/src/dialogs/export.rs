@@ -153,55 +153,51 @@ pub(crate) fn show_completed_viewport(ctx: &egui::Context, completed: &mut Optio
                             bottom: 12,
                         })
                         .show(ui, |ui| {
-                            // 主体内容：占据按钮行以上的空间并垂直居中
-                            ui.allocate_ui_with_layout(
-                                egui::vec2(ui.available_width(), (ui.available_height() - 36.0).max(0.0)),
-                                egui::Layout::top_down(egui::Align::Center),
+                            crate::chrome::dialog::content_with_bottom_buttons(
+                                ui,
+                                36.0,
                                 |ui| {
-                                    ui.vertical_centered(|ui| {
-                                        ui.add_space(4.0);
-                                        egui::Grid::new("export_completed_grid")
-                                            .num_columns(2)
-                                            .spacing([12.0, 6.0])
-                                            .show(ui, |ui| {
-                                                ui.label(t!("dialog.export.elapsed").as_ref());
-                                                ui.label(format_duration(elapsed));
-                                                ui.end_row();
+                                    ui.add_space(4.0);
+                                    egui::Grid::new("export_completed_grid")
+                                        .num_columns(2)
+                                        .spacing([12.0, 6.0])
+                                        .show(ui, |ui| {
+                                            ui.label(t!("dialog.export.elapsed").as_ref());
+                                            ui.label(format_duration(elapsed));
+                                            ui.end_row();
 
-                                                ui.label(t!("dialog.export.overall_speed").as_ref());
-                                                if speed > 0.0 {
-                                                    ui.label(format!("{:.2}x", speed));
-                                                } else {
-                                                    ui.label("—");
-                                                }
-                                                ui.end_row();
-                                            });
-                                    });
+                                            ui.label(t!("dialog.export.overall_speed").as_ref());
+                                            if speed > 0.0 {
+                                                ui.label(format!("{:.2}x", speed));
+                                            } else {
+                                                ui.label("—");
+                                            }
+                                            ui.end_row();
+                                        });
+                                },
+                                |ui| {
+                                    ui.add_space(4.0);
+                                    if ui.button(t!("dialog.export.open_folder").as_ref()).clicked() {
+                                        let parent = std::path::Path::new(&file_path)
+                                            .parent()
+                                            .map(|p| p.to_path_buf());
+                                        if let Some(dir) = parent {
+                                            #[cfg(target_os = "macos")]
+                                            let _ = std::process::Command::new("open")
+                                                .arg(&dir)
+                                                .spawn();
+                                            #[cfg(target_os = "windows")]
+                                            let _ = std::process::Command::new("explorer")
+                                                .arg(&dir)
+                                                .spawn();
+                                            #[cfg(target_os = "linux")]
+                                            let _ = std::process::Command::new("xdg-open")
+                                                .arg(&dir)
+                                                .spawn();
+                                        }
+                                    }
                                 },
                             );
-                            // 底部按钮（吸底）
-                            ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
-                                ui.add_space(4.0);
-                                if ui.button(t!("dialog.export.open_folder").as_ref()).clicked() {
-                                    let parent = std::path::Path::new(&file_path)
-                                        .parent()
-                                        .map(|p| p.to_path_buf());
-                                    if let Some(dir) = parent {
-                                        #[cfg(target_os = "macos")]
-                                        let _ = std::process::Command::new("open")
-                                            .arg(&dir)
-                                            .spawn();
-                                        #[cfg(target_os = "windows")]
-                                        let _ = std::process::Command::new("explorer")
-                                            .arg(&dir)
-                                            .spawn();
-                                        #[cfg(target_os = "linux")]
-                                        let _ = std::process::Command::new("xdg-open")
-                                            .arg(&dir)
-                                            .spawn();
-                                    }
-                                }
-                            });
                         });
                 });
             if close {
@@ -265,109 +261,105 @@ pub(crate) fn show_settings_viewport(
                         })
                         .show(ui, |ui| {
                             ui.set_max_width(280.0);
-                            // 主体内容：占据按钮行以上的空间并垂直居中
-                            ui.allocate_ui_with_layout(
-                                egui::vec2(ui.available_width(), (ui.available_height() - 36.0).max(0.0)),
-                                egui::Layout::top_down(egui::Align::Center),
+                            crate::chrome::dialog::content_with_bottom_buttons(
+                                ui,
+                                36.0,
                                 |ui| {
-                                    ui.vertical_centered(|ui| {
-                                        ui.add_space(8.0);
+                                    ui.add_space(8.0);
 
-                                        ui.horizontal(|ui| {
-                                            ui.label(t!("dialog.export.bit_depth").as_ref());
-                                            let bd = bd_cb.get();
-                                            let current = match bd {
-                                                yinhe_audio::export::WavBitDepth::Bit16 => "16-bit",
-                                                yinhe_audio::export::WavBitDepth::Bit24 => "24-bit",
-                                                yinhe_audio::export::WavBitDepth::Bit32Float => {
-                                                    "32-bit float"
-                                                }
-                                            };
-                                            egui::ComboBox::from_id_salt("export_bit_depth")
-                                                .selected_text(current)
-                                                .show_ui(ui, |ui| {
-                                                    if ui
-                                                        .selectable_label(
-                                                            bd == yinhe_audio::export::WavBitDepth::Bit16,
-                                                            "16-bit",
-                                                        )
-                                                        .clicked()
-                                                    {
-                                                        bd_cb.set(yinhe_audio::export::WavBitDepth::Bit16);
-                                                    }
-                                                    if ui
-                                                        .selectable_label(
-                                                            bd == yinhe_audio::export::WavBitDepth::Bit24,
-                                                            "24-bit",
-                                                        )
-                                                        .clicked()
-                                                    {
-                                                        bd_cb.set(yinhe_audio::export::WavBitDepth::Bit24);
-                                                    }
-                                                    if ui
-                                                        .selectable_label(
-                                                            bd == yinhe_audio::export::WavBitDepth::Bit32Float,
-                                                            "32-bit float",
-                                                        )
-                                                        .clicked()
-                                                    {
-                                                        bd_cb.set(
-                                                            yinhe_audio::export::WavBitDepth::Bit32Float,
-                                                        );
-                                                    }
-                                                });
-                                        });
-
-                                        ui.horizontal(|ui| {
-                                            ui.label(t!("dialog.export.sample_rate").as_ref());
-                                            let r = sr_cb.get();
-                                            let sr_text = if r == 0 {
-                                                t!("dialog.export.follow_global", n = sample_rate).to_string()
-                                            } else {
-                                                format!("{} Hz", r)
-                                            };
-                                            let sample_rates: [u32; 5] = [0, 44100, 48000, 96000, 192000];
-                                            egui::ComboBox::from_id_salt("export_sample_rate")
-                                                .selected_text(&sr_text)
-                                                .show_ui(ui, |ui| {
-                                                    for &rate in &sample_rates {
-                                                        let label = if rate == 0 {
-                                                            t!("dialog.export.follow_global", n = sample_rate).to_string()
-                                                        } else {
-                                                            format!("{} Hz", rate)
-                                                        };
-                                                        let selected = r == rate;
-                                                        if ui.selectable_label(selected, label).clicked() {
-                                                            sr_cb.set(rate);
-                                                        }
-                                                    }
-                                                });
-                                        });
-
-                                        ui.horizontal(|ui| {
-                                            ui.label(t!("dialog.export.xsynth_layers").as_ref());
-                                            let mut layers = lc_cb.get() as usize;
-                                            ui.add(
-                                                crate::widgets::numeric_input::decimal_drag_value(&mut layers)
-                                                    .range(0..=128)
-                                                    .speed(1.0),
-                                            );
-                                            lc_cb.set(layers as u32);
-                                            if lc_cb.get() == 0 {
-                                                ui.label(t!("common.unlimited").as_ref());
+                                    ui.horizontal(|ui| {
+                                        ui.label(t!("dialog.export.bit_depth").as_ref());
+                                        let bd = bd_cb.get();
+                                        let current = match bd {
+                                            yinhe_audio::export::WavBitDepth::Bit16 => "16-bit",
+                                            yinhe_audio::export::WavBitDepth::Bit24 => "24-bit",
+                                            yinhe_audio::export::WavBitDepth::Bit32Float => {
+                                                "32-bit float"
                                             }
-                                        });
+                                        };
+                                        egui::ComboBox::from_id_salt("export_bit_depth")
+                                            .selected_text(current)
+                                            .show_ui(ui, |ui| {
+                                                if ui
+                                                    .selectable_label(
+                                                        bd == yinhe_audio::export::WavBitDepth::Bit16,
+                                                        "16-bit",
+                                                    )
+                                                    .clicked()
+                                                {
+                                                    bd_cb.set(yinhe_audio::export::WavBitDepth::Bit16);
+                                                }
+                                                if ui
+                                                    .selectable_label(
+                                                        bd == yinhe_audio::export::WavBitDepth::Bit24,
+                                                        "24-bit",
+                                                    )
+                                                    .clicked()
+                                                {
+                                                    bd_cb.set(yinhe_audio::export::WavBitDepth::Bit24);
+                                                }
+                                                if ui
+                                                    .selectable_label(
+                                                        bd == yinhe_audio::export::WavBitDepth::Bit32Float,
+                                                        "32-bit float",
+                                                    )
+                                                    .clicked()
+                                                {
+                                                    bd_cb.set(
+                                                        yinhe_audio::export::WavBitDepth::Bit32Float,
+                                                    );
+                                                }
+                                            });
+                                    });
+
+                                    ui.horizontal(|ui| {
+                                        ui.label(t!("dialog.export.sample_rate").as_ref());
+                                        let r = sr_cb.get();
+                                        let sr_text = if r == 0 {
+                                            t!("dialog.export.follow_global", n = sample_rate).to_string()
+                                        } else {
+                                            format!("{} Hz", r)
+                                        };
+                                        let sample_rates: [u32; 5] = [0, 44100, 48000, 96000, 192000];
+                                        egui::ComboBox::from_id_salt("export_sample_rate")
+                                            .selected_text(&sr_text)
+                                            .show_ui(ui, |ui| {
+                                                for &rate in &sample_rates {
+                                                    let label = if rate == 0 {
+                                                        t!("dialog.export.follow_global", n = sample_rate).to_string()
+                                                    } else {
+                                                        format!("{} Hz", rate)
+                                                    };
+                                                    let selected = r == rate;
+                                                    if ui.selectable_label(selected, label).clicked() {
+                                                        sr_cb.set(rate);
+                                                    }
+                                                }
+                                            });
+                                    });
+
+                                    ui.horizontal(|ui| {
+                                        ui.label(t!("dialog.export.xsynth_layers").as_ref());
+                                        let mut layers = lc_cb.get() as usize;
+                                        ui.add(
+                                            crate::widgets::numeric_input::decimal_drag_value(&mut layers)
+                                                .range(0..=128)
+                                                .speed(1.0),
+                                        );
+                                        lc_cb.set(layers as u32);
+                                        if lc_cb.get() == 0 {
+                                            ui.label(t!("common.unlimited").as_ref());
+                                        }
                                     });
                                 },
+                                |ui| {
+                                    ui.add_space(4.0);
+                                    if ui.button(t!("dialog.export.start").as_ref()).clicked() {
+                                        *started_cb.borrow_mut() = true;
+                                        close = true;
+                                    }
+                                },
                             );
-                            // 底部按钮（吸底）
-                            ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
-                                ui.add_space(4.0);
-                                if ui.button(t!("dialog.export.start").as_ref()).clicked() {
-                                    *started_cb.borrow_mut() = true;
-                                    close = true;
-                                }
-                            });
                         });
                 });
             if close {

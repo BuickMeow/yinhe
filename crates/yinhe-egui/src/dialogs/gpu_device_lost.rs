@@ -45,27 +45,23 @@ pub(crate) fn show_viewport(ctx: &egui::Context) -> bool {
                         })
                         .show(ui, |ui| {
                             ui.set_max_width(436.0);
-                            // 主体内容：占据按钮行以上的空间并垂直居中
-                            ui.allocate_ui_with_layout(
-                                egui::vec2(ui.available_width(), (ui.available_height() - 36.0).max(0.0)),
-                                egui::Layout::top_down(egui::Align::Center),
+                            crate::chrome::dialog::content_with_bottom_buttons(
+                                ui,
+                                36.0,
                                 |ui| {
-                                    ui.vertical_centered(|ui| {
-                                        ui.add_space(8.0);
-                                        ui.label(t!("dialog.gpu_lost.message").as_ref());
-                                        ui.add_space(4.0);
-                                        ui.label(t!("dialog.gpu_lost.action").as_ref());
-                                    });
+                                    ui.add_space(8.0);
+                                    ui.label(t!("dialog.gpu_lost.message").as_ref());
+                                    ui.add_space(4.0);
+                                    ui.label(t!("dialog.gpu_lost.action").as_ref());
+                                },
+                                |ui| {
+                                    ui.add_space(4.0);
+                                    if ui.button(t!("common.exit_app").as_ref()).clicked() {
+                                        close = true;
+                                        *exit_capture.borrow_mut() = true;
+                                    }
                                 },
                             );
-                            // 底部按钮（吸底）
-                            ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
-                                ui.add_space(4.0);
-                                if ui.button(t!("common.exit_app").as_ref()).clicked() {
-                                    close = true;
-                                    *exit_capture.borrow_mut() = true;
-                                }
-                            });
                         });
                 });
             if close {

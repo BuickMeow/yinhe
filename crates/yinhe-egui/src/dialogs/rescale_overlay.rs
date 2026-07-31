@@ -44,36 +44,32 @@ pub(crate) fn show_viewport(
                             bottom: 12,
                         })
                         .show(ui, |ui| {
-                            // 主体内容：占据按钮行以上的空间并垂直居中
-                            ui.allocate_ui_with_layout(
-                                egui::vec2(ui.available_width(), (ui.available_height() - 36.0).max(0.0)),
-                                egui::Layout::top_down(egui::Align::Center),
+                            crate::chrome::dialog::content_with_bottom_buttons(
+                                ui,
+                                36.0,
                                 |ui| {
-                                    ui.vertical_centered(|ui| {
-                                        ui.add_space(4.0);
-                                        ui.add(
-                                            egui::ProgressBar::new(state.progress)
-                                                .desired_width(300.0)
-                                                .show_percentage(),
+                                    ui.add_space(4.0);
+                                    ui.add(
+                                        egui::ProgressBar::new(state.progress)
+                                            .desired_width(300.0)
+                                            .show_percentage(),
+                                    );
+                                    ui.add_space(6.0);
+                                    if !state.label.is_empty() {
+                                        ui.label(
+                                            egui::RichText::new(&state.label)
+                                                .size(11.0)
+                                                .color(egui::Color32::from_gray(160)),
                                         );
-                                        ui.add_space(6.0);
-                                        if !state.label.is_empty() {
-                                            ui.label(
-                                                egui::RichText::new(&state.label)
-                                                    .size(11.0)
-                                                    .color(egui::Color32::from_gray(160)),
-                                            );
-                                        }
-                                    });
+                                    }
+                                },
+                                |ui| {
+                                    ui.add_space(4.0);
+                                    if ui.button(t!("common.cancel").as_ref()).clicked() {
+                                        close = true;
+                                    }
                                 },
                             );
-                            // 底部按钮（吸底）
-                            ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
-                                ui.add_space(4.0);
-                                if ui.button(t!("common.cancel").as_ref()).clicked() {
-                                    close = true;
-                                }
-                            });
                         });
                 });
             if close {

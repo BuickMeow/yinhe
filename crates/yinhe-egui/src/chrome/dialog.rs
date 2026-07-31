@@ -44,6 +44,25 @@ pub(crate) fn viewport_builder(
     vb
 }
 
+/// 对话框内容区标准布局：主体内容垂直居中占据按钮行以上的空间，
+/// 按钮行用 `bottom_up` 布局固定贴底。
+///
+/// `btn_zone_h` 是底部按钮区预留高度（按钮行 + 间距）。
+/// `content` 在 `top_down(Center)` 布局中执行，`buttons` 在 `bottom_up(Center)` 中执行。
+pub(crate) fn content_with_bottom_buttons(
+    ui: &mut egui::Ui,
+    btn_zone_h: f32,
+    content: impl FnOnce(&mut egui::Ui),
+    buttons: impl FnOnce(&mut egui::Ui),
+) {
+    ui.allocate_ui_with_layout(
+        egui::vec2(ui.available_width(), (ui.available_height() - btn_zone_h).max(0.0)),
+        egui::Layout::top_down(egui::Align::Center),
+        content,
+    );
+    ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), buttons);
+}
+
 /// Draw a custom title bar for a dialog window.
 ///
 /// - macOS: draws a background colour strip, centered title, and drag

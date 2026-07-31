@@ -472,10 +472,20 @@ fn show_password_prompt(
         .map(|f| f.to_string_lossy().to_string())
         .unwrap_or_else(|| prompt.path.clone());
 
-    // 主体内容：占据按钮行以上的空间
-    ui.allocate_ui_with_layout(
-        eframe::egui::vec2(ui.available_width(), (ui.available_height() - 36.0).max(0.0)),
-        eframe::egui::Layout::top_down(eframe::egui::Align::Center),
+    // 主体内容 + 底部按钮行（吸底）
+    // 按钮闭包与输入框闭包不能同时可变借用 `prompt`，所以按钮点击只记录标志，
+    // 动作在 helper 调用结束后根据最新 `prompt` 构造。
+    let path = prompt.path.clone();
+    let password_len = std::rc::Rc::new(std::cell::Cell::new(prompt.password.len()));
+    let password_len_cb = password_len.clone();
+    let cancel_clicked = std::rc::Rc::new(std::cell::Cell::new(false));
+    let cancel_cb = cancel_clicked.clone();
+    let confirm_clicked = std::rc::Rc::new(std::cell::Cell::new(false));
+    let confirm_cb = confirm_clicked.clone();
+
+    crate::chrome::dialog::content_with_bottom_buttons(
+        ui,
+        36.0,
         |ui| {
             ui.add_space(6.0);
             let display_name = truncate_name(&filename, 40);
@@ -522,33 +532,38 @@ fn show_password_prompt(
                 }
             });
 
+            password_len_cb.set(prompt.password.len());
             ui.add_space(8.0);
             ui.separator();
         },
+        |ui| {
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                ui.with_layout(eframe::egui::Layout::right_to_left(eframe::egui::Align::Center), |ui| {
+                    if ui.button(t!("common.cancel").as_ref()).clicked() {
+                        cancel_cb.set(true);
+                    }
+                    let confirm_enabled = password_len.get() > 0;
+                    if ui.add_enabled(
+                        confirm_enabled,
+                        eframe::egui::Button::new(t!("common.confirm").as_ref()),
+                    ).clicked() {
+                        confirm_cb.set(true);
+                    }
+                });
+            });
+        },
     );
 
-    // 底部按钮行（吸底）
     let mut action = PasswordPromptAction::None;
-    ui.with_layout(eframe::egui::Layout::bottom_up(eframe::egui::Align::Center), |ui| {
-        ui.add_space(4.0);
-        ui.horizontal(|ui| {
-            ui.with_layout(eframe::egui::Layout::right_to_left(eframe::egui::Align::Center), |ui| {
-                if ui.button(t!("common.cancel").as_ref()).clicked() {
-                    action = PasswordPromptAction::Cancel;
-                }
-                let confirm_enabled = !prompt.password.is_empty();
-                if ui.add_enabled(
-                    confirm_enabled,
-                    eframe::egui::Button::new(t!("common.confirm").as_ref()),
-                ).clicked() {
-                    action = PasswordPromptAction::Confirm {
-                        path: prompt.path.clone(),
-                        password: prompt.password.clone(),
-                    };
-                }
-            });
-        });
-    });
+    if confirm_clicked.get() {
+        action = PasswordPromptAction::Confirm {
+            path,
+            password: prompt.password.clone(),
+        };
+    } else if cancel_clicked.get() {
+        action = PasswordPromptAction::Cancel;
+    }
 
     // 回车确认
     if ui.input(|i| i.key_pressed(eframe::egui::Key::Enter)) && !prompt.password.is_empty() {

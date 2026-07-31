@@ -50,41 +50,37 @@ pub(crate) fn show_viewport(
                         })
                         .show(ui, |ui| {
                             ui.set_max_width(316.0);
-                            // 主体内容：占据按钮行以上的空间并垂直居中
-                            ui.allocate_ui_with_layout(
-                                egui::vec2(ui.available_width(), (ui.available_height() - 36.0).max(0.0)),
-                                egui::Layout::top_down(egui::Align::Center),
+                            crate::chrome::dialog::content_with_bottom_buttons(
+                                ui,
+                                36.0,
                                 |ui| {
-                                    ui.vertical_centered(|ui| {
+                                    ui.add_space(8.0);
+                                    ui.label(t!("dialog.unsaved.message").as_ref());
+                                },
+                                |ui| {
+                                    ui.add_space(4.0);
+                                    ui.horizontal(|ui| {
+                                        if ui.button(t!("dialog.unsaved.save").as_ref()).clicked() {
+                                            *action_cb.borrow_mut() = Some(Action::Save);
+                                            close = true;
+                                        }
                                         ui.add_space(8.0);
-                                        ui.label(t!("dialog.unsaved.message").as_ref());
+                                        let discard_btn = ui.button(
+                                            egui::RichText::new(t!("dialog.unsaved.discard").as_ref())
+                                                .color(egui::Color32::from_rgb(255, 80, 80)),
+                                        );
+                                        if discard_btn.clicked() {
+                                            *action_cb.borrow_mut() = Some(Action::Discard);
+                                            close = true;
+                                        }
+                                        ui.add_space(8.0);
+                                        if ui.button(t!("dialog.unsaved.back").as_ref()).clicked() {
+                                            *action_cb.borrow_mut() = Some(Action::Cancel);
+                                            close = true;
+                                        }
                                     });
                                 },
                             );
-                            // 底部按钮行（吸底）
-                            ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
-                                ui.add_space(4.0);
-                                ui.horizontal(|ui| {
-                                    if ui.button(t!("dialog.unsaved.save").as_ref()).clicked() {
-                                        *action_cb.borrow_mut() = Some(Action::Save);
-                                        close = true;
-                                    }
-                                    ui.add_space(8.0);
-                                    let discard_btn = ui.button(
-                                        egui::RichText::new(t!("dialog.unsaved.discard").as_ref())
-                                            .color(egui::Color32::from_rgb(255, 80, 80)),
-                                    );
-                                    if discard_btn.clicked() {
-                                        *action_cb.borrow_mut() = Some(Action::Discard);
-                                        close = true;
-                                    }
-                                    ui.add_space(8.0);
-                                    if ui.button(t!("dialog.unsaved.back").as_ref()).clicked() {
-                                        *action_cb.borrow_mut() = Some(Action::Cancel);
-                                        close = true;
-                                    }
-                                });
-                            });
                         });
                 });
             if close {

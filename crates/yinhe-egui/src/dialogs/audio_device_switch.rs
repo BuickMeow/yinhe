@@ -44,9 +44,9 @@ pub(crate) fn show_viewport(
         viewport_id,
         crate::chrome::dialog::viewport_builder(t!("dialog.audio_switch.title").as_ref(), [460.0, 440.0], false),
         move |vctx, _class| {
-            let mut hide = false;
+            let hide = std::cell::Cell::new(false);
             if vctx.input(|i| i.viewport().close_requested()) {
-                hide = true;
+                hide.set(true);
             }
             egui::CentralPanel::default()
                 .frame(egui::Frame {
@@ -54,7 +54,11 @@ pub(crate) fn show_viewport(
                     ..Default::default()
                 })
                 .show(vctx, |ui| {
-                    crate::chrome::dialog::title_bar(ui, t!("dialog.audio_switch.title").as_ref(), &mut hide);
+                    let mut title_close = false;
+                    crate::chrome::dialog::title_bar(ui, t!("dialog.audio_switch.title").as_ref(), &mut title_close);
+                    if title_close {
+                        hide.set(true);
+                    }
                     egui::Frame::new()
                         .inner_margin(egui::Margin {
                             left: 12,
@@ -64,10 +68,9 @@ pub(crate) fn show_viewport(
                         })
                         .show(ui, |ui| {
                             ui.set_max_width(436.0);
-                            // 主体内容：提示文字 + 设备列表，占据按钮组以上的空间
-                            ui.allocate_ui_with_layout(
-                                egui::vec2(ui.available_width(), (ui.available_height() - 130.0).max(0.0)),
-                                egui::Layout::top_down(egui::Align::Center),
+                            crate::chrome::dialog::content_with_bottom_buttons(
+                                ui,
+                                130.0,
                                 |ui| {
                                     ui.vertical_centered(|ui| {
                                         ui.add_space(8.0);
@@ -103,48 +106,46 @@ pub(crate) fn show_viewport(
                                                 if resp.clicked() {
                                                     *action_capture.borrow_mut() =
                                                         AudioDeviceSwitchAction::Switch(name.clone());
-                                                    hide = true;
+                                                    hide.set(true);
                                                 }
                                             }
                                         });
                                 },
-                            );
-
-                            // 底部按钮组（吸底）
-                            ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
-                                ui.add_space(4.0);
-                                if ui.button(t!("common.exit_app").as_ref()).clicked() {
-                                    *action_capture.borrow_mut() =
-                                        AudioDeviceSwitchAction::Exit;
-                                    hide = true;
-                                }
-
-                                if let Some(err) = &error_str {
-                                    ui.add_space(8.0);
-                                    ui.label(
-                                        egui::RichText::new(err)
-                                            .color(egui::Color32::from_rgb(232, 80, 80)),
-                                    );
-                                }
-
-                                if allow_keep_current {
-                                    ui.add_space(8.0);
-                                    if ui.button(t!("dialog.audio_switch.keep_current").as_ref()).clicked() {
+                                |ui| {
+                                    ui.add_space(4.0);
+                                    if ui.button(t!("common.exit_app").as_ref()).clicked() {
                                         *action_capture.borrow_mut() =
-                                            AudioDeviceSwitchAction::KeepCurrent;
-                                        hide = true;
+                                            AudioDeviceSwitchAction::Exit;
+                                        hide.set(true);
                                     }
-                                }
 
-                                ui.add_space(8.0);
-                                if ui.button(t!("settings.refresh_devices").as_ref()).clicked() {
-                                    *action_capture.borrow_mut() =
-                                        AudioDeviceSwitchAction::Refresh;
-                                }
-                            });
+                                    if let Some(err) = &error_str {
+                                        ui.add_space(8.0);
+                                        ui.label(
+                                            egui::RichText::new(err)
+                                                .color(egui::Color32::from_rgb(232, 80, 80)),
+                                        );
+                                    }
+
+                                    if allow_keep_current {
+                                        ui.add_space(8.0);
+                                        if ui.button(t!("dialog.audio_switch.keep_current").as_ref()).clicked() {
+                                            *action_capture.borrow_mut() =
+                                                AudioDeviceSwitchAction::KeepCurrent;
+                                            hide.set(true);
+                                        }
+                                    }
+
+                                    ui.add_space(8.0);
+                                    if ui.button(t!("settings.refresh_devices").as_ref()).clicked() {
+                                        *action_capture.borrow_mut() =
+                                            AudioDeviceSwitchAction::Refresh;
+                                    }
+                                },
+                            );
                         });
                 });
-            if hide {
+            if hide.get() {
                 vctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
             }
         },
