@@ -15,6 +15,7 @@ pub mod arrange_move;
 pub mod automation_edit;
 pub mod conductor_edit;
 pub mod note_edit;
+pub mod note_pencil;
 pub mod selection;
 pub mod track_meta_edit;
 pub mod track_ops;

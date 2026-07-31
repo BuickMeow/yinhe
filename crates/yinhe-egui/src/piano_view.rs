@@ -14,6 +14,7 @@ mod drag;
 mod gpu_upload;
 mod jump_pulse;
 mod keyboard;
+mod marquee;
 mod perf;
 mod pencil;
 mod quantize_button;
@@ -252,7 +253,7 @@ pub fn show(
             }
         }
     } else if *active_tool == Tool::Eraser {
-        eraser_event = drag::eraser_drag_frame(
+        eraser_event = marquee::eraser_drag_frame(
             ui, content_rect, music_rect, view, quantize, ppq, bar_line_data, total_ticks,
             track_selected,
         );
@@ -559,7 +560,7 @@ pub fn show(
         sel_rect.apply_pending();
 
         // Draw active drag box (if any)
-        drag::draw_marquee_box(ui, content_rect, music_rect, view, quantize, ppq, bar_line_data,
+        marquee::draw_marquee_box(ui, content_rect, music_rect, view, quantize, ppq, bar_line_data,
             "sel_drag", egui::Color32::WHITE, egui::Color32::WHITE, vertical);
 
         // Draw persisted selection rects (remains after mouse release).
@@ -598,7 +599,7 @@ pub fn show(
         }
     } else if *active_tool == Tool::Eraser {
         // Draw eraser marquee box in red
-        drag::draw_marquee_box(ui, content_rect, music_rect, view, quantize, ppq, bar_line_data,
+        marquee::draw_marquee_box(ui, content_rect, music_rect, view, quantize, ppq, bar_line_data,
             "eraser_drag", egui::Color32::RED, egui::Color32::RED, false);
     }
 
