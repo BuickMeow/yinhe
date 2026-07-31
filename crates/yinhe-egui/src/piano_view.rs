@@ -282,7 +282,14 @@ pub fn show(
                         pixel_rect.contains(local)
                     });
                     if in_sel_rect {
-                        ui.ctx().set_cursor_icon(egui::CursorIcon::Move);
+                        // 垂直选框工具：只能水平拖动 → 左右双向指针；
+                        // 普通选框工具：四向移动指针。
+                        let icon = if *active_tool == Tool::SelectVertical {
+                            egui::CursorIcon::ResizeHorizontal
+                        } else {
+                            egui::CursorIcon::Move
+                        };
+                        ui.ctx().set_cursor_icon(icon);
                     }
                 }
             }
