@@ -1,5 +1,3 @@
-use std::collections::BTreeSet;
-
 use cpal::traits::{DeviceTrait, HostTrait};
 
 pub use yinhe_editor_core::audio_settings::AudioSettings;
@@ -23,18 +21,20 @@ pub(crate) fn discover_sample_rates() -> (u32, Vec<u32>) {
         .map(|cfg| cfg.sample_rate())
         .unwrap_or(48000);
 
+    // 只列标准采样率与设备支持范围的交集，而非按 1000Hz 步进枚举
+    // （会生成 45100、46100 等设备实际不支持的值，用户选了会建流失败）。
+    const STANDARD_RATES: [u32; 8] = [22050, 32000, 44100, 48000, 88200, 96000, 176400, 192000];
     let supported_rates: Vec<u32> = device
         .supported_output_configs()
         .ok()
         .map(|configs| {
-            configs
-                .flat_map(|cfg| {
-                    let min = cfg.min_sample_rate();
-                    let max = cfg.max_sample_rate();
-                    (min..=max).step_by(1000)
-                })
-                .collect::<BTreeSet<_>>()
-                .into_iter()
+            let ranges: Vec<(u32, u32)> = configs
+                .map(|cfg| (cfg.min_sample_rate(), cfg.max_sample_rate()))
+                .collect();
+            STANDARD_RATES
+                .iter()
+                .copied()
+                .filter(|&rate| ranges.iter().any(|(min, max)| rate >= *min && rate <= *max))
                 .collect()
         })
         .unwrap_or_default();

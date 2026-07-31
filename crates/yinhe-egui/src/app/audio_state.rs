@@ -44,6 +44,9 @@ pub(crate) struct AudioState {
     pub last_known_devices: Vec<String>,
     /// 上一次轮询设备列表的时间。每秒轮询一次，避免每帧调用 cpal 枚举。
     pub last_device_poll: Option<std::time::Instant>,
+    /// spawn_cpal_audio 失败的错误信息。Some 表示失败，rebuild_audio_if_needed
+    /// 不再重试，直到用户切换设备/文档/设置清除它。
+    pub spawn_error: Option<String>,
 }
 
 impl AudioState {
@@ -59,6 +62,7 @@ impl AudioState {
             device_switch_error: None,
             last_known_devices: Vec::new(),
             last_device_poll: None,
+            spawn_error: None,
         }
     }
 }

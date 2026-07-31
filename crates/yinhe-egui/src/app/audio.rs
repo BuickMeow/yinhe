@@ -113,6 +113,16 @@ impl App {
             None => return,
         };
 
+        // 文档切换时清除之前的 spawn 失败状态，允许重试
+        if self.audio_state.active_doc != Some(idx) {
+            self.audio_state.spawn_error = None;
+        }
+
+        // spawn 失败后不重试，等用户操作（切设备/改设置/切文档）再重试
+        if self.audio_state.spawn_error.is_some() {
+            return;
+        }
+
         let needs_rebuild = self.audio_state.active_doc != Some(idx) || self.audio_state.handle.is_none();
         if !needs_rebuild {
             return;
@@ -157,6 +167,7 @@ impl App {
             }
             Err(e) => {
                 tracing::error!("Failed to create audio: {}", e);
+                self.audio_state.spawn_error = Some(e);
                 progress::set_visible(&self.load_progress, false);
             }
         }
@@ -230,6 +241,8 @@ impl App {
     /// spawn 失败：保留 `device_switch_pending`，把错误塞进 `device_switch_error`，
     /// 对话框保持打开让用户重选。
     pub(crate) fn switch_audio_device(&mut self, device_name: String) {
+        // 清除之前的 spawn 失败状态，允许用新设备重试
+        self.audio_state.spawn_error = None;
         let saved_sample = self
             .audio_state
             .handle
@@ -254,9 +267,10 @@ impl App {
             self.audio_state.device_switch_pending = false;
             self.audio_state.device_switch_error = None;
         } else {
-            // spawn 失败 —— 保留对话框，显示错误
-            self.audio_state.device_switch_error =
-                Some(t!("dialog.audio_switch.stream_failed").to_string());
+            // spawn 失败 —— 保留对话框，显示实际错误信息（而非固定文案）
+            let err = self.audio_state.spawn_error.clone()
+                .unwrap_or_else(|| t!("dialog.audio_switch.stream_failed").to_string());
+            self.audio_state.device_switch_error = Some(err);
         }
     }
 
@@ -387,5 +401,6 @@ impl App {
         self.audio_state.handle = None;
         self.audio_state.active_doc = None;
         self.audio_state.last_channel_layout = None;
+        self.audio_state.spawn_error = None;
     }
 }

@@ -13,6 +13,17 @@ impl App {
         // `RenderContext::device_lost` 的文档。GPU device lost 不可恢复，只能退出。
         let device_lost = self.render_ctx.device_lost() || self.arr_render_ctx.device_lost();
 
+        // ── spawn 失败检测 ──
+        // rebuild_audio_if_needed 里 spawn_cpal_audio 失败时设置 spawn_error。
+        // 这里检测到后弹出设备切换对话框（必须切换，不显示"保持当前"按钮），
+        // 让用户选一个可用设备。spawn_error 会在用户选设备走 switch_audio_device
+        // 时清除，或在切换文档/改设置时清除。
+        if self.audio_state.spawn_error.is_some() && !self.audio_state.device_switch_pending {
+            self.audio_state.device_switch_pending = true;
+            self.audio_state.device_switch_required = true;
+            self.audio_state.device_switch_error = self.audio_state.spawn_error.clone();
+        }
+
         // ── 音频设备切换检测 ──
         // 两种触发场景，都走同一个"音频设备切换"对话框：
         //

@@ -523,7 +523,9 @@ pub fn spawn_cpal_audio(
             .ok_or("No output device")?,
     };
     let supported = device.default_output_config().map_err(|e| e.to_string())?;
-    let channels = supported.channels() as usize;
+    // 强制立体声：xsynth 是立体声合成器，ring buffer 和位置计算也硬编码 2 声道。
+    // 不取设备默认声道数，避免多声道设备（HDMI/聚合设备 6/8 声道）导致声道映射错乱。
+    let channels = STEREO_CHANNELS;
 
     // 设备能力协商：蓝牙设备（尤其 HFP 模式）的缓冲区/采样率范围往往比
     // 内置扬声器窄很多（实测小米开放式耳机缓冲区仅 14..=1024 帧）。
