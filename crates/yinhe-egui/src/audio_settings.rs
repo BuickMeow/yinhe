@@ -51,11 +51,17 @@ pub(crate) fn load_audio_settings() -> AudioSettings {
     let mut settings = AudioSettings::load();
     let devices = list_output_devices();
     let (default_rate, rates) = discover_sample_rates();
-    // Set default device if not already set
-    if settings.output_device_name.is_none() {
+    // 上次选的设备不在当前设备列表里（耳机拔了/换了电脑）→ 回退到系统默认
+    let need_default = settings
+        .output_device_name
+        .as_ref()
+        .map(|name| !devices.iter().any(|d| d == name))
+        .unwrap_or(true);
+    if need_default {
         settings.output_device_name = cpal::default_host()
             .default_output_device()
             .and_then(|d| d.description().ok().map(|desc| desc.to_string()));
+        settings.save();
     }
     settings.refresh_devices(devices, rates, default_rate);
     settings
