@@ -4,6 +4,7 @@ use yinhe_types::{AutomationLane, TimeSigEvent};
 
 use yinhe_editor_core::quantize::QuantizePreset;
 pub use yinhe_types::PencilNoteDrag;
+pub use yinhe_editor_core::ResizeSide;
 use crate::widgets::tools_panel::Tool;
 use crate::widgets::selection_actions::SelectionAction;
 
@@ -47,6 +48,8 @@ pub struct PianoViewFeedback<'a> {
     pub automation_drag_ghost: &'a mut Option<(u32, f32)>,
     pub note_drag_delta: &'a mut Option<(i64, i32, bool)>,
     pub pencil_note_drag: &'a mut Option<PencilNoteDrag>,
+    /// 选框边缘拖动伸缩：(side, delta_ticks)。dt 按量化对齐。
+    pub note_resize_delta: &'a mut Option<(ResizeSide, i64)>,
     pub velocity_edits: &'a mut Vec<yinhe_types::VelocityEdit>,
 }
 
@@ -215,6 +218,7 @@ pub fn show(
             total_ticks,
             cursor_tick,
             feedback.note_drag_delta,
+            feedback.note_resize_delta,
             sel_rect,
             track_colors,
             track_visible,
@@ -254,7 +258,7 @@ pub fn show(
         );
     }
 
-    // ── Hover cursor: show Move when over selection rect ──
+    // ── Hover cursor: show Move/ResizeWest/ResizeEast when over selection rect ──
     if (*active_tool == Tool::Select || *active_tool == Tool::SelectVertical)
         && !crate::view_interaction::pointer_over_popup(ui.ctx())
     {
@@ -262,14 +266,23 @@ pub fn show(
             if music_rect.contains(pos) {
                 let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
                 let eff_rects = sel_rect.effective_rects();
-                let in_sel_rect = eff_rects.iter().any(|&(t_start, t_end, key_lo, key_hi)| {
-                    let pixel_rect = crate::selection::drag::music_sel_to_pixel_rect(
-                        &view.base, view.key_height, t_start, t_end, key_lo, key_hi,
-                    );
-                    pixel_rect.contains(local)
-                });
-                if in_sel_rect {
-                    ui.ctx().set_cursor_icon(egui::CursorIcon::Move);
+                // 边缘检测优先（与 press 逻辑一致）
+                let edge_hit = drag::hit_test_sel_edge(&eff_rects, &view.base, view.key_height, local);
+                if let Some((side, _, _)) = edge_hit {
+                    match side {
+                        yinhe_editor_core::ResizeSide::Left => ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeWest),
+                        yinhe_editor_core::ResizeSide::Right => ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeEast),
+                    }
+                } else {
+                    let in_sel_rect = eff_rects.iter().any(|&(t_start, t_end, key_lo, key_hi)| {
+                        let pixel_rect = crate::selection::drag::music_sel_to_pixel_rect(
+                            &view.base, view.key_height, t_start, t_end, key_lo, key_hi,
+                        );
+                        pixel_rect.contains(local)
+                    });
+                    if in_sel_rect {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::Move);
+                    }
                 }
             }
         }

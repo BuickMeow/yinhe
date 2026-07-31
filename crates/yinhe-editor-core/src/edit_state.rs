@@ -22,6 +22,19 @@ pub struct SelRectState {
     drag_delta: Option<(i64, i32)>,
     /// Pending delta from duplicate/transpose; applied once then cleared.
     pub pending_delta: Option<(i64, i32)>,
+    /// Saved rects at resize start; never modified during resize.
+    resize_origins: Vec<(f64, f64, u8, u8)>,
+    /// Active resize side (Left/Right); None when not resizing.
+    resize_side: Option<ResizeSide>,
+    /// Current resize delta in tick units.
+    resize_dt: Option<i64>,
+}
+
+/// Which edge of the selection rect is being dragged.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ResizeSide {
+    Left,
+    Right,
 }
 
 impl SelRectState {
@@ -35,15 +48,39 @@ impl SelRectState {
         )
     }
 
+    /// Apply a resize delta to a single rect. Left side changes t_start,
+    /// Right side changes t_end. Ensures t_end > t_start (min width 1 tick).
+    fn resize_rect(rect: (f64, f64, u8, u8), side: ResizeSide, dt: i64) -> (f64, f64, u8, u8) {
+        let (t0, t1, kl, kh) = rect;
+        match side {
+            ResizeSide::Left => {
+                let new_t0 = (t0 + dt as f64).max(0.0).min(t1 - 1.0);
+                (new_t0, t1, kl, kh)
+            }
+            ResizeSide::Right => {
+                let new_t1 = (t1 + dt as f64).max(t0 + 1.0);
+                (t0, new_t1, kl, kh)
+            }
+        }
+    }
+
     /// Returns the effective selection rects:
     /// - During drag: drag_origins + drag_delta
+    /// - During resize: resize_origins + resize_side + resize_dt
     /// - Otherwise: rects
     pub fn effective_rects(&self) -> Vec<(f64, f64, u8, u8)> {
         if let Some((dt, dk)) = self.drag_delta {
             self.drag_origins.iter().map(|&r| Self::offset_rect(r, dt, dk)).collect()
+        } else if let (Some(side), Some(dt)) = (self.resize_side, self.resize_dt) {
+            self.resize_origins.iter().map(|&r| Self::resize_rect(r, side, dt)).collect()
         } else {
             self.rects.clone()
         }
+    }
+
+    /// 是否正在 resize。
+    pub fn is_resizing(&self) -> bool {
+        self.resize_side.is_some()
     }
 
     /// 是否没有任何选框。
@@ -80,6 +117,35 @@ impl SelRectState {
     pub fn cancel_drag(&mut self) {
         self.drag_origins.clear();
         self.drag_delta = None;
+    }
+
+    /// Begin resizing: save current rects as origins, clear resize delta.
+    pub fn start_resize(&mut self, side: ResizeSide) {
+        self.resize_origins = self.rects.clone();
+        self.resize_side = Some(side);
+        self.resize_dt = None;
+    }
+
+    /// Update resize delta.
+    pub fn update_resize(&mut self, dt: i64) {
+        self.resize_dt = Some(dt);
+    }
+
+    /// End resize: commit origins + dt to rects, clear resize state.
+    pub fn end_resize(&mut self) {
+        if let (Some(side), Some(dt)) = (self.resize_side, self.resize_dt) {
+            self.rects = self.resize_origins.iter().map(|&r| Self::resize_rect(r, side, dt)).collect();
+        }
+        self.resize_origins.clear();
+        self.resize_side = None;
+        self.resize_dt = None;
+    }
+
+    /// Cancel resize without committing.
+    pub fn cancel_resize(&mut self) {
+        self.resize_origins.clear();
+        self.resize_side = None;
+        self.resize_dt = None;
     }
 
     /// Apply pending delta from duplicate/transpose to all rects.

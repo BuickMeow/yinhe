@@ -222,7 +222,7 @@ impl App {
             Vec::new();
         let mut velocity_edits: Vec<yinhe_types::VelocityEdit> = Vec::new();
 
-        let (piano_event, note_drag_delta, pencil_note_drag) = {
+        let (piano_event, note_drag_delta, pencil_note_drag, note_resize_delta) = {
             let mut guard = crate::app::main_loop::ReplaceGuard::new(&mut self.documents[idx]);
             let doc = guard.as_mut();
             let midi_source: Option<&dyn yinhe_types::NoteSource> = Some(doc.data.model.as_ref());
@@ -234,6 +234,7 @@ impl App {
             let mut event = None;
             let mut note_drag_delta: Option<(i64, i32, bool)> = None;
             let mut pencil_note_drag: Option<crate::piano_view::PencilNoteDrag> = None;
+            let mut note_resize_delta: Option<(crate::piano_view::ResizeSide, i64)> = None;
             ui.scope_builder(egui::UiBuilder::new().max_rect(piano_rect), |ui| {
                 let _piano_total_start = if yinhe_memtrace::perf_probe::enabled() {
                     Some(std::time::Instant::now())
@@ -334,6 +335,7 @@ impl App {
                     automation_drag_ghost: &mut self.automation_drag_ghost,
                     note_drag_delta: &mut note_drag_delta,
                     pencil_note_drag: &mut pencil_note_drag,
+                    note_resize_delta: &mut note_resize_delta,
                     velocity_edits: &mut velocity_edits,
                 };
                 event = piano_view::show(
@@ -378,7 +380,7 @@ impl App {
                     yinhe_memtrace::perf_probe::record_piano_total(t0.elapsed());
                 }
             });
-            (event, note_drag_delta, pencil_note_drag)
+            (event, note_drag_delta, pencil_note_drag, note_resize_delta)
         };
 
         // Handle piano-view events
@@ -420,6 +422,9 @@ impl App {
 
         // Handle note drag
         self.handle_note_drag(note_drag_delta);
+
+        // Handle note resize (selection edge drag)
+        self.handle_note_resize(note_resize_delta);
 
         // Handle pencil note drag
         self.handle_pencil_note_drag(pencil_note_drag);
@@ -528,6 +533,26 @@ impl App {
                     sel_rect: doc.edit.sel_rect.clone(),
                 });
                 // 纯音符移动/复制：只更新 audible_notes，不重建 CC，不 chase
+                self.notify_notes_changed();
+            }
+        }
+    }
+
+    /// Handle note resize: shift one edge of all selected notes by `dt` ticks.
+    /// 选框工具边缘拖动伸缩：所有选中音符的 start_tick (Left) 或 end_tick (Right) 统一偏移。
+    fn handle_note_resize(&mut self, note_resize_delta: Option<(crate::piano_view::ResizeSide, i64)>) {
+        if let Some((side, dt)) = note_resize_delta {
+            let Some(idx) = self.active_doc else { return };
+            let doc = &mut self.documents[idx];
+            if let Some(action) = doc.resize_selected_notes(side, dt) {
+                self.pianoroll_view.base.dirty = true;
+                doc.history.push(yinhe_editor_core::history::UndoEntry {
+                    action,
+                    label: t!("undo.resize_notes").to_string(),
+                    selected: doc.edit.selected.clone(),
+                    track_selected: doc.edit.track_selected.clone(),
+                    sel_rect: doc.edit.sel_rect.clone(),
+                });
                 self.notify_notes_changed();
             }
         }

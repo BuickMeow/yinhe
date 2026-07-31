@@ -13,7 +13,7 @@ pub mod quantize;
 pub use config::{ProjectSfConfig, SfEntry};
 pub use document::{Document, TrackOverride};
 pub use yinhe_types::{AutomationEdit, PencilNoteDrag};
-pub use edit_state::EditState;
+pub use edit_state::{EditState, ResizeSide, SelRectState};
 pub use yinhe_core::Selection;
 pub use history::{PendingEdits, UndoAction, UndoEntry, UndoStack};
 pub use playback::PlaybackState;

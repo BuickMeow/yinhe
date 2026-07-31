@@ -4,8 +4,12 @@ use eframe::egui;
 
 use yinhe_types::{key_notes_in_range, TimeSigEvent};
 use yinhe_editor_core::quantize::QuantizePreset;
+use yinhe_editor_core::ResizeSide;
 
 use super::PianoViewEvent;
+
+/// Hit-test 边缘的像素阈值（与铅笔工具一致）。
+const EDGE_THRESHOLD_PX: f32 = 6.0;
 
 // ── Shared marquee drag state machine ──
 
@@ -177,6 +181,7 @@ pub(crate) fn sel_drag_frame(
     total_ticks: f64,
     cursor_tick: &mut Option<f64>,
     note_drag_delta: &mut Option<(i64, i32, bool)>,
+    note_resize_delta: &mut Option<(ResizeSide, i64)>,
     sel_rect: &mut yinhe_editor_core::edit_state::SelRectState,
     _track_colors: &[[f32; 3]],
     track_visible: &[bool],
@@ -192,6 +197,12 @@ pub(crate) fn sel_drag_frame(
     let mut drag_notes: Option<Vec<SelDragNoteInfo>> =
         ui.data_mut(|d| d.get_persisted(drag_notes_id)).unwrap_or(None);
 
+    // Resize state: (side, origin_boundary_tick, other_boundary_tick)。
+    // origin_boundary_tick 是被拖动边缘的原 tick；other_boundary_tick 是另一个边缘。
+    let resize_id = ui.id().with("sel_resize_state");
+    let mut sel_resize_state: Option<(ResizeSide, f64, f64)> =
+        ui.data_mut(|d| d.get_persisted(resize_id)).unwrap_or(None);
+
     let pointer = ui.input(|i| i.pointer.clone());
     let additive = ui.input(|i| i.modifiers.shift || i.modifiers.command || i.modifiers.ctrl);
 
@@ -200,6 +211,12 @@ pub(crate) fn sel_drag_frame(
         note_drag_origin = None;
         drag_notes = None;
         sel_rect.cancel_drag();
+    }
+    // Clear stale resize state
+    if sel_resize_state.is_some() && !pointer.primary_down() && !pointer.primary_released() {
+        sel_resize_state = None;
+        drag_notes = None;
+        sel_rect.cancel_resize();
     }
 
     // 弹窗打开时跳过所有 pointer 处理，避免点击穿透
@@ -225,50 +242,39 @@ pub(crate) fn sel_drag_frame(
             // Don't start drag, don't clear anything — let the button handle it.
         } else {
             let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
-            let in_sel_rect = eff_rects.iter().any(|&(t_start, t_end, key_lo, key_hi)| {
-                let pixel_rect = crate::selection::drag::music_sel_to_pixel_rect(
-                    &view.base, view.key_height, t_start, t_end, key_lo, key_hi,
-                );
-                pixel_rect.contains(local)
-            });
-            if in_sel_rect {
-                let raw_tick = view.x_to_tick(local.x);
-                let tick = crate::view_interaction::snap_tick(raw_tick, quantize, ppq, bar_line_data);
-                let key = view.y_to_key(local.y) as f64;
-                // Alt（Option）按下时进入复制模式：原音符保留，拖出副本。
-                // press 时锁定 alt 状态，拖拽中切换不影响本次操作。
-                let alt = ui.input(|i| i.modifiers.alt);
-                note_drag_origin = Some((tick, key, alt));
-                sel_rect.start_drag();
 
-                // Pre-compute all selected note info from rects + midi.
-                // Use Selection.contains() for precise half-open tick filtering
-                // (avoids off-by-one vs key_notes_in_range's broad range).
-                // Add track_selected + track_visible filters to align ghost with
-                // the note layer (build_notes).
-                let sel = &*selected;
-                drag_notes = Some(sel.rects.iter().flat_map(|&(ts, te, kl, kh, _tl, _th)| {
-                    (kl..=kh).flat_map(move |key| {
-                        midi.map(|m| {
-                            key_notes_in_range(m.key_notes(key), ts, te).iter()
-                                .filter(|n| sel.contains(n.track, n.start_tick, key))
-                                .filter(|n| track_selected.is_empty() || track_selected.contains(&n.track))
-                                .filter(|n| track_visible.get(n.track as usize).copied().unwrap_or(true))
-                                .map(|n| SelDragNoteInfo {
-                                    track: n.track,
-                                    start_tick: n.start_tick,
-                                    end_tick: n.end_tick,
-                                    key,
-                                })
-                                .collect::<Vec<_>>()
-                        }).unwrap_or_default()
-                    })
-                }).collect());
-            } else if !additive {
-                // 单击选框外（非加选模式）→ 立即清空选框与选区。
-                // 比 on_press 回调更早触发，覆盖 click（< 3px）的场景。
-                selected.clear();
-                sel_rect.clear();
+            // ── 边缘 hit-test：优先级大于拖动移动 ──
+            // 检查鼠标是否在某个选框的左右边缘 EDGE_THRESHOLD_PX 内。
+            let edge_hit = hit_test_sel_edge(&eff_rects, &view.base, view.key_height, local);
+
+            if let Some((side, origin_boundary_tick, other_boundary_tick)) = edge_hit {
+                // 启动 resize：记录原边缘 tick + 另一边缘 + 预计算选中音符
+                sel_resize_state = Some((side, origin_boundary_tick, other_boundary_tick));
+                sel_rect.start_resize(side);
+                drag_notes = Some(collect_drag_notes(selected, midi, track_visible, track_selected));
+            } else {
+                let in_sel_rect = eff_rects.iter().any(|&(t_start, t_end, key_lo, key_hi)| {
+                    let pixel_rect = crate::selection::drag::music_sel_to_pixel_rect(
+                        &view.base, view.key_height, t_start, t_end, key_lo, key_hi,
+                    );
+                    pixel_rect.contains(local)
+                });
+                if in_sel_rect {
+                    let raw_tick = view.x_to_tick(local.x);
+                    let tick = crate::view_interaction::snap_tick(raw_tick, quantize, ppq, bar_line_data);
+                    let key = view.y_to_key(local.y) as f64;
+                    // Alt（Option）按下时进入复制模式：原音符保留，拖出副本。
+                    // press 时锁定 alt 状态，拖拽中切换不影响本次操作。
+                    let alt = ui.input(|i| i.modifiers.alt);
+                    note_drag_origin = Some((tick, key, alt));
+                    sel_rect.start_drag();
+                    drag_notes = Some(collect_drag_notes(selected, midi, track_visible, track_selected));
+                } else if !additive {
+                    // 单击选框外（非加选模式）→ 立即清空选框与选区。
+                    // 比 on_press 回调更早触发，覆盖 click（< 3px）的场景。
+                    selected.clear();
+                    sel_rect.clear();
+                }
             }
         }
     }
@@ -360,10 +366,105 @@ pub(crate) fn sel_drag_frame(
         }
     }
 
+    // ── Resize drag: 边缘拖动伸缩选中音符 ──
+    if let Some((side, origin_boundary_tick, other_boundary_tick)) = sel_resize_state {
+        if let Some(ref notes) = drag_notes {
+            // Drag：实时显示 ghost + 更新 sel_rect
+            if pointer.primary_down() && !pointer.primary_pressed() {
+                if let Some(pos) = pointer.hover_pos() {
+                    // auto-scroll：边缘拖动能推出屏幕
+                    crate::selection::drag::auto_scroll_on_drag(
+                        ui,
+                        &mut view.base,
+                        music_rect,
+                        pos,
+                        |base, w, _h| {
+                            base.clamp_scroll_x(w, total_ticks);
+                            base.scroll_y = base.scroll_y.max(0.0);
+                        },
+                    );
+                    view.clamp_scroll(content_rect.width(), content_rect.height(), total_ticks);
+
+                    let clamped = pos.clamp(music_rect.min, music_rect.max);
+                    let local_x = clamped.x - content_rect.min.x;
+                    let raw_tick = view.x_to_tick(local_x);
+                    let (_new_boundary, dt) = compute_resize_dt(
+                        raw_tick, side, origin_boundary_tick, other_boundary_tick,
+                        quantize, ppq, bar_line_data,
+                    );
+
+                    // 生成 ghost/hidden：每个音符独立 clamp（end > start + 1）
+                    for info in notes {
+                        match side {
+                            ResizeSide::Right => {
+                                let new_end = (info.end_tick as i64 + dt)
+                                    .max(info.start_tick as i64 + 1) as u32;
+                                ghost_notes.push((info.start_tick, new_end, info.key, info.track));
+                                hidden_notes.push((info.track, info.start_tick, info.key));
+                            }
+                            ResizeSide::Left => {
+                                let new_start = (info.start_tick as i64 + dt)
+                                    .max(0)
+                                    .min(info.end_tick as i64 - 1) as u32;
+                                ghost_notes.push((new_start, info.end_tick, info.key, info.track));
+                                hidden_notes.push((info.track, info.start_tick, info.key));
+                            }
+                        }
+                    }
+
+                    sel_rect.update_resize(dt);
+
+                    // ── Tooltip：显示 ±gate ──
+                    let lines = vec![
+                        crate::view_interaction::format_signed("gate", dt),
+                    ];
+                    crate::view_interaction::draw_hover_tooltip(ui.ctx(), &lines, pos.x, pos.y);
+                    ui.ctx().request_repaint();
+                }
+            }
+            // Release：提交 dt
+            if pointer.primary_released() {
+                if let Some(pos) = pointer.hover_pos() {
+                    let clamped = pos.clamp(music_rect.min, music_rect.max);
+                    let local_x = clamped.x - content_rect.min.x;
+                    let raw_tick = view.x_to_tick(local_x);
+                    let (_new_boundary, dt) = compute_resize_dt(
+                        raw_tick, side, origin_boundary_tick, other_boundary_tick,
+                        quantize, ppq, bar_line_data,
+                    );
+                    *note_resize_delta = Some((side, dt));
+                    sel_rect.update_resize(dt);
+
+                    // Keep ghost/hidden alive on the release frame
+                    for info in notes {
+                        match side {
+                            ResizeSide::Right => {
+                                let new_end = (info.end_tick as i64 + dt)
+                                    .max(info.start_tick as i64 + 1) as u32;
+                                ghost_notes.push((info.start_tick, new_end, info.key, info.track));
+                                hidden_notes.push((info.track, info.start_tick, info.key));
+                            }
+                            ResizeSide::Left => {
+                                let new_start = (info.start_tick as i64 + dt)
+                                    .max(0)
+                                    .min(info.end_tick as i64 - 1) as u32;
+                                ghost_notes.push((new_start, info.end_tick, info.key, info.track));
+                                hidden_notes.push((info.track, info.start_tick, info.key));
+                            }
+                        }
+                    }
+                }
+                sel_rect.end_resize();
+                sel_resize_state = None;
+                drag_notes = None;
+            }
+        }
+    }
+
     // ── Marquee selection (shared with Eraser tool) ──
-    // Only start a marquee if no note drag is active (click was NOT inside selection).
-    if note_drag_origin.is_some() {
-        // Note drag active → clear any stale marquee state and skip marquee.
+    // Only start a marquee if no note drag/resize is active (click was NOT inside selection).
+    if note_drag_origin.is_some() || sel_resize_state.is_some() {
+        // Note drag/resize active → clear any stale marquee state and skip marquee.
         let sel_id = ui.id().with("sel_drag");
         ui.data_mut(|d| d.insert_persisted(sel_id, Option::<((f64, f32), egui::Pos2, egui::Pos2)>::None));
     } else {
@@ -397,6 +498,7 @@ pub(crate) fn sel_drag_frame(
 
     ui.data_mut(|d| d.insert_persisted(note_drag_id, note_drag_origin));
     ui.data_mut(|d| d.insert_persisted(drag_notes_id, drag_notes));
+    ui.data_mut(|d| d.insert_persisted(resize_id, sel_resize_state));
     (ghost_notes, hidden_notes)
 }
 
@@ -521,4 +623,112 @@ pub(crate) fn piano_snapped_bounds(
     (
         screen_sx, screen_ex, screen_sy, screen_ey, t_start, t_end, key_lo, key_hi,
     )
+}
+
+/// Hit-test 鼠标是否在某个选框的左右边缘 `EDGE_THRESHOLD_PX` 内。
+///
+/// 返回 `(side, origin_boundary_tick, other_boundary_tick)`：
+/// - `origin_boundary_tick`：被拖动边缘的原 tick
+/// - `other_boundary_tick`：另一个边缘的原 tick（用于计算最小宽度约束）
+///
+/// 窄选框（宽度 <= 2×阈值）跳过边缘检测，避免与 move 冲突。
+pub(crate) fn hit_test_sel_edge(
+    eff_rects: &[(f64, f64, u8, u8)],
+    base: &yinhe_types::view_base::TimelineViewBase,
+    key_height: f32,
+    local: egui::Pos2,
+) -> Option<(ResizeSide, f64, f64)> {
+    for &(t_start, t_end, _key_lo, _key_hi) in eff_rects {
+        let pixel_rect = crate::selection::drag::music_sel_to_pixel_rect(
+            base, key_height, t_start, t_end, _key_lo, _key_hi,
+        );
+        // y 不在选框纵向范围（含阈值）内 → 跳过
+        if local.y < pixel_rect.min.y - EDGE_THRESHOLD_PX
+            || local.y > pixel_rect.max.y + EDGE_THRESHOLD_PX
+        {
+            continue;
+        }
+        // 窄选框跳过边缘检测，避免与 move 冲突
+        if pixel_rect.width() <= 2.0 * EDGE_THRESHOLD_PX {
+            continue;
+        }
+        // 左边缘
+        if (local.x - pixel_rect.min.x).abs() <= EDGE_THRESHOLD_PX {
+            return Some((ResizeSide::Left, t_start, t_end));
+        }
+        // 右边缘
+        if (local.x - pixel_rect.max.x).abs() <= EDGE_THRESHOLD_PX {
+            return Some((ResizeSide::Right, t_end, t_start));
+        }
+    }
+    None
+}
+
+/// 预计算选中音符信息（move 和 resize 共用）。
+///
+/// 使用 `Selection::contains` 做精确的半开 tick 过滤，并叠加 track_selected
+/// 和 track_visible 过滤，与 note layer 的 build_notes 对齐。
+fn collect_drag_notes(
+    selected: &yinhe_core::Selection,
+    midi: Option<&dyn yinhe_types::NoteSource>,
+    track_visible: &[bool],
+    track_selected: &std::collections::HashSet<u16>,
+) -> Vec<SelDragNoteInfo> {
+    selected.rects.iter().flat_map(|&(ts, te, kl, kh, _tl, _th)| {
+        (kl..=kh).flat_map(move |key| {
+            midi.map(|m| {
+                key_notes_in_range(m.key_notes(key), ts, te).iter()
+                    .filter(|n| selected.contains(n.track, n.start_tick, key))
+                    .filter(|n| track_selected.is_empty() || track_selected.contains(&n.track))
+                    .filter(|n| track_visible.get(n.track as usize).copied().unwrap_or(true))
+                    .map(|n| SelDragNoteInfo {
+                        track: n.track,
+                        start_tick: n.start_tick,
+                        end_tick: n.end_tick,
+                        key,
+                    })
+                    .collect::<Vec<_>>()
+            }).unwrap_or_default()
+        })
+    }).collect()
+}
+
+/// 计算 resize 的 dt（按量化 snap），并约束最小宽度为一个量化间隔。
+///
+/// - `origin_boundary_tick`：被拖动边缘的原 tick
+/// - `other_boundary_tick`：另一个边缘的原 tick
+/// - 返回 `(snapped_boundary, dt)`：dt 已 clamp 使得 new_width >= interval
+#[allow(clippy::too_many_arguments)]
+fn compute_resize_dt(
+    raw_tick: f64,
+    side: ResizeSide,
+    origin_boundary_tick: f64,
+    other_boundary_tick: f64,
+    quantize: QuantizePreset,
+    ppq: u32,
+    bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
+) -> (f64, i64) {
+    let interval = quantize.tick_interval(ppq) as f64;
+    let original_width = (origin_boundary_tick - other_boundary_tick).abs();
+    // 最小允许宽度：如果原选框已经 < interval，不允许再压缩（min = original_width）
+    let min_width = original_width.min(interval).max(1.0);
+
+    match side {
+        ResizeSide::Right => {
+            let snapped = crate::view_interaction::snap_tick_ceil(raw_tick, quantize, ppq, bar_line_data);
+            let mut dt = (snapped - origin_boundary_tick).round() as i64;
+            // new_width = original_width + dt >= min_width
+            let dt_min = (min_width - original_width).ceil() as i64;
+            dt = dt.max(dt_min);
+            (origin_boundary_tick + dt as f64, dt)
+        }
+        ResizeSide::Left => {
+            let snapped = crate::view_interaction::snap_tick_floor(raw_tick, quantize, ppq, bar_line_data);
+            let mut dt = (snapped - origin_boundary_tick).round() as i64;
+            // new_width = original_width - dt >= min_width → dt <= original_width - min_width
+            let dt_max = (original_width - min_width).floor() as i64;
+            dt = dt.min(dt_max);
+            (origin_boundary_tick + dt as f64, dt)
+        }
+    }
 }

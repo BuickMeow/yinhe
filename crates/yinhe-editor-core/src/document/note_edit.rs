@@ -6,6 +6,7 @@ use yinhe_core::NoteEvent;
 use yinhe_types::{PencilNoteDrag, VelocityEdit};
 
 use crate::batch_ops;
+use crate::edit_state::ResizeSide;
 use crate::history::{NoteDelta, UndoAction};
 
 use super::Document;
@@ -259,6 +260,71 @@ impl Document {
             before: originals,
             after,
         }))
+    }
+
+    /// Resize all selected notes by shifting one edge (Left/Right) by `dt` ticks.
+    ///
+    /// 选框工具边缘拖动：对所有选中音符的 `start_tick`（Left）或 `end_tick`（Right）
+    /// 统一偏移 `dt`。每个音符独立 clamp，保证 `end_tick > start_tick`。
+    /// 选框 (`sel_rect`) 的更新由 UI 层负责（与 move 一致）。
+    pub fn resize_selected_notes(&mut self, side: ResizeSide, dt: i64) -> Option<UndoAction> {
+        if self.edit.selected.is_empty() || dt == 0 {
+            return None;
+        }
+
+        let model = Arc::make_mut(&mut self.data.model);
+        let originals = batch_ops::remove_selected(model, &self.edit.selected);
+
+        let mut new_by_key: std::collections::HashMap<u8, Vec<yinhe_types::Note>> =
+            std::collections::HashMap::new();
+        for (note, old_key) in &originals {
+            let new_note = match side {
+                ResizeSide::Left => {
+                    // start_tick += dt，clamp 到 [0, end_tick - 1]
+                    let new_start = (note.start_tick as i64 + dt)
+                        .max(0)
+                        .min(note.end_tick as i64 - 1) as u32;
+                    yinhe_types::Note { start_tick: new_start, ..*note }
+                }
+                ResizeSide::Right => {
+                    // end_tick += dt，clamp 到 [start_tick + 1, u32::MAX]
+                    let new_end = (note.end_tick as i64 + dt)
+                        .max(note.start_tick as i64 + 1) as u32;
+                    yinhe_types::Note { end_tick: new_end, ..*note }
+                }
+            };
+            new_by_key.entry(*old_key).or_default().push(new_note);
+        }
+
+        let after: Vec<(yinhe_types::Note, u8)> = new_by_key
+            .iter()
+            .flat_map(|(key, notes)| notes.iter().map(|n| (*n, *key)))
+            .collect();
+        batch_ops::insert_batch(model, new_by_key);
+
+        // 同步 Selection 的 tick 范围（用于后续操作的命中判定）。
+        // Selection::offset 会同时改 ts 和 te，但 resize 只想改其中一个，手动处理。
+        match side {
+            ResizeSide::Left => {
+                for r in &mut self.edit.selected.rects {
+                    let new_ts = (r.0 as i64 + dt).max(0) as u32;
+                    if new_ts < r.1 {
+                        r.0 = new_ts;
+                    }
+                }
+            }
+            ResizeSide::Right => {
+                for r in &mut self.edit.selected.rects {
+                    let new_te = (r.1 as i64 + dt).max(r.0 as i64 + 1) as u32;
+                    r.1 = new_te;
+                }
+            }
+        }
+
+        model.rebuild_dirty();
+        self.data.bump_revision();
+
+        Some(UndoAction::Notes(NoteDelta { before: originals, after }))
     }
 
     /// Apply a pencil-tool drag operation (move or resize a single note).
@@ -610,5 +676,80 @@ mod tests {
             UndoAction::Notes(delta) => assert_eq!(delta.before.len(), 1),
             _ => panic!("期望 UndoAction::Notes"),
         }
+    }
+
+    #[test]
+    fn resize_selected_notes_right_extends_end_tick() {
+        let mut doc = make_doc_with_note();
+        // 原音符: tick 100~200, key 60
+        let action = doc.resize_selected_notes(ResizeSide::Right, 50).expect("应产生 UndoAction");
+        let note = doc.data.model.notes[60][0];
+        assert_eq!(note.start_tick, 100, "start_tick 不变");
+        assert_eq!(note.end_tick, 250, "end_tick += 50");
+
+        // 选区右边界同步偏移
+        let (ts, te, _kl, _kh, _tl, _th) = doc.edit.selected.rects[0];
+        assert_eq!(ts, 100, "选区 ts 不变");
+        assert_eq!(te, 251, "选区 te += 50 (原 201)");
+
+        // UndoAction
+        match action {
+            UndoAction::Notes(delta) => {
+                assert_eq!(delta.before.len(), 1);
+                assert_eq!(delta.before[0].0.end_tick, 200);
+                assert_eq!(delta.after.len(), 1);
+                assert_eq!(delta.after[0].0.end_tick, 250);
+            }
+            _ => panic!("期望 UndoAction::Notes"),
+        }
+    }
+
+    #[test]
+    fn resize_selected_notes_left_shifts_start_tick() {
+        let mut doc = make_doc_with_note();
+        // 原音符: tick 100~200, key 60
+        doc.resize_selected_notes(ResizeSide::Left, -30).expect("应产生 UndoAction");
+        let note = doc.data.model.notes[60][0];
+        assert_eq!(note.start_tick, 70, "start_tick -= 30");
+        assert_eq!(note.end_tick, 200, "end_tick 不变");
+
+        // 选区左边界同步偏移
+        let (ts, te, _kl, _kh, _tl, _th) = doc.edit.selected.rects[0];
+        assert_eq!(ts, 70, "选区 ts -= 30");
+        assert_eq!(te, 201, "选区 te 不变");
+    }
+
+    #[test]
+    fn resize_selected_notes_right_clamps_to_min_length() {
+        let mut doc = make_doc_with_note();
+        // 原音符: tick 100~200 (长度 100)。dt = -200 会让 end < start，应 clamp 到 start+1
+        doc.resize_selected_notes(ResizeSide::Right, -200).expect("应产生 UndoAction");
+        let note = doc.data.model.notes[60][0];
+        assert_eq!(note.start_tick, 100);
+        assert_eq!(note.end_tick, 101, "end_tick 应 clamp 到 start+1");
+    }
+
+    #[test]
+    fn resize_selected_notes_left_clamps_to_min_length() {
+        let mut doc = make_doc_with_note();
+        // 原音符: tick 100~200。dt = 200 会让 start >= end，应 clamp 到 end-1
+        doc.resize_selected_notes(ResizeSide::Left, 200).expect("应产生 UndoAction");
+        let note = doc.data.model.notes[60][0];
+        assert_eq!(note.start_tick, 199, "start_tick 应 clamp 到 end-1");
+        assert_eq!(note.end_tick, 200);
+    }
+
+    #[test]
+    fn resize_selected_notes_zero_dt_returns_none() {
+        let mut doc = make_doc_with_note();
+        assert!(doc.resize_selected_notes(ResizeSide::Right, 0).is_none());
+        assert!(doc.resize_selected_notes(ResizeSide::Left, 0).is_none());
+    }
+
+    #[test]
+    fn resize_selected_notes_empty_selection_returns_none() {
+        let mut doc = make_doc_with_note();
+        doc.edit.selected.clear();
+        assert!(doc.resize_selected_notes(ResizeSide::Right, 50).is_none());
     }
 }
