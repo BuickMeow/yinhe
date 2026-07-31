@@ -520,6 +520,101 @@ impl Document {
         }
         Some(action)
     }
+
+    /// AM 变速：把面板选框时间跨度缩放为 `new_span`，选中锚点相对起点等比缩放。
+    ///
+    /// `anchor_sel_rects` 的 tick 范围同步缩放（value_range 不动）。
+    /// 返回单个 UndoAction（AutomationDelta），调用方 push 到 history。
+    pub fn rescale_anchor_span(&mut self, panel_idx: usize, new_span: u64) -> Option<UndoAction> {
+        let panel = self.edit.controller_panels.get(panel_idx)?;
+        if panel.show_velocity || panel.anchor_sel_rects.is_empty() {
+            return None;
+        }
+        let target = panel.selected_target.clone();
+        let rects = panel.anchor_sel_rects.clone();
+
+        let mut t0 = f64::INFINITY;
+        let mut t1 = f64::NEG_INFINITY;
+        for r in &rects {
+            t0 = t0.min(r.tick_start.min(r.tick_end));
+            t1 = t1.max(r.tick_start.max(r.tick_end));
+        }
+        let span = (t1 - t0) as u64;
+        if span == 0 || new_span == span || new_span == 0 {
+            return None;
+        }
+        let factor = new_span as f64 / span as f64;
+
+        // 定位 lane（与 apply_anchor_field_edit 同规则）
+        let (track_idx, lane_idx) = if matches!(target, AutomationTarget::Tempo) {
+            (0u16, 0usize)
+        } else {
+            let track_idx = self
+                .edit
+                .editing_track
+                .filter(|&t| {
+                    self.edit
+                        .track_visible
+                        .get(t as usize)
+                        .copied()
+                        .unwrap_or(false)
+                })
+                .filter(|&t| Some(t) != self.edit.conductor_track_idx)?;
+            let lane_idx = self
+                .data
+                .model
+                .tracks
+                .get(track_idx as usize)?
+                .automation_lanes
+                .iter()
+                .position(|l| l.target == target)?;
+            (track_idx, lane_idx)
+        };
+
+        let events = if matches!(target, AutomationTarget::Tempo) {
+            self.data.model.conductor.tempo.events.clone()
+        } else {
+            self.data.model.tracks[track_idx as usize].automation_lanes[lane_idx]
+                .events
+                .clone()
+        };
+        let scale_tick = |t: u32| -> u32 {
+            let s = (t0 + (t as f64 - t0) * factor).round();
+            if s > u32::MAX as f64 {
+                u32::MAX
+            } else if s < 0.0 {
+                0
+            } else {
+                s as u32
+            }
+        };
+        let mut moves: Vec<(u32, u32, f32)> = Vec::new();
+        for ev in &events {
+            if !rects.iter().any(|r| r.contains(ev.tick, ev.value)) {
+                continue;
+            }
+            let new_tick = scale_tick(ev.tick);
+            if new_tick != ev.tick {
+                moves.push((ev.tick, new_tick, ev.value));
+            }
+        }
+        if moves.is_empty() {
+            return None;
+        }
+        let action =
+            self.move_automation_events_batch(track_idx as usize, lane_idx, &target, &moves)?;
+
+        // 选框 rect 缩放（tick 范围）
+        for r in &mut self.edit.controller_panels[panel_idx].anchor_sel_rects {
+            let ts = r.tick_start.min(r.tick_end);
+            let te = r.tick_start.max(r.tick_end);
+            let nts = (t0 + (ts - t0) * factor).round();
+            let nte = (t0 + (te - t0) * factor).round().max(nts + 1.0);
+            r.tick_start = nts;
+            r.tick_end = nte;
+        }
+        Some(action)
+    }
 }
 
 #[cfg(test)]
@@ -665,5 +760,24 @@ mod tests {
             doc.apply_anchor_field_edit(0, AnchorField::Value, &ops)
                 .is_none()
         );
+    }
+
+    #[test]
+    fn rescale_anchor_span_doubles_ticks() {
+        let mut doc = make_doc_with_anchor();
+        // 跨度 250 → 500（×2）：锚点 100→200，200→400
+        doc.rescale_anchor_span(0, 500).expect("should edit");
+        let lane = &doc.data.model.tracks[0].automation_lanes[0];
+        assert_eq!(lane.events[0].tick, 200);
+        assert_eq!(lane.events[1].tick, 400);
+        let rect = doc.edit.controller_panels[0].anchor_sel_rects[0];
+        assert_eq!(rect.tick_start, 0.0);
+        assert_eq!(rect.tick_end, 500.0);
+    }
+
+    #[test]
+    fn rescale_anchor_span_same_span_returns_none() {
+        let mut doc = make_doc_with_anchor();
+        assert!(doc.rescale_anchor_span(0, 250).is_none());
     }
 }

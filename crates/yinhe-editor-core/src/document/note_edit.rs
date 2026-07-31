@@ -565,6 +565,107 @@ impl Document {
             after,
         }))
     }
+
+    /// 变速：把选框整体时间跨度（min ts .. max te）缩放为 `new_span` tick。
+    ///
+    /// 选中音符相对跨度起点等比缩放（可 undo），`selected` / `sel_rect` /
+    /// `arr_sel_rect` 的 tick 范围同步缩放（key/track 不动）。
+    /// 返回 `None` 表示无变化。
+    pub fn rescale_selection_span(&mut self, new_span: u64) -> Option<UndoAction> {
+        if self.edit.selected.is_empty() || new_span == 0 {
+            return None;
+        }
+        let mut t0 = u64::MAX;
+        let mut t1 = 0u64;
+        for &(ts, te, _, _, _, _) in &self.edit.selected.rects {
+            t0 = t0.min(ts as u64);
+            t1 = t1.max(te as u64);
+        }
+        let span = t1 - t0;
+        if span == 0 || new_span == span {
+            return None; // 跨度相同：无操作
+        }
+        let factor = new_span as f64 / span as f64;
+        let scale_tick = |v: u64| -> u64 {
+            let s = (t0 as f64 + (v as f64 - t0 as f64) * factor)
+                .round()
+                .max(t0 as f64);
+            if s > u32::MAX as f64 {
+                u32::MAX as u64
+            } else {
+                s as u64
+            }
+        };
+
+        let model = Arc::make_mut(&mut self.data.model);
+        let originals = batch_ops::remove_selected(model, &self.edit.selected);
+        if originals.is_empty() {
+            return None;
+        }
+
+        let mut new_by_key: std::collections::HashMap<u8, Vec<yinhe_types::Note>> =
+            std::collections::HashMap::new();
+        let mut changed = false;
+        for (note, key) in &originals {
+            let new_start = scale_tick(note.start_tick as u64) as u32;
+            let new_end = scale_tick(note.end_tick as u64).max(new_start as u64 + 1) as u32;
+            if new_start != note.start_tick || new_end != note.end_tick {
+                changed = true;
+            }
+            new_by_key.entry(*key).or_default().push(yinhe_types::Note {
+                start_tick: new_start,
+                end_tick: new_end,
+                ..*note
+            });
+        }
+        if !changed {
+            batch_ops::insert_batch(model, new_by_key);
+            model.rebuild_dirty();
+            return None; // remove 后原样插回，模型内容不变
+        }
+
+        let after: Vec<(yinhe_types::Note, u8)> = new_by_key
+            .iter()
+            .flat_map(|(key, notes)| notes.iter().map(|n| (*n, *key)))
+            .collect();
+        batch_ops::insert_batch(model, new_by_key);
+        model.rebuild_dirty();
+
+        // 选框 rect 同步缩放（tick 范围，key/track 不动）
+        let scale_rect = |ts: &mut u64, te: &mut u64| {
+            let nts = scale_tick(*ts);
+            let nte = scale_tick(*te).max(nts + 1);
+            *ts = nts;
+            *te = nte;
+        };
+        for r in &mut self.edit.selected.rects {
+            let mut ts = r.0 as u64;
+            let mut te = r.1 as u64;
+            scale_rect(&mut ts, &mut te);
+            r.0 = ts as u32;
+            r.1 = te as u32;
+        }
+        for r in &mut self.edit.sel_rect.rects {
+            let mut ts = r.0 as u64;
+            let mut te = r.1 as u64;
+            scale_rect(&mut ts, &mut te);
+            r.0 = ts as f64;
+            r.1 = te as f64;
+        }
+        for r in &mut self.edit.arr_sel_rect {
+            let mut ts = r.0 as u64;
+            let mut te = r.1 as u64;
+            scale_rect(&mut ts, &mut te);
+            r.0 = ts as f64;
+            r.1 = te as f64;
+        }
+
+        self.data.bump_revision();
+        Some(UndoAction::Notes(NoteDelta {
+            before: originals,
+            after,
+        }))
+    }
 }
 
 #[cfg(test)]
@@ -861,5 +962,49 @@ mod tests {
             doc.apply_note_field_edit(NoteField::Velocity, &ops)
                 .is_none()
         );
+    }
+
+    #[test]
+    fn rescale_selection_span_doubles_notes_and_rects() {
+        let mut doc = make_doc_with_note();
+        doc.edit.sel_rect.rects = vec![(100.0, 201.0, 60, 60)];
+        // 跨度 101 → 202（×2）：音符 start 100→100（起点不动），end 200→300
+        let action = doc.rescale_selection_span(202).expect("should edit");
+        let n = doc.data.model.notes[60][0];
+        assert_eq!(n.start_tick, 100);
+        assert_eq!(n.end_tick, 300);
+        assert_eq!(doc.edit.selected.rects[0].1, 302);
+        assert_eq!(doc.edit.sel_rect.rects[0], (100.0, 302.0, 60, 60));
+        match action {
+            UndoAction::Notes(delta) => {
+                assert_eq!(delta.before[0].0.end_tick, 200);
+                assert_eq!(delta.after[0].0.end_tick, 300);
+            }
+            _ => panic!("expected Notes"),
+        }
+    }
+
+    #[test]
+    fn rescale_selection_span_halves_notes() {
+        let mut doc = make_doc_with_note();
+        // 跨度 101 → 51（约 /2）：end 200 → 150
+        doc.rescale_selection_span(51).expect("should edit");
+        let n = doc.data.model.notes[60][0];
+        assert_eq!(n.start_tick, 100);
+        assert_eq!(n.end_tick, 150);
+        assert_eq!(doc.edit.selected.rects[0].1, 151);
+    }
+
+    #[test]
+    fn rescale_selection_span_same_span_returns_none() {
+        let mut doc = make_doc_with_note();
+        assert!(doc.rescale_selection_span(101).is_none());
+    }
+
+    #[test]
+    fn rescale_selection_span_empty_selection_returns_none() {
+        let mut doc = make_doc_with_note();
+        doc.edit.selected.clear();
+        assert!(doc.rescale_selection_span(200).is_none());
     }
 }

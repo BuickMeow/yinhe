@@ -348,6 +348,11 @@ sel.key: "キー"
 sel.tick: "ティック"
 sel.value: "値"
 undo.batch_edit: "一括編集"
+sel.tempo_title: "タイムストレッチ"
+sel.span_ticks: "ティック"
+sel.span_bar_beat: "小節.tick"
+sel.ratio: "倍率"
+undo.rescale_span: "タイムストレッチ"
 
 # ── ファイルダイアログ ──
 file_dialog.all_supported: "対応するすべての形式"

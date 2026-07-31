@@ -357,6 +357,11 @@ sel.key: "Key"
 sel.tick: "Tick"
 sel.value: "Value"
 undo.batch_edit: "Batch edit"
+sel.tempo_title: "Time stretch"
+sel.span_ticks: "Ticks"
+sel.span_bar_beat: "Bar.tick"
+sel.ratio: "Ratio"
+undo.rescale_span: "Time stretch"
 
 # ── File dialogs ──
 file_dialog.all_supported: "All supported"

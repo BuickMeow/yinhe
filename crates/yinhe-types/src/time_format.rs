@@ -69,6 +69,44 @@ pub fn format_tick_bar_beat_with_time_sig(
     format!("{}.{}.{:03}", bar, beat, tick_in_beat)
 }
 
+/// 反向解析 `bar.beat.tick`（全 1-indexed，如 `1.1.000`）为 tick。
+///
+/// 与 [`format_tick_bar_beat_with_time_sig`] 对应：支持拍号变化，
+/// bar 按 segment 的 bar 偏移定位。bar/beat 必须 ≥ 1，格式为三段。
+pub fn parse_bar_beat_tick(
+    s: &str,
+    ppq: u32,
+    time_sig_events: &[TimeSigEvent],
+    default_num: u8,
+    default_den: u8,
+) -> Option<u64> {
+    let parts: Vec<&str> = s.trim().split('.').collect();
+    if parts.len() != 3 {
+        return None;
+    }
+    let bar: u32 = parts[0].parse().ok()?;
+    let beat: u32 = parts[1].parse().ok()?;
+    let tick_part: u32 = parts[2].parse().ok()?;
+    if bar == 0 || beat == 0 {
+        return None;
+    }
+    let segments = build_time_sig_segments(time_sig_events, default_num, default_den);
+    let bar_offsets = compute_bar_offsets(ppq, &segments);
+    let target = bar - 1;
+    let seg_idx = bar_offsets
+        .partition_point(|&o| o <= target)
+        .saturating_sub(1);
+    let (seg_start, num, den) = segments[seg_idx];
+    let measure = measure_ticks(ppq, num, den);
+    let ticks_per_beat = (measure / num as u32).max(1);
+    let bars_into_seg = target - bar_offsets[seg_idx];
+    let total = seg_start as u64
+        + bars_into_seg as u64 * measure as u64
+        + (beat - 1) as u64 * ticks_per_beat as u64
+        + tick_part as u64;
+    Some(total)
+}
+
 /// Compute ticks per measure from time signature.
 ///
 /// `denominator_power` is the power-of-2 encoding: 2 = quarter note (4), 3 = eighth (8), etc.
@@ -224,5 +262,36 @@ mod tests {
     fn test_format_tick_bar_beat_second_bar() {
         // tick=1920 (480*4), ppq=480, num=4 → bar 2
         assert_eq!(format_tick_bar_beat(1920.0, 480, 4), "2.1.000");
+    }
+
+    #[test]
+    fn test_parse_bar_beat_tick_start() {
+        assert_eq!(parse_bar_beat_tick("1.1.000", 480, &[], 4, 2), Some(0));
+    }
+
+    #[test]
+    fn test_parse_bar_beat_tick_second_beat() {
+        assert_eq!(parse_bar_beat_tick("1.2.000", 480, &[], 4, 2), Some(480));
+    }
+
+    #[test]
+    fn test_parse_bar_beat_tick_second_bar() {
+        assert_eq!(parse_bar_beat_tick("2.1.000", 480, &[], 4, 2), Some(1920));
+    }
+
+    #[test]
+    fn test_parse_bar_beat_tick_round_trip() {
+        // format(2400) = "2.2.000"，反向应还原
+        assert_eq!(format_tick_bar_beat(2400.0, 480, 4), "2.2.000");
+        assert_eq!(parse_bar_beat_tick("2.2.000", 480, &[], 4, 2), Some(2400));
+    }
+
+    #[test]
+    fn test_parse_bar_beat_tick_invalid() {
+        assert_eq!(parse_bar_beat_tick("", 480, &[], 4, 2), None);
+        assert_eq!(parse_bar_beat_tick("1.1", 480, &[], 4, 2), None);
+        assert_eq!(parse_bar_beat_tick("0.1.000", 480, &[], 4, 2), None);
+        assert_eq!(parse_bar_beat_tick("1.0.000", 480, &[], 4, 2), None);
+        assert_eq!(parse_bar_beat_tick("abc.1.000", 480, &[], 4, 2), None);
     }
 }

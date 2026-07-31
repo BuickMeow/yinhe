@@ -13,8 +13,9 @@ use yinhe_editor_core::document::Document;
 use yinhe_editor_core::document::automation_edit::AnchorField;
 use yinhe_editor_core::document::note_edit::NoteField;
 use yinhe_editor_core::history::{UndoAction, UndoEntry};
-use yinhe_editor_core::num_expr::{NumOp, parse_num_expr};
-use yinhe_types::{AnchorSelRect, AutomationTarget};
+use yinhe_editor_core::num_expr::{NumOp, apply_ops, parse_num_expr};
+use yinhe_types::time_format::{format_tick_bar_beat_with_time_sig, parse_bar_beat_tick};
+use yinhe_types::{AnchorSelRect, AutomationTarget, TimeSigEvent};
 
 /// 当前拥有选框的视图（三视图互斥，同一时刻只有一个）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -305,6 +306,19 @@ pub(super) fn show(ui: &mut egui::Ui, doc: &mut Document) {
             );
         }
     }
+
+    // ── 变速（时间跨度编辑，可 undo；音符/事件与选框一起缩放） ──
+    ui.add_space(4.0);
+    ui.separator();
+    ui.add_space(4.0);
+    ui.label(
+        egui::RichText::new(t!("sel.tempo_title").as_ref())
+            .strong()
+            .size(13.0)
+            .color(egui::Color32::from_gray(200)),
+    );
+    ui.add_space(2.0);
+    tempo_section(ui, doc, view, t0, t1);
 }
 
 // ────────────────────────────────────────────────────────────────
@@ -383,6 +397,143 @@ fn push_undo(doc: &mut Document, action: UndoAction, label: &str) {
         sel_rect: doc.edit.sel_rect.clone(),
         arr_sel_rect: doc.edit.arr_sel_rect.clone(),
     });
+}
+
+/// 变速编辑区：tick 数 / bar.beat.tick / 倍率，三框同步（应用后统一刷新）。
+///
+/// 框 1（tick 数）：支持表达式（赋值/加减乘除）。
+/// 框 2（bar.beat.tick）：解析 1-indexed 格式。
+/// 框 3（倍率）：数字开头 = 乘法（2 = ×2），`x2`/`*2` = ×2，`/2` = ÷2；不支持加减。
+fn tempo_section(ui: &mut egui::Ui, doc: &mut Document, view: SelView, t0: f64, t1: f64) {
+    let span = ((t1 - t0).max(1.0)) as u64;
+    let ppq = doc.data.model.meta.ppq;
+    let ts_events: Vec<TimeSigEvent> = doc.data.model.conductor.time_sig.clone();
+    let default_num = ts_events.first().map(|t| t.numerator).unwrap_or(4);
+    let default_den = ts_events.first().map(|t| t.denominator).unwrap_or(2);
+
+    // 框 1：tick 数
+    let s1 = tempo_field(
+        ui,
+        "span_ticks",
+        t!("sel.span_ticks"),
+        span.to_string(),
+        |text| {
+            let ops = parse_num_expr(text)?;
+            let v = apply_ops(&ops, span as f64).round().max(1.0);
+            if v > u32::MAX as f64 {
+                None
+            } else {
+                Some(v as u64)
+            }
+        },
+    );
+    ui.add_space(2.0);
+
+    // 框 2：bar.beat.tick（与时间标尺同一格式）
+    let bar_beat =
+        format_tick_bar_beat_with_time_sig(span as f64, ppq, &ts_events, default_num, default_den);
+    let s2 = tempo_field(
+        ui,
+        "span_bar_beat",
+        t!("sel.span_bar_beat"),
+        bar_beat,
+        |text| {
+            parse_bar_beat_tick(text, ppq, &ts_events, default_num, default_den).map(|v| v.max(1))
+        },
+    );
+    ui.add_space(2.0);
+
+    // 框 3：倍率（数字开头 = 乘法）
+    let s3 = tempo_field(ui, "span_ratio", t!("sel.ratio"), "1".to_string(), |text| {
+        let ops = parse_num_expr(text)?;
+        let mut v = span as f64;
+        for op in ops {
+            match op {
+                NumOp::Set(n) => v *= n,
+                NumOp::Mul(n) => v *= n,
+                NumOp::Div(n) => v /= n,
+                NumOp::Add(_) => return None, // 倍率不支持加减
+            }
+        }
+        let v = v.round().max(1.0);
+        if v > u32::MAX as f64 {
+            None
+        } else {
+            Some(v as u64)
+        }
+    });
+
+    // 应用变速（任一框提交）
+    if let Some(new_span) = s1.or(s2).or(s3) {
+        match view {
+            SelView::Pr | SelView::Ar => {
+                if let Some(action) = doc.rescale_selection_span(new_span) {
+                    push_undo(doc, action, t!("undo.rescale_span").as_ref());
+                }
+            }
+            SelView::Am => {
+                // 互斥：只有一个面板有选框（与编辑区同一来源）
+                let panel_idx = doc
+                    .edit
+                    .controller_panels
+                    .iter()
+                    .position(|p| !p.show_velocity && !p.anchor_sel_rects.is_empty());
+                if let Some(panel_idx) = panel_idx {
+                    if let Some(action) = doc.rescale_anchor_span(panel_idx, new_span) {
+                        push_undo(doc, action, t!("undo.rescale_span").as_ref());
+                        doc.edit.controller_panels[panel_idx].dirty = true;
+                    }
+                }
+            }
+        }
+        // 清空三个输入框，下帧恢复显示新跨度
+        let base = ui.id();
+        for k in ["span_ticks", "span_bar_beat", "span_ratio"] {
+            ui.ctx()
+                .data_mut(|d| d.insert_temp::<String>(base.with(k).with("buf"), String::new()));
+        }
+    }
+}
+
+/// 变速输入框：显示当前值；输入后 Enter/失焦应用，返回解析出的新跨度。
+fn tempo_field(
+    ui: &mut egui::Ui,
+    key: &str,
+    label: impl Into<String>,
+    display: String,
+    parse: impl Fn(&str) -> Option<u64>,
+) -> Option<u64> {
+    let id = ui.id().with(key);
+    let buf_id = id.with("buf");
+    let mut result = None;
+    ui.horizontal(|ui| {
+        ui.label(
+            egui::RichText::new(label.into())
+                .size(11.0)
+                .color(egui::Color32::GRAY),
+        );
+        let is_editing = ui.ctx().memory(|m| m.has_focus(id));
+        let mut text: String = ui.ctx().data(|d| d.get_temp(buf_id).unwrap_or_default());
+        if !is_editing && text.is_empty() {
+            text = display;
+        }
+        let resp = ui.add(
+            egui::TextEdit::singleline(&mut text)
+                .id(id)
+                .desired_width(90.0),
+        );
+        ui.ctx().data_mut(|d| d.insert_temp(buf_id, text.clone()));
+        let submit = resp.lost_focus()
+            || (resp.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));
+        if submit && !text.trim().is_empty() {
+            if let Some(v) = parse(text.trim()) {
+                result = Some(v);
+            }
+            ui.ctx()
+                .data_mut(|d| d.insert_temp::<String>(buf_id, String::new()));
+        }
+    });
+    result
 }
 
 /// AM 选中锚点统计（自动化事件量小，直接收集）。

@@ -348,6 +348,11 @@ sel.key: "키"
 sel.tick: "틱"
 sel.value: "값"
 undo.batch_edit: "일괄 편집"
+sel.tempo_title: "타임 스트레치"
+sel.span_ticks: "틱"
+sel.span_bar_beat: "마디.tick"
+sel.ratio: "배율"
+undo.rescale_span: "타임 스트레치"
 
 # ── 파일 대화상자 ──
 file_dialog.all_supported: "지원되는 모든 형식"

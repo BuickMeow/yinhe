@@ -357,6 +357,11 @@ sel.key: "Key"
 sel.tick: "Tick"
 sel.value: "Value"
 undo.batch_edit: "批量编辑"
+sel.tempo_title: "变速"
+sel.span_ticks: "Tick"
+sel.span_bar_beat: "小节.tick"
+sel.ratio: "倍率"
+undo.rescale_span: "变速"
 
 # ── 文件对话框 ──
 file_dialog.all_supported: "所有支持的格式"
