@@ -228,6 +228,7 @@ pub(super) fn show(ui: &mut egui::Ui, doc: &mut Document) {
                 t!("sel.velocity"),
                 s.velocity.map(|v| v as f64),
                 fmt_int,
+                None,
                 |ops| {
                     if let Some(action) = doc.apply_note_field_edit(NoteField::Velocity, &ops) {
                         push_undo(doc, action, t!("undo.batch_edit").as_ref());
@@ -240,18 +241,21 @@ pub(super) fn show(ui: &mut egui::Ui, doc: &mut Document) {
                 t!("sel.gate"),
                 s.gate.map(|g| g as f64),
                 fmt_int,
+                None,
                 |ops| {
                     if let Some(action) = doc.apply_note_field_edit(NoteField::Gate, &ops) {
                         push_undo(doc, action, t!("undo.batch_edit").as_ref());
                     }
                 },
             );
+            let interval_hint = key_interval_hint(s.key);
             field_row(
                 ui,
                 "key",
                 t!("sel.key"),
                 s.key.map(|k| k as f64),
                 fmt_int,
+                Some(&interval_hint),
                 |ops| {
                     if let Some(action) = doc.apply_note_field_edit(NoteField::Key, &ops) {
                         push_undo(doc, action, t!("undo.batch_edit").as_ref());
@@ -264,6 +268,7 @@ pub(super) fn show(ui: &mut egui::Ui, doc: &mut Document) {
                 t!("sel.tick"),
                 s.tick.map(|t| t as f64),
                 fmt_int,
+                None,
                 |ops| {
                     if let Some(action) = doc.apply_note_field_edit(NoteField::Tick, &ops) {
                         push_undo(doc, action, t!("undo.batch_edit").as_ref());
@@ -280,6 +285,7 @@ pub(super) fn show(ui: &mut egui::Ui, doc: &mut Document) {
                 t!("sel.value"),
                 am.uniform_value.map(|v| v as f64),
                 fmt_val,
+                None,
                 |ops| {
                     if let Some(action) =
                         doc.apply_anchor_field_edit(panel_idx, AnchorField::Value, &ops)
@@ -295,6 +301,7 @@ pub(super) fn show(ui: &mut egui::Ui, doc: &mut Document) {
                 t!("sel.tick"),
                 am.uniform_tick.map(|t| t as f64),
                 fmt_int,
+                None,
                 |ops| {
                     if let Some(action) =
                         doc.apply_anchor_field_edit(panel_idx, AnchorField::Tick, &ops)
@@ -353,6 +360,7 @@ fn field_row(
     label: impl Into<String>,
     uniform: Option<f64>,
     fmt: impl Fn(f64) -> String,
+    hint: Option<&dyn Fn(&str) -> Option<String>>,
     on_apply: impl FnOnce(Vec<NumOp>),
 ) {
     ui.horizontal(|ui| {
@@ -374,6 +382,18 @@ fn field_row(
                 .desired_width(90.0)
                 .hint_text(if uniform.is_none() { "—" } else { "" }),
         );
+        // 实时提示（如 Key 框的音程名）：聚焦且有输入时显示
+        if let Some(h) = hint {
+            if resp.has_focus() && !text.trim().is_empty() {
+                if let Some(s) = h(text.trim()) {
+                    ui.label(
+                        egui::RichText::new(s)
+                            .size(11.0)
+                            .color(egui::Color32::from_gray(140)),
+                    );
+                }
+            }
+        }
         ui.ctx().data_mut(|d| d.insert_temp(buf_id, text.clone()));
         let submit = resp.lost_focus()
             || (resp.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));
@@ -607,4 +627,56 @@ fn fmt_val(v: f64) -> String {
 
 fn fmt_tick(v: f64) -> String {
     format!("{v:.0}")
+}
+
+/// Key 编辑输入的音程提示：解析输入文本，计算最终变化量并显示音程名。
+///
+/// - 变化量绝对值 1..=12 显示音程名，>12 或 0 不显示
+/// - 负值为下行（如 -2 → 大二度（下行））
+/// - 有 uniform key 时按当前值计算（支持赋值/链式）；无基准时仅纯加减可判定
+/// - 乘除运算无音程意义，不显示
+fn key_interval_hint(uniform_key: Option<u8>) -> impl Fn(&str) -> Option<String> {
+    move |text| {
+        let ops = parse_num_expr(text)?;
+        let delta = if let Some(cur) = uniform_key {
+            apply_ops(&ops, cur as f64) - cur as f64
+        } else {
+            // 无基准：仅纯加减可判定
+            let mut d = 0.0;
+            for op in &ops {
+                match op {
+                    NumOp::Add(n) => d += n,
+                    _ => return None,
+                }
+            }
+            d
+        };
+        if delta.fract() != 0.0 {
+            return None;
+        }
+        let d = delta.round() as i32;
+        if d == 0 || d.abs() > 12 {
+            return None;
+        }
+        let name = match d.abs() {
+            1 => t!("sel.interval.1"),
+            2 => t!("sel.interval.2"),
+            3 => t!("sel.interval.3"),
+            4 => t!("sel.interval.4"),
+            5 => t!("sel.interval.5"),
+            6 => t!("sel.interval.6"),
+            7 => t!("sel.interval.7"),
+            8 => t!("sel.interval.8"),
+            9 => t!("sel.interval.9"),
+            10 => t!("sel.interval.10"),
+            11 => t!("sel.interval.11"),
+            12 => t!("sel.interval.12"),
+            _ => return None,
+        };
+        if d < 0 {
+            Some(t!("sel.interval_down", name = name).to_string())
+        } else {
+            Some(name.to_string())
+        }
+    }
 }
