@@ -1,0 +1,459 @@
+//! 选框信息面板：显示当前选框的统计信息并支持批量表达式编辑。
+//!
+//! 优先于 Anchor / Track / 项目设置显示：任一视图（PR/AR/AM）存在选框时
+//! 整个 Info 面板切换为选框信息。编辑字段支持表达式：
+//! 赋值（`100`）、加减（`+2`/`-2`）、乘除（`x2`/`*2`/`/2`）、百分比（`20%`/`x.2`）、
+//! 链式（`x3/7`），语法见 `yinhe_editor_core::num_expr`。
+
+use eframe::egui;
+use rust_i18n::t;
+
+use yinhe_editor_core::batch_ops::summarize_selected;
+use yinhe_editor_core::document::Document;
+use yinhe_editor_core::document::automation_edit::AnchorField;
+use yinhe_editor_core::document::note_edit::NoteField;
+use yinhe_editor_core::history::{UndoAction, UndoEntry};
+use yinhe_editor_core::num_expr::{NumOp, parse_num_expr};
+use yinhe_types::{AnchorSelRect, AutomationTarget};
+
+/// 当前拥有选框的视图（三视图互斥，同一时刻只有一个）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SelView {
+    /// 钢琴卷帘
+    Pr,
+    /// 走带（arrange）
+    Ar,
+    /// 自动化
+    Am,
+}
+
+/// 任一视图存在选框？
+pub(super) fn has_any_selection(doc: &Document) -> bool {
+    !doc.edit.sel_rect.is_empty()
+        || !doc.edit.arr_sel_rect.is_empty()
+        || doc
+            .edit
+            .controller_panels
+            .iter()
+            .any(|p| !p.show_velocity && !p.anchor_sel_rects.is_empty())
+}
+
+/// 显示选框信息 + 批量编辑。
+pub(super) fn show(ui: &mut egui::Ui, doc: &mut Document) {
+    // ── 检测选框视图与矩形 ──
+    let pr_rects = doc.edit.sel_rect.effective_rects();
+    let ar_rects = doc.edit.arr_sel_rect.clone();
+    let am_rects: Vec<(usize, Vec<AnchorSelRect>)> = doc
+        .edit
+        .controller_panels
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| !p.show_velocity && !p.anchor_sel_rects.is_empty())
+        .map(|(i, p)| (i, p.anchor_sel_rects.clone()))
+        .collect();
+    let view = if !pr_rects.is_empty() {
+        SelView::Pr
+    } else if !ar_rects.is_empty() {
+        SelView::Ar
+    } else if !am_rects.is_empty() {
+        SelView::Am
+    } else {
+        return;
+    };
+
+    // ── 统计 ──
+    let summary = match view {
+        SelView::Pr | SelView::Ar => Some(summarize_selected(&doc.data.model, &doc.edit.selected)),
+        SelView::Am => None,
+    };
+    let am = match view {
+        SelView::Am => collect_am_anchors(doc, &am_rects),
+        _ => AmAnchors::default(),
+    };
+
+    // ── 时间跨度 / 视图特有跨度 ──
+    let (t0, t1) = match view {
+        SelView::Pr => pr_rects
+            .iter()
+            .map(|&(ts, te, _, _)| (ts, te))
+            .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), (x, y)| {
+                (a.min(x), b.max(y))
+            }),
+        SelView::Ar => ar_rects
+            .iter()
+            .map(|&(ts, te, _, _)| (ts, te))
+            .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), (x, y)| {
+                (a.min(x), b.max(y))
+            }),
+        SelView::Am => am_rects
+            .iter()
+            .flat_map(|(_, rs)| rs.iter())
+            .map(|r| (r.tick_start.min(r.tick_end), r.tick_start.max(r.tick_end)))
+            .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), (x, y)| {
+                (a.min(x), b.max(y))
+            }),
+    };
+
+    // ── 渲染 ──
+    ui.add_space(4.0);
+    ui.label(
+        egui::RichText::new(t!("sel.title").as_ref())
+            .strong()
+            .size(14.0)
+            .color(egui::Color32::from_gray(220)),
+    );
+    ui.add_space(2.0);
+
+    let pos_label = match view {
+        SelView::Pr => t!("sel.pos_pr"),
+        SelView::Ar => t!("sel.pos_ar"),
+        SelView::Am => t!("sel.pos_am"),
+    };
+    info_row(ui, t!("sel.pos"), pos_label);
+    let rect_count = match view {
+        SelView::Pr => pr_rects.len(),
+        SelView::Ar => ar_rects.len(),
+        SelView::Am => am_rects.iter().map(|(_, rs)| rs.len()).sum(),
+    };
+    info_row(ui, t!("sel.count"), rect_count.to_string());
+    info_row(
+        ui,
+        t!("sel.note_count"),
+        summary
+            .as_ref()
+            .map(|s| s.count.to_string())
+            .unwrap_or_else(|| "0".to_string()),
+    );
+    info_row(
+        ui,
+        t!("sel.event_count"),
+        match view {
+            SelView::Am => am.count.to_string(),
+            _ => "0".to_string(),
+        },
+    );
+    info_row(
+        ui,
+        t!("sel.tick_span"),
+        format!(
+            "{}，{}",
+            t!("sel.from_to", a = fmt_tick(t0), b = fmt_tick(t1)),
+            t!("sel.total_ticks", n = fmt_tick(t1 - t0))
+        ),
+    );
+    match view {
+        SelView::Pr => {
+            let (kl, kh) = pr_rects
+                .iter()
+                .fold((u8::MAX, 0u8), |(a, b), &(_, _, kl, kh)| {
+                    (a.min(kl), b.max(kh))
+                });
+            info_row(
+                ui,
+                t!("sel.key_span"),
+                format!(
+                    "{}，{}",
+                    t!("sel.from_to", a = kl, b = kh),
+                    t!("sel.total_keys", n = kh as i32 - kl as i32 + 1)
+                ),
+            );
+        }
+        SelView::Ar => {
+            let (tl, th) = ar_rects
+                .iter()
+                .fold((usize::MAX, 0usize), |(a, b), &(_, _, tl, th)| {
+                    (a.min(tl), b.max(th))
+                });
+            info_row(
+                ui,
+                t!("sel.track_span"),
+                format!(
+                    "{}，{}",
+                    t!("sel.from_to", a = tl, b = th),
+                    t!("sel.total_tracks", n = th - tl + 1)
+                ),
+            );
+        }
+        SelView::Am => {
+            // value 跨度：所有 rect 的 value_range 并集；None（垂直全选）→ 全范围
+            let mut rng: Option<(f32, f32)> = None;
+            let mut full = false;
+            for (_, rs) in &am_rects {
+                for r in rs {
+                    match r.value_range {
+                        None => full = true,
+                        Some((lo, hi)) => {
+                            let (lo, hi) = (lo.min(hi), lo.max(hi));
+                            rng = Some(match rng {
+                                Some((a, b)) => (a.min(lo), b.max(hi)),
+                                None => (lo, hi),
+                            });
+                        }
+                    }
+                }
+            }
+            let text = if full {
+                t!("sel.full_range").to_string()
+            } else {
+                match rng {
+                    Some((lo, hi)) => t!(
+                        "sel.from_to",
+                        a = fmt_val(lo as f64),
+                        b = fmt_val(hi as f64)
+                    )
+                    .to_string(),
+                    None => String::new(),
+                }
+            };
+            info_row(ui, t!("sel.value_span"), text);
+        }
+    }
+
+    ui.add_space(4.0);
+    ui.separator();
+    ui.add_space(4.0);
+
+    // ── 编辑区 ──
+    match view {
+        SelView::Pr | SelView::Ar => {
+            // view 判定保证 PR/AR 时 summary 必为 Some（防御性 early-return）。
+            let s = match summary {
+                Some(s) => s,
+                None => return,
+            };
+            field_row(
+                ui,
+                "velocity",
+                t!("sel.velocity"),
+                s.velocity.map(|v| v as f64),
+                fmt_int,
+                |ops| {
+                    if let Some(action) = doc.apply_note_field_edit(NoteField::Velocity, &ops) {
+                        push_undo(doc, action, t!("undo.batch_edit").as_ref());
+                    }
+                },
+            );
+            field_row(
+                ui,
+                "gate",
+                t!("sel.gate"),
+                s.gate.map(|g| g as f64),
+                fmt_int,
+                |ops| {
+                    if let Some(action) = doc.apply_note_field_edit(NoteField::Gate, &ops) {
+                        push_undo(doc, action, t!("undo.batch_edit").as_ref());
+                    }
+                },
+            );
+            field_row(
+                ui,
+                "key",
+                t!("sel.key"),
+                s.key.map(|k| k as f64),
+                fmt_int,
+                |ops| {
+                    if let Some(action) = doc.apply_note_field_edit(NoteField::Key, &ops) {
+                        push_undo(doc, action, t!("undo.batch_edit").as_ref());
+                    }
+                },
+            );
+            field_row(
+                ui,
+                "tick",
+                t!("sel.tick"),
+                s.tick.map(|t| t as f64),
+                fmt_int,
+                |ops| {
+                    if let Some(action) = doc.apply_note_field_edit(NoteField::Tick, &ops) {
+                        push_undo(doc, action, t!("undo.batch_edit").as_ref());
+                    }
+                },
+            );
+        }
+        SelView::Am => {
+            // 互斥：只有一个面板有选框
+            let panel_idx = am_rects[0].0;
+            field_row(
+                ui,
+                "am_value",
+                t!("sel.value"),
+                am.uniform_value.map(|v| v as f64),
+                fmt_val,
+                |ops| {
+                    if let Some(action) =
+                        doc.apply_anchor_field_edit(panel_idx, AnchorField::Value, &ops)
+                    {
+                        push_undo(doc, action, t!("undo.batch_edit").as_ref());
+                    }
+                    doc.edit.controller_panels[panel_idx].dirty = true;
+                },
+            );
+            field_row(
+                ui,
+                "am_tick",
+                t!("sel.tick"),
+                am.uniform_tick.map(|t| t as f64),
+                fmt_int,
+                |ops| {
+                    if let Some(action) =
+                        doc.apply_anchor_field_edit(panel_idx, AnchorField::Tick, &ops)
+                    {
+                        push_undo(doc, action, t!("undo.batch_edit").as_ref());
+                    }
+                    doc.edit.controller_panels[panel_idx].dirty = true;
+                },
+            );
+        }
+    }
+}
+
+// ────────────────────────────────────────────────────────────────
+// 工具函数
+// ────────────────────────────────────────────────────────────────
+
+/// 只读信息行：label（灰 11px）+ 值（白 12px）。
+fn info_row(ui: &mut egui::Ui, label: impl Into<String>, value: impl Into<String>) {
+    ui.horizontal(|ui| {
+        ui.label(
+            egui::RichText::new(label.into())
+                .size(11.0)
+                .color(egui::Color32::GRAY),
+        );
+        ui.label(
+            egui::RichText::new(value.into())
+                .size(12.0)
+                .color(egui::Color32::from_gray(200)),
+        );
+    });
+}
+
+/// 批量字段编辑行：label + 表达式输入框。
+///
+/// - 所有选中项字段值相同 → 输入框显示该值
+/// - mixed → 输入框为空并显示「—」提示
+/// - 输入表达式（`100`/`+2`/`x3/7`…）后 Enter 或失焦应用，应用后清空，
+///   下一帧恢复显示当前值
+fn field_row(
+    ui: &mut egui::Ui,
+    key: &str,
+    label: impl Into<String>,
+    uniform: Option<f64>,
+    fmt: impl Fn(f64) -> String,
+    on_apply: impl FnOnce(Vec<NumOp>),
+) {
+    ui.horizontal(|ui| {
+        ui.label(
+            egui::RichText::new(label.into())
+                .size(11.0)
+                .color(egui::Color32::GRAY),
+        );
+        let id = ui.id().with(key);
+        let buf_id = id.with("buf");
+        let is_editing = ui.ctx().memory(|m| m.has_focus(id));
+        let mut text: String = ui.ctx().data(|d| d.get_temp(buf_id).unwrap_or_default());
+        if !is_editing && text.is_empty() {
+            text = uniform.map(fmt).unwrap_or_default();
+        }
+        let resp = ui.add(
+            egui::TextEdit::singleline(&mut text)
+                .id(id)
+                .desired_width(90.0)
+                .hint_text(if uniform.is_none() { "—" } else { "" }),
+        );
+        ui.ctx().data_mut(|d| d.insert_temp(buf_id, text.clone()));
+        let submit = resp.lost_focus()
+            || (resp.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));
+        if submit && !text.trim().is_empty() {
+            if let Some(ops) = parse_num_expr(&text) {
+                on_apply(ops);
+            }
+            ui.ctx()
+                .data_mut(|d| d.insert_temp::<String>(buf_id, String::new()));
+        }
+    });
+}
+
+/// push 一个音符/锚点批量编辑的 undo entry。
+fn push_undo(doc: &mut Document, action: UndoAction, label: &str) {
+    doc.history.push(UndoEntry {
+        action,
+        label: label.to_string(),
+        selected: doc.edit.selected.clone(),
+        track_selected: doc.edit.track_selected.clone(),
+        sel_rect: doc.edit.sel_rect.clone(),
+        arr_sel_rect: doc.edit.arr_sel_rect.clone(),
+    });
+}
+
+/// AM 选中锚点统计（自动化事件量小，直接收集）。
+#[derive(Default)]
+struct AmAnchors {
+    count: usize,
+    /// 全部锚点 value 相同时为 Some。
+    uniform_value: Option<f32>,
+    /// 全部锚点 tick 相同时为 Some。
+    uniform_tick: Option<u32>,
+}
+
+fn collect_am_anchors(doc: &Document, panels: &[(usize, Vec<AnchorSelRect>)]) -> AmAnchors {
+    let mut out = AmAnchors::default();
+    let mut first = true;
+    for (panel_idx, rects) in panels {
+        let panel = &doc.edit.controller_panels[*panel_idx];
+        let target = &panel.selected_target;
+        let events: Vec<(u32, f32)> = if matches!(target, AutomationTarget::Tempo) {
+            doc.data
+                .model
+                .conductor
+                .tempo
+                .events
+                .iter()
+                .map(|e| (e.tick, e.value))
+                .collect()
+        } else {
+            let editing = doc.edit.editing_track.unwrap_or(u16::MAX);
+            let Some(track) = doc.data.model.tracks.get(editing as usize) else {
+                continue;
+            };
+            let Some(lane) = track.automation_lanes.iter().find(|l| l.target == *target) else {
+                continue;
+            };
+            lane.events.iter().map(|e| (e.tick, e.value)).collect()
+        };
+        for (tick, value) in events {
+            if !rects.iter().any(|r| r.contains(tick, value)) {
+                continue;
+            }
+            out.count += 1;
+            if first {
+                out.uniform_value = Some(value);
+                out.uniform_tick = Some(tick);
+                first = false;
+            } else {
+                if out.uniform_value.is_some() && out.uniform_value != Some(value) {
+                    out.uniform_value = None;
+                }
+                if out.uniform_tick.is_some() && out.uniform_tick != Some(tick) {
+                    out.uniform_tick = None;
+                }
+            }
+        }
+    }
+    out
+}
+
+fn fmt_int(v: f64) -> String {
+    format!("{v:.0}")
+}
+
+fn fmt_val(v: f64) -> String {
+    if (v - v.round()).abs() < 1e-6 {
+        format!("{v:.0}")
+    } else {
+        format!("{v:.3}")
+    }
+}
+
+fn fmt_tick(v: f64) -> String {
+    format!("{v:.0}")
+}

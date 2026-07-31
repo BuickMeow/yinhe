@@ -6,6 +6,7 @@
 //! - `project_info` — 项目设置（无选择时）
 
 mod anchor;
+mod selection;
 mod track;
 
 use eframe::egui;
@@ -60,27 +61,53 @@ fn render(
     info_content: &mut Option<InfoContent>,
     automation_drag_ghost: Option<(u32, f32)>,
 ) -> bool {
+    // ── 选框信息优先：任一视图存在选框时显示选框信息 ──
+    if selection::has_any_selection(doc) {
+        selection::show(ui, doc);
+        return false;
+    }
+
     match info_content.clone() {
         // ── 锚点信息 ──
-        Some(InfoContent::Anchor { track_idx, lane_idx, event_idx, target }) => {
+        Some(InfoContent::Anchor {
+            track_idx,
+            lane_idx,
+            event_idx,
+            target,
+        }) => {
             // Tempo 走 conductor.tempo；其他走 track.automation_lanes
-            let lane_events: Option<&[AutomationEvent]> = if matches!(target, AutomationTarget::Tempo) {
-                Some(&doc.data.model.conductor.tempo.events)
-            } else {
-                doc.data.model.tracks
-                    .get(track_idx as usize)
-                    .and_then(|t| t.automation_lanes.get(lane_idx))
-                    .map(|l| l.events.as_slice())
-            };
+            let lane_events: Option<&[AutomationEvent]> =
+                if matches!(target, AutomationTarget::Tempo) {
+                    Some(&doc.data.model.conductor.tempo.events)
+                } else {
+                    doc.data
+                        .model
+                        .tracks
+                        .get(track_idx as usize)
+                        .and_then(|t| t.automation_lanes.get(lane_idx))
+                        .map(|l| l.events.as_slice())
+                };
             let live_event = lane_events.and_then(|events| events.get(event_idx));
 
             if let Some(evt) = live_event {
-                let (live_tick, live_value) = if let Some((g_tick, g_value)) = automation_drag_ghost {
+                let (live_tick, live_value) = if let Some((g_tick, g_value)) = automation_drag_ghost
+                {
                     (g_tick, g_value)
                 } else {
                     (evt.tick, evt.value)
                 };
-                anchor::show_anchor_info(ui, doc, track_idx, lane_idx, event_idx, live_tick, live_value, evt.shape, &target, info_content);
+                anchor::show_anchor_info(
+                    ui,
+                    doc,
+                    track_idx,
+                    lane_idx,
+                    event_idx,
+                    live_tick,
+                    live_value,
+                    evt.shape,
+                    &target,
+                    info_content,
+                );
             } else {
                 *info_content = None;
             }
@@ -88,9 +115,7 @@ fn render(
         }
 
         // ── 音轨信息 ──
-        Some(InfoContent::Track) => {
-            track::show_track_info(ui, doc, audio, info_content)
-        }
+        Some(InfoContent::Track) => track::show_track_info(ui, doc, audio, info_content),
 
         // ── 无选择 → 项目设置 ──
         None => {
