@@ -4,24 +4,16 @@
 
 use eframe::egui;
 
-use yinhe_types::{key_notes_in_range, TimeSigEvent};
+use yinhe_types::TimeSigEvent;
 use yinhe_editor_core::quantize::QuantizePreset;
 use yinhe_editor_core::ResizeSide;
 
+use crate::selection::drag::CollectedNote;
 use super::marquee::marquee_drag_frame;
-
-/// Hit-test 边缘的像素阈值（与铅笔工具一致）。
-const EDGE_THRESHOLD_PX: f32 = 6.0;
 
 /// Pre-computed info for each selected note during a selection drag.
 /// Built once at drag start, reused every frame — eliminates O(N×M) midi lookups.
-#[derive(Clone)]
-pub(crate) struct SelDragNoteInfo {
-    pub track: u16,
-    pub start_tick: u32,
-    pub end_tick: u32,
-    pub key: u8,
-}
+pub(crate) type SelDragNoteInfo = CollectedNote;
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn sel_drag_frame(
@@ -107,7 +99,7 @@ pub(crate) fn sel_drag_frame(
                 // 启动 resize：记录原边缘 tick + 另一边缘 + 预计算选中音符
                 sel_resize_state = Some((side, origin_boundary_tick, other_boundary_tick));
                 sel_rect.start_resize(side);
-                drag_notes = Some(collect_drag_notes(selected, midi, track_visible, track_selected));
+                drag_notes = Some(collect_selected_notes(selected, midi, track_visible, track_selected));
             } else {
                 let in_sel_rect = eff_rects.iter().any(|&(t_start, t_end, key_lo, key_hi)| {
                     let pixel_rect = crate::selection::drag::music_sel_to_pixel_rect(
@@ -124,7 +116,7 @@ pub(crate) fn sel_drag_frame(
                     let alt = ui.input(|i| i.modifiers.alt);
                     note_drag_origin = Some((tick, key, alt));
                     sel_rect.start_drag();
-                    drag_notes = Some(collect_drag_notes(selected, midi, track_visible, track_selected));
+                    drag_notes = Some(collect_selected_notes(selected, midi, track_visible, track_selected));
                 } else if !additive {
                     // 单击选框外（非加选模式）→ 立即清空选框与选区。
                     // 比 on_press 回调更早触发，覆盖 click（< 3px）的场景。
@@ -358,110 +350,8 @@ pub(crate) fn sel_drag_frame(
     (ghost_notes, hidden_notes)
 }
 
-/// Hit-test 鼠标是否在某个选框的左右边缘 `EDGE_THRESHOLD_PX` 内。
-///
-/// 返回 `(side, origin_boundary_tick, other_boundary_tick)`：
-/// - `origin_boundary_tick`：被拖动边缘的原 tick
-/// - `other_boundary_tick`：另一个边缘的原 tick（用于计算最小宽度约束）
-///
-/// 窄选框（宽度 <= 2×阈值）跳过边缘检测，避免与 move 冲突。
-pub(crate) fn hit_test_sel_edge(
-    eff_rects: &[(f64, f64, u8, u8)],
-    base: &yinhe_types::view_base::TimelineViewBase,
-    key_height: f32,
-    local: egui::Pos2,
-) -> Option<(ResizeSide, f64, f64)> {
-    for &(t_start, t_end, _key_lo, _key_hi) in eff_rects {
-        let pixel_rect = crate::selection::drag::music_sel_to_pixel_rect(
-            base, key_height, t_start, t_end, _key_lo, _key_hi,
-        );
-        // y 不在选框纵向范围（含阈值）内 → 跳过
-        if local.y < pixel_rect.min.y - EDGE_THRESHOLD_PX
-            || local.y > pixel_rect.max.y + EDGE_THRESHOLD_PX
-        {
-            continue;
-        }
-        // 窄选框跳过边缘检测，避免与 move 冲突
-        if pixel_rect.width() <= 2.0 * EDGE_THRESHOLD_PX {
-            continue;
-        }
-        // 左边缘
-        if (local.x - pixel_rect.min.x).abs() <= EDGE_THRESHOLD_PX {
-            return Some((ResizeSide::Left, t_start, t_end));
-        }
-        // 右边缘
-        if (local.x - pixel_rect.max.x).abs() <= EDGE_THRESHOLD_PX {
-            return Some((ResizeSide::Right, t_end, t_start));
-        }
-    }
-    None
-}
-
-/// 预计算选中音符信息（move 和 resize 共用）。
-///
-/// 使用 `Selection::contains` 做精确的半开 tick 过滤，并叠加 track_selected
-/// 和 track_visible 过滤，与 note layer 的 build_notes 对齐。
-fn collect_drag_notes(
-    selected: &yinhe_core::Selection,
-    midi: Option<&dyn yinhe_types::NoteSource>,
-    track_visible: &[bool],
-    track_selected: &std::collections::HashSet<u16>,
-) -> Vec<SelDragNoteInfo> {
-    selected.rects.iter().flat_map(|&(ts, te, kl, kh, _tl, _th)| {
-        (kl..=kh).flat_map(move |key| {
-            midi.map(|m| {
-                key_notes_in_range(m.key_notes(key), ts, te).iter()
-                    .filter(|n| selected.contains(n.track, n.start_tick, key))
-                    .filter(|n| track_selected.is_empty() || track_selected.contains(&n.track))
-                    .filter(|n| track_visible.get(n.track as usize).copied().unwrap_or(true))
-                    .map(|n| SelDragNoteInfo {
-                        track: n.track,
-                        start_tick: n.start_tick,
-                        end_tick: n.end_tick,
-                        key,
-                    })
-                    .collect::<Vec<_>>()
-            }).unwrap_or_default()
-        })
-    }).collect()
-}
-
-/// 计算 resize 的 dt（按量化 snap），并约束最小宽度为一个量化间隔。
-///
-/// - `origin_boundary_tick`：被拖动边缘的原 tick
-/// - `other_boundary_tick`：另一个边缘的原 tick
-/// - 返回 `(snapped_boundary, dt)`：dt 已 clamp 使得 new_width >= interval
-#[allow(clippy::too_many_arguments)]
-fn compute_resize_dt(
-    raw_tick: f64,
-    side: ResizeSide,
-    origin_boundary_tick: f64,
-    other_boundary_tick: f64,
-    quantize: QuantizePreset,
-    ppq: u32,
-    bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
-) -> (f64, i64) {
-    let interval = quantize.tick_interval(ppq) as f64;
-    let original_width = (origin_boundary_tick - other_boundary_tick).abs();
-    // 最小允许宽度：如果原选框已经 < interval，不允许再压缩（min = original_width）
-    let min_width = original_width.min(interval).max(1.0);
-
-    match side {
-        ResizeSide::Right => {
-            let snapped = crate::view_interaction::snap_tick_ceil(raw_tick, quantize, ppq, bar_line_data);
-            let mut dt = (snapped - origin_boundary_tick).round() as i64;
-            // new_width = original_width + dt >= min_width
-            let dt_min = (min_width - original_width).ceil() as i64;
-            dt = dt.max(dt_min);
-            (origin_boundary_tick + dt as f64, dt)
-        }
-        ResizeSide::Left => {
-            let snapped = crate::view_interaction::snap_tick_floor(raw_tick, quantize, ppq, bar_line_data);
-            let mut dt = (snapped - origin_boundary_tick).round() as i64;
-            // new_width = original_width - dt >= min_width → dt <= original_width - min_width
-            let dt_max = (original_width - min_width).floor() as i64;
-            dt = dt.min(dt_max);
-            (origin_boundary_tick + dt as f64, dt)
-        }
-    }
-}
+// 通用逻辑已抽取到 crate::selection::drag：
+// - hit_test_sel_edge（边缘 hit-test）
+// - collect_selected_notes（选中音符预计算）
+// - compute_resize_dt（量化对齐 + 最小宽度约束）
+pub(crate) use crate::selection::drag::{collect_selected_notes, compute_resize_dt, hit_test_sel_edge};

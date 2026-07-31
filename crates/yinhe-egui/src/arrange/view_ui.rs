@@ -4,7 +4,7 @@ use eframe::egui;
 
 use yinhe_wgpu::{build_ghost_notes, build_arr_notes};
 use yinhe_core::TrackInfo;
-use yinhe_types::{ArrangementView, NoteSource, key_notes_in_range};
+use yinhe_types::{ArrangementView, NoteSource};
 use yinhe_wgpu::{InstanceRenderer, Uniforms, MAX_TRACKS};
 use yinhe_types::TimeSigEvent;
 use yinhe_wgpu::layer_cache_key;
@@ -567,37 +567,22 @@ fn sel_drag_frame_arrange(
             if dt != 0 || dtr != 0 {
                 let max_track = (num_tracks as i32 - 1).max(0) as u16;
 
-                if let Some(midi) = midi {
-                    for &(t_start, t_end, track_lo, track_hi) in move_orig_sel.iter() {
-                        let ts = t_start as u32;
-                        let te = t_end as u32;
-                        let tl = track_lo as u16;
-                        let th = track_hi as u16;
-                        for key in 0u8..128u8 {
-                            let notes = key_notes_in_range(midi.key_notes(key), ts, te);
-                            for note in notes {
-                                if note.track < tl || note.track > th {
-                                    continue;
-                                }
-                                if !selected.contains(note.track, note.start_tick, key) {
-                                    continue;
-                                }
-                                if !track_visible.get(note.track as usize).copied().unwrap_or(true) {
-                                    continue;
-                                }
-                                let new_tick = (note.start_tick as i64 + dt).max(0) as u32;
-                                let length = note.end_tick - note.start_tick;
-                                let new_track = (note.track as i32 + dtr).max(0).min(max_track as i32) as u16;
-                                ghost_notes.push((
-                                    new_tick,
-                                    new_tick + length,
-                                    key,
-                                    new_track,
-                                ));
-                                hidden_notes.insert((note.track, note.start_tick, key));
-                            }
-                        }
-                    }
+                // 与 PR 共用的选中音符收集（track_selected 传空集合 = 不过滤轨道）。
+                // selected.rects 在拖拽中保持原快照，与 move_orig_sel 语义一致。
+                let notes = crate::selection::drag::collect_selected_notes(
+                    selected, midi, track_visible, &HashSet::new(),
+                );
+                for note in notes {
+                    let new_tick = (note.start_tick as i64 + dt).max(0) as u32;
+                    let length = note.end_tick - note.start_tick;
+                    let new_track = (note.track as i32 + dtr).max(0).min(max_track as i32) as u16;
+                    ghost_notes.push((
+                        new_tick,
+                        new_tick + length,
+                        note.key,
+                        new_track,
+                    ));
+                    hidden_notes.insert((note.track, note.start_tick, note.key));
                 }
             }
         }
