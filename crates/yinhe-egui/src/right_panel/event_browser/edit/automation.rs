@@ -40,7 +40,11 @@ pub fn apply_automation_popups(
     target: &AutomationTarget,
     bar_lookup: &BarLookup,
 ) {
-    let ctx = AutoCtx { track_idx, lane_idx, target };
+    let ctx = AutoCtx {
+        track_idx,
+        lane_idx,
+        target,
+    };
     if let Some(req) = peek_pos_edit_request(ui, salt) {
         match req {
             EditRequest::AutoTick { tick, value } => {
@@ -50,7 +54,9 @@ pub fn apply_automation_popups(
         }
         return;
     }
-    let Some(req) = peek_edit_request(ui, salt) else { return };
+    let Some(req) = peek_edit_request(ui, salt) else {
+        return;
+    };
     match req {
         EditRequest::AutoValue { tick, value } => {
             show_auto_value_popup(ui, doc, salt, tick, value, &ctx);
@@ -74,18 +80,22 @@ fn show_auto_value_popup(
     value: f32,
     ctx: &AutoCtx,
 ) {
-    let action = show_number_popup(ui, PopupConfig {
-        salt,
-        title: t!("event_browser.edit_value").as_ref(),
-        initial: value as f64,
-        range_min: 0.0,
-        range_max: ctx.target.max_value() as f64,
-        speed: 1.0,
-        fixed_decimals: None,
-    });
+    let action = show_number_popup(
+        ui,
+        PopupConfig {
+            salt,
+            title: t!("event_browser.edit_value").as_ref(),
+            initial: value as f64,
+            range_min: 0.0,
+            range_max: ctx.target.max_value() as f64,
+            speed: 1.0,
+            fixed_decimals: None,
+        },
+    );
     match action {
         PopupAction::Closed(new_val_f) => {
             let new_val = new_val_f as f32;
+            let snapshot = doc.capture_snapshot();
             let before = snapshot_lane_events(doc, ctx.track_idx, ctx.lane_idx, ctx.target);
             doc.apply_automation_edits(vec![yinhe_types::AutomationEdit::Move {
                 track_idx: ctx.track_idx,
@@ -96,8 +106,16 @@ fn show_auto_value_popup(
                 new_value: new_val,
             }]);
             let after = snapshot_lane_events(doc, ctx.track_idx, ctx.lane_idx, ctx.target);
-            push_automation_undo(doc, ctx.track_idx, ctx.lane_idx, ctx.target, before, after,
-                t!("undo.edit_anchor_value").as_ref());
+            push_automation_undo(
+                doc,
+                ctx.track_idx,
+                ctx.lane_idx,
+                ctx.target,
+                before,
+                after,
+                t!("undo.edit_anchor_value").as_ref(),
+                snapshot,
+            );
             cleanup_edit_request(ui, salt);
         }
         PopupAction::Cancelled => cleanup_edit_request(ui, salt),
@@ -114,10 +132,18 @@ fn show_auto_tick_popup(
     ctx: &AutoCtx,
     bar_lookup: Option<&BarLookup>,
 ) {
-    let action = show_tick_popup(ui, salt, t!("event_browser.edit_tick").as_ref(), tick, 0, bar_lookup);
+    let action = show_tick_popup(
+        ui,
+        salt,
+        t!("event_browser.edit_tick").as_ref(),
+        tick,
+        0,
+        bar_lookup,
+    );
     match action {
         PopupAction::Closed(new_tick_f) => {
             let new_tick = new_tick_f as u32;
+            let snapshot = doc.capture_snapshot();
             let before = snapshot_lane_events(doc, ctx.track_idx, ctx.lane_idx, ctx.target);
             doc.apply_automation_edits(vec![yinhe_types::AutomationEdit::Move {
                 track_idx: ctx.track_idx,
@@ -128,8 +154,16 @@ fn show_auto_tick_popup(
                 new_value: value,
             }]);
             let after = snapshot_lane_events(doc, ctx.track_idx, ctx.lane_idx, ctx.target);
-            push_automation_undo(doc, ctx.track_idx, ctx.lane_idx, ctx.target, before, after,
-                t!("undo.edit_anchor_tick").as_ref());
+            push_automation_undo(
+                doc,
+                ctx.track_idx,
+                ctx.lane_idx,
+                ctx.target,
+                before,
+                after,
+                t!("undo.edit_anchor_tick").as_ref(),
+                snapshot,
+            );
             cleanup_edit_request(ui, salt);
         }
         PopupAction::Cancelled => cleanup_edit_request(ui, salt),
@@ -158,7 +192,11 @@ fn show_auto_shape_popup(
         .show(ui.ctx(), |ui| {
             egui::Frame::popup(ui.style()).show(ui, |ui| {
                 ui.set_min_width(220.0);
-                ui.label(egui::RichText::new(t!("event_browser.edit_shape").as_ref()).strong().size(11.0));
+                ui.label(
+                    egui::RichText::new(t!("event_browser.edit_shape").as_ref())
+                        .strong()
+                        .size(11.0),
+                );
                 ui.add_space(2.0);
 
                 let mut is_step = matches!(work_shape, SegmentShape::Step);
@@ -167,25 +205,30 @@ fn show_auto_shape_popup(
                 // 用直接比较替代 checkbox.changed()——Area 中 response 标记不可靠
                 // 只更新 pending（work_id），不调 doc.set_automation_shape
                 if is_step != was_step {
-                    let new_shape = if is_step { SegmentShape::Step } else { SegmentShape::linear_curve() };
-                    ui.ctx().memory_mut(|m| m.data.insert_temp(work_id, new_shape));
+                    let new_shape = if is_step {
+                        SegmentShape::Step
+                    } else {
+                        SegmentShape::linear_curve()
+                    };
+                    ui.ctx()
+                        .memory_mut(|m| m.data.insert_temp(work_id, new_shape));
                 }
 
                 if let SegmentShape::Curve { x1, y1, x2, y2 } = work_shape {
                     ui.add_space(2.0);
                     // ranges 与 anchor.rs 一致：x1 ∈ [0, 0.25], y1/y2 ∈ [-0.5, 0.5], x2 ∈ [-0.25, 0]
-                    let ranges: [(f32, f32); 4] = [
-                        (0.0, 0.25),
-                        (-0.5, 0.5),
-                        (-0.25, 0.0),
-                        (-0.5, 0.5),
-                    ];
+                    let ranges: [(f32, f32); 4] =
+                        [(0.0, 0.25), (-0.5, 0.5), (-0.25, 0.0), (-0.5, 0.5)];
                     let labels = ["X1", "Y1", "X2", "Y2"];
                     let mut vals = [x1, y1, x2, y2];
                     let old_vals = vals;
                     for i in 0..4 {
                         ui.horizontal(|ui| {
-                            ui.label(egui::RichText::new(labels[i]).size(11.0).color(egui::Color32::GRAY));
+                            ui.label(
+                                egui::RichText::new(labels[i])
+                                    .size(11.0)
+                                    .color(egui::Color32::GRAY),
+                            );
                             ui.add(
                                 crate::widgets::numeric_input::decimal_drag_value(&mut vals[i])
                                     .range(ranges[i].0 as f64..=ranges[i].1 as f64)
@@ -197,7 +240,12 @@ fn show_auto_shape_popup(
                     // 用直接比较替代 resp.changed()——后者在 Area 中不可靠
                     // 只更新 pending（work_id），不调 doc.set_automation_shape
                     if vals != old_vals {
-                        let ns = SegmentShape::Curve { x1: vals[0], y1: vals[1], x2: vals[2], y2: vals[3] };
+                        let ns = SegmentShape::Curve {
+                            x1: vals[0],
+                            y1: vals[1],
+                            x2: vals[2],
+                            y2: vals[3],
+                        };
                         ui.ctx().memory_mut(|m| m.data.insert_temp(work_id, ns));
                     }
                 }
@@ -218,12 +266,28 @@ fn show_auto_shape_popup(
     if !open {
         if !cancelled {
             // 读 pending shape，一次性 apply + push undo
-            let pending_shape = ui.memory(|m| m.data.get_temp::<SegmentShape>(work_id).unwrap_or(shape));
+            let pending_shape =
+                ui.memory(|m| m.data.get_temp::<SegmentShape>(work_id).unwrap_or(shape));
+            let snapshot = doc.capture_snapshot();
             let before = snapshot_lane_events(doc, ctx.track_idx, ctx.lane_idx, ctx.target);
-            doc.set_automation_shape(ctx.track_idx as usize, ctx.lane_idx, ctx.target, tick, pending_shape);
+            doc.set_automation_shape(
+                ctx.track_idx as usize,
+                ctx.lane_idx,
+                ctx.target,
+                tick,
+                pending_shape,
+            );
             let after = snapshot_lane_events(doc, ctx.track_idx, ctx.lane_idx, ctx.target);
-            push_automation_undo(doc, ctx.track_idx, ctx.lane_idx, ctx.target, before, after,
-                t!("undo.toggle_anchor_shape").as_ref());
+            push_automation_undo(
+                doc,
+                ctx.track_idx,
+                ctx.lane_idx,
+                ctx.target,
+                before,
+                after,
+                t!("undo.toggle_anchor_shape").as_ref(),
+                snapshot,
+            );
         }
         ui.memory_mut(|m| m.data.remove::<SegmentShape>(work_id));
         cleanup_edit_request(ui, salt);

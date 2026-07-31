@@ -237,11 +237,8 @@ impl App {
         crate::dialogs::load_error::show_viewport(&ctx, &mut self.load_error);
 
         // ── Unsaved changes confirmation ──
-        let action = crate::dialogs::unsaved::show_viewport(
-            &ctx,
-            &self.pending_unsaved,
-            &self.save_rx,
-        );
+        let action =
+            crate::dialogs::unsaved::show_viewport(&ctx, &self.pending_unsaved, &self.save_rx);
         match action {
             crate::dialogs::unsaved::Action::Save => {
                 if let Some(idx) = self.active_doc {
@@ -271,17 +268,25 @@ impl App {
     /// - **Cancel**：还原 meta.ppq = old，清除 pending edit（不推 undo）。
     fn show_ppq_rescale_confirm(&mut self, ctx: &egui::Context) {
         let pending: Option<(u32, u32, u64)> = ctx.data(|d| {
-            d.get_temp(egui::Id::new(crate::right_panel::project_info::PPQ_RESCALE_PENDING_ID))
+            d.get_temp(egui::Id::new(
+                crate::right_panel::project_info::PPQ_RESCALE_PENDING_ID,
+            ))
         });
-        let Some((old_val, new_val, dragvalue_id)) = pending else { return };
+        let Some((old_val, new_val, dragvalue_id)) = pending else {
+            return;
+        };
 
         let action = crate::dialogs::ppq_rescale_confirm::show_viewport(ctx, old_val, new_val);
         if action == crate::dialogs::ppq_rescale_confirm::PpqRescaleAction::None {
             return; // 用户还没选择，保持弹框打开
         }
 
-        let Some(doc_idx) = self.active_doc else { return };
-        let Some(doc) = self.documents.get_mut(doc_idx) else { return };
+        let Some(doc_idx) = self.active_doc else {
+            return;
+        };
+        let Some(doc) = self.documents.get_mut(doc_idx) else {
+            return;
+        };
 
         use crate::dialogs::ppq_rescale_confirm::PpqRescaleAction;
         match action {
@@ -291,30 +296,22 @@ impl App {
                 // commit_ppq 在 poll.rs 检测到子线程完成后才调用。
                 let model = std::sync::Arc::make_mut(&mut doc.data.model);
                 model.meta.ppq = old_val;
-                ctx.data_mut(|d| d.insert_temp(
-                    egui::Id::new(crate::app::rescale_state::RESCALE_REQUEST_ID),
-                    crate::app::rescale_state::RescaleRequest {
-                        old_ppq: old_val,
-                        new_ppq: new_val,
-                        dragvalue_id,
-                    },
-                ));
+                ctx.data_mut(|d| {
+                    d.insert_temp(
+                        egui::Id::new(crate::app::rescale_state::RESCALE_REQUEST_ID),
+                        crate::app::rescale_state::RescaleRequest {
+                            old_ppq: old_val,
+                            new_ppq: new_val,
+                            dragvalue_id,
+                        },
+                    )
+                });
             }
             PpqRescaleAction::NoRescale => {
                 // 不 rescale，但 rebuild_tempo_map（meta.ppq 已是 new_val）。
                 let model = std::sync::Arc::make_mut(&mut doc.data.model);
                 model.rebuild_tempo_map();
-                yinhe_editor_core::history::commit_ppq(
-                    &mut doc.history,
-                    &mut doc.edit.pending_edits,
-                    dragvalue_id,
-                    new_val,
-                    false,
-                    doc.edit.selected.clone(),
-                    doc.edit.track_selected.clone(),
-                    doc.edit.sel_rect.clone(),
-                    doc.edit.arr_sel_rect.clone(),
-                );
+                yinhe_editor_core::history::commit_ppq(doc, dragvalue_id, new_val, false);
             }
             PpqRescaleAction::Cancel => {
                 // 取消：还原 meta.ppq = old_val，清掉 pending edit（不推 undo）。
@@ -326,8 +323,10 @@ impl App {
         }
 
         // 清除 pending（dialog_dispatch 已处理完，避免下帧重复弹）。
-        ctx.data_mut(|d| d.remove::<(u32, u32, u64)>(
-            egui::Id::new(crate::right_panel::project_info::PPQ_RESCALE_PENDING_ID),
-        ));
+        ctx.data_mut(|d| {
+            d.remove::<(u32, u32, u64)>(egui::Id::new(
+                crate::right_panel::project_info::PPQ_RESCALE_PENDING_ID,
+            ))
+        });
     }
 }

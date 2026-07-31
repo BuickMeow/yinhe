@@ -7,7 +7,7 @@
 //! 完成后 [`crate::app::poll`] 检测到结果，把新 model 替换回 doc 并
 //! 调用 `commit_ppq(rescale=true)` 推 undo。
 
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 
 use eframe::egui;
 
@@ -72,13 +72,18 @@ impl App {
         if self.rescale.is_running() {
             return;
         }
-        let req: Option<RescaleRequest> = ctx.data(|d| d.get_temp(egui::Id::new(RESCALE_REQUEST_ID)));
+        let req: Option<RescaleRequest> =
+            ctx.data(|d| d.get_temp(egui::Id::new(RESCALE_REQUEST_ID)));
         let Some(req) = req else { return };
         // 取出请求后立即清除，避免下帧重复启动。
         ctx.data_mut(|d| d.remove::<RescaleRequest>(egui::Id::new(RESCALE_REQUEST_ID)));
 
-        let Some(doc_idx) = self.active_doc else { return };
-        let Some(doc) = self.documents.get(doc_idx) else { return };
+        let Some(doc_idx) = self.active_doc else {
+            return;
+        };
+        let Some(doc) = self.documents.get(doc_idx) else {
+            return;
+        };
 
         // clone model（Arc clone，廉价；子线程内部 Arc::make_mut 才深拷贝）。
         let model = (*doc.data.model).clone();
@@ -88,7 +93,9 @@ impl App {
         if let Ok(mut p) = self.rescale.progress.lock() {
             *p = RescaleProgress::default();
         }
-        self.rescale.cancel.store(false, std::sync::atomic::Ordering::Relaxed);
+        self.rescale
+            .cancel
+            .store(false, std::sync::atomic::Ordering::Relaxed);
 
         let progress = self.rescale.progress.clone();
         let cancel = self.rescale.cancel.clone();
@@ -128,8 +135,11 @@ impl App {
         };
         // 收到结果：清理 rx。
         self.rescale.rx = None;
-        let (old_ppq, new_ppq, dragvalue_id, doc_idx) =
-            self.rescale.pending.take().expect("pending must be Some when rx was Some");
+        let (old_ppq, new_ppq, dragvalue_id, doc_idx) = self
+            .rescale
+            .pending
+            .take()
+            .expect("pending must be Some when rx was Some");
 
         match result {
             Ok(new_model) => {
@@ -138,17 +148,7 @@ impl App {
                     doc.data.model = std::sync::Arc::new(new_model);
                     doc.data.bump_revision();
                     // 推 undo（带 rescale 标志）。
-                    commit_ppq(
-                        &mut doc.history,
-                        &mut doc.edit.pending_edits,
-                        dragvalue_id,
-                        new_ppq,
-                        true, // rescale
-                        doc.edit.selected.clone(),
-                        doc.edit.track_selected.clone(),
-                        doc.edit.sel_rect.clone(),
-                        doc.edit.arr_sel_rect.clone(),
-                    );
+                    commit_ppq(doc, dragvalue_id, new_ppq, true); // rescale
                 }
             }
             Err(msg) => {
@@ -164,5 +164,3 @@ impl App {
         }
     }
 }
-
-

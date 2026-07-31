@@ -20,7 +20,10 @@ impl App {
         let mut remaining = ui.available_rect_before_wrap();
 
         let has_arr = self.view_mode.show_transport() && self.active_doc.is_some();
-        let has_piano = self.view_mode.show_pianoroll(self.show_pianoroll_in_arrange) && self.active_doc.is_some();
+        let has_piano = self
+            .view_mode
+            .show_pianoroll(self.show_pianoroll_in_arrange)
+            && self.active_doc.is_some();
 
         let right_panel_total_w = if self.right_tab.is_some() {
             let max_w = (remaining.width() - 60.0).max(crate::theme::RIGHT_PANEL_MIN_WIDTH + 4.0);
@@ -139,7 +142,9 @@ impl App {
             );
             let Some(idx) = self.active_doc else { return };
             self.documents[idx].edit.selected = sel;
-            self.with_undo(t!("undo.eraser_arrange").as_ref(), |doc| doc.delete_selected());
+            self.with_undo(t!("undo.eraser_arrange").as_ref(), |doc| {
+                doc.delete_selected()
+            });
         }
 
         // Handle AR drag after guard is dropped (no outstanding borrow on self.documents)
@@ -155,7 +160,10 @@ impl App {
         }
 
         // Pianoroll area
-        if self.view_mode.show_pianoroll(self.show_pianoroll_in_arrange) {
+        if self
+            .view_mode
+            .show_pianoroll(self.show_pianoroll_in_arrange)
+        {
             self.show_pianoroll_split(ui, layout, idx, is_playing, &mut follow_mode);
         }
 
@@ -325,8 +333,7 @@ impl App {
                 let editing = doc.edit.editing_track;
                 let pr_visible: Vec<bool> = (0..doc.edit.track_visible.len())
                     .map(|i| {
-                        let selected = show_all
-                            || doc.edit.track_selected.contains(&(i as u16));
+                        let selected = show_all || doc.edit.track_selected.contains(&(i as u16));
                         let is_editing = editing == Some(i as u16);
                         doc.edit.track_visible[i] && (selected || is_editing)
                     })
@@ -369,7 +376,11 @@ impl App {
                         .edit
                         .editing_track
                         .filter(|&t| {
-                            doc.edit.track_visible.get(t as usize).copied().unwrap_or(true)
+                            doc.edit
+                                .track_visible
+                                .get(t as usize)
+                                .copied()
+                                .unwrap_or(true)
                         })
                         .filter(|&t| Some(t) != doc.edit.conductor_track_idx);
                     match edit_trk {
@@ -485,7 +496,9 @@ impl App {
                     let mut sel = yinhe_core::Selection::default();
                     sel.add_rect_track(t_start, t_end, key_lo, key_hi, track_lo, track_hi);
                     self.documents[idx].edit.selected = sel;
-                    self.with_undo(t!("undo.eraser_delete").as_ref(), |doc| doc.delete_selected());
+                    self.with_undo(t!("undo.eraser_delete").as_ref(), |doc| {
+                        doc.delete_selected()
+                    });
                 }
                 PianoViewEvent::QuantizePreset(preset) => {
                     let Some(idx) = self.active_doc else { return };
@@ -518,16 +531,10 @@ impl App {
     fn handle_velocity_edits(&mut self, edits: &[yinhe_types::VelocityEdit]) {
         let Some(idx) = self.active_doc else { return };
         let doc = &mut self.documents[idx];
+        let before = doc.capture_snapshot();
         if let Some(action) = doc.set_notes_velocity(edits) {
             self.pianoroll_view.base.dirty = true;
-            doc.history.push(yinhe_editor_core::history::UndoEntry {
-                action,
-                label: t!("undo.edit_velocity").to_string(),
-                selected: doc.edit.selected.clone(),
-                track_selected: doc.edit.track_selected.clone(),
-                sel_rect: doc.edit.sel_rect.clone(),
-                arr_sel_rect: doc.edit.arr_sel_rect.clone(),
-            });
+            doc.push_undo(action, t!("undo.edit_velocity").as_ref(), before);
             // 纯音符 velocity 修改：只更新 audible_notes，不重建 CC，不 chase
             self.notify_notes_changed();
         }
@@ -541,10 +548,11 @@ impl App {
         let Some(idx) = self.active_doc else { return };
         let doc = &mut self.documents[idx];
 
+        let before = doc.capture_snapshot();
         let actions = doc.apply_automation_edits(edits);
         if !actions.is_empty() {
             self.pianoroll_view.base.dirty = true;
-            push_automation_actions(doc, actions, t!("undo.edit_automation").as_ref());
+            push_automation_actions(doc, actions, t!("undo.edit_automation").as_ref(), before);
             self.notify_audio_model_changed();
         }
     }
@@ -552,9 +560,16 @@ impl App {
     /// Handle note drag — called once on release.
     /// 处理事件浏览器的跳转请求：设置 cursor_tick、切到 piano roll 视图、
     /// 切 editing_track（音符/automation 事件）、滚动到中心、启动闪烁动画。
-    fn handle_jump_request(&mut self, req: crate::right_panel::event_browser::JumpRequest, layout: &LayoutInfo) {
+    fn handle_jump_request(
+        &mut self,
+        req: crate::right_panel::event_browser::JumpRequest,
+        layout: &LayoutInfo,
+    ) {
         // 1. 切到 piano roll 视图（如果当前不在）
-        if !self.view_mode.show_pianoroll(self.show_pianoroll_in_arrange) {
+        if !self
+            .view_mode
+            .show_pianoroll(self.show_pianoroll_in_arrange)
+        {
             self.view_mode = crate::chrome::mode_bar::ViewMode::Edit;
         }
 
@@ -593,21 +608,21 @@ impl App {
         if let Some((delta_ticks, delta_keys, alt)) = note_drag_delta {
             let Some(idx) = self.active_doc else { return };
             let doc = &mut self.documents[idx];
+            let before = doc.capture_snapshot();
             let (action, label) = if alt {
-                (doc.duplicate_selected_to(delta_ticks, delta_keys), t!("undo.duplicate_move").to_string())
+                (
+                    doc.duplicate_selected_to(delta_ticks, delta_keys),
+                    t!("undo.duplicate_move").to_string(),
+                )
             } else {
-                (doc.move_selected_notes(delta_ticks, delta_keys), t!("undo.move_notes").to_string())
+                (
+                    doc.move_selected_notes(delta_ticks, delta_keys),
+                    t!("undo.move_notes").to_string(),
+                )
             };
             if let Some(action) = action {
                 self.pianoroll_view.base.dirty = true;
-                doc.history.push(yinhe_editor_core::history::UndoEntry {
-                    action,
-                    label,
-                    selected: doc.edit.selected.clone(),
-                    track_selected: doc.edit.track_selected.clone(),
-                    sel_rect: doc.edit.sel_rect.clone(),
-                    arr_sel_rect: doc.edit.arr_sel_rect.clone(),
-                });
+                doc.push_undo(action, &label, before);
                 // 纯音符移动/复制：只更新 audible_notes，不重建 CC，不 chase
                 self.notify_notes_changed();
             }
@@ -616,20 +631,17 @@ impl App {
 
     /// Handle note resize: shift one edge of all selected notes by `dt` ticks.
     /// 选框工具边缘拖动伸缩：所有选中音符的 start_tick (Left) 或 end_tick (Right) 统一偏移。
-    fn handle_note_resize(&mut self, note_resize_delta: Option<(crate::piano_view::ResizeSide, i64)>) {
+    fn handle_note_resize(
+        &mut self,
+        note_resize_delta: Option<(crate::piano_view::ResizeSide, i64)>,
+    ) {
         if let Some((side, dt)) = note_resize_delta {
             let Some(idx) = self.active_doc else { return };
             let doc = &mut self.documents[idx];
+            let before = doc.capture_snapshot();
             if let Some(action) = doc.resize_selected_notes(side, dt) {
                 self.pianoroll_view.base.dirty = true;
-                doc.history.push(yinhe_editor_core::history::UndoEntry {
-                    action,
-                    label: t!("undo.resize_notes").to_string(),
-                    selected: doc.edit.selected.clone(),
-                    track_selected: doc.edit.track_selected.clone(),
-                    sel_rect: doc.edit.sel_rect.clone(),
-                    arr_sel_rect: doc.edit.arr_sel_rect.clone(),
-                });
+                doc.push_undo(action, t!("undo.resize_notes").as_ref(), before);
                 self.notify_notes_changed();
             }
         }
@@ -640,19 +652,14 @@ impl App {
         let Some(drag) = drag else { return };
         let Some(idx) = self.active_doc else { return };
         let doc = &mut self.documents[idx];
+        let before = doc.capture_snapshot();
         if let Some(action) = doc.pencil_drag_note(&drag) {
             self.pianoroll_view.base.dirty = true;
-            doc.history.push(yinhe_editor_core::history::UndoEntry {
-                action,
-                label: match &drag {
-                    crate::piano_view::PencilNoteDrag::Move { .. } => t!("undo.move_note").to_string(),
-                    _ => t!("undo.resize_note").to_string(),
-                },
-                selected: doc.edit.selected.clone(),
-                track_selected: doc.edit.track_selected.clone(),
-                sel_rect: doc.edit.sel_rect.clone(),
-                arr_sel_rect: doc.edit.arr_sel_rect.clone(),
-            });
+            let label = match &drag {
+                crate::piano_view::PencilNoteDrag::Move { .. } => t!("undo.move_note").to_string(),
+                _ => t!("undo.resize_note").to_string(),
+            };
+            doc.push_undo(action, &label, before);
             // 纯音符拖动/缩放：只更新 audible_notes，不重建 CC，不 chase
             self.notify_notes_changed();
         }
@@ -667,16 +674,10 @@ impl App {
         let Some(idx) = self.active_doc else { return };
         let doc = &mut self.documents[idx];
 
+        let before = doc.capture_snapshot();
         if let Some(action) = doc.move_selected_arrange(delta_ticks, delta_tracks) {
             self.arrange_view.base.dirty = true;
-            doc.history.push(yinhe_editor_core::history::UndoEntry {
-                action,
-                label: t!("undo.move_in_arrange").to_string(),
-                selected: doc.edit.selected.clone(),
-                track_selected: doc.edit.track_selected.clone(),
-                sel_rect: doc.edit.sel_rect.clone(),
-                arr_sel_rect: doc.edit.arr_sel_rect.clone(),
-            });
+            doc.push_undo(action, t!("undo.move_in_arrange").as_ref(), before);
             self.notify_audio_model_changed();
         }
     }

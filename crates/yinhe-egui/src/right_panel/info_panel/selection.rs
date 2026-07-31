@@ -12,7 +12,6 @@ use yinhe_editor_core::batch_ops::summarize_selected;
 use yinhe_editor_core::document::Document;
 use yinhe_editor_core::document::automation_edit::AnchorField;
 use yinhe_editor_core::document::note_edit::NoteField;
-use yinhe_editor_core::history::{UndoAction, UndoEntry};
 use yinhe_editor_core::num_expr::{NumOp, apply_ops, parse_num_expr};
 use yinhe_types::time_format::{format_tick_bar_beat_with_time_sig, parse_bar_beat_tick};
 use yinhe_types::{AnchorSelRect, AutomationTarget, TimeSigEvent};
@@ -230,8 +229,9 @@ pub(super) fn show(ui: &mut egui::Ui, doc: &mut Document) {
                 fmt_int,
                 None,
                 |ops| {
+                    let before = doc.capture_snapshot();
                     if let Some(action) = doc.apply_note_field_edit(NoteField::Velocity, &ops) {
-                        push_undo(doc, action, t!("undo.batch_edit").as_ref());
+                        doc.push_undo(action, t!("undo.batch_edit").as_ref(), before);
                     }
                 },
             );
@@ -243,8 +243,9 @@ pub(super) fn show(ui: &mut egui::Ui, doc: &mut Document) {
                 fmt_int,
                 None,
                 |ops| {
+                    let before = doc.capture_snapshot();
                     if let Some(action) = doc.apply_note_field_edit(NoteField::Gate, &ops) {
-                        push_undo(doc, action, t!("undo.batch_edit").as_ref());
+                        doc.push_undo(action, t!("undo.batch_edit").as_ref(), before);
                     }
                 },
             );
@@ -257,8 +258,9 @@ pub(super) fn show(ui: &mut egui::Ui, doc: &mut Document) {
                 fmt_int,
                 Some(&interval_hint),
                 |ops| {
+                    let before = doc.capture_snapshot();
                     if let Some(action) = doc.apply_note_field_edit(NoteField::Key, &ops) {
-                        push_undo(doc, action, t!("undo.batch_edit").as_ref());
+                        doc.push_undo(action, t!("undo.batch_edit").as_ref(), before);
                     }
                 },
             );
@@ -270,8 +272,9 @@ pub(super) fn show(ui: &mut egui::Ui, doc: &mut Document) {
                 fmt_int,
                 None,
                 |ops| {
+                    let before = doc.capture_snapshot();
                     if let Some(action) = doc.apply_note_field_edit(NoteField::Tick, &ops) {
-                        push_undo(doc, action, t!("undo.batch_edit").as_ref());
+                        doc.push_undo(action, t!("undo.batch_edit").as_ref(), before);
                     }
                 },
             );
@@ -287,10 +290,11 @@ pub(super) fn show(ui: &mut egui::Ui, doc: &mut Document) {
                 fmt_val,
                 None,
                 |ops| {
+                    let before = doc.capture_snapshot();
                     if let Some(action) =
                         doc.apply_anchor_field_edit(panel_idx, AnchorField::Value, &ops)
                     {
-                        push_undo(doc, action, t!("undo.batch_edit").as_ref());
+                        doc.push_undo(action, t!("undo.batch_edit").as_ref(), before);
                     }
                     doc.edit.controller_panels[panel_idx].dirty = true;
                 },
@@ -303,10 +307,11 @@ pub(super) fn show(ui: &mut egui::Ui, doc: &mut Document) {
                 fmt_int,
                 None,
                 |ops| {
+                    let before = doc.capture_snapshot();
                     if let Some(action) =
                         doc.apply_anchor_field_edit(panel_idx, AnchorField::Tick, &ops)
                     {
-                        push_undo(doc, action, t!("undo.batch_edit").as_ref());
+                        doc.push_undo(action, t!("undo.batch_edit").as_ref(), before);
                     }
                     doc.edit.controller_panels[panel_idx].dirty = true;
                 },
@@ -407,18 +412,6 @@ fn field_row(
     });
 }
 
-/// push 一个音符/锚点批量编辑的 undo entry。
-fn push_undo(doc: &mut Document, action: UndoAction, label: &str) {
-    doc.history.push(UndoEntry {
-        action,
-        label: label.to_string(),
-        selected: doc.edit.selected.clone(),
-        track_selected: doc.edit.track_selected.clone(),
-        sel_rect: doc.edit.sel_rect.clone(),
-        arr_sel_rect: doc.edit.arr_sel_rect.clone(),
-    });
-}
-
 /// 变速编辑区：tick 数 / bar.beat.tick / 倍率，三框同步（应用后统一刷新）。
 ///
 /// 框 1（tick 数）：支持表达式（赋值/加减乘除）。
@@ -487,8 +480,9 @@ fn tempo_section(ui: &mut egui::Ui, doc: &mut Document, view: SelView, t0: f64, 
     if let Some(new_span) = s1.or(s2).or(s3) {
         match view {
             SelView::Pr | SelView::Ar => {
+                let before = doc.capture_snapshot();
                 if let Some(action) = doc.rescale_selection_span(new_span) {
-                    push_undo(doc, action, t!("undo.rescale_span").as_ref());
+                    doc.push_undo(action, t!("undo.rescale_span").as_ref(), before);
                 }
             }
             SelView::Am => {
@@ -499,8 +493,9 @@ fn tempo_section(ui: &mut egui::Ui, doc: &mut Document, view: SelView, t0: f64, 
                     .iter()
                     .position(|p| !p.show_velocity && !p.anchor_sel_rects.is_empty());
                 if let Some(panel_idx) = panel_idx {
+                    let before = doc.capture_snapshot();
                     if let Some(action) = doc.rescale_anchor_span(panel_idx, new_span) {
-                        push_undo(doc, action, t!("undo.rescale_span").as_ref());
+                        doc.push_undo(action, t!("undo.rescale_span").as_ref(), before);
                         doc.edit.controller_panels[panel_idx].dirty = true;
                     }
                 }

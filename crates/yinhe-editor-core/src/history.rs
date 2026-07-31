@@ -15,9 +15,9 @@ pub mod commit;
 mod tests;
 
 pub use commit::{
-    begin_edit, commit_artist, commit_compression_level, commit_description,
-    commit_ppq, commit_project_name, commit_track_name,
-    PendingEdits, UndoEntry, UndoStack,
+    EditSnapshot, PendingEdits, UndoEntry, UndoStack, begin_edit, commit_artist,
+    commit_compression_level, commit_description, commit_ppq, commit_project_name,
+    commit_track_name,
 };
 
 /// Maximum number of past edits kept in the undo stack.
@@ -112,11 +112,27 @@ pub enum UndoAction {
         new: String,
     },
     /// Project metadata was edited.
-    ProjectName { old: String, new: String },
-    ProjectArtist { old: String, new: String },
-    ProjectDescription { old: String, new: String },
-    ProjectPpq { old: u32, new: u32, rescale: bool },
-    CompressionLevel { old: i32, new: i32 },
+    ProjectName {
+        old: String,
+        new: String,
+    },
+    ProjectArtist {
+        old: String,
+        new: String,
+    },
+    ProjectDescription {
+        old: String,
+        new: String,
+    },
+    ProjectPpq {
+        old: u32,
+        new: u32,
+        rescale: bool,
+    },
+    CompressionLevel {
+        old: i32,
+        new: i32,
+    },
     /// 事件列表整体替换（time_sig / key_sig / marker / lyrics / chord / program_change
     /// 等所有 conductor 级或 per-track 级事件列表共用）。具体目标由 `target` 指定。
     EventList(EventListDelta),
@@ -132,9 +148,9 @@ pub enum UndoAction {
     TrackStructure {
         tracks_before: Vec<Arc<yinhe_core::TrackData>>,
         tracks_after: Vec<Arc<yinhe_core::TrackData>>,
-        note_remap: Vec<u16>,  // old_track → new_track (u16::MAX = deleted)
-        note_remap_inverse: Vec<u16>,  // new_track -> old_track (for undo)
-        deleted_notes: Vec<(Note, u8)>,  // 被 remove_track 删掉的音符（含 key），用于 undo 恢复
+        note_remap: Vec<u16>, // old_track → new_track (u16::MAX = deleted)
+        note_remap_inverse: Vec<u16>, // new_track -> old_track (for undo)
+        deleted_notes: Vec<(Note, u8)>, // 被 remove_track 删掉的音符（含 key），用于 undo 恢复
     },
     /// Multiple actions applied atomically (undo/redo as a single step).
     Composite(Vec<UndoAction>),
@@ -156,9 +172,17 @@ impl UndoAction {
                 std::mem::swap(&mut delta.before, &mut delta.after);
                 UndoAction::Automation(delta)
             }
-            UndoAction::TrackName { track_idx, mut old, mut new } => {
+            UndoAction::TrackName {
+                track_idx,
+                mut old,
+                mut new,
+            } => {
                 std::mem::swap(&mut old, &mut new);
-                UndoAction::TrackName { track_idx, old, new }
+                UndoAction::TrackName {
+                    track_idx,
+                    old,
+                    new,
+                }
             }
             UndoAction::ProjectName { mut old, mut new } => {
                 std::mem::swap(&mut old, &mut new);
@@ -177,10 +201,9 @@ impl UndoAction {
                 new: old,
                 rescale,
             },
-            UndoAction::CompressionLevel { old, new } => UndoAction::CompressionLevel {
-                old: new,
-                new: old,
-            },
+            UndoAction::CompressionLevel { old, new } => {
+                UndoAction::CompressionLevel { old: new, new: old }
+            }
             UndoAction::EventList(mut delta) => {
                 std::mem::swap(&mut delta.old, &mut delta.new);
                 UndoAction::EventList(delta)
@@ -208,9 +231,7 @@ impl UndoAction {
             UndoAction::Composite(actions) => {
                 // Reverse order so that reversed().redo() undoes in reverse order,
                 // matching the original undo() semantics.
-                UndoAction::Composite(
-                    actions.into_iter().rev().map(|a| a.reversed()).collect(),
-                )
+                UndoAction::Composite(actions.into_iter().rev().map(|a| a.reversed()).collect())
             }
         }
     }

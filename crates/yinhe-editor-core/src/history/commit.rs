@@ -3,7 +3,9 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use yinhe_core::Selection;
+use yinhe_types::AnchorSelRect;
 
+use crate::document::Document;
 use crate::edit_state::SelRectState;
 
 use super::UndoAction;
@@ -12,15 +14,23 @@ use super::UndoAction;
 // UndoEntry
 // ---------------------------------------------------------------------------
 
+/// 编辑前捕获的界面状态快照（undo/redo 恢复用）。
+#[derive(Clone, Default)]
+pub struct EditSnapshot {
+    pub selected: Selection,
+    pub track_selected: HashSet<u16>,
+    pub sel_rect: SelRectState,
+    /// AR 选框（f64 tick + usize track）。
+    pub arr_sel_rect: Vec<(f64, f64, usize, usize)>,
+    /// 每面板的 AM 选框（controller_panels 顺序）。
+    pub anchor_sel_rects: Vec<Vec<AnchorSelRect>>,
+}
+
 /// A single entry on the undo/redo stack.
 pub struct UndoEntry {
     pub action: UndoAction,
     pub label: String,
-    pub selected: Selection,
-    pub track_selected: HashSet<u16>,
-    pub sel_rect: SelRectState,
-    /// AR 选框，与 sel_rect 一样随 undo 快照/恢复。
-    pub arr_sel_rect: Vec<(f64, f64, usize, usize)>,
+    pub snapshot: EditSnapshot,
 }
 
 // ---------------------------------------------------------------------------
@@ -158,89 +168,77 @@ pub fn begin_edit(pending: &mut PendingEdits, id: u64, old_value: &str) {
 }
 
 /// Generic commit: take old value from pending, compare with new, push undo entry if changed.
+///
+/// 快照在 push 时捕获（`doc.capture_snapshot()`）：文本类编辑不改变选区/选框，
+/// 捕获时刻的界面状态即编辑前的状态。
 fn commit_field<T: PartialEq>(
-    stack: &mut UndoStack,
-    pending: &mut PendingEdits,
+    doc: &mut Document,
     id: u64,
     new_value: T,
     parse_old: impl FnOnce(&str) -> T,
     make_action: impl FnOnce(T, T) -> UndoAction,
     label: &str,
-    selected: Selection,
-    track_selected: HashSet<u16>,
-    sel_rect: SelRectState,
-    arr_sel_rect: Vec<(f64, f64, usize, usize)>,
 ) {
-    let Some(old_str) = pending.take(id) else { return; };
+    let Some(old_str) = doc.edit.pending_edits.take(id) else {
+        return;
+    };
     let old = parse_old(&old_str);
-    if old == new_value { return; }
-    stack.push(UndoEntry {
-        action: make_action(old, new_value),
-        label: label.to_string(),
-        selected,
-        track_selected,
-        sel_rect,
-        arr_sel_rect,
-    });
+    if old == new_value {
+        return;
+    }
+    let snapshot = doc.capture_snapshot();
+    doc.push_undo(make_action(old, new_value), label, snapshot);
 }
 
 /// Commit a track-name edit.
-pub fn commit_track_name(
-    stack: &mut UndoStack, pending: &mut PendingEdits, id: u64,
-    track_idx: usize, new_name: &str,
-    selected: Selection, track_selected: HashSet<u16>, sel_rect: SelRectState,
-    arr_sel_rect: Vec<(f64, f64, usize, usize)>,
-) {
+pub fn commit_track_name(doc: &mut Document, id: u64, track_idx: usize, new_name: &str) {
     commit_field(
-        stack, pending, id, new_name.to_string(),
+        doc,
+        id,
+        new_name.to_string(),
         |s| s.to_string(),
-        |old, new| UndoAction::TrackName { track_idx, old, new },
-        "Edit track name", selected, track_selected, sel_rect, arr_sel_rect,
+        |old, new| UndoAction::TrackName {
+            track_idx,
+            old,
+            new,
+        },
+        "Edit track name",
     );
 }
 
 /// Commit a project-name edit.
-pub fn commit_project_name(
-    stack: &mut UndoStack, pending: &mut PendingEdits, id: u64,
-    new_value: &str,
-    selected: Selection, track_selected: HashSet<u16>, sel_rect: SelRectState,
-    arr_sel_rect: Vec<(f64, f64, usize, usize)>,
-) {
+pub fn commit_project_name(doc: &mut Document, id: u64, new_value: &str) {
     commit_field(
-        stack, pending, id, new_value.to_string(),
+        doc,
+        id,
+        new_value.to_string(),
         |s| s.to_string(),
         |old, new| UndoAction::ProjectName { old, new },
-        "Edit project name", selected, track_selected, sel_rect, arr_sel_rect,
+        "Edit project name",
     );
 }
 
 /// Commit an artist edit.
-pub fn commit_artist(
-    stack: &mut UndoStack, pending: &mut PendingEdits, id: u64,
-    new_value: &str,
-    selected: Selection, track_selected: HashSet<u16>, sel_rect: SelRectState,
-    arr_sel_rect: Vec<(f64, f64, usize, usize)>,
-) {
+pub fn commit_artist(doc: &mut Document, id: u64, new_value: &str) {
     commit_field(
-        stack, pending, id, new_value.to_string(),
+        doc,
+        id,
+        new_value.to_string(),
         |s| s.to_string(),
         |old, new| UndoAction::ProjectArtist { old, new },
-        "Edit artist", selected, track_selected, sel_rect, arr_sel_rect,
+        "Edit artist",
     );
 }
 
 /// Commit a description edit.
-pub fn commit_description(
-    stack: &mut UndoStack, pending: &mut PendingEdits, id: u64,
-    new_value: &str,
-    selected: Selection, track_selected: HashSet<u16>, sel_rect: SelRectState,
-    arr_sel_rect: Vec<(f64, f64, usize, usize)>,
-) {
+pub fn commit_description(doc: &mut Document, id: u64, new_value: &str) {
     commit_field(
-        stack, pending, id, new_value.to_string(),
+        doc,
+        id,
+        new_value.to_string(),
         |s| s.to_string(),
         |old, new| UndoAction::ProjectDescription { old, new },
-        "Edit description", selected, track_selected, sel_rect, arr_sel_rect,
+        "Edit description",
     );
 }
 
@@ -248,31 +246,25 @@ pub fn commit_description(
 ///
 /// `rescale` = true 表示此次 PPQ 变更同时 rescale 了所有音符/automation 的 tick，
 /// undo/redo 需要反向 rescale 还原。
-pub fn commit_ppq(
-    stack: &mut UndoStack, pending: &mut PendingEdits, id: u64,
-    new_value: u32, rescale: bool,
-    selected: Selection, track_selected: HashSet<u16>, sel_rect: SelRectState,
-    arr_sel_rect: Vec<(f64, f64, usize, usize)>,
-) {
+pub fn commit_ppq(doc: &mut Document, id: u64, new_value: u32, rescale: bool) {
     commit_field(
-        stack, pending, id, new_value,
+        doc,
+        id,
+        new_value,
         |s| s.parse().unwrap_or(480),
         |old, new| UndoAction::ProjectPpq { old, new, rescale },
-        "Edit PPQ", selected, track_selected, sel_rect, arr_sel_rect,
+        "Edit PPQ",
     );
 }
 
 /// Commit a compression-level edit.
-pub fn commit_compression_level(
-    stack: &mut UndoStack, pending: &mut PendingEdits, id: u64,
-    new_value: i32,
-    selected: Selection, track_selected: HashSet<u16>, sel_rect: SelRectState,
-    arr_sel_rect: Vec<(f64, f64, usize, usize)>,
-) {
+pub fn commit_compression_level(doc: &mut Document, id: u64, new_value: i32) {
     commit_field(
-        stack, pending, id, new_value,
+        doc,
+        id,
+        new_value,
         |s| s.parse().unwrap_or(3),
         |old, new| UndoAction::CompressionLevel { old, new },
-        "Edit zstd level", selected, track_selected, sel_rect, arr_sel_rect,
+        "Edit zstd level",
     );
 }

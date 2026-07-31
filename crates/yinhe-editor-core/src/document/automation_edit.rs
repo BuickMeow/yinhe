@@ -780,4 +780,18 @@ mod tests {
         let mut doc = make_doc_with_anchor();
         assert!(doc.rescale_anchor_span(0, 250).is_none());
     }
+
+    #[test]
+    fn rescale_anchor_undo_restores_rect() {
+        let mut doc = make_doc_with_anchor();
+        let before = doc.capture_snapshot();
+        let action = doc.rescale_anchor_span(0, 500).expect("should edit");
+        doc.push_undo(action, "rescale", before);
+        assert!(doc.undo(), "undo 应成功");
+        let lane = &doc.data.model.tracks[0].automation_lanes[0];
+        assert_eq!(lane.events[0].tick, 100, "锚点 tick 恢复");
+        let rect = doc.edit.controller_panels[0].anchor_sel_rects[0];
+        assert_eq!(rect.tick_start, 0.0, "AM 选框恢复");
+        assert_eq!(rect.tick_end, 250.0);
+    }
 }

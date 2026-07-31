@@ -9,7 +9,7 @@ use eframe::egui;
 
 use rust_i18n::t;
 use yinhe_editor_core::document::Document;
-use yinhe_editor_core::history::{NoteDelta, UndoAction, UndoEntry};
+use yinhe_editor_core::history::{EditSnapshot, NoteDelta, UndoAction};
 use yinhe_types::{Note, PencilNoteDrag};
 
 use super::super::bar_lookup::BarLookup;
@@ -28,15 +28,23 @@ pub fn apply_note_popups(
 ) {
     if let Some(req) = peek_pos_edit_request(ui, salt) {
         match req {
-            EditRequest::NoteStartTick { note } => show_note_start_tick_popup(ui, doc, salt, note, Some(bar_lookup)),
-            EditRequest::NoteEndTick { note } => show_note_end_tick_popup(ui, doc, salt, note, Some(bar_lookup)),
+            EditRequest::NoteStartTick { note } => {
+                show_note_start_tick_popup(ui, doc, salt, note, Some(bar_lookup))
+            }
+            EditRequest::NoteEndTick { note } => {
+                show_note_end_tick_popup(ui, doc, salt, note, Some(bar_lookup))
+            }
             _ => remove_pos_edit_request(ui, salt),
         }
         return;
     }
-    let Some(req) = peek_edit_request(ui, salt) else { return };
+    let Some(req) = peek_edit_request(ui, salt) else {
+        return;
+    };
     match req {
-        EditRequest::NoteStartTick { note } => show_note_start_tick_popup(ui, doc, salt, note, None),
+        EditRequest::NoteStartTick { note } => {
+            show_note_start_tick_popup(ui, doc, salt, note, None)
+        }
         EditRequest::NoteEndTick { note } => show_note_end_tick_popup(ui, doc, salt, note, None),
         EditRequest::NoteGate { note } => show_note_gate_popup(ui, doc, salt, note),
         EditRequest::NoteKey { note } => show_note_key_popup(ui, doc, salt, note),
@@ -47,7 +55,9 @@ pub fn apply_note_popups(
 
 /// 在 key 桶中按 id 查找音符。
 fn find_note(model: &yinhe_core::YinModel, id: u32, key: u8) -> Option<Note> {
-    model.notes.get(key as usize)
+    model
+        .notes
+        .get(key as usize)
         .and_then(|bucket| bucket.iter().find(|n| n.id == id))
         .copied()
 }
@@ -61,26 +71,29 @@ fn note_fields_changed(a: &Note, b: &Note) -> bool {
 }
 
 /// 取 before/after 快照并 push NoteDelta undo（仅当字段变化时）。
+/// `snapshot` 必须是编辑**前**捕获的界面状态快照。
 fn push_note_undo(
     doc: &mut Document,
     before: Option<(Note, u8)>,
     after: Option<(Note, u8)>,
     label: &str,
+    snapshot: EditSnapshot,
 ) {
-    let Some((b_note, b_key)) = before else { return; };
-    let Some((a_note, a_key)) = after else { return; };
+    let Some((b_note, b_key)) = before else {
+        return;
+    };
+    let Some((a_note, a_key)) = after else {
+        return;
+    };
     if note_fields_changed(&b_note, &a_note) || b_key != a_key {
-        doc.history.push(UndoEntry {
-            action: UndoAction::Notes(NoteDelta {
+        doc.push_undo(
+            UndoAction::Notes(NoteDelta {
                 before: vec![(b_note, b_key)],
                 after: vec![(a_note, a_key)],
             }),
-            label: label.to_string(),
-            selected: doc.edit.selected.clone(),
-            track_selected: doc.edit.track_selected.clone(),
-            sel_rect: doc.edit.sel_rect.clone(),
-            arr_sel_rect: doc.edit.arr_sel_rect.clone(),
-        });
+            label,
+            snapshot,
+        );
     }
 }
 
@@ -91,10 +104,18 @@ fn show_note_start_tick_popup(
     note: NoteRef,
     bar_lookup: Option<&BarLookup>,
 ) {
-    let action = show_tick_popup(ui, salt, t!("event_browser.edit_tick").as_ref(), note.start_tick, 0, bar_lookup);
+    let action = show_tick_popup(
+        ui,
+        salt,
+        t!("event_browser.edit_tick").as_ref(),
+        note.start_tick,
+        0,
+        bar_lookup,
+    );
     match action {
         PopupAction::Closed(new_tick_f) => {
             let new_tick = new_tick_f as u32;
+            let snapshot = doc.capture_snapshot();
             let before = find_note(&doc.data.model, note.id, note.key).map(|n| (n, note.key));
             let delta_ticks = new_tick as i64 - note.start_tick as i64;
             doc.pencil_drag_note(&PencilNoteDrag::Move {
@@ -106,7 +127,13 @@ fn show_note_start_tick_popup(
             });
             // start_tick 改了，key 不变，仍在原 key 桶
             let after = find_note(&doc.data.model, note.id, note.key).map(|n| (n, note.key));
-            push_note_undo(doc, before, after, t!("undo.edit_anchor_tick").as_ref());
+            push_note_undo(
+                doc,
+                before,
+                after,
+                t!("undo.edit_anchor_tick").as_ref(),
+                snapshot,
+            );
             cleanup_edit_request(ui, salt);
         }
         PopupAction::Cancelled => cleanup_edit_request(ui, salt),
@@ -121,11 +148,18 @@ fn show_note_end_tick_popup(
     note: NoteRef,
     bar_lookup: Option<&BarLookup>,
 ) {
-    let action = show_tick_popup(ui, salt, t!("event_browser.edit_end_tick").as_ref(),
-        note.end_tick, note.start_tick + 1, bar_lookup);
+    let action = show_tick_popup(
+        ui,
+        salt,
+        t!("event_browser.edit_end_tick").as_ref(),
+        note.end_tick,
+        note.start_tick + 1,
+        bar_lookup,
+    );
     match action {
         PopupAction::Closed(new_end_f) => {
             let new_end = new_end_f as u32;
+            let snapshot = doc.capture_snapshot();
             let before = find_note(&doc.data.model, note.id, note.key).map(|n| (n, note.key));
             doc.pencil_drag_note(&PencilNoteDrag::ResizeRight {
                 track: note.track,
@@ -134,7 +168,13 @@ fn show_note_end_tick_popup(
                 new_end_tick: new_end,
             });
             let after = find_note(&doc.data.model, note.id, note.key).map(|n| (n, note.key));
-            push_note_undo(doc, before, after, t!("undo.edit_anchor_tick").as_ref());
+            push_note_undo(
+                doc,
+                before,
+                after,
+                t!("undo.edit_anchor_tick").as_ref(),
+                snapshot,
+            );
             cleanup_edit_request(ui, salt);
         }
         PopupAction::Cancelled => cleanup_edit_request(ui, salt),
@@ -142,26 +182,25 @@ fn show_note_end_tick_popup(
     }
 }
 
-fn show_note_gate_popup(
-    ui: &mut egui::Ui,
-    doc: &mut Document,
-    salt: &str,
-    note: NoteRef,
-) {
+fn show_note_gate_popup(ui: &mut egui::Ui, doc: &mut Document, salt: &str, note: NoteRef) {
     let gate = note.end_tick.saturating_sub(note.start_tick);
-    let action = show_number_popup(ui, PopupConfig {
-        salt,
-        title: t!("event_browser.edit_gate").as_ref(),
-        initial: gate as f64,
-        range_min: 1.0,
-        range_max: u32::MAX as f64,
-        speed: 1.0,
-        fixed_decimals: None,
-    });
+    let action = show_number_popup(
+        ui,
+        PopupConfig {
+            salt,
+            title: t!("event_browser.edit_gate").as_ref(),
+            initial: gate as f64,
+            range_min: 1.0,
+            range_max: u32::MAX as f64,
+            speed: 1.0,
+            fixed_decimals: None,
+        },
+    );
     match action {
         PopupAction::Closed(new_gate_f) => {
             let new_gate = new_gate_f as u32;
             let new_end = note.start_tick + new_gate;
+            let snapshot = doc.capture_snapshot();
             let before = find_note(&doc.data.model, note.id, note.key).map(|n| (n, note.key));
             doc.pencil_drag_note(&PencilNoteDrag::ResizeRight {
                 track: note.track,
@@ -170,7 +209,13 @@ fn show_note_gate_popup(
                 new_end_tick: new_end,
             });
             let after = find_note(&doc.data.model, note.id, note.key).map(|n| (n, note.key));
-            push_note_undo(doc, before, after, t!("undo.edit_anchor_tick").as_ref());
+            push_note_undo(
+                doc,
+                before,
+                after,
+                t!("undo.edit_anchor_tick").as_ref(),
+                snapshot,
+            );
             cleanup_edit_request(ui, salt);
         }
         PopupAction::Cancelled => cleanup_edit_request(ui, salt),
@@ -178,24 +223,23 @@ fn show_note_gate_popup(
     }
 }
 
-fn show_note_key_popup(
-    ui: &mut egui::Ui,
-    doc: &mut Document,
-    salt: &str,
-    note: NoteRef,
-) {
-    let action = show_number_popup(ui, PopupConfig {
-        salt,
-        title: t!("event_browser.edit_key").as_ref(),
-        initial: note.key as f64,
-        range_min: 0.0,
-        range_max: 127.0,
-        speed: 1.0,
-        fixed_decimals: None,
-    });
+fn show_note_key_popup(ui: &mut egui::Ui, doc: &mut Document, salt: &str, note: NoteRef) {
+    let action = show_number_popup(
+        ui,
+        PopupConfig {
+            salt,
+            title: t!("event_browser.edit_key").as_ref(),
+            initial: note.key as f64,
+            range_min: 0.0,
+            range_max: 127.0,
+            speed: 1.0,
+            fixed_decimals: None,
+        },
+    );
     match action {
         PopupAction::Closed(new_key_f) => {
             let new_key = new_key_f as i32;
+            let snapshot = doc.capture_snapshot();
             let before = find_note(&doc.data.model, note.id, note.key).map(|n| (n, note.key));
             let delta_keys = new_key - note.key as i32;
             doc.pencil_drag_note(&PencilNoteDrag::Move {
@@ -206,8 +250,15 @@ fn show_note_key_popup(
                 delta_keys,
             });
             // key 改了，需在新 key 桶中查找 after
-            let after = find_note(&doc.data.model, note.id, new_key as u8).map(|n| (n, new_key as u8));
-            push_note_undo(doc, before, after, t!("undo.edit_anchor_tick").as_ref());
+            let after =
+                find_note(&doc.data.model, note.id, new_key as u8).map(|n| (n, new_key as u8));
+            push_note_undo(
+                doc,
+                before,
+                after,
+                t!("undo.edit_anchor_tick").as_ref(),
+                snapshot,
+            );
             cleanup_edit_request(ui, salt);
         }
         PopupAction::Cancelled => cleanup_edit_request(ui, salt),
@@ -215,28 +266,33 @@ fn show_note_key_popup(
     }
 }
 
-fn show_note_velocity_popup(
-    ui: &mut egui::Ui,
-    doc: &mut Document,
-    salt: &str,
-    note: NoteRef,
-) {
-    let action = show_number_popup(ui, PopupConfig {
-        salt,
-        title: t!("event_browser.edit_velocity").as_ref(),
-        initial: note.velocity as f64,
-        range_min: 0.0,
-        range_max: 127.0,
-        speed: 1.0,
-        fixed_decimals: None,
-    });
+fn show_note_velocity_popup(ui: &mut egui::Ui, doc: &mut Document, salt: &str, note: NoteRef) {
+    let action = show_number_popup(
+        ui,
+        PopupConfig {
+            salt,
+            title: t!("event_browser.edit_velocity").as_ref(),
+            initial: note.velocity as f64,
+            range_min: 0.0,
+            range_max: 127.0,
+            speed: 1.0,
+            fixed_decimals: None,
+        },
+    );
     match action {
         PopupAction::Closed(new_vel_f) => {
             let new_vel = new_vel_f as u8;
+            let snapshot = doc.capture_snapshot();
             let before = find_note(&doc.data.model, note.id, note.key).map(|n| (n, note.key));
             doc.set_note_velocity(note.track, note.start_tick, note.key, new_vel);
             let after = find_note(&doc.data.model, note.id, note.key).map(|n| (n, note.key));
-            push_note_undo(doc, before, after, t!("undo.edit_anchor_tick").as_ref());
+            push_note_undo(
+                doc,
+                before,
+                after,
+                t!("undo.edit_anchor_tick").as_ref(),
+                snapshot,
+            );
             cleanup_edit_request(ui, salt);
         }
         PopupAction::Cancelled => cleanup_edit_request(ui, salt),

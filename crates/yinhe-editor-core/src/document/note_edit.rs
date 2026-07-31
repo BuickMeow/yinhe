@@ -1007,4 +1007,22 @@ mod tests {
         doc.edit.selected.clear();
         assert!(doc.rescale_selection_span(200).is_none());
     }
+
+    #[test]
+    fn rescale_undo_restores_notes_and_rects() {
+        let mut doc = make_doc_with_note();
+        doc.edit.sel_rect.rects = vec![(100.0, 201.0, 60, 60)];
+        let before = doc.capture_snapshot();
+        let action = doc.rescale_selection_span(202).expect("should edit");
+        doc.push_undo(action, "rescale", before);
+        assert_eq!(doc.edit.selected.rects[0].1, 302, "编辑后选区跟随缩放");
+        assert!(doc.undo(), "undo 应成功");
+        // 音符与选区/选框都恢复编辑前状态
+        assert_eq!(doc.data.model.notes[60][0].end_tick, 200);
+        assert_eq!(doc.edit.selected.rects[0].1, 201);
+        assert_eq!(doc.edit.sel_rect.rects[0], (100.0, 201.0, 60, 60));
+        assert!(doc.redo(), "redo 应成功");
+        assert_eq!(doc.data.model.notes[60][0].end_tick, 300);
+        assert_eq!(doc.edit.selected.rects[0].1, 302);
+    }
 }

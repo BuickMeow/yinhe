@@ -30,7 +30,9 @@ use eframe::egui;
 use rust_i18n::t;
 
 use yinhe_editor_core::document::Document;
-use yinhe_editor_core::history::{EventListDelta, EventListItem, EventListTarget, UndoAction, UndoEntry};
+use yinhe_editor_core::history::{
+    EditSnapshot, EventListDelta, EventListItem, EventListTarget, UndoAction,
+};
 
 use super::bar_lookup::BarLookup;
 use super::table::{remove_edit_request, remove_pos_edit_request};
@@ -208,15 +210,18 @@ pub(super) fn show_tick_popup(
 ) -> PopupAction {
     match bar_lookup {
         Some(bl) => show_position_popup(ui, salt, title, bl, tick, min_tick),
-        None => show_number_popup(ui, PopupConfig {
-            salt,
-            title,
-            initial: tick as f64,
-            range_min: min_tick as f64,
-            range_max: u32::MAX as f64,
-            speed: 1.0,
-            fixed_decimals: None,
-        }),
+        None => show_number_popup(
+            ui,
+            PopupConfig {
+                salt,
+                title,
+                initial: tick as f64,
+                range_min: min_tick as f64,
+                range_max: u32::MAX as f64,
+                speed: 1.0,
+                fixed_decimals: None,
+            },
+        ),
     }
 }
 
@@ -237,7 +242,11 @@ pub(super) fn show_position_popup(
     let state_id = egui::Id::new((salt, "pos_state"));
     let popup_id = ui.id().with((salt, "pos_popup"));
 
-    let mut tick_f = ui.memory(|m| m.data.get_temp::<f64>(state_id).unwrap_or(current_tick as f64));
+    let mut tick_f = ui.memory(|m| {
+        m.data
+            .get_temp::<f64>(state_id)
+            .unwrap_or(current_tick as f64)
+    });
     let mut open = true;
     let mut cancelled = false;
     let popup_pos = ui.clip_rect().min + egui::vec2(20.0, 20.0);
@@ -254,14 +263,22 @@ pub(super) fn show_position_popup(
                 let mut bar_f = bar as f64;
                 let mut tib_f = tick_in_bar as f64;
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("小节").size(11.0).color(egui::Color32::GRAY));
+                    ui.label(
+                        egui::RichText::new("小节")
+                            .size(11.0)
+                            .color(egui::Color32::GRAY),
+                    );
                     ui.add(
                         crate::widgets::numeric_input::decimal_drag_value(&mut bar_f)
                             .range(1.0..=u32::MAX as f64)
                             .speed(1.0)
                             .fixed_decimals(0),
                     );
-                    ui.label(egui::RichText::new("/").size(11.0).color(egui::Color32::GRAY));
+                    ui.label(
+                        egui::RichText::new("/")
+                            .size(11.0)
+                            .color(egui::Color32::GRAY),
+                    );
                     ui.add(
                         crate::widgets::numeric_input::decimal_drag_value(&mut tib_f)
                             .range(0.0..=u32::MAX as f64)
@@ -271,10 +288,9 @@ pub(super) fn show_position_popup(
                 });
                 // 值比较：任一 dragvalue 变了就换算回 tick
                 if bar_f != bar as f64 || tib_f != tick_in_bar as f64 {
-                    tick_f = bar_lookup.position_to_tick(
-                        bar_f.max(1.0) as u32,
-                        tib_f.max(0.0) as u32,
-                    ) as f64;
+                    tick_f = bar_lookup
+                        .position_to_tick(bar_f.max(1.0) as u32, tib_f.max(0.0) as u32)
+                        as f64;
                     tick_f = tick_f.max(min_tick as f64);
                 }
                 ui.add_space(2.0);
@@ -307,22 +323,25 @@ pub(super) fn show_position_popup(
 
 /// 构造并 push `UndoAction::EventList`（before != after 时才 push）。
 /// 供 keysig/timesig/text/pc 共用：它们的 undo 都是"某事件列表整体替换"。
+/// `snapshot` 必须是编辑**前**捕获的界面状态快照。
 pub(super) fn push_event_list_undo(
     doc: &mut Document,
     target: EventListTarget,
     before: Vec<EventListItem>,
     after: Vec<EventListItem>,
     label: &str,
+    snapshot: EditSnapshot,
 ) {
     if before != after {
-        doc.history.push(UndoEntry {
-            action: UndoAction::EventList(EventListDelta { target, old: before, new: after }),
-            label: label.to_string(),
-            selected: doc.edit.selected.clone(),
-            track_selected: doc.edit.track_selected.clone(),
-            sel_rect: doc.edit.sel_rect.clone(),
-            arr_sel_rect: doc.edit.arr_sel_rect.clone(),
-        });
+        doc.push_undo(
+            UndoAction::EventList(EventListDelta {
+                target,
+                old: before,
+                new: after,
+            }),
+            label,
+            snapshot,
+        );
     }
 }
 

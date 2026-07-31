@@ -67,26 +67,54 @@ pub(super) fn show_track_info(
     if doc.edit.track_selected.len() > 1 {
         ui.add_space(4.0);
         ui.label(
-            egui::RichText::new(t!("track.selected_count", n = doc.edit.track_selected.len()).as_ref())
-                .strong()
-                .size(14.0)
-                .color(egui::Color32::from_gray(220)),
+            egui::RichText::new(
+                t!("track.selected_count", n = doc.edit.track_selected.len()).as_ref(),
+            )
+            .strong()
+            .size(14.0)
+            .color(egui::Color32::from_gray(220)),
         );
         ui.add_space(2.0);
 
-        let total_notes: u64 = doc.edit.track_selected.iter()
-            .map(|&idx| doc.edit.track_info_cache.get(idx as usize).map(|ti| ti.note_count).unwrap_or(0))
+        let total_notes: u64 = doc
+            .edit
+            .track_selected
+            .iter()
+            .map(|&idx| {
+                doc.edit
+                    .track_info_cache
+                    .get(idx as usize)
+                    .map(|ti| ti.note_count)
+                    .unwrap_or(0)
+            })
             .sum();
-        let total_events: u64 = doc.edit.track_selected.iter()
-            .map(|&idx| doc.edit.track_info_cache.get(idx as usize).map(|ti| ti.event_count).unwrap_or(0))
+        let total_events: u64 = doc
+            .edit
+            .track_selected
+            .iter()
+            .map(|&idx| {
+                doc.edit
+                    .track_info_cache
+                    .get(idx as usize)
+                    .map(|ti| ti.event_count)
+                    .unwrap_or(0)
+            })
             .sum();
 
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new(t!("track.total_notes").as_ref()).size(11.0).color(egui::Color32::GRAY));
+            ui.label(
+                egui::RichText::new(t!("track.total_notes").as_ref())
+                    .size(11.0)
+                    .color(egui::Color32::GRAY),
+            );
             ui.label(egui::RichText::new(format!("{}", total_notes)).size(11.0));
         });
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new(t!("track.total_events").as_ref()).size(11.0).color(egui::Color32::GRAY));
+            ui.label(
+                egui::RichText::new(t!("track.total_events").as_ref())
+                    .size(11.0)
+                    .color(egui::Color32::GRAY),
+            );
             ui.label(egui::RichText::new(format!("{}", total_events)).size(11.0));
         });
         ui.add_space(4.0);
@@ -99,7 +127,12 @@ pub(super) fn show_track_info(
         ui.add_space(8.0);
         ui.separator();
         ui.add_space(6.0);
-        if ui.add(egui::Button::new(egui::RichText::new(t!("common.clear_selection").as_ref()).size(12.0))).clicked() {
+        if ui
+            .add(egui::Button::new(
+                egui::RichText::new(t!("common.clear_selection").as_ref()).size(12.0),
+            ))
+            .clicked()
+        {
             *info_content = None;
         }
         return false;
@@ -162,7 +195,12 @@ pub(super) fn show_track_info(
         ui.add_space(8.0);
         ui.separator();
         ui.add_space(6.0);
-        if ui.add(egui::Button::new(egui::RichText::new(t!("common.clear_selection").as_ref()).size(12.0))).clicked() {
+        if ui
+            .add(egui::Button::new(
+                egui::RichText::new(t!("common.clear_selection").as_ref()).size(12.0),
+            ))
+            .clicked()
+        {
             *info_content = None;
         }
         return false;
@@ -202,17 +240,8 @@ pub(super) fn show_track_info(
             }
         }
         if name_lost_focus {
-            yinhe_editor_core::history::commit_track_name(
-                &mut doc.history,
-                &mut doc.edit.pending_edits,
-                id.value(),
-                track_idx,
-                &doc.data.track_names[track_idx],
-                doc.edit.selected.clone(),
-                doc.edit.track_selected.clone(),
-                doc.edit.sel_rect.clone(),
-                doc.edit.arr_sel_rect.clone(),
-            );
+            let name = doc.data.track_names[track_idx].clone();
+            yinhe_editor_core::history::commit_track_name(doc, id.value(), track_idx, &name);
         }
     }
     let ti = &doc.edit.track_info_cache[track_idx];
@@ -250,7 +279,10 @@ pub(super) fn show_track_info(
             .width(50.0)
             .show_ui(ui, |ui| {
                 for (i, label) in ch_options.iter().enumerate() {
-                    if ui.selectable_label(i + 1 == ti.channel as usize, label).clicked() {
+                    if ui
+                        .selectable_label(i + 1 == ti.channel as usize, label)
+                        .clicked()
+                    {
                         new_ch = (i + 1) as u8;
                         port_changed = true;
                     }
@@ -278,7 +310,8 @@ pub(super) fn show_track_info(
 
     // ── Mute / Solo ──
     while doc.edit.track_overrides.len() <= track_idx {
-        doc.edit.track_overrides
+        doc.edit
+            .track_overrides
             .push(yinhe_editor_core::document::TrackOverride::default());
     }
 
@@ -348,11 +381,19 @@ pub(super) fn show_track_info(
     ui.add_space(2.0);
 
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("音符数:").size(11.0).color(egui::Color32::GRAY));
+        ui.label(
+            egui::RichText::new("音符数:")
+                .size(11.0)
+                .color(egui::Color32::GRAY),
+        );
         ui.label(egui::RichText::new(format!("{}", ti.note_count)).size(11.0));
     });
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("事件数:").size(11.0).color(egui::Color32::GRAY));
+        ui.label(
+            egui::RichText::new("事件数:")
+                .size(11.0)
+                .color(egui::Color32::GRAY),
+        );
         ui.label(egui::RichText::new(format!("{}", ti.event_count)).size(11.0));
     });
 
@@ -360,7 +401,11 @@ pub(super) fn show_track_info(
     let global_ch = ti.port as u32 * 16 + (ti.channel as u32 - 1);
     if let Some(pc) = doc.edit.pc_map_cache.get(&(global_ch as u8)) {
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("音色:").size(11.0).color(egui::Color32::GRAY));
+            ui.label(
+                egui::RichText::new("音色:")
+                    .size(11.0)
+                    .color(egui::Color32::GRAY),
+            );
             ui.label(egui::RichText::new(format!("PC {}", pc)).size(11.0));
         });
     }
@@ -368,7 +413,12 @@ pub(super) fn show_track_info(
     ui.add_space(8.0);
     ui.separator();
     ui.add_space(6.0);
-    if ui.add(egui::Button::new(egui::RichText::new("清除选择").size(12.0))).clicked() {
+    if ui
+        .add(egui::Button::new(
+            egui::RichText::new("清除选择").size(12.0),
+        ))
+        .clicked()
+    {
         *info_content = None;
     }
 

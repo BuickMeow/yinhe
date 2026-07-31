@@ -6,10 +6,10 @@ use rust_i18n::t;
 
 use yinhe_types::ArrangementView;
 
-use yinhe_editor_core::document::Document;
-use yinhe_editor_core::quantize::QuantizePreset;
 use crate::render_context::RenderContext;
 use crate::widgets::tools_panel::Tool;
+use yinhe_editor_core::document::Document;
+use yinhe_editor_core::quantize::QuantizePreset;
 
 /// Height of the time ruler band at the top of the arrangement view.
 use crate::theme;
@@ -80,7 +80,10 @@ pub fn show(
     // show unclamped positions while the GPU content (clamped inside
     // arrangement_view_ui::show) stays at the boundary — producing a visible
     // "bounce-back" effect on the ruler labels.
-    let total_ticks = crate::view_interaction::total_ticks_padded(doc.data.model.tick_length, doc.data.model.meta.ppq);
+    let total_ticks = crate::view_interaction::total_ticks_padded(
+        doc.data.model.tick_length,
+        doc.data.model.meta.ppq,
+    );
     let num_tracks = doc.edit.track_visible.len();
     arr_view.clamp_scroll(gpu_rect.width(), gpu_rect.height(), total_ticks, num_tracks);
 
@@ -150,13 +153,18 @@ pub fn show(
             doc.edit.track_pianoroll_visible.resize(n, true);
         }
         if doc.edit.track_overrides.len() < n {
-            doc.edit.track_overrides
+            doc.edit
+                .track_overrides
                 .resize(n, yinhe_editor_core::document::TrackOverride::default());
         }
         if doc.edit.track_colors_cache.len() < n {
             for i in doc.edit.track_colors_cache.len()..n {
-                doc.edit.track_colors_cache
-                    .push(yinhe_editor_core::document::track_color(i, doc.edit.conductor_track_idx));
+                doc.edit
+                    .track_colors_cache
+                    .push(yinhe_editor_core::document::track_color(
+                        i,
+                        doc.edit.conductor_track_idx,
+                    ));
             }
         }
 
@@ -182,6 +190,7 @@ pub fn show(
 
         // Handle track management actions (add/remove/move)
         for action in track_actions {
+            let before = doc.capture_snapshot();
             let (undo_action, label) = match &action {
                 track_panel::TrackAction::AddTrack { after_idx } => {
                     let idx = after_idx.unwrap_or(doc.data.model.tracks.len() - 1);
@@ -192,28 +201,27 @@ pub fn show(
                 }
                 track_panel::TrackAction::MoveUp { idx } => {
                     if *idx > 0 {
-                        (doc.move_track(*idx, *idx - 1), t!("undo.move_track_up").to_string())
+                        (
+                            doc.move_track(*idx, *idx - 1),
+                            t!("undo.move_track_up").to_string(),
+                        )
                     } else {
                         (None, String::new())
                     }
                 }
                 track_panel::TrackAction::MoveDown { idx } => {
                     if *idx + 1 < doc.data.model.tracks.len() {
-                        (doc.move_track(*idx, *idx + 1), t!("undo.move_track_down").to_string())
+                        (
+                            doc.move_track(*idx, *idx + 1),
+                            t!("undo.move_track_down").to_string(),
+                        )
                     } else {
                         (None, String::new())
                     }
                 }
             };
             if let Some(action) = undo_action {
-                doc.history.push(yinhe_editor_core::history::UndoEntry {
-                    action,
-                    label,
-                    selected: doc.edit.selected.clone(),
-                    track_selected: doc.edit.track_selected.clone(),
-                    sel_rect: doc.edit.sel_rect.clone(),
-                    arr_sel_rect: doc.edit.arr_sel_rect.clone(),
-                });
+                doc.push_undo(action, &label, before);
                 // 方案 A：音轨结构变化（add/remove/move）→ teardown + 下帧重建。
                 // 不再调 audio.reload_notes —— ChannelLayout 在引擎创建时冻结，
                 // reload_notes 不会更新 active_mask/channel_map，旧引擎无法 dispatch 新通道。
@@ -318,8 +326,13 @@ pub fn show(
             egui::vec2(tp_w, RULER_H),
         );
         let btn_size = 20.0;
-        let btn_rect = egui::Rect::from_center_size(corner_rect.center(), egui::vec2(btn_size, btn_size));
-        let btn_resp = ui.interact(btn_rect, egui::Id::new("arr_quantize_btn"), egui::Sense::click());
+        let btn_rect =
+            egui::Rect::from_center_size(corner_rect.center(), egui::vec2(btn_size, btn_size));
+        let btn_resp = ui.interact(
+            btn_rect,
+            egui::Id::new("arr_quantize_btn"),
+            egui::Sense::click(),
+        );
         let hovered = btn_resp.hovered();
 
         let icon_color = if hovered {
@@ -351,12 +364,20 @@ pub fn show(
     // ── "+" track add button in the corner (below track panel, left of scrollbar) ──
     {
         let corner_rect = egui::Rect::from_min_size(
-            egui::pos2(arr_rect.min.x, arr_rect.max.y - crate::widgets::scrollbar::SCROLLBAR_H),
+            egui::pos2(
+                arr_rect.min.x,
+                arr_rect.max.y - crate::widgets::scrollbar::SCROLLBAR_H,
+            ),
             egui::vec2(tp_w, crate::widgets::scrollbar::SCROLLBAR_H),
         );
         let btn_size = 20.0;
-        let btn_rect = egui::Rect::from_center_size(corner_rect.center(), egui::vec2(btn_size, btn_size));
-        let btn_resp = ui.interact(btn_rect, egui::Id::new("arr_add_track_btn"), egui::Sense::click());
+        let btn_rect =
+            egui::Rect::from_center_size(corner_rect.center(), egui::vec2(btn_size, btn_size));
+        let btn_resp = ui.interact(
+            btn_rect,
+            egui::Id::new("arr_add_track_btn"),
+            egui::Sense::click(),
+        );
         let hovered = btn_resp.hovered();
 
         use egui_material_icons::icons::ICON_ADD;
@@ -375,15 +396,9 @@ pub fn show(
 
         if btn_resp.clicked() {
             let idx = doc.data.model.tracks.len() - 1;
+            let before = doc.capture_snapshot();
             if let Some(action) = doc.add_track(idx) {
-                doc.history.push(yinhe_editor_core::history::UndoEntry {
-                    action,
-                    label: t!("undo.add_track").to_string(),
-                    selected: doc.edit.selected.clone(),
-                    track_selected: doc.edit.track_selected.clone(),
-                    sel_rect: doc.edit.sel_rect.clone(),
-                    arr_sel_rect: doc.edit.arr_sel_rect.clone(),
-                });
+                doc.push_undo(action, t!("undo.add_track").as_ref(), before);
                 // 方案 A：add_track → teardown + 下帧重建（同 track_actions 分支）。
                 *needs_audio_rebuild = true;
             }

@@ -7,7 +7,7 @@ use yinhe_types::TRACK_PALETTE;
 use yinhe_yin::{MappingFile, ProjectFile};
 
 use crate::edit_state::EditState;
-use crate::history::{UndoEntry, UndoStack};
+use crate::history::{EditSnapshot, UndoAction, UndoEntry, UndoStack};
 use crate::project_data::ProjectData;
 use crate::quantize::QuantizePreset;
 
@@ -110,7 +110,10 @@ impl Document {
                 track_overrides: model
                     .tracks
                     .iter()
-                    .map(|t| TrackOverride { muted: t.muted, soloed: t.soloed })
+                    .map(|t| TrackOverride {
+                        muted: t.muted,
+                        soloed: t.soloed,
+                    })
                     .collect(),
                 track_info_cache,
                 track_colors_cache: (0..num_tracks)
@@ -174,12 +177,8 @@ impl Document {
                 .map(|i| track_color(i, conductor_track_idx))
                 .collect();
 
-            let mut data = ProjectData::new(
-                Arc::new(model),
-                track_names,
-                project_file,
-                mapping_file,
-            );
+            let mut data =
+                ProjectData::new(Arc::new(model), track_names, project_file, mapping_file);
             data.rebuild_model();
 
             let track_info_cache = data.track_info();
@@ -188,7 +187,10 @@ impl Document {
                 .model
                 .tracks
                 .iter()
-                .map(|t| TrackOverride { muted: t.muted, soloed: t.soloed })
+                .map(|t| TrackOverride {
+                    muted: t.muted,
+                    soloed: t.soloed,
+                })
                 .collect();
 
             Ok(Document {
@@ -222,14 +224,17 @@ impl Document {
             yinhe_yin::YinError::Io(io) => io,
             other => std::io::Error::new(std::io::ErrorKind::InvalidData, other.to_string()),
         })?;
-        let project_file = yinhe_yin::ProjectFile::from_meta_with_sf(
-            &model.meta,
-            sf.mode,
-            sf.overrides.clone(),
-        );
-        let mut doc = Self::from_model(path, model, quantize_arrange, quantize_pianoroll, project_file, mapping).map_err(|e| {
-            std::io::Error::new(std::io::ErrorKind::InvalidData, e)
-        })?;
+        let project_file =
+            yinhe_yin::ProjectFile::from_meta_with_sf(&model.meta, sf.mode, sf.overrides.clone());
+        let mut doc = Self::from_model(
+            path,
+            model,
+            quantize_arrange,
+            quantize_pianoroll,
+            project_file,
+            mapping,
+        )
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
         doc.file_path = Some(path.to_string());
         Ok((doc, sf.mode))
     }
@@ -245,6 +250,50 @@ impl Document {
 // ---------------------------------------------------------------------------
 
 impl Document {
+    /// 捕获当前编辑状态快照（undo/redo 恢复用）。编辑**前**调用。
+    pub fn capture_snapshot(&self) -> EditSnapshot {
+        EditSnapshot {
+            selected: self.edit.selected.clone(),
+            track_selected: self.edit.track_selected.clone(),
+            sel_rect: self.edit.sel_rect.clone(),
+            arr_sel_rect: self.edit.arr_sel_rect.clone(),
+            anchor_sel_rects: self
+                .edit
+                .controller_panels
+                .iter()
+                .map(|p| p.anchor_sel_rects.clone())
+                .collect(),
+        }
+    }
+
+    /// 用编辑**前**快照 push 一个 undo entry。
+    pub fn push_undo(&mut self, action: UndoAction, label: &str, before: EditSnapshot) {
+        self.history.push(UndoEntry {
+            action,
+            label: label.to_string(),
+            snapshot: before,
+        });
+    }
+
+    /// 把快照恢复到 edit 状态（undo/redo 共用）。
+    /// AM 选框按面板索引对齐恢复，面板数量变化时防御跳过。
+    fn restore_snapshot(edit: &mut EditState, snapshot: &EditSnapshot) {
+        edit.selected = snapshot.selected.clone();
+        edit.track_selected = snapshot.track_selected.clone();
+        edit.sel_rect = snapshot.sel_rect.clone();
+        edit.arr_sel_rect = snapshot.arr_sel_rect.clone();
+        for (panel, rects) in edit
+            .controller_panels
+            .iter_mut()
+            .zip(&snapshot.anchor_sel_rects)
+        {
+            panel.anchor_sel_rects = rects.clone();
+            if !panel.anchor_sel_rects.is_empty() {
+                panel.dirty = true;
+            }
+        }
+    }
+
     /// Undo the most recent operation. Returns true if something was undone.
     pub fn undo(&mut self) -> bool {
         let Some(entry) = self.history.past.pop_back() else {
@@ -252,29 +301,20 @@ impl Document {
         };
 
         // Save current selection so redo can restore it.
-        let current_selected = self.edit.selected.clone();
-        let current_track_selected = self.edit.track_selected.clone();
-        let current_sel_rect = self.edit.sel_rect.clone();
-        let current_arr_sel_rect = self.edit.arr_sel_rect.clone();
+        let current = self.capture_snapshot();
 
         // 反转 action（消耗 entry.action，零克隆），apply 一次后再 move 进 redo 栈。
         let reversed = entry.action.reversed();
         reversed.redo(self);
 
         // Restore selection from the undo entry.
-        self.edit.selected = entry.selected;
-        self.edit.track_selected = entry.track_selected;
-        self.edit.sel_rect = entry.sel_rect;
-        self.edit.arr_sel_rect = entry.arr_sel_rect;
+        Self::restore_snapshot(&mut self.edit, &entry.snapshot);
 
         // Push reversed action onto the redo stack.
         self.history.future.push(UndoEntry {
             action: reversed,
             label: entry.label,
-            selected: current_selected,
-            track_selected: current_track_selected,
-            sel_rect: current_sel_rect,
-            arr_sel_rect: current_arr_sel_rect,
+            snapshot: current,
         });
 
         true
@@ -286,27 +326,19 @@ impl Document {
             return false;
         };
 
-        let current_selected = self.edit.selected.clone();
-        let current_track_selected = self.edit.track_selected.clone();
-        let current_sel_rect = self.edit.sel_rect.clone();
-        let current_arr_sel_rect = self.edit.arr_sel_rect.clone();
+        let current = self.capture_snapshot();
 
         // future 栈里存的是 reversed action，再反转一次回到原始方向并 apply。
         let reversed = entry.action.reversed();
         reversed.redo(self);
 
-        self.edit.selected = entry.selected;
-        self.edit.track_selected = entry.track_selected;
-        self.edit.sel_rect = entry.sel_rect;
-        self.edit.arr_sel_rect = entry.arr_sel_rect;
+        // Restore selection from the redo entry.
+        Self::restore_snapshot(&mut self.edit, &entry.snapshot);
 
         self.history.past.push_back(UndoEntry {
             action: reversed,
             label: entry.label,
-            selected: current_selected,
-            track_selected: current_track_selected,
-            sel_rect: current_sel_rect,
-            arr_sel_rect: current_arr_sel_rect,
+            snapshot: current,
         });
 
         true
@@ -451,13 +483,16 @@ mod tests {
             tracks: vec![Arc::new(t1), Arc::new(t2)],
             ..Default::default()
         };
-        model.load_track_notes(vec![vec![], vec![yinhe_core::NoteEvent {
-            id: 0,
-            start_tick: 0,
-            end_tick: 480,
-            key: 60,
-            velocity: 100,
-        }]]);
+        model.load_track_notes(vec![
+            vec![],
+            vec![yinhe_core::NoteEvent {
+                id: 0,
+                start_tick: 0,
+                end_tick: 480,
+                key: 60,
+                velocity: 100,
+            }],
+        ]);
         model.rebuild();
         assert_eq!(detect_conductor_from_model(&model), Some(0));
     }
@@ -489,26 +524,33 @@ mod tests {
     /// undo 时彻底丢失。修复后 deleted_notes 字段携带被删音符供 undo 恢复。
     #[test]
     fn remove_track_undo_restores_deleted_notes() {
-        use crate::edit_state::SelRectState;
-        use crate::history::UndoEntry;
-        use std::collections::HashSet;
+        use crate::history::{EditSnapshot, UndoEntry};
         use yinhe_core::NoteEvent;
 
         let mut doc = Document::empty();
         // conductor 在 track 0，A1 在 track 1。给 track 1 加 2 个音符。
         let notes_to_add = vec![
-            NoteEvent { id: 0, start_tick: 0, end_tick: 480, key: 60, velocity: 100 },
-            NoteEvent { id: 0, start_tick: 480, end_tick: 960, key: 64, velocity: 80 },
+            NoteEvent {
+                id: 0,
+                start_tick: 0,
+                end_tick: 480,
+                key: 60,
+                velocity: 100,
+            },
+            NoteEvent {
+                id: 0,
+                start_tick: 480,
+                end_tick: 960,
+                key: 64,
+                velocity: 80,
+            },
         ];
         for n in notes_to_add {
             let action = doc.add_note(1, n).expect("add_note should succeed");
             doc.history.push(UndoEntry {
                 action,
                 label: "add_note".to_string(),
-                selected: Default::default(),
-                track_selected: HashSet::new(),
-                sel_rect: SelRectState::default(),
-                arr_sel_rect: vec![],
+                snapshot: EditSnapshot::default(),
             });
         }
         assert_eq!(doc.model().note_count, 2, "添加后应有 2 个音符");
@@ -519,10 +561,7 @@ mod tests {
         doc.history.push(UndoEntry {
             action,
             label: "remove_track".to_string(),
-            selected: Default::default(),
-            track_selected: HashSet::new(),
-            sel_rect: SelRectState::default(),
-            arr_sel_rect: vec![],
+            snapshot: EditSnapshot::default(),
         });
         assert_eq!(doc.model().note_count, 0, "删除轨道后音符应清零");
         // 删除后原 track 2..N 各自前移 1，track_note_count 长度也少了 1
@@ -531,7 +570,11 @@ mod tests {
         // Undo：必须恢复被删轨道上的音符
         assert!(doc.undo(), "undo 应成功");
         assert_eq!(doc.model().tracks.len(), 17, "undo 后轨道数应恢复");
-        assert_eq!(doc.model().note_count, 2, "undo 后音符数必须恢复（这是 bug 修复点）");
+        assert_eq!(
+            doc.model().note_count,
+            2,
+            "undo 后音符数必须恢复（这是 bug 修复点）"
+        );
         assert_eq!(doc.model().track_note_count[1], 2, "track 1 的音符必须恢复");
         // 具体音符内容也要核对（start_tick + key）
         assert_eq!(doc.model().notes[60].len(), 1);
@@ -550,9 +593,7 @@ mod tests {
     /// 被拖事件从源 lane 剔除，导致事件彻底丢失。修复后会把事件加回源 lane。
     #[test]
     fn arrange_move_automation_clamped_to_source_preserves_events() {
-        use crate::edit_state::SelRectState;
-        use crate::history::UndoEntry;
-        use std::collections::HashSet;
+        use crate::history::{EditSnapshot, UndoEntry};
         use yinhe_core::Selection;
         use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, SegmentShape};
 
@@ -565,8 +606,16 @@ mod tests {
                 target: AutomationTarget::CC { controller: 7 },
                 track: 1,
                 events: vec![
-                    AutomationEvent { tick: 0, value: 64.0, shape: SegmentShape::Step },
-                    AutomationEvent { tick: 480, value: 80.0, shape: SegmentShape::Step },
+                    AutomationEvent {
+                        tick: 0,
+                        value: 64.0,
+                        shape: SegmentShape::Step,
+                    },
+                    AutomationEvent {
+                        tick: 480,
+                        value: 80.0,
+                        shape: SegmentShape::Step,
+                    },
                 ],
             });
         }
@@ -576,20 +625,22 @@ mod tests {
         doc.edit.selected.add_rect_track(0, 481, 0, 127, 1, 1);
 
         // 跨轨上移 1：raw_dst=0 是 conductor，被 clamp 回 track 1
-        let action = doc.move_selected_arrange(100, -1)
+        let action = doc
+            .move_selected_arrange(100, -1)
             .expect("move_selected_arrange should return an action");
         doc.history.push(UndoEntry {
             action,
             label: "arrange_move".to_string(),
-            selected: Default::default(),
-            track_selected: HashSet::new(),
-            sel_rect: SelRectState::default(),
-            arr_sel_rect: vec![],
+            snapshot: EditSnapshot::default(),
         });
 
         // 关键断言：事件不能蒸发，应该在 track 1 的 CC7 lane 里
         let lane = &doc.model().tracks[1].automation_lanes[0];
-        assert_eq!(lane.events.len(), 2, "事件数量必须保持 2（bug 修复点：之前变 0）");
+        assert_eq!(
+            lane.events.len(),
+            2,
+            "事件数量必须保持 2（bug 修复点：之前变 0）"
+        );
         // delta_ticks=100 已应用
         assert_eq!(lane.events[0].tick, 100, "第一个事件 tick 应偏移 +100");
         assert_eq!(lane.events[1].tick, 580, "第二个事件 tick 应偏移 +100");

@@ -4,7 +4,7 @@
 //! 供 `info_panel/anchor`、`event_browser/edit` 与 `app/layout` 复用，消除重复逻辑。
 
 use yinhe_editor_core::document::Document;
-use yinhe_editor_core::history::{AutomationDelta, UndoAction, UndoEntry};
+use yinhe_editor_core::history::{AutomationDelta, EditSnapshot, UndoAction};
 use yinhe_types::{AutomationEvent, AutomationTarget};
 
 /// 按 target 取 lane events 快照。
@@ -19,7 +19,8 @@ pub fn snapshot_lane_events(
     if matches!(target, AutomationTarget::Tempo) {
         doc.data.model.conductor.tempo.events.clone()
     } else {
-        doc.data.model
+        doc.data
+            .model
             .tracks
             .get(track_idx as usize)
             .and_then(|t| t.automation_lanes.get(lane_idx))
@@ -30,7 +31,8 @@ pub fn snapshot_lane_events(
 
 /// push 一个 AutomationDelta undo entry。
 ///
-/// 比较 `before` / `after`，差异时构造 `UndoEntry` push 到 `doc.history`。
+/// 比较 `before` / `after`，差异时构造 `UndoAction` push 到 `doc.history`。
+/// `snapshot` 必须是编辑**前**捕获的界面状态快照。
 pub fn push_automation_undo(
     doc: &mut Document,
     track_idx: u16,
@@ -39,44 +41,44 @@ pub fn push_automation_undo(
     before: Vec<AutomationEvent>,
     after: Vec<AutomationEvent>,
     label: &str,
+    snapshot: EditSnapshot,
 ) {
     if before == after {
         return;
     }
-    doc.history.push(UndoEntry {
-        action: UndoAction::Automation(AutomationDelta {
+    doc.push_undo(
+        UndoAction::Automation(AutomationDelta {
             track_idx: track_idx as usize,
             lane_idx,
             target: target.clone(),
             before,
             after,
         }),
-        label: label.to_string(),
-        selected: doc.edit.selected.clone(),
-        track_selected: doc.edit.track_selected.clone(),
-        sel_rect: doc.edit.sel_rect.clone(),
-        arr_sel_rect: doc.edit.arr_sel_rect.clone(),
-    });
+        label,
+        snapshot,
+    );
 }
 
 /// 把 `apply_automation_edits` 返回的 `UndoAction` 列表作为一个 undo entry push 到 history。
 ///
 /// 多个 action 用 `Composite` 合并，一次操作 = 一次 undo（避免逐个 undo）。
-pub fn push_automation_actions(doc: &mut Document, actions: Vec<UndoAction>, label: &str) {
+/// `snapshot` 必须是编辑**前**捕获的界面状态快照。
+pub fn push_automation_actions(
+    doc: &mut Document,
+    actions: Vec<UndoAction>,
+    label: &str,
+    snapshot: EditSnapshot,
+) {
     if actions.is_empty() {
         return;
     }
-    let action = if actions.len() == 1 {
-        actions.into_iter().next().unwrap()
-    } else {
-        UndoAction::Composite(actions)
+    // len==1 时直接取唯一 action（不 unwrap：用 match 防御空迭代器）；否则 Composite 合并。
+    let action = match actions.len() {
+        1 => match actions.into_iter().next() {
+            Some(a) => a,
+            None => return,
+        },
+        _ => UndoAction::Composite(actions),
     };
-    doc.history.push(UndoEntry {
-        action,
-        label: label.to_string(),
-        selected: doc.edit.selected.clone(),
-        track_selected: doc.edit.track_selected.clone(),
-        sel_rect: doc.edit.sel_rect.clone(),
-        arr_sel_rect: doc.edit.arr_sel_rect.clone(),
-    });
+    doc.push_undo(action, label, snapshot);
 }

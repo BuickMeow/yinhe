@@ -2,7 +2,10 @@ use eframe::egui;
 
 use rust_i18n::t;
 use yinhe_editor_core::document::Document;
-use yinhe_editor_core::history::{begin_edit, commit_project_name, commit_artist, commit_description, commit_ppq, commit_compression_level};
+use yinhe_editor_core::history::{
+    begin_edit, commit_artist, commit_compression_level, commit_description, commit_ppq,
+    commit_project_name,
+};
 
 /// ctx memory 中暂存待确认的 PPQ 修改（old, new, dragvalue_id）。
 ///
@@ -37,7 +40,11 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
         egui::TextEdit::singleline(&mut name).id_salt("proj_name"),
     );
     if resp.gained_focus() {
-        begin_edit(&mut doc.edit.pending_edits, resp.id.value(), &doc.data.model.meta.name);
+        begin_edit(
+            &mut doc.edit.pending_edits,
+            resp.id.value(),
+            &doc.data.model.meta.name,
+        );
     }
     if resp.changed() {
         let model = std::sync::Arc::make_mut(&mut doc.data.model);
@@ -48,16 +55,8 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
         }
     }
     if resp.lost_focus() {
-        commit_project_name(
-            &mut doc.history,
-            &mut doc.edit.pending_edits,
-            resp.id.value(),
-            &doc.data.model.meta.name,
-            doc.edit.selected.clone(),
-            doc.edit.track_selected.clone(),
-            doc.edit.sel_rect.clone(),
-            doc.edit.arr_sel_rect.clone(),
-        );
+        let name = doc.data.model.meta.name.clone();
+        commit_project_name(doc, resp.id.value(), &name);
     }
 
     ui.add_space(6.0);
@@ -74,23 +73,19 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
         egui::TextEdit::singleline(&mut artist).id_salt("proj_artist"),
     );
     if resp.gained_focus() {
-        begin_edit(&mut doc.edit.pending_edits, resp.id.value(), &doc.data.model.meta.artist);
+        begin_edit(
+            &mut doc.edit.pending_edits,
+            resp.id.value(),
+            &doc.data.model.meta.artist,
+        );
     }
     if resp.changed() {
         let model = std::sync::Arc::make_mut(&mut doc.data.model);
         model.meta.artist = artist;
     }
     if resp.lost_focus() {
-        commit_artist(
-            &mut doc.history,
-            &mut doc.edit.pending_edits,
-            resp.id.value(),
-            &doc.data.model.meta.artist,
-            doc.edit.selected.clone(),
-            doc.edit.track_selected.clone(),
-            doc.edit.sel_rect.clone(),
-            doc.edit.arr_sel_rect.clone(),
-        );
+        let artist = doc.data.model.meta.artist.clone();
+        commit_artist(doc, resp.id.value(), &artist);
     }
 
     ui.add_space(6.0);
@@ -111,8 +106,13 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
         egui::vec2(80.0, 20.0),
         crate::widgets::numeric_input::decimal_drag_value(&mut ppq).range(1..=32767),
     );
-    if resp.gained_focus() || (resp.drag_started() && !doc.edit.pending_edits.has(resp.id.value())) {
-        begin_edit(&mut doc.edit.pending_edits, resp.id.value(), &doc.data.model.meta.ppq.to_string());
+    if resp.gained_focus() || (resp.drag_started() && !doc.edit.pending_edits.has(resp.id.value()))
+    {
+        begin_edit(
+            &mut doc.edit.pending_edits,
+            resp.id.value(),
+            &doc.data.model.meta.ppq.to_string(),
+        );
     }
     if resp.changed() {
         let model = std::sync::Arc::make_mut(&mut doc.data.model);
@@ -120,30 +120,29 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
     }
     if resp.lost_focus() || resp.drag_stopped() {
         // 取出 pending old 值判断是否需要弹框
-        let old_str = doc.edit.pending_edits.get(resp.id.value()).map(|s| s.to_string());
+        let old_str = doc
+            .edit
+            .pending_edits
+            .get(resp.id.value())
+            .map(|s| s.to_string());
         let new_val = doc.data.model.meta.ppq;
-        let old_val: u32 = old_str.as_deref().and_then(|s| s.parse().ok()).unwrap_or(new_val);
+        let old_val: u32 = old_str
+            .as_deref()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(new_val);
         let has_notes = doc.data.model.note_count > 0;
         if old_val != new_val && has_notes {
             // 暂存待确认信息，由 dialog_dispatch 弹出独立 viewport 确认框。
-            ui.ctx().data_mut(|d| d.insert_temp(
-                egui::Id::new(PPQ_RESCALE_PENDING_ID),
-                (old_val, new_val, resp.id.value()),
-            ));
+            ui.ctx().data_mut(|d| {
+                d.insert_temp(
+                    egui::Id::new(PPQ_RESCALE_PENDING_ID),
+                    (old_val, new_val, resp.id.value()),
+                )
+            });
             // 不立即 commit，等弹框确认后再 commit
         } else {
             // 无音符或未变化：直接 commit（rescale=false）
-            commit_ppq(
-                &mut doc.history,
-                &mut doc.edit.pending_edits,
-                resp.id.value(),
-                new_val,
-                false,
-                doc.edit.selected.clone(),
-                doc.edit.track_selected.clone(),
-                doc.edit.sel_rect.clone(),
-                doc.edit.arr_sel_rect.clone(),
-            );
+            commit_ppq(doc, resp.id.value(), new_val, false);
         }
     }
 
@@ -160,24 +159,20 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
         egui::vec2(60.0, 20.0),
         crate::widgets::numeric_input::decimal_drag_value(&mut zstd_level).range(0..=22),
     );
-    if resp.gained_focus() || (resp.drag_started() && !doc.edit.pending_edits.has(resp.id.value())) {
-        begin_edit(&mut doc.edit.pending_edits, resp.id.value(), &doc.data.model.meta.compression_level.to_string());
+    if resp.gained_focus() || (resp.drag_started() && !doc.edit.pending_edits.has(resp.id.value()))
+    {
+        begin_edit(
+            &mut doc.edit.pending_edits,
+            resp.id.value(),
+            &doc.data.model.meta.compression_level.to_string(),
+        );
     }
     if resp.changed() {
         let model = std::sync::Arc::make_mut(&mut doc.data.model);
         model.meta.compression_level = zstd_level;
     }
     if resp.lost_focus() || resp.drag_stopped() {
-        commit_compression_level(
-            &mut doc.history,
-            &mut doc.edit.pending_edits,
-            resp.id.value(),
-            doc.data.model.meta.compression_level,
-            doc.edit.selected.clone(),
-            doc.edit.track_selected.clone(),
-            doc.edit.sel_rect.clone(),
-            doc.edit.arr_sel_rect.clone(),
-        );
+        commit_compression_level(doc, resp.id.value(), doc.data.model.meta.compression_level);
     }
 
     ui.add_space(6.0);
@@ -194,22 +189,18 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
         egui::TextEdit::multiline(&mut desc).id_salt("proj_desc"),
     );
     if resp.gained_focus() {
-        begin_edit(&mut doc.edit.pending_edits, resp.id.value(), &doc.data.model.meta.description);
+        begin_edit(
+            &mut doc.edit.pending_edits,
+            resp.id.value(),
+            &doc.data.model.meta.description,
+        );
     }
     if resp.changed() {
         let model = std::sync::Arc::make_mut(&mut doc.data.model);
         model.meta.description = desc;
     }
     if resp.lost_focus() {
-        commit_description(
-            &mut doc.history,
-            &mut doc.edit.pending_edits,
-            resp.id.value(),
-            &doc.data.model.meta.description,
-            doc.edit.selected.clone(),
-            doc.edit.track_selected.clone(),
-            doc.edit.sel_rect.clone(),
-            doc.edit.arr_sel_rect.clone(),
-        );
+        let desc = doc.data.model.meta.description.clone();
+        commit_description(doc, resp.id.value(), &desc);
     }
 }

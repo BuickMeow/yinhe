@@ -205,18 +205,11 @@ impl App {
         F: FnOnce(&mut Document) -> Option<yinhe_editor_core::history::UndoAction>,
     {
         let Some(idx) = self.active_doc else { return };
+        let before = self.documents[idx].capture_snapshot();
         let action = f(&mut self.documents[idx]);
         let Some(action) = action else { return };
         let doc = &mut self.documents[idx];
-        let entry = yinhe_editor_core::history::UndoEntry {
-            action,
-            label: label.to_string(),
-            selected: doc.edit.selected.clone(),
-            track_selected: doc.edit.track_selected.clone(),
-            sel_rect: doc.edit.sel_rect.clone(),
-            arr_sel_rect: doc.edit.arr_sel_rect.clone(),
-        };
-        doc.history.push(entry);
+        doc.push_undo(action, label, before);
         doc.data.bump_revision();
         self.pianoroll_view.base.dirty = true;
         self.arrange_view.base.dirty = true;

@@ -1,10 +1,8 @@
-use std::collections::HashSet;
 use std::sync::Arc;
 
 use yinhe_core::{ConductorData, NoteEvent, TrackData, YinModel};
 use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, SegmentShape, TimeSigEvent};
 
-use crate::edit_state::SelRectState;
 use crate::document::Document;
 
 use super::*;
@@ -16,7 +14,11 @@ fn make_doc(name: &str) -> Document {
             tempo: AutomationLane {
                 target: AutomationTarget::Tempo,
                 track: 0,
-                events: vec![AutomationEvent { tick: 0, value: 120.0, shape: SegmentShape::Step }],
+                events: vec![AutomationEvent {
+                    tick: 0,
+                    value: 120.0,
+                    shape: SegmentShape::Step,
+                }],
             },
             time_sig: vec![TimeSigEvent {
                 tick: 0,
@@ -63,10 +65,7 @@ fn push_stores_and_clears_redo() {
             new: "b".into(),
         },
         label: "rename".to_string(),
-        selected: Selection::default(),
-        track_selected: HashSet::new(),
-        sel_rect: SelRectState::default(),
-        arr_sel_rect: vec![],
+        snapshot: EditSnapshot::default(),
     });
     assert!(doc.history.can_undo());
     assert!(!doc.history.can_redo());
@@ -82,10 +81,7 @@ fn push_stores_and_clears_redo() {
             new: "d".into(),
         },
         label: "rename2".to_string(),
-        selected: Selection::default(),
-        track_selected: HashSet::new(),
-        sel_rect: SelRectState::default(),
-        arr_sel_rect: vec![],
+        snapshot: EditSnapshot::default(),
     });
     assert!(!doc.history.can_redo());
     assert!(doc.history.can_undo());
@@ -101,10 +97,7 @@ fn undo_restores_track_name() {
             new: "new".into(),
         },
         label: "rename".to_string(),
-        selected: Selection::default(),
-        track_selected: HashSet::new(),
-        sel_rect: SelRectState::default(),
-        arr_sel_rect: vec![],
+        snapshot: EditSnapshot::default(),
     });
     // Apply the forward action manually (simulating the edit)
     {
@@ -154,10 +147,7 @@ fn note_delta_undo_redo() {
         let model = Arc::make_mut(&mut doc.data.model);
         let mut sel = Selection::default();
         sel.add_rect_track(0, 480, 60, 60, 0, u16::MAX);
-        let r = crate::batch_ops::remove_selected(
-            model,
-            &sel,
-        );
+        let r = crate::batch_ops::remove_selected(model, &sel);
         model.rebuild_dirty();
         r
     };
@@ -169,10 +159,7 @@ fn note_delta_undo_redo() {
             after: vec![],
         }),
         label: "delete".to_string(),
-        selected: Selection::default(),
-        track_selected: HashSet::new(),
-        sel_rect: SelRectState::default(),
-        arr_sel_rect: vec![],
+        snapshot: EditSnapshot::default(),
     });
 
     // Note should be gone
@@ -210,10 +197,7 @@ fn clear_wipes_everything() {
             new: "b".into(),
         },
         label: "rename".to_string(),
-        selected: Selection::default(),
-        track_selected: HashSet::new(),
-        sel_rect: SelRectState::default(),
-        arr_sel_rect: vec![],
+        snapshot: EditSnapshot::default(),
     });
     doc.undo();
     assert!(doc.history.can_undo() || doc.history.can_redo());

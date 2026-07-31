@@ -34,10 +34,16 @@ pub fn apply_text_popups(
         }
         return;
     }
-    let Some(req) = peek_edit_request(ui, salt) else { return };
+    let Some(req) = peek_edit_request(ui, salt) else {
+        return;
+    };
     match req {
-        EditRequest::TextEventTick { kind, tick } => show_text_tick_popup(ui, doc, salt, kind, tick, None),
-        EditRequest::TextEventText { kind, tick } => show_text_value_popup(ui, doc, salt, kind, tick),
+        EditRequest::TextEventTick { kind, tick } => {
+            show_text_tick_popup(ui, doc, salt, kind, tick, None)
+        }
+        EditRequest::TextEventText { kind, tick } => {
+            show_text_value_popup(ui, doc, salt, kind, tick)
+        }
         _ => {}
     }
 }
@@ -50,16 +56,31 @@ fn show_text_tick_popup(
     tick: u32,
     bar_lookup: Option<&BarLookup>,
 ) {
-    let action = show_tick_popup(ui, salt, t!("event_browser.edit_tick").as_ref(), tick, 0, bar_lookup);
+    let action = show_tick_popup(
+        ui,
+        salt,
+        t!("event_browser.edit_tick").as_ref(),
+        tick,
+        0,
+        bar_lookup,
+    );
     match action {
         PopupAction::Closed(new_tick_f) => {
             let new_tick = new_tick_f as u32;
             // old_tick 来自 EditRequest（tick），new_tick 来自 pending；text 保持不变
             if let Some(text) = text_event_text(&doc.data.model, kind, tick) {
+                let snapshot = doc.capture_snapshot();
                 let before = text_snapshot(doc, kind);
                 apply_text_event_edit(doc, kind, tick, new_tick, text);
                 let after = text_snapshot(doc, kind);
-                push_event_list_undo(doc, text_target(kind), before, after, t!("undo.edit_text_event").as_ref());
+                push_event_list_undo(
+                    doc,
+                    text_target(kind),
+                    before,
+                    after,
+                    t!("undo.edit_text_event").as_ref(),
+                    snapshot,
+                );
             }
             cleanup_edit_request(ui, salt);
         }
@@ -76,14 +97,27 @@ fn show_text_value_popup(
     tick: u32,
 ) {
     let old_text = text_event_text(&doc.data.model, kind, tick).unwrap_or_default();
-    let action = show_text_edit_popup(ui, salt, t!("event_browser.edit_text").as_ref(), old_text.clone());
+    let action = show_text_edit_popup(
+        ui,
+        salt,
+        t!("event_browser.edit_text").as_ref(),
+        old_text.clone(),
+    );
     match action {
         TextPopupAction::Closed(new_text) => {
             if new_text != old_text {
+                let snapshot = doc.capture_snapshot();
                 let before = text_snapshot(doc, kind);
                 apply_text_event_edit(doc, kind, tick, tick, new_text);
                 let after = text_snapshot(doc, kind);
-                push_event_list_undo(doc, text_target(kind), before, after, t!("undo.edit_text_event").as_ref());
+                push_event_list_undo(
+                    doc,
+                    text_target(kind),
+                    before,
+                    after,
+                    t!("undo.edit_text_event").as_ref(),
+                    snapshot,
+                );
             }
             cleanup_edit_request(ui, salt);
         }
@@ -112,7 +146,11 @@ fn show_text_edit_popup(
     let state_id = egui::Id::new((salt, "state"));
     let popup_id = ui.id().with((salt, "popup"));
 
-    let mut state: String = ui.memory(|m| m.data.get_temp::<String>(state_id).unwrap_or_else(|| initial.clone()));
+    let mut state: String = ui.memory(|m| {
+        m.data
+            .get_temp::<String>(state_id)
+            .unwrap_or_else(|| initial.clone())
+    });
     let mut open = true;
     let mut cancelled = false;
     let popup_pos = ui.clip_rect().min + egui::vec2(20.0, 20.0);
@@ -162,28 +200,56 @@ fn show_text_edit_popup(
 /// 取文本类事件当前 text 字段值。
 fn text_event_text(model: &yinhe_core::YinModel, kind: TextEventKind, tick: u32) -> Option<String> {
     match kind {
-        TextEventKind::Marker => model.conductor.markers.iter()
-            .find(|e| e.tick == tick).map(|e| e.text.clone()),
-        TextEventKind::ConductorLyrics => model.conductor.lyrics.iter()
-            .find(|e| e.tick == tick).map(|e| e.text.clone()),
-        TextEventKind::ConductorChord => model.conductor.chord.iter()
-            .find(|e| e.tick == tick).map(|e| e.text.clone()),
-        TextEventKind::Lyrics { track } => model.tracks.get(track as usize)
+        TextEventKind::Marker => model
+            .conductor
+            .markers
+            .iter()
+            .find(|e| e.tick == tick)
+            .map(|e| e.text.clone()),
+        TextEventKind::ConductorLyrics => model
+            .conductor
+            .lyrics
+            .iter()
+            .find(|e| e.tick == tick)
+            .map(|e| e.text.clone()),
+        TextEventKind::ConductorChord => model
+            .conductor
+            .chord
+            .iter()
+            .find(|e| e.tick == tick)
+            .map(|e| e.text.clone()),
+        TextEventKind::Lyrics { track } => model
+            .tracks
+            .get(track as usize)
             .and_then(|t| t.lyrics.iter().find(|e| e.tick == tick))
             .map(|e| e.text.clone()),
-        TextEventKind::Chord { track } => model.tracks.get(track as usize)
+        TextEventKind::Chord { track } => model
+            .tracks
+            .get(track as usize)
             .and_then(|t| t.chord.iter().find(|e| e.tick == tick))
             .map(|e| e.text.clone()),
     }
 }
 
 /// 应用文本类事件编辑到 Document（set = upsert）。
-fn apply_text_event_edit(doc: &mut Document, kind: TextEventKind, old_tick: u32, new_tick: u32, new_text: String) {
+fn apply_text_event_edit(
+    doc: &mut Document,
+    kind: TextEventKind,
+    old_tick: u32,
+    new_tick: u32,
+    new_text: String,
+) {
     match kind {
         TextEventKind::Marker => doc.set_marker_event(old_tick, new_tick, new_text),
-        TextEventKind::ConductorLyrics => doc.set_conductor_lyrics_event(old_tick, new_tick, new_text),
-        TextEventKind::ConductorChord => doc.set_conductor_chord_event(old_tick, new_tick, new_text),
-        TextEventKind::Lyrics { track } => doc.set_lyrics_event(track, old_tick, new_tick, new_text),
+        TextEventKind::ConductorLyrics => {
+            doc.set_conductor_lyrics_event(old_tick, new_tick, new_text)
+        }
+        TextEventKind::ConductorChord => {
+            doc.set_conductor_chord_event(old_tick, new_tick, new_text)
+        }
+        TextEventKind::Lyrics { track } => {
+            doc.set_lyrics_event(track, old_tick, new_tick, new_text)
+        }
         TextEventKind::Chord { track } => doc.set_chord_event(track, old_tick, new_tick, new_text),
     }
 }
@@ -202,16 +268,51 @@ fn text_target(kind: TextEventKind) -> EventListTarget {
 /// 文本类事件列表的当前快照（用于 undo before/after）。
 fn text_snapshot(doc: &Document, kind: TextEventKind) -> Vec<EventListItem> {
     match kind {
-        TextEventKind::Marker => doc.data.model.conductor.markers.iter()
-            .cloned().map(EventListItem::Marker).collect(),
-        TextEventKind::ConductorLyrics => doc.data.model.conductor.lyrics.iter()
-            .cloned().map(EventListItem::Lyrics).collect(),
-        TextEventKind::ConductorChord => doc.data.model.conductor.chord.iter()
-            .cloned().map(EventListItem::Chord).collect(),
-        TextEventKind::Lyrics { track } => doc.data.model.tracks.get(track as usize)
-            .map(|t| t.lyrics.iter().cloned().map(EventListItem::Lyrics).collect())
+        TextEventKind::Marker => doc
+            .data
+            .model
+            .conductor
+            .markers
+            .iter()
+            .cloned()
+            .map(EventListItem::Marker)
+            .collect(),
+        TextEventKind::ConductorLyrics => doc
+            .data
+            .model
+            .conductor
+            .lyrics
+            .iter()
+            .cloned()
+            .map(EventListItem::Lyrics)
+            .collect(),
+        TextEventKind::ConductorChord => doc
+            .data
+            .model
+            .conductor
+            .chord
+            .iter()
+            .cloned()
+            .map(EventListItem::Chord)
+            .collect(),
+        TextEventKind::Lyrics { track } => doc
+            .data
+            .model
+            .tracks
+            .get(track as usize)
+            .map(|t| {
+                t.lyrics
+                    .iter()
+                    .cloned()
+                    .map(EventListItem::Lyrics)
+                    .collect()
+            })
             .unwrap_or_default(),
-        TextEventKind::Chord { track } => doc.data.model.tracks.get(track as usize)
+        TextEventKind::Chord { track } => doc
+            .data
+            .model
+            .tracks
+            .get(track as usize)
             .map(|t| t.chord.iter().cloned().map(EventListItem::Chord).collect())
             .unwrap_or_default(),
     }

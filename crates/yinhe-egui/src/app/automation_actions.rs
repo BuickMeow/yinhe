@@ -4,7 +4,7 @@
 //! copy/paste/duplicate/delete 作用于自动化锚点而非音符。
 
 use rust_i18n::t;
-use yinhe_types::{AutomationTarget, AnchorSelRect, SegmentShape};
+use yinhe_types::{AnchorSelRect, AutomationTarget, SegmentShape};
 
 use crate::app::App;
 use crate::widgets::tools_panel::Tool;
@@ -15,16 +15,32 @@ fn sel_rect_from_anchors(anchors: &[(u32, f32)], vertical: bool) -> Option<Ancho
     if anchors.is_empty() {
         return None;
     }
-    let tick_start = anchors.iter().map(|(t, _)| *t as f64).fold(f64::INFINITY, f64::min);
-    let tick_end = anchors.iter().map(|(t, _)| *t as f64).fold(f64::NEG_INFINITY, f64::max);
+    let tick_start = anchors
+        .iter()
+        .map(|(t, _)| *t as f64)
+        .fold(f64::INFINITY, f64::min);
+    let tick_end = anchors
+        .iter()
+        .map(|(t, _)| *t as f64)
+        .fold(f64::NEG_INFINITY, f64::max);
     let value_range = if vertical {
         None
     } else {
-        let vmin = anchors.iter().map(|(_, v)| *v).fold(f32::INFINITY, f32::min);
-        let vmax = anchors.iter().map(|(_, v)| *v).fold(f32::NEG_INFINITY, f32::max);
+        let vmin = anchors
+            .iter()
+            .map(|(_, v)| *v)
+            .fold(f32::INFINITY, f32::min);
+        let vmax = anchors
+            .iter()
+            .map(|(_, v)| *v)
+            .fold(f32::NEG_INFINITY, f32::max);
         Some((vmin, vmax))
     };
-    Some(AnchorSelRect { tick_start, tick_end, value_range })
+    Some(AnchorSelRect {
+        tick_start,
+        tick_end,
+        value_range,
+    })
 }
 
 /// 自动化锚点剪贴板。
@@ -59,11 +75,16 @@ impl App {
     /// 仅 Select/SelectVertical 工具下返回 true。
     /// 此时 copy/paste/duplicate/delete 作用于锚点而非音符。
     pub(crate) fn has_selected_automation_anchors(&self) -> bool {
-        let Some(idx) = self.active_doc else { return false };
+        let Some(idx) = self.active_doc else {
+            return false;
+        };
         if !matches!(self.active_tool, Tool::Select | Tool::SelectVertical) {
             return false;
         }
-        self.documents[idx].edit.controller_panels.iter()
+        self.documents[idx]
+            .edit
+            .controller_panels
+            .iter()
             .any(|p| !p.show_velocity && !p.anchor_sel_rects.is_empty())
     }
 
@@ -72,13 +93,24 @@ impl App {
         let Some(idx) = self.active_doc else { return };
         let doc = &self.documents[idx];
 
-        let Some(ctx) = Self::collect_anchor_ctx(doc) else { return };
+        let Some(ctx) = Self::collect_anchor_ctx(doc) else {
+            return;
+        };
         let panel = &doc.edit.controller_panels[ctx.panel_idx];
-        if panel.anchor_sel_rects.is_empty() { return; }
+        if panel.anchor_sel_rects.is_empty() {
+            return;
+        }
 
         // 收集落在任一 sel_rect 内的锚点
-        let mut copied: Vec<(u32, f32, SegmentShape)> = ctx.events.iter()
-            .filter(|(tick, value, _)| panel.anchor_sel_rects.iter().any(|r| r.contains(*tick, *value)))
+        let mut copied: Vec<(u32, f32, SegmentShape)> = ctx
+            .events
+            .iter()
+            .filter(|(tick, value, _)| {
+                panel
+                    .anchor_sel_rects
+                    .iter()
+                    .any(|r| r.contains(*tick, *value))
+            })
             .copied()
             .collect();
         if copied.is_empty() {
@@ -96,7 +128,9 @@ impl App {
     pub(crate) fn paste_automation_anchors(&mut self) {
         let Some(idx) = self.active_doc else { return };
         let clipboard = self.automation_clipboard.clone();
-        let Some(target) = clipboard.target else { return };
+        let Some(target) = clipboard.target else {
+            return;
+        };
         if clipboard.events.is_empty() {
             return;
         }
@@ -104,15 +138,25 @@ impl App {
         let doc = &mut self.documents[idx];
 
         // 找 target 匹配的面板
-        let panel_idx = doc.edit.controller_panels.iter()
+        let panel_idx = doc
+            .edit
+            .controller_panels
+            .iter()
             .position(|p| !p.show_velocity && p.selected_target == target);
         let Some(panel_idx) = panel_idx else { return };
 
         // 获取 track_idx（与 collect_anchor_ctx 一致）
-        let Some(track_idx) = Self::track_idx_for(doc, &target) else { return };
+        let Some(track_idx) = Self::track_idx_for(doc, &target) else {
+            return;
+        };
 
         let cursor_tick = doc.edit.cursor_tick.unwrap_or(0.0) as u32;
-        let min_tick = clipboard.events.iter().map(|(t, _, _)| *t).min().unwrap_or(0);
+        let min_tick = clipboard
+            .events
+            .iter()
+            .map(|(t, _, _)| *t)
+            .min()
+            .unwrap_or(0);
         let offset = cursor_tick as i64 - min_tick as i64;
 
         let mut edits = Vec::with_capacity(clipboard.events.len());
@@ -129,16 +173,22 @@ impl App {
             new_anchors.push((new_tick, *value));
         }
 
+        let before = doc.capture_snapshot();
         let actions = doc.apply_automation_edits(edits);
         if !actions.is_empty() {
             self.pianoroll_view.base.dirty = true;
             crate::right_panel::automation_undo::push_automation_actions(
-                doc, actions, t!("undo.paste_automation").as_ref(),
+                doc,
+                actions,
+                t!("undo.paste_automation").as_ref(),
+                before,
             );
             // 粘贴后选中改为根据新锚点范围设置 sel_rect
             let vertical = self.active_tool == Tool::SelectVertical;
             doc.edit.controller_panels[panel_idx].anchor_sel_rects =
-                sel_rect_from_anchors(&new_anchors, vertical).map(|r| vec![r]).unwrap_or_default();
+                sel_rect_from_anchors(&new_anchors, vertical)
+                    .map(|r| vec![r])
+                    .unwrap_or_default();
             doc.edit.controller_panels[panel_idx].dirty = true;
             self.notify_audio_model_changed();
         }
@@ -150,15 +200,26 @@ impl App {
         let Some(idx) = self.active_doc else { return };
         let doc = &mut self.documents[idx];
 
-        let Some(ctx) = Self::collect_anchor_ctx(doc) else { return };
+        let Some(ctx) = Self::collect_anchor_ctx(doc) else {
+            return;
+        };
         let ppq = doc.data.model.meta.ppq;
         let quantize = doc.edit.quantize_pianoroll;
         let panel = &doc.edit.controller_panels[ctx.panel_idx];
-        if panel.anchor_sel_rects.is_empty() { return; }
+        if panel.anchor_sel_rects.is_empty() {
+            return;
+        }
 
         // 收集落在任一 sel_rect 内的选中锚点（按 tick 升序）
-        let mut selected: Vec<(u32, f32, SegmentShape)> = ctx.events.iter()
-            .filter(|(tick, value, _)| panel.anchor_sel_rects.iter().any(|r| r.contains(*tick, *value)))
+        let mut selected: Vec<(u32, f32, SegmentShape)> = ctx
+            .events
+            .iter()
+            .filter(|(tick, value, _)| {
+                panel
+                    .anchor_sel_rects
+                    .iter()
+                    .any(|r| r.contains(*tick, *value))
+            })
             .copied()
             .collect();
         if selected.is_empty() {
@@ -191,16 +252,22 @@ impl App {
             new_anchors.push((new_tick, *value));
         }
 
+        let before = doc.capture_snapshot();
         let actions = doc.apply_automation_edits(edits);
         if !actions.is_empty() {
             self.pianoroll_view.base.dirty = true;
             crate::right_panel::automation_undo::push_automation_actions(
-                doc, actions, t!("undo.duplicate_automation").as_ref(),
+                doc,
+                actions,
+                t!("undo.duplicate_automation").as_ref(),
+                before,
             );
             // 重复后选中改为根据新锚点范围设置 sel_rect
             let vertical = self.active_tool == Tool::SelectVertical;
             doc.edit.controller_panels[ctx.panel_idx].anchor_sel_rects =
-                sel_rect_from_anchors(&new_anchors, vertical).map(|r| vec![r]).unwrap_or_default();
+                sel_rect_from_anchors(&new_anchors, vertical)
+                    .map(|r| vec![r])
+                    .unwrap_or_default();
             doc.edit.controller_panels[ctx.panel_idx].dirty = true;
             self.notify_audio_model_changed();
         }
@@ -211,14 +278,22 @@ impl App {
         let Some(idx) = self.active_doc else { return };
         let doc = &mut self.documents[idx];
 
-        let Some(ctx) = Self::collect_anchor_ctx(doc) else { return };
+        let Some(ctx) = Self::collect_anchor_ctx(doc) else {
+            return;
+        };
         let panel = &doc.edit.controller_panels[ctx.panel_idx];
-        if panel.anchor_sel_rects.is_empty() { return; }
+        if panel.anchor_sel_rects.is_empty() {
+            return;
+        }
 
         // 收集落在任一 sel_rect 内的锚点 tick
         let mut edits = Vec::new();
         for (tick, value, _) in &ctx.events {
-            if panel.anchor_sel_rects.iter().any(|r| r.contains(*tick, *value)) {
+            if panel
+                .anchor_sel_rects
+                .iter()
+                .any(|r| r.contains(*tick, *value))
+            {
                 edits.push(yinhe_types::AutomationEdit::Delete {
                     track_idx: ctx.track_idx,
                     lane_idx: ctx.lane_idx,
@@ -228,13 +303,19 @@ impl App {
             }
         }
 
+        let before = doc.capture_snapshot();
         let actions = doc.apply_automation_edits(edits);
         if !actions.is_empty() {
             self.pianoroll_view.base.dirty = true;
             crate::right_panel::automation_undo::push_automation_actions(
-                doc, actions, t!("undo.delete_automation").as_ref(),
+                doc,
+                actions,
+                t!("undo.delete_automation").as_ref(),
+                before,
             );
-            doc.edit.controller_panels[ctx.panel_idx].anchor_sel_rects.clear();
+            doc.edit.controller_panels[ctx.panel_idx]
+                .anchor_sel_rects
+                .clear();
             doc.edit.controller_panels[ctx.panel_idx].dirty = true;
             self.notify_audio_model_changed();
         }
@@ -246,7 +327,10 @@ impl App {
     ///
     /// 找第一个有选中锚点的非 velocity 面板。返回 `None` 表示无可操作面板。
     fn collect_anchor_ctx(doc: &yinhe_editor_core::document::Document) -> Option<AnchorCtx> {
-        let panel_idx = doc.edit.controller_panels.iter()
+        let panel_idx = doc
+            .edit
+            .controller_panels
+            .iter()
             .position(|p| !p.show_velocity && !p.anchor_sel_rects.is_empty())?;
         let panel = &doc.edit.controller_panels[panel_idx];
         let target = panel.selected_target.clone();
@@ -254,33 +338,60 @@ impl App {
         let track_idx = Self::track_idx_for(doc, &target)?;
 
         // 获取 lane events + lane_idx
-        let (lane_idx, events): (usize, Vec<(u32, f32, SegmentShape)>) = if matches!(target, AutomationTarget::Tempo) {
-            let events = doc.data.model.conductor.tempo.events.iter()
-                .map(|e| (e.tick, e.value, e.shape))
-                .collect();
-            (0, events)
-        } else {
-            let track = doc.data.model.tracks.get(track_idx as usize)?;
-            let (lane_idx, lane) = track.automation_lanes.iter()
-                .enumerate()
-                .find(|(_, l)| l.target == target)?;
-            let events = lane.events.iter()
-                .map(|e| (e.tick, e.value, e.shape))
-                .collect();
-            (lane_idx, events)
-        };
+        let (lane_idx, events): (usize, Vec<(u32, f32, SegmentShape)>) =
+            if matches!(target, AutomationTarget::Tempo) {
+                let events = doc
+                    .data
+                    .model
+                    .conductor
+                    .tempo
+                    .events
+                    .iter()
+                    .map(|e| (e.tick, e.value, e.shape))
+                    .collect();
+                (0, events)
+            } else {
+                let track = doc.data.model.tracks.get(track_idx as usize)?;
+                let (lane_idx, lane) = track
+                    .automation_lanes
+                    .iter()
+                    .enumerate()
+                    .find(|(_, l)| l.target == target)?;
+                let events = lane
+                    .events
+                    .iter()
+                    .map(|e| (e.tick, e.value, e.shape))
+                    .collect();
+                (lane_idx, events)
+            };
 
-        Some(AnchorCtx { panel_idx, target, track_idx, lane_idx, events })
+        Some(AnchorCtx {
+            panel_idx,
+            target,
+            track_idx,
+            lane_idx,
+            events,
+        })
     }
 
     /// 获取 target 对应的 track_idx。
     /// Tempo → conductor_track_idx；其他 → editing_track（需可见且非 conductor）。
-    fn track_idx_for(doc: &yinhe_editor_core::document::Document, target: &AutomationTarget) -> Option<u16> {
+    fn track_idx_for(
+        doc: &yinhe_editor_core::document::Document,
+        target: &AutomationTarget,
+    ) -> Option<u16> {
         if matches!(target, AutomationTarget::Tempo) {
             doc.edit.conductor_track_idx
         } else {
-            doc.edit.editing_track
-                .filter(|&t| doc.edit.track_visible.get(t as usize).copied().unwrap_or(false))
+            doc.edit
+                .editing_track
+                .filter(|&t| {
+                    doc.edit
+                        .track_visible
+                        .get(t as usize)
+                        .copied()
+                        .unwrap_or(false)
+                })
                 .filter(|&t| Some(t) != doc.edit.conductor_track_idx)
         }
     }

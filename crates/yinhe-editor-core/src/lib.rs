@@ -16,7 +16,7 @@ pub use document::automation_edit::AnchorField;
 pub use document::note_edit::NoteField;
 pub use document::{Document, TrackOverride};
 pub use edit_state::{EditState, ResizeSide, SelRectState};
-pub use history::{PendingEdits, UndoAction, UndoEntry, UndoStack};
+pub use history::{EditSnapshot, PendingEdits, UndoAction, UndoEntry, UndoStack};
 pub use playback::PlaybackState;
 pub use project_data::ProjectData;
 pub use quantize::QuantizePreset;

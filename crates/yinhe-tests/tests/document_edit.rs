@@ -1,5 +1,5 @@
 use yinhe_editor_core::document::Document;
-use yinhe_editor_core::history::{UndoAction, UndoEntry};
+use yinhe_editor_core::history::{EditSnapshot, UndoAction, UndoEntry};
 use yinhe_editor_core::quantize::QuantizePreset;
 use yinhe_mid2::MidiImportEncoding;
 use yinhe_test_helpers::*;
@@ -43,8 +43,15 @@ fn document_empty_has_conductor_and_16_tracks() {
 #[test]
 fn document_from_model() {
     let m = make_test_model();
-    let doc = Document::from_model("test.mid", m, QuantizePreset::Fraction(1, 4), QuantizePreset::Fraction(1, 16), Default::default(), Default::default())
-        .expect("from_model failed");
+    let doc = Document::from_model(
+        "test.mid",
+        m,
+        QuantizePreset::Fraction(1, 4),
+        QuantizePreset::Fraction(1, 16),
+        Default::default(),
+        Default::default(),
+    )
+    .expect("from_model failed");
     assert_eq!(doc.data.model.note_count, 4);
     assert_eq!(doc.file_name, "test");
 }
@@ -69,7 +76,9 @@ fn document_track_info_cache() {
 fn delete_selected_notes() {
     let mut doc = doc_with_notes();
     let (track, start_tick, key, end_tick) = first_note_key60(&mut doc);
-    doc.edit.selected.add_rect_track(start_tick, end_tick, key, key, track, track);
+    doc.edit
+        .selected
+        .add_rect_track(start_tick, end_tick, key, key, track, track);
     let action = doc.delete_selected();
     assert!(action.is_some());
     // One fewer note at key 60
@@ -89,7 +98,9 @@ fn duplicate_selected_notes() {
     let mut doc = doc_with_notes();
     let count_before = doc.data.model.notes[60].len();
     let (track, start_tick, key, end_tick) = first_note_key60(&mut doc);
-    doc.edit.selected.add_rect_track(start_tick, end_tick, key, key, track, track);
+    doc.edit
+        .selected
+        .add_rect_track(start_tick, end_tick, key, key, track, track);
     let action = doc.duplicate_selected();
     assert!(action.is_some());
     assert_eq!(doc.data.model.notes[60].len(), count_before + 1);
@@ -105,7 +116,9 @@ fn duplicate_selected_notes_empty_selection() {
 fn transpose_selected_notes_up() {
     let mut doc = doc_with_notes();
     let (track, start_tick, key, end_tick) = first_note_key60(&mut doc);
-    doc.edit.selected.add_rect_track(start_tick, end_tick, key, key, track, track);
+    doc.edit
+        .selected
+        .add_rect_track(start_tick, end_tick, key, key, track, track);
     let action = doc.transpose_selected(12);
     assert!(action.is_some());
     // Note should now be at key 72
@@ -116,7 +129,9 @@ fn transpose_selected_notes_up() {
 fn transpose_selected_notes_down() {
     let mut doc = doc_with_notes();
     let (track, start_tick, key, end_tick) = first_note_key60(&mut doc);
-    doc.edit.selected.add_rect_track(start_tick, end_tick, key, key, track, track);
+    doc.edit
+        .selected
+        .add_rect_track(start_tick, end_tick, key, key, track, track);
     let action = doc.transpose_selected(-12);
     assert!(action.is_some());
     // Note should now be at key 48 (60 - 12)
@@ -134,7 +149,9 @@ fn undo_redo_delete() {
     let mut doc = doc_with_notes();
     let note_count_before = doc.data.model.note_count;
     let (track, start_tick, key, end_tick) = first_note_key60(&mut doc);
-    doc.edit.selected.add_rect_track(start_tick, end_tick, key, key, track, track);
+    doc.edit
+        .selected
+        .add_rect_track(start_tick, end_tick, key, key, track, track);
     let action = doc.delete_selected().unwrap();
     assert_eq!(doc.data.model.note_count, note_count_before - 1);
 
@@ -142,10 +159,7 @@ fn undo_redo_delete() {
     doc.history.push(UndoEntry {
         action,
         label: "delete".to_string(),
-        selected: doc.edit.selected.clone(),
-        track_selected: doc.edit.track_selected.clone(),
-        sel_rect: doc.edit.sel_rect.clone(),
-        arr_sel_rect: doc.edit.arr_sel_rect.clone(),
+        snapshot: EditSnapshot::default(),
     });
     assert!(doc.undo());
     assert_eq!(doc.data.model.note_count, note_count_before);
@@ -159,17 +173,16 @@ fn undo_redo_delete() {
 fn undo_redo_transpose() {
     let mut doc = doc_with_notes();
     let (track, start_tick, key, end_tick) = first_note_key60(&mut doc);
-    doc.edit.selected.add_rect_track(start_tick, end_tick, key, key, track, track);
+    doc.edit
+        .selected
+        .add_rect_track(start_tick, end_tick, key, key, track, track);
     let action = doc.transpose_selected(7).unwrap();
     assert_eq!(doc.data.model.notes[67].len(), 1);
 
     doc.history.push(UndoEntry {
         action,
         label: "transpose".to_string(),
-        selected: doc.edit.selected.clone(),
-        track_selected: doc.edit.track_selected.clone(),
-        sel_rect: doc.edit.sel_rect.clone(),
-        arr_sel_rect: doc.edit.arr_sel_rect.clone(),
+        snapshot: EditSnapshot::default(),
     });
     assert!(doc.undo());
     assert!(doc.data.model.notes[67].is_empty());
@@ -180,17 +193,16 @@ fn undo_redo_duplicate() {
     let mut doc = doc_with_notes();
     let count_before = doc.data.model.notes[48].len();
     let (track, start_tick, key, end_tick) = first_note_key48(&mut doc);
-    doc.edit.selected.add_rect_track(start_tick, end_tick, key, key, track, track);
+    doc.edit
+        .selected
+        .add_rect_track(start_tick, end_tick, key, key, track, track);
     let action = doc.duplicate_selected().unwrap();
     assert_eq!(doc.data.model.notes[48].len(), count_before + 1);
 
     doc.history.push(UndoEntry {
         action,
         label: "duplicate".to_string(),
-        selected: doc.edit.selected.clone(),
-        track_selected: doc.edit.track_selected.clone(),
-        sel_rect: doc.edit.sel_rect.clone(),
-        arr_sel_rect: doc.edit.arr_sel_rect.clone(),
+        snapshot: EditSnapshot::default(),
     });
     assert!(doc.undo());
     assert_eq!(doc.data.model.notes[48].len(), count_before);
@@ -208,10 +220,7 @@ fn undo_stack_push_and_undo_redo() {
             new: "Edited".into(),
         },
         label: "edit1".to_string(),
-        selected: Default::default(),
-        track_selected: Default::default(),
-        sel_rect: Default::default(),
-        arr_sel_rect: doc.edit.arr_sel_rect.clone(),
+        snapshot: EditSnapshot::default(),
     });
     // Apply the edit
     {
@@ -227,10 +236,7 @@ fn undo_stack_push_and_undo_redo() {
             new: "Edited2".into(),
         },
         label: "edit2".to_string(),
-        selected: Default::default(),
-        track_selected: Default::default(),
-        sel_rect: Default::default(),
-        arr_sel_rect: doc.edit.arr_sel_rect.clone(),
+        snapshot: EditSnapshot::default(),
     });
     {
         let model = std::sync::Arc::make_mut(&mut doc.data.model);
@@ -248,8 +254,15 @@ fn undo_stack_push_and_undo_redo() {
 #[test]
 fn document_recode_track_names() {
     let m = make_test_model();
-    let mut doc = Document::from_model("test.mid", m, QuantizePreset::Fraction(1, 4), QuantizePreset::Fraction(1, 16), Default::default(), Default::default())
-        .expect("from_model failed");
+    let mut doc = Document::from_model(
+        "test.mid",
+        m,
+        QuantizePreset::Fraction(1, 4),
+        QuantizePreset::Fraction(1, 16),
+        Default::default(),
+        Default::default(),
+    )
+    .expect("from_model failed");
     let original_names = doc.data.track_names.clone();
     doc.recode_track_names(MidiImportEncoding::Utf8);
     assert_eq!(doc.data.track_names, original_names);
@@ -266,13 +279,24 @@ fn document_pc_map_cache() {
 fn delete_multiple_notes() {
     let mut doc = doc_with_notes();
     // Collect note references first to avoid borrow conflict
-    let to_delete: Vec<(u16, u32, u8, u32)> = doc.data.model.notes.iter().enumerate()
-        .flat_map(|(key, notes)| notes.iter().map(move |n| (n.track, n.start_tick, key as u8, n.end_tick)))
+    let to_delete: Vec<(u16, u32, u8, u32)> = doc
+        .data
+        .model
+        .notes
+        .iter()
+        .enumerate()
+        .flat_map(|(key, notes)| {
+            notes
+                .iter()
+                .map(move |n| (n.track, n.start_tick, key as u8, n.end_tick))
+        })
         .take(2)
         .collect();
     let note_count_before = doc.data.model.note_count;
     for (track, start_tick, key, end_tick) in &to_delete {
-        doc.edit.selected.add_rect_track(*start_tick, *end_tick, *key, *key, *track, *track);
+        doc.edit
+            .selected
+            .add_rect_track(*start_tick, *end_tick, *key, *key, *track, *track);
     }
     doc.delete_selected();
     assert_eq!(doc.data.model.note_count, note_count_before - 2);
@@ -281,13 +305,24 @@ fn delete_multiple_notes() {
 #[test]
 fn duplicate_multiple_notes() {
     let mut doc = doc_with_notes();
-    let to_dup: Vec<(u16, u32, u8, u32)> = doc.data.model.notes.iter().enumerate()
-        .flat_map(|(key, notes)| notes.iter().map(move |n| (n.track, n.start_tick, key as u8, n.end_tick)))
+    let to_dup: Vec<(u16, u32, u8, u32)> = doc
+        .data
+        .model
+        .notes
+        .iter()
+        .enumerate()
+        .flat_map(|(key, notes)| {
+            notes
+                .iter()
+                .map(move |n| (n.track, n.start_tick, key as u8, n.end_tick))
+        })
         .take(2)
         .collect();
     let note_count_before = doc.data.model.note_count;
     for (track, start_tick, key, end_tick) in &to_dup {
-        doc.edit.selected.add_rect_track(*start_tick, *end_tick, *key, *key, *track, *track);
+        doc.edit
+            .selected
+            .add_rect_track(*start_tick, *end_tick, *key, *key, *track, *track);
     }
     doc.duplicate_selected();
     assert_eq!(doc.data.model.note_count, note_count_before + 2);
@@ -297,7 +332,9 @@ fn duplicate_multiple_notes() {
 fn transpose_clamps_to_valid_range() {
     let mut doc = doc_with_notes();
     let (track, start_tick, key, end_tick) = first_note_key60(&mut doc);
-    doc.edit.selected.add_rect_track(start_tick, end_tick, key, key, track, track);
+    doc.edit
+        .selected
+        .add_rect_track(start_tick, end_tick, key, key, track, track);
     doc.transpose_selected(-100);
     // Should clamp to key 0
     assert_eq!(doc.data.model.notes[0].len(), 1);
@@ -307,7 +344,9 @@ fn transpose_clamps_to_valid_range() {
 fn transpose_clamps_upper_bound() {
     let mut doc = doc_with_notes();
     let (track, start_tick, key, end_tick) = first_note_key60(&mut doc);
-    doc.edit.selected.add_rect_track(start_tick, end_tick, key, key, track, track);
+    doc.edit
+        .selected
+        .add_rect_track(start_tick, end_tick, key, key, track, track);
     doc.transpose_selected(100);
     // Should clamp to key 127
     assert_eq!(doc.data.model.notes[127].len(), 1);
@@ -318,17 +357,16 @@ fn delete_then_undo_restores_notes() {
     let mut doc = doc_with_notes();
     let note_count_before = doc.data.model.note_count;
     let (track, start_tick, key, end_tick) = first_note_key60(&mut doc);
-    doc.edit.selected.add_rect_track(start_tick, end_tick, key, key, track, track);
+    doc.edit
+        .selected
+        .add_rect_track(start_tick, end_tick, key, key, track, track);
     let action = doc.delete_selected().unwrap();
     assert_eq!(doc.data.model.note_count, note_count_before - 1);
 
     doc.history.push(UndoEntry {
         action,
         label: "delete".to_string(),
-        selected: doc.edit.selected.clone(),
-        track_selected: doc.edit.track_selected.clone(),
-        sel_rect: doc.edit.sel_rect.clone(),
-        arr_sel_rect: doc.edit.arr_sel_rect.clone(),
+        snapshot: EditSnapshot::default(),
     });
     assert!(doc.undo());
     assert_eq!(doc.data.model.note_count, note_count_before);
@@ -339,30 +377,28 @@ fn consecutive_operations() {
     let mut doc = doc_with_notes();
     let note_count_before = doc.data.model.note_count;
     let (track, start_tick, key, end_tick) = first_note_key60(&mut doc);
-    doc.edit.selected.add_rect_track(start_tick, end_tick, key, key, track, track);
+    doc.edit
+        .selected
+        .add_rect_track(start_tick, end_tick, key, key, track, track);
     let action1 = doc.delete_selected().unwrap();
     assert_eq!(doc.data.model.note_count, note_count_before - 1);
 
     let (track2, start_tick2, key2, end_tick2) = first_note_key48(&mut doc);
-    doc.edit.selected.add_rect_track(start_tick2, end_tick2, key2, key2, track2, track2);
+    doc.edit
+        .selected
+        .add_rect_track(start_tick2, end_tick2, key2, key2, track2, track2);
     let action2 = doc.transpose_selected(12).unwrap();
 
     // Undo both
     doc.history.push(UndoEntry {
         action: action1,
         label: "delete".to_string(),
-        selected: doc.edit.selected.clone(),
-        track_selected: doc.edit.track_selected.clone(),
-        sel_rect: doc.edit.sel_rect.clone(),
-        arr_sel_rect: doc.edit.arr_sel_rect.clone(),
+        snapshot: EditSnapshot::default(),
     });
     doc.history.push(UndoEntry {
         action: action2,
         label: "transpose".to_string(),
-        selected: doc.edit.selected.clone(),
-        track_selected: doc.edit.track_selected.clone(),
-        sel_rect: doc.edit.sel_rect.clone(),
-        arr_sel_rect: doc.edit.arr_sel_rect.clone(),
+        snapshot: EditSnapshot::default(),
     });
 
     assert!(doc.undo());

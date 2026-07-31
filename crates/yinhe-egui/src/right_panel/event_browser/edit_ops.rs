@@ -13,7 +13,7 @@
 use eframe::egui;
 
 use yinhe_editor_core::document::Document;
-use yinhe_editor_core::history::{EventListItem, EventListTarget, UndoAction, UndoEntry};
+use yinhe_editor_core::history::{EventListItem, EventListTarget, UndoAction};
 
 use super::edit::push_event_list_undo;
 use super::state::{EditRequest, EventBrowserState};
@@ -42,32 +42,37 @@ fn dispatch_ops(
     target: EventListTarget,
     ctx: EventOpsCtx,
 ) {
-    let Some(req) = peek_edit_request(ui, salt) else { return };
+    let Some(req) = peek_edit_request(ui, salt) else {
+        return;
+    };
     match req {
         EditRequest::DeleteSelected => {
             if !state.selected_ticks.is_empty() {
+                let snapshot = doc.capture_snapshot();
                 let before = (ctx.snapshot)(doc);
                 (ctx.delete)(doc, &state.selected_ticks);
                 let after = (ctx.snapshot)(doc);
-                push_event_list_undo(doc, target, before, after, ctx.delete_label);
+                push_event_list_undo(doc, target, before, after, ctx.delete_label, snapshot);
                 cleanup(state, ui, salt);
             } else {
                 remove_edit_request(ui, salt);
             }
         }
         EditRequest::InsertAbove { tick } | EditRequest::InsertBelow { tick } => {
+            let snapshot = doc.capture_snapshot();
             let before = (ctx.snapshot)(doc);
             (ctx.insert)(doc, tick);
             let after = (ctx.snapshot)(doc);
-            push_event_list_undo(doc, target, before, after, ctx.insert_label);
+            push_event_list_undo(doc, target, before, after, ctx.insert_label, snapshot);
             remove_edit_request(ui, salt);
         }
         EditRequest::InsertFirst => {
             let tick = current_tick(doc);
+            let snapshot = doc.capture_snapshot();
             let before = (ctx.snapshot)(doc);
             (ctx.insert)(doc, tick);
             let after = (ctx.snapshot)(doc);
-            push_event_list_undo(doc, target, before, after, ctx.first_label);
+            push_event_list_undo(doc, target, before, after, ctx.first_label, snapshot);
             remove_edit_request(ui, salt);
         }
         _ => {}
@@ -88,136 +93,327 @@ struct EventOpsCtx {
 
 // ── TimeSig ──
 
-pub fn apply_timesig_ops(ui: &mut egui::Ui, doc: &mut Document, state: &mut EventBrowserState, salt: &str) {
-    dispatch_ops(ui, doc, state, salt, EventListTarget::TimeSig, EventOpsCtx {
-        snapshot: Box::new(|doc| doc.data.model.conductor.time_sig.iter().cloned().map(EventListItem::TimeSig).collect()),
-        delete: Box::new(|doc, ticks| { doc.delete_time_sig_events(ticks); }),
-        insert: Box::new(|doc, tick| doc.insert_time_sig_event(tick)),
-        delete_label: "删除拍号事件",
-        insert_label: "插入拍号事件",
-        first_label: "新建拍号事件",
-    });
+pub fn apply_timesig_ops(
+    ui: &mut egui::Ui,
+    doc: &mut Document,
+    state: &mut EventBrowserState,
+    salt: &str,
+) {
+    dispatch_ops(
+        ui,
+        doc,
+        state,
+        salt,
+        EventListTarget::TimeSig,
+        EventOpsCtx {
+            snapshot: Box::new(|doc| {
+                doc.data
+                    .model
+                    .conductor
+                    .time_sig
+                    .iter()
+                    .cloned()
+                    .map(EventListItem::TimeSig)
+                    .collect()
+            }),
+            delete: Box::new(|doc, ticks| {
+                doc.delete_time_sig_events(ticks);
+            }),
+            insert: Box::new(|doc, tick| doc.insert_time_sig_event(tick)),
+            delete_label: "删除拍号事件",
+            insert_label: "插入拍号事件",
+            first_label: "新建拍号事件",
+        },
+    );
 }
 
 // ── KeySig ──
 
-pub fn apply_keysig_ops(ui: &mut egui::Ui, doc: &mut Document, state: &mut EventBrowserState, salt: &str) {
-    dispatch_ops(ui, doc, state, salt, EventListTarget::KeySig, EventOpsCtx {
-        snapshot: Box::new(|doc| doc.data.model.conductor.key_sig.iter().cloned().map(EventListItem::KeySig).collect()),
-        delete: Box::new(|doc, ticks| { doc.delete_key_sig_events(ticks); }),
-        insert: Box::new(|doc, tick| doc.insert_key_sig_event(tick)),
-        delete_label: "删除调号事件",
-        insert_label: "插入调号事件",
-        first_label: "新建调号事件",
-    });
+pub fn apply_keysig_ops(
+    ui: &mut egui::Ui,
+    doc: &mut Document,
+    state: &mut EventBrowserState,
+    salt: &str,
+) {
+    dispatch_ops(
+        ui,
+        doc,
+        state,
+        salt,
+        EventListTarget::KeySig,
+        EventOpsCtx {
+            snapshot: Box::new(|doc| {
+                doc.data
+                    .model
+                    .conductor
+                    .key_sig
+                    .iter()
+                    .cloned()
+                    .map(EventListItem::KeySig)
+                    .collect()
+            }),
+            delete: Box::new(|doc, ticks| {
+                doc.delete_key_sig_events(ticks);
+            }),
+            insert: Box::new(|doc, tick| doc.insert_key_sig_event(tick)),
+            delete_label: "删除调号事件",
+            insert_label: "插入调号事件",
+            first_label: "新建调号事件",
+        },
+    );
 }
 
 // ── Marker ──
 
-pub fn apply_marker_ops(ui: &mut egui::Ui, doc: &mut Document, state: &mut EventBrowserState, salt: &str) {
-    dispatch_ops(ui, doc, state, salt, EventListTarget::Marker, EventOpsCtx {
-        snapshot: Box::new(|doc| doc.data.model.conductor.markers.iter().cloned().map(EventListItem::Marker).collect()),
-        delete: Box::new(|doc, ticks| { doc.delete_marker_events(ticks); }),
-        insert: Box::new(|doc, tick| doc.insert_marker_event(tick)),
-        delete_label: "删除标记事件",
-        insert_label: "插入标记事件",
-        first_label: "新建标记事件",
-    });
+pub fn apply_marker_ops(
+    ui: &mut egui::Ui,
+    doc: &mut Document,
+    state: &mut EventBrowserState,
+    salt: &str,
+) {
+    dispatch_ops(
+        ui,
+        doc,
+        state,
+        salt,
+        EventListTarget::Marker,
+        EventOpsCtx {
+            snapshot: Box::new(|doc| {
+                doc.data
+                    .model
+                    .conductor
+                    .markers
+                    .iter()
+                    .cloned()
+                    .map(EventListItem::Marker)
+                    .collect()
+            }),
+            delete: Box::new(|doc, ticks| {
+                doc.delete_marker_events(ticks);
+            }),
+            insert: Box::new(|doc, tick| doc.insert_marker_event(tick)),
+            delete_label: "删除标记事件",
+            insert_label: "插入标记事件",
+            first_label: "新建标记事件",
+        },
+    );
 }
 
 // ── Conductor Lyrics ──
 
-pub fn apply_conductor_lyrics_ops(ui: &mut egui::Ui, doc: &mut Document, state: &mut EventBrowserState, salt: &str) {
-    dispatch_ops(ui, doc, state, salt, EventListTarget::ConductorLyrics, EventOpsCtx {
-        snapshot: Box::new(|doc| doc.data.model.conductor.lyrics.iter().cloned().map(EventListItem::Lyrics).collect()),
-        delete: Box::new(|doc, ticks| { doc.delete_conductor_lyrics_events(ticks); }),
-        insert: Box::new(|doc, tick| doc.insert_conductor_lyrics_event(tick)),
-        delete_label: "删除歌词事件",
-        insert_label: "插入歌词事件",
-        first_label: "新建歌词事件",
-    });
+pub fn apply_conductor_lyrics_ops(
+    ui: &mut egui::Ui,
+    doc: &mut Document,
+    state: &mut EventBrowserState,
+    salt: &str,
+) {
+    dispatch_ops(
+        ui,
+        doc,
+        state,
+        salt,
+        EventListTarget::ConductorLyrics,
+        EventOpsCtx {
+            snapshot: Box::new(|doc| {
+                doc.data
+                    .model
+                    .conductor
+                    .lyrics
+                    .iter()
+                    .cloned()
+                    .map(EventListItem::Lyrics)
+                    .collect()
+            }),
+            delete: Box::new(|doc, ticks| {
+                doc.delete_conductor_lyrics_events(ticks);
+            }),
+            insert: Box::new(|doc, tick| doc.insert_conductor_lyrics_event(tick)),
+            delete_label: "删除歌词事件",
+            insert_label: "插入歌词事件",
+            first_label: "新建歌词事件",
+        },
+    );
 }
 
 // ── Conductor Chord ──
 
-pub fn apply_conductor_chord_ops(ui: &mut egui::Ui, doc: &mut Document, state: &mut EventBrowserState, salt: &str) {
-    dispatch_ops(ui, doc, state, salt, EventListTarget::ConductorChord, EventOpsCtx {
-        snapshot: Box::new(|doc| doc.data.model.conductor.chord.iter().cloned().map(EventListItem::Chord).collect()),
-        delete: Box::new(|doc, ticks| { doc.delete_conductor_chord_events(ticks); }),
-        insert: Box::new(|doc, tick| doc.insert_conductor_chord_event(tick)),
-        delete_label: "删除和弦事件",
-        insert_label: "插入和弦事件",
-        first_label: "新建和弦事件",
-    });
+pub fn apply_conductor_chord_ops(
+    ui: &mut egui::Ui,
+    doc: &mut Document,
+    state: &mut EventBrowserState,
+    salt: &str,
+) {
+    dispatch_ops(
+        ui,
+        doc,
+        state,
+        salt,
+        EventListTarget::ConductorChord,
+        EventOpsCtx {
+            snapshot: Box::new(|doc| {
+                doc.data
+                    .model
+                    .conductor
+                    .chord
+                    .iter()
+                    .cloned()
+                    .map(EventListItem::Chord)
+                    .collect()
+            }),
+            delete: Box::new(|doc, ticks| {
+                doc.delete_conductor_chord_events(ticks);
+            }),
+            insert: Box::new(|doc, tick| doc.insert_conductor_chord_event(tick)),
+            delete_label: "删除和弦事件",
+            insert_label: "插入和弦事件",
+            first_label: "新建和弦事件",
+        },
+    );
 }
 
 // ── Per-track Lyrics ──
 
-pub fn apply_lyrics_ops(ui: &mut egui::Ui, doc: &mut Document, state: &mut EventBrowserState, salt: &str, track: u16) {
-    dispatch_ops(ui, doc, state, salt, EventListTarget::Lyrics { track }, EventOpsCtx {
-        snapshot: Box::new(move |doc| doc.data.model.tracks.get(track as usize)
-            .map(|t| t.lyrics.iter().cloned().map(EventListItem::Lyrics).collect())
-            .unwrap_or_default()),
-        delete: Box::new(move |doc, ticks| { doc.delete_lyrics_events(track, ticks); }),
-        insert: Box::new(move |doc, tick| doc.insert_lyrics_event(track, tick)),
-        delete_label: "删除歌词事件",
-        insert_label: "插入歌词事件",
-        first_label: "新建歌词事件",
-    });
+pub fn apply_lyrics_ops(
+    ui: &mut egui::Ui,
+    doc: &mut Document,
+    state: &mut EventBrowserState,
+    salt: &str,
+    track: u16,
+) {
+    dispatch_ops(
+        ui,
+        doc,
+        state,
+        salt,
+        EventListTarget::Lyrics { track },
+        EventOpsCtx {
+            snapshot: Box::new(move |doc| {
+                doc.data
+                    .model
+                    .tracks
+                    .get(track as usize)
+                    .map(|t| {
+                        t.lyrics
+                            .iter()
+                            .cloned()
+                            .map(EventListItem::Lyrics)
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            }),
+            delete: Box::new(move |doc, ticks| {
+                doc.delete_lyrics_events(track, ticks);
+            }),
+            insert: Box::new(move |doc, tick| doc.insert_lyrics_event(track, tick)),
+            delete_label: "删除歌词事件",
+            insert_label: "插入歌词事件",
+            first_label: "新建歌词事件",
+        },
+    );
 }
 
 // ── Per-track Chord ──
 
-pub fn apply_chord_ops(ui: &mut egui::Ui, doc: &mut Document, state: &mut EventBrowserState, salt: &str, track: u16) {
-    dispatch_ops(ui, doc, state, salt, EventListTarget::Chord { track }, EventOpsCtx {
-        snapshot: Box::new(move |doc| doc.data.model.tracks.get(track as usize)
-            .map(|t| t.chord.iter().cloned().map(EventListItem::Chord).collect())
-            .unwrap_or_default()),
-        delete: Box::new(move |doc, ticks| { doc.delete_chord_events(track, ticks); }),
-        insert: Box::new(move |doc, tick| doc.insert_chord_event(track, tick)),
-        delete_label: "删除和弦事件",
-        insert_label: "插入和弦事件",
-        first_label: "新建和弦事件",
-    });
+pub fn apply_chord_ops(
+    ui: &mut egui::Ui,
+    doc: &mut Document,
+    state: &mut EventBrowserState,
+    salt: &str,
+    track: u16,
+) {
+    dispatch_ops(
+        ui,
+        doc,
+        state,
+        salt,
+        EventListTarget::Chord { track },
+        EventOpsCtx {
+            snapshot: Box::new(move |doc| {
+                doc.data
+                    .model
+                    .tracks
+                    .get(track as usize)
+                    .map(|t| t.chord.iter().cloned().map(EventListItem::Chord).collect())
+                    .unwrap_or_default()
+            }),
+            delete: Box::new(move |doc, ticks| {
+                doc.delete_chord_events(track, ticks);
+            }),
+            insert: Box::new(move |doc, tick| doc.insert_chord_event(track, tick)),
+            delete_label: "删除和弦事件",
+            insert_label: "插入和弦事件",
+            first_label: "新建和弦事件",
+        },
+    );
 }
 
 // ── Program Change ──
 
-pub fn apply_pc_ops(ui: &mut egui::Ui, doc: &mut Document, state: &mut EventBrowserState, salt: &str, track: u16) {
-    dispatch_ops(ui, doc, state, salt, EventListTarget::ProgramChange { track }, EventOpsCtx {
-        snapshot: Box::new(move |doc| doc.data.model.tracks.get(track as usize)
-            .map(|t| t.program_change.iter().cloned().map(EventListItem::ProgramChange).collect())
-            .unwrap_or_default()),
-        delete: Box::new(move |doc, ticks| { doc.delete_program_change_events(track, ticks); }),
-        insert: Box::new(move |doc, tick| doc.insert_program_change_event(track, tick)),
-        delete_label: "删除音色变更事件",
-        insert_label: "插入音色变更事件",
-        first_label: "新建音色变更事件",
-    });
+pub fn apply_pc_ops(
+    ui: &mut egui::Ui,
+    doc: &mut Document,
+    state: &mut EventBrowserState,
+    salt: &str,
+    track: u16,
+) {
+    dispatch_ops(
+        ui,
+        doc,
+        state,
+        salt,
+        EventListTarget::ProgramChange { track },
+        EventOpsCtx {
+            snapshot: Box::new(move |doc| {
+                doc.data
+                    .model
+                    .tracks
+                    .get(track as usize)
+                    .map(|t| {
+                        t.program_change
+                            .iter()
+                            .cloned()
+                            .map(EventListItem::ProgramChange)
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            }),
+            delete: Box::new(move |doc, ticks| {
+                doc.delete_program_change_events(track, ticks);
+            }),
+            insert: Box::new(move |doc, tick| doc.insert_program_change_event(track, tick)),
+            delete_label: "删除音色变更事件",
+            insert_label: "插入音色变更事件",
+            first_label: "新建音色变更事件",
+        },
+    );
 }
 
 // ── Notes ──
 
-pub fn apply_notes_ops(ui: &mut egui::Ui, doc: &mut Document, state: &mut EventBrowserState, salt: &str, track: u16) {
-    let Some(req) = peek_edit_request(ui, salt) else { return };
+pub fn apply_notes_ops(
+    ui: &mut egui::Ui,
+    doc: &mut Document,
+    state: &mut EventBrowserState,
+    salt: &str,
+    track: u16,
+) {
+    let Some(req) = peek_edit_request(ui, salt) else {
+        return;
+    };
     match req {
         EditRequest::DeleteSelected => {
             if !state.selected_ticks.is_empty() {
                 // 用矩形选区覆盖每个选中 tick 的所有 key，调用 delete_selected
+                let before = doc.capture_snapshot();
                 doc.edit.selected.clear();
                 for &tick in &state.selected_ticks {
                     // tick 到 tick+1 的窄矩形，覆盖全 key 范围，限定 track
-                    doc.edit.selected.add_rect_track(tick, tick + 1, 0, 127, track, track);
+                    doc.edit
+                        .selected
+                        .add_rect_track(tick, tick + 1, 0, 127, track, track);
                 }
                 if let Some(action) = doc.delete_selected() {
-                    doc.history.push(UndoEntry {
-                        action,
-                        label: "删除音符".to_string(),
-                        selected: Default::default(),
-                        track_selected: doc.edit.track_selected.clone(),
-                        sel_rect: doc.edit.sel_rect.clone(),
-                        arr_sel_rect: doc.edit.arr_sel_rect.clone(),
-                    });
+                    doc.push_undo(action, "删除音符", before);
                 }
                 cleanup(state, ui, salt);
             } else {
@@ -234,15 +430,9 @@ pub fn apply_notes_ops(ui: &mut egui::Ui, doc: &mut Document, state: &mut EventB
                 key: 60,
                 velocity: 100,
             };
+            let before = doc.capture_snapshot();
             if let Some(action) = doc.add_note(track, note) {
-                doc.history.push(UndoEntry {
-                    action,
-                    label: "插入音符".to_string(),
-                    selected: doc.edit.selected.clone(),
-                    track_selected: doc.edit.track_selected.clone(),
-                    sel_rect: doc.edit.sel_rect.clone(),
-                    arr_sel_rect: doc.edit.arr_sel_rect.clone(),
-                });
+                doc.push_undo(action, "插入音符", before);
             }
             remove_edit_request(ui, salt);
         }
@@ -256,15 +446,9 @@ pub fn apply_notes_ops(ui: &mut egui::Ui, doc: &mut Document, state: &mut EventB
                 key: 60,
                 velocity: 100,
             };
+            let before = doc.capture_snapshot();
             if let Some(action) = doc.add_note(track, note) {
-                doc.history.push(UndoEntry {
-                    action,
-                    label: "新建音符".to_string(),
-                    selected: doc.edit.selected.clone(),
-                    track_selected: doc.edit.track_selected.clone(),
-                    sel_rect: doc.edit.sel_rect.clone(),
-                    arr_sel_rect: doc.edit.arr_sel_rect.clone(),
-                });
+                doc.push_undo(action, "新建音符", before);
             }
             remove_edit_request(ui, salt);
         }
@@ -282,7 +466,9 @@ pub fn apply_automation_ops(
     track: u16,
     target: &yinhe_types::AutomationTarget,
 ) {
-    let Some(req) = peek_edit_request(ui, salt) else { return };
+    let Some(req) = peek_edit_request(ui, salt) else {
+        return;
+    };
     match req {
         EditRequest::DeleteSelected => {
             if !state.selected_ticks.is_empty() {
@@ -290,26 +476,25 @@ pub fn apply_automation_ops(
                 let lane_idx = if matches!(target, yinhe_types::AutomationTarget::Tempo) {
                     0usize
                 } else {
-                    doc.data.model.tracks.get(track as usize)
+                    doc.data
+                        .model
+                        .tracks
+                        .get(track as usize)
                         .and_then(|t| t.automation_lanes.iter().position(|l| &l.target == target))
                         .unwrap_or(0)
                 };
                 // 逐个删除选中 tick 的 automation 事件，合并为 Composite undo
+                let before = doc.capture_snapshot();
                 let mut actions: Vec<UndoAction> = Vec::new();
                 for &tick in &state.selected_ticks {
-                    if let Some(action) = doc.delete_automation_event(track as usize, lane_idx, target, tick) {
+                    if let Some(action) =
+                        doc.delete_automation_event(track as usize, lane_idx, target, tick)
+                    {
                         actions.push(action);
                     }
                 }
                 if !actions.is_empty() {
-                    doc.history.push(UndoEntry {
-                        action: UndoAction::Composite(actions),
-                        label: "删除自动化事件".to_string(),
-                        selected: doc.edit.selected.clone(),
-                        track_selected: doc.edit.track_selected.clone(),
-                        sel_rect: doc.edit.sel_rect.clone(),
-                        arr_sel_rect: doc.edit.arr_sel_rect.clone(),
-                    });
+                    doc.push_undo(UndoAction::Composite(actions), "删除自动化事件", before);
                 }
                 cleanup(state, ui, salt);
             } else {
@@ -318,41 +503,41 @@ pub fn apply_automation_ops(
         }
         EditRequest::InsertAbove { tick } | EditRequest::InsertBelow { tick } => {
             // 默认 value：Tempo=120（BPM），其他=0.0；shape=Step
-            let value = if matches!(target, yinhe_types::AutomationTarget::Tempo) { 120.0 } else { 0.0 };
+            let value = if matches!(target, yinhe_types::AutomationTarget::Tempo) {
+                120.0
+            } else {
+                0.0
+            };
             let event = yinhe_types::AutomationEvent {
                 tick,
                 value,
                 shape: yinhe_types::SegmentShape::Step,
             };
-            if let Some((_, _, action)) = doc.add_automation_event(track as usize, target.clone(), event) {
-                doc.history.push(UndoEntry {
-                    action,
-                    label: "插入自动化事件".to_string(),
-                    selected: doc.edit.selected.clone(),
-                    track_selected: doc.edit.track_selected.clone(),
-                    sel_rect: doc.edit.sel_rect.clone(),
-                    arr_sel_rect: doc.edit.arr_sel_rect.clone(),
-                });
+            let before = doc.capture_snapshot();
+            if let Some((_, _, action)) =
+                doc.add_automation_event(track as usize, target.clone(), event)
+            {
+                doc.push_undo(action, "插入自动化事件", before);
             }
             remove_edit_request(ui, salt);
         }
         EditRequest::InsertFirst => {
             let tick = current_tick(doc);
-            let value = if matches!(target, yinhe_types::AutomationTarget::Tempo) { 120.0 } else { 0.0 };
+            let value = if matches!(target, yinhe_types::AutomationTarget::Tempo) {
+                120.0
+            } else {
+                0.0
+            };
             let event = yinhe_types::AutomationEvent {
                 tick,
                 value,
                 shape: yinhe_types::SegmentShape::Step,
             };
-            if let Some((_, _, action)) = doc.add_automation_event(track as usize, target.clone(), event) {
-                doc.history.push(UndoEntry {
-                    action,
-                    label: "新建自动化事件".to_string(),
-                    selected: doc.edit.selected.clone(),
-                    track_selected: doc.edit.track_selected.clone(),
-                    sel_rect: doc.edit.sel_rect.clone(),
-                    arr_sel_rect: doc.edit.arr_sel_rect.clone(),
-                });
+            let before = doc.capture_snapshot();
+            if let Some((_, _, action)) =
+                doc.add_automation_event(track as usize, target.clone(), event)
+            {
+                doc.push_undo(action, "新建自动化事件", before);
             }
             remove_edit_request(ui, salt);
         }
