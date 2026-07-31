@@ -442,6 +442,54 @@ pub fn list_output_devices() -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// 协商采样率：请求值不在设备任何 f32 输出配置的支持范围内时，
+/// 回退到设备默认采样率。枚举失败时不做判断，交给 cpal 建流时报错。
+fn negotiate_sample_rate(
+    device: &cpal::Device,
+    requested: u32,
+    device_default: u32,
+) -> u32 {
+    let supported = match device.supported_output_configs() {
+        Ok(configs) => configs
+            .filter(|c| c.sample_format() == cpal::SampleFormat::F32)
+            .any(|c| requested >= c.min_sample_rate() && requested <= c.max_sample_rate()),
+        Err(_) => return requested,
+    };
+    if supported {
+        requested
+    } else {
+        tracing::warn!(
+            "Sample rate {requested} Hz not supported by output device, \
+             falling back to device default {device_default} Hz"
+        );
+        device_default
+    }
+}
+
+/// 协商缓冲区：Fixed(n) 超出设备支持范围时钳制到 [min, max]。
+/// 蓝牙设备常见 max 远小于内置扬声器（如 1024），不钳制会直接建流失败。
+fn negotiate_buffer_size(
+    requested: cpal::BufferSize,
+    supported: &cpal::SupportedBufferSize,
+) -> cpal::BufferSize {
+    let n = match requested {
+        cpal::BufferSize::Fixed(n) => n,
+        default => return default,
+    };
+    match supported {
+        cpal::SupportedBufferSize::Range { min, max } => {
+            let clamped = n.clamp(*min, *max);
+            if clamped != n {
+                tracing::warn!(
+                    "Buffer size {n} out of device range {min}..={max}, clamped to {clamped}"
+                );
+            }
+            cpal::BufferSize::Fixed(clamped)
+        }
+        cpal::SupportedBufferSize::Unknown => requested,
+    }
+}
+
 /// Spawn a CPAL audio stream backed by a producer/consumer audio FIFO.
 ///
 /// The CPAL callback only consumes already-rendered contiguous samples from the
@@ -476,6 +524,13 @@ pub fn spawn_cpal_audio(
     };
     let supported = device.default_output_config().map_err(|e| e.to_string())?;
     let channels = supported.channels() as usize;
+
+    // 设备能力协商：蓝牙设备（尤其 HFP 模式）的缓冲区/采样率范围往往比
+    // 内置扬声器窄很多（实测小米开放式耳机缓冲区仅 14..=1024 帧）。
+    // 直接把用户设置塞给 build_output_stream 会失败，而失败只进日志、
+    // UI 无感知，表现为"播放键失灵、时间线冻结"。这里先钳制/回退。
+    let sample_rate = negotiate_sample_rate(&device, sample_rate, supported.sample_rate());
+    let buffer_size = negotiate_buffer_size(buffer_size, supported.buffer_size());
 
     let config = cpal::StreamConfig {
         channels: channels as u16,
