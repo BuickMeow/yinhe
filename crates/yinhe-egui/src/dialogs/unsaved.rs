@@ -27,7 +27,7 @@ pub(crate) fn show_viewport(
 
     ctx_clone.show_viewport_immediate(
         viewport_id,
-        crate::chrome::dialog::viewport_builder(t!("dialog.unsaved.title").as_ref(), [380.0, 170.0], false),
+        crate::chrome::dialog::viewport_builder(t!("dialog.unsaved.title").as_ref(), [340.0, 130.0], false),
         move |vctx, _class| {
             let mut close = false;
             if vctx.input(|i| i.viewport().close_requested()) {
@@ -49,11 +49,11 @@ pub(crate) fn show_viewport(
                             bottom: 12,
                         })
                         .show(ui, |ui| {
-                            ui.set_max_width(360.0);
+                            ui.set_max_width(316.0);
                             ui.vertical_centered(|ui| {
                                 ui.add_space(8.0);
                                 ui.label(t!("dialog.unsaved.message").as_ref());
-                                ui.add_space(20.0);
+                                ui.add_space(16.0);
                                 ui.horizontal(|ui| {
                                     if ui.button(t!("dialog.unsaved.save").as_ref()).clicked() {
                                         *action_cb.borrow_mut() = Some(Action::Save);
