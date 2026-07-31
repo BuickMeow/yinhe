@@ -407,7 +407,7 @@ pub(crate) fn show_password_prompt_viewport(
         viewport_id,
         crate::chrome::dialog::viewport_builder(
             t!("dialog.archive.password_title").as_ref(),
-            [460.0, 200.0],
+            [460.0, 160.0],
             false,
         ),
         move |vctx, _class| {
@@ -472,71 +472,81 @@ fn show_password_prompt(
         .map(|f| f.to_string_lossy().to_string())
         .unwrap_or_else(|| prompt.path.clone());
 
-    ui.add_space(6.0);
-    let display_name = truncate_name(&filename, 40);
-    let prompt_resp = ui.label(
-        eframe::egui::RichText::new(t!("dialog.archive.password_prompt", name = display_name).as_ref())
-            .size(13.0),
+    // 主体内容：占据按钮行以上的空间
+    ui.allocate_ui_with_layout(
+        eframe::egui::vec2(ui.available_width(), (ui.available_height() - 36.0).max(0.0)),
+        eframe::egui::Layout::top_down(eframe::egui::Align::Center),
+        |ui| {
+            ui.add_space(6.0);
+            let display_name = truncate_name(&filename, 40);
+            let prompt_resp = ui.label(
+                eframe::egui::RichText::new(t!("dialog.archive.password_prompt", name = display_name).as_ref())
+                    .size(13.0),
+            );
+            if filename.len() != display_name.len() {
+                prompt_resp.on_hover_text(&filename);
+            }
+
+            if prompt.wrong {
+                ui.add_space(2.0);
+                ui.label(
+                    eframe::egui::RichText::new(t!("dialog.archive.password_wrong").as_ref())
+                        .size(12.0)
+                        .color(eframe::egui::Color32::from_rgb(220, 80, 80)),
+                );
+            }
+
+            ui.add_space(6.0);
+            // 密码输入框 + 眼睛切换按钮：回车确认，Esc 取消
+            ui.horizontal(|ui| {
+                let resp = ui.add(
+                    eframe::egui::TextEdit::singleline(&mut prompt.password)
+                        .password(!prompt.show_password)
+                        .hint_text(t!("dialog.archive.password_hint").as_ref())
+                        .desired_width(f32::INFINITY),
+                );
+                resp.request_focus();
+
+                // 眼睛图标：切换明文/圆点显示
+                use egui_material_icons::icons::{ICON_VISIBILITY, ICON_VISIBILITY_OFF};
+                let icon = if prompt.show_password { ICON_VISIBILITY_OFF } else { ICON_VISIBILITY };
+                let icon_color = ui.visuals().text_color();
+                let btn_resp = ui.add(
+                    eframe::egui::Button::new(
+                        eframe::egui::RichText::new(icon).size(16.0).color(icon_color)
+                    )
+                    .frame(false),
+                );
+                if btn_resp.clicked() {
+                    prompt.show_password = !prompt.show_password;
+                }
+            });
+
+            ui.add_space(8.0);
+            ui.separator();
+        },
     );
-    if filename.len() != display_name.len() {
-        prompt_resp.on_hover_text(&filename);
-    }
 
-    if prompt.wrong {
-        ui.add_space(2.0);
-        ui.label(
-            eframe::egui::RichText::new(t!("dialog.archive.password_wrong").as_ref())
-                .size(12.0)
-                .color(eframe::egui::Color32::from_rgb(220, 80, 80)),
-        );
-    }
-
-    ui.add_space(6.0);
-    // 密码输入框 + 眼睛切换按钮：回车确认，Esc 取消
-    ui.horizontal(|ui| {
-        let resp = ui.add(
-            eframe::egui::TextEdit::singleline(&mut prompt.password)
-                .password(!prompt.show_password)
-                .hint_text(t!("dialog.archive.password_hint").as_ref())
-                .desired_width(f32::INFINITY),
-        );
-        resp.request_focus();
-
-        // 眼睛图标：切换明文/圆点显示
-        use egui_material_icons::icons::{ICON_VISIBILITY, ICON_VISIBILITY_OFF};
-        let icon = if prompt.show_password { ICON_VISIBILITY_OFF } else { ICON_VISIBILITY };
-        let icon_color = ui.visuals().text_color();
-        let btn_resp = ui.add(
-            eframe::egui::Button::new(
-                eframe::egui::RichText::new(icon).size(16.0).color(icon_color)
-            )
-            .frame(false),
-        );
-        if btn_resp.clicked() {
-            prompt.show_password = !prompt.show_password;
-        }
-    });
-
-    ui.add_space(8.0);
-    ui.separator();
-    ui.add_space(4.0);
-
+    // 底部按钮行（吸底）
     let mut action = PasswordPromptAction::None;
-    ui.horizontal(|ui| {
-        ui.with_layout(eframe::egui::Layout::right_to_left(eframe::egui::Align::Center), |ui| {
-            if ui.button(t!("common.cancel").as_ref()).clicked() {
-                action = PasswordPromptAction::Cancel;
-            }
-            let confirm_enabled = !prompt.password.is_empty();
-            if ui.add_enabled(
-                confirm_enabled,
-                eframe::egui::Button::new(t!("common.confirm").as_ref()),
-            ).clicked() {
-                action = PasswordPromptAction::Confirm {
-                    path: prompt.path.clone(),
-                    password: prompt.password.clone(),
-                };
-            }
+    ui.with_layout(eframe::egui::Layout::bottom_up(eframe::egui::Align::Center), |ui| {
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.with_layout(eframe::egui::Layout::right_to_left(eframe::egui::Align::Center), |ui| {
+                if ui.button(t!("common.cancel").as_ref()).clicked() {
+                    action = PasswordPromptAction::Cancel;
+                }
+                let confirm_enabled = !prompt.password.is_empty();
+                if ui.add_enabled(
+                    confirm_enabled,
+                    eframe::egui::Button::new(t!("common.confirm").as_ref()),
+                ).clicked() {
+                    action = PasswordPromptAction::Confirm {
+                        path: prompt.path.clone(),
+                        password: prompt.password.clone(),
+                    };
+                }
+            });
         });
     });
 

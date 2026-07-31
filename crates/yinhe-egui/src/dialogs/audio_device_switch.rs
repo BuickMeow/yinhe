@@ -63,53 +63,68 @@ pub(crate) fn show_viewport(
                             bottom: 12,
                         })
                         .show(ui, |ui| {
-                            ui.set_max_width(460.0);
-
-                            ui.vertical_centered(|ui| {
-                                ui.add_space(8.0);
-                                if allow_keep_current {
-                                    ui.label(t!("dialog.audio_switch.devices_changed").as_ref());
-                                    ui.add_space(4.0);
-                                    ui.label(t!("dialog.audio_switch.select_new").as_ref());
-                                } else {
-                                    ui.label(t!("dialog.audio_switch.stream_error").as_ref());
-                                    ui.add_space(4.0);
-                                    ui.label(t!("dialog.audio_switch.select_device").as_ref());
-                                }
-                                ui.add_space(8.0);
-                            });
-
-                            // 设备列表 —— 用 radio button 替代宽按钮
-                            egui::ScrollArea::vertical()
-                                .max_height(220.0)
-                                .show(ui, |ui| {
-                                    if devices_vec.is_empty() {
-                                        ui.vertical_centered(|ui| {
-                                            ui.add_space(12.0);
-                                            ui.label(
-                                                egui::RichText::new(t!("dialog.audio_switch.no_devices").as_ref())
-                                                    .color(egui::Color32::from_gray(140)),
-                                            );
-                                        });
-                                    }
-                                    for name in &devices_vec {
-                                        let resp = ui.add(
-                                            egui::RadioButton::new(false, name),
-                                        );
-                                        if resp.clicked() {
-                                            *action_capture.borrow_mut() =
-                                                AudioDeviceSwitchAction::Switch(name.clone());
-                                            hide = true;
+                            ui.set_max_width(436.0);
+                            // 主体内容：提示文字 + 设备列表，占据按钮组以上的空间
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(ui.available_width(), (ui.available_height() - 130.0).max(0.0)),
+                                egui::Layout::top_down(egui::Align::Center),
+                                |ui| {
+                                    ui.vertical_centered(|ui| {
+                                        ui.add_space(8.0);
+                                        if allow_keep_current {
+                                            ui.label(t!("dialog.audio_switch.devices_changed").as_ref());
+                                            ui.add_space(4.0);
+                                            ui.label(t!("dialog.audio_switch.select_new").as_ref());
+                                        } else {
+                                            ui.label(t!("dialog.audio_switch.stream_error").as_ref());
+                                            ui.add_space(4.0);
+                                            ui.label(t!("dialog.audio_switch.select_device").as_ref());
                                         }
-                                    }
-                                });
+                                        ui.add_space(8.0);
+                                    });
 
-                            ui.add_space(8.0);
+                                    // 设备列表 —— 用 radio button 替代宽按钮
+                                    egui::ScrollArea::vertical()
+                                        .auto_shrink([false, false])
+                                        .show(ui, |ui| {
+                                            if devices_vec.is_empty() {
+                                                ui.vertical_centered(|ui| {
+                                                    ui.add_space(12.0);
+                                                    ui.label(
+                                                        egui::RichText::new(t!("dialog.audio_switch.no_devices").as_ref())
+                                                            .color(egui::Color32::from_gray(140)),
+                                                    );
+                                                });
+                                            }
+                                            for name in &devices_vec {
+                                                let resp = ui.add(
+                                                    egui::RadioButton::new(false, name),
+                                                );
+                                                if resp.clicked() {
+                                                    *action_capture.borrow_mut() =
+                                                        AudioDeviceSwitchAction::Switch(name.clone());
+                                                    hide = true;
+                                                }
+                                            }
+                                        });
+                                },
+                            );
 
-                            ui.vertical_centered(|ui| {
-                                if ui.button(t!("settings.refresh_devices").as_ref()).clicked() {
+                            // 底部按钮组（吸底）
+                            ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
+                                ui.add_space(4.0);
+                                if ui.button(t!("common.exit_app").as_ref()).clicked() {
                                     *action_capture.borrow_mut() =
-                                        AudioDeviceSwitchAction::Refresh;
+                                        AudioDeviceSwitchAction::Exit;
+                                    hide = true;
+                                }
+
+                                if let Some(err) = &error_str {
+                                    ui.add_space(8.0);
+                                    ui.label(
+                                        egui::RichText::new(err)
+                                            .color(egui::Color32::from_rgb(232, 80, 80)),
+                                    );
                                 }
 
                                 if allow_keep_current {
@@ -121,19 +136,10 @@ pub(crate) fn show_viewport(
                                     }
                                 }
 
-                                if let Some(err) = &error_str {
-                                    ui.add_space(8.0);
-                                    ui.label(
-                                        egui::RichText::new(err)
-                                            .color(egui::Color32::from_rgb(232, 80, 80)),
-                                    );
-                                }
-
-                                ui.add_space(16.0);
-                                if ui.button(t!("common.exit_app").as_ref()).clicked() {
+                                ui.add_space(8.0);
+                                if ui.button(t!("settings.refresh_devices").as_ref()).clicked() {
                                     *action_capture.borrow_mut() =
-                                        AudioDeviceSwitchAction::Exit;
-                                    hide = true;
+                                        AudioDeviceSwitchAction::Refresh;
                                 }
                             });
                         });

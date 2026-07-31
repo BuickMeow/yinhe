@@ -23,7 +23,7 @@ pub(crate) fn show_viewport(ctx: &egui::Context) -> bool {
 
     ctx_clone.show_viewport_immediate(
         viewport_id,
-        crate::chrome::dialog::viewport_builder(t!("dialog.gpu_lost.title").as_ref(), [460.0, 200.0], false),
+        crate::chrome::dialog::viewport_builder(t!("dialog.gpu_lost.title").as_ref(), [460.0, 150.0], false),
         move |vctx, _class| {
             let mut close = false;
             if vctx.input(|i| i.viewport().close_requested()) {
@@ -44,15 +44,23 @@ pub(crate) fn show_viewport(ctx: &egui::Context) -> bool {
                             bottom: 12,
                         })
                         .show(ui, |ui| {
-                            ui.set_max_width(460.0);
-                            ui.vertical_centered(|ui| {
-                                ui.add_space(8.0);
-                                ui.label(
-                                    t!("dialog.gpu_lost.message").as_ref(),
-                                );
+                            ui.set_max_width(436.0);
+                            // 主体内容：占据按钮行以上的空间并垂直居中
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(ui.available_width(), (ui.available_height() - 36.0).max(0.0)),
+                                egui::Layout::top_down(egui::Align::Center),
+                                |ui| {
+                                    ui.vertical_centered(|ui| {
+                                        ui.add_space(8.0);
+                                        ui.label(t!("dialog.gpu_lost.message").as_ref());
+                                        ui.add_space(4.0);
+                                        ui.label(t!("dialog.gpu_lost.action").as_ref());
+                                    });
+                                },
+                            );
+                            // 底部按钮（吸底）
+                            ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
                                 ui.add_space(4.0);
-                                ui.label(t!("dialog.gpu_lost.action").as_ref());
-                                ui.add_space(16.0);
                                 if ui.button(t!("common.exit_app").as_ref()).clicked() {
                                     close = true;
                                     *exit_capture.borrow_mut() = true;

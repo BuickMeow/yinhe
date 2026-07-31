@@ -33,7 +33,7 @@ pub(crate) fn show_viewport(ctx: &egui::Context, old: u32, new: u32) -> PpqResca
 
     ctx_clone.show_viewport_immediate(
         viewport_id,
-        crate::chrome::dialog::viewport_builder(t!("dialog.ppq_rescale.title").as_ref(), [380.0, 200.0], false),
+        crate::chrome::dialog::viewport_builder(t!("dialog.ppq_rescale.title").as_ref(), [380.0, 170.0], false),
         move |vctx, _class| {
             let mut close = false;
             if vctx.input(|i| i.viewport().close_requested()) {
@@ -55,36 +55,48 @@ pub(crate) fn show_viewport(ctx: &egui::Context, old: u32, new: u32) -> PpqResca
                             bottom: 12,
                         })
                         .show(ui, |ui| {
-                            ui.set_max_width(360.0);
-                            ui.add_space(6.0);
-                            ui.label(t!("dialog.ppq_rescale.desc", old = old, new = new).as_ref());
-                            ui.add_space(4.0);
-                            ui.label(t!("dialog.ppq_rescale.question").as_ref());
-                            ui.add_space(6.0);
-                            ui.label(
-                                egui::RichText::new(
-                                    t!("dialog.ppq_rescale.hint").as_ref(),
-                                )
-                                .color(egui::Color32::from_gray(140))
-                                .size(11.0),
+                            ui.set_max_width(356.0);
+                            // 主体内容：占据按钮行以上的空间并垂直居中
+                            ui.allocate_ui_with_layout(
+                                egui::vec2(ui.available_width(), (ui.available_height() - 36.0).max(0.0)),
+                                egui::Layout::top_down(egui::Align::Center),
+                                |ui| {
+                                    ui.vertical_centered(|ui| {
+                                        ui.add_space(6.0);
+                                        ui.label(t!("dialog.ppq_rescale.desc", old = old, new = new).as_ref());
+                                        ui.add_space(4.0);
+                                        ui.label(t!("dialog.ppq_rescale.question").as_ref());
+                                        ui.add_space(6.0);
+                                        ui.label(
+                                            egui::RichText::new(
+                                                t!("dialog.ppq_rescale.hint").as_ref(),
+                                            )
+                                            .color(egui::Color32::from_gray(140))
+                                            .size(11.0),
+                                        );
+                                    });
+                                },
                             );
-                            ui.add_space(12.0);
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().button_padding = egui::vec2(10.0, 4.0);
-                                if ui.button(t!("dialog.ppq_rescale.yes").as_ref()).clicked() {
-                                    *action_cb.borrow_mut() = Some(PpqRescaleAction::Rescale);
-                                    close = true;
-                                }
+                            // 底部按钮行（吸底）
+                            ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
                                 ui.add_space(4.0);
-                                if ui.button(t!("dialog.ppq_rescale.no").as_ref()).clicked() {
-                                    *action_cb.borrow_mut() = Some(PpqRescaleAction::NoRescale);
-                                    close = true;
-                                }
-                                ui.add_space(4.0);
-                                if ui.button(t!("common.cancel").as_ref()).clicked() {
-                                    *action_cb.borrow_mut() = Some(PpqRescaleAction::Cancel);
-                                    close = true;
-                                }
+                                ui.horizontal(|ui| {
+                                    ui.spacing_mut().button_padding = egui::vec2(10.0, 4.0);
+                                    if ui.button(t!("dialog.ppq_rescale.yes").as_ref()).clicked() {
+                                        *action_cb.borrow_mut() = Some(PpqRescaleAction::Rescale);
+                                        close = true;
+                                    }
+                                    ui.add_space(4.0);
+                                    if ui.button(t!("dialog.ppq_rescale.no").as_ref()).clicked() {
+                                        *action_cb.borrow_mut() = Some(PpqRescaleAction::NoRescale);
+                                        close = true;
+                                    }
+                                    ui.add_space(4.0);
+                                    if ui.button(t!("common.cancel").as_ref()).clicked() {
+                                        *action_cb.borrow_mut() = Some(PpqRescaleAction::Cancel);
+                                        close = true;
+                                    }
+                                });
                             });
                         });
                 });
