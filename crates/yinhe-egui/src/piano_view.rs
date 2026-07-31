@@ -666,6 +666,7 @@ pub fn show(
         let (_h, auto_edits, velocity_edits, auto_feedback, auto_drag_info) = automation_panel::show_panels(
             ui,
             ctx.panels,
+            selected,
             ctx.renderers,
             ctx.lanes,
             ctx.render_lanes,

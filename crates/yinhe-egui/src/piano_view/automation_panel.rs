@@ -147,6 +147,7 @@ fn sync_renderer_count(
 pub fn show_panels(
     ui: &mut egui::Ui,
     panels: &mut Vec<AutomationPanelView>,
+    selected: &mut yinhe_core::Selection,
     renderers: &mut Vec<(InstanceRenderer, RenderContext)>,
     automation_lanes: &[AutomationLane],
     render_lanes: &[&AutomationLane],
@@ -339,6 +340,11 @@ pub fn show_panels(
                 SelOp::Clear => {
                     panel.anchor_sel_rects.clear();
                     panel.dirty = true;
+                }
+                SelOp::ClearNoteSelection => {
+                    // 三视图选框互斥：开始新框选时清空共享音符选区，
+                    // App 层检测到选区被清空后清除其他视图的选框。
+                    selected.clear();
                 }
             }
         }

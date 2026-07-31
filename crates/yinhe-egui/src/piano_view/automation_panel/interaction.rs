@@ -91,6 +91,9 @@ pub(crate) enum SelOp {
     Set(SelRectOp),
     /// 清空选框（点击空白处 < 3px）
     Clear,
+    /// 开始新的框选（非加选模式 press）：清空共享音符选区（doc.edit.selected），
+    /// 触发 App 层三视图选框互斥，使其他视图的选框立即消失。
+    ClearNoteSelection,
 }
 
 /// 右键点击锚点时记录的编辑信息。
@@ -714,6 +717,11 @@ pub(crate) fn handle_automation_interaction(
                             start_pos: p,
                         });
                     });
+                    // 非加选模式：清空共享音符选区，触发三视图选框互斥
+                    // （与 AR/PR 在 press 时清空 selected 的行为一致）。
+                    if !cmd && !shift {
+                        sel_op = Some(SelOp::ClearNoteSelection);
+                    }
                 }
             }
 

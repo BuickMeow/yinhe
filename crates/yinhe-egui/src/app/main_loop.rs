@@ -159,6 +159,27 @@ impl eframe::App for App {
             // upload，渲染出上一个文档的音符（见 close_document 同根修复）。
             self.invalidate_cull_state();
             self.prev_active_doc = self.active_doc;
+            // 三视图选框互斥：切换文档后把 prev 计数对齐到新文档当前状态，
+            // 避免把"已有选框"误判为"新创建的选框"而清除其他视图。
+            match self.active_doc {
+                Some(i) => {
+                    self.prev_arr_count = self.arr_sel_rect.len();
+                    self.prev_pr_count = self.documents[i].edit.sel_rect.rects.len();
+                    self.prev_am_count = self.documents[i]
+                        .edit
+                        .controller_panels
+                        .iter()
+                        .map(|p| p.anchor_sel_rects.len())
+                        .sum();
+                    self.prev_selected_nonempty = !self.documents[i].edit.selected.is_empty();
+                }
+                None => {
+                    self.prev_arr_count = self.arr_sel_rect.len();
+                    self.prev_pr_count = 0;
+                    self.prev_am_count = 0;
+                    self.prev_selected_nonempty = false;
+                }
+            }
         }
 
         // ── Force dark mode + 统一主题色 ──

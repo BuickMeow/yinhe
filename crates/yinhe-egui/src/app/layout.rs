@@ -64,6 +64,8 @@ impl App {
         let Some(idx) = self.active_doc else {
             return;
         };
+        // 三视图选框互斥：先于任何渲染执行，保证同一时刻只有一个视图拥有选框。
+        self.enforce_sel_rect_exclusivity(idx);
 
         let is_playing = self
             .audio_state
@@ -159,6 +161,78 @@ impl App {
         }
 
         self.follow_mode = follow_mode;
+    }
+
+    /// PR/AR/AM 三视图选框互斥。
+    ///
+    /// 每帧渲染前检查各视图的选框数量与共享选区状态：
+    /// - 某视图**新增**了选框（框选提交，含 shift/cmd 加选追加）→ 清除其他视图的选框；
+    /// - 共享选区被**清空**（AR/PR 在 press 时清空 selected，即开始新的框选/空白点击）
+    ///   → 立即清除全部视图的选框（发起方已自行清空自己的选框）。
+    ///
+    /// 清除时同步从共享 `Selection` 中精确移除对应视图的矩形，避免误伤其他视图的选区。
+    /// `selected` 被三个视图共享，不能整体 clear()。
+    fn enforce_sel_rect_exclusivity(&mut self, idx: usize) {
+        let doc = &mut self.documents[idx];
+
+        // 清除前先采集各视图选框快照（含 f64→整数转换），供精确移除共享 Selection 中的矩形。
+        let arr_rects: Vec<(u32, u32, u16, u16)> = self
+            .arr_sel_rect
+            .iter()
+            .map(|&(ts, te, tl, th)| (ts as u32, te as u32, tl as u16, th as u16))
+            .collect();
+        let pr_rects: Vec<(u32, u32, u8, u8)> = doc
+            .edit
+            .sel_rect
+            .rects
+            .iter()
+            .map(|&(ts, te, kl, kh)| (ts as u32, te as u32, kl, kh))
+            .collect();
+
+        let arr_count = self.arr_sel_rect.len();
+        let pr_count = doc.edit.sel_rect.rects.len();
+        let am_count: usize = doc
+            .edit
+            .controller_panels
+            .iter()
+            .map(|p| p.anchor_sel_rects.len())
+            .sum();
+
+        let arr_gained = arr_count > self.prev_arr_count;
+        let pr_gained = pr_count > self.prev_pr_count;
+        let am_gained = am_count > self.prev_am_count;
+        // AR/PR 在 press 开始新框选/空白点击时会清空 selected。
+        let selection_cleared = doc.edit.selected.is_empty() && self.prev_selected_nonempty;
+
+        // 新选框只可能来自一个视图（单鼠标交互），各清除条件互不重叠。
+        let clear_arr = selection_cleared || pr_gained || am_gained;
+        let clear_pr = selection_cleared || arr_gained || am_gained;
+        let clear_am = selection_cleared || arr_gained || pr_gained;
+
+        if clear_arr {
+            self.arr_sel_rect.clear();
+            doc.edit.selected.remove_rects_track(&arr_rects);
+        }
+        if clear_pr {
+            doc.edit.sel_rect.clear();
+            doc.edit.selected.remove_rects(&pr_rects);
+        }
+        if clear_am {
+            for panel in &mut doc.edit.controller_panels {
+                panel.anchor_sel_rects.clear();
+            }
+        }
+
+        // 以清除后的状态更新 prev，供下一帧比较。
+        self.prev_arr_count = self.arr_sel_rect.len();
+        self.prev_pr_count = doc.edit.sel_rect.rects.len();
+        self.prev_am_count = doc
+            .edit
+            .controller_panels
+            .iter()
+            .map(|p| p.anchor_sel_rects.len())
+            .sum();
+        self.prev_selected_nonempty = !doc.edit.selected.is_empty();
     }
 
     /// Show the pianoroll split area, including the split handle and pianoroll view.
