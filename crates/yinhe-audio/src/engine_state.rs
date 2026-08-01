@@ -7,34 +7,11 @@ use xsynth_core::soundfont::SoundfontBase;
 use yinhe_core::YinModel;
 
 use crate::audio_model::{
-    ActiveNote, AudibleNote, AudioModel, PreparedModel, SortedCC, flatten_automation_to_cc_events,
+    ActiveNote, AudibleNote, AudioModel, PreparedModel, flatten_automation_to_cc_events,
 };
 use crate::channel::{ChannelState, ChaseSkip};
 use crate::engine::AudioEngine;
 use crate::prepare_model::build_audible_notes;
-
-/// 单通道状态 chase：扫 `cc_events[..target_sample)` 中 `channel` 的事件累积状态。
-///
-/// 用于音符预览：把目标位置的自动化状态（volume/pan/PBS/Program 等）应用到通道，
-/// 不污染正在播放的工程状态。只 apply 目标通道的事件，其余 O(1) 跳过；
-/// 预览是低频操作，线性扫描可接受（几十万事件中亚毫秒级）。
-pub(crate) fn chase_channel_state(
-    cc_events: &[SortedCC],
-    target_sample: u64,
-    channel: u32,
-) -> ChannelState {
-    let mut state = ChannelState::default();
-    for cc in cc_events {
-        if cc.sample >= target_sample {
-            break;
-        }
-        if cc.channel != channel {
-            continue;
-        }
-        state.apply(&cc.event);
-    }
-    state
-}
 
 impl AudioEngine {
     pub(crate) fn load_model(&mut self, model: &Arc<YinModel>) {
@@ -174,38 +151,6 @@ impl AudioEngine {
                 ));
             }
         }
-    }
-
-    /// 音符预览 NoteOn：把临时音符发到目标通道（dense channel），不经过 note_cursor。
-    pub(crate) fn preview_note_on(&mut self, channel: u8, key: u8, vel: u8) {
-        let dense = self.channel_layout.dense_for(channel as usize);
-        if dense != u32::MAX {
-            self.channel_group.send_event(SynthEvent::Channel(
-                dense,
-                ChannelEvent::Audio(ChannelAudioEvent::NoteOn { key, vel }),
-            ));
-        }
-    }
-
-    /// 音符预览 NoteOff。
-    pub(crate) fn preview_note_off(&mut self, channel: u8, key: u8) {
-        let dense = self.channel_layout.dense_for(channel as usize);
-        if dense != u32::MAX {
-            self.channel_group.send_event(SynthEvent::Channel(
-                dense,
-                ChannelEvent::Audio(ChannelAudioEvent::NoteOff { key }),
-            ));
-        }
-    }
-
-    /// 把 `sample` 位置的自动化状态应用到 `channel`（预览前设置 / 播放中预览后恢复）。
-    pub(crate) fn preview_apply_state(&mut self, channel: u8, sample: u64) {
-        let dense = self.channel_layout.dense_for(channel as usize);
-        if dense == u32::MAX {
-            return;
-        }
-        let state = chase_channel_state(&self.cc_events, sample, channel as u32);
-        state.send_to(dense, &mut self.channel_group, &ChaseSkip::default());
     }
 
     pub(crate) fn load_soundfont_for_port(&mut self, port: u8, paths: &[String]) {

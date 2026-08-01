@@ -419,6 +419,8 @@ impl App {
     /// - 目标位置自动化状态 = `target_tick` 处的自动化（渲染器按 target_sample chase）；
     /// - 时长换算用目标位置的 Tempo（tempo_map 自动变速）；
     /// - 力度缺省时用该音轨最近修改力度（default_velocity）。
+    ///
+    /// 整组合并成一条 `PreviewNotes` 命令发送（一次替换整组，且不占命令通道额度）。
     pub(crate) fn send_note_previews(&self, reqs: &[crate::piano_view::PreviewReq]) {
         if reqs.is_empty() {
             return;
@@ -429,6 +431,8 @@ impl App {
         let doc = &self.documents[idx];
         let model = &doc.data.model;
         let sr = audio.sample_rate as f64;
+        let mut notes: Vec<yinhe_audio::PreviewNoteParams> = Vec::new();
+        let mut stop = false;
         for req in reqs {
             match req {
                 crate::piano_view::PreviewReq::Note(p) => {
@@ -450,7 +454,7 @@ impl App {
                     let velocity = p
                         .velocity
                         .unwrap_or_else(|| doc.edit.default_velocity(p.track));
-                    audio.handle.send(yinhe_audio::AudioCommand::PreviewNote {
+                    notes.push(yinhe_audio::PreviewNoteParams {
                         channel,
                         key: p.key,
                         velocity,
@@ -458,10 +462,16 @@ impl App {
                         duration_samples: duration,
                     });
                 }
-                crate::piano_view::PreviewReq::Stop => {
-                    audio.handle.send(yinhe_audio::AudioCommand::PreviewStop);
-                }
+                crate::piano_view::PreviewReq::Stop => stop = true,
             }
+        }
+        // 同帧出现 Stop（Create 松手）时优先停止；否则整组替换。
+        if stop {
+            audio.handle.send(yinhe_audio::AudioCommand::PreviewStop);
+        } else if !notes.is_empty() {
+            audio
+                .handle
+                .send(yinhe_audio::AudioCommand::PreviewNotes { notes });
         }
     }
 

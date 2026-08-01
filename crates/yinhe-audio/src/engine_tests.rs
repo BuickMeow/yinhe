@@ -1195,8 +1195,8 @@ fn test_chase_after_seek_skips_dispatched_controllers() {
 }
 
 #[test]
-fn test_chase_channel_state_only_applies_target_channel() {
-    use crate::engine_state::chase_channel_state;
+fn test_chase_channel_states_incremental() {
+    use crate::preview_engine::chase_channel_states;
 
     let cc_events = vec![
         // ch0 的 CC7=100
@@ -1227,6 +1227,13 @@ fn test_chase_channel_state_only_applies_target_channel() {
             track: 0,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 90)),
         },
+        // ch0 的 PBS=48
+        SortedCC {
+            sample: 45,
+            channel: 0,
+            track: 0,
+            event: ChannelAudioEvent::Control(ControlEvent::PitchBendSensitivity(48.0)),
+        },
         // 边界：sample == target 不参与
         SortedCC {
             sample: 50,
@@ -1235,57 +1242,23 @@ fn test_chase_channel_state_only_applies_target_channel() {
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 10)),
         },
     ];
-    let state = chase_channel_state(&cc_events, 50, 0);
-    assert_eq!(state.volume, 90, "CC7 取最新值");
-    assert_eq!(state.pan, 80, "CC10 累积");
-    let other = chase_channel_state(&cc_events, 50, 1);
-    assert_eq!(other.volume, 50);
-}
-
-#[test]
-fn test_chase_channel_state_includes_rpn_and_pitch_bend() {
-    use crate::engine_state::chase_channel_state;
-
-    let cc_events = vec![
-        SortedCC {
-            sample: 0,
-            channel: 0,
-            track: 0,
-            event: ChannelAudioEvent::Control(ControlEvent::PitchBendSensitivity(48.0)),
-        },
-        SortedCC {
-            sample: 100,
-            channel: 0,
-            track: 0,
-            event: ChannelAudioEvent::Control(ControlEvent::PitchBendValue(0.3)),
-        },
-    ];
-    let state = chase_channel_state(&cc_events, 200, 0);
-    assert_eq!(state.pitch_bend_sensitivity, 48.0);
-    assert_eq!(state.pitch_bend, 0.3);
-}
-
-#[test]
-fn test_preview_note_and_apply_state() {
-    // 引擎预览方法：应用目标位置状态 + NoteOn/Off + 预览渲染，
-    // 不 panic、不推进播放位置、不影响 playing 状态。
-    let model = Arc::new(make_chase_model());
-    let sr = 48000u32;
-    let mut engine = AudioEngine::new(sr, ChannelLayout::from_mask(vec![true; 16]));
-    engine.load_model(&model);
-
-    let sample = (model.tempo_map.tick_to_seconds(768) * sr as f64) as u64;
-    engine.preview_apply_state(0, sample);
-    engine.preview_note_on(0, 60, 100);
-    engine.preview_note_off(0, 60);
-
-    let mut out = vec![0.0f32; 1024];
-    let pos_before = engine.sample_position();
-    engine.render_preview(&mut out);
+    // 同一 channel 三个升序目标：增量 chase 一次扫完
+    let states = chase_channel_states(&cc_events, 0, &[25, 40, 50]);
+    assert_eq!(states.len(), 3);
+    assert_eq!(states[0].volume, 100, "target 25：只有 CC7=100");
+    assert_eq!(states[0].pan, 64);
     assert_eq!(
-        engine.sample_position(),
-        pos_before,
-        "预览渲染不推进播放位置"
+        states[1].volume, 100,
+        "target 40：CC7=90 在 target 处不参与"
     );
-    assert!(!engine.playing());
+    assert_eq!(states[1].pan, 80, "CC10 已累积");
+    assert_eq!(
+        states[2].volume, 90,
+        "target 50：CC7=90 参与，边界事件不参与"
+    );
+    assert_eq!(states[2].pitch_bend_sensitivity, 48.0, "PBS 累积");
+
+    // 其他 channel 不受影响
+    let other = chase_channel_states(&cc_events, 1, &[50]);
+    assert_eq!(other[0].volume, 50);
 }

@@ -8,6 +8,7 @@ mod engine_render;
 mod engine_state;
 pub mod export;
 mod prepare_model;
+mod preview_engine;
 pub mod soundfont;
 pub mod spawn;
 
@@ -16,6 +17,6 @@ pub mod spawn;
 pub use yinhe_synth as synth;
 
 pub use spawn::{
-    AudioCommand, AudioHandle, CpalAudioHandle, channels_for_model, list_output_devices,
-    spawn_cpal_audio,
+    AudioCommand, AudioHandle, CpalAudioHandle, PreviewNoteParams, channels_for_model,
+    list_output_devices, spawn_cpal_audio,
 };
