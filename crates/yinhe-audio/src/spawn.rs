@@ -572,13 +572,15 @@ pub fn spawn_cpal_audio(
     let (ring_producer, mut ring_consumer) = AudioRing::new(RING_CAPACITY).split();
 
     let renderer_state = RendererSharedState::new();
-    let renderer_position = Arc::clone(&renderer_state.producer_sample_position);
     // UI 播放指示线的上限：渲染器已推入 ring 的采样位置（producer）。
     let handle_producer_position = Arc::clone(&renderer_state.producer_sample_position);
     let renderer_playing = Arc::clone(&renderer_state.playing);
     let renderer_duration = Arc::clone(&renderer_state.duration_samples);
     let initialized = Arc::clone(&renderer_state.initialized);
     let reset_generation = Arc::clone(&renderer_state.reset_generation);
+    // 清空边界：ack 时丢弃边界前的旧音频、保留新音频（竞态安全清空）。
+    let clear_base_sample = Arc::clone(&renderer_state.clear_base_sample);
+    let clear_ring_write = Arc::clone(&renderer_state.clear_ring_write);
 
     let shutdown = Arc::new(AtomicBool::new(false));
     let renderer_handle = spawn_renderer(
@@ -610,8 +612,10 @@ pub fn spawn_cpal_audio(
             yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Audio, || {
                 let generation = reset_generation.load(Ordering::Acquire);
                 if generation != acknowledged_generation {
-                    ring_consumer.clear();
-                    consumer_sample_position = renderer_position.load(Ordering::Acquire);
+                    // 丢弃边界前的旧音频，保留边界后渲染器已推入的新音频
+                    // （整体 clear 会把新播放位置的开头一起丢掉）。
+                    ring_consumer.discard_before(clear_ring_write.load(Ordering::Acquire));
+                    consumer_sample_position = clear_base_sample.load(Ordering::Acquire);
                     acknowledged_generation = generation;
                 }
 

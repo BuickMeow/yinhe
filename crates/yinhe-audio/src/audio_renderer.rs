@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -21,9 +21,16 @@ pub(crate) struct RendererSharedState {
     pub(crate) duration_samples: Arc<AtomicU64>,
     pub(crate) initialized: Arc<AtomicBool>,
     /// 每次 seek/reload 等需要让 cpal 回调清 ring 的操作都会 `fetch_add(1)`。
-    /// cpal 回调入口对比自己记录的 acknowledged_generation，不一致就 clear ring。
+    /// cpal 回调入口对比自己记录的 acknowledged_generation，不一致就丢弃
+    /// `clear_ring_write` 之前的旧音频并重定位消费位置。
     /// 生产者**不再等 ack** —— cpal 回调停了的话，等 ack 会永久卡死 renderer（P0-3）。
     pub(crate) reset_generation: Arc<AtomicU64>,
+    /// 清空瞬间的"新音频起点"采样位置：ring 中 `clear_ring_write` 之后推入的
+    /// 音频从该位置开始。cpal 回调 ack 时把消费位置对准这里。
+    pub(crate) clear_base_sample: Arc<AtomicU64>,
+    /// 清空瞬间 ring 的写入计数。cpal 回调 ack 时丢弃该值之前的全部内容
+    /// （旧音频），保留之后推入的新音频 —— 比整体 clear 更竞态安全。
+    pub(crate) clear_ring_write: Arc<AtomicUsize>,
 }
 
 impl RendererSharedState {
@@ -34,6 +41,8 @@ impl RendererSharedState {
             duration_samples: Arc::new(AtomicU64::new(0)),
             initialized: Arc::new(AtomicBool::new(false)),
             reset_generation: Arc::new(AtomicU64::new(0)),
+            clear_base_sample: Arc::new(AtomicU64::new(0)),
+            clear_ring_write: Arc::new(AtomicUsize::new(0)),
         }
     }
 }
@@ -402,11 +411,16 @@ impl AudioRenderer {
     fn clear_buffered_audio(&mut self) {
         // 不直接调 `self.ring.clear()`：它和 cpal 回调的 `pop_into` 并发时会
         // 把 cpal 刚推进的 read 指针覆盖回 write，下次回调会把旧数据当新数据读出 → 杂音。
-        // 改用 `reset_generation` 通知 cpal 回调自己 clear（spawn.rs:517-522），
-        // cpal 回调入口是单线程的，clear 和后续 pop_into 串行，无竞态。
+        // 改为记录"清空边界"并 bump `reset_generation`，由 cpal 回调入口（单线程，
+        // 与 pop_into 天然串行）用 `discard_before` 只丢弃边界前的旧音频。
+        // 边界之后可能已推入新音频（模型已加载时渲染很快，ack 常晚于新音频入队），
+        // 整体 clear 会把新播放位置的开头一起丢掉 —— 第二次播放开头缺失的根因。
+        let base = self.engine.sample_position();
+        self.state.producer_sample_position.store(base, Ordering::Release);
+        self.state.clear_base_sample.store(base, Ordering::Release);
         self.state
-            .producer_sample_position
-            .store(self.engine.sample_position(), Ordering::Release);
+            .clear_ring_write
+            .store(self.ring.write_position(), Ordering::Release);
         self.state.reset_generation.fetch_add(1, Ordering::AcqRel);
     }
 

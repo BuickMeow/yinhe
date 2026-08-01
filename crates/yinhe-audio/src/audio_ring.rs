@@ -63,6 +63,14 @@ impl AudioRingProducer {
         self.inner.capacity
     }
 
+    /// 当前写入计数（单调递增，不取模）。
+    /// 配合 `AudioRingConsumer::discard_before` 实现竞态安全的"清空"：
+    /// 以此刻写入计数为边界，之后推入的音频全部保留。
+    #[inline]
+    pub(crate) fn write_position(&self) -> usize {
+        self.inner.write.load(Ordering::Relaxed)
+    }
+
     #[inline]
     pub(crate) fn len(&self) -> usize {
         let read = self.inner.read.load(Ordering::Acquire);
@@ -109,9 +117,16 @@ impl AudioRingConsumer {
         count
     }
 
-    pub(crate) fn clear(&mut self) {
-        let write = self.inner.write.load(Ordering::Acquire);
-        self.inner.read.store(write, Ordering::Release);
+    /// 丢弃 `write_at_clear` 之前的所有缓冲内容，保留之后推入的音频。
+    ///
+    /// `write_at_clear` 取自已清空瞬间的 `AudioRingProducer::write_position()`。
+    /// seek/play 存在竞态：渲染器可能在 cpal 回调 ack 之前就把新音频推入 ring，
+    /// 此时整体 clear 会把新播放位置的开头一起丢掉（第二次播放开头缺失的根因）。
+    /// 改为只丢弃边界前的内容，边界后的新音频原样保留。
+    pub(crate) fn discard_before(&mut self, write_at_clear: usize) {
+        let read = self.inner.read.load(Ordering::Relaxed);
+        let stale = write_at_clear.wrapping_sub(read);
+        self.inner.read.store(read.wrapping_add(stale), Ordering::Release);
     }
 }
 
@@ -176,15 +191,49 @@ mod tests {
     }
 
     #[test]
-    fn clear_drops_buffered_samples() {
+    fn discard_before_keeps_audio_pushed_after_marker() {
+        // 模拟 seek/play 竞态：清空标记之后渲染器已推入新音频，
+        // discard_before 必须保留新音频、只丢弃旧内容。
+        let (mut producer, mut consumer) = AudioRing::new(8).split();
+        assert_eq!(producer.push_slice(&[1.0, 2.0, 3.0]), 3); // 旧音频（seek 前）
+        let marker = producer.write_position(); // 清空瞬间
+        assert_eq!(producer.push_slice(&[4.0, 5.0]), 2); // 竞态窗口内推入的新音频
+
+        consumer.discard_before(marker);
+
+        let mut out = [0.0; 4];
+        assert_eq!(consumer.pop_into(&mut out), 2);
+        assert_eq!(&out[..2], &[4.0, 5.0]);
+    }
+
+    #[test]
+    fn discard_before_without_new_audio_empties_ring() {
+        // 清空后还没来得及推入新音频（模型加载慢的路径）：全部丢弃。
         let (mut producer, mut consumer) = AudioRing::new(8).split();
         assert_eq!(producer.push_slice(&[1.0, 2.0, 3.0]), 3);
-        consumer.clear();
+        let marker = producer.write_position();
+
+        consumer.discard_before(marker);
 
         let mut out = [0.0; 3];
         assert_eq!(consumer.pop_into(&mut out), 0);
-        assert_eq!(producer.push_slice(&[4.0, 5.0]), 2);
-        assert_eq!(consumer.pop_into(&mut out[..2]), 2);
-        assert_eq!(&out[..2], &[4.0, 5.0]);
+        assert_eq!(producer.push_slice(&[6.0]), 1);
+        assert_eq!(consumer.pop_into(&mut out[..1]), 1);
+        assert_eq!(out[0], 6.0);
+    }
+
+    #[test]
+    fn discard_before_handles_wrap_around() {
+        let (mut producer, mut consumer) = AudioRing::new(4).split();
+        assert_eq!(producer.push_slice(&[1.0, 2.0, 3.0, 4.0]), 4);
+        let mut out = [0.0; 3];
+        assert_eq!(consumer.pop_into(&mut out), 3); // read=3，剩 [4.0]
+        let marker = producer.write_position(); // write=4
+        assert_eq!(producer.push_slice(&[5.0, 6.0, 7.0]), 3); // write=7，绕回
+
+        consumer.discard_before(marker);
+
+        assert_eq!(consumer.pop_into(&mut out), 3);
+        assert_eq!(&out, &[5.0, 6.0, 7.0]);
     }
 }
