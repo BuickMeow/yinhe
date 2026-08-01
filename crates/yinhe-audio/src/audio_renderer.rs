@@ -14,6 +14,8 @@ use crate::spawn::{AudioCommand, WorkerCmd, WorkerResult};
 const STEREO_CHANNELS: usize = 2;
 const RENDER_CHUNK_FRAMES: usize = 512;
 const TARGET_BUFFER_FRAMES: usize = 4096;
+/// 预览激活时的 ring 目标（帧数）：降低输出延迟（≈10ms @48k）。
+const PREVIEW_TARGET_FRAMES: usize = 512;
 const WAKE_SLEEP: Duration = Duration::from_millis(1);
 
 pub(crate) struct RendererSharedState {
@@ -455,7 +457,14 @@ impl AudioRenderer {
             return false;
         }
 
-        let target_samples = TARGET_BUFFER_FRAMES * STEREO_CHANNELS;
+        // 预览时用更小的 ring 目标（512 帧 ≈ 10ms）：预览是交互操作，
+        // 音符 NoteOn 后要等 ring 里已有音频播完才出声，目标 4096 帧会带来
+        // 约 85ms 延迟，快速拖动时每个音都滞后、听感响应很慢。
+        let target_samples = if previewing {
+            PREVIEW_TARGET_FRAMES * STEREO_CHANNELS
+        } else {
+            TARGET_BUFFER_FRAMES * STEREO_CHANNELS
+        };
         if self.ring.len() >= target_samples {
             return false;
         }

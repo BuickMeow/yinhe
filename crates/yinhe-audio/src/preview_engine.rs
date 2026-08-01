@@ -163,6 +163,10 @@ impl PreviewEngine {
     pub(crate) fn preview_notes(&mut self, notes: Vec<PreviewNoteIn>) {
         self.stop_all();
         let min = notes.iter().map(|n| n.target_sample).min().unwrap_or(0);
+        // trigger_at 存绝对位置（组开始 + 相对时值差）：position 是累计渲染帧数，
+        // 若只存相对差，预览引擎跑过一段时间后 position 已超过所有 trigger_at，
+        // 整组会在同一帧全部触发 → 时值差听不到。
+        let base = self.position;
         self.pending = notes
             .into_iter()
             .map(|n| PendingNote {
@@ -171,7 +175,7 @@ impl PreviewEngine {
                 velocity: n.velocity,
                 duration: n.duration,
                 state: n.state,
-                trigger_at: n.target_sample - min,
+                trigger_at: base + (n.target_sample - min),
             })
             .collect();
         self.pending.sort_by_key(|p| p.trigger_at);
@@ -349,5 +353,48 @@ mod tests {
         assert!(engine.voices.is_empty());
         assert!(engine.pending.is_empty());
         assert!(!engine.previewing());
+    }
+
+    #[test]
+    fn preview_notes_stagger_after_long_running() {
+        // 回归测试：预览引擎运行一段时间（position 已累计）后提交新组，
+        // 时值差仍然生效（trigger_at 是绝对位置，不能被累计 position 吞掉）。
+        let layout = ChannelLayout::from_mask(vec![true; 16]);
+        let mut engine = PreviewEngine::new(&layout, 48000);
+
+        // 先跑一段：position 累计到 100000 帧
+        let mut out = vec![0.0f32; 1024];
+        for _ in 0..200 {
+            engine.render(&mut out);
+        }
+
+        engine.preview_notes(vec![
+            PreviewNoteIn {
+                channel: 0,
+                key: 60,
+                velocity: 100,
+                duration: None,
+                state: ChannelState::default(),
+                target_sample: 5000,
+            },
+            PreviewNoteIn {
+                channel: 0,
+                key: 64,
+                velocity: 90,
+                duration: None,
+                state: ChannelState::default(),
+                target_sample: 10000,
+            },
+        ]);
+        assert_eq!(engine.voices.len(), 1, "最早音符立即触发");
+        assert_eq!(engine.pending.len(), 1);
+        // 渲染 9 帧（+4608 < 5000）：第二个仍未触发
+        for _ in 0..9 {
+            engine.render(&mut out);
+        }
+        assert_eq!(engine.voices.len(), 1, "绝对位置基准下时值差仍生效");
+        // 第 10 帧（+5120 >= 5000）：触发
+        engine.render(&mut out);
+        assert_eq!(engine.voices.len(), 2);
     }
 }

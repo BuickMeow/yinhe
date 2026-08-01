@@ -216,6 +216,19 @@ pub(crate) fn pencil_frame(
     // ── Start drag ──
     if pointer.primary_pressed() {
         if let Some(hit) = hit_note {
+            // 点击音符出声（像键盘预览一样）：播放该音符（gate 长度，原力度）。
+            // vel <= 1 的音符（黑乐谱隐藏音符）不响，与播放筛除一致。
+            if let Some(vel) = note_velocity(midi, hit.track, hit.start_tick, hit.key)
+                && vel > 1
+            {
+                preview_req = Some(super::PreviewReq::Note(super::NotePreview {
+                    track: hit.track,
+                    key: hit.key,
+                    velocity: Some(vel),
+                    target_tick: hit.start_tick,
+                    duration_ticks: hit.end_tick - hit.start_tick,
+                }));
+            }
             let new_drag = match hit.mode {
                 HitMode::ResizeLeft => {
                     PencilDrag::ResizeLeft(hit.track, hit.start_tick, hit.end_tick, hit.key)
@@ -275,9 +288,23 @@ pub(crate) fn pencil_frame(
                     );
                     view.clamp_scroll(content_rect.width(), content_rect.height(), total_ticks);
                 }
-                if let Some((tick, _)) = preview {
+                if let Some((tick, key)) = preview {
                     let interval = quantize.tick_interval(ppq) as f64;
                     let current_end = tick.max(*s_tick + interval);
+                    // 向右拖不超过一个量化时，key 跟随鼠标（可上下拖变调），
+                    // 像移动音符那样：变 key 播放一次（长度 = 当前 gate）。
+                    // 超过一个量化后 key 锁定，继续拖长度。
+                    if current_end - *s_tick <= interval && key != *s_key {
+                        *s_key = key;
+                        persist_state = true; // 变 key 后的最终 key 要随 release 提交
+                        preview_req = Some(super::PreviewReq::Note(super::NotePreview {
+                            track: track_idx,
+                            key: *s_key,
+                            velocity: None,
+                            target_tick: *s_tick as u32,
+                            duration_ticks: (current_end - *s_tick) as u32,
+                        }));
+                    }
                     ghost_notes.push((*s_tick as u32, current_end as u32, *s_key, track_idx));
 
                     // ── Tooltip：显示 key / tick / gate ──
@@ -343,16 +370,21 @@ pub(crate) fn pencil_frame(
                 let dk = (key as i32) - (*orig_key as i32);
 
                 // 音符预览：每变化 1 key 触发一次，长度 = 音符 gate，力度 = 音符原值。
+                // vel <= 1 的音符（黑乐谱隐藏音符）不预览，与播放筛除一致。
                 if dk != *last_dk {
                     *last_dk = dk;
                     persist_state = true;
-                    preview_req = Some(super::PreviewReq::Note(super::NotePreview {
-                        track: *trk,
-                        key: (*orig_key as i32 + dk).clamp(0, 127) as u8,
-                        velocity: note_velocity(midi, *trk, *orig_tick, *orig_key),
-                        target_tick: (*orig_tick as i64 + dt).max(0) as u32,
-                        duration_ticks: *orig_end - *orig_tick,
-                    }));
+                    if let Some(vel) = note_velocity(midi, *trk, *orig_tick, *orig_key)
+                        && vel > 1
+                    {
+                        preview_req = Some(super::PreviewReq::Note(super::NotePreview {
+                            track: *trk,
+                            key: (*orig_key as i32 + dk).clamp(0, 127) as u8,
+                            velocity: Some(vel),
+                            target_tick: (*orig_tick as i64 + dt).max(0) as u32,
+                            duration_ticks: *orig_end - *orig_tick,
+                        }));
+                    }
                 }
 
                 // Show ghost at the dragged position for visual feedback.
@@ -542,6 +574,7 @@ fn note_velocity(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::piano_view::PreviewReq;
     use eframe::egui;
 
     /// 空音符源（点击创建测试用）。
@@ -553,6 +586,17 @@ mod tests {
             Self {
                 buckets: std::array::from_fn(|_| Vec::new()),
             }
+        }
+
+        fn with_note(mut self, start: u32, end: u32, key: u8, vel: u8) -> Self {
+            self.buckets[key as usize].push(yinhe_types::Note {
+                id: 0,
+                start_tick: start,
+                end_tick: end,
+                velocity: vel,
+                track: 0,
+            });
+            self
         }
     }
     impl yinhe_types::NoteSource for MockNotes {
@@ -583,14 +627,14 @@ mod tests {
         egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(800.0, 600.0))
     }
 
-    /// 跑一帧 pencil_frame，返回新建音符事件（release 帧才有值）。
+    /// 跑一帧 pencil_frame，返回（新建音符事件，听觉预览请求）。
     fn run_frame(
         ctx: &egui::Context,
         raw: egui::RawInput,
         view: &mut yinhe_types::PianoRollView,
         midi: &MockNotes,
-    ) -> Option<yinhe_core::NoteEvent> {
-        let mut out = None;
+    ) -> (Option<yinhe_core::NoteEvent>, Option<PreviewReq>) {
+        let mut out = (None, None);
         let _ = ctx.run_ui(raw, |ui| {
             let r = pencil_frame(
                 ui,
@@ -607,9 +651,16 @@ mod tests {
                 &[],
                 1000.0,
             );
-            out = r.0;
+            out = (r.0, r.4);
         });
         out
+    }
+
+    /// 拖拽帧：按钮保持按下，鼠标移动到新位置。
+    fn drag_event(pos: egui::Pos2) -> egui::RawInput {
+        let mut raw = egui::RawInput::default();
+        raw.events.push(egui::Event::PointerMoved(pos));
+        raw
     }
 
     fn press_event(pos: egui::Pos2) -> egui::RawInput {
@@ -649,9 +700,14 @@ mod tests {
         let expected_key = view.y_to_key(50.0);
 
         // press 帧：不创建
-        assert!(run_frame(&ctx, press_event(pos), &mut view, &midi).is_none());
+        assert!(
+            run_frame(&ctx, press_event(pos), &mut view, &midi)
+                .0
+                .is_none()
+        );
         // release 帧：创建音符
-        let note = run_frame(&ctx, release_event(pos), &mut view, &midi).expect("点击应创建音符");
+        let (note, _) = run_frame(&ctx, release_event(pos), &mut view, &midi);
+        let note = note.expect("点击应创建音符");
         assert_eq!(note.start_tick, 120);
         assert_eq!(note.key, expected_key);
 
@@ -659,10 +715,87 @@ mod tests {
         // 导致音符被创建在第一次点击的位置）。
         let pos2 = egui::pos2(360.0, 100.0); // 量化网格点（120×3）
         let expected_key2 = view.y_to_key(100.0);
-        assert!(run_frame(&ctx, press_event(pos2), &mut view, &midi).is_none());
-        let note2 =
-            run_frame(&ctx, release_event(pos2), &mut view, &midi).expect("第二次点击应创建音符");
+        assert!(
+            run_frame(&ctx, press_event(pos2), &mut view, &midi)
+                .0
+                .is_none()
+        );
+        let (note2, _) = run_frame(&ctx, release_event(pos2), &mut view, &midi);
+        let note2 = note2.expect("第二次点击应创建音符");
         assert_eq!(note2.start_tick, 360);
         assert_eq!(note2.key, expected_key2);
+    }
+
+    /// 点击已有音符（tick 120~240，key 122）→ 立即出声（像键盘预览）。
+    /// 测试视图高 600px、128 键 × 10px：key 122 在 y≈55 可见。
+    #[test]
+    fn click_on_note_triggers_preview() {
+        let ctx = egui::Context::default();
+        let midi = MockNotes::new().with_note(120, 240, 122, 100);
+        let mut view = test_view();
+        let key_y = view.key_to_y(122) + view.key_height / 2.0;
+
+        let (_, preview) = run_frame(
+            &ctx,
+            press_event(egui::pos2(150.0, key_y)),
+            &mut view,
+            &midi,
+        );
+        let PreviewReq::Note(p) = preview.expect("点击音符应触发预览") else {
+            panic!("应为 Note 预览");
+        };
+        assert_eq!(p.key, 122);
+        assert_eq!(p.velocity, Some(100));
+        assert_eq!(p.target_tick, 120);
+        assert_eq!(p.duration_ticks, 120, "gate = end - start");
+    }
+
+    /// vel <= 1 的音符（黑乐谱隐藏音符）点击不预览。
+    #[test]
+    fn click_on_vel1_note_does_not_preview() {
+        let ctx = egui::Context::default();
+        let midi = MockNotes::new().with_note(120, 240, 122, 1);
+        let mut view = test_view();
+        let key_y = view.key_to_y(122) + view.key_height / 2.0;
+
+        let (_, preview) = run_frame(
+            &ctx,
+            press_event(egui::pos2(150.0, key_y)),
+            &mut view,
+            &midi,
+        );
+        assert!(preview.is_none(), "vel=1 隐藏音符不预览");
+    }
+
+    /// 新建音符：向右拖不超过一个量化时，上下拖动可改变 key，并像移动音符那样出声。
+    #[test]
+    fn create_drag_changes_key_within_one_quantize() {
+        let ctx = egui::Context::default();
+        let midi = MockNotes::new();
+        let mut view = test_view();
+
+        // press：tick 120，key 122 区域（屏幕内可见）
+        let p0 = egui::pos2(120.0, view.key_to_y(122) + view.key_height / 2.0);
+        let (_, preview) = run_frame(&ctx, press_event(p0), &mut view, &midi);
+        let PreviewReq::Note(p) = preview.expect("按下应触发持续音预览") else {
+            panic!("应为 Note 预览");
+        };
+        assert_eq!(p.key, 122);
+        assert_eq!(p.duration_ticks, 0, "新建按住为持续音");
+
+        // 拖拽帧：横向不动（仍在一个量化内），纵向移到 key 125
+        let p1 = egui::pos2(120.0, view.key_to_y(125) + view.key_height / 2.0);
+        let (_, preview) = run_frame(&ctx, drag_event(p1), &mut view, &midi);
+        let PreviewReq::Note(p) = preview.expect("变 key 应触发预览") else {
+            panic!("应为 Note 预览");
+        };
+        assert_eq!(p.key, 125, "量化内上下拖改变 key");
+        assert!(p.duration_ticks > 0, "变 key 播放为定长（像移动音符）");
+
+        // release：音符用最终 key
+        let (note, _) = run_frame(&ctx, release_event(p1), &mut view, &midi);
+        let note = note.expect("松手应创建音符");
+        assert_eq!(note.key, 125);
+        assert_eq!(note.start_tick, 120);
     }
 }

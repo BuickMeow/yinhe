@@ -189,6 +189,23 @@ pub(crate) fn sel_drag_frame(
                     ));
                     preview_last_dk = 0;
                     ui.data_mut(|d| d.insert_persisted(preview_dk_id, 0));
+                    // 点击选中音符出声：立即预览整组（dk=0，与移动时同组预览一致）。
+                    // vel <= 1 的音符（黑乐谱隐藏音符）不响，与播放筛除一致。
+                    if let Some(notes) = drag_notes.as_ref() {
+                        preview_reqs = notes
+                            .iter()
+                            .filter(|info| info.velocity > 1)
+                            .map(|info| {
+                                super::PreviewReq::Note(super::NotePreview {
+                                    track: info.track,
+                                    key: info.key,
+                                    velocity: Some(info.velocity),
+                                    target_tick: info.start_tick,
+                                    duration_ticks: info.end_tick - info.start_tick,
+                                })
+                            })
+                            .collect();
+                    }
                 } else if !additive {
                     // 单击选框外（非加选模式）→ 立即清空选框与选区。
                     // 比 on_press 回调更早触发，覆盖 click（< 3px）的场景。
@@ -256,8 +273,10 @@ pub(crate) fn sel_drag_frame(
             // 长度 = 音符 gate，时长换算用目标位置 Tempo）。
             if dk != preview_last_dk {
                 preview_last_dk = dk;
+                // vel <= 1 的音符（黑乐谱隐藏音符）不预览，与播放筛除一致。
                 preview_reqs = notes
                     .iter()
+                    .filter(|info| info.velocity > 1)
                     .map(|info| {
                         super::PreviewReq::Note(super::NotePreview {
                             track: info.track,
