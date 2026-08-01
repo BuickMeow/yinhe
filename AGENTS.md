@@ -26,7 +26,7 @@
 12. 既有的编译错误、警告以及测试错误请务必告诉我，哪怕和你的修复无关。我会考虑修复。
 13. /Users/jieneng/Music/MIDIs 是我们常见的MIDI测试用例目录。/Users/jieneng/Music/Soundfonts/Starry Studio Grand v2.7~/Presets/A_Standard/Studio Grand - Standard (No Hammer).sfz 是我们常用的音色库。如果需要进行实际测试，一般使用这两个目录。
 14. 如果要查找库，请优先查找本地。其次是网络。
-15. 如果你要构建debug版本，记得也顺手构建一下release版本。
+15. 每次修改代码后，顺便编译出release，这样方便用户在会话结束后直接开始测试功能。
 16. Windows主线程栈是1MB，macOS是8MB。因为要满足多平台，所以不要让主线程栈超过1MB。
 17. 千万不要在生产环境中写unwrap()。没保存工程就完蛋了。
 18. 如果哪里屡次容易出bug，就针对这个bug加个测试。
