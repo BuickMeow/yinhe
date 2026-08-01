@@ -9,9 +9,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use yinhe_core::{
-    ConductorData, NoteEvent, PcEvent, ProjectMeta, TrackData, YinModel,
-};
+use yinhe_core::{ConductorData, NoteEvent, PcEvent, ProjectMeta, TrackData, YinModel};
 use yinhe_types::AutomationLane;
 
 use crate::container::{Sections, pack, unpack};
@@ -263,7 +261,9 @@ pub fn load_yin_bytes(bytes: &[u8]) -> Result<YinModel, YinError> {
 ///
 /// For files written before SF persistence, `ProjectSoundFonts` will be
 /// `default()` (mode = false, overrides empty).
-pub fn load_yin_bytes_with_sf(bytes: &[u8]) -> Result<(YinModel, ProjectSoundFonts, MappingFile), YinError> {
+pub fn load_yin_bytes_with_sf(
+    bytes: &[u8],
+) -> Result<(YinModel, ProjectSoundFonts, MappingFile), YinError> {
     let (model, project, mapping) = load_yin_bytes_inner(bytes)?;
     let sf = ProjectSoundFonts {
         mode: project.soundfont_project_mode,

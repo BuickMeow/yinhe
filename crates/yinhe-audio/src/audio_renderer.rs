@@ -92,9 +92,8 @@ impl AudioRenderer {
 
     fn run(&mut self) {
         while !self.shutdown.load(Ordering::Relaxed) {
-            let did_work = self.process_commands()
-                | self.process_worker_results()
-                | self.render_if_needed();
+            let did_work =
+                self.process_commands() | self.process_worker_results() | self.render_if_needed();
 
             self.publish_state();
 
@@ -145,7 +144,8 @@ impl AudioRenderer {
                         }
                         AudioCommand::Play { from_sample } => {
                             if self.engine.model_loaded() {
-                                self.engine.handle_command(AudioCommand::Play { from_sample });
+                                self.engine
+                                    .handle_command(AudioCommand::Play { from_sample });
                                 // GPU 路径：同步 GpuSynth 位置
                                 #[cfg(feature = "gpu")]
                                 if let Some(ref mut synth) = self.engine.gpu_synth {
@@ -267,7 +267,8 @@ impl AudioRenderer {
                     self.state
                         .duration_samples
                         .store(duration_samples, Ordering::Relaxed);
-                    self.engine.apply_notes_only(model, yin_model, audible_notes, duration_samples);
+                    self.engine
+                        .apply_notes_only(model, yin_model, audible_notes, duration_samples);
                     // GPU 路径：音符变化后同步事件到 GpuSynth
                     #[cfg(feature = "gpu")]
                     self.sync_gpu_synth_events();
@@ -292,26 +293,28 @@ impl AudioRenderer {
                         .apply_loaded_soundfont_for_port(port, soundfonts, &dense_channels);
                     // GPU 路径：首次加载音色库时初始化 GpuSynth
                     #[cfg(feature = "gpu")]
-                    if self.use_gpu_synth && self.engine.gpu_synth.is_none()
-                        && let Some(first_path) = paths.first() {
-                            let sr = self.engine.sample_rate;
-                            match yinhe_synth::GpuSynth::new_default(
-                                std::path::Path::new(first_path),
-                                sr,
-                            ) {
-                                Ok(mut synth) => {
-                                    // 加载当前模型的事件
-                                    let events = self.build_gpu_synth_events();
-                                    synth.load_events(events);
-                                    synth.seek(self.engine.sample_position());
-                                    self.engine.gpu_synth = Some(synth);
-                                    eprintln!("[gpu] GpuSynth initialized from {}", first_path);
-                                }
-                                Err(e) => {
-                                    eprintln!("[gpu] Failed to init GpuSynth: {}", e);
-                                }
+                    if self.use_gpu_synth
+                        && self.engine.gpu_synth.is_none()
+                        && let Some(first_path) = paths.first()
+                    {
+                        let sr = self.engine.sample_rate;
+                        match yinhe_synth::GpuSynth::new_default(
+                            std::path::Path::new(first_path),
+                            sr,
+                        ) {
+                            Ok(mut synth) => {
+                                // 加载当前模型的事件
+                                let events = self.build_gpu_synth_events();
+                                synth.load_events(events);
+                                synth.seek(self.engine.sample_position());
+                                self.engine.gpu_synth = Some(synth);
+                                eprintln!("[gpu] GpuSynth initialized from {}", first_path);
+                            }
+                            Err(e) => {
+                                eprintln!("[gpu] Failed to init GpuSynth: {}", e);
                             }
                         }
+                    }
                     // 非 GPU feature 下 paths 不使用，显式标记避免 warning
                     #[cfg(not(feature = "gpu"))]
                     let _ = paths;
@@ -353,9 +356,13 @@ impl AudioRenderer {
         for key in 0..128usize {
             for note in self.engine.audible_notes[key].iter() {
                 let track = note.track as usize;
-                if self.engine.skip_track.get(track).copied().unwrap_or(false) { continue; }
+                if self.engine.skip_track.get(track).copied().unwrap_or(false) {
+                    continue;
+                }
                 let ch = audio_model.track_channel(track) as usize;
-                if self.engine.channel_layout.dense_for(ch) == u32::MAX { continue; }
+                if self.engine.channel_layout.dense_for(ch) == u32::MAX {
+                    continue;
+                }
 
                 events.push(yinhe_synth::SynthEvent {
                     sample: note.start_sample,
@@ -416,7 +423,9 @@ impl AudioRenderer {
         // 边界之后可能已推入新音频（模型已加载时渲染很快，ack 常晚于新音频入队），
         // 整体 clear 会把新播放位置的开头一起丢掉 —— 第二次播放开头缺失的根因。
         let base = self.engine.sample_position();
-        self.state.producer_sample_position.store(base, Ordering::Release);
+        self.state
+            .producer_sample_position
+            .store(base, Ordering::Release);
         self.state.clear_base_sample.store(base, Ordering::Release);
         self.state
             .clear_ring_write

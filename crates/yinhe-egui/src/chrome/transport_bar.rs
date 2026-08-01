@@ -3,9 +3,9 @@ use egui_material_icons::icons::*;
 use rust_i18n::t;
 
 use crate::file_loader::FileLoader;
+use crate::view_interaction::{FollowMode, FollowModeExt};
 use crate::widgets::tools_panel::{ALL_TOOLS, Tool};
 use yinhe_editor_core::document::Document;
-use crate::view_interaction::{FollowMode, FollowModeExt};
 use yinhe_types::time_format;
 
 /// Actions triggered from the file menu dropdown.
@@ -73,13 +73,20 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
             let mut button_right: Option<f32> = None;
 
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                let btn_size = egui::vec2(crate::theme::TRANSPORT_BTN_SIZE, crate::theme::TRANSPORT_BTN_SIZE);
+                let btn_size = egui::vec2(
+                    crate::theme::TRANSPORT_BTN_SIZE,
+                    crate::theme::TRANSPORT_BTN_SIZE,
+                );
                 let btn_rounding = egui::CornerRadius::same(2);
 
                 let file_btn = ui.add(
-                    egui::Button::new(ICON_DESCRIPTION.rich_text().size(crate::theme::TRANSPORT_BTN_FONT))
-                        .min_size(btn_size)
-                        .corner_radius(btn_rounding),
+                    egui::Button::new(
+                        ICON_DESCRIPTION
+                            .rich_text()
+                            .size(crate::theme::TRANSPORT_BTN_FONT),
+                    )
+                    .min_size(btn_size)
+                    .corner_radius(btn_rounding),
                 );
                 show_file_menu(
                     &file_btn,
@@ -89,7 +96,10 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                 );
 
                 if has_active {
-                    let is_playing = ctx.doc.map(|d| d.edit.playback.is_playing()).unwrap_or(false);
+                    let is_playing = ctx
+                        .doc
+                        .map(|d| d.edit.playback.is_playing())
+                        .unwrap_or(false);
 
                     if ui
                         .add(
@@ -116,9 +126,11 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
 
                     if ui
                         .add(
-                            egui::Button::new(ICON_STOP.rich_text().size(crate::theme::TRANSPORT_BTN_FONT))
-                                .min_size(btn_size)
-                                .corner_radius(btn_rounding),
+                            egui::Button::new(
+                                ICON_STOP.rich_text().size(crate::theme::TRANSPORT_BTN_FONT),
+                            )
+                            .min_size(btn_size)
+                            .corner_radius(btn_rounding),
                         )
                         .clicked()
                     {
@@ -127,9 +139,14 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
 
                     // ── Follow-mode button (cycle: None → Page → Continuous) ──
                     let follow_resp = ui.add(
-                        egui::Button::new(ctx.follow_mode.icon().rich_text().size(crate::theme::TRANSPORT_BTN_FONT))
-                            .min_size(btn_size)
-                            .corner_radius(btn_rounding),
+                        egui::Button::new(
+                            ctx.follow_mode
+                                .icon()
+                                .rich_text()
+                                .size(crate::theme::TRANSPORT_BTN_FONT),
+                        )
+                        .min_size(btn_size)
+                        .corner_radius(btn_rounding),
                     );
                     if follow_resp.clicked() {
                         *ctx.follow_mode = ctx.follow_mode.next();
@@ -138,10 +155,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                 }
 
                 if let Some(doc) = ctx.doc {
-                    timecode_rect = Some(show_timecode_display(
-                        ui,
-                        doc,
-                    ));
+                    timecode_rect = Some(show_timecode_display(ui, doc));
 
                     // ── 工具按钮：黑色矩形右侧，水平排列 ──
                     // 无按钮外框（透明背景），与旧 toolbar 风格一致：
@@ -225,20 +239,19 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
             let mut drag_started: bool = ui.data_mut(|d| d.get_temp(drag_id)).unwrap_or(false);
 
             if ui.input(|i| i.pointer.primary_down()) {
-                if !drag_started
-                    && let Some(pos) = ui.input(|i| i.pointer.press_origin()) {
-                        let in_bar = bar_rect.contains(pos);
-                        let in_timecode = timecode_rect
-                            .map(|r: egui::Rect| r.contains(pos))
-                            .unwrap_or(false);
-                        let in_buttons = button_right
-                            .map(|r: f32| pos.x >= bar_rect.min.x && pos.x < r)
-                            .unwrap_or(false);
-                        if in_bar && !in_timecode && !in_buttons {
-                            drag_started = true;
-                            ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
-                        }
+                if !drag_started && let Some(pos) = ui.input(|i| i.pointer.press_origin()) {
+                    let in_bar = bar_rect.contains(pos);
+                    let in_timecode = timecode_rect
+                        .map(|r: egui::Rect| r.contains(pos))
+                        .unwrap_or(false);
+                    let in_buttons = button_right
+                        .map(|r: f32| pos.x >= bar_rect.min.x && pos.x < r)
+                        .unwrap_or(false);
+                    if in_bar && !in_timecode && !in_buttons {
+                        drag_started = true;
+                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
                     }
+                }
             } else {
                 drag_started = false;
             }
@@ -279,7 +292,8 @@ fn show_file_menu(
                     item.enabled,
                     egui::Button::selectable(
                         false,
-                        egui::RichText::new(format!("      {}", item.label)).size(crate::theme::FILE_MENU_FONT),
+                        egui::RichText::new(format!("      {}", item.label))
+                            .size(crate::theme::FILE_MENU_FONT),
                     ),
                 );
                 if resp.clicked() {

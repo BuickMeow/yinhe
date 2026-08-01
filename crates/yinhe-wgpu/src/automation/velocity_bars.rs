@@ -1,6 +1,6 @@
-use yinhe_types::AutomationPanelView;
 use rayon::prelude::*;
-use yinhe_types::{key_notes_in_range, NoteSource};
+use yinhe_types::AutomationPanelView;
+use yinhe_types::{NoteSource, key_notes_in_range};
 
 use crate::vertex::VelocityBarInstance;
 
@@ -68,7 +68,8 @@ pub fn build_velocity_bars(
     // (visible on top) — softer notes are typically the ones users want to see
     // when adjusting dynamics, so they should never be hidden by louder bars.
     bars.sort_by(|a, b| {
-        a.tick.cmp(&b.tick)
+        a.tick
+            .cmp(&b.tick)
             .then(b.velocity().cmp(&a.velocity()))
             .then(a.track().cmp(&b.track()))
     });

@@ -42,7 +42,11 @@ pub(crate) fn show_viewport(
 
     ctx_clone.show_viewport_immediate(
         viewport_id,
-        crate::chrome::dialog::viewport_builder(t!("dialog.audio_switch.title").as_ref(), [460.0, 440.0], false),
+        crate::chrome::dialog::viewport_builder(
+            t!("dialog.audio_switch.title").as_ref(),
+            [460.0, 440.0],
+            false,
+        ),
         move |vctx, _class| {
             let hide = std::cell::Cell::new(false);
             if vctx.input(|i| i.viewport().close_requested()) {
@@ -55,7 +59,11 @@ pub(crate) fn show_viewport(
                 })
                 .show(vctx, |ui| {
                     let mut title_close = false;
-                    crate::chrome::dialog::title_bar(ui, t!("dialog.audio_switch.title").as_ref(), &mut title_close);
+                    crate::chrome::dialog::title_bar(
+                        ui,
+                        t!("dialog.audio_switch.title").as_ref(),
+                        &mut title_close,
+                    );
                     if title_close {
                         hide.set(true);
                     }
@@ -75,13 +83,19 @@ pub(crate) fn show_viewport(
                                     ui.vertical_centered(|ui| {
                                         ui.add_space(8.0);
                                         if allow_keep_current {
-                                            ui.label(t!("dialog.audio_switch.devices_changed").as_ref());
+                                            ui.label(
+                                                t!("dialog.audio_switch.devices_changed").as_ref(),
+                                            );
                                             ui.add_space(4.0);
                                             ui.label(t!("dialog.audio_switch.select_new").as_ref());
                                         } else {
-                                            ui.label(t!("dialog.audio_switch.stream_error").as_ref());
+                                            ui.label(
+                                                t!("dialog.audio_switch.stream_error").as_ref(),
+                                            );
                                             ui.add_space(4.0);
-                                            ui.label(t!("dialog.audio_switch.select_device").as_ref());
+                                            ui.label(
+                                                t!("dialog.audio_switch.select_device").as_ref(),
+                                            );
                                         }
                                         ui.add_space(8.0);
                                     });
@@ -94,18 +108,22 @@ pub(crate) fn show_viewport(
                                                 ui.vertical_centered(|ui| {
                                                     ui.add_space(12.0);
                                                     ui.label(
-                                                        egui::RichText::new(t!("dialog.audio_switch.no_devices").as_ref())
-                                                            .color(egui::Color32::from_gray(140)),
+                                                        egui::RichText::new(
+                                                            t!("dialog.audio_switch.no_devices")
+                                                                .as_ref(),
+                                                        )
+                                                        .color(egui::Color32::from_gray(140)),
                                                     );
                                                 });
                                             }
                                             for name in &devices_vec {
-                                                let resp = ui.add(
-                                                    egui::RadioButton::new(false, name),
-                                                );
+                                                let resp =
+                                                    ui.add(egui::RadioButton::new(false, name));
                                                 if resp.clicked() {
                                                     *action_capture.borrow_mut() =
-                                                        AudioDeviceSwitchAction::Switch(name.clone());
+                                                        AudioDeviceSwitchAction::Switch(
+                                                            name.clone(),
+                                                        );
                                                     hide.set(true);
                                                 }
                                             }
@@ -129,7 +147,10 @@ pub(crate) fn show_viewport(
 
                                     if allow_keep_current {
                                         ui.add_space(8.0);
-                                        if ui.button(t!("dialog.audio_switch.keep_current").as_ref()).clicked() {
+                                        if ui
+                                            .button(t!("dialog.audio_switch.keep_current").as_ref())
+                                            .clicked()
+                                        {
                                             *action_capture.borrow_mut() =
                                                 AudioDeviceSwitchAction::KeepCurrent;
                                             hide.set(true);
@@ -137,7 +158,8 @@ pub(crate) fn show_viewport(
                                     }
 
                                     ui.add_space(8.0);
-                                    if ui.button(t!("settings.refresh_devices").as_ref()).clicked() {
+                                    if ui.button(t!("settings.refresh_devices").as_ref()).clicked()
+                                    {
                                         *action_capture.borrow_mut() =
                                             AudioDeviceSwitchAction::Refresh;
                                     }
@@ -151,6 +173,5 @@ pub(crate) fn show_viewport(
         },
     );
 
-    
     std::mem::replace(&mut *action_rc.borrow_mut(), AudioDeviceSwitchAction::None)
 }

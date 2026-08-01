@@ -2,13 +2,16 @@
 
 use eframe::egui;
 
+use yinhe_types::{AnchorSelRect, AutomationPanelView};
 use yinhe_types::{AutomationLane, AutomationTarget, SegmentShape};
-use yinhe_types::{AutomationPanelView, AnchorSelRect};
-use yinhe_wgpu::{AutomationGhost, build_lane_override, build_lane_shape_override, build_lane_multi_move, build_lane_multi_copy};
+use yinhe_wgpu::{
+    AutomationGhost, build_lane_multi_copy, build_lane_multi_move, build_lane_override,
+    build_lane_shape_override,
+};
 
+use super::{ANCHOR_HIT_PX, AutomationEditCtx, panel_max_val};
 use crate::right_panel::{InfoContent, RightTab};
 use crate::widgets::tools_panel::Tool;
-use super::{panel_max_val, AutomationEditCtx, ANCHOR_HIT_PX};
 
 /// 悬停在锚点上多久后显示 tooltip（秒）。
 const HOVER_DELAY: f64 = 0.6;
@@ -19,8 +22,16 @@ const MARQUEE_THRESHOLD: f32 = 3.0;
 /// - tick 范围：取 min/max
 /// - value 范围：若任一为 None（垂直全选），结果为 None；否则取 min/max
 fn union_anchor_sel_rect(a: AnchorSelRect, b: AnchorSelRect) -> AnchorSelRect {
-    let ts = a.tick_start.min(a.tick_end).min(b.tick_start).min(b.tick_end);
-    let te = a.tick_start.max(a.tick_end).max(b.tick_start).max(b.tick_end);
+    let ts = a
+        .tick_start
+        .min(a.tick_end)
+        .min(b.tick_start)
+        .min(b.tick_end);
+    let te = a
+        .tick_start
+        .max(a.tick_end)
+        .max(b.tick_start)
+        .max(b.tick_end);
     let value_range = match (a.value_range, b.value_range) {
         (None, _) | (_, None) => None,
         (Some((va1, va2)), Some((vb1, vb2))) => {
@@ -29,16 +40,30 @@ fn union_anchor_sel_rect(a: AnchorSelRect, b: AnchorSelRect) -> AnchorSelRect {
             Some((vmin, vmax))
         }
     };
-    AnchorSelRect { tick_start: ts, tick_end: te, value_range }
+    AnchorSelRect {
+        tick_start: ts,
+        tick_end: te,
+        value_range,
+    }
 }
 
 /// Hover/drag tooltip 数据。锚点和控制点用不同的显示内容。
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum HoverTooltip {
     /// 锚点（或拖拽锚点）：显示 tick（小节:拍:tick）+ automation value
-    Anchor { tick: u32, value: f32, pos: egui::Pos2 },
+    Anchor {
+        tick: u32,
+        value: f32,
+        pos: egui::Pos2,
+    },
     /// 贝塞尔控制点（或拖拽控制点）：显示 CSS 风格 4 值 (x1, y1, x2, y2)
-    ControlPoint { x1: f32, y1: f32, x2: f32, y2: f32, pos: egui::Pos2 },
+    ControlPoint {
+        x1: f32,
+        y1: f32,
+        x2: f32,
+        y2: f32,
+        pos: egui::Pos2,
+    },
 }
 
 /// 控制点端别：cubic Bézier 有两个控制点，分别是 P1（起点出）和 P2（终点入）。
@@ -68,17 +93,30 @@ pub(crate) struct ControlPointHit {
 pub(crate) enum AutoDrag {
     /// Pencil 拖拽锚点：`old_tick` 是原始位置，`start_tick/start_value` 是按下时的锚点原始值
     /// （用于判断是否实际移动过，避免单击时产生空 Move）
-    MoveAnchor { old_tick: u32, start_tick: u32, start_value: f32 },
+    MoveAnchor {
+        old_tick: u32,
+        start_tick: u32,
+        start_value: f32,
+    },
     /// Curve 拖拽：起点已固定
     CurveDraw { start_tick: u32, start_value: f32 },
     /// 拖拽 Curve 段的某个控制点。
     /// `prev_tick`：被拖段的前驱事件 tick（段的起点，shape 存于此事件）。
     /// `which`：拖的是 P1（Out）还是 P2（In）。
     /// `start`：按下时该控制点的归一化 (x, y) 位置，用于判断是否实际移动过。
-    DragControlPoint { prev_tick: u32, which: CtrlEnd, start_x: f32, start_y: f32 },
+    DragControlPoint {
+        prev_tick: u32,
+        which: CtrlEnd,
+        start_x: f32,
+        start_y: f32,
+    },
     /// Select 工具拖拽多个选中锚点。`start_tick/start_value` 是按下时鼠标的 snapped 位置，
     /// 用于计算 delta。`alt` = Option 拖拽（复制而非移动）。
-    MoveAnchors { start_tick: u32, start_value: f32, alt: bool },
+    MoveAnchors {
+        start_tick: u32,
+        start_value: f32,
+        alt: bool,
+    },
     /// Select 工具框选锚点。
     /// `start_pos`：按下时的屏幕位置，用于 3px 阈值判断 + 框选矩形计算。
     MarqueeSelect { start_pos: egui::Pos2 },
@@ -178,8 +216,12 @@ pub(crate) fn hit_control_point_on_lane(
     for i in 1..lane.events.len() {
         let prev = &lane.events[i - 1];
         let cur = &lane.events[i];
-        let SegmentShape::Curve { x1, y1, x2, y2 } = prev.shape else { continue; };
-        if prev.shape.is_linear() { continue; }
+        let SegmentShape::Curve { x1, y1, x2, y2 } = prev.shape else {
+            continue;
+        };
+        if prev.shape.is_linear() {
+            continue;
+        }
 
         let px0 = x_offset + prev.tick as f32 * ppu;
         let py0 = panel_rect.min.y + panel.value_to_y(prev.value, max_val);
@@ -195,15 +237,29 @@ pub(crate) fn hit_control_point_on_lane(
         // 分别检测两个控制点
         let d1 = (c1x - mouse.x).powi(2) + (c1y - mouse.y).powi(2);
         let d2 = (c2x - mouse.x).powi(2) + (c2y - mouse.y).powi(2);
-        if d1 <= hit_sq
-            && best.as_ref().map(|b| d1 < b.dist_sq).unwrap_or(true)
-        {
-            best = Some(ControlPointHit { prev_tick: prev.tick, which: CtrlEnd::Out, x1, y1, x2, y2, pos: egui::pos2(c1x, c1y), dist_sq: d1 });
+        if d1 <= hit_sq && best.as_ref().map(|b| d1 < b.dist_sq).unwrap_or(true) {
+            best = Some(ControlPointHit {
+                prev_tick: prev.tick,
+                which: CtrlEnd::Out,
+                x1,
+                y1,
+                x2,
+                y2,
+                pos: egui::pos2(c1x, c1y),
+                dist_sq: d1,
+            });
         }
-        if d2 <= hit_sq
-            && best.as_ref().map(|b| d2 < b.dist_sq).unwrap_or(true)
-        {
-            best = Some(ControlPointHit { prev_tick: prev.tick, which: CtrlEnd::In, x1, y1, x2, y2, pos: egui::pos2(c2x, c2y), dist_sq: d2 });
+        if d2 <= hit_sq && best.as_ref().map(|b| d2 < b.dist_sq).unwrap_or(true) {
+            best = Some(ControlPointHit {
+                prev_tick: prev.tick,
+                which: CtrlEnd::In,
+                x1,
+                y1,
+                x2,
+                y2,
+                pos: egui::pos2(c2x, c2y),
+                dist_sq: d2,
+            });
         }
     }
     best
@@ -279,8 +335,18 @@ fn merge_ctrl_shape(
         .find(|e| e.tick == prev_tick)
         .map(|e| match e.shape {
             SegmentShape::Curve { x1, y1, x2, y2 } => match which {
-                CtrlEnd::Out => SegmentShape::Curve { x1: new_ctrl.0, y1: new_ctrl.1, x2, y2 },
-                CtrlEnd::In => SegmentShape::Curve { x1, y1, x2: new_ctrl.0, y2: new_ctrl.1 },
+                CtrlEnd::Out => SegmentShape::Curve {
+                    x1: new_ctrl.0,
+                    y1: new_ctrl.1,
+                    x2,
+                    y2,
+                },
+                CtrlEnd::In => SegmentShape::Curve {
+                    x1,
+                    y1,
+                    x2: new_ctrl.0,
+                    y2: new_ctrl.1,
+                },
             },
             SegmentShape::Step => SegmentShape::Step,
         })
@@ -352,8 +418,12 @@ pub(crate) fn handle_automation_interaction(
     let pointer_pressed = ui.input(|i| i.pointer.primary_pressed());
     let pointer_released = ui.input(|i| i.pointer.primary_released());
     let pointer_clicked = ui.input(|i| i.pointer.primary_clicked());
-    let pointer_double_clicked = ui.input(|i| i.pointer.button_double_clicked(egui::PointerButton::Primary));
-    let pointer_secondary_clicked = ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Secondary));
+    let pointer_double_clicked = ui.input(|i| {
+        i.pointer
+            .button_double_clicked(egui::PointerButton::Primary)
+    });
+    let pointer_secondary_clicked =
+        ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Secondary));
 
     // 鼠标位置 → tick/value。tick clamp 到 >= 0 防止 as u32 溢出。
     let pos = pointer_hover_pos;
@@ -365,7 +435,8 @@ pub(crate) fn handle_automation_interaction(
             ctx.quantize,
             ctx.ppq,
             ctx.bar_line_data,
-        ).max(0.0) as u32;
+        )
+        .max(0.0) as u32;
         let y_in_panel = (p.y - panel_rect.min.y).clamp(0.0, panel_rect.height());
         let value = panel.y_to_value(y_in_panel, max_val).clamp(0.0, max_val);
         (p, snapped_tick, value)
@@ -375,12 +446,13 @@ pub(crate) fn handle_automation_interaction(
     let in_grid = pos.is_some_and(|p| grid_area.contains(p));
 
     // 找当前 lane：Tempo 模式直接用 tempo_lane；其他模式从 automation_lanes 查。
-    let (lane_idx, lane): (Option<usize>, Option<&AutomationLane>) = if target == yinhe_types::AutomationTarget::Tempo {
-        (Some(0), Some(tempo_lane))
-    } else {
-        let idx = automation_lanes.iter().position(|l| l.target == target);
-        (idx, idx.and_then(|i| automation_lanes.get(i)))
-    };
+    let (lane_idx, lane): (Option<usize>, Option<&AutomationLane>) =
+        if target == yinhe_types::AutomationTarget::Tempo {
+            (Some(0), Some(tempo_lane))
+        } else {
+            let idx = automation_lanes.iter().position(|l| l.target == target);
+            (idx, idx.and_then(|i| automation_lanes.get(i)))
+        };
 
     // 命中检测：找距离鼠标最近的锚点
     let hit_anchor = lane.and_then(|l| {
@@ -441,7 +513,9 @@ pub(crate) fn handle_automation_interaction(
     {
         // Select 工具下，悬停在持续化选框内（未命中锚点）：显示移动光标
         let in_sel_rect = panel.anchor_sel_rects.iter().any(|r| {
-            let Some((_, tick, value)) = mouse_info else { return false };
+            let Some((_, tick, value)) = mouse_info else {
+                return false;
+            };
             r.contains(tick, value)
         });
         if in_sel_rect {
@@ -469,7 +543,9 @@ pub(crate) fn handle_automation_interaction(
                     }
                     // 清除可能残留的 drag_state（双击时 pointer_pressed 也会触发）
                     ui.ctx().data_mut(|d| d.remove::<AutoDrag>(drag_id));
-                } else if hit_ctrl.is_none() && let Some((_, tick, value)) = mouse_info {
+                } else if hit_ctrl.is_none()
+                    && let Some((_, tick, value)) = mouse_info
+                {
                     // 双击空白处：新建锚点（控制点上双击不新建）
                     edits.push(yinhe_types::AutomationEdit::Add {
                         track_idx,
@@ -503,7 +579,14 @@ pub(crate) fn handle_automation_interaction(
                         .map(|e| e.value)
                         .unwrap_or(0.0);
                     ui.ctx().data_mut(|d| {
-                        d.insert_temp(drag_id, AutoDrag::MoveAnchor { old_tick: tick, start_tick: tick, start_value: anchor_value });
+                        d.insert_temp(
+                            drag_id,
+                            AutoDrag::MoveAnchor {
+                                old_tick: tick,
+                                start_tick: tick,
+                                start_value: anchor_value,
+                            },
+                        );
                     });
                 } else if let Some(hit) = hit_ctrl {
                     // 命中控制点：开始拖拽该端控制点
@@ -512,36 +595,61 @@ pub(crate) fn handle_automation_interaction(
                         CtrlEnd::In => (hit.x2, hit.y2),
                     };
                     ui.ctx().data_mut(|d| {
-                        d.insert_temp(drag_id, AutoDrag::DragControlPoint {
-                            prev_tick: hit.prev_tick,
-                            which: hit.which,
-                            start_x,
-                            start_y,
-                        });
+                        d.insert_temp(
+                            drag_id,
+                            AutoDrag::DragControlPoint {
+                                prev_tick: hit.prev_tick,
+                                which: hit.which,
+                                start_x,
+                                start_y,
+                            },
+                        );
                     });
                 } else if drag_state.is_none() {
                     // 不在锚点/控制点上：检查是否在线段上，是则添加锚点并开始拖拽
                     if let Some(l) = lane
                         && let Some((_, tick, value)) = mouse_info
-                            && hit_line_on_lane(l, tick, value, ppu, scroll_x, grid_area.min.x, panel_rect.min.y, panel, max_val) {
-                                edits.push(yinhe_types::AutomationEdit::Add {
-                                    track_idx,
-                                    target: target.clone(),
-                                    tick,
-                                    value,
-                                    shape: SegmentShape::Step,
-                                });
-                                ui.ctx().data_mut(|d| {
-                                    d.insert_temp(drag_id, AutoDrag::MoveAnchor { old_tick: tick, start_tick: tick, start_value: value });
-                                });
-                            }
+                        && hit_line_on_lane(
+                            l,
+                            tick,
+                            value,
+                            ppu,
+                            scroll_x,
+                            grid_area.min.x,
+                            panel_rect.min.y,
+                            panel,
+                            max_val,
+                        )
+                    {
+                        edits.push(yinhe_types::AutomationEdit::Add {
+                            track_idx,
+                            target: target.clone(),
+                            tick,
+                            value,
+                            shape: SegmentShape::Step,
+                        });
+                        ui.ctx().data_mut(|d| {
+                            d.insert_temp(
+                                drag_id,
+                                AutoDrag::MoveAnchor {
+                                    old_tick: tick,
+                                    start_tick: tick,
+                                    start_value: value,
+                                },
+                            );
+                        });
+                    }
                 }
             }
             if pointer_released {
                 let drag = ui.ctx().data(|d| d.get_temp::<AutoDrag>(drag_id));
                 ui.ctx().data_mut(|d| d.remove::<AutoDrag>(drag_id));
                 match drag {
-                    Some(AutoDrag::MoveAnchor { old_tick, start_tick, start_value }) => {
+                    Some(AutoDrag::MoveAnchor {
+                        old_tick,
+                        start_tick,
+                        start_value,
+                    }) => {
                         if let Some((_, new_tick, new_value)) = mouse_info {
                             // 只有实际移动过才提交 Move（避免单击时锚点偏移到鼠标位置）
                             if new_tick != start_tick || new_value != start_value {
@@ -557,36 +665,64 @@ pub(crate) fn handle_automation_interaction(
                                 }
                                 // 构造 ghost 用于本帧渲染（防止松手瞬间旧线段闪现）
                                 if let Some(l) = lane {
-                                    let override_lane = build_lane_override(l, old_tick, new_tick, new_value);
-                                    return (edits, Some(AutomationGhost::Move { lane: override_lane, color: track_color }), None, None, None, None);
+                                    let override_lane =
+                                        build_lane_override(l, old_tick, new_tick, new_value);
+                                    return (
+                                        edits,
+                                        Some(AutomationGhost::Move {
+                                            lane: override_lane,
+                                            color: track_color,
+                                        }),
+                                        None,
+                                        None,
+                                        None,
+                                        None,
+                                    );
                                 }
                             }
                         }
                     }
-                    Some(AutoDrag::DragControlPoint { prev_tick, which, start_x, start_y }) => {
+                    Some(AutoDrag::DragControlPoint {
+                        prev_tick,
+                        which,
+                        start_x,
+                        start_y,
+                    }) => {
                         // 提交控制点拖拽：从鼠标位置反推新 (x, y)，并按端别合并到 shape
                         if let Some(l) = lane
                             && let Some((p, _, _)) = mouse_info
                             && let Some(lidx) = lane_idx
                             && let Some(new_ctrl) = compute_ctrl_from_mouse(
-                                l, prev_tick, which, p, ppu, scroll_x, grid_area, panel_rect, panel, max_val,
+                                l, prev_tick, which, p, ppu, scroll_x, grid_area, panel_rect,
+                                panel, max_val,
                             )
-                                && (new_ctrl.0 != start_x || new_ctrl.1 != start_y) {
-                                    // 读取当前 shape，按端别更新对应分量
-                                    let new_shape = merge_ctrl_shape(l, prev_tick, which, new_ctrl);
-                                    edits.push(yinhe_types::AutomationEdit::SetShape {
-                                        track_idx,
-                                        lane_idx: lidx,
-                                        target: target.clone(),
-                                        tick: prev_tick,
-                                        shape: new_shape,
-                                    });
-                                    // 构造 ghost 用于本帧渲染（防止松手瞬间旧曲线闪现）
-                                    // 与 MoveAnchor 同样的修复模式：release 这一帧 Layer 1 还未
-                                    // 用新 shape 重建，需用 ghost 覆盖该 lane 一帧。
-                                    let override_lane = build_lane_shape_override(l, prev_tick, new_shape);
-                                    return (edits, Some(AutomationGhost::Move { lane: override_lane, color: track_color }), None, None, None, None);
-                                }
+                            && (new_ctrl.0 != start_x || new_ctrl.1 != start_y)
+                        {
+                            // 读取当前 shape，按端别更新对应分量
+                            let new_shape = merge_ctrl_shape(l, prev_tick, which, new_ctrl);
+                            edits.push(yinhe_types::AutomationEdit::SetShape {
+                                track_idx,
+                                lane_idx: lidx,
+                                target: target.clone(),
+                                tick: prev_tick,
+                                shape: new_shape,
+                            });
+                            // 构造 ghost 用于本帧渲染（防止松手瞬间旧曲线闪现）
+                            // 与 MoveAnchor 同样的修复模式：release 这一帧 Layer 1 还未
+                            // 用新 shape 重建，需用 ghost 覆盖该 lane 一帧。
+                            let override_lane = build_lane_shape_override(l, prev_tick, new_shape);
+                            return (
+                                edits,
+                                Some(AutomationGhost::Move {
+                                    lane: override_lane,
+                                    color: track_color,
+                                }),
+                                None,
+                                None,
+                                None,
+                                None,
+                            );
+                        }
                     }
                     _ => {}
                 }
@@ -594,7 +730,12 @@ pub(crate) fn handle_automation_interaction(
             }
 
             // 点击空白（非拖拽，非控制点）：添加新锚点（shape = Step）
-            if pointer_clicked && in_grid && hit_anchor.is_none() && hit_ctrl.is_none() && drag_state.is_none() {
+            if pointer_clicked
+                && in_grid
+                && hit_anchor.is_none()
+                && hit_ctrl.is_none()
+                && drag_state.is_none()
+            {
                 if let Some((_, tick, value)) = mouse_info {
                     edits.push(yinhe_types::AutomationEdit::Add {
                         track_idx,
@@ -610,44 +751,56 @@ pub(crate) fn handle_automation_interaction(
         Tool::Curve => {
             // 拖拽起点 → 终点：press 记录起点，release 提交 2 个锚点
             // release 不检查 in_grid（同 Pencil 理由）。
-            if pointer_pressed && in_grid
-                && let Some((_, tick, value)) = mouse_info {
-                    ui.ctx().data_mut(|d| {
-                        d.insert_temp(drag_id, AutoDrag::CurveDraw { start_tick: tick, start_value: value });
-                    });
-                }
+            if pointer_pressed
+                && in_grid
+                && let Some((_, tick, value)) = mouse_info
+            {
+                ui.ctx().data_mut(|d| {
+                    d.insert_temp(
+                        drag_id,
+                        AutoDrag::CurveDraw {
+                            start_tick: tick,
+                            start_value: value,
+                        },
+                    );
+                });
+            }
             if pointer_released {
                 let drag = ui.ctx().data(|d| d.get_temp::<AutoDrag>(drag_id));
                 ui.ctx().data_mut(|d| d.remove::<AutoDrag>(drag_id));
-                if let Some(AutoDrag::CurveDraw { start_tick: t1, start_value: v1 }) = drag
-                    && let Some((_, t2, v2)) = mouse_info {
-                        if t1 != t2 {
-                            // 两个锚点：起点 Curve 直线，终点 Step
-                            edits.push(yinhe_types::AutomationEdit::Add {
-                                track_idx,
-                                target: target.clone(),
-                                tick: t1.min(t2),
-                                value: v1,
-                                shape: SegmentShape::linear_curve(),
-                            });
-                            edits.push(yinhe_types::AutomationEdit::Add {
-                                track_idx,
-                                target: target.clone(),
-                                tick: t1.max(t2),
-                                value: v2,
-                                shape: SegmentShape::Step,
-                            });
-                        } else {
-                            // 单击：只加一个 Curve 直线锚点
-                            edits.push(yinhe_types::AutomationEdit::Add {
-                                track_idx,
-                                target: target.clone(),
-                                tick: t2,
-                                value: v2,
-                                shape: SegmentShape::linear_curve(),
-                            });
-                        }
+                if let Some(AutoDrag::CurveDraw {
+                    start_tick: t1,
+                    start_value: v1,
+                }) = drag
+                    && let Some((_, t2, v2)) = mouse_info
+                {
+                    if t1 != t2 {
+                        // 两个锚点：起点 Curve 直线，终点 Step
+                        edits.push(yinhe_types::AutomationEdit::Add {
+                            track_idx,
+                            target: target.clone(),
+                            tick: t1.min(t2),
+                            value: v1,
+                            shape: SegmentShape::linear_curve(),
+                        });
+                        edits.push(yinhe_types::AutomationEdit::Add {
+                            track_idx,
+                            target: target.clone(),
+                            tick: t1.max(t2),
+                            value: v2,
+                            shape: SegmentShape::Step,
+                        });
+                    } else {
+                        // 单击：只加一个 Curve 直线锚点
+                        edits.push(yinhe_types::AutomationEdit::Add {
+                            track_idx,
+                            target: target.clone(),
+                            tick: t2,
+                            value: v2,
+                            shape: SegmentShape::linear_curve(),
+                        });
                     }
+                }
                 return (edits, None, None, None, None, None);
             }
         }
@@ -659,7 +812,9 @@ pub(crate) fn handle_automation_interaction(
 
             // 检测鼠标是否在持续化选框内（音乐坐标判断）
             let in_sel_rect = panel.anchor_sel_rects.iter().any(|r| {
-                let Some((_, tick, value)) = mouse_info else { return false };
+                let Some((_, tick, value)) = mouse_info else {
+                    return false;
+                };
                 r.contains(tick, value)
             });
 
@@ -671,15 +826,21 @@ pub(crate) fn handle_automation_interaction(
                         .and_then(|l| l.events.get(event_idx))
                         .map(|e| e.value)
                         .unwrap_or(0.0);
-                    let anchor_in_sel = panel.anchor_sel_rects
-                        .iter().any(|r| r.contains(tick, anchor_value));
+                    let anchor_in_sel = panel
+                        .anchor_sel_rects
+                        .iter()
+                        .any(|r| r.contains(tick, anchor_value));
                     if cmd || shift {
                         // Shift/Cmd+点击锚点：保持单选框语义，union 到最新选框（或新点 rect）
                         // 用 Set 替换所有为 unioned rect（与原行为一致）
                         let point_rect = AnchorSelRect {
                             tick_start: tick as f64,
                             tick_end: tick as f64,
-                            value_range: if vertical { None } else { Some((anchor_value, anchor_value)) },
+                            value_range: if vertical {
+                                None
+                            } else {
+                                Some((anchor_value, anchor_value))
+                            },
                         };
                         let final_rect = match panel.anchor_sel_rects.last().copied() {
                             Some(existing) => union_anchor_sel_rect(existing, point_rect),
@@ -692,18 +853,25 @@ pub(crate) fn handle_automation_interaction(
                             let point_rect = AnchorSelRect {
                                 tick_start: tick as f64,
                                 tick_end: tick as f64,
-                                value_range: if vertical { None } else { Some((anchor_value, anchor_value)) },
+                                value_range: if vertical {
+                                    None
+                                } else {
+                                    Some((anchor_value, anchor_value))
+                                },
                             };
                             sel_op = Some(SelOp::Set(SelRectOp::Set(point_rect)));
                         }
                         // 开始 MoveAnchors 拖拽（用鼠标位置作为 start，用于 delta 计算）
                         if let Some((_, _, value)) = mouse_info {
                             ui.ctx().data_mut(|d| {
-                                d.insert_temp(drag_id, AutoDrag::MoveAnchors {
-                                    start_tick: tick,
-                                    start_value: value,
-                                    alt,
-                                });
+                                d.insert_temp(
+                                    drag_id,
+                                    AutoDrag::MoveAnchors {
+                                        start_tick: tick,
+                                        start_value: value,
+                                        alt,
+                                    },
+                                );
                             });
                         }
                     }
@@ -711,19 +879,20 @@ pub(crate) fn handle_automation_interaction(
                     // 点击持续化选框内（未命中锚点）→ 拖拽选中的锚点
                     if let Some((_, tick, value)) = mouse_info {
                         ui.ctx().data_mut(|d| {
-                            d.insert_temp(drag_id, AutoDrag::MoveAnchors {
-                                start_tick: tick,
-                                start_value: value,
-                                alt,
-                            });
+                            d.insert_temp(
+                                drag_id,
+                                AutoDrag::MoveAnchors {
+                                    start_tick: tick,
+                                    start_value: value,
+                                    alt,
+                                },
+                            );
                         });
                     }
                 } else if let Some((p, _tick, _value)) = mouse_info {
                     // 不在选框内 → 开始框选（3px 阈值在拖拽中判断）
                     ui.ctx().data_mut(|d| {
-                        d.insert_temp(drag_id, AutoDrag::MarqueeSelect {
-                            start_pos: p,
-                        });
+                        d.insert_temp(drag_id, AutoDrag::MarqueeSelect { start_pos: p });
                     });
                     // 非加选模式：清空共享音符选区，触发三视图选框互斥
                     // （与 AR/PR 在 press 时清空 selected 的行为一致）。
@@ -735,35 +904,38 @@ pub(crate) fn handle_automation_interaction(
 
             // ── 拖拽中：更新 marquee_rect ──
             if let Some(AutoDrag::MarqueeSelect { start_pos, .. }) = drag_state
-                && let Some(p) = pos {
-                    let dist = (p - start_pos).length();
-                    if dist >= MARQUEE_THRESHOLD {
-                        // 计算框选矩形（屏幕坐标，clamp 到 grid_area）
-                        let rect = if vertical {
-                            // 垂直选择：y 范围扩展到整个 grid_area，x 范围按鼠标
-                            egui::Rect::from_min_max(
-                                egui::pos2(start_pos.x.min(p.x), grid_area.min.y),
-                                egui::pos2(start_pos.x.max(p.x), grid_area.max.y),
-                            ).intersect(grid_area)
-                        } else {
-                            let min = egui::pos2(start_pos.x.min(p.x), start_pos.y.min(p.y));
-                            let max = egui::pos2(start_pos.x.max(p.x), start_pos.y.max(p.y));
-                            egui::Rect::from_min_max(min, max).intersect(grid_area)
-                        };
-                        marquee_rect = Some(rect);
-                        // 无修饰键时清空选区（让用户看到选区被清空）
-                        if !cmd && !shift {
-                            sel_op = Some(SelOp::Set(SelRectOp::Keep));
-                        }
+                && let Some(p) = pos
+            {
+                let dist = (p - start_pos).length();
+                if dist >= MARQUEE_THRESHOLD {
+                    // 计算框选矩形（屏幕坐标，clamp 到 grid_area）
+                    let rect = if vertical {
+                        // 垂直选择：y 范围扩展到整个 grid_area，x 范围按鼠标
+                        egui::Rect::from_min_max(
+                            egui::pos2(start_pos.x.min(p.x), grid_area.min.y),
+                            egui::pos2(start_pos.x.max(p.x), grid_area.max.y),
+                        )
+                        .intersect(grid_area)
+                    } else {
+                        let min = egui::pos2(start_pos.x.min(p.x), start_pos.y.min(p.y));
+                        let max = egui::pos2(start_pos.x.max(p.x), start_pos.y.max(p.y));
+                        egui::Rect::from_min_max(min, max).intersect(grid_area)
+                    };
+                    marquee_rect = Some(rect);
+                    // 无修饰键时清空选区（让用户看到选区被清空）
+                    if !cmd && !shift {
+                        sel_op = Some(SelOp::Set(SelRectOp::Keep));
                     }
                 }
+            }
 
             // ── 释放：提交选区或拖拽 ──
             if pointer_released {
                 let drag = ui.ctx().data(|d| d.get_temp::<AutoDrag>(drag_id));
                 ui.ctx().data_mut(|d| d.remove::<AutoDrag>(drag_id));
                 // 清除 move_offset（拖拽结束）
-                ui.ctx().data_mut(|d| d.remove::<(i64, f32)>(move_offset_id));
+                ui.ctx()
+                    .data_mut(|d| d.remove::<(i64, f32)>(move_offset_id));
                 // 释放时的 ghost（MoveAnchors 释放当帧仍需显示 ghost，避免闪烁）
                 let mut release_ghost: Option<AutomationGhost> = None;
                 match drag {
@@ -785,8 +957,16 @@ pub(crate) fn handle_automation_interaction(
                                     value_range: if vertical {
                                         None
                                     } else {
-                                        let v1 = panel.y_to_value((max_y - panel_rect.min.y).clamp(0.0, panel_rect.height()), max_val);
-                                        let v2 = panel.y_to_value((min_y - panel_rect.min.y).clamp(0.0, panel_rect.height()), max_val);
+                                        let v1 = panel.y_to_value(
+                                            (max_y - panel_rect.min.y)
+                                                .clamp(0.0, panel_rect.height()),
+                                            max_val,
+                                        );
+                                        let v2 = panel.y_to_value(
+                                            (min_y - panel_rect.min.y)
+                                                .clamp(0.0, panel_rect.height()),
+                                            max_val,
+                                        );
                                         Some((v1.min(v2), v1.max(v2)))
                                     },
                                 };
@@ -804,7 +984,12 @@ pub(crate) fn handle_automation_interaction(
                             }
                         }
                     }
-                    Some(AutoDrag::MoveAnchors { start_tick, start_value, alt, .. }) => {
+                    Some(AutoDrag::MoveAnchors {
+                        start_tick,
+                        start_value,
+                        alt,
+                        ..
+                    }) => {
                         // 提交移动或复制
                         if let Some((_, cur_tick, cur_value)) = mouse_info
                             && let Some(l) = lane
@@ -813,13 +998,23 @@ pub(crate) fn handle_automation_interaction(
                         {
                             let d_tick = cur_tick as i64 - start_tick as i64;
                             // 垂直工具：只能水平移动，d_value 强制为 0
-                            let d_value = if vertical { 0.0 } else { cur_value - start_value };
+                            let d_value = if vertical {
+                                0.0
+                            } else {
+                                cur_value - start_value
+                            };
                             if d_tick != 0 || d_value.abs() > 1e-6 {
                                 // 收集 moves：从 lane.events 筛选落在任一 sel_rect 内的锚点
                                 // moves = (original_tick, new_tick, new_value)
-                                let moves: Vec<(u32, u32, f32)> = l.events.iter()
+                                let moves: Vec<(u32, u32, f32)> = l
+                                    .events
+                                    .iter()
                                     .filter_map(|e| {
-                                        if !panel.anchor_sel_rects.iter().any(|r| r.contains(e.tick, e.value)) {
+                                        if !panel
+                                            .anchor_sel_rects
+                                            .iter()
+                                            .any(|r| r.contains(e.tick, e.value))
+                                        {
                                             return None;
                                         }
                                         let new_tick = (e.tick as i64 + d_tick).max(0) as u32;
@@ -835,11 +1030,16 @@ pub(crate) fn handle_automation_interaction(
                                     } else {
                                         build_lane_multi_move(l, &moves)
                                     };
-                                    release_ghost = Some(AutomationGhost::Move { lane: ghost_lane, color: track_color });
+                                    release_ghost = Some(AutomationGhost::Move {
+                                        lane: ghost_lane,
+                                        color: track_color,
+                                    });
                                     if alt {
                                         // Alt = 复制：为每个选中锚点生成 Add（shape 从原始事件读取）
                                         for &(tick, new_tick, new_value) in &moves {
-                                            let shape = l.events.iter()
+                                            let shape = l
+                                                .events
+                                                .iter()
                                                 .find(|e| e.tick == tick)
                                                 .map(|e| e.shape)
                                                 .unwrap_or(SegmentShape::Step);
@@ -865,14 +1065,21 @@ pub(crate) fn handle_automation_interaction(
 
                                     // 所有选框一起偏移：tick += d_tick，value += d_value
                                     // 垂直工具 value_range 为 None 保持 None
-                                    let new_rects: Vec<AnchorSelRect> = panel.anchor_sel_rects.iter()
+                                    let new_rects: Vec<AnchorSelRect> = panel
+                                        .anchor_sel_rects
+                                        .iter()
                                         .map(|sel_rect| AnchorSelRect {
-                                            tick_start: (sel_rect.tick_start + d_tick as f64).max(0.0),
+                                            tick_start: (sel_rect.tick_start + d_tick as f64)
+                                                .max(0.0),
                                             tick_end: (sel_rect.tick_end + d_tick as f64).max(0.0),
-                                            value_range: sel_rect.value_range.map(|(vmin, vmax)| {
-                                                ((vmin + d_value).clamp(0.0, max_val),
-                                                 (vmax + d_value).clamp(0.0, max_val))
-                                            }),
+                                            value_range: sel_rect.value_range.map(
+                                                |(vmin, vmax)| {
+                                                    (
+                                                        (vmin + d_value).clamp(0.0, max_val),
+                                                        (vmax + d_value).clamp(0.0, max_val),
+                                                    )
+                                                },
+                                            ),
                                         })
                                         .collect();
                                     sel_op = Some(SelOp::Set(SelRectOp::ReplaceAll(new_rects)));
@@ -891,27 +1098,32 @@ pub(crate) fn handle_automation_interaction(
 
     // 右键点击锚点 → 记录编辑信息，供 show_panels 弹窗
     let right_click_id = ui.id().with("auto_right_click").with(panel_index);
-    if pointer_secondary_clicked && in_grid
+    if pointer_secondary_clicked
+        && in_grid
         && let Some((_, tick)) = hit_anchor
-            && let Some(lidx) = lane_idx
-                && let Some(l) = lane
-                    && let Some(_evt) = l.events.iter().find(|e| e.tick == tick) {
-                        // 清除旧编辑值，确保新锚点使用自己的初始值
-                        let edit_tick_id = ui.id().with("auto_right_tick").with(panel_index);
-                        let edit_value_id = ui.id().with("auto_right_value").with(panel_index);
-                        let was_open_id = ui.id().with("auto_right_was_open").with(panel_index);
-                        ui.ctx().data_mut(|d| {
-                            d.remove::<f64>(edit_tick_id);
-                            d.remove::<f64>(edit_value_id);
-                            d.remove::<bool>(was_open_id);
-                            d.insert_temp(right_click_id, RightClickAnchor {
-                                track_idx,
-                                lane_idx: lidx,
-                                old_tick: tick,
-                                target: target.clone(),
-                            });
-                        });
-                    }
+        && let Some(lidx) = lane_idx
+        && let Some(l) = lane
+        && let Some(_evt) = l.events.iter().find(|e| e.tick == tick)
+    {
+        // 清除旧编辑值，确保新锚点使用自己的初始值
+        let edit_tick_id = ui.id().with("auto_right_tick").with(panel_index);
+        let edit_value_id = ui.id().with("auto_right_value").with(panel_index);
+        let was_open_id = ui.id().with("auto_right_was_open").with(panel_index);
+        ui.ctx().data_mut(|d| {
+            d.remove::<f64>(edit_tick_id);
+            d.remove::<f64>(edit_value_id);
+            d.remove::<bool>(was_open_id);
+            d.insert_temp(
+                right_click_id,
+                RightClickAnchor {
+                    track_idx,
+                    lane_idx: lidx,
+                    old_tick: tick,
+                    target: target.clone(),
+                },
+            );
+        });
+    }
 
     // ── Ghost 计算（panel 局部坐标，传给 wgpu Layer 3 绘制）──
     // 重新读取 drag_state：press 分支可能刚设置过，release 分支已 return。
@@ -924,51 +1136,91 @@ pub(crate) fn handle_automation_interaction(
         let cur_x = x_offset + cur_tick as f32 * ppu;
         let cur_y = panel.value_to_y(cur_value, max_val);
         match drag {
-            AutoDrag::MoveAnchor { old_tick, start_tick: _, start_value: _ } => {
+            AutoDrag::MoveAnchor {
+                old_tick,
+                start_tick: _,
+                start_value: _,
+            } => {
                 // 用 build_lane_override 生成覆盖后的完整 lane，ghost 层整 lane 绘制。
                 // 这样无论锚点如何跨越、插入、拖到末尾，都只需要正常画线逻辑。
                 lane.map(|l| {
                     let override_lane = build_lane_override(l, old_tick, cur_tick, cur_value);
-                    AutomationGhost::Move { lane: override_lane, color: track_color }
+                    AutomationGhost::Move {
+                        lane: override_lane,
+                        color: track_color,
+                    }
                 })
             }
-            AutoDrag::CurveDraw { start_tick, start_value } => {
+            AutoDrag::CurveDraw {
+                start_tick,
+                start_value,
+            } => {
                 let start_x = x_offset + start_tick as f32 * ppu;
                 let start_y = panel.value_to_y(start_value, max_val);
-                Some(AutomationGhost::Curve { start_x, start_y, cur_x, cur_y, color: track_color })
+                Some(AutomationGhost::Curve {
+                    start_x,
+                    start_y,
+                    cur_x,
+                    cur_y,
+                    color: track_color,
+                })
             }
-            AutoDrag::DragControlPoint { prev_tick, which, .. } => {
+            AutoDrag::DragControlPoint {
+                prev_tick, which, ..
+            } => {
                 // 用原始鼠标位置（不 snap）反推该端控制点的 (x, y)，
                 // 合并到现有 shape 后生成覆盖 lane。
                 lane.and_then(|l| {
                     let new_ctrl = compute_ctrl_from_mouse(
-                        l, prev_tick, which, p, ppu, scroll_x, grid_area, panel_rect, panel, max_val,
+                        l, prev_tick, which, p, ppu, scroll_x, grid_area, panel_rect, panel,
+                        max_val,
                     )?;
                     // 读现有 shape，按端别替换对应分量
                     let new_shape = merge_ctrl_shape(l, prev_tick, which, new_ctrl);
                     let override_lane = build_lane_shape_override(l, prev_tick, new_shape);
-                    Some(AutomationGhost::Move { lane: override_lane, color: track_color })
+                    Some(AutomationGhost::Move {
+                        lane: override_lane,
+                        color: track_color,
+                    })
                 })
             }
-            AutoDrag::MoveAnchors { start_tick, start_value, alt, .. } => {
+            AutoDrag::MoveAnchors {
+                start_tick,
+                start_value,
+                alt,
+                ..
+            } => {
                 // Select 工具拖拽多个选中锚点：构建 multi-move 或 multi-copy ghost lane。
                 // 选中锚点的原始 (tick, value) 从 lane.events 读取（拖拽中模型不变）。
                 let d_tick = cur_tick as i64 - start_tick as i64;
                 // 垂直工具：只能水平移动，d_value 强制为 0
                 let vertical_now = matches!(ctx.active_tool, Tool::SelectVertical);
-                let d_value = if vertical_now { 0.0 } else { cur_value - start_value };
+                let d_value = if vertical_now {
+                    0.0
+                } else {
+                    cur_value - start_value
+                };
                 // 写入 move_offset，供 automation_panel.rs 偏移持续化选框
-                ui.ctx().data_mut(|d| d.insert_temp(move_offset_id, (d_tick, d_value)));
+                ui.ctx()
+                    .data_mut(|d| d.insert_temp(move_offset_id, (d_tick, d_value)));
                 // 未实际移动时不产生 ghost
                 if d_tick == 0 && d_value.abs() <= 1e-6 {
                     None
                 } else {
                     lane.and_then(|l| {
-                        if panel.anchor_sel_rects.is_empty() { return None; }
+                        if panel.anchor_sel_rects.is_empty() {
+                            return None;
+                        }
                         // 从 lane.events 筛选落在任一 sel_rect 内的锚点
-                        let moves: Vec<(u32, u32, f32)> = l.events.iter()
+                        let moves: Vec<(u32, u32, f32)> = l
+                            .events
+                            .iter()
                             .filter_map(|e| {
-                                if !panel.anchor_sel_rects.iter().any(|r| r.contains(e.tick, e.value)) {
+                                if !panel
+                                    .anchor_sel_rects
+                                    .iter()
+                                    .any(|r| r.contains(e.tick, e.value))
+                                {
                                     return None;
                                 }
                                 let new_tick = (e.tick as i64 + d_tick).max(0) as u32;
@@ -986,7 +1238,10 @@ pub(crate) fn handle_automation_interaction(
                             // 移动：原事件移到新位置
                             build_lane_multi_move(l, &moves)
                         };
-                        Some(AutomationGhost::Move { lane: override_lane, color: track_color })
+                        Some(AutomationGhost::Move {
+                            lane: override_lane,
+                            color: track_color,
+                        })
                     })
                 }
             }
@@ -1002,29 +1257,44 @@ pub(crate) fn handle_automation_interaction(
     // 拖拽中返回拖拽信息用于 tooltip
     let drag_info: Option<HoverTooltip> = if ghost.is_some() {
         match drag_now {
-            Some(AutoDrag::DragControlPoint { prev_tick, which, .. }) => {
+            Some(AutoDrag::DragControlPoint {
+                prev_tick, which, ..
+            }) => {
                 // 拖控制点：从鼠标位置反推 (x, y)，与现有 shape 合并后显示完整 4 值
                 lane.and_then(|l| {
                     let (p, _, _) = mouse_info?;
                     let new_ctrl = compute_ctrl_from_mouse(
-                        l, prev_tick, which, p, ppu, scroll_x, grid_area, panel_rect, panel, max_val,
+                        l, prev_tick, which, p, ppu, scroll_x, grid_area, panel_rect, panel,
+                        max_val,
                     )?;
-                    let (x1, y1, x2, y2) = l.events.iter()
-                        .find(|e| e.tick == prev_tick)
-                        .map(|e| match e.shape {
-                            SegmentShape::Curve { x1, y1, x2, y2 } => (x1, y1, x2, y2),
-                            SegmentShape::Step => (0.0, 0.0, 0.0, 0.0),
-                        })?;
+                    let (x1, y1, x2, y2) =
+                        l.events
+                            .iter()
+                            .find(|e| e.tick == prev_tick)
+                            .map(|e| match e.shape {
+                                SegmentShape::Curve { x1, y1, x2, y2 } => (x1, y1, x2, y2),
+                                SegmentShape::Step => (0.0, 0.0, 0.0, 0.0),
+                            })?;
                     let (x1, y1, x2, y2) = match which {
                         CtrlEnd::Out => (new_ctrl.0, new_ctrl.1, x2, y2),
-                        CtrlEnd::In  => (x1, y1, new_ctrl.0, new_ctrl.1),
+                        CtrlEnd::In => (x1, y1, new_ctrl.0, new_ctrl.1),
                     };
-                    Some(HoverTooltip::ControlPoint { x1, y1, x2, y2, pos: p })
+                    Some(HoverTooltip::ControlPoint {
+                        x1,
+                        y1,
+                        x2,
+                        y2,
+                        pos: p,
+                    })
                 })
             }
             _ => {
                 // 拖锚点 / CurveDraw：显示 (tick, value)，位置跟随鼠标
-                mouse_info.map(|(p, tick, value)| HoverTooltip::Anchor { tick, value, pos: p })
+                mouse_info.map(|(p, tick, value)| HoverTooltip::Anchor {
+                    tick,
+                    value,
+                    pos: p,
+                })
             }
         }
     } else {
@@ -1040,12 +1310,14 @@ pub(crate) fn handle_automation_interaction(
         if let Some((_, anchor_tick)) = hit_anchor {
             // 锚点 hover：清除控制点计时
             ui.ctx().data_mut(|d| d.remove::<(u32, f64)>(hover_ctrl_id));
-            let prev: Option<(u32, f64)> = ui.ctx().data(|d| d.get_temp::<(u32, f64)>(hover_anchor_id));
+            let prev: Option<(u32, f64)> =
+                ui.ctx().data(|d| d.get_temp::<(u32, f64)>(hover_anchor_id));
             let entry = match prev {
                 Some(e) if e.0 == anchor_tick => e,
                 _ => {
                     let new_entry = (anchor_tick, now);
-                    ui.ctx().data_mut(|d| d.insert_temp(hover_anchor_id, new_entry));
+                    ui.ctx()
+                        .data_mut(|d| d.insert_temp(hover_anchor_id, new_entry));
                     new_entry
                 }
             };
@@ -1057,7 +1329,11 @@ pub(crate) fn handle_automation_interaction(
                 if let Some(v) = anchor_value {
                     let ax = grid_area.min.x + anchor_tick as f32 * ppu - scroll_x;
                     let ay = panel_rect.min.y + panel.value_to_y(v, max_val);
-                    Some(HoverTooltip::Anchor { tick: anchor_tick, value: v, pos: egui::pos2(ax, ay) })
+                    Some(HoverTooltip::Anchor {
+                        tick: anchor_tick,
+                        value: v,
+                        pos: egui::pos2(ax, ay),
+                    })
                 } else {
                     None
                 }
@@ -1067,18 +1343,27 @@ pub(crate) fn handle_automation_interaction(
             }
         } else if let Some(hit) = hit_ctrl {
             // 控制点 hover：清除锚点计时
-            ui.ctx().data_mut(|d| d.remove::<(u32, f64)>(hover_anchor_id));
-            let prev: Option<(u32, f64)> = ui.ctx().data(|d| d.get_temp::<(u32, f64)>(hover_ctrl_id));
+            ui.ctx()
+                .data_mut(|d| d.remove::<(u32, f64)>(hover_anchor_id));
+            let prev: Option<(u32, f64)> =
+                ui.ctx().data(|d| d.get_temp::<(u32, f64)>(hover_ctrl_id));
             let entry = match prev {
                 Some(e) if e.0 == hit.prev_tick => e,
                 _ => {
                     let new_entry = (hit.prev_tick, now);
-                    ui.ctx().data_mut(|d| d.insert_temp(hover_ctrl_id, new_entry));
+                    ui.ctx()
+                        .data_mut(|d| d.insert_temp(hover_ctrl_id, new_entry));
                     new_entry
                 }
             };
             if now - entry.1 >= HOVER_DELAY {
-                Some(HoverTooltip::ControlPoint { x1: hit.x1, y1: hit.y1, x2: hit.x2, y2: hit.y2, pos: hit.pos })
+                Some(HoverTooltip::ControlPoint {
+                    x1: hit.x1,
+                    y1: hit.y1,
+                    x2: hit.x2,
+                    y2: hit.y2,
+                    pos: hit.pos,
+                })
             } else {
                 ui.ctx().request_repaint();
                 None

@@ -92,12 +92,17 @@ pub fn show(
     *last_cursor_tick = doc.edit.cursor_tick;
 
     let arr_total_w = layout.remaining.width();
-    let tp_w = layout.transport_panel_width.clamp(60.0, (arr_total_w - 60.0).max(60.0));
+    let tp_w = layout
+        .transport_panel_width
+        .clamp(60.0, (arr_total_w - 60.0).max(60.0));
     *layout.transport_panel_width = tp_w;
 
     let arr_rect = egui::Rect::from_min_max(
         layout.remaining.min,
-        egui::pos2(layout.remaining.max.x, layout.remaining.min.y + layout.arr_h),
+        egui::pos2(
+            layout.remaining.max.x,
+            layout.remaining.min.y + layout.arr_h,
+        ),
     );
 
     // ── Track panel: starts at RULER_H, ends at scrollbar top so rows align with GPU lanes ──
@@ -308,7 +313,16 @@ pub fn show(
             selection_anchor,
             info_content,
         };
-        view_ui::show(ui, gpu_size, arr_renderer, arr_render_ctx, arr_view, data, &mut edit, &mut cfg);
+        view_ui::show(
+            ui,
+            gpu_size,
+            arr_renderer,
+            arr_render_ctx,
+            arr_view,
+            data,
+            &mut edit,
+            &mut cfg,
+        );
     });
 
     // ── Horizontal scrollbar (right of track panel, below GPU content) ──

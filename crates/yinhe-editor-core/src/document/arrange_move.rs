@@ -20,7 +20,11 @@ impl Document {
     /// 5. Offsets the selection rects to follow
     ///
     /// Returns a single `Composite` UndoAction (or None if nothing moved).
-    pub fn move_selected_arrange(&mut self, delta_ticks: i64, delta_tracks: i32) -> Option<UndoAction> {
+    pub fn move_selected_arrange(
+        &mut self,
+        delta_ticks: i64,
+        delta_tracks: i32,
+    ) -> Option<UndoAction> {
         if self.edit.selected.is_empty() {
             return None;
         }
@@ -37,7 +41,8 @@ impl Document {
         // Collect originals, remove from model, re-insert at new positions.
         let originals = batch_ops::remove_selected(model, &self.edit.selected);
         if !originals.is_empty() {
-            let mut new_by_key: std::collections::HashMap<u8, Vec<yinhe_types::Note>> = std::collections::HashMap::new();
+            let mut new_by_key: std::collections::HashMap<u8, Vec<yinhe_types::Note>> =
+                std::collections::HashMap::new();
             for (note, old_key) in &originals {
                 let new_tick = (note.start_tick as i64 + delta_ticks).max(0) as u32;
                 let raw_track = (note.track as i32 + delta_tracks).clamp(0, num_tracks - 1);
@@ -142,8 +147,7 @@ impl Document {
         if delta_tracks != 0 {
             // Cross-track: add moved events to destination tracks
             for lm in &lane_moves {
-                let raw_dst = (lm.src_track as i32 + delta_tracks)
-                    .clamp(0, num_tracks - 1);
+                let raw_dst = (lm.src_track as i32 + delta_tracks).clamp(0, num_tracks - 1);
                 // Skip over conductor track: automation cannot land on it.
                 let dst_track_idx = if Some(raw_dst as u16) == self.edit.conductor_track_idx {
                     if delta_tracks < 0 {
@@ -173,14 +177,20 @@ impl Document {
                     continue;
                 }
                 let dst_track = Arc::make_mut(&mut model.tracks[dst_track_idx]);
-                let dst_lane_idx = match dst_track.automation_lanes.iter().position(|l| l.target == lm.target) {
+                let dst_lane_idx = match dst_track
+                    .automation_lanes
+                    .iter()
+                    .position(|l| l.target == lm.target)
+                {
                     Some(idx) => idx,
                     None => {
-                        dst_track.automation_lanes.push(yinhe_types::AutomationLane {
-                            target: lm.target.clone(),
-                            track: dst_track_idx as u16,
-                            events: Vec::new(),
-                        });
+                        dst_track
+                            .automation_lanes
+                            .push(yinhe_types::AutomationLane {
+                                target: lm.target.clone(),
+                                track: dst_track_idx as u16,
+                                events: Vec::new(),
+                            });
                         dst_track.automation_lanes.len() - 1
                     }
                 };

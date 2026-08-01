@@ -1,8 +1,8 @@
 use eframe::egui;
 use egui_extras::{Column, TableBuilder};
 
-use rust_i18n::t;
 use crate::audio_settings::AudioSettings;
+use rust_i18n::t;
 use yinhe_editor_core::document::Document;
 
 /// Show the XSynth channel-mapping panel.
@@ -22,7 +22,11 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>, settings: &AudioSetti
     };
 
     ui.add_space(4.0);
-    ui.label(egui::RichText::new(t!("channels.title").as_ref()).size(14.0).strong());
+    ui.label(
+        egui::RichText::new(t!("channels.title").as_ref())
+            .size(14.0)
+            .strong(),
+    );
     ui.add_space(4.0);
 
     // Build active mask from the YinModel: a (port, channel) is active if
@@ -34,8 +38,7 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>, settings: &AudioSetti
             continue;
         }
         let has_audible_note = doc.data.model.track_has_audio(track_idx as u16);
-        let has_ctrl = !track.automation_lanes.is_empty()
-            || !track.program_change.is_empty();
+        let has_ctrl = !track.automation_lanes.is_empty() || !track.program_change.is_empty();
         if has_audible_note || has_ctrl {
             active[global_ch] = true;
         }
@@ -79,10 +82,30 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>, settings: &AudioSetti
         .column(Column::initial(30.0).at_least(24.0))
         .column(Column::initial(140.0).at_least(60.0).clip(true))
         .header(20.0, |mut h| {
-            h.col(|ui| { ui.label(egui::RichText::new("XSynth").strong().size(11.0)); });
-            h.col(|ui| { ui.label(egui::RichText::new(t!("channels.header.source").as_ref()).strong().size(11.0)); });
-            h.col(|ui| { ui.label(egui::RichText::new(t!("channels.header.active").as_ref()).strong().size(11.0)); });
-            h.col(|ui| { ui.label(egui::RichText::new(t!("channels.header.soundfont").as_ref()).strong().size(11.0)); });
+            h.col(|ui| {
+                ui.label(egui::RichText::new("XSynth").strong().size(11.0));
+            });
+            h.col(|ui| {
+                ui.label(
+                    egui::RichText::new(t!("channels.header.source").as_ref())
+                        .strong()
+                        .size(11.0),
+                );
+            });
+            h.col(|ui| {
+                ui.label(
+                    egui::RichText::new(t!("channels.header.active").as_ref())
+                        .strong()
+                        .size(11.0),
+                );
+            });
+            h.col(|ui| {
+                ui.label(
+                    egui::RichText::new(t!("channels.header.soundfont").as_ref())
+                        .strong()
+                        .size(11.0),
+                );
+            });
         })
         .body(|body| {
             body.rows(18.0, compacted_channels as usize, |mut row| {
@@ -94,13 +117,9 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>, settings: &AudioSetti
                     sources
                         .iter()
                         .map(|&src| {
-                            let port = src >> 4 ;
+                            let port = src >> 4;
                             let ch = (src & 0x0F) + 1;
-                            format!(
-                                "{}{:02}",
-                                (b'A' + port) as char,
-                                ch
-                            )
+                            format!("{}{:02}", (b'A' + port) as char, ch)
                         })
                         .collect::<Vec<_>>()
                         .join(", ")
@@ -118,11 +137,10 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>, settings: &AudioSetti
                 } else {
                     let port = (sources[0] >> 4) as u8;
                     let has_sf = if settings.global_sf_config.global_enabled {
-                        settings.global_sf_config.ports[0]
-                            .iter()
-                            .any(|e| e.enabled)
+                        settings.global_sf_config.ports[0].iter().any(|e| e.enabled)
                     } else {
-                        doc.edit.project_sf
+                        doc.edit
+                            .project_sf
                             .overrides
                             .iter()
                             .any(|(p, entries)| *p == port && entries.iter().any(|e| e.enabled))
@@ -138,20 +156,17 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>, settings: &AudioSetti
                     );
                 });
                 row.col(|ui| {
-                    ui.label(
-                        egui::RichText::new(source_label)
-                            .monospace()
-                            .color(color),
-                    );
+                    ui.label(egui::RichText::new(source_label).monospace().color(color));
                 });
                 row.col(|ui| {
                     ui.label(
-                        egui::RichText::new(if is_active { "●" } else { "○" })
-                            .color(if is_active {
+                        egui::RichText::new(if is_active { "●" } else { "○" }).color(
+                            if is_active {
                                 egui::Color32::from_rgb(80, 200, 80)
                             } else {
                                 egui::Color32::from_gray(120)
-                            }),
+                            },
+                        ),
                     );
                 });
                 match sf_status {

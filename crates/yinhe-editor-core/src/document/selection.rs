@@ -38,7 +38,9 @@ impl Document {
             if Some(track_idx) == conductor {
                 continue;
             }
-            self.edit.selected.add_rect_track(0, max_end + 1, 0, 127, track_idx, track_idx);
+            self.edit
+                .selected
+                .add_rect_track(0, max_end + 1, 0, 127, track_idx, track_idx);
         }
 
         // Update visual sel_rect to show full range (PR uses f64 ticks).
@@ -62,17 +64,20 @@ impl Document {
         // But to be precise, split into: tracks before conductor, tracks after.
         match conductor {
             Some(c) if c > 0 => {
-                self.edit.selected.add_rect_track(0, max_end + 1, 0, 127, 0, c - 1);
+                self.edit
+                    .selected
+                    .add_rect_track(0, max_end + 1, 0, 127, 0, c - 1);
             }
             _ => {}
         }
         let after = conductor.map(|c| c + 1).unwrap_or(0);
         if after < num_tracks {
-            self.edit.selected.add_rect_track(0, max_end + 1, 0, 127, after, num_tracks - 1);
+            self.edit
+                .selected
+                .add_rect_track(0, max_end + 1, 0, 127, after, num_tracks - 1);
         }
         // AR 选框：全范围单矩形（含 conductor track），供 AR 视图绘制。
-        self.edit.arr_sel_rect =
-            vec![(0.0, (max_end + 1) as f64, 0, num_tracks as usize - 1)];
+        self.edit.arr_sel_rect = vec![(0.0, (max_end + 1) as f64, 0, num_tracks as usize - 1)];
     }
 
     /// Paste notes from clipboard (selection rects) at the cursor position.
@@ -108,12 +113,15 @@ impl Document {
                 .or_else(|| self.history.past.back());
             if let Some(entry) = entry
                 && let UndoAction::Notes(delta) = &entry.action
-                    && !delta.before.is_empty() {
-                        notes = delta.before.iter()
-                            .filter(|(n, key)| clipboard.contains(n.track, n.start_tick, *key))
-                            .cloned()
-                            .collect();
-                    }
+                && !delta.before.is_empty()
+            {
+                notes = delta
+                    .before
+                    .iter()
+                    .filter(|(n, key)| clipboard.contains(n.track, n.start_tick, *key))
+                    .cloned()
+                    .collect();
+            }
         }
 
         if notes.is_empty() {
@@ -174,7 +182,9 @@ impl Document {
             track_lo = track_lo.min(n.track);
             track_hi = track_hi.max(n.track);
         }
-        self.edit.selected.add_rect_track(min_tick, max_end + 1, 0, 127, track_lo, track_hi);
+        self.edit
+            .selected
+            .add_rect_track(min_tick, max_end + 1, 0, 127, track_lo, track_hi);
 
         self.data.rebuild_model_dirty();
         Some(UndoAction::Notes(NoteDelta {

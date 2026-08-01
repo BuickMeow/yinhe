@@ -31,9 +31,10 @@ pub fn builtin_soundfont_path() -> Option<std::path::PathBuf> {
         std::env::current_exe()
             .ok()
             .and_then(|exe| exe.parent().map(|p| p.join("assets").join(BUILTIN_SF_NAME))),
-        std::env::current_exe()
-            .ok()
-            .and_then(|exe| exe.parent().map(|p| p.join("../assets").join(BUILTIN_SF_NAME))),
+        std::env::current_exe().ok().and_then(|exe| {
+            exe.parent()
+                .map(|p| p.join("../assets").join(BUILTIN_SF_NAME))
+        }),
         Some(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("../assets")
@@ -41,10 +42,7 @@ pub fn builtin_soundfont_path() -> Option<std::path::PathBuf> {
         ),
     ];
 
-    candidates
-        .into_iter()
-        .flatten()
-        .find(|path| path.exists())
+    candidates.into_iter().flatten().find(|path| path.exists())
 }
 
 /// Global soundfont config — persisted to `yinhe_settings.json`.

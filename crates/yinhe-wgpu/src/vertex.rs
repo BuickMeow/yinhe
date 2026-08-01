@@ -13,10 +13,10 @@ pub struct Uniforms {
     pub scroll_frac: f32, // fractional part of scroll_x for sub-pixel NDC offset
     pub scroll_mode: u32, // 0=原始, 1=整数对齐, 2=子像素偏移
     pub min_border_width: f32,
-    pub track_count: u32, // number of valid tracks in track_colors
+    pub track_count: u32,    // number of valid tracks in track_colors
     pub sel_rect_count: u32, // number of valid selection rects
-    pub note_outline: u32, // 0=no outline (saves fill rate), 1=on
-    pub lane_height: f32, // AR: per-track lane height (PR unused, set to 0)
+    pub note_outline: u32,   // 0=no outline (saves fill rate), 1=on
+    pub lane_height: f32,    // AR: per-track lane height (PR unused, set to 0)
     /// Automation panel: vertical zoom factor (1.0 = full range visible).
     pub value_zoom: f32,
     /// Automation panel: vertical scroll offset in value space.
@@ -161,7 +161,10 @@ impl CurveInstance {
     /// Construct a straight-line segment instance.
     pub fn line(x1: f32, y1: f32, x2: f32, y2: f32, thickness: f32, color: [f32; 4]) -> Self {
         CurveInstance {
-            x1, y1, x2, y2,
+            x1,
+            y1,
+            x2,
+            y2,
             thickness,
             rgba_packed: pack_rgba(color[0], color[1], color[2], color[3]),
             shape: 0,
@@ -171,8 +174,10 @@ impl CurveInstance {
     /// Construct a filled-circle anchor instance at `(cx, cy)` with `radius`.
     pub fn circle(cx: f32, cy: f32, radius: f32, color: [f32; 4]) -> Self {
         CurveInstance {
-            x1: cx, y1: cy,
-            x2: cx, y2: cy,  // AABB collapses to a single point; pad handles the rest
+            x1: cx,
+            y1: cy,
+            x2: cx,
+            y2: cy, // AABB collapses to a single point; pad handles the rest
             thickness: radius,
             rgba_packed: pack_rgba(color[0], color[1], color[2], color[3]),
             shape: 1,
@@ -182,8 +187,10 @@ impl CurveInstance {
     /// Construct a filled-square anchor instance at `(cx, cy)` with `half_size`.
     pub fn square(cx: f32, cy: f32, half_size: f32, color: [f32; 4]) -> Self {
         CurveInstance {
-            x1: cx, y1: cy,
-            x2: cx, y2: cy,
+            x1: cx,
+            y1: cy,
+            x2: cx,
+            y2: cy,
             thickness: half_size,
             rgba_packed: pack_rgba(color[0], color[1], color[2], color[3]),
             shape: 2,
@@ -194,8 +201,10 @@ impl CurveInstance {
     /// 内环厚度固定为 1px（由 shader 处理）。
     pub fn hollow_circle(cx: f32, cy: f32, radius: f32, color: [f32; 4]) -> Self {
         CurveInstance {
-            x1: cx, y1: cy,
-            x2: cx, y2: cy,
+            x1: cx,
+            y1: cy,
+            x2: cx,
+            y2: cy,
             thickness: radius,
             rgba_packed: pack_rgba(color[0], color[1], color[2], color[3]),
             shape: 3,
@@ -207,7 +216,10 @@ impl DrawInstance {
     /// Construct a solid-filled rectangle with no rounded corners, no border.
     pub fn solid_rect(x: f32, y: f32, w: f32, h: f32, color: [f32; 4]) -> Self {
         DrawInstance {
-            x, y, w, h,
+            x,
+            y,
+            w,
+            h,
             rgba_packed: pack_rgba(color[0], color[1], color[2], color[3]),
             props_packed: pack_props(0.0, 0.0),
             velocity: 0,
@@ -216,9 +228,20 @@ impl DrawInstance {
     }
 
     /// Construct a rectangle with corner radius and border width.
-    pub fn with_props(x: f32, y: f32, w: f32, h: f32, color: [f32; 4], corner_radius: f32, border_width: f32) -> Self {
+    pub fn with_props(
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        color: [f32; 4],
+        corner_radius: f32,
+        border_width: f32,
+    ) -> Self {
         DrawInstance {
-            x, y, w, h,
+            x,
+            y,
+            w,
+            h,
             rgba_packed: pack_rgba(color[0], color[1], color[2], color[3]),
             props_packed: pack_props(corner_radius, border_width),
             velocity: 0,

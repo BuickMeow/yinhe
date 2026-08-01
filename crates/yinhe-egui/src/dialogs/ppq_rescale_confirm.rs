@@ -33,7 +33,11 @@ pub(crate) fn show_viewport(ctx: &egui::Context, old: u32, new: u32) -> PpqResca
 
     ctx_clone.show_viewport_immediate(
         viewport_id,
-        crate::chrome::dialog::viewport_builder(t!("dialog.ppq_rescale.title").as_ref(), [380.0, 170.0], false),
+        crate::chrome::dialog::viewport_builder(
+            t!("dialog.ppq_rescale.title").as_ref(),
+            [380.0, 170.0],
+            false,
+        ),
         move |vctx, _class| {
             let mut close = false;
             if vctx.input(|i| i.viewport().close_requested()) {
@@ -46,7 +50,11 @@ pub(crate) fn show_viewport(ctx: &egui::Context, old: u32, new: u32) -> PpqResca
                     ..Default::default()
                 })
                 .show(vctx, |ui| {
-                    crate::chrome::dialog::title_bar(ui, t!("dialog.ppq_rescale.title").as_ref(), &mut close);
+                    crate::chrome::dialog::title_bar(
+                        ui,
+                        t!("dialog.ppq_rescale.title").as_ref(),
+                        &mut close,
+                    );
                     egui::Frame::new()
                         .inner_margin(egui::Margin {
                             left: 12,
@@ -61,34 +69,42 @@ pub(crate) fn show_viewport(ctx: &egui::Context, old: u32, new: u32) -> PpqResca
                                 36.0,
                                 |ui| {
                                     ui.add_space(6.0);
-                                    ui.label(t!("dialog.ppq_rescale.desc", old = old, new = new).as_ref());
+                                    ui.label(
+                                        t!("dialog.ppq_rescale.desc", old = old, new = new)
+                                            .as_ref(),
+                                    );
                                     ui.add_space(4.0);
                                     ui.label(t!("dialog.ppq_rescale.question").as_ref());
                                     ui.add_space(6.0);
                                     ui.label(
-                                        egui::RichText::new(
-                                            t!("dialog.ppq_rescale.hint").as_ref(),
-                                        )
-                                        .color(egui::Color32::from_gray(140))
-                                        .size(11.0),
+                                        egui::RichText::new(t!("dialog.ppq_rescale.hint").as_ref())
+                                            .color(egui::Color32::from_gray(140))
+                                            .size(11.0),
                                     );
                                 },
                                 |ui| {
                                     ui.add_space(4.0);
                                     ui.horizontal(|ui| {
                                         ui.spacing_mut().button_padding = egui::vec2(10.0, 4.0);
-                                        if ui.button(t!("dialog.ppq_rescale.yes").as_ref()).clicked() {
-                                            *action_cb.borrow_mut() = Some(PpqRescaleAction::Rescale);
+                                        if ui
+                                            .button(t!("dialog.ppq_rescale.yes").as_ref())
+                                            .clicked()
+                                        {
+                                            *action_cb.borrow_mut() =
+                                                Some(PpqRescaleAction::Rescale);
                                             close = true;
                                         }
                                         ui.add_space(4.0);
-                                        if ui.button(t!("dialog.ppq_rescale.no").as_ref()).clicked() {
-                                            *action_cb.borrow_mut() = Some(PpqRescaleAction::NoRescale);
+                                        if ui.button(t!("dialog.ppq_rescale.no").as_ref()).clicked()
+                                        {
+                                            *action_cb.borrow_mut() =
+                                                Some(PpqRescaleAction::NoRescale);
                                             close = true;
                                         }
                                         ui.add_space(4.0);
                                         if ui.button(t!("common.cancel").as_ref()).clicked() {
-                                            *action_cb.borrow_mut() = Some(PpqRescaleAction::Cancel);
+                                            *action_cb.borrow_mut() =
+                                                Some(PpqRescaleAction::Cancel);
                                             close = true;
                                         }
                                     });

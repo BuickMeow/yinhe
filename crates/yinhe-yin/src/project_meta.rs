@@ -41,7 +41,6 @@ pub struct ProjectFile {
     //
     // These fields are `#[serde(default)]` so older `.yin` files (written
     // before SF persistence existed) still load cleanly with empty SF state.
-
     /// `true` = project was saved while in per-port (project) SF mode.
     /// `false` = global mode (or unknown / pre-SF-persistence file).
     #[serde(default)]

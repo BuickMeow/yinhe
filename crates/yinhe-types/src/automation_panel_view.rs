@@ -181,7 +181,10 @@ mod tests {
 
     #[test]
     fn test_sync_from_pianoroll_updates_values() {
-        let mut view = AutomationPanelView { dirty: false, ..Default::default() };
+        let mut view = AutomationPanelView {
+            dirty: false,
+            ..Default::default()
+        };
 
         view.sync_from_pianoroll(100.0, 0.5, 80.0);
 
@@ -193,7 +196,10 @@ mod tests {
 
     #[test]
     fn test_sync_from_pianoroll_no_change_skips_dirty() {
-        let mut view = AutomationPanelView { dirty: false, ..Default::default() };
+        let mut view = AutomationPanelView {
+            dirty: false,
+            ..Default::default()
+        };
 
         view.sync_from_pianoroll(0.0, 0.15, 60.0);
 
@@ -205,7 +211,10 @@ mod tests {
 
     #[test]
     fn test_sync_from_pianoroll_partial_update_triggers_dirty() {
-        let mut view = AutomationPanelView { dirty: false, ..Default::default() };
+        let mut view = AutomationPanelView {
+            dirty: false,
+            ..Default::default()
+        };
 
         // Only change scroll_x
         view.sync_from_pianoroll(50.0, 0.15, 60.0);

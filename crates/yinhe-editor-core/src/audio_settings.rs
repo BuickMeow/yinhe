@@ -133,12 +133,7 @@ impl AudioSettings {
 
     /// Populate device lists and adjust sample rate. Called after loading
     /// or defaulting, once the host has been queried.
-    pub fn refresh_devices(
-        &mut self,
-        devices: Vec<String>,
-        rates: Vec<u32>,
-        default_rate: u32,
-    ) {
+    pub fn refresh_devices(&mut self, devices: Vec<String>, rates: Vec<u32>, default_rate: u32) {
         self.available_devices = devices;
         self.available_sample_rates = rates;
         if !self.available_sample_rates.contains(&self.sample_rate) {

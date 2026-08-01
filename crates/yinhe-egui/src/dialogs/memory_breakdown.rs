@@ -1,12 +1,7 @@
 use eframe::egui;
 use rust_i18n::t;
 
-pub(crate) fn show_viewport(
-    ctx: &egui::Context,
-    open: &mut bool,
-    mem_mb: f64,
-    metal_size: u64,
-) {
+pub(crate) fn show_viewport(ctx: &egui::Context, open: &mut bool, mem_mb: f64, metal_size: u64) {
     let viewport_id = egui::ViewportId::from_hash_of("memory_breakdown_dialog");
     if !*open {
         return;
@@ -53,7 +48,11 @@ pub(crate) fn show_viewport(
                                 .show(ui, |ui| {
                                     if yinhe_memtrace::enabled() {
                                         ui.label(
-                                            t!("dialog.memory.allocator", n = format!("{:.1}", snapshot.total_mb())).as_ref(),
+                                            t!(
+                                                "dialog.memory.allocator",
+                                                n = format!("{:.1}", snapshot.total_mb())
+                                            )
+                                            .as_ref(),
                                         );
                                     } else {
                                         ui.label(
@@ -64,15 +63,24 @@ pub(crate) fn show_viewport(
                                         );
                                     }
                                     ui.label(
-                                        t!("dialog.memory.rss", n = format!("{:.1}", mem_mb)).as_ref(),
+                                        t!("dialog.memory.rss", n = format!("{:.1}", mem_mb))
+                                            .as_ref(),
                                     );
                                     ui.label(
-                                        t!("dialog.memory.gpu", n = format!("{:.1}", snapshot.gpu_mb())).as_ref(),
+                                        t!(
+                                            "dialog.memory.gpu",
+                                            n = format!("{:.1}", snapshot.gpu_mb())
+                                        )
+                                        .as_ref(),
                                     );
 
                                     #[cfg(target_os = "macos")]
                                     ui.label(
-                                        t!("dialog.memory.metal", n = format!("{:.1}", metal_size as f64 / 1_048_576.0)).as_ref(),
+                                        t!(
+                                            "dialog.memory.metal",
+                                            n = format!("{:.1}", metal_size as f64 / 1_048_576.0)
+                                        )
+                                        .as_ref(),
                                     );
 
                                     if yinhe_memtrace::enabled() {
@@ -89,19 +97,14 @@ pub(crate) fn show_viewport(
                                                         continue;
                                                     }
                                                     ui.label(tag.name());
-                                                    ui.label(format!(
-                                                        "{:.1} MB",
-                                                        snapshot.mb(tag)
-                                                    ));
+                                                    ui.label(format!("{:.1} MB", snapshot.mb(tag)));
                                                     ui.end_row();
                                                 }
                                             });
                                     }
 
                                     ui.separator();
-                                    ui.small(
-                                        t!("dialog.memory.note").as_ref(),
-                                    );
+                                    ui.small(t!("dialog.memory.note").as_ref());
                                 });
                         });
                 });

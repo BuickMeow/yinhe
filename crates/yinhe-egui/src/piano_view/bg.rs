@@ -35,8 +35,15 @@ pub fn paint(
             let first_tick = first.tick as f64;
             // 第一个调号事件之前的区间：无调号模式
             if tick_start < first_tick {
-                paint_black_key_rows(painter, content_rect, kb_w, kh, view,
-                    tick_start, first_tick.min(tick_end));
+                paint_black_key_rows(
+                    painter,
+                    content_rect,
+                    kb_w,
+                    kh,
+                    view,
+                    tick_start,
+                    first_tick.min(tick_end),
+                );
             }
             // 第一个调号事件起：调式分段
             if tick_end > first_tick {
@@ -186,10 +193,7 @@ fn paint_black_key_rows(
             continue;
         }
         painter.rect_filled(
-            egui::Rect::from_min_size(
-                egui::pos2(x_start, screen_y),
-                egui::vec2(seg_w, kh),
-            ),
+            egui::Rect::from_min_size(egui::pos2(x_start, screen_y), egui::vec2(seg_w, kh)),
             0.0,
             bk_color,
         );

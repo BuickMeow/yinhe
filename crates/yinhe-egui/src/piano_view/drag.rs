@@ -195,205 +195,209 @@ pub(crate) fn sel_drag_frame(
     let mut ghost_notes: Vec<GhostNote> = Vec::new();
     let mut hidden_notes: Vec<HiddenNote> = Vec::new();
     if let Some((origin_tick, origin_key, alt)) = note_drag_origin
-        && let Some(ref notes) = drag_notes {
-            if pointer.primary_down() && !pointer.primary_pressed()
-                && let Some(pos) = pointer.hover_pos() {
-                    // auto-scroll：拖拽音符能推出屏幕（pos 未 clamp）
-                    crate::selection::drag::auto_scroll_on_drag(
-                        ui,
-                        &mut view.base,
-                        music_rect,
-                        pos,
-                        |base, w, _h| {
-                            base.clamp_scroll_x(w, total_ticks);
-                            base.scroll_y = base.scroll_y.max(0.0);
-                        },
-                    );
-                    view.clamp_scroll(content_rect.width(), content_rect.height(), total_ticks);
+        && let Some(ref notes) = drag_notes
+    {
+        if pointer.primary_down()
+            && !pointer.primary_pressed()
+            && let Some(pos) = pointer.hover_pos()
+        {
+            // auto-scroll：拖拽音符能推出屏幕（pos 未 clamp）
+            crate::selection::drag::auto_scroll_on_drag(
+                ui,
+                &mut view.base,
+                music_rect,
+                pos,
+                |base, w, _h| {
+                    base.clamp_scroll_x(w, total_ticks);
+                    base.scroll_y = base.scroll_y.max(0.0);
+                },
+            );
+            view.clamp_scroll(content_rect.width(), content_rect.height(), total_ticks);
 
-                    // 位置 clamp 到 music_rect，避免鼠标飞出后产生异常值
-                    let clamped = pos.clamp(music_rect.min, music_rect.max);
-                    let local_x = clamped.x - content_rect.min.x;
-                    let local_y = clamped.y - content_rect.min.y;
-                    let raw_tick = view.x_to_tick(local_x);
-                    let snapped_tick =
-                        crate::view_interaction::snap_tick(raw_tick, quantize, ppq, bar_line_data);
-                    let current_key = view.y_to_key(local_y) as f64;
-                    let dt = (snapped_tick - origin_tick).round() as i64;
-                    // 垂直选框工具：只能水平移动，dk 强制为 0
-                    let dk = if vertical {
-                        0
-                    } else {
-                        (current_key - origin_key).round() as i32
-                    };
+            // 位置 clamp 到 music_rect，避免鼠标飞出后产生异常值
+            let clamped = pos.clamp(music_rect.min, music_rect.max);
+            let local_x = clamped.x - content_rect.min.x;
+            let local_y = clamped.y - content_rect.min.y;
+            let raw_tick = view.x_to_tick(local_x);
+            let snapped_tick =
+                crate::view_interaction::snap_tick(raw_tick, quantize, ppq, bar_line_data);
+            let current_key = view.y_to_key(local_y) as f64;
+            let dt = (snapped_tick - origin_tick).round() as i64;
+            // 垂直选框工具：只能水平移动，dk 强制为 0
+            let dk = if vertical {
+                0
+            } else {
+                (current_key - origin_key).round() as i32
+            };
 
-                    // O(N) — just apply delta to pre-computed data, no midi lookup.
-                    // Alt（复制模式）：原音符保留可见，不 push hidden_notes。
-                    for info in notes {
-                        let new_tick = (info.start_tick as i64 + dt).max(0) as u32;
-                        let new_key = ((info.key as i32) + dk).clamp(0, 127) as u8;
-                        let length = info.end_tick - info.start_tick;
-                        ghost_notes.push((new_tick, new_tick + length, new_key, info.track));
-                        if !alt {
-                            hidden_notes.push((info.track, info.start_tick, info.key));
-                        }
-                    }
-
-                    sel_rect.update_drag(dt, dk);
-
-                    // ── Tooltip：显示 ±tick / ±key（已按量化 snap）──
-                    let lines = vec![
-                        crate::view_interaction::format_signed("tick", dt),
-                        crate::view_interaction::format_signed("key", dk as i64),
-                    ];
-                    crate::view_interaction::draw_hover_tooltip(ui.ctx(), &lines, pos.x, pos.y);
-                    ui.ctx().request_repaint();
+            // O(N) — just apply delta to pre-computed data, no midi lookup.
+            // Alt（复制模式）：原音符保留可见，不 push hidden_notes。
+            for info in notes {
+                let new_tick = (info.start_tick as i64 + dt).max(0) as u32;
+                let new_key = ((info.key as i32) + dk).clamp(0, 127) as u8;
+                let length = info.end_tick - info.start_tick;
+                ghost_notes.push((new_tick, new_tick + length, new_key, info.track));
+                if !alt {
+                    hidden_notes.push((info.track, info.start_tick, info.key));
                 }
-            if pointer.primary_released() {
-                if let Some(pos) = pointer.hover_pos() {
-                    let clamped = pos.clamp(music_rect.min, music_rect.max);
-                    let local_x = clamped.x - content_rect.min.x;
-                    let local_y = clamped.y - content_rect.min.y;
-                    let raw_tick = view.x_to_tick(local_x);
-                    let snapped_tick =
-                        crate::view_interaction::snap_tick(raw_tick, quantize, ppq, bar_line_data);
-                    let current_key = view.y_to_key(local_y) as f64;
-                    let dt = (snapped_tick - origin_tick).round() as i64;
-                    // 垂直选框工具：只能水平移动，dk 强制为 0
-                    let dk = if vertical {
-                        0
-                    } else {
-                        (current_key - origin_key).round() as i32
-                    };
-                    *note_drag_delta = Some((dt, dk, alt));
-                    sel_rect.update_drag(dt, dk);
-
-                    // Keep ghost/hidden alive on the release frame so the original
-                    // notes don't flash back before the model is updated.
-                    for info in notes {
-                        let new_tick = (info.start_tick as i64 + dt).max(0) as u32;
-                        let new_key = ((info.key as i32) + dk).clamp(0, 127) as u8;
-                        let length = info.end_tick - info.start_tick;
-                        ghost_notes.push((new_tick, new_tick + length, new_key, info.track));
-                        if !alt {
-                            hidden_notes.push((info.track, info.start_tick, info.key));
-                        }
-                    }
-                }
-                sel_rect.end_drag();
-                note_drag_origin = None;
-                drag_notes = None;
             }
+
+            sel_rect.update_drag(dt, dk);
+
+            // ── Tooltip：显示 ±tick / ±key（已按量化 snap）──
+            let lines = vec![
+                crate::view_interaction::format_signed("tick", dt),
+                crate::view_interaction::format_signed("key", dk as i64),
+            ];
+            crate::view_interaction::draw_hover_tooltip(ui.ctx(), &lines, pos.x, pos.y);
+            ui.ctx().request_repaint();
         }
+        if pointer.primary_released() {
+            if let Some(pos) = pointer.hover_pos() {
+                let clamped = pos.clamp(music_rect.min, music_rect.max);
+                let local_x = clamped.x - content_rect.min.x;
+                let local_y = clamped.y - content_rect.min.y;
+                let raw_tick = view.x_to_tick(local_x);
+                let snapped_tick =
+                    crate::view_interaction::snap_tick(raw_tick, quantize, ppq, bar_line_data);
+                let current_key = view.y_to_key(local_y) as f64;
+                let dt = (snapped_tick - origin_tick).round() as i64;
+                // 垂直选框工具：只能水平移动，dk 强制为 0
+                let dk = if vertical {
+                    0
+                } else {
+                    (current_key - origin_key).round() as i32
+                };
+                *note_drag_delta = Some((dt, dk, alt));
+                sel_rect.update_drag(dt, dk);
+
+                // Keep ghost/hidden alive on the release frame so the original
+                // notes don't flash back before the model is updated.
+                for info in notes {
+                    let new_tick = (info.start_tick as i64 + dt).max(0) as u32;
+                    let new_key = ((info.key as i32) + dk).clamp(0, 127) as u8;
+                    let length = info.end_tick - info.start_tick;
+                    ghost_notes.push((new_tick, new_tick + length, new_key, info.track));
+                    if !alt {
+                        hidden_notes.push((info.track, info.start_tick, info.key));
+                    }
+                }
+            }
+            sel_rect.end_drag();
+            note_drag_origin = None;
+            drag_notes = None;
+        }
+    }
 
     // ── Resize drag: 边缘拖动伸缩选中音符 ──
     if let Some((side, origin_boundary_tick, other_boundary_tick)) = sel_resize_state
-        && let Some(ref notes) = drag_notes {
-            // Drag：实时显示 ghost + 更新 sel_rect
-            if pointer.primary_down() && !pointer.primary_pressed()
-                && let Some(pos) = pointer.hover_pos() {
-                    // auto-scroll：边缘拖动能推出屏幕
-                    crate::selection::drag::auto_scroll_on_drag(
-                        ui,
-                        &mut view.base,
-                        music_rect,
-                        pos,
-                        |base, w, _h| {
-                            base.clamp_scroll_x(w, total_ticks);
-                            base.scroll_y = base.scroll_y.max(0.0);
-                        },
-                    );
-                    view.clamp_scroll(content_rect.width(), content_rect.height(), total_ticks);
+        && let Some(ref notes) = drag_notes
+    {
+        // Drag：实时显示 ghost + 更新 sel_rect
+        if pointer.primary_down()
+            && !pointer.primary_pressed()
+            && let Some(pos) = pointer.hover_pos()
+        {
+            // auto-scroll：边缘拖动能推出屏幕
+            crate::selection::drag::auto_scroll_on_drag(
+                ui,
+                &mut view.base,
+                music_rect,
+                pos,
+                |base, w, _h| {
+                    base.clamp_scroll_x(w, total_ticks);
+                    base.scroll_y = base.scroll_y.max(0.0);
+                },
+            );
+            view.clamp_scroll(content_rect.width(), content_rect.height(), total_ticks);
 
-                    let clamped = pos.clamp(music_rect.min, music_rect.max);
-                    let local_x = clamped.x - content_rect.min.x;
-                    let raw_tick = view.x_to_tick(local_x);
-                    let (_new_boundary, dt) = compute_resize_dt(
-                        raw_tick,
-                        side,
-                        origin_boundary_tick,
-                        other_boundary_tick,
-                        quantize,
-                        ppq,
-                        bar_line_data,
-                    );
+            let clamped = pos.clamp(music_rect.min, music_rect.max);
+            let local_x = clamped.x - content_rect.min.x;
+            let raw_tick = view.x_to_tick(local_x);
+            let (_new_boundary, dt) = compute_resize_dt(
+                raw_tick,
+                side,
+                origin_boundary_tick,
+                other_boundary_tick,
+                quantize,
+                ppq,
+                bar_line_data,
+            );
 
-                    // 生成 ghost/hidden：每个音符独立 clamp（end > start + 1）
-                    for info in notes {
-                        match side {
-                            ResizeSide::Right => {
-                                let new_end = (info.end_tick as i64 + dt)
-                                    .max(info.start_tick as i64 + 1)
-                                    as u32;
-                                ghost_notes.push((info.start_tick, new_end, info.key, info.track));
-                                hidden_notes.push((info.track, info.start_tick, info.key));
-                            }
-                            ResizeSide::Left => {
-                                let new_start = (info.start_tick as i64 + dt)
-                                    .max(0)
-                                    .min(info.end_tick as i64 - 1)
-                                    as u32;
-                                ghost_notes.push((new_start, info.end_tick, info.key, info.track));
-                                hidden_notes.push((info.track, info.start_tick, info.key));
-                            }
-                        }
+            // 生成 ghost/hidden：每个音符独立 clamp（end > start + 1）
+            for info in notes {
+                match side {
+                    ResizeSide::Right => {
+                        let new_end =
+                            (info.end_tick as i64 + dt).max(info.start_tick as i64 + 1) as u32;
+                        ghost_notes.push((info.start_tick, new_end, info.key, info.track));
+                        hidden_notes.push((info.track, info.start_tick, info.key));
                     }
-
-                    sel_rect.update_resize(dt);
-
-                    // ── Tooltip：显示 ±gate（gate 变化量：Left 时 start 偏移 dt，gate 变化 = -dt）──
-                    let gate_delta = match side {
-                        ResizeSide::Left => -dt,
-                        ResizeSide::Right => dt,
-                    };
-                    let lines = vec![crate::view_interaction::format_signed("gate", gate_delta)];
-                    crate::view_interaction::draw_hover_tooltip(ui.ctx(), &lines, pos.x, pos.y);
-                    ui.ctx().request_repaint();
-                }
-            // Release：提交 dt
-            if pointer.primary_released() {
-                if let Some(pos) = pointer.hover_pos() {
-                    let clamped = pos.clamp(music_rect.min, music_rect.max);
-                    let local_x = clamped.x - content_rect.min.x;
-                    let raw_tick = view.x_to_tick(local_x);
-                    let (_new_boundary, dt) = compute_resize_dt(
-                        raw_tick,
-                        side,
-                        origin_boundary_tick,
-                        other_boundary_tick,
-                        quantize,
-                        ppq,
-                        bar_line_data,
-                    );
-                    *note_resize_delta = Some((side, dt));
-                    sel_rect.update_resize(dt);
-
-                    // Keep ghost/hidden alive on the release frame
-                    for info in notes {
-                        match side {
-                            ResizeSide::Right => {
-                                let new_end = (info.end_tick as i64 + dt)
-                                    .max(info.start_tick as i64 + 1)
-                                    as u32;
-                                ghost_notes.push((info.start_tick, new_end, info.key, info.track));
-                                hidden_notes.push((info.track, info.start_tick, info.key));
-                            }
-                            ResizeSide::Left => {
-                                let new_start = (info.start_tick as i64 + dt)
-                                    .max(0)
-                                    .min(info.end_tick as i64 - 1)
-                                    as u32;
-                                ghost_notes.push((new_start, info.end_tick, info.key, info.track));
-                                hidden_notes.push((info.track, info.start_tick, info.key));
-                            }
-                        }
+                    ResizeSide::Left => {
+                        let new_start = (info.start_tick as i64 + dt)
+                            .max(0)
+                            .min(info.end_tick as i64 - 1)
+                            as u32;
+                        ghost_notes.push((new_start, info.end_tick, info.key, info.track));
+                        hidden_notes.push((info.track, info.start_tick, info.key));
                     }
                 }
-                sel_rect.end_resize();
-                sel_resize_state = None;
-                drag_notes = None;
             }
+
+            sel_rect.update_resize(dt);
+
+            // ── Tooltip：显示 ±gate（gate 变化量：Left 时 start 偏移 dt，gate 变化 = -dt）──
+            let gate_delta = match side {
+                ResizeSide::Left => -dt,
+                ResizeSide::Right => dt,
+            };
+            let lines = vec![crate::view_interaction::format_signed("gate", gate_delta)];
+            crate::view_interaction::draw_hover_tooltip(ui.ctx(), &lines, pos.x, pos.y);
+            ui.ctx().request_repaint();
         }
+        // Release：提交 dt
+        if pointer.primary_released() {
+            if let Some(pos) = pointer.hover_pos() {
+                let clamped = pos.clamp(music_rect.min, music_rect.max);
+                let local_x = clamped.x - content_rect.min.x;
+                let raw_tick = view.x_to_tick(local_x);
+                let (_new_boundary, dt) = compute_resize_dt(
+                    raw_tick,
+                    side,
+                    origin_boundary_tick,
+                    other_boundary_tick,
+                    quantize,
+                    ppq,
+                    bar_line_data,
+                );
+                *note_resize_delta = Some((side, dt));
+                sel_rect.update_resize(dt);
+
+                // Keep ghost/hidden alive on the release frame
+                for info in notes {
+                    match side {
+                        ResizeSide::Right => {
+                            let new_end =
+                                (info.end_tick as i64 + dt).max(info.start_tick as i64 + 1) as u32;
+                            ghost_notes.push((info.start_tick, new_end, info.key, info.track));
+                            hidden_notes.push((info.track, info.start_tick, info.key));
+                        }
+                        ResizeSide::Left => {
+                            let new_start = (info.start_tick as i64 + dt)
+                                .max(0)
+                                .min(info.end_tick as i64 - 1)
+                                as u32;
+                            ghost_notes.push((new_start, info.end_tick, info.key, info.track));
+                            hidden_notes.push((info.track, info.start_tick, info.key));
+                        }
+                    }
+                }
+            }
+            sel_rect.end_resize();
+            sel_resize_state = None;
+            drag_notes = None;
+        }
+    }
 
     // ── Marquee selection (shared with Eraser tool) ──
     // Only start a marquee if no note drag/resize is active (click was NOT inside selection).
@@ -460,8 +464,6 @@ pub(crate) fn sel_drag_frame(
     ui.data_mut(|d| d.insert_persisted(resize_id, sel_resize_state));
     (ghost_notes, hidden_notes)
 }
-
-
 
 // 通用逻辑已抽取到 crate::selection::drag：
 // - hit_test_sel_edge（边缘 hit-test）

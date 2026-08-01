@@ -40,14 +40,20 @@ impl Selection {
         track_hi: u16,
     ) {
         if tick_end > tick_start {
-            self.rects.push((tick_start, tick_end, key_lo, key_hi, track_lo, track_hi));
+            self.rects
+                .push((tick_start, tick_end, key_lo, key_hi, track_lo, track_hi));
         }
     }
 
     /// Check if a specific note is selected.
     pub fn contains(&self, track: u16, start_tick: u32, key: u8) -> bool {
         self.rects.iter().any(|&(ts, te, kl, kh, tl, th)| {
-            track >= tl && track <= th && key >= kl && key <= kh && start_tick >= ts && start_tick < te
+            track >= tl
+                && track <= th
+                && key >= kl
+                && key <= kh
+                && start_tick >= ts
+                && start_tick < te
         })
     }
 
@@ -98,7 +104,9 @@ impl Selection {
     /// exclusivity (PR/AR/AM 三视图选框互斥).
     pub fn remove_rects(&mut self, rects: &[(u32, u32, u8, u8)]) {
         self.rects.retain(|r| {
-            !rects.iter().any(|q| q.0 == r.0 && q.1 == r.1 && q.2 == r.2 && q.3 == r.3)
+            !rects
+                .iter()
+                .any(|q| q.0 == r.0 && q.1 == r.1 && q.2 == r.2 && q.3 == r.3)
         });
     }
 
@@ -110,7 +118,9 @@ impl Selection {
         self.rects.retain(|r| {
             !(r.2 == 0
                 && r.3 == 127
-                && rects.iter().any(|q| q.0 == r.0 && q.1 == r.1 && q.2 == r.4 && q.3 == r.5))
+                && rects
+                    .iter()
+                    .any(|q| q.0 == r.0 && q.1 == r.1 && q.2 == r.4 && q.3 == r.5))
         });
     }
 

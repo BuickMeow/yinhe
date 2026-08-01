@@ -19,7 +19,8 @@ pub fn paint(ui: &egui::Ui, view: &PianoRollView, music_rect: egui::Rect) {
     let Some(p) = pulse else { return };
 
     if p.finished() {
-        ui.ctx().memory_mut(|m| m.data.remove::<JumpPulse>(pulse_key));
+        ui.ctx()
+            .memory_mut(|m| m.data.remove::<JumpPulse>(pulse_key));
         return;
     }
 
@@ -37,7 +38,8 @@ pub fn paint(ui: &egui::Ui, view: &PianoRollView, music_rect: egui::Rect) {
                     egui::pos2(music_rect.min.x + x, y_top),
                     egui::vec2(30.0, h),
                 );
-                ui.painter().rect_stroke(rect, 2.0, stroke, egui::StrokeKind::Middle);
+                ui.painter()
+                    .rect_stroke(rect, 2.0, stroke, egui::StrokeKind::Middle);
             }
         }
         PulseKind::TimesigLine => {

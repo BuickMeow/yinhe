@@ -6,7 +6,9 @@ use xsynth_core::soundfont::SoundfontBase;
 
 use yinhe_core::YinModel;
 
-use crate::audio_model::{ActiveNote, AudioModel, AudibleNote, PreparedModel, flatten_automation_to_cc_events};
+use crate::audio_model::{
+    ActiveNote, AudibleNote, AudioModel, PreparedModel, flatten_automation_to_cc_events,
+};
 use crate::channel::ChannelState;
 use crate::engine::AudioEngine;
 use crate::prepare_model::build_audible_notes;
@@ -16,18 +18,16 @@ impl AudioEngine {
         let audio_model = AudioModel::from_model(model);
         self.setup_percussion(&audio_model);
 
-        self.cc_events = flatten_automation_to_cc_events(model, self.sample_rate, self.automation_density);
+        self.cc_events =
+            flatten_automation_to_cc_events(model, self.sample_rate, self.automation_density);
         self.chase_generation = self.chase_generation.wrapping_add(1);
         self.cc_cursor = 0;
         self.active_notes.clear();
 
-        self.duration_samples = (model.tempo_map.tick_to_seconds(model.tick_length) * self.sample_rate as f64) as u64;
+        self.duration_samples =
+            (model.tempo_map.tick_to_seconds(model.tick_length) * self.sample_rate as f64) as u64;
 
-        self.skip_track = model
-            .track_audible_count
-            .iter()
-            .map(|&c| c == 0)
-            .collect();
+        self.skip_track = model.track_audible_count.iter().map(|&c| c == 0).collect();
 
         self.note_cursor = [0; 128];
         self.yin_model = Some(Arc::clone(model));
@@ -82,7 +82,8 @@ impl AudioEngine {
         // 不需要 AllNotesOff / ResetControl / chase —— 当前活跃音符和 channel state 不变。
         let sample = self.sample_position;
         for key in 0..128usize {
-            self.note_cursor[key] = self.audible_notes[key].partition_point(|n| n.start_sample < sample);
+            self.note_cursor[key] =
+                self.audible_notes[key].partition_point(|n| n.start_sample < sample);
         }
     }
 

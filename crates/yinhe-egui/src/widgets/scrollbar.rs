@@ -319,8 +319,8 @@ pub(crate) fn show_vertical(
 
     // Drag top edge → zoom，锚定 thumb 底边 sb 位置（rect_bottom 不动）
     if top_resp.dragged() {
-        let new_thumb_top_sb = (rect_top + top_resp.drag_delta().y)
-            .clamp(0.0, rect_bottom - 2.0 * EDGE_WIDTH);
+        let new_thumb_top_sb =
+            (rect_top + top_resp.drag_delta().y).clamp(0.0, rect_bottom - 2.0 * EDGE_WIDTH);
         let new_thumb_height_sb = (rect_bottom - new_thumb_top_sb).max(2.0 * EDGE_WIDTH);
         let new_cs = (k_constant / new_thumb_height_sb).clamp(cell_min, cell_max);
         // 重新计算（clamp 可能调整 cell_size）
@@ -339,8 +339,8 @@ pub(crate) fn show_vertical(
 
     // Drag bottom edge → zoom，锚定 thumb 顶边 sb 位置（rect_top 不动）
     if bottom_resp.dragged() {
-        let new_thumb_bottom_sb = (rect_bottom + bottom_resp.drag_delta().y)
-            .clamp(rect_top + 2.0 * EDGE_WIDTH, sb_h);
+        let new_thumb_bottom_sb =
+            (rect_bottom + bottom_resp.drag_delta().y).clamp(rect_top + 2.0 * EDGE_WIDTH, sb_h);
         let new_thumb_height_sb = (new_thumb_bottom_sb - rect_top).max(2.0 * EDGE_WIDTH);
         let new_cs = (k_constant / new_thumb_height_sb).clamp(cell_min, cell_max);
         let new_scale = sb_h / (num_cells_f * new_cs);
@@ -479,7 +479,8 @@ pub(crate) fn show_vertical_value(
 
     // Drag top edge → zoom, anchoring at bottom edge (固定 bottom_value)
     if top_resp.dragged() {
-        let new_top_pixel = (rect_top + top_resp.drag_delta().y).clamp(0.0, rect_bottom - 2.0 * EDGE_WIDTH);
+        let new_top_pixel =
+            (rect_top + top_resp.drag_delta().y).clamp(0.0, rect_bottom - 2.0 * EDGE_WIDTH);
         let new_top_value = total_value - new_top_pixel / scale;
         let new_visible = (new_top_value - bottom_value).max(0.01);
         let new_z = (total_value / new_visible).clamp(zoom_min, zoom_max);
@@ -495,13 +496,15 @@ pub(crate) fn show_vertical_value(
 
     // Drag bottom edge → zoom, anchoring at top edge (固定 top_value)
     if bottom_resp.dragged() {
-        let new_bottom_pixel = (rect_bottom + bottom_resp.drag_delta().y).clamp(rect_top + 2.0 * EDGE_WIDTH, sb_h);
+        let new_bottom_pixel =
+            (rect_bottom + bottom_resp.drag_delta().y).clamp(rect_top + 2.0 * EDGE_WIDTH, sb_h);
         let new_bottom_value = total_value - new_bottom_pixel / scale;
         let new_visible = (top_value - new_bottom_value).max(0.01);
         let new_z = (total_value / new_visible).clamp(zoom_min, zoom_max);
         let new_visible_clamped = total_value / new_z;
         // 固定顶边，scroll = top_value - new_visible
-        let new_scroll = (top_value - new_visible_clamped).clamp(0.0, (total_value - new_visible_clamped).max(0.0));
+        let new_scroll = (top_value - new_visible_clamped)
+            .clamp(0.0, (total_value - new_visible_clamped).max(0.0));
         *value_zoom = new_z;
         *value_scroll = new_scroll;
         *dirty = true;

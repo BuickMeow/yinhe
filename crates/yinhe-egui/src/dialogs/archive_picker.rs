@@ -17,7 +17,9 @@ pub(crate) enum ArchivePickerState {
     /// Background thread is opening the archive.
     Opening {
         path: String,
-        rx: mpsc::Receiver<Result<(yinhe_archive::Archive, Vec<yinhe_archive::ArchiveEntry>), String>>,
+        rx: mpsc::Receiver<
+            Result<(yinhe_archive::Archive, Vec<yinhe_archive::ArchiveEntry>), String>,
+        >,
     },
     /// Archive is open and ready for selection.
     Opened(ArchivePicker),
@@ -106,7 +108,9 @@ pub(crate) fn show(
                     *state = ArchivePickerState::Opened(picker);
                     ArchivePickerAction::None
                 }
-                Ok(Err(e)) => ArchivePickerAction::Error(t!("dialog.archive.open_failed", e = e).to_string()),
+                Ok(Err(e)) => {
+                    ArchivePickerAction::Error(t!("dialog.archive.open_failed", e = e).to_string())
+                }
                 Err(_) => {
                     // Still loading — show spinner
                     ui.horizontal(|ui| {
@@ -126,9 +130,11 @@ pub(crate) fn show(
                 .unwrap_or_else(|| picker.path.clone());
             let display_name = truncate_name(&filename, 45);
             let source_resp = ui.label(
-                eframe::egui::RichText::new(t!("dialog.archive.source", name = display_name).as_ref())
-                    .strong()
-                    .size(13.0),
+                eframe::egui::RichText::new(
+                    t!("dialog.archive.source", name = display_name).as_ref(),
+                )
+                .strong()
+                .size(13.0),
             );
             if filename.len() != display_name.len() {
                 source_resp.on_hover_text(&filename);
@@ -137,7 +143,11 @@ pub(crate) fn show(
 
             let search_response = ui.horizontal(|ui| {
                 use egui_material_icons::icons::ICON_SEARCH;
-                ui.label(eframe::egui::RichText::new(ICON_SEARCH.codepoint).size(14.0).color(eframe::egui::Color32::GRAY));
+                ui.label(
+                    eframe::egui::RichText::new(ICON_SEARCH.codepoint)
+                        .size(14.0)
+                        .color(eframe::egui::Color32::GRAY),
+                );
                 ui.add(
                     eframe::egui::TextEdit::singleline(&mut picker.search_query)
                         .hint_text(t!("dialog.archive.search_hint").as_ref())
@@ -172,11 +182,8 @@ pub(crate) fn show(
 
                         if response.hovered() && !is_selected {
                             let rect = response.rect;
-                            ui.painter().rect_filled(
-                                rect,
-                                0.0,
-                                crate::theme::ROW_SELECTED_BG,
-                            );
+                            ui.painter()
+                                .rect_filled(rect, 0.0, crate::theme::ROW_SELECTED_BG);
                         }
 
                         if response.clicked() {
@@ -184,7 +191,10 @@ pub(crate) fn show(
                         }
                         if response.double_clicked() {
                             let entry = picker.entries[entry_idx].clone();
-                            action = ArchivePickerAction::LoadFile { archive: picker.archive.clone(), entry };
+                            action = ArchivePickerAction::LoadFile {
+                                archive: picker.archive.clone(),
+                                entry,
+                            };
                             return;
                         }
 
@@ -205,9 +215,16 @@ pub(crate) fn show(
                         if display_name.len() != entry.name.len() {
                             let name_rect = eframe::egui::Rect::from_min_size(
                                 response_rect.left_center() + eframe::egui::vec2(8.0, 0.0),
-                                eframe::egui::vec2(response_rect.width() * 0.75, response_rect.height()),
+                                eframe::egui::vec2(
+                                    response_rect.width() * 0.75,
+                                    response_rect.height(),
+                                ),
                             );
-                            let name_resp = ui.interact(name_rect, ui.next_auto_id(), eframe::egui::Sense::hover());
+                            let name_resp = ui.interact(
+                                name_rect,
+                                ui.next_auto_id(),
+                                eframe::egui::Sense::hover(),
+                            );
                             name_resp.on_hover_text(&entry.name);
                         }
                         ui.painter().text(
@@ -224,21 +241,35 @@ pub(crate) fn show(
             ui.separator();
             ui.horizontal(|ui| {
                 ui.label(
-                    eframe::egui::RichText::new(t!("dialog.archive.file_count", n = picker.filtered.len()).as_ref())
-                        .size(12.0)
-                        .color(eframe::egui::Color32::GRAY),
+                    eframe::egui::RichText::new(
+                        t!("dialog.archive.file_count", n = picker.filtered.len()).as_ref(),
+                    )
+                    .size(12.0)
+                    .color(eframe::egui::Color32::GRAY),
                 );
-                ui.with_layout(eframe::egui::Layout::right_to_left(eframe::egui::Align::Center), |ui| {
-                    if ui.button(t!("common.cancel").as_ref()).clicked() {
-                        action = ArchivePickerAction::Cancel;
-                    }
-                    let confirm_enabled = picker.selected_idx.is_some();
-                    if ui.add_enabled(confirm_enabled, eframe::egui::Button::new(t!("common.confirm").as_ref())).clicked()
-                        && let Some(idx) = picker.selected_idx {
-                            let entry = picker.entries[idx].clone();
-                            action = ArchivePickerAction::LoadFile { archive: picker.archive.clone(), entry };
+                ui.with_layout(
+                    eframe::egui::Layout::right_to_left(eframe::egui::Align::Center),
+                    |ui| {
+                        if ui.button(t!("common.cancel").as_ref()).clicked() {
+                            action = ArchivePickerAction::Cancel;
                         }
-                });
+                        let confirm_enabled = picker.selected_idx.is_some();
+                        if ui
+                            .add_enabled(
+                                confirm_enabled,
+                                eframe::egui::Button::new(t!("common.confirm").as_ref()),
+                            )
+                            .clicked()
+                            && let Some(idx) = picker.selected_idx
+                        {
+                            let entry = picker.entries[idx].clone();
+                            action = ArchivePickerAction::LoadFile {
+                                archive: picker.archive.clone(),
+                                entry,
+                            };
+                        }
+                    },
+                );
             });
 
             if ui.input(|i| i.key_pressed(eframe::egui::Key::Escape)) {
@@ -250,21 +281,22 @@ pub(crate) fn show(
     }
 }
 
-pub(crate) fn show_viewport(ctx: &eframe::egui::Context, state: &mut Option<ArchivePickerState>) -> ArchivePickerAction {
+pub(crate) fn show_viewport(
+    ctx: &eframe::egui::Context,
+    state: &mut Option<ArchivePickerState>,
+) -> ArchivePickerAction {
     if state.is_none() {
         return ArchivePickerAction::None;
     }
     let viewport_id = eframe::egui::ViewportId::from_hash_of("archive_picker_dialog");
 
-    let taken_state = std::rc::Rc::new(std::cell::RefCell::new(
-        std::mem::replace(
-            state.as_mut().unwrap(),
-            ArchivePickerState::Opening {
-                path: String::new(),
-                rx: std::sync::mpsc::channel().1,
-            },
-        ),
-    ));
+    let taken_state = std::rc::Rc::new(std::cell::RefCell::new(std::mem::replace(
+        state.as_mut().unwrap(),
+        ArchivePickerState::Opening {
+            path: String::new(),
+            rx: std::sync::mpsc::channel().1,
+        },
+    )));
     let action = std::rc::Rc::new(std::cell::RefCell::new(ArchivePickerAction::None));
     let ctx_clone = ctx.clone();
     let taken_state_cb = taken_state.clone();
@@ -272,7 +304,11 @@ pub(crate) fn show_viewport(ctx: &eframe::egui::Context, state: &mut Option<Arch
 
     ctx_clone.show_viewport_immediate(
         viewport_id,
-        crate::chrome::dialog::viewport_builder(t!("dialog.archive.title").as_ref(), [560.0, 400.0], true),
+        crate::chrome::dialog::viewport_builder(
+            t!("dialog.archive.title").as_ref(),
+            [560.0, 400.0],
+            true,
+        ),
         move |vctx, _class| {
             let close_requested = vctx.input(|i| i.viewport().close_requested());
             let vctx_cmd = vctx.clone();
@@ -283,7 +319,11 @@ pub(crate) fn show_viewport(ctx: &eframe::egui::Context, state: &mut Option<Arch
                 })
                 .show(vctx, |ui| {
                     let mut close = close_requested;
-                    crate::chrome::dialog::title_bar(ui, t!("dialog.archive.title").as_ref(), &mut close);
+                    crate::chrome::dialog::title_bar(
+                        ui,
+                        t!("dialog.archive.title").as_ref(),
+                        &mut close,
+                    );
                     if close {
                         vctx_cmd.send_viewport_cmd(eframe::egui::ViewportCommand::Visible(false));
                         *action_cb.borrow_mut() = ArchivePickerAction::Cancel;
@@ -296,10 +336,7 @@ pub(crate) fn show_viewport(ctx: &eframe::egui::Context, state: &mut Option<Arch
                                 bottom: 12,
                             })
                             .show(ui, |ui| {
-                                let result = show(
-                                    &mut taken_state_cb.borrow_mut(),
-                                    ui,
-                                );
+                                let result = show(&mut taken_state_cb.borrow_mut(), ui);
                                 *action_cb.borrow_mut() = result;
                             });
                     }
@@ -315,8 +352,6 @@ pub(crate) fn show_viewport(ctx: &eframe::egui::Context, state: &mut Option<Arch
         .map(|rc| rc.into_inner())
         .unwrap_or(ArchivePickerAction::None)
 }
-
-
 
 // ── 密码输入对话框 ──
 
@@ -413,10 +448,8 @@ pub(crate) fn show_password_prompt_viewport(
                                 bottom: 12,
                             })
                             .show(ui, |ui| {
-                                let result = show_password_prompt(
-                                    &mut taken_state_cb.borrow_mut(),
-                                    ui,
-                                );
+                                let result =
+                                    show_password_prompt(&mut taken_state_cb.borrow_mut(), ui);
                                 *action_cb.borrow_mut() = result;
                             });
                     }
@@ -466,8 +499,10 @@ fn show_password_prompt(
             ui.add_space(6.0);
             let display_name = truncate_name(&filename, 40);
             let prompt_resp = ui.label(
-                eframe::egui::RichText::new(t!("dialog.archive.password_prompt", name = display_name).as_ref())
-                    .size(13.0),
+                eframe::egui::RichText::new(
+                    t!("dialog.archive.password_prompt", name = display_name).as_ref(),
+                )
+                .size(13.0),
             );
             if filename.len() != display_name.len() {
                 prompt_resp.on_hover_text(&filename);
@@ -495,11 +530,17 @@ fn show_password_prompt(
 
                 // 眼睛图标：切换明文/圆点显示
                 use egui_material_icons::icons::{ICON_VISIBILITY, ICON_VISIBILITY_OFF};
-                let icon = if prompt.show_password { ICON_VISIBILITY_OFF } else { ICON_VISIBILITY };
+                let icon = if prompt.show_password {
+                    ICON_VISIBILITY_OFF
+                } else {
+                    ICON_VISIBILITY
+                };
                 let icon_color = ui.visuals().text_color();
                 let btn_resp = ui.add(
                     eframe::egui::Button::new(
-                        eframe::egui::RichText::new(icon).size(16.0).color(icon_color)
+                        eframe::egui::RichText::new(icon)
+                            .size(16.0)
+                            .color(icon_color),
                     )
                     .frame(false),
                 );
@@ -515,18 +556,24 @@ fn show_password_prompt(
         |ui| {
             ui.add_space(4.0);
             ui.horizontal(|ui| {
-                ui.with_layout(eframe::egui::Layout::right_to_left(eframe::egui::Align::Center), |ui| {
-                    if ui.button(t!("common.cancel").as_ref()).clicked() {
-                        cancel_cb.set(true);
-                    }
-                    let confirm_enabled = password_len.get() > 0;
-                    if ui.add_enabled(
-                        confirm_enabled,
-                        eframe::egui::Button::new(t!("common.confirm").as_ref()),
-                    ).clicked() {
-                        confirm_cb.set(true);
-                    }
-                });
+                ui.with_layout(
+                    eframe::egui::Layout::right_to_left(eframe::egui::Align::Center),
+                    |ui| {
+                        if ui.button(t!("common.cancel").as_ref()).clicked() {
+                            cancel_cb.set(true);
+                        }
+                        let confirm_enabled = password_len.get() > 0;
+                        if ui
+                            .add_enabled(
+                                confirm_enabled,
+                                eframe::egui::Button::new(t!("common.confirm").as_ref()),
+                            )
+                            .clicked()
+                        {
+                            confirm_cb.set(true);
+                        }
+                    },
+                );
             });
         },
     );

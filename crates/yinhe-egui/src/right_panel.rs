@@ -96,7 +96,8 @@ pub fn show(
         if let Some(tab) = tab {
             match tab {
                 RightTab::Info => {
-                    changed |= info_panel::show(ui, doc, audio, info_content, automation_drag_ghost);
+                    changed |=
+                        info_panel::show(ui, doc, audio, info_content, automation_drag_ghost);
                 }
                 RightTab::SoundFont => {
                     changed |= soundfont::show(ui, audio_settings, doc);

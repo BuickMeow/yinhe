@@ -3,10 +3,10 @@ use yinhe_types::{AutomationLane, AutomationTarget, NoteSource, SegmentShape};
 use super::data_lines;
 use super::ghost;
 use super::velocity_bars;
-use crate::renderer::InstanceRenderer;
-use yinhe_types::AutomationPanelView;
-use crate::vertex::Uniforms;
 use crate::layer::layer_cache_key;
+use crate::renderer::InstanceRenderer;
+use crate::vertex::Uniforms;
+use yinhe_types::AutomationPanelView;
 
 /// 拖拽预览（ghost）。由交互层每帧计算，传给 wgpu 在 ghost 层绘制。
 ///
@@ -22,7 +22,13 @@ pub enum AutomationGhost {
         color: [f32; 3],
     },
     /// Curve 拖拽：从 `start` 到 `cur` 画预览线
-    Curve { start_x: f32, start_y: f32, cur_x: f32, cur_y: f32, color: [f32; 3] },
+    Curve {
+        start_x: f32,
+        start_y: f32,
+        cur_x: f32,
+        cur_y: f32,
+        color: [f32; 3],
+    },
 }
 
 fn target_hash(target: &AutomationTarget) -> u64 {
@@ -40,19 +46,26 @@ fn target_hash(target: &AutomationTarget) -> u64 {
 /// revision 不会 bump，所以需要单独 hash ghost 自身内容来触发 Layer 1 重建。
 fn hash_lane(lane: &AutomationLane) -> u64 {
     let mut h: u64 = 0;
-    h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(lane.events.len() as u64);
+    h = h
+        .wrapping_mul(0x9e3779b97f4a7c15)
+        .wrapping_add(lane.events.len() as u64);
     for e in &lane.events {
-        h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(e.tick as u64);
-        h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(e.value.to_bits() as u64);
+        h = h
+            .wrapping_mul(0x9e3779b97f4a7c15)
+            .wrapping_add(e.tick as u64);
+        h = h
+            .wrapping_mul(0x9e3779b97f4a7c15)
+            .wrapping_add(e.value.to_bits() as u64);
         let shape_bits = match e.shape {
             SegmentShape::Step => 0u64,
             SegmentShape::Curve { x1, y1, x2, y2 } => {
-                1 + (x1.to_bits() as u64).wrapping_mul(0x9e3779b97f4a7c15)
-                  .wrapping_add(y1.to_bits() as u64)
-                  .wrapping_mul(0x9e3779b97f4a7c15)
-                  .wrapping_add(x2.to_bits() as u64)
-                  .wrapping_mul(0x9e3779b97f4a7c15)
-                  .wrapping_add(y2.to_bits() as u64)
+                1 + (x1.to_bits() as u64)
+                    .wrapping_mul(0x9e3779b97f4a7c15)
+                    .wrapping_add(y1.to_bits() as u64)
+                    .wrapping_mul(0x9e3779b97f4a7c15)
+                    .wrapping_add(x2.to_bits() as u64)
+                    .wrapping_mul(0x9e3779b97f4a7c15)
+                    .wrapping_add(y2.to_bits() as u64)
             }
         };
         h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(shape_bits);
@@ -122,10 +135,10 @@ pub fn prepare(
         scroll_frac,
         scroll_mode,
         min_border_width,
-        track_count, // used by velocity pipeline for tc[track] bounds check
+        track_count,       // used by velocity pipeline for tc[track] bounds check
         sel_rect_count: 0, // unused in pixel mode
-        note_outline: 1, // unused in pixel mode
-        lane_height: 0.0, // unused in pixel mode
+        note_outline: 1,   // unused in pixel mode
+        lane_height: 0.0,  // unused in pixel mode
         value_zoom: view.value_zoom,
         value_scroll: view.value_scroll,
     };
@@ -146,22 +159,29 @@ pub fn prepare(
     let tv_hash = crate::hash_bools(track_visible);
     // ghost_lane_hash：被 ghost 覆盖的 lane 内容变化时触发 Layer 0 重建。
     // 拖拽过程中 ghost 不通过 Document 编辑，revision 不会 bump，所以需要单独 hash。
-    let ghost_lane_hash = ghost.as_ref().map(|g| match g {
-        AutomationGhost::Move { lane, .. } => hash_lane(lane),
-        AutomationGhost::Curve { .. } => 1,
-    }).unwrap_or(0);
+    let ghost_lane_hash = ghost
+        .as_ref()
+        .map(|g| match g {
+            AutomationGhost::Move { lane, .. } => hash_lane(lane),
+            AutomationGhost::Curve { .. } => 1,
+        })
+        .unwrap_or(0);
     // 固定层 lane 内容变化由 revision 检测：所有 lane 编辑路径
     // (add/move/delete/set_shape/arrange_move/apply_automation_delta) 都 bump revision。
     // 拖拽 ghost 时 revision 不变，固定层 cache 复用——正是想要的行为。
     // 之前这里有 O(全事件数) 的 fixed_lanes_hash，与 revision 双重检测，纯冗余，已删除。
     let bars_key = layer_cache_key(&[
-        vh, wh, tv_hash,
+        vh,
+        wh,
+        tv_hash,
         target_hash(&view.selected_target),
         show_anchors as u64,
         view.show_velocity as u64,
         ghost_lane_hash,
         revision,
-        highlight_ticks.iter().fold(0u64, |acc, &t| acc.wrapping_mul(31).wrapping_add(t as u64)),
+        highlight_ticks
+            .iter()
+            .fold(0u64, |acc, &t| acc.wrapping_mul(31).wrapping_add(t as u64)),
     ]);
     let ghost_for_layer0 = ghost.clone();
     let highlight_ticks_for_layer0 = highlight_ticks;
@@ -183,7 +203,18 @@ pub fn prepare(
                 _ => None,
             };
             data_lines::build_data_lines(
-                out, w, h, view, lanes, max_val, track_visible, track_colors, show_anchors, skip_lane, highlight_ticks_for_layer0, &theme,
+                out,
+                w,
+                h,
+                view,
+                lanes,
+                max_val,
+                track_visible,
+                track_colors,
+                show_anchors,
+                skip_lane,
+                highlight_ticks_for_layer0,
+                &theme,
             );
         });
     }

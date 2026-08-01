@@ -62,7 +62,8 @@ impl eframe::App for App {
             let any_dirty = self.documents.iter().any(|d| d.is_dirty());
             if any_dirty {
                 // Cancel the close and show the unsaved dialog instead
-                ui.ctx().send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                ui.ctx()
+                    .send_viewport_cmd(egui::ViewportCommand::CancelClose);
                 self.pending_unsaved = Some(PendingFileAction::Exit);
                 // 让 Dock 栏图标跳动，提示用户注意
                 crate::platform::request_user_attention();
@@ -381,7 +382,8 @@ impl eframe::App for App {
         // 这里用同样的 key（piano_view 的 ui 是 show_main_content 内部分配的，
         // 但 ctx memory 是全局的，用固定字面量 key 避免依赖 ui.id）。
         if let Some(p) = &self.jump_pulse {
-            ui.ctx().memory_mut(|m| m.data.insert_temp(egui::Id::new("jump_pulse"), p.clone()));
+            ui.ctx()
+                .memory_mut(|m| m.data.insert_temp(egui::Id::new("jump_pulse"), p.clone()));
         }
         self.show_main_content(ui, &layout);
         self.show_panels_and_overlays(ui, &layout);
@@ -391,9 +393,10 @@ impl eframe::App for App {
 
         // 清理已结束的 jump_pulse 动画
         if let Some(p) = &self.jump_pulse
-            && p.finished() {
-                self.jump_pulse = None;
-            }
+            && p.finished()
+        {
+            self.jump_pulse = None;
+        }
 
         if let Some(t0) = _ui_total_start {
             yinhe_memtrace::perf_probe::record_ui_total(t0.elapsed());

@@ -23,7 +23,12 @@ pub(crate) enum YinLoadEvent {
 
 /// Events for archive opening.
 pub(crate) enum ArchiveLoadEvent {
-    Complete(Result<(yinhe_archive::Archive, Vec<yinhe_archive::ArchiveEntry>), yinhe_archive::ArchiveError>),
+    Complete(
+        Result<
+            (yinhe_archive::Archive, Vec<yinhe_archive::ArchiveEntry>),
+            yinhe_archive::ArchiveError,
+        >,
+    ),
 }
 
 pub(crate) struct MidiLoader {
@@ -116,11 +121,19 @@ impl FileLoader {
         if let Some(path) = rfd::FileDialog::new()
             .add_filter(
                 t!("file_dialog.all_supported").as_ref(),
-                &["mid", "midi", "yin", "zip", "7z", "rar", "lzh", "lha", "tar", "gz", "xz", "tgz", "txz", "tbz", "bz2"],
+                &[
+                    "mid", "midi", "yin", "zip", "7z", "rar", "lzh", "lha", "tar", "gz", "xz",
+                    "tgz", "txz", "tbz", "bz2",
+                ],
             )
             .add_filter(t!("file_dialog.midi").as_ref(), &["mid", "midi"])
             .add_filter(t!("file_dialog.yinhe_project").as_ref(), &["yin"])
-            .add_filter(t!("file_dialog.archive").as_ref(), &["zip", "7z", "rar", "lzh", "lha", "tar", "gz", "xz", "tgz", "txz", "tbz", "bz2"])
+            .add_filter(
+                t!("file_dialog.archive").as_ref(),
+                &[
+                    "zip", "7z", "rar", "lzh", "lha", "tar", "gz", "xz", "tgz", "txz", "tbz", "bz2",
+                ],
+            )
             .pick_file()
         {
             let path_str = path.to_string_lossy().to_string();
@@ -134,7 +147,8 @@ impl FileLoader {
 
             match ext.as_str() {
                 "yin" => self.start_yin(path_str),
-                "zip" | "7z" | "rar" | "lzh" | "lha" | "tar" | "gz" | "xz" | "tgz" | "txz" | "tbz" | "bz2" => self.start_archive(path_str, None),
+                "zip" | "7z" | "rar" | "lzh" | "lha" | "tar" | "gz" | "xz" | "tgz" | "txz"
+                | "tbz" | "bz2" => self.start_archive(path_str, None),
                 _ => self.start_midi(path_str, encoding),
             }
         }
@@ -165,10 +179,7 @@ impl FileLoader {
                 }
             }
         });
-        self.yin_loader = Some(YinLoader {
-            path: path_str,
-            rx,
-        });
+        self.yin_loader = Some(YinLoader { path: path_str, rx });
     }
 
     /// Start loading an archive with optional password.
@@ -177,20 +188,15 @@ impl FileLoader {
         let (tx, rx) = mpsc::channel();
         let path_for_thread = path_str.clone();
         std::thread::spawn(move || {
-            let result = yinhe_archive::Archive::open_with_password(
-                &path_for_thread,
-                password.as_deref(),
-            )
-            .map(|archive| {
-                let entries = archive.list_midi_files();
-                (archive, entries)
-            });
+            let result =
+                yinhe_archive::Archive::open_with_password(&path_for_thread, password.as_deref())
+                    .map(|archive| {
+                        let entries = archive.list_midi_files();
+                        (archive, entries)
+                    });
             let _ = tx.send(ArchiveLoadEvent::Complete(result));
         });
-        self.archive_loader = Some(ArchiveLoader {
-            path: path_str,
-            rx,
-        });
+        self.archive_loader = Some(ArchiveLoader { path: path_str, rx });
     }
 
     fn start_midi(&mut self, path_str: String, encoding: MidiImportEncoding) {
@@ -203,7 +209,9 @@ impl FileLoader {
             let data = match std::fs::read(&path_for_thread) {
                 Ok(d) => d,
                 Err(e) => {
-                    let _ = tx.send(MidiLoadEvent::Complete(Box::new(Err(yinhe_mid2::MidiError::Io(e)))));
+                    let _ = tx.send(MidiLoadEvent::Complete(Box::new(Err(
+                        yinhe_mid2::MidiError::Io(e),
+                    ))));
                     return;
                 }
             };
@@ -341,16 +349,21 @@ impl FileLoader {
                             match &e {
                                 yinhe_archive::ArchiveError::PasswordRequired => {
                                     progress::set_visible(&self.load_progress, false);
-                                    self.password_prompt = Some(PasswordPrompt::new(loader.path.clone(), false));
+                                    self.password_prompt =
+                                        Some(PasswordPrompt::new(loader.path.clone(), false));
                                     return LoadResult::NotReady;
                                 }
                                 yinhe_archive::ArchiveError::WrongPassword => {
                                     progress::set_visible(&self.load_progress, false);
-                                    self.password_prompt = Some(PasswordPrompt::new(loader.path.clone(), true));
+                                    self.password_prompt =
+                                        Some(PasswordPrompt::new(loader.path.clone(), true));
                                     return LoadResult::NotReady;
                                 }
                                 _ => {
-                                    return LoadResult::ArchiveError(format!("打开压缩包失败: {}", e));
+                                    return LoadResult::ArchiveError(format!(
+                                        "打开压缩包失败: {}",
+                                        e
+                                    ));
                                 }
                             }
                         }
@@ -380,14 +393,18 @@ impl FileLoader {
                 Ok(d) => d,
                 Err(e) => {
                     let _ = tx.send(MidiLoadEvent::Complete(Box::new(Err(
-                        yinhe_mid2::MidiError::Io(std::io::Error::other(
-                            e.to_string(),
-                        )),
+                        yinhe_mid2::MidiError::Io(std::io::Error::other(e.to_string())),
                     ))));
                     return;
                 }
             };
-            Self::parse_midi_and_report(data, MidiImportEncoding::Utf8, tx, progress, cancel_for_thread);
+            Self::parse_midi_and_report(
+                data,
+                MidiImportEncoding::Utf8,
+                tx,
+                progress,
+                cancel_for_thread,
+            );
         });
         self.midi_loader = Some(MidiLoader {
             path: entry.name,
@@ -396,5 +413,4 @@ impl FileLoader {
             cancel,
         });
     }
-
 }

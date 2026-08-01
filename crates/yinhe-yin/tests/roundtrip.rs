@@ -2,9 +2,7 @@
 
 use std::sync::Arc;
 
-use yinhe_core::{
-    ConductorData, NoteEvent, PcEvent, ProjectMeta, TrackData, YinModel,
-};
+use yinhe_core::{ConductorData, NoteEvent, PcEvent, ProjectMeta, TrackData, YinModel};
 use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, SegmentShape, TimeSigEvent};
 use yinhe_yin::{load_yin, load_yin_bytes, save_yin, save_yin_bytes};
 
@@ -14,13 +12,29 @@ fn build_complex_model() -> YinModel {
             target: AutomationTarget::Tempo,
             track: 0,
             events: vec![
-                AutomationEvent { tick: 0, value: 120.0, shape: SegmentShape::Step },
-                AutomationEvent { tick: 1920, value: 60.0, shape: SegmentShape::Step },
+                AutomationEvent {
+                    tick: 0,
+                    value: 120.0,
+                    shape: SegmentShape::Step,
+                },
+                AutomationEvent {
+                    tick: 1920,
+                    value: 60.0,
+                    shape: SegmentShape::Step,
+                },
             ],
         },
         time_sig: vec![
-            TimeSigEvent { tick: 0, numerator: 4, denominator: 2 },
-            TimeSigEvent { tick: 3840, numerator: 3, denominator: 2 },
+            TimeSigEvent {
+                tick: 0,
+                numerator: 4,
+                denominator: 2,
+            },
+            TimeSigEvent {
+                tick: 3840,
+                numerator: 3,
+                denominator: 2,
+            },
         ],
         key_sig: Vec::new(),
         markers: Vec::new(),
@@ -34,48 +48,94 @@ fn build_complex_model() -> YinModel {
     t0.muted = false;
     t0.soloed = true;
     let t0_notes = vec![
-        NoteEvent { id: 0, start_tick: 0, end_tick: 480, key: 60, velocity: 100 },
-        NoteEvent { id: 0, start_tick: 480, end_tick: 960, key: 64, velocity: 90 },
-        NoteEvent { id: 0, start_tick: 1000, end_tick: 1500, key: 60, velocity: 80 },
-        NoteEvent { id: 0, start_tick: 1000, end_tick: 1400, key: 60, velocity: 70 },
+        NoteEvent {
+            id: 0,
+            start_tick: 0,
+            end_tick: 480,
+            key: 60,
+            velocity: 100,
+        },
+        NoteEvent {
+            id: 0,
+            start_tick: 480,
+            end_tick: 960,
+            key: 64,
+            velocity: 90,
+        },
+        NoteEvent {
+            id: 0,
+            start_tick: 1000,
+            end_tick: 1500,
+            key: 60,
+            velocity: 80,
+        },
+        NoteEvent {
+            id: 0,
+            start_tick: 1000,
+            end_tick: 1400,
+            key: 60,
+            velocity: 70,
+        },
     ];
     t0.automation_lanes = vec![
         AutomationLane {
             target: AutomationTarget::CC { controller: 7 },
             track: 0,
             events: vec![
-                AutomationEvent { tick: 0, value: 100.0, shape: SegmentShape::Step },
-                AutomationEvent { tick: 480, value: 80.0, shape: SegmentShape::Step },
+                AutomationEvent {
+                    tick: 0,
+                    value: 100.0,
+                    shape: SegmentShape::Step,
+                },
+                AutomationEvent {
+                    tick: 480,
+                    value: 80.0,
+                    shape: SegmentShape::Step,
+                },
             ],
         },
         AutomationLane {
             target: AutomationTarget::CC { controller: 11 },
             track: 0,
-            events: vec![
-                AutomationEvent { tick: 100, value: 64.0, shape: SegmentShape::Step },
-            ],
+            events: vec![AutomationEvent {
+                tick: 100,
+                value: 64.0,
+                shape: SegmentShape::Step,
+            }],
         },
         AutomationLane {
             target: AutomationTarget::PitchBend,
             track: 0,
             events: vec![
-                AutomationEvent { tick: 200, value: 2000.0, shape: SegmentShape::Step },
-                AutomationEvent { tick: 400, value: 1000.0, shape: SegmentShape::Step }, // 8192 - 1000 = 7192 → 1000
+                AutomationEvent {
+                    tick: 200,
+                    value: 2000.0,
+                    shape: SegmentShape::Step,
+                },
+                AutomationEvent {
+                    tick: 400,
+                    value: 1000.0,
+                    shape: SegmentShape::Step,
+                }, // 8192 - 1000 = 7192 → 1000
             ],
         },
         AutomationLane {
             target: AutomationTarget::Rpn { parameter: 0x0000 },
             track: 0,
-            events: vec![
-                AutomationEvent { tick: 100, value: 2.0, shape: SegmentShape::Step },
-            ],
+            events: vec![AutomationEvent {
+                tick: 100,
+                value: 2.0,
+                shape: SegmentShape::Step,
+            }],
         },
         AutomationLane {
             target: AutomationTarget::Rpn { parameter: 0x0001 },
             track: 0,
-            events: vec![
-                AutomationEvent { tick: 200, value: 8192.0, shape: SegmentShape::Step },
-            ],
+            events: vec![AutomationEvent {
+                tick: 200,
+                value: 8192.0,
+                shape: SegmentShape::Step,
+            }],
         },
     ];
     t0.program_change = vec![PcEvent {
@@ -99,8 +159,20 @@ fn build_complex_model() -> YinModel {
     let mut t2 = TrackData::new(1, 9);
     t2.name = "Drums".to_string();
     let t2_notes = vec![
-        NoteEvent { id: 0, start_tick: 0, end_tick: 60, key: 36, velocity: 127 },
-        NoteEvent { id: 0, start_tick: 240, end_tick: 300, key: 38, velocity: 100 },
+        NoteEvent {
+            id: 0,
+            start_tick: 0,
+            end_tick: 60,
+            key: 36,
+            velocity: 127,
+        },
+        NoteEvent {
+            id: 0,
+            start_tick: 240,
+            end_tick: 300,
+            key: 38,
+            velocity: 100,
+        },
     ];
 
     let per_track_notes = vec![t0_notes, t1_notes, t2_notes];
@@ -279,15 +351,17 @@ fn mapping_json_carries_track_metadata() {
 #[test]
 fn dense_score_compresses_well() {
     let t = TrackData::new(0, 0);
-    let per_track_notes: Vec<Vec<NoteEvent>> = vec![(0..100_000u32)
-        .map(|i| NoteEvent {
-            id: 0,
-            start_tick: i * 10,
-            end_tick: i * 10 + 5,
-            key: 60,
-            velocity: 100,
-        })
-        .collect()];
+    let per_track_notes: Vec<Vec<NoteEvent>> = vec![
+        (0..100_000u32)
+            .map(|i| NoteEvent {
+                id: 0,
+                start_tick: i * 10,
+                end_tick: i * 10 + 5,
+                key: 60,
+                velocity: 100,
+            })
+            .collect(),
+    ];
     let mut model = YinModel {
         tracks: vec![Arc::new(t)],
         ..Default::default()
@@ -325,8 +399,7 @@ fn version_bump_rejected() {
 // ──────────────────────── SoundFont persistence ────────────────────────
 
 use yinhe_yin::{
-    ProjectSoundFonts, SfEntryJson, SfPortOverride, load_yin_bytes_with_sf,
-    save_yin_bytes_with_sf,
+    ProjectSoundFonts, SfEntryJson, SfPortOverride, load_yin_bytes_with_sf, save_yin_bytes_with_sf,
 };
 
 fn sample_sf_state() -> ProjectSoundFonts {
@@ -434,7 +507,7 @@ fn sf_global_mode_preserves_overrides_list() {
     // switching back to project mode restores their configuration.
     let model = build_complex_model();
     let sf = ProjectSoundFonts {
-        mode: false, // global mode
+        mode: false,                            // global mode
         overrides: sample_sf_state().overrides, // but per-port list intact
     };
     let bytes = save_yin_bytes_with_sf(&model, &sf).unwrap();

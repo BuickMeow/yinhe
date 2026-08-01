@@ -127,7 +127,11 @@ pub(crate) fn handle_velocity_interaction(
     track: u16,
     track_color: [f32; 3],
     panel_index: usize,
-) -> (Vec<VelocityEdit>, Option<VelocityPreview>, Option<VelocityHover>) {
+) -> (
+    Vec<VelocityEdit>,
+    Option<VelocityPreview>,
+    Option<VelocityHover>,
+) {
     let stroke_id = ui.id().with("velocity_stroke").with(panel_index);
 
     let pos = ui.input(|i| i.pointer.hover_pos());
@@ -152,15 +156,30 @@ pub(crate) fn handle_velocity_interaction(
         if let Some((_, tick, value)) = mouse {
             // 单击也要命中：零长线段 + 容差收集一次
             let mut touched = HashMap::new();
-            collect_segment(midi, track, ((tick, value), (tick, value)), hit_ticks, &mut touched);
-            stroke = Some(VelocityStroke { track, last: (tick, value), touched });
+            collect_segment(
+                midi,
+                track,
+                ((tick, value), (tick, value)),
+                hit_ticks,
+                &mut touched,
+            );
+            stroke = Some(VelocityStroke {
+                track,
+                last: (tick, value),
+                touched,
+            });
         }
-    } else if down
-        && let (Some(s), Some((_, tick, value))) = (stroke.as_mut(), mouse) {
-            let last = s.last;
-            collect_segment(midi, s.track, (last, (tick, value)), hit_ticks, &mut s.touched);
-            s.last = (tick, value);
-        }
+    } else if down && let (Some(s), Some((_, tick, value))) = (stroke.as_mut(), mouse) {
+        let last = s.last;
+        collect_segment(
+            midi,
+            s.track,
+            (last, (tick, value)),
+            hit_ticks,
+            &mut s.touched,
+        );
+        s.last = (tick, value);
+    }
 
     let color = egui::Color32::from_rgb(
         (track_color[0] * 255.0) as u8,
@@ -222,7 +241,13 @@ mod tests {
     }
 
     fn note(track: u16, start: u32, end: u32, velocity: u8) -> Note {
-        Note { id: 0, start_tick: start, end_tick: end, velocity, track }
+        Note {
+            id: 0,
+            start_tick: start,
+            end_tick: end,
+            velocity,
+            track,
+        }
     }
 
     #[test]
@@ -263,7 +288,11 @@ mod tests {
         let mut touched = HashMap::new();
         collect_segment(&src, 0, ((0.0, 30.0), (200.0, 30.0)), 0.0, &mut touched);
         collect_segment(&src, 0, ((200.0, 90.0), (0.0, 90.0)), 0.0, &mut touched);
-        assert_eq!(touched[&(60, 100)].new_velocity, 90, "回扫时后经过的值应覆盖前值");
+        assert_eq!(
+            touched[&(60, 100)].new_velocity,
+            90,
+            "回扫时后经过的值应覆盖前值"
+        );
     }
 
     #[test]

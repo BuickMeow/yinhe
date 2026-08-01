@@ -18,15 +18,15 @@ pub struct KeyInfo {
     // 合成参数
     pub pitch_keycenter: u8,
     pub tune: i16,
-    pub volume: f32,       // dB → 线性增益
-    pub pan: f32,          // -1 (左) .. +1 (右)
-    pub offset: u32,       // 采样起始偏移
+    pub volume: f32, // dB → 线性增益
+    pub pan: f32,    // -1 (左) .. +1 (右)
+    pub offset: u32, // 采样起始偏移
     pub ampeg_start: f32,
     pub ampeg_delay: f32,
     pub ampeg_attack: f32,
     pub ampeg_hold: f32,
     pub ampeg_decay: f32,
-    pub ampeg_sustain: f32,   // 0..1
+    pub ampeg_sustain: f32, // 0..1
     pub ampeg_release: f32,
     pub lovel: u8,
     pub hivel: u8,
@@ -76,7 +76,10 @@ impl Default for KeyInfo {
 /// 根据文件扩展名自动检测格式并构建 key map。
 /// 支持 .sfz 和 .sf2 格式。
 pub fn build_key_map(path: &Path) -> Result<Vec<Vec<KeyInfo>>, String> {
-    let ext = path.extension().and_then(|e| e.to_str()).map(|e| e.to_lowercase());
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_lowercase());
     match ext.as_deref() {
         Some("sfz") => build_key_map_from_sfz(path),
         Some("sf2") => build_key_map_from_sf2(path),
@@ -87,14 +90,17 @@ pub fn build_key_map(path: &Path) -> Result<Vec<Vec<KeyInfo>>, String> {
 /// 根据 key 和 velocity 选择对应的 KeyInfo（力度分层）。
 pub fn select_key_info(key_map: &[Vec<KeyInfo>], key: u8, velocity: u8) -> Option<&KeyInfo> {
     let layers = &key_map[key as usize];
-    if layers.is_empty() { return None; }
+    if layers.is_empty() {
+        return None;
+    }
     for info in layers {
         if velocity >= info.lovel && velocity <= info.hivel {
             return Some(info);
         }
     }
     layers.iter().min_by_key(|info| {
-        (velocity as i16 - info.lovel as i16).unsigned_abs()
+        (velocity as i16 - info.lovel as i16)
+            .unsigned_abs()
             .min((velocity as i16 - info.hivel as i16).unsigned_abs())
     })
 }
@@ -139,7 +145,9 @@ fn build_key_map_from_sfz(sfz_path: &Path) -> Result<Vec<Vec<KeyInfo>>, String> 
 
         for key in region.keyrange.clone() {
             let k = key as usize;
-            if k < 128 { key_map[k].push(info.clone()); }
+            if k < 128 {
+                key_map[k].push(info.clone());
+            }
         }
     }
 
@@ -189,7 +197,9 @@ fn build_key_map_from_sf2(sf2_path: &Path) -> Result<Vec<Vec<KeyInfo>>, String> 
         // sustain 已经是百分比（0..100），归一化到 0..1
         let sustain_norm = (region.ampeg_envelope.ampeg_sustain / 100.0).clamp(0.0, 1.0);
 
-        let tune = region.fine_tune.wrapping_add(region.coarse_tune.wrapping_mul(100));
+        let tune = region
+            .fine_tune
+            .wrapping_add(region.coarse_tune.wrapping_mul(100));
 
         let info = KeyInfo {
             sample_path: None,
@@ -220,7 +230,9 @@ fn build_key_map_from_sf2(sf2_path: &Path) -> Result<Vec<Vec<KeyInfo>>, String> 
 
         for key in region.keyrange.clone() {
             let k = key as usize;
-            if k < 128 { key_map[k].push(info.clone()); }
+            if k < 128 {
+                key_map[k].push(info.clone());
+            }
         }
     }
 
@@ -271,7 +283,11 @@ pub fn load_wav_as_f32(path: &Path) -> Result<(Vec<f32>, u32), String> {
         samples
             .chunks(2)
             .map(|pair| {
-                if pair.len() == 2 { (pair[0] + pair[1]) * 0.5 } else { pair[0] }
+                if pair.len() == 2 {
+                    (pair[0] + pair[1]) * 0.5
+                } else {
+                    pair[0]
+                }
             })
             .collect()
     } else {

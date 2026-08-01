@@ -14,8 +14,18 @@ impl App {
                     .active_doc
                     .and_then(|idx| self.documents.get(idx))
                     .map(|doc| (doc.edit.quantize_arrange, doc.edit.quantize_pianoroll))
-                    .unwrap_or((QuantizePreset::Fraction(1, 4), QuantizePreset::Fraction(1, 16)));
-                match Document::from_model(&path, model, quantize_arrange, quantize_pianoroll, yinhe_yin::ProjectFile::default(), yinhe_yin::MappingFile::default()) {
+                    .unwrap_or((
+                        QuantizePreset::Fraction(1, 4),
+                        QuantizePreset::Fraction(1, 16),
+                    ));
+                match Document::from_model(
+                    &path,
+                    model,
+                    quantize_arrange,
+                    quantize_pianoroll,
+                    yinhe_yin::ProjectFile::default(),
+                    yinhe_yin::MappingFile::default(),
+                ) {
                     Ok(mut doc) => {
                         doc.mark_loaded(); // Loaded from file, not a fresh empty doc
                         // 仅首次启动的 Untitled（未修改且无 file_path）被替换，
@@ -51,37 +61,47 @@ impl App {
                     .active_doc
                     .and_then(|idx| self.documents.get(idx))
                     .map(|doc| (doc.edit.quantize_arrange, doc.edit.quantize_pianoroll))
-                    .unwrap_or((QuantizePreset::Fraction(1, 4), QuantizePreset::Fraction(1, 16)));
+                    .unwrap_or((
+                        QuantizePreset::Fraction(1, 4),
+                        QuantizePreset::Fraction(1, 16),
+                    ));
                 let project_file = yinhe_yin::ProjectFile::from_meta_with_sf(
                     &model.meta,
                     sf.mode,
                     sf.overrides.clone(),
                 );
-                let result = Document::from_model(&path, model, quantize_arrange, quantize_pianoroll, project_file, mapping)
-                    .ok()
-                    .map(|mut d| {
-                        d.file_path = Some(path.clone());
-                        d.mark_loaded(); // Loaded from file, not a fresh empty doc
+                let result = Document::from_model(
+                    &path,
+                    model,
+                    quantize_arrange,
+                    quantize_pianoroll,
+                    project_file,
+                    mapping,
+                )
+                .ok()
+                .map(|mut d| {
+                    d.file_path = Some(path.clone());
+                    d.mark_loaded(); // Loaded from file, not a fresh empty doc
 
-                        d.edit.project_sf.overrides = sf
-                            .overrides
-                            .iter()
-                            .map(|po| {
-                                let entries = po
-                                    .entries
-                                    .iter()
-                                    .map(|e| yinhe_editor_core::SfEntry {
-                                        path: e.path.clone(),
-                                        name: e.name.clone(),
-                                        enabled: e.enabled,
-                                    })
-                                    .collect();
-                                (po.port, entries)
-                            })
-                            .collect();
+                    d.edit.project_sf.overrides = sf
+                        .overrides
+                        .iter()
+                        .map(|po| {
+                            let entries = po
+                                .entries
+                                .iter()
+                                .map(|e| yinhe_editor_core::SfEntry {
+                                    path: e.path.clone(),
+                                    name: e.name.clone(),
+                                    enabled: e.enabled,
+                                })
+                                .collect();
+                            (po.port, entries)
+                        })
+                        .collect();
 
-                        (d, sf.mode)
-                    });
+                    (d, sf.mode)
+                });
                 if let Some((doc, sf_project_mode)) = result {
                     self.audio_settings.global_sf_config.global_enabled = !sf_project_mode;
                     if self.should_replace_initial_untitled() {
@@ -95,10 +115,8 @@ impl App {
                     self.teardown_audio();
                     self.invalidate_cull_state();
                 } else {
-                    self.load_error = Some(t!(
-                        "file_dialog.open_failed",
-                        name = file_name
-                    ).to_string());
+                    self.load_error =
+                        Some(t!("file_dialog.open_failed", name = file_name).to_string());
                 }
             }
             LoadResult::ArchiveError(msg) => {
@@ -109,36 +127,38 @@ impl App {
 
         // Poll async save completion
         if let Some(rx) = &self.save_rx
-            && rx.try_recv().is_ok() {
-                self.save_rx = None;
-                // Mark the active document as saved
-                if let Some(idx) = self.active_doc {
-                    self.documents[idx].mark_saved();
-                }
-                // If there's a deferred action, execute it now
-                if self.pending_unsaved.is_some() {
-                    let ctx = egui::Context::default();
-                    self.execute_pending_file_action(&ctx);
-                }
+            && rx.try_recv().is_ok()
+        {
+            self.save_rx = None;
+            // Mark the active document as saved
+            if let Some(idx) = self.active_doc {
+                self.documents[idx].mark_saved();
             }
+            // If there's a deferred action, execute it now
+            if self.pending_unsaved.is_some() {
+                let ctx = egui::Context::default();
+                self.execute_pending_file_action(&ctx);
+            }
+        }
 
         // Poll async export completion
         if let Some(rx) = &self.export.rx
-            && let Ok(result) = rx.try_recv() {
-                self.export.rx = None;
-                match result {
-                    Ok((path, elapsed, speed)) => {
-                        self.export.completed = Some(crate::dialogs::export::ExportCompleted {
-                            file_path: path,
-                            elapsed_secs: elapsed,
-                            overall_speed: speed,
-                        });
-                    }
-                    Err(e) => {
-                        self.load_error = Some(e);
-                    }
+            && let Ok(result) = rx.try_recv()
+        {
+            self.export.rx = None;
+            match result {
+                Ok((path, elapsed, speed)) => {
+                    self.export.completed = Some(crate::dialogs::export::ExportCompleted {
+                        file_path: path,
+                        elapsed_secs: elapsed,
+                        overall_speed: speed,
+                    });
+                }
+                Err(e) => {
+                    self.load_error = Some(e);
                 }
             }
+        }
 
         // Poll async PPQ rescale completion
         self.poll_rescale_completion();
@@ -150,9 +170,9 @@ impl App {
         if density != self.last_automation_density {
             self.last_automation_density = density;
             if let Some(audio) = &self.audio_state.handle {
-                audio.handle.send(yinhe_audio::AudioCommand::SetAutomationDensity {
-                    density,
-                });
+                audio
+                    .handle
+                    .send(yinhe_audio::AudioCommand::SetAutomationDensity { density });
             }
         }
     }

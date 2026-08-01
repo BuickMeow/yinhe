@@ -8,9 +8,9 @@ use xsynth_core::soundfont::SoundfontBase;
 
 use yinhe_core::YinModel;
 
+use crate::audio_model::{AudibleNote, PreparedModel, SortedCC};
 use crate::audio_renderer::{RendererSharedState, spawn_renderer};
 use crate::audio_ring::AudioRing;
-use crate::audio_model::{AudibleNote, PreparedModel, SortedCC};
 use crate::channel::ChannelState;
 use crate::channel_layout::ChannelLayout;
 
@@ -31,7 +31,10 @@ const AUDIO_CMD_CHANNEL_CAPACITY: usize = 16;
 /// 任何修改 `RING_BUFFER_FRAMES` / `STEREO_CHANNELS` 或去掉 `.next_power_of_two()` 的改动
 /// 都会在编译期触发 assert，而不是等到运行期才 panic。
 const RING_CAPACITY: usize = (RING_BUFFER_FRAMES * STEREO_CHANNELS).next_power_of_two();
-const _: () = assert!(RING_CAPACITY.is_power_of_two(), "RING_CAPACITY must be a power of two");
+const _: () = assert!(
+    RING_CAPACITY.is_power_of_two(),
+    "RING_CAPACITY must be a power of two"
+);
 
 /// Command sent from UI thread to the audio renderer thread.
 pub enum AudioCommand {
@@ -172,9 +175,10 @@ impl Drop for CpalAudioHandle {
         // join 阻塞时间可忽略。确保 AudioEngine → ChannelGroup → 2 个 rayon::ThreadPool
         // 在返回前被 drop，避免线程泄漏。
         if let Some(handle) = self.renderer_handle.take()
-            && let Err(payload) = handle.join() {
-                tracing::error!("Audio renderer thread panicked during shutdown: {payload:?}");
-            }
+            && let Err(payload) = handle.join()
+        {
+            tracing::error!("Audio renderer thread panicked during shutdown: {payload:?}");
+        }
     }
 }
 
@@ -454,11 +458,7 @@ pub fn list_output_devices() -> Vec<String> {
 
 /// 协商采样率：请求值不在设备任何 f32 输出配置的支持范围内时，
 /// 回退到设备默认采样率。枚举失败时不做判断，交给 cpal 建流时报错。
-fn negotiate_sample_rate(
-    device: &cpal::Device,
-    requested: u32,
-    device_default: u32,
-) -> u32 {
+fn negotiate_sample_rate(device: &cpal::Device, requested: u32, device_default: u32) -> u32 {
     let supported = match device.supported_output_configs() {
         Ok(configs) => configs
             .filter(|c| c.sample_format() == cpal::SampleFormat::F32)
@@ -526,11 +526,13 @@ pub fn spawn_cpal_audio(
         Some(name) => host
             .output_devices()
             .map_err(|e| format!("Failed to enumerate output devices: {e}"))?
-            .find(|d| d.description().ok().is_some_and(|desc| desc.to_string() == name))
+            .find(|d| {
+                d.description()
+                    .ok()
+                    .is_some_and(|desc| desc.to_string() == name)
+            })
             .ok_or_else(|| format!("Output device not found: {name}"))?,
-        None => host
-            .default_output_device()
-            .ok_or("No output device")?,
+        None => host.default_output_device().ok_or("No output device")?,
     };
     let supported = device.default_output_config().map_err(|e| e.to_string())?;
     // 强制立体声：xsynth 是立体声合成器，ring buffer 和位置计算也硬编码 2 声道。
@@ -559,15 +561,15 @@ pub fn spawn_cpal_audio(
         Ok(engine) => engine,
         Err(payload) => {
             let msg = payload
-                .downcast_ref::<String>().map(|s| s.as_str())
+                .downcast_ref::<String>()
+                .map(|s| s.as_str())
                 .or_else(|| payload.downcast_ref::<&str>().copied())
                 .unwrap_or("unknown panic");
             return Err(format!("AudioEngine initialization failed: {msg}"));
         }
     };
-    let (worker_tx, prepared_rx) =
-        spawn_worker(sample_rate, engine.channel_layout().clone())
-            .map_err(|e| format!("Failed to spawn audio worker thread: {e}"))?;
+    let (worker_tx, prepared_rx) = spawn_worker(sample_rate, engine.channel_layout().clone())
+        .map_err(|e| format!("Failed to spawn audio worker thread: {e}"))?;
 
     let (ring_producer, mut ring_consumer) = AudioRing::new(RING_CAPACITY).split();
 
@@ -624,8 +626,8 @@ pub fn spawn_cpal_audio(
                     if popped < data.len() {
                         data[popped..].fill(0.0);
                     }
-                    consumer_sample_position = consumer_sample_position
-                        .saturating_add((popped / STEREO_CHANNELS) as u64);
+                    consumer_sample_position =
+                        consumer_sample_position.saturating_add((popped / STEREO_CHANNELS) as u64);
                 } else {
                     data.fill(0.0);
                 }

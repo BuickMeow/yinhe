@@ -1,9 +1,9 @@
 use std::sync::mpsc;
 
 pub(crate) mod actions;
-pub(crate) mod automation_actions;
 pub(crate) mod audio;
 pub(crate) mod audio_state;
+pub(crate) mod automation_actions;
 pub(crate) mod dialog_dispatch;
 pub(crate) mod export_state;
 pub(crate) mod layout;
@@ -11,11 +11,11 @@ pub(crate) mod main_loop;
 pub(crate) mod poll;
 pub(crate) mod rescale_state;
 
-use crate::file_loader::FileLoader;
-use crate::dialogs::system_monitor::SystemMonitor;
-use yinhe_editor_core::document::Document;
-use crate::render_context::RenderContext;
 use crate::chrome::mode_bar::ViewMode;
+use crate::dialogs::system_monitor::SystemMonitor;
+use crate::file_loader::FileLoader;
+use crate::render_context::RenderContext;
+use yinhe_editor_core::document::Document;
 use yinhe_types::{ArrangementView, PianoRollView};
 
 /// A file action that was deferred because the current document has unsaved changes.
@@ -35,7 +35,7 @@ pub struct App {
     pub(crate) pianoroll_view: PianoRollView,
     pub(crate) last_cull_revision: u64, // revision ^ hidden_hash
     pub(crate) last_cull_revision_only: u64, // last revision (for incremental detection)
-    pub(crate) last_hidden_hash: u64, // last hidden_hash (for incremental detection)
+    pub(crate) last_hidden_hash: u64,   // last hidden_hash (for incremental detection)
 
     // ── Arrangement (shared GPU resources + global view state) ──
     pub(crate) arr_render_ctx: RenderContext,
@@ -165,8 +165,10 @@ impl App {
             let mut fonts = egui::FontDefinitions::default();
             fonts.font_data.insert(
                 "Pretendard".to_owned(),
-                egui::FontData::from_static(include_bytes!("../../../assets/Pretendard-Medium.otf"))
-                    .into(),
+                egui::FontData::from_static(include_bytes!(
+                    "../../../assets/Pretendard-Medium.otf"
+                ))
+                .into(),
             );
             fonts.font_data.insert(
                 "MiSans".to_owned(),
@@ -213,11 +215,7 @@ impl App {
 
         let mut app = Self {
             render_ctx,
-            pianoroll: yinhe_wgpu::InstanceRenderer::new(
-                device.clone(),
-                queue.clone(),
-                format,
-            ),
+            pianoroll: yinhe_wgpu::InstanceRenderer::new(device.clone(), queue.clone(), format),
             render_thread: None,
             pianoroll_view: PianoRollView::default(),
             last_cull_revision: 0,

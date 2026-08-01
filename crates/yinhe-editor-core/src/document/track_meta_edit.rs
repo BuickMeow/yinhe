@@ -13,17 +13,15 @@ use super::Document;
 impl Document {
     /// 按 `old_tick` 找到 `track.lyrics` 事件并修改其字段。
     /// 未找到对应 tick 的事件时静默返回。
-    pub fn set_lyrics_event(
-        &mut self,
-        track: u16,
-        old_tick: u32,
-        new_tick: u32,
-        new_text: String,
-    ) {
+    pub fn set_lyrics_event(&mut self, track: u16, old_tick: u32, new_tick: u32, new_text: String) {
         let model = Arc::make_mut(&mut self.data.model);
-        let Some(td) = model.tracks.get_mut(track as usize) else { return };
+        let Some(td) = model.tracks.get_mut(track as usize) else {
+            return;
+        };
         let td = Arc::make_mut(td);
-        let Some(idx) = td.lyrics.iter().position(|e| e.tick == old_tick) else { return };
+        let Some(idx) = td.lyrics.iter().position(|e| e.tick == old_tick) else {
+            return;
+        };
         {
             let event = &mut td.lyrics[idx];
             event.tick = new_tick;
@@ -35,17 +33,15 @@ impl Document {
 
     /// 按 `old_tick` 找到 `track.chord` 事件并修改其字段。
     /// 未找到对应 tick 的事件时静默返回。
-    pub fn set_chord_event(
-        &mut self,
-        track: u16,
-        old_tick: u32,
-        new_tick: u32,
-        new_text: String,
-    ) {
+    pub fn set_chord_event(&mut self, track: u16, old_tick: u32, new_tick: u32, new_text: String) {
         let model = Arc::make_mut(&mut self.data.model);
-        let Some(td) = model.tracks.get_mut(track as usize) else { return };
+        let Some(td) = model.tracks.get_mut(track as usize) else {
+            return;
+        };
         let td = Arc::make_mut(td);
-        let Some(idx) = td.chord.iter().position(|e| e.tick == old_tick) else { return };
+        let Some(idx) = td.chord.iter().position(|e| e.tick == old_tick) else {
+            return;
+        };
         {
             let event = &mut td.chord[idx];
             event.tick = new_tick;
@@ -116,7 +112,9 @@ impl Document {
     /// 插入一个 per-track 歌词事件（默认空文本）。
     pub fn insert_lyrics_event(&mut self, track: u16, tick: u32) {
         let model = Arc::make_mut(&mut self.data.model);
-        let Some(td) = model.tracks.get_mut(track as usize) else { return };
+        let Some(td) = model.tracks.get_mut(track as usize) else {
+            return;
+        };
         let td = Arc::make_mut(td);
         td.lyrics.push(yinhe_types::LyricsEvent {
             tick,
@@ -129,7 +127,9 @@ impl Document {
     /// 插入一个 per-track 和弦事件（默认空文本）。
     pub fn insert_chord_event(&mut self, track: u16, tick: u32) {
         let model = Arc::make_mut(&mut self.data.model);
-        let Some(td) = model.tracks.get_mut(track as usize) else { return };
+        let Some(td) = model.tracks.get_mut(track as usize) else {
+            return;
+        };
         let td = Arc::make_mut(td);
         td.chord.push(yinhe_types::ChordEvent {
             tick,
@@ -142,7 +142,9 @@ impl Document {
     /// 插入一个 Program Change 事件（默认 program=0, bank_msb=0, bank_lsb=0）。
     pub fn insert_program_change_event(&mut self, track: u16, tick: u32) {
         let model = Arc::make_mut(&mut self.data.model);
-        let Some(td) = model.tracks.get_mut(track as usize) else { return };
+        let Some(td) = model.tracks.get_mut(track as usize) else {
+            return;
+        };
         let td = Arc::make_mut(td);
         td.program_change.push(yinhe_types::PcEvent {
             tick,
@@ -164,9 +166,13 @@ impl Document {
         new_program: u8,
     ) {
         let model = Arc::make_mut(&mut self.data.model);
-        let Some(td) = model.tracks.get_mut(track as usize) else { return };
+        let Some(td) = model.tracks.get_mut(track as usize) else {
+            return;
+        };
         let td = Arc::make_mut(td);
-        let Some(idx) = td.program_change.iter().position(|e| e.tick == old_tick) else { return };
+        let Some(idx) = td.program_change.iter().position(|e| e.tick == old_tick) else {
+            return;
+        };
         {
             let event = &mut td.program_change[idx];
             event.tick = new_tick;

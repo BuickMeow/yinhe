@@ -10,17 +10,17 @@ static GLOBAL_ALLOC: TaggedAlloc = TaggedAlloc;
 mod app;
 mod arrange;
 mod audio_settings;
+mod chrome;
 mod dialogs;
 mod file_loader;
 mod piano_view;
+mod platform;
 mod render_context;
 mod right_panel;
-mod theme;
 mod selection;
+mod theme;
 mod view_interaction;
-mod chrome;
 mod widgets;
-mod platform;
 
 fn main() {
     tracing_subscriber::fmt()
@@ -31,8 +31,7 @@ fn main() {
         )
         .init();
 
-    let mut viewport = eframe::egui::ViewportBuilder::default()
-        .with_inner_size([1400.0, 900.0]);
+    let mut viewport = eframe::egui::ViewportBuilder::default().with_inner_size([1400.0, 900.0]);
 
     // macOS: with_transparent + fullsize_content_view avoids a white flash and
     // allows the traffic-light buttons to overlay the content area.

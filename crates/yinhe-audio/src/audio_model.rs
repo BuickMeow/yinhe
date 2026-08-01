@@ -103,8 +103,18 @@ impl AudioModel {
             .map(|t| {
                 t.automation_lanes
                     .iter()
-                    .find(|l| matches!(l.target, yinhe_types::AutomationTarget::CC { controller: 0 }))
-                    .map(|lane| lane.events.iter().map(|e| e.value.round().clamp(0.0, 127.0) as u8).collect())
+                    .find(|l| {
+                        matches!(
+                            l.target,
+                            yinhe_types::AutomationTarget::CC { controller: 0 }
+                        )
+                    })
+                    .map(|lane| {
+                        lane.events
+                            .iter()
+                            .map(|e| e.value.round().clamp(0.0, 127.0) as u8)
+                            .collect()
+                    })
                     .unwrap_or_default()
             })
             .collect();
@@ -121,18 +131,19 @@ impl AudioModel {
 }
 
 /// Convert a tick value to sample position using the tempo map.
-pub(crate) fn tick_to_sample(tick: u64, segments: &[yinhe_core::TempoSegment], tpb: u32, sr: f64) -> u64 {
+pub(crate) fn tick_to_sample(
+    tick: u64,
+    segments: &[yinhe_core::TempoSegment],
+    tpb: u32,
+    sr: f64,
+) -> u64 {
     let idx = match segments.binary_search_by_key(&tick, |s| s.start_tick as u64) {
         Ok(i) => i,
         Err(i) => i.saturating_sub(1),
     };
     let seg = &segments[idx];
     let secs = seg.start_time
-        + yinhe_core::ticks_to_seconds(
-            tick - seg.start_tick as u64,
-            tpb,
-            seg.micros_per_quarter,
-        );
+        + yinhe_core::ticks_to_seconds(tick - seg.start_tick as u64, tpb, seg.micros_per_quarter);
     (secs * sr) as u64
 }
 
@@ -163,7 +174,14 @@ pub(crate) fn flatten_automation_to_cc_events(
             let n = lane.events.len();
             for (i, e) in lane.events.iter().enumerate() {
                 let sample = (model.tempo_map.tick_to_seconds(e.tick as u64) * sr) as u64;
-                emit_automation_event(&lane.target, e.value, sample, channel, track_idx_u16, &mut cc_events);
+                emit_automation_event(
+                    &lane.target,
+                    e.value,
+                    sample,
+                    channel,
+                    track_idx_u16,
+                    &mut cc_events,
+                );
 
                 // Linear/Curve 段：在当前事件与下一事件之间按 density 间隔展开中间事件
                 if i + 1 < n {
@@ -180,7 +198,14 @@ pub(crate) fn flatten_automation_to_cc_events(
                             let f = e.shape.interpolate(frac);
                             let v = v1 + (v2 - v1) * f;
                             let s = (model.tempo_map.tick_to_seconds(t as u64) * sr) as u64;
-                            emit_automation_event(&lane.target, v, s, channel, track_idx_u16, &mut cc_events);
+                            emit_automation_event(
+                                &lane.target,
+                                v,
+                                s,
+                                channel,
+                                track_idx_u16,
+                                &mut cc_events,
+                            );
                             t = t.saturating_add(density);
                         }
                     }
@@ -191,12 +216,27 @@ pub(crate) fn flatten_automation_to_cc_events(
         for e in &track.program_change {
             let sample = (model.tempo_map.tick_to_seconds(e.tick as u64) * sr) as u64;
             if e.bank_msb != 0xFF {
-                cc_events.push(SortedCC { sample, channel, track: track_idx_u16, event: ChannelAudioEvent::Control(ControlEvent::Raw(0, e.bank_msb)) });
+                cc_events.push(SortedCC {
+                    sample,
+                    channel,
+                    track: track_idx_u16,
+                    event: ChannelAudioEvent::Control(ControlEvent::Raw(0, e.bank_msb)),
+                });
             }
             if e.bank_lsb != 0xFF {
-                cc_events.push(SortedCC { sample, channel, track: track_idx_u16, event: ChannelAudioEvent::Control(ControlEvent::Raw(32, e.bank_lsb)) });
+                cc_events.push(SortedCC {
+                    sample,
+                    channel,
+                    track: track_idx_u16,
+                    event: ChannelAudioEvent::Control(ControlEvent::Raw(32, e.bank_lsb)),
+                });
             }
-            cc_events.push(SortedCC { sample, channel, track: track_idx_u16, event: ChannelAudioEvent::ProgramChange(e.program) });
+            cc_events.push(SortedCC {
+                sample,
+                channel,
+                track: track_idx_u16,
+                event: ChannelAudioEvent::ProgramChange(e.program),
+            });
         }
     }
 
@@ -231,15 +271,20 @@ fn emit_automation_event(
     match target {
         AutomationTarget::CC { controller } => {
             out.push(SortedCC {
-                sample, channel, track,
+                sample,
+                channel,
+                track,
                 event: ChannelAudioEvent::Control(ControlEvent::Raw(
-                    *controller, value.round().clamp(0.0, 127.0) as u8,
+                    *controller,
+                    value.round().clamp(0.0, 127.0) as u8,
                 )),
             });
         }
         AutomationTarget::PitchBend => {
             out.push(SortedCC {
-                sample, channel, track,
+                sample,
+                channel,
+                track,
                 event: ChannelAudioEvent::Control(ControlEvent::PitchBendValue(
                     (value - 8192.0) / 8192.0,
                 )),
@@ -249,21 +294,29 @@ fn emit_automation_event(
             match parameter {
                 0 => {
                     out.push(SortedCC {
-                        sample, channel, track,
-                        event: ChannelAudioEvent::Control(ControlEvent::PitchBendSensitivity(value)),
+                        sample,
+                        channel,
+                        track,
+                        event: ChannelAudioEvent::Control(ControlEvent::PitchBendSensitivity(
+                            value,
+                        )),
                     });
                 }
                 1 => {
                     let fine = (value - 8192.0) / 8192.0 * 100.0;
                     out.push(SortedCC {
-                        sample, channel, track,
+                        sample,
+                        channel,
+                        track,
                         event: ChannelAudioEvent::Control(ControlEvent::FineTune(fine)),
                     });
                 }
                 2 => {
                     let coarse = value - 64.0;
                     out.push(SortedCC {
-                        sample, channel, track,
+                        sample,
+                        channel,
+                        track,
                         event: ChannelAudioEvent::Control(ControlEvent::CoarseTune(coarse)),
                     });
                 }
@@ -277,11 +330,31 @@ fn emit_automation_event(
                     } else {
                         (value.round().clamp(0.0, 127.0) as u8, 0u8)
                     };
-                    out.push(SortedCC { sample, channel, track, event: ChannelAudioEvent::Control(ControlEvent::Raw(101, msb)) });
-                    out.push(SortedCC { sample, channel, track, event: ChannelAudioEvent::Control(ControlEvent::Raw(100, lsb)) });
-                    out.push(SortedCC { sample, channel, track, event: ChannelAudioEvent::Control(ControlEvent::Raw(6, data_msb)) });
+                    out.push(SortedCC {
+                        sample,
+                        channel,
+                        track,
+                        event: ChannelAudioEvent::Control(ControlEvent::Raw(101, msb)),
+                    });
+                    out.push(SortedCC {
+                        sample,
+                        channel,
+                        track,
+                        event: ChannelAudioEvent::Control(ControlEvent::Raw(100, lsb)),
+                    });
+                    out.push(SortedCC {
+                        sample,
+                        channel,
+                        track,
+                        event: ChannelAudioEvent::Control(ControlEvent::Raw(6, data_msb)),
+                    });
                     if data_lsb != 0 {
-                        out.push(SortedCC { sample, channel, track, event: ChannelAudioEvent::Control(ControlEvent::Raw(38, data_lsb)) });
+                        out.push(SortedCC {
+                            sample,
+                            channel,
+                            track,
+                            event: ChannelAudioEvent::Control(ControlEvent::Raw(38, data_lsb)),
+                        });
                     }
                 }
             }
@@ -292,11 +365,31 @@ fn emit_automation_event(
             let v = value.round().clamp(0.0, 16383.0) as u16;
             let data_msb = ((v >> 7) & 0x7F) as u8;
             let data_lsb = (v & 0x7F) as u8;
-            out.push(SortedCC { sample, channel, track, event: ChannelAudioEvent::Control(ControlEvent::Raw(99, msb)) });
-            out.push(SortedCC { sample, channel, track, event: ChannelAudioEvent::Control(ControlEvent::Raw(98, lsb)) });
-            out.push(SortedCC { sample, channel, track, event: ChannelAudioEvent::Control(ControlEvent::Raw(6, data_msb)) });
+            out.push(SortedCC {
+                sample,
+                channel,
+                track,
+                event: ChannelAudioEvent::Control(ControlEvent::Raw(99, msb)),
+            });
+            out.push(SortedCC {
+                sample,
+                channel,
+                track,
+                event: ChannelAudioEvent::Control(ControlEvent::Raw(98, lsb)),
+            });
+            out.push(SortedCC {
+                sample,
+                channel,
+                track,
+                event: ChannelAudioEvent::Control(ControlEvent::Raw(6, data_msb)),
+            });
             if data_lsb != 0 {
-                out.push(SortedCC { sample, channel, track, event: ChannelAudioEvent::Control(ControlEvent::Raw(38, data_lsb)) });
+                out.push(SortedCC {
+                    sample,
+                    channel,
+                    track,
+                    event: ChannelAudioEvent::Control(ControlEvent::Raw(38, data_lsb)),
+                });
             }
         }
         // Tempo 走 `conductor.tempo` 而非 `track.automation_lanes`，
@@ -317,7 +410,11 @@ mod tests {
             tempo: AutomationLane {
                 target: AutomationTarget::Tempo,
                 track: 0,
-                events: vec![AutomationEvent { tick: 0, value: 120.0, shape: SegmentShape::Step }],
+                events: vec![AutomationEvent {
+                    tick: 0,
+                    value: 120.0,
+                    shape: SegmentShape::Step,
+                }],
             },
             time_sig: Vec::new(),
             key_sig: Vec::new(),
@@ -330,7 +427,10 @@ mod tests {
         let mut model = YinModel {
             conductor: Arc::new(conductor),
             tracks: vec![Arc::new(t)],
-            meta: ProjectMeta { ppq: 480, ..ProjectMeta::default() },
+            meta: ProjectMeta {
+                ppq: 480,
+                ..ProjectMeta::default()
+            },
             ..Default::default()
         };
         model.rebuild();
@@ -373,10 +473,16 @@ mod tests {
         let events = flatten_automation_to_cc_events(&model, 44100, 1);
 
         let pbs_idx = index_of(&events, |e| {
-            matches!(e, ChannelAudioEvent::Control(ControlEvent::PitchBendSensitivity(_)))
+            matches!(
+                e,
+                ChannelAudioEvent::Control(ControlEvent::PitchBendSensitivity(_))
+            )
         });
         let pb_idx = index_of(&events, |e| {
-            matches!(e, ChannelAudioEvent::Control(ControlEvent::PitchBendValue(_)))
+            matches!(
+                e,
+                ChannelAudioEvent::Control(ControlEvent::PitchBendValue(_))
+            )
         });
 
         let pbs_idx = pbs_idx.expect("PBS event should exist");
@@ -422,7 +528,10 @@ mod tests {
             matches!(e, ChannelAudioEvent::Control(ControlEvent::Raw(101, _)))
         });
         let pb_idx = index_of(&events, |e| {
-            matches!(e, ChannelAudioEvent::Control(ControlEvent::PitchBendValue(_)))
+            matches!(
+                e,
+                ChannelAudioEvent::Control(ControlEvent::PitchBendValue(_))
+            )
         });
 
         let rpn_cc101_idx = rpn_cc101_idx.expect("RPN CC101 selector should exist");
@@ -465,7 +574,10 @@ mod tests {
             matches!(e, ChannelAudioEvent::Control(ControlEvent::Raw(99, _)))
         });
         let pb_idx = index_of(&events, |e| {
-            matches!(e, ChannelAudioEvent::Control(ControlEvent::PitchBendValue(_)))
+            matches!(
+                e,
+                ChannelAudioEvent::Control(ControlEvent::PitchBendValue(_))
+            )
         });
 
         let nrpn_cc99_idx = nrpn_cc99_idx.expect("NRPN CC99 selector should exist");
@@ -520,7 +632,10 @@ mod tests {
             matches!(e, ChannelAudioEvent::Control(ControlEvent::CoarseTune(_)))
         });
         let pb_idx = index_of(&events, |e| {
-            matches!(e, ChannelAudioEvent::Control(ControlEvent::PitchBendValue(_)))
+            matches!(
+                e,
+                ChannelAudioEvent::Control(ControlEvent::PitchBendValue(_))
+            )
         });
 
         let fine_idx = fine_idx.expect("FineTune event should exist");

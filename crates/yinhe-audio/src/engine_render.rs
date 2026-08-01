@@ -1,8 +1,8 @@
 use std::cmp::Reverse;
 
+use xsynth_core::AudioPipe;
 use xsynth_core::channel::{ChannelAudioEvent, ChannelEvent};
 use xsynth_core::channel_group::SynthEvent;
-use xsynth_core::AudioPipe;
 
 use crate::audio_model::ActiveNote;
 use crate::engine::AudioEngine;
@@ -76,7 +76,12 @@ impl AudioEngine {
             let cc = &self.cc_events[self.cc_cursor];
             // mute 的音轨：跳过其自动化事件（CC/PB/RPN/NRPN/PC），
             // 使同 channel 上其他非 mute 轨道不受影响。
-            if !self.skip_track.get(cc.track as usize).copied().unwrap_or(false) {
+            if !self
+                .skip_track
+                .get(cc.track as usize)
+                .copied()
+                .unwrap_or(false)
+            {
                 let dense = self.channel_layout.dense_for(cc.channel as usize);
                 if dense != u32::MAX {
                     self.channel_group
@@ -150,9 +155,10 @@ impl AudioEngine {
         }
         // peek 堆顶（最早结束的未结束音符）作为下一 NoteOff 边界候选
         if let Some(Reverse(an)) = self.active_notes.peek()
-            && an.end_sample < block_end {
-                next = Some(next.map_or(an.end_sample, |s| s.min(an.end_sample)));
-            }
+            && an.end_sample < block_end
+        {
+            next = Some(next.map_or(an.end_sample, |s| s.min(an.end_sample)));
+        }
         for an in &self.ended_notes {
             let dense = self.channel_layout.dense_for(an.channel as usize);
             if dense != u32::MAX {

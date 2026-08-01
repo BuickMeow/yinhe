@@ -1,4 +1,4 @@
-use crate::vertex::{Uniforms, SelectionUniform, MAX_TRACKS, MAX_SEL_RECTS};
+use crate::vertex::{MAX_SEL_RECTS, MAX_TRACKS, SelectionUniform, Uniforms};
 use yinhe_types::PianoRollView;
 
 /// Render job data: uniforms built on CPU, sent to GPU for upload.
@@ -53,7 +53,9 @@ pub fn build_render_job(
 
     // Build selection rects uniform
     let sel_rect_count = selected.rects.len().min(MAX_SEL_RECTS) as u32;
-    let mut sel_uniform = SelectionUniform { rects: [[0; 4]; MAX_SEL_RECTS * 2] };
+    let mut sel_uniform = SelectionUniform {
+        rects: [[0; 4]; MAX_SEL_RECTS * 2],
+    };
     for (i, rect) in selected.rects.iter().enumerate().take(MAX_SEL_RECTS) {
         let (tick_start, tick_end, key_lo, key_hi, track_lo, track_hi) = *rect;
         sel_uniform.rects[i * 2] = [tick_start, tick_end, key_lo as u32, key_hi as u32];
@@ -75,8 +77,8 @@ pub fn build_render_job(
         track_count,
         sel_rect_count,
         note_outline: if note_outline { 1 } else { 0 },
-        lane_height: 0.0, // PR unused (shader uses key_height)
-        value_zoom: 0.0, // PR unused (automation panel only)
+        lane_height: 0.0,  // PR unused (shader uses key_height)
+        value_zoom: 0.0,   // PR unused (automation panel only)
         value_scroll: 0.0, // PR unused (automation panel only)
     };
 

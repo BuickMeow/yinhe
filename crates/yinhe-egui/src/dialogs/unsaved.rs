@@ -27,7 +27,11 @@ pub(crate) fn show_viewport(
 
     ctx_clone.show_viewport_immediate(
         viewport_id,
-        crate::chrome::dialog::viewport_builder(t!("dialog.unsaved.title").as_ref(), [340.0, 130.0], false),
+        crate::chrome::dialog::viewport_builder(
+            t!("dialog.unsaved.title").as_ref(),
+            [340.0, 130.0],
+            false,
+        ),
         move |vctx, _class| {
             let mut close = false;
             if vctx.input(|i| i.viewport().close_requested()) {
@@ -40,7 +44,11 @@ pub(crate) fn show_viewport(
                     ..Default::default()
                 })
                 .show(vctx, |ui| {
-                    crate::chrome::dialog::title_bar(ui, t!("dialog.unsaved.title").as_ref(), &mut close);
+                    crate::chrome::dialog::title_bar(
+                        ui,
+                        t!("dialog.unsaved.title").as_ref(),
+                        &mut close,
+                    );
                     egui::Frame::new()
                         .inner_margin(egui::Margin {
                             left: 12,
@@ -66,8 +74,10 @@ pub(crate) fn show_viewport(
                                         }
                                         ui.add_space(8.0);
                                         let discard_btn = ui.button(
-                                            egui::RichText::new(t!("dialog.unsaved.discard").as_ref())
-                                                .color(egui::Color32::from_rgb(255, 80, 80)),
+                                            egui::RichText::new(
+                                                t!("dialog.unsaved.discard").as_ref(),
+                                            )
+                                            .color(egui::Color32::from_rgb(255, 80, 80)),
                                         );
                                         if discard_btn.clicked() {
                                             *action_cb.borrow_mut() = Some(Action::Discard);

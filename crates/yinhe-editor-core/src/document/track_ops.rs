@@ -19,7 +19,9 @@ impl Document {
         let insert_idx = after_idx + 1;
 
         // Find a free channel on port 0
-        let used_channels: std::collections::HashSet<u8> = model.tracks.iter()
+        let used_channels: std::collections::HashSet<u8> = model
+            .tracks
+            .iter()
             .filter(|t| t.port == 0)
             .map(|t| t.channel)
             .collect();
@@ -35,10 +37,24 @@ impl Document {
 
         // Remap notes: track >= insert_idx gets +1
         let note_remap: Vec<u16> = (0..tracks_before.len())
-            .map(|i| if i >= insert_idx { (i + 1) as u16 } else { i as u16 })
+            .map(|i| {
+                if i >= insert_idx {
+                    (i + 1) as u16
+                } else {
+                    i as u16
+                }
+            })
             .collect();
         let note_remap_inverse: Vec<u16> = (0..model.tracks.len())
-            .map(|i| if i == insert_idx { u16::MAX } else if i < insert_idx { i as u16 } else { (i - 1) as u16 })
+            .map(|i| {
+                if i == insert_idx {
+                    u16::MAX
+                } else if i < insert_idx {
+                    i as u16
+                } else {
+                    (i - 1) as u16
+                }
+            })
             .collect();
 
         let tracks_after: Vec<Arc<yinhe_core::TrackData>> = model.tracks.clone();
@@ -48,7 +64,10 @@ impl Document {
             let bucket = Arc::make_mut(bucket);
             for note in bucket.iter_mut() {
                 // 越界音符按删除处理（unwrap_or(u16::MAX)），避免 panic（规则 17）。
-                note.track = note_remap.get(note.track as usize).copied().unwrap_or(u16::MAX);
+                note.track = note_remap
+                    .get(note.track as usize)
+                    .copied()
+                    .unwrap_or(u16::MAX);
             }
         }
 
@@ -61,9 +80,10 @@ impl Document {
         self.edit.track_selected.insert(insert_idx as u16);
         // 新增 track 后，editing_track 后面的索引要 +1
         if let Some(t) = self.edit.editing_track
-            && (t as usize) >= insert_idx {
-                self.edit.editing_track = Some(t + 1);
-            }
+            && (t as usize) >= insert_idx
+        {
+            self.edit.editing_track = Some(t + 1);
+        }
 
         Some(UndoAction::TrackStructure {
             tracks_before,
@@ -110,7 +130,15 @@ impl Document {
 
         // Remap: track < idx stays, track == idx is deleted (u16::MAX), track > idx gets -1
         let note_remap: Vec<u16> = (0..tracks_before.len())
-            .map(|i| if i == idx { u16::MAX } else if i > idx { (i - 1) as u16 } else { i as u16 })
+            .map(|i| {
+                if i == idx {
+                    u16::MAX
+                } else if i > idx {
+                    (i - 1) as u16
+                } else {
+                    i as u16
+                }
+            })
             .collect();
         let note_remap_inverse: Vec<u16> = (0..model.tracks.len())
             .map(|i| if i < idx { i as u16 } else { (i + 1) as u16 })
@@ -122,9 +150,18 @@ impl Document {
         for bucket in model.notes.iter_mut() {
             let bucket = Arc::make_mut(bucket);
             // 越界音符按删除处理（unwrap_or(u16::MAX)），避免 panic（规则 17）。
-            bucket.retain(|n| note_remap.get(n.track as usize).copied().unwrap_or(u16::MAX) != u16::MAX);
+            bucket.retain(|n| {
+                note_remap
+                    .get(n.track as usize)
+                    .copied()
+                    .unwrap_or(u16::MAX)
+                    != u16::MAX
+            });
             for note in bucket.iter_mut() {
-                note.track = note_remap.get(note.track as usize).copied().unwrap_or(u16::MAX);
+                note.track = note_remap
+                    .get(note.track as usize)
+                    .copied()
+                    .unwrap_or(u16::MAX);
             }
         }
         // Mark all buckets dirty since we may have removed notes from any
@@ -167,8 +204,9 @@ impl Document {
             return None;
         }
         // Don't move conductor track
-        if self.edit.conductor_track_idx == Some(from_idx as u16) ||
-           self.edit.conductor_track_idx == Some(to_idx as u16) {
+        if self.edit.conductor_track_idx == Some(from_idx as u16)
+            || self.edit.conductor_track_idx == Some(to_idx as u16)
+        {
             return None;
         }
 
@@ -181,18 +219,28 @@ impl Document {
         // Build remap table
         let note_remap: Vec<u16> = (0..tracks_before.len())
             .map(|i| {
-                if i == from_idx { to_idx as u16 }
-                else if from_idx < to_idx && i > from_idx && i <= to_idx { (i - 1) as u16 }
-                else if from_idx > to_idx && i >= to_idx && i < from_idx { (i + 1) as u16 }
-                else { i as u16 }
+                if i == from_idx {
+                    to_idx as u16
+                } else if from_idx < to_idx && i > from_idx && i <= to_idx {
+                    (i - 1) as u16
+                } else if from_idx > to_idx && i >= to_idx && i < from_idx {
+                    (i + 1) as u16
+                } else {
+                    i as u16
+                }
             })
             .collect();
         let note_remap_inverse: Vec<u16> = (0..model.tracks.len())
             .map(|i| {
-                if i == to_idx { from_idx as u16 }
-                else if from_idx < to_idx && i >= from_idx && i < to_idx { (i + 1) as u16 }
-                else if from_idx > to_idx && i > to_idx && i <= from_idx { (i - 1) as u16 }
-                else { i as u16 }
+                if i == to_idx {
+                    from_idx as u16
+                } else if from_idx < to_idx && i >= from_idx && i < to_idx {
+                    (i + 1) as u16
+                } else if from_idx > to_idx && i > to_idx && i <= from_idx {
+                    (i - 1) as u16
+                } else {
+                    i as u16
+                }
             })
             .collect();
 
@@ -203,7 +251,10 @@ impl Document {
             let bucket = Arc::make_mut(bucket);
             for note in bucket.iter_mut() {
                 // 越界音符按删除处理（unwrap_or(u16::MAX)），避免 panic（规则 17）。
-                note.track = note_remap.get(note.track as usize).copied().unwrap_or(u16::MAX);
+                note.track = note_remap
+                    .get(note.track as usize)
+                    .copied()
+                    .unwrap_or(u16::MAX);
             }
         }
 

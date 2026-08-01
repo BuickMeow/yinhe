@@ -21,7 +21,11 @@ pub(crate) fn show_viewport(
 
     ctx_clone.show_viewport_immediate(
         egui::ViewportId::from_hash_of("rescale_progress_dialog"),
-        crate::chrome::dialog::viewport_builder(t!("dialog.rescale.title").as_ref(), [340.0, 130.0], false),
+        crate::chrome::dialog::viewport_builder(
+            t!("dialog.rescale.title").as_ref(),
+            [340.0, 130.0],
+            false,
+        ),
         move |vctx, _class| {
             let state = match progress.lock() {
                 Ok(s) => s.clone(),
@@ -35,7 +39,11 @@ pub(crate) fn show_viewport(
                     ..Default::default()
                 })
                 .show(vctx, |ui| {
-                    crate::chrome::dialog::title_bar(ui, t!("dialog.rescale.title").as_ref(), &mut close);
+                    crate::chrome::dialog::title_bar(
+                        ui,
+                        t!("dialog.rescale.title").as_ref(),
+                        &mut close,
+                    );
                     egui::Frame::new()
                         .inner_margin(egui::Margin {
                             left: 12,

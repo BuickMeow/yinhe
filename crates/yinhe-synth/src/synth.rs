@@ -20,15 +20,15 @@ pub struct GpuVoiceState {
     pub speed: f32,
     pub gain: f32,
     pub time: f32,
-    pub start_offset: u32,  // 块内起始帧偏移
+    pub start_offset: u32, // 块内起始帧偏移
     // Envelope state at start of block
     pub envelope: f32,       // 当前 envelope 值
     pub env_stage: u32,      // 0=Delay,1=Attack,2=Hold,3=Decay,4=Sustain,5=Release,6=Finished
     pub stage_progress: f32, // 当前阶段已用帧数
     // Envelope parameters
-    pub env_level: f32,      // peak = gain
-    pub sustain_level: f32,  // 0..1
-    pub env_start: f32,      // ampeg_start (0..1)
+    pub env_level: f32,     // peak = gain
+    pub sustain_level: f32, // 0..1
+    pub env_start: f32,     // ampeg_start (0..1)
     // Stage durations (frames)
     pub delay_frames: f32,
     pub attack_frames: f32,
@@ -41,7 +41,7 @@ pub struct GpuVoiceState {
     // Loop
     pub loop_start: u32,
     pub loop_end: u32,
-    pub loop_mode: u32,     // 0=NoLoop, 1=LoopContinuous, 2=LoopSustain, 3=OneShot
+    pub loop_mode: u32, // 0=NoLoop, 1=LoopContinuous, 2=LoopSustain, 3=OneShot
 }
 
 /// Uniform buffer for render parameters.
@@ -60,7 +60,9 @@ pub fn advance_voices(voices: &mut [GpuVoiceState], frame_count: u32) {
     for voice in voices.iter_mut() {
         let active_frames = frame_count.saturating_sub(voice.start_offset);
         voice.start_offset = 0;
-        if voice.env_stage >= 6 || active_frames == 0 { continue; }
+        if voice.env_stage >= 6 || active_frames == 0 {
+            continue;
+        }
         voice.time += voice.speed * active_frames as f32;
 
         // 循环回绕
@@ -68,7 +70,8 @@ pub fn advance_voices(voices: &mut [GpuVoiceState], frame_count: u32) {
         if has_loop && voice.time >= voice.loop_end as f32 {
             let loop_len = (voice.loop_end - voice.loop_start) as f32;
             if loop_len > 0.0 {
-                voice.time = voice.loop_start as f32 + ((voice.time - voice.loop_start as f32) % loop_len);
+                voice.time =
+                    voice.loop_start as f32 + ((voice.time - voice.loop_start as f32) % loop_len);
             }
         }
 
@@ -78,7 +81,8 @@ pub fn advance_voices(voices: &mut [GpuVoiceState], frame_count: u32) {
 
         while remaining > 0.0 && voice.env_stage < 6 {
             match voice.env_stage {
-                0 => { // Delay
+                0 => {
+                    // Delay
                     let dur = voice.delay_frames - voice.stage_progress;
                     if remaining < dur {
                         voice.stage_progress += remaining;
@@ -89,7 +93,8 @@ pub fn advance_voices(voices: &mut [GpuVoiceState], frame_count: u32) {
                         voice.stage_progress = 0.0;
                     }
                 }
-                1 => { // Attack: 线性
+                1 => {
+                    // Attack: 线性
                     let dur = voice.attack_frames - voice.stage_progress;
                     if remaining < dur {
                         let t = (voice.stage_progress + remaining) / voice.attack_frames;
@@ -103,7 +108,8 @@ pub fn advance_voices(voices: &mut [GpuVoiceState], frame_count: u32) {
                         voice.stage_progress = 0.0;
                     }
                 }
-                2 => { // Hold
+                2 => {
+                    // Hold
                     let dur = voice.hold_frames - voice.stage_progress;
                     if remaining < dur {
                         voice.stage_progress += remaining;
@@ -114,7 +120,8 @@ pub fn advance_voices(voices: &mut [GpuVoiceState], frame_count: u32) {
                         voice.stage_progress = 0.0;
                     }
                 }
-                3 => { // Decay: 指数 (1-t)^8
+                3 => {
+                    // Decay: 指数 (1-t)^8
                     let dur = voice.decay_frames - voice.stage_progress;
                     if remaining < dur {
                         let t = (voice.stage_progress + remaining) / voice.decay_frames;
@@ -128,8 +135,11 @@ pub fn advance_voices(voices: &mut [GpuVoiceState], frame_count: u32) {
                         voice.stage_progress = 0.0;
                     }
                 }
-                4 => { remaining = 0.0; } // Sustain: 无限
-                5 => { // Release: 指数 (1-t)^8
+                4 => {
+                    remaining = 0.0;
+                } // Sustain: 无限
+                5 => {
+                    // Release: 指数 (1-t)^8
                     let dur = voice.release_frames - voice.stage_progress;
                     if remaining < dur {
                         let t = (voice.stage_progress + remaining) / voice.release_frames;
@@ -196,32 +206,56 @@ impl GpuAudioRenderer {
         // 8: chunk_offsets (uniform, separate)
         let mut entries = Vec::with_capacity(9);
         entries.push(wgpu::BindGroupLayoutEntry {
-            binding: 0, visibility: wgpu::ShaderStages::COMPUTE,
-            ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None },
+            binding: 0,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
             count: None,
         });
         entries.push(wgpu::BindGroupLayoutEntry {
-            binding: 1, visibility: wgpu::ShaderStages::COMPUTE,
-            ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None },
+            binding: 1,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
             count: None,
         });
         entries.push(wgpu::BindGroupLayoutEntry {
-            binding: 2, visibility: wgpu::ShaderStages::COMPUTE,
-            ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: false }, has_dynamic_offset: false, min_binding_size: None },
+            binding: 2,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only: false },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
             count: None,
         });
         for i in 0..MAX_CHUNKS {
             entries.push(wgpu::BindGroupLayoutEntry {
                 binding: (3 + i) as u32,
                 visibility: wgpu::ShaderStages::COMPUTE,
-                ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Storage { read_only: true }, has_dynamic_offset: false, min_binding_size: None },
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
                 count: None,
             });
         }
         // chunk_offsets uniform (binding 8)
         entries.push(wgpu::BindGroupLayoutEntry {
-            binding: 8, visibility: wgpu::ShaderStages::COMPUTE,
-            ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: None },
+            binding: 8,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
             count: None,
         });
 
@@ -253,8 +287,15 @@ impl GpuAudioRenderer {
         });
 
         Ok(Self {
-            device, queue, pipeline, pipeline_layout, bind_group_layout, dummy_buf,
-            buffers: None, sample_chunks: Vec::new(), frame_count: 0,
+            device,
+            queue,
+            pipeline,
+            pipeline_layout,
+            bind_group_layout,
+            dummy_buf,
+            buffers: None,
+            sample_chunks: Vec::new(),
+            frame_count: 0,
         })
     }
 
@@ -273,20 +314,18 @@ impl GpuAudioRenderer {
             force_fallback_adapter: false,
         }))
         .map_err(|_| "No GPU adapter found")?;
-        let (device, queue) = pollster::block_on(adapter.request_device(
-            &wgpu::DeviceDescriptor {
-                label: Some("gpu_audio"),
-                required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits {
-                    max_storage_buffer_binding_size: 512 * 1024 * 1024,
-                    max_buffer_size: 512 * 1024 * 1024,
-                    ..wgpu::Limits::default()
-                },
-                memory_hints: wgpu::MemoryHints::default(),
-                experimental_features: wgpu::ExperimentalFeatures::disabled(),
-                trace: wgpu::Trace::Off,
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            label: Some("gpu_audio"),
+            required_features: wgpu::Features::empty(),
+            required_limits: wgpu::Limits {
+                max_storage_buffer_binding_size: 512 * 1024 * 1024,
+                max_buffer_size: 512 * 1024 * 1024,
+                ..wgpu::Limits::default()
             },
-        ))
+            memory_hints: wgpu::MemoryHints::default(),
+            experimental_features: wgpu::ExperimentalFeatures::disabled(),
+            trace: wgpu::Trace::Off,
+        }))
         .map_err(|e| format!("Failed to create device: {}", e))?;
         Self::new(Arc::new(device), Arc::new(queue))
     }
@@ -316,13 +355,17 @@ impl GpuAudioRenderer {
         let chunk_count = self.sample_chunks.len().min(MAX_CHUNKS) as u32;
 
         // Create sample chunk buffers
-        let sample_chunks: Vec<wgpu::Buffer> = self.sample_chunks.iter().map(|data| {
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("sample_chunk"),
-                contents: bytemuck::cast_slice(data),
-                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        let sample_chunks: Vec<wgpu::Buffer> = self
+            .sample_chunks
+            .iter()
+            .map(|data| {
+                device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("sample_chunk"),
+                    contents: bytemuck::cast_slice(data),
+                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+                })
             })
-        }).collect();
+            .collect();
 
         // Create chunk_offsets buffer (uniform, padded to 32 bytes = 8 u32 for 16-byte alignment)
         let mut offsets: Vec<u32> = Vec::with_capacity(8);
@@ -343,38 +386,63 @@ impl GpuAudioRenderer {
         });
 
         // Other persistent buffers（用 rounded_voices 分配，和 max_voices 一致）
-        let voice_state_size = (rounded_voices as usize * std::mem::size_of::<GpuVoiceState>()) as u64;
-        let final_output_size = (frame_count.max(1) as usize * 2 * std::mem::size_of::<f32>()) as u64;
+        let voice_state_size =
+            (rounded_voices as usize * std::mem::size_of::<GpuVoiceState>()) as u64;
+        let final_output_size =
+            (frame_count.max(1) as usize * 2 * std::mem::size_of::<f32>()) as u64;
         let params_size = std::mem::size_of::<RenderParams>() as u64;
 
         let voice_state_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("gpu_voice_states"), size: voice_state_size,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false,
+            label: Some("gpu_voice_states"),
+            size: voice_state_size,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
         });
         let final_output_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("gpu_final_output"), size: final_output_size,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC, mapped_at_creation: false,
+            label: Some("gpu_final_output"),
+            size: final_output_size,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
         });
         let params_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("gpu_params"), size: params_size,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false,
+            label: Some("gpu_params"),
+            size: params_size,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
         });
         let staging0 = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("staging_0"), size: final_output_size,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false,
+            label: Some("staging_0"),
+            size: final_output_size,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
         });
         let staging1 = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("staging_1"), size: final_output_size,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false,
+            label: Some("staging_1"),
+            size: final_output_size,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
         });
 
         // Build bind group entries
-        let make_bg = |p: &wgpu::Buffer, v: &wgpu::Buffer, f: &wgpu::Buffer,
-                       co: &wgpu::Buffer, sc: &[wgpu::Buffer], db: &wgpu::Buffer| {
+        let make_bg = |p: &wgpu::Buffer,
+                       v: &wgpu::Buffer,
+                       f: &wgpu::Buffer,
+                       co: &wgpu::Buffer,
+                       sc: &[wgpu::Buffer],
+                       db: &wgpu::Buffer| {
             let mut bg_entries = vec![
-                wgpu::BindGroupEntry { binding: 0, resource: p.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: v.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: f.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: p.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: v.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: f.as_entire_binding(),
+                },
             ];
             // 必须固定迭代 MAX_CHUNKS 次：sc 可能不足 MAX_CHUNKS，
             // 其余 binding slot 用 dummy buffer 占位（layout 要求全部填充）。
@@ -385,9 +453,15 @@ impl GpuAudioRenderer {
                 } else {
                     db.as_entire_binding()
                 };
-                bg_entries.push(wgpu::BindGroupEntry { binding: (3 + i) as u32, resource });
+                bg_entries.push(wgpu::BindGroupEntry {
+                    binding: (3 + i) as u32,
+                    resource,
+                });
             }
-            bg_entries.push(wgpu::BindGroupEntry { binding: 8, resource: co.as_entire_binding() });
+            bg_entries.push(wgpu::BindGroupEntry {
+                binding: 8,
+                resource: co.as_entire_binding(),
+            });
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("audio_bg"),
                 layout: &self.bind_group_layout,
@@ -397,8 +471,22 @@ impl GpuAudioRenderer {
 
         self.buffers = Some(GpuBuffers {
             bind_groups: [
-                make_bg(&params_buf, &voice_state_buf, &final_output_buf, &chunk_offsets_buf, &sample_chunks, &self.dummy_buf),
-                make_bg(&params_buf, &voice_state_buf, &final_output_buf, &chunk_offsets_buf, &sample_chunks, &self.dummy_buf),
+                make_bg(
+                    &params_buf,
+                    &voice_state_buf,
+                    &final_output_buf,
+                    &chunk_offsets_buf,
+                    &sample_chunks,
+                    &self.dummy_buf,
+                ),
+                make_bg(
+                    &params_buf,
+                    &voice_state_buf,
+                    &final_output_buf,
+                    &chunk_offsets_buf,
+                    &sample_chunks,
+                    &self.dummy_buf,
+                ),
             ],
             sample_chunks,
             chunk_offsets_buf,
@@ -432,23 +520,28 @@ impl GpuAudioRenderer {
         self.ensure_buffers(voice_count, frame_count);
         let buf = self.buffers.as_mut().unwrap();
 
-        self.queue.write_buffer(&buf.voice_state_buf, 0, bytemuck::cast_slice(voices));
+        self.queue
+            .write_buffer(&buf.voice_state_buf, 0, bytemuck::cast_slice(voices));
         let params = RenderParams {
             frame_count,
             voice_count,
             sample_rate,
             sample_chunk_count: buf.chunk_count,
         };
-        self.queue.write_buffer(&buf.params_buf, 0, bytemuck::bytes_of(&params));
+        self.queue
+            .write_buffer(&buf.params_buf, 0, bytemuck::bytes_of(&params));
 
         let idx = buf.staging_idx;
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("audio_render"),
-        });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("audio_render"),
+            });
 
         {
             let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("voice_pass"), ..Default::default()
+                label: Some("voice_pass"),
+                ..Default::default()
             });
             cpass.set_pipeline(&self.pipeline);
             cpass.set_bind_group(0, &buf.bind_groups[idx], &[]);
@@ -456,13 +549,24 @@ impl GpuAudioRenderer {
         }
 
         let final_output_size = (frame_count as usize * 2 * std::mem::size_of::<f32>()) as u64;
-        encoder.copy_buffer_to_buffer(&buf.final_output_buf, 0, &buf.staging[idx], 0, final_output_size);
+        encoder.copy_buffer_to_buffer(
+            &buf.final_output_buf,
+            0,
+            &buf.staging[idx],
+            0,
+            final_output_size,
+        );
         self.queue.submit(std::iter::once(encoder.finish()));
 
         let buffer_slice = buf.staging[idx].slice(..);
         let (sender, receiver) = std::sync::mpsc::channel();
-        buffer_slice.map_async(wgpu::MapMode::Read, move |result| { let _ = sender.send(result); });
-        let _ = self.device.poll(wgpu::PollType::Wait { submission_index: None, timeout: None });
+        buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
+            let _ = sender.send(result);
+        });
+        let _ = self.device.poll(wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: None,
+        });
         receiver.recv().unwrap().unwrap();
 
         let data = buffer_slice.get_mapped_range();
@@ -498,8 +602,12 @@ pub fn cpu_render_voices(
     let mut output = vec![0.0f32; frame_count as usize * 2];
     for voice in voices.iter_mut() {
         for fi in 0..frame_count as usize {
-            if voice.env_stage >= 6 { continue; }
-            if fi < voice.start_offset as usize { continue; }
+            if voice.env_stage >= 6 {
+                continue;
+            }
+            if fi < voice.start_offset as usize {
+                continue;
+            }
             let frame_in_voice = fi - voice.start_offset as usize;
 
             let peak = voice.env_level;
@@ -509,18 +617,33 @@ pub fn cpu_render_voices(
             // 解析计算 envelope
             let env = match voice.env_stage {
                 0 => voice.env_start, // Delay
-                1 => { // Attack: 线性
-                    let t = if voice.attack_frames > 0.0 { (progress / voice.attack_frames).min(1.0) } else { 1.0 };
+                1 => {
+                    // Attack: 线性
+                    let t = if voice.attack_frames > 0.0 {
+                        (progress / voice.attack_frames).min(1.0)
+                    } else {
+                        1.0
+                    };
                     voice.env_start + (peak - voice.env_start) * t
                 }
                 2 => peak, // Hold
-                3 => { // Decay: 指数 (1-t)^8
-                    let t = if voice.decay_frames > 0.0 { (progress / voice.decay_frames).min(1.0) } else { 1.0 };
+                3 => {
+                    // Decay: 指数 (1-t)^8
+                    let t = if voice.decay_frames > 0.0 {
+                        (progress / voice.decay_frames).min(1.0)
+                    } else {
+                        1.0
+                    };
                     sus + (peak - sus) * (1.0 - t).powi(8)
                 }
                 4 => sus, // Sustain
-                5 => { // Release: 指数 (1-t)^8
-                    let t = if voice.release_frames > 0.0 { (progress / voice.release_frames).min(1.0) } else { 1.0 };
+                5 => {
+                    // Release: 指数 (1-t)^8
+                    let t = if voice.release_frames > 0.0 {
+                        (progress / voice.release_frames).min(1.0)
+                    } else {
+                        1.0
+                    };
                     voice.env_start * (1.0 - t).powi(8)
                 }
                 _ => 0.0,
@@ -540,9 +663,13 @@ pub fn cpu_render_voices(
                 }
             }
 
-            if idx >= voice.sample_length { continue; }
-            let a = sample_data[voice.sample_offset as usize + (idx as usize).min(max_idx as usize)];
-            let b = sample_data[voice.sample_offset as usize + ((idx + 1) as usize).min(max_idx as usize)];
+            if idx >= voice.sample_length {
+                continue;
+            }
+            let a =
+                sample_data[voice.sample_offset as usize + (idx as usize).min(max_idx as usize)];
+            let b = sample_data
+                [voice.sample_offset as usize + ((idx + 1) as usize).min(max_idx as usize)];
             let sample = a + (b - a) * frac;
             let out = sample * voice.gain * env;
             output[fi * 2] += out * voice.pan_left;
@@ -562,41 +689,74 @@ mod tests {
     use super::*;
 
     fn make_sine_samples(len: usize, freq: f32, sr: f32) -> Vec<f32> {
-        (0..len).map(|i| (2.0 * std::f32::consts::PI * freq * i as f32 / sr).sin()).collect()
+        (0..len)
+            .map(|i| (2.0 * std::f32::consts::PI * freq * i as f32 / sr).sin())
+            .collect()
     }
 
     fn make_voices(sample_len: u32, count: u32, speed: f32) -> Vec<GpuVoiceState> {
-        (0..count).map(|i| GpuVoiceState {
-            sample_offset: (i % 4) * sample_len, sample_length: sample_len,
-            speed, gain: 0.5, time: 0.0, start_offset: 0,
-            envelope: 0.0, env_stage: 4, stage_progress: 0.0,
-            env_level: 1.0, sustain_level: 1.0, env_start: 0.0,
-            delay_frames: 0.0, attack_frames: 1.0, hold_frames: 0.0,
-            decay_frames: 1.0, release_frames: 1.0,
-            pan_left: 1.0, pan_right: 1.0,
-            loop_start: 0, loop_end: 0, loop_mode: 0,
-        }).collect()
+        (0..count)
+            .map(|i| GpuVoiceState {
+                sample_offset: (i % 4) * sample_len,
+                sample_length: sample_len,
+                speed,
+                gain: 0.5,
+                time: 0.0,
+                start_offset: 0,
+                envelope: 0.0,
+                env_stage: 4,
+                stage_progress: 0.0,
+                env_level: 1.0,
+                sustain_level: 1.0,
+                env_start: 0.0,
+                delay_frames: 0.0,
+                attack_frames: 1.0,
+                hold_frames: 0.0,
+                decay_frames: 1.0,
+                release_frames: 1.0,
+                pan_left: 1.0,
+                pan_right: 1.0,
+                loop_start: 0,
+                loop_end: 0,
+                loop_mode: 0,
+            })
+            .collect()
     }
 
     fn setup_gpu() -> Option<(GpuAudioRenderer, Vec<f32>)> {
         let mut renderer = GpuAudioRenderer::new_default().ok()?;
         let sample_len = 4096u32;
-        let samples: Vec<f32> = (0..4).flat_map(|inst| {
-            make_sine_samples(sample_len as usize, 440.0 * (inst as f32 + 1.0), 44100.0)
-        }).collect();
+        let samples: Vec<f32> = (0..4)
+            .flat_map(|inst| {
+                make_sine_samples(sample_len as usize, 440.0 * (inst as f32 + 1.0), 44100.0)
+            })
+            .collect();
         renderer.upload_samples(&samples);
         let limits = renderer.device.limits();
-        eprintln!("GPU limits: min_storage_buf_align={} max_buf_binding={}", limits.min_storage_buffer_offset_alignment, limits.max_storage_buffer_binding_size);
+        eprintln!(
+            "GPU limits: min_storage_buf_align={} max_buf_binding={}",
+            limits.min_storage_buffer_offset_alignment, limits.max_storage_buffer_binding_size
+        );
         Some((renderer, samples))
     }
 
     fn bench_samples(sample_len: u32) -> Vec<f32> {
-        (0..4).flat_map(|inst| make_sine_samples(sample_len as usize, 440.0 * (inst as f32 + 1.0), 44100.0)).collect()
+        (0..4)
+            .flat_map(|inst| {
+                make_sine_samples(sample_len as usize, 440.0 * (inst as f32 + 1.0), 44100.0)
+            })
+            .collect()
     }
 
     #[test]
     fn phase15_single_pass_smoke() {
-        let (mut renderer, _samples) = match setup_gpu() { Some(r) => r, None => { eprintln!("No GPU"); return; } };
+        let (mut renderer, _samples) = match setup_gpu() {
+            Some(r) => r,
+            None => {
+                eprintln!("No GPU");
+                return;
+            }
+        };
         let voices = make_voices(4096, 16, 1.0);
         let result = renderer.render_block(&voices, 1024, 44100);
         assert_eq!(result.len(), 1024 * 2);
@@ -605,17 +765,27 @@ mod tests {
 
     #[test]
     fn phase15_benchmark() {
-        let (mut renderer, _samples) = match setup_gpu() { Some(r) => r, None => { eprintln!("No GPU"); return; } };
+        let (mut renderer, _samples) = match setup_gpu() {
+            Some(r) => r,
+            None => {
+                eprintln!("No GPU");
+                return;
+            }
+        };
         let sample_len = 4096u32;
         let samples = bench_samples(sample_len);
         let frame_count = 1024u32;
 
         for &vc in &[4, 16, 64, 256, 1024, 4096, 15000] {
             let voices = make_voices(sample_len, vc, 1.0);
-            for _ in 0..3 { let _ = renderer.render_block(&voices, frame_count, 44100); }
+            for _ in 0..3 {
+                let _ = renderer.render_block(&voices, frame_count, 44100);
+            }
             let n = 10;
             let gpu_start = std::time::Instant::now();
-            for _ in 0..n { let _ = renderer.render_block(&voices, frame_count, 44100); }
+            for _ in 0..n {
+                let _ = renderer.render_block(&voices, frame_count, 44100);
+            }
             let gpu_per_block = gpu_start.elapsed() / n;
             let cpu_start = std::time::Instant::now();
             for _ in 0..n {
@@ -624,15 +794,27 @@ mod tests {
             }
             let cpu_per_block = cpu_start.elapsed() / n;
             let speedup = cpu_per_block.as_secs_f64() / gpu_per_block.as_secs_f64();
-            eprintln!("Voices={vc:>6}: CPU={cpu_per_block:>8.2?} GPU={gpu_per_block:>8.2?} speedup={speedup:.2}x");
+            eprintln!(
+                "Voices={vc:>6}: CPU={cpu_per_block:>8.2?} GPU={gpu_per_block:>8.2?} speedup={speedup:.2}x"
+            );
         }
     }
 
     #[test]
     fn gpu_vs_cpu_correctness() {
-        let (mut renderer, samples) = match setup_gpu() { Some(r) => r, None => { eprintln!("No GPU"); return; } };
+        let (mut renderer, samples) = match setup_gpu() {
+            Some(r) => r,
+            None => {
+                eprintln!("No GPU");
+                return;
+            }
+        };
         let _sample_len = 4096u32;
-        eprintln!("Sample data: len={} first5={:?}", samples.len(), &samples[..5.min(samples.len())]);
+        eprintln!(
+            "Sample data: len={} first5={:?}",
+            samples.len(),
+            &samples[..5.min(samples.len())]
+        );
 
         // Test: manually create a 1-chunk renderer with known data
         let test_data: Vec<f32> = (0..1024).map(|i| i as f32 / 1024.0).collect();
@@ -642,25 +824,47 @@ mod tests {
 
         // voice 在 sustain 阶段: envelope = sustain_level * env_level = 1.0 * 1.0 = 1.0
         let gpu_voices = vec![GpuVoiceState {
-            sample_offset: 0, sample_length: 1024, speed: 1.0,
-            gain: 1.0, time: 0.0, start_offset: 0,
-            envelope: 1.0, env_stage: 4, stage_progress: 0.0,
-            env_level: 1.0, sustain_level: 1.0, env_start: 0.0,
-            delay_frames: 0.0, attack_frames: 1.0, hold_frames: 0.0,
-            decay_frames: 1.0, release_frames: 1.0,
-            pan_left: 1.0, pan_right: 1.0,
-            loop_start: 0, loop_end: 0, loop_mode: 0,
+            sample_offset: 0,
+            sample_length: 1024,
+            speed: 1.0,
+            gain: 1.0,
+            time: 0.0,
+            start_offset: 0,
+            envelope: 1.0,
+            env_stage: 4,
+            stage_progress: 0.0,
+            env_level: 1.0,
+            sustain_level: 1.0,
+            env_start: 0.0,
+            delay_frames: 0.0,
+            attack_frames: 1.0,
+            hold_frames: 0.0,
+            decay_frames: 1.0,
+            release_frames: 1.0,
+            pan_left: 1.0,
+            pan_right: 1.0,
+            loop_start: 0,
+            loop_end: 0,
+            loop_mode: 0,
         }];
         let gpu_out = renderer.render_block(&gpu_voices, 8, 44100);
 
         eprintln!("GPU output (8 frames, should be test_data[0..8]):");
         for i in 0..8 {
-            eprintln!("  frame[{i}]: gpu={:.6} expected={:.6}", gpu_out[i*2], test_data[i]);
+            eprintln!(
+                "  frame[{i}]: gpu={:.6} expected={:.6}",
+                gpu_out[i * 2],
+                test_data[i]
+            );
         }
 
         // Fresh buffer test: create ALL buffers from scratch, no reuse
         let device = &renderer.device;
-        eprintln!("  test_data len={} first3={:?}", test_data.len(), &test_data[..3]);
+        eprintln!(
+            "  test_data len={} first3={:?}",
+            test_data.len(),
+            &test_data[..3]
+        );
         // Try two-step approach: create buffer, then write data
         let sample_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("fresh_sample"),
@@ -668,142 +872,277 @@ mod tests {
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        renderer.queue.write_buffer(&sample_buf, 0, bytemuck::cast_slice(&test_data));
-        renderer.queue.submit(std::iter::empty::<wgpu::CommandBuffer>()); // flush the write
+        renderer
+            .queue
+            .write_buffer(&sample_buf, 0, bytemuck::cast_slice(&test_data));
+        renderer
+            .queue
+            .submit(std::iter::empty::<wgpu::CommandBuffer>()); // flush the write
         eprintln!("  sample_buf created: size={}", sample_buf.size());
         let voice_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("fresh_voice"),
             contents: bytemuck::cast_slice(&[GpuVoiceState {
-                sample_offset: 0, sample_length: 1024, speed: 1.0,
-                gain: 1.0, time: 0.0, start_offset: 0,
-                envelope: 1.0, env_stage: 4, stage_progress: 0.0,
-                env_level: 1.0, sustain_level: 1.0, env_start: 0.0,
-                delay_frames: 0.0, attack_frames: 1.0, hold_frames: 0.0,
-                decay_frames: 1.0, release_frames: 1.0,
-                pan_left: 1.0, pan_right: 1.0,
-                loop_start: 0, loop_end: 0, loop_mode: 0,
+                sample_offset: 0,
+                sample_length: 1024,
+                speed: 1.0,
+                gain: 1.0,
+                time: 0.0,
+                start_offset: 0,
+                envelope: 1.0,
+                env_stage: 4,
+                stage_progress: 0.0,
+                env_level: 1.0,
+                sustain_level: 1.0,
+                env_start: 0.0,
+                delay_frames: 0.0,
+                attack_frames: 1.0,
+                hold_frames: 0.0,
+                decay_frames: 1.0,
+                release_frames: 1.0,
+                pan_left: 1.0,
+                pan_right: 1.0,
+                loop_start: 0,
+                loop_end: 0,
+                loop_mode: 0,
             }]),
             usage: wgpu::BufferUsages::STORAGE,
         });
         let output_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("fresh_output"), size: 64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC, mapped_at_creation: false,
+            label: Some("fresh_output"),
+            size: 64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
         });
-        let params_data = RenderParams { frame_count: 8, voice_count: 1, sample_rate: 44100, sample_chunk_count: 1 };
+        let params_data = RenderParams {
+            frame_count: 8,
+            voice_count: 1,
+            sample_rate: 44100,
+            sample_chunk_count: 1,
+        };
         let params_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("fresh_params"), contents: bytemuck::bytes_of(&params_data),
+            label: Some("fresh_params"),
+            contents: bytemuck::bytes_of(&params_data),
             usage: wgpu::BufferUsages::UNIFORM,
         });
         let offsets_data = [0u32, 1024, 0, 0, 0, 1024, 0, 0]; // o0,o1,o2,o3,o4,total,_pad0,_pad1
         eprintln!("  offsets_data={:?}", offsets_data);
         eprintln!("  offsets_data size={} bytes", offsets_data.len() * 4);
         let offsets_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("fresh_offsets"), contents: bytemuck::cast_slice(&offsets_data),
+            label: Some("fresh_offsets"),
+            contents: bytemuck::cast_slice(&offsets_data),
             usage: wgpu::BufferUsages::UNIFORM,
         });
         let _staging_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("fresh_staging"), size: 64,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false,
+            label: Some("fresh_staging"),
+            size: 64,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
         });
         let _bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("fresh_bg"), layout: &renderer.bind_group_layout,
+            label: Some("fresh_bg"),
+            layout: &renderer.bind_group_layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: params_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: voice_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: output_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 3, resource: sample_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 4, resource: renderer.dummy_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 5, resource: renderer.dummy_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 6, resource: renderer.dummy_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 7, resource: renderer.dummy_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 8, resource: offsets_buf.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: params_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: voice_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: output_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: sample_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: renderer.dummy_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: renderer.dummy_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: renderer.dummy_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: renderer.dummy_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: offsets_buf.as_entire_binding(),
+                },
             ],
         });
         // Create const_one pipeline for verification test
         let const_shader = include_str!("shaders/const_one.wgsl");
         let const_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("const_one"), source: wgpu::ShaderSource::Wgsl(const_shader.into()),
+            label: Some("const_one"),
+            source: wgpu::ShaderSource::Wgsl(const_shader.into()),
         });
         let _const_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("const_pipe"), layout: Some(&renderer.pipeline_layout),
-            module: &const_module, entry_point: Some("vs_main"),
-            compilation_options: Default::default(), cache: None,
+            label: Some("const_pipe"),
+            layout: Some(&renderer.pipeline_layout),
+            module: &const_module,
+            entry_point: Some("vs_main"),
+            compilation_options: Default::default(),
+            cache: None,
         });
         // Verify sample_chunks[0] has test data
         let bufs = renderer.buffers.as_ref().unwrap();
         let verify_size = bufs.sample_chunks[0].size();
         let verify_staging = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("verify"), size: verify_size,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false,
+            label: Some("verify"),
+            size: verify_size,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
         });
-        let mut enc_v = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("verify") });
+        let mut enc_v = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("verify"),
+        });
         enc_v.copy_buffer_to_buffer(&bufs.sample_chunks[0], 0, &verify_staging, 0, verify_size);
         renderer.queue.submit(std::iter::once(enc_v.finish()));
         let vslice = verify_staging.slice(..);
         let (vtx, vrx) = std::sync::mpsc::channel();
-        vslice.map_async(wgpu::MapMode::Read, move |r| { let _ = vtx.send(r); });
-        let _ = renderer.device.poll(wgpu::PollType::Wait { submission_index: None, timeout: None });
+        vslice.map_async(wgpu::MapMode::Read, move |r| {
+            let _ = vtx.send(r);
+        });
+        let _ = renderer.device.poll(wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: None,
+        });
         vrx.recv().unwrap().unwrap();
         let vdata = vslice.get_mapped_range();
         let verify: Vec<f32> = bytemuck::cast_slice(&vdata).to_vec();
-        drop(vdata); verify_staging.unmap();
-        eprintln!("Verify sample_chunks[0]: len={} [0]={} [1]={} [2]={}", verify.len(), verify[0], verify[1], verify[2]);
+        drop(vdata);
+        verify_staging.unmap();
+        eprintln!(
+            "Verify sample_chunks[0]: len={} [0]={} [1]={} [2]={}",
+            verify.len(),
+            verify[0],
+            verify[1],
+            verify[2]
+        );
 
         // Create test_read pipeline (reads chunk_0[fi] directly)
         let test_read_shader = include_str!("shaders/test_read.wgsl");
         let test_read_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("test_read"), source: wgpu::ShaderSource::Wgsl(test_read_shader.into()),
+            label: Some("test_read"),
+            source: wgpu::ShaderSource::Wgsl(test_read_shader.into()),
         });
         let test_read_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("test_read_pipe"), layout: Some(&renderer.pipeline_layout),
-            module: &test_read_module, entry_point: Some("vs_main"),
-            compilation_options: Default::default(), cache: None,
+            label: Some("test_read_pipe"),
+            layout: Some(&renderer.pipeline_layout),
+            module: &test_read_module,
+            entry_point: Some("vs_main"),
+            compilation_options: Default::default(),
+            cache: None,
         });
         // Test: write test data into a FRESH buffer (not sample_chunks[0])
         let fresh_sample = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("fresh_sample2"), contents: bytemuck::cast_slice(&test_data),
+            label: Some("fresh_sample2"),
+            contents: bytemuck::cast_slice(&test_data),
             usage: wgpu::BufferUsages::STORAGE,
         });
         let output_buf3 = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("test3_output"), size: 64,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC, mapped_at_creation: false,
+            label: Some("test3_output"),
+            size: 64,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
         });
         let staging_buf3 = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("test3_staging"), size: 64,
-            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false,
+            label: Some("test3_staging"),
+            size: 64,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
         });
         let bg3 = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("test3_bg"), layout: &renderer.bind_group_layout,
+            label: Some("test3_bg"),
+            layout: &renderer.bind_group_layout,
             entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: params_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: voice_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 2, resource: output_buf3.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 3, resource: fresh_sample.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 4, resource: renderer.dummy_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 5, resource: renderer.dummy_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 6, resource: renderer.dummy_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 7, resource: renderer.dummy_buf.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 8, resource: offsets_buf.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: params_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: voice_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: output_buf3.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: fresh_sample.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: renderer.dummy_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: renderer.dummy_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: renderer.dummy_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: renderer.dummy_buf.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: offsets_buf.as_entire_binding(),
+                },
             ],
         });
-        let mut enc3 = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("test3") });
-        { let mut cp = enc3.begin_compute_pass(&wgpu::ComputePassDescriptor { label: Some("test3"), ..Default::default() });
-          cp.set_pipeline(&test_read_pipeline); cp.set_bind_group(0, &bg3, &[]);
-          cp.dispatch_workgroups(8, 1, 1); }
+        let mut enc3 = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("test3"),
+        });
+        {
+            let mut cp = enc3.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("test3"),
+                ..Default::default()
+            });
+            cp.set_pipeline(&test_read_pipeline);
+            cp.set_bind_group(0, &bg3, &[]);
+            cp.dispatch_workgroups(8, 1, 1);
+        }
         enc3.copy_buffer_to_buffer(&output_buf3, 0, &staging_buf3, 0, 64);
         renderer.queue.submit(std::iter::once(enc3.finish()));
-        let _ = renderer.device.poll(wgpu::PollType::Wait { submission_index: None, timeout: None });
+        let _ = renderer.device.poll(wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: None,
+        });
         let slice3 = staging_buf3.slice(..);
         let (tx3, rx3) = std::sync::mpsc::channel();
-        slice3.map_async(wgpu::MapMode::Read, move |r| { let _ = tx3.send(r); });
-        let _ = renderer.device.poll(wgpu::PollType::Wait { submission_index: None, timeout: None });
+        slice3.map_async(wgpu::MapMode::Read, move |r| {
+            let _ = tx3.send(r);
+        });
+        let _ = renderer.device.poll(wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: None,
+        });
         rx3.recv().unwrap().unwrap();
         let data3 = slice3.get_mapped_range();
         let out3: Vec<f32> = bytemuck::cast_slice(&data3).to_vec();
-        drop(data3); staging_buf3.unmap();
+        drop(data3);
+        staging_buf3.unmap();
         eprintln!("test_read with fresh sample_buf:");
         for i in 0..8 {
-            eprintln!("  frame[{i}]: gpu={:.6} expected={:.6}", out3[i*2], test_data[i]);
+            eprintln!(
+                "  frame[{i}]: gpu={:.6} expected={:.6}",
+                out3[i * 2],
+                test_data[i]
+            );
         }
     }
 }

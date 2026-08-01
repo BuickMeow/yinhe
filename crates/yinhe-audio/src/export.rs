@@ -145,9 +145,10 @@ pub fn export_wav(
     }
 
     if let Some(ref ep) = export_progress
-        && let Ok(mut p) = ep.lock() {
-            p.total_duration_secs = main_duration as f64 / sample_rate as f64;
-        }
+        && let Ok(mut p) = ep.lock()
+    {
+        p.total_duration_secs = main_duration as f64 / sample_rate as f64;
+    }
 
     let spec = hound::WavSpec {
         channels: 2,
@@ -196,24 +197,25 @@ pub fn export_wav(
         // Update export progress every ~100 blocks to reduce lock overhead
         if let Some(ref ep) = export_progress
             && rendered % (RENDER_CHUNK_FRAMES as u64 * 100) < RENDER_CHUNK_FRAMES as u64
-                && let Ok(mut p) = ep.lock() {
-                    p.rendered_secs = rendered as f64 / sample_rate as f64;
-                    p.voice_count = engine.voice_count();
-                    let now = Instant::now();
-                    let dt_wall = prev_instant.elapsed().as_secs_f64();
-                    let dt_rendered = p.rendered_secs - prev_rendered_secs;
-                    if dt_wall > 0.0 {
-                        p.render_speed = dt_rendered / dt_wall;
-                    }
-                    if let Some(start) = p.started_at {
-                        let elapsed = start.elapsed().as_secs_f64();
-                        if elapsed > 0.0 {
-                            p.overall_speed = p.rendered_secs / elapsed;
-                        }
-                    }
-                    prev_rendered_secs = p.rendered_secs;
-                    prev_instant = now;
+            && let Ok(mut p) = ep.lock()
+        {
+            p.rendered_secs = rendered as f64 / sample_rate as f64;
+            p.voice_count = engine.voice_count();
+            let now = Instant::now();
+            let dt_wall = prev_instant.elapsed().as_secs_f64();
+            let dt_rendered = p.rendered_secs - prev_rendered_secs;
+            if dt_wall > 0.0 {
+                p.render_speed = dt_rendered / dt_wall;
+            }
+            if let Some(start) = p.started_at {
+                let elapsed = start.elapsed().as_secs_f64();
+                if elapsed > 0.0 {
+                    p.overall_speed = p.rendered_secs / elapsed;
                 }
+            }
+            prev_rendered_secs = p.rendered_secs;
+            prev_instant = now;
+        }
     }
 
     // ── Phase 2: tail — let release tails decay naturally ──
@@ -246,30 +248,28 @@ pub fn export_wav(
 
         let tail_pct = tail_rendered as f32 / max_tail_samples as f32;
         let overall = 0.90 + tail_pct * 0.09;
-        progress(
-            overall,
-            &format!("余韵衰减中 (剩余 {} 音色)", vc),
-        );
+        progress(overall, &format!("余韵衰减中 (剩余 {} 音色)", vc));
 
         if let Some(ref ep) = export_progress
-            && let Ok(mut p) = ep.lock() {
-                p.rendered_secs = (rendered + tail_rendered) as f64 / sample_rate as f64;
-                p.voice_count = vc;
-                let now = Instant::now();
-                let dt_wall = prev_instant.elapsed().as_secs_f64();
-                let dt_rendered = p.rendered_secs - prev_rendered_secs;
-                if dt_wall > 0.0 {
-                    p.render_speed = dt_rendered / dt_wall;
-                }
-                if let Some(start) = p.started_at {
-                    let elapsed = start.elapsed().as_secs_f64();
-                    if elapsed > 0.0 {
-                        p.overall_speed = p.rendered_secs / elapsed;
-                    }
-                }
-                prev_rendered_secs = p.rendered_secs;
-                prev_instant = now;
+            && let Ok(mut p) = ep.lock()
+        {
+            p.rendered_secs = (rendered + tail_rendered) as f64 / sample_rate as f64;
+            p.voice_count = vc;
+            let now = Instant::now();
+            let dt_wall = prev_instant.elapsed().as_secs_f64();
+            let dt_rendered = p.rendered_secs - prev_rendered_secs;
+            if dt_wall > 0.0 {
+                p.render_speed = dt_rendered / dt_wall;
             }
+            if let Some(start) = p.started_at {
+                let elapsed = start.elapsed().as_secs_f64();
+                if elapsed > 0.0 {
+                    p.overall_speed = p.rendered_secs / elapsed;
+                }
+            }
+            prev_rendered_secs = p.rendered_secs;
+            prev_instant = now;
+        }
     }
 
     progress(0.99, "写入文件");
@@ -310,7 +310,10 @@ pub fn export_wav_gpu(
     progress(0.0, "初始化 GPU 合成器...");
     let mut synth = yinhe_synth::GpuSynth::new(device, queue, sfz_path, sample_rate)
         .map_err(|e| ExportError::Render(format!("GpuSynth 初始化失败: {}", e)))?;
-    eprintln!("[gpu-export] GpuSynth initialized: {:.2?}", t_start.elapsed());
+    eprintln!(
+        "[gpu-export] GpuSynth initialized: {:.2?}",
+        t_start.elapsed()
+    );
 
     // ── 2. 构建 SynthEvent 列表 ──
     progress(0.02, "构建事件列表...");
@@ -324,14 +327,22 @@ pub fn export_wav_gpu(
     let mut events: Vec<yinhe_synth::SynthEvent> = Vec::new();
     for key in 0..128usize {
         for note in model.notes[key].iter() {
-            if note.velocity <= 1 { continue; }
+            if note.velocity <= 1 {
+                continue;
+            }
             let track = note.track as usize;
-            if track < skip_tracks.len() && skip_tracks[track] { continue; }
+            if track < skip_tracks.len() && skip_tracks[track] {
+                continue;
+            }
             let ch = audio_model.track_channel(track) as usize;
-            if layout.dense_for(ch) == u32::MAX { continue; }
+            if layout.dense_for(ch) == u32::MAX {
+                continue;
+            }
 
-            let start_sample = crate::audio_model::tick_to_sample(note.start_tick as u64, segments, tpb, sr);
-            let end_sample = crate::audio_model::tick_to_sample(note.end_tick as u64, segments, tpb, sr);
+            let start_sample =
+                crate::audio_model::tick_to_sample(note.start_tick as u64, segments, tpb, sr);
+            let end_sample =
+                crate::audio_model::tick_to_sample(note.end_tick as u64, segments, tpb, sr);
 
             events.push(yinhe_synth::SynthEvent {
                 sample: start_sample,
@@ -348,7 +359,11 @@ pub fn export_wav_gpu(
         }
     }
     events.sort_by_key(|e| e.sample);
-    eprintln!("[gpu-export] Built {} events in {:.2?}", events.len(), t_events.elapsed());
+    eprintln!(
+        "[gpu-export] Built {} events in {:.2?}",
+        events.len(),
+        t_events.elapsed()
+    );
 
     // ── 3. 加载事件到合成器 ──
     progress(0.04, "加载事件到 GPU 合成器...");
@@ -359,8 +374,15 @@ pub fn export_wav_gpu(
         let mut max_sample = 0u64;
         for key in 0..128usize {
             if let Some(last_note) = model.notes[key].last() {
-                let end = crate::audio_model::tick_to_sample(last_note.end_tick as u64, segments, tpb, sr);
-                if end > max_sample { max_sample = end; }
+                let end = crate::audio_model::tick_to_sample(
+                    last_note.end_tick as u64,
+                    segments,
+                    tpb,
+                    sr,
+                );
+                if end > max_sample {
+                    max_sample = end;
+                }
             }
         }
         max_sample
@@ -415,7 +437,9 @@ pub fn export_wav_gpu(
 
     loop {
         let frames = RENDER_CHUNK_FRAMES.min((max_tail_samples - tail_rendered) as usize);
-        if frames == 0 { break; }
+        if frames == 0 {
+            break;
+        }
         let buf = &mut chunk[..frames * STEREO_CHANNELS];
         synth.render(buf);
         write_samples(&mut writer, buf, bit_depth)?;
@@ -435,7 +459,10 @@ pub fn export_wav_gpu(
     writer.finalize()?;
     let total = t_start.elapsed();
     let rtf = audio_secs / total.as_secs_f64();
-    eprintln!("[gpu-export] Done: {:.2?} (rtf={:.1}x, audio={:.1}s)", total, rtf, audio_secs);
+    eprintln!(
+        "[gpu-export] Done: {:.2?} (rtf={:.1}x, audio={:.1}s)",
+        total, rtf, audio_secs
+    );
     progress(1.0, "导出完成");
 
     Ok(())

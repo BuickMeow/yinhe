@@ -3,16 +3,10 @@ use wgpu::*;
 use crate::vertex::Uniforms;
 
 // Re-export hash utilities from yinhe-types for backward compatibility.
-pub use yinhe_types::{
-    compute_scroll_frac, hash_bools, hash_f32s, hash_f64s, hash_time_sigs,
-};
+pub use yinhe_types::{compute_scroll_frac, hash_bools, hash_f32s, hash_f64s, hash_time_sigs};
 
 /// Create a GPU vertex buffer with memtrace tracking.
-pub(super) fn create_vertex_buffer(
-    device: &Device,
-    label: &str,
-    size_bytes: u64,
-) -> Buffer {
+pub(super) fn create_vertex_buffer(device: &Device, label: &str, size_bytes: u64) -> Buffer {
     let buffer = yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Gpu, || {
         device.create_buffer(&BufferDescriptor {
             label: Some(label),

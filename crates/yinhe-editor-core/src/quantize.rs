@@ -16,19 +16,19 @@ pub enum QuantizePreset {
 impl QuantizePreset {
     /// Common fraction presets in display order (excluding `Absolute`).
     pub const ALL: &'static [QuantizePreset] = &[
-        QuantizePreset::Fraction(1, 1),    // Whole
-        QuantizePreset::Fraction(1, 2),    // Half
-        QuantizePreset::Fraction(1, 4),    // Quarter
-        QuantizePreset::Fraction(1, 8),    // Eighth
-        QuantizePreset::Fraction(1, 16),   // Sixteenth
-        QuantizePreset::Fraction(1, 32),   // 1/32
-        QuantizePreset::Fraction(1, 64),   // 1/64
-        QuantizePreset::Fraction(1, 128),  // 1/128
+        QuantizePreset::Fraction(1, 1),   // Whole
+        QuantizePreset::Fraction(1, 2),   // Half
+        QuantizePreset::Fraction(1, 4),   // Quarter
+        QuantizePreset::Fraction(1, 8),   // Eighth
+        QuantizePreset::Fraction(1, 16),  // Sixteenth
+        QuantizePreset::Fraction(1, 32),  // 1/32
+        QuantizePreset::Fraction(1, 64),  // 1/64
+        QuantizePreset::Fraction(1, 128), // 1/128
         // Triplets
-        QuantizePreset::Fraction(1, 6),    // Quarter triplet  (was 1/4T)
-        QuantizePreset::Fraction(1, 12),   // Eighth triplet   (was 1/8T)
-        QuantizePreset::Fraction(1, 24),   // 1/16 triplet     (was 1/16T)
-        QuantizePreset::Fraction(1, 48),   // 1/32 triplet     (was 1/32T)
+        QuantizePreset::Fraction(1, 6),  // Quarter triplet  (was 1/4T)
+        QuantizePreset::Fraction(1, 12), // Eighth triplet   (was 1/8T)
+        QuantizePreset::Fraction(1, 24), // 1/16 triplet     (was 1/16T)
+        QuantizePreset::Fraction(1, 48), // 1/32 triplet     (was 1/32T)
     ];
 
     /// Human-readable label (used in the button and dropdown).
@@ -47,7 +47,10 @@ impl QuantizePreset {
         match self {
             QuantizePreset::Fraction(num, den) => {
                 let d = (*den).max(1);
-                ppq.max(1).saturating_mul(4).saturating_mul(*num).div_ceil(d)
+                ppq.max(1)
+                    .saturating_mul(4)
+                    .saturating_mul(*num)
+                    .div_ceil(d)
             }
             QuantizePreset::Absolute(n) => *n,
         }
@@ -138,19 +141,46 @@ mod tests {
 
     #[test]
     fn test_snap_tick_ceil() {
-        assert_eq!(QuantizePreset::Fraction(1, 4).snap_tick_ceil(100.0, 480), 480.0);
-        assert_eq!(QuantizePreset::Fraction(1, 4).snap_tick_ceil(240.0, 480), 480.0);
-        assert_eq!(QuantizePreset::Fraction(1, 4).snap_tick_ceil(480.0, 480), 480.0);
-        assert_eq!(QuantizePreset::Fraction(1, 4).snap_tick_ceil(481.0, 480), 960.0);
+        assert_eq!(
+            QuantizePreset::Fraction(1, 4).snap_tick_ceil(100.0, 480),
+            480.0
+        );
+        assert_eq!(
+            QuantizePreset::Fraction(1, 4).snap_tick_ceil(240.0, 480),
+            480.0
+        );
+        assert_eq!(
+            QuantizePreset::Fraction(1, 4).snap_tick_ceil(480.0, 480),
+            480.0
+        );
+        assert_eq!(
+            QuantizePreset::Fraction(1, 4).snap_tick_ceil(481.0, 480),
+            960.0
+        );
     }
 
     #[test]
     fn test_snap_tick_floor() {
-        assert_eq!(QuantizePreset::Fraction(1, 4).snap_tick_floor(100.0, 480), 0.0);
-        assert_eq!(QuantizePreset::Fraction(1, 4).snap_tick_floor(240.0, 480), 0.0);
-        assert_eq!(QuantizePreset::Fraction(1, 4).snap_tick_floor(479.0, 480), 0.0);
-        assert_eq!(QuantizePreset::Fraction(1, 4).snap_tick_floor(480.0, 480), 480.0);
-        assert_eq!(QuantizePreset::Fraction(1, 4).snap_tick_floor(720.0, 480), 480.0);
+        assert_eq!(
+            QuantizePreset::Fraction(1, 4).snap_tick_floor(100.0, 480),
+            0.0
+        );
+        assert_eq!(
+            QuantizePreset::Fraction(1, 4).snap_tick_floor(240.0, 480),
+            0.0
+        );
+        assert_eq!(
+            QuantizePreset::Fraction(1, 4).snap_tick_floor(479.0, 480),
+            0.0
+        );
+        assert_eq!(
+            QuantizePreset::Fraction(1, 4).snap_tick_floor(480.0, 480),
+            480.0
+        );
+        assert_eq!(
+            QuantizePreset::Fraction(1, 4).snap_tick_floor(720.0, 480),
+            480.0
+        );
     }
 
     #[test]
@@ -184,14 +214,22 @@ mod tests {
     #[test]
     fn test_label_not_empty() {
         for preset in QuantizePreset::ALL {
-            assert!(!preset.label().is_empty(), "label should not be empty for {:?}", preset);
+            assert!(
+                !preset.label().is_empty(),
+                "label should not be empty for {:?}",
+                preset
+            );
         }
     }
 
     #[test]
     fn test_display_item_not_empty() {
         for preset in QuantizePreset::ALL {
-            assert!(!preset.display_item(480).is_empty(), "display_item should not be empty for {:?}", preset);
+            assert!(
+                !preset.display_item(480).is_empty(),
+                "display_item should not be empty for {:?}",
+                preset
+            );
         }
     }
 
@@ -205,7 +243,11 @@ mod tests {
     fn test_all_presets_have_unique_labels() {
         let mut labels = std::collections::HashSet::new();
         for preset in QuantizePreset::ALL {
-            assert!(labels.insert(preset.label()), "duplicate label: {}", preset.label());
+            assert!(
+                labels.insert(preset.label()),
+                "duplicate label: {}",
+                preset.label()
+            );
         }
     }
 }

@@ -12,8 +12,8 @@ use std::sync::Arc;
 
 use xsynth_core::effects::VolumeLimiter;
 
-use crate::synth::{GpuAudioRenderer, GpuVoiceState, advance_voices};
 use crate::sfz_parser;
+use crate::synth::{GpuAudioRenderer, GpuVoiceState, advance_voices};
 use crate::wgpu;
 
 /// 一个 MIDI 事件（NoteOn 或 NoteOff）
@@ -57,10 +57,7 @@ pub struct GpuSynth {
 
 impl GpuSynth {
     /// 创建合成器（自动创建 wgpu device/queue）
-    pub fn new_default(
-        soundfont_path: &std::path::Path,
-        sample_rate: u32,
-    ) -> Result<Self, String> {
+    pub fn new_default(soundfont_path: &std::path::Path, sample_rate: u32) -> Result<Self, String> {
         let renderer = GpuAudioRenderer::new_default()
             .map_err(|e| format!("GPU renderer init failed: {}", e))?;
         Self::from_renderer(renderer, soundfont_path, sample_rate)
@@ -98,13 +95,19 @@ impl GpuSynth {
                 } else {
                     continue;
                 };
-                if sample_offsets.contains_key(&dedup_key) { continue; }
+                if sample_offsets.contains_key(&dedup_key) {
+                    continue;
+                }
 
                 if let Some(ref data) = info.sample_data {
                     let offset = sample_data.len() as u32;
                     // data 是 Arc<[f32]>，sample_rate 匹配时零拷贝共享
                     let samples: Arc<[f32]> = if info.sample_rate != sample_rate {
-                        xsynth_soundfonts::resample::resample_vec(data.to_vec(), info.sample_rate as f32, sample_rate as f32)
+                        xsynth_soundfonts::resample::resample_vec(
+                            data.to_vec(),
+                            info.sample_rate as f32,
+                            sample_rate as f32,
+                        )
                     } else {
                         Arc::clone(data)
                     };
@@ -112,12 +115,19 @@ impl GpuSynth {
                     sample_data.extend_from_slice(&samples);
                     sample_offsets.insert(dedup_key, (offset, len));
                 } else if let Some(ref path) = info.sample_path {
-                    if path.to_string_lossy() == "missing" { continue; }
+                    if path.to_string_lossy() == "missing" {
+                        continue;
+                    }
                     let offset = sample_data.len() as u32;
                     match sfz_parser::load_wav_as_f32(path) {
                         Ok((samples, src_sr)) => {
                             let samples = if src_sr != sample_rate {
-                                xsynth_soundfonts::resample::resample_vec(samples, src_sr as f32, sample_rate as f32).to_vec()
+                                xsynth_soundfonts::resample::resample_vec(
+                                    samples,
+                                    src_sr as f32,
+                                    sample_rate as f32,
+                                )
+                                .to_vec()
                             } else {
                                 samples
                             };
@@ -176,7 +186,9 @@ impl GpuSynth {
     /// 渲染一块音频到 output（output.len() = frames * 2，立体声交错）
     pub fn render(&mut self, output: &mut [f32]) {
         let frames = output.len() / 2;
-        if frames == 0 { return; }
+        if frames == 0 {
+            return;
+        }
 
         let block_start = self.sample_position;
         let block_end = block_start + frames as u64;
@@ -185,7 +197,9 @@ impl GpuSynth {
         // 从事件列表分发
         while self.event_cursor < self.events.len() {
             let ev = self.events[self.event_cursor];
-            if ev.sample >= block_end { break; }
+            if ev.sample >= block_end {
+                break;
+            }
             if ev.sample >= block_start {
                 let offset = (ev.sample - block_start) as u32;
                 if ev.is_on {
@@ -202,7 +216,8 @@ impl GpuSynth {
             self.states_buf.clear();
             self.states_buf.extend(self.voices.iter().map(|v| v.state));
             // 直接写入 output，避免中间 Vec 分配
-            self.renderer.render_into(&self.states_buf, output, self.sample_rate);
+            self.renderer
+                .render_into(&self.states_buf, output, self.sample_rate);
         }
 
         // 原地推进 voice 状态
@@ -236,10 +251,11 @@ impl GpuSynth {
             Some(&v) => v,
             None => return,
         };
-        if length == 0 { return; }
+        if length == 0 {
+            return;
+        }
 
-        let pitch_semitones = (key as f32 - info.pitch_keycenter as f32)
-            + info.tune as f32 / 100.0;
+        let pitch_semitones = (key as f32 - info.pitch_keycenter as f32) + info.tune as f32 / 100.0;
         let speed = 2.0f32.powf(pitch_semitones / 12.0);
 
         let vel_norm = vel as f32 / 127.0;

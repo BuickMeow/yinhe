@@ -12,7 +12,13 @@ pub(crate) struct Sections {
 
 /// Pack header + sections into the final byte buffer.
 pub(crate) fn pack(sections: Sections) -> Vec<u8> {
-    let total = 4 + 2 + 4 + sections.project_json.len() + 4 + sections.mapping_json.len() + 4
+    let total = 4
+        + 2
+        + 4
+        + sections.project_json.len()
+        + 4
+        + sections.mapping_json.len()
+        + 4
         + sections.data.len();
     let mut out = Vec::with_capacity(total);
     out.extend_from_slice(MAGIC);

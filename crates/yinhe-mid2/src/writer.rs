@@ -188,38 +188,50 @@ fn build_track<'a>(track: &'a TrackData, notes: &[(Note, u8)]) -> Vec<TrackEvent
                         (v as u8, 0u8)
                     };
                     // CC101 (RPN MSB)
-                    events.push((ev.tick, TrackEventKind::Midi {
-                        channel: ch,
-                        message: MidiMessage::Controller {
-                            controller: u7::new(101),
-                            value: u7::new(msb),
-                        },
-                    }));
-                    // CC100 (RPN LSB)
-                    events.push((ev.tick, TrackEventKind::Midi {
-                        channel: ch,
-                        message: MidiMessage::Controller {
-                            controller: u7::new(100),
-                            value: u7::new(lsb),
-                        },
-                    }));
-                    // CC6 (Data Entry MSB)
-                    events.push((ev.tick, TrackEventKind::Midi {
-                        channel: ch,
-                        message: MidiMessage::Controller {
-                            controller: u7::new(6),
-                            value: u7::new(data_msb),
-                        },
-                    }));
-                    // CC38 (Data Entry LSB) — only for 14-bit targets with non-zero LSB
-                    if data_lsb != 0 && lane.target.is_14bit() {
-                        events.push((ev.tick, TrackEventKind::Midi {
+                    events.push((
+                        ev.tick,
+                        TrackEventKind::Midi {
                             channel: ch,
                             message: MidiMessage::Controller {
-                                controller: u7::new(38),
-                                value: u7::new(data_lsb),
+                                controller: u7::new(101),
+                                value: u7::new(msb),
                             },
-                        }));
+                        },
+                    ));
+                    // CC100 (RPN LSB)
+                    events.push((
+                        ev.tick,
+                        TrackEventKind::Midi {
+                            channel: ch,
+                            message: MidiMessage::Controller {
+                                controller: u7::new(100),
+                                value: u7::new(lsb),
+                            },
+                        },
+                    ));
+                    // CC6 (Data Entry MSB)
+                    events.push((
+                        ev.tick,
+                        TrackEventKind::Midi {
+                            channel: ch,
+                            message: MidiMessage::Controller {
+                                controller: u7::new(6),
+                                value: u7::new(data_msb),
+                            },
+                        },
+                    ));
+                    // CC38 (Data Entry LSB) — only for 14-bit targets with non-zero LSB
+                    if data_lsb != 0 && lane.target.is_14bit() {
+                        events.push((
+                            ev.tick,
+                            TrackEventKind::Midi {
+                                channel: ch,
+                                message: MidiMessage::Controller {
+                                    controller: u7::new(38),
+                                    value: u7::new(data_lsb),
+                                },
+                            },
+                        ));
                     }
                 }
                 AutomationTarget::Nrpn { parameter } => {
@@ -228,38 +240,50 @@ fn build_track<'a>(track: &'a TrackData, notes: &[(Note, u8)]) -> Vec<TrackEvent
                     let data_msb = ((v >> 7) & 0x7F) as u8;
                     let data_lsb = (v & 0x7F) as u8;
                     // CC99 (NRPN MSB)
-                    events.push((ev.tick, TrackEventKind::Midi {
-                        channel: ch,
-                        message: MidiMessage::Controller {
-                            controller: u7::new(99),
-                            value: u7::new(msb),
-                        },
-                    }));
-                    // CC98 (NRPN LSB)
-                    events.push((ev.tick, TrackEventKind::Midi {
-                        channel: ch,
-                        message: MidiMessage::Controller {
-                            controller: u7::new(98),
-                            value: u7::new(lsb),
-                        },
-                    }));
-                    // CC6 (Data Entry MSB)
-                    events.push((ev.tick, TrackEventKind::Midi {
-                        channel: ch,
-                        message: MidiMessage::Controller {
-                            controller: u7::new(6),
-                            value: u7::new(data_msb),
-                        },
-                    }));
-                    // CC38 (Data Entry LSB) only if non-zero
-                    if data_lsb != 0 {
-                        events.push((ev.tick, TrackEventKind::Midi {
+                    events.push((
+                        ev.tick,
+                        TrackEventKind::Midi {
                             channel: ch,
                             message: MidiMessage::Controller {
-                                controller: u7::new(38),
-                                value: u7::new(data_lsb),
+                                controller: u7::new(99),
+                                value: u7::new(msb),
                             },
-                        }));
+                        },
+                    ));
+                    // CC98 (NRPN LSB)
+                    events.push((
+                        ev.tick,
+                        TrackEventKind::Midi {
+                            channel: ch,
+                            message: MidiMessage::Controller {
+                                controller: u7::new(98),
+                                value: u7::new(lsb),
+                            },
+                        },
+                    ));
+                    // CC6 (Data Entry MSB)
+                    events.push((
+                        ev.tick,
+                        TrackEventKind::Midi {
+                            channel: ch,
+                            message: MidiMessage::Controller {
+                                controller: u7::new(6),
+                                value: u7::new(data_msb),
+                            },
+                        },
+                    ));
+                    // CC38 (Data Entry LSB) only if non-zero
+                    if data_lsb != 0 {
+                        events.push((
+                            ev.tick,
+                            TrackEventKind::Midi {
+                                channel: ch,
+                                message: MidiMessage::Controller {
+                                    controller: u7::new(38),
+                                    value: u7::new(data_lsb),
+                                },
+                            },
+                        ));
                     }
                 }
                 // Tempo 走 `conductor.tempo`（已在 build_conductor_track 写出），
@@ -321,9 +345,7 @@ fn build_track<'a>(track: &'a TrackData, notes: &[(Note, u8)]) -> Vec<TrackEvent
     if let Some(ch) = track.channel_prefix {
         events.push((
             0,
-            TrackEventKind::Meta(MetaMessage::MidiChannel(midly::num::u4::new(
-                ch & 0x0F,
-            ))),
+            TrackEventKind::Meta(MetaMessage::MidiChannel(midly::num::u4::new(ch & 0x0F))),
         ));
     }
 

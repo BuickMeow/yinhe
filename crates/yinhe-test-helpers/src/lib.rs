@@ -1,9 +1,11 @@
 use std::sync::Arc;
 
 use yinhe_core::{ConductorData, NoteEvent, PcEvent, ProjectMeta, TrackData, YinModel};
-use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, Note, NoteSource, SegmentShape, TimeSigEvent};
 use yinhe_editor_core::document::Document;
 use yinhe_editor_core::quantize::QuantizePreset;
+use yinhe_types::{
+    AutomationEvent, AutomationLane, AutomationTarget, Note, NoteSource, SegmentShape, TimeSigEvent,
+};
 
 /// Mock MIDI data for testing.
 pub struct MockMidi {
@@ -59,13 +61,29 @@ pub fn make_test_model() -> YinModel {
             target: AutomationTarget::Tempo,
             track: 0,
             events: vec![
-                AutomationEvent { tick: 0, value: 120.0, shape: SegmentShape::Step },
-                AutomationEvent { tick: 1920, value: 140.0, shape: SegmentShape::Step },
+                AutomationEvent {
+                    tick: 0,
+                    value: 120.0,
+                    shape: SegmentShape::Step,
+                },
+                AutomationEvent {
+                    tick: 1920,
+                    value: 140.0,
+                    shape: SegmentShape::Step,
+                },
             ],
         },
         time_sig: vec![
-            TimeSigEvent { tick: 0, numerator: 4, denominator: 2 },
-            TimeSigEvent { tick: 1920, numerator: 3, denominator: 2 },
+            TimeSigEvent {
+                tick: 0,
+                numerator: 4,
+                denominator: 2,
+            },
+            TimeSigEvent {
+                tick: 1920,
+                numerator: 3,
+                denominator: 2,
+            },
         ],
         key_sig: Vec::new(),
         markers: Vec::new(),
@@ -79,8 +97,16 @@ pub fn make_test_model() -> YinModel {
         target: AutomationTarget::CC { controller: 7 },
         track: 0,
         events: vec![
-            AutomationEvent { tick: 0, value: 100.0, shape: SegmentShape::Step },
-            AutomationEvent { tick: 240, value: 80.0, shape: SegmentShape::Step },
+            AutomationEvent {
+                tick: 0,
+                value: 100.0,
+                shape: SegmentShape::Step,
+            },
+            AutomationEvent {
+                tick: 240,
+                value: 80.0,
+                shape: SegmentShape::Step,
+            },
         ],
     }];
 
@@ -89,27 +115,59 @@ pub fn make_test_model() -> YinModel {
     t1.automation_lanes = vec![AutomationLane {
         target: AutomationTarget::PitchBend,
         track: 1,
-        events: vec![AutomationEvent { tick: 100, value: 9216.0, shape: SegmentShape::Step }], // 1024 + 8192 = raw value
+        events: vec![AutomationEvent {
+            tick: 100,
+            value: 9216.0,
+            shape: SegmentShape::Step,
+        }], // 1024 + 8192 = raw value
     }];
 
     let mut t2 = TrackData::new(1, 0); // port 1, ch 0
     t2.name = "Drums".into();
-    t2.program_change = vec![PcEvent { tick: 0, program: 7, bank_msb: 0xFF, bank_lsb: 0xFF }];
+    t2.program_change = vec![PcEvent {
+        tick: 0,
+        program: 7,
+        bank_msb: 0xFF,
+        bank_lsb: 0xFF,
+    }];
 
     let per_track_notes: Vec<Vec<NoteEvent>> = vec![
         vec![
-            NoteEvent { id: 0, start_tick: 0, end_tick: 480, key: 60, velocity: 100 },
-            NoteEvent { id: 0, start_tick: 480, end_tick: 960, key: 60, velocity: 100 },
+            NoteEvent {
+                id: 0,
+                start_tick: 0,
+                end_tick: 480,
+                key: 60,
+                velocity: 100,
+            },
+            NoteEvent {
+                id: 0,
+                start_tick: 480,
+                end_tick: 960,
+                key: 60,
+                velocity: 100,
+            },
         ],
-        vec![
-            NoteEvent { id: 0, start_tick: 0, end_tick: 1920, key: 48, velocity: 90 },
-        ],
-        vec![
-            NoteEvent { id: 0, start_tick: 0, end_tick: 240, key: 36, velocity: 120 },
-        ],
+        vec![NoteEvent {
+            id: 0,
+            start_tick: 0,
+            end_tick: 1920,
+            key: 48,
+            velocity: 90,
+        }],
+        vec![NoteEvent {
+            id: 0,
+            start_tick: 0,
+            end_tick: 240,
+            key: 36,
+            velocity: 120,
+        }],
     ];
 
-    let meta = ProjectMeta { ppq: 480, ..ProjectMeta::default() };
+    let meta = ProjectMeta {
+        ppq: 480,
+        ..ProjectMeta::default()
+    };
     let mut model = YinModel {
         conductor: Arc::new(conductor),
         tracks: vec![Arc::new(t0), Arc::new(t1), Arc::new(t2)],
@@ -124,7 +182,15 @@ pub fn make_test_model() -> YinModel {
 /// Create a Document from a test model.
 pub fn make_test_document() -> Document {
     let model = make_test_model();
-    Document::from_model("test.mid", model, QuantizePreset::Fraction(1, 4), QuantizePreset::Fraction(1, 16), Default::default(), Default::default()).expect("from_model failed")
+    Document::from_model(
+        "test.mid",
+        model,
+        QuantizePreset::Fraction(1, 4),
+        QuantizePreset::Fraction(1, 16),
+        Default::default(),
+        Default::default(),
+    )
+    .expect("from_model failed")
 }
 
 /// Create a multi-track YinModel with notes on many keys for stress testing.
@@ -132,9 +198,7 @@ pub fn make_stress_model(track_count: u16, notes_per_track: u32) -> YinModel {
     let conductor = ConductorData::default();
 
     let tracks: Vec<Arc<TrackData>> = (0..track_count)
-        .map(|t| {
-            Arc::new(TrackData::new(0, t as u8))
-        })
+        .map(|t| Arc::new(TrackData::new(0, t as u8)))
         .collect();
 
     let per_track_notes: Vec<Vec<NoteEvent>> = (0..track_count)
@@ -155,7 +219,10 @@ pub fn make_stress_model(track_count: u16, notes_per_track: u32) -> YinModel {
         })
         .collect();
 
-    let meta = ProjectMeta { ppq: 480, ..ProjectMeta::default() };
+    let meta = ProjectMeta {
+        ppq: 480,
+        ..ProjectMeta::default()
+    };
     let mut model = YinModel {
         conductor: Arc::new(conductor),
         tracks,

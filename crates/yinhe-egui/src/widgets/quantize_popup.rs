@@ -13,7 +13,10 @@ pub fn show(
     ui.set_min_width(120.0);
     for preset in QuantizePreset::ALL {
         if ui
-            .add(egui::Button::selectable(*preset == current, preset.display_item(ppq)))
+            .add(egui::Button::selectable(
+                *preset == current,
+                preset.display_item(ppq),
+            ))
             .clicked()
         {
             *pending = Some(*preset);
@@ -25,7 +28,10 @@ pub fn show(
     // ── 自定义时值 ──
     let is_frac = matches!(current, QuantizePreset::Fraction(_, _));
     if ui
-        .add(egui::Button::selectable(is_frac, t!("quantize.custom_fraction").as_ref()))
+        .add(egui::Button::selectable(
+            is_frac,
+            t!("quantize.custom_fraction").as_ref(),
+        ))
         .clicked()
     {
         *pending = Some(QuantizePreset::Fraction(1, 1));
@@ -35,7 +41,11 @@ pub fn show(
             ui.label(t!("quantize.numerator").as_ref());
             let mut n = num;
             if ui
-                .add(crate::widgets::numeric_input::decimal_drag_value(&mut n).range(1..=9999).speed(0.5))
+                .add(
+                    crate::widgets::numeric_input::decimal_drag_value(&mut n)
+                        .range(1..=9999)
+                        .speed(0.5),
+                )
                 .changed()
             {
                 *pending = Some(QuantizePreset::Fraction(n, den));
@@ -43,7 +53,11 @@ pub fn show(
             ui.label(t!("quantize.denominator").as_ref());
             let mut d = den;
             if ui
-                .add(crate::widgets::numeric_input::decimal_drag_value(&mut d).range(1..=9999).speed(0.5))
+                .add(
+                    crate::widgets::numeric_input::decimal_drag_value(&mut d)
+                        .range(1..=9999)
+                        .speed(0.5),
+                )
                 .changed()
             {
                 *pending = Some(QuantizePreset::Fraction(num, d.max(1)));
@@ -56,7 +70,10 @@ pub fn show(
     // ── 自定义Tick ──
     let is_abs = matches!(current, QuantizePreset::Absolute(_));
     if ui
-        .add(egui::Button::selectable(is_abs, t!("quantize.custom_tick").as_ref()))
+        .add(egui::Button::selectable(
+            is_abs,
+            t!("quantize.custom_tick").as_ref(),
+        ))
         .clicked()
     {
         *pending = Some(QuantizePreset::Absolute(1));
@@ -64,7 +81,11 @@ pub fn show(
     if let QuantizePreset::Absolute(n) = current {
         let mut val = n;
         if ui
-            .add(crate::widgets::numeric_input::decimal_drag_value(&mut val).range(1..=99999).speed(0.5))
+            .add(
+                crate::widgets::numeric_input::decimal_drag_value(&mut val)
+                    .range(1..=99999)
+                    .speed(0.5),
+            )
             .changed()
         {
             *pending = Some(QuantizePreset::Absolute(val));

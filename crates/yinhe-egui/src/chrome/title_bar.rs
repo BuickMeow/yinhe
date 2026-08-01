@@ -63,11 +63,8 @@ pub(crate) fn show(
             let text_max_w = tab_w - close_w - padding * 2.0;
 
             // ── Handle mouse wheel / trackpad scroll for tab overflow ──
-            let pointer_in_bar = ui.input(|i| {
-                i.pointer
-                    .hover_pos()
-                    .is_some_and(|p| bar_rect.contains(p))
-            });
+            let pointer_in_bar =
+                ui.input(|i| i.pointer.hover_pos().is_some_and(|p| bar_rect.contains(p)));
             if pointer_in_bar {
                 let scroll_delta = ui.input(|i| i.smooth_scroll_delta);
                 let zoom_delta = ui.input(|i| i.zoom_delta());
@@ -119,7 +116,8 @@ pub(crate) fn show(
                 );
 
                 // Skip tabs entirely outside the visible area
-                if tab_rect.max.x < bar_rect.min.x + left_padding || tab_rect.min.x > bar_rect.max.x {
+                if tab_rect.max.x < bar_rect.min.x + left_padding || tab_rect.min.x > bar_rect.max.x
+                {
                     click_targets.push((i, tab_rect, egui::Rect::NOTHING));
                     tab_x += tab_w + tab_gap;
                     continue;
@@ -293,7 +291,11 @@ pub(crate) fn show(
 
             // ── Register interact for each tab to prevent drag from claiming clicks on tabs ──
             for (i, (_, tab_rect, _)) in click_targets.iter().enumerate() {
-                ui.interact(*tab_rect, ui.id().with("tab_block").with(i), egui::Sense::click());
+                ui.interact(
+                    *tab_rect,
+                    ui.id().with("tab_block").with(i),
+                    egui::Sense::click(),
+                );
             }
 
             // ── Window drag region (after the tabs, excluding window buttons) ──

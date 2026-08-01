@@ -1,6 +1,8 @@
 use wgpu::*;
 
-use crate::vertex::{CurveInstance, DrawInstance, NoteInstance, Uniforms, SelectionUniform, VelocityBarInstance};
+use crate::vertex::{
+    CurveInstance, DrawInstance, NoteInstance, SelectionUniform, Uniforms, VelocityBarInstance,
+};
 
 /// Owns the render pipelines and their shared uniform buffers / bind group.
 ///

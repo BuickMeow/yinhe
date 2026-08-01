@@ -189,15 +189,17 @@ pub(crate) fn show(
                 );
 
                 if m_resp.clicked()
-                    && let Some(ov) = track_overrides.get_mut(idx) {
-                        ov.muted = !ov.muted;
-                        audio_dirty = true;
-                    }
+                    && let Some(ov) = track_overrides.get_mut(idx)
+                {
+                    ov.muted = !ov.muted;
+                    audio_dirty = true;
+                }
                 if s_resp.clicked()
-                    && let Some(ov) = track_overrides.get_mut(idx) {
-                        ov.soloed = !ov.soloed;
-                        audio_dirty = true;
-                    }
+                    && let Some(ov) = track_overrides.get_mut(idx)
+                {
+                    ov.soloed = !ov.soloed;
+                    audio_dirty = true;
+                }
             }
 
             // 铅笔 ICON：双击 track 后显示，表示该 track 是 pencil/automation 的编辑目标。
@@ -211,10 +213,7 @@ pub(crate) fn show(
                     row_rect.max.x - 6.0 - btn_size.x
                 };
                 let icon_y = badge_rect.center().y - btn_size.y * 0.5;
-                let icon_rect = egui::Rect::from_min_size(
-                    egui::pos2(icon_x, icon_y),
-                    btn_size,
-                );
+                let icon_rect = egui::Rect::from_min_size(egui::pos2(icon_x, icon_y), btn_size);
                 painter.text(
                     icon_rect.center(),
                     egui::Align2::CENTER_CENTER,
@@ -254,60 +253,62 @@ pub(crate) fn show(
 
     if resp.double_clicked() {
         if let Some(pos) = resp.interact_pointer_pos()
-            && let Some(idx) = hit(pos) {
-                // 双击 toggle：已经是 editing_track 则清除（关闭编辑），
-                // 否则设为新 editing_track（打开 PR 并切换编辑目标）。
-                let track_idx = track_info[idx].index;
-                if *editing_track == Some(track_idx) {
-                    *editing_track = None;
-                } else {
-                    *editing_track = Some(track_idx);
-                    *request_pianoroll = true;
-                }
+            && let Some(idx) = hit(pos)
+        {
+            // 双击 toggle：已经是 editing_track 则清除（关闭编辑），
+            // 否则设为新 editing_track（打开 PR 并切换编辑目标）。
+            let track_idx = track_info[idx].index;
+            if *editing_track == Some(track_idx) {
+                *editing_track = None;
+            } else {
+                *editing_track = Some(track_idx);
+                *request_pianoroll = true;
             }
+        }
     } else if resp.clicked()
         && let Some(pos) = resp.interact_pointer_pos()
-            && let Some(idx) = hit(pos) {
-                let track_idx = track_info[idx].index;
-                let shift = ui.input(|i| i.modifiers.shift);
-                let cmd = ui.input(|i| i.modifiers.command || i.modifiers.ctrl);
+        && let Some(idx) = hit(pos)
+    {
+        let track_idx = track_info[idx].index;
+        let shift = ui.input(|i| i.modifiers.shift);
+        let cmd = ui.input(|i| i.modifiers.command || i.modifiers.ctrl);
 
-                if shift {
-                    // Range-select from anchor to this track.
-                    if let Some(anchor) = *selection_anchor {
-                        let a = anchor as usize;
-                        let b = track_idx as usize;
-                        let lo = a.min(b);
-                        let hi = a.max(b);
-                        for i in lo..=hi {
-                            track_selected.insert(i as u16);
-                        }
-                    } else {
-                        track_selected.clear();
-                        track_selected.insert(track_idx);
-                        *selection_anchor = Some(track_idx);
-                    }
-                } else if cmd {
-                    // Toggle this track.
-                    if track_selected.contains(&track_idx) {
-                        track_selected.remove(&track_idx);
-                    } else {
-                        track_selected.insert(track_idx);
-                    }
-                    *selection_anchor = Some(track_idx);
-                } else {
-                    // Plain click: 如果点击的音轨已是唯一选中的，则取消选择；
-                    // 否则替换选择（清除旧选择，选中此音轨）。
-                    if track_selected.len() == 1 && track_selected.contains(&track_idx) {
-                        track_selected.clear();
-                    } else {
-                        track_selected.clear();
-                        track_selected.insert(track_idx);
-                    }
-                    *selection_anchor = Some(track_idx);
+        if shift {
+            // Range-select from anchor to this track.
+            if let Some(anchor) = *selection_anchor {
+                let a = anchor as usize;
+                let b = track_idx as usize;
+                let lo = a.min(b);
+                let hi = a.max(b);
+                for i in lo..=hi {
+                    track_selected.insert(i as u16);
                 }
-                *info_content = Some(crate::right_panel::InfoContent::Track);
+            } else {
+                track_selected.clear();
+                track_selected.insert(track_idx);
+                *selection_anchor = Some(track_idx);
             }
+        } else if cmd {
+            // Toggle this track.
+            if track_selected.contains(&track_idx) {
+                track_selected.remove(&track_idx);
+            } else {
+                track_selected.insert(track_idx);
+            }
+            *selection_anchor = Some(track_idx);
+        } else {
+            // Plain click: 如果点击的音轨已是唯一选中的，则取消选择；
+            // 否则替换选择（清除旧选择，选中此音轨）。
+            if track_selected.len() == 1 && track_selected.contains(&track_idx) {
+                track_selected.clear();
+            } else {
+                track_selected.clear();
+                track_selected.insert(track_idx);
+            }
+            *selection_anchor = Some(track_idx);
+        }
+        *info_content = Some(crate::right_panel::InfoContent::Track);
+    }
 
     // ── Right-click context menu ──
     // On secondary click, select the track under the cursor and record its
@@ -316,16 +317,17 @@ pub(crate) fn show(
     let ctx_menu_idx_id = egui::Id::new("track_ctx_menu_idx");
     if resp.secondary_clicked()
         && let Some(pos) = resp.interact_pointer_pos()
-            && let Some(idx) = hit(pos) {
-                let track_idx = track_info[idx].index;
-                if !track_selected.contains(&track_idx) {
-                    track_selected.clear();
-                    track_selected.insert(track_idx);
-                    *selection_anchor = Some(track_idx);
-                }
-                *info_content = Some(crate::right_panel::InfoContent::Track);
-                ui.ctx().data_mut(|d| d.insert_temp(ctx_menu_idx_id, idx));
-            }
+        && let Some(idx) = hit(pos)
+    {
+        let track_idx = track_info[idx].index;
+        if !track_selected.contains(&track_idx) {
+            track_selected.clear();
+            track_selected.insert(track_idx);
+            *selection_anchor = Some(track_idx);
+        }
+        *info_content = Some(crate::right_panel::InfoContent::Track);
+        ui.ctx().data_mut(|d| d.insert_temp(ctx_menu_idx_id, idx));
+    }
 
     resp.context_menu(|ui| {
         let idx = ui
@@ -337,24 +339,29 @@ pub(crate) fn show(
 
         if !is_conductor {
             if ui.button(t!("arrange.add_below").as_ref()).clicked() {
-                actions.push(TrackAction::AddTrack { after_idx: Some(idx) });
+                actions.push(TrackAction::AddTrack {
+                    after_idx: Some(idx),
+                });
                 ui.close();
             }
             if ui.button(t!("arrange.add_above").as_ref()).clicked() {
-                actions.push(TrackAction::AddTrack { after_idx: Some(idx.saturating_sub(1)) });
+                actions.push(TrackAction::AddTrack {
+                    after_idx: Some(idx.saturating_sub(1)),
+                });
                 ui.close();
             }
             ui.separator();
-            if idx > 0 && conductor_track_idx != Some((idx - 1) as u16)
-                && ui.button(t!("arrange.move_up").as_ref()).clicked() {
-                    actions.push(TrackAction::MoveUp { idx });
-                    ui.close();
-                }
-            if idx < num_tracks - 1
-                && ui.button(t!("arrange.move_down").as_ref()).clicked() {
-                    actions.push(TrackAction::MoveDown { idx });
-                    ui.close();
-                }
+            if idx > 0
+                && conductor_track_idx != Some((idx - 1) as u16)
+                && ui.button(t!("arrange.move_up").as_ref()).clicked()
+            {
+                actions.push(TrackAction::MoveUp { idx });
+                ui.close();
+            }
+            if idx < num_tracks - 1 && ui.button(t!("arrange.move_down").as_ref()).clicked() {
+                actions.push(TrackAction::MoveDown { idx });
+                ui.close();
+            }
             ui.separator();
             if ui.button(t!("arrange.delete_track").as_ref()).clicked() {
                 actions.push(TrackAction::RemoveTrack { idx });
@@ -363,7 +370,9 @@ pub(crate) fn show(
         } else {
             // Conductor track: only allow adding after
             if ui.button(t!("arrange.add_below").as_ref()).clicked() {
-                actions.push(TrackAction::AddTrack { after_idx: Some(idx) });
+                actions.push(TrackAction::AddTrack {
+                    after_idx: Some(idx),
+                });
                 ui.close();
             }
         }

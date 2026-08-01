@@ -46,8 +46,7 @@ impl ChannelLayout {
 
         for (track_idx, track) in model.tracks.iter().enumerate() {
             let ch = track_global_channel(model, track_idx) as usize;
-            let has_ctrl = !track.automation_lanes.is_empty()
-                || !track.program_change.is_empty();
+            let has_ctrl = !track.automation_lanes.is_empty() || !track.program_change.is_empty();
             if has_ctrl && ch < 256 {
                 ch_active[ch] = ch_active[ch].max(1);
             }
@@ -137,11 +136,7 @@ impl ChannelLayout {
     ///
     /// 激活语义与 `from_model` 完全对齐：
     /// `active(ch) = note_count[ch] > 0 || ctrl_count[ch] > 0`
-    pub fn differs_from_counts(
-        &self,
-        note_counts: &[u32; 256],
-        ctrl_counts: &[u32; 256],
-    ) -> bool {
+    pub fn differs_from_counts(&self, note_counts: &[u32; 256], ctrl_counts: &[u32; 256]) -> bool {
         for ch in 0..256 {
             let was_active = self.is_active(ch);
             let now_active = note_counts[ch] > 0 || ctrl_counts[ch] > 0;
@@ -165,7 +160,11 @@ mod tests {
             tempo: AutomationLane {
                 target: AutomationTarget::Tempo,
                 track: 0,
-                events: vec![AutomationEvent { tick: 0, value: 120.0, shape: SegmentShape::Step }],
+                events: vec![AutomationEvent {
+                    tick: 0,
+                    value: 120.0,
+                    shape: SegmentShape::Step,
+                }],
             },
             time_sig: Vec::new(),
             key_sig: Vec::new(),
@@ -176,16 +175,18 @@ mod tests {
         let first_ch = notes.first().map(|n| n.4).unwrap_or(0);
         let mut t = TrackData::new(0, first_ch);
         t.name = "Track 1".into();
-        let per_track_notes: Vec<Vec<NoteEvent>> = vec![notes
-            .into_iter()
-            .map(|(key, start, end, vel, _ch)| NoteEvent {
-                start_tick: start,
-                end_tick: end,
-                key,
-                velocity: vel,
-                id: 0,
-            })
-            .collect()];
+        let per_track_notes: Vec<Vec<NoteEvent>> = vec![
+            notes
+                .into_iter()
+                .map(|(key, start, end, vel, _ch)| NoteEvent {
+                    start_tick: start,
+                    end_tick: end,
+                    key,
+                    velocity: vel,
+                    id: 0,
+                })
+                .collect(),
+        ];
         let meta = ProjectMeta {
             ppq: 480,
             ..ProjectMeta::default()
@@ -206,7 +207,11 @@ mod tests {
             tempo: AutomationLane {
                 target: AutomationTarget::Tempo,
                 track: 0,
-                events: vec![AutomationEvent { tick: 0, value: 120.0, shape: SegmentShape::Step }],
+                events: vec![AutomationEvent {
+                    tick: 0,
+                    value: 120.0,
+                    shape: SegmentShape::Step,
+                }],
             },
             time_sig: Vec::new(),
             key_sig: Vec::new(),
@@ -223,9 +228,27 @@ mod tests {
             ..ProjectMeta::default()
         };
         let per_track_notes: Vec<Vec<NoteEvent>> = vec![
-            vec![NoteEvent { start_tick: 0, end_tick: 480, key: 60, velocity: 100, id: 0 }],
-            vec![NoteEvent { start_tick: 0, end_tick: 480, key: 64, velocity: 100, id: 0 }],
-            vec![NoteEvent { start_tick: 0, end_tick: 480, key: 67, velocity: 100, id: 0 }],
+            vec![NoteEvent {
+                start_tick: 0,
+                end_tick: 480,
+                key: 60,
+                velocity: 100,
+                id: 0,
+            }],
+            vec![NoteEvent {
+                start_tick: 0,
+                end_tick: 480,
+                key: 64,
+                velocity: 100,
+                id: 0,
+            }],
+            vec![NoteEvent {
+                start_tick: 0,
+                end_tick: 480,
+                key: 67,
+                velocity: 100,
+                id: 0,
+            }],
         ];
         let mut model = YinModel {
             conductor: Arc::new(conductor),
@@ -255,7 +278,11 @@ mod tests {
             tempo: AutomationLane {
                 target: AutomationTarget::Tempo,
                 track: 0,
-                events: vec![AutomationEvent { tick: 0, value: 120.0, shape: SegmentShape::Step }],
+                events: vec![AutomationEvent {
+                    tick: 0,
+                    value: 120.0,
+                    shape: SegmentShape::Step,
+                }],
             },
             time_sig: Vec::new(),
             key_sig: Vec::new(),
@@ -266,13 +293,28 @@ mod tests {
         let t1 = TrackData::new(0, 0);
         let t2 = TrackData::new(1, 0);
         let per_track_notes: Vec<Vec<NoteEvent>> = vec![
-            vec![NoteEvent { start_tick: 0, end_tick: 480, key: 60, velocity: 100, id: 0 }],
-            vec![NoteEvent { start_tick: 0, end_tick: 480, key: 60, velocity: 100, id: 0 }],
+            vec![NoteEvent {
+                start_tick: 0,
+                end_tick: 480,
+                key: 60,
+                velocity: 100,
+                id: 0,
+            }],
+            vec![NoteEvent {
+                start_tick: 0,
+                end_tick: 480,
+                key: 60,
+                velocity: 100,
+                id: 0,
+            }],
         ];
         let mut model = YinModel {
             conductor: Arc::new(conductor),
             tracks: vec![Arc::new(t1), Arc::new(t2)],
-            meta: ProjectMeta { ppq: 480, ..ProjectMeta::default() },
+            meta: ProjectMeta {
+                ppq: 480,
+                ..ProjectMeta::default()
+            },
             ..Default::default()
         };
         model.load_track_notes(per_track_notes);
@@ -302,12 +344,19 @@ mod tests {
         t.automation_lanes = vec![AutomationLane {
             target: AutomationTarget::CC { controller: 7 },
             track: 0,
-            events: vec![AutomationEvent { tick: 0, value: 100.0, shape: SegmentShape::Step }],
+            events: vec![AutomationEvent {
+                tick: 0,
+                value: 100.0,
+                shape: SegmentShape::Step,
+            }],
         }];
         let mut model = YinModel {
             conductor: Arc::new(conductor),
             tracks: vec![Arc::new(t)],
-            meta: ProjectMeta { ppq: 480, ..ProjectMeta::default() },
+            meta: ProjectMeta {
+                ppq: 480,
+                ..ProjectMeta::default()
+            },
             ..Default::default()
         };
         model.rebuild();
@@ -352,8 +401,8 @@ mod tests {
     #[test]
     fn dense_channels_for_port_collects_active() {
         let mut mask = vec![false; 32];
-        mask[0] = true;  // port 0, ch 0
-        mask[5] = true;  // port 0, ch 5
+        mask[0] = true; // port 0, ch 0
+        mask[5] = true; // port 0, ch 5
         mask[16] = true; // port 1, ch 0
         let layout = ChannelLayout::from_mask(mask);
         let port0 = layout.dense_channels_for_port(0);
@@ -402,7 +451,10 @@ mod tests {
         notes[0] = 2; // ch 0 有 2 个 audible
         let ctrls = [0u32; 256];
 
-        assert!(!layout.differs_from_counts(&notes, &ctrls), "ch 0 仍然激活，无翻转");
+        assert!(
+            !layout.differs_from_counts(&notes, &ctrls),
+            "ch 0 仍然激活，无翻转"
+        );
     }
 
     #[test]
@@ -445,7 +497,10 @@ mod tests {
         let mut ctrls = [0u32; 256];
         ctrls[5] = 1;
 
-        assert!(layout.differs_from_counts(&notes, &ctrls), "ch 5 由 automation 激活");
+        assert!(
+            layout.differs_from_counts(&notes, &ctrls),
+            "ch 5 由 automation 激活"
+        );
     }
 
     #[test]
@@ -458,9 +513,9 @@ mod tests {
         let layout = ChannelLayout::from_mask(mask);
 
         let mut notes = [0u32; 256];
-        notes[0] = 1;   // ch 0 仍激活
-        notes[16] = 0;  // ch 16 失活
-        notes[32] = 1;  // ch 32 新激活
+        notes[0] = 1; // ch 0 仍激活
+        notes[16] = 0; // ch 16 失活
+        notes[32] = 1; // ch 32 新激活
         let ctrls = [0u32; 256];
 
         assert!(layout.differs_from_counts(&notes, &ctrls), "多 port 翻转");
@@ -476,7 +531,10 @@ mod tests {
         let notes = [0u32; 256];
         let ctrls = [0u32; 256];
 
-        assert!(!layout.differs_from_counts(&notes, &ctrls), "全未激活，无翻转");
+        assert!(
+            !layout.differs_from_counts(&notes, &ctrls),
+            "全未激活，无翻转"
+        );
     }
 
     /// 集成测试：完整复现 bug 场景，验证 flip 检测触发 teardown。
@@ -497,14 +555,16 @@ mod tests {
 
         // 3. 旧 layout 检测新 counts → 必须报告翻转
         assert!(
-            layout.differs_from_counts(&with_note.channel_note_count, &with_note.channel_ctrl_count),
+            layout
+                .differs_from_counts(&with_note.channel_note_count, &with_note.channel_ctrl_count),
             "旧 layout（全 false）检测到 ch 0 0→1 翻转"
         );
 
         // 4. 用新 model 重建 layout → 与新 counts 一致，不再翻转
         let new_layout = ChannelLayout::from_model(&with_note);
         assert!(
-            !new_layout.differs_from_counts(&with_note.channel_note_count, &with_note.channel_ctrl_count),
+            !new_layout
+                .differs_from_counts(&with_note.channel_note_count, &with_note.channel_ctrl_count),
             "新 layout 与新 counts 一致，无翻转"
         );
     }

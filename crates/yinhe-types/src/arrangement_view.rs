@@ -71,8 +71,7 @@ impl ArrangementView {
         lane_height: f32,
         num_tracks: usize,
     ) -> (usize, usize) {
-        let first = ((scroll_y / lane_height).floor() as usize)
-            .min(num_tracks.saturating_sub(1));
+        let first = ((scroll_y / lane_height).floor() as usize).min(num_tracks.saturating_sub(1));
         let visible_count = (height / lane_height).ceil() as usize + 1;
         let last = (first + visible_count).min(num_tracks);
         (first, last)

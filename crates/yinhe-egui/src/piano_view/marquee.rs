@@ -5,8 +5,8 @@
 
 use eframe::egui;
 
-use yinhe_types::TimeSigEvent;
 use yinhe_editor_core::quantize::QuantizePreset;
+use yinhe_types::TimeSigEvent;
 
 use super::PianoViewEvent;
 
@@ -65,9 +65,7 @@ pub(crate) fn marquee_drag_frame(
     {
         let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
         let raw_tick = view.x_to_tick(local.x);
-        let start_tick = crate::view_interaction::snap_tick(
-            raw_tick, quantize, ppq, bar_line_data,
-        );
+        let start_tick = crate::view_interaction::snap_tick(raw_tick, quantize, ppq, bar_line_data);
         let start_content_y = local.y + view.base.scroll_y;
         drag = Some(((start_tick, start_content_y), local, local));
     }
@@ -80,47 +78,48 @@ pub(crate) fn marquee_drag_frame(
 
     // Move -> update with auto-scroll
     if let (Some(start_px), Some((start_music, press_pos, _))) = (start_pixel, drag) {
-        if pointer.primary_down() && !pointer.primary_pressed()
-            && let Some(pos) = pointer.hover_pos() {
-                let clamped = pos.clamp(music_rect.min, music_rect.max);
-                let local = egui::pos2(
-                    clamped.x - content_rect.min.x,
-                    clamped.y - content_rect.min.y,
-                );
+        if pointer.primary_down()
+            && !pointer.primary_pressed()
+            && let Some(pos) = pointer.hover_pos()
+        {
+            let clamped = pos.clamp(music_rect.min, music_rect.max);
+            let local = egui::pos2(
+                clamped.x - content_rect.min.x,
+                clamped.y - content_rect.min.y,
+            );
 
-                drag = Some((start_music, press_pos, local));
+            drag = Some((start_music, press_pos, local));
 
-                // ── Auto-scroll when dragging near the edge ──
-                // No scroll compensation needed: start is in music coords, so it
-                // automatically follows the content.
-                crate::selection::drag::auto_scroll_on_drag(
-                    ui,
-                    &mut view.base,
-                    music_rect,
-                    pos,
-                    |base, w, _h| {
-                        base.clamp_scroll_x(w, total_ticks);
-                        base.scroll_y = base.scroll_y.max(0.0);
-                    },
-                );
-                view.clamp_scroll(content_rect.width(), content_rect.height(), total_ticks);
+            // ── Auto-scroll when dragging near the edge ──
+            // No scroll compensation needed: start is in music coords, so it
+            // automatically follows the content.
+            crate::selection::drag::auto_scroll_on_drag(
+                ui,
+                &mut view.base,
+                music_rect,
+                pos,
+                |base, w, _h| {
+                    base.clamp_scroll_x(w, total_ticks);
+                    base.scroll_y = base.scroll_y.max(0.0);
+                },
+            );
+            view.clamp_scroll(content_rect.width(), content_rect.height(), total_ticks);
 
-                // ── Tooltip：显示 ±tick / ±key（tick 按量化 snap）──
-                let (s_tick, s_content_y) = start_music;
-                let raw_cur = view.x_to_tick(local.x);
-                let snapped_cur = crate::view_interaction::snap_tick(
-                    raw_cur, quantize, ppq, bar_line_data,
-                );
-                let dt = (snapped_cur - s_tick).round() as i64;
-                let s_key = view.y_to_key(s_content_y - view.base.scroll_y);
-                let cur_key = view.y_to_key(local.y);
-                let dk = cur_key as i32 - s_key as i32;
-                let lines = vec![
-                    crate::view_interaction::format_signed("tick", dt),
-                    crate::view_interaction::format_signed("key", dk as i64),
-                ];
-                crate::view_interaction::draw_hover_tooltip(ui.ctx(), &lines, pos.x, pos.y);
-            }
+            // ── Tooltip：显示 ±tick / ±key（tick 按量化 snap）──
+            let (s_tick, s_content_y) = start_music;
+            let raw_cur = view.x_to_tick(local.x);
+            let snapped_cur =
+                crate::view_interaction::snap_tick(raw_cur, quantize, ppq, bar_line_data);
+            let dt = (snapped_cur - s_tick).round() as i64;
+            let s_key = view.y_to_key(s_content_y - view.base.scroll_y);
+            let cur_key = view.y_to_key(local.y);
+            let dk = cur_key as i32 - s_key as i32;
+            let lines = vec![
+                crate::view_interaction::format_signed("tick", dt),
+                crate::view_interaction::format_signed("key", dk as i64),
+            ];
+            crate::view_interaction::draw_hover_tooltip(ui.ctx(), &lines, pos.x, pos.y);
+        }
 
         // Release → compute snapped bounds
         if pointer.primary_released() {
@@ -128,21 +127,27 @@ pub(crate) fn marquee_drag_frame(
                 // 3px 阈值用 press_pos（按下时的原始像素位置）
                 if (end - press_pos).length() >= 3.0 {
                     // 选区 bounds 用 start_px（量化后）和 end（当前鼠标）计算
-                    let (
-                        sx, ex, sy, ey,
-                        t_start, t_end, key_lo, key_hi,
-                    ) = piano_snapped_bounds(start_px, end, view, quantize, ppq, bar_line_data);
+                    let (sx, ex, sy, ey, t_start, t_end, key_lo, key_hi) =
+                        piano_snapped_bounds(start_px, end, view, quantize, ppq, bar_line_data);
                     let kb_w = music_rect.min.x - content_rect.min.x;
                     let snapped_view_rect = egui::Rect::from_min_max(
                         egui::pos2(sx.min(ex) - kb_w, sy.min(ey)),
                         egui::pos2(sx.max(ex) - kb_w, sy.max(ey)),
                     );
-                    Some(MarqueeDragResult { t_start, t_end, key_lo, key_hi, snapped_view_rect })
+                    Some(MarqueeDragResult {
+                        t_start,
+                        t_end,
+                        key_lo,
+                        key_hi,
+                        snapped_view_rect,
+                    })
                 } else {
                     None
                 }
             });
-            ui.data_mut(|d| d.insert_persisted(sel_id, Option::<((f64, f32), egui::Pos2, egui::Pos2)>::None));
+            ui.data_mut(|d| {
+                d.insert_persisted(sel_id, Option::<((f64, f32), egui::Pos2, egui::Pos2)>::None)
+            });
             view.base.dirty = true;
             return result;
         }
@@ -180,7 +185,10 @@ pub(crate) fn draw_marquee_box(
             return;
         }
         // 绘制用 start_music（量化后）和 end（当前鼠标）计算选区 bounds
-        let start = egui::pos2(view.tick_to_x(start_music.0), start_music.1 - view.base.scroll_y);
+        let start = egui::pos2(
+            view.tick_to_x(start_music.0),
+            start_music.1 - view.base.scroll_y,
+        );
         let (vx, vy, vw, vh, _, _, _, _) =
             piano_snapped_bounds(start, end, view, quantize, ppq, bar_line_data);
         let kb_w = music_rect.min.x - content_rect.min.x;
@@ -217,7 +225,14 @@ pub(crate) fn eraser_drag_frame(
     track_selected: &std::collections::HashSet<u16>,
 ) -> Option<PianoViewEvent> {
     let result = marquee_drag_frame(
-        ui, content_rect, music_rect, view, quantize, ppq, bar_line_data, total_ticks,
+        ui,
+        content_rect,
+        music_rect,
+        view,
+        quantize,
+        ppq,
+        bar_line_data,
+        total_ticks,
         "eraser_drag",
     )?;
     let track_lo = track_selected.iter().min().copied().unwrap_or(0);

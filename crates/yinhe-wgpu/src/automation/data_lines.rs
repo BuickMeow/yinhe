@@ -1,7 +1,7 @@
-use yinhe_types::AutomationPanelView;
-use yinhe_theme::GpuTheme;
-use yinhe_types::{AutomationEvent, AutomationLane, SegmentShape, TRACK_PALETTE};
 use crate::vertex::CurveInstance;
+use yinhe_theme::GpuTheme;
+use yinhe_types::AutomationPanelView;
+use yinhe_types::{AutomationEvent, AutomationLane, SegmentShape, TRACK_PALETTE};
 
 /// 自动化曲线的线宽（SDF 半宽，像素）。视觉宽度 ≈ 2×thickness + 1px AA。
 /// 0.5 ≈ 原 1px 矩形拟合的视觉宽度，但带 AA 抗锯齿。
@@ -61,24 +61,54 @@ fn collect_segments(
     // 无可见事件：在 chase 值处画一条横贯网格的横线
     if visible_events.is_empty() {
         let idx = lane.events.partition_point(|e| e.tick < pad_start);
-        let val = if idx > 0 { lane.events[idx - 1].value } else { 0.0 };
+        let val = if idx > 0 {
+            lane.events[idx - 1].value
+        } else {
+            0.0
+        };
         let y = view.value_to_y(val, max_val);
         if w > grid_left_x {
-            segs.push(SegSpan { x1: grid_left_x, y1: y, shape: SegmentShape::Step, x2: w, y2: y, tick1: 0, tick2: 0, v1: 0.0, v2: 0.0 });
+            segs.push(SegSpan {
+                x1: grid_left_x,
+                y1: y,
+                shape: SegmentShape::Step,
+                x2: w,
+                y2: y,
+                tick1: 0,
+                tick2: 0,
+                v1: 0.0,
+                v2: 0.0,
+            });
         }
         return segs;
     }
 
     // chase 值（第一个可见事件之前的值）
-    let prev_idx = lane.events.partition_point(|e| e.tick < visible_events[0].tick);
-    let chase_val = if prev_idx > 0 { lane.events[prev_idx - 1].value } else { 0.0 };
+    let prev_idx = lane
+        .events
+        .partition_point(|e| e.tick < visible_events[0].tick);
+    let chase_val = if prev_idx > 0 {
+        lane.events[prev_idx - 1].value
+    } else {
+        0.0
+    };
     let first_tick = visible_events[0].tick;
     let first_x = x_offset + first_tick as f32 * ppu;
     let chase_y = view.value_to_y(chase_val, max_val);
 
     // chase 段：grid_left → first_event
     if first_x > grid_left_x {
-        segs.push(SegSpan { x1: grid_left_x, y1: chase_y, shape: SegmentShape::Step, x2: first_x, y2: chase_y, tick1: 0, tick2: 0, v1: 0.0, v2: 0.0 });
+        segs.push(SegSpan {
+            x1: grid_left_x,
+            y1: chase_y,
+            shape: SegmentShape::Step,
+            x2: first_x,
+            y2: chase_y,
+            tick1: 0,
+            tick2: 0,
+            v1: 0.0,
+            v2: 0.0,
+        });
     }
 
     // 事件段：prev → cur（prev 从虚拟 chase 段尾端开始，每次迭代后 prev = evt）
@@ -92,8 +122,15 @@ fn collect_segments(
         let x2 = x_offset + evt.tick as f32 * ppu;
         let y2 = view.value_to_y(evt.value, max_val);
         segs.push(SegSpan {
-            x1: prev_x, y1: prev_y, shape: prev_shape, x2, y2,
-            tick1: prev_tick, tick2: evt.tick, v1: prev_value, v2: evt.value,
+            x1: prev_x,
+            y1: prev_y,
+            shape: prev_shape,
+            x2,
+            y2,
+            tick1: prev_tick,
+            tick2: evt.tick,
+            v1: prev_value,
+            v2: evt.value,
         });
         prev_shape = evt.shape;
         prev_x = x2;
@@ -112,8 +149,15 @@ fn collect_segments(
     };
     if right_bound > prev_x {
         segs.push(SegSpan {
-            x1: prev_x, y1: prev_y, shape: SegmentShape::Step, x2: right_bound, y2: prev_y,
-            tick1: prev_tick, tick2: 0, v1: prev_value, v2: 0.0,
+            x1: prev_x,
+            y1: prev_y,
+            shape: SegmentShape::Step,
+            x2: right_bound,
+            y2: prev_y,
+            tick1: prev_tick,
+            tick2: 0,
+            v1: prev_value,
+            v2: 0.0,
         });
     }
 
@@ -155,7 +199,10 @@ pub fn build_data_lines(
 
     for lane in lanes {
         // 跳过被 ghost 覆盖的 lane（通过 track + target 匹配）
-        if skip_lane.map(|sl| sl.track == lane.track && sl.target == lane.target).unwrap_or(false) {
+        if skip_lane
+            .map(|sl| sl.track == lane.track && sl.target == lane.target)
+            .unwrap_or(false)
+        {
             continue;
         }
 
@@ -169,7 +216,16 @@ pub fn build_data_lines(
             .unwrap_or_else(|| TRACK_PALETTE[trk_idx % TRACK_PALETTE.len()]);
 
         // 收集并绘制所有段
-        let segs = collect_segments(lane, view, max_val, w, pad_start, pad_end, x_offset, grid_left_x);
+        let segs = collect_segments(
+            lane,
+            view,
+            max_val,
+            w,
+            pad_start,
+            pad_end,
+            x_offset,
+            grid_left_x,
+        );
         for seg in &segs {
             render_segment(out, seg, view, max_val, color);
         }
@@ -188,12 +244,25 @@ pub fn build_data_lines(
                     [color[0], color[1], color[2], 1.0]
                 };
                 match evt.shape {
-                    SegmentShape::Step => out.push(CurveInstance::square(x, y, ANCHOR_RADIUS, anchor_color)),
-                    SegmentShape::Curve { .. } => out.push(CurveInstance::circle(x, y, ANCHOR_RADIUS, anchor_color)),
+                    SegmentShape::Step => {
+                        out.push(CurveInstance::square(x, y, ANCHOR_RADIUS, anchor_color))
+                    }
+                    SegmentShape::Curve { .. } => {
+                        out.push(CurveInstance::circle(x, y, ANCHOR_RADIUS, anchor_color))
+                    }
                 }
             }
             // 曲线段中间的空心控制点（仅 Curve 段，非直线时才画）
-            push_curve_control_points(out, lane, visible_events, view, max_val, x_offset, ppu, color);
+            push_curve_control_points(
+                out,
+                lane,
+                visible_events,
+                view,
+                max_val,
+                x_offset,
+                ppu,
+                color,
+            );
         }
     }
 }
@@ -219,7 +288,16 @@ pub(crate) fn build_lane_instances(
     let grid_left_x = view.base.left_panel_width;
     let ppu = view.base.pixels_per_tick;
 
-    let segs = collect_segments(lane, view, max_val, w, pad_start, pad_end, x_offset, grid_left_x);
+    let segs = collect_segments(
+        lane,
+        view,
+        max_val,
+        w,
+        pad_start,
+        pad_end,
+        x_offset,
+        grid_left_x,
+    );
     for seg in &segs {
         render_segment(out, seg, view, max_val, color);
     }
@@ -231,11 +309,24 @@ pub(crate) fn build_lane_instances(
             let y = view.value_to_y(evt.value, max_val);
             let anchor_color = [color[0], color[1], color[2], 1.0];
             match evt.shape {
-                SegmentShape::Step => out.push(CurveInstance::square(x, y, ANCHOR_RADIUS, anchor_color)),
-                SegmentShape::Curve { .. } => out.push(CurveInstance::circle(x, y, ANCHOR_RADIUS, anchor_color)),
+                SegmentShape::Step => {
+                    out.push(CurveInstance::square(x, y, ANCHOR_RADIUS, anchor_color))
+                }
+                SegmentShape::Curve { .. } => {
+                    out.push(CurveInstance::circle(x, y, ANCHOR_RADIUS, anchor_color))
+                }
             }
         }
-        push_curve_control_points(out, lane, visible_events, view, max_val, x_offset, ppu, color);
+        push_curve_control_points(
+            out,
+            lane,
+            visible_events,
+            view,
+            max_val,
+            x_offset,
+            ppu,
+            color,
+        );
     }
 }
 
@@ -284,11 +375,35 @@ fn push_curve_control_points(
             let c2x = px3 + (px3 - px0) * x2 * 4.0;
             let c2y = py3 + (py3 - py0) * y2 * 4.0;
             // 锚点 → 控制点的连线（handle）
-            out.push(CurveInstance::line(px0, py0, c1x, c1y, CTRL_HANDLE_THICKNESS, handle_color));
-            out.push(CurveInstance::line(px3, py3, c2x, c2y, CTRL_HANDLE_THICKNESS, handle_color));
+            out.push(CurveInstance::line(
+                px0,
+                py0,
+                c1x,
+                c1y,
+                CTRL_HANDLE_THICKNESS,
+                handle_color,
+            ));
+            out.push(CurveInstance::line(
+                px3,
+                py3,
+                c2x,
+                c2y,
+                CTRL_HANDLE_THICKNESS,
+                handle_color,
+            ));
             // 两个空心圆控制点
-            out.push(CurveInstance::hollow_circle(c1x, c1y, CTRL_POINT_RADIUS, ctrl_color));
-            out.push(CurveInstance::hollow_circle(c2x, c2y, CTRL_POINT_RADIUS, ctrl_color));
+            out.push(CurveInstance::hollow_circle(
+                c1x,
+                c1y,
+                CTRL_POINT_RADIUS,
+                ctrl_color,
+            ));
+            out.push(CurveInstance::hollow_circle(
+                c2x,
+                c2y,
+                CTRL_POINT_RADIUS,
+                ctrl_color,
+            ));
         }
         prev = Some(evt);
     }
@@ -311,7 +426,14 @@ fn render_segment(
         // 同一 tick 的多事件：只画竖直跳变
         let dy = seg.y2 - seg.y1;
         if dy.abs() > 0.0 {
-            out.push(CurveInstance::line(seg.x1, seg.y1, seg.x2, seg.y2, LINE_THICKNESS, line_color));
+            out.push(CurveInstance::line(
+                seg.x1,
+                seg.y1,
+                seg.x2,
+                seg.y2,
+                LINE_THICKNESS,
+                line_color,
+            ));
         }
         return;
     }
@@ -319,10 +441,24 @@ fn render_segment(
     match seg.shape {
         SegmentShape::Step => {
             // 横线（保持 v1）+ 竖直跳变
-            out.push(CurveInstance::line(seg.x1, seg.y1, seg.x2, seg.y1, LINE_THICKNESS, line_color));
+            out.push(CurveInstance::line(
+                seg.x1,
+                seg.y1,
+                seg.x2,
+                seg.y1,
+                LINE_THICKNESS,
+                line_color,
+            ));
             let dy = seg.y2 - seg.y1;
             if dy.abs() > 0.0 {
-                out.push(CurveInstance::line(seg.x2, seg.y1, seg.x2, seg.y2, LINE_THICKNESS, line_color));
+                out.push(CurveInstance::line(
+                    seg.x2,
+                    seg.y1,
+                    seg.x2,
+                    seg.y2,
+                    LINE_THICKNESS,
+                    line_color,
+                ));
             }
         }
         SegmentShape::Curve { .. } => {
@@ -347,7 +483,14 @@ fn render_curve_polyline(
     let span = seg.tick2.saturating_sub(seg.tick1) as f32;
     // 直线或段宽不足：退化成单条 line
     if seg.shape.is_linear() || span <= 0.0 || dx < 2.0 {
-        out.push(CurveInstance::line(px0, seg.y1, px3, seg.y2, LINE_THICKNESS, line_color));
+        out.push(CurveInstance::line(
+            px0,
+            seg.y1,
+            px3,
+            seg.y2,
+            LINE_THICKNESS,
+            line_color,
+        ));
         return;
     }
 
@@ -363,7 +506,14 @@ fn render_curve_polyline(
         let f = seg.shape.interpolate(t);
         let v = seg.v1 + (seg.v2 - seg.v1) * f;
         let y = view.value_to_y(v, max_val);
-        out.push(CurveInstance::line(prev_x, prev_y, px, y, LINE_THICKNESS, line_color));
+        out.push(CurveInstance::line(
+            prev_x,
+            prev_y,
+            px,
+            y,
+            LINE_THICKNESS,
+            line_color,
+        ));
         prev_x = px;
         prev_y = y;
     }

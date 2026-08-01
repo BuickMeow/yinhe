@@ -35,11 +35,25 @@ pub struct VelocityEdit {
 #[derive(Clone, Debug)]
 pub enum PencilNoteDrag {
     /// Moving a single note by (delta_ticks, delta_keys) from its original position.
-    Move { track: u16, start_tick: u32, key: u8, delta_ticks: i64, delta_keys: i32 },
+    Move {
+        track: u16,
+        start_tick: u32,
+        key: u8,
+        delta_ticks: i64,
+        delta_keys: i32,
+    },
     /// Resizing the right edge of a note.
-    ResizeRight { track: u16, start_tick: u32, key: u8, new_end_tick: u32 },
+    ResizeRight {
+        track: u16,
+        start_tick: u32,
+        key: u8,
+        new_end_tick: u32,
+    },
     /// Resizing the left edge of a note.
-    ResizeLeft { track: u16, start_tick: u32, key: u8, new_start_tick: u32 },
+    ResizeLeft {
+        track: u16,
+        start_tick: u32,
+        key: u8,
+        new_start_tick: u32,
+    },
 }
-
-

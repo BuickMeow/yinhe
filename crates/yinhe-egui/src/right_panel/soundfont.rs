@@ -1,8 +1,8 @@
 use eframe::egui;
 use egui_material_icons::icons::ICON_ADD;
 
-use rust_i18n::t;
 use crate::audio_settings::AudioSettings;
+use rust_i18n::t;
 use yinhe_editor_core::document::Document;
 
 use yinhe_editor_core::config::SfEntry;
@@ -128,7 +128,13 @@ pub fn show(
                 .count();
             ui.label(t!("soundfont.global_status", total = total, enabled = enabled).to_string());
         } else if let Some(ref doc) = doc {
-            let proj_total: usize = doc.edit.project_sf.overrides.iter().map(|(_, e)| e.len()).sum();
+            let proj_total: usize = doc
+                .edit
+                .project_sf
+                .overrides
+                .iter()
+                .map(|(_, e)| e.len())
+                .sum();
             let proj_enabled: usize = doc
                 .edit
                 .project_sf
@@ -137,7 +143,14 @@ pub fn show(
                 .flat_map(|(_, e)| e.iter())
                 .filter(|e| e.enabled)
                 .count();
-            ui.label(t!("soundfont.project_status", total = proj_total, enabled = proj_enabled).to_string());
+            ui.label(
+                t!(
+                    "soundfont.project_status",
+                    total = proj_total,
+                    enabled = proj_enabled
+                )
+                .to_string(),
+            );
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui.button(t!("soundfont.reload_audio").as_ref()).clicked() {
@@ -168,21 +181,21 @@ fn global_panel(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
             && let Some(paths) = rfd::FileDialog::new()
                 .add_filter("SoundFont", &["sf2", "sf3", "sfz"])
                 .pick_files()
-            {
-                for path in paths {
-                    let name = path
-                        .file_stem()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("SoundFont")
-                        .to_string();
-                    entries.push(SfEntry {
-                        path: path.to_string_lossy().to_string(),
-                        name,
-                        enabled: true,
-                    });
-                }
-                changed = true;
+        {
+            for path in paths {
+                let name = path
+                    .file_stem()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("SoundFont")
+                    .to_string();
+                entries.push(SfEntry {
+                    path: path.to_string_lossy().to_string(),
+                    name,
+                    enabled: true,
+                });
             }
+            changed = true;
+        }
         if ui.button(t!("common.clear").as_ref()).clicked() {
             entries.clear();
             changed = true;
@@ -232,7 +245,8 @@ fn project_panel(ui: &mut egui::Ui, doc: &mut Document) -> bool {
     let port = used_ports[selected_port];
 
     if let Some(idx) = doc
-        .edit.project_sf
+        .edit
+        .project_sf
         .overrides
         .iter()
         .position(|(p, _)| *p == port)
@@ -245,21 +259,21 @@ fn project_panel(ui: &mut egui::Ui, doc: &mut Document) -> bool {
                 && let Some(paths) = rfd::FileDialog::new()
                     .add_filter("SoundFont", &["sf2", "sf3", "sfz"])
                     .pick_files()
-                {
-                    for path in paths {
-                        let name = path
-                            .file_stem()
-                            .and_then(|n| n.to_str())
-                            .unwrap_or("SoundFont")
-                            .to_string();
-                        entries.push(SfEntry {
-                            path: path.to_string_lossy().to_string(),
-                            name,
-                            enabled: true,
-                        });
-                    }
-                    changed = true;
+            {
+                for path in paths {
+                    let name = path
+                        .file_stem()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("SoundFont")
+                        .to_string();
+                    entries.push(SfEntry {
+                        path: path.to_string_lossy().to_string(),
+                        name,
+                        enabled: true,
+                    });
                 }
+                changed = true;
+            }
         });
 
         if ui.button(t!("soundfont.clear_port").as_ref()).clicked() {

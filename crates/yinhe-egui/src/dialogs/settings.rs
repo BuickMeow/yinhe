@@ -16,7 +16,12 @@ pub fn show_content(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
         .spacing([12.0, 8.0])
         .show(ui, |ui| {
             ui.label(t!("settings.language").as_ref());
-            let locales = [("zh-CN", "简体中文"), ("en", "English"), ("ja", "日本語"), ("ko", "한국어")];
+            let locales = [
+                ("zh-CN", "简体中文"),
+                ("en", "English"),
+                ("ja", "日本語"),
+                ("ko", "한국어"),
+            ];
             let current = locales
                 .iter()
                 .find(|(code, _)| *code == settings.locale)
@@ -50,21 +55,25 @@ pub fn show_content(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
         .show(ui, |ui| {
             ui.label(t!("settings.audio.output_device").as_ref());
             let default_device = t!("settings.audio.default_device").to_string();
-            let current_device =
-                settings.output_device_name.as_deref().unwrap_or(default_device.as_str());
+            let current_device = settings
+                .output_device_name
+                .as_deref()
+                .unwrap_or(default_device.as_str());
             egui::ComboBox::from_id_salt("output_device")
                 .selected_text(current_device)
                 .show_ui(ui, |ui| {
                     for device_name in settings.available_devices().to_vec() {
-                        let selected =
-                            settings.output_device_name.as_ref() == Some(&device_name);
+                        let selected = settings.output_device_name.as_ref() == Some(&device_name);
                         if ui.selectable_label(selected, &device_name).clicked() {
                             settings.output_device_name = Some(device_name);
                             changed = true;
                         }
                     }
                     let is_default = settings.output_device_name.is_none();
-                    if ui.selectable_label(is_default, t!("settings.audio.default_device").as_ref()).clicked() {
+                    if ui
+                        .selectable_label(is_default, t!("settings.audio.default_device").as_ref())
+                        .clicked()
+                    {
                         settings.output_device_name = None;
                         changed = true;
                     }
@@ -95,9 +104,18 @@ pub fn show_content(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
                 (128, t!("settings.audio.buffer.frames", n = 128).to_string()),
                 (256, t!("settings.audio.buffer.frames", n = 256).to_string()),
                 (512, t!("settings.audio.buffer.frames", n = 512).to_string()),
-                (1024, t!("settings.audio.buffer.frames", n = 1024).to_string()),
-                (2048, t!("settings.audio.buffer.frames", n = 2048).to_string()),
-                (4096, t!("settings.audio.buffer.frames", n = 4096).to_string()),
+                (
+                    1024,
+                    t!("settings.audio.buffer.frames", n = 1024).to_string(),
+                ),
+                (
+                    2048,
+                    t!("settings.audio.buffer.frames", n = 2048).to_string(),
+                ),
+                (
+                    4096,
+                    t!("settings.audio.buffer.frames", n = 4096).to_string(),
+                ),
             ];
             let custom_buf = t!("settings.audio.buffer.custom").to_string();
             let buf_label = buf_sizes
@@ -142,7 +160,10 @@ pub fn show_content(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
             ui.end_row();
 
             ui.label(t!("settings.audio.synth_engine").as_ref());
-            let engine_names = [t!("settings.audio.engine_cpu").to_string(), t!("settings.audio.engine_gpu").to_string()];
+            let engine_names = [
+                t!("settings.audio.engine_cpu").to_string(),
+                t!("settings.audio.engine_gpu").to_string(),
+            ];
             let current_engine = if settings.use_gpu_synth { 1 } else { 0 };
             egui::ComboBox::from_id_salt("synth_engine")
                 .selected_text(engine_names[current_engine].clone())
@@ -170,7 +191,11 @@ pub fn show_content(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
         .spacing([12.0, 8.0])
         .show(ui, |ui| {
             ui.label(t!("settings.render.scroll_mode").as_ref());
-            let mode_names = [t!("settings.render.scroll.raw").to_string(), t!("settings.render.scroll.integer").to_string(), t!("settings.render.scroll.subpixel").to_string()];
+            let mode_names = [
+                t!("settings.render.scroll.raw").to_string(),
+                t!("settings.render.scroll.integer").to_string(),
+                t!("settings.render.scroll.subpixel").to_string(),
+            ];
             let current = settings.scroll_mode as usize;
             egui::ComboBox::from_id_salt("scroll_mode")
                 .selected_text(mode_names[current].clone())
@@ -298,7 +323,10 @@ pub fn show_content(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
     ui.horizontal(|ui| {
         ui.add_space(ui.available_width() / 2.0 - 80.0);
         if ui
-            .button(egui::RichText::new(t!("settings.factory_reset").as_ref()).color(egui::Color32::from_rgb(232, 80, 80)))
+            .button(
+                egui::RichText::new(t!("settings.factory_reset").as_ref())
+                    .color(egui::Color32::from_rgb(232, 80, 80)),
+            )
             .clicked()
         {
             let default_settings = AudioSettings::default();
@@ -333,7 +361,11 @@ pub(crate) fn show_viewport(
 
     ctx_clone.show_viewport_immediate(
         viewport_id,
-        crate::chrome::dialog::viewport_builder(t!("settings.title").as_ref(), [480.0, 560.0], true),
+        crate::chrome::dialog::viewport_builder(
+            t!("settings.title").as_ref(),
+            [480.0, 560.0],
+            true,
+        ),
         move |vctx, _class| {
             let mut slot = settings_cb.borrow_mut().take();
             if let Some(ref mut s) = slot {
@@ -347,7 +379,11 @@ pub(crate) fn show_viewport(
                         ..Default::default()
                     })
                     .show(vctx, |ui| {
-                        crate::chrome::dialog::title_bar(ui, t!("settings.title").as_ref(), &mut close);
+                        crate::chrome::dialog::title_bar(
+                            ui,
+                            t!("settings.title").as_ref(),
+                            &mut close,
+                        );
                         eframe::egui::Frame::new()
                             .inner_margin(eframe::egui::Margin {
                                 left: 12,
@@ -375,25 +411,21 @@ pub(crate) fn show_viewport(
         },
     );
 
-    
-
-    if let Some(s) = std::rc::Rc::into_inner(settings_rc)
-        .and_then(|rc| rc.into_inner())
-    {
+    if let Some(s) = std::rc::Rc::into_inner(settings_rc).and_then(|rc| rc.into_inner()) {
         *settings = s;
-        haptic_engine.apply_settings(
-            settings.haptic_enabled,
-            settings.haptic_intensity,
-        );
+        haptic_engine.apply_settings(settings.haptic_enabled, settings.haptic_intensity);
         if settings.xsynth_layers != prev_xsynth_layers
-            && let Some(audio) = audio {
-                let count = if settings.xsynth_layers == 0 {
-                    None
-                } else {
-                    Some(settings.xsynth_layers as usize)
-                };
-                audio.handle.send(yinhe_audio::AudioCommand::SetLayerCount { count });
-            }
+            && let Some(audio) = audio
+        {
+            let count = if settings.xsynth_layers == 0 {
+                None
+            } else {
+                Some(settings.xsynth_layers as usize)
+            };
+            audio
+                .handle
+                .send(yinhe_audio::AudioCommand::SetLayerCount { count });
+        }
         !settings.show_settings
     } else {
         false

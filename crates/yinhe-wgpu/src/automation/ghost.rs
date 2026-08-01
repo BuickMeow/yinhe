@@ -1,9 +1,9 @@
 use super::data_lines;
 use super::prepare::AutomationGhost;
-use yinhe_types::AutomationPanelView;
-use yinhe_theme::GpuTheme;
-use yinhe_types::{AutomationEvent, AutomationLane, SegmentShape};
 use crate::vertex::CurveInstance;
+use yinhe_theme::GpuTheme;
+use yinhe_types::AutomationPanelView;
+use yinhe_types::{AutomationEvent, AutomationLane, SegmentShape};
 
 /// ghost 锚点半径（像素）。
 const GHOST_RADIUS: f32 = 4.0;
@@ -82,10 +82,7 @@ pub fn build_lane_shape_override(
 /// 算法：先删除所有 `old_tick` 处的事件（保留各 shape），再按 `new_tick` 排序插入。
 /// `new_tick` 冲突时（多个 move 目标相同，或与未移动的旧事件冲突）后者覆盖前者。
 /// `new_tick == old_tick` 的项视为无操作（仅更新 value）。
-pub fn build_lane_multi_move(
-    lane: &AutomationLane,
-    moves: &[(u32, u32, f32)],
-) -> AutomationLane {
+pub fn build_lane_multi_move(lane: &AutomationLane, moves: &[(u32, u32, f32)]) -> AutomationLane {
     if moves.is_empty() {
         return lane.clone();
     }
@@ -110,9 +107,20 @@ pub fn build_lane_multi_move(
             events.remove(idx);
         }
         let insert_idx = events.partition_point(|e| e.tick < new_tick);
-        events.insert(insert_idx, AutomationEvent { tick: new_tick, value: new_value, shape });
+        events.insert(
+            insert_idx,
+            AutomationEvent {
+                tick: new_tick,
+                value: new_value,
+                shape,
+            },
+        );
     }
-    AutomationLane { target: lane.target.clone(), track: lane.track, events }
+    AutomationLane {
+        target: lane.target.clone(),
+        track: lane.track,
+        events,
+    }
 }
 
 /// 构造一条覆盖后的 lane：保留所有原事件，批量添加副本。
@@ -120,10 +128,7 @@ pub fn build_lane_multi_move(
 /// 用于 Select 工具 Alt+拖拽复制的 ghost 预览。
 /// `copies` = `[(src_tick, new_tick, new_value)]`：从 `src_tick` 取 shape，
 /// 在 `new_tick` 处插入副本。`new_tick` 冲突时后者覆盖前者。
-pub fn build_lane_multi_copy(
-    lane: &AutomationLane,
-    copies: &[(u32, u32, f32)],
-) -> AutomationLane {
+pub fn build_lane_multi_copy(lane: &AutomationLane, copies: &[(u32, u32, f32)]) -> AutomationLane {
     if copies.is_empty() {
         return lane.clone();
     }
@@ -131,7 +136,9 @@ pub fn build_lane_multi_copy(
     // 收集每个 src_tick 对应的 shape
     let mut shapes: Vec<SegmentShape> = Vec::with_capacity(copies.len());
     for (src_tick, _, _) in copies {
-        let shape = lane.events.iter()
+        let shape = lane
+            .events
+            .iter()
             .find(|e| e.tick == *src_tick)
             .map(|e| e.shape)
             .unwrap_or_else(|| lane.target.default_shape());
@@ -149,9 +156,20 @@ pub fn build_lane_multi_copy(
             events.remove(idx);
         }
         let insert_idx = events.partition_point(|e| e.tick < new_tick);
-        events.insert(insert_idx, AutomationEvent { tick: new_tick, value: new_value, shape });
+        events.insert(
+            insert_idx,
+            AutomationEvent {
+                tick: new_tick,
+                value: new_value,
+                shape,
+            },
+        );
     }
-    AutomationLane { target: lane.target.clone(), track: lane.track, events }
+    AutomationLane {
+        target: lane.target.clone(),
+        track: lane.track,
+        events,
+    }
 }
 
 /// Build ghost preview instances (layer 2, rebuilt every frame).
@@ -168,7 +186,9 @@ pub fn build_ghost(
 ) {
     let push_anchor = |out: &mut Vec<CurveInstance>, x: f32, y: f32, color: [f32; 3]| {
         out.push(CurveInstance::circle(
-            x, y, GHOST_RADIUS,
+            x,
+            y,
+            GHOST_RADIUS,
             [color[0], color[1], color[2], GHOST_ALPHA],
         ));
     };
@@ -178,11 +198,21 @@ pub fn build_ghost(
             // 整条 lane 作为 ghost 重新绘制
             data_lines::build_lane_instances(out, w, view, &lane, max_val, color, show_anchors);
         }
-        AutomationGhost::Curve { start_x, start_y, cur_x, cur_y, color } => {
+        AutomationGhost::Curve {
+            start_x,
+            start_y,
+            cur_x,
+            cur_y,
+            color,
+        } => {
             push_anchor(out, start_x, start_y, color);
             // 直线预览：从 start 到 cur（line 即 ctrl=(0.5,0.5) 的退化贝塞尔）
             out.push(CurveInstance::line(
-                start_x, start_y, cur_x, cur_y, GHOST_LINE_THICKNESS,
+                start_x,
+                start_y,
+                cur_x,
+                cur_y,
+                GHOST_LINE_THICKNESS,
                 [color[0], color[1], color[2], GHOST_ALPHA],
             ));
             push_anchor(out, cur_x, cur_y, color);

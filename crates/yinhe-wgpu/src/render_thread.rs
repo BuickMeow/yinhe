@@ -126,15 +126,20 @@ impl RenderThreadHandle {
                     for (layer_idx, nl) in job.note_layers.iter().enumerate() {
                         let cache_key = nl.cache_key;
                         let instances = &nl.instances;
-                        renderer.upload_note_layer(layer_idx, if nl.force { 0 } else { cache_key }, |out| {
-                            out.extend_from_slice(instances);
-                        });
+                        renderer.upload_note_layer(
+                            layer_idx,
+                            if nl.force { 0 } else { cache_key },
+                            |out| {
+                                out.extend_from_slice(instances);
+                            },
+                        );
                     }
 
                     // Draw + submit
-                    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                        label: Some("render_thread_frame"),
-                    });
+                    let mut encoder =
+                        device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                            label: Some("render_thread_frame"),
+                        });
                     renderer.draw(&mut encoder, &target_view, width, height);
                     queue.submit(std::iter::once(encoder.finish()));
                 }

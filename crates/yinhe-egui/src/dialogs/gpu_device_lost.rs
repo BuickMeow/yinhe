@@ -23,7 +23,11 @@ pub(crate) fn show_viewport(ctx: &egui::Context) -> bool {
 
     ctx_clone.show_viewport_immediate(
         viewport_id,
-        crate::chrome::dialog::viewport_builder(t!("dialog.gpu_lost.title").as_ref(), [460.0, 150.0], false),
+        crate::chrome::dialog::viewport_builder(
+            t!("dialog.gpu_lost.title").as_ref(),
+            [460.0, 150.0],
+            false,
+        ),
         move |vctx, _class| {
             let mut close = false;
             if vctx.input(|i| i.viewport().close_requested()) {
@@ -35,7 +39,11 @@ pub(crate) fn show_viewport(ctx: &egui::Context) -> bool {
                     ..Default::default()
                 })
                 .show(vctx, |ui| {
-                    crate::chrome::dialog::title_bar(ui, t!("dialog.gpu_lost.title").as_ref(), &mut close);
+                    crate::chrome::dialog::title_bar(
+                        ui,
+                        t!("dialog.gpu_lost.title").as_ref(),
+                        &mut close,
+                    );
                     egui::Frame::new()
                         .inner_margin(egui::Margin {
                             left: 12,

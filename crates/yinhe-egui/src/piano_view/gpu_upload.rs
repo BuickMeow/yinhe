@@ -8,8 +8,8 @@
 
 use std::collections::HashSet;
 
-use yinhe_wgpu::InstanceRenderer;
 use yinhe_types::NoteSource;
+use yinhe_wgpu::InstanceRenderer;
 
 /// GPU cull 上传所需的状态（含跨帧缓存的 revision/hash）。
 pub struct GpuUploadState<'a> {
@@ -61,7 +61,8 @@ pub fn upload(state: GpuUploadState) {
 
     if !cull_was_ready {
         // First-time upload or MIDI just loaded: force full upload.
-        let (all_notes, offsets) = yinhe_wgpu::build_all_notes(midi_src, hidden_notes, track_visible);
+        let (all_notes, offsets) =
+            yinhe_wgpu::build_all_notes(midi_src, hidden_notes, track_visible);
         pianoroll.upload_all_notes_for_cull(&all_notes, &offsets, note_revisions);
     } else {
         let revision_changed = revision != *last_cull_revision_only;
@@ -69,7 +70,8 @@ pub fn upload(state: GpuUploadState) {
 
         if hidden_changed && !revision_changed {
             // Only hidden_notes changed → must full upload
-            let (all_notes, offsets) = yinhe_wgpu::build_all_notes(midi_src, hidden_notes, track_visible);
+            let (all_notes, offsets) =
+                yinhe_wgpu::build_all_notes(midi_src, hidden_notes, track_visible);
             pianoroll.upload_all_notes_for_cull(&all_notes, &offsets, note_revisions);
         } else if revision_changed {
             // Revision changed → try incremental per-key upload
@@ -82,8 +84,13 @@ pub fn upload(state: GpuUploadState) {
                 // Try incremental: build + upload each dirty key
                 let mut all_ok = true;
                 for &key in &dirty_keys {
-                    let key_notes = yinhe_wgpu::build_key_notes(midi_src, key, hidden_notes, track_visible);
-                    if !pianoroll.try_incremental_key_upload(key, &key_notes, note_revisions[key as usize]) {
+                    let key_notes =
+                        yinhe_wgpu::build_key_notes(midi_src, key, hidden_notes, track_visible);
+                    if !pianoroll.try_incremental_key_upload(
+                        key,
+                        &key_notes,
+                        note_revisions[key as usize],
+                    ) {
                         all_ok = false;
                         break;
                     }
@@ -91,7 +98,8 @@ pub fn upload(state: GpuUploadState) {
 
                 if !all_ok {
                     // Fallback: full upload (some key's count changed)
-                    let (all_notes, offsets) = yinhe_wgpu::build_all_notes(midi_src, hidden_notes, track_visible);
+                    let (all_notes, offsets) =
+                        yinhe_wgpu::build_all_notes(midi_src, hidden_notes, track_visible);
                     pianoroll.upload_all_notes_for_cull(&all_notes, &offsets, note_revisions);
                 }
             }

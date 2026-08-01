@@ -111,7 +111,9 @@ impl ChannelState {
                 }
             }
             ChannelAudioEvent::Control(ControlEvent::PitchBendValue(v)) => self.pitch_bend = *v,
-            ChannelAudioEvent::Control(ControlEvent::PitchBendSensitivity(v)) => self.pitch_bend_sensitivity = *v,
+            ChannelAudioEvent::Control(ControlEvent::PitchBendSensitivity(v)) => {
+                self.pitch_bend_sensitivity = *v
+            }
             ChannelAudioEvent::Control(ControlEvent::FineTune(v)) => self.fine_tune = *v,
             ChannelAudioEvent::Control(ControlEvent::CoarseTune(v)) => self.coarse_tune = *v,
             ChannelAudioEvent::ProgramChange(p) => self.program = *p,
@@ -132,8 +134,7 @@ impl ChannelState {
                     self.data_entry_msb as f32 + self.data_entry_lsb as f32 / 100.0;
             }
             1 => {
-                let val =
-                    ((self.data_entry_msb as u16) << 7) + self.data_entry_lsb as u16;
+                let val = ((self.data_entry_msb as u16) << 7) + self.data_entry_lsb as u16;
                 self.fine_tune = (val as f32 - 8192.0) / 8192.0 * 100.0;
             }
             2 => {

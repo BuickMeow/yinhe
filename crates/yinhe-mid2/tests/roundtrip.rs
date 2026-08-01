@@ -1,10 +1,8 @@
 //! Round-trip tests: bytes -> YinModel -> bytes -> YinModel
 
-use yinhe_core::{
-    ConductorData, NoteEvent, PcEvent, ProjectMeta, TrackData, YinModel,
-};
-use yinhe_types::TimeSigEvent;
+use yinhe_core::{ConductorData, NoteEvent, PcEvent, ProjectMeta, TrackData, YinModel};
 use yinhe_mid2::{parse_bytes, write_to_bytes};
+use yinhe_types::TimeSigEvent;
 use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, SegmentShape};
 
 /// Hand-craft minimal SMF bytes: 1 track, 1 note (C4 quarter note at 120 BPM).
@@ -64,7 +62,10 @@ fn roundtrip_minimal_midi() {
     assert_eq!(n2.start_tick, n1.start_tick);
     assert_eq!(n2.end_tick, n1.end_tick);
     assert_eq!(n2.velocity, n1.velocity);
-    assert_eq!(model2.conductor.tempo.events.len(), model1.conductor.tempo.events.len());
+    assert_eq!(
+        model2.conductor.tempo.events.len(),
+        model1.conductor.tempo.events.len()
+    );
 }
 
 fn build_complex_model() -> YinModel {
@@ -75,13 +76,29 @@ fn build_complex_model() -> YinModel {
             target: AutomationTarget::Tempo,
             track: 0,
             events: vec![
-                AutomationEvent { tick: 0, value: 120.0, shape: SegmentShape::Step },
-                AutomationEvent { tick: 1920, value: 60.0, shape: SegmentShape::Step },
+                AutomationEvent {
+                    tick: 0,
+                    value: 120.0,
+                    shape: SegmentShape::Step,
+                },
+                AutomationEvent {
+                    tick: 1920,
+                    value: 60.0,
+                    shape: SegmentShape::Step,
+                },
             ],
         },
         time_sig: vec![
-            TimeSigEvent { tick: 0, numerator: 4, denominator: 2 },
-            TimeSigEvent { tick: 3840, numerator: 3, denominator: 2 },
+            TimeSigEvent {
+                tick: 0,
+                numerator: 4,
+                denominator: 2,
+            },
+            TimeSigEvent {
+                tick: 3840,
+                numerator: 3,
+                denominator: 2,
+            },
         ],
         key_sig: Vec::new(),
         markers: Vec::new(),
@@ -92,33 +109,69 @@ fn build_complex_model() -> YinModel {
     let mut t0 = TrackData::new(0, 0);
     t0.name = "Lead".to_string();
     let t0_notes = vec![
-        NoteEvent { id: 0, start_tick: 0, end_tick: 480, key: 60, velocity: 100 },
-        NoteEvent { id: 0, start_tick: 480, end_tick: 960, key: 64, velocity: 90 },
-        NoteEvent { id: 0, start_tick: 1000, end_tick: 1500, key: 60, velocity: 80 },
-        NoteEvent { id: 0, start_tick: 1000, end_tick: 1400, key: 60, velocity: 70 },
+        NoteEvent {
+            id: 0,
+            start_tick: 0,
+            end_tick: 480,
+            key: 60,
+            velocity: 100,
+        },
+        NoteEvent {
+            id: 0,
+            start_tick: 480,
+            end_tick: 960,
+            key: 64,
+            velocity: 90,
+        },
+        NoteEvent {
+            id: 0,
+            start_tick: 1000,
+            end_tick: 1500,
+            key: 60,
+            velocity: 80,
+        },
+        NoteEvent {
+            id: 0,
+            start_tick: 1000,
+            end_tick: 1400,
+            key: 60,
+            velocity: 70,
+        },
     ];
     t0.automation_lanes = vec![
         AutomationLane {
             target: AutomationTarget::CC { controller: 7 },
             track: 0,
             events: vec![
-                AutomationEvent { tick: 0, value: 100.0, shape: SegmentShape::Step },
-                AutomationEvent { tick: 480, value: 80.0, shape: SegmentShape::Step },
+                AutomationEvent {
+                    tick: 0,
+                    value: 100.0,
+                    shape: SegmentShape::Step,
+                },
+                AutomationEvent {
+                    tick: 480,
+                    value: 80.0,
+                    shape: SegmentShape::Step,
+                },
             ],
         },
         AutomationLane {
             target: AutomationTarget::PitchBend,
             track: 0,
-            events: vec![
-                AutomationEvent { tick: 200, value: 2000.0, shape: SegmentShape::Step },
-            ],
+            events: vec![AutomationEvent {
+                tick: 200,
+                value: 2000.0,
+                shape: SegmentShape::Step,
+            }],
         },
         AutomationLane {
             target: AutomationTarget::Rpn { parameter: 0x0000 },
             track: 0,
-            events: vec![
-                AutomationEvent { tick: 100, value: 2.0, shape: SegmentShape::Step },
-            ],
+            events: vec![AutomationEvent {
+                tick: 100,
+                value: 2.0,
+                shape: SegmentShape::Step,
+            }],
         },
     ];
     t0.program_change = vec![PcEvent {
@@ -166,7 +219,10 @@ fn roundtrip_complex_model_preserves_everything() {
 
     let _l1 = &model1.tracks[0];
     let l2 = &model2.tracks[1];
-    assert_eq!(model1.track_note_count[0], model2.track_note_count[1], "note count mismatch");
+    assert_eq!(
+        model1.track_note_count[0], model2.track_note_count[1],
+        "note count mismatch"
+    );
     assert_eq!(l2.name, "Lead");
     // Notes equal as a multiset of (start_tick, end_tick, key, velocity).
     // id 在每次解析时由 YinModel 重新分配，SMF round-trip 后具体 id 值可能不同，
@@ -222,7 +278,7 @@ fn build_overlap_midi_bytes() -> Vec<u8> {
     data.extend_from_slice(b"MTrk");
     let track: &[u8] = &[
         0x00, 0x90, 60, 100, // NoteOn at tick 0, vel=100
-        0x00, 0x90, 60, 80,  // NoteOn at tick 0 (overlap), vel=80
+        0x00, 0x90, 60, 80, // NoteOn at tick 0 (overlap), vel=80
         0x81, 0x70, 0x80, 60, 0, // delta=240, NoteOff (matches second NoteOn LIFO)
         0x81, 0x70, 0x80, 60, 0, // delta=240 (tick=480), NoteOff (matches first NoteOn)
         0x00, 0xFF, 0x2F, 0x00,
@@ -242,10 +298,17 @@ fn overlapping_notes_get_distinct_ids() {
         .iter()
         .filter(|n| n.track == 1 && n.start_tick == 0)
         .collect();
-    assert_eq!(key60_at_0.len(), 2, "expected two overlapping notes at tick 0");
+    assert_eq!(
+        key60_at_0.len(),
+        2,
+        "expected two overlapping notes at tick 0"
+    );
     let ids: Vec<u32> = key60_at_0.iter().map(|n| n.id).collect();
     assert_ne!(ids[0], ids[1], "overlapping notes must have distinct ids");
-    assert!(ids.iter().all(|&id| id != 0), "ids must be assigned (non-zero)");
+    assert!(
+        ids.iter().all(|&id| id != 0),
+        "ids must be assigned (non-zero)"
+    );
 }
 
 /// Build SMF bytes with a CC101+CC100+CC6 RPN sequence.
@@ -259,10 +322,8 @@ fn build_rpn_midi_bytes() -> Vec<u8> {
         // RPN MSB=0 (CC101=0)
         0x00, 0xB0, 101, 0,
         // RPN LSB=0 (CC100=0) → selects RPN 0/0 (Pitch Bend Sensitivity)
-        0x00, 0xB0, 100, 0,
-        // Data Entry MSB=2 (CC6=2)
-        0x00, 0xB0, 6, 2,
-        0x00, 0xFF, 0x2F, 0x00,
+        0x00, 0xB0, 100, 0, // Data Entry MSB=2 (CC6=2)
+        0x00, 0xB0, 6, 2, 0x00, 0xFF, 0x2F, 0x00,
     ];
     data.extend_from_slice(&(track.len() as u32).to_be_bytes());
     data.extend_from_slice(track);
@@ -277,7 +338,8 @@ fn rpn_sequence_decodes_to_rpn_event() {
     let t = &model.tracks[1];
     // CC101/100/6 should NOT appear as plain CC lanes
     assert!(t.automation_lanes.iter().all(|l| match &l.target {
-        AutomationTarget::CC { controller } => *controller != 101 && *controller != 100 && *controller != 6,
+        AutomationTarget::CC { controller } =>
+            *controller != 101 && *controller != 100 && *controller != 6,
         _ => true,
     }));
     // Should have one RPN lane for parameter 0x0000
@@ -300,12 +362,9 @@ fn build_port_channel_midi() -> Vec<u8> {
     data.extend_from_slice(b"MTrk");
     let track: &[u8] = &[
         // MidiPort = 2 (FF 21 01 02)
-        0x00, 0xFF, 0x21, 0x01, 0x02,
-        // MidiChannel prefix = 5 (FF 20 01 05)
-        0x00, 0xFF, 0x20, 0x01, 0x05,
-        // NoteOn channel=3 key=60
-        0x00, 0x93, 60, 100,
-        0x81, 0x70, 0x83, 60, 0, // NoteOff
+        0x00, 0xFF, 0x21, 0x01, 0x02, // MidiChannel prefix = 5 (FF 20 01 05)
+        0x00, 0xFF, 0x20, 0x01, 0x05, // NoteOn channel=3 key=60
+        0x00, 0x93, 60, 100, 0x81, 0x70, 0x83, 60, 0, // NoteOff
         0x00, 0xFF, 0x2F, 0x00,
     ];
     data.extend_from_slice(&(track.len() as u32).to_be_bytes());

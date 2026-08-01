@@ -3,9 +3,11 @@
 //! 与 `time_ruler` 共享同一套 segment 遍历骨架和 `MIN_SPACING` 阈值，
 //! 保证"有线就有标签，无标签就无线"。
 
-use eframe::egui;
 use crate::theme;
-use yinhe_types::{build_time_sig_segments, compute_measure_divisor, measure_ticks, TimeSigEvent, TimelineViewBase};
+use eframe::egui;
+use yinhe_types::{
+    TimeSigEvent, TimelineViewBase, build_time_sig_segments, compute_measure_divisor, measure_ticks,
+};
 
 /// 线和标签共用的最小像素间距。与 `time_ruler::MIN_LABEL_SPACING` 保持一致。
 const MIN_SPACING: f32 = 38.0;
@@ -167,7 +169,14 @@ pub fn paint_grid_lines(
 }
 
 /// 画一条竖线（宽度像素的填充矩形）。
-fn paint_line(painter: &egui::Painter, x: f32, top: f32, bottom: f32, width: f32, color: egui::Color32) {
+fn paint_line(
+    painter: &egui::Painter,
+    x: f32,
+    top: f32,
+    bottom: f32,
+    width: f32,
+    color: egui::Color32,
+) {
     let rect = egui::Rect::from_min_size(
         egui::pos2(x - width / 2.0, top),
         egui::vec2(width, bottom - top),

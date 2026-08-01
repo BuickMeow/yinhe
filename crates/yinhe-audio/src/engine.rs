@@ -1,5 +1,5 @@
-use std::collections::BinaryHeap;
 use std::cmp::Reverse;
+use std::collections::BinaryHeap;
 use std::sync::Arc;
 
 use xsynth_core::channel::ChannelInitOptions;
@@ -12,7 +12,7 @@ use xsynth_core::{AudioStreamParams, ChannelCount};
 
 use yinhe_core::YinModel;
 
-use crate::audio_model::{ActiveNote, AudioModel, AudibleNote, SortedCC};
+use crate::audio_model::{ActiveNote, AudibleNote, AudioModel, SortedCC};
 use crate::channel_layout::ChannelLayout;
 use crate::soundfont::SoundFontManager;
 use crate::spawn::AudioCommand;

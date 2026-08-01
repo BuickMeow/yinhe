@@ -296,7 +296,9 @@ unsafe impl GlobalAlloc for TaggedAlloc {
         }
 
         let offset_backup_ptr = unsafe { ptr.add(offset - OFFSET_BACKUP_SIZE) as *mut usize };
-        unsafe { *offset_backup_ptr = offset; }
+        unsafe {
+            *offset_backup_ptr = offset;
+        }
 
         COUNTERS[tag as usize].fetch_add(user_size as isize, Ordering::Relaxed);
 
@@ -440,7 +442,13 @@ mod tests {
                 align,
                 off,
             );
-            assert_eq!(off % align, 0, "user_offset({}) = {} not aligned", align, off);
+            assert_eq!(
+                off % align,
+                0,
+                "user_offset({}) = {} not aligned",
+                align,
+                off
+            );
         }
     }
 }

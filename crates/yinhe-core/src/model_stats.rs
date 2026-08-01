@@ -137,9 +137,10 @@ impl YinModel {
             let ch = track.global_channel() as usize;
             // channel_note_count: 累加该 track 的发声音符数（与 ChannelLayout::from_model 的 saturating_add 一致）
             if let Some(&audible) = self.track_audible_count.get(track_idx)
-                && audible > 0 {
-                    note_counts[ch] = note_counts[ch].saturating_add(audible as u32);
-                }
+                && audible > 0
+            {
+                note_counts[ch] = note_counts[ch].saturating_add(audible as u32);
+            }
             // channel_ctrl_count: 该 track 有 automation_lanes 或 program_change 就 +1
             if !track.automation_lanes.is_empty() || !track.program_change.is_empty() {
                 ctrl_counts[ch] = ctrl_counts[ch].saturating_add(1);
@@ -243,9 +244,7 @@ impl YinModel {
     /// 所以 rebuild_dirty 路径只需关心 tick_length 是否变了——tempo_map
     /// 内部缓存了 tick_length 字段，需要同步。
     pub fn rebuild_dirty(&mut self) {
-        let dirty_indices: Vec<usize> = (0..128)
-            .filter(|&k| self.dirty_keys[k])
-            .collect();
+        let dirty_indices: Vec<usize> = (0..128).filter(|&k| self.dirty_keys[k]).collect();
         if dirty_indices.is_empty() {
             return;
         }
@@ -365,7 +364,11 @@ impl YinModel {
         let scale_tick = |t: u32| -> u32 {
             let v = (t as f64 * scale).round();
             // 防御性 clamp：避免极端输入溢出。u32::MAX 已经远超任何合理 tick。
-            if v > u32::MAX as f64 { u32::MAX } else { v as u32 }
+            if v > u32::MAX as f64 {
+                u32::MAX
+            } else {
+                v as u32
+            }
         };
 
         // 1. Notes (128 buckets, parallel)
@@ -441,7 +444,11 @@ impl YinModel {
         let scale = new_ppq as f64 / old_ppq as f64;
         let scale_tick = |t: u32| -> u32 {
             let v = (t as f64 * scale).round();
-            if v > u32::MAX as f64 { u32::MAX } else { v as u32 }
+            if v > u32::MAX as f64 {
+                u32::MAX
+            } else {
+                v as u32
+            }
         };
 
         // ── 阶段 1：缩放音符（90%）──

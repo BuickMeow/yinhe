@@ -12,13 +12,21 @@ pub mod vertex;
 
 pub use layer::{LayerSlot, layer_cache_key};
 pub use note_buffer_key::{NoteBufferKey, hash_hidden};
-pub use render_thread::{RenderJob, NoteLayerData, RenderThreadHandle};
+pub use render_thread::{NoteLayerData, RenderJob, RenderThreadHandle};
 pub use renderer::{InstanceRenderer, PrepareTimings};
-pub use util::{hash_f64s, hash_f32s, hash_bools, hash_time_sigs, compute_scroll_frac};
+pub use util::{compute_scroll_frac, hash_bools, hash_f32s, hash_f64s, hash_time_sigs};
+pub use vertex::{
+    DrawInstance, MAX_TRACKS, NoteInstance, Uniforms, VelocityBarInstance, pack_props, pack_rgba,
+};
 pub use yinhe_theme::GpuTheme;
-pub use vertex::{DrawInstance, NoteInstance, VelocityBarInstance, Uniforms, MAX_TRACKS, pack_props, pack_rgba};
 
 // Re-export types that were previously provided by the separate crates
-pub use pianoroll::{build_render_job, PianorollRenderJob, build_notes, build_all_notes, build_key_notes, build_ghost_note};
-pub use automation::{prepare_automation, AutomationGhost, build_lane_override, build_lane_shape_override, build_lane_multi_move, build_lane_multi_copy};
 pub use arrangement::{build_ghost_notes, build_notes as build_arr_notes};
+pub use automation::{
+    AutomationGhost, build_lane_multi_copy, build_lane_multi_move, build_lane_override,
+    build_lane_shape_override, prepare_automation,
+};
+pub use pianoroll::{
+    PianorollRenderJob, build_all_notes, build_ghost_note, build_key_notes, build_notes,
+    build_render_job,
+};

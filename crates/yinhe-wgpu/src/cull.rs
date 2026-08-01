@@ -292,15 +292,20 @@ impl CullState {
         }
 
         if !notes.is_empty()
-            && let Some(ref buf) = self.per_key_buffers[key as usize] {
-                queue.write_buffer(buf, 0, bytemuck::cast_slice(notes));
-            }
+            && let Some(ref buf) = self.per_key_buffers[key as usize]
+        {
+            queue.write_buffer(buf, 0, bytemuck::cast_slice(notes));
+        }
         self.per_key_counts[key as usize] = notes.len() as u32;
 
         // Pre-compute dispatch args for this key (used by dispatch_workgroups_indirect).
         let wg = (notes.len() as u64).div_ceil(256);
         let args = [wg.min(65535) as u32, wg.div_ceil(65535) as u32, 1u32];
-        queue.write_buffer(&self.dispatch_args_buffer, key as u64 * 12, bytemuck::cast_slice(&args));
+        queue.write_buffer(
+            &self.dispatch_args_buffer,
+            key as u64 * 12,
+            bytemuck::cast_slice(&args),
+        );
 
         self.notes_dirty = true;
     }
@@ -325,23 +330,33 @@ impl CullState {
         };
         let slot_offset = key as u64 * 256;
         let slot_size = 256u64;
-        self.per_key_bind_groups[key as usize] = Some(device.create_bind_group(&BindGroupDescriptor {
-            label: Some("cull_bind_group"),
-            layout: &self.bind_group_layout,
-            entries: &[
-                BindGroupEntry { binding: 0, resource: uniform_buffer.as_entire_binding() },
-                BindGroupEntry { binding: 1, resource: all_buf.as_entire_binding() },
-                BindGroupEntry { binding: 2, resource: vis_buf.as_entire_binding() },
-                BindGroupEntry {
-                    binding: 3,
-                    resource: BindingResource::Buffer(BufferBinding {
-                        buffer: &self.indirect_args_buffer,
-                        offset: slot_offset,
-                        size: Some(std::num::NonZeroU64::new(slot_size).unwrap()),
-                    }),
-                },
-            ],
-        }));
+        self.per_key_bind_groups[key as usize] =
+            Some(device.create_bind_group(&BindGroupDescriptor {
+                label: Some("cull_bind_group"),
+                layout: &self.bind_group_layout,
+                entries: &[
+                    BindGroupEntry {
+                        binding: 0,
+                        resource: uniform_buffer.as_entire_binding(),
+                    },
+                    BindGroupEntry {
+                        binding: 1,
+                        resource: all_buf.as_entire_binding(),
+                    },
+                    BindGroupEntry {
+                        binding: 2,
+                        resource: vis_buf.as_entire_binding(),
+                    },
+                    BindGroupEntry {
+                        binding: 3,
+                        resource: BindingResource::Buffer(BufferBinding {
+                            buffer: &self.indirect_args_buffer,
+                            offset: slot_offset,
+                            size: Some(std::num::NonZeroU64::new(slot_size).unwrap()),
+                        }),
+                    },
+                ],
+            }));
     }
 
     pub(crate) fn is_ready(&self) -> bool {
@@ -356,7 +371,11 @@ impl CullState {
     /// The shared `indirect_args_buffer` / `dispatch_args_buffer` are reused
     /// (they'll be overwritten on the next `dispatch_cull`).
     pub(crate) fn clear_cull(&mut self) {
-        for buf in self.per_key_buffers.iter_mut().chain(self.per_key_visible_buffers.iter_mut()) {
+        for buf in self
+            .per_key_buffers
+            .iter_mut()
+            .chain(self.per_key_visible_buffers.iter_mut())
+        {
             if let Some(b) = buf.take() {
                 yinhe_memtrace::sub_gpu_resource(b.size());
             }
@@ -389,7 +408,10 @@ impl CullState {
     ) {
         // Skip if nothing changed since last cull.
         if !self.notes_dirty
-            && self.last_cull_uniforms.as_ref().is_some_and(|last| culling_relevant_eq(last, uniforms))
+            && self
+                .last_cull_uniforms
+                .as_ref()
+                .is_some_and(|last| culling_relevant_eq(last, uniforms))
         {
             return;
         }
@@ -409,9 +431,13 @@ impl CullState {
         // Phase 1: per-key cull dispatches.
         cull_pass.set_pipeline(&self.pipeline);
         for key in key_lo..=key_hi {
-            let Some(bg) = &self.per_key_bind_groups[key as usize] else { continue };
+            let Some(bg) = &self.per_key_bind_groups[key as usize] else {
+                continue;
+            };
             let count = self.per_key_counts[key as usize];
-            if count == 0 { continue; }
+            if count == 0 {
+                continue;
+            }
             // Each key's bind group already binds its own indirect_args slot
             // (256-byte slice at offset k*256), so no dynamic offset is needed.
             cull_pass.set_bind_group(0, bg, &[]);
@@ -425,14 +451,25 @@ impl CullState {
         self.notes_dirty = false;
     }
 
-    pub(crate) fn draw_visible_notes(&self, pass: &mut RenderPass<'_>, note_pipeline: &RenderPipeline, bind_group: &BindGroup, key_lo: u8, key_hi: u8) {
+    pub(crate) fn draw_visible_notes(
+        &self,
+        pass: &mut RenderPass<'_>,
+        note_pipeline: &RenderPipeline,
+        bind_group: &BindGroup,
+        key_lo: u8,
+        key_hi: u8,
+    ) {
         pass.set_pipeline(note_pipeline);
         pass.set_bind_group(0, bind_group, &[]);
         // Draw each key's visible notes via its own indirect-args slot.
         for key in key_lo..=key_hi {
-            let Some(vis_buf) = &self.per_key_visible_buffers[key as usize] else { continue };
+            let Some(vis_buf) = &self.per_key_visible_buffers[key as usize] else {
+                continue;
+            };
             let count = self.per_key_counts[key as usize];
-            if count == 0 { continue; }
+            if count == 0 {
+                continue;
+            }
             pass.set_vertex_buffer(0, vis_buf.slice(..));
             pass.draw_indirect(&self.indirect_args_buffer, key as u64 * 256);
         }

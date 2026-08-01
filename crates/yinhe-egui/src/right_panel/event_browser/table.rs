@@ -10,8 +10,10 @@
 //!    用 `EditRequest` 枚举区分类型，由 `apply_edit_popups` 取出分派。
 
 use eframe::egui;
-use egui_material_icons::icons::{ICON_CHEVRON_LEFT as ICON_PREV, ICON_CHEVRON_RIGHT as ICON_NEXT, ICON_ADD};
 use egui_extras::{Column, TableBuilder, TableRow};
+use egui_material_icons::icons::{
+    ICON_ADD, ICON_CHEVRON_LEFT as ICON_PREV, ICON_CHEVRON_RIGHT as ICON_NEXT,
+};
 
 use yinhe_types::SegmentShape;
 
@@ -86,16 +88,14 @@ pub(super) fn cell_text(
     let s: String = text.into();
     row.col(|ui| {
         // 放 Label 消耗 layout 空间
-        ui.add(
-            egui::Label::new(egui::RichText::new(s).size(11.0).monospace())
-                .selectable(false),
-        );
+        ui.add(egui::Label::new(egui::RichText::new(s).size(11.0).monospace()).selectable(false));
         // 整个 cell 加交互
         let cell_rect = ui.max_rect();
         let id = ui.id().with("cell").with(row_idx);
         let resp = ui.interact(cell_rect, id, egui::Sense::click());
         if resp.clicked() {
-            ui.ctx().memory_mut(|m| m.data.insert_temp(click_key, row_idx));
+            ui.ctx()
+                .memory_mut(|m| m.data.insert_temp(click_key, row_idx));
         }
     });
 }
@@ -116,18 +116,26 @@ pub(super) fn cell_position(
 ) {
     row.col(|ui| {
         ui.add(
-            egui::Label::new(egui::RichText::new(bar_lookup.format(tick)).size(11.0).monospace())
-                .selectable(false),
+            egui::Label::new(
+                egui::RichText::new(bar_lookup.format(tick))
+                    .size(11.0)
+                    .monospace(),
+            )
+            .selectable(false),
         );
         let cell_rect = ui.max_rect();
         let id = ui.id().with("poscell").with(row_idx);
         let resp = ui.interact(cell_rect, id, egui::Sense::click());
         if resp.clicked() {
-            ui.ctx().memory_mut(|m| m.data.insert_temp(click_key, row_idx));
+            ui.ctx()
+                .memory_mut(|m| m.data.insert_temp(click_key, row_idx));
         }
         if resp.secondary_clicked() {
             ui.ctx().memory_mut(|m| {
-                m.data.insert_temp(egui::Id::new((id_salt, "edit_pos")), tick_edit_request(tick));
+                m.data.insert_temp(
+                    egui::Id::new((id_salt, "edit_pos")),
+                    tick_edit_request(tick),
+                );
             });
         }
     });
@@ -175,25 +183,27 @@ pub(super) fn cell_row_header(
         if resp.clicked() {
             let modifiers = ui.ctx().input(|i| i.modifiers);
             handle_row_click(state, tick, all_ticks, modifiers);
-            ui.ctx().memory_mut(|m| m.data.insert_temp(click_key, row_idx));
+            ui.ctx()
+                .memory_mut(|m| m.data.insert_temp(click_key, row_idx));
         }
 
         // 右键：选中该行 + 弹出菜单
-        if resp.secondary_clicked()
-            && !state.selected_ticks.contains(&tick) {
-                handle_row_click(state, tick, all_ticks, egui::Modifiers::NONE);
-            }
+        if resp.secondary_clicked() && !state.selected_ticks.contains(&tick) {
+            handle_row_click(state, tick, all_ticks, egui::Modifiers::NONE);
+        }
         let edit_key = egui::Id::new((id_salt, "edit"));
         resp.context_menu(|ui| {
             if ui.button("在上方插入").clicked() {
                 ui.ctx().memory_mut(|m| {
-                    m.data.insert_temp(edit_key, EditRequest::InsertAbove { tick });
+                    m.data
+                        .insert_temp(edit_key, EditRequest::InsertAbove { tick });
                 });
                 ui.close();
             }
             if ui.button("在下方插入").clicked() {
                 ui.ctx().memory_mut(|m| {
-                    m.data.insert_temp(edit_key, EditRequest::InsertBelow { tick });
+                    m.data
+                        .insert_temp(edit_key, EditRequest::InsertBelow { tick });
                 });
                 ui.close();
             }
@@ -226,7 +236,11 @@ fn handle_row_click(
     } else if modifiers.shift {
         // Shift：范围选择（从上次点击到当前）
         if let Some(anchor) = state.last_clicked_tick {
-            let (lo, hi) = if anchor <= tick { (anchor, tick) } else { (tick, anchor) };
+            let (lo, hi) = if anchor <= tick {
+                (anchor, tick)
+            } else {
+                (tick, anchor)
+            };
             // 在 all_ticks 中找范围内的所有 tick
             for &t in all_ticks {
                 if t >= lo && t <= hi {
@@ -256,9 +270,13 @@ pub(super) fn empty_state_add_button(ui: &mut egui::Ui, id_salt: &str) -> bool {
     let mut clicked = false;
     ui.vertical_centered(|ui| {
         ui.add_space(40.0);
-        let icon_text = egui::RichText::new(ICON_ADD).size(24.0).color(egui::Color32::from_gray(200));
+        let icon_text = egui::RichText::new(ICON_ADD)
+            .size(24.0)
+            .color(egui::Color32::from_gray(200));
         let resp = ui.add(
-            egui::Label::new(icon_text).selectable(false).sense(egui::Sense::click()),
+            egui::Label::new(icon_text)
+                .selectable(false)
+                .sense(egui::Sense::click()),
         );
         // hover 时叠加蓝色图标（同 mode_bar 的 hover_highlight 机制）
         if resp.hovered() {
@@ -281,7 +299,8 @@ pub(super) fn empty_state_add_button(ui: &mut egui::Ui, id_salt: &str) -> bool {
     });
     if clicked {
         let edit_key = egui::Id::new((id_salt, "edit"));
-        ui.ctx().memory_mut(|m| m.data.insert_temp(edit_key, EditRequest::InsertFirst));
+        ui.ctx()
+            .memory_mut(|m| m.data.insert_temp(edit_key, EditRequest::InsertFirst));
     }
     clicked
 }
@@ -293,12 +312,13 @@ pub(super) fn handle_delete_key(ui: &egui::Ui, id_salt: &str, has_selection: boo
     if !has_selection {
         return false;
     }
-    let delete_pressed = ui.ctx().input(|i| {
-        i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace)
-    });
+    let delete_pressed = ui
+        .ctx()
+        .input(|i| i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace));
     if delete_pressed {
         let edit_key = egui::Id::new((id_salt, "edit"));
-        ui.ctx().memory_mut(|m| m.data.insert_temp(edit_key, EditRequest::DeleteSelected));
+        ui.ctx()
+            .memory_mut(|m| m.data.insert_temp(edit_key, EditRequest::DeleteSelected));
         true
     } else {
         false
@@ -320,20 +340,19 @@ pub(super) fn cell_editable(
 ) {
     let s: String = text.into();
     row.col(|ui| {
-        ui.add(
-            egui::Label::new(egui::RichText::new(s).size(11.0).monospace())
-                .selectable(false),
-        );
+        ui.add(egui::Label::new(egui::RichText::new(s).size(11.0).monospace()).selectable(false));
         let cell_rect = ui.max_rect();
         let id = ui.id().with("cell").with(row_idx);
         let resp = ui.interact(cell_rect, id, egui::Sense::click());
         if resp.clicked() {
-            ui.ctx().memory_mut(|m| m.data.insert_temp(click_key, row_idx));
+            ui.ctx()
+                .memory_mut(|m| m.data.insert_temp(click_key, row_idx));
         }
         if resp.secondary_clicked() {
             // 全局 key：与 apply_edit_popups 的 Id::new((id_salt, "edit")) 对齐
             ui.ctx().memory_mut(|m| {
-                m.data.insert_temp(egui::Id::new((id_salt, "edit")), edit_request);
+                m.data
+                    .insert_temp(egui::Id::new((id_salt, "edit")), edit_request);
             });
         }
     });
@@ -429,16 +448,31 @@ pub(super) fn render_pager(ui: &mut egui::Ui, page: usize, total_pages: usize) -
     let mem_key = ui.id().with("eb_page_input");
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         let next_enabled = page + 1 < total_pages;
-        if ui.add_enabled(
-            next_enabled,
-            egui::Label::new(ICON_NEXT.rich_text().size(14.0).color(egui::Color32::from_gray(200))).sense(egui::Sense::click()),
-        )
-        .clicked()
+        if ui
+            .add_enabled(
+                next_enabled,
+                egui::Label::new(
+                    ICON_NEXT
+                        .rich_text()
+                        .size(14.0)
+                        .color(egui::Color32::from_gray(200)),
+                )
+                .sense(egui::Sense::click()),
+            )
+            .clicked()
         {
             new_page = Some(page + 1);
         }
-        ui.label(egui::RichText::new(format!("/ {}", total_pages)).size(11.0).color(egui::Color32::from_gray(140)));
-        let buf: String = ui.memory(|m| m.data.get_temp(mem_key).unwrap_or_else(|| (page + 1).to_string()));
+        ui.label(
+            egui::RichText::new(format!("/ {}", total_pages))
+                .size(11.0)
+                .color(egui::Color32::from_gray(140)),
+        );
+        let buf: String = ui.memory(|m| {
+            m.data
+                .get_temp(mem_key)
+                .unwrap_or_else(|| (page + 1).to_string())
+        });
         let mut buf = buf;
         let resp = ui.add(
             egui::TextEdit::singleline(&mut buf)
@@ -452,17 +486,27 @@ pub(super) fn render_pager(ui: &mut egui::Ui, page: usize, total_pages: usize) -
         }
         if resp.lost_focus() {
             if let Ok(n) = edited_buf.trim().parse::<usize>()
-                && n >= 1 && n <= total_pages && n - 1 != page {
-                    new_page = Some(n - 1);
-                }
+                && n >= 1
+                && n <= total_pages
+                && n - 1 != page
+            {
+                new_page = Some(n - 1);
+            }
             ui.memory_mut(|m| m.data.remove::<String>(mem_key));
         }
         let prev_enabled = page > 0;
-        if ui.add_enabled(
-            prev_enabled,
-            egui::Label::new(ICON_PREV.rich_text().size(14.0).color(egui::Color32::from_gray(200))).sense(egui::Sense::click()),
-        )
-        .clicked()
+        if ui
+            .add_enabled(
+                prev_enabled,
+                egui::Label::new(
+                    ICON_PREV
+                        .rich_text()
+                        .size(14.0)
+                        .color(egui::Color32::from_gray(200)),
+                )
+                .sense(egui::Sense::click()),
+            )
+            .clicked()
         {
             new_page = Some(page - 1);
         }

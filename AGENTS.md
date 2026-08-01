@@ -32,3 +32,4 @@
 18. 如果哪里屡次容易出bug，就针对这个bug加个测试。
 19. 该程序有一些缩写或专有名词。PR-Pianoroll-钢琴卷帘，AR-Arrangement-工程走带，AM-Automation-自动化。gate-音符长度（单位为tick）。
 20. 每次修改之后，都跑一次cargo clippy，消除warning。如果有既有warning，报告给用户。
+21. 每次修改代码后，都运行一次cargo fmt（默认代码风格即可）。大范围的格式化要单独提交，不要和功能改动混在一个commit里。

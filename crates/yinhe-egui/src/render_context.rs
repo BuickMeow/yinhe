@@ -194,7 +194,8 @@ impl RenderContext {
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING,
                 view_formats,
             });
             let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -284,10 +285,12 @@ impl RenderContext {
     #[cfg(target_os = "macos")]
     pub fn metal_allocated_size(&self) -> Option<u64> {
         unsafe {
-            self.device().as_hal::<wgpu::hal::api::Metal>().map(|hal_device| {
-                use objc2_metal::MTLDevice;
-                hal_device.raw_device().currentAllocatedSize() as u64
-            })
+            self.device()
+                .as_hal::<wgpu::hal::api::Metal>()
+                .map(|hal_device| {
+                    use objc2_metal::MTLDevice;
+                    hal_device.raw_device().currentAllocatedSize() as u64
+                })
         }
     }
 

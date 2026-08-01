@@ -20,5 +20,3 @@ pub struct NoteEvent {
     pub key: u8,
     pub velocity: u8,
 }
-
-

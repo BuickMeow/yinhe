@@ -21,8 +21,8 @@ pub use events::NoteEvent;
 pub use model::{ConductorData, ProjectMeta, TrackData, TrackInfo, YinModel};
 pub use model_stats::RescaleProgress;
 pub use selection::Selection;
-pub use yinhe_types::{Note, PcEvent};
 pub use tempo_map::{
     DEFAULT_BPM, DEFAULT_MPQ, TempoMap, TempoSegment, bar_at_tick, bar_divide, bpm_from_mpq,
     mpq_from_bpm, recompute_tempo_start_times, seconds_to_ticks, ticks_to_seconds, total_bars,
 };
+pub use yinhe_types::{Note, PcEvent};

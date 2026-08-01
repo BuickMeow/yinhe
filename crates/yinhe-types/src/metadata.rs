@@ -117,10 +117,9 @@ impl ScaleType {
             | Self::Locrian
             | Self::MinorPentatonic
             | Self::Blues => (major_root_to_sf((root + 3) % 12), 1),
-            Self::Lydian
-            | Self::Mixolydian
-            | Self::MajorPentatonic
-            | Self::WholeTone => (major_root_to_sf(root), 0),
+            Self::Lydian | Self::Mixolydian | Self::MajorPentatonic | Self::WholeTone => {
+                (major_root_to_sf(root), 0)
+            }
         }
     }
 }
@@ -163,14 +162,14 @@ const fn sf_to_major_root(sf: i8) -> u8 {
     // 升号侧：C G D A E B F# C#
     // 降号侧：F Bb Eb Ab Db Gb Cb
     match sf {
-        0 => 0,  // C
-        1 => 7,  // G
-        2 => 2,  // D
-        3 => 9,  // A
-        4 => 4,  // E
-        5 => 11, // B
-        6 => 6,  // F#
-        7 => 1,  // C#
+        0 => 0,   // C
+        1 => 7,   // G
+        2 => 2,   // D
+        3 => 9,   // A
+        4 => 4,   // E
+        5 => 11,  // B
+        6 => 6,   // F#
+        7 => 1,   // C#
         -1 => 5,  // F
         -2 => 10, // Bb
         -3 => 3,  // Eb
@@ -272,7 +271,11 @@ mod tests {
         }
         // C# D# F# G# A#
         for pc in [1u8, 3, 6, 8, 10] {
-            assert!(mask & (1u16 << pc) == 0, "pc {} should NOT be in C major", pc);
+            assert!(
+                mask & (1u16 << pc) == 0,
+                "pc {} should NOT be in C major",
+                pc
+            );
         }
     }
 
@@ -282,8 +285,12 @@ mod tests {
         for &scale in ScaleType::ALL {
             for root in 0u8..12 {
                 let mask = scale.pitch_classes(root);
-                assert!(mask & (1u16 << root) != 0,
-                    "root {} not in scale {:?} pitch_classes", root, scale);
+                assert!(
+                    mask & (1u16 << root) != 0,
+                    "root {} not in scale {:?} pitch_classes",
+                    root,
+                    scale
+                );
             }
         }
     }

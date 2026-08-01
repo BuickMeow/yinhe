@@ -14,16 +14,20 @@ pub mod time_format;
 pub mod view_base;
 
 pub use arrangement_view::ArrangementView;
-pub use automation::{AutomationEdit, AutomationEvent, AutomationLane, AutomationTarget, SegmentShape};
-pub use automation_panel_view::{AutomationPanelView, AnchorSelRect};
+pub use automation::{
+    AutomationEdit, AutomationEvent, AutomationLane, AutomationTarget, SegmentShape,
+};
+pub use automation_panel_view::{AnchorSelRect, AutomationPanelView};
 pub use hash::*;
 pub use metadata::{ChordEvent, KeySigEvent, LyricsEvent, MarkerEvent, ScaleType, from_midi_sf_mi};
 pub use note::{Note, PencilNoteDrag, TimeSigEvent, VelocityEdit};
 pub use palette::TRACK_PALETTE;
 pub use pc_event::PcEvent;
 pub use piano_roll_view::PianoRollView;
-pub use source::{key_notes_in_range, NoteSource};
-pub use time_format::{build_time_sig_segments, compute_measure_divisor, measure_bounds_at_tick, measure_ticks};
+pub use source::{NoteSource, key_notes_in_range};
+pub use time_format::{
+    build_time_sig_segments, compute_measure_divisor, measure_bounds_at_tick, measure_ticks,
+};
 pub use view_base::TimelineViewBase;
 
 /// Returns true if the given MIDI key (0–127) is a black key on a piano.

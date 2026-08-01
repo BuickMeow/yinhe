@@ -2,10 +2,10 @@ use std::collections::HashSet;
 
 use eframe::egui;
 
-use yinhe_wgpu::{build_ghost_notes, build_arr_notes};
 use yinhe_types::ArrangementView;
-use yinhe_wgpu::{InstanceRenderer, Uniforms, MAX_TRACKS};
 use yinhe_wgpu::layer_cache_key;
+use yinhe_wgpu::{InstanceRenderer, MAX_TRACKS, Uniforms};
+use yinhe_wgpu::{build_arr_notes, build_ghost_notes};
 
 use crate::piano_view::drag::{GhostNote, HiddenNote};
 use crate::render_context::RenderContext;
@@ -62,10 +62,11 @@ pub fn show(
             0.0,
             *cfg.follow_mode,
             0.01,
-        ) {
-            view.base.scroll_x = new_scroll_x;
-            view.clamp_scroll(w as f32, h as f32, data.total_ticks, data.num_tracks);
-        }
+        )
+    {
+        view.base.scroll_x = new_scroll_x;
+        view.clamp_scroll(w as f32, h as f32, data.total_ticks, data.num_tracks);
+    }
 
     let scroll_x = view.base.scroll_x;
     let (scroll_x_pos, scroll_frac) = match cfg.scroll_mode {
@@ -73,12 +74,13 @@ pub fn show(
         _ => {
             let f = scroll_x.floor();
             (f, scroll_x - f)
-        },
+        }
     };
 
     // Build track colors — dynamic Vec, no fixed 1MB allocation.
     let track_count = data.track_colors.len().min(MAX_TRACKS) as u32;
-    let tc_colors: Vec<[f32; 4]> = data.track_colors
+    let tc_colors: Vec<[f32; 4]> = data
+        .track_colors
         .iter()
         .take(MAX_TRACKS)
         .map(|c| [c[0], c[1], c[2], 1.0])
@@ -96,11 +98,11 @@ pub fn show(
         scroll_frac,
         scroll_mode: cfg.scroll_mode,
         min_border_width: cfg.min_border_width,
-        track_count, // AR notes now use data.track_colors uniform for coloring
+        track_count,       // AR notes now use data.track_colors uniform for coloring
         sel_rect_count: 0, // unused in AR mode
-        note_outline: 1, // AR mode: outline always on
+        note_outline: 1,   // AR mode: outline always on
         lane_height: view.lane_height(), // AR: per-track lane height
-        value_zoom: 0.0, // AR unused (automation panel only)
+        value_zoom: 0.0,   // AR unused (automation panel only)
         value_scroll: 0.0, // AR unused (automation panel only)
     };
 
@@ -115,12 +117,13 @@ pub fn show(
     // ── Select tool dispatch (BEFORE layer building to get ghost notes) ──
     // Like PR's sel_drag_frame, this returns ghost_notes/hidden_notes generated
     // from the CURRENT frame's mouse position, enabling zero-delay ghost preview.
-    let (mut ghost_notes, hidden_notes, drag_rect) = if *cfg.active_tool == Tool::Select || *cfg.active_tool == Tool::SelectVertical {
-        let vertical = *cfg.active_tool == Tool::SelectVertical;
-        sel_drag_frame_arrange(ui, rect, view, &data, edit, vertical)
-    } else {
-        (Vec::new(), HashSet::new(), None)
-    };
+    let (mut ghost_notes, hidden_notes, drag_rect) =
+        if *cfg.active_tool == Tool::Select || *cfg.active_tool == Tool::SelectVertical {
+            let vertical = *cfg.active_tool == Tool::SelectVertical;
+            sel_drag_frame_arrange(ui, rect, view, &data, edit, vertical)
+        } else {
+            (Vec::new(), HashSet::new(), None)
+        };
 
     let vh = view.render_hash();
     let wh = {
@@ -159,7 +162,14 @@ pub fn show(
 
     // Layer 1: ghost notes (no cache — rebuilt every frame during drag)
     renderer.upload_note_layer(1, 0, |out| {
-        build_ghost_notes(out, &mut ghost_notes, w as f32, h as f32, view, data.track_visible);
+        build_ghost_notes(
+            out,
+            &mut ghost_notes,
+            w as f32,
+            h as f32,
+            view,
+            data.track_visible,
+        );
     });
 
     let content_changed = true;
@@ -175,20 +185,29 @@ pub fn show(
     let lh = view.lane_height();
     let scroll_y = view.base.scroll_y;
     if data.num_tracks > 0 {
-        let (trk_first, trk_last) = ArrangementView::visible_track_range_static(scroll_y, h as f32, lh, data.num_tracks);
+        let (trk_first, trk_last) =
+            ArrangementView::visible_track_range_static(scroll_y, h as f32, lh, data.num_tracks);
         for idx in trk_first..trk_last {
             if !data.track_visible.get(idx).copied().unwrap_or(true) {
                 continue;
             }
             let y = rect.min.y + ArrangementView::lane_y_static(idx, scroll_y, lh);
-            let col = if idx % 2 == 0 { theme.ar_lane_even } else { theme.ar_lane_odd };
+            let col = if idx % 2 == 0 {
+                theme.ar_lane_even
+            } else {
+                theme.ar_lane_odd
+            };
             painter.rect_filled(
                 egui::Rect::from_min_size(
                     egui::pos2(rect.min.x + lb_w, y),
                     egui::vec2(w as f32 - lb_w, lh),
                 ),
                 0.0,
-                egui::Color32::from_rgb((col.0 * 255.0) as u8, (col.1 * 255.0) as u8, (col.2 * 255.0) as u8),
+                egui::Color32::from_rgb(
+                    (col.0 * 255.0) as u8,
+                    (col.1 * 255.0) as u8,
+                    (col.2 * 255.0) as u8,
+                ),
             );
         }
     }
@@ -205,7 +224,13 @@ pub fn show(
             rect.max,
         );
         crate::widgets::grid_lines::paint_grid_lines(
-            &painter, grid_rect, &view.base, tpb, def_num, def_den, sig_events,
+            &painter,
+            grid_rect,
+            &view.base,
+            tpb,
+            def_num,
+            def_den,
+            sig_events,
             &crate::widgets::grid_lines::GridColors::arrangement(),
         );
     }
@@ -227,10 +252,7 @@ pub fn show(
         if cx_local >= lb_w && cx_local <= w as f32 {
             let cx = rect.min.x + cx_local;
             painter.line_segment(
-                [
-                    egui::pos2(cx, rect.min.y),
-                    egui::pos2(cx, rect.max.y),
-                ],
+                [egui::pos2(cx, rect.min.y), egui::pos2(cx, rect.max.y)],
                 egui::Stroke::new(crate::theme::CURSOR_WIDTH, crate::theme::CURSOR_COLOR),
             );
         }
@@ -238,7 +260,13 @@ pub fn show(
 
     // ── Draw drag selection rect (move-drag offset or marquee) on top of GPU texture ──
     if let Some(dr) = drag_rect {
-        crate::selection::draw::draw(ui.painter(), rect, dr, egui::Color32::WHITE, egui::Color32::WHITE);
+        crate::selection::draw::draw(
+            ui.painter(),
+            rect,
+            dr,
+            egui::Color32::WHITE,
+            egui::Color32::WHITE,
+        );
     }
 
     // ── Eraser tool dispatch (after GPU texture, before eraser marquee drawing) ──
@@ -258,7 +286,13 @@ pub fn show(
             egui::pos2(view_sx.min(view_ex), view_sy.min(view_ey)),
             egui::pos2(view_sx.max(view_ex), view_sy.max(view_ey)),
         );
-        crate::selection::draw::draw(ui.painter(), rect, snapped, egui::Color32::WHITE, egui::Color32::WHITE);
+        crate::selection::draw::draw(
+            ui.painter(),
+            rect,
+            snapped,
+            egui::Color32::WHITE,
+            egui::Color32::WHITE,
+        );
     }
 
     // Draw eraser marquee box in red (active during drag)
@@ -273,13 +307,19 @@ pub fn show(
             );
             if (end - start_pixel).length() >= 3.0
                 && let Some(b) = arrange_snapped_bounds(start_pixel, end, view, &data, false)
-                {
-                    let snapped = egui::Rect::from_min_max(
-                        egui::pos2(b.view_sx.min(b.view_ex), b.view_sy.min(b.view_ey)),
-                        egui::pos2(b.view_sx.max(b.view_ex), b.view_sy.max(b.view_ey)),
-                    );
-                    crate::selection::draw::draw(ui.painter(), rect, snapped, egui::Color32::RED, egui::Color32::RED);
-                }
+            {
+                let snapped = egui::Rect::from_min_max(
+                    egui::pos2(b.view_sx.min(b.view_ex), b.view_sy.min(b.view_ey)),
+                    egui::pos2(b.view_sx.max(b.view_ex), b.view_sy.max(b.view_ey)),
+                );
+                crate::selection::draw::draw(
+                    ui.painter(),
+                    rect,
+                    snapped,
+                    egui::Color32::RED,
+                    egui::Color32::RED,
+                );
+            }
         }
     }
 
@@ -303,7 +343,9 @@ pub fn show(
 
     // Clamp scroll after input and check for haptic boundary
     view.clamp_scroll(w as f32, h as f32, data.total_ticks, data.num_tracks);
-    let max_sx = (data.total_ticks as f32 * view.base.pixels_per_tick - (w as f32 - view.base.left_panel_width)).max(0.0);
+    let max_sx = (data.total_ticks as f32 * view.base.pixels_per_tick
+        - (w as f32 - view.base.left_panel_width))
+        .max(0.0);
     let max_sy = (data.num_tracks as f32 * view.lane_height() - h as f32).max(0.0);
     crate::view_interaction::notify_haptic_boundary(
         yinhe_haptic::HapticSlot::Arrangement,
@@ -361,12 +403,14 @@ fn sel_drag_frame_arrange(
     // Move-drag state: ((origin_tick, origin_track_f), (current_tick, current_track_f))
     // Stores both tick (horizontal) and track-float (vertical) music coordinates.
     let move_drag_id = ui.id().with("arr_move_drag");
-    let mut move_drag: Option<((f64, f32), (f64, f32))> =
-        ui.data_mut(|d| d.get_persisted(move_drag_id)).unwrap_or(None);
+    let mut move_drag: Option<((f64, f32), (f64, f32))> = ui
+        .data_mut(|d| d.get_persisted(move_drag_id))
+        .unwrap_or(None);
     // 拖拽开始时保存原选框快照（多选框，所以是 Vec）
     let move_orig_id = ui.id().with("arr_move_orig_sel");
-    let mut move_orig_sel: Vec<(f64, f64, usize, usize)> =
-        ui.data_mut(|d| d.get_persisted(move_orig_id)).unwrap_or_default();
+    let mut move_orig_sel: Vec<(f64, f64, usize, usize)> = ui
+        .data_mut(|d| d.get_persisted(move_orig_id))
+        .unwrap_or_default();
 
     let pointer = ui.input(|i| i.pointer.clone());
     let cmd = ui.input(|i| i.modifiers.command || i.modifiers.ctrl);
@@ -391,22 +435,25 @@ fn sel_drag_frame_arrange(
     }
 
     // ── Check if mouse is inside any existing selection rect (for Move cursor + drag) ──
-    let inside_sel_rect = edit.arr_sel_rect.iter().any(|&(t_start, t_end, track_lo, track_hi)| {
-        pointer.hover_pos().is_some_and(|pos| {
-            let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
-            let lh = view.lane_height();
-            let scroll_y = view.base.scroll_y;
-            let sy = track_lo as f32 * lh - scroll_y;
-            let ey = (track_hi as f32 + 1.0) * lh - scroll_y;
-            let sx = view.tick_to_x(t_start);
-            let ex = view.tick_to_x(t_end);
-            let rect = egui::Rect::from_min_max(
-                egui::pos2(sx.min(ex), sy.min(ey)),
-                egui::pos2(sx.max(ex), sy.max(ey)),
-            );
-            rect.contains(local)
-        })
-    });
+    let inside_sel_rect = edit
+        .arr_sel_rect
+        .iter()
+        .any(|&(t_start, t_end, track_lo, track_hi)| {
+            pointer.hover_pos().is_some_and(|pos| {
+                let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
+                let lh = view.lane_height();
+                let scroll_y = view.base.scroll_y;
+                let sy = track_lo as f32 * lh - scroll_y;
+                let ey = (track_hi as f32 + 1.0) * lh - scroll_y;
+                let sx = view.tick_to_x(t_start);
+                let ex = view.tick_to_x(t_end);
+                let rect = egui::Rect::from_min_max(
+                    egui::pos2(sx.min(ex), sy.min(ey)),
+                    egui::pos2(sx.max(ex), sy.max(ey)),
+                );
+                rect.contains(local)
+            })
+        });
 
     // Show Move cursor when hovering over the selection rect (only when not currently dragging)
     if inside_sel_rect && move_drag.is_none() && drag.is_none() {
@@ -444,81 +491,113 @@ fn sel_drag_frame_arrange(
 
     // ── Move-drag: update current position ──
     if let Some((origin, _)) = move_drag
-        && pointer.primary_down() && !pointer.primary_pressed()
-            && let Some(pos) = pointer.hover_pos() {
-                let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
-                let current_tick = view.x_to_tick(local.x);
-                let current_track_f = (local.y + view.base.scroll_y) / view.lane_height();
-                move_drag = Some((origin, (current_tick, current_track_f)));
+        && pointer.primary_down()
+        && !pointer.primary_pressed()
+        && let Some(pos) = pointer.hover_pos()
+    {
+        let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
+        let current_tick = view.x_to_tick(local.x);
+        let current_track_f = (local.y + view.base.scroll_y) / view.lane_height();
+        move_drag = Some((origin, (current_tick, current_track_f)));
 
-                // Auto-scroll when dragging near the edge
-                let lh = view.lane_height();
-                crate::selection::drag::auto_scroll_on_drag(
-                    ui,
-                    &mut view.base,
-                    content_rect,
-                    pos,
-                    |base, w, h| {
-                        base.clamp_scroll_x(w, data.total_ticks);
-                        let max_scroll_y = (data.num_tracks as f32 * lh - h).max(0.0);
-                        base.scroll_y = base.scroll_y.clamp(0.0, max_scroll_y);
-                    },
-                );
-            }
+        // Auto-scroll when dragging near the edge
+        let lh = view.lane_height();
+        crate::selection::drag::auto_scroll_on_drag(
+            ui,
+            &mut view.base,
+            content_rect,
+            pos,
+            |base, w, h| {
+                base.clamp_scroll_x(w, data.total_ticks);
+                let max_scroll_y = (data.num_tracks as f32 * lh - h).max(0.0);
+                base.scroll_y = base.scroll_y.clamp(0.0, max_scroll_y);
+            },
+        );
+    }
 
     // ── Generate ghost notes + offset sel_rect from current move_drag (BEFORE release) ──
     // Ghost notes must be generated before release clears move_drag, so the ghost
     // stays visible on the release frame (preventing flicker before model update).
     if let Some(((origin_t, origin_tr), (current_t, current_tr))) = move_drag
-        && !move_orig_sel.is_empty() {
-            let snapped_origin = crate::view_interaction::snap_tick(origin_t, data.quantize, data.ppq, data.bar_line_data);
-            let snapped_current = crate::view_interaction::snap_tick(current_t, data.quantize, data.ppq, data.bar_line_data);
-            let dt = (snapped_current - snapped_origin).round() as i64;
-            // 垂直选框工具：只能水平移动，dtr 强制为 0
-            let dtr = if vertical { 0 } else { (current_tr - origin_tr).round() as i32 };
+        && !move_orig_sel.is_empty()
+    {
+        let snapped_origin = crate::view_interaction::snap_tick(
+            origin_t,
+            data.quantize,
+            data.ppq,
+            data.bar_line_data,
+        );
+        let snapped_current = crate::view_interaction::snap_tick(
+            current_t,
+            data.quantize,
+            data.ppq,
+            data.bar_line_data,
+        );
+        let dt = (snapped_current - snapped_origin).round() as i64;
+        // 垂直选框工具：只能水平移动，dtr 强制为 0
+        let dtr = if vertical {
+            0
+        } else {
+            (current_tr - origin_tr).round() as i32
+        };
 
-            // 拖拽中：把 edit.arr_sel_rect 设为所有偏移后的选框，由 show() 统一绘制
-            *edit.arr_sel_rect = move_orig_sel.iter().map(|&(t_start, t_end, track_lo, track_hi)| {
+        // 拖拽中：把 edit.arr_sel_rect 设为所有偏移后的选框，由 show() 统一绘制
+        *edit.arr_sel_rect = move_orig_sel
+            .iter()
+            .map(|&(t_start, t_end, track_lo, track_hi)| {
                 (
                     t_start + dt as f64,
                     t_end + dt as f64,
                     track_lo.saturating_add_signed(dtr as isize),
                     track_hi.saturating_add_signed(dtr as isize),
                 )
-            }).collect();
+            })
+            .collect();
 
-            // Generate ghost notes at new positions + hide originals
-            if dt != 0 || dtr != 0 {
-                let max_track = (data.num_tracks as i32 - 1).max(0) as u16;
+        // Generate ghost notes at new positions + hide originals
+        if dt != 0 || dtr != 0 {
+            let max_track = (data.num_tracks as i32 - 1).max(0) as u16;
 
-                // 与 PR 共用的选中音符收集（edit.track_selected 传空集合 = 不过滤轨道）。
-                // edit.selected.rects 在拖拽中保持原快照，与 move_orig_sel 语义一致。
-                let notes = crate::selection::drag::collect_selected_notes(
-                    edit.selected, data.midi, data.track_visible, &HashSet::new(),
-                );
-                for note in notes {
-                    let new_tick = (note.start_tick as i64 + dt).max(0) as u32;
-                    let length = note.end_tick - note.start_tick;
-                    let new_track = (note.track as i32 + dtr).max(0).min(max_track as i32) as u16;
-                    ghost_notes.push((
-                        new_tick,
-                        new_tick + length,
-                        note.key,
-                        new_track,
-                    ));
-                    hidden_notes.insert((note.track, note.start_tick, note.key));
-                }
+            // 与 PR 共用的选中音符收集（edit.track_selected 传空集合 = 不过滤轨道）。
+            // edit.selected.rects 在拖拽中保持原快照，与 move_orig_sel 语义一致。
+            let notes = crate::selection::drag::collect_selected_notes(
+                edit.selected,
+                data.midi,
+                data.track_visible,
+                &HashSet::new(),
+            );
+            for note in notes {
+                let new_tick = (note.start_tick as i64 + dt).max(0) as u32;
+                let length = note.end_tick - note.start_tick;
+                let new_track = (note.track as i32 + dtr).max(0).min(max_track as i32) as u16;
+                ghost_notes.push((new_tick, new_tick + length, note.key, new_track));
+                hidden_notes.insert((note.track, note.start_tick, note.key));
             }
         }
+    }
 
     // ── Move-drag: release handling ──
     if move_drag.is_some() && pointer.primary_released() {
         if let Some(((origin_t, origin_tr), (current_t, current_tr))) = move_drag {
-            let snapped_origin = crate::view_interaction::snap_tick(origin_t, data.quantize, data.ppq, data.bar_line_data);
-            let snapped_current = crate::view_interaction::snap_tick(current_t, data.quantize, data.ppq, data.bar_line_data);
+            let snapped_origin = crate::view_interaction::snap_tick(
+                origin_t,
+                data.quantize,
+                data.ppq,
+                data.bar_line_data,
+            );
+            let snapped_current = crate::view_interaction::snap_tick(
+                current_t,
+                data.quantize,
+                data.ppq,
+                data.bar_line_data,
+            );
             let delta_ticks = (snapped_current - snapped_origin).round() as i64;
             // 垂直选框工具：只能水平移动，delta_tracks 强制为 0
-            let delta_tracks = if vertical { 0 } else { (current_tr - origin_tr).round() as i32 };
+            let delta_tracks = if vertical {
+                0
+            } else {
+                (current_tr - origin_tr).round() as i32
+            };
 
             let has_moved = delta_ticks != 0 || delta_tracks != 0;
 
@@ -526,14 +605,17 @@ fn sel_drag_frame_arrange(
                 *edit.arr_drag_delta = Some((delta_ticks, delta_tracks));
 
                 // 多选框：对所有原选框应用偏移
-                *edit.arr_sel_rect = move_orig_sel.iter().map(|&(t_start, t_end, track_lo, track_hi)| {
-                    (
-                        t_start + delta_ticks as f64,
-                        t_end + delta_ticks as f64,
-                        track_lo.saturating_add_signed(delta_tracks as isize),
-                        track_hi.saturating_add_signed(delta_tracks as isize),
-                    )
-                }).collect();
+                *edit.arr_sel_rect = move_orig_sel
+                    .iter()
+                    .map(|&(t_start, t_end, track_lo, track_hi)| {
+                        (
+                            t_start + delta_ticks as f64,
+                            t_end + delta_ticks as f64,
+                            track_lo.saturating_add_signed(delta_tracks as isize),
+                            track_hi.saturating_add_signed(delta_tracks as isize),
+                        )
+                    })
+                    .collect();
                 view.base.dirty = true;
             } else {
                 *edit.arr_sel_rect = move_orig_sel.clone();
@@ -546,28 +628,30 @@ fn sel_drag_frame_arrange(
 
     // ── Selection marquee drag handling ──
     if let Some((start_music, _)) = drag {
-        if pointer.primary_down() && !pointer.primary_pressed()
-            && let Some(pos) = pointer.hover_pos() {
-                let clamped = pos.clamp(content_rect.min, content_rect.max);
-                let local = egui::pos2(
-                    clamped.x - content_rect.min.x,
-                    clamped.y - content_rect.min.y,
-                );
-                drag = Some((start_music, local));
+        if pointer.primary_down()
+            && !pointer.primary_pressed()
+            && let Some(pos) = pointer.hover_pos()
+        {
+            let clamped = pos.clamp(content_rect.min, content_rect.max);
+            let local = egui::pos2(
+                clamped.x - content_rect.min.x,
+                clamped.y - content_rect.min.y,
+            );
+            drag = Some((start_music, local));
 
-                let lh = view.lane_height();
-                crate::selection::drag::auto_scroll_on_drag(
-                    ui,
-                    &mut view.base,
-                    content_rect,
-                    pos,
-                    |base, w, h| {
-                        base.clamp_scroll_x(w, data.total_ticks);
-                        let max_scroll_y = (data.num_tracks as f32 * lh - h).max(0.0);
-                        base.scroll_y = base.scroll_y.clamp(0.0, max_scroll_y);
-                    },
-                );
-            }
+            let lh = view.lane_height();
+            crate::selection::drag::auto_scroll_on_drag(
+                ui,
+                &mut view.base,
+                content_rect,
+                pos,
+                |base, w, h| {
+                    base.clamp_scroll_x(w, data.total_ticks);
+                    let max_scroll_y = (data.num_tracks as f32 * lh - h).max(0.0);
+                    base.scroll_y = base.scroll_y.clamp(0.0, max_scroll_y);
+                },
+            );
+        }
 
         let start_pixel = egui::pos2(
             view.tick_to_x(start_music.0),
@@ -577,14 +661,13 @@ fn sel_drag_frame_arrange(
         // Compute marquee drag_rect (BEFORE release, same pattern as move-drag)
         if let Some((_, end)) = drag
             && (end - start_pixel).length() >= 3.0
-                && let Some(b) =
-                    arrange_snapped_bounds(start_pixel, end, view, data, vertical)
-                {
-                    drag_rect = Some(egui::Rect::from_min_max(
-                        egui::pos2(b.view_sx.min(b.view_ex), b.view_sy.min(b.view_ey)),
-                        egui::pos2(b.view_sx.max(b.view_ex), b.view_sy.max(b.view_ey)),
-                    ));
-                }
+            && let Some(b) = arrange_snapped_bounds(start_pixel, end, view, data, vertical)
+        {
+            drag_rect = Some(egui::Rect::from_min_max(
+                egui::pos2(b.view_sx.min(b.view_ex), b.view_sy.min(b.view_ey)),
+                egui::pos2(b.view_sx.max(b.view_ex), b.view_sy.max(b.view_ey)),
+            ));
+        }
 
         if pointer.primary_released() {
             if let (Some(_midi_ref), Some((_, end))) = (data.midi, drag) {
@@ -592,7 +675,12 @@ fn sel_drag_frame_arrange(
 
                 if drag_dist < 3.0 {
                     let tick = view.x_to_tick(start_pixel.x);
-                    let snapped = crate::view_interaction::snap_tick(tick, data.quantize, data.ppq, data.bar_line_data);
+                    let snapped = crate::view_interaction::snap_tick(
+                        tick,
+                        data.quantize,
+                        data.ppq,
+                        data.bar_line_data,
+                    );
                     edit.selected.clear();
                     edit.arr_sel_rect.clear();
                     *edit.cursor_tick = Some(snapped.max(0.0));
@@ -607,16 +695,23 @@ fn sel_drag_frame_arrange(
                         *edit.info_content = Some(crate::right_panel::InfoContent::Track);
                     }
                 } else {
-                    if let Some(b) =
-                        arrange_snapped_bounds(start_pixel, end, view, data, vertical)
+                    if let Some(b) = arrange_snapped_bounds(start_pixel, end, view, data, vertical)
                     {
                         // shift 或 cmd/ctrl 累加模式：保留已有选框；否则清空
                         if !additive {
                             edit.selected.clear();
                             edit.arr_sel_rect.clear();
                         }
-                        edit.selected.add_rect_track(b.t_start as u32, b.t_end as u32, 0, 127, b.track_lo as u16, b.track_hi as u16);
-                        edit.arr_sel_rect.push((b.t_start, b.t_end, b.track_lo, b.track_hi));
+                        edit.selected.add_rect_track(
+                            b.t_start as u32,
+                            b.t_end as u32,
+                            0,
+                            127,
+                            b.track_lo as u16,
+                            b.track_hi as u16,
+                        );
+                        edit.arr_sel_rect
+                            .push((b.t_start, b.t_end, b.track_lo, b.track_hi));
                     } else if !additive {
                         // 选框完全在空白区域：清空选区
                         edit.selected.clear();
@@ -678,25 +773,30 @@ fn eraser_drag_frame_arrange(
 
     // Move → update with auto-scroll
     if let Some((start_music, _)) = drag {
-        if pointer.primary_down() && !pointer.primary_pressed()
-            && let Some(pos) = pointer.hover_pos() {
-                let clamped = pos.clamp(content_rect.min, content_rect.max);
-                let local = egui::pos2(
-                    clamped.x - content_rect.min.x,
-                    clamped.y - content_rect.min.y,
-                );
-                drag = Some((start_music, local));
+        if pointer.primary_down()
+            && !pointer.primary_pressed()
+            && let Some(pos) = pointer.hover_pos()
+        {
+            let clamped = pos.clamp(content_rect.min, content_rect.max);
+            let local = egui::pos2(
+                clamped.x - content_rect.min.x,
+                clamped.y - content_rect.min.y,
+            );
+            drag = Some((start_music, local));
 
-                let lh = view.lane_height();
-                crate::selection::drag::auto_scroll_on_drag(
-                    ui, &mut view.base, content_rect, pos,
-                    |base, w, h| {
-                        base.clamp_scroll_x(w, data.total_ticks);
-                        let max_scroll_y = (data.num_tracks as f32 * lh - h).max(0.0);
-                        base.scroll_y = base.scroll_y.clamp(0.0, max_scroll_y);
-                    },
-                );
-            }
+            let lh = view.lane_height();
+            crate::selection::drag::auto_scroll_on_drag(
+                ui,
+                &mut view.base,
+                content_rect,
+                pos,
+                |base, w, h| {
+                    base.clamp_scroll_x(w, data.total_ticks);
+                    let max_scroll_y = (data.num_tracks as f32 * lh - h).max(0.0);
+                    base.scroll_y = base.scroll_y.clamp(0.0, max_scroll_y);
+                },
+            );
+        }
 
         let start_pixel = egui::pos2(
             view.tick_to_x(start_music.0),
@@ -707,11 +807,10 @@ fn eraser_drag_frame_arrange(
         if pointer.primary_released() {
             if let Some((_, end)) = drag {
                 if (end - start_pixel).length() >= 3.0
-                    && let Some(b) =
-                        arrange_snapped_bounds(start_pixel, end, view, data, false)
-                    {
-                        *edit.arr_eraser_rect = Some((b.t_start, b.t_end, b.track_lo, b.track_hi));
-                    }
+                    && let Some(b) = arrange_snapped_bounds(start_pixel, end, view, data, false)
+                {
+                    *edit.arr_eraser_rect = Some((b.t_start, b.t_end, b.track_lo, b.track_hi));
+                }
                 view.base.dirty = true;
             }
             drag = None;
@@ -746,8 +845,10 @@ fn arrange_snapped_bounds(
 
     let tick_s = view.x_to_tick(sx);
     let tick_e = view.x_to_tick(ex);
-    let snapped_s = crate::view_interaction::snap_tick(tick_s, data.quantize, data.ppq, data.bar_line_data);
-    let snapped_e = crate::view_interaction::snap_tick(tick_e, data.quantize, data.ppq, data.bar_line_data);
+    let snapped_s =
+        crate::view_interaction::snap_tick(tick_s, data.quantize, data.ppq, data.bar_line_data);
+    let snapped_e =
+        crate::view_interaction::snap_tick(tick_e, data.quantize, data.ppq, data.bar_line_data);
     let t_start = snapped_s.min(snapped_e);
     let mut t_end = snapped_s.max(snapped_e);
 
@@ -787,5 +888,14 @@ fn arrange_snapped_bounds(
     let view_sx = view.tick_to_x(t_start);
     let view_ex = view.tick_to_x(t_end);
 
-    Some(ArrSnappedBounds { view_sx, view_ex, view_sy, view_ey, t_start, t_end, track_lo, track_hi })
+    Some(ArrSnappedBounds {
+        view_sx,
+        view_ex,
+        view_sy,
+        view_ey,
+        t_start,
+        t_end,
+        track_lo,
+        track_hi,
+    })
 }

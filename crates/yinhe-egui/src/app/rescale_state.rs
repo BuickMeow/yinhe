@@ -124,10 +124,11 @@ impl App {
                 self.rescale.rx = None;
                 let pending = self.rescale.pending.take();
                 if let Some((old_ppq, _new_ppq, _id, doc_idx)) = pending
-                    && let Some(doc) = self.documents.get_mut(doc_idx) {
-                        let model = std::sync::Arc::make_mut(&mut doc.data.model);
-                        model.meta.ppq = old_ppq;
-                    }
+                    && let Some(doc) = self.documents.get_mut(doc_idx)
+                {
+                    let model = std::sync::Arc::make_mut(&mut doc.data.model);
+                    model.meta.ppq = old_ppq;
+                }
                 self.load_error = Some("PPQ 缩放线程异常退出".to_string());
                 return;
             }

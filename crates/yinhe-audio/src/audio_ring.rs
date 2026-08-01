@@ -95,7 +95,9 @@ impl AudioRingProducer {
         unsafe {
             copy_into_ring(&self.inner, write, &input[..count]);
         }
-        self.inner.write.store(write.wrapping_add(count), Ordering::Release);
+        self.inner
+            .write
+            .store(write.wrapping_add(count), Ordering::Release);
         count
     }
 }
@@ -113,7 +115,9 @@ impl AudioRingConsumer {
         unsafe {
             copy_from_ring(&self.inner, read, &mut output[..count]);
         }
-        self.inner.read.store(read.wrapping_add(count), Ordering::Release);
+        self.inner
+            .read
+            .store(read.wrapping_add(count), Ordering::Release);
         count
     }
 
@@ -126,7 +130,9 @@ impl AudioRingConsumer {
     pub(crate) fn discard_before(&mut self, write_at_clear: usize) {
         let read = self.inner.read.load(Ordering::Relaxed);
         let stale = write_at_clear.wrapping_sub(read);
-        self.inner.read.store(read.wrapping_add(stale), Ordering::Release);
+        self.inner
+            .read
+            .store(read.wrapping_add(stale), Ordering::Release);
     }
 }
 

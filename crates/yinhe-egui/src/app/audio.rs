@@ -12,7 +12,9 @@ impl App {
     /// 被 dispatch。下一帧 `rebuild_audio_if_needed` 会用新 model 重新 spawn。
     pub(crate) fn notify_audio_model_changed(&mut self) {
         let Some(idx) = self.active_doc else { return };
-        if self.audio_state.handle.is_none() { return; }
+        if self.audio_state.handle.is_none() {
+            return;
+        }
         if self.channel_layout_flipped_for_doc(idx) {
             self.teardown_audio();
         } else if let Some(audio) = &self.audio_state.handle {
@@ -29,7 +31,9 @@ impl App {
     /// 并下一帧重建——同 `notify_audio_model_changed`。
     pub(crate) fn notify_notes_changed(&mut self) {
         let Some(idx) = self.active_doc else { return };
-        if self.audio_state.handle.is_none() { return; }
+        if self.audio_state.handle.is_none() {
+            return;
+        }
         if self.channel_layout_flipped_for_doc(idx) {
             self.teardown_audio();
         } else if let Some(audio) = &self.audio_state.handle {
@@ -52,16 +56,16 @@ impl App {
             return true; // 绑定的 doc 不一致，必须重建
         }
         let model = &self.documents[idx].data.model;
-        layout.differs_from_counts(
-            &model.channel_note_count,
-            &model.channel_ctrl_count,
-        )
+        layout.differs_from_counts(&model.channel_note_count, &model.channel_ctrl_count)
     }
 
     /// Resolve the merged SF configuration for the given document.
     ///
     /// Returns a list of `(port, paths)` for every port the MIDI uses.
-    pub(crate) fn resolve_sf_config(&self, doc: &yinhe_editor_core::document::Document) -> Vec<(u8, Vec<String>)> {
+    pub(crate) fn resolve_sf_config(
+        &self,
+        doc: &yinhe_editor_core::document::Document,
+    ) -> Vec<(u8, Vec<String>)> {
         let layout = yinhe_audio::channels_for_model(&doc.data.model);
         let num_ports = (layout.num_channels().div_ceil(16) as u8).max(1);
         let global = &self.audio_settings.global_sf_config;
@@ -123,7 +127,8 @@ impl App {
             return;
         }
 
-        let needs_rebuild = self.audio_state.active_doc != Some(idx) || self.audio_state.handle.is_none();
+        let needs_rebuild =
+            self.audio_state.active_doc != Some(idx) || self.audio_state.handle.is_none();
         if !needs_rebuild {
             return;
         }
@@ -177,11 +182,17 @@ impl App {
     /// automation density, model, layer count, soundfonts, mute/solo.
     ///
     /// 拆分自 `rebuild_audio_if_needed`，让 spawn 路径与初始状态注入解耦。
-    fn send_initial_audio_state(&self, audio: &yinhe_audio::CpalAudioHandle, doc: &yinhe_editor_core::document::Document) {
+    fn send_initial_audio_state(
+        &self,
+        audio: &yinhe_audio::CpalAudioHandle,
+        doc: &yinhe_editor_core::document::Document,
+    ) {
         // Apply automation density before LoadModel so the first prepare uses it
-        audio.handle.send(yinhe_audio::AudioCommand::SetAutomationDensity {
-            density: self.audio_settings.automation_event_density,
-        });
+        audio
+            .handle
+            .send(yinhe_audio::AudioCommand::SetAutomationDensity {
+                density: self.audio_settings.automation_event_density,
+            });
 
         // Load MIDI
         audio.handle.send(yinhe_audio::AudioCommand::LoadModel {
@@ -201,12 +212,7 @@ impl App {
         // Load SoundFonts — resolved from global + project config
         let port_configs = self.resolve_sf_config(doc);
         let total_sf: usize = port_configs.iter().map(|(_, p)| p.len()).sum();
-        progress::set_stage_progress(
-            &self.load_progress,
-            3,
-            0.0,
-            format!("0/{}", total_sf),
-        );
+        progress::set_stage_progress(&self.load_progress, 3, 0.0, format!("0/{}", total_sf));
         let mut loaded = 0usize;
         for (port, paths) in &port_configs {
             for _p in paths {
@@ -261,14 +267,17 @@ impl App {
 
         if let Some(audio) = &self.audio_state.handle {
             // spawn 成功 —— 恢复播放位置，关对话框
-            audio
-                .handle
-                .send(yinhe_audio::AudioCommand::Seek { sample: saved_sample });
+            audio.handle.send(yinhe_audio::AudioCommand::Seek {
+                sample: saved_sample,
+            });
             self.audio_state.device_switch_pending = false;
             self.audio_state.device_switch_error = None;
         } else {
             // spawn 失败 —— 保留对话框，显示实际错误信息（而非固定文案）
-            let err = self.audio_state.spawn_error.clone()
+            let err = self
+                .audio_state
+                .spawn_error
+                .clone()
                 .unwrap_or_else(|| t!("dialog.audio_switch.stream_failed").to_string());
             self.audio_state.device_switch_error = Some(err);
         }

@@ -56,7 +56,10 @@ pub(crate) fn content_with_bottom_buttons(
     buttons: impl FnOnce(&mut egui::Ui),
 ) {
     ui.allocate_ui_with_layout(
-        egui::vec2(ui.available_width(), (ui.available_height() - btn_zone_h).max(0.0)),
+        egui::vec2(
+            ui.available_width(),
+            (ui.available_height() - btn_zone_h).max(0.0),
+        ),
         egui::Layout::top_down(egui::Align::Center),
         content,
     );

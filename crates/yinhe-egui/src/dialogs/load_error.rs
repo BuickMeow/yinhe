@@ -14,7 +14,11 @@ pub(crate) fn show_viewport(ctx: &egui::Context, error: &mut Option<String>) {
 
     ctx_clone.show_viewport_immediate(
         viewport_id,
-        crate::chrome::dialog::viewport_builder(t!("dialog.load_error.title").as_ref(), [420.0, 120.0], false),
+        crate::chrome::dialog::viewport_builder(
+            t!("dialog.load_error.title").as_ref(),
+            [420.0, 120.0],
+            false,
+        ),
         move |vctx, _class| {
             let mut close = false;
             if vctx.input(|i| i.viewport().close_requested()) {
@@ -26,7 +30,11 @@ pub(crate) fn show_viewport(ctx: &egui::Context, error: &mut Option<String>) {
                     ..Default::default()
                 })
                 .show(vctx, |ui| {
-                    crate::chrome::dialog::title_bar(ui, t!("dialog.load_error.title").as_ref(), &mut close);
+                    crate::chrome::dialog::title_bar(
+                        ui,
+                        t!("dialog.load_error.title").as_ref(),
+                        &mut close,
+                    );
                     egui::Frame::new()
                         .inner_margin(egui::Margin {
                             left: 12,

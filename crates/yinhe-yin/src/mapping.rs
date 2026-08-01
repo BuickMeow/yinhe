@@ -79,14 +79,17 @@ impl MappingFile {
         // (port, channel) bucket map.
         let mut bucket: BTreeMap<(u8, u8), Vec<TrackMap>> = BTreeMap::new();
         for t in tracks {
-            bucket.entry((t.port, t.channel)).or_default().push(TrackMap {
-                uuid: t.uuid.clone(),
-                name: t.name.clone(),
-                color: t.color,
-                channel_prefix: t.channel_prefix,
-                muted: t.muted,
-                soloed: t.soloed,
-            });
+            bucket
+                .entry((t.port, t.channel))
+                .or_default()
+                .push(TrackMap {
+                    uuid: t.uuid.clone(),
+                    name: t.name.clone(),
+                    color: t.color,
+                    channel_prefix: t.channel_prefix,
+                    muted: t.muted,
+                    soloed: t.soloed,
+                });
         }
 
         // Re-assemble into ports[].channels[] structure.

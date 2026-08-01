@@ -260,8 +260,16 @@ mod tests {
     fn time_sig_lookup_picks_latest() {
         let tm = TempoMap {
             time_sig_events: vec![
-                TimeSigEvent { tick: 0, numerator: 4, denominator: 2 },
-                TimeSigEvent { tick: 1920, numerator: 3, denominator: 2 },
+                TimeSigEvent {
+                    tick: 0,
+                    numerator: 4,
+                    denominator: 2,
+                },
+                TimeSigEvent {
+                    tick: 1920,
+                    numerator: 3,
+                    denominator: 2,
+                },
             ],
             time_sig_default: (4, 2),
             ..Default::default()

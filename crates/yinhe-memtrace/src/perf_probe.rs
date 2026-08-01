@@ -13,8 +13,8 @@
 //! - A summary is always emitted when `static_rebuild_count` changes from 0
 //!   to non-zero (or vice versa) so transitions are visible.
 
-use std::sync::OnceLock;
 use std::sync::Mutex;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 

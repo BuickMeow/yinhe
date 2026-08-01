@@ -20,12 +20,18 @@ impl Document {
     /// dirty, and sending `AudioCommand::ReloadNotes`.
     pub fn pencil_drag_note(&mut self, drag: &PencilNoteDrag) -> Option<UndoAction> {
         match drag {
-            PencilNoteDrag::Move { track, start_tick, key, delta_ticks, delta_keys } => {
+            PencilNoteDrag::Move {
+                track,
+                start_tick,
+                key,
+                delta_ticks,
+                delta_keys,
+            } => {
                 let model = &self.data.model;
                 let k = *key as usize;
-                let note = model.notes[k].iter().find(|n| {
-                    n.track == *track && n.start_tick == *start_tick
-                })?;
+                let note = model.notes[k]
+                    .iter()
+                    .find(|n| n.track == *track && n.start_tick == *start_tick)?;
                 let orig_note = *note;
                 let new_key = ((*key as i32) + delta_keys).clamp(0, 127) as u8;
                 let new_tick = (orig_note.start_tick as i64 + delta_ticks).max(0) as u32;
@@ -46,7 +52,8 @@ impl Document {
                         track: *track,
                     };
                     let nk = new_key as usize;
-                    let insert_pos = model.notes[nk].partition_point(|n| n.start_tick < moved.start_tick);
+                    let insert_pos =
+                        model.notes[nk].partition_point(|n| n.start_tick < moved.start_tick);
                     Arc::make_mut(&mut model.notes[nk]).insert(insert_pos, moved);
                     model.mark_dirty(new_key);
                     model.rebuild_dirty();
@@ -58,18 +65,24 @@ impl Document {
                 }
                 None
             }
-            PencilNoteDrag::ResizeRight { track, start_tick, key, new_end_tick } => {
+            PencilNoteDrag::ResizeRight {
+                track,
+                start_tick,
+                key,
+                new_end_tick,
+            } => {
                 let model = &self.data.model;
                 let k = *key as usize;
-                let note = model.notes[k].iter().find(|n| {
-                    n.track == *track && n.start_tick == *start_tick
-                })?;
+                let note = model.notes[k]
+                    .iter()
+                    .find(|n| n.track == *track && n.start_tick == *start_tick)?;
                 if *new_end_tick != note.end_tick {
                     let before = *note;
                     let model = Arc::make_mut(&mut self.data.model);
-                    if let Some(n) = Arc::make_mut(&mut model.notes[k]).iter_mut().find(|n| {
-                        n.id == before.id
-                    }) {
+                    if let Some(n) = Arc::make_mut(&mut model.notes[k])
+                        .iter_mut()
+                        .find(|n| n.id == before.id)
+                    {
                         n.end_tick = (*new_end_tick).max(n.start_tick + 1);
                         let after = *n;
                         model.mark_dirty(*key);
@@ -83,18 +96,24 @@ impl Document {
                 }
                 None
             }
-            PencilNoteDrag::ResizeLeft { track, start_tick, key, new_start_tick } => {
+            PencilNoteDrag::ResizeLeft {
+                track,
+                start_tick,
+                key,
+                new_start_tick,
+            } => {
                 let model = &self.data.model;
                 let k = *key as usize;
-                let note = model.notes[k].iter().find(|n| {
-                    n.track == *track && n.start_tick == *start_tick
-                })?;
+                let note = model.notes[k]
+                    .iter()
+                    .find(|n| n.track == *track && n.start_tick == *start_tick)?;
                 if *new_start_tick != note.start_tick {
                     let before = *note;
                     let model = Arc::make_mut(&mut self.data.model);
-                    if let Some(n) = Arc::make_mut(&mut model.notes[k]).iter_mut().find(|n| {
-                        n.id == before.id
-                    }) {
+                    if let Some(n) = Arc::make_mut(&mut model.notes[k])
+                        .iter_mut()
+                        .find(|n| n.id == before.id)
+                    {
                         n.start_tick = (*new_start_tick).min(n.end_tick - 1);
                         let after = *n;
                         model.mark_dirty(*key);
@@ -147,9 +166,10 @@ impl Document {
                     .take_while(|n| n.start_tick == e.start_tick)
                     .find(|n| n.track == e.track);
                 if let Some(n) = note
-                    && n.velocity != e.velocity {
-                        targets.push((e.key, n.id, n.velocity, e.velocity));
-                    }
+                    && n.velocity != e.velocity
+                {
+                    targets.push((e.key, n.id, n.velocity, e.velocity));
+                }
             }
         }
         if targets.is_empty() {
@@ -165,7 +185,13 @@ impl Document {
                 .find(|n| n.id == id)
             {
                 n.velocity = new_vel;
-                before.push((yinhe_types::Note { velocity: old_vel, ..*n }, key));
+                before.push((
+                    yinhe_types::Note {
+                        velocity: old_vel,
+                        ..*n
+                    },
+                    key,
+                ));
                 after.push((*n, key));
                 model.mark_dirty(key);
             }
@@ -184,7 +210,9 @@ mod tests {
     use super::*;
     use crate::document::Document;
     use yinhe_core::{ConductorData, NoteEvent, TrackData, YinModel};
-    use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, SegmentShape, TimeSigEvent};
+    use yinhe_types::{
+        AutomationEvent, AutomationLane, AutomationTarget, SegmentShape, TimeSigEvent,
+    };
 
     fn make_doc_with_note() -> Document {
         let model = YinModel {
@@ -192,9 +220,17 @@ mod tests {
                 tempo: AutomationLane {
                     target: AutomationTarget::Tempo,
                     track: 0,
-                    events: vec![AutomationEvent { tick: 0, value: 120.0, shape: SegmentShape::Step }],
+                    events: vec![AutomationEvent {
+                        tick: 0,
+                        value: 120.0,
+                        shape: SegmentShape::Step,
+                    }],
                 },
-                time_sig: vec![TimeSigEvent { tick: 0, numerator: 4, denominator: 2 }],
+                time_sig: vec![TimeSigEvent {
+                    tick: 0,
+                    numerator: 4,
+                    denominator: 2,
+                }],
                 key_sig: Vec::new(),
                 markers: Vec::new(),
                 lyrics: Vec::new(),
@@ -224,7 +260,16 @@ mod tests {
             file_path: None,
         };
         // 加一个音符 (tick 100~200, key 60)
-        doc.add_note(0, NoteEvent { id: 0, start_tick: 100, end_tick: 200, key: 60, velocity: 100 });
+        doc.add_note(
+            0,
+            NoteEvent {
+                id: 0,
+                start_tick: 100,
+                end_tick: 200,
+                key: 60,
+                velocity: 100,
+            },
+        );
         // 选中它
         doc.edit.selected.add_rect_track(100, 201, 60, 60, 0, 0);
         doc
@@ -236,8 +281,13 @@ mod tests {
         // 初始 velocity = 100
         assert_eq!(doc.data.model.notes[60][0].velocity, 100);
 
-        let action = doc.set_note_velocity(0, 100, 60, 80).expect("应产生 UndoAction");
-        assert_eq!(doc.data.model.notes[60][0].velocity, 80, "velocity 应已更新为 80");
+        let action = doc
+            .set_note_velocity(0, 100, 60, 80)
+            .expect("应产生 UndoAction");
+        assert_eq!(
+            doc.data.model.notes[60][0].velocity, 80,
+            "velocity 应已更新为 80"
+        );
 
         // UndoAction 应记录 before/after
         match action {
@@ -272,10 +322,29 @@ mod tests {
     #[test]
     fn set_notes_velocity_batch_single_undo_entry() {
         let mut doc = make_doc_with_note();
-        doc.add_note(0, NoteEvent { id: 0, start_tick: 300, end_tick: 400, key: 64, velocity: 90 });
+        doc.add_note(
+            0,
+            NoteEvent {
+                id: 0,
+                start_tick: 300,
+                end_tick: 400,
+                key: 64,
+                velocity: 90,
+            },
+        );
         let edits = [
-            VelocityEdit { track: 0, start_tick: 100, key: 60, velocity: 80 },
-            VelocityEdit { track: 0, start_tick: 300, key: 64, velocity: 70 },
+            VelocityEdit {
+                track: 0,
+                start_tick: 100,
+                key: 60,
+                velocity: 80,
+            },
+            VelocityEdit {
+                track: 0,
+                start_tick: 300,
+                key: 64,
+                velocity: 70,
+            },
         ];
         let action = doc.set_notes_velocity(&edits).expect("应产生 UndoAction");
         assert_eq!(doc.data.model.notes[60][0].velocity, 80);
@@ -294,16 +363,38 @@ mod tests {
         let mut doc = make_doc_with_note();
         // 全部无效：未命中 + 值未变化
         let edits = [
-            VelocityEdit { track: 0, start_tick: 9999, key: 60, velocity: 80 },
-            VelocityEdit { track: 0, start_tick: 100, key: 60, velocity: 100 },
+            VelocityEdit {
+                track: 0,
+                start_tick: 9999,
+                key: 60,
+                velocity: 80,
+            },
+            VelocityEdit {
+                track: 0,
+                start_tick: 100,
+                key: 60,
+                velocity: 100,
+            },
         ];
         assert!(doc.set_notes_velocity(&edits).is_none());
         // 部分有效：只应用有效的那条
         let edits = [
-            VelocityEdit { track: 1, start_tick: 100, key: 60, velocity: 80 },
-            VelocityEdit { track: 0, start_tick: 100, key: 60, velocity: 55 },
+            VelocityEdit {
+                track: 1,
+                start_tick: 100,
+                key: 60,
+                velocity: 80,
+            },
+            VelocityEdit {
+                track: 0,
+                start_tick: 100,
+                key: 60,
+                velocity: 55,
+            },
         ];
-        let action = doc.set_notes_velocity(&edits).expect("部分有效应产生 UndoAction");
+        let action = doc
+            .set_notes_velocity(&edits)
+            .expect("部分有效应产生 UndoAction");
         assert_eq!(doc.data.model.notes[60][0].velocity, 55);
         match action {
             UndoAction::Notes(delta) => assert_eq!(delta.before.len(), 1),

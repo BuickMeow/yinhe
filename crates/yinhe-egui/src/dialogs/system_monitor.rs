@@ -24,9 +24,7 @@ impl SystemMonitor {
     }
 
     pub fn refresh_if_needed(&mut self) {
-        if self.last_refresh.elapsed().as_secs_f64()
-            >= crate::theme::SYS_REFRESH_INTERVAL_SECS
-        {
+        if self.last_refresh.elapsed().as_secs_f64() >= crate::theme::SYS_REFRESH_INTERVAL_SECS {
             if let Some(pid) = self.self_pid {
                 let _ = self
                     .sysinfo

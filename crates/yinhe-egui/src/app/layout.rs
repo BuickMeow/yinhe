@@ -160,9 +160,10 @@ impl App {
 
         // Handle AR quantize preset change from corner button
         if let Some(new_preset) = arr_quantize
-            && let Some(doc) = self.documents.get_mut(idx) {
-                doc.edit.quantize_arrange = new_preset;
-            }
+            && let Some(doc) = self.documents.get_mut(idx)
+        {
+            doc.edit.quantize_arrange = new_preset;
+        }
 
         // Pianoroll area
         if self
@@ -586,9 +587,10 @@ impl App {
 
         // 2. 切 editing_track（音符/CC/PB/PC 事件需要）
         if let Some((track, _key)) = req.note
-            && let Some(idx) = self.active_doc {
-                self.documents[idx].edit.editing_track = Some(track);
-            }
+            && let Some(idx) = self.active_doc
+        {
+            self.documents[idx].edit.editing_track = Some(track);
+        }
 
         // 3. 设置 cursor_tick
         if let Some(idx) = self.active_doc {

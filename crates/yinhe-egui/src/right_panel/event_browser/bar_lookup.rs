@@ -78,12 +78,16 @@ impl BarLookup {
         }
         let target_bar_0 = (bar.max(1) as i64 - 1).max(0); // 0-based
         // 找 target_bar_0 所在的 segment：最后一个 bar_start <= target_bar_0 的 seg
-        let seg = self.segs.iter()
+        let seg = self
+            .segs
+            .iter()
             .take_while(|s| s.bar_start as i64 <= target_bar_0)
             .last()
             .unwrap_or(&self.segs[0]);
         let bar_offset = target_bar_0 - seg.bar_start as i64;
-        let tick = seg.tick_start as i64 + bar_offset * seg.ticks_per_bar.max(1) as i64 + tick_in_bar as i64;
+        let tick = seg.tick_start as i64
+            + bar_offset * seg.ticks_per_bar.max(1) as i64
+            + tick_in_bar as i64;
         tick.max(0) as u32
     }
 }

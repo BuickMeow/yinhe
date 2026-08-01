@@ -57,13 +57,24 @@ pub enum SelectedItem {
     ConductorLyrics,
     /// 和弦事件（全局，conductor 级，仅 .yin 格式）
     ConductorChord,
-    Notes { track: u16 },
-    ProgramChange { track: u16 },
-    Automation { track: u16, target: AutomationTarget },
+    Notes {
+        track: u16,
+    },
+    ProgramChange {
+        track: u16,
+    },
+    Automation {
+        track: u16,
+        target: AutomationTarget,
+    },
     /// 歌词事件（per-track）
-    Lyrics { track: u16 },
+    Lyrics {
+        track: u16,
+    },
     /// 和弦事件（per-track）
-    Chord { track: u16 },
+    Chord {
+        track: u16,
+    },
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]

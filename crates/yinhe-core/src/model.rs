@@ -5,11 +5,11 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use yinhe_types::{AutomationLane, AutomationTarget, PcEvent};
 use crate::events::NoteEvent;
 use crate::tempo_map::{
     DEFAULT_MPQ, TempoMap, TempoSegment, mpq_from_bpm, recompute_tempo_start_times,
 };
+use yinhe_types::{AutomationLane, AutomationTarget, PcEvent};
 
 // =========================================================
 //  Conductor
@@ -450,8 +450,16 @@ mod tests {
     #[test]
     fn rebuild_builds_tempo_map_from_conductor() {
         let mut conductor = ConductorData::default();
-        conductor.tempo.events.push(yinhe_types::AutomationEvent { tick: 0, value: 120.0, shape: yinhe_types::SegmentShape::Step });
-        conductor.tempo.events.push(yinhe_types::AutomationEvent { tick: 1920, value: 60.0, shape: yinhe_types::SegmentShape::Step });
+        conductor.tempo.events.push(yinhe_types::AutomationEvent {
+            tick: 0,
+            value: 120.0,
+            shape: yinhe_types::SegmentShape::Step,
+        });
+        conductor.tempo.events.push(yinhe_types::AutomationEvent {
+            tick: 1920,
+            value: 60.0,
+            shape: yinhe_types::SegmentShape::Step,
+        });
 
         let mut m = YinModel {
             conductor: Arc::new(conductor),
@@ -470,7 +478,11 @@ mod tests {
         // segment at tick 0 (default 120 BPM) so lookups before the first
         // tempo find something.
         let mut conductor = ConductorData::default();
-        conductor.tempo.events.push(yinhe_types::AutomationEvent { tick: 1920, value: 60.0, shape: yinhe_types::SegmentShape::Step });
+        conductor.tempo.events.push(yinhe_types::AutomationEvent {
+            tick: 1920,
+            value: 60.0,
+            shape: yinhe_types::SegmentShape::Step,
+        });
 
         let mut m = YinModel {
             conductor: Arc::new(conductor),
@@ -528,7 +540,10 @@ mod tests {
             vec![note_silent(0, 480, 60), note_audible(0, 240, 62)],
         ];
         let mut base = YinModel {
-            tracks: vec![Arc::new(TrackData::new(0, 0)), Arc::new(TrackData::new(0, 1))],
+            tracks: vec![
+                Arc::new(TrackData::new(0, 0)),
+                Arc::new(TrackData::new(0, 1)),
+            ],
             ..Default::default()
         };
         base.load_track_notes(per_track);
@@ -584,8 +599,14 @@ mod tests {
         }
         m_full.rebuild();
 
-        assert_eq!(m_inc.track_note_count, m_full.track_note_count, "track_note_count drift");
-        assert_eq!(m_inc.track_audible_count, m_full.track_audible_count, "track_audible_count drift");
+        assert_eq!(
+            m_inc.track_note_count, m_full.track_note_count,
+            "track_note_count drift"
+        );
+        assert_eq!(
+            m_inc.track_audible_count, m_full.track_audible_count,
+            "track_audible_count drift"
+        );
         assert_eq!(m_inc.note_count, m_full.note_count);
         assert_eq!(m_inc.tick_length, m_full.tick_length);
 
@@ -609,8 +630,14 @@ mod tests {
         }
         m_del_ref.rebuild();
 
-        assert_eq!(m_del.track_note_count, m_del_ref.track_note_count, "track_note_count drift after remove");
-        assert_eq!(m_del.track_audible_count, m_del_ref.track_audible_count, "track_audible_count drift after remove");
+        assert_eq!(
+            m_del.track_note_count, m_del_ref.track_note_count,
+            "track_note_count drift after remove"
+        );
+        assert_eq!(
+            m_del.track_audible_count, m_del_ref.track_audible_count,
+            "track_audible_count drift after remove"
+        );
     }
 
     /// 回归测试：删除全曲最后一个音符（max end_tick 所在音符）后，
@@ -623,10 +650,16 @@ mod tests {
             // track 0: 两个音符，end_tick 分别为 480 和 1920（末尾）
             vec![note_audible(0, 480, 60), note_audible(480, 1920, 62)],
         ];
-        let mut m = YinModel { tracks: vec![Arc::new(super::TrackData::new(0, 0))], ..Default::default() };
+        let mut m = YinModel {
+            tracks: vec![Arc::new(super::TrackData::new(0, 0))],
+            ..Default::default()
+        };
         m.load_track_notes(per_track);
         m.rebuild();
-        assert_eq!(m.tick_length, 1920, "初始 tick_length 应为末尾音符 end_tick");
+        assert_eq!(
+            m.tick_length, 1920,
+            "初始 tick_length 应为末尾音符 end_tick"
+        );
 
         // 删除 end_tick=1920 的末尾音符
         {
@@ -673,7 +706,11 @@ mod tests {
         // track 1 (ch 1): 1 audible
         // track 2 (ch 9): 1 audible
         let per_track = vec![
-            vec![note_audible(0, 480, 60), note_audible(480, 960, 64), note_silent(0, 480, 60)],
+            vec![
+                note_audible(0, 480, 60),
+                note_audible(480, 960, 64),
+                note_silent(0, 480, 60),
+            ],
             vec![note_audible(0, 480, 60)],
             vec![note_audible(0, 480, 60)],
         ];
@@ -690,7 +727,10 @@ mod tests {
         assert_eq!(m.channel_note_count[0], 2, "ch 0: 2 audible (silent 不计)");
         assert_eq!(m.channel_note_count[1], 1);
         assert_eq!(m.channel_note_count[9], 1);
-        assert!(m.channel_ctrl_count.iter().all(|&c| c == 0), "无 automation / PC");
+        assert!(
+            m.channel_ctrl_count.iter().all(|&c| c == 0),
+            "无 automation / PC"
+        );
     }
 
     #[test]
@@ -713,10 +753,18 @@ mod tests {
         {
             let bucket = Arc::make_mut(&mut m_inc.notes[60]);
             bucket.push(yinhe_types::Note {
-                id: 0, start_tick: 960, end_tick: 1440, velocity: 80, track: 0,
+                id: 0,
+                start_tick: 960,
+                end_tick: 1440,
+                velocity: 80,
+                track: 0,
             });
             bucket.push(yinhe_types::Note {
-                id: 0, start_tick: 1440, end_tick: 1920, velocity: 0, track: 0,
+                id: 0,
+                start_tick: 1440,
+                end_tick: 1920,
+                velocity: 0,
+                track: 0,
             });
         }
         m_inc.mark_dirty(60);
@@ -726,10 +774,18 @@ mod tests {
         {
             let bucket = Arc::make_mut(&mut m_full.notes[60]);
             bucket.push(yinhe_types::Note {
-                id: 0, start_tick: 960, end_tick: 1440, velocity: 80, track: 0,
+                id: 0,
+                start_tick: 960,
+                end_tick: 1440,
+                velocity: 80,
+                track: 0,
             });
             bucket.push(yinhe_types::Note {
-                id: 0, start_tick: 1440, end_tick: 1920, velocity: 0, track: 0,
+                id: 0,
+                start_tick: 1440,
+                end_tick: 1920,
+                velocity: 0,
+                track: 0,
             });
         }
         m_full.rebuild();
@@ -750,15 +806,26 @@ mod tests {
     fn channel_counts_ctrl_tracks() {
         // track 0 (ch 0): 无音符，但有 automation_lanes → ctrl_count[0] = 1
         // track 1 (ch 5): 无音符，但有 program_change → ctrl_count[5] = 1
-        use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, PcEvent, SegmentShape};
+        use yinhe_types::{
+            AutomationEvent, AutomationLane, AutomationTarget, PcEvent, SegmentShape,
+        };
         let mut t0 = TrackData::new(0, 0);
         t0.automation_lanes = vec![AutomationLane {
             target: AutomationTarget::CC { controller: 7 },
             track: 0,
-            events: vec![AutomationEvent { tick: 0, value: 100.0, shape: SegmentShape::Step }],
+            events: vec![AutomationEvent {
+                tick: 0,
+                value: 100.0,
+                shape: SegmentShape::Step,
+            }],
         }];
         let mut t1 = TrackData::new(0, 5);
-        t1.program_change = vec![PcEvent { tick: 0, program: 5, bank_msb: 0, bank_lsb: 0 }];
+        t1.program_change = vec![PcEvent {
+            tick: 0,
+            program: 5,
+            bank_msb: 0,
+            bank_lsb: 0,
+        }];
         let mut m = YinModel {
             tracks: vec![Arc::new(t0), Arc::new(t1)],
             ..Default::default()
@@ -783,7 +850,11 @@ mod tests {
         // 加一个 audible 音符
         let bucket = Arc::make_mut(&mut m.notes[60]);
         bucket.push(yinhe_types::Note {
-            id: 0, start_tick: 0, end_tick: 480, velocity: 100, track: 0,
+            id: 0,
+            start_tick: 0,
+            end_tick: 480,
+            velocity: 100,
+            track: 0,
         });
         m.mark_dirty(60);
         m.rebuild_dirty();
@@ -842,7 +913,10 @@ mod tests {
         let per_track = vec![vec![note(0, 960, 60), note(960, 1920, 64)]];
         let mut m = YinModel {
             tracks: vec![Arc::new(TrackData::new(0, 0))],
-            meta: ProjectMeta { ppq: 960, ..Default::default() },
+            meta: ProjectMeta {
+                ppq: 960,
+                ..Default::default()
+            },
             ..Default::default()
         };
         m.load_track_notes(per_track);
@@ -859,18 +933,37 @@ mod tests {
     #[test]
     fn rescale_ppq_scales_automation_and_conductor() {
         // 验证 conductor.tempo / time_sig / track automation / pc 的 tick 也被缩放。
-        use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, PcEvent, SegmentShape, TimeSigEvent};
+        use yinhe_types::{
+            AutomationEvent, AutomationLane, AutomationTarget, PcEvent, SegmentShape, TimeSigEvent,
+        };
         let mut conductor = ConductorData::default();
-        conductor.tempo.events.push(AutomationEvent { tick: 480, value: 120.0, shape: SegmentShape::Step });
-        conductor.time_sig.push(TimeSigEvent { tick: 960, numerator: 4, denominator: 2 });
+        conductor.tempo.events.push(AutomationEvent {
+            tick: 480,
+            value: 120.0,
+            shape: SegmentShape::Step,
+        });
+        conductor.time_sig.push(TimeSigEvent {
+            tick: 960,
+            numerator: 4,
+            denominator: 2,
+        });
 
         let mut t0 = TrackData::new(0, 0);
         t0.automation_lanes = vec![AutomationLane {
             target: AutomationTarget::CC { controller: 7 },
             track: 0,
-            events: vec![AutomationEvent { tick: 240, value: 100.0, shape: SegmentShape::Step }],
+            events: vec![AutomationEvent {
+                tick: 240,
+                value: 100.0,
+                shape: SegmentShape::Step,
+            }],
         }];
-        t0.program_change = vec![PcEvent { tick: 120, program: 5, bank_msb: 0, bank_lsb: 0 }];
+        t0.program_change = vec![PcEvent {
+            tick: 120,
+            program: 5,
+            bank_msb: 0,
+            bank_lsb: 0,
+        }];
 
         let mut m = YinModel {
             conductor: Arc::new(conductor),

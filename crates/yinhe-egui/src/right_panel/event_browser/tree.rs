@@ -13,13 +13,31 @@ use super::state::{ArchiveKey, EventBrowserState, SelectedItem};
 use super::{group_tracks_by_port_channel, port_letter};
 
 /// 渲染整个树状导航。
-pub(super) fn render_tree(ui: &mut egui::Ui, doc: &yinhe_editor_core::document::Document, state: &mut EventBrowserState) {
+pub(super) fn render_tree(
+    ui: &mut egui::Ui,
+    doc: &yinhe_editor_core::document::Document,
+    state: &mut EventBrowserState,
+) {
     let model = &doc.data.model;
     let conductor_idx = doc.edit.conductor_track_idx;
     let groups = group_tracks_by_port_channel(model, conductor_idx);
 
-    render_leaf_item(ui, "project.json", ICON_DESCRIPTION, 0, SelectedItem::ProjectJson, state);
-    render_leaf_item(ui, "mapping.json", ICON_DESCRIPTION, 0, SelectedItem::MappingJson, state);
+    render_leaf_item(
+        ui,
+        "project.json",
+        ICON_DESCRIPTION,
+        0,
+        SelectedItem::ProjectJson,
+        state,
+    );
+    render_leaf_item(
+        ui,
+        "mapping.json",
+        ICON_DESCRIPTION,
+        0,
+        SelectedItem::MappingJson,
+        state,
+    );
 
     // Conductor 级事件始终显示（即使为 0），方便用户新建第一个事件。
     let tempo_count = model.conductor.tempo.events.len();
@@ -39,7 +57,10 @@ pub(super) fn render_tree(ui: &mut egui::Ui, doc: &yinhe_editor_core::document::
             &format!("Tempo ({})", tempo_count),
             ICON_SPEED,
             1,
-            SelectedItem::Automation { track: 0, target: AutomationTarget::Tempo },
+            SelectedItem::Automation {
+                track: 0,
+                target: AutomationTarget::Tempo,
+            },
             state,
         );
         render_leaf_item(
@@ -88,7 +109,12 @@ pub(super) fn render_tree(ui: &mut egui::Ui, doc: &yinhe_editor_core::document::
         let port_key = ArchiveKey::Port(port);
         let port_expanded = state.expanded_keys.contains(&port_key);
         let port_track_count: usize = channels.values().map(|v| v.len()).sum();
-        let port_label = t!("event_browser.port_tracks", port = port_letter(port), n = port_track_count).to_string();
+        let port_label = t!(
+            "event_browser.port_tracks",
+            port = port_letter(port),
+            n = port_track_count
+        )
+        .to_string();
         if render_dir_row(ui, &port_label, 0, port_expanded, channels.len()) {
             toggle_key(state, port_key);
         }
@@ -99,7 +125,12 @@ pub(super) fn render_tree(ui: &mut egui::Ui, doc: &yinhe_editor_core::document::
         for (&channel, track_indices) in channels {
             let ch_key = ArchiveKey::Channel(port, channel);
             let ch_expanded = state.expanded_keys.contains(&ch_key);
-            let ch_label = t!("event_browser.channel_tracks", ch = channel + 1, n = track_indices.len()).to_string();
+            let ch_label = t!(
+                "event_browser.channel_tracks",
+                ch = channel + 1,
+                n = track_indices.len()
+            )
+            .to_string();
             if render_dir_row(ui, &ch_label, 1, ch_expanded, track_indices.len()) {
                 toggle_key(state, ch_key);
             }
@@ -128,7 +159,12 @@ fn render_track_row(ui: &mut egui::Ui, model: &YinModel, idx: u16, state: &mut E
     } else {
         track.name.clone()
     };
-    let summary = format!("{} notes \u{00b7} {} auto \u{00b7} {} PC", note_count, track.automation_lanes.len(), pc_count);
+    let summary = format!(
+        "{} notes \u{00b7} {} auto \u{00b7} {} PC",
+        note_count,
+        track.automation_lanes.len(),
+        pc_count
+    );
 
     let row_bg = if is_selected {
         crate::theme::ROW_SELECTED_BG
@@ -147,8 +183,22 @@ fn render_track_row(ui: &mut egui::Ui, model: &YinModel, idx: u16, state: &mut E
                 ui.spacing_mut().item_spacing.x = 2.0;
                 ui.add_space(2.0 * 14.0);
 
-                let chev = if expanded { ICON_EXPAND_MORE } else { ICON_CHEVRON_RIGHT };
-                if ui.add(egui::Label::new(chev.rich_text().size(13.0).color(egui::Color32::from_gray(190))).sense(egui::Sense::click())).clicked() {
+                let chev = if expanded {
+                    ICON_EXPAND_MORE
+                } else {
+                    ICON_CHEVRON_RIGHT
+                };
+                if ui
+                    .add(
+                        egui::Label::new(
+                            chev.rich_text()
+                                .size(13.0)
+                                .color(egui::Color32::from_gray(190)),
+                        )
+                        .sense(egui::Sense::click()),
+                    )
+                    .clicked()
+                {
                     toggled = true;
                 }
 
@@ -156,7 +206,11 @@ fn render_track_row(ui: &mut egui::Ui, model: &YinModel, idx: u16, state: &mut E
                     ICON_AUDIOTRACK
                         .rich_text()
                         .size(12.0)
-                        .color(if is_selected { egui::Color32::WHITE } else { egui::Color32::from_gray(160) }),
+                        .color(if is_selected {
+                            egui::Color32::WHITE
+                        } else {
+                            egui::Color32::from_gray(160)
+                        }),
                 );
 
                 let name_resp = ui.add(
@@ -164,7 +218,11 @@ fn render_track_row(ui: &mut egui::Ui, model: &YinModel, idx: u16, state: &mut E
                         egui::RichText::new(&label_text)
                             .size(11.0)
                             .monospace()
-                            .color(if is_selected { egui::Color32::WHITE } else { egui::Color32::from_gray(220) }),
+                            .color(if is_selected {
+                                egui::Color32::WHITE
+                            } else {
+                                egui::Color32::from_gray(220)
+                            }),
                     )
                     .sense(egui::Sense::click()),
                 );
@@ -190,7 +248,14 @@ fn render_track_row(ui: &mut egui::Ui, model: &YinModel, idx: u16, state: &mut E
 
     if expanded {
         // per-track 事件始终显示（即使为 0），方便用户新建第一个事件。
-        render_leaf_item(ui, &format!("Notes ({})", note_count), ICON_MUSIC_NOTE, 3, SelectedItem::Notes { track: idx }, state);
+        render_leaf_item(
+            ui,
+            &format!("Notes ({})", note_count),
+            ICON_MUSIC_NOTE,
+            3,
+            SelectedItem::Notes { track: idx },
+            state,
+        );
         // 所有 automation lane 都作为叶子显示（CC/PB/RPN/NRPN）
         for lane in &track.automation_lanes {
             let icon = automation_icon(&lane.target);
@@ -199,11 +264,21 @@ fn render_track_row(ui: &mut egui::Ui, model: &YinModel, idx: u16, state: &mut E
                 &format!("{} ({})", lane.target.display_name(), lane.events.len()),
                 icon,
                 3,
-                SelectedItem::Automation { track: idx, target: lane.target.clone() },
+                SelectedItem::Automation {
+                    track: idx,
+                    target: lane.target.clone(),
+                },
                 state,
             );
         }
-        render_leaf_item(ui, &format!("Program Change ({})", pc_count), ICON_PALETTE, 3, SelectedItem::ProgramChange { track: idx }, state);
+        render_leaf_item(
+            ui,
+            &format!("Program Change ({})", pc_count),
+            ICON_PALETTE,
+            3,
+            SelectedItem::ProgramChange { track: idx },
+            state,
+        );
         render_leaf_item(
             ui,
             &format!("Lyrics ({})", track.lyrics.len()),
@@ -235,35 +310,109 @@ fn automation_icon(target: &AutomationTarget) -> egui_material_icons::MaterialIc
 
 // ── Tree row renderers ──
 
-fn render_dir_row(ui: &mut egui::Ui, name: &str, depth: usize, expanded: bool, child_count: usize) -> bool {
+fn render_dir_row(
+    ui: &mut egui::Ui,
+    name: &str,
+    depth: usize,
+    expanded: bool,
+    child_count: usize,
+) -> bool {
     let mut toggled = false;
-    egui::Frame::NONE.inner_margin(egui::Margin::symmetric(2, 1)).show(ui, |ui| {
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 2.0;
-            ui.add_space(depth as f32 * 14.0);
-            let chev = if expanded { ICON_EXPAND_MORE } else { ICON_CHEVRON_RIGHT };
-            if ui.add(egui::Label::new(chev.rich_text().size(13.0).color(egui::Color32::from_gray(190))).sense(egui::Sense::click())).clicked() { toggled = true; }
-            let folder = if expanded { ICON_FOLDER_OPEN } else { ICON_FOLDER };
-            if ui.add(egui::Label::new(folder.rich_text().size(13.0).color(egui::Color32::from_rgb(220, 180, 90))).sense(egui::Sense::click())).clicked() { toggled = true; }
-            ui.label(egui::RichText::new(name).size(11.0).color(egui::Color32::from_gray(220)));
-            ui.label(egui::RichText::new(format!("({})", child_count)).size(10.0).color(egui::Color32::from_gray(110)));
+    egui::Frame::NONE
+        .inner_margin(egui::Margin::symmetric(2, 1))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 2.0;
+                ui.add_space(depth as f32 * 14.0);
+                let chev = if expanded {
+                    ICON_EXPAND_MORE
+                } else {
+                    ICON_CHEVRON_RIGHT
+                };
+                if ui
+                    .add(
+                        egui::Label::new(
+                            chev.rich_text()
+                                .size(13.0)
+                                .color(egui::Color32::from_gray(190)),
+                        )
+                        .sense(egui::Sense::click()),
+                    )
+                    .clicked()
+                {
+                    toggled = true;
+                }
+                let folder = if expanded {
+                    ICON_FOLDER_OPEN
+                } else {
+                    ICON_FOLDER
+                };
+                if ui
+                    .add(
+                        egui::Label::new(
+                            folder
+                                .rich_text()
+                                .size(13.0)
+                                .color(egui::Color32::from_rgb(220, 180, 90)),
+                        )
+                        .sense(egui::Sense::click()),
+                    )
+                    .clicked()
+                {
+                    toggled = true;
+                }
+                ui.label(
+                    egui::RichText::new(name)
+                        .size(11.0)
+                        .color(egui::Color32::from_gray(220)),
+                );
+                ui.label(
+                    egui::RichText::new(format!("({})", child_count))
+                        .size(10.0)
+                        .color(egui::Color32::from_gray(110)),
+                );
+            });
         });
-    });
     toggled
 }
 
-fn render_leaf_item(ui: &mut egui::Ui, name: &str, icon: egui_material_icons::MaterialIcon, depth: usize, item: SelectedItem, state: &mut EventBrowserState) {
+fn render_leaf_item(
+    ui: &mut egui::Ui,
+    name: &str,
+    icon: egui_material_icons::MaterialIcon,
+    depth: usize,
+    item: SelectedItem,
+    state: &mut EventBrowserState,
+) {
     let is_selected = state.selected_item.as_ref() == Some(&item);
-    let bg = if is_selected { crate::theme::ROW_SELECTED_BG } else { egui::Color32::TRANSPARENT };
-    let frame_r = egui::Frame::NONE.fill(bg).inner_margin(egui::Margin::symmetric(2, 1)).show(ui, |ui| {
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 2.0;
-            ui.add_space(depth as f32 * 14.0);
-            ui.add_space(14.0);
-            ui.label(icon.rich_text().size(12.0).color(if is_selected { egui::Color32::WHITE } else { egui::Color32::from_gray(160) }));
-            ui.label(egui::RichText::new(name).size(11.0).monospace().color(if is_selected { egui::Color32::WHITE } else { egui::Color32::from_gray(200) }));
-        });
-    });
+    let bg = if is_selected {
+        crate::theme::ROW_SELECTED_BG
+    } else {
+        egui::Color32::TRANSPARENT
+    };
+    let frame_r =
+        egui::Frame::NONE
+            .fill(bg)
+            .inner_margin(egui::Margin::symmetric(2, 1))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 2.0;
+                    ui.add_space(depth as f32 * 14.0);
+                    ui.add_space(14.0);
+                    ui.label(icon.rich_text().size(12.0).color(if is_selected {
+                        egui::Color32::WHITE
+                    } else {
+                        egui::Color32::from_gray(160)
+                    }));
+                    ui.label(egui::RichText::new(name).size(11.0).monospace().color(
+                        if is_selected {
+                            egui::Color32::WHITE
+                        } else {
+                            egui::Color32::from_gray(200)
+                        },
+                    ));
+                });
+            });
     if frame_r.response.interact(egui::Sense::click()).clicked() {
         state.selected_item = Some(item);
         state.selected_track = None;

@@ -6,12 +6,12 @@ use rust_i18n::t;
 
 use yinhe_editor_core::quantize::QuantizePreset;
 pub use yinhe_types::AutomationEdit;
-use yinhe_types::{AutomationLane, AutomationTarget, TimeSigEvent, VelocityEdit};
 use yinhe_types::time_format::format_tick_bar_beat_with_time_sig;
+use yinhe_types::{AutomationLane, AutomationTarget, TimeSigEvent, VelocityEdit};
 
-use yinhe_wgpu::{AutomationGhost, prepare_automation};
 use yinhe_types::AutomationPanelView;
 use yinhe_wgpu::InstanceRenderer;
+use yinhe_wgpu::{AutomationGhost, prepare_automation};
 
 use crate::right_panel::{InfoContent, RightTab};
 use crate::widgets::tools_panel::Tool;
@@ -152,7 +152,12 @@ pub(crate) fn panel_max_val(panel: &AutomationPanelView, tempo_lane: &Automation
     if panel.show_velocity {
         127.0
     } else if panel.selected_target == AutomationTarget::Tempo {
-        tempo_lane.events.iter().map(|e| e.value).fold(0.0_f32, f32::max).max(1.0)
+        tempo_lane
+            .events
+            .iter()
+            .map(|e| e.value)
+            .fold(0.0_f32, f32::max)
+            .max(1.0)
     } else {
         panel.selected_target.max_value()
     }
@@ -215,11 +220,18 @@ pub fn show_panels(
 
     // 派生 show_anchors：Pencil/Curve/Select/SelectVertical 工具下显示锚点
     let active_tool = edit_ctx.map(|c| c.active_tool).unwrap_or(Tool::Select);
-    let show_anchors = matches!(active_tool, Tool::Pencil | Tool::Curve | Tool::Select | Tool::SelectVertical);
+    let show_anchors = matches!(
+        active_tool,
+        Tool::Pencil | Tool::Curve | Tool::Select | Tool::SelectVertical
+    );
 
     // Sync scroll state from pianoroll
     for panel in state.panels.iter_mut() {
-        panel.sync_from_pianoroll(cfg.pianoroll_scroll_x, cfg.pianoroll_ppt, layout.combo_width);
+        panel.sync_from_pianoroll(
+            cfg.pianoroll_scroll_x,
+            cfg.pianoroll_ppt,
+            layout.combo_width,
+        );
     }
 
     // Ensure renderer count matches panel count
@@ -242,7 +254,10 @@ pub fn show_panels(
     // Panels area rect (visible portion only)
     let panels_area_rect = egui::Rect::from_min_max(
         egui::pos2(0.0, layout.content_top_y),
-        egui::pos2(layout.content_rect_right, layout.content_top_y + layout.panels_visible_h),
+        egui::pos2(
+            layout.content_rect_right,
+            layout.content_top_y + layout.panels_visible_h,
+        ),
     );
 
     // Handle mouse wheel / trackpad scroll in the state.panels area
@@ -384,41 +399,46 @@ pub fn show_panels(
             }
         }
 
-        if gw > 0 && gh > 0
-            && let Some((renderer, render_ctx)) = state.renderers.get_mut(i) {
-                render_panel_content(
-                    ui,
-                    renderer,
-                    render_ctx,
-                    panel,
-                    grid_rect,
-                    gpw,
-                    gph,
-                    data.render_lanes,
-                    data.tempo_lane,
-                    data.midi,
-                    data.track_visible,
-                    data.track_colors,
-                    cfg.scroll_mode,
-                    cfg.min_border_width,
-                    show_anchors,
-                    max_val_f,
-                    panel_ghost,
-                    cfg.revision,
-                    edit.info_content,
-                    i,
-                    layout.combo_width,
-                );
-                draw_panel_overlay(
-                    ui,
-                    panel,
-                    panel_rect,
-                    grid_area,
-                    max_val_f,
-                    i,
-                    &PanelOverlayData { marquee_rect, velocity_preview },
-                );
-            }
+        if gw > 0
+            && gh > 0
+            && let Some((renderer, render_ctx)) = state.renderers.get_mut(i)
+        {
+            render_panel_content(
+                ui,
+                renderer,
+                render_ctx,
+                panel,
+                grid_rect,
+                gpw,
+                gph,
+                data.render_lanes,
+                data.tempo_lane,
+                data.midi,
+                data.track_visible,
+                data.track_colors,
+                cfg.scroll_mode,
+                cfg.min_border_width,
+                show_anchors,
+                max_val_f,
+                panel_ghost,
+                cfg.revision,
+                edit.info_content,
+                i,
+                layout.combo_width,
+            );
+            draw_panel_overlay(
+                ui,
+                panel,
+                panel_rect,
+                grid_area,
+                max_val_f,
+                i,
+                &PanelOverlayData {
+                    marquee_rect,
+                    velocity_preview,
+                },
+            );
+        }
 
         // ── 垂直滚动条（值空间） ──
         // 占用面板右侧 SCROLLBAR_W 宽度。仅在 visible_range < upper_bound 时显示。
@@ -457,9 +477,21 @@ pub fn show_panels(
     ui.set_clip_rect(old_clip);
 
     // ── 右键锚点：设置 edit.info_content 打开信息面板 ──
-    apply_right_click_anchor(ui, state.panels.len(), data.automation_lanes, edit.info_content, edit.right_tab);
+    apply_right_click_anchor(
+        ui,
+        state.panels.len(),
+        data.automation_lanes,
+        edit.info_content,
+        edit.right_tab,
+    );
 
-    (layout.panels_visible_h, edits, velocity_edits, feedback, all_drag_info)
+    (
+        layout.panels_visible_h,
+        edits,
+        velocity_edits,
+        feedback,
+        all_drag_info,
+    )
 }
 
 /// 当帧交互产生的临时 overlay 数据。
@@ -496,7 +528,8 @@ fn draw_panel_overlay(
         let ppu = panel.base.pixels_per_tick;
         // MoveAnchors 拖拽中偏移选框（跟随锚点移动）
         let move_offset_id = ui.id().with("auto_move_offset").with(panel_idx);
-        let (d_tick, d_value) = ui.ctx()
+        let (d_tick, d_value) = ui
+            .ctx()
             .data(|d| d.get_temp::<(i64, f32)>(move_offset_id))
             .unwrap_or((0, 0.0));
         let painter = ui.painter();
@@ -515,16 +548,10 @@ fn draw_panel_overlay(
                     (ya.min(yb), ya.max(yb))
                 }
             };
-            let rect = egui::Rect::from_min_max(
-                egui::pos2(x1, y1),
-                egui::pos2(x2, y2),
-            ).intersect(grid_area);
+            let rect = egui::Rect::from_min_max(egui::pos2(x1, y1), egui::pos2(x2, y2))
+                .intersect(grid_area);
             // 选框颜色与 PR/AR 一致：白色 + gamma_multiply
-            painter.rect_filled(
-                rect,
-                0.0,
-                egui::Color32::WHITE.gamma_multiply(0.15),
-            );
+            painter.rect_filled(rect, 0.0, egui::Color32::WHITE.gamma_multiply(0.15));
             painter.rect_stroke(
                 rect,
                 0.0,
@@ -537,11 +564,7 @@ fn draw_panel_overlay(
     if let Some(rect) = overlay.marquee_rect {
         let painter = ui.painter();
         // 选框颜色与 PR/AR 一致：白色 + gamma_multiply（拖拽中略亮）
-        painter.rect_filled(
-            rect,
-            0.0,
-            egui::Color32::WHITE.gamma_multiply(0.20),
-        );
+        painter.rect_filled(rect, 0.0, egui::Color32::WHITE.gamma_multiply(0.20));
         painter.rect_stroke(
             rect,
             0.0,
@@ -581,8 +604,11 @@ fn draw_value_labels(
         panel.y_to_value(h * 0.5, label_max).round() as u32,
         panel.y_to_value(h, label_max).round() as u32,
     );
-    let (top_val, mid_val, bot_val) =
-        (top_val.to_string(), mid_val.to_string(), bot_val.to_string());
+    let (top_val, mid_val, bot_val) = (
+        top_val.to_string(),
+        mid_val.to_string(),
+        bot_val.to_string(),
+    );
 
     let text_x = panel_rect.min.x + combo_width + pad_x;
     let top_y = panel_rect.min.y + 4.0;
@@ -794,8 +820,11 @@ fn dispatch_edit_interaction(
                 );
                 out.velocity_edits = vel_edits;
                 out.preview = preview;
-                tooltip = tip
-                    .map(|(tick, value, pos)| interaction::HoverTooltip::Anchor { tick, value, pos });
+                tooltip = tip.map(|(tick, value, pos)| interaction::HoverTooltip::Anchor {
+                    tick,
+                    value,
+                    pos,
+                });
             }
         } else if let Some(track) = ctx.active_track {
             let (panel_edits, ghost, drag_info, hover_info, marquee_rect, sel_op) =
@@ -843,7 +872,13 @@ fn dispatch_edit_interaction(
                 };
                 (vec![pos_str, val_str], pos.x, pos.y)
             }
-            interaction::HoverTooltip::ControlPoint { x1, y1, x2, y2, pos } => (
+            interaction::HoverTooltip::ControlPoint {
+                x1,
+                y1,
+                x2,
+                y2,
+                pos,
+            } => (
                 vec![
                     format!("X1: {:.2}", x1),
                     format!("Y1: {:.2}", y1),
@@ -906,12 +941,21 @@ fn render_panel_content(
     let mut highlight_ticks: Vec<u32> = Vec::new();
     for l in &lanes {
         for e in &l.events {
-            if panel.anchor_sel_rects.iter().any(|r| r.contains(e.tick, e.value)) {
+            if panel
+                .anchor_sel_rects
+                .iter()
+                .any(|r| r.contains(e.tick, e.value))
+            {
                 highlight_ticks.push(e.tick);
             }
         }
     }
-    if let Some(InfoContent::Anchor { target: anchor_target, track_idx, event_idx, .. }) = info_content
+    if let Some(InfoContent::Anchor {
+        target: anchor_target,
+        track_idx,
+        event_idx,
+        ..
+    }) = info_content
         && *anchor_target == panel.selected_target
     {
         // 通过 event_idx 定位锚点的实际 tick
@@ -923,9 +967,10 @@ fn render_panel_content(
             })
             .and_then(|l| l.events.get(*event_idx))
             .map(|e| e.tick)
-            && !highlight_ticks.contains(&tick) {
-                highlight_ticks.push(tick);
-            }
+            && !highlight_ticks.contains(&tick)
+        {
+            highlight_ticks.push(tick);
+        }
     }
 
     let gpu_dirty = prepare_automation(
@@ -1038,9 +1083,14 @@ fn show_target_combo(
         ui.with_layout(layout, |ui| {
             // ── Target selector button (tools panel style) ──
             let target_resp = ui.add(
-                egui::Label::new(ICON_AUTOMATION.rich_text().size(14.0).color(egui::Color32::GRAY))
-                    .sense(egui::Sense::click())
-                    .selectable(false),
+                egui::Label::new(
+                    ICON_AUTOMATION
+                        .rich_text()
+                        .size(14.0)
+                        .color(egui::Color32::GRAY),
+                )
+                .sense(egui::Sense::click())
+                .selectable(false),
             );
             crate::widgets::hover::hover_highlight(
                 ui,
@@ -1052,7 +1102,9 @@ fn show_target_combo(
 
             // ── Popup menu (manually managed Area to support DragValue interaction) ──
             let popup_id = ui.id().with("auto_target_popup");
-            let is_open = ui.data_mut(|d| d.get_persisted::<bool>(popup_id)).unwrap_or(false);
+            let is_open = ui
+                .data_mut(|d| d.get_persisted::<bool>(popup_id))
+                .unwrap_or(false);
 
             if target_resp.clicked() {
                 ui.data_mut(|d| d.insert_persisted(popup_id, !is_open));
@@ -1068,7 +1120,13 @@ fn show_target_combo(
                             ui.set_min_width(120.0);
                             // Velocity (special: not an AutomationTarget, renders from notes)
                             let vel_selected = panel.show_velocity;
-                            if ui.add(egui::Button::selectable(vel_selected, t!("automation.velocity").as_ref())).clicked() {
+                            if ui
+                                .add(egui::Button::selectable(
+                                    vel_selected,
+                                    t!("automation.velocity").as_ref(),
+                                ))
+                                .clicked()
+                            {
                                 panel.show_velocity = true;
                                 panel.dirty = true;
                                 ui.ctx().data_mut(|d| d.insert_persisted(popup_id, false));
@@ -1076,7 +1134,8 @@ fn show_target_combo(
                             ui.separator();
                             for target in AUTOMATION_TARGETS {
                                 let name = target.display_name();
-                                let selected = !panel.show_velocity && panel.selected_target == *target;
+                                let selected =
+                                    !panel.show_velocity && panel.selected_target == *target;
                                 if ui.add(egui::Button::selectable(selected, &name)).clicked() {
                                     panel.selected_target = target.clone();
                                     panel.show_velocity = false;
@@ -1091,9 +1150,15 @@ fn show_target_combo(
                                 _ => 0,
                             };
                             let old_cc = cc_input;
-                            ui.add(crate::widgets::numeric_input::decimal_drag_value(&mut cc_input).range(0..=127).speed(1));
+                            ui.add(
+                                crate::widgets::numeric_input::decimal_drag_value(&mut cc_input)
+                                    .range(0..=127)
+                                    .speed(1),
+                            );
                             if cc_input != old_cc {
-                                panel.selected_target = AutomationTarget::CC { controller: cc_input as u8 };
+                                panel.selected_target = AutomationTarget::CC {
+                                    controller: cc_input as u8,
+                                };
                                 panel.show_velocity = false;
                                 panel.dirty = true;
                             }
@@ -1103,9 +1168,11 @@ fn show_target_combo(
                 // Close only when clicking outside the popup area (not on any interactive element)
                 if ui.input(|i| i.pointer.any_pressed())
                     && let Some(pos) = ui.input(|i| i.pointer.interact_pos())
-                        && !area_resp.response.rect.contains(pos) && !target_resp.rect.contains(pos) {
-                            ui.data_mut(|d| d.insert_persisted(popup_id, false));
-                        }
+                    && !area_resp.response.rect.contains(pos)
+                    && !target_resp.rect.contains(pos)
+                {
+                    ui.data_mut(|d| d.insert_persisted(popup_id, false));
+                }
             }
 
             ui.add_space(4.0);
@@ -1123,7 +1190,10 @@ fn apply_right_click_anchor(
 ) {
     for i in 0..panel_count {
         let right_click_id = ui.id().with("auto_right_click").with(i);
-        if let Some(anchor) = ui.ctx().data(|d| d.get_temp::<interaction::RightClickAnchor>(right_click_id)) {
+        if let Some(anchor) = ui
+            .ctx()
+            .data(|d| d.get_temp::<interaction::RightClickAnchor>(right_click_id))
+        {
             // 通过 tick 查找 event_idx
             let event_idx = automation_lanes
                 .iter()

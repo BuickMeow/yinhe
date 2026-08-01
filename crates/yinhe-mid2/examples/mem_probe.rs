@@ -31,7 +31,9 @@ fn main() {
         Ok(m) => {
             eprintln!(
                 "[mem-probe] parse done in {:?}  notes={}  tracks={}",
-                parse_dur, m.note_count, m.tracks.len(),
+                parse_dur,
+                m.note_count,
+                m.tracks.len(),
             );
         }
         Err(e) => {

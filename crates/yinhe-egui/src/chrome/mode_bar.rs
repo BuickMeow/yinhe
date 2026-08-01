@@ -108,12 +108,7 @@ fn metric_with_value_sz(ui: &mut egui::Ui, label: &str, value: &str, value_sz: f
 }
 
 /// Like [`metric`], but the value is clickable (e.g. to open a detail popup).
-fn metric_clickable(
-    ui: &mut egui::Ui,
-    label: &str,
-    value: &str,
-    on_click: impl FnOnce(),
-) {
+fn metric_clickable(ui: &mut egui::Ui, label: &str, value: &str, on_click: impl FnOnce()) {
     metric_clickable_with_value_sz(ui, label, value, crate::theme::MODE_LABEL_FONT, on_click);
 }
 

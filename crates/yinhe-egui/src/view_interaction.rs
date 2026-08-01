@@ -280,9 +280,10 @@ pub(crate) fn handle_input(
 /// When true, lower layers should not process pointer events to avoid click-through.
 pub(crate) fn pointer_over_popup(ctx: &egui::Context) -> bool {
     if let Some(pos) = ctx.input(|i| i.pointer.hover_pos())
-        && let Some(layer) = ctx.layer_id_at(pos) {
-            return layer.order == egui::Order::Foreground;
-        }
+        && let Some(layer) = ctx.layer_id_at(pos)
+    {
+        return layer.order == egui::Order::Foreground;
+    }
     false
 }
 
@@ -405,8 +406,6 @@ pub fn snap_tick_floor(
     }
 }
 
-
-
 // ── Hover tooltip ──
 
 /// 格式化带符号的数值：正用 `+`，负用 `-`。
@@ -476,7 +475,12 @@ mod tests {
     #[test]
     fn snap_tick_with_bar_line_data() {
         let events = [];
-        let result = snap_tick(500.0, QuantizePreset::Fraction(1, 4), 480, Some((480, 4, 2, &events)));
+        let result = snap_tick(
+            500.0,
+            QuantizePreset::Fraction(1, 4),
+            480,
+            Some((480, 4, 2, &events)),
+        );
         // In 4/4 at 480tpb, bar 1 spans 0..1920
         // tick 500 → offset from bar_start=0 is 500, snapped to 480
         assert_eq!(result, 480.0);
@@ -486,7 +490,12 @@ mod tests {
     fn snap_tick_near_next_bar() {
         let events = [];
         // tick 1910 is very close to next bar at 1920
-        let result = snap_tick(1910.0, QuantizePreset::Fraction(1, 4), 480, Some((480, 4, 2, &events)));
+        let result = snap_tick(
+            1910.0,
+            QuantizePreset::Fraction(1, 4),
+            480,
+            Some((480, 4, 2, &events)),
+        );
         // 1910 - 0 = 1910 offset, snapped to 1920 (4*480), but distance to next_bar(1920) = 10
         // distance to grid_tick(1920) = 0, so grid_tick wins
         assert_eq!(result, 1920.0);
@@ -496,7 +505,12 @@ mod tests {
     fn snap_tick_inside_bar_with_3_4() {
         let events = [];
         // 3/4 at 480tpb → ticks_per_bar = 1440
-        let result = snap_tick(500.0, QuantizePreset::Fraction(1, 4), 480, Some((480, 3, 2, &events)));
+        let result = snap_tick(
+            500.0,
+            QuantizePreset::Fraction(1, 4),
+            480,
+            Some((480, 3, 2, &events)),
+        );
         // offset = 500, snapped to 480
         assert_eq!(result, 480.0);
     }

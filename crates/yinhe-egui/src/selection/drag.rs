@@ -1,8 +1,8 @@
 use eframe::egui;
-use yinhe_types::view_base::TimelineViewBase;
-use yinhe_types::{key_notes_in_range, NoteSource, TimeSigEvent};
-use yinhe_editor_core::quantize::QuantizePreset;
 use yinhe_editor_core::ResizeSide;
+use yinhe_editor_core::quantize::QuantizePreset;
+use yinhe_types::view_base::TimelineViewBase;
+use yinhe_types::{NoteSource, TimeSigEvent, key_notes_in_range};
 
 /// Hit-test 边缘的像素阈值（与铅笔工具一致）。
 const EDGE_THRESHOLD_PX: f32 = 6.0;
@@ -98,23 +98,29 @@ pub fn collect_selected_notes(
     track_visible: &[bool],
     track_selected: &std::collections::HashSet<u16>,
 ) -> Vec<CollectedNote> {
-    selected.rects.iter().flat_map(|&(ts, te, kl, kh, _tl, _th)| {
-        (kl..=kh).flat_map(move |key| {
-            midi.map(|m| {
-                key_notes_in_range(m.key_notes(key), ts, te).iter()
-                    .filter(|n| selected.contains(n.track, n.start_tick, key))
-                    .filter(|n| track_selected.is_empty() || track_selected.contains(&n.track))
-                    .filter(|n| track_visible.get(n.track as usize).copied().unwrap_or(true))
-                    .map(|n| CollectedNote {
-                        track: n.track,
-                        start_tick: n.start_tick,
-                        end_tick: n.end_tick,
-                        key,
-                    })
-                    .collect::<Vec<_>>()
-            }).unwrap_or_default()
+    selected
+        .rects
+        .iter()
+        .flat_map(|&(ts, te, kl, kh, _tl, _th)| {
+            (kl..=kh).flat_map(move |key| {
+                midi.map(|m| {
+                    key_notes_in_range(m.key_notes(key), ts, te)
+                        .iter()
+                        .filter(|n| selected.contains(n.track, n.start_tick, key))
+                        .filter(|n| track_selected.is_empty() || track_selected.contains(&n.track))
+                        .filter(|n| track_visible.get(n.track as usize).copied().unwrap_or(true))
+                        .map(|n| CollectedNote {
+                            track: n.track,
+                            start_tick: n.start_tick,
+                            end_tick: n.end_tick,
+                            key,
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+            })
         })
-    }).collect()
+        .collect()
 }
 
 /// Hit-test 鼠标是否在某个选框的左右边缘 `EDGE_THRESHOLD_PX` 内。
@@ -176,7 +182,8 @@ pub fn compute_resize_dt(
 
     match side {
         ResizeSide::Right => {
-            let snapped = crate::view_interaction::snap_tick_ceil(raw_tick, quantize, ppq, bar_line_data);
+            let snapped =
+                crate::view_interaction::snap_tick_ceil(raw_tick, quantize, ppq, bar_line_data);
             let mut dt = (snapped - origin_boundary_tick).round() as i64;
             // new_width = original_width + dt >= min_width
             let dt_min = (min_width - original_width).ceil() as i64;
@@ -184,7 +191,8 @@ pub fn compute_resize_dt(
             (origin_boundary_tick + dt as f64, dt)
         }
         ResizeSide::Left => {
-            let snapped = crate::view_interaction::snap_tick_floor(raw_tick, quantize, ppq, bar_line_data);
+            let snapped =
+                crate::view_interaction::snap_tick_floor(raw_tick, quantize, ppq, bar_line_data);
             let mut dt = (snapped - origin_boundary_tick).round() as i64;
             // new_width = original_width - dt >= min_width → dt <= original_width - min_width
             let dt_max = (original_width - min_width).floor() as i64;

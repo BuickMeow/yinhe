@@ -26,13 +26,16 @@ const BTN_SPACING: f32 = 4.0;
 /// Compute the screen-space rect of the floating action bar for a given
 /// selection rect, or `None` if the bar would be clipped / off-screen.
 /// This is used by `sel_drag_frame` to detect clicks on the bar.
-pub fn compute_bar_rect(
-    content_rect: egui::Rect,
-    sel_view_rect: egui::Rect,
-) -> Option<egui::Rect> {
+pub fn compute_bar_rect(content_rect: egui::Rect, sel_view_rect: egui::Rect) -> Option<egui::Rect> {
     let sel_screen = egui::Rect::from_min_max(
-        egui::pos2(content_rect.min.x + sel_view_rect.min.x, content_rect.min.y + sel_view_rect.min.y),
-        egui::pos2(content_rect.min.x + sel_view_rect.max.x, content_rect.min.y + sel_view_rect.max.y),
+        egui::pos2(
+            content_rect.min.x + sel_view_rect.min.x,
+            content_rect.min.y + sel_view_rect.min.y,
+        ),
+        egui::pos2(
+            content_rect.min.x + sel_view_rect.max.x,
+            content_rect.min.y + sel_view_rect.max.y,
+        ),
     );
 
     let btn_count = 6;
@@ -73,8 +76,14 @@ pub fn show(
 
     // Convert view-local to screen coordinates
     let sel_screen = egui::Rect::from_min_max(
-        egui::pos2(content_rect.min.x + sel.min.x, content_rect.min.y + sel.min.y),
-        egui::pos2(content_rect.min.x + sel.max.x, content_rect.min.y + sel.max.y),
+        egui::pos2(
+            content_rect.min.x + sel.min.x,
+            content_rect.min.y + sel.min.y,
+        ),
+        egui::pos2(
+            content_rect.min.x + sel.max.x,
+            content_rect.min.y + sel.max.y,
+        ),
     );
 
     // Bar dimensions

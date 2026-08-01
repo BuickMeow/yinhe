@@ -1,6 +1,6 @@
-use yinhe_wgpu::build_notes;
-use yinhe_types::PianoRollView;
 use yinhe_core::YinModel;
+use yinhe_types::PianoRollView;
+use yinhe_wgpu::build_notes;
 
 use yinhe_test_helpers::*;
 

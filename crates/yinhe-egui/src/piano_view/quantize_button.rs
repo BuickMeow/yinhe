@@ -32,7 +32,8 @@ pub fn show(ui: &mut egui::Ui, ctx: QuantizeBtnCtx) -> Option<PianoViewEvent> {
         egui::vec2(kb_w, crate::theme::RULER_H),
     );
     // 背景矩形：与 ruler 带对齐，画在键盘之上
-    ui.painter().rect_filled(corner_rect, 0.0, crate::theme::RULER_BG);
+    ui.painter()
+        .rect_filled(corner_rect, 0.0, crate::theme::RULER_BG);
     // 右侧分隔线（与 ruler 对齐）
     ui.painter().line_segment(
         [
@@ -45,7 +46,11 @@ pub fn show(ui: &mut egui::Ui, ctx: QuantizeBtnCtx) -> Option<PianoViewEvent> {
     let btn_size = 20.0;
     let btn_rect =
         egui::Rect::from_center_size(corner_rect.center(), egui::vec2(btn_size, btn_size));
-    let btn_resp = ui.interact(btn_rect, egui::Id::new("pr_quantize_btn"), egui::Sense::click());
+    let btn_resp = ui.interact(
+        btn_rect,
+        egui::Id::new("pr_quantize_btn"),
+        egui::Sense::click(),
+    );
     let hovered = btn_resp.hovered();
 
     let icon_color = if hovered {

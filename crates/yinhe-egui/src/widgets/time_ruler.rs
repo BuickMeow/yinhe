@@ -1,5 +1,5 @@
 use eframe::egui;
-use yinhe_types::{build_time_sig_segments, compute_measure_divisor, measure_ticks, TimeSigEvent};
+use yinhe_types::{TimeSigEvent, build_time_sig_segments, compute_measure_divisor, measure_ticks};
 
 // ── Constants ──
 

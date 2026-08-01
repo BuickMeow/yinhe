@@ -26,11 +26,13 @@ pub fn sf_list(ui: &mut egui::Ui, entries: &mut Vec<SfEntry>) -> bool {
 
         // Track drag reorder
         if let Some((origin, _)) = drag_state
-            && action == Some(SfAction::Dragging) && origin != i {
-                // Hovering over a different row while dragging
-                drag_state = Some((origin, i));
-                ui.data_mut(|d| d.insert_persisted(drag_id, drag_state));
-            }
+            && action == Some(SfAction::Dragging)
+            && origin != i
+        {
+            // Hovering over a different row while dragging
+            drag_state = Some((origin, i));
+            ui.data_mut(|d| d.insert_persisted(drag_id, drag_state));
+        }
 
         match action {
             Some(SfAction::Remove) => remove_idx = Some(i),
@@ -52,15 +54,17 @@ pub fn sf_list(ui: &mut egui::Ui, entries: &mut Vec<SfEntry>) -> bool {
 
     // Apply reorder on drop
     if let Some((src, dst)) = drag_state
-        && !ui.input(|i| i.pointer.any_down()) && src != dst {
-            // Sort-of-reorder by remove/insert
-            if src < entries.len() && dst < entries.len() {
-                let e = entries.remove(src);
-                entries.insert(dst.min(entries.len()), e);
-                changed = true;
-            }
-            ui.data_mut(|d| d.insert_persisted::<Option<(usize, usize)>>(drag_id, None));
+        && !ui.input(|i| i.pointer.any_down())
+        && src != dst
+    {
+        // Sort-of-reorder by remove/insert
+        if src < entries.len() && dst < entries.len() {
+            let e = entries.remove(src);
+            entries.insert(dst.min(entries.len()), e);
+            changed = true;
         }
+        ui.data_mut(|d| d.insert_persisted::<Option<(usize, usize)>>(drag_id, None));
+    }
 
     if let Some(idx) = remove_idx {
         entries.remove(idx);

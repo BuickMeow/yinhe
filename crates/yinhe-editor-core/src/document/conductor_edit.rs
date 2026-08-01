@@ -26,7 +26,9 @@ impl Document {
     ) {
         let model = Arc::make_mut(&mut self.data.model);
         let conductor = Arc::make_mut(&mut model.conductor);
-        let Some(idx) = conductor.time_sig.iter().position(|e| e.tick == old_tick) else { return };
+        let Some(idx) = conductor.time_sig.iter().position(|e| e.tick == old_tick) else {
+            return;
+        };
         {
             let event = &mut conductor.time_sig[idx];
             event.tick = new_tick;
@@ -50,7 +52,9 @@ impl Document {
     ) {
         let model = Arc::make_mut(&mut self.data.model);
         let conductor = Arc::make_mut(&mut model.conductor);
-        let Some(idx) = conductor.key_sig.iter().position(|e| e.tick == old_tick) else { return };
+        let Some(idx) = conductor.key_sig.iter().position(|e| e.tick == old_tick) else {
+            return;
+        };
         {
             let event = &mut conductor.key_sig[idx];
             event.tick = new_tick;
@@ -63,15 +67,12 @@ impl Document {
 
     /// 按 `old_tick` 找到 `conductor.markers` 事件并修改其字段。
     /// 未找到对应 tick 的事件时静默返回。
-    pub fn set_marker_event(
-        &mut self,
-        old_tick: u32,
-        new_tick: u32,
-        new_text: String,
-    ) {
+    pub fn set_marker_event(&mut self, old_tick: u32, new_tick: u32, new_text: String) {
         let model = Arc::make_mut(&mut self.data.model);
         let conductor = Arc::make_mut(&mut model.conductor);
-        let Some(idx) = conductor.markers.iter().position(|e| e.tick == old_tick) else { return };
+        let Some(idx) = conductor.markers.iter().position(|e| e.tick == old_tick) else {
+            return;
+        };
         {
             let event = &mut conductor.markers[idx];
             event.tick = new_tick;
@@ -83,15 +84,12 @@ impl Document {
 
     /// 按 `old_tick` 找到 `conductor.lyrics` 事件并修改其字段。
     /// 未找到对应 tick 的事件时静默返回。
-    pub fn set_conductor_lyrics_event(
-        &mut self,
-        old_tick: u32,
-        new_tick: u32,
-        new_text: String,
-    ) {
+    pub fn set_conductor_lyrics_event(&mut self, old_tick: u32, new_tick: u32, new_text: String) {
         let model = Arc::make_mut(&mut self.data.model);
         let conductor = Arc::make_mut(&mut model.conductor);
-        let Some(idx) = conductor.lyrics.iter().position(|e| e.tick == old_tick) else { return };
+        let Some(idx) = conductor.lyrics.iter().position(|e| e.tick == old_tick) else {
+            return;
+        };
         {
             let event = &mut conductor.lyrics[idx];
             event.tick = new_tick;
@@ -103,15 +101,12 @@ impl Document {
 
     /// 按 `old_tick` 找到 `conductor.chord` 事件并修改其字段。
     /// 未找到对应 tick 的事件时静默返回。
-    pub fn set_conductor_chord_event(
-        &mut self,
-        old_tick: u32,
-        new_tick: u32,
-        new_text: String,
-    ) {
+    pub fn set_conductor_chord_event(&mut self, old_tick: u32, new_tick: u32, new_text: String) {
         let model = Arc::make_mut(&mut self.data.model);
         let conductor = Arc::make_mut(&mut model.conductor);
-        let Some(idx) = conductor.chord.iter().position(|e| e.tick == old_tick) else { return };
+        let Some(idx) = conductor.chord.iter().position(|e| e.tick == old_tick) else {
+            return;
+        };
         {
             let event = &mut conductor.chord[idx];
             event.tick = new_tick;
@@ -128,7 +123,10 @@ impl Document {
     pub fn delete_time_sig_events(
         &mut self,
         ticks: &std::collections::HashSet<u32>,
-    ) -> (Vec<yinhe_types::TimeSigEvent>, Vec<yinhe_types::TimeSigEvent>) {
+    ) -> (
+        Vec<yinhe_types::TimeSigEvent>,
+        Vec<yinhe_types::TimeSigEvent>,
+    ) {
         let model = Arc::make_mut(&mut self.data.model);
         let conductor = Arc::make_mut(&mut model.conductor);
         let before = conductor.time_sig.clone();

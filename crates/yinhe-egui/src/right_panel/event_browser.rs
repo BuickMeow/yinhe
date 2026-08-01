@@ -69,9 +69,10 @@ pub fn show(
             }
         }
         if let Some(idx) = state.selected_track
-            && idx as usize >= tracks_len {
-                state.selected_track = None;
-            }
+            && idx as usize >= tracks_len
+        {
+            state.selected_track = None;
+        }
         state.fingerprint = Some(fingerprint);
     }
 
@@ -89,10 +90,8 @@ pub fn show(
         egui::pos2(total_rect.min.x, split_y),
         egui::pos2(total_rect.max.x, split_y + gap),
     );
-    let bot_rect = egui::Rect::from_min_max(
-        egui::pos2(total_rect.min.x, split_y + gap),
-        total_rect.max,
-    );
+    let bot_rect =
+        egui::Rect::from_min_max(egui::pos2(total_rect.min.x, split_y + gap), total_rect.max);
 
     ui.scope_builder(egui::UiBuilder::new().max_rect(top_rect), |ui| {
         egui::ScrollArea::both()

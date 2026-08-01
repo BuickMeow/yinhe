@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 
 use thiserror::Error;
-use unarc_rs::unified::{ArchiveFormat, ArchiveOptions, UnifiedArchive};
 use unarc_rs::ArchiveError as UnarcError;
+use unarc_rs::unified::{ArchiveFormat, ArchiveOptions, UnifiedArchive};
 
 /// Error type for archive operations.
 #[derive(Debug, Error)]
@@ -86,7 +86,11 @@ impl Archive {
 
         let midi_entries = collect_midi_entries(&mut archive)?;
 
-        Ok(Self { path, password: pw, midi_entries })
+        Ok(Self {
+            path,
+            password: pw,
+            midi_entries,
+        })
     }
 
     /// List all MIDI files (.mid/.midi) in the archive, sorted by name A-Z.
@@ -237,8 +241,8 @@ mod tests {
 
         let zip_file = std::fs::File::create(&zip_path).unwrap();
         let mut zip = zip::ZipWriter::new(zip_file);
-        let options = SimpleFileOptions::default()
-            .compression_method(zip::CompressionMethod::Stored);
+        let options =
+            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
 
         zip.start_file("track1.mid", options).unwrap();
         zip.write_all(b"MThd").unwrap();
@@ -271,8 +275,8 @@ mod tests {
 
         let zip_file = std::fs::File::create(&zip_path).unwrap();
         let mut zip = zip::ZipWriter::new(zip_file);
-        let options = SimpleFileOptions::default()
-            .compression_method(zip::CompressionMethod::Stored);
+        let options =
+            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
         zip.start_file("readme.txt", options).unwrap();
         zip.write_all(b"hello").unwrap();
         zip.finish().unwrap();
@@ -290,8 +294,8 @@ mod tests {
 
         let zip_file = std::fs::File::create(&zip_path).unwrap();
         let mut zip = zip::ZipWriter::new(zip_file);
-        let options = SimpleFileOptions::default()
-            .compression_method(zip::CompressionMethod::Stored);
+        let options =
+            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
         zip.start_file("track.mid", options).unwrap();
         zip.write_all(b"MThd").unwrap();
         zip.finish().unwrap();

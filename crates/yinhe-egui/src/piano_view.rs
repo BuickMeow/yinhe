@@ -202,10 +202,11 @@ pub fn show(
             view.keyboard_width(),
             *follow_mode,
             1.0,
-        ) {
-            view.base.scroll_x = new_scroll_x;
-            view.clamp_scroll(w as f32, h as f32, total_ticks);
-        }
+        )
+    {
+        view.base.scroll_x = new_scroll_x;
+        view.clamp_scroll(w as f32, h as f32, total_ticks);
+    }
 
     // ── Selection drag (Select tool only) ──
     // Update state BEFORE handle_input to avoid egui pointer-capture conflicts.
@@ -261,9 +262,9 @@ pub fn show(
         if let Some(note) = note_event
             && let Some(track) =
                 pencil::valid_pencil_track(editing_track, track_visible, conductor_idx)
-            {
-                pencil_event = Some(PianoViewEvent::AddNote { track, note });
-            }
+        {
+            pencil_event = Some(PianoViewEvent::AddNote { track, note });
+        }
     } else if *active_tool == Tool::Eraser {
         eraser_event = marquee::eraser_drag_frame(
             ui,
@@ -282,45 +283,45 @@ pub fn show(
     if (*active_tool == Tool::Select || *active_tool == Tool::SelectVertical)
         && !crate::view_interaction::pointer_over_popup(ui.ctx())
         && let Some(pos) = ui.input(|i| i.pointer.hover_pos())
-            && music_rect.contains(pos) {
-                let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
-                let eff_rects = sel_rect.effective_rects();
-                // 边缘检测优先（与 press 逻辑一致）
-                let edge_hit =
-                    drag::hit_test_sel_edge(&eff_rects, &view.base, view.key_height, local);
-                if let Some((side, _, _)) = edge_hit {
-                    match side {
-                        yinhe_editor_core::ResizeSide::Left => {
-                            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeWest)
-                        }
-                        yinhe_editor_core::ResizeSide::Right => {
-                            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeEast)
-                        }
-                    }
-                } else {
-                    let in_sel_rect = eff_rects.iter().any(|&(t_start, t_end, key_lo, key_hi)| {
-                        let pixel_rect = crate::selection::drag::music_sel_to_pixel_rect(
-                            &view.base,
-                            view.key_height,
-                            t_start,
-                            t_end,
-                            key_lo,
-                            key_hi,
-                        );
-                        pixel_rect.contains(local)
-                    });
-                    if in_sel_rect {
-                        // 垂直选框工具：只能水平拖动 → 左右双向指针；
-                        // 普通选框工具：四向移动指针。
-                        let icon = if *active_tool == Tool::SelectVertical {
-                            egui::CursorIcon::ResizeHorizontal
-                        } else {
-                            egui::CursorIcon::Move
-                        };
-                        ui.ctx().set_cursor_icon(icon);
-                    }
+        && music_rect.contains(pos)
+    {
+        let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
+        let eff_rects = sel_rect.effective_rects();
+        // 边缘检测优先（与 press 逻辑一致）
+        let edge_hit = drag::hit_test_sel_edge(&eff_rects, &view.base, view.key_height, local);
+        if let Some((side, _, _)) = edge_hit {
+            match side {
+                yinhe_editor_core::ResizeSide::Left => {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeWest)
+                }
+                yinhe_editor_core::ResizeSide::Right => {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeEast)
                 }
             }
+        } else {
+            let in_sel_rect = eff_rects.iter().any(|&(t_start, t_end, key_lo, key_hi)| {
+                let pixel_rect = crate::selection::drag::music_sel_to_pixel_rect(
+                    &view.base,
+                    view.key_height,
+                    t_start,
+                    t_end,
+                    key_lo,
+                    key_hi,
+                );
+                pixel_rect.contains(local)
+            });
+            if in_sel_rect {
+                // 垂直选框工具：只能水平拖动 → 左右双向指针；
+                // 普通选框工具：四向移动指针。
+                let icon = if *active_tool == Tool::SelectVertical {
+                    egui::CursorIcon::ResizeHorizontal
+                } else {
+                    egui::CursorIcon::Move
+                };
+                ui.ctx().set_cursor_icon(icon);
+            }
+        }
+    }
 
     // ── Content interaction (zoom/pan/cursor/drag/reset) ──
     // 传 content_rect（含键盘列）+ left_zone_width=kb_w，让 handle_input 统一处理

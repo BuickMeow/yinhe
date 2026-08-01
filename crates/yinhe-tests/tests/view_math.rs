@@ -1,7 +1,7 @@
-use yinhe_types::view_base::TimelineViewBase;
-use yinhe_types::{ArrangementView, PianoRollView};
 use yinhe_editor_core::follow::{FollowMode, compute_follow_scroll, total_ticks_padded};
 use yinhe_editor_core::quantize::QuantizePreset;
+use yinhe_types::view_base::TimelineViewBase;
+use yinhe_types::{ArrangementView, PianoRollView};
 
 fn make_base() -> TimelineViewBase {
     TimelineViewBase {
@@ -28,7 +28,10 @@ fn tick_to_x_with_scroll() {
     let mut base = make_base();
     base.scroll_x = 100.0;
     let x = base.tick_to_x(0.0);
-    assert!((x - 0.0).abs() < 1e-6, "tick_to_x(0) with scroll=100 should be 0, got {x}");
+    assert!(
+        (x - 0.0).abs() < 1e-6,
+        "tick_to_x(0) with scroll=100 should be 0, got {x}"
+    );
 }
 
 #[test]
@@ -37,7 +40,10 @@ fn tick_to_x_x_to_tick_roundtrip() {
     let tick = 1234.5;
     let x = base.tick_to_x(tick);
     let back = base.x_to_tick(x);
-    assert!((back - tick).abs() < 0.01, "roundtrip failed: {tick} -> {x} -> {back}");
+    assert!(
+        (back - tick).abs() < 0.01,
+        "roundtrip failed: {tick} -> {x} -> {back}"
+    );
 }
 
 #[test]
@@ -55,8 +61,10 @@ fn zoom_around_x_preserves_tick() {
     let tick_before = base.x_to_tick(pointer_x);
     base.zoom_around_x(pointer_x, 2.0);
     let tick_after = base.x_to_tick(pointer_x);
-    assert!((tick_after - tick_before).abs() < 1.0,
-        "zoom should preserve tick at pointer: {tick_before} vs {tick_after}");
+    assert!(
+        (tick_after - tick_before).abs() < 1.0,
+        "zoom should preserve tick at pointer: {tick_before} vs {tick_after}"
+    );
 }
 
 #[test]
@@ -276,7 +284,16 @@ fn format_time_sig_4_4() {
 
 #[test]
 fn format_tick_bar_beat() {
-    assert_eq!(yinhe_types::time_format::format_tick_bar_beat(0.0, 480, 4), "1.1.000");
-    assert_eq!(yinhe_types::time_format::format_tick_bar_beat(480.0, 480, 4), "1.2.000");
-    assert_eq!(yinhe_types::time_format::format_tick_bar_beat(1920.0, 480, 4), "2.1.000");
+    assert_eq!(
+        yinhe_types::time_format::format_tick_bar_beat(0.0, 480, 4),
+        "1.1.000"
+    );
+    assert_eq!(
+        yinhe_types::time_format::format_tick_bar_beat(480.0, 480, 4),
+        "1.2.000"
+    );
+    assert_eq!(
+        yinhe_types::time_format::format_tick_bar_beat(1920.0, 480, 4),
+        "2.1.000"
+    );
 }

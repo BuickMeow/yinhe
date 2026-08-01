@@ -86,10 +86,7 @@ impl SegmentShape {
 
     #[inline]
     fn is_linear_impl(x1: f32, y1: f32, x2: f32, y2: f32) -> bool {
-        x1.abs() < 1e-4
-            && y1.abs() < 1e-4
-            && x2.abs() < 1e-4
-            && y2.abs() < 1e-4
+        x1.abs() < 1e-4 && y1.abs() < 1e-4 && x2.abs() < 1e-4 && y2.abs() < 1e-4
     }
 }
 
@@ -162,9 +159,9 @@ impl AutomationTarget {
             AutomationTarget::CC { .. } => 127.0,
             AutomationTarget::PitchBend => 16383.0,
             AutomationTarget::Rpn { parameter } => match parameter {
-                0 => 127.0,    // Pitch Bend Sensitivity (semitones)
-                2 => 127.0,    // Coarse Tune (semitones, -64..+63 stored as 0..127)
-                _ => 16383.0,  // Fine Tune (14-bit)
+                0 => 127.0,   // Pitch Bend Sensitivity (semitones)
+                2 => 127.0,   // Coarse Tune (semitones, -64..+63 stored as 0..127)
+                _ => 16383.0, // Fine Tune (14-bit)
             },
             AutomationTarget::Nrpn { .. } => 16383.0,
             AutomationTarget::Tempo => 60_000_000.0,
@@ -180,8 +177,8 @@ impl AutomationTarget {
             },
             AutomationTarget::PitchBend => 8192.0,
             AutomationTarget::Rpn { parameter } => match parameter {
-                0 => 2.0,     // Pitch Bend Sensitivity (2 semitones)
-                1 => 8192.0,  // Fine Tune (center of 14-bit range)
+                0 => 2.0,    // Pitch Bend Sensitivity (2 semitones)
+                1 => 8192.0, // Fine Tune (center of 14-bit range)
                 _ => 0.0,
             },
             AutomationTarget::Nrpn { .. } => 0.0,
@@ -233,14 +230,12 @@ impl AutomationTarget {
                 }
             }
             AutomationTarget::PitchBend => "Pitch Bend".into(),
-            AutomationTarget::Rpn { parameter } => {
-                match parameter {
-                    0 => "PB Sensitivity (RPN 0)".into(),
-                    1 => "Fine Tune (RPN 1)".into(),
-                    2 => "Coarse Tune (RPN 2)".into(),
-                    _ => format!("RPN {}", parameter),
-                }
-            }
+            AutomationTarget::Rpn { parameter } => match parameter {
+                0 => "PB Sensitivity (RPN 0)".into(),
+                1 => "Fine Tune (RPN 1)".into(),
+                2 => "Coarse Tune (RPN 2)".into(),
+                _ => format!("RPN {}", parameter),
+            },
             AutomationTarget::Nrpn { parameter } => {
                 format!("NRPN {}", parameter)
             }
@@ -459,11 +454,26 @@ mod tests {
     fn test_max_and_default_values() {
         assert_eq!(AutomationTarget::CC { controller: 0 }.max_value(), 127.0);
         assert_eq!(AutomationTarget::CC { controller: 0 }.default_value(), 0.0);
-        assert_eq!(AutomationTarget::CC { controller: 10 }.default_value(), 64.0);
-        assert_eq!(AutomationTarget::CC { controller: 71 }.default_value(), 64.0);
-        assert_eq!(AutomationTarget::CC { controller: 72 }.default_value(), 64.0);
-        assert_eq!(AutomationTarget::CC { controller: 73 }.default_value(), 64.0);
-        assert_eq!(AutomationTarget::CC { controller: 74 }.default_value(), 64.0);
+        assert_eq!(
+            AutomationTarget::CC { controller: 10 }.default_value(),
+            64.0
+        );
+        assert_eq!(
+            AutomationTarget::CC { controller: 71 }.default_value(),
+            64.0
+        );
+        assert_eq!(
+            AutomationTarget::CC { controller: 72 }.default_value(),
+            64.0
+        );
+        assert_eq!(
+            AutomationTarget::CC { controller: 73 }.default_value(),
+            64.0
+        );
+        assert_eq!(
+            AutomationTarget::CC { controller: 74 }.default_value(),
+            64.0
+        );
         assert_eq!(AutomationTarget::PitchBend.max_value(), 16383.0);
         assert_eq!(AutomationTarget::PitchBend.default_value(), 8192.0);
         assert!(AutomationTarget::PitchBend.has_center_line());
@@ -474,7 +484,10 @@ mod tests {
         assert_eq!(AutomationTarget::Rpn { parameter: 0 }.max_value(), 127.0);
         assert_eq!(AutomationTarget::Rpn { parameter: 0 }.default_value(), 2.0);
         assert_eq!(AutomationTarget::Rpn { parameter: 1 }.max_value(), 16383.0);
-        assert_eq!(AutomationTarget::Rpn { parameter: 1 }.default_value(), 8192.0);
+        assert_eq!(
+            AutomationTarget::Rpn { parameter: 1 }.default_value(),
+            8192.0
+        );
         assert!(AutomationTarget::Rpn { parameter: 1 }.has_center_line());
         assert_eq!(AutomationTarget::Rpn { parameter: 2 }.max_value(), 127.0);
         assert_eq!(AutomationTarget::Rpn { parameter: 2 }.default_value(), 0.0);
@@ -508,9 +521,18 @@ mod tests {
         }
         // PB / RPN / NRPN → 直线 Curve
         assert_eq!(AutomationTarget::PitchBend.default_shape(), linear);
-        assert_eq!(AutomationTarget::Rpn { parameter: 0 }.default_shape(), linear);
-        assert_eq!(AutomationTarget::Rpn { parameter: 1 }.default_shape(), linear);
-        assert_eq!(AutomationTarget::Nrpn { parameter: 5 }.default_shape(), linear);
+        assert_eq!(
+            AutomationTarget::Rpn { parameter: 0 }.default_shape(),
+            linear
+        );
+        assert_eq!(
+            AutomationTarget::Rpn { parameter: 1 }.default_shape(),
+            linear
+        );
+        assert_eq!(
+            AutomationTarget::Nrpn { parameter: 5 }.default_shape(),
+            linear
+        );
     }
 
     #[test]
@@ -528,10 +550,46 @@ mod tests {
 
         // 贝塞尔端点：无论控制点位置，端点始终为 0 和 1
         // 偏移量 (x1,y1,x2,y2)：P1=(x1*4,y1*4), P2=(1+x2*4, 1+y2*4)
-        assert_eq!(SegmentShape::Curve { x1: 0.1, y1: 0.2, x2: -0.1, y2: -0.2 }.interpolate(0.0), 0.0);
-        assert_eq!(SegmentShape::Curve { x1: 0.1, y1: 0.2, x2: -0.1, y2: -0.2 }.interpolate(1.0), 1.0);
-        assert_eq!(SegmentShape::Curve { x1: 0.25, y1: -0.5, x2: -0.25, y2: 0.5 }.interpolate(0.0), 0.0);
-        assert_eq!(SegmentShape::Curve { x1: 0.25, y1: -0.5, x2: -0.25, y2: 0.5 }.interpolate(1.0), 1.0);
+        assert_eq!(
+            SegmentShape::Curve {
+                x1: 0.1,
+                y1: 0.2,
+                x2: -0.1,
+                y2: -0.2
+            }
+            .interpolate(0.0),
+            0.0
+        );
+        assert_eq!(
+            SegmentShape::Curve {
+                x1: 0.1,
+                y1: 0.2,
+                x2: -0.1,
+                y2: -0.2
+            }
+            .interpolate(1.0),
+            1.0
+        );
+        assert_eq!(
+            SegmentShape::Curve {
+                x1: 0.25,
+                y1: -0.5,
+                x2: -0.25,
+                y2: 0.5
+            }
+            .interpolate(0.0),
+            0.0
+        );
+        assert_eq!(
+            SegmentShape::Curve {
+                x1: 0.25,
+                y1: -0.5,
+                x2: -0.25,
+                y2: 0.5
+            }
+            .interpolate(1.0),
+            1.0
+        );
     }
 
     #[test]
@@ -542,29 +600,76 @@ mod tests {
         // ease-in-out 近似 CSS cubic-bezier(0.42, 0, 0.58, 1)
         // → 偏移量 (x1=0.42/4, y1=0, x2=(0.58-1)/4, y2=(1-1)/4) = (0.105, 0, -0.105, 0)
         // B_y(0.5) 接近 0.5
-        let ease_io = SegmentShape::Curve { x1: 0.105, y1: 0.0, x2: -0.105, y2: 0.0 };
+        let ease_io = SegmentShape::Curve {
+            x1: 0.105,
+            y1: 0.0,
+            x2: -0.105,
+            y2: 0.0,
+        };
         let v = ease_io.interpolate(0.5);
-        assert!((v - 0.5).abs() < 0.02, "ease-in-out mid expected ~0.5, got {v}");
+        assert!(
+            (v - 0.5).abs() < 0.02,
+            "ease-in-out mid expected ~0.5, got {v}"
+        );
 
         // 控制点全部偏到 v_end（实际 y1=y2=1）：
         // P1.y = y1*4 = 1 → y1 = 0.25；P2.y = 1 + y2*4 = 1 → y2 = 0
         // B_y(0.5) = 0.375*1 + 0.375*1 + 0.125 = 0.875
-        let v_end = SegmentShape::Curve { x1: 0.075, y1: 0.25, x2: -0.075, y2: 0.0 }.interpolate(0.5);
+        let v_end = SegmentShape::Curve {
+            x1: 0.075,
+            y1: 0.25,
+            x2: -0.075,
+            y2: 0.0,
+        }
+        .interpolate(0.5);
         assert!((v_end - 0.875).abs() < 1e-6, "expected 0.875, got {v_end}");
 
         // 控制点全部偏到 v_start（实际 y1=y2=0）：
         // P1.y = y1*4 = 0 → y1 = 0；P2.y = 1 + y2*4 = 0 → y2 = -0.25
         // B_y(0.5) = 0.125
-        let v_start = SegmentShape::Curve { x1: 0.075, y1: 0.0, x2: -0.075, y2: -0.25 }.interpolate(0.5);
-        assert!((v_start - 0.125).abs() < 1e-6, "expected 0.125, got {v_start}");
+        let v_start = SegmentShape::Curve {
+            x1: 0.075,
+            y1: 0.0,
+            x2: -0.075,
+            y2: -0.25,
+        }
+        .interpolate(0.5);
+        assert!(
+            (v_start - 0.125).abs() < 1e-6,
+            "expected 0.125, got {v_start}"
+        );
     }
 
     #[test]
     fn test_segment_shape_is_linear() {
         assert!(SegmentShape::linear_curve().is_linear());
-        assert!(!SegmentShape::Curve { x1: 0.0, y1: 0.1, x2: 0.0, y2: 0.0 }.is_linear());
-        assert!(!SegmentShape::Curve { x1: 0.1, y1: 0.0, x2: 0.0, y2: 0.0 }.is_linear());
-        assert!(!SegmentShape::Curve { x1: 0.0, y1: 0.0, x2: 0.1, y2: 0.0 }.is_linear());
+        assert!(
+            !SegmentShape::Curve {
+                x1: 0.0,
+                y1: 0.1,
+                x2: 0.0,
+                y2: 0.0
+            }
+            .is_linear()
+        );
+        assert!(
+            !SegmentShape::Curve {
+                x1: 0.1,
+                y1: 0.0,
+                x2: 0.0,
+                y2: 0.0
+            }
+            .is_linear()
+        );
+        assert!(
+            !SegmentShape::Curve {
+                x1: 0.0,
+                y1: 0.0,
+                x2: 0.1,
+                y2: 0.0
+            }
+            .is_linear()
+        );
         assert!(!SegmentShape::Step.is_linear());
     }
 }

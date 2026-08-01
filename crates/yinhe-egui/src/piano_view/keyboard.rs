@@ -40,9 +40,11 @@ pub fn paint(
             egui::pos2(content_rect.min.x, screen_y),
             egui::vec2(kb_w, kh),
         );
-        painter.rect_filled(key_rect, 0.0, egui::Color32::from_rgb(
-            (r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8,
-        ));
+        painter.rect_filled(
+            key_rect,
+            0.0,
+            egui::Color32::from_rgb((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8),
+        );
         painter.rect_stroke(key_rect, 0.0, stroke, egui::StrokeKind::Inside);
 
         // C 位置标注音名（中央 C = C4 = key 60）
@@ -74,9 +76,11 @@ pub fn paint(
             egui::pos2(content_rect.min.x, screen_y),
             egui::vec2(kb_w, kh),
         );
-        painter.rect_filled(key_rect, 0.0, egui::Color32::from_rgb(
-            (r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8,
-        ));
+        painter.rect_filled(
+            key_rect,
+            0.0,
+            egui::Color32::from_rgb((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8),
+        );
         painter.rect_stroke(key_rect, 0.0, stroke, egui::StrokeKind::Inside);
     }
 }

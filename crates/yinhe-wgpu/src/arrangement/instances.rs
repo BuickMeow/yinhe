@@ -1,10 +1,10 @@
 use std::collections::HashSet;
 
 use rayon::prelude::*;
-use yinhe_types::{key_notes_in_range, NoteSource};
+use yinhe_types::{NoteSource, key_notes_in_range};
 
-use yinhe_types::ArrangementView;
 use crate::vertex::NoteInstance;
+use yinhe_types::ArrangementView;
 
 /// Stack red zone threshold. When stack usage exceeds this, `stacker` will
 /// allocate a new stack segment before calling the closure.
@@ -106,7 +106,8 @@ pub fn build_notes(
         .filter_map(|key| {
             // Wrap key processing in stacker to get fresh stack segments on demand.
             stacker::maybe_grow(STACK_RED_ZONE, STACK_SIZE, || {
-                let notes = key_notes_in_range(midi.key_notes(key), tick_start as u32, tick_end as u32);
+                let notes =
+                    key_notes_in_range(midi.key_notes(key), tick_start as u32, tick_end as u32);
                 if notes.is_empty() {
                     return None;
                 }
@@ -136,7 +137,12 @@ pub fn build_notes(
                     track_buckets[ti].push((note.start_tick, note.end_tick, note.velocity));
                 }
 
-                for (ti, bucket) in track_buckets.iter().enumerate().take(trk_last).skip(trk_first) {
+                for (ti, bucket) in track_buckets
+                    .iter()
+                    .enumerate()
+                    .take(trk_last)
+                    .skip(trk_first)
+                {
                     flush_track_bucket(
                         &mut local,
                         bucket.iter().copied(),
@@ -184,11 +190,7 @@ pub fn build_ghost_notes(
     let merge_gap_ticks = (1.0 / ppu).ceil() as u32;
 
     // 原地按 (key, track, start_tick) 排序，使同一 (key, track) 连续且升序。
-    ghost_notes.sort_by(|a, b| {
-        a.2.cmp(&b.2)
-            .then(a.3.cmp(&b.3))
-            .then(a.0.cmp(&b.0))
-    });
+    ghost_notes.sort_by(|a, b| a.2.cmp(&b.2).then(a.3.cmp(&b.3)).then(a.0.cmp(&b.0)));
 
     // 遍历每个 (key, track) 分组，合并 + 裁剪 + push。
     let mut i = 0;
@@ -199,9 +201,9 @@ pub fn build_ghost_notes(
         while j < ghost_notes.len() && ghost_notes[j].2 == key && ghost_notes[j].3 == track {
             j += 1;
         }
-        let bucket = ghost_notes[i..j].iter().map(|&(s, e, _, _)| {
-            (s, e.max(s), 0u8)
-        });
+        let bucket = ghost_notes[i..j]
+            .iter()
+            .map(|&(s, e, _, _)| (s, e.max(s), 0u8));
         flush_track_bucket(
             out,
             bucket,

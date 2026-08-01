@@ -2,9 +2,7 @@ use super::*;
 use std::collections::BTreeMap;
 use xsynth_core::channel::ControlEvent;
 use xsynth_core::channel_group::ParallelismOptions;
-use yinhe_core::{
-    ConductorData, NoteEvent, PcEvent, ProjectMeta, TrackData, YinModel,
-};
+use yinhe_core::{ConductorData, NoteEvent, PcEvent, ProjectMeta, TrackData, YinModel};
 use yinhe_editor_core::document::Document;
 use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, SegmentShape};
 
@@ -15,7 +13,11 @@ fn make_model_with_notes(notes: Vec<(u8, u32, u32, u8, u8)>) -> YinModel {
         tempo: AutomationLane {
             target: AutomationTarget::Tempo,
             track: 0,
-            events: vec![AutomationEvent { tick: 0, value: 120.0, shape: SegmentShape::Step }],
+            events: vec![AutomationEvent {
+                tick: 0,
+                value: 120.0,
+                shape: SegmentShape::Step,
+            }],
         },
         time_sig: Vec::new(),
         key_sig: Vec::new(),
@@ -26,16 +28,18 @@ fn make_model_with_notes(notes: Vec<(u8, u32, u32, u8, u8)>) -> YinModel {
     let first_ch = notes.first().map(|n| n.4).unwrap_or(0);
     let mut t = TrackData::new(0, first_ch);
     t.name = "Track 1".into();
-    let per_track_notes: Vec<Vec<NoteEvent>> = vec![notes
-        .into_iter()
-        .map(|(key, start, end, vel, _ch)| NoteEvent {
-            start_tick: start,
-            end_tick: end,
-            key,
-            velocity: vel,
-            id: 0,
-        })
-        .collect()];
+    let per_track_notes: Vec<Vec<NoteEvent>> = vec![
+        notes
+            .into_iter()
+            .map(|(key, start, end, vel, _ch)| NoteEvent {
+                start_tick: start,
+                end_tick: end,
+                key,
+                velocity: vel,
+                id: 0,
+            })
+            .collect(),
+    ];
     let meta = ProjectMeta {
         ppq: 480,
         ..ProjectMeta::default()
@@ -53,7 +57,8 @@ fn make_model_with_notes(notes: Vec<(u8, u32, u32, u8, u8)>) -> YinModel {
 
 #[test]
 fn test_sorted_cc_ordering() {
-    let mut cc = [SortedCC {
+    let mut cc = [
+        SortedCC {
             sample: 100,
             channel: 0,
             track: 0,
@@ -70,7 +75,8 @@ fn test_sorted_cc_ordering() {
             channel: 0,
             track: 0,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 60)),
-        }];
+        },
+    ];
     cc.sort_by_key(|e| e.sample);
     assert_eq!(cc[0].sample, 50);
     assert_eq!(cc[1].sample, 100);
@@ -109,7 +115,11 @@ fn test_audible_index_filters_vel_and_inactive_channel() {
         tempo: AutomationLane {
             target: AutomationTarget::Tempo,
             track: 0,
-            events: vec![AutomationEvent { tick: 0, value: 120.0, shape: SegmentShape::Step }],
+            events: vec![AutomationEvent {
+                tick: 0,
+                value: 120.0,
+                shape: SegmentShape::Step,
+            }],
         },
         time_sig: Vec::new(),
         key_sig: Vec::new(),
@@ -210,8 +220,16 @@ fn test_audible_index_uses_per_key_tempo_cursor() {
             target: AutomationTarget::Tempo,
             track: 0,
             events: vec![
-                AutomationEvent { tick: 0, value: 120.0, shape: SegmentShape::Step },
-                AutomationEvent { tick: 1000, value: 60.0, shape: SegmentShape::Step },
+                AutomationEvent {
+                    tick: 0,
+                    value: 120.0,
+                    shape: SegmentShape::Step,
+                },
+                AutomationEvent {
+                    tick: 1000,
+                    value: 60.0,
+                    shape: SegmentShape::Step,
+                },
             ],
         },
         time_sig: Vec::new(),
@@ -354,7 +372,11 @@ fn make_model_with_controls(
         tempo: AutomationLane {
             target: AutomationTarget::Tempo,
             track: 0,
-            events: vec![AutomationEvent { tick: 0, value: 120.0, shape: SegmentShape::Step }],
+            events: vec![AutomationEvent {
+                tick: 0,
+                value: 120.0,
+                shape: SegmentShape::Step,
+            }],
         },
         time_sig: Vec::new(),
         key_sig: Vec::new(),
@@ -409,7 +431,11 @@ fn make_model_with_controls(
         lanes.push(AutomationLane {
             target: AutomationTarget::Rpn { parameter: key },
             track: 0,
-            events: vec![AutomationEvent { tick, value, shape: SegmentShape::Step }],
+            events: vec![AutomationEvent {
+                tick,
+                value,
+                shape: SegmentShape::Step,
+            }],
         });
     }
 
@@ -474,11 +500,7 @@ fn test_reload_notes_rebuilds_cc_pb_pc_rpn() {
     // Model B: completely different shape — 3 CCs at different ticks,
     // 2 pitch bends, 2 program changes, 1 RPN (which expands to 3 raw CCs).
     let model_b = Arc::new(make_model_with_controls(
-        vec![
-            (7, 480, 80),
-            (7, 960, 90),
-            (11, 240, 100),
-        ],
+        vec![(7, 480, 80), (7, 960, 90), (11, 240, 100)],
         vec![(120, 4096), (600, -2048)],
         vec![(0, 1), (480, 2)],
         vec![(0x0000, 240, 0x0200 as f32)],
@@ -495,7 +517,10 @@ fn test_reload_notes_rebuilds_cc_pb_pc_rpn() {
 
     // Assert events are sorted (so the schedule loop's monotonic cursor works).
     for w in engine.cc_events.windows(2) {
-        assert!(w[0].sample <= w[1].sample, "cc_events must be sorted by sample");
+        assert!(
+            w[0].sample <= w[1].sample,
+            "cc_events must be sorted by sample"
+        );
     }
 
     // Reload again with an empty model — cc_events must drain to zero.
@@ -525,7 +550,11 @@ fn make_bench_model(tracks: usize, notes_per_track: usize) -> YinModel {
         tempo: AutomationLane {
             target: AutomationTarget::Tempo,
             track: 0,
-            events: vec![AutomationEvent { tick: 0, value: 120.0, shape: SegmentShape::Step }],
+            events: vec![AutomationEvent {
+                tick: 0,
+                value: 120.0,
+                shape: SegmentShape::Step,
+            }],
         },
         time_sig: Vec::new(),
         key_sig: Vec::new(),
@@ -626,7 +655,9 @@ fn bench_parallelism_configs() {
                 ChannelLayout::from_mask(active_mask.clone()),
                 cfg.parallelism,
             );
-            engine.handle_command(AudioCommand::LoadModel { model: Arc::clone(&model) });
+            engine.handle_command(AudioCommand::LoadModel {
+                model: Arc::clone(&model),
+            });
             engine.handle_command(AudioCommand::Play { from_sample: 0 });
             engine.render(&mut output);
         }
@@ -637,7 +668,9 @@ fn bench_parallelism_configs() {
             ChannelLayout::from_mask(active_mask.clone()),
             cfg.parallelism,
         );
-        engine.handle_command(AudioCommand::LoadModel { model: Arc::clone(&model) });
+        engine.handle_command(AudioCommand::LoadModel {
+            model: Arc::clone(&model),
+        });
         engine.handle_command(AudioCommand::Play { from_sample: 0 });
 
         let start = std::time::Instant::now();
@@ -654,7 +687,10 @@ fn bench_parallelism_configs() {
     }
 
     // 确保每个配置都跑了（不做具体数值断言，避免 CI 环境波动）
-    assert!(results.iter().all(|(_, t)| *t > 0), "all configs returned 0 time");
+    assert!(
+        results.iter().all(|(_, t)| *t > 0),
+        "all configs returned 0 time"
+    );
     eprintln!();
     eprintln!("Summary:");
     eprintln!("  AUTO_PER_CHANNEL 是当前默认配置，AUTO_PER_KEY 添加了 per-key 并行化开销。");
@@ -666,14 +702,11 @@ fn bench_parallelism_configs() {
 #[ignore = "需要本地 MIDI 和 SoundFont 文件"]
 fn prof_night_voyager_parallelism() {
     let midi_path = "/Users/jieneng/Music/MIDIs/Night Voyager.mid";
-    let sf_path =
-        "/Users/jieneng/Music/Soundfonts/Starry Studio Grand v2.7~/Presets/A_Standard/Studio Grand - Standard (No Hammer).sfz";
+    let sf_path = "/Users/jieneng/Music/Soundfonts/Starry Studio Grand v2.7~/Presets/A_Standard/Studio Grand - Standard (No Hammer).sfz";
 
     use std::time::Instant;
 
-    let model = std::sync::Arc::new(
-        yinhe_mid2::parse_path(midi_path).unwrap(),
-    );
+    let model = std::sync::Arc::new(yinhe_mid2::parse_path(midi_path).unwrap());
     let active_mask = crate::spawn::channels_for_model(&model)
         .active_mask()
         .to_vec();

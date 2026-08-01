@@ -22,7 +22,11 @@ pub(crate) fn show_progress_viewport(
 
     ctx_clone.show_viewport_immediate(
         egui::ViewportId::from_hash_of("export_progress_dialog"),
-        crate::chrome::dialog::viewport_builder(t!("dialog.export.progress_title").as_ref(), [320.0, 310.0], false),
+        crate::chrome::dialog::viewport_builder(
+            t!("dialog.export.progress_title").as_ref(),
+            [320.0, 310.0],
+            false,
+        ),
         move |vctx, _class| {
             let state = match export_progress.lock() {
                 Ok(s) => s.clone(),
@@ -39,7 +43,11 @@ pub(crate) fn show_progress_viewport(
                     ..Default::default()
                 })
                 .show(vctx, |ui| {
-                    crate::chrome::dialog::title_bar(ui, t!("dialog.export.progress_title").as_ref(), &mut close);
+                    crate::chrome::dialog::title_bar(
+                        ui,
+                        t!("dialog.export.progress_title").as_ref(),
+                        &mut close,
+                    );
                     egui::Frame::new()
                         .inner_margin(egui::Margin {
                             left: 12,
@@ -50,10 +58,7 @@ pub(crate) fn show_progress_viewport(
                         .show(ui, |ui| {
                             ui.vertical_centered(|ui| {
                                 ui.add_space(4.0);
-                                ui.add(
-                                    egui::ProgressBar::new(state.progress)
-                                        .desired_width(280.0),
-                                );
+                                ui.add(egui::ProgressBar::new(state.progress).desired_width(280.0));
                                 ui.add_space(8.0);
 
                                 egui::Grid::new("export_progress_grid")
@@ -118,7 +123,10 @@ pub(crate) fn show_progress_viewport(
     ctx.request_repaint();
 }
 
-pub(crate) fn show_completed_viewport(ctx: &egui::Context, completed: &mut Option<ExportCompleted>) {
+pub(crate) fn show_completed_viewport(
+    ctx: &egui::Context,
+    completed: &mut Option<ExportCompleted>,
+) {
     let file_path = match completed {
         Some(c) => c.file_path.clone(),
         None => return,
@@ -132,7 +140,11 @@ pub(crate) fn show_completed_viewport(ctx: &egui::Context, completed: &mut Optio
 
     ctx_clone.show_viewport_immediate(
         egui::ViewportId::from_hash_of("export_completed_dialog"),
-        crate::chrome::dialog::viewport_builder(t!("dialog.export.completed_title").as_ref(), [320.0, 160.0], false),
+        crate::chrome::dialog::viewport_builder(
+            t!("dialog.export.completed_title").as_ref(),
+            [320.0, 160.0],
+            false,
+        ),
         move |vctx, _class| {
             let mut close = false;
             if vctx.input(|i| i.viewport().close_requested()) {
@@ -144,7 +156,11 @@ pub(crate) fn show_completed_viewport(ctx: &egui::Context, completed: &mut Optio
                     ..Default::default()
                 })
                 .show(vctx, |ui| {
-                    crate::chrome::dialog::title_bar(ui, t!("dialog.export.completed_title").as_ref(), &mut close);
+                    crate::chrome::dialog::title_bar(
+                        ui,
+                        t!("dialog.export.completed_title").as_ref(),
+                        &mut close,
+                    );
                     egui::Frame::new()
                         .inner_margin(egui::Margin {
                             left: 12,
@@ -177,7 +193,10 @@ pub(crate) fn show_completed_viewport(ctx: &egui::Context, completed: &mut Optio
                                 },
                                 |ui| {
                                     ui.add_space(4.0);
-                                    if ui.button(t!("dialog.export.open_folder").as_ref()).clicked() {
+                                    if ui
+                                        .button(t!("dialog.export.open_folder").as_ref())
+                                        .clicked()
+                                    {
                                         let parent = std::path::Path::new(&file_path)
                                             .parent()
                                             .map(|p| p.to_path_buf());

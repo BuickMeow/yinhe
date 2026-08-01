@@ -3,11 +3,11 @@
 //! - Native `NSMenu` menu bar with File / Edit menus
 
 use std::collections::HashMap;
-use std::sync::{mpsc, Mutex, OnceLock};
+use std::sync::{Mutex, OnceLock, mpsc};
 
 use muda::{
-    accelerator::{Accelerator, Code, Modifiers},
     IsMenuItem, Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem, Submenu,
+    accelerator::{Accelerator, Code, Modifiers},
 };
 use objc2::runtime::{AnyClass, AnyObject};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
@@ -22,8 +22,7 @@ fn cls(name: &std::ffi::CStr) -> Option<&'static AnyClass> {
 /// Helper to create a CStr from a string literal at compile time.
 macro_rules! cstr {
     ($s:literal) => {
-        std::ffi::CStr::from_bytes_with_nul(concat!($s, "\0").as_bytes())
-            .unwrap()
+        std::ffi::CStr::from_bytes_with_nul(concat!($s, "\0").as_bytes()).unwrap()
     };
 }
 
@@ -44,9 +43,13 @@ pub(crate) fn request_user_attention() {
 
 /// Set the document-edited indicator (dot in the red traffic-light button).
 pub(crate) fn set_document_edited(frame: &eframe::Frame, edited: bool) {
-    let Ok(handle) = frame.window_handle() else { return };
+    let Ok(handle) = frame.window_handle() else {
+        return;
+    };
     let raw = handle.as_raw();
-    let RawWindowHandle::AppKit(appkit) = raw else { return };
+    let RawWindowHandle::AppKit(appkit) = raw else {
+        return;
+    };
     let ns_view: &AnyObject = unsafe { &*appkit.ns_view.as_ptr().cast() };
     let ns_window: Option<&AnyObject> = unsafe { objc2::msg_send![ns_view, window] };
     let Some(ns_window) = ns_window else { return };
@@ -203,21 +206,25 @@ fn init_native_menu() -> muda::Result<()> {
     ));
     map.insert(transpose_down_item.id().clone(), MenuAction::TransposeDown);
 
-    let edit_menu = Submenu::with_items("编辑", true, &[
-        undo_item.as_ref(),
-        redo_item.as_ref(),
-        &PredefinedMenuItem::separator(),
-        cut_item.as_ref(),
-        copy_item.as_ref(),
-        paste_item.as_ref(),
-        &PredefinedMenuItem::separator(),
-        select_all_item.as_ref(),
-        duplicate_item.as_ref(),
-        delete_item.as_ref(),
-        &PredefinedMenuItem::separator(),
-        transpose_up_item.as_ref(),
-        transpose_down_item.as_ref(),
-    ])?;
+    let edit_menu = Submenu::with_items(
+        "编辑",
+        true,
+        &[
+            undo_item.as_ref(),
+            redo_item.as_ref(),
+            &PredefinedMenuItem::separator(),
+            cut_item.as_ref(),
+            copy_item.as_ref(),
+            paste_item.as_ref(),
+            &PredefinedMenuItem::separator(),
+            select_all_item.as_ref(),
+            duplicate_item.as_ref(),
+            delete_item.as_ref(),
+            &PredefinedMenuItem::separator(),
+            transpose_up_item.as_ref(),
+            transpose_down_item.as_ref(),
+        ],
+    )?;
 
     let menu = Menu::with_items(&[&file_menu, &edit_menu])?;
     menu.init_for_nsapp();
@@ -255,10 +262,10 @@ fn init_native_menu() -> muda::Result<()> {
             if let Some(map) = MENU_MAP.get()
                 && let Some(action) = map.get(event.id())
                 && let Ok(sender_guard) = MENU_SENDER.lock()
-                    && let Some(tx) = sender_guard.as_ref()
-                {
-                    let _ = tx.send(action.clone());
-                }
+                && let Some(tx) = sender_guard.as_ref()
+            {
+                let _ = tx.send(action.clone());
+            }
         }));
     }));
 

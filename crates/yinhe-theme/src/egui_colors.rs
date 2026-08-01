@@ -35,9 +35,9 @@ pub const TICK_LABEL: Color32 = Color32::from_rgb(0x44, 0x44, 0x49);
 
 // ── Grid line colors（pianoroll / automation 共用 pr_*，arrangement 用 ar_*）──
 // 从 GpuTheme 迁移而来，统一用 Color32。alpha 直接编进 Color32。
-pub const PR_MEASURE_LINE: Color32 = Color32::from_rgb(0x59, 0x59, 0x66);   // (0.35,0.35,0.40,1.0)
-pub const PR_BEAT_LINE: Color32 = Color32::from_rgb(0x38, 0x38, 0x40);       // (0.22,0.22,0.25,1.0)
-pub const PR_SUB_BEAT_LINE: Color32 = Color32::from_rgb(0x29, 0x29, 0x2E);   // (0.16,0.16,0.18,1.0)
+pub const PR_MEASURE_LINE: Color32 = Color32::from_rgb(0x59, 0x59, 0x66); // (0.35,0.35,0.40,1.0)
+pub const PR_BEAT_LINE: Color32 = Color32::from_rgb(0x38, 0x38, 0x40); // (0.22,0.22,0.25,1.0)
+pub const PR_SUB_BEAT_LINE: Color32 = Color32::from_rgb(0x29, 0x29, 0x2E); // (0.16,0.16,0.18,1.0)
 pub const PR_TICK_LINE: Color32 = Color32::from_rgb(0x25, 0x25, 0x2A);
 
 // ── Piano roll 横向：八度线 / 调号背景 ──
@@ -49,8 +49,8 @@ pub const PR_SCALE_OUTSIDE: Color32 = Color32::from_rgb(0x1A, 0x1A, 0x1F);
 pub const PR_ROOT_NOTE: Color32 = Color32::from_rgb(0x28, 0x32, 0x46);
 /// 无调号时的黑键行背景（与 GpuTheme::pr_black_key_row 一致）。
 pub const PR_BLACK_KEY_ROW: Color32 = Color32::from_rgb(0x1A, 0x1A, 0x1F);
-pub const AR_MEASURE_LINE: Color32 = Color32::from_rgb(0x4D, 0x4D, 0x59);     // (0.30,0.30,0.35,1.0)
-pub const AR_BEAT_LINE: Color32 = Color32::from_rgb(0x33, 0x33, 0x3B);        // (0.20,0.20,0.23,1.0)
+pub const AR_MEASURE_LINE: Color32 = Color32::from_rgb(0x4D, 0x4D, 0x59); // (0.30,0.30,0.35,1.0)
+pub const AR_BEAT_LINE: Color32 = Color32::from_rgb(0x33, 0x33, 0x3B); // (0.20,0.20,0.23,1.0)
 
 // ── Scrollbar colors ──
 pub const SCROLLBAR_BG: Color32 = Color32::from_rgb(0x14, 0x14, 0x18);

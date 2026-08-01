@@ -14,9 +14,7 @@ use std::sync::Arc;
 
 use rayon::prelude::*;
 
-use yinhe_core::{
-    ConductorData, NoteEvent, PcEvent, ProjectMeta, TrackData, YinModel,
-};
+use yinhe_core::{ConductorData, NoteEvent, PcEvent, ProjectMeta, TrackData, YinModel};
 use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, SegmentShape, TimeSigEvent};
 
 use crate::encoding::MidiImportEncoding;
@@ -139,9 +137,10 @@ pub fn parse_bytes_with_encoding(
 /// background parse thread, avoiding O(n) note iteration on the UI thread.
 fn ensure_conductor_track(model: &mut YinModel) {
     let has_conductor = model.track_note_count.first().copied().unwrap_or(0) == 0
-        && model.tracks.first().is_some_and(|t| {
-            t.automation_lanes.is_empty() && t.program_change.is_empty()
-        });
+        && model
+            .tracks
+            .first()
+            .is_some_and(|t| t.automation_lanes.is_empty() && t.program_change.is_empty());
     if has_conductor || model.tracks.is_empty() {
         return;
     }
@@ -209,11 +208,7 @@ fn collect_conductor(
                 midly::TrackEventKind::Meta(midly::MetaMessage::KeySignature(sf, minor)) => {
                     let mi = if minor { 1 } else { 0 };
                     let (root, scale) = yinhe_types::from_midi_sf_mi(sf, mi);
-                    key_sig.push(yinhe_types::KeySigEvent {
-                        tick,
-                        root,
-                        scale,
-                    });
+                    key_sig.push(yinhe_types::KeySigEvent { tick, root, scale });
                 }
                 midly::TrackEventKind::Meta(midly::MetaMessage::Marker(text)) => {
                     markers.push(yinhe_types::MarkerEvent {
@@ -238,9 +233,7 @@ fn collect_conductor(
                 // SMF 允许歌词放在 track 0（conductor-only track）。
                 // 这些歌词在 parse_track 里会因为 track 0 无 MIDI 消息被丢弃，
                 // 因此这里在 collect_conductor 抢先收集到 ConductorData.lyrics。
-                midly::TrackEventKind::Meta(midly::MetaMessage::Lyric(text))
-                    if track_idx == 0 =>
-                {
+                midly::TrackEventKind::Meta(midly::MetaMessage::Lyric(text)) if track_idx == 0 => {
                     lyrics.push(yinhe_types::LyricsEvent {
                         tick,
                         text: encoding.decode(text),
@@ -390,12 +383,24 @@ fn parse_track(
                             });
                         } else {
                             // NoteOn with vel=0 == NoteOff
-                            resolve_note_off(k, global_ch, current_tick, &mut active_notes, &mut td.notes);
+                            resolve_note_off(
+                                k,
+                                global_ch,
+                                current_tick,
+                                &mut active_notes,
+                                &mut td.notes,
+                            );
                         }
                     }
                     midly::MidiMessage::NoteOff { key, .. } => {
                         let k = key.as_int();
-                        resolve_note_off(k, global_ch, current_tick, &mut active_notes, &mut td.notes);
+                        resolve_note_off(
+                            k,
+                            global_ch,
+                            current_tick,
+                            &mut active_notes,
+                            &mut td.notes,
+                        );
                     }
                     midly::MidiMessage::Controller { controller, value } => {
                         let cc = controller.as_int();
@@ -426,8 +431,22 @@ fn parse_track(
                                 // Bank LSB: buffer for potential PC folding
                                 pending_bank[ch_idx].lsb = Some((val, current_tick));
                             }
-                            6 => handle_cc6(val, ch_idx, current_tick, &rpn_state, &nrpn_state, &mut auto_events),
-                            38 => handle_cc38(val, ch_idx, current_tick, &rpn_state, &nrpn_state, &mut auto_events),
+                            6 => handle_cc6(
+                                val,
+                                ch_idx,
+                                current_tick,
+                                &rpn_state,
+                                &nrpn_state,
+                                &mut auto_events,
+                            ),
+                            38 => handle_cc38(
+                                val,
+                                ch_idx,
+                                current_tick,
+                                &rpn_state,
+                                &nrpn_state,
+                                &mut auto_events,
+                            ),
                             _ => {
                                 // All other CC → AutomationTarget::CC
                                 auto_events.push((
@@ -492,9 +511,7 @@ fn parse_track(
     // Pin port/channel from first MIDI event seen, or default.
     let _ = track_idx; // (kept for future use)
     td.port = current_port;
-    td.channel = first_global_channel
-        .map(|gc| gc & 0x0F)
-        .unwrap_or(0);
+    td.channel = first_global_channel.map(|gc| gc & 0x0F).unwrap_or(0);
 
     // Flush pending bank values that were NOT consumed by a ProgramChange.
     // These become plain CC events so nothing is lost.
@@ -502,13 +519,21 @@ fn parse_track(
         if let Some((val, tick)) = bank.msb {
             auto_events.push((
                 AutomationTarget::CC { controller: 0 },
-                AutomationEvent { tick, value: val as f32, ..Default::default() },
+                AutomationEvent {
+                    tick,
+                    value: val as f32,
+                    ..Default::default()
+                },
             ));
         }
         if let Some((val, tick)) = bank.lsb {
             auto_events.push((
                 AutomationTarget::CC { controller: 32 },
-                AutomationEvent { tick, value: val as f32, ..Default::default() },
+                AutomationEvent {
+                    tick,
+                    value: val as f32,
+                    ..Default::default()
+                },
             ));
         }
     }
@@ -532,9 +557,7 @@ fn parse_track(
 
     // Build automation_lanes from accumulated events.
     // Sort by (target, tick) then group into lanes.
-    auto_events.sort_by(|a, b| {
-        a.0.cmp(&b.0).then_with(|| a.1.tick.cmp(&b.1.tick))
-    });
+    auto_events.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.tick.cmp(&b.1.tick)));
 
     td.automation_lanes = group_automation_events(auto_events, td.port, td.channel, track_idx);
 
@@ -559,10 +582,7 @@ fn group_automation_events(
         while i < events.len() && events[i].0 == target {
             i += 1;
         }
-        let lane_events: Vec<AutomationEvent> = events[start..i]
-            .iter()
-            .map(|(_, e)| *e)
-            .collect();
+        let lane_events: Vec<AutomationEvent> = events[start..i].iter().map(|(_, e)| *e).collect();
         lanes.push(AutomationLane {
             target,
             track: track_idx as u16,
@@ -593,7 +613,11 @@ fn handle_cc6(
         };
         auto_events.push((
             target,
-            AutomationEvent { tick: current_tick, value, ..Default::default() },
+            AutomationEvent {
+                tick: current_tick,
+                value,
+                ..Default::default()
+            },
         ));
     } else if let (Some(msb), Some(lsb)) = (nrpn.msb, nrpn.lsb) {
         let parameter = ((msb as u16) << 8) | lsb as u16;
@@ -642,13 +666,21 @@ fn handle_cc38(
             } else {
                 auto_events.push((
                     target,
-                    AutomationEvent { tick: current_tick, value: val as f32, ..Default::default() },
+                    AutomationEvent {
+                        tick: current_tick,
+                        value: val as f32,
+                        ..Default::default()
+                    },
                 ));
             }
         } else {
             auto_events.push((
                 AutomationTarget::CC { controller: 38 },
-                AutomationEvent { tick: current_tick, value: val as f32, ..Default::default() },
+                AutomationEvent {
+                    tick: current_tick,
+                    value: val as f32,
+                    ..Default::default()
+                },
             ));
         }
     } else if let (Some(msb), Some(lsb)) = (nrpn.msb, nrpn.lsb) {

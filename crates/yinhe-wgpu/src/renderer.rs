@@ -16,7 +16,7 @@ use wgpu::*;
 use crate::cull::CullState;
 use crate::layer::{AnyLayer, LayerKind};
 use crate::pipeline::RenderPipelineState;
-use crate::vertex::{CurveInstance, NoteInstance, Uniforms, SelectionUniform, VelocityBarInstance};
+use crate::vertex::{CurveInstance, NoteInstance, SelectionUniform, Uniforms, VelocityBarInstance};
 
 /// Per-frame timing breakdown returned by `prepare`.
 #[derive(Clone, Copy, Debug, Default)]
@@ -106,7 +106,8 @@ impl InstanceRenderer {
         self.ensure_track_colors_capacity(colors.len());
         if self.cached_track_colors.as_deref() != Some(colors) {
             let bytes = bytemuck::cast_slice(colors);
-            self.queue.write_buffer(&self.render.track_colors_buffer, 0, bytes);
+            self.queue
+                .write_buffer(&self.render.track_colors_buffer, 0, bytes);
             self.cached_track_colors = Some(colors.to_vec());
         }
     }
@@ -133,9 +134,18 @@ impl InstanceRenderer {
             label: Some("render_bind_group"),
             layout: &self.render.bind_group_layout,
             entries: &[
-                BindGroupEntry { binding: 0, resource: self.render.uniform_buffer.as_entire_binding() },
-                BindGroupEntry { binding: 1, resource: self.render.track_colors_buffer.as_entire_binding() },
-                BindGroupEntry { binding: 2, resource: self.render.selection_buffer.as_entire_binding() },
+                BindGroupEntry {
+                    binding: 0,
+                    resource: self.render.uniform_buffer.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: self.render.track_colors_buffer.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: self.render.selection_buffer.as_entire_binding(),
+                },
             ],
         });
         // Invalidate cache to force re-upload with the new buffer.
@@ -145,7 +155,8 @@ impl InstanceRenderer {
     /// Upload selection rects to the GPU.  Skips the write when the value is unchanged.
     pub fn upload_selection(&mut self, sel: &SelectionUniform) {
         if self.cached_selection.as_ref() != Some(sel) {
-            self.queue.write_buffer(&self.render.selection_buffer, 0, bytemuck::bytes_of(sel));
+            self.queue
+                .write_buffer(&self.render.selection_buffer, 0, bytemuck::bytes_of(sel));
             self.cached_selection = Some(*sel);
         }
     }
@@ -155,7 +166,8 @@ impl InstanceRenderer {
     /// upgrade a layer to the note pipeline.
     pub fn ensure_layers(&mut self, count: usize) {
         while self.layers.len() < count {
-            self.layers.push(AnyLayer::new(&self.device, LayerKind::Decor));
+            self.layers
+                .push(AnyLayer::new(&self.device, LayerKind::Decor));
         }
     }
 
@@ -163,7 +175,8 @@ impl InstanceRenderer {
     /// exists with a different kind, it is replaced (buffer is recreated).
     pub fn ensure_layer(&mut self, index: usize, kind: LayerKind) {
         while self.layers.len() <= index {
-            self.layers.push(AnyLayer::new(&self.device, LayerKind::Decor));
+            self.layers
+                .push(AnyLayer::new(&self.device, LayerKind::Decor));
         }
         if self.layers[index].kind() != kind {
             self.layers[index] = AnyLayer::new(&self.device, kind);
@@ -172,7 +185,12 @@ impl InstanceRenderer {
 
     impl_upload_layer!(upload_note_layer, Note, Note, NoteInstance);
     impl_upload_layer!(upload_curve_layer, Curve, Curve, CurveInstance);
-    impl_upload_layer!(upload_velocity_layer, Velocity, Velocity, VelocityBarInstance);
+    impl_upload_layer!(
+        upload_velocity_layer,
+        Velocity,
+        Velocity,
+        VelocityBarInstance
+    );
 
     /// Upload ALL note instances to the persistent GPU buffer for compute cull.
     /// Call this once on MIDI load/change, NOT every frame.
@@ -184,8 +202,12 @@ impl InstanceRenderer {
         key_revisions: &[u64; 128],
     ) {
         self.cull.upload_all_notes(
-            &self.device, &self.queue, &self.render.uniform_buffer,
-            notes, per_key_offsets, key_revisions,
+            &self.device,
+            &self.queue,
+            &self.render.uniform_buffer,
+            notes,
+            per_key_offsets,
+            key_revisions,
         );
     }
 
@@ -203,7 +225,11 @@ impl InstanceRenderer {
             return false;
         }
         self.cull.upload_one_key(
-            &self.device, &self.queue, &self.render.uniform_buffer, key, notes,
+            &self.device,
+            &self.queue,
+            &self.render.uniform_buffer,
+            key,
+            notes,
         );
         self.cull.uploaded_key_revisions[key as usize] = revision;
         true
@@ -280,7 +306,12 @@ impl InstanceRenderer {
         height: u32,
     ) {
         let mut pass = crate::util::begin_pianoroll_pass(
-            encoder, target, &self.render.pipeline, &self.render.bind_group, width, height,
+            encoder,
+            target,
+            &self.render.pipeline,
+            &self.render.bind_group,
+            width,
+            height,
         );
 
         self.draw_static_layers(&mut pass);
@@ -338,14 +369,25 @@ impl InstanceRenderer {
 
         // Phase 2: Single render pass
         let mut pass = crate::util::begin_pianoroll_pass(
-            encoder, target, &self.render.pipeline, &self.render.bind_group, width, height,
+            encoder,
+            target,
+            &self.render.pipeline,
+            &self.render.bind_group,
+            width,
+            height,
         );
 
         // Step 1-3: decor → velocity → curve
         self.draw_static_layers(&mut pass);
 
         // Step 4: culled notes (from GPU compute cull buffer)
-        self.cull.draw_visible_notes(&mut pass, &self.render.note_pipeline, &self.render.bind_group, key_lo, key_hi);
+        self.cull.draw_visible_notes(
+            &mut pass,
+            &self.render.note_pipeline,
+            &self.render.bind_group,
+            key_lo,
+            key_hi,
+        );
 
         // Step 5: ghost notes (last note layer, if any) — on top of everything
         let ghost = self.layers.iter().rfind(|l| l.kind() == LayerKind::Note);

@@ -19,7 +19,8 @@ pub(crate) fn prepare_model(
 ) -> PreparedModel {
     let cc_events = flatten_automation_to_cc_events(model, sample_rate, density);
 
-    let duration_samples = (model.tempo_map.tick_to_seconds(model.tick_length) * sample_rate as f64) as u64;
+    let duration_samples =
+        (model.tempo_map.tick_to_seconds(model.tick_length) * sample_rate as f64) as u64;
 
     let audible_notes = build_audible_notes(model, sample_rate);
 

@@ -1,6 +1,6 @@
 use rayon::prelude::*;
 use yinhe_theme::GpuTheme;
-use yinhe_types::{key_notes_in_range, NoteSource};
+use yinhe_types::{NoteSource, key_notes_in_range};
 
 use crate::vertex::NoteInstance;
 use yinhe_types::PianoRollView;
@@ -51,7 +51,8 @@ pub fn build_notes(
         .filter_map(|key| {
             // Wrap key processing in stacker to get fresh stack segments on demand.
             stacker::maybe_grow(STACK_RED_ZONE, STACK_SIZE, || {
-                let notes = key_notes_in_range(midi.key_notes(key), range_start as u32, range_end as u32);
+                let notes =
+                    key_notes_in_range(midi.key_notes(key), range_start as u32, range_end as u32);
                 if notes.is_empty() {
                     return None;
                 }
@@ -190,8 +191,6 @@ pub fn build_key_notes(
     local
 }
 
-
-
 /// Build a single ghost note instance for the pencil tool preview (layer 4).
 /// Uses the note's track color at full opacity so it appears as a solid preview
 /// on top of the existing notes. Color is fetched from track_colors storage
@@ -233,7 +232,6 @@ mod tests {
         }
     }
 
-
     #[test]
     fn test_build_notes_basic() {
         let mut out: Vec<NoteInstance> = Vec::new();
@@ -242,7 +240,15 @@ mod tests {
         let track_visible = vec![true];
 
         let hidden = std::collections::HashSet::new();
-        build_notes(&mut out, 800.0, 500.0, &midi, &view, &hidden, &track_visible);
+        build_notes(
+            &mut out,
+            800.0,
+            500.0,
+            &midi,
+            &view,
+            &hidden,
+            &track_visible,
+        );
         assert!(!out.is_empty(), "should produce note instances");
         let note = &out[0];
         assert_eq!(note.start_tick, 0);
@@ -261,7 +267,15 @@ mod tests {
         let track_visible = vec![false];
 
         let hidden = std::collections::HashSet::new();
-        build_notes(&mut out, 800.0, 500.0, &midi, &view, &hidden, &track_visible);
+        build_notes(
+            &mut out,
+            800.0,
+            500.0,
+            &midi,
+            &view,
+            &hidden,
+            &track_visible,
+        );
         assert!(out.is_empty(), "notes on hidden track should be skipped");
     }
 
@@ -274,7 +288,15 @@ mod tests {
         let track_visible = vec![true, true, true];
 
         let hidden = std::collections::HashSet::new();
-        build_notes(&mut out, 800.0, 500.0, &midi, &view, &hidden, &track_visible);
+        build_notes(
+            &mut out,
+            800.0,
+            500.0,
+            &midi,
+            &view,
+            &hidden,
+            &track_visible,
+        );
         assert_eq!((out[0].packed >> 8) & 0xFFFF, 2, "track should be 2");
     }
 
@@ -287,7 +309,15 @@ mod tests {
         let track_visible = vec![true];
 
         let hidden = std::collections::HashSet::new();
-        build_notes(&mut out, 800.0, 500.0, &midi, &view, &hidden, &track_visible);
+        build_notes(
+            &mut out,
+            800.0,
+            500.0,
+            &midi,
+            &view,
+            &hidden,
+            &track_visible,
+        );
         assert_eq!((out[0].packed >> 8) & 0xFFFF, 0, "track should be 0");
     }
 
@@ -303,7 +333,15 @@ mod tests {
         let track_visible = vec![true];
 
         let hidden = std::collections::HashSet::new();
-        build_notes(&mut out, 800.0, 500.0, &midi, &view, &hidden, &track_visible);
+        build_notes(
+            &mut out,
+            800.0,
+            500.0,
+            &midi,
+            &view,
+            &hidden,
+            &track_visible,
+        );
         assert_eq!(out.len(), 3, "should produce 3 note instances");
     }
 
@@ -321,7 +359,15 @@ mod tests {
         let track_visible = vec![true];
 
         let hidden = std::collections::HashSet::new();
-        build_notes(&mut out, 800.0, 500.0, &midi, &view, &hidden, &track_visible);
+        build_notes(
+            &mut out,
+            800.0,
+            500.0,
+            &midi,
+            &view,
+            &hidden,
+            &track_visible,
+        );
         assert!(
             !out.is_empty(),
             "long note crossing the left edge must be included"
@@ -338,11 +384,15 @@ mod tests {
         let track_visible = vec![true];
 
         let hidden = std::collections::HashSet::new();
-        build_notes(&mut out, 800.0, 500.0, &midi, &view, &hidden, &track_visible);
-        assert!(
-            out.is_empty(),
-            "note fully off-screen-left must be culled"
+        build_notes(
+            &mut out,
+            800.0,
+            500.0,
+            &midi,
+            &view,
+            &hidden,
+            &track_visible,
         );
+        assert!(out.is_empty(), "note fully off-screen-left must be culled");
     }
-
 }

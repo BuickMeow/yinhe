@@ -25,7 +25,11 @@ impl UndoAction {
                 &delta.target,
                 &delta.after,
             ),
-            UndoAction::TrackName { track_idx, old: _, new } => {
+            UndoAction::TrackName {
+                track_idx,
+                old: _,
+                new,
+            } => {
                 let model = Arc::make_mut(&mut doc.data.model);
                 if let Some(track) = model.tracks.get_mut(*track_idx) {
                     let track = Arc::make_mut(track);
@@ -54,7 +58,11 @@ impl UndoAction {
                 let model = Arc::make_mut(&mut doc.data.model);
                 model.meta.description = new.clone();
             }
-            UndoAction::ProjectPpq { old: _, new, rescale } => {
+            UndoAction::ProjectPpq {
+                old: _,
+                new,
+                rescale,
+            } => {
                 let model = Arc::make_mut(&mut doc.data.model);
                 if *rescale {
                     model.rescale_ppq(*new);
@@ -81,9 +89,18 @@ impl UndoAction {
                 for bucket in model.notes.iter_mut() {
                     let bucket = Arc::make_mut(bucket);
                     // 越界音符（track 字段 >= note_remap.len()）按删除处理，避免 panic（规则 17）。
-                    bucket.retain(|n| note_remap.get(n.track as usize).copied().unwrap_or(u16::MAX) != u16::MAX);
+                    bucket.retain(|n| {
+                        note_remap
+                            .get(n.track as usize)
+                            .copied()
+                            .unwrap_or(u16::MAX)
+                            != u16::MAX
+                    });
                     for note in bucket.iter_mut() {
-                        note.track = note_remap.get(note.track as usize).copied().unwrap_or(u16::MAX);
+                        note.track = note_remap
+                            .get(note.track as usize)
+                            .copied()
+                            .unwrap_or(u16::MAX);
                     }
                 }
                 // undo remove_track 时 tracks_after 比 tracks_before 长，
@@ -199,64 +216,96 @@ fn apply_event_list_delta(doc: &mut Document, delta: &super::EventListDelta) {
     match delta.target {
         EventListTarget::TimeSig => {
             let conductor = Arc::make_mut(&mut model.conductor);
-            conductor.time_sig = delta.new.iter().filter_map(|i| match i {
-                EventListItem::TimeSig(e) => Some(e.clone()),
-                _ => None,
-            }).collect();
+            conductor.time_sig = delta
+                .new
+                .iter()
+                .filter_map(|i| match i {
+                    EventListItem::TimeSig(e) => Some(e.clone()),
+                    _ => None,
+                })
+                .collect();
         }
         EventListTarget::KeySig => {
             let conductor = Arc::make_mut(&mut model.conductor);
-            conductor.key_sig = delta.new.iter().filter_map(|i| match i {
-                EventListItem::KeySig(e) => Some(e.clone()),
-                _ => None,
-            }).collect();
+            conductor.key_sig = delta
+                .new
+                .iter()
+                .filter_map(|i| match i {
+                    EventListItem::KeySig(e) => Some(e.clone()),
+                    _ => None,
+                })
+                .collect();
         }
         EventListTarget::Marker => {
             let conductor = Arc::make_mut(&mut model.conductor);
-            conductor.markers = delta.new.iter().filter_map(|i| match i {
-                EventListItem::Marker(e) => Some(e.clone()),
-                _ => None,
-            }).collect();
+            conductor.markers = delta
+                .new
+                .iter()
+                .filter_map(|i| match i {
+                    EventListItem::Marker(e) => Some(e.clone()),
+                    _ => None,
+                })
+                .collect();
         }
         EventListTarget::ConductorLyrics => {
             let conductor = Arc::make_mut(&mut model.conductor);
-            conductor.lyrics = delta.new.iter().filter_map(|i| match i {
-                EventListItem::Lyrics(e) => Some(e.clone()),
-                _ => None,
-            }).collect();
+            conductor.lyrics = delta
+                .new
+                .iter()
+                .filter_map(|i| match i {
+                    EventListItem::Lyrics(e) => Some(e.clone()),
+                    _ => None,
+                })
+                .collect();
         }
         EventListTarget::ConductorChord => {
             let conductor = Arc::make_mut(&mut model.conductor);
-            conductor.chord = delta.new.iter().filter_map(|i| match i {
-                EventListItem::Chord(e) => Some(e.clone()),
-                _ => None,
-            }).collect();
+            conductor.chord = delta
+                .new
+                .iter()
+                .filter_map(|i| match i {
+                    EventListItem::Chord(e) => Some(e.clone()),
+                    _ => None,
+                })
+                .collect();
         }
         EventListTarget::Lyrics { track } => {
             if let Some(t) = model.tracks.get_mut(track as usize) {
                 let t = Arc::make_mut(t);
-                t.lyrics = delta.new.iter().filter_map(|i| match i {
-                    EventListItem::Lyrics(e) => Some(e.clone()),
-                    _ => None,
-                }).collect();
+                t.lyrics = delta
+                    .new
+                    .iter()
+                    .filter_map(|i| match i {
+                        EventListItem::Lyrics(e) => Some(e.clone()),
+                        _ => None,
+                    })
+                    .collect();
             }
         }
         EventListTarget::Chord { track } => {
             if let Some(t) = model.tracks.get_mut(track as usize) {
                 let t = Arc::make_mut(t);
-                t.chord = delta.new.iter().filter_map(|i| match i {
-                    EventListItem::Chord(e) => Some(e.clone()),
-                    _ => None,
-                }).collect();
+                t.chord = delta
+                    .new
+                    .iter()
+                    .filter_map(|i| match i {
+                        EventListItem::Chord(e) => Some(e.clone()),
+                        _ => None,
+                    })
+                    .collect();
             }
         }
         EventListTarget::ProgramChange { track } => {
             if let Some(t) = model.tracks.get_mut(track as usize) {
                 let t = Arc::make_mut(t);
-                t.program_change = delta.new.iter().filter_map(|i| match i {
-                    EventListItem::ProgramChange(e) => Some(*e),
-                    _ => None,
-                }).collect();
+                t.program_change = delta
+                    .new
+                    .iter()
+                    .filter_map(|i| match i {
+                        EventListItem::ProgramChange(e) => Some(*e),
+                        _ => None,
+                    })
+                    .collect();
             }
         }
     }

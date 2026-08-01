@@ -58,6 +58,12 @@ pub fn request_user_attention() {
 
 // Re-export the platform-specific inner type and function.
 #[cfg(target_os = "macos")]
-use macos::{MenuBarInner, set_document_edited as set_document_edited_inner, request_user_attention as request_user_attention_inner};
+use macos::{
+    MenuBarInner, request_user_attention as request_user_attention_inner,
+    set_document_edited as set_document_edited_inner,
+};
 #[cfg(not(target_os = "macos"))]
-use stub::{MenuBarInner, set_document_edited as set_document_edited_inner, request_user_attention as request_user_attention_inner};
+use stub::{
+    MenuBarInner, request_user_attention as request_user_attention_inner,
+    set_document_edited as set_document_edited_inner,
+};
