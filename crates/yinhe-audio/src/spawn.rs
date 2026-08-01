@@ -571,6 +571,14 @@ pub fn spawn_cpal_audio(
         sample_rate,
         buffer_size,
     };
+    // cpal 回调每次请求的帧数（约等于流缓冲）：预览时 ring 目标必须 ≥ 它，
+    // 否则回调只能 pop 出部分帧、其余填静音 → 每个回调周期后半段静音 → 声音
+    // "一闪一闪"地卡顿。Default（设备默认缓冲）时帧数未知，保守按 1024 帧估算
+    // （常见设备与蓝牙 HFP 上限均 ≤ 1024）。
+    let callback_frames = match config.buffer_size {
+        cpal::BufferSize::Fixed(n) => n as usize,
+        cpal::BufferSize::Default => 1024,
+    };
 
     // catch_unwind 包住 AudioEngine::new：ChannelGroup::new 内部
     // `rayon::ThreadPoolBuilder::build().unwrap()` 在进程线程数超限时会 panic
@@ -614,6 +622,7 @@ pub fn spawn_cpal_audio(
         worker_tx,
         prepared_rx,
         Arc::clone(&shutdown),
+        callback_frames,
         #[cfg(feature = "gpu")]
         use_gpu_synth,
     )

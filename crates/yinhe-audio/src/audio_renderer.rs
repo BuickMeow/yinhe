@@ -64,6 +64,8 @@ struct AudioRenderer {
     preview_engine: PreviewEngine,
     /// 预览叠加用临时缓冲。
     preview_scratch: Vec<f32>,
+    /// 预览激活时的 ring 目标（帧数）：≥ cpal 回调帧数，避免回调欠载静音卡顿。
+    preview_target_frames: usize,
     /// 是否启用 GPU 合成器。启用后加载音色库时初始化 GpuSynth，渲染走 engine.gpu_synth。
     #[cfg(feature = "gpu")]
     use_gpu_synth: bool,
@@ -80,6 +82,8 @@ impl AudioRenderer {
         worker_tx: Sender<WorkerCmd>,
         prepared_rx: Receiver<WorkerResult>,
         shutdown: Arc<AtomicBool>,
+        // cpal 回调每次请求的帧数（预览时 ring 目标下限，避免回调欠载静音）。
+        callback_frames: usize,
         #[cfg(feature = "gpu")] use_gpu_synth: bool,
     ) -> Self {
         let preview_engine = PreviewEngine::new(&engine.channel_layout, engine.sample_rate);
@@ -95,6 +99,7 @@ impl AudioRenderer {
             scratch: vec![0.0; RENDER_CHUNK_FRAMES * STEREO_CHANNELS],
             preview_engine,
             preview_scratch: vec![0.0; RENDER_CHUNK_FRAMES * STEREO_CHANNELS],
+            preview_target_frames: PREVIEW_TARGET_FRAMES.max(callback_frames),
             #[cfg(feature = "gpu")]
             use_gpu_synth,
         }
@@ -461,7 +466,7 @@ impl AudioRenderer {
         // 音符 NoteOn 后要等 ring 里已有音频播完才出声，目标 4096 帧会带来
         // 约 85ms 延迟，快速拖动时每个音都滞后、听感响应很慢。
         let target_samples = if previewing {
-            PREVIEW_TARGET_FRAMES * STEREO_CHANNELS
+            self.preview_target_frames * STEREO_CHANNELS
         } else {
             TARGET_BUFFER_FRAMES * STEREO_CHANNELS
         };
@@ -539,6 +544,8 @@ pub(crate) fn spawn_renderer(
     worker_tx: Sender<WorkerCmd>,
     prepared_rx: Receiver<WorkerResult>,
     shutdown: Arc<AtomicBool>,
+    // cpal 回调每次请求的帧数（预览时 ring 目标下限）。
+    callback_frames: usize,
     #[cfg(feature = "gpu")] use_gpu_synth: bool,
 ) -> Result<JoinHandle<()>, std::io::Error> {
     thread::Builder::new()
@@ -553,6 +560,7 @@ pub(crate) fn spawn_renderer(
                 worker_tx,
                 prepared_rx,
                 shutdown,
+                callback_frames,
                 #[cfg(feature = "gpu")]
                 use_gpu_synth,
             );
