@@ -56,7 +56,7 @@ pub fn show(ui: &mut egui::Ui, ctx: QuantizeBtnCtx) -> Option<PianoViewEvent> {
     let icon_color = if hovered {
         crate::theme::ACCENT_ACTIVE
     } else {
-        egui::Color32::from_gray(160)
+        crate::theme::TEXT_MUTED
     };
     ui.painter().text(
         btn_rect.center(),

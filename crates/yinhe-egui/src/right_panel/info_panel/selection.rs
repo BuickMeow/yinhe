@@ -100,7 +100,7 @@ pub(super) fn show(ui: &mut egui::Ui, doc: &mut Document) {
         egui::RichText::new(t!("sel.title").as_ref())
             .strong()
             .size(14.0)
-            .color(egui::Color32::from_gray(220)),
+            .color(crate::theme::TEXT_PRIMARY),
     );
     ui.add_space(2.0);
 
@@ -327,7 +327,7 @@ pub(super) fn show(ui: &mut egui::Ui, doc: &mut Document) {
         egui::RichText::new(t!("sel.tempo_title").as_ref())
             .strong()
             .size(13.0)
-            .color(egui::Color32::from_gray(200)),
+            .color(crate::theme::TEXT_BRIGHT),
     );
     ui.add_space(2.0);
     tempo_section(ui, doc, view, t0, t1);
@@ -379,7 +379,7 @@ fn info_row(ui: &mut egui::Ui, label: impl Into<String>, value: impl Into<String
         ui.label(
             egui::RichText::new(value.into())
                 .size(12.0)
-                .color(egui::Color32::from_gray(200)),
+                .color(crate::theme::TEXT_BRIGHT),
         );
     });
 }
@@ -430,7 +430,7 @@ fn field_row(
             ui.label(
                 egui::RichText::new(s)
                     .size(11.0)
-                    .color(egui::Color32::from_gray(140)),
+                    .color(crate::theme::TEXT_FAINT),
             );
         }
         ui.ctx().data_mut(|d| d.insert_temp(buf_id, text.clone()));

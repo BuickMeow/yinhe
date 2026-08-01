@@ -95,7 +95,7 @@ pub fn show(
     if settings.global_sf_config.global_enabled {
         ui.label(
             egui::RichText::new(t!("soundfont.global_hint").as_ref())
-                .color(egui::Color32::from_gray(140))
+                .color(crate::theme::TEXT_FAINT)
                 .size(12.0),
         );
         ui.add_space(4.0);
@@ -283,7 +283,7 @@ fn project_panel(ui: &mut egui::Ui, doc: &mut Document) -> bool {
     } else {
         ui.label(
             egui::RichText::new(t!("soundfont.not_configured").as_ref())
-                .color(egui::Color32::from_gray(100))
+                .color(crate::theme::TEXT_HINT)
                 .size(12.0),
         );
         ui.add_space(4.0);

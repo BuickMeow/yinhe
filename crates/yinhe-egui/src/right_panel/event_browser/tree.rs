@@ -191,9 +191,7 @@ fn render_track_row(ui: &mut egui::Ui, model: &YinModel, idx: u16, state: &mut E
                 if ui
                     .add(
                         egui::Label::new(
-                            chev.rich_text()
-                                .size(13.0)
-                                .color(egui::Color32::from_gray(190)),
+                            chev.rich_text().size(13.0).color(crate::theme::TEXT_MEDIUM),
                         )
                         .sense(egui::Sense::click()),
                     )
@@ -209,7 +207,7 @@ fn render_track_row(ui: &mut egui::Ui, model: &YinModel, idx: u16, state: &mut E
                         .color(if is_selected {
                             egui::Color32::WHITE
                         } else {
-                            egui::Color32::from_gray(160)
+                            crate::theme::TEXT_MUTED
                         }),
                 );
 
@@ -221,7 +219,7 @@ fn render_track_row(ui: &mut egui::Ui, model: &YinModel, idx: u16, state: &mut E
                             .color(if is_selected {
                                 egui::Color32::WHITE
                             } else {
-                                egui::Color32::from_gray(220)
+                                crate::theme::TEXT_PRIMARY
                             }),
                     )
                     .sense(egui::Sense::click()),
@@ -233,7 +231,7 @@ fn render_track_row(ui: &mut egui::Ui, model: &YinModel, idx: u16, state: &mut E
                 ui.label(
                     egui::RichText::new(format!("[{}]", summary))
                         .size(10.0)
-                        .color(egui::Color32::from_gray(110)),
+                        .color(crate::theme::TEXT_DIMMER),
                 );
             });
         });
@@ -332,9 +330,7 @@ fn render_dir_row(
                 if ui
                     .add(
                         egui::Label::new(
-                            chev.rich_text()
-                                .size(13.0)
-                                .color(egui::Color32::from_gray(190)),
+                            chev.rich_text().size(13.0).color(crate::theme::TEXT_MEDIUM),
                         )
                         .sense(egui::Sense::click()),
                     )
@@ -353,7 +349,7 @@ fn render_dir_row(
                             folder
                                 .rich_text()
                                 .size(13.0)
-                                .color(egui::Color32::from_rgb(220, 180, 90)),
+                                .color(crate::theme::WARNING_GOLD),
                         )
                         .sense(egui::Sense::click()),
                     )
@@ -364,12 +360,12 @@ fn render_dir_row(
                 ui.label(
                     egui::RichText::new(name)
                         .size(11.0)
-                        .color(egui::Color32::from_gray(220)),
+                        .color(crate::theme::TEXT_PRIMARY),
                 );
                 ui.label(
                     egui::RichText::new(format!("({})", child_count))
                         .size(10.0)
-                        .color(egui::Color32::from_gray(110)),
+                        .color(crate::theme::TEXT_DIMMER),
                 );
             });
         });
@@ -402,13 +398,13 @@ fn render_leaf_item(
                     ui.label(icon.rich_text().size(12.0).color(if is_selected {
                         egui::Color32::WHITE
                     } else {
-                        egui::Color32::from_gray(160)
+                        crate::theme::TEXT_MUTED
                     }));
                     ui.label(egui::RichText::new(name).size(11.0).monospace().color(
                         if is_selected {
                             egui::Color32::WHITE
                         } else {
-                            egui::Color32::from_gray(200)
+                            crate::theme::TEXT_BRIGHT
                         },
                     ));
                 });

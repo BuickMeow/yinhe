@@ -15,7 +15,7 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>, settings: &AudioSetti
         ui.add_space(8.0);
         ui.label(
             egui::RichText::new(t!("common.no_document").as_ref())
-                .color(egui::Color32::from_gray(100))
+                .color(crate::theme::TEXT_HINT)
                 .size(12.0),
         );
         return;
@@ -129,7 +129,7 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>, settings: &AudioSetti
                 let color = if is_active {
                     egui::Color32::WHITE
                 } else {
-                    egui::Color32::from_gray(120)
+                    crate::theme::TEXT_DIM
                 };
 
                 let sf_status = if sources.is_empty() {
@@ -162,9 +162,9 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>, settings: &AudioSetti
                     ui.label(
                         egui::RichText::new(if is_active { "●" } else { "○" }).color(
                             if is_active {
-                                egui::Color32::from_rgb(80, 200, 80)
+                                crate::theme::OK_GREEN
                             } else {
-                                egui::Color32::from_gray(120)
+                                crate::theme::TEXT_DIM
                             },
                         ),
                     );
@@ -180,7 +180,7 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>, settings: &AudioSetti
                         row.col(|ui| {
                             ui.label(
                                 egui::RichText::new("● 未加载音色库")
-                                    .color(egui::Color32::from_rgb(230, 160, 40))
+                                    .color(crate::theme::WARNING)
                                     .size(11.0),
                             );
                         });

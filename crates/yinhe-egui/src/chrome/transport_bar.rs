@@ -326,7 +326,7 @@ fn show_file_menu(
                 let icon_color = if item.enabled {
                     egui::Color32::WHITE
                 } else {
-                    egui::Color32::from_gray(80)
+                    crate::theme::TEXT_DISABLED
                 };
                 let resp = ui.add_enabled(
                     item.enabled,
@@ -459,7 +459,7 @@ fn show_timecode_display(ui: &mut egui::Ui, doc: &Document) -> egui::Rect {
 
     let c = crate::theme::ACCENT_ACTIVE;
     let font = egui::FontId::proportional(crate::theme::TIMECODE_FONT);
-    let grid = egui::Stroke::new(1.0, egui::Color32::from_gray(60));
+    let grid = egui::Stroke::new(1.0, crate::theme::BORDER_DIM);
 
     ui.painter()
         .rect_filled(rect, egui::CornerRadius::same(8), egui::Color32::BLACK);

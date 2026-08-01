@@ -461,11 +461,11 @@ fn draw_inline_button(
         (f, egui::Color32::BLACK)
     } else {
         let f = if hovered {
-            egui::Color32::from_gray(70)
+            crate::theme::BTN_BG_HOVER
         } else {
-            egui::Color32::from_gray(45)
+            crate::theme::BTN_BG
         };
-        (f, egui::Color32::from_gray(180))
+        (f, crate::theme::TEXT_SECONDARY)
     };
 
     painter.rect_filled(rect, 3.0, fill);

@@ -513,7 +513,7 @@ fn show_password_prompt(
                 ui.label(
                     eframe::egui::RichText::new(t!("dialog.archive.password_wrong").as_ref())
                         .size(12.0)
-                        .color(eframe::egui::Color32::from_rgb(220, 80, 80)),
+                        .color(crate::theme::ERROR_TEXT),
                 );
             }
 

@@ -40,7 +40,7 @@ pub(super) fn show_anchor_info(
         egui::RichText::new(t!("anchor.title").as_ref())
             .strong()
             .size(14.0)
-            .color(egui::Color32::from_gray(220)),
+            .color(crate::theme::TEXT_PRIMARY),
     );
     ui.add_space(2.0);
 
@@ -54,7 +54,7 @@ pub(super) fn show_anchor_info(
         ui.label(
             egui::RichText::new(target.display_name())
                 .size(12.0)
-                .color(egui::Color32::from_gray(200)),
+                .color(crate::theme::TEXT_BRIGHT),
         );
     });
     ui.add_space(4.0);
@@ -333,7 +333,7 @@ pub(super) fn show_anchor_info(
     ui.label(
         egui::RichText::new(shape_desc.as_ref())
             .size(10.0)
-            .color(egui::Color32::from_gray(140)),
+            .color(crate::theme::TEXT_FAINT),
     );
 
     ui.add_space(8.0);

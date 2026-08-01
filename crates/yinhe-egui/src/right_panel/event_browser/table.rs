@@ -164,7 +164,7 @@ pub(super) fn cell_row_header(
         let label_color = if is_selected {
             egui::Color32::WHITE
         } else {
-            egui::Color32::from_gray(180)
+            crate::theme::TEXT_SECONDARY
         };
         ui.add(
             egui::Label::new(
@@ -272,7 +272,7 @@ pub(super) fn empty_state_add_button(ui: &mut egui::Ui, id_salt: &str) -> bool {
         ui.add_space(40.0);
         let icon_text = egui::RichText::new(ICON_ADD)
             .size(24.0)
-            .color(egui::Color32::from_gray(200));
+            .color(crate::theme::TEXT_BRIGHT);
         let resp = ui.add(
             egui::Label::new(icon_text)
                 .selectable(false)
@@ -294,7 +294,7 @@ pub(super) fn empty_state_add_button(ui: &mut egui::Ui, id_salt: &str) -> bool {
         ui.label(
             egui::RichText::new("点击新建第一个事件")
                 .size(11.0)
-                .color(egui::Color32::from_gray(140)),
+                .color(crate::theme::TEXT_FAINT),
         );
     });
     if clicked {
@@ -455,7 +455,7 @@ pub(super) fn render_pager(ui: &mut egui::Ui, page: usize, total_pages: usize) -
                     ICON_NEXT
                         .rich_text()
                         .size(14.0)
-                        .color(egui::Color32::from_gray(200)),
+                        .color(crate::theme::TEXT_BRIGHT),
                 )
                 .sense(egui::Sense::click()),
             )
@@ -466,7 +466,7 @@ pub(super) fn render_pager(ui: &mut egui::Ui, page: usize, total_pages: usize) -
         ui.label(
             egui::RichText::new(format!("/ {}", total_pages))
                 .size(11.0)
-                .color(egui::Color32::from_gray(140)),
+                .color(crate::theme::TEXT_FAINT),
         );
         let buf: String = ui.memory(|m| {
             m.data
@@ -502,7 +502,7 @@ pub(super) fn render_pager(ui: &mut egui::Ui, page: usize, total_pages: usize) -
                     ICON_PREV
                         .rich_text()
                         .size(14.0)
-                        .color(egui::Color32::from_gray(200)),
+                        .color(crate::theme::TEXT_BRIGHT),
                 )
                 .sense(egui::Sense::click()),
             )

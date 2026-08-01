@@ -78,7 +78,7 @@ pub(crate) fn show_viewport(ctx: &egui::Context, old: u32, new: u32) -> PpqResca
                                     ui.add_space(6.0);
                                     ui.label(
                                         egui::RichText::new(t!("dialog.ppq_rescale.hint").as_ref())
-                                            .color(egui::Color32::from_gray(140))
+                                            .color(crate::theme::TEXT_FAINT)
                                             .size(11.0),
                                     );
                                 },

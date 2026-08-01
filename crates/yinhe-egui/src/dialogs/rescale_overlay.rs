@@ -67,7 +67,7 @@ pub(crate) fn show_viewport(
                                         ui.label(
                                             egui::RichText::new(&state.label)
                                                 .size(11.0)
-                                                .color(egui::Color32::from_gray(160)),
+                                                .color(crate::theme::TEXT_MUTED),
                                         );
                                     }
                                 },

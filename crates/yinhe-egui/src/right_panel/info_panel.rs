@@ -35,7 +35,7 @@ pub fn show(
         ui.add_space(8.0);
         ui.label(
             egui::RichText::new(t!("common.no_document").as_ref())
-                .color(egui::Color32::from_gray(100))
+                .color(crate::theme::TEXT_HINT)
                 .size(12.0),
         );
         return false;

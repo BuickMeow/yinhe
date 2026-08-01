@@ -22,7 +22,7 @@ pub fn paint(
     h_f32: f32,
     theme: &GpuTheme,
 ) {
-    let stroke_color = egui::Color32::from_gray(60);
+    let stroke_color = crate::theme::BORDER_DIM;
     let stroke = egui::Stroke::new(1.0, stroke_color);
 
     // White keys
@@ -56,7 +56,7 @@ pub fn paint(
                 egui::Align2::LEFT_CENTER,
                 label,
                 egui::FontId::proportional((kh * 0.5).clamp(8.0, 14.0)),
-                egui::Color32::from_gray(90),
+                crate::theme::TEXT_LABEL_DIM,
             );
         }
     }

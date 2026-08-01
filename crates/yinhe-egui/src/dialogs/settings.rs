@@ -325,7 +325,7 @@ pub fn show_content(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
         if ui
             .button(
                 egui::RichText::new(t!("settings.factory_reset").as_ref())
-                    .color(egui::Color32::from_rgb(232, 80, 80)),
+                    .color(crate::theme::DANGER_TEXT),
             )
             .clicked()
         {

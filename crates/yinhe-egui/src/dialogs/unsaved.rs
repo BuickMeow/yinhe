@@ -77,7 +77,7 @@ pub(crate) fn show_viewport(
                                             egui::RichText::new(
                                                 t!("dialog.unsaved.discard").as_ref(),
                                             )
-                                            .color(egui::Color32::from_rgb(255, 80, 80)),
+                                            .color(crate::theme::DANGER_TEXT_BRIGHT),
                                         );
                                         if discard_btn.clicked() {
                                             *action_cb.borrow_mut() = Some(Action::Discard);

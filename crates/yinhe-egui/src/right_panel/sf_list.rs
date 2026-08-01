@@ -160,7 +160,7 @@ fn sf_row(
         egui::Align2::LEFT_CENTER,
         path_text,
         egui::FontId::proportional(10.0),
-        egui::Color32::from_gray(120),
+        crate::theme::TEXT_DIM,
     );
 
     // ── Drag handle ──

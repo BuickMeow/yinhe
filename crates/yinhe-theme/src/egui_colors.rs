@@ -13,6 +13,32 @@ pub const ACCENT_ACTIVE: Color32 = Color32::from_rgb(100, 180, 255);
 // ── 模式栏（mode bar）文字/图标色：讲解行与性能显示（CPU/MEM/FPS）的灰色字 ──
 pub const MODE_BAR_TEXT: Color32 = Color32::GRAY;
 
+// ── UI 文字/图标灰度（值对应各 UI 层既有用法，统一从 theme 取色）──
+pub const TEXT_PRIMARY: Color32 = Color32::from_gray(220); // 标题/强调文字
+pub const TEXT_BRIGHT: Color32 = Color32::from_gray(200); // 主文字/按钮文字
+pub const TEXT_MEDIUM: Color32 = Color32::from_gray(190); // 箭头/图标
+pub const TEXT_SECONDARY: Color32 = Color32::from_gray(180); // 次要文字
+pub const TEXT_MUTED: Color32 = Color32::from_gray(160); // 弱化文字/未激活图标
+pub const TEXT_FAINT: Color32 = Color32::from_gray(140); // 弱化文字
+pub const TEXT_DIM: Color32 = Color32::from_gray(120); // 小标签/弱文字
+pub const TEXT_DIMMER: Color32 = Color32::from_gray(110); // 摘要文字
+pub const TEXT_HINT: Color32 = Color32::from_gray(100); // 提示/占位文字
+pub const TEXT_LABEL_DIM: Color32 = Color32::from_gray(90); // 键盘音名等极弱文字
+pub const TEXT_DISABLED: Color32 = Color32::from_gray(80); // 禁用文字
+pub const BTN_BG: Color32 = Color32::from_gray(45); // 内联按钮底色
+pub const BTN_BG_HOVER: Color32 = Color32::from_gray(70); // 内联按钮悬停底色
+pub const BORDER_DIM: Color32 = Color32::from_gray(60); // 分隔线/描边/弱背景
+pub const ACTION_BAR_BG: Color32 = Color32::from_rgb(30, 30, 35); // 浮动操作条背景
+
+// ── 语义色 ──
+pub const DANGER: Color32 = Color32::from_rgb(232, 17, 35); // 关闭按钮红
+pub const DANGER_TEXT: Color32 = Color32::from_rgb(232, 80, 80); // 危险文字
+pub const DANGER_TEXT_BRIGHT: Color32 = Color32::from_rgb(255, 80, 80); // 危险强调文字
+pub const ERROR_TEXT: Color32 = Color32::from_rgb(220, 80, 80); // 错误提示文字
+pub const OK_GREEN: Color32 = Color32::from_rgb(80, 200, 80); // 成功/启用
+pub const WARNING: Color32 = Color32::from_rgb(230, 160, 40); // 警告
+pub const WARNING_GOLD: Color32 = Color32::from_rgb(220, 180, 90); // 金色标记
+
 // ── Event browser 行选中底色（树形导航 / PR 根音行共用） ──
 pub const ROW_SELECTED_BG: Color32 = Color32::from_rgb(40, 50, 70);
 

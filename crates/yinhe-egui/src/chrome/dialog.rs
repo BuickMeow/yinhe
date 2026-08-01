@@ -115,7 +115,7 @@ pub(crate) fn title_bar(ui: &mut egui::Ui, title: &str, close: &mut bool) {
             if close_hover {
                 egui::Color32::WHITE
             } else {
-                egui::Color32::from_gray(160)
+                crate::theme::TEXT_MUTED
             },
         );
     }
@@ -126,7 +126,7 @@ pub(crate) fn title_bar(ui: &mut egui::Ui, title: &str, close: &mut bool) {
         egui::Align2::CENTER_CENTER,
         title,
         egui::FontId::proportional(13.0),
-        egui::Color32::from_gray(200),
+        crate::theme::TEXT_BRIGHT,
     );
 
     // ── Drag region (both platforms) ──

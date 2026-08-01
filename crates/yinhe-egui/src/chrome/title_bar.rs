@@ -107,7 +107,7 @@ pub(crate) fn show(
                 egui::Align2::CENTER_CENTER,
                 "Yinhe MIDI Editor",
                 egui::FontId::proportional(13.0),
-                egui::Color32::from_gray(180),
+                crate::theme::TEXT_SECONDARY,
             );
 
             let mut tab_x = bar_rect.min.x + left_padding - *tab_scroll_offset;
@@ -149,9 +149,9 @@ pub(crate) fn show(
 
                 // Tab text with ellipsis truncation
                 let text_color = if *is_active {
-                    egui::Color32::from_gray(220)
+                    crate::theme::TEXT_PRIMARY
                 } else {
-                    egui::Color32::from_gray(180)
+                    crate::theme::TEXT_SECONDARY
                 };
                 let text_to_draw = {
                     let full_w = painter
@@ -206,7 +206,7 @@ pub(crate) fn show(
                     if close_hover {
                         egui::Color32::WHITE
                     } else {
-                        egui::Color32::from_gray(160)
+                        crate::theme::TEXT_MUTED
                     },
                 );
 
@@ -359,7 +359,7 @@ fn paint_window_buttons(
     // ── Close button (red on hover) ──
     let close_hover = close_rect.contains(ui.input(|i| i.pointer.hover_pos()).unwrap_or_default());
     let close_bg = if close_hover {
-        egui::Color32::from_rgb(232, 17, 35)
+        crate::theme::DANGER
     } else {
         egui::Color32::TRANSPARENT
     };
@@ -368,7 +368,7 @@ fn paint_window_buttons(
     let x_color = if close_hover {
         egui::Color32::WHITE
     } else {
-        egui::Color32::from_gray(120)
+        crate::theme::TEXT_DIM
     };
     let cx = close_rect.center();
     let x_size = 8.0;
@@ -383,7 +383,7 @@ fn paint_window_buttons(
     // ── Maximize button ──
     let max_hover = maximize_rect.contains(ui.input(|i| i.pointer.hover_pos()).unwrap_or_default());
     let max_bg = if max_hover {
-        egui::Color32::from_gray(60)
+        crate::theme::BORDER_DIM
     } else {
         egui::Color32::TRANSPARENT
     };
@@ -391,7 +391,7 @@ fn paint_window_buttons(
     let max_color = if max_hover {
         egui::Color32::WHITE
     } else {
-        egui::Color32::from_gray(120)
+        crate::theme::TEXT_DIM
     };
     let mcx = maximize_rect.center();
     let m_size = 9.0;
@@ -414,7 +414,7 @@ fn paint_window_buttons(
     // ── Minimize button ──
     let min_hover = minimize_rect.contains(ui.input(|i| i.pointer.hover_pos()).unwrap_or_default());
     let min_bg = if min_hover {
-        egui::Color32::from_gray(60)
+        crate::theme::BORDER_DIM
     } else {
         egui::Color32::TRANSPARENT
     };
@@ -422,7 +422,7 @@ fn paint_window_buttons(
     let min_color = if min_hover {
         egui::Color32::WHITE
     } else {
-        egui::Color32::from_gray(120)
+        crate::theme::TEXT_DIM
     };
     let mn_cx = minimize_rect.center();
     let line_y = mn_cx.y;

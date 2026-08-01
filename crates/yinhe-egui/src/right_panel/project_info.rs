@@ -20,7 +20,7 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
         ui.add_space(8.0);
         ui.label(
             egui::RichText::new(t!("common.no_document").as_ref())
-                .color(egui::Color32::from_gray(100))
+                .color(crate::theme::TEXT_HINT)
                 .size(12.0),
         );
         return;
@@ -31,7 +31,7 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
     // ── Project name ──
     ui.label(
         egui::RichText::new(t!("project.name").as_ref())
-            .color(egui::Color32::from_gray(160))
+            .color(crate::theme::TEXT_MUTED)
             .size(11.0),
     );
     let mut name = doc.data.model.meta.name.clone();
@@ -64,7 +64,7 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
     // ── Artist ──
     ui.label(
         egui::RichText::new(t!("project.artist").as_ref())
-            .color(egui::Color32::from_gray(160))
+            .color(crate::theme::TEXT_MUTED)
             .size(11.0),
     );
     let mut artist = doc.data.model.meta.artist.clone();
@@ -98,7 +98,7 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
     // - 选"取消"：还原 meta.ppq = old。
     ui.label(
         egui::RichText::new(t!("project.ppq").as_ref())
-            .color(egui::Color32::from_gray(160))
+            .color(crate::theme::TEXT_MUTED)
             .size(11.0),
     );
     let mut ppq = doc.data.model.meta.ppq as i32;
@@ -151,7 +151,7 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
     // ── zstd compression level ──
     ui.label(
         egui::RichText::new(t!("project.compression").as_ref())
-            .color(egui::Color32::from_gray(160))
+            .color(crate::theme::TEXT_MUTED)
             .size(11.0),
     );
     let mut zstd_level = doc.data.model.meta.compression_level;
@@ -180,7 +180,7 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
     // ── Description ──
     ui.label(
         egui::RichText::new(t!("project.description").as_ref())
-            .color(egui::Color32::from_gray(160))
+            .color(crate::theme::TEXT_MUTED)
             .size(11.0),
     );
     let mut desc = doc.data.model.meta.description.clone();

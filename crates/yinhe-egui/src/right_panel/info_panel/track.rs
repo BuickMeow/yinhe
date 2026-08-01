@@ -26,7 +26,7 @@ pub(super) fn show_track_info(
         ui.add_space(8.0);
         ui.label(
             egui::RichText::new(t!("track.no_tracks").as_ref())
-                .color(egui::Color32::from_gray(100))
+                .color(crate::theme::TEXT_HINT)
                 .size(12.0),
         );
         return false;
@@ -72,7 +72,7 @@ pub(super) fn show_track_info(
             )
             .strong()
             .size(14.0)
-            .color(egui::Color32::from_gray(220)),
+            .color(crate::theme::TEXT_PRIMARY),
         );
         ui.add_space(2.0);
 
@@ -153,7 +153,7 @@ pub(super) fn show_track_info(
             egui::RichText::new(t!("track.conductor").as_ref())
                 .strong()
                 .size(14.0)
-                .color(egui::Color32::from_gray(220)),
+                .color(crate::theme::TEXT_PRIMARY),
         );
         ui.add_space(2.0);
         ui.label(
@@ -168,7 +168,7 @@ pub(super) fn show_track_info(
                 ui.label(t!("track.song_title").as_ref());
                 ui.label(
                     egui::RichText::new(&doc.data.model.meta.name)
-                        .color(egui::Color32::from_gray(200))
+                        .color(crate::theme::TEXT_BRIGHT)
                         .size(13.0),
                 );
             });
@@ -179,7 +179,7 @@ pub(super) fn show_track_info(
             ui.label(t!("track.tempo_count").as_ref());
             ui.label(
                 egui::RichText::new(format!("{}", doc.data.model.conductor.tempo.events.len()))
-                    .color(egui::Color32::from_gray(180))
+                    .color(crate::theme::TEXT_SECONDARY)
                     .size(13.0),
             );
         });
@@ -187,7 +187,7 @@ pub(super) fn show_track_info(
             ui.label(t!("track.timesig_count").as_ref());
             ui.label(
                 egui::RichText::new(format!("{}", doc.data.model.conductor.time_sig.len()))
-                    .color(egui::Color32::from_gray(180))
+                    .color(crate::theme::TEXT_SECONDARY)
                     .size(13.0),
             );
         });
@@ -412,7 +412,7 @@ pub(super) fn show_track_info(
         let mute_color = if muted {
             crate::theme::MUTE_ACTIVE
         } else {
-            egui::Color32::from_gray(140)
+            crate::theme::TEXT_FAINT
         };
         let mute_label = format!("{} {}", ICON_VOLUME_OFF.codepoint, t!("track.mute"));
         let r1 = ui.add(
@@ -431,7 +431,7 @@ pub(super) fn show_track_info(
         let solo_color = if soloed {
             crate::theme::SOLO_ACTIVE
         } else {
-            egui::Color32::from_gray(140)
+            crate::theme::TEXT_FAINT
         };
         let solo_label = format!("{} {}", ICON_HEADPHONES.codepoint, t!("track.solo"));
         let r2 = ui.add(

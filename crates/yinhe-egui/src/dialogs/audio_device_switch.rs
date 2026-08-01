@@ -112,7 +112,7 @@ pub(crate) fn show_viewport(
                                                             t!("dialog.audio_switch.no_devices")
                                                                 .as_ref(),
                                                         )
-                                                        .color(egui::Color32::from_gray(140)),
+                                                        .color(crate::theme::TEXT_FAINT),
                                                     );
                                                 });
                                             }
@@ -141,7 +141,7 @@ pub(crate) fn show_viewport(
                                         ui.add_space(8.0);
                                         ui.label(
                                             egui::RichText::new(err)
-                                                .color(egui::Color32::from_rgb(232, 80, 80)),
+                                                .color(crate::theme::DANGER_TEXT),
                                         );
                                     }
 
