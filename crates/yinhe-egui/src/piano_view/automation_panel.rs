@@ -368,17 +368,14 @@ pub fn show_panels(
                 } else {
                     format!("{}", value.round() as i32)
                 };
-                // 鼠标悬停在选框上 → 显示选框统计（参考 info panel）
-                let sel_text = cfg
-                    .sel_hint
-                    .filter(|sh| sh.is_automation)
-                    .filter(|_| {
-                        panel
-                            .anchor_sel_rects
-                            .iter()
-                            .any(|r| r.contains(raw_tick as u32, value))
-                    })
-                    .map(|sh| t!("hint.sel_events", n = sh.count, span = &sh.span).to_string());
+                // 本面板有选框 → 讲解行显示选框统计（参考 info panel）
+                let sel_text = if !panel.anchor_sel_rects.is_empty()
+                    && let Some(sh) = cfg.sel_hint
+                {
+                    Some(t!("hint.sel_events", n = sh.count, span = &sh.span).to_string())
+                } else {
+                    None
+                };
                 feedback.status_hint = Some(if let Some(s) = sel_text {
                     s
                 } else {

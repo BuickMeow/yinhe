@@ -26,13 +26,12 @@ pub(crate) struct SelHintInfo {
     pub count: u64,
     /// 时间跨度（bar.beat.tick→bar.beat.tick）。
     pub span: String,
-    /// true = 自动化选框（事件），false = 音符选框。
-    pub is_automation: bool,
 }
 
 impl App {
     /// 存在选框时计算讲解行的选框统计（无选框返回 None）。
-    fn compute_sel_hint(&self, doc: &yinhe_editor_core::document::Document) -> Option<SelHintInfo> {
+    /// PR/AR/AM 三视图选框互斥，同一时刻最多一个来源。
+    fn compute_sel_hint(doc: &yinhe_editor_core::document::Document) -> Option<SelHintInfo> {
         let model = &doc.data.model;
         let ppq = model.meta.ppq;
         let (def_num, def_den) = model.tempo_map.time_sig_default;
@@ -57,7 +56,6 @@ impl App {
             Some(SelHintInfo {
                 count: summarize_selected(model, &doc.edit.selected).count,
                 span: format!("{}→{}", fmt(t0), fmt(t1)),
-                is_automation: false,
             })
         } else if !ar_rects.is_empty() {
             let (t0, t1) = ar_rects.iter().fold(
@@ -67,7 +65,6 @@ impl App {
             Some(SelHintInfo {
                 count: summarize_selected(model, &doc.edit.selected).count,
                 span: format!("{}→{}", fmt(t0), fmt(t1)),
-                is_automation: false,
             })
         } else if !am_rects.is_empty() {
             let (t0, t1) = am_rects
@@ -88,7 +85,6 @@ impl App {
             Some(SelHintInfo {
                 count: count as u64,
                 span: format!("{}→{}", fmt(t0), fmt(t1)),
-                is_automation: true,
             })
         } else {
             None
@@ -159,7 +155,7 @@ impl App {
         let mut follow_mode = self.follow_mode;
 
         // 讲解行选框统计（存在选框时 Some；PR/AR/AM 互斥，单一来源）
-        let sel_hint = self.compute_sel_hint(&self.documents[idx]);
+        let sel_hint = Self::compute_sel_hint(&self.documents[idx]);
 
         // Arrangement view
         let mut needs_audio_rebuild = false;
@@ -839,5 +835,71 @@ impl App {
         if is_audio_playing || self.audio_state.pending_playback {
             ui.ctx().request_repaint();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use yinhe_test_helpers::make_test_document;
+    use yinhe_types::{AnchorSelRect, AutomationPanelView, AutomationTarget};
+
+    /// PR 选框：音符数 + 时间跨度（4/4、ppq=480 下 960 tick = 1.3.000）。
+    #[test]
+    fn sel_hint_pr_selection() {
+        let mut doc = make_test_document();
+        doc.edit.sel_rect.rects = vec![(0.0, 960.0, 60, 60)];
+        doc.edit
+            .selected
+            .add_rect_track(0, 960, 60, 60, 0, u16::MAX);
+
+        let hint = App::compute_sel_hint(&doc).expect("PR 选框应生成选框信息");
+        assert_eq!(hint.count, 2); // key 60 的两个音符（0-480、480-960）
+        assert_eq!(hint.span, "1.1.000→1.3.000");
+    }
+
+    /// AR 选框：与 PR 同源共享 selected，统计一致。
+    /// 注意 from_model 会插入 Conductor 轨，音符 track 索引 +1。
+    #[test]
+    fn sel_hint_ar_selection() {
+        let mut doc = make_test_document();
+        doc.edit.arr_sel_rect = vec![(0.0, 960.0, 0, 0)];
+        doc.edit
+            .selected
+            .add_rect_track(0, 960, 60, 60, 0, u16::MAX);
+
+        let hint = App::compute_sel_hint(&doc).expect("AR 选框应生成选框信息");
+        assert_eq!(hint.count, 2); // key 60 的两个音符（track 0..=MAX）
+        assert_eq!(hint.span, "1.1.000→1.3.000");
+    }
+
+    /// AM 选框：事件数统计（CC7 lane 两个锚点均在选框内）。
+    /// 插入 Conductor 轨后 Lead（含 CC7 lane）位于 index 1。
+    #[test]
+    fn sel_hint_am_selection() {
+        let mut doc = make_test_document();
+        doc.edit.editing_track = Some(1);
+        doc.edit.controller_panels.clear();
+        doc.edit.controller_panels.push(AutomationPanelView {
+            show_velocity: false,
+            selected_target: AutomationTarget::CC { controller: 7 },
+            anchor_sel_rects: vec![AnchorSelRect {
+                tick_start: 0.0,
+                tick_end: 240.0,
+                value_range: None,
+            }],
+            ..Default::default()
+        });
+
+        let hint = App::compute_sel_hint(&doc).expect("AM 选框应生成选框信息");
+        assert_eq!(hint.count, 2); // CC7 lane：tick 0 / 240 两个事件
+        assert_eq!(hint.span, "1.1.000→1.1.240");
+    }
+
+    /// 无选框 → None。
+    #[test]
+    fn sel_hint_none_without_selection() {
+        let doc = make_test_document();
+        assert!(App::compute_sel_hint(&doc).is_none());
     }
 }

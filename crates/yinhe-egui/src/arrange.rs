@@ -467,7 +467,7 @@ pub fn show(
             (*layout.transport_panel_width + v_resp.drag_delta().x).clamp(60.0, arr_total_w - 60.0);
     }
 
-    // ── 状态栏讲解行：走带悬停提示（位置 + 音轨号）──
+    // ── 状态栏讲解行：走带悬停提示（位置 + 音轨号；有选框时优先显示选框统计）──
     if let Some(pos) = ui.input(|i| i.pointer.hover_pos()) {
         let model = &*doc.data.model;
         let tpb = model.meta.ppq;
@@ -479,27 +479,30 @@ pub fn show(
             |y: f32| (((y + scroll_y) / lh).floor() as usize).min(num_tracks.saturating_sub(1));
         let track_str =
             |track: usize| t!("hint.track", n = format!("{:03}", track + 1)).to_string();
+        // 本视图有选框 → 讲解行显示选框统计（参考 info panel）
+        let sel_text = if !doc.edit.arr_sel_rect.is_empty()
+            && let Some(sh) = sel_hint
+        {
+            Some(t!("hint.sel_notes", n = sh.count, span = &sh.span).to_string())
+        } else {
+            None
+        };
         if gpu_rect.contains(pos) {
             let tick = arr_view.x_to_tick(pos.x - gpu_rect.min.x).max(0.0);
             let track = hover_track(pos.y);
             let pos_str =
                 format_tick_bar_beat_with_time_sig(tick, tpb, sig_events, def_num, def_den);
-            // 鼠标悬停在选框上 → 显示选框统计（参考 info panel）
-            let sel_text = sel_hint
-                .filter(|sh| !sh.is_automation)
-                .filter(|_| {
-                    doc.edit.arr_sel_rect.iter().any(|&(t0, t1, tl, th)| {
-                        tick >= t0.min(t1) && tick <= t0.max(t1) && track >= tl && track <= th
-                    })
-                })
-                .map(|sh| t!("hint.sel_notes", n = sh.count, span = &sh.span).to_string());
             *status_hint = Some(if let Some(s) = sel_text {
                 s
             } else {
                 format!("{} {}", pos_str, track_str(track))
             });
         } else if tp_rect.contains(pos) {
-            *status_hint = Some(track_str(hover_track(pos.y)));
+            *status_hint = Some(if let Some(s) = sel_text {
+                s
+            } else {
+                track_str(hover_track(pos.y))
+            });
         } else if arr_rect.contains(pos) {
             // 走带视图内但不在内容区（标尺/滚动条）→ 清空
             *status_hint = None;

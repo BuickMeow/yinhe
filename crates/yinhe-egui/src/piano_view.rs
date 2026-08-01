@@ -987,15 +987,14 @@ pub fn show(
             let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
             let tick = view.x_to_tick(local.x).max(0.0);
             let key = view.y_to_key(local.y);
-            // 鼠标悬停在选框上 → 显示选框统计（参考 info panel）
-            let sel_text = sel_hint
-                .filter(|sh| !sh.is_automation)
-                .filter(|_| {
-                    sel_rect.effective_rects().iter().any(|&(t0, t1, kl, kh)| {
-                        tick >= t0.min(t1) && tick <= t0.max(t1) && key >= kl && key <= kh
-                    })
-                })
-                .map(|sh| t!("hint.sel_notes", n = sh.count, span = &sh.span).to_string());
+            // 本视图有选框 → 讲解行显示选框统计（参考 info panel）
+            let sel_text = if !sel_rect.effective_rects().is_empty()
+                && let Some(sh) = sel_hint
+            {
+                Some(t!("hint.sel_notes", n = sh.count, span = &sh.span).to_string())
+            } else {
+                None
+            };
             if let Some(s) = sel_text {
                 Some(s)
             } else {
