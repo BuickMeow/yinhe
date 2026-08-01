@@ -121,6 +121,7 @@ pub(crate) struct RightClickAnchor {
 /// 检测鼠标是否悬停在两个锚点之间的线段上。
 ///
 /// 如果鼠标位置在插值线附近（阈值 8 像素），返回 `true`。
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 pub(crate) fn hit_line_on_lane(
     lane: &AutomationLane,
     tick: u32,
@@ -160,6 +161,7 @@ pub(crate) fn hit_line_on_lane(
 /// 遍历所有 Curve 段（非直线），计算两个控制点屏幕位置（偏移量 *4 放大，
 /// P1 相对 P0、P2 相对 P3），返回最近控制点所属段的前驱事件 tick + 端别 +
 /// 该段的 4 个 ctrl 值 + 控制点像素位置。
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 pub(crate) fn hit_control_point_on_lane(
     lane: &AutomationLane,
     mouse: egui::Pos2,
@@ -215,6 +217,7 @@ pub(crate) fn hit_control_point_on_lane(
 ///
 /// 段水平或竖直时（dx/dy ≈ 0），对应分量为 0（与直线控制点对齐）。
 /// 返回 `None` 表示 `prev_tick` 不存在或没有下一个事件。
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 fn compute_ctrl_from_mouse(
     lane: &AutomationLane,
     prev_tick: u32,

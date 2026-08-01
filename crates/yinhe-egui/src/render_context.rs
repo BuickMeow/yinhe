@@ -309,6 +309,7 @@ impl RenderContext {
     /// texture. This avoids accumulating GPU command buffers when nothing moved.
     ///
     /// Returns early if the GPU device has been lost.
+    #[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
     pub fn paint(
         &mut self,
         renderer: &mut yinhe_wgpu::InstanceRenderer,

@@ -140,6 +140,7 @@ pub(super) fn cell_position(
 ///
 /// `tick`：该行事件 tick（用于多选状态记录）
 /// `all_ticks`：当前页所有行的 tick（用于 Shift 范围选择）
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 pub(super) fn cell_row_header(
     row: &mut TableRow,
     state: &mut EventBrowserState,

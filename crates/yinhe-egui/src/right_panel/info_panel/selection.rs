@@ -384,15 +384,15 @@ fn info_row(ui: &mut egui::Ui, label: impl Into<String>, value: impl Into<String
     });
 }
 
+/// 表达式输入框的提示函数：输入非法时返回提示文本。
+type HintFn = dyn Fn(&str) -> Option<String>;
+
 /// 批量字段编辑行：label + 表达式输入框。
 ///
 /// - 所有选中项字段值相同 → 输入框显示该值
 /// - mixed → 输入框为空并显示「—」提示
 /// - 输入表达式（`100`/`+2`/`x3/7`…）后 Enter 或失焦应用，应用后清空，
 ///   下一帧恢复显示当前值
-/// 表达式输入框的提示函数：输入非法时返回提示文本。
-type HintFn = dyn Fn(&str) -> Option<String>;
-
 fn field_row(
     ui: &mut egui::Ui,
     key: &str,

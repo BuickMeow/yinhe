@@ -199,6 +199,7 @@ pub(crate) fn show(
 ///
 /// 即使 `total_pixels <= view_height`（内容一屏装下），也会绘制占满滚动条的 thumb，
 /// 用户仍可拖动边缘缩放。只有 `max_scroll_y == 0` 时 pan 无效。
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 pub(crate) fn show_vertical(
     ui: &mut egui::Ui,
     rect: egui::Rect,
@@ -367,6 +368,7 @@ pub(crate) fn show_vertical(
 /// - 顶边/底边拖动 → 缩放 value_zoom（顶边固定底部值，底边固定顶部值）
 ///
 /// `zoom_min` / `zoom_max` = value_zoom 的范围。`total_value` = 值上限（upper_bound）。
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 pub(crate) fn show_vertical_value(
     ui: &mut egui::Ui,
     rect: egui::Rect,

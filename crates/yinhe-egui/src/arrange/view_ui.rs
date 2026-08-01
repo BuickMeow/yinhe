@@ -23,6 +23,7 @@ use crate::widgets::tools_panel::Tool;
 /// `arr_drag_delta` is set on mouse release after dragging an existing selection
 /// (moving notes + automation events in the selected track/time range).
 /// `(delta_ticks, delta_tracks)` — ticks are horizontal, tracks are vertical.
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 pub fn show(
     ui: &mut egui::Ui,
     available: egui::Vec2,
@@ -399,6 +400,7 @@ pub fn show(
 /// `hidden_notes`: `(track, start_tick, key)` — original notes to hide during drag.
 /// `drag_rect`: the selection rect to draw on top of the GPU texture (move-drag offset
 ///   rect or marquee rect). `None` on release (arr_sel_rect takes over).
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 fn sel_drag_frame_arrange(
     ui: &mut egui::Ui,
     content_rect: egui::Rect,
@@ -713,6 +715,7 @@ fn sel_drag_frame_arrange(
 
 /// Eraser-tool marquee drag for the arrangement view.
 /// On release, sets `arr_eraser_rect` which triggers deletion in the caller.
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 fn eraser_drag_frame_arrange(
     ui: &mut egui::Ui,
     content_rect: egui::Rect,
@@ -810,6 +813,7 @@ struct ArrSnappedBounds {
 }
 
 /// Compute snapped selection bounds for arrangement.
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 fn arrange_snapped_bounds(
     start: egui::Pos2,
     end: egui::Pos2,

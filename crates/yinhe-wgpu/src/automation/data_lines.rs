@@ -43,6 +43,7 @@ struct SegSpan {
 /// 单锚点情况下，visible_events 只有 1 个事件，循环第一次迭代产生
 /// dx=0 的竖直跳变段（chase_y → evt.value），render_segment 走 dx<=0 分支
 /// 正确画竖线；right 段从锚点画到右边界，保持锚点值。
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 fn collect_segments(
     lane: &AutomationLane,
     view: &AutomationPanelView,
@@ -126,6 +127,7 @@ fn collect_segments(
 ///
 /// `max_val` 由调用方传入：Tempo 时为实际事件的最大值（动态），其他 target
 /// 时为 `target.max_value()`。所有 lane 必须共享同一 max_val。
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 pub fn build_data_lines(
     out: &mut Vec<CurveInstance>,
     w: f32,
@@ -245,6 +247,7 @@ pub(crate) fn build_lane_instances(
 /// GPU 裁剪）。偏移量参数化（内部 *4 放大）：
 ///   c1 = P0 + (P3 - P0) · (x1·4, y1·4)  — P1 相对 P0（起点出）
 ///   c2 = P3 + (P3 - P0) · (x2·4, y2·4)  — P2 相对 P3（终点入）
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 fn push_curve_control_points(
     out: &mut Vec<CurveInstance>,
     lane: &AutomationLane,

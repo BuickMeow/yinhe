@@ -19,6 +19,7 @@ const STACK_SIZE: usize = 1024 * 1024; // 1MB per segment
 ///
 /// `entries`：同一 (key, track) 下按 start_tick 升序的 (start, end, vel)。
 /// 合并条件：相邻条目间距 ≤ `merge_gap_ticks` 个 tick（≤1 像素时合并）。
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 fn flush_track_bucket(
     out: &mut Vec<NoteInstance>,
     entries: impl IntoIterator<Item = (u32, u32, u8)>,

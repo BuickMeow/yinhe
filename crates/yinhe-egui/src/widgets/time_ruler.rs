@@ -98,6 +98,7 @@ fn paint_background(painter: &egui::Painter, rect: egui::Rect) {
 ///
 /// Returns `true` if the ruler was clicked or dragged this frame (the caller
 /// typically uses this to clear any active selection box).
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 pub(crate) fn interactive_ruler(
     ui: &mut egui::Ui,
     ruler_rect: egui::Rect,

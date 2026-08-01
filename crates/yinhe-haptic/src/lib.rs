@@ -96,6 +96,7 @@ impl HapticEngine {
     /// from `false` → `true`).  If the user stays on a boundary the flag is
     /// already `true` and nothing happens.  When the user scrolls away the
     /// flag is automatically cleared for the next entry.
+    #[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
     pub fn notify_boundary(
         &self,
         slot: HapticSlot,
@@ -150,6 +151,7 @@ impl HapticEngine {
     /// `zoom_x` / `zoom_y` are the current zoom values; `min_x` / `max_x` /
     /// `min_y` / `max_y` are the allowed range.  Haptic fires on entry into
     /// any zoom limit.
+    #[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
     pub fn notify_zoom_boundary(
         &self,
         slot: HapticSlot,

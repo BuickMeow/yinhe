@@ -50,6 +50,7 @@ impl GridColors {
 /// - `tpb`：ticks per beat（MIDI PPQ）
 /// - `default_num` / `default_den`：默认拍号
 /// - `time_sig_events`：拍号变更事件
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 pub fn paint_grid_lines(
     painter: &egui::Painter,
     painter_rect: egui::Rect,

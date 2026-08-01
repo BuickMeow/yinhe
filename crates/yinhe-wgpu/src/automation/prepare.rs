@@ -79,6 +79,7 @@ fn hash_lane(lane: &AutomationLane) -> u64 {
 ///
 /// `max_val`: 当前 panel 的值域上界。Tempo 由调用方按实际事件动态计算，
 ///            其他 target 直接传 `target.max_value()`。
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 pub fn prepare(
     renderer: &mut InstanceRenderer,
     width: u32,

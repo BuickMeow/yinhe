@@ -33,6 +33,7 @@ pub fn snapshot_lane_events(
 ///
 /// 比较 `before` / `after`，差异时构造 `UndoAction` push 到 `doc.history`。
 /// `snapshot` 必须是编辑**前**捕获的界面状态快照。
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 pub fn push_automation_undo(
     doc: &mut Document,
     track_idx: u16,

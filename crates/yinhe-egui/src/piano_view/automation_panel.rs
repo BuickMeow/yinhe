@@ -150,6 +150,7 @@ fn sync_renderer_count(
 ///
 /// Returns the total height consumed by all panels (including split handles
 /// between them, but no leading handle for the first panel).
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 pub fn show_panels(
     ui: &mut egui::Ui,
     panels: &mut [AutomationPanelView],

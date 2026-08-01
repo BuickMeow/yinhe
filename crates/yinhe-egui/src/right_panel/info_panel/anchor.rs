@@ -18,6 +18,7 @@ use crate::right_panel::automation_undo::{
 use super::InfoContent;
 
 /// 显示自动化锚点信息编辑器。
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 pub(super) fn show_anchor_info(
     ui: &mut egui::Ui,
     doc: &mut Document,

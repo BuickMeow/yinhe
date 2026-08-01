@@ -127,6 +127,7 @@ impl ViewInteraction for yinhe_types::ArrangementView {
 ///   arrangement 传 rect），因为 `x_to_tick` 内部会减 `left_panel_width`。
 /// If `quantize` is provided, cursor placement snaps to the grid.
 /// `bar_line_data: (ticks_per_beat, default_num, default_den, &[TimeSigEvent])`
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 pub(crate) fn handle_input(
     ui: &mut egui::Ui,
     rect: egui::Rect,
@@ -289,6 +290,7 @@ pub(crate) fn pointer_over_popup(ctx: &egui::Context) -> bool {
 ///
 /// Call this after `clamp_scroll` with the old scroll values, the raw
 /// scroll delta, and the maximum scroll range for each axis.
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 pub(crate) fn notify_haptic_boundary(
     slot: yinhe_haptic::HapticSlot,
     old_scroll_x: f32,
@@ -317,6 +319,7 @@ pub(crate) fn notify_haptic_boundary(
 ///
 /// Call this after `handle_input` with the current zoom values and their
 /// allowed ranges.
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 pub(crate) fn notify_haptic_zoom(
     slot: yinhe_haptic::HapticSlot,
     zoom_x: f32,

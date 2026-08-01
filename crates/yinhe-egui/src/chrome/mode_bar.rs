@@ -147,6 +147,7 @@ fn metric_clickable_with_value_sz(
     }
 }
 
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 pub fn show(
     ui: &mut egui::Ui,
     view_mode: &mut ViewMode,

@@ -27,6 +27,7 @@ pub(crate) enum TrackAction {
 /// Returns `(audio_dirty, actions)` where `audio_dirty` is `true` if the user
 /// toggled a Mute or Solo button this frame, and `actions` is a list of
 /// track-management actions (add/remove/move) for the caller to apply.
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 #[must_use]
 pub(crate) fn show(
     ui: &mut egui::Ui,

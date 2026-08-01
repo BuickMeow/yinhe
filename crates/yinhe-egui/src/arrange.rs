@@ -22,6 +22,7 @@ pub(crate) type ArrSelRect = (f64, f64, usize, usize);
 
 /// Returns `Some(new_preset)` if the user picked a new quantize preset
 /// from the corner AR button.
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 pub fn show(
     ui: &mut egui::Ui,
     doc: &mut Document,

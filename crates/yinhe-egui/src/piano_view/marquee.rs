@@ -26,6 +26,7 @@ pub(crate) struct MarqueeDragResult {
 /// Returns `Some(MarqueeDragResult)` on a valid drag release (>= 3px), `None` otherwise.
 /// A click that stays within 3px returns `None` — the caller can treat it as a
 /// plain cursor-position click (set cursor_tick etc.).
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 pub(crate) fn marquee_drag_frame(
     ui: &mut egui::Ui,
     content_rect: egui::Rect,
@@ -155,6 +156,7 @@ pub(crate) fn marquee_drag_frame(
 /// Must be called AFTER `render_ctx.paint` so the box is not covered by the texture.
 /// `id_suffix` — persisted drag state key (e.g. "sel_drag" or "eraser_drag").
 /// `fill_color` / `stroke_color` — base colors for the marquee.
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 pub(crate) fn draw_marquee_box(
     ui: &mut egui::Ui,
     content_rect: egui::Rect,

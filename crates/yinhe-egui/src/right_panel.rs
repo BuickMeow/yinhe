@@ -40,6 +40,7 @@ pub enum InfoContent {
 /// `rect` is the full area reserved for the right panel, including a 4px
 /// split-handle strip at its left edge.  Returns `true` if the audio engine
 /// needs to be reloaded (soundfont config changed).
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 pub fn show(
     ui: &mut egui::Ui,
     rect: egui::Rect,

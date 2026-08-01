@@ -89,6 +89,7 @@ const RENDER_CHUNK_FRAMES: usize = 1024;
 /// are still active (prevents infinite loop on stuck voices).
 const MAX_TAIL_SECONDS: f64 = 30.0;
 
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 pub fn export_wav(
     model: Arc<YinModel>,
     sample_rate: u32,
@@ -290,6 +291,7 @@ pub fn export_wav(
 /// 使用 GPU 合成器（GpuSynth）导出 WAV。
 ///
 /// 与 `export_wav` 统一代码路径：创建 GpuSynth → 构建 SynthEvent → render 循环。
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 #[cfg(feature = "gpu")]
 pub fn export_wav_gpu(
     model: Arc<YinModel>,

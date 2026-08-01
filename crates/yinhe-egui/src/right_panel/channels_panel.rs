@@ -64,8 +64,7 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>, settings: &AudioSetti
 
     // Build reverse map: dense -> list of source channels
     let mut reverse: Vec<Vec<u8>> = vec![Vec::new(); compacted_channels as usize];
-    for src in 0..num_channels {
-        let d = dense[src];
+    for (src, &d) in dense.iter().enumerate().take(num_channels) {
         if d != u32::MAX {
             reverse[d as usize].push(src as u8);
         }

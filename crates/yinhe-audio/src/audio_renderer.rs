@@ -54,6 +54,7 @@ struct AudioRenderer {
 }
 
 impl AudioRenderer {
+    #[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
     fn new(
         engine: AudioEngine,
         ring: AudioRingProducer,
@@ -419,6 +420,7 @@ impl AudioRenderer {
     }
 }
 
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 pub(crate) fn spawn_renderer(
     engine: AudioEngine,
     ring: AudioRingProducer,

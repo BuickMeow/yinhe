@@ -21,6 +21,7 @@ pub struct PianorollRenderJob {
 /// touching any GPU resources. The result can be sent to a render thread
 /// for async upload + draw + submit. Ghost notes are NOT included —
 /// they are a transient overlay built and uploaded separately.
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 pub fn build_render_job(
     width: u32,
     height: u32,
