@@ -252,6 +252,10 @@ pub(crate) fn pencil_frame(
     // ── Compute drag output ──
     let mut result = None;
     let mut pencil_note_drag = None;
+    // Move 分支的 last_dk 在拖拽中更新，需要写回持久化。
+    // 注意不能无条件写回帧首快照：那会把 press/release 分支刚写入的
+    // 状态（Create / None）覆盖回旧值，导致点击创建音符失效。
+    let mut persist_state = false;
 
     match &mut drag_state {
         Some(PencilDrag::Create(s_tick, s_key)) => {
@@ -341,6 +345,7 @@ pub(crate) fn pencil_frame(
                 // 音符预览：每变化 1 key 触发一次，长度 = 音符 gate，力度 = 音符原值。
                 if dk != *last_dk {
                     *last_dk = dk;
+                    persist_state = true;
                     preview_req = Some(super::PreviewReq::Note(super::NotePreview {
                         track: *trk,
                         key: (*orig_key as i32 + dk).clamp(0, 127) as u8,
@@ -506,8 +511,10 @@ pub(crate) fn pencil_frame(
         None => {}
     }
 
-    // 持久化拖拽状态（Move 的 last_dk 在拖拽中更新）。
-    ui.data_mut(|d| d.insert_persisted(pencil_id, drag_state));
+    // 仅在 Move 的 last_dk 变化时写回（带新 last_dk 的完整状态）。
+    if persist_state {
+        ui.data_mut(|d| d.insert_persisted(pencil_id, drag_state));
+    }
 
     (
         result,
@@ -530,4 +537,132 @@ fn note_velocity(
         .iter()
         .find(|n| n.track == track && n.start_tick == start_tick)
         .map(|n| n.velocity)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use eframe::egui;
+
+    /// 空音符源（点击创建测试用）。
+    struct MockNotes {
+        buckets: [Vec<yinhe_types::Note>; 128],
+    }
+    impl MockNotes {
+        fn new() -> Self {
+            Self {
+                buckets: std::array::from_fn(|_| Vec::new()),
+            }
+        }
+    }
+    impl yinhe_types::NoteSource for MockNotes {
+        fn key_notes(&self, key: u8) -> &[yinhe_types::Note] {
+            &self.buckets[key as usize]
+        }
+        fn duration(&self) -> f64 {
+            0.0
+        }
+    }
+
+    fn test_view() -> yinhe_types::PianoRollView {
+        yinhe_types::PianoRollView {
+            base: yinhe_types::TimelineViewBase {
+                pixels_per_tick: 1.0,
+                scroll_x: 0.0,
+                scroll_y: 0.0,
+                left_panel_width: 0.0,
+                dirty: false,
+                track_panel_row_height: 40.0,
+                track_panel_scroll_y: 0.0,
+            },
+            key_height: 10.0,
+        }
+    }
+
+    fn frame_rect() -> egui::Rect {
+        egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(800.0, 600.0))
+    }
+
+    /// 跑一帧 pencil_frame，返回新建音符事件（release 帧才有值）。
+    fn run_frame(
+        ctx: &egui::Context,
+        raw: egui::RawInput,
+        view: &mut yinhe_types::PianoRollView,
+        midi: &MockNotes,
+    ) -> Option<yinhe_core::NoteEvent> {
+        let mut out = None;
+        let _ = ctx.run_ui(raw, |ui| {
+            let r = pencil_frame(
+                ui,
+                frame_rect(),
+                frame_rect(),
+                view,
+                QuantizePreset::Fraction(1, 16), // 与 PR 默认量化一致（网格 120）
+                480,
+                None,
+                Some(0),
+                &[true],
+                None,
+                Some(midi),
+                &[],
+                1000.0,
+            );
+            out = r.0;
+        });
+        out
+    }
+
+    fn press_event(pos: egui::Pos2) -> egui::RawInput {
+        let mut raw = egui::RawInput::default();
+        raw.events.push(egui::Event::PointerMoved(pos));
+        raw.events.push(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::default(),
+        });
+        raw
+    }
+
+    fn release_event(pos: egui::Pos2) -> egui::RawInput {
+        let mut raw = egui::RawInput::default();
+        raw.events.push(egui::Event::PointerMoved(pos));
+        raw.events.push(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::default(),
+        });
+        raw
+    }
+
+    /// 回归测试：点击必须创建音符（曾因帧首快照被无条件写回 persisted、
+    /// 覆盖 press 分支刚存入的状态而失效，音符永远无法创建）。
+    /// 同时验证第二次点击不被残留状态污染（音符创建在旧位置）。
+    #[test]
+    fn click_creates_note_at_click_position() {
+        let ctx = egui::Context::default();
+        let midi = MockNotes::new();
+        let mut view = test_view();
+
+        let pos = egui::pos2(120.0, 50.0); // 120 是 4 分音符量化的网格点
+        let expected_key = view.y_to_key(50.0);
+
+        // press 帧：不创建
+        assert!(run_frame(&ctx, press_event(pos), &mut view, &midi).is_none());
+        // release 帧：创建音符
+        let note = run_frame(&ctx, release_event(pos), &mut view, &midi).expect("点击应创建音符");
+        assert_eq!(note.start_tick, 120);
+        assert_eq!(note.key, expected_key);
+
+        // 第二次点击不同位置：必须在新位置创建（旧 bug：残留 Create 状态
+        // 导致音符被创建在第一次点击的位置）。
+        let pos2 = egui::pos2(360.0, 100.0); // 量化网格点（120×3）
+        let expected_key2 = view.y_to_key(100.0);
+        assert!(run_frame(&ctx, press_event(pos2), &mut view, &midi).is_none());
+        let note2 =
+            run_frame(&ctx, release_event(pos2), &mut view, &midi).expect("第二次点击应创建音符");
+        assert_eq!(note2.start_tick, 360);
+        assert_eq!(note2.key, expected_key2);
+    }
 }
