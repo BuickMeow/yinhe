@@ -84,6 +84,9 @@ pub enum AudioCommand {
 pub struct AudioHandle {
     pub(crate) cmd_tx: Sender<AudioCommand>,
     sample_position: Arc<AtomicU64>,
+    /// 渲染线程已产出（推入 ring）的采样位置。UI 用它限制播放指示线
+    /// 不能超过实际已渲染的音频（防止"准备播放"期间指示线空跑）。
+    producer_sample_position: Arc<AtomicU64>,
     playing: Arc<AtomicBool>,
     duration_samples: Arc<AtomicU64>,
     /// 由 cpal 流错误回调置位。UI 每帧查询，若为 true 应弹窗提示用户重启。
@@ -114,6 +117,14 @@ impl AudioHandle {
 
     pub fn sample_position(&self) -> u64 {
         self.sample_position.load(Ordering::Relaxed)
+    }
+
+    /// 渲染线程已推入 ring 的采样位置（producer），总是 `>= sample_position()`。
+    ///
+    /// 播放指示线以此为上限：Play/Seek 清空 ring 后、首个 chunk 渲染完成前
+    /// 没有可听的音频，指示线必须停在当前位置等待，不能按墙钟空跑。
+    pub fn producer_sample_position(&self) -> u64 {
+        self.producer_sample_position.load(Ordering::Relaxed)
     }
 
     pub fn sample_position_arc(&self) -> Arc<AtomicU64> {
@@ -562,6 +573,8 @@ pub fn spawn_cpal_audio(
 
     let renderer_state = RendererSharedState::new();
     let renderer_position = Arc::clone(&renderer_state.producer_sample_position);
+    // UI 播放指示线的上限：渲染器已推入 ring 的采样位置（producer）。
+    let handle_producer_position = Arc::clone(&renderer_state.producer_sample_position);
     let renderer_playing = Arc::clone(&renderer_state.playing);
     let renderer_duration = Arc::clone(&renderer_state.duration_samples);
     let initialized = Arc::clone(&renderer_state.initialized);
@@ -646,6 +659,7 @@ pub fn spawn_cpal_audio(
         handle: AudioHandle {
             cmd_tx,
             sample_position,
+            producer_sample_position: handle_producer_position,
             playing,
             duration_samples,
             stream_error,

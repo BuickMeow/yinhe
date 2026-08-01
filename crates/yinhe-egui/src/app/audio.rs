@@ -383,6 +383,14 @@ impl App {
             }
         };
 
+        // 指示线不允许超过渲染器已产出的位置：Play/Seek 清空 ring 后，
+        // 首个 chunk 渲染完成之前没有可听的音频（cpal 回调输出的是静音）。
+        // 若此时继续按墙钟外推，指示线会在"准备播放"期间空跑，等声音真正
+        // 响起时指示线已经领先一大截，开头听起来就像被吞掉了。
+        // 钳制到 producer 位置后：音频没准备好，指示线就停在原地等。
+        let produced = handle.producer_sample_position();
+        let interpolated_sample = interpolated_sample.min(produced as f64);
+
         let time = interpolated_sample / sr;
         let tick = doc.data.model.tempo_map.tick_at_time(time);
         let end_tick = doc.data.model.tick_length as f64;
