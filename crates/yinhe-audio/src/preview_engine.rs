@@ -153,9 +153,12 @@ impl PreviewEngine {
         }
     }
 
-    /// 是否还有活跃 voice（含 NoteOff 后的余音）——渲染器据此决定是否继续输出。
-    pub(crate) fn has_voices(&self) -> bool {
-        self.channel_group.voice_count() > 0
+    /// 是否处于预览状态（有活跃预览音或余音仍在响）——渲染器据此决定是否输出预览。
+    ///
+    /// 不能只看 `voice_count()`：NoteOn 后 voice 是延迟 spawn 的（渲染后才出现），
+    /// 若渲染条件只看 voice 数量，未播放时第一帧就会提前退出、永不渲染 → 预览无声。
+    pub(crate) fn previewing(&self) -> bool {
+        !self.voices.is_empty() || self.channel_group.voice_count() > 0
     }
 
     /// 停止全部预览音（NoteOff；余音继续渲染直到自然衰减完）。
@@ -203,14 +206,39 @@ mod tests {
 
     #[test]
     fn stop_all_keeps_rendering_until_voices_decay() {
-        // NoteOff 后 voice 仍活跃（余音），has_voices 继续为真 —— 渲染器据此
+        // NoteOff 后 voice 仍活跃（余音），previewing 继续为真 —— 渲染器据此
         // 持续输出余音，而不是在 NoteOff 瞬间截断。
         let layout = ChannelLayout::from_mask(vec![true; 16]);
         let mut engine = PreviewEngine::new(&layout, 48000);
         engine.note_on(0, 60, 100, None, &ChannelState::default());
         engine.stop_all();
         assert!(engine.voices.is_empty());
-        // 无音色库时 NoteOn 不产生 voice，has_voices 为 false；有音色时由 voice_count 决定。
-        assert!(!engine.has_voices());
+        // 无音色库时 NoteOn 不产生 voice，previewing 为 false；有音色时由 voice_count 决定。
+        assert!(!engine.previewing());
+    }
+
+    #[test]
+    fn previewing_true_before_voice_spawns() {
+        // 回归测试：NoteOn 后 voice 延迟 spawn（渲染后才出现），previewing 必须
+        // 在 voices 非空时立即为真，否则未播放时渲染器第一帧就提前退出、预览无声。
+        let layout = ChannelLayout::from_mask(vec![true; 16]);
+        let mut engine = PreviewEngine::new(&layout, 48000);
+        assert!(!engine.previewing());
+        engine.note_on(0, 60, 100, None, &ChannelState::default());
+        assert!(
+            engine.previewing(),
+            "NoteOn 后即使 voice 未 spawn 也必须为真"
+        );
+        // 定长到期 NoteOff 后余音仍在时也为真
+        engine.note_on(0, 62, 100, Some(4800), &ChannelState::default());
+        let mut out = vec![0.0f32; 1024];
+        for _ in 0..30 {
+            out.fill(0.0);
+            engine.render(&mut out);
+        }
+        assert_eq!(engine.voices.len(), 1, "定长音符到期移除，持续音保留");
+        assert!(engine.previewing(), "持续音还在");
+        engine.stop_all();
+        assert!(!engine.previewing(), "全部停止且无音色库（无 voice）后结束");
     }
 }

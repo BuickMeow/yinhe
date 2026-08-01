@@ -439,8 +439,8 @@ impl AudioRenderer {
         if !self.state.initialized.load(Ordering::Acquire) {
             return false;
         }
-        // 预览有活跃 voice（含 NoteOff 后的余音）时强制渲染：未播放时也要输出。
-        let previewing = self.preview_engine.has_voices();
+        // 预览组非空或有余音时强制渲染：未播放时也要输出。
+        let previewing = self.preview_engine.previewing();
         if !self.engine.playing() && !previewing {
             return false;
         }
