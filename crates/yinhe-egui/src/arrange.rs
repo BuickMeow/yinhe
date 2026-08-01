@@ -268,7 +268,6 @@ pub fn show(
                 )
             }),
             is_playing,
-            &doc.data.track_names,
             follow_mode,
             active_tool,
             scroll_mode,

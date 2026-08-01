@@ -40,7 +40,6 @@ pub fn show(
     ppq: u32,
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
     is_playing: bool,
-    _track_names: &[String],
     follow_mode: &mut crate::view_interaction::FollowMode,
     active_tool: &Tool,
     scroll_mode: u32,
