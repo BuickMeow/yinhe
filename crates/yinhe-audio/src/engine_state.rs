@@ -9,7 +9,7 @@ use yinhe_core::YinModel;
 use crate::audio_model::{
     ActiveNote, AudibleNote, AudioModel, PreparedModel, flatten_automation_to_cc_events,
 };
-use crate::channel::ChannelState;
+use crate::channel::{ChannelState, ChaseSkip};
 use crate::engine::AudioEngine;
 use crate::prepare_model::build_audible_notes;
 
@@ -22,6 +22,7 @@ impl AudioEngine {
             flatten_automation_to_cc_events(model, self.sample_rate, self.automation_density);
         self.chase_generation = self.chase_generation.wrapping_add(1);
         self.cc_cursor = 0;
+        self.chase_cc_base = 0;
         self.active_notes.clear();
 
         self.duration_samples =
@@ -90,13 +91,30 @@ impl AudioEngine {
     /// 方案 B：应用 worker 线程异步算好的 256 通道状态快照。
     /// 在 `seek_to` 之后由 renderer 收到 `ChaseResult` 时调用，恢复各通道的
     /// volume / pan / program / pitch bend / RPN 等控制器值。
+    ///
+    /// chase 是异步的：结果到达时渲染器可能已经 dispatch 了 seek 点之后的
+    /// 实时事件（包括 seek 点同 sample 的事件）。若整体覆盖，这些新值会被
+    /// 打回 seek 前的旧值（从中间小节开始播放时 PBS/PitchBend 被覆盖的根因）。
+    /// 因此对 `[chase_cc_base, cc_cursor)` 区间内已 dispatch 的控制器跳过，
+    /// 只补齐尚未被实时事件覆盖的状态。
+    /// 构建 chase 跳过掩码：`[chase_cc_base, cc_cursor)` 区间内已 dispatch 的控制器。
+    /// 独立为 pub(crate) 方法，便于测试直接观察跳过行为。
+    pub(crate) fn chase_skip(&self) -> ChaseSkip {
+        let mut skip = ChaseSkip::default();
+        for cc in &self.cc_events[self.chase_cc_base..self.cc_cursor] {
+            skip.mark(&cc.event, cc.channel as usize);
+        }
+        skip
+    }
+
     pub(crate) fn apply_chase_result(&mut self, states: Box<[ChannelState; 256]>) {
+        let skip = self.chase_skip();
         for ch in 0..256u32 {
             let dense = self.channel_layout.dense_for(ch as usize);
             if dense == u32::MAX {
                 continue;
             }
-            states[ch as usize].send_to(dense, &mut self.channel_group);
+            states[ch as usize].send_to(dense, &mut self.channel_group, &skip);
         }
     }
 
@@ -185,6 +203,8 @@ impl AudioEngine {
         self.active_notes.clear();
 
         self.cc_cursor = self.cc_events.partition_point(|cc| cc.sample < sample);
+        // 记录 seek 点，供 apply_chase_result 计算"已 dispatch 事件区间"。
+        self.chase_cc_base = self.cc_cursor;
 
         // Reset note cursors to the correct position based on pre-built audible_notes.
         // 桶内 start_sample 严格升序，partition_point 谓词单调，结果正确（修 P0-2）。

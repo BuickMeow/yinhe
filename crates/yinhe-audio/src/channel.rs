@@ -72,6 +72,65 @@ impl Default for ChannelState {
     }
 }
 
+/// chase 应用时的跳过信息：seek 后已被实时事件 dispatch 过的控制器。
+///
+/// chase 是异步的，结果到达时渲染器可能已经 dispatch 了 seek 点之后的
+/// 事件（包括 seek 点同 sample 的事件）。若整体覆盖，这些新值会被打回
+/// seek 前的旧值（从中间小节开始播放时 PBS/PitchBend 被覆盖的根因），
+/// 因此这些控制器必须跳过，只补齐尚未被实时事件覆盖的状态。
+#[derive(Clone, Copy)]
+pub(crate) struct ChaseSkip {
+    /// 每 channel 128 bit：bit cc = 该 Raw CC 已被 dispatch。
+    pub(crate) cc_mask: [u128; 256],
+    /// PitchBendValue 已被 dispatch。
+    pub(crate) pitch_bend: [bool; 256],
+    /// PitchBendSensitivity（RPN 0）已被 dispatch。
+    pub(crate) pbs: [bool; 256],
+    /// FineTune（RPN 1）已被 dispatch。
+    pub(crate) fine_tune: [bool; 256],
+    /// CoarseTune（RPN 2）已被 dispatch。
+    pub(crate) coarse_tune: [bool; 256],
+    /// ProgramChange 已被 dispatch。
+    pub(crate) program: [bool; 256],
+}
+
+// [T; 256] 不实现 Default（标准库只覆盖 N<=32），手写。
+impl Default for ChaseSkip {
+    fn default() -> Self {
+        Self {
+            cc_mask: [0; 256],
+            pitch_bend: [false; 256],
+            pbs: [false; 256],
+            fine_tune: [false; 256],
+            coarse_tune: [false; 256],
+            program: [false; 256],
+        }
+    }
+}
+
+impl ChaseSkip {
+    /// 标记一个已 dispatch 的 CC 事件，chase 应用时跳过对应控制器。
+    pub(crate) fn mark(&mut self, event: &ChannelAudioEvent, channel: usize) {
+        match event {
+            ChannelAudioEvent::Control(ControlEvent::Raw(cc, _)) => {
+                self.cc_mask[channel] |= 1u128 << cc;
+            }
+            ChannelAudioEvent::Control(ControlEvent::PitchBendValue(_)) => {
+                self.pitch_bend[channel] = true;
+            }
+            ChannelAudioEvent::Control(ControlEvent::PitchBendSensitivity(_)) => {
+                self.pbs[channel] = true;
+            }
+            ChannelAudioEvent::Control(ControlEvent::FineTune(_)) => self.fine_tune[channel] = true,
+            ChannelAudioEvent::Control(ControlEvent::CoarseTune(_)) => {
+                self.coarse_tune[channel] = true;
+            }
+            ChannelAudioEvent::ProgramChange(_) => self.program[channel] = true,
+            _ => {}
+        }
+    }
+}
+
 impl ChannelState {
     pub(crate) fn apply(&mut self, event: &ChannelAudioEvent) {
         match event {
@@ -144,74 +203,73 @@ impl ChannelState {
         }
     }
 
-    pub(crate) fn send_to(&self, ch: u32, cg: &mut ChannelGroup) {
-        let mut send = |event: ChannelAudioEvent| {
-            cg.send_event(SynthEvent::Channel(ch, ChannelEvent::Audio(event)));
+    /// 计算 chase 应用时要发送的事件列表；`skip` 中标记的控制器跳过。
+    /// 独立为纯函数，便于单元测试直接观察跳过行为。
+    fn events_to_send(&self, channel: usize, skip: &ChaseSkip) -> Vec<ChannelAudioEvent> {
+        let mut out = Vec::with_capacity(24);
+        let mut push_raw = |cc: u8, val: u8| {
+            if skip.cc_mask[channel] & (1u128 << cc) == 0 {
+                out.push(ChannelAudioEvent::Control(ControlEvent::Raw(cc, val)));
+            }
         };
-        send(ChannelAudioEvent::Control(ControlEvent::Raw(
-            0,
-            self.bank_msb,
-        )));
-        send(ChannelAudioEvent::Control(ControlEvent::Raw(
-            32,
-            self.bank_lsb,
-        )));
-        send(ChannelAudioEvent::Control(ControlEvent::Raw(
-            7,
-            self.volume,
-        )));
-        send(ChannelAudioEvent::Control(ControlEvent::Raw(10, self.pan)));
-        send(ChannelAudioEvent::Control(ControlEvent::Raw(
-            11,
-            self.expression,
-        )));
-        send(ChannelAudioEvent::Control(ControlEvent::Raw(
-            64,
-            self.sustain,
-        )));
+        push_raw(0, self.bank_msb);
+        push_raw(32, self.bank_lsb);
+        push_raw(7, self.volume);
+        push_raw(10, self.pan);
+        push_raw(11, self.expression);
+        push_raw(64, self.sustain);
         if self.env_set {
-            send(ChannelAudioEvent::Control(ControlEvent::Raw(
-                73,
-                self.attack,
-            )));
-            send(ChannelAudioEvent::Control(ControlEvent::Raw(
-                72,
-                self.release,
+            push_raw(73, self.attack);
+            push_raw(72, self.release);
+        }
+        push_raw(74, self.cutoff);
+        push_raw(71, self.resonance);
+        if !skip.program[channel] {
+            out.push(ChannelAudioEvent::ProgramChange(self.program));
+        }
+        if !skip.pbs[channel] {
+            out.push(ChannelAudioEvent::Control(
+                ControlEvent::PitchBendSensitivity(self.pitch_bend_sensitivity),
+            ));
+        }
+        if !skip.fine_tune[channel] {
+            out.push(ChannelAudioEvent::Control(ControlEvent::FineTune(
+                self.fine_tune,
             )));
         }
-        send(ChannelAudioEvent::Control(ControlEvent::Raw(
-            74,
-            self.cutoff,
-        )));
-        send(ChannelAudioEvent::Control(ControlEvent::Raw(
-            71,
-            self.resonance,
-        )));
-        send(ChannelAudioEvent::ProgramChange(self.program));
+        if !skip.coarse_tune[channel] {
+            out.push(ChannelAudioEvent::Control(ControlEvent::CoarseTune(
+                self.coarse_tune,
+            )));
+        }
+        if !skip.pitch_bend[channel] {
+            out.push(ChannelAudioEvent::Control(ControlEvent::PitchBendValue(
+                self.pitch_bend,
+            )));
+        }
 
-        send(ChannelAudioEvent::Control(
-            ControlEvent::PitchBendSensitivity(self.pitch_bend_sensitivity),
-        ));
-        send(ChannelAudioEvent::Control(ControlEvent::FineTune(
-            self.fine_tune,
-        )));
-        send(ChannelAudioEvent::Control(ControlEvent::CoarseTune(
-            self.coarse_tune,
-        )));
-        send(ChannelAudioEvent::Control(ControlEvent::PitchBendValue(
-            self.pitch_bend,
-        )));
-
-        // Send generic CC values for controllers not covered by specific fields above.
+        // 通用 CC：发送未被特定字段覆盖、未被 dispatch 覆盖且非 0 的控制器。
         // CCs already sent: 0, 7, 10, 11, 32, 64, 71, 72, 73, 74.
         // RPN-related CCs (100, 101, 6, 38) are handled by the high-level
         // PitchBendSensitivity / FineTune / CoarseTune events above.
         const ALREADY_SENT: [u8; 12] = [0, 6, 7, 10, 11, 32, 38, 64, 71, 72, 73, 74];
         for cc in 0u8..128u8 {
             let val = self.cc_values[cc as usize];
-            if val != 0 && !ALREADY_SENT.contains(&cc) && cc != 100 && cc != 101 {
-                send(ChannelAudioEvent::Control(ControlEvent::Raw(cc, val)));
+            if val != 0
+                && !ALREADY_SENT.contains(&cc)
+                && cc != 100
+                && cc != 101
+                && skip.cc_mask[channel] & (1u128 << cc) == 0
+            {
+                out.push(ChannelAudioEvent::Control(ControlEvent::Raw(cc, val)));
             }
+        }
+        out
+    }
+
+    pub(crate) fn send_to(&self, ch: u32, cg: &mut ChannelGroup, skip: &ChaseSkip) {
+        for event in self.events_to_send(ch as usize, skip) {
+            cg.send_event(SynthEvent::Channel(ch, ChannelEvent::Audio(event)));
         }
     }
 }
@@ -301,6 +359,83 @@ mod tests {
         state.apply(&ChannelAudioEvent::Control(ControlEvent::Raw(100, 2)));
         state.apply(&ChannelAudioEvent::Control(ControlEvent::Raw(6, 70)));
         assert!((state.coarse_tune - 6.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_chase_skip_mark() {
+        let mut skip = ChaseSkip::default();
+        skip.mark(&ChannelAudioEvent::Control(ControlEvent::Raw(64, 1)), 3);
+        skip.mark(
+            &ChannelAudioEvent::Control(ControlEvent::PitchBendValue(0.5)),
+            3,
+        );
+        skip.mark(&ChannelAudioEvent::ProgramChange(5), 3);
+        assert_ne!(skip.cc_mask[3] & (1u128 << 64), 0);
+        assert_eq!(skip.cc_mask[3] & (1u128 << 7), 0);
+        assert!(skip.pitch_bend[3]);
+        assert!(skip.program[3]);
+        assert!(!skip.pbs[3]);
+        assert_eq!(skip.cc_mask[0], 0); // 其他 channel 不受影响
+    }
+
+    #[test]
+    fn test_events_to_send_skips_dispatched() {
+        let mut state = ChannelState {
+            volume: 100,
+            pitch_bend_sensitivity: 48.0,
+            pitch_bend: 0.5,
+            ..Default::default()
+        };
+        state.cc_values[91] = 80; // 通用 CC（reverb），不走专门字段
+
+        let mut skip = ChaseSkip::default();
+        skip.cc_mask[0] |= 1u128 << 7; // CC7 已 dispatch
+        skip.cc_mask[0] |= 1u128 << 91; // CC91 已 dispatch
+        skip.pbs[0] = true; // PitchBendSensitivity 已 dispatch
+        skip.pitch_bend[0] = true; // PitchBendValue 已 dispatch
+
+        let events = state.events_to_send(0, &skip);
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, ChannelAudioEvent::Control(ControlEvent::Raw(7, _))))
+        );
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, ChannelAudioEvent::Control(ControlEvent::Raw(91, _))))
+        );
+        assert!(!events.iter().any(|e| matches!(
+            e,
+            ChannelAudioEvent::Control(ControlEvent::PitchBendSensitivity(_))
+        )));
+        assert!(!events.iter().any(|e| matches!(
+            e,
+            ChannelAudioEvent::Control(ControlEvent::PitchBendValue(_))
+        )));
+        // 未跳过的控制器仍在
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, ChannelAudioEvent::Control(ControlEvent::Raw(10, _))))
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, ChannelAudioEvent::Control(ControlEvent::Raw(11, _))))
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, ChannelAudioEvent::ProgramChange(_)))
+        );
+        // 其他 channel 不受跳过影响
+        let other = state.events_to_send(1, &skip);
+        assert!(
+            other
+                .iter()
+                .any(|e| matches!(e, ChannelAudioEvent::Control(ControlEvent::Raw(7, 100))))
+        );
     }
 
     #[test]

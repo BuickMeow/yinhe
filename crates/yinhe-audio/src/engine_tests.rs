@@ -1051,3 +1051,145 @@ fn test_muted_track_cc_skipped_in_chase() {
         "muted track's CC7=40 should be skipped; only track 1's CC7=100 should apply"
     );
 }
+
+/// 构造 cyber-night 风格的模型：RPN(0) PBS 2→48（tick 768）、PitchBend 滑音、CC7。
+/// 第 2 小节 = tick 768（PPQ 480，4/4）。
+fn make_chase_model() -> YinModel {
+    let conductor = ConductorData {
+        tempo: AutomationLane {
+            target: AutomationTarget::Tempo,
+            track: 0,
+            events: vec![AutomationEvent {
+                tick: 0,
+                value: 120.0,
+                shape: SegmentShape::Step,
+            }],
+        },
+        time_sig: Vec::new(),
+        key_sig: Vec::new(),
+        markers: Vec::new(),
+        lyrics: Vec::new(),
+        chord: Vec::new(),
+    };
+    let mut t = TrackData::new(0, 0);
+    t.name = "Chase".into();
+    t.automation_lanes = vec![
+        AutomationLane {
+            target: AutomationTarget::Rpn { parameter: 0 },
+            track: 0,
+            events: vec![
+                AutomationEvent {
+                    tick: 0,
+                    value: 2.0,
+                    shape: SegmentShape::Step,
+                },
+                AutomationEvent {
+                    tick: 768,
+                    value: 48.0,
+                    shape: SegmentShape::Step,
+                },
+            ],
+        },
+        AutomationLane {
+            target: AutomationTarget::PitchBend,
+            track: 0,
+            events: vec![
+                AutomationEvent {
+                    tick: 336,
+                    value: 8192.0,
+                    shape: SegmentShape::Step,
+                },
+                AutomationEvent {
+                    tick: 1536,
+                    value: 10892.0,
+                    shape: SegmentShape::Step,
+                },
+            ],
+        },
+        AutomationLane {
+            target: AutomationTarget::CC { controller: 7 },
+            track: 0,
+            events: vec![
+                AutomationEvent {
+                    tick: 192,
+                    value: 100.0,
+                    shape: SegmentShape::Step,
+                },
+                AutomationEvent {
+                    tick: 768,
+                    value: 80.0,
+                    shape: SegmentShape::Step,
+                },
+            ],
+        },
+    ];
+    // 至少一个音符：track_audible_count > 0，否则 skip_track 会把该轨道当 mute。
+    let per_track_notes: Vec<Vec<NoteEvent>> = vec![vec![NoteEvent {
+        start_tick: 0,
+        end_tick: 100,
+        key: 60,
+        velocity: 100,
+        id: 0,
+    }]];
+    let meta = ProjectMeta {
+        ppq: 480,
+        ..ProjectMeta::default()
+    };
+    let mut model = YinModel {
+        conductor: Arc::new(conductor),
+        tracks: vec![Arc::new(t)],
+        meta,
+        ..Default::default()
+    };
+    model.load_track_notes(per_track_notes);
+    model.rebuild();
+    model
+}
+
+/// 回归测试（cyber-night 根因）：从第 2 小节（tick 768）开始播放时，
+/// 渲染器先 dispatch 了 seek 点处的 PBS=48 / CC7=80，异步 chase 结果后到。
+/// `apply_chase_result` 必须跳过已 dispatch 的控制器，否则 PBS 会被覆盖回
+/// seek 前的 2（弯音幅度全错）、CC7 覆盖回 100。
+#[test]
+fn test_chase_after_seek_skips_dispatched_controllers() {
+    let model = Arc::new(make_chase_model());
+    let sr = 48000u32;
+    let mut engine = AudioEngine::new(sr, ChannelLayout::from_mask(vec![true; 16]));
+    engine.load_model(&model);
+
+    let seek_sample = (model.tempo_map.tick_to_seconds(768) * sr as f64) as u64;
+    engine.seek_to(seek_sample);
+
+    // 渲染器第一帧：dispatch seek 点及之后 512 帧的事件（含 t768 的 PBS=48、CC7=80）
+    engine.dispatch_and_find_next(seek_sample, seek_sample + 512);
+
+    // worker 异步算出的 chase 快照：seek 之前的状态
+    let states = crate::spawn::compute_chase_states_for_test(
+        &engine.cc_events,
+        seek_sample,
+        &engine.skip_track,
+    );
+    assert_eq!(states[0].pitch_bend_sensitivity, 2.0, "seek 前 PBS=2");
+    assert_eq!(states[0].volume, 100, "seek 前 CC7=100");
+
+    // 修复核心：已 dispatch 的控制器必须在 chase 中跳过
+    let skip = engine.chase_skip();
+    assert!(
+        skip.pbs[0],
+        "t768 的 PBS=48 已 dispatch，chase 必须跳过 PBS"
+    );
+    assert_ne!(
+        skip.cc_mask[0] & (1u128 << 7),
+        0,
+        "t768 的 CC7=80 已 dispatch，chase 必须跳过 CC7"
+    );
+    assert!(
+        !skip.pitch_bend[0],
+        "t1536 的 PitchBend 尚未 dispatch，chase 应恢复 seek 前的 PB 值"
+    );
+
+    // 应用 chase 结果（跳过逻辑的行为由 events_to_send 单测覆盖）
+    engine.apply_chase_result(states);
+    // seek 后继续渲染不应 panic，且后续事件照常 dispatch
+    engine.dispatch_and_find_next(seek_sample + 512, seek_sample + 2048);
+}

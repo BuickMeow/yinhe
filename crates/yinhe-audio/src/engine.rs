@@ -40,6 +40,9 @@ pub(crate) struct AudioEngine {
     /// `Arc` 共享给 worker 线程做 chase 计算，避免每次 Seek clone 几十万条 CC。
     pub(crate) cc_events: Arc<Vec<SortedCC>>,
     pub(crate) cc_cursor: usize,
+    /// 最近一次 `seek_to` 时的 cc_cursor：`apply_chase_result` 用它计算
+    /// "seek 后已 dispatch 的事件区间"，跳过这些控制器避免旧值覆盖新值。
+    pub(crate) chase_cc_base: usize,
     /// min-heap by end_sample：堆顶是最早结束的音符。
     /// NoteOff 检测从 O(V) retain 全扫降到 O(ended × log V) 逐个 pop。
     pub(crate) active_notes: BinaryHeap<Reverse<ActiveNote>>,
@@ -101,6 +104,7 @@ impl AudioEngine {
                 audible_notes: Box::new(core::array::from_fn(|_| Vec::new())),
                 cc_events: Arc::new(Vec::new()),
                 cc_cursor: 0,
+                chase_cc_base: 0,
                 active_notes: BinaryHeap::new(),
                 ended_notes: Vec::new(),
                 model: None,
