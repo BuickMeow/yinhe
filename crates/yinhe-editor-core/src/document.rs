@@ -108,7 +108,7 @@ impl Document {
                     .collect(),
                 track_info_cache,
                 track_colors_cache: (0..num_tracks)
-                    .map(|i| track_color(i, conductor_track_idx))
+                    .map(|i| track_color(&model.tracks[i], i, conductor_track_idx))
                     .collect(),
                 conductor_track_idx,
                 ..Default::default()
@@ -165,7 +165,7 @@ impl Document {
             let num_tracks = model.tracks.len();
             let track_names: Vec<String> = model.tracks.iter().map(|t| t.name.clone()).collect();
             let track_colors_cache = (0..num_tracks)
-                .map(|i| track_color(i, conductor_track_idx))
+                .map(|i| track_color(&model.tracks[i], i, conductor_track_idx))
                 .collect();
 
             let mut data =
@@ -341,8 +341,13 @@ impl Document {
     pub(crate) fn sync_track_caches(&mut self) {
         self.edit.track_info_cache = self.data.track_info();
         let num_tracks = self.data.model.tracks.len();
-        self.edit.track_colors_cache = (0..num_tracks)
-            .map(|i| track_color(i, self.edit.conductor_track_idx))
+        self.edit.track_colors_cache = self
+            .data
+            .model
+            .tracks
+            .iter()
+            .enumerate()
+            .map(|(i, t)| track_color(t, i, self.edit.conductor_track_idx))
             .collect();
         while self.edit.track_visible.len() < num_tracks {
             self.edit.track_visible.push(true);
@@ -413,10 +418,15 @@ pub fn detect_conductor_from_model(model: &YinModel) -> Option<u16> {
     Some(0)
 }
 
-/// Track color from palette, with conductor offset.
-pub fn track_color(idx: usize, conductor_idx: Option<u16>) -> [f32; 3] {
+/// Track display color: prefers `TrackData.color` (when set, i.e. not the
+/// default placeholder), otherwise falls back to the palette with conductor
+/// offset. Conductor track is fixed to a white-ish tone.
+pub fn track_color(track: &TrackData, idx: usize, conductor_idx: Option<u16>) -> [f32; 3] {
     if Some(idx as u16) == conductor_idx {
         return [0.94, 0.94, 0.94];
+    }
+    if track.color != yinhe_core::DEFAULT_TRACK_COLOR {
+        return track.color;
     }
     let palette_idx = match conductor_idx {
         Some(c) if (idx as u16) > c => idx - 1,
@@ -490,24 +500,37 @@ mod tests {
 
     #[test]
     fn track_color_conductor_is_whiteish() {
-        let color = track_color(0, Some(0));
+        let t = TrackData::new(0, 0);
+        let color = track_color(&t, 0, Some(0));
         assert_eq!(color, [0.94, 0.94, 0.94]);
     }
 
     #[test]
     fn track_color_cycles_through_palette() {
-        let first = track_color(0, None);
+        let t = TrackData::new(0, 0);
+        let first = track_color(&t, 0, None);
         assert_eq!(first, TRACK_PALETTE[0]);
-        let second = track_color(1, None);
+        let second = track_color(&t, 1, None);
         assert_eq!(second, TRACK_PALETTE[1]);
-        let wrap = track_color(16, None);
+        let wrap = track_color(&t, 16, None);
         assert_eq!(wrap, TRACK_PALETTE[0]);
     }
 
     #[test]
     fn track_color_offsets_after_conductor() {
-        let color = track_color(1, Some(0));
+        let t = TrackData::new(0, 0);
+        let color = track_color(&t, 1, Some(0));
         assert_eq!(color, TRACK_PALETTE[0]);
+    }
+
+    #[test]
+    fn track_color_prefers_explicit_color_over_palette() {
+        let mut t = TrackData::new(0, 0);
+        t.color = [0.1, 0.2, 0.3];
+        assert_eq!(track_color(&t, 3, None), [0.1, 0.2, 0.3]);
+        // 默认占位色回退到调色板
+        let t2 = TrackData::new(0, 0);
+        assert_eq!(track_color(&t2, 3, None), TRACK_PALETTE[3]);
     }
 
     /// 回归测试：删除轨道后 undo 必须恢复被删轨道上的音符。
