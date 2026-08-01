@@ -428,14 +428,14 @@ pub fn apply_notes_ops(
             }
         }
         EditRequest::InsertAbove { tick } | EditRequest::InsertBelow { tick } => {
-            // 新建音符：C4(60)，四分音符，力度 100
+            // 新建音符：C4(60)，四分音符，力度取该音轨最近修改值
             let ppq = doc.data.model.meta.ppq;
             let note = yinhe_core::NoteEvent {
                 id: 0, // add_note 会分配 id
                 start_tick: tick,
                 end_tick: tick + ppq,
                 key: 60,
-                velocity: 100,
+                velocity: doc.edit.default_velocity(track),
             };
             let before = doc.capture_snapshot();
             if let Some(action) = doc.add_note(track, note) {
@@ -451,7 +451,7 @@ pub fn apply_notes_ops(
                 start_tick: tick,
                 end_tick: tick + ppq,
                 key: 60,
-                velocity: 100,
+                velocity: doc.edit.default_velocity(track),
             };
             let before = doc.capture_snapshot();
             if let Some(action) = doc.add_note(track, note) {

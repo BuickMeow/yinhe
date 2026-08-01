@@ -156,6 +156,8 @@ impl Document {
     pub fn set_notes_velocity(&mut self, edits: &[VelocityEdit]) -> Option<UndoAction> {
         // 先定位目标音符并记录原值（只读，按 start_tick 二分）。
         let mut targets: Vec<(u8, u32, u8, u8)> = Vec::new(); // (key, id, old_vel, new_vel)
+        // 实际命中的 (track, start_tick, new_vel)：用于记录"最近修改力度"。
+        let mut remembered: Vec<(u16, u32, u8)> = Vec::new();
         {
             let model = &self.data.model;
             for e in edits {
@@ -169,6 +171,7 @@ impl Document {
                     && n.velocity != e.velocity
                 {
                     targets.push((e.key, n.id, n.velocity, e.velocity));
+                    remembered.push((e.track, e.start_tick, e.velocity));
                 }
             }
         }
@@ -201,6 +204,10 @@ impl Document {
         }
         model.rebuild_dirty();
         self.data.bump_revision();
+        // 记录"最近修改力度"：新音符默认力度跟随最近一次修改（同轨取时间最晚的音符）。
+        for (track, start_tick, velocity) in remembered {
+            self.edit.remember_velocity(track, start_tick, velocity);
+        }
         Some(UndoAction::Notes(NoteDelta { before, after }))
     }
 }
@@ -400,5 +407,46 @@ mod tests {
             UndoAction::Notes(delta) => assert_eq!(delta.before.len(), 1),
             _ => panic!("期望 UndoAction::Notes"),
         }
+    }
+
+    #[test]
+    fn set_notes_velocity_remembers_latest_tick() {
+        let mut doc = make_doc_with_note();
+        doc.add_note(
+            0,
+            NoteEvent {
+                id: 0,
+                start_tick: 200,
+                end_tick: 300,
+                key: 60,
+                velocity: 90,
+            },
+        );
+        // 一笔修改两个音符：t100 改 75，t200 改 60 → 记录时间最晚（t200）的 60
+        let edits = [
+            VelocityEdit {
+                track: 0,
+                start_tick: 100,
+                key: 60,
+                velocity: 75,
+            },
+            VelocityEdit {
+                track: 0,
+                start_tick: 200,
+                key: 60,
+                velocity: 60,
+            },
+        ];
+        assert!(doc.set_notes_velocity(&edits).is_some());
+        assert_eq!(doc.edit.default_velocity(0), 60);
+        // 未命中/未变化的修改不记录
+        let edits = [VelocityEdit {
+            track: 0,
+            start_tick: 999,
+            key: 60,
+            velocity: 10,
+        }];
+        assert!(doc.set_notes_velocity(&edits).is_none());
+        assert_eq!(doc.edit.default_velocity(0), 60);
     }
 }

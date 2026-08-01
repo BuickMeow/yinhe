@@ -494,6 +494,11 @@ impl App {
                     }
                 }
                 PianoViewEvent::AddNote { track, note } => {
+                    // 新音符默认力度 = 该音轨最近一次 velocity 修改值（无记录 100）。
+                    let mut note = note;
+                    if let Some(idx) = self.active_doc {
+                        note.velocity = self.documents[idx].edit.default_velocity(track);
+                    }
                     self.add_note_with_undo(track, note);
                 }
                 PianoViewEvent::EraserDelete {

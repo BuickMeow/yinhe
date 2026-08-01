@@ -198,6 +198,10 @@ pub struct EditState {
     /// AR 选框（钢琴卷帘/自动化的选框在 `sel_rect`/`anchor_sel_rects`）。
     /// 与 sel_rect 一样参与 undo 快照，随文档切换。
     pub arr_sel_rect: Vec<(f64, f64, usize, usize)>,
+    /// 各音轨最近一次 velocity 修改（(start_tick, velocity)）。
+    /// 新建音符默认力度取此值（同轨多音符修改时记时间最晚的），无记录回退 100。
+    /// UI 状态，不参与 undo 快照，不持久化。
+    pub recent_velocity: Vec<Option<(u32, u8)>>,
 }
 
 impl Default for EditState {
@@ -225,11 +229,34 @@ impl Default for EditState {
             editing_track: None,
             sel_rect: SelRectState::default(),
             arr_sel_rect: Vec::new(),
+            recent_velocity: Vec::new(),
         }
     }
 }
 
 impl EditState {
+    /// 新建音符的默认力度：该音轨最近一次 velocity 修改值，无记录时 100。
+    pub fn default_velocity(&self, track: u16) -> u8 {
+        self.recent_velocity
+            .get(track as usize)
+            .and_then(|v| *v)
+            .map(|(_, v)| v)
+            .unwrap_or(100)
+    }
+
+    /// 记录一次 velocity 修改。同一音轨多次修改时只保留 start_tick 最晚的
+    /// （一笔批量修改多个音符 = 记录时间最晚那个音符的力度）。
+    pub fn remember_velocity(&mut self, track: u16, start_tick: u32, velocity: u8) {
+        let i = track as usize;
+        if self.recent_velocity.len() <= i {
+            self.recent_velocity.resize(i + 1, None);
+        }
+        let slot = &mut self.recent_velocity[i];
+        if slot.map_or(true, |(t, _)| start_tick >= t) {
+            *slot = Some((start_tick, velocity));
+        }
+    }
+
     /// 音符选框整体 tick 平移（selected + sel_rect + arr_sel_rect）。
     /// 用于 tick 加减/复制的非拖拽编辑（拖拽类由 UI 拖拽状态机负责，不要调用）。
     pub fn offset_sel_ticks(&mut self, dt: i64) {
@@ -342,5 +369,43 @@ impl EditState {
                 r.tick_end = nte;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_velocity_falls_back_to_100() {
+        let state = EditState::default();
+        assert_eq!(state.default_velocity(0), 100);
+        assert_eq!(state.default_velocity(5), 100);
+    }
+
+    #[test]
+    fn remember_velocity_keeps_latest_tick_per_track() {
+        let mut state = EditState::default();
+        state.remember_velocity(1, 100, 75);
+        assert_eq!(state.default_velocity(1), 75);
+        // 更晚的音符覆盖
+        state.remember_velocity(1, 300, 60);
+        assert_eq!(state.default_velocity(1), 60);
+        // 更早的音符不覆盖
+        state.remember_velocity(1, 50, 90);
+        assert_eq!(state.default_velocity(1), 60);
+        // 其他音轨不受影响
+        assert_eq!(state.default_velocity(0), 100);
+        state.remember_velocity(2, 0, 10);
+        assert_eq!(state.default_velocity(2), 10);
+        assert_eq!(state.default_velocity(1), 60);
+    }
+
+    #[test]
+    fn remember_velocity_same_tick_keeps_latest() {
+        let mut state = EditState::default();
+        state.remember_velocity(0, 100, 70);
+        state.remember_velocity(0, 100, 80);
+        assert_eq!(state.default_velocity(0), 80);
     }
 }

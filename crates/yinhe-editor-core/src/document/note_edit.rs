@@ -455,6 +455,14 @@ impl Document {
             return None;
         }
 
+        if field == NoteField::Velocity {
+            // 记录"最近修改力度"：新音符默认力度跟随最近一次修改（同轨取时间最晚的音符）。
+            for t in &targets {
+                self.edit
+                    .remember_velocity(t.old.track, t.old.start_tick, t.new.velocity);
+            }
+        }
+
         let model = Arc::make_mut(&mut self.data.model);
         let mut before = Vec::with_capacity(targets.len());
         let mut after = Vec::with_capacity(targets.len());
@@ -1146,5 +1154,29 @@ mod tests {
         let n = doc.data.model.notes[60][0];
         assert_eq!(n.start_tick, 100);
         assert_eq!(n.end_tick, 200);
+    }
+
+    #[test]
+    fn apply_note_field_edit_velocity_remembers_latest_tick() {
+        let mut doc = make_doc_with_note();
+        doc.add_note(
+            0,
+            yinhe_core::NoteEvent {
+                id: 0,
+                start_tick: 200,
+                end_tick: 300,
+                key: 60,
+                velocity: 90,
+            },
+        );
+        // 选区覆盖 t100 与 t200 两个音符
+        doc.edit.selected.add_rect_track(100, 300, 60, 60, 0, 0);
+        let ops = crate::num_expr::parse_num_expr("60").unwrap(); // 赋值 60
+        assert!(
+            doc.apply_note_field_edit(NoteField::Velocity, &ops)
+                .is_some()
+        );
+        // 记录时间最晚（t200）的 60
+        assert_eq!(doc.edit.default_velocity(0), 60);
     }
 }
