@@ -164,7 +164,7 @@ fn roundtrip_complex_model_preserves_everything() {
     // Parser inserts a conductor track, so model2 has one more track.
     assert_eq!(model2.tracks.len(), model1.tracks.len() + 1);
 
-    let l1 = &model1.tracks[0];
+    let _l1 = &model1.tracks[0];
     let l2 = &model2.tracks[1];
     assert_eq!(model1.track_note_count[0], model2.track_note_count[1], "note count mismatch");
     assert_eq!(l2.name, "Lead");
@@ -207,7 +207,7 @@ fn roundtrip_complex_model_preserves_everything() {
     assert!((model2.conductor.tempo.events[1].value - 60.0).abs() < 0.5);
     assert_eq!(model2.conductor.time_sig.len(), 2);
 
-    let b1 = &model1.tracks[1];
+    let _b1 = &model1.tracks[1];
     let b2 = &model2.tracks[2];
     assert_eq!(model2.track_note_count[2], model1.track_note_count[1]);
     assert_eq!(b2.channel, 1);

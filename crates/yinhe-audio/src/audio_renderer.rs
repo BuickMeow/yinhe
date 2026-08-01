@@ -282,8 +282,8 @@ impl AudioRenderer {
                         .apply_loaded_soundfont_for_port(port, soundfonts, &dense_channels);
                     // GPU 路径：首次加载音色库时初始化 GpuSynth
                     #[cfg(feature = "gpu")]
-                    if self.use_gpu_synth && self.engine.gpu_synth.is_none() {
-                        if let Some(first_path) = paths.first() {
+                    if self.use_gpu_synth && self.engine.gpu_synth.is_none()
+                        && let Some(first_path) = paths.first() {
                             let sr = self.engine.sample_rate;
                             match yinhe_synth::GpuSynth::new_default(
                                 std::path::Path::new(first_path),
@@ -302,7 +302,6 @@ impl AudioRenderer {
                                 }
                             }
                         }
-                    }
                     // 非 GPU feature 下 paths 不使用，显式标记避免 warning
                     #[cfg(not(feature = "gpu"))]
                     let _ = paths;

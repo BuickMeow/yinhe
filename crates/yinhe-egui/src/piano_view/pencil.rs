@@ -188,14 +188,13 @@ pub(crate) fn pencil_frame(
     // ── Ghost notes: only when not over an existing note ──
     let mut ghost_notes: Vec<(u32, u32, u8, u16)> = Vec::new();
     let mut hidden_notes: Vec<(u16, u32, u8)> = Vec::new();
-    if can_write && drag_state.is_none() && hit_note.is_none() {
-        if let Some((tick, key)) = preview {
+    if can_write && drag_state.is_none() && hit_note.is_none()
+        && let Some((tick, key)) = preview {
             let interval = quantize.tick_interval(ppq) as f64;
             // Not dragging (drag_state is None due to the outer condition),
             // show preview at hover position
             ghost_notes.push((tick as u32, (tick + interval) as u32, key, track_idx));
         }
-    }
 
     // ── Start drag ──
     if pointer.primary_pressed() {
@@ -282,8 +281,8 @@ pub(crate) fn pencil_frame(
         }
         Some(PencilDrag::Move(trk, orig_tick, orig_key, orig_end, press_tick)) => {
             // auto-scroll：让音符能拖出屏幕（pos 未 clamp）
-            if pointer.primary_down() && !pointer.primary_released() {
-                if let Some(pos) = hover_pos {
+            if pointer.primary_down() && !pointer.primary_released()
+                && let Some(pos) = hover_pos {
                     crate::selection::drag::auto_scroll_on_drag(
                         ui,
                         &mut view.base,
@@ -296,7 +295,6 @@ pub(crate) fn pencil_frame(
                     );
                     view.clamp_scroll(content_rect.width(), content_rect.height(), total_ticks);
                 }
-            }
             if let Some((tick, key)) = preview {
                 let dt = (tick as i64) - (*press_tick as i64);
                 let dk = (key as i32) - (*orig_key as i32);
@@ -336,8 +334,8 @@ pub(crate) fn pencil_frame(
         }
         Some(PencilDrag::ResizeRight(trk, orig_tick, orig_end, orig_key)) => {
             // auto-scroll：右边缘能拖出屏幕
-            if pointer.primary_down() && !pointer.primary_released() {
-                if let Some(pos) = hover_pos {
+            if pointer.primary_down() && !pointer.primary_released()
+                && let Some(pos) = hover_pos {
                     crate::selection::drag::auto_scroll_on_drag(
                         ui,
                         &mut view.base,
@@ -350,7 +348,6 @@ pub(crate) fn pencil_frame(
                     );
                     view.clamp_scroll(content_rect.width(), content_rect.height(), total_ticks);
                 }
-            }
             if let Some((tick, _)) = preview {
                 let interval = quantize.tick_interval(ppq) as f64;
                 let snapped = crate::view_interaction::snap_tick_ceil(
@@ -393,8 +390,8 @@ pub(crate) fn pencil_frame(
         }
         Some(PencilDrag::ResizeLeft(trk, orig_tick, orig_end, orig_key)) => {
             // auto-scroll：左边缘能拖出屏幕
-            if pointer.primary_down() && !pointer.primary_released() {
-                if let Some(pos) = hover_pos {
+            if pointer.primary_down() && !pointer.primary_released()
+                && let Some(pos) = hover_pos {
                     crate::selection::drag::auto_scroll_on_drag(
                         ui,
                         &mut view.base,
@@ -407,7 +404,6 @@ pub(crate) fn pencil_frame(
                     );
                     view.clamp_scroll(content_rect.width(), content_rect.height(), total_ticks);
                 }
-            }
             if let Some((tick, _)) = preview {
                 let interval = quantize.tick_interval(ppq) as f64;
                 let snapped = crate::view_interaction::snap_tick_floor(

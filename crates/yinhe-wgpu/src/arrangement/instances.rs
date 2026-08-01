@@ -79,8 +79,8 @@ fn flush_track_bucket(
 /// All pixel positions and colors are computed in the GPU vertex shader:
 ///   - x/w: ticks → pixels via ppu + scroll_x (same as before)
 ///   - y/h: shader computes from lane_height + scroll_y + key + track
-/// This means scroll_y changes do NOT invalidate the cache (same optimization
-/// as PR notes).
+///     This means scroll_y changes do NOT invalidate the cache (same optimization
+///     as PR notes).
 ///
 /// GPU clips off-screen notes.
 ///
@@ -135,10 +135,10 @@ pub fn build_notes(
                     track_buckets[ti].push((note.start_tick, note.end_tick, note.velocity));
                 }
 
-                for ti in trk_first..trk_last {
+                for (ti, bucket) in track_buckets.iter().enumerate().take(trk_last).skip(trk_first) {
                     flush_track_bucket(
                         &mut local,
-                        track_buckets[ti].iter().copied(),
+                        bucket.iter().copied(),
                         key,
                         ti,
                         tick_start,

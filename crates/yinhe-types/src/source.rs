@@ -28,11 +28,11 @@ pub trait NoteSource: Sync {
 /// Uses binary search (`partition_point`) on the sorted-by-start_tick note list.
 /// The returned slice is conservative: callers must still perform their own
 /// viewport/pixel culling.
-pub fn key_notes_in_range<'a>(
-    notes: &'a [Note],
+pub fn key_notes_in_range(
+    notes: &[Note],
     tick_start: u32,
     tick_end: u32,
-) -> &'a [Note] {
+) -> &[Note] {
     if notes.is_empty() || tick_start > tick_end {
         return &[];
     }

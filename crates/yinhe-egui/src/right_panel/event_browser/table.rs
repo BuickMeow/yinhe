@@ -178,11 +178,10 @@ pub(super) fn cell_row_header(
         }
 
         // 右键：选中该行 + 弹出菜单
-        if resp.secondary_clicked() {
-            if !state.selected_ticks.contains(&tick) {
+        if resp.secondary_clicked()
+            && !state.selected_ticks.contains(&tick) {
                 handle_row_click(state, tick, all_ticks, egui::Modifiers::NONE);
             }
-        }
         let edit_key = egui::Id::new((id_salt, "edit"));
         resp.context_menu(|ui| {
             if ui.button("在上方插入").clicked() {
@@ -451,11 +450,10 @@ pub(super) fn render_pager(ui: &mut egui::Ui, page: usize, total_pages: usize) -
             ui.memory_mut(|m| m.data.insert_temp(mem_key, buf));
         }
         if resp.lost_focus() {
-            if let Ok(n) = edited_buf.trim().parse::<usize>() {
-                if n >= 1 && n <= total_pages && n - 1 != page {
+            if let Ok(n) = edited_buf.trim().parse::<usize>()
+                && n >= 1 && n <= total_pages && n - 1 != page {
                     new_page = Some(n - 1);
                 }
-            }
             ui.memory_mut(|m| m.data.remove::<String>(mem_key));
         }
         let prev_enabled = page > 0;

@@ -233,12 +233,11 @@ pub(crate) fn show(
                         action = ArchivePickerAction::Cancel;
                     }
                     let confirm_enabled = picker.selected_idx.is_some();
-                    if ui.add_enabled(confirm_enabled, eframe::egui::Button::new(t!("common.confirm").as_ref())).clicked() {
-                        if let Some(idx) = picker.selected_idx {
+                    if ui.add_enabled(confirm_enabled, eframe::egui::Button::new(t!("common.confirm").as_ref())).clicked()
+                        && let Some(idx) = picker.selected_idx {
                             let entry = picker.entries[idx].clone();
                             action = ArchivePickerAction::LoadFile { archive: picker.archive.clone(), entry };
                         }
-                    }
                 });
             });
 
@@ -298,7 +297,7 @@ pub(crate) fn show_viewport(ctx: &eframe::egui::Context, state: &mut Option<Arch
                             })
                             .show(ui, |ui| {
                                 let result = show(
-                                    &mut *taken_state_cb.borrow_mut(),
+                                    &mut taken_state_cb.borrow_mut(),
                                     ui,
                                 );
                                 *action_cb.borrow_mut() = result;
@@ -317,30 +316,7 @@ pub(crate) fn show_viewport(ctx: &eframe::egui::Context, state: &mut Option<Arch
         .unwrap_or(ArchivePickerAction::None)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
 
-    #[test]
-    fn format_size_bytes() {
-        assert_eq!(format_size(0), "0 B");
-        assert_eq!(format_size(512), "512 B");
-        assert_eq!(format_size(1023), "1023 B");
-    }
-
-    #[test]
-    fn format_size_kilobytes() {
-        assert_eq!(format_size(1024), "1.0 KB");
-        assert_eq!(format_size(1536), "1.5 KB");
-        assert_eq!(format_size(1024 * 1024 - 1), "1024.0 KB");
-    }
-
-    #[test]
-    fn format_size_megabytes() {
-        assert_eq!(format_size(1024 * 1024), "1.0 MB");
-        assert_eq!(format_size(1024 * 1024 * 5), "5.0 MB");
-    }
-}
 
 // ── 密码输入对话框 ──
 
@@ -438,7 +414,7 @@ pub(crate) fn show_password_prompt_viewport(
                             })
                             .show(ui, |ui| {
                                 let result = show_password_prompt(
-                                    &mut *taken_state_cb.borrow_mut(),
+                                    &mut taken_state_cb.borrow_mut(),
                                     ui,
                                 );
                                 *action_cb.borrow_mut() = result;
@@ -578,4 +554,29 @@ fn show_password_prompt(
     }
 
     action
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_size_bytes() {
+        assert_eq!(format_size(0), "0 B");
+        assert_eq!(format_size(512), "512 B");
+        assert_eq!(format_size(1023), "1023 B");
+    }
+
+    #[test]
+    fn format_size_kilobytes() {
+        assert_eq!(format_size(1024), "1.0 KB");
+        assert_eq!(format_size(1536), "1.5 KB");
+        assert_eq!(format_size(1024 * 1024 - 1), "1024.0 KB");
+    }
+
+    #[test]
+    fn format_size_megabytes() {
+        assert_eq!(format_size(1024 * 1024), "1.0 MB");
+        assert_eq!(format_size(1024 * 1024 * 5), "5.0 MB");
+    }
 }

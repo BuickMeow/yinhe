@@ -506,9 +506,9 @@ pub(crate) fn handle_automation_interaction(
                     });
                 } else if drag_state.is_none() {
                     // 不在锚点/控制点上：检查是否在线段上，是则添加锚点并开始拖拽
-                    if let Some(l) = lane {
-                        if let Some((_, tick, value)) = mouse_info {
-                            if hit_line_on_lane(l, tick, value, ppu, scroll_x, grid_area.min.x, panel_rect.min.y, panel, max_val) {
+                    if let Some(l) = lane
+                        && let Some((_, tick, value)) = mouse_info
+                            && hit_line_on_lane(l, tick, value, ppu, scroll_x, grid_area.min.x, panel_rect.min.y, panel, max_val) {
                                 edits.push(yinhe_types::AutomationEdit::Add {
                                     track_idx,
                                     target: target.clone(),
@@ -520,8 +520,6 @@ pub(crate) fn handle_automation_interaction(
                                     d.insert_temp(drag_id, AutoDrag::MoveAnchor { old_tick: tick, start_tick: tick, start_value: value });
                                 });
                             }
-                        }
-                    }
                 }
             }
             if pointer_released {
@@ -555,11 +553,10 @@ pub(crate) fn handle_automation_interaction(
                         if let Some(l) = lane
                             && let Some((p, _, _)) = mouse_info
                             && let Some(lidx) = lane_idx
-                        {
-                            if let Some(new_ctrl) = compute_ctrl_from_mouse(
+                            && let Some(new_ctrl) = compute_ctrl_from_mouse(
                                 l, prev_tick, which, p, ppu, scroll_x, grid_area, panel_rect, panel, max_val,
-                            ) {
-                                if new_ctrl.0 != start_x || new_ctrl.1 != start_y {
+                            )
+                                && (new_ctrl.0 != start_x || new_ctrl.1 != start_y) {
                                     // 读取当前 shape，按端别更新对应分量
                                     let new_shape = merge_ctrl_shape(l, prev_tick, which, new_ctrl);
                                     edits.push(yinhe_types::AutomationEdit::SetShape {
@@ -575,8 +572,6 @@ pub(crate) fn handle_automation_interaction(
                                     let override_lane = build_lane_shape_override(l, prev_tick, new_shape);
                                     return (edits, Some(AutomationGhost::Move { lane: override_lane, color: track_color }), None, None, None, None);
                                 }
-                            }
-                        }
                     }
                     _ => {}
                 }
@@ -600,18 +595,17 @@ pub(crate) fn handle_automation_interaction(
         Tool::Curve => {
             // 拖拽起点 → 终点：press 记录起点，release 提交 2 个锚点
             // release 不检查 in_grid（同 Pencil 理由）。
-            if pointer_pressed && in_grid {
-                if let Some((_, tick, value)) = mouse_info {
+            if pointer_pressed && in_grid
+                && let Some((_, tick, value)) = mouse_info {
                     ui.ctx().data_mut(|d| {
                         d.insert_temp(drag_id, AutoDrag::CurveDraw { start_tick: tick, start_value: value });
                     });
                 }
-            }
             if pointer_released {
                 let drag = ui.ctx().data(|d| d.get_temp::<AutoDrag>(drag_id));
                 ui.ctx().data_mut(|d| d.remove::<AutoDrag>(drag_id));
-                if let Some(AutoDrag::CurveDraw { start_tick: t1, start_value: v1 }) = drag {
-                    if let Some((_, t2, v2)) = mouse_info {
+                if let Some(AutoDrag::CurveDraw { start_tick: t1, start_value: v1 }) = drag
+                    && let Some((_, t2, v2)) = mouse_info {
                         if t1 != t2 {
                             // 两个锚点：起点 Curve 直线，终点 Step
                             edits.push(yinhe_types::AutomationEdit::Add {
@@ -639,7 +633,6 @@ pub(crate) fn handle_automation_interaction(
                             });
                         }
                     }
-                }
                 return (edits, None, None, None, None, None);
             }
         }
@@ -726,8 +719,8 @@ pub(crate) fn handle_automation_interaction(
             }
 
             // ── 拖拽中：更新 marquee_rect ──
-            if let Some(AutoDrag::MarqueeSelect { start_pos, .. }) = drag_state {
-                if let Some(p) = pos {
+            if let Some(AutoDrag::MarqueeSelect { start_pos, .. }) = drag_state
+                && let Some(p) = pos {
                     let dist = (p - start_pos).length();
                     if dist >= MARQUEE_THRESHOLD {
                         // 计算框选矩形（屏幕坐标，clamp 到 grid_area）
@@ -749,7 +742,6 @@ pub(crate) fn handle_automation_interaction(
                         }
                     }
                 }
-            }
 
             // ── 释放：提交选区或拖拽 ──
             if pointer_released {
@@ -884,11 +876,11 @@ pub(crate) fn handle_automation_interaction(
 
     // 右键点击锚点 → 记录编辑信息，供 show_panels 弹窗
     let right_click_id = ui.id().with("auto_right_click").with(panel_index);
-    if pointer_secondary_clicked && in_grid {
-        if let Some((_, tick)) = hit_anchor {
-            if let Some(lidx) = lane_idx {
-                if let Some(l) = lane {
-                    if let Some(_evt) = l.events.iter().find(|e| e.tick == tick) {
+    if pointer_secondary_clicked && in_grid
+        && let Some((_, tick)) = hit_anchor
+            && let Some(lidx) = lane_idx
+                && let Some(l) = lane
+                    && let Some(_evt) = l.events.iter().find(|e| e.tick == tick) {
                         // 清除旧编辑值，确保新锚点使用自己的初始值
                         let edit_tick_id = ui.id().with("auto_right_tick").with(panel_index);
                         let edit_value_id = ui.id().with("auto_right_value").with(panel_index);
@@ -905,10 +897,6 @@ pub(crate) fn handle_automation_interaction(
                             });
                         });
                     }
-                }
-            }
-        }
-    }
 
     // ── Ghost 计算（panel 局部坐标，传给 wgpu Layer 3 绘制）──
     // 重新读取 drag_state：press 分支可能刚设置过，release 分支已 return。

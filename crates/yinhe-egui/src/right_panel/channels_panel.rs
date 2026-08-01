@@ -88,14 +88,14 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>, settings: &AudioSetti
         .body(|body| {
             body.rows(18.0, compacted_channels as usize, |mut row| {
                 let d = row.index();
-                let sources = &reverse[d as usize];
+                let sources = &reverse[d];
                 let source_label = if sources.is_empty() {
                     "—".to_string()
                 } else {
                     sources
                         .iter()
                         .map(|&src| {
-                            let port = (src >> 4) as u8;
+                            let port = src >> 4 ;
                             let ch = (src & 0x0F) + 1;
                             format!(
                                 "{}{:02}",

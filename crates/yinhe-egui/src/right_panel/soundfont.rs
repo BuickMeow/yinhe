@@ -164,8 +164,8 @@ fn global_panel(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
 
     // Toolbar
     ui.horizontal(|ui| {
-        if ui.button(add_button_text()).clicked() {
-            if let Some(paths) = rfd::FileDialog::new()
+        if ui.button(add_button_text()).clicked()
+            && let Some(paths) = rfd::FileDialog::new()
                 .add_filter("SoundFont", &["sf2", "sf3", "sfz"])
                 .pick_files()
             {
@@ -183,7 +183,6 @@ fn global_panel(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
                 }
                 changed = true;
             }
-        }
         if ui.button(t!("common.clear").as_ref()).clicked() {
             entries.clear();
             changed = true;
@@ -242,8 +241,8 @@ fn project_panel(ui: &mut egui::Ui, doc: &mut Document) -> bool {
         changed |= super::sf_list::sf_list(ui, entries);
 
         ui.horizontal(|ui| {
-            if ui.button(add_button_text()).clicked() {
-                if let Some(paths) = rfd::FileDialog::new()
+            if ui.button(add_button_text()).clicked()
+                && let Some(paths) = rfd::FileDialog::new()
                     .add_filter("SoundFont", &["sf2", "sf3", "sfz"])
                     .pick_files()
                 {
@@ -261,7 +260,6 @@ fn project_panel(ui: &mut egui::Ui, doc: &mut Document) -> bool {
                     }
                     changed = true;
                 }
-            }
         });
 
         if ui.button(t!("soundfont.clear_port").as_ref()).clicked() {

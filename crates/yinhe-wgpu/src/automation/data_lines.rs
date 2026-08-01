@@ -191,7 +191,7 @@ pub fn build_data_lines(
                 }
             }
             // 曲线段中间的空心控制点（仅 Curve 段，非直线时才画）
-            push_curve_control_points(out, lane, &visible_events, view, max_val, x_offset, ppu, color);
+            push_curve_control_points(out, lane, visible_events, view, max_val, x_offset, ppu, color);
         }
     }
 }
@@ -233,7 +233,7 @@ pub(crate) fn build_lane_instances(
                 SegmentShape::Curve { .. } => out.push(CurveInstance::circle(x, y, ANCHOR_RADIUS, anchor_color)),
             }
         }
-        push_curve_control_points(out, lane, &visible_events, view, max_val, x_offset, ppu, color);
+        push_curve_control_points(out, lane, visible_events, view, max_val, x_offset, ppu, color);
     }
 }
 

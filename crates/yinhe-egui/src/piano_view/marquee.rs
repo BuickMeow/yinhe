@@ -79,8 +79,8 @@ pub(crate) fn marquee_drag_frame(
 
     // Move -> update with auto-scroll
     if let (Some(start_px), Some((start_music, press_pos, _))) = (start_pixel, drag) {
-        if pointer.primary_down() && !pointer.primary_pressed() {
-            if let Some(pos) = pointer.hover_pos() {
+        if pointer.primary_down() && !pointer.primary_pressed()
+            && let Some(pos) = pointer.hover_pos() {
                 let clamped = pos.clamp(music_rect.min, music_rect.max);
                 let local = egui::pos2(
                     clamped.x - content_rect.min.x,
@@ -120,7 +120,6 @@ pub(crate) fn marquee_drag_frame(
                 ];
                 crate::view_interaction::draw_hover_tooltip(ui.ctx(), &lines, pos.x, pos.y);
             }
-        }
 
         // Release → compute snapped bounds
         if pointer.primary_released() {
@@ -195,7 +194,7 @@ pub(crate) fn draw_marquee_box(
                 egui::pos2(vx.max(vy) - kb_w, vw.max(vh)),
             )
         };
-        crate::selection::draw::draw(&ui.painter(), music_rect, snapped, fill_color, stroke_color);
+        crate::selection::draw::draw(ui.painter(), music_rect, snapped, fill_color, stroke_color);
     }
 }
 
@@ -262,8 +261,8 @@ pub(crate) fn piano_snapped_bounds(
     let kh = view.key_height;
     let scroll_y = view.base.scroll_y;
 
-    let key_lo = (127.0 - ((scroll_y + ey) / kh)).ceil().max(0.0).min(127.0) as u8;
-    let key_hi = (127.0 - ((scroll_y + sy) / kh)).ceil().max(0.0).min(127.0) as u8;
+    let key_lo = (127.0 - ((scroll_y + ey) / kh)).ceil().clamp(0.0, 127.0) as u8;
+    let key_hi = (127.0 - ((scroll_y + sy) / kh)).ceil().clamp(0.0, 127.0) as u8;
     let screen_sy = (127.0 - key_hi as f32) * kh - scroll_y;
     let screen_ey = (127.0 - key_lo as f32 + 1.0) * kh - scroll_y;
 

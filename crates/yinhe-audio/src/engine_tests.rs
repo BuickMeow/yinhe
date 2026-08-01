@@ -53,8 +53,7 @@ fn make_model_with_notes(notes: Vec<(u8, u32, u32, u8, u8)>) -> YinModel {
 
 #[test]
 fn test_sorted_cc_ordering() {
-    let mut cc = vec![
-        SortedCC {
+    let mut cc = [SortedCC {
             sample: 100,
             channel: 0,
             track: 0,
@@ -71,8 +70,7 @@ fn test_sorted_cc_ordering() {
             channel: 0,
             track: 0,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 60)),
-        },
-    ];
+        }];
     cc.sort_by_key(|e| e.sample);
     assert_eq!(cc[0].sample, 50);
     assert_eq!(cc[1].sample, 100);

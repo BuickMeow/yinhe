@@ -151,6 +151,6 @@ pub(crate) fn show_viewport(
         },
     );
 
-    let action = std::mem::replace(&mut *action_rc.borrow_mut(), AudioDeviceSwitchAction::None);
-    action
+    
+    std::mem::replace(&mut *action_rc.borrow_mut(), AudioDeviceSwitchAction::None)
 }

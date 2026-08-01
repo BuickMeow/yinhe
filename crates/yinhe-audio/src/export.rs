@@ -143,11 +143,10 @@ pub fn export_wav(
         return Err(ExportError::Render("歌曲时长为零，没有可导出的内容".into()));
     }
 
-    if let Some(ref ep) = export_progress {
-        if let Ok(mut p) = ep.lock() {
+    if let Some(ref ep) = export_progress
+        && let Ok(mut p) = ep.lock() {
             p.total_duration_secs = main_duration as f64 / sample_rate as f64;
         }
-    }
 
     let spec = hound::WavSpec {
         channels: 2,
@@ -177,7 +176,7 @@ pub fn export_wav(
 
     // ── Phase 1: render the main content (notes + CC events) ──
     while rendered < main_duration {
-        if cancel.as_ref().map_or(false, |c| c.load(Ordering::Relaxed)) {
+        if cancel.as_ref().is_some_and(|c| c.load(Ordering::Relaxed)) {
             return Err(ExportError::Cancelled);
         }
         let frames = ((main_duration - rendered) as usize).min(RENDER_CHUNK_FRAMES);
@@ -194,9 +193,9 @@ pub fn export_wav(
         progress(pct, &format!("渲染中 {:.0}%", pct * 100.0));
 
         // Update export progress every ~100 blocks to reduce lock overhead
-        if let Some(ref ep) = export_progress {
-            if rendered % (RENDER_CHUNK_FRAMES as u64 * 100) < RENDER_CHUNK_FRAMES as u64 {
-                if let Ok(mut p) = ep.lock() {
+        if let Some(ref ep) = export_progress
+            && rendered % (RENDER_CHUNK_FRAMES as u64 * 100) < RENDER_CHUNK_FRAMES as u64
+                && let Ok(mut p) = ep.lock() {
                     p.rendered_secs = rendered as f64 / sample_rate as f64;
                     p.voice_count = engine.voice_count();
                     let now = Instant::now();
@@ -214,8 +213,6 @@ pub fn export_wav(
                     prev_rendered_secs = p.rendered_secs;
                     prev_instant = now;
                 }
-            }
-        }
     }
 
     // ── Phase 2: tail — let release tails decay naturally ──
@@ -223,7 +220,7 @@ pub fn export_wav(
     let mut tail_rendered: u64 = 0;
 
     loop {
-        if cancel.as_ref().map_or(false, |c| c.load(Ordering::Relaxed)) {
+        if cancel.as_ref().is_some_and(|c| c.load(Ordering::Relaxed)) {
             return Err(ExportError::Cancelled);
         }
         let frames = RENDER_CHUNK_FRAMES.min((max_tail_samples - tail_rendered) as usize);
@@ -253,8 +250,8 @@ pub fn export_wav(
             &format!("余韵衰减中 (剩余 {} 音色)", vc),
         );
 
-        if let Some(ref ep) = export_progress {
-            if let Ok(mut p) = ep.lock() {
+        if let Some(ref ep) = export_progress
+            && let Ok(mut p) = ep.lock() {
                 p.rendered_secs = (rendered + tail_rendered) as f64 / sample_rate as f64;
                 p.voice_count = vc;
                 let now = Instant::now();
@@ -272,7 +269,6 @@ pub fn export_wav(
                 prev_rendered_secs = p.rendered_secs;
                 prev_instant = now;
             }
-        }
     }
 
     progress(0.99, "写入文件");

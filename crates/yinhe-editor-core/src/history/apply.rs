@@ -254,7 +254,7 @@ fn apply_event_list_delta(doc: &mut Document, delta: &super::EventListDelta) {
             if let Some(t) = model.tracks.get_mut(track as usize) {
                 let t = Arc::make_mut(t);
                 t.program_change = delta.new.iter().filter_map(|i| match i {
-                    EventListItem::ProgramChange(e) => Some(e.clone()),
+                    EventListItem::ProgramChange(e) => Some(*e),
                     _ => None,
                 }).collect();
             }

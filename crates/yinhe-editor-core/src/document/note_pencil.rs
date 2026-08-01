@@ -146,11 +146,10 @@ impl Document {
                     .iter()
                     .take_while(|n| n.start_tick == e.start_tick)
                     .find(|n| n.track == e.track);
-                if let Some(n) = note {
-                    if n.velocity != e.velocity {
+                if let Some(n) = note
+                    && n.velocity != e.velocity {
                         targets.push((e.key, n.id, n.velocity, e.velocity));
                     }
-                }
             }
         }
         if targets.is_empty() {

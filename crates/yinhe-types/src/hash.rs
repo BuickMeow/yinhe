@@ -32,7 +32,7 @@ pub fn compute_scroll_frac(scroll_x: f32, scroll_mode: u32) -> (f32, f32) {
 pub fn hash_f64s(values: &[f64]) -> u64 {
     let mut h: u64 = 0;
     for &v in values {
-        h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(v.to_bits() as u64);
+        h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(v.to_bits());
     }
     h
 }

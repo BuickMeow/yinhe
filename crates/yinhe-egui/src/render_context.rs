@@ -389,7 +389,7 @@ mod tests {
     #[test]
     fn texture_byte_size_r8() {
         let size = texture_byte_size(wgpu::TextureFormat::R8Unorm, 200, 100, 1);
-        assert_eq!(size, 200 * 100 * 1);
+        assert_eq!(size, 200 * 100);
     }
 
     #[test]

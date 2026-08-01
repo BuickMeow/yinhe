@@ -100,7 +100,6 @@ fn pianoroll_visible_key_range() {
     let view = PianoRollView::default();
     let (lo, hi) = view.visible_key_range(600.0);
     assert!(lo <= hi);
-    assert!(lo >= 0);
     assert!(hi <= 127);
 }
 

@@ -254,13 +254,11 @@ fn init_native_menu() -> muda::Result<()> {
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             if let Some(map) = MENU_MAP.get()
                 && let Some(action) = map.get(event.id())
-            {
-                if let Ok(sender_guard) = MENU_SENDER.lock()
+                && let Ok(sender_guard) = MENU_SENDER.lock()
                     && let Some(tx) = sender_guard.as_ref()
                 {
                     let _ = tx.send(action.clone());
                 }
-            }
         }));
     }));
 

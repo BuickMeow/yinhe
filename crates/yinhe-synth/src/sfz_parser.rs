@@ -85,7 +85,7 @@ pub fn build_key_map(path: &Path) -> Result<Vec<Vec<KeyInfo>>, String> {
 }
 
 /// 根据 key 和 velocity 选择对应的 KeyInfo（力度分层）。
-pub fn select_key_info<'a>(key_map: &'a [Vec<KeyInfo>], key: u8, velocity: u8) -> Option<&'a KeyInfo> {
+pub fn select_key_info(key_map: &[Vec<KeyInfo>], key: u8, velocity: u8) -> Option<&KeyInfo> {
     let layers = &key_map[key as usize];
     if layers.is_empty() { return None; }
     for info in layers {

@@ -143,7 +143,7 @@ fn sync_renderer_count(
 /// between them, but no leading handle for the first panel).
 pub fn show_panels(
     ui: &mut egui::Ui,
-    panels: &mut Vec<AutomationPanelView>,
+    panels: &mut [AutomationPanelView],
     selected: &mut yinhe_core::Selection,
     renderers: &mut Vec<(InstanceRenderer, RenderContext)>,
     automation_lanes: &[AutomationLane],
@@ -346,8 +346,8 @@ pub fn show_panels(
             }
         }
 
-        if gw > 0 && gh > 0 {
-            if let Some((renderer, render_ctx)) = renderers.get_mut(i) {
+        if gw > 0 && gh > 0
+            && let Some((renderer, render_ctx)) = renderers.get_mut(i) {
                 render_panel_content(
                     ui,
                     renderer,
@@ -443,7 +443,6 @@ pub fn show_panels(
                     );
                 }
             }
-        }
 
         // ── 垂直滚动条（值空间） ──
         // 占用面板右侧 SCROLLBAR_W 宽度。仅在 visible_range < upper_bound 时显示。
@@ -849,11 +848,9 @@ fn render_panel_content(
             })
             .and_then(|l| l.events.get(*event_idx))
             .map(|e| e.tick)
-        {
-            if !highlight_ticks.contains(&tick) {
+            && !highlight_ticks.contains(&tick) {
                 highlight_ticks.push(tick);
             }
-        }
     }
 
     let gpu_dirty = prepare_automation(
@@ -1029,13 +1026,11 @@ fn show_target_combo(
                     });
 
                 // Close only when clicking outside the popup area (not on any interactive element)
-                if ui.input(|i| i.pointer.any_pressed()) {
-                    if let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
-                        if !area_resp.response.rect.contains(pos) && !target_resp.rect.contains(pos) {
+                if ui.input(|i| i.pointer.any_pressed())
+                    && let Some(pos) = ui.input(|i| i.pointer.interact_pos())
+                        && !area_resp.response.rect.contains(pos) && !target_resp.rect.contains(pos) {
                             ui.data_mut(|d| d.insert_persisted(popup_id, false));
                         }
-                    }
-                }
             }
 
             ui.add_space(4.0);

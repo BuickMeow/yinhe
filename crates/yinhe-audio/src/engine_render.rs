@@ -149,11 +149,10 @@ impl AudioEngine {
             self.active_notes.pop();
         }
         // peek 堆顶（最早结束的未结束音符）作为下一 NoteOff 边界候选
-        if let Some(Reverse(an)) = self.active_notes.peek() {
-            if an.end_sample < block_end {
+        if let Some(Reverse(an)) = self.active_notes.peek()
+            && an.end_sample < block_end {
                 next = Some(next.map_or(an.end_sample, |s| s.min(an.end_sample)));
             }
-        }
         for an in &self.ended_notes {
             let dense = self.channel_layout.dense_for(an.channel as usize);
             if dense != u32::MAX {

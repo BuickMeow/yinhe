@@ -471,7 +471,7 @@ fn show_pc_detail(
 ) -> Option<JumpRequest> {
     let t = track as usize;
     let mut events: Vec<yinhe_types::PcEvent> = doc.data.model.tracks.get(t)
-        .map(|td| td.program_change.iter().copied().collect())
+        .map(|td| td.program_change.to_vec())
         .unwrap_or_default();
     events.sort_by_key(|e| e.tick);
     let (page, page_start, page_items) = paginate(state, &events);

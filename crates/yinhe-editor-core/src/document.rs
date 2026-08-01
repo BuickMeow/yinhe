@@ -22,19 +22,12 @@ pub mod track_ops;
 
 /// Per-track mutable overrides (mute, solo).
 #[derive(Clone)]
+#[derive(Default)]
 pub struct TrackOverride {
     pub muted: bool,
     pub soloed: bool,
 }
 
-impl Default for TrackOverride {
-    fn default() -> Self {
-        Self {
-            muted: false,
-            soloed: false,
-        }
-    }
-}
 
 /// Per-document state: persistent data + editing state + undo history.
 pub struct Document {

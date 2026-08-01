@@ -56,11 +56,10 @@ pub fn new_shared() -> SharedProgress {
 }
 
 pub fn set_stage(progress: &SharedProgress, idx: usize, status: StageStatus) {
-    if let Ok(mut p) = progress.lock() {
-        if idx < p.stages.len() {
+    if let Ok(mut p) = progress.lock()
+        && idx < p.stages.len() {
             p.stages[idx].status = status;
         }
-    }
 }
 
 pub fn set_stage_progress(
@@ -69,13 +68,12 @@ pub fn set_stage_progress(
     pct: f32,
     detail: String,
 ) {
-    if let Ok(mut p) = progress.lock() {
-        if idx < p.stages.len() {
+    if let Ok(mut p) = progress.lock()
+        && idx < p.stages.len() {
             p.stages[idx].progress = pct;
             p.stages[idx].detail = detail;
             p.stages[idx].status = StageStatus::Active;
         }
-    }
 }
 
 pub fn set_visible(progress: &SharedProgress, visible: bool) {

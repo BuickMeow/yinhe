@@ -291,11 +291,10 @@ impl CullState {
             self.recreate_cull_bind_group(device, uniform_buffer, key);
         }
 
-        if !notes.is_empty() {
-            if let Some(ref buf) = self.per_key_buffers[key as usize] {
+        if !notes.is_empty()
+            && let Some(ref buf) = self.per_key_buffers[key as usize] {
                 queue.write_buffer(buf, 0, bytemuck::cast_slice(notes));
             }
-        }
         self.per_key_counts[key as usize] = notes.len() as u32;
 
         // Pre-compute dispatch args for this key (used by dispatch_workgroups_indirect).

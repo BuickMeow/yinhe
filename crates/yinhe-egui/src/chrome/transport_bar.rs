@@ -225,8 +225,8 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
             let mut drag_started: bool = ui.data_mut(|d| d.get_temp(drag_id)).unwrap_or(false);
 
             if ui.input(|i| i.pointer.primary_down()) {
-                if !drag_started {
-                    if let Some(pos) = ui.input(|i| i.pointer.press_origin()) {
+                if !drag_started
+                    && let Some(pos) = ui.input(|i| i.pointer.press_origin()) {
                         let in_bar = bar_rect.contains(pos);
                         let in_timecode = timecode_rect
                             .map(|r: egui::Rect| r.contains(pos))
@@ -239,7 +239,6 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                             ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
                         }
                     }
-                }
             } else {
                 drag_started = false;
             }

@@ -380,8 +380,7 @@ impl FileLoader {
                 Ok(d) => d,
                 Err(e) => {
                     let _ = tx.send(MidiLoadEvent::Complete(Box::new(Err(
-                        yinhe_mid2::MidiError::Io(std::io::Error::new(
-                            std::io::ErrorKind::Other,
+                        yinhe_mid2::MidiError::Io(std::io::Error::other(
                             e.to_string(),
                         )),
                     ))));

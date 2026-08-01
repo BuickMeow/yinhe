@@ -623,8 +623,7 @@ mod tests {
             // track 0: 两个音符，end_tick 分别为 480 和 1920（末尾）
             vec![note_audible(0, 480, 60), note_audible(480, 1920, 62)],
         ];
-        let mut m = YinModel::default();
-        m.tracks = vec![Arc::new(super::TrackData::new(0, 0))];
+        let mut m = YinModel { tracks: vec![Arc::new(super::TrackData::new(0, 0))], ..Default::default() };
         m.load_track_notes(per_track);
         m.rebuild();
         assert_eq!(m.tick_length, 1920, "初始 tick_length 应为末尾音符 end_tick");

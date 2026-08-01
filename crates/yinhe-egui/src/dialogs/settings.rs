@@ -375,7 +375,9 @@ pub(crate) fn show_viewport(
         },
     );
 
-    let should_teardown = if let Some(s) = std::rc::Rc::into_inner(settings_rc)
+    
+
+    if let Some(s) = std::rc::Rc::into_inner(settings_rc)
         .and_then(|rc| rc.into_inner())
     {
         *settings = s;
@@ -383,8 +385,8 @@ pub(crate) fn show_viewport(
             settings.haptic_enabled,
             settings.haptic_intensity,
         );
-        if settings.xsynth_layers != prev_xsynth_layers {
-            if let Some(audio) = audio {
+        if settings.xsynth_layers != prev_xsynth_layers
+            && let Some(audio) = audio {
                 let count = if settings.xsynth_layers == 0 {
                     None
                 } else {
@@ -392,11 +394,8 @@ pub(crate) fn show_viewport(
                 };
                 audio.handle.send(yinhe_audio::AudioCommand::SetLayerCount { count });
             }
-        }
         !settings.show_settings
     } else {
         false
-    };
-
-    should_teardown
+    }
 }

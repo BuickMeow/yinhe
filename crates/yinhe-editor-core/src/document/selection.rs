@@ -106,16 +106,14 @@ impl Document {
             let entry = cut_past_len
                 .and_then(|len| self.history.past.get(len))
                 .or_else(|| self.history.past.back());
-            if let Some(entry) = entry {
-                if let UndoAction::Notes(delta) = &entry.action {
-                    if !delta.before.is_empty() {
+            if let Some(entry) = entry
+                && let UndoAction::Notes(delta) = &entry.action
+                    && !delta.before.is_empty() {
                         notes = delta.before.iter()
                             .filter(|(n, key)| clipboard.contains(n.track, n.start_tick, *key))
                             .cloned()
                             .collect();
                     }
-                }
-            }
         }
 
         if notes.is_empty() {

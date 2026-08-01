@@ -75,6 +75,7 @@ impl TimeRulerView for yinhe_types::ArrangementView {
 /// - medium → `bar.beat`
 /// - dense  → `bar.beat.sub_beat`
 /// - very dense → `bar.beat.tick` (e.g. `1.1.234`)
+///
 /// Paint the ruler background and bottom divider.
 fn paint_background(painter: &egui::Painter, rect: egui::Rect) {
     painter.rect_filled(rect, 0.0, theme::RULER_BG);

@@ -52,10 +52,10 @@ impl YinModel {
                     max_tick = end;
                 }
                 note_count += 1;
-                if (track_idx as usize) < track_counts.len() {
-                    track_counts[track_idx as usize] += 1;
+                if track_idx < track_counts.len() {
+                    track_counts[track_idx] += 1;
                     if note.velocity > 1 {
-                        track_audible[track_idx as usize] += 1;
+                        track_audible[track_idx] += 1;
                     }
                 }
                 // id 分配：0 = 未分配，从发号器取；非 0 = 外部分配，保留并跟踪 max。
@@ -93,7 +93,7 @@ impl YinModel {
             self.next_note_id = max_id_seen + 1;
         }
 
-        self.notes = Box::new(key_notes.map(|v| Arc::new(v)));
+        *self.notes = key_notes.map(Arc::new);
         self.note_count = note_count;
         self.tick_length = max_tick;
         self.track_note_count = track_counts;
@@ -136,18 +136,17 @@ impl YinModel {
         for (track_idx, track) in self.tracks.iter().enumerate() {
             let ch = track.global_channel() as usize;
             // channel_note_count: 累加该 track 的发声音符数（与 ChannelLayout::from_model 的 saturating_add 一致）
-            if let Some(&audible) = self.track_audible_count.get(track_idx) {
-                if audible > 0 {
+            if let Some(&audible) = self.track_audible_count.get(track_idx)
+                && audible > 0 {
                     note_counts[ch] = note_counts[ch].saturating_add(audible as u32);
                 }
-            }
             // channel_ctrl_count: 该 track 有 automation_lanes 或 program_change 就 +1
             if !track.automation_lanes.is_empty() || !track.program_change.is_empty() {
                 ctrl_counts[ch] = ctrl_counts[ch].saturating_add(1);
             }
         }
-        self.channel_note_count = Box::new(note_counts);
-        self.channel_ctrl_count = Box::new(ctrl_counts);
+        *self.channel_note_count = note_counts;
+        *self.channel_ctrl_count = ctrl_counts;
     }
 
     /// Rebuild all derived data from scratch.

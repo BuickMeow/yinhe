@@ -68,11 +68,10 @@ pub fn show(
                 state.expanded_keys.insert(ArchiveKey::Port(t.port));
             }
         }
-        if let Some(idx) = state.selected_track {
-            if idx as usize >= tracks_len {
+        if let Some(idx) = state.selected_track
+            && idx as usize >= tracks_len {
                 state.selected_track = None;
             }
-        }
         state.fingerprint = Some(fingerprint);
     }
 

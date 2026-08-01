@@ -81,8 +81,7 @@ pub fn show(
     if let Some(ct) = *cursor_tick
         && is_playing
         && *follow_mode != crate::view_interaction::FollowMode::None
-    {
-        if let Some(new_scroll_x) = crate::view_interaction::compute_follow_scroll(
+        && let Some(new_scroll_x) = crate::view_interaction::compute_follow_scroll(
             ct,
             view.base.pixels_per_tick,
             w as f32,
@@ -93,7 +92,6 @@ pub fn show(
             view.base.scroll_x = new_scroll_x;
             view.clamp_scroll(w as f32, h as f32, total_ticks, num_tracks);
         }
-    }
 
     let scroll_x = view.base.scroll_x;
     let (scroll_x_pos, scroll_frac) = match scroll_mode {
@@ -287,7 +285,7 @@ pub fn show(
 
     // ── Draw drag selection rect (move-drag offset or marquee) on top of GPU texture ──
     if let Some(dr) = drag_rect {
-        crate::selection::draw::draw(&ui.painter(), rect, dr, egui::Color32::WHITE, egui::Color32::WHITE);
+        crate::selection::draw::draw(ui.painter(), rect, dr, egui::Color32::WHITE, egui::Color32::WHITE);
     }
 
     // ── Eraser tool dispatch (after GPU texture, before eraser marquee drawing) ──
@@ -317,7 +315,7 @@ pub fn show(
             egui::pos2(view_sx.min(view_ex), view_sy.min(view_ey)),
             egui::pos2(view_sx.max(view_ex), view_sy.max(view_ey)),
         );
-        crate::selection::draw::draw(&ui.painter(), rect, snapped, egui::Color32::WHITE, egui::Color32::WHITE);
+        crate::selection::draw::draw(ui.painter(), rect, snapped, egui::Color32::WHITE, egui::Color32::WHITE);
     }
 
     // Draw eraser marquee box in red (active during drag)
@@ -330,17 +328,16 @@ pub fn show(
                 view.tick_to_x(start_music.0),
                 start_music.1 * view.lane_height() - view.base.scroll_y,
             );
-            if (end - start_pixel).length() >= 3.0 {
-                if let Some((vx, vy, vw, vh, _, _, _, _)) =
+            if (end - start_pixel).length() >= 3.0
+                && let Some((vx, vy, vw, vh, _, _, _, _)) =
                     arrange_snapped_bounds(start_pixel, end, view, quantize, ppq, bar_line_data, num_tracks, false)
                 {
                     let snapped = egui::Rect::from_min_max(
                         egui::pos2(vx.min(vy), vw.min(vh)),
                         egui::pos2(vx.max(vy), vw.max(vh)),
                     );
-                    crate::selection::draw::draw(&ui.painter(), rect, snapped, egui::Color32::RED, egui::Color32::RED);
+                    crate::selection::draw::draw(ui.painter(), rect, snapped, egui::Color32::RED, egui::Color32::RED);
                 }
-            }
         }
     }
 
@@ -517,9 +514,9 @@ fn sel_drag_frame_arrange(
     }
 
     // ── Move-drag: update current position ──
-    if let Some((origin, _)) = move_drag {
-        if pointer.primary_down() && !pointer.primary_pressed() {
-            if let Some(pos) = pointer.hover_pos() {
+    if let Some((origin, _)) = move_drag
+        && pointer.primary_down() && !pointer.primary_pressed()
+            && let Some(pos) = pointer.hover_pos() {
                 let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
                 let current_tick = view.x_to_tick(local.x);
                 let current_track_f = (local.y + view.base.scroll_y) / view.lane_height();
@@ -539,14 +536,12 @@ fn sel_drag_frame_arrange(
                     },
                 );
             }
-        }
-    }
 
     // ── Generate ghost notes + offset sel_rect from current move_drag (BEFORE release) ──
     // Ghost notes must be generated before release clears move_drag, so the ghost
     // stays visible on the release frame (preventing flicker before model update).
-    if let Some(((origin_t, origin_tr), (current_t, current_tr))) = move_drag {
-        if !move_orig_sel.is_empty() {
+    if let Some(((origin_t, origin_tr), (current_t, current_tr))) = move_drag
+        && !move_orig_sel.is_empty() {
             let snapped_origin = crate::view_interaction::snap_tick(origin_t, quantize, ppq, bar_line_data);
             let snapped_current = crate::view_interaction::snap_tick(current_t, quantize, ppq, bar_line_data);
             let dt = (snapped_current - snapped_origin).round() as i64;
@@ -586,7 +581,6 @@ fn sel_drag_frame_arrange(
                 }
             }
         }
-    }
 
     // ── Move-drag: release handling ──
     if move_drag.is_some() && pointer.primary_released() {
@@ -623,8 +617,8 @@ fn sel_drag_frame_arrange(
 
     // ── Selection marquee drag handling ──
     if let Some((start_music, _)) = drag {
-        if pointer.primary_down() && !pointer.primary_pressed() {
-            if let Some(pos) = pointer.hover_pos() {
+        if pointer.primary_down() && !pointer.primary_pressed()
+            && let Some(pos) = pointer.hover_pos() {
                 let clamped = pos.clamp(content_rect.min, content_rect.max);
                 let local = egui::pos2(
                     clamped.x - content_rect.min.x,
@@ -645,7 +639,6 @@ fn sel_drag_frame_arrange(
                     },
                 );
             }
-        }
 
         let start_pixel = egui::pos2(
             view.tick_to_x(start_music.0),
@@ -653,9 +646,9 @@ fn sel_drag_frame_arrange(
         );
 
         // Compute marquee drag_rect (BEFORE release, same pattern as move-drag)
-        if let Some((_, end)) = drag {
-            if (end - start_pixel).length() >= 3.0 {
-                if let Some((vx, vy, vw, vh, _, _, _, _)) =
+        if let Some((_, end)) = drag
+            && (end - start_pixel).length() >= 3.0
+                && let Some((vx, vy, vw, vh, _, _, _, _)) =
                     arrange_snapped_bounds(start_pixel, end, view, quantize, ppq, bar_line_data, num_tracks, vertical)
                 {
                     drag_rect = Some(egui::Rect::from_min_max(
@@ -663,8 +656,6 @@ fn sel_drag_frame_arrange(
                         egui::pos2(vx.max(vy), vw.max(vh)),
                     ));
                 }
-            }
-        }
 
         if pointer.primary_released() {
             if let (Some(_midi_ref), Some((_, end))) = (midi, drag) {
@@ -762,8 +753,8 @@ fn eraser_drag_frame_arrange(
 
     // Move → update with auto-scroll
     if let Some((start_music, _)) = drag {
-        if pointer.primary_down() && !pointer.primary_pressed() {
-            if let Some(pos) = pointer.hover_pos() {
+        if pointer.primary_down() && !pointer.primary_pressed()
+            && let Some(pos) = pointer.hover_pos() {
                 let clamped = pos.clamp(content_rect.min, content_rect.max);
                 let local = egui::pos2(
                     clamped.x - content_rect.min.x,
@@ -781,7 +772,6 @@ fn eraser_drag_frame_arrange(
                     },
                 );
             }
-        }
 
         let start_pixel = egui::pos2(
             view.tick_to_x(start_music.0),
@@ -791,13 +781,12 @@ fn eraser_drag_frame_arrange(
         // Release → compute snapped bounds, set eraser rect
         if pointer.primary_released() {
             if let Some((_, end)) = drag {
-                if (end - start_pixel).length() >= 3.0 {
-                    if let Some((_, _, _, _, t_start, t_end, track_lo, track_hi)) =
+                if (end - start_pixel).length() >= 3.0
+                    && let Some((_, _, _, _, t_start, t_end, track_lo, track_hi)) =
                         arrange_snapped_bounds(start_pixel, end, view, quantize, ppq, bar_line_data, num_tracks, false)
                     {
                         *arr_eraser_rect = Some((t_start, t_end, track_lo, track_hi));
                     }
-                }
                 view.base.dirty = true;
             }
             drag = None;

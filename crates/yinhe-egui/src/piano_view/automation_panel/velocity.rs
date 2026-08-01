@@ -152,13 +152,12 @@ pub(crate) fn handle_velocity_interaction(
             collect_segment(midi, track, ((tick, value), (tick, value)), hit_ticks, &mut touched);
             stroke = Some(VelocityStroke { track, last: (tick, value), touched });
         }
-    } else if down {
-        if let (Some(s), Some((_, tick, value))) = (stroke.as_mut(), mouse) {
+    } else if down
+        && let (Some(s), Some((_, tick, value))) = (stroke.as_mut(), mouse) {
             let last = s.last;
             collect_segment(midi, s.track, (last, (tick, value)), hit_ticks, &mut s.touched);
             s.last = (tick, value);
         }
-    }
 
     let color = egui::Color32::from_rgb(
         (track_color[0] * 255.0) as u8,

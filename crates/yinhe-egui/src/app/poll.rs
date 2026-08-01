@@ -108,8 +108,8 @@ impl App {
         }
 
         // Poll async save completion
-        if let Some(rx) = &self.save_rx {
-            if rx.try_recv().is_ok() {
+        if let Some(rx) = &self.save_rx
+            && rx.try_recv().is_ok() {
                 self.save_rx = None;
                 // Mark the active document as saved
                 if let Some(idx) = self.active_doc {
@@ -121,11 +121,10 @@ impl App {
                     self.execute_pending_file_action(&ctx);
                 }
             }
-        }
 
         // Poll async export completion
-        if let Some(rx) = &self.export.rx {
-            if let Ok(result) = rx.try_recv() {
+        if let Some(rx) = &self.export.rx
+            && let Ok(result) = rx.try_recv() {
                 self.export.rx = None;
                 match result {
                     Ok((path, elapsed, speed)) => {
@@ -140,7 +139,6 @@ impl App {
                     }
                 }
             }
-        }
 
         // Poll async PPQ rescale completion
         self.poll_rescale_completion();

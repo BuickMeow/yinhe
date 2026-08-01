@@ -160,11 +160,10 @@ impl Drop for CpalAudioHandle {
         // 同步 join renderer 线程。WAKE_SLEEP=1ms，renderer 最多 1ms 后退出，
         // join 阻塞时间可忽略。确保 AudioEngine → ChannelGroup → 2 个 rayon::ThreadPool
         // 在返回前被 drop，避免线程泄漏。
-        if let Some(handle) = self.renderer_handle.take() {
-            if let Err(payload) = handle.join() {
+        if let Some(handle) = self.renderer_handle.take()
+            && let Err(payload) = handle.join() {
                 tracing::error!("Audio renderer thread panicked during shutdown: {payload:?}");
             }
-        }
     }
 }
 
@@ -172,13 +171,13 @@ impl CpalAudioHandle {
     /// Notify the audio thread that the MIDI model has changed (full rebuild:
     /// cc_events + audible_notes + chase). Use for automation edits / undo / redo.
     pub fn reload_notes(&self, model: Arc<YinModel>) {
-        let _ = self.handle.send(AudioCommand::ReloadNotes { model });
+        self.handle.send(AudioCommand::ReloadNotes { model });
     }
 
     /// Notify the audio thread that only notes have changed (no automation, no
     /// chase). Use for pure note edits — keeps current channel state intact.
     pub fn update_notes(&self, model: Arc<YinModel>) {
-        let _ = self.handle.send(AudioCommand::UpdateNotes { model });
+        self.handle.send(AudioCommand::UpdateNotes { model });
     }
 }
 
@@ -550,7 +549,7 @@ pub fn spawn_cpal_audio(
         Err(payload) => {
             let msg = payload
                 .downcast_ref::<String>().map(|s| s.as_str())
-                .or_else(|| payload.downcast_ref::<&str>().map(|s| *s))
+                .or_else(|| payload.downcast_ref::<&str>().copied())
                 .unwrap_or("unknown panic");
             return Err(format!("AudioEngine initialization failed: {msg}"));
         }

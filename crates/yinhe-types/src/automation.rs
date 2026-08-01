@@ -211,7 +211,7 @@ impl AutomationTarget {
     pub fn default_shape(&self) -> SegmentShape {
         match self {
             AutomationTarget::CC { controller } => match controller {
-                64 | 65 | 66 | 67 | 68 => SegmentShape::Step,
+                64..=68 => SegmentShape::Step,
                 _ => SegmentShape::linear_curve(),
             },
             AutomationTarget::PitchBend => SegmentShape::linear_curve(),

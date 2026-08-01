@@ -73,11 +73,10 @@ pub(crate) fn show(
 
     let btn_size = egui::vec2(18.0, 18.0);
 
-    for idx in first..last {
+    for (idx, ti) in track_info.iter().enumerate().take(last).skip(first) {
         if !track_visible.get(idx).copied().unwrap_or(true) {
             continue;
         }
-        let ti = &track_info[idx];
         let y = panel_rect.min.y + idx as f32 * *row_height - *scroll_y;
         if y > panel_rect.max.y || y + *row_height < panel_rect.min.y {
             continue;
@@ -188,18 +187,16 @@ pub(crate) fn show(
                     egui::Id::new(("track_btn_s", idx)),
                 );
 
-                if m_resp.clicked() {
-                    if let Some(ov) = track_overrides.get_mut(idx) {
+                if m_resp.clicked()
+                    && let Some(ov) = track_overrides.get_mut(idx) {
                         ov.muted = !ov.muted;
                         audio_dirty = true;
                     }
-                }
-                if s_resp.clicked() {
-                    if let Some(ov) = track_overrides.get_mut(idx) {
+                if s_resp.clicked()
+                    && let Some(ov) = track_overrides.get_mut(idx) {
                         ov.soloed = !ov.soloed;
                         audio_dirty = true;
                     }
-                }
             }
 
             // 铅笔 ICON：双击 track 后显示，表示该 track 是 pencil/automation 的编辑目标。
@@ -255,8 +252,8 @@ pub(crate) fn show(
     };
 
     if resp.double_clicked() {
-        if let Some(pos) = resp.interact_pointer_pos() {
-            if let Some(idx) = hit(pos) {
+        if let Some(pos) = resp.interact_pointer_pos()
+            && let Some(idx) = hit(pos) {
                 // 双击 toggle：已经是 editing_track 则清除（关闭编辑），
                 // 否则设为新 editing_track（打开 PR 并切换编辑目标）。
                 let track_idx = track_info[idx].index;
@@ -267,10 +264,9 @@ pub(crate) fn show(
                     *request_pianoroll = true;
                 }
             }
-        }
-    } else if resp.clicked() {
-        if let Some(pos) = resp.interact_pointer_pos() {
-            if let Some(idx) = hit(pos) {
+    } else if resp.clicked()
+        && let Some(pos) = resp.interact_pointer_pos()
+            && let Some(idx) = hit(pos) {
                 let track_idx = track_info[idx].index;
                 let shift = ui.input(|i| i.modifiers.shift);
                 let cmd = ui.input(|i| i.modifiers.command || i.modifiers.ctrl);
@@ -311,17 +307,15 @@ pub(crate) fn show(
                 }
                 *info_content = Some(crate::right_panel::InfoContent::Track);
             }
-        }
-    }
 
     // ── Right-click context menu ──
     // On secondary click, select the track under the cursor and record its
     // index in egui temp data so the context_menu closure (which may run on
     // subsequent frames while the menu stays open) can recover it.
     let ctx_menu_idx_id = egui::Id::new("track_ctx_menu_idx");
-    if resp.secondary_clicked() {
-        if let Some(pos) = resp.interact_pointer_pos() {
-            if let Some(idx) = hit(pos) {
+    if resp.secondary_clicked()
+        && let Some(pos) = resp.interact_pointer_pos()
+            && let Some(idx) = hit(pos) {
                 let track_idx = track_info[idx].index;
                 if !track_selected.contains(&track_idx) {
                     track_selected.clear();
@@ -331,8 +325,6 @@ pub(crate) fn show(
                 *info_content = Some(crate::right_panel::InfoContent::Track);
                 ui.ctx().data_mut(|d| d.insert_temp(ctx_menu_idx_id, idx));
             }
-        }
-    }
 
     resp.context_menu(|ui| {
         let idx = ui
@@ -352,18 +344,16 @@ pub(crate) fn show(
                 ui.close();
             }
             ui.separator();
-            if idx > 0 && conductor_track_idx != Some((idx - 1) as u16) {
-                if ui.button(t!("arrange.move_up").as_ref()).clicked() {
+            if idx > 0 && conductor_track_idx != Some((idx - 1) as u16)
+                && ui.button(t!("arrange.move_up").as_ref()).clicked() {
                     actions.push(TrackAction::MoveUp { idx });
                     ui.close();
                 }
-            }
-            if idx < num_tracks - 1 {
-                if ui.button(t!("arrange.move_down").as_ref()).clicked() {
+            if idx < num_tracks - 1
+                && ui.button(t!("arrange.move_down").as_ref()).clicked() {
                     actions.push(TrackAction::MoveDown { idx });
                     ui.close();
                 }
-            }
             ui.separator();
             if ui.button(t!("arrange.delete_track").as_ref()).clicked() {
                 actions.push(TrackAction::RemoveTrack { idx });

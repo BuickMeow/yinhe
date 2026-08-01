@@ -46,11 +46,10 @@ pub fn show(
     let rev_before = doc.data.revision;
     let port_changed = render(ui, doc, audio, info_content, automation_drag_ghost);
     let rev_after = doc.data.revision;
-    if rev_after != rev_before {
-        if let Some(audio) = audio {
+    if rev_after != rev_before
+        && let Some(audio) = audio {
             audio.reload_notes(doc.data.model.clone());
         }
-    }
     port_changed
 }
 

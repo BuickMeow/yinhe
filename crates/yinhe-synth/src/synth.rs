@@ -376,13 +376,16 @@ impl GpuAudioRenderer {
                 wgpu::BindGroupEntry { binding: 1, resource: v.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 2, resource: f.as_entire_binding() },
             ];
+            // 必须固定迭代 MAX_CHUNKS 次：sc 可能不足 MAX_CHUNKS，
+            // 其余 binding slot 用 dummy buffer 占位（layout 要求全部填充）。
+            #[allow(clippy::needless_range_loop)]
             for i in 0..MAX_CHUNKS {
-                let buf = if (i as u32) < chunk_count {
+                let resource = if (i as u32) < chunk_count {
                     sc[i].as_entire_binding()
                 } else {
                     db.as_entire_binding()
                 };
-                bg_entries.push(wgpu::BindGroupEntry { binding: (3 + i) as u32, resource: buf });
+                bg_entries.push(wgpu::BindGroupEntry { binding: (3 + i) as u32, resource });
             }
             bg_entries.push(wgpu::BindGroupEntry { binding: 8, resource: co.as_entire_binding() });
             device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -628,11 +631,11 @@ mod tests {
     #[test]
     fn gpu_vs_cpu_correctness() {
         let (mut renderer, samples) = match setup_gpu() { Some(r) => r, None => { eprintln!("No GPU"); return; } };
-        let sample_len = 4096u32;
+        let _sample_len = 4096u32;
         eprintln!("Sample data: len={} first5={:?}", samples.len(), &samples[..5.min(samples.len())]);
 
         // Test: manually create a 1-chunk renderer with known data
-        let test_data: Vec<f32> = (0..1024).map(|i| (i as f32 / 1024.0)).collect();
+        let test_data: Vec<f32> = (0..1024).map(|i| i as f32 / 1024.0).collect();
         renderer.upload_samples(&test_data);
         // Force recreate buffers
         renderer.buffers = None;
@@ -698,11 +701,11 @@ mod tests {
             label: Some("fresh_offsets"), contents: bytemuck::cast_slice(&offsets_data),
             usage: wgpu::BufferUsages::UNIFORM,
         });
-        let staging_buf = device.create_buffer(&wgpu::BufferDescriptor {
+        let _staging_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("fresh_staging"), size: 64,
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST, mapped_at_creation: false,
         });
-        let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let _bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("fresh_bg"), layout: &renderer.bind_group_layout,
             entries: &[
                 wgpu::BindGroupEntry { binding: 0, resource: params_buf.as_entire_binding() },
@@ -721,7 +724,7 @@ mod tests {
         let const_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("const_one"), source: wgpu::ShaderSource::Wgsl(const_shader.into()),
         });
-        let const_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        let _const_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("const_pipe"), layout: Some(&renderer.pipeline_layout),
             module: &const_module, entry_point: Some("vs_main"),
             compilation_options: Default::default(), cache: None,

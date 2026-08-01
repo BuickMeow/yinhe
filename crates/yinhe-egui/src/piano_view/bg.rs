@@ -65,8 +65,8 @@ fn paint_scale_background(
     let bottom = 128.0 * kh - view.base.scroll_y;
 
     // 可见 key 范围：y_to_key(0.0)=顶部 key（大值），y_to_key(h)=底部 key（小值）
-    let key_hi = view.y_to_key(0.0).min(127) as u8;
-    let key_lo = view.y_to_key(h).max(0) as u8;
+    let key_hi = view.y_to_key(0.0).min(127);
+    let key_lo = view.y_to_key(h);
 
     // 按 tick 区间渲染
     let (tick_start, tick_end) = view.visible_tick_range(content_rect.width());
@@ -162,8 +162,8 @@ fn paint_black_key_rows(
     let bottom = 128.0 * kh - view.base.scroll_y;
 
     // 可见 key 范围
-    let key_hi = view.y_to_key(0.0).min(127) as u8;
-    let key_lo = view.y_to_key(h).max(0) as u8;
+    let key_hi = view.y_to_key(0.0).min(127);
+    let key_lo = view.y_to_key(h);
 
     // 区间 x 范围（clamp 到 content 区域）
     let ppt = view.base.pixels_per_tick;

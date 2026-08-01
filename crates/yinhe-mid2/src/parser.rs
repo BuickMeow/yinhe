@@ -139,7 +139,7 @@ pub fn parse_bytes_with_encoding(
 /// background parse thread, avoiding O(n) note iteration on the UI thread.
 fn ensure_conductor_track(model: &mut YinModel) {
     let has_conductor = model.track_note_count.first().copied().unwrap_or(0) == 0
-        && model.tracks.first().map_or(false, |t| {
+        && model.tracks.first().is_some_and(|t| {
             t.automation_lanes.is_empty() && t.program_change.is_empty()
         });
     if has_conductor || model.tracks.is_empty() {
@@ -498,7 +498,7 @@ fn parse_track(
 
     // Flush pending bank values that were NOT consumed by a ProgramChange.
     // These become plain CC events so nothing is lost.
-    for (_ch_idx, bank) in pending_bank.iter().enumerate() {
+    for bank in pending_bank.iter() {
         if let Some((val, tick)) = bank.msb {
             auto_events.push((
                 AutomationTarget::CC { controller: 0 },
@@ -561,7 +561,7 @@ fn group_automation_events(
         }
         let lane_events: Vec<AutomationEvent> = events[start..i]
             .iter()
-            .map(|(_, e)| e.clone())
+            .map(|(_, e)| *e)
             .collect();
         lanes.push(AutomationLane {
             target,

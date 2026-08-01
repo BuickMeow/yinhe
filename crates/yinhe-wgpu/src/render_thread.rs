@@ -123,14 +123,12 @@ impl RenderThreadHandle {
                     renderer.ensure_layers(total_layers);
 
                     // Upload note layers (cache_key=0 means force)
-                    let mut layer_idx = 0;
-                    for nl in &job.note_layers {
+                    for (layer_idx, nl) in job.note_layers.iter().enumerate() {
                         let cache_key = nl.cache_key;
                         let instances = &nl.instances;
                         renderer.upload_note_layer(layer_idx, if nl.force { 0 } else { cache_key }, |out| {
                             out.extend_from_slice(instances);
                         });
-                        layer_idx += 1;
                     }
 
                     // Draw + submit

@@ -325,10 +325,7 @@ impl Document {
                     shape,
                 } => {
                     let event = yinhe_types::AutomationEvent { tick, value, shape };
-                    match self.add_automation_event(track_idx as usize, target, event) {
-                        Some((_, _, action)) => Some(action),
-                        None => None,
-                    }
+                    self.add_automation_event(track_idx as usize, target, event).map(|(_, _, action)| action)
                 }
                 AutomationEdit::Move {
                     track_idx,
@@ -657,7 +654,8 @@ mod tests {
             })],
             ..Default::default()
         };
-        let doc = Document {
+        
+        Document {
             data: crate::project_data::ProjectData::new(
                 Arc::new(model),
                 vec!["t".to_string()],
@@ -683,8 +681,7 @@ mod tests {
             history: crate::history::UndoStack::new(),
             file_name: "test".into(),
             file_path: None,
-        };
-        doc
+        }
     }
 
     #[test]

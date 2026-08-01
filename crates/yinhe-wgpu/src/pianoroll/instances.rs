@@ -233,9 +233,6 @@ mod tests {
         }
     }
 
-    fn make_theme() -> GpuTheme {
-        GpuTheme::default()
-    }
 
     #[test]
     fn test_build_notes_basic() {

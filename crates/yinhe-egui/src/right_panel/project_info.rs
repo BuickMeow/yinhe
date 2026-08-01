@@ -154,7 +154,7 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
             .color(egui::Color32::from_gray(160))
             .size(11.0),
     );
-    let mut zstd_level = doc.data.model.meta.compression_level as i32;
+    let mut zstd_level = doc.data.model.meta.compression_level;
     let resp = ui.add_sized(
         egui::vec2(60.0, 20.0),
         crate::widgets::numeric_input::decimal_drag_value(&mut zstd_level).range(0..=22),

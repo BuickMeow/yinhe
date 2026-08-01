@@ -60,11 +60,10 @@ impl Document {
         self.edit.track_selected.clear();
         self.edit.track_selected.insert(insert_idx as u16);
         // 新增 track 后，editing_track 后面的索引要 +1
-        if let Some(t) = self.edit.editing_track {
-            if (t as usize) >= insert_idx {
+        if let Some(t) = self.edit.editing_track
+            && (t as usize) >= insert_idx {
                 self.edit.editing_track = Some(t + 1);
             }
-        }
 
         Some(UndoAction::TrackStructure {
             tracks_before,

@@ -419,17 +419,15 @@ fn field_row(
                 .hint_text(if uniform.is_none() { "—" } else { "" }),
         );
         // 实时提示（如 Key 框的音程名）：聚焦且有输入时显示
-        if let Some(h) = hint {
-            if resp.has_focus() && !text.trim().is_empty() {
-                if let Some(s) = h(text.trim()) {
+        if let Some(h) = hint
+            && resp.has_focus() && !text.trim().is_empty()
+                && let Some(s) = h(text.trim()) {
                     ui.label(
                         egui::RichText::new(s)
                             .size(11.0)
                             .color(egui::Color32::from_gray(140)),
                     );
                 }
-            }
-        }
         ui.ctx().data_mut(|d| d.insert_temp(buf_id, text.clone()));
         let submit = resp.lost_focus()
             || (resp.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));

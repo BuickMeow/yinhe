@@ -52,7 +52,7 @@ pub fn write_to_bytes(model: &YinModel) -> Result<Vec<u8>, MidiError> {
 
     let mut buf = Vec::new();
     smf.write(&mut buf)
-        .map_err(|e| MidiError::Io(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
+        .map_err(|e| MidiError::Io(std::io::Error::other(e.to_string())))?;
     Ok(buf)
 }
 

@@ -189,10 +189,10 @@ pub(crate) fn sel_drag_frame(
     // Note drag: use pre-computed data for ghost/hidden, store delta only on release
     let mut ghost_notes: Vec<(u32, u32, u8, u16)> = Vec::new();
     let mut hidden_notes: Vec<(u16, u32, u8)> = Vec::new();
-    if let Some((origin_tick, origin_key, alt)) = note_drag_origin {
-        if let Some(ref notes) = drag_notes {
-            if pointer.primary_down() && !pointer.primary_pressed() {
-                if let Some(pos) = pointer.hover_pos() {
+    if let Some((origin_tick, origin_key, alt)) = note_drag_origin
+        && let Some(ref notes) = drag_notes {
+            if pointer.primary_down() && !pointer.primary_pressed()
+                && let Some(pos) = pointer.hover_pos() {
                     // auto-scroll：拖拽音符能推出屏幕（pos 未 clamp）
                     crate::selection::drag::auto_scroll_on_drag(
                         ui,
@@ -244,7 +244,6 @@ pub(crate) fn sel_drag_frame(
                     crate::view_interaction::draw_hover_tooltip(ui.ctx(), &lines, pos.x, pos.y);
                     ui.ctx().request_repaint();
                 }
-            }
             if pointer.primary_released() {
                 if let Some(pos) = pointer.hover_pos() {
                     let clamped = pos.clamp(music_rect.min, music_rect.max);
@@ -281,14 +280,13 @@ pub(crate) fn sel_drag_frame(
                 drag_notes = None;
             }
         }
-    }
 
     // ── Resize drag: 边缘拖动伸缩选中音符 ──
-    if let Some((side, origin_boundary_tick, other_boundary_tick)) = sel_resize_state {
-        if let Some(ref notes) = drag_notes {
+    if let Some((side, origin_boundary_tick, other_boundary_tick)) = sel_resize_state
+        && let Some(ref notes) = drag_notes {
             // Drag：实时显示 ghost + 更新 sel_rect
-            if pointer.primary_down() && !pointer.primary_pressed() {
-                if let Some(pos) = pointer.hover_pos() {
+            if pointer.primary_down() && !pointer.primary_pressed()
+                && let Some(pos) = pointer.hover_pos() {
                     // auto-scroll：边缘拖动能推出屏幕
                     crate::selection::drag::auto_scroll_on_drag(
                         ui,
@@ -347,7 +345,6 @@ pub(crate) fn sel_drag_frame(
                     crate::view_interaction::draw_hover_tooltip(ui.ctx(), &lines, pos.x, pos.y);
                     ui.ctx().request_repaint();
                 }
-            }
             // Release：提交 dt
             if pointer.primary_released() {
                 if let Some(pos) = pointer.hover_pos() {
@@ -392,7 +389,6 @@ pub(crate) fn sel_drag_frame(
                 drag_notes = None;
             }
         }
-    }
 
     // ── Marquee selection (shared with Eraser tool) ──
     // Only start a marquee if no note drag/resize is active (click was NOT inside selection).
@@ -459,6 +455,16 @@ pub(crate) fn sel_drag_frame(
     ui.data_mut(|d| d.insert_persisted(resize_id, sel_resize_state));
     (ghost_notes, hidden_notes)
 }
+
+
+
+// 通用逻辑已抽取到 crate::selection::drag：
+// - hit_test_sel_edge（边缘 hit-test）
+// - collect_selected_notes（选中音符预计算）
+// - compute_resize_dt（量化对齐 + 最小宽度约束）
+pub(crate) use crate::selection::drag::{
+    collect_selected_notes, compute_resize_dt, hit_test_sel_edge,
+};
 
 #[cfg(test)]
 mod tests {
@@ -562,11 +568,3 @@ mod tests {
         assert_eq!(result, None);
     }
 }
-
-// 通用逻辑已抽取到 crate::selection::drag：
-// - hit_test_sel_edge（边缘 hit-test）
-// - collect_selected_notes（选中音符预计算）
-// - compute_resize_dt（量化对齐 + 最小宽度约束）
-pub(crate) use crate::selection::drag::{
-    collect_selected_notes, compute_resize_dt, hit_test_sel_edge,
-};

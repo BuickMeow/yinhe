@@ -348,7 +348,7 @@ impl InstanceRenderer {
         self.cull.draw_visible_notes(&mut pass, &self.render.note_pipeline, &self.render.bind_group, key_lo, key_hi);
 
         // Step 5: ghost notes (last note layer, if any) — on top of everything
-        let ghost = self.layers.iter().filter(|l| l.kind() == LayerKind::Note).last();
+        let ghost = self.layers.iter().rfind(|l| l.kind() == LayerKind::Note);
         if let Some(ghost) = ghost {
             pass.set_pipeline(&self.render.note_pipeline);
             ghost.draw(&mut pass, 0);

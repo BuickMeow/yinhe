@@ -203,7 +203,7 @@ impl eframe::App for App {
             &mut self.tab_scroll_offset,
         );
         if let Some(title_bar::TitleBarAction::CloseDocument(idx)) = title_bar_action {
-            if self.documents.get(idx).map_or(false, |d| d.is_dirty()) {
+            if self.documents.get(idx).is_some_and(|d| d.is_dirty()) {
                 self.pending_unsaved = Some(PendingFileAction::CloseDocument(idx));
                 // 把 unsaved 弹窗拉到主窗口前台（用户点击 tab 关闭按钮是主动
                 // 操作，应该立刻看到弹窗）
@@ -386,11 +386,10 @@ impl eframe::App for App {
         self.sync_automation_density();
 
         // 清理已结束的 jump_pulse 动画
-        if let Some(p) = &self.jump_pulse {
-            if p.finished() {
+        if let Some(p) = &self.jump_pulse
+            && p.finished() {
                 self.jump_pulse = None;
             }
-        }
 
         if let Some(t0) = _ui_total_start {
             yinhe_memtrace::perf_probe::record_ui_total(t0.elapsed());

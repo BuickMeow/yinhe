@@ -195,8 +195,7 @@ pub fn show(
     if let Some(ct) = *cursor_tick
         && is_playing
         && *follow_mode != super::view_interaction::FollowMode::None
-    {
-        if let Some(new_scroll_x) = super::view_interaction::compute_follow_scroll(
+        && let Some(new_scroll_x) = super::view_interaction::compute_follow_scroll(
             ct,
             view.base.pixels_per_tick,
             w as f32,
@@ -207,7 +206,6 @@ pub fn show(
             view.base.scroll_x = new_scroll_x;
             view.clamp_scroll(w as f32, h as f32, total_ticks);
         }
-    }
 
     // ── Selection drag (Select tool only) ──
     // Update state BEFORE handle_input to avoid egui pointer-capture conflicts.
@@ -260,13 +258,12 @@ pub fn show(
         ghost_notes = ghost;
         hidden_notes.extend(hidden);
         *feedback.pencil_note_drag = pencil_drag;
-        if let Some(note) = note_event {
-            if let Some(track) =
+        if let Some(note) = note_event
+            && let Some(track) =
                 pencil::valid_pencil_track(editing_track, track_visible, conductor_idx)
             {
                 pencil_event = Some(PianoViewEvent::AddNote { track, note });
             }
-        }
     } else if *active_tool == Tool::Eraser {
         eraser_event = marquee::eraser_drag_frame(
             ui,
@@ -284,9 +281,8 @@ pub fn show(
     // ── Hover cursor: show Move/ResizeWest/ResizeEast when over selection rect ──
     if (*active_tool == Tool::Select || *active_tool == Tool::SelectVertical)
         && !crate::view_interaction::pointer_over_popup(ui.ctx())
-    {
-        if let Some(pos) = ui.input(|i| i.pointer.hover_pos()) {
-            if music_rect.contains(pos) {
+        && let Some(pos) = ui.input(|i| i.pointer.hover_pos())
+            && music_rect.contains(pos) {
                 let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
                 let eff_rects = sel_rect.effective_rects();
                 // 边缘检测优先（与 press 逻辑一致）
@@ -325,8 +321,6 @@ pub fn show(
                     }
                 }
             }
-        }
-    }
 
     // ── Content interaction (zoom/pan/cursor/drag/reset) ──
     // 传 content_rect（含键盘列）+ left_zone_width=kb_w，让 handle_input 统一处理
@@ -696,7 +690,7 @@ pub fn show(
                 );
                 if shifted.intersects(music_rect_local) {
                     crate::selection::draw::draw(
-                        &ui.painter(),
+                        ui.painter(),
                         music_rect,
                         shifted,
                         egui::Color32::WHITE,

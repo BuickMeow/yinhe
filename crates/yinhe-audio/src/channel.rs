@@ -254,7 +254,7 @@ mod tests {
         assert_eq!(state.expression, 127);
         assert_eq!(state.program, 0);
         assert_eq!(state.data_entry_msb, 2);
-        assert_eq!(state.env_set, false);
+        assert!(!state.env_set);
         assert!((state.pitch_bend).abs() < f32::EPSILON);
         assert_eq!(state.rpn_msb, None);
         assert_eq!(state.rpn_lsb, None);

@@ -207,7 +207,7 @@ fn load_yin_bytes_inner(bytes: &[u8]) -> Result<(YinModel, ProjectFile, MappingF
 
     let mut tracks: Vec<Arc<TrackData>> = Vec::with_capacity(flat.len());
     let mut per_track_notes: Vec<Vec<NoteEvent>> = Vec::with_capacity(flat.len());
-    for ((port, channel, tm), payload) in flat.into_iter().zip(model_data.tracks.into_iter()) {
+    for ((port, channel, tm), payload) in flat.into_iter().zip(model_data.tracks) {
         let td = TrackData {
             uuid: tm.uuid.clone(),
             name: tm.name.clone(),

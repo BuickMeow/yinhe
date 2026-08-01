@@ -1,13 +1,13 @@
-/// Haptic feedback engine for trackpad boundary feedback.
-///
-/// On macOS this uses the private `MultitouchSupport.framework` `MTActuator`
-/// API to drive the trackpad Taptic Engine directly.  On other platforms this
-/// is a no-op stub.
-///
-/// The engine tracks per-slot, per-edge flags internally so that haptic is
-/// only fired when the user *enters* a boundary, not while staying in one.
-/// Each visual view (piano roll, arrangement, etc.) gets its own slot so
-/// they don't interfere with each other.
+//! Haptic feedback engine for trackpad boundary feedback.
+//!
+//! On macOS this uses the private `MultitouchSupport.framework` `MTActuator`
+//! API to drive the trackpad Taptic Engine directly.  On other platforms this
+//! is a no-op stub.
+//!
+//! The engine tracks per-slot, per-edge flags internally so that haptic is
+//! only fired when the user *enters* a boundary, not while staying in one.
+//! Each visual view (piano roll, arrangement, etc.) gets its own slot so
+//! they don't interfere with each other.
 
 #[cfg(target_os = "macos")]
 mod macos;
