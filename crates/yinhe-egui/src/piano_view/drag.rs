@@ -15,6 +15,22 @@ use super::marquee::marquee_drag_frame;
 /// Built once at drag start, reused every frame — eliminates O(N×M) midi lookups.
 pub(crate) type SelDragNoteInfo = CollectedNote;
 
+/// 指针是否在选框浮动工具条（selection_actions bar）上。
+fn on_action_bar(
+    pos: egui::Pos2,
+    music_rect: egui::Rect,
+    view: &yinhe_types::PianoRollView,
+    eff_rects: &[(f64, f64, u8, u8)],
+) -> bool {
+    eff_rects.iter().any(|&(t_start, t_end, key_lo, key_hi)| {
+        let pixel_rect = crate::selection::drag::music_sel_to_pixel_rect(
+            &view.base, view.key_height, t_start, t_end, key_lo, key_hi,
+        );
+        crate::widgets::selection_actions::compute_bar_rect(music_rect, pixel_rect)
+            .is_some_and(|bar| bar.contains(pos))
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn sel_drag_frame(
     ui: &mut egui::Ui,
@@ -72,19 +88,15 @@ pub(crate) fn sel_drag_frame(
         return (Vec::new(), Vec::new());
     }
 
+    // press 分支和 click 分支共用，整个函数作用域内有效。
+    let eff_rects = sel_rect.effective_rects();
+
     // Start drag (note drag only — marquee is handled by shared function below)
     if pointer.primary_pressed()
         && let Some(pos) = pointer.hover_pos()
         && music_rect.contains(pos)
     {
-        let eff_rects = sel_rect.effective_rects();
-        let on_bar = eff_rects.iter().any(|&(t_start, t_end, key_lo, key_hi)| {
-            let pixel_rect = crate::selection::drag::music_sel_to_pixel_rect(
-                &view.base, view.key_height, t_start, t_end, key_lo, key_hi,
-            );
-            crate::widgets::selection_actions::compute_bar_rect(music_rect, pixel_rect)
-                .is_some_and(|bar| bar.contains(pos))
-        });
+        let on_bar = on_action_bar(pos, music_rect, view, &eff_rects);
 
         if on_bar {
             // Don't start drag, don't clear anything — let the button handle it.
@@ -262,9 +274,13 @@ pub(crate) fn sel_drag_frame(
 
                     sel_rect.update_resize(dt);
 
-                    // ── Tooltip：显示 ±gate ──
+                    // ── Tooltip：显示 ±gate（gate 变化量：Left 时 start 偏移 dt，gate 变化 = -dt）──
+                    let gate_delta = match side {
+                        ResizeSide::Left => -dt,
+                        ResizeSide::Right => dt,
+                    };
                     let lines = vec![
-                        crate::view_interaction::format_signed("gate", dt),
+                        crate::view_interaction::format_signed("gate", gate_delta),
                     ];
                     crate::view_interaction::draw_hover_tooltip(ui.ctx(), &lines, pos.x, pos.y);
                     ui.ctx().request_repaint();
@@ -334,7 +350,7 @@ pub(crate) fn sel_drag_frame(
             // Simple click (no marquee) - set cursor to click position for paste.
             // 选框清空已在 press 时完成（非加选模式），此处仅设置 cursor。
             if let Some(pos) = ui.input(|i| i.pointer.hover_pos()) {
-                if music_rect.contains(pos) {
+                if music_rect.contains(pos) && !on_action_bar(pos, music_rect, view, &eff_rects) {
                     let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
                     let tick = view.x_to_tick(local.x);
                     let snapped = crate::view_interaction::snap_tick(tick, quantize, ppq, bar_line_data);
