@@ -88,6 +88,11 @@ struct PreviewVoice {
     key: u8,
     /// 渲染帧数上限；`None` = 持续音（等 `PreviewStop`）。
     duration: Option<u64>,
+    /// NoteOn 时的 position（渲染时钟）。到期检查用相对时长
+    /// `position - start_position`，绝不能用绝对 `position`——
+    /// 预览引擎运行一段时间后 position 已累计很大，直接比较会让
+    /// 所有音符在第一帧就"到期"（四分音符也只响几毫秒）。
+    start_position: u64,
 }
 
 impl PreviewEngine {
@@ -158,6 +163,7 @@ impl PreviewEngine {
             channel,
             key,
             duration,
+            start_position: self.position,
         });
     }
 
@@ -201,7 +207,9 @@ impl PreviewEngine {
 
         let mut i = 0;
         while i < self.voices.len() {
-            let done = self.voices[i].duration.is_some_and(|d| self.position >= d);
+            let done = self.voices[i]
+                .duration
+                .is_some_and(|d| self.position.saturating_sub(self.voices[i].start_position) >= d);
             if done {
                 let v = self.voices.swap_remove(i);
                 self.note_off(v.channel, v.key);
@@ -402,6 +410,38 @@ mod tests {
         engine.render(&mut out);
         assert_eq!(engine.voices.len(), 2, "封顶窗口到点后触发");
         assert!(engine.pending.is_empty());
+    }
+
+    #[test]
+    fn note_duration_not_truncated_after_long_running() {
+        // 回归测试（用户报告：普通四分音符也被判成很短的音符）：
+        // 预览引擎运行一段时间（position 已累计）后 NoteOn 的定长音符，
+        // 必须响满自己的 duration —— 到期判断用相对时长，而不是绝对 position。
+        let layout = ChannelLayout::from_mask(vec![true; 16]);
+        let mut engine = PreviewEngine::new(&layout, 48000);
+
+        // 先跑 200 帧，position 累计 102400
+        let mut out = vec![0.0f32; 1024];
+        for _ in 0..200 {
+            engine.render(&mut out);
+        }
+
+        // 四分音符 0.5s = 24000 帧
+        engine.note_on(0, 60, 100, Some(24_000), &ChannelState::default());
+        assert_eq!(engine.voices.len(), 1);
+
+        // 渲染 20 帧（10240 帧 < 24000）：音符必须还在
+        // （旧实现 position 102400 >= 24000，第一帧就把音符 NoteOff 了）。
+        for _ in 0..20 {
+            engine.render(&mut out);
+        }
+        assert_eq!(engine.voices.len(), 1, "四分音符响满时长，不能提前截断");
+
+        // 渲染满 24000 帧（相对起点）后到期移除
+        for _ in 0..30 {
+            engine.render(&mut out);
+        }
+        assert!(engine.voices.is_empty(), "到时后正常 NoteOff");
     }
 
     #[test]

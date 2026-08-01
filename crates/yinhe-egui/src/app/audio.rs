@@ -431,9 +431,6 @@ impl App {
         let doc = &self.documents[idx];
         let model = &doc.data.model;
         let sr = audio.sample_rate as f64;
-        // 预览最短时长：黑乐谱音符 gate 常只有 1-2 tick（≈1ms），照 gate 播放几乎
-        // 听不到；定长预览至少响 150ms（音高可感知），长 gate 音符仍按原长度。
-        let min_preview_samples = (0.15 * sr) as u64;
         let mut notes: Vec<yinhe_audio::PreviewNoteParams> = Vec::new();
         let mut stop = false;
         for req in reqs {
@@ -450,7 +447,7 @@ impl App {
                             .tempo_map
                             .tick_to_seconds((p.target_tick + p.duration_ticks) as u64)
                             * sr) as u64;
-                        end.saturating_sub(target).max(min_preview_samples)
+                        end.saturating_sub(target)
                     } else {
                         0
                     };
