@@ -252,11 +252,13 @@ fn paint_labels(
         };
 
         // ── Main label loop ──
+        // 对齐到段内网格：变拍子段的 seg_start 通常不在全局步长网格上，
+        // 必须从 seg_start 起按 local 对齐，否则标签全落在错误的网格偏移。
         let first_tick_f = seg_start_f.max(tick_start);
         let step_f = main_step as f64;
-        let first = ((first_tick_f / step_f).floor() as u32)
-            .saturating_mul(main_step)
-            .max(seg_start);
+        let first = seg_start.saturating_add(
+            (((first_tick_f - seg_start_f) / step_f).floor() as u32).saturating_mul(main_step),
+        );
 
         let mut tick = first;
         while (tick as f64) <= tick_end && tick < seg_end {
@@ -305,7 +307,11 @@ fn paint_labels(
         // ── Fine-tick loop: label individual ticks between sub-beat lines ──
         if tick_step > 0 && tick_step < ticks_per_sub {
             let first_tick_u = seg_start.max(tick_start as u32);
-            let first_aligned = first_tick_u.div_ceil(tick_step) * tick_step;
+            let first_aligned = seg_start.saturating_add(
+                (first_tick_u - seg_start)
+                    .div_ceil(tick_step)
+                    .saturating_mul(tick_step),
+            );
 
             let mut ft = first_aligned;
             while (ft as f64) <= tick_end && ft < seg_end {
@@ -388,6 +394,97 @@ fn cumulative_bar_offsets(tpb: u32, segments: &[(u32, u8, u8)]) -> Vec<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use yinhe_types::TimelineViewBase;
+
+    struct FakeRuler {
+        base: TimelineViewBase,
+    }
+
+    fn make_base(ppu: f32) -> TimelineViewBase {
+        TimelineViewBase {
+            pixels_per_tick: ppu,
+            scroll_x: 0.0,
+            scroll_y: 0.0,
+            left_panel_width: 60.0,
+            dirty: false,
+            track_panel_row_height: 40.0,
+            track_panel_scroll_y: 0.0,
+        }
+    }
+
+    impl TimeRulerView for FakeRuler {
+        fn tick_to_x(&self, tick: f64) -> f32 {
+            self.base.tick_to_x(tick)
+        }
+        fn x_to_tick(&self, x: f32) -> f64 {
+            self.base.x_to_tick(x)
+        }
+        fn pixels_per_tick(&self) -> f32 {
+            self.base.pixels_per_tick
+        }
+        fn content_left(&self) -> f32 {
+            self.base.left_panel_width
+        }
+        fn zoom_around_x(&mut self, _pointer_x: f32, _factor: f32) {}
+        fn mark_dirty(&mut self) {}
+    }
+
+    /// 变拍子段（seg_start 不在主步长网格上）的标签必须正常显示：
+    /// 段内对齐保证小节/拍标签不丢失。
+    #[test]
+    fn test_ruler_labels_align_within_segment() {
+        // tpb=480，拍号事件在 tick 1000（非 480 倍数）变 3/4，屏幕显示 tick 8000..14000。
+        // 3/4 段每小节 1440、每拍 480；seg_start=1000 不在 480/120 网格上。
+        let ruler = FakeRuler {
+            base: TimelineViewBase {
+                pixels_per_tick: 0.1,
+                scroll_x: 800.0,
+                ..make_base(0.1)
+            },
+        };
+        let rect = egui::Rect::from_min_max(egui::pos2(60.0, 0.0), egui::pos2(660.0, 30.0));
+        let ctx = egui::Context::default();
+        ctx.begin_pass(egui::RawInput::default()); // 初始化字体系统（测试环境）
+        let painter = ctx.layer_painter(egui::LayerId::new(
+            egui::Order::Background,
+            egui::Id::new("ruler_test"),
+        ));
+        let events = vec![TimeSigEvent {
+            tick: 1000,
+            numerator: 3,
+            denominator: 2,
+        }];
+        paint_labels(&painter, rect, &ruler, 480, 4, 2, &events);
+
+        let offset_x = rect.min.x - ruler.content_left();
+        let mut label_ticks = Vec::new();
+        painter.for_each_shape(|cs| {
+            if let egui::Shape::Text(t) = &cs.shape {
+                let x = t.pos.x - 2.0; // draw_label 在 x+2 处绘制
+                label_ticks.push(ruler.x_to_tick(x - offset_x));
+            }
+        });
+        label_ticks.sort_by(|a, b| a.total_cmp(b));
+
+        // 4/4 段与 3/4 段都应有标签（修复前 3/4 段因全局对齐全部丢失）。
+        assert!(label_ticks.len() >= 10, "标签数量过少: {label_ticks:?}");
+        let in_34 = label_ticks.iter().filter(|&&t| t >= 10000.0 - 1.0).count();
+        assert!(
+            in_34 >= 3,
+            "3/4 段应有标签，实际 {in_34} 个: {label_ticks:?}"
+        );
+        // 3/4 段所有标签都必须落在拍网格上（段内 local 是 480 的倍数）。
+        let on_beat_grid = |t: f64| {
+            let local = t - 1000.0;
+            ((local / 480.0).round() * 480.0 - local).abs() < 1.0
+        };
+        assert!(
+            label_ticks
+                .iter()
+                .all(|&t| t < 10000.0 - 1.0 || on_beat_grid(t)),
+            "3/4 段标签应落在拍网格上: {label_ticks:?}"
+        );
+    }
 
     #[test]
     fn cumulative_bar_offsets_single_segment() {
