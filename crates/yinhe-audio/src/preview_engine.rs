@@ -52,6 +52,31 @@ pub(crate) struct PreviewEngine {
     position: u64,
     /// 活跃预览音。
     voices: Vec<PreviewVoice>,
+    /// 待触发预览音（按目标位置相对时值错开，最早音符立即触发）。
+    pending: Vec<PendingNote>,
+}
+
+/// 预览组中的一个音符（渲染器组装好后提交）。
+pub(crate) struct PreviewNoteIn {
+    pub(crate) channel: u8,
+    pub(crate) key: u8,
+    pub(crate) velocity: u8,
+    pub(crate) duration: Option<u64>,
+    /// 目标位置自动化状态。
+    pub(crate) state: ChannelState,
+    /// 目标位置 sample（组内相对时值依据）。
+    pub(crate) target_sample: u64,
+}
+
+/// 待触发预览音。
+struct PendingNote {
+    channel: u8,
+    key: u8,
+    velocity: u8,
+    duration: Option<u64>,
+    state: ChannelState,
+    /// 预览时钟到达该位置时触发（相对组内最早音符的帧数）。
+    trigger_at: u64,
 }
 
 /// 一个活跃预览音。
@@ -84,6 +109,7 @@ impl PreviewEngine {
             port_sfs: std::array::from_fn(|_| Vec::new()),
             position: 0,
             voices: Vec::new(),
+            pending: Vec::new(),
         }
     }
 
@@ -131,6 +157,27 @@ impl PreviewEngine {
         });
     }
 
+    /// 提交整组预览（替换旧组）：组内音符按目标位置**相对时值**错开触发——
+    /// 最早音符立即响，其余音符延迟（目标位置差）后响，各自响自己的 gate。
+    /// 例如旋律音符 start 相差 4800 帧，预览时就错开 4800 帧依次触发。
+    pub(crate) fn preview_notes(&mut self, notes: Vec<PreviewNoteIn>) {
+        self.stop_all();
+        let min = notes.iter().map(|n| n.target_sample).min().unwrap_or(0);
+        self.pending = notes
+            .into_iter()
+            .map(|n| PendingNote {
+                channel: n.channel,
+                key: n.key,
+                velocity: n.velocity,
+                duration: n.duration,
+                state: n.state,
+                trigger_at: n.target_sample - min,
+            })
+            .collect();
+        self.pending.sort_by_key(|p| p.trigger_at);
+        self.flush_pending();
+    }
+
     /// 渲染一帧预览音频（不推进主引擎位置）。到期的定长音符在此 NoteOff
     /// （余音继续渲染，voice 自然衰减完才消失）。
     pub(crate) fn render(&mut self, output: &mut [f32]) {
@@ -140,6 +187,7 @@ impl PreviewEngine {
         }
         self.channel_group.read_samples(output);
         self.position += frames as u64;
+        self.flush_pending();
 
         let mut i = 0;
         while i < self.voices.len() {
@@ -153,18 +201,31 @@ impl PreviewEngine {
         }
     }
 
-    /// 是否处于预览状态（有活跃预览音或余音仍在响）——渲染器据此决定是否输出预览。
+    /// 是否处于预览状态（有活跃预览音、待触发音符或余音仍在响）——
+    /// 渲染器据此决定是否输出预览。
     ///
     /// 不能只看 `voice_count()`：NoteOn 后 voice 是延迟 spawn 的（渲染后才出现），
     /// 若渲染条件只看 voice 数量，未播放时第一帧就会提前退出、永不渲染 → 预览无声。
     pub(crate) fn previewing(&self) -> bool {
-        !self.voices.is_empty() || self.channel_group.voice_count() > 0
+        !self.voices.is_empty() || !self.pending.is_empty() || self.channel_group.voice_count() > 0
     }
 
-    /// 停止全部预览音（NoteOff；余音继续渲染直到自然衰减完）。
+    /// 停止全部预览音（NoteOff 与待触发音符；余音继续渲染直到自然衰减完）。
     pub(crate) fn stop_all(&mut self) {
         while let Some(v) = self.voices.pop() {
             self.note_off(v.channel, v.key);
+        }
+        self.pending.clear();
+    }
+
+    /// 触发所有到点的待触发音符（pending 按 trigger_at 有序）。
+    fn flush_pending(&mut self) {
+        while let Some(p) = self.pending.first() {
+            if p.trigger_at > self.position {
+                break;
+            }
+            let p = self.pending.remove(0);
+            self.note_on(p.channel, p.key, p.velocity, p.duration, &p.state);
         }
     }
 
@@ -240,5 +301,53 @@ mod tests {
         assert!(engine.previewing(), "持续音还在");
         engine.stop_all();
         assert!(!engine.previewing(), "全部停止且无音色库（无 voice）后结束");
+    }
+
+    #[test]
+    fn preview_notes_stagger_by_relative_position() {
+        // 回归测试：移动多个不同起点的音符时，预览按目标位置相对时值错开触发，
+        // 而不是所有音符同时演奏（旧实现忽略音符间的时值关系）。
+        let layout = ChannelLayout::from_mask(vec![true; 16]);
+        let mut engine = PreviewEngine::new(&layout, 48000);
+
+        // 两个音符：B 比 A 晚 4800 帧（目标位置差）
+        engine.preview_notes(vec![
+            PreviewNoteIn {
+                channel: 0,
+                key: 60,
+                velocity: 100,
+                duration: None,
+                state: ChannelState::default(),
+                target_sample: 1000,
+            },
+            PreviewNoteIn {
+                channel: 0,
+                key: 64,
+                velocity: 90,
+                duration: None,
+                state: ChannelState::default(),
+                target_sample: 5800,
+            },
+        ]);
+        assert_eq!(engine.voices.len(), 1, "最早音符立即触发");
+        assert_eq!(engine.pending.len(), 1, "第二个音符延迟等待");
+
+        let mut out = vec![0.0f32; 1024];
+        // 渲染 9 帧（4608 帧 < 4800）：第二个音符仍未触发
+        for _ in 0..9 {
+            engine.render(&mut out);
+        }
+        assert_eq!(engine.voices.len(), 1, "时值差未到，不触发");
+        assert_eq!(engine.pending.len(), 1);
+        // 第 10 帧（5120 帧 >= 4800）：触发第二个音符
+        engine.render(&mut out);
+        assert_eq!(engine.voices.len(), 2, "时值差到达后触发");
+        assert!(engine.pending.is_empty());
+
+        // 全部停止：voices 与 pending 都清空
+        engine.stop_all();
+        assert!(engine.voices.is_empty());
+        assert!(engine.pending.is_empty());
+        assert!(!engine.previewing());
     }
 }

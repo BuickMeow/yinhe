@@ -206,8 +206,6 @@ impl AudioRenderer {
                             }
                         }
                         AudioCommand::PreviewNotes { notes } => {
-                            // 整组替换：先停旧组（余音继续渲染，自然衰减）。
-                            self.preview_engine.stop_all();
                             // 按 channel 分组、组内按 target_sample 升序，增量 chase：
                             // 每个通道只扫一遍 cc_events，避免整组预览反复全量扫描。
                             let cc_events = self.engine.cc_events.clone();
@@ -224,21 +222,30 @@ impl AudioRenderer {
                             for (_, g) in &mut groups {
                                 g.sort_by_key(|n| n.target_sample);
                             }
+                            let mut inputs: Vec<crate::preview_engine::PreviewNoteIn> =
+                                Vec::with_capacity(notes.len());
                             for (ch, g) in groups {
                                 let targets: Vec<u64> = g.iter().map(|n| n.target_sample).collect();
                                 let states = crate::preview_engine::chase_channel_states(
                                     &cc_events, ch, &targets,
                                 );
                                 for (n, state) in g.iter().zip(states.iter()) {
-                                    let duration = if n.duration_samples > 0 {
-                                        Some(n.duration_samples)
-                                    } else {
-                                        None
-                                    };
-                                    self.preview_engine
-                                        .note_on(n.channel, n.key, n.velocity, duration, state);
+                                    inputs.push(crate::preview_engine::PreviewNoteIn {
+                                        channel: n.channel,
+                                        key: n.key,
+                                        velocity: n.velocity,
+                                        duration: if n.duration_samples > 0 {
+                                            Some(n.duration_samples)
+                                        } else {
+                                            None
+                                        },
+                                        state: *state,
+                                        target_sample: n.target_sample,
+                                    });
                                 }
                             }
+                            // 整组替换：组内按目标位置相对时值错开触发。
+                            self.preview_engine.preview_notes(inputs);
                         }
                         AudioCommand::PreviewStop => {
                             self.preview_engine.stop_all();
@@ -322,7 +329,10 @@ impl AudioRenderer {
                     // GPU 路径：音符变化后同步事件到 GpuSynth
                     #[cfg(feature = "gpu")]
                     self.sync_gpu_synth_events();
-                    self.clear_buffered_audio();
+                    // 注意：这里**不**清 ring。UpdateNotes 不 seek、不改 cc_events，
+                    // 已渲染的 ring 内容是"过去时"音频（新音符只影响未来 dispatch），
+                    // 清空会把正在播放的预览余音/当前音频丢掉 → 松手停顿。
+                    // 只有 PreparedModel（cc_events 重建/seek）才需要清。
                     self.state.initialized.store(true, Ordering::Release);
                     did_work = true;
                 }
