@@ -15,6 +15,11 @@ use yinhe_editor_core::quantize::QuantizePreset;
 use crate::theme;
 const RULER_H: f32 = theme::RULER_H;
 
+/// Arrange 拖拽偏移量：(tick delta, track 行 delta)。
+pub(crate) type ArrDragDelta = (i64, i32);
+/// Arrange 选框/橡皮擦矩形：(t_start, t_end, track_lo, track_hi)。
+pub(crate) type ArrSelRect = (f64, f64, usize, usize);
+
 /// Returns `Some(new_preset)` if the user picked a new quantize preset
 /// from the corner AR button.
 pub fn show(
@@ -36,8 +41,8 @@ pub fn show(
     scroll_mode: u32,
     min_border_width: f32,
     haptic_engine: Option<&yinhe_haptic::HapticEngine>,
-    arr_drag_delta: &mut Option<(i64, i32)>,
-    arr_eraser_rect: &mut Option<(f64, f64, usize, usize)>,
+    arr_drag_delta: &mut Option<ArrDragDelta>,
+    arr_eraser_rect: &mut Option<ArrSelRect>,
     info_content: &mut Option<crate::right_panel::InfoContent>,
     // 音轨结构变化（add/remove track）需要 teardown + 重建音频引擎。
     // 由调用方 layout.rs 读取后调 `App::teardown_audio()`，下一帧

@@ -390,13 +390,16 @@ fn info_row(ui: &mut egui::Ui, label: impl Into<String>, value: impl Into<String
 /// - mixed → 输入框为空并显示「—」提示
 /// - 输入表达式（`100`/`+2`/`x3/7`…）后 Enter 或失焦应用，应用后清空，
 ///   下一帧恢复显示当前值
+/// 表达式输入框的提示函数：输入非法时返回提示文本。
+type HintFn = dyn Fn(&str) -> Option<String>;
+
 fn field_row(
     ui: &mut egui::Ui,
     key: &str,
     label: impl Into<String>,
     uniform: Option<f64>,
     fmt: impl Fn(f64) -> String,
-    hint: Option<&dyn Fn(&str) -> Option<String>>,
+    hint: Option<&HintFn>,
     on_apply: impl FnOnce(Vec<NumOp>),
 ) {
     ui.horizontal(|ui| {

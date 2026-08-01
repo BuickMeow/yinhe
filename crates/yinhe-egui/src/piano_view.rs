@@ -10,7 +10,7 @@ pub use yinhe_types::PencilNoteDrag;
 
 pub mod automation_panel;
 mod bg;
-mod drag;
+pub(crate) mod drag;
 mod gpu_upload;
 mod jump_pulse;
 mod keyboard;

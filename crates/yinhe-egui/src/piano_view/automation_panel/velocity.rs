@@ -108,6 +108,9 @@ fn build_preview(
     VelocityPreview { bars, color }
 }
 
+/// 拖拽中跟随鼠标显示的 (tick, value, 屏幕位置)。
+pub(crate) type VelocityHover = (u32, f32, egui::Pos2);
+
 /// 处理 velocity 面板上的铅笔笔划。
 ///
 /// 返回 `(edits, preview, tooltip)`：
@@ -124,7 +127,7 @@ pub(crate) fn handle_velocity_interaction(
     track: u16,
     track_color: [f32; 3],
     panel_index: usize,
-) -> (Vec<VelocityEdit>, Option<VelocityPreview>, Option<(u32, f32, egui::Pos2)>) {
+) -> (Vec<VelocityEdit>, Option<VelocityPreview>, Option<VelocityHover>) {
     let stroke_id = ui.id().with("velocity_stroke").with(panel_index);
 
     let pos = ui.input(|i| i.pointer.hover_pos());

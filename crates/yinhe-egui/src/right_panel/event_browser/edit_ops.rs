@@ -79,13 +79,20 @@ fn dispatch_ops(
     }
 }
 
+/// 事件列表快照函数：编辑前捕获 before/after 用。
+type SnapshotFn = Box<dyn Fn(&Document) -> Vec<EventListItem>>;
+/// 按选中的 tick 集合批量删除。
+type DeleteFn = Box<dyn Fn(&mut Document, &std::collections::HashSet<u32>)>;
+/// 在指定 tick 插入新事件。
+type InsertFn = Box<dyn Fn(&mut Document, u32)>;
+
 /// 单个事件列表类型的操作上下文。
 ///
 /// 使用 `Box<dyn Fn>` 而非 `fn` 指针，因为 per-track 类型需要在闭包中捕获 `track`。
 struct EventOpsCtx {
-    snapshot: Box<dyn Fn(&Document) -> Vec<EventListItem>>,
-    delete: Box<dyn Fn(&mut Document, &std::collections::HashSet<u32>)>,
-    insert: Box<dyn Fn(&mut Document, u32)>,
+    snapshot: SnapshotFn,
+    delete: DeleteFn,
+    insert: InsertFn,
     delete_label: &'static str,
     insert_label: &'static str,
     first_label: &'static str,

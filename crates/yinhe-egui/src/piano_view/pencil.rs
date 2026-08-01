@@ -77,7 +77,7 @@ pub(crate) fn pencil_frame(
     midi: Option<&dyn yinhe_types::NoteSource>,
     _track_colors: &[[f32; 3]],
     total_ticks: f64,
-) -> (Option<yinhe_core::NoteEvent>, Vec<(u32, u32, u8, u16)>, Vec<(u16, u32, u8)>, Option<PencilNoteDrag>) {
+) -> (Option<yinhe_core::NoteEvent>, Vec<super::drag::GhostNote>, Vec<super::drag::HiddenNote>, Option<PencilNoteDrag>) {
     let pencil_id = ui.id().with("pencil_drag");
     let drag_state: Option<PencilDrag> =
         ui.data_mut(|d| d.get_persisted(pencil_id)).unwrap_or(None);
@@ -186,8 +186,8 @@ pub(crate) fn pencil_frame(
     }
 
     // ── Ghost notes: only when not over an existing note ──
-    let mut ghost_notes: Vec<(u32, u32, u8, u16)> = Vec::new();
-    let mut hidden_notes: Vec<(u16, u32, u8)> = Vec::new();
+    let mut ghost_notes: Vec<super::drag::GhostNote> = Vec::new();
+    let mut hidden_notes: Vec<super::drag::HiddenNote> = Vec::new();
     if can_write && drag_state.is_none() && hit_note.is_none()
         && let Some((tick, key)) = preview {
             let interval = quantize.tick_interval(ppq) as f64;

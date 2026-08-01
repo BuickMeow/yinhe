@@ -81,13 +81,13 @@ impl App {
         // Arrangement view
         let mut needs_audio_rebuild = false;
         let (arr_drag_delta, arr_eraser_rect, arr_quantize): (
-            Option<(i64, i32)>,
-            Option<(f64, f64, usize, usize)>,
+            Option<crate::arrange::ArrDragDelta>,
+            Option<crate::arrange::ArrSelRect>,
             Option<yinhe_editor_core::quantize::QuantizePreset>,
         ) = if self.view_mode.show_transport() {
             let mut request_pianoroll = false;
-            let mut arr_drag_delta: Option<(i64, i32)> = None;
-            let mut arr_eraser_rect: Option<(f64, f64, usize, usize)> = None;
+            let mut arr_drag_delta: Option<crate::arrange::ArrDragDelta> = None;
+            let mut arr_eraser_rect: Option<crate::arrange::ArrSelRect> = None;
             let mut guard = crate::app::main_loop::ReplaceGuard::new(&mut self.documents[idx]);
             let arr_quantize = arrange::show(
                 ui,

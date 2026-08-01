@@ -6,10 +6,13 @@ use yinhe_audio::export::WavBitDepth;
 
 use crate::dialogs::export::{ExportCompleted, ExportProgress};
 
+/// 导出线程完成消息：`Ok((输出路径, 耗时秒, 倍速))` 或 `Err(错误信息)`。
+pub(crate) type ExportResultMsg = Result<(String, f64, f64), String>;
+
 /// All audio-export-related state, extracted from `App` to reduce the God Object.
 pub(crate) struct ExportState {
     /// Receiver for the async export result.
-    pub rx: Option<mpsc::Receiver<Result<(String, f64, f64), String>>>,
+    pub rx: Option<mpsc::Receiver<ExportResultMsg>>,
     /// Shared progress for the export thread to report status.
     pub progress: Arc<Mutex<ExportProgress>>,
     /// Flag to signal the export thread to cancel.

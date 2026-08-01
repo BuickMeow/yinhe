@@ -10,6 +10,7 @@ use yinhe_types::TimeSigEvent;
 use yinhe_wgpu::layer_cache_key;
 
 use yinhe_editor_core::quantize::QuantizePreset;
+use crate::piano_view::drag::{GhostNote, HiddenNote};
 use crate::render_context::RenderContext;
 use crate::widgets::tools_panel::Tool;
 
@@ -45,8 +46,8 @@ pub fn show(
     min_border_width: f32,
     haptic_engine: Option<&yinhe_haptic::HapticEngine>,
     revision: u64,
-    arr_sel_rect: &mut Vec<(f64, f64, usize, usize)>,
-    arr_drag_delta: &mut Option<(i64, i32)>,
+    arr_sel_rect: &mut Vec<super::ArrSelRect>,
+    arr_drag_delta: &mut Option<super::ArrDragDelta>,
     arr_eraser_rect: &mut Option<(f64, f64, usize, usize)>,
     track_selected: &mut HashSet<u16>,
     selection_anchor: &mut Option<u16>,
@@ -329,12 +330,12 @@ pub fn show(
                 start_music.1 * view.lane_height() - view.base.scroll_y,
             );
             if (end - start_pixel).length() >= 3.0
-                && let Some((vx, vy, vw, vh, _, _, _, _)) =
+                && let Some(b) =
                     arrange_snapped_bounds(start_pixel, end, view, quantize, ppq, bar_line_data, num_tracks, false)
                 {
                     let snapped = egui::Rect::from_min_max(
-                        egui::pos2(vx.min(vy), vw.min(vh)),
-                        egui::pos2(vx.max(vy), vw.max(vh)),
+                        egui::pos2(b.view_sx.min(b.view_ex), b.view_sy.min(b.view_ey)),
+                        egui::pos2(b.view_sx.max(b.view_ex), b.view_sy.max(b.view_ey)),
                     );
                     crate::selection::draw::draw(ui.painter(), rect, snapped, egui::Color32::RED, egui::Color32::RED);
                 }
@@ -412,15 +413,15 @@ fn sel_drag_frame_arrange(
     total_ticks: f64,
     num_tracks: usize,
     cursor_tick: &mut Option<f64>,
-    arr_sel_rect: &mut Vec<(f64, f64, usize, usize)>,
-    arr_drag_delta: &mut Option<(i64, i32)>,
+    arr_sel_rect: &mut Vec<super::ArrSelRect>,
+    arr_drag_delta: &mut Option<super::ArrDragDelta>,
     track_selected: &mut HashSet<u16>,
     selection_anchor: &mut Option<u16>,
     info_content: &mut Option<crate::right_panel::InfoContent>,
     vertical: bool,
-) -> (Vec<(u32, u32, u8, u16)>, HashSet<(u16, u32, u8)>, Option<egui::Rect>) {
-    let mut ghost_notes: Vec<(u32, u32, u8, u16)> = Vec::new();
-    let mut hidden_notes: HashSet<(u16, u32, u8)> = HashSet::new();
+) -> (Vec<GhostNote>, HashSet<HiddenNote>, Option<egui::Rect>) {
+    let mut ghost_notes: Vec<GhostNote> = Vec::new();
+    let mut hidden_notes: HashSet<HiddenNote> = HashSet::new();
     let mut drag_rect: Option<egui::Rect> = None;
 
     let sel_id = ui.id().with("sel_drag_arr");
@@ -648,12 +649,12 @@ fn sel_drag_frame_arrange(
         // Compute marquee drag_rect (BEFORE release, same pattern as move-drag)
         if let Some((_, end)) = drag
             && (end - start_pixel).length() >= 3.0
-                && let Some((vx, vy, vw, vh, _, _, _, _)) =
+                && let Some(b) =
                     arrange_snapped_bounds(start_pixel, end, view, quantize, ppq, bar_line_data, num_tracks, vertical)
                 {
                     drag_rect = Some(egui::Rect::from_min_max(
-                        egui::pos2(vx.min(vy), vw.min(vh)),
-                        egui::pos2(vx.max(vy), vw.max(vh)),
+                        egui::pos2(b.view_sx.min(b.view_ex), b.view_sy.min(b.view_ey)),
+                        egui::pos2(b.view_sx.max(b.view_ex), b.view_sy.max(b.view_ey)),
                     ));
                 }
 
@@ -678,7 +679,7 @@ fn sel_drag_frame_arrange(
                         *info_content = Some(crate::right_panel::InfoContent::Track);
                     }
                 } else {
-                    if let Some((_, _, _, _, t_start, t_end, track_lo, track_hi)) =
+                    if let Some(b) =
                         arrange_snapped_bounds(start_pixel, end, view, quantize, ppq, bar_line_data, num_tracks, vertical)
                     {
                         // shift 或 cmd/ctrl 累加模式：保留已有选框；否则清空
@@ -686,8 +687,8 @@ fn sel_drag_frame_arrange(
                             selected.clear();
                             arr_sel_rect.clear();
                         }
-                        selected.add_rect_track(t_start as u32, t_end as u32, 0, 127, track_lo as u16, track_hi as u16);
-                        arr_sel_rect.push((t_start, t_end, track_lo, track_hi));
+                        selected.add_rect_track(b.t_start as u32, b.t_end as u32, 0, 127, b.track_lo as u16, b.track_hi as u16);
+                        arr_sel_rect.push((b.t_start, b.t_end, b.track_lo, b.track_hi));
                     } else if !additive {
                         // 选框完全在空白区域：清空选区
                         selected.clear();
@@ -782,10 +783,10 @@ fn eraser_drag_frame_arrange(
         if pointer.primary_released() {
             if let Some((_, end)) = drag {
                 if (end - start_pixel).length() >= 3.0
-                    && let Some((_, _, _, _, t_start, t_end, track_lo, track_hi)) =
+                    && let Some(b) =
                         arrange_snapped_bounds(start_pixel, end, view, quantize, ppq, bar_line_data, num_tracks, false)
                     {
-                        *arr_eraser_rect = Some((t_start, t_end, track_lo, track_hi));
+                        *arr_eraser_rect = Some((b.t_start, b.t_end, b.track_lo, b.track_hi));
                     }
                 view.base.dirty = true;
             }
@@ -796,9 +797,19 @@ fn eraser_drag_frame_arrange(
     ui.data_mut(|d| d.insert_persisted(drag_id, drag));
 }
 
+/// 吸附后的选框边界：view 局部坐标 + tick/track 范围。
+struct ArrSnappedBounds {
+    view_sx: f32,
+    view_ex: f32,
+    view_sy: f32,
+    view_ey: f32,
+    t_start: f64,
+    t_end: f64,
+    track_lo: usize,
+    track_hi: usize,
+}
+
 /// Compute snapped selection bounds for arrangement.
-/// Returns (view_local_sx, view_local_ex, view_local_sy, view_local_ey,
-///          t_start, t_end, track_lo, track_hi).
 fn arrange_snapped_bounds(
     start: egui::Pos2,
     end: egui::Pos2,
@@ -808,7 +819,7 @@ fn arrange_snapped_bounds(
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
     num_tracks: usize,
     vertical: bool,
-) -> Option<(f32, f32, f32, f32, f64, f64, usize, usize)> {
+) -> Option<ArrSnappedBounds> {
     let sx = start.x.min(end.x);
     let ex = start.x.max(end.x);
 
@@ -855,5 +866,5 @@ fn arrange_snapped_bounds(
     let view_sx = view.tick_to_x(t_start);
     let view_ex = view.tick_to_x(t_end);
 
-    Some((view_sx, view_ex, view_sy, view_ey, t_start, t_end, track_lo, track_hi))
+    Some(ArrSnappedBounds { view_sx, view_ex, view_sy, view_ey, t_start, t_end, track_lo, track_hi })
 }

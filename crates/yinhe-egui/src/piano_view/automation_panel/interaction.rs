@@ -50,6 +50,19 @@ pub(crate) enum CtrlEnd {
     In,
 }
 
+/// 命中曲线控制点的结果（`dist_sq` 仅用于选最近命中，调用方不消费）。
+#[derive(Clone, Copy)]
+pub(crate) struct ControlPointHit {
+    prev_tick: u32,
+    which: CtrlEnd,
+    x1: f32,
+    y1: f32,
+    x2: f32,
+    y2: f32,
+    pos: egui::Pos2,
+    dist_sq: f32,
+}
+
 /// 拖拽状态（ghost）。存在 egui data 中，跨帧保持。
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum AutoDrag {
@@ -156,11 +169,10 @@ pub(crate) fn hit_control_point_on_lane(
     panel_rect: egui::Rect,
     panel: &AutomationPanelView,
     max_val: f32,
-) -> Option<(u32, CtrlEnd, f32, f32, f32, f32, egui::Pos2)> {
+) -> Option<ControlPointHit> {
     let x_offset = grid_area.min.x - scroll_x;
     let hit_sq = ANCHOR_HIT_PX * ANCHOR_HIT_PX;
-    // (prev_tick, which, x1, y1, x2, y2, pos, dist_sq)
-    let mut best: Option<(u32, CtrlEnd, f32, f32, f32, f32, egui::Pos2, f32)> = None;
+    let mut best: Option<ControlPointHit> = None;
     for i in 1..lane.events.len() {
         let prev = &lane.events[i - 1];
         let cur = &lane.events[i];
@@ -182,17 +194,17 @@ pub(crate) fn hit_control_point_on_lane(
         let d1 = (c1x - mouse.x).powi(2) + (c1y - mouse.y).powi(2);
         let d2 = (c2x - mouse.x).powi(2) + (c2y - mouse.y).powi(2);
         if d1 <= hit_sq
-            && best.as_ref().map(|(_, _, _, _, _, _, _, d)| d1 < *d).unwrap_or(true)
+            && best.as_ref().map(|b| d1 < b.dist_sq).unwrap_or(true)
         {
-            best = Some((prev.tick, CtrlEnd::Out, x1, y1, x2, y2, egui::pos2(c1x, c1y), d1));
+            best = Some(ControlPointHit { prev_tick: prev.tick, which: CtrlEnd::Out, x1, y1, x2, y2, pos: egui::pos2(c1x, c1y), dist_sq: d1 });
         }
         if d2 <= hit_sq
-            && best.as_ref().map(|(_, _, _, _, _, _, _, d)| d2 < *d).unwrap_or(true)
+            && best.as_ref().map(|b| d2 < b.dist_sq).unwrap_or(true)
         {
-            best = Some((prev.tick, CtrlEnd::In, x1, y1, x2, y2, egui::pos2(c2x, c2y), d2));
+            best = Some(ControlPointHit { prev_tick: prev.tick, which: CtrlEnd::In, x1, y1, x2, y2, pos: egui::pos2(c2x, c2y), dist_sq: d2 });
         }
     }
-    best.map(|(t, w, x1, y1, x2, y2, p, _)| (t, w, x1, y1, x2, y2, p))
+    best
 }
 
 /// 从鼠标屏幕位置反推 Curve 段某一端控制点的偏移量 `(x, y) ∈ [-0.5, 0.5]`。
@@ -490,16 +502,16 @@ pub(crate) fn handle_automation_interaction(
                     ui.ctx().data_mut(|d| {
                         d.insert_temp(drag_id, AutoDrag::MoveAnchor { old_tick: tick, start_tick: tick, start_value: anchor_value });
                     });
-                } else if let Some((prev_tick, which, x1, y1, x2, y2, _)) = hit_ctrl {
+                } else if let Some(hit) = hit_ctrl {
                     // 命中控制点：开始拖拽该端控制点
-                    let (start_x, start_y) = match which {
-                        CtrlEnd::Out => (x1, y1),
-                        CtrlEnd::In => (x2, y2),
+                    let (start_x, start_y) = match hit.which {
+                        CtrlEnd::Out => (hit.x1, hit.y1),
+                        CtrlEnd::In => (hit.x2, hit.y2),
                     };
                     ui.ctx().data_mut(|d| {
                         d.insert_temp(drag_id, AutoDrag::DragControlPoint {
-                            prev_tick,
-                            which,
+                            prev_tick: hit.prev_tick,
+                            which: hit.which,
                             start_x,
                             start_y,
                         });
@@ -1050,20 +1062,20 @@ pub(crate) fn handle_automation_interaction(
                 ui.ctx().request_repaint();
                 None
             }
-        } else if let Some((prev_tick, _which, x1, y1, x2, y2, ctrl_pos)) = hit_ctrl {
+        } else if let Some(hit) = hit_ctrl {
             // 控制点 hover：清除锚点计时
             ui.ctx().data_mut(|d| d.remove::<(u32, f64)>(hover_anchor_id));
             let prev: Option<(u32, f64)> = ui.ctx().data(|d| d.get_temp::<(u32, f64)>(hover_ctrl_id));
             let entry = match prev {
-                Some(e) if e.0 == prev_tick => e,
+                Some(e) if e.0 == hit.prev_tick => e,
                 _ => {
-                    let new_entry = (prev_tick, now);
+                    let new_entry = (hit.prev_tick, now);
                     ui.ctx().data_mut(|d| d.insert_temp(hover_ctrl_id, new_entry));
                     new_entry
                 }
             };
             if now - entry.1 >= HOVER_DELAY {
-                Some(HoverTooltip::ControlPoint { x1, y1, x2, y2, pos: ctrl_pos })
+                Some(HoverTooltip::ControlPoint { x1: hit.x1, y1: hit.y1, x2: hit.x2, y2: hit.y2, pos: hit.pos })
             } else {
                 ui.ctx().request_repaint();
                 None

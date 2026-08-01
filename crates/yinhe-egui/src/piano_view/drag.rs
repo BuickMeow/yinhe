@@ -15,6 +15,11 @@ use crate::selection::drag::CollectedNote;
 /// Built once at drag start, reused every frame — eliminates O(N×M) midi lookups.
 pub(crate) type SelDragNoteInfo = CollectedNote;
 
+/// 拖拽预览的幽灵音符：(start_tick, end_tick, key, track)。
+pub(crate) type GhostNote = (u32, u32, u8, u16);
+/// 拖拽时隐藏的原音符：(track, start_tick, key)。
+pub(crate) type HiddenNote = (u16, u32, u8);
+
 /// 指针是否在选框浮动工具条（selection_actions bar）上。
 fn on_action_bar(
     pos: egui::Pos2,
@@ -80,7 +85,7 @@ pub(crate) fn sel_drag_frame(
     track_visible: &[bool],
     track_selected: &std::collections::HashSet<u16>,
     vertical: bool,
-) -> (Vec<(u32, u32, u8, u16)>, Vec<(u16, u32, u8)>) {
+) -> (Vec<GhostNote>, Vec<HiddenNote>) {
     let note_drag_id = ui.id().with("note_drag_origin");
     let mut note_drag_origin: Option<(f64, f64, bool)> = ui
         .data_mut(|d| d.get_persisted(note_drag_id))
@@ -187,8 +192,8 @@ pub(crate) fn sel_drag_frame(
     }
 
     // Note drag: use pre-computed data for ghost/hidden, store delta only on release
-    let mut ghost_notes: Vec<(u32, u32, u8, u16)> = Vec::new();
-    let mut hidden_notes: Vec<(u16, u32, u8)> = Vec::new();
+    let mut ghost_notes: Vec<GhostNote> = Vec::new();
+    let mut hidden_notes: Vec<HiddenNote> = Vec::new();
     if let Some((origin_tick, origin_key, alt)) = note_drag_origin
         && let Some(ref notes) = drag_notes {
             if pointer.primary_down() && !pointer.primary_pressed()

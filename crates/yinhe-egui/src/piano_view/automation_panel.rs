@@ -56,6 +56,15 @@ use crate::theme;
 /// Height of the split/handle between automation panels.
 pub(crate) const SPLIT_H: f32 = theme::AUTO_PANEL_SPLIT_H;
 
+/// `show_panels` 的返回：总高度 + 编辑动作列表 + 联动反馈 + (拖拽锚点 tick, value)。
+pub(crate) type PanelsOutput = (
+    f32,
+    Vec<AutomationEdit>,
+    Vec<VelocityEdit>,
+    PanelPianorollFeedback,
+    Option<(u32, f32)>,
+);
+
 /// automation 面板交互产生的 pianoroll 联动反馈。
 ///
 /// `show_panels` 返回，由 `piano_view::show` 应用到 pianoroll view。
@@ -166,7 +175,7 @@ pub fn show_panels(
     revision: u64,
     info_content: &mut Option<InfoContent>,
     right_tab: &mut Option<RightTab>,
-) -> (f32, Vec<AutomationEdit>, Vec<VelocityEdit>, PanelPianorollFeedback, Option<(u32, f32)>) {
+) -> PanelsOutput {
     let mut edits = Vec::new();
     let mut velocity_edits = Vec::new();
     let mut feedback = PanelPianorollFeedback::default();
