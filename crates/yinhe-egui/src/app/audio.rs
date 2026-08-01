@@ -413,6 +413,58 @@ impl App {
         }
     }
 
+    /// 发送音符听觉预览请求（铅笔新建/拖拽、选框拖拽产生）。
+    ///
+    /// - 通道 = 目标音轨的全局通道；
+    /// - 目标位置自动化状态 = `target_tick` 处的自动化（渲染器按 target_sample chase）；
+    /// - 时长换算用目标位置的 Tempo（tempo_map 自动变速）；
+    /// - 力度缺省时用该音轨最近修改力度（default_velocity）。
+    pub(crate) fn send_note_previews(&self, reqs: &[crate::piano_view::PreviewReq]) {
+        if reqs.is_empty() {
+            return;
+        }
+        let (Some(idx), Some(audio)) = (self.active_doc, self.audio_state.handle.as_ref()) else {
+            return;
+        };
+        let doc = &self.documents[idx];
+        let model = &doc.data.model;
+        let sr = audio.sample_rate as f64;
+        for req in reqs {
+            match req {
+                crate::piano_view::PreviewReq::Note(p) => {
+                    let Some(track) = model.tracks.get(p.track as usize) else {
+                        continue;
+                    };
+                    let channel = track.global_channel();
+                    let target =
+                        (model.tempo_map.tick_to_seconds(p.target_tick as u64) * sr) as u64;
+                    let duration = if p.duration_ticks > 0 {
+                        let end = (model
+                            .tempo_map
+                            .tick_to_seconds((p.target_tick + p.duration_ticks) as u64)
+                            * sr) as u64;
+                        end.saturating_sub(target)
+                    } else {
+                        0
+                    };
+                    let velocity = p
+                        .velocity
+                        .unwrap_or_else(|| doc.edit.default_velocity(p.track));
+                    audio.handle.send(yinhe_audio::AudioCommand::PreviewNote {
+                        channel,
+                        key: p.key,
+                        velocity,
+                        target_sample: target,
+                        duration_samples: duration,
+                    });
+                }
+                crate::piano_view::PreviewReq::Stop => {
+                    audio.handle.send(yinhe_audio::AudioCommand::PreviewStop);
+                }
+            }
+        }
+    }
+
     /// Tear down audio (e.g. on new project or settings change).
     pub(crate) fn teardown_audio(&mut self) {
         self.audio_state.handle = None;

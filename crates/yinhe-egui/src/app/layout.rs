@@ -310,7 +310,7 @@ impl App {
             Vec::new();
         let mut velocity_edits: Vec<yinhe_types::VelocityEdit> = Vec::new();
 
-        let (piano_event, note_drag_delta, pencil_note_drag, note_resize_delta) = {
+        let (piano_event, note_drag_delta, pencil_note_drag, note_resize_delta, preview_reqs) = {
             let mut guard = crate::app::main_loop::ReplaceGuard::new(&mut self.documents[idx]);
             let doc = guard.as_mut();
             let midi_source: Option<&dyn yinhe_types::NoteSource> = Some(doc.data.model.as_ref());
@@ -323,6 +323,7 @@ impl App {
             let mut note_drag_delta: Option<(i64, i32, bool)> = None;
             let mut pencil_note_drag: Option<crate::piano_view::PencilNoteDrag> = None;
             let mut note_resize_delta: Option<(crate::piano_view::ResizeSide, i64)> = None;
+            let mut preview_reqs: Vec<crate::piano_view::PreviewReq> = Vec::new();
             ui.scope_builder(egui::UiBuilder::new().max_rect(piano_rect), |ui| {
                 let _piano_total_start = if yinhe_memtrace::perf_probe::enabled() {
                     Some(std::time::Instant::now())
@@ -428,6 +429,7 @@ impl App {
                     pencil_note_drag: &mut pencil_note_drag,
                     note_resize_delta: &mut note_resize_delta,
                     velocity_edits: &mut velocity_edits,
+                    preview_reqs: &mut preview_reqs,
                 };
                 event = piano_view::show(
                     ui,
@@ -471,8 +473,17 @@ impl App {
                     yinhe_memtrace::perf_probe::record_piano_total(t0.elapsed());
                 }
             });
-            (event, note_drag_delta, pencil_note_drag, note_resize_delta)
+            (
+                event,
+                note_drag_delta,
+                pencil_note_drag,
+                note_resize_delta,
+                preview_reqs,
+            )
         };
+
+        // 音符听觉预览（铅笔新建/拖拽、选框拖拽触发）。
+        self.send_note_previews(&preview_reqs);
 
         // Handle piano-view events
         if let Some(event) = piano_event {

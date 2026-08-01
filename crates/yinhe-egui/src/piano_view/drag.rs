@@ -85,11 +85,17 @@ pub(crate) fn sel_drag_frame(
     track_visible: &[bool],
     track_selected: &std::collections::HashSet<u16>,
     vertical: bool,
-) -> (Vec<GhostNote>, Vec<HiddenNote>) {
+) -> (Vec<GhostNote>, Vec<HiddenNote>, Vec<super::PreviewReq>) {
     let note_drag_id = ui.id().with("note_drag_origin");
     let mut note_drag_origin: Option<(f64, f64, bool)> = ui
         .data_mut(|d| d.get_persisted(note_drag_id))
         .unwrap_or(None);
+
+    // 拖拽中已触发预览的 key delta（每变化 1 key 触发一次整组预览）。
+    let preview_dk_id = ui.id().with("note_drag_preview_dk");
+    let mut preview_last_dk: i32 = ui.data_mut(|d| d.get_persisted(preview_dk_id)).unwrap_or(0);
+    // 音符听觉预览请求（key 变化时整组触发）。
+    let mut preview_reqs: Vec<super::PreviewReq> = Vec::new();
 
     // Pre-computed drag note info — built once at drag start, reused every frame.
     let drag_notes_id = ui.id().with("drag_notes");
@@ -121,7 +127,7 @@ pub(crate) fn sel_drag_frame(
 
     // 弹窗打开时跳过所有 pointer 处理，避免点击穿透
     if crate::view_interaction::pointer_over_popup(ui.ctx()) {
-        return (Vec::new(), Vec::new());
+        return (Vec::new(), Vec::new(), Vec::new());
     }
 
     // press 分支和 click 分支共用，整个函数作用域内有效。
@@ -181,6 +187,8 @@ pub(crate) fn sel_drag_frame(
                         track_visible,
                         track_selected,
                     ));
+                    preview_last_dk = 0;
+                    ui.data_mut(|d| d.insert_persisted(preview_dk_id, 0));
                 } else if !additive {
                     // 单击选框外（非加选模式）→ 立即清空选框与选区。
                     // 比 on_press 回调更早触发，覆盖 click（< 3px）的场景。
@@ -243,6 +251,25 @@ pub(crate) fn sel_drag_frame(
             }
 
             sel_rect.update_drag(dt, dk);
+
+            // 音符听觉预览：每变化 1 key，播放一次整组选中音符（各自通道/力度，
+            // 长度 = 音符 gate，时长换算用目标位置 Tempo）。
+            if dk != preview_last_dk {
+                preview_last_dk = dk;
+                preview_reqs = notes
+                    .iter()
+                    .map(|info| {
+                        super::PreviewReq::Note(super::NotePreview {
+                            track: info.track,
+                            key: ((info.key as i32) + dk).clamp(0, 127) as u8,
+                            velocity: Some(info.velocity),
+                            target_tick: (info.start_tick as i64 + dt).max(0) as u32,
+                            duration_ticks: info.end_tick - info.start_tick,
+                        })
+                    })
+                    .collect();
+                ui.data_mut(|d| d.insert_persisted(preview_dk_id, preview_last_dk));
+            }
 
             // ── Tooltip：显示 ±tick / ±key（已按量化 snap）──
             let lines = vec![
@@ -462,7 +489,7 @@ pub(crate) fn sel_drag_frame(
     ui.data_mut(|d| d.insert_persisted(note_drag_id, note_drag_origin));
     ui.data_mut(|d| d.insert_persisted(drag_notes_id, drag_notes));
     ui.data_mut(|d| d.insert_persisted(resize_id, sel_resize_state));
-    (ghost_notes, hidden_notes)
+    (ghost_notes, hidden_notes, preview_reqs)
 }
 
 // 通用逻辑已抽取到 crate::selection::drag：

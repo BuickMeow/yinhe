@@ -11,6 +11,16 @@ use crate::engine::AudioEngine;
 const STEREO_CHANNELS: usize = 2;
 
 impl AudioEngine {
+    /// 预览专用渲染：只输出当前 voice 的音频，不推进 sample_position、不 dispatch 事件。
+    /// 未播放时的音符预览靠它持续出声（播放中预览走正常 `render`，预览音与工程混音）。
+    pub(crate) fn render_preview(&mut self, output: &mut [f32]) {
+        let frames = output.len() / STEREO_CHANNELS;
+        if frames == 0 {
+            return;
+        }
+        self.channel_group.read_samples(output);
+    }
+
     pub(crate) fn render(&mut self, output: &mut [f32]) {
         let frames = output.len() / STEREO_CHANNELS;
         if frames == 0 || !self.playing {

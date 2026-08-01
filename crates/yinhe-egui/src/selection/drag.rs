@@ -14,6 +14,8 @@ pub struct CollectedNote {
     pub start_tick: u32,
     pub end_tick: u32,
     pub key: u8,
+    /// 原力度（拖拽预览用）。
+    pub velocity: u8,
 }
 
 /// Auto-scroll the view when the pointer is near the edges of `content_rect`.
@@ -114,6 +116,7 @@ pub fn collect_selected_notes(
                             start_tick: n.start_tick,
                             end_tick: n.end_tick,
                             key,
+                            velocity: n.velocity,
                         })
                         .collect::<Vec<_>>()
                 })

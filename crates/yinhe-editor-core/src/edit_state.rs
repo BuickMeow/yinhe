@@ -252,7 +252,7 @@ impl EditState {
             self.recent_velocity.resize(i + 1, None);
         }
         let slot = &mut self.recent_velocity[i];
-        if slot.map_or(true, |(t, _)| start_tick >= t) {
+        if slot.is_none_or(|(t, _)| start_tick >= t) {
             *slot = Some((start_tick, velocity));
         }
     }

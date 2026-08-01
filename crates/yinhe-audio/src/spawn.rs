@@ -81,6 +81,20 @@ pub enum AudioCommand {
     SetAutomationDensity {
         density: u32,
     },
+    /// 音符听觉预览：渲染器把目标位置的通道自动化状态应用到通道后 NoteOn 一个临时音符。
+    /// `duration_samples == 0` 表示持续音（直到 `PreviewStop`）；否则渲染到时长自动 NoteOff。
+    /// 预览不依赖播放状态：未播放时也渲染输出（预览音独立于工程音符，不推进播放位置）。
+    PreviewNote {
+        /// 全局通道（port<<4 | channel）。
+        channel: u8,
+        key: u8,
+        velocity: u8,
+        /// 目标位置 sample：该处的自动化状态（volume/pan/PBS/Program 等）用于预览。
+        target_sample: u64,
+        duration_samples: u64,
+    },
+    /// 停止持续音预览（`PreviewNote` 的 `duration_samples == 0` 时用）。
+    PreviewStop,
 }
 
 /// Handle used by the UI to control audio playback.

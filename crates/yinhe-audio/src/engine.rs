@@ -206,6 +206,8 @@ impl AudioEngine {
             AudioCommand::SetAutomationDensity { density } => {
                 self.automation_density = density.max(1);
             }
+            // 预览命令由渲染器处理（需要 ring/渲染时钟），引擎层忽略。
+            AudioCommand::PreviewNote { .. } | AudioCommand::PreviewStop => {}
         }
     }
 

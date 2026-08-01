@@ -52,6 +52,27 @@ pub struct AutomationPanelsCtx<'a> {
     pub wgpu_state: &'a std::sync::Arc<eframe::egui_wgpu::RenderState>,
 }
 
+/// 音符听觉预览请求（UI 交互 → App → AudioCommand）。
+/// 预览音从目标音轨的通道发出，通道状态按目标位置（target_tick）的自动化。
+pub(crate) enum PreviewReq {
+    /// 播放/重触发一个音符预览。`duration_ticks == 0` 表示持续音（直到 `Stop`）。
+    Note(NotePreview),
+    /// 停止持续音预览。
+    Stop,
+}
+
+/// 单个音符的预览参数。
+pub(crate) struct NotePreview {
+    pub track: u16,
+    pub key: u8,
+    /// `None` = 用该音轨最近修改力度（default_velocity）。
+    pub velocity: Option<u8>,
+    /// 目标位置 tick：自动化状态采样点（音符起点）。
+    pub target_tick: u32,
+    /// 预览时长（tick），0 = 持续音（配合 `PreviewReq::Stop`）。
+    pub duration_ticks: u32,
+}
+
 /// piano_view 给外部的反馈通道（合并多个 &mut 出参）。
 pub struct PianoViewFeedback<'a> {
     pub auto_edit_events: &'a mut Vec<crate::piano_view::automation_panel::AutomationEdit>,
@@ -63,6 +84,8 @@ pub struct PianoViewFeedback<'a> {
     /// 选框边缘拖动伸缩：(side, delta_ticks)。dt 按量化对齐。
     pub note_resize_delta: &'a mut Option<(ResizeSide, i64)>,
     pub velocity_edits: &'a mut Vec<yinhe_types::VelocityEdit>,
+    /// 音符听觉预览请求（铅笔新建/拖拽、选框拖拽触发）。
+    pub preview_reqs: &'a mut Vec<PreviewReq>,
 }
 
 /// Height of the time ruler band at the top of the pianoroll view.
@@ -217,7 +240,7 @@ pub fn show(
         std::collections::HashSet::new();
     if *active_tool == Tool::Select || *active_tool == Tool::SelectVertical {
         let vertical = *active_tool == Tool::SelectVertical;
-        let (sel_ghosts, sel_hidden) = drag::sel_drag_frame(
+        let (sel_ghosts, sel_hidden, sel_previews) = drag::sel_drag_frame(
             ui,
             content_rect,
             music_rect,
@@ -239,8 +262,9 @@ pub fn show(
         );
         ghost_notes = sel_ghosts;
         hidden_notes = sel_hidden.into_iter().collect();
+        feedback.preview_reqs.extend(sel_previews);
     } else if *active_tool == Tool::Pencil {
-        let (note_event, ghost, hidden, pencil_drag) = pencil::pencil_frame(
+        let (note_event, ghost, hidden, pencil_drag, preview) = pencil::pencil_frame(
             ui,
             content_rect,
             music_rect,
@@ -258,6 +282,9 @@ pub fn show(
         ghost_notes = ghost;
         hidden_notes.extend(hidden);
         *feedback.pencil_note_drag = pencil_drag;
+        if let Some(p) = preview {
+            feedback.preview_reqs.push(p);
+        }
         if let Some(note) = note_event
             && let Some(track) =
                 pencil::valid_pencil_track(editing_track, track_visible, conductor_idx)

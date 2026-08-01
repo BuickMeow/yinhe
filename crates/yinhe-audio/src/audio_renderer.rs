@@ -47,6 +47,14 @@ impl RendererSharedState {
     }
 }
 
+/// 渲染器侧的音符预览状态：NoteOn 后由渲染时钟自动 NoteOff（无需定时器线程）。
+struct PreviewNote {
+    channel: u8,
+    key: u8,
+    /// `Some(dur)`：渲染 `dur` 帧后自动 NoteOff；`None`：持续音（等 `PreviewStop`）。
+    duration_samples: Option<u64>,
+}
+
 struct AudioRenderer {
     engine: AudioEngine,
     ring: AudioRingProducer,
@@ -57,6 +65,10 @@ struct AudioRenderer {
     prepared_rx: Receiver<WorkerResult>,
     shutdown: Arc<AtomicBool>,
     scratch: Vec<f32>,
+    /// 当前预览音符（`None` = 无预览）。
+    preview: Option<PreviewNote>,
+    /// 预览开始后实际渲染输出的帧数（预览音被播放的时长）。
+    preview_elapsed: u64,
     /// 是否启用 GPU 合成器。启用后加载音色库时初始化 GpuSynth，渲染走 engine.gpu_synth。
     #[cfg(feature = "gpu")]
     use_gpu_synth: bool,
@@ -85,6 +97,8 @@ impl AudioRenderer {
             prepared_rx,
             shutdown,
             scratch: vec![0.0; RENDER_CHUNK_FRAMES * STEREO_CHANNELS],
+            preview: None,
+            preview_elapsed: 0,
             #[cfg(feature = "gpu")]
             use_gpu_synth,
         }
@@ -92,8 +106,10 @@ impl AudioRenderer {
 
     fn run(&mut self) {
         while !self.shutdown.load(Ordering::Relaxed) {
-            let did_work =
-                self.process_commands() | self.process_worker_results() | self.render_if_needed();
+            let did_work = self.process_commands()
+                | self.process_worker_results()
+                | self.render_if_needed()
+                | self.check_preview_done();
 
             self.publish_state();
 
@@ -115,6 +131,7 @@ impl AudioRenderer {
                     did_work = true;
                     match cmd {
                         AudioCommand::LoadModel { model } => {
+                            self.preview_off();
                             self.engine.handle_command(AudioCommand::Pause);
                             self.engine.handle_command(AudioCommand::Stop);
                             self.clear_buffered_audio();
@@ -144,6 +161,7 @@ impl AudioRenderer {
                         }
                         AudioCommand::Play { from_sample } => {
                             if self.engine.model_loaded() {
+                                self.preview_off();
                                 self.engine
                                     .handle_command(AudioCommand::Play { from_sample });
                                 // GPU 路径：同步 GpuSynth 位置
@@ -159,6 +177,7 @@ impl AudioRenderer {
                             }
                         }
                         AudioCommand::Seek { sample } => {
+                            self.preview_off();
                             self.engine.handle_command(AudioCommand::Seek { sample });
                             #[cfg(feature = "gpu")]
                             if let Some(ref mut synth) = self.engine.gpu_synth {
@@ -169,6 +188,7 @@ impl AudioRenderer {
                             self.request_chase(sample);
                         }
                         AudioCommand::Stop => {
+                            self.preview_off();
                             self.engine.handle_command(AudioCommand::Stop);
                             #[cfg(feature = "gpu")]
                             if let Some(ref mut synth) = self.engine.gpu_synth {
@@ -192,6 +212,32 @@ impl AudioRenderer {
                             if self.engine.model_loaded() {
                                 self.request_chase(self.engine.sample_position());
                             }
+                        }
+                        AudioCommand::PreviewNote {
+                            channel,
+                            key,
+                            velocity,
+                            target_sample,
+                            duration_samples,
+                        } => {
+                            // retrigger：先停旧预览音（NoteOff + 恢复旧通道状态）。
+                            self.preview_off();
+                            // 应用目标位置的自动化状态，让预览音按目标位置的音色/音量发声。
+                            self.engine.preview_apply_state(channel, target_sample);
+                            self.engine.preview_note_on(channel, key, velocity);
+                            self.preview = Some(PreviewNote {
+                                channel,
+                                key,
+                                duration_samples: if duration_samples > 0 {
+                                    Some(duration_samples)
+                                } else {
+                                    None
+                                },
+                            });
+                            self.preview_elapsed = 0;
+                        }
+                        AudioCommand::PreviewStop => {
+                            self.preview_off();
                         }
                         other => self.engine.handle_command(other),
                     }
@@ -222,6 +268,31 @@ impl AudioRenderer {
         }
 
         did_work
+    }
+
+    /// 停止当前预览音：NoteOff；播放中再把该通道状态恢复为当前播放位置的值
+    /// （预览期间通道状态被切到目标位置，恢复后不影响正在播放的自动化）。
+    fn preview_off(&mut self) {
+        let Some(p) = self.preview.take() else { return };
+        self.engine.preview_note_off(p.channel, p.key);
+        if self.engine.playing() {
+            self.engine
+                .preview_apply_state(p.channel, self.engine.sample_position());
+        }
+        self.preview_elapsed = 0;
+    }
+
+    /// 定长预览到期检查：预览音实际渲染输出的帧数达到 duration 就 NoteOff。
+    /// 未播放时渲染器持续为预览输出，elapsed 照常推进，因此无需定时器线程。
+    fn check_preview_done(&mut self) -> bool {
+        if let Some(p) = &self.preview
+            && let Some(dur) = p.duration_samples
+            && self.preview_elapsed >= dur
+        {
+            self.preview_off();
+            return true;
+        }
+        false
     }
 
     /// 方案 B：发 `PrepareChase` 给 worker 线程异步计算 256 通道状态快照。
@@ -383,7 +454,12 @@ impl AudioRenderer {
     }
 
     fn render_if_needed(&mut self) -> bool {
-        if !self.state.initialized.load(Ordering::Acquire) || !self.engine.playing() {
+        if !self.state.initialized.load(Ordering::Acquire) {
+            return false;
+        }
+        // 预览激活时强制渲染：未播放时也要持续输出预览音（cpal 回调消费 ring）。
+        let previewing = self.preview.is_some();
+        if !self.engine.playing() && !previewing {
             return false;
         }
 
@@ -397,10 +473,13 @@ impl AudioRenderer {
             return false;
         }
 
-        // 统一渲染路径：engine.render() 内部根据 gpu_synth 是否存在自动选择 GPU/CPU
-        // GPU 路径：GpuSynth.render() → 限幅由 GpuSynth 内部完成
-        // CPU 路径：xsynth → 需要外部限幅
-        self.engine.render(&mut self.scratch);
+        if previewing && !self.engine.playing() {
+            // 未播放预览：只输出现有 voice 的音频，不推进位置、不 dispatch 工程事件。
+            self.engine.render_preview(&mut self.scratch);
+        } else {
+            // 播放路径：预览音与工程音符在 channel_group 里天然混音。
+            self.engine.render(&mut self.scratch);
+        }
 
         // GPU 路径在 GpuSynth::render 内部已做限幅；CPU 路径需要外部限幅
         #[cfg(feature = "gpu")]
@@ -412,6 +491,10 @@ impl AudioRenderer {
 
         let pushed = self.ring.push_slice(&self.scratch);
         debug_assert_eq!(pushed, self.scratch.len());
+        if previewing {
+            // 预览时长按实际渲染输出帧数累计（ring 满停渲时不计）。
+            self.preview_elapsed += RENDER_CHUNK_FRAMES as u64;
+        }
         true
     }
 

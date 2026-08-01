@@ -12,8 +12,8 @@ use yinhe_types::{TimeSigEvent, key_notes_in_range};
 pub(crate) enum PencilDrag {
     /// Creating a new note: (start_tick, key)
     Create(f64, u8),
-    /// Moving an existing note: (track, original_start_tick, original_key, original_end, press_snapped_tick)
-    Move(u16, u32, u8, u32, f64),
+    /// Moving an existing note: (track, original_start_tick, original_key, original_end, press_snapped_tick, last_dk)
+    Move(u16, u32, u8, u32, f64, i32),
     /// Resizing right edge: (track, start_tick, end_tick, key)
     ResizeRight(u16, u32, u32, u8),
     /// Resizing left edge: (track, start_tick, end_tick, key)
@@ -62,6 +62,15 @@ pub(crate) fn valid_pencil_track(
 /// Returns `(note_event, ghost_notes, hidden_notes, pencil_note_drag)`.
 /// ghost_notes are (start_tick, end_tick, key, track) as u32/u8/u16 — color fetched from storage buffer in shader.
 /// hidden_notes are (track, start_tick, key) for notes being dragged.
+/// Pencil 工具的帧输出：新建音符、ghost/hidden、松手拖拽提交、听觉预览请求。
+type PencilFrameOut = (
+    Option<yinhe_core::NoteEvent>,
+    Vec<super::drag::GhostNote>,
+    Vec<super::drag::HiddenNote>,
+    Option<PencilNoteDrag>,
+    Option<super::PreviewReq>,
+);
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn pencil_frame(
     ui: &mut egui::Ui,
@@ -77,15 +86,13 @@ pub(crate) fn pencil_frame(
     midi: Option<&dyn yinhe_types::NoteSource>,
     _track_colors: &[[f32; 3]],
     total_ticks: f64,
-) -> (
-    Option<yinhe_core::NoteEvent>,
-    Vec<super::drag::GhostNote>,
-    Vec<super::drag::HiddenNote>,
-    Option<PencilNoteDrag>,
-) {
+) -> PencilFrameOut {
     let pencil_id = ui.id().with("pencil_drag");
-    let drag_state: Option<PencilDrag> =
+    let mut drag_state: Option<PencilDrag> =
         ui.data_mut(|d| d.get_persisted(pencil_id)).unwrap_or(None);
+
+    // 音符听觉预览请求（key 变化 / 新建按下 / 松手）。
+    let mut preview_req: Option<super::PreviewReq> = None;
 
     let pointer = ui.input(|i| i.pointer.clone());
 
@@ -96,7 +103,7 @@ pub(crate) fn pencil_frame(
 
     // 弹窗打开时跳过所有 pointer 处理，避免点击穿透
     if crate::view_interaction::pointer_over_popup(ui.ctx()) {
-        return (None, Vec::new(), Vec::new(), None);
+        return (None, Vec::new(), Vec::new(), None, None);
     }
 
     let hover_pos = pointer.hover_pos();
@@ -218,12 +225,27 @@ pub(crate) fn pencil_frame(
                 }
                 HitMode::Move => {
                     let press_tick = preview.map(|(t, _)| t).unwrap_or(0.0);
-                    PencilDrag::Move(hit.track, hit.start_tick, hit.key, hit.end_tick, press_tick)
+                    PencilDrag::Move(
+                        hit.track,
+                        hit.start_tick,
+                        hit.key,
+                        hit.end_tick,
+                        press_tick,
+                        0,
+                    )
                 }
             };
             ui.data_mut(|d| d.insert_persisted(pencil_id, Some(new_drag)));
         } else if let Some((tick, key)) = preview {
             ui.data_mut(|d| d.insert_persisted(pencil_id, Some(PencilDrag::Create(tick, key))));
+            // 音符预览：按住期间持续响，松手 Stop。力度用该音轨最近修改值。
+            preview_req = Some(super::PreviewReq::Note(super::NotePreview {
+                track: track_idx,
+                key,
+                velocity: None,
+                target_tick: tick.max(0.0) as u32,
+                duration_ticks: 0,
+            }));
         }
     }
 
@@ -231,7 +253,7 @@ pub(crate) fn pencil_frame(
     let mut result = None;
     let mut pencil_note_drag = None;
 
-    match &drag_state {
+    match &mut drag_state {
         Some(PencilDrag::Create(s_tick, s_key)) => {
             // Show ghost while dragging (before release)
             if pointer.primary_down() && !pointer.primary_released() {
@@ -268,6 +290,7 @@ pub(crate) fn pencil_frame(
             }
             // Release -> commit note.
             if pointer.primary_released() {
+                preview_req = Some(super::PreviewReq::Stop);
                 if can_write {
                     let interval = quantize.tick_interval(ppq) as f64;
                     let end_tick = if let Some((tick, _)) = preview {
@@ -293,7 +316,7 @@ pub(crate) fn pencil_frame(
                 ui.data_mut(|d| d.insert_persisted(pencil_id, Option::<PencilDrag>::None));
             }
         }
-        Some(PencilDrag::Move(trk, orig_tick, orig_key, orig_end, press_tick)) => {
+        Some(PencilDrag::Move(trk, orig_tick, orig_key, orig_end, press_tick, last_dk)) => {
             // auto-scroll：让音符能拖出屏幕（pos 未 clamp）
             if pointer.primary_down()
                 && !pointer.primary_released()
@@ -314,6 +337,18 @@ pub(crate) fn pencil_frame(
             if let Some((tick, key)) = preview {
                 let dt = (tick as i64) - (*press_tick as i64);
                 let dk = (key as i32) - (*orig_key as i32);
+
+                // 音符预览：每变化 1 key 触发一次，长度 = 音符 gate，力度 = 音符原值。
+                if dk != *last_dk {
+                    *last_dk = dk;
+                    preview_req = Some(super::PreviewReq::Note(super::NotePreview {
+                        track: *trk,
+                        key: (*orig_key as i32 + dk).clamp(0, 127) as u8,
+                        velocity: note_velocity(midi, *trk, *orig_tick, *orig_key),
+                        target_tick: (*orig_tick as i64 + dt).max(0) as u32,
+                        duration_ticks: *orig_end - *orig_tick,
+                    }));
+                }
 
                 // Show ghost at the dragged position for visual feedback.
                 // The original note stays in place until release.
@@ -471,5 +506,28 @@ pub(crate) fn pencil_frame(
         None => {}
     }
 
-    (result, ghost_notes, hidden_notes, pencil_note_drag)
+    // 持久化拖拽状态（Move 的 last_dk 在拖拽中更新）。
+    ui.data_mut(|d| d.insert_persisted(pencil_id, drag_state));
+
+    (
+        result,
+        ghost_notes,
+        hidden_notes,
+        pencil_note_drag,
+        preview_req,
+    )
+}
+
+/// 查音符的 velocity（预览用）：按 (track, start_tick, key) 定位。
+fn note_velocity(
+    midi: Option<&dyn yinhe_types::NoteSource>,
+    track: u16,
+    start_tick: u32,
+    key: u8,
+) -> Option<u8> {
+    let midi = midi?;
+    key_notes_in_range(midi.key_notes(key), start_tick, start_tick + 1)
+        .iter()
+        .find(|n| n.track == track && n.start_tick == start_tick)
+        .map(|n| n.velocity)
 }
