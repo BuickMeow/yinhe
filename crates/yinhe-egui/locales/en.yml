@@ -16,6 +16,30 @@ common.clear_selection: "Clear Selection"
 # ── Mode bar ──
 # ARRANGE / MIX / EDIT kept as-is, not translated
 
+# ── Status-line hints ──
+hint.mode_arrange: "Arrange · overview of all tracks"
+hint.mode_mix: "Mix view"
+hint.mode_edit: "Piano roll · detailed note editing"
+hint.pr_toggle: "Show the piano roll below the arrangement"
+hint.right_info: "Info panel · selection/project info"
+hint.right_soundfont: "SoundFont panel · configure SF2/SFZ sounds"
+hint.right_channels: "Channels panel · XSynth channel mapping"
+hint.right_event_browser: "Event browser · all MIDI events"
+hint.mem: "Memory details · click to view"
+hint.file_menu: "File menu · New/Open/Save/Export"
+hint.play: "Play/Pause · Space"
+hint.stop: "Stop · Esc"
+hint.follow: "Playback follow · Lock/Page/Continuous (click to cycle)"
+hint.timecode: "Playback position · BPM/time-sig/PPQ"
+hint.track: "Track %{n}"
+hint.tool.select: "Select · marquee/move/resize notes · Delete to remove"
+hint.tool.select_vertical: "Vertical select · select whole note columns"
+hint.tool.pan: "Pan · drag to move the view"
+hint.tool.pencil: "Pencil · click or drag to draw notes"
+hint.tool.curve: "Curve · drag to draw automation curves"
+hint.tool.scissors: "Scissors · split notes"
+hint.tool.eraser: "Eraser · drag over notes to delete"
+
 # ── Tools ──
 tool.select: "Select"
 tool.select_vertical: "Vertical Select"
@@ -201,6 +225,7 @@ event_browser.edit_numerator: "Edit Numerator"
 event_browser.edit_denominator: "Edit Denominator (2^n)"
 event_browser.edit_keysig_root: "Edit Root (0-11, C=0)"
 event_browser.edit_keysig_scale: "Edit Scale"
+event_browser.edit_program: "Edit Program (0-127)"
 event_browser.edit_text: "Edit Text"
 event_browser.shape_step: "Step (Discrete)"
 

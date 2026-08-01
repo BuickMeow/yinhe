@@ -16,6 +16,30 @@ common.clear_selection: "清除选择"
 # ── 模式栏 ──
 # ARRANGE / MIX / EDIT 保留原文，不翻译
 
+# ── 状态栏讲解行 ──
+hint.mode_arrange: "工程走带 · 全部音轨音符总览"
+hint.mode_mix: "混音视图"
+hint.mode_edit: "钢琴卷帘 · 音符精细编辑"
+hint.pr_toggle: "在走带视图下方显示钢琴卷帘"
+hint.right_info: "信息面板 · 选区/项目信息"
+hint.right_soundfont: "音色库面板 · 配置 SF2/SFZ 音色"
+hint.right_channels: "通道面板 · XSynth 通道映射"
+hint.right_event_browser: "事件浏览器 · 全部 MIDI 事件"
+hint.mem: "内存占用详情 · 点击查看"
+hint.file_menu: "文件菜单 · 新建/打开/保存/导出"
+hint.play: "播放/暂停 · 空格"
+hint.stop: "停止 · Esc"
+hint.follow: "播放跟随 · 锁定/翻页/实时（点击切换）"
+hint.timecode: "播放位置 · BPM/拍号/PPQ"
+hint.track: "音轨 %{n}"
+hint.tool.select: "选择 · 框选/移动/缩放音符 · Delete 删除"
+hint.tool.select_vertical: "垂直选择 · 整列选择音符"
+hint.tool.pan: "手形 · 拖动平移视图"
+hint.tool.pencil: "铅笔 · 点击/拖拽绘制音符"
+hint.tool.curve: "曲线 · 拖拽绘制自动化曲线"
+hint.tool.scissors: "剪刀 · 剪断音符"
+hint.tool.eraser: "橡皮擦 · 划选删除音符"
+
 # ── 工具栏 ──
 tool.select: "选择"
 tool.select_vertical: "垂直选择"
@@ -201,6 +225,7 @@ event_browser.edit_numerator: "编辑分子"
 event_browser.edit_denominator: "编辑分母(2^n)"
 event_browser.edit_keysig_root: "编辑根音 (0-11, C=0)"
 event_browser.edit_keysig_scale: "编辑音阶"
+event_browser.edit_program: "编辑音色 (0-127)"
 event_browser.edit_text: "编辑文本"
 event_browser.shape_step: "离散 (Step)"
 

@@ -12,8 +12,33 @@ common.clear: "クリア"
 common.add: "追加"
 common.exit_app: "yinhe を終了"
 
+common.clear_selection: "選択をクリア"
+
 # ── モードバー ──
-# ARRANGE / MIX / EDIT は原文のまま（翻訳しない）
+
+# ── ステータスバー解説行 ──
+hint.mode_arrange: "アレンジ · 全トラックの音符概要"
+hint.mode_mix: "ミックスビュー"
+hint.mode_edit: "ピアノロール · 音符の精密編集"
+hint.pr_toggle: "アレンジの下にピアノロールを表示"
+hint.right_info: "情報パネル · 選択/プロジェクト情報"
+hint.right_soundfont: "サウンドフォントパネル · SF2/SFZ 音色を設定"
+hint.right_channels: "チャンネルパネル · XSynth チャンネルマッピング"
+hint.right_event_browser: "イベントブラウザ · 全 MIDI イベント"
+hint.mem: "メモリ使用量詳細 · クリックで表示"
+hint.file_menu: "ファイルメニュー · 新規/開く/保存/エクスポート"
+hint.play: "再生/一時停止 · スペース"
+hint.stop: "停止 · Esc"
+hint.follow: "再生追従 · ロック/ページ/連続（クリックで切替）"
+hint.timecode: "再生位置 · BPM/拍子/PPQ"
+hint.track: "トラック %{n}"
+hint.tool.select: "選択 · マーキー/移動/サイズ変更 · Delete で削除"
+hint.tool.select_vertical: "縦選択 · 列単位で音符を選択"
+hint.tool.pan: "手のひら · ドラッグでビューを移動"
+hint.tool.pencil: "鉛筆 · クリック/ドラッグで音符を描画"
+hint.tool.curve: "曲線 · ドラッグでオートメーション曲線を描画"
+hint.tool.scissors: "ハサミ · 音符を分割"
+hint.tool.eraser: "消しゴム · なぞって音符を削除"
 
 # ── ツール ──
 tool.select: "選択"
@@ -205,12 +230,20 @@ event_browser.edit_text: "テキストを編集"
 event_browser.shape_step: "離散 (Step)"
 
 # ── アンカーパネル ──
+anchor.title: "オートメーションアンカー"
+anchor.target: "ターゲット:"
 anchor.tick: "ティック:"
 anchor.value: "値:"
 anchor.x1: "X1:"
 anchor.y1: "Y1:"
 anchor.x2: "X2:"
 anchor.y2: "Y2:"
+anchor.shape: "曲線タイプ:"
+anchor.discrete: "離散 (Step)"
+anchor.shape_step_desc: "離散 (Step) — 次のアンカーまで値を保持"
+anchor.shape_linear_desc: "曲線 (Linear) — 線形補間"
+anchor.shape_bezier_desc: "曲線 (Bézier) — アンカー間の白丸をドラッグして曲率を調整"
+anchor.clear_selection: "選択をクリア"
 
 # ── 鉛筆ツールチップ ──
 pencil.key: "キー %{n}"
@@ -322,6 +355,7 @@ undo.edit_anchor_x2: "オートメーションアンカー X2を編集"
 undo.edit_anchor_y2: "オートメーションアンカー Y2を編集"
 undo.edit_timesig: "拍子記号を編集"
 undo.edit_keysig: "調号を編集"
+undo.edit_pc: "プログラムチェンジを編集"
 undo.edit_text_event: "テキストイベントを編集"
 
 # ── 選択情報 ──

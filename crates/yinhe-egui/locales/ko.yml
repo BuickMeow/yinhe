@@ -12,8 +12,33 @@ common.clear: "지우기"
 common.add: "추가"
 common.exit_app: "yinhe 종료"
 
+common.clear_selection: "선택 지우기"
+
 # ── 모드 바 ──
-# ARRANGE / MIX / EDIT는 원문 그대로 (번역하지 않음)
+
+# ── 상태 표시줄 설명 행 ──
+hint.mode_arrange: "어레인지 · 전체 트랙 노트 개요"
+hint.mode_mix: "믹스 뷰"
+hint.mode_edit: "피아노 롤 · 노트 세밀 편집"
+hint.pr_toggle: "어레인지 아래에 피아노 롤 표시"
+hint.right_info: "정보 패널 · 선택/프로젝트 정보"
+hint.right_soundfont: "사운드폰트 패널 · SF2/SFZ 음색 설정"
+hint.right_channels: "채널 패널 · XSynth 채널 매핑"
+hint.right_event_browser: "이벤트 브라우저 · 전체 MIDI 이벤트"
+hint.mem: "메모리 사용량 상세 · 클릭하여 보기"
+hint.file_menu: "파일 메뉴 · 새로 만들기/열기/저장/내보내기"
+hint.play: "재생/일시정지 · 스페이스"
+hint.stop: "정지 · Esc"
+hint.follow: "재생 추적 · 잠금/페이지/연속 (클릭하여 전환)"
+hint.timecode: "재생 위치 · BPM/박자/PPQ"
+hint.track: "트랙 %{n}"
+hint.tool.select: "선택 · 드래그 선택/이동/크기 조절 · Delete 삭제"
+hint.tool.select_vertical: "세로 선택 · 열 단위 노트 선택"
+hint.tool.pan: "손바닥 · 드래그로 뷰 이동"
+hint.tool.pencil: "연필 · 클릭/드래그로 노트 그리기"
+hint.tool.curve: "곡선 · 드래그로 자동화 곡선 그리기"
+hint.tool.scissors: "가위 · 노트 자르기"
+hint.tool.eraser: "지우개 · 드래그하여 노트 삭제"
 
 # ── 도구 ──
 tool.select: "선택"
@@ -200,16 +225,25 @@ event_browser.edit_numerator: "분자 편집"
 event_browser.edit_denominator: "분모 편집(2^n)"
 event_browser.edit_keysig_root: "루트 편집 (0-11, C=0)"
 event_browser.edit_keysig_scale: "스케일 편집"
+event_browser.edit_program: "프로그램 편집 (0-127)"
 event_browser.edit_text: "텍스트 편집"
 event_browser.shape_step: "이산 (Step)"
 
 # ── 앵커 패널 ──
+anchor.title: "자동화 앵커"
+anchor.target: "대상:"
 anchor.tick: "틱:"
 anchor.value: "값:"
 anchor.x1: "X1:"
 anchor.y1: "Y1:"
 anchor.x2: "X2:"
 anchor.y2: "Y2:"
+anchor.shape: "곡선 유형:"
+anchor.discrete: "이산 (Step)"
+anchor.shape_step_desc: "이산 (Step) — 다음 앵커까지 값 유지"
+anchor.shape_linear_desc: "곡선 (Linear) — 선형 보간"
+anchor.shape_bezier_desc: "곡선 (Bézier) — 앵커 사이의 빈 원을 드래그하여 곡률 조정"
+anchor.clear_selection: "선택 지우기"
 
 # ── 연필 툴팁 ──
 pencil.key: "키 %{n}"
