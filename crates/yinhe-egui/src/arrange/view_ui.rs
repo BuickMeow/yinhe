@@ -578,7 +578,7 @@ fn sel_drag_frame_arrange(
         if let Some((_, end)) = drag
             && (end - start_pixel).length() >= 3.0
                 && let Some(b) =
-                    arrange_snapped_bounds(start_pixel, end, view, &data, vertical)
+                    arrange_snapped_bounds(start_pixel, end, view, data, vertical)
                 {
                     drag_rect = Some(egui::Rect::from_min_max(
                         egui::pos2(b.view_sx.min(b.view_ex), b.view_sy.min(b.view_ey)),
@@ -608,7 +608,7 @@ fn sel_drag_frame_arrange(
                     }
                 } else {
                     if let Some(b) =
-                        arrange_snapped_bounds(start_pixel, end, view, &data, vertical)
+                        arrange_snapped_bounds(start_pixel, end, view, data, vertical)
                     {
                         // shift 或 cmd/ctrl 累加模式：保留已有选框；否则清空
                         if !additive {
@@ -708,7 +708,7 @@ fn eraser_drag_frame_arrange(
             if let Some((_, end)) = drag {
                 if (end - start_pixel).length() >= 3.0
                     && let Some(b) =
-                        arrange_snapped_bounds(start_pixel, end, view, &data, false)
+                        arrange_snapped_bounds(start_pixel, end, view, data, false)
                     {
                         *edit.arr_eraser_rect = Some((b.t_start, b.t_end, b.track_lo, b.track_hi));
                     }

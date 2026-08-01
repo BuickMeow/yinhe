@@ -89,25 +89,31 @@ impl App {
             let mut arr_drag_delta: Option<crate::arrange::ArrDragDelta> = None;
             let mut arr_eraser_rect: Option<crate::arrange::ArrSelRect> = None;
             let mut guard = crate::app::main_loop::ReplaceGuard::new(&mut self.documents[idx]);
+            let cfg = crate::arrange::ArrangeViewCfg {
+                is_playing,
+                follow_mode: &mut follow_mode,
+                active_tool: &self.active_tool,
+                scroll_mode: self.audio_settings.scroll_mode,
+                min_border_width: self.audio_settings.min_border_width,
+                revision: guard.as_ref().data.revision,
+                haptic_engine: Some(&self.haptic_engine),
+            };
             let arr_quantize = arrange::show(
                 ui,
                 guard.as_mut(),
                 &mut self.arrange_view,
-                layout.remaining,
-                layout.arr_h,
-                &mut self.transport_panel_width,
+                crate::arrange::ArrangeLayout {
+                    remaining: layout.remaining,
+                    arr_h: layout.arr_h,
+                    transport_panel_width: &mut self.transport_panel_width,
+                },
                 &mut self.arr_renderer,
                 &mut self.arr_render_ctx,
+                cfg,
                 &mut self.last_cursor_tick,
-                is_playing,
-                &mut follow_mode,
-                &self.active_tool,
                 self.audio_state.handle.as_ref(),
                 &mut request_pianoroll,
                 &mut self.track_selection_anchor,
-                self.audio_settings.scroll_mode,
-                self.audio_settings.min_border_width,
-                Some(&self.haptic_engine),
                 &mut arr_drag_delta,
                 &mut arr_eraser_rect,
                 &mut self.info_content,

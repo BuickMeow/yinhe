@@ -65,26 +65,22 @@ pub(crate) struct ArrangeLayout<'a> {
 
 /// Returns `Some(new_preset)` if the user picked a new quantize preset
 /// from the corner AR button.
-#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
+///
+/// 编排视图协调器：聚合 doc/布局/渲染/配置/编辑原料/信号六个职责面的输入，
+/// 内部按只读数据、可变编辑状态、视图配置三轴分发（见 ArrangeData 等）。
+#[allow(clippy::too_many_arguments)]
 pub fn show(
     ui: &mut egui::Ui,
     doc: &mut Document,
     arr_view: &mut ArrangementView,
-    remaining: egui::Rect,
-    arr_h: f32,
-    transport_panel_width: &mut f32,
+    layout: ArrangeLayout<'_>,
     arr_renderer: &mut yinhe_wgpu::InstanceRenderer,
     arr_render_ctx: &mut RenderContext,
+    mut cfg: ArrangeViewCfg<'_>,
     last_cursor_tick: &mut Option<f64>,
-    is_playing: bool,
-    follow_mode: &mut crate::view_interaction::FollowMode,
-    active_tool: &Tool,
     audio: Option<&yinhe_audio::CpalAudioHandle>,
     request_pianoroll: &mut bool,
     selection_anchor: &mut Option<u16>,
-    scroll_mode: u32,
-    min_border_width: f32,
-    haptic_engine: Option<&yinhe_haptic::HapticEngine>,
     arr_drag_delta: &mut Option<ArrDragDelta>,
     arr_eraser_rect: &mut Option<ArrSelRect>,
     info_content: &mut Option<crate::right_panel::InfoContent>,
@@ -95,13 +91,13 @@ pub fn show(
 ) -> Option<QuantizePreset> {
     *last_cursor_tick = doc.edit.cursor_tick;
 
-    let arr_total_w = remaining.width();
-    let tp_w = transport_panel_width.clamp(60.0, (arr_total_w - 60.0).max(60.0));
-    *transport_panel_width = tp_w;
+    let arr_total_w = layout.remaining.width();
+    let tp_w = layout.transport_panel_width.clamp(60.0, (arr_total_w - 60.0).max(60.0));
+    *layout.transport_panel_width = tp_w;
 
     let arr_rect = egui::Rect::from_min_max(
-        remaining.min,
-        egui::pos2(remaining.max.x, remaining.min.y + arr_h),
+        layout.remaining.min,
+        egui::pos2(layout.remaining.max.x, layout.remaining.min.y + layout.arr_h),
     );
 
     // ── Track panel: starts at RULER_H, ends at scrollbar top so rows align with GPU lanes ──
@@ -282,15 +278,6 @@ pub fn show(
     });
 
     // ── Arrangement GPU view (below ruler) ──
-    let mut cfg = ArrangeViewCfg {
-        is_playing,
-        follow_mode,
-        active_tool,
-        scroll_mode,
-        min_border_width,
-        revision: doc.data.revision,
-        haptic_engine,
-    };
     let gpu_size = gpu_rect.size();
     ui.scope_builder(egui::UiBuilder::new().max_rect(gpu_rect), |ui| {
         let model = &*doc.data.model;
@@ -458,8 +445,8 @@ pub fn show(
     );
     let v_resp = crate::widgets::split_handle::vertical(ui, "__v_split__", v_handle);
     if v_resp.dragged() {
-        *transport_panel_width =
-            (*transport_panel_width + v_resp.drag_delta().x).clamp(60.0, arr_total_w - 60.0);
+        *layout.transport_panel_width =
+            (*layout.transport_panel_width + v_resp.drag_delta().x).clamp(60.0, arr_total_w - 60.0);
     }
 
     pending_quantize
