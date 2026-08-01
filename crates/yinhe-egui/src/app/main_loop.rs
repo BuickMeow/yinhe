@@ -30,6 +30,10 @@ impl<'a, T> ReplaceGuard<'a, T> {
     pub(super) fn as_mut(&mut self) -> &mut T {
         self.value.as_mut().expect("ReplaceGuard already consumed")
     }
+
+    pub(super) fn as_ref(&self) -> &T {
+        self.value.as_ref().expect("ReplaceGuard already consumed")
+    }
 }
 
 impl<'a, T> Drop for ReplaceGuard<'a, T> {

@@ -20,6 +20,49 @@ pub(crate) type ArrDragDelta = (i64, i32);
 /// Arrange 选框/橡皮擦矩形：(t_start, t_end, track_lo, track_hi)。
 pub(crate) type ArrSelRect = (f64, f64, usize, usize);
 
+/// Arrange 视图的只读模型数据（同一帧内不变）。
+pub(crate) struct ArrangeData<'a> {
+    pub midi: Option<&'a dyn yinhe_types::NoteSource>,
+    pub track_visible: &'a [bool],
+    pub track_colors: &'a [[f32; 3]],
+    pub track_info: &'a [yinhe_core::TrackInfo],
+    pub quantize: QuantizePreset,
+    pub ppq: u32,
+    pub bar_line_data: Option<(u32, u8, u8, &'a [yinhe_types::TimeSigEvent])>,
+    pub total_ticks: f64,
+    pub num_tracks: usize,
+}
+
+/// Arrange 交互产生的可变编辑状态（out-params 聚合）。
+pub(crate) struct ArrangeEdit<'a> {
+    pub selected: &'a mut yinhe_core::Selection,
+    pub cursor_tick: &'a mut Option<f64>,
+    pub arr_sel_rect: &'a mut Vec<ArrSelRect>,
+    pub arr_drag_delta: &'a mut Option<ArrDragDelta>,
+    pub arr_eraser_rect: &'a mut Option<ArrSelRect>,
+    pub track_selected: &'a mut std::collections::HashSet<u16>,
+    pub selection_anchor: &'a mut Option<u16>,
+    pub info_content: &'a mut Option<crate::right_panel::InfoContent>,
+}
+
+/// Arrange 视图/播放/渲染配置（layout.rs 每帧构造）。
+pub(crate) struct ArrangeViewCfg<'a> {
+    pub is_playing: bool,
+    pub follow_mode: &'a mut crate::view_interaction::FollowMode,
+    pub active_tool: &'a Tool,
+    pub scroll_mode: u32,
+    pub min_border_width: f32,
+    pub revision: u64,
+    pub haptic_engine: Option<&'a yinhe_haptic::HapticEngine>,
+}
+
+/// Arrange 布局几何。
+pub(crate) struct ArrangeLayout<'a> {
+    pub remaining: egui::Rect,
+    pub arr_h: f32,
+    pub transport_panel_width: &'a mut f32,
+}
+
 /// Returns `Some(new_preset)` if the user picked a new quantize preset
 /// from the corner AR button.
 #[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
