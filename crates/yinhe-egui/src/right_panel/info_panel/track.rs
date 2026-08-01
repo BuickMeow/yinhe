@@ -244,7 +244,8 @@ pub(super) fn show_track_info(
             yinhe_editor_core::history::commit_track_name(doc, id.value(), track_idx, &name);
         }
     }
-    let ti = &doc.edit.track_info_cache[track_idx];
+    // 快照一份 track_info（避免借用与后续颜色 undo 的 &mut doc 冲突）。
+    let ti = doc.edit.track_info_cache[track_idx].clone();
 
     ui.add_space(4.0);
 
@@ -311,6 +312,8 @@ pub(super) fn show_track_info(
     // ── 音轨颜色（ImageToMidi 颜色事件兼容）──
     // 显示当前实际颜色（缓存：显式颜色优先，否则调色板），
     // 编辑后写入 TrackData.color 并刷新缓存（无需重建音频引擎）。
+    // undo：颜色 popup 打开时记录旧色，关闭时若颜色有变则提交一条 undo。
+    let mut undo_color: Option<([f32; 3], [f32; 3])> = None; // (old, new)
     ui.horizontal(|ui| {
         ui.label("颜色:");
         let cur = doc
@@ -324,6 +327,20 @@ pub(super) fn show_track_info(
             (cur[1] * 255.0).round() as u8,
             (cur[2] * 255.0).round() as u8,
         ];
+        // popup id 与 color_edit_button_srgb 内部（auto_id_with("popup")）一致
+        let popup_id = ui.auto_id_with("popup");
+        let open = egui::Popup::is_id_open(ui.ctx(), popup_id);
+        let was_open = ui
+            .ctx()
+            .data(|d| d.get_temp::<bool>(popup_id.with("color_open")))
+            .unwrap_or(false);
+        ui.ctx()
+            .data_mut(|d| d.insert_temp(popup_id.with("color_open"), open));
+        if open && !was_open {
+            // popup 刚打开：记录编辑前颜色
+            ui.ctx()
+                .data_mut(|d| d.insert_temp(popup_id.with("color_old"), cur));
+        }
         let resp = ui.color_edit_button_srgb(&mut srgb);
         if resp.changed() {
             let new = [
@@ -343,7 +360,35 @@ pub(super) fn show_track_info(
             }
             doc.data.bump_revision();
         }
+        if !open && was_open {
+            // popup 刚关闭：颜色有变则提交一条 undo
+            let old = ui
+                .ctx()
+                .data(|d| d.get_temp::<[f32; 3]>(popup_id.with("color_old")))
+                .unwrap_or(cur);
+            let new = doc
+                .edit
+                .track_colors_cache
+                .get(track_idx)
+                .copied()
+                .unwrap_or(cur);
+            if old != new {
+                undo_color = Some((old, new));
+            }
+        }
     });
+    if let Some((old, new)) = undo_color {
+        let snapshot = doc.capture_snapshot();
+        doc.push_undo(
+            yinhe_editor_core::history::UndoAction::TrackColor {
+                track_idx,
+                old,
+                new,
+            },
+            "Edit track color",
+            snapshot,
+        );
+    }
 
     ui.add_space(6.0);
 

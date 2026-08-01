@@ -41,6 +41,20 @@ impl UndoAction {
                     }
                 }
             }
+            UndoAction::TrackColor {
+                track_idx,
+                old: _,
+                new,
+            } => {
+                let model = Arc::make_mut(&mut doc.data.model);
+                if let Some(track) = model.tracks.get_mut(*track_idx) {
+                    Arc::make_mut(track).color = *new;
+                }
+                if let Some(c) = doc.edit.track_colors_cache.get_mut(*track_idx) {
+                    *c = *new;
+                }
+                doc.data.bump_revision();
+            }
             UndoAction::ProjectName { old: _, new } => {
                 let model = Arc::make_mut(&mut doc.data.model);
                 model.meta.name = new.clone();

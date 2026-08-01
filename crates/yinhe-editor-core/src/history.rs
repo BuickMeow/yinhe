@@ -111,6 +111,12 @@ pub enum UndoAction {
         old: String,
         new: String,
     },
+    /// A track color was edited (source of the ImageToMidi color event).
+    TrackColor {
+        track_idx: usize,
+        old: [f32; 3],
+        new: [f32; 3],
+    },
     /// Project metadata was edited.
     ProjectName {
         old: String,
@@ -179,6 +185,18 @@ impl UndoAction {
             } => {
                 std::mem::swap(&mut old, &mut new);
                 UndoAction::TrackName {
+                    track_idx,
+                    old,
+                    new,
+                }
+            }
+            UndoAction::TrackColor {
+                track_idx,
+                mut old,
+                mut new,
+            } => {
+                std::mem::swap(&mut old, &mut new);
+                UndoAction::TrackColor {
                     track_idx,
                     old,
                     new,
