@@ -6,7 +6,7 @@
 //! - `project_info` — 项目设置（无选择时）
 
 mod anchor;
-mod selection;
+pub(crate) mod selection;
 mod track;
 
 use eframe::egui;

@@ -1,5 +1,4 @@
 use egui_material_icons::icons::*;
-use rust_i18n::t;
 
 #[derive(PartialEq, Clone, Copy, Debug)]
 pub enum Tool {
@@ -33,18 +32,6 @@ impl Tool {
             Tool::Curve => ICON_DRAW,
             Tool::Scissors => ICON_CONTENT_CUT,
             Tool::Eraser => ICON_INK_ERASER,
-        }
-    }
-
-    pub fn label(self) -> String {
-        match self {
-            Tool::Select => t!("tool.select").to_string(),
-            Tool::SelectVertical => t!("tool.select_vertical").to_string(),
-            Tool::Pan => t!("tool.pan").to_string(),
-            Tool::Pencil => t!("tool.pencil").to_string(),
-            Tool::Curve => t!("tool.curve").to_string(),
-            Tool::Scissors => t!("tool.scissors").to_string(),
-            Tool::Eraser => t!("tool.eraser").to_string(),
         }
     }
 }

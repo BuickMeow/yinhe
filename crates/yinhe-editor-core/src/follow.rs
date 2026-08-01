@@ -17,14 +17,6 @@ impl FollowMode {
             FollowMode::Continuous => FollowMode::None,
         }
     }
-
-    pub fn tooltip(self) -> &'static str {
-        match self {
-            FollowMode::None => "不滚动",
-            FollowMode::Page => "翻页跟随",
-            FollowMode::Continuous => "实时跟随",
-        }
-    }
 }
 
 /// Total timeline length in ticks with 64 bars of padding after the last
@@ -120,13 +112,6 @@ mod tests {
         assert_eq!(FollowMode::None.next(), FollowMode::Page);
         assert_eq!(FollowMode::Page.next(), FollowMode::Continuous);
         assert_eq!(FollowMode::Continuous.next(), FollowMode::None);
-    }
-
-    #[test]
-    fn follow_mode_tooltip_not_empty() {
-        assert!(!FollowMode::None.tooltip().is_empty());
-        assert!(!FollowMode::Page.tooltip().is_empty());
-        assert!(!FollowMode::Continuous.tooltip().is_empty());
     }
 
     #[test]

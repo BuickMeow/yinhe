@@ -165,7 +165,6 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                     if follow_resp.hovered() {
                         hovered_hint = Some(t!("hint.follow").to_string());
                     }
-                    follow_resp.on_hover_text(ctx.follow_mode.tooltip());
                 }
 
                 if let Some(doc) = ctx.doc {
@@ -206,7 +205,6 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                         if resp.hovered() {
                             hovered_hint = Some(tool_hint(tool));
                         }
-                        resp.on_hover_text(tool.label());
                         ui.add_space(2.0);
                     }
                     // 把左侧按钮 + 右侧工具按钮都纳入"按钮区"，

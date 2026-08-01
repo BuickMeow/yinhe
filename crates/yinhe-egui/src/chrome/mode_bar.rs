@@ -48,7 +48,7 @@ fn mode_button(ui: &mut egui::Ui, label: &str, is_selected: bool, on_click: impl
                 .color(if is_selected {
                     crate::theme::ACCENT_ACTIVE
                 } else {
-                    egui::Color32::GRAY
+                    crate::theme::MODE_BAR_TEXT
                 }),
         )
         .sense(egui::Sense::click())
@@ -76,7 +76,7 @@ fn right_icon_button(
     let color = if is_active {
         crate::theme::ACCENT_ACTIVE
     } else {
-        egui::Color32::GRAY
+        crate::theme::MODE_BAR_TEXT
     };
     let resp = ui.add(
         egui::Label::new(icon.rich_text().size(14.0).color(color))
@@ -106,7 +106,7 @@ fn metric_with_value_sz(ui: &mut egui::Ui, label: &str, value: &str, value_sz: f
         egui::Label::new(
             egui::RichText::new(label)
                 .size(crate::theme::MODE_LABEL_FONT)
-                .color(egui::Color32::GRAY),
+                .color(crate::theme::MODE_BAR_TEXT),
         )
         .selectable(false),
     );
@@ -137,7 +137,7 @@ fn metric_clickable_with_value_sz(
         egui::Label::new(
             egui::RichText::new(label)
                 .size(crate::theme::MODE_LABEL_FONT)
-                .color(egui::Color32::GRAY),
+                .color(crate::theme::MODE_BAR_TEXT),
         )
         .selectable(false),
     );
@@ -150,7 +150,6 @@ fn metric_clickable_with_value_sz(
         .sense(egui::Sense::click())
         .selectable(false),
     );
-    let resp = resp.on_hover_text("点击打开内存占用详情");
     if resp.clicked() {
         on_click();
     }
@@ -213,7 +212,7 @@ pub fn show(
                     let piano_color = if *show_pianoroll_in_arrange {
                         crate::theme::ACCENT_ACTIVE
                     } else {
-                        egui::Color32::GRAY
+                        crate::theme::MODE_BAR_TEXT
                     };
                     let piano_resp = ui.add(
                         egui::Label::new(ICON_PIANO.rich_text().size(14.0).color(piano_color))
@@ -235,46 +234,10 @@ pub fn show(
                     }
                 }
 
-                // ── 讲解/状态文字：模式栏控件 > 右侧图标（上一帧）> 视图提示 ──
-                // 右侧图标在下方 with_layout 内才绘制，其 hover 状态无法当帧得知，
-                // 因此写入 persisted 状态，下一帧显示（1 帧延迟不可感知）。
-                // 注意：读写必须用全局稳定 Id，with_layout 子 ui 的 ui.id() 不同。
-                let icon_hint_id = egui::Id::new("mode_bar_icon_hint");
-                if hovered_hint.is_none() {
-                    hovered_hint = ui
-                        .data_mut(|d| d.get_persisted(icon_hint_id))
-                        .unwrap_or(None);
-                }
-                let over_popup = crate::view_interaction::pointer_over_popup(ui.ctx());
-                let over_bar = ui.input(|i| {
-                    i.pointer
-                        .hover_pos()
-                        .is_some_and(|p| ui.max_rect().contains(p))
-                });
-                let display_text = if over_popup {
-                    None
-                } else if hovered_hint.is_some() {
-                    hovered_hint
-                } else if over_bar {
-                    None
-                } else {
-                    status_hint.clone()
-                };
-                if let Some(text) = display_text {
-                    ui.add_space(12.0);
-                    ui.add(
-                        egui::Label::new(
-                            egui::RichText::new(text)
-                                .size(crate::theme::MODE_LABEL_FONT)
-                                .color(egui::Color32::GRAY),
-                        )
-                        .selectable(false),
-                    );
-                }
-
                 // ── Spacer: push right icons to the right edge ──
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    // 右侧图标本帧 hover 提示（persisted，下帧由上方读取）
+                    // 右侧图标本帧 hover 提示（讲解行在下方同布局内最后添加，
+                    // 处于最左侧且 hover 状态当帧有效，避免跨帧延迟导致的闪烁）
                     let mut icon_hint: Option<String> = None;
 
                     // Right-most first (from right to left):
@@ -366,7 +329,36 @@ pub fn show(
                         metric(ui, "FPS", &format!("{:.1}", fps));
                     });
 
-                    ui.data_mut(|d| d.insert_persisted(icon_hint_id, icon_hint));
+                    // ── 讲解/状态文字：模式栏控件 > 视图提示；模式栏空白处清空 ──
+                    // right_to_left 中最后添加 = 最左侧，紧随左侧 mode 按钮。
+                    let over_popup = crate::view_interaction::pointer_over_popup(ui.ctx());
+                    let over_bar = ui.input(|i| {
+                        i.pointer
+                            .hover_pos()
+                            .is_some_and(|p| ui.max_rect().contains(p))
+                    });
+                    let display_text = if over_popup {
+                        None
+                    } else if icon_hint.is_some() {
+                        icon_hint
+                    } else if hovered_hint.is_some() {
+                        hovered_hint
+                    } else if over_bar {
+                        None
+                    } else {
+                        status_hint.clone()
+                    };
+                    if let Some(text) = display_text {
+                        ui.add_space(12.0);
+                        ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(text)
+                                    .size(crate::theme::MODE_LABEL_FONT)
+                                    .color(crate::theme::MODE_BAR_TEXT),
+                            )
+                            .selectable(false),
+                        );
+                    }
                 });
             });
         });

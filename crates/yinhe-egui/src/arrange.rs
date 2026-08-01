@@ -90,6 +90,7 @@ pub fn show(
     // `rebuild_audio_if_needed` 会用新 model 重新 spawn 引擎和 ChannelLayout。
     needs_audio_rebuild: &mut bool,
     status_hint: &mut Option<String>,
+    sel_hint: Option<&crate::app::layout::SelHintInfo>,
 ) -> Option<QuantizePreset> {
     *last_cursor_tick = doc.edit.cursor_tick;
 
@@ -480,9 +481,23 @@ pub fn show(
             |track: usize| t!("hint.track", n = format!("{:03}", track + 1)).to_string();
         if gpu_rect.contains(pos) {
             let tick = arr_view.x_to_tick(pos.x - gpu_rect.min.x).max(0.0);
+            let track = hover_track(pos.y);
             let pos_str =
                 format_tick_bar_beat_with_time_sig(tick, tpb, sig_events, def_num, def_den);
-            *status_hint = Some(format!("{} {}", pos_str, track_str(hover_track(pos.y))));
+            // 鼠标悬停在选框上 → 显示选框统计（参考 info panel）
+            let sel_text = sel_hint
+                .filter(|sh| !sh.is_automation)
+                .filter(|_| {
+                    doc.edit.arr_sel_rect.iter().any(|&(t0, t1, tl, th)| {
+                        tick >= t0.min(t1) && tick <= t0.max(t1) && track >= tl && track <= th
+                    })
+                })
+                .map(|sh| t!("hint.sel_notes", n = sh.count, span = &sh.span).to_string());
+            *status_hint = Some(if let Some(s) = sel_text {
+                s
+            } else {
+                format!("{} {}", pos_str, track_str(track))
+            });
         } else if tp_rect.contains(pos) {
             *status_hint = Some(track_str(hover_track(pos.y)));
         } else if arr_rect.contains(pos) {

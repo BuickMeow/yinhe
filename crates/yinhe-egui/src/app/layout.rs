@@ -5,6 +5,10 @@ use crate::app::App;
 use crate::arrange;
 use crate::piano_view;
 use crate::right_panel::automation_undo::push_automation_actions;
+use crate::right_panel::info_panel::selection::selected_am_events;
+use yinhe_editor_core::batch_ops::summarize_selected;
+use yinhe_types::AnchorSelRect;
+use yinhe_types::time_format::format_tick_bar_beat_with_time_sig;
 
 /// Layout geometry computed once per frame, shared by arrangement and pianoroll.
 pub(in crate::app) struct LayoutInfo {
@@ -14,7 +18,83 @@ pub(in crate::app) struct LayoutInfo {
     pub right_panel_total_w: f32,
 }
 
+/// 讲解行的选框统计（layout.rs 每帧计算，视图命中选框后显示）。
+/// 三视图选框互斥，同一时刻最多只有一个来源为 Some。
+#[derive(Clone)]
+pub(crate) struct SelHintInfo {
+    /// 选中音符数（PR/AR）或事件数（AM）。
+    pub count: u64,
+    /// 时间跨度（bar.beat.tick→bar.beat.tick）。
+    pub span: String,
+    /// true = 自动化选框（事件），false = 音符选框。
+    pub is_automation: bool,
+}
+
 impl App {
+    /// 存在选框时计算讲解行的选框统计（无选框返回 None）。
+    fn compute_sel_hint(&self, doc: &yinhe_editor_core::document::Document) -> Option<SelHintInfo> {
+        let model = &doc.data.model;
+        let ppq = model.meta.ppq;
+        let (def_num, def_den) = model.tempo_map.time_sig_default;
+        let sig_events = model.tempo_map.time_sig_events.as_slice();
+        let fmt = |t: f64| format_tick_bar_beat_with_time_sig(t, ppq, sig_events, def_num, def_den);
+
+        let pr_rects = doc.edit.sel_rect.effective_rects();
+        let ar_rects = &doc.edit.arr_sel_rect;
+        let am_rects: Vec<&AnchorSelRect> = doc
+            .edit
+            .controller_panels
+            .iter()
+            .filter(|p| !p.show_velocity && !p.anchor_sel_rects.is_empty())
+            .flat_map(|p| p.anchor_sel_rects.iter())
+            .collect();
+
+        if !pr_rects.is_empty() {
+            let (t0, t1) = pr_rects.iter().fold(
+                (f64::INFINITY, f64::NEG_INFINITY),
+                |(a, b), &(ts, te, _, _)| (a.min(ts), b.max(te)),
+            );
+            Some(SelHintInfo {
+                count: summarize_selected(model, &doc.edit.selected).count,
+                span: format!("{}→{}", fmt(t0), fmt(t1)),
+                is_automation: false,
+            })
+        } else if !ar_rects.is_empty() {
+            let (t0, t1) = ar_rects.iter().fold(
+                (f64::INFINITY, f64::NEG_INFINITY),
+                |(a, b), &(ts, te, _, _)| (a.min(ts), b.max(te)),
+            );
+            Some(SelHintInfo {
+                count: summarize_selected(model, &doc.edit.selected).count,
+                span: format!("{}→{}", fmt(t0), fmt(t1)),
+                is_automation: false,
+            })
+        } else if !am_rects.is_empty() {
+            let (t0, t1) = am_rects
+                .iter()
+                .fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), r| {
+                    (
+                        a.min(r.tick_start.min(r.tick_end)),
+                        b.max(r.tick_start.max(r.tick_end)),
+                    )
+                });
+            let count: usize = doc
+                .edit
+                .controller_panels
+                .iter()
+                .filter(|p| !p.show_velocity && !p.anchor_sel_rects.is_empty())
+                .map(|p| selected_am_events(doc, p, &p.anchor_sel_rects).len())
+                .sum();
+            Some(SelHintInfo {
+                count: count as u64,
+                span: format!("{}→{}", fmt(t0), fmt(t1)),
+                is_automation: true,
+            })
+        } else {
+            None
+        }
+    }
+
     /// Compute layout geometry for the current frame.
     pub(in crate::app) fn compute_layout(&mut self, ui: &mut egui::Ui) -> LayoutInfo {
         let mut remaining = ui.available_rect_before_wrap();
@@ -78,6 +158,9 @@ impl App {
             .unwrap_or(false);
         let mut follow_mode = self.follow_mode;
 
+        // 讲解行选框统计（存在选框时 Some；PR/AR/AM 互斥，单一来源）
+        let sel_hint = self.compute_sel_hint(&self.documents[idx]);
+
         // Arrangement view
         let mut needs_audio_rebuild = false;
         let (arr_drag_delta, arr_eraser_rect, arr_quantize): (
@@ -119,6 +202,7 @@ impl App {
                 &mut self.info_content,
                 &mut needs_audio_rebuild,
                 &mut self.status_hint,
+                sel_hint.as_ref(),
             );
             if request_pianoroll {
                 self.show_pianoroll_in_arrange = true;
@@ -171,7 +255,14 @@ impl App {
             .view_mode
             .show_pianoroll(self.show_pianoroll_in_arrange)
         {
-            self.show_pianoroll_split(ui, layout, idx, is_playing, &mut follow_mode);
+            self.show_pianoroll_split(
+                ui,
+                layout,
+                idx,
+                is_playing,
+                &mut follow_mode,
+                sel_hint.as_ref(),
+            );
         }
 
         self.follow_mode = follow_mode;
@@ -258,6 +349,7 @@ impl App {
         idx: usize,
         is_playing: bool,
         follow_mode: &mut crate::view_interaction::FollowMode,
+        sel_hint: Option<&SelHintInfo>,
     ) {
         // Horizontal splitter
         if self.view_mode.show_transport() {
@@ -470,6 +562,7 @@ impl App {
                     doc.data.note_revisions(),
                     Some(&self.haptic_engine),
                     &mut feedback,
+                    sel_hint,
                 );
                 if let Some(t0) = _piano_total_start {
                     yinhe_memtrace::perf_probe::record_piano_total(t0.elapsed());

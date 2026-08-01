@@ -1,4 +1,5 @@
 use eframe::egui;
+use rust_i18n::t;
 
 use yinhe_types::time_format::format_tick_bar_beat_with_time_sig;
 use yinhe_types::{AutomationLane, TimeSigEvent};
@@ -143,6 +144,7 @@ pub fn show(
     note_revisions: &[u64; 128],
     haptic_engine: Option<&yinhe_haptic::HapticEngine>,
     feedback: &mut PianoViewFeedback<'_>,
+    sel_hint: Option<&crate::app::layout::SelHintInfo>,
 ) -> Option<PianoViewEvent> {
     // Sense::hover() — no drag ownership. All drag is handled by dedicated
     // ui.interact calls below, each inside its own push_id scope.
@@ -840,6 +842,7 @@ pub fn show(
             min_border_width,
             revision,
             bar_line_data,
+            sel_hint,
         };
         let mut panels_edit = automation_panel::PanelsEdit {
             selected,
@@ -984,13 +987,26 @@ pub fn show(
             let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
             let tick = view.x_to_tick(local.x).max(0.0);
             let key = view.y_to_key(local.y);
-            let pos_str = match bar_line_data {
-                Some((ppq, num, den, events)) => {
-                    format_tick_bar_beat_with_time_sig(tick, ppq, events, num, den)
-                }
-                None => format!("{}", tick as u32),
-            };
-            Some(format!("{} {}", pos_str, key))
+            // 鼠标悬停在选框上 → 显示选框统计（参考 info panel）
+            let sel_text = sel_hint
+                .filter(|sh| !sh.is_automation)
+                .filter(|_| {
+                    sel_rect.effective_rects().iter().any(|&(t0, t1, kl, kh)| {
+                        tick >= t0.min(t1) && tick <= t0.max(t1) && key >= kl && key <= kh
+                    })
+                })
+                .map(|sh| t!("hint.sel_notes", n = sh.count, span = &sh.span).to_string());
+            if let Some(s) = sel_text {
+                Some(s)
+            } else {
+                let pos_str = match bar_line_data {
+                    Some((ppq, num, den, events)) => {
+                        format_tick_bar_beat_with_time_sig(tick, ppq, events, num, den)
+                    }
+                    None => format!("{}", tick as u32),
+                };
+                Some(format!("{} {}", pos_str, key))
+            }
         } else if content_rect.contains(pos) {
             // 键盘列：只显示音高数字
             let local_y = pos.y - content_rect.min.y;

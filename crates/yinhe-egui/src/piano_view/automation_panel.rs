@@ -84,6 +84,8 @@ pub(crate) struct PanelsCfg<'a> {
     pub revision: u64,
     /// 状态栏讲解行格式化位置所需（拍号事件）。
     pub bar_line_data: Option<(u32, u8, u8, &'a [TimeSigEvent])>,
+    /// 讲解行选框统计（AM 选框命中时显示）。
+    pub sel_hint: Option<&'a crate::app::layout::SelHintInfo>,
 }
 
 /// 面板模型只读数据。
@@ -366,7 +368,22 @@ pub fn show_panels(
                 } else {
                     format!("{}", value.round() as i32)
                 };
-                feedback.status_hint = Some(format!("{} {}", pos_str, val_str));
+                // 鼠标悬停在选框上 → 显示选框统计（参考 info panel）
+                let sel_text = cfg
+                    .sel_hint
+                    .filter(|sh| sh.is_automation)
+                    .filter(|_| {
+                        panel
+                            .anchor_sel_rects
+                            .iter()
+                            .any(|r| r.contains(raw_tick as u32, value))
+                    })
+                    .map(|sh| t!("hint.sel_events", n = sh.count, span = &sh.span).to_string());
+                feedback.status_hint = Some(if let Some(s) = sel_text {
+                    s
+                } else {
+                    format!("{} {}", pos_str, val_str)
+                });
             } else if panel_rect.contains(pos) {
                 // 面板内非 grid 区（combo 选择器/滚动条）→ 清空
                 feedback.status_hint = None;

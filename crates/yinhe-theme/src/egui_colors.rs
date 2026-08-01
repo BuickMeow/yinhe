@@ -10,6 +10,9 @@ pub const APP_BG: Color32 = Color32::from_rgb(25, 25, 28);
 // ── Active accent color ──
 pub const ACCENT_ACTIVE: Color32 = Color32::from_rgb(100, 180, 255);
 
+// ── 模式栏（mode bar）文字/图标色：讲解行与性能显示（CPU/MEM/FPS）的灰色字 ──
+pub const MODE_BAR_TEXT: Color32 = Color32::GRAY;
+
 // ── Event browser 行选中底色（树形导航 / PR 根音行共用） ──
 pub const ROW_SELECTED_BG: Color32 = Color32::from_rgb(40, 50, 70);
 

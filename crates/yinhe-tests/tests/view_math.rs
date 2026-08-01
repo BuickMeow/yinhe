@@ -177,13 +177,6 @@ fn follow_mode_next_cycles() {
 }
 
 #[test]
-fn follow_mode_tooltip_not_empty() {
-    assert!(!FollowMode::None.tooltip().is_empty());
-    assert!(!FollowMode::Page.tooltip().is_empty());
-    assert!(!FollowMode::Continuous.tooltip().is_empty());
-}
-
-#[test]
 fn compute_follow_scroll_none_mode() {
     assert_eq!(
         compute_follow_scroll(100.0, 1.0, 800.0, 0.0, FollowMode::None, 1.0),

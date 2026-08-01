@@ -595,35 +595,48 @@ struct AmAnchors {
     uniform_tick: Option<u32>,
 }
 
+/// 面板选框覆盖的锚点事件列表（讲解行统计与 info panel 共用事件来源逻辑）。
+/// Tempo 面板读 conductor.tempo，其他面板读 editing_track 的匹配 lane。
+pub(crate) fn selected_am_events(
+    doc: &Document,
+    panel: &yinhe_types::AutomationPanelView,
+    rects: &[AnchorSelRect],
+) -> Vec<(u32, f32)> {
+    let target = &panel.selected_target;
+    let events: Vec<(u32, f32)> = if matches!(target, AutomationTarget::Tempo) {
+        doc.data
+            .model
+            .conductor
+            .tempo
+            .events
+            .iter()
+            .map(|e| (e.tick, e.value))
+            .collect()
+    } else {
+        let Some(track) = doc
+            .edit
+            .editing_track
+            .and_then(|i| doc.data.model.tracks.get(i as usize))
+        else {
+            return Vec::new();
+        };
+        let Some(lane) = track.automation_lanes.iter().find(|l| l.target == *target) else {
+            return Vec::new();
+        };
+        lane.events.iter().map(|e| (e.tick, e.value)).collect()
+    };
+    events
+        .into_iter()
+        .filter(|(t, v)| rects.iter().any(|r| r.contains(*t, *v)))
+        .collect()
+}
+
 fn collect_am_anchors(doc: &Document, panels: &[(usize, Vec<AnchorSelRect>)]) -> AmAnchors {
     let mut out = AmAnchors::default();
     let mut first = true;
     for (panel_idx, rects) in panels {
         let panel = &doc.edit.controller_panels[*panel_idx];
-        let target = &panel.selected_target;
-        let events: Vec<(u32, f32)> = if matches!(target, AutomationTarget::Tempo) {
-            doc.data
-                .model
-                .conductor
-                .tempo
-                .events
-                .iter()
-                .map(|e| (e.tick, e.value))
-                .collect()
-        } else {
-            let editing = doc.edit.editing_track.unwrap_or(u16::MAX);
-            let Some(track) = doc.data.model.tracks.get(editing as usize) else {
-                continue;
-            };
-            let Some(lane) = track.automation_lanes.iter().find(|l| l.target == *target) else {
-                continue;
-            };
-            lane.events.iter().map(|e| (e.tick, e.value)).collect()
-        };
-        for (tick, value) in events {
-            if !rects.iter().any(|r| r.contains(tick, value)) {
-                continue;
-            }
+        for (tick, value) in selected_am_events(doc, panel, rects) {
             out.count += 1;
             if first {
                 out.uniform_value = Some(value);
