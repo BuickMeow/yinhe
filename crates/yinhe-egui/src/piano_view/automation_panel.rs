@@ -56,6 +56,50 @@ use crate::theme;
 /// Height of the split/handle between automation panels.
 pub(crate) const SPLIT_H: f32 = theme::AUTO_PANEL_SPLIT_H;
 
+/// 面板集合渲染状态（panels 与 renderers 一一对应）。
+pub(crate) struct PanelsState<'a> {
+    pub panels: &'a mut Vec<AutomationPanelView>,
+    pub renderers: &'a mut Vec<(InstanceRenderer, RenderContext)>,
+    pub wgpu_state: &'a Arc<eframe::egui_wgpu::RenderState>,
+    pub show_panels: &'a mut bool,
+}
+
+/// 面板布局几何。
+#[derive(Clone, Copy)]
+pub(crate) struct PanelsLayout {
+    pub combo_width: f32,
+    pub content_rect_right: f32,
+    pub content_top_y: f32,
+    pub panels_visible_h: f32,
+}
+
+/// 面板渲染/联动配置。
+#[derive(Clone, Copy)]
+pub(crate) struct PanelsCfg {
+    pub pianoroll_scroll_x: f32,
+    pub pianoroll_ppt: f32,
+    pub scroll_mode: u32,
+    pub min_border_width: f32,
+    pub revision: u64,
+}
+
+/// 面板模型只读数据。
+pub(crate) struct PanelsData<'a> {
+    pub automation_lanes: &'a [AutomationLane],
+    pub render_lanes: &'a [&'a AutomationLane],
+    pub tempo_lane: &'a AutomationLane,
+    pub midi: Option<&'a dyn yinhe_types::NoteSource>,
+    pub track_visible: &'a [bool],
+    pub track_colors: &'a [[f32; 3]],
+}
+
+/// 面板编辑状态。
+pub(crate) struct PanelsEdit<'a> {
+    pub selected: &'a mut yinhe_core::Selection,
+    pub info_content: &'a mut Option<InfoContent>,
+    pub right_tab: &'a mut Option<RightTab>,
+}
+
 /// `show_panels` 的返回：总高度 + 编辑动作列表 + 联动反馈 + (拖拽锚点 tick, value)。
 pub(crate) type PanelsOutput = (
     f32,
@@ -153,35 +197,18 @@ fn sync_renderer_count(
 #[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 pub fn show_panels(
     ui: &mut egui::Ui,
-    panels: &mut [AutomationPanelView],
-    selected: &mut yinhe_core::Selection,
-    renderers: &mut Vec<(InstanceRenderer, RenderContext)>,
-    automation_lanes: &[AutomationLane],
-    render_lanes: &[&AutomationLane],
-    show_panels: &mut bool,
-    wgpu_state: &Arc<eframe::egui_wgpu::RenderState>,
-    combo_width: f32,
-    pianoroll_scroll_x: f32,
-    pianoroll_ppt: f32,
-    content_rect_right: f32,
-    content_top_y: f32,
-    panels_visible_h: f32,
-    track_visible: &[bool],
-    track_colors: &[[f32; 3]],
-    scroll_mode: u32,
-    min_border_width: f32,
-    midi: Option<&dyn yinhe_types::NoteSource>,
+    state: &mut PanelsState<'_>,
+    data: &PanelsData<'_>,
+    layout: PanelsLayout,
+    cfg: PanelsCfg,
+    edit: &mut PanelsEdit<'_>,
     edit_ctx: Option<&AutomationEditCtx<'_>>,
-    tempo_lane: &AutomationLane,
-    revision: u64,
-    info_content: &mut Option<InfoContent>,
-    right_tab: &mut Option<RightTab>,
 ) -> PanelsOutput {
     let mut edits = Vec::new();
     let mut velocity_edits = Vec::new();
     let mut feedback = PanelPianorollFeedback::default();
     let mut all_drag_info: Option<(u32, f32)> = None;
-    if !*show_panels || panels.is_empty() {
+    if !*state.show_panels || state.panels.is_empty() {
         return (0.0, edits, velocity_edits, feedback, None);
     }
 
@@ -190,22 +217,22 @@ pub fn show_panels(
     let show_anchors = matches!(active_tool, Tool::Pencil | Tool::Curve | Tool::Select | Tool::SelectVertical);
 
     // Sync scroll state from pianoroll
-    for panel in panels.iter_mut() {
-        panel.sync_from_pianoroll(pianoroll_scroll_x, pianoroll_ppt, combo_width);
+    for panel in state.panels.iter_mut() {
+        panel.sync_from_pianoroll(cfg.pianoroll_scroll_x, cfg.pianoroll_ppt, layout.combo_width);
     }
 
     // Ensure renderer count matches panel count
-    sync_renderer_count(renderers, panels, wgpu_state, 640, 200);
+    sync_renderer_count(state.renderers, state.panels, state.wgpu_state, 640, 200);
 
     // Snapshot pre-drag heights so rendering stays consistent with the
     // pre-computed panels_total_h layout. Drag writes to panel_height for
     // the next frame instead of mid-frame, avoiding one-frame overlap jitter.
-    let orig_heights: Vec<f32> = panels.iter().map(|p| p.panel_height).collect();
+    let orig_heights: Vec<f32> = state.panels.iter().map(|p| p.panel_height).collect();
 
     // ── Scroll state for overflow ──
     let panels_natural_h: f32 =
-        orig_heights.iter().sum::<f32>() + (panels.len() as f32 * SPLIT_H);
-    let max_scroll = (panels_natural_h - panels_visible_h).max(0.0);
+        orig_heights.iter().sum::<f32>() + (state.panels.len() as f32 * SPLIT_H);
+    let max_scroll = (panels_natural_h - layout.panels_visible_h).max(0.0);
 
     let scroll_id = ui.id().with("auto_panel_scroll_y");
     let mut scroll_y: f32 = ui.data_mut(|d| d.get_persisted(scroll_id)).unwrap_or(0.0);
@@ -213,11 +240,11 @@ pub fn show_panels(
 
     // Panels area rect (visible portion only)
     let panels_area_rect = egui::Rect::from_min_max(
-        egui::pos2(0.0, content_top_y),
-        egui::pos2(content_rect_right, content_top_y + panels_visible_h),
+        egui::pos2(0.0, layout.content_top_y),
+        egui::pos2(layout.content_rect_right, layout.content_top_y + layout.panels_visible_h),
     );
 
-    // Handle mouse wheel / trackpad scroll in the panels area
+    // Handle mouse wheel / trackpad scroll in the state.panels area
     let pointer_in_panels = ui.input(|i| {
         i.pointer
             .hover_pos()
@@ -229,19 +256,19 @@ pub fn show_panels(
     }
     ui.data_mut(|d| d.insert_persisted(scroll_id, scroll_y));
 
-    // Clip all painting to the panels area
+    // Clip all painting to the state.panels area
     let old_clip = ui.clip_rect();
     ui.set_clip_rect(panels_area_rect.intersect(old_clip));
 
-    let mut y_offset = content_top_y - scroll_y;
-    let visible_top = content_top_y;
-    let visible_bottom = content_top_y + panels_visible_h;
+    let mut y_offset = layout.content_top_y - scroll_y;
+    let visible_top = layout.content_top_y;
+    let visible_bottom = layout.content_top_y + layout.panels_visible_h;
 
-    for (i, panel) in panels.iter_mut().enumerate() {
+    for (i, panel) in state.panels.iter_mut().enumerate() {
         // Split handle before every panel (first = divider from pianoroll)
         let handle_rect = egui::Rect::from_min_max(
             egui::pos2(0.0, y_offset),
-            egui::pos2(content_rect_right, y_offset + SPLIT_H),
+            egui::pos2(layout.content_rect_right, y_offset + SPLIT_H),
         );
         handle_split_drag(ui, panel, handle_rect, i);
         y_offset += SPLIT_H;
@@ -251,13 +278,13 @@ pub fn show_panels(
         let panel_top = y_offset;
         let panel_bottom = y_offset + panel_h;
         // 右边界让出 SCROLLBAR_W 给垂直滚动条
-        let panel_right = content_rect_right - crate::widgets::scrollbar::SCROLLBAR_W;
+        let panel_right = layout.content_rect_right - crate::widgets::scrollbar::SCROLLBAR_W;
         let panel_rect = egui::Rect::from_min_max(
             egui::pos2(0.0, panel_top),
             egui::pos2(panel_right, panel_bottom),
         );
 
-        // Skip heavy rendering for panels entirely outside the visible area
+        // Skip heavy rendering for state.panels entirely outside the visible area
         let is_visible = panel_bottom >= visible_top && panel_top <= visible_bottom;
         if !is_visible {
             y_offset += panel_h;
@@ -285,15 +312,15 @@ pub fn show_panels(
         //   Cmd+滚轮 → 垂直缩放
         //   普通滚轮 → 不操作
         let grid_area = egui::Rect::from_min_max(
-            egui::pos2(panel_rect.min.x + combo_width, panel_rect.min.y),
+            egui::pos2(panel_rect.min.x + layout.combo_width, panel_rect.min.y),
             egui::pos2(panel_rect.max.x, panel_rect.max.y),
         );
         let combo_area = egui::Rect::from_min_max(
             panel_rect.min,
-            egui::pos2(panel_rect.min.x + combo_width, panel_rect.max.y),
+            egui::pos2(panel_rect.min.x + layout.combo_width, panel_rect.max.y),
         );
         let upper_bound = value_upper_bound(panel);
-        let max_val_f = panel_max_val(panel, tempo_lane);
+        let max_val_f = panel_max_val(panel, data.tempo_lane);
         let zoom_min = min_value_zoom(max_val_f, upper_bound);
         handle_panel_scroll_zoom(
             ui,
@@ -314,14 +341,14 @@ pub fn show_panels(
             grid_area,
             panel_rect,
             panel,
-            automation_lanes,
-            tempo_lane,
-            midi,
+            data.automation_lanes,
+            data.tempo_lane,
+            data.midi,
             edit_ctx,
             i,
-            track_colors,
-            info_content,
-            right_tab,
+            data.track_colors,
+            edit.info_content,
+            edit.right_tab,
         );
         edits.extend(out.automation_edits);
         velocity_edits.extend(out.velocity_edits);
@@ -351,13 +378,13 @@ pub fn show_panels(
                 SelOp::ClearNoteSelection => {
                     // 三视图选框互斥：开始新框选时清空共享音符选区，
                     // App 层检测到选区被清空后清除其他视图的选框。
-                    selected.clear();
+                    edit.selected.clear();
                 }
             }
         }
 
         if gw > 0 && gh > 0
-            && let Some((renderer, render_ctx)) = renderers.get_mut(i) {
+            && let Some((renderer, render_ctx)) = state.renderers.get_mut(i) {
                 render_panel_content(
                     ui,
                     renderer,
@@ -366,20 +393,20 @@ pub fn show_panels(
                     grid_rect,
                     gpw,
                     gph,
-                    render_lanes,
-                    tempo_lane,
-                    midi,
-                    track_visible,
-                    track_colors,
-                    scroll_mode,
-                    min_border_width,
+                    data.render_lanes,
+                    data.tempo_lane,
+                    data.midi,
+                    data.track_visible,
+                    data.track_colors,
+                    cfg.scroll_mode,
+                    cfg.min_border_width,
                     show_anchors,
                     max_val_f,
                     panel_ghost,
-                    revision,
-                    info_content,
+                    cfg.revision,
+                    edit.info_content,
                     i,
-                    combo_width,
+                    layout.combo_width,
                 );
                 // ── velocity 笔划预览（画在 wgpu 纹理之上）──
                 if let Some(preview) = &velocity_preview {
@@ -459,7 +486,7 @@ pub fn show_panels(
         // tempo 模式下 upper_bound 是 `AutomationTarget::Tempo.max_value()`；其他模式用 max_value()。
         let vsb_rect = egui::Rect::from_min_max(
             egui::pos2(panel_right, panel_top),
-            egui::pos2(content_rect_right, panel_bottom),
+            egui::pos2(layout.content_rect_right, panel_bottom),
         );
         ui.push_id(format!("auto_vscroll_{}", i), |ui| {
             crate::widgets::scrollbar::show_vertical_value(
@@ -478,7 +505,7 @@ pub fn show_panels(
         // ── Left side: target selector + display mode buttons ──
         let combo_rect = egui::Rect::from_min_max(
             panel_rect.min,
-            egui::pos2(panel_rect.min.x + combo_width, panel_rect.max.y),
+            egui::pos2(panel_rect.min.x + layout.combo_width, panel_rect.max.y),
         );
         show_target_combo(ui, panel, combo_rect, panels_area_rect);
 
@@ -508,7 +535,7 @@ pub fn show_panels(
         let (top_val, mid_val, bot_val) =
             (top_val.to_string(), mid_val.to_string(), bot_val.to_string());
 
-        let text_x = panel_rect.min.x + combo_width + pad_x;
+        let text_x = panel_rect.min.x + layout.combo_width + pad_x;
         let top_y = panel_rect.min.y + 4.0;
         let mid_y = panel_rect.center().y;
         let bot_y = panel_rect.max.y - 4.0;
@@ -537,7 +564,7 @@ pub fn show_panels(
         );
 
         // Target name: bottom-left, 100px from grid left edge, same row as bottom value
-        let name_x = panel_rect.min.x + combo_width + 40.0;
+        let name_x = panel_rect.min.x + layout.combo_width + 40.0;
         painter.text(
             egui::pos2(name_x, bot_y),
             egui::Align2::LEFT_BOTTOM,
@@ -552,10 +579,10 @@ pub fn show_panels(
     // Restore clip rect
     ui.set_clip_rect(old_clip);
 
-    // ── 右键锚点：设置 info_content 打开信息面板 ──
-    apply_right_click_anchor(ui, panels.len(), automation_lanes, info_content, right_tab);
+    // ── 右键锚点：设置 edit.info_content 打开信息面板 ──
+    apply_right_click_anchor(ui, state.panels.len(), data.automation_lanes, edit.info_content, edit.right_tab);
 
-    (panels_visible_h, edits, velocity_edits, feedback, all_drag_info)
+    (layout.panels_visible_h, edits, velocity_edits, feedback, all_drag_info)
 }
 
 /// 分割条拖拽：调整面板高度。写入下一帧生效，避免帧内布局抖动。

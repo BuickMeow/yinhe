@@ -781,32 +781,47 @@ pub fn show(
             None
         };
 
+        let mut panels_state = automation_panel::PanelsState {
+            panels: ctx.panels,
+            renderers: ctx.renderers,
+            wgpu_state: ctx.wgpu_state,
+            show_panels: ctx.show,
+        };
+        let panels_data = automation_panel::PanelsData {
+            automation_lanes: ctx.lanes,
+            render_lanes: ctx.render_lanes,
+            tempo_lane,
+            midi,
+            track_visible,
+            track_colors,
+        };
+        let panels_layout = automation_panel::PanelsLayout {
+            combo_width: combo_w,
+            content_rect_right: rect.max.x,
+            content_top_y: panels_y,
+            panels_visible_h: panels_total_h,
+        };
+        let panels_cfg = automation_panel::PanelsCfg {
+            pianoroll_scroll_x: view.base.scroll_x,
+            pianoroll_ppt: view.base.pixels_per_tick,
+            scroll_mode,
+            min_border_width,
+            revision,
+        };
+        let mut panels_edit = automation_panel::PanelsEdit {
+            selected,
+            info_content: feedback.info_content,
+            right_tab: feedback.right_tab,
+        };
         let (_h, auto_edits, velocity_edits, auto_feedback, auto_drag_info) =
             automation_panel::show_panels(
                 ui,
-                ctx.panels,
-                selected,
-                ctx.renderers,
-                ctx.lanes,
-                ctx.render_lanes,
-                ctx.show,
-                ctx.wgpu_state,
-                combo_w,
-                view.base.scroll_x,
-                view.base.pixels_per_tick,
-                rect.max.x,
-                panels_y,
-                panels_total_h,
-                track_visible,
-                track_colors,
-                scroll_mode,
-                min_border_width,
-                midi,
+                &mut panels_state,
+                &panels_data,
+                panels_layout,
+                panels_cfg,
+                &mut panels_edit,
                 edit_ctx.as_ref(),
-                tempo_lane,
-                revision,
-                feedback.info_content,
-                feedback.right_tab,
             );
         for edit in auto_edits {
             feedback.auto_edit_events.push(edit);
