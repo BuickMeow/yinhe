@@ -56,9 +56,6 @@ use crate::theme;
 /// Height of the split/handle between automation panels.
 pub(crate) const SPLIT_H: f32 = theme::AUTO_PANEL_SPLIT_H;
 
-/// Tempo 的绝对上限（BPM）。来自 `bpm_from_mpq`：mpq=1 时 BPM=60_000_000。
-const TEMPO_UPPER_BOUND: f32 = 60_000_000.0;
-
 /// automation 面板交互产生的 pianoroll 联动反馈。
 ///
 /// `show_panels` 返回，由 `piano_view::show` 应用到 pianoroll view。
@@ -83,13 +80,13 @@ impl Default for PanelPianorollFeedback {
 }
 
 /// 计算 target 的值上限。达到此上限时不可再缩小 value_zoom。
-/// - Tempo: 60_000_000 BPM
+/// - Tempo: `AutomationTarget::Tempo.max_value()`（BPM 理论上限 60_000_000）
 /// - CC/PB/RPN/NRPN: max_value()
 fn value_upper_bound(panel: &AutomationPanelView) -> f32 {
     if panel.show_velocity {
         127.0
     } else if panel.selected_target == AutomationTarget::Tempo {
-        TEMPO_UPPER_BOUND
+        AutomationTarget::Tempo.max_value()
     } else {
         panel.selected_target.max_value()
     }
@@ -450,7 +447,7 @@ pub fn show_panels(
 
         // ── 垂直滚动条（值空间） ──
         // 占用面板右侧 SCROLLBAR_W 宽度。仅在 visible_range < upper_bound 时显示。
-        // tempo 模式下 upper_bound 是 TEMPO_UPPER_BOUND；其他模式用 max_value()。
+        // tempo 模式下 upper_bound 是 `AutomationTarget::Tempo.max_value()`；其他模式用 max_value()。
         let vsb_rect = egui::Rect::from_min_max(
             egui::pos2(panel_right, panel_top),
             egui::pos2(content_rect_right, panel_bottom),
