@@ -30,7 +30,7 @@ use crate::widgets::split_handle;
 use state::ArchiveKey;
 
 // 对外暴露的公共类型（right_panel 通过 `event_browser::` 引用）
-pub use state::{EventBrowserState, JumpRequest, PulseKind};
+pub use state::{EventBrowserState, JumpRequest};
 
 /// 渲染事件浏览器，返回可能的跳转请求。
 pub fn show(

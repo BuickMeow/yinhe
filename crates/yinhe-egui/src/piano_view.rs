@@ -12,7 +12,6 @@ pub mod automation_panel;
 mod bg;
 pub(crate) mod drag;
 mod gpu_upload;
-mod jump_pulse;
 mod keyboard;
 mod marquee;
 mod pencil;
@@ -938,10 +937,6 @@ pub fn show(
             quantize,
         },
     );
-
-    // ── Jump pulse：事件浏览器跳转后的闪烁高亮 ──
-    // 通过 ctx memory 读取（App 在 main_loop 每帧写入）。详见 jump_pulse 模块。
-    jump_pulse::paint(ui, view, music_rect);
 
     sel_action
         .map(PianoViewEvent::SelectionAction)

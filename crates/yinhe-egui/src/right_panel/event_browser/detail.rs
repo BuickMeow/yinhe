@@ -20,7 +20,7 @@ use super::edit_ops::{
     apply_timesig_ops,
 };
 use super::state::{
-    EditRequest, EventBrowserState, JumpRequest, NoteRef, PulseKind, SelectedItem, TextEventKind,
+    EditRequest, EventBrowserState, JumpRequest, NoteRef, SelectedItem, TextEventKind,
 };
 use super::table::{
     AutomationEventOwned, build_table, cell_editable, cell_position, cell_row_header, cell_text,
@@ -258,7 +258,6 @@ fn show_automation_detail(
     take_row_click(ui, "eb_auto").map(|i| JumpRequest {
         tick: page_items[i].tick,
         note,
-        pulse: None,
     })
 }
 
@@ -354,11 +353,9 @@ fn show_timesig_detail(
     }
     apply_timesig_popups(ui, doc, "eb_ts_edit", bar_lookup);
     apply_timesig_ops(ui, doc, state, "eb_ts_edit");
-    // TimeSig：竖线闪烁
     take_row_click(ui, "eb_ts").map(|i| JumpRequest {
         tick: page_items[i].tick,
         note: None,
-        pulse: Some(PulseKind::TimesigLine),
     })
 }
 
@@ -458,7 +455,6 @@ fn show_keysig_detail(
     take_row_click(ui, "eb_ks").map(|i| JumpRequest {
         tick: page_items[i].tick,
         note: None,
-        pulse: Some(PulseKind::TimesigLine),
     })
 }
 
@@ -608,7 +604,6 @@ fn show_text_events_detail(
     take_row_click(ui, table_id).map(|i| JumpRequest {
         tick: page_items[i].0,
         note: None,
-        pulse: Some(PulseKind::TimesigLine),
     })
 }
 
@@ -778,13 +773,12 @@ fn show_notes_detail(
     }
     apply_note_popups(ui, doc, "eb_notes_edit", bar_lookup);
     apply_notes_ops(ui, doc, state, "eb_notes_edit", track);
-    // 音符：矩形闪烁 + 切到音符所在 track
+    // 音符：切到音符所在 track
     take_row_click(ui, "eb_notes").map(|i| {
         let (n, _key, _trk) = &page_notes[i];
         JumpRequest {
             tick: n.start_tick,
             note: Some((track, n.key)),
-            pulse: Some(PulseKind::NoteRect),
         }
     })
 }
@@ -882,7 +876,6 @@ fn show_pc_detail(
     take_row_click(ui, "eb_pc").map(|i| JumpRequest {
         tick: page_items[i].tick,
         note: Some((track, 0)),
-        pulse: None,
     })
 }
 

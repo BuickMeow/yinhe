@@ -6,24 +6,11 @@
 use yinhe_types::{AutomationTarget, SegmentShape};
 
 /// 事件浏览器表格行点击时产生的跳转请求。
-///
-/// 音符/TimeSig 携带 `PulseKind`，App 据此启动闪烁动画；
-/// automation 类只跳转不闪烁（`PulseKind = None`）。
 #[derive(Clone, Debug)]
 pub struct JumpRequest {
     pub tick: u32,
     /// 音符事件：`Some((track, key))`；其他事件：`None`。
     pub note: Option<(u16, u8)>,
-    /// 闪烁高亮类型：`None` = 仅跳转不闪烁。
-    pub pulse: Option<PulseKind>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PulseKind {
-    /// 音符矩形闪烁（piano roll 内画白色描边矩形）。
-    NoteRect,
-    /// TimeSig 竖线闪烁（贯穿 piano roll 高度的白色竖线）。
-    TimesigLine,
 }
 
 pub struct EventBrowserState {

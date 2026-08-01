@@ -571,7 +571,7 @@ impl App {
 
     /// Handle note drag — called once on release.
     /// 处理事件浏览器的跳转请求：设置 cursor_tick、切到 piano roll 视图、
-    /// 切 editing_track（音符/automation 事件）、滚动到中心、启动闪烁动画。
+    /// 切 editing_track（音符/automation 事件）、滚动到中心。
     fn handle_jump_request(
         &mut self,
         req: crate::right_panel::event_browser::JumpRequest,
@@ -604,16 +604,6 @@ impl App {
         let target_x = req.tick as f32 * view.base.pixels_per_tick;
         view.base.scroll_x = (target_x - content_w * 0.5).max(0.0);
         view.base.dirty = true;
-
-        // 5. 启动闪烁动画
-        if let Some(kind) = req.pulse {
-            self.jump_pulse = Some(crate::view_interaction::JumpPulse {
-                tick: req.tick,
-                key: req.note.map(|(_, k)| k),
-                kind,
-                start_time: std::time::Instant::now(),
-            });
-        }
     }
 
     fn handle_note_drag(&mut self, note_drag_delta: Option<(i64, i32, bool)>) {
