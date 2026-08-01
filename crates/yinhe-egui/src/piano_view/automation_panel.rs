@@ -18,6 +18,7 @@ use crate::widgets::tools_panel::Tool;
 
 mod interaction;
 mod velocity;
+use velocity::VelocityPreview;
 
 /// Curated list of known automation targets shown in the dropdown.
 const AUTOMATION_TARGETS: &[AutomationTarget] = &[
@@ -408,77 +409,15 @@ pub fn show_panels(
                     i,
                     layout.combo_width,
                 );
-                // ── velocity 笔划预览（画在 wgpu 纹理之上）──
-                if let Some(preview) = &velocity_preview {
-                    let painter = ui.painter();
-                    for bar in &preview.bars {
-                        painter.rect_filled(*bar, 0.0, preview.color.gamma_multiply(0.85));
-                        // 顶部亮线标示新高度
-                        painter.line_segment(
-                            [bar.left_top(), bar.right_top()],
-                            egui::Stroke::new(1.0, egui::Color32::WHITE),
-                        );
-                    }
-                }
-                // ── 持续化选框（框选完成后持续显示，画在 wgpu 纹理之上）──
-                if marquee_rect.is_none() {
-                    let x_offset = grid_area.min.x - panel.base.scroll_x;
-                    let ppu = panel.base.pixels_per_tick;
-                    // MoveAnchors 拖拽中偏移选框（跟随锚点移动）
-                    let move_offset_id = ui.id().with("auto_move_offset").with(i);
-                    let (d_tick, d_value) = ui.ctx()
-                        .data(|d| d.get_temp::<(i64, f32)>(move_offset_id))
-                        .unwrap_or((0, 0.0));
-                    let painter = ui.painter();
-                    for sel_rect in &panel.anchor_sel_rects {
-                        let ts = (sel_rect.tick_start.min(sel_rect.tick_end) + d_tick as f64).max(0.0);
-                        let te = (sel_rect.tick_start.max(sel_rect.tick_end) + d_tick as f64).max(0.0);
-                        let x1 = x_offset + (ts as f32) * ppu;
-                        let x2 = x_offset + (te as f32) * ppu;
-                        let (y1, y2) = match sel_rect.value_range {
-                            None => (grid_area.min.y, grid_area.max.y),
-                            Some((vmin, vmax)) => {
-                                let v1 = (vmin + d_value).clamp(0.0, max_val_f);
-                                let v2 = (vmax + d_value).clamp(0.0, max_val_f);
-                                let ya = panel_rect.min.y + panel.value_to_y(v2, max_val_f);
-                                let yb = panel_rect.min.y + panel.value_to_y(v1, max_val_f);
-                                (ya.min(yb), ya.max(yb))
-                            }
-                        };
-                        let rect = egui::Rect::from_min_max(
-                            egui::pos2(x1, y1),
-                            egui::pos2(x2, y2),
-                        ).intersect(grid_area);
-                        // 选框颜色与 PR/AR 一致：白色 + gamma_multiply
-                        painter.rect_filled(
-                            rect,
-                            0.0,
-                            egui::Color32::WHITE.gamma_multiply(0.15),
-                        );
-                        painter.rect_stroke(
-                            rect,
-                            0.0,
-                            egui::Stroke::new(1.0, egui::Color32::WHITE.gamma_multiply(0.40)),
-                            egui::StrokeKind::Inside,
-                        );
-                    }
-                }
-                // ── Select 工具框选矩形（拖拽中的临时选框，画在最上层）──
-                if let Some(rect) = marquee_rect {
-                    let painter = ui.painter();
-                    // 选框颜色与 PR/AR 一致：白色 + gamma_multiply（拖拽中略亮）
-                    painter.rect_filled(
-                        rect,
-                        0.0,
-                        egui::Color32::WHITE.gamma_multiply(0.20),
-                    );
-                    painter.rect_stroke(
-                        rect,
-                        0.0,
-                        egui::Stroke::new(1.0, egui::Color32::WHITE.gamma_multiply(0.40)),
-                        egui::StrokeKind::Inside,
-                    );
-                }
+                draw_panel_overlay(
+                    ui,
+                    panel,
+                    panel_rect,
+                    grid_area,
+                    max_val_f,
+                    i,
+                    &PanelOverlayData { marquee_rect, velocity_preview },
+                );
             }
 
         // ── 垂直滚动条（值空间） ──
@@ -509,69 +448,7 @@ pub fn show_panels(
         );
         show_target_combo(ui, panel, combo_rect, panels_area_rect);
 
-        // ── Grid overlay: value labels + target name ──
-        let name = if panel.show_velocity {
-            t!("automation.velocity").to_string()
-        } else {
-            panel.selected_target.display_name()
-        };
-        let label_color = theme::MEASURE_LABEL;
-        let font_id = egui::FontId::proportional(10.0);
-        let pad_x = 4.0;
-
-        // Velocity / Tempo 用面板级 max_val_f；其他用 target 固定 max_value()
-        let label_max = if panel.show_velocity || panel.selected_target == AutomationTarget::Tempo {
-            max_val_f
-        } else {
-            panel.selected_target.max_value()
-        };
-        // 根据垂直 zoom/scroll 计算面板顶部、中部、底部的实际值
-        let h = panel_rect.height();
-        let (top_val, mid_val, bot_val) = (
-            panel.y_to_value(0.0, label_max).round() as u32,
-            panel.y_to_value(h * 0.5, label_max).round() as u32,
-            panel.y_to_value(h, label_max).round() as u32,
-        );
-        let (top_val, mid_val, bot_val) =
-            (top_val.to_string(), mid_val.to_string(), bot_val.to_string());
-
-        let text_x = panel_rect.min.x + layout.combo_width + pad_x;
-        let top_y = panel_rect.min.y + 4.0;
-        let mid_y = panel_rect.center().y;
-        let bot_y = panel_rect.max.y - 4.0;
-
-        let painter = ui.painter();
-        painter.text(
-            egui::pos2(text_x, top_y),
-            egui::Align2::LEFT_TOP,
-            top_val,
-            font_id.clone(),
-            label_color,
-        );
-        painter.text(
-            egui::pos2(text_x, mid_y),
-            egui::Align2::LEFT_CENTER,
-            mid_val,
-            font_id.clone(),
-            label_color,
-        );
-        painter.text(
-            egui::pos2(text_x, bot_y),
-            egui::Align2::LEFT_BOTTOM,
-            bot_val,
-            font_id.clone(),
-            label_color,
-        );
-
-        // Target name: bottom-left, 100px from grid left edge, same row as bottom value
-        let name_x = panel_rect.min.x + layout.combo_width + 40.0;
-        painter.text(
-            egui::pos2(name_x, bot_y),
-            egui::Align2::LEFT_BOTTOM,
-            &name,
-            font_id.clone(),
-            label_color,
-        );
+        draw_value_labels(ui, panel, panel_rect, layout.combo_width, max_val_f);
 
         y_offset += panel_h;
     }
@@ -583,6 +460,167 @@ pub fn show_panels(
     apply_right_click_anchor(ui, state.panels.len(), data.automation_lanes, edit.info_content, edit.right_tab);
 
     (layout.panels_visible_h, edits, velocity_edits, feedback, all_drag_info)
+}
+
+/// 当帧交互产生的临时 overlay 数据。
+struct PanelOverlayData {
+    marquee_rect: Option<egui::Rect>,
+    velocity_preview: Option<VelocityPreview>,
+}
+
+/// 绘制 wgpu 纹理之上的面板 overlay：velocity 笔划预览、持续化选框、拖拽中 marquee。
+fn draw_panel_overlay(
+    ui: &mut egui::Ui,
+    panel: &AutomationPanelView,
+    panel_rect: egui::Rect,
+    grid_area: egui::Rect,
+    max_val_f: f32,
+    panel_idx: usize,
+    overlay: &PanelOverlayData,
+) {
+    // ── velocity 笔划预览 ──
+    if let Some(preview) = &overlay.velocity_preview {
+        let painter = ui.painter();
+        for bar in &preview.bars {
+            painter.rect_filled(*bar, 0.0, preview.color.gamma_multiply(0.85));
+            // 顶部亮线标示新高度
+            painter.line_segment(
+                [bar.left_top(), bar.right_top()],
+                egui::Stroke::new(1.0, egui::Color32::WHITE),
+            );
+        }
+    }
+    // ── 持续化选框（框选完成后持续显示，画在 wgpu 纹理之上）──
+    if overlay.marquee_rect.is_none() {
+        let x_offset = grid_area.min.x - panel.base.scroll_x;
+        let ppu = panel.base.pixels_per_tick;
+        // MoveAnchors 拖拽中偏移选框（跟随锚点移动）
+        let move_offset_id = ui.id().with("auto_move_offset").with(panel_idx);
+        let (d_tick, d_value) = ui.ctx()
+            .data(|d| d.get_temp::<(i64, f32)>(move_offset_id))
+            .unwrap_or((0, 0.0));
+        let painter = ui.painter();
+        for sel_rect in &panel.anchor_sel_rects {
+            let ts = (sel_rect.tick_start.min(sel_rect.tick_end) + d_tick as f64).max(0.0);
+            let te = (sel_rect.tick_start.max(sel_rect.tick_end) + d_tick as f64).max(0.0);
+            let x1 = x_offset + (ts as f32) * ppu;
+            let x2 = x_offset + (te as f32) * ppu;
+            let (y1, y2) = match sel_rect.value_range {
+                None => (grid_area.min.y, grid_area.max.y),
+                Some((vmin, vmax)) => {
+                    let v1 = (vmin + d_value).clamp(0.0, max_val_f);
+                    let v2 = (vmax + d_value).clamp(0.0, max_val_f);
+                    let ya = panel_rect.min.y + panel.value_to_y(v2, max_val_f);
+                    let yb = panel_rect.min.y + panel.value_to_y(v1, max_val_f);
+                    (ya.min(yb), ya.max(yb))
+                }
+            };
+            let rect = egui::Rect::from_min_max(
+                egui::pos2(x1, y1),
+                egui::pos2(x2, y2),
+            ).intersect(grid_area);
+            // 选框颜色与 PR/AR 一致：白色 + gamma_multiply
+            painter.rect_filled(
+                rect,
+                0.0,
+                egui::Color32::WHITE.gamma_multiply(0.15),
+            );
+            painter.rect_stroke(
+                rect,
+                0.0,
+                egui::Stroke::new(1.0, egui::Color32::WHITE.gamma_multiply(0.40)),
+                egui::StrokeKind::Inside,
+            );
+        }
+    }
+    // ── Select 工具框选矩形（拖拽中的临时选框，画在最上层）──
+    if let Some(rect) = overlay.marquee_rect {
+        let painter = ui.painter();
+        // 选框颜色与 PR/AR 一致：白色 + gamma_multiply（拖拽中略亮）
+        painter.rect_filled(
+            rect,
+            0.0,
+            egui::Color32::WHITE.gamma_multiply(0.20),
+        );
+        painter.rect_stroke(
+            rect,
+            0.0,
+            egui::Stroke::new(1.0, egui::Color32::WHITE.gamma_multiply(0.40)),
+            egui::StrokeKind::Inside,
+        );
+    }
+}
+
+/// 绘制面板左侧的值标签（顶部/中部/底部）与 target 名。
+fn draw_value_labels(
+    ui: &mut egui::Ui,
+    panel: &AutomationPanelView,
+    panel_rect: egui::Rect,
+    combo_width: f32,
+    max_val_f: f32,
+) {
+    let name = if panel.show_velocity {
+        t!("automation.velocity").to_string()
+    } else {
+        panel.selected_target.display_name()
+    };
+    let label_color = theme::MEASURE_LABEL;
+    let font_id = egui::FontId::proportional(10.0);
+    let pad_x = 4.0;
+
+    // Velocity / Tempo 用面板级 max_val_f；其他用 target 固定 max_value()
+    let label_max = if panel.show_velocity || panel.selected_target == AutomationTarget::Tempo {
+        max_val_f
+    } else {
+        panel.selected_target.max_value()
+    };
+    // 根据垂直 zoom/scroll 计算面板顶部、中部、底部的实际值
+    let h = panel_rect.height();
+    let (top_val, mid_val, bot_val) = (
+        panel.y_to_value(0.0, label_max).round() as u32,
+        panel.y_to_value(h * 0.5, label_max).round() as u32,
+        panel.y_to_value(h, label_max).round() as u32,
+    );
+    let (top_val, mid_val, bot_val) =
+        (top_val.to_string(), mid_val.to_string(), bot_val.to_string());
+
+    let text_x = panel_rect.min.x + combo_width + pad_x;
+    let top_y = panel_rect.min.y + 4.0;
+    let mid_y = panel_rect.center().y;
+    let bot_y = panel_rect.max.y - 4.0;
+
+    let painter = ui.painter();
+    painter.text(
+        egui::pos2(text_x, top_y),
+        egui::Align2::LEFT_TOP,
+        top_val,
+        font_id.clone(),
+        label_color,
+    );
+    painter.text(
+        egui::pos2(text_x, mid_y),
+        egui::Align2::LEFT_CENTER,
+        mid_val,
+        font_id.clone(),
+        label_color,
+    );
+    painter.text(
+        egui::pos2(text_x, bot_y),
+        egui::Align2::LEFT_BOTTOM,
+        bot_val,
+        font_id.clone(),
+        label_color,
+    );
+
+    // Target name: bottom-left, 100px from grid left edge, same row as bottom value
+    let name_x = panel_rect.min.x + combo_width + 40.0;
+    painter.text(
+        egui::pos2(name_x, bot_y),
+        egui::Align2::LEFT_BOTTOM,
+        &name,
+        font_id.clone(),
+        label_color,
+    );
 }
 
 /// 分割条拖拽：调整面板高度。写入下一帧生效，避免帧内布局抖动。
