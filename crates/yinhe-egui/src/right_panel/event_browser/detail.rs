@@ -19,7 +19,7 @@ use super::edit_ops::{
 use super::state::{EditRequest, EventBrowserState, JumpRequest, NoteRef, PulseKind, SelectedItem, TextEventKind};
 use super::table::{
     build_table, cell_editable, cell_position, cell_row_header, cell_text,
-    empty_state_add_button, handle_delete_key, shape_text,
+    curve_points_text, empty_state_add_button, handle_delete_key, shape_text,
     paginate, render_pager, take_row_click, total_pages, AutomationEventOwned,
 };
 
@@ -125,7 +125,11 @@ fn show_automation_detail(
             (t!("event_browser.header.tick").as_ref(), 70.0),
             (t!("event_browser.header.position").as_ref(), 80.0),
             (t!("event_browser.header.value").as_ref(), 60.0),
-            (t!("event_browser.header.shape").as_ref(), 130.0),
+            ("X1", 50.0),
+            ("Y1", 50.0),
+            ("X2", 50.0),
+            ("Y2", 50.0),
+            (t!("event_browser.header.shape").as_ref(), 90.0),
         ], page_items.len(), |i, row, click_key| {
             let e = &page_items[i];
             cell_row_header(row, state, "eb_auto_edit", i, page_start, e.tick, &page_ticks, click_key);
@@ -135,6 +139,11 @@ fn show_automation_detail(
                 |nt| EditRequest::AutoTick { tick: nt, value: e.value }, click_key);
             cell_editable(row, "eb_auto_edit", i, format!("{}", e.value),
                 EditRequest::AutoValue { tick: e.tick, value: e.value }, click_key);
+            let [x1, y1, x2, y2] = curve_points_text(e.shape);
+            cell_text(row, x1, click_key, i);
+            cell_text(row, y1, click_key, i);
+            cell_text(row, x2, click_key, i);
+            cell_text(row, y2, click_key, i);
             cell_editable(row, "eb_auto_edit", i, shape_text(e.shape),
                 EditRequest::AutoShape { tick: e.tick, shape: e.shape }, click_key);
         });

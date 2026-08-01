@@ -366,17 +366,31 @@ pub(super) fn remove_pos_edit_request(ui: &egui::Ui, id_salt: &str) {
     ui.memory_mut(|m| m.data.remove::<EditRequest>(key));
 }
 
-/// 把 `SegmentShape` 格式化为表格单元格文本。
+/// 把 `SegmentShape` 格式化为表格单元格文本（仅类型名；曲线参数见 `curve_points_text`）。
 pub(super) fn shape_text(shape: SegmentShape) -> String {
     match shape {
         SegmentShape::Step => "Step".to_string(),
-        SegmentShape::Curve { x1, y1, x2, y2 } => {
-            if shape.is_linear() {
-                "Linear".to_string()
-            } else {
-                format!("{:.2},{:.2},{:.2},{:.2}", x1, y1, x2, y2)
-            }
-        }
+        SegmentShape::Curve { .. } if shape.is_linear() => "Linear".to_string(),
+        SegmentShape::Curve { .. } => "Curve".to_string(),
+    }
+}
+
+/// 曲线控制点四分量文本，顺序为 (X1, Y1, X2, Y2)。
+/// 离散（Step）没有控制点，全部返回 "N/A"。
+pub(super) fn curve_points_text(shape: SegmentShape) -> [String; 4] {
+    match shape {
+        SegmentShape::Step => [
+            "N/A".to_string(),
+            "N/A".to_string(),
+            "N/A".to_string(),
+            "N/A".to_string(),
+        ],
+        SegmentShape::Curve { x1, y1, x2, y2 } => [
+            format!("{:.2}", x1),
+            format!("{:.2}", y1),
+            format!("{:.2}", x2),
+            format!("{:.2}", y2),
+        ],
     }
 }
 

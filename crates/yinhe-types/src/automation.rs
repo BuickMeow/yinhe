@@ -155,8 +155,8 @@ impl AutomationTarget {
 
     /// Maximum raw value for this target (used to normalize bar heights).
     ///
-    /// `Tempo` 返回的 240.0 仅作 fallback；panel 层会按实际事件动态
-    /// 计算最大值（Tempo 的实际范围由项目内的事件决定，可能 120 也可能 200）。
+    /// `Tempo` 返回的 60_000_000.0（BPM 理论上限，对应 mpq=1）仅作 fallback；
+    /// panel 层会按实际事件动态计算最大值（Tempo 的实际范围由项目内的事件决定）。
     pub fn max_value(&self) -> f32 {
         match self {
             AutomationTarget::CC { .. } => 127.0,
@@ -167,7 +167,7 @@ impl AutomationTarget {
                 _ => 16383.0,  // Fine Tune (14-bit)
             },
             AutomationTarget::Nrpn { .. } => 16383.0,
-            AutomationTarget::Tempo => 240.0,
+            AutomationTarget::Tempo => 60_000_000.0,
         }
     }
 
@@ -481,6 +481,10 @@ mod tests {
         assert!(!AutomationTarget::Rpn { parameter: 2 }.has_center_line());
         assert_eq!(AutomationTarget::Nrpn { parameter: 5 }.max_value(), 16383.0);
         assert_eq!(AutomationTarget::Nrpn { parameter: 5 }.default_value(), 0.0);
+        // Tempo 上限：BPM 理论上限 60_000_000（对应 mpq=1），不应退回 240
+        assert_eq!(AutomationTarget::Tempo.max_value(), 60_000_000.0);
+        assert_eq!(AutomationTarget::Tempo.default_value(), 120.0);
+        assert!(!AutomationTarget::Tempo.has_center_line());
     }
 
     #[test]
