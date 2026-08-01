@@ -235,131 +235,141 @@ pub fn show(
                 }
 
                 // ── Spacer: push right icons to the right edge ──
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    // 右侧图标本帧 hover 提示（讲解行在下方同布局内最后添加，
-                    // 处于最左侧且 hover 状态当帧有效，避免跨帧延迟导致的闪烁）
-                    let mut icon_hint: Option<String> = None;
+                // 讲解行用 painter 绘制在 mode 按钮右侧（左对齐），绘制时机在
+                // 本布局之后，右侧图标 hover 状态当帧有效（无跨帧闪烁），
+                // 且不参与布局，不会像 right_to_left 内联那样被推到屏幕中部。
+                let hint_x = ui.cursor().min.x + 12.0;
+                let bar_center_y = ui.max_rect().center().y;
 
-                    // Right-most first (from right to left):
-                    //  1. ICON_INFO
-                    //  2. ICON_MUSIC_CAST
-                    //  3. ICON_SHUFFLE
-                    //  4. ICON_AUTO_STORIES (event browser)
+                let icon_hint: Option<String> = ui
+                    .with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let mut icon_hint: Option<String> = None;
 
-                    if right_icon_button(ui, ICON_INFO, *right_tab == Some(RightTab::Info), || {
-                        *right_tab = if *right_tab == Some(RightTab::Info) {
-                            None
-                        } else {
-                            Some(RightTab::Info)
-                        };
-                    }) {
-                        icon_hint = Some(t!("hint.right_info").to_string());
-                    }
+                        // Right-most first (from right to left):
+                        //  1. ICON_INFO
+                        //  2. ICON_MUSIC_CAST
+                        //  3. ICON_SHUFFLE
+                        //  4. ICON_AUTO_STORIES (event browser)
 
-                    ui.add_space(4.0);
-
-                    if right_icon_button(
-                        ui,
-                        ICON_MUSIC_CAST,
-                        *right_tab == Some(RightTab::SoundFont),
-                        || {
-                            *right_tab = if *right_tab == Some(RightTab::SoundFont) {
-                                None
-                            } else {
-                                Some(RightTab::SoundFont)
-                            };
-                        },
-                    ) {
-                        icon_hint = Some(t!("hint.right_soundfont").to_string());
-                    }
-
-                    ui.add_space(4.0);
-
-                    if right_icon_button(
-                        ui,
-                        ICON_SHUFFLE,
-                        *right_tab == Some(RightTab::Channels),
-                        || {
-                            *right_tab = if *right_tab == Some(RightTab::Channels) {
-                                None
-                            } else {
-                                Some(RightTab::Channels)
-                            };
-                        },
-                    ) {
-                        icon_hint = Some(t!("hint.right_channels").to_string());
-                    }
-
-                    ui.add_space(4.0);
-
-                    if right_icon_button(
-                        ui,
-                        ICON_FOLDER_ZIP,
-                        *right_tab == Some(RightTab::EventBrowser),
-                        || {
-                            *right_tab = if *right_tab == Some(RightTab::EventBrowser) {
-                                None
-                            } else {
-                                Some(RightTab::EventBrowser)
-                            };
-                        },
-                    ) {
-                        icon_hint = Some(t!("hint.right_event_browser").to_string());
-                    }
-
-                    // ── Resource metrics (CPU / MEM / FPS) — left of the right icons ──
-                    ui.separator();
-                    ui.add_space(8.0);
-
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 4.0;
-                        metric(ui, "CPU", &format!("{:.1}%", cpu_usage));
-                        ui.add_space(12.0);
-                        let ctx_clone = ui.ctx().clone();
-                        if metric_clickable(ui, "MEM", &format!("{:.1} MB", mem_mb), || {
-                            *show_mem_breakdown = true;
-                            crate::chrome::dialog::raise_viewport(
-                                &ctx_clone,
-                                egui::ViewportId::from_hash_of("memory_breakdown_dialog"),
-                            );
-                        }) {
-                            icon_hint = Some(t!("hint.mem").to_string());
+                        if right_icon_button(
+                            ui,
+                            ICON_INFO,
+                            *right_tab == Some(RightTab::Info),
+                            || {
+                                *right_tab = if *right_tab == Some(RightTab::Info) {
+                                    None
+                                } else {
+                                    Some(RightTab::Info)
+                                };
+                            },
+                        ) {
+                            icon_hint = Some(t!("hint.right_info").to_string());
                         }
-                        ui.add_space(12.0);
-                        metric(ui, "FPS", &format!("{:.1}", fps));
-                    });
 
-                    // ── 讲解/状态文字：模式栏控件 > 视图提示；模式栏空白处清空 ──
-                    // right_to_left 中最后添加 = 最左侧，紧随左侧 mode 按钮。
-                    let over_popup = crate::view_interaction::pointer_over_popup(ui.ctx());
-                    let over_bar = ui.input(|i| {
-                        i.pointer
-                            .hover_pos()
-                            .is_some_and(|p| ui.max_rect().contains(p))
-                    });
-                    let display_text = if over_popup {
-                        None
-                    } else if icon_hint.is_some() {
+                        ui.add_space(4.0);
+
+                        if right_icon_button(
+                            ui,
+                            ICON_MUSIC_CAST,
+                            *right_tab == Some(RightTab::SoundFont),
+                            || {
+                                *right_tab = if *right_tab == Some(RightTab::SoundFont) {
+                                    None
+                                } else {
+                                    Some(RightTab::SoundFont)
+                                };
+                            },
+                        ) {
+                            icon_hint = Some(t!("hint.right_soundfont").to_string());
+                        }
+
+                        ui.add_space(4.0);
+
+                        if right_icon_button(
+                            ui,
+                            ICON_SHUFFLE,
+                            *right_tab == Some(RightTab::Channels),
+                            || {
+                                *right_tab = if *right_tab == Some(RightTab::Channels) {
+                                    None
+                                } else {
+                                    Some(RightTab::Channels)
+                                };
+                            },
+                        ) {
+                            icon_hint = Some(t!("hint.right_channels").to_string());
+                        }
+
+                        ui.add_space(4.0);
+
+                        if right_icon_button(
+                            ui,
+                            ICON_FOLDER_ZIP,
+                            *right_tab == Some(RightTab::EventBrowser),
+                            || {
+                                *right_tab = if *right_tab == Some(RightTab::EventBrowser) {
+                                    None
+                                } else {
+                                    Some(RightTab::EventBrowser)
+                                };
+                            },
+                        ) {
+                            icon_hint = Some(t!("hint.right_event_browser").to_string());
+                        }
+
+                        // ── Resource metrics (CPU / MEM / FPS) — left of the right icons ──
+                        ui.separator();
+                        ui.add_space(8.0);
+
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 4.0;
+                            metric(ui, "CPU", &format!("{:.1}%", cpu_usage));
+                            ui.add_space(12.0);
+                            let ctx_clone = ui.ctx().clone();
+                            if metric_clickable(ui, "MEM", &format!("{:.1} MB", mem_mb), || {
+                                *show_mem_breakdown = true;
+                                crate::chrome::dialog::raise_viewport(
+                                    &ctx_clone,
+                                    egui::ViewportId::from_hash_of("memory_breakdown_dialog"),
+                                );
+                            }) {
+                                icon_hint = Some(t!("hint.mem").to_string());
+                            }
+                            ui.add_space(12.0);
+                            metric(ui, "FPS", &format!("{:.1}", fps));
+                        });
+
                         icon_hint
-                    } else if hovered_hint.is_some() {
-                        hovered_hint
-                    } else if over_bar {
-                        None
-                    } else {
-                        status_hint.clone()
-                    };
-                    if let Some(text) = display_text {
-                        ui.add_space(12.0);
-                        ui.add(
-                            egui::Label::new(
-                                egui::RichText::new(text)
-                                    .size(crate::theme::MODE_LABEL_FONT)
-                                    .color(crate::theme::MODE_BAR_TEXT),
-                            )
-                            .selectable(false),
-                        );
-                    }
+                    })
+                    .inner;
+
+                // ── 讲解/状态文字：模式栏控件 > 视图提示；模式栏空白处清空 ──
+                let over_popup = crate::view_interaction::pointer_over_popup(ui.ctx());
+                let over_bar = ui.input(|i| {
+                    i.pointer
+                        .hover_pos()
+                        .is_some_and(|p| ui.max_rect().contains(p))
                 });
+                let display_text = if over_popup {
+                    None
+                } else if icon_hint.is_some() {
+                    icon_hint
+                } else if hovered_hint.is_some() {
+                    hovered_hint
+                } else if over_bar {
+                    None
+                } else {
+                    status_hint.clone()
+                };
+                if let Some(text) = display_text {
+                    ui.painter().text(
+                        egui::pos2(hint_x, bar_center_y),
+                        egui::Align2::LEFT_CENTER,
+                        text,
+                        egui::FontId::proportional(crate::theme::MODE_LABEL_FONT),
+                        crate::theme::MODE_BAR_TEXT,
+                    );
+                }
             });
         });
 }
