@@ -308,6 +308,45 @@ pub(super) fn show_track_info(
 
     ui.add_space(6.0);
 
+    // ── 音轨颜色（ImageToMidi 颜色事件兼容）──
+    // 显示当前实际颜色（缓存：显式颜色优先，否则调色板），
+    // 编辑后写入 TrackData.color 并刷新缓存（无需重建音频引擎）。
+    ui.horizontal(|ui| {
+        ui.label("颜色:");
+        let cur = doc
+            .edit
+            .track_colors_cache
+            .get(track_idx)
+            .copied()
+            .unwrap_or(yinhe_core::DEFAULT_TRACK_COLOR);
+        let mut srgb = [
+            (cur[0] * 255.0).round() as u8,
+            (cur[1] * 255.0).round() as u8,
+            (cur[2] * 255.0).round() as u8,
+        ];
+        let resp = ui.color_edit_button_srgb(&mut srgb);
+        if resp.changed() {
+            let new = [
+                srgb[0] as f32 / 255.0,
+                srgb[1] as f32 / 255.0,
+                srgb[2] as f32 / 255.0,
+            ];
+            {
+                let model = Arc::make_mut(&mut doc.data.model);
+                if track_idx < model.tracks.len() {
+                    let td = Arc::make_mut(&mut model.tracks[track_idx]);
+                    td.color = new;
+                }
+            }
+            if let Some(c) = doc.edit.track_colors_cache.get_mut(track_idx) {
+                *c = new;
+            }
+            doc.data.bump_revision();
+        }
+    });
+
+    ui.add_space(6.0);
+
     // ── Mute / Solo ──
     while doc.edit.track_overrides.len() <= track_idx {
         doc.edit

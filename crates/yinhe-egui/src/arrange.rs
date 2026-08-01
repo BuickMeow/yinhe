@@ -212,6 +212,7 @@ pub fn show(
                 doc.edit
                     .track_colors_cache
                     .push(yinhe_editor_core::document::track_color(
+                        &doc.data.model.tracks[i],
                         i,
                         doc.edit.conductor_track_idx,
                     ));
