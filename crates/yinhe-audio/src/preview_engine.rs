@@ -50,9 +50,6 @@ pub(crate) struct PreviewEngine {
     port_sfs: [Vec<Arc<dyn SoundfontBase>>; 16],
     /// 渲染时钟（预览输出帧数累计，与主引擎 sample_position 独立）。
     position: u64,
-    /// 预览错开封顶帧数：组内音符即使目标位置差很大（跨小节旋律），
-    /// 最多延迟这么久（约 150ms），保留先后顺序但不让后续音符等太久。
-    max_stagger_frames: u64,
     /// 活跃预览音。
     voices: Vec<PreviewVoice>,
     /// 待触发预览音（按目标位置相对时值错开，最早音符立即触发）。
@@ -116,7 +113,6 @@ impl PreviewEngine {
             dense_map: std::array::from_fn(|ch| layout.dense_for(ch)),
             port_sfs: std::array::from_fn(|_| Vec::new()),
             position: 0,
-            max_stagger_frames: (0.15 * sample_rate as f64) as u64,
             voices: Vec::new(),
             pending: Vec::new(),
         }
@@ -169,15 +165,14 @@ impl PreviewEngine {
 
     /// 提交整组预览（替换旧组）：组内音符按目标位置**相对时值**错开触发——
     /// 最早音符立即响，其余音符延迟（目标位置差）后响，各自响自己的 gate。
-    /// 例如旋律音符 start 相差 4800 帧，预览时就错开 4800 帧依次触发。
+    /// 例如旋律音符 start 相差 4800 帧（已按目标位置 Tempo/PPQ 换算），
+    /// 预览时就错开 4800 帧依次触发。时值差来自真实乐曲位置，不用固定毫秒封顶。
     pub(crate) fn preview_notes(&mut self, notes: Vec<PreviewNoteIn>) {
         self.stop_all();
         let min = notes.iter().map(|n| n.target_sample).min().unwrap_or(0);
         // trigger_at 存绝对位置（组开始 + 相对时值差）：position 是累计渲染帧数，
         // 若只存相对差，预览引擎跑过一段时间后 position 已超过所有 trigger_at，
         // 整组会在同一帧全部触发 → 时值差听不到。
-        // 时值差封顶 max_stagger_frames（约 150ms）：保留先后顺序，但跨小节
-        // 旋律的第二音符不会"迟迟不来"（此前按绝对时值差，用户要等几秒）。
         let base = self.position;
         self.pending = notes
             .into_iter()
@@ -187,7 +182,7 @@ impl PreviewEngine {
                 velocity: n.velocity,
                 duration: n.duration,
                 state: n.state,
-                trigger_at: base + (n.target_sample - min).min(self.max_stagger_frames),
+                trigger_at: base + (n.target_sample - min),
             })
             .collect();
         self.pending.sort_by_key(|p| p.trigger_at);
@@ -370,9 +365,9 @@ mod tests {
     }
 
     #[test]
-    fn preview_notes_stagger_capped_for_far_notes() {
-        // 回归测试：组内目标位置差很大（跨小节旋律）时，错开封顶在约 150ms，
-        // 后续音符不会"迟迟不来"；同时先后的顺序仍保留。
+    fn preview_notes_stagger_by_real_time_value() {
+        // 用户报告：错开必须按目标位置的真实时值（BPM/tick/PPQ 换算的帧数），
+        // 不能把远音符压到一个固定毫秒点一起触发（听感像同时和弦）。
         let layout = ChannelLayout::from_mask(vec![true; 16]);
         let mut engine = PreviewEngine::new(&layout, 48000);
 
@@ -391,24 +386,22 @@ mod tests {
                 velocity: 90,
                 duration: None,
                 state: ChannelState::default(),
-                target_sample: 100_000, // 远大于 0.15s（7200 帧）
+                target_sample: 100_000, // 真实时值差 100000 帧（> 2 秒）
             },
         ]);
         assert_eq!(engine.voices.len(), 1);
         assert_eq!(engine.pending.len(), 1);
-        let max_stagger = engine.max_stagger_frames;
 
         let mut out = vec![0.0f32; 1024];
-        // 渲染 max_stagger/512 帧内：第二音符不触发
-        let frames_needed = (max_stagger / 512) as usize;
-        for _ in 0..frames_needed {
+        // 渲染 195 帧（99840 帧 < 100000）：第二音符必须还没触发
+        // （若像旧实现那样封顶 150ms=7200 帧，这里早就全部触发了）。
+        for _ in 0..195 {
             engine.render(&mut out);
         }
-        assert_eq!(engine.voices.len(), 1, "封顶窗口内不触发");
-        // 再多渲染 2 帧：触发（封顶而非绝对时值差）
+        assert_eq!(engine.voices.len(), 1, "真实时值差未到，不触发");
+        // 第 196 帧（100352 >= 100000）：到点触发
         engine.render(&mut out);
-        engine.render(&mut out);
-        assert_eq!(engine.voices.len(), 2, "封顶窗口到点后触发");
+        assert_eq!(engine.voices.len(), 2, "真实时值差到点后触发");
         assert!(engine.pending.is_empty());
     }
 

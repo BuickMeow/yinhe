@@ -467,8 +467,12 @@ impl App {
         }
         // 同帧出现 Stop（Create 松手）时优先停止；否则整组替换。
         if stop {
+            // Stop 走快速路径标志（渲染忙时命令通道满会丢命令，标志保证松手即停）。
+            audio.handle.request_preview_stop();
             audio.handle.send(yinhe_audio::AudioCommand::PreviewStop);
         } else if !notes.is_empty() {
+            // 新预览组：清除待消费的 Stop 请求，避免被渲染器当作"松手后的堆积旧组"跳过。
+            audio.handle.clear_preview_stop();
             audio
                 .handle
                 .send(yinhe_audio::AudioCommand::PreviewNotes { notes });

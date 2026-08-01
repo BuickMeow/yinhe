@@ -64,6 +64,8 @@ struct AudioRenderer {
     preview_engine: PreviewEngine,
     /// 预览叠加用临时缓冲。
     preview_scratch: Vec<f32>,
+    /// 预览 Stop 快速路径标志（与 AudioHandle 共享）：每轮消费，通道满丢命令也必达。
+    preview_stop_flag: Arc<AtomicBool>,
     /// 预览激活时的 ring 目标（帧数）：≥ cpal 回调帧数，避免回调欠载静音卡顿。
     preview_target_frames: usize,
     /// 是否启用 GPU 合成器。启用后加载音色库时初始化 GpuSynth，渲染走 engine.gpu_synth。
@@ -82,6 +84,7 @@ impl AudioRenderer {
         worker_tx: Sender<WorkerCmd>,
         prepared_rx: Receiver<WorkerResult>,
         shutdown: Arc<AtomicBool>,
+        preview_stop_flag: Arc<AtomicBool>,
         // cpal 回调每次请求的帧数（预览时 ring 目标下限，避免回调欠载静音）。
         callback_frames: usize,
         #[cfg(feature = "gpu")] use_gpu_synth: bool,
@@ -99,6 +102,7 @@ impl AudioRenderer {
             scratch: vec![0.0; RENDER_CHUNK_FRAMES * STEREO_CHANNELS],
             preview_engine,
             preview_scratch: vec![0.0; RENDER_CHUNK_FRAMES * STEREO_CHANNELS],
+            preview_stop_flag,
             preview_target_frames: PREVIEW_TARGET_FRAMES.max(callback_frames),
             #[cfg(feature = "gpu")]
             use_gpu_synth,
@@ -107,8 +111,15 @@ impl AudioRenderer {
 
     fn run(&mut self) {
         while !self.shutdown.load(Ordering::Relaxed) {
-            let did_work =
-                self.process_commands() | self.process_worker_results() | self.render_if_needed();
+            let mut did_work = self.process_commands() | self.process_worker_results();
+            // 预览 Stop 快速路径：命令通道满（渲染忙时 PreviewStop 可能被丢弃）也保证
+            // 松手即停。必须在 process_commands 之后消费：处理命令期间 flag 保持置位，
+            // PreviewNotes 分支借此跳过堆积的旧预览组（松手后不再触发）。
+            if self.preview_stop_flag.swap(false, Ordering::AcqRel) {
+                self.preview_engine.stop_all();
+                did_work = true;
+            }
+            did_work |= self.render_if_needed();
 
             self.publish_state();
 
@@ -213,6 +224,11 @@ impl AudioRenderer {
                             }
                         }
                         AudioCommand::PreviewNotes { notes } => {
+                            // 用户已松手（Stop 请求尚未消费）：跳过堆积的旧预览组，
+                            // 否则每条都会 stop_all + 触发一组，松手后还在响。
+                            if self.preview_stop_flag.load(Ordering::Acquire) {
+                                continue;
+                            }
                             // 按 channel 分组、组内按 target_sample 升序，增量 chase：
                             // 每个通道只扫一遍 cc_events，避免整组预览反复全量扫描。
                             let cc_events = self.engine.cc_events.clone();
@@ -544,6 +560,7 @@ pub(crate) fn spawn_renderer(
     worker_tx: Sender<WorkerCmd>,
     prepared_rx: Receiver<WorkerResult>,
     shutdown: Arc<AtomicBool>,
+    preview_stop_flag: Arc<AtomicBool>,
     // cpal 回调每次请求的帧数（预览时 ring 目标下限）。
     callback_frames: usize,
     #[cfg(feature = "gpu")] use_gpu_synth: bool,
@@ -560,6 +577,7 @@ pub(crate) fn spawn_renderer(
                 worker_tx,
                 prepared_rx,
                 shutdown,
+                preview_stop_flag,
                 callback_frames,
                 #[cfg(feature = "gpu")]
                 use_gpu_synth,

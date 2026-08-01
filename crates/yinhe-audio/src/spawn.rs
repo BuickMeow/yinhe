@@ -114,6 +114,9 @@ pub struct AudioHandle {
     duration_samples: Arc<AtomicU64>,
     /// 由 cpal 流错误回调置位。UI 每帧查询，若为 true 应弹窗提示用户重启。
     stream_error: Arc<AtomicBool>,
+    /// 预览 Stop 快速路径标志：渲染线程每轮消费。命令通道满（渲染忙时
+    /// `PreviewStop` 命令可能被丢弃）也保证松手即停。
+    preview_stop_flag: Arc<AtomicBool>,
 }
 
 impl AudioHandle {
@@ -136,6 +139,18 @@ impl AudioHandle {
                 tracing::warn!("AudioHandle::send: channel disconnected, dropping command");
             }
         }
+    }
+
+    /// 请求立即停止全部预览音。不依赖命令通道（渲染忙时通道满会丢命令），
+    /// 由渲染线程每轮消费标志，保证松手即停。
+    pub fn request_preview_stop(&self) {
+        self.preview_stop_flag.store(true, Ordering::Release);
+    }
+
+    /// 开始新预览组时清除待消费的停止请求，避免新组被渲染器当作
+    /// "松手后的堆积旧组"跳过。
+    pub fn clear_preview_stop(&self) {
+        self.preview_stop_flag.store(false, Ordering::Release);
     }
 
     pub fn sample_position(&self) -> u64 {
@@ -540,6 +555,7 @@ pub fn spawn_cpal_audio(
     let playing = Arc::new(AtomicBool::new(false));
     let duration_samples = Arc::new(AtomicU64::new(0));
     let stream_error = Arc::new(AtomicBool::new(false));
+    let preview_stop_flag = Arc::new(AtomicBool::new(false));
 
     let host = cpal::default_host();
     let device = match device_name {
@@ -622,6 +638,7 @@ pub fn spawn_cpal_audio(
         worker_tx,
         prepared_rx,
         Arc::clone(&shutdown),
+        Arc::clone(&preview_stop_flag),
         callback_frames,
         #[cfg(feature = "gpu")]
         use_gpu_synth,
@@ -698,6 +715,7 @@ pub fn spawn_cpal_audio(
             playing,
             duration_samples,
             stream_error,
+            preview_stop_flag,
         },
         sample_rate,
         _stream: stream,
