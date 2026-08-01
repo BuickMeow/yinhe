@@ -37,9 +37,37 @@ pub fn write_to_bytes(model: &YinModel) -> Result<Vec<u8>, MidiError> {
         }
     }
 
+    // 颜色事件 payload（ImageToMidi 私有扩展：FF 0A meta + 魔数 00 0F）。
+    // 仅在颜色非默认占位色时写出；channel 用 0x7F（全通道通配），任何读取方
+    // 按通道匹配都能命中。payload 借自本函数局部 Vec，无需泄漏。
+    let color_payloads: Vec<Option<Vec<u8>>> = model
+        .tracks
+        .iter()
+        .map(|t| {
+            if t.color != yinhe_core::DEFAULT_TRACK_COLOR {
+                Some(vec![
+                    0x00,
+                    0x0F,
+                    0x7F, // 全通道通配
+                    0x00,
+                    (t.color[0] * 255.0).round() as u8,
+                    (t.color[1] * 255.0).round() as u8,
+                    (t.color[2] * 255.0).round() as u8,
+                    0xFF, // alpha 不透明
+                ])
+            } else {
+                None
+            }
+        })
+        .collect();
+
     // Tracks 1..N+1: per-track event streams
     for (i, t) in model.tracks.iter().enumerate() {
-        tracks.push(build_track(t, &per_track_notes[i]));
+        tracks.push(build_track(
+            t,
+            &per_track_notes[i],
+            color_payloads[i].as_deref(),
+        ));
     }
 
     let smf = Smf {
@@ -121,7 +149,11 @@ fn build_conductor_track<'a>(model: &'a YinModel) -> Vec<TrackEvent<'a>> {
     flatten_to_track(events, song_title)
 }
 
-fn build_track<'a>(track: &'a TrackData, notes: &[(Note, u8)]) -> Vec<TrackEvent<'a>> {
+fn build_track<'a>(
+    track: &'a TrackData,
+    notes: &[(Note, u8)],
+    color_payload: Option<&'a [u8]>,
+) -> Vec<TrackEvent<'a>> {
     let ch = u4::new(track.channel & 0x0F);
     let mut events: Vec<(u32, TrackEventKind<'a>)> = Vec::new();
 
@@ -340,6 +372,12 @@ fn build_track<'a>(track: &'a TrackData, notes: &[(Note, u8)]) -> Vec<TrackEvent
                 track.port & 0x7F,
             ))),
         ));
+    }
+    // 颜色事件（ImageToMidi 私有扩展：FF 0A meta + 魔数 00 0F）。
+    // 0x0A 在 SMF 规范中未定义，midly 用 Unknown 承载，写出时原样回写类型字节。
+    // 放在音轨开头（delta 0），与 ImageToMidi 生态的写法一致。
+    if let Some(payload) = color_payload {
+        events.push((0, TrackEventKind::Meta(MetaMessage::Unknown(0x0A, payload))));
     }
     // MidiChannel meta (FF 20) — preserves channel prefix on roundtrip
     if let Some(ch) = track.channel_prefix {

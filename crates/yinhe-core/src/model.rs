@@ -59,6 +59,9 @@ impl Default for ConductorData {
 //  TrackData
 // =========================================================
 
+/// 音轨默认颜色（未设置颜色事件时的占位值，UI 显示时回退到调色板）。
+pub const DEFAULT_TRACK_COLOR: [f32; 3] = [0.5, 0.5, 0.5];
+
 /// One MIDI track's complete data.
 ///
 /// Channel/track are held here, not in individual events. NoteEvent is
@@ -103,7 +106,7 @@ impl TrackData {
         Self {
             uuid: uuid::Uuid::new_v4().to_string(),
             name: String::new(),
-            color: [0.5, 0.5, 0.5],
+            color: DEFAULT_TRACK_COLOR,
             port,
             channel,
             channel_prefix: None,

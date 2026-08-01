@@ -1,9 +1,108 @@
 //! Round-trip tests: bytes -> YinModel -> bytes -> YinModel
 
+use std::sync::Arc;
+
 use yinhe_core::{ConductorData, NoteEvent, PcEvent, ProjectMeta, TrackData, YinModel};
 use yinhe_mid2::{parse_bytes, write_to_bytes};
 use yinhe_types::TimeSigEvent;
 use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, SegmentShape};
+
+/// 手写带颜色事件的 SMF：1 条音轨，音符在 channel 0，
+/// 颜色事件（FF 0A Copyright + 魔数 00 0F + ch=0x7F + 红 RGB）。
+fn color_event_midi() -> Vec<u8> {
+    let mut data = Vec::new();
+    data.extend_from_slice(b"MThd");
+    data.extend_from_slice(&6u32.to_be_bytes());
+    data.extend_from_slice(&[0, 0, 0, 1, 1, 0xE0]);
+    data.extend_from_slice(b"MTrk");
+    let track: &[u8] = &[
+        0x00, 0xFF, 0x0A, 0x08, 0x00, 0x0F, 0x7F, 0x00, 0xFF, 0x00, 0x00,
+        0xFF, // 颜色事件
+        0x00, 0x90, 60, 100, // NoteOn
+        0x81, 0x70, 0x80, 60, 0, // delta=240, NoteOff
+        0x00, 0xFF, 0x2F, 0x00,
+    ];
+    data.extend_from_slice(&(track.len() as u32).to_be_bytes());
+    data.extend_from_slice(track);
+    data
+}
+
+#[test]
+fn color_event_parses_into_track_color() {
+    let model = parse_bytes(&color_event_midi()).expect("parse failed");
+    let t = &model.tracks[1];
+    assert_eq!(t.color[0], 1.0);
+    assert_eq!(t.color[1], 0.0);
+    assert_eq!(t.color[2], 0.0);
+}
+
+/// 同轨两个颜色事件：ch=0（红）与 ch=0x7F（蓝），音符在 channel 0。
+/// 精确通道匹配应优先于 0x7F 通配。
+#[test]
+fn color_event_prefers_exact_channel_match() {
+    let mut data = Vec::new();
+    data.extend_from_slice(b"MThd");
+    data.extend_from_slice(&6u32.to_be_bytes());
+    data.extend_from_slice(&[0, 0, 0, 1, 1, 0xE0]);
+    data.extend_from_slice(b"MTrk");
+    let track: &[u8] = &[
+        0x00, 0xFF, 0x0A, 0x08, 0x00, 0x0F, 0x00, 0x00, 0xFF, 0x00, 0x00, 0xFF, // ch=0 红
+        0x00, 0xFF, 0x0A, 0x08, 0x00, 0x0F, 0x7F, 0x00, 0x00, 0x00, 0xFF, 0xFF, // ch=0x7F 蓝
+        0x00, 0x90, 60, 100, // NoteOn channel 0
+        0x81, 0x70, 0x80, 60, 0, 0x00, 0xFF, 0x2F, 0x00,
+    ];
+    data.extend_from_slice(&(track.len() as u32).to_be_bytes());
+    data.extend_from_slice(track);
+
+    let model = parse_bytes(&data).expect("parse failed");
+    let t = &model.tracks[1];
+    assert_eq!(t.channel, 0);
+    assert_eq!(t.color[0], 1.0); // 精确匹配 ch=0 的红色
+    assert_eq!(t.color[2], 0.0);
+}
+
+/// 颜色 roundtrip：model 带颜色 → SMF → 再解析颜色一致；
+/// 默认色音轨不写出颜色事件（往返不新增事件）。
+#[test]
+fn color_roundtrip_via_smf() {
+    let mut model1 = build_complex_model();
+    {
+        let t0 = Arc::make_mut(&mut model1.tracks[0]);
+        t0.color = [0.2, 0.4, 0.6];
+    }
+    let bytes = write_to_bytes(&model1).unwrap();
+    let model2 = parse_bytes(&bytes).unwrap();
+
+    let c2 = model2.tracks[1].color;
+    assert!((c2[0] - 0.2).abs() < 0.01);
+    assert!((c2[1] - 0.4).abs() < 0.01);
+    assert!((c2[2] - 0.6).abs() < 0.01);
+    // 默认色音轨保持默认（不写出颜色事件）
+    assert_eq!(model2.tracks[2].color, yinhe_core::DEFAULT_TRACK_COLOR);
+}
+
+/// 渐变变体（12 字节 payload）只取第一组颜色。
+#[test]
+fn color_event_gradient_takes_first_color() {
+    let mut data = Vec::new();
+    data.extend_from_slice(b"MThd");
+    data.extend_from_slice(&6u32.to_be_bytes());
+    data.extend_from_slice(&[0, 0, 0, 1, 1, 0xE0]);
+    data.extend_from_slice(b"MTrk");
+    let track: &[u8] = &[
+        0x00, 0xFF, 0x0A, 0x0C, 0x00, 0x0F, 0x7F, 0x00, 0x80, 0x40, 0x20, 0xFF, 0x10, 0x20, 0x30,
+        0xFF, // 12 字节渐变：主色 (128,64,32)，渐变色 (16,32,48)
+        0x00, 0x90, 60, 100, 0x81, 0x70, 0x80, 60, 0, 0x00, 0xFF, 0x2F, 0x00,
+    ];
+    data.extend_from_slice(&(track.len() as u32).to_be_bytes());
+    data.extend_from_slice(track);
+
+    let model = parse_bytes(&data).expect("parse failed");
+    let t = &model.tracks[1];
+    assert!((t.color[0] - 128.0 / 255.0).abs() < 0.01);
+    assert!((t.color[1] - 64.0 / 255.0).abs() < 0.01);
+    assert!((t.color[2] - 32.0 / 255.0).abs() < 0.01);
+}
 
 /// Hand-craft minimal SMF bytes: 1 track, 1 note (C4 quarter note at 120 BPM).
 fn minimal_midi_bytes() -> Vec<u8> {

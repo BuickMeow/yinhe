@@ -18,6 +18,7 @@ mod source;
 mod tempo_map;
 
 pub use events::NoteEvent;
+pub use model::DEFAULT_TRACK_COLOR;
 pub use model::{ConductorData, ProjectMeta, TrackData, TrackInfo, YinModel};
 pub use model_stats::RescaleProgress;
 pub use selection::Selection;

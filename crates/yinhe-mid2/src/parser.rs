@@ -274,6 +274,34 @@ fn collect_conductor(
 //  Per-track pass
 // =========================================================
 
+/// 解析 ImageToMidi 私有颜色事件（伪装成 FF 0A meta）。
+///
+/// payload 布局：`[0x00, 0x0F, channel, 0x00, R, G, B, A, (R2, G2, B2, A2)]`
+/// 8 字节 = 单色；12 字节 = 渐变（只取第一组颜色）。
+/// channel 为 0..15（指定通道）或 0x7F（全部通道）。
+/// 返回 (channel, [r, g, b])，RGB 已归一化到 0..1。
+fn parse_color_event(data: &[u8]) -> Option<(u8, [f32; 3])> {
+    if (data.len() != 8 && data.len() != 12)
+        || data[0] != 0x00
+        || data[1] != 0x0F
+        || data[3] != 0x00
+    {
+        return None;
+    }
+    let channel = data[2];
+    if channel > 15 && channel != 0x7F {
+        return None;
+    }
+    Some((
+        channel,
+        [
+            data[4] as f32 / 255.0,
+            data[5] as f32 / 255.0,
+            data[6] as f32 / 255.0,
+        ],
+    ))
+}
+
 #[derive(Clone, Copy, Debug)]
 struct ActiveNote {
     key: u8,
@@ -336,6 +364,10 @@ fn parse_track(
     // Pending Bank Select per channel (CC 0 / CC 32).
     let mut pending_bank: [PendingBank; 16] = [PendingBank::default(); 16];
 
+    // ImageToMidi 颜色事件（伪装成 FF 0A Copyright meta）列表：
+    // (channel, color)。channel = 0..15 指定通道，0x7F = 全部通道。
+    let mut color_events: Vec<(u8, [f32; 3])> = Vec::new();
+
     // Accumulate automation events per target during parsing.
     // Key = (target_variant, controller_or_parameter).
     // We use a Vec<(AutomationTarget, AutomationEvent)> and sort at the end.
@@ -361,6 +393,14 @@ fn parse_track(
             }
             midly::TrackEventKind::Meta(midly::MetaMessage::MidiChannel(ch)) => {
                 td.channel_prefix = Some(ch.as_int());
+            }
+            // ImageToMidi 私有颜色事件：FF 0A meta + 魔数 00 0F。
+            // 0x0A 在 SMF 规范中未定义，midly 解析为 Unknown；
+            // 非颜色事件的同类 meta 保持忽略。
+            midly::TrackEventKind::Meta(midly::MetaMessage::Unknown(0x0A, text)) => {
+                if let Some(ev) = parse_color_event(text) {
+                    color_events.push(ev);
+                }
             }
             midly::TrackEventKind::Midi { channel, message } => {
                 has_midi_message = true;
@@ -512,6 +552,17 @@ fn parse_track(
     let _ = track_idx; // (kept for future use)
     td.port = current_port;
     td.channel = first_global_channel.map(|gc| gc & 0x0F).unwrap_or(0);
+
+    // 应用颜色事件：优先精确通道匹配，其次 0x7F 全通道通配，最后取第一个。
+    // 颜色是音轨级属性，事件出现在音轨内任意位置都作用于整轨。
+    if let Some((_, color)) = color_events
+        .iter()
+        .find(|(ch, _)| *ch == td.channel)
+        .or_else(|| color_events.iter().find(|(ch, _)| *ch == 0x7F))
+        .or_else(|| color_events.first())
+    {
+        td.color = *color;
+    }
 
     // Flush pending bank values that were NOT consumed by a ProgramChange.
     // These become plain CC events so nothing is lost.
