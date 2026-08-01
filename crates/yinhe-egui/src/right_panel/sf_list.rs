@@ -150,11 +150,7 @@ fn sf_row(
 
     // ── Path (truncated) ──
     let path_x = name_end.max(rect.min.x + 120.0);
-    let path_text = if entry.path.len() > 40 {
-        format!("…{}", &entry.path[entry.path.len() - 37..])
-    } else {
-        entry.path.clone()
-    };
+    let path_text = truncate_path(&entry.path);
     ui.painter().text(
         egui::pos2(path_x, rect.center().y),
         egui::Align2::LEFT_CENTER,
@@ -205,4 +201,54 @@ fn sf_row(
     }
 
     (false, None)
+}
+
+/// 截断音色库路径用于显示：超过 40 字符时保留尾部 37 字符、前缀加省略号。
+///
+/// 必须按字符（而非字节）截断：按字节切片可能落在多字节 UTF-8 字符中间，
+/// 中文路径（如「下载/钢琴音色库/xxx.sf2」）会触发 char boundary panic，
+/// 在 release 构建（panic=abort）下直接闪退。
+fn truncate_path(path: &str) -> String {
+    if path.chars().count() > 40 {
+        // nth_back(36) = 尾部第 37 个字符（nth_back(0) 是最后一个），
+        // 保证截断后恰为尾部 37 个字符，且起始索引必在字符边界上。
+        let start = path
+            .char_indices()
+            .nth_back(36)
+            .map(|(i, _)| i)
+            .unwrap_or(0);
+        format!("…{}", &path[start..])
+    } else {
+        path.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::truncate_path;
+
+    /// 回归测试：中文字符路径截断必须安全（旧实现按字节切片会 panic 闪退）。
+    #[test]
+    fn cjk_path_truncation_is_char_boundary_safe() {
+        // 44 个字符，超过截断阈值 40
+        let path = "/Users/jieneng/下载/钢琴音色库合集/斯坦威大钢琴精选音源完整版.sf2";
+        let t = truncate_path(path);
+        assert!(t.starts_with('…'));
+        assert!(t.chars().count() <= 38);
+        // 截断结果必须是合法 UTF-8（字节切片落在字符中间时会 panic）
+        assert!(t.is_char_boundary(0));
+    }
+
+    #[test]
+    fn ascii_path_truncation() {
+        let path = "/Users/jieneng/Music/Soundfonts/Starry Studio Grand v2.7~/Presets/A_Standard/Studio Grand - Standard (No Hammer).sfz";
+        let t = truncate_path(path);
+        assert!(t.starts_with('…'));
+        assert!(t.ends_with("(No Hammer).sfz"));
+    }
+
+    #[test]
+    fn short_path_kept_as_is() {
+        assert_eq!(truncate_path("short.sf2"), "short.sf2");
+    }
 }

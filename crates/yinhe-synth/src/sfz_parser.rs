@@ -260,22 +260,24 @@ pub fn load_wav_as_f32(path: &Path) -> Result<(Vec<f32>, u32), String> {
         .map_err(|e| format!("Failed to open WAV {:?}: {}", path, e))?;
 
     let spec = reader.spec();
+    // 读取样本必须显式处理 Err：损坏/截断的 WAV 会令 hound 返回错误，
+    // 若 unwrap 则 GPU 加载音色库时直接 panic（release=abort）闪退。
     let samples: Vec<f32> = match spec.bits_per_sample {
         16 => reader
             .samples::<i16>()
-            .map(|s| s.unwrap() as f32 / i16::MAX as f32)
-            .collect(),
+            .map(|s| s.map(|v| v as f32 / i16::MAX as f32))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("Failed to read 16-bit samples from {:?}: {}", path, e))?,
         24 => reader
             .samples::<i32>()
-            .map(|s| {
-                let v = s.unwrap();
-                (v >> 8) as f32 / (i16::MAX as f32)
-            })
-            .collect(),
+            .map(|s| s.map(|v| (v >> 8) as f32 / (i16::MAX as f32)))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("Failed to read 24-bit samples from {:?}: {}", path, e))?,
         32 => reader
             .samples::<i32>()
-            .map(|s| s.unwrap() as f32 / i32::MAX as f32)
-            .collect(),
+            .map(|s| s.map(|v| v as f32 / i32::MAX as f32))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("Failed to read 32-bit samples from {:?}: {}", path, e))?,
         _ => return Err(format!("Unsupported bit depth: {}", spec.bits_per_sample)),
     };
 
