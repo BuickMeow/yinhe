@@ -377,7 +377,7 @@ pub(crate) fn handle_automation_interaction(
     track_idx: u16,
     ctx: &AutomationEditCtx<'_>,
     panel_index: usize,
-    track_colors: &[[f32; 3]],
+    track_colors: &[[f32; 4]],
     info_content: &mut Option<InfoContent>,
     right_tab: &mut Option<RightTab>,
 ) -> (
@@ -402,11 +402,12 @@ pub(crate) fn handle_automation_interaction(
     let drag_id = ui.id().with("auto_drag").with(panel_index);
     // MoveAnchors 拖拽偏移量写入此 id，供 automation_panel.rs 偏移持续化选框
     let move_offset_id = ui.id().with("auto_move_offset").with(panel_index);
-    // ghost 用 track color 而非黄色
-    let track_color = track_colors
+    // ghost 用 track color 而非黄色（ghost 自身有固定透明度）
+    let track_color4 = track_colors
         .get(track_idx as usize)
         .copied()
-        .unwrap_or([0.8, 0.8, 0.8]);
+        .unwrap_or([0.8, 0.8, 0.8, 1.0]);
+    let track_color = [track_color4[0], track_color4[1], track_color4[2]];
 
     // 读取当前拖拽状态
     let drag_state = ui.ctx().data(|d| d.get_temp::<AutoDrag>(drag_id));

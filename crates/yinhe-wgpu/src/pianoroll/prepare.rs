@@ -27,7 +27,7 @@ pub fn build_render_job(
     height: u32,
     view: &PianoRollView,
     selected: &yinhe_core::Selection,
-    track_colors: &[[f32; 3]],
+    track_colors: &[[f32; 4]],
     scroll_mode: u32,
     min_border_width: f32,
     note_outline: bool,
@@ -45,11 +45,7 @@ pub fn build_render_job(
 
     // Build track colors — dynamic Vec, no fixed 1MB allocation.
     let track_count = track_colors.len().min(MAX_TRACKS) as u32;
-    let tc_colors: Vec<[f32; 4]> = track_colors
-        .iter()
-        .take(MAX_TRACKS)
-        .map(|c| [c[0], c[1], c[2], 1.0])
-        .collect();
+    let tc_colors: Vec<[f32; 4]> = track_colors.iter().take(MAX_TRACKS).copied().collect();
 
     // Build selection rects uniform
     let sel_rect_count = selected.rects.len().min(MAX_SEL_RECTS) as u32;

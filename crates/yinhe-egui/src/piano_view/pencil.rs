@@ -84,7 +84,7 @@ pub(crate) fn pencil_frame(
     track_visible: &[bool],
     conductor_idx: Option<u16>,
     midi: Option<&dyn yinhe_types::NoteSource>,
-    _track_colors: &[[f32; 3]],
+    _track_colors: &[[f32; 4]],
     total_ticks: f64,
 ) -> PencilFrameOut {
     let pencil_id = ui.id().with("pencil_drag");

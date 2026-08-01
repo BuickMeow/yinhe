@@ -180,7 +180,7 @@ pub fn build_data_lines(
     lanes: &[&AutomationLane],
     max_val: f32,
     track_visible: &[bool],
-    track_color: &[[f32; 3]],
+    track_color: &[[f32; 4]],
     show_anchors: bool,
     skip_lane: Option<&AutomationLane>,
     highlight_ticks: &[u32],
@@ -210,10 +210,11 @@ pub fn build_data_lines(
         if !track_visible.get(trk_idx).copied().unwrap_or(true) {
             continue;
         }
-        let color = track_color
-            .get(trk_idx)
-            .copied()
-            .unwrap_or_else(|| TRACK_PALETTE[trk_idx % TRACK_PALETTE.len()]);
+        let c = track_color.get(trk_idx).copied().unwrap_or_else(|| {
+            let p = TRACK_PALETTE[trk_idx % TRACK_PALETTE.len()];
+            [p[0], p[1], p[2], 1.0]
+        });
+        let color = [c[0], c[1], c[2]]; // 曲线用 RGB，alpha 由 CurveInstance 打包时固定
 
         // 收集并绘制所有段
         let segs = collect_segments(

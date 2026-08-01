@@ -79,12 +79,7 @@ pub fn show(
 
     // Build track colors — dynamic Vec, no fixed 1MB allocation.
     let track_count = data.track_colors.len().min(MAX_TRACKS) as u32;
-    let tc_colors: Vec<[f32; 4]> = data
-        .track_colors
-        .iter()
-        .take(MAX_TRACKS)
-        .map(|c| [c[0], c[1], c[2], 1.0])
-        .collect();
+    let tc_colors: Vec<[f32; 4]> = data.track_colors.iter().take(MAX_TRACKS).copied().collect();
 
     let uniforms = Uniforms {
         width: w as f32,

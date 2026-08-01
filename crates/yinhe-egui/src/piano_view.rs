@@ -115,7 +115,7 @@ pub fn show(
     midi: Option<&dyn yinhe_types::NoteSource>,
     selected: &mut yinhe_core::Selection,
     track_visible: &[bool],
-    track_colors: &[[f32; 3]],
+    track_colors: &[[f32; 4]],
     cursor_tick: &mut Option<f64>,
     is_playing: bool,
     quantize: QuantizePreset,

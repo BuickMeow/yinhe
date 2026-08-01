@@ -81,7 +81,7 @@ pub(crate) fn sel_drag_frame(
     note_drag_delta: &mut Option<(i64, i32, bool)>,
     note_resize_delta: &mut Option<(ResizeSide, i64)>,
     sel_rect: &mut yinhe_editor_core::edit_state::SelRectState,
-    _track_colors: &[[f32; 3]],
+    _track_colors: &[[f32; 4]],
     track_visible: &[bool],
     track_selected: &std::collections::HashSet<u16>,
     vertical: bool,

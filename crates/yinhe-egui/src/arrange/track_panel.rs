@@ -37,7 +37,7 @@ pub(crate) fn show(
     track_selected: &mut HashSet<u16>,
     selection_anchor: &mut Option<u16>,
     conductor_track_idx: Option<u16>,
-    track_colors: &[[f32; 3]],
+    track_colors: &[[f32; 4]],
     row_height: &mut f32,
     scroll_y: &mut f32,
     request_pianoroll: &mut bool,
@@ -96,11 +96,15 @@ pub(crate) fn show(
             painter.rect_filled(row_rect, 0.0, egui::Color32::WHITE.gamma_multiply(0.03));
         }
 
-        let color = track_colors.get(idx).copied().unwrap_or([0.5, 0.5, 0.5]);
-        let color32 = egui::Color32::from_rgb(
+        let color = track_colors
+            .get(idx)
+            .copied()
+            .unwrap_or([0.5, 0.5, 0.5, 1.0]);
+        let color32 = egui::Color32::from_rgba_unmultiplied(
             (color[0] * 255.0) as u8,
             (color[1] * 255.0) as u8,
             (color[2] * 255.0) as u8,
+            (color[3] * 255.0) as u8,
         );
 
         let badge_w = 8.0_f32;

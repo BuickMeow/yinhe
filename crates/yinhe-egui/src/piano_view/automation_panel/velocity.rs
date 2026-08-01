@@ -125,7 +125,7 @@ pub(crate) fn handle_velocity_interaction(
     panel: &AutomationPanelView,
     midi: &dyn NoteSource,
     track: u16,
-    track_color: [f32; 3],
+    track_color: [f32; 4],
     panel_index: usize,
 ) -> (
     Vec<VelocityEdit>,
@@ -181,10 +181,11 @@ pub(crate) fn handle_velocity_interaction(
         s.last = (tick, value);
     }
 
-    let color = egui::Color32::from_rgb(
+    let color = egui::Color32::from_rgba_unmultiplied(
         (track_color[0] * 255.0) as u8,
         (track_color[1] * 255.0) as u8,
         (track_color[2] * 255.0) as u8,
+        (track_color[3] * 255.0) as u8,
     );
 
     let mut edits = Vec::new();

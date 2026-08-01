@@ -313,7 +313,7 @@ pub(super) fn show_track_info(
     // 显示当前实际颜色（缓存：显式颜色优先，否则调色板），
     // 编辑后写入 TrackData.color 并刷新缓存（无需重建音频引擎）。
     // undo：颜色 popup 打开时记录旧色，关闭时若颜色有变则提交一条 undo。
-    let mut undo_color: Option<([f32; 3], [f32; 3])> = None; // (old, new)
+    let mut undo_color: Option<([f32; 4], [f32; 4])> = None; // (old, new)
     ui.horizontal(|ui| {
         ui.label("颜色:");
         let cur = doc
@@ -322,12 +322,13 @@ pub(super) fn show_track_info(
             .get(track_idx)
             .copied()
             .unwrap_or(yinhe_core::DEFAULT_TRACK_COLOR);
-        let mut srgb = [
+        let mut srgba = egui::Color32::from_rgba_unmultiplied(
             (cur[0] * 255.0).round() as u8,
             (cur[1] * 255.0).round() as u8,
             (cur[2] * 255.0).round() as u8,
-        ];
-        // popup id 与 color_edit_button_srgb 内部（auto_id_with("popup")）一致
+            (cur[3] * 255.0).round() as u8,
+        );
+        // popup id 与 color_edit_button_srgba 内部（auto_id_with("popup")）一致
         let popup_id = ui.auto_id_with("popup");
         let open = egui::Popup::is_id_open(ui.ctx(), popup_id);
         let was_open = ui
@@ -341,12 +342,13 @@ pub(super) fn show_track_info(
             ui.ctx()
                 .data_mut(|d| d.insert_temp(popup_id.with("color_old"), cur));
         }
-        let resp = ui.color_edit_button_srgb(&mut srgb);
+        let resp = ui.color_edit_button_srgba(&mut srgba);
         if resp.changed() {
             let new = [
-                srgb[0] as f32 / 255.0,
-                srgb[1] as f32 / 255.0,
-                srgb[2] as f32 / 255.0,
+                srgba.r() as f32 / 255.0,
+                srgba.g() as f32 / 255.0,
+                srgba.b() as f32 / 255.0,
+                srgba.a() as f32 / 255.0,
             ];
             {
                 let model = Arc::make_mut(&mut doc.data.model);
@@ -364,7 +366,7 @@ pub(super) fn show_track_info(
             // popup 刚关闭：颜色有变则提交一条 undo
             let old = ui
                 .ctx()
-                .data(|d| d.get_temp::<[f32; 3]>(popup_id.with("color_old")))
+                .data(|d| d.get_temp::<[f32; 4]>(popup_id.with("color_old")))
                 .unwrap_or(cur);
             let new = doc
                 .edit

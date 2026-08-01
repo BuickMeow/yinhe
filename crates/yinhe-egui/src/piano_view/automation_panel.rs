@@ -91,7 +91,7 @@ pub(crate) struct PanelsData<'a> {
     pub tempo_lane: &'a AutomationLane,
     pub midi: Option<&'a dyn yinhe_types::NoteSource>,
     pub track_visible: &'a [bool],
-    pub track_colors: &'a [[f32; 3]],
+    pub track_colors: &'a [[f32; 4]],
 }
 
 /// 面板编辑状态。
@@ -783,7 +783,7 @@ fn dispatch_edit_interaction(
     midi: Option<&dyn yinhe_types::NoteSource>,
     edit_ctx: Option<&AutomationEditCtx<'_>>,
     panel_index: usize,
-    track_colors: &[[f32; 3]],
+    track_colors: &[[f32; 4]],
     info_content: &mut Option<InfoContent>,
     right_tab: &mut Option<RightTab>,
 ) -> PanelInteractionOut {
@@ -807,7 +807,7 @@ fn dispatch_edit_interaction(
                 let track_color = track_colors
                     .get(track as usize)
                     .copied()
-                    .unwrap_or([0.8, 0.8, 0.8]);
+                    .unwrap_or([0.8, 0.8, 0.8, 1.0]);
                 let (vel_edits, preview, tip) = velocity::handle_velocity_interaction(
                     ui,
                     grid_area,
@@ -908,7 +908,7 @@ fn render_panel_content(
     tempo_lane: &AutomationLane,
     midi: Option<&dyn yinhe_types::NoteSource>,
     track_visible: &[bool],
-    track_colors: &[[f32; 3]],
+    track_colors: &[[f32; 4]],
     scroll_mode: u32,
     min_border_width: f32,
     show_anchors: bool,

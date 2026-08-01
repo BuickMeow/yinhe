@@ -24,7 +24,7 @@ pub(crate) type ArrSelRect = (f64, f64, usize, usize);
 pub(crate) struct ArrangeData<'a> {
     pub midi: Option<&'a dyn yinhe_types::NoteSource>,
     pub track_visible: &'a [bool],
-    pub track_colors: &'a [[f32; 3]],
+    pub track_colors: &'a [[f32; 4]],
     pub track_info: &'a [yinhe_core::TrackInfo],
     pub quantize: QuantizePreset,
     pub ppq: u32,

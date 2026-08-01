@@ -101,7 +101,7 @@ pub fn prepare(
     lanes: &[&AutomationLane],
     midi: Option<&dyn NoteSource>,
     track_visible: &[bool],
-    track_colors: &[[f32; 3]],
+    track_colors: &[[f32; 4]],
     scroll_mode: u32,
     min_border_width: f32,
     show_anchors: bool,
@@ -117,10 +117,7 @@ pub fn prepare(
 
     // Build track colors in GPU format (vec4) — needed for velocity pipeline
     // which fetches color via `tc[track]` in the shader.
-    let tc_colors: Vec<[f32; 4]> = track_colors
-        .iter()
-        .map(|c| [c[0], c[1], c[2], 1.0])
-        .collect();
+    let tc_colors: Vec<[f32; 4]> = track_colors.to_vec();
     let track_count = tc_colors.len() as u32;
 
     let uniforms = Uniforms {
