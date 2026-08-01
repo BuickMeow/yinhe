@@ -3,13 +3,10 @@ use std::collections::HashSet;
 use eframe::egui;
 
 use yinhe_wgpu::{build_ghost_notes, build_arr_notes};
-use yinhe_core::TrackInfo;
-use yinhe_types::{ArrangementView, NoteSource};
+use yinhe_types::ArrangementView;
 use yinhe_wgpu::{InstanceRenderer, Uniforms, MAX_TRACKS};
-use yinhe_types::TimeSigEvent;
 use yinhe_wgpu::layer_cache_key;
 
-use yinhe_editor_core::quantize::QuantizePreset;
 use crate::piano_view::drag::{GhostNote, HiddenNote};
 use crate::render_context::RenderContext;
 use crate::widgets::tools_panel::Tool;
@@ -30,28 +27,9 @@ pub fn show(
     renderer: &mut InstanceRenderer,
     render_ctx: &mut RenderContext,
     view: &mut ArrangementView,
-    midi: Option<&dyn NoteSource>,
-    selected: &mut yinhe_core::Selection,
-    track_visible: &[bool],
-    track_colors: &[[f32; 3]],
-    track_info: &[TrackInfo],
-    cursor_tick: &mut Option<f64>,
-    quantize: QuantizePreset,
-    ppq: u32,
-    bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
-    is_playing: bool,
-    follow_mode: &mut crate::view_interaction::FollowMode,
-    active_tool: &Tool,
-    scroll_mode: u32,
-    min_border_width: f32,
-    haptic_engine: Option<&yinhe_haptic::HapticEngine>,
-    revision: u64,
-    arr_sel_rect: &mut Vec<super::ArrSelRect>,
-    arr_drag_delta: &mut Option<super::ArrDragDelta>,
-    arr_eraser_rect: &mut Option<(f64, f64, usize, usize)>,
-    track_selected: &mut HashSet<u16>,
-    selection_anchor: &mut Option<u16>,
-    info_content: &mut Option<crate::right_panel::InfoContent>,
+    data: super::ArrangeData<'_>,
+    edit: &mut super::ArrangeEdit<'_>,
+    cfg: &mut super::ArrangeViewCfg<'_>,
 ) {
     let _arrange_total_start = if yinhe_memtrace::perf_probe::enabled() {
         Some(std::time::Instant::now())
@@ -72,30 +50,25 @@ pub fn show(
 
     render_ctx.ensure_size(pw, ph);
 
-    let total_ticks = crate::view_interaction::total_ticks_padded(
-        midi.and_then(|m| m.tick_length()).unwrap_or(0),
-        ppq,
-    );
-    let num_tracks = track_visible.len();
-    view.clamp_scroll(w as f32, h as f32, total_ticks, num_tracks);
+    view.clamp_scroll(w as f32, h as f32, data.total_ticks, data.num_tracks);
 
-    if let Some(ct) = *cursor_tick
-        && is_playing
-        && *follow_mode != crate::view_interaction::FollowMode::None
+    if let Some(ct) = *edit.cursor_tick
+        && cfg.is_playing
+        && *cfg.follow_mode != crate::view_interaction::FollowMode::None
         && let Some(new_scroll_x) = crate::view_interaction::compute_follow_scroll(
             ct,
             view.base.pixels_per_tick,
             w as f32,
             0.0,
-            *follow_mode,
+            *cfg.follow_mode,
             0.01,
         ) {
             view.base.scroll_x = new_scroll_x;
-            view.clamp_scroll(w as f32, h as f32, total_ticks, num_tracks);
+            view.clamp_scroll(w as f32, h as f32, data.total_ticks, data.num_tracks);
         }
 
     let scroll_x = view.base.scroll_x;
-    let (scroll_x_pos, scroll_frac) = match scroll_mode {
+    let (scroll_x_pos, scroll_frac) = match cfg.scroll_mode {
         0 => (scroll_x, 0.0),
         _ => {
             let f = scroll_x.floor();
@@ -104,8 +77,8 @@ pub fn show(
     };
 
     // Build track colors — dynamic Vec, no fixed 1MB allocation.
-    let track_count = track_colors.len().min(MAX_TRACKS) as u32;
-    let tc_colors: Vec<[f32; 4]> = track_colors
+    let track_count = data.track_colors.len().min(MAX_TRACKS) as u32;
+    let tc_colors: Vec<[f32; 4]> = data.track_colors
         .iter()
         .take(MAX_TRACKS)
         .map(|c| [c[0], c[1], c[2], 1.0])
@@ -121,9 +94,9 @@ pub fn show(
         keyboard_width: view.base.left_panel_width,
         mode: 2, // AR notes: shader computes pixel_y from lane_height + scroll_y
         scroll_frac,
-        scroll_mode,
-        min_border_width,
-        track_count, // AR notes now use track_colors uniform for coloring
+        scroll_mode: cfg.scroll_mode,
+        min_border_width: cfg.min_border_width,
+        track_count, // AR notes now use data.track_colors uniform for coloring
         sel_rect_count: 0, // unused in AR mode
         note_outline: 1, // AR mode: outline always on
         lane_height: view.lane_height(), // AR: per-track lane height
@@ -142,29 +115,9 @@ pub fn show(
     // ── Select tool dispatch (BEFORE layer building to get ghost notes) ──
     // Like PR's sel_drag_frame, this returns ghost_notes/hidden_notes generated
     // from the CURRENT frame's mouse position, enabling zero-delay ghost preview.
-    let (mut ghost_notes, hidden_notes, drag_rect) = if *active_tool == Tool::Select || *active_tool == Tool::SelectVertical {
-        let vertical = *active_tool == Tool::SelectVertical;
-        sel_drag_frame_arrange(
-            ui,
-            rect,
-            view,
-            midi,
-            selected,
-            track_visible,
-            track_info,
-            quantize,
-            ppq,
-            bar_line_data,
-            total_ticks,
-            num_tracks,
-            cursor_tick,
-            arr_sel_rect,
-            arr_drag_delta,
-            track_selected,
-            selection_anchor,
-            info_content,
-            vertical,
-        )
+    let (mut ghost_notes, hidden_notes, drag_rect) = if *cfg.active_tool == Tool::Select || *cfg.active_tool == Tool::SelectVertical {
+        let vertical = *cfg.active_tool == Tool::SelectVertical;
+        sel_drag_frame_arrange(ui, rect, view, &data, edit, vertical)
     } else {
         (Vec::new(), HashSet::new(), None)
     };
@@ -180,7 +133,7 @@ pub fn show(
     // tv_hash still needed for notes layer cache key
     let tv_hash = {
         let mut h = 0u64;
-        for &v in track_visible {
+        for &v in data.track_visible {
             h = h.wrapping_mul(0x9e3779b97f4a7c15).wrapping_add(v as u64);
         }
         h
@@ -189,16 +142,16 @@ pub fn show(
     // Grid lines 已迁移到 egui（见下方 paint_grid_lines 调用），wgpu 不再构建 grid layer。
 
     // Layer 0: notes (16B NoteInstance — shader computes pixel positions from uniforms)
-    let notes_key = layer_cache_key(&[vh, wh, tv_hash, revision, hidden_notes.len() as u64]);
+    let notes_key = layer_cache_key(&[vh, wh, tv_hash, cfg.revision, hidden_notes.len() as u64]);
     renderer.upload_note_layer(0, notes_key, |out| {
-        if let Some(midi) = midi {
+        if let Some(midi) = data.midi {
             build_arr_notes(
                 out,
                 w as f32,
                 h as f32,
                 midi,
                 view,
-                track_visible,
+                data.track_visible,
                 &hidden_notes,
             );
         }
@@ -206,7 +159,7 @@ pub fn show(
 
     // Layer 1: ghost notes (no cache — rebuilt every frame during drag)
     renderer.upload_note_layer(1, 0, |out| {
-        build_ghost_notes(out, &mut ghost_notes, w as f32, h as f32, view, track_visible);
+        build_ghost_notes(out, &mut ghost_notes, w as f32, h as f32, view, data.track_visible);
     });
 
     let content_changed = true;
@@ -221,11 +174,10 @@ pub fn show(
     );
     let lh = view.lane_height();
     let scroll_y = view.base.scroll_y;
-    let num_tracks = track_visible.len();
-    if num_tracks > 0 {
-        let (trk_first, trk_last) = ArrangementView::visible_track_range_static(scroll_y, h as f32, lh, num_tracks);
+    if data.num_tracks > 0 {
+        let (trk_first, trk_last) = ArrangementView::visible_track_range_static(scroll_y, h as f32, lh, data.num_tracks);
         for idx in trk_first..trk_last {
-            if !track_visible.get(idx).copied().unwrap_or(true) {
+            if !data.track_visible.get(idx).copied().unwrap_or(true) {
                 continue;
             }
             let y = rect.min.y + ArrangementView::lane_y_static(idx, scroll_y, lh);
@@ -243,7 +195,7 @@ pub fn show(
 
     // ── Grid lines (drawn by egui before wgpu texture) ──
     // 替代原 wgpu grid layer。与 time_ruler 共用 MIN_SPACING 阈值，保证"有线就有标签"。
-    if let Some(midi) = midi
+    if let Some(midi) = data.midi
         && let Some(tpb) = midi.ticks_per_beat()
     {
         let (def_num, def_den) = midi.time_sig_default();
@@ -269,7 +221,7 @@ pub fn show(
     );
 
     // ── Playback cursor (drawn by egui on top of the wgpu texture) ──
-    if let Some(ct) = *cursor_tick {
+    if let Some(ct) = *edit.cursor_tick {
         let lb_w = view.base.left_panel_width;
         let cx_local = view.tick_to_x(ct);
         if cx_local >= lb_w && cx_local <= w as f32 {
@@ -290,22 +242,12 @@ pub fn show(
     }
 
     // ── Eraser tool dispatch (after GPU texture, before eraser marquee drawing) ──
-    if *active_tool == Tool::Eraser {
-        eraser_drag_frame_arrange(
-            ui,
-            rect,
-            view,
-            quantize,
-            ppq,
-            bar_line_data,
-            total_ticks,
-            num_tracks,
-            arr_eraser_rect,
-        );
+    if *cfg.active_tool == Tool::Eraser {
+        eraser_drag_frame_arrange(ui, rect, view, &data, edit);
     }
 
     // Draw persisted selection rects (remains after mouse release, 支持多选框).
-    for &(t_start, t_end, track_lo, track_hi) in arr_sel_rect.iter() {
+    for &(t_start, t_end, track_lo, track_hi) in edit.arr_sel_rect.iter() {
         let lh = view.lane_height();
         let scroll_y = view.base.scroll_y;
         let view_sy = track_lo as f32 * lh - scroll_y;
@@ -320,7 +262,7 @@ pub fn show(
     }
 
     // Draw eraser marquee box in red (active during drag)
-    if *active_tool == Tool::Eraser {
+    if *cfg.active_tool == Tool::Eraser {
         let drag_id = ui.id().with("eraser_drag_arr");
         let drag: Option<((f64, f32), egui::Pos2)> =
             ui.data_mut(|d| d.get_persisted(drag_id)).unwrap_or(None);
@@ -330,8 +272,7 @@ pub fn show(
                 start_music.1 * view.lane_height() - view.base.scroll_y,
             );
             if (end - start_pixel).length() >= 3.0
-                && let Some(b) =
-                    arrange_snapped_bounds(start_pixel, end, view, quantize, ppq, bar_line_data, num_tracks, false)
+                && let Some(b) = arrange_snapped_bounds(start_pixel, end, view, &data, false)
                 {
                     let snapped = egui::Rect::from_min_max(
                         egui::pos2(b.view_sx.min(b.view_ex), b.view_sy.min(b.view_ey)),
@@ -350,20 +291,20 @@ pub fn show(
         ui,
         rect,
         view,
-        cursor_tick,
+        edit.cursor_tick,
         0.0,
-        Some((quantize, ppq)),
-        bar_line_data,
+        Some((data.quantize, data.ppq)),
+        data.bar_line_data,
         Some(&resp),
-        is_playing,
-        follow_mode,
-        active_tool,
+        cfg.is_playing,
+        cfg.follow_mode,
+        cfg.active_tool,
     );
 
     // Clamp scroll after input and check for haptic boundary
-    view.clamp_scroll(w as f32, h as f32, total_ticks, num_tracks);
-    let max_sx = (total_ticks as f32 * view.base.pixels_per_tick - (w as f32 - view.base.left_panel_width)).max(0.0);
-    let max_sy = (num_tracks as f32 * view.lane_height() - h as f32).max(0.0);
+    view.clamp_scroll(w as f32, h as f32, data.total_ticks, data.num_tracks);
+    let max_sx = (data.total_ticks as f32 * view.base.pixels_per_tick - (w as f32 - view.base.left_panel_width)).max(0.0);
+    let max_sy = (data.num_tracks as f32 * view.lane_height() - h as f32).max(0.0);
     crate::view_interaction::notify_haptic_boundary(
         yinhe_haptic::HapticSlot::Arrangement,
         pre_scroll_x,
@@ -373,7 +314,7 @@ pub fn show(
         max_sx,
         max_sy,
         raw_scroll,
-        haptic_engine,
+        cfg.haptic_engine,
     );
     crate::view_interaction::notify_haptic_zoom(
         yinhe_haptic::HapticSlot::Arrangement,
@@ -383,7 +324,7 @@ pub fn show(
         10.0,
         16.0,
         120.0,
-        haptic_engine,
+        cfg.haptic_engine,
     );
 
     if let Some(t0) = _arrange_total_start {
@@ -399,26 +340,12 @@ pub fn show(
 /// `hidden_notes`: `(track, start_tick, key)` — original notes to hide during drag.
 /// `drag_rect`: the selection rect to draw on top of the GPU texture (move-drag offset
 ///   rect or marquee rect). `None` on release (arr_sel_rect takes over).
-#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 fn sel_drag_frame_arrange(
     ui: &mut egui::Ui,
     content_rect: egui::Rect,
     view: &mut ArrangementView,
-    midi: Option<&dyn NoteSource>,
-    selected: &mut yinhe_core::Selection,
-    track_visible: &[bool],
-    track_info: &[TrackInfo],
-    quantize: QuantizePreset,
-    ppq: u32,
-    bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
-    total_ticks: f64,
-    num_tracks: usize,
-    cursor_tick: &mut Option<f64>,
-    arr_sel_rect: &mut Vec<super::ArrSelRect>,
-    arr_drag_delta: &mut Option<super::ArrDragDelta>,
-    track_selected: &mut HashSet<u16>,
-    selection_anchor: &mut Option<u16>,
-    info_content: &mut Option<crate::right_panel::InfoContent>,
+    data: &super::ArrangeData<'_>,
+    edit: &mut super::ArrangeEdit<'_>,
     vertical: bool,
 ) -> (Vec<GhostNote>, HashSet<HiddenNote>, Option<egui::Rect>) {
     let mut ghost_notes: Vec<GhostNote> = Vec::new();
@@ -464,7 +391,7 @@ fn sel_drag_frame_arrange(
     }
 
     // ── Check if mouse is inside any existing selection rect (for Move cursor + drag) ──
-    let inside_sel_rect = arr_sel_rect.iter().any(|&(t_start, t_end, track_lo, track_hi)| {
+    let inside_sel_rect = edit.arr_sel_rect.iter().any(|&(t_start, t_end, track_lo, track_hi)| {
         pointer.hover_pos().is_some_and(|pos| {
             let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
             let lh = view.lane_height();
@@ -498,8 +425,8 @@ fn sel_drag_frame_arrange(
         if inside_sel_rect && !additive {
             // Start move-drag of existing selection
             // 保存原选框快照并清空（拖拽中由 move_orig_sel 计算偏移后的选框显示）
-            move_orig_sel = arr_sel_rect.clone();
-            arr_sel_rect.clear();
+            move_orig_sel = edit.arr_sel_rect.clone();
+            edit.arr_sel_rect.clear();
             let origin = (click_tick, click_track_f);
             move_drag = Some((origin, origin));
             drag = None;
@@ -509,8 +436,8 @@ fn sel_drag_frame_arrange(
             drag = Some(((click_tick, start_track_y), local));
             // 累加模式下保留已有选框，否则清空
             if !additive {
-                arr_sel_rect.clear();
-                selected.clear();
+                edit.arr_sel_rect.clear();
+                edit.selected.clear();
             }
         }
     }
@@ -532,8 +459,8 @@ fn sel_drag_frame_arrange(
                     content_rect,
                     pos,
                     |base, w, h| {
-                        base.clamp_scroll_x(w, total_ticks);
-                        let max_scroll_y = (num_tracks as f32 * lh - h).max(0.0);
+                        base.clamp_scroll_x(w, data.total_ticks);
+                        let max_scroll_y = (data.num_tracks as f32 * lh - h).max(0.0);
                         base.scroll_y = base.scroll_y.clamp(0.0, max_scroll_y);
                     },
                 );
@@ -544,14 +471,14 @@ fn sel_drag_frame_arrange(
     // stays visible on the release frame (preventing flicker before model update).
     if let Some(((origin_t, origin_tr), (current_t, current_tr))) = move_drag
         && !move_orig_sel.is_empty() {
-            let snapped_origin = crate::view_interaction::snap_tick(origin_t, quantize, ppq, bar_line_data);
-            let snapped_current = crate::view_interaction::snap_tick(current_t, quantize, ppq, bar_line_data);
+            let snapped_origin = crate::view_interaction::snap_tick(origin_t, data.quantize, data.ppq, data.bar_line_data);
+            let snapped_current = crate::view_interaction::snap_tick(current_t, data.quantize, data.ppq, data.bar_line_data);
             let dt = (snapped_current - snapped_origin).round() as i64;
             // 垂直选框工具：只能水平移动，dtr 强制为 0
             let dtr = if vertical { 0 } else { (current_tr - origin_tr).round() as i32 };
 
-            // 拖拽中：把 arr_sel_rect 设为所有偏移后的选框，由 show() 统一绘制
-            *arr_sel_rect = move_orig_sel.iter().map(|&(t_start, t_end, track_lo, track_hi)| {
+            // 拖拽中：把 edit.arr_sel_rect 设为所有偏移后的选框，由 show() 统一绘制
+            *edit.arr_sel_rect = move_orig_sel.iter().map(|&(t_start, t_end, track_lo, track_hi)| {
                 (
                     t_start + dt as f64,
                     t_end + dt as f64,
@@ -562,12 +489,12 @@ fn sel_drag_frame_arrange(
 
             // Generate ghost notes at new positions + hide originals
             if dt != 0 || dtr != 0 {
-                let max_track = (num_tracks as i32 - 1).max(0) as u16;
+                let max_track = (data.num_tracks as i32 - 1).max(0) as u16;
 
-                // 与 PR 共用的选中音符收集（track_selected 传空集合 = 不过滤轨道）。
-                // selected.rects 在拖拽中保持原快照，与 move_orig_sel 语义一致。
+                // 与 PR 共用的选中音符收集（edit.track_selected 传空集合 = 不过滤轨道）。
+                // edit.selected.rects 在拖拽中保持原快照，与 move_orig_sel 语义一致。
                 let notes = crate::selection::drag::collect_selected_notes(
-                    selected, midi, track_visible, &HashSet::new(),
+                    edit.selected, data.midi, data.track_visible, &HashSet::new(),
                 );
                 for note in notes {
                     let new_tick = (note.start_tick as i64 + dt).max(0) as u32;
@@ -587,8 +514,8 @@ fn sel_drag_frame_arrange(
     // ── Move-drag: release handling ──
     if move_drag.is_some() && pointer.primary_released() {
         if let Some(((origin_t, origin_tr), (current_t, current_tr))) = move_drag {
-            let snapped_origin = crate::view_interaction::snap_tick(origin_t, quantize, ppq, bar_line_data);
-            let snapped_current = crate::view_interaction::snap_tick(current_t, quantize, ppq, bar_line_data);
+            let snapped_origin = crate::view_interaction::snap_tick(origin_t, data.quantize, data.ppq, data.bar_line_data);
+            let snapped_current = crate::view_interaction::snap_tick(current_t, data.quantize, data.ppq, data.bar_line_data);
             let delta_ticks = (snapped_current - snapped_origin).round() as i64;
             // 垂直选框工具：只能水平移动，delta_tracks 强制为 0
             let delta_tracks = if vertical { 0 } else { (current_tr - origin_tr).round() as i32 };
@@ -596,10 +523,10 @@ fn sel_drag_frame_arrange(
             let has_moved = delta_ticks != 0 || delta_tracks != 0;
 
             if has_moved {
-                *arr_drag_delta = Some((delta_ticks, delta_tracks));
+                *edit.arr_drag_delta = Some((delta_ticks, delta_tracks));
 
                 // 多选框：对所有原选框应用偏移
-                *arr_sel_rect = move_orig_sel.iter().map(|&(t_start, t_end, track_lo, track_hi)| {
+                *edit.arr_sel_rect = move_orig_sel.iter().map(|&(t_start, t_end, track_lo, track_hi)| {
                     (
                         t_start + delta_ticks as f64,
                         t_end + delta_ticks as f64,
@@ -609,12 +536,12 @@ fn sel_drag_frame_arrange(
                 }).collect();
                 view.base.dirty = true;
             } else {
-                *arr_sel_rect = move_orig_sel.clone();
+                *edit.arr_sel_rect = move_orig_sel.clone();
             }
         }
         move_drag = None;
         move_orig_sel.clear();
-        drag_rect = None; // arr_sel_rect takes over on release
+        drag_rect = None; // edit.arr_sel_rect takes over on release
     }
 
     // ── Selection marquee drag handling ──
@@ -635,8 +562,8 @@ fn sel_drag_frame_arrange(
                     content_rect,
                     pos,
                     |base, w, h| {
-                        base.clamp_scroll_x(w, total_ticks);
-                        let max_scroll_y = (num_tracks as f32 * lh - h).max(0.0);
+                        base.clamp_scroll_x(w, data.total_ticks);
+                        let max_scroll_y = (data.num_tracks as f32 * lh - h).max(0.0);
                         base.scroll_y = base.scroll_y.clamp(0.0, max_scroll_y);
                     },
                 );
@@ -651,7 +578,7 @@ fn sel_drag_frame_arrange(
         if let Some((_, end)) = drag
             && (end - start_pixel).length() >= 3.0
                 && let Some(b) =
-                    arrange_snapped_bounds(start_pixel, end, view, quantize, ppq, bar_line_data, num_tracks, vertical)
+                    arrange_snapped_bounds(start_pixel, end, view, &data, vertical)
                 {
                     drag_rect = Some(egui::Rect::from_min_max(
                         egui::pos2(b.view_sx.min(b.view_ex), b.view_sy.min(b.view_ey)),
@@ -660,46 +587,46 @@ fn sel_drag_frame_arrange(
                 }
 
         if pointer.primary_released() {
-            if let (Some(_midi_ref), Some((_, end))) = (midi, drag) {
+            if let (Some(_midi_ref), Some((_, end))) = (data.midi, drag) {
                 let drag_dist = (end - start_pixel).length();
 
                 if drag_dist < 3.0 {
                     let tick = view.x_to_tick(start_pixel.x);
-                    let snapped = crate::view_interaction::snap_tick(tick, quantize, ppq, bar_line_data);
-                    selected.clear();
-                    arr_sel_rect.clear();
-                    *cursor_tick = Some(snapped.max(0.0));
+                    let snapped = crate::view_interaction::snap_tick(tick, data.quantize, data.ppq, data.bar_line_data);
+                    edit.selected.clear();
+                    edit.arr_sel_rect.clear();
+                    *edit.cursor_tick = Some(snapped.max(0.0));
 
                     // 点击时同时选中对应音轨
                     let track_arr_idx = start_music.1.floor() as usize;
-                    if track_arr_idx < num_tracks {
-                        let track_idx = track_info[track_arr_idx].index;
-                        track_selected.clear();
-                        track_selected.insert(track_idx);
-                        *selection_anchor = Some(track_idx);
-                        *info_content = Some(crate::right_panel::InfoContent::Track);
+                    if track_arr_idx < data.num_tracks {
+                        let track_idx = data.track_info[track_arr_idx].index;
+                        edit.track_selected.clear();
+                        edit.track_selected.insert(track_idx);
+                        *edit.selection_anchor = Some(track_idx);
+                        *edit.info_content = Some(crate::right_panel::InfoContent::Track);
                     }
                 } else {
                     if let Some(b) =
-                        arrange_snapped_bounds(start_pixel, end, view, quantize, ppq, bar_line_data, num_tracks, vertical)
+                        arrange_snapped_bounds(start_pixel, end, view, &data, vertical)
                     {
                         // shift 或 cmd/ctrl 累加模式：保留已有选框；否则清空
                         if !additive {
-                            selected.clear();
-                            arr_sel_rect.clear();
+                            edit.selected.clear();
+                            edit.arr_sel_rect.clear();
                         }
-                        selected.add_rect_track(b.t_start as u32, b.t_end as u32, 0, 127, b.track_lo as u16, b.track_hi as u16);
-                        arr_sel_rect.push((b.t_start, b.t_end, b.track_lo, b.track_hi));
+                        edit.selected.add_rect_track(b.t_start as u32, b.t_end as u32, 0, 127, b.track_lo as u16, b.track_hi as u16);
+                        edit.arr_sel_rect.push((b.t_start, b.t_end, b.track_lo, b.track_hi));
                     } else if !additive {
                         // 选框完全在空白区域：清空选区
-                        selected.clear();
-                        arr_sel_rect.clear();
+                        edit.selected.clear();
+                        edit.arr_sel_rect.clear();
                     }
                 }
                 view.base.dirty = true;
             }
             drag = None;
-            drag_rect = None; // arr_sel_rect takes over on release
+            drag_rect = None; // edit.arr_sel_rect takes over on release
         }
     }
 
@@ -714,17 +641,12 @@ fn sel_drag_frame_arrange(
 
 /// Eraser-tool marquee drag for the arrangement view.
 /// On release, sets `arr_eraser_rect` which triggers deletion in the caller.
-#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 fn eraser_drag_frame_arrange(
     ui: &mut egui::Ui,
     content_rect: egui::Rect,
     view: &mut ArrangementView,
-    quantize: QuantizePreset,
-    ppq: u32,
-    bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
-    total_ticks: f64,
-    num_tracks: usize,
-    arr_eraser_rect: &mut Option<(f64, f64, usize, usize)>,
+    data: &super::ArrangeData<'_>,
+    edit: &mut super::ArrangeEdit<'_>,
 ) {
     let drag_id = ui.id().with("eraser_drag_arr");
     let mut drag: Option<((f64, f32), egui::Pos2)> =
@@ -751,7 +673,7 @@ fn eraser_drag_frame_arrange(
         let start_tick = view.x_to_tick(local.x);
         let start_track_f = (local.y + view.base.scroll_y) / view.lane_height();
         drag = Some(((start_tick, start_track_f), local));
-        *arr_eraser_rect = None;
+        *edit.arr_eraser_rect = None;
     }
 
     // Move → update with auto-scroll
@@ -769,8 +691,8 @@ fn eraser_drag_frame_arrange(
                 crate::selection::drag::auto_scroll_on_drag(
                     ui, &mut view.base, content_rect, pos,
                     |base, w, h| {
-                        base.clamp_scroll_x(w, total_ticks);
-                        let max_scroll_y = (num_tracks as f32 * lh - h).max(0.0);
+                        base.clamp_scroll_x(w, data.total_ticks);
+                        let max_scroll_y = (data.num_tracks as f32 * lh - h).max(0.0);
                         base.scroll_y = base.scroll_y.clamp(0.0, max_scroll_y);
                     },
                 );
@@ -786,9 +708,9 @@ fn eraser_drag_frame_arrange(
             if let Some((_, end)) = drag {
                 if (end - start_pixel).length() >= 3.0
                     && let Some(b) =
-                        arrange_snapped_bounds(start_pixel, end, view, quantize, ppq, bar_line_data, num_tracks, false)
+                        arrange_snapped_bounds(start_pixel, end, view, &data, false)
                     {
-                        *arr_eraser_rect = Some((b.t_start, b.t_end, b.track_lo, b.track_hi));
+                        *edit.arr_eraser_rect = Some((b.t_start, b.t_end, b.track_lo, b.track_hi));
                     }
                 view.base.dirty = true;
             }
@@ -812,15 +734,11 @@ struct ArrSnappedBounds {
 }
 
 /// Compute snapped selection bounds for arrangement.
-#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 fn arrange_snapped_bounds(
     start: egui::Pos2,
     end: egui::Pos2,
     view: &ArrangementView,
-    quantize: QuantizePreset,
-    ppq: u32,
-    bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
-    num_tracks: usize,
+    data: &super::ArrangeData<'_>,
     vertical: bool,
 ) -> Option<ArrSnappedBounds> {
     let sx = start.x.min(end.x);
@@ -828,18 +746,18 @@ fn arrange_snapped_bounds(
 
     let tick_s = view.x_to_tick(sx);
     let tick_e = view.x_to_tick(ex);
-    let snapped_s = crate::view_interaction::snap_tick(tick_s, quantize, ppq, bar_line_data);
-    let snapped_e = crate::view_interaction::snap_tick(tick_e, quantize, ppq, bar_line_data);
+    let snapped_s = crate::view_interaction::snap_tick(tick_s, data.quantize, data.ppq, data.bar_line_data);
+    let snapped_e = crate::view_interaction::snap_tick(tick_e, data.quantize, data.ppq, data.bar_line_data);
     let t_start = snapped_s.min(snapped_e);
     let mut t_end = snapped_s.max(snapped_e);
 
     // Ensure minimum width of one quantise grid interval
-    let interval = quantize.tick_interval(ppq) as f64;
+    let interval = data.quantize.tick_interval(data.ppq) as f64;
     if t_end <= t_start {
         t_end = t_start + interval.max(1.0);
     }
 
-    if num_tracks == 0 {
+    if data.num_tracks == 0 {
         return None;
     }
 
@@ -848,19 +766,19 @@ fn arrange_snapped_bounds(
 
     // 垂直全选模式：track 范围固定 0..num_tracks-1，忽略鼠标 y
     let (track_lo, track_hi, view_sy, view_ey) = if vertical {
-        let th = num_tracks - 1;
-        (0, th, 0.0, num_tracks as f32 * lh - scroll_y)
+        let th = data.num_tracks - 1;
+        (0, th, 0.0, data.num_tracks as f32 * lh - scroll_y)
     } else {
         let sy = start.y.min(end.y);
         let ey = start.y.max(end.y);
         let track_lo_raw = ((scroll_y + sy) / lh).floor().max(0.0) as usize;
         let track_hi_raw = ((scroll_y + ey) / lh).floor().max(0.0) as usize;
         // 边界判断：选框必须与实际音轨区域有重叠，否则不纳入选择范围。
-        if track_lo_raw >= num_tracks {
+        if track_lo_raw >= data.num_tracks {
             return None;
         }
         let track_lo = track_lo_raw;
-        let track_hi = track_hi_raw.min(num_tracks - 1);
+        let track_hi = track_hi_raw.min(data.num_tracks - 1);
         let view_sy = track_lo as f32 * lh - scroll_y;
         let view_ey = (track_hi as f32 + 1.0) * lh - scroll_y;
         (track_lo, track_hi, view_sy, view_ey)

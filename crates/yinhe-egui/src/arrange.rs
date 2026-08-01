@@ -143,7 +143,7 @@ pub fn show(
             egui::pos2(arr_rect.min.x + tp_w + 4.0, arr_rect.min.y),
             egui::pos2(gpu_rect.max.x, arr_rect.min.y + RULER_H),
         );
-        let model = &doc.data.model;
+        let model = &*doc.data.model;
         let tpb = model.meta.ppq;
         let (def_num, def_den) = model.tempo_map.time_sig_default;
         let sig_events = model.tempo_map.time_sig_events.as_slice();
@@ -282,48 +282,46 @@ pub fn show(
     });
 
     // ── Arrangement GPU view (below ruler) ──
-    let arr_midi: Option<&dyn yinhe_types::NoteSource> =
-        Some(&*doc.data.model as &dyn yinhe_types::NoteSource);
+    let mut cfg = ArrangeViewCfg {
+        is_playing,
+        follow_mode,
+        active_tool,
+        scroll_mode,
+        min_border_width,
+        revision: doc.data.revision,
+        haptic_engine,
+    };
     let gpu_size = gpu_rect.size();
     ui.scope_builder(egui::UiBuilder::new().max_rect(gpu_rect), |ui| {
-        view_ui::show(
-            ui,
-            gpu_size,
-            arr_renderer,
-            arr_render_ctx,
-            arr_view,
-            arr_midi,
-            &mut doc.edit.selected,
-            &doc.edit.track_visible,
-            &doc.edit.track_colors_cache,
-            &doc.edit.track_info_cache,
-            &mut doc.edit.cursor_tick,
-            doc.edit.quantize_arrange,
-            doc.data.model.meta.ppq,
-            Some({
-                let model = &doc.data.model;
-                let (def_num, def_den) = model.tempo_map.time_sig_default;
-                (
-                    model.meta.ppq,
-                    def_num,
-                    def_den,
-                    model.tempo_map.time_sig_events.as_slice(),
-                )
-            }),
-            is_playing,
-            follow_mode,
-            active_tool,
-            scroll_mode,
-            min_border_width,
-            haptic_engine,
-            doc.data.revision,
-            &mut doc.edit.arr_sel_rect,
+        let model = &*doc.data.model;
+        let (def_num, def_den) = model.tempo_map.time_sig_default;
+        let data = ArrangeData {
+            midi: Some(model as &dyn yinhe_types::NoteSource),
+            track_visible: &doc.edit.track_visible,
+            track_colors: &doc.edit.track_colors_cache,
+            track_info: &doc.edit.track_info_cache,
+            quantize: doc.edit.quantize_arrange,
+            ppq: model.meta.ppq,
+            bar_line_data: Some((
+                model.meta.ppq,
+                def_num,
+                def_den,
+                model.tempo_map.time_sig_events.as_slice(),
+            )),
+            total_ticks,
+            num_tracks,
+        };
+        let mut edit = ArrangeEdit {
+            selected: &mut doc.edit.selected,
+            cursor_tick: &mut doc.edit.cursor_tick,
+            arr_sel_rect: &mut doc.edit.arr_sel_rect,
             arr_drag_delta,
             arr_eraser_rect,
-            &mut doc.edit.track_selected,
+            track_selected: &mut doc.edit.track_selected,
             selection_anchor,
             info_content,
-        );
+        };
+        view_ui::show(ui, gpu_size, arr_renderer, arr_render_ctx, arr_view, data, &mut edit, &mut cfg);
     });
 
     // ── Horizontal scrollbar (right of track panel, below GPU content) ──
