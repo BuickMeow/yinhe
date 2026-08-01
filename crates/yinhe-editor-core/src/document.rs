@@ -420,10 +420,10 @@ pub fn detect_conductor_from_model(model: &YinModel) -> Option<u16> {
 
 /// Track display color: prefers `TrackData.color` (when set, i.e. not the
 /// default placeholder), otherwise falls back to the palette with conductor
-/// offset. Conductor track is fixed to a white-ish tone.
-pub fn track_color(track: &TrackData, idx: usize, conductor_idx: Option<u16>) -> [f32; 3] {
+/// offset. Conductor track is fixed to a white-ish tone. RGBA.
+pub fn track_color(track: &TrackData, idx: usize, conductor_idx: Option<u16>) -> [f32; 4] {
     if Some(idx as u16) == conductor_idx {
-        return [0.94, 0.94, 0.94];
+        return [0.94, 0.94, 0.94, 1.0];
     }
     if track.color != yinhe_core::DEFAULT_TRACK_COLOR {
         return track.color;
@@ -432,7 +432,8 @@ pub fn track_color(track: &TrackData, idx: usize, conductor_idx: Option<u16>) ->
         Some(c) if (idx as u16) > c => idx - 1,
         _ => idx,
     };
-    TRACK_PALETTE[palette_idx % TRACK_PALETTE.len()]
+    let c = TRACK_PALETTE[palette_idx % TRACK_PALETTE.len()];
+    [c[0], c[1], c[2], 1.0]
 }
 
 #[cfg(test)]
@@ -502,35 +503,75 @@ mod tests {
     fn track_color_conductor_is_whiteish() {
         let t = TrackData::new(0, 0);
         let color = track_color(&t, 0, Some(0));
-        assert_eq!(color, [0.94, 0.94, 0.94]);
+        assert_eq!(color, [0.94, 0.94, 0.94, 1.0]);
     }
 
     #[test]
     fn track_color_cycles_through_palette() {
         let t = TrackData::new(0, 0);
         let first = track_color(&t, 0, None);
-        assert_eq!(first, TRACK_PALETTE[0]);
+        assert_eq!(
+            first,
+            [
+                TRACK_PALETTE[0][0],
+                TRACK_PALETTE[0][1],
+                TRACK_PALETTE[0][2],
+                1.0
+            ]
+        );
         let second = track_color(&t, 1, None);
-        assert_eq!(second, TRACK_PALETTE[1]);
+        assert_eq!(
+            second,
+            [
+                TRACK_PALETTE[1][0],
+                TRACK_PALETTE[1][1],
+                TRACK_PALETTE[1][2],
+                1.0
+            ]
+        );
         let wrap = track_color(&t, 16, None);
-        assert_eq!(wrap, TRACK_PALETTE[0]);
+        assert_eq!(
+            wrap,
+            [
+                TRACK_PALETTE[0][0],
+                TRACK_PALETTE[0][1],
+                TRACK_PALETTE[0][2],
+                1.0
+            ]
+        );
     }
 
     #[test]
     fn track_color_offsets_after_conductor() {
         let t = TrackData::new(0, 0);
         let color = track_color(&t, 1, Some(0));
-        assert_eq!(color, TRACK_PALETTE[0]);
+        assert_eq!(
+            color,
+            [
+                TRACK_PALETTE[0][0],
+                TRACK_PALETTE[0][1],
+                TRACK_PALETTE[0][2],
+                1.0
+            ]
+        );
     }
 
     #[test]
     fn track_color_prefers_explicit_color_over_palette() {
         let mut t = TrackData::new(0, 0);
-        t.color = [0.1, 0.2, 0.3];
-        assert_eq!(track_color(&t, 3, None), [0.1, 0.2, 0.3]);
+        t.color = [0.1, 0.2, 0.3, 0.5];
+        assert_eq!(track_color(&t, 3, None), [0.1, 0.2, 0.3, 0.5]);
         // 默认占位色回退到调色板
         let t2 = TrackData::new(0, 0);
-        assert_eq!(track_color(&t2, 3, None), TRACK_PALETTE[3]);
+        assert_eq!(
+            track_color(&t2, 3, None),
+            [
+                TRACK_PALETTE[3][0],
+                TRACK_PALETTE[3][1],
+                TRACK_PALETTE[3][2],
+                1.0
+            ]
+        );
     }
 
     /// 回归测试：删除轨道后 undo 必须恢复被删轨道上的音符。

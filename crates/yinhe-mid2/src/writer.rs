@@ -53,7 +53,7 @@ pub fn write_to_bytes(model: &YinModel) -> Result<Vec<u8>, MidiError> {
                     (t.color[0] * 255.0).round() as u8,
                     (t.color[1] * 255.0).round() as u8,
                     (t.color[2] * 255.0).round() as u8,
-                    0xFF, // alpha 不透明
+                    (t.color[3] * 255.0).round() as u8, // alpha
                 ])
             } else {
                 None

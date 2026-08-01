@@ -60,7 +60,8 @@ impl Default for ConductorData {
 // =========================================================
 
 /// 音轨默认颜色（未设置颜色事件时的占位值，UI 显示时回退到调色板）。
-pub const DEFAULT_TRACK_COLOR: [f32; 3] = [0.5, 0.5, 0.5];
+/// RGBA，alpha 默认不透明。
+pub const DEFAULT_TRACK_COLOR: [f32; 4] = [0.5, 0.5, 0.5, 1.0];
 
 /// One MIDI track's complete data.
 ///
@@ -75,7 +76,8 @@ pub const DEFAULT_TRACK_COLOR: [f32; 3] = [0.5, 0.5, 0.5];
 pub struct TrackData {
     pub uuid: String,
     pub name: String,
-    pub color: [f32; 3],
+    /// 音轨颜色（RGBA，0..1）。是 ImageToMidi 颜色事件的来源/去向。
+    pub color: [f32; 4],
     /// MIDI port (0..16, displayed as A..P).
     pub port: u8,
     /// MIDI channel (0..16, displayed as 1..16).

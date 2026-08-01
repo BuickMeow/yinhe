@@ -181,8 +181,8 @@ pub struct EditState {
     pub soundfont_selected_port: u8,
     pub project_sf: ProjectSfConfig,
     pub pending_edits: PendingEdits,
-    /// Per-track display colors (computed once at load time).
-    pub track_colors_cache: Vec<[f32; 3]>,
+    /// Per-track display colors (RGBA, computed once at load time).
+    pub track_colors_cache: Vec<[f32; 4]>,
     /// Cached track metadata (recomputed from midi + track_names).
     pub track_info_cache: Vec<yinhe_core::TrackInfo>,
     /// Cached first ProgramChange per channel.

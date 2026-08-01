@@ -39,13 +39,35 @@ pub struct ChannelMap {
 pub struct TrackMap {
     pub uuid: String,
     pub name: String,
-    pub color: [f32; 3],
+    /// RGBA（0..1）。旧存档为 RGB，反序列化时自动补 alpha=1.0。
+    #[serde(
+        default = "default_track_color",
+        deserialize_with = "deserialize_track_color"
+    )]
+    pub color: [f32; 4],
     #[serde(default)]
     pub channel_prefix: Option<u8>,
     #[serde(default)]
     pub muted: bool,
     #[serde(default)]
     pub soloed: bool,
+}
+
+fn default_track_color() -> [f32; 4] {
+    yinhe_core::DEFAULT_TRACK_COLOR
+}
+
+/// 兼容旧存档的 RGB 三元素数组（补 alpha=1.0）与新格式的 RGBA 四元素数组。
+fn deserialize_track_color<'de, D>(d: D) -> Result<[f32; 4], D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let v = Vec::<f32>::deserialize(d)?;
+    match v.len() {
+        3 => Ok([v[0], v[1], v[2], 1.0]),
+        4 => Ok([v[0], v[1], v[2], v[3]]),
+        n => Err(serde::de::Error::invalid_length(n, &"3 or 4 elements")),
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

@@ -111,11 +111,11 @@ pub enum UndoAction {
         old: String,
         new: String,
     },
-    /// A track color was edited (source of the ImageToMidi color event).
+    /// A track color was edited (source of the ImageToMidi color event). RGBA.
     TrackColor {
         track_idx: usize,
-        old: [f32; 3],
-        new: [f32; 3],
+        old: [f32; 4],
+        new: [f32; 4],
     },
     /// Project metadata was edited.
     ProjectName {

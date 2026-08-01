@@ -121,12 +121,12 @@ fn undo_restores_track_name() {
 #[test]
 fn track_color_undo_redo() {
     let mut doc = make_doc("t");
-    doc.edit.track_colors_cache = vec![[0.1, 0.2, 0.3]];
+    doc.edit.track_colors_cache = vec![[0.1, 0.2, 0.3, 1.0]];
     doc.history.push(UndoEntry {
         action: UndoAction::TrackColor {
             track_idx: 0,
-            old: [0.1, 0.2, 0.3],
-            new: [0.4, 0.5, 0.6],
+            old: [0.1, 0.2, 0.3, 1.0],
+            new: [0.4, 0.5, 0.6, 0.5],
         },
         label: "recolor".to_string(),
         snapshot: EditSnapshot::default(),
@@ -135,21 +135,21 @@ fn track_color_undo_redo() {
     {
         let model = Arc::make_mut(&mut doc.data.model);
         let track = Arc::make_mut(&mut model.tracks[0]);
-        track.color = [0.4, 0.5, 0.6];
+        track.color = [0.4, 0.5, 0.6, 0.5];
     }
-    doc.edit.track_colors_cache[0] = [0.4, 0.5, 0.6];
-    assert_eq!(doc.data.model.tracks[0].color, [0.4, 0.5, 0.6]);
+    doc.edit.track_colors_cache[0] = [0.4, 0.5, 0.6, 0.5];
+    assert_eq!(doc.data.model.tracks[0].color, [0.4, 0.5, 0.6, 0.5]);
 
     // Undo：颜色与显示缓存一起恢复
     assert!(doc.undo());
-    assert_eq!(doc.data.model.tracks[0].color, [0.1, 0.2, 0.3]);
-    assert_eq!(doc.edit.track_colors_cache[0], [0.1, 0.2, 0.3]);
+    assert_eq!(doc.data.model.tracks[0].color, [0.1, 0.2, 0.3, 1.0]);
+    assert_eq!(doc.edit.track_colors_cache[0], [0.1, 0.2, 0.3, 1.0]);
     assert!(doc.history.can_redo());
 
     // Redo
     assert!(doc.redo());
-    assert_eq!(doc.data.model.tracks[0].color, [0.4, 0.5, 0.6]);
-    assert_eq!(doc.edit.track_colors_cache[0], [0.4, 0.5, 0.6]);
+    assert_eq!(doc.data.model.tracks[0].color, [0.4, 0.5, 0.6, 0.5]);
+    assert_eq!(doc.edit.track_colors_cache[0], [0.4, 0.5, 0.6, 0.5]);
     assert!(doc.history.can_undo());
 }
 

@@ -44,7 +44,7 @@ fn build_complex_model() -> YinModel {
 
     let mut t0 = TrackData::new(0, 0);
     t0.name = "Lead".to_string();
-    t0.color = [0.8, 0.3, 0.2];
+    t0.color = [0.8, 0.3, 0.2, 1.0];
     t0.muted = false;
     t0.soloed = true;
     let t0_notes = vec![
@@ -147,7 +147,7 @@ fn build_complex_model() -> YinModel {
 
     let mut t1 = TrackData::new(0, 1);
     t1.name = "Bass".to_string();
-    t1.color = [0.2, 0.5, 0.9];
+    t1.color = [0.2, 0.5, 0.9, 1.0];
     let t1_notes = vec![NoteEvent {
         id: 0,
         start_tick: 0,
@@ -214,7 +214,7 @@ fn roundtrip_in_memory() {
 
     let lead = m2.tracks.iter().find(|t| t.name == "Lead").expect("Lead");
     let lead_idx = m2.tracks.iter().position(|t| t.name == "Lead").unwrap() as u16;
-    assert_eq!(lead.color, [0.8, 0.3, 0.2]);
+    assert_eq!(lead.color, [0.8, 0.3, 0.2, 1.0]);
     assert!(lead.soloed);
     assert_eq!(m2.track_note_count[lead_idx as usize], 4);
 
@@ -462,6 +462,27 @@ fn sf_roundtrip_preserves_mode_and_entries() {
     assert_eq!(p3.port, 3);
     assert_eq!(p3.entries.len(), 1);
     assert_eq!(p3.entries[0].name, "Drums");
+}
+
+// ──────────────────────── 旧存档颜色兼容 ────────────────────────
+
+/// 旧版 .yin 的 mapping 里颜色是 RGB 三元素数组，
+/// 反序列化时应自动补 alpha=1.0，避免旧存档无法打开。
+#[test]
+fn legacy_rgb_color_deserializes_with_alpha() {
+    let json = r#"{"version":1,"ports":[{"port":0,"channels":[{"channel":0,"tracks":[{"uuid":"u1","name":"t","color":[0.5,0.25,0.125]}]}]}]}"#;
+    let mf: yinhe_yin::MappingFile = serde_json::from_str(json).expect("parse mapping");
+    let tm = &mf.ports[0].channels[0].tracks[0];
+    assert_eq!(tm.color, [0.5, 0.25, 0.125, 1.0]);
+}
+
+/// 新格式 RGBA 四元素数组正常反序列化，alpha 原样保留。
+#[test]
+fn rgba_color_deserializes_as_is() {
+    let json = r#"{"version":1,"ports":[{"port":0,"channels":[{"channel":0,"tracks":[{"uuid":"u1","name":"t","color":[1.0,0.0,0.0,0.5]}]}]}]}"#;
+    let mf: yinhe_yin::MappingFile = serde_json::from_str(json).expect("parse mapping");
+    let tm = &mf.ports[0].channels[0].tracks[0];
+    assert_eq!(tm.color, [1.0, 0.0, 0.0, 0.5]);
 }
 
 #[test]

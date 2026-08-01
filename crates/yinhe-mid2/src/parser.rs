@@ -279,8 +279,8 @@ fn collect_conductor(
 /// payload 布局：`[0x00, 0x0F, channel, 0x00, R, G, B, A, (R2, G2, B2, A2)]`
 /// 8 字节 = 单色；12 字节 = 渐变（只取第一组颜色）。
 /// channel 为 0..15（指定通道）或 0x7F（全部通道）。
-/// 返回 (channel, [r, g, b])，RGB 已归一化到 0..1。
-fn parse_color_event(data: &[u8]) -> Option<(u8, [f32; 3])> {
+/// 返回 (channel, [r, g, b, a])，RGBA 已归一化到 0..1。
+fn parse_color_event(data: &[u8]) -> Option<(u8, [f32; 4])> {
     if (data.len() != 8 && data.len() != 12)
         || data[0] != 0x00
         || data[1] != 0x0F
@@ -298,6 +298,7 @@ fn parse_color_event(data: &[u8]) -> Option<(u8, [f32; 3])> {
             data[4] as f32 / 255.0,
             data[5] as f32 / 255.0,
             data[6] as f32 / 255.0,
+            data[7] as f32 / 255.0,
         ],
     ))
 }
@@ -365,8 +366,8 @@ fn parse_track(
     let mut pending_bank: [PendingBank; 16] = [PendingBank::default(); 16];
 
     // ImageToMidi 颜色事件（伪装成 FF 0A Copyright meta）列表：
-    // (channel, color)。channel = 0..15 指定通道，0x7F = 全部通道。
-    let mut color_events: Vec<(u8, [f32; 3])> = Vec::new();
+    // (channel, rgba)。channel = 0..15 指定通道，0x7F = 全部通道。
+    let mut color_events: Vec<(u8, [f32; 4])> = Vec::new();
 
     // Accumulate automation events per target during parsing.
     // Key = (target_variant, controller_or_parameter).
