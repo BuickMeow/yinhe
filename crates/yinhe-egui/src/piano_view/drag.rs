@@ -329,6 +329,7 @@ pub(crate) fn sel_drag_frame(
                     }
                 }
             }
+            preview_reqs.push(super::PreviewReq::Stop);
             sel_rect.end_drag();
             note_drag_origin = None;
             drag_notes = None;

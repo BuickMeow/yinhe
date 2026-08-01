@@ -405,6 +405,7 @@ pub(crate) fn pencil_frame(
 
                 // Only output drag on release — do NOT modify the model during drag.
                 if pointer.primary_released() {
+                    preview_req = Some(super::PreviewReq::Stop);
                     pencil_note_drag = Some(PencilNoteDrag::Move {
                         track: *trk,
                         start_tick: *orig_tick,
@@ -416,6 +417,7 @@ pub(crate) fn pencil_frame(
                 }
             } else {
                 if pointer.primary_released() {
+                    preview_req = Some(super::PreviewReq::Stop);
                     ui.data_mut(|d| d.insert_persisted(pencil_id, Option::<PencilDrag>::None));
                 }
             }
@@ -467,6 +469,7 @@ pub(crate) fn pencil_frame(
 
                 // Only output on release
                 if pointer.primary_released() {
+                    preview_req = Some(super::PreviewReq::Stop);
                     pencil_note_drag = Some(PencilNoteDrag::ResizeRight {
                         track: *trk,
                         start_tick: *orig_tick,
@@ -477,6 +480,7 @@ pub(crate) fn pencil_frame(
                 }
             } else {
                 if pointer.primary_released() {
+                    preview_req = Some(super::PreviewReq::Stop);
                     ui.data_mut(|d| d.insert_persisted(pencil_id, Option::<PencilDrag>::None));
                 }
             }
@@ -526,6 +530,7 @@ pub(crate) fn pencil_frame(
 
                 // Only output on release
                 if pointer.primary_released() {
+                    preview_req = Some(super::PreviewReq::Stop);
                     pencil_note_drag = Some(PencilNoteDrag::ResizeLeft {
                         track: *trk,
                         start_tick: *orig_tick,
@@ -536,6 +541,7 @@ pub(crate) fn pencil_frame(
                 }
             } else {
                 if pointer.primary_released() {
+                    preview_req = Some(super::PreviewReq::Stop);
                     ui.data_mut(|d| d.insert_persisted(pencil_id, Option::<PencilDrag>::None));
                 }
             }
