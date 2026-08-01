@@ -20,8 +20,6 @@ pub struct SelRectState {
     drag_origins: Vec<(f64, f64, u8, u8)>,
     /// Current drag delta in (tick, key) units.
     drag_delta: Option<(i64, i32)>,
-    /// Pending delta from duplicate/transpose; applied once then cleared.
-    pub pending_delta: Option<(i64, i32)>,
     /// Saved rects at resize start; never modified during resize.
     resize_origins: Vec<(f64, f64, u8, u8)>,
     /// Active resize side (Left/Right); None when not resizing.
@@ -70,9 +68,15 @@ impl SelRectState {
     /// - Otherwise: rects
     pub fn effective_rects(&self) -> Vec<(f64, f64, u8, u8)> {
         if let Some((dt, dk)) = self.drag_delta {
-            self.drag_origins.iter().map(|&r| Self::offset_rect(r, dt, dk)).collect()
+            self.drag_origins
+                .iter()
+                .map(|&r| Self::offset_rect(r, dt, dk))
+                .collect()
         } else if let (Some(side), Some(dt)) = (self.resize_side, self.resize_dt) {
-            self.resize_origins.iter().map(|&r| Self::resize_rect(r, side, dt)).collect()
+            self.resize_origins
+                .iter()
+                .map(|&r| Self::resize_rect(r, side, dt))
+                .collect()
         } else {
             self.rects.clone()
         }
@@ -107,7 +111,11 @@ impl SelRectState {
     /// End drag: commit origins + delta to rects, clear drag state.
     pub fn end_drag(&mut self) {
         if let Some((dt, dk)) = self.drag_delta {
-            self.rects = self.drag_origins.iter().map(|&r| Self::offset_rect(r, dt, dk)).collect();
+            self.rects = self
+                .drag_origins
+                .iter()
+                .map(|&r| Self::offset_rect(r, dt, dk))
+                .collect();
         }
         self.drag_origins.clear();
         self.drag_delta = None;
@@ -134,7 +142,11 @@ impl SelRectState {
     /// End resize: commit origins + dt to rects, clear resize state.
     pub fn end_resize(&mut self) {
         if let (Some(side), Some(dt)) = (self.resize_side, self.resize_dt) {
-            self.rects = self.resize_origins.iter().map(|&r| Self::resize_rect(r, side, dt)).collect();
+            self.rects = self
+                .resize_origins
+                .iter()
+                .map(|&r| Self::resize_rect(r, side, dt))
+                .collect();
         }
         self.resize_origins.clear();
         self.resize_side = None;
@@ -146,16 +158,6 @@ impl SelRectState {
         self.resize_origins.clear();
         self.resize_side = None;
         self.resize_dt = None;
-    }
-
-    /// Apply pending delta from duplicate/transpose to all rects.
-    pub fn apply_pending(&mut self) {
-        if let Some((dt, dk)) = self.pending_delta {
-            for r in &mut self.rects {
-                *r = Self::offset_rect(*r, dt, dk);
-            }
-        }
-        self.pending_delta = None;
     }
 }
 
@@ -223,6 +225,122 @@ impl Default for EditState {
             editing_track: None,
             sel_rect: SelRectState::default(),
             arr_sel_rect: Vec::new(),
+        }
+    }
+}
+
+impl EditState {
+    /// 音符选框整体 tick 平移（selected + sel_rect + arr_sel_rect）。
+    /// 用于 tick 加减/复制的非拖拽编辑（拖拽类由 UI 拖拽状态机负责，不要调用）。
+    pub fn offset_sel_ticks(&mut self, dt: i64) {
+        self.selected.offset_ticks(dt);
+        for r in &mut self.sel_rect.rects {
+            r.0 += dt as f64;
+            r.1 += dt as f64;
+        }
+        for r in &mut self.arr_sel_rect {
+            r.0 += dt as f64;
+            r.1 += dt as f64;
+        }
+    }
+
+    /// 音符选框整体 key 平移（selected + sel_rect；AR 选框无 key 概念）。
+    pub fn offset_sel_keys(&mut self, dk: i32) {
+        self.selected.offset(0, dk);
+        for r in &mut self.sel_rect.rects {
+            r.2 = (r.2 as i32 + dk).clamp(0, 127) as u8;
+            r.3 = (r.3 as i32 + dk).clamp(0, 127) as u8;
+        }
+    }
+
+    /// 音符选框 tick 终点统一平移（gate 加减用，起点不动）。保证 te > ts。
+    pub fn offset_sel_te(&mut self, dt: i64) {
+        for r in &mut self.sel_rect.rects {
+            r.1 = (r.1 + dt as f64).max(r.0 + 1.0);
+        }
+        for r in &mut self.arr_sel_rect {
+            r.1 = (r.1 + dt as f64).max(r.0 + 1.0);
+        }
+        for r in &mut self.selected.rects {
+            let new_te = (r.1 as i64 + dt).max(r.0 as i64 + 1) as u32;
+            r.1 = new_te;
+        }
+    }
+
+    /// 音符选框 tick 范围相对 `t0` 等比缩放（变速用，key/track 不动）。
+    pub fn scale_sel_ticks(&mut self, t0: u64, factor: f64) {
+        let scale = |v: u64| -> u64 {
+            let s = (t0 as f64 + (v as f64 - t0 as f64) * factor)
+                .round()
+                .max(t0 as f64);
+            if s > u32::MAX as f64 {
+                u32::MAX as u64
+            } else {
+                s as u64
+            }
+        };
+        let scale_rect = |ts: &mut u64, te: &mut u64| {
+            let nts = scale(*ts);
+            let nte = scale(*te).max(nts + 1);
+            *ts = nts;
+            *te = nte;
+        };
+        for r in &mut self.selected.rects {
+            let mut ts = r.0 as u64;
+            let mut te = r.1 as u64;
+            scale_rect(&mut ts, &mut te);
+            r.0 = ts as u32;
+            r.1 = te as u32;
+        }
+        for r in &mut self.sel_rect.rects {
+            let mut ts = r.0 as u64;
+            let mut te = r.1 as u64;
+            scale_rect(&mut ts, &mut te);
+            r.0 = ts as f64;
+            r.1 = te as f64;
+        }
+        for r in &mut self.arr_sel_rect {
+            let mut ts = r.0 as u64;
+            let mut te = r.1 as u64;
+            scale_rect(&mut ts, &mut te);
+            r.0 = ts as f64;
+            r.1 = te as f64;
+        }
+    }
+
+    /// AM 选框（指定面板）tick 范围平移。
+    pub fn offset_anchor_ticks(&mut self, panel_idx: usize, dt: i64) {
+        if let Some(panel) = self.controller_panels.get_mut(panel_idx) {
+            for r in &mut panel.anchor_sel_rects {
+                r.tick_start += dt as f64;
+                r.tick_end += dt as f64;
+            }
+        }
+    }
+
+    /// AM 选框（指定面板）value 范围平移（value_range 为 None 的垂直全选跳过）。
+    pub fn offset_anchor_values(&mut self, panel_idx: usize, dv: f32) {
+        if let Some(panel) = self.controller_panels.get_mut(panel_idx) {
+            for r in &mut panel.anchor_sel_rects {
+                if let Some((lo, hi)) = &mut r.value_range {
+                    *lo += dv;
+                    *hi += dv;
+                }
+            }
+        }
+    }
+
+    /// AM 选框（指定面板）tick 范围相对 `t0` 等比缩放（value_range 不动）。
+    pub fn scale_anchor_ticks(&mut self, panel_idx: usize, t0: f64, factor: f64) {
+        if let Some(panel) = self.controller_panels.get_mut(panel_idx) {
+            for r in &mut panel.anchor_sel_rects {
+                let ts = r.tick_start.min(r.tick_end);
+                let te = r.tick_start.max(r.tick_end);
+                let nts = (t0 + (ts - t0) * factor).round();
+                let nte = (t0 + (te - t0) * factor).round().max(nts + 1.0);
+                r.tick_start = nts;
+                r.tick_end = nte;
+            }
         }
     }
 }

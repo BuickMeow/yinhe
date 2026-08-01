@@ -128,7 +128,7 @@ impl Document {
             batch_ops::insert_batch(model, new_by_key);
 
             // Offset selection rects to cover the duplicated notes.
-            self.edit.selected.offset(offset as i64, 0);
+            self.edit.offset_sel_ticks(offset as i64);
             after
         };
         self.data.rebuild_model_dirty();
@@ -228,7 +228,7 @@ impl Document {
             batch_ops::insert_batch(model, new_by_key);
 
             // Offset selection rects to follow the transposed notes.
-            self.edit.selected.offset(0, semitones as i32);
+            self.edit.offset_sel_keys(semitones as i32);
             (moved_data, after)
         };
         self.data.rebuild_model_dirty();
@@ -461,16 +461,7 @@ impl Document {
 
         // 选框跟随：gate 加减 uniform → 选框右边缘 te 同步平移（左边缘不动）
         if let Some(d) = uniform_delta {
-            for r in &mut self.edit.sel_rect.rects {
-                r.1 = (r.1 + d as f64).max(r.0 + 1.0);
-            }
-            for r in &mut self.edit.arr_sel_rect {
-                r.1 = (r.1 + d as f64).max(r.0 + 1.0);
-            }
-            for r in &mut self.edit.selected.rects {
-                let new_te = (r.1 as i64 + d).max(r.0 as i64 + 1) as u32;
-                r.1 = new_te;
-            }
+            self.edit.offset_sel_te(d);
         }
         Some(UndoAction::Notes(NoteDelta { before, after }))
     }
@@ -543,22 +534,10 @@ impl Document {
 
         // 选框跟随：加减 uniform 时平移，乘除/赋值（非 uniform）不动
         if let Some(dt) = uniform_tick {
-            self.edit.selected.offset_ticks(dt);
-            for r in &mut self.edit.sel_rect.rects {
-                r.0 += dt as f64;
-                r.1 += dt as f64;
-            }
-            for r in &mut self.edit.arr_sel_rect {
-                r.0 += dt as f64;
-                r.1 += dt as f64;
-            }
+            self.edit.offset_sel_ticks(dt);
         }
         if let Some(dk) = uniform_key {
-            self.edit.selected.offset(0, dk);
-            for r in &mut self.edit.sel_rect.rects {
-                r.2 = (r.2 as i32 + dk).clamp(0, 127) as u8;
-                r.3 = (r.3 as i32 + dk).clamp(0, 127) as u8;
-            }
+            self.edit.offset_sel_keys(dk);
         }
         Some(UndoAction::Notes(NoteDelta {
             before: originals,
@@ -632,33 +611,7 @@ impl Document {
         model.rebuild_dirty();
 
         // 选框 rect 同步缩放（tick 范围，key/track 不动）
-        let scale_rect = |ts: &mut u64, te: &mut u64| {
-            let nts = scale_tick(*ts);
-            let nte = scale_tick(*te).max(nts + 1);
-            *ts = nts;
-            *te = nte;
-        };
-        for r in &mut self.edit.selected.rects {
-            let mut ts = r.0 as u64;
-            let mut te = r.1 as u64;
-            scale_rect(&mut ts, &mut te);
-            r.0 = ts as u32;
-            r.1 = te as u32;
-        }
-        for r in &mut self.edit.sel_rect.rects {
-            let mut ts = r.0 as u64;
-            let mut te = r.1 as u64;
-            scale_rect(&mut ts, &mut te);
-            r.0 = ts as f64;
-            r.1 = te as f64;
-        }
-        for r in &mut self.edit.arr_sel_rect {
-            let mut ts = r.0 as u64;
-            let mut te = r.1 as u64;
-            scale_rect(&mut ts, &mut te);
-            r.0 = ts as f64;
-            r.1 = te as f64;
-        }
+        self.edit.scale_sel_ticks(t0, factor);
 
         self.data.bump_revision();
         Some(UndoAction::Notes(NoteDelta {
@@ -790,6 +743,26 @@ mod tests {
         // key 60 + 100 半音 = 160, 应 clamp 到 127
         let _ = doc.duplicate_selected_to(0, 100);
         assert_eq!(doc.data.model.notes[127].len(), 1, "应 clamp 到 key 127");
+    }
+
+    #[test]
+    fn transpose_follows_visual_rects() {
+        let mut doc = make_doc_with_note();
+        doc.edit.sel_rect.rects = vec![(100.0, 201.0, 60, 60)];
+        let _ = doc.transpose_selected(2);
+        // 数据选区 + PR 视觉选框的 key 一起平移
+        assert_eq!(doc.edit.selected.rects[0].2, 62);
+        assert_eq!(doc.edit.sel_rect.rects[0], (100.0, 201.0, 62, 62));
+    }
+
+    #[test]
+    fn duplicate_follows_visual_rects() {
+        let mut doc = make_doc_with_note();
+        doc.edit.sel_rect.rects = vec![(100.0, 201.0, 60, 60)];
+        let _ = doc.duplicate_selected();
+        // 数据选区 + PR 视觉选框一起平移到副本（tick 偏移 100）
+        assert_eq!(doc.edit.selected.rects[0].0, 200);
+        assert_eq!(doc.edit.sel_rect.rects[0], (200.0, 301.0, 60, 60));
     }
 
     #[test]

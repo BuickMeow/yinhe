@@ -505,18 +505,10 @@ impl Document {
 
         // 选框跟随：加减 uniform → tick/value 范围平移
         if let Some(dt) = uniform_tick {
-            for r in &mut self.edit.controller_panels[panel_idx].anchor_sel_rects {
-                r.tick_start += dt as f64;
-                r.tick_end += dt as f64;
-            }
+            self.edit.offset_anchor_ticks(panel_idx, dt);
         }
         if let Some(dv) = uniform_value {
-            for r in &mut self.edit.controller_panels[panel_idx].anchor_sel_rects {
-                if let Some((lo, hi)) = &mut r.value_range {
-                    *lo += dv;
-                    *hi += dv;
-                }
-            }
+            self.edit.offset_anchor_values(panel_idx, dv);
         }
         Some(action)
     }
@@ -605,14 +597,7 @@ impl Document {
             self.move_automation_events_batch(track_idx as usize, lane_idx, &target, &moves)?;
 
         // 选框 rect 缩放（tick 范围）
-        for r in &mut self.edit.controller_panels[panel_idx].anchor_sel_rects {
-            let ts = r.tick_start.min(r.tick_end);
-            let te = r.tick_start.max(r.tick_end);
-            let nts = (t0 + (ts - t0) * factor).round();
-            let nte = (t0 + (te - t0) * factor).round().max(nts + 1.0);
-            r.tick_start = nts;
-            r.tick_end = nte;
-        }
+        self.edit.scale_anchor_ticks(panel_idx, t0, factor);
         Some(action)
     }
 }

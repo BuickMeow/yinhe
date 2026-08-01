@@ -2,11 +2,11 @@ use eframe::egui;
 
 use yinhe_types::{AutomationLane, TimeSigEvent};
 
+use crate::widgets::selection_actions::SelectionAction;
+use crate::widgets::tools_panel::Tool;
+pub use yinhe_editor_core::ResizeSide;
 use yinhe_editor_core::quantize::QuantizePreset;
 pub use yinhe_types::PencilNoteDrag;
-pub use yinhe_editor_core::ResizeSide;
-use crate::widgets::tools_panel::Tool;
-use crate::widgets::selection_actions::SelectionAction;
 
 pub mod automation_panel;
 mod bg;
@@ -15,15 +15,25 @@ mod gpu_upload;
 mod jump_pulse;
 mod keyboard;
 mod marquee;
-mod perf;
 mod pencil;
+mod perf;
 mod quantize_button;
 
 /// Events emitted by the piano-roll view for the caller to act on.
 pub enum PianoViewEvent {
     SelectionAction(SelectionAction),
-    AddNote { track: u16, note: yinhe_core::NoteEvent },
-    EraserDelete { t_start: u32, t_end: u32, key_lo: u8, key_hi: u8, track_lo: u16, track_hi: u16 },
+    AddNote {
+        track: u16,
+        note: yinhe_core::NoteEvent,
+    },
+    EraserDelete {
+        t_start: u32,
+        t_end: u32,
+        key_lo: u8,
+        key_hi: u8,
+        track_lo: u16,
+        track_hi: u16,
+    },
     QuantizePreset(QuantizePreset),
 }
 
@@ -31,8 +41,10 @@ pub enum PianoViewEvent {
 /// 合并 5 个 auto_* 参数，减少 piano_view::show 的参数数量。
 pub struct AutomationPanelsCtx<'a> {
     pub panels: &'a mut Vec<yinhe_types::AutomationPanelView>,
-    pub renderers:
-        &'a mut Vec<(yinhe_wgpu::InstanceRenderer, crate::render_context::RenderContext)>,
+    pub renderers: &'a mut Vec<(
+        yinhe_wgpu::InstanceRenderer,
+        crate::render_context::RenderContext,
+    )>,
     pub lanes: &'a [yinhe_types::AutomationLane],
     /// 渲染用 lanes：所有 PR 可见音轨的 lanes（与音符显示逻辑一致）。
     /// `lanes` 仅为 editing_track 的编辑目标，渲染不受其限制。
@@ -77,7 +89,7 @@ pub fn show(
     view: &mut yinhe_types::PianoRollView,
     last_cull_revision: &mut u64, // revision ^ hidden_hash — triggers all_notes re-upload
     last_cull_revision_only: &mut u64, // last revision for incremental detection
-    last_hidden_hash: &mut u64, // last hidden_hash for incremental detection
+    last_hidden_hash: &mut u64,   // last hidden_hash for incremental detection
     midi: Option<&dyn yinhe_types::NoteSource>,
     selected: &mut yinhe_core::Selection,
     track_visible: &[bool],
@@ -203,7 +215,8 @@ pub fn show(
     let mut pencil_event: Option<PianoViewEvent> = None;
     let mut eraser_event: Option<PianoViewEvent> = None;
     let mut ghost_notes: Vec<(u32, u32, u8, u16)> = Vec::new();
-    let mut hidden_notes: std::collections::HashSet<(u16, u32, u8)> = std::collections::HashSet::new();
+    let mut hidden_notes: std::collections::HashSet<(u16, u32, u8)> =
+        std::collections::HashSet::new();
     if *active_tool == Tool::Select || *active_tool == Tool::SelectVertical {
         let vertical = *active_tool == Tool::SelectVertical;
         let (sel_ghosts, sel_hidden) = drag::sel_drag_frame(
@@ -248,13 +261,22 @@ pub fn show(
         hidden_notes.extend(hidden);
         *feedback.pencil_note_drag = pencil_drag;
         if let Some(note) = note_event {
-            if let Some(track) = pencil::valid_pencil_track(editing_track, track_visible, conductor_idx) {
+            if let Some(track) =
+                pencil::valid_pencil_track(editing_track, track_visible, conductor_idx)
+            {
                 pencil_event = Some(PianoViewEvent::AddNote { track, note });
             }
         }
     } else if *active_tool == Tool::Eraser {
         eraser_event = marquee::eraser_drag_frame(
-            ui, content_rect, music_rect, view, quantize, ppq, bar_line_data, total_ticks,
+            ui,
+            content_rect,
+            music_rect,
+            view,
+            quantize,
+            ppq,
+            bar_line_data,
+            total_ticks,
             track_selected,
         );
     }
@@ -268,16 +290,26 @@ pub fn show(
                 let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
                 let eff_rects = sel_rect.effective_rects();
                 // 边缘检测优先（与 press 逻辑一致）
-                let edge_hit = drag::hit_test_sel_edge(&eff_rects, &view.base, view.key_height, local);
+                let edge_hit =
+                    drag::hit_test_sel_edge(&eff_rects, &view.base, view.key_height, local);
                 if let Some((side, _, _)) = edge_hit {
                     match side {
-                        yinhe_editor_core::ResizeSide::Left => ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeWest),
-                        yinhe_editor_core::ResizeSide::Right => ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeEast),
+                        yinhe_editor_core::ResizeSide::Left => {
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeWest)
+                        }
+                        yinhe_editor_core::ResizeSide::Right => {
+                            ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeEast)
+                        }
                     }
                 } else {
                     let in_sel_rect = eff_rects.iter().any(|&(t_start, t_end, key_lo, key_hi)| {
                         let pixel_rect = crate::selection::drag::music_sel_to_pixel_rect(
-                            &view.base, view.key_height, t_start, t_end, key_lo, key_hi,
+                            &view.base,
+                            view.key_height,
+                            t_start,
+                            t_end,
+                            key_lo,
+                            key_hi,
                         );
                         pixel_rect.contains(local)
                     });
@@ -359,7 +391,9 @@ pub fn show(
     view.clamp_scroll(w as f32, h as f32, total_ticks);
 
     // ── Haptic boundary feedback ──
-    let max_sx = (total_ticks as f32 * view.base.pixels_per_tick - (w as f32 - view.base.left_panel_width)).max(0.0);
+    let max_sx = (total_ticks as f32 * view.base.pixels_per_tick
+        - (w as f32 - view.base.left_panel_width))
+        .max(0.0);
     let max_sy = (view.total_key_height() - h as f32).max(0.0);
     crate::view_interaction::notify_haptic_boundary(
         yinhe_haptic::HapticSlot::PianoRoll,
@@ -419,8 +453,13 @@ pub fn show(
     if cull_ready {
         // GPU cull path: upload ghost layer (GPU cull handles notes)
         let job = yinhe_wgpu::build_render_job(
-            w, h, view, &*selected,
-            track_colors, scroll_mode, min_border_width,
+            w,
+            h,
+            view,
+            &*selected,
+            track_colors,
+            scroll_mode,
+            min_border_width,
             note_outline,
         );
         pianoroll.upload_uniforms(job.uniforms);
@@ -438,18 +477,38 @@ pub fn show(
     } else if let Some(rt) = render_thread {
         // Async path (no cull): build instances on this thread, send to render thread
         let job = yinhe_wgpu::build_render_job(
-            w, h, view, &*selected,
-            track_colors, scroll_mode, min_border_width,
+            w,
+            h,
+            view,
+            &*selected,
+            track_colors,
+            scroll_mode,
+            min_border_width,
             note_outline,
         );
         // Build note instances + ghost overlay as note layers for the render thread.
         let mut notes_instances = Vec::new();
         if let Some(midi) = midi {
-            yinhe_wgpu::build_notes(&mut notes_instances, w as f32, h as f32, midi, view, &hidden_notes, track_visible);
+            yinhe_wgpu::build_notes(
+                &mut notes_instances,
+                w as f32,
+                h as f32,
+                midi,
+                view,
+                &hidden_notes,
+                track_visible,
+            );
         }
         let mut ghost_instances = Vec::new();
         for &(start_tick, end_tick, key, track) in &ghost_notes {
-            yinhe_wgpu::build_ghost_note(&mut ghost_instances, start_tick, end_tick, key, track, &theme);
+            yinhe_wgpu::build_ghost_note(
+                &mut ghost_instances,
+                start_tick,
+                end_tick,
+                key,
+                track,
+                &theme,
+            );
         }
         // Cache key for notes: includes viewport tick/key range, revision,
         // hidden_notes, and track_visible — anything that affects which notes
@@ -460,13 +519,25 @@ pub fn show(
         let tv_hash = yinhe_wgpu::hash_bools(track_visible);
         let hidden_hash = yinhe_wgpu::hash_hidden(&hidden_notes);
         let notes_cache_key = yinhe_wgpu::layer_cache_key(&[
-            tick_start.to_bits(), tick_end.to_bits(),
-            key_lo as u64, key_hi as u64,
-            tv_hash, revision, hidden_hash,
+            tick_start.to_bits(),
+            tick_end.to_bits(),
+            key_lo as u64,
+            key_hi as u64,
+            tv_hash,
+            revision,
+            hidden_hash,
         ]);
         let note_layers = vec![
-            yinhe_wgpu::NoteLayerData { instances: notes_instances, cache_key: notes_cache_key, force: false },
-            yinhe_wgpu::NoteLayerData { instances: ghost_instances, cache_key: 0, force: true },
+            yinhe_wgpu::NoteLayerData {
+                instances: notes_instances,
+                cache_key: notes_cache_key,
+                force: false,
+            },
+            yinhe_wgpu::NoteLayerData {
+                instances: ghost_instances,
+                cache_key: 0,
+                force: true,
+            },
         ];
         rt.send_job(yinhe_wgpu::RenderJob {
             width: job.width,
@@ -512,11 +583,20 @@ pub fn show(
         let (def_num, def_den) = midi.time_sig_default();
         let sig_events = midi.time_sig_events();
         let grid_rect = egui::Rect::from_min_max(
-            egui::pos2(content_rect.min.x + view.keyboard_width(), content_rect.min.y),
+            egui::pos2(
+                content_rect.min.x + view.keyboard_width(),
+                content_rect.min.y,
+            ),
             content_rect.max,
         );
         crate::widgets::grid_lines::paint_grid_lines(
-            &painter, grid_rect, &view.base, tpb, def_num, def_den, sig_events,
+            &painter,
+            grid_rect,
+            &view.base,
+            tpb,
+            def_num,
+            def_den,
+            sig_events,
             &crate::widgets::grid_lines::GridColors::pianoroll(),
         );
     }
@@ -524,7 +604,15 @@ pub fn show(
     // Paint wgpu content into the content_rect (notes only — grid moved to egui)
     if cull_ready {
         // GPU cull path: draw directly (no render thread needed — cull makes GPU work fast)
-        render_ctx.paint(pianoroll, pw, ph, "pianoroll_frame", &painter, content_rect, true);
+        render_ctx.paint(
+            pianoroll,
+            pw,
+            ph,
+            "pianoroll_frame",
+            &painter,
+            content_rect,
+            true,
+        );
     } else {
         // Render thread handles GPU work — just display the latest texture
         render_ctx.paint_texture_only(pw, ph, &painter, content_rect);
@@ -538,7 +626,6 @@ pub fn show(
 
     // ── Keyboard (drawn by egui on top of the wgpu texture) ──
     keyboard::paint(&painter, content_rect, kb_w, kh, bottom, h_f32, &theme);
-
 
     // ── Playback cursor (drawn by egui on top of the wgpu texture) ──
     // Decoupled from the wgpu pipeline so cursor movement during playback
@@ -563,21 +650,36 @@ pub fn show(
     // after the GPU paint so it's not covered by the texture.
     if *active_tool == Tool::Select || *active_tool == Tool::SelectVertical {
         let vertical = *active_tool == Tool::SelectVertical;
-        // Apply pending sel_rect delta from duplicate/transpose
-        sel_rect.apply_pending();
 
         // Draw active drag box (if any)
-        marquee::draw_marquee_box(ui, content_rect, music_rect, view, quantize, ppq, bar_line_data,
-            "sel_drag", egui::Color32::WHITE, egui::Color32::WHITE, vertical);
+        marquee::draw_marquee_box(
+            ui,
+            content_rect,
+            music_rect,
+            view,
+            quantize,
+            ppq,
+            bar_line_data,
+            "sel_drag",
+            egui::Color32::WHITE,
+            egui::Color32::WHITE,
+            vertical,
+        );
 
         // Draw persisted selection rects (remains after mouse release).
         // Compute pixel rect from music coordinates each frame so it follows
         // scroll/zoom. 多选框时遍历所有 rects。
         let eff_rects = sel_rect.effective_rects();
-        let persisted_pixel_rects: Vec<egui::Rect> = eff_rects.iter()
+        let persisted_pixel_rects: Vec<egui::Rect> = eff_rects
+            .iter()
             .map(|&(t_start, t_end, key_lo, key_hi)| {
                 crate::selection::drag::music_sel_to_pixel_rect(
-                    &view.base, view.key_height, t_start, t_end, key_lo, key_hi,
+                    &view.base,
+                    view.key_height,
+                    t_start,
+                    t_end,
+                    key_lo,
+                    key_hi,
                 )
             })
             .collect();
@@ -593,21 +695,40 @@ pub fn show(
                     egui::pos2(rect.max.x - kb_w, rect.max.y),
                 );
                 if shifted.intersects(music_rect_local) {
-                    crate::selection::draw::draw(&ui.painter(), music_rect, shifted, egui::Color32::WHITE, egui::Color32::WHITE);
+                    crate::selection::draw::draw(
+                        &ui.painter(),
+                        music_rect,
+                        shifted,
+                        egui::Color32::WHITE,
+                        egui::Color32::WHITE,
+                    );
                 }
             }
         }
 
         // Show floating action bar next to the latest persisted selection rect
-        if let Some(action) =
-            crate::widgets::selection_actions::show(ui, music_rect, persisted_pixel_rects.last().copied())
-        {
+        if let Some(action) = crate::widgets::selection_actions::show(
+            ui,
+            music_rect,
+            persisted_pixel_rects.last().copied(),
+        ) {
             sel_action = Some(action);
         }
     } else if *active_tool == Tool::Eraser {
         // Draw eraser marquee box in red
-        marquee::draw_marquee_box(ui, content_rect, music_rect, view, quantize, ppq, bar_line_data,
-            "eraser_drag", egui::Color32::RED, egui::Color32::RED, false);
+        marquee::draw_marquee_box(
+            ui,
+            content_rect,
+            music_rect,
+            view,
+            quantize,
+            ppq,
+            bar_line_data,
+            "eraser_drag",
+            egui::Color32::RED,
+            egui::Color32::RED,
+            false,
+        );
     }
 
     // ── Time ruler ──
@@ -649,9 +770,12 @@ pub fn show(
         // active_track 由 editing_track 决定（与 pencil 一致），
         // 允许 conductor（用于 Tempo automation）。只需可见即可
         // （editing_track 已常驻 PR 显示，不再要求 track_selected）。
-        let active_track = editing_track
-            .filter(|&t| track_visible.get(t as usize).copied().unwrap_or(false));
-        let edit_ctx = if matches!(*active_tool, Tool::Pencil | Tool::Curve | Tool::Select | Tool::SelectVertical) {
+        let active_track =
+            editing_track.filter(|&t| track_visible.get(t as usize).copied().unwrap_or(false));
+        let edit_ctx = if matches!(
+            *active_tool,
+            Tool::Pencil | Tool::Curve | Tool::Select | Tool::SelectVertical
+        ) {
             Some(automation_panel::AutomationEditCtx {
                 active_tool: *active_tool,
                 active_track,
@@ -663,32 +787,33 @@ pub fn show(
             None
         };
 
-        let (_h, auto_edits, velocity_edits, auto_feedback, auto_drag_info) = automation_panel::show_panels(
-            ui,
-            ctx.panels,
-            selected,
-            ctx.renderers,
-            ctx.lanes,
-            ctx.render_lanes,
-            ctx.show,
-            ctx.wgpu_state,
-            combo_w,
-            view.base.scroll_x,
-            view.base.pixels_per_tick,
-            rect.max.x,
-            panels_y,
-            panels_total_h,
-            track_visible,
-            track_colors,
-            scroll_mode,
-            min_border_width,
-            midi,
-            edit_ctx.as_ref(),
-            tempo_lane,
-            revision,
-            feedback.info_content,
-            feedback.right_tab,
-        );
+        let (_h, auto_edits, velocity_edits, auto_feedback, auto_drag_info) =
+            automation_panel::show_panels(
+                ui,
+                ctx.panels,
+                selected,
+                ctx.renderers,
+                ctx.lanes,
+                ctx.render_lanes,
+                ctx.show,
+                ctx.wgpu_state,
+                combo_w,
+                view.base.scroll_x,
+                view.base.pixels_per_tick,
+                rect.max.x,
+                panels_y,
+                panels_total_h,
+                track_visible,
+                track_colors,
+                scroll_mode,
+                min_border_width,
+                midi,
+                edit_ctx.as_ref(),
+                tempo_lane,
+                revision,
+                feedback.info_content,
+                feedback.right_tab,
+            );
         for edit in auto_edits {
             feedback.auto_edit_events.push(edit);
         }
@@ -737,7 +862,10 @@ pub fn show(
     let sb_y = rect.min.y + rect.height() - crate::widgets::scrollbar::SCROLLBAR_H;
     let sb_rect = egui::Rect::from_min_max(
         egui::pos2(rect.min.x + kb_w, sb_y),
-        egui::pos2(content_right_x, sb_y + crate::widgets::scrollbar::SCROLLBAR_H),
+        egui::pos2(
+            content_right_x,
+            sb_y + crate::widgets::scrollbar::SCROLLBAR_H,
+        ),
     );
 
     ui.push_id("piano_scrollbar", |ui| {
@@ -790,13 +918,16 @@ pub fn show(
     });
 
     // ── PR quantize button in the top-left corner (left of ruler, above keyboard) ──
-    let pr_quantize_event = quantize_button::show(ui, quantize_button::QuantizeBtnCtx {
-        rect_min_x: rect.min.x,
-        ruler_band_y,
-        kb_w,
-        ppq,
-        quantize,
-    });
+    let pr_quantize_event = quantize_button::show(
+        ui,
+        quantize_button::QuantizeBtnCtx {
+            rect_min_x: rect.min.x,
+            ruler_band_y,
+            kb_w,
+            ppq,
+            quantize,
+        },
+    );
 
     // ── Jump pulse：事件浏览器跳转后的闪烁高亮 ──
     // 通过 ctx memory 读取（App 在 main_loop 每帧写入）。详见 jump_pulse 模块。

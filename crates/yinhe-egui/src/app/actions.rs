@@ -118,14 +118,7 @@ impl App {
     /// New notes are placed after the original selection, offset by the selection duration.
     pub(crate) fn duplicate_selected_notes(&mut self) {
         self.with_undo(t!("undo.duplicate_notes").as_ref(), |doc| {
-            let action = doc.duplicate_selected();
-            if action.is_some() {
-                doc.edit.sel_rect.pending_delta = action.as_ref().and_then(|_| {
-                    // Re-derive offset from the action
-                    None
-                });
-            }
-            action
+            doc.duplicate_selected()
         });
     }
 
