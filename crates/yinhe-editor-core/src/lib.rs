@@ -13,6 +13,7 @@ pub mod quantize;
 
 pub use config::{ProjectSfConfig, SfEntry};
 pub use document::automation_edit::AnchorField;
+pub use document::note_edit::FlipAxis;
 pub use document::note_edit::NoteField;
 pub use document::{Document, TrackOverride};
 pub use edit_state::{EditState, ResizeSide, SelRectState};

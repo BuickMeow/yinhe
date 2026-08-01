@@ -11,7 +11,7 @@ use rust_i18n::t;
 use yinhe_editor_core::batch_ops::summarize_selected;
 use yinhe_editor_core::document::Document;
 use yinhe_editor_core::document::automation_edit::AnchorField;
-use yinhe_editor_core::document::note_edit::NoteField;
+use yinhe_editor_core::document::note_edit::{FlipAxis, NoteField};
 use yinhe_editor_core::num_expr::{NumOp, apply_ops, parse_num_expr};
 use yinhe_types::time_format::{format_tick_bar_beat_with_time_sig, parse_bar_beat_tick};
 use yinhe_types::{AnchorSelRect, AutomationTarget, TimeSigEvent};
@@ -331,6 +331,37 @@ pub(super) fn show(ui: &mut egui::Ui, doc: &mut Document) {
     );
     ui.add_space(2.0);
     tempo_section(ui, doc, view, t0, t1);
+
+    // ── 翻转（音符镜像；AM 锚点无 key 概念，不显示） ──
+    if view != SelView::Am {
+        ui.add_space(4.0);
+        ui.separator();
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            if ui
+                .add(egui::Button::new(
+                    egui::RichText::new(t!("sel.flip_horizontal")).size(12.0),
+                ))
+                .clicked()
+            {
+                let before = doc.capture_snapshot();
+                if let Some(action) = doc.flip_selected_notes(FlipAxis::Horizontal) {
+                    doc.push_undo(action, t!("undo.flip_horizontal").as_ref(), before);
+                }
+            }
+            if ui
+                .add(egui::Button::new(
+                    egui::RichText::new(t!("sel.flip_vertical")).size(12.0),
+                ))
+                .clicked()
+            {
+                let before = doc.capture_snapshot();
+                if let Some(action) = doc.flip_selected_notes(FlipAxis::Vertical) {
+                    doc.push_undo(action, t!("undo.flip_vertical").as_ref(), before);
+                }
+            }
+        });
+    }
 }
 
 // ────────────────────────────────────────────────────────────────

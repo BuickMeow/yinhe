@@ -132,6 +132,15 @@ impl App {
         self.with_undo(label.as_ref(), |doc| doc.transpose_selected(semitones));
     }
 
+    /// Flip selected notes horizontally (tick) or vertically (key).
+    pub(crate) fn flip_selected_notes(&mut self, axis: yinhe_editor_core::FlipAxis) {
+        let label = match axis {
+            yinhe_editor_core::FlipAxis::Horizontal => t!("undo.flip_horizontal"),
+            yinhe_editor_core::FlipAxis::Vertical => t!("undo.flip_vertical"),
+        };
+        self.with_undo(label.as_ref(), |doc| doc.flip_selected_notes(axis));
+    }
+
     // ── Copy / Cut / Paste / Select All ──
 
     /// Copy selection rects to clipboard (no note data, just rects).

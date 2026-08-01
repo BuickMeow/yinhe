@@ -26,6 +26,15 @@ pub enum NoteField {
     Tick,
 }
 
+/// 翻转方向（选中音符镜像）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FlipAxis {
+    /// 水平翻转：按选框整体 tick 范围镜像（start/end 互换镜像，gate 不变）。
+    Horizontal,
+    /// 垂直翻转：按选框整体 key 范围镜像。
+    Vertical,
+}
+
 impl Document {
     /// Add a single note. Returns an `UndoAction` if the note was added.
     pub fn add_note(&mut self, track_idx: u16, note: NoteEvent) -> Option<UndoAction> {
@@ -619,6 +628,70 @@ impl Document {
             after,
         }))
     }
+
+    /// 翻转选中音符：水平（按 tick 镜像）或垂直（按 key 镜像）。
+    ///
+    /// 镜像范围 = 选框整体范围（min..max）；翻转后选框范围不变。
+    /// 返回 `None` 表示没有选中音符。
+    pub fn flip_selected_notes(&mut self, axis: FlipAxis) -> Option<UndoAction> {
+        if self.edit.selected.is_empty() {
+            return None;
+        }
+        // 镜像范围 = 选框整体范围
+        let mut t0 = u64::MAX;
+        let mut t1 = 0u64;
+        let mut kl = u8::MAX;
+        let mut kh = 0u8;
+        for &(ts, te, kl_, kh_, _, _) in &self.edit.selected.rects {
+            t0 = t0.min(ts as u64);
+            t1 = t1.max(te as u64);
+            kl = kl.min(kl_);
+            kh = kh.max(kh_);
+        }
+
+        let model = Arc::make_mut(&mut self.data.model);
+        let originals = batch_ops::remove_selected(model, &self.edit.selected);
+        if originals.is_empty() {
+            return None;
+        }
+
+        let mirror_tick = |v: u32| -> u32 { (t0 as i64 + (t1 as i64 - v as i64)).max(0) as u32 };
+        let mut new_by_key: std::collections::HashMap<u8, Vec<yinhe_types::Note>> =
+            std::collections::HashMap::new();
+        for (note, old_key) in &originals {
+            match axis {
+                FlipAxis::Horizontal => {
+                    let new_start = mirror_tick(note.end_tick);
+                    let new_end = mirror_tick(note.start_tick).max(new_start + 1);
+                    new_by_key
+                        .entry(*old_key)
+                        .or_default()
+                        .push(yinhe_types::Note {
+                            start_tick: new_start,
+                            end_tick: new_end,
+                            ..*note
+                        });
+                }
+                FlipAxis::Vertical => {
+                    let new_key = (kl as i32 + kh as i32 - *old_key as i32).clamp(0, 127) as u8;
+                    new_by_key.entry(new_key).or_default().push(*note);
+                }
+            }
+        }
+
+        let after: Vec<(yinhe_types::Note, u8)> = new_by_key
+            .iter()
+            .flat_map(|(key, notes)| notes.iter().map(|n| (*n, *key)))
+            .collect();
+        batch_ops::insert_batch(model, new_by_key);
+        model.rebuild_dirty();
+        self.data.bump_revision();
+
+        Some(UndoAction::Notes(NoteDelta {
+            before: originals,
+            after,
+        }))
+    }
 }
 
 #[cfg(test)]
@@ -997,5 +1070,81 @@ mod tests {
         assert!(doc.redo(), "redo 应成功");
         assert_eq!(doc.data.model.notes[60][0].end_tick, 300);
         assert_eq!(doc.edit.selected.rects[0].1, 302);
+    }
+
+    #[test]
+    fn flip_horizontal_mirrors_ticks() {
+        let mut doc = make_doc_with_note();
+        // 第二个音符 (150, 250) key 60
+        doc.add_note(
+            0,
+            NoteEvent {
+                id: 1,
+                start_tick: 150,
+                end_tick: 250,
+                key: 60,
+                velocity: 100,
+            },
+        );
+        doc.edit.selected.add_rect_track(150, 251, 60, 60, 0, 0);
+        let action = doc
+            .flip_selected_notes(FlipAxis::Horizontal)
+            .expect("should flip");
+        // t0=100, t1=251：
+        // n1 (100,200) → start' = 100 + (251-200) = 151, end' = 100 + (251-100) = 251
+        // n2 (150,250) → start' = 100 + (251-250) = 101, end' = 100 + (251-150) = 201
+        // 桶内按 start 排序：[(101,201), (151,251)]
+        assert_eq!(doc.data.model.notes[60][0].start_tick, 101);
+        assert_eq!(doc.data.model.notes[60][0].end_tick, 201);
+        assert_eq!(doc.data.model.notes[60][1].start_tick, 151);
+        assert_eq!(doc.data.model.notes[60][1].end_tick, 251);
+        match action {
+            UndoAction::Notes(delta) => {
+                assert_eq!(delta.before.len(), 2);
+                assert_eq!(delta.after.len(), 2);
+            }
+            _ => panic!("expected Notes"),
+        }
+    }
+
+    #[test]
+    fn flip_vertical_mirrors_keys() {
+        let mut doc = make_doc_with_note(); // key 60（alloc id 1）
+        doc.add_note(
+            0,
+            NoteEvent {
+                id: 2,
+                start_tick: 100,
+                end_tick: 200,
+                key: 64,
+                velocity: 100,
+            },
+        );
+        doc.edit.selected.add_rect_track(100, 201, 64, 64, 0, 0);
+        doc.flip_selected_notes(FlipAxis::Vertical)
+            .expect("should flip");
+        // kl=60, kh=64：60↔64（add_note 忽略传入 id，按 alloc 顺序为 1、2）
+        assert!(
+            doc.data.model.notes[64].iter().any(|n| n.id == 1),
+            "key 60 的音符应镜像到 64"
+        );
+        assert!(
+            doc.data.model.notes[60].iter().any(|n| n.id == 2),
+            "key 64 的音符应镜像到 60"
+        );
+    }
+
+    #[test]
+    fn flip_undo_restores_notes() {
+        let mut doc = make_doc_with_note();
+        let before = doc.capture_snapshot();
+        let action = doc
+            .flip_selected_notes(FlipAxis::Horizontal)
+            .expect("should flip");
+        doc.push_undo(action, "flip", before);
+        assert!(doc.undo(), "undo 应成功");
+        let n = doc.data.model.notes[60][0];
+        assert_eq!(n.start_tick, 100);
+        assert_eq!(n.end_tick, 200);
     }
 }

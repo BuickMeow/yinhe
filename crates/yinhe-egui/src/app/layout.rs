@@ -479,6 +479,12 @@ impl App {
                         SelectionAction::Duplicate => self.duplicate_selected_notes(),
                         SelectionAction::TransposeUp => self.transpose_selected_notes(12),
                         SelectionAction::TransposeDown => self.transpose_selected_notes(-12),
+                        SelectionAction::FlipHorizontal => {
+                            self.flip_selected_notes(yinhe_editor_core::FlipAxis::Horizontal)
+                        }
+                        SelectionAction::FlipVertical => {
+                            self.flip_selected_notes(yinhe_editor_core::FlipAxis::Vertical)
+                        }
                     }
                 }
                 PianoViewEvent::AddNote { track, note } => {

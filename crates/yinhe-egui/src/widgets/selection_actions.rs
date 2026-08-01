@@ -8,6 +8,8 @@ pub enum SelectionAction {
     Duplicate,
     TransposeUp,
     TransposeDown,
+    FlipHorizontal,
+    FlipVertical,
 }
 
 /// Gap between selection box right edge and the floating bar.
@@ -33,7 +35,7 @@ pub fn compute_bar_rect(
         egui::pos2(content_rect.min.x + sel_view_rect.max.x, content_rect.min.y + sel_view_rect.max.y),
     );
 
-    let btn_count = 4;
+    let btn_count = 6;
     let bar_w = ICON_SIZE + H_PAD * 2.0;
     let bar_h = ICON_SIZE * btn_count as f32 + V_PAD * 2.0 + (btn_count - 1) as f32 * BTN_SPACING;
 
@@ -76,7 +78,7 @@ pub fn show(
     );
 
     // Bar dimensions
-    let btn_count = 4;
+    let btn_count = 6;
     let bar_w = ICON_SIZE + H_PAD * 2.0;
     let bar_h = ICON_SIZE * btn_count as f32 + V_PAD * 2.0 + (btn_count - 1) as f32 * BTN_SPACING;
 
@@ -108,12 +110,21 @@ pub fn show(
     ui.painter().rect_filled(bar_rect, corner_radius, bg_color);
 
     // Draw buttons
-    let icons = [ICON_DELETE, ICON_CONTENT_COPY, ICON_KEYBOARD_ARROW_UP, ICON_KEYBOARD_ARROW_DOWN];
+    let icons = [
+        ICON_DELETE,
+        ICON_CONTENT_COPY,
+        ICON_KEYBOARD_ARROW_UP,
+        ICON_KEYBOARD_ARROW_DOWN,
+        ICON_FLIP,
+        ICON_FLIP,
+    ];
     let actions = [
         SelectionAction::Delete,
         SelectionAction::Duplicate,
         SelectionAction::TransposeUp,
         SelectionAction::TransposeDown,
+        SelectionAction::FlipHorizontal,
+        SelectionAction::FlipVertical,
     ];
 
     let mut result = None;
@@ -137,13 +148,29 @@ pub fn show(
 
         // Draw icon
         let icon_font_id = egui::FontId::new(ICON_SIZE, icon.font_family());
-        ui.painter().text(
-            btn_rect.center(),
-            egui::Align2::CENTER_CENTER,
-            icon.codepoint,
-            icon_font_id,
-            color,
-        );
+        if action == &SelectionAction::FlipVertical {
+            // ICON_FLIP 旋转 90° = 垂直翻转（绕按钮中心）
+            let galley =
+                ui.painter()
+                    .layout_no_wrap(icon.codepoint.to_string(), icon_font_id, color);
+            let pos = egui::Align2::CENTER_CENTER
+                .anchor_size(btn_rect.center(), galley.size())
+                .min;
+            ui.painter().add(
+                egui::epaint::TextShape::new(pos, galley, color).with_angle_and_anchor(
+                    std::f32::consts::FRAC_PI_2,
+                    egui::Align2::CENTER_CENTER,
+                ),
+            );
+        } else {
+            ui.painter().text(
+                btn_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                icon.codepoint,
+                icon_font_id,
+                color,
+            );
+        }
 
         // Manual click detection using primary_released (not consumed by widgets)
         if released && hovered {
