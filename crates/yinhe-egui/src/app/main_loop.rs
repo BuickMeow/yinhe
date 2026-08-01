@@ -206,6 +206,7 @@ impl eframe::App for App {
             &mut self.active_doc,
             &mut self.title_bar_press_pos,
             &mut self.tab_scroll_offset,
+            &mut self.status_hint,
         );
         if let Some(title_bar::TitleBarAction::CloseDocument(idx)) = title_bar_action {
             if self.documents.get(idx).is_some_and(|d| d.is_dirty()) {
@@ -325,6 +326,7 @@ impl eframe::App for App {
                 doc: active_doc,
                 follow_mode: &mut self.follow_mode,
                 active_tool: &mut self.active_tool,
+                status_hint: &mut self.status_hint,
             },
         );
 
@@ -373,6 +375,7 @@ impl eframe::App for App {
             mem_mb,
             self.fps,
             &mut self.show_mem_breakdown,
+            &self.status_hint,
         );
 
         // ── Main content area ──

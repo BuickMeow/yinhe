@@ -1,5 +1,6 @@
 use eframe::egui;
 use egui_material_icons::icons::*;
+use rust_i18n::t;
 
 use crate::right_panel::RightTab;
 
@@ -29,7 +30,17 @@ impl ViewMode {
     }
 }
 
-fn mode_button(ui: &mut egui::Ui, label: &str, is_selected: bool, on_click: impl FnOnce()) {
+/// 平台主修饰键：macOS 用 ⌘，其他平台用 Ctrl+。
+pub(crate) fn mod_key() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "⌘"
+    } else {
+        "Ctrl+"
+    }
+}
+
+/// 返回 true 表示当前鼠标悬停在该按钮上（供状态栏讲解行使用）。
+fn mode_button(ui: &mut egui::Ui, label: &str, is_selected: bool, on_click: impl FnOnce()) -> bool {
     let resp = ui.add(
         egui::Label::new(
             egui::RichText::new(label)
@@ -53,6 +64,7 @@ fn mode_button(ui: &mut egui::Ui, label: &str, is_selected: bool, on_click: impl
     if resp.clicked() {
         on_click();
     }
+    resp.hovered()
 }
 
 fn right_icon_button(
@@ -60,7 +72,7 @@ fn right_icon_button(
     icon: egui_material_icons::MaterialIcon,
     is_active: bool,
     on_click: impl FnOnce(),
-) {
+) -> bool {
     let color = if is_active {
         crate::theme::ACCENT_ACTIVE
     } else {
@@ -81,6 +93,7 @@ fn right_icon_button(
     if resp.clicked() {
         on_click();
     }
+    resp.hovered()
 }
 
 /// A compact "LABEL value" readout. Both label and value at `MODE_LABEL_FONT`.
@@ -108,8 +121,9 @@ fn metric_with_value_sz(ui: &mut egui::Ui, label: &str, value: &str, value_sz: f
 }
 
 /// Like [`metric`], but the value is clickable (e.g. to open a detail popup).
-fn metric_clickable(ui: &mut egui::Ui, label: &str, value: &str, on_click: impl FnOnce()) {
-    metric_clickable_with_value_sz(ui, label, value, crate::theme::MODE_LABEL_FONT, on_click);
+/// Returns true when hovered (for the status-line hint).
+fn metric_clickable(ui: &mut egui::Ui, label: &str, value: &str, on_click: impl FnOnce()) -> bool {
+    metric_clickable_with_value_sz(ui, label, value, crate::theme::MODE_LABEL_FONT, on_click)
 }
 
 fn metric_clickable_with_value_sz(
@@ -118,7 +132,7 @@ fn metric_clickable_with_value_sz(
     value: &str,
     value_sz: f32,
     on_click: impl FnOnce(),
-) {
+) -> bool {
     ui.add(
         egui::Label::new(
             egui::RichText::new(label)
@@ -140,6 +154,7 @@ fn metric_clickable_with_value_sz(
     if resp.clicked() {
         on_click();
     }
+    resp.hovered()
 }
 
 #[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
@@ -152,6 +167,7 @@ pub fn show(
     mem_mb: f64,
     fps: f32,
     show_mem_breakdown: &mut bool,
+    status_hint: &Option<String>,
 ) {
     egui::Panel::bottom("bottom_bar")
         .frame(egui::Frame {
@@ -163,21 +179,30 @@ pub fn show(
             ui.horizontal(|ui| {
                 ui.add_space(2.0);
 
-                mode_button(ui, "ARRANGE", *view_mode == ViewMode::Arrange, || {
+                // 本帧左侧控件 hover 提示（右侧图标提示下帧显示，见 icon_hint_id）
+                let mut hovered_hint: Option<String> = None;
+
+                if mode_button(ui, "ARRANGE", *view_mode == ViewMode::Arrange, || {
                     *view_mode = ViewMode::Arrange;
-                });
+                }) {
+                    hovered_hint = Some(t!("hint.mode_arrange").to_string());
+                }
 
                 ui.add_space(2.0);
 
-                mode_button(ui, "MIX", *view_mode == ViewMode::Mix, || {
+                if mode_button(ui, "MIX", *view_mode == ViewMode::Mix, || {
                     *view_mode = ViewMode::Mix;
-                });
+                }) {
+                    hovered_hint = Some(t!("hint.mode_mix").to_string());
+                }
 
                 ui.add_space(2.0);
 
-                mode_button(ui, "EDIT", *view_mode == ViewMode::Edit, || {
+                if mode_button(ui, "EDIT", *view_mode == ViewMode::Edit, || {
                     *view_mode = ViewMode::Edit;
-                });
+                }) {
+                    hovered_hint = Some(t!("hint.mode_edit").to_string());
+                }
 
                 // ── Piano roll toggle ──
                 if *view_mode == ViewMode::Arrange {
@@ -205,27 +230,72 @@ pub fn show(
                     if piano_resp.clicked() {
                         *show_pianoroll_in_arrange = !*show_pianoroll_in_arrange;
                     }
+                    if piano_resp.hovered() {
+                        hovered_hint = Some(t!("hint.pr_toggle").to_string());
+                    }
+                }
+
+                // ── 讲解/状态文字：模式栏控件 > 右侧图标（上一帧）> 视图提示 ──
+                // 右侧图标在下方 with_layout 内才绘制，其 hover 状态无法当帧得知，
+                // 因此写入 persisted 状态，下一帧显示（1 帧延迟不可感知）。
+                // 注意：读写必须用全局稳定 Id，with_layout 子 ui 的 ui.id() 不同。
+                let icon_hint_id = egui::Id::new("mode_bar_icon_hint");
+                if hovered_hint.is_none() {
+                    hovered_hint = ui
+                        .data_mut(|d| d.get_persisted(icon_hint_id))
+                        .unwrap_or(None);
+                }
+                let over_popup = crate::view_interaction::pointer_over_popup(ui.ctx());
+                let over_bar = ui.input(|i| {
+                    i.pointer
+                        .hover_pos()
+                        .is_some_and(|p| ui.max_rect().contains(p))
+                });
+                let display_text = if over_popup {
+                    None
+                } else if hovered_hint.is_some() {
+                    hovered_hint
+                } else if over_bar {
+                    None
+                } else {
+                    status_hint.clone()
+                };
+                if let Some(text) = display_text {
+                    ui.add_space(12.0);
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(text)
+                                .size(crate::theme::MODE_LABEL_FONT)
+                                .color(egui::Color32::GRAY),
+                        )
+                        .selectable(false),
+                    );
                 }
 
                 // ── Spacer: push right icons to the right edge ──
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    // 右侧图标本帧 hover 提示（persisted，下帧由上方读取）
+                    let mut icon_hint: Option<String> = None;
+
                     // Right-most first (from right to left):
                     //  1. ICON_INFO
                     //  2. ICON_MUSIC_CAST
                     //  3. ICON_SHUFFLE
                     //  4. ICON_AUTO_STORIES (event browser)
 
-                    right_icon_button(ui, ICON_INFO, *right_tab == Some(RightTab::Info), || {
+                    if right_icon_button(ui, ICON_INFO, *right_tab == Some(RightTab::Info), || {
                         *right_tab = if *right_tab == Some(RightTab::Info) {
                             None
                         } else {
                             Some(RightTab::Info)
                         };
-                    });
+                    }) {
+                        icon_hint = Some(t!("hint.right_info").to_string());
+                    }
 
                     ui.add_space(4.0);
 
-                    right_icon_button(
+                    if right_icon_button(
                         ui,
                         ICON_MUSIC_CAST,
                         *right_tab == Some(RightTab::SoundFont),
@@ -236,11 +306,13 @@ pub fn show(
                                 Some(RightTab::SoundFont)
                             };
                         },
-                    );
+                    ) {
+                        icon_hint = Some(t!("hint.right_soundfont").to_string());
+                    }
 
                     ui.add_space(4.0);
 
-                    right_icon_button(
+                    if right_icon_button(
                         ui,
                         ICON_SHUFFLE,
                         *right_tab == Some(RightTab::Channels),
@@ -251,11 +323,13 @@ pub fn show(
                                 Some(RightTab::Channels)
                             };
                         },
-                    );
+                    ) {
+                        icon_hint = Some(t!("hint.right_channels").to_string());
+                    }
 
                     ui.add_space(4.0);
 
-                    right_icon_button(
+                    if right_icon_button(
                         ui,
                         ICON_FOLDER_ZIP,
                         *right_tab == Some(RightTab::EventBrowser),
@@ -266,7 +340,9 @@ pub fn show(
                                 Some(RightTab::EventBrowser)
                             };
                         },
-                    );
+                    ) {
+                        icon_hint = Some(t!("hint.right_event_browser").to_string());
+                    }
 
                     // ── Resource metrics (CPU / MEM / FPS) — left of the right icons ──
                     ui.separator();
@@ -277,16 +353,20 @@ pub fn show(
                         metric(ui, "CPU", &format!("{:.1}%", cpu_usage));
                         ui.add_space(12.0);
                         let ctx_clone = ui.ctx().clone();
-                        metric_clickable(ui, "MEM", &format!("{:.1} MB", mem_mb), || {
+                        if metric_clickable(ui, "MEM", &format!("{:.1} MB", mem_mb), || {
                             *show_mem_breakdown = true;
                             crate::chrome::dialog::raise_viewport(
                                 &ctx_clone,
                                 egui::ViewportId::from_hash_of("memory_breakdown_dialog"),
                             );
-                        });
+                        }) {
+                            icon_hint = Some(t!("hint.mem").to_string());
+                        }
                         ui.add_space(12.0);
                         metric(ui, "FPS", &format!("{:.1}", fps));
                     });
+
+                    ui.data_mut(|d| d.insert_persisted(icon_hint_id, icon_hint));
                 });
             });
         });

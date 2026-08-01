@@ -5,6 +5,7 @@ use eframe::egui;
 use rust_i18n::t;
 
 use yinhe_types::ArrangementView;
+use yinhe_types::time_format::format_tick_bar_beat_with_time_sig;
 
 use crate::render_context::RenderContext;
 use crate::widgets::tools_panel::Tool;
@@ -88,6 +89,7 @@ pub fn show(
     // 由调用方 layout.rs 读取后调 `App::teardown_audio()`，下一帧
     // `rebuild_audio_if_needed` 会用新 model 重新 spawn 引擎和 ChannelLayout。
     needs_audio_rebuild: &mut bool,
+    status_hint: &mut Option<String>,
 ) -> Option<QuantizePreset> {
     *last_cursor_tick = doc.edit.cursor_tick;
 
@@ -462,6 +464,31 @@ pub fn show(
     if v_resp.dragged() {
         *layout.transport_panel_width =
             (*layout.transport_panel_width + v_resp.drag_delta().x).clamp(60.0, arr_total_w - 60.0);
+    }
+
+    // ── 状态栏讲解行：走带悬停提示（位置 + 音轨号）──
+    if let Some(pos) = ui.input(|i| i.pointer.hover_pos()) {
+        let model = &*doc.data.model;
+        let tpb = model.meta.ppq;
+        let (def_num, def_den) = model.tempo_map.time_sig_default;
+        let sig_events = model.tempo_map.time_sig_events.as_slice();
+        let lh = arr_view.lane_height();
+        let scroll_y = arr_view.base.scroll_y;
+        let hover_track =
+            |y: f32| (((y + scroll_y) / lh).floor() as usize).min(num_tracks.saturating_sub(1));
+        let track_str =
+            |track: usize| t!("hint.track", n = format!("{:03}", track + 1)).to_string();
+        if gpu_rect.contains(pos) {
+            let tick = arr_view.x_to_tick(pos.x - gpu_rect.min.x).max(0.0);
+            let pos_str =
+                format_tick_bar_beat_with_time_sig(tick, tpb, sig_events, def_num, def_den);
+            *status_hint = Some(format!("{} {}", pos_str, track_str(hover_track(pos.y))));
+        } else if tp_rect.contains(pos) {
+            *status_hint = Some(track_str(hover_track(pos.y)));
+        } else if arr_rect.contains(pos) {
+            // 走带视图内但不在内容区（标尺/滚动条）→ 清空
+            *status_hint = None;
+        }
     }
 
     pending_quantize

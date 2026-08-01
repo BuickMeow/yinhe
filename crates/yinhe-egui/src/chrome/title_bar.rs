@@ -19,6 +19,7 @@ pub(crate) fn show(
     active_doc: &mut Option<usize>,
     title_bar_press_pos: &mut Option<egui::Pos2>,
     tab_scroll_offset: &mut f32,
+    status_hint: &mut Option<String>,
 ) -> Option<TitleBarAction> {
     let mut action = None;
     egui::Panel::top("title_bar")
@@ -65,6 +66,10 @@ pub(crate) fn show(
             // ── Handle mouse wheel / trackpad scroll for tab overflow ──
             let pointer_in_bar =
                 ui.input(|i| i.pointer.hover_pos().is_some_and(|p| bar_rect.contains(p)));
+            // 状态栏讲解行：鼠标在标题栏上时清空（标题栏不属于任何可讲解区域）
+            if pointer_in_bar {
+                *status_hint = None;
+            }
             if pointer_in_bar {
                 let scroll_delta = ui.input(|i| i.smooth_scroll_delta);
                 let zoom_delta = ui.input(|i| i.zoom_delta());

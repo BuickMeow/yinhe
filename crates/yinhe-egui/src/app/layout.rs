@@ -118,6 +118,7 @@ impl App {
                 &mut arr_eraser_rect,
                 &mut self.info_content,
                 &mut needs_audio_rebuild,
+                &mut self.status_hint,
             );
             if request_pianoroll {
                 self.show_pianoroll_in_arrange = true;
@@ -430,6 +431,7 @@ impl App {
                     note_resize_delta: &mut note_resize_delta,
                     velocity_edits: &mut velocity_edits,
                     preview_reqs: &mut preview_reqs,
+                    status_hint: &mut self.status_hint,
                 };
                 event = piano_view::show(
                     ui,
@@ -724,6 +726,7 @@ impl App {
                 &mut self.event_browser_state,
                 &mut self.info_content,
                 self.automation_drag_ghost,
+                &mut self.status_hint,
             );
             if changed {
                 self.teardown_audio();

@@ -76,12 +76,14 @@ pub(crate) struct PanelsLayout {
 
 /// 面板渲染/联动配置。
 #[derive(Clone, Copy)]
-pub(crate) struct PanelsCfg {
+pub(crate) struct PanelsCfg<'a> {
     pub pianoroll_scroll_x: f32,
     pub pianoroll_ppt: f32,
     pub scroll_mode: u32,
     pub min_border_width: f32,
     pub revision: u64,
+    /// 状态栏讲解行格式化位置所需（拍号事件）。
+    pub bar_line_data: Option<(u32, u8, u8, &'a [TimeSigEvent])>,
 }
 
 /// 面板模型只读数据。
@@ -113,7 +115,6 @@ pub(crate) type PanelsOutput = (
 /// automation 面板交互产生的 pianoroll 联动反馈。
 ///
 /// `show_panels` 返回，由 `piano_view::show` 应用到 pianoroll view。
-#[derive(Clone, Copy)]
 pub struct PanelPianorollFeedback {
     /// 水平滚动 delta（像素）。非零时 piano_view 会调整 `scroll_x`。
     pub scroll_x_delta: f32,
@@ -121,6 +122,8 @@ pub struct PanelPianorollFeedback {
     pub zoom_factor: f32,
     /// 缩放中心（pianoroll content 局部 x 坐标，已减去 rect.min.x）。
     pub zoom_center_x: f32,
+    /// 状态栏讲解行：鼠标悬停在面板 grid 区时的提示（位置 + 值）。
+    pub status_hint: Option<String>,
 }
 
 impl Default for PanelPianorollFeedback {
@@ -129,6 +132,7 @@ impl Default for PanelPianorollFeedback {
             scroll_x_delta: 0.0,
             zoom_factor: 1.0, // 1.0 = 无缩放
             zoom_center_x: 0.0,
+            status_hint: None,
         }
     }
 }
@@ -206,7 +210,7 @@ pub fn show_panels(
     state: &mut PanelsState<'_>,
     data: &PanelsData<'_>,
     layout: PanelsLayout,
-    cfg: PanelsCfg,
+    cfg: PanelsCfg<'_>,
     edit: &mut PanelsEdit<'_>,
     edit_ctx: Option<&AutomationEditCtx<'_>>,
 ) -> PanelsOutput {
@@ -338,6 +342,36 @@ pub fn show_panels(
         let upper_bound = value_upper_bound(panel);
         let max_val_f = panel_max_val(panel, data.tempo_lane);
         let zoom_min = min_value_zoom(max_val_f, upper_bound);
+
+        // ── 状态栏讲解行：面板 grid 区悬停提示（位置 + 值）──
+        if let Some(pos) = ui.input(|i| i.pointer.hover_pos()) {
+            if grid_area.contains(pos) {
+                let x_in_grid = pos.x - grid_area.min.x;
+                let raw_tick =
+                    ((x_in_grid + panel.base.scroll_x) / panel.base.pixels_per_tick).max(0.0);
+                let y_in_panel = (pos.y - panel_rect.min.y).clamp(0.0, panel_rect.height());
+                let value = panel
+                    .y_to_value(y_in_panel, max_val_f)
+                    .clamp(0.0, max_val_f);
+                let pos_str = match cfg.bar_line_data {
+                    Some((ppq, num, den, events)) => {
+                        format_tick_bar_beat_with_time_sig(raw_tick as f64, ppq, events, num, den)
+                    }
+                    None => format!("{}", raw_tick as u32),
+                };
+                let val_str = if panel.show_velocity {
+                    format!("{}", value.round() as i32)
+                } else if panel.selected_target == AutomationTarget::Tempo {
+                    format!("{:.2} BPM", value)
+                } else {
+                    format!("{}", value.round() as i32)
+                };
+                feedback.status_hint = Some(format!("{} {}", pos_str, val_str));
+            } else if panel_rect.contains(pos) {
+                // 面板内非 grid 区（combo 选择器/滚动条）→ 清空
+                feedback.status_hint = None;
+            }
+        }
         handle_panel_scroll_zoom(
             ui,
             panel,

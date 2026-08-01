@@ -35,6 +35,8 @@ pub struct TransportContext<'a> {
     pub doc: Option<&'a Document>,
     pub follow_mode: &'a mut FollowMode,
     pub active_tool: &'a mut Tool,
+    /// 状态栏讲解行：控件 hover 时写入提示，空白处清空；鼠标不在传输栏时不动。
+    pub status_hint: &'a mut Option<String>,
 }
 
 /// Output from the transport bar — replaces `&mut bool` out-parameters.
@@ -72,6 +74,9 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
             let mut timecode_rect: Option<egui::Rect> = None;
             let mut button_right: Option<f32> = None;
 
+            // 本帧控件 hover 提示（状态栏讲解行）
+            let mut hovered_hint: Option<String> = None;
+
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 let btn_size = egui::vec2(
                     crate::theme::TRANSPORT_BTN_SIZE,
@@ -88,6 +93,10 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                     .min_size(btn_size)
                     .corner_radius(btn_rounding),
                 );
+                if file_btn.hovered() {
+                    let m = crate::chrome::mode_bar::mod_key();
+                    hovered_hint = Some(format!("{} ({}N/{}O/{}S)", t!("hint.file_menu"), m, m, m));
+                }
                 show_file_menu(
                     &file_btn,
                     ctx.file_loader,
@@ -101,40 +110,42 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                         .map(|d| d.edit.playback.is_playing())
                         .unwrap_or(false);
 
-                    if ui
-                        .add(
-                            egui::Button::new(
-                                (if is_playing {
-                                    ICON_PAUSE
-                                } else {
-                                    ICON_PLAY_ARROW
-                                })
-                                .rich_text()
-                                .size(crate::theme::TRANSPORT_BTN_FONT),
-                            )
-                            .min_size(btn_size)
-                            .corner_radius(btn_rounding),
+                    let play_resp = ui.add(
+                        egui::Button::new(
+                            (if is_playing {
+                                ICON_PAUSE
+                            } else {
+                                ICON_PLAY_ARROW
+                            })
+                            .rich_text()
+                            .size(crate::theme::TRANSPORT_BTN_FONT),
                         )
-                        .clicked()
-                    {
+                        .min_size(btn_size)
+                        .corner_radius(btn_rounding),
+                    );
+                    if play_resp.clicked() {
                         if is_playing {
                             pause_return = true;
                         } else {
                             toggle_play = true;
                         }
                     }
+                    if play_resp.hovered() {
+                        hovered_hint = Some(t!("hint.play").to_string());
+                    }
 
-                    if ui
-                        .add(
-                            egui::Button::new(
-                                ICON_STOP.rich_text().size(crate::theme::TRANSPORT_BTN_FONT),
-                            )
-                            .min_size(btn_size)
-                            .corner_radius(btn_rounding),
+                    let stop_resp = ui.add(
+                        egui::Button::new(
+                            ICON_STOP.rich_text().size(crate::theme::TRANSPORT_BTN_FONT),
                         )
-                        .clicked()
-                    {
+                        .min_size(btn_size)
+                        .corner_radius(btn_rounding),
+                    );
+                    if stop_resp.clicked() {
                         stop_play = true;
+                    }
+                    if stop_resp.hovered() {
+                        hovered_hint = Some(t!("hint.stop").to_string());
                     }
 
                     // ── Follow-mode button (cycle: None → Page → Continuous) ──
@@ -150,6 +161,9 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                     );
                     if follow_resp.clicked() {
                         *ctx.follow_mode = ctx.follow_mode.next();
+                    }
+                    if follow_resp.hovered() {
+                        hovered_hint = Some(t!("hint.follow").to_string());
                     }
                     follow_resp.on_hover_text(ctx.follow_mode.tooltip());
                 }
@@ -189,6 +203,9 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                         if resp.clicked() {
                             *ctx.active_tool = tool;
                         }
+                        if resp.hovered() {
+                            hovered_hint = Some(tool_hint(tool));
+                        }
                         resp.on_hover_text(tool.label());
                         ui.add_space(2.0);
                     }
@@ -197,6 +214,18 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                     button_right = Some(ui.cursor().min.x);
                 }
             });
+
+            // ── 状态栏讲解行：控件 hover 提示写入，传输栏空白处清空 ──
+            let pointer_pos = ui.input(|i| i.pointer.hover_pos());
+            if pointer_pos.is_some_and(|p| timecode_rect.is_some_and(|r| r.contains(p))) {
+                hovered_hint = Some(t!("hint.timecode").to_string());
+            }
+            let bar_rect = ui.max_rect();
+            if let Some(hint) = hovered_hint {
+                *ctx.status_hint = Some(hint);
+            } else if pointer_pos.is_some_and(|p| bar_rect.contains(p)) {
+                *ctx.status_hint = None;
+            }
 
             // ── Double-click transport bar blank area to toggle maximize/restore ──
             // Manual click-timestamp tracking avoids egui's button_double_clicked()
@@ -264,6 +293,19 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
         pause_return,
         stop_play,
         pending_file_action,
+    }
+}
+
+/// 状态栏讲解行：工具的短说明（与 tool.label() 的悬停 tooltip 互补）。
+fn tool_hint(tool: Tool) -> String {
+    match tool {
+        Tool::Select => t!("hint.tool.select").to_string(),
+        Tool::SelectVertical => t!("hint.tool.select_vertical").to_string(),
+        Tool::Pan => t!("hint.tool.pan").to_string(),
+        Tool::Pencil => t!("hint.tool.pencil").to_string(),
+        Tool::Curve => t!("hint.tool.curve").to_string(),
+        Tool::Scissors => t!("hint.tool.scissors").to_string(),
+        Tool::Eraser => t!("hint.tool.eraser").to_string(),
     }
 }
 

@@ -52,10 +52,16 @@ pub fn show(
     event_browser_state: &mut event_browser::EventBrowserState,
     info_content: &mut Option<InfoContent>,
     automation_drag_ghost: Option<(u32, f32)>,
+    status_hint: &mut Option<String>,
 ) -> (bool, Option<event_browser::JumpRequest>) {
     let tab = *right_tab;
     if tab.is_none() {
         return (false, None);
+    }
+
+    // 状态栏讲解行：鼠标在右面板上时清空（右面板不属于可讲解区域）
+    if ui.input(|i| i.pointer.hover_pos().is_some_and(|p| rect.contains(p))) {
+        *status_hint = None;
     }
 
     let theme = crate::theme::RIGHT_PANEL_MIN_WIDTH;

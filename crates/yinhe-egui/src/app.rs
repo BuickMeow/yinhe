@@ -107,6 +107,12 @@ pub struct App {
     // ── Cursor-follow mode (shared across arrangement & piano roll) ──
     pub(crate) follow_mode: crate::view_interaction::FollowMode,
 
+    // ── 状态栏讲解行（teaching bar）──
+    /// mode_bar 左下角的讲解文字：各视图/控件每帧写入，mode_bar 展示。
+    /// 鼠标悬停在钢琴卷帘/走带/自动化面板上时显示位置信息，
+    /// 悬停在控件上时显示该控件的用途与快捷键。
+    pub(crate) status_hint: Option<String>,
+
     // ── Audio engine ──
     pub(crate) audio_state: audio_state::AudioState,
 
@@ -263,6 +269,7 @@ impl App {
             prev_selected_nonempty: false,
 
             follow_mode: crate::view_interaction::FollowMode::Page,
+            status_hint: None,
 
             audio_state: audio_state::AudioState::new(),
 

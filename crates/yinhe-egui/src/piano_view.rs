@@ -1,5 +1,6 @@
 use eframe::egui;
 
+use yinhe_types::time_format::format_tick_bar_beat_with_time_sig;
 use yinhe_types::{AutomationLane, TimeSigEvent};
 
 use crate::widgets::selection_actions::SelectionAction;
@@ -86,6 +87,8 @@ pub struct PianoViewFeedback<'a> {
     pub velocity_edits: &'a mut Vec<yinhe_types::VelocityEdit>,
     /// 音符听觉预览请求（铅笔新建/拖拽、选框拖拽触发）。
     pub preview_reqs: &'a mut Vec<PreviewReq>,
+    /// 状态栏讲解行：钢琴卷帘悬停提示（位置 + 音高）。
+    pub status_hint: &'a mut Option<String>,
 }
 
 /// Height of the time ruler band at the top of the pianoroll view.
@@ -783,6 +786,8 @@ pub fn show(
 
     // ── Automation panels ──
     let panels_y = content_rect.max.y;
+    // 自动化面板的状态栏提示（鼠标在面板 grid_area 内时由 show_panels 写入）
+    let mut panels_status_hint: Option<String> = None;
     if let Some(ctx) = auto_ctx.as_mut() {
         let kb_w = view.keyboard_width();
         let combo_w = kb_w * theme::AUTO_PANEL_COMBO_WIDTH_RATIO;
@@ -834,6 +839,7 @@ pub fn show(
             scroll_mode,
             min_border_width,
             revision,
+            bar_line_data,
         };
         let mut panels_edit = automation_panel::PanelsEdit {
             selected,
@@ -850,6 +856,7 @@ pub fn show(
                 &mut panels_edit,
                 edit_ctx.as_ref(),
             );
+        panels_status_hint = auto_feedback.status_hint.clone();
         for edit in auto_edits {
             feedback.auto_edit_events.push(edit);
         }
@@ -964,6 +971,35 @@ pub fn show(
             quantize,
         },
     );
+
+    // ── 状态栏讲解行：钢琴卷帘悬停提示（位置 + 音高）──
+    // 自动化面板的提示（grid_area 内）优先于 PR 内容区提示；
+    // 鼠标在视图内但不在任何可讲解区域（标尺/滚动条/面板空白）→ 清空。
+    if let Some(pos) = ui.input(|i| i.pointer.hover_pos())
+        && rect.contains(pos)
+    {
+        let hint = if let Some(h) = panels_status_hint {
+            Some(h)
+        } else if music_rect.contains(pos) {
+            let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
+            let tick = view.x_to_tick(local.x).max(0.0);
+            let key = view.y_to_key(local.y);
+            let pos_str = match bar_line_data {
+                Some((ppq, num, den, events)) => {
+                    format_tick_bar_beat_with_time_sig(tick, ppq, events, num, den)
+                }
+                None => format!("{}", tick as u32),
+            };
+            Some(format!("{} {}", pos_str, key))
+        } else if content_rect.contains(pos) {
+            // 键盘列：只显示音高数字
+            let local_y = pos.y - content_rect.min.y;
+            Some(format!("{}", view.y_to_key(local_y)))
+        } else {
+            None
+        };
+        *feedback.status_hint = hint;
+    }
 
     sel_action
         .map(PianoViewEvent::SelectionAction)
