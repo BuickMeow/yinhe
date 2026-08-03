@@ -44,13 +44,17 @@ struct DrawIndirectArgs {
     first_instance: u32,   // 0
 };
 
-// Per-key dispatch info (binding 4). Host-written; shares the 256-byte slot
-// with the dispatch_workgroups_indirect args (first 12 bytes).
+// Per-key dispatch info (binding 4). Host-written every frame; shares the
+// 256-byte slot with the dispatch_workgroups_indirect args (first 12 bytes).
+// c_lo is the first dispatched chunk of the frame: chunk c of the key covers
+// notes [c*256, min((c+1)*256, count)), contiguous, so the input index is
+// computed directly — no lookup table.
 struct DispatchInfo {
     wg_x: u32,
     wg_y: u32,
     wg_z: u32,
     count: u32,
+    c_lo: u32,
 };
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
@@ -67,11 +71,14 @@ var<workgroup> wg_base: u32;
 
 @compute @workgroup_size(256)
 fn main(
-    @builtin(global_invocation_id) global_id: vec3<u32>,
+    @builtin(workgroup_id) wg_id: vec3<u32>,
     @builtin(local_invocation_id) local_id: vec3<u32>,
 ) {
-    let MAX_X_THREADS: u32 = 65535u * 256u;
-    let index = global_id.x + global_id.y * MAX_X_THREADS;
+    // Chunk = c_lo + global workgroup id; workgroups beyond 65535 are packed
+    // into wg_id.y by the host's dispatch args (wg_y = ceil(count/65535)).
+    let wg = wg_id.x + wg_id.y * 65535u;
+    let chunk = dispatch_info.c_lo + wg;
+    let index = chunk * 256u + local_id.x;
     // `count` is the note count at upload time (host-written in the dispatch
     // args slot). The buffer capacity can exceed it (grown buffers, shrunk
     // keys), and the tail holds stale/uninitialized data — culling those would

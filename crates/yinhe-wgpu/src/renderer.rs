@@ -365,7 +365,8 @@ impl InstanceRenderer {
         let (key_lo, key_hi) = self.visible_key_range();
         // Phase 1: Compute cull (skipped if uniforms + notes unchanged since last frame)
         let uniforms = self.cached_uniforms.unwrap_or_default();
-        self.cull.dispatch_cull(encoder, key_lo, key_hi, &uniforms);
+        self.cull
+            .dispatch_cull(encoder, &self.queue, key_lo, key_hi, &uniforms);
 
         // Phase 2: Single render pass
         let mut pass = crate::util::begin_pianoroll_pass(
