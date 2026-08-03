@@ -439,7 +439,7 @@ pub fn show(
         0.001,
         10.0,
         h as f32 / 128.0,
-        60.0,
+        h as f32 / 12.0,
         haptic_engine,
     );
 
@@ -929,13 +929,14 @@ pub fn show(
     // ── Vertical scrollbar ──
     // PR 像素空间：num_cells = 128，cell_size = key_height。
     // 滚动条范围 = PR 内容区 [content_y, content_y + content_h]，不超过 PR/AM 分割线。
-    // 即使缩到最小（key_height = cell_min，128 键一屏装下），仍然显示占满滚动条的 thumb。
+    // 相对缩放：最小 = 128 键一屏（cell_min），最大 = 12 键一屏（cell_max），随窗口变化。
     {
         let vsb_rect = egui::Rect::from_min_max(
             egui::pos2(content_right_x, content_y),
             egui::pos2(rect.max.x, content_y + content_h),
         );
         let cell_min = content_rect.height() / 128.0;
+        let cell_max = content_rect.height() / 12.0;
         ui.push_id("piano_vscroll", |ui| {
             crate::widgets::scrollbar::show_vertical(
                 ui,
@@ -945,7 +946,7 @@ pub fn show(
                 &mut view.key_height,
                 128,
                 cell_min,
-                60.0,
+                cell_max,
                 &mut view.base.dirty,
             );
         });

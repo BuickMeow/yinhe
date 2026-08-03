@@ -8,6 +8,10 @@ pub struct PianoRollView {
     pub base: TimelineViewBase,
     /// Pixels per MIDI key (vertical zoom).
     pub key_height: f32,
+    /// 上次记录的视口高度。垂直缩放是相对的：视口高度变化（如窗口最大化）
+    /// 时按比例换算 key_height/scroll_y，保持屏幕上显示的键数不变。
+    /// 0.0 表示尚未初始化（首次渲染时默认显示 64 键并居中）。
+    pub viewport_h: f32,
 }
 
 impl Default for PianoRollView {
@@ -23,6 +27,7 @@ impl Default for PianoRollView {
                 track_panel_scroll_y: 0.0,
             },
             key_height: 12.0,
+            viewport_h: 0.0,
         }
     }
 }
@@ -103,9 +108,21 @@ impl PianoRollView {
         // Horizontal
         self.base.clamp_scroll_x(width, total_ticks);
 
-        // 128 键总高未超过视口（含略超几像素的浮点误差，以及窗口放大后遗留的
-        // 旧缩放——128 键全显示后下方还有空白）时，将 key_height 吸附为
-        // 当前视口下 128 键恰好填满的上限（= 缩小的极限）。
+        // 垂直缩放是相对的：视口高度变化时按比例换算，保持显示的键数不变
+        // （窗口最大化/还原后看到的键范围不变，居中位置也自动保持）。
+        if self.viewport_h > 0.0 && height != self.viewport_h {
+            let ratio = height / self.viewport_h;
+            self.key_height = (self.key_height * ratio).clamp(height / 128.0, height / 12.0);
+            self.base.scroll_y *= ratio;
+        } else if self.viewport_h == 0.0 && height > 0.0 {
+            // 首次初始化：默认显示 64 键，视口居中（显示范围约 key 31~95，中央 C 在中间）。
+            self.key_height = height / 64.0;
+            self.base.scroll_y = (self.total_key_height() - height).max(0.0) / 2.0;
+        }
+        self.viewport_h = height;
+
+        // 128 键总高未超过视口（含略超几像素的浮点误差，以及旧版绝对缩放遗留的
+        // 小 key_height）时，将 key_height 吸附为当前视口下 128 键恰好填满的上限。
         let total = self.total_key_height();
         if total < height + 5.0 {
             self.key_height = height / 128.0;
@@ -128,9 +145,12 @@ impl PianoRollView {
 
     /// Zoom around a pointer position (vertical).
     pub fn zoom_around_y(&mut self, pointer_y: f32, zoom_factor: f32, viewport_height: f32) {
+        // 相对缩放：最小 = 128 键一屏（缩小极限），最大 = 12 键一屏（放大极限），
+        // 与窗口大小无关，任何窗口下行为一致。
         let min_kh = viewport_height / 128.0;
+        let max_kh = viewport_height / 12.0;
         let old = self.key_height;
-        self.key_height = (self.key_height * zoom_factor).clamp(min_kh, 60.0);
+        self.key_height = (self.key_height * zoom_factor).clamp(min_kh, max_kh);
 
         self.base.scroll_y = (self.base.scroll_y + pointer_y) / old * self.key_height - pointer_y;
         self.base.dirty = true;
@@ -153,6 +173,7 @@ mod tests {
                 track_panel_scroll_y: 0.0,
             },
             key_height: 12.0,
+            viewport_h: 0.0,
         }
     }
 
@@ -162,6 +183,7 @@ mod tests {
         assert_eq!(v.key_height, 12.0);
         assert_eq!(v.base.pixels_per_tick, 0.15);
         assert_eq!(v.base.left_panel_width, 60.0);
+        assert_eq!(v.viewport_h, 0.0);
         assert!(v.base.dirty);
     }
 
@@ -267,9 +289,10 @@ mod tests {
     #[test]
     fn test_clamp_scroll_vertical() {
         let mut v = make_view();
+        v.clamp_scroll(1000.0, 500.0, 10000.0); // 首次初始化
         v.base.scroll_y = 99999.0;
         v.clamp_scroll(1000.0, 500.0, 10000.0);
-        let max_scroll = (128.0f32 * 12.0 - 500.0).max(0.0);
+        let max_scroll = (128.0f32 * v.key_height - 500.0).max(0.0);
         assert!(v.base.scroll_y <= max_scroll);
     }
 
@@ -285,29 +308,30 @@ mod tests {
     #[test]
     fn test_clamp_scroll_snaps_key_height_when_close() {
         let mut v = make_view();
-        v.key_height = 12.0;
-        // total = 1536, height = 1532, diff = 4 < 5
+        v.clamp_scroll(1000.0, 1532.0, 10000.0); // 首次初始化
+        // 手动造成略超一屏（差 4px < 5px）→ 吸附回 128 键恰好填满
+        v.key_height = 1532.0 / 128.0 + 0.03;
         v.clamp_scroll(1000.0, 1532.0, 10000.0);
         assert!((v.key_height - 1532.0 / 128.0).abs() < 0.01);
     }
 
     #[test]
     fn test_clamp_scroll_fills_extra_space_when_keys_fully_visible() {
-        // 模拟窗口放大（如最大化）：视口 2000px 高于 128 键总高 1536px，
-        // 旧 key_height 遗留导致下方空白 → 自动吸附为 2000/128 填满视口。
+        // 兜底自愈：key_height 低于一屏（如旧版绝对缩放遗留）时自动吸附填满。
         let mut v = make_view();
-        v.key_height = 12.0;
+        v.clamp_scroll(1000.0, 2000.0, 10000.0); // 首次初始化
+        v.key_height = 2000.0 / 128.0 - 2.0;
         v.clamp_scroll(1000.0, 2000.0, 10000.0);
         assert!((v.key_height - 2000.0 / 128.0).abs() < 0.01);
         assert_eq!(v.base.scroll_y, 0.0);
     }
 
     #[test]
-    fn test_clamp_scroll_no_dirty_when_key_height_already_fills_viewport() {
-        // key_height 已是 h/128（恰好填满）时，clamp_scroll 不应反复标记 dirty。
+    fn test_clamp_scroll_no_dirty_when_unchanged() {
+        // 稳定状态（无 resize/无滚动）时，clamp_scroll 不应反复标记 dirty。
         let mut v = make_view();
+        v.clamp_scroll(1000.0, 2000.0, 10000.0); // 首次初始化
         v.base.dirty = false;
-        v.key_height = 2000.0 / 128.0;
         v.clamp_scroll(1000.0, 2000.0, 10000.0);
         assert!(!v.base.dirty);
     }
@@ -316,9 +340,53 @@ mod tests {
     fn test_clamp_scroll_keeps_zoom_when_keys_exceed_viewport() {
         // 128 键超过视口（正常缩放状态）时不得吸附，保留用户缩放。
         let mut v = make_view();
-        v.key_height = 12.0;
+        v.clamp_scroll(1000.0, 500.0, 10000.0); // 首次初始化
+        let kh = v.key_height;
         v.clamp_scroll(1000.0, 500.0, 10000.0);
-        assert!((v.key_height - 12.0).abs() < 0.01);
+        assert!((v.key_height - kh).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_clamp_scroll_init_defaults_64_keys_centered() {
+        // 首次渲染：默认显示 64 键，视口居中（显示范围约 key 31~95，中央 C 在中间）。
+        let mut v = make_view();
+        v.clamp_scroll(1000.0, 800.0, 10000.0);
+        assert!((v.key_height - 800.0 / 64.0).abs() < 0.01);
+        let expect_sy = (128.0 * (800.0 / 64.0) - 800.0) / 2.0;
+        assert!((v.base.scroll_y - expect_sy).abs() < 0.01);
+        assert_eq!(v.viewport_h, 800.0);
+    }
+
+    #[test]
+    fn test_clamp_scroll_resize_keeps_keys_visible() {
+        // 窗口放大：key_height 与 scroll_y 按比例换算，显示的键范围不变。
+        let mut v = make_view();
+        v.clamp_scroll(1000.0, 800.0, 10000.0); // kh = 12.5, scroll_y = 400
+        v.clamp_scroll(1000.0, 1600.0, 10000.0);
+        assert!((v.key_height - 25.0).abs() < 0.01);
+        assert!((v.base.scroll_y - 800.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_clamp_scroll_resize_smaller_window() {
+        // 窗口缩小：同样按比例换算，键范围不变。
+        let mut v = make_view();
+        v.clamp_scroll(1000.0, 1600.0, 10000.0); // kh = 25, scroll_y = 800
+        v.clamp_scroll(1000.0, 800.0, 10000.0);
+        assert!((v.key_height - 12.5).abs() < 0.01);
+        assert!((v.base.scroll_y - 400.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_clamp_scroll_resize_keeps_min_zoom_filling_viewport() {
+        // 缩到最小（128 键恰好填满）后窗口放大：仍恰好填满，无底部空白。
+        let mut v = make_view();
+        v.clamp_scroll(1000.0, 800.0, 10000.0);
+        v.key_height = 800.0 / 128.0;
+        v.base.scroll_y = 0.0;
+        v.clamp_scroll(1000.0, 1600.0, 10000.0);
+        assert!((v.key_height - 1600.0 / 128.0).abs() < 0.01);
+        assert_eq!(v.base.scroll_y, 0.0);
     }
 
     #[test]
@@ -362,7 +430,8 @@ mod tests {
     fn test_zoom_around_y_clamps_max() {
         let mut v = make_view();
         v.zoom_around_y(200.0, 100.0, 500.0);
-        assert!(v.key_height <= 60.0);
+        let max_kh = 500.0 / 12.0;
+        assert!(v.key_height <= max_kh + 0.001);
     }
 
     #[test]

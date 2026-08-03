@@ -229,6 +229,7 @@ mod tests {
                 track_panel_scroll_y: 0.0,
             },
             key_height: 12.0,
+            viewport_h: 0.0,
         }
     }
 
