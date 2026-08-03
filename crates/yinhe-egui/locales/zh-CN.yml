@@ -23,7 +23,6 @@ hint.mode_edit: "钢琴卷帘 · 音符精细编辑"
 hint.pr_toggle: "在走带视图下方显示钢琴卷帘"
 hint.right_info: "信息面板 · 选区/项目信息"
 hint.right_soundfont: "音色库面板 · 配置 SF2/SFZ 音色"
-hint.right_channels: "通道面板 · XSynth 通道映射"
 hint.right_event_browser: "事件浏览器 · 全部 MIDI 事件"
 hint.mem: "内存占用详情 · 点击查看"
 hint.file_menu: "文件菜单 · 新建/打开/保存/导出"
@@ -258,15 +257,6 @@ quantize.custom_tick: "自定义 tick"
 quantize.custom_fraction: "自定义时值"
 quantize.numerator: "n:"
 quantize.denominator: "d:"
-
-# ── 通道面板 ──
-channels.title: "XSynth 通道映射"
-channels.ports: "MIDI 端口数: %{n}"
-channels.xsynth_channels: "XSynth 通道数: %{n}"
-channels.header.xsynth: "XSynth"
-channels.header.source: "源通道"
-channels.header.active: "活跃"
-channels.header.soundfont: "音色库"
 
 # ── 音色库面板 ──
 soundfont.global: "全局音色库"

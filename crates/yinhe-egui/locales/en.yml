@@ -23,7 +23,6 @@ hint.mode_edit: "Piano roll · detailed note editing"
 hint.pr_toggle: "Show the piano roll below the arrangement"
 hint.right_info: "Info panel · selection/project info"
 hint.right_soundfont: "SoundFont panel · configure SF2/SFZ sounds"
-hint.right_channels: "Channels panel · XSynth channel mapping"
 hint.right_event_browser: "Event browser · all MIDI events"
 hint.mem: "Memory details · click to view"
 hint.file_menu: "File menu · New/Open/Save/Export"
@@ -258,15 +257,6 @@ quantize.custom_tick: "Custom Tick"
 quantize.custom_fraction: "Custom Fraction"
 quantize.numerator: "n:"
 quantize.denominator: "d:"
-
-# ── Channels panel ──
-channels.title: "XSynth Channel Mapping"
-channels.ports: "MIDI Ports: %{n}"
-channels.xsynth_channels: "XSynth Channels: %{n}"
-channels.header.xsynth: "XSynth"
-channels.header.source: "Source Ch"
-channels.header.active: "Active"
-channels.header.soundfont: "SoundFont"
 
 # ── SoundFont panel ──
 soundfont.global: "Global SoundFonts"

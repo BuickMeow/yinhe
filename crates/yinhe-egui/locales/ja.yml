@@ -23,7 +23,6 @@ hint.mode_edit: "ピアノロール · 音符の精密編集"
 hint.pr_toggle: "アレンジの下にピアノロールを表示"
 hint.right_info: "情報パネル · 選択/プロジェクト情報"
 hint.right_soundfont: "サウンドフォントパネル · SF2/SFZ 音色を設定"
-hint.right_channels: "チャンネルパネル · XSynth チャンネルマッピング"
 hint.right_event_browser: "イベントブラウザ · 全 MIDI イベント"
 hint.mem: "メモリ使用量詳細 · クリックで表示"
 hint.file_menu: "ファイルメニュー · 新規/開く/保存/エクスポート"
@@ -258,15 +257,6 @@ quantize.custom_tick: "カスタムティック"
 quantize.custom_fraction: "カスタム分数"
 quantize.numerator: "n:"
 quantize.denominator: "d:"
-
-# ── チャネルパネル ──
-channels.title: "XSynthチャネルマッピング"
-channels.ports: "MIDIポート数: %{n}"
-channels.xsynth_channels: "XSynthチャネル数: %{n}"
-channels.header.xsynth: "XSynth"
-channels.header.source: "ソースCh"
-channels.header.active: "アクティブ"
-channels.header.soundfont: "SoundFont"
 
 # ── SoundFontパネル ──
 soundfont.global: "グローバルSoundFont"

@@ -23,7 +23,6 @@ hint.mode_edit: "피아노 롤 · 노트 세밀 편집"
 hint.pr_toggle: "어레인지 아래에 피아노 롤 표시"
 hint.right_info: "정보 패널 · 선택/프로젝트 정보"
 hint.right_soundfont: "사운드폰트 패널 · SF2/SFZ 음색 설정"
-hint.right_channels: "채널 패널 · XSynth 채널 매핑"
 hint.right_event_browser: "이벤트 브라우저 · 전체 MIDI 이벤트"
 hint.mem: "메모리 사용량 상세 · 클릭하여 보기"
 hint.file_menu: "파일 메뉴 · 새로 만들기/열기/저장/내보내기"
@@ -258,15 +257,6 @@ quantize.custom_tick: "사용자 정의 틱"
 quantize.custom_fraction: "사용자 정의 분수"
 quantize.numerator: "n:"
 quantize.denominator: "d:"
-
-# ── 채널 패널 ──
-channels.title: "XSynth 채널 매핑"
-channels.ports: "MIDI 포트 수: %{n}"
-channels.xsynth_channels: "XSynth 채널 수: %{n}"
-channels.header.xsynth: "XSynth"
-channels.header.source: "소스 채널"
-channels.header.active: "활성"
-channels.header.soundfont: "SoundFont"
 
 # ── SoundFont 패널 ──
 soundfont.global: "글로벌 SoundFont"

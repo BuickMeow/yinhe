@@ -1,5 +1,4 @@
 pub mod automation_undo;
-pub mod channels_panel;
 pub mod event_browser;
 pub mod info_panel;
 pub mod project_info;
@@ -16,7 +15,6 @@ use yinhe_types::AutomationTarget;
 pub enum RightTab {
     Info,
     SoundFont,
-    Channels,
     EventBrowser,
 }
 
@@ -107,9 +105,6 @@ pub fn show(
                 }
                 RightTab::SoundFont => {
                     changed |= soundfont::show(ui, audio_settings, doc);
-                }
-                RightTab::Channels => {
-                    channels_panel::show(ui, doc, audio_settings);
                 }
                 RightTab::EventBrowser => {
                     jump_request = event_browser::show(ui, doc, event_browser_state);

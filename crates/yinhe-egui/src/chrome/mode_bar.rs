@@ -248,8 +248,7 @@ pub fn show(
                         // Right-most first (from right to left):
                         //  1. ICON_INFO
                         //  2. ICON_MUSIC_CAST
-                        //  3. ICON_SHUFFLE
-                        //  4. ICON_AUTO_STORIES (event browser)
+                        //  3. ICON_AUTO_STORIES (event browser)
 
                         if right_icon_button(
                             ui,
@@ -281,23 +280,6 @@ pub fn show(
                             },
                         ) {
                             icon_hint = Some(t!("hint.right_soundfont").to_string());
-                        }
-
-                        ui.add_space(4.0);
-
-                        if right_icon_button(
-                            ui,
-                            ICON_SHUFFLE,
-                            *right_tab == Some(RightTab::Channels),
-                            || {
-                                *right_tab = if *right_tab == Some(RightTab::Channels) {
-                                    None
-                                } else {
-                                    Some(RightTab::Channels)
-                                };
-                            },
-                        ) {
-                            icon_hint = Some(t!("hint.right_channels").to_string());
                         }
 
                         ui.add_space(4.0);
