@@ -253,29 +253,7 @@ pub(crate) fn flatten_automation_to_cc_events(
         }
 
         for e in &track.program_change {
-            let tick = e.tick;
-            if e.bank_msb != 0xFF {
-                cc_events.push(SortedCC {
-                    tick,
-                    channel,
-                    track: track_idx_u16,
-                    event: ChannelAudioEvent::Control(ControlEvent::Raw(0, e.bank_msb)),
-                });
-            }
-            if e.bank_lsb != 0xFF {
-                cc_events.push(SortedCC {
-                    tick,
-                    channel,
-                    track: track_idx_u16,
-                    event: ChannelAudioEvent::Control(ControlEvent::Raw(32, e.bank_lsb)),
-                });
-            }
-            cc_events.push(SortedCC {
-                tick,
-                channel,
-                track: track_idx_u16,
-                event: ChannelAudioEvent::ProgramChange(e.program),
-            });
+            push_program_change(e, channel, track_idx_u16, &mut cc_events);
         }
     }
 
@@ -288,10 +266,43 @@ pub(crate) fn flatten_automation_to_cc_events(
     Arc::new(cc_events)
 }
 
-/// 同 sample 同 channel 内的分发优先级：0 = 参数/控制类（RPN、CC、PC），
+/// Program Change 展开为 CC 事件序列（bank select + ProgramChange）。
+/// 供 flatten（播放事件流）与查询式 chase 共用。
+pub(crate) fn push_program_change(
+    pc: &yinhe_types::PcEvent,
+    channel: u32,
+    track: u16,
+    out: &mut Vec<SortedCC>,
+) {
+    let tick = pc.tick;
+    if pc.bank_msb != 0xFF {
+        out.push(SortedCC {
+            tick,
+            channel,
+            track,
+            event: ChannelAudioEvent::Control(ControlEvent::Raw(0, pc.bank_msb)),
+        });
+    }
+    if pc.bank_lsb != 0xFF {
+        out.push(SortedCC {
+            tick,
+            channel,
+            track,
+            event: ChannelAudioEvent::Control(ControlEvent::Raw(32, pc.bank_lsb)),
+        });
+    }
+    out.push(SortedCC {
+        tick,
+        channel,
+        track,
+        event: ChannelAudioEvent::ProgramChange(pc.program),
+    });
+}
+
+/// 同 tick 同 channel 内的分发优先级：0 = 参数/控制类（RPN、CC、PC），
 /// 1 = PitchBendValue。数值小的先发，保证 PBS/FineTune/CoarseTune 等 RPN
 /// 参数在 PB 使用它们之前就位。
-fn dispatch_priority(event: &ChannelAudioEvent) -> u8 {
+pub(crate) fn dispatch_priority(event: &ChannelAudioEvent) -> u8 {
     match event {
         ChannelAudioEvent::Control(ControlEvent::PitchBendValue(_)) => 1,
         _ => 0,
@@ -300,7 +311,8 @@ fn dispatch_priority(event: &ChannelAudioEvent) -> u8 {
 
 /// 将单个 automation 值转换成 XSynth 事件并推入 `out`。
 /// 事件时刻为 tick（u32，与模型一致）。
-fn emit_automation_event(
+/// 供 `flatten_automation_to_cc_events`（播放事件流）与查询式 chase 共用。
+pub(crate) fn emit_automation_event(
     target: &AutomationTarget,
     value: f32,
     tick: u32,

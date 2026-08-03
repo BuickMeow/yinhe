@@ -1104,28 +1104,39 @@ fn test_muted_track_cc_skipped_in_dispatch() {
 /// mute 轨道的 CC 不参与 channel state 快照构建。
 #[test]
 fn test_muted_track_cc_skipped_in_chase() {
-    use crate::audio_model::SortedCC;
-    use xsynth_core::channel::{ChannelAudioEvent, ControlEvent};
-
-    let cc_events = vec![
-        // track 0（将被 mute）的 CC7=40
-        SortedCC {
+    // track 0（将被 mute）的 CC7=40，track 1（非 mute）的 CC7=100，同 channel 0
+    let mut t0 = TrackData::new(0, 0);
+    t0.automation_lanes = vec![AutomationLane {
+        target: AutomationTarget::CC { controller: 7 },
+        track: 0,
+        events: vec![AutomationEvent {
             tick: 100,
-            channel: 0,
-            track: 0,
-            event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 40)),
-        },
-        // track 1（非 mute）的 CC7=100
-        SortedCC {
+            value: 40.0,
+            shape: SegmentShape::Step,
+        }],
+    }];
+    let mut t1 = TrackData::new(0, 0);
+    t1.automation_lanes = vec![AutomationLane {
+        target: AutomationTarget::CC { controller: 7 },
+        track: 1,
+        events: vec![AutomationEvent {
             tick: 200,
-            channel: 0,
-            track: 1,
-            event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 100)),
+            value: 100.0,
+            shape: SegmentShape::Step,
+        }],
+    }];
+    let mut model = YinModel {
+        tracks: vec![Arc::new(t0), Arc::new(t1)],
+        meta: ProjectMeta {
+            ppq: 480,
+            ..ProjectMeta::default()
         },
-    ];
+        ..Default::default()
+    };
+    model.rebuild();
 
     // chase 到 tick 300，skip track 0
-    let states = crate::spawn::compute_chase_states_for_test(&cc_events, 300, &[true, false]);
+    let states = crate::spawn::compute_chase_states_for_test(&model, 300, &[true, false]);
     // track 0 的 CC7=40 被跳过，只有 track 1 的 CC7=100 生效
     // CC7 映射到 ChannelState.volume
     assert_eq!(
@@ -1248,8 +1259,8 @@ fn test_chase_after_seek_skips_dispatched_controllers() {
     engine.dispatch_and_find_next(768, 768 + 512);
 
     // worker 异步算出的 chase 快照：seek 之前的状态
-    let states =
-        crate::spawn::compute_chase_states_for_test(&engine.cc_events, 768, &engine.skip_track);
+    // worker 异步算出的 chase 快照：seek 之前的状态（查询式：直接查模型 lane）
+    let states = crate::spawn::compute_chase_states_for_test(&model, 768, &engine.skip_track);
     assert_eq!(states[0].pitch_bend_sensitivity, 2.0, "seek 前 PBS=2");
     assert_eq!(states[0].volume, 100, "seek 前 CC7=100");
 
@@ -1569,4 +1580,193 @@ fn test_audible_buckets_sorted_without_sort() {
     assert_eq!(audible[60].len(), 3, "三个音符都进桶");
     assert_eq!(audible[60][0].start_tick, 0);
     assert_eq!(audible[60][2].start_tick, 960);
+}
+
+// ---------------------------------------------------------------------------
+// 查询式 chase 回归测试：模型 lane 二分 + 曲线实时插值
+// ---------------------------------------------------------------------------
+
+/// 构造单 track 带一条 lane 的模型。
+fn model_with_lane(lane: AutomationLane) -> YinModel {
+    let mut t = TrackData::new(0, 0);
+    t.automation_lanes = vec![lane];
+    let mut model = YinModel {
+        tracks: vec![Arc::new(t)],
+        meta: ProjectMeta {
+            ppq: 480,
+            ..ProjectMeta::default()
+        },
+        ..Default::default()
+    };
+    model.rebuild();
+    model
+}
+
+/// 查询式 chase 的核心卖点：曲线段内实时插值真实值（与 flatten density 无关）。
+/// 直线 = 退化曲线 `Curve { 0,0,0,0 }`。
+#[test]
+fn test_chase_query_linear_interpolation() {
+    // CC7：tick 0 = 100 → tick 480 = 60，Linear（退化曲线）。
+    let model = model_with_lane(AutomationLane {
+        target: AutomationTarget::CC { controller: 7 },
+        track: 0,
+        events: vec![
+            AutomationEvent {
+                tick: 0,
+                value: 100.0,
+                shape: SegmentShape::Curve {
+                    x1: 0.0,
+                    y1: 0.0,
+                    x2: 0.0,
+                    y2: 0.0,
+                },
+            },
+            AutomationEvent {
+                tick: 480,
+                value: 60.0,
+                shape: SegmentShape::Curve {
+                    x1: 0.0,
+                    y1: 0.0,
+                    x2: 0.0,
+                    y2: 0.0,
+                },
+            },
+        ],
+    });
+
+    // 段中点：真实值 80（线性插值），CC7 → volume
+    let states = crate::spawn::compute_chase_states_for_test(&model, 240, &[false]);
+    assert_eq!(states[0].volume, 80, "曲线段中点应插值到 80");
+
+    // 段外（最后一条之后）：保持终点值
+    let states = crate::spawn::compute_chase_states_for_test(&model, 960, &[false]);
+    assert_eq!(states[0].volume, 60, "曲线结束后保持终点值");
+
+    // 边界：target == 下一事件 tick → 曲线终点值（连续性）
+    let states = crate::spawn::compute_chase_states_for_test(&model, 480, &[false]);
+    assert_eq!(states[0].volume, 60, "target == 段末 tick 取曲线终点");
+
+    // target 在第一条事件之前：无事件，默认值 127
+    let states = crate::spawn::compute_chase_states_for_test(&model, 0, &[false]);
+    assert_eq!(states[0].volume, 127, "target 前无事件保持默认");
+}
+
+/// Step 段边界：保持最后一条事件值（与播放事件流 `tick < target` 语义一致）。
+#[test]
+fn test_chase_query_step_keeps_last_value() {
+    // CC10 pan：tick 0 = 100（Step）→ tick 480 = 20（Step）。
+    let model = model_with_lane(AutomationLane {
+        target: AutomationTarget::CC { controller: 10 },
+        track: 0,
+        events: vec![
+            AutomationEvent {
+                tick: 0,
+                value: 100.0,
+                shape: SegmentShape::Step,
+            },
+            AutomationEvent {
+                tick: 480,
+                value: 20.0,
+                shape: SegmentShape::Step,
+            },
+        ],
+    });
+
+    // 段内：保持 100
+    let states = crate::spawn::compute_chase_states_for_test(&model, 240, &[false]);
+    assert_eq!(states[0].pan, 100, "Step 段保持上一值");
+
+    // 边界：target == 下一事件 tick，Step 语义保持 100（t480 的事件由 dispatch 处理）
+    let states = crate::spawn::compute_chase_states_for_test(&model, 480, &[false]);
+    assert_eq!(states[0].pan, 100, "Step 在事件 tick 处仍保持旧值");
+
+    // 段后：20
+    let states = crate::spawn::compute_chase_states_for_test(&model, 960, &[false]);
+    assert_eq!(states[0].pan, 20, "Step 段后取新值");
+}
+
+/// Program Change：取 target 前最后一条（离散事件，无插值）。
+#[test]
+fn test_chase_query_program_change_last_before_target() {
+    let mut t = TrackData::new(0, 0);
+    t.program_change = vec![
+        PcEvent {
+            tick: 0,
+            program: 5,
+            bank_msb: 0,
+            bank_lsb: 0,
+        },
+        PcEvent {
+            tick: 480,
+            program: 20,
+            bank_msb: 0,
+            bank_lsb: 0,
+        },
+    ];
+    let mut model = YinModel {
+        tracks: vec![Arc::new(t)],
+        meta: ProjectMeta {
+            ppq: 480,
+            ..ProjectMeta::default()
+        },
+        ..Default::default()
+    };
+    model.rebuild();
+
+    let states = crate::spawn::compute_chase_states_for_test(&model, 240, &[false]);
+    assert_eq!(states[0].program, 5, "target 前最后一条 PC");
+    let states = crate::spawn::compute_chase_states_for_test(&model, 960, &[false]);
+    assert_eq!(states[0].program, 20);
+    // target == PC tick：该 PC 由 dispatch 处理，chase 取更早的
+    let states = crate::spawn::compute_chase_states_for_test(&model, 480, &[false]);
+    assert_eq!(states[0].program, 5, "t480 的 PC 不参与（== target）");
+}
+
+/// 查询式 vs flatten 全扫一致性：Step 段 + 各种控制器下，两种 chase 结果必须一致。
+/// 这是 chase 语义没被改坏的防护（任何重写都必须过此测试）。
+#[test]
+fn test_chase_query_matches_flattened_scan() {
+    // cyber-night 风格模型：RPN PBS、PitchBend、CC7、多 track 同 channel。
+    let model = Arc::new(make_chase_model());
+    let skip = vec![false; model.tracks.len()];
+
+    for target in [200u32, 480, 768, 1000, 1536, 2000] {
+        // 旧式：flatten 事件流从曲首累计（density=1 的离散近似）
+        let cc = crate::audio_model::flatten_automation_to_cc_events(&model, 1);
+        let mut old = [crate::channel::ChannelState::default(); 256];
+        for e in cc.iter() {
+            if e.tick >= target {
+                break;
+            }
+            old[e.channel as usize].apply(&e.event);
+        }
+        // 新式：查询模型 lane
+        let new = crate::spawn::compute_chase_states_for_test(&model, target, &skip);
+
+        for ch in 0..256usize {
+            assert_eq!(
+                new[ch].volume, old[ch].volume,
+                "target {target} ch{ch} volume"
+            );
+            assert_eq!(new[ch].pan, old[ch].pan, "target {target} ch{ch} pan");
+            assert_eq!(
+                new[ch].pitch_bend_sensitivity, old[ch].pitch_bend_sensitivity,
+                "target {target} ch{ch} PBS"
+            );
+            assert_eq!(
+                new[ch].pitch_bend, old[ch].pitch_bend,
+                "target {target} ch{ch} pitch_bend"
+            );
+            assert_eq!(
+                new[ch].program, old[ch].program,
+                "target {target} ch{ch} program"
+            );
+            assert_eq!(new[ch].fine_tune, old[ch].fine_tune);
+            assert_eq!(new[ch].coarse_tune, old[ch].coarse_tune);
+            assert_eq!(
+                new[ch].cc_values, old[ch].cc_values,
+                "target {target} ch{ch} cc"
+            );
+        }
+    }
 }

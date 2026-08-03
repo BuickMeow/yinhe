@@ -7,6 +7,7 @@ use crossbeam_channel::{Sender, bounded, unbounded};
 use xsynth_core::soundfont::SoundfontBase;
 
 use yinhe_core::YinModel;
+use yinhe_types::SegmentShape;
 
 use crate::audio_model::{PreparedModel, SortedCC};
 use crate::audio_renderer::{RendererSharedState, spawn_renderer};
@@ -255,11 +256,12 @@ pub(crate) enum WorkerCmd {
     PrepareModel(Arc<YinModel>, u32),
     /// Notes-only prepare: audible_notes + duration (UpdateNotes). No cc_events rebuild.
     PrepareNotes(Arc<YinModel>),
-    /// Compute channel-state snapshot at `target_tick` by linear-scanning `cc_events`.
+    /// Compute channel-state snapshot at `target_tick` by **querying the model
+    /// automation lanes**（每 lane 二分 + 曲线实时插值，不再从曲首逐条累计）。
     /// `generation` matches `AudioEngine::chase_generation` so the renderer can
-    /// discard stale results after a PrepareModel replaces cc_events.
+    /// discard stale results after a PrepareModel replaces the model.
     PrepareChase {
-        cc_events: Arc<Vec<SortedCC>>,
+        model: Arc<YinModel>,
         target_tick: u32,
         generation: u64,
         /// 当前 skip_track 快照，chase 时跳过 mute 轨道的 CC。
@@ -387,25 +389,25 @@ pub(crate) fn spawn_worker(
                         yinhe_memtrace::purge_free_pages();
                     }
                     WorkerCmd::PrepareChase {
-                        cc_events,
+                        model,
                         target_tick,
                         generation,
                         skip_mask,
                     } => {
                         // 合并连续 PrepareChase，只保留最新（同 generation 或不同 generation 都只留最新）
-                        let mut latest_cc = cc_events;
+                        let mut latest_model = model;
                         let mut latest_target = target_tick;
                         let mut latest_gen = generation;
                         let mut latest_mask = skip_mask;
                         while let Ok(next) = cmd_rx.try_recv() {
                             match next {
                                 WorkerCmd::PrepareChase {
-                                    cc_events,
+                                    model,
                                     target_tick,
                                     generation,
                                     skip_mask,
                                 } => {
-                                    latest_cc = cc_events;
+                                    latest_model = model;
                                     latest_target = target_tick;
                                     latest_gen = generation;
                                     latest_mask = skip_mask;
@@ -415,7 +417,8 @@ pub(crate) fn spawn_worker(
                                 }
                             }
                         }
-                        let states = compute_chase_states(&latest_cc, latest_target, &latest_mask);
+                        let states =
+                            compute_chase_states(&latest_model, latest_target, &latest_mask);
                         let _ = result_tx.send(WorkerResult::ChaseResult {
                             states,
                             generation: latest_gen,
@@ -452,43 +455,99 @@ pub(crate) fn spawn_worker(
     Ok((cmd_tx, result_rx))
 }
 
-/// 在 worker 线程上从 `cc_events[0]` 线性扫到 `target_tick`，构建 256 通道状态快照。
-/// 这部分计算从 renderer 线程移出来（方案 B），避免 seek 时 renderer 阻塞几十万次
-/// `ChannelState::apply`。结果由 renderer 的 `apply_chase_result` 直接 `send_to`。
+/// 在 worker 线程上**查询式**构建 256 通道状态快照：不再从曲首逐条累计
+/// cc_events，而是直接查询模型自动化 lane——每个 lane 二分定位目标位置的
+/// 生效值（Linear/Curve 段实时插值，与 density 无关的真实值），PC 取最后一条。
 ///
-/// `skip_mask`：mute 的音轨的 CC 不参与 chase，使其不影响同 channel 上其他轨道。
-/// 事件比较在 tick 域（cc_events 已按 tick 排序）。
+/// 结果由 renderer 的 `apply_chase_result` 直接 `send_to`。
+/// `skip_mask`：mute 的音轨的 lane/PC 不参与 chase，不影响同 channel 其他轨道。
+///
+/// 复杂度：O(所有未 mute 音轨的 lane 数 × log(lane 事件数))，与曲长无关。
 fn compute_chase_states(
-    cc_events: &[SortedCC],
+    model: &YinModel,
     target_tick: u32,
     skip_mask: &[bool],
 ) -> Box<[ChannelState; 256]> {
-    let mut states: Box<[ChannelState; 256]> = Box::new([ChannelState::default(); 256]);
-    for cc in cc_events {
-        if cc.tick >= target_tick {
-            break;
+    use crate::audio_model::{emit_automation_event, push_program_change};
+
+    // 每通道收集目标位置生效事件（tick 排序后顺序 apply，多 track 同 channel 自动合并）。
+    let mut events: [Vec<SortedCC>; 256] = std::array::from_fn(|_| Vec::new());
+
+    for (track_idx, track) in model.tracks.iter().enumerate() {
+        if skip_mask.get(track_idx).copied().unwrap_or(false) {
+            continue; // mute 轨道不参与 chase
         }
-        // mute 轨道的 CC 不参与 chase
-        if skip_mask.get(cc.track as usize).copied().unwrap_or(false) {
-            continue;
-        }
-        let ch = cc.channel as usize;
+        let ch = track.global_channel() as usize;
         if ch >= 256 {
             continue;
         }
-        states[ch].apply(&cc.event);
+        let out = &mut events[ch];
+        for lane in &track.automation_lanes {
+            if let Some((value, tick)) = lane_value_at(lane, target_tick) {
+                emit_automation_event(&lane.target, value, tick, ch as u32, track_idx as u16, out);
+            }
+        }
+        for pc in &track.program_change {
+            if pc.tick < target_tick {
+                push_program_change(pc, ch as u32, track_idx as u16, out);
+            }
+        }
+    }
+
+    let mut states: Box<[ChannelState; 256]> = Box::new([ChannelState::default(); 256]);
+    for (ch, mut evs) in events.into_iter().enumerate() {
+        if evs.is_empty() {
+            continue;
+        }
+        // 与播放事件流一致：同 tick 参数类（RPN/CC/PC）先于 PitchBendValue。
+        evs.sort_by_key(|e| (e.tick, crate::audio_model::dispatch_priority(&e.event)));
+        let mut state = ChannelState::default();
+        for e in &evs {
+            state.apply(&e.event);
+        }
+        states[ch] = state;
     }
     states
+}
+
+/// 查询 lane 在 `target` 位置的生效值（模型 lane 声明为按 tick 排序）。
+///
+/// - Step：最后一条 `tick < target` 的事件值（保持语义）。
+/// - Linear/Curve：target 落在段内时**实时插值**（真实值，与 flatten 的 density 无关）；
+///   target == 下一事件 tick 时取曲线终点值（连续），Step 则保持上一值。
+/// - 返回 `(value, tick)`；tick 用于与播放事件流一致的排序（曲线插值用 target）。
+fn lane_value_at(lane: &yinhe_types::AutomationLane, target: u32) -> Option<(f32, u32)> {
+    let events = &lane.events;
+    let idx = events.partition_point(|e| e.tick < target);
+    if idx == 0 {
+        return None; // target 之前没有任何事件
+    }
+    let e = &events[idx - 1];
+    if idx < events.len() {
+        let next = &events[idx];
+        if !matches!(e.shape, SegmentShape::Step) && target < next.tick {
+            // 曲线段内：插值真实值（事件 tick 用 target，排序时位于本段生效点）
+            let frac = (target - e.tick) as f32 / (next.tick - e.tick) as f32;
+            let v = e.value + (next.value - e.value) * e.shape.interpolate(frac);
+            return Some((v, target));
+        }
+        if !matches!(e.shape, SegmentShape::Step) && target == next.tick {
+            // 曲线终点：连续到达 next.value（下一事件 tick == target 由 dispatch 处理，
+            // chase 提供同值兜底，chase_skip 会跳过已 dispatch 的控制器）
+            return Some((next.value, next.tick));
+        }
+    }
+    Some((e.value, e.tick))
 }
 
 /// 测试用包装：暴露 `compute_chase_states` 给单元测试。
 #[cfg(test)]
 pub(crate) fn compute_chase_states_for_test(
-    cc_events: &[SortedCC],
+    model: &YinModel,
     target_tick: u32,
     skip_mask: &[bool],
 ) -> Box<[ChannelState; 256]> {
-    compute_chase_states(cc_events, target_tick, skip_mask)
+    compute_chase_states(model, target_tick, skip_mask)
 }
 
 /// 列出系统所有可用输出设备的描述名（cpal `Device::description()`）。

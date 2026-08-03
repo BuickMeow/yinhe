@@ -317,13 +317,15 @@ impl AudioRenderer {
 
     /// 方案 B：发 `PrepareChase` 给 worker 线程异步计算 256 通道状态快照。
     /// worker 完成后回传 `ChaseResult`，`process_worker_results` 应用。
-    /// `chase_generation` 用于丢弃过期结果（cc_events 被 PrepareModel 替换后）。
+    /// `chase_generation` 用于丢弃过期结果（模型被 PrepareModel 替换后）。
     fn request_chase(&self, target_tick: u32) {
-        let cc_events = Arc::clone(&self.engine.cc_events);
+        let Some(model) = self.engine.yin_model.clone() else {
+            return;
+        };
         let generation = self.engine.chase_generation;
         let skip_mask = self.engine.skip_track.clone();
         let _ = self.worker_tx.send(WorkerCmd::PrepareChase {
-            cc_events,
+            model,
             target_tick,
             generation,
             skip_mask,
