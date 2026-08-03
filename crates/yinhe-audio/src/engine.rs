@@ -26,6 +26,9 @@ pub(crate) struct AudioEngine {
     pub(crate) sf_manager: SoundFontManager,
     pub(crate) sample_rate: u32,
     pub(crate) sample_position: u64,
+    /// dispatch 基准（tick 域）：与 sample_position 同步推进（每块末更新，
+    /// seek/load 时由 sample→tick 初始化）。事件比较全在 tick 域。
+    pub(crate) current_tick: u32,
     pub(crate) playing: bool,
     pub(crate) duration_samples: u64,
 
@@ -97,6 +100,7 @@ impl AudioEngine {
                 sf_manager: SoundFontManager::new(sample_rate),
                 sample_rate,
                 sample_position: 0,
+                current_tick: 0,
                 playing: false,
                 duration_samples: 0,
                 note_cursor: [0; 128],
@@ -120,6 +124,34 @@ impl AudioEngine {
 
     pub(crate) fn sample_position(&self) -> u64 {
         self.sample_position
+    }
+
+    /// 当前 dispatch 基准 tick（renderer 发 PrepareChase / 预览时使用）。
+    pub(crate) fn current_tick(&self) -> u32 {
+        self.current_tick
+    }
+
+    /// tick→sample（渲染段边界用）。tempo 信息来自 yin_model。
+    pub(crate) fn tick_to_sample(&self, tick: u32) -> u64 {
+        let Some(m) = &self.yin_model else { return 0 };
+        crate::audio_model::tick_to_sample(
+            tick,
+            &m.tempo_map.tempo_segments,
+            m.tempo_map.ticks_per_beat,
+            self.sample_rate as f64,
+        )
+    }
+
+    /// sample→tick（块边界/seek 基准）。返回满足 `tick_to_sample(t) <= sample`
+    /// 的最大 t（浮点误差已校验修正，见 `sample_to_tick`）。
+    pub(crate) fn sample_to_tick(&self, sample: u64) -> u32 {
+        let Some(m) = &self.yin_model else { return 0 };
+        crate::audio_model::sample_to_tick(
+            sample,
+            &m.tempo_map.tempo_segments,
+            m.tempo_map.ticks_per_beat,
+            self.sample_rate as f64,
+        )
     }
 
     pub(crate) fn playing(&self) -> bool {

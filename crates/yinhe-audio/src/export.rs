@@ -340,9 +340,8 @@ pub fn export_wav_gpu(
             }
 
             let start_sample =
-                crate::audio_model::tick_to_sample(note.start_tick as u64, segments, tpb, sr);
-            let end_sample =
-                crate::audio_model::tick_to_sample(note.end_tick as u64, segments, tpb, sr);
+                crate::audio_model::tick_to_sample(note.start_tick, segments, tpb, sr);
+            let end_sample = crate::audio_model::tick_to_sample(note.end_tick, segments, tpb, sr);
 
             events.push(yinhe_synth::SynthEvent {
                 sample: start_sample,
@@ -374,12 +373,7 @@ pub fn export_wav_gpu(
         let mut max_sample = 0u64;
         for key in 0..128usize {
             if let Some(last_note) = model.notes[key].last() {
-                let end = crate::audio_model::tick_to_sample(
-                    last_note.end_tick as u64,
-                    segments,
-                    tpb,
-                    sr,
-                );
+                let end = crate::audio_model::tick_to_sample(last_note.end_tick, segments, tpb, sr);
                 if end > max_sample {
                     max_sample = end;
                 }

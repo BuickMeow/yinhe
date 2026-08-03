@@ -524,11 +524,12 @@ impl App {
     /// 发送音符听觉预览请求（铅笔新建/拖拽、选框拖拽产生）。
     ///
     /// - 通道 = 目标音轨的全局通道；
-    /// - 目标位置自动化状态 = `target_tick` 处的自动化（渲染器按 target_sample chase）；
+    /// - 目标位置自动化状态 = `target_tick` 处的自动化（渲染器按 target_tick chase）；
     /// - 时长换算用目标位置的 Tempo（tempo_map 自动变速）；
     /// - 力度缺省时用该音轨最近修改力度（default_velocity）。
     ///
     /// 整组合并成一条 `PreviewNotes` 命令发送（一次替换整组，且不占命令通道额度）。
+    /// 时刻全在 tick 域（与编辑层一致），渲染线程内部转 sample。
     pub(crate) fn send_note_previews(&self, reqs: &[crate::piano_view::PreviewReq]) {
         if reqs.is_empty() {
             return;
@@ -538,7 +539,6 @@ impl App {
         };
         let doc = &self.documents[idx];
         let model = &doc.data.model;
-        let sr = audio.sample_rate as f64;
         let mut notes: Vec<yinhe_audio::PreviewNoteParams> = Vec::new();
         let mut stop = false;
         for req in reqs {
@@ -548,17 +548,6 @@ impl App {
                         continue;
                     };
                     let channel = track.global_channel();
-                    let target =
-                        (model.tempo_map.tick_to_seconds(p.target_tick as u64) * sr) as u64;
-                    let duration = if p.duration_ticks > 0 {
-                        let end = (model
-                            .tempo_map
-                            .tick_to_seconds((p.target_tick + p.duration_ticks) as u64)
-                            * sr) as u64;
-                        end.saturating_sub(target)
-                    } else {
-                        0
-                    };
                     let velocity = p
                         .velocity
                         .unwrap_or_else(|| doc.edit.default_velocity(p.track));
@@ -566,8 +555,8 @@ impl App {
                         channel,
                         key: p.key,
                         velocity,
-                        target_sample: target,
-                        duration_samples: duration,
+                        target_tick: p.target_tick,
+                        duration_ticks: p.duration_ticks,
                     });
                 }
                 crate::piano_view::PreviewReq::Stop => stop = true,

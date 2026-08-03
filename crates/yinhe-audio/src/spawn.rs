@@ -91,16 +91,16 @@ pub enum AudioCommand {
     PreviewStop,
 }
 
-/// 单个预览音符的参数。
+/// 单个预览音符的参数（tick 域，与编辑层一致；渲染线程转 sample 差喂预览引擎）。
 pub struct PreviewNoteParams {
     /// 全局通道（port<<4 | channel）。
     pub channel: u8,
     pub key: u8,
     pub velocity: u8,
-    /// 目标位置 sample：该处的自动化状态（volume/pan/PBS/Program 等）用于预览。
-    pub target_sample: u64,
-    /// 渲染帧数上限；0 = 持续音（等 `PreviewStop`）。
-    pub duration_samples: u64,
+    /// 目标位置 tick：该处的自动化状态（volume/pan/PBS/Program 等）用于预览。
+    pub target_tick: u32,
+    /// 预览时长（tick）；0 = 持续音（等 `PreviewStop`）。
+    pub duration_ticks: u32,
 }
 
 /// Handle used by the UI to control audio playback.
@@ -255,12 +255,12 @@ pub(crate) enum WorkerCmd {
     PrepareModel(Arc<YinModel>, u32),
     /// Notes-only prepare: audible_notes + duration (UpdateNotes). No cc_events rebuild.
     PrepareNotes(Arc<YinModel>),
-    /// Compute channel-state snapshot at `target_sample` by linear-scanning `cc_events`.
+    /// Compute channel-state snapshot at `target_tick` by linear-scanning `cc_events`.
     /// `generation` matches `AudioEngine::chase_generation` so the renderer can
     /// discard stale results after a PrepareModel replaces cc_events.
     PrepareChase {
         cc_events: Arc<Vec<SortedCC>>,
-        target_sample: u64,
+        target_tick: u32,
         generation: u64,
         /// 当前 skip_track 快照，chase 时跳过 mute 轨道的 CC。
         skip_mask: Vec<bool>,
@@ -388,25 +388,25 @@ pub(crate) fn spawn_worker(
                     }
                     WorkerCmd::PrepareChase {
                         cc_events,
-                        target_sample,
+                        target_tick,
                         generation,
                         skip_mask,
                     } => {
                         // 合并连续 PrepareChase，只保留最新（同 generation 或不同 generation 都只留最新）
                         let mut latest_cc = cc_events;
-                        let mut latest_target = target_sample;
+                        let mut latest_target = target_tick;
                         let mut latest_gen = generation;
                         let mut latest_mask = skip_mask;
                         while let Ok(next) = cmd_rx.try_recv() {
                             match next {
                                 WorkerCmd::PrepareChase {
                                     cc_events,
-                                    target_sample,
+                                    target_tick,
                                     generation,
                                     skip_mask,
                                 } => {
                                     latest_cc = cc_events;
-                                    latest_target = target_sample;
+                                    latest_target = target_tick;
                                     latest_gen = generation;
                                     latest_mask = skip_mask;
                                 }
@@ -452,19 +452,20 @@ pub(crate) fn spawn_worker(
     Ok((cmd_tx, result_rx))
 }
 
-/// 在 worker 线程上从 `cc_events[0]` 线性扫到 `target_sample`，构建 256 通道状态快照。
+/// 在 worker 线程上从 `cc_events[0]` 线性扫到 `target_tick`，构建 256 通道状态快照。
 /// 这部分计算从 renderer 线程移出来（方案 B），避免 seek 时 renderer 阻塞几十万次
 /// `ChannelState::apply`。结果由 renderer 的 `apply_chase_result` 直接 `send_to`。
 ///
 /// `skip_mask`：mute 的音轨的 CC 不参与 chase，使其不影响同 channel 上其他轨道。
+/// 事件比较在 tick 域（cc_events 已按 tick 排序）。
 fn compute_chase_states(
     cc_events: &[SortedCC],
-    target_sample: u64,
+    target_tick: u32,
     skip_mask: &[bool],
 ) -> Box<[ChannelState; 256]> {
     let mut states: Box<[ChannelState; 256]> = Box::new([ChannelState::default(); 256]);
     for cc in cc_events {
-        if cc.sample >= target_sample {
+        if cc.tick >= target_tick {
             break;
         }
         // mute 轨道的 CC 不参与 chase
@@ -484,10 +485,10 @@ fn compute_chase_states(
 #[cfg(test)]
 pub(crate) fn compute_chase_states_for_test(
     cc_events: &[SortedCC],
-    target_sample: u64,
+    target_tick: u32,
     skip_mask: &[bool],
 ) -> Box<[ChannelState; 256]> {
-    compute_chase_states(cc_events, target_sample, skip_mask)
+    compute_chase_states(cc_events, target_tick, skip_mask)
 }
 
 /// 列出系统所有可用输出设备的描述名（cpal `Device::description()`）。

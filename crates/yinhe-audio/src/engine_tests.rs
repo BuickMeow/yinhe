@@ -59,28 +59,28 @@ fn make_model_with_notes(notes: Vec<(u8, u32, u32, u8, u8)>) -> YinModel {
 fn test_sorted_cc_ordering() {
     let mut cc = [
         SortedCC {
-            sample: 100,
+            tick: 100,
             channel: 0,
             track: 0,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 80)),
         },
         SortedCC {
-            sample: 50,
+            tick: 50,
             channel: 0,
             track: 0,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 100)),
         },
         SortedCC {
-            sample: 200,
+            tick: 200,
             channel: 0,
             track: 0,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 60)),
         },
     ];
-    cc.sort_by_key(|e| e.sample);
-    assert_eq!(cc[0].sample, 50);
-    assert_eq!(cc[1].sample, 100);
-    assert_eq!(cc[2].sample, 200);
+    cc.sort_by_key(|e| e.tick);
+    assert_eq!(cc[0].tick, 50);
+    assert_eq!(cc[1].tick, 100);
+    assert_eq!(cc[2].tick, 200);
 }
 
 #[test]
@@ -93,9 +93,10 @@ fn test_render_dispatches_note_inside_large_buffer_at_exact_sample() {
     engine.load_model(&model);
     engine.playing = true;
 
-    // Note at key 60, start_tick=960, velocity=100 → should dispatch at sample 48000.
-    let next = engine.dispatch_and_find_next(48000, 60000);
-    // NoteOff at tick1440 = 72000 samples > block_end 60000, so no next event in range.
+    // Note at key 60, start_tick=960, velocity=100 → should dispatch at tick 960.
+    // @48000Hz 1 tick = 50 sample：960 tick = 48000 sample，1200 tick = 60000 sample。
+    let next = engine.dispatch_and_find_next(960, 1200);
+    // NoteOff at tick 1440 > block_end 1200, so no next event in range.
     assert_eq!(next, None);
 
     assert_eq!(engine.note_cursor[60], 1);
@@ -180,9 +181,10 @@ fn test_audible_index_filters_vel_and_inactive_channel() {
     engine.load_model(&model);
 
     assert_eq!(engine.note_cursor[60], 0);
-    // Note at key 60, start_tick=960, velocity=100 → should dispatch at sample 44100.
-    let next = engine.dispatch_and_find_next(44100, 60000);
-    // Next note (other track) starts at tick1440 = 132300 > block_end, so no next event.
+    // Note at key 60, start_tick=960, velocity=100 → should dispatch at tick 960
+    //（44100 Hz：1 tick = 45.94 sample，960 tick = 44100 sample）。
+    let next = engine.dispatch_and_find_next(960, 1306);
+    // Next note (other track) starts at tick1440 = 66150 sample > block_end, so no next event.
     assert_eq!(next, None);
     // audible_notes 桶里只有 vel>1 的音符（哑音在 worker 线程已剔除）。
     // key 60 桶：1 个 vel=100 音符（start=44100），dispatch 后 cursor=1。
@@ -271,29 +273,29 @@ fn test_audible_index_uses_per_key_tempo_cursor() {
     let mut engine = AudioEngine::new(48000, ChannelLayout::from_mask(mask));
     engine.load_model(&Arc::new(model));
 
-    // Note at key 0, start_tick=2000 → ~150000 samples at 48000 Hz (120→60 BPM at tick 1000).
-    // Note at key 60, start_tick=480 → 24000 samples at 48000 Hz.
-    let next = engine.dispatch_and_find_next(24000, 200000);
-    // NoteOff at end_tick=960 = 48000 samples is the next event (before key 0 at 150000).
-    assert_eq!(next, Some(48000));
+    // Note at key 0, start_tick=2000（60 BPM 段，1 tick = 100 sample @48000Hz）。
+    // Note at key 60, start_tick=480 → 24000 samples（120 BPM 段，1 tick = 50 sample）。
+    let next = engine.dispatch_and_find_next(480, 2500);
+    // NoteOff at end_tick=960 是下一个事件（早于 key 0 的 NoteOn at 2000）。
+    assert_eq!(next, Some(960));
     assert_eq!(engine.note_cursor[60], 1);
     assert_eq!(engine.active_notes.len(), 1);
 
-    let next = engine.dispatch_and_find_next(48000, 200000);
-    // After dispatching NoteOff at 48000, next event is key 0 NoteOn at ~150000.
-    assert_eq!(next, Some(150000));
+    let next = engine.dispatch_and_find_next(960, 2500);
+    // 处理 NoteOff 960 后，下一个事件是 key 0 的 NoteOn at 2000。
+    assert_eq!(next, Some(2000));
     // key 60 ended, so only key 0 is active.
     assert_eq!(engine.active_notes.len(), 0);
 
-    let next = engine.dispatch_and_find_next(150000, 200000);
-    // After dispatching key 0 NoteOn, NoteOff at end_tick=2480 = 198000 samples.
-    assert_eq!(next, Some(198000));
+    let next = engine.dispatch_and_find_next(2000, 2500);
+    // key 0 NoteOn 后，NoteOff at end_tick=2480。
+    assert_eq!(next, Some(2480));
     assert_eq!(engine.note_cursor[0], 1);
     // key 0 is active.
     assert_eq!(engine.active_notes.len(), 1);
 
-    let next = engine.dispatch_and_find_next(198000, 200000);
-    // No more events in [198000, 200000).
+    let next = engine.dispatch_and_find_next(2480, 2500);
+    // [2480, 2500) 内无更多事件。
     assert_eq!(next, None);
     assert_eq!(engine.active_notes.len(), 0);
 }
@@ -517,10 +519,7 @@ fn test_reload_notes_rebuilds_cc_pb_pc_rpn() {
 
     // Assert events are sorted (so the schedule loop's monotonic cursor works).
     for w in engine.cc_events.windows(2) {
-        assert!(
-            w[0].sample <= w[1].sample,
-            "cc_events must be sorted by sample"
-        );
+        assert!(w[0].tick <= w[1].tick, "cc_events must be sorted by tick");
     }
 
     // Reload again with an empty model — cc_events must drain to zero.
@@ -798,7 +797,7 @@ fn test_track_existence_activates_channel() {
 
     // NoteOff at tick 480 = 1 beat @ 120 BPM @ 44100 Hz = 22050 samples.
     let next = engine.dispatch_and_find_next(0, 60000);
-    assert_eq!(next, Some(22050));
+    assert_eq!(next, Some(480));
     assert_eq!(engine.note_cursor[60], 1);
     assert_eq!(engine.active_notes.len(), 1);
 }
@@ -849,7 +848,7 @@ fn test_first_note_on_fresh_document_dispatches_without_rebuild() {
     });
 
     let next = engine.dispatch_and_find_next(0, 60000);
-    assert_eq!(next, Some(22050));
+    assert_eq!(next, Some(480));
     assert_eq!(engine.note_cursor[60], 1);
     assert_eq!(engine.active_notes.len(), 1);
 }
@@ -935,16 +934,16 @@ fn test_notes_delta_incremental_apply_keeps_clean_bucket_cursor() {
     assert_eq!(engine.note_cursor[64], 1, "干净桶 cursor 保留");
     assert_eq!(engine.note_cursor[60], 1, "dirty 桶 cursor 重算");
 
-    // 继续 dispatch：22050 = 两个 NoteOff，44100 = 新音符（960 tick）的 NoteOn
-    let next = engine.dispatch_and_find_next(22050, 60000);
-    assert_eq!(next, Some(44100), "新音符 NoteOn 位置");
+    // 继续 dispatch：480 = 两个 NoteOff，960 = 新音符（960 tick）的 NoteOn
+    let next = engine.dispatch_and_find_next(480, 60000);
+    assert_eq!(next, Some(960), "新音符 NoteOn 位置");
     assert_eq!(
         engine.active_notes.len(),
         0,
         "两个 NoteOff 已弹，新音符未到"
     );
-    let next = engine.dispatch_and_find_next(44100, 70000);
-    assert_eq!(next, Some(66150), "新音符 NoteOff = 1440 tick");
+    let next = engine.dispatch_and_find_next(960, 70000);
+    assert_eq!(next, Some(1440), "新音符 NoteOff = 1440 tick");
     assert_eq!(engine.active_notes.len(), 1, "新音符已 NoteOn");
 }
 ///
@@ -991,7 +990,7 @@ fn test_add_track_then_rebuild_activates_new_channel() {
     let mut engine = spawn_engine_for_doc(&doc, sample_rate);
     engine.playing = true;
     let next = engine.dispatch_and_find_next(0, 60000);
-    assert_eq!(next, Some(22050));
+    assert_eq!(next, Some(480));
     assert_eq!(engine.note_cursor[60], 1);
     assert_eq!(engine.active_notes.len(), 1);
 }
@@ -1045,7 +1044,7 @@ fn test_remove_track_then_rebuild_deactivates_channel() {
     let mut engine = spawn_engine_for_doc(&doc, sample_rate);
     engine.playing = true;
     let next = engine.dispatch_and_find_next(0, 60000);
-    assert_eq!(next, Some(22050));
+    assert_eq!(next, Some(480));
     assert_eq!(engine.note_cursor[60], 1);
     assert_eq!(engine.note_cursor[64], 0);
     assert_eq!(engine.active_notes.len(), 1);
@@ -1079,13 +1078,13 @@ fn test_muted_track_cc_skipped_in_dispatch() {
     // 注入两条 CC 事件：track 0（mute）和 track 1（非 mute），同 channel 0
     engine.cc_events = Arc::new(vec![
         SortedCC {
-            sample: 0,
+            tick: 0,
             channel: 0,
             track: 0,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 40)),
         },
         SortedCC {
-            sample: 0,
+            tick: 0,
             channel: 0,
             track: 1,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 100)),
@@ -1111,21 +1110,21 @@ fn test_muted_track_cc_skipped_in_chase() {
     let cc_events = vec![
         // track 0（将被 mute）的 CC7=40
         SortedCC {
-            sample: 100,
+            tick: 100,
             channel: 0,
             track: 0,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 40)),
         },
         // track 1（非 mute）的 CC7=100
         SortedCC {
-            sample: 200,
+            tick: 200,
             channel: 0,
             track: 1,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 100)),
         },
     ];
 
-    // chase 到 sample 300，skip track 0
+    // chase 到 tick 300，skip track 0
     let states = crate::spawn::compute_chase_states_for_test(&cc_events, 300, &[true, false]);
     // track 0 的 CC7=40 被跳过，只有 track 1 的 CC7=100 生效
     // CC7 映射到 ChannelState.volume
@@ -1242,16 +1241,15 @@ fn test_chase_after_seek_skips_dispatched_controllers() {
 
     let seek_sample = (model.tempo_map.tick_to_seconds(768) * sr as f64) as u64;
     engine.seek_to(seek_sample);
+    // seek 后 current_tick = sample_to_tick(seek_sample) = 768
+    assert_eq!(engine.current_tick(), 768, "seek 位置应反查回 768 tick");
 
-    // 渲染器第一帧：dispatch seek 点及之后 512 帧的事件（含 t768 的 PBS=48、CC7=80）
-    engine.dispatch_and_find_next(seek_sample, seek_sample + 512);
+    // 渲染器第一帧：dispatch seek 点及之后的事件（含 t768 的 PBS=48、CC7=80）
+    engine.dispatch_and_find_next(768, 768 + 512);
 
     // worker 异步算出的 chase 快照：seek 之前的状态
-    let states = crate::spawn::compute_chase_states_for_test(
-        &engine.cc_events,
-        seek_sample,
-        &engine.skip_track,
-    );
+    let states =
+        crate::spawn::compute_chase_states_for_test(&engine.cc_events, 768, &engine.skip_track);
     assert_eq!(states[0].pitch_bend_sensitivity, 2.0, "seek 前 PBS=2");
     assert_eq!(states[0].volume, 100, "seek 前 CC7=100");
 
@@ -1274,7 +1272,7 @@ fn test_chase_after_seek_skips_dispatched_controllers() {
     // 应用 chase 结果（跳过逻辑的行为由 events_to_send 单测覆盖）
     engine.apply_chase_result(states);
     // seek 后继续渲染不应 panic，且后续事件照常 dispatch
-    engine.dispatch_and_find_next(seek_sample + 512, seek_sample + 2048);
+    engine.dispatch_and_find_next(768 + 512, 768 + 2048);
 }
 
 #[test]
@@ -1284,42 +1282,42 @@ fn test_chase_channel_states_incremental() {
     let cc_events = vec![
         // ch0 的 CC7=100
         SortedCC {
-            sample: 10,
+            tick: 10,
             channel: 0,
             track: 0,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 100)),
         },
         // ch1 的 CC7=50（不应影响 ch0）
         SortedCC {
-            sample: 20,
+            tick: 20,
             channel: 1,
             track: 1,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 50)),
         },
         // ch0 的 CC10=80（pan）
         SortedCC {
-            sample: 30,
+            tick: 30,
             channel: 0,
             track: 0,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(10, 80)),
         },
         // ch0 的 CC7=90（最新）
         SortedCC {
-            sample: 40,
+            tick: 40,
             channel: 0,
             track: 0,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 90)),
         },
         // ch0 的 PBS=48
         SortedCC {
-            sample: 45,
+            tick: 45,
             channel: 0,
             track: 0,
             event: ChannelAudioEvent::Control(ControlEvent::PitchBendSensitivity(48.0)),
         },
-        // 边界：sample == target 不参与
+        // 边界：tick == target 不参与
         SortedCC {
-            sample: 50,
+            tick: 50,
             channel: 0,
             track: 0,
             event: ChannelAudioEvent::Control(ControlEvent::Raw(7, 10)),

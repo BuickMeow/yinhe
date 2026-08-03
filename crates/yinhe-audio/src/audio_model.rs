@@ -6,7 +6,9 @@ use yinhe_core::YinModel;
 use yinhe_types::{AutomationTarget, SegmentShape};
 
 pub(crate) struct SortedCC {
-    pub(crate) sample: u64,
+    /// 事件时刻（tick 域，u32——模型 NoteEvent/AutomationEvent 的 tick 上限）。
+    /// 音频内部统一 tick 域：dispatch/chase 比较不再需要 sample 转换。
+    pub(crate) tick: u32,
     pub(crate) channel: u32,
     /// 源音轨索引，用于 mute 时过滤自动化事件。
     pub(crate) track: u16,
@@ -15,21 +17,19 @@ pub(crate) struct SortedCC {
 
 /// 活跃音符（已 NoteOn 待 NoteOff）。
 ///
-/// `Ord` 按 `end_sample` 升序，相同 end_sample 再按 (key, channel) 区分。
+/// `Ord` 按 `end_tick` 升序，相同 end_tick 再按 (key, channel) 区分。
 /// 配合 `BinaryHeap<Reverse<ActiveNote>>` 用作 min-heap，让最早结束的音符在堆顶，
 /// NoteOff 检测从 O(V) retain 全扫降到 O(ended × log V) 逐个 pop。
 #[derive(Clone, Copy)]
 pub(crate) struct ActiveNote {
     pub(crate) key: u8,
     pub(crate) channel: u8,
-    pub(crate) end_sample: u64,
+    pub(crate) end_tick: u32,
 }
 
 impl PartialEq for ActiveNote {
     fn eq(&self, other: &Self) -> bool {
-        self.end_sample == other.end_sample
-            && self.key == other.key
-            && self.channel == other.channel
+        self.end_tick == other.end_tick && self.key == other.key && self.channel == other.channel
     }
 }
 impl Eq for ActiveNote {}
@@ -40,23 +40,26 @@ impl PartialOrd for ActiveNote {
 }
 impl Ord for ActiveNote {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.end_sample
-            .cmp(&other.end_sample)
+        self.end_tick
+            .cmp(&other.end_tick)
             .then(self.key.cmp(&other.key))
             .then(self.channel.cmp(&other.channel))
     }
 }
 
-/// 音频线程消费的可听音事件（vel > 1），tick 已预转换为 sample。
-/// 桶内按 `start_sample` 严格升序排列（YinModel.notes[key] 本身按 start_tick 升序，
-/// tick→sample 单调，所以转换后保持有序）。
+/// 音频线程消费的可听音事件（vel > 1），时刻存 **tick**（u32，与模型一致）。
+/// 桶内按 `start_tick` 严格升序（YinModel.notes[key] 本身按 start_tick 排序，
+/// tick 天然单调，**无需再 sort**）。
 ///
 /// `key` 不存（桶索引即 key）。`id` 用于 undo/redo 后跨 prepared model
 /// 引用同一音符（暂未使用，预留）。
+///
+/// tick 域化：1 亿音符下每条约 24→16 字节（-0.8GB），且 dispatch 比较
+/// 不再需要 tick→sample 转换；只有"渲染段边界"才转 sample（每块少量）。
 #[repr(C)]
 pub(crate) struct AudibleNote {
-    pub start_sample: u64,
-    pub end_sample: u64,
+    pub start_tick: u32,
+    pub end_tick: u32,
     pub id: u32,
     pub track: u16,
     pub velocity: u8,
@@ -75,7 +78,7 @@ pub(crate) struct PreparedModel {
     /// (for seek/chase dispatch) and the worker thread (for chase computation)
     /// without cloning the (potentially hundreds of thousands of) events.
     pub cc_events: Arc<Vec<SortedCC>>,
-    /// 128 个 key 桶的可听音（vel > 1），tick 已转 sample。
+    /// 128 个 key 桶的可听音（vel > 1），时刻为 tick（u32）。
     /// 音频线程的 seek / dispatch 只读这份列表，不再访问 YinModel.notes。
     pub audible_notes: Box<[Vec<AudibleNote>; 128]>,
     pub duration_samples: u64,
@@ -132,19 +135,58 @@ impl AudioModel {
 
 /// Convert a tick value to sample position using the tempo map.
 pub(crate) fn tick_to_sample(
-    tick: u64,
+    tick: u32,
     segments: &[yinhe_core::TempoSegment],
     tpb: u32,
     sr: f64,
 ) -> u64 {
-    let idx = match segments.binary_search_by_key(&tick, |s| s.start_tick as u64) {
+    let idx = match segments.binary_search_by_key(&tick, |s| s.start_tick) {
         Ok(i) => i,
         Err(i) => i.saturating_sub(1),
     };
     let seg = &segments[idx];
     let secs = seg.start_time
-        + yinhe_core::ticks_to_seconds(tick - seg.start_tick as u64, tpb, seg.micros_per_quarter);
+        + yinhe_core::ticks_to_seconds((tick - seg.start_tick) as u64, tpb, seg.micros_per_quarter);
     (secs * sr) as u64
+}
+
+/// Convert a sample position back to the tick domain (floor), for dispatch
+///基准/seek。返回满足 `tick_to_sample(t) <= sample` 的**最大** t。
+///
+/// 浮点误差防护：floor 后向上校验（tick_to_sample 单调，最多修正 1-2 次），
+/// 保证 dispatch 不会因低估基准而漏触发已到位置的事件。
+pub(crate) fn sample_to_tick(
+    sample: u64,
+    segments: &[yinhe_core::TempoSegment],
+    tpb: u32,
+    sr: f64,
+) -> u32 {
+    if segments.is_empty() {
+        return 0;
+    }
+    let time = sample as f64 / sr;
+    // 找 start_time <= time 的段（按 start_time 二分）
+    let idx = segments
+        .partition_point(|s| s.start_time <= time)
+        .saturating_sub(1);
+    let seg = &segments[idx];
+    let secs_per_tick = if tpb == 0 {
+        0.0
+    } else {
+        seg.micros_per_quarter as f64 / (tpb as f64 * 1_000_000.0)
+    };
+    let mut t = if secs_per_tick > 0.0 {
+        ((time - seg.start_time) / secs_per_tick).floor() as i64 + seg.start_tick as i64
+    } else {
+        seg.start_tick as i64
+    };
+    t = t.max(0);
+    // 向上校验：确保返回最大满足 tick_to_sample(t) <= sample 的 t。
+    // 若 floor 因浮点误差低估，这里补到真实边界（循环最多几次）。
+    while tick_to_sample(t as u32, segments, tpb, sr) <= sample && t < u32::MAX as i64 {
+        t += 1;
+    }
+    (t - 1).max(0) as u32
 }
 
 /// Flatten automation lanes + program changes into sorted, deduped SortedCC events.
@@ -159,10 +201,8 @@ pub(crate) fn tick_to_sample(
 /// the worker thread (for chase computation) without cloning.
 pub(crate) fn flatten_automation_to_cc_events(
     model: &YinModel,
-    sample_rate: u32,
     density: u32,
 ) -> Arc<Vec<SortedCC>> {
-    let sr = sample_rate as f64;
     let density = density.max(1);
     let mut cc_events = Vec::new();
 
@@ -173,11 +213,11 @@ pub(crate) fn flatten_automation_to_cc_events(
         for lane in &track.automation_lanes {
             let n = lane.events.len();
             for (i, e) in lane.events.iter().enumerate() {
-                let sample = (model.tempo_map.tick_to_seconds(e.tick as u64) * sr) as u64;
+                // tick 域：事件时刻直接存模型的 tick（u32），不再转 sample。
                 emit_automation_event(
                     &lane.target,
                     e.value,
-                    sample,
+                    e.tick,
                     channel,
                     track_idx_u16,
                     &mut cc_events,
@@ -197,11 +237,10 @@ pub(crate) fn flatten_automation_to_cc_events(
                             let frac = (t - tick1) as f32 / span;
                             let f = e.shape.interpolate(frac);
                             let v = v1 + (v2 - v1) * f;
-                            let s = (model.tempo_map.tick_to_seconds(t as u64) * sr) as u64;
                             emit_automation_event(
                                 &lane.target,
                                 v,
-                                s,
+                                t,
                                 channel,
                                 track_idx_u16,
                                 &mut cc_events,
@@ -214,10 +253,10 @@ pub(crate) fn flatten_automation_to_cc_events(
         }
 
         for e in &track.program_change {
-            let sample = (model.tempo_map.tick_to_seconds(e.tick as u64) * sr) as u64;
+            let tick = e.tick;
             if e.bank_msb != 0xFF {
                 cc_events.push(SortedCC {
-                    sample,
+                    tick,
                     channel,
                     track: track_idx_u16,
                     event: ChannelAudioEvent::Control(ControlEvent::Raw(0, e.bank_msb)),
@@ -225,14 +264,14 @@ pub(crate) fn flatten_automation_to_cc_events(
             }
             if e.bank_lsb != 0xFF {
                 cc_events.push(SortedCC {
-                    sample,
+                    tick,
                     channel,
                     track: track_idx_u16,
                     event: ChannelAudioEvent::Control(ControlEvent::Raw(32, e.bank_lsb)),
                 });
             }
             cc_events.push(SortedCC {
-                sample,
+                tick,
                 channel,
                 track: track_idx_u16,
                 event: ChannelAudioEvent::ProgramChange(e.program),
@@ -240,11 +279,11 @@ pub(crate) fn flatten_automation_to_cc_events(
         }
     }
 
-    // 排序：同 sample 同 channel 下，RPN/参数类事件必须排在 PitchBendValue 之前。
+    // 排序：同 tick 同 channel 下，RPN/参数类事件必须排在 PitchBendValue 之前。
     // 原因：xsynth 收到 PitchBendValue 时会按当前 PBS 立即计算弯音并作用于已响 voice，
     // 若 PBS 尚未更新，PB 会用旧 PBS 算出错误音高。见 commit 3490e02。
     // sort_by_key 稳定，同 priority 仍按插入顺序。
-    cc_events.sort_by_key(|e| (e.sample, e.channel, dispatch_priority(&e.event)));
+    cc_events.sort_by_key(|e| (e.tick, e.channel, dispatch_priority(&e.event)));
     cc_events.dedup_by(|a, b| a.channel == b.channel && a.event == b.event);
     Arc::new(cc_events)
 }
@@ -260,10 +299,11 @@ fn dispatch_priority(event: &ChannelAudioEvent) -> u8 {
 }
 
 /// 将单个 automation 值转换成 XSynth 事件并推入 `out`。
+/// 事件时刻为 tick（u32，与模型一致）。
 fn emit_automation_event(
     target: &AutomationTarget,
     value: f32,
-    sample: u64,
+    tick: u32,
     channel: u32,
     track: u16,
     out: &mut Vec<SortedCC>,
@@ -271,7 +311,7 @@ fn emit_automation_event(
     match target {
         AutomationTarget::CC { controller } => {
             out.push(SortedCC {
-                sample,
+                tick,
                 channel,
                 track,
                 event: ChannelAudioEvent::Control(ControlEvent::Raw(
@@ -282,7 +322,7 @@ fn emit_automation_event(
         }
         AutomationTarget::PitchBend => {
             out.push(SortedCC {
-                sample,
+                tick,
                 channel,
                 track,
                 event: ChannelAudioEvent::Control(ControlEvent::PitchBendValue(
@@ -294,7 +334,7 @@ fn emit_automation_event(
             match parameter {
                 0 => {
                     out.push(SortedCC {
-                        sample,
+                        tick,
                         channel,
                         track,
                         event: ChannelAudioEvent::Control(ControlEvent::PitchBendSensitivity(
@@ -305,7 +345,7 @@ fn emit_automation_event(
                 1 => {
                     let fine = (value - 8192.0) / 8192.0 * 100.0;
                     out.push(SortedCC {
-                        sample,
+                        tick,
                         channel,
                         track,
                         event: ChannelAudioEvent::Control(ControlEvent::FineTune(fine)),
@@ -314,7 +354,7 @@ fn emit_automation_event(
                 2 => {
                     let coarse = value - 64.0;
                     out.push(SortedCC {
-                        sample,
+                        tick,
                         channel,
                         track,
                         event: ChannelAudioEvent::Control(ControlEvent::CoarseTune(coarse)),
@@ -331,26 +371,26 @@ fn emit_automation_event(
                         (value.round().clamp(0.0, 127.0) as u8, 0u8)
                     };
                     out.push(SortedCC {
-                        sample,
+                        tick,
                         channel,
                         track,
                         event: ChannelAudioEvent::Control(ControlEvent::Raw(101, msb)),
                     });
                     out.push(SortedCC {
-                        sample,
+                        tick,
                         channel,
                         track,
                         event: ChannelAudioEvent::Control(ControlEvent::Raw(100, lsb)),
                     });
                     out.push(SortedCC {
-                        sample,
+                        tick,
                         channel,
                         track,
                         event: ChannelAudioEvent::Control(ControlEvent::Raw(6, data_msb)),
                     });
                     if data_lsb != 0 {
                         out.push(SortedCC {
-                            sample,
+                            tick,
                             channel,
                             track,
                             event: ChannelAudioEvent::Control(ControlEvent::Raw(38, data_lsb)),
@@ -366,26 +406,26 @@ fn emit_automation_event(
             let data_msb = ((v >> 7) & 0x7F) as u8;
             let data_lsb = (v & 0x7F) as u8;
             out.push(SortedCC {
-                sample,
+                tick,
                 channel,
                 track,
                 event: ChannelAudioEvent::Control(ControlEvent::Raw(99, msb)),
             });
             out.push(SortedCC {
-                sample,
+                tick,
                 channel,
                 track,
                 event: ChannelAudioEvent::Control(ControlEvent::Raw(98, lsb)),
             });
             out.push(SortedCC {
-                sample,
+                tick,
                 channel,
                 track,
                 event: ChannelAudioEvent::Control(ControlEvent::Raw(6, data_msb)),
             });
             if data_lsb != 0 {
                 out.push(SortedCC {
-                    sample,
+                    tick,
                     channel,
                     track,
                     event: ChannelAudioEvent::Control(ControlEvent::Raw(38, data_lsb)),
@@ -470,7 +510,7 @@ mod tests {
             },
         ];
         let model = model_with_lanes(lanes);
-        let events = flatten_automation_to_cc_events(&model, 44100, 1);
+        let events = flatten_automation_to_cc_events(&model, 1);
 
         let pbs_idx = index_of(&events, |e| {
             matches!(
@@ -522,7 +562,7 @@ mod tests {
             },
         ];
         let model = model_with_lanes(lanes);
-        let events = flatten_automation_to_cc_events(&model, 44100, 1);
+        let events = flatten_automation_to_cc_events(&model, 1);
 
         let rpn_cc101_idx = index_of(&events, |e| {
             matches!(e, ChannelAudioEvent::Control(ControlEvent::Raw(101, _)))
@@ -568,7 +608,7 @@ mod tests {
             },
         ];
         let model = model_with_lanes(lanes);
-        let events = flatten_automation_to_cc_events(&model, 44100, 1);
+        let events = flatten_automation_to_cc_events(&model, 1);
 
         let nrpn_cc99_idx = index_of(&events, |e| {
             matches!(e, ChannelAudioEvent::Control(ControlEvent::Raw(99, _)))
@@ -623,7 +663,7 @@ mod tests {
             },
         ];
         let model = model_with_lanes(lanes);
-        let events = flatten_automation_to_cc_events(&model, 44100, 1);
+        let events = flatten_automation_to_cc_events(&model, 1);
 
         let fine_idx = index_of(&events, |e| {
             matches!(e, ChannelAudioEvent::Control(ControlEvent::FineTune(_)))

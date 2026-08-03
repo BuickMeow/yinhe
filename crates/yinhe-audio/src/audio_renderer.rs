@@ -184,8 +184,8 @@ impl AudioRenderer {
                                     synth.seek(from_sample);
                                 }
                                 self.clear_buffered_audio();
-                                // 方案 B：seek 后异步 chase
-                                self.request_chase(from_sample);
+                                // 方案 B：seek 后异步 chase（current_tick 已由 seek 更新）
+                                self.request_chase(self.engine.current_tick());
                             } else {
                                 self.engine.set_pending_play(from_sample);
                             }
@@ -198,8 +198,8 @@ impl AudioRenderer {
                                 synth.seek(sample);
                             }
                             self.clear_buffered_audio();
-                            // 方案 B：seek 后异步 chase
-                            self.request_chase(sample);
+                            // 方案 B：seek 后异步 chase（current_tick 已由 seek 更新）
+                            self.request_chase(self.engine.current_tick());
                         }
                         AudioCommand::Stop => {
                             self.preview_engine.stop_all();
@@ -224,7 +224,7 @@ impl AudioRenderer {
                             // mute 状态变了，chase 结果需要更新：
                             // unmute 的轨道的 CC 需要恢复，mute 的轨道的 CC 不再参与。
                             if self.engine.model_loaded() {
-                                self.request_chase(self.engine.sample_position());
+                                self.request_chase(self.engine.current_tick());
                             }
                         }
                         AudioCommand::PreviewNotes { notes } => {
@@ -233,7 +233,7 @@ impl AudioRenderer {
                             if self.preview_stop_flag.load(Ordering::Acquire) {
                                 continue;
                             }
-                            // 按 channel 分组、组内按 target_sample 升序，增量 chase：
+                            // 按 channel 分组、组内按 target_tick 升序，增量 chase：
                             // 每个通道只扫一遍 cc_events，避免整组预览反复全量扫描。
                             let cc_events = self.engine.cc_events.clone();
                             let mut groups: Vec<(u32, Vec<&crate::spawn::PreviewNoteParams>)> =
@@ -247,27 +247,34 @@ impl AudioRenderer {
                                 }
                             }
                             for (_, g) in &mut groups {
-                                g.sort_by_key(|n| n.target_sample);
+                                g.sort_by_key(|n| n.target_tick);
                             }
                             let mut inputs: Vec<crate::preview_engine::PreviewNoteIn> =
                                 Vec::with_capacity(notes.len());
                             for (ch, g) in groups {
-                                let targets: Vec<u64> = g.iter().map(|n| n.target_sample).collect();
+                                let targets: Vec<u32> = g.iter().map(|n| n.target_tick).collect();
                                 let states = crate::preview_engine::chase_channel_states(
                                     &cc_events, ch, &targets,
                                 );
                                 for (n, state) in g.iter().zip(states.iter()) {
+                                    // 预览引擎内部时钟是渲染帧（sample 域）：tick 只用于
+                                    // chase 目标比较，这里把相对时值差/时长转回 sample。
+                                    let target = self.engine.tick_to_sample(n.target_tick);
+                                    let duration = if n.duration_ticks > 0 {
+                                        let end = self.engine.tick_to_sample(
+                                            n.target_tick.saturating_add(n.duration_ticks),
+                                        );
+                                        Some(end.saturating_sub(target))
+                                    } else {
+                                        None
+                                    };
                                     inputs.push(crate::preview_engine::PreviewNoteIn {
                                         channel: n.channel,
                                         key: n.key,
                                         velocity: n.velocity,
-                                        duration: if n.duration_samples > 0 {
-                                            Some(n.duration_samples)
-                                        } else {
-                                            None
-                                        },
+                                        duration,
                                         state: *state,
-                                        target_sample: n.target_sample,
+                                        target_sample: target,
                                     });
                                 }
                             }
@@ -311,13 +318,13 @@ impl AudioRenderer {
     /// 方案 B：发 `PrepareChase` 给 worker 线程异步计算 256 通道状态快照。
     /// worker 完成后回传 `ChaseResult`，`process_worker_results` 应用。
     /// `chase_generation` 用于丢弃过期结果（cc_events 被 PrepareModel 替换后）。
-    fn request_chase(&self, target_sample: u64) {
+    fn request_chase(&self, target_tick: u32) {
         let cc_events = Arc::clone(&self.engine.cc_events);
         let generation = self.engine.chase_generation;
         let skip_mask = self.engine.skip_track.clone();
         let _ = self.worker_tx.send(WorkerCmd::PrepareChase {
             cc_events,
-            target_sample,
+            target_tick,
             generation,
             skip_mask,
         });
@@ -339,7 +346,7 @@ impl AudioRenderer {
                     self.state.initialized.store(true, Ordering::Release);
                     // 方案 B：apply_prepared_model 内部 seek_to 不再 chase，
                     // 这里发 PrepareChase 让 worker 异步算 channel state
-                    self.request_chase(self.engine.sample_position());
+                    self.request_chase(self.engine.current_tick());
                     did_work = true;
                 }
                 Ok(WorkerResult::PreparedNotes {
@@ -457,13 +464,13 @@ impl AudioRenderer {
                 }
 
                 events.push(yinhe_synth::SynthEvent {
-                    sample: note.start_sample,
+                    sample: self.engine.tick_to_sample(note.start_tick),
                     key: key as u8,
                     velocity: note.velocity,
                     is_on: true,
                 });
                 events.push(yinhe_synth::SynthEvent {
-                    sample: note.end_sample,
+                    sample: self.engine.tick_to_sample(note.end_tick),
                     key: key as u8,
                     velocity: 0,
                     is_on: false,

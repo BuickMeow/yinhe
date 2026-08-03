@@ -26,53 +26,65 @@ impl AudioEngine {
             return;
         }
 
-        // CPU 路径：xsynth 逐段分发+渲染
-        let block_start = self.sample_position;
-        let block_end = block_start + frames as u64;
-        let mut rendered_until = block_start;
+        // CPU 路径：xsynth 逐段分发+渲染。事件比较全在 tick 域
+        // （dispatch 基准 = current_tick，块边界 = sample→tick 反查），
+        // 只有"渲染段边界"才转一次 sample（每块事件数量级）。
+        let block_start_sample = self.sample_position;
+        let block_end_sample = block_start_sample + frames as u64;
+        let block_end_tick = self.sample_to_tick(block_end_sample);
+        let mut rendered_until_sample = block_start_sample;
+        let mut rendered_until_tick = self.current_tick;
         let mut offset_frames = 0usize;
 
-        while rendered_until < block_end {
-            // 单次 dispatch + find_next，128 桶只扫一遍
-            let next_event_sample = self
-                .dispatch_and_find_next(rendered_until, block_end)
-                .unwrap_or(block_end)
-                .max(rendered_until)
-                .min(block_end);
-
-            if next_event_sample > rendered_until {
-                let segment_frames = (next_event_sample - rendered_until) as usize;
-                let start = offset_frames * STEREO_CHANNELS;
-                let end = (offset_frames + segment_frames) * STEREO_CHANNELS;
-                self.channel_group.read_samples(&mut output[start..end]);
-                rendered_until = next_event_sample;
-                offset_frames += segment_frames;
+        while rendered_until_tick < block_end_tick {
+            // 单次 dispatch + find_next：候选是下一个未处理事件的 tick
+            //（严格 > rendered_until_tick，循环必然推进）。
+            let next_tick = self
+                .dispatch_and_find_next(rendered_until_tick, block_end_tick)
+                .unwrap_or(block_end_tick)
+                .min(block_end_tick);
+            // 块末边界直接对齐 block_end_sample；否则 tick→sample 得段边界。
+            // 极快 tempo 下多个 tick 可能映射同一 sample（零长段）：
+            // 不渲染、只推进 tick 继续 dispatch，事件不丢不重。
+            let next_sample = if next_tick >= block_end_tick {
+                block_end_sample
             } else {
-                // 所有事件已分发完，渲染剩余部分
-                let remaining = block_end - rendered_until;
-                let segment_frames = remaining as usize;
+                self.tick_to_sample(next_tick)
+            };
+            let segment_frames = (next_sample - rendered_until_sample) as usize;
+            if segment_frames > 0 {
                 let start = offset_frames * STEREO_CHANNELS;
                 let end = (offset_frames + segment_frames) * STEREO_CHANNELS;
                 self.channel_group.read_samples(&mut output[start..end]);
-                break;
+                rendered_until_sample = next_sample;
+                offset_frames += segment_frames;
             }
+            rendered_until_tick = next_tick;
         }
 
-        self.sample_position = block_end;
+        // 补齐剩余帧（浮点/块对齐：tick_to_sample(block_end_tick) 可能略小于
+        // block_end_sample，剩余段无事件）。
+        let remaining = block_end_sample - rendered_until_sample;
+        if remaining > 0 {
+            let start = offset_frames * STEREO_CHANNELS;
+            let end = (offset_frames + remaining as usize) * STEREO_CHANNELS;
+            self.channel_group.read_samples(&mut output[start..end]);
+        }
+
+        self.sample_position = block_end_sample;
+        self.current_tick = block_end_tick;
     }
 
-    /// 在 `sample` 位置分发所有事件（CC + NoteOn + NoteOff），
-    /// 同时返回 `(sample, block_end)` 范围内下一个事件的位置。
+    /// 在 `tick` 位置分发所有事件（CC + NoteOn + NoteOff），
+    /// 同时返回 `(tick, block_end_tick)` 范围内下一个事件的位置（tick 域）。
     ///
     /// 合并了原来 `next_event_sample`、`dispatch_cc_until`、`dispatch_notes_at`
-    /// 三个函数的职责，128 桶只扫描一次。所有 tick→sample 已由 worker 线程预转换。
-    pub(crate) fn dispatch_and_find_next(&mut self, sample: u64, block_end: u64) -> Option<u64> {
-        let mut next: Option<u64> = None;
+    /// 三个函数的职责，128 桶只扫描一次。所有比较都在 tick 域，无需转换。
+    pub(crate) fn dispatch_and_find_next(&mut self, tick: u32, block_end_tick: u32) -> Option<u32> {
+        let mut next: Option<u32> = None;
 
         // ── CC 事件 ──
-        while self.cc_cursor < self.cc_events.len()
-            && self.cc_events[self.cc_cursor].sample <= sample
-        {
+        while self.cc_cursor < self.cc_events.len() && self.cc_events[self.cc_cursor].tick <= tick {
             let cc = &self.cc_events[self.cc_cursor];
             // mute 的音轨：跳过其自动化事件（CC/PB/RPN/NRPN/PC），
             // 使同 channel 上其他非 mute 轨道不受影响。
@@ -91,28 +103,29 @@ impl AudioEngine {
             self.cc_cursor += 1;
         }
         if self.cc_cursor < self.cc_events.len() {
-            let cc_sample = self.cc_events[self.cc_cursor].sample;
-            if cc_sample < block_end {
-                next = Some(next.map_or(cc_sample, |s| s.min(cc_sample)));
+            let cc_tick = self.cc_events[self.cc_cursor].tick;
+            if cc_tick < block_end_tick {
+                next = Some(next.map_or(cc_tick, |t| t.min(cc_tick)));
             }
         }
 
         // ── NoteOn + 找下一个 NoteOn 边界（单次 128 桶扫描）──
-        // audible_notes 桶内 start_sample 升序，桶里只有 vel>1 的音符，无需运行时过滤。
+        // audible_notes 桶内 start_tick 升序（模型桶有序，无需 sort），
+        // 桶里只有 vel>1 的音符，无需运行时过滤。
         for key in 0..128usize {
             let notes = self.audible_notes[key].as_slice();
             let mut cursor = self.note_cursor[key];
 
             while cursor < notes.len() {
                 let note = &notes[cursor];
-                if note.start_sample > sample {
+                if note.start_tick > tick {
                     // 该桶下一个待处理音符 → 记录为边界候选
-                    if note.start_sample < block_end {
-                        next = Some(next.map_or(note.start_sample, |s| s.min(note.start_sample)));
+                    if note.start_tick < block_end_tick {
+                        next = Some(next.map_or(note.start_tick, |t| t.min(note.start_tick)));
                     }
                     break;
                 }
-                // start_sample ≤ sample → dispatch NoteOn
+                // start_tick ≤ tick → dispatch NoteOn
                 let track = note.track as usize;
                 let ch = self
                     .model
@@ -132,7 +145,7 @@ impl AudioEngine {
                         self.active_notes.push(Reverse(ActiveNote {
                             key: key as u8,
                             channel: ch as u8,
-                            end_sample: note.end_sample,
+                            end_tick: note.end_tick,
                         }));
                     }
                 }
@@ -142,12 +155,12 @@ impl AudioEngine {
         }
 
         // ── NoteOff + 找下一个 NoteOff 边界（min-heap 逐个 pop）──
-        // 堆顶 = end_sample 最小的活跃音符。
+        // 堆顶 = end_tick 最小的活跃音符。
         // ended 个音符每个 O(log V) pop，未结束的堆顶 O(1) peek 得下一边界。
         // 之前是 Vec::retain 全扫 O(V_active)，高密度段 V 大时被多次调用形成 O(k×V) 正反馈。
         self.ended_notes.clear();
         while let Some(Reverse(an)) = self.active_notes.peek() {
-            if an.end_sample > sample {
+            if an.end_tick > tick {
                 break;
             }
             self.ended_notes.push(*an);
@@ -155,9 +168,9 @@ impl AudioEngine {
         }
         // peek 堆顶（最早结束的未结束音符）作为下一 NoteOff 边界候选
         if let Some(Reverse(an)) = self.active_notes.peek()
-            && an.end_sample < block_end
+            && an.end_tick < block_end_tick
         {
-            next = Some(next.map_or(an.end_sample, |s| s.min(an.end_sample)));
+            next = Some(next.map_or(an.end_tick, |t| t.min(an.end_tick)));
         }
         for an in &self.ended_notes {
             let dense = self.channel_layout.dense_for(an.channel as usize);

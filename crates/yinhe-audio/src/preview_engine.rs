@@ -17,16 +17,17 @@ const STEREO_CHANNELS: usize = 2;
 
 /// 为同一 channel 的一组目标位置增量 chase：`targets` 必须升序，只扫一遍 cc_events。
 /// 返回与 `targets` 一一对应的状态快照（用于预览整组音符的目标位置自动化）。
+/// 事件比较在 tick 域（cc_events 已按 tick 排序）。
 pub(crate) fn chase_channel_states(
     cc_events: &[SortedCC],
     channel: u32,
-    targets: &[u64],
+    targets: &[u32],
 ) -> Vec<ChannelState> {
     let mut states = Vec::with_capacity(targets.len());
     let mut state = ChannelState::default();
     let mut cursor = 0usize;
     for &target in targets {
-        while cursor < cc_events.len() && cc_events[cursor].sample < target {
+        while cursor < cc_events.len() && cc_events[cursor].tick < target {
             if cc_events[cursor].channel == channel {
                 state.apply(&cc_events[cursor].event);
             }

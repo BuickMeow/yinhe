@@ -16,8 +16,7 @@ impl AudioEngine {
         let audio_model = AudioModel::from_model(model);
         self.setup_percussion(&audio_model);
 
-        self.cc_events =
-            flatten_automation_to_cc_events(model, self.sample_rate, self.automation_density);
+        self.cc_events = flatten_automation_to_cc_events(model, self.automation_density);
         self.chase_generation = self.chase_generation.wrapping_add(1);
         self.cc_cursor = 0;
         self.chase_cc_base = 0;
@@ -29,8 +28,9 @@ impl AudioEngine {
         self.skip_track = model.track_audible_count.iter().map(|&c| c == 0).collect();
 
         self.note_cursor = [0; 128];
+        self.current_tick = 0;
         self.yin_model = Some(Arc::clone(model));
-        self.audible_notes = build_audible_notes(model, self.sample_rate);
+        self.audible_notes = build_audible_notes(model);
         self.model = Some(audio_model);
     }
 
@@ -77,15 +77,15 @@ impl AudioEngine {
         self.yin_model = Some(yin_model);
         self.model = Some(model);
 
-        // 只替换 dirty 桶：重置该桶的 note_cursor（保持当前 sample_position，
+        // 只替换 dirty 桶：重置该桶的 note_cursor（保持当前播放位置，
         // 重新找游标）。不需要 AllNotesOff / ResetControl / chase ——
         // 当前活跃音符和 channel state 不变。
-        let sample = self.sample_position;
+        let tick = self.current_tick;
         for (key, bucket) in audible_delta.into_iter().enumerate() {
             if let Some(bucket) = bucket {
                 self.audible_notes[key] = bucket;
                 self.note_cursor[key] =
-                    self.audible_notes[key].partition_point(|n| n.start_sample < sample);
+                    self.audible_notes[key].partition_point(|n| n.start_tick < tick);
             }
         }
     }
@@ -200,26 +200,30 @@ impl AudioEngine {
             )));
 
         self.sample_position = sample;
+        self.current_tick = self.sample_to_tick(sample);
         self.note_cursor = [0; 128];
         self.cc_cursor = 0;
         self.active_notes.clear();
 
-        self.cc_cursor = self.cc_events.partition_point(|cc| cc.sample < sample);
+        self.cc_cursor = self
+            .cc_events
+            .partition_point(|cc| cc.tick < self.current_tick);
         // 记录 seek 点，供 apply_chase_result 计算"已 dispatch 事件区间"。
         self.chase_cc_base = self.cc_cursor;
 
         // Reset note cursors to the correct position based on pre-built audible_notes.
-        // 桶内 start_sample 严格升序，partition_point 谓词单调，结果正确（修 P0-2）。
+        // 桶内 start_tick 严格升序，partition_point 谓词单调，结果正确（修 P0-2）。
+        let tick = self.current_tick;
         for key in 0..128usize {
             let notes = self.audible_notes[key].as_slice();
-            let cursor = notes.partition_point(|n| n.start_sample < sample);
+            let cursor = notes.partition_point(|n| n.start_tick < tick);
             self.note_cursor[key] = cursor;
 
             // 扫描 seek 点之前开始、seek 点之后才结束的所有音符，全部重启（修 P2-10）。
-            // 桶按 start_sample 升序，但 end_sample 不保证有序，必须线性扫 [..cursor]。
+            // 桶按 start_tick 升序，但 end_tick 不保证有序，必须线性扫 [..cursor]。
             // 黑乐谱叠层场景下 cursor 前通常有几十个跨点音符，O(cursor) 完全可接受。
             for n in &notes[..cursor] {
-                if n.end_sample <= sample {
+                if n.end_tick <= tick {
                     continue;
                 }
                 let track = n.track as usize;
@@ -245,7 +249,7 @@ impl AudioEngine {
                 self.active_notes.push(std::cmp::Reverse(ActiveNote {
                     key: key as u8,
                     channel: ch as u8,
-                    end_sample: n.end_sample,
+                    end_tick: n.end_tick,
                 }));
             }
         }
