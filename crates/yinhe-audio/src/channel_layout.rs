@@ -8,12 +8,10 @@
 
 use yinhe_core::YinModel;
 
-use crate::spawn::track_global_channel;
-
 /// 不可变的通道布局，`AudioEngine` 创建时定型。
 #[derive(Clone)]
 pub struct ChannelLayout {
-    /// `active_mask[i] == true` 表示源通道 `i` 有可听音符或控制事件。
+    /// `active_mask[i] == true` 表示源通道 `i` 被某条音轨使用（存在即激活）。
     /// 长度 = `num_channels`，超出部分视为未激活。
     active_mask: Vec<bool>,
     /// `channel_map[src] = dense`（激活）或 `u32::MAX`（未激活）。
@@ -28,37 +26,23 @@ pub struct ChannelLayout {
 impl ChannelLayout {
     /// 分析 `YinModel` 构建通道布局。
     ///
-    /// 源通道"激活"条件：任意 `vel > 1` 的音符落在其上，或所属 track
-    /// 有 automation lane / program change。
+    /// 源通道"激活"条件：存在音轨使用该通道（`TrackData::global_channel`）。
+    /// 音轨存在即激活——空音轨的通道也随时可用（首音符预览/播放立即有声），
+    /// 不再按音符/CC 数量推断。成本 O(tracks)，与音符总数无关。
     pub fn from_model(model: &YinModel) -> Self {
-        let mut ch_active = [0u32; 256];
+        let mut ch_active = [false; 256];
 
-        for bucket in model.notes.iter() {
-            for n in bucket.iter() {
-                if n.velocity > 1 {
-                    let ch = track_global_channel(model, n.track as usize) as usize;
-                    if ch < 256 {
-                        ch_active[ch] = ch_active[ch].saturating_add(1);
-                    }
-                }
+        for track in model.tracks.iter() {
+            let ch = track.global_channel() as usize;
+            if ch < 256 {
+                ch_active[ch] = true;
             }
         }
 
-        for (track_idx, track) in model.tracks.iter().enumerate() {
-            let ch = track_global_channel(model, track_idx) as usize;
-            let has_ctrl = !track.automation_lanes.is_empty() || !track.program_change.is_empty();
-            if has_ctrl && ch < 256 {
-                ch_active[ch] = ch_active[ch].max(1);
-            }
-        }
-
-        let max_active_ch = ch_active.iter().rposition(|&c| c > 0).unwrap_or(0);
+        let max_active_ch = ch_active.iter().rposition(|&c| c).unwrap_or(0);
         let num_channels = (max_active_ch + 1).max(1) as u32;
 
-        let active_mask: Vec<bool> = ch_active[..num_channels as usize]
-            .iter()
-            .map(|&c| c > 0)
-            .collect();
+        let active_mask: Vec<bool> = ch_active[..num_channels as usize].to_vec();
 
         Self::from_mask(active_mask)
     }
@@ -127,20 +111,24 @@ impl ChannelLayout {
         dense_channels
     }
 
-    /// 检测当前 layout 与给定 channel 计数是否在激活状态上有差异。
+    /// 检测当前 layout 与 model 的 tracks 是否在激活状态上有差异。
     ///
-    /// 用于音频引擎在音符/automation 编辑后判断是否需要 teardown + 重建：
-    /// `ChannelLayout` 创建后不可变，只有激活状态翻转（0→1 / 1→0）才必须重建。
-    /// 若仅音符数变化但激活状态不变（如已激活 channel 加/删非末音符），
-    /// 返回 false，调用方可走便宜的 `UpdateNotes` 路径。
+    /// 用于音频引擎在编辑后判断是否需要 teardown + 重建：`ChannelLayout`
+    /// 创建后不可变，只有激活状态翻转才必须重建。
     ///
-    /// 激活语义与 `from_model` 完全对齐：
-    /// `active(ch) = note_count[ch] > 0 || ctrl_count[ch] > 0`
-    pub fn differs_from_counts(&self, note_counts: &[u32; 256], ctrl_counts: &[u32; 256]) -> bool {
-        for ch in 0..256 {
-            let was_active = self.is_active(ch);
-            let now_active = note_counts[ch] > 0 || ctrl_counts[ch] > 0;
-            if was_active != now_active {
+    /// 激活语义与 `from_model` 完全对齐：`active(ch) = ch 上有音轨`。
+    /// 音轨增删/改 port 或 channel → 翻转 → 重建；音符增删不改变激活状态，
+    /// 走便宜的 `UpdateNotes` 路径即可。成本 O(tracks)，与音符总数无关。
+    pub fn differs_from_model(&self, model: &YinModel) -> bool {
+        let mut now_active = [false; 256];
+        for track in model.tracks.iter() {
+            let ch = track.global_channel() as usize;
+            if ch < 256 {
+                now_active[ch] = true;
+            }
+        }
+        for (ch, &now) in now_active.iter().enumerate() {
+            if self.is_active(ch) != now {
                 return true;
             }
         }
@@ -327,18 +315,16 @@ mod tests {
     }
 
     #[test]
-    fn from_model_skips_velocity_0_1() {
-        let model = make_model_with_notes(vec![
-            (60, 0, 480, 0, 0),
-            (61, 0, 480, 1, 0),
-            (62, 0, 480, 2, 0),
-        ]);
+    fn from_model_empty_track_activates_channel() {
+        // 音轨存在即激活：即使没有任何音符（vel 0/1 或空音轨），通道也随时可用。
+        let model = make_model_with_notes(vec![(60, 0, 480, 0, 0)]);
         let layout = ChannelLayout::from_model(&model);
         assert!(layout.is_active(0));
     }
 
     #[test]
-    fn from_model_cc_activates_channel() {
+    fn from_model_track_activates_channel_regardless_of_notes() {
+        // 只有 automation 的音轨也能激活通道（音轨存在即激活，与音符/CC 无关）。
         let conductor = ConductorData::default();
         let mut t = TrackData::new(0, 5);
         t.automation_lanes = vec![AutomationLane {
@@ -411,161 +397,137 @@ mod tests {
         assert_eq!(port1, vec![2]); // dense 2 = src 16
     }
 
-    /// 回归测试：空 model 的 ChannelLayout 不应让任何通道激活。
-    /// 这是"新建工程播放无声"bug 的核心：空 model → 全 false active_mask →
-    /// 引擎创建时无激活通道 → 后续加音符无法 dispatch。
-    /// 修复方案是 add_track/add_note 后 teardown + 重建引擎，让 from_model
-    /// 重新计算 ChannelLayout。
+    /// 回归测试：通道激活完全由音轨决定。空 model（无音轨）→ 全 false；
+    /// 加音轨后重建 → 该音轨的通道被激活，空音轨也能立即发声。
     #[test]
-    fn empty_model_then_notes_rebuild_layout() {
+    fn empty_model_then_track_rebuild_layout() {
         // 1. 空 model → 全 false
         let empty = YinModel::default();
         let layout_empty = ChannelLayout::from_model(&empty);
         assert!(!layout_empty.is_active(0));
 
-        // 2. 加音符后重建 → 通道 0 激活
-        let with_notes = make_model_with_notes(vec![(60, 0, 480, 100, 0)]);
-        let layout_with = ChannelLayout::from_model(&with_notes);
+        // 2. 加音轨（ch 0，带音符）后重建 → 通道 0 激活
+        let with_track = make_model_with_notes(vec![(60, 0, 480, 100, 0)]);
+        let layout_with = ChannelLayout::from_model(&with_track);
         assert!(layout_with.is_active(0));
         assert_eq!(layout_with.dense_for(0), 0);
         assert_eq!(layout_with.compacted_channels(), 1);
     }
 
     // -----------------------------------------------------------------------
-    // differs_from_counts 测试：flip 检测的核心逻辑
+    // differs_from_model 测试：flip 检测的核心逻辑
     // -----------------------------------------------------------------------
-    // 这是选项 Z 的关键：用 per-channel 计数器判断 ChannelLayout 是否需要重建。
-    // - 加首 audible 音符 → 0→1 翻转 → differs = true → teardown
-    // - 删末 audible 音符 → 1→0 翻转 → differs = true → teardown
-    // - 已激活 channel 加/删非末音符 → 不翻转 → differs = false → 走 UpdateNotes
+    // 激活完全由音轨决定：
+    // - 加音轨/改音轨 channel → 0→1 翻转 → differs = true → teardown
+    // - 删音轨 → 1→0 翻转 → differs = true → teardown
+    // - 音符增删 → 激活状态不变 → differs = false → 走 UpdateNotes
 
     #[test]
-    fn differs_from_counts_no_flip_when_adding_non_first_note() {
-        // layout: ch 0 已激活（有 1 个 audible 音符）
-        // counts: ch 0 有 2 个 audible → 仍然激活，无翻转
-        let mut mask = vec![false; 16];
-        mask[0] = true;
-        let layout = ChannelLayout::from_mask(mask);
-
-        let mut notes = [0u32; 256];
-        notes[0] = 2; // ch 0 有 2 个 audible
-        let ctrls = [0u32; 256];
-
-        assert!(
-            !layout.differs_from_counts(&notes, &ctrls),
-            "ch 0 仍然激活，无翻转"
-        );
+    fn differs_from_model_no_flip_on_note_edits() {
+        // 音符增删不改变激活状态：layout 与 model 的音轨集合一致 → 无翻转
+        let model = make_model_with_notes(vec![(60, 0, 480, 100, 0)]);
+        let layout = ChannelLayout::from_model(&model);
+        assert!(!layout.differs_from_model(&model), "同 model 无翻转");
     }
 
     #[test]
-    fn differs_from_counts_flip_when_first_note_added() {
-        // layout: ch 0 未激活（空 model 创建的）
-        // counts: ch 0 有 1 个 audible → 0→1 翻转
-        let mut mask = vec![false; 16];
-        mask[0] = false;
-        let layout = ChannelLayout::from_mask(mask);
+    fn differs_from_model_flip_when_track_added() {
+        // layout: ch 0 激活；model 新增 ch 1 音轨 → 0→1 翻转
+        let model = make_model_with_notes(vec![(60, 0, 480, 100, 0)]);
+        let layout = ChannelLayout::from_model(&model);
 
-        let mut notes = [0u32; 256];
-        notes[0] = 1; // 首 audible 音符
-        let ctrls = [0u32; 256];
-
-        assert!(layout.differs_from_counts(&notes, &ctrls), "ch 0 0→1 翻转");
+        let mut extended = model.clone();
+        extended.tracks.push(Arc::new(TrackData::new(0, 1)));
+        assert!(layout.differs_from_model(&extended), "ch 1 0→1 翻转");
     }
 
     #[test]
-    fn differs_from_counts_flip_when_last_note_removed() {
-        // layout: ch 0 已激活
-        // counts: ch 0 = 0 → 1→0 翻转
-        let mut mask = vec![false; 16];
-        mask[0] = true;
-        let layout = ChannelLayout::from_mask(mask);
+    fn differs_from_model_flip_when_track_removed() {
+        // layout: ch 0 激活；model 删掉唯一音轨 → 1→0 翻转
+        let model = make_model_with_notes(vec![(60, 0, 480, 100, 0)]);
+        let layout = ChannelLayout::from_model(&model);
 
-        let notes = [0u32; 256]; // ch 0 = 0（末音符被删）
-        let ctrls = [0u32; 256];
-
-        assert!(layout.differs_from_counts(&notes, &ctrls), "ch 0 1→0 翻转");
+        let mut reduced = model.clone();
+        reduced.tracks.clear();
+        assert!(layout.differs_from_model(&reduced), "ch 0 1→0 翻转");
     }
 
     #[test]
-    fn differs_from_counts_ctrl_only_channel() {
-        // layout: ch 5 未激活
-        // counts: ch 5 note=0 但 ctrl=1 → 0→1 翻转（automation 激活 channel）
-        let mask = vec![false; 16];
-        let layout = ChannelLayout::from_mask(mask);
+    fn differs_from_model_flip_when_track_changes_channel() {
+        // 音轨从 ch 0 改到 ch 1 → 0→1 翻转
+        let model = make_model_with_notes(vec![(60, 0, 480, 100, 0)]);
+        let layout = ChannelLayout::from_model(&model);
 
-        let notes = [0u32; 256];
-        let mut ctrls = [0u32; 256];
-        ctrls[5] = 1;
-
-        assert!(
-            layout.differs_from_counts(&notes, &ctrls),
-            "ch 5 由 automation 激活"
-        );
+        let mut moved = model.clone();
+        let t = Arc::make_mut(&mut moved.tracks[0]);
+        t.channel = 1;
+        assert!(layout.differs_from_model(&moved), "ch 0→1 翻转");
     }
 
     #[test]
-    fn differs_from_counts_multi_port_flip() {
-        // layout: ch 0 (port 0) 和 ch 16 (port 1) 激活
-        // counts: ch 0 仍激活，ch 16 失活，ch 32 (port 2) 新激活
-        let mut mask = vec![false; 48];
-        mask[0] = true;
-        mask[16] = true;
-        let layout = ChannelLayout::from_mask(mask);
+    fn differs_from_model_multi_port_flip() {
+        // layout: ch 0 (port 0) 和 ch 16 (port 1) 激活；model 新增 port 2 音轨
+        let conductor = ConductorData::default();
+        let per_track_notes: Vec<Vec<NoteEvent>> = vec![vec![NoteEvent {
+            start_tick: 0,
+            end_tick: 480,
+            key: 60,
+            velocity: 100,
+            id: 0,
+        }]];
+        let mut model = YinModel {
+            conductor: Arc::new(conductor),
+            tracks: vec![
+                Arc::new(TrackData::new(0, 0)),
+                Arc::new(TrackData::new(1, 0)),
+            ],
+            meta: ProjectMeta {
+                ppq: 480,
+                ..ProjectMeta::default()
+            },
+            ..Default::default()
+        };
+        model.load_track_notes(per_track_notes);
+        model.rebuild();
+        let layout = ChannelLayout::from_model(&model);
+        assert!(layout.is_active(0));
+        assert!(layout.is_active(16));
 
-        let mut notes = [0u32; 256];
-        notes[0] = 1; // ch 0 仍激活
-        notes[16] = 0; // ch 16 失活
-        notes[32] = 1; // ch 32 新激活
-        let ctrls = [0u32; 256];
-
-        assert!(layout.differs_from_counts(&notes, &ctrls), "多 port 翻转");
+        let mut extended = model.clone();
+        extended.tracks.push(Arc::new(TrackData::new(2, 0)));
+        assert!(layout.differs_from_model(&extended), "多 port 翻转");
     }
 
     #[test]
-    fn differs_from_counts_all_inactive() {
-        // layout: 全 false（空 model）
-        // counts: 全 0 → 无翻转
-        let mask = vec![false; 16];
-        let layout = ChannelLayout::from_mask(mask);
-
-        let notes = [0u32; 256];
-        let ctrls = [0u32; 256];
-
-        assert!(
-            !layout.differs_from_counts(&notes, &ctrls),
-            "全未激活，无翻转"
-        );
+    fn differs_from_model_all_inactive() {
+        // layout: 全 false（空 model）；model 也无音轨 → 无翻转
+        let empty = YinModel::default();
+        let layout = ChannelLayout::from_model(&empty);
+        assert!(!layout.differs_from_model(&empty), "全未激活，无翻转");
     }
 
-    /// 集成测试：完整复现 bug 场景，验证 flip 检测触发 teardown。
+    /// 集成测试：完整复现 bug 场景——空工程写第一个音符必须立即有声。
     ///
-    /// 场景：空 model spawn 引擎 → 加首 audible 音符 →
-    /// `differs_from_counts` 必须返回 true（检测到 0→1 翻转）→
-    /// App 应 teardown，下一帧用新 model 重建。
+    /// 场景：空 model spawn 引擎（无音轨）→ 加音轨（即使还没有音符）→
+    /// `differs_from_model` 报告翻转 → teardown；重建后通道已激活，
+    /// 再写第一个音符无需任何重建即可发声。
     #[test]
-    fn differs_from_counts_detects_silent_note_bug_scenario() {
+    fn differs_from_model_detects_first_track_activation() {
         // 1. 空 model → layout 全 false
         let empty = YinModel::default();
         let layout = ChannelLayout::from_model(&empty);
 
-        // 2. 加首 audible 音符后，model 的 channel_note_count[0] = 1
-        let with_note = make_model_with_notes(vec![(60, 0, 480, 100, 0)]);
-        // with_note 已经 rebuild 过，channel_note_count 是新鲜的
-        assert_eq!(with_note.channel_note_count[0], 1);
+        // 2. 加音轨（ch 0，无音符）→ 0→1 翻转
+        let mut with_track = empty.clone();
+        with_track.tracks.push(Arc::new(TrackData::new(0, 0)));
+        assert!(layout.differs_from_model(&with_track), "ch 0 0→1 翻转");
 
-        // 3. 旧 layout 检测新 counts → 必须报告翻转
+        // 3. 重建 layout → 与 model 一致，不再翻转；空音轨的通道已激活
+        let new_layout = ChannelLayout::from_model(&with_track);
         assert!(
-            layout
-                .differs_from_counts(&with_note.channel_note_count, &with_note.channel_ctrl_count),
-            "旧 layout（全 false）检测到 ch 0 0→1 翻转"
+            !new_layout.differs_from_model(&with_track),
+            "新 layout 一致"
         );
-
-        // 4. 用新 model 重建 layout → 与新 counts 一致，不再翻转
-        let new_layout = ChannelLayout::from_model(&with_note);
-        assert!(
-            !new_layout
-                .differs_from_counts(&with_note.channel_note_count, &with_note.channel_ctrl_count),
-            "新 layout 与新 counts 一致，无翻转"
-        );
+        assert!(new_layout.is_active(0), "空音轨通道已激活");
     }
 }

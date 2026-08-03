@@ -758,45 +758,51 @@ fn prof_night_voyager_parallelism() {
     }
 }
 
-/// 回归测试：空 model 创建引擎后，加音符应通过 teardown + 重建恢复发声。
+/// 回归测试：通道激活完全由音轨决定（音轨存在即激活）。
 ///
-/// 这是"新建工程写音符不发声"bug 的核心防护：
-/// 1. 空 model → ChannelLayout 全 false → 引擎创建时无激活通道
-/// 2. 后续 add_note 无法更新已冻结的 ChannelLayout
-/// 3. 方案 A：add_track/remove_track 触发 teardown，下帧重建
-/// 4. 重建时 from_model 重新扫描，新音符的通道被激活
+/// 1. 真·空 model（无音轨）→ ChannelLayout 全 false → 无通道可 dispatch
+/// 2. 有音轨（哪怕没有任何音符）→ 通道立即可用
+/// 3. 引擎 spawn 后加第一个音符 → 无需重建即可发声（bug 修复核心）
 #[test]
-fn test_teardown_rebuild_reactivates_channels() {
-    // 1. 空 model → 全 false
+fn test_track_existence_activates_channel() {
+    // 1. 无音轨 → 全 false
     let empty = YinModel::default();
     let layout_empty = crate::spawn::channels_for_model(&empty);
     assert!(!layout_empty.is_active(0));
-    let engine = AudioEngine::new(44100, layout_empty);
-    assert_eq!(engine.channel_layout.dense_for(0), u32::MAX);
 
-    // 2. 加音符后重建 → 通道 0 激活
-    let with_notes = make_model_with_notes(vec![(60, 0, 480, 100, 0)]);
-    let layout_with = crate::spawn::channels_for_model(&with_notes);
-    assert!(layout_with.is_active(0));
-    assert_eq!(layout_with.dense_for(0), 0);
-    assert_eq!(layout_with.compacted_channels(), 1);
+    // 2. 有音轨（ch 0）但没有任何音符 → 通道 0 已激活
+    let mut model = YinModel::default();
+    model.tracks = vec![Arc::new(TrackData::new(0, 0))];
+    let layout = crate::spawn::channels_for_model(&model);
+    assert!(layout.is_active(0));
+    assert_eq!(layout.dense_for(0), 0);
+    assert_eq!(layout.compacted_channels(), 1);
 
-    // 3. teardown 旧引擎，用新 layout 重建
-    let model = Arc::new(with_notes);
-    let mut engine = AudioEngine::new(44100, layout_with);
-    engine.load_model(&model);
+    // 3. 加第一个音符（track 0 = ch 0）→ 同一引擎直接 dispatch
+    let id = model.alloc_note_id();
+    let bucket = Arc::make_mut(&mut model.notes[60]);
+    bucket.push(yinhe_types::Note {
+        id,
+        start_tick: 0,
+        end_tick: 480,
+        velocity: 100,
+        track: 0,
+    });
+    model.rebuild();
+
+    let mut engine = AudioEngine::new(44100, layout);
+    engine.load_model(&Arc::new(model));
     engine.playing = true;
 
-    // 4. dispatch 应能触发 NoteOn（之前在空 layout 下会被 dense_for=MAX 跳过）
-    let next = engine.dispatch_and_find_next(0, 60000);
     // NoteOff at tick 480 = 1 beat @ 120 BPM @ 44100 Hz = 22050 samples.
+    let next = engine.dispatch_and_find_next(0, 60000);
     assert_eq!(next, Some(22050));
     assert_eq!(engine.note_cursor[60], 1);
     assert_eq!(engine.active_notes.len(), 1);
 }
 
 // ---------------------------------------------------------------------------
-// 方案 A 集成测试：用 Document 模拟真实编辑流程
+// 集成测试：用 Document 模拟真实编辑流程
 // ---------------------------------------------------------------------------
 
 /// 用当前 model 的 ChannelLayout spawn 引擎，模拟 App 的 rebuild_audio_if_needed。
@@ -809,17 +815,19 @@ fn spawn_engine_for_doc(doc: &Document, sample_rate: u32) -> AudioEngine {
     engine
 }
 
-/// 完整 bug 复现 + 修复验证：空 Document → 加音符 → 旧引擎无声 → teardown + 重建 → 有声。
+/// 完整 bug 复现 + 修复验证：空 Document（16 条音轨占满 ch 0-15）→
+/// 引擎 spawn 时通道已全部激活 → 写第一个音符立即发声，无需 teardown + 重建。
 #[test]
-fn test_teardown_rebuild_fixes_silent_note_bug_via_document() {
+fn test_first_note_on_fresh_document_dispatches_without_rebuild() {
     let sample_rate = 44100u32;
     let mut doc = Document::empty();
 
-    // 1. 空 model → spawn 引擎 A（layout 全 false）
-    let mut engine_a = spawn_engine_for_doc(&doc, sample_rate);
-    engine_a.playing = true;
+    // 1. 空 Document spawn 引擎：16 条音轨的通道 0-15 全部激活
+    let mut engine = spawn_engine_for_doc(&doc, sample_rate);
+    engine.playing = true;
+    assert!(engine.channel_layout.is_active(0));
 
-    // 2. 加音符（track 1 = channel 0）
+    // 2. 加第一个音符（track 1 = channel 0）
     doc.add_note(
         1,
         NoteEvent {
@@ -832,24 +840,19 @@ fn test_teardown_rebuild_fixes_silent_note_bug_via_document() {
     );
     doc.data.bump_revision();
 
-    // 3. 旧引擎 A dispatch —— 通道 0 未激活 → NoteOn 被跳过（bug 复现）
-    let next_a = engine_a.dispatch_and_find_next(0, 60000);
-    assert_eq!(next_a, None, "旧引擎 layout 未激活通道 0 → 无声");
-    assert_eq!(engine_a.active_notes.len(), 0);
+    // 3. 模拟 App 的 notify_notes_changed → UpdateNotes：音轨没变 → 激活状态
+    //    没变 → 无需 teardown，旧引擎直接更新音符即可 dispatch
+    engine.handle_command(AudioCommand::UpdateNotes {
+        model: Arc::clone(&doc.data.model),
+    });
 
-    // 4. teardown 引擎 A，用新 model 重建引擎 B（方案 A）
-    drop(engine_a);
-    let mut engine_b = spawn_engine_for_doc(&doc, sample_rate);
-    engine_b.playing = true;
-
-    // 5. 新引擎 B 的 layout 已激活通道 0 → NoteOn 正常 dispatch
-    let next_b = engine_b.dispatch_and_find_next(0, 60000);
-    assert_eq!(next_b, Some(22050));
-    assert_eq!(engine_b.note_cursor[60], 1);
-    assert_eq!(engine_b.active_notes.len(), 1);
+    let next = engine.dispatch_and_find_next(0, 60000);
+    assert_eq!(next, Some(22050));
+    assert_eq!(engine.note_cursor[60], 1);
+    assert_eq!(engine.active_notes.len(), 1);
 }
 
-/// add_track 后新通道在重建的 layout 中被激活。
+/// add_track 后新音轨的通道在重建的 layout 中立即激活（无需等音符）。
 ///
 /// 空 Document 已用满 0-15 通道，所以先 remove_track(16) 释放 channel 15，
 /// 再 add_track 让新 track 分配到 channel 15。
@@ -874,46 +877,32 @@ fn test_add_track_then_rebuild_activates_new_channel() {
     );
     doc.data.bump_revision();
 
-    // 3. 初始 layout：只有通道 0 激活
+    // 3. 初始 layout：通道 0-14 激活（A1..A15），channel 15 未激活
     let layout_before = crate::spawn::channels_for_model(&doc.data.model);
     assert!(layout_before.is_active(0));
     assert!(!layout_before.is_active(15));
-    assert_eq!(layout_before.compacted_channels(), 1);
+    assert_eq!(layout_before.compacted_channels(), 15);
 
     // 4. add_track(1)：新 track 在 idx 2，channel 15（第一个空闲）
     doc.add_track(1);
     doc.data.bump_revision();
 
-    // 5. 在新 track（idx 2）上加音符 → channel 15
-    doc.add_note(
-        2,
-        NoteEvent {
-            start_tick: 0,
-            end_tick: 480,
-            key: 64,
-            velocity: 100,
-            id: 0,
-        },
-    );
-    doc.data.bump_revision();
-
-    // 6. 新 layout：通道 0 和 15 都激活
+    // 5. 新 layout：channel 15 已激活——即使新音轨还没有任何音符
     let layout_after = crate::spawn::channels_for_model(&doc.data.model);
     assert!(layout_after.is_active(0), "channel 0 still active");
     assert!(layout_after.is_active(15), "channel 15 now active");
-    assert_eq!(layout_after.compacted_channels(), 2);
+    assert_eq!(layout_after.compacted_channels(), 16);
 
-    // 7. 重建引擎 → 两个音符都能 dispatch
+    // 6. 重建引擎 → track 1 的音符能 dispatch
     let mut engine = spawn_engine_for_doc(&doc, sample_rate);
     engine.playing = true;
     let next = engine.dispatch_and_find_next(0, 60000);
     assert_eq!(next, Some(22050));
     assert_eq!(engine.note_cursor[60], 1);
-    assert_eq!(engine.note_cursor[64], 1);
-    assert_eq!(engine.active_notes.len(), 2);
+    assert_eq!(engine.active_notes.len(), 1);
 }
 
-/// remove_track 后被移除通道的音符不再 dispatch。
+/// remove_track 后被移除音轨的通道失活，其音符不再 dispatch。
 #[test]
 fn test_remove_track_then_rebuild_deactivates_channel() {
     let sample_rate = 44100u32;
@@ -942,21 +931,21 @@ fn test_remove_track_then_rebuild_deactivates_channel() {
     );
     doc.data.bump_revision();
 
-    // 2. 初始 layout：通道 0 和 1 都激活
+    // 2. 初始 layout：通道 0-15 全部激活（A1..A16 占满）
     let layout_before = crate::spawn::channels_for_model(&doc.data.model);
     assert!(layout_before.is_active(0));
     assert!(layout_before.is_active(1));
-    assert_eq!(layout_before.compacted_channels(), 2);
+    assert_eq!(layout_before.compacted_channels(), 16);
 
     // 3. remove track 2（通道 1 的音符随之删除）
     doc.remove_track(2);
     doc.data.bump_revision();
 
-    // 4. 新 layout：只有通道 0 激活
+    // 4. 新 layout：通道 1 失活，其余 15 个通道仍激活
     let layout_after = crate::spawn::channels_for_model(&doc.data.model);
     assert!(layout_after.is_active(0));
     assert!(!layout_after.is_active(1));
-    assert_eq!(layout_after.compacted_channels(), 1);
+    assert_eq!(layout_after.compacted_channels(), 15);
 
     // 5. 重建引擎 → 只有通道 0 的音符 dispatch
     let mut engine = spawn_engine_for_doc(&doc, sample_rate);

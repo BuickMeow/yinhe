@@ -103,7 +103,6 @@ impl YinModel {
             self.bucket_max_end_tick[k] = bucket_max_end[k];
             self.bucket_track_stats[k] = std::mem::take(&mut bucket_stats[k]);
         }
-        self.recompute_channel_counts();
     }
 
     /// 分配一个新的全局唯一音符 id。编辑路径（新增/粘贴/复制）调用。
@@ -119,35 +118,6 @@ impl YinModel {
     pub fn mark_dirty(&mut self, key: u8) {
         self.dirty_keys[key as usize] = true;
         self.note_revisions[key as usize] = self.note_revisions[key as usize].wrapping_add(1);
-    }
-
-    /// 从 `track_audible_count` + `tracks` 重新派生 per-channel 计数。
-    ///
-    /// 成本 O(tracks)，通常 17-100 个 track，几乎免费。在 `rebuild` /
-    /// `rebuild_dirty` 末尾调用，保持 `channel_note_count` /
-    /// `channel_ctrl_count` 与 `track_audible_count` 一致。
-    ///
-    /// 激活语义与 `ChannelLayout::from_model` 完全对齐：
-    /// - note_count[ch] > 0 ⟺ ch 上至少一个 vel > 1 的音符
-    /// - ctrl_count[ch] > 0 ⟺ ch 上至少一个 track 有 automation / PC
-    fn recompute_channel_counts(&mut self) {
-        let mut note_counts = [0u32; 256];
-        let mut ctrl_counts = [0u32; 256];
-        for (track_idx, track) in self.tracks.iter().enumerate() {
-            let ch = track.global_channel() as usize;
-            // channel_note_count: 累加该 track 的发声音符数（与 ChannelLayout::from_model 的 saturating_add 一致）
-            if let Some(&audible) = self.track_audible_count.get(track_idx)
-                && audible > 0
-            {
-                note_counts[ch] = note_counts[ch].saturating_add(audible as u32);
-            }
-            // channel_ctrl_count: 该 track 有 automation_lanes 或 program_change 就 +1
-            if !track.automation_lanes.is_empty() || !track.program_change.is_empty() {
-                ctrl_counts[ch] = ctrl_counts[ch].saturating_add(1);
-            }
-        }
-        *self.channel_note_count = note_counts;
-        *self.channel_ctrl_count = ctrl_counts;
     }
 
     /// Rebuild all derived data from scratch.
@@ -219,9 +189,6 @@ impl YinModel {
 
         // Rebuild tempo_map (depends on tick_length we just computed).
         self.tempo_map = Arc::new(self.build_tempo_map());
-
-        // 派生 per-channel 计数（用于音频引擎检测 ChannelLayout 翻转）。
-        self.recompute_channel_counts();
     }
 
     /// Rebuild only the dirty buckets and update statistics incrementally.
@@ -335,9 +302,6 @@ impl YinModel {
         if new_tick_length != prev_tick_length {
             self.tempo_map = Arc::new(self.build_tempo_map());
         }
-
-        // 5. 派生 per-channel 计数（与 rebuild() 末尾一致）。
-        self.recompute_channel_counts();
     }
 
     /// Change PPQ and rescale all tick data to preserve absolute timing.

@@ -12,8 +12,8 @@ pub(crate) struct AudioState {
     /// 当前引擎创建时使用的 `ChannelLayout` 快照。
     ///
     /// 用于在 `notify_notes_changed` / `notify_audio_model_changed` 里检测
-    /// channel 激活状态是否翻转：若 `layout.differs_from_counts(model)` 为 true，
-    /// 说明有 channel 的激活状态变了（0→1 或 1→0），必须 teardown + 重建引擎。
+    /// channel 激活状态是否翻转：若 `layout.differs_from_model(model)` 为 true，
+    /// 说明有音轨增删/改通道（激活状态变了），必须 teardown + 重建引擎。
     /// 否则可走便宜的 `UpdateNotes` / `ReloadNotes` 路径。
     ///
     /// `None` 表示引擎尚未 spawn，下一帧 `rebuild_audio_if_needed` 会用新 model

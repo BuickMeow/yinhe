@@ -56,7 +56,7 @@ impl App {
             return true; // 绑定的 doc 不一致，必须重建
         }
         let model = &self.documents[idx].data.model;
-        layout.differs_from_counts(&model.channel_note_count, &model.channel_ctrl_count)
+        layout.differs_from_model(model)
     }
 
     /// Resolve the merged SF configuration for the given document.
