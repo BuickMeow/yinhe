@@ -182,7 +182,6 @@ dialog.audio_switch.stream_error: "音频流已断开（设备热拔或驱动错
 dialog.audio_switch.select_device: "请选择一个新的输出设备："
 dialog.audio_switch.no_devices: "（未发现任何输出设备）"
 dialog.audio_switch.keep_current: "保持当前设备"
-dialog.audio_switch.stream_failed: "无法在该设备上创建音频流，请选另一个设备"
 
 # ── 加载遮罩 ──
 dialog.loading.title: "正在加载"

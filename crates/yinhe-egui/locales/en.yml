@@ -182,7 +182,6 @@ dialog.audio_switch.stream_error: "Audio stream disconnected (device removed or 
 dialog.audio_switch.select_device: "Please select a new output device:"
 dialog.audio_switch.no_devices: "(No output devices found)"
 dialog.audio_switch.keep_current: "Keep Current Device"
-dialog.audio_switch.stream_failed: "Cannot create audio stream on this device, please choose another"
 
 # ── Loading overlay ──
 dialog.loading.title: "Loading"

@@ -48,7 +48,7 @@ pub fn parse_bytes(data: &[u8]) -> Result<YinModel, MidiError> {
 pub fn parse_bytes_with_encoding(
     data: &[u8],
     encoding: MidiImportEncoding,
-    mut progress: impl FnMut(LoadProgress) + Send,
+    progress: impl FnMut(LoadProgress) + Send,
 ) -> Result<YinModel, MidiError> {
     yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Midi, || {
         // 惰性解析：只切出 header + track 块迭代器，不构建全量事件树喵～

@@ -182,7 +182,6 @@ dialog.audio_switch.stream_error: "오디오 스트림이 끊어졌습니다 (�
 dialog.audio_switch.select_device: "새 출력 장치를 선택해 주세요:"
 dialog.audio_switch.no_devices: "(출력 장치를 찾을 수 없음)"
 dialog.audio_switch.keep_current: "현재 장치 유지"
-dialog.audio_switch.stream_failed: "이 장치에서 오디오 스트림을 만들 수 없습니다. 다른 장치를 선택해 주세요"
 
 # ── 로딩 오버레이 ──
 dialog.loading.title: "로딩 중"

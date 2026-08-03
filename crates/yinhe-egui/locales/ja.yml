@@ -182,7 +182,6 @@ dialog.audio_switch.stream_error: "オーディオストリームが切断され
 dialog.audio_switch.select_device: "新しい出力デバイスを選択してください："
 dialog.audio_switch.no_devices: "(出力デバイスが見つかりません)"
 dialog.audio_switch.keep_current: "現在のデバイスを維持"
-dialog.audio_switch.stream_failed: "このデバイスでオーディオストリームを作成できません。別のデバイスを選択してください"
 
 # ── ロードオーバーレイ ──
 dialog.loading.title: "読み込み中"

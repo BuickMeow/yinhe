@@ -317,6 +317,9 @@ impl eframe::App for App {
         // ── Ensure audio engine is loaded for the active document ──
         self.rebuild_audio_if_needed();
 
+        // ── 后台 spawn 结果收取（引擎初始化 stage 完成）──
+        self.poll_audio_spawn();
+
         // ── 音色库异步加载进度（完成计数驱动 stage 2）──
         self.poll_audio_progress();
 

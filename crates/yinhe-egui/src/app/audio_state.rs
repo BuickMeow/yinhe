@@ -51,6 +51,14 @@ pub(crate) struct AudioState {
     /// spawn_cpal_audio 失败的错误信息。Some 表示失败，rebuild_audio_if_needed
     /// 不再重试，直到用户切换设备/文档/设置清除它。
     pub spawn_error: Option<String>,
+    /// 后台 spawn 状态：spawn 是为哪个 doc 发起的（完成时对比 active_doc，
+    /// 不一致则丢弃结果）与结果通道。Some = spawn 进行中。
+    pub spawn_for_doc: Option<usize>,
+    pub spawn_rx: Option<std::sync::mpsc::Receiver<Result<yinhe_audio::CpalAudioHandle, String>>>,
+    /// 设备切换时保存的播放位置：spawn 完成后发送 Seek 恢复。
+    pub spawn_restore_sample: Option<u64>,
+    /// spawn 期间暂存的 layout 快照（flip 检测用），完成后写入 last_channel_layout。
+    pub pending_layout: Option<ChannelLayout>,
 }
 
 impl AudioState {
@@ -69,6 +77,10 @@ impl AudioState {
             sf_pending: false,
             last_device_poll: None,
             spawn_error: None,
+            spawn_for_doc: None,
+            spawn_rx: None,
+            spawn_restore_sample: None,
+            pending_layout: None,
         }
     }
 }

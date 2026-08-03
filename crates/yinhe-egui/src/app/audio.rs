@@ -1,5 +1,4 @@
 use crate::app::App;
-use rust_i18n::t;
 use yinhe_editor_core::progress;
 
 impl App {
@@ -111,6 +110,10 @@ impl App {
     }
 
     /// Rebuild the audio engine if the active document changed or audio was dropped.
+    ///
+    /// spawn 在后台线程执行（设备枚举 + AudioEngine::new + build_output_stream
+    /// 都是慢操作，UI 线程同步执行会冻结几百 ms）；结果由每帧的
+    /// `poll_audio_spawn` 收取并完成初始状态注入。
     pub(crate) fn rebuild_audio_if_needed(&mut self) {
         let idx = match self.active_doc {
             Some(idx) => idx,
@@ -133,8 +136,15 @@ impl App {
             return;
         }
 
+        // spawn 进行中且目标 doc 没变：等待结果，不重复发起。
+        // （doc 变了则发起新 spawn，旧结果到达时按 spawn_for_doc 对比丢弃。）
+        if self.audio_state.spawn_rx.is_some() && self.audio_state.spawn_for_doc == Some(idx) {
+            return;
+        }
+
         progress::set_visible(&self.load_progress, true);
         progress::set_stage(&self.load_progress, 1, progress::StageStatus::Active);
+        progress::set_stage_progress(&self.load_progress, 1, 0.0, "初始化音频引擎".into());
 
         // Drop old audio (stops cpal stream, frees engine)
         self.audio_state.handle = None;
@@ -152,18 +162,82 @@ impl App {
         } else {
             cpal::BufferSize::Fixed(self.audio_settings.buffer_size)
         };
+        let device_name = self.audio_settings.output_device_name.clone();
+        #[cfg(feature = "gpu")]
+        let use_gpu_synth = self.audio_settings.use_gpu_synth;
 
-        match yinhe_audio::spawn_cpal_audio(
-            sr,
-            layout,
-            buffer_size,
-            self.audio_settings.output_device_name.as_deref(),
-            #[cfg(feature = "gpu")]
-            self.audio_settings.use_gpu_synth,
-        ) {
+        // 后台线程执行 spawn（设备枚举/线程池创建/建流全不在 UI 线程）。
+        // 结果经 mpsc 回传，UI 每帧 poll_audio_spawn 收取。
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::Builder::new()
+            .name("audio-spawn".into())
+            .spawn(move || {
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    yinhe_audio::spawn_cpal_audio(
+                        sr,
+                        layout,
+                        buffer_size,
+                        device_name.as_deref(),
+                        #[cfg(feature = "gpu")]
+                        use_gpu_synth,
+                    )
+                }));
+                let result = match result {
+                    Ok(r) => r,
+                    Err(payload) => Err(format!("Audio spawn panicked: {payload:?}")),
+                };
+                let _ = tx.send(result);
+            })
+            .expect("spawn audio thread");
+
+        self.audio_state.spawn_for_doc = Some(idx);
+        self.audio_state.spawn_rx = Some(rx);
+        // spawn_restore_sample 由 switch_audio_device 设置，这里不覆盖
+        // layout_snapshot 在 spawn 完成后由 poll_audio_spawn 设置
+        self.audio_state.pending_layout = Some(layout_snapshot);
+    }
+
+    /// 每帧收取后台 spawn 结果：成功 → 注入初始状态（stage 1 Done）；
+    /// 失败 → 记录错误。结果对应的 doc 已不是活动文档时丢弃（下一帧重新 spawn）。
+    pub(crate) fn poll_audio_spawn(&mut self) {
+        let Some(rx) = self.audio_state.spawn_rx.take() else {
+            return;
+        };
+        let spawn_for = self.audio_state.spawn_for_doc.take();
+        let restore = self.audio_state.spawn_restore_sample.take();
+        let pending_layout = self.audio_state.pending_layout.take();
+        let result = match rx.try_recv() {
+            Ok(r) => r,
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                // 还在跑：放回状态，下帧再查
+                self.audio_state.spawn_rx = Some(rx);
+                self.audio_state.spawn_for_doc = spawn_for;
+                self.audio_state.spawn_restore_sample = restore;
+                self.audio_state.pending_layout = pending_layout;
+                return;
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                Err("Audio spawn thread disconnected".to_string())
+            }
+        };
+
+        match result {
             Ok(audio) => {
+                let Some(idx) = self.active_doc else {
+                    drop(audio);
+                    return;
+                };
+                // 结果对应的是旧 doc（切换文档后旧 spawn 才完成）：丢弃，
+                // 下一帧 rebuild_audio_if_needed 会用新 doc 重新 spawn。
+                if spawn_for != Some(idx) {
+                    drop(audio);
+                    yinhe_memtrace::purge_free_pages();
+                    return;
+                }
+
                 progress::set_stage(&self.load_progress, 1, progress::StageStatus::Done);
 
+                let doc = &self.documents[idx];
                 // 音色库完成计数基准（事件驱动进度：每完成一 port +1）
                 let port_configs = self.resolve_sf_config(doc);
                 self.audio_state.sf_total = port_configs.len();
@@ -171,16 +245,26 @@ impl App {
 
                 self.send_initial_audio_state(&audio, doc, &port_configs);
 
+                // 设备切换：恢复播放位置，关对话框
+                if let Some(sample) = restore {
+                    audio
+                        .handle
+                        .send(yinhe_audio::AudioCommand::Seek { sample });
+                    self.audio_state.device_switch_pending = false;
+                    self.audio_state.device_switch_error = None;
+                }
+
                 self.audio_state.handle = Some(audio);
                 self.audio_state.active_doc = Some(idx);
-                self.audio_state.last_channel_layout = Some(layout_snapshot);
+                self.audio_state.last_channel_layout = pending_layout;
 
                 // 进度条保持可见：音色库异步加载的完成计数由
                 // `poll_audio_progress` 驱动，全部完成才隐藏。
             }
             Err(e) => {
                 tracing::error!("Failed to create audio: {}", e);
-                self.audio_state.spawn_error = Some(e);
+                self.audio_state.spawn_error = Some(e.clone());
+                self.audio_state.device_switch_error = Some(e);
                 progress::set_visible(&self.load_progress, false);
             }
         }
@@ -278,7 +362,8 @@ impl App {
     /// 切换音频输出设备（由"音频设备切换"对话框触发）。
     ///
     /// 流程：保存当前 sample_position → 更新设置 → drop 旧 handle →
-    /// `rebuild_audio_if_needed` 用新设备名 spawn → 发 Seek 恢复位置。
+    /// 后台 spawn（`rebuild_audio_if_needed`）→ `poll_audio_spawn` 完成后
+    /// 发 Seek 恢复位置并关对话框。
     ///
     /// spawn 成功：清 `device_switch_pending`，对话框下帧消失。
     /// spawn 失败：保留 `device_switch_pending`，把错误塞进 `device_switch_error`，
@@ -292,6 +377,8 @@ impl App {
             .as_ref()
             .map(|h| h.handle.sample_position())
             .unwrap_or(0);
+        // 记录恢复位置：spawn 完成后由 poll_audio_spawn 发送 Seek。
+        self.audio_state.spawn_restore_sample = Some(saved_sample);
 
         self.audio_settings.output_device_name = Some(device_name);
         self.audio_settings.save();
@@ -299,25 +386,9 @@ impl App {
         // drop 旧 handle（Drop trait 会通知 renderer 线程退出），强制 rebuild
         self.audio_state.handle = None;
 
-        // 用新设备名重建（rebuild_audio_if_needed 会读 output_device_name）
+        // 用新设备名重建（rebuild_audio_if_needed 会读 output_device_name，
+        // 后台 spawn，结果由每帧 poll_audio_spawn 收取）
         self.rebuild_audio_if_needed();
-
-        if let Some(audio) = &self.audio_state.handle {
-            // spawn 成功 —— 恢复播放位置，关对话框
-            audio.handle.send(yinhe_audio::AudioCommand::Seek {
-                sample: saved_sample,
-            });
-            self.audio_state.device_switch_pending = false;
-            self.audio_state.device_switch_error = None;
-        } else {
-            // spawn 失败 —— 保留对话框，显示实际错误信息（而非固定文案）
-            let err = self
-                .audio_state
-                .spawn_error
-                .clone()
-                .unwrap_or_else(|| t!("dialog.audio_switch.stream_failed").to_string());
-            self.audio_state.device_switch_error = Some(err);
-        }
     }
 
     /// Handle playback toggle/pause/stop and cursor sync.
