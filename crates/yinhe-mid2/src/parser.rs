@@ -48,7 +48,7 @@ pub fn parse_bytes(data: &[u8]) -> Result<YinModel, MidiError> {
 pub fn parse_bytes_with_encoding(
     data: &[u8],
     encoding: MidiImportEncoding,
-    mut progress: impl FnMut(LoadProgress),
+    mut progress: impl FnMut(LoadProgress) + Send,
 ) -> Result<YinModel, MidiError> {
     yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Midi, || {
         // 惰性解析：只切出 header + track 块迭代器，不构建全量事件树喵～
@@ -73,15 +73,27 @@ pub fn parse_bytes_with_encoding(
         let track_events: Vec<midly::EventIter> =
             track_iter.clone().collect::<Result<Vec<_>, _>>()?;
         let total_tracks = track_events.len();
-        progress(LoadProgress {
-            current_track: total_tracks,
-            total_tracks,
-        });
 
+        // 并行解析进度：每完成一个 track 回调一次。
+        // 进度基准是"已完成的 track 数"，不再预先报满（旧实现解析开始前就发
+        // total/total，模型构建期间进度条已 100%，是"假进度"的根源）。
+        // FnMut 不能直接跨并行闭包共享，用 Mutex 包一层（每 track 锁一次，无竞争）。
+        let done = std::sync::atomic::AtomicUsize::new(0);
+        let progress = std::sync::Mutex::new(progress);
         let parsed: Vec<Option<TrackData>> = track_events
             .into_par_iter()
             .enumerate()
-            .map(|(track_idx, events)| parse_track(events, track_idx, encoding))
+            .map(|(track_idx, events)| {
+                let r = parse_track(events, track_idx, encoding);
+                let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                if let Ok(mut p) = progress.lock() {
+                    p(LoadProgress {
+                        current_track: n,
+                        total_tracks,
+                    });
+                }
+                r
+            })
             .collect::<Result<Vec<_>, _>>()?;
 
         // Drop skipped tracks and assign fallback names / final track indices by position.

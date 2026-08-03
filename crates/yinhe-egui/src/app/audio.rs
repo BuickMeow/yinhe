@@ -134,7 +134,7 @@ impl App {
         }
 
         progress::set_visible(&self.load_progress, true);
-        progress::set_stage(&self.load_progress, 2, progress::StageStatus::Active);
+        progress::set_stage(&self.load_progress, 1, progress::StageStatus::Active);
 
         // Drop old audio (stops cpal stream, frees engine)
         self.audio_state.handle = None;
@@ -162,7 +162,7 @@ impl App {
             self.audio_settings.use_gpu_synth,
         ) {
             Ok(audio) => {
-                progress::set_stage(&self.load_progress, 2, progress::StageStatus::Done);
+                progress::set_stage(&self.load_progress, 1, progress::StageStatus::Done);
 
                 self.send_initial_audio_state(&audio, doc);
 
@@ -214,14 +214,14 @@ impl App {
         // Load SoundFonts — resolved from global + project config
         let port_configs = self.resolve_sf_config(doc);
         let total_sf: usize = port_configs.iter().map(|(_, p)| p.len()).sum();
-        progress::set_stage_progress(&self.load_progress, 3, 0.0, format!("0/{}", total_sf));
+        progress::set_stage_progress(&self.load_progress, 2, 0.0, format!("0/{}", total_sf));
         let mut loaded = 0usize;
         for (port, paths) in &port_configs {
             for _p in paths {
                 loaded += 1;
                 progress::set_stage_progress(
                     &self.load_progress,
-                    3,
+                    2,
                     loaded as f32 / total_sf.max(1) as f32,
                     format!("{}/{}", loaded, total_sf),
                 );
@@ -231,7 +231,7 @@ impl App {
                 paths: paths.clone(),
             });
         }
-        progress::set_stage(&self.load_progress, 3, progress::StageStatus::Done);
+        progress::set_stage(&self.load_progress, 2, progress::StageStatus::Done);
 
         // Send initial mute/solo state
         let skip = doc.compute_skip_mask();

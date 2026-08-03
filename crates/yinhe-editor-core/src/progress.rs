@@ -33,12 +33,6 @@ pub fn new_shared() -> SharedProgress {
                 detail: String::new(),
             },
             StageInfo {
-                label: "转换存档格式".into(),
-                progress: 0.0,
-                status: StageStatus::Pending,
-                detail: String::new(),
-            },
-            StageInfo {
                 label: "初始化音频引擎".into(),
                 progress: 0.0,
                 status: StageStatus::Pending,

@@ -159,8 +159,7 @@ impl FileLoader {
         let path_for_thread = path_str.clone();
         let progress = self.load_progress.clone();
         std::thread::spawn(move || {
-            progress::set_stage(&progress, 0, StageStatus::Done);
-            progress::set_stage(&progress, 1, StageStatus::Active);
+            progress::set_stage(&progress, 0, StageStatus::Active);
             let result = yinhe_yin::load_yin_with_sf(&path_for_thread);
             match result {
                 Ok((model, sf, mapping)) => {
@@ -169,7 +168,7 @@ impl FileLoader {
                         .and_then(|n| n.to_str())
                         .map(|s| s.to_string())
                         .unwrap_or_default();
-                    progress::set_stage(&progress, 1, StageStatus::Done);
+                    progress::set_stage(&progress, 0, StageStatus::Done);
                     progress::set_visible(&progress, false);
                     let _ = tx.send(YinLoadEvent::Complete(Ok((model, sf, mapping, file_name))));
                 }
@@ -243,8 +242,8 @@ impl FileLoader {
                 let _ = tx_inner.send(MidiLoadEvent::Progress(p));
             })
         });
+        // stage 0 覆盖整个解析（音轨并行解析 + 模型构建），完成才标 Done。
         progress::set_stage(&progress, 0, StageStatus::Done);
-        progress::set_stage(&progress, 1, StageStatus::Done);
         progress::set_visible(&progress, false);
         let _ = tx.send(MidiLoadEvent::Complete(Box::new(result)));
     }
