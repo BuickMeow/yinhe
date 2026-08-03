@@ -14,8 +14,6 @@ pub(crate) fn prepare_model(
     model: &Arc<YinModel>,
     sample_rate: u32,
     density: u32,
-    _active_mask: &[bool],
-    _channel_map: &[u32; 256],
 ) -> PreparedModel {
     let cc_events = flatten_automation_to_cc_events(model, sample_rate, density);
 

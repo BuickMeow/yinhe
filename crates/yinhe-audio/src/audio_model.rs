@@ -5,8 +5,6 @@ use xsynth_core::channel::{ChannelAudioEvent, ControlEvent};
 use yinhe_core::YinModel;
 use yinhe_types::{AutomationTarget, SegmentShape};
 
-use crate::spawn::track_global_channel;
-
 pub(crate) struct SortedCC {
     pub(crate) sample: u64,
     pub(crate) channel: u32,
@@ -94,9 +92,7 @@ pub(crate) struct AudioModel {
 
 impl AudioModel {
     pub(crate) fn from_model(model: &YinModel) -> Self {
-        let track_channels: Vec<u8> = (0..model.tracks.len())
-            .map(|i| track_global_channel(model, i))
-            .collect();
+        let track_channels: Vec<u8> = model.tracks.iter().map(|t| t.global_channel()).collect();
         let track_cc0: Vec<Vec<u8>> = model
             .tracks
             .iter()
@@ -168,7 +164,7 @@ pub(crate) fn flatten_automation_to_cc_events(
 
     for (track_idx, track) in model.tracks.iter().enumerate() {
         let track_idx_u16 = track_idx as u16;
-        let channel = track_global_channel(model, track_idx) as u32;
+        let channel = track.global_channel() as u32;
 
         for lane in &track.automation_lanes {
             let n = lane.events.len();

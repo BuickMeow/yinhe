@@ -134,10 +134,6 @@ impl AudioEngine {
         self.channel_group.voice_count()
     }
 
-    pub(crate) fn channel_layout(&self) -> &ChannelLayout {
-        &self.channel_layout
-    }
-
     pub(crate) fn model_loaded(&self) -> bool {
         self.model.is_some()
     }

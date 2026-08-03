@@ -231,16 +231,6 @@ impl CpalAudioHandle {
     }
 }
 
-/// Compute the global channel byte for a track: `(port << 4) | channel`.
-#[inline]
-pub(crate) fn track_global_channel(model: &YinModel, track_idx: usize) -> u8 {
-    let t = match model.tracks.get(track_idx) {
-        Some(t) => t,
-        None => return 0,
-    };
-    (t.port & 0x0F) << 4 | (t.channel & 0x0F)
-}
-
 /// Analyse a YinModel and return the `ChannelLayout` (active_mask + channel_map).
 ///
 /// A channel is "active" if any note with vel>1 lives on it, OR any
@@ -305,7 +295,6 @@ pub(crate) enum WorkerResult {
 /// 调用方应给出用户可见的错误，而不是直接 abort 进程。
 pub(crate) fn spawn_worker(
     sample_rate: u32,
-    layout: ChannelLayout,
 ) -> Result<(Sender<WorkerCmd>, crossbeam_channel::Receiver<WorkerResult>), std::io::Error> {
     let (cmd_tx, cmd_rx) = unbounded::<WorkerCmd>();
     let (result_tx, result_rx) = bounded::<WorkerResult>(1);
@@ -345,8 +334,6 @@ pub(crate) fn spawn_worker(
                             &latest,
                             sample_rate,
                             latest_density,
-                            layout.active_mask(),
-                            layout.channel_map(),
                         );
                         let _ = result_tx.send(WorkerResult::PreparedModel(prepared));
                     }
@@ -612,7 +599,7 @@ pub fn spawn_cpal_audio(
             return Err(format!("AudioEngine initialization failed: {msg}"));
         }
     };
-    let (worker_tx, prepared_rx) = spawn_worker(sample_rate, engine.channel_layout().clone())
+    let (worker_tx, prepared_rx) = spawn_worker(sample_rate)
         .map_err(|e| format!("Failed to spawn audio worker thread: {e}"))?;
 
     let (ring_producer, mut ring_consumer) = AudioRing::new(RING_CAPACITY).split();
