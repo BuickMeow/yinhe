@@ -51,10 +51,16 @@ pub(crate) struct CullState {
     /// Per-key note count at last upload (in NoteInstance units).
     per_key_counts: [u32; 128],
 
-    /// Per-key dispatch args buffer: 128 × DispatchIndirectArgs (12 bytes each).
-    /// Pre-computed at upload time so `dispatch_cull` can use
-    /// `dispatch_workgroups_indirect` instead of computing wg_x/wg_y per frame.
-    /// Slot k is at byte offset k * 12.
+    /// Per-key dispatch args buffer: 128 slots × 256 bytes each.
+    /// Slot k is at byte offset k * 256 (satisfies
+    /// `min_storage_buffer_offset_alignment`, typically 256):
+    ///   - [0..12)  `DispatchIndirectArgs` (wg_x, wg_y, wg_z=1), pre-computed at
+    ///     upload time so `dispatch_cull` can use `dispatch_workgroups_indirect`
+    ///     instead of computing wg_x/wg_y per frame.
+    ///   - [12..16) note count at last upload (u32), read by `cull.wgsl` as the
+    ///     cull bound instead of `arrayLength` — the buffer capacity can exceed
+    ///     the written count (grown buffers, shrunk keys), and the tail holds
+    ///     stale/uninitialized data that would be culled as ghost notes.
     dispatch_args_buffer: Buffer,
 
     /// Per-key revision at last upload (full or incremental).
@@ -123,6 +129,16 @@ impl CullState {
                     },
                     count: None,
                 },
+                BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: ShaderStages::COMPUTE,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -147,21 +163,28 @@ impl CullState {
         // Slot k is at byte offset k * 256. draw_indirect reads 16 bytes from a slot.
         let indirect_args_stride = 256;
         let indirect_args_size = 128 * indirect_args_stride;
+        // COPY_SRC so tests can read back the slot contents after a dispatch.
         let indirect_args_buffer = device.create_buffer(&BufferDescriptor {
             label: Some("indirect_args"),
             size: indirect_args_size,
-            usage: BufferUsages::STORAGE | BufferUsages::INDIRECT | BufferUsages::COPY_DST,
+            usage: BufferUsages::STORAGE
+                | BufferUsages::INDIRECT
+                | BufferUsages::COPY_DST
+                | BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
         yinhe_memtrace::add_gpu_resource(indirect_args_size);
 
-        // DispatchIndirectArgs: 128 × 12 bytes (x, y, z as u32).
-        // Written at upload time; read by dispatch_workgroups_indirect.
-        let dispatch_args_size = 128 * 12;
+        // Dispatch args + per-key note count, 128 slots × 256 bytes each.
+        // Slot layout: [wg_x, wg_y, wg_z, count] (16 bytes) + padding. The
+        // 256-byte stride satisfies min_storage_buffer_offset_alignment
+        // (typically 256). wg_x/wg_y pre-computed at upload time; `count`
+        // bounds the cull scan in cull.wgsl (index < count).
+        let dispatch_args_size = 128 * 256;
         let dispatch_args_buffer = device.create_buffer(&BufferDescriptor {
             label: Some("cull_dispatch_args"),
             size: dispatch_args_size,
-            usage: BufferUsages::INDIRECT | BufferUsages::COPY_DST,
+            usage: BufferUsages::STORAGE | BufferUsages::INDIRECT | BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         yinhe_memtrace::add_gpu_resource(dispatch_args_size);
@@ -298,12 +321,19 @@ impl CullState {
         }
         self.per_key_counts[key as usize] = notes.len() as u32;
 
-        // Pre-compute dispatch args for this key (used by dispatch_workgroups_indirect).
+        // Pre-compute dispatch args (wg_x, wg_y) + note count for this key.
+        // count bounds the cull scan in cull.wgsl (index < count); using the
+        // buffer capacity instead would cull stale/uninitialized tail data.
         let wg = (notes.len() as u64).div_ceil(256);
-        let args = [wg.min(65535) as u32, wg.div_ceil(65535) as u32, 1u32];
+        let args = [
+            wg.min(65535) as u32,
+            wg.div_ceil(65535) as u32,
+            1u32,
+            notes.len() as u32,
+        ];
         queue.write_buffer(
             &self.dispatch_args_buffer,
-            key as u64 * 12,
+            key as u64 * 256,
             bytemuck::cast_slice(&args),
         );
 
@@ -352,7 +382,15 @@ impl CullState {
                         resource: BindingResource::Buffer(BufferBinding {
                             buffer: &self.indirect_args_buffer,
                             offset: slot_offset,
-                            size: Some(std::num::NonZeroU64::new(slot_size).unwrap()),
+                            size: std::num::NonZeroU64::new(slot_size),
+                        }),
+                    },
+                    BindGroupEntry {
+                        binding: 4,
+                        resource: BindingResource::Buffer(BufferBinding {
+                            buffer: &self.dispatch_args_buffer,
+                            offset: key as u64 * 256,
+                            size: std::num::NonZeroU64::new(256),
                         }),
                     },
                 ],
@@ -443,7 +481,7 @@ impl CullState {
             cull_pass.set_bind_group(0, bg, &[]);
             // Dispatch args (wg_x, wg_y, 1) were pre-computed at upload time
             // and stored in dispatch_args_buffer. This avoids per-frame div_ceil.
-            cull_pass.dispatch_workgroups_indirect(&self.dispatch_args_buffer, key as u64 * 12);
+            cull_pass.dispatch_workgroups_indirect(&self.dispatch_args_buffer, key as u64 * 256);
         }
         drop(cull_pass);
 
@@ -473,5 +511,109 @@ impl CullState {
             pass.set_vertex_buffer(0, vis_buf.slice(..));
             pass.draw_indirect(&self.indirect_args_buffer, key as u64 * 256);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::vertex::NoteInstance;
+    use std::sync::atomic::Ordering;
+
+    /// Headless GPU device for cull integration tests.
+    /// Returns None when no adapter is available (e.g. CI without a GPU),
+    /// which skips the test.
+    fn headless_device() -> Option<(Device, Queue)> {
+        let instance = Instance::default();
+        let adapter = pollster::block_on(instance.request_adapter(&Default::default())).ok()?;
+        let (device, queue) =
+            pollster::block_on(adapter.request_device(&DeviceDescriptor::default())).ok()?;
+        Some((device, queue))
+    }
+
+    fn visible_uniforms() -> Uniforms {
+        Uniforms {
+            width: 800.0,
+            height: 600.0,
+            scroll_x: 0.0,
+            scroll_y: 1000.0, // key 60 rows land inside the viewport (y ∈ [340, 360))
+            pixels_per_tick: 0.1,
+            key_height: 20.0,
+            keyboard_width: 60.0,
+            mode: 1,
+            ..Default::default()
+        }
+    }
+
+    fn test_notes(n: usize) -> Vec<NoteInstance> {
+        (0..n)
+            .map(|i| NoteInstance {
+                start_tick: i as u32 * 10,
+                end_tick: i as u32 * 10 + 5,
+                packed: NoteInstance::pack(60, 0, 100),
+                reserved: 0,
+            })
+            .collect()
+    }
+
+    /// Regression test for the ghost-note bug: a key whose buffer capacity
+    /// exceeds its written note count must NOT cull stale data beyond `count`.
+    ///
+    /// Scenario: upload 100 notes (buffer capacity rounds up to 256 elements),
+    /// then upload 50 notes (buffer is not recreated, so elements 50..255 still
+    /// hold the first upload's notes). If the shader used `arrayLength`
+    /// (capacity) as the cull bound, the stale notes at 50..99 would pass the
+    /// AABB test and be drawn as ghosts (instance_count would be ≥ 100).
+    #[test]
+    fn cull_ignores_stale_notes_beyond_count() {
+        let Some((device, queue)) = headless_device() else {
+            return;
+        };
+        let mut cull = CullState::new(&device);
+        let uniform_buffer = device.create_buffer(&BufferDescriptor {
+            label: Some("test_uniform"),
+            size: 256,
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        cull.upload_one_key(&device, &queue, &uniform_buffer, 0, &test_notes(100));
+        // Shrunk upload: same key, fewer notes, buffer NOT recreated.
+        cull.upload_one_key(&device, &queue, &uniform_buffer, 0, &test_notes(50));
+
+        let mut encoder = device.create_command_encoder(&Default::default());
+        cull.dispatch_cull(&mut encoder, 0, 0, &visible_uniforms());
+
+        // Read back indirect_args slot 0 (instance_count at byte offset 4).
+        let args_readback = device.create_buffer(&BufferDescriptor {
+            label: Some("args_readback"),
+            size: 256,
+            usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        encoder.copy_buffer_to_buffer(&cull.indirect_args_buffer, 0, &args_readback, 0, 256);
+        queue.submit([encoder.finish()]);
+
+        let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let done2 = done.clone();
+        args_readback
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, move |_| {
+                done2.store(true, Ordering::SeqCst);
+            });
+        device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .expect("poll failed");
+        assert!(done.load(Ordering::SeqCst), "map_async callback not fired");
+        let view = args_readback.slice(..).get_mapped_range();
+        let args: &[u32] = bytemuck::cast_slice(&view);
+        let instance_count = args[1]; // DrawIndirectArgs.instance_count
+        drop(view);
+        args_readback.unmap();
+
+        assert_eq!(
+            instance_count, 50,
+            "stale notes beyond the uploaded count must not be culled"
+        );
     }
 }

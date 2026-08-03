@@ -44,10 +44,20 @@ struct DrawIndirectArgs {
     first_instance: u32,   // 0
 };
 
+// Per-key dispatch info (binding 4). Host-written; shares the 256-byte slot
+// with the dispatch_workgroups_indirect args (first 12 bytes).
+struct DispatchInfo {
+    wg_x: u32,
+    wg_y: u32,
+    wg_z: u32,
+    count: u32,
+};
+
 @group(0) @binding(0) var<uniform> u: Uniforms;
 @group(0) @binding(1) var<storage, read> all_instances: array<NoteInstance>;
 @group(0) @binding(2) var<storage, read_write> visible_instances: array<NoteInstance>;
 @group(0) @binding(3) var<storage, read_write> indirect_args: DrawIndirectArgs;
+@group(0) @binding(4) var<storage, read> dispatch_info: DispatchInfo;
 
 // Workgroup shared memory for prefix sum.
 // After the scan, wg_prefix[i] = number of visible instances in [0..=i].
@@ -62,7 +72,11 @@ fn main(
 ) {
     let MAX_X_THREADS: u32 = 65535u * 256u;
     let index = global_id.x + global_id.y * MAX_X_THREADS;
-    let in_range = index < arrayLength(&all_instances);
+    // `count` is the note count at upload time (host-written in the dispatch
+    // args slot). The buffer capacity can exceed it (grown buffers, shrunk
+    // keys), and the tail holds stale/uninitialized data — culling those would
+    // render ghost notes, so the scan bound must be `count`, not arrayLength.
+    let in_range = index < dispatch_info.count;
 
     var visible: u32 = 0u;
 

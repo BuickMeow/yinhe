@@ -7286,6 +7286,7 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "half",
+ "pollster",
  "rayon",
  "stacker",
  "tracing",
