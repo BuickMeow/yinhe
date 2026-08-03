@@ -103,9 +103,11 @@ impl PianoRollView {
         // Horizontal
         self.base.clamp_scroll_x(width, total_ticks);
 
-        // When total height exceeds viewport by only a few pixels, re-snap key_height
+        // 128 键总高未超过视口（含略超几像素的浮点误差，以及窗口放大后遗留的
+        // 旧缩放——128 键全显示后下方还有空白）时，将 key_height 吸附为
+        // 当前视口下 128 键恰好填满的上限（= 缩小的极限）。
         let total = self.total_key_height();
-        if total > height && total - height < 5.0 {
+        if total < height + 5.0 {
             self.key_height = height / 128.0;
         }
 
@@ -287,6 +289,36 @@ mod tests {
         // total = 1536, height = 1532, diff = 4 < 5
         v.clamp_scroll(1000.0, 1532.0, 10000.0);
         assert!((v.key_height - 1532.0 / 128.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_clamp_scroll_fills_extra_space_when_keys_fully_visible() {
+        // 模拟窗口放大（如最大化）：视口 2000px 高于 128 键总高 1536px，
+        // 旧 key_height 遗留导致下方空白 → 自动吸附为 2000/128 填满视口。
+        let mut v = make_view();
+        v.key_height = 12.0;
+        v.clamp_scroll(1000.0, 2000.0, 10000.0);
+        assert!((v.key_height - 2000.0 / 128.0).abs() < 0.01);
+        assert_eq!(v.base.scroll_y, 0.0);
+    }
+
+    #[test]
+    fn test_clamp_scroll_no_dirty_when_key_height_already_fills_viewport() {
+        // key_height 已是 h/128（恰好填满）时，clamp_scroll 不应反复标记 dirty。
+        let mut v = make_view();
+        v.base.dirty = false;
+        v.key_height = 2000.0 / 128.0;
+        v.clamp_scroll(1000.0, 2000.0, 10000.0);
+        assert!(!v.base.dirty);
+    }
+
+    #[test]
+    fn test_clamp_scroll_keeps_zoom_when_keys_exceed_viewport() {
+        // 128 键超过视口（正常缩放状态）时不得吸附，保留用户缩放。
+        let mut v = make_view();
+        v.key_height = 12.0;
+        v.clamp_scroll(1000.0, 500.0, 10000.0);
+        assert!((v.key_height - 12.0).abs() < 0.01);
     }
 
     #[test]
