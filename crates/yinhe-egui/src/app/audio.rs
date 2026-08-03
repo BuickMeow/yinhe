@@ -138,6 +138,8 @@ impl App {
 
         // Drop old audio (stops cpal stream, frees engine)
         self.audio_state.handle = None;
+        // 旧引擎的 audible_notes/cc_events 已释放：归还空闲页，切文档后 RSS 不累积。
+        yinhe_memtrace::purge_free_pages();
 
         let doc = &self.documents[idx];
         let sr = self.audio_settings.sample_rate;

@@ -342,6 +342,9 @@ pub(crate) fn spawn_worker(
                         );
                         last_synced_revisions = Some(latest.note_revisions);
                         let _ = result_tx.send(WorkerResult::PreparedModel(prepared));
+                        // 构建 audible_notes/cc_events 的临时内存已释放：归还空闲页，
+                        // 避免 RSS 跨阶段累积（大工程峰值内存只涨不跌的根因之一）。
+                        yinhe_memtrace::purge_free_pages();
                     }
                     WorkerCmd::PrepareNotes(model) => {
                         // 合并连续 PrepareNotes，只保留最新
@@ -374,6 +377,7 @@ pub(crate) fn spawn_worker(
                             audible_delta,
                             duration_samples,
                         });
+                        yinhe_memtrace::purge_free_pages();
                     }
                     WorkerCmd::PrepareChase {
                         cc_events,
