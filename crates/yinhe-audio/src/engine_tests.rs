@@ -1343,3 +1343,230 @@ fn test_chase_channel_states_incremental() {
     let other = chase_channel_states(&cc_events, 1, &[50]);
     assert_eq!(other[0].volume, 50);
 }
+
+// ---------------------------------------------------------------------------
+// tick 域化回归测试：sample↔tick 转换、全曲渲染完整性、零长段、seek 去重
+// ---------------------------------------------------------------------------
+
+/// 构造带 tempo 变速的模型：`tempo_events` = [(tick, BPM), ...]，`notes` = [(key, start, end)]。
+fn make_model_with_tempo(
+    tempo_events: Vec<(u32, f32)>,
+    notes: Vec<(u8, u32, u32)>,
+) -> Arc<YinModel> {
+    let conductor = ConductorData {
+        tempo: AutomationLane {
+            target: AutomationTarget::Tempo,
+            track: 0,
+            events: tempo_events
+                .into_iter()
+                .map(|(tick, value)| AutomationEvent {
+                    tick,
+                    value,
+                    shape: SegmentShape::Step,
+                })
+                .collect(),
+        },
+        time_sig: Vec::new(),
+        key_sig: Vec::new(),
+        markers: Vec::new(),
+        lyrics: Vec::new(),
+        chord: Vec::new(),
+    };
+    let per_track_notes: Vec<Vec<NoteEvent>> = vec![
+        notes
+            .into_iter()
+            .map(|(key, start, end)| NoteEvent {
+                start_tick: start,
+                end_tick: end,
+                key,
+                velocity: 100,
+                id: 0,
+            })
+            .collect(),
+    ];
+    let mut model = YinModel {
+        conductor: Arc::new(conductor),
+        tracks: vec![Arc::new(TrackData::new(0, 0))],
+        meta: ProjectMeta {
+            ppq: 480,
+            ..ProjectMeta::default()
+        },
+        ..Default::default()
+    };
+    model.load_track_notes(per_track_notes);
+    model.rebuild();
+    Arc::new(model)
+}
+
+/// sample↔tick 往返：变速（120→60 BPM @ tick 1000）下转换精确、浮点误差修正有效。
+#[test]
+fn test_sample_tick_roundtrip_with_tempo_changes() {
+    let model = make_model_with_tempo(vec![(0, 120.0), (1000, 60.0)], vec![]);
+    let sr = 44100f64;
+    let segments = &model.tempo_map.tempo_segments;
+    let tpb = model.tempo_map.ticks_per_beat;
+
+    // 已知值：120BPM 段 1 tick = 45.9375 sample；60BPM 段 = 91.875
+    assert_eq!(
+        crate::audio_model::tick_to_sample(480, segments, tpb, sr),
+        22050
+    );
+    assert_eq!(
+        crate::audio_model::tick_to_sample(1000, segments, tpb, sr),
+        45937
+    );
+    assert_eq!(
+        crate::audio_model::tick_to_sample(2000, segments, tpb, sr),
+        137812
+    );
+
+    // 往返：tick→sample→tick 精确还原（含变速段边界）
+    for t in [0u32, 1, 479, 480, 999, 1000, 1001, 1999, 2000, 2500] {
+        let s = crate::audio_model::tick_to_sample(t, segments, tpb, sr);
+        assert_eq!(
+            crate::audio_model::sample_to_tick(s, segments, tpb, sr),
+            t,
+            "tick {t} 往返失败"
+        );
+    }
+
+    // 浮点边界：sample 略小于某 tick 的映射时，floor 反查应回到前一 tick
+    assert_eq!(
+        crate::audio_model::sample_to_tick(22049, segments, tpb, sr),
+        479,
+        "22049 sample 应反查 479 tick（22050 才是 480）"
+    );
+}
+
+/// 全曲渲染完整性：所有音符恰好触发一次 NoteOn/NoteOff，无丢无重。
+/// 这是 tick 域化后的事件闭环防护（dispatch 基准/块边界转换出错会在此暴露）。
+#[test]
+fn test_full_render_all_events_exactly_once() {
+    let model = make_model_with_tempo(
+        vec![(0, 120.0), (1000, 60.0)],
+        vec![
+            (60, 0, 480),
+            (64, 480, 960),
+            (67, 0, 2000),
+            (72, 1500, 2400),
+        ],
+    );
+    let mask = vec![true; 16];
+    let mut engine = AudioEngine::new(44100, ChannelLayout::from_mask(mask));
+    engine.load_model(&model);
+    engine.playing = true;
+
+    let total_frames = engine.duration_samples() as usize;
+    assert!(total_frames > 0);
+    let chunk = 1024usize;
+    let mut out = vec![0.0f32; chunk * 2];
+    let mut rendered = 0usize;
+    let mut max_active = 0usize;
+    // 多渲染一块：曲尾事件（end_tick 映射 sample == duration_samples）按
+    // "候选 == 块边界延迟到下一块"的语义在曲内不触发（真实播放由 Stop 兜底），
+    // 额外一块让它们最终触发，验证事件不丢。
+    while rendered < total_frames + chunk {
+        let n = (total_frames + chunk - rendered).min(chunk);
+        engine.render(&mut out[..n * 2]);
+        rendered += n;
+        max_active = max_active.max(engine.active_notes.len());
+    }
+
+    // 全部事件已 dispatch：活跃音符清空、所有桶 cursor 到末尾
+    assert_eq!(engine.active_notes.len(), 0, "所有音符都应 NoteOff");
+    assert!(max_active >= 2, "渲染过程中应存在叠层音符");
+    for key in 0..128usize {
+        assert_eq!(
+            engine.note_cursor[key],
+            engine.audible_notes[key].len(),
+            "key {key} 的桶应全部 dispatch"
+        );
+    }
+    assert_eq!(
+        engine.sample_position as usize,
+        total_frames + chunk,
+        "渲染到曲尾后一块"
+    );
+    assert_eq!(
+        engine.current_tick(),
+        crate::audio_model::sample_to_tick(
+            (total_frames + chunk) as u64,
+            &model.tempo_map.tempo_segments,
+            model.tempo_map.ticks_per_beat,
+            44100.0,
+        ),
+        "current_tick 应同步推进"
+    );
+}
+
+/// 极快 tempo（1 tick < 1 sample）：多个 tick 映射同一 sample，零长渲染段
+/// 不死循环、事件不丢（tick 域化后零长段路径的正确性防护）。
+#[test]
+fn test_fast_tempo_zero_length_segments_no_hang() {
+    // 12000 BPM：mpq = 5000us，1 tick ≈ 0.46 sample @44100 → tick 480/481 同 sample。
+    let model = make_model_with_tempo(vec![(0, 12000.0)], vec![(60, 0, 481), (64, 482, 960)]);
+    let mask = vec![true; 16];
+    let mut engine = AudioEngine::new(44100, ChannelLayout::from_mask(mask));
+    engine.load_model(&model);
+    engine.playing = true;
+
+    // 一帧 512 帧：块内 tick 跨度约 1113，覆盖全部事件
+    let mut out = vec![0.0f32; 1024];
+    engine.render(&mut out);
+    assert_eq!(engine.sample_position, 512, "整块渲染完成，无死循环");
+    assert_eq!(engine.active_notes.len(), 0, "两个音符都 NoteOff");
+    assert_eq!(engine.note_cursor[60], 1);
+    assert_eq!(engine.note_cursor[64], 1);
+}
+
+/// seek 到任意位置后 dispatch：跨 seek 点的音符不重复 NoteOn
+/// （seek 已重启一次，dispatch 不能再次触发）。
+#[test]
+fn test_seek_then_dispatch_no_duplicate_note_on() {
+    let model = make_model_with_tempo(vec![(0, 120.0)], vec![(60, 0, 960), (64, 480, 1440)]);
+    let mask = vec![true; 16];
+    let mut engine = AudioEngine::new(44100, ChannelLayout::from_mask(mask));
+    engine.load_model(&model);
+    engine.playing = true;
+
+    // seek 到 30000 sample ≈ tick 653（两个音符都已开始）
+    let seek_sample = 30000u64;
+    engine.seek_to(seek_sample);
+    assert_eq!(engine.current_tick(), 653, "sample_to_tick(30000) = 653");
+    assert_eq!(engine.active_notes.len(), 2, "seek 重启两个跨点音符");
+
+    // dispatch seek 点：不重复 NoteOn（cursor 已跳过），只处理 NoteOff 边界
+    let next = engine.dispatch_and_find_next(653, 3000);
+    assert_eq!(next, Some(960), "下一个事件是两个音符的 NoteOff 960");
+    assert_eq!(engine.active_notes.len(), 2, "dispatch 不重复 NoteOn");
+
+    // NoteOff 960 触发一次，active 减 1
+    engine.dispatch_and_find_next(960, 3000);
+    assert_eq!(engine.active_notes.len(), 1);
+    // 1440 处第二个 NoteOff
+    engine.dispatch_and_find_next(1440, 3000);
+    assert_eq!(engine.active_notes.len(), 0);
+}
+
+/// audible_notes 免 sort 依赖：模型桶乱序插入、rebuild 排序后，
+/// 音频桶保持 start_tick 严格升序（dispatch 单调 cursor 的前提）。
+#[test]
+fn test_audible_buckets_sorted_without_sort() {
+    let model = make_model_with_tempo(
+        vec![(0, 120.0)],
+        vec![(60, 960, 1440), (60, 0, 480), (60, 480, 960)], // 乱序插入
+    );
+    let audible = crate::prepare_model::build_audible_notes(&model);
+    for key in 0..128usize {
+        let bucket = &audible[key];
+        for w in bucket.windows(2) {
+            assert!(
+                w[0].start_tick < w[1].start_tick,
+                "key {key} 桶必须严格升序（免 sort 依赖模型桶顺序）"
+            );
+        }
+    }
+    assert_eq!(audible[60].len(), 3, "三个音符都进桶");
+    assert_eq!(audible[60][0].start_tick, 0);
+    assert_eq!(audible[60][2].start_tick, 960);
+}
