@@ -42,6 +42,10 @@ pub(crate) struct AudioState {
     /// 上一次轮询到的系统输出设备列表，用于检测设备插拔。
     /// 空 Vec 表示还没初始化过（首次轮询只记录、不触发对话框）。
     pub last_known_devices: Vec<String>,
+    /// 音色库加载进度状态：期望加载的 port 总数（完成计数基准）与等待标志。
+    /// `sf_pending = true` 时每帧 `poll_audio_progress` 轮询实际完成数。
+    pub sf_total: usize,
+    pub sf_pending: bool,
     /// 上一次轮询设备列表的时间。每秒轮询一次，避免每帧调用 cpal 枚举。
     pub last_device_poll: Option<std::time::Instant>,
     /// spawn_cpal_audio 失败的错误信息。Some 表示失败，rebuild_audio_if_needed
@@ -61,6 +65,8 @@ impl AudioState {
             device_switch_required: false,
             device_switch_error: None,
             last_known_devices: Vec::new(),
+            sf_total: 0,
+            sf_pending: false,
             last_device_poll: None,
             spawn_error: None,
         }

@@ -317,6 +317,9 @@ impl eframe::App for App {
         // ── Ensure audio engine is loaded for the active document ──
         self.rebuild_audio_if_needed();
 
+        // ── 音色库异步加载进度（完成计数驱动 stage 2）──
+        self.poll_audio_progress();
+
         // ── Transport bar ──
         let active_doc = self.active_doc.and_then(|idx| self.documents.get(idx));
         let transport_response = transport_bar::show(

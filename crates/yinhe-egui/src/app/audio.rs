@@ -164,13 +164,19 @@ impl App {
             Ok(audio) => {
                 progress::set_stage(&self.load_progress, 1, progress::StageStatus::Done);
 
-                self.send_initial_audio_state(&audio, doc);
+                // 音色库完成计数基准（事件驱动进度：每完成一 port +1）
+                let port_configs = self.resolve_sf_config(doc);
+                self.audio_state.sf_total = port_configs.len();
+                self.audio_state.sf_pending = true;
+
+                self.send_initial_audio_state(&audio, doc, &port_configs);
 
                 self.audio_state.handle = Some(audio);
                 self.audio_state.active_doc = Some(idx);
                 self.audio_state.last_channel_layout = Some(layout_snapshot);
 
-                progress::set_visible(&self.load_progress, false);
+                // 进度条保持可见：音色库异步加载的完成计数由
+                // `poll_audio_progress` 驱动，全部完成才隐藏。
             }
             Err(e) => {
                 tracing::error!("Failed to create audio: {}", e);
@@ -188,6 +194,7 @@ impl App {
         &self,
         audio: &yinhe_audio::CpalAudioHandle,
         doc: &yinhe_editor_core::document::Document,
+        port_configs: &[(u8, Vec<String>)],
     ) {
         // Apply automation density before LoadModel so the first prepare uses it
         audio
@@ -212,32 +219,60 @@ impl App {
             .send(yinhe_audio::AudioCommand::SetLayerCount { count: layers });
 
         // Load SoundFonts — resolved from global + project config
-        let port_configs = self.resolve_sf_config(doc);
-        let total_sf: usize = port_configs.iter().map(|(_, p)| p.len()).sum();
-        progress::set_stage_progress(&self.load_progress, 2, 0.0, format!("0/{}", total_sf));
-        let mut loaded = 0usize;
-        for (port, paths) in &port_configs {
-            for _p in paths {
-                loaded += 1;
-                progress::set_stage_progress(
-                    &self.load_progress,
-                    2,
-                    loaded as f32 / total_sf.max(1) as f32,
-                    format!("{}/{}", loaded, total_sf),
-                );
-            }
+        //
+        // 进度改事件驱动：每个 port 的 `LoadedSoundFont` 结果回传时计数器 +1，
+        // UI 每帧轮询（见 `poll_audio_progress`）更新 stage 2 —— 不再发完命令
+        // 就预填 100%（异步加载还没开始，是假进度）。
+        progress::set_stage(&self.load_progress, 2, progress::StageStatus::Active);
+        progress::set_stage_progress(
+            &self.load_progress,
+            2,
+            0.0,
+            format!("0/{}", port_configs.len()),
+        );
+        for (port, paths) in port_configs {
             audio.handle.send(yinhe_audio::AudioCommand::LoadSoundFont {
                 port: *port,
                 paths: paths.clone(),
             });
         }
-        progress::set_stage(&self.load_progress, 2, progress::StageStatus::Done);
 
         // Send initial mute/solo state
         let skip = doc.compute_skip_mask();
         audio
             .handle
             .send(yinhe_audio::AudioCommand::SkipTracks { skip });
+    }
+
+    /// 每帧轮询音色库加载进度：`sf_loaded_count() / sf_total` 驱动
+    /// "加载音色库"stage 的真实进度，全部完成才标 Done 并隐藏进度条。
+    /// 无音色库配置（total = 0）时立即完成。
+    pub(crate) fn poll_audio_progress(&mut self) {
+        if !self.audio_state.sf_pending {
+            return;
+        }
+        let Some(audio) = &self.audio_state.handle else {
+            // handle 已丢（如 spawn 失败/重建中）：放弃本轮等待
+            self.audio_state.sf_pending = false;
+            progress::set_visible(&self.load_progress, false);
+            return;
+        };
+        let total = self.audio_state.sf_total;
+        let loaded = audio.handle.sf_loaded_count();
+        if total == 0 || loaded >= total {
+            self.audio_state.sf_pending = false;
+            progress::set_stage(&self.load_progress, 2, progress::StageStatus::Done);
+            progress::set_visible(&self.load_progress, false);
+        } else {
+            progress::set_stage_progress(
+                &self.load_progress,
+                2,
+                loaded as f32 / total as f32,
+                format!("{}/{}", loaded, total),
+            );
+            // 进度条还在跑：保持可见（set_stage_progress 会把 stage 置 Active）
+            progress::set_visible(&self.load_progress, true);
+        }
     }
 
     /// 切换音频输出设备（由"音频设备切换"对话框触发）。

@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::thread;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -117,6 +117,8 @@ pub struct AudioHandle {
     /// 预览 Stop 快速路径标志：渲染线程每轮消费。命令通道满（渲染忙时
     /// `PreviewStop` 命令可能被丢弃）也保证松手即停。
     preview_stop_flag: Arc<AtomicBool>,
+    /// 已完成加载的音色库 port 数（worker 每完成一 port +1）。
+    sf_loaded: Arc<AtomicUsize>,
 }
 
 impl AudioHandle {
@@ -185,6 +187,11 @@ impl AudioHandle {
     /// 一旦置位就不会清零，UI 应弹出"需要重启"对话框。
     pub fn stream_error(&self) -> bool {
         self.stream_error.load(Ordering::Relaxed)
+    }
+
+    /// 已完成加载的音色库 port 数（`LoadSoundFont` 结果回传时 +1）。
+    pub fn sf_loaded_count(&self) -> usize {
+        self.sf_loaded.load(Ordering::Relaxed)
     }
 }
 
@@ -634,6 +641,8 @@ pub fn spawn_cpal_audio(
     // 清空边界：ack 时丢弃边界前的旧音频、保留新音频（竞态安全清空）。
     let clear_base_sample = Arc::clone(&renderer_state.clear_base_sample);
     let clear_ring_write = Arc::clone(&renderer_state.clear_ring_write);
+    // 音色库完成计数（renderer_state 即将 move 进 renderer，先 clone 给 handle）。
+    let handle_sf_loaded = Arc::clone(&renderer_state.sf_loaded);
 
     let shutdown = Arc::new(AtomicBool::new(false));
     let renderer_handle = spawn_renderer(
@@ -723,6 +732,7 @@ pub fn spawn_cpal_audio(
             duration_samples,
             stream_error,
             preview_stop_flag,
+            sf_loaded: handle_sf_loaded,
         },
         sample_rate,
         _stream: stream,

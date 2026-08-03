@@ -34,6 +34,9 @@ pub(crate) struct RendererSharedState {
     /// 清空瞬间 ring 的写入计数。cpal 回调 ack 时丢弃该值之前的全部内容
     /// （旧音频），保留之后推入的新音频 —— 比整体 clear 更竞态安全。
     pub(crate) clear_ring_write: Arc<AtomicUsize>,
+    /// 已加载完成的音色库 port 数（每 port 一条 `LoadedSoundFont` 结果 +1）。
+    /// UI 据此驱动"加载音色库"stage 的真实进度（完成计数，不预填）。
+    pub(crate) sf_loaded: Arc<AtomicUsize>,
 }
 
 impl RendererSharedState {
@@ -46,6 +49,7 @@ impl RendererSharedState {
             reset_generation: Arc::new(AtomicU64::new(0)),
             clear_base_sample: Arc::new(AtomicU64::new(0)),
             clear_ring_write: Arc::new(AtomicUsize::new(0)),
+            sf_loaded: Arc::new(AtomicUsize::new(0)),
         }
     }
 }
@@ -372,6 +376,8 @@ impl AudioRenderer {
                     dense_channels,
                     paths,
                 }) => {
+                    // 音色库完成计数：UI 的"加载音色库"stage 进度 = 已完成 port 数。
+                    self.state.sf_loaded.fetch_add(1, Ordering::Relaxed);
                     // 预览引擎与主引擎共享同一音色（Arc，零拷贝）。
                     self.preview_engine
                         .set_port_soundfonts(port, soundfonts.clone());
