@@ -12,6 +12,53 @@ const STACK_RED_ZONE: usize = 32 * 1024;
 /// New stack segment size to allocate when the red zone is exceeded.
 const STACK_SIZE: usize = 1024 * 1024; // 1MB per segment
 
+/// PR 音符过滤循环：逐音符原样输出（不合并、不裁剪），仅过滤 track_visible /
+/// hidden_notes / （可选）视口 tick 范围。PR 和 GPU cull 共用的唯一实现。
+///
+/// `range` 为 `Some((ts, te))` 时只输出与视口 tick 范围相交的音符，`None`
+/// 输出该 key 的全部音符。notes 必须按 start_tick 升序。
+fn build_key_instances(
+    out: &mut Vec<NoteInstance>,
+    midi: &dyn NoteSource,
+    key: u8,
+    track_visible: &[bool],
+    hidden_notes: &std::collections::HashSet<(u16, u32, u8)>,
+    range: Option<(f64, f64)>,
+) {
+    let notes = match range {
+        Some((ts, te)) => key_notes_in_range(midi.key_notes(key), ts as u32, te as u32),
+        None => midi.key_notes(key),
+    };
+    for note in notes {
+        if let Some((_, te)) = range
+            && note.start_tick as f64 > te
+        {
+            break;
+        }
+        if let Some((ts, _)) = range
+            && (note.end_tick as f64) < ts
+        {
+            continue;
+        }
+        if !track_visible
+            .get(note.track as usize)
+            .copied()
+            .unwrap_or(true)
+        {
+            continue;
+        }
+        if hidden_notes.contains(&(note.track, note.start_tick, key)) {
+            continue;
+        }
+        out.push(NoteInstance {
+            start_tick: note.start_tick,
+            end_tick: note.end_tick,
+            packed: NoteInstance::pack(key, note.track, note.velocity),
+            reserved: 0,
+        });
+    }
+}
+
 /// Build note instances (layer 2).
 /// Dependencies: selection, track_visible, tick range (scroll_x)
 ///
@@ -41,55 +88,14 @@ pub fn build_notes(
     // key_notes_in_range looks back via the max_end index, so any note that
     // starts off-screen-left but extends into view is still included — no
     // padding required, regardless of note length.
-    let range_start = tick_start.max(0.0);
-    let range_end = tick_end;
+    let range = Some((tick_start.max(0.0), tick_end));
 
-    // Use stacker to protect against stack overflow when processing many notes.
-    // Each parallel iteration runs in a separate stack segment if needed.
     let results: Vec<Vec<NoteInstance>> = (key_lo..=key_hi)
         .into_par_iter()
         .filter_map(|key| {
-            // Wrap key processing in stacker to get fresh stack segments on demand.
             stacker::maybe_grow(STACK_RED_ZONE, STACK_SIZE, || {
-                let notes =
-                    key_notes_in_range(midi.key_notes(key), range_start as u32, range_end as u32);
-                if notes.is_empty() {
-                    return None;
-                }
-
                 let mut local = Vec::new();
-
-                for note in notes {
-                    if note.start_tick as f64 > range_end {
-                        break;
-                    }
-                    if (note.end_tick as f64) < range_start {
-                        continue;
-                    }
-                    if !track_visible
-                        .get(note.track as usize)
-                        .copied()
-                        .unwrap_or(true)
-                    {
-                        continue;
-                    }
-
-                    // Skip hidden notes (being dragged)
-                    if hidden_notes.contains(&(note.track, note.start_tick, key)) {
-                        continue;
-                    }
-
-                    // 16B NoteInstance: shader fetches color from track_colors
-                    // storage buffer via track index, and computes pixel positions
-                    // from uniforms. track is u16 (0..65535).
-                    local.push(NoteInstance {
-                        start_tick: note.start_tick,
-                        end_tick: note.end_tick,
-                        packed: NoteInstance::pack(key, note.track, note.velocity),
-                        reserved: 0,
-                    });
-                }
-
+                build_key_instances(&mut local, midi, key, track_visible, hidden_notes, range);
                 if local.is_empty() { None } else { Some(local) }
             })
         })
@@ -118,31 +124,8 @@ pub fn build_all_notes(
         .into_par_iter()
         .map(|key| {
             stacker::maybe_grow(STACK_RED_ZONE, STACK_SIZE, || {
-                let notes = midi.key_notes(key);
-                if notes.is_empty() {
-                    return Vec::new();
-                }
-
                 let mut local = Vec::new();
-                for note in notes {
-                    if !track_visible
-                        .get(note.track as usize)
-                        .copied()
-                        .unwrap_or(true)
-                    {
-                        continue;
-                    }
-                    if hidden_notes.contains(&(note.track, note.start_tick, key)) {
-                        continue;
-                    }
-                    local.push(NoteInstance {
-                        start_tick: note.start_tick,
-                        end_tick: note.end_tick,
-                        packed: NoteInstance::pack(key, note.track, note.velocity),
-                        reserved: 0,
-                    });
-                }
-
+                build_key_instances(&mut local, midi, key, track_visible, hidden_notes, None);
                 local
             })
         })
@@ -168,26 +151,8 @@ pub fn build_key_notes(
     hidden_notes: &std::collections::HashSet<(u16, u32, u8)>,
     track_visible: &[bool],
 ) -> Vec<NoteInstance> {
-    let notes = midi.key_notes(key);
     let mut local = Vec::new();
-    for note in notes {
-        if !track_visible
-            .get(note.track as usize)
-            .copied()
-            .unwrap_or(true)
-        {
-            continue;
-        }
-        if hidden_notes.contains(&(note.track, note.start_tick, key)) {
-            continue;
-        }
-        local.push(NoteInstance {
-            start_tick: note.start_tick,
-            end_tick: note.end_tick,
-            packed: NoteInstance::pack(key, note.track, note.velocity),
-            reserved: 0,
-        });
-    }
+    build_key_instances(&mut local, midi, key, track_visible, hidden_notes, None);
     local
 }
 
