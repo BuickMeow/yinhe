@@ -6,9 +6,7 @@ use xsynth_core::soundfont::SoundfontBase;
 
 use yinhe_core::YinModel;
 
-use crate::audio_model::{
-    ActiveNote, AudibleNote, AudioModel, PreparedModel, flatten_automation_to_cc_events,
-};
+use crate::audio_model::{ActiveNote, AudioModel, PreparedModel, flatten_automation_to_cc_events};
 use crate::channel::{ChannelState, ChaseSkip};
 use crate::engine::AudioEngine;
 use crate::prepare_model::build_audible_notes;
@@ -65,26 +63,30 @@ impl AudioEngine {
 
     /// 方案 A：只应用音符更新（`UpdateNotes` 路径）。
     /// 不重建 cc_events，不 seek，不 chase —— 保持当前播放位置和 channel state。
-    /// 只替换 `audible_notes` 和 `model`，影响后续音符 dispatch。
+    /// 只替换 `audible_delta` 中 dirty 桶并重置对应 note_cursor；
+    /// 干净桶保留旧数据与旧 cursor（增量语义，1 亿音符工程编辑不再全量重扫）。
     pub(crate) fn apply_notes_only(
         &mut self,
         model: AudioModel,
         yin_model: Arc<YinModel>,
-        audible_notes: Box<[Vec<AudibleNote>; 128]>,
+        audible_delta: crate::audio_model::AudibleDelta,
         duration_samples: u64,
     ) {
         self.setup_percussion(&model);
         self.duration_samples = duration_samples;
         self.yin_model = Some(yin_model);
-        self.audible_notes = audible_notes;
         self.model = Some(model);
 
-        // 重新计算 note_cursor：保持当前 sample_position，重新找每个 key 桶的游标。
-        // 不需要 AllNotesOff / ResetControl / chase —— 当前活跃音符和 channel state 不变。
+        // 只替换 dirty 桶：重置该桶的 note_cursor（保持当前 sample_position，
+        // 重新找游标）。不需要 AllNotesOff / ResetControl / chase ——
+        // 当前活跃音符和 channel state 不变。
         let sample = self.sample_position;
-        for key in 0..128usize {
-            self.note_cursor[key] =
-                self.audible_notes[key].partition_point(|n| n.start_sample < sample);
+        for (key, bucket) in audible_delta.into_iter().enumerate() {
+            if let Some(bucket) = bucket {
+                self.audible_notes[key] = bucket;
+                self.note_cursor[key] =
+                    self.audible_notes[key].partition_point(|n| n.start_sample < sample);
+            }
         }
     }
 

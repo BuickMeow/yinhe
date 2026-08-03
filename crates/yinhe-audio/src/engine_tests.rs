@@ -854,7 +854,99 @@ fn test_first_note_on_fresh_document_dispatches_without_rebuild() {
     assert_eq!(engine.active_notes.len(), 1);
 }
 
-/// add_track 后新音轨的通道在重建的 layout 中立即激活（无需等音符）。
+/// 增量 UpdateNotes 回归测试：
+/// 1. 编辑只 bump 对应 key 桶的 note_revisions（worker dirty 计算的前提）
+/// 2. `prepare_notes_dirty` 只重建 dirty 桶，其余桶 None
+/// 3. `apply_notes_only` 增量应用：dirty 桶新音符可 dispatch，干净桶 cursor 保留
+#[test]
+fn test_notes_delta_incremental_apply_keeps_clean_bucket_cursor() {
+    let sample_rate = 44100u32;
+    let mut doc = Document::empty();
+    doc.add_note(
+        1,
+        NoteEvent {
+            start_tick: 0,
+            end_tick: 480,
+            key: 60,
+            velocity: 100,
+            id: 0,
+        },
+    );
+    doc.add_note(
+        1,
+        NoteEvent {
+            start_tick: 0,
+            end_tick: 480,
+            key: 64,
+            velocity: 100,
+            id: 0,
+        },
+    );
+    doc.data.bump_revision();
+
+    let mut engine = spawn_engine_for_doc(&doc, sample_rate);
+    engine.playing = true;
+
+    // 播放推进一帧（512 帧 = 1024 samples）：两个音符 NoteOn，cursor 推进
+    let mut out = vec![0.0f32; 1024];
+    engine.render(&mut out);
+    assert_eq!(engine.sample_position, 512);
+    assert_eq!(engine.note_cursor[60], 1);
+    assert_eq!(engine.note_cursor[64], 1);
+
+    // 编辑：key 60 桶加一个更晚的音符 → 只有 note_revisions[60] bump
+    let revs_before = doc.data.model.note_revisions;
+    doc.add_note(
+        1,
+        NoteEvent {
+            start_tick: 960,
+            end_tick: 1440,
+            key: 60,
+            velocity: 100,
+            id: 0,
+        },
+    );
+    doc.data.bump_revision();
+    let revs_after = doc.data.model.note_revisions;
+    assert_ne!(revs_before[60], revs_after[60], "dirty 桶 revision bump");
+    assert_eq!(revs_before[64], revs_after[64], "干净桶 revision 不变");
+
+    // worker 语义：dirty = revisions 对比 → 只有 key 60
+    let dirty: [bool; 128] = core::array::from_fn(|k| revs_before[k] != revs_after[k]);
+    assert!(dirty[60]);
+    assert!(!dirty[64]);
+
+    let (audio_model, yin_model, delta, _dur) =
+        crate::prepare_model::prepare_notes_dirty(&doc.data.model, sample_rate, &dirty);
+    assert_eq!(
+        delta[60].as_ref().map(|b| b.len()),
+        Some(2),
+        "dirty 桶含新旧音符"
+    );
+    for key in 0..128usize {
+        if key != 60 {
+            assert!(delta[key].is_none(), "非 dirty 桶不应重建");
+        }
+    }
+
+    engine.apply_notes_only(audio_model, yin_model, delta, 0);
+
+    // 干净桶（key 64）cursor 保留 = 1；dirty 桶（key 60）按 sample_position 重算 = 1
+    assert_eq!(engine.note_cursor[64], 1, "干净桶 cursor 保留");
+    assert_eq!(engine.note_cursor[60], 1, "dirty 桶 cursor 重算");
+
+    // 继续 dispatch：22050 = 两个 NoteOff，44100 = 新音符（960 tick）的 NoteOn
+    let next = engine.dispatch_and_find_next(22050, 60000);
+    assert_eq!(next, Some(44100), "新音符 NoteOn 位置");
+    assert_eq!(
+        engine.active_notes.len(),
+        0,
+        "两个 NoteOff 已弹，新音符未到"
+    );
+    let next = engine.dispatch_and_find_next(44100, 70000);
+    assert_eq!(next, Some(66150), "新音符 NoteOff = 1440 tick");
+    assert_eq!(engine.active_notes.len(), 1, "新音符已 NoteOn");
+}
 ///
 /// 空 Document 已用满 0-15 通道，所以先 remove_track(16) 释放 channel 15，
 /// 再 add_track 让新 track 分配到 channel 15。

@@ -62,6 +62,10 @@ pub(crate) struct AudibleNote {
     pub velocity: u8,
 }
 
+/// `PrepareNotes` 的增量结果：`[key] = Some(新桶)` 表示该 key 桶需要替换，
+/// `None` 表示桶未变化（音频线程保留旧数据与旧 cursor）。
+pub(crate) type AudibleDelta = Box<[Option<Vec<AudibleNote>>; 128]>;
+
 /// Pre-computed model data, built on a worker thread and applied
 /// atomically on the audio thread.
 pub(crate) struct PreparedModel {

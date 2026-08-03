@@ -341,14 +341,14 @@ impl AudioRenderer {
                 Ok(WorkerResult::PreparedNotes {
                     model,
                     yin_model,
-                    audible_notes,
+                    audible_delta,
                     duration_samples,
                 }) => {
                     self.state
                         .duration_samples
                         .store(duration_samples, Ordering::Relaxed);
                     self.engine
-                        .apply_notes_only(model, yin_model, audible_notes, duration_samples);
+                        .apply_notes_only(model, yin_model, audible_delta, duration_samples);
                     // GPU 路径：音符变化后同步事件到 GpuSynth
                     #[cfg(feature = "gpu")]
                     self.sync_gpu_synth_events();

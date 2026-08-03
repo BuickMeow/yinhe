@@ -8,7 +8,7 @@ use xsynth_core::soundfont::SoundfontBase;
 
 use yinhe_core::YinModel;
 
-use crate::audio_model::{AudibleNote, PreparedModel, SortedCC};
+use crate::audio_model::{PreparedModel, SortedCC};
 use crate::audio_renderer::{RendererSharedState, spawn_renderer};
 use crate::audio_ring::AudioRing;
 use crate::channel::ChannelState;
@@ -267,11 +267,12 @@ pub(crate) enum WorkerCmd {
 
 pub(crate) enum WorkerResult {
     PreparedModel(PreparedModel),
-    /// Result of `PrepareNotes` — only audible_notes + duration + model refs.
+    /// Result of `PrepareNotes` — 只包含 dirty 桶的 audible_notes 增量 + duration + model refs。
+    /// `audible_delta[key] == None` 表示该桶未变化，音频线程保留旧桶和旧 cursor。
     PreparedNotes {
         model: crate::audio_model::AudioModel,
         yin_model: Arc<YinModel>,
-        audible_notes: Box<[Vec<AudibleNote>; 128]>,
+        audible_delta: crate::audio_model::AudibleDelta,
         duration_samples: u64,
     },
     /// Result of `PrepareChase` — 256-channel state snapshot.
@@ -306,6 +307,10 @@ pub(crate) fn spawn_worker(
             // 下次循环优先从 pending 取，避免饿死后续命令。
             let mut pending: std::collections::VecDeque<WorkerCmd> =
                 std::collections::VecDeque::new();
+            // 上次 prepare 时的 note_revisions 快照：对比当前 model 得出 dirty 桶，
+            // 使 PrepareNotes 只重建变化的 key 桶（1 亿音符工程编辑不再全量扫描）。
+            // None = 尚未同步过（首次 PrepareNotes 全量）。
+            let mut last_synced_revisions: Option<[u64; 128]> = None;
             loop {
                 let cmd = match pending.pop_front() {
                     Some(c) => c,
@@ -335,6 +340,7 @@ pub(crate) fn spawn_worker(
                             sample_rate,
                             latest_density,
                         );
+                        last_synced_revisions = Some(latest.note_revisions);
                         let _ = result_tx.send(WorkerResult::PreparedModel(prepared));
                     }
                     WorkerCmd::PrepareNotes(model) => {
@@ -350,12 +356,22 @@ pub(crate) fn spawn_worker(
                                 }
                             }
                         }
-                        let (audio_model, yin_model, audible_notes, duration_samples) =
-                            crate::prepare_model::prepare_notes(&latest, sample_rate);
+                        // 对比 note_revisions 算 dirty 桶：只重建变化的 key 桶。
+                        // rebuild() 会 bump 全部 128 个 revision（全量变化），
+                        // 与模型侧 dirty 语义一致。
+                        let dirty: [bool; 128] = match &last_synced_revisions {
+                            Some(prev) => {
+                                core::array::from_fn(|k| prev[k] != latest.note_revisions[k])
+                            }
+                            None => [true; 128], // 首次同步：全量
+                        };
+                        let (audio_model, yin_model, audible_delta, duration_samples) =
+                            crate::prepare_model::prepare_notes_dirty(&latest, sample_rate, &dirty);
+                        last_synced_revisions = Some(latest.note_revisions);
                         let _ = result_tx.send(WorkerResult::PreparedNotes {
                             model: audio_model,
                             yin_model,
-                            audible_notes,
+                            audible_delta,
                             duration_samples,
                         });
                     }
