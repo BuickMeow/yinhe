@@ -1,9 +1,9 @@
 //! GPU compute cull state: per-key note buffers + indirect dispatch.
 //!
 //! Architecture: each MIDI key (0..127) owns its own `all_notes` (input),
-//! `visible_notes` (output), and a slot in the shared `indirect_args` buffer.
-//! The cull dispatch loops over keys; each key's visible capacity equals its
-//! all-notes capacity, so there is no global visible-note cap.
+//! `visible_notes` (output), and a per-key draw-args buffer. The cull
+//! dispatch loops over keys; each key's visible capacity equals its all-notes
+//! capacity, so there is no global visible-note cap.
 //!
 //! Memory: all_notes + visible_notes ≈ 2 × total notes × 16B (worst case:
 //! minimum zoom, every note visible). H2O.mid (13.8M) ≈ 374MB; 100M ≈ 3.2GB.
@@ -130,22 +130,22 @@ fn visible_tick_range(uniforms: &Uniforms) -> (u32, u32) {
 pub(crate) struct CullState {
     pipeline: ComputePipeline,
     bind_group_layout: BindGroupLayout,
-    /// Reset pipeline: zeros all 128 indirect_args slots in one dispatch.
-    /// Eliminates the CPU-side 32KB write_buffer per frame.
-    reset_pipeline: ComputePipeline,
-    reset_bind_group: BindGroup,
     /// Per-key bind groups (128 slots). `None` until the key is first uploaded.
     per_key_bind_groups: Vec<Option<BindGroup>>,
     /// Per-key all-notes storage buffers (cull input), grown on demand.
     per_key_buffers: Vec<Option<Buffer>>,
     /// Per-key visible-notes storage buffers (cull output + draw vertex source).
-    /// Same size as the corresponding `per_key_buffers` slot (visible ≤ all).
+    /// 256-aligned so every chunk's sparse slots [chunk*256, chunk*256+256)
+    /// fit; visible slots beyond the written count hold stale data and are
+    /// not drawn (draw args bound instance_count to the culled count).
     per_key_visible_buffers: Vec<Option<Buffer>>,
-    /// Shared indirect-args buffer: 128 slots × 256 bytes (DrawIndirectArgs + pad).
-    /// Slot k is at byte offset k * 256. 256-byte stride satisfies
-    /// `min_storage_buffer_offset_alignment` (typically 256). Reset to
-    /// [6,0,0,0,0] before each dispatch.
-    indirect_args_buffer: Buffer,
+    /// Per-key draw args buffer (one DrawIndirectArgs per chunk, 16B each).
+    /// Written by the cull shader's thread 0 per chunk; read by
+    /// `multi_draw_indirect` in draw order (chunk order = input order).
+    per_key_draw_args_buffers: Vec<Option<Buffer>>,
+    /// Chunk count dispatched for each key in the current frame (0 = none).
+    /// Filled by `dispatch_cull`, read by `draw_visible_notes`.
+    frame_chunk_counts: [u32; 128],
 
     /// Per-key note count at last upload (in NoteInstance units).
     per_key_counts: [u32; 128],
@@ -262,24 +262,6 @@ impl CullState {
             cache: None,
         });
 
-        // DrawIndirectArgs: 128 slots × 256 bytes each.
-        // Each slot: [vertex_count=6, instance_count=0, first_vertex=0, first_instance=0] (16 bytes)
-        // + 240 bytes padding to satisfy min_storage_buffer_offset_alignment (typically 256).
-        // Slot k is at byte offset k * 256. draw_indirect reads 16 bytes from a slot.
-        let indirect_args_stride = 256;
-        let indirect_args_size = 128 * indirect_args_stride;
-        // COPY_SRC so tests can read back the slot contents after a dispatch.
-        let indirect_args_buffer = device.create_buffer(&BufferDescriptor {
-            label: Some("indirect_args"),
-            size: indirect_args_size,
-            usage: BufferUsages::STORAGE
-                | BufferUsages::INDIRECT
-                | BufferUsages::COPY_DST
-                | BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        });
-        yinhe_memtrace::add_gpu_resource(indirect_args_size);
-
         // Dispatch args + per-key note count + c_lo, 128 slots × 256 bytes each.
         // Slot layout: [wg_x, wg_y, wg_z, count, c_lo] (20 bytes) + padding.
         // The 256-byte stride satisfies min_storage_buffer_offset_alignment
@@ -294,54 +276,14 @@ impl CullState {
         });
         yinhe_memtrace::add_gpu_resource(dispatch_args_size);
 
-        // Reset pipeline: zeros all 128 indirect_args slots in one dispatch.
-        // Uses a separate bind group layout that binds the full indirect_args
-        // buffer as a flat array<u32> (the cull bind group only binds a 256-byte
-        // slice per key).
-        let reset_bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
-            label: Some("cull_reset_bind_group_layout"),
-            entries: &[BindGroupLayoutEntry {
-                binding: 0,
-                visibility: ShaderStages::COMPUTE,
-                ty: BindingType::Buffer {
-                    ty: BufferBindingType::Storage { read_only: false },
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
-        });
-        let reset_pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
-            label: Some("cull_reset_pipeline_layout"),
-            bind_group_layouts: &[Some(&reset_bind_group_layout)],
-            immediate_size: 0,
-        });
-        let reset_pipeline = device.create_compute_pipeline(&ComputePipelineDescriptor {
-            label: Some("cull_reset_pipeline"),
-            layout: Some(&reset_pipeline_layout),
-            module: &cull_shader,
-            entry_point: Some("reset_indirect_args"),
-            compilation_options: PipelineCompilationOptions::default(),
-            cache: None,
-        });
-        let reset_bind_group = device.create_bind_group(&BindGroupDescriptor {
-            label: Some("cull_reset_bind_group"),
-            layout: &reset_bind_group_layout,
-            entries: &[BindGroupEntry {
-                binding: 0,
-                resource: indirect_args_buffer.as_entire_binding(),
-            }],
-        });
-
         Self {
             pipeline,
             bind_group_layout,
-            reset_pipeline,
-            reset_bind_group,
             per_key_bind_groups: (0..128).map(|_| None).collect(),
             per_key_buffers: (0..128).map(|_| None).collect(),
             per_key_visible_buffers: (0..128).map(|_| None).collect(),
-            indirect_args_buffer,
+            per_key_draw_args_buffers: (0..128).map(|_| None).collect(),
+            frame_chunk_counts: [0; 128],
             per_key_counts: [0; 128],
             bucket_indexes: (0..128).map(|_| None).collect(),
             dispatch_args_buffer,
@@ -374,8 +316,10 @@ impl CullState {
         self.notes_dirty = true;
     }
 
-    /// Grow (if needed) + write + bind-group-recreate (if buffer grew) for one key.
-    /// Also grows the per-key visible buffer to match (visible ≤ all).
+    /// Grow (if needed) + write + bind-group-recreate (if any buffer grew) for
+    /// one key. Visible buffer is 256-aligned (chunk*256 sparse slots); draw
+    /// args buffer holds one DrawIndirectArgs per chunk. The three buffers
+    /// grow together so the bind group always sees consistent sizes.
     pub(crate) fn upload_one_key(
         &mut self,
         device: &Device,
@@ -385,37 +329,68 @@ impl CullState {
         notes: &[NoteInstance],
     ) {
         let needed = notes.len() as u64 * std::mem::size_of::<NoteInstance>() as u64;
+        let chunk_total = (notes.len() as u64).div_ceil(256).max(1);
+        // Visible buffer is 256-aligned so every chunk's sparse slots
+        // [chunk*256, chunk*256+256) fit; draw args: one per chunk.
+        let vis_size = chunk_total * 256 * std::mem::size_of::<NoteInstance>() as u64;
+        let args_size = chunk_total * std::mem::size_of::<u32>() as u64 * 4;
 
         let need_recreate = match &self.per_key_buffers[key as usize] {
             None => true,
             Some(buf) => buf.size() < needed,
+        } || match &self.per_key_visible_buffers[key as usize] {
+            None => true,
+            Some(buf) => buf.size() < vis_size,
+        } || match &self.per_key_draw_args_buffers[key as usize] {
+            None => true,
+            Some(buf) => buf.size() < args_size,
         };
         if need_recreate {
-            if let Some(ref buf) = self.per_key_buffers[key as usize] {
-                yinhe_memtrace::sub_gpu_resource(buf.size());
+            // 释放旧的三个 buffer（如有）并创建新的三个：
+            //   all_notes: 大小 needed.max(4096)，usage STORAGE | COPY_DST
+            //   visible:   大小 vis_size，usage STORAGE | VERTEX
+            //   draw_args: 大小 args_size，usage STORAGE | INDIRECT
+            // 全部走 yinhe_memtrace::sub_gpu_resource / add_gpu_resource
+            // （可先统一释放旧的三个，再统一创建新的三个）
+            for buf in self
+                .per_key_buffers
+                .iter_mut()
+                .chain(self.per_key_visible_buffers.iter_mut())
+                .chain(self.per_key_draw_args_buffers.iter_mut())
+            {
+                if let Some(b) = buf.take() {
+                    yinhe_memtrace::sub_gpu_resource(b.size());
+                }
             }
-            let size = needed.max(4096);
-            let buffer = device.create_buffer(&BufferDescriptor {
+
+            let all_size = needed.max(4096);
+            let all_buf = device.create_buffer(&BufferDescriptor {
                 label: Some("all_notes_key"),
-                size,
+                size: all_size,
                 usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
-            yinhe_memtrace::add_gpu_resource(size);
-            self.per_key_buffers[key as usize] = Some(buffer);
+            yinhe_memtrace::add_gpu_resource(all_size);
+            self.per_key_buffers[key as usize] = Some(all_buf);
 
-            // Visible buffer matches all-notes size (worst case: all visible).
-            if let Some(ref buf) = self.per_key_visible_buffers[key as usize] {
-                yinhe_memtrace::sub_gpu_resource(buf.size());
-            }
-            let vis_buffer = device.create_buffer(&BufferDescriptor {
+            let vis_buf = device.create_buffer(&BufferDescriptor {
                 label: Some("visible_notes_key"),
-                size,
-                usage: BufferUsages::STORAGE | BufferUsages::VERTEX,
+                size: vis_size,
+                // COPY_SRC so tests can read back the culled output.
+                usage: BufferUsages::STORAGE | BufferUsages::VERTEX | BufferUsages::COPY_SRC,
                 mapped_at_creation: false,
             });
-            yinhe_memtrace::add_gpu_resource(size);
-            self.per_key_visible_buffers[key as usize] = Some(vis_buffer);
+            yinhe_memtrace::add_gpu_resource(vis_size);
+            self.per_key_visible_buffers[key as usize] = Some(vis_buf);
+
+            let args_buf = device.create_buffer(&BufferDescriptor {
+                label: Some("draw_args_key"),
+                size: args_size,
+                usage: BufferUsages::STORAGE | BufferUsages::INDIRECT | BufferUsages::COPY_SRC,
+                mapped_at_creation: false,
+            });
+            yinhe_memtrace::add_gpu_resource(args_size);
+            self.per_key_draw_args_buffers[key as usize] = Some(args_buf);
 
             self.recreate_cull_bind_group(device, uniform_buffer, key);
         }
@@ -440,9 +415,8 @@ impl CullState {
     }
 
     /// Recreate the bind group for a single key (after its buffer grew).
-    /// Binds: uniform, all_notes[k], visible_notes[k], indirect_args slot k
-    /// (256-byte slice at offset k*256 — no dynamic offset needed since each
-    /// key has its own bind group).
+    /// Binds: uniform, all_notes[k], visible_notes[k], per-key draw_args[k],
+    /// and the dispatch-args slot k (256-byte slice at offset k*256).
     fn recreate_cull_bind_group(&mut self, device: &Device, uniform_buffer: &Buffer, key: u8) {
         let all_buf = match &self.per_key_buffers[key as usize] {
             Some(b) => b.clone(),
@@ -452,8 +426,10 @@ impl CullState {
             Some(b) => b.clone(),
             None => return,
         };
-        let slot_offset = key as u64 * 256;
-        let slot_size = 256u64;
+        let args_buf = match &self.per_key_draw_args_buffers[key as usize] {
+            Some(b) => b.clone(),
+            None => return,
+        };
         self.per_key_bind_groups[key as usize] =
             Some(device.create_bind_group(&BindGroupDescriptor {
                 label: Some("cull_bind_group"),
@@ -473,11 +449,7 @@ impl CullState {
                     },
                     BindGroupEntry {
                         binding: 3,
-                        resource: BindingResource::Buffer(BufferBinding {
-                            buffer: &self.indirect_args_buffer,
-                            offset: slot_offset,
-                            size: std::num::NonZeroU64::new(slot_size),
-                        }),
+                        resource: args_buf.as_entire_binding(),
                     },
                     BindGroupEntry {
                         binding: 4,
@@ -500,13 +472,14 @@ impl CullState {
     ///
     /// Called when the active document changes (close / switch / new) to avoid
     /// stale note data leaking from the previous document into the next render.
-    /// The shared `indirect_args_buffer` / `dispatch_args_buffer` are reused
-    /// (they'll be overwritten on the next `dispatch_cull`).
+    /// The shared `dispatch_args_buffer` is reused (it'll be overwritten on the
+    /// next `dispatch_cull`).
     pub(crate) fn clear_cull(&mut self) {
         for buf in self
             .per_key_buffers
             .iter_mut()
             .chain(self.per_key_visible_buffers.iter_mut())
+            .chain(self.per_key_draw_args_buffers.iter_mut())
         {
             if let Some(b) = buf.take() {
                 yinhe_memtrace::sub_gpu_resource(b.size());
@@ -514,14 +487,15 @@ impl CullState {
         }
         self.per_key_bind_groups.fill(None);
         self.per_key_counts.fill(0);
+        self.frame_chunk_counts.fill(0);
         self.bucket_indexes.fill(None);
         self.uploaded_key_revisions.fill(0);
         self.last_cull_uniforms = None;
         self.notes_dirty = false;
     }
 
-    /// Reset all 128 indirect-args slots, then dispatch the cull pass per key.
-    /// Each key writes into its own visible buffer + indirect-args slot.
+    /// Dispatch the cull pass per key. Each key writes into its own visible
+    /// buffer's fixed sparse slots + its per-key draw-args buffer.
     ///
     /// Only keys in `key_lo..=key_hi` are dispatched — off-screen keys would
     /// produce zero visible instances anyway, so skipping them saves both CPU
@@ -536,8 +510,8 @@ impl CullState {
     ///
     /// **Skip optimization**: if no notes were re-uploaded (`!notes_dirty`) and
     /// the culling-relevant uniform fields match the last dispatch, the previous
-    /// frame's `visible_notes` + `indirect_args` are still valid and the entire
-    /// reset + dispatch is skipped. This makes idle frames (no scroll, no edit)
+    /// frame's `visible_notes` + per-key draw args are still valid and the
+    /// entire dispatch is skipped. This makes idle frames (no scroll, no edit)
     /// cost zero GPU compute work.
     pub(crate) fn dispatch_cull(
         &mut self,
@@ -577,6 +551,7 @@ impl CullState {
             info[slot + 2] = 1;
             info[slot + 3] = self.per_key_counts[key];
             info[slot + 4] = c_lo;
+            self.frame_chunk_counts[key] = chunk_count;
         }
         queue.write_buffer(&self.dispatch_args_buffer, 0, bytemuck::cast_slice(&info));
 
@@ -585,15 +560,8 @@ impl CullState {
             timestamp_writes: None,
         });
 
-        // Phase 0: GPU-side reset of all 128 indirect_args slots.
-        // One dispatch of 128 threads; thread k writes [6,0,0,0] to slot k.
-        // Replaces the old CPU-side 32KB write_buffer.
-        cull_pass.set_pipeline(&self.reset_pipeline);
-        cull_pass.set_bind_group(0, &self.reset_bind_group, &[]);
-        cull_pass.dispatch_workgroups(1, 1, 1);
-
-        // Phase 1: per-key cull dispatches. Only keys with visible chunks are
-        // dispatched (info[slot] == 0 means chunk_count == 0 → skip).
+        // Per-key cull dispatches. Only keys with visible chunks are dispatched
+        // (info[slot] == 0 means chunk_count == 0 → skip).
         cull_pass.set_pipeline(&self.pipeline);
         for key in key_lo..=key_hi {
             let Some(bg) = &self.per_key_bind_groups[key as usize] else {
@@ -602,8 +570,6 @@ impl CullState {
             if info[key as usize * 64] == 0 {
                 continue;
             }
-            // Each key's bind group already binds its own indirect_args slot
-            // (256-byte slice at offset k*256), so no dynamic offset is needed.
             cull_pass.set_bind_group(0, bg, &[]);
             // Dispatch args (wg_x, wg_y, 1, count, c_lo) were written above as
             // one 32KB blob; the GPU reads them via dispatch_workgroups_indirect.
@@ -615,6 +581,10 @@ impl CullState {
         self.notes_dirty = false;
     }
 
+    /// Draw the culled notes via `multi_draw_indirect`. Each key's chunks are
+    /// drawn in buffer order, and chunks are written in dispatch order
+    /// (= input/tick order), so the z-order is fully deterministic across
+    /// frames — no dependence on GPU workgroup scheduling.
     pub(crate) fn draw_visible_notes(
         &self,
         pass: &mut RenderPass<'_>,
@@ -625,17 +595,29 @@ impl CullState {
     ) {
         pass.set_pipeline(note_pipeline);
         pass.set_bind_group(0, bind_group, &[]);
-        // Draw each key's visible notes via its own indirect-args slot.
         for key in key_lo..=key_hi {
             let Some(vis_buf) = &self.per_key_visible_buffers[key as usize] else {
                 continue;
             };
-            let count = self.per_key_counts[key as usize];
-            if count == 0 {
+            let Some(args_buf) = &self.per_key_draw_args_buffers[key as usize] else {
+                continue;
+            };
+            let chunk_count = self.frame_chunk_counts[key as usize];
+            if chunk_count == 0 {
                 continue;
             }
             pass.set_vertex_buffer(0, vis_buf.slice(..));
-            pass.draw_indirect(&self.indirect_args_buffer, key as u64 * 256);
+            // multi_draw_indirect draws chunks in buffer order (= input order),
+            // giving deterministic z-order. Split into ≤1M-draw segments in
+            // case a single key ever exceeds maxDrawIndirectCount (1,000,000).
+            let mut remaining = chunk_count;
+            let mut offset = 0u32;
+            while remaining > 0 {
+                let n = remaining.min(1_000_000);
+                pass.multi_draw_indirect(args_buf, offset as u64 * 16, n);
+                offset += n;
+                remaining -= n;
+            }
         }
     }
 }
@@ -710,14 +692,22 @@ mod tests {
         let mut encoder = device.create_command_encoder(&Default::default());
         cull.dispatch_cull(&mut encoder, &queue, 0, 0, &visible_uniforms());
 
-        // Read back indirect_args slot 0 (instance_count at byte offset 4).
+        // Read back the per-key draw args (instance_count at byte offset 4).
         let args_readback = device.create_buffer(&BufferDescriptor {
             label: Some("args_readback"),
-            size: 256,
+            size: 16,
             usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
-        encoder.copy_buffer_to_buffer(&cull.indirect_args_buffer, 0, &args_readback, 0, 256);
+        encoder.copy_buffer_to_buffer(
+            cull.per_key_draw_args_buffers[0]
+                .as_ref()
+                .expect("uploaded"),
+            0,
+            &args_readback,
+            0,
+            16,
+        );
         queue.submit([encoder.finish()]);
 
         let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -733,14 +723,93 @@ mod tests {
         assert!(done.load(Ordering::SeqCst), "map_async callback not fired");
         let view = args_readback.slice(..).get_mapped_range();
         let args: &[u32] = bytemuck::cast_slice(&view);
-        let instance_count = args[1]; // DrawIndirectArgs.instance_count
+        // DrawIndirectArgs: [vertex_count=6, instance_count, first_vertex=0,
+        // first_instance=0] — chunk 0 starts at sparse slot 0.
+        assert_eq!(args[0], 6, "vertex_count must be 6 (two triangles)");
+        assert_eq!(args[2], 0, "first_vertex must be 0");
+        assert_eq!(args[3], 0, "first_instance must be 0 (chunk 0)");
+        let instance_count = args[1];
         drop(view);
         args_readback.unmap();
 
         assert_eq!(
             instance_count, 50,
-            "stale notes beyond the uploaded count must not be culled"
+            "stale notes beyond the uploaded count must not be drawn"
         );
+    }
+
+    /// Z-order must be deterministic across frames: with 1000 notes at the
+    /// same tick (spanning 4 chunks), the culled output order must follow the
+    /// input order every frame, independent of GPU workgroup scheduling.
+    #[test]
+    fn cull_output_order_is_deterministic() {
+        let Some((device, queue)) = headless_device() else {
+            return;
+        };
+        let mut cull = CullState::new(&device);
+        let uniform_buffer = device.create_buffer(&BufferDescriptor {
+            label: Some("test_uniform"),
+            size: 256,
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        // 1000 notes at tick 0 (4 chunks); track index distinguishes order.
+        let notes: Vec<NoteInstance> = (0..1000)
+            .map(|i| NoteInstance {
+                start_tick: 0,
+                end_tick: 100,
+                packed: NoteInstance::pack(60, i as u16, 100),
+                reserved: 0,
+            })
+            .collect();
+        cull.upload_one_key(&device, &queue, &uniform_buffer, 0, &notes);
+
+        let run = |cull: &mut CullState, scroll_x: f32| -> Vec<u32> {
+            let mut u = visible_uniforms();
+            u.scroll_x = scroll_x; // 1px shift still keeps all notes visible
+            let mut encoder = device.create_command_encoder(&Default::default());
+            cull.dispatch_cull(&mut encoder, &queue, 0, 0, &u);
+            let readback = device.create_buffer(&BufferDescriptor {
+                label: Some("vis_readback"),
+                size: 4 * 256 * 16, // 4 chunks × 256 slots × 16B
+                usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+            encoder.copy_buffer_to_buffer(
+                cull.per_key_visible_buffers[0].as_ref().expect("uploaded"),
+                0,
+                &readback,
+                0,
+                4 * 256 * 16,
+            );
+            queue.submit([encoder.finish()]);
+
+            let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let done2 = done.clone();
+            readback.slice(..).map_async(wgpu::MapMode::Read, move |_| {
+                done2.store(true, Ordering::SeqCst);
+            });
+            device
+                .poll(wgpu::PollType::wait_indefinitely())
+                .expect("poll failed");
+            assert!(done.load(Ordering::SeqCst));
+            let view = readback.slice(..).get_mapped_range();
+            let insts: &[NoteInstance] = bytemuck::cast_slice(&view);
+            let packed: Vec<u32> = insts[..1000].iter().map(|n| n.packed).collect();
+            drop(view);
+            readback.unmap();
+            packed
+        };
+
+        let a = run(&mut cull, 0.0);
+        let b = run(&mut cull, 1.0);
+        assert_eq!(a, b, "z-order must be stable across frames");
+        // Output order == input order: packed = track<<8 | vel<<24 | key, with
+        // track = i, so packed increases by 256 per note.
+        let expected: Vec<u32> = (0..1000)
+            .map(|i| NoteInstance::pack(60, i as u16, 100))
+            .collect();
+        assert_eq!(a, expected, "culled output must follow input (tick) order");
     }
 
     fn build_index(start_ends: &[(u32, u32)]) -> KeyBucketIndex {

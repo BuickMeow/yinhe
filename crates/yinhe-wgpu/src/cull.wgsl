@@ -5,13 +5,20 @@
 // key, binding that key's buffers. This removes any global visible-note
 // cap — the total visible capacity equals the total note count.
 //
-// Z-order stability: uses workgroup prefix sum (Hillis-Steele scan) instead
-// of per-instance atomicAdd. This guarantees that within each workgroup,
-// visible instances are written to the output buffer in the same order as
-// they appear in `all_instances` (= all_notes order = tick order). Since
-// overlapping notes (same key, same tick, different tracks) are adjacent in
-// the buffer and typically within the same workgroup (256 instances), their
-// z-order is deterministic across frames — no flickering.
+// Output: fixed-slot sparse. Chunk c writes its visible notes to the fixed
+// sparse slots [c*256, c*256+256) of `visible_instances` (rank-1 within the
+// chunk's prefix sum), and thread 0 writes the chunk's draw args
+// (vertex_count=6, instance_count=wg_total, first_vertex=0, first_instance=
+// c*256) into `draw_args[c]`. The host draws with multi_draw_indirect in
+// chunk order, so the output (z) order equals the input order = tick order —
+// deterministic across frames, with no atomics and no dependence on GPU
+// workgroup scheduling.
+//
+// Within a chunk, a workgroup prefix sum (Hillis-Steele scan) guarantees that
+// visible instances are written in the same order as they appear in
+// `all_instances` (= all_notes order = tick order). Overlapping notes (same
+// key, same tick, different tracks) are adjacent in the input, so their
+// z-order is stable across frames — no flickering.
 
 struct Uniforms {
     width: f32,
@@ -39,9 +46,9 @@ struct NoteInstance {
 
 struct DrawIndirectArgs {
     vertex_count: u32,     // 6 (two triangles per note)
-    instance_count: atomic<u32>,
+    instance_count: u32,
     first_vertex: u32,     // 0
-    first_instance: u32,   // 0
+    first_instance: u32,   // chunk * 256 (first sparse slot of this chunk)
 };
 
 // Per-key dispatch info (binding 4). Host-written every frame; shares the
@@ -60,14 +67,12 @@ struct DispatchInfo {
 @group(0) @binding(0) var<uniform> u: Uniforms;
 @group(0) @binding(1) var<storage, read> all_instances: array<NoteInstance>;
 @group(0) @binding(2) var<storage, read_write> visible_instances: array<NoteInstance>;
-@group(0) @binding(3) var<storage, read_write> indirect_args: DrawIndirectArgs;
+@group(0) @binding(3) var<storage, read_write> draw_args: array<DrawIndirectArgs>;
 @group(0) @binding(4) var<storage, read> dispatch_info: DispatchInfo;
 
 // Workgroup shared memory for prefix sum.
 // After the scan, wg_prefix[i] = number of visible instances in [0..=i].
 var<workgroup> wg_prefix: array<u32, 256>;
-// Base offset of this workgroup in visible_instances (set by thread 0).
-var<workgroup> wg_base: u32;
 
 @compute @workgroup_size(256)
 fn main(
@@ -146,35 +151,18 @@ fn main(
         stride *= 2u;
     }
 
-    // Phase 2: thread 0 reserves a contiguous block for this workgroup.
+    // Phase 2: thread 0 writes this chunk's draw args. Visible threads write
+    // to fixed sparse slots (chunk * 256 + rank - 1), so the output order is
+    // fully deterministic: (chunk, rank) == input order — stable z-order
+    // across frames, no atomics, no scheduling dependence.
     if local_id.x == 0u {
-        let wg_total = wg_prefix[255];
-        wg_base = atomicAdd(&indirect_args.instance_count, wg_total);
+        draw_args[chunk] = DrawIndirectArgs(6u, wg_prefix[255u], 0u, chunk * 256u);
     }
-    workgroupBarrier();
-
-    // Phase 3: write visible instances in deterministic order.
-    // For a visible thread i, its position = wg_base + prefix[i] - 1
-    // (inclusive scan: prefix[i] = count in [0..=i], so 0-indexed pos = prefix[i] - 1).
     if visible == 1u {
-        let dst = wg_base + wg_prefix[local_id.x] - 1u;
+        let dst = chunk * 256u + wg_prefix[local_id.x] - 1u;
         if dst < arrayLength(&visible_instances) {
             visible_instances[dst] = all_instances[index];
         }
     }
 }
 
-// ── Reset pass: zero all 128 indirect_args slots in one dispatch ──
-// Each slot is 256 bytes (64 u32s). Thread k resets slot k:
-//   vertex_count = 6, instance_count = 0, first_vertex = 0, first_instance = 0.
-// This replaces the CPU-side 32KB write_buffer and eliminates the CPU→GPU transfer.
-@group(0) @binding(0) var<storage, read_write> indirect_args_full: array<u32>;
-
-@compute @workgroup_size(128)
-fn reset_indirect_args(@builtin(local_invocation_id) lid: vec3<u32>) {
-    let base = lid.x * 64u;
-    indirect_args_full[base] = 6u;       // vertex_count
-    indirect_args_full[base + 1u] = 0u;  // instance_count
-    indirect_args_full[base + 2u] = 0u;  // first_vertex
-    indirect_args_full[base + 3u] = 0u;  // first_instance
-}
