@@ -771,8 +771,10 @@ fn test_track_existence_activates_channel() {
     assert!(!layout_empty.is_active(0));
 
     // 2. 有音轨（ch 0）但没有任何音符 → 通道 0 已激活
-    let mut model = YinModel::default();
-    model.tracks = vec![Arc::new(TrackData::new(0, 0))];
+    let mut model = YinModel {
+        tracks: vec![Arc::new(TrackData::new(0, 0))],
+        ..Default::default()
+    };
     let layout = crate::spawn::channels_for_model(&model);
     assert!(layout.is_active(0));
     assert_eq!(layout.dense_for(0), 0);

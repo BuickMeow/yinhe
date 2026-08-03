@@ -1,3 +1,4 @@
+use std::cmp::Reverse;
 use std::sync::Arc;
 use xsynth_core::channel::{
     ChannelAudioEvent, ChannelConfigEvent, ChannelEvent, ChannelInitOptions,
@@ -185,7 +186,10 @@ impl PreviewEngine {
                 trigger_at: base + (n.target_sample - min),
             })
             .collect();
-        self.pending.sort_by_key(|p| p.trigger_at);
+        // 降序排序：trigger_at 最小的在末尾，flush_pending 用 pop() O(1) 弹出。
+        // （升序 + remove(0) 是 O(n²) 元素移动，大组预览——选框全选拖动时
+        // 可能上万音符——会在音频渲染线程卡顿。）
+        self.pending.sort_by_key(|p| Reverse(p.trigger_at));
         self.flush_pending();
     }
 
@@ -231,14 +235,17 @@ impl PreviewEngine {
         self.pending.clear();
     }
 
-    /// 触发所有到点的待触发音符（pending 按 trigger_at 有序）。
+    /// 触发所有到点的待触发音符（pending 按 trigger_at 降序，末尾最早触发）。
     fn flush_pending(&mut self) {
-        while let Some(p) = self.pending.first() {
-            if p.trigger_at > self.position {
-                break;
+        while self
+            .pending
+            .last()
+            .is_some_and(|p| p.trigger_at <= self.position)
+        {
+            // last() 刚确认非空，pop 必成功；不用 unwrap（见 AGENTS 约定）。
+            if let Some(p) = self.pending.pop() {
+                self.note_on(p.channel, p.key, p.velocity, p.duration, &p.state);
             }
-            let p = self.pending.remove(0);
-            self.note_on(p.channel, p.key, p.velocity, p.duration, &p.state);
         }
     }
 
