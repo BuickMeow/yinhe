@@ -9,7 +9,7 @@ use crate::vertex::{
 /// Four pipelines share the same uniform buffer, track-colors buffer, selection
 /// buffer, and bind group:
 ///   - `pipeline`: decor pipeline (32-byte `DrawInstance` vertex layout, `vs_main`)
-///   - `note_pipeline`: note pipeline (16-byte `NoteInstance` vertex layout, `vs_main_note`)
+///   - `note_pipeline`: note pipeline (12-byte `NoteInstance` vertex layout, `vs_main_note`)
 ///   - `velocity_pipeline`: velocity bar pipeline (16-byte `VelocityBarInstance` vertex
 ///     layout, `vs_main_velocity` — unified border-based mode)
 ///   - `curve_pipeline`: automation curve pipeline (32-byte `CurveInstance` vertex layout,
@@ -160,7 +160,7 @@ impl RenderPipelineState {
             cache: None,
         });
 
-        // Note pipeline: 16-byte NoteInstance vertex layout, shares uniforms/bind group
+        // Note pipeline: 12-byte NoteInstance vertex layout, shares uniforms/bind group
         let note_pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
             label: Some("note_pipeline"),
             layout: Some(&pipeline_layout),
@@ -171,7 +171,7 @@ impl RenderPipelineState {
                     array_stride: std::mem::size_of::<NoteInstance>() as u64,
                     step_mode: VertexStepMode::Instance,
                     attributes: &vertex_attr_array![
-                        0 => Uint32x4,
+                        0 => Uint32x3,
                     ],
                 }],
                 compilation_options: PipelineCompilationOptions::default(),

@@ -60,7 +60,7 @@ pub struct DrawInstance {
     pub tag: u32,
 }
 
-/// Note instance: 16 bytes = vec4<u32>.
+/// Note instance: 12 bytes = 3×u32.
 /// Used by the note pipeline (PR notes, AR notes, ghost notes).
 ///
 /// All pixel positions are computed in the GPU vertex shader from uniforms;
@@ -70,7 +70,6 @@ pub struct DrawInstance {
 ///   d0 = start_tick (u32)
 ///   d1 = end_tick   (u32)
 ///   d2 = packed: key(u8) | track(u16) | vel(u8)
-///   d3 = reserved (u32)
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct NoteInstance {
@@ -78,7 +77,6 @@ pub struct NoteInstance {
     pub end_tick: u32,
     /// key(u8, bits 0..8) | track(u16, bits 8..24) | vel(u8, bits 24..32)
     pub packed: u32,
-    pub reserved: u32,
 }
 
 impl NoteInstance {
@@ -328,7 +326,7 @@ mod tests {
     #[test]
     fn test_note_instance_size() {
         assert_eq!(std::mem::size_of::<DrawInstance>(), 32);
-        assert_eq!(std::mem::size_of::<NoteInstance>(), 16);
+        assert_eq!(std::mem::size_of::<NoteInstance>(), 12);
         assert_eq!(std::mem::size_of::<VelocityBarInstance>(), 16);
         // 4×f32 (endp) + f32 (thickness) + u32 (rgba) + u32 (shape) = 16+4+4+4 = 28
         assert_eq!(std::mem::size_of::<CurveInstance>(), 28);

@@ -54,11 +54,11 @@ fn build_key_instances(
             start_tick: note.start_tick,
             end_tick: note.end_tick,
             packed: NoteInstance::pack(key, note.track, note.velocity),
-            reserved: 0,
         });
     }
 }
 
+/// Build a single ghost note
 /// Build note instances (layer 2).
 /// Dependencies: selection, track_visible, tick range (scroll_x)
 ///
@@ -172,7 +172,6 @@ pub fn build_ghost_note(
         start_tick,
         end_tick,
         packed: NoteInstance::pack(key, track, 0),
-        reserved: 0,
     });
 }
 

@@ -37,7 +37,7 @@ struct DrawInstance {
 }
 
 struct NoteInstance {
-    @location(0) data: vec4<u32>,  // x=start_tick, y=end_tick, z=packed(key|track|vel), w=reserved
+    @location(0) data: vec3<u32>,  // x=start_tick, y=end_tick, z=packed(key|track|vel)
 }
 
 struct VelocityBarInstance {

@@ -659,7 +659,6 @@ mod tests {
                 start_tick: i as u32 * 10,
                 end_tick: i as u32 * 10 + 5,
                 packed: NoteInstance::pack(60, 0, 100),
-                reserved: 0,
             })
             .collect()
     }
@@ -759,7 +758,6 @@ mod tests {
                 start_tick: 0,
                 end_tick: 100,
                 packed: NoteInstance::pack(60, i as u16, 100),
-                reserved: 0,
             })
             .collect();
         cull.upload_one_key(&device, &queue, &uniform_buffer, 0, &notes);
@@ -771,7 +769,7 @@ mod tests {
             cull.dispatch_cull(&mut encoder, &queue, 0, 0, &u);
             let readback = device.create_buffer(&BufferDescriptor {
                 label: Some("vis_readback"),
-                size: 4 * 256 * 16, // 4 chunks × 256 slots × 16B
+                size: 4 * 256 * 12, // 4 chunks × 256 slots × 12B
                 usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
                 mapped_at_creation: false,
             });
@@ -780,7 +778,7 @@ mod tests {
                 0,
                 &readback,
                 0,
-                4 * 256 * 16,
+                4 * 256 * 12,
             );
             queue.submit([encoder.finish()]);
 
@@ -819,7 +817,6 @@ mod tests {
                 start_tick: s,
                 end_tick: e,
                 packed: NoteInstance::pack(60, 0, 100),
-                reserved: 0,
             })
             .collect();
         KeyBucketIndex::build(&notes)

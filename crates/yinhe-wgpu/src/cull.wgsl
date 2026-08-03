@@ -1,4 +1,4 @@
-// GPU compute cull for NoteInstance (16 bytes each).
+// GPU compute cull for NoteInstance (12 bytes each).
 //
 // Per-key architecture: each MIDI key (0..127) has its own `all_notes` and
 // `visible_notes` storage buffer. The host dispatches this shader once per
@@ -41,7 +41,9 @@ struct Uniforms {
 };
 
 struct NoteInstance {
-    data: vec4<u32>, // start_tick, end_tick, packed(key|track|vel), reserved
+    start_tick: u32,
+    end_tick: u32,
+    packed: u32, // key|track|vel
 };
 
 struct DrawIndirectArgs {
@@ -94,9 +96,9 @@ fn main(
 
     if in_range {
         let inst = all_instances[index];
-        let start_tick = inst.data.x;
-        let end_tick = inst.data.y;
-        let packed = inst.data.z;
+        let start_tick = inst.start_tick;
+        let end_tick = inst.end_tick;
+        let packed = inst.packed;
         let key = packed & 0xFFu;
 
         // Skip zero-length notes (deleted/placeholder)

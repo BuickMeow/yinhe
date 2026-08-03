@@ -49,7 +49,6 @@ fn flush_track_bucket(
             start_tick: s,
             end_tick: e,
             packed: NoteInstance::pack(key, track.min(65535) as u16, vel),
-            reserved: 0,
         });
     };
 
