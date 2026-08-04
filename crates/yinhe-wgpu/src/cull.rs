@@ -1247,4 +1247,298 @@ mod tests {
             eprintln!("没有可用的 MIDI 文件，测试跳过");
         }
     }
+
+    /// 滚动序列：upload 后两次不同 scroll_x 的 dispatch，输出必须不同。
+    /// 如果相同 → dispatch 层没更新（cull 层 bug）。
+    #[test]
+    fn cull_scroll_sequence_updates() {
+        let Some((device, queue)) = headless_device() else {
+            return;
+        };
+        let mut cull = CullState::new(&device);
+        let uniform_buffer = device.create_buffer(&BufferDescriptor {
+            label: Some("test_uniform"),
+            size: 256,
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let mut all_notes = Vec::new();
+        let mut offsets = [0u32; 129];
+        for key in 0..128u8 {
+            let mut notes = Vec::new();
+            for i in 0..20_000 {
+                // 均匀 10-tick 网格会让 c1/c2 两个视口恰好容纳相同数量音符
+                // （c1==c2，滚动是否更新无从分辨）。在 [50000, 80000) 挖一个
+                // 空洞，让三个视口的音符数各不相同。
+                let start = (i as u32) * 10 + if i >= 5000 { 30_000 } else { 0 };
+                notes.push(NoteInstance {
+                    start_tick: start,
+                    end_tick: start + 5,
+                    packed: NoteInstance::pack(key, 0, 100),
+                });
+            }
+            offsets[key as usize] = all_notes.len() as u32;
+            all_notes.extend(notes);
+        }
+        offsets[128] = all_notes.len() as u32;
+        cull.upload_all_notes(
+            &device,
+            &queue,
+            &uniform_buffer,
+            &all_notes,
+            &offsets,
+            &[0; 128],
+        );
+
+        let run = |cull: &mut CullState, scroll_x: f32| -> u64 {
+            let u = Uniforms {
+                width: 800.0,
+                height: 600.0,
+                scroll_x,
+                scroll_y: 0.0,
+                pixels_per_tick: 0.1,
+                key_height: 12.0,
+                keyboard_width: 60.0,
+                mode: 1,
+                ..Default::default()
+            };
+            queue.write_buffer(&uniform_buffer, 0, bytemuck::bytes_of(&u));
+            let mut encoder = device.create_command_encoder(&Default::default());
+            cull.dispatch_cull(&mut encoder, &queue, 0, 127, &u);
+            // 必须提交 encoder，否则 cull 的 compute pass 不会在 GPU 上执行。
+            queue.submit([encoder.finish()]);
+            // 读回所有 key 的 draw_args（只读 frame_chunk_counts 个 chunk）
+            let mut total: u64 = 0;
+            for key in 0..128 {
+                let Some(args_buf) = &cull.per_key_draw_args_buffers[key] else {
+                    continue;
+                };
+                let chunk_count = cull.frame_chunk_counts[key] as usize;
+                if chunk_count == 0 {
+                    continue;
+                }
+                let readback = device.create_buffer(&BufferDescriptor {
+                    label: Some("args_readback"),
+                    size: 16 * chunk_count as u64,
+                    usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+                    mapped_at_creation: false,
+                });
+                let mut enc = device.create_command_encoder(&Default::default());
+                enc.copy_buffer_to_buffer(args_buf, 0, &readback, 0, 16 * chunk_count as u64);
+                queue.submit([enc.finish()]);
+                let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                let done2 = done.clone();
+                readback.slice(..).map_async(wgpu::MapMode::Read, move |_| {
+                    done2.store(true, Ordering::SeqCst);
+                });
+                device
+                    .poll(wgpu::PollType::wait_indefinitely())
+                    .expect("poll failed");
+                assert!(done.load(Ordering::SeqCst));
+                let view = readback.slice(..).get_mapped_range();
+                let args: &[u32] = bytemuck::cast_slice(&view);
+                for c in 0..chunk_count {
+                    total += args[c * 4 + 1] as u64;
+                }
+                drop(view);
+                readback.unmap();
+            }
+            total
+        };
+
+        let c0 = run(&mut cull, 0.0); // 视口 tick ~[0, 7412]
+        let c1 = run(&mut cull, 4000.0); // 视口 tick ~[39388, 47412]
+        let c2 = run(&mut cull, 8000.0); // 视口 tick ~[79388, 87412]（音符到 199990，仍有）
+        println!("SCROLL: c0={c0} c1={c1} c2={c2}");
+        assert!(c1 != c0, "滚动后输出必须变化: c0={c0} c1={c1}");
+        assert!(c2 != c1, "滚动后输出必须变化: c1={c1} c2={c2}");
+        assert!(c0 > 0, "首个视口应有输出");
+    }
+
+    /// 真实 MIDI：模拟 egui 层完整序列（upload 判断 → dispatch → 滚动 → 切轨）。
+    #[test]
+    fn cull_real_midi_sequence() {
+        let Some((device, queue)) = headless_device() else {
+            return;
+        };
+        let mut cull = CullState::new(&device);
+        let uniform_buffer = device.create_buffer(&BufferDescriptor {
+            label: Some("test_uniform"),
+            size: 256,
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let paths = [
+            "/Users/jieneng/Music/MIDIs/99 Luftballons.mid",
+            "/Users/jieneng/Music/MIDIs/1.mid",
+            "/Users/jieneng/Music/MIDIs/123.mid",
+        ];
+        let mut tested_any = false;
+        for path in paths {
+            let Ok(model) = yinhe_mid2::parse_path(path) else {
+                continue; // 文件不存在或解析失败 → 跳过
+            };
+            tested_any = true;
+            println!(
+                "=== FILE {path}: tracks={} note_count={}",
+                model.tracks.len(),
+                model.note_count
+            );
+
+            let hidden = std::collections::HashSet::new();
+            let all_visible: Vec<bool> = vec![true; model.tracks.len()];
+
+            // ── 模拟 gpu_upload::upload 的 note_key 判断 + 上传 ──
+            let note_key =
+                |revision: u64, tv: &[bool], h: &std::collections::HashSet<(u16, u32, u8)>| {
+                    crate::NoteBufferKey::new(revision, tv, h).value()
+                };
+            let mut last_key = 0u64;
+            let mut last_rev = 0u64;
+            let mut last_hidden = 0u64;
+            let upload_once =
+                |cull: &mut CullState,
+                 model: &yinhe_core::YinModel,
+                 tv: &[bool],
+                 note_revisions: &[u64; 128],
+                 last_key: &mut u64,
+                 last_rev: &mut u64,
+                 last_hidden: &mut u64,
+                 revision: u64,
+                 hidden: &std::collections::HashSet<(u16, u32, u8)>| {
+                    let cull_was_ready = cull.per_key_bind_groups.iter().any(|bg| bg.is_some());
+                    if !cull_was_ready {
+                        *last_key = 0;
+                    }
+                    let nk = note_key(revision, tv, hidden);
+                    if nk == *last_key {
+                        return;
+                    }
+                    // 全量上传（简化：不做增量路径，测试重点是全量+track_visible）
+                    let (all_notes, offsets) = crate::pianoroll::build_all_notes(model, hidden, tv);
+                    cull.upload_all_notes(
+                        &device,
+                        &queue,
+                        &uniform_buffer,
+                        &all_notes,
+                        &offsets,
+                        note_revisions,
+                    );
+                    *last_key = nk;
+                    *last_rev = revision;
+                    *last_hidden = crate::hash_hidden(hidden);
+                };
+
+            let revision: u64 = 1;
+            let note_revisions = [revision; 128];
+
+            // 步骤 1：首次全量上传（全轨道可见）
+            upload_once(
+                &mut cull,
+                &model,
+                &all_visible,
+                &note_revisions,
+                &mut last_key,
+                &mut last_rev,
+                &mut last_hidden,
+                revision,
+                &hidden,
+            );
+            // 步骤 2：dispatch 视口 1（scroll_x=0）
+            let run = |cull: &mut CullState, scroll_x: f32| -> u64 {
+                let u = Uniforms {
+                    width: 800.0,
+                    height: 600.0,
+                    scroll_x,
+                    scroll_y: 0.0,
+                    pixels_per_tick: 0.1,
+                    key_height: 12.0,
+                    keyboard_width: 60.0,
+                    mode: 1,
+                    ..Default::default()
+                };
+                queue.write_buffer(&uniform_buffer, 0, bytemuck::bytes_of(&u));
+                let mut encoder = device.create_command_encoder(&Default::default());
+                cull.dispatch_cull(&mut encoder, &queue, 0, 127, &u);
+                // 必须提交 encoder，否则 cull 的 compute pass 不会在 GPU 上执行。
+                queue.submit([encoder.finish()]);
+                let mut total: u64 = 0;
+                for key in 0..128 {
+                    let Some(args_buf) = &cull.per_key_draw_args_buffers[key] else {
+                        continue;
+                    };
+                    let chunk_count = cull.frame_chunk_counts[key] as usize;
+                    if chunk_count == 0 {
+                        continue;
+                    }
+                    let readback = device.create_buffer(&BufferDescriptor {
+                        label: Some("args_readback"),
+                        size: 16 * chunk_count as u64,
+                        usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+                        mapped_at_creation: false,
+                    });
+                    let mut enc = device.create_command_encoder(&Default::default());
+                    enc.copy_buffer_to_buffer(args_buf, 0, &readback, 0, 16 * chunk_count as u64);
+                    queue.submit([enc.finish()]);
+                    let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                    let done2 = done.clone();
+                    readback.slice(..).map_async(wgpu::MapMode::Read, move |_| {
+                        done2.store(true, Ordering::SeqCst);
+                    });
+                    device
+                        .poll(wgpu::PollType::wait_indefinitely())
+                        .expect("poll failed");
+                    assert!(done.load(Ordering::SeqCst));
+                    let view = readback.slice(..).get_mapped_range();
+                    let args: &[u32] = bytemuck::cast_slice(&view);
+                    for c in 0..chunk_count {
+                        total += args[c * 4 + 1] as u64;
+                    }
+                    drop(view);
+                    readback.unmap();
+                }
+                total
+            };
+            let s0 = run(&mut cull, 0.0);
+            // 步骤 3：模拟滚动（upload 判断：note_key 不变 → 跳过）→ dispatch 视口 2
+            upload_once(
+                &mut cull,
+                &model,
+                &all_visible,
+                &note_revisions,
+                &mut last_key,
+                &mut last_rev,
+                &mut last_hidden,
+                revision,
+                &hidden,
+            );
+            let s1 = run(&mut cull, 1000.0);
+            // 步骤 4：模拟切轨（track_visible 变化 → 必须重新上传）→ dispatch
+            let mut half_visible = all_visible.clone();
+            for (i, v) in half_visible.iter_mut().enumerate() {
+                if i % 2 == 1 {
+                    *v = false;
+                }
+            }
+            upload_once(
+                &mut cull,
+                &model,
+                &half_visible,
+                &note_revisions,
+                &mut last_key,
+                &mut last_rev,
+                &mut last_hidden,
+                revision,
+                &hidden,
+            );
+            let s2 = run(&mut cull, 1000.0);
+            println!("SEQ {path}: s0={s0} s1={s1} s2={s2}");
+            assert!(s1 != s0, "滚动后输出必须变化: s0={s0} s1={s1}");
+            // 切轨后输出应减少（一半轨道隐藏；若模型轨道数<=1 或全部音符在同一轨道则可能不减，允许相等）
+            assert!(s2 <= s1, "切轨后输出不应增加: s1={s1} s2={s2}");
+        }
+        if !tested_any {
+            eprintln!("无可用 MIDI 文件，跳过");
+        }
+    }
 }

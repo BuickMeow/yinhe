@@ -5,6 +5,7 @@
 //! - revision 变了且 per-key revision 匹配 → 跳过（已上传）
 //! - revision 变了且部分 key 不同 → 尝试增量（count 必须匹配）
 //! - revision 变了且 count 不匹配 → 全量上传
+//! - 仅 track_visible 变了（note_key 变化但 revision/hidden 未变）→ 必须全量上传
 
 use std::collections::HashSet;
 
@@ -105,6 +106,12 @@ pub fn upload(state: GpuUploadState) {
             }
             // dirty_keys.is_empty(): revision bumped but no key revisions changed
             // (e.g. conductor-only edit) → 只更新 tracking，不重传。
+        } else {
+            // Only track_visible changed (note_key differs but revision and
+            // hidden_notes are unchanged) → must full upload.
+            let (all_notes, offsets) =
+                yinhe_wgpu::build_all_notes(midi_src, hidden_notes, track_visible);
+            pianoroll.upload_all_notes_for_cull(&all_notes, &offsets, note_revisions);
         }
     }
 
