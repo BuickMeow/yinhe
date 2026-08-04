@@ -1748,4 +1748,701 @@ mod tests {
             prev_total = Some(gpu_total);
         }
     }
+
+    /// 精确逐 key 复现测试：每 key 50000 音符（13 个 bucket），视口滚动到
+    /// 歌曲各位置（开头 / 1/4 / 中间 / 3/4），GPU cull 输出与 CPU f32 镜像
+    /// 逐 key 精确对比（容差 2）。
+    ///
+    /// 现有测试只断言「比例 50%~150%」或「输出 > 0」，覆盖不到「每个 key
+    /// 只显示前几个 bucket、后面全部丢失」这类部分丢失 bug。
+    #[test]
+    fn cull_mid_song_exact_per_key() {
+        let Some((device, queue)) = headless_device() else {
+            return;
+        };
+        let mut cull = CullState::new(&device);
+        let uniform_buffer = device.create_buffer(&BufferDescriptor {
+            label: Some("test_uniform"),
+            size: 256,
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        // 每 key 50000 音符：start = i*20, end = start+10 → 覆盖 [0, 1M) ticks，
+        // 13 个 bucket / 196 chunks。
+        let mut all_notes = Vec::new();
+        let mut offsets = [0u32; 129];
+        for key in 0..128u8 {
+            let notes: Vec<NoteInstance> = (0..50_000u32)
+                .map(|i| NoteInstance {
+                    start_tick: i * 20,
+                    end_tick: i * 20 + 10,
+                    packed: NoteInstance::pack(key, 0, 100),
+                })
+                .collect();
+            offsets[key as usize] = all_notes.len() as u32;
+            all_notes.extend(notes);
+        }
+        offsets[128] = all_notes.len() as u32;
+        cull.upload_all_notes(
+            &device,
+            &queue,
+            &uniform_buffer,
+            &all_notes,
+            &offsets,
+            &[0; 128],
+        );
+
+        let (w, h, kh, kb_w) = (800.0f32, 600.0f32, 12.0f32, 60.0f32);
+        let mut any_bad = false;
+        for ppu in [0.1f32, 0.026372144] {
+            // 视口中心 tick：开头 / 1/4 / 中间 / 3/4（scroll_x = tick * ppu）
+            for &center_tick in &[0u32, 250_000, 500_000, 750_000] {
+                let scroll_x = center_tick as f32 * ppu;
+                let u = Uniforms {
+                    width: w,
+                    height: h,
+                    scroll_x,
+                    scroll_y: 0.0,
+                    pixels_per_tick: ppu,
+                    key_height: kh,
+                    keyboard_width: kb_w,
+                    mode: 1,
+                    ..Default::default()
+                };
+                queue.write_buffer(&uniform_buffer, 0, bytemuck::bytes_of(&u));
+                let mut encoder = device.create_command_encoder(&Default::default());
+                cull.dispatch_cull(&mut encoder, &queue, 0, 127, &u);
+                queue.submit([encoder.finish()]);
+
+                let (ts, te) = visible_tick_range(&u);
+                let x_offset = kb_w - scroll_x;
+                let bottom_y = 128.0 * kh - u.scroll_y;
+                let mut mismatches: Vec<(u32, u64, u64, i64)> = Vec::new();
+                for key in 0..128u8 {
+                    // CPU 期望：f32 镜像 shader 的 X + Y 条件
+                    let mut expected = 0u64;
+                    for n in &all_notes
+                        [offsets[key as usize] as usize..offsets[key as usize + 1] as usize]
+                    {
+                        if n.end_tick > n.start_tick {
+                            let px = x_offset + n.start_tick as f32 * ppu;
+                            let pr = x_offset + n.end_tick as f32 * ppu;
+                            if pr >= 0.0 && px <= w {
+                                let k = (n.packed & 0xFF) as f32;
+                                let pb = bottom_y - k * kh;
+                                let py = bottom_y - (k + 1.0) * kh;
+                                if pb >= 0.0 && py <= h {
+                                    expected += 1;
+                                }
+                            }
+                        }
+                    }
+
+                    // GPU：读回该 key 的 draw_args（本帧实际派发的 chunk）
+                    let chunk_count = cull.frame_chunk_counts[key as usize] as usize;
+                    let mut gpu = 0u64;
+                    if chunk_count > 0 {
+                        let args_buf = cull.per_key_draw_args_buffers[key as usize]
+                            .as_ref()
+                            .expect("有 chunk 派发却没有 args buffer");
+                        let readback = device.create_buffer(&BufferDescriptor {
+                            label: Some("args_readback"),
+                            size: 16 * chunk_count as u64,
+                            usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+                            mapped_at_creation: false,
+                        });
+                        let mut enc = device.create_command_encoder(&Default::default());
+                        enc.copy_buffer_to_buffer(
+                            args_buf,
+                            0,
+                            &readback,
+                            0,
+                            16 * chunk_count as u64,
+                        );
+                        queue.submit([enc.finish()]);
+                        let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                        let done2 = done.clone();
+                        readback.slice(..).map_async(wgpu::MapMode::Read, move |_| {
+                            done2.store(true, Ordering::SeqCst);
+                        });
+                        device
+                            .poll(wgpu::PollType::wait_indefinitely())
+                            .expect("poll failed");
+                        assert!(done.load(Ordering::SeqCst));
+                        let view = readback.slice(..).get_mapped_range();
+                        let args: &[u32] = bytemuck::cast_slice(&view);
+                        for c in 0..chunk_count {
+                            gpu += args[c * 4 + 1] as u64;
+                        }
+                        drop(view);
+                        readback.unmap();
+                    }
+
+                    let diff = gpu as i64 - expected as i64;
+                    if diff.abs() > 2 {
+                        mismatches.push((key as u32, expected, gpu, diff));
+                    }
+                }
+                if !mismatches.is_empty() {
+                    any_bad = true;
+                    println!(
+                        "✗ ppu={ppu} scroll_x={scroll_x} (ts={ts} te={te}) 不匹配 key 数={}, 示例: {:?}",
+                        mismatches.len(),
+                        &mismatches[..mismatches.len().min(8)]
+                    );
+                    // 打印一个坏 key 的 bucket 诊断
+                    let key = mismatches[0].0 as usize;
+                    if let Some(idx) = &cull.bucket_indexes[key] {
+                        println!(
+                            "  key={key}: buckets={} chunk_total={} b_lo={} b_hi_end={} dispatched_chunks={}",
+                            idx.bucket_start.len(),
+                            idx.chunk_total,
+                            idx.bucket_suffix_max_end.partition_point(|&m| m >= ts),
+                            idx.bucket_start.partition_point(|&s| s <= te),
+                            cull.frame_chunk_counts[key],
+                        );
+                    }
+                }
+            }
+        }
+        assert!(!any_bad, "存在 GPU 与 CPU 逐 key 计数不匹配（见上方打印）");
+    }
+
+    /// 真实大 MIDI + 相对视口：视口中心 = 歌曲总 tick 的 25% / 50% / 75%，
+    /// GPU cull 输出与 CPU f32 镜像逐 key 精确对比（容差 2）。
+    ///
+    /// 黑乐谱大文件音符密度极高（start.mid：1.64 亿音符 / 309 万 ticks），
+    /// 每个 key 的音符数可达数百万（几十上百个 bucket），与合成均匀分布
+    /// 的场景不同，需要真实文件验证。
+    #[test]
+    fn cull_real_large_midi_relative_viewport() {
+        let Some((device, queue)) = headless_device() else {
+            return;
+        };
+        let paths = [
+            "/Users/jieneng/Music/MIDIs/test.mid",
+            "/Users/jieneng/Music/MIDIs/Night Voyager.mid",
+            "/Users/jieneng/Music/MIDIs/Ouranos - HDSQ & The Romanticist [v1.6.6].mid",
+            "/Users/jieneng/Music/MIDIs/start.mid", // 1.64 亿音符，parse 约 3.6 分钟
+        ];
+        let (w, h, kh, kb_w) = (1376.0f32, 419.0f32, 3.2734375, 60.0f32);
+        let ppu = 0.026372144f32;
+        let mut tested_any = false;
+        for path in paths {
+            let t0 = std::time::Instant::now();
+            let Ok(model) = yinhe_mid2::parse_path(path) else {
+                println!("{path}: 不存在或解析失败，跳过");
+                continue;
+            };
+            tested_any = true;
+            println!(
+                "=== {path}: parse={:?} note_count={} tick_length={} tracks={}",
+                t0.elapsed(),
+                model.note_count,
+                model.tick_length,
+                model.tracks.len()
+            );
+
+            let hidden = std::collections::HashSet::new();
+            let track_visible: Vec<bool> = vec![true; model.tracks.len()];
+            let t1 = std::time::Instant::now();
+            let (all_notes, offsets) =
+                crate::pianoroll::build_all_notes(&model, &hidden, &track_visible);
+            println!("build_all_notes {:?} len={}", t1.elapsed(), all_notes.len());
+
+            let mut cull = CullState::new(&device);
+            let uniform_buffer = device.create_buffer(&BufferDescriptor {
+                label: Some("test_uniform"),
+                size: 256,
+                usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            let t2 = std::time::Instant::now();
+            cull.upload_all_notes(
+                &device,
+                &queue,
+                &uniform_buffer,
+                &all_notes,
+                &offsets,
+                &[0; 128],
+            );
+            println!("upload_all_notes {:?}", t2.elapsed());
+
+            let total_ticks = model.tick_length;
+            let x_offset = |scroll_x: f32| kb_w - scroll_x;
+            let bottom_y = 128.0 * kh;
+            let mut any_bad = false;
+            // 视口中心 = 歌曲总长的比例处（相对位置）
+            for frac in [0.0f32, 0.25, 0.5, 0.75] {
+                let center_tick = total_ticks as f32 * frac;
+                // scroll_x 使 tick=center_tick 落在视口中心
+                let scroll_x = (kb_w + center_tick * ppu - w / 2.0).max(0.0);
+                let u = Uniforms {
+                    width: w,
+                    height: h,
+                    scroll_x,
+                    scroll_y: 0.0,
+                    pixels_per_tick: ppu,
+                    key_height: kh,
+                    keyboard_width: kb_w,
+                    mode: 1,
+                    ..Default::default()
+                };
+                queue.write_buffer(&uniform_buffer, 0, bytemuck::bytes_of(&u));
+                let mut encoder = device.create_command_encoder(&Default::default());
+                cull.dispatch_cull(&mut encoder, &queue, 0, 127, &u);
+                queue.submit([encoder.finish()]);
+
+                let (ts, te) = visible_tick_range(&u);
+                let xo = x_offset(scroll_x);
+                let mut mismatches: Vec<(u32, u64, u64, i64)> = Vec::new();
+                let mut gpu_total = 0u64;
+                let mut cpu_total = 0u64;
+                for key in 0..128u8 {
+                    // CPU 期望：f32 镜像 shader 的 X + Y 条件
+                    let mut expected = 0u64;
+                    for n in &all_notes
+                        [offsets[key as usize] as usize..offsets[key as usize + 1] as usize]
+                    {
+                        if n.end_tick > n.start_tick {
+                            let px = xo + n.start_tick as f32 * ppu;
+                            let pr = xo + n.end_tick as f32 * ppu;
+                            if pr >= 0.0 && px <= w {
+                                let k = (n.packed & 0xFF) as f32;
+                                let pb = bottom_y - k * kh;
+                                let py = bottom_y - (k + 1.0) * kh;
+                                if pb >= 0.0 && py <= h {
+                                    expected += 1;
+                                }
+                            }
+                        }
+                    }
+                    cpu_total += expected;
+
+                    let chunk_count = cull.frame_chunk_counts[key as usize] as usize;
+                    let mut gpu = 0u64;
+                    if chunk_count > 0 {
+                        let args_buf = cull.per_key_draw_args_buffers[key as usize]
+                            .as_ref()
+                            .expect("有 chunk 派发却没有 args buffer");
+                        let readback = device.create_buffer(&BufferDescriptor {
+                            label: Some("args_readback"),
+                            size: 16 * chunk_count as u64,
+                            usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+                            mapped_at_creation: false,
+                        });
+                        let mut enc = device.create_command_encoder(&Default::default());
+                        enc.copy_buffer_to_buffer(
+                            args_buf,
+                            0,
+                            &readback,
+                            0,
+                            16 * chunk_count as u64,
+                        );
+                        queue.submit([enc.finish()]);
+                        let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                        let done2 = done.clone();
+                        readback.slice(..).map_async(wgpu::MapMode::Read, move |_| {
+                            done2.store(true, Ordering::SeqCst);
+                        });
+                        device
+                            .poll(wgpu::PollType::wait_indefinitely())
+                            .expect("poll failed");
+                        assert!(done.load(Ordering::SeqCst));
+                        let view = readback.slice(..).get_mapped_range();
+                        let args: &[u32] = bytemuck::cast_slice(&view);
+                        for c in 0..chunk_count {
+                            gpu += args[c * 4 + 1] as u64;
+                        }
+                        drop(view);
+                        readback.unmap();
+                    }
+                    gpu_total += gpu;
+
+                    let diff = gpu as i64 - expected as i64;
+                    if diff.abs() > 2 {
+                        mismatches.push((key as u32, expected, gpu, diff));
+                    }
+                }
+                println!(
+                    "  frac={frac} (ts={ts} te={te}) GPU_total={gpu_total} CPU_total={cpu_total} 不匹配 key 数={}",
+                    mismatches.len()
+                );
+                if !mismatches.is_empty() {
+                    any_bad = true;
+                    println!("    示例: {:?}", &mismatches[..mismatches.len().min(10)]);
+                    let key = mismatches[0].0 as usize;
+                    if let Some(idx) = &cull.bucket_indexes[key] {
+                        println!(
+                            "    key={key}: buckets={} chunk_total={} b_lo={} b_hi_end={} dispatched_chunks={}",
+                            idx.bucket_start.len(),
+                            idx.chunk_total,
+                            idx.bucket_suffix_max_end.partition_point(|&m| m >= ts),
+                            idx.bucket_start.partition_point(|&s| s <= te),
+                            cull.frame_chunk_counts[key],
+                        );
+                    }
+                }
+            }
+            assert!(
+                !any_bad,
+                "{path}: 存在 GPU 与 CPU 逐 key 计数不匹配（见上方打印）"
+            );
+        }
+        assert!(tested_any, "没有任何可用 MIDI 文件");
+    }
+
+    /// 多帧交互序列：模拟真实使用中的状态机（滚动 → skip 优化 → 编辑增量
+    /// 上传 → 切轨 → hidden 变化），每帧 GPU cull 输出与 CPU f32 镜像逐 key
+    /// 精确对比。覆盖单帧 dispatch 测试测不到的上传/派发状态交互。
+    #[test]
+    fn cull_multi_frame_interaction_sequence() {
+        let path = "/Users/jieneng/Music/MIDIs/test.mid";
+        if !std::path::Path::new(path).exists() {
+            eprintln!("test.mid 不存在，跳过");
+            return;
+        }
+        let Some((device, queue)) = headless_device() else {
+            return;
+        };
+        let t0 = std::time::Instant::now();
+        let mut model = yinhe_mid2::parse_path(path).expect("parse test.mid 失败");
+        println!(
+            "parse {:?} note_count={} tick_length={}",
+            t0.elapsed(),
+            model.note_count,
+            model.tick_length
+        );
+
+        let mut cull = CullState::new(&device);
+        let uniform_buffer = device.create_buffer(&BufferDescriptor {
+            label: Some("test_uniform"),
+            size: 256,
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let (w, h, kh, kb_w) = (1376.0f32, 419.0f32, 3.2734375, 60.0f32);
+        let ppu = 0.026372144f32;
+        let bottom_y = 128.0 * kh;
+
+        // ── 模拟 gpu_upload::upload 的状态机 ──
+        let mut last_key = 0u64; // note_key
+        let mut last_rev = 0u64; // revision
+        let mut last_hidden = 0u64; // hidden hash
+        let mut revision: u64 = 1;
+        let mut tv: Vec<bool> = vec![true; model.tracks.len()];
+        let mut hidden: std::collections::HashSet<(u16, u32, u8)> =
+            std::collections::HashSet::new();
+        let note_key_of =
+            |revision: u64, tv: &[bool], h: &std::collections::HashSet<(u16, u32, u8)>| {
+                crate::NoteBufferKey::new(revision, tv, h).value()
+            };
+
+        // 帧处理：执行上传状态机 + dispatch + 读回 + 对比
+        let mut frame_no = 0;
+        let mut run_frame = |frame_no: &mut usize,
+                             cull: &mut CullState,
+                             model: &yinhe_core::YinModel,
+                             revision: u64,
+                             tv: &[bool],
+                             hidden: &std::collections::HashSet<(u16, u32, u8)>,
+                             scroll_x: f32|
+         -> bool {
+            *frame_no += 1;
+            // ── 上传状态机（镜像 gpu_upload::upload）──
+            let cull_was_ready = cull.per_key_bind_groups.iter().any(|bg| bg.is_some());
+            if !cull_was_ready {
+                last_key = 0;
+            }
+            let nk = note_key_of(revision, tv, hidden);
+            let mut uploaded_kind = "skip";
+            if nk != last_key {
+                if !cull_was_ready {
+                    let (all_notes, offsets) = crate::pianoroll::build_all_notes(model, hidden, tv);
+                    cull.upload_all_notes(
+                        &device,
+                        &queue,
+                        &uniform_buffer,
+                        &all_notes,
+                        &offsets,
+                        &model.note_revisions,
+                    );
+                    uploaded_kind = "full";
+                } else {
+                    let revision_changed = revision != last_rev;
+                    let hidden_changed = crate::hash_hidden(hidden) != last_hidden;
+                    if hidden_changed && !revision_changed {
+                        let (all_notes, offsets) =
+                            crate::pianoroll::build_all_notes(model, hidden, tv);
+                        cull.upload_all_notes(
+                            &device,
+                            &queue,
+                            &uniform_buffer,
+                            &all_notes,
+                            &offsets,
+                            &model.note_revisions,
+                        );
+                        uploaded_kind = "full(hidden)";
+                    } else if revision_changed {
+                        let dirty: Vec<u8> = (0u8..128)
+                            .filter(|&k| {
+                                model.note_revisions[k as usize]
+                                    != cull.uploaded_key_revisions[k as usize]
+                            })
+                            .collect();
+                        if dirty.is_empty() {
+                            uploaded_kind = "none(rev-only)";
+                        } else {
+                            let mut all_ok = true;
+                            for &k in &dirty {
+                                let key_notes =
+                                    crate::pianoroll::build_key_notes(model, k, hidden, tv);
+                                if cull.per_key_buffers[k as usize].is_none() {
+                                    all_ok = false;
+                                    break;
+                                }
+                                cull.upload_one_key(
+                                    &device,
+                                    &queue,
+                                    &uniform_buffer,
+                                    k,
+                                    &key_notes,
+                                );
+                                cull.uploaded_key_revisions[k as usize] =
+                                    model.note_revisions[k as usize];
+                            }
+                            if all_ok {
+                                uploaded_kind = "incremental";
+                            } else {
+                                let (all_notes, offsets) =
+                                    crate::pianoroll::build_all_notes(model, hidden, tv);
+                                cull.upload_all_notes(
+                                    &device,
+                                    &queue,
+                                    &uniform_buffer,
+                                    &all_notes,
+                                    &offsets,
+                                    &model.note_revisions,
+                                );
+                                uploaded_kind = "full(fallback)";
+                            }
+                        }
+                    } else {
+                        let (all_notes, offsets) =
+                            crate::pianoroll::build_all_notes(model, hidden, tv);
+                        cull.upload_all_notes(
+                            &device,
+                            &queue,
+                            &uniform_buffer,
+                            &all_notes,
+                            &offsets,
+                            &model.note_revisions,
+                        );
+                        uploaded_kind = "full(tv)";
+                    }
+                }
+                last_key = nk;
+                last_rev = revision;
+                last_hidden = crate::hash_hidden(hidden);
+            }
+
+            // ── dispatch ──
+            let u = Uniforms {
+                width: w,
+                height: h,
+                scroll_x,
+                scroll_y: 0.0,
+                pixels_per_tick: ppu,
+                key_height: kh,
+                keyboard_width: kb_w,
+                mode: 1,
+                ..Default::default()
+            };
+            queue.write_buffer(&uniform_buffer, 0, bytemuck::bytes_of(&u));
+            let mut encoder = device.create_command_encoder(&Default::default());
+            cull.dispatch_cull(&mut encoder, &queue, 0, 127, &u);
+            queue.submit([encoder.finish()]);
+
+            // ── CPU 参考：镜像 shader X+Y 条件（用当前 model）──
+            let xo = kb_w - scroll_x;
+            let mut mismatches: Vec<(u32, u64, u64, i64)> = Vec::new();
+            let mut gpu_total = 0u64;
+            let mut cpu_total = 0u64;
+            for key in 0..128u8 {
+                let mut expected = 0u64;
+                for n in model.notes[key as usize].iter() {
+                    if n.end_tick > n.start_tick
+                        && tv.get(n.track as usize).copied().unwrap_or(true)
+                        && !hidden.contains(&(n.track, n.start_tick, key))
+                    {
+                        let px = xo + n.start_tick as f32 * ppu;
+                        let pr = xo + n.end_tick as f32 * ppu;
+                        if pr >= 0.0 && px <= w {
+                            let k = key as f32;
+                            let pb = bottom_y - k * kh;
+                            let py = bottom_y - (k + 1.0) * kh;
+                            if pb >= 0.0 && py <= h {
+                                expected += 1;
+                            }
+                        }
+                    }
+                }
+                cpu_total += expected;
+
+                let chunk_count = cull.frame_chunk_counts[key as usize] as usize;
+                let mut gpu = 0u64;
+                if chunk_count > 0 {
+                    let args_buf = cull.per_key_draw_args_buffers[key as usize]
+                        .as_ref()
+                        .expect("有 chunk 派发却没有 args buffer");
+                    let readback = device.create_buffer(&BufferDescriptor {
+                        label: Some("args_readback"),
+                        size: 16 * chunk_count as u64,
+                        usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+                        mapped_at_creation: false,
+                    });
+                    let mut enc = device.create_command_encoder(&Default::default());
+                    enc.copy_buffer_to_buffer(args_buf, 0, &readback, 0, 16 * chunk_count as u64);
+                    queue.submit([enc.finish()]);
+                    let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                    let done2 = done.clone();
+                    readback.slice(..).map_async(wgpu::MapMode::Read, move |_| {
+                        done2.store(true, Ordering::SeqCst);
+                    });
+                    device
+                        .poll(wgpu::PollType::wait_indefinitely())
+                        .expect("poll failed");
+                    assert!(done.load(Ordering::SeqCst));
+                    let view = readback.slice(..).get_mapped_range();
+                    let args: &[u32] = bytemuck::cast_slice(&view);
+                    for c in 0..chunk_count {
+                        gpu += args[c * 4 + 1] as u64;
+                    }
+                    drop(view);
+                    readback.unmap();
+                }
+                gpu_total += gpu;
+
+                let diff = gpu as i64 - expected as i64;
+                if diff.abs() > 2 {
+                    mismatches.push((key as u32, expected, gpu, diff));
+                }
+            }
+            println!(
+                "帧{frame_no}: upload={uploaded_kind} scroll_x={scroll_x} GPU={gpu_total} CPU={cpu_total} 不匹配={}",
+                mismatches.len()
+            );
+            if !mismatches.is_empty() {
+                println!("  示例: {:?}", &mismatches[..mismatches.len().min(5)]);
+                return false;
+            }
+            true
+        };
+
+        let mut ok = true;
+        let total_ticks = model.tick_length as f32;
+        // 帧 1：首次全量上传 + 开头视口
+        ok &= run_frame(
+            &mut frame_no,
+            &mut cull,
+            &model,
+            revision,
+            &tv,
+            &hidden,
+            0.0,
+        );
+        // 帧 2：滚动到 25%
+        ok &= run_frame(
+            &mut frame_no,
+            &mut cull,
+            &model,
+            revision,
+            &tv,
+            &hidden,
+            (total_ticks * 0.25 * ppu).max(0.0),
+        );
+        // 帧 3：滚动到 50%（跳过，note_key 不变 → upload=skip）
+        ok &= run_frame(
+            &mut frame_no,
+            &mut cull,
+            &model,
+            revision,
+            &tv,
+            &hidden,
+            (total_ticks * 0.5 * ppu).max(0.0),
+        );
+        // 帧 4：相同视口（dispatch 的 skip 优化）
+        let mid_scroll = (total_ticks * 0.5 * ppu).max(0.0);
+        ok &= run_frame(
+            &mut frame_no,
+            &mut cull,
+            &model,
+            revision,
+            &tv,
+            &hidden,
+            mid_scroll,
+        );
+        // 帧 5：编辑 key 60（加一个音符）→ 增量上传
+        {
+            let k = 60u8;
+            let start = (model.tick_length / 2) as u32;
+            let id = model.alloc_note_id();
+            std::sync::Arc::make_mut(&mut model.notes[k as usize]).push(yinhe_types::Note {
+                id,
+                start_tick: start,
+                end_tick: start + 240,
+                velocity: 100,
+                track: 0,
+            });
+            model.mark_dirty(k);
+            model.rebuild_dirty();
+            revision = revision.wrapping_add(1);
+        }
+        ok &= run_frame(
+            &mut frame_no,
+            &mut cull,
+            &model,
+            revision,
+            &tv,
+            &hidden,
+            mid_scroll,
+        );
+        // 帧 6：切轨（隐藏 track 1-7）→ track_visible 全量
+        for v in tv.iter_mut().take(8).skip(1) {
+            *v = false;
+        }
+        ok &= run_frame(
+            &mut frame_no,
+            &mut cull,
+            &model,
+            revision,
+            &tv,
+            &hidden,
+            mid_scroll,
+        );
+        // 帧 7：hidden_notes 变化（全量）
+        hidden.insert((0, 0, 60));
+        ok &= run_frame(
+            &mut frame_no,
+            &mut cull,
+            &model,
+            revision,
+            &tv,
+            &hidden,
+            mid_scroll,
+        );
+        // 帧 8：滚动到 75%
+        ok &= run_frame(
+            &mut frame_no,
+            &mut cull,
+            &model,
+            revision,
+            &tv,
+            &hidden,
+            (total_ticks * 0.75 * ppu).max(0.0),
+        );
+        assert!(ok, "多帧交互序列存在 GPU/CPU 不匹配（见上方打印）");
+    }
 }
