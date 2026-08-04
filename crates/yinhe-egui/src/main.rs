@@ -73,6 +73,42 @@ fn main() {
     let options = eframe::NativeOptions {
         viewport,
         renderer: eframe::Renderer::Wgpu,
+        wgpu_options: eframe::egui_wgpu::WgpuConfiguration {
+            wgpu_setup: {
+                use eframe::egui_wgpu::wgpu;
+                let mut setup = eframe::egui_wgpu::WgpuSetupCreateNew::without_display_handle();
+                setup.device_descriptor = std::sync::Arc::new(|adapter| {
+                    let base_limits = if adapter.get_info().backend == wgpu::Backend::Gl {
+                        wgpu::Limits::downlevel_webgl2_defaults()
+                    } else {
+                        wgpu::Limits::default()
+                    };
+                    if !adapter
+                        .features()
+                        .contains(wgpu::Features::INDIRECT_FIRST_INSTANCE)
+                    {
+                        tracing::error!(
+                            "适配器不支持 INDIRECT_FIRST_INSTANCE，GPU cull 会丢失音符"
+                        );
+                    }
+                    wgpu::DeviceDescriptor {
+                        label: Some("egui wgpu device"),
+                        // GPU cull 的 multi_draw_indirect 依赖 first_instance≠0
+                        // 定位 chunk 槽位；feature 未启用时 wgpu（Metal/DX12）
+                        // 会静默丢弃这些 draw，音符大面积丢失。
+                        required_features: adapter.features()
+                            & wgpu::Features::INDIRECT_FIRST_INSTANCE,
+                        required_limits: wgpu::Limits {
+                            max_texture_dimension_2d: 8192,
+                            ..base_limits
+                        },
+                        ..Default::default()
+                    }
+                });
+                eframe::egui_wgpu::WgpuSetup::CreateNew(setup)
+            },
+            ..Default::default()
+        },
         ..Default::default()
     };
 

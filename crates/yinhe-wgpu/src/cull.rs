@@ -118,7 +118,7 @@ impl KeyBucketIndex {
         }
     }
 
-    /// Chunk range [c_lo, c_lo + count) that can intersect
+    /// Chunk range [c_lo, c_hi) that can intersect
     /// [tick_start, tick_end]. Conservative: may include chunks that the
     /// shader's exact AABB test then culls. Returns None when nothing can
     /// intersect.
@@ -444,8 +444,12 @@ impl CullState {
             let vis_buf = device.create_buffer(&BufferDescriptor {
                 label: Some("visible_notes_key"),
                 size: vis_size,
-                // COPY_SRC so tests can read back the culled output.
-                usage: BufferUsages::STORAGE | BufferUsages::VERTEX | BufferUsages::COPY_SRC,
+                // COPY_SRC so tests can read back the culled output;
+                // COPY_DST so tests can overwrite slots directly.
+                usage: BufferUsages::STORAGE
+                    | BufferUsages::VERTEX
+                    | BufferUsages::COPY_SRC
+                    | BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
             yinhe_memtrace::add_gpu_resource(vis_size);
@@ -454,7 +458,11 @@ impl CullState {
             let args_buf = device.create_buffer(&BufferDescriptor {
                 label: Some("draw_args_key"),
                 size: args_size,
-                usage: BufferUsages::STORAGE | BufferUsages::INDIRECT | BufferUsages::COPY_SRC,
+                // COPY_DST so tests can overwrite draw args directly.
+                usage: BufferUsages::STORAGE
+                    | BufferUsages::INDIRECT
+                    | BufferUsages::COPY_SRC
+                    | BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
             yinhe_memtrace::add_gpu_resource(args_size);
@@ -610,10 +618,12 @@ impl CullState {
         let mut info = [0u32; 128 * 64];
         for key in 0..128 {
             let slot = key * 64;
-            let (c_lo, chunk_count) = self.bucket_indexes[key]
+            // visible_chunk_range 返回 (c_lo, c_hi) 区间，chunk 数 = c_hi - c_lo。
+            let (c_lo, c_hi) = self.bucket_indexes[key]
                 .as_ref()
                 .and_then(|idx| idx.visible_chunk_range(tick_start, tick_end))
                 .unwrap_or((0, 0));
+            let chunk_count = c_hi - c_lo;
             info[slot] = chunk_count.min(65535);
             info[slot + 1] = chunk_count.div_ceil(65535);
             info[slot + 2] = 1;
@@ -661,6 +671,50 @@ impl CullState {
 
         self.last_cull_uniforms = Some(*uniforms);
         self.notes_dirty = false;
+    }
+
+    /// 诊断用：读回所有 key 的 draw_args，求「GPU cull 判定为可见」的音符总数。
+    /// GPU 同步 + 逐 key 读回，慢（每小节一次可接受）；仅用于真实运行时的
+    /// 「CPU 构建数 vs GPU 显示数」对比，定位显示中断点。
+    pub(crate) fn readback_total_instances(&self, device: &Device, queue: &Queue) -> u64 {
+        let mut total = 0u64;
+        for key in 0..128 {
+            let chunk_count = self.frame_chunk_counts[key] as usize;
+            if chunk_count == 0 {
+                continue;
+            }
+            let Some(args_buf) = &self.per_key_draw_args_buffers[key] else {
+                continue;
+            };
+            let readback = device.create_buffer(&BufferDescriptor {
+                label: Some("diag_readback"),
+                size: 16 * chunk_count as u64,
+                usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+            let mut enc = device.create_command_encoder(&CommandEncoderDescriptor {
+                label: Some("diag_copy"),
+            });
+            enc.copy_buffer_to_buffer(args_buf, 0, &readback, 0, 16 * chunk_count as u64);
+            queue.submit([enc.finish()]);
+            let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let done2 = done.clone();
+            readback.slice(..).map_async(wgpu::MapMode::Read, move |_| {
+                done2.store(true, std::sync::atomic::Ordering::SeqCst);
+            });
+            device
+                .poll(wgpu::PollType::wait_indefinitely())
+                .expect("diag poll failed");
+            assert!(done.load(std::sync::atomic::Ordering::SeqCst));
+            let view = readback.slice(..).get_mapped_range();
+            let args: &[u32] = bytemuck::cast_slice(&view);
+            for c in 0..chunk_count {
+                total += args[c * 4 + 1] as u64;
+            }
+            drop(view);
+            readback.unmap();
+        }
+        total
     }
 
     /// Draw the culled notes via `multi_draw_indirect`. Each key's chunks are
@@ -716,8 +770,14 @@ mod tests {
     fn headless_device() -> Option<(Device, Queue)> {
         let instance = Instance::default();
         let adapter = pollster::block_on(instance.request_adapter(&Default::default())).ok()?;
-        let (device, queue) =
-            pollster::block_on(adapter.request_device(&DeviceDescriptor::default())).ok()?;
+        // 启用 INDIRECT_FIRST_INSTANCE：cull 的 multi_draw_indirect 依赖
+        // first_instance≠0 定位 chunk 槽位；feature 未启用时 wgpu/Metal 会
+        // 静默丢弃这些 draw（见 cull_draw_first_instance_semantics）。
+        let desc = DeviceDescriptor {
+            required_features: adapter.features() & Features::INDIRECT_FIRST_INSTANCE,
+            ..Default::default()
+        };
+        let (device, queue) = pollster::block_on(adapter.request_device(&desc)).ok()?;
         Some((device, queue))
     }
 
@@ -2862,5 +2922,1095 @@ mod tests {
             bad == 0,
             "{bad}/{total_bars} 个小节存在 GPU 明显少于 CPU 的 key（见上方打印）"
         );
+    }
+
+    /// 单轨 + 精细滚动 + 中断检测：只显示一个轨道（track_visible 过滤），
+    /// 从歌曲开头精细滚动到末尾，追踪 GPU 显示数量随视口位置的变化。
+    ///
+    /// 用户报告：单轨模式下「从音轨开始计数，没过一会不同 key 在特定位置
+    /// 相继中断」——即显示的音符在某处停止增长/骤降。此测试定位中断点。
+    #[test]
+    fn cull_single_track_fine_scroll_interrupt_detect() {
+        let path = "/Users/jieneng/Music/MIDIs/start.mid";
+        if !std::path::Path::new(path).exists() {
+            eprintln!("start.mid 不存在，跳过");
+            return;
+        }
+        let Some((device, queue)) = headless_device() else {
+            return;
+        };
+        let t0 = std::time::Instant::now();
+        let model = yinhe_mid2::parse_path(path).expect("parse start.mid 失败");
+        println!(
+            "parse {:?} note_count={} tick_length={} tracks={}",
+            t0.elapsed(),
+            model.note_count,
+            model.tick_length,
+            model.tracks.len()
+        );
+
+        let mut cull = CullState::new(&device);
+        let uniform_buffer = device.create_buffer(&BufferDescriptor {
+            label: Some("test_uniform"),
+            size: 256,
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let (w, h, kh, kb_w) = (1376.0f32, 419.0f32, 3.2734375, 60.0f32);
+        let ppu = 0.026372144f32;
+        let hidden = std::collections::HashSet::new();
+
+        // 单轨模式：只显示 track 0
+        let mut tv: Vec<bool> = vec![false; model.tracks.len()];
+        tv[0] = true;
+        let (all_notes, offsets) = crate::pianoroll::build_all_notes(&model, &hidden, &tv);
+        println!(
+            "单轨 track0 音符数={}（key 60 的={}）",
+            all_notes.len(),
+            offsets[61] - offsets[60]
+        );
+        cull.upload_all_notes(
+            &device,
+            &queue,
+            &uniform_buffer,
+            &all_notes,
+            &offsets,
+            &model.note_revisions,
+        );
+
+        let total_ticks = model.tick_length as f32;
+        // 精细滚动：60 步覆盖全曲
+        let step = (total_ticks / 60.0).max(5_000.0);
+        let mut prev_gpu_total: Option<u64> = None;
+        let mut prev_tick: Option<f32> = None;
+        let mut suspicious: Vec<(f32, u64, u64)> = Vec::new();
+        let mut tick = 0.0f32;
+        let mut steps = 0u32;
+        while tick <= total_ticks {
+            let scroll_x = (kb_w + tick * ppu - w / 2.0).max(0.0);
+            let u = Uniforms {
+                width: w,
+                height: h,
+                scroll_x,
+                scroll_y: 0.0,
+                pixels_per_tick: ppu,
+                key_height: kh,
+                keyboard_width: kb_w,
+                mode: 1,
+                ..Default::default()
+            };
+            queue.write_buffer(&uniform_buffer, 0, bytemuck::bytes_of(&u));
+            let mut encoder = device.create_command_encoder(&Default::default());
+            cull.dispatch_cull(&mut encoder, &queue, 0, 127, &u);
+            queue.submit([encoder.finish()]);
+            let (ts_lo, ts_hi) = visible_tick_range(&u);
+
+            // GPU 数量
+            let mut gpu_total = 0u64;
+            for key in 0..128u8 {
+                let chunk_count = cull.frame_chunk_counts[key as usize] as usize;
+                if chunk_count == 0 {
+                    continue;
+                }
+                let Some(args_buf) = &cull.per_key_draw_args_buffers[key as usize] else {
+                    continue;
+                };
+                let readback = device.create_buffer(&BufferDescriptor {
+                    label: Some("args_readback"),
+                    size: 16 * chunk_count as u64,
+                    usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+                    mapped_at_creation: false,
+                });
+                let mut enc = device.create_command_encoder(&Default::default());
+                enc.copy_buffer_to_buffer(args_buf, 0, &readback, 0, 16 * chunk_count as u64);
+                queue.submit([enc.finish()]);
+                let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                let done2 = done.clone();
+                readback.slice(..).map_async(wgpu::MapMode::Read, move |_| {
+                    done2.store(true, Ordering::SeqCst);
+                });
+                device
+                    .poll(wgpu::PollType::wait_indefinitely())
+                    .expect("poll failed");
+                assert!(done.load(Ordering::SeqCst));
+                let view = readback.slice(..).get_mapped_range();
+                let args: &[u32] = bytemuck::cast_slice(&view);
+                for c in 0..chunk_count {
+                    gpu_total += args[c * 4 + 1] as u64;
+                }
+                drop(view);
+                readback.unmap();
+            }
+
+            // 中断检测：滚动后 GPU 总数骤降（< 上一帧的 10% 且差 > 100）
+            if let (Some(p), Some(pt)) = (prev_gpu_total, prev_tick)
+                && tick > pt + 1.0
+                && gpu_total < p / 10
+                && p > 100
+            {
+                suspicious.push((tick, p, gpu_total));
+                println!("⚠️ 中断候选: tick={tick:.0} 前帧={p} 当前={gpu_total}（骤降）");
+            }
+            prev_gpu_total = Some(gpu_total);
+            prev_tick = Some(tick);
+            if steps.is_multiple_of(10) {
+                println!(
+                    "tick={tick:.0} scroll={scroll_x:.1} GPU_total={gpu_total} ts={ts_lo} te={ts_hi}"
+                );
+            }
+            tick += step;
+            steps += 1;
+        }
+        println!("滚动完成，步数={steps}，中断候选数={}", suspicious.len());
+        assert!(
+            suspicious.len() <= 3,
+            "发现 {} 处疑似中断（见上方打印）",
+            suspicious.len()
+        );
+    }
+
+    /// 真实渲染 + 像素读回：把 cull 结果真正画到 texture 上，读回像素统计
+    /// 「音符像素数」随视口位置的变化，找显示中断点。
+    ///
+    /// 用户报告：铅笔工具能探测到音符（数据/位置正确）但显示不出来——
+    /// 说明问题在渲染层。此测试验证 draw_args 之外的真实绘制结果。
+    #[test]
+    fn cull_render_pixel_check() {
+        let path = "/Users/jieneng/Music/MIDIs/Night Voyager.mid";
+        if !std::path::Path::new(path).exists() {
+            eprintln!("Night Voyager.mid 不存在，跳过");
+            return;
+        }
+        let Some((device, queue)) = headless_device() else {
+            return;
+        };
+        let t0 = std::time::Instant::now();
+        let model = yinhe_mid2::parse_path(path).expect("parse 失败");
+        println!(
+            "parse {:?} note_count={} tick_length={} tracks={}",
+            t0.elapsed(),
+            model.note_count,
+            model.tick_length,
+            model.tracks.len()
+        );
+
+        // 单轨：选音符最多的轨道（音符存在 model.notes[key]，需按 track 统计）
+        let mut best_track = 0usize;
+        let mut best_count = 0usize;
+        for i in 0..model.tracks.len() {
+            let c = model.notes_for_track(i as u16).count();
+            if c > best_count {
+                best_count = c;
+                best_track = i;
+            }
+        }
+        println!("单轨 track {best_track}: {} 音符", best_count);
+        let mut tv: Vec<bool> = vec![false; model.tracks.len()];
+        tv[best_track] = true;
+        let hidden = std::collections::HashSet::new();
+        let (all_notes, offsets) = crate::pianoroll::build_all_notes(&model, &hidden, &tv);
+
+        let format = wgpu::TextureFormat::Rgba8UnormSrgb;
+        let mut renderer = crate::InstanceRenderer::new(device.clone(), queue.clone(), format);
+        renderer.upload_all_notes_for_cull(&all_notes, &offsets, &model.note_revisions);
+        // CPU 模式对照：同一视口用 build_notes + legacy 绘制
+        let mut renderer_legacy =
+            crate::InstanceRenderer::new(device.clone(), queue.clone(), format);
+
+        let (w, h, kh, kb_w) = (1376.0f32, 419.0f32, 3.2734375, 60.0f32);
+        let ppu = 0.026372144f32;
+        let pw = w as u32;
+        let ph = h as u32;
+        // 不透明轨道色（非黑 → 可统计）
+        let track_colors: Vec<[f32; 4]> = (0..model.tracks.len())
+            .map(|_| [0.2, 0.7, 1.0, 1.0])
+            .collect();
+
+        let target = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("diag_target"),
+            size: wgpu::Extent3d {
+                width: pw,
+                height: ph,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let target_view = target.create_view(&Default::default());
+        let target_legacy = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("diag_target_legacy"),
+            size: wgpu::Extent3d {
+                width: pw,
+                height: ph,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let target_legacy_view = target_legacy.create_view(&Default::default());
+        let bytes_per_row = pw * 4;
+        let aligned_row = bytes_per_row.div_ceil(256) * 256;
+
+        let mut read_pixels = |device: &Device, queue: &Queue, target: &wgpu::Texture| -> u64 {
+            let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("pixel_readback"),
+                size: (aligned_row * ph) as u64,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+            let mut enc = device.create_command_encoder(&Default::default());
+            enc.copy_texture_to_buffer(
+                wgpu::TexelCopyTextureInfo {
+                    texture: target,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::TexelCopyBufferInfo {
+                    buffer: &buffer,
+                    layout: wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(aligned_row),
+                        rows_per_image: Some(ph),
+                    },
+                },
+                wgpu::Extent3d {
+                    width: pw,
+                    height: ph,
+                    depth_or_array_layers: 1,
+                },
+            );
+            queue.submit([enc.finish()]);
+            let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let done2 = done.clone();
+            buffer.slice(..).map_async(wgpu::MapMode::Read, move |_| {
+                done2.store(true, std::sync::atomic::Ordering::SeqCst);
+            });
+            device
+                .poll(wgpu::PollType::wait_indefinitely())
+                .expect("poll failed");
+            assert!(done.load(std::sync::atomic::Ordering::SeqCst));
+            let mapped = buffer.slice(..).get_mapped_range();
+            let mut note_pixels = 0u64;
+            for row in 0..ph {
+                let start = (row as usize) * aligned_row as usize;
+                let row_data = &mapped[start..start + bytes_per_row as usize];
+                for px in row_data.chunks_exact(4) {
+                    if px[0] > 8 || px[1] > 8 || px[2] > 8 {
+                        note_pixels += 1;
+                    }
+                }
+            }
+            drop(mapped);
+            buffer.unmap();
+            note_pixels
+        };
+
+        let total_ticks = model.tick_length as f32;
+        // 聚焦验证：只测几个关键位置（像素缺失 vs CPU 期望的对比）
+        let probe_ticks: [f32; 4] = [0.0, 87_168.0, 435_840.0, 1_089_600.0];
+        let mut prev_pixels: Option<u64> = None;
+        let mut prev_tick: Option<f32> = None;
+        let mut suspicious: Vec<(f32, u64, u64)> = Vec::new();
+        for (step, &tick) in probe_ticks.iter().enumerate() {
+            let tick = tick.min(total_ticks);
+            let scroll_x = (kb_w + tick * ppu - w / 2.0).max(0.0);
+            let view = yinhe_types::PianoRollView {
+                key_height: kh,
+                viewport_h: h,
+                base: yinhe_types::TimelineViewBase {
+                    pixels_per_tick: ppu,
+                    scroll_x,
+                    scroll_y: 0.0,
+                    left_panel_width: kb_w,
+                    dirty: true,
+                    track_panel_row_height: 40.0,
+                    track_panel_scroll_y: 0.0,
+                },
+            };
+            let job = crate::pianoroll::build_render_job(
+                pw,
+                ph,
+                &view,
+                &yinhe_core::Selection::default(),
+                &track_colors,
+                0,
+                0.0,
+                false,
+            );
+            renderer.upload_uniforms(job.uniforms);
+            renderer.upload_track_colors(&job.track_colors);
+            renderer.upload_selection(&job.selection);
+            renderer.ensure_layers(1);
+            let mut encoder = device.create_command_encoder(&Default::default());
+            renderer.draw(&mut encoder, &target_view, pw, ph);
+            queue.submit([encoder.finish()]);
+            let (ts_lo, ts_hi) = visible_tick_range(&job.uniforms);
+            let cull_pixels = read_pixels(&device, &queue, &target);
+
+            // CPU 模式（legacy）：build_notes + note layer
+            let mut instances = Vec::new();
+            crate::pianoroll::build_notes(&mut instances, w, h, &model, &view, &hidden, &tv);
+            // 每 key 的 CPU 实例数
+            let mut cpu_by_key = [0u32; 128];
+            for n in &instances {
+                cpu_by_key[(n.packed & 0xFF) as usize] += 1;
+            }
+            renderer_legacy.upload_uniforms(job.uniforms);
+            renderer_legacy.upload_track_colors(&job.track_colors);
+            renderer_legacy.upload_selection(&job.selection);
+            renderer_legacy.ensure_layers(1);
+            renderer_legacy.upload_note_layer(0, 0, |out| {
+                out.extend(instances.iter().copied());
+            });
+            let mut enc2 = device.create_command_encoder(&Default::default());
+            renderer_legacy.draw(&mut enc2, &target_legacy_view, pw, ph);
+            queue.submit([enc2.finish()]);
+            let legacy_pixels = read_pixels(&device, &queue, &target_legacy);
+
+            if let (Some(p), Some(pt)) = (prev_pixels, prev_tick)
+                && tick > pt + 1.0
+                && cull_pixels < p / 10
+                && p > 500
+            {
+                suspicious.push((tick, p, cull_pixels));
+                println!("⚠️ 渲染中断候选: tick={tick:.0} 前帧像素={p} 当前={cull_pixels}");
+            }
+            prev_pixels = Some(cull_pixels);
+            prev_tick = Some(tick);
+            if step % 8 == 0 || cull_pixels != legacy_pixels {
+                println!(
+                    "tick={tick:.0} scroll={scroll_x:.1} cull像素={cull_pixels} cpu像素={legacy_pixels} (cpu实例={})",
+                    instances.len()
+                );
+            }
+            // cull 像素分布：按 y 行统计，判断哪些 key 画出来了
+            if cull_pixels > 0 {
+                let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("pixel_dump"),
+                    size: (aligned_row * ph) as u64,
+                    usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                    mapped_at_creation: false,
+                });
+                let mut enc = device.create_command_encoder(&Default::default());
+                enc.copy_texture_to_buffer(
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &target,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    wgpu::TexelCopyBufferInfo {
+                        buffer: &buffer,
+                        layout: wgpu::TexelCopyBufferLayout {
+                            offset: 0,
+                            bytes_per_row: Some(aligned_row),
+                            rows_per_image: Some(ph),
+                        },
+                    },
+                    wgpu::Extent3d {
+                        width: pw,
+                        height: ph,
+                        depth_or_array_layers: 1,
+                    },
+                );
+                queue.submit([enc.finish()]);
+                let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                let done2 = done.clone();
+                buffer.slice(..).map_async(wgpu::MapMode::Read, move |_| {
+                    done2.store(true, std::sync::atomic::Ordering::SeqCst);
+                });
+                device
+                    .poll(wgpu::PollType::wait_indefinitely())
+                    .expect("poll failed");
+                assert!(done.load(std::sync::atomic::Ordering::SeqCst));
+                let mapped = buffer.slice(..).get_mapped_range();
+                // 每 key 一行（kh 像素），统计该行非黑像素数
+                let mut key_px = [0u32; 128];
+                let mut min_x = pw;
+                let mut max_x = 0u32;
+                for row in 0..ph {
+                    let start = (row as usize) * aligned_row as usize;
+                    let row_data = &mapped[start..start + bytes_per_row as usize];
+                    let mut row_px = 0u32;
+                    for (col, px) in row_data.chunks_exact(4).enumerate() {
+                        if px[0] > 8 || px[1] > 8 || px[2] > 8 {
+                            row_px += 1;
+                            min_x = min_x.min(col as u32);
+                            max_x = max_x.max(col as u32);
+                        }
+                    }
+                    if row_px > 0 {
+                        // y=0 是 key 127，y=ph 是 key 0
+                        let key = ((419.0 - row as f32) / kh).clamp(0.0, 127.0) as usize;
+                        key_px[key] += row_px;
+                    }
+                }
+                drop(mapped);
+                buffer.unmap();
+                // 列出有像素的 key（含该 key 的 chunk 信息）与 CPU 期望对比
+                let mut painted: Vec<(u32, u32, u32, u32, u32)> = Vec::new(); // (key, px, chunk_count, c_lo, cpu_instances)
+                let mut missing: Vec<(u32, u32, u32, u32)> = Vec::new(); // (key, cpu_instances, chunk_count, c_lo) 有 CPU 音符但没画
+                for k in 0..128usize {
+                    let cc = renderer.cull.frame_chunk_counts[k];
+                    let clo = renderer.cull.bucket_indexes[k]
+                        .as_ref()
+                        .and_then(|idx| idx.visible_chunk_range(ts_lo, ts_hi))
+                        .map(|(lo, _)| lo)
+                        .unwrap_or(0);
+                    if key_px[k] > 0 {
+                        painted.push((k as u32, key_px[k], cc, clo, cpu_by_key[k]));
+                    } else if cpu_by_key[k] > 0 {
+                        missing.push((k as u32, cpu_by_key[k], cc, clo));
+                    }
+                }
+                println!("  画出的 key（key,像素,chunk数,c_lo,cpu实例）: {painted:?}");
+                println!("  有 CPU 音符但 0 像素的 key（key,cpu实例,chunk数,c_lo）: {missing:?}");
+                println!("  x∈[{min_x},{max_x}] 视口 tick [{ts_lo},{ts_hi}]");
+            }
+        }
+        println!("渲染完成，中断候选数={}", suspicious.len());
+        assert!(
+            suspicious.len() <= 3,
+            "发现 {} 处疑似渲染中断（见上方打印）",
+            suspicious.len()
+        );
+    }
+
+    /// 聚焦验证：在一个「cull 像素=0 但 CPU 有大量音符」的视口，读回
+    /// visible buffer 的实际内容，确认 shader 到底写入了什么。
+    /// 区分两类根因：shader 写入错误 vs 渲染管线问题。
+    #[test]
+    fn cull_visible_buffer_content_check() {
+        let path = "/Users/jieneng/Music/MIDIs/Night Voyager.mid";
+        if !std::path::Path::new(path).exists() {
+            eprintln!("Night Voyager.mid 不存在，跳过");
+            return;
+        }
+        let Some((device, queue)) = headless_device() else {
+            return;
+        };
+        let model = yinhe_mid2::parse_path(path).expect("parse 失败");
+
+        let mut tv: Vec<bool> = vec![false; model.tracks.len()];
+        tv[59] = true; // track 59 音符最多（118 万）
+        let hidden = std::collections::HashSet::new();
+        let (all_notes, offsets) = crate::pianoroll::build_all_notes(&model, &hidden, &tv);
+
+        let mut cull = CullState::new(&device);
+        let uniform_buffer = device.create_buffer(&BufferDescriptor {
+            label: Some("test_uniform"),
+            size: 256,
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        cull.upload_all_notes(
+            &device,
+            &queue,
+            &uniform_buffer,
+            &all_notes,
+            &offsets,
+            &model.note_revisions,
+        );
+
+        let (w, h, kh, kb_w) = (1376.0f32, 419.0f32, 3.2734375, 60.0f32);
+        let ppu = 0.026372144f32;
+        // 复现「cull 0 像素」的位置：tick=1,089,600
+        let tick = 1_089_600f32;
+        let scroll_x = (kb_w + tick * ppu - w / 2.0).max(0.0);
+        let u = Uniforms {
+            width: w,
+            height: h,
+            scroll_x,
+            scroll_y: 0.0,
+            pixels_per_tick: ppu,
+            key_height: kh,
+            keyboard_width: kb_w,
+            mode: 1,
+            ..Default::default()
+        };
+        queue.write_buffer(&uniform_buffer, 0, bytemuck::bytes_of(&u));
+        let mut encoder = device.create_command_encoder(&Default::default());
+        cull.dispatch_cull(&mut encoder, &queue, 0, 127, &u);
+        queue.submit([encoder.finish()]);
+        let (ts_lo, ts_hi) = visible_tick_range(&u);
+        println!("视口 ts={ts_lo} te={ts_hi}");
+
+        // CPU 期望（key 60 的可见音符，前 10 个）
+        let view = yinhe_types::PianoRollView {
+            key_height: kh,
+            viewport_h: h,
+            base: yinhe_types::TimelineViewBase {
+                pixels_per_tick: ppu,
+                scroll_x,
+                scroll_y: 0.0,
+                left_panel_width: kb_w,
+                dirty: true,
+                track_panel_row_height: 40.0,
+                track_panel_scroll_y: 0.0,
+            },
+        };
+        let mut cpu_instances = Vec::new();
+        crate::pianoroll::build_notes(&mut cpu_instances, w, h, &model, &view, &hidden, &tv);
+        let cpu_key60: Vec<_> = cpu_instances
+            .iter()
+            .filter(|n| n.packed & 0xFF == 60)
+            .take(10)
+            .map(|n| (n.start_tick, n.end_tick, n.packed))
+            .collect();
+        println!("CPU 期望（key60 前10）: {cpu_key60:?}");
+
+        // GPU：读回 key 60 的 draw_args + visible buffer 内容
+        let key = 60u8;
+        let chunk_count = cull.frame_chunk_counts[key as usize] as usize;
+        println!("key60: chunk_count={chunk_count} 首可见 chunk 内实例数（读回验证）");
+        let mut total_gpu = 0u64;
+        let mut shown_first: Vec<(u32, u32, u32)> = Vec::new();
+        if chunk_count > 0 {
+            let args_buf = cull.per_key_draw_args_buffers[key as usize]
+                .as_ref()
+                .expect("args buffer");
+            let readback = device.create_buffer(&BufferDescriptor {
+                label: Some("args_readback"),
+                size: 16 * chunk_count as u64,
+                usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+            let mut enc = device.create_command_encoder(&Default::default());
+            enc.copy_buffer_to_buffer(args_buf, 0, &readback, 0, 16 * chunk_count as u64);
+            queue.submit([enc.finish()]);
+            let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let done2 = done.clone();
+            readback.slice(..).map_async(wgpu::MapMode::Read, move |_| {
+                done2.store(true, Ordering::SeqCst);
+            });
+            device
+                .poll(wgpu::PollType::wait_indefinitely())
+                .expect("poll failed");
+            assert!(done.load(Ordering::SeqCst));
+            let view = readback.slice(..).get_mapped_range();
+            let args: &[u32] = bytemuck::cast_slice(&view);
+            let mut nonempty_chunks = 0u32;
+            for c in 0..chunk_count {
+                let n = args[c * 4 + 1];
+                total_gpu += n as u64;
+                if n > 0 {
+                    nonempty_chunks += 1;
+                }
+            }
+            println!(
+                "key60 draw_args: 非空 chunk={nonempty_chunks}/{chunk_count} 总实例={total_gpu}"
+            );
+            let args_copy: Vec<u32> = args.to_vec();
+            drop(view);
+            readback.unmap();
+
+            // 读回 visible buffer 中第一个非空 chunk 的槽位内容
+            let mut first_nonzero: Option<usize> = None;
+            let mut enc2 = device.create_command_encoder(&Default::default());
+            // 重新读 args（上面的 view 已 drop）
+            let readback2 = device.create_buffer(&BufferDescriptor {
+                label: Some("args_readback2"),
+                size: 16 * chunk_count as u64,
+                usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+            enc2.copy_buffer_to_buffer(args_buf, 0, &readback2, 0, 16 * chunk_count as u64);
+            queue.submit([enc2.finish()]);
+            let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let done2 = done.clone();
+            readback2
+                .slice(..)
+                .map_async(wgpu::MapMode::Read, move |_| {
+                    done2.store(true, Ordering::SeqCst);
+                });
+            device
+                .poll(wgpu::PollType::wait_indefinitely())
+                .expect("poll failed");
+            assert!(done.load(Ordering::SeqCst));
+            let v2 = readback2.slice(..).get_mapped_range();
+            let args2: &[u32] = bytemuck::cast_slice(&v2);
+            for c in 0..chunk_count {
+                if args2[c * 4 + 1] > 0 {
+                    first_nonzero = Some(c);
+                    break;
+                }
+            }
+            drop(v2);
+            readback2.unmap();
+
+            if let Some(c) = first_nonzero {
+                let vis_buf = cull.per_key_visible_buffers[key as usize]
+                    .as_ref()
+                    .expect("vis buffer");
+                let count = args_copy[c * 4 + 1] as usize;
+                // c 是相对 wg 索引；实际槽位 = (c_lo + wg) * 256
+                let c_lo = cull.bucket_indexes[key as usize]
+                    .as_ref()
+                    .and_then(|idx| idx.visible_chunk_range(ts_lo, ts_hi))
+                    .map(|(lo, _)| lo)
+                    .unwrap_or(0);
+                let rb = device.create_buffer(&BufferDescriptor {
+                    label: Some("vis_readback"),
+                    size: 12 * count as u64,
+                    usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+                    mapped_at_creation: false,
+                });
+                let mut enc3 = device.create_command_encoder(&Default::default());
+                enc3.copy_buffer_to_buffer(
+                    vis_buf,
+                    ((c_lo + c as u32) * 256) as u64 * 12,
+                    &rb,
+                    0,
+                    12 * count as u64,
+                );
+                queue.submit([enc3.finish()]);
+                let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                let done2 = done.clone();
+                rb.slice(..).map_async(wgpu::MapMode::Read, move |_| {
+                    done2.store(true, Ordering::SeqCst);
+                });
+                device
+                    .poll(wgpu::PollType::wait_indefinitely())
+                    .expect("poll failed");
+                assert!(done.load(Ordering::SeqCst));
+                let v = rb.slice(..).get_mapped_range();
+                let inst: &[u32] = bytemuck::cast_slice(&v);
+                for i in 0..count.min(10) {
+                    shown_first.push((inst[i * 3], inst[i * 3 + 1], inst[i * 3 + 2]));
+                }
+                drop(v);
+                rb.unmap();
+            }
+        }
+        println!("key60 visible buffer 首非空 chunk 内容: {shown_first:?}");
+        assert!(
+            total_gpu > 0,
+            "key60 在这个视口应该有可见音符（CPU 有 {} 个）",
+            cpu_instances.len()
+        );
+    }
+
+    /// 最小复现：手工构造一个 key（10 chunks），视口只覆盖后 2 chunks
+    /// （c_lo=8）。验证 multi_draw_indirect 在 first_instance 非零时的绘制。
+    #[test]
+    fn cull_draw_c_lo_nonzero_minimal() {
+        let Some((device, queue)) = headless_device() else {
+            return;
+        };
+        let format = wgpu::TextureFormat::Rgba8UnormSrgb;
+        let mut renderer = crate::InstanceRenderer::new(device.clone(), queue.clone(), format);
+
+        // 手工构造：key 60，2560 个音符（10 chunks）。
+        // 音符 i：start = i*100，end = start+10（tick 0..256000）
+        let mut notes = Vec::new();
+        for i in 0..2560u32 {
+            notes.push(NoteInstance {
+                start_tick: i * 100,
+                end_tick: i * 100 + 10,
+                packed: NoteInstance::pack(60, 0, 100),
+            });
+        }
+        let mut offsets = [0u32; 129];
+        offsets[60] = 0;
+        for o in offsets.iter_mut().take(129).skip(61) {
+            *o = 2560;
+        }
+        offsets[128] = 2560;
+        renderer.upload_all_notes_for_cull(&notes, &offsets, &[0; 128]);
+
+        let (w, h, kh, kb_w) = (1376.0f32, 419.0f32, 3.2734375, 60.0f32);
+        let ppu = 0.026372144f32;
+        let pw = w as u32;
+        let ph = h as u32;
+        let track_colors: Vec<[f32; 4]> = vec![[0.2, 0.7, 1.0, 1.0]];
+
+        let target = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("min_target"),
+            size: wgpu::Extent3d {
+                width: pw,
+                height: ph,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let target_view = target.create_view(&Default::default());
+        let bytes_per_row = pw * 4;
+        let aligned_row = bytes_per_row.div_ceil(256) * 256;
+
+        let render_and_count =
+            |renderer: &mut crate::InstanceRenderer, scroll_x: f32| -> (u64, u32) {
+                let view = yinhe_types::PianoRollView {
+                    key_height: kh,
+                    viewport_h: h,
+                    base: yinhe_types::TimelineViewBase {
+                        pixels_per_tick: ppu,
+                        scroll_x,
+                        scroll_y: 0.0,
+                        left_panel_width: kb_w,
+                        dirty: true,
+                        track_panel_row_height: 40.0,
+                        track_panel_scroll_y: 0.0,
+                    },
+                };
+                let job = crate::pianoroll::build_render_job(
+                    pw,
+                    ph,
+                    &view,
+                    &yinhe_core::Selection::default(),
+                    &track_colors,
+                    0,
+                    0.0,
+                    false,
+                );
+                renderer.upload_uniforms(job.uniforms);
+                renderer.upload_track_colors(&job.track_colors);
+                renderer.upload_selection(&job.selection);
+                renderer.ensure_layers(1);
+                let mut encoder = device.create_command_encoder(&Default::default());
+                renderer.draw(&mut encoder, &target_view, pw, ph);
+                queue.submit([encoder.finish()]);
+                let (ts_lo, ts_hi) = visible_tick_range(&job.uniforms);
+                // 渲染后读回 args + 槽位内容（确认渲染时的数据）
+                let cc = renderer.cull.frame_chunk_counts[60];
+                if let Some(args_buf) = &renderer.cull.per_key_draw_args_buffers[60] {
+                    let rb = device.create_buffer(&BufferDescriptor {
+                        label: Some("args_rb"),
+                        size: 16 * cc as u64,
+                        usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+                        mapped_at_creation: false,
+                    });
+                    let mut enc = device.create_command_encoder(&Default::default());
+                    enc.copy_buffer_to_buffer(args_buf, 0, &rb, 0, 16 * cc as u64);
+                    queue.submit([enc.finish()]);
+                    let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                    let done2 = done.clone();
+                    rb.slice(..).map_async(wgpu::MapMode::Read, move |_| {
+                        done2.store(true, Ordering::SeqCst);
+                    });
+                    device
+                        .poll(wgpu::PollType::wait_indefinitely())
+                        .expect("poll failed");
+                    assert!(done.load(Ordering::SeqCst));
+                    let v = rb.slice(..).get_mapped_range();
+                    let a: &[u32] = bytemuck::cast_slice(&v);
+                    let c_lo = renderer.cull.bucket_indexes[60]
+                        .as_ref()
+                        .and_then(|idx| idx.visible_chunk_range(ts_lo, ts_hi))
+                        .map(|(lo, _)| lo)
+                        .unwrap_or(0);
+                    println!(
+                        "  ts={ts_lo} te={ts_hi} c_lo={c_lo} cc={cc} args[0..min(4)]={:?}",
+                        &a[..a.len().min(16)]
+                    );
+                    drop(v);
+                    rb.unmap();
+                }
+                // 读回像素
+                let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("px"),
+                    size: (aligned_row * ph) as u64,
+                    usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                    mapped_at_creation: false,
+                });
+                let mut enc = device.create_command_encoder(&Default::default());
+                enc.copy_texture_to_buffer(
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &target,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    wgpu::TexelCopyBufferInfo {
+                        buffer: &buffer,
+                        layout: wgpu::TexelCopyBufferLayout {
+                            offset: 0,
+                            bytes_per_row: Some(aligned_row),
+                            rows_per_image: Some(ph),
+                        },
+                    },
+                    wgpu::Extent3d {
+                        width: pw,
+                        height: ph,
+                        depth_or_array_layers: 1,
+                    },
+                );
+                queue.submit([enc.finish()]);
+                let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                let done2 = done.clone();
+                buffer.slice(..).map_async(wgpu::MapMode::Read, move |_| {
+                    done2.store(true, std::sync::atomic::Ordering::SeqCst);
+                });
+                device
+                    .poll(wgpu::PollType::wait_indefinitely())
+                    .expect("poll failed");
+                assert!(done.load(std::sync::atomic::Ordering::SeqCst));
+                let mapped = buffer.slice(..).get_mapped_range();
+                let mut px = 0u64;
+                for row in 0..ph {
+                    let start = (row as usize) * aligned_row as usize;
+                    let row_data = &mapped[start..start + bytes_per_row as usize];
+                    for p in row_data.chunks_exact(4) {
+                        if p[0] > 8 || p[1] > 8 || p[2] > 8 {
+                            px += 1;
+                        }
+                    }
+                }
+                drop(mapped);
+                buffer.unmap();
+                // 读回 vis buffer 槽位 c_lo*256 起的内容（确认数据存在）
+                let c_lo = renderer.cull.bucket_indexes[60]
+                    .as_ref()
+                    .and_then(|idx| idx.visible_chunk_range(ts_lo, ts_hi))
+                    .map(|(lo, _)| lo)
+                    .unwrap_or(0);
+                if let Some(vis_buf) = &renderer.cull.per_key_visible_buffers[60] {
+                    let rb2 = device.create_buffer(&BufferDescriptor {
+                        label: Some("vis_rb"),
+                        size: 12 * 8_u64,
+                        usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+                        mapped_at_creation: false,
+                    });
+                    let mut enc = device.create_command_encoder(&Default::default());
+                    enc.copy_buffer_to_buffer(vis_buf, (c_lo * 256) as u64 * 12, &rb2, 0, 12 * 8);
+                    queue.submit([enc.finish()]);
+                    let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                    let done2 = done.clone();
+                    rb2.slice(..).map_async(wgpu::MapMode::Read, move |_| {
+                        done2.store(true, Ordering::SeqCst);
+                    });
+                    device
+                        .poll(wgpu::PollType::wait_indefinitely())
+                        .expect("poll failed");
+                    assert!(done.load(Ordering::SeqCst));
+                    let v2 = rb2.slice(..).get_mapped_range();
+                    let inst: &[u32] = bytemuck::cast_slice(&v2);
+                    println!(
+                        "  槽位 c_lo*256 起 8 个音符: {:?}",
+                        inst[..inst.len().min(24)].to_vec()
+                    );
+                    drop(v2);
+                    rb2.unmap();
+                }
+                (px, cc)
+            };
+
+        // 场景 A：视口覆盖全部 10 chunks（c_lo=0）——预期画出 2560 个音符
+        // 视口 tick [0, 260000]：scroll_x = 0
+        let (px_a, cc_a) = render_and_count(&mut renderer, 0.0);
+        println!("场景A(c_lo=0): 像素={px_a} chunk数={cc_a}（预期 ~2560 音符）");
+
+        // 场景 B：视口只覆盖后 2 chunks（c_lo=8）——预期画出 512 个音符
+        // 后 2 chunks = 音符 [2048, 2560) = tick [204800, 256000]
+        // 视口 tick [200000, 260000]：scroll_x = 200000*ppu - kb_w + w/2 附近
+        let scroll_b = (200_000f32 * ppu - kb_w + w / 2.0).max(0.0);
+        let (px_b, cc_b) = render_and_count(&mut renderer, scroll_b);
+        println!("场景B(c_lo=8): 像素={px_b} chunk数={cc_b}（预期 ~512 音符）");
+        assert!(px_a > 1000, "场景A 应画出大量音符，实际像素={px_a}");
+        assert!(px_b > 200, "场景B 应画出音符，实际像素={px_b}");
+    }
+
+    /// 判别实验：multi_draw_indirect 的 first_instance 到底发生了什么。
+    /// 两个 chunk 的音符分别落在屏幕左半/右半；覆写 args 为单条
+    /// (6, 256, 0, 256)（只画 chunk 1，槽位 256..512 = 右半音符）：
+    /// - 右有左无 → first_instance 被正确 honoring（则大值失败是幅值问题）
+    /// - 左有右无 → first_instance 被忽略成 0（抓到槽位 0 的 chunk 0 数据）
+    /// - 左右都无 → 该 draw 被整体丢弃
+    #[test]
+    fn cull_draw_first_instance_semantics() {
+        let Some((device, queue)) = headless_device() else {
+            return;
+        };
+        let format = wgpu::TextureFormat::Rgba8UnormSrgb;
+        let mut renderer = crate::InstanceRenderer::new(device.clone(), queue.clone(), format);
+
+        // key 60，512 音符（2 chunks）：
+        //   chunk 0（槽位 0..256）:   tick [0, 25610]      → 屏幕左半 x∈[60,188]
+        //   chunk 1（槽位 256..512）: tick [221600, 247210] → 屏幕右半 x∈[1168,1296]
+        let mut notes = Vec::new();
+        for i in 0..256u32 {
+            notes.push(NoteInstance {
+                start_tick: i * 100,
+                end_tick: i * 100 + 10,
+                packed: NoteInstance::pack(60, 0, 100),
+            });
+        }
+        for i in 0..256u32 {
+            notes.push(NoteInstance {
+                start_tick: 221_600 + i * 100,
+                end_tick: 221_600 + i * 100 + 10,
+                packed: NoteInstance::pack(60, 0, 100),
+            });
+        }
+        let mut offsets = [0u32; 129];
+        for o in offsets.iter_mut().take(129).skip(61) {
+            *o = 512;
+        }
+        offsets[128] = 512;
+        renderer.upload_all_notes_for_cull(&notes, &offsets, &[0; 128]);
+
+        let (w, h, kh, kb_w) = (1376.0f32, 419.0f32, 3.2734375, 60.0f32);
+        let ppu = 0.005f32; // 视口 tick [0, 263200]：两个区域都在屏内
+        let pw = w as u32;
+        let ph = h as u32;
+        let track_colors: Vec<[f32; 4]> = vec![[0.2, 0.7, 1.0, 1.0]];
+
+        let target = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("fi_target"),
+            size: wgpu::Extent3d {
+                width: pw,
+                height: ph,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let target_view = target.create_view(&Default::default());
+        let bytes_per_row = pw * 4;
+        let aligned_row = bytes_per_row.div_ceil(256) * 256;
+
+        // 渲染一帧并分别统计左半 / 右半的非黑像素数。
+        let render_lr = |renderer: &mut crate::InstanceRenderer| -> (u64, u64) {
+            let view = yinhe_types::PianoRollView {
+                key_height: kh,
+                viewport_h: h,
+                base: yinhe_types::TimelineViewBase {
+                    pixels_per_tick: ppu,
+                    scroll_x: 0.0,
+                    scroll_y: 0.0,
+                    left_panel_width: kb_w,
+                    dirty: true,
+                    track_panel_row_height: 40.0,
+                    track_panel_scroll_y: 0.0,
+                },
+            };
+            let job = crate::pianoroll::build_render_job(
+                pw,
+                ph,
+                &view,
+                &yinhe_core::Selection::default(),
+                &track_colors,
+                0,
+                0.0,
+                false,
+            );
+            renderer.upload_uniforms(job.uniforms);
+            renderer.upload_track_colors(&job.track_colors);
+            renderer.upload_selection(&job.selection);
+            renderer.ensure_layers(1);
+            let mut encoder = device.create_command_encoder(&Default::default());
+            renderer.draw(&mut encoder, &target_view, pw, ph);
+            queue.submit([encoder.finish()]);
+
+            let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("px"),
+                size: (aligned_row * ph) as u64,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+            let mut enc = device.create_command_encoder(&Default::default());
+            enc.copy_texture_to_buffer(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &target,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::TexelCopyBufferInfo {
+                    buffer: &buffer,
+                    layout: wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(aligned_row),
+                        rows_per_image: Some(ph),
+                    },
+                },
+                wgpu::Extent3d {
+                    width: pw,
+                    height: ph,
+                    depth_or_array_layers: 1,
+                },
+            );
+            queue.submit([enc.finish()]);
+            let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let done2 = done.clone();
+            buffer.slice(..).map_async(wgpu::MapMode::Read, move |_| {
+                done2.store(true, std::sync::atomic::Ordering::SeqCst);
+            });
+            device
+                .poll(wgpu::PollType::wait_indefinitely())
+                .expect("poll failed");
+            assert!(done.load(std::sync::atomic::Ordering::SeqCst));
+            let mapped = buffer.slice(..).get_mapped_range();
+            let (mut left, mut right) = (0u64, 0u64);
+            for row in 0..ph {
+                let start = (row as usize) * aligned_row as usize;
+                let row_data = &mapped[start..start + bytes_per_row as usize];
+                for (col, p) in row_data.chunks_exact(4).enumerate() {
+                    if p[0] > 8 || p[1] > 8 || p[2] > 8 {
+                        if (col as u32) < pw / 2 {
+                            left += 1;
+                        } else {
+                            right += 1;
+                        }
+                    }
+                }
+            }
+            drop(mapped);
+            buffer.unmap();
+            (left, right)
+        };
+
+        // 基准：正常 dispatch，args=[(6,256,0,0),(6,256,0,256)]。
+        // （bug 存在时右半已画不出，仅打印不断言；决定性证据在下面两段）
+        let (l0, r0) = render_lr(&mut renderer);
+        println!("基准（两条 args）: left={l0} right={r0}");
+
+        // 覆写 args 并重画（uniforms 不变 → dispatch 被跳过，args 保持覆写值）。
+        let overwrite_args = |renderer: &mut crate::InstanceRenderer, args: [u32; 4]| {
+            let args_buf = renderer.cull.per_key_draw_args_buffers[60]
+                .as_ref()
+                .expect("args buffer");
+            queue.write_buffer(args_buf, 0, bytemuck::cast_slice(&args));
+            renderer.cull.frame_chunk_counts[60] = 1;
+        };
+
+        // 对照：单条 first_instance=0 → 只画 chunk 0（左半）。
+        overwrite_args(&mut renderer, [6, 256, 0, 0]);
+        let (lc, rc) = render_lr(&mut renderer);
+        println!("对照 first_instance=0: left={lc} right={rc}");
+        assert!(lc > 100, "对照左半应有像素: {lc}");
+        assert_eq!(rc, 0, "对照右半应无像素: {rc}");
+
+        // 实验：单条 first_instance=256 → 应只画 chunk 1（右半）。
+        overwrite_args(&mut renderer, [6, 256, 0, 256]);
+        let (l1, r1) = render_lr(&mut renderer);
+        println!("实验 first_instance=256: left={l1} right={r1}");
+        if r1 > 0 && l1 == 0 {
+            println!("结论: first_instance 被正确 honoring");
+        } else if l1 > 0 && r1 == 0 {
+            println!("结论: first_instance 被忽略成 0（抓到槽位 0 数据）");
+        } else {
+            println!("结论: draw 被整体丢弃或结果异常");
+        }
+        assert_eq!(l1, 0, "first_instance=256 不应抓到槽位 0 的数据: left={l1}");
+        assert!(r1 > 100, "first_instance=256 应画出 chunk 1: right={r1}");
     }
 }

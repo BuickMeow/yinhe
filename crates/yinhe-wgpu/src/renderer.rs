@@ -35,7 +35,9 @@ pub struct InstanceRenderer {
     cached_track_colors: Option<Vec<[f32; 4]>>,
     cached_selection: Option<SelectionUniform>,
     layers: Vec<AnyLayer>,
-    cull: CullState,
+    pub(crate) cull: CullState,
+    /// 诊断：上一次打印自检的小节索引（cull_diag_bar 用）。
+    pub(crate) last_diag_bar: u64,
     pub theme: yinhe_theme::GpuTheme,
 }
 
@@ -86,6 +88,7 @@ impl InstanceRenderer {
                 cached_selection: None,
                 layers: Vec::new(),
                 cull,
+                last_diag_bar: u64::MAX,
                 theme: yinhe_theme::GpuTheme::default(),
             }
         })
@@ -252,6 +255,53 @@ impl InstanceRenderer {
     /// note buffers from the previous document don't leak into the next render.
     pub fn clear_cull(&mut self) {
         self.cull.clear_cull();
+        self.last_diag_bar = u64::MAX;
+    }
+
+    /// 诊断：每跨过一个小节边界，打印「CPU 构建可见数 vs GPU cull 显示数」。
+    /// 在 `draw`（dispatch）之后调用，读回的是本帧的 draw_args。
+    /// 仅当 YIN_CULL_DIAG=1 时生效（避免正常使用时的每小节同步读回开销）。
+    /// 用于定位「GPU cull 显示中断」：若 gpu 数在某小节后停止增长/骤降，
+    /// 即中断点。
+    pub fn cull_diag_bar(
+        &mut self,
+        view: &yinhe_types::PianoRollView,
+        midi: Option<&dyn yinhe_types::NoteSource>,
+        w: f32,
+        h: f32,
+        hidden_notes: &std::collections::HashSet<(u16, u32, u8)>,
+        track_visible: &[bool],
+    ) {
+        if std::env::var_os("YIN_CULL_DIAG").is_none() {
+            return;
+        }
+        if !self.cull.is_ready() {
+            return;
+        }
+        let ppq = midi.and_then(|m| m.ticks_per_beat()).unwrap_or(480) as f32;
+        let bar_ticks = (ppq * 4.0).max(1.0); // 4/4 一小节
+        let bar = (view.base.scroll_x / (view.base.pixels_per_tick * bar_ticks)).max(0.0) as u64;
+        if bar == self.last_diag_bar {
+            return;
+        }
+        self.last_diag_bar = bar;
+
+        // CPU 参考：非 cull 模式的构建路径
+        let mut cpu = 0u64;
+        if let Some(midi) = midi {
+            let mut out = Vec::new();
+            crate::pianoroll::build_notes(&mut out, w, h, midi, view, hidden_notes, track_visible);
+            cpu = out.len() as u64;
+        }
+        let gpu = self
+            .cull
+            .readback_total_instances(&self.device, &self.queue);
+        tracing::info!(
+            "[cull-diag] bar={bar} scroll_x={} tick={} cpu={cpu} gpu={gpu} diff={}",
+            view.base.scroll_x,
+            view.base.scroll_x / view.base.pixels_per_tick,
+            gpu as i64 - cpu as i64,
+        );
     }
 
     /// Draw all layers into the given render target.
