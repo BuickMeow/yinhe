@@ -84,29 +84,36 @@ impl KeyBucketIndex {
         }
     }
 
-    /// Chunk range [c_lo, c_lo + chunk_count) that can intersect
-    /// [tick_start, tick_end]. Conservative: may include buckets that the
-    /// shader's exact AABB test then culls. Returns None when nothing can.
+    /// Chunk range [0, chunk_count) that can intersect [tick_start, tick_end].
+    /// Conservative: may include buckets that the shader's exact AABB test
+    /// then culls. Returns None when nothing can intersect.
+    ///
+    /// Both arrays are monotonic, so the visible buckets form a prefix:
+    ///   - `bucket_suffix_max_end` is non-increasing: buckets with
+    ///     suffix_max_end >= ts can intersect (conservative), the first bucket
+    ///     with suffix_max_end < ts and everything after it cannot (all notes
+    ///     end before ts). partition_point uses `m >= ts` (a true-prefix
+    ///     predicate; `m < ts` would be a false-prefix on a decreasing array
+    ///     and its binary search result would be undefined).
+    ///   - `bucket_start` is non-decreasing: buckets with start <= te can
+    ///     intersect.
+    ///
+    /// Visible buckets = [0, min(b_lo, b_hi_end)), so c_lo is always 0.
     fn visible_chunk_range(&self, tick_start: u32, tick_end: u32) -> Option<(u32, u32)> {
         if self.chunk_total == 0 || tick_start > tick_end {
             return None;
         }
         let b_lo = self
             .bucket_suffix_max_end
-            .partition_point(|&m| m < tick_start);
-        if b_lo >= self.bucket_start.len() {
-            return None;
-        }
-        // b_hi + 1 = first bucket whose start_tick > tick_end.
+            .partition_point(|&m| m >= tick_start);
         let b_hi_end = self.bucket_start.partition_point(|&s| s <= tick_end);
-        if b_hi_end == 0 || b_hi_end <= b_lo {
+        let b_end = b_lo.min(b_hi_end);
+        if b_end == 0 {
             return None;
         }
-        let b_hi = b_hi_end - 1;
         let chunks_per_bucket = NOTES_PER_BUCKET / 256;
-        let c_lo = b_lo * chunks_per_bucket;
-        let c_hi_end = ((b_hi + 1) * chunks_per_bucket).min(self.chunk_total as usize);
-        Some((c_lo as u32, (c_hi_end - c_lo) as u32))
+        let c_hi_end = (b_end * chunks_per_bucket).min(self.chunk_total as usize);
+        Some((0, c_hi_end as u32))
     }
 }
 
@@ -878,6 +885,59 @@ mod tests {
             Some((0, 1)),
             "long note crossing from off-screen-left must keep its bucket dispatched"
         );
+    }
+
+    #[test]
+    fn bucket_index_prefix_with_long_note() {
+        // 4 buckets: bucket 0 has a long note (max_end = 1_000_000), buckets
+        // 1..3 are short notes ending well before the viewport.
+        // suffix_max = [1_000_000, 163_835, 163_835, 163_835] (non-increasing,
+        // with a mid-array boundary). Viewport [200_000, 210_000]: only bucket
+        // 0 can intersect (its long note crosses the viewport). Regression:
+        // the old code started dispatch at the first suffix < ts bucket,
+        // skipping exactly the bucket that contains the visible long note.
+        let mut notes: Vec<(u32, u32)> = Vec::new();
+        // Bucket 0: 4096 notes, first one is a long note.
+        for i in 0..4096 {
+            notes.push((i * 10, i * 10 + 5));
+        }
+        notes[0] = (0, 1_000_000);
+        // Buckets 1..3: short notes.
+        for b in 1..4 {
+            let base = b * 4096 * 10;
+            for i in 0..4096 {
+                notes.push((base + i * 10, base + i * 10 + 5));
+            }
+        }
+        let idx = build_index(&notes);
+        assert_eq!(idx.chunk_total, 64);
+        // Only bucket 0 (chunks [0, 16)) is dispatched.
+        assert_eq!(idx.visible_chunk_range(200_000, 210_000), Some((0, 16)));
+        // Viewport at the very start (bucket 0 starts at tick 0): b_lo = len
+        // (suffix all >= ts), b_hi_end = 1 → bucket 0 only.
+        assert_eq!(idx.visible_chunk_range(0, 10), Some((0, 16)));
+        // Viewport after every note end → nothing.
+        assert!(idx.visible_chunk_range(2_000_000, 3_000_000).is_none());
+    }
+
+    #[test]
+    fn bucket_index_all_suffix_visible() {
+        // Every bucket's max_end >= ts (e.g. black-score long notes): b_lo ==
+        // len, and the key must still be dispatched (NOT return None).
+        // 3 buckets, all with a long note at the start.
+        let mut notes: Vec<(u32, u32)> = Vec::new();
+        for b in 0..3 {
+            let base = b * 4096 * 10;
+            notes.push((base, 10_000_000)); // long note in every bucket
+            for i in 1..4096 {
+                notes.push((base + i * 10, base + i * 10 + 5));
+            }
+        }
+        let idx = build_index(&notes);
+        assert_eq!(idx.chunk_total, 48);
+        // Viewport in the middle: all buckets' suffix_max_end >= ts, so the
+        // whole start-side prefix up to b_hi_end is dispatched.
+        assert_eq!(idx.visible_chunk_range(500_000, 600_000), Some((0, 48)));
     }
 
     #[test]
