@@ -1,7 +1,8 @@
 # GPU Cull 音符丢失问题调研记录
 
-> 状态：**未解决**。已定位到渲染层（`multi_draw_indirect` + 大 `first_instance`），根因待确认。
-> 本文件供新会话快速接续，包含全部已确认事实、复现方式、关键数据和下一步实验。
+> 状态：**已解决**（commit `3d7df48`）。23 个 cull 测试全过，start.mid 全曲 403 小节
+> GPU≥CPU 且 0 个 key 缺失；最小复现场景B 从 0 像素恢复到 2752。
+> 根因是两个并存的 bug，见第 7 节。
 
 ## 1. 用户报告的问题
 
@@ -125,19 +126,44 @@ multi_draw_indirect 画不出来。** legacy 用 `pass.draw(0..6, 0..count)`（f
 - ❌ shader 写入越界（c_lo+wg < chunk_total 已验证）
 - ❌ GPU 过载/超时（单轨 chunk 很少也中断；headless 同样复现）
 
-## 7. 当前假设
+## 7. 根因（已确认，两个并存的 bug）
 
-**根因假设：`multi_draw_indirect` 的 `first_instance` 大值时绘制失败。**
+### 根因 1（主根因）：wgpu 静默丢弃 `first_instance ≠ 0` 的 indirect draw
 
-- 场景A（first_instance = 0/256）画得出来；场景B（first_instance = 2048/2304）画不出来
-- 数据层全部正确，唯一差异就是 first_instance 的值
-- wgpu/Metal 对 indirect draw 的实例访问（`instanceStart * stride`）超出某内部限制时
-  可能丢弃整个 draw（即使按 buffer 大小计算并未越界——vis buffer 30720 字节，
-  first_instance=2304 → 字节 27648，+256 实例 × 12 = 30720 恰好到末尾）
-- 已知 wgpu 的间接绘制在部分驱动上有对齐/大小检查的坑
+判别实验 `cull_draw_first_instance_semantics`（两个 chunk 的音符分别放在屏幕左半/右半，
+覆写 args 为单条 `(6,256,0,256)`）：
 
-**备选假设：** vertex buffer 绑定的 size 与 indirect draw 实例范围的交互（正好等于 buffer
-末尾的访问被丢弃）；或 headless 与 Metal 共享此行为（用户真实设备同样丢失，符合）。
+```
+未启用 feature:  基准 left=516 right=0  对照(fi=0) left=516 right=0  实验(fi=256) left=0 right=0
+                 → draw 被整体丢弃（若被忽略会抓到槽位 0 → left=516，实测 left=0）
+启用 feature 后: 基准 left=516 right=516 实验 left=0 right=516 → 完全正确
+```
+
+- device 创建时未启用 `Features::INDIRECT_FIRST_INSTANCE`（egui_wgpu 默认不带），
+  wgpu 不做 CPU 侧校验，Metal 直接丢弃整个 draw；`first_instance=256` 就丢，与幅值无关
+- 这解释了旧前缀索引时代就存在的原始报告（"每个 key 只显示前几百个音符"= 只有 chunk 0
+  `first_instance=0` 能画出），也解释了场景A"正常"是假象（chunk 1 被丢弃后像素与
+  chunk 0 重叠，无法从像素数分辨）
+- 已知上游问题：wgpu-native#515（DX12 同样丢弃；Vulkan 正常）
+- **修复**：`main.rs` 的 egui_wgpu `device_descriptor` 回调启用
+  `adapter.features() & INDIRECT_FIRST_INSTANCE`（Metal 适配器支持该 feature）；
+  测试的 `headless_device()` 同步启用。feature 缺失时打 error 日志
+
+### 根因 2（0e07750 引入）：`c_hi` 被当作 chunk 数
+
+`dispatch_cull` 中 `visible_chunk_range` 返回 `(c_lo, c_hi)` 区间，代码却把第二个值
+当 chunk 数用（旧前缀语义下 `c_lo=0`、`count==c_hi` 恰好成立，重构时漏改）：
+
+- 实际 dispatch 范围变成 `[c_lo, c_lo+c_hi)`：chunk ≥ chunk_total 的 args
+  （`instance_count=0` 但 `first_instance` 远超 vis buffer 末尾）混入 draw 调用
+- 歌曲末尾 `c_lo ≈ c_hi ≈ chunk_total` 时 dispatch 量 ≈ 2×chunk_total → 后半段卡顿
+- **修复**：`chunk_count = c_hi - c_lo`
+
+### 验证
+
+- `cull_draw_c_lo_nonzero_minimal` 场景B：0 → 2752 像素（场景A：2048 → 3992，
+  此前其实只画出了 chunk 0）
+- 23 个 cull 测试全过；`cull_vs_cpu_build_path_per_bar` 全曲 403 小节 0 个 key GPU<CPU
 
 ## 8. 下一步实验建议（新会话）
 
@@ -164,8 +190,9 @@ multi_draw_indirect 画不出来。** legacy 用 `pass.draw(0..6, 0..count)`（f
 | `cull_multi_frame_interaction_sequence` | 滚动/skip/编辑/切轨/隐藏多帧状态机 | 通过 |
 | `cull_vs_cpu_build_path_per_bar` | start.mid 全曲每小节 CPU 真实路径 vs GPU | 通过（GPU ≥ CPU） |
 | `cull_visible_buffer_content_check` | visible buffer 内容逐项验证 | 通过（内容正确） |
-| `cull_render_pixel_check` | 真实渲染像素 vs CPU 像素（**暴露问题**） | **失败（cull << cpu）** |
-| `cull_draw_c_lo_nonzero_minimal` | 最小复现（**决定性证据**） | **失败（c_lo≠0 画不出）** |
+| `cull_render_pixel_check` | 真实渲染像素 vs CPU 像素（曾暴露问题） | 通过（修复后） |
+| `cull_draw_c_lo_nonzero_minimal` | 最小复现 | 通过（场景B 2752 像素） |
+| `cull_draw_first_instance_semantics` | 判别 first_instance 丢弃/忽略/正常（回归守卫） | 通过 |
 | `cull_single_track_fine_scroll_interrupt_detect` | 单轨精细滚动中断检测 | 通过（无中断，track0 空轨需换轨） |
 
 ## 10. 用户附带报告的其他现象（与本问题可能无关，待确认）
