@@ -561,6 +561,20 @@ impl CullState {
             info[slot + 4] = c_lo;
             self.frame_chunk_counts[key] = chunk_count;
         }
+        let mut dispatched_keys = 0u32;
+        let mut total_chunks = 0u32;
+        for key in 0..128 {
+            if info[key * 64] > 0 {
+                dispatched_keys += 1;
+                total_chunks += info[key * 64];
+            }
+        }
+        tracing::debug!(
+            "[cull-dispatch] scroll_x={} ts={} te={} dispatched_keys={dispatched_keys} total_chunks={total_chunks}",
+            uniforms.scroll_x,
+            tick_start,
+            tick_end,
+        );
         queue.write_buffer(&self.dispatch_args_buffer, 0, bytemuck::cast_slice(&info));
 
         let mut cull_pass = encoder.begin_compute_pass(&ComputePassDescriptor {
@@ -1539,6 +1553,199 @@ mod tests {
         }
         if !tested_any {
             eprintln!("无可用 MIDI 文件，跳过");
+        }
+    }
+
+    /// start.mid（1.64 亿音符）端到端 GPU cull 测试：模拟真实视口
+    /// （width=1376, height=419, ppu=0.026372144, kh=3.2734375, scroll_y=0,
+    /// keyboard_width=60, mode=1），在 5 个滚动位置验证：
+    /// 1. 滚动后 GPU 输出的 instance_count 必须变化（无固定数量限制）；
+    /// 2. GPU 每 key 计数与 CPU 逐音符（精确镜像 shader 的 f32 条件）完全一致。
+    #[test]
+    fn cull_start_mid_sequence() {
+        let path = "/Users/jieneng/Music/MIDIs/start.mid";
+        if !std::path::Path::new(path).exists() {
+            eprintln!("start.mid 不存在，跳过");
+            return;
+        }
+        let Some((device, queue)) = headless_device() else {
+            return;
+        };
+        let t0 = std::time::Instant::now();
+        let model = yinhe_mid2::parse_path(path).expect("parse start.mid 失败");
+        println!(
+            "PARSE {:?} note_count={} tick_length={} tracks={}",
+            t0.elapsed(),
+            model.note_count,
+            model.tick_length,
+            model.tracks.len()
+        );
+
+        let mut cull = CullState::new(&device);
+        let uniform_buffer = device.create_buffer(&BufferDescriptor {
+            label: Some("test_uniform"),
+            size: 256,
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let t1 = std::time::Instant::now();
+        let track_visible: Vec<bool> = vec![true; model.tracks.len()];
+        let (all_notes, offsets) = crate::pianoroll::build_all_notes(
+            &model,
+            &std::collections::HashSet::new(),
+            &track_visible,
+        );
+        println!(
+            "build_all_notes {:?} len={} ({:.2} GB)",
+            t1.elapsed(),
+            all_notes.len(),
+            all_notes.len() as f64 * 12.0 / 1e9
+        );
+
+        let t2 = std::time::Instant::now();
+        cull.upload_all_notes(
+            &device,
+            &queue,
+            &uniform_buffer,
+            &all_notes,
+            &offsets,
+            &[0; 128],
+        );
+        println!(
+            "upload_all_notes {:?} GPU per_key_counts={:?}",
+            t2.elapsed(),
+            &cull.per_key_counts[..]
+        );
+        drop(all_notes); // 释放 CPU 副本，降低峰值内存
+
+        // 真实视口（用户日志数值）
+        const W: f32 = 1376.0;
+        const H: f32 = 419.0;
+        const PPU: f32 = 0.026372144;
+        const KH: f32 = 3.2734375;
+        const KB_W: f32 = 60.0;
+        // te = (scroll_x + 1316)/ppu → scroll_x = te*ppu - 1316
+        // tick 100 万 → scroll_x ≈ 25056；tick 300 万 → scroll_x ≈ 77800
+        let scrolls = [0.0f32, 1000.0, 6490.0, 25056.0, 77800.0];
+
+        let mut prev_total: Option<u64> = None;
+        for &scroll_x in &scrolls {
+            let u = Uniforms {
+                width: W,
+                height: H,
+                scroll_x,
+                scroll_y: 0.0,
+                pixels_per_tick: PPU,
+                key_height: KH,
+                keyboard_width: KB_W,
+                mode: 1,
+                ..Default::default()
+            };
+            let (ts, te) = visible_tick_range(&u);
+            queue.write_buffer(&uniform_buffer, 0, bytemuck::bytes_of(&u));
+            let mut encoder = device.create_command_encoder(&Default::default());
+            cull.dispatch_cull(&mut encoder, &queue, 0, 127, &u);
+            queue.submit([encoder.finish()]);
+
+            // 读回每个 key 的 draw_args（只读本帧实际派发的 chunk）
+            let mut gpu_per_key = [0u64; 128];
+            let mut gpu_total: u64 = 0;
+            for (key, &chunk_count) in cull.frame_chunk_counts.iter().enumerate() {
+                if chunk_count == 0 {
+                    continue;
+                }
+                let Some(args_buf) = &cull.per_key_draw_args_buffers[key] else {
+                    continue;
+                };
+                let read_size = chunk_count as u64 * 16;
+                let readback = device.create_buffer(&BufferDescriptor {
+                    label: Some("args_readback"),
+                    size: read_size,
+                    usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+                    mapped_at_creation: false,
+                });
+                let mut enc = device.create_command_encoder(&Default::default());
+                enc.copy_buffer_to_buffer(args_buf, 0, &readback, 0, read_size);
+                queue.submit([enc.finish()]);
+                let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                let done2 = done.clone();
+                readback.slice(..).map_async(wgpu::MapMode::Read, move |_| {
+                    done2.store(true, Ordering::SeqCst);
+                });
+                device
+                    .poll(wgpu::PollType::wait_indefinitely())
+                    .expect("poll failed");
+                assert!(done.load(Ordering::SeqCst));
+                let view = readback.slice(..).get_mapped_range();
+                let args: &[u32] = bytemuck::cast_slice(&view);
+                let mut key_total: u64 = 0;
+                for c in 0..chunk_count as usize {
+                    key_total += args[c * 4 + 1] as u64; // instance_count
+                }
+                drop(view);
+                readback.unmap();
+                gpu_per_key[key] = key_total;
+                gpu_total += key_total;
+            }
+            let gpu_keys = gpu_per_key.iter().filter(|&&c| c > 0).count();
+
+            // CPU 参考：精确镜像 shader 的 X 可见条件（同样的 f32 运算，
+            // 不用 visible_tick_range——它含 pad 边距而 shader 没有）。
+            let t3 = std::time::Instant::now();
+            let x_offset = KB_W - scroll_x;
+            let mut cpu_total: u64 = 0;
+            let mut cpu_keys = 0u32;
+            let mut cpu_per_key = [0u64; 128];
+            for (key, slot) in cpu_per_key.iter_mut().enumerate() {
+                let mut c = 0u64;
+                for n in model.notes[key].iter() {
+                    if n.end_tick > n.start_tick {
+                        let x = x_offset + n.start_tick as f32 * PPU;
+                        let right = x_offset + n.end_tick as f32 * PPU;
+                        if right >= 0.0 && x <= W {
+                            c += 1;
+                        }
+                    }
+                }
+                *slot = c;
+                cpu_total += c;
+                if c > 0 {
+                    cpu_keys += 1;
+                }
+            }
+            println!("CPU 参考计数耗时 {:?}", t3.elapsed());
+
+            let dispatched_chunks: u32 = cull.frame_chunk_counts.iter().sum();
+            println!(
+                "SCROLL_X={scroll_x} ts={ts} te={te} chunks={dispatched_chunks} | GPU total={gpu_total} keys>0={gpu_keys} | CPU total={cpu_total} keys>0={cpu_keys}"
+            );
+            // GPU vs CPU 每 key 对比
+            let mut diffs: Vec<(u32, i64, u64)> = Vec::new();
+            for (key, &g) in gpu_per_key.iter().enumerate() {
+                let c = cpu_per_key[key];
+                if g != c {
+                    diffs.push((key as u32, g as i64 - c as i64, c));
+                }
+            }
+            println!(
+                "  GPU≠CPU 的 key 数={}，示例(前10): {:?}",
+                diffs.len(),
+                &diffs[..diffs.len().min(10)]
+            );
+            // f32 镜像后 GPU 与 CPU 应逐 key 完全一致（留 2 容差防平台舍入差）。
+            assert!(
+                diffs.iter().all(|&(_, d, _)| d.abs() <= 2),
+                "GPU 与 CPU 逐 key 计数不一致: {diffs:?}"
+            );
+
+            if let Some(prev) = prev_total {
+                assert_ne!(
+                    gpu_total, prev,
+                    "滚动后 GPU 输出必须变化: scroll 前={prev} scroll 后={gpu_total}"
+                );
+            }
+            prev_total = Some(gpu_total);
         }
     }
 }

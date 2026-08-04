@@ -362,6 +362,13 @@ impl InstanceRenderer {
         width: u32,
         height: u32,
     ) {
+        tracing::debug!(
+            "[cull-draw] is_ready={} cached_scroll_x={:?} cached_ppu={:?} cached_mode={:?}",
+            self.cull.is_ready(),
+            self.cached_uniforms.as_ref().map(|u| u.scroll_x),
+            self.cached_uniforms.as_ref().map(|u| u.pixels_per_tick),
+            self.cached_uniforms.as_ref().map(|u| u.mode),
+        );
         let (key_lo, key_hi) = self.visible_key_range();
         // Phase 1: Compute cull (skipped if uniforms + notes unchanged since last frame)
         let uniforms = self.cached_uniforms.unwrap_or_default();

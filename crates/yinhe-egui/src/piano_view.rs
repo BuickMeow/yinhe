@@ -476,6 +476,13 @@ pub fn show(
     // Prepare GPU data (ghost notes are handled separately as a transient overlay)
     let theme = pianoroll.theme().clone();
     let cull_ready = use_gpu_cull && pianoroll.cull_ready();
+    tracing::debug!(
+        "[cull-frame] cull_ready={cull_ready} scroll_x={} scroll_y={} ppu={} kh={} w={w} h={h}",
+        view.base.scroll_x,
+        view.base.scroll_y,
+        view.base.pixels_per_tick,
+        view.key_height,
+    );
     if cull_ready {
         // GPU cull path: upload ghost layer (GPU cull handles notes)
         let job = yinhe_wgpu::build_render_job(
