@@ -763,6 +763,7 @@ mod tests {
     use super::*;
     use crate::vertex::NoteInstance;
     use std::sync::atomic::Ordering;
+    use yinhe_types::NoteSource;
 
     /// Headless GPU device for cull integration tests.
     /// Returns None when no adapter is available (e.g. CI without a GPU),
@@ -4012,5 +4013,274 @@ mod tests {
         }
         assert_eq!(l1, 0, "first_instance=256 不应抓到槽位 0 的数据: left={l1}");
         assert!(r1 > 100, "first_instance=256 应画出 chunk 1: right={r1}");
+    }
+
+    /// PR 模式可见 key 范围（与 `InstanceRenderer::visible_key_range` 同款计算）。
+    fn pr_visible_key_range(kh: f32, scroll_y: f32, height: f32) -> (u8, u8) {
+        let bottom = 128.0 * kh - scroll_y;
+        let top_key = ((bottom / kh).ceil() as i32 - 1).clamp(0, 127);
+        let bottom_key = (((bottom - height) / kh).ceil() as i32 - 1).clamp(0, 127);
+        let lo = bottom_key.min(top_key).saturating_sub(1).clamp(0, 127);
+        let hi = bottom_key.max(top_key).saturating_add(1).clamp(0, 127);
+        (lo as u8, hi as u8)
+    }
+
+    /// 性能对比 benchmark：CPU 构建 vs GPU cull（start.mid，1.3GB / 826 轨黑乐谱）。
+    ///
+    /// 以帧率为核心指标：
+    ///   - CPU 路径每帧 = `build_notes`（UI 线程同步构建可见音符），FPS = 1000/ms。
+    ///   - GPU cull 滚动中每帧 = dispatch 的 CPU 编码时间 + GPU 执行时间，
+    ///     有效 FPS = 1000/max(cpu_ms, gpu_ms)（UI 编码与 GPU 执行流水线重叠，
+    ///     帧率受两者较大者限制）。
+    ///   - GPU cull 静止帧 = dispatch 被 skip，实测其成本。
+    ///
+    /// 运行：cargo test -p yinhe-wgpu --release -- --ignored --nocapture cull_bench
+    #[test]
+    #[ignore]
+    fn cull_bench_vs_cpu_start_mid() {
+        let path = "/Users/jieneng/Music/MIDIs/start.mid";
+        let t0 = std::time::Instant::now();
+        let model = yinhe_mid2::parse_path(path).expect("解析 start.mid");
+        let parse_ms = t0.elapsed().as_secs_f64() * 1e3;
+
+        let mut total = 0u64;
+        let mut max_key_notes = 0u64;
+        let mut max_end_tick = 0u32;
+        for k in 0..128u8 {
+            let notes = model.key_notes(k);
+            total += notes.len() as u64;
+            max_key_notes = max_key_notes.max(notes.len() as u64);
+            if let Some(last) = notes.last() {
+                max_end_tick = max_end_tick.max(last.end_tick);
+            }
+        }
+        println!("== start.mid 规模 ==");
+        println!(
+            "解析 {parse_ms:.0}ms，音符 {total}，轨道 {}，最大 key 音符数 {max_key_notes}，总时长 {max_end_tick} ticks",
+            model.tracks.len()
+        );
+
+        let Some((device, queue)) = headless_device() else {
+            eprintln!("无可用 GPU 适配器，跳过");
+            return;
+        };
+        let mut cull = CullState::new(&device);
+        let uniform_buffer = device.create_buffer(&BufferDescriptor {
+            label: Some("bench_uniform"),
+            size: 256,
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let hidden = std::collections::HashSet::new();
+        let track_visible: Vec<bool> = vec![true; model.tracks.len()];
+
+        // ── GPU cull 一次性成本：全量构建 + 全量上传（加载 / 轨道显隐切换时）──
+        let t = std::time::Instant::now();
+        let (all_notes, offsets) =
+            crate::pianoroll::build_all_notes(&model, &hidden, &track_visible);
+        let build_ms = t.elapsed().as_secs_f64() * 1e3;
+        let t = std::time::Instant::now();
+        cull.upload_all_notes(
+            &device,
+            &queue,
+            &uniform_buffer,
+            &all_notes,
+            &offsets,
+            &[0; 128],
+        );
+        let upload_ms = t.elapsed().as_secs_f64() * 1e3;
+        println!("\n== GPU cull 一次性成本（加载 / 轨道显隐切换） ==");
+        println!(
+            "build_all_notes {build_ms:.0}ms，upload_all_notes {upload_ms:.0}ms，数据 {:.0}MB",
+            all_notes.len() as f64 * 12.0 / 1e6
+        );
+        // 清空队列：write_buffer 的 GPU 拷贝在 submit 时才发生，先让它落地。
+        queue.submit([device.create_command_encoder(&Default::default()).finish()]);
+        device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .expect("poll");
+
+        // 空 submit + poll 的固定开销（Metal 同步往返延迟），用于修正 GPU 执行时间。
+        let mut empty_poll_ms = f64::MAX;
+        for _ in 0..5 {
+            let t = std::time::Instant::now();
+            queue.submit([device.create_command_encoder(&Default::default()).finish()]);
+            device
+                .poll(wgpu::PollType::wait_indefinitely())
+                .expect("poll");
+            empty_poll_ms = empty_poll_ms.min(t.elapsed().as_secs_f64() * 1e3);
+        }
+        println!("空 submit+poll 固定开销: {empty_poll_ms:.3}ms");
+
+        // ── 每帧成本：多档缩放，视口滚动到歌曲 60% 处 ──
+        let (width, height, kb_w, kh) = (1600.0f32, 900.0f32, 80.0f32, 14.0f32);
+        let scroll_y = 400.0f32;
+        let ppus = [0.02f32, 0.05, 0.1, 0.5, 2.0];
+        println!(
+            "\n== 每帧成本（视口 {width:.0}x{height:.0}，滚动到 60% 处；滚动帧 scroll_x 每帧 +1px） =="
+        );
+        println!(
+            "{:>5} {:>11} {:>9} {:>9} {:>11} {:>9} {:>11} {:>9} {:>9} {:>6}",
+            "ppu",
+            "可见音符",
+            "CPU/ms",
+            "CPU/FPS",
+            "GPU编码/ms",
+            "GPU执行/ms",
+            "GPU/FPS",
+            "dispatch",
+            "chunk",
+            "skip/ms"
+        );
+        // key_lo/key_hi 与 ppu 无关（PR 模式的 Y 坐标不依赖缩放），提前算好。
+        let (key_lo, key_hi) = pr_visible_key_range(kh, scroll_y, height);
+        println!("PR 可见 key 范围: {key_lo}..={key_hi}");
+        for &ppu in &ppus {
+            let scroll_x0 = (max_end_tick as f32 * ppu * 0.6).max(0.0);
+            let view = yinhe_types::PianoRollView {
+                key_height: kh,
+                viewport_h: height,
+                base: yinhe_types::TimelineViewBase {
+                    pixels_per_tick: ppu,
+                    scroll_x: scroll_x0,
+                    scroll_y,
+                    left_panel_width: kb_w,
+                    dirty: true,
+                    track_panel_row_height: 40.0,
+                    track_panel_scroll_y: 0.0,
+                },
+            };
+
+            // CPU 路径：暖机 1 次 + 3 次取最优（复用 Vec 避免分配噪声）。
+            let mut cpu_out: Vec<NoteInstance> = Vec::new();
+            crate::pianoroll::build_notes(
+                &mut cpu_out,
+                width,
+                height,
+                &model,
+                &view,
+                &hidden,
+                &track_visible,
+            );
+            let mut cpu_ms = f64::MAX;
+            for _ in 0..3 {
+                cpu_out.clear();
+                let t = std::time::Instant::now();
+                crate::pianoroll::build_notes(
+                    &mut cpu_out,
+                    width,
+                    height,
+                    &model,
+                    &view,
+                    &hidden,
+                    &track_visible,
+                );
+                cpu_ms = cpu_ms.min(t.elapsed().as_secs_f64() * 1e3);
+            }
+            let cpu_visible = cpu_out.len();
+
+            // GPU cull：5 帧滚动（scroll_x 每帧 +1px，模拟连续滚动，避免 skip 优化），
+            // 跳过首帧（首帧含 uniform 首次生效），取后 4 帧最优。
+            // GPU 执行时间扣掉空 submit+poll 的固定开销，才是 cull 本身的耗时。
+            let mut gpu_cpu_ms = f64::MAX;
+            let mut gpu_gpu_ms = f64::MAX;
+            for i in 0..5 {
+                let u = Uniforms {
+                    width,
+                    height,
+                    scroll_x: scroll_x0 + i as f32,
+                    scroll_y,
+                    pixels_per_tick: ppu,
+                    key_height: kh,
+                    keyboard_width: kb_w,
+                    mode: 1,
+                    ..Default::default()
+                };
+                queue.write_buffer(&uniform_buffer, 0, bytemuck::bytes_of(&u));
+                let t = std::time::Instant::now();
+                let mut enc = device.create_command_encoder(&Default::default());
+                cull.dispatch_cull(&mut enc, &queue, key_lo, key_hi, &u);
+                queue.submit([enc.finish()]);
+                let cpu_t = t.elapsed().as_secs_f64() * 1e3;
+                let t = std::time::Instant::now();
+                device
+                    .poll(wgpu::PollType::wait_indefinitely())
+                    .expect("poll");
+                let gpu_t = t.elapsed().as_secs_f64() * 1e3;
+                if i > 0 {
+                    gpu_cpu_ms = gpu_cpu_ms.min(cpu_t);
+                    gpu_gpu_ms = gpu_gpu_ms.min((gpu_t - empty_poll_ms).max(0.0));
+                }
+            }
+            // 静止帧：uniforms 与上一帧相同 → dispatch 被 skip，实测其成本。
+            let t = std::time::Instant::now();
+            let mut enc = device.create_command_encoder(&Default::default());
+            cull.dispatch_cull(
+                &mut enc,
+                &queue,
+                key_lo,
+                key_hi,
+                &cached_uniforms(scroll_x0 + 4.0, ppu, width, height, kb_w, kh, scroll_y),
+            );
+            queue.submit([enc.finish()]);
+            device
+                .poll(wgpu::PollType::wait_indefinitely())
+                .expect("poll");
+            let skip_ms = (t.elapsed().as_secs_f64() * 1e3 - empty_poll_ms).max(0.0);
+
+            // GPU 可见数（读回 draw_args）+ 每帧 dispatch/chunk 数。
+            // frame_chunk_counts 对全部 128 key 都填（含 Y 方向视口外的 key），
+            // 实际 dispatch 的只有 key_lo..=key_hi 且 chunk>0 的 key。
+            let gpu_visible = cull.readback_total_instances(&device, &queue);
+            let dispatch_count = (key_lo..=key_hi)
+                .filter(|&k| cull.frame_chunk_counts[k as usize] > 0)
+                .count();
+            let chunk_total: u32 = (key_lo..=key_hi)
+                .map(|k| cull.frame_chunk_counts[k as usize])
+                .sum();
+
+            let cpu_fps = 1000.0 / cpu_ms;
+            let gpu_fps = 1000.0 / gpu_cpu_ms.max(gpu_gpu_ms);
+            println!(
+                "{:>5} {:>11} {:>9.2} {:>9.1} {:>11.3} {:>9.3} {:>11.1} {:>9} {:>9} {:>6.3}",
+                ppu,
+                cpu_visible,
+                cpu_ms,
+                cpu_fps,
+                gpu_cpu_ms,
+                gpu_gpu_ms,
+                gpu_fps,
+                dispatch_count,
+                chunk_total,
+                skip_ms,
+            );
+            println!(
+                "    GPU cull 可见={gpu_visible}（CPU={cpu_visible}，比值 {:.2}）",
+                gpu_visible as f64 / cpu_visible.max(1) as f64
+            );
+        }
+    }
+
+    fn cached_uniforms(
+        scroll_x: f32,
+        ppu: f32,
+        width: f32,
+        height: f32,
+        kb_w: f32,
+        kh: f32,
+        scroll_y: f32,
+    ) -> Uniforms {
+        Uniforms {
+            width,
+            height,
+            scroll_x,
+            scroll_y,
+            pixels_per_tick: ppu,
+            key_height: kh,
+            keyboard_width: kb_w,
+            mode: 1,
+            ..Default::default()
+        }
     }
 }
