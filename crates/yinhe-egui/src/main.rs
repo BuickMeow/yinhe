@@ -23,13 +23,16 @@ mod view_interaction;
 mod widgets;
 
 fn main() {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::builder()
-                .with_default_directive(tracing::level_filters::LevelFilter::INFO.into())
-                .parse_lossy("wgpu=warn,naga=warn"),
-        )
-        .init();
+    let mut env_filter = tracing_subscriber::EnvFilter::builder()
+        .with_default_directive(tracing::level_filters::LevelFilter::INFO.into())
+        .from_env_lossy();
+    // 静态字符串，解析失败时忽略（保持默认级别）
+    for directive in ["wgpu=warn", "naga=warn"] {
+        if let Ok(d) = directive.parse() {
+            env_filter = env_filter.add_directive(d);
+        }
+    }
+    tracing_subscriber::fmt().with_env_filter(env_filter).init();
 
     let mut viewport = eframe::egui::ViewportBuilder::default().with_inner_size([1400.0, 900.0]);
 
