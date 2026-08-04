@@ -27,7 +27,9 @@ fn main() {
         .with_default_directive(tracing::level_filters::LevelFilter::INFO.into())
         .from_env_lossy();
     // 静态字符串，解析失败时忽略（保持默认级别）
-    for directive in ["wgpu=warn", "naga=warn"] {
+    // symphonia_format_riff 的 "ignoring unknown chunk" INFO 日志属于
+    // 上游解码器的例行提示（smpl chunk 等），不是我们的错误，压到 warn。
+    for directive in ["wgpu=warn", "naga=warn", "symphonia_format_riff=warn"] {
         if let Ok(d) = directive.parse() {
             env_filter = env_filter.add_directive(d);
         }
