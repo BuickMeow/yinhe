@@ -28,92 +28,152 @@ fn culling_relevant_eq(a: &Uniforms, b: &Uniforms) -> bool {
         && a.lane_height == b.lane_height
 }
 
-/// Per-key tick-bucket index over the key's notes (sorted by start_tick).
+/// Per-key tick-chunk index over the key's notes (sorted by start_tick).
 ///
-/// Buckets are fixed-size (NOTES_PER_BUCKET notes each). Chunk c of a key
-/// covers notes [c*256, min((c+1)*256, count)) — contiguous, so the shader
-/// computes its input range directly from (c_lo, chunk id) without any GPU
-/// lookup table.
+/// Chunk c covers notes [c*256, min((c+1)*256, count)) — contiguous, so the
+/// shader computes its input range directly from (c_lo, chunk id) without
+/// any GPU lookup table.
 ///
-/// A bucket can intersect the viewport tick range [ts, te] iff
-/// bucket_start[b] <= te AND max_end[b] >= ts. max_end is not monotonic, so
-/// we store its suffix max (monotonic non-increasing), making both bounds
-/// binary-searchable:
-///   - b_lo = first bucket with suffix_max_end >= ts
-///   - b_hi = last bucket with bucket_start <= te
+/// A chunk can intersect the viewport tick range [ts, te] iff
+/// chunk_start[c] <= te AND chunk_max_end[c] >= ts. chunk_max_end is not
+/// monotonic (a long note anywhere inflates it), so we store **block-level
+/// prefix/suffix max** (one entry per BLOCK_CHUNKS chunks):
+///   - left bound: block prefix max is non-decreasing → binary search finds
+///     the first block whose prefix max >= ts; every earlier chunk's max_end
+///     < ts. A forward scan of that block's ≤64 chunks then finds the exact
+///     first chunk with max_end >= ts.
+///   - right bound: block suffix max is non-increasing → binary search finds
+///     the first block whose suffix max < ts; every chunk from there on ends
+///     < ts. A backward scan of the previous block finds the exact last chunk
+///     with max_end >= ts.
+///
+/// Long notes only pollute their own block (≤64 chunk comparisons), so the
+/// dispatched range is O(viewport) instead of O(song prefix): a viewport in
+/// the middle of a 100M-note song no longer scans every note from the song
+/// start every frame (that caused multi-second-per-frame stalls at the
+/// song's tail).
 #[derive(Clone)]
 struct KeyBucketIndex {
-    /// start_tick of each bucket's first note (monotonic non-decreasing).
-    bucket_start: Vec<u32>,
-    /// max over buckets [b..] of per-bucket max end_tick (monotonic
-    /// non-increasing). Used to find the first bucket that can intersect.
-    bucket_suffix_max_end: Vec<u32>,
+    /// start_tick of each chunk's first note (monotonic non-decreasing).
+    chunk_start: Vec<u32>,
+    /// max end_tick within each chunk (not monotonic).
+    chunk_max_end: Vec<u32>,
+    /// prefix max of chunk_max_end, one entry per BLOCK_CHUNKS chunks
+    /// (monotonic non-decreasing).
+    block_prefix_max: Vec<u32>,
+    /// suffix max of chunk_max_end, one entry per BLOCK_CHUNKS chunks
+    /// (monotonic non-increasing).
+    block_suffix_max: Vec<u32>,
     /// Total chunk count = ceil(note_count / 256).
     chunk_total: u32,
 }
 
-/// Notes per bucket; each bucket spans NOTES_PER_BUCKET / 256 = 16 chunks.
-const NOTES_PER_BUCKET: usize = 4096;
+/// Chunks per index block; per-block scan cost ≤ BLOCK_CHUNKS comparisons.
+const BLOCK_CHUNKS: usize = 64;
 
 impl KeyBucketIndex {
     fn build(notes: &[NoteInstance]) -> Self {
-        let mut bucket_start = Vec::new();
-        let mut bucket_max_end = Vec::new();
+        let mut chunk_start = Vec::new();
+        let mut chunk_max_end = Vec::new();
         let mut i = 0;
         while i < notes.len() {
-            let end = (i + NOTES_PER_BUCKET).min(notes.len());
-            bucket_start.push(notes[i].start_tick);
+            let end = (i + 256).min(notes.len());
+            chunk_start.push(notes[i].start_tick);
             let mut max_end = notes[i].end_tick;
             for n in &notes[i..end] {
                 max_end = max_end.max(n.end_tick);
             }
-            bucket_max_end.push(max_end);
+            chunk_max_end.push(max_end);
             i = end;
         }
-        let mut suffix_max = Vec::with_capacity(bucket_max_end.len());
+        // Block prefix max (non-decreasing).
+        let mut block_prefix_max = Vec::new();
         let mut cur = 0;
-        for &m in bucket_max_end.iter().rev() {
-            cur = cur.max(m);
-            suffix_max.push(cur);
+        for (bi, m) in chunk_max_end.iter().enumerate() {
+            cur = cur.max(*m);
+            if bi % BLOCK_CHUNKS == BLOCK_CHUNKS - 1 || bi == chunk_max_end.len() - 1 {
+                block_prefix_max.push(cur);
+            }
         }
-        suffix_max.reverse();
+        // Block suffix max (non-increasing): max over [block..] of per-block max.
+        let n_blocks = chunk_max_end.len().div_ceil(BLOCK_CHUNKS);
+        let mut per_block_max = vec![0u32; n_blocks];
+        for (bi, m) in chunk_max_end.iter().enumerate() {
+            let b = bi / BLOCK_CHUNKS;
+            per_block_max[b] = per_block_max[b].max(*m);
+        }
+        let mut block_suffix_max = Vec::with_capacity(n_blocks);
+        let mut cur = 0;
+        for &m in per_block_max.iter().rev() {
+            cur = cur.max(m);
+            block_suffix_max.push(cur);
+        }
+        block_suffix_max.reverse();
         KeyBucketIndex {
-            bucket_start,
-            bucket_suffix_max_end: suffix_max,
-            chunk_total: notes.len().div_ceil(256) as u32,
+            chunk_total: chunk_max_end.len() as u32,
+            chunk_start,
+            chunk_max_end,
+            block_prefix_max,
+            block_suffix_max,
         }
     }
 
-    /// Chunk range [0, chunk_count) that can intersect [tick_start, tick_end].
-    /// Conservative: may include buckets that the shader's exact AABB test
-    /// then culls. Returns None when nothing can intersect.
+    /// Chunk range [c_lo, c_lo + count) that can intersect
+    /// [tick_start, tick_end]. Conservative: may include chunks that the
+    /// shader's exact AABB test then culls. Returns None when nothing can
+    /// intersect.
     ///
-    /// Both arrays are monotonic, so the visible buckets form a prefix:
-    ///   - `bucket_suffix_max_end` is non-increasing: buckets with
-    ///     suffix_max_end >= ts can intersect (conservative), the first bucket
-    ///     with suffix_max_end < ts and everything after it cannot (all notes
-    ///     end before ts). partition_point uses `m >= ts` (a true-prefix
-    ///     predicate; `m < ts` would be a false-prefix on a decreasing array
-    ///     and its binary search result would be undefined).
-    ///   - `bucket_start` is non-decreasing: buckets with start <= te can
-    ///     intersect.
-    ///
-    /// Visible buckets = [0, min(b_lo, b_hi_end)), so c_lo is always 0.
+    /// Correctness: any visible chunk v has chunk_max_end[v] >= ts, so v lies
+    /// between the first chunk with max_end >= ts (found by block prefix
+    /// search + forward scan) and the last chunk with max_end >= ts (found by
+    /// block suffix search + backward scan). Combined with the chunk_start
+    /// <= te bound, the interval [c_lo, c_hi) covers every visible chunk.
     fn visible_chunk_range(&self, tick_start: u32, tick_end: u32) -> Option<(u32, u32)> {
         if self.chunk_total == 0 || tick_start > tick_end {
             return None;
         }
-        let b_lo = self
-            .bucket_suffix_max_end
-            .partition_point(|&m| m >= tick_start);
-        let b_hi_end = self.bucket_start.partition_point(|&s| s <= tick_end);
-        let b_end = b_lo.min(b_hi_end);
-        if b_end == 0 {
+        let c_hi_bound = self.chunk_start.partition_point(|&s| s <= tick_end);
+        if c_hi_bound == 0 {
             return None;
         }
-        let chunks_per_bucket = NOTES_PER_BUCKET / 256;
-        let c_hi_end = (b_end * chunks_per_bucket).min(self.chunk_total as usize);
-        Some((0, c_hi_end as u32))
+
+        // Left bound: first chunk with max_end >= ts.
+        let block_lo = self
+            .block_prefix_max
+            .partition_point(|&m| m < tick_start)
+            .saturating_mul(BLOCK_CHUNKS)
+            .min(c_hi_bound);
+        let scan_end = (block_lo + BLOCK_CHUNKS).min(c_hi_bound);
+        let mut c_lo = scan_end;
+        for c in block_lo..scan_end {
+            if self.chunk_max_end[c] >= tick_start {
+                c_lo = c;
+                break;
+            }
+        }
+
+        // Right bound: last chunk with max_end >= ts. The block-level suffix
+        // search may point at a block whose max_end >= ts comes from chunks
+        // with start > te (past the viewport) — those must still be scanned
+        // (they clip the bound), so the backward scan runs over the full
+        // block, not just [0, c_hi_bound).
+        let block_tail = self.block_suffix_max.partition_point(|&m| m >= tick_start);
+        let mut c_hi = c_lo + 1;
+        if block_tail > 0 {
+            let back_start = (block_tail - 1).saturating_mul(BLOCK_CHUNKS).max(c_lo);
+            let back_end = (block_tail * BLOCK_CHUNKS).min(self.chunk_total as usize);
+            for c in (back_start..back_end).rev() {
+                if self.chunk_max_end[c] >= tick_start {
+                    c_hi = c + 1;
+                    break;
+                }
+            }
+        }
+        let c_hi = c_hi.min(c_hi_bound);
+        if c_lo >= c_hi || c_lo >= c_hi_bound {
+            return None;
+        }
+        Some((c_lo as u32, c_hi as u32))
     }
 }
 
@@ -865,27 +925,22 @@ mod tests {
 
     #[test]
     fn bucket_index_multi_bucket_boundaries() {
-        // 5000 notes → 2 buckets (4096 + 904), 20 chunks (16 + 4).
+        // 5000 notes → 20 chunks (256 notes each).
         let notes: Vec<(u32, u32)> = (0..5000).map(|i| (i * 10, i * 10 + 5)).collect();
         let idx = build_index(&notes);
         assert_eq!(idx.chunk_total, 20);
-        // Viewport inside bucket 0 → chunks [0, 16).
-        assert_eq!(idx.visible_chunk_range(0, 100), Some((0, 16)));
-        // Viewport inside bucket 1's tick range: bucket 1's max_end (49995) is
-        // part of bucket 0's suffix max (49995 ≥ ts), so bucket 0 is
-        // conservatively included → [0, 20). The shader's exact AABB test then
-        // culls bucket 0's notes. (suffix max is monotonic non-increasing, so
-        // b_lo is always 0 or len — it can only reject a viewport entirely
-        // past the last note end.)
-        assert_eq!(idx.visible_chunk_range(40_000, 50_000), Some((0, 20)));
-        // Viewport spanning both buckets → [0, 20).
+        // Viewport inside chunk 0 → chunks [0, 1).
+        assert_eq!(idx.visible_chunk_range(0, 100), Some((0, 1)));
+        // Viewport inside chunk 15's tick range: only the chunks whose
+        // max_end >= ts are kept → [15, 20). The shader's exact AABB test then
+        // culls the rest.
+        assert_eq!(idx.visible_chunk_range(40_000, 50_000), Some((15, 20)));
+        // Viewport spanning everything → [0, 20).
         assert_eq!(idx.visible_chunk_range(0, 50_000), Some((0, 20)));
-        // Gap between the buckets' start ticks (bucket 1 starts at tick 40960):
-        // bucket 0's max_end (40955) is below the viewport, but the suffix max
-        // is conservative (bucket 1's max_end = 49995 ≥ ts), so b_lo stays 0
-        // and bucket 0 is dispatched too — the shader's exact AABB test then
-        // culls bucket 0's notes. Conservative inclusion is by design.
-        assert_eq!(idx.visible_chunk_range(41_000, 42_000), Some((0, 20)));
+        // Viewport in the gap between chunk 15's notes (max_end 40955) and
+        // chunk 16's start (40960): chunk 16's max_end (43515) >= ts, so only
+        // chunk 16 is dispatched — [16, 17).
+        assert_eq!(idx.visible_chunk_range(41_000, 42_000), Some((16, 17)));
     }
 
     #[test]
@@ -904,42 +959,38 @@ mod tests {
 
     #[test]
     fn bucket_index_prefix_with_long_note() {
-        // 4 buckets: bucket 0 has a long note (max_end = 1_000_000), buckets
-        // 1..3 are short notes ending well before the viewport.
-        // suffix_max = [1_000_000, 163_835, 163_835, 163_835] (non-increasing,
-        // with a mid-array boundary). Viewport [200_000, 210_000]: only bucket
-        // 0 can intersect (its long note crosses the viewport). Regression:
-        // the old code started dispatch at the first suffix < ts bucket,
-        // skipping exactly the bucket that contains the visible long note.
+        // 16384 notes → 64 chunks. Chunk 0 has a long note (max_end = 1_000_000),
+        // chunks 1..63 are short notes ending well before the viewport.
+        // Viewport [200_000, 210_000]: only chunk 0 can intersect (its long
+        // note crosses the viewport); the block prefix/suffix search must not
+        // pull in the short-note chunks (they all end < ts).
         let mut notes: Vec<(u32, u32)> = Vec::new();
-        // Bucket 0: 4096 notes, first one is a long note.
-        for i in 0..4096 {
+        // Chunk 0's notes: 256 notes, first one is a long note.
+        for i in 0..256 {
             notes.push((i * 10, i * 10 + 5));
         }
         notes[0] = (0, 1_000_000);
-        // Buckets 1..3: short notes.
-        for b in 1..4 {
-            let base = b * 4096 * 10;
-            for i in 0..4096 {
-                notes.push((base + i * 10, base + i * 10 + 5));
-            }
+        // Remaining chunks (1..63): short notes.
+        for i in 256..16384 {
+            notes.push((i * 10, i * 10 + 5));
         }
         let idx = build_index(&notes);
         assert_eq!(idx.chunk_total, 64);
-        // Only bucket 0 (chunks [0, 16)) is dispatched.
-        assert_eq!(idx.visible_chunk_range(200_000, 210_000), Some((0, 16)));
-        // Viewport at the very start (bucket 0 starts at tick 0): b_lo = len
-        // (suffix all >= ts), b_hi_end = 1 → bucket 0 only.
-        assert_eq!(idx.visible_chunk_range(0, 10), Some((0, 16)));
+        // Only chunk 0 (the long note) is dispatched.
+        assert_eq!(idx.visible_chunk_range(200_000, 210_000), Some((0, 1)));
+        // Viewport at the very start → chunk 0 only.
+        assert_eq!(idx.visible_chunk_range(0, 10), Some((0, 1)));
         // Viewport after every note end → nothing.
         assert!(idx.visible_chunk_range(2_000_000, 3_000_000).is_none());
     }
 
     #[test]
     fn bucket_index_all_suffix_visible() {
-        // Every bucket's max_end >= ts (e.g. black-score long notes): b_lo ==
-        // len, and the key must still be dispatched (NOT return None).
-        // 3 buckets, all with a long note at the start.
+        // Every chunk block has a long note (max_end = 10_000_000), so no
+        // block suffix drops below ts, and the key must still be dispatched
+        // (NOT return None). The dispatched range covers chunks 0..33: the
+        // last chunk with max_end >= ts is chunk 32 (bucket 2's long note);
+        // chunks 33..47 are short notes ending before the viewport.
         let mut notes: Vec<(u32, u32)> = Vec::new();
         for b in 0..3 {
             let base = b * 4096 * 10;
@@ -950,9 +1001,9 @@ mod tests {
         }
         let idx = build_index(&notes);
         assert_eq!(idx.chunk_total, 48);
-        // Viewport in the middle: all buckets' suffix_max_end >= ts, so the
-        // whole start-side prefix up to b_hi_end is dispatched.
-        assert_eq!(idx.visible_chunk_range(500_000, 600_000), Some((0, 48)));
+        // Viewport in the middle: chunk 32's long note is the last chunk with
+        // max_end >= ts, so the range is [0, 33).
+        assert_eq!(idx.visible_chunk_range(500_000, 600_000), Some((0, 33)));
     }
 
     #[test]
@@ -976,6 +1027,87 @@ mod tests {
 
     /// 端到端：黑乐谱风格构造数据（128 keys × 8192 音符 + 每 key 长音符），
     /// 模拟 PR 默认视口，验证每个可见 key 都有输出。
+    #[test]
+    fn bucket_index_conservative_bruteforce() {
+        // 随机黑乐谱风格数据（密集短音符 + 随机长音符），暴力验证
+        // visible_chunk_range 是保守超集：区间必须覆盖所有可见 chunk。
+        let mut state: u64 = 0x9E3779B97F4A7C15;
+        let mut next = || {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (state >> 33) as u32
+        };
+        for trial in 0..150 {
+            let n = 60_000;
+            let mut notes: Vec<(u32, u32)> = Vec::with_capacity(n);
+            let mut tick = 0u32;
+            for _ in 0..n {
+                tick = tick.wrapping_add(next() % 4); // 密集
+                let len = if next() % 80 == 0 {
+                    100_000 + next() % 1_000_000 // 长音符
+                } else {
+                    10 + next() % 60
+                };
+                notes.push((tick, tick + len));
+            }
+            let idx = build_index(&notes);
+            let total = idx.chunk_total as usize;
+            for _ in 0..300 {
+                let ts = next() % 1_500_000;
+                let te = ts + 5_000 + next() % 60_000;
+                let range = idx.visible_chunk_range(ts, te);
+                // 暴力：第一个/最后一个可见 chunk（start <= te && max_end >= ts）
+                let mut first: Option<usize> = None;
+                let mut last: Option<usize> = None;
+                for c in 0..total {
+                    if idx.chunk_start[c] <= te && idx.chunk_max_end[c] >= ts {
+                        first = first.or(Some(c));
+                        last = Some(c);
+                    }
+                }
+                match (range, first) {
+                    (Some((lo, hi)), Some(_)) => {
+                        assert!(
+                            lo as usize <= first.unwrap(),
+                            "trial {trial} ts={ts} te={te}: c_lo={lo} > first={}",
+                            first.unwrap()
+                        );
+                        assert!(
+                            hi as usize > last.unwrap(),
+                            "trial {trial} ts={ts} te={te}: c_hi={hi} <= last={}\n  block_suffix={:?}\n  block_prefix={:?}\n  chunk_start[160..170]={:?}\n  chunk_max_end[160..170]={:?}",
+                            last.unwrap(),
+                            idx.block_suffix_max,
+                            idx.block_prefix_max,
+                            &idx.chunk_start[160..170.min(total)],
+                            &idx.chunk_max_end[160..170.min(total)],
+                        );
+                    }
+                    (Some(_), None) => {
+                        panic!("trial {trial} ts={ts} te={te}: 区间非空但暴力无可见 chunk")
+                    }
+                    (None, Some(_)) => {
+                        let f = first.unwrap();
+                        println!(
+                            "诊断: ts={ts} te={te} first={f} last={} block_suffix={:?} block_prefix={:?}",
+                            last.unwrap(),
+                            idx.block_suffix_max,
+                            idx.block_prefix_max
+                        );
+                        for c in f.saturating_sub(2)..(f + 5).min(total) {
+                            println!(
+                                "  chunk {c}: start={} max_end={}",
+                                idx.chunk_start[c], idx.chunk_max_end[c]
+                            );
+                        }
+                        panic!("trial {trial}: None 但暴力有可见 chunk")
+                    }
+                    (None, None) => {}
+                }
+            }
+        }
+    }
+
     #[test]
     fn cull_end_to_end_multi_key() {
         let Some((device, queue)) = headless_device() else {
@@ -1895,11 +2027,11 @@ mod tests {
                     let key = mismatches[0].0 as usize;
                     if let Some(idx) = &cull.bucket_indexes[key] {
                         println!(
-                            "  key={key}: buckets={} chunk_total={} b_lo={} b_hi_end={} dispatched_chunks={}",
-                            idx.bucket_start.len(),
+                            "  key={key}: chunks={} chunk_total={} c_lo={} c_hi_bound={} dispatched_chunks={}",
+                            idx.chunk_start.len(),
                             idx.chunk_total,
-                            idx.bucket_suffix_max_end.partition_point(|&m| m >= ts),
-                            idx.bucket_start.partition_point(|&s| s <= te),
+                            idx.block_prefix_max.partition_point(|&m| m < ts) * 64,
+                            idx.chunk_start.partition_point(|&s| s <= te),
                             cull.frame_chunk_counts[key],
                         );
                     }
@@ -2075,11 +2207,11 @@ mod tests {
                     let key = mismatches[0].0 as usize;
                     if let Some(idx) = &cull.bucket_indexes[key] {
                         println!(
-                            "    key={key}: buckets={} chunk_total={} b_lo={} b_hi_end={} dispatched_chunks={}",
-                            idx.bucket_start.len(),
+                            "    key={key}: chunks={} chunk_total={} c_lo={} c_hi_bound={} dispatched_chunks={}",
+                            idx.chunk_start.len(),
                             idx.chunk_total,
-                            idx.bucket_suffix_max_end.partition_point(|&m| m >= ts),
-                            idx.bucket_start.partition_point(|&s| s <= te),
+                            idx.block_prefix_max.partition_point(|&m| m < ts) * 64,
+                            idx.chunk_start.partition_point(|&s| s <= te),
                             cull.frame_chunk_counts[key],
                         );
                     }
@@ -2444,5 +2576,291 @@ mod tests {
             (total_ticks * 0.75 * ppu).max(0.0),
         );
         assert!(ok, "多帧交互序列存在 GPU/CPU 不匹配（见上方打印）");
+    }
+
+    /// CPU 真实构建路径 vs GPU cull，每小节步进对比。
+    ///
+    /// CPU 参考用真实的 `build_notes`（非 cull 模式下 piano_view 的构建路径，
+    /// 与 f32 镜像不同），逐小节滚动全曲，统计两者可见音符数。
+    /// 用户报告：CPU 显示正常、仅 GPU cull 丢失，且滚动后立即出现。
+    #[test]
+    fn cull_vs_cpu_build_path_per_bar() {
+        let path = "/Users/jieneng/Music/MIDIs/start.mid";
+        if !std::path::Path::new(path).exists() {
+            eprintln!("test.mid 不存在，跳过");
+            return;
+        }
+        let Some((device, queue)) = headless_device() else {
+            return;
+        };
+        let t0 = std::time::Instant::now();
+        let model = yinhe_mid2::parse_path(path).expect("parse test.mid 失败");
+        println!(
+            "parse {:?} note_count={} tick_length={} ppq={}",
+            t0.elapsed(),
+            model.note_count,
+            model.tick_length,
+            model.meta.ppq
+        );
+
+        let mut cull = CullState::new(&device);
+        let uniform_buffer = device.create_buffer(&BufferDescriptor {
+            label: Some("test_uniform"),
+            size: 256,
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        // 真实用户视口参数（cull_start_mid_sequence 中的数值）
+        let (w, h, kh, kb_w) = (1376.0f32, 419.0f32, 3.2734375, 60.0f32);
+        let ppu = 0.026372144f32;
+        let hidden = std::collections::HashSet::new();
+        let tv: Vec<bool> = vec![true; model.tracks.len()];
+
+        // GPU 上传（全量）
+        let (all_notes, offsets) = crate::pianoroll::build_all_notes(&model, &hidden, &tv);
+        cull.upload_all_notes(
+            &device,
+            &queue,
+            &uniform_buffer,
+            &all_notes,
+            &offsets,
+            &model.note_revisions,
+        );
+
+        // 小节步进：4/4 一小节 = ppq * 4
+        let bar_ticks = (model.meta.ppq.max(1) * 4) as f32;
+        let total_bars = (model.tick_length as f32 / bar_ticks).ceil() as u32;
+        println!("bar_ticks={bar_ticks} total_bars={total_bars}");
+
+        let mut prev_gpu: Option<u64> = None;
+        let mut prev_scroll: Option<f32> = None;
+        let mut bad = 0u32;
+        for bar in 0..total_bars {
+            let center_tick = (bar as f32 + 0.5) * bar_ticks;
+            let scroll_x = (kb_w + center_tick * ppu - w / 2.0).max(0.0);
+
+            // ── CPU 真实路径：build_notes（非 cull 模式的构建）──
+            let view = yinhe_types::PianoRollView {
+                key_height: kh,
+                viewport_h: h,
+                base: yinhe_types::TimelineViewBase {
+                    pixels_per_tick: ppu,
+                    scroll_x,
+                    scroll_y: 0.0,
+                    left_panel_width: kb_w,
+                    dirty: true,
+                    track_panel_row_height: 40.0,
+                    track_panel_scroll_y: 0.0,
+                },
+            };
+            let mut cpu_instances = Vec::new();
+            crate::pianoroll::build_notes(&mut cpu_instances, w, h, &model, &view, &hidden, &tv);
+            // 只统计 dispatch 范围（renderer 的 visible_key_range 公式）内的 key
+            let key_lo_hi = {
+                let bottom = 128.0 * kh;
+                let top_key = ((bottom / kh).ceil() as i32 - 1).clamp(0, 127);
+                let bottom_key = (((bottom - h) / kh).ceil() as i32 - 1).clamp(0, 127);
+                let lo = bottom_key.min(top_key).max(0);
+                let hi = bottom_key.max(top_key).min(127);
+                (lo as u8, hi as u8)
+            };
+            // 逐 key 统计 CPU（用与 GPU 相同的左边界：键盘右缘，见 cull.wgsl 的
+            // pixel_right >= 0 条件对应 end >= (scroll_x - kb_w)/ppu）
+            let mut cpu_by_key = [0u64; 128];
+            for n in &cpu_instances {
+                let k = (n.packed & 0xFF) as usize;
+                if k >= key_lo_hi.0 as usize && k <= key_lo_hi.1 as usize {
+                    cpu_by_key[k] += 1;
+                }
+            }
+            let cpu_count: u64 = cpu_by_key.iter().sum();
+
+            // ── GPU cull ──
+            let u = Uniforms {
+                width: w,
+                height: h,
+                scroll_x,
+                scroll_y: 0.0,
+                pixels_per_tick: ppu,
+                key_height: kh,
+                keyboard_width: kb_w,
+                mode: 1,
+                ..Default::default()
+            };
+            queue.write_buffer(&uniform_buffer, 0, bytemuck::bytes_of(&u));
+            let mut encoder = device.create_command_encoder(&Default::default());
+            cull.dispatch_cull(&mut encoder, &queue, key_lo_hi.0, key_lo_hi.1, &u);
+            queue.submit([encoder.finish()]);
+            let (ts_lo, ts_hi) = visible_tick_range(&u);
+
+            let mut gpu_count = 0u64;
+            let mut gpu_by_key = [0u64; 128];
+            for key in key_lo_hi.0..=key_lo_hi.1 {
+                let chunk_count = cull.frame_chunk_counts[key as usize] as usize;
+                if chunk_count == 0 {
+                    continue;
+                }
+                let Some(args_buf) = &cull.per_key_draw_args_buffers[key as usize] else {
+                    continue;
+                };
+                let readback = device.create_buffer(&BufferDescriptor {
+                    label: Some("args_readback"),
+                    size: 16 * chunk_count as u64,
+                    usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+                    mapped_at_creation: false,
+                });
+                let mut enc = device.create_command_encoder(&Default::default());
+                enc.copy_buffer_to_buffer(args_buf, 0, &readback, 0, 16 * chunk_count as u64);
+                queue.submit([enc.finish()]);
+                let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                let done2 = done.clone();
+                readback.slice(..).map_async(wgpu::MapMode::Read, move |_| {
+                    done2.store(true, Ordering::SeqCst);
+                });
+                device
+                    .poll(wgpu::PollType::wait_indefinitely())
+                    .expect("poll failed");
+                assert!(done.load(Ordering::SeqCst));
+                let view = readback.slice(..).get_mapped_range();
+                let args: &[u32] = bytemuck::cast_slice(&view);
+                for c in 0..chunk_count {
+                    let n = args[c * 4 + 1] as u64;
+                    gpu_by_key[key as usize] += n;
+                    gpu_count += n;
+                }
+                drop(view);
+                readback.unmap();
+            }
+
+            // 逐 key 差异统计：找出「只显示前几千个、后面全丢」的 key
+            let mut key_diffs: Vec<(u32, u64, u64)> = Vec::new();
+            let total_chunks: u32 = cull.frame_chunk_counts.iter().sum();
+            if bar % 16 == 0 {
+                println!("  bar={bar}: dispatched_chunks 总数={total_chunks}");
+                // 读回 key 60 的第一个非空 chunk 的音符 tick，验证显示内容随视口移动
+                let probe_key = 60u8;
+                let chunk_count = cull.frame_chunk_counts[probe_key as usize] as usize;
+                if chunk_count > 0 {
+                    let args_buf = cull.per_key_draw_args_buffers[probe_key as usize]
+                        .as_ref()
+                        .expect("args buffer");
+                    let readback = device.create_buffer(&BufferDescriptor {
+                        label: Some("args_readback"),
+                        size: 16 * chunk_count as u64,
+                        usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+                        mapped_at_creation: false,
+                    });
+                    let mut enc = device.create_command_encoder(&Default::default());
+                    enc.copy_buffer_to_buffer(args_buf, 0, &readback, 0, 16 * chunk_count as u64);
+                    queue.submit([enc.finish()]);
+                    let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                    let done2 = done.clone();
+                    readback.slice(..).map_async(wgpu::MapMode::Read, move |_| {
+                        done2.store(true, Ordering::SeqCst);
+                    });
+                    device
+                        .poll(wgpu::PollType::wait_indefinitely())
+                        .expect("poll failed");
+                    assert!(done.load(Ordering::SeqCst));
+                    let view = readback.slice(..).get_mapped_range();
+                    let args: &[u32] = bytemuck::cast_slice(&view);
+                    let mut first_nonzero = None;
+                    for c in 0..chunk_count {
+                        if args[c * 4 + 1] > 0 {
+                            first_nonzero = Some(c);
+                            break;
+                        }
+                    }
+                    drop(view);
+                    readback.unmap();
+                    if let Some(c) = first_nonzero {
+                        // 读回 visible buffer 槽位 (c_lo + wg)*256 的音符 start_tick
+                        let c_lo = cull.bucket_indexes[probe_key as usize]
+                            .as_ref()
+                            .and_then(|idx| idx.visible_chunk_range(ts_lo, ts_hi))
+                            .map(|(lo, _)| lo)
+                            .unwrap_or(0);
+                        let vis_buf = cull.per_key_visible_buffers[probe_key as usize]
+                            .as_ref()
+                            .expect("vis buffer");
+                        let rb = device.create_buffer(&BufferDescriptor {
+                            label: Some("vis_readback"),
+                            size: 12,
+                            usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+                            mapped_at_creation: false,
+                        });
+                        let mut enc2 = device.create_command_encoder(&Default::default());
+                        enc2.copy_buffer_to_buffer(
+                            vis_buf,
+                            ((c_lo + c as u32) * 256) as u64 * 12,
+                            &rb,
+                            0,
+                            12,
+                        );
+                        queue.submit([enc2.finish()]);
+                        let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                        let done2 = done.clone();
+                        rb.slice(..).map_async(wgpu::MapMode::Read, move |_| {
+                            done2.store(true, Ordering::SeqCst);
+                        });
+                        device
+                            .poll(wgpu::PollType::wait_indefinitely())
+                            .expect("poll failed");
+                        assert!(done.load(Ordering::SeqCst));
+                        let v = rb.slice(..).get_mapped_range();
+                        let inst: &[u32] = bytemuck::cast_slice(&v);
+                        println!(
+                            "    key60 c_lo={c_lo} 首非空 chunk={c} 首音符 start_tick={} (视口中心 tick={center_tick:.0})",
+                            inst[0]
+                        );
+                        drop(v);
+                        rb.unmap();
+                    } else {
+                        println!("    key60 无可见音符");
+                    }
+                }
+            }
+            for k in key_lo_hi.0..=key_lo_hi.1 {
+                let c = cpu_by_key[k as usize];
+                let g = gpu_by_key[k as usize];
+                // GPU 明显少于 CPU（超过 1% 且绝对差 > 100）
+                if c > 0 && g + 100 < c {
+                    key_diffs.push((k as u32, c, g));
+                }
+            }
+            if !key_diffs.is_empty() && bar % 8 == 0 {
+                println!(
+                    "  bar={bar}: GPU<CPU 的 key 数={}，示例: {:?}",
+                    key_diffs.len(),
+                    &key_diffs[..key_diffs.len().min(8)]
+                );
+            }
+
+            let diff = gpu_count as i64 - cpu_count as i64;
+            let marker = if key_diffs.is_empty() { "" } else { " ⚠️" };
+            println!(
+                "bar={bar} tick={center_tick:.0} CPU={cpu_count} GPU={gpu_count} diff={diff}{marker}"
+            );
+            if !key_diffs.is_empty() {
+                bad += 1;
+            }
+            if let Some(p) = prev_gpu {
+                // 仅当视口确实移动了才要求 GPU 输出变化
+                if prev_scroll != Some(scroll_x) {
+                    assert_ne!(
+                        gpu_count, p,
+                        "bar={bar}: GPU 输出未随滚动变化（cull 层没更新）"
+                    );
+                }
+            }
+            prev_gpu = Some(gpu_count);
+            prev_scroll = Some(scroll_x);
+        }
+        println!("总 bad 数（存在 GPU<CPU 的 key）: {bad}/{total_bars}");
+        assert!(
+            bad == 0,
+            "{bad}/{total_bars} 个小节存在 GPU 明显少于 CPU 的 key（见上方打印）"
+        );
     }
 }
