@@ -149,6 +149,14 @@ impl App {
                     doc.data.bump_revision();
                     // 推 undo（带 rescale 标志）。
                     commit_ppq(doc, dragvalue_id, new_ppq, true); // rescale
+                    // rescale 替换了整个 model（所有音符 tick 按 PPQ 比例变化），
+                    // 必须清空 GPU cull buffer：若新 model 的 note_revisions 与
+                    // uploaded_key_revisions 巧合相同，增量检测会跳过上传，
+                    // 渲染出 PPQ 缩放前的旧音符（见 close_document / main_loop
+                    // 的文档替换路径同根修复）。
+                    if self.active_doc == Some(doc_idx) {
+                        self.invalidate_cull_state();
+                    }
                 }
             }
             Err(msg) => {
