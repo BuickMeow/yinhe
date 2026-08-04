@@ -7293,6 +7293,7 @@ dependencies = [
  "wgpu",
  "yinhe-core",
  "yinhe-memtrace",
+ "yinhe-mid2",
  "yinhe-test-helpers",
  "yinhe-theme",
  "yinhe-types",

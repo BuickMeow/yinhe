@@ -358,13 +358,14 @@ impl CullState {
             //   visible:   大小 vis_size，usage STORAGE | VERTEX
             //   draw_args: 大小 args_size，usage STORAGE | INDIRECT
             // 全部走 yinhe_memtrace::sub_gpu_resource / add_gpu_resource
-            // （可先统一释放旧的三个，再统一创建新的三个）
-            for buf in self
-                .per_key_buffers
-                .iter_mut()
-                .chain(self.per_key_visible_buffers.iter_mut())
-                .chain(self.per_key_draw_args_buffers.iter_mut())
-            {
+            // （可先统一释放旧的三个，再统一创建新的三个）。
+            // 只释放当前 key 的三个 buffer——不能遍历全部 keys，那会销毁
+            // 其他 key 的 buffer，全量上传后只剩最后一个 key 存活。
+            for buf in [
+                &mut self.per_key_buffers[key as usize],
+                &mut self.per_key_visible_buffers[key as usize],
+                &mut self.per_key_draw_args_buffers[key as usize],
+            ] {
                 if let Some(b) = buf.take() {
                     yinhe_memtrace::sub_gpu_resource(b.size());
                 }
@@ -957,5 +958,293 @@ mod tests {
         // = [400, 8400], with margin → starts before 400, ends after 8400.
         let (ts, te) = visible_tick_range(&u);
         assert!(ts <= 390 && te >= 8410, "ts={ts} te={te}");
+    }
+
+    /// 端到端：黑乐谱风格构造数据（128 keys × 8192 音符 + 每 key 长音符），
+    /// 模拟 PR 默认视口，验证每个可见 key 都有输出。
+    #[test]
+    fn cull_end_to_end_multi_key() {
+        let Some((device, queue)) = headless_device() else {
+            return;
+        };
+        let mut cull = CullState::new(&device);
+        let uniform_buffer = device.create_buffer(&BufferDescriptor {
+            label: Some("test_uniform"),
+            size: 256,
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        let mut all_notes = Vec::new();
+        let mut offsets = [0u32; 129];
+        for key in 0..128u8 {
+            let mut notes = Vec::new();
+            // 长音符（覆盖到 tick 10M，start=0）
+            notes.push(NoteInstance {
+                start_tick: 0,
+                end_tick: 10_000_000,
+                packed: NoteInstance::pack(key, 0, 100),
+            });
+            // 密集短音符
+            for i in 0..8192 {
+                notes.push(NoteInstance {
+                    start_tick: i * 10 + 1,
+                    end_tick: i * 10 + 6,
+                    packed: NoteInstance::pack(key, 0, 100),
+                });
+            }
+            offsets[key as usize] = all_notes.len() as u32;
+            all_notes.extend(notes);
+        }
+        offsets[128] = all_notes.len() as u32;
+        cull.upload_all_notes(
+            &device,
+            &queue,
+            &uniform_buffer,
+            &all_notes,
+            &offsets,
+            &[0; 128],
+        );
+
+        // PR 默认视口：scroll=0, ppu=0.1, kh=12, height=600 → 可见 key 77..127
+        // （key 76 的行在 y∈[612, 624)，完全在视口外）
+        let u = Uniforms {
+            width: 800.0,
+            height: 600.0,
+            scroll_x: 0.0,
+            scroll_y: 0.0,
+            pixels_per_tick: 0.1,
+            key_height: 12.0,
+            keyboard_width: 60.0,
+            mode: 1,
+            ..Default::default()
+        };
+        let mut encoder = device.create_command_encoder(&Default::default());
+        cull.dispatch_cull(&mut encoder, &queue, 76, 127, &u);
+        // 必须提交 encoder，否则 cull 的 compute pass 不会在 GPU 上执行。
+        queue.submit([encoder.finish()]);
+
+        // 读回每个 key 的 draw_args[0]，断言 instance_count >= 1（长音符可见）
+        // 可见范围是 77..=127：key 76 的行在 y∈[612, 624)，完全在视口外。
+        let mut bad: Vec<u32> = Vec::new();
+        for key in 77..=127 {
+            let readback = device.create_buffer(&BufferDescriptor {
+                label: Some("args_readback"),
+                size: 16,
+                usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+            let args_buf = match &cull.per_key_draw_args_buffers[key as usize] {
+                Some(b) => b,
+                None => panic!("key {key} 没有 args buffer (upload 后应存在)"),
+            };
+            let mut enc = device.create_command_encoder(&Default::default());
+            enc.copy_buffer_to_buffer(args_buf, 0, &readback, 0, 16);
+            queue.submit([enc.finish()]);
+            let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let done2 = done.clone();
+            readback.slice(..).map_async(wgpu::MapMode::Read, move |_| {
+                done2.store(true, Ordering::SeqCst);
+            });
+            device
+                .poll(wgpu::PollType::wait_indefinitely())
+                .expect("poll failed");
+            assert!(done.load(Ordering::SeqCst));
+            let view = readback.slice(..).get_mapped_range();
+            let args: &[u32] = bytemuck::cast_slice(&view);
+            let count = args[1];
+            drop(view);
+            readback.unmap();
+            if count == 0 {
+                bad.push(key as u32);
+            }
+        }
+        assert!(bad.is_empty(), "这些 key 没有可见音符: {bad:?}");
+    }
+
+    /// 端到端：真实 MIDI 文件。CPU 路径（build_notes）与 GPU cull 的输出对比。
+    /// 文件不存在时跳过（CI 兼容）。
+    #[test]
+    fn cull_real_midi_vs_cpu() {
+        let Some((device, queue)) = headless_device() else {
+            return;
+        };
+        let mut cull = CullState::new(&device);
+        let uniform_buffer = device.create_buffer(&BufferDescriptor {
+            label: Some("test_uniform"),
+            size: 256,
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        // 先测一个小文件（几万音符级），再测大文件
+        let paths = [
+            "/Users/jieneng/Music/MIDIs/99 Luftballons.mid",
+            "/Users/jieneng/Music/MIDIs/APT.mid",
+            "/Users/jieneng/Music/MIDIs/1.mid",
+        ];
+        let mut tested_any = false;
+        let mut bad_ratios: Vec<(&str, u32, u64, f64)> = Vec::new();
+        for path in paths {
+            // `parser` 是 yinhe-mid2 的私有模块，解析入口在 crate 根：
+            let Ok(model) = yinhe_mid2::parse_path(path) else {
+                continue; // 文件不存在或解析失败 → 跳过
+            };
+            tested_any = true;
+
+            // ── 构造统一的 PR 视口 ──
+            let ppu = 0.1f32;
+            let kh = 12.0f32;
+            let width = 800.0f32;
+            let height = 600.0f32;
+            let kb_w = 60.0f32;
+            // TimelineViewBase 没有 derive Default，用 PianoRollView::default() 再覆写。
+            // TimelineViewBase 没有 derive Default，字段全部显式给出。
+            let view = yinhe_types::PianoRollView {
+                key_height: kh,
+                viewport_h: height,
+                base: yinhe_types::TimelineViewBase {
+                    pixels_per_tick: ppu,
+                    scroll_x: 0.0,
+                    scroll_y: 0.0,
+                    left_panel_width: kb_w,
+                    dirty: true,
+                    track_panel_row_height: 40.0,
+                    track_panel_scroll_y: 0.0,
+                },
+            };
+            let hidden = std::collections::HashSet::new();
+            let track_visible: Vec<bool> = vec![true; model.tracks.len()];
+
+            // ── CPU 期望值 ──
+            let mut cpu_out: Vec<NoteInstance> = Vec::new();
+            crate::pianoroll::build_notes(
+                &mut cpu_out,
+                width,
+                height,
+                &model,
+                &view,
+                &hidden,
+                &track_visible,
+            );
+            // CPU 输出按 key 统计
+            let mut cpu_by_key = [0u32; 128];
+            for n in &cpu_out {
+                cpu_by_key[(n.packed & 0xFF) as usize] += 1;
+            }
+            let cpu_total: u32 = cpu_by_key.iter().sum();
+
+            // ── GPU cull ──
+            let (all_notes, offsets) =
+                crate::pianoroll::build_all_notes(&model, &hidden, &track_visible);
+            cull.upload_all_notes(
+                &device,
+                &queue,
+                &uniform_buffer,
+                &all_notes,
+                &offsets,
+                &[0; 128],
+            );
+
+            let u = Uniforms {
+                width,
+                height,
+                scroll_x: 0.0,
+                scroll_y: 0.0,
+                pixels_per_tick: ppu,
+                key_height: kh,
+                keyboard_width: kb_w,
+                mode: 1,
+                ..Default::default()
+            };
+            // 写 uniform buffer：dispatch_cull 只读 Rust 侧 Uniforms 算 CPU 端
+            // 桶索引，不会把 uniform 写进 GPU buffer。不写的话 shader 读到
+            // 全零 uniform（mode=0、width/height=0、ppu=0），所有音符都通过
+            // 裁剪，GPU 输出等于全量音符。
+            queue.write_buffer(&uniform_buffer, 0, bytemuck::bytes_of(&u));
+            let mut encoder = device.create_command_encoder(&Default::default());
+            cull.dispatch_cull(&mut encoder, &queue, 0, 127, &u);
+            // 必须提交 encoder，否则 cull 的 compute pass 不会在 GPU 上执行。
+            queue.submit([encoder.finish()]);
+
+            // 读回每个 key 的 draw_args。只读本帧实际派发的 chunk
+            // （frame_chunk_counts）：未派发的 key 的 draw_args 从未被 shader
+            // 写入（内容未定义，读了是垃圾），按 0 计。
+            let mut gpu_total: u64 = 0;
+            let mut gpu_by_key = [0u64; 128];
+            for (key, gpu_key_total) in gpu_by_key.iter_mut().enumerate() {
+                let chunk_count = cull.frame_chunk_counts[key];
+                if chunk_count == 0 {
+                    continue;
+                }
+                let Some(args_buf) = &cull.per_key_draw_args_buffers[key] else {
+                    continue; // buffer 被销毁（upload 释放 bug）→ 无输出，按 0 计
+                };
+                let read_size = chunk_count as u64 * 16;
+                let readback = device.create_buffer(&BufferDescriptor {
+                    label: Some("args_readback"),
+                    size: read_size,
+                    usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+                    mapped_at_creation: false,
+                });
+                let mut enc = device.create_command_encoder(&Default::default());
+                enc.copy_buffer_to_buffer(args_buf, 0, &readback, 0, read_size);
+                queue.submit([enc.finish()]);
+                let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+                let done2 = done.clone();
+                readback.slice(..).map_async(wgpu::MapMode::Read, move |_| {
+                    done2.store(true, Ordering::SeqCst);
+                });
+                device
+                    .poll(wgpu::PollType::wait_indefinitely())
+                    .expect("poll failed");
+                assert!(done.load(Ordering::SeqCst));
+                let view = readback.slice(..).get_mapped_range();
+                let args: &[u32] = bytemuck::cast_slice(&view);
+                let mut key_total: u64 = 0;
+                for c in 0..chunk_count as usize {
+                    key_total += args[c * 4 + 1] as u64; // instance_count
+                }
+                drop(view);
+                readback.unmap();
+                *gpu_key_total = key_total;
+                gpu_total += key_total;
+            }
+
+            // ── 报告（println 输出，测试结束后我分析）──
+            let cpu_keys: Vec<u32> = (0..128u32)
+                .filter(|&k| cpu_by_key[k as usize] > 0)
+                .collect();
+            let gpu_keys: Vec<u32> = (0..128u32)
+                .filter(|&k| gpu_by_key[k as usize] > 0)
+                .collect();
+            println!(
+                "FILE {path}: CPU total={cpu_total} keys={cpu_keys:?}; GPU total={gpu_total} keys={gpu_keys:?}"
+            );
+            println!(
+                "  per-key GPU counts: {:?}",
+                (0..128u32)
+                    .filter(|&k| gpu_by_key[k as usize] > 0 || cpu_by_key[k as usize] > 0)
+                    .map(|k| (k, cpu_by_key[k as usize], gpu_by_key[k as usize]))
+                    .collect::<Vec<_>>()
+            );
+
+            // 断言：GPU 输出与 CPU 同数量级（GPU 是 CPU 的 50%..150%）。
+            // 不立即 panic，而是收集所有文件的违规，全部跑完后统一断言，
+            // 这样所有文件的对比数字都能打印出来供分析。
+            if cpu_total > 0 {
+                let ratio = gpu_total as f64 / cpu_total as f64;
+                if !(ratio > 0.5 && ratio < 1.5) {
+                    bad_ratios.push((path, cpu_total, gpu_total, ratio));
+                }
+            }
+        }
+        assert!(
+            bad_ratios.is_empty(),
+            "GPU/CPU 输出比例异常: {bad_ratios:?}"
+        );
+        if !tested_any {
+            eprintln!("没有可用的 MIDI 文件，测试跳过");
+        }
     }
 }
