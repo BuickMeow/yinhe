@@ -43,8 +43,8 @@ pub fn build_velocity_bars(
         .into_par_iter()
         .flat_map_iter(|key| {
             stacker::maybe_grow(STACK_RED_ZONE, STACK_SIZE, || {
-                let mut local: Vec<VelocityBarInstance> = Vec::new();
                 let notes = midi.key_notes_in_range(key, pad_start, pad_end);
+                let mut local: Vec<VelocityBarInstance> = Vec::new();
                 for note in notes {
                     if note.start_tick as f64 > pad_end as f64 {
                         break;
@@ -68,14 +68,18 @@ pub fn build_velocity_bars(
         })
         .collect();
 
-    // Deterministic z-order：主键 vel DESC（大 vel 底层先画，小 vel 顶层后画）——
-    // 跨 tick 也成立：tick 靠后的大 vel bar 不会盖住前面未放完的小 vel bar；
-    // 次键 gate DESC（同力度时短 gate 顶层后画）→ tick ASC → track ASC。
-    bars.sort_by(|a, b| {
-        b.velocity()
-            .cmp(&a.velocity())
-            .then(b.length.cmp(&a.length))
-            .then(a.tick.cmp(&b.tick))
+    // 一次排序搞定两件事：去重的段内处理序 + 最终的 z-order。
+    // 排序键 = (vel ASC, gate ASC, tick DESC, track ASC)：
+    // - 同 vel 连续成段，段内即去重所需的处理序（短 gate 先入覆盖并集）；
+    // - 去重后整体 reverse() 得到 z-order：vel DESC（大 vel 底层先画，
+    //   小 vel 顶层后画，跨 tick 成立）→ gate DESC（短 gate 顶层）→ tick ASC。
+    // 实测：sort_unstable_by_key 的 key 数组分配（277 万 × 16B）比比较器重复
+    // 字段访问更慢，用 sort_unstable_by。
+    bars.sort_unstable_by(|a, b| {
+        a.velocity()
+            .cmp(&b.velocity())
+            .then(a.length.cmp(&b.length))
+            .then(b.tick.cmp(&a.tick))
             .then(a.track().cmp(&b.track()))
     });
 
@@ -86,42 +90,61 @@ pub fn build_velocity_bars(
 
 /// 按 (vel, gate) 优先级去重完全被覆盖的 bar（见 [`build_velocity_bars`] 的规则）。
 ///
-/// 覆盖检测按 vel 分桶：同 vel 的 bar 同高，短 gate 的后画（顶层）；
-/// 桶内按 gate ASC 处理，维护已覆盖的 tick 区间并集（合并、按起点有序），
-/// 区间完全在并集内的 bar 不可见。不同 vel 的 bar 只部分重叠，不处理。
-/// 同 (tick, gate, vel) 的完全重复被区间覆盖自然去重（第二个的区间已在并集内）。
+/// 前置条件：bars 已按 (vel ASC, gate ASC, tick DESC, track ASC) 排序——
+/// 同 vel 连续成段，段内即覆盖检测所需的处理序（短 gate 先入并集），
+/// 无需再分桶排序。各 vel 段并行处理（keep 写入互不重叠）。
+///
+/// 覆盖规则：同 vel 的 bar 同高，短 gate 的后画（顶层），维护已覆盖的
+/// tick 区间并集（合并、按起点有序），区间完全在并集内的 bar 不可见。
+/// 同 (tick, gate, vel) 的完全重复被区间覆盖自然去重。
+/// 不同 vel 的 bar 只部分重叠（高的露头、矮的可见），不处理。
+///
+/// 完成后 bars 整体 reverse()，把 (vel ASC, gate ASC) 段序变成
+/// (vel DESC, gate DESC) 的 z-order。
 fn dedup_overlapped(bars: &mut Vec<VelocityBarInstance>) {
-    let mut buckets: [Vec<u32>; 128] = core::array::from_fn(|_| Vec::new());
-    for (i, b) in bars.iter().enumerate() {
-        buckets[b.velocity() as usize].push(i as u32);
-    }
-    let mut keep = vec![true; bars.len()];
-    for bucket in buckets.iter_mut() {
-        if bucket.len() < 2 {
-            continue;
+    // 1. 找 vel 段边界（同 vel 连续段，长度 >= 2 才需要覆盖检测）。
+    let mut segments: Vec<(usize, usize)> = Vec::new();
+    let mut i = 0;
+    while i < bars.len() {
+        let vel = bars[i].velocity();
+        let mut j = i + 1;
+        while j < bars.len() && bars[j].velocity() == vel {
+            j += 1;
         }
-        // 短 gate 优先（顶层后画）：gate ASC，同 gate 按 tick DESC——
-        // 同 gate 的 bar 互不覆盖（同高同宽、tick 偏移只部分重叠），但 tick 更
-        // 晚的 bar 可能是覆盖长 bar 的联合成员，先入并集才能让被联合覆盖的
-        // 长 bar 正确判删。
-        bucket.sort_by_key(|&i| {
-            let b = &bars[i as usize];
-            (b.length, std::cmp::Reverse(b.tick))
-        });
-        // 已覆盖的 tick 区间（合并后不重叠、按起点有序）。
-        let mut covered: Vec<(u32, u32)> = Vec::new();
-        for &i in bucket.iter() {
-            let b = &bars[i as usize];
-            let s = b.tick;
-            let e = b.tick + b.length;
-            if is_fully_covered(&covered, s, e) {
-                keep[i as usize] = false;
-            } else {
-                insert_interval(&mut covered, s, e);
+        if j - i >= 2 {
+            segments.push((i, j));
+        }
+        i = j;
+    }
+
+    // 2. 各 vel 段并行做区间覆盖检测（段内已是 gate ASC 处理序），
+    //    每段返回被删除的索引，主线程合并。
+    let deleted: Vec<Vec<usize>> = segments
+        .par_iter()
+        .map(|&(s, e)| {
+            let mut covered: Vec<(u32, u32)> = Vec::new();
+            let mut del = Vec::new();
+            for idx in s..e {
+                let b = &bars[idx];
+                let s_ = b.tick;
+                let e_ = b.tick + b.length;
+                if is_fully_covered(&covered, s_, e_) {
+                    del.push(idx);
+                } else {
+                    insert_interval(&mut covered, s_, e_);
+                }
             }
+            del
+        })
+        .collect();
+
+    // 3. 标记删除 + 原位过滤（保持当前段序），整体反转得 z-order。
+    let mut keep = vec![true; bars.len()];
+    for del in deleted {
+        for i in del {
+            keep[i] = false;
         }
     }
-    // 原位过滤（保持 z-order 顺序）。
     let mut w = 0;
     for r in 0..bars.len() {
         if keep[r] {
@@ -130,6 +153,7 @@ fn dedup_overlapped(bars: &mut Vec<VelocityBarInstance>) {
         }
     }
     bars.truncate(w);
+    bars.reverse();
 }
 
 /// [s, e) 是否完全落在已覆盖区间并集内（covered 合并后不重叠、按起点有序）。
