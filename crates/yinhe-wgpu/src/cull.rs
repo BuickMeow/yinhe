@@ -205,15 +205,26 @@ fn visible_tick_range(uniforms: &Uniforms) -> (u32, u32) {
 
 pub(crate) struct CullState {
     pipeline: ComputePipeline,
-    bind_group_layout: BindGroupLayout,
+    /// 供 note_pipeline 复用为 render pipeline 的 group 1（顶点阶段索引间接读）。
+    pub(crate) bind_group_layout: BindGroupLayout,
+    /// 顶点阶段专用的「all_instances 只读」bind group layout（单 binding）。
+    /// 与 cull bind group 分离：render pass 引用它不会把 visible_indices
+    /// （STORAGE_READ_WRITE，exclusive usage）带进 render scope 与 vertex
+    /// buffer 冲突。
+    pub(crate) all_bind_group_layout: BindGroupLayout,
     /// Per-key bind groups (128 slots). `None` until the key is first uploaded.
     per_key_bind_groups: Vec<Option<BindGroup>>,
+    /// Per-key vertex-stage bind groups（只含 all_instances）。
+    per_key_all_bind_groups: Vec<Option<BindGroup>>,
     /// Per-key all-notes storage buffers (cull input), grown on demand.
     per_key_buffers: Vec<Option<Buffer>>,
-    /// Per-key visible-notes storage buffers (cull output + draw vertex source).
-    /// 256-aligned so every chunk's sparse slots [chunk*256, chunk*256+256)
-    /// fit; visible slots beyond the written count hold stale data and are
-    /// not drawn (draw args bound instance_count to the culled count).
+    /// Per-key visible-index buffers (cull output: 4B u32 indices into the
+    /// key's `all_instances`; draw vertex source). 256-aligned so every
+    /// chunk's sparse slots [chunk*256, chunk*256+256) fit; visible slots
+    /// beyond the written count hold stale data and are not drawn (draw args
+    /// bound instance_count to the culled count).
+    /// 索引化（12B → 4B/槽）使全曲稀疏槽位显存降到 1/3；顶点阶段经
+    /// shader.wgsl 的 @group(1) 从 all_instances 间接读回完整数据。
     per_key_visible_buffers: Vec<Option<Buffer>>,
     /// Per-key draw args buffer (one DrawIndirectArgs per chunk, 16B each).
     /// Written by the cull shader's thread 0 per chunk; read by
@@ -338,6 +349,23 @@ impl CullState {
             ],
         });
 
+        // 顶点阶段专用：单 binding 的 all_instances 只读 layout。
+        // 与 cull bind group 分离，render pass 引用时不会把 exclusive 的
+        // STORAGE_READ_WRITE（visible_indices）带进同一 usage scope。
+        let all_bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+            label: Some("all_instances_bind_group_layout"),
+            entries: &[BindGroupLayoutEntry {
+                binding: 0,
+                visibility: ShaderStages::VERTEX,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+
         let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
             label: Some("cull_pipeline_layout"),
             bind_group_layouts: &[Some(&bind_group_layout)],
@@ -390,7 +418,9 @@ impl CullState {
         Self {
             pipeline,
             bind_group_layout,
+            all_bind_group_layout,
             per_key_bind_groups: (0..128).map(|_| None).collect(),
+            per_key_all_bind_groups: (0..128).map(|_| None).collect(),
             per_key_buffers: (0..128).map(|_| None).collect(),
             per_key_visible_buffers: (0..128).map(|_| None).collect(),
             per_key_draw_args_buffers: (0..128).map(|_| None).collect(),
@@ -467,8 +497,8 @@ impl CullState {
         let needed = notes.len() as u64 * std::mem::size_of::<NoteInstance>() as u64;
         let chunk_total = (notes.len() as u64).div_ceil(256).max(1);
         // Visible buffer is 256-aligned so every chunk's sparse slots
-        // [chunk*256, chunk*256+256) fit; draw args: one per chunk.
-        let vis_size = chunk_total * 256 * std::mem::size_of::<NoteInstance>() as u64;
+        // [chunk*256, chunk*256+256) fit; slots are 4B u32 indices now.
+        let vis_size = chunk_total * 256 * std::mem::size_of::<u32>() as u64;
         let args_size = chunk_total * std::mem::size_of::<u32>() as u64 * 4;
 
         let need_recreate = match &self.per_key_buffers[key as usize] {
@@ -484,7 +514,7 @@ impl CullState {
         if need_recreate {
             // 释放旧的三个 buffer（如有）并创建新的三个：
             //   all_notes: 大小 needed.max(4096)，usage STORAGE | COPY_DST
-            //   visible:   大小 vis_size，usage STORAGE | VERTEX
+            //   visible:   大小 vis_size（4B 索引），usage STORAGE | VERTEX
             //   draw_args: 大小 args_size，usage STORAGE | INDIRECT
             // 全部走 yinhe_memtrace::sub_gpu_resource / add_gpu_resource
             // （可先统一释放旧的三个，再统一创建新的三个）。
@@ -511,7 +541,7 @@ impl CullState {
             self.per_key_buffers[key as usize] = Some(all_buf);
 
             let vis_buf = device.create_buffer(&BufferDescriptor {
-                label: Some("visible_notes_key"),
+                label: Some("visible_indices_key"),
                 size: vis_size,
                 // COPY_SRC so tests can read back the culled output;
                 // COPY_DST so tests can overwrite slots directly.
@@ -567,6 +597,13 @@ impl CullState {
         self.per_key_buffers[key as usize].is_some()
     }
 
+    /// The per-key vertex-stage bind group (only `all_instances`).
+    /// Render pass 用它做索引间接读，不会把 exclusive 的 visible_indices
+    /// usage 带进 render scope。
+    pub(crate) fn per_key_all_bind_group(&self, key: u8) -> Option<&BindGroup> {
+        self.per_key_all_bind_groups[key as usize].as_ref()
+    }
+
     /// Recreate the bind group for a single key (after its buffer grew).
     /// Binds: uniform, all_notes[k], visible_notes[k], per-key draw_args[k],
     /// and the dispatch-args slot k (256-byte slice at offset k*256).
@@ -618,6 +655,16 @@ impl CullState {
                     },
                 ],
             }));
+        // 顶点阶段专用 bind group（只含 all_instances）：grow 后必须重建。
+        self.per_key_all_bind_groups[key as usize] =
+            Some(device.create_bind_group(&BindGroupDescriptor {
+                label: Some("all_instances_bind_group"),
+                layout: &self.all_bind_group_layout,
+                entries: &[BindGroupEntry {
+                    binding: 0,
+                    resource: all_buf.as_entire_binding(),
+                }],
+            }));
     }
 
     pub(crate) fn is_ready(&self) -> bool {
@@ -643,6 +690,7 @@ impl CullState {
             }
         }
         self.per_key_bind_groups.fill(None);
+        self.per_key_all_bind_groups.fill(None);
         self.per_key_counts.fill(0);
         self.frame_chunk_counts.fill(0);
         self.bucket_indexes.fill(None);
@@ -802,6 +850,10 @@ impl CullState {
     /// drawn in buffer order, and chunks are written in dispatch order
     /// (= input/tick order), so the z-order is fully deterministic across
     /// frames — no dependence on GPU workgroup scheduling.
+    ///
+    /// Per-key bind group (@group(1)) is set before each key's draw so the
+    /// vertex shader can indirect-read that key's `all_instances` from the
+    /// 4-byte visible index.
     pub(crate) fn draw_visible_notes(
         &self,
         pass: &mut RenderPass<'_>,
@@ -823,6 +875,10 @@ impl CullState {
             if chunk_count == 0 {
                 continue;
             }
+            let Some(bg) = self.per_key_all_bind_group(key) else {
+                continue;
+            };
+            pass.set_bind_group(1, bg, &[]);
             pass.set_vertex_buffer(0, vis_buf.slice(..));
             // multi_draw_indirect draws chunks in buffer order (= input order),
             // giving deterministic z-order. Split into ≤1M-draw segments in
@@ -990,12 +1046,12 @@ mod tests {
         }
         cull.upload_one_key(&device, &queue, &uniform_buffer, 60, &all);
 
-        let run = |cull: &mut CullState, u: &Uniforms| -> Vec<NoteInstance> {
+        let run = |cull: &mut CullState, u: &Uniforms| -> Vec<u32> {
             let mut encoder = device.create_command_encoder(&Default::default());
             cull.dispatch_cull(&mut encoder, &queue, 60, 60, u);
             let readback = device.create_buffer(&BufferDescriptor {
                 label: Some("vis_readback"),
-                size: 256 * 12,
+                size: 256 * 4, // 1 chunk × 256 slots × 4B 索引
                 usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
                 mapped_at_creation: false,
             });
@@ -1004,7 +1060,7 @@ mod tests {
                 0,
                 &readback,
                 0,
-                256 * 12,
+                256 * 4,
             );
             queue.submit([encoder.finish()]);
 
@@ -1018,26 +1074,22 @@ mod tests {
                 .expect("poll failed");
             assert!(done.load(Ordering::SeqCst));
             let view = readback.slice(..).get_mapped_range();
-            let insts: &[NoteInstance] = bytemuck::cast_slice(&view);
-            let out = insts[..30].to_vec();
+            let idx: &[u32] = bytemuck::cast_slice(&view);
+            let out = idx[..30].to_vec();
             drop(view);
             readback.unmap();
             out
         };
 
         let u = visible_uniforms();
-        // 无 mask（默认全 1）：30 个全部可见。
-        assert_eq!(run(&mut cull, &u).len(), 30);
+        // 无 mask（默认全 1）：30 个全部可见，索引 = 输入顺序 0..30。
+        let all_vis = run(&mut cull, &u);
+        assert_eq!(all_vis, (0..30).collect::<Vec<u32>>());
 
-        // 隐藏轨道 1：只剩 20 个，且 track 必须 ∈ {0, 2}。
+        // 隐藏轨道 1：只剩 20 个，且 track 必须 ∈ {0, 2}（track = idx / 10）。
         cull.upload_track_mask(&queue, &[true, false, true]);
         let out = run(&mut cull, &u);
-        assert_eq!(out.len(), 30, "未写槽位读回的是旧数据，靠 draw args 限界");
-        let visible: Vec<u32> = out
-            .iter()
-            .take(20)
-            .map(|n| (n.packed >> 8) & 0xFFFF)
-            .collect();
+        let visible: Vec<u32> = out.iter().take(20).map(|&i| i / 10).collect();
         assert!(
             visible.iter().all(|&t| t == 0 || t == 2),
             "隐藏轨道 1 的音符泄漏: {visible:?}"
@@ -1046,11 +1098,7 @@ mod tests {
         // 恢复轨道 1：mask 变化必须重跑 dispatch（绕过 skip 优化）→ 30 个全回来。
         cull.upload_track_mask(&queue, &[true, true, true]);
         let out2 = run(&mut cull, &u);
-        let visible2: Vec<u32> = out2
-            .iter()
-            .take(30)
-            .map(|n| (n.packed >> 8) & 0xFFFF)
-            .collect();
+        let visible2: Vec<u32> = out2.iter().take(30).map(|&i| i / 10).collect();
         assert!(
             visible2.iter().all(|&t| t <= 2),
             "恢复后轨道异常: {visible2:?}"
@@ -1089,7 +1137,7 @@ mod tests {
             cull.dispatch_cull(&mut encoder, &queue, 0, 0, &u);
             let readback = device.create_buffer(&BufferDescriptor {
                 label: Some("vis_readback"),
-                size: 4 * 256 * 12, // 4 chunks × 256 slots × 12B
+                size: 4 * 256 * 4, // 4 chunks × 256 slots × 4B 索引
                 usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
                 mapped_at_creation: false,
             });
@@ -1098,7 +1146,7 @@ mod tests {
                 0,
                 &readback,
                 0,
-                4 * 256 * 12,
+                4 * 256 * 4,
             );
             queue.submit([encoder.finish()]);
 
@@ -1112,21 +1160,18 @@ mod tests {
                 .expect("poll failed");
             assert!(done.load(Ordering::SeqCst));
             let view = readback.slice(..).get_mapped_range();
-            let insts: &[NoteInstance] = bytemuck::cast_slice(&view);
-            let packed: Vec<u32> = insts[..1000].iter().map(|n| n.packed).collect();
+            let idx: &[u32] = bytemuck::cast_slice(&view);
+            let out: Vec<u32> = idx[..1000].to_vec();
             drop(view);
             readback.unmap();
-            packed
+            out
         };
 
         let a = run(&mut cull, 0.0);
         let b = run(&mut cull, 1.0);
         assert_eq!(a, b, "z-order must be stable across frames");
-        // Output order == input order: packed = track<<8 | vel<<24 | key, with
-        // track = i, so packed increases by 256 per note.
-        let expected: Vec<u32> = (0..1000)
-            .map(|i| NoteInstance::pack(60, i as u16, 100))
-            .collect();
+        // 索引 == 输入顺序（音符在 all_instances 里的位置）。
+        let expected: Vec<u32> = (0..1000).collect();
         assert_eq!(a, expected, "culled output must follow input (tick) order");
     }
 
@@ -3013,7 +3058,7 @@ mod tests {
                     drop(view);
                     readback.unmap();
                     if let Some(c) = first_nonzero {
-                        // 读回 visible buffer 槽位 (c_lo + wg)*256 的音符 start_tick
+                        // 读回 visible buffer 槽位 (c_lo + wg)*256 的首个索引
                         let c_lo = cull.bucket_indexes[probe_key as usize]
                             .as_ref()
                             .and_then(|idx| idx.visible_chunk_range(ts_lo, ts_hi))
@@ -3024,17 +3069,17 @@ mod tests {
                             .expect("vis buffer");
                         let rb = device.create_buffer(&BufferDescriptor {
                             label: Some("vis_readback"),
-                            size: 12,
+                            size: 4,
                             usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
                             mapped_at_creation: false,
                         });
                         let mut enc2 = device.create_command_encoder(&Default::default());
                         enc2.copy_buffer_to_buffer(
                             vis_buf,
-                            ((c_lo + c as u32) * 256) as u64 * 12,
+                            ((c_lo + c as u32) * 256) as u64 * 4,
                             &rb,
                             0,
-                            12,
+                            4,
                         );
                         queue.submit([enc2.finish()]);
                         let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -3047,10 +3092,10 @@ mod tests {
                             .expect("poll failed");
                         assert!(done.load(Ordering::SeqCst));
                         let v = rb.slice(..).get_mapped_range();
-                        let inst: &[u32] = bytemuck::cast_slice(&v);
+                        let idx: &[u32] = bytemuck::cast_slice(&v);
                         println!(
-                            "    key60 c_lo={c_lo} 首非空 chunk={c} 首音符 start_tick={} (视口中心 tick={center_tick:.0})",
-                            inst[0]
+                            "    key60 c_lo={c_lo} 首非空 chunk={c} 首音符 idx={} (视口中心 tick={center_tick:.0})",
+                            idx[0]
                         );
                         drop(v);
                         rb.unmap();
@@ -3731,7 +3776,7 @@ mod tests {
                     .as_ref()
                     .expect("vis buffer");
                 let count = args_copy[c * 4 + 1] as usize;
-                // c 是相对 wg 索引；实际槽位 = (c_lo + wg) * 256
+                // c 是相对 wg 索引；实际槽位 = (c_lo + wg) * 256（4B 索引/槽）
                 let c_lo = cull.bucket_indexes[key as usize]
                     .as_ref()
                     .and_then(|idx| idx.visible_chunk_range(ts_lo, ts_hi))
@@ -3739,17 +3784,17 @@ mod tests {
                     .unwrap_or(0);
                 let rb = device.create_buffer(&BufferDescriptor {
                     label: Some("vis_readback"),
-                    size: 12 * count as u64,
+                    size: 4 * count as u64,
                     usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
                     mapped_at_creation: false,
                 });
                 let mut enc3 = device.create_command_encoder(&Default::default());
                 enc3.copy_buffer_to_buffer(
                     vis_buf,
-                    ((c_lo + c as u32) * 256) as u64 * 12,
+                    ((c_lo + c as u32) * 256) as u64 * 4,
                     &rb,
                     0,
-                    12 * count as u64,
+                    4 * count as u64,
                 );
                 queue.submit([enc3.finish()]);
                 let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -3762,9 +3807,12 @@ mod tests {
                     .expect("poll failed");
                 assert!(done.load(Ordering::SeqCst));
                 let v = rb.slice(..).get_mapped_range();
-                let inst: &[u32] = bytemuck::cast_slice(&v);
+                let idx: &[u32] = bytemuck::cast_slice(&v);
+                // 索引是 per-key 本地位置 → 加 offsets[key] 才是全局 all_notes 位置。
+                let base = offsets[key as usize] as usize;
                 for i in 0..count.min(10) {
-                    shown_first.push((inst[i * 3], inst[i * 3 + 1], inst[i * 3 + 2]));
+                    let note = all_notes[base + idx[i] as usize];
+                    shown_first.push((note.start_tick, note.end_tick, note.packed));
                 }
                 drop(v);
                 rb.unmap();
@@ -3959,12 +4007,12 @@ mod tests {
                 if let Some(vis_buf) = &renderer.cull.per_key_visible_buffers[60] {
                     let rb2 = device.create_buffer(&BufferDescriptor {
                         label: Some("vis_rb"),
-                        size: 12 * 8_u64,
+                        size: 4 * 8_u64,
                         usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
                         mapped_at_creation: false,
                     });
                     let mut enc = device.create_command_encoder(&Default::default());
-                    enc.copy_buffer_to_buffer(vis_buf, (c_lo * 256) as u64 * 12, &rb2, 0, 12 * 8);
+                    enc.copy_buffer_to_buffer(vis_buf, (c_lo * 256) as u64 * 4, &rb2, 0, 4 * 8);
                     queue.submit([enc.finish()]);
                     let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
                     let done2 = done.clone();
@@ -3976,10 +4024,10 @@ mod tests {
                         .expect("poll failed");
                     assert!(done.load(Ordering::SeqCst));
                     let v2 = rb2.slice(..).get_mapped_range();
-                    let inst: &[u32] = bytemuck::cast_slice(&v2);
+                    let idx: &[u32] = bytemuck::cast_slice(&v2);
                     println!(
-                        "  槽位 c_lo*256 起 8 个音符: {:?}",
-                        inst[..inst.len().min(24)].to_vec()
+                        "  槽位 c_lo*256 起 8 个索引: {:?}",
+                        idx[..idx.len().min(8)].to_vec()
                     );
                     drop(v2);
                     rb2.unmap();

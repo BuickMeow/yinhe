@@ -1,13 +1,13 @@
 // GPU compute cull for NoteInstance (12 bytes each).
 //
 // Per-key architecture: each MIDI key (0..127) has its own `all_notes` and
-// `visible_notes` storage buffer. The host dispatches this shader once per
+// `visible_indices` storage buffer. The host dispatches this shader once per
 // key, binding that key's buffers. This removes any global visible-note
 // cap — the total visible capacity equals the total note count.
 //
-// Output: fixed-slot sparse. Chunk c writes its visible notes to the fixed
-// sparse slots [c*256, c*256+256) of `visible_instances` (rank-1 within the
-// chunk's prefix sum), and thread 0 writes the chunk's draw args
+// Output: fixed-slot sparse. Chunk c writes its visible note indices to the
+// fixed sparse slots [c*256, c*256+256) of `visible_indices` (rank-1 within
+// the chunk's prefix sum), and thread 0 writes the chunk's draw args
 // (vertex_count=6, instance_count=wg_total, first_vertex=0, first_instance=
 // c*256) into `draw_args[wg]` — a relative index aligned with
 // multi_draw_indirect, which reads draw args starting from index 0. The host
@@ -20,6 +20,10 @@
 // `all_instances` (= all_notes order = tick order). Overlapping notes (same
 // key, same tick, different tracks) are adjacent in the input, so their
 // z-order is stable across frames — no flickering.
+//
+// The vertex stage reads back the full NoteInstance from `all_instances`
+// (bound via the same per-key bind group, @group(1) in shader.wgsl) using
+// the 4-byte index — visible slots are 1/3 the size of the data itself.
 
 struct Uniforms {
     width: f32,
@@ -69,7 +73,9 @@ struct DispatchInfo {
 
 @group(0) @binding(0) var<uniform> u: Uniforms;
 @group(0) @binding(1) var<storage, read> all_instances: array<NoteInstance>;
-@group(0) @binding(2) var<storage, read_write> visible_instances: array<NoteInstance>;
+// 可见索引缓冲：每槽 4B（u32），存「该 key 的 all_instances 内的本地索引」。
+// 顶点阶段从 @group(1) 的 all_instances 间接读回完整数据。
+@group(0) @binding(2) var<storage, read_write> visible_indices: array<u32>;
 @group(0) @binding(3) var<storage, read_write> draw_args: array<DrawIndirectArgs>;
 @group(0) @binding(4) var<storage, read> dispatch_info: DispatchInfo;
 // Per-track visibility bitmask (1 bit per track). Track 显隐变化时由宿主写入；
@@ -171,8 +177,8 @@ fn main(
     }
     if visible == 1u {
         let dst = chunk * 256u + wg_prefix[local_id.x] - 1u;
-        if dst < arrayLength(&visible_instances) {
-            visible_instances[dst] = all_instances[index];
+        if dst < arrayLength(&visible_indices) {
+            visible_indices[dst] = index;
         }
     }
 }

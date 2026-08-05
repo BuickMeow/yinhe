@@ -40,6 +40,14 @@ struct NoteInstance {
     @location(0) data: vec3<u32>,  // x=start_tick, y=end_tick, z=packed(key|track|vel)
 }
 
+// GPU storage 布局的 NoteInstance（与 cull.wgsl / Rust `NoteInstance` 一致）。
+// all_instances（@group(1)）的元素类型。
+struct NoteData {
+    start_tick: u32,
+    end_tick: u32,
+    packed: u32,
+}
+
 struct VelocityBarInstance {
     @location(0) data: vec4<u32>,  // x=tick, y=length, z=packed(track|velocity), w=reserved
 }
@@ -214,16 +222,22 @@ fn vs_main(
 // CPU only stores semantic data (start_tick, end_tick, key, track);
 // all pixel positions are computed here from uniforms.
 // Color is fetched from track_colors storage buffer.
-@vertex
-fn vs_main_note(
-    @builtin(vertex_index) vertex_index: u32,
-    instance: NoteInstance,
+// ── Note pipeline vertex shader ───────────────────────────────────────────
+// GPU-cull 路径：vertex buffer 每实例 4B u32 索引，从 per-key 的顶点专用
+// bind group (@group(1)) 的 all_instances 间接读回完整 NoteInstance。
+// visible 槽位从 12B 降到 4B（全曲稀疏槽显存 -67%）。
+@group(1) @binding(0)
+var<storage, read> all_instances: array<NoteData>;
+
+// 共享的几何计算：tick/key/track → 像素矩形 → NDC。
+fn note_geometry(
+    vertex_index: u32,
+    start_tick: u32,
+    end_tick: u32,
+    packed: u32,
 ) -> VertexOutput {
     var out: VertexOutput;
 
-    let start_tick = instance.data.x;
-    let end_tick = instance.data.y;
-    let packed = instance.data.z;
     let key = packed & 0xFFu;
     let track = (packed >> 8u) & 0xFFFFu;
 
@@ -307,6 +321,25 @@ fn vs_main_note(
     out.half_size = vec2<f32>(pixel_w, pixel_h) * 0.5;
 
     return out;
+}
+
+@vertex
+fn vs_main_note(
+    @builtin(vertex_index) vertex_index: u32,
+    @location(0) idx: u32,
+) -> VertexOutput {
+    let inst = all_instances[idx];
+    return note_geometry(vertex_index, inst.start_tick, inst.end_tick, inst.packed);
+}
+
+// CPU-built note layers (ghost notes / legacy path): full 12B instance data
+// comes straight from the vertex buffer — no index indirection.
+@vertex
+fn vs_main_note_direct(
+    @builtin(vertex_index) vertex_index: u32,
+    instance: NoteInstance,
+) -> VertexOutput {
+    return note_geometry(vertex_index, instance.data.x, instance.data.y, instance.data.z);
 }
 
 // ── Velocity bar pipeline vertex shader ───────────────────────────────────

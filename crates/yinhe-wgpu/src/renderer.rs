@@ -76,8 +76,15 @@ impl InstanceRenderer {
                 source: ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
             });
 
-            let render = RenderPipelineState::new(&device, format, &render_shader);
+            // Cull 先建：note_pipeline 的 group 1 复用其 all_instances bind
+            // group layout（顶点阶段经索引间接读 all_instances）。
             let cull = CullState::new(&device);
+            let render = RenderPipelineState::new(
+                &device,
+                format,
+                &render_shader,
+                &cull.all_bind_group_layout,
+            );
 
             Self {
                 device,
@@ -373,10 +380,10 @@ impl InstanceRenderer {
 
         self.draw_static_layers(&mut pass);
 
-        // Step 4: all note layers
+        // Step 4: all note layers (CPU-built 12B instances → direct pipeline)
         for layer in &self.layers {
             if layer.kind() == LayerKind::Note {
-                pass.set_pipeline(&self.render.note_pipeline);
+                pass.set_pipeline(&self.render.note_direct_pipeline);
                 layer.draw(&mut pass, 0);
             }
         }
@@ -457,7 +464,7 @@ impl InstanceRenderer {
         // Step 5: ghost notes (last note layer, if any) — on top of everything
         let ghost = self.layers.iter().rfind(|l| l.kind() == LayerKind::Note);
         if let Some(ghost) = ghost {
-            pass.set_pipeline(&self.render.note_pipeline);
+            pass.set_pipeline(&self.render.note_direct_pipeline);
             ghost.draw(&mut pass, 0);
         }
     }

@@ -6,10 +6,13 @@ use crate::vertex::{
 
 /// Owns the render pipelines and their shared uniform buffers / bind group.
 ///
-/// Four pipelines share the same uniform buffer, track-colors buffer, selection
+/// Five pipelines share the uniform buffer, track-colors buffer, selection
 /// buffer, and bind group:
 ///   - `pipeline`: decor pipeline (32-byte `DrawInstance` vertex layout, `vs_main`)
-///   - `note_pipeline`: note pipeline (12-byte `NoteInstance` vertex layout, `vs_main_note`)
+///   - `note_pipeline`: GPU-cull note pipeline (4-byte u32 index vertex layout,
+///     `vs_main_note` — indirect-reads `all_instances` via @group(1) = cull bind group)
+///   - `note_direct_pipeline`: CPU-built note pipeline (12-byte `NoteInstance`
+///     vertex layout, `vs_main_note_direct` — ghost notes / legacy draw)
 ///   - `velocity_pipeline`: velocity bar pipeline (16-byte `VelocityBarInstance` vertex
 ///     layout, `vs_main_velocity` — unified border-based mode)
 ///   - `curve_pipeline`: automation curve pipeline (32-byte `CurveInstance` vertex layout,
@@ -17,6 +20,7 @@ use crate::vertex::{
 pub struct RenderPipelineState {
     pub pipeline: RenderPipeline,
     pub note_pipeline: RenderPipeline,
+    pub note_direct_pipeline: RenderPipeline,
     pub velocity_pipeline: RenderPipeline,
     pub curve_pipeline: RenderPipeline,
     pub uniform_buffer: Buffer,
@@ -29,7 +33,12 @@ pub struct RenderPipelineState {
 }
 
 impl RenderPipelineState {
-    pub fn new(device: &Device, format: TextureFormat, render_shader: &ShaderModule) -> Self {
+    pub fn new(
+        device: &Device,
+        format: TextureFormat,
+        render_shader: &ShaderModule,
+        all_bind_group_layout: &BindGroupLayout,
+    ) -> Self {
         // Main uniforms buffer
         let uniform_size = std::mem::size_of::<Uniforms>() as u64;
         let uniform_buffer = device.create_buffer(&BufferDescriptor {
@@ -123,6 +132,16 @@ impl RenderPipelineState {
             immediate_size: 0,
         });
 
+        // GPU-cull note pipeline layout: group 0 = shared render bind group
+        // (uniform/track_colors/selection), group 1 = per-key all_instances
+        // bind group so the vertex shader can indirect-read the full
+        // NoteInstance from the 4-byte visible index.
+        let cull_note_pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
+            label: Some("cull_note_pipeline_layout"),
+            bind_group_layouts: &[Some(&bind_group_layout), Some(all_bind_group_layout)],
+            immediate_size: 0,
+        });
+
         // Decor pipeline: 32-byte DrawInstance vertex layout
         let pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
             label: Some("decor_pipeline"),
@@ -160,13 +179,49 @@ impl RenderPipelineState {
             cache: None,
         });
 
-        // Note pipeline: 12-byte NoteInstance vertex layout, shares uniforms/bind group
+        // GPU-cull note pipeline: 4-byte u32 index vertex layout, indirect-reads
+        // all_instances via @group(1). Shares uniforms/bind group.
         let note_pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
             label: Some("note_pipeline"),
-            layout: Some(&pipeline_layout),
+            layout: Some(&cull_note_pipeline_layout),
             vertex: VertexState {
                 module: render_shader,
                 entry_point: Some("vs_main_note"),
+                buffers: &[VertexBufferLayout {
+                    array_stride: std::mem::size_of::<u32>() as u64,
+                    step_mode: VertexStepMode::Instance,
+                    attributes: &vertex_attr_array![0 => Uint32],
+                }],
+                compilation_options: PipelineCompilationOptions::default(),
+            },
+            fragment: Some(FragmentState {
+                module: render_shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(ColorTargetState {
+                    format,
+                    blend: Some(BlendState::ALPHA_BLENDING),
+                    write_mask: ColorWrites::ALL,
+                })],
+                compilation_options: PipelineCompilationOptions::default(),
+            }),
+            primitive: PrimitiveState {
+                topology: PrimitiveTopology::TriangleList,
+                ..PrimitiveState::default()
+            },
+            depth_stencil: None,
+            multisample: MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+
+        // Direct note pipeline: 12-byte NoteInstance vertex layout (ghost notes,
+        // legacy CPU-built note layers). Same vertex math, no index indirection.
+        let note_direct_pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
+            label: Some("note_direct_pipeline"),
+            layout: Some(&pipeline_layout),
+            vertex: VertexState {
+                module: render_shader,
+                entry_point: Some("vs_main_note_direct"),
                 buffers: &[VertexBufferLayout {
                     array_stride: std::mem::size_of::<NoteInstance>() as u64,
                     step_mode: VertexStepMode::Instance,
@@ -277,6 +332,7 @@ impl RenderPipelineState {
         Self {
             pipeline,
             note_pipeline,
+            note_direct_pipeline,
             velocity_pipeline,
             curve_pipeline,
             uniform_buffer,
