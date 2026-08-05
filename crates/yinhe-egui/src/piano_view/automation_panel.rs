@@ -342,7 +342,7 @@ pub fn show_panels(
             egui::pos2(panel_rect.min.x + layout.combo_width, panel_rect.max.y),
         );
         let upper_bound = value_upper_bound(panel);
-        let max_val_f = panel_max_val(panel, data.tempo_lane);
+        let mut max_val_f = panel_max_val(panel, data.tempo_lane);
         let zoom_min = min_value_zoom(max_val_f, upper_bound);
 
         // ── 状态栏讲解行：面板 grid 区悬停提示（位置 + 值）──
@@ -418,6 +418,11 @@ pub fn show_panels(
         velocity_edits.extend(out.velocity_edits);
         if out.anchor_drag.is_some() {
             all_drag_info = out.anchor_drag;
+        }
+        // 拖拽锚点突破当前显示上限时扩展显示范围（Tempo 可拖出 120 以上的 BPM）：
+        // 渲染/标签/滚动条用扩展后的 max_val_f，锚点保持在面板内、整条曲线实时拉开。
+        if let Some((_, v)) = out.anchor_drag {
+            max_val_f = max_val_f.max(v);
         }
         let panel_ghost = out.ghost;
         let velocity_preview = out.preview;

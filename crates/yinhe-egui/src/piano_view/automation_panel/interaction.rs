@@ -396,6 +396,13 @@ pub(crate) fn handle_automation_interaction(
     if max_val == 0.0 {
         return (edits, None, None, None, None, None);
     }
+    // value 的绝对上限：Tempo 允许拖拽突破当前显示上限（当前最大事件值），
+    // 直达 `max_value()` 的 60_000_000 BPM；其他 target 上限就是 max_val（不变）。
+    let value_cap = if target == yinhe_types::AutomationTarget::Tempo {
+        yinhe_types::AutomationTarget::Tempo.max_value()
+    } else {
+        max_val
+    };
 
     let ppu = panel.base.pixels_per_tick;
     let scroll_x = panel.base.scroll_x;
@@ -438,8 +445,11 @@ pub(crate) fn handle_automation_interaction(
             ctx.bar_line_data,
         )
         .max(0.0) as u32;
-        let y_in_panel = (p.y - panel_rect.min.y).clamp(0.0, panel_rect.height());
-        let value = panel.y_to_value(y_in_panel, max_val).clamp(0.0, max_val);
+        // y 不 clamp：允许鼠标拖到面板上方（y < 0），value 线性外推
+        // 突破当前显示上限——Tempo 锚点由此可拖出 120 以上的 BPM。
+        // value 的下限 0 由下方 clamp 兜底。
+        let y_in_panel = p.y - panel_rect.min.y;
+        let value = panel.y_to_value(y_in_panel, max_val).clamp(0.0, value_cap);
         (p, snapped_tick, value)
     });
 
@@ -1019,7 +1029,7 @@ pub(crate) fn handle_automation_interaction(
                                             return None;
                                         }
                                         let new_tick = (e.tick as i64 + d_tick).max(0) as u32;
-                                        let new_value = (e.value + d_value).clamp(0.0, max_val);
+                                        let new_value = (e.value + d_value).clamp(0.0, value_cap);
                                         Some((e.tick, new_tick, new_value))
                                     })
                                     .collect();
@@ -1076,8 +1086,8 @@ pub(crate) fn handle_automation_interaction(
                                             value_range: sel_rect.value_range.map(
                                                 |(vmin, vmax)| {
                                                     (
-                                                        (vmin + d_value).clamp(0.0, max_val),
-                                                        (vmax + d_value).clamp(0.0, max_val),
+                                                        (vmin + d_value).clamp(0.0, value_cap),
+                                                        (vmax + d_value).clamp(0.0, value_cap),
                                                     )
                                                 },
                                             ),
@@ -1225,7 +1235,7 @@ pub(crate) fn handle_automation_interaction(
                                     return None;
                                 }
                                 let new_tick = (e.tick as i64 + d_tick).max(0) as u32;
-                                let new_value = (e.value + d_value).clamp(0.0, max_val);
+                                let new_value = (e.value + d_value).clamp(0.0, value_cap);
                                 Some((e.tick, new_tick, new_value))
                             })
                             .collect();
@@ -1381,4 +1391,164 @@ pub(crate) fn handle_automation_interaction(
     };
 
     (edits, ghost, drag_info, hover_info, marquee_rect, sel_op)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::widgets::tools_panel::Tool;
+    use yinhe_editor_core::quantize::QuantizePreset;
+    use yinhe_types::{AutomationEdit, AutomationEvent, AutomationTarget, SegmentShape};
+
+    /// 测试用面板：Tempo target、1px/tick、面板高 80px、无滚动、无缩放。
+    fn tempo_panel() -> AutomationPanelView {
+        AutomationPanelView {
+            selected_target: AutomationTarget::Tempo,
+            show_velocity: false,
+            panel_height: 80.0,
+            value_zoom: 1.0,
+            value_scroll: 0.0,
+            base: yinhe_types::TimelineViewBase {
+                pixels_per_tick: 1.0,
+                scroll_x: 0.0,
+                scroll_y: 0.0,
+                left_panel_width: 0.0,
+                dirty: true,
+                track_panel_row_height: 40.0,
+                track_panel_scroll_y: 0.0,
+            },
+            ..Default::default()
+        }
+    }
+
+    /// 构造带 tempo 事件的 lane。
+    fn tempo_lane(events: Vec<(u32, f32)>) -> AutomationLane {
+        AutomationLane {
+            target: AutomationTarget::Tempo,
+            track: 0,
+            events: events
+                .into_iter()
+                .map(|(tick, value)| AutomationEvent {
+                    tick,
+                    value,
+                    shape: SegmentShape::Step,
+                })
+                .collect(),
+        }
+    }
+
+    fn edit_ctx() -> AutomationEditCtx<'static> {
+        AutomationEditCtx {
+            active_tool: Tool::Pencil,
+            active_track: Some(0),
+            // 1/16 音符网格：interval = 480*4/16 = 120 tick，与测试拖拽位置对齐。
+            quantize: QuantizePreset::Fraction(1, 16),
+            ppq: 480,
+            bar_line_data: None,
+        }
+    }
+
+    /// 面板矩形：800x80，grid 与 panel 同宽（combo_width=0）。
+    fn panel_rect() -> egui::Rect {
+        egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(800.0, 80.0))
+    }
+
+    /// 跑一帧 handle_automation_interaction，返回 edits。
+    fn run_frame(
+        ctx: &egui::Context,
+        raw: egui::RawInput,
+        panel: &AutomationPanelView,
+        lane: &AutomationLane,
+    ) -> Vec<AutomationEdit> {
+        let mut edits = Vec::new();
+        let _ = ctx.run_ui(raw, |ui| {
+            let mut info: Option<InfoContent> = None;
+            let mut right_tab: Option<RightTab> = None;
+            edits = handle_automation_interaction(
+                ui,
+                panel_rect(),
+                panel_rect(),
+                panel,
+                &[],
+                lane,
+                0,
+                &edit_ctx(),
+                0,
+                &[[0.8, 0.8, 0.8, 1.0]],
+                &mut info,
+                &mut right_tab,
+            )
+            .0;
+        });
+        edits
+    }
+
+    fn press_event(pos: egui::Pos2) -> egui::RawInput {
+        let mut raw = egui::RawInput::default();
+        raw.events.push(egui::Event::PointerMoved(pos));
+        raw.events.push(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::default(),
+        });
+        raw
+    }
+
+    fn drag_event(pos: egui::Pos2) -> egui::RawInput {
+        let mut raw = egui::RawInput::default();
+        raw.events.push(egui::Event::PointerMoved(pos));
+        raw
+    }
+
+    fn release_event(pos: egui::Pos2) -> egui::RawInput {
+        let mut raw = egui::RawInput::default();
+        raw.events.push(egui::Event::PointerMoved(pos));
+        raw.events.push(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::default(),
+        });
+        raw
+    }
+
+    /// 回归测试：Tempo 锚点拖到面板上方可突破当前显示上限（如 120 BPM）。
+    /// 曾因 `value.clamp(0.0, max_val)` 把值钳死在显示上限，无法插入更高 BPM。
+    #[test]
+    fn tempo_anchor_drag_above_panel_exceeds_display_max() {
+        let ctx = egui::Context::default();
+        let panel = tempo_panel();
+        let lane = tempo_lane(vec![(0, 120.0)]);
+        // 锚点 (tick=0, value=120) 位于面板顶部：y = value_to_y(120, 120) = 0。
+        let anchor = egui::pos2(0.0, 0.0);
+        // 拖到面板上方 20px、tick 120（1/16 音符量化点）。
+        let above = egui::pos2(120.0, -20.0);
+
+        let _ = run_frame(&ctx, press_event(anchor), &panel, &lane);
+        let _ = run_frame(&ctx, drag_event(above), &panel, &lane);
+        let edits = run_frame(&ctx, release_event(above), &panel, &lane);
+
+        let move_edit = edits
+            .iter()
+            .find(|e| matches!(e, AutomationEdit::Move { .. }))
+            .expect("拖拽应提交 Move");
+        match move_edit {
+            AutomationEdit::Move {
+                old_tick,
+                new_tick,
+                new_value,
+                ..
+            } => {
+                assert_eq!(*old_tick, 0);
+                assert_eq!(*new_tick, 120);
+                assert!(
+                    *new_value > 120.0,
+                    "BPM 应突破显示上限 120，实际 {new_value}"
+                );
+                assert_eq!(*new_value, 150.0);
+            }
+            _ => unreachable!(),
+        }
+    }
 }
