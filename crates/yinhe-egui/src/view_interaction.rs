@@ -388,10 +388,12 @@ pub(crate) fn format_signed(label: &str, v: i64) -> String {
 ///
 /// 复用于 automation panel / 选框工具 / 铅笔工具。
 /// 各工具自行计算要显示的行内容，这里只负责绘制。
+/// 提示框位于鼠标右上方（水平偏移 `gap`），避免框体盖住鼠标指针。
 pub(crate) fn draw_hover_tooltip(ctx: &egui::Context, lines: &[String], x: f32, y: f32) {
     let painter = ctx.debug_painter();
     let font_id = egui::FontId::monospace(12.0);
-    let gap = 8.0;
+    // 向右偏移 24px 再上移，拖拽时提示框不遮挡鼠标（曾因偏移过小挡住指针）。
+    let gap = 24.0;
     let tooltip_x = x + gap;
     let tooltip_y = y - 24.0;
     let mut max_w = 0.0_f32;

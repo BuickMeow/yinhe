@@ -460,6 +460,10 @@ pub(crate) fn sel_drag_frame(
             d.insert_persisted(sel_id, Option::<((f64, f32), egui::Pos2, egui::Pos2)>::None)
         });
     } else {
+        // release 帧 note_drag_origin / sel_resize_state 已被清 None，但本次 release
+        // 刚完成音符移动/缩放拖拽（delta 已写入）：不能再当简单点击处理，
+        // 否则 cursor_tick 会跳到释放位置、演奏指示线错误跳转。
+        let release_was_drag = note_drag_delta.is_some() || note_resize_delta.is_some();
         if let Some(result) = marquee_drag_frame(
             ui,
             content_rect,
@@ -491,7 +495,7 @@ pub(crate) fn sel_drag_frame(
             sel_rect
                 .rects
                 .push((result.t_start, result.t_end, key_lo, key_hi));
-        } else if ui.input(|i| i.pointer.primary_released()) {
+        } else if ui.input(|i| i.pointer.primary_released()) && !release_was_drag {
             // Simple click (no marquee) - set cursor to click position for paste.
             // 选框清空已在 press 时完成（非加选模式），此处仅设置 cursor。
             if let Some(pos) = ui.input(|i| i.pointer.hover_pos()) {
@@ -530,6 +534,7 @@ pub(crate) use crate::selection::drag::{
 mod tests {
     use super::*;
     use yinhe_editor_core::quantize::QuantizePreset;
+    use yinhe_test_helpers::make_midi;
 
     /// 构造测试用的钢琴卷帘视图：1px/tick、无滚动、key 高 10px。
     fn test_view() -> yinhe_types::PianoRollView {
@@ -627,5 +632,136 @@ mod tests {
             None,
         );
         assert_eq!(result, None);
+    }
+
+    /// 跑一帧 sel_drag_frame（Select 工具）。
+    fn run_sel_frame(
+        ctx: &egui::Context,
+        raw: egui::RawInput,
+        view: &mut yinhe_types::PianoRollView,
+        midi: &dyn yinhe_types::NoteSource,
+        selected: &mut yinhe_core::Selection,
+        cursor_tick: &mut Option<f64>,
+        note_drag_delta: &mut Option<(i64, i32, bool)>,
+        note_resize_delta: &mut Option<(yinhe_editor_core::ResizeSide, i64)>,
+        sel_rect: &mut yinhe_editor_core::edit_state::SelRectState,
+    ) {
+        let _ = ctx.run_ui(raw, |ui| {
+            sel_drag_frame(
+                ui,
+                content(),
+                content(),
+                view,
+                Some(midi),
+                selected,
+                QuantizePreset::Fraction(1, 16),
+                480,
+                None,
+                10000.0,
+                cursor_tick,
+                note_drag_delta,
+                note_resize_delta,
+                sel_rect,
+                &[[0.5, 0.5, 0.5, 1.0]],
+                &[true],
+                &std::collections::HashSet::new(),
+                false,
+            );
+        });
+    }
+
+    fn press_event(pos: egui::Pos2) -> egui::RawInput {
+        let mut raw = egui::RawInput::default();
+        raw.events.push(egui::Event::PointerMoved(pos));
+        raw.events.push(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::default(),
+        });
+        raw
+    }
+
+    fn drag_event(pos: egui::Pos2) -> egui::RawInput {
+        let mut raw = egui::RawInput::default();
+        raw.events.push(egui::Event::PointerMoved(pos));
+        raw
+    }
+
+    fn release_event(pos: egui::Pos2) -> egui::RawInput {
+        let mut raw = egui::RawInput::default();
+        raw.events.push(egui::Event::PointerMoved(pos));
+        raw.events.push(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::default(),
+        });
+        raw
+    }
+
+    /// 回归测试：移动音符后松开鼠标不得让演奏指示线跳到释放位置。
+    /// （release 帧 note_drag_origin 已被清 None，曾导致 marquee 的 simple-click
+    /// 路径把 cursor_tick 设为释放点，playhead 错误跳转。）
+    #[test]
+    fn release_after_note_move_does_not_move_playhead() {
+        let ctx = egui::Context::default();
+        let mut view = test_view();
+        // 模拟已初始化的视口（viewport_h==0 时 clamp_scroll 会触发首次初始化，
+        // 重算 key_height/scroll_y，干扰本测试的坐标假设）。
+        view.viewport_h = 600.0;
+        let midi = make_midi(vec![(100, 0, 480, 0, 100)]);
+        // 选框覆盖音符 (tick 0..480, key 100)。key 100 → y = (127-100)*10 = 270。
+        let mut selected = yinhe_core::Selection::default();
+        selected.add_rect_track(0, 480, 100, 100, 0, 0);
+        let mut sel_rect = yinhe_editor_core::edit_state::SelRectState::default();
+        sel_rect.rects.push((0.0, 480.0, 100, 100));
+        let mut cursor_tick: Option<f64> = None;
+        let mut note_drag_delta: Option<(i64, i32, bool)> = None;
+        let mut note_resize_delta: Option<(yinhe_editor_core::ResizeSide, i64)> = None;
+
+        // 音符中间按下 → 拖到 tick 360（1/16 网格：间隔 120）→ 松开。
+        let press = egui::pos2(240.0, 275.0);
+        let release = egui::pos2(360.0, 275.0);
+        let _ = run_sel_frame(
+            &ctx,
+            press_event(press),
+            &mut view,
+            &midi,
+            &mut selected,
+            &mut cursor_tick,
+            &mut note_drag_delta,
+            &mut note_resize_delta,
+            &mut sel_rect,
+        );
+        let _ = run_sel_frame(
+            &ctx,
+            drag_event(release),
+            &mut view,
+            &midi,
+            &mut selected,
+            &mut cursor_tick,
+            &mut note_drag_delta,
+            &mut note_resize_delta,
+            &mut sel_rect,
+        );
+        let _ = run_sel_frame(
+            &ctx,
+            release_event(release),
+            &mut view,
+            &midi,
+            &mut selected,
+            &mut cursor_tick,
+            &mut note_drag_delta,
+            &mut note_resize_delta,
+            &mut sel_rect,
+        );
+
+        assert_eq!(
+            note_drag_delta,
+            Some((120, 0, false)),
+            "音符应移动 +120 tick"
+        );
+        assert_eq!(cursor_tick, None, "移动后松开不得把 playhead 跳到释放位置");
     }
 }

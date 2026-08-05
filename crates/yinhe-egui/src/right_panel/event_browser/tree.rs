@@ -200,15 +200,15 @@ fn render_track_row(ui: &mut egui::Ui, model: &YinModel, idx: u16, state: &mut E
                     toggled = true;
                 }
 
-                ui.label(
-                    ICON_AUDIOTRACK
-                        .rich_text()
-                        .size(12.0)
-                        .color(if is_selected {
+                ui.add(
+                    egui::Label::new(ICON_AUDIOTRACK.rich_text().size(12.0).color(
+                        if is_selected {
                             egui::Color32::WHITE
                         } else {
                             crate::theme::TEXT_MUTED
-                        }),
+                        },
+                    ))
+                    .selectable(false),
                 );
 
                 let name_resp = ui.add(
@@ -222,16 +222,20 @@ fn render_track_row(ui: &mut egui::Ui, model: &YinModel, idx: u16, state: &mut E
                                 crate::theme::TEXT_PRIMARY
                             }),
                     )
+                    .selectable(false)
                     .sense(egui::Sense::click()),
                 );
                 if name_resp.clicked() {
                     selected = true;
                 }
 
-                ui.label(
-                    egui::RichText::new(format!("[{}]", summary))
-                        .size(10.0)
-                        .color(crate::theme::TEXT_DIMMER),
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(format!("[{}]", summary))
+                            .size(10.0)
+                            .color(crate::theme::TEXT_DIMMER),
+                    )
+                    .selectable(false),
                 );
             });
         });
@@ -357,15 +361,21 @@ fn render_dir_row(
                 {
                     toggled = true;
                 }
-                ui.label(
-                    egui::RichText::new(name)
-                        .size(11.0)
-                        .color(crate::theme::TEXT_PRIMARY),
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(name)
+                            .size(11.0)
+                            .color(crate::theme::TEXT_PRIMARY),
+                    )
+                    .selectable(false),
                 );
-                ui.label(
-                    egui::RichText::new(format!("({})", child_count))
-                        .size(10.0)
-                        .color(crate::theme::TEXT_DIMMER),
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(format!("({})", child_count))
+                            .size(10.0)
+                            .color(crate::theme::TEXT_DIMMER),
+                    )
+                    .selectable(false),
                 );
             });
         });
@@ -386,29 +396,34 @@ fn render_leaf_item(
     } else {
         egui::Color32::TRANSPARENT
     };
-    let frame_r =
-        egui::Frame::NONE
-            .fill(bg)
-            .inner_margin(egui::Margin::symmetric(2, 1))
-            .show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 2.0;
-                    ui.add_space(depth as f32 * 14.0);
-                    ui.add_space(14.0);
-                    ui.label(icon.rich_text().size(12.0).color(if is_selected {
+    let frame_r = egui::Frame::NONE
+        .fill(bg)
+        .inner_margin(egui::Margin::symmetric(2, 1))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 2.0;
+                ui.add_space(depth as f32 * 14.0);
+                ui.add_space(14.0);
+                ui.add(
+                    egui::Label::new(icon.rich_text().size(12.0).color(if is_selected {
                         egui::Color32::WHITE
                     } else {
                         crate::theme::TEXT_MUTED
-                    }));
-                    ui.label(egui::RichText::new(name).size(11.0).monospace().color(
+                    }))
+                    .selectable(false),
+                );
+                ui.add(
+                    egui::Label::new(egui::RichText::new(name).size(11.0).monospace().color(
                         if is_selected {
                             egui::Color32::WHITE
                         } else {
                             crate::theme::TEXT_BRIGHT
                         },
-                    ));
-                });
+                    ))
+                    .selectable(false),
+                );
             });
+        });
     if frame_r.response.interact(egui::Sense::click()).clicked() {
         state.selected_item = Some(item);
         state.selected_track = None;
