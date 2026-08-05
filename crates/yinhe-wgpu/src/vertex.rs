@@ -71,7 +71,7 @@ pub struct DrawInstance {
 ///   d1 = end_tick   (u32)
 ///   d2 = packed: key(u8) | track(u16) | vel(u8)
 #[repr(C)]
-#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+#[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct NoteInstance {
     pub start_tick: u32,
     pub end_tick: u32,

@@ -219,6 +219,11 @@ pub(crate) struct CullState {
     /// Written by the cull shader's thread 0 per chunk; read by
     /// `multi_draw_indirect` in draw order (chunk order = input order).
     per_key_draw_args_buffers: Vec<Option<Buffer>>,
+    /// Per-track visibility bitmask (1 bit per track, MAX_TRACKS bits).
+    /// Written by `upload_track_mask`; read by cull.wgsl (binding 5).
+    /// Fixed-size (MAX_TRACKS/8 bytes) so per-key bind groups never need
+    /// recreating on track-count growth.
+    track_mask_buffer: Buffer,
     /// Chunk count dispatched for each key in the current frame (0 = none).
     /// Filled by `dispatch_cull`, read by `draw_visible_notes`.
     frame_chunk_counts: [u32; 128],
@@ -320,6 +325,16 @@ impl CullState {
                     },
                     count: None,
                 },
+                BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: ShaderStages::COMPUTE,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -352,6 +367,26 @@ impl CullState {
         });
         yinhe_memtrace::add_gpu_resource(dispatch_args_size);
 
+        // Track visibility bitmask: fixed size = MAX_TRACKS bits (8 KB), so
+        // per-key bind groups bind a stable buffer and never need recreating
+        // when the track count grows. Initialized to all-visible.
+        let track_mask_size = crate::vertex::MAX_TRACKS as u64 / 8;
+        let track_mask_buffer = device.create_buffer(&BufferDescriptor {
+            label: Some("cull_track_mask"),
+            size: track_mask_size,
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
+            mapped_at_creation: true,
+        });
+        yinhe_memtrace::add_gpu_resource(track_mask_size);
+        {
+            let words = vec![u32::MAX; crate::vertex::MAX_TRACKS / 32];
+            track_mask_buffer
+                .slice(..)
+                .get_mapped_range_mut()
+                .copy_from_slice(bytemuck::cast_slice(&words));
+        }
+        track_mask_buffer.unmap();
+
         Self {
             pipeline,
             bind_group_layout,
@@ -359,6 +394,7 @@ impl CullState {
             per_key_buffers: (0..128).map(|_| None).collect(),
             per_key_visible_buffers: (0..128).map(|_| None).collect(),
             per_key_draw_args_buffers: (0..128).map(|_| None).collect(),
+            track_mask_buffer,
             frame_chunk_counts: [0; 128],
             per_key_counts: [0; 128],
             bucket_indexes: (0..128).map(|_| None).collect(),
@@ -367,6 +403,30 @@ impl CullState {
             last_cull_uniforms: None,
             notes_dirty: false,
         }
+    }
+
+    /// Update the per-track visibility bitmask. Called whenever track_visible
+    /// changes (before/while the background full rebuild runs), so the cull
+    /// shader immediately stops emitting hidden tracks' notes from the current
+    /// (possibly stale) buffers.
+    ///
+    /// Marks `notes_dirty` so the next `dispatch_cull` re-runs even when the
+    /// culling-relevant uniforms are unchanged (mask change must invalidate
+    /// the skip optimization).
+    pub(crate) fn upload_track_mask(&mut self, queue: &Queue, track_visible: &[bool]) {
+        // 一次性打包：默认全 1，逐位清隐藏轨道。8KB 固定 buffer（MAX_TRACKS/8）。
+        let mut words = vec![u32::MAX; crate::vertex::MAX_TRACKS / 32];
+        for (i, &v) in track_visible
+            .iter()
+            .take(crate::vertex::MAX_TRACKS)
+            .enumerate()
+        {
+            if !v {
+                words[i / 32] &= !(1u32 << (i % 32));
+            }
+        }
+        queue.write_buffer(&self.track_mask_buffer, 0, bytemuck::cast_slice(&words));
+        self.notes_dirty = true;
     }
 
     /// Upload notes for all 128 keys. `notes` is a flat buffer; `per_key_offsets`
@@ -551,6 +611,10 @@ impl CullState {
                             offset: key as u64 * 256,
                             size: std::num::NonZeroU64::new(256),
                         }),
+                    },
+                    BindGroupEntry {
+                        binding: 5,
+                        resource: self.track_mask_buffer.as_entire_binding(),
                     },
                 ],
             }));
@@ -894,6 +958,102 @@ mod tests {
         assert_eq!(
             instance_count, 50,
             "stale notes beyond the uploaded count must not be drawn"
+        );
+    }
+
+    /// Track 显隐 mask：隐藏轨道的音符必须被 cull shader 过滤掉，即使
+    /// buffer 里还存着它们（后台重建期间「旧 buffer + mask 双重过滤」的保证）。
+    /// 同时验证 mask 变化会强制重跑 dispatch（绕过 skip 优化）。
+    #[test]
+    fn cull_track_mask_filters_hidden_tracks() {
+        let Some((device, queue)) = headless_device() else {
+            return;
+        };
+        let mut cull = CullState::new(&device);
+        let uniform_buffer = device.create_buffer(&BufferDescriptor {
+            label: Some("test_uniform"),
+            size: 256,
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        // 3 条轨道各 10 个可见音符（key 60）。
+        let mut all = Vec::new();
+        for track in 0..3u16 {
+            for i in 0..10 {
+                all.push(NoteInstance {
+                    start_tick: i * 10,
+                    end_tick: i * 10 + 5,
+                    packed: NoteInstance::pack(60, track, 100),
+                });
+            }
+        }
+        cull.upload_one_key(&device, &queue, &uniform_buffer, 60, &all);
+
+        let run = |cull: &mut CullState, u: &Uniforms| -> Vec<NoteInstance> {
+            let mut encoder = device.create_command_encoder(&Default::default());
+            cull.dispatch_cull(&mut encoder, &queue, 60, 60, u);
+            let readback = device.create_buffer(&BufferDescriptor {
+                label: Some("vis_readback"),
+                size: 256 * 12,
+                usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+            encoder.copy_buffer_to_buffer(
+                cull.per_key_visible_buffers[60].as_ref().expect("uploaded"),
+                0,
+                &readback,
+                0,
+                256 * 12,
+            );
+            queue.submit([encoder.finish()]);
+
+            let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let done2 = done.clone();
+            readback.slice(..).map_async(wgpu::MapMode::Read, move |_| {
+                done2.store(true, Ordering::SeqCst);
+            });
+            device
+                .poll(wgpu::PollType::wait_indefinitely())
+                .expect("poll failed");
+            assert!(done.load(Ordering::SeqCst));
+            let view = readback.slice(..).get_mapped_range();
+            let insts: &[NoteInstance] = bytemuck::cast_slice(&view);
+            let out = insts[..30].to_vec();
+            drop(view);
+            readback.unmap();
+            out
+        };
+
+        let u = visible_uniforms();
+        // 无 mask（默认全 1）：30 个全部可见。
+        assert_eq!(run(&mut cull, &u).len(), 30);
+
+        // 隐藏轨道 1：只剩 20 个，且 track 必须 ∈ {0, 2}。
+        cull.upload_track_mask(&queue, &[true, false, true]);
+        let out = run(&mut cull, &u);
+        assert_eq!(out.len(), 30, "未写槽位读回的是旧数据，靠 draw args 限界");
+        let visible: Vec<u32> = out
+            .iter()
+            .take(20)
+            .map(|n| (n.packed >> 8) & 0xFFFF)
+            .collect();
+        assert!(
+            visible.iter().all(|&t| t == 0 || t == 2),
+            "隐藏轨道 1 的音符泄漏: {visible:?}"
+        );
+
+        // 恢复轨道 1：mask 变化必须重跑 dispatch（绕过 skip 优化）→ 30 个全回来。
+        cull.upload_track_mask(&queue, &[true, true, true]);
+        let out2 = run(&mut cull, &u);
+        let visible2: Vec<u32> = out2
+            .iter()
+            .take(30)
+            .map(|n| (n.packed >> 8) & 0xFFFF)
+            .collect();
+        assert!(
+            visible2.iter().all(|&t| t <= 2),
+            "恢复后轨道异常: {visible2:?}"
         );
     }
 

@@ -72,6 +72,9 @@ struct DispatchInfo {
 @group(0) @binding(2) var<storage, read_write> visible_instances: array<NoteInstance>;
 @group(0) @binding(3) var<storage, read_write> draw_args: array<DrawIndirectArgs>;
 @group(0) @binding(4) var<storage, read> dispatch_info: DispatchInfo;
+// Per-track visibility bitmask (1 bit per track). Track 显隐变化时由宿主写入；
+// track 显隐全量重建期间，旧 buffer + 此 mask 双重过滤保证显示正确。
+@group(0) @binding(5) var<storage, read> track_mask: array<u32>;
 
 // Workgroup shared memory for prefix sum.
 // After the scan, wg_prefix[i] = number of visible instances in [0..=i].
@@ -101,9 +104,14 @@ fn main(
         let end_tick = inst.end_tick;
         let packed = inst.packed;
         let key = packed & 0xFFu;
+        let track = (packed >> 8u) & 0xFFFFu;
+        // Track 显隐 mask：隐藏轨道的音符直接跳过。mask 始终反映当前
+        // track_visible（上传数据也按构建时的 track_visible 过滤过），
+        // 双重过滤无害——这是「后台重建期间显示不闪错」的保证。
+        let track_visible = (track_mask[track >> 5u] & (1u << (track & 31u))) != 0u;
 
         // Skip zero-length notes (deleted/placeholder)
-        if end_tick > start_tick {
+        if track_visible && end_tick > start_tick {
             let ppu = u.pixels_per_tick;
             let x_offset = u.keyboard_width - u.scroll_x;
 
@@ -123,7 +131,6 @@ fn main(
                     pixel_y = bottom - (f32(key) + 1.0) * u.key_height;
                 } else {
                     // AR: lane_height based
-                    let track = (packed >> 8u) & 0xFFFFu;
                     let lh = u.lane_height;
                     let lh_per_key = lh / 128.0;
                     pixel_bottom = -u.scroll_y + lh - f32(key) * lh_per_key + f32(track) * lh;

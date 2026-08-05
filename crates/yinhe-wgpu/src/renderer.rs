@@ -195,6 +195,13 @@ impl InstanceRenderer {
         VelocityBarInstance
     );
 
+    /// Upload the per-track visibility bitmask to the cull shader.
+    /// Call whenever `track_visible` changes; the shader immediately stops
+    /// emitting hidden tracks' notes even from stale (pre-rebuild) buffers.
+    pub fn upload_track_mask(&mut self, track_visible: &[bool]) {
+        self.cull.upload_track_mask(&self.queue, track_visible);
+    }
+
     /// Upload ALL note instances to the persistent GPU buffer for compute cull.
     /// Call this once on MIDI load/change, NOT every frame.
     /// Also records per-key offsets and revisions for future incremental uploads.
