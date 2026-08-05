@@ -30,6 +30,9 @@ pub struct RenderPipelineState {
     pub selection_buffer: Buffer,
     pub bind_group: BindGroup,
     pub bind_group_layout: BindGroupLayout,
+    /// 共享 index buffer：矩形四角 [0,1,2, 1,3,2]（0=TL,1=TR,2=BL,3=BR）。
+    /// note / velocity pipeline 以 4 顶点 + 此 index 绘制（顶点 -33%）。
+    pub index_buffer: Buffer,
 }
 
 impl RenderPipelineState {
@@ -125,6 +128,24 @@ impl RenderPipelineState {
                 },
             ],
         });
+
+        // 共享 index buffer：两个三角形共享矩形四角。
+        // 顶点顺序与 shader 的 pos/uv 数组一致（0=TL, 1=TR, 2=BL, 3=BR）。
+        let index_buffer = device.create_buffer(&BufferDescriptor {
+            label: Some("shared_index_buffer"),
+            size: 6 * std::mem::size_of::<u32>() as u64,
+            usage: BufferUsages::INDEX | BufferUsages::COPY_DST,
+            mapped_at_creation: true,
+        });
+        yinhe_memtrace::add_gpu_resource(6 * std::mem::size_of::<u32>() as u64);
+        {
+            let idx: [u32; 6] = [0, 1, 2, 1, 3, 2];
+            index_buffer
+                .slice(..)
+                .get_mapped_range_mut()
+                .copy_from_slice(bytemuck::cast_slice(&idx));
+        }
+        index_buffer.unmap();
 
         let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
             label: Some("pipeline_layout"),
@@ -341,6 +362,7 @@ impl RenderPipelineState {
             selection_buffer,
             bind_group,
             bind_group_layout,
+            index_buffer,
         }
     }
 }

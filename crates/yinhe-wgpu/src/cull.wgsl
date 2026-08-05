@@ -8,12 +8,13 @@
 // Output: fixed-slot sparse. Chunk c writes its visible note indices to the
 // fixed sparse slots [c*256, c*256+256) of `visible_indices` (rank-1 within
 // the chunk's prefix sum), and thread 0 writes the chunk's draw args
-// (vertex_count=6, instance_count=wg_total, first_vertex=0, first_instance=
-// c*256) into `draw_args[wg]` — a relative index aligned with
-// multi_draw_indirect, which reads draw args starting from index 0. The host
-// draws with multi_draw_indirect in chunk order, so the output (z) order
-// equals the input order = tick order — deterministic across frames, with no
-// atomics and no dependence on GPU workgroup scheduling.
+// (DrawIndexedIndirectArgs: index_count=6, instance_count=wg_total,
+// first_index=0, base_vertex=0, first_instance=c*256) into `draw_args[wg]` —
+// a relative index aligned with multi_draw_indexed_indirect, which reads draw
+// args starting from index 0. The host draws with multi_draw_indexed_indirect
+// in chunk order, so the output (z) order equals the input order = tick order
+// — deterministic across frames, with no atomics and no dependence on GPU
+// workgroup scheduling.
 //
 // Within a chunk, a workgroup prefix sum (Hillis-Steele scan) guarantees that
 // visible instances are written in the same order as they appear in
@@ -51,11 +52,12 @@ struct NoteInstance {
     packed: u32, // key|track|vel
 };
 
-struct DrawIndirectArgs {
-    vertex_count: u32,     // 6 (two triangles per note)
+struct DrawIndexedIndirectArgs {
+    index_count: u32,     // 6 (two triangles per note, shared index buffer)
     instance_count: u32,
-    first_vertex: u32,     // 0
-    first_instance: u32,   // chunk * 256 (first sparse slot of this chunk)
+    first_index: u32,     // 0
+    base_vertex: i32,     // 0
+    first_instance: u32,  // chunk * 256 (first sparse slot of this chunk)
 };
 
 // Per-key dispatch info (binding 4). Host-written every frame; shares the
@@ -76,7 +78,7 @@ struct DispatchInfo {
 // 可见索引缓冲：每槽 4B（u32），存「该 key 的 all_instances 内的本地索引」。
 // 顶点阶段从 @group(1) 的 all_instances 间接读回完整数据。
 @group(0) @binding(2) var<storage, read_write> visible_indices: array<u32>;
-@group(0) @binding(3) var<storage, read_write> draw_args: array<DrawIndirectArgs>;
+@group(0) @binding(3) var<storage, read_write> draw_args: array<DrawIndexedIndirectArgs>;
 @group(0) @binding(4) var<storage, read> dispatch_info: DispatchInfo;
 // Per-track visibility bitmask (1 bit per track). Track 显隐变化时由宿主写入；
 // track 显隐全量重建期间，旧 buffer + 此 mask 双重过滤保证显示正确。
@@ -168,12 +170,12 @@ fn main(
     }
 
     // Phase 2: thread 0 writes this chunk's draw args at the relative index
-    // `wg` (multi_draw_indirect reads args from index 0). Visible threads
-    // write to fixed sparse slots (chunk * 256 + rank - 1), so the output
-    // order is fully deterministic: (chunk, rank) == input order — stable
-    // z-order across frames, no atomics, no scheduling dependence.
+    // `wg` (multi_draw_indexed_indirect reads args from index 0). Visible
+    // threads write to fixed sparse slots (chunk * 256 + rank - 1), so the
+    // output order is fully deterministic: (chunk, rank) == input order —
+    // stable z-order across frames, no atomics, no scheduling dependence.
     if local_id.x == 0u {
-        draw_args[wg] = DrawIndirectArgs(6u, wg_prefix[255u], 0u, chunk * 256u);
+        draw_args[wg] = DrawIndexedIndirectArgs(6u, wg_prefix[255u], 0u, 0i, chunk * 256u);
     }
     if visible == 1u {
         let dst = chunk * 256u + wg_prefix[local_id.x] - 1u;

@@ -276,22 +276,20 @@ fn note_geometry(
         pixel_h = max(floor(raw_bottom + 0.5) - floor(raw_y + 0.5), 1.0);
     }
 
-    var pos = array<vec2<f32>, 6>(
+    // 4 顶点 + 共享 index buffer（[0,1,2, 1,3,2]）：0=TL, 1=TR, 2=BL, 3=BR。
+    // 相比 6 顶点/实例，顶点数 -33%（黑乐谱级实例数下显著省顶点处理）。
+    var pos = array<vec2<f32>, 4>(
+        vec2<f32>(pixel_x,           pixel_y),
         vec2<f32>(pixel_x + pixel_w, pixel_y),
-        vec2<f32>(pixel_x + pixel_w, pixel_y + pixel_h),
-        vec2<f32>(pixel_x,           pixel_y),
-        vec2<f32>(pixel_x + pixel_w, pixel_y + pixel_h),
         vec2<f32>(pixel_x,           pixel_y + pixel_h),
-        vec2<f32>(pixel_x,           pixel_y),
+        vec2<f32>(pixel_x + pixel_w, pixel_y + pixel_h),
     );
 
-    var uv = array<vec2<f32>, 6>(
+    var uv = array<vec2<f32>, 4>(
+        vec2<f32>(0.0, 0.0),
         vec2<f32>(1.0, 0.0),
-        vec2<f32>(1.0, 1.0),
-        vec2<f32>(0.0, 0.0),
-        vec2<f32>(1.0, 1.0),
         vec2<f32>(0.0, 1.0),
-        vec2<f32>(0.0, 0.0),
+        vec2<f32>(1.0, 1.0),
     );
 
     let pixel_pos = pos[vertex_index];
@@ -388,22 +386,19 @@ fn vs_main_velocity(
         pixel_h = max(floor(raw_bottom + 0.5) - floor(raw_y + 0.5), 1.0);
     }
 
-    var pos = array<vec2<f32>, 6>(
+    // 4 顶点 + 共享 index buffer（与 note 相同：[0,1,2, 1,3,2]）。
+    var pos = array<vec2<f32>, 4>(
+        vec2<f32>(pixel_x,           pixel_y),
         vec2<f32>(pixel_x + pixel_w, pixel_y),
-        vec2<f32>(pixel_x + pixel_w, pixel_y + pixel_h),
-        vec2<f32>(pixel_x,           pixel_y),
-        vec2<f32>(pixel_x + pixel_w, pixel_y + pixel_h),
         vec2<f32>(pixel_x,           pixel_y + pixel_h),
-        vec2<f32>(pixel_x,           pixel_y),
+        vec2<f32>(pixel_x + pixel_w, pixel_y + pixel_h),
     );
 
-    var uv = array<vec2<f32>, 6>(
+    var uv = array<vec2<f32>, 4>(
+        vec2<f32>(0.0, 0.0),
         vec2<f32>(1.0, 0.0),
-        vec2<f32>(1.0, 1.0),
-        vec2<f32>(0.0, 0.0),
-        vec2<f32>(1.0, 1.0),
         vec2<f32>(0.0, 1.0),
-        vec2<f32>(0.0, 0.0),
+        vec2<f32>(1.0, 1.0),
     );
 
     let pixel_pos = pos[vertex_index];

@@ -499,7 +499,8 @@ impl CullState {
         // Visible buffer is 256-aligned so every chunk's sparse slots
         // [chunk*256, chunk*256+256) fit; slots are 4B u32 indices now.
         let vis_size = chunk_total * 256 * std::mem::size_of::<u32>() as u64;
-        let args_size = chunk_total * std::mem::size_of::<u32>() as u64 * 4;
+        // DrawIndexedIndirectArgs = 5 × u32 = 20B per chunk.
+        let args_size = chunk_total * std::mem::size_of::<u32>() as u64 * 5;
 
         let need_recreate = match &self.per_key_buffers[key as usize] {
             None => true,
@@ -815,16 +816,17 @@ impl CullState {
             let Some(args_buf) = &self.per_key_draw_args_buffers[key] else {
                 continue;
             };
+            // DrawIndexedIndirectArgs = 20B per chunk.
             let readback = device.create_buffer(&BufferDescriptor {
                 label: Some("diag_readback"),
-                size: 16 * chunk_count as u64,
+                size: 20 * chunk_count as u64,
                 usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
                 mapped_at_creation: false,
             });
             let mut enc = device.create_command_encoder(&CommandEncoderDescriptor {
                 label: Some("diag_copy"),
             });
-            enc.copy_buffer_to_buffer(args_buf, 0, &readback, 0, 16 * chunk_count as u64);
+            enc.copy_buffer_to_buffer(args_buf, 0, &readback, 0, 20 * chunk_count as u64);
             queue.submit([enc.finish()]);
             let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
             let done2 = done.clone();
@@ -838,7 +840,7 @@ impl CullState {
             let view = readback.slice(..).get_mapped_range();
             let args: &[u32] = bytemuck::cast_slice(&view);
             for c in 0..chunk_count {
-                total += args[c * 4 + 1] as u64;
+                total += args[c * 5 + 1] as u64; // instance_count @ offset 4
             }
             drop(view);
             readback.unmap();
@@ -846,24 +848,26 @@ impl CullState {
         total
     }
 
-    /// Draw the culled notes via `multi_draw_indirect`. Each key's chunks are
-    /// drawn in buffer order, and chunks are written in dispatch order
-    /// (= input/tick order), so the z-order is fully deterministic across
-    /// frames — no dependence on GPU workgroup scheduling.
+    /// Draw the culled notes via `multi_draw_indexed_indirect`. Each key's
+    /// chunks are drawn in buffer order, and chunks are written in dispatch
+    /// order (= input/tick order), so the z-order is fully deterministic
+    /// across frames — no dependence on GPU workgroup scheduling.
     ///
     /// Per-key bind group (@group(1)) is set before each key's draw so the
     /// vertex shader can indirect-read that key's `all_instances` from the
-    /// 4-byte visible index.
+    /// 4-byte visible index. 4 顶点 + 共享 index buffer（顶点 -33%）。
     pub(crate) fn draw_visible_notes(
         &self,
         pass: &mut RenderPass<'_>,
         note_pipeline: &RenderPipeline,
         bind_group: &BindGroup,
+        index_buffer: &Buffer,
         key_lo: u8,
         key_hi: u8,
     ) {
         pass.set_pipeline(note_pipeline);
         pass.set_bind_group(0, bind_group, &[]);
+        pass.set_index_buffer(index_buffer.slice(..), IndexFormat::Uint32);
         for key in key_lo..=key_hi {
             let Some(vis_buf) = &self.per_key_visible_buffers[key as usize] else {
                 continue;
@@ -880,14 +884,14 @@ impl CullState {
             };
             pass.set_bind_group(1, bg, &[]);
             pass.set_vertex_buffer(0, vis_buf.slice(..));
-            // multi_draw_indirect draws chunks in buffer order (= input order),
-            // giving deterministic z-order. Split into ≤1M-draw segments in
-            // case a single key ever exceeds maxDrawIndirectCount (1,000,000).
+            // multi_draw_indexed_indirect draws chunks in buffer order (= input
+            // order), giving deterministic z-order. Split into ≤1M-draw segments
+            // in case a single key ever exceeds maxDrawIndirectCount (1,000,000).
             let mut remaining = chunk_count;
             let mut offset = 0u32;
             while remaining > 0 {
                 let n = remaining.min(1_000_000);
-                pass.multi_draw_indirect(args_buf, offset as u64 * 16, n);
+                pass.multi_draw_indexed_indirect(args_buf, offset as u64 * 20, n);
                 offset += n;
                 remaining -= n;
             }
@@ -1609,7 +1613,7 @@ mod tests {
                 let Some(args_buf) = &cull.per_key_draw_args_buffers[key] else {
                     continue; // buffer 被销毁（upload 释放 bug）→ 无输出，按 0 计
                 };
-                let read_size = chunk_count as u64 * 16;
+                let read_size = chunk_count as u64 * 20;
                 let readback = device.create_buffer(&BufferDescriptor {
                     label: Some("args_readback"),
                     size: read_size,
@@ -1632,7 +1636,7 @@ mod tests {
                 let args: &[u32] = bytemuck::cast_slice(&view);
                 let mut key_total: u64 = 0;
                 for c in 0..chunk_count as usize {
-                    key_total += args[c * 4 + 1] as u64; // instance_count
+                    key_total += args[c * 5 + 1] as u64; // instance_count
                 }
                 drop(view);
                 readback.unmap();
@@ -1748,12 +1752,12 @@ mod tests {
                 }
                 let readback = device.create_buffer(&BufferDescriptor {
                     label: Some("args_readback"),
-                    size: 16 * chunk_count as u64,
+                    size: 20 * chunk_count as u64,
                     usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
                     mapped_at_creation: false,
                 });
                 let mut enc = device.create_command_encoder(&Default::default());
-                enc.copy_buffer_to_buffer(args_buf, 0, &readback, 0, 16 * chunk_count as u64);
+                enc.copy_buffer_to_buffer(args_buf, 0, &readback, 0, 20 * chunk_count as u64);
                 queue.submit([enc.finish()]);
                 let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
                 let done2 = done.clone();
@@ -1767,7 +1771,7 @@ mod tests {
                 let view = readback.slice(..).get_mapped_range();
                 let args: &[u32] = bytemuck::cast_slice(&view);
                 for c in 0..chunk_count {
-                    total += args[c * 4 + 1] as u64;
+                    total += args[c * 5 + 1] as u64;
                 }
                 drop(view);
                 readback.unmap();
@@ -1902,12 +1906,12 @@ mod tests {
                     }
                     let readback = device.create_buffer(&BufferDescriptor {
                         label: Some("args_readback"),
-                        size: 16 * chunk_count as u64,
+                        size: 20 * chunk_count as u64,
                         usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
                         mapped_at_creation: false,
                     });
                     let mut enc = device.create_command_encoder(&Default::default());
-                    enc.copy_buffer_to_buffer(args_buf, 0, &readback, 0, 16 * chunk_count as u64);
+                    enc.copy_buffer_to_buffer(args_buf, 0, &readback, 0, 20 * chunk_count as u64);
                     queue.submit([enc.finish()]);
                     let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
                     let done2 = done.clone();
@@ -1921,7 +1925,7 @@ mod tests {
                     let view = readback.slice(..).get_mapped_range();
                     let args: &[u32] = bytemuck::cast_slice(&view);
                     for c in 0..chunk_count {
-                        total += args[c * 4 + 1] as u64;
+                        total += args[c * 5 + 1] as u64;
                     }
                     drop(view);
                     readback.unmap();
@@ -2073,7 +2077,7 @@ mod tests {
                 let Some(args_buf) = &cull.per_key_draw_args_buffers[key] else {
                     continue;
                 };
-                let read_size = chunk_count as u64 * 16;
+                let read_size = chunk_count as u64 * 20;
                 let readback = device.create_buffer(&BufferDescriptor {
                     label: Some("args_readback"),
                     size: read_size,
@@ -2096,7 +2100,7 @@ mod tests {
                 let args: &[u32] = bytemuck::cast_slice(&view);
                 let mut key_total: u64 = 0;
                 for c in 0..chunk_count as usize {
-                    key_total += args[c * 4 + 1] as u64; // instance_count
+                    key_total += args[c * 5 + 1] as u64; // instance_count
                 }
                 drop(view);
                 readback.unmap();
@@ -2263,7 +2267,7 @@ mod tests {
                             .expect("有 chunk 派发却没有 args buffer");
                         let readback = device.create_buffer(&BufferDescriptor {
                             label: Some("args_readback"),
-                            size: 16 * chunk_count as u64,
+                            size: 20 * chunk_count as u64,
                             usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
                             mapped_at_creation: false,
                         });
@@ -2273,7 +2277,7 @@ mod tests {
                             0,
                             &readback,
                             0,
-                            16 * chunk_count as u64,
+                            20 * chunk_count as u64,
                         );
                         queue.submit([enc.finish()]);
                         let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -2288,7 +2292,7 @@ mod tests {
                         let view = readback.slice(..).get_mapped_range();
                         let args: &[u32] = bytemuck::cast_slice(&view);
                         for c in 0..chunk_count {
-                            gpu += args[c * 4 + 1] as u64;
+                            gpu += args[c * 5 + 1] as u64;
                         }
                         drop(view);
                         readback.unmap();
@@ -2443,7 +2447,7 @@ mod tests {
                             .expect("有 chunk 派发却没有 args buffer");
                         let readback = device.create_buffer(&BufferDescriptor {
                             label: Some("args_readback"),
-                            size: 16 * chunk_count as u64,
+                            size: 20 * chunk_count as u64,
                             usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
                             mapped_at_creation: false,
                         });
@@ -2453,7 +2457,7 @@ mod tests {
                             0,
                             &readback,
                             0,
-                            16 * chunk_count as u64,
+                            20 * chunk_count as u64,
                         );
                         queue.submit([enc.finish()]);
                         let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -2468,7 +2472,7 @@ mod tests {
                         let view = readback.slice(..).get_mapped_range();
                         let args: &[u32] = bytemuck::cast_slice(&view);
                         for c in 0..chunk_count {
-                            gpu += args[c * 4 + 1] as u64;
+                            gpu += args[c * 5 + 1] as u64;
                         }
                         drop(view);
                         readback.unmap();
@@ -2714,12 +2718,12 @@ mod tests {
                         .expect("有 chunk 派发却没有 args buffer");
                     let readback = device.create_buffer(&BufferDescriptor {
                         label: Some("args_readback"),
-                        size: 16 * chunk_count as u64,
+                        size: 20 * chunk_count as u64,
                         usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
                         mapped_at_creation: false,
                     });
                     let mut enc = device.create_command_encoder(&Default::default());
-                    enc.copy_buffer_to_buffer(args_buf, 0, &readback, 0, 16 * chunk_count as u64);
+                    enc.copy_buffer_to_buffer(args_buf, 0, &readback, 0, 20 * chunk_count as u64);
                     queue.submit([enc.finish()]);
                     let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
                     let done2 = done.clone();
@@ -2733,7 +2737,7 @@ mod tests {
                     let view = readback.slice(..).get_mapped_range();
                     let args: &[u32] = bytemuck::cast_slice(&view);
                     for c in 0..chunk_count {
-                        gpu += args[c * 4 + 1] as u64;
+                        gpu += args[c * 5 + 1] as u64;
                     }
                     drop(view);
                     readback.unmap();
@@ -2989,12 +2993,12 @@ mod tests {
                 };
                 let readback = device.create_buffer(&BufferDescriptor {
                     label: Some("args_readback"),
-                    size: 16 * chunk_count as u64,
+                    size: 20 * chunk_count as u64,
                     usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
                     mapped_at_creation: false,
                 });
                 let mut enc = device.create_command_encoder(&Default::default());
-                enc.copy_buffer_to_buffer(args_buf, 0, &readback, 0, 16 * chunk_count as u64);
+                enc.copy_buffer_to_buffer(args_buf, 0, &readback, 0, 20 * chunk_count as u64);
                 queue.submit([enc.finish()]);
                 let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
                 let done2 = done.clone();
@@ -3008,7 +3012,7 @@ mod tests {
                 let view = readback.slice(..).get_mapped_range();
                 let args: &[u32] = bytemuck::cast_slice(&view);
                 for c in 0..chunk_count {
-                    let n = args[c * 4 + 1] as u64;
+                    let n = args[c * 5 + 1] as u64;
                     gpu_by_key[key as usize] += n;
                     gpu_count += n;
                 }
@@ -3030,12 +3034,12 @@ mod tests {
                         .expect("args buffer");
                     let readback = device.create_buffer(&BufferDescriptor {
                         label: Some("args_readback"),
-                        size: 16 * chunk_count as u64,
+                        size: 20 * chunk_count as u64,
                         usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
                         mapped_at_creation: false,
                     });
                     let mut enc = device.create_command_encoder(&Default::default());
-                    enc.copy_buffer_to_buffer(args_buf, 0, &readback, 0, 16 * chunk_count as u64);
+                    enc.copy_buffer_to_buffer(args_buf, 0, &readback, 0, 20 * chunk_count as u64);
                     queue.submit([enc.finish()]);
                     let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
                     let done2 = done.clone();
@@ -3050,7 +3054,7 @@ mod tests {
                     let args: &[u32] = bytemuck::cast_slice(&view);
                     let mut first_nonzero = None;
                     for c in 0..chunk_count {
-                        if args[c * 4 + 1] > 0 {
+                        if args[c * 5 + 1] > 0 {
                             first_nonzero = Some(c);
                             break;
                         }
@@ -3241,12 +3245,12 @@ mod tests {
                 };
                 let readback = device.create_buffer(&BufferDescriptor {
                     label: Some("args_readback"),
-                    size: 16 * chunk_count as u64,
+                    size: 20 * chunk_count as u64,
                     usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
                     mapped_at_creation: false,
                 });
                 let mut enc = device.create_command_encoder(&Default::default());
-                enc.copy_buffer_to_buffer(args_buf, 0, &readback, 0, 16 * chunk_count as u64);
+                enc.copy_buffer_to_buffer(args_buf, 0, &readback, 0, 20 * chunk_count as u64);
                 queue.submit([enc.finish()]);
                 let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
                 let done2 = done.clone();
@@ -3260,7 +3264,7 @@ mod tests {
                 let view = readback.slice(..).get_mapped_range();
                 let args: &[u32] = bytemuck::cast_slice(&view);
                 for c in 0..chunk_count {
-                    gpu_total += args[c * 4 + 1] as u64;
+                    gpu_total += args[c * 5 + 1] as u64;
                 }
                 drop(view);
                 readback.unmap();
@@ -3704,12 +3708,12 @@ mod tests {
                 .expect("args buffer");
             let readback = device.create_buffer(&BufferDescriptor {
                 label: Some("args_readback"),
-                size: 16 * chunk_count as u64,
+                size: 20 * chunk_count as u64,
                 usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
                 mapped_at_creation: false,
             });
             let mut enc = device.create_command_encoder(&Default::default());
-            enc.copy_buffer_to_buffer(args_buf, 0, &readback, 0, 16 * chunk_count as u64);
+            enc.copy_buffer_to_buffer(args_buf, 0, &readback, 0, 20 * chunk_count as u64);
             queue.submit([enc.finish()]);
             let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
             let done2 = done.clone();
@@ -3724,7 +3728,7 @@ mod tests {
             let args: &[u32] = bytemuck::cast_slice(&view);
             let mut nonempty_chunks = 0u32;
             for c in 0..chunk_count {
-                let n = args[c * 4 + 1];
+                let n = args[c * 5 + 1];
                 total_gpu += n as u64;
                 if n > 0 {
                     nonempty_chunks += 1;
@@ -3743,11 +3747,11 @@ mod tests {
             // 重新读 args（上面的 view 已 drop）
             let readback2 = device.create_buffer(&BufferDescriptor {
                 label: Some("args_readback2"),
-                size: 16 * chunk_count as u64,
+                size: 20 * chunk_count as u64,
                 usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
                 mapped_at_creation: false,
             });
-            enc2.copy_buffer_to_buffer(args_buf, 0, &readback2, 0, 16 * chunk_count as u64);
+            enc2.copy_buffer_to_buffer(args_buf, 0, &readback2, 0, 20 * chunk_count as u64);
             queue.submit([enc2.finish()]);
             let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
             let done2 = done.clone();
@@ -3916,12 +3920,12 @@ mod tests {
                 if let Some(args_buf) = &renderer.cull.per_key_draw_args_buffers[60] {
                     let rb = device.create_buffer(&BufferDescriptor {
                         label: Some("args_rb"),
-                        size: 16 * cc as u64,
+                        size: 20 * cc as u64,
                         usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
                         mapped_at_creation: false,
                     });
                     let mut enc = device.create_command_encoder(&Default::default());
-                    enc.copy_buffer_to_buffer(args_buf, 0, &rb, 0, 16 * cc as u64);
+                    enc.copy_buffer_to_buffer(args_buf, 0, &rb, 0, 20 * cc as u64);
                     queue.submit([enc.finish()]);
                     let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
                     let done2 = done.clone();
@@ -4204,13 +4208,15 @@ mod tests {
             (left, right)
         };
 
-        // 基准：正常 dispatch，args=[(6,256,0,0),(6,256,0,256)]。
+        // 基准：正常 dispatch，args=[(6,256,0,0,0),(6,256,0,0,256)]。
         // （bug 存在时右半已画不出，仅打印不断言；决定性证据在下面两段）
         let (l0, r0) = render_lr(&mut renderer);
         println!("基准（两条 args）: left={l0} right={r0}");
 
         // 覆写 args 并重画（uniforms 不变 → dispatch 被跳过，args 保持覆写值）。
-        let overwrite_args = |renderer: &mut crate::InstanceRenderer, args: [u32; 4]| {
+        // DrawIndexedIndirectArgs = [index_count, instance_count, first_index,
+        // base_vertex, first_instance]。
+        let overwrite_args = |renderer: &mut crate::InstanceRenderer, args: [u32; 5]| {
             let args_buf = renderer.cull.per_key_draw_args_buffers[60]
                 .as_ref()
                 .expect("args buffer");
@@ -4219,14 +4225,14 @@ mod tests {
         };
 
         // 对照：单条 first_instance=0 → 只画 chunk 0（左半）。
-        overwrite_args(&mut renderer, [6, 256, 0, 0]);
+        overwrite_args(&mut renderer, [6, 256, 0, 0, 0]);
         let (lc, rc) = render_lr(&mut renderer);
         println!("对照 first_instance=0: left={lc} right={rc}");
         assert!(lc > 100, "对照左半应有像素: {lc}");
         assert_eq!(rc, 0, "对照右半应无像素: {rc}");
 
         // 实验：单条 first_instance=256 → 应只画 chunk 1（右半）。
-        overwrite_args(&mut renderer, [6, 256, 0, 256]);
+        overwrite_args(&mut renderer, [6, 256, 0, 0, 256]);
         let (l1, r1) = render_lr(&mut renderer);
         println!("实验 first_instance=256: left={l1} right={r1}");
         if r1 > 0 && l1 == 0 {
@@ -4583,7 +4589,7 @@ mod tests {
             let Some(args_buf) = &cull.per_key_draw_args_buffers[key as usize] else {
                 continue;
             };
-            let read_size = chunk_count as u64 * 16;
+            let read_size = chunk_count as u64 * 20;
             let readback = device.create_buffer(&BufferDescriptor {
                 label: Some("args_readback"),
                 size: read_size,
@@ -4605,7 +4611,7 @@ mod tests {
             let view = readback.slice(..).get_mapped_range();
             let args: &[u32] = bytemuck::cast_slice(&view);
             for c in 0..chunk_count as usize {
-                gpu_total += args[c * 4 + 1] as u64;
+                gpu_total += args[c * 5 + 1] as u64;
             }
             drop(view);
             readback.unmap();

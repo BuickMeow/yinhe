@@ -342,19 +342,19 @@ impl InstanceRenderer {
         for layer in &self.layers {
             if layer.kind() == LayerKind::Decor {
                 pass.set_pipeline(&self.render.pipeline);
-                layer.draw(pass, 0);
+                layer.draw(pass, 0, None);
             }
         }
         for layer in &self.layers {
             if layer.kind() == LayerKind::Velocity {
                 pass.set_pipeline(&self.render.velocity_pipeline);
-                layer.draw(pass, 0);
+                layer.draw(pass, 0, Some(&self.render.index_buffer));
             }
         }
         for layer in &self.layers {
             if layer.kind() == LayerKind::Curve {
                 pass.set_pipeline(&self.render.curve_pipeline);
-                layer.draw(pass, 0);
+                layer.draw(pass, 0, None);
             }
         }
     }
@@ -380,11 +380,11 @@ impl InstanceRenderer {
 
         self.draw_static_layers(&mut pass);
 
-        // Step 4: all note layers (CPU-built 12B instances → direct pipeline)
+        // Step 4: all note layers
         for layer in &self.layers {
             if layer.kind() == LayerKind::Note {
                 pass.set_pipeline(&self.render.note_direct_pipeline);
-                layer.draw(&mut pass, 0);
+                layer.draw(&mut pass, 0, Some(&self.render.index_buffer));
             }
         }
     }
@@ -457,6 +457,7 @@ impl InstanceRenderer {
             &mut pass,
             &self.render.note_pipeline,
             &self.render.bind_group,
+            &self.render.index_buffer,
             key_lo,
             key_hi,
         );
@@ -465,7 +466,7 @@ impl InstanceRenderer {
         let ghost = self.layers.iter().rfind(|l| l.kind() == LayerKind::Note);
         if let Some(ghost) = ghost {
             pass.set_pipeline(&self.render.note_direct_pipeline);
-            ghost.draw(&mut pass, 0);
+            ghost.draw(&mut pass, 0, Some(&self.render.index_buffer));
         }
     }
 

@@ -139,7 +139,15 @@ impl<T: Pod> LayerSlot<T> {
     }
 
     /// Draw this layer into an active render pass.
-    pub fn draw<'a>(&self, pass: &mut RenderPass<'a>, vertex_slot: u32) {
+    /// `index_buffer: Some(..)` 时用 4 顶点 + 共享 index buffer 绘制
+    /// （note/velocity 层，顶点 -33%）；None 时普通 6 顶点非索引绘制
+    /// （decor/curve 层，数据量小不值得）。
+    pub fn draw<'a>(
+        &self,
+        pass: &mut RenderPass<'a>,
+        vertex_slot: u32,
+        index_buffer: Option<&Buffer>,
+    ) {
         if self.count == 0 {
             return;
         }
@@ -150,7 +158,12 @@ impl<T: Pod> LayerSlot<T> {
                 break;
             }
             pass.set_vertex_buffer(vertex_slot, chunk.buffer.slice(..));
-            pass.draw(0..6, 0..batch_count as u32);
+            if let Some(ib) = index_buffer {
+                pass.set_index_buffer(ib.slice(..), IndexFormat::Uint32);
+                pass.draw_indexed(0..6, 0, 0..batch_count as u32);
+            } else {
+                pass.draw(0..6, 0..batch_count as u32);
+            }
             remaining -= batch_count;
         }
     }
@@ -219,12 +232,17 @@ impl AnyLayer {
         }
     }
 
-    pub(crate) fn draw<'a>(&self, pass: &mut RenderPass<'a>, vertex_slot: u32) {
+    pub(crate) fn draw<'a>(
+        &self,
+        pass: &mut RenderPass<'a>,
+        vertex_slot: u32,
+        index_buffer: Option<&Buffer>,
+    ) {
         match self {
-            AnyLayer::Decor(l) => l.draw(pass, vertex_slot),
-            AnyLayer::Note(l) => l.draw(pass, vertex_slot),
-            AnyLayer::Velocity(l) => l.draw(pass, vertex_slot),
-            AnyLayer::Curve(l) => l.draw(pass, vertex_slot),
+            AnyLayer::Decor(l) => l.draw(pass, vertex_slot, None),
+            AnyLayer::Note(l) => l.draw(pass, vertex_slot, index_buffer),
+            AnyLayer::Velocity(l) => l.draw(pass, vertex_slot, index_buffer),
+            AnyLayer::Curve(l) => l.draw(pass, vertex_slot, None),
         }
     }
 }
