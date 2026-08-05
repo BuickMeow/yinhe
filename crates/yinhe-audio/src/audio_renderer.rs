@@ -81,6 +81,7 @@ impl AudioRenderer {
     #[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
     fn new(
         engine: AudioEngine,
+        preview_engine: PreviewEngine,
         ring: AudioRingProducer,
         state: RendererSharedState,
         channels: u16,
@@ -93,7 +94,6 @@ impl AudioRenderer {
         callback_frames: usize,
         #[cfg(feature = "gpu")] use_gpu_synth: bool,
     ) -> Self {
-        let preview_engine = PreviewEngine::new(&engine.channel_layout, engine.sample_rate);
         Self {
             engine,
             ring,
@@ -568,6 +568,7 @@ impl AudioRenderer {
 #[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 pub(crate) fn spawn_renderer(
     engine: AudioEngine,
+    preview_engine: PreviewEngine,
     ring: AudioRingProducer,
     state: RendererSharedState,
     channels: u16,
@@ -585,6 +586,7 @@ pub(crate) fn spawn_renderer(
         .spawn(move || {
             let mut renderer = AudioRenderer::new(
                 engine,
+                preview_engine,
                 ring,
                 state,
                 channels,

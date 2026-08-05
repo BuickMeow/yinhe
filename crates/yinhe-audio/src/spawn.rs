@@ -670,22 +670,30 @@ pub fn spawn_cpal_audio(
         cpal::BufferSize::Default => 1024,
     };
 
-    // catch_unwind 包住 AudioEngine::new：ChannelGroup::new 内部
-    // `rayon::ThreadPoolBuilder::build().unwrap()` 在进程线程数超限时会 panic
-    // （macOS EAGAIN / code 35）。捕获后返回 Err，让上层弹对话框而不是 abort 进程。
-    let engine = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        crate::engine::AudioEngine::new(sample_rate, layout)
-    })) {
-        Ok(engine) => engine,
-        Err(payload) => {
-            let msg = payload
-                .downcast_ref::<String>()
-                .map(|s| s.as_str())
-                .or_else(|| payload.downcast_ref::<&str>().copied())
-                .unwrap_or("unknown panic");
-            return Err(format!("AudioEngine initialization failed: {msg}"));
-        }
-    };
+    // catch_unwind 包住 AudioEngine::new + PreviewEngine::new：两者内部都调用
+    // ChannelGroup::new，其内部 `rayon::ThreadPoolBuilder::build().unwrap()` 在
+    // 进程线程数超限时会 panic（macOS EAGAIN / code 35）。捕获后返回 Err，
+    // 让上层弹对话框而不是 abort 进程。注意：panic=abort 配置下 catch_unwind
+    // 无效，根 Cargo.toml 必须保持 panic=unwind。
+    let (engine, preview_engine) =
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let engine = crate::engine::AudioEngine::new(sample_rate, layout);
+            let preview = crate::preview_engine::PreviewEngine::new(
+                &engine.channel_layout,
+                engine.sample_rate,
+            );
+            (engine, preview)
+        })) {
+            Ok(pair) => pair,
+            Err(payload) => {
+                let msg = payload
+                    .downcast_ref::<String>()
+                    .map(|s| s.as_str())
+                    .or_else(|| payload.downcast_ref::<&str>().copied())
+                    .unwrap_or("unknown panic");
+                return Err(format!("Audio engine initialization failed: {msg}"));
+            }
+        };
     let (worker_tx, prepared_rx) = spawn_worker(sample_rate)
         .map_err(|e| format!("Failed to spawn audio worker thread: {e}"))?;
 
@@ -707,6 +715,7 @@ pub fn spawn_cpal_audio(
     let shutdown = Arc::new(AtomicBool::new(false));
     let renderer_handle = spawn_renderer(
         engine,
+        preview_engine,
         ring_producer,
         renderer_state,
         channels as u16,

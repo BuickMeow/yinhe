@@ -54,7 +54,8 @@ lto = false                         # 禁用链接时优化（大幅减少链接
 codegen-units = 16                  # 增加并行代码生成单元（最大 16，加速编译）
 debug = 1                           # 行号表（函数名+行号），支持 backtrace 和 profiler
 strip = "none"                      # 保留符号用于调试分析（体积换调试能力）
-panic = "abort"                    # 使用 abort 而非 unwind（减少生成的代码量）
+panic = "unwind"                  # 必须 unwind：panic=abort 会让 catch_unwind 失效，
+                                # 任何线程 panic 都会直接杀死进程（丢未保存工程）
 incremental = true                 # 启用增量编译（对多次构建友好）
 
 [profile.release]
@@ -62,4 +63,5 @@ opt-level = 3            # 性能优先：最大运行速度优化
 lto = "thin"             # 轻量 LTO：兼顾性能与编译速度（比 "z" 快得多，体积略增）
 codegen-units = 16       # 并行代码生成：加速链接，对运行时性能影响极小
 strip = true             # 体积第二：strip 仅去调试符号，不影响运行性能
-panic = "abort"          # 不用 unwind，减少体积且略快
+panic = "unwind"          # 必须 unwind：音频初始化 catch_unwind 依赖它，
+                         # abort 下线程 panic 直接杀进程（macOS EAGAIN 线程超限）
