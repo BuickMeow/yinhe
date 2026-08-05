@@ -139,13 +139,32 @@ pub fn show(
     let mut result = None;
     let pointer_pos = ui.input(|i| i.pointer.hover_pos());
     let released = ui.input(|i| i.pointer.primary_released());
+    let pressed = ui.input(|i| i.pointer.primary_pressed());
+
+    // 预计算按钮矩形（press 帧也要用）。
+    let btn_rects: Vec<egui::Rect> = (0..btn_count)
+        .map(|i| {
+            let btn_y = bar_rect.min.y + V_PAD + i as f32 * (ICON_SIZE + BTN_SPACING);
+            egui::Rect::from_min_max(
+                egui::pos2(bar_rect.min.x, btn_y),
+                egui::pos2(bar_rect.max.x, btn_y + ICON_SIZE),
+            )
+        })
+        .collect();
+
+    // 记录按下时所在的按钮：只有 press 和 release 落在同一个按钮上才算点击。
+    // 否则从音乐区拖拽到工具条上释放会误触发按钮动作（事件穿透的反向）。
+    let press_btn_id = ui.id().with("sel_bar_press_btn");
+    let mut press_btn: Option<usize> = ui
+        .data_mut(|d| d.get_persisted(press_btn_id))
+        .unwrap_or(None);
+    if pressed {
+        press_btn = pointer_pos.and_then(|p| btn_rects.iter().position(|r| r.contains(p)));
+        ui.data_mut(|d| d.insert_persisted(press_btn_id, press_btn));
+    }
 
     for (i, (&icon, action)) in icons.iter().zip(actions.iter()).enumerate() {
-        let btn_y = bar_rect.min.y + V_PAD + i as f32 * (ICON_SIZE + BTN_SPACING);
-        let btn_rect = egui::Rect::from_min_max(
-            egui::pos2(bar_rect.min.x, btn_y),
-            egui::pos2(bar_rect.max.x, btn_y + ICON_SIZE),
-        );
+        let btn_rect = btn_rects[i];
 
         // Hover detection
         let hovered = pointer_pos.is_some_and(|p| btn_rect.contains(p));
@@ -181,10 +200,16 @@ pub fn show(
             );
         }
 
-        // Manual click detection using primary_released (not consumed by widgets)
-        if released && hovered {
+        // Manual click detection: press and release on the same button,
+        // with release still hovering it (press 起点记录防拖拽穿透误触)。
+        if released && hovered && press_btn == Some(i) {
             result = Some(*action);
         }
+    }
+
+    // release 后清除 press 记录，避免影响下一次点击。
+    if released {
+        ui.data_mut(|d| d.insert_persisted(press_btn_id, Option::<usize>::None));
     }
 
     result

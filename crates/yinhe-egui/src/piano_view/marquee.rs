@@ -26,6 +26,9 @@ pub(crate) struct MarqueeDragResult {
 /// Returns `Some(MarqueeDragResult)` on a valid drag release (>= 3px), `None` otherwise.
 /// A click that stays within 3px returns `None` — the caller can treat it as a
 /// plain cursor-position click (set cursor_tick etc.).
+///
+/// `on_bar`: 按下时指针是否在选框浮动工具条上。为 true 时不启动框选——
+/// 否则从工具条上按下拖拽会穿透到选框逻辑（不按 ctrl 也能拉出第二个选框）。
 #[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 pub(crate) fn marquee_drag_frame(
     ui: &mut egui::Ui,
@@ -37,6 +40,7 @@ pub(crate) fn marquee_drag_frame(
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
     total_ticks: f64,
     id_suffix: &'static str,
+    on_bar: bool,
 ) -> Option<MarqueeDragResult> {
     let sel_id = ui.id().with(id_suffix);
     // drag = (start_music, press_pos, current_pos)
@@ -62,6 +66,7 @@ pub(crate) fn marquee_drag_frame(
     if pointer.primary_pressed()
         && let Some(pos) = pointer.hover_pos()
         && music_rect.contains(pos)
+        && !on_bar
     {
         let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
         let raw_tick = view.x_to_tick(local.x);
@@ -234,6 +239,8 @@ pub(crate) fn eraser_drag_frame(
         bar_line_data,
         total_ticks,
         "eraser_drag",
+        // 橡皮擦工具没有选区浮动工具条，无需防穿透
+        false,
     )?;
     let track_lo = track_selected.iter().min().copied().unwrap_or(0);
     let track_hi = track_selected.iter().max().copied().unwrap_or(u16::MAX);
@@ -289,4 +296,142 @@ pub(crate) fn piano_snapped_bounds(
     (
         screen_sx, screen_ex, screen_sy, screen_ey, t_start, t_end, key_lo, key_hi,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use yinhe_editor_core::quantize::QuantizePreset;
+
+    /// 构造测试用的钢琴卷帘视图：1px/tick、无滚动、key 高 10px。
+    fn test_view() -> yinhe_types::PianoRollView {
+        yinhe_types::PianoRollView {
+            base: yinhe_types::TimelineViewBase {
+                pixels_per_tick: 1.0,
+                scroll_x: 0.0,
+                scroll_y: 0.0,
+                left_panel_width: 0.0,
+                dirty: false,
+                track_panel_row_height: 40.0,
+                track_panel_scroll_y: 0.0,
+            },
+            key_height: 10.0,
+            viewport_h: 0.0,
+        }
+    }
+
+    fn content() -> egui::Rect {
+        egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(800.0, 600.0))
+    }
+
+    /// 浮动工具条上的一点（用 compute_bar_rect 计算得到，避免硬编码坐标）。
+    fn bar_point() -> egui::Pos2 {
+        let eff = [(0.0f64, 100.0f64, 60u8, 70u8)];
+        let pixel_rect = crate::selection::drag::music_sel_to_pixel_rect(
+            &test_view().base,
+            test_view().key_height,
+            eff[0].0,
+            eff[0].1,
+            eff[0].2,
+            eff[0].3,
+        );
+        let bar = crate::widgets::selection_actions::compute_bar_rect(content(), pixel_rect)
+            .expect("bar 应显示");
+        bar.center()
+    }
+
+    /// 跑一帧 marquee_drag_frame，返回框选结果。
+    fn run_frame(
+        ctx: &egui::Context,
+        raw: egui::RawInput,
+        view: &mut yinhe_types::PianoRollView,
+        on_bar: bool,
+    ) -> Option<MarqueeDragResult> {
+        let mut out = None;
+        let _ = ctx.run_ui(raw, |ui| {
+            out = marquee_drag_frame(
+                ui,
+                content(),
+                content(),
+                view,
+                QuantizePreset::Fraction(1, 4),
+                480,
+                None,
+                1000.0,
+                "sel_drag",
+                on_bar,
+            );
+        });
+        out
+    }
+
+    fn press_event(pos: egui::Pos2) -> egui::RawInput {
+        let mut raw = egui::RawInput::default();
+        raw.events.push(egui::Event::PointerMoved(pos));
+        raw.events.push(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::default(),
+        });
+        raw
+    }
+
+    fn drag_event(pos: egui::Pos2) -> egui::RawInput {
+        let mut raw = egui::RawInput::default();
+        raw.events.push(egui::Event::PointerMoved(pos));
+        raw
+    }
+
+    fn release_event(pos: egui::Pos2) -> egui::RawInput {
+        let mut raw = egui::RawInput::default();
+        raw.events.push(egui::Event::PointerMoved(pos));
+        raw.events.push(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::default(),
+        });
+        raw
+    }
+
+    /// 回归测试：从浮动工具条上按下拖拽不得启动框选。
+    /// （曾导致不按 ctrl 也能拉出第二个选框 —— 事件穿透。）
+    #[test]
+    fn marquee_from_action_bar_does_not_start() {
+        let ctx = egui::Context::default();
+        let mut view = test_view();
+        let pos = bar_point();
+
+        let _ = run_frame(&ctx, press_event(pos), &mut view, true);
+        let _ = run_frame(
+            &ctx,
+            drag_event(pos + egui::vec2(30.0, 10.0)),
+            &mut view,
+            true,
+        );
+        let result = run_frame(
+            &ctx,
+            release_event(pos + egui::vec2(30.0, 10.0)),
+            &mut view,
+            true,
+        );
+        assert!(result.is_none(), "从工具条按下拖拽不得产生选框（事件穿透）");
+    }
+
+    /// 保障测试：音乐区正常框选不受防穿透影响。
+    #[test]
+    fn marquee_normal_drag_still_works() {
+        let ctx = egui::Context::default();
+        let mut view = test_view();
+        let start = egui::pos2(200.0, 300.0);
+        let end = egui::pos2(240.0, 330.0);
+
+        let _ = run_frame(&ctx, press_event(start), &mut view, false);
+        let _ = run_frame(&ctx, drag_event(end), &mut view, false);
+        let result = run_frame(&ctx, release_event(end), &mut view, false);
+        let result = result.expect("正常框选应产生结果");
+        assert!(result.t_start < result.t_end, "t 范围应有效");
+        assert!(result.key_lo <= result.key_hi, "key 范围应有效");
+    }
 }

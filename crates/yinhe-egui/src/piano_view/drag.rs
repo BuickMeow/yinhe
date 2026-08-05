@@ -132,13 +132,18 @@ pub(crate) fn sel_drag_frame(
 
     // press 分支和 click 分支共用，整个函数作用域内有效。
     let eff_rects = sel_rect.effective_rects();
+    // 按下时指针是否在选框浮动工具条上：在工具条上时不启动任何拖拽/框选
+    // （曾复发两次：playhead 跳转 + 不按 ctrl 拉出第二个选框）。
+    let press_on_bar = ui
+        .input(|i| i.pointer.hover_pos())
+        .is_some_and(|pos| on_action_bar(pos, music_rect, view, &eff_rects));
 
     // Start drag (note drag only — marquee is handled by shared function below)
     if pointer.primary_pressed()
         && let Some(pos) = pointer.hover_pos()
         && music_rect.contains(pos)
     {
-        let on_bar = on_action_bar(pos, music_rect, view, &eff_rects);
+        let on_bar = press_on_bar;
 
         if on_bar {
             // Don't start drag, don't clear anything — let the button handle it.
@@ -465,6 +470,7 @@ pub(crate) fn sel_drag_frame(
             bar_line_data,
             total_ticks,
             "sel_drag",
+            press_on_bar,
         ) {
             let track_lo = track_selected.iter().min().copied().unwrap_or(0);
             let track_hi = track_selected.iter().max().copied().unwrap_or(u16::MAX);
