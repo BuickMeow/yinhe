@@ -189,41 +189,15 @@ const fn sf_to_major_root(sf: i8) -> u8 {
 ///
 /// 导出 MIDI 时，非大小调音阶由 `ScaleType::to_midi_sf_mi` 替换为最接近的大/小调。
 ///
-/// serde 向后兼容：旧 `.yin` 文件存的 `{sf, mi}` 会被自动迁移为 `{root, scale}`。
-#[derive(Clone, Debug, PartialEq, Serialize)]
+/// serde 兼容性：bincode 不支持 `deserialize_any`（untagged 枚举依赖它），
+/// 所以这里直接用派生实现，与派生 `Serialize` 的线格式一一对应。
+/// 早期版本曾用 `#[serde(untagged)]` 迁移旧 `{sf, mi}` 格式，
+/// 但该迁移对 bincode 从来无法工作，已删除。
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct KeySigEvent {
     pub tick: u32,
     pub root: u8,
     pub scale: ScaleType,
-}
-
-impl<'de> Deserialize<'de> for KeySigEvent {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        #[serde(untagged)]
-        enum Raw {
-            New {
-                tick: u32,
-                root: u8,
-                scale: ScaleType,
-            },
-            Legacy {
-                tick: u32,
-                sf: i8,
-                mi: u8,
-            },
-        }
-        match Raw::deserialize(deserializer)? {
-            Raw::New { tick, root, scale } => Ok(KeySigEvent { tick, root, scale }),
-            Raw::Legacy { tick, sf, mi } => {
-                let (root, scale) = from_midi_sf_mi(sf, mi);
-                Ok(KeySigEvent { tick, root, scale })
-            }
-        }
-    }
 }
 
 /// 标记事件（MIDI Meta FF 06 Marker / FF 07 CueMarker）。
@@ -360,16 +334,6 @@ mod tests {
             let (root2, _) = from_midi_sf_mi(sf2, 1);
             assert_eq!(root2, root);
         }
-    }
-
-    /// 旧格式 {sf, mi} 反序列化迁移到 {root, scale}。
-    #[test]
-    fn test_legacy_keysig_deserialize() {
-        let json = r#"{"tick":0,"sf":2,"mi":0}"#; // D 大调
-        let ev: KeySigEvent = serde_json::from_str(json).unwrap();
-        assert_eq!(ev.tick, 0);
-        assert_eq!(ev.root, 2); // D
-        assert_eq!(ev.scale, ScaleType::Major);
     }
 
     /// 新格式 {root, scale} 正常反序列化。

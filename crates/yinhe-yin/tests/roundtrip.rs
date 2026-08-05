@@ -36,7 +36,18 @@ fn build_complex_model() -> YinModel {
                 denominator: 2,
             },
         ],
-        key_sig: Vec::new(),
+        key_sig: vec![
+            yinhe_types::KeySigEvent {
+                tick: 0,
+                root: 0, // C
+                scale: yinhe_types::ScaleType::Major,
+            },
+            yinhe_types::KeySigEvent {
+                tick: 1920,
+                root: 9, // A
+                scale: yinhe_types::ScaleType::NaturalMinor,
+            },
+        ],
         markers: Vec::new(),
         lyrics: Vec::new(),
         chord: Vec::new(),
@@ -209,6 +220,16 @@ fn roundtrip_in_memory() {
     assert_eq!(m2.conductor.tempo.events.len(), 2);
     assert!((m2.conductor.tempo.events[1].value - 60.0).abs() < 1e-6);
     assert_eq!(m2.conductor.time_sig.len(), 2);
+
+    // 回归：key_sig 非空时必须能完成 bincode 往返（曾经 untagged 导致 deserialize_any 失败）
+    assert_eq!(m2.conductor.key_sig.len(), 2);
+    assert_eq!(m2.conductor.key_sig[0].root, 0);
+    assert_eq!(m2.conductor.key_sig[0].scale, yinhe_types::ScaleType::Major);
+    assert_eq!(m2.conductor.key_sig[1].tick, 1920);
+    assert_eq!(
+        m2.conductor.key_sig[1].scale,
+        yinhe_types::ScaleType::NaturalMinor
+    );
 
     assert_eq!(m2.tracks.len(), 3);
 

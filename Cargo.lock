@@ -7264,6 +7264,7 @@ dependencies = [
  "yinhe-theme",
  "yinhe-types",
  "yinhe-wgpu",
+ "yinhe-yin",
 ]
 
 [[package]]
