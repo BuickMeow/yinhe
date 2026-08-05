@@ -244,8 +244,12 @@ fn note_geometry(
     let ppu = u.pixels_per_tick;
     let x_offset = u.keyboard_width - u.scroll_x;
 
+    // 右边界直接算（与相邻音符的左边界完全相同的表达式），杜绝 1px 缝隙：
+    // 链式 pixel_x + pixel_w 会叠加取整偏移与 f32 舍入误差，在 .5 临界处
+    // 与相邻音符的边界岔开 1px（tick 越大 pixel_w 的 ULP 越大越容易触发）。
     var pixel_x = x_offset + f32(start_tick) * ppu;
-    var pixel_w = max(x_offset + f32(end_tick) * ppu - pixel_x, 2.0);
+    var right = x_offset + f32(end_tick) * ppu;
+    var pixel_w = max(right - pixel_x, 2.0);
     var pixel_y: f32;
     var pixel_h: f32;
 
@@ -265,24 +269,30 @@ fn note_geometry(
     }
 
     // Snap to integer pixels to prevent sub-pixel jitter.
+    // 取整基于直接值（raw_x / raw_right），pixel_w 由取整后的差得出，
+    // 保证 A 的右边界 == 相邻音符 B 的左边界（同 tick 同表达式同结果）。
     if u.scroll_mode != 0u {
         let raw_x = pixel_x;
-        let raw_right = pixel_x + pixel_w;
+        let raw_right = right;
         pixel_x = floor(raw_x + 0.5);
+        right = floor(raw_right + 0.5);
         let raw_y = pixel_y;
         let raw_bottom = pixel_y + pixel_h;
         pixel_y = floor(raw_y + 0.5);
-        pixel_w = max(floor(raw_right + 0.5) - floor(raw_x + 0.5), 1.0);
+        pixel_w = max(right - pixel_x, 1.0);
         pixel_h = max(floor(raw_bottom + 0.5) - floor(raw_y + 0.5), 1.0);
+    } else {
+        // 非取整模式：保留 2.0 最小可见宽度（黑乐谱密集短音符保证可见）。
+        right = pixel_x + pixel_w;
     }
 
     // 4 顶点 + 共享 index buffer（[0,1,2, 1,3,2]）：0=TL, 1=TR, 2=BL, 3=BR。
     // 相比 6 顶点/实例，顶点数 -33%（黑乐谱级实例数下显著省顶点处理）。
     var pos = array<vec2<f32>, 4>(
-        vec2<f32>(pixel_x,           pixel_y),
-        vec2<f32>(pixel_x + pixel_w, pixel_y),
-        vec2<f32>(pixel_x,           pixel_y + pixel_h),
-        vec2<f32>(pixel_x + pixel_w, pixel_y + pixel_h),
+        vec2<f32>(pixel_x, pixel_y),
+        vec2<f32>(right,   pixel_y),
+        vec2<f32>(pixel_x, pixel_y + pixel_h),
+        vec2<f32>(right,   pixel_y + pixel_h),
     );
 
     var uv = array<vec2<f32>, 4>(
@@ -362,8 +372,11 @@ fn vs_main_velocity(
     let ppu = u.pixels_per_tick;
     let x_offset = u.keyboard_width - u.scroll_x;
 
+    // 右边界直接算（tick+length = 音符右端，与相邻 bar 的左边界同表达式），
+    // 杜绝 1px 缝隙（链式 pixel_x + pixel_w 的取整/舍入误差见 note_geometry）。
     var pixel_x = x_offset + f32(tick) * ppu;
-    var pixel_w = max(f32(length) * ppu, 2.0);
+    var right = x_offset + f32(tick + length) * ppu;
+    var pixel_w = max(right - pixel_x, 2.0);
 
     // Y from velocity: 126 级映射（vel=1 已由构建过滤，不显示）。
     // vel 2..=127 → 高度 1..=126 单位：y = (vel-1)/126 * panel_h。
@@ -377,21 +390,25 @@ fn vs_main_velocity(
     // Snap to integer pixels to prevent sub-pixel jitter.
     if u.scroll_mode != 0u {
         let raw_x = pixel_x;
-        let raw_right = pixel_x + pixel_w;
+        let raw_right = right;
         pixel_x = floor(raw_x + 0.5);
+        right = floor(raw_right + 0.5);
         let raw_y = pixel_y;
         let raw_bottom = pixel_y + pixel_h;
         pixel_y = floor(raw_y + 0.5);
-        pixel_w = max(floor(raw_right + 0.5) - floor(raw_x + 0.5), 1.0);
+        pixel_w = max(right - pixel_x, 1.0);
         pixel_h = max(floor(raw_bottom + 0.5) - floor(raw_y + 0.5), 1.0);
+    } else {
+        // 非取整模式：保留 2.0 最小可见宽度（与 note_geometry 一致）。
+        right = pixel_x + pixel_w;
     }
 
     // 4 顶点 + 共享 index buffer（与 note 相同：[0,1,2, 1,3,2]）。
     var pos = array<vec2<f32>, 4>(
-        vec2<f32>(pixel_x,           pixel_y),
-        vec2<f32>(pixel_x + pixel_w, pixel_y),
-        vec2<f32>(pixel_x,           pixel_y + pixel_h),
-        vec2<f32>(pixel_x + pixel_w, pixel_y + pixel_h),
+        vec2<f32>(pixel_x, pixel_y),
+        vec2<f32>(right,   pixel_y),
+        vec2<f32>(pixel_x, pixel_y + pixel_h),
+        vec2<f32>(right,   pixel_y + pixel_h),
     );
 
     var uv = array<vec2<f32>, 4>(
