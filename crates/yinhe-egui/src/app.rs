@@ -38,13 +38,6 @@ pub struct App {
     pub(crate) last_hidden_hash: u64,   // last hidden_hash (for incremental detection)
 
     // ── Arrangement (shared GPU resources + global view state) ──
-    // AR 与 PR 共用同一套 gpu_upload 判定逻辑，但 arr_renderer 是独立实例，
-    // 上传状态必须分开记录（各自维护自己的 uploaded_key_revisions）。
-    pub(crate) arr_last_cull_revision: u64,
-    pub(crate) arr_last_cull_revision_only: u64,
-    pub(crate) arr_last_hidden_hash: u64,
-
-    // ── Arrangement (shared GPU resources + global view state) ──
     pub(crate) arr_render_ctx: RenderContext,
     pub(crate) arr_renderer: yinhe_wgpu::InstanceRenderer,
     pub(crate) arrange_view: ArrangementView,
@@ -233,10 +226,6 @@ impl App {
             last_cull_revision_only: 0,
             last_hidden_hash: 0,
 
-            arr_last_cull_revision: 0,
-            arr_last_cull_revision_only: 0,
-            arr_last_hidden_hash: 0,
-
             arr_render_ctx,
             arr_renderer: yinhe_wgpu::InstanceRenderer::new(device, queue, format),
             arrange_view: ArrangementView::default(),
@@ -376,9 +365,6 @@ impl App {
         self.last_cull_revision = 0;
         self.last_cull_revision_only = 0;
         self.last_hidden_hash = 0;
-        self.arr_last_cull_revision = 0;
-        self.arr_last_cull_revision_only = 0;
-        self.arr_last_hidden_hash = 0;
     }
 
     /// 判断打开 MIDI/.yin 时是否应替换当前标签页而非另开一个。
