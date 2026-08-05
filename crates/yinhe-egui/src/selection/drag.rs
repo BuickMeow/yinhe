@@ -2,7 +2,7 @@ use eframe::egui;
 use yinhe_editor_core::ResizeSide;
 use yinhe_editor_core::quantize::QuantizePreset;
 use yinhe_types::view_base::TimelineViewBase;
-use yinhe_types::{NoteSource, TimeSigEvent, key_notes_in_range};
+use yinhe_types::{NoteSource, TimeSigEvent};
 
 /// Hit-test 边缘的像素阈值（与铅笔工具一致）。
 const EDGE_THRESHOLD_PX: f32 = 6.0;
@@ -106,7 +106,7 @@ pub fn collect_selected_notes(
         .flat_map(|&(ts, te, kl, kh, _tl, _th)| {
             (kl..=kh).flat_map(move |key| {
                 midi.map(|m| {
-                    key_notes_in_range(m.key_notes(key), ts, te)
+                    m.key_notes_in_range(key, ts, te)
                         .iter()
                         .filter(|n| selected.contains(n.track, n.start_tick, key))
                         .filter(|n| track_selected.is_empty() || track_selected.contains(&n.track))

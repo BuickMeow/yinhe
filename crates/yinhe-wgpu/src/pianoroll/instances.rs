@@ -1,6 +1,6 @@
 use rayon::prelude::*;
 use yinhe_theme::GpuTheme;
-use yinhe_types::{NoteSource, key_notes_in_range};
+use yinhe_types::NoteSource;
 
 use crate::vertex::NoteInstance;
 use yinhe_types::PianoRollView;
@@ -26,7 +26,7 @@ fn build_key_instances(
     range: Option<(f64, f64)>,
 ) {
     let notes = match range {
-        Some((ts, te)) => key_notes_in_range(midi.key_notes(key), ts as u32, te as u32),
+        Some((ts, te)) => midi.key_notes_in_range(key, ts as u32, te as u32),
         None => midi.key_notes(key),
     };
     for note in notes {

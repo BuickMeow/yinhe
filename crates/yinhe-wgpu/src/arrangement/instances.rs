@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use rayon::prelude::*;
-use yinhe_types::{NoteSource, key_notes_in_range};
+use yinhe_types::NoteSource;
 
 use crate::vertex::NoteInstance;
 use yinhe_types::ArrangementView;
@@ -105,8 +105,7 @@ pub fn build_notes(
         .filter_map(|key| {
             // Wrap key processing in stacker to get fresh stack segments on demand.
             stacker::maybe_grow(STACK_RED_ZONE, STACK_SIZE, || {
-                let notes =
-                    key_notes_in_range(midi.key_notes(key), tick_start as u32, tick_end as u32);
+                let notes = midi.key_notes_in_range(key, tick_start as u32, tick_end as u32);
                 if notes.is_empty() {
                     return None;
                 }

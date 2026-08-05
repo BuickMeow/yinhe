@@ -179,6 +179,10 @@ pub struct YinModel {
     pub notes: Box<[Arc<Vec<yinhe_types::Note>>; 128]>,
     pub note_count: u64,
     pub tick_length: u64,
+    /// 全曲最长音符长度（tick），只增不减：删除最长音符后保留旧值只会让
+    /// 视口查询左边界略偏左，绝不漏音符。由 `load_track_notes` / `rebuild` /
+    /// `rebuild_dirty` / `rescale_ppq` 维护；供 `NoteSource::max_note_len` 返回。
+    pub max_note_len: u32,
     /// Per-track note count cache (avoids scanning 128 buckets for stats).
     pub track_note_count: Vec<u64>,
     /// Per-track audible note count (velocity > 1). `> 0` means the track
@@ -228,6 +232,7 @@ impl Default for YinModel {
             notes: Box::new(core::array::from_fn(|_| Arc::new(Vec::new()))),
             note_count: 0,
             tick_length: 0,
+            max_note_len: 0,
             track_note_count: Vec::new(),
             track_audible_count: Vec::new(),
             dirty_keys: [false; 128],

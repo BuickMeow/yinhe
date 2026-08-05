@@ -38,6 +38,7 @@ impl YinModel {
 
         let mut note_count: u64 = 0;
         let mut max_tick: u64 = 0;
+        let mut max_len: u32 = 0;
         let mut track_counts: Vec<u64> = vec![0u64; self.tracks.len()];
         let mut track_audible: Vec<u64> = vec![0u64; self.tracks.len()];
         let mut bucket_stats: [HashMap<u16, (u64, u64)>; 128] =
@@ -51,6 +52,7 @@ impl YinModel {
                 if end > max_tick {
                     max_tick = end;
                 }
+                max_len = max_len.max(note.end_tick.saturating_sub(note.start_tick));
                 note_count += 1;
                 if track_idx < track_counts.len() {
                     track_counts[track_idx] += 1;
@@ -96,6 +98,7 @@ impl YinModel {
         *self.notes = key_notes.map(Arc::new);
         self.note_count = note_count;
         self.tick_length = max_tick;
+        self.max_note_len = max_len;
         self.track_note_count = track_counts;
         self.track_audible_count = track_audible;
         for (k, bucket) in self.notes.iter().enumerate() {
@@ -147,6 +150,7 @@ impl YinModel {
         // (may have changed after edits or track insertions).
         let mut note_count: u64 = 0;
         let mut max_tick: u64 = 0;
+        let mut max_len: u32 = 0;
         let mut track_counts: Vec<u64> = vec![0u64; self.tracks.len()];
         let mut track_audible: Vec<u64> = vec![0u64; self.tracks.len()];
         // Per-bucket per-track stats — recomputed in the same pass so
@@ -161,6 +165,7 @@ impl YinModel {
                 if end > max_tick {
                     max_tick = end;
                 }
+                max_len = max_len.max(n.end_tick.saturating_sub(n.start_tick));
                 if end > bucket_max_end[k] {
                     bucket_max_end[k] = end;
                 }
@@ -179,6 +184,7 @@ impl YinModel {
         }
         self.note_count = note_count;
         self.tick_length = max_tick;
+        self.max_note_len = max_len;
         self.track_note_count = track_counts;
         self.track_audible_count = track_audible;
         for k in 0..128 {
@@ -248,6 +254,11 @@ impl YinModel {
                 if end > bucket_max {
                     bucket_max = end;
                 }
+                // max_note_len 只增不减：删除最长音符后保留旧值只会让视口
+                // 查询左边界略偏左，绝不漏音符（见 NoteSource::max_note_len）。
+                self.max_note_len = self
+                    .max_note_len
+                    .max(n.end_tick.saturating_sub(n.start_tick));
             }
             self.bucket_max_end_tick[k] = bucket_max;
         }

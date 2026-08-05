@@ -5,7 +5,7 @@ use rust_i18n::t;
 
 use super::PencilNoteDrag;
 use yinhe_editor_core::quantize::QuantizePreset;
-use yinhe_types::{TimeSigEvent, key_notes_in_range};
+use yinhe_types::TimeSigEvent;
 
 /// Internal pencil-tool drag mode persisted across frames.
 #[derive(Clone)]
@@ -148,7 +148,7 @@ pub(crate) fn pencil_frame(
             let key = view.y_to_key(mouse_local_y);
             let midi = midi?;
             let active_track = track?;
-            let notes = key_notes_in_range(midi.key_notes(key), 0, u32::MAX);
+            let notes = midi.key_notes_in_range(key, 0, u32::MAX);
 
             for note in notes {
                 // 只命中正在编辑的 track，避免跨 track 误触（即使其他 track
@@ -571,7 +571,7 @@ fn note_velocity(
     key: u8,
 ) -> Option<u8> {
     let midi = midi?;
-    key_notes_in_range(midi.key_notes(key), start_tick, start_tick + 1)
+    midi.key_notes_in_range(key, start_tick, start_tick + 1)
         .iter()
         .find(|n| n.track == track && n.start_tick == start_tick)
         .map(|n| n.velocity)

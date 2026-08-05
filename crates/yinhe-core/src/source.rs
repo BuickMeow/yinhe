@@ -30,6 +30,10 @@ impl NoteSource for YinModel {
         Some(self.tick_length)
     }
 
+    fn max_note_len(&self) -> u32 {
+        self.max_note_len
+    }
+
     fn time_sig_default(&self) -> (u8, u8) {
         self.tempo_map.time_sig_default
     }

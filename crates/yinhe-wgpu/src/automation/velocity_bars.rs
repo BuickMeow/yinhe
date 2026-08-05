@@ -1,6 +1,6 @@
 use rayon::prelude::*;
 use yinhe_types::AutomationPanelView;
-use yinhe_types::{NoteSource, key_notes_in_range};
+use yinhe_types::NoteSource;
 
 use crate::vertex::VelocityBarInstance;
 
@@ -38,7 +38,7 @@ pub fn build_velocity_bars(
         .flat_map_iter(|key| {
             stacker::maybe_grow(STACK_RED_ZONE, STACK_SIZE, || {
                 let mut local: Vec<VelocityBarInstance> = Vec::new();
-                let notes = key_notes_in_range(midi.key_notes(key), pad_start, pad_end);
+                let notes = midi.key_notes_in_range(key, pad_start, pad_end);
                 for note in notes {
                     if note.start_tick as f64 > pad_end as f64 {
                         break;
