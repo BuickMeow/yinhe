@@ -124,12 +124,11 @@ fn dedup_overlapped(bars: &mut Vec<VelocityBarInstance>) {
         .map(|&(s, e)| {
             let mut covered: Vec<(u32, u32)> = Vec::new();
             let mut del = Vec::new();
-            for idx in s..e {
-                let b = &bars[idx];
+            for (off, b) in bars[s..e].iter().enumerate() {
                 let s_ = b.tick;
                 let e_ = b.tick + b.length;
                 if is_fully_covered(&covered, s_, e_) {
-                    del.push(idx);
+                    del.push(s + off);
                 } else {
                     insert_interval(&mut covered, s_, e_);
                 }
