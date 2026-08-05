@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use yinhe_core::{ConductorData, NoteEvent, PcEvent, ProjectMeta, TrackData, YinModel};
+use yinhe_core::{BucketNote, ConductorData, PcEvent, ProjectMeta, TrackData, YinModel};
 use yinhe_types::AutomationLane;
 
 use crate::container::{Sections, pack, unpack};
@@ -29,22 +29,47 @@ pub struct ProjectSoundFonts {
 }
 
 /// What goes into the zstd-compressed bincode blob.
+///
+/// v3 起音符不再挂在 track 下，而是直接按 key 桶存储（`key_notes`），
+/// 桶内已按 `start_tick` 排序，配合 delta+gate 编码提升压缩率；
+/// 加载时由 `YinModel::load_bucket_notes` 直接入桶，省去按 track 分组
+/// 再重新分桶的多余转换。`id` 不落盘，加载时重新分配。
 #[derive(Serialize, Deserialize)]
 struct ModelData {
     conductor: ConductorData,
     tracks: Vec<TrackPayload>,
+    key_notes: Vec<KeyBucket>,
 }
 
 #[derive(Serialize, Deserialize)]
 struct TrackPayload {
     uuid: String,
-    notes: Vec<NoteEvent>,
     automation_lanes: Vec<AutomationLane>,
     program_change: Vec<PcEvent>,
     #[serde(default)]
     lyrics: Vec<yinhe_types::LyricsEvent>,
     #[serde(default)]
     chord: Vec<yinhe_types::ChordEvent>,
+}
+
+/// 一个 key 桶的持久化表示（定长 11B/音符：track u16 + velocity u8 + start u32 + gate u32）。
+#[derive(Default, Serialize, Deserialize)]
+struct KeyBucket {
+    notes: Vec<StoredNote>,
+}
+
+/// delta+gate 编码的音符。
+///
+/// `start`：桶内第一个音符存绝对 start_tick，其余存相对前一音符的 delta；
+/// `gate`：长度 = end - start。黑乐谱同 key 内相邻 start 差极小（0~几十 tick），
+/// 绝对值大数（百万级 tick）转成小数后高位字节大量为 0，zstd 压缩率显著提升
+/// （5.5M 音符工程：绝对存储 15.5MB → delta+gate 约 3MB）。
+#[derive(Serialize, Deserialize)]
+struct StoredNote {
+    track: u16,
+    velocity: u8,
+    start: u32,
+    gate: u32,
 }
 
 // =========================================================
@@ -75,34 +100,50 @@ fn save_yin_bytes_with_files_inner(
     let mapping_json = serde_json::to_vec_pretty(mapping)?;
 
     // data.bin: bincode(ModelData) → zstd
-    // Build per-track notes in a single O(N) pass instead of O(T×N).
-    //
-    // 不序列化 id：id 是编辑会话内的身份标识（undo/selection/音频匹配），
-    // 保存→加载后 undo 栈清空，重新分配即可。且全局递增 id 逐字节 +1，
-    // zstd 找不到 ≥3B 公共子串（minmatch=3），压缩率仅 73%——
-    // 5.5M 音符文件里 id 一个字段就吃掉 16MB（占 .yin 体积 60%+）。
-    // 保存时置 0（“未分配”哨兵），加载时 `load_track_notes` 统一发号，
-    // 与 MIDI 解析路径行为一致；旧 .yin 的非 0 id 仍保留原值（兼容）。
-    let num_tracks = model.tracks.len();
-    let mut per_track_notes: Vec<Vec<NoteEvent>> = vec![Vec::new(); num_tracks];
-    for (key, bucket) in model.notes.iter().enumerate() {
-        for n in bucket.iter() {
-            if (n.track as usize) < num_tracks {
-                per_track_notes[n.track as usize].push(NoteEvent {
-                    id: 0,
-                    start_tick: n.start_tick,
-                    end_tick: n.end_tick,
-                    key: key as u8,
-                    velocity: n.velocity,
-                });
-            }
+    // 按 key 桶直存（单趟 O(N)），桶内 delta+gate 编码：
+    // - delta：同桶相邻音符 start 之差（桶内已按 start_tick 排序，第一音符存绝对）；
+    //   黑乐谱同 key 内音符极密，相邻差仅 0~几十 tick，而绝对值是百万级大数，
+    //   高位字节大量重复，zstd 压缩率天差地别（见 KeyBucket 注释）
+    // - gate：end - start（长度）
+    // - 不序列化 id：会话内身份（undo/selection/音频匹配），保存→加载后
+    //   undo 栈清空，加载时由 load_bucket_notes 重新分配；全局递增 id 逐字节
+    //   +1，zstd minmatch=3 下几乎压不动（5.5M 音符文件曾占 16MB）
+    let mut key_notes: Vec<KeyBucket> = Vec::with_capacity(128);
+    for bucket in model.notes.iter() {
+        // 桶内应有序（模型不变量）；乱序时兜底排序，避免 delta 下溢
+        let sorted: Vec<&yinhe_core::Note>;
+        let iter: Box<dyn Iterator<Item = &yinhe_core::Note> + '_> =
+            if bucket.is_sorted_by_key(|n| n.start_tick) {
+                Box::new(bucket.iter())
+            } else {
+                sorted = bucket.iter().collect();
+                let mut sorted = sorted;
+                sorted.sort_by_key(|n| n.start_tick);
+                Box::new(sorted.into_iter())
+            };
+        let mut prev_start: u32 = 0;
+        let mut notes = Vec::with_capacity(bucket.len());
+        for (i, n) in iter.enumerate() {
+            let start = if i == 0 {
+                n.start_tick
+            } else {
+                n.start_tick - prev_start
+            };
+            notes.push(StoredNote {
+                track: n.track,
+                velocity: n.velocity,
+                start,
+                gate: n.end_tick.saturating_sub(n.start_tick),
+            });
+            prev_start = n.start_tick;
         }
+        key_notes.push(KeyBucket { notes });
     }
 
-    let mut tracks_payload = Vec::with_capacity(num_tracks);
+    let mut tracks_payload = Vec::with_capacity(model.tracks.len());
     {
         let mut by_uuid: std::collections::HashMap<&str, usize> =
-            std::collections::HashMap::with_capacity(num_tracks);
+            std::collections::HashMap::with_capacity(model.tracks.len());
         for (i, t) in model.tracks.iter().enumerate() {
             by_uuid.insert(&t.uuid, i);
         }
@@ -111,7 +152,6 @@ fn save_yin_bytes_with_files_inner(
                 let t = &model.tracks[track_idx];
                 tracks_payload.push(TrackPayload {
                     uuid: t.uuid.clone(),
-                    notes: std::mem::take(&mut per_track_notes[track_idx]),
                     automation_lanes: t.automation_lanes.clone(),
                     program_change: t.program_change.clone(),
                     lyrics: t.lyrics.clone(),
@@ -124,6 +164,7 @@ fn save_yin_bytes_with_files_inner(
     let model_data = ModelData {
         conductor: (*model.conductor).clone(),
         tracks: tracks_payload,
+        key_notes,
     };
 
     let plain = bincode::serialize(&model_data)?;
@@ -211,7 +252,6 @@ fn load_yin_bytes_inner(bytes: &[u8]) -> Result<(YinModel, ProjectFile, MappingF
     }
 
     let mut tracks: Vec<Arc<TrackData>> = Vec::with_capacity(flat.len());
-    let mut per_track_notes: Vec<Vec<NoteEvent>> = Vec::with_capacity(flat.len());
     for ((port, channel, tm), payload) in flat.into_iter().zip(model_data.tracks) {
         let td = TrackData {
             uuid: tm.uuid.clone(),
@@ -222,7 +262,7 @@ fn load_yin_bytes_inner(bytes: &[u8]) -> Result<(YinModel, ProjectFile, MappingF
             channel_prefix: tm.channel_prefix,
             muted: tm.muted,
             soloed: tm.soloed,
-            notes: Vec::new(), // notes loaded via load_track_notes
+            notes: Vec::new(), // notes loaded via load_bucket_notes
             automation_lanes: payload.automation_lanes,
             program_change: payload.program_change,
             lyrics: payload.lyrics,
@@ -237,8 +277,39 @@ fn load_yin_bytes_inner(bytes: &[u8]) -> Result<(YinModel, ProjectFile, MappingF
                 ),
             )));
         }
-        per_track_notes.push(payload.notes);
         tracks.push(Arc::new(td));
+    }
+
+    // 还原 delta+gate 编码：桶内第一音符为绝对 start，其余 start = prev + delta，
+    // end = start + gate。还原后直接按桶入模型（无需再按 track 分桶）。
+    if model_data.key_notes.len() != 128 {
+        return Err(YinError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "key_notes has {} buckets, expected 128",
+                model_data.key_notes.len()
+            ),
+        )));
+    }
+    let mut bucket_notes: Vec<Vec<BucketNote>> = Vec::with_capacity(128);
+    for bucket in model_data.key_notes {
+        let mut prev_start: u32 = 0;
+        let mut notes = Vec::with_capacity(bucket.notes.len());
+        for (i, sn) in bucket.notes.into_iter().enumerate() {
+            let start = if i == 0 {
+                sn.start
+            } else {
+                prev_start + sn.start
+            };
+            notes.push(BucketNote {
+                track: sn.track,
+                start_tick: start,
+                end_tick: start + sn.gate,
+                velocity: sn.velocity,
+            });
+            prev_start = start;
+        }
+        bucket_notes.push(notes);
     }
 
     let mut model = YinModel {
@@ -253,7 +324,7 @@ fn load_yin_bytes_inner(bytes: &[u8]) -> Result<(YinModel, ProjectFile, MappingF
         },
         ..Default::default()
     };
-    model.load_track_notes(per_track_notes);
+    model.load_bucket_notes(bucket_notes);
     model.rebuild();
     Ok((model, project, mapping))
 }

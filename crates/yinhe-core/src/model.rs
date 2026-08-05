@@ -381,6 +381,7 @@ impl YinModel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::events::BucketNote;
 
     fn note(start: u32, end: u32, key: u8) -> NoteEvent {
         NoteEvent {
@@ -422,6 +423,59 @@ mod tests {
         assert_eq!(m.notes[60][1].id, 42);
         assert_eq!(m.notes[64][0].id, 7);
         assert_eq!(m.next_note_id, 43, "发号器应推进到 max+1");
+    }
+
+    #[test]
+    fn load_bucket_notes_fills_buckets_and_assigns_ids() {
+        // .yin v3 加载路径：直接按 key 桶填，track 取自 BucketNote，id 一律重新分配
+        let mut all: Vec<Vec<BucketNote>> = Vec::with_capacity(128);
+        all.push(vec![BucketNote {
+            track: 1,
+            start_tick: 0,
+            end_tick: 480,
+            velocity: 100,
+        }]);
+        all.push(vec![
+            BucketNote {
+                track: 0,
+                start_tick: 960,
+                end_tick: 1440,
+                velocity: 90,
+            },
+            BucketNote {
+                track: 1,
+                start_tick: 960,
+                end_tick: 1920,
+                velocity: 80,
+            },
+        ]);
+        all.resize(128, Vec::new());
+
+        let mut m = YinModel {
+            tracks: vec![
+                Arc::new(TrackData::new(0, 0)),
+                Arc::new(TrackData::new(0, 1)),
+            ],
+            ..Default::default()
+        };
+        m.load_bucket_notes(all);
+
+        assert_eq!(m.note_count, 3);
+        assert_eq!(m.notes[0][0].track, 1);
+        assert_eq!(m.notes[0][0].start_tick, 0);
+        assert_eq!(m.notes[1].len(), 2);
+        assert_eq!(m.notes[1][0].track, 0);
+        assert_eq!(m.notes[1][1].track, 1);
+        // id 从 1 开始重新分配
+        let mut ids: Vec<u32> = m
+            .notes
+            .iter()
+            .flat_map(|b| b.iter().map(|n| n.id))
+            .collect();
+        ids.sort_unstable();
+        assert_eq!(ids, vec![1, 2, 3]);
+        assert_eq!(m.track_note_count[1], 2);
+        assert_eq!(m.next_note_id, 4);
     }
 
     #[test]

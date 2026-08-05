@@ -331,6 +331,26 @@ fn roundtrip_to_disk() {
     assert_eq!(m2.note_count, m1.note_count);
 }
 
+/// 回归：桶内乱序时保存必须兜底排序（否则 delta 编码下溢 panic / 数据损坏）。
+#[test]
+fn unsorted_bucket_save_is_safe() {
+    let mut m1 = build_complex_model();
+    // 手动打乱 key=60 桶（模型不变量被破坏的极端情况）
+    let bucket = Arc::make_mut(&mut m1.notes[60]);
+    bucket.sort_by_key(|n| n.end_tick); // 反序：end_tick 序 ≠ start_tick 序
+
+    let bytes = save_yin_bytes(&m1).unwrap();
+    let m2 = load_yin_bytes(&bytes).unwrap();
+
+    // 保存时按 start_tick 排序，音符集合不丢；加载后桶内必须有序
+    assert_eq!(m2.note_count, m1.note_count);
+    assert!(
+        m2.notes[60]
+            .windows(2)
+            .all(|w| w[0].start_tick <= w[1].start_tick)
+    );
+}
+
 #[test]
 fn empty_model_roundtrips() {
     let m1 = YinModel::default();

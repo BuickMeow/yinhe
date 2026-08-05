@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use yinhe_types::Note;
 
-use crate::events::NoteEvent;
+use crate::events::{BucketNote, NoteEvent};
 
 use super::YinModel;
 
@@ -21,7 +21,7 @@ impl YinModel {
     /// in the same pass (avoids a second full scan in `rebuild()`).
     ///
     /// 音符 id 分配：输入 NoteEvent.id == 0 表示未分配（MIDI 解析路径），
-    /// 由本方法从 `next_note_id` 起顺序发号；非 0 表示外部已分配（.yin 加载），
+    /// 由本方法从 `next_note_id` 起顺序发号；非 0 表示外部已分配（旧 .yin 加载），
     /// 保留原 id 并推进 `next_note_id` 到 max+1。
     pub fn load_track_notes(&mut self, per_track_notes: Vec<Vec<NoteEvent>>) {
         // Count per key for exact allocation.
@@ -32,80 +32,43 @@ impl YinModel {
             }
         }
 
-        // Allocate and fill each bucket, counting in one pass.
-        let mut key_notes: [Vec<Note>; 128] =
-            core::array::from_fn(|k| Vec::with_capacity(per_key_count[k] as usize));
-
-        let mut note_count: u64 = 0;
-        let mut max_tick: u64 = 0;
-        let mut max_len: u32 = 0;
-        let mut track_counts: Vec<u64> = vec![0u64; self.tracks.len()];
-        let mut track_audible: Vec<u64> = vec![0u64; self.tracks.len()];
-        let mut bucket_stats: [HashMap<u16, (u64, u64)>; 128] =
-            core::array::from_fn(|_| HashMap::new());
-        let mut bucket_max_end: [u64; 128] = [0; 128];
-        let mut max_id_seen: u32 = 0;
-
+        let mut loader = NoteLoader::new(self.tracks.len(), self.next_note_id, per_key_count);
         for (track_idx, notes) in per_track_notes.into_iter().enumerate() {
             for note in notes {
-                let end = note.end_tick as u64;
-                if end > max_tick {
-                    max_tick = end;
-                }
-                max_len = max_len.max(note.end_tick.saturating_sub(note.start_tick));
-                note_count += 1;
-                if track_idx < track_counts.len() {
-                    track_counts[track_idx] += 1;
-                    if note.velocity > 1 {
-                        track_audible[track_idx] += 1;
-                    }
-                }
-                // id 分配：0 = 未分配，从发号器取；非 0 = 外部分配，保留并跟踪 max。
-                let id = if note.id == 0 {
-                    let id = self.next_note_id;
-                    self.next_note_id = self.next_note_id.wrapping_add(1);
-                    id
-                } else {
-                    if note.id > max_id_seen {
-                        max_id_seen = note.id;
-                    }
-                    note.id
-                };
-                let key = note.key as usize;
-                key_notes[key].push(Note {
-                    id,
-                    start_tick: note.start_tick,
-                    end_tick: note.end_tick,
-                    velocity: note.velocity,
-                    track: track_idx as u16,
-                });
-                if end > bucket_max_end[key] {
-                    bucket_max_end[key] = end;
-                }
-                let e = bucket_stats[key].entry(track_idx as u16).or_insert((0, 0));
-                e.0 += 1;
-                if note.velocity > 1 {
-                    e.1 += 1;
-                }
+                loader.feed(
+                    note.key as usize,
+                    track_idx as u16,
+                    note.start_tick,
+                    note.end_tick,
+                    note.velocity,
+                    note.id,
+                );
             }
         }
+        loader.finish(self);
+    }
 
-        // 若加载了外部分配的 id，确保发号器在 max+1 之上，避免后续冲突。
-        if max_id_seen + 1 > self.next_note_id {
-            self.next_note_id = max_id_seen + 1;
+    /// `.yin` 加载路径：直接按 key 桶填（桶内已按 start_tick 排序）。
+    ///
+    /// 与 `load_track_notes` 的区别：输入是 128 个 key 桶而非 per-track 列表，
+    /// 省去“按 track 分组存 → 加载再分桶”的多余转换（`.yin` 新格式直接按桶存）。
+    /// 每个音符的 `track` 取自 `BucketNote.track`；id 一律重新分配（`id` 不落盘）。
+    pub fn load_bucket_notes(&mut self, bucket_notes: Vec<Vec<BucketNote>>) {
+        let mut loader =
+            NoteLoader::with_capacity(self.tracks.len(), self.next_note_id, &bucket_notes);
+        for (key, notes) in bucket_notes.into_iter().enumerate() {
+            for note in notes {
+                loader.feed(
+                    key,
+                    note.track,
+                    note.start_tick,
+                    note.end_tick,
+                    note.velocity,
+                    0, // id 不落盘，一律重新分配
+                );
+            }
         }
-
-        *self.notes = key_notes.map(Arc::new);
-        self.note_count = note_count;
-        self.tick_length = max_tick;
-        self.max_note_len = max_len;
-        self.track_note_count = track_counts;
-        self.track_audible_count = track_audible;
-        for (k, bucket) in self.notes.iter().enumerate() {
-            self.bucket_note_count[k] = bucket.len() as u64;
-            self.bucket_max_end_tick[k] = bucket_max_end[k];
-            self.bucket_track_stats[k] = std::mem::take(&mut bucket_stats[k]);
-        }
+        loader.finish(self);
     }
 
     /// 分配一个新的全局唯一音符 id。编辑路径（新增/粘贴/复制）调用。
@@ -513,4 +476,129 @@ pub struct RescaleProgress {
     pub progress: f32,
     /// 当前阶段标签（如 "缩放音符 42/128"）。
     pub label: String,
+}
+
+/// `load_track_notes` / `load_bucket_notes` 的共享装载状态：
+/// 分配 id、入桶、统计（单趟，避免 rebuild 二次扫描）。
+struct NoteLoader {
+    key_notes: [Vec<Note>; 128],
+    note_count: u64,
+    max_tick: u64,
+    max_len: u32,
+    track_counts: Vec<u64>,
+    track_audible: Vec<u64>,
+    bucket_stats: [HashMap<u16, (u64, u64)>; 128],
+    bucket_max_end: [u64; 128],
+    max_id_seen: u32,
+    next_note_id: u32,
+}
+
+impl NoteLoader {
+    /// 按每 key 预估容量精确分配（MIDI 解析路径，先扫一遍数数）。
+    fn new(track_count: usize, next_note_id: u32, per_key_count: [u32; 128]) -> Self {
+        Self {
+            key_notes: core::array::from_fn(|k| Vec::with_capacity(per_key_count[k] as usize)),
+            note_count: 0,
+            max_tick: 0,
+            max_len: 0,
+            track_counts: vec![0u64; track_count],
+            track_audible: vec![0u64; track_count],
+            bucket_stats: core::array::from_fn(|_| HashMap::new()),
+            bucket_max_end: [0; 128],
+            max_id_seen: 0,
+            next_note_id,
+        }
+    }
+
+    /// 容量直接取自各桶长度（.yin 加载路径，桶已就位）。
+    fn with_capacity(
+        track_count: usize,
+        next_note_id: u32,
+        bucket_notes: &[Vec<BucketNote>],
+    ) -> Self {
+        Self {
+            key_notes: core::array::from_fn(|k| {
+                Vec::with_capacity(bucket_notes.get(k).map_or(0, |b| b.len()))
+            }),
+            note_count: 0,
+            max_tick: 0,
+            max_len: 0,
+            track_counts: vec![0u64; track_count],
+            track_audible: vec![0u64; track_count],
+            bucket_stats: core::array::from_fn(|_| HashMap::new()),
+            bucket_max_end: [0; 128],
+            max_id_seen: 0,
+            next_note_id,
+        }
+    }
+
+    /// 处理单个音符：发号（0=未分配）+ 入桶 + 统计。
+    fn feed(
+        &mut self,
+        key: usize,
+        track: u16,
+        start_tick: u32,
+        end_tick: u32,
+        velocity: u8,
+        id: u32,
+    ) {
+        let end = end_tick as u64;
+        if end > self.max_tick {
+            self.max_tick = end;
+        }
+        self.max_len = self.max_len.max(end_tick.saturating_sub(start_tick));
+        self.note_count += 1;
+        if (track as usize) < self.track_counts.len() {
+            self.track_counts[track as usize] += 1;
+            if velocity > 1 {
+                self.track_audible[track as usize] += 1;
+            }
+        }
+        // id 分配：0 = 未分配，从发号器取；非 0 = 外部分配，保留并跟踪 max。
+        let id = if id == 0 {
+            let id = self.next_note_id;
+            self.next_note_id = self.next_note_id.wrapping_add(1);
+            id
+        } else {
+            if id > self.max_id_seen {
+                self.max_id_seen = id;
+            }
+            id
+        };
+        self.key_notes[key].push(Note {
+            id,
+            start_tick,
+            end_tick,
+            velocity,
+            track,
+        });
+        if end > self.bucket_max_end[key] {
+            self.bucket_max_end[key] = end;
+        }
+        let e = self.bucket_stats[key].entry(track).or_insert((0, 0));
+        e.0 += 1;
+        if velocity > 1 {
+            e.1 += 1;
+        }
+    }
+
+    /// 写回模型：统计字段 + 发号器（保留 id 时推进到 max+1）。
+    fn finish(mut self, model: &mut YinModel) {
+        if self.max_id_seen + 1 > self.next_note_id {
+            self.next_note_id = self.max_id_seen + 1;
+        }
+        model.next_note_id = self.next_note_id;
+
+        *model.notes = self.key_notes.map(Arc::new);
+        model.note_count = self.note_count;
+        model.tick_length = self.max_tick;
+        model.max_note_len = self.max_len;
+        model.track_note_count = self.track_counts;
+        model.track_audible_count = self.track_audible;
+        for (k, bucket) in model.notes.iter().enumerate() {
+            model.bucket_note_count[k] = bucket.len() as u64;
+            model.bucket_max_end_tick[k] = self.bucket_max_end[k];
+            model.bucket_track_stats[k] = std::mem::take(&mut self.bucket_stats[k]);
+        }
+    }
 }

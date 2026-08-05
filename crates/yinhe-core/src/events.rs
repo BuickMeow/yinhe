@@ -20,3 +20,14 @@ pub struct NoteEvent {
     pub key: u8,
     pub velocity: u8,
 }
+
+/// `.yin` 加载路径的桶内音符：与 `NoteEvent` 的区别是自带 `track`（
+/// 桶式存储没有 per-track 容器可隐含 track），且不存 `id`（加载时重新分配）
+/// 与 `key`（桶下标即 key）。
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+pub struct BucketNote {
+    pub track: u16,
+    pub start_tick: u32,
+    pub end_tick: u32,
+    pub velocity: u8,
+}
