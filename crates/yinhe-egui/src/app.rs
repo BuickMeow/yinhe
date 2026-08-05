@@ -36,6 +36,9 @@ pub struct App {
     pub(crate) last_cull_revision: u64, // revision ^ hidden_hash
     pub(crate) last_cull_revision_only: u64, // last revision (for incremental detection)
     pub(crate) last_hidden_hash: u64,   // last hidden_hash (for incremental detection)
+    pub(crate) last_tv_hash: u64,       // last track_visible hash (track_mask 变化检测)
+    /// Track 显隐后台重建状态机（见 gpu_upload::CullRebuild）。
+    pub(crate) cull_rebuild: Option<crate::piano_view::gpu_upload::CullRebuild>,
 
     // ── Arrangement (shared GPU resources + global view state) ──
     pub(crate) arr_render_ctx: RenderContext,
@@ -225,6 +228,8 @@ impl App {
             last_cull_revision: 0,
             last_cull_revision_only: 0,
             last_hidden_hash: 0,
+            last_tv_hash: 0,
+            cull_rebuild: None,
 
             arr_render_ctx,
             arr_renderer: yinhe_wgpu::InstanceRenderer::new(device, queue, format),
@@ -362,9 +367,13 @@ impl App {
     pub(crate) fn invalidate_cull_state(&mut self) {
         self.pianoroll.clear_cull();
         self.arr_renderer.clear_cull();
+        // 丢弃进行中的后台重建（旧文档数据不得上传到新文档；
+        // 后台线程 send 失败自动退出）。
+        self.cull_rebuild = None;
         self.last_cull_revision = 0;
         self.last_cull_revision_only = 0;
         self.last_hidden_hash = 0;
+        self.last_tv_hash = 0;
     }
 
     /// 判断打开 MIDI/.yin 时是否应替换当前标签页而非另开一个。

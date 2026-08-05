@@ -43,6 +43,7 @@ rust-i18n = { workspace = true }
 
 [dev-dependencies]
 yinhe-test-helpers = { path = "../yinhe-test-helpers" }
+pollster = { workspace = true }
 
 [build-dependencies]
 embed-resource = "3"

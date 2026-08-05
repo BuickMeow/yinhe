@@ -13,7 +13,7 @@ pub use yinhe_types::PencilNoteDrag;
 pub mod automation_panel;
 mod bg;
 pub(crate) mod drag;
-mod gpu_upload;
+pub(crate) mod gpu_upload;
 mod keyboard;
 mod marquee;
 mod pencil;
@@ -116,7 +116,10 @@ pub fn show(
     last_cull_revision: &mut u64, // revision ^ hidden_hash — triggers all_notes re-upload
     last_cull_revision_only: &mut u64, // last revision for incremental detection
     last_hidden_hash: &mut u64,   // last hidden_hash for incremental detection
+    last_tv_hash: &mut u64,       // last track_visible hash (track_mask 变化检测)
+    cull_rebuild: &mut Option<crate::piano_view::gpu_upload::CullRebuild>, // 后台重建状态机
     midi: Option<&dyn yinhe_types::NoteSource>,
+    midi_arc: Option<&std::sync::Arc<yinhe_core::YinModel>>,
     selected: &mut yinhe_core::Selection,
     track_visible: &[bool],
     track_colors: &[[f32; 4]],
@@ -463,6 +466,7 @@ pub fn show(
         gpu_upload::upload(gpu_upload::GpuUploadState {
             pianoroll,
             midi,
+            midi_arc,
             revision,
             note_revisions,
             track_visible,
@@ -470,6 +474,8 @@ pub fn show(
             last_cull_revision,
             last_cull_revision_only,
             last_hidden_hash,
+            last_tv_hash,
+            rebuild: cull_rebuild,
         });
     }
 
