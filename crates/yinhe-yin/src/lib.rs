@@ -19,13 +19,15 @@
 //! file's identity (name, soundfont config, view state) is inspectable
 //! without paying the cost of zstd-decoding the full event stream.
 //!
-//! v3（data 段）设计：
-//! - 音符按 key 桶直存（`key_notes[128]`），不再挂在 track 下——加载直接
-//!   入桶，省去“按 track 分组存 → 再分桶”的多余转换
-//! - 桶内 delta+gate 编码（`StoredNote`）：同 key 相邻音符 start 差 + 长度，
-//!   黑乐谱音符极密，绝对值百万级大数转小数后 zstd 压缩率大幅提升
+//! v4（data 段）设计：
+//! - 音符按 key 桶直存（`key_notes[128]`），加载直接入桶；桶内 delta+gate
+//!   编码（同 key 相邻 start 差 + 长度），黑乐谱音符极密，转小数后 zstd
+//!   压缩率大幅提升
+//! - bincode varint 编码（LEB128）：delta/gate 99% < 16 tick，定长 u32
+//!   裸数据膨胀 ~2.3 倍，varint 后 11B → ~5B/音符
 //! - 不序列化音符 id：id 是会话内身份（undo/selection/音频匹配），加载时
 //!   由 `load_bucket_notes` 重新分配；全局递增 id 在 zstd 下几乎压不动
+//! - 实测 5.5M 音符 3.22MB、1.64 亿音符 75MB（start.mid，787 轨）
 
 mod container;
 mod error;
@@ -42,4 +44,4 @@ pub use mapping::{ChannelMap, MappingFile, PortMap, TrackMap, ViewState};
 pub use project_meta::{ProjectFile, SfEntryJson, SfPortOverride};
 
 pub const MAGIC: &[u8; 4] = b"YINH";
-pub const VERSION: u16 = 3;
+pub const VERSION: u16 = 4;

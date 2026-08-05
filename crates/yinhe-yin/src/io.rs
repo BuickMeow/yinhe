@@ -17,6 +17,27 @@ use crate::error::YinError;
 use crate::mapping::MappingFile;
 use crate::project_meta::{ProjectFile, SfPortOverride};
 
+/// bincode varint 编码（所有整数 LEB128）。
+///
+/// 音符 delta/gate 99% < 16 tick、track 值小，定长 u32/u16 存它们
+/// 裸数据膨胀 ~2.3 倍；varint 后裸数据 11B → ~5B/音符，zstd 之前就
+/// 先省一半。加载必须用同一配置（不兼容定长 v3 文件，VERSION 已 4）。
+fn serialize_with_varint<T: serde::Serialize>(v: &T) -> Result<Vec<u8>, YinError> {
+    use bincode::Options;
+    let config = bincode::DefaultOptions::new()
+        .with_varint_encoding()
+        .with_little_endian();
+    Ok(config.serialize(v)?)
+}
+
+fn deserialize_with_varint<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T, YinError> {
+    use bincode::Options;
+    let config = bincode::DefaultOptions::new()
+        .with_varint_encoding()
+        .with_little_endian();
+    Ok(config.deserialize(bytes)?)
+}
+
 /// SoundFont state attached to a project (mode + per-port overrides).
 ///
 /// This is what `save_yin_with_sf` consumes and `load_yin_with_sf` returns.
@@ -167,7 +188,7 @@ fn save_yin_bytes_with_files_inner(
         key_notes,
     };
 
-    let plain = bincode::serialize(&model_data)?;
+    let plain = serialize_with_varint(&model_data)?;
     let level = model.meta.compression_level.clamp(0, 22);
     let data = zstd::encode_all(&plain[..], level)?;
 
@@ -236,7 +257,7 @@ fn load_yin_bytes_inner(bytes: &[u8]) -> Result<(YinModel, ProjectFile, MappingF
 
     // zstd decompress + bincode deserialize the data section.
     let plain = zstd::decode_all(&sections.data[..])?;
-    let model_data: ModelData = bincode::deserialize(&plain)?;
+    let model_data: ModelData = deserialize_with_varint(&plain)?;
 
     // Re-assemble TrackData by zipping mapping entries with payloads in order.
     let flat: Vec<(u8, u8, &crate::mapping::TrackMap)> = mapping.flat_tracks().collect();
