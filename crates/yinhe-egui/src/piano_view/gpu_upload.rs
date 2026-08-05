@@ -76,6 +76,15 @@ impl CullRebuild {
             | CullRebuild::Uploading { hidden_hash, .. } => *hidden_hash,
         }
     }
+
+    /// 构建/上传对应的 track_visible hash。
+    pub(crate) fn tv_hash(&self) -> u64 {
+        match self {
+            CullRebuild::Building { tv_hash, .. } | CullRebuild::Uploading { tv_hash, .. } => {
+                *tv_hash
+            }
+        }
+    }
 }
 
 /// 启动后台全量重建。构建在独立线程执行（`build_all_notes` 内部 rayon 并行），
@@ -241,11 +250,18 @@ pub fn upload(state: GpuUploadState) {
 
     // 2. 推进（或丢弃）进行中的后台重建。
     if let Some(rb) = rebuild.as_mut() {
-        let stale = revision != rb.revision() || hidden_hash != rb.hidden_hash();
+        // track_visible 变化也必须丢弃：旧重建的数据基于旧 tv，继续上传
+        // 会把 GPU 上「上次完整上传」的数据从 key 0 开始逐 key 覆盖成错误
+        // 内容（表现为从下向上隐去），且完成后 note_key 可能仍等于
+        // last_cull_revision 导致永不恢复。
+        let stale =
+            revision != rb.revision() || hidden_hash != rb.hidden_hash() || tv_hash != rb.tv_hash();
         if stale {
-            // revision/hidden 变化 → 数据过期，丢弃 pending（后台线程
-            // send 失败自动退出），本帧落入下方正常路径处理。
+            // 丢弃 pending（后台线程 send 失败自动退出），并强制失效
+            // last_cull_revision：GPU 数据可能已被旧重建部分污染，必须让
+            // 本帧落入下方正常路径重新评估（启动基于当前 tv 的重建）。
             *rebuild = None;
+            *last_cull_revision = 0;
         } else {
             match advance_rebuild(rb, pianoroll) {
                 Advance::InProgress => return, // 还在重建，本帧不做其他上传
@@ -258,12 +274,14 @@ pub fn upload(state: GpuUploadState) {
                         *last_hidden_hash = hidden_hash;
                         return;
                     }
-                    // 重建期间 track_visible 又变了：数据基于旧 mask，本帧
-                    // 不 return，落入下方正常路径重启（用新 tv_hash）。
+                    // 重建数据基于旧 tv（期间切过轨）：GPU 已被旧 tv 数据
+                    // 替换，强制本帧重新评估（用新 tv 重启重建）。
+                    *last_cull_revision = 0;
                 }
                 Advance::Failed => {
                     *rebuild = None;
-                    // 落入下方正常路径 → 同步全量兜底。
+                    // 数据不完整：强制全量兜底。
+                    *last_cull_revision = 0;
                 }
             }
         }
@@ -365,6 +383,7 @@ pub fn upload(state: GpuUploadState) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::Ordering;
     use yinhe_test_helpers::make_stress_model;
 
     /// Headless GPU renderer for state-machine integration tests.
@@ -379,6 +398,336 @@ mod tests {
             queue,
             wgpu::TextureFormat::Rgba8UnormSrgb,
         ))
+    }
+
+    /// 渲染一帧并统计非空像素数（有无音符的粗略判断）。
+    /// 返回 (蓝像素, 红像素)——track 0 蓝色、track 1 红色，用于区分显示内容。
+    fn render_pixel_count(
+        renderer: &mut InstanceRenderer,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        target: &wgpu::Texture,
+        view: &wgpu::TextureView,
+        pw: u32,
+        ph: u32,
+    ) -> (u64, u64) {
+        // 与真实 UI 一致：先构建 uniforms（PR 视口）再渲染。
+        let view_data = yinhe_types::PianoRollView {
+            key_height: 20.0,
+            viewport_h: ph as f32,
+            base: yinhe_types::TimelineViewBase {
+                pixels_per_tick: 0.1,
+                scroll_x: 0.0,
+                scroll_y: 2000.0, // 让 key 0..28 进入视口（音符分布在 key 0..61）
+                left_panel_width: 60.0,
+                dirty: true,
+                track_panel_row_height: 40.0,
+                track_panel_scroll_y: 0.0,
+            },
+        };
+        let track_colors: [[f32; 4]; 2] = [[0.2, 0.7, 1.0, 1.0], [0.9, 0.3, 0.3, 1.0]];
+        let job = yinhe_wgpu::build_render_job(
+            pw,
+            ph,
+            &view_data,
+            &yinhe_core::Selection::default(),
+            &track_colors,
+            0,
+            0.0,
+            false,
+        );
+        renderer.upload_uniforms(job.uniforms);
+        renderer.upload_track_colors(&job.track_colors);
+        renderer.upload_selection(&job.selection);
+
+        let mut enc = device.create_command_encoder(&Default::default());
+        renderer.draw(&mut enc, view, pw, ph);
+        queue.submit([enc.finish()]);
+
+        let bytes_per_row = pw * 4;
+        let aligned_row = bytes_per_row.div_ceil(256) * 256;
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("px"),
+            size: (aligned_row * ph) as u64,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut enc = device.create_command_encoder(&Default::default());
+        enc.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture: target,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(aligned_row),
+                    rows_per_image: Some(ph),
+                },
+            },
+            wgpu::Extent3d {
+                width: pw,
+                height: ph,
+                depth_or_array_layers: 1,
+            },
+        );
+        queue.submit([enc.finish()]);
+        let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let done2 = done.clone();
+        buffer.slice(..).map_async(wgpu::MapMode::Read, move |_| {
+            done2.store(true, Ordering::SeqCst);
+        });
+        device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .expect("poll failed");
+        assert!(done.load(Ordering::SeqCst));
+        let mapped = buffer.slice(..).get_mapped_range();
+        let mut blue = 0u64;
+        let mut red = 0u64;
+        for row in 0..ph {
+            let start = (row as usize) * aligned_row as usize;
+            let row_data = &mapped[start..start + bytes_per_row as usize];
+            for p in row_data.chunks_exact(4) {
+                if p[0] > 8 || p[1] > 8 || p[2] > 8 {
+                    if p[2] > p[0] {
+                        blue += 1; // track 0 蓝色（B 通道大）
+                    } else {
+                        red += 1; // track 1 红色（R 通道大）
+                    }
+                }
+            }
+        }
+        drop(mapped);
+        buffer.unmap();
+        (blue, red)
+    }
+
+    /// 切轨流程回归（「从下向上隐去」bug）：切轨后旧轨道数据必须立即被
+    /// mask 过滤（中间态显示空而非旧数据逐 key 消失），后台重建完成后
+    /// 新轨道数据恢复显示。
+    #[test]
+    fn track_switch_rebuild_masks_old_track_immediately() {
+        let Some((device, queue)) = (|| {
+            let instance = wgpu::Instance::default();
+            let adapter = pollster::block_on(instance.request_adapter(&Default::default())).ok()?;
+            let (device, queue) =
+                pollster::block_on(adapter.request_device(&Default::default())).ok()?;
+            Some((device, queue))
+        })() else {
+            return;
+        };
+        let mut renderer = InstanceRenderer::new(
+            device.clone(),
+            queue.clone(),
+            wgpu::TextureFormat::Rgba8UnormSrgb,
+        );
+        let pw = 800u32;
+        let ph = 600u32;
+        let target = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("switch_target"),
+            size: wgpu::Extent3d {
+                width: pw,
+                height: ph,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let target_view = target.create_view(&Default::default());
+
+        // 双轨模型：track 0 与 track 1 各有 1000 音符（key = n % 128）。
+        let model = Arc::new(make_stress_model(2, 1000));
+        let hidden = HashSet::new();
+        let note_revisions = model.note_revisions;
+
+        let mut last_cull_revision = 0u64;
+        let mut last_cull_revision_only = 0u64;
+        let mut last_hidden_hash = 0u64;
+        let mut last_tv_hash = 0u64;
+        let mut rebuild: Option<CullRebuild> = None;
+
+        // 首帧：只显示 track 0（模拟打开 Master 轨）。
+        let tv0 = vec![true, false];
+        upload(GpuUploadState {
+            pianoroll: &mut renderer,
+            midi: Some(model.as_ref() as &dyn NoteSource),
+            midi_arc: Some(&model),
+            revision: 1,
+            note_revisions: &note_revisions,
+            track_visible: &tv0,
+            hidden_notes: &hidden,
+            last_cull_revision: &mut last_cull_revision,
+            last_cull_revision_only: &mut last_cull_revision_only,
+            last_hidden_hash: &mut last_hidden_hash,
+            last_tv_hash: &mut last_tv_hash,
+            rebuild: &mut rebuild,
+        });
+        let px0 = render_pixel_count(
+            &mut renderer,
+            &device,
+            &queue,
+            &target,
+            &target_view,
+            pw,
+            ph,
+        );
+        assert!(
+            px0.0 > 0 && px0.1 == 0,
+            "首次加载应显示 track 0 音符: {px0:?}"
+        );
+
+        // 切轨：只显示 track 1 → 旧数据（track 0）必须立即被 mask 过滤。
+        let tv1 = vec![false, true];
+        upload(GpuUploadState {
+            pianoroll: &mut renderer,
+            midi: Some(model.as_ref() as &dyn NoteSource),
+            midi_arc: Some(&model),
+            revision: 1,
+            note_revisions: &note_revisions,
+            track_visible: &tv1,
+            hidden_notes: &hidden,
+            last_cull_revision: &mut last_cull_revision,
+            last_cull_revision_only: &mut last_cull_revision_only,
+            last_hidden_hash: &mut last_hidden_hash,
+            last_tv_hash: &mut last_tv_hash,
+            rebuild: &mut rebuild,
+        });
+        let px1 = render_pixel_count(
+            &mut renderer,
+            &device,
+            &queue,
+            &target,
+            &target_view,
+            pw,
+            ph,
+        );
+        assert_eq!(
+            px1,
+            (0, 0),
+            "切轨后旧轨道数据必须立即被 mask 过滤（而不是逐 key 隐去）: {px1:?}"
+        );
+
+        // 推进几帧，让后台重建进入 Uploading 并上传部分 track 1 数据。
+        for _ in 0..4 {
+            upload(GpuUploadState {
+                pianoroll: &mut renderer,
+                midi: Some(model.as_ref() as &dyn NoteSource),
+                midi_arc: Some(&model),
+                revision: 1,
+                note_revisions: &note_revisions,
+                track_visible: &tv1,
+                hidden_notes: &hidden,
+                last_cull_revision: &mut last_cull_revision,
+                last_cull_revision_only: &mut last_cull_revision_only,
+                last_hidden_hash: &mut last_hidden_hash,
+                last_tv_hash: &mut last_tv_hash,
+                rebuild: &mut rebuild,
+            });
+        }
+        let mid = render_pixel_count(
+            &mut renderer,
+            &device,
+            &queue,
+            &target,
+            &target_view,
+            pw,
+            ph,
+        );
+        assert!(mid.1 > 0, "track 1 数据应已部分显示: {mid:?}");
+
+        // 快速切回 track 0（重建 A 尚未完成）：「从下向上隐去」bug 复现点。
+        // 修复前：pending 重建 A 继续上传 track 1 数据 → 红色像素扩散；
+        // 修复后：pending 被丢弃（tv 变化），重建 B 上传 track 0 → 红色递减。
+        let tv0b = vec![true, false];
+        upload(GpuUploadState {
+            pianoroll: &mut renderer,
+            midi: Some(model.as_ref() as &dyn NoteSource),
+            midi_arc: Some(&model),
+            revision: 1,
+            note_revisions: &note_revisions,
+            track_visible: &tv0b,
+            hidden_notes: &hidden,
+            last_cull_revision: &mut last_cull_revision,
+            last_cull_revision_only: &mut last_cull_revision_only,
+            last_hidden_hash: &mut last_hidden_hash,
+            last_tv_hash: &mut last_tv_hash,
+            rebuild: &mut rebuild,
+        });
+        let mut reds = Vec::new();
+        for _ in 0..4 {
+            upload(GpuUploadState {
+                pianoroll: &mut renderer,
+                midi: Some(model.as_ref() as &dyn NoteSource),
+                midi_arc: Some(&model),
+                revision: 1,
+                note_revisions: &note_revisions,
+                track_visible: &tv0b,
+                hidden_notes: &hidden,
+                last_cull_revision: &mut last_cull_revision,
+                last_cull_revision_only: &mut last_cull_revision_only,
+                last_hidden_hash: &mut last_hidden_hash,
+                last_tv_hash: &mut last_tv_hash,
+                rebuild: &mut rebuild,
+            });
+            reds.push(
+                render_pixel_count(
+                    &mut renderer,
+                    &device,
+                    &queue,
+                    &target,
+                    &target_view,
+                    pw,
+                    ph,
+                )
+                .1,
+            );
+        }
+        assert!(
+            reds.windows(2).all(|w| w[1] <= w[0] + 2),
+            "切回后 track 1 数据不得继续扩散（从下向上隐去 bug）: {reds:?}"
+        );
+
+        // 推进后台重建直到完成（每帧 upload 一次，模拟真实帧循环）。
+        let mut guard = 0u32;
+        while rebuild.is_some() {
+            upload(GpuUploadState {
+                pianoroll: &mut renderer,
+                midi: Some(model.as_ref() as &dyn NoteSource),
+                midi_arc: Some(&model),
+                revision: 1,
+                note_revisions: &note_revisions,
+                track_visible: &tv0b,
+                hidden_notes: &hidden,
+                last_cull_revision: &mut last_cull_revision,
+                last_cull_revision_only: &mut last_cull_revision_only,
+                last_hidden_hash: &mut last_hidden_hash,
+                last_tv_hash: &mut last_tv_hash,
+                rebuild: &mut rebuild,
+            });
+            guard += 1;
+            assert!(guard < 100, "后台重建未在 100 帧内完成");
+        }
+        // 重建完成后：track 0 数据全部上传 → 显示恢复。
+        let px2 = render_pixel_count(
+            &mut renderer,
+            &device,
+            &queue,
+            &target,
+            &target_view,
+            pw,
+            ph,
+        );
+        assert!(
+            px2.0 > 0 && px2.1 == 0,
+            "重建完成后应显示 track 0 音符: {px2:?}"
+        );
     }
 
     /// 后台构建产物必须与同步全量构建一致（含 track_visible 过滤），

@@ -976,9 +976,10 @@ mod tests {
         cull.dispatch_cull(&mut encoder, &queue, 0, 0, &visible_uniforms());
 
         // Read back the per-key draw args (instance_count at byte offset 4).
+        // DrawIndexedIndirectArgs = 20B.
         let args_readback = device.create_buffer(&BufferDescriptor {
             label: Some("args_readback"),
-            size: 16,
+            size: 20,
             usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
@@ -989,7 +990,7 @@ mod tests {
             0,
             &args_readback,
             0,
-            16,
+            20,
         );
         queue.submit([encoder.finish()]);
 
@@ -1006,11 +1007,12 @@ mod tests {
         assert!(done.load(Ordering::SeqCst), "map_async callback not fired");
         let view = args_readback.slice(..).get_mapped_range();
         let args: &[u32] = bytemuck::cast_slice(&view);
-        // DrawIndirectArgs: [vertex_count=6, instance_count, first_vertex=0,
-        // first_instance=0] — chunk 0 starts at sparse slot 0.
-        assert_eq!(args[0], 6, "vertex_count must be 6 (two triangles)");
-        assert_eq!(args[2], 0, "first_vertex must be 0");
-        assert_eq!(args[3], 0, "first_instance must be 0 (chunk 0)");
+        // DrawIndexedIndirectArgs: [index_count=6, instance_count, first_index=0,
+        // base_vertex=0, first_instance=0] — chunk 0 starts at sparse slot 0.
+        assert_eq!(args[0], 6, "index_count must be 6 (two triangles)");
+        assert_eq!(args[2], 0, "first_index must be 0");
+        assert_eq!(args[3], 0, "base_vertex must be 0");
+        assert_eq!(args[4], 0, "first_instance must be 0 (chunk 0)");
         let instance_count = args[1];
         drop(view);
         args_readback.unmap();
