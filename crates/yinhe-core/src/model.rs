@@ -402,6 +402,29 @@ mod tests {
     }
 
     #[test]
+    fn load_track_notes_assigns_and_preserves_ids() {
+        // id=0 自动发号；非 0（旧 .yin）保留原 id 并推进发号器到 max+1
+        let mut n0 = note(0, 480, 60);
+        n0.id = 0;
+        let mut n1 = note(480, 960, 60);
+        n1.id = 42;
+        let mut n2 = note(960, 1440, 64);
+        n2.id = 7;
+        let per_track = vec![vec![n0, n1, n2]];
+        let mut m = YinModel {
+            tracks: vec![Arc::new(TrackData::new(0, 0))],
+            ..Default::default()
+        };
+        m.load_track_notes(per_track);
+
+        // id=0 的从 1 开始分配，不与已保留 id 冲突
+        assert_eq!(m.notes[60][0].id, 1);
+        assert_eq!(m.notes[60][1].id, 42);
+        assert_eq!(m.notes[64][0].id, 7);
+        assert_eq!(m.next_note_id, 43, "发号器应推进到 max+1");
+    }
+
+    #[test]
     fn rebuild_counts_and_buckets_notes() {
         let per_track = vec![vec![
             note(0, 480, 60),

@@ -231,6 +231,24 @@ fn roundtrip_in_memory() {
         yinhe_types::ScaleType::NaturalMinor
     );
 
+    // id 不序列化：加载后重新分配，从 1 开始且全局唯一（发号器推进到 max+1）
+    let mut ids: Vec<u32> = m2
+        .notes
+        .iter()
+        .flat_map(|b| b.iter().map(|n| n.id))
+        .collect();
+    let id_count = ids.len();
+    ids.sort_unstable();
+    assert_eq!(ids.first(), Some(&1), "id 应从 1 开始重新分配");
+    ids.dedup();
+    assert_eq!(id_count, m2.note_count as usize);
+    assert_eq!(ids.len(), id_count, "id 必须全局唯一");
+    assert_eq!(
+        m2.next_note_id,
+        m2.note_count as u32 + 1,
+        "发号器应推进到 max+1"
+    );
+
     assert_eq!(m2.tracks.len(), 3);
 
     let lead = m2.tracks.iter().find(|t| t.name == "Lead").expect("Lead");

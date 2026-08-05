@@ -76,13 +76,20 @@ fn save_yin_bytes_with_files_inner(
 
     // data.bin: bincode(ModelData) → zstd
     // Build per-track notes in a single O(N) pass instead of O(T×N).
+    //
+    // 不序列化 id：id 是编辑会话内的身份标识（undo/selection/音频匹配），
+    // 保存→加载后 undo 栈清空，重新分配即可。且全局递增 id 逐字节 +1，
+    // zstd 找不到 ≥3B 公共子串（minmatch=3），压缩率仅 73%——
+    // 5.5M 音符文件里 id 一个字段就吃掉 16MB（占 .yin 体积 60%+）。
+    // 保存时置 0（“未分配”哨兵），加载时 `load_track_notes` 统一发号，
+    // 与 MIDI 解析路径行为一致；旧 .yin 的非 0 id 仍保留原值（兼容）。
     let num_tracks = model.tracks.len();
     let mut per_track_notes: Vec<Vec<NoteEvent>> = vec![Vec::new(); num_tracks];
     for (key, bucket) in model.notes.iter().enumerate() {
         for n in bucket.iter() {
             if (n.track as usize) < num_tracks {
                 per_track_notes[n.track as usize].push(NoteEvent {
-                    id: n.id,
+                    id: 0,
                     start_tick: n.start_tick,
                     end_tick: n.end_tick,
                     key: key as u8,
