@@ -334,12 +334,12 @@ fn vs_main_velocity(
     var pixel_x = x_offset + f32(tick) * ppu;
     var pixel_w = max(f32(length) * ppu, 2.0);
 
-    // Y from velocity: value_to_y(vel) = h - (vel - scroll) * zoom / 127 * h
-    // Bar top = value_to_y(velocity), bar bottom = value_to_y(0)
+    // Y from velocity: 126 级映射（vel=1 已由构建过滤，不显示）。
+    // vel 2..=127 → 高度 1..=126 单位：y = (vel-1)/126 * panel_h。
     let panel_h = u.height;
-    let vel_f = f32(velocity);
-    let y_top = panel_h - (vel_f - u.value_scroll) * u.value_zoom / 127.0 * panel_h;
-    let y_bottom = panel_h - (0.0 - u.value_scroll) * u.value_zoom / 127.0 * panel_h;
+    let vel_f = f32(max(velocity, 1u) - 1u);
+    let y_top = panel_h - (vel_f - u.value_scroll) * u.value_zoom / 126.0 * panel_h;
+    let y_bottom = panel_h - (0.0 - u.value_scroll) * u.value_zoom / 126.0 * panel_h;
     var pixel_y = y_top;
     var pixel_h = max(y_bottom - y_top, 1.0);
 

@@ -101,7 +101,8 @@ fn build_preview(
         .map(|b| {
             let x = grid_area.min.x + b.start_tick as f32 * ppu - scroll_x;
             let w = (b.length as f32 * ppu).max(2.0);
-            let top = panel_rect.min.y + panel.value_to_y(b.new_velocity as f32, 127.0);
+            // 126 级映射（与 shader 一致）：vel 2..=127 → 高度 1..=126 单位。
+            let top = panel_rect.min.y + panel.value_to_y((b.new_velocity - 1) as f32, 126.0);
             egui::Rect::from_min_max(egui::pos2(x, top), egui::pos2(x + w, panel_rect.max.y))
         })
         .collect();
@@ -144,7 +145,8 @@ pub(crate) fn handle_velocity_interaction(
     let mouse = pos.map(|p| {
         let tick = (((p.x - grid_area.min.x + panel.base.scroll_x) / ppu) as f64).max(0.0);
         let y = (p.y - panel_rect.min.y).clamp(0.0, panel_rect.height());
-        let value = panel.y_to_value(y, 127.0).clamp(1.0, 127.0);
+        // 126 级映射（与 shader 一致）：y → vel = y_to_value(y, 126) + 1。
+        let value = (panel.y_to_value(y, 126.0) + 1.0).clamp(1.0, 127.0);
         (p, tick, value)
     });
     let in_grid = pos.is_some_and(|p| grid_area.contains(p));

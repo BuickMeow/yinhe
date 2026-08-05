@@ -56,6 +56,11 @@ pub fn build_velocity_bars(
                     if !track_visible.get(trk_idx).copied().unwrap_or(true) {
                         continue;
                     }
+                    // velocity=1（MIDI 静音）不显示：面板 127 级 → 126 级
+                    // （shader y = (vel-1)/126，vel=2 → 1 单位高度）。
+                    if note.velocity <= 1 {
+                        continue;
+                    }
                     local.push(VelocityBarInstance {
                         tick: note.start_tick,
                         length: note.end_tick - note.start_tick,
@@ -300,6 +305,14 @@ mod tests {
         assert_eq!(out.len(), 2, "合并覆盖应删除长 bar: {out:?}");
     }
 
+    /// velocity=1 的音符不显示（126 级映射的配套）。
+    #[test]
+    fn skip_velocity_one_bars() {
+        let out = build(vec![make_bar(100, 10, 1, 0), make_bar(100, 10, 100, 1)]);
+        assert_eq!(out.len(), 1, "vel=1 应被过滤: {out:?}");
+        assert_eq!(out[0].2, 100);
+    }
+
     /// 真实 MIDI 去重效果统计：视口内音符数（去重前 bar 数）vs 去重后 bar 数。
     /// 运行：cargo test -p yinhe-wgpu --release -- --ignored --nocapture dedup_real_midi
     #[test]
@@ -325,7 +338,13 @@ mod tests {
         let tv = vec![true; model.tracks.len()];
         let (ts, te) = view.base.visible_tick_range(w);
         let before: u64 = (0..128u8)
-            .map(|k| model.key_notes_in_range(k, ts as u32, te as u32).len() as u64)
+            .map(|k| {
+                model
+                    .key_notes_in_range(k, ts as u32, te as u32)
+                    .iter()
+                    .filter(|n| n.velocity > 1) // 与构建的 vel=1 过滤一致
+                    .count() as u64
+            })
             .sum();
         let t0 = std::time::Instant::now();
         let mut out = Vec::new();
