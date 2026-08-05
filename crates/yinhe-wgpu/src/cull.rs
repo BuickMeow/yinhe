@@ -3389,7 +3389,7 @@ mod tests {
         let bytes_per_row = pw * 4;
         let aligned_row = bytes_per_row.div_ceil(256) * 256;
 
-        let mut read_pixels = |device: &Device, queue: &Queue, target: &wgpu::Texture| -> u64 {
+        let read_pixels = |device: &Device, queue: &Queue, target: &wgpu::Texture| -> u64 {
             let buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("pixel_readback"),
                 size: (aligned_row * ph) as u64,
@@ -4256,6 +4256,180 @@ mod tests {
         let lo = bottom_key.min(top_key).saturating_sub(1).clamp(0, 127);
         let hi = bottom_key.max(top_key).saturating_add(1).clamp(0, 127);
         (lo as u8, hi as u8)
+    }
+
+    /// 大 tick 长音符衔接处的 1px 缝隙回归测试。
+    ///
+    /// 旧实现右边界走「pixel_x + pixel_w」链式（两次舍入），在 .5 临界
+    /// 处与相邻音符的直接计算边界岔开 1px。歌曲靠后（scroll_x / tick 大）
+    /// 时 f32 大值运算的 ULP 大，缩放（ppu 连续变化）时最容易触发。
+    /// 音符必须够长（> 2px）走出 2.0 宽度下限，链式误差才会显现。
+    ///
+    /// 实证：随机搜索「缩放中的 ppu / 滚动偏移」组合，渲染 2000 个密集
+    /// 音符（PPQ 1920 的 1/32 gate，tick 384 万起，严格衔接），扫描整行
+    /// 断言非空像素列连续。
+    #[test]
+    fn note_boundary_no_gap_large_tick() {
+        let Some((device, queue)) = headless_device() else {
+            return;
+        };
+        let format = wgpu::TextureFormat::Rgba8UnormSrgb;
+        let mut renderer = crate::InstanceRenderer::new(device.clone(), queue.clone(), format);
+
+        let (w, kh, kb_w) = (1376.0f32, 40.0f32, 60.0f32);
+        let h = 600.0f32;
+        let pw = w as u32;
+        let ph = h as u32;
+        let target = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("gap_target"),
+            size: wgpu::Extent3d {
+                width: pw,
+                height: ph,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let target_view = target.create_view(&Default::default());
+
+        // 伪随机（确定性，可复现）。
+        let mut state: u64 = 0x9E37_79B9_7F4A_7C15;
+        let mut next = || {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (state >> 33) as u32
+        };
+
+        // 随机组合搜索：缩放 ppu、歌曲靠后的滚动位置。
+        // 注意：音符必须严格衔接（end_tick == 下一个的 start_tick），
+        // 纯测浮点缝隙，排除任何真实间隙的干扰。
+        // 音符长度 240 tick（PPQ 1920 的 1/32 音符）——必须 > 2px（ppu≤0.06
+        // 时 8 tick 宽音符永远走 2.0 宽度下限，链式误差被掩盖，抓不到旧 bug）。
+        let trials = 300;
+        for trial in 0..trials {
+            // 密集音符：2000 个，每个 240 tick 宽（PPQ 1920 / 32），严格衔接。
+            // t0 从 500 小节（500×1920×4 = 384 万 tick）起，歌曲靠后。
+            let t0 = 3_840_000 + next() % 2_000_000;
+            let mut notes = Vec::with_capacity(2000);
+            let mut tick = t0;
+            for _ in 0..2000 {
+                notes.push(NoteInstance {
+                    start_tick: tick,
+                    end_tick: tick + 240,
+                    packed: NoteInstance::pack(60, 0, 100),
+                });
+                tick += 240;
+            }
+            renderer.ensure_layers(1);
+            renderer.upload_note_layer(0, 0, |out| out.extend_from_slice(&notes));
+
+            // 缩放 ppu（连续变化中的任意值）与滚动位置（歌曲靠后）。
+            let ppu = 0.005 + (next() % 1100) as f32 * 0.00005; // 0.005..0.06
+            let scroll_x = t0 as f32 * ppu - 300.0 + (next() % 600) as f32;
+            let view = yinhe_types::PianoRollView {
+                key_height: kh,
+                viewport_h: h,
+                base: yinhe_types::TimelineViewBase {
+                    pixels_per_tick: ppu,
+                    scroll_x: scroll_x.max(0.0),
+                    scroll_y: 2380.0, // key 60 行居中
+                    left_panel_width: kb_w,
+                    dirty: true,
+                    track_panel_row_height: 40.0,
+                    track_panel_scroll_y: 0.0,
+                },
+            };
+            let job = crate::pianoroll::build_render_job(
+                pw,
+                ph,
+                &view,
+                &yinhe_core::Selection::default(),
+                &[[0.2, 0.7, 1.0, 1.0]],
+                1, // scroll_mode = 1（整数对齐，取整路径）
+                0.0,
+                false,
+            );
+            renderer.upload_uniforms(job.uniforms);
+            renderer.upload_track_colors(&job.track_colors);
+            renderer.upload_selection(&job.selection);
+
+            let mut enc = device.create_command_encoder(&Default::default());
+            renderer.draw(&mut enc, &target_view, pw, ph);
+            queue.submit([enc.finish()]);
+
+            let bytes_per_row = pw * 4;
+            let aligned_row = bytes_per_row.div_ceil(256) * 256;
+            let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("gap_px"),
+                size: (aligned_row * ph) as u64,
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+            let mut enc = device.create_command_encoder(&Default::default());
+            enc.copy_texture_to_buffer(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &target,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::TexelCopyBufferInfo {
+                    buffer: &buffer,
+                    layout: wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(aligned_row),
+                        rows_per_image: Some(ph),
+                    },
+                },
+                wgpu::Extent3d {
+                    width: pw,
+                    height: ph,
+                    depth_or_array_layers: 1,
+                },
+            );
+            queue.submit([enc.finish()]);
+            let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let done2 = done.clone();
+            buffer.slice(..).map_async(wgpu::MapMode::Read, move |_| {
+                done2.store(true, std::sync::atomic::Ordering::SeqCst);
+            });
+            device
+                .poll(wgpu::PollType::wait_indefinitely())
+                .expect("poll failed");
+            assert!(done.load(std::sync::atomic::Ordering::SeqCst));
+            let mapped = buffer.slice(..).get_mapped_range();
+
+            // 扫描 key 60 行的中间一行（y=320）：非空列必须连续（无缝隙）。
+            let row = 320usize;
+            let start = row * aligned_row as usize;
+            let row_data = &mapped[start..start + bytes_per_row as usize];
+            let mut min_col: Option<u32> = None;
+            let mut max_col = 0u32;
+            let mut count = 0u32;
+            for (col, p) in row_data.chunks_exact(4).enumerate() {
+                if p[0] > 8 || p[1] > 8 || p[2] > 8 {
+                    min_col.get_or_insert(col as u32);
+                    max_col = col as u32;
+                    count += 1;
+                }
+            }
+            drop(mapped);
+            buffer.unmap();
+
+            let Some(min_col) = min_col else {
+                continue; // 音符不在视口内，换组合
+            };
+            let span = max_col - min_col + 1;
+            assert_eq!(
+                count, span,
+                "衔接音符间出现缝隙: trial={trial} t0={t0} ppu={ppu} scroll_x={scroll_x} 非空列 {count}/{span} (min={min_col} max={max_col})"
+            );
+        }
     }
 
     /// 性能对比 benchmark：CPU 构建 vs GPU cull。
