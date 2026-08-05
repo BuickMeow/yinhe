@@ -30,6 +30,10 @@ pub fn show(
     data: super::ArrangeData<'_>,
     edit: &mut super::ArrangeEdit<'_>,
     cfg: &mut super::ArrangeViewCfg<'_>,
+    use_gpu_cull: bool,
+    arr_last_cull_revision: &mut u64,
+    arr_last_cull_revision_only: &mut u64,
+    arr_last_hidden_hash: &mut u64,
 ) {
     let _arrange_total_start = if yinhe_memtrace::perf_probe::enabled() {
         Some(std::time::Instant::now())
@@ -120,6 +124,23 @@ pub fn show(
             (Vec::new(), HashSet::new(), None)
         };
 
+    // ── Upload all notes to GPU cull buffer（AR 与 PR 共用 gpu_upload 策略）──
+    // 只在 GPU cull 模式开启时执行；CPU 构建模式跳过。
+    if use_gpu_cull {
+        crate::piano_view::gpu_upload::upload(crate::piano_view::gpu_upload::GpuUploadState {
+            pianoroll: renderer,
+            midi: data.midi,
+            revision: cfg.revision,
+            note_revisions: data.note_revisions,
+            track_visible: data.track_visible,
+            hidden_notes: &hidden_notes,
+            last_cull_revision: arr_last_cull_revision,
+            last_cull_revision_only: arr_last_cull_revision_only,
+            last_hidden_hash: arr_last_hidden_hash,
+        });
+    }
+    let cull_ready = use_gpu_cull && renderer.cull_ready();
+
     let vh = view.render_hash();
     let wh = {
         let mut hash: u64 = 0;
@@ -140,20 +161,24 @@ pub fn show(
     // Grid lines 已迁移到 egui（见下方 paint_grid_lines 调用），wgpu 不再构建 grid layer。
 
     // Layer 0: notes (16B NoteInstance — shader computes pixel positions from uniforms)
-    let notes_key = layer_cache_key(&[vh, wh, tv_hash, cfg.revision, hidden_notes.len() as u64]);
-    renderer.upload_note_layer(0, notes_key, |out| {
-        if let Some(midi) = data.midi {
-            build_arr_notes(
-                out,
-                w as f32,
-                h as f32,
-                midi,
-                view,
-                data.track_visible,
-                &hidden_notes,
-            );
-        }
-    });
+    // GPU cull 模式：notes 由 compute cull 提供（draw_with_cull），跳过 CPU 构建层。
+    if !cull_ready {
+        let notes_key =
+            layer_cache_key(&[vh, wh, tv_hash, cfg.revision, hidden_notes.len() as u64]);
+        renderer.upload_note_layer(0, notes_key, |out| {
+            if let Some(midi) = data.midi {
+                build_arr_notes(
+                    out,
+                    w as f32,
+                    h as f32,
+                    midi,
+                    view,
+                    data.track_visible,
+                    &hidden_notes,
+                );
+            }
+        });
+    }
 
     // Layer 1: ghost notes (no cache — rebuilt every frame during drag)
     renderer.upload_note_layer(1, 0, |out| {

@@ -4290,4 +4290,130 @@ mod tests {
             ..Default::default()
         }
     }
+
+    /// AR 模式（mode=2, lane_height）的 GPU cull 与 CPU 逐音符 AABB 判定一致性。
+    ///
+    /// AR 的 Y 坐标依赖 track（lane 分层），不能按 key 裁剪，128 key 全部 dispatch。
+    /// CPU 期望值用与 `cull.wgsl` 完全相同的 f32 数学逐音符计算，不做 merge
+    /// （merge 是 build_arr_notes 的显示优化，不在 cull 职责内）。
+    #[test]
+    fn cull_arr_mode_lane_height_vs_cpu() {
+        let path = "/Users/jieneng/Music/MIDIs/APT.mid";
+        if !std::path::Path::new(path).exists() {
+            eprintln!("APT.mid 不存在，跳过");
+            return;
+        }
+        let Some((device, queue)) = headless_device() else {
+            return;
+        };
+        let model = yinhe_mid2::parse_path(path).expect("parse 失败");
+        let hidden = std::collections::HashSet::new();
+        let tv: Vec<bool> = vec![true; model.tracks.len()];
+        let (all_notes, offsets) = crate::pianoroll::build_all_notes(&model, &hidden, &tv);
+
+        let mut cull = CullState::new(&device);
+        let uniform_buffer = device.create_buffer(&BufferDescriptor {
+            label: Some("test_uniform"),
+            size: 256,
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        cull.upload_all_notes(
+            &device,
+            &queue,
+            &uniform_buffer,
+            &all_notes,
+            &offsets,
+            &model.note_revisions,
+        );
+
+        // AR 视口：部分轨道可见（lane_height=20），tick 滚动到歌曲中部。
+        let (w, h, lh, kb_w) = (1376.0f32, 800.0f32, 20.0f32, 60.0f32);
+        let ppu = 0.05f32;
+        let scroll_x = 2000.0f32;
+        let scroll_y = 100.0f32;
+        let u = Uniforms {
+            width: w,
+            height: h,
+            scroll_x,
+            scroll_y,
+            pixels_per_tick: ppu,
+            keyboard_width: kb_w,
+            mode: 2, // AR: lane_height based
+            lane_height: lh,
+            ..Default::default()
+        };
+        queue.write_buffer(&uniform_buffer, 0, bytemuck::bytes_of(&u));
+        let mut encoder = device.create_command_encoder(&Default::default());
+        cull.dispatch_cull(&mut encoder, &queue, 0, 127, &u);
+        queue.submit([encoder.finish()]);
+
+        // 读回 draw_args 求 GPU 可见总数。
+        let mut gpu_total: u64 = 0;
+        for key in 0..128u8 {
+            let chunk_count = cull.frame_chunk_counts[key as usize];
+            if chunk_count == 0 {
+                continue;
+            }
+            let Some(args_buf) = &cull.per_key_draw_args_buffers[key as usize] else {
+                continue;
+            };
+            let read_size = chunk_count as u64 * 16;
+            let readback = device.create_buffer(&BufferDescriptor {
+                label: Some("args_readback"),
+                size: read_size,
+                usage: BufferUsages::COPY_DST | BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+            let mut enc = device.create_command_encoder(&Default::default());
+            enc.copy_buffer_to_buffer(args_buf, 0, &readback, 0, read_size);
+            queue.submit([enc.finish()]);
+            let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let done2 = done.clone();
+            readback.slice(..).map_async(wgpu::MapMode::Read, move |_| {
+                done2.store(true, Ordering::SeqCst);
+            });
+            device
+                .poll(wgpu::PollType::wait_indefinitely())
+                .expect("poll failed");
+            assert!(done.load(Ordering::SeqCst));
+            let view = readback.slice(..).get_mapped_range();
+            let args: &[u32] = bytemuck::cast_slice(&view);
+            for c in 0..chunk_count as usize {
+                gpu_total += args[c * 4 + 1] as u64;
+            }
+            drop(view);
+            readback.unmap();
+        }
+
+        // CPU 期望：逐音符跑 shader 同款判定（tick 范围用保守的 visible_tick_range 过滤）。
+        let (ts_lo, ts_hi) = visible_tick_range(&u);
+        let mut cpu_visible: u64 = 0;
+        for n in &all_notes {
+            if n.end_tick <= n.start_tick {
+                continue;
+            }
+            if n.start_tick > ts_hi || n.end_tick < ts_lo {
+                continue; // 保守跳过，不漏（长音符跨左边界时 end >= ts_lo 仍保留）
+            }
+            let key = (n.packed & 0xFF) as f32;
+            let track = ((n.packed >> 8) & 0xFFFF) as f32;
+            let x_offset = kb_w - scroll_x;
+            let pixel_x = x_offset + n.start_tick as f32 * ppu;
+            let pixel_right = x_offset + n.end_tick as f32 * ppu;
+            if pixel_right >= 0.0 && pixel_x <= w {
+                let lh_per_key = lh / 128.0;
+                let pixel_bottom = -scroll_y + lh - key * lh_per_key + track * lh;
+                let pixel_y = -scroll_y + lh - (key + 1.0) * lh_per_key + track * lh;
+                if pixel_bottom >= 0.0 && pixel_y <= h {
+                    cpu_visible += 1;
+                }
+            }
+        }
+        println!("AR mode=2: CPU={cpu_visible} GPU={gpu_total}");
+        assert!(
+            gpu_total == cpu_visible,
+            "AR GPU cull 与 CPU 判定不一致: GPU={gpu_total} CPU={cpu_visible}"
+        );
+    }
 }

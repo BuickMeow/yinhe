@@ -27,6 +27,8 @@ pub(crate) struct ArrangeData<'a> {
     pub track_visible: &'a [bool],
     pub track_colors: &'a [[f32; 4]],
     pub track_info: &'a [yinhe_core::TrackInfo],
+    /// 每 key 音符 revision（GPU cull 增量上传检测用）。
+    pub note_revisions: &'a [u64; 128],
     pub quantize: QuantizePreset,
     pub ppq: u32,
     pub bar_line_data: Option<(u32, u8, u8, &'a [yinhe_types::TimeSigEvent])>,
@@ -78,6 +80,10 @@ pub fn show(
     arr_renderer: &mut yinhe_wgpu::InstanceRenderer,
     arr_render_ctx: &mut RenderContext,
     mut cfg: ArrangeViewCfg<'_>,
+    use_gpu_cull: bool,
+    arr_last_cull_revision: &mut u64,
+    arr_last_cull_revision_only: &mut u64,
+    arr_last_hidden_hash: &mut u64,
     last_cursor_tick: &mut Option<f64>,
     audio: Option<&yinhe_audio::CpalAudioHandle>,
     request_pianoroll: &mut bool,
@@ -296,6 +302,7 @@ pub fn show(
             track_visible: &doc.edit.track_visible,
             track_colors: &doc.edit.track_colors_cache,
             track_info: &doc.edit.track_info_cache,
+            note_revisions: &model.note_revisions,
             quantize: doc.edit.quantize_arrange,
             ppq: model.meta.ppq,
             bar_line_data: Some((
@@ -326,6 +333,10 @@ pub fn show(
             data,
             &mut edit,
             &mut cfg,
+            use_gpu_cull,
+            arr_last_cull_revision,
+            arr_last_cull_revision_only,
+            arr_last_hidden_hash,
         );
     });
 

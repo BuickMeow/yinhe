@@ -13,7 +13,7 @@ pub use yinhe_types::PencilNoteDrag;
 pub mod automation_panel;
 mod bg;
 pub(crate) mod drag;
-mod gpu_upload;
+pub(crate) mod gpu_upload;
 mod keyboard;
 mod marquee;
 mod pencil;
