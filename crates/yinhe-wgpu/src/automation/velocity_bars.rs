@@ -314,5 +314,40 @@ mod tests {
             out.len(),
             out.len() as f64 * 100.0 / before.max(1) as f64,
         );
+
+        // 真实滚动视口（350 小节附近，ppu=0.026，宽 1376px）：
+        // 滚动时 bars_key 失配，每帧重建。测每帧构建+排序+去重成本。
+        let (w2, ppu2) = (1376.0f32, 0.026372144f32);
+        let kb = 60.0f32;
+        let max_end = model.tick_length().unwrap_or(0).max(1) as f32;
+        let scroll_x2 = (kb + max_end * ppu2 * 0.87 - w2 / 2.0).max(0.0);
+        let view2 = AutomationPanelView {
+            base: yinhe_types::TimelineViewBase {
+                pixels_per_tick: ppu2,
+                scroll_x: scroll_x2,
+                scroll_y: 0.0,
+                left_panel_width: kb,
+                dirty: true,
+                track_panel_row_height: 40.0,
+                track_panel_scroll_y: 0.0,
+            },
+            ..Default::default()
+        };
+        let mut out2 = Vec::new();
+        // 暖机 1 次后取最优（3 次）。
+        build_velocity_bars(&mut out2, w2, &model, &view2, &tv);
+        let mut frame_ms = f64::MAX;
+        for _ in 0..3 {
+            out2.clear();
+            let t = std::time::Instant::now();
+            build_velocity_bars(&mut out2, w2, &model, &view2, &tv);
+            frame_ms = frame_ms.min(t.elapsed().as_secs_f64() * 1e3);
+        }
+        println!(
+            "真实视口(87%): 视口内 bar={} 去重后={} 每帧构建+排序+去重={frame_ms:.1}ms ≈ {:.0} FPS",
+            before as f64 * (w2 / ppu2 / 3_092_040.0f32) as f64,
+            out2.len(),
+            1000.0 / frame_ms,
+        );
     }
 }
