@@ -86,6 +86,9 @@ pub(crate) struct PanelsCfg<'a> {
     pub bar_line_data: Option<(u32, u8, u8, &'a [TimeSigEvent])>,
     /// 讲解行选框统计（AM 选框命中时显示）。
     pub sel_hint: Option<&'a crate::app::layout::SelHintInfo>,
+    /// 当前编辑目标是否为 Conductor 轨。Conductor 下 AM 面板只可编辑 Tempo
+    /// （下拉菜单仅显示 Tempo，非 Tempo 编辑被 dispatch 层禁用）。
+    pub editing_is_conductor: bool,
 }
 
 /// 面板模型只读数据。
@@ -519,7 +522,13 @@ pub fn show_panels(
             panel_rect.min,
             egui::pos2(panel_rect.min.x + layout.combo_width, panel_rect.max.y),
         );
-        show_target_combo(ui, panel, combo_rect, panels_area_rect);
+        show_target_combo(
+            ui,
+            panel,
+            combo_rect,
+            panels_area_rect,
+            cfg.editing_is_conductor,
+        );
 
         draw_value_labels(ui, panel, panel_rect, layout.combo_width, max_val_f);
 
@@ -879,6 +888,34 @@ fn dispatch_edit_interaction(
                     pos,
                 });
             }
+        } else if panel.selected_target == AutomationTarget::Tempo {
+            // Tempo 不依赖 active_track：无论编辑目标是哪个轨道（甚至没有编辑目标）
+            // 都可编辑。document 层忽略 track_idx，直接操作 conductor.tempo，
+            // 所以这里传 0。非 Tempo 事件绝不能落进 Conductor（曾导致弯音写入别的轨道）。
+            let (panel_edits, ghost, drag_info, hover_info, marquee_rect, sel_op) =
+                interaction::handle_automation_interaction(
+                    ui,
+                    grid_area,
+                    panel_rect,
+                    panel,
+                    automation_lanes,
+                    tempo_lane,
+                    0,
+                    ctx,
+                    panel_index,
+                    track_colors,
+                    info_content,
+                    right_tab,
+                );
+            out.automation_edits = panel_edits;
+            out.ghost = ghost;
+            out.marquee_rect = marquee_rect;
+            out.sel_op = sel_op;
+            // anchor_drag 只跟锚点拖拽（InfoPanel 用它显示实时 tick/value）
+            if let Some(interaction::HoverTooltip::Anchor { tick, value, .. }) = drag_info {
+                out.anchor_drag = Some((tick, value));
+            }
+            tooltip = drag_info.or(hover_info);
         } else if let Some(track) = ctx.active_track {
             let (panel_edits, ghost, drag_info, hover_info, marquee_rect, sel_op) =
                 interaction::handle_automation_interaction(
@@ -1124,6 +1161,7 @@ fn show_target_combo(
     panel: &mut AutomationPanelView,
     combo_rect: egui::Rect,
     panels_area_rect: egui::Rect,
+    editing_is_conductor: bool,
 ) {
     // Draw left panel background (covers the grid underneath)
     ui.painter().rect_filled(combo_rect, 0.0, theme::APP_BG);
@@ -1171,21 +1209,28 @@ fn show_target_combo(
                     .show(ui.ctx(), |ui| {
                         egui::Frame::menu(ui.style()).show(ui, |ui| {
                             ui.set_min_width(120.0);
-                            // Velocity (special: not an AutomationTarget, renders from notes)
-                            let vel_selected = panel.show_velocity;
-                            if ui
-                                .add(egui::Button::selectable(
-                                    vel_selected,
-                                    t!("automation.velocity").as_ref(),
-                                ))
-                                .clicked()
-                            {
-                                panel.show_velocity = true;
-                                panel.dirty = true;
-                                ui.ctx().data_mut(|d| d.insert_persisted(popup_id, false));
+                            // Conductor 下只可编辑 Tempo：Velocity / 其他 target / 自定义 CC 都不提供。
+                            if !editing_is_conductor {
+                                // Velocity (special: not an AutomationTarget, renders from notes)
+                                let vel_selected = panel.show_velocity;
+                                if ui
+                                    .add(egui::Button::selectable(
+                                        vel_selected,
+                                        t!("automation.velocity").as_ref(),
+                                    ))
+                                    .clicked()
+                                {
+                                    panel.show_velocity = true;
+                                    panel.dirty = true;
+                                    ui.ctx().data_mut(|d| d.insert_persisted(popup_id, false));
+                                }
+                                ui.separator();
                             }
-                            ui.separator();
                             for target in AUTOMATION_TARGETS {
+                                // Conductor 下只保留 Tempo。
+                                if editing_is_conductor && *target != AutomationTarget::Tempo {
+                                    continue;
+                                }
                                 let name = target.display_name();
                                 let selected =
                                     !panel.show_velocity && panel.selected_target == *target;
@@ -1196,24 +1241,28 @@ fn show_target_combo(
                                     ui.ctx().data_mut(|d| d.insert_persisted(popup_id, false));
                                 }
                             }
-                            ui.separator();
-                            ui.label(t!("automation.custom_cc").as_ref());
-                            let mut cc_input = match &panel.selected_target {
-                                AutomationTarget::CC { controller } => *controller as i32,
-                                _ => 0,
-                            };
-                            let old_cc = cc_input;
-                            ui.add(
-                                crate::widgets::numeric_input::decimal_drag_value(&mut cc_input)
+                            if !editing_is_conductor {
+                                ui.separator();
+                                ui.label(t!("automation.custom_cc").as_ref());
+                                let mut cc_input = match &panel.selected_target {
+                                    AutomationTarget::CC { controller } => *controller as i32,
+                                    _ => 0,
+                                };
+                                let old_cc = cc_input;
+                                ui.add(
+                                    crate::widgets::numeric_input::decimal_drag_value(
+                                        &mut cc_input,
+                                    )
                                     .range(0..=127)
                                     .speed(1),
-                            );
-                            if cc_input != old_cc {
-                                panel.selected_target = AutomationTarget::CC {
-                                    controller: cc_input as u8,
-                                };
-                                panel.show_velocity = false;
-                                panel.dirty = true;
+                                );
+                                if cc_input != old_cc {
+                                    panel.selected_target = AutomationTarget::CC {
+                                        controller: cc_input as u8,
+                                    };
+                                    panel.show_velocity = false;
+                                    panel.dirty = true;
+                                }
                             }
                         });
                     });
@@ -1360,6 +1409,150 @@ pub fn show_toggle_buttons(ui: &mut egui::Ui, show_panels: &mut bool, panel_coun
         );
         if minus_resp.clicked() && *panel_count > 0 {
             *panel_count -= 1;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use yinhe_editor_core::quantize::QuantizePreset;
+    use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, SegmentShape};
+
+    /// 测试用面板：Tempo target、1px/tick、面板高 80px、无滚动、无缩放。
+    fn tempo_panel() -> AutomationPanelView {
+        AutomationPanelView {
+            selected_target: AutomationTarget::Tempo,
+            show_velocity: false,
+            panel_height: 80.0,
+            value_zoom: 1.0,
+            value_scroll: 0.0,
+            base: yinhe_types::TimelineViewBase {
+                pixels_per_tick: 1.0,
+                scroll_x: 0.0,
+                scroll_y: 0.0,
+                left_panel_width: 0.0,
+                dirty: true,
+                track_panel_row_height: 40.0,
+                track_panel_scroll_y: 0.0,
+            },
+            ..Default::default()
+        }
+    }
+
+    fn tempo_lane(events: Vec<(u32, f32)>) -> AutomationLane {
+        AutomationLane {
+            target: AutomationTarget::Tempo,
+            track: 0,
+            events: events
+                .into_iter()
+                .map(|(tick, value)| AutomationEvent {
+                    tick,
+                    value,
+                    shape: SegmentShape::Step,
+                })
+                .collect(),
+        }
+    }
+
+    fn panel_rect() -> egui::Rect {
+        egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(800.0, 80.0))
+    }
+
+    fn press_event(pos: egui::Pos2) -> egui::RawInput {
+        let mut raw = egui::RawInput::default();
+        raw.events.push(egui::Event::PointerMoved(pos));
+        raw.events.push(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::default(),
+        });
+        raw
+    }
+
+    fn drag_event(pos: egui::Pos2) -> egui::RawInput {
+        let mut raw = egui::RawInput::default();
+        raw.events.push(egui::Event::PointerMoved(pos));
+        raw
+    }
+
+    fn release_event(pos: egui::Pos2) -> egui::RawInput {
+        let mut raw = egui::RawInput::default();
+        raw.events.push(egui::Event::PointerMoved(pos));
+        raw.events.push(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::default(),
+        });
+        raw
+    }
+
+    /// 跑一帧 dispatch_edit_interaction（Tempo 面板），返回 automation_edits。
+    fn run_dispatch(
+        ctx: &egui::Context,
+        raw: egui::RawInput,
+        panel: &mut AutomationPanelView,
+        lane: &AutomationLane,
+        active_track: Option<u16>,
+    ) -> Vec<AutomationEdit> {
+        let mut edits = Vec::new();
+        let _ = ctx.run_ui(raw, |ui| {
+            let edit_ctx = AutomationEditCtx {
+                active_tool: Tool::Pencil,
+                active_track,
+                // 1/16 音符网格：interval = 480*4/16 = 120 tick。
+                quantize: QuantizePreset::Fraction(1, 16),
+                ppq: 480,
+                bar_line_data: None,
+            };
+            let mut info: Option<InfoContent> = None;
+            let mut right_tab: Option<RightTab> = None;
+            edits = dispatch_edit_interaction(
+                ui,
+                panel_rect(),
+                panel_rect(),
+                panel,
+                &[],
+                lane,
+                None,
+                Some(&edit_ctx),
+                0,
+                &[[0.8, 0.8, 0.8, 1.0]],
+                &mut info,
+                &mut right_tab,
+            )
+            .automation_edits;
+        });
+        edits
+    }
+
+    /// 回归测试：Tempo 编辑不依赖 active_track——没有任何编辑目标
+    /// （editing_track=None）时 Tempo 锚点依然可拖拽（Conductor 下编辑的前提）。
+    #[test]
+    fn tempo_editable_without_active_track() {
+        let ctx = egui::Context::default();
+        let mut panel = tempo_panel();
+        let lane = tempo_lane(vec![(0, 120.0)]);
+        // 锚点 (tick=0, value=120) 位于面板顶部。
+        let anchor = egui::pos2(0.0, 0.0);
+        // 拖到面板上方 20px、tick 120（1/16 音符量化点）。
+        let above = egui::pos2(120.0, -20.0);
+
+        let _ = run_dispatch(&ctx, press_event(anchor), &mut panel, &lane, None);
+        let _ = run_dispatch(&ctx, drag_event(above), &mut panel, &lane, None);
+        let edits = run_dispatch(&ctx, release_event(above), &mut panel, &lane, None);
+
+        let move_edit = edits
+            .iter()
+            .find(|e| matches!(e, AutomationEdit::Move { .. }))
+            .expect("无 active_track 时 Tempo 拖拽也应提交 Move");
+        match move_edit {
+            AutomationEdit::Move { new_value, .. } => {
+                assert_eq!(*new_value, 150.0, "BPM 应突破显示上限 120");
+            }
+            _ => unreachable!(),
         }
     }
 }

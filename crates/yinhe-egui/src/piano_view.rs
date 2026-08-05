@@ -810,11 +810,13 @@ pub fn show(
         let combo_w = kb_w * theme::AUTO_PANEL_COMBO_WIDTH_RATIO;
 
         // automation 编辑上下文：Pencil/Curve/Select/SelectVertical 工具时启用。
-        // active_track 由 editing_track 决定（与 pencil 一致），
-        // 允许 conductor（用于 Tempo automation）。只需可见即可
+        // active_track 由 editing_track 决定（与 pencil 一致），但 Conductor 除外：
+        // Conductor 不能作为非 Tempo 自动化编辑目标（Tempo 编辑不依赖 active_track，
+        // 见 dispatch_edit_interaction）。只需可见即可
         // （editing_track 已常驻 PR 显示，不再要求 track_selected）。
-        let active_track =
-            editing_track.filter(|&t| track_visible.get(t as usize).copied().unwrap_or(false));
+        let active_track = editing_track
+            .filter(|&t| track_visible.get(t as usize).copied().unwrap_or(false))
+            .filter(|&t| Some(t) != conductor_idx);
         let edit_ctx = if matches!(
             *active_tool,
             Tool::Pencil | Tool::Curve | Tool::Select | Tool::SelectVertical
@@ -858,6 +860,7 @@ pub fn show(
             revision,
             bar_line_data,
             sel_hint,
+            editing_is_conductor: editing_track == conductor_idx,
         };
         let mut panels_edit = automation_panel::PanelsEdit {
             selected,

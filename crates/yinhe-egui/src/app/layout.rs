@@ -695,9 +695,11 @@ impl App {
             self.view_mode = crate::chrome::mode_bar::ViewMode::Edit;
         }
 
-        // 2. 切 editing_track（音符/CC/PB/PC 事件需要）
+        // 2. 切 editing_track（音符/CC/PB/PC 事件需要）。
+        // Conductor 不可作为编辑目标（无铅笔图标）；Tempo 编辑不依赖它。
         if let Some((track, _key)) = req.note
             && let Some(idx) = self.active_doc
+            && self.documents[idx].edit.conductor_track_idx != Some(track)
         {
             self.documents[idx].edit.editing_track = Some(track);
         }

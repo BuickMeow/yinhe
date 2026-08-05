@@ -69,6 +69,12 @@ pub(crate) fn show(
     let painter = ui.painter().clone();
     let mut audio_dirty = false;
 
+    // 迁移：Conductor 不可作为编辑目标（旧版本可能已把 editing_track 设为
+    // Conductor），自动清除，保证铅笔图标不会出现在 Conductor 行。
+    if *editing_track == conductor_track_idx {
+        *editing_track = None;
+    }
+
     let interact_id = egui::Id::new("track_panel_area");
     let resp = ui.interact(panel_rect, interact_id, egui::Sense::click_and_drag());
 
@@ -259,6 +265,11 @@ pub(crate) fn show(
         if let Some(pos) = resp.interact_pointer_pos()
             && let Some(idx) = hit(pos)
         {
+            // Conductor 不可作为编辑目标：Tempo 自动化不依赖编辑目标即可编辑，
+            // 因此 Conductor 行永远不出铅笔图标（双击忽略）。
+            if Some(track_info[idx].index) == conductor_track_idx {
+                return (false, Vec::new());
+            }
             // 双击 toggle：已经是 editing_track 则清除（关闭编辑），
             // 否则设为新 editing_track（打开 PR 并切换编辑目标）。
             let track_idx = track_info[idx].index;
