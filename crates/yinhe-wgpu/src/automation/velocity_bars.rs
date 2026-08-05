@@ -68,13 +68,14 @@ pub fn build_velocity_bars(
         })
         .collect();
 
-    // Deterministic z-order: tick ASC → velocity DESC（soft 后画在上）→
-    // gate DESC（同力度时短 gate 后画在上）→ track ASC。
+    // Deterministic z-order：主键 vel DESC（大 vel 底层先画，小 vel 顶层后画）——
+    // 跨 tick 也成立：tick 靠后的大 vel bar 不会盖住前面未放完的小 vel bar；
+    // 次键 gate DESC（同力度时短 gate 顶层后画）→ tick ASC → track ASC。
     bars.sort_by(|a, b| {
-        a.tick
-            .cmp(&b.tick)
-            .then(b.velocity().cmp(&a.velocity()))
+        b.velocity()
+            .cmp(&a.velocity())
             .then(b.length.cmp(&a.length))
+            .then(a.tick.cmp(&b.tick))
             .then(a.track().cmp(&b.track()))
     });
 
@@ -248,6 +249,20 @@ mod tests {
     fn keep_non_overlapping_bars() {
         let out = build(vec![make_bar(100, 10, 80, 0), make_bar(200, 10, 80, 1)]);
         assert_eq!(out.len(), 2);
+    }
+
+    #[test]
+    fn zorder_large_vel_behind_small_vel() {
+        // 回归：tick 靠后的大 vel bar 必须先画（底层），
+        // 不能盖住前面未放完（gate 长）的小 vel bar。
+        let out = build(vec![
+            make_bar(100, 200, 20, 0), // 小 vel 长 bar，未放完
+            make_bar(150, 10, 100, 1), // tick 靠后的大 vel 短 bar
+        ]);
+        assert_eq!(out.len(), 2);
+        // 输出顺序 = 绘制顺序：vel DESC → 大 vel（100）在前（底层）。
+        assert_eq!(out[0].2, 100, "大 vel 应先画（底层）: {out:?}");
+        assert_eq!(out[1].2, 20, "小 vel 后画（顶层）: {out:?}");
     }
 
     #[test]
