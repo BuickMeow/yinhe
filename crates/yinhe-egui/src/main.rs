@@ -29,7 +29,14 @@ fn main() {
     // 静态字符串，解析失败时忽略（保持默认级别）
     // symphonia_format_riff 的 "ignoring unknown chunk" INFO 日志属于
     // 上游解码器的例行提示（smpl chunk 等），不是我们的错误，压到 warn。
-    for directive in ["wgpu=warn", "naga=warn", "symphonia_format_riff=warn"] {
+    // epaint::text::fonts 启动时会因 material-icons 家族缺替换字符打
+    // "Failed to find replacement characters" 警告，纯噪音，直接关掉。
+    for directive in [
+        "wgpu=warn",
+        "naga=warn",
+        "symphonia_format_riff=warn",
+        "epaint::text::fonts=off",
+    ] {
         if let Ok(d) = directive.parse() {
             env_filter = env_filter.add_directive(d);
         }
