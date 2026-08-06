@@ -26,6 +26,9 @@ pub fn show(
     let mut changed = false;
 
     // ── Top: mode toggle (two text buttons, mutually exclusive) ──
+    // 上方留 8px 与面板顶/顶栏分隔线拉开，下方 separator 前不额外加宽，
+    // 避免上窄下宽；字号与面板其他文字（12px）一致。
+    ui.add_space(8.0);
     ui.horizontal(|ui| {
         ui.add_space(8.0);
 
@@ -35,7 +38,7 @@ pub fn show(
         let resp_g = ui.add(
             egui::Label::new(
                 egui::RichText::new(t!("soundfont.global").as_ref())
-                    .size(crate::theme::MODE_LABEL_FONT)
+                    .size(12.0)
                     .color(if is_global {
                         crate::theme::ACCENT_ACTIVE
                     } else {
@@ -49,7 +52,7 @@ pub fn show(
             ui,
             &resp_g,
             t!("soundfont.global").as_ref(),
-            egui::FontId::proportional(crate::theme::MODE_LABEL_FONT),
+            egui::FontId::proportional(12.0),
             is_global,
         );
         if resp_g.clicked() && !is_global {
@@ -63,7 +66,7 @@ pub fn show(
         let resp_p = ui.add(
             egui::Label::new(
                 egui::RichText::new(t!("soundfont.project").as_ref())
-                    .size(crate::theme::MODE_LABEL_FONT)
+                    .size(12.0)
                     .color(if !is_global {
                         crate::theme::ACCENT_ACTIVE
                     } else {
@@ -77,7 +80,7 @@ pub fn show(
             ui,
             &resp_p,
             t!("soundfont.project").as_ref(),
-            egui::FontId::proportional(crate::theme::MODE_LABEL_FONT),
+            egui::FontId::proportional(12.0),
             !is_global,
         );
         if resp_p.clicked() && is_global {
@@ -86,7 +89,6 @@ pub fn show(
         }
     });
 
-    ui.add_space(8.0);
     ui.separator();
     ui.add_space(4.0);
 
