@@ -72,6 +72,49 @@ pub(crate) fn set_document_edited(frame: &eframe::Frame, edited: bool) {
     }
 }
 
+// ── App Nap（播放时阻止系统降频）──────────────────────────────────────
+
+// 当前 App Nap 阻止令牌（beginActivityWithOptions: 的返回值），null 表示未阻止。
+// 只在主线程访问（播放状态检查发生在 UI 帧内）。
+thread_local! {
+    static APP_NAP_TOKEN: std::cell::Cell<*mut AnyObject> =
+        const { std::cell::Cell::new(std::ptr::null_mut()) };
+}
+
+/// 播放时阻止 App Nap（NSActivityUserInitiatedAllowingIdleSystemSleep），
+/// 避免窗口遮挡/后台时系统降低定时器精度导致播放卡顿；停止播放时恢复。
+pub(crate) fn set_app_nap_enabled(enabled: bool) {
+    let Some(pi_class) = cls(cstr!("NSProcessInfo")) else {
+        return;
+    };
+    let Some(string_class) = cls(cstr!("NSString")) else {
+        return;
+    };
+    unsafe {
+        let pi: *mut AnyObject = objc2::msg_send![pi_class, processInfo];
+        APP_NAP_TOKEN.with(|cell| {
+            let token = cell.get();
+            if enabled && token.is_null() {
+                let reason: *mut AnyObject = objc2::msg_send![
+                    string_class,
+                    stringWithUTF8String: c"Yinhe playback".as_ptr()
+                ];
+                let t: *mut AnyObject = objc2::msg_send![
+                    pi,
+                    beginActivityWithOptions: 0x00FFFFFFu64,
+                    reason: reason
+                ];
+                if !t.is_null() {
+                    cell.set(t);
+                }
+            } else if !enabled && !token.is_null() {
+                let _: () = objc2::msg_send![pi, endActivity: token];
+                cell.set(std::ptr::null_mut());
+            }
+        });
+    }
+}
+
 // ── Menu Bar ───────────────────────────────────────────────────────────────
 
 /// Global channel for menu actions. The muda event handler writes here.

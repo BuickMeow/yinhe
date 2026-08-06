@@ -835,10 +835,17 @@ impl App {
             .as_ref()
             .map(|a| a.handle.is_playing())
             .unwrap_or(false);
+        // macOS: 播放时阻止 App Nap（防止系统降低定时器精度导致播放卡顿），
+        // 仅在播放状态翻转时调用平台 API。
+        let playing = is_audio_playing || self.audio_state.pending_playback;
+        if playing != self.app_nap_active {
+            self.app_nap_active = playing;
+            crate::platform::set_app_nap_enabled(playing);
+        }
         // macOS: 窗口被完全遮挡时暂停动画重绘省 CPU/电（音频在独立线程继续播）。
         // 恢复可见时 Occluded(false) 事件会触发一次重绘，playhead 按 anchor+Instant 重算，不会跳帧丢位置。
         let occluded = ui.ctx().input(|i| i.viewport().occluded == Some(true));
-        if (is_audio_playing || self.audio_state.pending_playback) && !occluded {
+        if playing && !occluded {
             ui.ctx().request_repaint();
         }
     }

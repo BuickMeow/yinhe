@@ -93,6 +93,8 @@ pub struct App {
     pub(crate) title_bar_press_pos: Option<egui::Pos2>,
     /// Horizontal scroll offset for title bar tabs (pixels).
     pub(crate) tab_scroll_offset: f32,
+    /// macOS：播放中是否已阻止 App Nap（状态变化时才调用平台 API）。
+    pub(crate) app_nap_active: bool,
 
     // ── Cursor tick tracking for cross-view sync ──
     pub(crate) last_cursor_tick: Option<f64>,
@@ -271,6 +273,7 @@ impl App {
 
             title_bar_press_pos: None,
             tab_scroll_offset: 0.0,
+            app_nap_active: false,
 
             last_cursor_tick: None,
             piano_last_cursor_tick: None,

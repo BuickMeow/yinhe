@@ -61,14 +61,21 @@ pub fn request_user_attention() {
     request_user_attention_inner();
 }
 
+/// macOS：播放时阻止 App Nap（防止系统降低定时器精度）；非 macOS 平台为空操作。
+pub fn set_app_nap_enabled(enabled: bool) {
+    set_app_nap_enabled_inner(enabled);
+}
+
 // Re-export the platform-specific inner type and function.
 #[cfg(target_os = "macos")]
 use macos::{
     MenuBarInner, request_user_attention as request_user_attention_inner,
+    set_app_nap_enabled as set_app_nap_enabled_inner,
     set_document_edited as set_document_edited_inner,
 };
 #[cfg(not(target_os = "macos"))]
 use stub::{
     MenuBarInner, request_user_attention as request_user_attention_inner,
+    set_app_nap_enabled as set_app_nap_enabled_inner,
     set_document_edited as set_document_edited_inner,
 };
