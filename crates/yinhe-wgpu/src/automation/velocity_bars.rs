@@ -195,16 +195,22 @@ fn insert_interval(covered: &mut Vec<(u32, u32)>, s: u32, e: u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use yinhe_types::{Note, NoteSource};
+    use yinhe_types::{Note, NoteBucket, NoteSource};
 
     /// 测试音符全部放在 key 60（velocity 面板不分 key）。
     struct MockSource {
-        notes: Vec<Note>, // 按 start_tick 升序
+        notes: NoteBucket, // 按 start_tick 升序
     }
 
     impl NoteSource for MockSource {
-        fn key_notes(&self, key: u8) -> &[Note] {
-            if key == 60 { &self.notes } else { &[] }
+        fn key_notes(&self, key: u8) -> &NoteBucket {
+            if key == 60 {
+                &self.notes
+            } else {
+                static EMPTY: std::sync::LazyLock<NoteBucket> =
+                    std::sync::LazyLock::new(NoteBucket::default);
+                &EMPTY
+            }
         }
 
         fn duration(&self) -> f64 {
@@ -223,7 +229,11 @@ mod tests {
     }
 
     fn build(notes: Vec<Note>) -> Vec<(u32, u32, u8, u16)> {
-        let src = MockSource { notes };
+        let mut notes = notes;
+        notes.sort_by_key(|n| n.start_tick);
+        let src = MockSource {
+            notes: NoteBucket::from_sorted(notes),
+        };
         let view = AutomationPanelView::default();
         let tv = vec![true; 4];
         let mut out = Vec::new();
@@ -341,7 +351,6 @@ mod tests {
             .map(|k| {
                 model
                     .key_notes_in_range(k, ts as u32, te as u32)
-                    .iter()
                     .filter(|n| n.velocity > 1) // 与构建的 vel=1 过滤一致
                     .count() as u64
             })

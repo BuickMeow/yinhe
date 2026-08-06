@@ -60,8 +60,7 @@ impl Document {
         {
             let model = Arc::make_mut(&mut self.data.model);
             let k = key as usize;
-            let insert_pos = model.notes[k].partition_point(|n| n.start_tick < note.start_tick);
-            Arc::make_mut(&mut model.notes[k]).insert(insert_pos, typed_note);
+            Arc::make_mut(&mut model.notes[k]).insert_sorted(typed_note);
             model.mark_dirty(key);
         }
         self.data.rebuild_model_dirty();
@@ -390,7 +389,7 @@ impl Document {
     fn edit_note_props(&mut self, field: NoteField, ops: &[NumOp]) -> Option<UndoAction> {
         struct Target {
             key: u8,
-            idx: usize,
+            id: u32,
             old: yinhe_types::Note,
             new: yinhe_types::Note,
         }
@@ -401,10 +400,7 @@ impl Document {
             for &(ts, te, kl, kh, tl, th) in &self.edit.selected.rects {
                 for key in kl..=kh {
                     let k = key as usize;
-                    let bucket = &model.notes[k];
-                    let lo = bucket.partition_point(|n| n.start_tick < ts);
-                    let hi = bucket.partition_point(|n| n.start_tick < te);
-                    for (offset, n) in bucket[lo..hi].iter().enumerate() {
+                    for n in model.notes[k].range(ts, te) {
                         if n.track < tl || n.track > th {
                             continue;
                         }
@@ -442,7 +438,7 @@ impl Document {
                             }
                             targets.push(Target {
                                 key,
-                                idx: lo + offset,
+                                id: n.id,
                                 old: *n,
                                 new,
                             });
@@ -468,7 +464,9 @@ impl Document {
         let mut after = Vec::with_capacity(targets.len());
         for t in &targets {
             let bucket = Arc::make_mut(&mut model.notes[t.key as usize]);
-            bucket[t.idx] = t.new;
+            // 收集阶段与修改阶段之间无并发修改，目标必然存在。
+            let n = bucket.find_mut(t.id).expect("edit target vanished");
+            *n = t.new;
             before.push((t.old, t.key));
             after.push((t.new, t.key));
             model.mark_dirty(t.key);

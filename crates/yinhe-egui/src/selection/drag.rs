@@ -107,7 +107,6 @@ pub fn collect_selected_notes(
             (kl..=kh).flat_map(move |key| {
                 midi.map(|m| {
                     m.key_notes_in_range(key, ts, te)
-                        .iter()
                         .filter(|n| selected.contains(n.track, n.start_tick, key))
                         .filter(|n| track_selected.is_empty() || track_selected.contains(&n.track))
                         .filter(|n| track_visible.get(n.track as usize).copied().unwrap_or(true))

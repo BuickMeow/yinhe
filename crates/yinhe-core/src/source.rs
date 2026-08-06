@@ -5,13 +5,13 @@
 //! that already speaks NoteSource (PianoRoll, Arrangement) works without
 //! changes.
 
-use yinhe_types::{Note, NoteSource, TimeSigEvent};
+use yinhe_types::{NoteBucket, NoteSource, TimeSigEvent};
 
 use crate::model::YinModel;
 
 impl NoteSource for YinModel {
-    fn key_notes(&self, key: u8) -> &[Note] {
-        self.notes[key as usize].as_slice()
+    fn key_notes(&self, key: u8) -> &NoteBucket {
+        self.notes[key as usize].as_ref()
     }
 
     fn duration(&self) -> f64 {

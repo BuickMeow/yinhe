@@ -25,36 +25,38 @@ fn build_key_instances(
     hidden_notes: &std::collections::HashSet<(u16, u32, u8)>,
     range: Option<(f64, f64)>,
 ) {
-    let notes = match range {
-        Some((ts, te)) => midi.key_notes_in_range(key, ts as u32, te as u32),
-        None => midi.key_notes(key),
-    };
-    for note in notes {
-        if let Some((_, te)) = range
-            && note.start_tick as f64 > te
-        {
-            break;
-        }
-        if let Some((ts, _)) = range
-            && (note.end_tick as f64) < ts
-        {
-            continue;
-        }
+    // 单音符过滤 + 输出（range 迭代器已精确到 [ts, te)，无需再 break）。
+    let emit = |out: &mut Vec<NoteInstance>, note: &yinhe_types::Note| {
         if !track_visible
             .get(note.track as usize)
             .copied()
             .unwrap_or(true)
         {
-            continue;
+            return;
         }
         if hidden_notes.contains(&(note.track, note.start_tick, key)) {
-            continue;
+            return;
         }
         out.push(NoteInstance {
             start_tick: note.start_tick,
             end_tick: note.end_tick,
             packed: NoteInstance::pack(key, note.track, note.velocity),
         });
+    };
+    match range {
+        Some((ts, te)) => {
+            for note in midi.key_notes_in_range(key, ts as u32, te as u32) {
+                if (note.end_tick as f64) < ts {
+                    continue;
+                }
+                emit(out, note);
+            }
+        }
+        None => {
+            for note in midi.key_notes(key).iter() {
+                emit(out, note);
+            }
+        }
     }
 }
 

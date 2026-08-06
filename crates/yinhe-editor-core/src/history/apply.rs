@@ -133,10 +133,7 @@ impl UndoAction {
                     for (note, key) in deleted_notes {
                         by_key.entry(*key).or_default().push(*note);
                     }
-                    for (key, notes) in by_key {
-                        let k = key as usize;
-                        Arc::make_mut(&mut model.notes[k]).extend(notes);
-                    }
+                    crate::batch_ops::insert_batch(model, by_key);
                 }
                 model.rebuild();
                 doc.data.bump_revision();
@@ -171,7 +168,7 @@ pub(crate) fn apply_note_delta(doc: &mut Document, remove: &[(Note, u8)], insert
     }
     for (key, to_remove) in &remove_by_key {
         let k = *key as usize;
-        Arc::make_mut(&mut model.notes[k]).retain(|n| !to_remove.contains(&n.id));
+        Arc::make_mut(&mut model.notes[k]).remove_by_ids(to_remove);
         model.mark_dirty(*key);
     }
 

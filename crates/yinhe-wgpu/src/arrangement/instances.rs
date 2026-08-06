@@ -105,10 +105,8 @@ pub fn build_notes(
         .filter_map(|key| {
             // Wrap key processing in stacker to get fresh stack segments on demand.
             stacker::maybe_grow(STACK_RED_ZONE, STACK_SIZE, || {
-                let notes = midi.key_notes_in_range(key, tick_start as u32, tick_end as u32);
-                if notes.is_empty() {
-                    return None;
-                }
+                let mut notes = midi.key_notes_in_range(key, tick_start as u32, tick_end as u32);
+                notes.next()?; // 该 key 无命中音符
 
                 let mut local = Vec::new();
 

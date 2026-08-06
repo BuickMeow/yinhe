@@ -110,11 +110,31 @@ struct NoteStreams {
 
 /// 归并堆元素：堆顶 = 当前 (start, track, key) 最小的桶游标。
 /// `key` 即桶号（0-127），同 (start, track) 的不同桶 key 必不同，全序无歧义。
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-struct HeapEntry {
+/// `note` 携带游标指向的音符本体（元素已被 `next()` 消费，避免二次取）。
+/// 比较只按 (start, track, key)（`Note` 无 Eq/Ord，不参与排序）。
+#[derive(Clone, Copy)]
+struct HeapEntry<'a> {
     start: u32,
     track: u16,
     key: u8,
+    note: &'a yinhe_types::Note,
+}
+
+impl PartialEq for HeapEntry<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        (self.start, self.track, self.key) == (other.start, other.track, other.key)
+    }
+}
+impl Eq for HeapEntry<'_> {}
+impl PartialOrd for HeapEntry<'_> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for HeapEntry<'_> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        (self.start, self.track, self.key).cmp(&(other.start, other.track, other.key))
+    }
 }
 
 /// 每 1M 音符汇报一次进度的掩码。
@@ -139,7 +159,7 @@ fn encode_note_streams(
     // 兜底：乱序桶先本地排（不写回模型，只影响本次归并源）。
     let mut sorted_copies: Vec<Option<Vec<yinhe_types::Note>>> = Vec::with_capacity(128);
     for (key, bucket) in model.notes.iter().enumerate() {
-        if bucket.is_sorted_by_key(|n| n.start_tick) {
+        if bucket.is_sorted() {
             sorted_copies.push(None);
         } else {
             let mut b: Vec<yinhe_types::Note> = bucket.iter().copied().collect();
@@ -152,25 +172,26 @@ fn encode_note_streams(
             (key as f32 + 1.0) / 128.0,
         );
     }
-    let mut sources: Vec<&[yinhe_types::Note]> = Vec::with_capacity(128);
+    let mut sources: Vec<Box<dyn Iterator<Item = &yinhe_types::Note> + '_>> =
+        Vec::with_capacity(128);
     for (key, bucket) in model.notes.iter().enumerate() {
         match &sorted_copies[key] {
-            Some(c) => sources.push(c.as_slice()),
-            None => sources.push(bucket.as_slice()),
+            Some(c) => sources.push(Box::new(c.iter())),
+            None => sources.push(Box::new(bucket.iter())),
         }
     }
 
     // 128 路归并：每桶一个游标在堆里，pop 最小 (start, track, key) 后
     // 推进该桶下一个。桶内按 start 有序（兜底已排），输出即全局序。
-    let mut cur = [0usize; 128];
     let mut heap: std::collections::BinaryHeap<std::cmp::Reverse<HeapEntry>> =
         std::collections::BinaryHeap::with_capacity(128);
-    for (key, src) in sources.iter().enumerate() {
-        if let Some(first) = src.first() {
+    for (key, src) in sources.iter_mut().enumerate() {
+        if let Some(n) = src.next() {
             heap.push(std::cmp::Reverse(HeapEntry {
-                start: first.start_tick,
-                track: first.track,
+                start: n.start_tick,
+                track: n.track,
                 key: key as u8,
+                note: n,
             }));
         }
     }
@@ -187,13 +208,13 @@ fn encode_note_streams(
     for i in 0..total {
         let std::cmp::Reverse(e) = heap.pop().expect("heap must stay full until total");
         let key = e.key as usize;
-        let n = sources[key][cur[key]];
-        cur[key] += 1;
-        if let Some(next) = sources[key].get(cur[key]) {
+        let n = e.note;
+        if let Some(next) = sources[key].next() {
             heap.push(std::cmp::Reverse(HeapEntry {
                 start: next.start_tick,
                 track: next.track,
                 key: e.key,
+                note: next,
             }));
         }
         delta.push(if i == 0 {

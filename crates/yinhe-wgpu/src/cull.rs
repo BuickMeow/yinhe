@@ -2810,13 +2810,15 @@ mod tests {
             let k = 60u8;
             let start = (model.tick_length / 2) as u32;
             let id = model.alloc_note_id();
-            std::sync::Arc::make_mut(&mut model.notes[k as usize]).push(yinhe_types::Note {
-                id,
-                start_tick: start,
-                end_tick: start + 240,
-                velocity: 100,
-                track: 0,
-            });
+            std::sync::Arc::make_mut(&mut model.notes[k as usize]).insert_sorted(
+                yinhe_types::Note {
+                    id,
+                    start_tick: start,
+                    end_tick: start + 240,
+                    velocity: 100,
+                    track: 0,
+                },
+            );
             model.mark_dirty(k);
             model.rebuild_dirty();
             revision = revision.wrapping_add(1);

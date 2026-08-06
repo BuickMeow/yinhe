@@ -9,7 +9,7 @@ use crate::events::NoteEvent;
 use crate::tempo_map::{
     DEFAULT_MPQ, TempoMap, TempoSegment, mpq_from_bpm, recompute_tempo_start_times,
 };
-use yinhe_types::{AutomationLane, AutomationTarget, PcEvent};
+use yinhe_types::{AutomationLane, AutomationTarget, NoteBucket, PcEvent};
 
 // =========================================================
 //  Conductor
@@ -174,9 +174,10 @@ pub struct YinModel {
     pub meta: ProjectMeta,
 
     /// Single authoritative note store: `notes[key]` = all notes at that key,
-    /// sorted by start_tick. Each note carries its track index and全局唯一 id。
+    /// sorted by start_tick (chunked, 65536 notes/chunk). Each note carries
+    /// its track index and全局唯一 id。
     /// Compatible with `yinhe_types::NoteSource`.
-    pub notes: Box<[Arc<Vec<yinhe_types::Note>>; 128]>,
+    pub notes: Box<[Arc<NoteBucket>; 128]>,
     pub note_count: u64,
     pub tick_length: u64,
     /// 全曲最长音符长度（tick），只增不减：删除最长音符后保留旧值只会让
@@ -231,7 +232,7 @@ impl Default for YinModel {
             tracks: Vec::new(),
             tempo_map: Arc::new(TempoMap::default()),
             meta: ProjectMeta::default(),
-            notes: Box::new(core::array::from_fn(|_| Arc::new(Vec::new()))),
+            notes: Box::new(core::array::from_fn(|_| Arc::new(NoteBucket::default()))),
             note_count: 0,
             tick_length: 0,
             max_note_len: 0,
@@ -633,7 +634,7 @@ mod tests {
         let mut m_inc = base.clone();
         {
             let model = Arc::make_mut(&mut m_inc.notes[60]);
-            model.push(yinhe_types::Note {
+            model.insert_sorted(yinhe_types::Note {
                 id: 0,
                 start_tick: 960,
                 end_tick: 1440,
@@ -643,7 +644,7 @@ mod tests {
         }
         {
             let model = Arc::make_mut(&mut m_inc.notes[62]);
-            model.push(yinhe_types::Note {
+            model.insert_sorted(yinhe_types::Note {
                 id: 0,
                 start_tick: 240,
                 end_tick: 480,
@@ -658,7 +659,7 @@ mod tests {
         let mut m_full = base.clone();
         {
             let model = Arc::make_mut(&mut m_full.notes[60]);
-            model.push(yinhe_types::Note {
+            model.insert_sorted(yinhe_types::Note {
                 id: 0,
                 start_tick: 960,
                 end_tick: 1440,
@@ -668,7 +669,7 @@ mod tests {
         }
         {
             let model = Arc::make_mut(&mut m_full.notes[62]);
-            model.push(yinhe_types::Note {
+            model.insert_sorted(yinhe_types::Note {
                 id: 0,
                 start_tick: 240,
                 end_tick: 480,

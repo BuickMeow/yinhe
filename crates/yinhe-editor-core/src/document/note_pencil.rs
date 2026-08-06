@@ -30,7 +30,7 @@ impl Document {
                 let model = &self.data.model;
                 let k = *key as usize;
                 let note = model.notes[k]
-                    .iter()
+                    .range(*start_tick, start_tick.saturating_add(1))
                     .find(|n| n.track == *track && n.start_tick == *start_tick)?;
                 let orig_note = *note;
                 let new_key = ((*key as i32) + delta_keys).clamp(0, 127) as u8;
@@ -39,8 +39,7 @@ impl Document {
                 if *delta_ticks != 0 || *delta_keys != 0 {
                     let model = Arc::make_mut(&mut self.data.model);
                     // Remove original from old key bucket by id
-                    let ok = *key as usize;
-                    Arc::make_mut(&mut model.notes[ok]).retain(|n| n.id != orig_note.id);
+                    Arc::make_mut(&mut model.notes[*key as usize]).remove_by_id(orig_note.id);
                     model.mark_dirty(*key);
                     // Insert moved note at new key bucket（保留原 id）
                     let length = orig_note.end_tick - orig_note.start_tick;
@@ -52,9 +51,7 @@ impl Document {
                         track: *track,
                     };
                     let nk = new_key as usize;
-                    let insert_pos =
-                        model.notes[nk].partition_point(|n| n.start_tick < moved.start_tick);
-                    Arc::make_mut(&mut model.notes[nk]).insert(insert_pos, moved);
+                    Arc::make_mut(&mut model.notes[nk]).insert_sorted(moved);
                     model.mark_dirty(new_key);
                     model.rebuild_dirty();
                     self.data.bump_revision();
@@ -74,15 +71,12 @@ impl Document {
                 let model = &self.data.model;
                 let k = *key as usize;
                 let note = model.notes[k]
-                    .iter()
+                    .range(*start_tick, start_tick.saturating_add(1))
                     .find(|n| n.track == *track && n.start_tick == *start_tick)?;
                 if *new_end_tick != note.end_tick {
                     let before = *note;
                     let model = Arc::make_mut(&mut self.data.model);
-                    if let Some(n) = Arc::make_mut(&mut model.notes[k])
-                        .iter_mut()
-                        .find(|n| n.id == before.id)
-                    {
+                    if let Some(n) = Arc::make_mut(&mut model.notes[k]).find_mut(before.id) {
                         n.end_tick = (*new_end_tick).max(n.start_tick + 1);
                         let after = *n;
                         model.mark_dirty(*key);
@@ -105,30 +99,24 @@ impl Document {
                 let model = &self.data.model;
                 let k = *key as usize;
                 let note = model.notes[k]
-                    .iter()
+                    .range(*start_tick, start_tick.saturating_add(1))
                     .find(|n| n.track == *track && n.start_tick == *start_tick)?;
                 if *new_start_tick != note.start_tick {
                     let before = *note;
                     let model = Arc::make_mut(&mut self.data.model);
                     let bucket = Arc::make_mut(&mut model.notes[k]);
-                    if let Some(idx) = bucket.iter().position(|n| n.id == before.id) {
-                        let mut moved = bucket[idx];
-                        moved.start_tick = (*new_start_tick).min(moved.end_tick - 1);
-                        // start_tick 是排序键：改值后必须移除并插回正确位置，
-                        // 否则桶失序（partition_point 等二分查询会出错）。
-                        bucket.remove(idx);
-                        let insert_pos =
-                            bucket.partition_point(|n| n.start_tick < moved.start_tick);
-                        bucket.insert(insert_pos, moved);
-                        let after = moved;
-                        model.mark_dirty(*key);
-                        model.rebuild_dirty();
-                        self.data.bump_revision();
-                        return Some(UndoAction::Notes(NoteDelta {
-                            before: vec![(before, *key)],
-                            after: vec![(after, *key)],
-                        }));
-                    }
+                    let mut moved = bucket.remove_by_id(before.id)?;
+                    moved.start_tick = (*new_start_tick).min(moved.end_tick - 1);
+                    // start_tick 是排序键：改值后按排序键重新插入。
+                    bucket.insert_sorted(moved);
+                    let after = moved;
+                    model.mark_dirty(*key);
+                    model.rebuild_dirty();
+                    self.data.bump_revision();
+                    return Some(UndoAction::Notes(NoteDelta {
+                        before: vec![(before, *key)],
+                        after: vec![(after, *key)],
+                    }));
                 }
                 None
             }
@@ -166,11 +154,8 @@ impl Document {
         {
             let model = &self.data.model;
             for e in edits {
-                let bucket = &model.notes[e.key as usize];
-                let lo = bucket.partition_point(|n| n.start_tick < e.start_tick);
-                let note = bucket[lo..]
-                    .iter()
-                    .take_while(|n| n.start_tick == e.start_tick)
+                let note = model.notes[e.key as usize]
+                    .range(e.start_tick, e.start_tick.saturating_add(1))
                     .find(|n| n.track == e.track);
                 if let Some(n) = note
                     && n.velocity != e.velocity
@@ -188,21 +173,20 @@ impl Document {
         let mut after = Vec::with_capacity(targets.len());
         for (key, id, old_vel, new_vel) in targets {
             let k = key as usize;
-            if let Some(n) = Arc::make_mut(&mut model.notes[k])
-                .iter_mut()
-                .find(|n| n.id == id)
-            {
-                n.velocity = new_vel;
-                before.push((
-                    yinhe_types::Note {
-                        velocity: old_vel,
-                        ..*n
-                    },
-                    key,
-                ));
-                after.push((*n, key));
-                model.mark_dirty(key);
-            }
+            // 收集阶段与修改阶段之间无并发修改，目标必然存在。
+            let n = Arc::make_mut(&mut model.notes[k])
+                .find_mut(id)
+                .expect("velocity target vanished");
+            n.velocity = new_vel;
+            before.push((
+                yinhe_types::Note {
+                    velocity: old_vel,
+                    ..*n
+                },
+                key,
+            ));
+            after.push((*n, key));
+            model.mark_dirty(key);
         }
         if before.is_empty() {
             return None;
@@ -321,14 +305,7 @@ mod tests {
             })
             .expect("应产生 UndoAction");
         let bucket = &doc.data.model.notes[60];
-        for w in bucket.windows(2) {
-            assert!(
-                w[0].start_tick <= w[1].start_tick,
-                "桶失序: {} > {}",
-                w[0].start_tick,
-                w[1].start_tick
-            );
-        }
+        assert!(bucket.is_sorted(), "桶失序");
         assert_eq!(
             bucket.iter().map(|n| n.start_tick).collect::<Vec<_>>(),
             vec![50, 100, 500],
@@ -352,14 +329,7 @@ mod tests {
         })
         .expect("应产生 UndoAction");
         let bucket = &doc.data.model.notes[60];
-        for w in bucket.windows(2) {
-            assert!(
-                w[0].start_tick <= w[1].start_tick,
-                "桶失序: {} > {}",
-                w[0].start_tick,
-                w[1].start_tick
-            );
-        }
+        assert!(bucket.is_sorted(), "桶失序");
         assert_eq!(
             bucket.iter().map(|n| n.start_tick).collect::<Vec<_>>(),
             vec![50, 100, 450],
@@ -375,14 +345,7 @@ mod tests {
         })
         .expect("应产生 UndoAction");
         let bucket = &doc.data.model.notes[60];
-        for w in bucket.windows(2) {
-            assert!(
-                w[0].start_tick <= w[1].start_tick,
-                "桶失序: {} > {}",
-                w[0].start_tick,
-                w[1].start_tick
-            );
-        }
+        assert!(bucket.is_sorted(), "桶失序");
         assert_eq!(bucket[0].start_tick, 50);
         assert_eq!(bucket[1].start_tick, 199, "clamp 到 end_tick-1 (200-1)");
         assert_eq!(bucket[2].start_tick, 450);

@@ -782,7 +782,7 @@ fn test_track_existence_activates_channel() {
     // 3. 加第一个音符（track 0 = ch 0）→ 同一引擎直接 dispatch
     let id = model.alloc_note_id();
     let bucket = Arc::make_mut(&mut model.notes[60]);
-    bucket.push(yinhe_types::Note {
+    bucket.insert_sorted(yinhe_types::Note {
         id,
         start_tick: 0,
         end_tick: 480,

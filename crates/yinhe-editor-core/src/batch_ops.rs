@@ -14,12 +14,14 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use yinhe_core::{Selection, YinModel};
-use yinhe_types::Note;
+use yinhe_types::{Note, NoteBucket};
 
 /// Remove all notes matching `selection` from the model.
 ///
-/// For each rect × key range, uses `partition_point` to locate the tick
-/// range, then `drain` in a single O(B) pass per bucket.
+/// For each rect × key range, deletes `start_tick ∈ [tick_start, tick_end)`
+/// within the track range, in a single pass per bucket (chunked: only hit
+/// chunks are scanned). All tracks selected → contiguous `drain_range`;
+/// track-filtered → `drain_range_filtered`.
 ///
 /// Returns the removed notes with their original key, so callers can
 /// re-insert them at a new position (move/transpose) or discard them (delete).
@@ -29,30 +31,18 @@ pub fn remove_selected(model: &mut YinModel, selection: &Selection) -> Vec<(Note
     for &(tick_start, tick_end, key_lo, key_hi, track_lo, track_hi) in &selection.rects {
         for key in key_lo..=key_hi {
             let k = key as usize;
-            let start_idx = model.notes[k].partition_point(|n| n.start_tick < tick_start);
-            let end_idx = model.notes[k].partition_point(|n| n.start_tick < tick_end);
-
-            // Collect removed notes before clearing.
-            for n in &model.notes[k][start_idx..end_idx] {
-                if n.track >= track_lo && n.track <= track_hi {
-                    removed.push((*n, key));
-                }
-            }
-
-            if start_idx < end_idx {
-                let bucket = Arc::make_mut(&mut model.notes[k]);
-                // Fast path: all tracks selected → contiguous drain (memmove).
-                // Slow path: track-filtered → retain (full scan).
-                if track_lo == 0 && track_hi == u16::MAX {
-                    bucket.drain(start_idx..end_idx);
-                } else {
-                    bucket.retain(|n| {
-                        !(n.start_tick >= tick_start
-                            && n.start_tick < tick_end
-                            && n.track >= track_lo
-                            && n.track <= track_hi)
-                    });
-                }
+            let bucket = Arc::make_mut(&mut model.notes[k]);
+            // Fast path: all tracks selected → contiguous span drain.
+            // Slow path: track-filtered → segment scan + filter.
+            let out = if track_lo == 0 && track_hi == u16::MAX {
+                bucket.drain_range(tick_start, tick_end)
+            } else {
+                bucket.drain_range_filtered(tick_start, tick_end, |n| {
+                    n.track >= track_lo && n.track <= track_hi
+                })
+            };
+            if !out.is_empty() {
+                removed.extend(out.into_iter().map(|n| (n, key)));
                 model.mark_dirty(key);
             }
         }
@@ -63,62 +53,27 @@ pub fn remove_selected(model: &mut YinModel, selection: &Selection) -> Vec<(Note
 
 /// Insert notes into the model, grouped by destination key.
 ///
-/// For each key bucket, appends in a way that keeps the bucket sorted by
-/// `start_tick`: sort the new notes (O(K log K)), fast-path pure tail
-/// appends, otherwise two-way merge (O(B + K)) instead of a full bucket
-/// sort (O(B log B)). Marks each touched bucket dirty. The caller is
-/// responsible for calling `rebuild_dirty()` afterwards.
+/// For each key bucket, merges the sorted new notes into the chunked
+/// sequence (O(N + K) per bucket, keeps chunking invariant). Marks each
+/// touched bucket dirty. The caller is responsible for calling
+/// `rebuild_dirty()` afterwards.
 pub fn insert_batch(model: &mut YinModel, notes_by_key: HashMap<u8, Vec<Note>>) {
     for (key, notes) in notes_by_key {
         let k = key as usize;
-        append_notes_ordered(Arc::make_mut(&mut model.notes[k]), notes);
+        Arc::make_mut(&mut model.notes[k]).insert_batch_sorted(notes);
         model.mark_dirty(key);
     }
 }
 
-/// Append `new_notes` to a bucket that is sorted by `start_tick`, keeping
-/// it sorted. Stable: notes with equal `start_tick` keep existing-bucket
-/// order first, then new notes.
-///
-/// - `new_notes` is sorted in place first (O(K log K))
-/// - if every new note starts at or after the bucket tail, plain `extend`
-///   (zero copy, O(K))
-/// - otherwise both sorted runs are merged into a fresh vec (O(B + K))
-///
-/// This is the single point that guarantees the per-key sorted invariant
-/// for batch inserts; `rebuild_dirty()` relies on it and no longer sorts.
-pub fn append_notes_ordered(bucket: &mut Vec<Note>, mut new_notes: Vec<Note>) {
-    if new_notes.is_empty() {
-        return;
-    }
-    new_notes.sort_by_key(|n| n.start_tick);
-    let tail_ok = bucket
-        .last()
-        .is_none_or(|last| last.start_tick <= new_notes[0].start_tick);
-    if tail_ok {
-        bucket.extend(new_notes);
-        return;
-    }
-    let old = std::mem::take(bucket);
-    let mut merged = Vec::with_capacity(old.len() + new_notes.len());
-    let (mut i, mut j) = (0usize, 0usize);
-    while i < old.len() && j < new_notes.len() {
-        if old[i].start_tick <= new_notes[j].start_tick {
-            merged.push(old[i]);
-            i += 1;
-        } else {
-            merged.push(new_notes[j]);
-            j += 1;
-        }
-    }
-    merged.extend_from_slice(&old[i..]);
-    merged.extend_from_slice(&new_notes[j..]);
-    *bucket = merged;
+/// Append `new_notes` to a bucket keeping it sorted (chunked merge).
+/// Kept for API compatibility with callers that pass a single bucket.
+pub fn append_notes_ordered(bucket: &mut NoteBucket, new_notes: Vec<Note>) {
+    bucket.insert_batch_sorted(new_notes);
 }
 
 /// Collect notes matching `selection` from the model (read-only, no removal).
 ///
-/// For each rect × key range, uses `partition_point` to find the tick range.
+/// For each rect × key range, iterates `start_tick ∈ [tick_start, tick_end)`.
 /// Returns `(Note, key)` pairs.
 pub fn collect_selected(model: &YinModel, selection: &Selection) -> Vec<(Note, u8)> {
     let mut result: Vec<(Note, u8)> = Vec::new();
@@ -126,9 +81,7 @@ pub fn collect_selected(model: &YinModel, selection: &Selection) -> Vec<(Note, u
     for &(tick_start, tick_end, key_lo, key_hi, track_lo, track_hi) in &selection.rects {
         for key in key_lo..=key_hi {
             let k = key as usize;
-            let start_idx = model.notes[k].partition_point(|n| n.start_tick < tick_start);
-            let end_idx = model.notes[k].partition_point(|n| n.start_tick < tick_end);
-            for n in &model.notes[k][start_idx..end_idx] {
+            for n in model.notes[k].range(tick_start, tick_end) {
                 if n.track >= track_lo && n.track <= track_hi {
                     result.push((*n, key));
                 }
@@ -177,10 +130,7 @@ pub fn summarize_selected(model: &YinModel, selection: &Selection) -> SelectedNo
     for &(ts, te, kl, kh, tl, th) in &selection.rects {
         for key in kl..=kh {
             let k = key as usize;
-            let bucket = &model.notes[k];
-            let lo = bucket.partition_point(|n| n.start_tick < ts);
-            let hi = bucket.partition_point(|n| n.start_tick < te);
-            for n in &bucket[lo..hi] {
+            for n in model.notes[k].range(ts, te) {
                 if n.track < tl || n.track > th {
                     continue;
                 }
@@ -229,21 +179,14 @@ mod tests {
         }
     }
 
-    /// 断言桶按 start_tick 有序（partition_point 等二分查询的正确性前提）。
-    fn assert_sorted(bucket: &[Note]) {
-        for w in bucket.windows(2) {
-            assert!(
-                w[0].start_tick <= w[1].start_tick,
-                "bucket 失序: {} > {}",
-                w[0].start_tick,
-                w[1].start_tick
-            );
-        }
+    /// 断言桶按 start_tick 有序（块级二分的正确性前提）。
+    fn assert_sorted(bucket: &NoteBucket) {
+        assert!(bucket.is_sorted(), "bucket 失序");
     }
 
     #[test]
     fn append_notes_ordered_tail_fast_path() {
-        let mut bucket = vec![note(1, 0, 480), note(2, 480, 960)];
+        let mut bucket = NoteBucket::from_sorted(vec![note(1, 0, 480), note(2, 480, 960)]);
         append_notes_ordered(&mut bucket, vec![note(3, 1000, 1500), note(4, 2000, 2500)]);
         assert_sorted(&bucket);
         assert_eq!(bucket.len(), 4);
@@ -251,7 +194,7 @@ mod tests {
 
     #[test]
     fn append_notes_ordered_merges_into_middle() {
-        let mut bucket = vec![note(1, 0, 480), note(2, 2000, 2500)];
+        let mut bucket = NoteBucket::from_sorted(vec![note(1, 0, 480), note(2, 2000, 2500)]);
         append_notes_ordered(&mut bucket, vec![note(3, 500, 900), note(4, 1000, 1500)]);
         assert_sorted(&bucket);
         assert_eq!(
@@ -263,7 +206,7 @@ mod tests {
 
     #[test]
     fn append_notes_ordered_merges_to_head() {
-        let mut bucket = vec![note(1, 500, 900), note(2, 2000, 2500)];
+        let mut bucket = NoteBucket::from_sorted(vec![note(1, 500, 900), note(2, 2000, 2500)]);
         append_notes_ordered(&mut bucket, vec![note(3, 100, 200)]);
         assert_sorted(&bucket);
         assert_eq!(
@@ -274,12 +217,12 @@ mod tests {
 
     #[test]
     fn append_notes_ordered_empty_cases() {
-        let mut bucket = vec![];
+        let mut bucket = NoteBucket::default();
         append_notes_ordered(&mut bucket, vec![note(1, 100, 200)]);
         assert_sorted(&bucket);
         assert_eq!(bucket.len(), 1);
 
-        let mut bucket2 = vec![note(1, 100, 200)];
+        let mut bucket2 = NoteBucket::from_sorted(vec![note(1, 100, 200)]);
         append_notes_ordered(&mut bucket2, vec![]);
         assert_eq!(bucket2.len(), 1, "空输入不得改变桶");
     }
@@ -287,7 +230,7 @@ mod tests {
     #[test]
     fn append_notes_ordered_sorts_unsorted_input() {
         // 调用方（new_by_key 遍历顺序）不保证组内有序，必须内部先排。
-        let mut bucket = vec![note(1, 0, 100)];
+        let mut bucket = NoteBucket::from_sorted(vec![note(1, 0, 100)]);
         append_notes_ordered(&mut bucket, vec![note(4, 3000, 4000), note(3, 1000, 2000)]);
         assert_sorted(&bucket);
         assert_eq!(
@@ -299,7 +242,7 @@ mod tests {
     #[test]
     fn append_notes_ordered_stable_for_equal_tick() {
         // 同 start_tick：旧桶元素在前，新追加在后（稳定）。
-        let mut bucket = vec![note(1, 480, 700)];
+        let mut bucket = NoteBucket::from_sorted(vec![note(1, 480, 700)]);
         append_notes_ordered(&mut bucket, vec![note(2, 480, 600)]);
         assert_sorted(&bucket);
         assert_eq!(bucket.iter().map(|n| n.id).collect::<Vec<_>>(), vec![1, 2]);

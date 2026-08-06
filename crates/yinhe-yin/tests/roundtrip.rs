@@ -337,18 +337,19 @@ fn unsorted_bucket_save_is_safe() {
     let mut m1 = build_complex_model();
     // 手动打乱 key=60 桶（模型不变量被破坏的极端情况）
     let bucket = Arc::make_mut(&mut m1.notes[60]);
-    bucket.sort_by_key(|n| n.end_tick); // 反序：end_tick 序 ≠ start_tick 序
+    {
+        let mut it = bucket.iter_mut();
+        let a = it.next().expect("bucket 非空");
+        let b = it.next().expect("bucket 非空");
+        std::mem::swap(&mut a.start_tick, &mut b.start_tick); // 反序：破坏 start_tick 序
+    }
 
     let bytes = save_yin_bytes(&m1).unwrap();
     let m2 = load_yin_bytes(&bytes).unwrap();
 
     // 保存时按 start_tick 排序，音符集合不丢；加载后桶内必须有序
     assert_eq!(m2.note_count, m1.note_count);
-    assert!(
-        m2.notes[60]
-            .windows(2)
-            .all(|w| w[0].start_tick <= w[1].start_tick)
-    );
+    assert!(m2.notes[60].is_sorted());
 }
 
 #[test]

@@ -13,8 +13,10 @@
 //! - 批量插入 = 排序 + 双路归并（batch_ops::append_notes_ordered 路径）
 
 use std::hint::black_box;
+use std::sync::Arc;
 use std::time::Instant;
 
+use yinhe_core::{NoteEvent, TrackData, YinModel};
 use yinhe_types::Note;
 
 /// 65536 音符/块 = 1MB/块（Note 16B）。
@@ -287,6 +289,51 @@ fn bench_batch_insert() {
     black_box((v.len(), c.chunks.len()));
 }
 
+/// 真实生产路径：YinModel（块化 NoteBucket）+ `add_note` 的单点插入核心
+/// （Arc::make_mut + insert_sorted + mark_dirty），单 key 密集分布。
+fn bench_real_model_insert(count: usize, iters: usize, label: &str) {
+    let max_tick = 10_000_000u32;
+    let per_track: Vec<Vec<NoteEvent>> = vec![
+        (0..count)
+            .map(|i| NoteEvent {
+                id: 0,
+                start_tick: (i as u64 * max_tick as u64 / count as u64) as u32,
+                end_tick: 0,
+                key: 60,
+                velocity: 100,
+            })
+            .collect(),
+    ];
+    let mut model = YinModel {
+        tracks: vec![Arc::new(TrackData::new(0, 0))],
+        ..Default::default()
+    };
+    model.load_track_notes(per_track);
+    model.rebuild();
+
+    // 随机插入序列：id 避开已分配的 1..=count（避免与 remove_by_id/find_mut 冲突）。
+    let inserts: Vec<Note> = make_notes(iters, max_tick, 7)
+        .into_iter()
+        .enumerate()
+        .map(|(i, mut n)| {
+            n.id = (count + i) as u32;
+            n
+        })
+        .collect();
+
+    let t0 = Instant::now();
+    for n in inserts {
+        Arc::make_mut(&mut model.notes[60]).insert_sorted(n);
+        model.mark_dirty(60);
+    }
+    let d0 = t0.elapsed();
+    let per = d0.as_secs_f64() / iters as f64;
+    println!();
+    println!("== 真实 YinModel（块化）单点插入：{count} 音符/key，{iters} 次（{label}） ==");
+    println!("  NoteBucket    {:>10.2} µs/op", per * 1e6);
+    black_box(model.notes[60].len());
+}
+
 fn bench_range_query() {
     let max_tick = 10_000_000u32;
     let notes = make_notes(1_000_000, max_tick, 42);
@@ -341,4 +388,6 @@ fn main() {
     bench_single_insert(10_000_000, 100, "黑乐谱单 key 极端密集");
     bench_batch_insert();
     bench_range_query();
+    bench_real_model_insert(1_000_000, 1000, "128M 工程 / 128 key");
+    bench_real_model_insert(10_000_000, 100, "黑乐谱单 key 极端密集");
 }

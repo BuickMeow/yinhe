@@ -8,7 +8,7 @@ use std::collections::HashMap;
 
 use eframe::egui;
 
-use yinhe_types::{AutomationPanelView, Note, NoteSource, VelocityEdit};
+use yinhe_types::{AutomationPanelView, NoteSource, VelocityEdit};
 
 /// 笔划命中的像素容差（pt）：单击时也会命中 start 在 ±HIT_PX 内的力度条。
 const HIT_PX: f32 = 2.0;
@@ -55,13 +55,10 @@ fn collect_segment(
     let lo = (t0.min(t1) - hit_ticks).max(0.0);
     let hi = t0.max(t1) + hit_ticks;
     for key in 0u8..128 {
-        let notes: &[Note] = midi.key_notes(key);
-        if notes.is_empty() {
-            continue;
-        }
-        let lo_idx = notes.partition_point(|n| (n.start_tick as f64) < lo);
-        let hi_idx = notes.partition_point(|n| (n.start_tick as f64) <= hi);
-        for note in &notes[lo_idx..hi_idx] {
+        // u32 边界保守外扩（floor/ceil），range 是 [lo, hi) 右开，hi+1 保持闭区间语义。
+        let lo_u = lo.floor() as u32;
+        let hi_u = hi.ceil() as u32;
+        for note in midi.key_notes(key).range(lo_u, hi_u.saturating_add(1)) {
             if note.track != track {
                 continue;
             }
@@ -229,13 +226,19 @@ mod tests {
     use super::*;
 
     struct MockSource {
-        notes: Vec<Note>,
+        notes: NoteBucket,
     }
 
     impl NoteSource for MockSource {
-        fn key_notes(&self, key: u8) -> &[Note] {
+        fn key_notes(&self, key: u8) -> &NoteBucket {
             // 测试音符都放在 key 60
-            if key == 60 { &self.notes } else { &[] }
+            if key == 60 {
+                &self.notes
+            } else {
+                static EMPTY: std::sync::LazyLock<NoteBucket> =
+                    std::sync::LazyLock::new(NoteBucket::default);
+                &EMPTY
+            }
         }
 
         fn duration(&self) -> f64 {
@@ -256,11 +259,11 @@ mod tests {
     #[test]
     fn segment_hits_only_active_track_and_interpolates() {
         let src = MockSource {
-            notes: vec![
+            notes: NoteBucket::from_sorted(vec![
                 note(0, 100, 200, 64),
                 note(1, 300, 400, 64), // 其他音轨：不命中
                 note(0, 500, 600, 64),
-            ],
+            ]),
         };
         let mut touched = HashMap::new();
         // 线段 tick 0 → 1000，value 0 → 100
@@ -273,7 +276,7 @@ mod tests {
     #[test]
     fn zero_length_segment_uses_tolerance_and_start_value() {
         let src = MockSource {
-            notes: vec![note(0, 100, 200, 64), note(0, 110, 200, 64)],
+            notes: NoteBucket::from_sorted(vec![note(0, 100, 200, 64), note(0, 110, 200, 64)]),
         };
         let mut touched = HashMap::new();
         // 单击 tick 105，容差 ±5：两条都命中，值都取单击值 80
@@ -286,7 +289,7 @@ mod tests {
     #[test]
     fn later_segment_overwrites_earlier() {
         let src = MockSource {
-            notes: vec![note(0, 100, 200, 64)],
+            notes: NoteBucket::from_sorted(vec![note(0, 100, 200, 64)]),
         };
         let mut touched = HashMap::new();
         collect_segment(&src, 0, ((0.0, 30.0), (200.0, 30.0)), 0.0, &mut touched);
@@ -301,7 +304,7 @@ mod tests {
     #[test]
     fn velocity_clamped_to_valid_range() {
         let src = MockSource {
-            notes: vec![note(0, 0, 100, 64), note(0, 1000, 1100, 64)],
+            notes: NoteBucket::from_sorted(vec![note(0, 0, 100, 64), note(0, 1000, 1100, 64)]),
         };
         let mut touched = HashMap::new();
         collect_segment(&src, 0, ((0.0, -50.0), (1000.0, 500.0)), 0.0, &mut touched);

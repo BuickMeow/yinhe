@@ -166,7 +166,7 @@ fn note_delta_undo_redo() {
     let key = 60;
     {
         let model = Arc::make_mut(&mut doc.data.model);
-        Arc::make_mut(&mut model.notes[key as usize]).push(yinhe_types::Note {
+        Arc::make_mut(&mut model.notes[key as usize]).insert_sorted(yinhe_types::Note {
             id: 0,
             start_tick: note.start_tick,
             end_tick: note.end_tick,

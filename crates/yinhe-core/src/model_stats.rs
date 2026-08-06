@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use yinhe_types::Note;
+use yinhe_types::{Note, NoteBucket};
 
 use crate::events::{BucketNote, NoteEvent};
 
@@ -98,11 +98,11 @@ impl YinModel {
     /// `load_track_notes` and by edit operations. `rebuild()` only
     /// sorts buckets and rebuilds indices.
     pub fn rebuild(&mut self) {
-        // Sort all 128 buckets in parallel.
+        // Sort + re-chunk all 128 buckets in parallel.
         use rayon::prelude::*;
-        self.notes
-            .par_iter_mut()
-            .for_each(|bucket| Arc::make_mut(bucket).sort_by_key(|n| n.start_tick));
+        self.notes.par_iter_mut().for_each(|bucket| {
+            Arc::make_mut(bucket).sort();
+        });
 
         // Bump all note_revisions (full rebuild = all keys changed).
         for r in &mut self.note_revisions {
@@ -312,7 +312,8 @@ impl YinModel {
                     n.end_tick = n.start_tick;
                 }
             }
-            bucket.sort_by_key(|n| n.start_tick);
+            // start_tick 是排序键：缩放后重新排序切块。
+            bucket.sort();
         });
 
         // 2. Conductor: tempo events + time signature events
@@ -399,7 +400,7 @@ impl YinModel {
                     n.end_tick = n.start_tick;
                 }
             }
-            bucket.sort_by_key(|n| n.start_tick);
+            bucket.sort();
             let d = done.fetch_add(1, Ordering::Relaxed) + 1;
             if let Ok(mut p) = progress_clone.lock() {
                 p.progress = d as f32 / 128.0 * 0.9;
@@ -580,7 +581,11 @@ impl NoteLoader {
         }
         model.next_note_id = self.next_note_id;
 
-        *model.notes = self.key_notes.map(Arc::new);
+        *model.notes = self.key_notes.map(|mut v| {
+            // 加载路径统一在此排序（乱序输入），随后按 65536 切块。
+            v.sort_by_key(|n| n.start_tick);
+            Arc::new(NoteBucket::from_sorted(v))
+        });
         model.note_count = self.note_count;
         model.tick_length = self.max_tick;
         model.max_note_len = self.max_len;

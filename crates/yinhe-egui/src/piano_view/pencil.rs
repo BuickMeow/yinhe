@@ -571,8 +571,7 @@ fn note_velocity(
     key: u8,
 ) -> Option<u8> {
     let midi = midi?;
-    midi.key_notes_in_range(key, start_tick, start_tick + 1)
-        .iter()
+    midi.key_notes_in_range(key, start_tick, start_tick.saturating_add(1))
         .find(|n| n.track == track && n.start_tick == start_tick)
         .map(|n| n.velocity)
 }
@@ -585,17 +584,17 @@ mod tests {
 
     /// 空音符源（点击创建测试用）。
     struct MockNotes {
-        buckets: [Vec<yinhe_types::Note>; 128],
+        buckets: [yinhe_types::NoteBucket; 128],
     }
     impl MockNotes {
         fn new() -> Self {
             Self {
-                buckets: std::array::from_fn(|_| Vec::new()),
+                buckets: std::array::from_fn(|_| yinhe_types::NoteBucket::default()),
             }
         }
 
         fn with_note(mut self, start: u32, end: u32, key: u8, vel: u8) -> Self {
-            self.buckets[key as usize].push(yinhe_types::Note {
+            self.buckets[key as usize].insert_sorted(yinhe_types::Note {
                 id: 0,
                 start_tick: start,
                 end_tick: end,
@@ -606,7 +605,7 @@ mod tests {
         }
     }
     impl yinhe_types::NoteSource for MockNotes {
-        fn key_notes(&self, key: u8) -> &[yinhe_types::Note] {
+        fn key_notes(&self, key: u8) -> &yinhe_types::NoteBucket {
             &self.buckets[key as usize]
         }
         fn duration(&self) -> f64 {

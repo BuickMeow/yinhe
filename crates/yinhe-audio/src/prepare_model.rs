@@ -62,9 +62,8 @@ pub(crate) fn prepare_notes_dirty(
 /// 模型桶按 start_tick 排序，tick 天然单调，**无需 sort**（旧 sample 域因
 /// tempo 变速段的局部非单调才需要保险性 sort）。
 fn build_bucket(model: &YinModel, key: usize) -> Vec<AudibleNote> {
-    let src = model.notes[key].as_slice();
-    let mut dst: Vec<AudibleNote> = Vec::with_capacity(src.len());
-    for n in src.iter() {
+    let mut dst: Vec<AudibleNote> = Vec::with_capacity(model.notes[key].len());
+    for n in model.notes[key].iter() {
         if n.velocity <= 1 {
             continue;
         }
