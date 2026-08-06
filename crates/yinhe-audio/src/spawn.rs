@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -200,7 +200,10 @@ impl AudioHandle {
 pub struct CpalAudioHandle {
     pub handle: AudioHandle,
     pub sample_rate: u32,
-    pub(crate) _stream: cpal::Stream,
+    /// 共享给 cpal 错误回调（采样率变化时恢复流）。用 Arc<Mutex<Option>> 而非裸
+    /// Stream：错误回调在流创建之前就注册，只能通过共享句柄访问。回调只持 Weak，
+    /// handle drop 时 Arc 归零 → Stream 正常释放，不形成循环引用。
+    pub(crate) _stream: Arc<Mutex<Option<cpal::Stream>>>,
     /// 设置为 true 时通知 renderer 线程退出。
     pub(crate) shutdown: Arc<AtomicBool>,
     /// renderer 线程的 JoinHandle。
@@ -738,7 +741,17 @@ pub fn spawn_cpal_audio(
 
     // cpal 流错误回调：用 tracing 而不是 eprintln!，同时置 stream_error 标志，
     // UI 每帧查询后弹出对话框。错误不可逆，置位后不再清零。
+    //
+    // 例外：macOS 上 cpal 0.18 会给设备注册全局采样率监听，任何其他 app 改变
+    // 设备采样率（视频/音乐播放、蓝牙 A2DP↔HFP 切换）都会暂停本流并报
+    // "Device sample rate changed"。设备没坏，CoreAudio 会自动做采样率转换
+    //（SRC），恢复流即可，不该弹"重新选择设备"。真正不可恢复的错误（设备
+    // 移除、驱动崩溃等）才置位 stream_error。
     let stream_error_flag = Arc::clone(&stream_error);
+    // 流在回调注册之后才创建，用 Arc<Mutex<Option>> 共享给错误回调；
+    // 回调只持 Weak，handle 释放时不会形成循环引用。
+    let stream_holder: Arc<Mutex<Option<cpal::Stream>>> = Arc::new(Mutex::new(None));
+    let stream_holder_weak = Arc::downgrade(&stream_holder);
     let stream = match device.build_output_stream(
         config,
         move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
@@ -769,8 +782,26 @@ pub fn spawn_cpal_audio(
             })
         },
         move |err| {
-            tracing::error!("Audio stream error: {err}");
-            stream_error_flag.store(true, Ordering::Release);
+            let is_rate_change = err.kind() == cpal::ErrorKind::StreamInvalidated
+                && err
+                    .message()
+                    .is_some_and(|m| m.contains("sample rate changed"));
+            if is_rate_change {
+                // cpal 已把流暂停；设备还活着，CoreAudio 会做 SRC，恢复即可。
+                tracing::warn!("Audio stream paused by device sample rate change, resuming: {err}");
+                if let Some(holder) = stream_holder_weak.upgrade() {
+                    let guard = holder.lock().unwrap_or_else(|e| e.into_inner());
+                    if let Some(stream) = guard.as_ref()
+                        && let Err(e) = stream.play()
+                    {
+                        tracing::error!("Failed to resume audio stream: {e}");
+                        stream_error_flag.store(true, Ordering::Release);
+                    }
+                }
+            } else {
+                tracing::error!("Audio stream error: {err}");
+                stream_error_flag.store(true, Ordering::Release);
+            }
         },
         None,
     ) {
@@ -782,14 +813,22 @@ pub fn spawn_cpal_audio(
             return Err(format!("Failed to build stream: {e}"));
         }
     };
-
-    match stream.play() {
-        Ok(()) => {}
-        Err(e) => {
+    // 流创建完成，放入共享句柄供错误回调恢复使用；启动也走同一句柄
+    // （store→play 顺序：若启动前就发生采样率变化，错误回调也能从句柄拿到流恢复）。
+    *stream_holder.lock().unwrap_or_else(|e| e.into_inner()) = Some(stream);
+    match stream_holder
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .map(|s| s.play())
+    {
+        Some(Ok(())) => {}
+        Some(Err(e)) => {
             shutdown.store(true, Ordering::Release);
             let _ = renderer_handle.join();
             return Err(format!("Failed to start stream: {e}"));
         }
+        None => return Err("Audio stream unexpectedly missing after build".to_string()),
     }
 
     Ok(CpalAudioHandle {
@@ -804,7 +843,7 @@ pub fn spawn_cpal_audio(
             sf_loaded: handle_sf_loaded,
         },
         sample_rate,
-        _stream: stream,
+        _stream: stream_holder,
         shutdown,
         renderer_handle: Some(renderer_handle),
     })
