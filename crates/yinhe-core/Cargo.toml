@@ -8,3 +8,8 @@ yinhe-types = { path = "../yinhe-types" }
 rayon = { workspace = true }
 serde = { workspace = true }
 uuid = { workspace = true }
+
+# 纯 std 基准（harness = false：直接运行 main，不用 #[bench]）
+[[bench]]
+name = "chunked_bench"
+harness = false
