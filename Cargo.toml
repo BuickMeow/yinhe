@@ -45,12 +45,6 @@ cpal = "0.18"
 dirs = "6"
 rust-i18n = "3"
 
-# 本地修补 winit：macOS 上 applicationDidFinishLaunching: 可能被 AppKit 重复投递
-# （注册 CFBundleDocumentTypes 后 Finder 的打开事件会在启动早期到达），winit 无幂等
-# 保护会二次 dispatch_init_events 导致 eframe 二次初始化崩溃。上游修好后删除此段。
-[patch.crates-io]
-winit = { path = "vendor/winit" }
-
 [profile.fast-release]
 inherits = "release"                # 基于 release 默认设置
 opt-level = 1                       # 基本优化，编译速度远快于 3
