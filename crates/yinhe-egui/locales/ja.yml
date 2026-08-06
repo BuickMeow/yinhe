@@ -183,8 +183,22 @@ dialog.audio_switch.select_device: "新しい出力デバイスを選択して�
 dialog.audio_switch.no_devices: "(出力デバイスが見つかりません)"
 dialog.audio_switch.keep_current: "現在のデバイスを維持"
 
-# ── ロードオーバーレイ ──
+# ── ローディングオーバーレイ ──
 dialog.loading.title: "読み込み中"
+dialog.loading.yin_stage: "プロジェクトを読み込み中"
+dialog.loading.yin_decompress: "データを解凍中…"
+dialog.loading.yin_rebuild: "音符を復元中…"
+dialog.loading.yin_resort: "音符をソート中…"
+
+# ── 保存進捗 ──
+dialog.saving.title: "プロジェクトを保存中"
+dialog.saving.stage.collect: "音符を収集中…"
+dialog.saving.stage.sort: "音符をソート中…"
+dialog.saving.stage.encode: "フィールド列をエンコード中…"
+dialog.saving.stage.compress: "zstd 圧縮中…"
+dialog.saving.stage.decompress: "zstd 解凍中…"
+dialog.saving.stage.rebuild: "音符を復元中…"
+dialog.saving.stage.resort: "バケットをソート中…"
 
 # ── メモリ使用量詳細 ──
 dialog.memory.title: "メモリ使用量の詳細"

@@ -147,6 +147,11 @@ impl App {
             }
         }
 
+        // ── 保存进度窗口 ──
+        if let Some((stage, fraction)) = self.save_progress {
+            crate::dialogs::save_overlay::show_viewport(&ctx, stage, fraction);
+        }
+
         // ── Archive picker ──
         let picker_action = crate::dialogs::archive_picker::show_viewport(
             &ctx,

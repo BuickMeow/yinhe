@@ -185,6 +185,20 @@ dialog.audio_switch.keep_current: "保持当前设备"
 
 # ── 加载遮罩 ──
 dialog.loading.title: "正在加载"
+dialog.loading.yin_stage: "加载工程"
+dialog.loading.yin_decompress: "解压数据…"
+dialog.loading.yin_rebuild: "还原音符…"
+dialog.loading.yin_resort: "排序音符…"
+
+# ── 保存进度 ──
+dialog.saving.title: "正在保存工程"
+dialog.saving.stage.collect: "收集音符…"
+dialog.saving.stage.sort: "排序音符…"
+dialog.saving.stage.encode: "编码字段流…"
+dialog.saving.stage.compress: "zstd 压缩…"
+dialog.saving.stage.decompress: "zstd 解压…"
+dialog.saving.stage.rebuild: "还原音符…"
+dialog.saving.stage.resort: "桶内排序…"
 
 # ── 内存占用详情 ──
 dialog.memory.title: "内存占用详情"

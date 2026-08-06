@@ -57,6 +57,15 @@ pub fn set_stage(progress: &SharedProgress, idx: usize, status: StageStatus) {
     }
 }
 
+/// 替换 stage 的标题（如 .yin 加载把“解析 MIDI 音轨”换成“加载工程”）。
+pub fn set_stage_label(progress: &SharedProgress, idx: usize, label: String) {
+    if let Ok(mut p) = progress.lock()
+        && idx < p.stages.len()
+    {
+        p.stages[idx].label = label;
+    }
+}
+
 pub fn set_stage_progress(progress: &SharedProgress, idx: usize, pct: f32, detail: String) {
     if let Ok(mut p) = progress.lock()
         && idx < p.stages.len()

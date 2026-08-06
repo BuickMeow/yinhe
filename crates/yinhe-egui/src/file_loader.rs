@@ -159,8 +159,23 @@ impl FileLoader {
         let path_for_thread = path_str.clone();
         let progress = self.load_progress.clone();
         std::thread::spawn(move || {
+            progress::set_stage_label(&progress, 0, t!("dialog.loading.yin_stage").to_string());
             progress::set_stage(&progress, 0, StageStatus::Active);
-            let result = yinhe_yin::load_yin_with_sf(&path_for_thread);
+            let result = yinhe_yin::load_yin_with_sf_progress(&path_for_thread, |p| {
+                let detail = match p.stage {
+                    yinhe_yin::YinProgressStage::Decompress => {
+                        t!("dialog.loading.yin_decompress").to_string()
+                    }
+                    yinhe_yin::YinProgressStage::Rebuild => {
+                        t!("dialog.loading.yin_rebuild").to_string()
+                    }
+                    yinhe_yin::YinProgressStage::Resort => {
+                        t!("dialog.loading.yin_resort").to_string()
+                    }
+                    _ => String::new(),
+                };
+                progress::set_stage_progress(&progress, 0, p.fraction, detail);
+            });
             match result {
                 Ok((model, sf, mapping)) => {
                     let file_name = std::path::Path::new(&path_for_thread)

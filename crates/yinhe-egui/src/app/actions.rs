@@ -396,13 +396,18 @@ impl App {
         let path_for_thread = path.clone();
 
         let (tx, rx) = mpsc::channel();
+        let (progress_tx, progress_rx) = mpsc::channel();
         std::thread::spawn(move || {
-            if let Err(e) = yinhe_yin::save_yin_with_files(
+            let result = yinhe_yin::save_yin_with_files_progress(
                 &model,
                 &path_for_thread,
                 &project_file,
                 &mapping_file,
-            ) {
+                |p| {
+                    let _ = progress_tx.send(p);
+                },
+            );
+            if let Err(e) = result {
                 tracing::error!("Failed to save project: {}", e);
             }
             let _ = tx.send(());
@@ -412,6 +417,7 @@ impl App {
             doc.file_path = Some(path);
         }
         self.save_rx = Some(rx);
+        self.save_progress_rx = Some(progress_rx);
     }
 
     pub(crate) fn save_as_dialog(&mut self) {

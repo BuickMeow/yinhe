@@ -130,6 +130,8 @@ impl App {
             && rx.try_recv().is_ok()
         {
             self.save_rx = None;
+            self.save_progress_rx = None;
+            self.save_progress = None;
             // Mark the active document as saved
             if let Some(idx) = self.active_doc {
                 self.documents[idx].mark_saved();
@@ -138,6 +140,10 @@ impl App {
             if self.pending_unsaved.is_some() {
                 let ctx = egui::Context::default();
                 self.execute_pending_file_action(&ctx);
+            }
+        } else if let Some(rx) = &self.save_progress_rx {
+            while let Ok(p) = rx.try_recv() {
+                self.save_progress = Some((p.stage, p.fraction));
             }
         }
 

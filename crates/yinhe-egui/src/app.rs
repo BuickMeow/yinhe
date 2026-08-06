@@ -61,6 +61,9 @@ pub struct App {
 
     // ── Async save ──
     pub(crate) save_rx: Option<mpsc::Receiver<()>>,
+    /// 保存进度（阶段 + 阶段内 0.0~1.0），由保存线程经 channel 推送。
+    pub(crate) save_progress: Option<(yinhe_yin::YinProgressStage, f32)>,
+    pub(crate) save_progress_rx: Option<mpsc::Receiver<yinhe_yin::YinProgress>>,
 
     // ── Unsaved changes confirmation ──
     /// A file action deferred until the user chooses save/discard/cancel.
@@ -247,6 +250,8 @@ impl App {
             file_loader: FileLoader::new(load_progress.clone()),
             load_error: None,
             save_rx: None,
+            save_progress: None,
+            save_progress_rx: None,
             pending_unsaved: None,
             should_exit: false,
             export: export_state::ExportState::new(),

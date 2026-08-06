@@ -185,6 +185,20 @@ dialog.audio_switch.keep_current: "현재 장치 유지"
 
 # ── 로딩 오버레이 ──
 dialog.loading.title: "로딩 중"
+dialog.loading.yin_stage: "프로젝트 불러오는 중"
+dialog.loading.yin_decompress: "데이터 압축 해제 중…"
+dialog.loading.yin_rebuild: "음표 복원 중…"
+dialog.loading.yin_resort: "음표 정렬 중…"
+
+# ── 저장 진행 ──
+dialog.saving.title: "프로젝트 저장 중"
+dialog.saving.stage.collect: "음표 수집 중…"
+dialog.saving.stage.sort: "음표 정렬 중…"
+dialog.saving.stage.encode: "필드 열 인코딩 중…"
+dialog.saving.stage.compress: "zstd 압축 중…"
+dialog.saving.stage.decompress: "zstd 압축 해제 중…"
+dialog.saving.stage.rebuild: "음표 복원 중…"
+dialog.saving.stage.resort: "버킷 정렬 중…"
 
 # ── 메모리 사용량 세부 정보 ──
 dialog.memory.title: "메모리 사용량 세부 정보"
