@@ -145,6 +145,7 @@ pub(crate) fn show(
                 use egui_material_icons::icons::ICON_SEARCH;
                 ui.label(
                     eframe::egui::RichText::new(ICON_SEARCH.codepoint)
+                        .family(ICON_SEARCH.font_family())
                         .size(14.0)
                         .color(eframe::egui::Color32::GRAY),
                 );

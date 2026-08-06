@@ -8,12 +8,11 @@ use yinhe_editor_core::document::Document;
 use yinhe_editor_core::config::SfEntry;
 
 /// 构造带 Material Icon 的 "添加" 按钮文本。
-/// material icons 字体已注册为 Proportional 的 fallback，ICON_ADD 码点会自动用图标字体渲染，
-/// 后续文字用普通字体渲染。
-fn add_button_text() -> egui::RichText {
+/// 图标码点用 material-icons 家族渲染（否则被 Pretendard/MiSans 的
+/// PUA 私有字形抢占，显示成奇怪的方框/数字），文字走 Proportional。
+fn add_button_text() -> egui::WidgetText {
     let label = t!("common.add");
-    egui::RichText::new(format!("{} {}", ICON_ADD.codepoint, label.as_ref()))
-        .family(egui::FontFamily::Proportional)
+    crate::widgets::icon_text::icon_text(ICON_ADD, label.as_ref(), 12.0, egui::Color32::PLACEHOLDER)
 }
 
 /// Show the sound-bank (SoundFont) panel.

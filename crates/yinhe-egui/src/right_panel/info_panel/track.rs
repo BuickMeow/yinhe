@@ -409,19 +409,19 @@ pub(super) fn show_track_info(
 
     ui.horizontal(|ui| {
         // 静音：始终显示 ICON_VOLUME_OFF + 文字，颜色区分激活状态
+        // 图标走 material-icons 家族（否则 PUA 码点被 Pretendard/MiSans 抢占）
         let mute_color = if muted {
             crate::theme::MUTE_ACTIVE
         } else {
             crate::theme::TEXT_FAINT
         };
-        let mute_label = format!("{} {}", ICON_VOLUME_OFF.codepoint, t!("track.mute"));
         let r1 = ui.add(
-            egui::Button::new(
-                egui::RichText::new(mute_label)
-                    .family(egui::FontFamily::Proportional)
-                    .color(mute_color)
-                    .size(12.0),
-            )
+            egui::Button::new(crate::widgets::icon_text::icon_text(
+                ICON_VOLUME_OFF,
+                t!("track.mute").as_ref(),
+                12.0,
+                mute_color,
+            ))
             .min_size(egui::vec2(60.0, 22.0)),
         );
 
@@ -433,14 +433,13 @@ pub(super) fn show_track_info(
         } else {
             crate::theme::TEXT_FAINT
         };
-        let solo_label = format!("{} {}", ICON_HEADPHONES.codepoint, t!("track.solo"));
         let r2 = ui.add(
-            egui::Button::new(
-                egui::RichText::new(solo_label)
-                    .family(egui::FontFamily::Proportional)
-                    .color(solo_color)
-                    .size(12.0),
-            )
+            egui::Button::new(crate::widgets::icon_text::icon_text(
+                ICON_HEADPHONES,
+                t!("track.solo").as_ref(),
+                12.0,
+                solo_color,
+            ))
             .min_size(egui::vec2(60.0, 22.0)),
         );
 

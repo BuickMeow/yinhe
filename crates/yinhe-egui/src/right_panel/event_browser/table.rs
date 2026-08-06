@@ -270,7 +270,8 @@ pub(super) fn empty_state_add_button(ui: &mut egui::Ui, id_salt: &str) -> bool {
     let mut clicked = false;
     ui.vertical_centered(|ui| {
         ui.add_space(40.0);
-        let icon_text = egui::RichText::new(ICON_ADD)
+        let icon_text = egui::RichText::new(ICON_ADD.codepoint)
+            .family(ICON_ADD.font_family())
             .size(24.0)
             .color(crate::theme::TEXT_BRIGHT);
         let resp = ui.add(
@@ -284,7 +285,7 @@ pub(super) fn empty_state_add_button(ui: &mut egui::Ui, id_salt: &str) -> bool {
                 resp.rect.center(),
                 egui::Align2::CENTER_CENTER,
                 ICON_ADD.codepoint,
-                egui::FontId::proportional(24.0),
+                egui::FontId::new(24.0, ICON_ADD.font_family()),
                 ACCENT_ACTIVE,
             );
         }
