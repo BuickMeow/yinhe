@@ -153,6 +153,10 @@ pub struct App {
     pub(crate) menu_bar: crate::platform::MenuBar,
     /// Tracks the last `is_dirty` state to avoid redundant `setDocumentEdited` calls.
     pub(crate) last_dirty_state: bool,
+    /// macOS: 正在进行的 Ctrl+左键（已被改写为右键）拖拽。
+    /// 拖拽途中松开 Ctrl 也能正确结束右键拖拽（release 继续改写为 Secondary）。
+    #[cfg(target_os = "macos")]
+    pub(crate) ctrl_click_active: bool,
 
     // ── Clipboard (selection-rect based, not note data) ──
     pub(crate) clipboard: yinhe_core::Selection,
@@ -293,6 +297,8 @@ impl App {
 
             menu_bar: crate::platform::MenuBar::new(),
             last_dirty_state: false,
+            #[cfg(target_os = "macos")]
+            ctrl_click_active: false,
 
             clipboard: yinhe_core::Selection::default(),
             cut_past_len: None,

@@ -45,6 +45,43 @@ impl<'a, T> Drop for ReplaceGuard<'a, T> {
 }
 
 impl eframe::App for App {
+    /// macOS: 把 Ctrl+左键改写为右键（系统惯例，Finder/多数原生应用如此）。
+    /// 改写发生在 egui 处理输入之前，因此 `secondary_clicked()` 等会正确触发；
+    /// 同时清除 ctrl 修饰符，避免 PR 视图把它误判为"加选/快捷键"。
+    #[cfg(target_os = "macos")]
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        use egui::{Event, PointerButton};
+        for event in &mut raw_input.events {
+            match event {
+                Event::PointerButton {
+                    button,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } if *button == PointerButton::Primary && modifiers.ctrl => {
+                    *button = PointerButton::Secondary;
+                    modifiers.ctrl = false;
+                    self.ctrl_click_active = true;
+                }
+                Event::PointerButton {
+                    button,
+                    pressed: false,
+                    modifiers,
+                    ..
+                } if *button == PointerButton::Primary && self.ctrl_click_active => {
+                    // 拖拽途中松开 Ctrl 也能正确结束右键拖拽
+                    *button = PointerButton::Secondary;
+                    modifiers.ctrl = false;
+                    self.ctrl_click_active = false;
+                }
+                Event::PointerGone => {
+                    self.ctrl_click_active = false;
+                }
+                _ => {}
+            }
+        }
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let _ui_total_start = if yinhe_memtrace::perf_probe::enabled() {
             Some(std::time::Instant::now())

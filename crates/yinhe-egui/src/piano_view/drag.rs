@@ -110,6 +110,11 @@ pub(crate) fn sel_drag_frame(
         ui.data_mut(|d| d.get_persisted(resize_id)).unwrap_or(None);
 
     let pointer = ui.input(|i| i.pointer.clone());
+    // 加选修饰键：Windows 惯例 Ctrl+点击，macOS 惯例 Cmd+点击。
+    // macOS 上 Ctrl+左键已被 raw_input_hook 改写为右键（系统惯例），不再承担加选。
+    #[cfg(target_os = "macos")]
+    let additive = ui.input(|i| i.modifiers.shift || i.modifiers.command);
+    #[cfg(not(target_os = "macos"))]
     let additive = ui.input(|i| i.modifiers.shift || i.modifiers.command || i.modifiers.ctrl);
 
     // Clear stale note drag state
