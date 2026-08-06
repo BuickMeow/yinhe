@@ -155,6 +155,16 @@ fn real_midi_save_and_reopen_roundtrip() {
         .expect("from_model 失败");
 
         let note_count = doc.data.model.note_count;
+        // 回归：保存→重开后音轨顺序/名字/通道及每轨音符归属必须逐条一致
+        // （曾因 data.bin 按 mapping 排序写、音符流仍用 model 索引而整体错位）
+        let tracks_before: Vec<(String, u8, u8)> = doc
+            .data
+            .model
+            .tracks
+            .iter()
+            .map(|t| (t.name.clone(), t.port, t.channel))
+            .collect();
+        let per_track_before: Vec<u64> = doc.data.model.track_note_count.clone();
         let dir = tempfile::tempdir().unwrap();
         let yin_path = dir.path().join(format!("{f}.yin"));
         let yin_str = yin_path.to_string_lossy().to_string();
@@ -163,6 +173,21 @@ fn real_midi_save_and_reopen_roundtrip() {
         assert_eq!(
             doc2.data.model.note_count, note_count,
             "{f}: 重开后音符数不一致"
+        );
+        let tracks_after: Vec<(String, u8, u8)> = doc2
+            .data
+            .model
+            .tracks
+            .iter()
+            .map(|t| (t.name.clone(), t.port, t.channel))
+            .collect();
+        assert_eq!(
+            tracks_after, tracks_before,
+            "{f}: 音轨顺序/名字/通道在保存→重开后不一致"
+        );
+        assert_eq!(
+            doc2.data.model.track_note_count, per_track_before,
+            "{f}: 音符归属（每轨音符数）在保存→重开后不一致"
         );
         eprintln!("{f}: {note_count} notes 保存→重开 OK");
     }

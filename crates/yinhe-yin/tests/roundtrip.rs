@@ -352,6 +352,102 @@ fn unsorted_bucket_save_is_safe() {
     assert!(m2.notes[60].is_sorted());
 }
 
+/// 回归：音轨 channel 乱序 + port 交错（真实 MIDI 常见：APT.mid 的
+/// port=1 音轨插在 port=0 音轨中间）时，保存→加载必须保持音轨号、名字、
+/// 通道、音符归属与 automation lane.track 完全不变。曾经 data.bin 的
+/// meta payload 按 mapping.flat_tracks() 顺序写，而音符流 track 列仍为
+/// model 索引，两空间不一致导致保存→加载后音轨名/通道/内容整体错位。
+#[test]
+fn track_order_preserved_when_ports_interleave() {
+    // 故意交错：t0 port1、t1 port0、t2 port1、t3 port0（channel 也乱序）
+    let mut t0 = TrackData::new(1, 0);
+    t0.name = "Drums".to_string();
+    let mut t1 = TrackData::new(0, 2);
+    t1.name = "Solo".to_string();
+    let mut t2 = TrackData::new(1, 1);
+    t2.name = "Percussion".to_string();
+    let mut t3 = TrackData::new(0, 0);
+    t3.name = "Lead".to_string();
+
+    t0.automation_lanes = vec![AutomationLane {
+        target: AutomationTarget::CC { controller: 7 },
+        track: 0,
+        events: vec![AutomationEvent {
+            tick: 0,
+            value: 100.0,
+            shape: SegmentShape::Step,
+        }],
+    }];
+
+    let per_track_notes = vec![
+        vec![NoteEvent {
+            id: 0,
+            start_tick: 0,
+            end_tick: 60,
+            key: 36,
+            velocity: 127,
+        }],
+        vec![NoteEvent {
+            id: 0,
+            start_tick: 0,
+            end_tick: 480,
+            key: 60,
+            velocity: 100,
+        }],
+        vec![NoteEvent {
+            id: 0,
+            start_tick: 0,
+            end_tick: 120,
+            key: 42,
+            velocity: 120,
+        }],
+        vec![NoteEvent {
+            id: 0,
+            start_tick: 480,
+            end_tick: 960,
+            key: 62,
+            velocity: 90,
+        }],
+    ];
+
+    let mut model = YinModel {
+        tracks: vec![Arc::new(t0), Arc::new(t1), Arc::new(t2), Arc::new(t3)],
+        ..Default::default()
+    };
+    model.load_track_notes(per_track_notes);
+    model.rebuild();
+
+    let m2 = load_yin_bytes(&save_yin_bytes(&model).unwrap()).unwrap();
+
+    // 音轨号（顺序）、名字、port、channel 全部不变
+    let expected: [(&str, u8, u8); 4] = [
+        ("Drums", 1, 0),
+        ("Solo", 0, 2),
+        ("Percussion", 1, 1),
+        ("Lead", 0, 0),
+    ];
+    assert_eq!(m2.tracks.len(), expected.len());
+    for (i, (name, port, ch)) in expected.iter().enumerate() {
+        assert_eq!(m2.tracks[i].name, *name, "track {i} 名字");
+        assert_eq!(m2.tracks[i].port, *port, "track {i} port");
+        assert_eq!(m2.tracks[i].channel, *ch, "track {i} channel");
+    }
+
+    // 每轨音符归属不变（音符 track 索引 = 保存前 model 索引）
+    let mut total: u64 = 0;
+    for (i, (name, _, _)) in expected.iter().enumerate() {
+        let count = m2.notes_for_track(i as u16).count();
+        total += count as u64;
+        assert!(count > 0, "track {i} ({name}) 必须有音符");
+    }
+    assert_eq!(total, m2.note_count);
+
+    // automation lane.track 保持 model 索引，仍挂在原音轨上
+    assert_eq!(m2.tracks[0].automation_lanes.len(), 1);
+    assert_eq!(m2.tracks[0].automation_lanes[0].track, 0);
+    assert!(m2.tracks[1..].iter().all(|t| t.automation_lanes.is_empty()));
+}
+
 #[test]
 fn empty_model_roundtrips() {
     let m1 = YinModel::default();

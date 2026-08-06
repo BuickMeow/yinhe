@@ -410,27 +410,21 @@ fn save_yin_bytes_with_files_inner(
     let notes = encode_note_streams(model, on_progress)?;
     let meta = MetaPayload {
         conductor: (*model.conductor).clone(),
-        tracks: {
-            let mut by_uuid: std::collections::HashMap<&str, usize> =
-                std::collections::HashMap::with_capacity(model.tracks.len());
-            for (i, t) in model.tracks.iter().enumerate() {
-                by_uuid.insert(&t.uuid, i);
-            }
-            let mut tracks_payload = Vec::with_capacity(model.tracks.len());
-            for (_port, _ch, tm) in mapping.flat_tracks() {
-                if let Some(&track_idx) = by_uuid.get(tm.uuid.as_str()) {
-                    let t = &model.tracks[track_idx];
-                    tracks_payload.push(TrackPayload {
-                        uuid: t.uuid.clone(),
-                        automation_lanes: t.automation_lanes.clone(),
-                        program_change: t.program_change.clone(),
-                        lyrics: t.lyrics.clone(),
-                        chord: t.chord.clone(),
-                    });
-                }
-            }
-            tracks_payload
-        },
+        // payload 按 model.tracks 顺序写，与音符流 track 列（model 索引）同空间；
+        // 加载侧用 uuid 与 mapping 关联，不依赖 mapping 的存储顺序。
+        // 曾经按 mapping.flat_tracks() 顺序写，而音符流仍是 model 索引，
+        // 两个索引空间不一致，音轨顺序与 model 不同时保存→加载即错位。
+        tracks: model
+            .tracks
+            .iter()
+            .map(|t| TrackPayload {
+                uuid: t.uuid.clone(),
+                automation_lanes: t.automation_lanes.clone(),
+                program_change: t.program_change.clone(),
+                lyrics: t.lyrics.clone(),
+                chord: t.chord.clone(),
+            })
+            .collect(),
     };
     let data = compress_data(&meta, &notes, model.meta.compression_level, on_progress)?;
 
@@ -513,7 +507,10 @@ fn load_yin_bytes_inner(
 
     let (model_data, note_streams) = decompress_data(&sections.data, on_progress)?;
 
-    // Re-assemble TrackData by zipping mapping entries with payloads in order.
+    // 按 payload 顺序（保存时的 model.tracks 顺序）重建 TrackData；
+    // 音轨的 port/channel/元数据取自 mapping（uuid 关联），
+    // 不再依赖 mapping 的存储顺序——mapping 的 ports/channels 嵌套分组
+    // 无法表达 model 的全局音轨顺序（同 port 音轨必须连续存放）。
     let flat: Vec<(u8, u8, &crate::mapping::TrackMap)> = mapping.flat_tracks().collect();
     if flat.len() != model_data.tracks.len() {
         return Err(YinError::Io(std::io::Error::new(
@@ -525,9 +522,23 @@ fn load_yin_bytes_inner(
             ),
         )));
     }
+    let mut by_uuid: std::collections::HashMap<&str, (u8, u8, &crate::mapping::TrackMap)> =
+        std::collections::HashMap::with_capacity(flat.len());
+    for (port, channel, tm) in flat {
+        by_uuid.insert(tm.uuid.as_str(), (port, channel, tm));
+    }
 
-    let mut tracks: Vec<Arc<TrackData>> = Vec::with_capacity(flat.len());
-    for ((port, channel, tm), payload) in flat.into_iter().zip(model_data.tracks) {
+    let mut tracks: Vec<Arc<TrackData>> = Vec::with_capacity(model_data.tracks.len());
+    for payload in model_data.tracks {
+        let Some(&(port, channel, tm)) = by_uuid.get(payload.uuid.as_str()) else {
+            return Err(YinError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "track UUID mismatch: mapping has no track with payload uuid {}",
+                    payload.uuid
+                ),
+            )));
+        };
         let td = TrackData {
             uuid: tm.uuid.clone(),
             name: tm.name.clone(),
@@ -543,15 +554,6 @@ fn load_yin_bytes_inner(
             lyrics: payload.lyrics,
             chord: payload.chord,
         };
-        if td.uuid != payload.uuid {
-            return Err(YinError::Io(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!(
-                    "track UUID mismatch: mapping={} payload={}",
-                    td.uuid, payload.uuid
-                ),
-            )));
-        }
         tracks.push(Arc::new(td));
     }
 

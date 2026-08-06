@@ -3,7 +3,7 @@
 //! Carries the per-track metadata that is needed to display a track
 //! list before paying the cost of decoding the full event stream.
 
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
@@ -68,50 +68,51 @@ where
 impl MappingFile {
     /// Build a MappingFile from a YinModel's tracks.
     ///
-    /// Tracks are grouped by `(port, channel)`. The order of tracks
-    /// within a channel preserves their position in `model.tracks`.
+    /// Tracks are grouped by `(port, channel)`. Group order (ports,
+    /// channels) and track order within a group follow the position in
+    /// `model.tracks` (first-appearance order), so the file reads like
+    /// the model. Note: the nested grouping itself cannot express a
+    /// model order where ports interleave (same-port tracks must stay
+    /// contiguous); `data.bin` is therefore linked by uuid, never by
+    /// flat order.
     pub fn from_tracks(tracks: &[std::sync::Arc<TrackData>]) -> Self {
-        // Group preserving original order: walk tracks, push into a
-        // (port, channel) bucket map.
-        let mut bucket: BTreeMap<(u8, u8), Vec<TrackMap>> = BTreeMap::new();
+        let mut ports: Vec<PortMap> = Vec::new();
+        // 首次出现顺序保存分组；用 map 记录 (port / (port, channel)) → 下标，O(tracks)。
+        let mut port_idx: HashMap<u8, usize> = HashMap::with_capacity(tracks.len());
+        let mut ch_idx: HashMap<(u8, u8), usize> = HashMap::with_capacity(tracks.len());
         for t in tracks {
-            bucket
-                .entry((t.port, t.channel))
-                .or_default()
-                .push(TrackMap {
-                    uuid: t.uuid.clone(),
-                    name: t.name.clone(),
-                    color: t.color,
-                    channel_prefix: t.channel_prefix,
-                    muted: t.muted,
-                    soloed: t.soloed,
+            let p = *port_idx.entry(t.port).or_insert_with(|| {
+                ports.push(PortMap {
+                    port: t.port,
+                    channels: Vec::new(),
                 });
+                ports.len() - 1
+            });
+            let pm = &mut ports[p];
+            let c = *ch_idx.entry((t.port, t.channel)).or_insert_with(|| {
+                pm.channels.push(ChannelMap {
+                    channel: t.channel,
+                    tracks: Vec::new(),
+                });
+                pm.channels.len() - 1
+            });
+            pm.channels[c].tracks.push(TrackMap {
+                uuid: t.uuid.clone(),
+                name: t.name.clone(),
+                color: t.color,
+                channel_prefix: t.channel_prefix,
+                muted: t.muted,
+                soloed: t.soloed,
+            });
         }
-
-        // Re-assemble into ports[].channels[] structure.
-        let mut ports_map: BTreeMap<u8, BTreeMap<u8, Vec<TrackMap>>> = BTreeMap::new();
-        for ((port, channel), tms) in bucket {
-            ports_map.entry(port).or_default().insert(channel, tms);
-        }
-
-        let ports: Vec<PortMap> = ports_map
-            .into_iter()
-            .map(|(port, channels)| PortMap {
-                port,
-                channels: channels
-                    .into_iter()
-                    .map(|(channel, tracks)| ChannelMap { channel, tracks })
-                    .collect(),
-            })
-            .collect();
 
         Self { version: 2, ports }
     }
 
-    /// Flat ordered list of (port, channel, TrackMap), iterating ports
-    /// in ascending order, channels in ascending order, tracks in stored
-    /// order. Used to align `mapping.json` track entries with `data.bin`
-    /// track payloads.
+    /// Flat ordered list of (port, channel, TrackMap) — ports and
+    /// channels in first-appearance order, tracks in stored order.
+    /// Not used to order loaded tracks: `data.bin` payloads carry the
+    /// authoritative track order, linked to mapping entries by uuid.
     pub fn flat_tracks(&self) -> impl Iterator<Item = (u8, u8, &TrackMap)> {
         self.ports.iter().flat_map(|p| {
             let port = p.port;
