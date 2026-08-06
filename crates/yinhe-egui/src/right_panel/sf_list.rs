@@ -7,6 +7,8 @@ use yinhe_editor_core::config::SfEntry;
 
 /// 行高（两行布局：第一行名称、第二行路径）。
 const ROW_H: f32 = 40.0;
+/// 行间距（显式控制，不依赖 egui 光标推进）。
+const ROW_GAP: f32 = 10.0;
 /// 拖拽指针贴近可视区边缘时的自动滚动速度（px/帧）。
 const AUTO_SCROLL_SPEED: f32 = 32.0;
 /// 触发自动滚动的边缘距离。
@@ -60,11 +62,20 @@ pub fn sf_list(ui: &mut egui::Ui, entries: &mut Vec<SfEntry>, salt: &str) -> boo
                 .unwrap_or_default();
 
             let total = entries.len();
+            // 行位置显式计算，不依赖光标推进（checkbox 的 ui.put 会推进光标，
+            // 与行高无关）；循环结束后再把光标推进到列表末尾，保证 ScrollArea
+            // 内容高度正确。
+            let start_y = ui.available_rect_before_wrap().min.y;
+            let mut row_y = start_y;
+            let mut last_row_rect: Option<egui::Rect> = None;
 
             for i in 0..total {
-                let top_left = ui.available_rect_before_wrap().min;
-                let row_rect =
-                    egui::Rect::from_min_size(top_left, egui::vec2(ui.available_width(), ROW_H));
+                let row_rect = egui::Rect::from_min_size(
+                    egui::pos2(ui.available_rect_before_wrap().min.x, row_y),
+                    egui::vec2(ui.available_width(), ROW_H),
+                );
+                row_y += ROW_H + ROW_GAP;
+                last_row_rect = Some(row_rect);
                 item_rects.push(row_rect);
 
                 let is_selected = state.selected.contains(&i);
@@ -180,6 +191,11 @@ pub fn sf_list(ui: &mut egui::Ui, entries: &mut Vec<SfEntry>, salt: &str) -> boo
                     Some(SfAction::Remove) => remove_idx = Some(i),
                     None => {}
                 }
+            }
+
+            // 光标推进到列表末尾（含间距），ScrollArea 据此计算内容高度
+            if let Some(r) = last_row_rect {
+                ui.advance_cursor_after_rect(r);
             }
 
             // ── 拖拽中：插入线 + ghost + 自动滚动 + 释放排序 ──
@@ -357,8 +373,7 @@ fn draw_ghost(
     let Some(first) = item_rects.first() else {
         return;
     };
-    let ghost_h = (ROW_H + ui.spacing().item_spacing.y) * drag_indices.len() as f32
-        - ui.spacing().item_spacing.y;
+    let ghost_h = (ROW_H + ROW_GAP) * drag_indices.len() as f32 - ROW_GAP;
     let ghost_rect = egui::Rect::from_min_size(
         pointer + egui::vec2(12.0, -ghost_h / 2.0),
         egui::vec2(first.width() * 0.9, ghost_h),
@@ -378,7 +393,7 @@ fn draw_ghost(
         if idx >= entries.len() {
             continue;
         }
-        let y = ghost_rect.min.y + (ROW_H + ui.spacing().item_spacing.y) * k as f32;
+        let y = ghost_rect.min.y + (ROW_H + ROW_GAP) * k as f32;
         ui.painter().text(
             egui::pos2(ghost_rect.min.x + 10.0, y + 10.0),
             egui::Align2::LEFT_CENTER,
