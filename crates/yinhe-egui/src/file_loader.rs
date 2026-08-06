@@ -201,13 +201,17 @@ impl FileLoader {
     pub(crate) fn start_archive(&mut self, path_str: String, password: Option<String>) {
         let (tx, rx) = mpsc::channel();
         let path_for_thread = path_str.clone();
+        let progress = self.load_progress.clone();
         std::thread::spawn(move || {
+            progress::set_stage_label(&progress, 0, t!("dialog.loading.archive_stage").to_string());
+            progress::set_stage(&progress, 0, StageStatus::Active);
             let result =
                 yinhe_archive::Archive::open_with_password(&path_for_thread, password.as_deref())
                     .map(|archive| {
                         let entries = archive.list_midi_files();
                         (archive, entries)
                     });
+            progress::set_stage(&progress, 0, StageStatus::Done);
             let _ = tx.send(ArchiveLoadEvent::Complete(result));
         });
         self.archive_loader = Some(ArchiveLoader { path: path_str, rx });

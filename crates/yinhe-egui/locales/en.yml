@@ -185,6 +185,7 @@ dialog.audio_switch.keep_current: "Keep Current Device"
 
 # ── Loading overlay ──
 dialog.loading.title: "Loading"
+dialog.loading.archive_stage: "Opening archive"
 dialog.loading.yin_stage: "Loading project"
 dialog.loading.yin_decompress: "Decompressing…"
 dialog.loading.yin_rebuild: "Rebuilding notes…"
