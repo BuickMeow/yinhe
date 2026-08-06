@@ -4,6 +4,7 @@
 //! `save_yin_bytes(model)` / `load_yin_bytes(bytes)` operate on memory
 //! buffers (used by tests and for streaming).
 
+use std::io::Cursor;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -17,11 +18,33 @@ use crate::error::YinError;
 use crate::mapping::MappingFile;
 use crate::project_meta::{ProjectFile, SfPortOverride};
 
+/// 保存/加载的进度阶段。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum YinProgressStage {
+    /// 保存：收集音符（128 桶 → 平铺）
+    Collect,
+    /// 保存：全局排序 (start, track, key)
+    Sort,
+    /// 保存：5 个字段流编码
+    Encode,
+    /// 保存：zstd 压缩（6 个流）
+    Compress,
+    /// 加载：zstd 解压（6 个流）
+    Decompress,
+    /// 加载：按 key 分桶还原音符
+    Rebuild,
+    /// 加载：桶内按 start 排序
+    Resort,
+}
+
+/// 进度回调载荷：阶段 + 阶段内进度 0.0~1.0。
+#[derive(Clone, Copy, Debug)]
+pub struct YinProgress {
+    pub stage: YinProgressStage,
+    pub fraction: f32,
+}
+
 /// bincode varint 编码（所有整数 LEB128）。
-///
-/// 音符 delta/gate 99% < 16 tick、track 值小，定长 u32/u16 存它们
-/// 裸数据膨胀 ~2.3 倍；varint 后裸数据 11B → ~5B/音符，zstd 之前就
-/// 先省一半。加载必须用同一配置（不兼容定长 v3 文件，VERSION 已 4）。
 fn serialize_with_varint<T: serde::Serialize>(v: &T) -> Result<Vec<u8>, YinError> {
     use bincode::Options;
     let config = bincode::DefaultOptions::new()
@@ -49,17 +72,15 @@ pub struct ProjectSoundFonts {
     pub overrides: Vec<SfPortOverride>,
 }
 
-/// What goes into the zstd-compressed bincode blob.
-///
-/// v3 起音符不再挂在 track 下，而是直接按 key 桶存储（`key_notes`），
-/// 桶内已按 `start_tick` 排序，配合 delta+gate 编码提升压缩率；
-/// 加载时由 `YinModel::load_bucket_notes` 直接入桶，省去按 track 分组
-/// 再重新分桶的多余转换。`id` 不落盘，加载时重新分配。
+// =========================================================
+//  v5 列式音符格式
+// =========================================================
+
+/// 非音符部分（conductor + tracks payload），整体 bincode varint + zstd。
 #[derive(Serialize, Deserialize)]
-struct ModelData {
+struct MetaPayload {
     conductor: ConductorData,
     tracks: Vec<TrackPayload>,
-    key_notes: Vec<KeyBucket>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -73,24 +94,234 @@ struct TrackPayload {
     chord: Vec<yinhe_types::ChordEvent>,
 }
 
-/// 一个 key 桶的持久化表示（定长 11B/音符：track u16 + velocity u8 + start u32 + gate u32）。
-#[derive(Default, Serialize, Deserialize)]
-struct KeyBucket {
-    notes: Vec<StoredNote>,
+/// 5 个列式音符流（全局按 (start, track, key) 排序后各字段独立成流）。
+///
+/// 黑乐谱的重复单元是"同一 tick 内所有轨齐发的图案"，按 (start, track, key)
+/// 排序后图案整块重复；再按字段拆列，zstd 对每列各自达到最佳匹配
+/// （交错流会被其他字段稀释）。实测 start.mid 1.64 亿音符：
+/// v4 key 桶 75MB → 列式 40.8MB（zstd3）/ 13.5MB（zstd19）。
+#[derive(Default)]
+struct NoteStreams {
+    /// 第一音符绝对 start，其余 = start - prev（同 tick 相邻为 0）
+    delta: Vec<u32>,
+    key: Vec<u8>,
+    track: Vec<u16>,
+    vel: Vec<u8>,
+    gate: Vec<u32>,
 }
 
-/// delta+gate 编码的音符。
-///
-/// `start`：桶内第一个音符存绝对 start_tick，其余存相对前一音符的 delta；
-/// `gate`：长度 = end - start。黑乐谱同 key 内相邻 start 差极小（0~几十 tick），
-/// 绝对值大数（百万级 tick）转成小数后高位字节大量为 0，zstd 压缩率显著提升
-/// （5.5M 音符工程：绝对存储 15.5MB → delta+gate 约 3MB）。
-#[derive(Serialize, Deserialize)]
-struct StoredNote {
-    track: u16,
-    velocity: u8,
+/// 排序用音符（12B/音符，Rust 默认布局）。
+#[derive(Clone, Copy)]
+struct SortNote {
     start: u32,
+    track: u16,
+    key: u8,
+    vel: u8,
     gate: u32,
+}
+
+/// 每 1M 音符汇报一次进度的掩码。
+const PROGRESS_MASK: usize = 0xF_FFFF;
+
+fn progress(on_progress: &mut dyn FnMut(YinProgress), stage: YinProgressStage, fraction: f32) {
+    on_progress(YinProgress { stage, fraction });
+}
+
+/// 保存侧：收集全部音符 + 全局排序 + 列式编码。
+fn encode_note_streams(
+    model: &YinModel,
+    on_progress: &mut dyn FnMut(YinProgress),
+) -> Result<NoteStreams, YinError> {
+    let total: usize = model.notes.iter().map(|b| b.len()).sum();
+    let mut items: Vec<SortNote> = Vec::with_capacity(total);
+    for (key, bucket) in model.notes.iter().enumerate() {
+        for n in bucket.iter() {
+            items.push(SortNote {
+                start: n.start_tick,
+                track: n.track,
+                key: key as u8,
+                vel: n.velocity,
+                gate: n.end_tick.saturating_sub(n.start_tick),
+            });
+        }
+        progress(
+            on_progress,
+            YinProgressStage::Collect,
+            (key as f32 + 1.0) / 128.0,
+        );
+    }
+
+    progress(on_progress, YinProgressStage::Sort, 0.0);
+    // 排序键 (start, track, key)：黑乐谱图案（同 tick 全轨齐发）排成整块
+    items.sort_unstable_by_key(|n| (n.start, n.track, n.key));
+    progress(on_progress, YinProgressStage::Sort, 1.0);
+
+    let mut s = NoteStreams::default();
+    let (mut delta, mut key, mut track, mut vel, mut gate) = (
+        Vec::with_capacity(total),
+        Vec::with_capacity(total),
+        Vec::with_capacity(total),
+        Vec::with_capacity(total),
+        Vec::with_capacity(total),
+    );
+    let mut prev_start: u32 = 0;
+    for (i, n) in items.iter().enumerate() {
+        delta.push(if i == 0 {
+            n.start
+        } else {
+            n.start - prev_start
+        });
+        key.push(n.key);
+        track.push(n.track);
+        vel.push(n.vel);
+        gate.push(n.gate);
+        prev_start = n.start;
+        if total > 0 && i & PROGRESS_MASK == 0 {
+            progress(
+                on_progress,
+                YinProgressStage::Encode,
+                i as f32 / total as f32,
+            );
+        }
+    }
+    s.delta = delta;
+    s.key = key;
+    s.track = track;
+    s.vel = vel;
+    s.gate = gate;
+    progress(on_progress, YinProgressStage::Encode, 1.0);
+    Ok(s)
+}
+
+/// 保存侧：meta 流 + 5 个音符流，各自 zstd，打包成 data 段。
+fn compress_data(
+    meta: &MetaPayload,
+    notes: &NoteStreams,
+    level: i32,
+    on_progress: &mut dyn FnMut(YinProgress),
+) -> Result<Vec<u8>, YinError> {
+    let level = level.clamp(0, 22);
+    let plains: [Vec<u8>; 6] = [
+        serialize_with_varint(meta)?,
+        serialize_with_varint(&notes.delta)?,
+        serialize_with_varint(&notes.key)?,
+        serialize_with_varint(&notes.track)?,
+        serialize_with_varint(&notes.vel)?,
+        serialize_with_varint(&notes.gate)?,
+    ];
+    let mut out = Vec::new();
+    for (i, plain) in plains.into_iter().enumerate() {
+        let comp = zstd::encode_all(Cursor::new(&plain), level)?;
+        out.extend_from_slice(&(comp.len() as u32).to_le_bytes());
+        out.extend_from_slice(&comp);
+        progress(
+            on_progress,
+            YinProgressStage::Compress,
+            (i as f32 + 1.0) / 6.0,
+        );
+    }
+    Ok(out)
+}
+
+/// 加载侧：data 段 → meta 流 + 5 个音符流。
+fn decompress_data(
+    data: &[u8],
+    on_progress: &mut dyn FnMut(YinProgress),
+) -> Result<(MetaPayload, NoteStreams), YinError> {
+    let mut plains: Vec<Vec<u8>> = Vec::with_capacity(6);
+    let mut off = 0usize;
+    for i in 0..6 {
+        if off + 4 > data.len() {
+            return Err(YinError::Truncated {
+                needed: 4,
+                available: data.len() - off,
+            });
+        }
+        let len = u32::from_le_bytes(data[off..off + 4].try_into().unwrap()) as usize;
+        off += 4;
+        if off + len > data.len() {
+            return Err(YinError::Truncated {
+                needed: len,
+                available: data.len() - off,
+            });
+        }
+        plains.push(zstd::decode_all(Cursor::new(&data[off..off + len]))?);
+        off += len;
+        progress(
+            on_progress,
+            YinProgressStage::Decompress,
+            (i as f32 + 1.0) / 6.0,
+        );
+    }
+    let meta: MetaPayload = deserialize_with_varint(&plains[0])?;
+    let delta: Vec<u32> = deserialize_with_varint(&plains[1])?;
+    let key: Vec<u8> = deserialize_with_varint(&plains[2])?;
+    let track: Vec<u16> = deserialize_with_varint(&plains[3])?;
+    let vel: Vec<u8> = deserialize_with_varint(&plains[4])?;
+    let gate: Vec<u32> = deserialize_with_varint(&plains[5])?;
+
+    let n = key.len();
+    if delta.len() != n || track.len() != n || vel.len() != n || gate.len() != n {
+        return Err(YinError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "note stream length mismatch: delta={} key={} track={} vel={} gate={}",
+                delta.len(),
+                n,
+                track.len(),
+                vel.len(),
+                gate.len()
+            ),
+        )));
+    }
+    let s = NoteStreams {
+        delta,
+        key,
+        track,
+        vel,
+        gate,
+    };
+    Ok((meta, s))
+}
+
+/// 加载侧：5 个音符流 → 128 个 key 桶（桶内按 start 排序）。
+fn bucket_from_streams(
+    s: &NoteStreams,
+    on_progress: &mut dyn FnMut(YinProgress),
+) -> Result<Vec<Vec<BucketNote>>, YinError> {
+    let n = s.key.len();
+    let mut buckets: Vec<Vec<BucketNote>> = Vec::with_capacity(128);
+    for _ in 0..128 {
+        buckets.push(Vec::new());
+    }
+    let mut prev_start: u32 = 0;
+    for i in 0..n {
+        let start = if i == 0 {
+            s.delta[0]
+        } else {
+            prev_start + s.delta[i]
+        };
+        buckets[s.key[i] as usize].push(BucketNote {
+            track: s.track[i],
+            start_tick: start,
+            end_tick: start + s.gate[i],
+            velocity: s.vel[i],
+        });
+        prev_start = start;
+        if n > 0 && i & PROGRESS_MASK == 0 {
+            progress(on_progress, YinProgressStage::Rebuild, i as f32 / n as f32);
+        }
+    }
+    progress(on_progress, YinProgressStage::Rebuild, 1.0);
+    for (i, bucket) in buckets.iter_mut().enumerate() {
+        bucket.sort_unstable_by_key(|x| x.start_tick);
+        progress(
+            on_progress,
+            YinProgressStage::Resort,
+            (i as f32 + 1.0) / 128.0,
+        );
+    }
+    Ok(buckets)
 }
 
 // =========================================================
@@ -101,6 +332,7 @@ struct StoredNote {
 fn save_yin_bytes_inner(
     model: &YinModel,
     sf: Option<&ProjectSoundFonts>,
+    on_progress: &mut dyn FnMut(YinProgress),
 ) -> Result<Vec<u8>, YinError> {
     // 1. project.json (with or without SF state)
     let project = match sf {
@@ -108,7 +340,7 @@ fn save_yin_bytes_inner(
         None => ProjectFile::from_meta(&model.meta),
     };
     let mapping = MappingFile::from_tracks(&model.tracks);
-    save_yin_bytes_with_files_inner(model, &project, &mapping)
+    save_yin_bytes_with_files_inner(model, &project, &mapping, on_progress)
 }
 
 /// Internal: serialize with pre-built ProjectFile and MappingFile.
@@ -116,81 +348,40 @@ fn save_yin_bytes_with_files_inner(
     model: &YinModel,
     project: &ProjectFile,
     mapping: &MappingFile,
+    on_progress: &mut dyn FnMut(YinProgress),
 ) -> Result<Vec<u8>, YinError> {
     let project_json = serde_json::to_vec_pretty(project)?;
     let mapping_json = serde_json::to_vec_pretty(mapping)?;
 
-    // data.bin: bincode(ModelData) → zstd
-    // 按 key 桶直存（单趟 O(N)），桶内 delta+gate 编码：
-    // - delta：同桶相邻音符 start 之差（桶内已按 start_tick 排序，第一音符存绝对）；
-    //   黑乐谱同 key 内音符极密，相邻差仅 0~几十 tick，而绝对值是百万级大数，
-    //   高位字节大量重复，zstd 压缩率天差地别（见 KeyBucket 注释）
-    // - gate：end - start（长度）
-    // - 不序列化 id：会话内身份（undo/selection/音频匹配），保存→加载后
-    //   undo 栈清空，加载时由 load_bucket_notes 重新分配；全局递增 id 逐字节
-    //   +1，zstd minmatch=3 下几乎压不动（5.5M 音符文件曾占 16MB）
-    let mut key_notes: Vec<KeyBucket> = Vec::with_capacity(128);
-    for bucket in model.notes.iter() {
-        // 桶内应有序（模型不变量）；乱序时兜底排序，避免 delta 下溢
-        let sorted: Vec<&yinhe_core::Note>;
-        let iter: Box<dyn Iterator<Item = &yinhe_core::Note> + '_> =
-            if bucket.is_sorted_by_key(|n| n.start_tick) {
-                Box::new(bucket.iter())
-            } else {
-                sorted = bucket.iter().collect();
-                let mut sorted = sorted;
-                sorted.sort_by_key(|n| n.start_tick);
-                Box::new(sorted.into_iter())
-            };
-        let mut prev_start: u32 = 0;
-        let mut notes = Vec::with_capacity(bucket.len());
-        for (i, n) in iter.enumerate() {
-            let start = if i == 0 {
-                n.start_tick
-            } else {
-                n.start_tick - prev_start
-            };
-            notes.push(StoredNote {
-                track: n.track,
-                velocity: n.velocity,
-                start,
-                gate: n.end_tick.saturating_sub(n.start_tick),
-            });
-            prev_start = n.start_tick;
-        }
-        key_notes.push(KeyBucket { notes });
-    }
-
-    let mut tracks_payload = Vec::with_capacity(model.tracks.len());
-    {
-        let mut by_uuid: std::collections::HashMap<&str, usize> =
-            std::collections::HashMap::with_capacity(model.tracks.len());
-        for (i, t) in model.tracks.iter().enumerate() {
-            by_uuid.insert(&t.uuid, i);
-        }
-        for (_port, _ch, tm) in mapping.flat_tracks() {
-            if let Some(&track_idx) = by_uuid.get(tm.uuid.as_str()) {
-                let t = &model.tracks[track_idx];
-                tracks_payload.push(TrackPayload {
-                    uuid: t.uuid.clone(),
-                    automation_lanes: t.automation_lanes.clone(),
-                    program_change: t.program_change.clone(),
-                    lyrics: t.lyrics.clone(),
-                    chord: t.chord.clone(),
-                });
-            }
-        }
-    }
-
-    let model_data = ModelData {
+    // data 段：meta（conductor + tracks payload）+ 5 列音符流，每流独立 zstd。
+    // 音符 id 不落盘（会话内身份，全局递增 id 在 zstd 下几乎压不动），
+    // 加载时由 load_bucket_notes 重新分配。
+    let notes = encode_note_streams(model, on_progress)?;
+    let meta = MetaPayload {
         conductor: (*model.conductor).clone(),
-        tracks: tracks_payload,
-        key_notes,
+        tracks: {
+            let mut by_uuid: std::collections::HashMap<&str, usize> =
+                std::collections::HashMap::with_capacity(model.tracks.len());
+            for (i, t) in model.tracks.iter().enumerate() {
+                by_uuid.insert(&t.uuid, i);
+            }
+            let mut tracks_payload = Vec::with_capacity(model.tracks.len());
+            for (_port, _ch, tm) in mapping.flat_tracks() {
+                if let Some(&track_idx) = by_uuid.get(tm.uuid.as_str()) {
+                    let t = &model.tracks[track_idx];
+                    tracks_payload.push(TrackPayload {
+                        uuid: t.uuid.clone(),
+                        automation_lanes: t.automation_lanes.clone(),
+                        program_change: t.program_change.clone(),
+                        lyrics: t.lyrics.clone(),
+                        chord: t.chord.clone(),
+                    });
+                }
+            }
+            tracks_payload
+        },
     };
-
-    let plain = serialize_with_varint(&model_data)?;
-    let level = model.meta.compression_level.clamp(0, 22);
-    let data = zstd::encode_all(&plain[..], level)?;
+    let data = compress_data(&meta, &notes, model.meta.compression_level, on_progress)?;
 
     let bytes = pack(Sections {
         project_json,
@@ -202,7 +393,7 @@ fn save_yin_bytes_with_files_inner(
 
 /// Serialize a `YinModel` to `.yin` bytes (no SoundFont state).
 pub fn save_yin_bytes(model: &YinModel) -> Result<Vec<u8>, YinError> {
-    save_yin_bytes_inner(model, None)
+    save_yin_bytes_inner(model, None, &mut |_| {})
 }
 
 /// Serialize a `YinModel` plus its SoundFont state to `.yin` bytes.
@@ -210,7 +401,7 @@ pub fn save_yin_bytes_with_sf(
     model: &YinModel,
     sf: &ProjectSoundFonts,
 ) -> Result<Vec<u8>, YinError> {
-    save_yin_bytes_inner(model, Some(sf))
+    save_yin_bytes_inner(model, Some(sf), &mut |_| {})
 }
 
 /// Save a `YinModel` to a file at `path` (no SoundFont state).
@@ -238,7 +429,18 @@ pub fn save_yin_with_files(
     project: &ProjectFile,
     mapping: &MappingFile,
 ) -> Result<(), YinError> {
-    let bytes = save_yin_bytes_with_files_inner(model, project, mapping)?;
+    save_yin_with_files_progress(model, path, project, mapping, |_| {})
+}
+
+/// `save_yin_with_files` + 进度回调（后台线程保存时用于驱动 UI 进度条）。
+pub fn save_yin_with_files_progress(
+    model: &YinModel,
+    path: impl AsRef<Path>,
+    project: &ProjectFile,
+    mapping: &MappingFile,
+    mut on_progress: impl FnMut(YinProgress) + Send,
+) -> Result<(), YinError> {
+    let bytes = save_yin_bytes_with_files_inner(model, project, mapping, &mut on_progress)?;
     std::fs::write(path.as_ref(), &bytes)?;
     Ok(())
 }
@@ -249,15 +451,16 @@ pub fn save_yin_with_files(
 
 /// Internal: parse `.yin` bytes, returning model and the raw `ProjectFile`
 /// (so callers can extract SF state if they want it).
-fn load_yin_bytes_inner(bytes: &[u8]) -> Result<(YinModel, ProjectFile, MappingFile), YinError> {
+fn load_yin_bytes_inner(
+    bytes: &[u8],
+    on_progress: &mut dyn FnMut(YinProgress),
+) -> Result<(YinModel, ProjectFile, MappingFile), YinError> {
     let sections = unpack(bytes)?;
 
     let project: ProjectFile = serde_json::from_slice(&sections.project_json)?;
     let mapping: MappingFile = serde_json::from_slice(&sections.mapping_json)?;
 
-    // zstd decompress + bincode deserialize the data section.
-    let plain = zstd::decode_all(&sections.data[..])?;
-    let model_data: ModelData = deserialize_with_varint(&plain)?;
+    let (model_data, note_streams) = decompress_data(&sections.data, on_progress)?;
 
     // Re-assemble TrackData by zipping mapping entries with payloads in order.
     let flat: Vec<(u8, u8, &crate::mapping::TrackMap)> = mapping.flat_tracks().collect();
@@ -301,37 +504,8 @@ fn load_yin_bytes_inner(bytes: &[u8]) -> Result<(YinModel, ProjectFile, MappingF
         tracks.push(Arc::new(td));
     }
 
-    // 还原 delta+gate 编码：桶内第一音符为绝对 start，其余 start = prev + delta，
-    // end = start + gate。还原后直接按桶入模型（无需再按 track 分桶）。
-    if model_data.key_notes.len() != 128 {
-        return Err(YinError::Io(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            format!(
-                "key_notes has {} buckets, expected 128",
-                model_data.key_notes.len()
-            ),
-        )));
-    }
-    let mut bucket_notes: Vec<Vec<BucketNote>> = Vec::with_capacity(128);
-    for bucket in model_data.key_notes {
-        let mut prev_start: u32 = 0;
-        let mut notes = Vec::with_capacity(bucket.notes.len());
-        for (i, sn) in bucket.notes.into_iter().enumerate() {
-            let start = if i == 0 {
-                sn.start
-            } else {
-                prev_start + sn.start
-            };
-            notes.push(BucketNote {
-                track: sn.track,
-                start_tick: start,
-                end_tick: start + sn.gate,
-                velocity: sn.velocity,
-            });
-            prev_start = start;
-        }
-        bucket_notes.push(notes);
-    }
+    // 列式流 → 128 桶（桶内按 start 排序），再由 load_bucket_notes 入模型并分配 id。
+    let bucket_notes = bucket_from_streams(&note_streams, on_progress)?;
 
     let mut model = YinModel {
         conductor: Arc::new(model_data.conductor),
@@ -352,7 +526,7 @@ fn load_yin_bytes_inner(bytes: &[u8]) -> Result<(YinModel, ProjectFile, MappingF
 
 /// Parse `.yin` bytes into a `YinModel` (SoundFont state, if any, is dropped).
 pub fn load_yin_bytes(bytes: &[u8]) -> Result<YinModel, YinError> {
-    let (model, _project, _mapping) = load_yin_bytes_inner(bytes)?;
+    let (model, _project, _mapping) = load_yin_bytes_inner(bytes, &mut |_| {})?;
     Ok(model)
 }
 
@@ -363,7 +537,7 @@ pub fn load_yin_bytes(bytes: &[u8]) -> Result<YinModel, YinError> {
 pub fn load_yin_bytes_with_sf(
     bytes: &[u8],
 ) -> Result<(YinModel, ProjectSoundFonts, MappingFile), YinError> {
-    let (model, project, mapping) = load_yin_bytes_inner(bytes)?;
+    let (model, project, mapping) = load_yin_bytes_inner(bytes, &mut |_| {})?;
     let sf = ProjectSoundFonts {
         mode: project.soundfont_project_mode,
         overrides: project.soundfont_overrides,
@@ -381,6 +555,19 @@ pub fn load_yin(path: impl AsRef<Path>) -> Result<YinModel, YinError> {
 pub fn load_yin_with_sf(
     path: impl AsRef<Path>,
 ) -> Result<(YinModel, ProjectSoundFonts, MappingFile), YinError> {
+    load_yin_with_sf_progress(path, |_| {})
+}
+
+/// `load_yin_with_sf` + 进度回调（后台线程加载时用于驱动 UI 进度条）。
+pub fn load_yin_with_sf_progress(
+    path: impl AsRef<Path>,
+    mut on_progress: impl FnMut(YinProgress) + Send,
+) -> Result<(YinModel, ProjectSoundFonts, MappingFile), YinError> {
     let bytes = std::fs::read(path.as_ref())?;
-    load_yin_bytes_with_sf(&bytes)
+    let (model, project, mapping) = load_yin_bytes_inner(&bytes, &mut on_progress)?;
+    let sf = ProjectSoundFonts {
+        mode: project.soundfont_project_mode,
+        overrides: project.soundfont_overrides,
+    };
+    Ok((model, sf, mapping))
 }
