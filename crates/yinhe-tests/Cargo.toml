@@ -5,6 +5,10 @@ edition = "2024"
 
 [dependencies]
 
+[features]
+# 与 yinhe-egui 的 memtrace feature 对齐：开启分类内存追踪。
+memtrace = ["yinhe-memtrace/memtrace"]
+
 [dev-dependencies]
 yinhe-types = { path = "../yinhe-types" }
 yinhe-core = { path = "../yinhe-core" }
@@ -14,4 +18,6 @@ yinhe-yin = { path = "../yinhe-yin" }
 yinhe-wgpu = { path = "../yinhe-wgpu" }
 yinhe-test-helpers = { path = "../yinhe-test-helpers" }
 yinhe-theme = { path = "../yinhe-theme" }
+yinhe-memtrace = { path = "../yinhe-memtrace" }
+sysinfo = { workspace = true }
 tempfile = { workspace = true }

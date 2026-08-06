@@ -7240,9 +7240,11 @@ dependencies = [
 name = "yinhe-tests"
 version = "0.1.0"
 dependencies = [
+ "sysinfo",
  "tempfile",
  "yinhe-core",
  "yinhe-editor-core",
+ "yinhe-memtrace",
  "yinhe-mid2",
  "yinhe-test-helpers",
  "yinhe-theme",
