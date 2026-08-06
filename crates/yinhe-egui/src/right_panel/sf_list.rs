@@ -107,32 +107,20 @@ fn sf_row(
             .rect_filled(rect, 2.0, egui::Color32::from_black_alpha(20));
     }
 
-    // ── Checkbox ──
+    // ── Checkbox（原生控件，矢量对勾不依赖字体）──
+    // 每行的 ui.id() 相同，push_id 保证 checkbox 的自动 id 唯一。
     let cb_rect = egui::Rect::from_min_max(
-        egui::pos2(rect.min.x + 4.0, rect.center().y - 6.0),
-        egui::pos2(rect.min.x + 16.0, rect.center().y + 6.0),
+        egui::pos2(rect.min.x + 4.0, rect.center().y - 9.0),
+        egui::pos2(rect.min.x + 22.0, rect.center().y + 9.0),
     );
-    let cb_resp = ui.interact(cb_rect, id.with("cb"), egui::Sense::click());
-    if cb_resp.clicked() {
-        entry.enabled = !entry.enabled;
+    let cb_changed = ui
+        .push_id(("sf_cb", index), |ui| {
+            ui.put(cb_rect, egui::Checkbox::new(&mut entry.enabled, ""))
+        })
+        .inner
+        .changed();
+    if cb_changed {
         return (true, None);
-    }
-
-    // Draw checkbox
-    let cb_color = if entry.enabled {
-        crate::theme::ACCENT_ACTIVE
-    } else {
-        egui::Color32::GRAY
-    };
-    ui.painter().rect_filled(cb_rect, 2.0, cb_color);
-    if entry.enabled {
-        ui.painter().text(
-            cb_rect.center(),
-            egui::Align2::CENTER_CENTER,
-            "✓",
-            egui::FontId::proportional(10.0),
-            egui::Color32::WHITE,
-        );
     }
 
     // ── Name ──
