@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use yinhe_types::AutomationEdit;
+use yinhe_types::AutomationEvent;
 use yinhe_types::AutomationTarget;
 
 use crate::history::{AutomationDelta, UndoAction};
@@ -36,10 +37,8 @@ impl Document {
             let model = Arc::make_mut(&mut self.data.model);
             let conductor = Arc::make_mut(&mut model.conductor);
             let lane = &mut conductor.tempo;
-            let before = lane.events.clone();
             let insert_pos = lane.events.partition_point(|e| e.tick < event.tick);
             lane.events.insert(insert_pos, event);
-            let after = lane.events.clone();
             self.data.rebuild_tempo_map();
             self.data.bump_revision();
             return Some((
@@ -49,8 +48,9 @@ impl Document {
                     track_idx: 0,
                     lane_idx: 0,
                     target,
-                    before,
-                    after,
+                    // 增量 delta：只存被编辑的事件（before 空 = 纯新增）。
+                    before: vec![],
+                    after: vec![event],
                 }),
             ));
         }
@@ -76,10 +76,8 @@ impl Document {
         };
         let lane = &mut track.automation_lanes[lane_idx];
 
-        let before = lane.events.clone();
         let insert_pos = lane.events.partition_point(|e| e.tick < event.tick);
         lane.events.insert(insert_pos, event);
-        let after = lane.events.clone();
 
         self.data.bump_revision();
         Some((
@@ -89,8 +87,8 @@ impl Document {
                 track_idx,
                 lane_idx,
                 target,
-                before,
-                after,
+                before: vec![],
+                after: vec![event],
             }),
         ))
     }
@@ -119,16 +117,21 @@ impl Document {
             &mut track.automation_lanes.get_mut(lane_idx)?.events
         };
 
-        let before = events.clone();
-        // 验证原事件存在
-        events.iter().position(|e| e.tick == old_tick)?;
+        let mut before = Vec::with_capacity(2);
+        // 原事件（操作前值）必须进 before，undo 才能恢复。
+        let orig = *events.iter().find(|e| e.tick == old_tick)?;
+        before.push(orig);
 
         if old_tick == new_tick {
             // 只改 value，不改 tick：直接原地修改，避免 retain 误删原事件
             let evt = events.iter_mut().find(|e| e.tick == old_tick)?;
             evt.value = new_value;
         } else {
-            // 移除目标 tick 上已有的事件（避免重复 tick）
+            // 目标 tick 上已有的事件（冲突项）会被移除——必须进 before，
+            // 否则 undo 丢失它（增量 delta 的前提：before 覆盖全部被移除项）。
+            if let Some(conflict) = events.iter().find(|e| e.tick == new_tick) {
+                before.push(*conflict);
+            }
             events.retain(|e| e.tick != new_tick);
             // 找到原事件并修改
             let evt = events.iter_mut().find(|e| e.tick == old_tick)?;
@@ -136,7 +139,11 @@ impl Document {
             evt.value = new_value;
             events.sort_by_key(|e| e.tick);
         }
-        let after = events.clone();
+        let after = vec![AutomationEvent {
+            tick: new_tick,
+            value: new_value,
+            shape: before[0].shape,
+        }];
 
         if matches!(target, yinhe_types::AutomationTarget::Tempo) {
             self.data.rebuild_tempo_map();
@@ -176,7 +183,21 @@ impl Document {
             &mut track.automation_lanes.get_mut(lane_idx)?.events
         };
 
-        let before = events.clone();
+        // 增量 before：原事件（old_tick 处）+ 冲突项（new_tick 处非本次移动的事件）。
+        // 冲突项定义：插入时会移除 new_tick 残留事件——残留 = tick ∈ new_ticks
+        // 且 tick ∉ old_ticks 的既有事件（本次移动的事件已被 remove）。
+        let old_ticks: std::collections::HashSet<u32> = moves.iter().map(|(o, _, _)| *o).collect();
+        let mut before: Vec<AutomationEvent> = Vec::with_capacity(moves.len() * 2);
+        for (old_tick, new_tick, _) in moves {
+            if let Some(ev) = events.iter().find(|e| e.tick == *old_tick) {
+                before.push(*ev);
+            }
+            if !old_ticks.contains(new_tick)
+                && let Some(ev) = events.iter().find(|e| e.tick == *new_tick)
+            {
+                before.push(*ev);
+            }
+        }
 
         // 收集每个 old_tick 对应的 shape，并从 events 移除
         let mut shapes: Vec<yinhe_types::SegmentShape> = Vec::with_capacity(moves.len());
@@ -194,23 +215,21 @@ impl Document {
             .map(|((_, new, val), shape)| (*new, *val, *shape))
             .collect();
         sorted.sort_by_key(|(new, _, _)| *new);
+        let mut after: Vec<AutomationEvent> = Vec::with_capacity(sorted.len());
         for (new_tick, new_value, shape) in sorted {
             // 移除 new_tick 处可能残留的旧事件
             if let Some(idx) = events.iter().position(|e| e.tick == new_tick) {
                 events.remove(idx);
             }
             let insert_idx = events.partition_point(|e| e.tick < new_tick);
-            events.insert(
-                insert_idx,
-                yinhe_types::AutomationEvent {
-                    tick: new_tick,
-                    value: new_value,
-                    shape,
-                },
-            );
+            let evt = AutomationEvent {
+                tick: new_tick,
+                value: new_value,
+                shape,
+            };
+            events.insert(insert_idx, evt);
+            after.push(evt);
         }
-
-        let after = events.clone();
         if matches!(target, yinhe_types::AutomationTarget::Tempo) {
             self.data.rebuild_tempo_map();
         }
@@ -245,12 +264,14 @@ impl Document {
             &mut track.automation_lanes.get_mut(lane_idx)?.events
         };
 
-        let before = events.clone();
-        events.retain(|e| e.tick != tick);
-        if before.len() == events.len() {
+        // 增量 delta：before = 被删事件（undo 恢复的唯一信息源）。
+        let before: Vec<AutomationEvent> =
+            events.iter().filter(|e| e.tick == tick).copied().collect();
+        if before.is_empty() {
             return None;
         }
-        let after = events.clone();
+        events.retain(|e| e.tick != tick);
+        let after = Vec::new();
 
         if matches!(target, yinhe_types::AutomationTarget::Tempo) {
             self.data.rebuild_tempo_map();
@@ -287,13 +308,18 @@ impl Document {
             &mut track.automation_lanes.get_mut(lane_idx)?.events
         };
 
-        let before = events.clone();
+        // 增量 delta：before = 原事件，after = 改后事件（单事件对）。
+        let before: Vec<AutomationEvent> =
+            events.iter().filter(|e| e.tick == tick).copied().collect();
+        if before.is_empty() {
+            return None;
+        }
         let evt = events.iter_mut().find(|e| e.tick == tick)?;
         if evt.shape == shape {
             return None;
         }
         evt.shape = shape;
-        let after = events.clone();
+        let after = vec![*evt];
 
         if matches!(target, yinhe_types::AutomationTarget::Tempo) {
             self.data.rebuild_tempo_map();
@@ -448,19 +474,17 @@ impl Document {
             (track_idx, lane_idx)
         };
 
-        // 收集选中锚点 + 计算新值 + uniform 判定
+        // 收集选中锚点 + 计算新值 + uniform 判定（只读借用，无需克隆）
         let events = if matches!(target, AutomationTarget::Tempo) {
-            self.data.model.conductor.tempo.events.clone()
+            &self.data.model.conductor.tempo.events
         } else {
-            self.data.model.tracks[track_idx as usize].automation_lanes[lane_idx]
-                .events
-                .clone()
+            &self.data.model.tracks[track_idx as usize].automation_lanes[lane_idx].events
         };
         let max_val = target.max_value();
         let mut moves: Vec<(u32, u32, f32)> = Vec::new();
         let mut uniform_tick: Option<i64> = None;
         let mut uniform_value: Option<f32> = None;
-        for ev in &events {
+        for ev in events {
             if !rects.iter().any(|r| r.contains(ev.tick, ev.value)) {
                 continue;
             }
@@ -562,11 +586,9 @@ impl Document {
         };
 
         let events = if matches!(target, AutomationTarget::Tempo) {
-            self.data.model.conductor.tempo.events.clone()
+            &self.data.model.conductor.tempo.events
         } else {
-            self.data.model.tracks[track_idx as usize].automation_lanes[lane_idx]
-                .events
-                .clone()
+            &self.data.model.tracks[track_idx as usize].automation_lanes[lane_idx].events
         };
         let scale_tick = |t: u32| -> u32 {
             let s = (t0 + (t as f64 - t0) * factor).round();
@@ -579,7 +601,7 @@ impl Document {
             }
         };
         let mut moves: Vec<(u32, u32, f32)> = Vec::new();
-        for ev in &events {
+        for ev in events {
             if !rects.iter().any(|r| r.contains(ev.tick, ev.value)) {
                 continue;
             }

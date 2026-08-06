@@ -23,6 +23,7 @@ impl UndoAction {
                 delta.track_idx,
                 delta.lane_idx,
                 &delta.target,
+                &delta.before,
                 &delta.after,
             ),
             UndoAction::TrackName {
@@ -183,31 +184,29 @@ pub(crate) fn apply_note_delta(doc: &mut Document, remove: &[(Note, u8)], insert
     doc.data.bump_revision();
 }
 
-/// Replace the event list of `track_idx`'s `lane_idx` with `events`.
+/// 增量应用自动化事件 delta：删除 `remove`（按 tick 匹配），插入 `insert`
+/// （排序后归并，保持 lane 按 tick 有序）。
 ///
-/// Tempo 走 `conductor.tempo` 路径（`track_idx`/`lane_idx` 被忽略）；
-/// 其他 target 走 `track.automation_lanes[lane_idx]` 路径。
+/// redo 传 `(before, after)`；undo 经 `reversed()` 交换后同样调用。
+/// 兼容旧的全量快照 entry：全量快照的 before/after 覆盖整个 lane，
+/// 增量语义退化为“删全部旧 + 插全部新”= 整体替换。
 pub(crate) fn apply_automation_delta(
     doc: &mut Document,
     track_idx: usize,
     lane_idx: usize,
     target: &yinhe_types::AutomationTarget,
-    events: &[AutomationEvent],
+    remove: &[AutomationEvent],
+    insert: &[AutomationEvent],
 ) {
     let model = Arc::make_mut(&mut doc.data.model);
     if matches!(target, yinhe_types::AutomationTarget::Tempo) {
         let conductor = Arc::make_mut(&mut model.conductor);
         let lane = &mut conductor.tempo;
-        lane.events.clear();
-        lane.events.extend_from_slice(events);
-        lane.events.sort_by_key(|e| e.tick);
+        apply_event_diff(&mut lane.events, remove, insert);
     } else if let Some(track) = model.tracks.get_mut(track_idx) {
         let track = Arc::make_mut(track);
         if let Some(lane) = track.automation_lanes.get_mut(lane_idx) {
-            lane.events.clear();
-            lane.events.extend_from_slice(events);
-            // 保持有序（编辑操作应已保证，但防御性排序）
-            lane.events.sort_by_key(|e| e.tick);
+            apply_event_diff(&mut lane.events, remove, insert);
         }
     }
     // Tempo 改了要重建 tempo_map（否则音频引擎和播放光标都用旧 tempo）
@@ -215,6 +214,38 @@ pub(crate) fn apply_automation_delta(
         doc.data.rebuild_tempo_map();
     }
     doc.data.bump_revision();
+}
+
+/// 对一个按 tick 排序的事件列表做“删 remove + 插 insert”。
+/// 删除按 tick 匹配（lane 内 tick 唯一）；插入排序后双路归并（O(N + K)）。
+fn apply_event_diff(
+    events: &mut Vec<AutomationEvent>,
+    remove: &[AutomationEvent],
+    insert: &[AutomationEvent],
+) {
+    if !remove.is_empty() {
+        let remove_ticks: HashSet<u32> = remove.iter().map(|e| e.tick).collect();
+        events.retain(|e| !remove_ticks.contains(&e.tick));
+    }
+    if !insert.is_empty() {
+        let mut new_events = insert.to_vec();
+        new_events.sort_by_key(|e| e.tick);
+        let old = std::mem::take(events);
+        let mut merged = Vec::with_capacity(old.len() + new_events.len());
+        let (mut i, mut j) = (0usize, 0usize);
+        while i < old.len() && j < new_events.len() {
+            if old[i].tick <= new_events[j].tick {
+                merged.push(old[i]);
+                i += 1;
+            } else {
+                merged.push(new_events[j]);
+                j += 1;
+            }
+        }
+        merged.extend_from_slice(&old[i..]);
+        merged.extend_from_slice(&new_events[j..]);
+        *events = merged;
+    }
 }
 
 /// 把 `EventListDelta::new` 写回到 `target` 指定的事件列表字段。
