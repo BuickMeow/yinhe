@@ -33,13 +33,14 @@ pub(super) fn show_track_info(
     }
 
     // ── Track selector ──
+    // 轨道号 0-based：Conductor = 000（与 AR 面板一致）。
     let track_names: Vec<String> = doc
         .data
         .model
         .tracks
         .iter()
         .enumerate()
-        .map(|(i, t)| format!("{:03} – {}", i + 1, t.name))
+        .map(|(i, t)| format!("{:03} – {}", i, t.name))
         .collect();
 
     let sel_idx = doc

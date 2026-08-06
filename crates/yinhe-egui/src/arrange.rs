@@ -476,8 +476,7 @@ pub fn show(
         let scroll_y = arr_view.base.scroll_y;
         let hover_track =
             |y: f32| (((y + scroll_y) / lh).floor() as usize).min(num_tracks.saturating_sub(1));
-        let track_str =
-            |track: usize| t!("hint.track", n = format!("{:03}", track + 1)).to_string();
+        let track_str = |track: usize| t!("hint.track", n = format!("{:03}", track)).to_string();
         // 本视图有选框 → 讲解行显示选框统计（参考 info panel）
         let sel_text = if !doc.edit.arr_sel_rect.is_empty()
             && let Some(sh) = sel_hint
