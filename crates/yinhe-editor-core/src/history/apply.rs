@@ -3,6 +3,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use yinhe_core::Selection;
 use yinhe_types::{AutomationEvent, Note};
 
 use crate::document::Document;
@@ -18,6 +19,17 @@ impl UndoAction {
     pub fn redo(&self, doc: &mut Document) {
         match self {
             UndoAction::Notes(delta) => apply_note_delta(doc, &delta.before, &delta.after),
+            // 操作式 undo：按 rects 重放几何变换（不存数据副本）。
+            UndoAction::MoveNotes {
+                rects,
+                delta_ticks,
+                delta_keys,
+            } => apply_note_shift(doc, rects, *delta_ticks, *delta_keys),
+            UndoAction::FlipNotes {
+                rects,
+                bounds,
+                axis,
+            } => apply_note_flip(doc, rects, *bounds, *axis),
             UndoAction::Automation(delta) => apply_automation_delta(
                 doc,
                 delta.track_idx,
@@ -180,6 +192,93 @@ pub(crate) fn apply_note_delta(doc: &mut Document, remove: &[(Note, u8)], insert
     }
     crate::batch_ops::insert_batch(model, by_key);
 
+    model.rebuild_dirty();
+    doc.data.bump_revision();
+}
+
+/// 操作式 undo：按 rects 收集音符，统一平移 (delta_ticks, delta_keys)。
+///
+/// redo 方向：rects = 操作前位置，音符在此，施加 +delta。
+/// undo 方向：`reversed()` 已把 rects 平移到操作后位置、delta 取反，
+/// 音符在此，施加 −delta——与 redo 共用同一实现。
+///
+/// 与 `Document::move_selected_notes` 的模型操作一致（收集→变换→删原→插新），
+/// 但不碰选区状态。前提：操作不触发 clamp（生成端已检测回退副本制）。
+pub(crate) fn apply_note_shift(
+    doc: &mut Document,
+    rects: &[(u32, u32, u8, u8, u16, u16)],
+    delta_ticks: i64,
+    delta_keys: i32,
+) {
+    if delta_ticks == 0 && delta_keys == 0 {
+        return;
+    }
+    let model = Arc::make_mut(&mut doc.data.model);
+    let sel = Selection {
+        rects: rects.to_vec(),
+    };
+    let originals = crate::batch_ops::collect_selected(model, &sel);
+    if originals.is_empty() {
+        return;
+    }
+    let mut new_by_key: HashMap<u8, Vec<Note>> = HashMap::new();
+    for (note, old_key) in &originals {
+        let new_key = ((*old_key as i32) + delta_keys).clamp(0, 127) as u8;
+        let new_start = (note.start_tick as i64 + delta_ticks).max(0) as u32;
+        let length = note.end_tick - note.start_tick;
+        let moved = Note {
+            start_tick: new_start,
+            end_tick: new_start + length,
+            ..*note
+        };
+        new_by_key.entry(new_key).or_default().push(moved);
+    }
+    crate::batch_ops::remove_selected(model, &sel);
+    crate::batch_ops::insert_batch(model, new_by_key);
+    model.rebuild_dirty();
+    doc.data.bump_revision();
+}
+
+/// 操作式 undo：按 rects 收集音符，以 bounds 为镜像边界翻转（两次镜像恒等）。
+///
+/// 前提：所有音符都在选框内（跨出选框的镜像会触发 clamp，生成端已
+/// 检测回退副本制）。
+pub(crate) fn apply_note_flip(
+    doc: &mut Document,
+    rects: &[(u32, u32, u8, u8, u16, u16)],
+    bounds: (u64, u64, u8, u8),
+    axis: crate::document::note_edit::FlipAxis,
+) {
+    let (t0, t1, kl, kh) = bounds;
+    let model = Arc::make_mut(&mut doc.data.model);
+    let sel = Selection {
+        rects: rects.to_vec(),
+    };
+    let originals = crate::batch_ops::collect_selected(model, &sel);
+    if originals.is_empty() {
+        return;
+    }
+    let mirror_tick = |v: u32| -> u32 { (t0 as i64 + (t1 as i64 - v as i64)).max(0) as u32 };
+    let mut new_by_key: HashMap<u8, Vec<Note>> = HashMap::new();
+    for (note, old_key) in &originals {
+        match axis {
+            crate::document::note_edit::FlipAxis::Horizontal => {
+                let new_start = mirror_tick(note.end_tick);
+                let new_end = mirror_tick(note.start_tick).max(new_start + 1);
+                new_by_key.entry(*old_key).or_default().push(Note {
+                    start_tick: new_start,
+                    end_tick: new_end,
+                    ..*note
+                });
+            }
+            crate::document::note_edit::FlipAxis::Vertical => {
+                let new_key = (kl as i32 + kh as i32 - *old_key as i32).clamp(0, 127) as u8;
+                new_by_key.entry(new_key).or_default().push(*note);
+            }
+        }
+    }
+    crate::batch_ops::remove_selected(model, &sel);
+    crate::batch_ops::insert_batch(model, new_by_key);
     model.rebuild_dirty();
     doc.data.bump_revision();
 }

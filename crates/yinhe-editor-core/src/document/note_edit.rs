@@ -201,10 +201,15 @@ impl Document {
     }
 
     /// Transpose all selected notes by `semitones`. Returns an `UndoAction` if any notes were transposed.
+    ///
+    /// 几何平移类：默认操作式 undo（`MoveNotes`，O(1) 内存）；
+    /// 若任何音符触发 key 边界 clamp（越界回不来），回退副本制 `Notes`。
     pub fn transpose_selected(&mut self, semitones: i8) -> Option<UndoAction> {
         if self.edit.selected.is_empty() {
             return None;
         }
+        // 操作式 undo 需要操作**前**的选区矩形（offset_sel_keys 之前捕获）。
+        let rects_before = self.edit.selected.rects.clone();
         let (before, after) = {
             let model = Arc::make_mut(&mut self.data.model);
 
@@ -240,7 +245,20 @@ impl Document {
             (moved_data, after)
         };
         self.data.rebuild_model_dirty();
-        Some(UndoAction::Notes(NoteDelta { before, after }))
+        // 操作式 undo 前提：无音符触发 key clamp（undo 反向移动回原 key，
+        // 原 key ∈ [0,127]，不触发新 clamp，对称性成立）。
+        let clamp_free = before.iter().all(|(_, k)| {
+            (*k as i16 + semitones as i16) >= 0 && (*k as i16 + semitones as i16) <= 127
+        });
+        if clamp_free {
+            Some(UndoAction::MoveNotes {
+                rects: rects_before,
+                delta_ticks: 0,
+                delta_keys: semitones as i32,
+            })
+        } else {
+            Some(UndoAction::Notes(NoteDelta { before, after }))
+        }
     }
 
     /// Move all selected notes by (delta_ticks, delta_keys).
@@ -248,6 +266,9 @@ impl Document {
     /// Returns an `UndoAction` if any notes were moved. The caller is
     /// responsible for pushing it to the history stack, marking the view
     /// dirty, and sending `AudioCommand::ReloadNotes`.
+    ///
+    /// 几何平移类：默认操作式 undo（`MoveNotes`，O(1) 内存）；
+    /// 若任何音符触发 tick/key 边界 clamp（越界回不来），回退副本制 `Notes`。
     pub fn move_selected_notes(&mut self, delta_ticks: i64, delta_keys: i32) -> Option<UndoAction> {
         if self.edit.selected.is_empty() {
             return None;
@@ -260,8 +281,8 @@ impl Document {
 
         // Batch removal + collect removed notes.
         let originals = batch_ops::remove_selected(model, &self.edit.selected);
-
-        // Batch insert: group by destination key, extend.
+        // 操作式 undo 需要操作**前**的选区矩形（offset 之前捕获）。
+        let rects_before = self.edit.selected.rects.clone();
         let mut new_by_key: std::collections::HashMap<u8, Vec<yinhe_types::Note>> =
             std::collections::HashMap::new();
         for (note, old_key) in &originals {
@@ -288,10 +309,25 @@ impl Document {
         model.rebuild_dirty();
         self.data.bump_revision();
 
-        Some(UndoAction::Notes(NoteDelta {
-            before: originals,
-            after,
-        }))
+        // 操作式 undo 前提：无音符触发 tick/key clamp（undo 反向移动回
+        // 原位置，原位置不触发新 clamp，对称性成立）。
+        let clamp_free = originals.iter().all(|(n, k)| {
+            (n.start_tick as i64 + delta_ticks) >= 0
+                && (*k as i32 + delta_keys) >= 0
+                && (*k as i32 + delta_keys) <= 127
+        });
+        if clamp_free {
+            Some(UndoAction::MoveNotes {
+                rects: rects_before,
+                delta_ticks,
+                delta_keys,
+            })
+        } else {
+            Some(UndoAction::Notes(NoteDelta {
+                before: originals,
+                after,
+            }))
+        }
     }
 
     /// Resize all selected notes by shifting one edge (Left/Right) by `dt` ticks.
@@ -693,10 +729,25 @@ impl Document {
         model.rebuild_dirty();
         self.data.bump_revision();
 
-        Some(UndoAction::Notes(NoteDelta {
-            before: originals,
-            after,
-        }))
+        // 操作式 undo 前提：水平镜像时所有音符的 end_tick 都 <= t1
+        // （跨出选框的 end 镜像后触发 clamp 0，两次镜像不再恒等）。
+        // 垂直镜像 key ∈ [kl, kh] 恒对称，无此问题。
+        let flip_safe = axis == FlipAxis::Vertical
+            || originals
+                .iter()
+                .all(|(n, _)| (n.end_tick as u64) <= t1 && (n.start_tick as u64) >= t0);
+        if flip_safe {
+            Some(UndoAction::FlipNotes {
+                rects: self.edit.selected.rects.clone(),
+                bounds: (t0, t1, kl, kh),
+                axis,
+            })
+        } else {
+            Some(UndoAction::Notes(NoteDelta {
+                before: originals,
+                after,
+            }))
+        }
     }
 }
 
@@ -1104,11 +1155,11 @@ mod tests {
         assert_eq!(doc.data.model.notes[60][1].start_tick, 151);
         assert_eq!(doc.data.model.notes[60][1].end_tick, 251);
         match action {
-            UndoAction::Notes(delta) => {
-                assert_eq!(delta.before.len(), 2);
-                assert_eq!(delta.after.len(), 2);
+            UndoAction::FlipNotes { rects, bounds, .. } => {
+                assert!(!rects.is_empty());
+                assert_eq!(bounds, (100, 251, 60, 60));
             }
-            _ => panic!("expected Notes"),
+            other => panic!("expected FlipNotes, got {other:?}"),
         }
     }
 

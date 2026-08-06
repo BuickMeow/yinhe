@@ -4,6 +4,7 @@ use yinhe_core::{ConductorData, NoteEvent, TrackData, YinModel};
 use yinhe_types::{AutomationEvent, AutomationLane, AutomationTarget, SegmentShape, TimeSigEvent};
 
 use crate::document::Document;
+use crate::document::note_edit::FlipAxis;
 
 use super::*;
 use yinhe_core::Selection;
@@ -307,11 +308,19 @@ fn model_snapshot(model: &YinModel) -> ModelSnapshot {
 }
 
 /// 断言操作满足 undo/redo 完全往返：undo 后 = 操作前，redo 后 = 操作后。
-fn assert_roundtrip(doc: &mut Document, label: &str, action: impl FnOnce(&mut Document)) {
+/// 快照在操作**前**捕获（与生产调用方一致：先 capture 再操作再 push）。
+fn assert_roundtrip(
+    doc: &mut Document,
+    label: &str,
+    action: impl FnOnce(&mut Document) -> Option<UndoAction>,
+) {
     let before = model_snapshot(&doc.data.model);
-    action(doc);
+    let snapshot = doc.capture_snapshot();
+    let action = action(doc);
     let after = model_snapshot(&doc.data.model);
     assert_ne!(before, after, "{label}: 操作必须改变模型");
+    let action = action.expect("{label}: 操作必须产生 undo action");
+    doc.push_undo(action, label, snapshot);
     assert!(doc.undo(), "{label}: undo 应成功");
     assert_eq!(
         model_snapshot(&doc.data.model),
@@ -360,20 +369,16 @@ fn automation_add_roundtrips() {
     let mut doc = make_doc_with_cc_lane();
     let target = AutomationTarget::CC { controller: 7 };
     assert_roundtrip(&mut doc, "add", |doc| {
-        let action = doc
-            .add_automation_event(
-                0,
-                target.clone(),
-                AutomationEvent {
-                    tick: 150,
-                    value: 50.0,
-                    shape: SegmentShape::Step,
-                },
-            )
-            .map(|(_, _, a)| a);
-        if let Some(a) = action {
-            doc.push_undo(a, "add", doc.capture_snapshot());
-        }
+        doc.add_automation_event(
+            0,
+            target.clone(),
+            AutomationEvent {
+                tick: 150,
+                value: 50.0,
+                shape: SegmentShape::Step,
+            },
+        )
+        .map(|(_, _, a)| a)
     });
     // 增量断言：新增事件的 delta 只含该事件，不是整个 lane。
     let action = doc
@@ -402,20 +407,16 @@ fn automation_add_roundtrips() {
 fn automation_add_tempo_roundtrips() {
     let mut doc = make_doc("tempo");
     assert_roundtrip(&mut doc, "add-tempo", |doc| {
-        let action = doc
-            .add_automation_event(
-                0,
-                AutomationTarget::Tempo,
-                AutomationEvent {
-                    tick: 480,
-                    value: 140.0,
-                    shape: SegmentShape::Step,
-                },
-            )
-            .map(|(_, _, a)| a);
-        if let Some(a) = action {
-            doc.push_undo(a, "add-tempo", doc.capture_snapshot());
-        }
+        doc.add_automation_event(
+            0,
+            AutomationTarget::Tempo,
+            AutomationEvent {
+                tick: 480,
+                value: 140.0,
+                shape: SegmentShape::Step,
+            },
+        )
+        .map(|(_, _, a)| a)
     });
 }
 
@@ -424,17 +425,14 @@ fn automation_move_roundtrips_including_conflict() {
     let mut doc = make_doc_with_cc_lane();
     // tick 200 → 300：tick 300 处已有事件（冲突项）会被移除，undo 必须恢复它。
     assert_roundtrip(&mut doc, "move-with-conflict", |doc| {
-        let action = doc.move_automation_event(
+        doc.move_automation_event(
             0,
             0,
             &AutomationTarget::CC { controller: 7 },
             200,
             300,
             88.0,
-        );
-        if let Some(a) = action {
-            doc.push_undo(a, "move", doc.capture_snapshot());
-        }
+        )
     });
 }
 
@@ -443,17 +441,14 @@ fn automation_move_value_only_roundtrips() {
     let mut doc = make_doc_with_cc_lane();
     // 只改 value（tick 不变）
     assert_roundtrip(&mut doc, "move-value-only", |doc| {
-        let action = doc.move_automation_event(
+        doc.move_automation_event(
             0,
             0,
             &AutomationTarget::CC { controller: 7 },
             200,
             200,
             10.0,
-        );
-        if let Some(a) = action {
-            doc.push_undo(a, "move-value", doc.capture_snapshot());
-        }
+        )
     });
 }
 
@@ -463,11 +458,7 @@ fn automation_batch_move_roundtrips_including_conflict() {
     // 批量：100→150、200→300（300 处冲突）、300→400
     assert_roundtrip(&mut doc, "batch-move", |doc| {
         let moves = vec![(100, 150, 10.0), (200, 300, 20.0), (300, 400, 30.0)];
-        let action =
-            doc.move_automation_events_batch(0, 0, &AutomationTarget::CC { controller: 7 }, &moves);
-        if let Some(a) = action {
-            doc.push_undo(a, "batch-move", doc.capture_snapshot());
-        }
+        doc.move_automation_events_batch(0, 0, &AutomationTarget::CC { controller: 7 }, &moves)
     });
 }
 
@@ -475,11 +466,7 @@ fn automation_batch_move_roundtrips_including_conflict() {
 fn automation_delete_roundtrips() {
     let mut doc = make_doc_with_cc_lane();
     assert_roundtrip(&mut doc, "delete", |doc| {
-        let action =
-            doc.delete_automation_event(0, 0, &AutomationTarget::CC { controller: 7 }, 200);
-        if let Some(a) = action {
-            doc.push_undo(a, "delete", doc.capture_snapshot());
-        }
+        doc.delete_automation_event(0, 0, &AutomationTarget::CC { controller: 7 }, 200)
     });
     // 增量断言：delta 只含被删事件。
     let action = doc
@@ -499,16 +486,13 @@ fn automation_delete_roundtrips() {
 fn automation_shape_roundtrips() {
     let mut doc = make_doc_with_cc_lane();
     assert_roundtrip(&mut doc, "shape", |doc| {
-        let action = doc.set_automation_shape(
+        doc.set_automation_shape(
             0,
             0,
             &AutomationTarget::CC { controller: 7 },
             200,
             SegmentShape::linear_curve(),
-        );
-        if let Some(a) = action {
-            doc.push_undo(a, "shape", doc.capture_snapshot());
-        }
+        )
     });
 }
 
@@ -562,4 +546,169 @@ fn automation_mixed_sequence_roundtrips() {
         final_state,
         "全部 redo 后回到终态"
     );
+}
+
+// ---------------------------------------------------------------------------
+// 方案 2：操作式 undo（MoveNotes / FlipNotes）round-trip
+// ---------------------------------------------------------------------------
+
+/// 带两个音符（tick 100/400）的 doc，供音符 round-trip 用。
+fn make_doc_with_notes() -> Document {
+    let mut doc = make_doc("notes");
+    let model = Arc::make_mut(&mut doc.data.model);
+    model.load_track_notes(vec![vec![
+        NoteEvent {
+            id: 0,
+            start_tick: 100,
+            end_tick: 200,
+            key: 60,
+            velocity: 100,
+        },
+        NoteEvent {
+            id: 0,
+            start_tick: 400,
+            end_tick: 500,
+            key: 64,
+            velocity: 90,
+        },
+    ]]);
+    model.rebuild();
+    doc
+}
+
+#[test]
+fn move_notes_uses_operational_undo_and_roundtrips() {
+    let mut doc = make_doc_with_notes();
+    doc.edit
+        .selected
+        .add_rect_track(100, 501, 60, 64, 0, u16::MAX);
+    let action = doc.move_selected_notes(300, 2).expect("move 应成功");
+    // 无 clamp → 操作式（O(1) 内存，无数据副本）
+    assert!(
+        matches!(action, UndoAction::MoveNotes { .. }),
+        "无 clamp 移动应为 MoveNotes"
+    );
+    doc.push_undo(action, "move", doc.capture_snapshot());
+    assert!(doc.undo());
+    let n = &doc.data.model.notes[60];
+    assert_eq!(n.get(0).unwrap().start_tick, 100);
+    assert!(doc.redo());
+    let n = &doc.data.model.notes[62];
+    assert_eq!(n.get(0).unwrap().start_tick, 400);
+    assert_eq!(n.get(0).unwrap().end_tick, 500);
+}
+
+#[test]
+fn move_notes_clamp_falls_back_to_snapshot() {
+    let mut doc = make_doc_with_notes();
+    doc.edit
+        .selected
+        .add_rect_track(100, 501, 60, 64, 0, u16::MAX);
+    // 左移 300：tick 100 的音符触发 clamp 0（100-300 < 0），不可逆 → 回退副本制。
+    let action = doc.move_selected_notes(-300, 0).expect("move 应成功");
+    assert!(
+        matches!(action, UndoAction::Notes(_)),
+        "clamp 移动必须回退副本制"
+    );
+    // 副本制 round-trip 依然精确。
+    doc.push_undo(action, "move-clamp", doc.capture_snapshot());
+    assert!(doc.undo());
+    assert_eq!(doc.data.model.notes[60].get(0).unwrap().start_tick, 100);
+    assert!(doc.redo());
+    assert_eq!(doc.data.model.notes[60].get(0).unwrap().start_tick, 0);
+}
+
+#[test]
+fn transpose_uses_operational_undo_and_roundtrips() {
+    let mut doc = make_doc_with_notes();
+    doc.edit
+        .selected
+        .add_rect_track(100, 501, 60, 64, 0, u16::MAX);
+    let action = doc.transpose_selected(12).expect("transpose 应成功");
+    assert!(
+        matches!(action, UndoAction::MoveNotes { .. }),
+        "无 clamp transpose 应为 MoveNotes"
+    );
+    doc.push_undo(action, "transpose", doc.capture_snapshot());
+    assert!(doc.undo());
+    assert_eq!(doc.data.model.notes[60].get(0).unwrap().start_tick, 100);
+    assert!(doc.redo());
+    assert_eq!(doc.data.model.notes[72].get(0).unwrap().start_tick, 100);
+}
+
+#[test]
+fn transpose_clamp_falls_back_to_snapshot() {
+    let mut doc = make_doc_with_notes();
+    doc.edit
+        .selected
+        .add_rect_track(100, 501, 60, 64, 0, u16::MAX);
+    // key 60 音符上移 12 → 72 安全；key 64 下移 100 超出范围？不，transpose 是统一方向：
+    // 用 +120 超出 127 → clamp → 回退副本制。
+    let action = doc.transpose_selected(120).expect("transpose 应成功");
+    assert!(
+        matches!(action, UndoAction::Notes(_)),
+        "clamp transpose 必须回退副本制"
+    );
+}
+
+#[test]
+fn flip_horizontal_roundtrips_operationally() {
+    let mut doc = make_doc_with_notes();
+    doc.edit
+        .selected
+        .add_rect_track(100, 501, 60, 64, 0, u16::MAX);
+    let action = doc
+        .flip_selected_notes(FlipAxis::Horizontal)
+        .expect("flip 应成功");
+    // 两个音符 end(200/500) <= t1(501) → flip_safe → 操作式。
+    assert!(
+        matches!(action, UndoAction::FlipNotes { .. }),
+        "选框内音符 flip 应为 FlipNotes"
+    );
+    doc.push_undo(action, "flip-h", doc.capture_snapshot());
+    assert!(doc.undo());
+    let n = &doc.data.model.notes[60];
+    assert_eq!(n.get(0).unwrap().start_tick, 100);
+    assert_eq!(n.get(0).unwrap().end_tick, 200);
+    assert!(doc.redo());
+    let n = &doc.data.model.notes[60];
+    assert_eq!(n.get(0).unwrap().start_tick, 401);
+    assert_eq!(n.get(0).unwrap().end_tick, 501);
+}
+
+#[test]
+fn flip_overflow_falls_back_to_snapshot() {
+    let mut doc = make_doc_with_notes();
+    // 音符 (100,200) 和 (400,500)：选区覆盖两个，t1=401 → (400,500) 的
+    // end_tick=500 跨出选框 → 镜像触发 clamp，回退副本制。
+    doc.edit
+        .selected
+        .add_rect_track(100, 401, 60, 64, 0, u16::MAX);
+    let action = doc
+        .flip_selected_notes(FlipAxis::Horizontal)
+        .expect("flip 应成功");
+    assert!(
+        matches!(action, UndoAction::Notes(_)),
+        "跨选框 flip 必须回退副本制"
+    );
+}
+
+#[test]
+fn flip_vertical_roundtrips_operationally() {
+    let mut doc = make_doc_with_notes();
+    doc.edit
+        .selected
+        .add_rect_track(100, 501, 60, 64, 0, u16::MAX);
+    let action = doc
+        .flip_selected_notes(FlipAxis::Vertical)
+        .expect("flip 应成功");
+    assert!(
+        matches!(action, UndoAction::FlipNotes { .. }),
+        "垂直 flip 应为 FlipNotes"
+    );
+    doc.push_undo(action, "flip-v", doc.capture_snapshot());
+    assert!(doc.undo());
+    assert_eq!(doc.data.model.notes[60].get(0).unwrap().start_tick, 100);
+    assert!(doc.redo());
+    assert_eq!(doc.data.model.notes[64].get(0).unwrap().start_tick, 100);
 }

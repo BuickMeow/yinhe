@@ -158,6 +158,29 @@ pub enum UndoAction {
         note_remap_inverse: Vec<u16>, // new_track -> old_track (for undo)
         deleted_notes: Vec<(Note, u8)>, // 被 remove_track 删掉的音符（含 key），用于 undo 恢复
     },
+    /// 几何平移类操作（move/transpose）的操作式 undo：不存数据副本，
+    /// 存逆操作参数（O(1) 内存，与受影响音符数无关）。
+    ///
+    /// `rects` = 操作前选区矩形（含 track 过滤）。redo 在 rects 收集音符
+    /// 施加 (+delta)；undo 时 `reversed()` 把 rects 平移到操作后位置并取反
+    /// delta，在操作后位置收集音符施加 (−delta)——与 redo 共用同一 apply。
+    ///
+    /// 前提：操作不触发 tick/key 边界 clamp（触发时生成端回退 `Notes`
+    /// 副本制，保证 undo 精确）。栈序保证 undo 时对象集 = 操作刚完成时。
+    MoveNotes {
+        rects: Vec<(u32, u32, u8, u8, u16, u16)>,
+        delta_ticks: i64,
+        delta_keys: i32,
+    },
+    /// 镜像翻转（flip）的操作式 undo：两次镜像恒等，自逆操作。
+    /// `bounds` = 镜像边界 (t0, t1, kl, kh)（选框整体范围，翻转后不变）。
+    /// 前提：音符都在选框内（跨出选框的音符镜像会触发 clamp，生成端
+    /// 检测到后回退 `Notes` 副本制）。
+    FlipNotes {
+        rects: Vec<(u32, u32, u8, u8, u16, u16)>,
+        bounds: (u64, u64, u8, u8),
+        axis: crate::document::note_edit::FlipAxis,
+    },
     /// Multiple actions applied atomically (undo/redo as a single step).
     Composite(Vec<UndoAction>),
 }
@@ -246,6 +269,34 @@ impl UndoAction {
                     deleted_notes,
                 }
             }
+            UndoAction::MoveNotes {
+                rects,
+                delta_ticks,
+                delta_keys,
+            } => {
+                // 逆操作：rects 平移到操作后位置（undo 时音符在此），delta 取反。
+                // apply 统一为“在 rects 收集 + 施加 delta”。
+                let moved_rects = rects
+                    .into_iter()
+                    .map(|(ts, te, kl, kh, tl, th)| {
+                        (
+                            (ts as i64 + delta_ticks).max(0) as u32,
+                            (te as i64 + delta_ticks).max(0) as u32,
+                            (kl as i32 + delta_keys).clamp(0, 127) as u8,
+                            (kh as i32 + delta_keys).clamp(0, 127) as u8,
+                            tl,
+                            th,
+                        )
+                    })
+                    .collect();
+                UndoAction::MoveNotes {
+                    rects: moved_rects,
+                    delta_ticks: -delta_ticks,
+                    delta_keys: -delta_keys,
+                }
+            }
+            // 两次镜像恒等：自逆，原样返回。
+            UndoAction::FlipNotes { .. } => self,
             UndoAction::Composite(actions) => {
                 // Reverse order so that reversed().redo() undoes in reverse order,
                 // matching the original undo() semantics.
