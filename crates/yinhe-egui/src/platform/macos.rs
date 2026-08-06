@@ -9,7 +9,7 @@ use muda::{
     IsMenuItem, Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem, Submenu,
     accelerator::{Accelerator, Code, Modifiers},
 };
-use objc2::runtime::{AnyClass, AnyObject, ClassBuilder, Sel};
+use objc2::runtime::{AnyClass, AnyObject};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
 use super::MenuAction;
@@ -26,142 +26,18 @@ macro_rules! cstr {
     };
 }
 
-// ── Finder 打开文件（NSAppleEventManager kAEOpenDocuments）──────────────
+// ── Finder 打开文件（预留通道）────────────────────────────────────────
 
 /// Finder/桌面"打开方式"传入的文件路径发送端。
+/// 目前 Finder 打开功能在实验分支（feat/finder-open-experiment）开发中，
+/// 这里只保留通道，避免残留任何会在启动期执行的 ObjC 注册。
 static OPEN_FILES_SENDER: Mutex<Option<mpsc::Sender<String>>> = Mutex::new(None);
 
-/// Apple Events 四字符代码。
-/// keyDirectObject ('----')：事件直对象；kCoreEventClass ('core')：核心事件类；
-/// kAEOpenDocuments ('odoc')：打开文档事件（Finder 双击文件时发送）。
-const KEY_DIRECT_OBJECT: u32 = 0x2D2D_2D2D;
-const KEY_ERROR_NUMBER: u32 = 0x6572_7221; // 'err!'
-const CORE_EVENT_CLASS: u32 = 0x636F_7265;
-const AE_OPEN_DOCUMENTS: u32 = 0x6F64_6F63;
-
-/// 接收 Finder 双击/右键"打开方式"打开的文件（kAEOpenDocuments Apple 事件）。
-/// 通过 NSAppleEventManager 注册独立 handler，不替换 winit 的 NSApplication delegate。
-/// 返回接收端，由调用方在主线程轮询。
+/// 创建 Finder 打开文件的通道。返回接收端，由调用方在主线程轮询。
 fn register_open_files_handler() -> mpsc::Receiver<String> {
     let (tx, rx) = mpsc::channel();
     *OPEN_FILES_SENDER.lock().unwrap() = Some(tx);
-
-    let Some(superclass) = cls(cstr!("NSObject")) else {
-        return rx;
-    };
-    let Some(handler_class) = ClassBuilder::new(cstr!("YinheOpenFilesHandler"), superclass) else {
-        return rx;
-    };
-    let mut handler_class = handler_class;
-    unsafe {
-        handler_class.add_method(
-            objc2::sel!(handleOpenEvent:withReplyEvent:),
-            handle_open_event as extern "C-unwind" fn(_, _, _, _),
-        );
-    }
-    let handler_class = handler_class.register();
-
-    // 持有 handler 实例，避免被释放（AppKit 不会 retain AppleEventManager 的 handler）。
-    // 只能在主线程创建，与 NSAppleEventManager 的派发线程一致。
-    let handler: objc2::rc::Retained<AnyObject> = unsafe { objc2::msg_send![handler_class, new] };
-    let handler_ptr = &*handler as *const AnyObject as *mut AnyObject;
-    thread_local! {
-        static HANDLER: OnceLock<*mut AnyObject> = const { OnceLock::new() };
-    }
-    HANDLER.with(|cell| {
-        let _ = cell.set(handler_ptr);
-    });
-
-    let Some(mgr_class) = cls(cstr!("NSAppleEventManager")) else {
-        return rx;
-    };
-    unsafe {
-        let mgr: *mut AnyObject = objc2::msg_send![mgr_class, sharedManager];
-        let _: () = objc2::msg_send![
-            mgr,
-            setEventHandler: handler_ptr,
-            selector: objc2::sel!(handleOpenEvent:withReplyEvent:),
-            forEventClass: CORE_EVENT_CLASS,
-            andEventID: AE_OPEN_DOCUMENTS
-        ];
-    }
-
     rx
-}
-
-/// kAEOpenDocuments 事件回调：提取文件路径并发送到 UI 线程通道。
-extern "C-unwind" fn handle_open_event(
-    _this: &AnyObject,
-    _sel: Sel,
-    event: *mut AnyObject,
-    reply: *mut AnyObject,
-) {
-    if event.is_null() {
-        return;
-    }
-    // 回调中不 panic（ObjC 边界），用 catch_unwind 包一层。
-    let paths = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let mut paths = Vec::new();
-        unsafe {
-            // 直对象是文件 URL 的 AEDesc 列表
-            let desc: *mut AnyObject =
-                objc2::msg_send![event, eventDescriptorForKeyword: KEY_DIRECT_OBJECT];
-            if desc.is_null() {
-                return paths;
-            }
-            let count: isize = objc2::msg_send![desc, numberOfItems];
-            for i in 1..=count {
-                let item: *mut AnyObject = objc2::msg_send![desc, descriptorAtIndex: i];
-                if item.is_null() {
-                    continue;
-                }
-                let url: *mut AnyObject = objc2::msg_send![item, fileURLValue];
-                if url.is_null() {
-                    continue;
-                }
-                let ns_path: *mut AnyObject = objc2::msg_send![url, path];
-                if ns_path.is_null() {
-                    continue;
-                }
-                let cstr_ptr: *const std::ffi::c_char = objc2::msg_send![ns_path, UTF8String];
-                if cstr_ptr.is_null() {
-                    continue;
-                }
-                paths.push(
-                    std::ffi::CStr::from_ptr(cstr_ptr)
-                        .to_string_lossy()
-                        .into_owned(),
-                );
-            }
-        }
-        paths
-    }));
-    if let Ok(paths) = paths
-        && let Ok(sender_guard) = OPEN_FILES_SENDER.lock()
-        && let Some(tx) = sender_guard.as_ref()
-    {
-        for path in paths {
-            let _ = tx.send(path);
-        }
-    }
-    // 给发送方（osascript 等脚本）一个明确回复，避免其挂起等待。
-    // 未设置回复时发送方会一直等待直到超时。
-    if !reply.is_null() {
-        let Some(desc_class) = cls(cstr!("NSAppleEventDescriptor")) else {
-            return;
-        };
-        unsafe {
-            let err_desc: *mut AnyObject =
-                objc2::msg_send![desc_class, descriptorWithInt32: -1708i32];
-            if !err_desc.is_null() {
-                let _: () = objc2::msg_send![
-                    reply,
-                    setDescriptor: err_desc,
-                    forKeyword: KEY_ERROR_NUMBER
-                ];
-            }
-        }
-    }
 }
 
 // ── Dock icon bounce ───────────────────────────────────────────────────────
