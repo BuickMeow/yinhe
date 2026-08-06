@@ -1,5 +1,7 @@
 //! 复现：工程保存后无法二次打开的排查测试。
 
+use std::sync::Arc;
+
 use yinhe_editor_core::document::Document;
 use yinhe_editor_core::quantize::QuantizePreset;
 use yinhe_test_helpers::*;
@@ -78,6 +80,45 @@ fn document_save_and_reopen_roundtrip() {
         doc2.data.model.tracks.len(),
         doc.data.model.tracks.len(),
         "轨道数必须一致"
+    );
+}
+
+/// 回归：info panel 改名后保存→重开，名称必须保持（保存读 model.tracks[].name，
+/// 改名必须写入权威源，不能只更新显示缓存）。
+#[test]
+fn track_names_survive_save_and_reopen() {
+    let mut doc = make_test_document();
+
+    // 模拟 info panel 改名路径：写 model.tracks[].name（权威源）+ track_info_cache。
+    // track 1 是可编辑音轨（conductor 是 track 0）。
+    {
+        let model = Arc::make_mut(&mut doc.data.model);
+        if let Some(td) = model.tracks.get_mut(1) {
+            Arc::make_mut(td).name = "Lead Guitar".to_string();
+        }
+        if let Some(ti) = doc.edit.track_info_cache.get_mut(1) {
+            ti.name = "Lead Guitar".to_string();
+        }
+    }
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("names.yin");
+    let path_str = path.to_string_lossy().to_string();
+
+    let doc2 = save_and_reopen(&mut doc, &path_str).expect("save→load→from_model 必须成功");
+
+    assert_eq!(
+        doc2.data.model.tracks[1].name, "Lead Guitar",
+        "改名后的音轨名必须跨保存/重开保持"
+    );
+    // 其他轨道名字不受影响
+    assert_eq!(
+        doc2.data.model.tracks[0].name,
+        doc.data.model.tracks[0].name
+    );
+    assert_eq!(
+        doc2.data.model.tracks[2].name,
+        doc.data.model.tracks[2].name
     );
 }
 

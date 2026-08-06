@@ -743,7 +743,6 @@ mod tests {
         let mut doc = Document {
             data: crate::project_data::ProjectData::new(
                 Arc::new(model),
-                vec!["t".to_string()],
                 Default::default(),
                 Default::default(),
             ),

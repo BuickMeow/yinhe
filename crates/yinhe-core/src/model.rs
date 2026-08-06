@@ -248,7 +248,7 @@ impl Default for YinModel {
 }
 
 impl YinModel {
-    /// 新建一个空工程：Conductor 轨（120 BPM + 4/4 拍号）+ 16 条 A1..A16 轨道。
+    /// 新建一个空工程：Conductor 轨（120 BPM + 4/4 拍号）+ 16 条 Track 1..Track 16 轨道。
     ///
     /// 工厂方法封装了 `Document::empty()` 之前内联构造的样板代码，
     /// 避免 document.rs 直接操作 YinModel 内部字段。
@@ -282,7 +282,7 @@ impl YinModel {
         tracks.push(Arc::new(t));
         for ch in 0..16u8 {
             let mut t = TrackData::new(0, ch);
-            t.name = format!("A{}", ch + 1);
+            t.name = format!("Track {}", ch + 1);
             tracks.push(Arc::new(t));
         }
 
@@ -908,11 +908,11 @@ mod tests {
         m.rebuild();
         assert_eq!(m.tracks.len(), 17);
         assert_eq!(m.tracks[0].name, "Conductor");
-        assert_eq!(m.tracks[1].name, "A1");
-        assert_eq!(m.tracks[16].name, "A16");
+        assert_eq!(m.tracks[1].name, "Track 1");
+        assert_eq!(m.tracks[16].name, "Track 16");
         // Conductor 应在 ch 0
         assert_eq!(m.tracks[0].channel, 0);
-        // A1 在 ch 0, A16 在 ch 15
+        // Track 1 在 ch 0, Track 16 在 ch 15
         assert_eq!(m.tracks[1].channel, 0);
         assert_eq!(m.tracks[16].channel, 15);
         // 120 BPM + 4/4 拍号

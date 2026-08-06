@@ -34,6 +34,10 @@ impl UndoAction {
                 if let Some(track) = model.tracks.get_mut(*track_idx) {
                     let track = Arc::make_mut(track);
                     track.name = new.clone();
+                    // 同步显示缓存（AR/PR 轨道列表、info panel 读它）。
+                    if let Some(ti) = doc.edit.track_info_cache.get_mut(*track_idx) {
+                        ti.name = new.clone();
+                    }
                     // SMF 标准：track 0 的 TrackName = song title。
                     // 编辑 track 0 name 时同步到 meta.name，保持一致。
                     if *track_idx == 0 {
@@ -62,6 +66,9 @@ impl UndoAction {
                 // 编辑 project name 时同步到 track 0 name，保持一致。
                 if let Some(track) = model.tracks.get_mut(0) {
                     Arc::make_mut(track).name = new.clone();
+                    if let Some(ti) = doc.edit.track_info_cache.get_mut(0) {
+                        ti.name = new.clone();
+                    }
                 }
             }
             UndoAction::ProjectArtist { old: _, new } => {

@@ -35,9 +35,9 @@ fn first_note_key48(doc: &Document) -> (u16, u32, u8, u32) {
 fn document_empty_has_conductor_and_16_tracks() {
     let doc = Document::empty();
     assert_eq!(doc.data.model.tracks.len(), 17);
-    assert_eq!(doc.track_names()[0], "Conductor");
-    assert_eq!(doc.track_names()[1], "A1");
-    assert_eq!(doc.track_names()[16], "A16");
+    assert_eq!(doc.data.model.tracks[0].name, "Conductor");
+    assert_eq!(doc.data.model.tracks[1].name, "Track 1");
+    assert_eq!(doc.data.model.tracks[16].name, "Track 16");
 }
 
 #[test]
@@ -263,9 +263,22 @@ fn document_recode_track_names() {
         Default::default(),
     )
     .expect("from_model failed");
-    let original_names = doc.data.track_names.clone();
+    let original_names: Vec<String> = doc
+        .data
+        .model
+        .tracks
+        .iter()
+        .map(|t| t.name.clone())
+        .collect();
     doc.recode_track_names(MidiImportEncoding::Utf8);
-    assert_eq!(doc.data.track_names, original_names);
+    let names_after: Vec<String> = doc
+        .data
+        .model
+        .tracks
+        .iter()
+        .map(|t| t.name.clone())
+        .collect();
+    assert_eq!(names_after, original_names);
 }
 
 #[test]

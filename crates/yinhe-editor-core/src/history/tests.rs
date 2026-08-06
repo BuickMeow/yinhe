@@ -40,7 +40,6 @@ fn make_doc(name: &str) -> Document {
     Document {
         data: crate::project_data::ProjectData::new(
             Arc::new(model),
-            vec![name.to_string()],
             Default::default(),
             Default::default(),
         ),

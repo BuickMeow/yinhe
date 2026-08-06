@@ -16,8 +16,6 @@ use yinhe_yin::{MappingFile, ProjectFile};
 #[derive(Clone)]
 pub struct ProjectData {
     pub model: Arc<YinModel>,
-    /// Authoritative, editable track names. Mirrored into `track_info_cache`.
-    pub track_names: Vec<String>,
 
     /// The original `project.json` structure, preserved for faithful round-tripping
     /// (保留 SoundFont 等非 meta 字段)。meta 字段在 save 时从 `model.meta` 重建。
@@ -124,15 +122,9 @@ impl ProjectData {
     }
 
     /// Construct a `ProjectData` with a given model and file structures.
-    pub fn new(
-        model: Arc<YinModel>,
-        track_names: Vec<String>,
-        project_file: ProjectFile,
-        mapping_file: MappingFile,
-    ) -> Self {
+    pub fn new(model: Arc<YinModel>, project_file: ProjectFile, mapping_file: MappingFile) -> Self {
         Self {
             model,
-            track_names,
             project_file,
             mapping_file,
             revision: 0,

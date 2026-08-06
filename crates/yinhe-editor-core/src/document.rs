@@ -51,10 +51,6 @@ impl Document {
         &self.data.model
     }
 
-    pub fn track_names(&self) -> &[String] {
-        &self.data.track_names
-    }
-
     pub fn selected(&self) -> &yinhe_core::Selection {
         &self.edit.selected
     }
@@ -81,13 +77,11 @@ impl Document {
         let mut model = YinModel::new_empty_with_16_tracks();
         model.rebuild();
 
-        let track_names = model.tracks.iter().map(|t| t.name.clone()).collect();
         let num_tracks = model.tracks.len();
         let conductor_track_idx = Some(0);
 
         let data = ProjectData::new(
             Arc::new(model.clone()),
-            track_names,
             ProjectFile::from_meta(&model.meta),
             MappingFile::default(),
         );
@@ -163,13 +157,11 @@ impl Document {
             let conductor_track_idx = detect_conductor_from_model(&model);
 
             let num_tracks = model.tracks.len();
-            let track_names: Vec<String> = model.tracks.iter().map(|t| t.name.clone()).collect();
             let track_colors_cache = (0..num_tracks)
                 .map(|i| track_color(&model.tracks[i], i, conductor_track_idx))
                 .collect();
 
-            let mut data =
-                ProjectData::new(Arc::new(model), track_names, project_file, mapping_file);
+            let mut data = ProjectData::new(Arc::new(model), project_file, mapping_file);
             data.rebuild_model();
 
             let track_info_cache = data.track_info();
@@ -445,14 +437,13 @@ mod tests {
         let doc = Document::empty();
         assert_eq!(doc.model().tracks.len(), 17);
         assert_eq!(doc.model().tracks[0].name, "Conductor");
-        assert_eq!(doc.model().tracks[1].name, "A1");
-        assert_eq!(doc.model().tracks[16].name, "A16");
-        assert_eq!(doc.track_names().len(), 17);
+        assert_eq!(doc.model().tracks[1].name, "Track 1");
+        assert_eq!(doc.model().tracks[16].name, "Track 16");
         assert_eq!(doc.edit.conductor_track_idx, Some(0));
         assert_eq!(doc.edit.track_visible.len(), 17);
         assert_eq!(doc.edit.track_pianoroll_visible.len(), 17);
         assert_eq!(doc.file_name, "Untitled");
-        // Conductor track channels: A1 on ch0, A16 on ch15
+        // Conductor track channels: Track 1 on ch0, Track 16 on ch15
         assert_eq!(doc.model().tracks[1].channel, 0);
         assert_eq!(doc.model().tracks[16].channel, 15);
     }

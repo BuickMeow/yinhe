@@ -35,10 +35,11 @@ pub(super) fn show_track_info(
     // ── Track selector ──
     let track_names: Vec<String> = doc
         .data
-        .track_names
+        .model
+        .tracks
         .iter()
         .enumerate()
-        .map(|(i, name)| format!("{:03} – {}", i + 1, name))
+        .map(|(i, t)| format!("{:03} – {}", i + 1, t.name))
         .collect();
 
     let sel_idx = doc
@@ -213,7 +214,7 @@ pub(super) fn show_track_info(
     let mut name_lost_focus = false;
     ui.horizontal(|ui| {
         ui.label(t!("track.name").as_ref());
-        let mut name = doc.data.track_names[track_idx].clone();
+        let mut name = doc.data.model.tracks[track_idx].name.clone();
         let resp = ui.add_sized(
             egui::vec2(ui.available_width().max(60.0), 18.0),
             egui::TextEdit::singleline(&mut name).id_salt(("track_name", track_idx)),
@@ -230,17 +231,21 @@ pub(super) fn show_track_info(
             yinhe_editor_core::history::begin_edit(
                 &mut doc.edit.pending_edits,
                 id.value(),
-                &doc.data.track_names[track_idx],
+                &doc.data.model.tracks[track_idx].name,
             );
         }
         if let Some(new_name) = name_change {
-            doc.data.track_names[track_idx] = new_name.clone();
+            // 唯一权威源是 model.tracks[].name（保存时 sync_mapping_file 读它）；
+            // track_info_cache 是显示缓存，同步更新（undo 由 apply.rs 反向同步）。
+            if let Some(td) = Arc::make_mut(&mut doc.data.model).tracks.get_mut(track_idx) {
+                Arc::make_mut(td).name = new_name.clone();
+            }
             if let Some(ti_mut) = doc.edit.track_info_cache.get_mut(track_idx) {
                 ti_mut.name = new_name;
             }
         }
         if name_lost_focus {
-            let name = doc.data.track_names[track_idx].clone();
+            let name = doc.data.model.tracks[track_idx].name.clone();
             yinhe_editor_core::history::commit_track_name(doc, id.value(), track_idx, &name);
         }
     }
@@ -274,17 +279,17 @@ pub(super) fn show_track_info(
 
         ui.add_space(4.0);
 
-        let ch_options: Vec<String> = (1..=16).map(|c| format!("{:02}", c)).collect();
+        let ch_options: Vec<String> = (0..16).map(|c| format!("{:02}", c + 1)).collect();
         let _ch_sel = egui::ComboBox::from_id_salt("track_channel")
-            .selected_text(format!("{:02}", ti.channel))
+            .selected_text(format!("{:02}", ti.channel + 1))
             .width(50.0)
             .show_ui(ui, |ui| {
                 for (i, label) in ch_options.iter().enumerate() {
                     if ui
-                        .selectable_label(i + 1 == ti.channel as usize, label)
+                        .selectable_label(i == ti.channel as usize, label)
                         .clicked()
                     {
-                        new_ch = (i + 1) as u8;
+                        new_ch = i as u8;
                         port_changed = true;
                     }
                 }
@@ -297,7 +302,7 @@ pub(super) fn show_track_info(
             if track_idx < model.tracks.len() {
                 let td = Arc::make_mut(&mut model.tracks[track_idx]);
                 td.port = new_port;
-                td.channel = new_ch.saturating_sub(1);
+                td.channel = new_ch;
             }
         }
         doc.data.rebuild_model();
