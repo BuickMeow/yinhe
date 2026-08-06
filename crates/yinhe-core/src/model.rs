@@ -282,7 +282,9 @@ impl YinModel {
         tracks.push(Arc::new(t));
         for ch in 0..16u8 {
             let mut t = TrackData::new(0, ch);
-            t.name = format!("Track {}", ch + 1);
+            // 轨道号 = 在 tracks 中的位置（Conductor 占 0 号，音轨从 1 号开始）。
+            // 不按通道命名：通道经常被改，轨道号相对固定。
+            t.name = format!("Track {}", tracks.len());
             tracks.push(Arc::new(t));
         }
 

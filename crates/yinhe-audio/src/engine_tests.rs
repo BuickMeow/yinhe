@@ -954,7 +954,7 @@ fn test_add_track_then_rebuild_activates_new_channel() {
     let sample_rate = 44100u32;
     let mut doc = Document::empty();
 
-    // 1. 释放 channel 15：移除 track 16（A16）
+    // 1. 释放 channel 15：移除 track 16（Track 16）
     doc.remove_track(16);
 
     // 2. track 1（通道 0）加一个音符
@@ -970,7 +970,7 @@ fn test_add_track_then_rebuild_activates_new_channel() {
     );
     doc.data.bump_revision();
 
-    // 3. 初始 layout：通道 0-14 激活（A1..A15），channel 15 未激活
+    // 3. 初始 layout：通道 0-14 激活（Track 1..Track 15），channel 15 未激活
     let layout_before = crate::spawn::channels_for_model(&doc.data.model);
     assert!(layout_before.is_active(0));
     assert!(!layout_before.is_active(15));
@@ -1024,7 +1024,7 @@ fn test_remove_track_then_rebuild_deactivates_channel() {
     );
     doc.data.bump_revision();
 
-    // 2. 初始 layout：通道 0-15 全部激活（A1..A16 占满）
+    // 2. 初始 layout：通道 0-15 全部激活（Track 1..Track 16 占满）
     let layout_before = crate::spawn::channels_for_model(&doc.data.model);
     assert!(layout_before.is_active(0));
     assert!(layout_before.is_active(1));

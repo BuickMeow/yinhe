@@ -574,7 +574,7 @@ mod tests {
         use yinhe_core::NoteEvent;
 
         let mut doc = Document::empty();
-        // conductor 在 track 0，A1 在 track 1。给 track 1 加 2 个音符。
+        // conductor 在 track 0，Track 1 在 track 1。给 track 1 加 2 个音符。
         let notes_to_add = vec![
             NoteEvent {
                 id: 0,

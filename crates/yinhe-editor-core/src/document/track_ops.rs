@@ -28,7 +28,9 @@ impl Document {
         let channel = (0..16u8).find(|c| !used_channels.contains(c)).unwrap_or(0);
 
         let mut new_track = yinhe_core::TrackData::new(0, channel);
-        new_track.name = format!("A{}", channel + 1);
+        // 轨道号 = 插入位置（tracks 数组索引；Conductor 占 0 号，音轨从 1 号开始）。
+        // 不按通道命名：通道经常被改，轨道号相对固定。
+        new_track.name = format!("Track {}", insert_idx);
 
         let tracks_before: Vec<Arc<yinhe_core::TrackData>> = model.tracks.clone();
 
