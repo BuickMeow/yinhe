@@ -35,6 +35,7 @@ static OPEN_FILES_SENDER: Mutex<Option<mpsc::Sender<String>>> = Mutex::new(None)
 /// keyDirectObject ('----')：事件直对象；kCoreEventClass ('core')：核心事件类；
 /// kAEOpenDocuments ('odoc')：打开文档事件（Finder 双击文件时发送）。
 const KEY_DIRECT_OBJECT: u32 = 0x2D2D_2D2D;
+const KEY_ERROR_NUMBER: u32 = 0x6572_7221; // 'err!'
 const CORE_EVENT_CLASS: u32 = 0x636F_7265;
 const AE_OPEN_DOCUMENTS: u32 = 0x6F64_6F63;
 
@@ -93,7 +94,7 @@ extern "C-unwind" fn handle_open_event(
     _this: &AnyObject,
     _sel: Sel,
     event: *mut AnyObject,
-    _reply: *mut AnyObject,
+    reply: *mut AnyObject,
 ) {
     if event.is_null() {
         return;
@@ -141,6 +142,24 @@ extern "C-unwind" fn handle_open_event(
     {
         for path in paths {
             let _ = tx.send(path);
+        }
+    }
+    // 给发送方（osascript 等脚本）一个明确回复，避免其挂起等待。
+    // 未设置回复时发送方会一直等待直到超时。
+    if !reply.is_null() {
+        let Some(desc_class) = cls(cstr!("NSAppleEventDescriptor")) else {
+            return;
+        };
+        unsafe {
+            let err_desc: *mut AnyObject =
+                objc2::msg_send![desc_class, descriptorWithInt32: -1708i32];
+            if !err_desc.is_null() {
+                let _: () = objc2::msg_send![
+                    reply,
+                    setDescriptor: err_desc,
+                    forKeyword: KEY_ERROR_NUMBER
+                ];
+            }
         }
     }
 }

@@ -60,6 +60,9 @@ icon = ["assets/yinhe.icns"]
 version = "0.1.0"
 resources = []
 copyright = "Copyright (c) Jieneng 2026"
-category = "Developer Tool"
+category = "Music"
 short_description = "A MIDI editor built with Rust and egui."
 long_description = "A MIDI editor built with Rust and egui."
+# 追加到生成 Info.plist 的片段：注册 Finder 双击/右键"打开方式"的文档类型
+# （配合 Apple Events 支持直接打开 MIDI/工程文件）
+osx_info_plist_exts = ["assets/macos/document_types.plist"]
