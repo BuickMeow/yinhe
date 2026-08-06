@@ -835,7 +835,10 @@ impl App {
             .as_ref()
             .map(|a| a.handle.is_playing())
             .unwrap_or(false);
-        if is_audio_playing || self.audio_state.pending_playback {
+        // macOS: 窗口被完全遮挡时暂停动画重绘省 CPU/电（音频在独立线程继续播）。
+        // 恢复可见时 Occluded(false) 事件会触发一次重绘，playhead 按 anchor+Instant 重算，不会跳帧丢位置。
+        let occluded = ui.ctx().input(|i| i.viewport().occluded == Some(true));
+        if (is_audio_playing || self.audio_state.pending_playback) && !occluded {
             ui.ctx().request_repaint();
         }
     }
