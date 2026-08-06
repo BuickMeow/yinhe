@@ -42,6 +42,11 @@ impl MenuBar {
     pub fn poll(&mut self) -> Vec<MenuAction> {
         self.inner.poll()
     }
+
+    /// Poll for file paths passed in by the OS (Finder "Open With" on macOS).
+    pub fn poll_open_files(&mut self) -> Vec<String> {
+        self.inner.poll_open_files()
+    }
 }
 
 /// Set the document-edited dot in the macOS traffic light close button.

@@ -192,6 +192,12 @@ impl eframe::App for App {
             self.handle_file_action(file_action, ui.ctx());
         }
 
+        // ── macOS: Finder/桌面双击或"打开方式"传入的文件（Apple Events）──
+        for path in self.menu_bar.poll_open_files() {
+            self.file_loader
+                .load_path(path, self.audio_settings.midi_import_encoding);
+        }
+
         // ── Detect document switch → invalidate GPU caches ──
         if self.active_doc != self.prev_active_doc {
             self.arrange_view.base.dirty = true;

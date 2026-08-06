@@ -15,6 +15,10 @@ impl MenuBarInner {
     pub fn poll(&mut self) -> Vec<MenuAction> {
         Vec::new()
     }
+
+    pub fn poll_open_files(&mut self) -> Vec<String> {
+        Vec::new()
+    }
 }
 
 pub(crate) fn set_document_edited(_frame: &eframe::Frame, _edited: bool) {
