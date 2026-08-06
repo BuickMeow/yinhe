@@ -105,6 +105,13 @@ pub(crate) fn set_app_nap_enabled(enabled: bool) {
                     reason: reason
                 ];
                 if !t.is_null() {
+                    // `beginActivityWithOptions:` 按 ObjC 内存规则返回 +0（autoreleased）
+                    // 对象：裸 msg_send 存下的指针会在下一个 autorelease pool 排干时失效，
+                    // 之后 `endActivity:` 就是 use-after-free（macOS 26 Swift Foundation
+                    // 实测崩溃：SIGTRAP / objc_opt_isKindOfClass PAC 陷阱）。显式 retain
+                    // 保证 token 在我们持有期间存活；endActivity 后不再 release——endActivity
+                    // 是否接管所有权因系统版本而异，宁可泄漏这个小对象也不 double-free。
+                    let _: *mut AnyObject = objc2::msg_send![t, retain];
                     cell.set(t);
                 }
             } else if !enabled && !token.is_null() {
