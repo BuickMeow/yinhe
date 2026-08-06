@@ -69,12 +69,6 @@ pub(crate) fn show(
     let painter = ui.painter().clone();
     let mut audio_dirty = false;
 
-    // 迁移：Conductor 不可作为编辑目标（旧版本可能已把 editing_track 设为
-    // Conductor），自动清除，保证铅笔图标不会出现在 Conductor 行。
-    if *editing_track == conductor_track_idx {
-        *editing_track = None;
-    }
-
     let interact_id = egui::Id::new("track_panel_area");
     let resp = ui.interact(panel_rect, interact_id, egui::Sense::click_and_drag());
 
@@ -213,15 +207,12 @@ pub(crate) fn show(
             }
 
             // 铅笔 ICON：双击 track 后显示，表示该 track 是 pencil/automation 的编辑目标。
-            // 非 conductor：在 M/S 按钮左侧；conductor：在行右侧（无 M/S 按钮）。
-            if *editing_track == Some(ti.index) {
+            // 非 conductor：在 M/S 按钮左侧；conductor：不出铅笔图标
+            // （Tempo 编辑不依赖编辑目标，conductor 仅作 PR 打开/定位用）。
+            if *editing_track == Some(ti.index) && !is_conductor {
                 let gap = 2.0;
                 let total_btn_w = 2.0 * btn_size.x + gap;
-                let icon_x = if !is_conductor {
-                    row_rect.max.x - total_btn_w - 6.0 - gap - btn_size.x
-                } else {
-                    row_rect.max.x - 6.0 - btn_size.x
-                };
+                let icon_x = row_rect.max.x - total_btn_w - 6.0 - gap - btn_size.x;
                 let icon_y = badge_rect.center().y - btn_size.y * 0.5;
                 let icon_rect = egui::Rect::from_min_size(egui::pos2(icon_x, icon_y), btn_size);
                 painter.text(
@@ -265,13 +256,9 @@ pub(crate) fn show(
         if let Some(pos) = resp.interact_pointer_pos()
             && let Some(idx) = hit(pos)
         {
-            // Conductor 不可作为编辑目标：Tempo 自动化不依赖编辑目标即可编辑，
-            // 因此 Conductor 行永远不出铅笔图标（双击忽略）。
-            if Some(track_info[idx].index) == conductor_track_idx {
-                return (false, Vec::new());
-            }
             // 双击 toggle：已经是 editing_track 则清除（关闭编辑），
             // 否则设为新 editing_track（打开 PR 并切换编辑目标）。
+            // Conductor 也可作为编辑目标（仅用于 Tempo automation，不出铅笔图标）。
             let track_idx = track_info[idx].index;
             if *editing_track == Some(track_idx) {
                 *editing_track = None;
