@@ -190,8 +190,10 @@ pub struct YinModel {
     pub track_audible_count: Vec<u64>,
 
     /// Dirty bucket tracking: `dirty_keys[k]` is true when bucket k has been
-    /// modified and needs sorting. Use `mark_dirty()` to set, `rebuild_dirty()`
-    /// to clear. Public for struct construction via `..Default::default()`.
+    /// modified and needs incremental stats. Buckets are kept sorted by the
+    /// write paths themselves (`rebuild_dirty` no longer sorts). Use
+    /// `mark_dirty()` to set, `rebuild_dirty()` to clear. Public for struct
+    /// construction via `..Default::default()`.
     pub dirty_keys: [bool; 128],
 
     /// Per-key note revision counter. Bumped every time `mark_dirty(k)` is
@@ -353,7 +355,7 @@ impl YinModel {
     /// Use after editing Tempo automation events when notes are untouched.
     /// O(tempo_events + time_sig_events), typically < 100 events — near-instant
     /// even for 100M-note projects. Cheaper than `rebuild()` / `rebuild_dirty()`
-    /// which also sort/rescan note buckets.
+    /// which also rescan note buckets.
     pub fn rebuild_tempo_map(&mut self) {
         self.tempo_map = Arc::new(self.build_tempo_map());
     }

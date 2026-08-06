@@ -168,16 +168,12 @@ pub(crate) fn apply_note_delta(doc: &mut Document, remove: &[(Note, u8)], insert
         model.mark_dirty(*key);
     }
 
-    // Insert `insert` notes, grouped by key.
+    // Insert `insert` notes, grouped by key (keeps buckets sorted).
     let mut by_key: HashMap<u8, Vec<Note>> = HashMap::new();
     for (note, key) in insert {
         by_key.entry(*key).or_default().push(*note);
     }
-    for (key, notes) in by_key {
-        let k = key as usize;
-        Arc::make_mut(&mut model.notes[k]).extend(notes);
-        model.mark_dirty(key);
-    }
+    crate::batch_ops::insert_batch(model, by_key);
 
     model.rebuild_dirty();
     doc.data.bump_revision();

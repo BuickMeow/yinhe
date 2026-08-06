@@ -110,12 +110,17 @@ impl Document {
                 if *new_start_tick != note.start_tick {
                     let before = *note;
                     let model = Arc::make_mut(&mut self.data.model);
-                    if let Some(n) = Arc::make_mut(&mut model.notes[k])
-                        .iter_mut()
-                        .find(|n| n.id == before.id)
-                    {
-                        n.start_tick = (*new_start_tick).min(n.end_tick - 1);
-                        let after = *n;
+                    let bucket = Arc::make_mut(&mut model.notes[k]);
+                    if let Some(idx) = bucket.iter().position(|n| n.id == before.id) {
+                        let mut moved = bucket[idx];
+                        moved.start_tick = (*new_start_tick).min(moved.end_tick - 1);
+                        // start_tick 是排序键：改值后必须移除并插回正确位置，
+                        // 否则桶失序（partition_point 等二分查询会出错）。
+                        bucket.remove(idx);
+                        let insert_pos =
+                            bucket.partition_point(|n| n.start_tick < moved.start_tick);
+                        bucket.insert(insert_pos, moved);
+                        let after = moved;
                         model.mark_dirty(*key);
                         model.rebuild_dirty();
                         self.data.bump_revision();
@@ -280,6 +285,108 @@ mod tests {
         // 选中它
         doc.edit.selected.add_rect_track(100, 201, 60, 60, 0, 0);
         doc
+    }
+
+    #[test]
+    fn pencil_resize_left_keeps_bucket_sorted() {
+        let mut doc = make_doc_with_note(); // tick 100~200 key 60
+        doc.add_note(
+            0,
+            NoteEvent {
+                id: 0,
+                start_tick: 300,
+                end_tick: 400,
+                key: 60,
+                velocity: 100,
+            },
+        );
+        doc.add_note(
+            0,
+            NoteEvent {
+                id: 0,
+                start_tick: 500,
+                end_tick: 600,
+                key: 60,
+                velocity: 100,
+            },
+        );
+        // 桶: [100, 300, 500]
+
+        // 左边缘拖到最前（50）→ 被拖音符必须移到桶头，否则桶失序。
+        let action = doc
+            .pencil_drag_note(&PencilNoteDrag::ResizeLeft {
+                track: 0,
+                start_tick: 300,
+                key: 60,
+                new_start_tick: 50,
+            })
+            .expect("应产生 UndoAction");
+        let bucket = &doc.data.model.notes[60];
+        for w in bucket.windows(2) {
+            assert!(
+                w[0].start_tick <= w[1].start_tick,
+                "桶失序: {} > {}",
+                w[0].start_tick,
+                w[1].start_tick
+            );
+        }
+        assert_eq!(
+            bucket.iter().map(|n| n.start_tick).collect::<Vec<_>>(),
+            vec![50, 100, 500],
+            "左边缘拖到最前时音符应重新定位"
+        );
+        assert_eq!(
+            bucket[0].end_tick, 400,
+            "start_tick 改变时 end_tick 保持原值（长度改变）"
+        );
+        let UndoAction::Notes(delta) = action else {
+            panic!("应产生 Notes undo");
+        };
+        assert_eq!(delta.after[0].0.start_tick, 50);
+
+        // 左边缘拖到中间（450）→ 插到 500 之前。
+        doc.pencil_drag_note(&PencilNoteDrag::ResizeLeft {
+            track: 0,
+            start_tick: 500,
+            key: 60,
+            new_start_tick: 450,
+        })
+        .expect("应产生 UndoAction");
+        let bucket = &doc.data.model.notes[60];
+        for w in bucket.windows(2) {
+            assert!(
+                w[0].start_tick <= w[1].start_tick,
+                "桶失序: {} > {}",
+                w[0].start_tick,
+                w[1].start_tick
+            );
+        }
+        assert_eq!(
+            bucket.iter().map(|n| n.start_tick).collect::<Vec<_>>(),
+            vec![50, 100, 450],
+            "左边缘拖到中间时音符应重新定位"
+        );
+
+        // 左边缘超过 end_tick-1 → clamp 到 end_tick-1，桶仍有序。
+        doc.pencil_drag_note(&PencilNoteDrag::ResizeLeft {
+            track: 0,
+            start_tick: 100,
+            key: 60,
+            new_start_tick: 999,
+        })
+        .expect("应产生 UndoAction");
+        let bucket = &doc.data.model.notes[60];
+        for w in bucket.windows(2) {
+            assert!(
+                w[0].start_tick <= w[1].start_tick,
+                "桶失序: {} > {}",
+                w[0].start_tick,
+                w[1].start_tick
+            );
+        }
+        assert_eq!(bucket[0].start_tick, 50);
+        assert_eq!(bucket[1].start_tick, 199, "clamp 到 end_tick-1 (200-1)");
+        assert_eq!(bucket[2].start_tick, 450);
     }
 
     #[test]

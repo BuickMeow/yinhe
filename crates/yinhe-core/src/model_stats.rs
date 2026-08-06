@@ -160,15 +160,22 @@ impl YinModel {
         self.tempo_map = Arc::new(self.build_tempo_map());
     }
 
-    /// Rebuild only the dirty buckets and update statistics incrementally.
+    /// Rebuild statistics for the dirty buckets incrementally.
     ///
-    /// Cost: O(sum of dirty bucket sizes) for sorting + O(D) for stats.
+    /// Cost: O(sum of dirty bucket sizes) for stats + O(D) bookkeeping.
     /// For a 30M-note song where only 10 buckets were touched, this is
     /// ~O(10 bucket scans) instead of O(128 bucket sorts + clones).
     ///
-    /// The sorting step only calls `Arc::make_mut` on dirty buckets,
-    /// so clean buckets that share Arc data with an undo snapshot are
-    /// never deep-cloned — the key performance win over `rebuild()`.
+    /// **No sorting happens here.** All write paths guarantee the
+    /// per-key bucket stays sorted by `start_tick` themselves:
+    /// - single-note paths insert at the `partition_point` position
+    /// - `batch_ops::append_notes_ordered` merges batch inserts
+    /// - in-place field edits never touch the sort key (velocity, end_tick)
+    ///
+    /// `rebuild()` still sorts — it is the full-rebuild fallback for loads,
+    /// track-structure changes, and PPQ rescale. If a bucket ever becomes
+    /// unsorted, every `partition_point` consumer silently misbehaves, so
+    /// keep the invariant in mind when adding new write paths.
     ///
     /// Statistics are updated incrementally using `bucket_note_count`:
     /// subtract old counts for dirty buckets, then rescan only dirty
@@ -186,23 +193,7 @@ impl YinModel {
         }
 
         let prev_tick_length = self.tick_length;
-
-        // 1. Sort only dirty buckets in parallel (Arc::make_mut only for these).
-        use rayon::prelude::*;
-        let dirty = self.dirty_keys; // Copy 128 bools
-        self.notes
-            .par_iter_mut()
-            .enumerate()
-            .for_each(|(k, bucket)| {
-                if dirty[k] {
-                    Arc::make_mut(bucket).sort_by_key(|n| n.start_tick);
-                }
-            });
         self.dirty_keys = [false; 128];
-
-        // 2. Incremental stats: subtract old per-bucket counts, add new ones.
-        //    Recompute bucket_max_end_tick for dirty buckets, then derive
-        //    tick_length as max over all 128 buckets — shrink-aware.
         let mut delta_note_count: i64 = 0;
         for &k in &dirty_indices {
             let old = self.bucket_note_count[k] as i64;
