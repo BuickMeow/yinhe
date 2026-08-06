@@ -1,4 +1,5 @@
 use eframe::egui;
+use egui_material_icons::icons::ICON_DRAG_INDICATOR;
 use rust_i18n::t;
 
 use yinhe_editor_core::config::SfEntry;
@@ -84,13 +85,14 @@ enum SfAction {
 }
 
 /// Render a single SF entry row. Returns (changed, action).
+/// 两行布局：第一行名称、第二行路径，复选框垂直居中，右侧拖拽手柄。
 fn sf_row(
     ui: &mut egui::Ui,
     entry: &mut SfEntry,
     index: usize,
     total: usize,
 ) -> (bool, Option<SfAction>) {
-    let height = 24.0;
+    let height = 40.0;
     let id = ui.id().with(format!("sf_{}", index));
 
     // Allocate space and get the rect
@@ -107,7 +109,7 @@ fn sf_row(
             .rect_filled(rect, 2.0, egui::Color32::from_black_alpha(20));
     }
 
-    // ── Checkbox（原生控件，矢量对勾不依赖字体）──
+    // ── Checkbox（原生控件，矢量对勾不依赖字体，垂直居中于两行）──
     // 每行的 ui.id() 相同，push_id 保证 checkbox 的自动 id 唯一。
     let cb_rect = egui::Rect::from_min_max(
         egui::pos2(rect.min.x + 4.0, rect.center().y - 9.0),
@@ -123,31 +125,27 @@ fn sf_row(
         return (true, None);
     }
 
-    // ── Name ──
-    let name_x = rect.min.x + 22.0;
+    let text_x = rect.min.x + 22.0;
+
+    // ── 第一行：名称 ──
     ui.painter().text(
-        egui::pos2(name_x, rect.center().y),
+        egui::pos2(text_x, rect.min.y + 10.0),
         egui::Align2::LEFT_CENTER,
         &entry.name,
         egui::FontId::proportional(12.0),
         egui::Color32::WHITE,
     );
 
-    // Approximate text end
-    let name_end = name_x + entry.name.len() as f32 * 7.0 + 8.0;
-
-    // ── Path (truncated) ──
-    let path_x = name_end.max(rect.min.x + 120.0);
-    let path_text = truncate_path(&entry.path);
+    // ── 第二行：路径（截断，灰色小字）──
     ui.painter().text(
-        egui::pos2(path_x, rect.center().y),
+        egui::pos2(text_x, rect.min.y + 28.0),
         egui::Align2::LEFT_CENTER,
-        path_text,
+        truncate_path(&entry.path),
         egui::FontId::proportional(10.0),
         crate::theme::TEXT_DIM,
     );
 
-    // ── Drag handle ──
+    // ── Drag handle（Material 图标）──
     let drag_rect = egui::Rect::from_min_max(
         egui::pos2(rect.max.x - 16.0, rect.min.y),
         egui::pos2(rect.max.x - 4.0, rect.max.y),
@@ -155,8 +153,8 @@ fn sf_row(
     ui.painter().text(
         drag_rect.center(),
         egui::Align2::CENTER_CENTER,
-        "⠿",
-        egui::FontId::proportional(10.0),
+        ICON_DRAG_INDICATOR.codepoint,
+        egui::FontId::new(14.0, ICON_DRAG_INDICATOR.font_family()),
         egui::Color32::GRAY,
     );
 
