@@ -185,6 +185,7 @@ dialog.audio_switch.keep_current: "現在のデバイスを維持"
 
 # ── ローディングオーバーレイ ──
 dialog.loading.title: "読み込み中"
+dialog.loading.waiting: "待機中…"
 dialog.loading.archive_stage: "アーカイブを開いています"
 dialog.loading.yin_stage: "プロジェクトを読み込み中"
 dialog.loading.yin_decompress: "データを解凍中…"
@@ -193,9 +194,8 @@ dialog.loading.yin_resort: "音符をソート中…"
 
 # ── 保存進捗 ──
 dialog.saving.title: "プロジェクトを保存中"
-dialog.saving.stage.collect: "音符を収集中…"
-dialog.saving.stage.sort: "音符をソート中…"
-dialog.saving.stage.encode: "フィールド列をエンコード中…"
+dialog.saving.stage.collect: "ノートバケットを確認中…"
+dialog.saving.stage.sort: "音符をマージ中…"
 dialog.saving.stage.compress: "zstd 圧縮中…"
 dialog.saving.stage.decompress: "zstd 解凍中…"
 dialog.saving.stage.rebuild: "音符を復元中…"

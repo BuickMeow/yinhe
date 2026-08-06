@@ -185,6 +185,7 @@ dialog.audio_switch.keep_current: "Keep Current Device"
 
 # ── Loading overlay ──
 dialog.loading.title: "Loading"
+dialog.loading.waiting: "Waiting…"
 dialog.loading.archive_stage: "Opening archive"
 dialog.loading.yin_stage: "Loading project"
 dialog.loading.yin_decompress: "Decompressing…"
@@ -193,9 +194,8 @@ dialog.loading.yin_resort: "Sorting notes…"
 
 # ── Save progress ──
 dialog.saving.title: "Saving Project"
-dialog.saving.stage.collect: "Collecting notes…"
-dialog.saving.stage.sort: "Sorting notes…"
-dialog.saving.stage.encode: "Encoding columns…"
+dialog.saving.stage.collect: "Checking buckets…"
+dialog.saving.stage.sort: "Merging notes…"
 dialog.saving.stage.compress: "zstd compressing…"
 dialog.saving.stage.decompress: "zstd decompressing…"
 dialog.saving.stage.rebuild: "Rebuilding notes…"

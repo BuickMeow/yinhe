@@ -63,12 +63,28 @@ pub(crate) fn show_viewport(ctx: &egui::Context, progress: SharedProgress) -> bo
                                         }
                                     };
                                     ui.label(icon.rich_text().size(14.0));
-                                    ui.add(
-                                        egui::ProgressBar::new(stage.progress)
-                                            .desired_width(200.0)
-                                            .show_percentage(),
-                                    );
-                                    ui.label(egui::RichText::new(&stage.label).size(12.0));
+                                    if stage.status
+                                        == yinhe_editor_core::progress::StageStatus::Pending
+                                    {
+                                        // 未开始的阶段不画 0% 进度条（避免误以为卡死）
+                                        ui.label(
+                                            egui::RichText::new(&stage.label)
+                                                .size(12.0)
+                                                .color(crate::theme::TEXT_DIM),
+                                        );
+                                        ui.label(
+                                            egui::RichText::new(t!("dialog.loading.waiting"))
+                                                .size(10.0)
+                                                .color(crate::theme::TEXT_DIM),
+                                        );
+                                    } else {
+                                        ui.add(
+                                            egui::ProgressBar::new(stage.progress)
+                                                .desired_width(200.0)
+                                                .show_percentage(),
+                                        );
+                                        ui.label(egui::RichText::new(&stage.label).size(12.0));
+                                    }
                                 });
                                 if !stage.detail.is_empty() {
                                     ui.label(

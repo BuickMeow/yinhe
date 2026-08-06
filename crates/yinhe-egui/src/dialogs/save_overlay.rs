@@ -13,7 +13,6 @@ pub(crate) fn stage_label(stage: YinProgressStage) -> String {
     match stage {
         YinProgressStage::Collect => t!("dialog.saving.stage.collect").to_string(),
         YinProgressStage::Sort => t!("dialog.saving.stage.sort").to_string(),
-        YinProgressStage::Encode => t!("dialog.saving.stage.encode").to_string(),
         YinProgressStage::Compress => t!("dialog.saving.stage.compress").to_string(),
         YinProgressStage::Decompress => t!("dialog.saving.stage.decompress").to_string(),
         YinProgressStage::Rebuild => t!("dialog.saving.stage.rebuild").to_string(),
