@@ -1,78 +1,281 @@
 use eframe::egui;
 use egui_material_icons::icons::ICON_DRAG_INDICATOR;
 use rust_i18n::t;
+use serde::{Deserialize, Serialize};
 
 use yinhe_editor_core::config::SfEntry;
 
-/// A reusable, compact list of SoundFont entries with checkboxes.
+/// 行高（两行布局：第一行名称、第二行路径）。
+const ROW_H: f32 = 40.0;
+/// 拖拽指针贴近可视区边缘时的自动滚动速度（px/帧）。
+const AUTO_SCROLL_SPEED: f32 = 32.0;
+/// 触发自动滚动的边缘距离。
+const AUTO_SCROLL_MARGIN: f32 = 20.0;
+
+/// 列表跨帧状态：多选 + 拖拽排序。
+/// `salt` 区分不同列表（全局/各 port），防止状态串用。
+#[derive(Default, Clone, Serialize, Deserialize)]
+struct ListState {
+    /// 选中的行（已排序）。
+    selected: Vec<usize>,
+    /// 最近一次点击的行（shift 范围选择的锚点）。
+    last_click: Option<usize>,
+    /// 拖拽进行中。
+    drag: Option<DragState>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+struct DragState {
+    /// 被拖拽的行（原始索引，已排序，可能多个）。
+    indices: Vec<usize>,
+    /// 插入位置：删除被拖行后，按剩余行计数（0..=visible）。
+    insert_idx: usize,
+}
+
+/// 可复用音色列表：多选 + 拖拽排序 + 启用复选框 + 右键菜单。
 ///
-/// Returns `true` if the list was modified (toggle, reorder, remove).
-pub fn sf_list(ui: &mut egui::Ui, entries: &mut Vec<SfEntry>) -> bool {
+/// 返回 `true` 表示列表被修改（排序/切换/删除），调用方据此重载音频。
+pub fn sf_list(ui: &mut egui::Ui, entries: &mut Vec<SfEntry>, salt: &str) -> bool {
+    let state_id = ui.id().with(("sf_list", salt));
+    let mut state: ListState = ui
+        .data_mut(|d| d.get_persisted(state_id))
+        .unwrap_or_default();
+
     let mut changed = false;
-
-    // Use a simple drag-reorder approach via stored indices.
-    let drag_id = ui.id().with("sf_drag");
-    let mut drag_state: Option<(usize, usize)> =
-        ui.data_mut(|d| d.get_persisted(drag_id)).unwrap_or(None);
-
     let mut remove_idx: Option<usize> = None;
+    let mut item_rects: Vec<egui::Rect> = Vec::new();
+    let mut auto_scroll = 0.0;
 
-    // ── Render rows ──
-    let total = entries.len();
-    for i in 0..total {
-        let (row_changed, action) = sf_row(ui, &mut entries[i], i, total);
-        if row_changed {
-            changed = true;
-        }
+    let scroll_id = ui.id().with(("sf_scroll", salt));
+    egui::ScrollArea::vertical()
+        .id_salt(scroll_id)
+        .auto_shrink([false, false])
+        .show_viewport(ui, |ui, viewport| {
+            let dragging = state.drag.is_some();
+            // 拖拽时被拖行索引快照（本帧固定，避免拖拽中排序抖动）
+            let drag_indices: Vec<usize> = state
+                .drag
+                .as_ref()
+                .map(|d| d.indices.clone())
+                .unwrap_or_default();
 
-        // Track drag reorder
-        if let Some((origin, _)) = drag_state
-            && action == Some(SfAction::Dragging)
-            && origin != i
-        {
-            // Hovering over a different row while dragging
-            drag_state = Some((origin, i));
-            ui.data_mut(|d| d.insert_persisted(drag_id, drag_state));
-        }
+            let total = entries.len();
 
-        match action {
-            Some(SfAction::Remove) => remove_idx = Some(i),
-            Some(SfAction::StartDrag) => {
-                drag_state = Some((i, i));
-                ui.data_mut(|d| d.insert_persisted(drag_id, drag_state));
+            for i in 0..total {
+                let top_left = ui.available_rect_before_wrap().min;
+                let row_rect =
+                    egui::Rect::from_min_size(top_left, egui::vec2(ui.available_width(), ROW_H));
+                item_rects.push(row_rect);
+
+                let is_selected = state.selected.contains(&i);
+                let is_dragged = drag_indices.contains(&i);
+
+                // ── 行背景：拖拽行半透明（移出感），选中行主题色淡染，其余 hover ──
+                if is_dragged {
+                    ui.painter()
+                        .rect_filled(row_rect, 2.0, egui::Color32::from_black_alpha(40));
+                } else if is_selected {
+                    ui.painter().rect_filled(
+                        row_rect,
+                        2.0,
+                        crate::theme::ACCENT_ACTIVE.gamma_multiply(0.15),
+                    );
+                } else if ui.rect_contains_pointer(row_rect) {
+                    ui.painter()
+                        .rect_filled(row_rect, 2.0, egui::Color32::from_black_alpha(20));
+                }
+
+                let row_id = ui.id().with(("sf_row", i));
+                let resp = ui.interact(row_rect, row_id, egui::Sense::click_and_drag());
+
+                // ── 行内容：复选框 + 名称 + 路径 ──
+                let cb_rect = egui::Rect::from_min_max(
+                    egui::pos2(row_rect.min.x + 4.0, row_rect.center().y - 9.0),
+                    egui::pos2(row_rect.min.x + 22.0, row_rect.center().y + 9.0),
+                );
+                // 每行的 ui.id() 相同，push_id 保证 checkbox 的自动 id 唯一。
+                let cb_changed = ui
+                    .push_id(("sf_cb", i), |ui| {
+                        ui.put(cb_rect, egui::Checkbox::new(&mut entries[i].enabled, ""))
+                    })
+                    .inner
+                    .changed();
+                if cb_changed {
+                    changed = true;
+                }
+
+                let text_x = row_rect.min.x + 22.0;
+                ui.painter().text(
+                    egui::pos2(text_x, row_rect.min.y + 10.0),
+                    egui::Align2::LEFT_CENTER,
+                    &entries[i].name,
+                    egui::FontId::proportional(12.0),
+                    egui::Color32::WHITE,
+                );
+                ui.painter().text(
+                    egui::pos2(text_x, row_rect.min.y + 28.0),
+                    egui::Align2::LEFT_CENTER,
+                    truncate_path(&entries[i].path),
+                    egui::FontId::proportional(10.0),
+                    crate::theme::TEXT_DIM,
+                );
+
+                // ── 右侧拖拽手柄（Material 图标）──
+                ui.painter().text(
+                    egui::pos2(row_rect.max.x - 10.0, row_rect.center().y),
+                    egui::Align2::CENTER_CENTER,
+                    ICON_DRAG_INDICATOR.codepoint,
+                    egui::FontId::new(14.0, ICON_DRAG_INDICATOR.font_family()),
+                    egui::Color32::GRAY,
+                );
+
+                // ── 点击选择（拖拽中不响应）──
+                if resp.clicked() && !dragging {
+                    handle_click(&mut state, i, ui);
+                }
+
+                // ── 拖拽开始：未选中的行先单选，然后拖起整个选中集合 ──
+                if resp.drag_started() && !dragging {
+                    if !is_selected {
+                        state.selected.clear();
+                        state.selected.push(i);
+                        state.last_click = Some(i);
+                    }
+                    state.selected.sort();
+                    state.drag = Some(DragState {
+                        indices: state.selected.clone(),
+                        insert_idx: i,
+                    });
+                }
+
+                // ── 右键菜单 ──
+                let mut action: Option<SfAction> = None;
+                resp.context_menu(|ui| {
+                    ui.set_min_width(100.0);
+                    if i > 0 && ui.button(t!("sf_list.move_up").as_ref()).clicked() {
+                        action = Some(SfAction::MoveUp);
+                        ui.close();
+                    }
+                    if i + 1 < total && ui.button(t!("sf_list.move_down").as_ref()).clicked() {
+                        action = Some(SfAction::MoveDown);
+                        ui.close();
+                    }
+                    ui.separator();
+                    if ui.button(t!("sf_list.delete").as_ref()).clicked() {
+                        action = Some(SfAction::Remove);
+                        ui.close();
+                    }
+                });
+                match action {
+                    Some(SfAction::MoveUp) => {
+                        entries.swap(i, i - 1);
+                        swap_selection(&mut state, i, i - 1);
+                        changed = true;
+                    }
+                    Some(SfAction::MoveDown) => {
+                        entries.swap(i, i + 1);
+                        swap_selection(&mut state, i, i + 1);
+                        changed = true;
+                    }
+                    Some(SfAction::Remove) => remove_idx = Some(i),
+                    None => {}
+                }
             }
-            Some(SfAction::MoveUp) if i > 0 => {
-                entries.swap(i, i - 1);
-                changed = true;
-            }
-            Some(SfAction::MoveDown) if i < total - 1 => {
-                entries.swap(i, i + 1);
-                changed = true;
-            }
-            _ => {}
-        }
-    }
 
-    // Apply reorder on drop
-    if let Some((src, dst)) = drag_state
-        && !ui.input(|i| i.pointer.any_down())
-        && src != dst
-    {
-        // Sort-of-reorder by remove/insert
-        if src < entries.len() && dst < entries.len() {
-            let e = entries.remove(src);
-            entries.insert(dst.min(entries.len()), e);
-            changed = true;
-        }
-        ui.data_mut(|d| d.insert_persisted::<Option<(usize, usize)>>(drag_id, None));
+            // ── 拖拽中：插入线 + ghost + 自动滚动 + 释放排序 ──
+            if let Some(drag) = &mut state.drag {
+                let pointer = ui.ctx().input(|i| i.pointer.interact_pos());
+
+                if let Some(p) = pointer {
+                    // 插入位置：指针越过剩余行的中线则后移一位
+                    let mut insert = 0usize;
+                    for (i, rect) in item_rects.iter().enumerate() {
+                        if drag.indices.contains(&i) {
+                            continue;
+                        }
+                        if p.y < rect.center().y {
+                            break;
+                        }
+                        insert += 1;
+                    }
+                    drag.insert_idx = insert;
+
+                    // 自动滚动：指针贴近可视区边缘
+                    if p.y < viewport.top() + AUTO_SCROLL_MARGIN {
+                        auto_scroll = -AUTO_SCROLL_SPEED;
+                    } else if p.y > viewport.bottom() - AUTO_SCROLL_MARGIN {
+                        auto_scroll = AUTO_SCROLL_SPEED;
+                    }
+                }
+
+                // 插入位置线
+                if let Some(y) = insert_line_y(&drag.indices, drag.insert_idx, &item_rects) {
+                    let x1 = item_rects[0].left() + 4.0;
+                    let x2 = item_rects[0].right() - 4.0;
+                    ui.painter().line_segment(
+                        [egui::pos2(x1, y), egui::pos2(x2, y)],
+                        egui::Stroke::new(3.0, crate::theme::ACCENT_ACTIVE),
+                    );
+                }
+
+                // 跟随指针的 ghost（含名称/路径，一眼看出拖的是谁）
+                if let Some(p) = pointer {
+                    draw_ghost(ui, p, &drag.indices, entries, &item_rects);
+                }
+
+                // 释放：应用拖拽排序（保持被拖项相对顺序）
+                if ui.input(|i| i.pointer.any_released()) {
+                    apply_drop(entries, &drag.indices, drag.insert_idx);
+                    changed = true;
+                    state.selected.clear();
+                    state.last_click = None;
+                    state.drag = None;
+                }
+            }
+        });
+
+    // 自动滚动：直接改 ScrollArea 的持久化状态（不干扰用户滚轮/滚动条）
+    if auto_scroll != 0.0 {
+        let mut sa =
+            egui::containers::scroll_area::State::load(ui.ctx(), scroll_id).unwrap_or_default();
+        sa.offset.y = (sa.offset.y + auto_scroll).max(0.0);
+        sa.store(ui.ctx(), scroll_id);
     }
 
     if let Some(idx) = remove_idx {
         entries.remove(idx);
+        // 删除后修正选中索引
+        state.selected.retain(|&x| x != idx);
+        for x in &mut state.selected {
+            if *x > idx {
+                *x -= 1;
+            }
+        }
         changed = true;
     }
 
+    ui.data_mut(|d| d.insert_persisted(state_id, state));
     changed
+}
+
+/// 应用拖拽排序：从后往前删被拖行（避免索引错乱），再按插入点恢复，
+/// 被拖项保持原有相对顺序。`indices` 必须已排序。
+fn apply_drop<T: Clone>(entries: &mut Vec<T>, indices: &[usize], insert_idx: usize) {
+    let mut dragged: Vec<T> = Vec::with_capacity(indices.len());
+    for &idx in indices {
+        if idx < entries.len() {
+            dragged.push(entries[idx].clone());
+        }
+    }
+    for &idx in indices.iter().rev() {
+        if idx < entries.len() {
+            entries.remove(idx);
+        }
+    }
+    let insert_at = insert_idx.min(entries.len());
+    for (k, item) in dragged.into_iter().enumerate() {
+        entries.insert(insert_at + k, item);
+    }
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -80,113 +283,117 @@ enum SfAction {
     Remove,
     MoveUp,
     MoveDown,
-    StartDrag,
-    Dragging,
 }
 
-/// Render a single SF entry row. Returns (changed, action).
-/// 两行布局：第一行名称、第二行路径，复选框垂直居中，右侧拖拽手柄。
-fn sf_row(
-    ui: &mut egui::Ui,
-    entry: &mut SfEntry,
-    index: usize,
-    total: usize,
-) -> (bool, Option<SfAction>) {
-    let height = 40.0;
-    let id = ui.id().with(format!("sf_{}", index));
-
-    // Allocate space and get the rect
-    let (rect, _) = ui.allocate_exact_size(
-        egui::vec2(ui.available_width(), height),
-        egui::Sense::click_and_drag(),
-    );
-    let resp = ui.interact(rect, id, egui::Sense::click_and_drag());
-    let hovered = resp.hovered();
-
-    // Background highlight
-    if hovered {
-        ui.painter()
-            .rect_filled(rect, 2.0, egui::Color32::from_black_alpha(20));
-    }
-
-    // ── Checkbox（原生控件，矢量对勾不依赖字体，垂直居中于两行）──
-    // 每行的 ui.id() 相同，push_id 保证 checkbox 的自动 id 唯一。
-    let cb_rect = egui::Rect::from_min_max(
-        egui::pos2(rect.min.x + 4.0, rect.center().y - 9.0),
-        egui::pos2(rect.min.x + 22.0, rect.center().y + 9.0),
-    );
-    let cb_changed = ui
-        .push_id(("sf_cb", index), |ui| {
-            ui.put(cb_rect, egui::Checkbox::new(&mut entry.enabled, ""))
-        })
-        .inner
-        .changed();
-    if cb_changed {
-        return (true, None);
-    }
-
-    let text_x = rect.min.x + 22.0;
-
-    // ── 第一行：名称 ──
-    ui.painter().text(
-        egui::pos2(text_x, rect.min.y + 10.0),
-        egui::Align2::LEFT_CENTER,
-        &entry.name,
-        egui::FontId::proportional(12.0),
-        egui::Color32::WHITE,
-    );
-
-    // ── 第二行：路径（截断，灰色小字）──
-    ui.painter().text(
-        egui::pos2(text_x, rect.min.y + 28.0),
-        egui::Align2::LEFT_CENTER,
-        truncate_path(&entry.path),
-        egui::FontId::proportional(10.0),
-        crate::theme::TEXT_DIM,
-    );
-
-    // ── Drag handle（Material 图标）──
-    let drag_rect = egui::Rect::from_min_max(
-        egui::pos2(rect.max.x - 16.0, rect.min.y),
-        egui::pos2(rect.max.x - 4.0, rect.max.y),
-    );
-    ui.painter().text(
-        drag_rect.center(),
-        egui::Align2::CENTER_CENTER,
-        ICON_DRAG_INDICATOR.codepoint,
-        egui::FontId::new(14.0, ICON_DRAG_INDICATOR.font_family()),
-        egui::Color32::GRAY,
-    );
-
-    // ── Detect drag start ──
-    if resp.drag_started() {
-        return (false, Some(SfAction::StartDrag));
-    }
-
-    // ── Context menu on right-click ──
-    let mut action: Option<SfAction> = None;
-    resp.context_menu(|ui| {
-        ui.set_min_width(100.0);
-        if index > 0 && ui.button(t!("sf_list.move_up").as_ref()).clicked() {
-            action = Some(SfAction::MoveUp);
-            ui.close();
+/// 点击选择：无修饰键单选；cmd/ctrl 切换；shift 范围选择（以 last_click 为锚点）。
+fn handle_click(state: &mut ListState, i: usize, ui: &egui::Ui) {
+    let mods = ui.input(|i| i.modifiers);
+    if mods.command || mods.ctrl {
+        if let Some(pos) = state.selected.iter().position(|&x| x == i) {
+            state.selected.remove(pos);
+        } else {
+            state.selected.push(i);
         }
-        if index < total - 1 && ui.button(t!("sf_list.move_down").as_ref()).clicked() {
-            action = Some(SfAction::MoveDown);
-            ui.close();
+    } else if mods.shift {
+        let anchor = state.last_click.unwrap_or(i);
+        let (lo, hi) = (anchor.min(i), anchor.max(i));
+        for x in lo..=hi {
+            if !state.selected.contains(&x) {
+                state.selected.push(x);
+            }
         }
-        ui.separator();
-        if ui.button(t!("sf_list.delete").as_ref()).clicked() {
-            action = Some(SfAction::Remove);
-            ui.close();
-        }
-    });
-
-    if let Some(a) = action {
-        return (false, Some(a));
+        state.selected.sort();
+    } else {
+        state.selected.clear();
+        state.selected.push(i);
     }
+    state.last_click = Some(i);
+}
 
-    (false, None)
+/// 右键上移/下移后，选中索引与行一起交换。
+fn swap_selection(state: &mut ListState, a: usize, b: usize) {
+    for x in &mut state.selected {
+        if *x == a {
+            *x = b;
+        } else if *x == b {
+            *x = a;
+        }
+    }
+    state.last_click = match state.last_click {
+        Some(x) if x == a => Some(b),
+        Some(x) if x == b => Some(a),
+        other => other,
+    };
+}
+
+/// 插入线 y 坐标：删除被拖行后，第 `insert_idx` 个剩余行的顶部；
+/// 插到末尾时为最后一个可见行的底部。
+fn insert_line_y(
+    drag_indices: &[usize],
+    insert_idx: usize,
+    item_rects: &[egui::Rect],
+) -> Option<f32> {
+    let mut visible = 0usize;
+    for (i, rect) in item_rects.iter().enumerate() {
+        if drag_indices.contains(&i) {
+            continue;
+        }
+        if visible == insert_idx {
+            return Some(rect.top());
+        }
+        visible += 1;
+    }
+    item_rects.last().map(|r| r.bottom())
+}
+
+/// 跟随指针的半透明行副本（堆叠显示每个被拖行的名称/路径）。
+fn draw_ghost(
+    ui: &egui::Ui,
+    pointer: egui::Pos2,
+    drag_indices: &[usize],
+    entries: &[SfEntry],
+    item_rects: &[egui::Rect],
+) {
+    let Some(first) = item_rects.first() else {
+        return;
+    };
+    let ghost_h = (ROW_H + ui.spacing().item_spacing.y) * drag_indices.len() as f32
+        - ui.spacing().item_spacing.y;
+    let ghost_rect = egui::Rect::from_min_size(
+        pointer + egui::vec2(12.0, -ghost_h / 2.0),
+        egui::vec2(first.width() * 0.9, ghost_h),
+    );
+    ui.painter().rect_filled(
+        ghost_rect,
+        4.0,
+        ui.visuals().window_fill.gamma_multiply(0.95),
+    );
+    ui.painter().rect_stroke(
+        ghost_rect,
+        4.0,
+        egui::Stroke::new(1.0, crate::theme::ACCENT_ACTIVE),
+        egui::StrokeKind::Inside,
+    );
+    for (k, &idx) in drag_indices.iter().enumerate() {
+        if idx >= entries.len() {
+            continue;
+        }
+        let y = ghost_rect.min.y + (ROW_H + ui.spacing().item_spacing.y) * k as f32;
+        ui.painter().text(
+            egui::pos2(ghost_rect.min.x + 10.0, y + 10.0),
+            egui::Align2::LEFT_CENTER,
+            &entries[idx].name,
+            egui::FontId::proportional(12.0),
+            egui::Color32::WHITE,
+        );
+        ui.painter().text(
+            egui::pos2(ghost_rect.min.x + 10.0, y + 28.0),
+            egui::Align2::LEFT_CENTER,
+            truncate_path(&entries[idx].path),
+            egui::FontId::proportional(10.0),
+            crate::theme::TEXT_DIM,
+        );
+    }
 }
 
 /// 截断音色库路径用于显示：超过 40 字符时保留尾部 37 字符、前缀加省略号。
@@ -211,7 +418,51 @@ fn truncate_path(path: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::truncate_path;
+    use super::{apply_drop, truncate_path};
+
+    /// 拖拽排序：单行拖到中间。
+    #[test]
+    fn drop_single_row_to_middle() {
+        let mut v = vec!["a", "b", "c", "d", "e"];
+        // 拖 'a'（index 0）到 index 3 的位置（'c' 和 'd' 之间）
+        apply_drop(&mut v, &[0], 2);
+        assert_eq!(v, vec!["b", "c", "a", "d", "e"]);
+    }
+
+    /// 拖拽排序：多行一起拖到开头。
+    #[test]
+    fn drop_multiple_rows_to_front() {
+        let mut v = vec!["a", "b", "c", "d", "e"];
+        // 拖 'c'、'd' 到最前面
+        apply_drop(&mut v, &[2, 3], 0);
+        assert_eq!(v, vec!["c", "d", "a", "b", "e"]);
+    }
+
+    /// 拖拽排序：多行拖到末尾，保持相对顺序。
+    #[test]
+    fn drop_multiple_rows_to_end() {
+        let mut v = vec!["a", "b", "c", "d", "e"];
+        // 拖 'a'、'b' 到末尾
+        apply_drop(&mut v, &[0, 1], 3);
+        assert_eq!(v, vec!["c", "d", "e", "a", "b"]);
+    }
+
+    /// 拖拽排序：插入索引越界时 clamp 到末尾，不 panic。
+    #[test]
+    fn drop_insert_idx_out_of_bounds_is_clamped() {
+        let mut v = vec!["a", "b", "c"];
+        apply_drop(&mut v, &[0], 99);
+        assert_eq!(v, vec!["b", "c", "a"]);
+    }
+
+    /// 拖拽排序：不连续多选（cmd 点选），保持选中顺序。
+    #[test]
+    fn drop_non_contiguous_selection() {
+        let mut v = vec!["a", "b", "c", "d", "e", "f"];
+        // 拖 'b'、'e' 到 'c' 的位置
+        apply_drop(&mut v, &[1, 4], 1);
+        assert_eq!(v, vec!["a", "b", "e", "c", "d", "f"]);
+    }
 
     /// 回归测试：中文字符路径截断必须安全（旧实现按字节切片会 panic 闪退）。
     #[test]

@@ -174,7 +174,7 @@ fn global_panel(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
 
     // SF list — always edit ports[0]
     let entries = &mut settings.global_sf_config.ports[0];
-    changed |= super::sf_list::sf_list(ui, entries);
+    changed |= super::sf_list::sf_list(ui, entries, "global");
 
     // Toolbar
     ui.horizontal(|ui| {
@@ -253,7 +253,7 @@ fn project_panel(ui: &mut egui::Ui, doc: &mut Document) -> bool {
         .position(|(p, _)| *p == port)
     {
         let entries = &mut doc.edit.project_sf.overrides[idx].1;
-        changed |= super::sf_list::sf_list(ui, entries);
+        changed |= super::sf_list::sf_list(ui, entries, &format!("port_{port}"));
 
         ui.horizontal(|ui| {
             if ui.button(add_button_text()).clicked()
