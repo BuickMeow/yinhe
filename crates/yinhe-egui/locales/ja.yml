@@ -111,9 +111,6 @@ settings.render.gpu_cull: "GPUカリング"
 settings.midi_import.heading: "MIDIインポート"
 settings.midi_import.encoding: "トラック名エンコーディング"
 settings.refresh_devices: "デバイスリストを更新"
-settings.haptic.heading: "触覚フィードバック"
-settings.haptic.enabled: "触覚を有効化"
-settings.haptic.intensity: "触覚の強さ"
 settings.factory_reset: "工場リセット"
 
 # ── 未保存ダイアログ ──

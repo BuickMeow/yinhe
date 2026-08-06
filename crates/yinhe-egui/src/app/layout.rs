@@ -175,7 +175,6 @@ impl App {
                 scroll_mode: self.audio_settings.scroll_mode,
                 min_border_width: self.audio_settings.min_border_width,
                 revision: guard.as_ref().data.revision,
-                haptic_engine: Some(&self.haptic_engine),
             };
             let arr_quantize = arrange::show(
                 ui,
@@ -559,7 +558,6 @@ impl App {
                     doc.edit.editing_track,
                     doc.data.revision,
                     doc.data.note_revisions(),
-                    Some(&self.haptic_engine),
                     &mut feedback,
                     sel_hint,
                 );

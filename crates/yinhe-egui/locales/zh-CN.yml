@@ -111,9 +111,6 @@ settings.render.gpu_cull: "GPU 裁剪"
 settings.midi_import.heading: "MIDI 导入"
 settings.midi_import.encoding: "音轨名编码"
 settings.refresh_devices: "刷新设备列表"
-settings.haptic.heading: "触控板震动"
-settings.haptic.enabled: "启用震动"
-settings.haptic.intensity: "震动强度"
 settings.factory_reset: "恢复出厂设置"
 
 # ── 未保存对话框 ──

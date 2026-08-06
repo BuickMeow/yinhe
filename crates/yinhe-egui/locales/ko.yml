@@ -111,9 +111,6 @@ settings.render.gpu_cull: "GPU 컬링"
 settings.midi_import.heading: "MIDI 가져오기"
 settings.midi_import.encoding: "트랙 이름 인코딩"
 settings.refresh_devices: "장치 목록 새로고침"
-settings.haptic.heading: "햅틱 피드백"
-settings.haptic.enabled: "햅틱 활성화"
-settings.haptic.intensity: "햅틱 강도"
 settings.factory_reset: "공장 초기화"
 
 # ── 저장되지 않음 대화상자 ──

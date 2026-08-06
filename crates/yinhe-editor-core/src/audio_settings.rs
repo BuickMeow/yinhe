@@ -26,10 +26,6 @@ pub struct AudioSettings {
     pub min_border_width: f32,
     /// MIDI 导入编码
     pub midi_import_encoding: MidiImportEncoding,
-    /// 触控板震动反馈
-    pub haptic_enabled: bool,
-    /// 震动强度 0.0~1.0
-    pub haptic_intensity: f32,
     /// 实时播放是否使用 GPU 合成器（yinhe-synth）替代 xsynth。
     /// 默认关闭，仍使用 xsynth。开启后会在加载音色库时初始化 GPU 渲染路径。
     pub use_gpu_synth: bool,
@@ -62,8 +58,6 @@ impl Default for AudioSettings {
             midi_import_encoding: MidiImportEncoding::Utf8,
             automation_event_density: 1,
             note_outline: true, // outline on by default (existing behavior)
-            haptic_enabled: true,
-            haptic_intensity: 0.5,
             use_gpu_synth: false,
             use_gpu_cull: false, // 默认 CPU 构建
             locale: "zh-CN".to_string(),

@@ -54,7 +54,6 @@ pub(crate) struct ArrangeViewCfg<'a> {
     pub scroll_mode: u32,
     pub min_border_width: f32,
     pub revision: u64,
-    pub haptic_engine: Option<&'a yinhe_haptic::HapticEngine>,
 }
 
 /// Arrange 布局几何。

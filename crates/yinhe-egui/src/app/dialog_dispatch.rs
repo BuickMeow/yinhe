@@ -117,7 +117,6 @@ impl App {
         if crate::dialogs::settings::show_viewport(
             &ctx,
             &mut self.audio_settings,
-            &mut self.haptic_engine,
             &self.audio_state.handle,
         ) {
             self.teardown_audio();

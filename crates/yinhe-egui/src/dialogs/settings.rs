@@ -290,35 +290,6 @@ pub fn show_content(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
     ui.separator();
     ui.add_space(8.0);
 
-    ui.heading(t!("settings.haptic.heading").as_ref());
-    ui.add_space(8.0);
-
-    egui::Grid::new("haptic_settings_grid")
-        .num_columns(2)
-        .spacing([12.0, 8.0])
-        .show(ui, |ui| {
-            ui.label(t!("settings.haptic.enabled").as_ref());
-            if ui.checkbox(&mut settings.haptic_enabled, "").changed() {
-                changed = true;
-            }
-            ui.end_row();
-
-            ui.label(t!("settings.haptic.intensity").as_ref());
-            let mut intensity = settings.haptic_intensity;
-            if ui
-                .add(egui::Slider::new(&mut intensity, 0.0..=1.0).step_by(0.05))
-                .changed()
-            {
-                settings.haptic_intensity = intensity;
-                changed = true;
-            }
-            ui.end_row();
-        });
-
-    ui.add_space(16.0);
-    ui.separator();
-    ui.add_space(8.0);
-
     // ── Factory reset button ──
     ui.horizontal(|ui| {
         ui.add_space(ui.available_width() / 2.0 - 80.0);
@@ -346,7 +317,6 @@ pub fn show_content(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
 pub(crate) fn show_viewport(
     ctx: &eframe::egui::Context,
     settings: &mut AudioSettings,
-    haptic_engine: &mut yinhe_haptic::HapticEngine,
     audio: &Option<yinhe_audio::CpalAudioHandle>,
 ) -> bool {
     let viewport_id = eframe::egui::ViewportId::from_hash_of("settings_dialog");
@@ -413,7 +383,6 @@ pub(crate) fn show_viewport(
 
     if let Some(s) = std::rc::Rc::into_inner(settings_rc).and_then(|rc| rc.into_inner()) {
         *settings = s;
-        haptic_engine.apply_settings(settings.haptic_enabled, settings.haptic_intensity);
         if settings.xsynth_layers != prev_xsynth_layers
             && let Some(audio) = audio
         {

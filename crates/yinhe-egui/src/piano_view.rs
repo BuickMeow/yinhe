@@ -145,7 +145,6 @@ pub fn show(
     editing_track: Option<u16>,
     revision: u64,
     note_revisions: &[u64; 128],
-    haptic_engine: Option<&yinhe_haptic::HapticEngine>,
     feedback: &mut PianoViewFeedback<'_>,
     sel_hint: Option<&crate::app::layout::SelHintInfo>,
 ) -> Option<PianoViewEvent> {
@@ -361,10 +360,6 @@ pub fn show(
     // 传 content_rect（含键盘列）+ left_zone_width=kb_w，让 handle_input 统一处理
     // 键盘区垂直缩放与卷帘区平移/水平缩放。x_to_tick 内部减 left_panel_width，
     // 所以传入相对 content 的 x 才正确（之前传 music_rect 导致 kb_w 被减两次）。
-    // Save scroll state before input for haptic boundary detection
-    let pre_scroll_x = view.base.scroll_x;
-    let pre_scroll_y = view.base.scroll_y;
-    let raw_scroll = ui.input(|i| i.smooth_scroll_delta);
     crate::view_interaction::handle_input(
         ui,
         content_rect,
@@ -418,33 +413,6 @@ pub fn show(
         ppq,
     );
     view.clamp_scroll(w as f32, h as f32, total_ticks);
-
-    // ── Haptic boundary feedback ──
-    let max_sx = (total_ticks as f32 * view.base.pixels_per_tick
-        - (w as f32 - view.base.left_panel_width))
-        .max(0.0);
-    let max_sy = (view.total_key_height() - h as f32).max(0.0);
-    crate::view_interaction::notify_haptic_boundary(
-        yinhe_haptic::HapticSlot::PianoRoll,
-        pre_scroll_x,
-        pre_scroll_y,
-        view.base.scroll_x,
-        view.base.scroll_y,
-        max_sx,
-        max_sy,
-        raw_scroll,
-        haptic_engine,
-    );
-    crate::view_interaction::notify_haptic_zoom(
-        yinhe_haptic::HapticSlot::PianoRoll,
-        view.base.pixels_per_tick,
-        view.key_height,
-        0.001,
-        10.0,
-        h as f32 / 128.0,
-        h as f32 / 12.0,
-        haptic_engine,
-    );
 
     // ── Dirty detection ──
     // cursor_tick no longer affects rendering at all — the cursor is drawn

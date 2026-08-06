@@ -129,9 +129,6 @@ pub struct App {
     /// Tracks the last applied automation density to detect changes.
     pub(crate) last_automation_density: u32,
 
-    // ── Haptic feedback ──
-    pub(crate) haptic_engine: yinhe_haptic::HapticEngine,
-
     // ── System resource monitoring ──
     pub(crate) sys_monitor: SystemMonitor,
     /// Live FPS (real, EMA-smoothed from egui frame delta).
@@ -287,8 +284,6 @@ impl App {
             last_midi_encoding: yinhe_mid2::MidiImportEncoding::Utf8,
             last_automation_density,
 
-            haptic_engine: yinhe_haptic::HapticEngine::new(),
-
             sys_monitor: SystemMonitor::new(),
             fps: 0.0,
 
@@ -316,11 +311,6 @@ impl App {
             app.render_thread = Some(handle);
         }
 
-        // Sync haptic settings from persisted config
-        app.haptic_engine.apply_settings(
-            app.audio_settings.haptic_enabled,
-            app.audio_settings.haptic_intensity,
-        );
         app
     }
 

@@ -111,9 +111,6 @@ settings.render.gpu_cull: "GPU Culling"
 settings.midi_import.heading: "MIDI Import"
 settings.midi_import.encoding: "Track Name Encoding"
 settings.refresh_devices: "Refresh Device List"
-settings.haptic.heading: "Haptic Feedback"
-settings.haptic.enabled: "Enable Haptic"
-settings.haptic.intensity: "Haptic Intensity"
 settings.factory_reset: "Factory Reset"
 
 # ── Unsaved dialog ──
