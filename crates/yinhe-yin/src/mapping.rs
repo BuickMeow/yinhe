@@ -16,11 +16,6 @@ pub struct MappingFile {
     /// track-creation order; the same order is used in `data.bin` so the
     /// two stay aligned by index.
     pub ports: Vec<PortMap>,
-    /// Soundfont paths per port (0..15).
-    #[serde(default)]
-    pub soundfonts: BTreeMap<u8, Vec<String>>,
-    #[serde(default)]
-    pub view: ViewState,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -70,27 +65,6 @@ where
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct ViewState {
-    #[serde(default = "default_zoom")]
-    pub zoom_x: f32,
-    #[serde(default = "default_zoom")]
-    pub zoom_y: f32,
-    #[serde(default)]
-    pub scroll_tick: u32,
-    #[serde(default = "default_scroll_key")]
-    pub scroll_key: u8,
-    #[serde(default)]
-    pub active_track_uuid: Option<String>,
-}
-
-fn default_zoom() -> f32 {
-    1.0
-}
-fn default_scroll_key() -> u8 {
-    60
-}
-
 impl MappingFile {
     /// Build a MappingFile from a YinModel's tracks.
     ///
@@ -131,12 +105,7 @@ impl MappingFile {
             })
             .collect();
 
-        Self {
-            version: 2,
-            ports,
-            soundfonts: BTreeMap::new(),
-            view: ViewState::default(),
-        }
+        Self { version: 2, ports }
     }
 
     /// Flat ordered list of (port, channel, TrackMap), iterating ports

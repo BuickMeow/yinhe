@@ -990,24 +990,6 @@ fn show_mapping_json(ui: &mut egui::Ui, doc: &Document) {
             }
         }
     }
-
-    if !mf.soundfonts.is_empty() {
-        ui.add_space(6.0);
-        ui.label(egui::RichText::new("soundfonts").size(11.0).strong());
-        for (port, paths) in &mf.soundfonts {
-            kv(ui, &format!("port {}", port), paths.join(", "));
-        }
-    }
-
-    ui.add_space(6.0);
-    ui.label(egui::RichText::new("view").size(11.0).strong());
-    kv(ui, "zoom_x", format!("{:.2}", mf.view.zoom_x));
-    kv(ui, "zoom_y", format!("{:.2}", mf.view.zoom_y));
-    kv(ui, "scroll_tick", format!("{}", mf.view.scroll_tick));
-    kv(ui, "scroll_key", format!("{}", mf.view.scroll_key));
-    if let Some(ref uuid) = mf.view.active_track_uuid {
-        kv(ui, "active_track_uuid", uuid.clone());
-    }
 }
 
 // ── Overview / Track detail ──
