@@ -7,8 +7,6 @@ use yinhe_editor_core::config::SfEntry;
 
 /// 行高（两行布局：第一行名称、第二行路径）。
 const ROW_H: f32 = 40.0;
-/// 行间距（显式控制，不依赖 egui 光标推进）。
-const ROW_GAP: f32 = 10.0;
 /// 拖拽指针贴近可视区边缘时的自动滚动速度（px/帧）。
 const AUTO_SCROLL_SPEED: f32 = 32.0;
 /// 触发自动滚动的边缘距离。
@@ -54,12 +52,6 @@ pub fn sf_list(ui: &mut egui::Ui, entries: &mut Vec<SfEntry>, salt: &str) -> boo
         .auto_shrink([false, false])
         .show_viewport(ui, |ui, viewport| {
             let dragging = state.drag.is_some();
-            // 拖拽时被拖行索引快照（本帧固定，避免拖拽中排序抖动）
-            let drag_indices: Vec<usize> = state
-                .drag
-                .as_ref()
-                .map(|d| d.indices.clone())
-                .unwrap_or_default();
 
             let total = entries.len();
             // 行位置显式计算，不依赖光标推进（checkbox 的 ui.put 会推进光标，
@@ -74,18 +66,14 @@ pub fn sf_list(ui: &mut egui::Ui, entries: &mut Vec<SfEntry>, salt: &str) -> boo
                     egui::pos2(ui.available_rect_before_wrap().min.x, row_y),
                     egui::vec2(ui.available_width(), ROW_H),
                 );
-                row_y += ROW_H + ROW_GAP;
+                row_y += ROW_H;
                 last_row_rect = Some(row_rect);
                 item_rects.push(row_rect);
 
                 let is_selected = state.selected.contains(&i);
-                let is_dragged = drag_indices.contains(&i);
 
-                // ── 行背景：拖拽行半透明（移出感），选中行主题色淡染，其余 hover ──
-                if is_dragged {
-                    ui.painter()
-                        .rect_filled(row_rect, 2.0, egui::Color32::from_black_alpha(40));
-                } else if is_selected {
+                // ── 行背景：选中（含拖拽中，被拖行必在选中集合内）主题色淡染，其余 hover ──
+                if is_selected {
                     ui.painter().rect_filled(
                         row_rect,
                         2.0,
