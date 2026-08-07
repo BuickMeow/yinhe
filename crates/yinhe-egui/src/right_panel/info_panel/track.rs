@@ -334,8 +334,7 @@ pub(super) fn show_track_info(
             .unwrap_or(yinhe_core::DEFAULT_TRACK_COLOR);
         let mut srgba = crate::theme::rgba_to_color32((cur[0], cur[1], cur[2], cur[3]));
         let mut changed = false;
-        changed |= ui.color_edit_button_srgba(&mut srgba).changed();
-        changed |= crate::widgets::hsv::hsv_sliders(ui, &mut srgba, 48.0);
+        changed |= crate::widgets::color_picker::color_edit_button(ui, &mut srgba).changed();
         let editing = changed;
         if editing && !was_editing {
             // 会话开始：记录编辑前颜色

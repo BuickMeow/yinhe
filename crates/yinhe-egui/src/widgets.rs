@@ -1,7 +1,7 @@
+pub(crate) mod color_picker;
 pub mod grid_lines;
 pub(crate) mod hint;
 pub(crate) mod hover;
-pub(crate) mod hsv;
 pub(crate) mod icon_text;
 pub mod numeric_input;
 pub mod quantize_button;
