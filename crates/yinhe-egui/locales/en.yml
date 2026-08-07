@@ -86,6 +86,10 @@ menu.octave_down: "Octave Down"
 
 # ── Settings dialog ──
 settings.title: "Settings"
+settings.search_hint: "Search settings…"
+settings.search_clear: "Clear"
+settings.search_results: "Search results"
+settings.search_none: "No matching settings"
 settings.cat.theme: "Theme"
 settings.cat.language: "Language"
 settings.cat.audio: "Audio"

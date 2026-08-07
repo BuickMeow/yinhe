@@ -17,6 +17,143 @@ const CATEGORY_KEYS: [&str; 7] = [
     "settings.cat.general",
 ];
 
+/// 设置项注册表（供搜索）：(分类索引, 中文, English, 日本語, 한국어)。
+/// 搜索词匹配任意语言的名称（不区分大小写）。
+const SETTING_ITEMS: &[(usize, &str, &str, &str, &str)] = &[
+    (
+        0,
+        "主题预设",
+        "Theme preset",
+        "テーマプリセット",
+        "테마 프리셋",
+    ),
+    (0, "背景", "Background color", "背景色", "배경색"),
+    (0, "主文字", "Text color", "テキスト色", "텍스트 색"),
+    (0, "强调色", "Accent color", "アクセント色", "강조색"),
+    (0, "选中色", "Selection color", "選択色", "선택 색"),
+    (0, "危险色", "Danger color", "危険色", "위험 색"),
+    (0, "边框", "Border color", "枠線色", "테두리 색"),
+    (0, "警告色", "Warning color", "警告色", "경고 색"),
+    (1, "语言", "Language", "言語", "언어"),
+    (2, "输出设备", "Output device", "出力デバイス", "출력 장치"),
+    (2, "采样率", "Sample rate", "サンプルレート", "샘플 레이트"),
+    (
+        2,
+        "缓冲区大小",
+        "Buffer size",
+        "バッファサイズ",
+        "버퍼 크기",
+    ),
+    (
+        2,
+        "合成器层数",
+        "Synth layers",
+        "シンセレイヤー",
+        "신스 레이어",
+    ),
+    (2, "合成引擎", "Synth engine", "シンセエンジン", "신스 엔진"),
+    (
+        3,
+        "滚动模式",
+        "Scroll mode",
+        "スクロールモード",
+        "스크롤 모드",
+    ),
+    (
+        3,
+        "自动化密度",
+        "Automation density",
+        "オートメーション密度",
+        "자동화 밀도",
+    ),
+    (3, "音符描边", "Note outline", "ノート枠線", "노트 외곽선"),
+    (
+        3,
+        "最小边框宽度",
+        "Min border width",
+        "最小枠線幅",
+        "최소 테두리 폭",
+    ),
+    (3, "GPU 裁剪", "GPU culling", "GPU カリング", "GPU 컬링"),
+    (
+        4,
+        "MIDI 导入编码",
+        "MIDI import encoding",
+        "MIDI インポートエンコーディング",
+        "MIDI 가져오기 인코딩",
+    ),
+    (5, "界面缩放", "UI scale", "UI スケール", "UI 배율"),
+    (
+        6,
+        "刷新设备列表",
+        "Refresh devices",
+        "デバイス更新",
+        "장치 새로고침",
+    ),
+    (
+        6,
+        "恢复出厂设置",
+        "Factory reset",
+        "工場出荷時リセット",
+        "공장 초기화",
+    ),
+];
+
+/// 搜索词是否匹配设置项（任意语言名称，不区分大小写）。
+fn item_matches(item: &(usize, &str, &str, &str, &str), query: &str) -> bool {
+    let q = query.to_lowercase();
+    item.1.to_lowercase().contains(&q)
+        || item.2.to_lowercase().contains(&q)
+        || item.3.to_lowercase().contains(&q)
+        || item.4.to_lowercase().contains(&q)
+}
+
+/// 右侧内容：有搜索词时显示跨分类搜索结果，否则显示当前分类。
+fn show_search_results(
+    ui: &mut egui::Ui,
+    settings: &mut AudioSettings,
+    main_ctx: &egui::Context,
+) -> bool {
+    let query = settings.settings_search.trim().to_string();
+    if query.is_empty() {
+        return match settings.settings_tab {
+            0 => show_theme_tab(ui, settings),
+            1 => show_language_tab(ui, settings),
+            2 => show_audio_tab(ui, settings),
+            3 => show_render_tab(ui, settings),
+            4 => show_midi_tab(ui, settings),
+            5 => show_display_tab(ui, settings, main_ctx),
+            _ => show_general_tab(ui, settings),
+        };
+    }
+
+    ui.heading(t!("settings.search_results").as_ref());
+    ui.add_space(6.0);
+    let mut matched = 0usize;
+    for item in SETTING_ITEMS {
+        if !item_matches(item, &query) {
+            continue;
+        }
+        matched += 1;
+        let cat = item.0;
+        let cat_name = t!(CATEGORY_KEYS[cat]).to_string();
+        if ui
+            .selectable_label(false, format!("{}  ·  {}", cat_name, item.1))
+            .clicked()
+        {
+            settings.settings_tab = cat;
+            settings.settings_search.clear();
+        }
+    }
+    if matched == 0 {
+        ui.colored_label(
+            crate::theme::text_hint(),
+            t!("settings.search_none").as_ref(),
+        );
+    }
+    false
+}
+
 /// 编辑一个标准色（egui 取色器 ↔ 主题 Rgba）。
 fn edit_std_color(ui: &mut egui::Ui, label: &str, rgba: &mut Rgba) -> bool {
     ui.label(label);
@@ -462,9 +599,24 @@ pub fn show_content(
     let mut changed = false;
 
     ui.horizontal(|ui| {
-        // ── 左侧：分类导航（窄） ──
+        // ── 左侧：搜索框 + 分类导航（窄） ──
         ui.vertical(|ui| {
             ui.set_width(132.0);
+
+            // 搜索框（多语言检索设置项）
+            ui.add(
+                egui::TextEdit::singleline(&mut settings.settings_search)
+                    .hint_text(t!("settings.search_hint").as_ref())
+                    .id_salt("settings_search")
+                    .desired_width(132.0),
+            );
+            if !settings.settings_search.is_empty()
+                && ui.button(t!("settings.search_clear").as_ref()).clicked()
+            {
+                settings.settings_search.clear();
+            }
+            ui.add_space(6.0);
+
             for (i, key) in CATEGORY_KEYS.iter().enumerate() {
                 let selected = settings.settings_tab == i;
                 if ui.selectable_label(selected, t!(*key).as_ref()).clicked() {
@@ -477,18 +629,10 @@ pub fn show_content(
         ui.separator();
         ui.add_space(8.0);
 
-        // ── 右侧：当前分类内容（宽） ──
+        // ── 右侧：搜索结果（搜索中）或当前分类内容（宽） ──
         ui.vertical(|ui| {
             ui.set_width(ui.available_width());
-            match settings.settings_tab {
-                0 => changed |= show_theme_tab(ui, settings),
-                1 => changed |= show_language_tab(ui, settings),
-                2 => changed |= show_audio_tab(ui, settings),
-                3 => changed |= show_render_tab(ui, settings),
-                4 => changed |= show_midi_tab(ui, settings),
-                5 => changed |= show_display_tab(ui, settings, main_ctx),
-                _ => changed |= show_general_tab(ui, settings),
-            }
+            changed |= show_search_results(ui, settings, main_ctx);
         });
     });
 

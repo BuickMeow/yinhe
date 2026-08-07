@@ -86,6 +86,10 @@ menu.octave_down: "降八度"
 
 # ── 设置对话框 ──
 settings.title: "设置"
+settings.search_hint: "搜索设置…"
+settings.search_clear: "清除"
+settings.search_results: "搜索结果"
+settings.search_none: "无匹配的设置项"
 settings.cat.theme: "主题"
 settings.cat.language: "语言"
 settings.cat.audio: "音频"

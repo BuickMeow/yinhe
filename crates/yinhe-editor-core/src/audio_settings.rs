@@ -47,6 +47,9 @@ pub struct AudioSettings {
     /// 设置页当前选中的分类（左侧导航）。
     #[serde(skip)]
     pub settings_tab: usize,
+    /// 设置页搜索词（不持久化）。
+    #[serde(skip)]
+    pub settings_search: String,
     #[serde(skip)]
     pub available_devices: Vec<String>,
     #[serde(skip)]
@@ -75,6 +78,7 @@ impl Default for AudioSettings {
             ui_scale: 1.0, // UI 缩放（egui zoom_factor，1.0 = 100%）
             show_settings: false,
             settings_tab: 0,
+            settings_search: String::new(),
             available_devices: Vec::new(),
             available_sample_rates: Vec::new(),
         }
