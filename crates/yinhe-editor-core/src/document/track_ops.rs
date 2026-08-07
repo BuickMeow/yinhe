@@ -28,9 +28,11 @@ impl Document {
         let channel = (0..16u8).find(|c| !used_channels.contains(c)).unwrap_or(0);
 
         let mut new_track = yinhe_core::TrackData::new(0, channel);
-        // 轨道号 = 插入位置（tracks 数组索引；Conductor 占 0 号，音轨从 1 号开始）。
+        // 新音轨编号 = 当前音轨总数（tracks.len()，Conductor 占 0 号），不随插入位置
+        // 变化：已有 16 条音轨时在 Track 2 下方插入，新音轨应为 Track 17，而不是与
+        // 插入位置同号的 Track 3（会与既有音轨重名）。
         // 不按通道命名：通道经常被改，轨道号相对固定。
-        new_track.name = format!("Track {}", insert_idx);
+        new_track.name = format!("Track {}", num_tracks);
 
         let tracks_before: Vec<Arc<yinhe_core::TrackData>> = model.tracks.clone();
 
@@ -289,5 +291,28 @@ impl Document {
             note_remap_inverse,
             deleted_notes: Vec::new(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Document;
+
+    /// 新音轨编号 = 已有音轨数 + 1，而不是插入位置：
+    /// 在 16 条音轨的工程里于 Track 2 下方插入，新音轨应为 Track 17（而非 Track 3），
+    /// 且全工程音轨名不重复（Track 3 已存在）。
+    #[test]
+    fn add_track_names_by_total_count_not_insert_position() {
+        let mut doc = Document::empty(); // Conductor + Track 1..16
+        doc.add_track(2); // 在 Track 2 下方插入
+
+        let model = doc.model();
+        assert_eq!(model.tracks.len(), 18);
+        assert_eq!(model.tracks[3].name, "Track 17");
+
+        let mut names: Vec<&str> = model.tracks.iter().map(|t| t.name.as_str()).collect();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), model.tracks.len(), "新音轨名与既有音轨重名");
     }
 }
