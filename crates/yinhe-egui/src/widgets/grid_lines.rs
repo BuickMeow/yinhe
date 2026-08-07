@@ -28,7 +28,7 @@ impl GridColors {
             measure: theme::pr_measure_line(),
             beat: theme::pr_beat_line(),
             sub_beat: Some(theme::pr_sub_beat_line()),
-            tick: Some(theme::pr_tick_line()),
+            tick: Some(theme::pr_sub_beat_line()),
         }
     }
 

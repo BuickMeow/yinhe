@@ -41,24 +41,11 @@ pub(crate) fn mod_key() -> &'static str {
 
 /// 返回 true 表示当前鼠标悬停在该按钮上（供状态栏讲解行使用）。
 fn mode_button(ui: &mut egui::Ui, label: &str, is_selected: bool, on_click: impl FnOnce()) -> bool {
-    let resp = ui.add(
-        egui::Label::new(
-            egui::RichText::new(label)
-                .size(crate::theme::MODE_LABEL_FONT)
-                .color(if is_selected {
-                    crate::theme::accent_active()
-                } else {
-                    crate::theme::mode_bar_text()
-                }),
-        )
-        .sense(egui::Sense::click())
-        .selectable(false),
-    );
-    crate::widgets::hover::hover_highlight(
+    let resp = crate::widgets::hover::hover_button(
         ui,
-        &resp,
         label,
         egui::FontId::proportional(crate::theme::MODE_LABEL_FONT),
+        crate::theme::mode_bar_text(),
         is_selected,
     );
     if resp.clicked() {
@@ -73,21 +60,11 @@ fn right_icon_button(
     is_active: bool,
     on_click: impl FnOnce(),
 ) -> bool {
-    let color = if is_active {
-        crate::theme::accent_active()
-    } else {
-        crate::theme::mode_bar_text()
-    };
-    let resp = ui.add(
-        egui::Label::new(icon.rich_text().size(crate::theme::ICON_FONT).color(color))
-            .sense(egui::Sense::click())
-            .selectable(false),
-    );
-    crate::widgets::hover::hover_highlight(
+    let resp = crate::widgets::hover::hover_button(
         ui,
-        &resp,
         icon.codepoint,
         egui::FontId::new(crate::theme::ICON_FONT, icon.font_family()),
+        crate::theme::mode_bar_text(),
         is_active,
     );
     if resp.clicked() {
@@ -209,26 +186,11 @@ pub fn show(
                     ui.separator();
                     ui.add_space(6.0);
 
-                    let piano_color = if *show_pianoroll_in_arrange {
-                        crate::theme::accent_active()
-                    } else {
-                        crate::theme::mode_bar_text()
-                    };
-                    let piano_resp = ui.add(
-                        egui::Label::new(
-                            ICON_PIANO
-                                .rich_text()
-                                .size(crate::theme::ICON_FONT)
-                                .color(piano_color),
-                        )
-                        .sense(egui::Sense::click())
-                        .selectable(false),
-                    );
-                    crate::widgets::hover::hover_highlight(
+                    let piano_resp = crate::widgets::hover::hover_button(
                         ui,
-                        &piano_resp,
                         ICON_PIANO.codepoint,
                         egui::FontId::new(crate::theme::ICON_FONT, ICON_PIANO.font_family()),
+                        crate::theme::mode_bar_text(),
                         *show_pianoroll_in_arrange,
                     );
                     if piano_resp.clicked() {

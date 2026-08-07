@@ -27,7 +27,7 @@ pub fn show(ui: &mut egui::Ui, ctx: QuantizeBtnCtx) -> Option<QuantizePreset> {
 
     // 背景矩形：与 ruler 带对齐
     ui.painter()
-        .rect_filled(corner_rect, 0.0, crate::theme::ruler_bg());
+        .rect_filled(corner_rect, 0.0, crate::theme::app_bg());
     // 右侧分隔线（与 ruler 对齐）
     ui.painter().line_segment(
         [

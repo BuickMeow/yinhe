@@ -593,7 +593,7 @@ fn draw_panel_overlay(
             // 顶部亮线标示新高度
             painter.line_segment(
                 [bar.left_top(), bar.right_top()],
-                egui::Stroke::new(1.0, crate::theme::preview_line()),
+                egui::Stroke::new(1.0, crate::theme::marquee_color()),
             );
         }
     }
@@ -1194,21 +1194,11 @@ fn show_target_combo(
         let layout = egui::Layout::top_down(egui::Align::Center);
         ui.with_layout(layout, |ui| {
             // ── Target selector button (tools panel style) ──
-            let target_resp = ui.add(
-                egui::Label::new(
-                    ICON_AUTOMATION
-                        .rich_text()
-                        .size(crate::theme::ICON_FONT)
-                        .color(crate::theme::text_label()),
-                )
-                .sense(egui::Sense::click())
-                .selectable(false),
-            );
-            crate::widgets::hover::hover_highlight(
+            let target_resp = crate::widgets::hover::hover_button(
                 ui,
-                &target_resp,
                 ICON_AUTOMATION.codepoint,
                 egui::FontId::new(crate::theme::ICON_FONT, ICON_AUTOMATION.font_family()),
+                crate::theme::text_label(),
                 false,
             );
 
@@ -1355,28 +1345,14 @@ pub fn show_toggle_buttons(ui: &mut egui::Ui, show_panels: &mut bool, panel_coun
     ui.add_space(6.0);
 
     // Toggle button
-    let toggle_color = if *show_panels {
-        theme::accent_active()
-    } else {
-        crate::theme::text_label()
-    };
-    let toggle_label = ICON_SIGNAL_CELLULAR_ALT
-        .rich_text()
-        .size(crate::theme::PANEL_TOGGLE_FONT)
-        .color(toggle_color);
-    let toggle_resp = ui.add(
-        egui::Label::new(toggle_label)
-            .sense(egui::Sense::click())
-            .selectable(false),
-    );
-    crate::widgets::hover::hover_highlight(
+    let toggle_resp = crate::widgets::hover::hover_button(
         ui,
-        &toggle_resp,
         ICON_SIGNAL_CELLULAR_ALT.codepoint,
         egui::FontId::new(
             crate::theme::PANEL_TOGGLE_FONT,
             ICON_SIGNAL_CELLULAR_ALT.font_family(),
         ),
+        crate::theme::text_label(),
         *show_panels,
     );
     if toggle_resp.clicked() {
@@ -1388,22 +1364,11 @@ pub fn show_toggle_buttons(ui: &mut egui::Ui, show_panels: &mut bool, panel_coun
 
     if *show_panels {
         // + button (add panel)
-        let plus_color = crate::theme::text_label();
-        let plus_resp = ui.add(
-            egui::Label::new(
-                ICON_ADD
-                    .rich_text()
-                    .size(crate::theme::PANEL_TOGGLE_FONT)
-                    .color(plus_color),
-            )
-            .sense(egui::Sense::click())
-            .selectable(false),
-        );
-        crate::widgets::hover::hover_highlight(
+        let plus_resp = crate::widgets::hover::hover_button(
             ui,
-            &plus_resp,
             ICON_ADD.codepoint,
             egui::FontId::new(crate::theme::PANEL_TOGGLE_FONT, ICON_ADD.font_family()),
+            crate::theme::text_label(),
             false,
         );
         if plus_resp.clicked() {
@@ -1411,21 +1376,11 @@ pub fn show_toggle_buttons(ui: &mut egui::Ui, show_panels: &mut bool, panel_coun
         }
 
         // - button (remove panel)
-        let minus_resp = ui.add(
-            egui::Label::new(
-                ICON_REMOVE
-                    .rich_text()
-                    .size(crate::theme::PANEL_TOGGLE_FONT)
-                    .color(plus_color),
-            )
-            .sense(egui::Sense::click())
-            .selectable(false),
-        );
-        crate::widgets::hover::hover_highlight(
+        let minus_resp = crate::widgets::hover::hover_button(
             ui,
-            &minus_resp,
             ICON_REMOVE.codepoint,
             egui::FontId::new(crate::theme::PANEL_TOGGLE_FONT, ICON_REMOVE.font_family()),
+            crate::theme::text_label(),
             false,
         );
         if minus_resp.clicked() && *panel_count > 0 {

@@ -15,11 +15,11 @@ pub fn horizontal(
         rect,
         0.0,
         if resp.dragged() {
-            theme::pressed_color(theme::split_default())
+            theme::pressed_color(theme::border_dim())
         } else if resp.hovered() {
-            theme::hover_color(theme::split_default())
+            theme::hover_color(theme::border_dim())
         } else {
-            theme::split_default()
+            theme::border_dim()
         },
     );
     if resp.hovered() || resp.dragged() {
@@ -41,11 +41,11 @@ pub fn vertical(
         rect,
         0.0,
         if resp.dragged() {
-            theme::pressed_color(theme::v_split_default())
+            theme::pressed_color(theme::border_dim())
         } else if resp.hovered() {
-            theme::hover_color(theme::v_split_default())
+            theme::hover_color(theme::border_dim())
         } else {
-            theme::v_split_default()
+            theme::border_dim()
         },
     );
     if resp.hovered() || resp.dragged() {

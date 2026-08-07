@@ -910,7 +910,7 @@ pub fn show(
                 ),
             );
             ui.painter()
-                .rect_filled(sb_left_blank, 0.0, theme::scrollbar_bg());
+                .rect_filled(sb_left_blank, 0.0, theme::app_bg());
             ui.scope_builder(egui::UiBuilder::new().max_rect(sb_left_blank), |ui| {
                 ui.horizontal_centered(|ui| {
                     let mut count = ctx.panels.len();

@@ -35,24 +35,11 @@ pub fn show(
         let is_global = settings.global_sf_config.global_enabled;
 
         // "全局音色库" button
-        let resp_g = ui.add(
-            egui::Label::new(
-                egui::RichText::new(t!("soundfont.global").as_ref())
-                    .size(crate::theme::BODY_FONT)
-                    .color(if is_global {
-                        crate::theme::accent_active()
-                    } else {
-                        crate::theme::text_label()
-                    }),
-            )
-            .sense(egui::Sense::click())
-            .selectable(false),
-        );
-        crate::widgets::hover::hover_highlight(
+        let resp_g = crate::widgets::hover::hover_button(
             ui,
-            &resp_g,
             t!("soundfont.global").as_ref(),
             egui::FontId::proportional(crate::theme::BODY_FONT),
+            crate::theme::text_label(),
             is_global,
         );
         if resp_g.clicked() && !is_global {
@@ -63,24 +50,11 @@ pub fn show(
         ui.add_space(16.0);
 
         // "歌曲音色库" button
-        let resp_p = ui.add(
-            egui::Label::new(
-                egui::RichText::new(t!("soundfont.project").as_ref())
-                    .size(crate::theme::BODY_FONT)
-                    .color(if !is_global {
-                        crate::theme::accent_active()
-                    } else {
-                        crate::theme::text_label()
-                    }),
-            )
-            .sense(egui::Sense::click())
-            .selectable(false),
-        );
-        crate::widgets::hover::hover_highlight(
+        let resp_p = crate::widgets::hover::hover_button(
             ui,
-            &resp_p,
             t!("soundfont.project").as_ref(),
             egui::FontId::proportional(crate::theme::BODY_FONT),
+            crate::theme::text_label(),
             !is_global,
         );
         if resp_p.clicked() && is_global {

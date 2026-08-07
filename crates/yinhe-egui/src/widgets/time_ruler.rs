@@ -78,7 +78,7 @@ impl TimeRulerView for yinhe_types::ArrangementView {
 ///
 /// Paint the ruler background and bottom divider.
 fn paint_background(painter: &egui::Painter, rect: egui::Rect) {
-    painter.rect_filled(rect, 0.0, theme::ruler_bg());
+    painter.rect_filled(rect, 0.0, theme::app_bg());
 
     let stroke = egui::Stroke::new(1.0, theme::ruler_divider());
     painter.line_segment(

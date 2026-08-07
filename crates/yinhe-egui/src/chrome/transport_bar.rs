@@ -175,32 +175,17 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                     timecode_rect = Some(show_timecode_display(ui, doc));
 
                     // ── 工具按钮：黑色矩形右侧，水平排列 ──
-                    // 无按钮外框（透明背景），与旧 toolbar 风格一致：
-                    // Label + Sense::click + hover_highlight。
+                    // 无按钮外框（透明背景），单一绘制：hover 变色不叠层。
                     // 字号与 transport 其他按钮一致（TRANSPORT_BTN_FONT）。
                     ui.add_space(4.0);
                     for tool in ALL_TOOLS {
                         let is_active = *ctx.active_tool == tool;
-                        let color = if is_active {
-                            crate::theme::accent_active()
-                        } else {
-                            crate::theme::text_label()
-                        };
                         let icon = tool.icon();
-                        let resp = ui.add(
-                            egui::Label::new(
-                                icon.rich_text()
-                                    .size(crate::theme::TRANSPORT_BTN_FONT)
-                                    .color(color),
-                            )
-                            .sense(egui::Sense::click())
-                            .selectable(false),
-                        );
-                        crate::widgets::hover::hover_highlight(
+                        let resp = crate::widgets::hover::hover_button(
                             ui,
-                            &resp,
                             icon.codepoint,
                             egui::FontId::new(crate::theme::TRANSPORT_BTN_FONT, icon.font_family()),
+                            crate::theme::text_label(),
                             is_active,
                         );
                         if resp.clicked() {
