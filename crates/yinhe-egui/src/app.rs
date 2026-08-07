@@ -4,6 +4,7 @@ pub(crate) mod actions;
 pub(crate) mod audio;
 pub(crate) mod audio_state;
 pub(crate) mod automation_actions;
+pub(crate) mod cursor;
 pub(crate) mod dialog_dispatch;
 pub(crate) mod export_state;
 pub(crate) mod layout;
@@ -120,6 +121,9 @@ pub struct App {
     /// 鼠标悬停在钢琴卷帘/走带/自动化面板上时显示位置信息，
     /// 悬停在控件上时显示该控件的用途与快捷键。
     pub(crate) status_hint: Option<String>,
+
+    // ── Material 风格鼠标指针 ──
+    pub(crate) material_cursors: cursor::MaterialCursorState,
 
     // ── Audio engine ──
     pub(crate) audio_state: audio_state::AudioState,
@@ -284,6 +288,8 @@ impl App {
 
             follow_mode: crate::view_interaction::FollowMode::Page,
             status_hint: None,
+
+            material_cursors: cursor::MaterialCursorState::new(),
 
             audio_state: audio_state::AudioState::new(),
 

@@ -7154,6 +7154,7 @@ dependencies = [
 name = "yinhe-egui"
 version = "0.1.0"
 dependencies = [
+ "ab_glyph",
  "bytemuck",
  "cpal",
  "dirs",
