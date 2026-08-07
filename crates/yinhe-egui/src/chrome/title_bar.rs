@@ -61,6 +61,8 @@ pub(crate) fn show(
 
             // Uniform tab width: fixed 120px for compact tabs
             let tab_w = 120.0;
+            // 未保存圆点占位（直径 8 + 间距 6）
+            let dirty_dot_w = 14.0;
             let text_max_w = tab_w - close_w - padding * 2.0;
 
             // ── Handle mouse wheel / trackpad scroll for tab overflow ──
@@ -141,11 +143,10 @@ pub(crate) fn show(
 
                 // Build display name with dirty indicator
                 let file_name = doc.file_name.as_str();
-                let display_name = if doc.is_dirty() {
-                    format!("*{}", file_name)
-                } else {
-                    file_name.to_string()
-                };
+                let dirty_dot = doc.is_dirty();
+                let display_name = file_name.to_string();
+                // 未保存时文字可用宽度减去圆点占位
+                let text_max_w = text_max_w - if dirty_dot { dirty_dot_w } else { 0.0 };
 
                 // Tab text with ellipsis truncation
                 let text_color = if *is_active {
@@ -180,7 +181,17 @@ pub(crate) fn show(
                         format!("{}{}", truncated, ellipsis)
                     }
                 };
-                let text_pos = egui::pos2(tab_rect.min.x + padding, tab_rect.center().y);
+                let mut text_x = tab_rect.min.x + padding;
+                if dirty_dot {
+                    // 未保存指示：Material 风格圆点（比文字深一点的灰色）
+                    painter.circle_filled(
+                        egui::pos2(text_x + 4.0, tab_rect.center().y),
+                        4.0,
+                        crate::theme::TAB_DIRTY_DOT,
+                    );
+                    text_x += dirty_dot_w;
+                }
+                let text_pos = egui::pos2(text_x, tab_rect.center().y);
                 painter.text(
                     text_pos,
                     egui::Align2::LEFT_CENTER,

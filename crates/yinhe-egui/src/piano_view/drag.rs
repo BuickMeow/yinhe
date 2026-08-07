@@ -132,10 +132,17 @@ pub(crate) fn sel_drag_frame(
     let mut sel_resize_state: Option<(ResizeSide, f64, f64)> =
         ui.data_mut(|d| d.get_persisted(resize_id)).unwrap_or(None);
 
-    // 单音符边缘伸缩状态（不需要先选中，见 hit_test_note_edge）。
+    // 单音符边缘伸缩状态（不需要先选中，见 hit_test_note）。
     let note_resize_id = ui.id().with("sel_note_resize_state");
     let mut sel_note_resize: Option<SelNoteResize> = ui
         .data_mut(|d| d.get_persisted(note_resize_id))
+        .unwrap_or(None);
+
+    // 单音符移动状态：(track, orig_start, orig_key, orig_end, press_snapped_tick, last_dk)。
+    // 不需要先选中：press 音符中部（未选中）直接移动该音符，与铅笔一致。
+    let note_move_id = ui.id().with("sel_note_move_state");
+    let mut sel_note_move: Option<(u16, u32, u8, u32, f64, i32)> = ui
+        .data_mut(|d| d.get_persisted(note_move_id))
         .unwrap_or(None);
 
     let pointer = ui.input(|i| i.pointer.clone());
@@ -162,6 +169,10 @@ pub(crate) fn sel_drag_frame(
     if sel_note_resize.is_some() && !pointer.primary_down() && !pointer.primary_released() {
         sel_note_resize = None;
     }
+    // Clear stale single-note move state
+    if sel_note_move.is_some() && !pointer.primary_down() && !pointer.primary_released() {
+        sel_note_move = None;
+    }
 
     // 弹窗打开时跳过所有 pointer 处理，避免点击穿透
     if crate::view_interaction::pointer_over_popup(ui.ctx()) {
@@ -187,14 +198,53 @@ pub(crate) fn sel_drag_frame(
             // Don't start drag, don't clear anything — let the button handle it.
         } else {
             let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
+            // 点击位置是否在某个选框内（音符 hit-test 与选区移动共用）。
+            let in_sel_rect = eff_rects.iter().any(|&(t_start, t_end, key_lo, key_hi)| {
+                let pixel_rect = crate::selection::drag::music_sel_to_pixel_rect(
+                    &view.base,
+                    view.key_height,
+                    t_start,
+                    t_end,
+                    key_lo,
+                    key_hi,
+                );
+                pixel_rect.contains(local)
+            });
 
-            // ── 单音符边缘 hit-test（不用先选中）：优先级大于选框边缘/移动 ──
-            // hover 音符左右边缘 EDGE_THRESHOLD_PX 内直接伸缩该音符，与铅笔一致。
-            let note_edge_hit =
-                hit_test_note_edge(midi, view, local, track_visible, track_selected);
-            if let Some((side, track, start_tick, end_tick, key)) = note_edge_hit {
-                sel_note_resize = Some((side, track, start_tick, end_tick, key));
-                // 点击音符边缘出声（gate 长度，原力度）。vel <= 1 隐藏音符不响。
+            // ── 音符 hit-test（不用先选中，与铅笔一致）──
+            // 轨道作用域 = editing_track（存在时）∪ track_selected ∩ track_visible。
+            // 边缘 → 单音符伸缩；中部（未选中）→ 单音符移动。
+            if let Some((mode, track, start_tick, end_tick, key)) = hit_test_note(
+                midi,
+                view,
+                local,
+                track_visible,
+                track_selected,
+                editing_track,
+            ) {
+                match mode {
+                    super::pencil::HitMode::ResizeLeft | super::pencil::HitMode::ResizeRight => {
+                        let side = match mode {
+                            super::pencil::HitMode::ResizeLeft => ResizeSide::Left,
+                            _ => ResizeSide::Right,
+                        };
+                        sel_note_resize = Some((side, track, start_tick, end_tick, key));
+                    }
+                    super::pencil::HitMode::Move => {
+                        // 音符中部：未选中时直接移动该音符；已选中交给选区移动。
+                        if !in_sel_rect {
+                            let raw_tick = view.x_to_tick(local.x);
+                            let tick = crate::view_interaction::snap_tick(
+                                raw_tick,
+                                quantize,
+                                ppq,
+                                bar_line_data,
+                            );
+                            sel_note_move = Some((track, start_tick, key, end_tick, tick, 0));
+                        }
+                    }
+                }
+                // 点击音符出声（gate 长度，原力度）。vel <= 1 隐藏音符不响。
                 if let Some(vel) = note_velocity(midi, track, start_tick, key)
                     && vel > 1
                 {
@@ -209,9 +259,8 @@ pub(crate) fn sel_drag_frame(
             }
 
             // ── 选框边缘 hit-test：优先级大于拖动移动 ──
-            // 检查鼠标是否在某个选框的左右边缘 EDGE_THRESHOLD_PX 内。
-            // 已命中音符边缘时跳过（单音符伸缩优先于选框整体伸缩）。
-            let edge_hit = if sel_note_resize.is_some() {
+            // 已命中音符（伸缩/移动）时跳过——单音符操作优先于选框整体操作。
+            let edge_hit = if sel_note_resize.is_some() || sel_note_move.is_some() {
                 None
             } else {
                 hit_test_sel_edge(&eff_rects, &view.base, view.key_height, local)
@@ -226,19 +275,9 @@ pub(crate) fn sel_drag_frame(
                     midi,
                     track_visible,
                     track_selected,
+                    editing_track,
                 ));
-            } else {
-                let in_sel_rect = eff_rects.iter().any(|&(t_start, t_end, key_lo, key_hi)| {
-                    let pixel_rect = crate::selection::drag::music_sel_to_pixel_rect(
-                        &view.base,
-                        view.key_height,
-                        t_start,
-                        t_end,
-                        key_lo,
-                        key_hi,
-                    );
-                    pixel_rect.contains(local)
-                });
+            } else if sel_note_resize.is_none() && sel_note_move.is_none() {
                 if in_sel_rect {
                     let raw_tick = view.x_to_tick(local.x);
                     let tick =
@@ -254,6 +293,7 @@ pub(crate) fn sel_drag_frame(
                         midi,
                         track_visible,
                         track_selected,
+                        editing_track,
                     ));
                     preview_last_dk = 0;
                     ui.data_mut(|d| d.insert_persisted(preview_dk_id, 0));
@@ -618,6 +658,103 @@ pub(crate) fn sel_drag_frame(
         }
     }
 
+    // ── Single-note move: 直接拖动未选中音符（不用先选中，与铅笔一致）──
+    if let Some((trk, orig_start, orig_key, orig_end, press_tick, last_dk)) = sel_note_move {
+        // Drag：实时显示 ghost + hidden + tooltip
+        if pointer.primary_down()
+            && !pointer.primary_pressed()
+            && let Some(pos) = pointer.hover_pos()
+        {
+            // auto-scroll：音符能拖出屏幕
+            crate::selection::drag::auto_scroll_on_drag(
+                ui,
+                &mut view.base,
+                music_rect,
+                pos,
+                |base, w, _h| {
+                    base.clamp_scroll_x(w, total_ticks);
+                    base.scroll_y = base.scroll_y.max(0.0);
+                },
+            );
+            view.clamp_scroll(content_rect.width(), content_rect.height(), total_ticks);
+
+            let clamped = pos.clamp(music_rect.min, music_rect.max);
+            let local_x = clamped.x - content_rect.min.x;
+            let local_y = clamped.y - content_rect.min.y;
+            let raw_tick = view.x_to_tick(local_x);
+            let snapped_tick =
+                crate::view_interaction::snap_tick(raw_tick, quantize, ppq, bar_line_data);
+            let dt = (snapped_tick - press_tick).round() as i64;
+            // 垂直选框工具：只能水平移动，dk 强制为 0
+            let dk = if vertical {
+                0
+            } else {
+                view.y_to_key(local_y) as i32 - orig_key as i32
+            };
+
+            let new_start = (orig_start as i64 + dt).max(0) as u32;
+            let new_key = (orig_key as i32 + dk).clamp(0, 127) as u8;
+            ghost_notes.push((new_start, new_start + (orig_end - orig_start), new_key, trk));
+            hidden_notes.push((trk, orig_start, orig_key));
+
+            // 音符预览：每变化 1 key 触发一次（gate 长度，原力度）。
+            // vel <= 1 的音符（黑乐谱隐藏音符）不预览，与播放筛除一致。
+            if dk != last_dk {
+                sel_note_move = Some((trk, orig_start, orig_key, orig_end, press_tick, dk));
+                if let Some(vel) = note_velocity(midi, trk, orig_start, orig_key)
+                    && vel > 1
+                {
+                    preview_reqs.push(super::PreviewReq::Note(super::NotePreview {
+                        track: trk,
+                        key: new_key,
+                        velocity: Some(vel),
+                        target_tick: new_start,
+                        duration_ticks: orig_end - orig_start,
+                    }));
+                }
+            }
+
+            // ── Tooltip：显示 ±tick / ±key（已按量化 snap）──
+            let lines = vec![
+                crate::view_interaction::format_signed("tick", dt),
+                crate::view_interaction::format_signed("key", dk as i64),
+            ];
+            crate::view_interaction::draw_hover_tooltip(ui.ctx(), &lines, pos.x, pos.y);
+            ui.ctx().request_repaint();
+        }
+        // Release：提交单音符移动（复用铅笔的 PencilNoteDrag 通道）
+        if pointer.primary_released() {
+            if let Some(pos) = pointer.hover_pos() {
+                let clamped = pos.clamp(music_rect.min, music_rect.max);
+                let local_x = clamped.x - content_rect.min.x;
+                let local_y = clamped.y - content_rect.min.y;
+                let raw_tick = view.x_to_tick(local_x);
+                let snapped_tick =
+                    crate::view_interaction::snap_tick(raw_tick, quantize, ppq, bar_line_data);
+                let dt = (snapped_tick - press_tick).round() as i64;
+                let dk = if vertical {
+                    0
+                } else {
+                    view.y_to_key(local_y) as i32 - orig_key as i32
+                };
+                pencil_note_drag = Some(yinhe_types::PencilNoteDrag::Move {
+                    track: trk,
+                    start_tick: orig_start,
+                    key: orig_key,
+                    delta_ticks: dt,
+                    delta_keys: dk,
+                });
+                // Keep ghost/hidden alive on the release frame
+                let new_start = (orig_start as i64 + dt).max(0) as u32;
+                let new_key = (orig_key as i32 + dk).clamp(0, 127) as u8;
+                ghost_notes.push((new_start, new_start + (orig_end - orig_start), new_key, trk));
+                hidden_notes.push((trk, orig_start, orig_key));
+            }
+            preview_reqs.push(super::PreviewReq::Stop);
+            sel_note_move = None;
+        }
+    }
+
     // ── 双击写音符（第二击 release 帧触发）──
     // egui 在第二击 release 时判定 double-click。条件：
     // - 无 note drag / resize 进行中（排除双击选框内音符/边缘的情况）
@@ -630,6 +767,7 @@ pub(crate) fn sel_drag_frame(
     }) && note_drag_origin.is_none()
         && sel_resize_state.is_none()
         && sel_note_resize.is_none()
+        && sel_note_move.is_none()
         && let Some(pos) = pointer.hover_pos()
         && music_rect.contains(pos)
         && !on_action_bar(pos, music_rect, view, &eff_rects)
@@ -660,7 +798,11 @@ pub(crate) fn sel_drag_frame(
 
     // ── Marquee selection (shared with Eraser tool) ──
     // Only start a marquee if no note drag/resize is active (click was NOT inside selection).
-    if note_drag_origin.is_some() || sel_resize_state.is_some() || sel_note_resize.is_some() {
+    if note_drag_origin.is_some()
+        || sel_resize_state.is_some()
+        || sel_note_resize.is_some()
+        || sel_note_move.is_some()
+    {
         // Note drag/resize active → clear any stale marquee state and skip marquee.
         let sel_id = ui.id().with("sel_drag");
         ui.data_mut(|d| {
@@ -684,8 +826,10 @@ pub(crate) fn sel_drag_frame(
             "sel_drag",
             press_on_bar,
         ) {
-            let track_lo = track_selected.iter().min().copied().unwrap_or(0);
-            let track_hi = track_selected.iter().max().copied().unwrap_or(u16::MAX);
+            // 轨道作用域：editing_track 存在时框选只作用于编辑音轨；
+            // 否则 track_selected（空 = 全部轨道）。
+            let (track_lo, track_hi) =
+                crate::selection::drag::pr_track_range(editing_track, track_selected);
             // 垂直全选模式 key 固定 0..127；普通选框在框选区域无音符时
             // 也自动变成垂直选框（全 128 键）。
             let (key_lo, key_hi) = if vertical
@@ -702,13 +846,14 @@ pub(crate) fn sel_drag_frame(
             } else {
                 (result.key_lo, result.key_hi)
             };
-            selected.add_rect_track(
+            crate::selection::drag::add_pr_selection_rect(
+                selected,
                 result.t_start as u32,
                 result.t_end as u32,
                 key_lo,
                 key_hi,
-                track_lo,
-                track_hi,
+                editing_track,
+                track_selected,
             );
             sel_rect
                 .rects
@@ -738,6 +883,7 @@ pub(crate) fn sel_drag_frame(
     ui.data_mut(|d| d.insert_persisted(drag_notes_id, drag_notes));
     ui.data_mut(|d| d.insert_persisted(resize_id, sel_resize_state));
     ui.data_mut(|d| d.insert_persisted(note_resize_id, sel_note_resize));
+    ui.data_mut(|d| d.insert_persisted(note_move_id, sel_note_move));
     (
         ghost_notes,
         hidden_notes,
@@ -803,31 +949,38 @@ fn double_click_note(
     ))
 }
 
-/// Hit-test 鼠标是否在某个音符（可见轨道）的左右边缘 `EDGE_THRESHOLD_PX` 内。
+/// 音符 hit-test：返回 `(mode, track, start_tick, end_tick, key)`。
 ///
-/// 不需要先选中：hover 音符边缘即可伸缩该音符（与铅笔一致）。
-/// 返回 `(side, track, start_tick, end_tick, key)`。
-/// 轨道范围与 collect_selected_notes 一致：track_selected（空 = 全部）∩ track_visible。
+/// 不需要先选中：边缘 → 单音符伸缩；中部 → 单音符移动（与铅笔一致）。
+/// 轨道作用域 = editing_track（存在时只查编辑音轨），否则 track_selected
+/// （空 = 全部）∩ track_visible。
 /// 只查可能覆盖鼠标点的音符：key_notes_in_range 左边界保守（tick - max_note_len），
 /// 右边界精确，每帧 hover 开销与铅笔 hit-test 同级。
-pub(crate) fn hit_test_note_edge(
+pub(crate) fn hit_test_note(
     midi: Option<&dyn yinhe_types::NoteSource>,
     view: &yinhe_types::PianoRollView,
     local: egui::Pos2,
     track_visible: &[bool],
     track_selected: &std::collections::HashSet<u16>,
-) -> Option<SelNoteResize> {
+    editing_track: Option<u16>,
+) -> Option<(super::pencil::HitMode, u16, u32, u32, u8)> {
     const EDGE_THRESHOLD_PX: f32 = 6.0;
     let (midi, key) = (midi?, view.y_to_key(local.y));
     let raw_tick = view.x_to_tick(local.x);
     let notes = midi.key_notes_in_range(key, raw_tick as u32, (raw_tick + 1.0) as u32);
     for note in notes {
-        if !track_visible
-            .get(note.track as usize)
-            .copied()
-            .unwrap_or(true)
-            || (!track_selected.is_empty() && !track_selected.contains(&note.track))
-        {
+        // 轨道作用域：editing_track 优先，其次 track_selected（空 = 全部）∩ track_visible。
+        let in_scope = match editing_track {
+            Some(t) => note.track == t,
+            None => {
+                (track_selected.is_empty() || track_selected.contains(&note.track))
+                    && track_visible
+                        .get(note.track as usize)
+                        .copied()
+                        .unwrap_or(true)
+            }
+        };
+        if !in_scope {
             continue;
         }
         let note_left = view.tick_to_x(note.start_tick as f64);
@@ -837,14 +990,14 @@ pub(crate) fn hit_test_note_edge(
         }
         let dist_left = (local.x - note_left).abs();
         let dist_right = (local.x - note_right).abs();
-        let side = if dist_left <= EDGE_THRESHOLD_PX {
-            ResizeSide::Left
+        let mode = if dist_left <= EDGE_THRESHOLD_PX {
+            super::pencil::HitMode::ResizeLeft
         } else if dist_right <= EDGE_THRESHOLD_PX {
-            ResizeSide::Right
+            super::pencil::HitMode::ResizeRight
         } else {
-            continue; // 音符中部：交给移动/选框逻辑
+            super::pencil::HitMode::Move // 音符中部：直接拖动移动该音符
         };
-        return Some((side, note.track, note.start_tick, note.end_tick, key));
+        return Some((mode, note.track, note.start_tick, note.end_tick, key));
     }
     None
 }
@@ -1599,5 +1752,138 @@ mod tests {
             "音符左边缘应从 300 缩到 240，实际 {pencil_drag:?}"
         );
         assert_eq!(cursor_tick, None, "伸缩后松开不得把 playhead 跳到释放位置");
+    }
+
+    /// 单音符移动（不用先选中）：press 音符中部 → 拖 → release 提交。
+    #[test]
+    fn select_tool_moves_single_note_without_selection() {
+        let ctx = egui::Context::default();
+        let mut view = test_view();
+        view.viewport_h = 600.0;
+        // 音符 (tick 300..330, key 90)：中心 (315, 375)，无任何选框。
+        let midi = make_midi(vec![(90, 300, 330, 0, 100)]);
+        let mut selected = yinhe_core::Selection::default();
+        let mut sel_rect = yinhe_editor_core::edit_state::SelRectState::default();
+        let mut cursor_tick: Option<f64> = None;
+        let mut note_drag_delta: Option<(i64, i32, bool)> = None;
+        let mut note_resize_delta: Option<(yinhe_editor_core::ResizeSide, i64)> = None;
+
+        // press tick 315 → snap 360；release tick 435 → snap 480：dt = +120。
+        let press = egui::pos2(315.0, 375.0);
+        let release = egui::pos2(435.0, 375.0);
+        let _ = run_sel_frame(
+            &ctx,
+            press_event(press),
+            &mut view,
+            &midi,
+            &mut selected,
+            &mut cursor_tick,
+            &mut note_drag_delta,
+            &mut note_resize_delta,
+            &mut sel_rect,
+            None,
+        );
+        let _ = run_sel_frame(
+            &ctx,
+            drag_event(release),
+            &mut view,
+            &midi,
+            &mut selected,
+            &mut cursor_tick,
+            &mut note_drag_delta,
+            &mut note_resize_delta,
+            &mut sel_rect,
+            None,
+        );
+        let (_, _, pencil_drag) = run_sel_frame(
+            &ctx,
+            release_event(release),
+            &mut view,
+            &midi,
+            &mut selected,
+            &mut cursor_tick,
+            &mut note_drag_delta,
+            &mut note_resize_delta,
+            &mut sel_rect,
+            None,
+        );
+
+        assert!(
+            matches!(
+                pencil_drag,
+                Some(yinhe_types::PencilNoteDrag::Move {
+                    track: 0,
+                    start_tick: 300,
+                    key: 90,
+                    delta_ticks: 120,
+                    delta_keys: 0,
+                })
+            ),
+            "未选中音符应直接移动 +120 tick，实际 {pencil_drag:?}"
+        );
+        assert_eq!(note_drag_delta, None, "不得启动选区移动");
+        assert!(selected.is_empty(), "选区不应被修改");
+        assert!(sel_rect.is_empty(), "选框不应被修改");
+    }
+
+    /// bug 回归：editing_track 存在时，框选只作用于编辑音轨。
+    #[test]
+    fn marquee_respects_editing_track() {
+        let ctx = egui::Context::default();
+        let mut view = test_view();
+        view.viewport_h = 600.0;
+        // track 0 和 track 5 在框选区域内都有音符。
+        let midi = make_midi(vec![(90, 100, 200, 0, 100), (90, 100, 200, 5, 100)]);
+        let mut selected = yinhe_core::Selection::default();
+        let mut sel_rect = yinhe_editor_core::edit_state::SelRectState::default();
+        let mut cursor_tick: Option<f64> = None;
+        let mut note_drag_delta: Option<(i64, i32, bool)> = None;
+        let mut note_resize_delta: Option<(yinhe_editor_core::ResizeSide, i64)> = None;
+
+        // 框选 tick 50..250、key 85..95 区域（两个音符都在内）。
+        let start = egui::pos2(50.0, 420.0);
+        let end = egui::pos2(250.0, 320.0);
+        let _ = run_sel_frame(
+            &ctx,
+            press_event(start),
+            &mut view,
+            &midi,
+            &mut selected,
+            &mut cursor_tick,
+            &mut note_drag_delta,
+            &mut note_resize_delta,
+            &mut sel_rect,
+            Some(5),
+        );
+        let _ = run_sel_frame(
+            &ctx,
+            drag_event(end),
+            &mut view,
+            &midi,
+            &mut selected,
+            &mut cursor_tick,
+            &mut note_drag_delta,
+            &mut note_resize_delta,
+            &mut sel_rect,
+            Some(5),
+        );
+        let _ = run_sel_frame(
+            &ctx,
+            release_event(end),
+            &mut view,
+            &midi,
+            &mut selected,
+            &mut cursor_tick,
+            &mut note_drag_delta,
+            &mut note_resize_delta,
+            &mut sel_rect,
+            Some(5),
+        );
+
+        assert_eq!(selected.rects.len(), 1, "框选应只产生一个选区 rect");
+        let (_, _, _, _, tl, th) = selected.rects[0];
+        assert_eq!((tl, th), (5, 5), "框选应只作用于编辑音轨 5");
+        assert!(selected.contains(5, 100, 90), "编辑音轨音符应被选中");
+        assert!(!selected.contains(0, 100, 90), "非编辑音轨的音符不得被选中");
     }
 }

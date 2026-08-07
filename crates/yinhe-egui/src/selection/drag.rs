@@ -94,11 +94,13 @@ pub fn music_sel_to_pixel_rect(
 /// 使用 `Selection::contains` 做精确的半开 tick 过滤，并叠加 track_selected
 /// 和 track_visible 过滤，与 note layer 的 build_notes 对齐。
 /// `track_selected` 传空集合表示不过滤轨道（如 AR 视图）。
+/// `editing_track` 存在时只收集该轨道（PR 工具作用域 = 编辑音轨）。
 pub fn collect_selected_notes(
     selected: &yinhe_core::Selection,
     midi: Option<&dyn NoteSource>,
     track_visible: &[bool],
     track_selected: &std::collections::HashSet<u16>,
+    editing_track: Option<u16>,
 ) -> Vec<CollectedNote> {
     selected
         .rects
@@ -108,7 +110,10 @@ pub fn collect_selected_notes(
                 midi.map(|m| {
                     m.key_notes_in_range(key, ts, te)
                         .filter(|n| selected.contains(n.track, n.start_tick, key))
-                        .filter(|n| track_selected.is_empty() || track_selected.contains(&n.track))
+                        .filter(|n| match editing_track {
+                            Some(t) => n.track == t,
+                            None => track_selected.is_empty() || track_selected.contains(&n.track),
+                        })
                         .filter(|n| track_visible.get(n.track as usize).copied().unwrap_or(true))
                         .map(|n| CollectedNote {
                             track: n.track,
@@ -123,6 +128,63 @@ pub fn collect_selected_notes(
             })
         })
         .collect()
+}
+
+/// PR 工具的轨道作用范围：editing_track 存在时只作用于编辑音轨；
+/// 否则 track_selected（空 = 全部轨道）。
+pub fn pr_track_range(
+    editing_track: Option<u16>,
+    track_selected: &std::collections::HashSet<u16>,
+) -> (u16, u16) {
+    match editing_track {
+        Some(t) => (t, t),
+        None => {
+            let lo = track_selected.iter().min().copied().unwrap_or(0);
+            let hi = track_selected.iter().max().copied().unwrap_or(u16::MAX);
+            (lo, hi)
+        }
+    }
+}
+
+/// 选框的轨道范围是否只覆盖单个轨道。
+/// editing_track 存在时为 true；否则 track_selected 只含一个轨道时为 true。
+pub fn pr_single_track(
+    editing_track: Option<u16>,
+    track_selected: &std::collections::HashSet<u16>,
+) -> Option<u16> {
+    match editing_track {
+        Some(t) => Some(t),
+        None if track_selected.is_empty() => None,
+        None => {
+            let mut it = track_selected.iter().copied();
+            let first = it.next()?;
+            it.next().is_none().then_some(first)
+        }
+    }
+}
+
+/// 把选框 `(t_start..t_end, key_lo..=key_hi)` 按 PR 工具作用域添加到选区。
+///
+/// editing_track 存在 → 只加该轨；track_selected 空 → 全部轨道；
+/// 多轨选中 → 逐轨添加（避免 [min,max] 连续范围误伤中间未选中的轨道）。
+pub fn add_pr_selection_rect(
+    selected: &mut yinhe_core::Selection,
+    t_start: u32,
+    t_end: u32,
+    key_lo: u8,
+    key_hi: u8,
+    editing_track: Option<u16>,
+    track_selected: &std::collections::HashSet<u16>,
+) {
+    if let Some(t) = pr_single_track(editing_track, track_selected) {
+        selected.add_rect_track(t_start, t_end, key_lo, key_hi, t, t);
+    } else if track_selected.is_empty() {
+        selected.add_rect_track(t_start, t_end, key_lo, key_hi, 0, u16::MAX);
+    } else {
+        for &t in track_selected {
+            selected.add_rect_track(t_start, t_end, key_lo, key_hi, t, t);
+        }
+    }
 }
 
 /// Hit-test 鼠标是否在某个选框的左右边缘 `EDGE_THRESHOLD_PX` 内。

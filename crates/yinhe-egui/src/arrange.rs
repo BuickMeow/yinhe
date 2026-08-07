@@ -344,6 +344,19 @@ pub fn show(
             total_ticks,
             &mut arr_view.base.dirty,
         );
+
+        // 滚动条滚轮缩放：水平滚动条上滚轮 = 轨道行高缩放（锚定滚动条中心 y）
+        if let Some(pos) = ui.input(|i| i.pointer.hover_pos())
+            && sb_rect.contains(pos)
+        {
+            let scroll_y = ui.input(|i| i.smooth_scroll_delta.y);
+            if scroll_y.abs() > 0.5 {
+                let factor = if scroll_y > 0.0 { 1.1 } else { 1.0 / 1.1 };
+                let anchor_y = sb_rect.center().y - arr_rect.min.y;
+                arr_view.zoom_lane_height(anchor_y, factor);
+                ui.ctx().request_repaint();
+            }
+        }
     }
 
     // ── Vertical scrollbar (right of GPU content, full AR height minus ruler) ──
@@ -366,6 +379,19 @@ pub fn show(
                 &mut arr_view.base.dirty,
             );
         });
+
+        // 滚动条滚轮缩放：垂直滚动条上滚轮 = 水平缩放（锚定滚动条中心 x）
+        if let Some(pos) = ui.input(|i| i.pointer.hover_pos())
+            && vsb_rect.contains(pos)
+        {
+            let scroll_y = ui.input(|i| i.smooth_scroll_delta.y);
+            if scroll_y.abs() > 0.5 {
+                let factor = if scroll_y > 0.0 { 1.1 } else { 1.0 / 1.1 };
+                let anchor_x = vsb_rect.center().x - arr_rect.min.x;
+                arr_view.zoom_around_x(anchor_x, factor);
+                ui.ctx().request_repaint();
+            }
+        }
     }
 
     // ── AR quantize button in the top-left corner (left of ruler, above track panel) ──

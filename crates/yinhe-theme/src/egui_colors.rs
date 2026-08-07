@@ -18,6 +18,7 @@ pub const TEXT_PRIMARY: Color32 = Color32::from_gray(220); // 标题/强调文�
 pub const TEXT_BRIGHT: Color32 = Color32::from_gray(200); // 主文字/按钮文字
 pub const TEXT_MEDIUM: Color32 = Color32::from_gray(190); // 箭头/图标
 pub const TEXT_SECONDARY: Color32 = Color32::from_gray(180); // 次要文字
+pub const TAB_DIRTY_DOT: Color32 = Color32::from_gray(200); // 标签未保存圆点（比文字深一点的灰）
 pub const TEXT_MUTED: Color32 = Color32::from_gray(160); // 弱化文字/未激活图标
 pub const TEXT_FAINT: Color32 = Color32::from_gray(140); // 弱化文字
 pub const TEXT_DIM: Color32 = Color32::from_gray(120); // 小标签/弱文字

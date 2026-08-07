@@ -526,11 +526,13 @@ fn sel_drag_frame_arrange(
 
             // 与 PR 共用的选中音符收集（edit.track_selected 传空集合 = 不过滤轨道）。
             // edit.selected.rects 在拖拽中保持原快照，与 move_orig_sel 语义一致。
+            // AR 无 editing_track 概念，传 None。
             let notes = crate::selection::drag::collect_selected_notes(
                 edit.selected,
                 data.midi,
                 data.track_visible,
                 &HashSet::new(),
+                None,
             );
             for note in notes {
                 let new_tick = (note.start_tick as i64 + dt).max(0) as u32;

@@ -318,6 +318,7 @@ pub fn show(
             bar_line_data,
             total_ticks,
             track_selected,
+            editing_track,
         );
     }
 
@@ -329,17 +330,21 @@ pub fn show(
     {
         let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
         let eff_rects = sel_rect.effective_rects();
-        // 音符边缘优先（不用先选中，与铅笔一致）——hover 音符左右边缘显示伸缩光标。
-        if let Some((side, _, _, _, _)) =
-            drag::hit_test_note_edge(midi, view, local, track_visible, track_selected)
-        {
-            match side {
-                yinhe_editor_core::ResizeSide::Left => {
-                    ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeWest)
-                }
-                yinhe_editor_core::ResizeSide::Right => {
-                    ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeEast)
-                }
+        // 音符 hit-test 优先（不用先选中，与铅笔一致）：
+        // 边缘 → 伸缩光标；中部 → 移动光标。
+        if let Some((mode, _, _, _, _)) = drag::hit_test_note(
+            midi,
+            view,
+            local,
+            track_visible,
+            track_selected,
+            editing_track,
+        ) {
+            use crate::piano_view::pencil::HitMode;
+            match mode {
+                HitMode::ResizeLeft => ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeWest),
+                HitMode::ResizeRight => ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeEast),
+                HitMode::Move => ui.ctx().set_cursor_icon(egui::CursorIcon::Move),
             }
         } else if let Some((side, _, _)) =
             drag::hit_test_sel_edge(&eff_rects, &view.base, view.key_height, local)
@@ -957,6 +962,25 @@ pub fn show(
                 &mut view.base.dirty,
             );
         });
+
+        // ── 滚动条滚轮缩放：垂直滚动条上滚轮 = 水平缩放；水平滚动条上滚轮 = 垂直缩放 ──
+        if let Some(pos) = ui.input(|i| i.pointer.hover_pos()) {
+            let scroll_y = ui.input(|i| i.smooth_scroll_delta.y);
+            if scroll_y.abs() > 0.5 {
+                let factor = if scroll_y > 0.0 { 1.1 } else { 1.0 / 1.1 };
+                if vsb_rect.contains(pos) {
+                    // 垂直滚动条 → 水平缩放（锚定滚动条中心 x）
+                    let anchor_x = vsb_rect.center().x - content_rect.min.x;
+                    view.zoom_around_x(anchor_x, factor);
+                    ui.ctx().request_repaint();
+                } else if sb_rect.contains(pos) {
+                    // 水平滚动条 → 垂直缩放（锚定滚动条中心 y）
+                    let anchor_y = sb_rect.center().y - content_rect.min.y;
+                    view.zoom_around_y(anchor_y, factor, content_rect.height());
+                    ui.ctx().request_repaint();
+                }
+            }
+        }
     }
 
     // ── Perf probe: submit per-frame sample ──

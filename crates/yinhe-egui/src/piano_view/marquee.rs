@@ -228,6 +228,7 @@ pub(crate) fn eraser_drag_frame(
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
     total_ticks: f64,
     track_selected: &std::collections::HashSet<u16>,
+    editing_track: Option<u16>,
 ) -> Option<PianoViewEvent> {
     let result = marquee_drag_frame(
         ui,
@@ -242,8 +243,9 @@ pub(crate) fn eraser_drag_frame(
         // 橡皮擦工具没有选区浮动工具条，无需防穿透
         false,
     )?;
-    let track_lo = track_selected.iter().min().copied().unwrap_or(0);
-    let track_hi = track_selected.iter().max().copied().unwrap_or(u16::MAX);
+    // 轨道作用域：editing_track 存在时只擦编辑音轨；否则 track_selected（空 = 全部）。
+    let (track_lo, track_hi) =
+        crate::selection::drag::pr_track_range(editing_track, track_selected);
     Some(PianoViewEvent::EraserDelete {
         t_start: result.t_start as u32,
         t_end: result.t_end as u32,
