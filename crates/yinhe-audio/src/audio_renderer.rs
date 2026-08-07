@@ -229,7 +229,7 @@ impl AudioRenderer {
                         }
                         AudioCommand::PreviewNotes { notes } => {
                             // 用户已松手（Stop 请求尚未消费）：跳过堆积的旧预览组，
-                            // 否则每条都会 stop_all + 触发一组，松手后还在响。
+                            // 否则松手后还会触发一组在响。
                             if self.preview_stop_flag.load(Ordering::Acquire) {
                                 continue;
                             }
@@ -278,7 +278,7 @@ impl AudioRenderer {
                                     });
                                 }
                             }
-                            // 整组替换：组内按目标位置相对时值错开触发。
+                            // 提交预览组：组内按目标位置相对时值错开触发。
                             self.preview_engine.preview_notes(inputs);
                         }
                         AudioCommand::PreviewStop => {

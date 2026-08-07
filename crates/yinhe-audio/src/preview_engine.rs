@@ -165,12 +165,20 @@ impl PreviewEngine {
         });
     }
 
-    /// 提交整组预览（替换旧组）：组内音符按目标位置**相对时值**错开触发——
-    /// 最早音符立即响，其余音符延迟（目标位置差）后响，各自响自己的 gate。
+    /// 提交整组预览（替换旧组的**待触发音符**）：组内音符按目标位置**相对时值**
+    /// 错开触发——最早音符立即响，其余音符延迟（目标位置差）后响，各自响自己的 gate。
     /// 例如旋律音符 start 相差 4800 帧（已按目标位置 Tempo/PPQ 换算），
     /// 预览时就错开 4800 帧依次触发。时值差来自真实乐曲位置，不用固定毫秒封顶。
+    ///
+    /// **已在响的音符不在这里 NoteOff**（继续响满自己的 gate）：
+    /// 快速拖拽时每帧提交一组新音符，渲染线程按 ring 水位门控渲染（频率 ≈ cpal
+    /// 回调频率），若提交即 `stop_all()`，音符会在下一次渲染之前被杀掉、永远听不到
+    /// ——"拖过几十个键只响几声"的根因。替换语义由 `stop_all()`（PreviewStop /
+    /// 释放）负责：两次预览之间必然有一次释放，正在响的旧组在那里统一停止。
     pub(crate) fn preview_notes(&mut self, notes: Vec<PreviewNoteIn>) {
-        self.stop_all();
+        // 旧组未触发的待触发音符已过期（目标位置被新组替换），只清 pending；
+        // 已在响的音符保留，继续响满自己的 gate。
+        self.pending.clear();
         let min = notes.iter().map(|n| n.target_sample).min().unwrap_or(0);
         // trigger_at 存绝对位置（组开始 + 相对时值差）：position 是累计渲染帧数，
         // 若只存相对差，预览引擎跑过一段时间后 position 已超过所有 trigger_at，
@@ -486,5 +494,82 @@ mod tests {
         // 第 10 帧（+5120 >= 5000）：触发
         engine.render(&mut out);
         assert_eq!(engine.voices.len(), 2);
+    }
+
+    #[test]
+    fn rapid_preview_replacement_keeps_all_notes_audible() {
+        // 回归测试（快速拖拽丢音）：渲染线程按 ring 水位门控渲染，两次渲染之间
+        // 可能堆积多条 PreviewNotes 命令。若提交新组即 stop_all，绝大多数音符
+        // 会在被渲染之前就 NoteOff，永远听不到 —— 必须全部保留、响满自己的 gate。
+        let layout = ChannelLayout::from_mask(vec![true; 16]);
+        let mut engine = PreviewEngine::new(&layout, 48000);
+
+        // 模拟 C2→C7 快速拖拽：60 个键，每键一组、渲染器来不及渲染。
+        let mut out = vec![0.0f32; 1024];
+        for key in 36..96 {
+            engine.preview_notes(vec![PreviewNoteIn {
+                channel: 0,
+                key,
+                velocity: 100,
+                duration: Some(48_000), // 1s gate
+                state: ChannelState::default(),
+                target_sample: 0,
+            }]);
+        }
+        // 旧实现只剩最后 1 个音符；新实现 60 个全部保留。
+        assert_eq!(engine.voices.len(), 60, "快速拖拽的所有键都要能出声");
+
+        // gate 到期前不能提前 NoteOff（93 × 512 = 47616 < 48000）
+        for _ in 0..93 {
+            engine.render(&mut out);
+        }
+        assert_eq!(engine.voices.len(), 60, "gate 未到期不能提前 NoteOff");
+        // 第 94 次渲染（48128 >= 48000）：全部到期 NoteOff
+        engine.render(&mut out);
+        assert!(engine.voices.is_empty(), "gate 到期全部 NoteOff");
+    }
+
+    #[test]
+    fn preview_notes_replace_clears_stale_pending_only() {
+        // 新组提交时：旧组尚未触发的待触发音符必须清掉（目标位置已过期），
+        // 已在响的音符必须保留（继续响满 gate）。
+        let layout = ChannelLayout::from_mask(vec![true; 16]);
+        let mut engine = PreviewEngine::new(&layout, 48000);
+
+        engine.preview_notes(vec![
+            PreviewNoteIn {
+                channel: 0,
+                key: 60,
+                velocity: 100,
+                duration: Some(48_000),
+                state: ChannelState::default(),
+                target_sample: 0,
+            },
+            PreviewNoteIn {
+                channel: 0,
+                key: 64,
+                velocity: 90,
+                duration: Some(48_000),
+                state: ChannelState::default(),
+                target_sample: 100_000, // 延迟音符：尚未触发
+            },
+        ]);
+        assert_eq!(engine.voices.len(), 1);
+        assert_eq!(engine.pending.len(), 1, "延迟音符在等待触发");
+
+        // 新组替换：旧组延迟音符过期清掉，已在响的 60 号音符保留。
+        engine.preview_notes(vec![PreviewNoteIn {
+            channel: 0,
+            key: 67,
+            velocity: 100,
+            duration: Some(48_000),
+            state: ChannelState::default(),
+            target_sample: 0,
+        }]);
+        assert!(engine.pending.is_empty(), "旧组待触发音符被清掉");
+        assert_eq!(engine.voices.len(), 2, "旧组正在响的音符 + 新组音符都保留");
+
+        engine.stop_all();
+        assert!(engine.voices.is_empty());
     }
 }

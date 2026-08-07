@@ -82,8 +82,9 @@ pub enum AudioCommand {
     SetAutomationDensity {
         density: u32,
     },
-    /// 音符听觉预览：整组替换。渲染器先把旧预览组全部 NoteOff（余音继续渲染），
-    /// 再对每个音符应用目标位置自动化状态并 NoteOn。
+    /// 音符听觉预览：替换旧组的待触发音符；已在响的旧组音符继续响满自己的 gate
+    /// （快速拖拽时若立即 NoteOff，音符会在被渲染前死掉，永远听不到）。
+    /// 每组音符应用目标位置自动化状态并 NoteOn。停止由 PreviewStop（释放）负责。
     /// 预览走独立合成器（PreviewEngine）：不占主引擎 voice、不改播放状态。
     PreviewNotes {
         notes: Vec<PreviewNoteParams>,

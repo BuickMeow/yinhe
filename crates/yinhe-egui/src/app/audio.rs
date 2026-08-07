@@ -528,7 +528,8 @@ impl App {
     /// - 时长换算用目标位置的 Tempo（tempo_map 自动变速）；
     /// - 力度缺省时用该音轨最近修改力度（default_velocity）。
     ///
-    /// 整组合并成一条 `PreviewNotes` 命令发送（一次替换整组，且不占命令通道额度）。
+    /// 整组合并成一条 `PreviewNotes` 命令发送（替换旧组待触发音符；正在响的音符
+    /// 继续响满 gate，松手时由 Stop 统一停止；且不占命令通道额度）。
     /// 时刻全在 tick 域（与编辑层一致），渲染线程内部转 sample。
     pub(crate) fn send_note_previews(&self, reqs: &[crate::piano_view::PreviewReq]) {
         if reqs.is_empty() {
