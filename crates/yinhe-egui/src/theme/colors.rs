@@ -72,7 +72,6 @@ theme_getters! {
     selected_bg => selected_bg,
     contrast_fg => contrast_fg,
     btn_bg => btn_bg,
-    border_dim => border_dim,
     danger_text => danger_text,
     danger_text_bright => danger_text_bright,
     error_text => error_text,

@@ -447,7 +447,7 @@ fn show_timecode_display(ui: &mut egui::Ui, doc: &Document) -> egui::Rect {
 
     let c = crate::theme::accent_active();
     let font = egui::FontId::proportional(crate::theme::TIMECODE_FONT);
-    let grid = egui::Stroke::new(1.0, crate::theme::border_dim());
+    let grid = egui::Stroke::new(1.0, crate::theme::line_fg());
 
     ui.painter()
         .rect_filled(rect, egui::CornerRadius::same(8), crate::theme::inset_bg());

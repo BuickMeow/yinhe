@@ -22,8 +22,9 @@ pub fn paint(
     h_f32: f32,
     theme: &GpuTheme,
 ) {
-    let stroke_color = crate::theme::border_dim();
-    let stroke = egui::Stroke::new(1.0, stroke_color);
+    let stroke_color = crate::theme::rgb_to_color32(theme.key_black);
+    // 描边宽度随 y 轴缩放（键高）等比：kh=12（默认）时 1px
+    let stroke = egui::Stroke::new((kh * 0.0833).clamp(0.5, 2.0), stroke_color);
 
     // White keys
     for key in 0u8..128 {

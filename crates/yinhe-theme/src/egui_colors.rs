@@ -56,7 +56,6 @@ pub struct Theme {
     pub contrast_fg: Color32,
     // ── 按钮 / 边框 ──
     pub btn_bg: Color32,
-    pub border_dim: Color32,
     // ── 语义色 ──
     pub danger: Color32,
     pub danger_text: Color32,
@@ -183,10 +182,8 @@ pub fn derive_theme(base: crate::base::BaseColors) -> Theme {
     let danger_hover = mix(danger, gray128, 0.30);
     let warning_gold = mix(warning, text, 0.25);
 
-    // 色系设计：选中底 = 强调色混背景（暗主题深蓝、亮主题中浅蓝，同色相）；
-    // 边框/分割线 = 主文字暗化（与文字同色系）
+    // 色系设计：选中底 = 强调色混背景（暗主题深蓝、亮主题中浅蓝，同色相）
     let selected_bg = mix(bg, accent, 0.30);
-    let border_dim = shade(text, 0.27);
     // 时间码凹槽：背景深一档（暗主题更深、亮主题浅灰，方向自动正确）
     let inset_bg = shade(bg, 0.7);
 
@@ -217,7 +214,6 @@ pub fn derive_theme(base: crate::base::BaseColors) -> Theme {
         selected_bg,
         contrast_fg: contrast,
         btn_bg: mix_btn_bg,
-        border_dim,
         danger,
         danger_text,
         danger_text_bright,
@@ -264,8 +260,8 @@ mod tests {
         // 选中底 = 背景混强调色（同色相）：25,25,28 混 (100,180,255) 30%
         assert_eq!(t.selected_bg, Color32::from_rgb(47, 71, 96));
         assert_eq!(t.danger, Color32::from_rgb(232, 17, 35));
-        // 边框 = 主文字暗化（同色系）：220×0.27
-        assert_eq!(t.border_dim, Color32::from_gray(59));
+        // 线条统一色 = 背景混主文字 15%：25 + (220-25)×0.15 ≈ 54
+        assert_eq!(t.line_fg, Color32::from_rgb(54, 54, 56));
         // 时间码凹槽 = 背景深一档：25,25,28 × 0.7
         assert_eq!(t.inset_bg, Color32::from_rgb(17, 17, 19));
         // hover/选中文字在暗底上应为白
