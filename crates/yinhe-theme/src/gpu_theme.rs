@@ -7,7 +7,6 @@
 pub struct GpuTheme {
     // ── Pianoroll ──
     pub pr_bg: (f32, f32, f32),
-    pub pr_black_key_row: (f32, f32, f32),
     pub pr_white_key: (f32, f32, f32),
     pub pr_black_key: (f32, f32, f32),
 
@@ -43,7 +42,6 @@ impl GpuTheme {
         };
         Self {
             pr_bg: mix(0.02),
-            pr_black_key_row: (bg[0], bg[1], bg[2]),
             pr_white_key: (text[0] * 0.81, text[1] * 0.81, text[2] * 0.81),
             pr_black_key: mix(0.08),
             ar_bg: mix(0.05),

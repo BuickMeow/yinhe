@@ -181,6 +181,8 @@ pub fn derive_theme(base: crate::base::BaseColors) -> Theme {
     let mix_pr_beat = mix(bg, text, 0.16);
     let mix_pr_sub_beat = mix(bg, text, 0.08);
     let mix_pr_scale_outside = mix(bg, text, 0.015);
+    // 黑键行条带对比度参考 AR lane even（0.08），避免与背景同色
+    let mix_pr_black_key_row = mix(bg, text, 0.08);
     let mix_ar_measure = mix(bg, text, 0.27);
     let mix_ar_beat = mix(bg, text, 0.13);
     let mix_scrollbar_rect = mix(bg, text, 0.28);
@@ -258,7 +260,7 @@ pub fn derive_theme(base: crate::base::BaseColors) -> Theme {
         pr_octave_line: mix_pr_beat,
         pr_scale_outside: mix_pr_scale_outside,
         pr_root_note: row_selected_bg,
-        pr_black_key_row: mix_pr_scale_outside,
+        pr_black_key_row: mix_pr_black_key_row,
         ar_measure_line: mix_ar_measure,
         ar_beat_line: mix_ar_beat,
         scrollbar_rect: mix_scrollbar_rect,
