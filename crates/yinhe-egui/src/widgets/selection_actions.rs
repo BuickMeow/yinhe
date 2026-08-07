@@ -166,8 +166,17 @@ pub fn show(
     for (i, (&icon, action)) in icons.iter().zip(actions.iter()).enumerate() {
         let btn_rect = btn_rects[i];
 
-        // Hover detection（hover 变白，与全项目图标按钮基准风格一致）
+        // Hover detection（hover 变白 + 统一增益底色，与全项目图标按钮基准风格一致）
         let hovered = pointer_pos.is_some_and(|p| btn_rect.contains(p));
+        if hovered {
+            let down = pressed && press_btn == Some(i);
+            let bg = if down {
+                crate::theme::pressed_color(crate::theme::app_bg())
+            } else {
+                crate::theme::hover_color(crate::theme::app_bg())
+            };
+            ui.painter().rect_filled(btn_rect, 4.0, bg);
+        }
         let color = if hovered {
             crate::theme::hover_text()
         } else {

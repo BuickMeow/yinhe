@@ -129,12 +129,18 @@ pub(crate) fn show(
                     continue;
                 }
 
-                // Tab background — active / hover / inactive
+                // Tab background — active / pressed / hover / inactive
                 let is_hovered = tab_rect.contains(hover_pos) && !*is_active;
+                let pointer_down = ui
+                    .input(|i| i.pointer.button_down(egui::PointerButton::Primary))
+                    && tab_rect
+                        .contains(ui.input(|i| i.pointer.interact_pos()).unwrap_or_default());
                 let bg = if *is_active {
                     crate::theme::tab_active_bg()
+                } else if pointer_down && is_hovered {
+                    crate::theme::pressed_color(crate::theme::tab_inactive_bg())
                 } else if is_hovered {
-                    crate::theme::tab_hover_bg()
+                    crate::theme::hover_color(crate::theme::tab_inactive_bg())
                 } else {
                     crate::theme::tab_inactive_bg()
                 };
@@ -205,7 +211,14 @@ pub(crate) fn show(
                     egui::vec2(close_w, tab_h),
                 );
                 let close_hover = tab_close_rect.contains(hover_pos);
-                crate::chrome::dialog::paint_close_button(painter, tab_close_rect, close_hover);
+                let close_pressed = close_hover
+                    && ui.input(|i| i.pointer.button_down(egui::PointerButton::Primary));
+                crate::chrome::dialog::paint_close_button(
+                    painter,
+                    tab_close_rect,
+                    close_hover,
+                    close_pressed,
+                );
 
                 click_targets.push((i, tab_rect, tab_close_rect));
 
@@ -355,7 +368,11 @@ fn paint_window_buttons(
 
     // ── Close button (red on hover) ──
     let close_hover = close_rect.contains(ui.input(|i| i.pointer.hover_pos()).unwrap_or_default());
-    let close_bg = if close_hover {
+    let close_pressed =
+        close_hover && ui.input(|i| i.pointer.button_down(egui::PointerButton::Primary));
+    let close_bg = if close_pressed {
+        crate::theme::pressed_color(crate::theme::danger())
+    } else if close_hover {
         crate::theme::danger()
     } else {
         egui::Color32::TRANSPARENT
@@ -379,8 +396,12 @@ fn paint_window_buttons(
 
     // ── Maximize button ──
     let max_hover = maximize_rect.contains(ui.input(|i| i.pointer.hover_pos()).unwrap_or_default());
-    let max_bg = if max_hover {
-        crate::theme::border_dim()
+    let max_pressed =
+        max_hover && ui.input(|i| i.pointer.button_down(egui::PointerButton::Primary));
+    let max_bg = if max_pressed {
+        crate::theme::pressed_color(crate::theme::app_bg())
+    } else if max_hover {
+        crate::theme::hover_color(crate::theme::app_bg())
     } else {
         egui::Color32::TRANSPARENT
     };
@@ -410,8 +431,12 @@ fn paint_window_buttons(
 
     // ── Minimize button ──
     let min_hover = minimize_rect.contains(ui.input(|i| i.pointer.hover_pos()).unwrap_or_default());
-    let min_bg = if min_hover {
-        crate::theme::border_dim()
+    let min_pressed =
+        min_hover && ui.input(|i| i.pointer.button_down(egui::PointerButton::Primary));
+    let min_bg = if min_pressed {
+        crate::theme::pressed_color(crate::theme::app_bg())
+    } else if min_hover {
+        crate::theme::hover_color(crate::theme::app_bg())
     } else {
         egui::Color32::TRANSPARENT
     };

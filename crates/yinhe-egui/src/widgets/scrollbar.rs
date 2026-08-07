@@ -12,12 +12,14 @@ pub(crate) const SCROLLBAR_W: f32 = theme::SCROLLBAR_W;
 const EDGE_WIDTH: f32 = 4.0;
 
 /// 滚动条四色（运行时读取当前主题，不能是 const——getter 非 const fn）。
+/// hover/drag 用统一悬浮/按下增益，不再单独定义绝对色。
 fn colors() -> (egui::Color32, egui::Color32, egui::Color32, egui::Color32) {
+    let rect = theme::scrollbar_rect();
     (
         theme::scrollbar_bg(),
-        theme::scrollbar_rect(),
-        theme::scrollbar_hover(),
-        theme::scrollbar_drag(),
+        rect,
+        theme::hover_color(rect),
+        theme::pressed_color(rect),
     )
 }
 

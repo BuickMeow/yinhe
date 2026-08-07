@@ -14,8 +14,10 @@ pub fn horizontal(
     ui.painter().rect_filled(
         rect,
         0.0,
-        if resp.hovered() || resp.dragged() {
-            theme::split_hover()
+        if resp.dragged() {
+            theme::pressed_color(theme::split_default())
+        } else if resp.hovered() {
+            theme::hover_color(theme::split_default())
         } else {
             theme::split_default()
         },
@@ -38,8 +40,10 @@ pub fn vertical(
     ui.painter().rect_filled(
         rect,
         0.0,
-        if resp.hovered() || resp.dragged() {
-            theme::v_split_hover()
+        if resp.dragged() {
+            theme::pressed_color(theme::v_split_default())
+        } else if resp.hovered() {
+            theme::hover_color(theme::v_split_default())
         } else {
             theme::v_split_default()
         },

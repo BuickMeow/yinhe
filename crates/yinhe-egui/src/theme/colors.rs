@@ -53,7 +53,6 @@ theme_getters! {
     ruler_bg => ruler_bg,
     scrollbar_bg => scrollbar_bg,
     tab_inactive_bg => tab_inactive_bg,
-    tab_hover_bg => tab_hover_bg,
     tab_active_bg => tab_active_bg,
     text_primary => text_primary,
     text_bright => text_bright,
@@ -76,9 +75,7 @@ theme_getters! {
     hover_text => hover_text,
     marquee_color => marquee_color,
     preview_line => preview_line,
-    row_hover_tint => row_hover_tint,
     btn_bg => btn_bg,
-    btn_bg_hover => btn_bg_hover,
     border_dim => border_dim,
     danger_text => danger_text,
     danger_text_bright => danger_text_bright,
@@ -102,11 +99,7 @@ theme_getters! {
     ar_measure_line => ar_measure_line,
     ar_beat_line => ar_beat_line,
     scrollbar_rect => scrollbar_rect,
-    scrollbar_hover => scrollbar_hover,
-    scrollbar_drag => scrollbar_drag,
-    split_hover => split_hover,
     split_default => split_default,
-    v_split_hover => v_split_hover,
     v_split_default => v_split_default,
     cursor_color => cursor_color,
     timecode_bg => timecode_bg,
@@ -114,6 +107,16 @@ theme_getters! {
 
 pub fn marquee_fill_alpha() -> f32 {
     current().marquee_fill_alpha
+}
+
+/// 统一悬浮色：基色向主文字混入 12%（暗色主题变亮、亮色主题变暗）。
+pub fn hover_color(base: egui::Color32) -> egui::Color32 {
+    current().hovered(base)
+}
+
+/// 统一按下色：基色向主文字混入 24%（比悬浮更重一档）。
+pub fn pressed_color(base: egui::Color32) -> egui::Color32 {
+    current().pressed(base)
 }
 
 /// 当前主题是否暗基底（egui 原生控件 Visuals 选型用）。

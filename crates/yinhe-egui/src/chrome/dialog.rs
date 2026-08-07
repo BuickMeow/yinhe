@@ -67,10 +67,20 @@ pub(crate) fn content_with_bottom_buttons(
 }
 
 /// 绘制统一的 "X" 关闭按钮（对话框标题栏与文档 tab 共用）：
-/// hover 时红色底 + 图标变白，其余灰色。
-pub(crate) fn paint_close_button(painter: &egui::Painter, rect: egui::Rect, hovered: bool) {
+/// hover 时红色底 + 图标变白，按下时按统一按下增益加深，其余灰色。
+pub(crate) fn paint_close_button(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    hovered: bool,
+    pressed: bool,
+) {
     if hovered {
-        painter.rect_filled(rect, 4.0, crate::theme::danger_hover());
+        let bg = if pressed {
+            crate::theme::pressed_color(crate::theme::danger_hover())
+        } else {
+            crate::theme::danger_hover()
+        };
+        painter.rect_filled(rect, 4.0, bg);
     }
     painter.text(
         rect.center(),
@@ -115,7 +125,9 @@ pub(crate) fn title_bar(ui: &mut egui::Ui, title: &str, close: &mut bool) {
         );
         let close_hover =
             close_rect.contains(ui.input(|i| i.pointer.hover_pos()).unwrap_or_default());
-        paint_close_button(&ui.painter(), close_rect, close_hover);
+        let close_pressed =
+            close_hover && ui.input(|i| i.pointer.button_down(egui::PointerButton::Primary));
+        paint_close_button(&ui.painter(), close_rect, close_hover, close_pressed);
         if ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Primary))
             && close_rect.contains(ui.input(|i| i.pointer.interact_pos()).unwrap_or_default())
         {

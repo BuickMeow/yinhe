@@ -187,8 +187,11 @@ pub(crate) fn show(
                         // hover 用白色 3% 提亮（与主界面列表行一致），选中保持 ROW_SELECTED_BG
                         if response.hovered() && !is_selected {
                             let rect = response.rect;
-                            ui.painter()
-                                .rect_filled(rect, 0.0, crate::theme::row_hover_tint());
+                            ui.painter().rect_filled(
+                                rect,
+                                0.0,
+                                crate::theme::hover_color(crate::theme::app_bg()),
+                            );
                         }
 
                         if response.clicked() {

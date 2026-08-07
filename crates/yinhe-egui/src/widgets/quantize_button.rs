@@ -43,6 +43,16 @@ pub fn show(ui: &mut egui::Ui, ctx: QuantizeBtnCtx) -> Option<QuantizePreset> {
     let btn_resp = ui.interact(btn_rect, egui::Id::new(id_salt), egui::Sense::click());
     let hovered = btn_resp.hovered();
 
+    // 统一悬浮/按下底色（图标按钮与 hover_highlight 同款）
+    if hovered {
+        let bg = if btn_resp.is_pointer_button_down_on() {
+            crate::theme::pressed_color(crate::theme::app_bg())
+        } else {
+            crate::theme::hover_color(crate::theme::app_bg())
+        };
+        ui.painter().rect_filled(btn_rect, 4.0, bg);
+    }
+
     let icon_color = if hovered {
         crate::theme::hover_text()
     } else {

@@ -247,6 +247,17 @@ impl eframe::App for App {
             visuals.panel_fill = crate::theme::app_bg();
             // 选中高亮色统一为 ROW_SELECTED_BG
             visuals.selection.bg_fill = crate::theme::row_selected_bg();
+            // egui 原生控件（Button/ComboBox/Slider/Checkbox 等）三态统一：
+            // inactive = btn_bg，hover/active 用统一增益
+            let btn = crate::theme::btn_bg();
+            visuals.widgets.inactive.bg_fill = btn;
+            visuals.widgets.inactive.weak_bg_fill = crate::theme::app_bg();
+            visuals.widgets.hovered.bg_fill = crate::theme::hover_color(btn);
+            visuals.widgets.hovered.weak_bg_fill =
+                crate::theme::hover_color(crate::theme::app_bg());
+            visuals.widgets.active.bg_fill = crate::theme::pressed_color(btn);
+            visuals.widgets.active.weak_bg_fill =
+                crate::theme::pressed_color(crate::theme::app_bg());
             visuals
         });
 

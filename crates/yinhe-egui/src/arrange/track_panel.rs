@@ -119,7 +119,11 @@ pub(crate) fn show(
         if selected {
             painter.rect_filled(row_rect, 0.0, ui.visuals().selection.bg_fill);
         } else if row_rect.contains(ui.input(|i| i.pointer.hover_pos().unwrap_or_default())) {
-            painter.rect_filled(row_rect, 0.0, crate::theme::row_hover_tint());
+            painter.rect_filled(
+                row_rect,
+                0.0,
+                crate::theme::hover_color(crate::theme::app_bg()),
+            );
         }
 
         let color = track_colors
@@ -533,19 +537,25 @@ fn draw_inline_button(
 ) -> egui::Response {
     let resp = ui.interact(rect, id, egui::Sense::click());
     let hovered = resp.hovered();
+    let pressed = resp.is_pointer_button_down_on();
 
     let (fill, text_col) = if active {
-        let f = if hovered {
-            active_color.gamma_multiply(1.15)
+        let f = if pressed {
+            crate::theme::pressed_color(active_color)
+        } else if hovered {
+            crate::theme::hover_color(active_color)
         } else {
             active_color
         };
         (f, egui::Color32::BLACK)
     } else {
-        let f = if hovered {
-            crate::theme::btn_bg_hover()
+        let base = crate::theme::btn_bg();
+        let f = if pressed {
+            crate::theme::pressed_color(base)
+        } else if hovered {
+            crate::theme::hover_color(base)
         } else {
-            crate::theme::btn_bg()
+            base
         };
         (f, crate::theme::text_secondary())
     };

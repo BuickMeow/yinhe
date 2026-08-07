@@ -34,7 +34,6 @@ pub struct Theme {
     pub ruler_bg: Color32,
     pub scrollbar_bg: Color32,
     pub tab_inactive_bg: Color32,
-    pub tab_hover_bg: Color32,
     pub tab_active_bg: Color32,
     // ── 文字灰阶（从 text 标准色派生） ──
     pub text_primary: Color32,
@@ -59,10 +58,8 @@ pub struct Theme {
     pub hover_text: Color32,
     pub marquee_color: Color32,
     pub preview_line: Color32,
-    pub row_hover_tint: Color32,
     // ── 按钮 / 边框 ──
     pub btn_bg: Color32,
-    pub btn_bg_hover: Color32,
     pub border_dim: Color32,
     // ── 语义色 ──
     pub danger: Color32,
@@ -90,11 +87,7 @@ pub struct Theme {
     pub ar_beat_line: Color32,
     // ── 滚动条 / 分割条 ──
     pub scrollbar_rect: Color32,
-    pub scrollbar_hover: Color32,
-    pub scrollbar_drag: Color32,
-    pub split_hover: Color32,
     pub split_default: Color32,
-    pub v_split_hover: Color32,
     pub v_split_default: Color32,
     // ── 光标 / 选框 ──
     pub cursor_color: Color32,
@@ -106,10 +99,22 @@ pub struct Theme {
     pub dark_mode: bool,
 }
 
+impl Theme {
+    /// 统一悬浮色：基色向主文字混入 12%（暗色主题变亮、亮色主题变暗，方向自动）。
+    pub fn hovered(&self, base: Color32) -> Color32 {
+        mix(base, self.text_primary, 0.12)
+    }
+
+    /// 统一按下色：基色向主文字混入 24%（比悬浮更重一档）。
+    pub fn pressed(&self, base: Color32) -> Color32 {
+        mix(base, self.text_primary, 0.24)
+    }
+}
+
 // ── 颜色工具（sRGB 空间近似，够主题派生用） ──
 
 /// 线性插值（sRGB 编码空间近似）。
-fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
+pub fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
     let t = t.clamp(0.0, 1.0);
     Color32::from_rgba_premultiplied(
         (a.r() as f32 * (1.0 - t) + b.r() as f32 * t) as u8,
@@ -169,10 +174,8 @@ pub fn derive_theme(base: crate::base::BaseColors) -> Theme {
 
     // 面板底色：背景与文字按比例混合（暗主题提亮、亮主题压暗，方向自动正确）
     let mix_tab_inactive = mix(bg, text, 0.05);
-    let mix_tab_hover = mix(bg, text, 0.12);
     let mix_tab_active = mix(bg, text, 0.15);
     let mix_btn_bg = mix(bg, text, 0.105);
-    let mix_btn_bg_hover = mix(bg, text, 0.23);
     let mix_action_bar = mix(bg, text, 0.03);
     let mix_ruler_divider = mix(bg, text, 0.18);
     let mix_tick_label = mix(bg, text, 0.22);
@@ -184,10 +187,7 @@ pub fn derive_theme(base: crate::base::BaseColors) -> Theme {
     let mix_ar_measure = mix(bg, text, 0.27);
     let mix_ar_beat = mix(bg, text, 0.13);
     let mix_scrollbar_rect = mix(bg, text, 0.28);
-    let mix_scrollbar_hover = mix(bg, text, 0.45);
-    let mix_scrollbar_drag = mix(bg, text, 0.61);
     let mix_measure_label = shade(text, 0.77);
-    let mix_row_hover = mix(bg, text, 0.03);
 
     // 危险系：危险色与文字/对比色混合得到浅红/暗红档位（同色相）
     let danger_text = mix(danger, text, 0.28);
@@ -211,7 +211,6 @@ pub fn derive_theme(base: crate::base::BaseColors) -> Theme {
         ruler_bg: bg,
         scrollbar_bg: bg,
         tab_inactive_bg: mix_tab_inactive,
-        tab_hover_bg: mix_tab_hover,
         tab_active_bg: mix_tab_active,
         text_primary,
         text_bright,
@@ -234,9 +233,7 @@ pub fn derive_theme(base: crate::base::BaseColors) -> Theme {
         hover_text: contrast,
         marquee_color: contrast,
         preview_line: contrast,
-        row_hover_tint: mix_row_hover,
         btn_bg: mix_btn_bg,
-        btn_bg_hover: mix_btn_bg_hover,
         border_dim,
         danger,
         danger_text,
@@ -261,11 +258,7 @@ pub fn derive_theme(base: crate::base::BaseColors) -> Theme {
         ar_measure_line: mix_ar_measure,
         ar_beat_line: mix_ar_beat,
         scrollbar_rect: mix_scrollbar_rect,
-        scrollbar_hover: mix_scrollbar_hover,
-        scrollbar_drag: mix_scrollbar_drag,
-        split_hover: text_hint,
         split_default: border_dim,
-        v_split_hover: text_muted,
         v_split_default: border_dim,
         cursor_color: Color32::from_rgba_premultiplied(
             contrast.r(),
