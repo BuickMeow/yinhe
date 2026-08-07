@@ -12,8 +12,8 @@ use yinhe_types::{KeySigEvent, PianoRollView};
 ///
 /// 按可见 tick 范围分段渲染：
 /// - 第一个调号事件**之前**的区间：无调号模式（黑键行色带，无根音高亮）
-/// - 每个调号事件生效区间：调内音用背景色（不画），调外音用 `PR_SCALE_OUTSIDE` 暗色，
-///   根音用 `PR_ROOT_NOTE` 深蓝
+/// - 每个调号事件生效区间：调内/调外音统一用黑白键条纹（黑键行条纹色、白键行背景色），
+///   仅根音行用 `PR_ROOT_NOTE` 深蓝高亮
 /// - 工程无任何调号事件：全部走无调号模式
 #[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 pub fn paint(
@@ -91,7 +91,8 @@ fn paint_scale_background(
     let tick_start = tick_start.max(0.0);
     let tick_end = tick_end.max(tick_start);
 
-    let outside_color = crate::theme::pr_scale_outside().gamma_multiply(content_opacity);
+    // 调内/调外音统一用黑白键条纹（黑键行条纹色、白键行背景色）；根音行用蓝色高亮
+    let bk_color = crate::theme::pr_black_key_row();
     let root_color = crate::theme::pr_root_note().gamma_multiply(content_opacity);
     let ppt = view.base.pixels_per_tick;
     let scroll_x = view.base.scroll_x;
@@ -113,7 +114,7 @@ fn paint_scale_background(
     // 遍历可见调号区间
     let mut idx = start_idx;
     loop {
-        let (root, scale) = (key_sig_events[idx].root, key_sig_events[idx].scale);
+        let root = key_sig_events[idx].root;
         let seg_end = if idx + 1 < key_sig_events.len() {
             (key_sig_events[idx + 1].tick as f64).min(tick_end)
         } else {
@@ -127,15 +128,14 @@ fn paint_scale_background(
             let seg_w = x_end - x_start;
 
             if seg_w > 0.0 {
-                let pitch_mask = scale.pitch_classes(root);
                 for key in key_lo..=key_hi {
                     let pc = key % 12;
                     let color = if pc == root {
-                        root_color
-                    } else if pitch_mask & (1u16 << pc) != 0 {
-                        continue; // 调内音，用背景色（不画）
+                        root_color // 根音高亮
+                    } else if yinhe_types::is_black_key(key) {
+                        bk_color // 黑键行条纹（调内/调外统一）
                     } else {
-                        outside_color
+                        continue; // 白键行 = 背景色
                     };
                     let y = bottom - (key as f32 + 1.0) * kh;
                     let screen_y = content_rect.min.y + y;
