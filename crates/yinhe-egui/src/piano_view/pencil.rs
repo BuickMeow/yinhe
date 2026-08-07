@@ -564,7 +564,7 @@ pub(crate) fn pencil_frame(
 }
 
 /// 查音符的 velocity（预览用）：按 (track, start_tick, key) 定位。
-fn note_velocity(
+pub(crate) fn note_velocity(
     midi: Option<&dyn yinhe_types::NoteSource>,
     track: u16,
     start_tick: u32,

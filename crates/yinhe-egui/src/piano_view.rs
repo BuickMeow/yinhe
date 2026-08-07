@@ -247,28 +247,29 @@ pub fn show(
         std::collections::HashSet::new();
     if *active_tool == Tool::Select || *active_tool == Tool::SelectVertical {
         let vertical = *active_tool == Tool::SelectVertical;
-        let (sel_ghosts, sel_hidden, sel_previews, sel_note_event) = drag::sel_drag_frame(
-            ui,
-            content_rect,
-            music_rect,
-            view,
-            midi,
-            selected,
-            quantize,
-            ppq,
-            bar_line_data,
-            total_ticks,
-            cursor_tick,
-            feedback.note_drag_delta,
-            feedback.note_resize_delta,
-            sel_rect,
-            track_colors,
-            track_visible,
-            track_selected,
-            editing_track,
-            conductor_idx,
-            vertical,
-        );
+        let (sel_ghosts, sel_hidden, sel_previews, sel_note_event, sel_pencil_drag) =
+            drag::sel_drag_frame(
+                ui,
+                content_rect,
+                music_rect,
+                view,
+                midi,
+                selected,
+                quantize,
+                ppq,
+                bar_line_data,
+                total_ticks,
+                cursor_tick,
+                feedback.note_drag_delta,
+                feedback.note_resize_delta,
+                sel_rect,
+                track_colors,
+                track_visible,
+                track_selected,
+                editing_track,
+                conductor_idx,
+                vertical,
+            );
         ghost_notes = sel_ghosts;
         hidden_notes = sel_hidden.into_iter().collect();
         feedback.preview_reqs.extend(sel_previews);
@@ -276,6 +277,8 @@ pub fn show(
         if let Some((note, track)) = sel_note_event {
             pencil_event = Some(PianoViewEvent::AddNote { track, note });
         }
+        // 单音符边缘伸缩（选择工具，不用先选中）：复用铅笔的提交通道。
+        *feedback.pencil_note_drag = sel_pencil_drag;
     } else if *active_tool == Tool::Pencil {
         let (note_event, ghost, hidden, pencil_drag, preview) = pencil::pencil_frame(
             ui,
@@ -326,9 +329,21 @@ pub fn show(
     {
         let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
         let eff_rects = sel_rect.effective_rects();
-        // 边缘检测优先（与 press 逻辑一致）
-        let edge_hit = drag::hit_test_sel_edge(&eff_rects, &view.base, view.key_height, local);
-        if let Some((side, _, _)) = edge_hit {
+        // 音符边缘优先（不用先选中，与铅笔一致）——hover 音符左右边缘显示伸缩光标。
+        if let Some((side, _, _, _, _)) =
+            drag::hit_test_note_edge(midi, view, local, track_visible, track_selected)
+        {
+            match side {
+                yinhe_editor_core::ResizeSide::Left => {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeWest)
+                }
+                yinhe_editor_core::ResizeSide::Right => {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeEast)
+                }
+            }
+        } else if let Some((side, _, _)) =
+            drag::hit_test_sel_edge(&eff_rects, &view.base, view.key_height, local)
+        {
             match side {
                 yinhe_editor_core::ResizeSide::Left => {
                     ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeWest)
