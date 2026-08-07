@@ -5,6 +5,18 @@ use yinhe_theme::base::{BaseColors, Rgba};
 
 use crate::audio_settings::AudioSettings;
 
+// ── 设置分类（左侧导航，顺序即 settings_tab 索引） ──
+
+const CATEGORY_KEYS: [&str; 7] = [
+    "settings.cat.theme",
+    "settings.cat.language",
+    "settings.cat.audio",
+    "settings.cat.render",
+    "settings.cat.midi",
+    "settings.cat.display",
+    "settings.cat.general",
+];
+
 /// 编辑一个标准色（egui 取色器 ↔ 主题 Rgba）。
 fn edit_std_color(ui: &mut egui::Ui, label: &str, rgba: &mut Rgba) -> bool {
     ui.label(label);
@@ -16,50 +28,11 @@ fn edit_std_color(ui: &mut egui::Ui, label: &str, rgba: &mut Rgba) -> bool {
     changed
 }
 
-/// Show the settings dialog content inside an existing Ui.
-/// Returns `true` if settings were changed.
-pub fn show_content(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
+// ── 各分类内容 ──
+
+fn show_theme_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
     let mut changed = false;
 
-    ui.heading(t!("settings.language").as_ref());
-    ui.add_space(8.0);
-
-    egui::Grid::new("language_grid")
-        .num_columns(2)
-        .spacing([12.0, 8.0])
-        .show(ui, |ui| {
-            ui.label(t!("settings.language").as_ref());
-            let locales = [
-                ("zh-CN", "简体中文"),
-                ("en", "English"),
-                ("ja", "日本語"),
-                ("ko", "한국어"),
-            ];
-            let current = locales
-                .iter()
-                .find(|(code, _)| *code == settings.locale)
-                .map(|(_, name)| *name)
-                .unwrap_or("简体中文");
-            egui::ComboBox::from_id_salt("locale_select")
-                .selected_text(current)
-                .show_ui(ui, |ui| {
-                    for (code, name) in locales {
-                        let selected = settings.locale == code;
-                        if ui.selectable_label(selected, name).clicked() {
-                            settings.locale = code.to_string();
-                            rust_i18n::set_locale(code);
-                            changed = true;
-                        }
-                    }
-                });
-            ui.end_row();
-        });
-
-    ui.add_space(16.0);
-    ui.separator();
-    ui.add_space(8.0);
-
-    // ── 主题：预设 + 7 个标准色（改色实时生效） ──
     ui.heading(t!("settings.theme.heading").as_ref());
     ui.add_space(8.0);
 
@@ -134,11 +107,48 @@ pub fn show_content(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
         crate::theme::set_theme(base);
         changed = true;
     }
+    changed
+}
 
-    ui.add_space(16.0);
-    ui.separator();
+fn show_language_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
+    let mut changed = false;
+    ui.heading(t!("settings.language").as_ref());
     ui.add_space(8.0);
+    egui::Grid::new("language_grid")
+        .num_columns(2)
+        .spacing([12.0, 8.0])
+        .show(ui, |ui| {
+            ui.label(t!("settings.language").as_ref());
+            let locales = [
+                ("zh-CN", "简体中文"),
+                ("en", "English"),
+                ("ja", "日本語"),
+                ("ko", "한국어"),
+            ];
+            let current = locales
+                .iter()
+                .find(|(code, _)| *code == settings.locale)
+                .map(|(_, name)| *name)
+                .unwrap_or("简体中文");
+            egui::ComboBox::from_id_salt("locale_select")
+                .selected_text(current)
+                .show_ui(ui, |ui| {
+                    for (code, name) in locales {
+                        let selected = settings.locale == code;
+                        if ui.selectable_label(selected, name).clicked() {
+                            settings.locale = code.to_string();
+                            rust_i18n::set_locale(code);
+                            changed = true;
+                        }
+                    }
+                });
+            ui.end_row();
+        });
+    changed
+}
 
+fn show_audio_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
+    let mut changed = false;
     ui.heading(t!("settings.audio.heading").as_ref());
     ui.add_space(8.0);
 
@@ -271,11 +281,11 @@ pub fn show_content(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
                 });
             ui.end_row();
         });
+    changed
+}
 
-    ui.add_space(16.0);
-    ui.separator();
-    ui.add_space(8.0);
-
+fn show_render_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
+    let mut changed = false;
     ui.heading(t!("settings.render.heading").as_ref());
     ui.add_space(8.0);
 
@@ -340,14 +350,13 @@ pub fn show_content(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
             }
             ui.end_row();
         });
+    changed
+}
 
-    ui.add_space(16.0);
-    ui.separator();
-    ui.add_space(8.0);
-
+fn show_midi_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
+    let mut changed = false;
     ui.heading(t!("settings.midi_import.heading").as_ref());
     ui.add_space(8.0);
-
     egui::Grid::new("midi_import_grid")
         .num_columns(2)
         .spacing([12.0, 8.0])
@@ -366,26 +375,63 @@ pub fn show_content(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
                 });
             ui.end_row();
         });
+    changed
+}
+
+fn show_display_tab(
+    ui: &mut egui::Ui,
+    settings: &mut AudioSettings,
+    main_ctx: &egui::Context,
+) -> bool {
+    let mut changed = false;
+    ui.heading(t!("settings.display.heading").as_ref());
+    ui.add_space(8.0);
+
+    egui::Grid::new("display_settings_grid")
+        .num_columns(2)
+        .spacing([12.0, 8.0])
+        .show(ui, |ui| {
+            ui.label(t!("settings.display.ui_scale").as_ref());
+            ui.horizontal(|ui| {
+                let mut scale = settings.ui_scale;
+                if ui
+                    .add(egui::Slider::new(&mut scale, 0.75..=2.0).step_by(0.05))
+                    .changed()
+                {
+                    settings.ui_scale = scale;
+                    main_ctx.set_zoom_factor(scale);
+                    changed = true;
+                }
+                if ui
+                    .button(t!("settings.display.reset_scale").as_ref())
+                    .clicked()
+                {
+                    settings.ui_scale = 1.0;
+                    main_ctx.set_zoom_factor(1.0);
+                    changed = true;
+                }
+            });
+            ui.end_row();
+        });
+    changed
+}
+
+fn show_general_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
+    let mut changed = false;
+    ui.heading(t!("settings.general.heading").as_ref());
+    ui.add_space(8.0);
+
+    if ui.button(t!("settings.refresh_devices").as_ref()).clicked() {
+        let devices = crate::audio_settings::list_output_devices();
+        let (default_rate, rates) = crate::audio_settings::discover_sample_rates();
+        settings.refresh_devices(devices, rates, default_rate);
+    }
 
     ui.add_space(16.0);
     ui.separator();
     ui.add_space(8.0);
 
     ui.horizontal(|ui| {
-        if ui.button(t!("settings.refresh_devices").as_ref()).clicked() {
-            let devices = crate::audio_settings::list_output_devices();
-            let (default_rate, rates) = crate::audio_settings::discover_sample_rates();
-            settings.refresh_devices(devices, rates, default_rate);
-        }
-    });
-
-    ui.add_space(16.0);
-    ui.separator();
-    ui.add_space(8.0);
-
-    // ── Factory reset button ──
-    ui.horizontal(|ui| {
-        ui.add_space(ui.available_width() / 2.0 - 80.0);
         if ui
             .button(
                 egui::RichText::new(t!("settings.factory_reset").as_ref())
@@ -402,6 +448,48 @@ pub fn show_content(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
             settings.available_sample_rates = rates;
             changed = true;
         }
+    });
+    changed
+}
+
+/// Show the settings dialog content inside an existing Ui.
+/// Returns `true` if settings were changed.
+pub fn show_content(
+    ui: &mut egui::Ui,
+    settings: &mut AudioSettings,
+    main_ctx: &egui::Context,
+) -> bool {
+    let mut changed = false;
+
+    ui.horizontal(|ui| {
+        // ── 左侧：分类导航（窄） ──
+        ui.vertical(|ui| {
+            ui.set_width(132.0);
+            for (i, key) in CATEGORY_KEYS.iter().enumerate() {
+                let selected = settings.settings_tab == i;
+                if ui.selectable_label(selected, t!(*key).as_ref()).clicked() {
+                    settings.settings_tab = i;
+                }
+            }
+        });
+
+        ui.add_space(4.0);
+        ui.separator();
+        ui.add_space(8.0);
+
+        // ── 右侧：当前分类内容（宽） ──
+        ui.vertical(|ui| {
+            ui.set_width(ui.available_width());
+            match settings.settings_tab {
+                0 => changed |= show_theme_tab(ui, settings),
+                1 => changed |= show_language_tab(ui, settings),
+                2 => changed |= show_audio_tab(ui, settings),
+                3 => changed |= show_render_tab(ui, settings),
+                4 => changed |= show_midi_tab(ui, settings),
+                5 => changed |= show_display_tab(ui, settings, main_ctx),
+                _ => changed |= show_general_tab(ui, settings),
+            }
+        });
     });
 
     changed
@@ -420,13 +508,14 @@ pub(crate) fn show_viewport(
     let prev_xsynth_layers = settings.xsynth_layers;
     let settings_rc = std::rc::Rc::new(std::cell::RefCell::new(Some(std::mem::take(settings))));
     let ctx_clone = ctx.clone();
+    let main_ctx = ctx.clone(); // 闭包内使用（zoom_factor 设在主窗口 ctx）
     let settings_cb = settings_rc.clone();
 
     ctx_clone.show_viewport_immediate(
         viewport_id,
         crate::chrome::dialog::viewport_builder(
             t!("settings.title").as_ref(),
-            [480.0, 560.0],
+            [760.0, 620.0],
             true,
         ),
         move |vctx, _class| {
@@ -458,7 +547,7 @@ pub(crate) fn show_viewport(
                                 eframe::egui::ScrollArea::vertical()
                                     .auto_shrink([false; 2])
                                     .show(ui, |ui| {
-                                        let changed = show_content(ui, s);
+                                        let changed = show_content(ui, s, &main_ctx);
                                         if changed {
                                             s.save();
                                         }

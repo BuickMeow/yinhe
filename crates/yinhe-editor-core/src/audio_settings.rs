@@ -40,8 +40,13 @@ pub struct AudioSettings {
     pub theme_base: yinhe_theme::base::BaseColors,
     /// 主题预设名（"dark"/"light"/"custom"）。
     pub theme_preset: String,
+    /// UI 缩放倍率（egui zoom_factor，0.75~2.0，1.0 = 100%）。
+    pub ui_scale: f32,
     #[serde(skip)]
     pub show_settings: bool,
+    /// 设置页当前选中的分类（左侧导航）。
+    #[serde(skip)]
+    pub settings_tab: usize,
     #[serde(skip)]
     pub available_devices: Vec<String>,
     #[serde(skip)]
@@ -67,7 +72,9 @@ impl Default for AudioSettings {
             locale: "zh-CN".to_string(),
             theme_base: yinhe_theme::base::BaseColors::DARK,
             theme_preset: "dark".to_string(),
+            ui_scale: 1.0, // UI 缩放（egui zoom_factor，1.0 = 100%）
             show_settings: false,
+            settings_tab: 0,
             available_devices: Vec::new(),
             available_sample_rates: Vec::new(),
         }
