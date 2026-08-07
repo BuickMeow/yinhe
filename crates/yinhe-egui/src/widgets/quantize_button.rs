@@ -28,14 +28,6 @@ pub fn show(ui: &mut egui::Ui, ctx: QuantizeBtnCtx) -> Option<QuantizePreset> {
     // 背景矩形：与 ruler 带对齐
     ui.painter()
         .rect_filled(corner_rect, 0.0, crate::theme::app_bg());
-    // 右侧分隔线（与 ruler 对齐）
-    ui.painter().line_segment(
-        [
-            egui::pos2(corner_rect.max.x, corner_rect.min.y),
-            egui::pos2(corner_rect.max.x, corner_rect.max.y),
-        ],
-        egui::Stroke::new(1.0, crate::theme::ruler_divider()),
-    );
 
     let btn_size = 20.0;
     let btn_rect =

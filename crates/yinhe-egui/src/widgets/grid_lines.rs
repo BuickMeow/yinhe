@@ -26,7 +26,7 @@ impl GridColors {
     pub fn pianoroll() -> Self {
         Self {
             measure: theme::grid_measure(),
-            beat: theme::grid_beat(),
+            beat: theme::line_fg(),
             sub_beat: Some(theme::grid_sub_beat()),
             tick: Some(theme::grid_sub_beat()),
         }
@@ -36,7 +36,7 @@ impl GridColors {
     pub fn arrangement() -> Self {
         Self {
             measure: theme::grid_measure(),
-            beat: theme::grid_beat(),
+            beat: theme::line_fg(),
             sub_beat: None,
             tick: None,
         }

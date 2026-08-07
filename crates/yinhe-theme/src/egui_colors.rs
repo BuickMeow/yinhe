@@ -67,17 +67,17 @@ pub struct Theme {
     pub mute_active: Color32,
     pub solo_active: Color32,
     // ── 标尺 / 网格线 ──
-    pub ruler_divider: Color32,
     pub measure_label: Color32,
     pub beat_label: Color32,
     pub sub_beat_label: Color32,
     pub tick_label: Color32,
     pub grid_measure: Color32,
-    pub grid_beat: Color32,
     pub grid_sub_beat: Color32,
     pub stripe_bg: Color32,
     // ── 滚动条 / 分割条 ──
     pub thumb_bg: Color32,
+    /// 线条统一色（egui 原生控件描边、分割条、网格中间档；bg+15%）。
+    pub line_fg: Color32,
     // ── 光标 / 选框 ──
     pub cursor_fg: Color32,
     pub marquee_fill_alpha: f32,
@@ -166,11 +166,11 @@ pub fn derive_theme(base: crate::base::BaseColors) -> Theme {
     let mix_control_selected = mix(bg, text, 0.15);
     let mix_btn_bg = mix(bg, text, 0.105);
     let mix_raised = mix(bg, text, 0.03);
-    let mix_ruler_divider = mix(bg, text, 0.18);
     let mix_tick_label = mix(bg, text, 0.22);
-    let mix_grid_measure = mix(bg, text, 0.33);
-    let mix_grid_beat = mix(bg, text, 0.16);
+    let mix_grid_measure = mix(bg, text, 0.30);
     let mix_grid_sub_beat = mix(bg, text, 0.08);
+    // 线条统一色：egui 原生描边/分割条/网格中间档
+    let mix_line = mix(bg, text, 0.15);
     // 条纹着色行：比 app_bg 更黑一档（色差小，深色主题基准）
     let mix_stripe = mix(bg, Color32::BLACK, 0.10);
     let mix_thumb = mix(bg, text, 0.28);
@@ -226,16 +226,15 @@ pub fn derive_theme(base: crate::base::BaseColors) -> Theme {
         warning_gold,
         mute_active: warning,
         solo_active: danger_text,
-        ruler_divider: mix_ruler_divider,
         measure_label: mix_measure_label,
         beat_label: text_dim,
         sub_beat_label: text_label_dim,
         tick_label: mix_tick_label,
         grid_sub_beat: mix_grid_sub_beat,
         grid_measure: mix_grid_measure,
-        grid_beat: mix_grid_beat,
         stripe_bg: mix_stripe,
         thumb_bg: mix_thumb,
+        line_fg: mix_line,
         cursor_fg: Color32::from_rgba_premultiplied(
             contrast.r(),
             contrast.g(),

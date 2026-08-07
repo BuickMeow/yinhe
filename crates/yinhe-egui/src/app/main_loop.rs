@@ -248,8 +248,9 @@ impl eframe::App for App {
             // 选中高亮色统一为 ROW_SELECTED_BG
             visuals.selection.bg_fill = crate::theme::selected_bg();
             // egui 原生控件（Button/ComboBox/Slider/Checkbox 等）三态统一：
-            // inactive = btn_bg，hover/active 用统一增益
+            // inactive = btn_bg，hover/active 用统一增益；描边统一 line_fg
             let btn = crate::theme::btn_bg();
+            let line = crate::theme::line_fg();
             visuals.widgets.inactive.bg_fill = btn;
             visuals.widgets.inactive.weak_bg_fill = crate::theme::app_bg();
             visuals.widgets.hovered.bg_fill = crate::theme::hover_color(btn);
@@ -258,6 +259,17 @@ impl eframe::App for App {
             visuals.widgets.active.bg_fill = crate::theme::pressed_color(btn);
             visuals.widgets.active.weak_bg_fill =
                 crate::theme::pressed_color(crate::theme::app_bg());
+            // 原生描边/滑轨线（Slider rail、ComboBox 边框等）统一为 line_fg
+            visuals.widgets.inactive.fg_stroke = egui::Stroke::new(1.0, line);
+            visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, line);
+            visuals.widgets.hovered.fg_stroke =
+                egui::Stroke::new(1.0, crate::theme::hover_color(line));
+            visuals.widgets.hovered.bg_stroke =
+                egui::Stroke::new(1.0, crate::theme::hover_color(line));
+            visuals.widgets.active.fg_stroke =
+                egui::Stroke::new(1.0, crate::theme::pressed_color(line));
+            visuals.widgets.active.bg_stroke =
+                egui::Stroke::new(1.0, crate::theme::pressed_color(line));
             visuals
         });
 

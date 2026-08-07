@@ -220,7 +220,7 @@ fn paint_octave_lines(
     kh: f32,
     view: &PianoRollView,
 ) {
-    let octave_line = crate::theme::grid_beat();
+    let octave_line = crate::theme::line_fg();
     let content_left = content_rect.min.x + kb_w;
     let bottom = 128.0 * kh - view.base.scroll_y;
     for key in (0u8..128).step_by(12) {
