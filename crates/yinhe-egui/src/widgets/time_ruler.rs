@@ -159,9 +159,10 @@ pub(crate) fn interactive_ruler(
         }
 
         // 滚轮 / 触摸板上下滑动 → 水平缩放（无需 Cmd）
+        // 方向：上滚 = 放大，下滚 = 缩小（与内容区一致）
         let scroll = ui.input(|i| i.smooth_scroll_delta);
         if scroll.y.abs() > 0.5 {
-            let factor = if scroll.y > 0.0 { 1.1 } else { 1.0 / 1.1 };
+            let factor = if scroll.y > 0.0 { 1.0 / 1.1 } else { 1.1 };
             view.zoom_around_x(pointer_x_view, factor);
             view.mark_dirty();
             ui.ctx().request_repaint();

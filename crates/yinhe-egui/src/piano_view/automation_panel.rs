@@ -775,7 +775,8 @@ fn handle_panel_scroll_zoom(
         }
         // Cmd+滚轮 → 水平缩放（联动 pianoroll）
         if cmd && scroll_delta.y.abs() > 0.5 {
-            let factor = if scroll_delta.y > 0.0 { 1.1 } else { 1.0 / 1.1 };
+            // 方向：上滚 = 放大，下滚 = 缩小（与 PR 内容区/滚动条一致）
+            let factor = if scroll_delta.y > 0.0 { 1.0 / 1.1 } else { 1.1 };
             feedback.zoom_factor = factor;
             feedback.zoom_center_x = p.x - panel_rect.min.x;
         }
@@ -810,7 +811,8 @@ fn handle_panel_scroll_zoom(
         }
         // Cmd+滚轮 → 垂直缩放
         if cmd && scroll_delta.y.abs() > 0.5 {
-            let factor = if scroll_delta.y > 0.0 { 1.1 } else { 1.0 / 1.1 };
+            // 方向：上滚 = 放大，下滚 = 缩小（与 PR 内容区/滚动条一致）
+            let factor = if scroll_delta.y > 0.0 { 1.0 / 1.1 } else { 1.1 };
             apply_vertical_zoom(panel, factor);
         }
     }

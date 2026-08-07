@@ -159,14 +159,15 @@ pub(crate) fn handle_input(
             let in_left_zone = pointer_x < left_zone_width;
             if in_left_zone {
                 // 左区：滚轮垂直缩放（与原 kb_zoom 一致，cmd 不改变语义）
+                // 方向：上滚 = 放大，下滚 = 缩小（与滚动条缩放一致）
                 if scroll.y.abs() > 0.5 {
-                    let factor = if scroll.y > 0.0 { 1.1 } else { 1.0 / 1.1 };
+                    let factor = if scroll.y > 0.0 { 1.0 / 1.1 } else { 1.1 };
                     view.zoom_around_y(pointer_y, factor, rect.height());
                 }
             } else if cmd {
-                // 右区 cmd+scroll.y: 水平缩放
+                // 右区 cmd+scroll.y: 水平缩放（上滚 = 放大，下滚 = 缩小）
                 if scroll.y.abs() > 0.5 {
-                    let factor = if scroll.y > 0.0 { 1.1 } else { 1.0 / 1.1 };
+                    let factor = if scroll.y > 0.0 { 1.0 / 1.1 } else { 1.1 };
                     view.zoom_around_x(pointer_x, factor);
                 }
             } else {
