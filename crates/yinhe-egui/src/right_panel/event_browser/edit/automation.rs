@@ -195,7 +195,7 @@ fn show_auto_shape_popup(
                 ui.label(
                     egui::RichText::new(t!("event_browser.edit_shape").as_ref())
                         .strong()
-                        .size(11.0),
+                        .size(crate::theme::SMALL_FONT),
                 );
                 ui.add_space(2.0);
 
@@ -226,7 +226,7 @@ fn show_auto_shape_popup(
                         ui.horizontal(|ui| {
                             ui.label(
                                 egui::RichText::new(labels[i])
-                                    .size(11.0)
+                                    .size(crate::theme::SMALL_FONT)
                                     .color(crate::theme::TEXT_LABEL),
                             );
                             ui.add(

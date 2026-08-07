@@ -219,7 +219,7 @@ pub(crate) fn show(
                     icon_rect.center(),
                     egui::Align2::CENTER_CENTER,
                     ICON_EDIT.codepoint,
-                    egui::FontId::new(14.0, ICON_EDIT.font_family()),
+                    egui::FontId::new(crate::theme::ICON_FONT, ICON_EDIT.font_family()),
                     crate::theme::TEXT_BRIGHT,
                 );
             }
@@ -471,7 +471,7 @@ fn draw_inline_button(
         rect.center(),
         egui::Align2::CENTER_CENTER,
         label,
-        egui::FontId::proportional(11.0),
+        egui::FontId::proportional(crate::theme::SMALL_FONT),
         text_col,
     );
 

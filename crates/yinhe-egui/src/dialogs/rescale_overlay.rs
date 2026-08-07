@@ -66,7 +66,7 @@ pub(crate) fn show_viewport(
                                     if !state.label.is_empty() {
                                         ui.label(
                                             egui::RichText::new(&state.label)
-                                                .size(11.0)
+                                                .size(crate::theme::SMALL_FONT)
                                                 .color(crate::theme::TEXT_MUTED),
                                         );
                                     }

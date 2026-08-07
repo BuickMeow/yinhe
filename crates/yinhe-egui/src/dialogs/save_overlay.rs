@@ -55,7 +55,10 @@ pub(crate) fn show_viewport(ctx: &egui::Context, stage: YinProgressStage, fracti
                                     .desired_width(crate::theme::PROGRESS_BAR_WIDTH)
                                     .show_percentage(),
                             );
-                            ui.label(egui::RichText::new(stage_label(stage)).size(12.0));
+                            ui.label(
+                                egui::RichText::new(stage_label(stage))
+                                    .size(crate::theme::BODY_FONT),
+                            );
                         });
                 });
         },

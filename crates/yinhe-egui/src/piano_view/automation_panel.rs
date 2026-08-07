@@ -650,7 +650,7 @@ fn draw_value_labels(
         panel.selected_target.display_name()
     };
     let label_color = theme::MEASURE_LABEL;
-    let font_id = egui::FontId::proportional(10.0);
+    let font_id = egui::FontId::proportional(crate::theme::SMALL_LABEL_FONT);
     let pad_x = 4.0;
 
     // Velocity / Tempo 用面板级 max_val_f；其他用 target 固定 max_value()
@@ -1179,7 +1179,7 @@ fn show_target_combo(
                 egui::Label::new(
                     ICON_AUTOMATION
                         .rich_text()
-                        .size(14.0)
+                        .size(crate::theme::ICON_FONT)
                         .color(crate::theme::TEXT_LABEL),
                 )
                 .sense(egui::Sense::click())
@@ -1189,7 +1189,7 @@ fn show_target_combo(
                 ui,
                 &target_resp,
                 ICON_AUTOMATION.codepoint,
-                egui::FontId::new(14.0, ICON_AUTOMATION.font_family()),
+                egui::FontId::new(crate::theme::ICON_FONT, ICON_AUTOMATION.font_family()),
                 false,
             );
 
@@ -1343,7 +1343,7 @@ pub fn show_toggle_buttons(ui: &mut egui::Ui, show_panels: &mut bool, panel_coun
     };
     let toggle_label = ICON_SIGNAL_CELLULAR_ALT
         .rich_text()
-        .size(theme::MODE_LABEL_FONT + 2.0)
+        .size(crate::theme::PANEL_TOGGLE_FONT)
         .color(toggle_color);
     let toggle_resp = ui.add(
         egui::Label::new(toggle_label)
@@ -1355,7 +1355,7 @@ pub fn show_toggle_buttons(ui: &mut egui::Ui, show_panels: &mut bool, panel_coun
         &toggle_resp,
         ICON_SIGNAL_CELLULAR_ALT.codepoint,
         egui::FontId::new(
-            theme::MODE_LABEL_FONT + 2.0,
+            crate::theme::PANEL_TOGGLE_FONT,
             ICON_SIGNAL_CELLULAR_ALT.font_family(),
         ),
         *show_panels,
@@ -1374,7 +1374,7 @@ pub fn show_toggle_buttons(ui: &mut egui::Ui, show_panels: &mut bool, panel_coun
             egui::Label::new(
                 ICON_ADD
                     .rich_text()
-                    .size(theme::MODE_LABEL_FONT + 2.0)
+                    .size(crate::theme::PANEL_TOGGLE_FONT)
                     .color(plus_color),
             )
             .sense(egui::Sense::click())
@@ -1384,7 +1384,7 @@ pub fn show_toggle_buttons(ui: &mut egui::Ui, show_panels: &mut bool, panel_coun
             ui,
             &plus_resp,
             ICON_ADD.codepoint,
-            egui::FontId::new(theme::MODE_LABEL_FONT + 2.0, ICON_ADD.font_family()),
+            egui::FontId::new(crate::theme::PANEL_TOGGLE_FONT, ICON_ADD.font_family()),
             false,
         );
         if plus_resp.clicked() {
@@ -1396,7 +1396,7 @@ pub fn show_toggle_buttons(ui: &mut egui::Ui, show_panels: &mut bool, panel_coun
             egui::Label::new(
                 ICON_REMOVE
                     .rich_text()
-                    .size(theme::MODE_LABEL_FONT + 2.0)
+                    .size(crate::theme::PANEL_TOGGLE_FONT)
                     .color(plus_color),
             )
             .sense(egui::Sense::click())
@@ -1406,7 +1406,7 @@ pub fn show_toggle_buttons(ui: &mut egui::Ui, show_panels: &mut bool, panel_coun
             ui,
             &minus_resp,
             ICON_REMOVE.codepoint,
-            egui::FontId::new(theme::MODE_LABEL_FONT + 2.0, ICON_REMOVE.font_family()),
+            egui::FontId::new(crate::theme::PANEL_TOGGLE_FONT, ICON_REMOVE.font_family()),
             false,
         );
         if minus_resp.clicked() && *panel_count > 0 {

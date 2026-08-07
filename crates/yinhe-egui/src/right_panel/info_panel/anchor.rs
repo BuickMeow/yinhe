@@ -39,7 +39,7 @@ pub(super) fn show_anchor_info(
     ui.label(
         egui::RichText::new(t!("anchor.title").as_ref())
             .strong()
-            .size(14.0)
+            .size(crate::theme::PANEL_TITLE_FONT)
             .color(crate::theme::TEXT_PRIMARY),
     );
     ui.add_space(2.0);
@@ -48,12 +48,12 @@ pub(super) fn show_anchor_info(
     ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new(t!("anchor.target").as_ref())
-                .size(11.0)
+                .size(crate::theme::SMALL_FONT)
                 .color(crate::theme::TEXT_LABEL),
         );
         ui.label(
             egui::RichText::new(target.display_name())
-                .size(12.0)
+                .size(crate::theme::BODY_FONT)
                 .color(crate::theme::TEXT_BRIGHT),
         );
     });
@@ -65,7 +65,7 @@ pub(super) fn show_anchor_info(
     ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new(t!("anchor.tick").as_ref())
-                .size(11.0)
+                .size(crate::theme::SMALL_FONT)
                 .color(crate::theme::TEXT_LABEL),
         );
         let resp = ui.add(
@@ -101,7 +101,7 @@ pub(super) fn show_anchor_info(
     ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new(t!("anchor.value").as_ref())
-                .size(11.0)
+                .size(crate::theme::SMALL_FONT)
                 .color(crate::theme::TEXT_LABEL),
         );
         let resp = ui.add(
@@ -137,7 +137,7 @@ pub(super) fn show_anchor_info(
     ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new(t!("anchor.shape").as_ref())
-                .size(11.0)
+                .size(crate::theme::SMALL_FONT)
                 .color(crate::theme::TEXT_LABEL),
         );
         let is_step = matches!(shape, SegmentShape::Step);
@@ -173,7 +173,7 @@ pub(super) fn show_anchor_info(
         ui.horizontal(|ui| {
             ui.label(
                 egui::RichText::new(t!("anchor.x1").as_ref())
-                    .size(11.0)
+                    .size(crate::theme::SMALL_FONT)
                     .color(crate::theme::TEXT_LABEL),
             );
             let resp = ui.add(
@@ -211,7 +211,7 @@ pub(super) fn show_anchor_info(
         ui.horizontal(|ui| {
             ui.label(
                 egui::RichText::new(t!("anchor.y1").as_ref())
-                    .size(11.0)
+                    .size(crate::theme::SMALL_FONT)
                     .color(crate::theme::TEXT_LABEL),
             );
             let resp = ui.add(
@@ -249,7 +249,7 @@ pub(super) fn show_anchor_info(
         ui.horizontal(|ui| {
             ui.label(
                 egui::RichText::new(t!("anchor.x2").as_ref())
-                    .size(11.0)
+                    .size(crate::theme::SMALL_FONT)
                     .color(crate::theme::TEXT_LABEL),
             );
             let resp = ui.add(
@@ -287,7 +287,7 @@ pub(super) fn show_anchor_info(
         ui.horizontal(|ui| {
             ui.label(
                 egui::RichText::new(t!("anchor.y2").as_ref())
-                    .size(11.0)
+                    .size(crate::theme::SMALL_FONT)
                     .color(crate::theme::TEXT_LABEL),
             );
             let resp = ui.add(
@@ -332,7 +332,7 @@ pub(super) fn show_anchor_info(
     };
     ui.label(
         egui::RichText::new(shape_desc.as_ref())
-            .size(10.0)
+            .size(crate::theme::SMALL_LABEL_FONT)
             .color(crate::theme::TEXT_FAINT),
     );
 
@@ -342,7 +342,8 @@ pub(super) fn show_anchor_info(
 
     if ui
         .add(egui::Button::new(
-            egui::RichText::new(t!("common.clear_selection").as_ref()).size(12.0),
+            egui::RichText::new(t!("common.clear_selection").as_ref())
+                .size(crate::theme::BODY_FONT),
         ))
         .clicked()
     {

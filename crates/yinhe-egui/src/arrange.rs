@@ -440,7 +440,7 @@ pub fn show(
             btn_rect.center(),
             egui::Align2::CENTER_CENTER,
             doc.edit.quantize_arrange.label(),
-            egui::FontId::proportional(11.0),
+            egui::FontId::proportional(crate::theme::SMALL_FONT),
             icon_color,
         );
 
@@ -486,7 +486,7 @@ pub fn show(
             btn_rect.center(),
             egui::Align2::CENTER_CENTER,
             ICON_ADD.codepoint,
-            egui::FontId::new(18.0, ICON_ADD.font_family()),
+            egui::FontId::new(crate::theme::ICON_BTN_FONT, ICON_ADD.font_family()),
             icon_color,
         );
 

@@ -161,7 +161,11 @@ fn show_text_edit_popup(
         .show(ui.ctx(), |ui| {
             egui::Frame::popup(ui.style()).show(ui, |ui| {
                 ui.set_min_width(220.0);
-                ui.label(egui::RichText::new(title).strong().size(11.0));
+                ui.label(
+                    egui::RichText::new(title)
+                        .strong()
+                        .size(crate::theme::SMALL_FONT),
+                );
                 ui.add_space(2.0);
                 let resp = ui.add(
                     egui::TextEdit::singleline(&mut state)

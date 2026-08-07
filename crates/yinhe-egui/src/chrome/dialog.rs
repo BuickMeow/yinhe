@@ -76,7 +76,10 @@ pub(crate) fn paint_close_button(painter: &egui::Painter, rect: egui::Rect, hove
         rect.center(),
         egui::Align2::CENTER_CENTER,
         egui_material_icons::icons::ICON_CLOSE.codepoint,
-        egui::FontId::new(12.0, egui_material_icons::icons::ICON_CLOSE.font_family()),
+        egui::FontId::new(
+            crate::theme::ICON_FONT_SM,
+            egui_material_icons::icons::ICON_CLOSE.font_family(),
+        ),
         if hovered {
             egui::Color32::WHITE
         } else {
@@ -130,7 +133,7 @@ pub(crate) fn title_bar(ui: &mut egui::Ui, title: &str, close: &mut bool) {
         egui::pos2(bar_rect.center().x, bar_rect.min.y + height / 2.0),
         egui::Align2::CENTER_CENTER,
         title,
-        egui::FontId::proportional(13.0),
+        egui::FontId::proportional(crate::theme::SUB_TITLE_FONT),
         crate::theme::TEXT_BRIGHT,
     );
 

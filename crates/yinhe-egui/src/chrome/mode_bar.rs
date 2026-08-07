@@ -79,7 +79,7 @@ fn right_icon_button(
         crate::theme::MODE_BAR_TEXT
     };
     let resp = ui.add(
-        egui::Label::new(icon.rich_text().size(14.0).color(color))
+        egui::Label::new(icon.rich_text().size(crate::theme::ICON_FONT).color(color))
             .sense(egui::Sense::click())
             .selectable(false),
     );
@@ -87,7 +87,7 @@ fn right_icon_button(
         ui,
         &resp,
         icon.codepoint,
-        egui::FontId::new(14.0, icon.font_family()),
+        egui::FontId::new(crate::theme::ICON_FONT, icon.font_family()),
         is_active,
     );
     if resp.clicked() {
@@ -215,15 +215,20 @@ pub fn show(
                         crate::theme::MODE_BAR_TEXT
                     };
                     let piano_resp = ui.add(
-                        egui::Label::new(ICON_PIANO.rich_text().size(14.0).color(piano_color))
-                            .sense(egui::Sense::click())
-                            .selectable(false),
+                        egui::Label::new(
+                            ICON_PIANO
+                                .rich_text()
+                                .size(crate::theme::ICON_FONT)
+                                .color(piano_color),
+                        )
+                        .sense(egui::Sense::click())
+                        .selectable(false),
                     );
                     crate::widgets::hover::hover_highlight(
                         ui,
                         &piano_resp,
                         ICON_PIANO.codepoint,
-                        egui::FontId::new(14.0, ICON_PIANO.font_family()),
+                        egui::FontId::new(crate::theme::ICON_FONT, ICON_PIANO.font_family()),
                         *show_pianoroll_in_arrange,
                     );
                     if piano_resp.clicked() {

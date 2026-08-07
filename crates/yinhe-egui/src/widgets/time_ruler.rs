@@ -223,7 +223,7 @@ fn paint_labels(
         0
     };
 
-    let font_id = egui::FontId::new(10.0, egui::FontFamily::Monospace);
+    let font_id = egui::FontId::new(crate::theme::SMALL_LABEL_FONT, egui::FontFamily::Monospace);
     let text_y_center = rect.min.y + rect.height() / 2.0;
 
     for i in 0..segments.len() {

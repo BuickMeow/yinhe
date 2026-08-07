@@ -27,7 +27,7 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
     ui.label(
         egui::RichText::new(t!("project.name").as_ref())
             .color(crate::theme::TEXT_MUTED)
-            .size(11.0),
+            .size(crate::theme::SMALL_FONT),
     );
     let mut name = doc.data.model.meta.name.clone();
     let resp = ui.add_sized(
@@ -60,7 +60,7 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
     ui.label(
         egui::RichText::new(t!("project.artist").as_ref())
             .color(crate::theme::TEXT_MUTED)
-            .size(11.0),
+            .size(crate::theme::SMALL_FONT),
     );
     let mut artist = doc.data.model.meta.artist.clone();
     let resp = ui.add_sized(
@@ -94,7 +94,7 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
     ui.label(
         egui::RichText::new(t!("project.ppq").as_ref())
             .color(crate::theme::TEXT_MUTED)
-            .size(11.0),
+            .size(crate::theme::SMALL_FONT),
     );
     let mut ppq = doc.data.model.meta.ppq as i32;
     let resp = ui.add_sized(
@@ -147,7 +147,7 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
     ui.label(
         egui::RichText::new(t!("project.compression").as_ref())
             .color(crate::theme::TEXT_MUTED)
-            .size(11.0),
+            .size(crate::theme::SMALL_FONT),
     );
     let mut zstd_level = doc.data.model.meta.compression_level;
     let resp = ui.add_sized(
@@ -176,7 +176,7 @@ pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
     ui.label(
         egui::RichText::new(t!("project.description").as_ref())
             .color(crate::theme::TEXT_MUTED)
-            .size(11.0),
+            .size(crate::theme::SMALL_FONT),
     );
     let mut desc = doc.data.model.meta.description.clone();
     let resp = ui.add_sized(

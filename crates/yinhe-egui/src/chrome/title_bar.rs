@@ -53,7 +53,7 @@ pub(crate) fn show(
             // Collect tab_rects and close_rects for manual click detection
             let mut click_targets: Vec<(usize, egui::Rect, egui::Rect)> = Vec::new();
 
-            let font_id = egui::FontId::proportional(12.0);
+            let font_id = egui::FontId::proportional(crate::theme::BODY_FONT);
             let close_w = 20.0;
             let padding = 6.0;
             let tab_gap = 2.0;
@@ -107,7 +107,7 @@ pub(crate) fn show(
                 egui::pos2(bar_rect.center().x, bar_rect.center().y),
                 egui::Align2::CENTER_CENTER,
                 "Yinhe MIDI Editor",
-                egui::FontId::proportional(13.0),
+                egui::FontId::proportional(crate::theme::SUB_TITLE_FONT),
                 crate::theme::TEXT_SECONDARY,
             );
 

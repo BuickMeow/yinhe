@@ -99,7 +99,7 @@ pub(super) fn show(ui: &mut egui::Ui, doc: &mut Document) {
     ui.label(
         egui::RichText::new(t!("sel.title").as_ref())
             .strong()
-            .size(14.0)
+            .size(crate::theme::PANEL_TITLE_FONT)
             .color(crate::theme::TEXT_PRIMARY),
     );
     ui.add_space(2.0);
@@ -326,7 +326,7 @@ pub(super) fn show(ui: &mut egui::Ui, doc: &mut Document) {
     ui.label(
         egui::RichText::new(t!("sel.tempo_title").as_ref())
             .strong()
-            .size(13.0)
+            .size(crate::theme::SUB_TITLE_FONT)
             .color(crate::theme::TEXT_BRIGHT),
     );
     ui.add_space(2.0);
@@ -340,7 +340,7 @@ pub(super) fn show(ui: &mut egui::Ui, doc: &mut Document) {
         ui.horizontal(|ui| {
             if ui
                 .add(egui::Button::new(
-                    egui::RichText::new(t!("sel.flip_horizontal")).size(12.0),
+                    egui::RichText::new(t!("sel.flip_horizontal")).size(crate::theme::BODY_FONT),
                 ))
                 .clicked()
             {
@@ -351,7 +351,7 @@ pub(super) fn show(ui: &mut egui::Ui, doc: &mut Document) {
             }
             if ui
                 .add(egui::Button::new(
-                    egui::RichText::new(t!("sel.flip_vertical")).size(12.0),
+                    egui::RichText::new(t!("sel.flip_vertical")).size(crate::theme::BODY_FONT),
                 ))
                 .clicked()
             {
@@ -373,12 +373,12 @@ fn info_row(ui: &mut egui::Ui, label: impl Into<String>, value: impl Into<String
     ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new(label.into())
-                .size(11.0)
+                .size(crate::theme::SMALL_FONT)
                 .color(crate::theme::TEXT_LABEL),
         );
         ui.label(
             egui::RichText::new(value.into())
-                .size(12.0)
+                .size(crate::theme::BODY_FONT)
                 .color(crate::theme::TEXT_BRIGHT),
         );
     });
@@ -405,7 +405,7 @@ fn field_row(
     ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new(label.into())
-                .size(11.0)
+                .size(crate::theme::SMALL_FONT)
                 .color(crate::theme::TEXT_LABEL),
         );
         let id = ui.id().with(key);
@@ -429,7 +429,7 @@ fn field_row(
         {
             ui.label(
                 egui::RichText::new(s)
-                    .size(11.0)
+                    .size(crate::theme::SMALL_FONT)
                     .color(crate::theme::TEXT_FAINT),
             );
         }
@@ -558,7 +558,7 @@ fn tempo_field(
     ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new(label.into())
-                .size(11.0)
+                .size(crate::theme::SMALL_FONT)
                 .color(crate::theme::TEXT_LABEL),
         );
         let is_editing = ui.ctx().memory(|m| m.has_focus(id));

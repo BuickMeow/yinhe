@@ -38,7 +38,7 @@ pub fn show(
         let resp_g = ui.add(
             egui::Label::new(
                 egui::RichText::new(t!("soundfont.global").as_ref())
-                    .size(12.0)
+                    .size(crate::theme::BODY_FONT)
                     .color(if is_global {
                         crate::theme::ACCENT_ACTIVE
                     } else {
@@ -52,7 +52,7 @@ pub fn show(
             ui,
             &resp_g,
             t!("soundfont.global").as_ref(),
-            egui::FontId::proportional(12.0),
+            egui::FontId::proportional(crate::theme::BODY_FONT),
             is_global,
         );
         if resp_g.clicked() && !is_global {
@@ -66,7 +66,7 @@ pub fn show(
         let resp_p = ui.add(
             egui::Label::new(
                 egui::RichText::new(t!("soundfont.project").as_ref())
-                    .size(12.0)
+                    .size(crate::theme::BODY_FONT)
                     .color(if !is_global {
                         crate::theme::ACCENT_ACTIVE
                     } else {
@@ -80,7 +80,7 @@ pub fn show(
             ui,
             &resp_p,
             t!("soundfont.project").as_ref(),
-            egui::FontId::proportional(12.0),
+            egui::FontId::proportional(crate::theme::BODY_FONT),
             !is_global,
         );
         if resp_p.clicked() && is_global {
@@ -97,7 +97,7 @@ pub fn show(
         ui.label(
             egui::RichText::new(t!("soundfont.global_hint").as_ref())
                 .color(crate::theme::TEXT_FAINT)
-                .size(12.0),
+                .size(crate::theme::BODY_FONT),
         );
         ui.add_space(4.0);
         changed |= global_panel(ui, settings);

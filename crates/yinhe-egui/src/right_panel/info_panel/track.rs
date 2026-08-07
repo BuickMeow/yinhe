@@ -68,7 +68,7 @@ pub(super) fn show_track_info(
                 t!("track.selected_count", n = doc.edit.track_selected.len()).as_ref(),
             )
             .strong()
-            .size(14.0)
+            .size(crate::theme::PANEL_TITLE_FONT)
             .color(crate::theme::TEXT_PRIMARY),
         );
         ui.add_space(2.0);
@@ -101,23 +101,27 @@ pub(super) fn show_track_info(
         ui.horizontal(|ui| {
             ui.label(
                 egui::RichText::new(t!("track.total_notes").as_ref())
-                    .size(11.0)
+                    .size(crate::theme::SMALL_FONT)
                     .color(crate::theme::TEXT_LABEL),
             );
-            ui.label(egui::RichText::new(format!("{}", total_notes)).size(11.0));
+            ui.label(
+                egui::RichText::new(format!("{}", total_notes)).size(crate::theme::SMALL_FONT),
+            );
         });
         ui.horizontal(|ui| {
             ui.label(
                 egui::RichText::new(t!("track.total_events").as_ref())
-                    .size(11.0)
+                    .size(crate::theme::SMALL_FONT)
                     .color(crate::theme::TEXT_LABEL),
             );
-            ui.label(egui::RichText::new(format!("{}", total_events)).size(11.0));
+            ui.label(
+                egui::RichText::new(format!("{}", total_events)).size(crate::theme::SMALL_FONT),
+            );
         });
         ui.add_space(4.0);
         ui.label(
             egui::RichText::new(t!("track.multi_select_hint").as_ref())
-                .size(11.0)
+                .size(crate::theme::SMALL_FONT)
                 .color(crate::theme::TEXT_LABEL),
         );
 
@@ -126,7 +130,8 @@ pub(super) fn show_track_info(
         ui.add_space(6.0);
         if ui
             .add(egui::Button::new(
-                egui::RichText::new(t!("common.clear_selection").as_ref()).size(12.0),
+                egui::RichText::new(t!("common.clear_selection").as_ref())
+                    .size(crate::theme::BODY_FONT),
             ))
             .clicked()
         {
@@ -149,13 +154,13 @@ pub(super) fn show_track_info(
         ui.label(
             egui::RichText::new(t!("track.conductor").as_ref())
                 .strong()
-                .size(14.0)
+                .size(crate::theme::PANEL_TITLE_FONT)
                 .color(crate::theme::TEXT_PRIMARY),
         );
         ui.add_space(2.0);
         ui.label(
             egui::RichText::new(t!("track.conductor_hint").as_ref())
-                .size(11.0)
+                .size(crate::theme::SMALL_FONT)
                 .color(crate::theme::TEXT_LABEL),
         );
         ui.add_space(8.0);
@@ -166,7 +171,7 @@ pub(super) fn show_track_info(
                 ui.label(
                     egui::RichText::new(&doc.data.model.meta.name)
                         .color(crate::theme::TEXT_BRIGHT)
-                        .size(13.0),
+                        .size(crate::theme::SUB_TITLE_FONT),
                 );
             });
             ui.add_space(2.0);
@@ -177,7 +182,7 @@ pub(super) fn show_track_info(
             ui.label(
                 egui::RichText::new(format!("{}", doc.data.model.conductor.tempo.events.len()))
                     .color(crate::theme::TEXT_SECONDARY)
-                    .size(13.0),
+                    .size(crate::theme::SUB_TITLE_FONT),
             );
         });
         ui.horizontal(|ui| {
@@ -185,7 +190,7 @@ pub(super) fn show_track_info(
             ui.label(
                 egui::RichText::new(format!("{}", doc.data.model.conductor.time_sig.len()))
                     .color(crate::theme::TEXT_SECONDARY)
-                    .size(13.0),
+                    .size(crate::theme::SUB_TITLE_FONT),
             );
         });
 
@@ -194,7 +199,8 @@ pub(super) fn show_track_info(
         ui.add_space(6.0);
         if ui
             .add(egui::Button::new(
-                egui::RichText::new(t!("common.clear_selection").as_ref()).size(12.0),
+                egui::RichText::new(t!("common.clear_selection").as_ref())
+                    .size(crate::theme::BODY_FONT),
             ))
             .clicked()
         {
@@ -463,24 +469,28 @@ pub(super) fn show_track_info(
     // ── 摘要 ──
     ui.separator();
     ui.add_space(4.0);
-    ui.label(egui::RichText::new("属性摘要").size(11.0).strong());
+    ui.label(
+        egui::RichText::new("属性摘要")
+            .size(crate::theme::SMALL_FONT)
+            .strong(),
+    );
     ui.add_space(2.0);
 
     ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new("音符数:")
-                .size(11.0)
+                .size(crate::theme::SMALL_FONT)
                 .color(crate::theme::TEXT_LABEL),
         );
-        ui.label(egui::RichText::new(format!("{}", ti.note_count)).size(11.0));
+        ui.label(egui::RichText::new(format!("{}", ti.note_count)).size(crate::theme::SMALL_FONT));
     });
     ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new("事件数:")
-                .size(11.0)
+                .size(crate::theme::SMALL_FONT)
                 .color(crate::theme::TEXT_LABEL),
         );
-        ui.label(egui::RichText::new(format!("{}", ti.event_count)).size(11.0));
+        ui.label(egui::RichText::new(format!("{}", ti.event_count)).size(crate::theme::SMALL_FONT));
     });
 
     // Program Change
@@ -489,10 +499,10 @@ pub(super) fn show_track_info(
         ui.horizontal(|ui| {
             ui.label(
                 egui::RichText::new("音色:")
-                    .size(11.0)
+                    .size(crate::theme::SMALL_FONT)
                     .color(crate::theme::TEXT_LABEL),
             );
-            ui.label(egui::RichText::new(format!("PC {}", pc)).size(11.0));
+            ui.label(egui::RichText::new(format!("PC {}", pc)).size(crate::theme::SMALL_FONT));
         });
     }
 
@@ -501,7 +511,7 @@ pub(super) fn show_track_info(
     ui.add_space(6.0);
     if ui
         .add(egui::Button::new(
-            egui::RichText::new("清除选择").size(12.0),
+            egui::RichText::new("清除选择").size(crate::theme::BODY_FONT),
         ))
         .clicked()
     {

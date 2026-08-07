@@ -345,7 +345,7 @@ fn show_file_menu(
                     icon_pos,
                     egui::Align2::LEFT_CENTER,
                     item.icon.codepoint,
-                    egui::FontId::new(16.0, item.icon.font_family()),
+                    egui::FontId::new(crate::theme::ICON_FONT_LG, item.icon.font_family()),
                     icon_color,
                 );
             }

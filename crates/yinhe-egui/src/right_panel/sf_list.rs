@@ -109,14 +109,14 @@ pub fn sf_list(ui: &mut egui::Ui, entries: &mut Vec<SfEntry>, salt: &str) -> boo
                     egui::pos2(text_x, row_rect.min.y + 10.0),
                     egui::Align2::LEFT_CENTER,
                     &entries[i].name,
-                    egui::FontId::proportional(12.0),
+                    egui::FontId::proportional(crate::theme::BODY_FONT),
                     crate::theme::TEXT_BRIGHT,
                 );
                 ui.painter().text(
                     egui::pos2(text_x, row_rect.min.y + 28.0),
                     egui::Align2::LEFT_CENTER,
                     truncate_path(&entries[i].path),
-                    egui::FontId::proportional(10.0),
+                    egui::FontId::proportional(crate::theme::SMALL_LABEL_FONT),
                     crate::theme::TEXT_DIM,
                 );
 
@@ -125,7 +125,7 @@ pub fn sf_list(ui: &mut egui::Ui, entries: &mut Vec<SfEntry>, salt: &str) -> boo
                     egui::pos2(row_rect.max.x - 10.0, row_rect.center().y),
                     egui::Align2::CENTER_CENTER,
                     ICON_DRAG_INDICATOR.codepoint,
-                    egui::FontId::new(14.0, ICON_DRAG_INDICATOR.font_family()),
+                    egui::FontId::new(crate::theme::ICON_FONT, ICON_DRAG_INDICATOR.font_family()),
                     crate::theme::TEXT_LABEL,
                 );
 

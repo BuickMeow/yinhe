@@ -134,7 +134,7 @@ pub(crate) fn show(
                     t!("dialog.archive.source", name = display_name).as_ref(),
                 )
                 .strong()
-                .size(13.0),
+                .size(crate::theme::SUB_TITLE_FONT),
             );
             if filename.len() != display_name.len() {
                 source_resp.on_hover_text(&filename);
@@ -146,7 +146,7 @@ pub(crate) fn show(
                 ui.label(
                     eframe::egui::RichText::new(ICON_SEARCH.codepoint)
                         .family(ICON_SEARCH.font_family())
-                        .size(14.0)
+                        .size(crate::theme::ICON_FONT)
                         .color(crate::theme::TEXT_LABEL),
                 );
                 ui.add(
@@ -216,7 +216,7 @@ pub(crate) fn show(
                             response_rect.left_center() + eframe::egui::vec2(8.0, 0.0),
                             eframe::egui::Align2::LEFT_CENTER,
                             &text,
-                            eframe::egui::FontId::proportional(13.0),
+                            eframe::egui::FontId::proportional(crate::theme::SUB_TITLE_FONT),
                             ui.visuals().text_color(),
                         );
 
@@ -239,7 +239,7 @@ pub(crate) fn show(
                             response_rect.right_center() + eframe::egui::vec2(-8.0, 0.0),
                             eframe::egui::Align2::RIGHT_CENTER,
                             &size_text,
-                            eframe::egui::FontId::proportional(11.0),
+                            eframe::egui::FontId::proportional(crate::theme::SMALL_FONT),
                             crate::theme::TEXT_LABEL,
                         );
                     }
@@ -252,7 +252,7 @@ pub(crate) fn show(
                     eframe::egui::RichText::new(
                         t!("dialog.archive.file_count", n = picker.filtered.len()).as_ref(),
                     )
-                    .size(12.0)
+                    .size(crate::theme::BODY_FONT)
                     .color(crate::theme::TEXT_LABEL),
                 );
                 ui.with_layout(
@@ -510,7 +510,7 @@ fn show_password_prompt(
                 eframe::egui::RichText::new(
                     t!("dialog.archive.password_prompt", name = display_name).as_ref(),
                 )
-                .size(13.0),
+                .size(crate::theme::SUB_TITLE_FONT),
             );
             if filename.len() != display_name.len() {
                 prompt_resp.on_hover_text(&filename);
@@ -520,7 +520,7 @@ fn show_password_prompt(
                 ui.add_space(2.0);
                 ui.label(
                     eframe::egui::RichText::new(t!("dialog.archive.password_wrong").as_ref())
-                        .size(12.0)
+                        .size(crate::theme::BODY_FONT)
                         .color(crate::theme::ERROR_TEXT),
                 );
             }
@@ -547,7 +547,7 @@ fn show_password_prompt(
                 let btn_resp = ui.add(
                     eframe::egui::Button::new(
                         eframe::egui::RichText::new(icon)
-                            .size(16.0)
+                            .size(crate::theme::ICON_FONT_LG)
                             .color(icon_color),
                     )
                     .frame(false),

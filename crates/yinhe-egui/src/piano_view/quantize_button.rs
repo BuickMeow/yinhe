@@ -62,7 +62,7 @@ pub fn show(ui: &mut egui::Ui, ctx: QuantizeBtnCtx) -> Option<PianoViewEvent> {
         btn_rect.center(),
         egui::Align2::CENTER_CENTER,
         quantize.label(),
-        egui::FontId::proportional(11.0),
+        egui::FontId::proportional(crate::theme::SMALL_FONT),
         icon_color,
     );
 

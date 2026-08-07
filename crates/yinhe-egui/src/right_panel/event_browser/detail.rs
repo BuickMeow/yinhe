@@ -153,7 +153,11 @@ fn show_automation_detail(
 
     ui.add_space(4.0);
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(title).size(12.0).strong());
+        ui.label(
+            egui::RichText::new(title)
+                .size(crate::theme::BODY_FONT)
+                .strong(),
+        );
         if let Some(np) = render_pager(ui, page, total_pages(total)) {
             state.event_page = np;
         }
@@ -278,7 +282,7 @@ fn show_timesig_detail(
     ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new(format!("拍号 {} 个", total))
-                .size(12.0)
+                .size(crate::theme::BODY_FONT)
                 .strong(),
         );
         if let Some(np) = render_pager(ui, page, total_pages(total)) {
@@ -376,7 +380,7 @@ fn show_keysig_detail(
     ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new(format!("调号 {} 个", total))
-                .size(12.0)
+                .size(crate::theme::BODY_FONT)
                 .strong(),
         );
         if let Some(np) = render_pager(ui, page, total_pages(total)) {
@@ -528,7 +532,7 @@ fn show_text_events_detail(
     ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new(format!("{} {} 个", label, total))
-                .size(12.0)
+                .size(crate::theme::BODY_FONT)
                 .strong(),
         );
         if let Some(np) = render_pager(ui, page, total_pages(total)) {
@@ -648,7 +652,7 @@ fn show_notes_detail(
     ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new(format!("音符 {} 个", total))
-                .size(12.0)
+                .size(crate::theme::BODY_FONT)
                 .strong(),
         );
         if let Some(np) = render_pager(ui, page, total_pages(total)) {
@@ -807,7 +811,7 @@ fn show_pc_detail(
     ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new(format!("音色变更 {} 个", total))
-                .size(12.0)
+                .size(crate::theme::BODY_FONT)
                 .strong(),
         );
         if let Some(np) = render_pager(ui, page, total_pages(total)) {
@@ -884,19 +888,23 @@ fn show_pc_detail(
 fn show_project_json(ui: &mut egui::Ui, doc: &Document) {
     let pf = &doc.data.project_file;
     ui.add_space(4.0);
-    ui.label(egui::RichText::new("project.json").size(13.0).strong());
+    ui.label(
+        egui::RichText::new("project.json")
+            .size(crate::theme::SUB_TITLE_FONT)
+            .strong(),
+    );
     ui.add_space(6.0);
 
     let kv = |ui: &mut egui::Ui, k: &str, v: String| {
         ui.horizontal(|ui| {
             ui.label(
                 egui::RichText::new(k)
-                    .size(11.0)
+                    .size(crate::theme::SMALL_FONT)
                     .color(crate::theme::TEXT_LABEL),
             );
             ui.label(
                 egui::RichText::new(v)
-                    .size(11.0)
+                    .size(crate::theme::SMALL_FONT)
                     .monospace()
                     .color(crate::theme::TEXT_PRIMARY),
             );
@@ -919,7 +927,7 @@ fn show_project_json(ui: &mut egui::Ui, doc: &Document) {
         ui.add_space(6.0);
         ui.label(
             egui::RichText::new("soundfont_overrides")
-                .size(11.0)
+                .size(crate::theme::SMALL_FONT)
                 .strong(),
         );
         for po in &pf.soundfont_overrides {
@@ -927,7 +935,7 @@ fn show_project_json(ui: &mut egui::Ui, doc: &Document) {
                 ui.add_space(14.0);
                 ui.label(
                     egui::RichText::new(format!("port {}:", po.port))
-                        .size(11.0)
+                        .size(crate::theme::SMALL_FONT)
                         .color(crate::theme::TEXT_LABEL),
                 );
             });
@@ -941,7 +949,7 @@ fn show_project_json(ui: &mut egui::Ui, doc: &Document) {
                     };
                     ui.label(
                         egui::RichText::new(format!("{} {} ({})", status, entry.name, entry.path))
-                            .size(10.0)
+                            .size(crate::theme::SMALL_LABEL_FONT)
                             .monospace()
                             .color(crate::theme::TEXT_SECONDARY),
                     );
@@ -954,19 +962,23 @@ fn show_project_json(ui: &mut egui::Ui, doc: &Document) {
 fn show_mapping_json(ui: &mut egui::Ui, doc: &Document) {
     let mf = &doc.data.mapping_file;
     ui.add_space(4.0);
-    ui.label(egui::RichText::new("mapping.json").size(13.0).strong());
+    ui.label(
+        egui::RichText::new("mapping.json")
+            .size(crate::theme::SUB_TITLE_FONT)
+            .strong(),
+    );
     ui.add_space(6.0);
 
     let kv = |ui: &mut egui::Ui, k: &str, v: String| {
         ui.horizontal(|ui| {
             ui.label(
                 egui::RichText::new(k)
-                    .size(11.0)
+                    .size(crate::theme::SMALL_FONT)
                     .color(crate::theme::TEXT_LABEL),
             );
             ui.label(
                 egui::RichText::new(v)
-                    .size(11.0)
+                    .size(crate::theme::SMALL_FONT)
                     .monospace()
                     .color(crate::theme::TEXT_PRIMARY),
             );
@@ -976,7 +988,11 @@ fn show_mapping_json(ui: &mut egui::Ui, doc: &Document) {
     kv(ui, "version", format!("{}", mf.version));
 
     ui.add_space(6.0);
-    ui.label(egui::RichText::new("ports").size(11.0).strong());
+    ui.label(
+        egui::RichText::new("ports")
+            .size(crate::theme::SMALL_FONT)
+            .strong(),
+    );
     for p in &mf.ports {
         for ch in &p.channels {
             for t in &ch.tracks {
@@ -1003,7 +1019,11 @@ fn show_mapping_json(ui: &mut egui::Ui, doc: &Document) {
 // ── Overview / Track detail ──
 
 pub(super) fn show_overview(ui: &mut egui::Ui, model: &yinhe_core::YinModel) {
-    ui.label(egui::RichText::new("工程概览").size(14.0).strong());
+    ui.label(
+        egui::RichText::new("工程概览")
+            .size(crate::theme::PANEL_TITLE_FONT)
+            .strong(),
+    );
     ui.add_space(4.0);
     let name = if model.meta.name.is_empty() {
         "(未命名)"
@@ -1087,19 +1107,23 @@ pub(super) fn show_track_detail(
     } else {
         t!("event_browser.track_named", n = idx, name = &track.name).to_string()
     };
-    ui.label(egui::RichText::new(header).size(13.0).strong());
+    ui.label(
+        egui::RichText::new(header)
+            .size(crate::theme::SUB_TITLE_FONT)
+            .strong(),
+    );
     ui.add_space(4.0);
 
     let kv = |ui: &mut egui::Ui, k: &str, v: String| {
         ui.horizontal(|ui| {
             ui.label(
                 egui::RichText::new(k)
-                    .size(11.0)
+                    .size(crate::theme::SMALL_FONT)
                     .color(crate::theme::TEXT_LABEL),
             );
             ui.label(
                 egui::RichText::new(v)
-                    .size(11.0)
+                    .size(crate::theme::SMALL_FONT)
                     .monospace()
                     .color(crate::theme::TEXT_PRIMARY),
             );
@@ -1134,7 +1158,11 @@ pub(super) fn show_track_detail(
         format!("{} / {}", track.muted, track.soloed),
     );
     ui.add_space(6.0);
-    ui.label(egui::RichText::new("事件计数").size(12.0).strong());
+    ui.label(
+        egui::RichText::new("事件计数")
+            .size(crate::theme::BODY_FONT)
+            .strong(),
+    );
     kv(
         ui,
         "Notes",

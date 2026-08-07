@@ -89,7 +89,11 @@ fn show_number_popup(ui: &mut egui::Ui, cfg: PopupConfig) -> PopupAction {
         .show(ui.ctx(), |ui| {
             egui::Frame::popup(ui.style()).show(ui, |ui| {
                 ui.set_min_width(180.0);
-                ui.label(egui::RichText::new(cfg.title).strong().size(11.0));
+                ui.label(
+                    egui::RichText::new(cfg.title)
+                        .strong()
+                        .size(crate::theme::SMALL_FONT),
+                );
                 ui.add_space(2.0);
                 let mut dv = crate::widgets::numeric_input::decimal_drag_value(&mut state)
                     .range(cfg.range_min..=cfg.range_max)
@@ -160,7 +164,11 @@ fn show_choice_popup<T: Copy + PartialEq + Send + Sync + 'static>(
         .show(ui.ctx(), |ui| {
             egui::Frame::popup(ui.style()).show(ui, |ui| {
                 ui.set_min_width(180.0);
-                ui.label(egui::RichText::new(title).strong().size(11.0));
+                ui.label(
+                    egui::RichText::new(title)
+                        .strong()
+                        .size(crate::theme::SMALL_FONT),
+                );
                 ui.add_space(2.0);
                 let _resp = egui::ComboBox::from_id_salt(salt)
                     .selected_text(label_of(&state))
@@ -257,7 +265,11 @@ pub(super) fn show_position_popup(
         .show(ui.ctx(), |ui| {
             egui::Frame::popup(ui.style()).show(ui, |ui| {
                 ui.set_min_width(200.0);
-                ui.label(egui::RichText::new(title).strong().size(11.0));
+                ui.label(
+                    egui::RichText::new(title)
+                        .strong()
+                        .size(crate::theme::SMALL_FONT),
+                );
                 ui.add_space(2.0);
                 let (bar, tick_in_bar) = bar_lookup.tick_to_position(tick_f.max(0.0) as u32);
                 let mut bar_f = bar as f64;
@@ -265,7 +277,7 @@ pub(super) fn show_position_popup(
                 ui.horizontal(|ui| {
                     ui.label(
                         egui::RichText::new("小节")
-                            .size(11.0)
+                            .size(crate::theme::SMALL_FONT)
                             .color(crate::theme::TEXT_LABEL),
                     );
                     ui.add(
@@ -276,7 +288,7 @@ pub(super) fn show_position_popup(
                     );
                     ui.label(
                         egui::RichText::new("/")
-                            .size(11.0)
+                            .size(crate::theme::SMALL_FONT)
                             .color(crate::theme::TEXT_LABEL),
                     );
                     ui.add(

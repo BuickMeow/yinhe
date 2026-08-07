@@ -110,7 +110,7 @@ pub(crate) fn show_progress_viewport(
                                 if !state.status.is_empty() {
                                     ui.label(
                                         egui::RichText::new(&state.status)
-                                            .size(12.0)
+                                            .size(crate::theme::BODY_FONT)
                                             .color(crate::theme::TEXT_MUTED),
                                     );
                                 }

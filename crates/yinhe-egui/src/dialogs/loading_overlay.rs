@@ -62,19 +62,19 @@ pub(crate) fn show_viewport(ctx: &egui::Context, progress: SharedProgress) -> bo
                                             ICON_RADIO_BUTTON_UNCHECKED
                                         }
                                     };
-                                    ui.label(icon.rich_text().size(14.0));
+                                    ui.label(icon.rich_text().size(crate::theme::ICON_FONT));
                                     if stage.status
                                         == yinhe_editor_core::progress::StageStatus::Pending
                                     {
                                         // 未开始的阶段不画 0% 进度条（避免误以为卡死）
                                         ui.label(
                                             egui::RichText::new(&stage.label)
-                                                .size(12.0)
+                                                .size(crate::theme::BODY_FONT)
                                                 .color(crate::theme::TEXT_DIM),
                                         );
                                         ui.label(
                                             egui::RichText::new(t!("dialog.loading.waiting"))
-                                                .size(10.0)
+                                                .size(crate::theme::SMALL_LABEL_FONT)
                                                 .color(crate::theme::TEXT_DIM),
                                         );
                                     } else {
@@ -83,13 +83,16 @@ pub(crate) fn show_viewport(ctx: &egui::Context, progress: SharedProgress) -> bo
                                                 .desired_width(crate::theme::PROGRESS_BAR_WIDTH)
                                                 .show_percentage(),
                                         );
-                                        ui.label(egui::RichText::new(&stage.label).size(12.0));
+                                        ui.label(
+                                            egui::RichText::new(&stage.label)
+                                                .size(crate::theme::BODY_FONT),
+                                        );
                                     }
                                 });
                                 if !stage.detail.is_empty() {
                                     ui.label(
                                         egui::RichText::new(&stage.detail)
-                                            .size(10.0)
+                                            .size(crate::theme::SMALL_LABEL_FONT)
                                             .color(crate::theme::TEXT_LABEL),
                                     );
                                 }

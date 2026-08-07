@@ -53,7 +53,11 @@ pub(super) fn build_table<F>(
     tb.header(20.0, |mut h| {
         for (label, _) in headers {
             h.col(|ui| {
-                ui.label(egui::RichText::new(*label).strong().size(11.0));
+                ui.label(
+                    egui::RichText::new(*label)
+                        .strong()
+                        .size(crate::theme::SMALL_FONT),
+                );
             });
         }
     })
@@ -88,7 +92,14 @@ pub(super) fn cell_text(
     let s: String = text.into();
     row.col(|ui| {
         // 放 Label 消耗 layout 空间
-        ui.add(egui::Label::new(egui::RichText::new(s).size(11.0).monospace()).selectable(false));
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(s)
+                    .size(crate::theme::SMALL_FONT)
+                    .monospace(),
+            )
+            .selectable(false),
+        );
         // 整个 cell 加交互
         let cell_rect = ui.max_rect();
         let id = ui.id().with("cell").with(row_idx);
@@ -118,7 +129,7 @@ pub(super) fn cell_position(
         ui.add(
             egui::Label::new(
                 egui::RichText::new(bar_lookup.format(tick))
-                    .size(11.0)
+                    .size(crate::theme::SMALL_FONT)
                     .monospace(),
             )
             .selectable(false),
@@ -169,7 +180,7 @@ pub(super) fn cell_row_header(
         ui.add(
             egui::Label::new(
                 egui::RichText::new(format!("{}", page_start + row_idx + 1))
-                    .size(11.0)
+                    .size(crate::theme::SMALL_FONT)
                     .monospace()
                     .color(label_color),
             )
@@ -272,7 +283,7 @@ pub(super) fn empty_state_add_button(ui: &mut egui::Ui, id_salt: &str) -> bool {
         ui.add_space(40.0);
         let icon_text = egui::RichText::new(ICON_ADD.codepoint)
             .family(ICON_ADD.font_family())
-            .size(24.0)
+            .size(crate::theme::ICON_FONT_XL)
             .color(crate::theme::TEXT_BRIGHT);
         let resp = ui.add(
             egui::Label::new(icon_text)
@@ -285,7 +296,7 @@ pub(super) fn empty_state_add_button(ui: &mut egui::Ui, id_salt: &str) -> bool {
                 resp.rect.center(),
                 egui::Align2::CENTER_CENTER,
                 ICON_ADD.codepoint,
-                egui::FontId::new(24.0, ICON_ADD.font_family()),
+                egui::FontId::new(crate::theme::ICON_FONT_XL, ICON_ADD.font_family()),
                 ACCENT_ACTIVE,
             );
         }
@@ -294,7 +305,7 @@ pub(super) fn empty_state_add_button(ui: &mut egui::Ui, id_salt: &str) -> bool {
         }
         ui.label(
             egui::RichText::new("点击新建第一个事件")
-                .size(11.0)
+                .size(crate::theme::SMALL_FONT)
                 .color(crate::theme::TEXT_FAINT),
         );
     });
@@ -341,7 +352,14 @@ pub(super) fn cell_editable(
 ) {
     let s: String = text.into();
     row.col(|ui| {
-        ui.add(egui::Label::new(egui::RichText::new(s).size(11.0).monospace()).selectable(false));
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(s)
+                    .size(crate::theme::SMALL_FONT)
+                    .monospace(),
+            )
+            .selectable(false),
+        );
         let cell_rect = ui.max_rect();
         let id = ui.id().with("cell").with(row_idx);
         let resp = ui.interact(cell_rect, id, egui::Sense::click());
@@ -455,7 +473,7 @@ pub(super) fn render_pager(ui: &mut egui::Ui, page: usize, total_pages: usize) -
                 egui::Label::new(
                     ICON_NEXT
                         .rich_text()
-                        .size(14.0)
+                        .size(crate::theme::ICON_FONT)
                         .color(crate::theme::TEXT_BRIGHT),
                 )
                 .sense(egui::Sense::click()),
@@ -466,7 +484,7 @@ pub(super) fn render_pager(ui: &mut egui::Ui, page: usize, total_pages: usize) -
         }
         ui.label(
             egui::RichText::new(format!("/ {}", total_pages))
-                .size(11.0)
+                .size(crate::theme::SMALL_FONT)
                 .color(crate::theme::TEXT_FAINT),
         );
         let buf: String = ui.memory(|m| {
@@ -478,7 +496,7 @@ pub(super) fn render_pager(ui: &mut egui::Ui, page: usize, total_pages: usize) -
         let resp = ui.add(
             egui::TextEdit::singleline(&mut buf)
                 .desired_width(28.0)
-                .font(egui::FontId::proportional(11.0))
+                .font(egui::FontId::proportional(crate::theme::SMALL_FONT))
                 .horizontal_align(egui::Align::Center),
         );
         let edited_buf = buf.clone();
@@ -502,7 +520,7 @@ pub(super) fn render_pager(ui: &mut egui::Ui, page: usize, total_pages: usize) -
                 egui::Label::new(
                     ICON_PREV
                         .rich_text()
-                        .size(14.0)
+                        .size(crate::theme::ICON_FONT)
                         .color(crate::theme::TEXT_BRIGHT),
                 )
                 .sense(egui::Sense::click()),
