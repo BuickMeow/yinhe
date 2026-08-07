@@ -59,10 +59,17 @@ pub fn draw(
     ];
 
     // Fill
-    painter.rect_filled(sel, 0.0, fill_color.gamma_multiply(0.15));
+    painter.rect_filled(
+        sel,
+        0.0,
+        fill_color.gamma_multiply(crate::theme::MARQUEE_FILL_ALPHA),
+    );
 
     // Strokes — only draw edges that weren't clipped
-    let stroke = egui::Stroke::new(1.0, stroke_color.gamma_multiply(0.40));
+    let stroke = egui::Stroke::new(
+        1.0,
+        stroke_color.gamma_multiply(crate::theme::MARQUEE_STROKE_ALPHA),
+    );
     let [t, r, b, l] = clipped;
     if !t {
         painter.line_segment(

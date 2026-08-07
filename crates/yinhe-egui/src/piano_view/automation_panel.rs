@@ -613,11 +613,18 @@ fn draw_panel_overlay(
             let rect = egui::Rect::from_min_max(egui::pos2(x1, y1), egui::pos2(x2, y2))
                 .intersect(grid_area);
             // 选框颜色与 PR/AR 一致：白色 + gamma_multiply
-            painter.rect_filled(rect, 0.0, egui::Color32::WHITE.gamma_multiply(0.15));
+            painter.rect_filled(
+                rect,
+                0.0,
+                egui::Color32::WHITE.gamma_multiply(crate::theme::MARQUEE_FILL_ALPHA),
+            );
             painter.rect_stroke(
                 rect,
                 0.0,
-                egui::Stroke::new(1.0, egui::Color32::WHITE.gamma_multiply(0.40)),
+                egui::Stroke::new(
+                    1.0,
+                    egui::Color32::WHITE.gamma_multiply(crate::theme::MARQUEE_STROKE_ALPHA),
+                ),
                 egui::StrokeKind::Inside,
             );
         }
@@ -625,12 +632,19 @@ fn draw_panel_overlay(
     // ── Select 工具框选矩形（拖拽中的临时选框，画在最上层）──
     if let Some(rect) = overlay.marquee_rect {
         let painter = ui.painter();
-        // 选框颜色与 PR/AR 一致：白色 + gamma_multiply（拖拽中略亮）
-        painter.rect_filled(rect, 0.0, egui::Color32::WHITE.gamma_multiply(0.20));
+        // 选框颜色与 PR/AR 一致：白色 + gamma_multiply（拖拽中与已提交同透明度）
+        painter.rect_filled(
+            rect,
+            0.0,
+            egui::Color32::WHITE.gamma_multiply(crate::theme::MARQUEE_FILL_ALPHA),
+        );
         painter.rect_stroke(
             rect,
             0.0,
-            egui::Stroke::new(1.0, egui::Color32::WHITE.gamma_multiply(0.40)),
+            egui::Stroke::new(
+                1.0,
+                egui::Color32::WHITE.gamma_multiply(crate::theme::MARQUEE_STROKE_ALPHA),
+            ),
             egui::StrokeKind::Inside,
         );
     }
@@ -871,7 +885,7 @@ fn dispatch_edit_interaction(
                 let track_color = track_colors
                     .get(track as usize)
                     .copied()
-                    .unwrap_or([0.8, 0.8, 0.8, 1.0]);
+                    .unwrap_or(yinhe_core::DEFAULT_TRACK_COLOR);
                 let (vel_edits, preview, tip) = velocity::handle_velocity_interaction(
                     ui,
                     grid_area,
@@ -1090,12 +1104,7 @@ fn render_panel_content(
 
     // ── Background + center line (drawn by egui before wgpu texture) ──
     let theme = renderer.theme();
-    let (r, g, b) = theme.pr_bg;
-    painter.rect_filled(
-        grid_rect,
-        0.0,
-        egui::Color32::from_rgb((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8),
-    );
+    painter.rect_filled(grid_rect, 0.0, crate::theme::rgb_to_color32(theme.pr_bg));
     // Center line (only for targets that have one)
     // 直接基于 panel.selected_target 判断，不依赖 lanes 是否非空：
     // 即使该 target 没有任何锚点事件（lanes 为空），中线也应照常显示。
@@ -1106,19 +1115,13 @@ fn render_panel_content(
         if max_val > 0.0 && target.has_center_line() {
             let center_val = target.default_value();
             let y_center = panel.value_to_y(center_val, max_val);
-            let (cr, cg, cb, ca) = theme.center_line;
             painter.rect_filled(
                 egui::Rect::from_min_size(
                     egui::pos2(grid_rect.min.x, grid_rect.min.y + y_center - 0.5),
                     egui::vec2(grid_rect.width(), 1.0),
                 ),
                 0.0,
-                egui::Color32::from_rgba_unmultiplied(
-                    (cr * 255.0) as u8,
-                    (cg * 255.0) as u8,
-                    (cb * 255.0) as u8,
-                    (ca * 255.0) as u8,
-                ),
+                crate::theme::rgba_to_color32(theme.center_line),
             );
         }
     }

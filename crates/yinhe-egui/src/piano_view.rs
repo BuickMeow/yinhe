@@ -18,7 +18,6 @@ mod keyboard;
 mod marquee;
 mod pencil;
 mod perf;
-mod quantize_button;
 
 /// Events emitted by the piano-roll view for the caller to act on.
 pub enum PianoViewEvent {
@@ -593,12 +592,7 @@ pub fn show(
 
     // ── Background (drawn by egui before wgpu texture) ──
     let theme = pianoroll.theme().clone();
-    let (r, g, b) = theme.pr_bg;
-    painter.rect_filled(
-        content_rect,
-        0.0,
-        egui::Color32::from_rgb((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8),
-    );
+    painter.rect_filled(content_rect, 0.0, crate::theme::rgb_to_color32(theme.pr_bg));
 
     // ── Scale background + 八度横线（调号驱动的调内/调外/根音条带）──
     let kh = view.key_height;
@@ -1017,16 +1011,19 @@ pub fn show(
     });
 
     // ── PR quantize button in the top-left corner (left of ruler, above keyboard) ──
-    let pr_quantize_event = quantize_button::show(
+    let pr_quantize_event = crate::widgets::quantize_button::show(
         ui,
-        quantize_button::QuantizeBtnCtx {
-            rect_min_x: rect.min.x,
-            ruler_band_y,
-            kb_w,
+        crate::widgets::quantize_button::QuantizeBtnCtx {
+            corner_rect: egui::Rect::from_min_size(
+                egui::pos2(rect.min.x, ruler_band_y),
+                egui::vec2(kb_w, crate::theme::RULER_H),
+            ),
+            id_salt: "pr_quantize_btn",
             ppq,
             quantize,
         },
-    );
+    )
+    .map(PianoViewEvent::QuantizePreset);
 
     // ── 状态栏讲解行：钢琴卷帘悬停提示（位置 + 音高）──
     // 自动化面板的提示（grid_area 内）优先于 PR 内容区提示；

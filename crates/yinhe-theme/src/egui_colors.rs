@@ -98,3 +98,27 @@ pub const SOLO_ACTIVE: Color32 = Color32::from_rgb(220, 80, 80);
 // ── Cursor / playhead ──
 pub const CURSOR_COLOR: Color32 = Color32::from_rgba_premultiplied(255, 255, 255, 204);
 pub const CURSOR_WIDTH: f32 = 2.0;
+
+// ── Marquee（选框）透明度：三视图（PR/AR/AM）共用 ──
+pub const MARQUEE_FILL_ALPHA: f32 = 0.15;
+pub const MARQUEE_STROKE_ALPHA: f32 = 0.40;
+
+/// [f32;3] 元组（0..1，如 GpuTheme 字段）→ Color32（alpha=255）。
+/// 替代散落各处的 `Color32::from_rgb((r*255.0) as u8, ...)` 手写转换。
+pub fn rgb_to_color32(c: (f32, f32, f32)) -> Color32 {
+    Color32::from_rgb(
+        (c.0 * 255.0) as u8,
+        (c.1 * 255.0) as u8,
+        (c.2 * 255.0) as u8,
+    )
+}
+
+/// [f32;4] 元组（0..1，非预乘 alpha，如 GpuTheme 字段）→ Color32。
+pub fn rgba_to_color32(c: (f32, f32, f32, f32)) -> Color32 {
+    Color32::from_rgba_unmultiplied(
+        (c.0 * 255.0) as u8,
+        (c.1 * 255.0) as u8,
+        (c.2 * 255.0) as u8,
+        (c.3 * 255.0) as u8,
+    )
+}

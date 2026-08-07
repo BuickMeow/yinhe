@@ -1,37 +1,31 @@
-//! Pianoroll 左上角量化按钮（点击弹出量化预设选择 popup）。
+//! 左上角量化按钮（点击弹出量化预设选择 popup），PR/AR 共用。
 //!
-//! 位于时间标尺与键盘的交叉角落，点击切换量化预设。
+//! PR 位于时间标尺与键盘的交叉角落，AR 位于音轨面板上方，
+//! 两者只差角落矩形与 id，绘制与弹窗逻辑完全相同。
 
 use eframe::egui;
 
 use yinhe_editor_core::quantize::QuantizePreset;
-
-use super::PianoViewEvent;
-
 /// 量化按钮上下文。
 pub struct QuantizeBtnCtx {
-    pub rect_min_x: f32,
-    pub ruler_band_y: f32,
-    pub kb_w: f32,
+    /// 按钮所在的角落矩形（背景 + 分隔线绘制范围）。
+    pub corner_rect: egui::Rect,
+    /// 按钮交互 id（PR/AR 各用不同 salt，避免 id 冲突）。
+    pub id_salt: &'static str,
     pub ppq: u32,
     pub quantize: QuantizePreset,
 }
 
-/// 绘制量化按钮并处理点击。返回新的量化预设（若用户选择了新值）。
-pub fn show(ui: &mut egui::Ui, ctx: QuantizeBtnCtx) -> Option<PianoViewEvent> {
+/// 绘制量化按钮并处理点击。返回用户新选的量化预设（若有）。
+pub fn show(ui: &mut egui::Ui, ctx: QuantizeBtnCtx) -> Option<QuantizePreset> {
     let QuantizeBtnCtx {
-        rect_min_x,
-        ruler_band_y,
-        kb_w,
+        corner_rect,
+        id_salt,
         ppq,
         quantize,
     } = ctx;
 
-    let corner_rect = egui::Rect::from_min_size(
-        egui::pos2(rect_min_x, ruler_band_y),
-        egui::vec2(kb_w, crate::theme::RULER_H),
-    );
-    // 背景矩形：与 ruler 带对齐，画在键盘之上
+    // 背景矩形：与 ruler 带对齐
     ui.painter()
         .rect_filled(corner_rect, 0.0, crate::theme::RULER_BG);
     // 右侧分隔线（与 ruler 对齐）
@@ -46,15 +40,11 @@ pub fn show(ui: &mut egui::Ui, ctx: QuantizeBtnCtx) -> Option<PianoViewEvent> {
     let btn_size = 20.0;
     let btn_rect =
         egui::Rect::from_center_size(corner_rect.center(), egui::vec2(btn_size, btn_size));
-    let btn_resp = ui.interact(
-        btn_rect,
-        egui::Id::new("pr_quantize_btn"),
-        egui::Sense::click(),
-    );
+    let btn_resp = ui.interact(btn_rect, egui::Id::new(id_salt), egui::Sense::click());
     let hovered = btn_resp.hovered();
 
     let icon_color = if hovered {
-        crate::theme::ACCENT_ACTIVE
+        egui::Color32::WHITE
     } else {
         crate::theme::TEXT_MUTED
     };
@@ -73,5 +63,5 @@ pub fn show(ui: &mut egui::Ui, ctx: QuantizeBtnCtx) -> Option<PianoViewEvent> {
             crate::widgets::quantize_popup::show(ui, ppq, quantize, &mut pending_q);
         });
 
-    pending_q.map(PianoViewEvent::QuantizePreset)
+    pending_q
 }

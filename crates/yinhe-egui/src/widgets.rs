@@ -3,6 +3,7 @@ pub(crate) mod hint;
 pub(crate) mod hover;
 pub(crate) mod icon_text;
 pub mod numeric_input;
+pub mod quantize_button;
 pub mod quantize_popup;
 pub mod scrollbar;
 pub mod selection_actions;

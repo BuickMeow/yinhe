@@ -415,47 +415,19 @@ pub fn show(
     }
 
     // ── AR quantize button in the top-left corner (left of ruler, above track panel) ──
-    let mut pending_quantize = None;
-    {
-        let corner_rect = egui::Rect::from_min_size(
-            egui::pos2(arr_rect.min.x, arr_rect.min.y),
-            egui::vec2(tp_w, RULER_H),
-        );
-        let btn_size = 20.0;
-        let btn_rect =
-            egui::Rect::from_center_size(corner_rect.center(), egui::vec2(btn_size, btn_size));
-        let btn_resp = ui.interact(
-            btn_rect,
-            egui::Id::new("arr_quantize_btn"),
-            egui::Sense::click(),
-        );
-        let hovered = btn_resp.hovered();
-
-        let icon_color = if hovered {
-            crate::theme::ACCENT_ACTIVE
-        } else {
-            crate::theme::TEXT_MUTED
-        };
-        ui.painter().text(
-            btn_rect.center(),
-            egui::Align2::CENTER_CENTER,
-            doc.edit.quantize_arrange.label(),
-            egui::FontId::proportional(crate::theme::SMALL_FONT),
-            icon_color,
-        );
-
-        egui::Popup::from_toggle_button_response(&btn_resp)
-            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-            .show(|ui| {
-                let ppq = doc.data.model.meta.ppq;
-                crate::widgets::quantize_popup::show(
-                    ui,
-                    ppq,
-                    doc.edit.quantize_arrange,
-                    &mut pending_quantize,
-                );
-            });
-    }
+    // 与 PR 共用 quantize_button 组件（角落矩形 + 弹窗逻辑一致）。
+    let pending_quantize = crate::widgets::quantize_button::show(
+        ui,
+        crate::widgets::quantize_button::QuantizeBtnCtx {
+            corner_rect: egui::Rect::from_min_size(
+                egui::pos2(arr_rect.min.x, arr_rect.min.y),
+                egui::vec2(tp_w, RULER_H),
+            ),
+            id_salt: "arr_quantize_btn",
+            ppq: doc.data.model.meta.ppq,
+            quantize: doc.edit.quantize_arrange,
+        },
+    );
 
     // ── "+" track add button in the corner (below track panel, left of scrollbar) ──
     {
@@ -478,7 +450,7 @@ pub fn show(
 
         use egui_material_icons::icons::ICON_ADD;
         let icon_color = if hovered {
-            crate::theme::ACCENT_ACTIVE
+            egui::Color32::WHITE
         } else {
             crate::theme::TEXT_MUTED
         };

@@ -329,12 +329,7 @@ pub(super) fn show_track_info(
             .get(track_idx)
             .copied()
             .unwrap_or(yinhe_core::DEFAULT_TRACK_COLOR);
-        let mut srgba = egui::Color32::from_rgba_unmultiplied(
-            (cur[0] * 255.0).round() as u8,
-            (cur[1] * 255.0).round() as u8,
-            (cur[2] * 255.0).round() as u8,
-            (cur[3] * 255.0).round() as u8,
-        );
+        let mut srgba = crate::theme::rgba_to_color32((cur[0], cur[1], cur[2], cur[3]));
         // popup id 与 color_edit_button_srgba 内部（auto_id_with("popup")）一致
         let popup_id = ui.auto_id_with("popup");
         let open = egui::Popup::is_id_open(ui.ctx(), popup_id);

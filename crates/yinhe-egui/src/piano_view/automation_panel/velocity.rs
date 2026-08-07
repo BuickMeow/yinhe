@@ -180,12 +180,12 @@ pub(crate) fn handle_velocity_interaction(
         s.last = (tick, value);
     }
 
-    let color = egui::Color32::from_rgba_unmultiplied(
-        (track_color[0] * 255.0) as u8,
-        (track_color[1] * 255.0) as u8,
-        (track_color[2] * 255.0) as u8,
-        (track_color[3] * 255.0) as u8,
-    );
+    let color = crate::theme::rgba_to_color32((
+        track_color[0],
+        track_color[1],
+        track_color[2],
+        track_color[3],
+    ));
 
     let mut edits = Vec::new();
     let mut preview = None;

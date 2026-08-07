@@ -171,12 +171,7 @@ pub fn show(
 
     // ── Background + track lanes (drawn by egui before wgpu texture) ──
     let lb_w = view.base.left_panel_width;
-    let (r, g, b) = theme.ar_bg;
-    painter.rect_filled(
-        rect,
-        0.0,
-        egui::Color32::from_rgb((r * 255.0) as u8, (g * 255.0) as u8, (b * 255.0) as u8),
-    );
+    painter.rect_filled(rect, 0.0, crate::theme::rgb_to_color32(theme.ar_bg));
     let lh = view.lane_height();
     let scroll_y = view.base.scroll_y;
     if data.num_tracks > 0 {

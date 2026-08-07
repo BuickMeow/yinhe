@@ -99,13 +99,8 @@ pub(crate) fn show(
         let color = track_colors
             .get(idx)
             .copied()
-            .unwrap_or([0.5, 0.5, 0.5, 1.0]);
-        let color32 = egui::Color32::from_rgba_unmultiplied(
-            (color[0] * 255.0) as u8,
-            (color[1] * 255.0) as u8,
-            (color[2] * 255.0) as u8,
-            (color[3] * 255.0) as u8,
-        );
+            .unwrap_or(yinhe_core::DEFAULT_TRACK_COLOR);
+        let color32 = crate::theme::rgba_to_color32((color[0], color[1], color[2], color[3]));
 
         let badge_w = 8.0_f32;
         let badge_rect = egui::Rect::from_min_size(row_rect.min, egui::vec2(badge_w, *row_height));
