@@ -335,7 +335,7 @@ pub fn show(
             egui::pos2(arr_rect.min.x + tp_w + 4.0, gpu_rect.max.y),
             egui::pos2(gpu_rect.max.x, arr_rect.max.y),
         );
-        crate::widgets::scrollbar::show(
+        let sb_bg_dx = crate::widgets::scrollbar::show(
             ui,
             sb_rect,
             gpu_rect.width(),
@@ -344,6 +344,13 @@ pub fn show(
             total_ticks,
             &mut arr_view.base.dirty,
         );
+        // 水平滚动条背景拖拽 → 轨道行高缩放（与滚轮缩放同锚点）
+        if sb_bg_dx != 0.0 {
+            let factor = 1.0 + sb_bg_dx * 0.005;
+            let anchor_y = sb_rect.center().y - arr_rect.min.y;
+            arr_view.zoom_lane_height(anchor_y, factor);
+            ui.ctx().request_repaint();
+        }
 
         // 滚动条滚轮缩放：水平滚动条上滚轮 = 轨道行高缩放（锚定滚动条中心 y）
         if let Some(pos) = ui.input(|i| i.pointer.hover_pos())
@@ -366,19 +373,28 @@ pub fn show(
             egui::pos2(gpu_rect.max.x, arr_rect.min.y + RULER_H),
             egui::pos2(arr_rect.max.x, gpu_rect.max.y),
         );
-        ui.push_id("arr_vscroll", |ui| {
-            crate::widgets::scrollbar::show_vertical(
-                ui,
-                vsb_rect,
-                gpu_rect.height(),
-                &mut arr_view.base.scroll_y,
-                &mut arr_view.base.track_panel_row_height,
-                num_tracks,
-                16.0,
-                120.0,
-                &mut arr_view.base.dirty,
-            );
-        });
+        let vsb_bg_dy = ui
+            .push_id("arr_vscroll", |ui| {
+                crate::widgets::scrollbar::show_vertical(
+                    ui,
+                    vsb_rect,
+                    gpu_rect.height(),
+                    &mut arr_view.base.scroll_y,
+                    &mut arr_view.base.track_panel_row_height,
+                    num_tracks,
+                    16.0,
+                    120.0,
+                    &mut arr_view.base.dirty,
+                )
+            })
+            .inner;
+        // 垂直滚动条背景拖拽 → 水平缩放（与滚轮缩放同锚点）
+        if vsb_bg_dy != 0.0 {
+            let factor = 1.0 + vsb_bg_dy * 0.005;
+            let anchor_x = vsb_rect.center().x - arr_rect.min.x;
+            arr_view.zoom_around_x(anchor_x, factor);
+            ui.ctx().request_repaint();
+        }
 
         // 滚动条滚轮缩放：垂直滚动条上滚轮 = 水平缩放（锚定滚动条中心 x）
         if let Some(pos) = ui.input(|i| i.pointer.hover_pos())

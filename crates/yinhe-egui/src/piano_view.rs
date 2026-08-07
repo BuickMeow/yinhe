@@ -926,17 +926,27 @@ pub fn show(
         ),
     );
 
-    ui.push_id("piano_scrollbar", |ui| {
-        crate::widgets::scrollbar::show(
-            ui,
-            sb_rect,
-            w as f32 - kb_w,
-            &mut view.base.scroll_x,
-            &mut view.base.pixels_per_tick,
-            total_ticks,
-            &mut view.base.dirty,
-        );
-    });
+    // 水平滚动条：thumb 拖 = 平移/边缘缩放（scrollbar 内部），
+    // 背景拖拽返回值 → 垂直缩放（与滚轮缩放同锚点）
+    let sb_bg_dx = ui
+        .push_id("piano_scrollbar", |ui| {
+            crate::widgets::scrollbar::show(
+                ui,
+                sb_rect,
+                w as f32 - kb_w,
+                &mut view.base.scroll_x,
+                &mut view.base.pixels_per_tick,
+                total_ticks,
+                &mut view.base.dirty,
+            )
+        })
+        .inner;
+    if sb_bg_dx != 0.0 {
+        let factor = 1.0 + sb_bg_dx * 0.005;
+        let anchor_y = sb_rect.center().y - content_rect.min.y;
+        view.zoom_around_y(anchor_y, factor, content_rect.height());
+        ui.ctx().request_repaint();
+    }
 
     // ── Vertical scrollbar ──
     // PR 像素空间：num_cells = 128，cell_size = key_height。
@@ -949,19 +959,29 @@ pub fn show(
         );
         let cell_min = content_rect.height() / 128.0;
         let cell_max = content_rect.height() / 12.0;
-        ui.push_id("piano_vscroll", |ui| {
-            crate::widgets::scrollbar::show_vertical(
-                ui,
-                vsb_rect,
-                content_rect.height(),
-                &mut view.base.scroll_y,
-                &mut view.key_height,
-                128,
-                cell_min,
-                cell_max,
-                &mut view.base.dirty,
-            );
-        });
+        // 垂直滚动条：thumb 拖 = 平移/边缘缩放（scrollbar 内部），
+        // 背景拖拽返回值 → 水平缩放（与滚轮缩放同锚点）
+        let vsb_bg_dy = ui
+            .push_id("piano_vscroll", |ui| {
+                crate::widgets::scrollbar::show_vertical(
+                    ui,
+                    vsb_rect,
+                    content_rect.height(),
+                    &mut view.base.scroll_y,
+                    &mut view.key_height,
+                    128,
+                    cell_min,
+                    cell_max,
+                    &mut view.base.dirty,
+                )
+            })
+            .inner;
+        if vsb_bg_dy != 0.0 {
+            let factor = 1.0 + vsb_bg_dy * 0.005;
+            let anchor_x = vsb_rect.center().x - content_rect.min.x;
+            view.zoom_around_x(anchor_x, factor);
+            ui.ctx().request_repaint();
+        }
 
         // ── 滚动条滚轮缩放：垂直滚动条上滚轮 = 水平缩放；水平滚动条上滚轮 = 垂直缩放 ──
         if let Some(pos) = ui.input(|i| i.pointer.hover_pos()) {

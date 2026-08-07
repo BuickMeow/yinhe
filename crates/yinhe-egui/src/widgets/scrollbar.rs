@@ -19,6 +19,133 @@ const EDGE_WIDTH: f32 = 4.0;
 const PPT_MIN: f32 = 0.001;
 const PPT_MAX: f32 = 10.0;
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 跑一帧滚动条，返回背景拖拽返回值。
+    fn run_frame(
+        ctx: &egui::Context,
+        raw: egui::RawInput,
+        rect: egui::Rect,
+        scroll_x: &mut f32,
+        ppt: &mut f32,
+        dirty: &mut bool,
+    ) -> f32 {
+        let mut out = 0.0f32;
+        let _ = ctx.run_ui(raw, |ui| {
+            out = show(ui, rect, 300.0, scroll_x, ppt, 1000.0, dirty);
+        });
+        out
+    }
+
+    fn press_event(pos: egui::Pos2) -> egui::RawInput {
+        let mut raw = egui::RawInput::default();
+        raw.events.push(egui::Event::PointerMoved(pos));
+        raw.events.push(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::default(),
+        });
+        raw
+    }
+
+    fn drag_event(pos: egui::Pos2) -> egui::RawInput {
+        let mut raw = egui::RawInput::default();
+        raw.events.push(egui::Event::PointerMoved(pos));
+        raw
+    }
+
+    /// 背景拖拽（thumb 之外）→ 返回 dx，供调用处缩放对面轴。
+    /// 配置：total=1000 tick，view_width=300，ppt=1 → thumb 占 [0, 90]，
+    /// x=200 是背景区。
+    /// egui 的 hit test 基于上一帧注册的 widgets：先 hover 注册一帧再 press。
+    #[test]
+    fn background_drag_returns_dx() {
+        let ctx = egui::Context::default();
+        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(300.0, 16.0));
+        let mut scroll_x = 0.0f32;
+        let mut ppt = 1.0f32;
+        let mut dirty = false;
+
+        let start = egui::pos2(200.0, 8.0);
+        let end = egui::pos2(250.0, 8.0);
+        // 帧1：hover 注册 widget（hit test 在下一帧生效）
+        let _ = run_frame(
+            &ctx,
+            drag_event(start),
+            rect,
+            &mut scroll_x,
+            &mut ppt,
+            &mut dirty,
+        );
+        // 帧2：press
+        let _ = run_frame(
+            &ctx,
+            press_event(start),
+            rect,
+            &mut scroll_x,
+            &mut ppt,
+            &mut dirty,
+        );
+        // 帧3：drag（本帧移动 50px）→ 应返回 dx
+        let dx = run_frame(
+            &ctx,
+            drag_event(end),
+            rect,
+            &mut scroll_x,
+            &mut ppt,
+            &mut dirty,
+        );
+        assert!(dx > 0.0, "背景拖拽应返回非零 dx，实际 {dx}");
+        assert_eq!(scroll_x, 0.0, "背景拖拽不应平移");
+    }
+
+    /// thumb 中间拖拽 = 平移，返回 0（不触发对面轴缩放）。
+    #[test]
+    fn thumb_drag_pans_and_returns_zero() {
+        let ctx = egui::Context::default();
+        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(300.0, 16.0));
+        let mut scroll_x = 0.0f32;
+        let mut ppt = 1.0f32;
+        let mut dirty = false;
+
+        // thumb 中间 (45, 8)，拖到 (95, 8)：平移 50px = 50/0.3 tick。
+        let start = egui::pos2(45.0, 8.0);
+        let end = egui::pos2(95.0, 8.0);
+        // 帧1：hover 注册
+        let _ = run_frame(
+            &ctx,
+            drag_event(start),
+            rect,
+            &mut scroll_x,
+            &mut ppt,
+            &mut dirty,
+        );
+        // 帧2：press
+        let _ = run_frame(
+            &ctx,
+            press_event(start),
+            rect,
+            &mut scroll_x,
+            &mut ppt,
+            &mut dirty,
+        );
+        // 帧3：drag（本帧移动 50px）→ thumb 平移，返回 0
+        let dx = run_frame(
+            &ctx,
+            drag_event(end),
+            rect,
+            &mut scroll_x,
+            &mut ppt,
+            &mut dirty,
+        );
+        assert_eq!(dx, 0.0, "thumb 拖拽（平移）不应返回背景 dx");
+        assert!(scroll_x > 0.0, "thumb 拖拽应平移 scroll_x");
+    }
+}
+
 // ── Horizontal scrollbar ──
 
 /// Paint a horizontal scrollbar into the given rect.
@@ -37,10 +164,10 @@ pub(crate) fn show(
     pixels_per_tick: &mut f32,
     total_ticks: f64,
     dirty: &mut bool,
-) {
+) -> f32 {
     let sb_w = rect.width();
     if sb_w <= 0.0 || total_ticks <= 0.0 {
-        return;
+        return 0.0;
     }
 
     // Clamp scroll_x BEFORE computing the rectangle visual, so the
@@ -72,6 +199,11 @@ pub(crate) fn show(
         egui::pos2(rect.min.x + rect_left, rect.min.y),
         egui::pos2((rect.min.x + rect_right).min(rect.max.x), rect.max.y),
     );
+
+    // 背景拖拽（thumb 之外的区域）→ 返回拖拽 dx 供调用处缩放对面轴。
+    // 注册在 thumb 交互之前：thumb 区域优先，背景兜底。
+    let bg_id = ui.id().with("__sb_bg__");
+    let bg_resp = ui.interact(rect, bg_id, egui::Sense::drag());
 
     // Three interaction zones
     let left_edge_rect = egui::Rect::from_min_max(
@@ -138,7 +270,7 @@ pub(crate) fn show(
         *scroll_x = scroll_x.clamp(0.0, max_scroll_x(*pixels_per_tick));
         *dirty = true;
         ui.ctx().request_repaint();
-        return;
+        return 0.0;
     }
 
     // Apply zoom, clamping both ppt and scroll_x so the rectangle never
@@ -168,7 +300,7 @@ pub(crate) fn show(
             new_viewport_ticks,
         );
         ui.ctx().request_repaint();
-        return;
+        return 0.0;
     }
 
     // Drag right edge → zoom, anchoring at left edge
@@ -179,6 +311,24 @@ pub(crate) fn show(
         let new_viewport_ticks = (new_right_tick - start_tick).max(1.0);
         apply_zoom(scroll_x, pixels_per_tick, start_tick, new_viewport_ticks);
         ui.ctx().request_repaint();
+    }
+
+    // 背景拖拽 dx（thumb 未拖时）→ 调用处缩放对面轴
+    #[cfg(test)]
+    eprintln!(
+        "[sb] hovered={} down={} dragged={} delta={:?} contains={} press_origin={:?} interact={:?}",
+        bg_resp.hovered(),
+        bg_resp.is_pointer_button_down_on(),
+        bg_resp.dragged(),
+        bg_resp.drag_delta(),
+        bg_resp.contains_pointer(),
+        ui.input(|i| i.pointer.press_origin()),
+        ui.input(|i| i.pointer.interact_pos()),
+    );
+    if bg_resp.dragged() {
+        bg_resp.drag_delta().x
+    } else {
+        0.0
     }
 }
 
@@ -210,10 +360,10 @@ pub(crate) fn show_vertical(
     cell_min: f32,
     cell_max: f32,
     dirty: &mut bool,
-) {
+) -> f32 {
     let sb_h = rect.height();
     if sb_h <= 0.0 || view_height <= 0.0 || num_cells == 0 {
-        return;
+        return 0.0;
     }
 
     let num_cells_f = num_cells as f32;
@@ -240,6 +390,11 @@ pub(crate) fn show_vertical(
         egui::pos2(rect.min.x, rect.min.y + rect_top),
         egui::pos2(rect.max.x, (rect.min.y + rect_bottom).min(rect.max.y)),
     );
+
+    // 背景拖拽（thumb 之外的区域）→ 返回拖拽 dy 供调用处缩放对面轴。
+    // 注册在 thumb 交互之前：thumb 区域优先，背景兜底。
+    let bg_id = ui.id().with("__vsb_bg__");
+    let bg_resp = ui.interact(rect, bg_id, egui::Sense::drag());
 
     // Three interaction zones (top edge / middle / bottom edge)
     let top_edge_rect = egui::Rect::from_min_max(
@@ -314,7 +469,7 @@ pub(crate) fn show_vertical(
         *scroll_y = (*scroll_y + delta / scale).clamp(0.0, max_scroll_y);
         *dirty = true;
         ui.ctx().request_repaint();
-        return;
+        return 0.0;
     }
 
     // Drag top edge → zoom，锚定 thumb 底边 sb 位置（rect_bottom 不动）
@@ -334,7 +489,7 @@ pub(crate) fn show_vertical(
         *scroll_y = new_scroll_y.clamp(0.0, max_sy);
         *dirty = true;
         ui.ctx().request_repaint();
-        return;
+        return 0.0;
     }
 
     // Drag bottom edge → zoom，锚定 thumb 顶边 sb 位置（rect_top 不动）
@@ -353,6 +508,13 @@ pub(crate) fn show_vertical(
         *scroll_y = new_scroll_y.clamp(0.0, max_sy);
         *dirty = true;
         ui.ctx().request_repaint();
+    }
+
+    // 背景拖拽 dy（thumb 未拖时）→ 调用处缩放对面轴
+    if bg_resp.dragged() {
+        bg_resp.drag_delta().y
+    } else {
+        0.0
     }
 }
 
