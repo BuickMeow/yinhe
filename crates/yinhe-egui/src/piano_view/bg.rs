@@ -15,6 +15,7 @@ use yinhe_types::{KeySigEvent, PianoRollView};
 /// - 每个调号事件生效区间：调内音用背景色（不画），调外音用 `PR_SCALE_OUTSIDE` 暗色，
 ///   根音用 `PR_ROOT_NOTE` 深蓝
 /// - 工程无任何调号事件：全部走无调号模式
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 pub fn paint(
     painter: &egui::Painter,
     content_rect: egui::Rect,
@@ -22,6 +23,7 @@ pub fn paint(
     kh: f32,
     view: &PianoRollView,
     key_sig_events: &[KeySigEvent],
+    content_opacity: f32,
 ) {
     let (tick_start, tick_end) = view.visible_tick_range(content_rect.width());
     let tick_start = tick_start.max(0.0);
@@ -29,7 +31,16 @@ pub fn paint(
 
     match key_sig_events.first() {
         None => {
-            paint_black_key_rows(painter, content_rect, kb_w, kh, view, tick_start, tick_end);
+            paint_black_key_rows(
+                painter,
+                content_rect,
+                kb_w,
+                kh,
+                view,
+                tick_start,
+                tick_end,
+                content_opacity,
+            );
         }
         Some(first) => {
             let first_tick = first.tick as f64;
@@ -43,11 +54,20 @@ pub fn paint(
                     view,
                     tick_start,
                     first_tick.min(tick_end),
+                    content_opacity,
                 );
             }
             // 第一个调号事件起：调式分段
             if tick_end > first_tick {
-                paint_scale_background(painter, content_rect, kb_w, kh, view, key_sig_events);
+                paint_scale_background(
+                    painter,
+                    content_rect,
+                    kb_w,
+                    kh,
+                    view,
+                    key_sig_events,
+                    content_opacity,
+                );
             }
         }
     }
@@ -66,6 +86,7 @@ fn paint_scale_background(
     kh: f32,
     view: &PianoRollView,
     key_sig_events: &[KeySigEvent],
+    content_opacity: f32,
 ) {
     let content_left = content_rect.min.x + kb_w;
     let h = content_rect.height();
@@ -80,9 +101,8 @@ fn paint_scale_background(
     let tick_start = tick_start.max(0.0);
     let tick_end = tick_end.max(tick_start);
 
-    let outside_color =
-        crate::theme::pr_scale_outside().gamma_multiply(crate::theme::content_alpha());
-    let root_color = crate::theme::pr_root_note().gamma_multiply(crate::theme::content_alpha());
+    let outside_color = crate::theme::pr_scale_outside().gamma_multiply(content_opacity);
+    let root_color = crate::theme::pr_root_note().gamma_multiply(content_opacity);
     let ppt = view.base.pixels_per_tick;
     let scroll_x = view.base.scroll_x;
 
@@ -156,6 +176,7 @@ fn paint_scale_background(
 ///
 /// 仅画 `[seg_start, seg_end)` tick 区间对应的 x 范围（clamp 到可见区域）。
 /// 用于"工程无调号"或"第一个调号事件之前"的区间。
+#[allow(clippy::too_many_arguments)] // 上下文透传参数，见 AGENTS 约定
 fn paint_black_key_rows(
     painter: &egui::Painter,
     content_rect: egui::Rect,
@@ -164,6 +185,7 @@ fn paint_black_key_rows(
     view: &PianoRollView,
     seg_start: f64,
     seg_end: f64,
+    content_opacity: f32,
 ) {
     let content_left = content_rect.min.x + kb_w;
     let h = content_rect.height();
@@ -183,7 +205,7 @@ fn paint_black_key_rows(
         return;
     }
 
-    let bk_color = crate::theme::pr_black_key_row().gamma_multiply(crate::theme::content_alpha());
+    let bk_color = crate::theme::pr_black_key_row().gamma_multiply(content_opacity);
     for key in key_lo..=key_hi {
         if !yinhe_types::is_black_key(key) {
             continue;

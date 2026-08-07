@@ -18,9 +18,6 @@ pub struct GpuTheme {
 
     // ── Automation ──
     pub center_line: (f32, f32, f32, f32),
-
-    /// 内容层背景/条纹透明度（PR/AM 背景、AR 条纹；1.0 = 不透明）。
-    pub content_alpha: f32,
 }
 
 impl GpuTheme {
@@ -53,7 +50,6 @@ impl GpuTheme {
             ar_lane_even: mix(0.08),
             ar_lane_odd: mix(0.04),
             center_line: (mix(0.28).0, mix(0.28).1, mix(0.28).2, 0.6),
-            content_alpha: 0.7,
         }
     }
 }

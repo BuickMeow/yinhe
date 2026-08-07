@@ -42,6 +42,8 @@ pub struct AudioSettings {
     pub theme_preset: String,
     /// UI 缩放倍率（egui zoom_factor，0.75~2.0，1.0 = 100%）。
     pub ui_scale: f32,
+    /// 内容层背景/条纹不透明度（PR/AM 背景、AR 条纹；1.0 = 不透明，0.0 = 全透明）。
+    pub content_opacity: f32,
     #[serde(skip)]
     pub show_settings: bool,
     /// 设置页当前选中的分类（左侧导航）。
@@ -76,6 +78,7 @@ impl Default for AudioSettings {
             theme_base: yinhe_theme::base::BaseColors::DARK,
             theme_preset: "dark".to_string(),
             ui_scale: 1.0, // UI 缩放（egui zoom_factor，1.0 = 100%）
+            content_opacity: 0.7,
             show_settings: false,
             settings_tab: 0,
             settings_search: String::new(),

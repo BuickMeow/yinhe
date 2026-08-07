@@ -46,6 +46,8 @@ pub(crate) fn show(
     track_colors: &[[f32; 4]],
     row_height: &mut f32,
     scroll_y: &mut f32,
+    // 内容层条纹不透明度（设置调控，与 GPU 区条纹同值）。
+    content_opacity: f32,
     request_pianoroll: &mut bool,
     editing_track: &mut Option<u16>,
     info_content: &mut Option<crate::right_panel::InfoContent>,
@@ -81,12 +83,13 @@ pub(crate) fn show(
     let painter = ui.painter().clone();
     let mut audio_dirty = false;
 
-    // 交替行条纹：与 GPU 区 lane 条纹同源同透明度（yinhe-theme 全局 GPU 主题）
+    // 交替行条纹：与 GPU 区 lane 条纹同源（颜色来自 yinhe-theme 全局 GPU 主题），
+    // 透明度由设置调控，与 GPU 区同值
     let gpu_theme = yinhe_theme::current_gpu_theme();
-    let lane_even = crate::theme::rgb_to_color32(gpu_theme.ar_lane_even)
-        .gamma_multiply(gpu_theme.content_alpha);
+    let lane_even =
+        crate::theme::rgb_to_color32(gpu_theme.ar_lane_even).gamma_multiply(content_opacity);
     let lane_odd =
-        crate::theme::rgb_to_color32(gpu_theme.ar_lane_odd).gamma_multiply(gpu_theme.content_alpha);
+        crate::theme::rgb_to_color32(gpu_theme.ar_lane_odd).gamma_multiply(content_opacity);
 
     let interact_id = egui::Id::new("track_panel_area");
     let resp = ui.interact(panel_rect, interact_id, egui::Sense::click_and_drag());

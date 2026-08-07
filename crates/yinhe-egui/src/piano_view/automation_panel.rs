@@ -81,6 +81,8 @@ pub(crate) struct PanelsCfg<'a> {
     pub pianoroll_ppt: f32,
     pub scroll_mode: u32,
     pub min_border_width: f32,
+    /// 内容层背景不透明度（设置调控，1.0 = 不透明）。
+    pub content_opacity: f32,
     pub revision: u64,
     /// 状态栏讲解行格式化位置所需（拍号事件）。
     pub bar_line_data: Option<(u32, u8, u8, &'a [TimeSigEvent])>,
@@ -487,6 +489,7 @@ pub fn show_panels(
                 data.track_colors,
                 cfg.scroll_mode,
                 cfg.min_border_width,
+                cfg.content_opacity,
                 show_anchors,
                 max_val_f,
                 panel_ghost,
@@ -1031,6 +1034,7 @@ fn render_panel_content(
     track_colors: &[[f32; 4]],
     scroll_mode: u32,
     min_border_width: f32,
+    content_opacity: f32,
     show_anchors: bool,
     max_val_f: f32,
     panel_ghost: Option<AutomationGhost>,
@@ -1125,7 +1129,7 @@ fn render_panel_content(
     painter.rect_filled(
         content_rect,
         0.0,
-        crate::theme::rgb_to_color32(theme.pr_bg).gamma_multiply(theme.content_alpha),
+        crate::theme::rgb_to_color32(theme.pr_bg).gamma_multiply(content_opacity),
     );
 
     // ── Center line (only for targets that have one) ──

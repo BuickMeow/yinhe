@@ -170,7 +170,8 @@ pub fn show(
     let content_changed = true;
 
     // ── Track lanes ──
-    // 背景不铺（透明）；轨道行条纹半透明一层，用于区分行界。
+    // 底部铺 theme 背景一层（不透明），轨道行条纹半透明叠其上，用于区分行界。
+    painter.rect_filled(rect, 0.0, crate::theme::app_bg());
     let lb_w = view.base.left_panel_width;
     let lh = view.lane_height();
     let scroll_y = view.base.scroll_y;
@@ -183,9 +184,9 @@ pub fn show(
             }
             let y = rect.min.y + ArrangementView::lane_y_static(idx, scroll_y, lh);
             let col = if idx % 2 == 0 {
-                crate::theme::rgb_to_color32(theme.ar_lane_even).gamma_multiply(theme.content_alpha)
+                crate::theme::rgb_to_color32(theme.ar_lane_even).gamma_multiply(cfg.content_opacity)
             } else {
-                crate::theme::rgb_to_color32(theme.ar_lane_odd).gamma_multiply(theme.content_alpha)
+                crate::theme::rgb_to_color32(theme.ar_lane_odd).gamma_multiply(cfg.content_opacity)
             };
             painter.rect_filled(
                 egui::Rect::from_min_size(

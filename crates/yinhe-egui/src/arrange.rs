@@ -53,6 +53,8 @@ pub(crate) struct ArrangeViewCfg<'a> {
     pub active_tool: &'a Tool,
     pub scroll_mode: u32,
     pub min_border_width: f32,
+    /// 内容层条纹不透明度（设置调控，1.0 = 不透明）。
+    pub content_opacity: f32,
     pub revision: u64,
 }
 
@@ -241,6 +243,7 @@ pub fn show(
             &doc.edit.track_colors_cache,
             &mut arr_view.base.track_panel_row_height,
             &mut arr_view.base.track_panel_scroll_y,
+            cfg.content_opacity,
             request_pianoroll,
             &mut doc.edit.editing_track,
             info_content,

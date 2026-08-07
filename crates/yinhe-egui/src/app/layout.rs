@@ -174,6 +174,7 @@ impl App {
                 active_tool: &self.active_tool,
                 scroll_mode: self.audio_settings.scroll_mode,
                 min_border_width: self.audio_settings.min_border_width,
+                content_opacity: self.audio_settings.content_opacity,
                 revision: guard.as_ref().data.revision,
             };
             let arr_quantize = arrange::show(
@@ -531,6 +532,7 @@ impl App {
                     auto_ctx,
                     self.audio_settings.scroll_mode,
                     self.audio_settings.min_border_width,
+                    self.audio_settings.content_opacity,
                     self.audio_settings.note_outline,
                     self.audio_settings.use_gpu_cull,
                     &doc.data.model.conductor.tempo,

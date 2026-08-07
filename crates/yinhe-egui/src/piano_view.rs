@@ -135,6 +135,7 @@ pub fn show(
     mut auto_ctx: Option<AutomationPanelsCtx<'_>>,
     scroll_mode: u32,
     min_border_width: f32,
+    content_opacity: f32,
     note_outline: bool,
     use_gpu_cull: bool,
     tempo_lane: &AutomationLane,
@@ -595,7 +596,7 @@ pub fn show(
     painter.rect_filled(
         content_rect,
         0.0,
-        crate::theme::rgb_to_color32(theme.pr_bg).gamma_multiply(theme.content_alpha),
+        crate::theme::rgb_to_color32(theme.pr_bg).gamma_multiply(content_opacity),
     );
 
     // ── Scale background + 八度横线（调号驱动的调内/调外/根音条带）──
@@ -604,7 +605,15 @@ pub fn show(
     let h_f32 = h as f32;
     let bottom = 128.0 * kh - scroll_y;
     let kb_w = view.keyboard_width();
-    bg::paint(&painter, content_rect, kb_w, kh, view, key_sig_events);
+    bg::paint(
+        &painter,
+        content_rect,
+        kb_w,
+        kh,
+        view,
+        key_sig_events,
+        content_opacity,
+    );
 
     // ── Grid lines (drawn by egui before wgpu texture) ──
     // 替代原 wgpu grid layer。与 time_ruler 共用 MIN_SPACING 阈值，保证"有线就有标签"。
@@ -857,6 +866,7 @@ pub fn show(
             pianoroll_ppt: view.base.pixels_per_tick,
             scroll_mode,
             min_border_width,
+            content_opacity,
             revision,
             bar_line_data,
             sel_hint,
