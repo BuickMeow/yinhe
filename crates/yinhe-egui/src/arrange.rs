@@ -121,7 +121,10 @@ pub fn show(
     // ── GPU area: shifted down by RULER_H, shifted up by SCROLLBAR_H,
     //    shifted left by SCROLLBAR_W to leave room for the vertical scrollbar ──
     let gpu_rect = egui::Rect::from_min_max(
-        egui::pos2(arr_rect.min.x + tp_w + 4.0, arr_rect.min.y + RULER_H),
+        egui::pos2(
+            arr_rect.min.x + tp_w + crate::theme::SPLIT_HANDLE_W,
+            arr_rect.min.y + RULER_H,
+        ),
         egui::pos2(
             arr_rect.max.x - crate::widgets::scrollbar::SCROLLBAR_W,
             arr_rect.max.y - crate::widgets::scrollbar::SCROLLBAR_H,
@@ -145,7 +148,10 @@ pub fn show(
     //    ruler 右边界对齐 gpu_rect.max.x，让出垂直滚动条空间
     {
         let ruler_rect = egui::Rect::from_min_max(
-            egui::pos2(arr_rect.min.x + tp_w + 4.0, arr_rect.min.y),
+            egui::pos2(
+                arr_rect.min.x + tp_w + crate::theme::SPLIT_HANDLE_W,
+                arr_rect.min.y,
+            ),
             egui::pos2(gpu_rect.max.x, arr_rect.min.y + RULER_H),
         );
 
@@ -368,7 +374,10 @@ pub fn show(
     //    让出右下角 SCROLLBAR_W × SCROLLBAR_H 给垂直滚动条+水平滚动条的交叠区
     {
         let sb_rect = egui::Rect::from_min_max(
-            egui::pos2(arr_rect.min.x + tp_w + 4.0, gpu_rect.max.y),
+            egui::pos2(
+                arr_rect.min.x + tp_w + crate::theme::SPLIT_HANDLE_W,
+                gpu_rect.max.y,
+            ),
             egui::pos2(gpu_rect.max.x, arr_rect.max.y),
         );
 
