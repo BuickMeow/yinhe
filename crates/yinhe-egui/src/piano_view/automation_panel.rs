@@ -1121,11 +1121,13 @@ fn render_panel_content(
     let painter = ui.painter();
     let theme = renderer.theme();
 
-    // ── Background（半透明一层：combo 列由 show_target_combo 画不透明 app_bg）──
+    // ── Background（theme 背景一层 + 内容层按设置透明度叠上；
+    //    combo 列由 show_target_combo 画不透明 app_bg）──
     let content_rect = egui::Rect::from_min_max(
         egui::pos2(grid_rect.min.x + combo_width, grid_rect.min.y),
         grid_rect.max,
     );
+    painter.rect_filled(content_rect, 0.0, crate::theme::app_bg());
     painter.rect_filled(
         content_rect,
         0.0,

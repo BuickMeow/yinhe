@@ -591,8 +591,9 @@ pub fn show(
     // Static cache was removed — every frame rebuilds + uploads, so always paint.
     view.base.dirty = false;
 
-    // ── Background（半透明一层：透出底层，检查绘制时仍能看清内容）──
+    // ── Background（theme 背景一层 + 内容层按设置透明度叠上）──
     let theme = pianoroll.theme().clone();
+    painter.rect_filled(content_rect, 0.0, crate::theme::app_bg());
     painter.rect_filled(
         content_rect,
         0.0,
