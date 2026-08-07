@@ -247,7 +247,7 @@ pub fn show(
         std::collections::HashSet::new();
     if *active_tool == Tool::Select || *active_tool == Tool::SelectVertical {
         let vertical = *active_tool == Tool::SelectVertical;
-        let (sel_ghosts, sel_hidden, sel_previews) = drag::sel_drag_frame(
+        let (sel_ghosts, sel_hidden, sel_previews, sel_note_event) = drag::sel_drag_frame(
             ui,
             content_rect,
             music_rect,
@@ -265,11 +265,17 @@ pub fn show(
             track_colors,
             track_visible,
             track_selected,
+            editing_track,
+            conductor_idx,
             vertical,
         );
         ghost_notes = sel_ghosts;
         hidden_notes = sel_hidden.into_iter().collect();
         feedback.preview_reqs.extend(sel_previews);
+        // 双击写音符（选择工具）：与铅笔一致，目标轨 = editing_track。
+        if let Some((note, track)) = sel_note_event {
+            pencil_event = Some(PianoViewEvent::AddNote { track, note });
+        }
     } else if *active_tool == Tool::Pencil {
         let (note_event, ghost, hidden, pencil_drag, preview) = pencil::pencil_frame(
             ui,

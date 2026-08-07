@@ -20,6 +20,9 @@ pub(crate) type GhostNote = (u32, u32, u8, u16);
 /// 拖拽时隐藏的原音符：(track, start_tick, key)。
 pub(crate) type HiddenNote = (u16, u32, u8);
 
+/// 双击写音符的提交：(note, track)。
+pub(crate) type SelNoteEvent = Option<(yinhe_core::NoteEvent, u16)>;
+
 /// 指针是否在选框浮动工具条（selection_actions bar）上。
 fn on_action_bar(
     pos: egui::Pos2,
@@ -84,8 +87,17 @@ pub(crate) fn sel_drag_frame(
     _track_colors: &[[f32; 4]],
     track_visible: &[bool],
     track_selected: &std::collections::HashSet<u16>,
+    editing_track: Option<u16>,
+    conductor_idx: Option<u16>,
     vertical: bool,
-) -> (Vec<GhostNote>, Vec<HiddenNote>, Vec<super::PreviewReq>) {
+) -> (
+    Vec<GhostNote>,
+    Vec<HiddenNote>,
+    Vec<super::PreviewReq>,
+    SelNoteEvent,
+) {
+    // 双击写音符的提交（note + track），由 show() 转成 PianoViewEvent::AddNote。
+    let mut note_event: SelNoteEvent = None;
     let note_drag_id = ui.id().with("note_drag_origin");
     let mut note_drag_origin: Option<(f64, f64, bool)> = ui
         .data_mut(|d| d.get_persisted(note_drag_id))
@@ -132,7 +144,7 @@ pub(crate) fn sel_drag_frame(
 
     // 弹窗打开时跳过所有 pointer 处理，避免点击穿透
     if crate::view_interaction::pointer_over_popup(ui.ctx()) {
-        return (Vec::new(), Vec::new(), Vec::new());
+        return (Vec::new(), Vec::new(), Vec::new(), None);
     }
 
     // press 分支和 click 分支共用，整个函数作用域内有效。
@@ -456,6 +468,45 @@ pub(crate) fn sel_drag_frame(
         }
     }
 
+    // ── 双击写音符（第二击 release 帧触发）──
+    // egui 在第二击 release 时判定 double-click。条件：
+    // - 无 note drag / resize 进行中（排除双击选框内音符/边缘的情况）
+    // - 不在浮动工具条上（防事件穿透）
+    // - editing_track 有效且点击位置无音符 → 创建，长度 = 一个量化间隔。
+    // 双击命中音符时 double_click_note 返回 None，保持选中/拖拽行为。
+    if ui.input(|i| {
+        i.pointer
+            .button_double_clicked(egui::PointerButton::Primary)
+    }) && note_drag_origin.is_none()
+        && sel_resize_state.is_none()
+        && let Some(pos) = pointer.hover_pos()
+        && music_rect.contains(pos)
+        && !on_action_bar(pos, music_rect, view, &eff_rects)
+    {
+        let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
+        if let Some((note, track)) = double_click_note(
+            midi,
+            editing_track,
+            track_visible,
+            conductor_idx,
+            view,
+            local,
+            quantize,
+            ppq,
+            bar_line_data,
+        ) {
+            note_event = Some((note, track));
+            // 听觉预览：一次性播放（gate = 新建音符长度）。
+            preview_reqs.push(super::PreviewReq::Note(super::NotePreview {
+                track,
+                key: note.key,
+                velocity: None,
+                target_tick: note.start_tick,
+                duration_ticks: note.end_tick - note.start_tick,
+            }));
+        }
+    }
+
     // ── Marquee selection (shared with Eraser tool) ──
     // Only start a marquee if no note drag/resize is active (click was NOT inside selection).
     if note_drag_origin.is_some() || sel_resize_state.is_some() {
@@ -483,8 +534,18 @@ pub(crate) fn sel_drag_frame(
         ) {
             let track_lo = track_selected.iter().min().copied().unwrap_or(0);
             let track_hi = track_selected.iter().max().copied().unwrap_or(u16::MAX);
-            // 垂直全选模式：key 范围固定 0..127，忽略鼠标 y
-            let (key_lo, key_hi) = if vertical {
+            // 垂直全选模式 key 固定 0..127；普通选框在框选区域无音符时
+            // 也自动变成垂直选框（全 128 键）。
+            let (key_lo, key_hi) = if vertical
+                || !rect_has_notes(
+                    midi,
+                    result.t_start as u32,
+                    result.t_end as u32,
+                    result.key_lo,
+                    result.key_hi,
+                    track_lo,
+                    track_hi,
+                ) {
                 (0, 127)
             } else {
                 (result.key_lo, result.key_hi)
@@ -524,7 +585,7 @@ pub(crate) fn sel_drag_frame(
     ui.data_mut(|d| d.insert_persisted(note_drag_id, note_drag_origin));
     ui.data_mut(|d| d.insert_persisted(drag_notes_id, drag_notes));
     ui.data_mut(|d| d.insert_persisted(resize_id, sel_resize_state));
-    (ghost_notes, hidden_notes, preview_reqs)
+    (ghost_notes, hidden_notes, preview_reqs, note_event)
 }
 
 // 通用逻辑已抽取到 crate::selection::drag：
@@ -534,6 +595,73 @@ pub(crate) fn sel_drag_frame(
 pub(crate) use crate::selection::drag::{
     collect_selected_notes, compute_resize_dt, hit_test_sel_edge,
 };
+
+/// 双击写音符：editing_track 有效且点击位置无音符时创建新音符。
+///
+/// 音符长度 = 一个量化间隔（与铅笔点击一致）。返回 `(note, track)`。
+/// 命中已有音符（editing_track 上）时返回 `None`——双击保持选中/拖拽行为。
+#[allow(clippy::too_many_arguments)]
+fn double_click_note(
+    midi: Option<&dyn yinhe_types::NoteSource>,
+    editing_track: Option<u16>,
+    track_visible: &[bool],
+    conductor_idx: Option<u16>,
+    view: &yinhe_types::PianoRollView,
+    local: egui::Pos2,
+    quantize: QuantizePreset,
+    ppq: u32,
+    bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
+) -> Option<(yinhe_core::NoteEvent, u16)> {
+    let track = super::pencil::valid_pencil_track(editing_track, track_visible, conductor_idx)?;
+    let raw_tick = view.x_to_tick(local.x);
+    let key = view.y_to_key(local.y);
+    // 点击位置已有音符（editing_track 上）→ 不创建。
+    // key_notes_in_range 左边界保守（tick - max_note_len），右边界精确，
+    // 任何覆盖该像素点的音符都会被包含；像素判定过滤跨边界长音符。
+    if let Some(midi) = midi {
+        let hit = midi
+            .key_notes_in_range(key, raw_tick as u32, (raw_tick + 1.0) as u32)
+            .any(|n| {
+                n.track == track
+                    && view.tick_to_x(n.start_tick as f64) <= local.x
+                    && local.x <= view.tick_to_x(n.end_tick as f64)
+            });
+        if hit {
+            return None;
+        }
+    }
+    let tick = crate::view_interaction::snap_tick(raw_tick, quantize, ppq, bar_line_data).max(0.0);
+    let interval = quantize.tick_interval(ppq) as f64;
+    Some((
+        yinhe_core::NoteEvent {
+            id: 0, // 由 Document::add_note 分配
+            start_tick: tick as u32,
+            end_tick: (tick + interval) as u32,
+            key,
+            velocity: 100, // App 层替换为 default_velocity
+        },
+        track,
+    ))
+}
+
+/// 选框区域内是否至少有一个音符（数据层面，track 范围限定）。
+///
+/// 框选松手时判断：区域内无音符 → 自动变为垂直选框（全 128 键）。
+fn rect_has_notes(
+    midi: Option<&dyn yinhe_types::NoteSource>,
+    t_start: u32,
+    t_end: u32,
+    key_lo: u8,
+    key_hi: u8,
+    track_lo: u16,
+    track_hi: u16,
+) -> bool {
+    let Some(midi) = midi else { return false };
+    (key_lo..=key_hi).any(|key| {
+        midi.key_notes_in_range(key, t_start, t_end)
+            .any(|n| n.track >= track_lo && n.track <= track_hi && n.start_tick >= t_start)
+    })
+}
 
 #[cfg(test)]
 mod tests {
@@ -640,6 +768,8 @@ mod tests {
     }
 
     /// 跑一帧 sel_drag_frame（Select 工具）。
+    /// 返回 (note_event, preview_reqs)，供双击写音符测试断言。
+    #[allow(clippy::too_many_arguments)]
     fn run_sel_frame(
         ctx: &egui::Context,
         raw: egui::RawInput,
@@ -650,9 +780,17 @@ mod tests {
         note_drag_delta: &mut Option<(i64, i32, bool)>,
         note_resize_delta: &mut Option<(yinhe_editor_core::ResizeSide, i64)>,
         sel_rect: &mut yinhe_editor_core::edit_state::SelRectState,
+        editing_track: Option<u16>,
+    ) -> (
+        Option<(yinhe_core::NoteEvent, u16)>,
+        Vec<crate::piano_view::PreviewReq>,
     ) {
+        let mut out: (
+            Option<(yinhe_core::NoteEvent, u16)>,
+            Vec<crate::piano_view::PreviewReq>,
+        ) = (None, Vec::new());
         let _ = ctx.run_ui(raw, |ui| {
-            sel_drag_frame(
+            let (_, _, previews, note_event) = sel_drag_frame(
                 ui,
                 content(),
                 content(),
@@ -670,9 +808,13 @@ mod tests {
                 &[[0.5, 0.5, 0.5, 1.0]],
                 &[true],
                 &std::collections::HashSet::new(),
+                editing_track,
+                None,
                 false,
             );
+            out = (note_event, previews);
         });
+        out
     }
 
     fn press_event(pos: egui::Pos2) -> egui::RawInput {
@@ -738,6 +880,7 @@ mod tests {
             &mut note_drag_delta,
             &mut note_resize_delta,
             &mut sel_rect,
+            None,
         );
         let _ = run_sel_frame(
             &ctx,
@@ -749,6 +892,7 @@ mod tests {
             &mut note_drag_delta,
             &mut note_resize_delta,
             &mut sel_rect,
+            None,
         );
         let _ = run_sel_frame(
             &ctx,
@@ -760,6 +904,7 @@ mod tests {
             &mut note_drag_delta,
             &mut note_resize_delta,
             &mut sel_rect,
+            None,
         );
 
         assert_eq!(
@@ -768,5 +913,346 @@ mod tests {
             "音符应移动 +120 tick"
         );
         assert_eq!(cursor_tick, None, "移动后松开不得把 playhead 跳到释放位置");
+    }
+
+    /// 双击空白处 → 创建音符（选择工具）。
+    #[test]
+    fn double_click_creates_note() {
+        let ctx = egui::Context::default();
+        let mut view = test_view();
+        view.viewport_h = 600.0;
+        let midi = make_midi(vec![]);
+        let mut selected = yinhe_core::Selection::default();
+        let mut sel_rect = yinhe_editor_core::edit_state::SelRectState::default();
+        let mut cursor_tick: Option<f64> = None;
+        let mut note_drag_delta: Option<(i64, i32, bool)> = None;
+        let mut note_resize_delta: Option<(yinhe_editor_core::ResizeSide, i64)> = None;
+
+        // 双击位置：tick 360（1/16 网格 480×4/16=120 的网格点）、key 90 → y = (127-90)*10 + 5 = 375。
+        let pos = egui::pos2(360.0, 375.0);
+        let _ = run_sel_frame(
+            &ctx,
+            press_event(pos),
+            &mut view,
+            &midi,
+            &mut selected,
+            &mut cursor_tick,
+            &mut note_drag_delta,
+            &mut note_resize_delta,
+            &mut sel_rect,
+            Some(0),
+        );
+        let _ = run_sel_frame(
+            &ctx,
+            release_event(pos),
+            &mut view,
+            &midi,
+            &mut selected,
+            &mut cursor_tick,
+            &mut note_drag_delta,
+            &mut note_resize_delta,
+            &mut sel_rect,
+            Some(0),
+        );
+        let _ = run_sel_frame(
+            &ctx,
+            press_event(pos),
+            &mut view,
+            &midi,
+            &mut selected,
+            &mut cursor_tick,
+            &mut note_drag_delta,
+            &mut note_resize_delta,
+            &mut sel_rect,
+            Some(0),
+        );
+        // egui 在第二击 release 帧判定 double-click。
+        let (note_event, previews) = run_sel_frame(
+            &ctx,
+            release_event(pos),
+            &mut view,
+            &midi,
+            &mut selected,
+            &mut cursor_tick,
+            &mut note_drag_delta,
+            &mut note_resize_delta,
+            &mut sel_rect,
+            Some(0),
+        );
+
+        let (note, track) = note_event.expect("双击空白应创建音符");
+        assert_eq!(track, 0);
+        assert_eq!(note.start_tick, 360, "起点按量化 snap");
+        assert_eq!(note.end_tick, 480, "长度 = 一个量化间隔");
+        assert_eq!(note.key, 90);
+        assert!(
+            matches!(
+                previews.first(),
+                Some(crate::piano_view::PreviewReq::Note(_))
+            ),
+            "双击创建应触发听觉预览"
+        );
+    }
+
+    /// 双击已有音符的位置 → 不创建（保持选择工具行为）。
+    #[test]
+    fn double_click_on_existing_note_does_not_create() {
+        let ctx = egui::Context::default();
+        let mut view = test_view();
+        view.viewport_h = 600.0;
+        let midi = make_midi(vec![(90, 300, 330, 0, 100)]);
+        let mut selected = yinhe_core::Selection::default();
+        let mut sel_rect = yinhe_editor_core::edit_state::SelRectState::default();
+        let mut cursor_tick: Option<f64> = None;
+        let mut note_drag_delta: Option<(i64, i32, bool)> = None;
+        let mut note_resize_delta: Option<(yinhe_editor_core::ResizeSide, i64)> = None;
+
+        // 音符 (tick 300..330, key 90)：中心点 (315, 375)。
+        let pos = egui::pos2(315.0, 375.0);
+        let _ = run_sel_frame(
+            &ctx,
+            press_event(pos),
+            &mut view,
+            &midi,
+            &mut selected,
+            &mut cursor_tick,
+            &mut note_drag_delta,
+            &mut note_resize_delta,
+            &mut sel_rect,
+            Some(0),
+        );
+        let _ = run_sel_frame(
+            &ctx,
+            release_event(pos),
+            &mut view,
+            &midi,
+            &mut selected,
+            &mut cursor_tick,
+            &mut note_drag_delta,
+            &mut note_resize_delta,
+            &mut sel_rect,
+            Some(0),
+        );
+        let _ = run_sel_frame(
+            &ctx,
+            press_event(pos),
+            &mut view,
+            &midi,
+            &mut selected,
+            &mut cursor_tick,
+            &mut note_drag_delta,
+            &mut note_resize_delta,
+            &mut sel_rect,
+            Some(0),
+        );
+        // egui 在第二击 release 帧判定 double-click。
+        let (note_event, _) = run_sel_frame(
+            &ctx,
+            release_event(pos),
+            &mut view,
+            &midi,
+            &mut selected,
+            &mut cursor_tick,
+            &mut note_drag_delta,
+            &mut note_resize_delta,
+            &mut sel_rect,
+            Some(0),
+        );
+
+        assert!(note_event.is_none(), "双击已有音符不得创建新音符");
+    }
+
+    /// 双击但 editing_track 无效（None）→ 不创建。
+    #[test]
+    fn double_click_without_editing_track_does_not_create() {
+        let ctx = egui::Context::default();
+        let mut view = test_view();
+        view.viewport_h = 600.0;
+        let midi = make_midi(vec![]);
+        let mut selected = yinhe_core::Selection::default();
+        let mut sel_rect = yinhe_editor_core::edit_state::SelRectState::default();
+        let mut cursor_tick: Option<f64> = None;
+        let mut note_drag_delta: Option<(i64, i32, bool)> = None;
+        let mut note_resize_delta: Option<(yinhe_editor_core::ResizeSide, i64)> = None;
+
+        let pos = egui::pos2(300.0, 375.0);
+        let _ = run_sel_frame(
+            &ctx,
+            press_event(pos),
+            &mut view,
+            &midi,
+            &mut selected,
+            &mut cursor_tick,
+            &mut note_drag_delta,
+            &mut note_resize_delta,
+            &mut sel_rect,
+            None,
+        );
+        let _ = run_sel_frame(
+            &ctx,
+            release_event(pos),
+            &mut view,
+            &midi,
+            &mut selected,
+            &mut cursor_tick,
+            &mut note_drag_delta,
+            &mut note_resize_delta,
+            &mut sel_rect,
+            None,
+        );
+        let _ = run_sel_frame(
+            &ctx,
+            press_event(pos),
+            &mut view,
+            &midi,
+            &mut selected,
+            &mut cursor_tick,
+            &mut note_drag_delta,
+            &mut note_resize_delta,
+            &mut sel_rect,
+            None,
+        );
+        // egui 在第二击 release 帧判定 double-click。
+        let (note_event, _) = run_sel_frame(
+            &ctx,
+            release_event(pos),
+            &mut view,
+            &midi,
+            &mut selected,
+            &mut cursor_tick,
+            &mut note_drag_delta,
+            &mut note_resize_delta,
+            &mut sel_rect,
+            None,
+        );
+
+        assert!(note_event.is_none(), "无 editing_track 时双击不得创建");
+    }
+
+    /// 框选到音符 → 普通选框；框选空区域 → 自动变垂直选框（全 128 键）。
+    #[test]
+    fn empty_marquee_becomes_vertical_selection() {
+        let ctx = egui::Context::default();
+        let mut view = test_view();
+        view.viewport_h = 600.0;
+        // 音符在 key 100（tick 100..200），框选 key 85..95 区域 → 无音符。
+        let midi = make_midi(vec![(100, 100, 200, 0, 100)]);
+        let mut selected = yinhe_core::Selection::default();
+        let mut sel_rect = yinhe_editor_core::edit_state::SelRectState::default();
+        let mut cursor_tick: Option<f64> = None;
+        let mut note_drag_delta: Option<(i64, i32, bool)> = None;
+        let mut note_resize_delta: Option<(yinhe_editor_core::ResizeSide, i64)> = None;
+
+        // key 85 → y=(127-85)*10=420；key 95 → y=(127-95)*10=320。
+        let start = egui::pos2(50.0, 420.0);
+        let end = egui::pos2(150.0, 320.0);
+        let _ = run_sel_frame(
+            &ctx,
+            press_event(start),
+            &mut view,
+            &midi,
+            &mut selected,
+            &mut cursor_tick,
+            &mut note_drag_delta,
+            &mut note_resize_delta,
+            &mut sel_rect,
+            None,
+        );
+        let _ = run_sel_frame(
+            &ctx,
+            drag_event(end),
+            &mut view,
+            &midi,
+            &mut selected,
+            &mut cursor_tick,
+            &mut note_drag_delta,
+            &mut note_resize_delta,
+            &mut sel_rect,
+            None,
+        );
+        let _ = run_sel_frame(
+            &ctx,
+            release_event(end),
+            &mut view,
+            &midi,
+            &mut selected,
+            &mut cursor_tick,
+            &mut note_drag_delta,
+            &mut note_resize_delta,
+            &mut sel_rect,
+            None,
+        );
+
+        assert_eq!(sel_rect.rects.len(), 1, "应有一个选框");
+        let (t0, t1, kl, kh) = sel_rect.rects[0];
+        assert_eq!((kl, kh), (0, 127), "空区域框选应变为全 128 键垂直选框");
+        assert!(t0 < t1);
+        // 选中范围也应覆盖全键。
+        assert!(
+            selected.rects.iter().any(|r| r.2 == 0 && r.3 == 127),
+            "selected 应包含全键范围"
+        );
+    }
+
+    /// 框选到音符 → 保持普通选框（不垂直化）。
+    #[test]
+    fn marquee_with_notes_stays_rectangular() {
+        let ctx = egui::Context::default();
+        let mut view = test_view();
+        view.viewport_h = 600.0;
+        // key 90（tick 100..200）在框选范围内。
+        let midi = make_midi(vec![(90, 100, 200, 0, 100)]);
+        let mut selected = yinhe_core::Selection::default();
+        let mut sel_rect = yinhe_editor_core::edit_state::SelRectState::default();
+        let mut cursor_tick: Option<f64> = None;
+        let mut note_drag_delta: Option<(i64, i32, bool)> = None;
+        let mut note_resize_delta: Option<(yinhe_editor_core::ResizeSide, i64)> = None;
+
+        // key 85..95 区域框选（key 90 音符在内）。
+        let start = egui::pos2(50.0, 420.0);
+        let end = egui::pos2(150.0, 320.0);
+        let _ = run_sel_frame(
+            &ctx,
+            press_event(start),
+            &mut view,
+            &midi,
+            &mut selected,
+            &mut cursor_tick,
+            &mut note_drag_delta,
+            &mut note_resize_delta,
+            &mut sel_rect,
+            None,
+        );
+        let _ = run_sel_frame(
+            &ctx,
+            drag_event(end),
+            &mut view,
+            &midi,
+            &mut selected,
+            &mut cursor_tick,
+            &mut note_drag_delta,
+            &mut note_resize_delta,
+            &mut sel_rect,
+            None,
+        );
+        let _ = run_sel_frame(
+            &ctx,
+            release_event(end),
+            &mut view,
+            &midi,
+            &mut selected,
+            &mut cursor_tick,
+            &mut note_drag_delta,
+            &mut note_resize_delta,
+            &mut sel_rect,
+            None,
+        );
+
+        assert_eq!(sel_rect.rects.len(), 1);
+        let (_, _, kl, kh) = sel_rect.rects[0];
+        assert!(
+            kl >= 85 && kh <= 95,
+            "有音符的选框应保持矩形范围，实际 kl={kl} kh={kh}"
+        );
     }
 }
