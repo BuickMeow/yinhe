@@ -74,9 +74,8 @@ pub fn show(
         state.fingerprint = Some(fingerprint);
     }
 
-    let frame_bg = egui::Frame::NONE
-        .fill(theme::app_bg())
-        .inner_margin(egui::Margin::symmetric(4, 2));
+    // 不画背景（right_panel 已铺 app_bg，再 fill 叠两层）；只保留内边距
+    let frame_bg = egui::Frame::NONE.inner_margin(egui::Margin::symmetric(4, 2));
 
     let total_rect = ui.available_rect_before_wrap();
     let total_h = total_rect.height();

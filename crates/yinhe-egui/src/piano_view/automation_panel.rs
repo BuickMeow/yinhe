@@ -285,6 +285,19 @@ pub fn show_panels(
     let old_clip = ui.clip_rect();
     ui.set_clip_rect(panels_area_rect.intersect(old_clip));
 
+    // 面板右侧竖条：panel 让出 SCROLLBAR_W 给垂直滚动条，这块区域补背景
+    let vbar_rect = egui::Rect::from_min_max(
+        egui::pos2(
+            layout.content_rect_right - crate::widgets::scrollbar::SCROLLBAR_W,
+            layout.content_top_y,
+        ),
+        egui::pos2(
+            layout.content_rect_right,
+            layout.content_top_y + layout.panels_visible_h,
+        ),
+    );
+    ui.painter().rect_filled(vbar_rect, 0.0, theme::app_bg());
+
     let mut y_offset = layout.content_top_y - scroll_y;
     let visible_top = layout.content_top_y;
     let visible_bottom = layout.content_top_y + layout.panels_visible_h;
@@ -1102,20 +1115,17 @@ fn render_panel_content(
     panel.dirty = false;
 
     let painter = ui.painter();
-
-    // ── Background + center line (drawn by egui before wgpu texture) ──
-    // 背景只铺内容区（combo 列由 show_target_combo 单独画 app_bg），
-    // 避免“先画再盖”叠两层。
     let theme = renderer.theme();
+
+    // ── Center line (only for targets that have one) ──
+    // 直接基于 panel.selected_target 判断，不依赖 lanes 是否非空：
+    // 即使该 target 没有任何锚点事件（lanes 为空），中线也应照常显示。
+    // velocity 模式下不画中线（velocity 没有 center 概念）。
+    // 背景不再铺色（透明），只保留内容绘制。
     let content_rect = egui::Rect::from_min_max(
         egui::pos2(grid_rect.min.x + combo_width, grid_rect.min.y),
         grid_rect.max,
     );
-    painter.rect_filled(content_rect, 0.0, crate::theme::rgb_to_color32(theme.pr_bg));
-    // Center line (only for targets that have one)
-    // 直接基于 panel.selected_target 判断，不依赖 lanes 是否非空：
-    // 即使该 target 没有任何锚点事件（lanes 为空），中线也应照常显示。
-    // velocity 模式下不画中线（velocity 没有 center 概念）。
     if !panel.show_velocity {
         let target = &panel.selected_target;
         let max_val = target.max_value();

@@ -590,9 +590,10 @@ pub fn show(
     // Static cache was removed — every frame rebuilds + uploads, so always paint.
     view.base.dirty = false;
 
-    // ── Background (drawn by egui before wgpu texture) ──
+    // ── Background ──
+    // 不再铺 pr_bg：背景透明，检查/调试时可直接看到内容绘制的边界；
+    // 各内容层（scale 条带/网格/音符/键盘）自行绘制。
     let theme = pianoroll.theme().clone();
-    painter.rect_filled(content_rect, 0.0, crate::theme::rgb_to_color32(theme.pr_bg));
 
     // ── Scale background + 八度横线（调号驱动的调内/调外/根音条带）──
     let kh = view.key_height;
@@ -764,6 +765,14 @@ pub fn show(
     if let Some(midi) = midi
         && let Some(tpb) = midi.ticks_per_beat()
     {
+        // 右上角角落：标尺右缘到垂直滚动条之间（SCROLLBAR_W × RULER_H）
+        let corner_rect = egui::Rect::from_min_max(
+            egui::pos2(content_right_x, ruler_band_y),
+            egui::pos2(rect.max.x, ruler_band_y + RULER_H),
+        );
+        ui.painter()
+            .rect_filled(corner_rect, 0.0, crate::theme::app_bg());
+
         let ruler_rect = egui::Rect::from_min_max(
             egui::pos2(rect.min.x + view.keyboard_width(), ruler_band_y),
             egui::pos2(content_right_x, ruler_band_y + RULER_H),
@@ -912,6 +921,15 @@ pub fn show(
     // ── Horizontal scrollbar ──
     let kb_w = view.keyboard_width();
     let sb_y = rect.min.y + rect.height() - crate::widgets::scrollbar::SCROLLBAR_H;
+
+    // 右下角角落：横纵滚动条交叠区（SCROLLBAR_W × SCROLLBAR_H）
+    let corner_rect = egui::Rect::from_min_max(
+        egui::pos2(content_right_x, sb_y),
+        egui::pos2(rect.max.x, rect.max.y),
+    );
+    ui.painter()
+        .rect_filled(corner_rect, 0.0, crate::theme::app_bg());
+
     let sb_rect = egui::Rect::from_min_max(
         egui::pos2(rect.min.x + kb_w, sb_y),
         egui::pos2(

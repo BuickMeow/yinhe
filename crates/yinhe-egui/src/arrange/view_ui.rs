@@ -169,9 +169,9 @@ pub fn show(
 
     let content_changed = true;
 
-    // ── Background + track lanes (drawn by egui before wgpu texture) ──
+    // ── Track lanes (drawn by egui before wgpu texture) ──
+    // 不再铺 ar_bg 整块背景（背景透明）；轨道行条纹保留，用于区分行界。
     let lb_w = view.base.left_panel_width;
-    painter.rect_filled(rect, 0.0, crate::theme::rgb_to_color32(theme.ar_bg));
     let lh = view.lane_height();
     let scroll_y = view.base.scroll_y;
     if data.num_tracks > 0 {

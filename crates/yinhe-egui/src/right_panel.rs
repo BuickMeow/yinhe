@@ -81,10 +81,12 @@ pub fn show(
             .clamp(theme, max_w - crate::theme::SPLIT_HANDLE_W);
     }
 
-    // ── Panel content area (8px left/right padding, after the handle) ──
+    // ── Panel content area: full width after the split handle ──
+    // 背景铺满整个面板（不再往内收缩，避免两侧 0 层缝隙）；
+    // 文字等内容由下方统一收缩 8px，各 tab 内部可再调整。
     let content_rect = egui::Rect::from_min_max(
-        egui::pos2(rect.min.x + crate::theme::SPLIT_HANDLE_W + 8.0, rect.min.y),
-        egui::pos2(rect.max.x - 8.0, rect.max.y),
+        egui::pos2(rect.min.x + crate::theme::SPLIT_HANDLE_W, rect.min.y),
+        egui::pos2(rect.max.x, rect.max.y),
     );
 
     let mut changed = false;
@@ -97,21 +99,30 @@ pub fn show(
         ui.painter()
             .rect_filled(ui.max_rect(), 0.0, crate::theme::app_bg());
 
-        // ── Content ──
-        if let Some(tab) = tab {
-            match tab {
-                RightTab::Info => {
-                    changed |=
-                        info_panel::show(ui, doc, audio, info_content, automation_drag_ghost);
-                }
-                RightTab::SoundFont => {
-                    changed |= soundfont::show(ui, audio_settings, doc);
-                }
-                RightTab::EventBrowser => {
-                    jump_request = event_browser::show(ui, doc, event_browser_state);
+        // 内容区收缩 8px（左右），避免文字贴边
+        let inner = egui::Rect::from_min_max(
+            egui::pos2(content_rect.min.x + 8.0, content_rect.min.y),
+            egui::pos2(content_rect.max.x - 8.0, content_rect.max.y),
+        );
+        ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| {
+            ui.set_clip_rect(inner);
+
+            // ── Content ──
+            if let Some(tab) = tab {
+                match tab {
+                    RightTab::Info => {
+                        changed |=
+                            info_panel::show(ui, doc, audio, info_content, automation_drag_ghost);
+                    }
+                    RightTab::SoundFont => {
+                        changed |= soundfont::show(ui, audio_settings, doc);
+                    }
+                    RightTab::EventBrowser => {
+                        jump_request = event_browser::show(ui, doc, event_browser_state);
+                    }
                 }
             }
-        }
+        });
     });
 
     (changed, jump_request)
