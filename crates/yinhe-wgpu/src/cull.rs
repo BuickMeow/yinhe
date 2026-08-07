@@ -2148,9 +2148,8 @@ mod tests {
             return;
         };
         let paths = [
-            "/Users/jieneng/Music/MIDIs/test.mid",
-            "/Users/jieneng/Music/MIDIs/Night Voyager.mid",
-            "/Users/jieneng/Music/MIDIs/Ouranos - HDSQ & The Romanticist [v1.6.6].mid",
+            "/Users/jieneng/Music/MIDIs/tau2.5.9.mid",
+            "/Users/jieneng/Music/MIDIs/5K 5,555,555 notes by The Atom Bomb.mid",
         ];
         let (w, h, kh, kb_w) = (1376.0f32, 419.0f32, 3.2734375, 60.0f32);
         let ppu = 0.026372144f32;
@@ -2681,9 +2680,9 @@ mod tests {
     /// 说明问题在渲染层。此测试验证 draw_args 之外的真实绘制结果。
     #[test]
     fn cull_render_pixel_check() {
-        let path = "/Users/jieneng/Music/MIDIs/Night Voyager.mid";
+        let path = "/Users/jieneng/Music/MIDIs/tau2.5.9.mid";
         if !std::path::Path::new(path).exists() {
-            eprintln!("Night Voyager.mid 不存在，跳过");
+            eprintln!("tau2.5.9.mid 不存在，跳过");
             return;
         }
         let Some((device, queue)) = headless_device() else {
@@ -2995,9 +2994,9 @@ mod tests {
     /// 区分两类根因：shader 写入错误 vs 渲染管线问题。
     #[test]
     fn cull_visible_buffer_content_check() {
-        let path = "/Users/jieneng/Music/MIDIs/Night Voyager.mid";
+        let path = "/Users/jieneng/Music/MIDIs/tau2.5.9.mid";
         if !std::path::Path::new(path).exists() {
-            eprintln!("Night Voyager.mid 不存在，跳过");
+            eprintln!("tau2.5.9.mid 不存在，跳过");
             return;
         }
         let Some((device, queue)) = headless_device() else {
@@ -3005,8 +3004,27 @@ mod tests {
         };
         let model = yinhe_mid2::parse_path(path).expect("parse 失败");
 
+        // 选 key60 音符最多的轨道（保证视口内 key60 一定有可见音符），
+        // 探针 tick 对准该轨道 key60 的第一个音符。
+        let notes60 = model.key_notes(60);
+        let mut track_counts: Vec<usize> = vec![0; model.tracks.len()];
+        for n in notes60.iter() {
+            track_counts[n.track as usize] += 1;
+        }
+        let best_track = track_counts
+            .iter()
+            .enumerate()
+            .max_by_key(|(_, c)| *c)
+            .map(|(i, _)| i)
+            .unwrap_or(0);
+        let tick = notes60
+            .iter()
+            .find(|n| n.track as usize == best_track)
+            .map(|n| n.start_tick as f32)
+            .unwrap_or(0.0);
+        println!("key60 最多轨道 track {best_track}，探针 tick={tick}");
         let mut tv: Vec<bool> = vec![false; model.tracks.len()];
-        tv[59] = true; // track 59 音符最多（118 万）
+        tv[best_track] = true;
         let hidden = std::collections::HashSet::new();
         let (all_notes, offsets) = crate::pianoroll::build_all_notes(&model, &hidden, &tv);
 
@@ -3028,8 +3046,7 @@ mod tests {
 
         let (w, h, kh, kb_w) = (1376.0f32, 419.0f32, 3.2734375, 60.0f32);
         let ppu = 0.026372144f32;
-        // 复现「cull 0 像素」的位置：tick=1,089,600
-        let tick = 1_089_600f32;
+        // 复现「cull 0 像素」的位置：视口中心对准 key60 首音符所在 tick
         let scroll_x = (kb_w + tick * ppu - w / 2.0).max(0.0);
         let u = Uniforms {
             width: w,
