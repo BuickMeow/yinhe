@@ -7146,6 +7146,7 @@ dependencies = [
  "yinhe-core",
  "yinhe-memtrace",
  "yinhe-mid2",
+ "yinhe-theme",
  "yinhe-types",
  "yinhe-yin",
 ]
