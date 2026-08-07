@@ -169,8 +169,8 @@ pub fn show(
 
     let content_changed = true;
 
-    // ── Track lanes (drawn by egui before wgpu texture) ──
-    // 不再铺 ar_bg 整块背景（背景透明）；轨道行条纹保留，用于区分行界。
+    // ── Track lanes ──
+    // 背景不铺（透明）；轨道行条纹半透明一层，用于区分行界。
     let lb_w = view.base.left_panel_width;
     let lh = view.lane_height();
     let scroll_y = view.base.scroll_y;
@@ -183,9 +183,9 @@ pub fn show(
             }
             let y = rect.min.y + ArrangementView::lane_y_static(idx, scroll_y, lh);
             let col = if idx % 2 == 0 {
-                theme.ar_lane_even
+                crate::theme::rgb_to_color32(theme.ar_lane_even).gamma_multiply(0.7)
             } else {
-                theme.ar_lane_odd
+                crate::theme::rgb_to_color32(theme.ar_lane_odd).gamma_multiply(0.7)
             };
             painter.rect_filled(
                 egui::Rect::from_min_size(
@@ -193,11 +193,7 @@ pub fn show(
                     egui::vec2(w as f32 - lb_w, lh),
                 ),
                 0.0,
-                egui::Color32::from_rgb(
-                    (col.0 * 255.0) as u8,
-                    (col.1 * 255.0) as u8,
-                    (col.2 * 255.0) as u8,
-                ),
+                col,
             );
         }
     }

@@ -1117,15 +1117,18 @@ fn render_panel_content(
     let painter = ui.painter();
     let theme = renderer.theme();
 
-    // ── Center line (only for targets that have one) ──
-    // 直接基于 panel.selected_target 判断，不依赖 lanes 是否非空：
-    // 即使该 target 没有任何锚点事件（lanes 为空），中线也应照常显示。
-    // velocity 模式下不画中线（velocity 没有 center 概念）。
-    // 背景不再铺色（透明），只保留内容绘制。
+    // ── Background（半透明一层：combo 列由 show_target_combo 画不透明 app_bg）──
     let content_rect = egui::Rect::from_min_max(
         egui::pos2(grid_rect.min.x + combo_width, grid_rect.min.y),
         grid_rect.max,
     );
+    painter.rect_filled(
+        content_rect,
+        0.0,
+        crate::theme::rgb_to_color32(theme.pr_bg).gamma_multiply(0.7),
+    );
+
+    // ── Center line (only for targets that have one) ──
     if !panel.show_velocity {
         let target = &panel.selected_target;
         let max_val = target.max_value();

@@ -590,10 +590,13 @@ pub fn show(
     // Static cache was removed — every frame rebuilds + uploads, so always paint.
     view.base.dirty = false;
 
-    // ── Background ──
-    // 不再铺 pr_bg：背景透明，检查/调试时可直接看到内容绘制的边界；
-    // 各内容层（scale 条带/网格/音符/键盘）自行绘制。
+    // ── Background（半透明一层：透出底层，检查绘制时仍能看清内容）──
     let theme = pianoroll.theme().clone();
+    painter.rect_filled(
+        content_rect,
+        0.0,
+        crate::theme::rgb_to_color32(theme.pr_bg).gamma_multiply(0.7),
+    );
 
     // ── Scale background + 八度横线（调号驱动的调内/调外/根音条带）──
     let kh = view.key_height;
