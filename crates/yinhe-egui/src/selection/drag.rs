@@ -148,7 +148,7 @@ pub fn pr_track_range(
 
 /// 选框的轨道范围是否只覆盖单个轨道。
 /// editing_track 存在时为 true；否则 track_selected 只含一个轨道时为 true。
-pub fn pr_single_track(
+fn pr_single_track(
     editing_track: Option<u16>,
     track_selected: &std::collections::HashSet<u16>,
 ) -> Option<u16> {
