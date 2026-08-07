@@ -319,8 +319,11 @@ pub(super) fn show_track_info(
     // ── 音轨颜色（ImageToMidi 颜色事件兼容）──
     // 显示当前实际颜色（缓存：显式颜色优先，否则调色板），
     // 编辑后写入 TrackData.color 并刷新缓存（无需重建音频引擎）。
-    // undo：颜色 popup 打开时记录旧色，关闭时若颜色有变则提交一条 undo。
+    // undo：颜色编辑会话（滑块拖动/弹窗连续变化）开始记录旧色，
+    // 会话结束（连续两帧无变化）时若有变化提交一条 undo。
     let mut undo_color: Option<([f32; 4], [f32; 4])> = None; // (old, new)
+    let edit_id = ui.id().with("track_color_edit");
+    let was_editing = ui.data(|d| d.get_temp::<bool>(edit_id)).unwrap_or(false);
     ui.horizontal(|ui| {
         ui.label("颜色:");
         let cur = doc
@@ -330,22 +333,15 @@ pub(super) fn show_track_info(
             .copied()
             .unwrap_or(yinhe_core::DEFAULT_TRACK_COLOR);
         let mut srgba = crate::theme::rgba_to_color32((cur[0], cur[1], cur[2], cur[3]));
-        // popup id 与 color_edit_button_srgba 内部（auto_id_with("popup")）一致
-        let popup_id = ui.auto_id_with("popup");
-        let open = egui::Popup::is_id_open(ui.ctx(), popup_id);
-        let was_open = ui
-            .ctx()
-            .data(|d| d.get_temp::<bool>(popup_id.with("color_open")))
-            .unwrap_or(false);
-        ui.ctx()
-            .data_mut(|d| d.insert_temp(popup_id.with("color_open"), open));
-        if open && !was_open {
-            // popup 刚打开：记录编辑前颜色
-            ui.ctx()
-                .data_mut(|d| d.insert_temp(popup_id.with("color_old"), cur));
+        let mut changed = false;
+        changed |= ui.color_edit_button_srgba(&mut srgba).changed();
+        changed |= crate::widgets::hsv::hsv_sliders(ui, &mut srgba, 48.0);
+        let editing = changed;
+        if editing && !was_editing {
+            // 会话开始：记录编辑前颜色
+            ui.data_mut(|d| d.insert_temp(edit_id.with("old"), cur));
         }
-        let resp = ui.color_edit_button_srgba(&mut srgba);
-        if resp.changed() {
+        if changed {
             let new = [
                 srgba.r() as f32 / 255.0,
                 srgba.g() as f32 / 255.0,
@@ -364,11 +360,10 @@ pub(super) fn show_track_info(
             }
             doc.data.bump_revision();
         }
-        if !open && was_open {
-            // popup 刚关闭：颜色有变则提交一条 undo
+        if !editing && was_editing {
+            // 会话结束：颜色有变则提交一条 undo
             let old = ui
-                .ctx()
-                .data(|d| d.get_temp::<[f32; 4]>(popup_id.with("color_old")))
+                .data(|d| d.get_temp::<[f32; 4]>(edit_id.with("old")))
                 .unwrap_or(cur);
             let new = doc
                 .edit
@@ -380,6 +375,7 @@ pub(super) fn show_track_info(
                 undo_color = Some((old, new));
             }
         }
+        ui.data_mut(|d| d.insert_temp(edit_id, editing));
     });
     if let Some((old, new)) = undo_color {
         let snapshot = doc.capture_snapshot();

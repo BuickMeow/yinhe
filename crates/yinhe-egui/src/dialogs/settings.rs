@@ -152,11 +152,15 @@ fn show_search_results(
     false
 }
 
-/// 编辑一个标准色（egui 取色器 ↔ 主题 Rgba）。
+/// 编辑一个标准色（颜色按钮 + HSV 三滑块 ↔ 主题 Rgba）。
 fn edit_std_color(ui: &mut egui::Ui, label: &str, rgba: &mut Rgba) -> bool {
     ui.label(label);
     let mut c = rgba.to_color32();
-    let changed = ui.color_edit_button_srgba(&mut c).changed();
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        changed |= ui.color_edit_button_srgba(&mut c).changed();
+        changed |= crate::widgets::hsv::hsv_sliders(ui, &mut c, 84.0);
+    });
     if changed {
         *rgba = Rgba::from_color32(c);
     }
