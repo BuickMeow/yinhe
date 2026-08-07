@@ -72,16 +72,17 @@ pub fn sf_list(ui: &mut egui::Ui, entries: &mut Vec<SfEntry>, salt: &str) -> boo
 
                 let is_selected = state.selected.contains(&i);
 
-                // ── 行背景：选中（含拖拽中，被拖行必在选中集合内）主题色淡染，其余 hover ──
+                // ── 行背景：选中（含拖拽中，被拖行必在选中集合内）与音轨面板同款
+                // ROW_SELECTED_BG；hover 同音轨面板的白色 3% 提亮 ──
                 if is_selected {
+                    ui.painter()
+                        .rect_filled(row_rect, 0.0, crate::theme::ROW_SELECTED_BG);
+                } else if ui.rect_contains_pointer(row_rect) {
                     ui.painter().rect_filled(
                         row_rect,
                         0.0,
-                        crate::theme::ACCENT_ACTIVE.gamma_multiply(0.15),
+                        egui::Color32::WHITE.gamma_multiply(0.03),
                     );
-                } else if ui.rect_contains_pointer(row_rect) {
-                    ui.painter()
-                        .rect_filled(row_rect, 0.0, crate::theme::ROW_HOVER_BG);
                 }
 
                 let row_id = ui.id().with(("sf_row", i));
