@@ -7258,6 +7258,7 @@ name = "yinhe-theme"
 version = "0.1.0"
 dependencies = [
  "egui",
+ "serde",
 ]
 
 [[package]]

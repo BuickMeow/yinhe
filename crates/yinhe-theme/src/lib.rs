@@ -1,3 +1,4 @@
+pub mod base;
 #[cfg(feature = "egui")]
 pub mod egui_colors;
 mod gpu_theme;
