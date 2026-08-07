@@ -57,12 +57,12 @@ mod tests {
         raw
     }
 
-    /// 背景拖拽（thumb 之外）→ 返回 dx，供调用处缩放对面轴。
+    /// 背景拖拽（thumb 之外）→ 返回垂直位移 dy，供调用处缩放对面轴。
     /// 配置：total=1000 tick，view_width=300，ppt=1 → thumb 占 [0, 90]，
     /// x=200 是背景区。
     /// egui 的 hit test 基于上一帧注册的 widgets：先 hover 注册一帧再 press。
     #[test]
-    fn background_drag_returns_dx() {
+    fn background_drag_returns_dy() {
         let ctx = egui::Context::default();
         let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(300.0, 16.0));
         let mut scroll_x = 0.0f32;
@@ -70,7 +70,7 @@ mod tests {
         let mut dirty = false;
 
         let start = egui::pos2(200.0, 8.0);
-        let end = egui::pos2(250.0, 8.0);
+        let end = egui::pos2(200.0, 28.0);
         // 帧1：hover 注册 widget（hit test 在下一帧生效）
         let _ = run_frame(
             &ctx,
@@ -89,8 +89,8 @@ mod tests {
             &mut ppt,
             &mut dirty,
         );
-        // 帧3：drag（本帧移动 50px）→ 应返回 dx
-        let dx = run_frame(
+        // 帧3：drag（本帧垂直移动 20px）→ 应返回 dy
+        let dy = run_frame(
             &ctx,
             drag_event(end),
             rect,
@@ -98,7 +98,7 @@ mod tests {
             &mut ppt,
             &mut dirty,
         );
-        assert!(dx > 0.0, "背景拖拽应返回非零 dx，实际 {dx}");
+        assert!(dy > 0.0, "背景拖拽应返回非零 dy，实际 {dy}");
         assert_eq!(scroll_x, 0.0, "背景拖拽不应平移");
     }
 
@@ -143,6 +143,48 @@ mod tests {
         );
         assert_eq!(dx, 0.0, "thumb 拖拽（平移）不应返回背景 dx");
         assert!(scroll_x > 0.0, "thumb 拖拽应平移 scroll_x");
+    }
+
+    /// thumb 上垂直拖动 → 返回 dy（缩放），不产生平移。
+    #[test]
+    fn thumb_vertical_drag_returns_dy() {
+        let ctx = egui::Context::default();
+        let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(300.0, 16.0));
+        let mut scroll_x = 0.0f32;
+        let mut ppt = 1.0f32;
+        let mut dirty = false;
+
+        let start = egui::pos2(45.0, 8.0);
+        let end = egui::pos2(45.0, 28.0);
+        // 帧1：hover 注册
+        let _ = run_frame(
+            &ctx,
+            drag_event(start),
+            rect,
+            &mut scroll_x,
+            &mut ppt,
+            &mut dirty,
+        );
+        // 帧2：press
+        let _ = run_frame(
+            &ctx,
+            press_event(start),
+            rect,
+            &mut scroll_x,
+            &mut ppt,
+            &mut dirty,
+        );
+        // 帧3：drag（本帧垂直移动 20px）→ 返回 dy，x 未动 → 不平移
+        let dy = run_frame(
+            &ctx,
+            drag_event(end),
+            rect,
+            &mut scroll_x,
+            &mut ppt,
+            &mut dirty,
+        );
+        assert!(dy > 0.0, "thumb 上垂直拖应返回非零 dy，实际 {dy}");
+        assert_eq!(scroll_x, 0.0, "纯垂直拖不得平移");
     }
 }
 
@@ -200,7 +242,7 @@ pub(crate) fn show(
         egui::pos2((rect.min.x + rect_right).min(rect.max.x), rect.max.y),
     );
 
-    // 背景拖拽（thumb 之外的区域）→ 返回拖拽 dx 供调用处缩放对面轴。
+    // 背景拖拽（thumb 之外的区域）→ 返回垂直位移 dy 供调用处缩放对面轴。
     // 注册在 thumb 交互之前：thumb 区域优先，背景兜底。
     let bg_id = ui.id().with("__sb_bg__");
     let bg_resp = ui.interact(rect, bg_id, egui::Sense::drag());
@@ -262,7 +304,8 @@ pub(crate) fn show(
 
     // ── Interaction ──
 
-    // Drag middle → pan
+    // Drag middle → pan（x 方向）；垂直位移 → 返回 dy 供调用处缩放对面轴。
+    // 斜拖 = 平移 + 缩放同时进行。
     if middle_resp.dragged() {
         let delta = middle_resp.drag_delta().x;
         let delta_ticks = delta as f64 / scale;
@@ -270,7 +313,7 @@ pub(crate) fn show(
         *scroll_x = scroll_x.clamp(0.0, max_scroll_x(*pixels_per_tick));
         *dirty = true;
         ui.ctx().request_repaint();
-        return 0.0;
+        return middle_resp.drag_delta().y;
     }
 
     // Apply zoom, clamping both ppt and scroll_x so the rectangle never
@@ -313,20 +356,9 @@ pub(crate) fn show(
         ui.ctx().request_repaint();
     }
 
-    // 背景拖拽 dx（thumb 未拖时）→ 调用处缩放对面轴
-    #[cfg(test)]
-    eprintln!(
-        "[sb] hovered={} down={} dragged={} delta={:?} contains={} press_origin={:?} interact={:?}",
-        bg_resp.hovered(),
-        bg_resp.is_pointer_button_down_on(),
-        bg_resp.dragged(),
-        bg_resp.drag_delta(),
-        bg_resp.contains_pointer(),
-        ui.input(|i| i.pointer.press_origin()),
-        ui.input(|i| i.pointer.interact_pos()),
-    );
+    // 垂直位移 dy（thumb 中间或背景拖拽时）→ 调用处缩放对面轴（key 行高）
     if bg_resp.dragged() {
-        bg_resp.drag_delta().x
+        bg_resp.drag_delta().y
     } else {
         0.0
     }
@@ -391,7 +423,7 @@ pub(crate) fn show_vertical(
         egui::pos2(rect.max.x, (rect.min.y + rect_bottom).min(rect.max.y)),
     );
 
-    // 背景拖拽（thumb 之外的区域）→ 返回拖拽 dy 供调用处缩放对面轴。
+    // 背景拖拽（thumb 之外的区域）→ 返回水平位移 dx 供调用处缩放对面轴。
     // 注册在 thumb 交互之前：thumb 区域优先，背景兜底。
     let bg_id = ui.id().with("__vsb_bg__");
     let bg_resp = ui.interact(rect, bg_id, egui::Sense::drag());
@@ -462,14 +494,16 @@ pub(crate) fn show_vertical(
     // 避免把 thumb 像素变化等同于 viewport_pixels 变化（那是 bug）。
     let k_constant = view_height * sb_h / num_cells_f;
 
-    // Drag middle → pan（仅当 max_scroll_y > 0 时有效）
-    // delta 是滚动条像素，需除以 scale 转换为内容像素，否则越放大鼠标越跟不上。
-    if middle_resp.dragged() && max_scroll_y > 0.0 {
-        let delta = middle_resp.drag_delta().y;
-        *scroll_y = (*scroll_y + delta / scale).clamp(0.0, max_scroll_y);
-        *dirty = true;
-        ui.ctx().request_repaint();
-        return 0.0;
+    // Drag middle → pan（y 方向）；水平位移 → 返回 dx 供调用处缩放对面轴。
+    // 斜拖 = 平移 + 缩放同时进行。
+    if middle_resp.dragged() {
+        if max_scroll_y > 0.0 {
+            let delta = middle_resp.drag_delta().y;
+            *scroll_y = (*scroll_y + delta / scale).clamp(0.0, max_scroll_y);
+            *dirty = true;
+            ui.ctx().request_repaint();
+        }
+        return middle_resp.drag_delta().x;
     }
 
     // Drag top edge → zoom，锚定 thumb 底边 sb 位置（rect_bottom 不动）
@@ -510,9 +544,9 @@ pub(crate) fn show_vertical(
         ui.ctx().request_repaint();
     }
 
-    // 背景拖拽 dy（thumb 未拖时）→ 调用处缩放对面轴
+    // 水平位移 dx（thumb 中间或背景拖拽时）→ 调用处缩放对面轴（tick 宽度）
     if bg_resp.dragged() {
-        bg_resp.drag_delta().y
+        bg_resp.drag_delta().x
     } else {
         0.0
     }

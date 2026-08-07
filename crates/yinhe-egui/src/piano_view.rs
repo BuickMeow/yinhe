@@ -926,9 +926,8 @@ pub fn show(
         ),
     );
 
-    // 水平滚动条：thumb 拖 = 平移/边缘缩放（scrollbar 内部），
-    // 背景拖拽返回值 → 垂直缩放（与滚轮缩放同锚点）
-    let sb_bg_dx = ui
+    // 水平滚动条：thumb 拖 = 平移（x）+ 垂直位移 → 垂直缩放（key 行高）
+    let sb_drag_dy = ui
         .push_id("piano_scrollbar", |ui| {
             crate::widgets::scrollbar::show(
                 ui,
@@ -941,8 +940,8 @@ pub fn show(
             )
         })
         .inner;
-    if sb_bg_dx != 0.0 {
-        let factor = 1.0 + sb_bg_dx * 0.005;
+    if sb_drag_dy != 0.0 {
+        let factor = 1.0 + sb_drag_dy * 0.005;
         let anchor_y = sb_rect.center().y - content_rect.min.y;
         view.zoom_around_y(anchor_y, factor, content_rect.height());
         ui.ctx().request_repaint();
@@ -959,9 +958,8 @@ pub fn show(
         );
         let cell_min = content_rect.height() / 128.0;
         let cell_max = content_rect.height() / 12.0;
-        // 垂直滚动条：thumb 拖 = 平移/边缘缩放（scrollbar 内部），
-        // 背景拖拽返回值 → 水平缩放（与滚轮缩放同锚点）
-        let vsb_bg_dy = ui
+        // 垂直滚动条：thumb 拖 = 平移（y）+ 水平位移 → 水平缩放（tick 宽度）
+        let vsb_drag_dx = ui
             .push_id("piano_vscroll", |ui| {
                 crate::widgets::scrollbar::show_vertical(
                     ui,
@@ -976,8 +974,8 @@ pub fn show(
                 )
             })
             .inner;
-        if vsb_bg_dy != 0.0 {
-            let factor = 1.0 + vsb_bg_dy * 0.005;
+        if vsb_drag_dx != 0.0 {
+            let factor = 1.0 + vsb_drag_dx * 0.005;
             let anchor_x = vsb_rect.center().x - content_rect.min.x;
             view.zoom_around_x(anchor_x, factor);
             ui.ctx().request_repaint();
