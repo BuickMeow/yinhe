@@ -76,12 +76,12 @@ pub fn sf_list(ui: &mut egui::Ui, entries: &mut Vec<SfEntry>, salt: &str) -> boo
                 if is_selected {
                     ui.painter().rect_filled(
                         row_rect,
-                        2.0,
+                        0.0,
                         crate::theme::ACCENT_ACTIVE.gamma_multiply(0.15),
                     );
                 } else if ui.rect_contains_pointer(row_rect) {
                     ui.painter()
-                        .rect_filled(row_rect, 2.0, crate::theme::ROW_HOVER_BG);
+                        .rect_filled(row_rect, 0.0, crate::theme::ROW_HOVER_BG);
                 }
 
                 let row_id = ui.id().with(("sf_row", i));
