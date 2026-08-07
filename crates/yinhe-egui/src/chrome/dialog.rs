@@ -104,12 +104,7 @@ pub(crate) fn title_bar(ui: &mut egui::Ui, title: &str, close: &mut bool) {
     let height = crate::theme::TITLE_BAR_H;
     let bar_rect = ui.max_rect();
 
-    // Background strip
-    ui.painter().rect_filled(
-        egui::Rect::from_min_size(bar_rect.min, egui::vec2(bar_rect.max.x, height)),
-        0.0,
-        crate::theme::app_bg(),
-    );
+    // 不画背景条：弹窗的 CentralPanel frame 已铺满 app_bg（叠两层是 bug）。
 
     // ── Close button (right side, non-macOS only) ──
     #[cfg(not(target_os = "macos"))]

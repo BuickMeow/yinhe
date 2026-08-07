@@ -1104,8 +1104,14 @@ fn render_panel_content(
     let painter = ui.painter();
 
     // ── Background + center line (drawn by egui before wgpu texture) ──
+    // 背景只铺内容区（combo 列由 show_target_combo 单独画 app_bg），
+    // 避免“先画再盖”叠两层。
     let theme = renderer.theme();
-    painter.rect_filled(grid_rect, 0.0, crate::theme::rgb_to_color32(theme.pr_bg));
+    let content_rect = egui::Rect::from_min_max(
+        egui::pos2(grid_rect.min.x + combo_width, grid_rect.min.y),
+        grid_rect.max,
+    );
+    painter.rect_filled(content_rect, 0.0, crate::theme::rgb_to_color32(theme.pr_bg));
     // Center line (only for targets that have one)
     // 直接基于 panel.selected_target 判断，不依赖 lanes 是否非空：
     // 即使该 target 没有任何锚点事件（lanes 为空），中线也应照常显示。
@@ -1118,8 +1124,8 @@ fn render_panel_content(
             let y_center = panel.value_to_y(center_val, max_val);
             painter.rect_filled(
                 egui::Rect::from_min_size(
-                    egui::pos2(grid_rect.min.x, grid_rect.min.y + y_center - 0.5),
-                    egui::vec2(grid_rect.width(), 1.0),
+                    egui::pos2(content_rect.min.x, content_rect.min.y + y_center - 0.5),
+                    egui::vec2(content_rect.width(), 1.0),
                 ),
                 0.0,
                 crate::theme::rgba_to_color32(theme.center_line),
@@ -1169,7 +1175,7 @@ fn show_target_combo(
     panels_area_rect: egui::Rect,
     editing_is_conductor: bool,
 ) {
-    // Draw left panel background (covers the grid underneath)
+    // combo 列自己的背景（内容区背景只铺到 combo_width 之后）
     ui.painter().rect_filled(combo_rect, 0.0, theme::app_bg());
 
     let combo_inner = combo_rect.shrink(4.0);

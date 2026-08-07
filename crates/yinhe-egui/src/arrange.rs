@@ -146,6 +146,15 @@ pub fn show(
             egui::pos2(arr_rect.min.x + tp_w + 4.0, arr_rect.min.y),
             egui::pos2(gpu_rect.max.x, arr_rect.min.y + RULER_H),
         );
+
+        // 右上角角落：标尺右缘到垂直滚动条之间（SCROLLBAR_W × RULER_H）
+        let corner_rect = egui::Rect::from_min_max(
+            egui::pos2(gpu_rect.max.x, arr_rect.min.y),
+            egui::pos2(arr_rect.max.x, arr_rect.min.y + RULER_H),
+        );
+        ui.painter()
+            .rect_filled(corner_rect, 0.0, crate::theme::app_bg());
+
         let model = &*doc.data.model;
         let tpb = model.meta.ppq;
         let (def_num, def_den) = model.tempo_map.time_sig_default;
@@ -359,6 +368,12 @@ pub fn show(
             egui::pos2(arr_rect.min.x + tp_w + 4.0, gpu_rect.max.y),
             egui::pos2(gpu_rect.max.x, arr_rect.max.y),
         );
+
+        // 右下角角落：横纵滚动条交叠区（SCROLLBAR_W × SCROLLBAR_H）
+        let corner_rect = egui::Rect::from_min_max(gpu_rect.max, arr_rect.max);
+        ui.painter()
+            .rect_filled(corner_rect, 0.0, crate::theme::app_bg());
+
         let sb_drag_dy = crate::widgets::scrollbar::show(
             ui,
             sb_rect,
@@ -455,13 +470,17 @@ pub fn show(
 
     // ── "+" track add button in the corner (below track panel, left of scrollbar) ──
     {
-        let corner_rect = egui::Rect::from_min_size(
+        let corner_rect = egui::Rect::from_min_max(
             egui::pos2(
                 arr_rect.min.x,
                 arr_rect.max.y - crate::widgets::scrollbar::SCROLLBAR_H,
             ),
-            egui::vec2(tp_w, crate::widgets::scrollbar::SCROLLBAR_H),
+            egui::pos2(arr_rect.min.x + tp_w, arr_rect.max.y),
         );
+        // 角落背景：track panel 下方、水平滚动条左侧（未来可放其他控件）
+        ui.painter()
+            .rect_filled(corner_rect, 0.0, crate::theme::app_bg());
+
         let btn_size = 20.0;
         let btn_rect =
             egui::Rect::from_center_size(corner_rect.center(), egui::vec2(btn_size, btn_size));
