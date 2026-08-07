@@ -232,9 +232,13 @@ impl eframe::App for App {
             }
         }
 
-        // ── Force dark mode + 统一主题色 ──
+        // ── 统一主题色：Visuals 基底跟随主题明/暗（egui 原生控件配色） ──
         ui.ctx().set_visuals({
-            let mut visuals = egui::Visuals::dark();
+            let mut visuals = if crate::theme::dark_mode() {
+                egui::Visuals::dark()
+            } else {
+                egui::Visuals::light()
+            };
             // 弹窗/面板背景色统一为程序背景色（egui 默认 gray(27) 与主题不符）
             visuals.window_fill = crate::theme::app_bg();
             visuals.panel_fill = crate::theme::app_bg();

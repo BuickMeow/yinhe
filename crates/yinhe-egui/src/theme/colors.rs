@@ -116,6 +116,11 @@ pub fn marquee_fill_alpha() -> f32 {
     current().marquee_fill_alpha
 }
 
+/// 当前主题是否暗基底（egui 原生控件 Visuals 选型用）。
+pub fn dark_mode() -> bool {
+    current().dark_mode
+}
+
 pub fn marquee_stroke_alpha() -> f32 {
     current().marquee_stroke_alpha
 }

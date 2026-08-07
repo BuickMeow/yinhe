@@ -101,6 +101,8 @@ pub struct Theme {
     pub cursor_color: Color32,
     pub marquee_fill_alpha: f32,
     pub marquee_stroke_alpha: f32,
+    // ── 明/暗基底（egui 原生控件 Visuals 选型用） ──
+    pub dark_mode: bool,
 }
 
 // ── 颜色工具（sRGB 空间近似，够主题派生用） ──
@@ -267,6 +269,8 @@ pub fn derive_theme(base: crate::base::BaseColors) -> Theme {
         ),
         marquee_fill_alpha: 0.15,
         marquee_stroke_alpha: 0.40,
+        // 与 contrast_text 同一把尺子：背景偏亮 → 亮基底（egui Visuals::light）
+        dark_mode: luminance(bg) <= 0.5,
     }
 }
 
@@ -288,12 +292,14 @@ mod tests {
         // hover/选中文字在暗底上应为白
         assert_eq!(t.hover_text, Color32::WHITE);
         assert_eq!(t.text_selected, Color32::WHITE);
+        assert!(t.dark_mode);
     }
 
     /// 亮色主题：对比色方向、灰阶方向、网格线方向全部正确。
     #[test]
     fn derive_light_directions() {
         let t = derive_theme(crate::base::BaseColors::LIGHT);
+        assert!(!t.dark_mode);
         // 亮底上的对比文字应为深色
         assert_eq!(t.hover_text, Color32::from_gray(20));
         assert_eq!(t.text_selected, Color32::from_gray(20));
