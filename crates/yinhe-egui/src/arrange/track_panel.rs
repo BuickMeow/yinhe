@@ -19,6 +19,12 @@ pub(crate) enum TrackAction {
     MoveUp { idx: usize },
     /// Move a track down (swap with next)
     MoveDown { idx: usize },
+    /// 拖拽排序：把 `indices`（升序，保持相对顺序）整体移动到
+    /// 删除它们后的列表中的 `insert_at` 位置。
+    MoveTracks {
+        indices: Vec<usize>,
+        insert_at: usize,
+    },
 }
 
 /// Render the track list using a painter (unified component for both
@@ -61,6 +67,12 @@ pub(crate) fn show(
     let max_scroll = (num_tracks as f32 * *row_height - panel_h).max(0.0);
     *scroll_y = scroll_y.clamp(0.0, max_scroll);
 
+    // ── 拖拽排序跨帧状态（算法见 widgets::reorder） ──
+    let drag_id = ui.id().with("track_panel_drag");
+    let mut drag: Option<crate::widgets::reorder::DragReorder> =
+        ui.data_mut(|d| d.get_temp(drag_id)).unwrap_or_default();
+    let dragging = drag.is_some();
+
     // Visible track range
     let first = (*scroll_y / *row_height).floor() as usize;
     let visible_count = (panel_h / *row_height).ceil() as usize + 2;
@@ -74,19 +86,25 @@ pub(crate) fn show(
 
     let btn_size = egui::vec2(18.0, 18.0);
 
-    for (idx, ti) in track_info.iter().enumerate().take(last).skip(first) {
-        if !track_visible.get(idx).copied().unwrap_or(true) {
-            continue;
-        }
-        let y = panel_rect.min.y + idx as f32 * *row_height - *scroll_y;
-        if y > panel_rect.max.y || y + *row_height < panel_rect.min.y {
-            continue;
-        }
+    // 全部行的矩形（含视口外/隐藏行，保证拖拽插入索引全局正确）；仅可视行渲染。
+    let mut item_rects: Vec<egui::Rect> = Vec::with_capacity(num_tracks);
 
+    for (idx, ti) in track_info.iter().enumerate() {
+        let y = panel_rect.min.y + idx as f32 * *row_height - *scroll_y;
         let row_rect = egui::Rect::from_min_size(
             egui::pos2(panel_rect.min.x, y),
             egui::vec2(panel_w, *row_height),
         );
+        item_rects.push(row_rect);
+        if idx < first || idx >= last {
+            continue;
+        }
+        if !track_visible.get(idx).copied().unwrap_or(true) {
+            continue;
+        }
+        if y > panel_rect.max.y || y + *row_height < panel_rect.min.y {
+            continue;
+        }
 
         let is_conductor = Some(ti.index) == conductor_track_idx;
         let selected = track_selected.contains(&ti.index);
@@ -248,7 +266,7 @@ pub(crate) fn show(
         if idx >= num_tracks { None } else { Some(idx) }
     };
 
-    if resp.double_clicked() {
+    if resp.double_clicked() && !dragging {
         if let Some(pos) = resp.interact_pointer_pos()
             && let Some(idx) = hit(pos)
         {
@@ -264,6 +282,7 @@ pub(crate) fn show(
             }
         }
     } else if resp.clicked()
+        && !dragging
         && let Some(pos) = resp.interact_pointer_pos()
         && let Some(idx) = hit(pos)
     {
@@ -308,7 +327,6 @@ pub(crate) fn show(
         *info_content = Some(crate::right_panel::InfoContent::Track);
     }
 
-    // ── Right-click context menu ──
     // On secondary click, select the track under the cursor and record its
     // index in egui temp data so the context_menu closure (which may run on
     // subsequent frames while the menu stays open) can recover it.
@@ -376,6 +394,66 @@ pub(crate) fn show(
         }
     });
 
+    // ── 拖拽排序 ──
+    // 拖拽开始：未选中的行先单选，然后拖起整个选中集合（排除 conductor）。
+    if resp.drag_started()
+        && !dragging
+        && let Some(pos) = resp.interact_pointer_pos()
+        && let Some(idx) = hit(pos)
+        && Some(track_info[idx].index) != conductor_track_idx
+    {
+        let track_idx = track_info[idx].index;
+        if !track_selected.contains(&track_idx) {
+            track_selected.clear();
+            track_selected.insert(track_idx);
+            *selection_anchor = Some(track_idx);
+        }
+        let mut indices: Vec<usize> = track_selected.iter().map(|&t| t as usize).collect();
+        indices.sort_unstable();
+        indices.retain(|&i| track_info.get(i).map(|t| Some(t.index)) != Some(conductor_track_idx));
+        if !indices.is_empty() {
+            drag = Some(crate::widgets::reorder::DragReorder {
+                indices,
+                insert_idx: idx,
+            });
+        }
+    }
+
+    // 拖拽进行中：插入位置 + 插入线 + 边缘自动滚动；释放时提交排序。
+    if let Some(drag_state) = &mut drag {
+        if let Some(p) = ui.input(|i| i.pointer.interact_pos()) {
+            drag_state.update_insert_idx(p.y, &item_rects);
+            // conductor 固定在最前（索引 0），被拖行不能插到它前面
+            drag_state.insert_idx = drag_state.insert_idx.max(1);
+
+            // 自动滚动：指针贴近面板上下边缘
+            const AUTO_SCROLL_MARGIN: f32 = 20.0;
+            const AUTO_SCROLL_SPEED: f32 = 32.0;
+            if p.y < panel_rect.top() + AUTO_SCROLL_MARGIN {
+                *scroll_y = (*scroll_y - AUTO_SCROLL_SPEED).max(0.0);
+            } else if p.y > panel_rect.bottom() - AUTO_SCROLL_MARGIN {
+                *scroll_y = (*scroll_y + AUTO_SCROLL_SPEED).min(max_scroll);
+            }
+        }
+
+        if let Some(y) = drag_state.insert_line_y(&item_rects) {
+            let x1 = panel_rect.min.x + 4.0;
+            let x2 = panel_rect.max.x - 4.0;
+            painter.line_segment(
+                [egui::pos2(x1, y), egui::pos2(x2, y)],
+                egui::Stroke::new(3.0, crate::theme::ACCENT_ACTIVE),
+            );
+        }
+
+        if ui.input(|i| i.pointer.any_released()) {
+            actions.push(TrackAction::MoveTracks {
+                indices: drag_state.indices.clone(),
+                insert_at: drag_state.insert_idx,
+            });
+            drag = None;
+        }
+    }
+
     // ── Up/Down arrow key navigation ──
     if ui.input(|i| i.key_pressed(egui::Key::ArrowUp)) {
         if let Some(&current) = track_selected.iter().next() {
@@ -429,6 +507,8 @@ pub(crate) fn show(
             *scroll_y = (*scroll_y - scroll_delta.y).max(0.0);
         }
     }
+
+    ui.data_mut(|d| d.insert_temp(drag_id, drag));
 
     (audio_dirty, actions)
 }

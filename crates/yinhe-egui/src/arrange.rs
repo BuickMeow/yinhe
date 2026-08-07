@@ -272,6 +272,30 @@ pub fn show(
                         (None, String::new())
                     }
                 }
+                track_panel::TrackAction::MoveTracks { indices, insert_at } => {
+                    // 拖拽排序：拆成逐个 move_track，合并为一个 Composite undo。
+                    let moves = crate::widgets::reorder::plan_moves(
+                        doc.data.model.tracks.len(),
+                        indices,
+                        *insert_at,
+                    );
+                    let mut sub_actions = Vec::new();
+                    for (from, to) in moves {
+                        if let Some(a) = doc.move_track(from, to) {
+                            sub_actions.push(a);
+                        }
+                    }
+                    (
+                        if sub_actions.is_empty() {
+                            None
+                        } else {
+                            Some(yinhe_editor_core::history::UndoAction::Composite(
+                                sub_actions,
+                            ))
+                        },
+                        t!("undo.move_track").to_string(),
+                    )
+                }
             };
             if let Some(action) = undo_action {
                 doc.push_undo(action, &label, before);

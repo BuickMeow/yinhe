@@ -5,6 +5,7 @@ pub(crate) mod icon_text;
 pub mod numeric_input;
 pub mod quantize_button;
 pub mod quantize_popup;
+pub(crate) mod reorder;
 pub mod scrollbar;
 pub mod selection_actions;
 pub mod split_handle;

@@ -20,16 +20,8 @@ struct ListState {
     selected: Vec<usize>,
     /// 最近一次点击的行（shift 范围选择的锚点）。
     last_click: Option<usize>,
-    /// 拖拽进行中。
-    drag: Option<DragState>,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-struct DragState {
-    /// 被拖拽的行（原始索引，已排序，可能多个）。
-    indices: Vec<usize>,
-    /// 插入位置：删除被拖行后，按剩余行计数（0..=visible）。
-    insert_idx: usize,
+    /// 拖拽进行中（状态/算法见 widgets::reorder）。
+    drag: Option<crate::widgets::reorder::DragReorder>,
 }
 
 /// 可复用音色列表：多选 + 拖拽排序 + 启用复选框 + 右键菜单。
@@ -142,7 +134,7 @@ pub fn sf_list(ui: &mut egui::Ui, entries: &mut Vec<SfEntry>, salt: &str) -> boo
                         state.last_click = Some(i);
                     }
                     state.selected.sort();
-                    state.drag = Some(DragState {
+                    state.drag = Some(crate::widgets::reorder::DragReorder {
                         indices: state.selected.clone(),
                         insert_idx: i,
                     });
@@ -192,18 +184,8 @@ pub fn sf_list(ui: &mut egui::Ui, entries: &mut Vec<SfEntry>, salt: &str) -> boo
                 let pointer = ui.ctx().input(|i| i.pointer.interact_pos());
 
                 if let Some(p) = pointer {
-                    // 插入位置：指针越过剩余行的中线则后移一位
-                    let mut insert = 0usize;
-                    for (i, rect) in item_rects.iter().enumerate() {
-                        if drag.indices.contains(&i) {
-                            continue;
-                        }
-                        if p.y < rect.center().y {
-                            break;
-                        }
-                        insert += 1;
-                    }
-                    drag.insert_idx = insert;
+                    // 插入位置：指针越过剩余行的中线则后移一位（跳过被拖行）
+                    drag.update_insert_idx(p.y, &item_rects);
 
                     // 自动滚动：指针贴近可视区边缘
                     if p.y < viewport.top() + AUTO_SCROLL_MARGIN {
@@ -214,7 +196,7 @@ pub fn sf_list(ui: &mut egui::Ui, entries: &mut Vec<SfEntry>, salt: &str) -> boo
                 }
 
                 // 插入位置线
-                if let Some(y) = insert_line_y(&drag.indices, drag.insert_idx, &item_rects) {
+                if let Some(y) = drag.insert_line_y(&item_rects) {
                     let x1 = item_rects[0].left() + 4.0;
                     let x2 = item_rects[0].right() - 4.0;
                     ui.painter().line_segment(
@@ -225,7 +207,7 @@ pub fn sf_list(ui: &mut egui::Ui, entries: &mut Vec<SfEntry>, salt: &str) -> boo
 
                 // 释放：应用拖拽排序（保持被拖项相对顺序）
                 if ui.input(|i| i.pointer.any_released()) {
-                    apply_drop(entries, &drag.indices, drag.insert_idx);
+                    crate::widgets::reorder::apply_reorder(entries, &drag.indices, drag.insert_idx);
                     changed = true;
                     state.selected.clear();
                     state.last_click = None;
@@ -258,25 +240,7 @@ pub fn sf_list(ui: &mut egui::Ui, entries: &mut Vec<SfEntry>, salt: &str) -> boo
     changed
 }
 
-/// 应用拖拽排序：从后往前删被拖行（避免索引错乱），再按插入点恢复，
-/// 被拖项保持原有相对顺序。`indices` 必须已排序。
-fn apply_drop<T: Clone>(entries: &mut Vec<T>, indices: &[usize], insert_idx: usize) {
-    let mut dragged: Vec<T> = Vec::with_capacity(indices.len());
-    for &idx in indices {
-        if idx < entries.len() {
-            dragged.push(entries[idx].clone());
-        }
-    }
-    for &idx in indices.iter().rev() {
-        if idx < entries.len() {
-            entries.remove(idx);
-        }
-    }
-    let insert_at = insert_idx.min(entries.len());
-    for (k, item) in dragged.into_iter().enumerate() {
-        entries.insert(insert_at + k, item);
-    }
-}
+/// 应用拖拽排序（逻辑已提取到 widgets::reorder，见 apply_reorder）。
 
 #[derive(Clone, Copy, PartialEq)]
 enum SfAction {
@@ -326,26 +290,6 @@ fn swap_selection(state: &mut ListState, a: usize, b: usize) {
     };
 }
 
-/// 插入线 y 坐标：删除被拖行后，第 `insert_idx` 个剩余行的顶部；
-/// 插到末尾时为最后一个可见行的底部。
-fn insert_line_y(
-    drag_indices: &[usize],
-    insert_idx: usize,
-    item_rects: &[egui::Rect],
-) -> Option<f32> {
-    let mut visible = 0usize;
-    for (i, rect) in item_rects.iter().enumerate() {
-        if drag_indices.contains(&i) {
-            continue;
-        }
-        if visible == insert_idx {
-            return Some(rect.top());
-        }
-        visible += 1;
-    }
-    item_rects.last().map(|r| r.bottom())
-}
-
 /// 截断音色库路径用于显示：超过 40 字符时保留尾部 37 字符、前缀加省略号。
 ///
 /// 必须按字符（而非字节）截断：按字节切片可能落在多字节 UTF-8 字符中间，
@@ -368,51 +312,7 @@ fn truncate_path(path: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_drop, truncate_path};
-
-    /// 拖拽排序：单行拖到中间。
-    #[test]
-    fn drop_single_row_to_middle() {
-        let mut v = vec!["a", "b", "c", "d", "e"];
-        // 拖 'a'（index 0）到 index 3 的位置（'c' 和 'd' 之间）
-        apply_drop(&mut v, &[0], 2);
-        assert_eq!(v, vec!["b", "c", "a", "d", "e"]);
-    }
-
-    /// 拖拽排序：多行一起拖到开头。
-    #[test]
-    fn drop_multiple_rows_to_front() {
-        let mut v = vec!["a", "b", "c", "d", "e"];
-        // 拖 'c'、'd' 到最前面
-        apply_drop(&mut v, &[2, 3], 0);
-        assert_eq!(v, vec!["c", "d", "a", "b", "e"]);
-    }
-
-    /// 拖拽排序：多行拖到末尾，保持相对顺序。
-    #[test]
-    fn drop_multiple_rows_to_end() {
-        let mut v = vec!["a", "b", "c", "d", "e"];
-        // 拖 'a'、'b' 到末尾
-        apply_drop(&mut v, &[0, 1], 3);
-        assert_eq!(v, vec!["c", "d", "e", "a", "b"]);
-    }
-
-    /// 拖拽排序：插入索引越界时 clamp 到末尾，不 panic。
-    #[test]
-    fn drop_insert_idx_out_of_bounds_is_clamped() {
-        let mut v = vec!["a", "b", "c"];
-        apply_drop(&mut v, &[0], 99);
-        assert_eq!(v, vec!["b", "c", "a"]);
-    }
-
-    /// 拖拽排序：不连续多选（cmd 点选），保持选中顺序。
-    #[test]
-    fn drop_non_contiguous_selection() {
-        let mut v = vec!["a", "b", "c", "d", "e", "f"];
-        // 拖 'b'、'e' 到 'c' 的位置
-        apply_drop(&mut v, &[1, 4], 1);
-        assert_eq!(v, vec!["a", "b", "e", "c", "d", "f"]);
-    }
+    use super::truncate_path;
 
     /// 回归测试：中文字符路径截断必须安全（旧实现按字节切片会 panic 闪退）。
     #[test]
