@@ -348,6 +348,7 @@ impl App {
     ) {
         // Horizontal splitter
         if self.view_mode.show_transport() {
+            // 整条带作为 handle（绘制+交互同一层，避免叠两层同色填充）
             let split_right = layout.remaining.max.x;
             let h_split_rect = egui::Rect::from_min_max(
                 egui::pos2(
@@ -359,27 +360,8 @@ impl App {
                     layout.remaining.min.y + layout.arr_h + crate::theme::SPLIT_GAP,
                 ),
             );
-            let h_int_rect = egui::Rect::from_min_max(
-                egui::pos2(
-                    layout.remaining.min.x,
-                    layout.remaining.min.y + layout.arr_h + 0.5,
-                ),
-                egui::pos2(
-                    split_right,
-                    layout.remaining.min.y + layout.arr_h + crate::theme::SPLIT_GAP,
-                ),
-            );
             let h_split_resp =
-                crate::widgets::split_handle::horizontal(ui, "__h_split__", h_int_rect);
-            ui.painter().rect_filled(
-                h_split_rect,
-                0.0,
-                if h_split_resp.hovered() || h_split_resp.dragged() {
-                    crate::theme::split_hover()
-                } else {
-                    crate::theme::split_default()
-                },
-            );
+                crate::widgets::split_handle::horizontal(ui, "__h_split__", h_split_rect);
             if h_split_resp.dragged() {
                 let total_y = layout.remaining.size().y;
                 let delta = h_split_resp.drag_delta().y;

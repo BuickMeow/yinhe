@@ -81,6 +81,11 @@ pub(crate) fn show(
     let painter = ui.painter().clone();
     let mut audio_dirty = false;
 
+    // 交替行条纹：与 GPU 区 lane 条纹同源同透明度（yinhe-theme 全局 GPU 主题）
+    let gpu_theme = yinhe_theme::current_gpu_theme();
+    let lane_even = crate::theme::rgb_to_color32(gpu_theme.ar_lane_even).gamma_multiply(0.7);
+    let lane_odd = crate::theme::rgb_to_color32(gpu_theme.ar_lane_odd).gamma_multiply(0.7);
+
     let interact_id = egui::Id::new("track_panel_area");
     let resp = ui.interact(panel_rect, interact_id, egui::Sense::click_and_drag());
 
@@ -108,6 +113,12 @@ pub(crate) fn show(
 
         let is_conductor = Some(ti.index) == conductor_track_idx;
         let selected = track_selected.contains(&ti.index);
+        // 交替行条纹（在选中/悬停 tint 之下，与 GPU 区条纹对齐）
+        painter.rect_filled(
+            row_rect,
+            0.0,
+            if idx % 2 == 0 { lane_even } else { lane_odd },
+        );
         if selected {
             painter.rect_filled(row_rect, 0.0, ui.visuals().selection.bg_fill);
         } else if row_rect.contains(ui.input(|i| i.pointer.hover_pos().unwrap_or_default())) {
