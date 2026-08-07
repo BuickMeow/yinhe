@@ -11,6 +11,8 @@ static CURRENT: OnceLock<RwLock<Theme>> = OnceLock::new();
 /// 切换主题：重新派生全部颜色，下一帧生效。
 pub fn set_theme(base: BaseColors) {
     let theme = derive_theme(base);
+    // GPU 渲染主题同步派生（钢琴卷帘/走带纹理同源换色）
+    yinhe_theme::set_current_gpu_theme(yinhe_theme::GpuTheme::from_base(base));
     match CURRENT.get() {
         Some(lock) => {
             let mut guard = lock.write().unwrap_or_else(|e| e.into_inner());

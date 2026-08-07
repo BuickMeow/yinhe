@@ -182,7 +182,7 @@ pub fn prepare(
     ]);
     let ghost_for_layer0 = ghost.clone();
     let highlight_ticks_for_layer0 = highlight_ticks;
-    let theme = renderer.theme.clone();
+    let theme = renderer.theme();
 
     if is_velocity {
         // Velocity bars via velocity pipeline (VelocityBarInstance, 16B)

@@ -38,7 +38,6 @@ pub struct InstanceRenderer {
     pub(crate) cull: CullState,
     /// 诊断：上一次打印自检的小节索引（cull_diag_bar 用）。
     pub(crate) last_diag_bar: u64,
-    pub theme: yinhe_theme::GpuTheme,
 }
 
 /// Generates a typed `upload_*_layer` method for one layer variant.
@@ -96,7 +95,6 @@ impl InstanceRenderer {
                 layers: Vec::new(),
                 cull,
                 last_diag_bar: u64::MAX,
-                theme: yinhe_theme::GpuTheme::default(),
             }
         })
     }
@@ -470,11 +468,8 @@ impl InstanceRenderer {
         }
     }
 
-    pub fn theme(&self) -> &yinhe_theme::GpuTheme {
-        &self.theme
-    }
-
-    pub fn set_theme(&mut self, theme: yinhe_theme::GpuTheme) {
-        self.theme = theme;
+    /// 当前 GPU 主题（从全局读取，随用户主题切换自动更新）。
+    pub fn theme(&self) -> yinhe_theme::GpuTheme {
+        yinhe_theme::current_gpu_theme()
     }
 }
