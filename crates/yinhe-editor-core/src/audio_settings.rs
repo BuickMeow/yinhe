@@ -36,6 +36,10 @@ pub struct AudioSettings {
     pub use_gpu_cull: bool,
     /// UI 语言代码，如 "zh-CN"、"en"、"ja"、"ko"。
     pub locale: String,
+    /// 主题标准色（用户可调，全局生效）。
+    pub theme_base: yinhe_theme::base::BaseColors,
+    /// 主题预设名（"dark"/"light"/"custom"）。
+    pub theme_preset: String,
     #[serde(skip)]
     pub show_settings: bool,
     #[serde(skip)]
@@ -61,6 +65,8 @@ impl Default for AudioSettings {
             use_gpu_synth: false,
             use_gpu_cull: false, // 默认 CPU 构建
             locale: "zh-CN".to_string(),
+            theme_base: yinhe_theme::base::BaseColors::DARK,
+            theme_preset: "dark".to_string(),
             show_settings: false,
             available_devices: Vec::new(),
             available_sample_rates: Vec::new(),

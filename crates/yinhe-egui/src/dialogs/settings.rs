@@ -1,7 +1,20 @@
 use eframe::egui;
 use rust_i18n::t;
 
+use yinhe_theme::base::{BaseColors, Rgba};
+
 use crate::audio_settings::AudioSettings;
+
+/// 编辑一个标准色（egui 取色器 ↔ 主题 Rgba）。
+fn edit_std_color(ui: &mut egui::Ui, label: &str, rgba: &mut Rgba) -> bool {
+    ui.label(label);
+    let mut c = rgba.to_color32();
+    let changed = ui.color_edit_button_srgba(&mut c).changed();
+    if changed {
+        *rgba = Rgba::from_color32(c);
+    }
+    changed
+}
 
 /// Show the settings dialog content inside an existing Ui.
 /// Returns `true` if settings were changed.
@@ -41,6 +54,86 @@ pub fn show_content(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
                 });
             ui.end_row();
         });
+
+    ui.add_space(16.0);
+    ui.separator();
+    ui.add_space(8.0);
+
+    // ── 主题：预设 + 7 个标准色（改色实时生效） ──
+    ui.heading(t!("settings.theme.heading").as_ref());
+    ui.add_space(8.0);
+
+    egui::Grid::new("theme_preset_grid")
+        .num_columns(2)
+        .spacing([12.0, 8.0])
+        .show(ui, |ui| {
+            ui.label(t!("settings.theme.preset").as_ref());
+            let preset_names = [
+                ("dark", t!("settings.theme.dark").to_string()),
+                ("light", t!("settings.theme.light").to_string()),
+                ("custom", t!("settings.theme.custom").to_string()),
+            ];
+            let current_preset = preset_names
+                .iter()
+                .find(|(n, _)| *n == settings.theme_preset)
+                .map(|(_, l)| l.clone())
+                .unwrap_or_else(|| t!("settings.theme.custom").to_string());
+            egui::ComboBox::from_id_salt("theme_preset")
+                .selected_text(current_preset)
+                .show_ui(ui, |ui| {
+                    for (name, label) in preset_names {
+                        let selected = settings.theme_preset == name;
+                        if ui.selectable_label(selected, label).clicked() {
+                            settings.theme_preset = name.to_string();
+                            if name == "dark" {
+                                settings.theme_base = BaseColors::DARK;
+                            } else if name == "light" {
+                                settings.theme_base = BaseColors::LIGHT;
+                            }
+                            crate::theme::set_theme(settings.theme_base);
+                            changed = true;
+                        }
+                    }
+                });
+            ui.end_row();
+        });
+
+    ui.add_space(4.0);
+    let mut base = settings.theme_base;
+    let mut base_changed = false;
+    egui::Grid::new("theme_colors_grid")
+        .num_columns(2)
+        .spacing([12.0, 6.0])
+        .show(ui, |ui| {
+            base_changed |= edit_std_color(ui, t!("settings.theme.bg").as_ref(), &mut base.bg);
+            ui.end_row();
+            base_changed |= edit_std_color(ui, t!("settings.theme.text").as_ref(), &mut base.text);
+            ui.end_row();
+            base_changed |=
+                edit_std_color(ui, t!("settings.theme.accent").as_ref(), &mut base.accent);
+            ui.end_row();
+            base_changed |= edit_std_color(
+                ui,
+                t!("settings.theme.selection").as_ref(),
+                &mut base.selection,
+            );
+            ui.end_row();
+            base_changed |=
+                edit_std_color(ui, t!("settings.theme.danger").as_ref(), &mut base.danger);
+            ui.end_row();
+            base_changed |=
+                edit_std_color(ui, t!("settings.theme.border").as_ref(), &mut base.border);
+            ui.end_row();
+            base_changed |=
+                edit_std_color(ui, t!("settings.theme.warning").as_ref(), &mut base.warning);
+            ui.end_row();
+        });
+    if base_changed {
+        settings.theme_base = base;
+        settings.theme_preset = "custom".to_string();
+        crate::theme::set_theme(base);
+        changed = true;
+    }
 
     ui.add_space(16.0);
     ui.separator();
