@@ -90,7 +90,7 @@ pub(crate) fn show_viewport(ctx: &egui::Context, progress: SharedProgress) -> bo
                                     ui.label(
                                         egui::RichText::new(&stage.detail)
                                             .size(10.0)
-                                            .color(egui::Color32::GRAY),
+                                            .color(crate::theme::TEXT_LABEL),
                                     );
                                 }
                             }

@@ -374,7 +374,7 @@ fn info_row(ui: &mut egui::Ui, label: impl Into<String>, value: impl Into<String
         ui.label(
             egui::RichText::new(label.into())
                 .size(11.0)
-                .color(egui::Color32::GRAY),
+                .color(crate::theme::TEXT_LABEL),
         );
         ui.label(
             egui::RichText::new(value.into())
@@ -406,7 +406,7 @@ fn field_row(
         ui.label(
             egui::RichText::new(label.into())
                 .size(11.0)
-                .color(egui::Color32::GRAY),
+                .color(crate::theme::TEXT_LABEL),
         );
         let id = ui.id().with(key);
         let buf_id = id.with("buf");
@@ -559,7 +559,7 @@ fn tempo_field(
         ui.label(
             egui::RichText::new(label.into())
                 .size(11.0)
-                .color(egui::Color32::GRAY),
+                .color(crate::theme::TEXT_LABEL),
         );
         let is_editing = ui.ctx().memory(|m| m.has_focus(id));
         let mut text: String = ui.ctx().data(|d| d.get_temp(buf_id).unwrap_or_default());

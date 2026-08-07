@@ -147,7 +147,7 @@ pub(crate) fn show(
                     eframe::egui::RichText::new(ICON_SEARCH.codepoint)
                         .family(ICON_SEARCH.font_family())
                         .size(14.0)
-                        .color(eframe::egui::Color32::GRAY),
+                        .color(crate::theme::TEXT_LABEL),
                 );
                 ui.add(
                     eframe::egui::TextEdit::singleline(&mut picker.search_query)
@@ -233,7 +233,7 @@ pub(crate) fn show(
                             eframe::egui::Align2::RIGHT_CENTER,
                             &size_text,
                             eframe::egui::FontId::proportional(11.0),
-                            eframe::egui::Color32::GRAY,
+                            crate::theme::TEXT_LABEL,
                         );
                     }
                 });
@@ -246,7 +246,7 @@ pub(crate) fn show(
                         t!("dialog.archive.file_count", n = picker.filtered.len()).as_ref(),
                     )
                     .size(12.0)
-                    .color(eframe::egui::Color32::GRAY),
+                    .color(crate::theme::TEXT_LABEL),
                 );
                 ui.with_layout(
                     eframe::egui::Layout::right_to_left(eframe::egui::Align::Center),

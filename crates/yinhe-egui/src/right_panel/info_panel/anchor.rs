@@ -49,7 +49,7 @@ pub(super) fn show_anchor_info(
         ui.label(
             egui::RichText::new(t!("anchor.target").as_ref())
                 .size(11.0)
-                .color(egui::Color32::GRAY),
+                .color(crate::theme::TEXT_LABEL),
         );
         ui.label(
             egui::RichText::new(target.display_name())
@@ -66,7 +66,7 @@ pub(super) fn show_anchor_info(
         ui.label(
             egui::RichText::new(t!("anchor.tick").as_ref())
                 .size(11.0)
-                .color(egui::Color32::GRAY),
+                .color(crate::theme::TEXT_LABEL),
         );
         let resp = ui.add(
             crate::widgets::numeric_input::decimal_drag_value(&mut edit_tick)
@@ -102,7 +102,7 @@ pub(super) fn show_anchor_info(
         ui.label(
             egui::RichText::new(t!("anchor.value").as_ref())
                 .size(11.0)
-                .color(egui::Color32::GRAY),
+                .color(crate::theme::TEXT_LABEL),
         );
         let resp = ui.add(
             crate::widgets::numeric_input::decimal_drag_value(&mut edit_value)
@@ -138,7 +138,7 @@ pub(super) fn show_anchor_info(
         ui.label(
             egui::RichText::new(t!("anchor.shape").as_ref())
                 .size(11.0)
-                .color(egui::Color32::GRAY),
+                .color(crate::theme::TEXT_LABEL),
         );
         let is_step = matches!(shape, SegmentShape::Step);
         let mut discrete = is_step;
@@ -174,7 +174,7 @@ pub(super) fn show_anchor_info(
             ui.label(
                 egui::RichText::new(t!("anchor.x1").as_ref())
                     .size(11.0)
-                    .color(egui::Color32::GRAY),
+                    .color(crate::theme::TEXT_LABEL),
             );
             let resp = ui.add(
                 crate::widgets::numeric_input::decimal_drag_value(&mut edit)
@@ -212,7 +212,7 @@ pub(super) fn show_anchor_info(
             ui.label(
                 egui::RichText::new(t!("anchor.y1").as_ref())
                     .size(11.0)
-                    .color(egui::Color32::GRAY),
+                    .color(crate::theme::TEXT_LABEL),
             );
             let resp = ui.add(
                 crate::widgets::numeric_input::decimal_drag_value(&mut edit)
@@ -250,7 +250,7 @@ pub(super) fn show_anchor_info(
             ui.label(
                 egui::RichText::new(t!("anchor.x2").as_ref())
                     .size(11.0)
-                    .color(egui::Color32::GRAY),
+                    .color(crate::theme::TEXT_LABEL),
             );
             let resp = ui.add(
                 crate::widgets::numeric_input::decimal_drag_value(&mut edit)
@@ -288,7 +288,7 @@ pub(super) fn show_anchor_info(
             ui.label(
                 egui::RichText::new(t!("anchor.y2").as_ref())
                     .size(11.0)
-                    .color(egui::Color32::GRAY),
+                    .color(crate::theme::TEXT_LABEL),
             );
             let resp = ui.add(
                 crate::widgets::numeric_input::decimal_drag_value(&mut edit)

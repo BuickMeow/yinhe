@@ -11,7 +11,8 @@ pub const APP_BG: Color32 = Color32::from_rgb(25, 25, 28);
 pub const ACCENT_ACTIVE: Color32 = Color32::from_rgb(100, 180, 255);
 
 // ── 模式栏（mode bar）文字/图标色：讲解行与性能显示（CPU/MEM/FPS）的灰色字 ──
-pub const MODE_BAR_TEXT: Color32 = Color32::GRAY;
+// 与弱标签文字 TEXT_LABEL 同色（gray128）。
+pub const MODE_BAR_TEXT: Color32 = TEXT_LABEL;
 
 // ── UI 文字/图标灰度（值对应各 UI 层既有用法，统一从 theme 取色）──
 pub const TEXT_PRIMARY: Color32 = Color32::from_gray(220); // 标题/强调文字
@@ -23,6 +24,8 @@ pub const TEXT_MUTED: Color32 = Color32::from_gray(160); // 弱化文字/未激�
 pub const TEXT_FAINT: Color32 = Color32::from_gray(140); // 弱化文字
 pub const TEXT_DIM: Color32 = Color32::from_gray(120); // 小标签/弱文字
 pub const TEXT_DIMMER: Color32 = Color32::from_gray(110); // 摘要文字
+/// 弱标签文字/未激活图标（原散落各处的 `Color32::GRAY`，gray128）。
+pub const TEXT_LABEL: Color32 = Color32::from_gray(128);
 pub const TEXT_HINT: Color32 = Color32::from_gray(100); // 提示/占位文字
 pub const TEXT_LABEL_DIM: Color32 = Color32::from_gray(90); // 键盘音名等极弱文字
 pub const TEXT_DISABLED: Color32 = Color32::from_gray(80); // 禁用文字

@@ -42,7 +42,7 @@ pub fn show(
                     .color(if is_global {
                         crate::theme::ACCENT_ACTIVE
                     } else {
-                        egui::Color32::GRAY
+                        crate::theme::TEXT_LABEL
                     }),
             )
             .sense(egui::Sense::click())
@@ -70,7 +70,7 @@ pub fn show(
                     .color(if !is_global {
                         crate::theme::ACCENT_ACTIVE
                     } else {
-                        egui::Color32::GRAY
+                        crate::theme::TEXT_LABEL
                     }),
             )
             .sense(egui::Sense::click())

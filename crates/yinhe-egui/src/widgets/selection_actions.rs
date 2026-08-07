@@ -171,7 +171,7 @@ pub fn show(
         let color = if hovered {
             crate::theme::ACCENT_ACTIVE
         } else {
-            egui::Color32::GRAY
+            crate::theme::TEXT_LABEL
         };
 
         // Draw icon

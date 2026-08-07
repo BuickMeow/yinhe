@@ -107,7 +107,7 @@ pub(super) fn show_track_info(
             ui.label(
                 egui::RichText::new(t!("track.total_notes").as_ref())
                     .size(11.0)
-                    .color(egui::Color32::GRAY),
+                    .color(crate::theme::TEXT_LABEL),
             );
             ui.label(egui::RichText::new(format!("{}", total_notes)).size(11.0));
         });
@@ -115,7 +115,7 @@ pub(super) fn show_track_info(
             ui.label(
                 egui::RichText::new(t!("track.total_events").as_ref())
                     .size(11.0)
-                    .color(egui::Color32::GRAY),
+                    .color(crate::theme::TEXT_LABEL),
             );
             ui.label(egui::RichText::new(format!("{}", total_events)).size(11.0));
         });
@@ -123,7 +123,7 @@ pub(super) fn show_track_info(
         ui.label(
             egui::RichText::new(t!("track.multi_select_hint").as_ref())
                 .size(11.0)
-                .color(egui::Color32::GRAY),
+                .color(crate::theme::TEXT_LABEL),
         );
 
         ui.add_space(8.0);
@@ -161,7 +161,7 @@ pub(super) fn show_track_info(
         ui.label(
             egui::RichText::new(t!("track.conductor_hint").as_ref())
                 .size(11.0)
-                .color(egui::Color32::GRAY),
+                .color(crate::theme::TEXT_LABEL),
         );
         ui.add_space(8.0);
 
@@ -475,7 +475,7 @@ pub(super) fn show_track_info(
         ui.label(
             egui::RichText::new("音符数:")
                 .size(11.0)
-                .color(egui::Color32::GRAY),
+                .color(crate::theme::TEXT_LABEL),
         );
         ui.label(egui::RichText::new(format!("{}", ti.note_count)).size(11.0));
     });
@@ -483,7 +483,7 @@ pub(super) fn show_track_info(
         ui.label(
             egui::RichText::new("事件数:")
                 .size(11.0)
-                .color(egui::Color32::GRAY),
+                .color(crate::theme::TEXT_LABEL),
         );
         ui.label(egui::RichText::new(format!("{}", ti.event_count)).size(11.0));
     });
@@ -495,7 +495,7 @@ pub(super) fn show_track_info(
             ui.label(
                 egui::RichText::new("音色:")
                     .size(11.0)
-                    .color(egui::Color32::GRAY),
+                    .color(crate::theme::TEXT_LABEL),
             );
             ui.label(egui::RichText::new(format!("PC {}", pc)).size(11.0));
         });

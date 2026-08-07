@@ -180,7 +180,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                         let color = if is_active {
                             crate::theme::ACCENT_ACTIVE
                         } else {
-                            egui::Color32::GRAY
+                            crate::theme::TEXT_LABEL
                         };
                         let icon = tool.icon();
                         let resp = ui.add(

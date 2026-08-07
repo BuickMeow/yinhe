@@ -889,7 +889,11 @@ fn show_project_json(ui: &mut egui::Ui, doc: &Document) {
 
     let kv = |ui: &mut egui::Ui, k: &str, v: String| {
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new(k).size(11.0).color(egui::Color32::GRAY));
+            ui.label(
+                egui::RichText::new(k)
+                    .size(11.0)
+                    .color(crate::theme::TEXT_LABEL),
+            );
             ui.label(
                 egui::RichText::new(v)
                     .size(11.0)
@@ -924,7 +928,7 @@ fn show_project_json(ui: &mut egui::Ui, doc: &Document) {
                 ui.label(
                     egui::RichText::new(format!("port {}:", po.port))
                         .size(11.0)
-                        .color(egui::Color32::GRAY),
+                        .color(crate::theme::TEXT_LABEL),
                 );
             });
             for entry in &po.entries {
@@ -955,7 +959,11 @@ fn show_mapping_json(ui: &mut egui::Ui, doc: &Document) {
 
     let kv = |ui: &mut egui::Ui, k: &str, v: String| {
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new(k).size(11.0).color(egui::Color32::GRAY));
+            ui.label(
+                egui::RichText::new(k)
+                    .size(11.0)
+                    .color(crate::theme::TEXT_LABEL),
+            );
             ui.label(
                 egui::RichText::new(v)
                     .size(11.0)
@@ -1084,7 +1092,11 @@ pub(super) fn show_track_detail(
 
     let kv = |ui: &mut egui::Ui, k: &str, v: String| {
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new(k).size(11.0).color(egui::Color32::GRAY));
+            ui.label(
+                egui::RichText::new(k)
+                    .size(11.0)
+                    .color(crate::theme::TEXT_LABEL),
+            );
             ui.label(
                 egui::RichText::new(v)
                     .size(11.0)

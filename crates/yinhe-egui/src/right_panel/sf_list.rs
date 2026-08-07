@@ -126,7 +126,7 @@ pub fn sf_list(ui: &mut egui::Ui, entries: &mut Vec<SfEntry>, salt: &str) -> boo
                     egui::Align2::CENTER_CENTER,
                     ICON_DRAG_INDICATOR.codepoint,
                     egui::FontId::new(14.0, ICON_DRAG_INDICATOR.font_family()),
-                    egui::Color32::GRAY,
+                    crate::theme::TEXT_LABEL,
                 );
 
                 // ── 点击选择（拖拽中不响应）──

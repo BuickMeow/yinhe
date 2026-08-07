@@ -227,7 +227,7 @@ fn show_auto_shape_popup(
                             ui.label(
                                 egui::RichText::new(labels[i])
                                     .size(11.0)
-                                    .color(egui::Color32::GRAY),
+                                    .color(crate::theme::TEXT_LABEL),
                             );
                             ui.add(
                                 crate::widgets::numeric_input::decimal_drag_value(&mut vals[i])

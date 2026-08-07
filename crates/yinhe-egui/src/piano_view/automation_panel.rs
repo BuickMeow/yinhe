@@ -1180,7 +1180,7 @@ fn show_target_combo(
                     ICON_AUTOMATION
                         .rich_text()
                         .size(14.0)
-                        .color(egui::Color32::GRAY),
+                        .color(crate::theme::TEXT_LABEL),
                 )
                 .sense(egui::Sense::click())
                 .selectable(false),
@@ -1339,7 +1339,7 @@ pub fn show_toggle_buttons(ui: &mut egui::Ui, show_panels: &mut bool, panel_coun
     let toggle_color = if *show_panels {
         theme::ACCENT_ACTIVE
     } else {
-        egui::Color32::GRAY
+        crate::theme::TEXT_LABEL
     };
     let toggle_label = ICON_SIGNAL_CELLULAR_ALT
         .rich_text()
@@ -1369,7 +1369,7 @@ pub fn show_toggle_buttons(ui: &mut egui::Ui, show_panels: &mut bool, panel_coun
 
     if *show_panels {
         // + button (add panel)
-        let plus_color = egui::Color32::GRAY;
+        let plus_color = crate::theme::TEXT_LABEL;
         let plus_resp = ui.add(
             egui::Label::new(
                 ICON_ADD
