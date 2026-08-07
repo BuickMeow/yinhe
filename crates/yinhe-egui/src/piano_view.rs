@@ -754,8 +754,8 @@ pub fn show(
             ppq,
             bar_line_data,
             "eraser_drag",
-            egui::Color32::RED,
-            egui::Color32::RED,
+            crate::theme::danger_text_bright(),
+            crate::theme::danger_text_bright(),
             false,
         );
     }

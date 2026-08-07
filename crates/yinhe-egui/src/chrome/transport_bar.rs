@@ -460,8 +460,11 @@ fn show_timecode_display(ui: &mut egui::Ui, doc: &Document) -> egui::Rect {
     let font = egui::FontId::proportional(crate::theme::TIMECODE_FONT);
     let grid = egui::Stroke::new(1.0, crate::theme::border_dim());
 
-    ui.painter()
-        .rect_filled(rect, egui::CornerRadius::same(8), egui::Color32::BLACK);
+    ui.painter().rect_filled(
+        rect,
+        egui::CornerRadius::same(8),
+        crate::theme::timecode_bg(),
+    );
 
     let texts_top = [bpm_str, pos_str];
     let texts_bot = [ts_str, time_str];

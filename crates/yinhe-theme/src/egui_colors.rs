@@ -101,7 +101,9 @@ pub struct Theme {
     pub cursor_color: Color32,
     pub marquee_fill_alpha: f32,
     pub marquee_stroke_alpha: f32,
-    // ── 明/暗基底（egui 原生控件 Visuals 选型用） ──
+    /// 时间码等"信息凹槽"底色（背景深一档，明暗主题方向自动正确）。
+    pub timecode_bg: Color32,
+    /// 背景偏亮时（浅色主题）为 true（egui Visuals 选 light）。
     pub dark_mode: bool,
 }
 
@@ -147,9 +149,7 @@ pub fn derive_theme(base: crate::base::BaseColors) -> Theme {
     let bg = base.bg.to_color32();
     let text = base.text.to_color32();
     let accent = base.accent.to_color32();
-    let selection = base.selection.to_color32();
     let danger = base.danger.to_color32();
-    let border = base.border.to_color32();
     let warning = base.warning.to_color32();
     let contrast = contrast_text(bg);
     let gray128 = shade(text, 0.58); // text_label
@@ -189,12 +189,19 @@ pub fn derive_theme(base: crate::base::BaseColors) -> Theme {
     let mix_measure_label = shade(text, 0.77);
     let mix_row_hover = mix(bg, text, 0.03);
 
-    // 危险系：危险色与文字/对比色混合得到浅红/暗红档位
+    // 危险系：危险色与文字/对比色混合得到浅红/暗红档位（同色相）
     let danger_text = mix(danger, text, 0.28);
     let danger_text_bright = mix(danger, contrast, 0.30);
     let error_text = mix(danger, text, 0.32);
     let danger_hover = mix(danger, gray128, 0.30);
     let warning_gold = mix(warning, text, 0.25);
+
+    // 色系设计：选中底 = 强调色混背景（暗主题深蓝、亮主题中浅蓝，同色相）；
+    // 边框/分割线 = 主文字暗化（与文字同色系）
+    let row_selected_bg = mix(bg, accent, 0.30);
+    let border_dim = shade(text, 0.27);
+    // 时间码凹槽：背景深一档（暗主题更深、亮主题浅灰，方向自动正确）
+    let timecode_bg = shade(bg, 0.7);
 
     let cursor_a = (contrast.a() as f32 * 0.80) as u8;
 
@@ -220,17 +227,17 @@ pub fn derive_theme(base: crate::base::BaseColors) -> Theme {
         text_label_dim,
         text_disabled,
         mode_bar_text: text_label,
-        text_selected: contrast_text(selection),
+        text_selected: contrast_text(row_selected_bg),
         tooltip_text: contrast,
         accent_active: accent,
-        row_selected_bg: selection,
+        row_selected_bg,
         hover_text: contrast,
         marquee_color: contrast,
         preview_line: contrast,
         row_hover_tint: mix_row_hover,
         btn_bg: mix_btn_bg,
         btn_bg_hover: mix_btn_bg_hover,
-        border_dim: border,
+        border_dim,
         danger,
         danger_text,
         danger_text_bright,
@@ -250,7 +257,7 @@ pub fn derive_theme(base: crate::base::BaseColors) -> Theme {
         pr_tick_line: mix_pr_sub_beat,
         pr_octave_line: mix_pr_beat,
         pr_scale_outside: mix_pr_scale_outside,
-        pr_root_note: selection,
+        pr_root_note: row_selected_bg,
         pr_black_key_row: mix_pr_scale_outside,
         ar_measure_line: mix_ar_measure,
         ar_beat_line: mix_ar_beat,
@@ -258,7 +265,7 @@ pub fn derive_theme(base: crate::base::BaseColors) -> Theme {
         scrollbar_hover: mix_scrollbar_hover,
         scrollbar_drag: mix_scrollbar_drag,
         split_hover: text_hint,
-        split_default: border,
+        split_default: border_dim,
         v_split_hover: text_muted,
         v_split_default: text_disabled,
         cursor_color: Color32::from_rgba_premultiplied(
@@ -269,6 +276,7 @@ pub fn derive_theme(base: crate::base::BaseColors) -> Theme {
         ),
         marquee_fill_alpha: 0.15,
         marquee_stroke_alpha: 0.40,
+        timecode_bg,
         // 与 contrast_text 同一把尺子：背景偏亮 → 亮基底（egui Visuals::light）
         dark_mode: luminance(bg) <= 0.5,
     }
@@ -286,9 +294,13 @@ mod tests {
         assert_eq!(t.text_primary, Color32::from_gray(220));
         assert_eq!(t.text_disabled, Color32::from_gray(79));
         assert_eq!(t.accent_active, Color32::from_rgb(100, 180, 255));
-        assert_eq!(t.row_selected_bg, Color32::from_rgb(40, 50, 70));
+        // 选中底 = 背景混强调色（同色相）：25,25,28 混 (100,180,255) 30%
+        assert_eq!(t.row_selected_bg, Color32::from_rgb(47, 71, 96));
         assert_eq!(t.danger, Color32::from_rgb(232, 17, 35));
-        assert_eq!(t.border_dim, Color32::from_gray(60));
+        // 边框 = 主文字暗化（同色系）：220×0.27
+        assert_eq!(t.border_dim, Color32::from_gray(59));
+        // 时间码凹槽 = 背景深一档：25,25,28 × 0.7
+        assert_eq!(t.timecode_bg, Color32::from_rgb(17, 17, 19));
         // hover/选中文字在暗底上应为白
         assert_eq!(t.hover_text, Color32::WHITE);
         assert_eq!(t.text_selected, Color32::WHITE);

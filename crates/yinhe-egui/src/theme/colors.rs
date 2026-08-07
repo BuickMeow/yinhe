@@ -110,6 +110,7 @@ theme_getters! {
     v_split_hover => v_split_hover,
     v_split_default => v_split_default,
     cursor_color => cursor_color,
+    timecode_bg => timecode_bg,
 }
 
 pub fn marquee_fill_alpha() -> f32 {

@@ -306,8 +306,8 @@ pub fn show(
                     ui.painter(),
                     rect,
                     snapped,
-                    egui::Color32::RED,
-                    egui::Color32::RED,
+                    crate::theme::danger_text_bright(),
+                    crate::theme::danger_text_bright(),
                 );
             }
         }

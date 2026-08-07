@@ -30,9 +30,7 @@ const SETTING_ITEMS: &[(usize, &str, &str, &str, &str)] = &[
     (0, "背景", "Background color", "背景色", "배경색"),
     (0, "主文字", "Text color", "テキスト色", "텍스트 색"),
     (0, "强调色", "Accent color", "アクセント色", "강조색"),
-    (0, "选中色", "Selection color", "選択色", "선택 색"),
     (0, "危险色", "Danger color", "危険色", "위험 색"),
-    (0, "边框", "Border color", "枠線色", "테두리 색"),
     (0, "警告色", "Warning color", "警告色", "경고 색"),
     (1, "语言", "Language", "言語", "언어"),
     (2, "输出设备", "Output device", "出力デバイス", "출력 장치"),
@@ -228,17 +226,8 @@ fn show_theme_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
             base_changed |=
                 edit_std_color(ui, t!("settings.theme.accent").as_ref(), &mut base.accent);
             ui.end_row();
-            base_changed |= edit_std_color(
-                ui,
-                t!("settings.theme.selection").as_ref(),
-                &mut base.selection,
-            );
-            ui.end_row();
             base_changed |=
                 edit_std_color(ui, t!("settings.theme.danger").as_ref(), &mut base.danger);
-            ui.end_row();
-            base_changed |=
-                edit_std_color(ui, t!("settings.theme.border").as_ref(), &mut base.border);
             ui.end_row();
             base_changed |=
                 edit_std_color(ui, t!("settings.theme.warning").as_ref(), &mut base.warning);

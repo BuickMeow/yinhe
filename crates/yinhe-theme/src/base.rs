@@ -38,21 +38,20 @@ impl Rgba {
     }
 }
 
-/// 用户可调的标准色：一套主题仅由这 7 个颜色决定。
+/// 用户可调的标准色：一套主题仅由这 5 个颜色决定。
+/// 色系设计：每个标准色派生一族同色相颜色——
+/// accent → 选中底/激活；text → 文字灰阶/边框/分割线；
+/// danger/warning → 各自语义深浅档。
 #[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize)]
 pub struct BaseColors {
     /// 应用背景（最深的底色）。
     pub bg: Rgba,
-    /// 主文字（灰阶从这里派生：乘以亮度系数得到从亮到暗的各级文字）。
+    /// 主文字（灰阶、边框、分割线从这里派生）。
     pub text: Rgba,
-    /// 强调色（激活/选中高亮/插入线等）。
+    /// 强调色（激活/选中底/插入线等，选中底 = 强调色混背景）。
     pub accent: Rgba,
-    /// 选中底色（列表行选中、根音行）。
-    pub selection: Rgba,
-    /// 危险色（关闭按钮/错误/破坏性操作）。
+    /// 危险色（关闭按钮/错误/破坏性操作/橡皮擦）。
     pub danger: Rgba,
-    /// 边框/分隔线。
-    pub border: Rgba,
     /// 警告/标记金（Mute 激活等）。
     pub warning: Rgba,
 }
@@ -69,43 +68,35 @@ impl BaseColors {
         bg: Rgba::new(25, 25, 28, 255),
         text: Rgba::new(220, 220, 220, 255),
         accent: Rgba::new(100, 180, 255, 255),
-        selection: Rgba::new(40, 50, 70, 255),
         danger: Rgba::new(232, 17, 35, 255),
-        border: Rgba::new(60, 60, 60, 255),
         warning: Rgba::new(240, 200, 60, 255),
     };
 
-    /// 亮色主题（浅底深字，中性灰）。
+    /// 亮色主题（浅底深字）。
     pub const LIGHT: Self = Self {
         bg: Rgba::new(240, 240, 244, 255),
         text: Rgba::new(30, 30, 34, 255),
         accent: Rgba::new(30, 110, 220, 255),
-        selection: Rgba::new(195, 210, 240, 255),
         danger: Rgba::new(200, 30, 40, 255),
-        border: Rgba::new(160, 160, 166, 255),
         warning: Rgba::new(200, 150, 20, 255),
     };
 
-    /// 亮色·冷灰（GitHub Light 风：冷灰底 + 蓝色强调）。
+    /// 亮色主题·冷色（浅蓝白底）。
     pub const LIGHT_COOL: Self = Self {
-        bg: Rgba::new(246, 248, 250, 255),
-        text: Rgba::new(31, 35, 40, 255),
-        accent: Rgba::new(9, 105, 218, 255),
-        selection: Rgba::new(188, 212, 246, 255),
-        danger: Rgba::new(207, 34, 46, 255),
-        border: Rgba::new(173, 180, 189, 255),
-        warning: Rgba::new(158, 106, 3, 255),
+        bg: Rgba::new(232, 240, 250, 255),
+        text: Rgba::new(30, 40, 55, 255),
+        accent: Rgba::new(25, 100, 200, 255),
+        danger: Rgba::new(205, 35, 45, 255),
+        warning: Rgba::new(195, 150, 25, 255),
     };
 
-    /// 亮色·暖米（Solarized Light 风：米色底，长时间盯屏眼睛压力小）。
+    /// 亮色主题·暖色（浅米白底）。
     pub const LIGHT_WARM: Self = Self {
-        bg: Rgba::new(250, 244, 230, 255),
-        text: Rgba::new(88, 78, 60, 255),
-        accent: Rgba::new(38, 119, 210, 255),
-        selection: Rgba::new(228, 214, 188, 255),
-        danger: Rgba::new(210, 60, 50, 255),
-        border: Rgba::new(186, 175, 150, 255),
-        warning: Rgba::new(170, 125, 0, 255),
+        bg: Rgba::new(250, 244, 234, 255),
+        text: Rgba::new(55, 45, 35, 255),
+        accent: Rgba::new(180, 90, 30, 255),
+        danger: Rgba::new(205, 50, 40, 255),
+        warning: Rgba::new(180, 140, 30, 255),
     };
 
     /// 内置预设（设置页下拉框）。`None` 表示"自定义"。
