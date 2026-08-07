@@ -81,8 +81,6 @@ pub(crate) struct PanelsCfg<'a> {
     pub pianoroll_ppt: f32,
     pub scroll_mode: u32,
     pub min_border_width: f32,
-    /// 内容层背景不透明度（设置调控，1.0 = 不透明）。
-    pub content_opacity: f32,
     pub revision: u64,
     /// 状态栏讲解行格式化位置所需（拍号事件）。
     pub bar_line_data: Option<(u32, u8, u8, &'a [TimeSigEvent])>,
@@ -489,7 +487,6 @@ pub fn show_panels(
                 data.track_colors,
                 cfg.scroll_mode,
                 cfg.min_border_width,
-                cfg.content_opacity,
                 show_anchors,
                 max_val_f,
                 panel_ghost,
@@ -1034,7 +1031,6 @@ fn render_panel_content(
     track_colors: &[[f32; 4]],
     scroll_mode: u32,
     min_border_width: f32,
-    content_opacity: f32,
     show_anchors: bool,
     max_val_f: f32,
     panel_ghost: Option<AutomationGhost>,
@@ -1121,18 +1117,12 @@ fn render_panel_content(
     let painter = ui.painter();
     let theme = renderer.theme();
 
-    // ── Background（theme 背景一层 + 内容层按设置透明度叠上；
-    //    combo 列由 show_target_combo 画不透明 app_bg）──
+    // ── Background（app_bg 一层，不透明不叠加；combo 列由 show_target_combo 画）──
     let content_rect = egui::Rect::from_min_max(
         egui::pos2(grid_rect.min.x + combo_width, grid_rect.min.y),
         grid_rect.max,
     );
     painter.rect_filled(content_rect, 0.0, crate::theme::app_bg());
-    painter.rect_filled(
-        content_rect,
-        0.0,
-        crate::theme::rgb_to_color32(theme.pr_bg).gamma_multiply(content_opacity),
-    );
 
     // ── Center line (only for targets that have one) ──
     if !panel.show_velocity {

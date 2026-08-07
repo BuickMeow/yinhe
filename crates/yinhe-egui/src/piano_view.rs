@@ -591,14 +591,9 @@ pub fn show(
     // Static cache was removed — every frame rebuilds + uploads, so always paint.
     view.base.dirty = false;
 
-    // ── Background（theme 背景一层 + 内容层按设置透明度叠上）──
+    // ── Background（app_bg 一层，不透明不叠加；条纹/色块自行叠上）──
     let theme = pianoroll.theme().clone();
     painter.rect_filled(content_rect, 0.0, crate::theme::app_bg());
-    painter.rect_filled(
-        content_rect,
-        0.0,
-        crate::theme::rgb_to_color32(theme.pr_bg).gamma_multiply(content_opacity),
-    );
 
     // ── Scale background + 八度横线（调号驱动的调内/调外/根音条带）──
     let kh = view.key_height;
@@ -867,7 +862,6 @@ pub fn show(
             pianoroll_ppt: view.base.pixels_per_tick,
             scroll_mode,
             min_border_width,
-            content_opacity,
             revision,
             bar_line_data,
             sel_hint,

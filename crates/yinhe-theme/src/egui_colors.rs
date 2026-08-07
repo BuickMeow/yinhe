@@ -181,8 +181,8 @@ pub fn derive_theme(base: crate::base::BaseColors) -> Theme {
     let mix_pr_beat = mix(bg, text, 0.16);
     let mix_pr_sub_beat = mix(bg, text, 0.08);
     let mix_pr_scale_outside = mix(bg, text, 0.015);
-    // 黑键行条带对比度参考 AR lane even（0.08），避免与背景同色
-    let mix_pr_black_key_row = mix(bg, text, 0.08);
+    // 条纹着色行：比 app_bg 更黑一档（色差小，深色主题基准）
+    let mix_pr_black_key_row = mix(bg, Color32::BLACK, 0.08);
     let mix_ar_measure = mix(bg, text, 0.27);
     let mix_ar_beat = mix(bg, text, 0.13);
     let mix_scrollbar_rect = mix(bg, text, 0.28);

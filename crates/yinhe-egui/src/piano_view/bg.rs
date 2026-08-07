@@ -31,16 +31,7 @@ pub fn paint(
 
     match key_sig_events.first() {
         None => {
-            paint_black_key_rows(
-                painter,
-                content_rect,
-                kb_w,
-                kh,
-                view,
-                tick_start,
-                tick_end,
-                content_opacity,
-            );
+            paint_black_key_rows(painter, content_rect, kb_w, kh, view, tick_start, tick_end);
         }
         Some(first) => {
             let first_tick = first.tick as f64;
@@ -54,7 +45,6 @@ pub fn paint(
                     view,
                     tick_start,
                     first_tick.min(tick_end),
-                    content_opacity,
                 );
             }
             // 第一个调号事件起：调式分段
@@ -185,7 +175,6 @@ fn paint_black_key_rows(
     view: &PianoRollView,
     seg_start: f64,
     seg_end: f64,
-    content_opacity: f32,
 ) {
     let content_left = content_rect.min.x + kb_w;
     let h = content_rect.height();
@@ -205,7 +194,7 @@ fn paint_black_key_rows(
         return;
     }
 
-    let bk_color = crate::theme::pr_black_key_row().gamma_multiply(content_opacity);
+    let bk_color = crate::theme::pr_black_key_row();
     for key in key_lo..=key_hi {
         if !yinhe_types::is_black_key(key) {
             continue;

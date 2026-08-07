@@ -46,8 +46,6 @@ pub(crate) fn show(
     track_colors: &[[f32; 4]],
     row_height: &mut f32,
     scroll_y: &mut f32,
-    // 内容层条纹不透明度（设置调控，与 GPU 区条纹同值）。
-    content_opacity: f32,
     request_pianoroll: &mut bool,
     editing_track: &mut Option<u16>,
     info_content: &mut Option<crate::right_panel::InfoContent>,
@@ -83,13 +81,9 @@ pub(crate) fn show(
     let painter = ui.painter().clone();
     let mut audio_dirty = false;
 
-    // 交替行条纹：与 GPU 区 lane 条纹同源（颜色来自 yinhe-theme 全局 GPU 主题），
-    // 透明度由设置调控，与 GPU 区同值
+    // 交替行条纹：着色行（偶数行）与 GPU 区同源颜色，不透明；奇数行用 app_bg 打底
     let gpu_theme = yinhe_theme::current_gpu_theme();
-    let lane_even =
-        crate::theme::rgb_to_color32(gpu_theme.ar_lane_even).gamma_multiply(content_opacity);
-    let lane_odd =
-        crate::theme::rgb_to_color32(gpu_theme.ar_lane_odd).gamma_multiply(content_opacity);
+    let lane_even = crate::theme::rgb_to_color32(gpu_theme.ar_lane_even);
 
     let interact_id = egui::Id::new("track_panel_area");
     let resp = ui.interact(panel_rect, interact_id, egui::Sense::click_and_drag());
@@ -118,12 +112,10 @@ pub(crate) fn show(
 
         let is_conductor = Some(ti.index) == conductor_track_idx;
         let selected = track_selected.contains(&ti.index);
-        // 交替行条纹（在选中/悬停 tint 之下，与 GPU 区条纹对齐）
-        painter.rect_filled(
-            row_rect,
-            0.0,
-            if idx % 2 == 0 { lane_even } else { lane_odd },
-        );
+        // 着色行条纹（奇数行 = app_bg 普通行，不画；选中/悬停 tint 在条纹之上）
+        if idx % 2 == 0 {
+            painter.rect_filled(row_rect, 0.0, lane_even);
+        }
         if selected {
             painter.rect_filled(row_rect, 0.0, ui.visuals().selection.bg_fill);
         } else if row_rect.contains(ui.input(|i| i.pointer.hover_pos().unwrap_or_default())) {

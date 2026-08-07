@@ -12,8 +12,8 @@ pub struct GpuTheme {
 
     // ── Arrangement ──
     pub ar_bg: (f32, f32, f32),
+    /// 条纹着色行：比 app_bg 更黑一档（奇数行用 app_bg，不画）。
     pub ar_lane_even: (f32, f32, f32),
-    pub ar_lane_odd: (f32, f32, f32),
 
     // ── Automation ──
     pub center_line: (f32, f32, f32, f32),
@@ -40,13 +40,14 @@ impl GpuTheme {
                 bg[2] + (text[2] - bg[2]) * t,
             )
         };
+        // 条纹着色行：比 app_bg 更黑一档（色差小，深色主题基准）
+        let darken = |t: f32| (bg[0] * (1.0 - t), bg[1] * (1.0 - t), bg[2] * (1.0 - t));
         Self {
             pr_bg: mix(0.02),
             pr_white_key: (text[0] * 0.81, text[1] * 0.81, text[2] * 0.81),
             pr_black_key: mix(0.08),
             ar_bg: mix(0.05),
-            ar_lane_even: mix(0.08),
-            ar_lane_odd: mix(0.04),
+            ar_lane_even: darken(0.08),
             center_line: (mix(0.28).0, mix(0.28).1, mix(0.28).2, 0.6),
         }
     }

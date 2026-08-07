@@ -170,7 +170,7 @@ pub fn show(
     let content_changed = true;
 
     // ── Track lanes ──
-    // 底部铺 theme 背景一层（不透明），轨道行条纹半透明叠其上，用于区分行界。
+    // 普通行 = app_bg（打底一层，不透明）；着色行（偶数行）叠更黑条纹。
     painter.rect_filled(rect, 0.0, crate::theme::app_bg());
     let lb_w = view.base.left_panel_width;
     let lh = view.lane_height();
@@ -182,12 +182,11 @@ pub fn show(
             if !data.track_visible.get(idx).copied().unwrap_or(true) {
                 continue;
             }
+            if idx % 2 != 0 {
+                continue; // 奇数行 = 普通行（app_bg）
+            }
             let y = rect.min.y + ArrangementView::lane_y_static(idx, scroll_y, lh);
-            let col = if idx % 2 == 0 {
-                crate::theme::rgb_to_color32(theme.ar_lane_even).gamma_multiply(cfg.content_opacity)
-            } else {
-                crate::theme::rgb_to_color32(theme.ar_lane_odd).gamma_multiply(cfg.content_opacity)
-            };
+            let col = crate::theme::rgb_to_color32(theme.ar_lane_even);
             painter.rect_filled(
                 egui::Rect::from_min_size(
                     egui::pos2(rect.min.x + lb_w, y),
