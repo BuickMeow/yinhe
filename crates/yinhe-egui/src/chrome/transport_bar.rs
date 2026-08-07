@@ -90,6 +90,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                             .rich_text()
                             .size(crate::theme::TRANSPORT_BTN_FONT),
                     )
+                    .frame(false) // 无背景色：与工具栏风格统一
                     .min_size(btn_size)
                     .corner_radius(btn_rounding),
                 );
@@ -120,6 +121,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                             .rich_text()
                             .size(crate::theme::TRANSPORT_BTN_FONT),
                         )
+                        .frame(false) // 无背景色：与工具栏风格统一
                         .min_size(btn_size)
                         .corner_radius(btn_rounding),
                     );
@@ -138,6 +140,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                         egui::Button::new(
                             ICON_STOP.rich_text().size(crate::theme::TRANSPORT_BTN_FONT),
                         )
+                        .frame(false) // 无背景色：与工具栏风格统一
                         .min_size(btn_size)
                         .corner_radius(btn_rounding),
                     );
@@ -156,6 +159,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                                 .rich_text()
                                 .size(crate::theme::TRANSPORT_BTN_FONT),
                         )
+                        .frame(false) // 无背景色：与工具栏风格统一
                         .min_size(btn_size)
                         .corner_radius(btn_rounding),
                     );
