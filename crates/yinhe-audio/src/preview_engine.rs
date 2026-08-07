@@ -130,13 +130,16 @@ impl PreviewEngine {
     }
 
     /// 预览 NoteOn：设置通道音色 + 目标位置自动化状态（含 Program）+ NoteOn。
-    pub(crate) fn note_on(
+    /// 以 `start_position`（精确触发帧）为 gate 到期基准：块内中间帧触发时
+    /// 若用 self.position（块开头），到期会被算早最多一个块周期。
+    fn note_on_at(
         &mut self,
         channel: u8,
         key: u8,
         velocity: u8,
         duration: Option<u64>,
         state: &ChannelState,
+        start_position: u64,
     ) {
         let dense = self.dense_map[channel as usize];
         if dense == u32::MAX {
@@ -161,7 +164,7 @@ impl PreviewEngine {
             channel,
             key,
             duration,
-            start_position: self.position,
+            start_position,
         });
     }
 
@@ -199,32 +202,42 @@ impl PreviewEngine {
         // （升序 + remove(0) 是 O(n²) 元素移动，大组预览——选框全选拖动时
         // 可能上万音符——会在音频渲染线程卡顿。）
         self.pending.sort_by_key(|p| Reverse(p.trigger_at));
-        self.flush_pending();
+        self.flush_pending_at(self.position);
     }
 
-    /// 渲染一帧预览音频（不推进主引擎位置）。到期的定长音符在此 NoteOff
-    /// （余音继续渲染，voice 自然衰减完才消失）。
+    /// 渲染一个块（帧数 = output/2，不推进主引擎位置）。事件（待触发音符的
+    /// NoteOn、定长音符的 NoteOff）在**精确的 sample 位置**处理：块按最近事件
+    /// 边界切成段，段间触发/释放，因此音符能在块内任意帧开始/结束，不会被量化
+    /// 到块（512 帧 ≈ 10.7ms）边界的第一帧。余音继续渲染，voice 自然衰减完才消失。
     pub(crate) fn render(&mut self, output: &mut [f32]) {
         let frames = output.len() / STEREO_CHANNELS;
         if frames == 0 {
             return;
         }
-        self.channel_group.read_samples(output);
-        self.position += frames as u64;
-        self.flush_pending();
+        let block_end = self.position + frames as u64;
+        let mut offset_frames = 0usize;
+        let mut cursor = self.position;
 
-        let mut i = 0;
-        while i < self.voices.len() {
-            let done = self.voices[i]
-                .duration
-                .is_some_and(|d| self.position.saturating_sub(self.voices[i].start_position) >= d);
-            if done {
-                let v = self.voices.swap_remove(i);
-                self.note_off(v.channel, v.key);
-            } else {
-                i += 1;
-            }
+        while cursor < block_end {
+            // 处理 cursor 位置的事件（块开头也可能有到点的 pending）。
+            self.flush_pending_at(cursor);
+            self.expire_voices_at(cursor);
+
+            // 下一事件边界；无事件则直通块末。
+            let next = self.next_event_boundary(block_end);
+            // next 必 > cursor（<= cursor 的事件已在上方处理完）且 <= block_end。
+            debug_assert!(next > cursor || next == block_end);
+            let seg_frames = (next - cursor) as usize;
+            let start = offset_frames * STEREO_CHANNELS;
+            let end = (offset_frames + seg_frames) * STEREO_CHANNELS;
+            self.channel_group.read_samples(&mut output[start..end]);
+            offset_frames += seg_frames;
+            cursor = next;
         }
+        // 块末事件（trigger_at / 到期恰好 == block_end）。
+        self.flush_pending_at(block_end);
+        self.expire_voices_at(block_end);
+        self.position = block_end;
     }
 
     /// 是否处于预览状态（有活跃预览音、待触发音符或余音仍在响）——
@@ -244,16 +257,53 @@ impl PreviewEngine {
         self.pending.clear();
     }
 
-    /// 触发所有到点的待触发音符（pending 按 trigger_at 降序，末尾最早触发）。
-    fn flush_pending(&mut self) {
-        while self
-            .pending
-            .last()
-            .is_some_and(|p| p.trigger_at <= self.position)
-        {
+    /// 触发所有 trigger_at <= pos 的待触发音符（pending 按 trigger_at 降序，
+    /// 末尾最早触发，pop 即 O(1)）。start_position 用精确触发帧，保证块内
+    /// 中间帧触发的音符 gate 到期不错位。
+    fn flush_pending_at(&mut self, pos: u64) {
+        while self.pending.last().is_some_and(|p| p.trigger_at <= pos) {
             // last() 刚确认非空，pop 必成功；不用 unwrap（见 AGENTS 约定）。
             if let Some(p) = self.pending.pop() {
-                self.note_on(p.channel, p.key, p.velocity, p.duration, &p.state);
+                self.note_on_at(
+                    p.channel,
+                    p.key,
+                    p.velocity,
+                    p.duration,
+                    &p.state,
+                    p.trigger_at,
+                );
+            }
+        }
+    }
+
+    /// 块内最近的事件边界：待触发音符的 trigger_at、定长音符的到期位置
+    /// （start_position + duration），都没有则返回 `block_end`（无事件段直通块末）。
+    fn next_event_boundary(&self, block_end: u64) -> u64 {
+        let mut next = block_end;
+        // pending 降序排列：trigger_at 最小的在末尾。
+        if let Some(p) = self.pending.last() {
+            next = next.min(p.trigger_at);
+        }
+        for v in &self.voices {
+            if let Some(d) = v.duration {
+                next = next.min(v.start_position.saturating_add(d));
+            }
+        }
+        next
+    }
+
+    /// 到期（start_position + duration <= pos）的定长音符在此 NoteOff。
+    fn expire_voices_at(&mut self, pos: u64) {
+        let mut i = 0;
+        while i < self.voices.len() {
+            let due = self.voices[i]
+                .duration
+                .is_some_and(|d| pos.saturating_sub(self.voices[i].start_position) >= d);
+            if due {
+                let v = self.voices.swap_remove(i);
+                self.note_off(v.channel, v.key);
+            } else {
+                i += 1;
             }
         }
     }
@@ -279,8 +329,8 @@ mod tests {
         let mut engine = PreviewEngine::new(&layout, 48000);
 
         // 整组两个音符（不同通道）同时 NoteOn → 都保留（回归：旧实现单音符状态只响最后一个）。
-        engine.note_on(0, 60, 100, Some(4800), &ChannelState::default());
-        engine.note_on(1, 64, 90, None, &ChannelState::default());
+        engine.note_on_at(0, 60, 100, Some(4800), &ChannelState::default(), 0);
+        engine.note_on_at(1, 64, 90, None, &ChannelState::default(), 0);
         assert_eq!(engine.voices.len(), 2);
 
         // 渲染 10 帧（512 帧/次 = 5120 帧）：定长的到期 NoteOff，持续音保留。
@@ -300,7 +350,7 @@ mod tests {
         // 持续输出余音，而不是在 NoteOff 瞬间截断。
         let layout = ChannelLayout::from_mask(vec![true; 16]);
         let mut engine = PreviewEngine::new(&layout, 48000);
-        engine.note_on(0, 60, 100, None, &ChannelState::default());
+        engine.note_on_at(0, 60, 100, None, &ChannelState::default(), 0);
         engine.stop_all();
         assert!(engine.voices.is_empty());
         // 无音色库时 NoteOn 不产生 voice，previewing 为 false；有音色时由 voice_count 决定。
@@ -314,13 +364,13 @@ mod tests {
         let layout = ChannelLayout::from_mask(vec![true; 16]);
         let mut engine = PreviewEngine::new(&layout, 48000);
         assert!(!engine.previewing());
-        engine.note_on(0, 60, 100, None, &ChannelState::default());
+        engine.note_on_at(0, 60, 100, None, &ChannelState::default(), 0);
         assert!(
             engine.previewing(),
             "NoteOn 后即使 voice 未 spawn 也必须为真"
         );
         // 定长到期 NoteOff 后余音仍在时也为真
-        engine.note_on(0, 62, 100, Some(4800), &ChannelState::default());
+        engine.note_on_at(0, 62, 100, Some(4800), &ChannelState::default(), 0);
         let mut out = vec![0.0f32; 1024];
         for _ in 0..30 {
             out.fill(0.0);
@@ -435,8 +485,15 @@ mod tests {
             engine.render(&mut out);
         }
 
-        // 四分音符 0.5s = 24000 帧
-        engine.note_on(0, 60, 100, Some(24_000), &ChannelState::default());
+        // 四分音符 0.5s = 24000 帧（start_position = 当前时钟位置 102400）
+        engine.note_on_at(
+            0,
+            60,
+            100,
+            Some(24_000),
+            &ChannelState::default(),
+            engine.position,
+        );
         assert_eq!(engine.voices.len(), 1);
 
         // 渲染 20 帧（10240 帧 < 24000）：音符必须还在
@@ -527,6 +584,54 @@ mod tests {
         // 第 94 次渲染（48128 >= 48000）：全部到期 NoteOff
         engine.render(&mut out);
         assert!(engine.voices.is_empty(), "gate 到期全部 NoteOff");
+    }
+
+    #[test]
+    fn pending_note_triggers_at_exact_sample_inside_block() {
+        // 回归测试（块内精确帧触发）：待触发音符必须在 trigger_at 的精确 sample
+        // 位置触发，而不是被量化到渲染块（512 帧 ≈ 10.7ms）边界的第一帧；
+        // gate 到期（NoteOff）位置同理。start_position 是精确触发帧的证据。
+        let layout = ChannelLayout::from_mask(vec![true; 16]);
+        let mut engine = PreviewEngine::new(&layout, 48000);
+
+        // A 立即触发（组内最早）；B 的 trigger_at = 1000（落在第二个渲染块
+        // [512, 1024) 的中间帧），gate 300 帧 → 到期于 1300（第三个块中间帧）。
+        engine.preview_notes(vec![
+            PreviewNoteIn {
+                channel: 0,
+                key: 60,
+                velocity: 100,
+                duration: None,
+                state: ChannelState::default(),
+                target_sample: 0,
+            },
+            PreviewNoteIn {
+                channel: 0,
+                key: 64,
+                velocity: 90,
+                duration: Some(300),
+                state: ChannelState::default(),
+                target_sample: 1000,
+            },
+        ]);
+        assert_eq!(engine.voices.len(), 1, "A 立即触发");
+        assert_eq!(engine.pending.len(), 1, "B 还没到触发点");
+
+        let mut out = vec![0.0f32; 1024];
+        engine.render(&mut out); // [0, 512)：B 不触发
+        assert_eq!(engine.voices.len(), 1, "B 的 trigger_at 未到");
+        assert_eq!(engine.pending.len(), 1);
+
+        engine.render(&mut out); // [512, 1024)：帧 1000 处触发 B
+        assert_eq!(engine.voices.len(), 2, "块内中间帧触发");
+        assert_eq!(
+            engine.voices[1].start_position, 1000,
+            "start_position 必须是精确触发帧；若量化到块边界则听感错位"
+        );
+        assert!(engine.pending.is_empty());
+
+        engine.render(&mut out); // [1024, 1536)：帧 1300 处 B 到期 NoteOff
+        assert_eq!(engine.voices.len(), 1, "到期位置也精确到帧（只剩持续音 A）");
     }
 
     #[test]
