@@ -83,8 +83,10 @@ pub(crate) fn show(
 
     // 交替行条纹：与 GPU 区 lane 条纹同源同透明度（yinhe-theme 全局 GPU 主题）
     let gpu_theme = yinhe_theme::current_gpu_theme();
-    let lane_even = crate::theme::rgb_to_color32(gpu_theme.ar_lane_even).gamma_multiply(0.7);
-    let lane_odd = crate::theme::rgb_to_color32(gpu_theme.ar_lane_odd).gamma_multiply(0.7);
+    let lane_even = crate::theme::rgb_to_color32(gpu_theme.ar_lane_even)
+        .gamma_multiply(gpu_theme.content_alpha);
+    let lane_odd =
+        crate::theme::rgb_to_color32(gpu_theme.ar_lane_odd).gamma_multiply(gpu_theme.content_alpha);
 
     let interact_id = egui::Id::new("track_panel_area");
     let resp = ui.interact(panel_rect, interact_id, egui::Sense::click_and_drag());

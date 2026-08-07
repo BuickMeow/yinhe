@@ -595,7 +595,7 @@ pub fn show(
     painter.rect_filled(
         content_rect,
         0.0,
-        crate::theme::rgb_to_color32(theme.pr_bg).gamma_multiply(0.7),
+        crate::theme::rgb_to_color32(theme.pr_bg).gamma_multiply(theme.content_alpha),
     );
 
     // ── Scale background + 八度横线（调号驱动的调内/调外/根音条带）──

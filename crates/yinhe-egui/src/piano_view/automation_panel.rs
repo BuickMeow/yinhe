@@ -1125,7 +1125,7 @@ fn render_panel_content(
     painter.rect_filled(
         content_rect,
         0.0,
-        crate::theme::rgb_to_color32(theme.pr_bg).gamma_multiply(0.7),
+        crate::theme::rgb_to_color32(theme.pr_bg).gamma_multiply(theme.content_alpha),
     );
 
     // ── Center line (only for targets that have one) ──

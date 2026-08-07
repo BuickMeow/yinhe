@@ -80,8 +80,9 @@ fn paint_scale_background(
     let tick_start = tick_start.max(0.0);
     let tick_end = tick_end.max(tick_start);
 
-    let outside_color = crate::theme::pr_scale_outside().gamma_multiply(0.7);
-    let root_color = crate::theme::pr_root_note().gamma_multiply(0.7);
+    let outside_color =
+        crate::theme::pr_scale_outside().gamma_multiply(crate::theme::content_alpha());
+    let root_color = crate::theme::pr_root_note().gamma_multiply(crate::theme::content_alpha());
     let ppt = view.base.pixels_per_tick;
     let scroll_x = view.base.scroll_x;
 
@@ -182,7 +183,7 @@ fn paint_black_key_rows(
         return;
     }
 
-    let bk_color = crate::theme::pr_black_key_row().gamma_multiply(0.7);
+    let bk_color = crate::theme::pr_black_key_row().gamma_multiply(crate::theme::content_alpha());
     for key in key_lo..=key_hi {
         if !yinhe_types::is_black_key(key) {
             continue;

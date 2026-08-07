@@ -103,6 +103,8 @@ pub struct Theme {
     pub marquee_stroke_alpha: f32,
     /// 时间码等"信息凹槽"底色（背景深一档，明暗主题方向自动正确）。
     pub timecode_bg: Color32,
+    /// 内容层背景/条纹透明度（PR/AM 背景、PR 色块条带；1.0 = 不透明）。
+    pub content_alpha: f32,
     /// 背景偏亮时（浅色主题）为 true（egui Visuals 选 light）。
     pub dark_mode: bool,
 }
@@ -277,6 +279,7 @@ pub fn derive_theme(base: crate::base::BaseColors) -> Theme {
         marquee_fill_alpha: 0.15,
         marquee_stroke_alpha: 0.40,
         timecode_bg,
+        content_alpha: 0.7,
         // 与 contrast_text 同一把尺子：背景偏亮 → 亮基底（egui Visuals::light）
         dark_mode: luminance(bg) <= 0.5,
     }

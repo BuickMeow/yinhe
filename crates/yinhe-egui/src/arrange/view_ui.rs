@@ -183,9 +183,9 @@ pub fn show(
             }
             let y = rect.min.y + ArrangementView::lane_y_static(idx, scroll_y, lh);
             let col = if idx % 2 == 0 {
-                crate::theme::rgb_to_color32(theme.ar_lane_even).gamma_multiply(0.7)
+                crate::theme::rgb_to_color32(theme.ar_lane_even).gamma_multiply(theme.content_alpha)
             } else {
-                crate::theme::rgb_to_color32(theme.ar_lane_odd).gamma_multiply(0.7)
+                crate::theme::rgb_to_color32(theme.ar_lane_odd).gamma_multiply(theme.content_alpha)
             };
             painter.rect_filled(
                 egui::Rect::from_min_size(
