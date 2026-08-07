@@ -30,7 +30,6 @@ pub fn rgba_to_color32(c: (f32, f32, f32, f32)) -> Color32 {
 pub struct Theme {
     // ── 背景 / 面板 ──
     pub app_bg: Color32,
-    pub raised_bg: Color32,
     pub control_bg: Color32,
     pub control_selected_bg: Color32,
     // ── 文字灰阶（从 text 标准色派生） ──
@@ -71,6 +70,8 @@ pub struct Theme {
     pub sub_beat_label: Color32,
     pub tick_label: Color32,
     pub grid_sub_beat: Color32,
+    /// 网格 1tick 最浅档（bg+3%）。
+    pub grid_tick: Color32,
     pub stripe_bg: Color32,
     /// 线条统一色（egui 原生控件描边、分割条、网格、滑块、八度线；bg+15%）。
     pub line_fg: Color32,
@@ -160,13 +161,14 @@ pub fn derive_theme(base: crate::base::BaseColors) -> Theme {
     let mix_control = mix(bg, text, 0.05);
     let mix_control_selected = mix(bg, text, 0.15);
     let mix_btn_bg = mix(bg, text, 0.10);
-    let mix_raised = mix(bg, text, 0.03);
     let mix_tick_label = mix(bg, text, 0.22);
     let mix_grid_sub_beat = mix(bg, text, 0.08);
+    // 网格 1tick 最浅档（bg+3%）
+    let mix_grid_tick = mix(bg, text, 0.03);
     // 线条统一色：egui 原生描边/分割条/网格/滑块
     let mix_line = mix(bg, text, 0.15);
-    // 条纹着色行：比 app_bg 更黑一档（色差小，深色主题基准）
-    let mix_stripe = mix(bg, Color32::BLACK, 0.10);
+    // 条纹着色行：比 app_bg 更黑一档（bg-15% = ×85%）
+    let mix_stripe = mix(bg, Color32::BLACK, 0.15);
     let mix_measure_label = shade(text, 0.77);
 
     // 危险系：危险色与文字/对比色混合得到浅红/暗红档位（同色相）
@@ -183,7 +185,6 @@ pub fn derive_theme(base: crate::base::BaseColors) -> Theme {
 
     Theme {
         app_bg: bg,
-        raised_bg: mix_raised,
         control_bg: mix_control,
         control_selected_bg: mix_control_selected,
         text_primary,
@@ -219,6 +220,7 @@ pub fn derive_theme(base: crate::base::BaseColors) -> Theme {
         sub_beat_label: text_label_dim,
         tick_label: mix_tick_label,
         grid_sub_beat: mix_grid_sub_beat,
+        grid_tick: mix_grid_tick,
         stripe_bg: mix_stripe,
         line_fg: mix_line,
         marquee_fill_alpha: 0.15,

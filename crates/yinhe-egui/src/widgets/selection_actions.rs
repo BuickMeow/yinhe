@@ -114,7 +114,7 @@ pub fn show(
     }
 
     // Draw background pill (rounded rect with semi-circle ends)
-    let bg_color = crate::theme::raised_bg();
+    let bg_color = crate::theme::line_fg();
     let corner_radius = bar_w / 2.0;
     ui.painter().rect_filled(bar_rect, corner_radius, bg_color);
 

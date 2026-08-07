@@ -1117,12 +1117,12 @@ fn render_panel_content(
     let painter = ui.painter();
     let theme = renderer.theme();
 
-    // ── Background（app_bg 一层，不透明不叠加；combo 列由 show_target_combo 画）──
+    // ── Background（app_bg 一层 + 条纹着色底；combo 列由 show_target_combo 画）──
     let content_rect = egui::Rect::from_min_max(
         egui::pos2(grid_rect.min.x + combo_width, grid_rect.min.y),
         grid_rect.max,
     );
-    painter.rect_filled(content_rect, 0.0, crate::theme::app_bg());
+    painter.rect_filled(content_rect, 0.0, crate::theme::stripe_bg());
 
     // ── Center line (only for targets that have one) ──
     if !panel.show_velocity {

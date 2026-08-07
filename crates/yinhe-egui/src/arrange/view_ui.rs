@@ -103,7 +103,6 @@ pub fn show(
 
     view.base.dirty = false;
 
-    let theme = renderer.theme().clone();
     renderer.upload_uniforms(uniforms);
     renderer.upload_track_colors(&tc_colors);
     // Grid 已迁移到 egui（widgets::grid_lines），wgpu 只剩 notes + ghost notes 两层。
@@ -186,7 +185,7 @@ pub fn show(
                 continue; // 奇数行 = 普通行（app_bg）
             }
             let y = rect.min.y + ArrangementView::lane_y_static(idx, scroll_y, lh);
-            let col = crate::theme::rgb_to_color32(theme.stripe);
+            let col = crate::theme::stripe_bg();
             painter.rect_filled(
                 egui::Rect::from_min_size(
                     egui::pos2(rect.min.x + lb_w, y),

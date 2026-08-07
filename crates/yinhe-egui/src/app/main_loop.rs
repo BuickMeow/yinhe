@@ -270,6 +270,8 @@ impl eframe::App for App {
                 egui::Stroke::new(1.0, crate::theme::pressed_color(line));
             visuals.widgets.active.bg_stroke =
                 egui::Stroke::new(1.0, crate::theme::pressed_color(line));
+            // 原生控件文字统一用主题主文字色（egui 默认灰与主题不协调）
+            visuals.override_text_color = Some(crate::theme::text_primary());
             visuals
         });
 

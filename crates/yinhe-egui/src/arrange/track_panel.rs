@@ -82,8 +82,7 @@ pub(crate) fn show(
     let mut audio_dirty = false;
 
     // 交替行条纹：着色行（偶数行）与 GPU 区同源颜色，不透明；奇数行用 app_bg 打底
-    let gpu_theme = yinhe_theme::current_gpu_theme();
-    let lane_even = crate::theme::rgb_to_color32(gpu_theme.stripe);
+    let lane_even = crate::theme::stripe_bg();
 
     let interact_id = egui::Id::new("track_panel_area");
     let resp = ui.interact(panel_rect, interact_id, egui::Sense::click_and_drag());

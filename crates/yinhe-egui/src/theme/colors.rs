@@ -49,7 +49,6 @@ macro_rules! theme_getters {
 
 theme_getters! {
     app_bg => app_bg,
-    raised_bg => raised_bg,
     control_bg => control_bg,
     control_selected_bg => control_selected_bg,
     text_primary => text_primary,
@@ -84,6 +83,7 @@ theme_getters! {
     sub_beat_label => sub_beat_label,
     tick_label => tick_label,
     grid_sub_beat => grid_sub_beat,
+    grid_tick => grid_tick,
     stripe_bg => stripe_bg,
     line_fg => line_fg,
     inset_bg => inset_bg,

@@ -28,7 +28,7 @@ impl GridColors {
             measure: theme::line_fg(),
             beat: theme::line_fg(),
             sub_beat: Some(theme::grid_sub_beat()),
-            tick: Some(theme::grid_sub_beat()),
+            tick: Some(theme::grid_tick()),
         }
     }
 
@@ -372,15 +372,16 @@ mod tests {
         assert!(base.pixels_per_tick <= 0.001);
     }
 
-    /// 验证 GridColors 配色档位：measure/beat 统一 line_fg，sub_beat 更低一档。
+    /// 验证 GridColors 配色档位：measure/beat 统一 line_fg，sub_beat/tick 更浅。
     #[test]
     fn test_grid_colors_distinct() {
         let pr = GridColors::pianoroll();
         let ar = GridColors::arrangement();
         // measure 与 beat 同用 line_fg（统一线条色）
         assert_eq!(pr.measure, pr.beat);
-        // sub_beat 是更低一档（比 line_fg 暗/亮方向随主题）
+        // sub_beat（+8%）与 tick（+3%）逐档更浅
         assert_ne!(pr.measure, pr.sub_beat.unwrap());
+        assert_ne!(pr.sub_beat.unwrap(), pr.tick.unwrap());
         assert!(ar.sub_beat.is_none());
         assert!(ar.tick.is_none());
     }
