@@ -114,7 +114,7 @@ pub fn show(
     }
 
     // Draw background pill (rounded rect with semi-circle ends)
-    let bg_color = crate::theme::ACTION_BAR_BG;
+    let bg_color = crate::theme::action_bar_bg();
     let corner_radius = bar_w / 2.0;
     ui.painter().rect_filled(bar_rect, corner_radius, bg_color);
 
@@ -169,9 +169,9 @@ pub fn show(
         // Hover detection（hover 变白，与全项目图标按钮基准风格一致）
         let hovered = pointer_pos.is_some_and(|p| btn_rect.contains(p));
         let color = if hovered {
-            crate::theme::HOVER_TEXT
+            crate::theme::hover_text()
         } else {
-            crate::theme::TEXT_LABEL
+            crate::theme::text_label()
         };
 
         // Draw icon

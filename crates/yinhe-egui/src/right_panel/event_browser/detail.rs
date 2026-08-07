@@ -900,13 +900,13 @@ fn show_project_json(ui: &mut egui::Ui, doc: &Document) {
             ui.label(
                 egui::RichText::new(k)
                     .size(crate::theme::SMALL_FONT)
-                    .color(crate::theme::TEXT_LABEL),
+                    .color(crate::theme::text_label()),
             );
             ui.label(
                 egui::RichText::new(v)
                     .size(crate::theme::SMALL_FONT)
                     .monospace()
-                    .color(crate::theme::TEXT_PRIMARY),
+                    .color(crate::theme::text_primary()),
             );
         });
     };
@@ -936,7 +936,7 @@ fn show_project_json(ui: &mut egui::Ui, doc: &Document) {
                 ui.label(
                     egui::RichText::new(format!("port {}:", po.port))
                         .size(crate::theme::SMALL_FONT)
-                        .color(crate::theme::TEXT_LABEL),
+                        .color(crate::theme::text_label()),
                 );
             });
             for entry in &po.entries {
@@ -951,7 +951,7 @@ fn show_project_json(ui: &mut egui::Ui, doc: &Document) {
                         egui::RichText::new(format!("{} {} ({})", status, entry.name, entry.path))
                             .size(crate::theme::SMALL_LABEL_FONT)
                             .monospace()
-                            .color(crate::theme::TEXT_SECONDARY),
+                            .color(crate::theme::text_secondary()),
                     );
                 });
             }
@@ -974,13 +974,13 @@ fn show_mapping_json(ui: &mut egui::Ui, doc: &Document) {
             ui.label(
                 egui::RichText::new(k)
                     .size(crate::theme::SMALL_FONT)
-                    .color(crate::theme::TEXT_LABEL),
+                    .color(crate::theme::text_label()),
             );
             ui.label(
                 egui::RichText::new(v)
                     .size(crate::theme::SMALL_FONT)
                     .monospace()
-                    .color(crate::theme::TEXT_PRIMARY),
+                    .color(crate::theme::text_primary()),
             );
         });
     };
@@ -1035,24 +1035,24 @@ pub(super) fn show_overview(ui: &mut egui::Ui, model: &yinhe_core::YinModel) {
     } else {
         &model.meta.artist
     };
-    ui.colored_label(crate::theme::TEXT_DIM, format!("名称: {}", name));
-    ui.colored_label(crate::theme::TEXT_DIM, format!("作者: {}", artist));
-    ui.colored_label(crate::theme::TEXT_DIM, format!("PPQ: {}", model.meta.ppq));
+    ui.colored_label(crate::theme::text_dim(), format!("名称: {}", name));
+    ui.colored_label(crate::theme::text_dim(), format!("作者: {}", artist));
+    ui.colored_label(crate::theme::text_dim(), format!("PPQ: {}", model.meta.ppq));
     ui.colored_label(
-        crate::theme::TEXT_DIM,
+        crate::theme::text_dim(),
         format!("zstd 等级: {}", model.meta.compression_level),
     );
     let groups = super::group_tracks_by_port_channel(model, None);
     ui.colored_label(
-        crate::theme::TEXT_DIM,
+        crate::theme::text_dim(),
         format!("活跃 port 数: {}", groups.len()),
     );
     ui.colored_label(
-        crate::theme::TEXT_DIM,
+        crate::theme::text_dim(),
         format!("轨道: {} 个", model.tracks.len()),
     );
     ui.colored_label(
-        crate::theme::TEXT_DIM,
+        crate::theme::text_dim(),
         format!("音符: {} 个", model.note_count),
     );
     let mut cc = 0usize;
@@ -1068,31 +1068,31 @@ pub(super) fn show_overview(ui: &mut egui::Ui, model: &yinhe_core::YinModel) {
         }
         pc += t.program_change.len();
     }
-    ui.colored_label(crate::theme::TEXT_DIM, format!("CC: {} 个", cc));
-    ui.colored_label(crate::theme::TEXT_DIM, format!("弯音: {} 个", pb));
-    ui.colored_label(crate::theme::TEXT_DIM, format!("音色变更: {} 个", pc));
+    ui.colored_label(crate::theme::text_dim(), format!("CC: {} 个", cc));
+    ui.colored_label(crate::theme::text_dim(), format!("弯音: {} 个", pb));
+    ui.colored_label(crate::theme::text_dim(), format!("音色变更: {} 个", pc));
     ui.colored_label(
-        crate::theme::TEXT_DIM,
+        crate::theme::text_dim(),
         format!("Tempo: {} 个", model.conductor.tempo.events.len()),
     );
     ui.colored_label(
-        crate::theme::TEXT_DIM,
+        crate::theme::text_dim(),
         format!("拍号: {} 个", model.conductor.time_sig.len()),
     );
     if !model.conductor.key_sig.is_empty() {
         ui.colored_label(
-            crate::theme::TEXT_DIM,
+            crate::theme::text_dim(),
             format!("调号: {} 个", model.conductor.key_sig.len()),
         );
     }
     if !model.conductor.markers.is_empty() {
         ui.colored_label(
-            crate::theme::TEXT_DIM,
+            crate::theme::text_dim(),
             format!("标记: {} 个", model.conductor.markers.len()),
         );
     }
     ui.add_space(8.0);
-    ui.colored_label(crate::theme::TEXT_HINT, "← 点击左侧条目查看详情");
+    ui.colored_label(crate::theme::text_hint(), "← 点击左侧条目查看详情");
 }
 
 pub(super) fn show_track_detail(
@@ -1119,13 +1119,13 @@ pub(super) fn show_track_detail(
             ui.label(
                 egui::RichText::new(k)
                     .size(crate::theme::SMALL_FONT)
-                    .color(crate::theme::TEXT_LABEL),
+                    .color(crate::theme::text_label()),
             );
             ui.label(
                 egui::RichText::new(v)
                     .size(crate::theme::SMALL_FONT)
                     .monospace()
-                    .color(crate::theme::TEXT_PRIMARY),
+                    .color(crate::theme::text_primary()),
             );
         });
     };

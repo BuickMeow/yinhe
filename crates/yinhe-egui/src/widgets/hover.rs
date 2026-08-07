@@ -16,7 +16,7 @@ pub(crate) fn hover_highlight(
             egui::Align2::CENTER_CENTER,
             text,
             font_id,
-            crate::theme::HOVER_TEXT,
+            crate::theme::hover_text(),
         );
     }
 }

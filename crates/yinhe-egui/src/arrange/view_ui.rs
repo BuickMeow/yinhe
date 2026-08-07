@@ -243,7 +243,7 @@ pub fn show(
             let cx = rect.min.x + cx_local;
             painter.line_segment(
                 [egui::pos2(cx, rect.min.y), egui::pos2(cx, rect.max.y)],
-                egui::Stroke::new(crate::theme::CURSOR_WIDTH, crate::theme::CURSOR_COLOR),
+                egui::Stroke::new(crate::theme::CURSOR_WIDTH, crate::theme::cursor_color()),
             );
         }
     }
@@ -254,8 +254,8 @@ pub fn show(
             ui.painter(),
             rect,
             dr,
-            crate::theme::MARQUEE_COLOR,
-            crate::theme::MARQUEE_COLOR,
+            crate::theme::marquee_color(),
+            crate::theme::marquee_color(),
         );
     }
 
@@ -280,8 +280,8 @@ pub fn show(
             ui.painter(),
             rect,
             snapped,
-            crate::theme::MARQUEE_COLOR,
-            crate::theme::MARQUEE_COLOR,
+            crate::theme::marquee_color(),
+            crate::theme::marquee_color(),
         );
     }
 

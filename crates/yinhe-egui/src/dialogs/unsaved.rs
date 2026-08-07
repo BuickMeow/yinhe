@@ -40,7 +40,7 @@ pub(crate) fn show_viewport(
             }
             egui::CentralPanel::default()
                 .frame(egui::Frame {
-                    fill: crate::theme::APP_BG,
+                    fill: crate::theme::app_bg(),
                     ..Default::default()
                 })
                 .show(vctx, |ui| {
@@ -77,7 +77,7 @@ pub(crate) fn show_viewport(
                                             egui::RichText::new(
                                                 t!("dialog.unsaved.discard").as_ref(),
                                             )
-                                            .color(crate::theme::DANGER_TEXT_BRIGHT),
+                                            .color(crate::theme::danger_text_bright()),
                                         );
                                         if discard_btn.clicked() {
                                             *action_cb.borrow_mut() = Some(Action::Discard);

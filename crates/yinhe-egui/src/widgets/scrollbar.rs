@@ -9,11 +9,17 @@ pub(crate) const SCROLLBAR_H: f32 = theme::SCROLLBAR_H;
 /// Width of the vertical scrollbar band.
 pub(crate) const SCROLLBAR_W: f32 = theme::SCROLLBAR_W;
 
-const BG_COLOR: egui::Color32 = theme::SCROLLBAR_BG;
-const RECT_COLOR: egui::Color32 = theme::SCROLLBAR_RECT;
-const RECT_HOVER_COLOR: egui::Color32 = theme::SCROLLBAR_HOVER;
-const RECT_DRAG_COLOR: egui::Color32 = theme::SCROLLBAR_DRAG;
 const EDGE_WIDTH: f32 = 4.0;
+
+/// 滚动条四色（运行时读取当前主题，不能是 const——getter 非 const fn）。
+fn colors() -> (egui::Color32, egui::Color32, egui::Color32, egui::Color32) {
+    (
+        theme::scrollbar_bg(),
+        theme::scrollbar_rect(),
+        theme::scrollbar_hover(),
+        theme::scrollbar_drag(),
+    )
+}
 
 /// Pixel-range allowed for `pixels_per_tick`.
 const PPT_MIN: f32 = 0.001;
@@ -233,8 +239,9 @@ pub(crate) fn show(
     let rect_width = (viewport_ticks * scale) as f32;
     let rect_right = rect_left + rect_width;
 
+    let (bg_color, rect_color, rect_hover_color, rect_drag_color) = colors();
     // Paint background bar
-    ui.painter().rect_filled(rect, 0.0, BG_COLOR);
+    ui.painter().rect_filled(rect, 0.0, bg_color);
 
     // ── Rectangle visual ──
     let rect_rect = egui::Rect::from_min_max(
@@ -284,14 +291,14 @@ pub(crate) fn show(
     let middle_hovered = middle_resp.hovered() || middle_resp.dragged();
 
     // Paint rectangle with appropriate color
-    let rect_color = if left_resp.dragged() || right_resp.dragged() || middle_resp.dragged() {
-        RECT_DRAG_COLOR
+    let thumb_color = if left_resp.dragged() || right_resp.dragged() || middle_resp.dragged() {
+        rect_drag_color
     } else if middle_hovered || left_hovered || right_hovered {
-        RECT_HOVER_COLOR
+        rect_hover_color
     } else {
-        RECT_COLOR
+        rect_color
     };
-    ui.painter().rect_filled(rect_rect, 2.0, rect_color);
+    ui.painter().rect_filled(rect_rect, 2.0, thumb_color);
 
     // ── Cursor ──
     if left_hovered {
@@ -414,8 +421,9 @@ pub(crate) fn show_vertical(
     let rect_height = (view_height * scale).min(sb_h - rect_top);
     let rect_bottom = rect_top + rect_height;
 
+    let (bg_color, rect_color, rect_hover_color, rect_drag_color) = colors();
     // Paint background bar
-    ui.painter().rect_filled(rect, 0.0, BG_COLOR);
+    ui.painter().rect_filled(rect, 0.0, bg_color);
 
     // ── Rectangle visual ──
     let rect_rect = egui::Rect::from_min_max(
@@ -465,14 +473,14 @@ pub(crate) fn show_vertical(
     let middle_hovered = middle_resp.hovered() || middle_resp.dragged();
 
     // Paint rectangle with appropriate color
-    let rect_color = if top_resp.dragged() || bottom_resp.dragged() || middle_resp.dragged() {
-        RECT_DRAG_COLOR
+    let thumb_color = if top_resp.dragged() || bottom_resp.dragged() || middle_resp.dragged() {
+        rect_drag_color
     } else if middle_hovered || top_hovered || bottom_hovered {
-        RECT_HOVER_COLOR
+        rect_hover_color
     } else {
-        RECT_COLOR
+        rect_color
     };
-    ui.painter().rect_filled(rect_rect, 2.0, rect_color);
+    ui.painter().rect_filled(rect_rect, 2.0, thumb_color);
 
     // ── Cursor ──
     if top_hovered {
@@ -600,8 +608,9 @@ pub(crate) fn show_vertical_value(
     let rect_bottom = ((total_value - bottom_value) * scale).min(sb_h);
     let rect_height = (rect_bottom - rect_top).max(0.0);
 
+    let (bg_color, rect_color, rect_hover_color, rect_drag_color) = colors();
     // Paint background bar
-    ui.painter().rect_filled(rect, 0.0, BG_COLOR);
+    ui.painter().rect_filled(rect, 0.0, bg_color);
 
     let rect_rect = egui::Rect::from_min_max(
         egui::pos2(rect.min.x, rect.min.y + rect_top),
@@ -644,14 +653,14 @@ pub(crate) fn show_vertical_value(
     let bottom_hovered = bottom_resp.hovered() || bottom_resp.dragged();
     let middle_hovered = middle_resp.hovered() || middle_resp.dragged();
 
-    let rect_color = if top_resp.dragged() || bottom_resp.dragged() || middle_resp.dragged() {
-        RECT_DRAG_COLOR
+    let thumb_color = if top_resp.dragged() || bottom_resp.dragged() || middle_resp.dragged() {
+        rect_drag_color
     } else if middle_hovered || top_hovered || bottom_hovered {
-        RECT_HOVER_COLOR
+        rect_hover_color
     } else {
-        RECT_COLOR
+        rect_color
     };
-    ui.painter().rect_filled(rect_rect, 2.0, rect_color);
+    ui.painter().rect_filled(rect_rect, 2.0, thumb_color);
 
     if top_hovered {
         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeNorth);

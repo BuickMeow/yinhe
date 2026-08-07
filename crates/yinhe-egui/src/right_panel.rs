@@ -94,7 +94,7 @@ pub fn show(
 
         // Background
         ui.painter()
-            .rect_filled(ui.max_rect(), 0.0, crate::theme::APP_BG);
+            .rect_filled(ui.max_rect(), 0.0, crate::theme::app_bg());
 
         // ── Content ──
         if let Some(tab) = tab {

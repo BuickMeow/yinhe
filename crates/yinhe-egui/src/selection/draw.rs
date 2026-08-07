@@ -62,13 +62,13 @@ pub fn draw(
     painter.rect_filled(
         sel,
         0.0,
-        fill_color.gamma_multiply(crate::theme::MARQUEE_FILL_ALPHA),
+        fill_color.gamma_multiply(crate::theme::marquee_fill_alpha()),
     );
 
     // Strokes — only draw edges that weren't clipped
     let stroke = egui::Stroke::new(
         1.0,
-        stroke_color.gamma_multiply(crate::theme::MARQUEE_STROKE_ALPHA),
+        stroke_color.gamma_multiply(crate::theme::marquee_stroke_alpha()),
     );
     let [t, r, b, l] = clipped;
     if !t {

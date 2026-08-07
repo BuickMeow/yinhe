@@ -173,9 +173,9 @@ pub(super) fn cell_row_header(
     row.col(|ui| {
         let is_selected = state.selected_ticks.contains(&tick);
         let label_color = if is_selected {
-            crate::theme::TEXT_SELECTED
+            crate::theme::text_selected()
         } else {
-            crate::theme::TEXT_SECONDARY
+            crate::theme::text_secondary()
         };
         ui.add(
             egui::Label::new(
@@ -277,27 +277,26 @@ fn handle_row_click(
 ///
 /// 返回 true 表示用户点击了加号（触发 `EditRequest::InsertFirst`）。
 pub(super) fn empty_state_add_button(ui: &mut egui::Ui, id_salt: &str) -> bool {
-    use crate::theme::ACCENT_ACTIVE;
     let mut clicked = false;
     ui.vertical_centered(|ui| {
         ui.add_space(40.0);
         let icon_text = egui::RichText::new(ICON_ADD.codepoint)
             .family(ICON_ADD.font_family())
             .size(crate::theme::ICON_FONT_XL)
-            .color(crate::theme::TEXT_BRIGHT);
+            .color(crate::theme::text_bright());
         let resp = ui.add(
             egui::Label::new(icon_text)
                 .selectable(false)
                 .sense(egui::Sense::click()),
         );
-        // hover 时叠加蓝色图标（同 mode_bar 的 hover_highlight 机制）
+        // hover 时叠加高亮图标（同 mode_bar 的 hover_highlight 机制）
         if resp.hovered() {
             ui.painter().text(
                 resp.rect.center(),
                 egui::Align2::CENTER_CENTER,
                 ICON_ADD.codepoint,
                 egui::FontId::new(crate::theme::ICON_FONT_XL, ICON_ADD.font_family()),
-                ACCENT_ACTIVE,
+                crate::theme::hover_text(),
             );
         }
         if resp.clicked() {
@@ -306,7 +305,7 @@ pub(super) fn empty_state_add_button(ui: &mut egui::Ui, id_salt: &str) -> bool {
         ui.label(
             egui::RichText::new("点击新建第一个事件")
                 .size(crate::theme::SMALL_FONT)
-                .color(crate::theme::TEXT_FAINT),
+                .color(crate::theme::text_faint()),
         );
     });
     if clicked {
@@ -474,7 +473,7 @@ pub(super) fn render_pager(ui: &mut egui::Ui, page: usize, total_pages: usize) -
                     ICON_NEXT
                         .rich_text()
                         .size(crate::theme::ICON_FONT)
-                        .color(crate::theme::TEXT_BRIGHT),
+                        .color(crate::theme::text_bright()),
                 )
                 .sense(egui::Sense::click()),
             )
@@ -485,7 +484,7 @@ pub(super) fn render_pager(ui: &mut egui::Ui, page: usize, total_pages: usize) -
         ui.label(
             egui::RichText::new(format!("/ {}", total_pages))
                 .size(crate::theme::SMALL_FONT)
-                .color(crate::theme::TEXT_FAINT),
+                .color(crate::theme::text_faint()),
         );
         let buf: String = ui.memory(|m| {
             m.data
@@ -521,7 +520,7 @@ pub(super) fn render_pager(ui: &mut egui::Ui, page: usize, total_pages: usize) -
                     ICON_PREV
                         .rich_text()
                         .size(crate::theme::ICON_FONT)
-                        .color(crate::theme::TEXT_BRIGHT),
+                        .color(crate::theme::text_bright()),
                 )
                 .sense(egui::Sense::click()),
             )

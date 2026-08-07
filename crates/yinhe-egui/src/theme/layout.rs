@@ -35,6 +35,9 @@ pub const SPLIT_CLAMP_MAX: f32 = 0.7;
 pub const MIN_KEYBOARD_WIDTH: f32 = 30.0;
 pub const MAX_KEYBOARD_RATIO: f32 = 0.4;
 
+// ── Cursor / playhead ──
+pub const CURSOR_WIDTH: f32 = 2.0;
+
 // ── Right panel ──
 pub const RIGHT_PANEL_MIN_WIDTH: f32 = 160.0;
 pub const RIGHT_PANEL_DEFAULT_WIDTH: f32 = 320.0;

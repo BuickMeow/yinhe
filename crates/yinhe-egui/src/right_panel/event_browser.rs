@@ -75,7 +75,7 @@ pub fn show(
     }
 
     let frame_bg = egui::Frame::NONE
-        .fill(theme::APP_BG)
+        .fill(theme::app_bg())
         .inner_margin(egui::Margin::symmetric(4, 2));
 
     let total_rect = ui.available_rect_before_wrap();

@@ -78,9 +78,9 @@ impl TimeRulerView for yinhe_types::ArrangementView {
 ///
 /// Paint the ruler background and bottom divider.
 fn paint_background(painter: &egui::Painter, rect: egui::Rect) {
-    painter.rect_filled(rect, 0.0, theme::RULER_BG);
+    painter.rect_filled(rect, 0.0, theme::ruler_bg());
 
-    let stroke = egui::Stroke::new(1.0, theme::RULER_DIVIDER);
+    let stroke = egui::Stroke::new(1.0, theme::ruler_divider());
     painter.line_segment(
         [
             egui::pos2(rect.min.x, rect.max.y),
@@ -276,11 +276,11 @@ fn paint_labels(
 
                 let (label, color) = if is_measure {
                     let bar = bar_offset + (local / ticks_per_measure) + 1;
-                    (format!("{}", bar), theme::MEASURE_LABEL)
+                    (format!("{}", bar), theme::measure_label())
                 } else if is_beat && show_beat {
                     let bar = bar_offset + (local / ticks_per_measure) + 1;
                     let beat = (local % ticks_per_measure) / ticks_per_beat + 1;
-                    (format!("{}.{}", bar, beat), theme::BEAT_LABEL)
+                    (format!("{}.{}", bar, beat), theme::beat_label())
                 } else if show_sub {
                     let bar = bar_offset + (local / ticks_per_measure) + 1;
                     let beat = (local % ticks_per_measure) / ticks_per_beat + 1;
@@ -288,11 +288,11 @@ fn paint_labels(
                         let tick_in_beat = (tick as f64 % tpb as f64) as u32;
                         (
                             format!("{}.{}.{:03}", bar, beat, tick_in_beat),
-                            theme::TICK_LABEL,
+                            theme::tick_label(),
                         )
                     } else {
                         let sub = (local % ticks_per_beat) / ticks_per_sub;
-                        (format!("{}.{}.{}", bar, beat, sub), theme::SUB_BEAT_LABEL)
+                        (format!("{}.{}.{}", bar, beat, sub), theme::sub_beat_label())
                     }
                 } else {
                     tick += main_step;
@@ -339,7 +339,7 @@ fn paint_labels(
                             x,
                             text_y_center,
                             &label,
-                            theme::TICK_LABEL,
+                            theme::tick_label(),
                         );
                     }
                 }

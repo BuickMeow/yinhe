@@ -167,7 +167,7 @@ fn render_track_row(ui: &mut egui::Ui, model: &YinModel, idx: u16, state: &mut E
     );
 
     let row_bg = if is_selected {
-        crate::theme::ROW_SELECTED_BG
+        crate::theme::row_selected_bg()
     } else {
         egui::Color32::TRANSPARENT
     };
@@ -193,7 +193,7 @@ fn render_track_row(ui: &mut egui::Ui, model: &YinModel, idx: u16, state: &mut E
                         egui::Label::new(
                             chev.rich_text()
                                 .size(crate::theme::SUB_TITLE_FONT)
-                                .color(crate::theme::TEXT_MEDIUM),
+                                .color(crate::theme::text_medium()),
                         )
                         .sense(egui::Sense::click()),
                     )
@@ -208,9 +208,9 @@ fn render_track_row(ui: &mut egui::Ui, model: &YinModel, idx: u16, state: &mut E
                             .rich_text()
                             .size(crate::theme::BODY_FONT)
                             .color(if is_selected {
-                                crate::theme::TEXT_SELECTED
+                                crate::theme::text_selected()
                             } else {
-                                crate::theme::TEXT_MUTED
+                                crate::theme::text_muted()
                             }),
                     )
                     .selectable(false),
@@ -222,9 +222,9 @@ fn render_track_row(ui: &mut egui::Ui, model: &YinModel, idx: u16, state: &mut E
                             .size(crate::theme::SMALL_FONT)
                             .monospace()
                             .color(if is_selected {
-                                crate::theme::TEXT_SELECTED
+                                crate::theme::text_selected()
                             } else {
-                                crate::theme::TEXT_PRIMARY
+                                crate::theme::text_primary()
                             }),
                     )
                     .selectable(false)
@@ -238,7 +238,7 @@ fn render_track_row(ui: &mut egui::Ui, model: &YinModel, idx: u16, state: &mut E
                     egui::Label::new(
                         egui::RichText::new(format!("[{}]", summary))
                             .size(crate::theme::SMALL_LABEL_FONT)
-                            .color(crate::theme::TEXT_DIMMER),
+                            .color(crate::theme::text_dimmer()),
                     )
                     .selectable(false),
                 );
@@ -341,7 +341,7 @@ fn render_dir_row(
                         egui::Label::new(
                             chev.rich_text()
                                 .size(crate::theme::SUB_TITLE_FONT)
-                                .color(crate::theme::TEXT_MEDIUM),
+                                .color(crate::theme::text_medium()),
                         )
                         .sense(egui::Sense::click()),
                     )
@@ -360,7 +360,7 @@ fn render_dir_row(
                             folder
                                 .rich_text()
                                 .size(crate::theme::SUB_TITLE_FONT)
-                                .color(crate::theme::WARNING_GOLD),
+                                .color(crate::theme::warning_gold()),
                         )
                         .sense(egui::Sense::click()),
                     )
@@ -372,7 +372,7 @@ fn render_dir_row(
                     egui::Label::new(
                         egui::RichText::new(name)
                             .size(crate::theme::SMALL_FONT)
-                            .color(crate::theme::TEXT_PRIMARY),
+                            .color(crate::theme::text_primary()),
                     )
                     .selectable(false),
                 );
@@ -380,7 +380,7 @@ fn render_dir_row(
                     egui::Label::new(
                         egui::RichText::new(format!("({})", child_count))
                             .size(crate::theme::SMALL_LABEL_FONT)
-                            .color(crate::theme::TEXT_DIMMER),
+                            .color(crate::theme::text_dimmer()),
                     )
                     .selectable(false),
                 );
@@ -399,7 +399,7 @@ fn render_leaf_item(
 ) {
     let is_selected = state.selected_item.as_ref() == Some(&item);
     let bg = if is_selected {
-        crate::theme::ROW_SELECTED_BG
+        crate::theme::row_selected_bg()
     } else {
         egui::Color32::TRANSPARENT
     };
@@ -414,9 +414,9 @@ fn render_leaf_item(
                 ui.add(
                     egui::Label::new(icon.rich_text().size(crate::theme::BODY_FONT).color(
                         if is_selected {
-                            crate::theme::TEXT_SELECTED
+                            crate::theme::text_selected()
                         } else {
-                            crate::theme::TEXT_MUTED
+                            crate::theme::text_muted()
                         },
                     ))
                     .selectable(false),
@@ -427,9 +427,9 @@ fn render_leaf_item(
                             .size(crate::theme::SMALL_FONT)
                             .monospace()
                             .color(if is_selected {
-                                crate::theme::TEXT_SELECTED
+                                crate::theme::text_selected()
                             } else {
-                                crate::theme::TEXT_BRIGHT
+                                crate::theme::text_bright()
                             }),
                     )
                     .selectable(false),

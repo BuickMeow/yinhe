@@ -296,7 +296,7 @@ pub fn show_content(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
         if ui
             .button(
                 egui::RichText::new(t!("settings.factory_reset").as_ref())
-                    .color(crate::theme::DANGER_TEXT),
+                    .color(crate::theme::danger_text()),
             )
             .clicked()
         {
@@ -345,7 +345,7 @@ pub(crate) fn show_viewport(
                 }
                 eframe::egui::CentralPanel::default()
                     .frame(eframe::egui::Frame {
-                        fill: crate::theme::APP_BG,
+                        fill: crate::theme::app_bg(),
                         ..Default::default()
                     })
                     .show(vctx, |ui| {

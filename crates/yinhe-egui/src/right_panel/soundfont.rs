@@ -40,9 +40,9 @@ pub fn show(
                 egui::RichText::new(t!("soundfont.global").as_ref())
                     .size(crate::theme::BODY_FONT)
                     .color(if is_global {
-                        crate::theme::ACCENT_ACTIVE
+                        crate::theme::accent_active()
                     } else {
-                        crate::theme::TEXT_LABEL
+                        crate::theme::text_label()
                     }),
             )
             .sense(egui::Sense::click())
@@ -68,9 +68,9 @@ pub fn show(
                 egui::RichText::new(t!("soundfont.project").as_ref())
                     .size(crate::theme::BODY_FONT)
                     .color(if !is_global {
-                        crate::theme::ACCENT_ACTIVE
+                        crate::theme::accent_active()
                     } else {
-                        crate::theme::TEXT_LABEL
+                        crate::theme::text_label()
                     }),
             )
             .sense(egui::Sense::click())
@@ -96,7 +96,7 @@ pub fn show(
     if settings.global_sf_config.global_enabled {
         ui.label(
             egui::RichText::new(t!("soundfont.global_hint").as_ref())
-                .color(crate::theme::TEXT_FAINT)
+                .color(crate::theme::text_faint())
                 .size(crate::theme::BODY_FONT),
         );
         ui.add_space(4.0);

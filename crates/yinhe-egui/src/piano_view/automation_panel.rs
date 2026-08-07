@@ -580,7 +580,7 @@ fn draw_panel_overlay(
             // 顶部亮线标示新高度
             painter.line_segment(
                 [bar.left_top(), bar.right_top()],
-                egui::Stroke::new(1.0, crate::theme::PREVIEW_LINE),
+                egui::Stroke::new(1.0, crate::theme::preview_line()),
             );
         }
     }
@@ -616,14 +616,15 @@ fn draw_panel_overlay(
             painter.rect_filled(
                 rect,
                 0.0,
-                crate::theme::MARQUEE_COLOR.gamma_multiply(crate::theme::MARQUEE_FILL_ALPHA),
+                crate::theme::marquee_color().gamma_multiply(crate::theme::marquee_fill_alpha()),
             );
             painter.rect_stroke(
                 rect,
                 0.0,
                 egui::Stroke::new(
                     1.0,
-                    crate::theme::MARQUEE_COLOR.gamma_multiply(crate::theme::MARQUEE_STROKE_ALPHA),
+                    crate::theme::marquee_color()
+                        .gamma_multiply(crate::theme::marquee_stroke_alpha()),
                 ),
                 egui::StrokeKind::Inside,
             );
@@ -636,14 +637,14 @@ fn draw_panel_overlay(
         painter.rect_filled(
             rect,
             0.0,
-            crate::theme::MARQUEE_COLOR.gamma_multiply(crate::theme::MARQUEE_FILL_ALPHA),
+            crate::theme::marquee_color().gamma_multiply(crate::theme::marquee_fill_alpha()),
         );
         painter.rect_stroke(
             rect,
             0.0,
             egui::Stroke::new(
                 1.0,
-                crate::theme::MARQUEE_COLOR.gamma_multiply(crate::theme::MARQUEE_STROKE_ALPHA),
+                crate::theme::marquee_color().gamma_multiply(crate::theme::marquee_stroke_alpha()),
             ),
             egui::StrokeKind::Inside,
         );
@@ -663,7 +664,7 @@ fn draw_value_labels(
     } else {
         panel.selected_target.display_name()
     };
-    let label_color = theme::MEASURE_LABEL;
+    let label_color = theme::measure_label();
     let font_id = egui::FontId::proportional(crate::theme::SMALL_LABEL_FONT);
     let pad_x = 4.0;
 
@@ -1169,7 +1170,7 @@ fn show_target_combo(
     editing_is_conductor: bool,
 ) {
     // Draw left panel background (covers the grid underneath)
-    ui.painter().rect_filled(combo_rect, 0.0, theme::APP_BG);
+    ui.painter().rect_filled(combo_rect, 0.0, theme::app_bg());
 
     let combo_inner = combo_rect.shrink(4.0);
 
@@ -1183,7 +1184,7 @@ fn show_target_combo(
                     ICON_AUTOMATION
                         .rich_text()
                         .size(crate::theme::ICON_FONT)
-                        .color(crate::theme::TEXT_LABEL),
+                        .color(crate::theme::text_label()),
                 )
                 .sense(egui::Sense::click())
                 .selectable(false),
@@ -1340,9 +1341,9 @@ pub fn show_toggle_buttons(ui: &mut egui::Ui, show_panels: &mut bool, panel_coun
 
     // Toggle button
     let toggle_color = if *show_panels {
-        theme::ACCENT_ACTIVE
+        theme::accent_active()
     } else {
-        crate::theme::TEXT_LABEL
+        crate::theme::text_label()
     };
     let toggle_label = ICON_SIGNAL_CELLULAR_ALT
         .rich_text()
@@ -1372,7 +1373,7 @@ pub fn show_toggle_buttons(ui: &mut egui::Ui, show_panels: &mut bool, panel_coun
 
     if *show_panels {
         // + button (add panel)
-        let plus_color = crate::theme::TEXT_LABEL;
+        let plus_color = crate::theme::text_label();
         let plus_resp = ui.add(
             egui::Label::new(
                 ICON_ADD

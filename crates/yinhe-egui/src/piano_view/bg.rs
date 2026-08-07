@@ -80,8 +80,8 @@ fn paint_scale_background(
     let tick_start = tick_start.max(0.0);
     let tick_end = tick_end.max(tick_start);
 
-    let outside_color = crate::theme::PR_SCALE_OUTSIDE;
-    let root_color = crate::theme::PR_ROOT_NOTE;
+    let outside_color = crate::theme::pr_scale_outside();
+    let root_color = crate::theme::pr_root_note();
     let ppt = view.base.pixels_per_tick;
     let scroll_x = view.base.scroll_x;
 
@@ -182,7 +182,7 @@ fn paint_black_key_rows(
         return;
     }
 
-    let bk_color = crate::theme::PR_BLACK_KEY_ROW;
+    let bk_color = crate::theme::pr_black_key_row();
     for key in key_lo..=key_hi {
         if !yinhe_types::is_black_key(key) {
             continue;
@@ -208,7 +208,7 @@ fn paint_octave_lines(
     kh: f32,
     view: &PianoRollView,
 ) {
-    let octave_line = crate::theme::PR_OCTAVE_LINE;
+    let octave_line = crate::theme::pr_octave_line();
     let content_left = content_rect.min.x + kb_w;
     let bottom = 128.0 * kh - view.base.scroll_y;
     for key in (0u8..128).step_by(12) {

@@ -68,7 +68,7 @@ pub fn sf_list(ui: &mut egui::Ui, entries: &mut Vec<SfEntry>, salt: &str) -> boo
                 // ROW_SELECTED_BG；hover 同音轨面板的白色 3% 提亮 ──
                 if is_selected {
                     ui.painter()
-                        .rect_filled(row_rect, 0.0, crate::theme::ROW_SELECTED_BG);
+                        .rect_filled(row_rect, 0.0, crate::theme::row_selected_bg());
                 } else if ui.rect_contains_pointer(row_rect) {
                     ui.painter()
                         .rect_filled(row_rect, 0.0, crate::theme::row_hover_tint());
@@ -99,14 +99,14 @@ pub fn sf_list(ui: &mut egui::Ui, entries: &mut Vec<SfEntry>, salt: &str) -> boo
                     egui::Align2::LEFT_CENTER,
                     &entries[i].name,
                     egui::FontId::proportional(crate::theme::BODY_FONT),
-                    crate::theme::TEXT_BRIGHT,
+                    crate::theme::text_bright(),
                 );
                 ui.painter().text(
                     egui::pos2(text_x, row_rect.min.y + 28.0),
                     egui::Align2::LEFT_CENTER,
                     truncate_path(&entries[i].path),
                     egui::FontId::proportional(crate::theme::SMALL_LABEL_FONT),
-                    crate::theme::TEXT_DIM,
+                    crate::theme::text_dim(),
                 );
 
                 // ── 右侧拖拽手柄（Material 图标）──
@@ -115,7 +115,7 @@ pub fn sf_list(ui: &mut egui::Ui, entries: &mut Vec<SfEntry>, salt: &str) -> boo
                     egui::Align2::CENTER_CENTER,
                     ICON_DRAG_INDICATOR.codepoint,
                     egui::FontId::new(crate::theme::ICON_FONT, ICON_DRAG_INDICATOR.font_family()),
-                    crate::theme::TEXT_LABEL,
+                    crate::theme::text_label(),
                 );
 
                 // ── 点击选择（拖拽中不响应）──
@@ -198,7 +198,7 @@ pub fn sf_list(ui: &mut egui::Ui, entries: &mut Vec<SfEntry>, salt: &str) -> boo
                     let x2 = item_rects[0].right() - 4.0;
                     ui.painter().line_segment(
                         [egui::pos2(x1, y), egui::pos2(x2, y)],
-                        egui::Stroke::new(3.0, crate::theme::ACCENT_ACTIVE),
+                        egui::Stroke::new(3.0, crate::theme::accent_active()),
                     );
                 }
 

@@ -15,9 +15,9 @@ pub fn horizontal(
         rect,
         0.0,
         if resp.hovered() || resp.dragged() {
-            theme::SPLIT_HOVER
+            theme::split_hover()
         } else {
-            theme::SPLIT_DEFAULT
+            theme::split_default()
         },
     );
     if resp.hovered() || resp.dragged() {
@@ -39,9 +39,9 @@ pub fn vertical(
         rect,
         0.0,
         if resp.hovered() || resp.dragged() {
-            theme::V_SPLIT_HOVER
+            theme::v_split_hover()
         } else {
-            theme::V_SPLIT_DEFAULT
+            theme::v_split_default()
         },
     );
     if resp.hovered() || resp.dragged() {

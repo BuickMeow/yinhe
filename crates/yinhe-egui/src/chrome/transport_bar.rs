@@ -57,7 +57,7 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
 
     egui::Panel::top("transport_bar")
         .frame(egui::Frame {
-            fill: crate::theme::APP_BG,
+            fill: crate::theme::app_bg(),
             inner_margin: egui::Margin {
                 left: 8,
                 right: 8,
@@ -178,9 +178,9 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                     for tool in ALL_TOOLS {
                         let is_active = *ctx.active_tool == tool;
                         let color = if is_active {
-                            crate::theme::ACCENT_ACTIVE
+                            crate::theme::accent_active()
                         } else {
-                            crate::theme::TEXT_LABEL
+                            crate::theme::text_label()
                         };
                         let icon = tool.icon();
                         let resp = ui.add(
@@ -327,9 +327,9 @@ fn show_file_menu(
             ) {
                 for item in items {
                     let icon_color = if item.enabled {
-                        crate::theme::TEXT_BRIGHT
+                        crate::theme::text_bright()
                     } else {
-                        crate::theme::TEXT_DISABLED
+                        crate::theme::text_disabled()
                     };
                     let resp = ui.add_enabled(
                         item.enabled,
@@ -456,9 +456,9 @@ fn show_timecode_display(ui: &mut egui::Ui, doc: &Document) -> egui::Rect {
     ui.add_space(pad);
     let (rect, _) = ui.allocate_exact_size(egui::vec2(rect_w, rect_h), egui::Sense::hover());
 
-    let c = crate::theme::ACCENT_ACTIVE;
+    let c = crate::theme::accent_active();
     let font = egui::FontId::proportional(crate::theme::TIMECODE_FONT);
-    let grid = egui::Stroke::new(1.0, crate::theme::BORDER_DIM);
+    let grid = egui::Stroke::new(1.0, crate::theme::border_dim());
 
     ui.painter()
         .rect_filled(rect, egui::CornerRadius::same(8), egui::Color32::BLACK);

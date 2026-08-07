@@ -40,7 +40,7 @@ pub(super) fn show_anchor_info(
         egui::RichText::new(t!("anchor.title").as_ref())
             .strong()
             .size(crate::theme::PANEL_TITLE_FONT)
-            .color(crate::theme::TEXT_PRIMARY),
+            .color(crate::theme::text_primary()),
     );
     ui.add_space(2.0);
 
@@ -49,12 +49,12 @@ pub(super) fn show_anchor_info(
         ui.label(
             egui::RichText::new(t!("anchor.target").as_ref())
                 .size(crate::theme::SMALL_FONT)
-                .color(crate::theme::TEXT_LABEL),
+                .color(crate::theme::text_label()),
         );
         ui.label(
             egui::RichText::new(target.display_name())
                 .size(crate::theme::BODY_FONT)
-                .color(crate::theme::TEXT_BRIGHT),
+                .color(crate::theme::text_bright()),
         );
     });
     ui.add_space(4.0);
@@ -66,7 +66,7 @@ pub(super) fn show_anchor_info(
         ui.label(
             egui::RichText::new(t!("anchor.tick").as_ref())
                 .size(crate::theme::SMALL_FONT)
-                .color(crate::theme::TEXT_LABEL),
+                .color(crate::theme::text_label()),
         );
         let resp = ui.add(
             crate::widgets::numeric_input::decimal_drag_value(&mut edit_tick)
@@ -102,7 +102,7 @@ pub(super) fn show_anchor_info(
         ui.label(
             egui::RichText::new(t!("anchor.value").as_ref())
                 .size(crate::theme::SMALL_FONT)
-                .color(crate::theme::TEXT_LABEL),
+                .color(crate::theme::text_label()),
         );
         let resp = ui.add(
             crate::widgets::numeric_input::decimal_drag_value(&mut edit_value)
@@ -138,7 +138,7 @@ pub(super) fn show_anchor_info(
         ui.label(
             egui::RichText::new(t!("anchor.shape").as_ref())
                 .size(crate::theme::SMALL_FONT)
-                .color(crate::theme::TEXT_LABEL),
+                .color(crate::theme::text_label()),
         );
         let is_step = matches!(shape, SegmentShape::Step);
         let mut discrete = is_step;
@@ -174,7 +174,7 @@ pub(super) fn show_anchor_info(
             ui.label(
                 egui::RichText::new(t!("anchor.x1").as_ref())
                     .size(crate::theme::SMALL_FONT)
-                    .color(crate::theme::TEXT_LABEL),
+                    .color(crate::theme::text_label()),
             );
             let resp = ui.add(
                 crate::widgets::numeric_input::decimal_drag_value(&mut edit)
@@ -212,7 +212,7 @@ pub(super) fn show_anchor_info(
             ui.label(
                 egui::RichText::new(t!("anchor.y1").as_ref())
                     .size(crate::theme::SMALL_FONT)
-                    .color(crate::theme::TEXT_LABEL),
+                    .color(crate::theme::text_label()),
             );
             let resp = ui.add(
                 crate::widgets::numeric_input::decimal_drag_value(&mut edit)
@@ -250,7 +250,7 @@ pub(super) fn show_anchor_info(
             ui.label(
                 egui::RichText::new(t!("anchor.x2").as_ref())
                     .size(crate::theme::SMALL_FONT)
-                    .color(crate::theme::TEXT_LABEL),
+                    .color(crate::theme::text_label()),
             );
             let resp = ui.add(
                 crate::widgets::numeric_input::decimal_drag_value(&mut edit)
@@ -288,7 +288,7 @@ pub(super) fn show_anchor_info(
             ui.label(
                 egui::RichText::new(t!("anchor.y2").as_ref())
                     .size(crate::theme::SMALL_FONT)
-                    .color(crate::theme::TEXT_LABEL),
+                    .color(crate::theme::text_label()),
             );
             let resp = ui.add(
                 crate::widgets::numeric_input::decimal_drag_value(&mut edit)
@@ -333,7 +333,7 @@ pub(super) fn show_anchor_info(
     ui.label(
         egui::RichText::new(shape_desc.as_ref())
             .size(crate::theme::SMALL_LABEL_FONT)
-            .color(crate::theme::TEXT_FAINT),
+            .color(crate::theme::text_faint()),
     );
 
     ui.add_space(8.0);

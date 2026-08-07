@@ -375,9 +375,9 @@ impl App {
                 h_split_rect,
                 0.0,
                 if h_split_resp.hovered() || h_split_resp.dragged() {
-                    crate::theme::SPLIT_HOVER
+                    crate::theme::split_hover()
                 } else {
-                    crate::theme::SPLIT_DEFAULT
+                    crate::theme::split_default()
                 },
             );
             if h_split_resp.dragged() {

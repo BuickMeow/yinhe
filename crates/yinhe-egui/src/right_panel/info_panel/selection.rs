@@ -100,7 +100,7 @@ pub(super) fn show(ui: &mut egui::Ui, doc: &mut Document) {
         egui::RichText::new(t!("sel.title").as_ref())
             .strong()
             .size(crate::theme::PANEL_TITLE_FONT)
-            .color(crate::theme::TEXT_PRIMARY),
+            .color(crate::theme::text_primary()),
     );
     ui.add_space(2.0);
 
@@ -327,7 +327,7 @@ pub(super) fn show(ui: &mut egui::Ui, doc: &mut Document) {
         egui::RichText::new(t!("sel.tempo_title").as_ref())
             .strong()
             .size(crate::theme::SUB_TITLE_FONT)
-            .color(crate::theme::TEXT_BRIGHT),
+            .color(crate::theme::text_bright()),
     );
     ui.add_space(2.0);
     tempo_section(ui, doc, view, t0, t1);
@@ -374,12 +374,12 @@ fn info_row(ui: &mut egui::Ui, label: impl Into<String>, value: impl Into<String
         ui.label(
             egui::RichText::new(label.into())
                 .size(crate::theme::SMALL_FONT)
-                .color(crate::theme::TEXT_LABEL),
+                .color(crate::theme::text_label()),
         );
         ui.label(
             egui::RichText::new(value.into())
                 .size(crate::theme::BODY_FONT)
-                .color(crate::theme::TEXT_BRIGHT),
+                .color(crate::theme::text_bright()),
         );
     });
 }
@@ -406,7 +406,7 @@ fn field_row(
         ui.label(
             egui::RichText::new(label.into())
                 .size(crate::theme::SMALL_FONT)
-                .color(crate::theme::TEXT_LABEL),
+                .color(crate::theme::text_label()),
         );
         let id = ui.id().with(key);
         let buf_id = id.with("buf");
@@ -430,7 +430,7 @@ fn field_row(
             ui.label(
                 egui::RichText::new(s)
                     .size(crate::theme::SMALL_FONT)
-                    .color(crate::theme::TEXT_FAINT),
+                    .color(crate::theme::text_faint()),
             );
         }
         ui.ctx().data_mut(|d| d.insert_temp(buf_id, text.clone()));
@@ -559,7 +559,7 @@ fn tempo_field(
         ui.label(
             egui::RichText::new(label.into())
                 .size(crate::theme::SMALL_FONT)
-                .color(crate::theme::TEXT_LABEL),
+                .color(crate::theme::text_label()),
         );
         let is_editing = ui.ctx().memory(|m| m.has_focus(id));
         let mut text: String = ui.ctx().data(|d| d.get_temp(buf_id).unwrap_or_default());

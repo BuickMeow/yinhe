@@ -25,7 +25,7 @@ pub(crate) fn show_viewport(ctx: &egui::Context, progress: SharedProgress) -> bo
             let mut close = close_requested;
             egui::CentralPanel::default()
                 .frame(egui::Frame {
-                    fill: crate::theme::APP_BG,
+                    fill: crate::theme::app_bg(),
                     ..Default::default()
                 })
                 .show(vctx, |ui| {
@@ -70,12 +70,12 @@ pub(crate) fn show_viewport(ctx: &egui::Context, progress: SharedProgress) -> bo
                                         ui.label(
                                             egui::RichText::new(&stage.label)
                                                 .size(crate::theme::BODY_FONT)
-                                                .color(crate::theme::TEXT_DIM),
+                                                .color(crate::theme::text_dim()),
                                         );
                                         ui.label(
                                             egui::RichText::new(t!("dialog.loading.waiting"))
                                                 .size(crate::theme::SMALL_LABEL_FONT)
-                                                .color(crate::theme::TEXT_DIM),
+                                                .color(crate::theme::text_dim()),
                                         );
                                     } else {
                                         ui.add(
@@ -93,7 +93,7 @@ pub(crate) fn show_viewport(ctx: &egui::Context, progress: SharedProgress) -> bo
                                     ui.label(
                                         egui::RichText::new(&stage.detail)
                                             .size(crate::theme::SMALL_LABEL_FONT)
-                                            .color(crate::theme::TEXT_LABEL),
+                                            .color(crate::theme::text_label()),
                                     );
                                 }
                             }

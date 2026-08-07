@@ -69,7 +69,7 @@ pub(super) fn show_track_info(
             )
             .strong()
             .size(crate::theme::PANEL_TITLE_FONT)
-            .color(crate::theme::TEXT_PRIMARY),
+            .color(crate::theme::text_primary()),
         );
         ui.add_space(2.0);
 
@@ -102,7 +102,7 @@ pub(super) fn show_track_info(
             ui.label(
                 egui::RichText::new(t!("track.total_notes").as_ref())
                     .size(crate::theme::SMALL_FONT)
-                    .color(crate::theme::TEXT_LABEL),
+                    .color(crate::theme::text_label()),
             );
             ui.label(
                 egui::RichText::new(format!("{}", total_notes)).size(crate::theme::SMALL_FONT),
@@ -112,7 +112,7 @@ pub(super) fn show_track_info(
             ui.label(
                 egui::RichText::new(t!("track.total_events").as_ref())
                     .size(crate::theme::SMALL_FONT)
-                    .color(crate::theme::TEXT_LABEL),
+                    .color(crate::theme::text_label()),
             );
             ui.label(
                 egui::RichText::new(format!("{}", total_events)).size(crate::theme::SMALL_FONT),
@@ -122,7 +122,7 @@ pub(super) fn show_track_info(
         ui.label(
             egui::RichText::new(t!("track.multi_select_hint").as_ref())
                 .size(crate::theme::SMALL_FONT)
-                .color(crate::theme::TEXT_LABEL),
+                .color(crate::theme::text_label()),
         );
 
         ui.add_space(8.0);
@@ -155,13 +155,13 @@ pub(super) fn show_track_info(
             egui::RichText::new(t!("track.conductor").as_ref())
                 .strong()
                 .size(crate::theme::PANEL_TITLE_FONT)
-                .color(crate::theme::TEXT_PRIMARY),
+                .color(crate::theme::text_primary()),
         );
         ui.add_space(2.0);
         ui.label(
             egui::RichText::new(t!("track.conductor_hint").as_ref())
                 .size(crate::theme::SMALL_FONT)
-                .color(crate::theme::TEXT_LABEL),
+                .color(crate::theme::text_label()),
         );
         ui.add_space(8.0);
 
@@ -170,7 +170,7 @@ pub(super) fn show_track_info(
                 ui.label(t!("track.song_title").as_ref());
                 ui.label(
                     egui::RichText::new(&doc.data.model.meta.name)
-                        .color(crate::theme::TEXT_BRIGHT)
+                        .color(crate::theme::text_bright())
                         .size(crate::theme::SUB_TITLE_FONT),
                 );
             });
@@ -181,7 +181,7 @@ pub(super) fn show_track_info(
             ui.label(t!("track.tempo_count").as_ref());
             ui.label(
                 egui::RichText::new(format!("{}", doc.data.model.conductor.tempo.events.len()))
-                    .color(crate::theme::TEXT_SECONDARY)
+                    .color(crate::theme::text_secondary())
                     .size(crate::theme::SUB_TITLE_FONT),
             );
         });
@@ -189,7 +189,7 @@ pub(super) fn show_track_info(
             ui.label(t!("track.timesig_count").as_ref());
             ui.label(
                 egui::RichText::new(format!("{}", doc.data.model.conductor.time_sig.len()))
-                    .color(crate::theme::TEXT_SECONDARY)
+                    .color(crate::theme::text_secondary())
                     .size(crate::theme::SUB_TITLE_FONT),
             );
         });
@@ -413,9 +413,9 @@ pub(super) fn show_track_info(
         // 静音：始终显示 ICON_VOLUME_OFF + 文字，颜色区分激活状态
         // 图标走 material-icons 家族（否则 PUA 码点被 Pretendard/MiSans 抢占）
         let mute_color = if muted {
-            crate::theme::MUTE_ACTIVE
+            crate::theme::mute_active()
         } else {
-            crate::theme::TEXT_FAINT
+            crate::theme::text_faint()
         };
         let r1 = ui.add(
             egui::Button::new(crate::widgets::icon_text::icon_text(
@@ -431,9 +431,9 @@ pub(super) fn show_track_info(
 
         // 独奏：始终显示 ICON_HEADPHONES + 文字，颜色区分激活状态
         let solo_color = if soloed {
-            crate::theme::SOLO_ACTIVE
+            crate::theme::solo_active()
         } else {
-            crate::theme::TEXT_FAINT
+            crate::theme::text_faint()
         };
         let r2 = ui.add(
             egui::Button::new(crate::widgets::icon_text::icon_text(
@@ -475,7 +475,7 @@ pub(super) fn show_track_info(
         ui.label(
             egui::RichText::new(t!("track.note_count").as_ref())
                 .size(crate::theme::SMALL_FONT)
-                .color(crate::theme::TEXT_LABEL),
+                .color(crate::theme::text_label()),
         );
         ui.label(egui::RichText::new(format!("{}", ti.note_count)).size(crate::theme::SMALL_FONT));
     });
@@ -483,7 +483,7 @@ pub(super) fn show_track_info(
         ui.label(
             egui::RichText::new(t!("track.event_count").as_ref())
                 .size(crate::theme::SMALL_FONT)
-                .color(crate::theme::TEXT_LABEL),
+                .color(crate::theme::text_label()),
         );
         ui.label(egui::RichText::new(format!("{}", ti.event_count)).size(crate::theme::SMALL_FONT));
     });
@@ -495,7 +495,7 @@ pub(super) fn show_track_info(
             ui.label(
                 egui::RichText::new(t!("track.program").as_ref())
                     .size(crate::theme::SMALL_FONT)
-                    .color(crate::theme::TEXT_LABEL),
+                    .color(crate::theme::text_label()),
             );
             ui.label(egui::RichText::new(format!("PC {}", pc)).size(crate::theme::SMALL_FONT));
         });

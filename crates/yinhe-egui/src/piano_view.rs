@@ -669,7 +669,7 @@ pub fn show(
                     egui::pos2(cx, content_rect.min.y),
                     egui::pos2(cx, content_rect.max.y),
                 ],
-                egui::Stroke::new(crate::theme::CURSOR_WIDTH, crate::theme::CURSOR_COLOR),
+                egui::Stroke::new(crate::theme::CURSOR_WIDTH, crate::theme::cursor_color()),
             );
         }
     }
@@ -690,8 +690,8 @@ pub fn show(
             ppq,
             bar_line_data,
             "sel_drag",
-            crate::theme::MARQUEE_COLOR,
-            crate::theme::MARQUEE_COLOR,
+            crate::theme::marquee_color(),
+            crate::theme::marquee_color(),
             vertical,
         );
 
@@ -728,8 +728,8 @@ pub fn show(
                         ui.painter(),
                         music_rect,
                         shifted,
-                        crate::theme::MARQUEE_COLOR,
-                        crate::theme::MARQUEE_COLOR,
+                        crate::theme::marquee_color(),
+                        crate::theme::marquee_color(),
                     );
                 }
             }
@@ -893,7 +893,7 @@ pub fn show(
                 ),
             );
             ui.painter()
-                .rect_filled(sb_left_blank, 0.0, theme::SCROLLBAR_BG);
+                .rect_filled(sb_left_blank, 0.0, theme::scrollbar_bg());
             ui.scope_builder(egui::UiBuilder::new().max_rect(sb_left_blank), |ui| {
                 ui.horizontal_centered(|ui| {
                     let mut count = ctx.panels.len();

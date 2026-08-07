@@ -39,7 +39,7 @@ pub(crate) fn show_progress_viewport(
             let mut close = close_requested;
             egui::CentralPanel::default()
                 .frame(egui::Frame {
-                    fill: crate::theme::APP_BG,
+                    fill: crate::theme::app_bg(),
                     ..Default::default()
                 })
                 .show(vctx, |ui| {
@@ -111,7 +111,7 @@ pub(crate) fn show_progress_viewport(
                                     ui.label(
                                         egui::RichText::new(&state.status)
                                             .size(crate::theme::BODY_FONT)
-                                            .color(crate::theme::TEXT_MUTED),
+                                            .color(crate::theme::text_muted()),
                                     );
                                 }
                             });
@@ -156,7 +156,7 @@ pub(crate) fn show_completed_viewport(
             }
             egui::CentralPanel::default()
                 .frame(egui::Frame {
-                    fill: crate::theme::APP_BG,
+                    fill: crate::theme::app_bg(),
                     ..Default::default()
                 })
                 .show(vctx, |ui| {
@@ -270,7 +270,7 @@ pub(crate) fn show_settings_viewport(
             }
             egui::CentralPanel::default()
                 .frame(egui::Frame {
-                    fill: crate::theme::APP_BG,
+                    fill: crate::theme::app_bg(),
                     ..Default::default()
                 })
                 .show(vctx, |ui| {

@@ -35,7 +35,7 @@ pub(crate) fn show_viewport(
             let mut close = close_requested;
             egui::CentralPanel::default()
                 .frame(egui::Frame {
-                    fill: crate::theme::APP_BG,
+                    fill: crate::theme::app_bg(),
                     ..Default::default()
                 })
                 .show(vctx, |ui| {
@@ -67,7 +67,7 @@ pub(crate) fn show_viewport(
                                         ui.label(
                                             egui::RichText::new(&state.label)
                                                 .size(crate::theme::SMALL_FONT)
-                                                .color(crate::theme::TEXT_MUTED),
+                                                .color(crate::theme::text_muted()),
                                         );
                                     }
                                 },

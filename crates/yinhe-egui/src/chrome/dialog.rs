@@ -70,7 +70,7 @@ pub(crate) fn content_with_bottom_buttons(
 /// hover 时红色底 + 图标变白，其余灰色。
 pub(crate) fn paint_close_button(painter: &egui::Painter, rect: egui::Rect, hovered: bool) {
     if hovered {
-        painter.rect_filled(rect, 4.0, crate::theme::DANGER_HOVER);
+        painter.rect_filled(rect, 4.0, crate::theme::danger_hover());
     }
     painter.text(
         rect.center(),
@@ -81,9 +81,9 @@ pub(crate) fn paint_close_button(painter: &egui::Painter, rect: egui::Rect, hove
             egui_material_icons::icons::ICON_CLOSE.font_family(),
         ),
         if hovered {
-            crate::theme::HOVER_TEXT
+            crate::theme::hover_text()
         } else {
-            crate::theme::TEXT_MUTED
+            crate::theme::text_muted()
         },
     );
 }
@@ -108,7 +108,7 @@ pub(crate) fn title_bar(ui: &mut egui::Ui, title: &str, close: &mut bool) {
     ui.painter().rect_filled(
         egui::Rect::from_min_size(bar_rect.min, egui::vec2(bar_rect.max.x, height)),
         0.0,
-        crate::theme::APP_BG,
+        crate::theme::app_bg(),
     );
 
     // ── Close button (right side, non-macOS only) ──
@@ -134,7 +134,7 @@ pub(crate) fn title_bar(ui: &mut egui::Ui, title: &str, close: &mut bool) {
         egui::Align2::CENTER_CENTER,
         title,
         egui::FontId::proportional(crate::theme::SUB_TITLE_FONT),
-        crate::theme::TEXT_BRIGHT,
+        crate::theme::text_bright(),
     );
 
     // ── Drag region (both platforms) ──

@@ -180,7 +180,7 @@ pub fn show(
     ui.scope_builder(egui::UiBuilder::new().max_rect(tp_rect), |ui| {
         ui.set_clip_rect(tp_rect);
         ui.painter()
-            .rect_filled(ui.max_rect(), 0.0, crate::theme::APP_BG);
+            .rect_filled(ui.max_rect(), 0.0, crate::theme::app_bg());
 
         arr_view.base.track_panel_scroll_y = arr_view.base.scroll_y;
 
@@ -474,9 +474,9 @@ pub fn show(
 
         use egui_material_icons::icons::ICON_ADD;
         let icon_color = if hovered {
-            crate::theme::HOVER_TEXT
+            crate::theme::hover_text()
         } else {
-            crate::theme::TEXT_MUTED
+            crate::theme::text_muted()
         };
         ui.painter().text(
             btn_rect.center(),

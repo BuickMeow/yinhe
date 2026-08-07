@@ -91,7 +91,7 @@ impl eframe::App for App {
 
         // ── Full-viewport background ──
         ui.painter()
-            .rect_filled(ui.ctx().viewport_rect(), 0.0, crate::theme::APP_BG);
+            .rect_filled(ui.ctx().viewport_rect(), 0.0, crate::theme::app_bg());
 
         // ── Intercept native close (macOS traffic light, Alt+F4, etc.) ──
         let close_requested = ui.ctx().input(|i| i.viewport().close_requested());
@@ -236,10 +236,10 @@ impl eframe::App for App {
         ui.ctx().set_visuals({
             let mut visuals = egui::Visuals::dark();
             // 弹窗/面板背景色统一为程序背景色（egui 默认 gray(27) 与主题不符）
-            visuals.window_fill = crate::theme::APP_BG;
-            visuals.panel_fill = crate::theme::APP_BG;
+            visuals.window_fill = crate::theme::app_bg();
+            visuals.panel_fill = crate::theme::app_bg();
             // 选中高亮色统一为 ROW_SELECTED_BG
-            visuals.selection.bg_fill = crate::theme::ROW_SELECTED_BG;
+            visuals.selection.bg_fill = crate::theme::row_selected_bg();
             visuals
         });
 

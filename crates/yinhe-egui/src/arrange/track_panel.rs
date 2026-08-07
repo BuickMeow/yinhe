@@ -136,7 +136,7 @@ pub(crate) fn show(
                 egui::Align2::LEFT_CENTER,
                 &track_num_text,
                 font.clone(),
-                crate::theme::TEXT_PRIMARY,
+                crate::theme::text_primary(),
             );
             let badge_text = if is_conductor {
                 "Master".to_string()
@@ -159,7 +159,7 @@ pub(crate) fn show(
                 egui::Align2::LEFT_CENTER,
                 &badge_text,
                 font.clone(),
-                crate::theme::TEXT_PRIMARY,
+                crate::theme::text_primary(),
             );
 
             let name = &ti.name;
@@ -169,7 +169,7 @@ pub(crate) fn show(
                 egui::Align2::LEFT_CENTER,
                 name,
                 name_font,
-                crate::theme::TEXT_PRIMARY,
+                crate::theme::text_primary(),
             );
 
             if !is_conductor {
@@ -193,7 +193,7 @@ pub(crate) fn show(
                     m_rect,
                     "M",
                     muted,
-                    crate::theme::MUTE_ACTIVE,
+                    crate::theme::mute_active(),
                     egui::Id::new(("track_btn_m", idx)),
                 );
                 let s_resp = draw_inline_button(
@@ -202,7 +202,7 @@ pub(crate) fn show(
                     s_rect,
                     "S",
                     soloed,
-                    crate::theme::SOLO_ACTIVE,
+                    crate::theme::solo_active(),
                     egui::Id::new(("track_btn_s", idx)),
                 );
 
@@ -234,7 +234,7 @@ pub(crate) fn show(
                     egui::Align2::CENTER_CENTER,
                     ICON_EDIT.codepoint,
                     egui::FontId::new(crate::theme::ICON_FONT, ICON_EDIT.font_family()),
-                    crate::theme::TEXT_BRIGHT,
+                    crate::theme::text_bright(),
                 );
             }
         } else {
@@ -244,7 +244,7 @@ pub(crate) fn show(
                 egui::Align2::LEFT_CENTER,
                 &track_num_text,
                 font,
-                crate::theme::TEXT_PRIMARY,
+                crate::theme::text_primary(),
             );
 
             let name = &ti.name;
@@ -254,7 +254,7 @@ pub(crate) fn show(
                 egui::Align2::LEFT_CENTER,
                 name,
                 name_font,
-                crate::theme::TEXT_PRIMARY,
+                crate::theme::text_primary(),
             );
         }
     }
@@ -441,7 +441,7 @@ pub(crate) fn show(
             let x2 = panel_rect.max.x - 4.0;
             painter.line_segment(
                 [egui::pos2(x1, y), egui::pos2(x2, y)],
-                egui::Stroke::new(3.0, crate::theme::ACCENT_ACTIVE),
+                egui::Stroke::new(3.0, crate::theme::accent_active()),
             );
         }
 
@@ -535,11 +535,11 @@ fn draw_inline_button(
         (f, egui::Color32::BLACK)
     } else {
         let f = if hovered {
-            crate::theme::BTN_BG_HOVER
+            crate::theme::btn_bg_hover()
         } else {
-            crate::theme::BTN_BG
+            crate::theme::btn_bg()
         };
-        (f, crate::theme::TEXT_SECONDARY)
+        (f, crate::theme::text_secondary())
     };
 
     painter.rect_filled(rect, 3.0, fill);

@@ -224,6 +224,8 @@ impl App {
 
         let audio_settings = crate::audio_settings::load_audio_settings();
         rust_i18n::set_locale(&audio_settings.locale);
+        // 主题初始化（阶段 3 起改为读取设置的 theme_base）
+        crate::theme::set_theme(yinhe_theme::base::BaseColors::DARK);
         let last_automation_density = audio_settings.automation_event_density;
 
         let mut app = Self {

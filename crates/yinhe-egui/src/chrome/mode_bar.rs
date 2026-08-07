@@ -46,9 +46,9 @@ fn mode_button(ui: &mut egui::Ui, label: &str, is_selected: bool, on_click: impl
             egui::RichText::new(label)
                 .size(crate::theme::MODE_LABEL_FONT)
                 .color(if is_selected {
-                    crate::theme::ACCENT_ACTIVE
+                    crate::theme::accent_active()
                 } else {
-                    crate::theme::MODE_BAR_TEXT
+                    crate::theme::mode_bar_text()
                 }),
         )
         .sense(egui::Sense::click())
@@ -74,9 +74,9 @@ fn right_icon_button(
     on_click: impl FnOnce(),
 ) -> bool {
     let color = if is_active {
-        crate::theme::ACCENT_ACTIVE
+        crate::theme::accent_active()
     } else {
-        crate::theme::MODE_BAR_TEXT
+        crate::theme::mode_bar_text()
     };
     let resp = ui.add(
         egui::Label::new(icon.rich_text().size(crate::theme::ICON_FONT).color(color))
@@ -106,7 +106,7 @@ fn metric_with_value_sz(ui: &mut egui::Ui, label: &str, value: &str, value_sz: f
         egui::Label::new(
             egui::RichText::new(label)
                 .size(crate::theme::MODE_LABEL_FONT)
-                .color(crate::theme::MODE_BAR_TEXT),
+                .color(crate::theme::mode_bar_text()),
         )
         .selectable(false),
     );
@@ -114,7 +114,7 @@ fn metric_with_value_sz(ui: &mut egui::Ui, label: &str, value: &str, value_sz: f
         egui::Label::new(
             egui::RichText::new(value)
                 .size(value_sz)
-                .color(crate::theme::ACCENT_ACTIVE),
+                .color(crate::theme::accent_active()),
         )
         .selectable(false),
     );
@@ -137,7 +137,7 @@ fn metric_clickable_with_value_sz(
         egui::Label::new(
             egui::RichText::new(label)
                 .size(crate::theme::MODE_LABEL_FONT)
-                .color(crate::theme::MODE_BAR_TEXT),
+                .color(crate::theme::mode_bar_text()),
         )
         .selectable(false),
     );
@@ -145,7 +145,7 @@ fn metric_clickable_with_value_sz(
         egui::Label::new(
             egui::RichText::new(value)
                 .size(value_sz)
-                .color(crate::theme::ACCENT_ACTIVE),
+                .color(crate::theme::accent_active()),
         )
         .sense(egui::Sense::click())
         .selectable(false),
@@ -171,7 +171,7 @@ pub fn show(
     egui::Panel::bottom("bottom_bar")
         .frame(egui::Frame {
             inner_margin: egui::Margin::symmetric(8, 6),
-            fill: crate::theme::APP_BG,
+            fill: crate::theme::app_bg(),
             ..Default::default()
         })
         .show(ui, |ui| {
@@ -210,9 +210,9 @@ pub fn show(
                     ui.add_space(6.0);
 
                     let piano_color = if *show_pianoroll_in_arrange {
-                        crate::theme::ACCENT_ACTIVE
+                        crate::theme::accent_active()
                     } else {
-                        crate::theme::MODE_BAR_TEXT
+                        crate::theme::mode_bar_text()
                     };
                     let piano_resp = ui.add(
                         egui::Label::new(
@@ -354,7 +354,7 @@ pub fn show(
                         egui::Align2::LEFT_CENTER,
                         text,
                         egui::FontId::proportional(crate::theme::MODE_LABEL_FONT),
-                        crate::theme::MODE_BAR_TEXT,
+                        crate::theme::mode_bar_text(),
                     );
                 }
             });

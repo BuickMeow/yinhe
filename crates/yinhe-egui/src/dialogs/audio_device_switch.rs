@@ -54,7 +54,7 @@ pub(crate) fn show_viewport(
             }
             egui::CentralPanel::default()
                 .frame(egui::Frame {
-                    fill: crate::theme::APP_BG,
+                    fill: crate::theme::app_bg(),
                     ..Default::default()
                 })
                 .show(vctx, |ui| {
@@ -112,7 +112,7 @@ pub(crate) fn show_viewport(
                                                             t!("dialog.audio_switch.no_devices")
                                                                 .as_ref(),
                                                         )
-                                                        .color(crate::theme::TEXT_FAINT),
+                                                        .color(crate::theme::text_faint()),
                                                     );
                                                 });
                                             }
@@ -141,7 +141,7 @@ pub(crate) fn show_viewport(
                                         ui.add_space(8.0);
                                         ui.label(
                                             egui::RichText::new(err)
-                                                .color(crate::theme::DANGER_TEXT),
+                                                .color(crate::theme::danger_text()),
                                         );
                                     }
 

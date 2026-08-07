@@ -26,7 +26,7 @@ pub(crate) fn show_viewport(ctx: &egui::Context, open: &mut bool, mem_mb: f64, m
             }
             egui::CentralPanel::default()
                 .frame(egui::Frame {
-                    fill: crate::theme::APP_BG,
+                    fill: crate::theme::app_bg(),
                     ..Default::default()
                 })
                 .show(vctx, |ui| {
@@ -59,7 +59,7 @@ pub(crate) fn show_viewport(ctx: &egui::Context, open: &mut bool, mem_mb: f64, m
                                             egui::RichText::new(
                                                 t!("dialog.memory.not_enabled").as_ref(),
                                             )
-                                            .color(crate::theme::TEXT_FAINT),
+                                            .color(crate::theme::text_faint()),
                                         );
                                     }
                                     ui.label(

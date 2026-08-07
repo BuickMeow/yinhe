@@ -26,7 +26,7 @@ pub(crate) fn show_viewport(ctx: &egui::Context, error: &mut Option<String>) {
             }
             egui::CentralPanel::default()
                 .frame(egui::Frame {
-                    fill: crate::theme::APP_BG,
+                    fill: crate::theme::app_bg(),
                     ..Default::default()
                 })
                 .show(vctx, |ui| {

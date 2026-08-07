@@ -278,7 +278,7 @@ pub(super) fn show_position_popup(
                     ui.label(
                         egui::RichText::new("小节")
                             .size(crate::theme::SMALL_FONT)
-                            .color(crate::theme::TEXT_LABEL),
+                            .color(crate::theme::text_label()),
                     );
                     ui.add(
                         crate::widgets::numeric_input::decimal_drag_value(&mut bar_f)
@@ -289,7 +289,7 @@ pub(super) fn show_position_popup(
                     ui.label(
                         egui::RichText::new("/")
                             .size(crate::theme::SMALL_FONT)
-                            .color(crate::theme::TEXT_LABEL),
+                            .color(crate::theme::text_label()),
                     );
                     ui.add(
                         crate::widgets::numeric_input::decimal_drag_value(&mut tib_f)

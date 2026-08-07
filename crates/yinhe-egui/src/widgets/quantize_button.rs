@@ -27,14 +27,14 @@ pub fn show(ui: &mut egui::Ui, ctx: QuantizeBtnCtx) -> Option<QuantizePreset> {
 
     // 背景矩形：与 ruler 带对齐
     ui.painter()
-        .rect_filled(corner_rect, 0.0, crate::theme::RULER_BG);
+        .rect_filled(corner_rect, 0.0, crate::theme::ruler_bg());
     // 右侧分隔线（与 ruler 对齐）
     ui.painter().line_segment(
         [
             egui::pos2(corner_rect.max.x, corner_rect.min.y),
             egui::pos2(corner_rect.max.x, corner_rect.max.y),
         ],
-        egui::Stroke::new(1.0, crate::theme::RULER_DIVIDER),
+        egui::Stroke::new(1.0, crate::theme::ruler_divider()),
     );
 
     let btn_size = 20.0;
@@ -44,9 +44,9 @@ pub fn show(ui: &mut egui::Ui, ctx: QuantizeBtnCtx) -> Option<QuantizePreset> {
     let hovered = btn_resp.hovered();
 
     let icon_color = if hovered {
-        crate::theme::HOVER_TEXT
+        crate::theme::hover_text()
     } else {
-        crate::theme::TEXT_MUTED
+        crate::theme::text_muted()
     };
     ui.painter().text(
         btn_rect.center(),

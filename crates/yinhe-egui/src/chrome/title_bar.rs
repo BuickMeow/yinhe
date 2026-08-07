@@ -24,7 +24,7 @@ pub(crate) fn show(
     egui::Panel::top("title_bar")
         .show_separator_line(false)
         .frame(egui::Frame {
-            fill: crate::theme::APP_BG,
+            fill: crate::theme::app_bg(),
             inner_margin: egui::Margin::ZERO,
             outer_margin: egui::Margin::ZERO,
             ..Default::default()
@@ -108,7 +108,7 @@ pub(crate) fn show(
                 egui::Align2::CENTER_CENTER,
                 "Yinhe MIDI Editor",
                 egui::FontId::proportional(crate::theme::SUB_TITLE_FONT),
-                crate::theme::TEXT_SECONDARY,
+                crate::theme::text_secondary(),
             );
 
             let mut tab_x = bar_rect.min.x + left_padding - *tab_scroll_offset;
@@ -132,11 +132,11 @@ pub(crate) fn show(
                 // Tab background — active / hover / inactive
                 let is_hovered = tab_rect.contains(hover_pos) && !*is_active;
                 let bg = if *is_active {
-                    crate::theme::TAB_ACTIVE_BG
+                    crate::theme::tab_active_bg()
                 } else if is_hovered {
-                    crate::theme::TAB_HOVER_BG
+                    crate::theme::tab_hover_bg()
                 } else {
-                    crate::theme::TAB_INACTIVE_BG
+                    crate::theme::tab_inactive_bg()
                 };
                 painter.rect_filled(tab_rect, 4.0, bg);
 
@@ -149,9 +149,9 @@ pub(crate) fn show(
 
                 // Tab text with ellipsis truncation
                 let text_color = if *is_active {
-                    crate::theme::TEXT_PRIMARY
+                    crate::theme::text_primary()
                 } else {
-                    crate::theme::TEXT_SECONDARY
+                    crate::theme::text_secondary()
                 };
                 let text_to_draw = {
                     let full_w = painter
@@ -186,7 +186,7 @@ pub(crate) fn show(
                     painter.circle_filled(
                         egui::pos2(text_x + 4.0, tab_rect.center().y),
                         4.0,
-                        crate::theme::TAB_DIRTY_DOT,
+                        crate::theme::tab_dirty_dot(),
                     );
                     text_x += dirty_dot_w;
                 }
@@ -356,16 +356,16 @@ fn paint_window_buttons(
     // ── Close button (red on hover) ──
     let close_hover = close_rect.contains(ui.input(|i| i.pointer.hover_pos()).unwrap_or_default());
     let close_bg = if close_hover {
-        crate::theme::DANGER
+        crate::theme::danger()
     } else {
         egui::Color32::TRANSPARENT
     };
     painter.rect_filled(*close_rect, 0.0, close_bg);
     // X icon
     let x_color = if close_hover {
-        crate::theme::HOVER_TEXT
+        crate::theme::hover_text()
     } else {
-        crate::theme::TEXT_DIM
+        crate::theme::text_dim()
     };
     let cx = close_rect.center();
     let x_size = 8.0;
@@ -380,15 +380,15 @@ fn paint_window_buttons(
     // ── Maximize button ──
     let max_hover = maximize_rect.contains(ui.input(|i| i.pointer.hover_pos()).unwrap_or_default());
     let max_bg = if max_hover {
-        crate::theme::BORDER_DIM
+        crate::theme::border_dim()
     } else {
         egui::Color32::TRANSPARENT
     };
     painter.rect_filled(*maximize_rect, 0.0, max_bg);
     let max_color = if max_hover {
-        crate::theme::HOVER_TEXT
+        crate::theme::hover_text()
     } else {
-        crate::theme::TEXT_DIM
+        crate::theme::text_dim()
     };
     let mcx = maximize_rect.center();
     let m_size = 9.0;
@@ -411,15 +411,15 @@ fn paint_window_buttons(
     // ── Minimize button ──
     let min_hover = minimize_rect.contains(ui.input(|i| i.pointer.hover_pos()).unwrap_or_default());
     let min_bg = if min_hover {
-        crate::theme::BORDER_DIM
+        crate::theme::border_dim()
     } else {
         egui::Color32::TRANSPARENT
     };
     painter.rect_filled(*minimize_rect, 0.0, min_bg);
     let min_color = if min_hover {
-        crate::theme::HOVER_TEXT
+        crate::theme::hover_text()
     } else {
-        crate::theme::TEXT_DIM
+        crate::theme::text_dim()
     };
     let mn_cx = minimize_rect.center();
     let line_y = mn_cx.y;

@@ -46,7 +46,7 @@ pub(crate) fn show_viewport(ctx: &egui::Context, old: u32, new: u32) -> PpqResca
             }
             egui::CentralPanel::default()
                 .frame(egui::Frame {
-                    fill: crate::theme::APP_BG,
+                    fill: crate::theme::app_bg(),
                     ..Default::default()
                 })
                 .show(vctx, |ui| {
@@ -78,7 +78,7 @@ pub(crate) fn show_viewport(ctx: &egui::Context, old: u32, new: u32) -> PpqResca
                                     ui.add_space(6.0);
                                     ui.label(
                                         egui::RichText::new(t!("dialog.ppq_rescale.hint").as_ref())
-                                            .color(crate::theme::TEXT_FAINT)
+                                            .color(crate::theme::text_faint())
                                             .size(crate::theme::SMALL_FONT),
                                     );
                                 },

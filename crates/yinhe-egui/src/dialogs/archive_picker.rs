@@ -147,7 +147,7 @@ pub(crate) fn show(
                     eframe::egui::RichText::new(ICON_SEARCH.codepoint)
                         .family(ICON_SEARCH.font_family())
                         .size(crate::theme::ICON_FONT)
-                        .color(crate::theme::TEXT_LABEL),
+                        .color(crate::theme::text_label()),
                 );
                 ui.add(
                     eframe::egui::TextEdit::singleline(&mut picker.search_query)
@@ -171,7 +171,7 @@ pub(crate) fn show(
                         let is_selected = picker.selected_idx == Some(entry_idx);
 
                         let bg = if is_selected {
-                            crate::theme::ROW_SELECTED_BG
+                            crate::theme::row_selected_bg()
                         } else {
                             eframe::egui::Color32::TRANSPARENT
                         };
@@ -237,7 +237,7 @@ pub(crate) fn show(
                             eframe::egui::Align2::RIGHT_CENTER,
                             &size_text,
                             eframe::egui::FontId::proportional(crate::theme::SMALL_FONT),
-                            crate::theme::TEXT_LABEL,
+                            crate::theme::text_label(),
                         );
                     }
                 });
@@ -250,7 +250,7 @@ pub(crate) fn show(
                         t!("dialog.archive.file_count", n = picker.filtered.len()).as_ref(),
                     )
                     .size(crate::theme::BODY_FONT)
-                    .color(crate::theme::TEXT_LABEL),
+                    .color(crate::theme::text_label()),
                 );
                 ui.with_layout(
                     eframe::egui::Layout::right_to_left(eframe::egui::Align::Center),
@@ -319,7 +319,7 @@ pub(crate) fn show_viewport(
             let vctx_cmd = vctx.clone();
             eframe::egui::CentralPanel::default()
                 .frame(eframe::egui::Frame {
-                    fill: crate::theme::APP_BG,
+                    fill: crate::theme::app_bg(),
                     ..Default::default()
                 })
                 .show(vctx, |ui| {
@@ -431,7 +431,7 @@ pub(crate) fn show_password_prompt_viewport(
             let vctx_cmd = vctx.clone();
             eframe::egui::CentralPanel::default()
                 .frame(eframe::egui::Frame {
-                    fill: crate::theme::APP_BG,
+                    fill: crate::theme::app_bg(),
                     ..Default::default()
                 })
                 .show(vctx, |ui| {
@@ -518,7 +518,7 @@ fn show_password_prompt(
                 ui.label(
                     eframe::egui::RichText::new(t!("dialog.archive.password_wrong").as_ref())
                         .size(crate::theme::BODY_FONT)
-                        .color(crate::theme::ERROR_TEXT),
+                        .color(crate::theme::error_text()),
                 );
             }
 

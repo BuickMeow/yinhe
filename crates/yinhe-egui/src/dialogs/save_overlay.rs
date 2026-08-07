@@ -33,7 +33,7 @@ pub(crate) fn show_viewport(ctx: &egui::Context, stage: YinProgressStage, fracti
             let mut close = false;
             egui::CentralPanel::default()
                 .frame(egui::Frame {
-                    fill: crate::theme::APP_BG,
+                    fill: crate::theme::app_bg(),
                     ..Default::default()
                 })
                 .show(vctx, |ui| {
