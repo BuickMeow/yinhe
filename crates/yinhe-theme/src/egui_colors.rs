@@ -52,12 +52,12 @@ pub const TAB_HOVER_BG: Color32 = Color32::from_rgb(48, 48, 52);
 // ── Close / danger hover ──
 pub const DANGER_HOVER: Color32 = Color32::from_rgb(200, 50, 50);
 
-// ── Time ruler colors ──
-pub const RULER_BG: Color32 = Color32::from_rgb(0x14, 0x14, 0x18);
+// ── Time ruler colors（背景与文字灰阶同源，为主题系统收敛色源） ──
+pub const RULER_BG: Color32 = APP_BG;
 pub const RULER_DIVIDER: Color32 = Color32::from_rgb(0x3A, 0x3A, 0x3F);
 pub const MEASURE_LABEL: Color32 = Color32::from_rgb(0xAA, 0xAA, 0xAF);
-pub const BEAT_LABEL: Color32 = Color32::from_rgb(0x77, 0x77, 0x7C);
-pub const SUB_BEAT_LABEL: Color32 = Color32::from_rgb(0x55, 0x55, 0x5A);
+pub const BEAT_LABEL: Color32 = TEXT_DIM; // (119,119,124)≈gray120
+pub const SUB_BEAT_LABEL: Color32 = TEXT_LABEL_DIM; // (85,85,90)≈gray90
 pub const TICK_LABEL: Color32 = Color32::from_rgb(0x44, 0x44, 0x49);
 
 // ── Grid line colors（pianoroll / automation 共用 pr_*，arrangement 用 ar_*）──
@@ -65,7 +65,7 @@ pub const TICK_LABEL: Color32 = Color32::from_rgb(0x44, 0x44, 0x49);
 pub const PR_MEASURE_LINE: Color32 = Color32::from_rgb(0x59, 0x59, 0x66); // (0.35,0.35,0.40,1.0)
 pub const PR_BEAT_LINE: Color32 = Color32::from_rgb(0x38, 0x38, 0x40); // (0.22,0.22,0.25,1.0)
 pub const PR_SUB_BEAT_LINE: Color32 = Color32::from_rgb(0x29, 0x29, 0x2E); // (0.16,0.16,0.18,1.0)
-pub const PR_TICK_LINE: Color32 = Color32::from_rgb(0x25, 0x25, 0x2A);
+pub const PR_TICK_LINE: Color32 = PR_SUB_BEAT_LINE; // (37,37,42)≈次拍线
 
 // ── Piano roll 横向：八度线 / 调号背景 ──
 /// 每个八度边界的横向细线（C 位置）。与 `PR_BEAT_LINE` 同值。
