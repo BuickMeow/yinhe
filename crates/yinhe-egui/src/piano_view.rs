@@ -926,7 +926,7 @@ pub fn show(
         ),
     );
 
-    // 水平滚动条：thumb 拖 = 平移（x）+ 垂直位移 → 垂直缩放（key 行高）
+    // 水平滚动条：thumb 拖 = 平移（x）+ 垂直位移 → x 轴缩放（tick 宽度）
     let sb_drag_dy = ui
         .push_id("piano_scrollbar", |ui| {
             crate::widgets::scrollbar::show(
@@ -942,8 +942,8 @@ pub fn show(
         .inner;
     if sb_drag_dy != 0.0 {
         let factor = 1.0 + sb_drag_dy * 0.005;
-        let anchor_y = sb_rect.center().y - content_rect.min.y;
-        view.zoom_around_y(anchor_y, factor, content_rect.height());
+        let anchor_x = sb_rect.center().x - content_rect.min.x;
+        view.zoom_around_x(anchor_x, factor);
         ui.ctx().request_repaint();
     }
 
@@ -958,7 +958,7 @@ pub fn show(
         );
         let cell_min = content_rect.height() / 128.0;
         let cell_max = content_rect.height() / 12.0;
-        // 垂直滚动条：thumb 拖 = 平移（y）+ 水平位移 → 水平缩放（tick 宽度）
+        // 垂直滚动条：thumb 拖 = 平移（y）+ 水平位移 → y 轴缩放（key 行高）
         let vsb_drag_dx = ui
             .push_id("piano_vscroll", |ui| {
                 crate::widgets::scrollbar::show_vertical(
@@ -976,25 +976,25 @@ pub fn show(
             .inner;
         if vsb_drag_dx != 0.0 {
             let factor = 1.0 + vsb_drag_dx * 0.005;
-            let anchor_x = vsb_rect.center().x - content_rect.min.x;
-            view.zoom_around_x(anchor_x, factor);
+            let anchor_y = vsb_rect.center().y - content_rect.min.y;
+            view.zoom_around_y(anchor_y, factor, content_rect.height());
             ui.ctx().request_repaint();
         }
 
-        // ── 滚动条滚轮缩放：垂直滚动条上滚轮 = 水平缩放；水平滚动条上滚轮 = 垂直缩放 ──
+        // ── 滚动条滚轮缩放：水平滚动条滚轮 = x 轴缩放；垂直滚动条滚轮 = y 轴缩放 ──
         if let Some(pos) = ui.input(|i| i.pointer.hover_pos()) {
             let scroll_y = ui.input(|i| i.smooth_scroll_delta.y);
             if scroll_y.abs() > 0.5 {
                 let factor = if scroll_y > 0.0 { 1.1 } else { 1.0 / 1.1 };
                 if vsb_rect.contains(pos) {
-                    // 垂直滚动条 → 水平缩放（锚定滚动条中心 x）
-                    let anchor_x = vsb_rect.center().x - content_rect.min.x;
-                    view.zoom_around_x(anchor_x, factor);
+                    // 垂直滚动条 → y 轴缩放（锚定滚动条中心 y）
+                    let anchor_y = vsb_rect.center().y - content_rect.min.y;
+                    view.zoom_around_y(anchor_y, factor, content_rect.height());
                     ui.ctx().request_repaint();
                 } else if sb_rect.contains(pos) {
-                    // 水平滚动条 → 垂直缩放（锚定滚动条中心 y）
-                    let anchor_y = sb_rect.center().y - content_rect.min.y;
-                    view.zoom_around_y(anchor_y, factor, content_rect.height());
+                    // 水平滚动条 → x 轴缩放（锚定滚动条中心 x）
+                    let anchor_x = sb_rect.center().x - content_rect.min.x;
+                    view.zoom_around_x(anchor_x, factor);
                     ui.ctx().request_repaint();
                 }
             }
