@@ -7,6 +7,19 @@ use crate::chrome::title_bar;
 use crate::chrome::mode_bar;
 use crate::chrome::transport_bar;
 
+// ── 透明度调试开关（YIN_TRANSPARENT=1）──
+/// 把主窗口背景改为全透明，露出桌面，用于检查各控件是否把自身背景画干净。
+fn transparent_bg() -> bool {
+    static E: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *E.get_or_init(|| {
+        let on = std::env::var("YIN_TRANSPARENT").as_deref() == Ok("1");
+        if on {
+            eprintln!("[yin_transparent] enabled (YIN_TRANSPARENT=1) — 主窗口背景全透明");
+        }
+        on
+    })
+}
+
 // ── Panic-safe take guard ──
 /// Restores a taken value back into its slot on drop, preventing data loss
 /// if a panic occurs between `std::mem::take` and the manual put-back.
@@ -82,6 +95,13 @@ impl eframe::App for App {
         }
     }
 
+    /// 背景清除色。eframe 默认清成半透明深灰 rgba(12,12,12,180)，会盖住透明窗口；
+    /// 这里统一清成全透明：正常模式下全视口的 app_bg 填充会盖住它，视觉不变；
+    /// YIN_TRANSPARENT=1 调试透明背景时则直接露出桌面。
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        [0.0, 0.0, 0.0, 0.0]
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let _ui_total_start = if yinhe_memtrace::perf_probe::enabled() {
             Some(std::time::Instant::now())
@@ -90,8 +110,11 @@ impl eframe::App for App {
         };
 
         // ── Full-viewport background ──
-        ui.painter()
-            .rect_filled(ui.ctx().viewport_rect(), 0.0, crate::theme::app_bg());
+        // YIN_TRANSPARENT=1 调试透明背景时跳过，露出桌面检查控件绘制
+        if !transparent_bg() {
+            ui.painter()
+                .rect_filled(ui.ctx().viewport_rect(), 0.0, crate::theme::app_bg());
+        }
 
         // ── Intercept native close (macOS traffic light, Alt+F4, etc.) ──
         let close_requested = ui.ctx().input(|i| i.viewport().close_requested());
