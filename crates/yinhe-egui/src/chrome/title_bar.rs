@@ -136,13 +136,13 @@ pub(crate) fn show(
                     && tab_rect
                         .contains(ui.input(|i| i.pointer.interact_pos()).unwrap_or_default());
                 let bg = if *is_active {
-                    crate::theme::tab_active_bg()
+                    crate::theme::control_selected_bg()
                 } else if pointer_down && is_hovered {
-                    crate::theme::pressed_color(crate::theme::tab_inactive_bg())
+                    crate::theme::pressed_color(crate::theme::control_bg())
                 } else if is_hovered {
-                    crate::theme::hover_color(crate::theme::tab_inactive_bg())
+                    crate::theme::hover_color(crate::theme::control_bg())
                 } else {
-                    crate::theme::tab_inactive_bg()
+                    crate::theme::control_bg()
                 };
                 painter.rect_filled(tab_rect, 4.0, bg);
 
@@ -380,7 +380,7 @@ fn paint_window_buttons(
     painter.rect_filled(*close_rect, 0.0, close_bg);
     // X icon
     let x_color = if close_hover {
-        crate::theme::hover_text()
+        crate::theme::contrast_fg()
     } else {
         crate::theme::text_dim()
     };
@@ -407,7 +407,7 @@ fn paint_window_buttons(
     };
     painter.rect_filled(*maximize_rect, 0.0, max_bg);
     let max_color = if max_hover {
-        crate::theme::hover_text()
+        crate::theme::contrast_fg()
     } else {
         crate::theme::text_dim()
     };
@@ -442,7 +442,7 @@ fn paint_window_buttons(
     };
     painter.rect_filled(*minimize_rect, 0.0, min_bg);
     let min_color = if min_hover {
-        crate::theme::hover_text()
+        crate::theme::contrast_fg()
     } else {
         crate::theme::text_dim()
     };

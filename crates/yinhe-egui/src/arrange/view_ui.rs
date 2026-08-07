@@ -186,7 +186,7 @@ pub fn show(
                 continue; // 奇数行 = 普通行（app_bg）
             }
             let y = rect.min.y + ArrangementView::lane_y_static(idx, scroll_y, lh);
-            let col = crate::theme::rgb_to_color32(theme.ar_lane_even);
+            let col = crate::theme::rgb_to_color32(theme.stripe);
             painter.rect_filled(
                 egui::Rect::from_min_size(
                     egui::pos2(rect.min.x + lb_w, y),
@@ -239,7 +239,7 @@ pub fn show(
             let cx = rect.min.x + cx_local;
             painter.line_segment(
                 [egui::pos2(cx, rect.min.y), egui::pos2(cx, rect.max.y)],
-                egui::Stroke::new(crate::theme::CURSOR_WIDTH, crate::theme::cursor_color()),
+                egui::Stroke::new(crate::theme::CURSOR_WIDTH, crate::theme::cursor_fg()),
             );
         }
     }
@@ -250,8 +250,8 @@ pub fn show(
             ui.painter(),
             rect,
             dr,
-            crate::theme::marquee_color(),
-            crate::theme::marquee_color(),
+            crate::theme::contrast_fg(),
+            crate::theme::contrast_fg(),
         );
     }
 
@@ -276,8 +276,8 @@ pub fn show(
             ui.painter(),
             rect,
             snapped,
-            crate::theme::marquee_color(),
-            crate::theme::marquee_color(),
+            crate::theme::contrast_fg(),
+            crate::theme::contrast_fg(),
         );
     }
 

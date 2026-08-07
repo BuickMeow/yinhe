@@ -296,7 +296,7 @@ pub(super) fn empty_state_add_button(ui: &mut egui::Ui, id_salt: &str) -> bool {
                 egui::Align2::CENTER_CENTER,
                 ICON_ADD.codepoint,
                 egui::FontId::new(crate::theme::ICON_FONT_XL, ICON_ADD.font_family()),
-                crate::theme::hover_text(),
+                crate::theme::contrast_fg(),
             );
         }
         if resp.clicked() {

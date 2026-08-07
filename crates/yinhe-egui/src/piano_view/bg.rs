@@ -92,8 +92,8 @@ fn paint_scale_background(
     let tick_end = tick_end.max(tick_start);
 
     // 调内/调外音统一用黑白键条纹（黑键行条纹色、白键行背景色）；根音行用蓝色高亮
-    let bk_color = crate::theme::pr_black_key_row();
-    let root_color = crate::theme::row_selected_bg().gamma_multiply(content_opacity);
+    let bk_color = crate::theme::stripe_bg();
+    let root_color = crate::theme::selected_bg().gamma_multiply(content_opacity);
     let ppt = view.base.pixels_per_tick;
     let scroll_x = view.base.scroll_x;
 
@@ -194,7 +194,7 @@ fn paint_black_key_rows(
         return;
     }
 
-    let bk_color = crate::theme::pr_black_key_row();
+    let bk_color = crate::theme::stripe_bg();
     for key in key_lo..=key_hi {
         if !yinhe_types::is_black_key(key) {
             continue;
@@ -220,7 +220,7 @@ fn paint_octave_lines(
     kh: f32,
     view: &PianoRollView,
 ) {
-    let octave_line = crate::theme::pr_beat_line();
+    let octave_line = crate::theme::grid_beat();
     let content_left = content_rect.min.x + kb_w;
     let bottom = 128.0 * kh - view.base.scroll_y;
     for key in (0u8..128).step_by(12) {

@@ -167,7 +167,7 @@ fn render_track_row(ui: &mut egui::Ui, model: &YinModel, idx: u16, state: &mut E
     );
 
     let row_bg = if is_selected {
-        crate::theme::row_selected_bg()
+        crate::theme::selected_bg()
     } else {
         egui::Color32::TRANSPARENT
     };
@@ -399,7 +399,7 @@ fn render_leaf_item(
 ) {
     let is_selected = state.selected_item.as_ref() == Some(&item);
     let bg = if is_selected {
-        crate::theme::row_selected_bg()
+        crate::theme::selected_bg()
     } else {
         egui::Color32::TRANSPARENT
     };

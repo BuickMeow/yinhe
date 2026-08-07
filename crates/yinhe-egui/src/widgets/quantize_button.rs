@@ -54,7 +54,7 @@ pub fn show(ui: &mut egui::Ui, ctx: QuantizeBtnCtx) -> Option<QuantizePreset> {
     }
 
     let icon_color = if hovered {
-        crate::theme::hover_text()
+        crate::theme::contrast_fg()
     } else {
         crate::theme::text_muted()
     };

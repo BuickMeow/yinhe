@@ -246,7 +246,7 @@ impl eframe::App for App {
             visuals.window_fill = crate::theme::app_bg();
             visuals.panel_fill = crate::theme::app_bg();
             // 选中高亮色统一为 ROW_SELECTED_BG
-            visuals.selection.bg_fill = crate::theme::row_selected_bg();
+            visuals.selection.bg_fill = crate::theme::selected_bg();
             // egui 原生控件（Button/ComboBox/Slider/Checkbox 等）三态统一：
             // inactive = btn_bg，hover/active 用统一增益
             let btn = crate::theme::btn_bg();

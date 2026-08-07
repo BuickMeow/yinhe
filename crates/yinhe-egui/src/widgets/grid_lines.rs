@@ -25,18 +25,18 @@ impl GridColors {
     /// Pianoroll 配色（automation 也用这套）。
     pub fn pianoroll() -> Self {
         Self {
-            measure: theme::pr_measure_line(),
-            beat: theme::pr_beat_line(),
-            sub_beat: Some(theme::pr_sub_beat_line()),
-            tick: Some(theme::pr_sub_beat_line()),
+            measure: theme::grid_measure(),
+            beat: theme::grid_beat(),
+            sub_beat: Some(theme::grid_sub_beat()),
+            tick: Some(theme::grid_sub_beat()),
         }
     }
 
     /// Arrangement 配色（无 sub_beat / tick 线）。
     pub fn arrangement() -> Self {
         Self {
-            measure: theme::ar_measure_line(),
-            beat: theme::ar_beat_line(),
+            measure: theme::grid_measure(),
+            beat: theme::grid_beat(),
             sub_beat: None,
             tick: None,
         }

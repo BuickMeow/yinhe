@@ -68,7 +68,7 @@ pub fn sf_list(ui: &mut egui::Ui, entries: &mut Vec<SfEntry>, salt: &str) -> boo
                 // ROW_SELECTED_BG；hover 用统一悬浮增益 ──
                 if is_selected {
                     ui.painter()
-                        .rect_filled(row_rect, 0.0, crate::theme::row_selected_bg());
+                        .rect_filled(row_rect, 0.0, crate::theme::selected_bg());
                 } else if ui.rect_contains_pointer(row_rect) {
                     ui.painter().rect_filled(
                         row_rect,

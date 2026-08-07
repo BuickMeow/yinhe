@@ -678,7 +678,7 @@ pub fn show(
                     egui::pos2(cx, content_rect.min.y),
                     egui::pos2(cx, content_rect.max.y),
                 ],
-                egui::Stroke::new(crate::theme::CURSOR_WIDTH, crate::theme::cursor_color()),
+                egui::Stroke::new(crate::theme::CURSOR_WIDTH, crate::theme::cursor_fg()),
             );
         }
     }
@@ -699,8 +699,8 @@ pub fn show(
             ppq,
             bar_line_data,
             "sel_drag",
-            crate::theme::marquee_color(),
-            crate::theme::marquee_color(),
+            crate::theme::contrast_fg(),
+            crate::theme::contrast_fg(),
             vertical,
         );
 
@@ -737,8 +737,8 @@ pub fn show(
                         ui.painter(),
                         music_rect,
                         shifted,
-                        crate::theme::marquee_color(),
-                        crate::theme::marquee_color(),
+                        crate::theme::contrast_fg(),
+                        crate::theme::contrast_fg(),
                     );
                 }
             }

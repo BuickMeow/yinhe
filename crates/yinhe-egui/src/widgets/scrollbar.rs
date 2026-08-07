@@ -14,7 +14,7 @@ const EDGE_WIDTH: f32 = 4.0;
 /// 滚动条四色（运行时读取当前主题，不能是 const——getter 非 const fn）。
 /// hover/drag 用统一悬浮/按下增益，不再单独定义绝对色。
 fn colors() -> (egui::Color32, egui::Color32, egui::Color32, egui::Color32) {
-    let rect = theme::scrollbar_rect();
+    let rect = theme::thumb_bg();
     (
         theme::app_bg(),
         rect,

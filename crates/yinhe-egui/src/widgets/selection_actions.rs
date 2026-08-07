@@ -114,7 +114,7 @@ pub fn show(
     }
 
     // Draw background pill (rounded rect with semi-circle ends)
-    let bg_color = crate::theme::action_bar_bg();
+    let bg_color = crate::theme::raised_bg();
     let corner_radius = bar_w / 2.0;
     ui.painter().rect_filled(bar_rect, corner_radius, bg_color);
 
@@ -178,7 +178,7 @@ pub fn show(
             ui.painter().rect_filled(btn_rect, 4.0, bg);
         }
         let color = if hovered {
-            crate::theme::hover_text()
+            crate::theme::contrast_fg()
         } else {
             crate::theme::text_label()
         };

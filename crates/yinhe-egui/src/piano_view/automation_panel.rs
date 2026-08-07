@@ -593,7 +593,7 @@ fn draw_panel_overlay(
             // 顶部亮线标示新高度
             painter.line_segment(
                 [bar.left_top(), bar.right_top()],
-                egui::Stroke::new(1.0, crate::theme::marquee_color()),
+                egui::Stroke::new(1.0, crate::theme::contrast_fg()),
             );
         }
     }
@@ -629,14 +629,14 @@ fn draw_panel_overlay(
             painter.rect_filled(
                 rect,
                 0.0,
-                crate::theme::marquee_color().gamma_multiply(crate::theme::marquee_fill_alpha()),
+                crate::theme::contrast_fg().gamma_multiply(crate::theme::marquee_fill_alpha()),
             );
             painter.rect_stroke(
                 rect,
                 0.0,
                 egui::Stroke::new(
                     1.0,
-                    crate::theme::marquee_color()
+                    crate::theme::contrast_fg()
                         .gamma_multiply(crate::theme::marquee_stroke_alpha()),
                 ),
                 egui::StrokeKind::Inside,
@@ -650,14 +650,14 @@ fn draw_panel_overlay(
         painter.rect_filled(
             rect,
             0.0,
-            crate::theme::marquee_color().gamma_multiply(crate::theme::marquee_fill_alpha()),
+            crate::theme::contrast_fg().gamma_multiply(crate::theme::marquee_fill_alpha()),
         );
         painter.rect_stroke(
             rect,
             0.0,
             egui::Stroke::new(
                 1.0,
-                crate::theme::marquee_color().gamma_multiply(crate::theme::marquee_stroke_alpha()),
+                crate::theme::contrast_fg().gamma_multiply(crate::theme::marquee_stroke_alpha()),
             ),
             egui::StrokeKind::Inside,
         );

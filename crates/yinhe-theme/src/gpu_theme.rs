@@ -6,12 +6,12 @@
 #[derive(Clone, Debug)]
 pub struct GpuTheme {
     // ── Pianoroll ──
-    pub pr_white_key: (f32, f32, f32),
-    pub pr_black_key: (f32, f32, f32),
+    pub key_white: (f32, f32, f32),
+    pub key_black: (f32, f32, f32),
 
     // ── Arrangement ──
     /// 条纹着色行：比 app_bg 更黑一档（奇数行用 app_bg，不画）。
-    pub ar_lane_even: (f32, f32, f32),
+    pub stripe: (f32, f32, f32),
 
     // ── Automation ──
     pub center_line: (f32, f32, f32, f32),
@@ -41,9 +41,9 @@ impl GpuTheme {
         // 条纹着色行：比 app_bg 更黑一档（色差小，深色主题基准）
         let darken = |t: f32| (bg[0] * (1.0 - t), bg[1] * (1.0 - t), bg[2] * (1.0 - t));
         Self {
-            pr_white_key: (text[0] * 0.81, text[1] * 0.81, text[2] * 0.81),
-            pr_black_key: mix(0.08),
-            ar_lane_even: darken(0.10),
+            key_white: (text[0] * 0.81, text[1] * 0.81, text[2] * 0.81),
+            key_black: mix(0.08),
+            stripe: darken(0.10),
             center_line: (mix(0.28).0, mix(0.28).1, mix(0.28).2, 0.6),
         }
     }

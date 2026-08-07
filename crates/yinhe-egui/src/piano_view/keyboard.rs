@@ -39,11 +39,7 @@ pub fn paint(
             egui::pos2(content_rect.min.x, screen_y),
             egui::vec2(kb_w, kh),
         );
-        painter.rect_filled(
-            key_rect,
-            0.0,
-            crate::theme::rgb_to_color32(theme.pr_white_key),
-        );
+        painter.rect_filled(key_rect, 0.0, crate::theme::rgb_to_color32(theme.key_white));
         painter.rect_stroke(key_rect, 0.0, stroke, egui::StrokeKind::Inside);
 
         // C 位置标注音名（中央 C = C4 = key 60）
@@ -74,11 +70,7 @@ pub fn paint(
             egui::pos2(content_rect.min.x, screen_y),
             egui::vec2(kb_w, kh),
         );
-        painter.rect_filled(
-            key_rect,
-            0.0,
-            crate::theme::rgb_to_color32(theme.pr_black_key),
-        );
+        painter.rect_filled(key_rect, 0.0, crate::theme::rgb_to_color32(theme.key_black));
         painter.rect_stroke(key_rect, 0.0, stroke, egui::StrokeKind::Inside);
     }
 }

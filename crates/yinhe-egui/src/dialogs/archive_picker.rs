@@ -171,7 +171,7 @@ pub(crate) fn show(
                         let is_selected = picker.selected_idx == Some(entry_idx);
 
                         let bg = if is_selected {
-                            crate::theme::row_selected_bg()
+                            crate::theme::selected_bg()
                         } else {
                             eframe::egui::Color32::TRANSPARENT
                         };
