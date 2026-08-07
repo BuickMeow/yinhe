@@ -84,7 +84,6 @@ pub struct Theme {
     pub pr_sub_beat_line: Color32,
     pub pr_tick_line: Color32,
     pub pr_octave_line: Color32,
-    pub pr_scale_outside: Color32,
     pub pr_root_note: Color32,
     pub pr_black_key_row: Color32,
     pub ar_measure_line: Color32,
@@ -180,9 +179,8 @@ pub fn derive_theme(base: crate::base::BaseColors) -> Theme {
     let mix_pr_measure = mix(bg, text, 0.33);
     let mix_pr_beat = mix(bg, text, 0.16);
     let mix_pr_sub_beat = mix(bg, text, 0.08);
-    let mix_pr_scale_outside = mix(bg, text, 0.015);
     // 条纹着色行：比 app_bg 更黑一档（色差小，深色主题基准）
-    let mix_pr_black_key_row = mix(bg, Color32::BLACK, 0.08);
+    let mix_pr_black_key_row = mix(bg, Color32::BLACK, 0.10);
     let mix_ar_measure = mix(bg, text, 0.27);
     let mix_ar_beat = mix(bg, text, 0.13);
     let mix_scrollbar_rect = mix(bg, text, 0.28);
@@ -258,7 +256,6 @@ pub fn derive_theme(base: crate::base::BaseColors) -> Theme {
         pr_sub_beat_line: mix_pr_sub_beat,
         pr_tick_line: mix_pr_sub_beat,
         pr_octave_line: mix_pr_beat,
-        pr_scale_outside: mix_pr_scale_outside,
         pr_root_note: row_selected_bg,
         pr_black_key_row: mix_pr_black_key_row,
         ar_measure_line: mix_ar_measure,

@@ -97,7 +97,6 @@ theme_getters! {
     pr_sub_beat_line => pr_sub_beat_line,
     pr_tick_line => pr_tick_line,
     pr_octave_line => pr_octave_line,
-    pr_scale_outside => pr_scale_outside,
     pr_root_note => pr_root_note,
     pr_black_key_row => pr_black_key_row,
     ar_measure_line => ar_measure_line,
