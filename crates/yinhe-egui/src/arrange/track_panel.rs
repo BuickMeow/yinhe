@@ -122,7 +122,7 @@ pub(crate) fn show(
                 egui::Align2::LEFT_CENTER,
                 &track_num_text,
                 font.clone(),
-                egui::Color32::WHITE.gamma_multiply(0.85),
+                crate::theme::TEXT_PRIMARY,
             );
             let badge_text = if is_conductor {
                 "Master".to_string()
@@ -145,7 +145,7 @@ pub(crate) fn show(
                 egui::Align2::LEFT_CENTER,
                 &badge_text,
                 font.clone(),
-                egui::Color32::WHITE.gamma_multiply(0.85),
+                crate::theme::TEXT_PRIMARY,
             );
 
             let name = &ti.name;
@@ -155,7 +155,7 @@ pub(crate) fn show(
                 egui::Align2::LEFT_CENTER,
                 name,
                 name_font,
-                egui::Color32::WHITE.gamma_multiply(0.85),
+                crate::theme::TEXT_PRIMARY,
             );
 
             if !is_conductor {
@@ -220,7 +220,7 @@ pub(crate) fn show(
                     egui::Align2::CENTER_CENTER,
                     ICON_EDIT.codepoint,
                     egui::FontId::new(14.0, ICON_EDIT.font_family()),
-                    egui::Color32::WHITE,
+                    crate::theme::TEXT_BRIGHT,
                 );
             }
         } else {
@@ -230,7 +230,7 @@ pub(crate) fn show(
                 egui::Align2::LEFT_CENTER,
                 &track_num_text,
                 font,
-                egui::Color32::WHITE.gamma_multiply(0.85),
+                crate::theme::TEXT_PRIMARY,
             );
 
             let name = &ti.name;
@@ -240,7 +240,7 @@ pub(crate) fn show(
                 egui::Align2::LEFT_CENTER,
                 name,
                 name_font,
-                egui::Color32::WHITE.gamma_multiply(0.85),
+                crate::theme::TEXT_PRIMARY,
             );
         }
     }

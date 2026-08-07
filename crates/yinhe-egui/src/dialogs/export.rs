@@ -107,7 +107,7 @@ pub(crate) fn show_progress_viewport(
                                     ui.label(
                                         egui::RichText::new(&state.status)
                                             .size(12.0)
-                                            .color(egui::Color32::LIGHT_GRAY),
+                                            .color(crate::theme::TEXT_MUTED),
                                     );
                                 }
                             });

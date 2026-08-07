@@ -110,7 +110,7 @@ pub fn sf_list(ui: &mut egui::Ui, entries: &mut Vec<SfEntry>, salt: &str) -> boo
                     egui::Align2::LEFT_CENTER,
                     &entries[i].name,
                     egui::FontId::proportional(12.0),
-                    egui::Color32::WHITE,
+                    crate::theme::TEXT_BRIGHT,
                 );
                 ui.painter().text(
                     egui::pos2(text_x, row_rect.min.y + 28.0),

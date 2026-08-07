@@ -324,7 +324,7 @@ fn show_file_menu(
         ) {
             for item in items {
                 let icon_color = if item.enabled {
-                    egui::Color32::WHITE
+                    crate::theme::TEXT_BRIGHT
                 } else {
                     crate::theme::TEXT_DISABLED
                 };
