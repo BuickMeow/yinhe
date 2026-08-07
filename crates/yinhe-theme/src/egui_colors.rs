@@ -43,6 +43,9 @@ pub const WARNING_GOLD: Color32 = Color32::from_rgb(220, 180, 90); // 金色标�
 // ── Event browser 行选中底色（树形导航 / PR 根音行共用） ──
 pub const ROW_SELECTED_BG: Color32 = Color32::from_rgb(40, 50, 70);
 
+// ── 列表行悬停底色：比 APP_BG 亮一档的中性灰（sf_list 等行 hover） ──
+pub const ROW_HOVER_BG: Color32 = Color32::from_rgb(45, 45, 50);
+
 // ── Tab colors ──
 pub const TAB_ACTIVE_BG: Color32 = Color32::from_rgb(55, 55, 60);
 pub const TAB_INACTIVE_BG: Color32 = Color32::from_rgb(35, 35, 38);

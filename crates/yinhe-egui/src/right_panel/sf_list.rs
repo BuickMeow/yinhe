@@ -93,7 +93,7 @@ pub fn sf_list(ui: &mut egui::Ui, entries: &mut Vec<SfEntry>, salt: &str) -> boo
                     );
                 } else if ui.rect_contains_pointer(row_rect) {
                     ui.painter()
-                        .rect_filled(row_rect, 2.0, egui::Color32::from_black_alpha(20));
+                        .rect_filled(row_rect, 2.0, crate::theme::ROW_HOVER_BG);
                 }
 
                 let row_id = ui.id().with(("sf_row", i));
@@ -234,11 +234,6 @@ pub fn sf_list(ui: &mut egui::Ui, entries: &mut Vec<SfEntry>, salt: &str) -> boo
                     );
                 }
 
-                // 跟随指针的 ghost（含名称/路径，一眼看出拖的是谁）
-                if let Some(p) = pointer {
-                    draw_ghost(ui, p, &drag.indices, entries, &item_rects);
-                }
-
                 // 释放：应用拖拽排序（保持被拖项相对顺序）
                 if ui.input(|i| i.pointer.any_released()) {
                     apply_drop(entries, &drag.indices, drag.insert_idx);
@@ -360,55 +355,6 @@ fn insert_line_y(
         visible += 1;
     }
     item_rects.last().map(|r| r.bottom())
-}
-
-/// 跟随指针的半透明行副本（堆叠显示每个被拖行的名称/路径）。
-fn draw_ghost(
-    ui: &egui::Ui,
-    pointer: egui::Pos2,
-    drag_indices: &[usize],
-    entries: &[SfEntry],
-    item_rects: &[egui::Rect],
-) {
-    let Some(first) = item_rects.first() else {
-        return;
-    };
-    let ghost_h = (ROW_H + ROW_GAP) * drag_indices.len() as f32 - ROW_GAP;
-    let ghost_rect = egui::Rect::from_min_size(
-        pointer + egui::vec2(12.0, -ghost_h / 2.0),
-        egui::vec2(first.width() * 0.9, ghost_h),
-    );
-    ui.painter().rect_filled(
-        ghost_rect,
-        4.0,
-        ui.visuals().window_fill.gamma_multiply(0.95),
-    );
-    ui.painter().rect_stroke(
-        ghost_rect,
-        4.0,
-        egui::Stroke::new(1.0, crate::theme::ACCENT_ACTIVE),
-        egui::StrokeKind::Inside,
-    );
-    for (k, &idx) in drag_indices.iter().enumerate() {
-        if idx >= entries.len() {
-            continue;
-        }
-        let y = ghost_rect.min.y + (ROW_H + ROW_GAP) * k as f32;
-        ui.painter().text(
-            egui::pos2(ghost_rect.min.x + 10.0, y + 10.0),
-            egui::Align2::LEFT_CENTER,
-            &entries[idx].name,
-            egui::FontId::proportional(12.0),
-            egui::Color32::WHITE,
-        );
-        ui.painter().text(
-            egui::pos2(ghost_rect.min.x + 10.0, y + 28.0),
-            egui::Align2::LEFT_CENTER,
-            truncate_path(&entries[idx].path),
-            egui::FontId::proportional(10.0),
-            crate::theme::TEXT_DIM,
-        );
-    }
 }
 
 /// 截断音色库路径用于显示：超过 40 字符时保留尾部 37 字符、前缀加省略号。
