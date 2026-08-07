@@ -465,7 +465,7 @@ pub(super) fn show_track_info(
     ui.separator();
     ui.add_space(4.0);
     ui.label(
-        egui::RichText::new("属性摘要")
+        egui::RichText::new(t!("track.properties").as_ref())
             .size(crate::theme::SMALL_FONT)
             .strong(),
     );
@@ -473,7 +473,7 @@ pub(super) fn show_track_info(
 
     ui.horizontal(|ui| {
         ui.label(
-            egui::RichText::new("音符数:")
+            egui::RichText::new(t!("track.note_count").as_ref())
                 .size(crate::theme::SMALL_FONT)
                 .color(crate::theme::TEXT_LABEL),
         );
@@ -481,7 +481,7 @@ pub(super) fn show_track_info(
     });
     ui.horizontal(|ui| {
         ui.label(
-            egui::RichText::new("事件数:")
+            egui::RichText::new(t!("track.event_count").as_ref())
                 .size(crate::theme::SMALL_FONT)
                 .color(crate::theme::TEXT_LABEL),
         );
@@ -493,7 +493,7 @@ pub(super) fn show_track_info(
     if let Some(pc) = doc.edit.pc_map_cache.get(&(global_ch as u8)) {
         ui.horizontal(|ui| {
             ui.label(
-                egui::RichText::new("音色:")
+                egui::RichText::new(t!("track.program").as_ref())
                     .size(crate::theme::SMALL_FONT)
                     .color(crate::theme::TEXT_LABEL),
             );
@@ -506,7 +506,7 @@ pub(super) fn show_track_info(
     ui.add_space(6.0);
     if ui
         .add(egui::Button::new(
-            egui::RichText::new("清除选择").size(crate::theme::BODY_FONT),
+            egui::RichText::new(t!("track.clear_selection").as_ref()).size(crate::theme::BODY_FONT),
         ))
         .clicked()
     {
