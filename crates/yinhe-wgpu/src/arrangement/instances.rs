@@ -105,8 +105,7 @@ pub fn build_notes(
         .filter_map(|key| {
             // Wrap key processing in stacker to get fresh stack segments on demand.
             stacker::maybe_grow(STACK_RED_ZONE, STACK_SIZE, || {
-                let mut notes = midi.key_notes_in_range(key, tick_start as u32, tick_end as u32);
-                notes.next()?; // 该 key 无命中音符
+                let notes = midi.key_notes_in_range(key, tick_start as u32, tick_end as u32);
 
                 let mut local = Vec::new();
 
@@ -213,5 +212,36 @@ pub fn build_ghost_notes(
             merge_gap_ticks,
         );
         i = j;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use yinhe_test_helpers::make_midi;
+
+    /// 回归测试：a0f4492 曾用 `notes.next()?` 做非空检查，把 range 内第一个
+    /// 音符吞掉（每个 key 的可见首音符永远不渲染 → 视觉丢音符、跨轨道）。
+    #[test]
+    fn build_notes_keeps_first_note_of_range() {
+        let midi = make_midi(vec![
+            (60, 0, 100, 0, 100),
+            (60, 200, 300, 0, 100),
+            (60, 400, 500, 0, 100),
+        ]);
+        let view = ArrangementView::default();
+        let mut out = Vec::new();
+        build_notes(
+            &mut out,
+            2000.0,
+            400.0,
+            &midi,
+            &view,
+            &[true],
+            &HashSet::new(),
+        );
+        let starts: Vec<u32> = out.iter().map(|n| n.start_tick).collect();
+        assert!(starts.contains(&0), "range 内第一个音符被吞: {starts:?}");
+        assert_eq!(out.len(), 3, "3 个音符都应被构建: {starts:?}");
     }
 }
