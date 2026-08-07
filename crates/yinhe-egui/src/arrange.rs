@@ -345,20 +345,22 @@ pub fn show(
             &mut arr_view.base.dirty,
         );
         // 水平滚动条：thumb 拖 = 平移（x）+ 垂直位移 → x 轴缩放
+        // 方向：上拖 = 放大，下拖 = 缩小
         if sb_drag_dy != 0.0 {
-            let factor = 1.0 + sb_drag_dy * 0.005;
+            let factor = 1.0 - sb_drag_dy * 0.005;
             let anchor_x = sb_rect.center().x - arr_rect.min.x;
             arr_view.zoom_around_x(anchor_x, factor);
             ui.ctx().request_repaint();
         }
 
         // 滚动条滚轮缩放：水平滚动条上滚轮 = x 轴缩放（锚定滚动条中心 x）
+        // 方向：上滚 = 放大，下滚 = 缩小
         if let Some(pos) = ui.input(|i| i.pointer.hover_pos())
             && sb_rect.contains(pos)
         {
             let scroll_y = ui.input(|i| i.smooth_scroll_delta.y);
             if scroll_y.abs() > 0.5 {
-                let factor = if scroll_y > 0.0 { 1.1 } else { 1.0 / 1.1 };
+                let factor = if scroll_y > 0.0 { 1.0 / 1.1 } else { 1.1 };
                 let anchor_x = sb_rect.center().x - arr_rect.min.x;
                 arr_view.zoom_around_x(anchor_x, factor);
                 ui.ctx().request_repaint();
@@ -389,20 +391,22 @@ pub fn show(
             })
             .inner;
         // 垂直滚动条：thumb 拖 = 平移（y）+ 水平位移 → y 轴缩放（轨道行高）
+        // 方向：左拖 = 放大，右拖 = 缩小
         if vsb_drag_dx != 0.0 {
-            let factor = 1.0 + vsb_drag_dx * 0.005;
+            let factor = 1.0 - vsb_drag_dx * 0.005;
             let anchor_y = vsb_rect.center().y - arr_rect.min.y;
             arr_view.zoom_lane_height(anchor_y, factor);
             ui.ctx().request_repaint();
         }
 
         // 滚动条滚轮缩放：垂直滚动条上滚轮 = y 轴缩放（锚定滚动条中心 y）
+        // 方向：上滚 = 放大，下滚 = 缩小
         if let Some(pos) = ui.input(|i| i.pointer.hover_pos())
             && vsb_rect.contains(pos)
         {
             let scroll_y = ui.input(|i| i.smooth_scroll_delta.y);
             if scroll_y.abs() > 0.5 {
-                let factor = if scroll_y > 0.0 { 1.1 } else { 1.0 / 1.1 };
+                let factor = if scroll_y > 0.0 { 1.0 / 1.1 } else { 1.1 };
                 let anchor_y = vsb_rect.center().y - arr_rect.min.y;
                 arr_view.zoom_lane_height(anchor_y, factor);
                 ui.ctx().request_repaint();
