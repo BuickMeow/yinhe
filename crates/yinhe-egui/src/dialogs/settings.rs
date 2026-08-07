@@ -178,11 +178,19 @@ fn show_theme_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
         .spacing([12.0, 8.0])
         .show(ui, |ui| {
             ui.label(t!("settings.theme.preset").as_ref());
-            let preset_names = [
-                ("dark", t!("settings.theme.dark").to_string()),
-                ("light", t!("settings.theme.light").to_string()),
-                ("custom", t!("settings.theme.custom").to_string()),
-            ];
+            // 预设列表来自 BaseColors::PRESETS，i18n key 为 settings.theme.<name>
+            //（name 中的 '-' 换成 '_'），末尾追加"自定义"。
+            let preset_names: Vec<(String, String)> = BaseColors::PRESETS
+                .iter()
+                .map(|(n, _)| {
+                    let key = format!("settings.theme.{}", n.replace('-', "_"));
+                    (n.to_string(), t!(key.as_str()).to_string())
+                })
+                .chain(std::iter::once((
+                    "custom".to_string(),
+                    t!("settings.theme.custom").to_string(),
+                )))
+                .collect();
             let current_preset = preset_names
                 .iter()
                 .find(|(n, _)| *n == settings.theme_preset)
@@ -194,11 +202,9 @@ fn show_theme_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
                     for (name, label) in preset_names {
                         let selected = settings.theme_preset == name;
                         if ui.selectable_label(selected, label).clicked() {
-                            settings.theme_preset = name.to_string();
-                            if name == "dark" {
-                                settings.theme_base = BaseColors::DARK;
-                            } else if name == "light" {
-                                settings.theme_base = BaseColors::LIGHT;
+                            settings.theme_preset = name.clone();
+                            if let Some(base) = BaseColors::preset_by_name(&name) {
+                                settings.theme_base = base;
                             }
                             crate::theme::set_theme(settings.theme_base);
                             changed = true;

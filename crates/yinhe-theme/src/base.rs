@@ -75,7 +75,7 @@ impl BaseColors {
         warning: Rgba::new(240, 200, 60, 255),
     };
 
-    /// 亮色主题（浅底深字）。
+    /// 亮色主题（浅底深字，中性灰）。
     pub const LIGHT: Self = Self {
         bg: Rgba::new(240, 240, 244, 255),
         text: Rgba::new(30, 30, 34, 255),
@@ -86,8 +86,35 @@ impl BaseColors {
         warning: Rgba::new(200, 150, 20, 255),
     };
 
+    /// 亮色·冷灰（GitHub Light 风：冷灰底 + 蓝色强调）。
+    pub const LIGHT_COOL: Self = Self {
+        bg: Rgba::new(246, 248, 250, 255),
+        text: Rgba::new(31, 35, 40, 255),
+        accent: Rgba::new(9, 105, 218, 255),
+        selection: Rgba::new(188, 212, 246, 255),
+        danger: Rgba::new(207, 34, 46, 255),
+        border: Rgba::new(173, 180, 189, 255),
+        warning: Rgba::new(158, 106, 3, 255),
+    };
+
+    /// 亮色·暖米（Solarized Light 风：米色底，长时间盯屏眼睛压力小）。
+    pub const LIGHT_WARM: Self = Self {
+        bg: Rgba::new(250, 244, 230, 255),
+        text: Rgba::new(88, 78, 60, 255),
+        accent: Rgba::new(38, 119, 210, 255),
+        selection: Rgba::new(228, 214, 188, 255),
+        danger: Rgba::new(210, 60, 50, 255),
+        border: Rgba::new(186, 175, 150, 255),
+        warning: Rgba::new(170, 125, 0, 255),
+    };
+
     /// 内置预设（设置页下拉框）。`None` 表示"自定义"。
-    pub const PRESETS: [(&'static str, Self); 2] = [("dark", Self::DARK), ("light", Self::LIGHT)];
+    pub const PRESETS: [(&'static str, Self); 4] = [
+        ("dark", Self::DARK),
+        ("light", Self::LIGHT),
+        ("light-cool", Self::LIGHT_COOL),
+        ("light-warm", Self::LIGHT_WARM),
+    ];
 
     pub fn preset_by_name(name: &str) -> Option<Self> {
         Self::PRESETS

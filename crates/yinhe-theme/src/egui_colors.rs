@@ -311,6 +311,20 @@ mod tests {
         assert!(dark.pr_measure_line.r() > dark.app_bg.r());
     }
 
+    /// 新增的亮色预设：亮基底、深对比字、网格线压暗方向全部正确。
+    #[test]
+    fn derive_light_presets_directions() {
+        for base in [
+            crate::base::BaseColors::LIGHT_COOL,
+            crate::base::BaseColors::LIGHT_WARM,
+        ] {
+            let t = derive_theme(base);
+            assert!(!t.dark_mode);
+            assert_eq!(t.hover_text, Color32::from_gray(20));
+            assert!(t.pr_measure_line.r() < t.app_bg.r());
+        }
+    }
+
     /// Rgba ↔ Color32 往返无损。
     #[test]
     fn rgba_roundtrip() {
