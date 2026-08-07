@@ -70,15 +70,11 @@ pub struct Theme {
     pub beat_label: Color32,
     pub sub_beat_label: Color32,
     pub tick_label: Color32,
-    pub grid_measure: Color32,
     pub grid_sub_beat: Color32,
     pub stripe_bg: Color32,
-    // ── 滚动条 / 分割条 ──
-    pub thumb_bg: Color32,
-    /// 线条统一色（egui 原生控件描边、分割条、网格中间档；bg+15%）。
+    /// 线条统一色（egui 原生控件描边、分割条、网格、滑块、八度线；bg+15%）。
     pub line_fg: Color32,
     // ── 光标 / 选框 ──
-    pub cursor_fg: Color32,
     pub marquee_fill_alpha: f32,
     pub marquee_stroke_alpha: f32,
     /// 时间码等"信息凹槽"底色（背景深一档，明暗主题方向自动正确）。
@@ -163,16 +159,14 @@ pub fn derive_theme(base: crate::base::BaseColors) -> Theme {
     // 面板底色：背景与文字按比例混合（暗主题提亮、亮主题压暗，方向自动正确）
     let mix_control = mix(bg, text, 0.05);
     let mix_control_selected = mix(bg, text, 0.15);
-    let mix_btn_bg = mix(bg, text, 0.105);
+    let mix_btn_bg = mix(bg, text, 0.10);
     let mix_raised = mix(bg, text, 0.03);
     let mix_tick_label = mix(bg, text, 0.22);
-    let mix_grid_measure = mix(bg, text, 0.30);
     let mix_grid_sub_beat = mix(bg, text, 0.08);
-    // 线条统一色：egui 原生描边/分割条/网格中间档
+    // 线条统一色：egui 原生描边/分割条/网格/滑块
     let mix_line = mix(bg, text, 0.15);
     // 条纹着色行：比 app_bg 更黑一档（色差小，深色主题基准）
     let mix_stripe = mix(bg, Color32::BLACK, 0.10);
-    let mix_thumb = mix(bg, text, 0.28);
     let mix_measure_label = shade(text, 0.77);
 
     // 危险系：危险色与文字/对比色混合得到浅红/暗红档位（同色相）
@@ -184,10 +178,8 @@ pub fn derive_theme(base: crate::base::BaseColors) -> Theme {
 
     // 色系设计：选中底 = 强调色混背景（暗主题深蓝、亮主题中浅蓝，同色相）
     let selected_bg = mix(bg, accent, 0.30);
-    // 时间码凹槽：背景深一档（暗主题更深、亮主题浅灰，方向自动正确）
-    let inset_bg = shade(bg, 0.7);
-
-    let cursor_a = (contrast.a() as f32 * 0.80) as u8;
+    // 凹槽底：比 app_bg 暗一档（bg-15%），亮色背景同样生效
+    let inset_bg = mix(bg, Color32::BLACK, 0.15);
 
     Theme {
         app_bg: bg,
@@ -227,16 +219,8 @@ pub fn derive_theme(base: crate::base::BaseColors) -> Theme {
         sub_beat_label: text_label_dim,
         tick_label: mix_tick_label,
         grid_sub_beat: mix_grid_sub_beat,
-        grid_measure: mix_grid_measure,
         stripe_bg: mix_stripe,
-        thumb_bg: mix_thumb,
         line_fg: mix_line,
-        cursor_fg: Color32::from_rgba_premultiplied(
-            contrast.r(),
-            contrast.g(),
-            contrast.b(),
-            cursor_a,
-        ),
         marquee_fill_alpha: 0.15,
         marquee_stroke_alpha: 0.40,
         inset_bg,
@@ -262,8 +246,8 @@ mod tests {
         assert_eq!(t.danger, Color32::from_rgb(232, 17, 35));
         // 线条统一色 = 背景混主文字 15%：25 + (220-25)×0.15 ≈ 54
         assert_eq!(t.line_fg, Color32::from_rgb(54, 54, 56));
-        // 时间码凹槽 = 背景深一档：25,25,28 × 0.7
-        assert_eq!(t.inset_bg, Color32::from_rgb(17, 17, 19));
+        // 凹槽底 = 背景暗 15%：25×0.85 ≈ 21
+        assert_eq!(t.inset_bg, Color32::from_rgb(21, 21, 23));
         // hover/选中文字在暗底上应为白
         assert_eq!(t.contrast_fg, Color32::WHITE);
         assert_eq!(t.text_selected, Color32::WHITE);
@@ -280,10 +264,10 @@ mod tests {
         assert_eq!(t.text_selected, Color32::from_gray(20));
         // 灰阶比主文字暗
         assert!(t.text_dim.r() < t.text_primary.r());
-        // 网格线比背景暗（暗主题是比背景亮）
-        assert!(t.grid_measure.r() < t.app_bg.r());
+        // 线条色比背景亮/暗方向随主题（亮色主题线条比背景暗）
+        assert!(t.line_fg.r() < t.app_bg.r());
         let dark = derive_theme(crate::base::BaseColors::DARK);
-        assert!(dark.grid_measure.r() > dark.app_bg.r());
+        assert!(dark.line_fg.r() > dark.app_bg.r());
     }
 
     /// 新增的亮色预设：亮基底、深对比字、网格线压暗方向全部正确。
@@ -296,7 +280,7 @@ mod tests {
             let t = derive_theme(base);
             assert!(!t.dark_mode);
             assert_eq!(t.contrast_fg, Color32::from_gray(20));
-            assert!(t.grid_measure.r() < t.app_bg.r());
+            assert!(t.line_fg.r() < t.app_bg.r());
         }
     }
 

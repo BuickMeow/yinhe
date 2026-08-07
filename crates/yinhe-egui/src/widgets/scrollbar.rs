@@ -14,7 +14,7 @@ const EDGE_WIDTH: f32 = 4.0;
 /// 滚动条四色（运行时读取当前主题，不能是 const——getter 非 const fn）。
 /// hover/drag 用统一悬浮/按下增益，不再单独定义绝对色。
 fn colors() -> (egui::Color32, egui::Color32, egui::Color32, egui::Color32) {
-    let rect = theme::thumb_bg();
+    let rect = theme::line_fg();
     (
         theme::app_bg(),
         rect,
@@ -300,7 +300,7 @@ pub(crate) fn show(
     } else {
         rect_color
     };
-    ui.painter().rect_filled(rect_rect, 2.0, thumb_color);
+    ui.painter().rect_filled(rect_rect, 0.0, thumb_color);
 
     // ── Cursor ──
     if left_hovered {
@@ -482,7 +482,7 @@ pub(crate) fn show_vertical(
     } else {
         rect_color
     };
-    ui.painter().rect_filled(rect_rect, 2.0, thumb_color);
+    ui.painter().rect_filled(rect_rect, 0.0, thumb_color);
 
     // ── Cursor ──
     if top_hovered {
@@ -662,7 +662,7 @@ pub(crate) fn show_vertical_value(
     } else {
         rect_color
     };
-    ui.painter().rect_filled(rect_rect, 2.0, thumb_color);
+    ui.painter().rect_filled(rect_rect, 0.0, thumb_color);
 
     if top_hovered {
         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeNorth);

@@ -25,7 +25,7 @@ impl GridColors {
     /// Pianoroll 配色（automation 也用这套）。
     pub fn pianoroll() -> Self {
         Self {
-            measure: theme::grid_measure(),
+            measure: theme::line_fg(),
             beat: theme::line_fg(),
             sub_beat: Some(theme::grid_sub_beat()),
             tick: Some(theme::grid_sub_beat()),
@@ -35,7 +35,7 @@ impl GridColors {
     /// Arrangement 配色（无 sub_beat / tick 线）。
     pub fn arrangement() -> Self {
         Self {
-            measure: theme::grid_measure(),
+            measure: theme::line_fg(),
             beat: theme::line_fg(),
             sub_beat: None,
             tick: None,
@@ -372,13 +372,15 @@ mod tests {
         assert!(base.pixels_per_tick <= 0.001);
     }
 
-    /// 验证 GridColors 配色常量存在且不同。
+    /// 验证 GridColors 配色档位：measure/beat 统一 line_fg，sub_beat 更低一档。
     #[test]
     fn test_grid_colors_distinct() {
         let pr = GridColors::pianoroll();
         let ar = GridColors::arrangement();
-        assert!(pr.measure != pr.beat);
-        assert!(pr.measure != pr.sub_beat.unwrap());
+        // measure 与 beat 同用 line_fg（统一线条色）
+        assert_eq!(pr.measure, pr.beat);
+        // sub_beat 是更低一档（比 line_fg 暗/亮方向随主题）
+        assert_ne!(pr.measure, pr.sub_beat.unwrap());
         assert!(ar.sub_beat.is_none());
         assert!(ar.tick.is_none());
     }

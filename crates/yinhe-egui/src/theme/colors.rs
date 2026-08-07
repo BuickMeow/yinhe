@@ -83,12 +83,9 @@ theme_getters! {
     beat_label => beat_label,
     sub_beat_label => sub_beat_label,
     tick_label => tick_label,
-    grid_measure => grid_measure,
     grid_sub_beat => grid_sub_beat,
     stripe_bg => stripe_bg,
-    thumb_bg => thumb_bg,
     line_fg => line_fg,
-    cursor_fg => cursor_fg,
     inset_bg => inset_bg,
 }
 

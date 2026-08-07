@@ -678,7 +678,7 @@ pub fn show(
                     egui::pos2(cx, content_rect.min.y),
                     egui::pos2(cx, content_rect.max.y),
                 ],
-                egui::Stroke::new(crate::theme::CURSOR_WIDTH, crate::theme::cursor_fg()),
+                egui::Stroke::new(crate::theme::CURSOR_WIDTH, crate::theme::contrast_fg()),
             );
         }
     }
