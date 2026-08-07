@@ -254,8 +254,8 @@ pub fn show(
             ui.painter(),
             rect,
             dr,
-            egui::Color32::WHITE,
-            egui::Color32::WHITE,
+            crate::theme::MARQUEE_COLOR,
+            crate::theme::MARQUEE_COLOR,
         );
     }
 
@@ -280,8 +280,8 @@ pub fn show(
             ui.painter(),
             rect,
             snapped,
-            egui::Color32::WHITE,
-            egui::Color32::WHITE,
+            crate::theme::MARQUEE_COLOR,
+            crate::theme::MARQUEE_COLOR,
         );
     }
 

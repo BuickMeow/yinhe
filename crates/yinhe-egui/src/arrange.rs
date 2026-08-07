@@ -474,7 +474,7 @@ pub fn show(
 
         use egui_material_icons::icons::ICON_ADD;
         let icon_color = if hovered {
-            egui::Color32::WHITE
+            crate::theme::HOVER_TEXT
         } else {
             crate::theme::TEXT_MUTED
         };

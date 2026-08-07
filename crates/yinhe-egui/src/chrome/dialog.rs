@@ -81,7 +81,7 @@ pub(crate) fn paint_close_button(painter: &egui::Painter, rect: egui::Rect, hove
             egui_material_icons::icons::ICON_CLOSE.font_family(),
         ),
         if hovered {
-            egui::Color32::WHITE
+            crate::theme::HOVER_TEXT
         } else {
             crate::theme::TEXT_MUTED
         },

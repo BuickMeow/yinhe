@@ -690,8 +690,8 @@ pub fn show(
             ppq,
             bar_line_data,
             "sel_drag",
-            egui::Color32::WHITE,
-            egui::Color32::WHITE,
+            crate::theme::MARQUEE_COLOR,
+            crate::theme::MARQUEE_COLOR,
             vertical,
         );
 
@@ -728,8 +728,8 @@ pub fn show(
                         ui.painter(),
                         music_rect,
                         shifted,
-                        egui::Color32::WHITE,
-                        egui::Color32::WHITE,
+                        crate::theme::MARQUEE_COLOR,
+                        crate::theme::MARQUEE_COLOR,
                     );
                 }
             }

@@ -169,7 +169,7 @@ pub fn show(
         // Hover detection（hover 变白，与全项目图标按钮基准风格一致）
         let hovered = pointer_pos.is_some_and(|p| btn_rect.contains(p));
         let color = if hovered {
-            egui::Color32::WHITE
+            crate::theme::HOVER_TEXT
         } else {
             crate::theme::TEXT_LABEL
         };

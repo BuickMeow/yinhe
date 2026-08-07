@@ -70,11 +70,8 @@ pub fn sf_list(ui: &mut egui::Ui, entries: &mut Vec<SfEntry>, salt: &str) -> boo
                     ui.painter()
                         .rect_filled(row_rect, 0.0, crate::theme::ROW_SELECTED_BG);
                 } else if ui.rect_contains_pointer(row_rect) {
-                    ui.painter().rect_filled(
-                        row_rect,
-                        0.0,
-                        egui::Color32::WHITE.gamma_multiply(0.03),
-                    );
+                    ui.painter()
+                        .rect_filled(row_rect, 0.0, crate::theme::row_hover_tint());
                 }
 
                 let row_id = ui.id().with(("sf_row", i));

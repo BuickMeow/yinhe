@@ -44,7 +44,7 @@ pub fn show(ui: &mut egui::Ui, ctx: QuantizeBtnCtx) -> Option<QuantizePreset> {
     let hovered = btn_resp.hovered();
 
     let icon_color = if hovered {
-        egui::Color32::WHITE
+        crate::theme::HOVER_TEXT
     } else {
         crate::theme::TEXT_MUTED
     };

@@ -363,7 +363,7 @@ fn paint_window_buttons(
     painter.rect_filled(*close_rect, 0.0, close_bg);
     // X icon
     let x_color = if close_hover {
-        egui::Color32::WHITE
+        crate::theme::HOVER_TEXT
     } else {
         crate::theme::TEXT_DIM
     };
@@ -386,7 +386,7 @@ fn paint_window_buttons(
     };
     painter.rect_filled(*maximize_rect, 0.0, max_bg);
     let max_color = if max_hover {
-        egui::Color32::WHITE
+        crate::theme::HOVER_TEXT
     } else {
         crate::theme::TEXT_DIM
     };
@@ -417,7 +417,7 @@ fn paint_window_buttons(
     };
     painter.rect_filled(*minimize_rect, 0.0, min_bg);
     let min_color = if min_hover {
-        egui::Color32::WHITE
+        crate::theme::HOVER_TEXT
     } else {
         crate::theme::TEXT_DIM
     };

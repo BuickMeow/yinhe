@@ -208,7 +208,7 @@ fn render_track_row(ui: &mut egui::Ui, model: &YinModel, idx: u16, state: &mut E
                             .rich_text()
                             .size(crate::theme::BODY_FONT)
                             .color(if is_selected {
-                                egui::Color32::WHITE
+                                crate::theme::TEXT_SELECTED
                             } else {
                                 crate::theme::TEXT_MUTED
                             }),
@@ -222,7 +222,7 @@ fn render_track_row(ui: &mut egui::Ui, model: &YinModel, idx: u16, state: &mut E
                             .size(crate::theme::SMALL_FONT)
                             .monospace()
                             .color(if is_selected {
-                                egui::Color32::WHITE
+                                crate::theme::TEXT_SELECTED
                             } else {
                                 crate::theme::TEXT_PRIMARY
                             }),
@@ -414,7 +414,7 @@ fn render_leaf_item(
                 ui.add(
                     egui::Label::new(icon.rich_text().size(crate::theme::BODY_FONT).color(
                         if is_selected {
-                            egui::Color32::WHITE
+                            crate::theme::TEXT_SELECTED
                         } else {
                             crate::theme::TEXT_MUTED
                         },
@@ -427,7 +427,7 @@ fn render_leaf_item(
                             .size(crate::theme::SMALL_FONT)
                             .monospace()
                             .color(if is_selected {
-                                egui::Color32::WHITE
+                                crate::theme::TEXT_SELECTED
                             } else {
                                 crate::theme::TEXT_BRIGHT
                             }),

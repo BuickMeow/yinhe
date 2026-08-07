@@ -111,7 +111,7 @@ pub(crate) fn show(
         if selected {
             painter.rect_filled(row_rect, 0.0, ui.visuals().selection.bg_fill);
         } else if row_rect.contains(ui.input(|i| i.pointer.hover_pos().unwrap_or_default())) {
-            painter.rect_filled(row_rect, 0.0, egui::Color32::WHITE.gamma_multiply(0.03));
+            painter.rect_filled(row_rect, 0.0, crate::theme::row_hover_tint());
         }
 
         let color = track_colors

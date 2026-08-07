@@ -103,6 +103,25 @@ pub const CURSOR_WIDTH: f32 = 2.0;
 pub const MARQUEE_FILL_ALPHA: f32 = 0.15;
 pub const MARQUEE_STROKE_ALPHA: f32 = 0.40;
 
+// ── Hover / 选框 / 行提亮基色（原散落的 WHITE 字面量，为主题系统收编） ──
+/// hover 高亮文字/图标色（全项目 hover 变白基准）。
+pub const HOVER_TEXT: Color32 = Color32::WHITE;
+/// 选框基色（PR/AR/AM 白框，透明度见 MARQUEE_*_ALPHA）。
+pub const MARQUEE_COLOR: Color32 = Color32::WHITE;
+
+/// 列表行 hover 提亮（3% 白叠加，音轨面板/音色库/archive 行共用）。
+/// gamma_multiply 非 const fn，故用函数而非常量。
+pub fn row_hover_tint() -> Color32 {
+    Color32::WHITE.gamma_multiply(0.03)
+}
+
+/// 选中行文字色（ROW_SELECTED_BG 上的白字）。
+pub const TEXT_SELECTED: Color32 = Color32::WHITE;
+/// 拖拽 tooltip 文字色（深色浮层上的白字，对比度优先）。
+pub const TOOLTIP_TEXT: Color32 = Color32::WHITE;
+/// 编辑预览顶部高亮线（如 velocity 笔划预览的新高度线）。
+pub const PREVIEW_LINE: Color32 = Color32::WHITE;
+
 /// [f32;3] 元组（0..1，如 GpuTheme 字段）→ Color32（alpha=255）。
 /// 替代散落各处的 `Color32::from_rgb((r*255.0) as u8, ...)` 手写转换。
 pub fn rgb_to_color32(c: (f32, f32, f32)) -> Color32 {

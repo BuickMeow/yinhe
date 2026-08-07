@@ -173,7 +173,7 @@ pub(super) fn cell_row_header(
     row.col(|ui| {
         let is_selected = state.selected_ticks.contains(&tick);
         let label_color = if is_selected {
-            egui::Color32::WHITE
+            crate::theme::TEXT_SELECTED
         } else {
             crate::theme::TEXT_SECONDARY
         };
