@@ -224,6 +224,8 @@ pub(crate) fn handle_velocity_interaction(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use yinhe_core::Note;
+    use yinhe_types::NoteBucket;
 
     struct MockSource {
         notes: NoteBucket,
