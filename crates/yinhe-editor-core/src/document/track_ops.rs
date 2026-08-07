@@ -28,11 +28,23 @@ impl Document {
         let channel = (0..16u8).find(|c| !used_channels.contains(c)).unwrap_or(0);
 
         let mut new_track = yinhe_core::TrackData::new(0, channel);
-        // 新音轨编号 = 当前音轨总数（tracks.len()，Conductor 占 0 号），不随插入位置
-        // 变化：已有 16 条音轨时在 Track 2 下方插入，新音轨应为 Track 17，而不是与
-        // 插入位置同号的 Track 3（会与既有音轨重名）。
+        // 新音轨编号 = 现有最大 "Track N" 编号 + 1（N 来自项目自动生成的轨道名，
+        // Conductor/导入的真实轨名如 "Piano" 不参与）。不随插入位置变化：
+        // 已有 16 条音轨时在 Track 2 下方插入，新音轨应为 Track 17 而非 Track 3。
+        // 不能按 tracks.len() 取名——删除中间音轨后数量会撞上仍存在的编号
+        // （删掉 Track 3 后剩 16 轨，但 Track 16 还在）。
         // 不按通道命名：通道经常被改，轨道号相对固定。
-        new_track.name = format!("Track {}", num_tracks);
+        let max_track_num = model
+            .tracks
+            .iter()
+            .filter_map(|t| {
+                t.name
+                    .strip_prefix("Track ")
+                    .and_then(|s| s.parse::<u32>().ok())
+            })
+            .max()
+            .unwrap_or(0);
+        new_track.name = format!("Track {}", max_track_num + 1);
 
         let tracks_before: Vec<Arc<yinhe_core::TrackData>> = model.tracks.clone();
 
@@ -308,6 +320,26 @@ mod tests {
 
         let model = doc.model();
         assert_eq!(model.tracks.len(), 18);
+        assert_eq!(model.tracks[3].name, "Track 17");
+
+        let mut names: Vec<&str> = model.tracks.iter().map(|t| t.name.as_str()).collect();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), model.tracks.len(), "新音轨名与既有音轨重名");
+    }
+
+    /// 删除中间音轨后数量会撞上仍存在的编号（删掉 Track 3 后剩 16 轨，
+    /// 但 Track 16 还在），新音轨必须取最大已用编号 + 1（Track 17）。
+    #[test]
+    fn add_track_after_removing_middle_track_avoids_collision() {
+        let mut doc = Document::empty(); // Conductor + Track 1..16
+        assert!(doc.remove_track(3).is_some()); // 删除 Track 3
+        assert_eq!(doc.model().tracks.len(), 16);
+
+        doc.add_track(2); // 在 Track 2 下方插入
+
+        let model = doc.model();
+        assert_eq!(model.tracks.len(), 17);
         assert_eq!(model.tracks[3].name, "Track 17");
 
         let mut names: Vec<&str> = model.tracks.iter().map(|t| t.name.as_str()).collect();
