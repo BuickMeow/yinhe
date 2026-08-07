@@ -110,7 +110,8 @@ pub(crate) fn show(
         let track_num_text = format!("{:03}", ti.index);
 
         if show_details {
-            let font = egui::FontId::proportional((*row_height * 0.25).clamp(8.0, 13.0));
+            // 详情模式行号/名称字号下限统一为 9（原行号误写 8）
+            let font = egui::FontId::proportional((*row_height * 0.25).clamp(9.0, 13.0));
 
             painter.text(
                 egui::pos2(text_x, badge_rect.min.y + *row_height * 0.30),
