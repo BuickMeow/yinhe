@@ -59,7 +59,7 @@ pub(crate) fn show_viewport(
                                     ui.add_space(4.0);
                                     ui.add(
                                         egui::ProgressBar::new(state.progress)
-                                            .desired_width(300.0)
+                                            .desired_width(crate::theme::PROGRESS_BAR_WIDTH)
                                             .show_percentage(),
                                     );
                                     ui.add_space(6.0);

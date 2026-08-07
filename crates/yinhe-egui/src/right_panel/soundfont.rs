@@ -282,12 +282,7 @@ fn project_panel(ui: &mut egui::Ui, doc: &mut Document) -> bool {
             changed = true;
         }
     } else {
-        ui.label(
-            egui::RichText::new(t!("soundfont.not_configured").as_ref())
-                .color(crate::theme::TEXT_HINT)
-                .size(12.0),
-        );
-        ui.add_space(4.0);
+        crate::widgets::hint::empty_hint(ui, t!("soundfont.not_configured").as_ref());
         if ui.button(t!("soundfont.add_for_port").as_ref()).clicked() {
             doc.edit.project_sf.overrides.push((port, Vec::new()));
             changed = true;

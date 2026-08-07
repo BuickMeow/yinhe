@@ -17,12 +17,7 @@ pub(crate) const PPQ_RESCALE_PENDING_ID: &str = "ppq_rescale_pending";
 /// Show the Project Info panel for editing project metadata.
 pub fn show(ui: &mut egui::Ui, doc: Option<&mut Document>) {
     let Some(doc) = doc else {
-        ui.add_space(8.0);
-        ui.label(
-            egui::RichText::new(t!("common.no_document").as_ref())
-                .color(crate::theme::TEXT_HINT)
-                .size(12.0),
-        );
+        crate::widgets::hint::empty_hint(ui, t!("common.no_document").as_ref());
         return;
     };
 

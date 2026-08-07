@@ -1,5 +1,4 @@
 use eframe::egui;
-use egui_material_icons::icons::*;
 
 use yinhe_editor_core::document::Document;
 
@@ -206,20 +205,7 @@ pub(crate) fn show(
                     egui::vec2(close_w, tab_h),
                 );
                 let close_hover = tab_close_rect.contains(hover_pos);
-                if close_hover {
-                    painter.rect_filled(tab_close_rect, 4.0, crate::theme::DANGER_HOVER);
-                }
-                painter.text(
-                    tab_close_rect.center(),
-                    egui::Align2::CENTER_CENTER,
-                    ICON_CLOSE.codepoint,
-                    egui::FontId::new(12.0, ICON_CLOSE.font_family()),
-                    if close_hover {
-                        egui::Color32::WHITE
-                    } else {
-                        crate::theme::TEXT_MUTED
-                    },
-                );
+                crate::chrome::dialog::paint_close_button(painter, tab_close_rect, close_hover);
 
                 click_targets.push((i, tab_rect, tab_close_rect));
 

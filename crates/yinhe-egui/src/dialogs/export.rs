@@ -58,7 +58,11 @@ pub(crate) fn show_progress_viewport(
                         .show(ui, |ui| {
                             ui.vertical_centered(|ui| {
                                 ui.add_space(4.0);
-                                ui.add(egui::ProgressBar::new(state.progress).desired_width(280.0));
+                                ui.add(
+                                    egui::ProgressBar::new(state.progress)
+                                        .desired_width(crate::theme::PROGRESS_BAR_WIDTH)
+                                        .show_percentage(),
+                                );
                                 ui.add_space(8.0);
 
                                 egui::Grid::new("export_progress_grid")

@@ -52,7 +52,7 @@ pub(crate) fn show_viewport(ctx: &egui::Context, stage: YinProgressStage, fracti
                         .show(ui, |ui| {
                             ui.add(
                                 egui::ProgressBar::new(fraction)
-                                    .desired_width(330.0)
+                                    .desired_width(crate::theme::PROGRESS_BAR_WIDTH)
                                     .show_percentage(),
                             );
                             ui.label(egui::RichText::new(stage_label(stage)).size(12.0));

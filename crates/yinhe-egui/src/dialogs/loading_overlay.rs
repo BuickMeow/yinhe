@@ -80,7 +80,7 @@ pub(crate) fn show_viewport(ctx: &egui::Context, progress: SharedProgress) -> bo
                                     } else {
                                         ui.add(
                                             egui::ProgressBar::new(stage.progress)
-                                                .desired_width(200.0)
+                                                .desired_width(crate::theme::PROGRESS_BAR_WIDTH)
                                                 .show_percentage(),
                                         );
                                         ui.label(egui::RichText::new(&stage.label).size(12.0));

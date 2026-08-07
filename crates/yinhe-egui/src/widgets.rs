@@ -1,4 +1,5 @@
 pub mod grid_lines;
+pub(crate) mod hint;
 pub(crate) mod hover;
 pub(crate) mod icon_text;
 pub mod numeric_input;

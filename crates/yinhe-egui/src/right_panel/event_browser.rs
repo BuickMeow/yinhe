@@ -39,11 +39,9 @@ pub fn show(
     state: &mut EventBrowserState,
 ) -> Option<JumpRequest> {
     let Some(doc) = doc else {
-        ui.add_space(8.0);
-        ui.label(
-            egui::RichText::new("\u{ff08}\u{672a}\u{6253}\u{5f00}\u{6587}\u{6863}\u{ff09}")
-                .color(crate::theme::TEXT_HINT)
-                .size(12.0),
+        crate::widgets::hint::empty_hint(
+            ui,
+            "\u{ff08}\u{672a}\u{6253}\u{5f00}\u{6587}\u{6863}\u{ff09}",
         );
         return None;
     };

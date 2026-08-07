@@ -178,13 +178,20 @@ pub(crate) fn show(
 
                         let response = ui.add_sized(
                             [ui.available_width(), row_height],
-                            eframe::egui::Button::new("").fill(bg),
+                            eframe::egui::Button::new("")
+                                .fill(bg)
+                                .stroke(eframe::egui::Stroke::NONE)
+                                .corner_radius(eframe::egui::CornerRadius::ZERO),
                         );
 
+                        // hover 用白色 3% 提亮（与主界面列表行一致），选中保持 ROW_SELECTED_BG
                         if response.hovered() && !is_selected {
                             let rect = response.rect;
-                            ui.painter()
-                                .rect_filled(rect, 0.0, crate::theme::ROW_SELECTED_BG);
+                            ui.painter().rect_filled(
+                                rect,
+                                0.0,
+                                eframe::egui::Color32::WHITE.gamma_multiply(0.03),
+                            );
                         }
 
                         if response.clicked() {

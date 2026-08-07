@@ -32,12 +32,7 @@ pub fn show(
     automation_drag_ghost: Option<(u32, f32)>,
 ) -> bool {
     let Some(doc) = doc else {
-        ui.add_space(8.0);
-        ui.label(
-            egui::RichText::new(t!("common.no_document").as_ref())
-                .color(crate::theme::TEXT_HINT)
-                .size(12.0),
-        );
+        crate::widgets::hint::empty_hint(ui, t!("common.no_document").as_ref());
         return false;
     };
 

@@ -66,6 +66,25 @@ pub(crate) fn content_with_bottom_buttons(
     ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), buttons);
 }
 
+/// 绘制统一的 "X" 关闭按钮（对话框标题栏与文档 tab 共用）：
+/// hover 时红色底 + 图标变白，其余灰色。
+pub(crate) fn paint_close_button(painter: &egui::Painter, rect: egui::Rect, hovered: bool) {
+    if hovered {
+        painter.rect_filled(rect, 4.0, crate::theme::DANGER_HOVER);
+    }
+    painter.text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        egui_material_icons::icons::ICON_CLOSE.codepoint,
+        egui::FontId::new(12.0, egui_material_icons::icons::ICON_CLOSE.font_family()),
+        if hovered {
+            egui::Color32::WHITE
+        } else {
+            crate::theme::TEXT_MUTED
+        },
+    );
+}
+
 /// Draw a custom title bar for a dialog window.
 ///
 /// - macOS: draws a background colour strip, centered title, and drag
@@ -98,26 +117,12 @@ pub(crate) fn title_bar(ui: &mut egui::Ui, title: &str, close: &mut bool) {
         );
         let close_hover =
             close_rect.contains(ui.input(|i| i.pointer.hover_pos()).unwrap_or_default());
-        if close_hover {
-            ui.painter()
-                .rect_filled(close_rect, 0.0, crate::theme::DANGER_HOVER);
-        }
+        paint_close_button(&ui.painter(), close_rect, close_hover);
         if ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Primary))
             && close_rect.contains(ui.input(|i| i.pointer.interact_pos()).unwrap_or_default())
         {
             *close = true;
         }
-        ui.painter().text(
-            close_rect.center(),
-            egui::Align2::CENTER_CENTER,
-            ICON_CLOSE.codepoint,
-            egui::FontId::new(12.0, ICON_CLOSE.font_family()),
-            if close_hover {
-                egui::Color32::WHITE
-            } else {
-                crate::theme::TEXT_MUTED
-            },
-        );
     }
 
     // ── Centered title (both platforms) ──

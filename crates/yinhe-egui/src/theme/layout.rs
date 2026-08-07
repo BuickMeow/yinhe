@@ -30,3 +30,6 @@ pub const AUTO_PANEL_COMBO_WIDTH_RATIO: f32 = 1.0;
 // ── System monitoring ──
 pub const SYS_REFRESH_INTERVAL_SECS: f64 = 0.5;
 pub const MEM_POPUP_SIZE: [f32; 2] = [280.0, 390.0];
+
+// ── Dialog progress bars ──
+pub const PROGRESS_BAR_WIDTH: f32 = 280.0;

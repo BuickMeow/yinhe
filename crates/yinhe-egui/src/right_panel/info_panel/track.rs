@@ -23,12 +23,7 @@ pub(super) fn show_track_info(
 ) -> bool {
     let num_tracks = doc.data.model.tracks.len();
     if num_tracks == 0 {
-        ui.add_space(8.0);
-        ui.label(
-            egui::RichText::new(t!("track.no_tracks").as_ref())
-                .color(crate::theme::TEXT_HINT)
-                .size(12.0),
-        );
+        crate::widgets::hint::empty_hint(ui, t!("track.no_tracks").as_ref());
         return false;
     }
 
