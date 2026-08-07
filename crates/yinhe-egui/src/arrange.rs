@@ -500,7 +500,10 @@ pub fn show(
     // ── Vertical splitter handle (drawn last so it sits on top) ──
     let v_handle = egui::Rect::from_min_max(
         egui::pos2(arr_rect.min.x + tp_w, arr_rect.min.y),
-        egui::pos2(arr_rect.min.x + tp_w + 4.0, arr_rect.max.y),
+        egui::pos2(
+            arr_rect.min.x + tp_w + crate::theme::SPLIT_HANDLE_W,
+            arr_rect.max.y,
+        ),
     );
     let v_resp = crate::widgets::split_handle::vertical(ui, "__v_split__", v_handle);
     if v_resp.dragged() {

@@ -68,21 +68,22 @@ pub fn show(
     let clamp_w = (*right_panel_width + 4.0).clamp(theme + 4.0, max_w);
     *right_panel_width = (clamp_w - 4.0).max(theme);
 
-    // ── Split handle (4px at the left edge) ──
+    // ── Split handle (SPLIT_HANDLE_W at the left edge) ──
     let handle_rect = egui::Rect::from_min_max(
         egui::pos2(rect.min.x, rect.min.y),
-        egui::pos2(rect.min.x + 4.0, rect.max.y),
+        egui::pos2(rect.min.x + crate::theme::SPLIT_HANDLE_W, rect.max.y),
     );
     let resp = crate::widgets::split_handle::vertical(ui, "__right_split__", handle_rect);
     if resp.dragged() {
         // Handle is at the left edge of a right-aligned panel.
         // Dragging right → panel narrows (width decreases).
-        *right_panel_width = (*right_panel_width - resp.drag_delta().x).clamp(theme, max_w - 4.0);
+        *right_panel_width = (*right_panel_width - resp.drag_delta().x)
+            .clamp(theme, max_w - crate::theme::SPLIT_HANDLE_W);
     }
 
     // ── Panel content area (8px left/right padding, after the handle) ──
     let content_rect = egui::Rect::from_min_max(
-        egui::pos2(rect.min.x + 4.0 + 8.0, rect.min.y),
+        egui::pos2(rect.min.x + crate::theme::SPLIT_HANDLE_W + 8.0, rect.min.y),
         egui::pos2(rect.max.x - 8.0, rect.max.y),
     );
 

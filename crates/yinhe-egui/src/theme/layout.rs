@@ -4,7 +4,8 @@ pub const RULER_H: f32 = 24.0;
 pub const SCROLLBAR_H: f32 = 24.0;
 /// 垂直滚动条宽度（与水平滚动条高度一致，对称设计）。
 pub const SCROLLBAR_W: f32 = 24.0;
-pub const SPLIT_GAP: f32 = 4.0;
+pub const SPLIT_GAP: f32 = 2.0;
+pub const SPLIT_HANDLE_W: f32 = 2.0;
 
 // ── 字号体系 ──
 // 所有 UI 字号集中于此。高 DPI 铺垫：未来支持高分屏时在此统一乘缩放因子，
@@ -43,7 +44,7 @@ pub const RIGHT_PANEL_MIN_WIDTH: f32 = 160.0;
 pub const RIGHT_PANEL_DEFAULT_WIDTH: f32 = 320.0;
 
 // ── Automation panel ──
-pub const AUTO_PANEL_SPLIT_H: f32 = 4.0;
+pub const AUTO_PANEL_SPLIT_H: f32 = SPLIT_HANDLE_W;
 pub const AUTO_PANEL_COMBO_WIDTH_RATIO: f32 = 1.0;
 
 // ── System monitoring ──

@@ -267,7 +267,7 @@ pub fn derive_theme(base: crate::base::BaseColors) -> Theme {
         split_hover: text_hint,
         split_default: border_dim,
         v_split_hover: text_muted,
-        v_split_default: text_disabled,
+        v_split_default: border_dim,
         cursor_color: Color32::from_rgba_premultiplied(
             contrast.r(),
             contrast.g(),
