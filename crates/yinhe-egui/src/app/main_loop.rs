@@ -436,9 +436,6 @@ impl eframe::App for App {
         self.show_load_error_modal(ui);
         self.sync_automation_density();
 
-        // ── Material 风格鼠标指针（读取本帧光标图标，替换为位图光标）──
-        self.material_cursors.apply(ui.ctx());
-
         if let Some(t0) = _ui_total_start {
             yinhe_memtrace::perf_probe::record_ui_total(t0.elapsed());
         }
