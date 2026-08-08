@@ -72,6 +72,8 @@ pub struct Theme {
     pub grid_sub_beat: Color32,
     /// 网格 1tick 最浅档（bg+3%）。
     pub grid_tick: Color32,
+    /// 标尺/滚动条轨道底色（bg-20%，最初 RULER_BG 的 (20,20,24)）。
+    pub track_bg: Color32,
     pub stripe_bg: Color32,
     /// 线条统一色（egui 原生控件描边、分割条、网格、滑块、八度线；bg+15%）。
     pub line_fg: Color32,
@@ -165,6 +167,8 @@ pub fn derive_theme(base: crate::base::BaseColors) -> Theme {
     let mix_grid_sub_beat = mix(bg, text, 0.08);
     // 网格 1tick 最浅档（bg+3%）
     let mix_grid_tick = mix(bg, text, 0.03);
+    // 标尺/滚动条轨道底色：比 app_bg 暗 20%（bg-20%，最初 RULER_BG）
+    let mix_track = mix(bg, Color32::BLACK, 0.20);
     // 线条统一色：egui 原生描边/分割条/网格/滑块
     let mix_line = mix(bg, text, 0.15);
     // 条纹着色行：比 app_bg 更黑一档（bg-15% = ×85%）
@@ -221,6 +225,7 @@ pub fn derive_theme(base: crate::base::BaseColors) -> Theme {
         tick_label: mix_tick_label,
         grid_sub_beat: mix_grid_sub_beat,
         grid_tick: mix_grid_tick,
+        track_bg: mix_track,
         stripe_bg: mix_stripe,
         line_fg: mix_line,
         marquee_fill_alpha: 0.15,

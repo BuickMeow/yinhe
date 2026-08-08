@@ -84,6 +84,7 @@ theme_getters! {
     tick_label => tick_label,
     grid_sub_beat => grid_sub_beat,
     grid_tick => grid_tick,
+    track_bg => track_bg,
     stripe_bg => stripe_bg,
     line_fg => line_fg,
     inset_bg => inset_bg,

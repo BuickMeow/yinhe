@@ -78,7 +78,7 @@ impl TimeRulerView for yinhe_types::ArrangementView {
 ///
 /// Paint the ruler background and bottom divider.
 fn paint_background(painter: &egui::Painter, rect: egui::Rect) {
-    painter.rect_filled(rect, 0.0, theme::app_bg());
+    painter.rect_filled(rect, 0.0, theme::track_bg());
 }
 
 /// Paint an interactive time ruler that also jumps the cursor when clicked or dragged.

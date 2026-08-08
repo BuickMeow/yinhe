@@ -779,7 +779,7 @@ pub fn show(
             egui::pos2(rect.max.x, ruler_band_y + RULER_H),
         );
         ui.painter()
-            .rect_filled(corner_rect, 0.0, crate::theme::app_bg());
+            .rect_filled(corner_rect, 0.0, crate::theme::track_bg());
 
         let ruler_rect = egui::Rect::from_min_max(
             egui::pos2(rect.min.x + view.keyboard_width(), ruler_band_y),
@@ -910,7 +910,7 @@ pub fn show(
                 ),
             );
             ui.painter()
-                .rect_filled(sb_left_blank, 0.0, theme::app_bg());
+                .rect_filled(sb_left_blank, 0.0, theme::track_bg());
             ui.scope_builder(egui::UiBuilder::new().max_rect(sb_left_blank), |ui| {
                 ui.horizontal_centered(|ui| {
                     let mut count = ctx.panels.len();
@@ -936,7 +936,7 @@ pub fn show(
         egui::pos2(rect.max.x, rect.max.y),
     );
     ui.painter()
-        .rect_filled(corner_rect, 0.0, crate::theme::app_bg());
+        .rect_filled(corner_rect, 0.0, crate::theme::track_bg());
 
     let sb_rect = egui::Rect::from_min_max(
         egui::pos2(rect.min.x + kb_w, sb_y),

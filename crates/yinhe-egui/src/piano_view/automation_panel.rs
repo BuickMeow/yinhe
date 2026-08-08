@@ -296,7 +296,7 @@ pub fn show_panels(
             layout.content_top_y + layout.panels_visible_h,
         ),
     );
-    ui.painter().rect_filled(vbar_rect, 0.0, theme::app_bg());
+    ui.painter().rect_filled(vbar_rect, 0.0, theme::track_bg());
 
     let mut y_offset = layout.content_top_y - scroll_y;
     let visible_top = layout.content_top_y;

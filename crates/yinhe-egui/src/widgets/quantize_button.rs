@@ -27,7 +27,7 @@ pub fn show(ui: &mut egui::Ui, ctx: QuantizeBtnCtx) -> Option<QuantizePreset> {
 
     // 背景矩形：与 ruler 带对齐
     ui.painter()
-        .rect_filled(corner_rect, 0.0, crate::theme::app_bg());
+        .rect_filled(corner_rect, 0.0, crate::theme::track_bg());
 
     let btn_size = 20.0;
     let btn_rect =

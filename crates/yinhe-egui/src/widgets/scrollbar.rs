@@ -16,7 +16,7 @@ const EDGE_WIDTH: f32 = 4.0;
 fn colors() -> (egui::Color32, egui::Color32, egui::Color32, egui::Color32) {
     let rect = theme::line_fg();
     (
-        theme::app_bg(),
+        theme::track_bg(),
         rect,
         theme::hover_color(rect),
         theme::pressed_color(rect),

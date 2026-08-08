@@ -159,7 +159,7 @@ pub fn show(
             egui::pos2(arr_rect.max.x, arr_rect.min.y + RULER_H),
         );
         ui.painter()
-            .rect_filled(corner_rect, 0.0, crate::theme::app_bg());
+            .rect_filled(corner_rect, 0.0, crate::theme::track_bg());
 
         let model = &*doc.data.model;
         let tpb = model.meta.ppq;
@@ -381,7 +381,7 @@ pub fn show(
         // 右下角角落：横纵滚动条交叠区（SCROLLBAR_W × SCROLLBAR_H）
         let corner_rect = egui::Rect::from_min_max(gpu_rect.max, arr_rect.max);
         ui.painter()
-            .rect_filled(corner_rect, 0.0, crate::theme::app_bg());
+            .rect_filled(corner_rect, 0.0, crate::theme::track_bg());
 
         let sb_drag_dy = crate::widgets::scrollbar::show(
             ui,
@@ -488,7 +488,7 @@ pub fn show(
         );
         // 角落背景：track panel 下方、水平滚动条左侧（未来可放其他控件）
         ui.painter()
-            .rect_filled(corner_rect, 0.0, crate::theme::app_bg());
+            .rect_filled(corner_rect, 0.0, crate::theme::track_bg());
 
         let btn_size = 20.0;
         let btn_rect =
