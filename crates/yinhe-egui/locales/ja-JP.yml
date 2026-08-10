@@ -148,6 +148,7 @@ settings.midi_import.heading: "MIDIインポート"
 settings.midi_import.encoding: "トラック名エンコーディング"
 settings.refresh_devices: "デバイスリストを更新"
 settings.factory_reset: "工場リセット"
+settings.general.heading: "一般"
 
 # ── 未保存ダイアログ ──
 dialog.unsaved.title: "未保存の変更"

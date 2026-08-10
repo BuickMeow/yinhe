@@ -148,6 +148,7 @@ settings.midi_import.heading: "MIDI Import"
 settings.midi_import.encoding: "Track Name Encoding"
 settings.refresh_devices: "Refresh Device List"
 settings.factory_reset: "Factory Reset"
+settings.general.heading: "General"
 
 # ── Unsaved dialog ──
 dialog.unsaved.title: "Unsaved Changes"

@@ -148,6 +148,7 @@ settings.midi_import.heading: "MIDI 가져오기"
 settings.midi_import.encoding: "트랙 이름 인코딩"
 settings.refresh_devices: "장치 목록 새로고침"
 settings.factory_reset: "공장 초기화"
+settings.general.heading: "일반"
 
 # ── 저장되지 않음 대화상자 ──
 dialog.unsaved.title: "저장되지 않은 변경사항"
