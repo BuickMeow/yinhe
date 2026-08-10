@@ -109,6 +109,10 @@ impl AudioSettings {
                             s.global_sf_config = std::mem::take(&mut s.global_sf_config)
                                 .with_fallback_path(&s.default_sf2_path);
                         }
+                        // 校验 ui_scale 在设置滑块范围（0.75~2.0）内：设置文件可能被
+                        // 手改或损坏，异常值会让 egui zoom_factor 放大像素尺寸，
+                        // 导致离屏纹理超过 GPU 上限而崩溃。
+                        s.ui_scale = s.ui_scale.clamp(0.75, 2.0);
                         return s;
                     }
                     Err(e) => {

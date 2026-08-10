@@ -54,7 +54,6 @@ pub struct RenderContext {
     texture_id: egui::TextureId,
     width: u32,
     height: u32,
-    shrink_to_fit_on_next_size: bool,
     /// True when the offscreen texture has been recreated and needs a full
     /// GPU render pass before it can be displayed. Set by `recreate_target`
     /// and cleared by `paint()` when it performs a render.
@@ -102,7 +101,6 @@ impl RenderContext {
             texture_id,
             width,
             height,
-            shrink_to_fit_on_next_size: false,
             needs_render: true, // fresh texture, needs first render
             device_lost,
             texture_size_bytes,
@@ -146,7 +144,6 @@ impl RenderContext {
             texture_id,
             width,
             height,
-            shrink_to_fit_on_next_size: false,
             needs_render: true,
             device_lost,
             texture_size_bytes,
@@ -167,6 +164,11 @@ impl RenderContext {
         height: u32,
     ) -> (wgpu::Texture, wgpu::TextureView, egui::TextureId, u64) {
         yinhe_memtrace::with_tag(yinhe_memtrace::AllocTag::Gpu, || {
+            // GPU 纹理尺寸硬上限（如 8192）：超限 create_texture 校验失败会 panic。
+            // 视口纹理超限时降级为上限尺寸（内容完整显示，仅分辨率降低）。
+            let max_dim = device.limits().max_texture_dimension_2d;
+            let width = width.min(max_dim).max(1);
+            let height = height.min(max_dim).max(1);
             // Provide a linear (non-srgb) view format for backends that require it
             // when TEXTURE_BINDING is used with an sRGB format (e.g. Metal, Vulkan).
             // Without this, creating a shader resource view can fail and cause
@@ -236,20 +238,30 @@ impl RenderContext {
     }
 
     /// Resize the offscreen texture if needed.
+    ///
+    /// 尺寸双向跟随：GUI 缩放（zoom_factor）或窗口 resize 改变 ppp 后，
+    /// 视口像素尺寸可能变大也可能变小，必须双向重建。旧实现用
+    /// `shrink_to_fit_on_next_size` 延迟缩小，但该 flag 从未被置位，
+    /// 导致纹理只增不减——GUI 缩放调小后 uv_max < 1，内容被放大显示。
     pub fn ensure_size(&mut self, width: u32, height: u32) {
         if width == 0 || height == 0 {
             return;
         }
 
-        let should_shrink =
-            self.shrink_to_fit_on_next_size && (self.width != width || self.height != height);
-        let should_grow = width > self.width || height > self.height;
+        // 与 create_target 相同的设备上限裁剪：否则超限尺寸会每帧触发 recreate。
+        let max_dim = self.wgpu_state.device.limits().max_texture_dimension_2d;
+        let width = width.min(max_dim).max(1);
+        let height = height.min(max_dim).max(1);
 
-        if should_shrink || should_grow {
+        if width != self.width || height != self.height {
             self.recreate_target(width, height);
         }
+    }
 
-        self.shrink_to_fit_on_next_size = false;
+    /// 当前纹理的实际像素尺寸（可能因 GPU 尺寸上限被裁剪）。
+    /// 渲染线程的目标视口必须用实际尺寸，否则视口超出纹理会裁剪内容。
+    pub fn actual_size(&self) -> (u32, u32) {
+        (self.width, self.height)
     }
 
     pub fn preview_texture_id(&self) -> egui::TextureId {
@@ -330,8 +342,8 @@ impl RenderContext {
         }
 
         let uv_max = egui::pos2(
-            width as f32 / self.width as f32,
-            height as f32 / self.height as f32,
+            (width as f32 / self.width as f32).min(1.0),
+            (height as f32 / self.height as f32).min(1.0),
         );
 
         let do_render = self.needs_render || content_changed;
@@ -340,7 +352,8 @@ impl RenderContext {
             let mut encoder = self
                 .device()
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some(label) });
-            renderer.draw(&mut encoder, self.preview_view(), width, height);
+            // 视口用纹理实际尺寸（可能小于期望尺寸），避免渲染目标外裁剪
+            renderer.draw(&mut encoder, self.preview_view(), self.width, self.height);
             self.queue().submit(std::iter::once(encoder.finish()));
             self.needs_render = false;
         }
@@ -366,8 +379,8 @@ impl RenderContext {
         rect: egui::Rect,
     ) {
         let uv_max = egui::pos2(
-            width as f32 / self.width as f32,
-            height as f32 / self.height as f32,
+            (width as f32 / self.width as f32).min(1.0),
+            (height as f32 / self.height as f32).min(1.0),
         );
 
         let texture_id = self.preview_texture_id();

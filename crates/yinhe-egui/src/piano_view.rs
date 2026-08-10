@@ -209,7 +209,9 @@ pub fn show(
 
     // Update render thread's target view if texture was recreated
     if let Some(rt) = render_thread {
-        rt.update_target(render_ctx.preview_view().clone(), pw, ph);
+        // 目标视口用纹理实际尺寸（超 GPU 上限时被裁剪，视口必须一致）
+        let (aw, ah) = render_ctx.actual_size();
+        rt.update_target(render_ctx.preview_view().clone(), aw, ah);
     }
 
     // Clamp scroll — add some extra space beyond the last note
