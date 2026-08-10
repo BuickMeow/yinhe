@@ -9,6 +9,8 @@ use wgpu::util::DeviceExt;
 const MAX_CHUNKS: usize = 5;
 const CHUNK_SIZE: usize = 30_000_000; // 30M f32 = 120MB per chunk
 const WORKGROUP_SIZE: u32 = 256;
+/// MIDI 通道数（与 shader pass2 的 16 通道归约布局对齐）。
+const CHANNEL_COUNT: usize = 16;
 
 /// Per-voice state that is uploaded to the GPU each block.
 /// 布局必须与 WGSL 的 VoiceState 结构体严格对应。
@@ -22,6 +24,8 @@ pub struct GpuVoiceState {
     pub base_gain: f32,
     pub time: f32,
     pub start_offset: u32, // 块内起始帧偏移
+    /// MIDI 通道（0..15），pass2 按通道归约到 channel_mix。
+    pub channel: u32,
     // Envelope state at start of block
     pub envelope: f32,       // 当前 envelope 值
     pub env_stage: u32,      // 0=Delay,1=Attack,2=Hold,3=Decay,4=Sustain,5=Release,6=Finished
@@ -275,9 +279,10 @@ struct GpuBuffers {
     chunk_count: u32,
     voice_state_buf: wgpu::Buffer,
     max_voices: u32,
-    final_output_buf: wgpu::Buffer,
+    /// per-channel 混音输出（16 通道 × frames × 2 f32），pass2 写入
+    channel_mix_buf: wgpu::Buffer,
     params_buf: wgpu::Buffer,
-    /// pass1 归约中间结果（voice_workgroups × frames × 2 f32）
+    /// pass1 每 voice 每帧输出（voices × frames × 2 f32）
     #[allow(dead_code)] // 经 bind_groups 使用
     partial_buf: wgpu::Buffer,
     staging: [wgpu::Buffer; 2],
@@ -301,6 +306,8 @@ pub struct GpuAudioRenderer {
     /// Persistent copy of sample data chunks (never consumed, reused for buffer rebuilds).
     sample_chunks: Vec<Vec<f32>>,
     frame_count: u32,
+    /// render_into 的 per-channel 混音临时缓冲（复用，避免每块分配）
+    mix_scratch: Vec<f32>,
 }
 
 impl GpuAudioRenderer {
@@ -314,10 +321,10 @@ impl GpuAudioRenderer {
         // 10-binding layout:
         // 0: params (uniform)
         // 1: voice_states (storage read_write，滤波器状态跨 block 写回)
-        // 2: final_output (storage read_write)
+        // 2: channel_mix (storage read_write，16 通道 × frames × 2)
         // 3-7: 5 sample chunks (storage read)
         // 8: chunk_offsets (uniform, separate)
-        // 9: partial（pass1 归约中间结果，read_write）
+        // 9: partial（pass1 每 voice 输出，read_write）
         let mut entries = Vec::with_capacity(10);
         entries.push(wgpu::BindGroupLayoutEntry {
             binding: 0,
@@ -430,6 +437,7 @@ impl GpuAudioRenderer {
             buffers: None,
             sample_chunks: Vec::new(),
             frame_count: 0,
+            mix_scratch: Vec::new(),
         })
     }
 
@@ -520,13 +528,15 @@ impl GpuAudioRenderer {
         });
 
         // Other persistent buffers（用 rounded_voices 分配，和 max_voices 一致）
+        // 其他持久 buffer（用 rounded_voices 分配，和 max_voices 一致）
         let voice_state_size =
             (rounded_voices as usize * std::mem::size_of::<GpuVoiceState>()) as u64;
-        let final_output_size =
-            (frame_count.max(1) as usize * 2 * std::mem::size_of::<f32>()) as u64;
-        // pass1 workgroup 数（按分配的最大 voice 数向上取整）
-        let alloc_wg_count = rounded_voices.div_ceil(WORKGROUP_SIZE);
-        let partial_size = (alloc_wg_count as usize
+        // per-channel 混音：16 通道 × frames × 2
+        let channel_mix_size =
+            (CHANNEL_COUNT as usize * frame_count.max(1) as usize * 2 * std::mem::size_of::<f32>())
+                as u64;
+        // pass1 每 voice 每帧输出（按分配的最大 voice 数）
+        let partial_size = (rounded_voices as usize
             * frame_count.max(1) as usize
             * 2
             * std::mem::size_of::<f32>()) as u64;
@@ -547,9 +557,9 @@ impl GpuAudioRenderer {
             usage: wgpu::BufferUsages::STORAGE,
             mapped_at_creation: false,
         });
-        let final_output_buf = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("gpu_final_output"),
-            size: final_output_size,
+        let channel_mix_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("gpu_channel_mix"),
+            size: channel_mix_size,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
@@ -561,13 +571,13 @@ impl GpuAudioRenderer {
         });
         let staging0 = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("staging_0"),
-            size: final_output_size,
+            size: channel_mix_size,
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
         let staging1 = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("staging_1"),
-            size: final_output_size,
+            size: channel_mix_size,
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -641,7 +651,7 @@ impl GpuAudioRenderer {
                 make_bg(
                     &params_buf,
                     &voice_state_buf,
-                    &final_output_buf,
+                    &channel_mix_buf,
                     &chunk_offsets_buf,
                     &sample_chunks,
                     &self.dummy_buf,
@@ -650,7 +660,7 @@ impl GpuAudioRenderer {
                 make_bg(
                     &params_buf,
                     &voice_state_buf,
-                    &final_output_buf,
+                    &channel_mix_buf,
                     &chunk_offsets_buf,
                     &sample_chunks,
                     &self.dummy_buf,
@@ -662,7 +672,7 @@ impl GpuAudioRenderer {
             chunk_count,
             voice_state_buf,
             max_voices: rounded_voices,
-            final_output_buf,
+            channel_mix_buf,
             params_buf,
             partial_buf,
             staging: [staging0, staging1],
@@ -672,20 +682,20 @@ impl GpuAudioRenderer {
         self.frame_count = frame_count;
     }
 
-    /// Render a block of audio using the GPU.
-    /// 渲染一块音频。输出写入 `output`（长度 = frame_count * 2，立体声交错）。
+    /// 渲染一块音频的 per-channel 混音（16 通道 × frames × 2 f32，立体声交错）。
     /// `voices` 会被更新：读回 GPU 端推进的滤波器 IIR 状态（跨 block 持久）。
+    /// 通道滤波（CC74/71）与通道求和由调用方（GpuSynth）在 CPU 完成。
     /// 返回实际 voice 数量（0 表示静音）。
-    pub fn render_into(
+    pub fn render_channel_mix(
         &mut self,
         voices: &mut [GpuVoiceState],
-        output: &mut [f32],
+        channel_mix: &mut [f32],
         sample_rate: u32,
     ) -> u32 {
-        let frame_count = (output.len() / 2) as u32;
+        let frame_count = (channel_mix.len() / 2 / CHANNEL_COUNT) as u32;
         let voice_count = voices.len() as u32;
         if voice_count == 0 || frame_count == 0 {
-            output.fill(0.0);
+            channel_mix.fill(0.0);
             return 0;
         }
 
@@ -694,7 +704,7 @@ impl GpuAudioRenderer {
         let buf = match self.buffers.as_mut() {
             Some(b) => b,
             None => {
-                output.fill(0.0);
+                channel_mix.fill(0.0);
                 return 0;
             }
         };
@@ -719,7 +729,8 @@ impl GpuAudioRenderer {
                 label: Some("audio_render"),
             });
 
-        // pass1：每 voice 串行渲染 block 内所有帧（含逐帧包络推进与 per-voice 滤波）
+        // pass1：每 voice 串行渲染 block 内所有帧（含逐帧包络推进与 per-voice 滤波），
+        // 每帧结果直写 partial[vid][frame]
         {
             let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("voice_pass"),
@@ -729,7 +740,7 @@ impl GpuAudioRenderer {
             cpass.set_bind_group(0, &buf.bind_groups[idx], &[]);
             cpass.dispatch_workgroups(voice_wg_count, 1, 1);
         }
-        // pass2：归约 partial 到最终输出
+        // pass2：每帧一个 workgroup，把 partial 按通道归约到 channel_mix
         {
             let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("mix_pass"),
@@ -740,14 +751,8 @@ impl GpuAudioRenderer {
             cpass.dispatch_workgroups(frame_count, 1, 1);
         }
 
-        let final_output_size = (frame_count as usize * 2 * std::mem::size_of::<f32>()) as u64;
-        encoder.copy_buffer_to_buffer(
-            &buf.final_output_buf,
-            0,
-            &buf.staging[idx],
-            0,
-            final_output_size,
-        );
+        let mix_size = (channel_mix.len() * std::mem::size_of::<f32>()) as u64;
+        encoder.copy_buffer_to_buffer(&buf.channel_mix_buf, 0, &buf.staging[idx], 0, mix_size);
         // 读回 voice 状态（滤波器 IIR 状态，供下一 block 上传）
         let voice_state_size = buf.voice_state_buf.size();
         encoder.copy_buffer_to_buffer(
@@ -760,7 +765,7 @@ impl GpuAudioRenderer {
         self.queue.submit(std::iter::once(encoder.finish()));
 
         // 只 map 本次实际渲染的帧数（staging 可能比本次 block 大）
-        let buffer_slice = buf.staging[idx].slice(..final_output_size);
+        let buffer_slice = buf.staging[idx].slice(..mix_size);
         let (sender, receiver) = std::sync::mpsc::channel();
         buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
             let _ = sender.send(result);
@@ -776,13 +781,13 @@ impl GpuAudioRenderer {
         });
         // map 失败（如设备丢失）：输出静音，不 unwrap 保命
         if !matches!(receiver.recv(), Ok(Ok(()))) || !matches!(vreceiver.recv(), Ok(Ok(()))) {
-            output.fill(0.0);
+            channel_mix.fill(0.0);
             return 0;
         }
 
         let data = buffer_slice.get_mapped_range();
-        let gpu_output: &[f32] = bytemuck::cast_slice(&data);
-        output[..gpu_output.len()].copy_from_slice(gpu_output);
+        let gpu_mix: &[f32] = bytemuck::cast_slice(&data);
+        channel_mix[..gpu_mix.len()].copy_from_slice(gpu_mix);
         drop(data);
         buf.staging[idx].unmap();
 
@@ -804,6 +809,31 @@ impl GpuAudioRenderer {
         buf.staging_idx = 1 - buf.staging_idx;
 
         voice_count
+    }
+
+    /// Render a block of audio using the GPU.
+    /// 渲染一块音频（frames × 2 立体声交错）：per-channel 混音求和，无通道滤波。
+    /// `voices` 会被更新：读回 GPU 端推进的滤波器 IIR 状态（跨 block 持久）。
+    /// 返回实际 voice 数量（0 表示静音）。
+    pub fn render_into(
+        &mut self,
+        voices: &mut [GpuVoiceState],
+        output: &mut [f32],
+        sample_rate: u32,
+    ) -> u32 {
+        let frames = output.len() / 2;
+        let mut scratch = std::mem::take(&mut self.mix_scratch);
+        scratch.resize(CHANNEL_COUNT * frames * 2, 0.0);
+        let n = self.render_channel_mix(voices, &mut scratch, sample_rate);
+        self.mix_scratch = scratch;
+        output.fill(0.0);
+        for ch in 0..CHANNEL_COUNT {
+            let base = ch * frames * 2;
+            for (i, o) in output.iter_mut().enumerate() {
+                *o += self.mix_scratch[base + i];
+            }
+        }
+        n
     }
 
     /// 渲染一块音频（返回新分配的 Vec，兼容旧接口）。

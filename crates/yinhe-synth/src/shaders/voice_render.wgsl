@@ -24,6 +24,8 @@ struct VoiceState {
     base_gain: f32,
     time: f32,
     start_offset: u32,
+    // MIDI 通道（0..15，pass2 按通道归约到 channel_mix）
+    channel: u32,
     // Envelope state at start of block
     envelope: f32,
     env_stage: u32,      // 0=Delay..6=Finished
@@ -81,7 +83,7 @@ struct VoiceState {
 
 @group(0) @binding(0) var<uniform> params: RenderParams;
 @group(0) @binding(1) var<storage, read_write> voice_states: array<VoiceState>;
-@group(0) @binding(2) var<storage, read_write> final_output: array<f32>;
+@group(0) @binding(2) var<storage, read_write> channel_mix: array<f32>;
 @group(0) @binding(3) var<storage, read> chunk_0: array<f32>;
 @group(0) @binding(4) var<storage, read> chunk_1: array<f32>;
 @group(0) @binding(5) var<storage, read> chunk_2: array<f32>;
@@ -198,7 +200,8 @@ fn advance_env(st: VoiceState) -> VoiceState {
     return s;
 }
 
-/// Pass 1：每线程一个 voice，串行推进 block 内所有帧，workgroup 归约到 partial。
+/// Pass 1：每线程一个 voice，串行推进 block 内所有帧，每帧结果直写
+/// `partial[vid][frame]`（无 workgroup 归约，避免每帧 barrier）。
 @compute @workgroup_size(256)
 fn vs_main(@builtin(workgroup_id) wid: vec3<u32>,
            @builtin(local_invocation_id) lid: vec3<u32>) {
@@ -306,26 +309,9 @@ fn vs_main(@builtin(workgroup_id) wid: vec3<u32>,
             st = advance_env(st);
         }
 
-        shared_l[lid.x] = my_l;
-        shared_r[lid.x] = my_r;
-        workgroupBarrier();
-
-        var stride = 128u;
-        while stride > 0u {
-            if lid.x < stride {
-                shared_l[lid.x] += shared_l[lid.x + stride];
-                shared_r[lid.x] += shared_r[lid.x + stride];
-            }
-            workgroupBarrier();
-            stride /= 2u;
-        }
-
-        if lid.x == 0u {
-            let base = wid.x * fc * 2u + fi * 2u;
-            partial[base] = shared_l[0];
-            partial[base + 1u] = shared_r[0];
-        }
-        workgroupBarrier();
+        // 直写自己的 slot（pass2 按通道归约；无 workgroup 同步）
+        partial[vid * fc * 2u + fi * 2u] = my_l;
+        partial[vid * fc * 2u + fi * 2u + 1u] = my_r;
     }
 
     // 写回滤波器状态（跨 block 持久；其余字段由 CPU advance_voices 推进）
@@ -341,21 +327,23 @@ fn vs_main(@builtin(workgroup_id) wid: vec3<u32>,
     }
 }
 
-/// Pass 2：每帧一个 workgroup，归约所有 pass1 workgroup 的 partial。
+/// Pass 2：每帧一个 workgroup；256 线程 = 16 通道 × 16 槽位，
+/// 把 pass1 的 per-voice partial 按通道归约到 channel_mix[ch][frame][2]。
 @compute @workgroup_size(256)
 fn mix_main(@builtin(workgroup_id) wid: vec3<u32>,
             @builtin(local_invocation_id) lid: vec3<u32>) {
     let fi = wid.x;
     let fc = params.frame_count;
     if fi >= fc { return; }
-    let wgc = params.voice_wg_count;
-    let iters = (wgc + 255u) / 256u;
+    // 线程布局：ch = lid/16，slot = lid%16；每个 slot 扫 stride 16 的 voice。
+    // 16 通道 × 16 槽位 = 256 线程，覆盖 voice_count ≤ 256 的槽位空间。
+    let ch = lid.x / 16u;
+    let s = lid.x % 16u;
     var sum_l = 0.0;
     var sum_r = 0.0;
-    for (var it: u32 = 0u; it < iters; it++) {
-        let wg = lid.x + it * 256u;
-        if wg < wgc {
-            let base = wg * fc * 2u + fi * 2u;
+    for (var vid = s; vid < params.voice_count; vid += 16u) {
+        if voice_states[vid].channel == ch {
+            let base = vid * fc * 2u + fi * 2u;
             sum_l += partial[base];
             sum_r += partial[base + 1u];
         }
@@ -365,9 +353,10 @@ fn mix_main(@builtin(workgroup_id) wid: vec3<u32>,
     shared_r[lid.x] = sum_r;
     workgroupBarrier();
 
-    var stride = 128u;
+    // 组内（16 槽位）树归约
+    var stride = 8u;
     while stride > 0u {
-        if lid.x < stride {
+        if s < stride {
             shared_l[lid.x] += shared_l[lid.x + stride];
             shared_r[lid.x] += shared_r[lid.x + stride];
         }
@@ -375,8 +364,9 @@ fn mix_main(@builtin(workgroup_id) wid: vec3<u32>,
         stride /= 2u;
     }
 
-    if lid.x == 0u {
-        final_output[fi * 2u] = shared_l[0];
-        final_output[fi * 2u + 1u] = shared_r[0];
+    if s == 0u {
+        let base = (ch * fc + fi) * 2u;
+        channel_mix[base] = shared_l[ch * 16u];
+        channel_mix[base + 1u] = shared_r[ch * 16u];
     }
 }

@@ -270,6 +270,8 @@ pub struct GpuSynth {
     voices: Vec<Voice>,
     /// 预分配的 voice states 缓冲区，避免每帧分配
     states_buf: Vec<GpuVoiceState>,
+    /// 16 通道混音缓冲（GPU 输出读回，CPU 通道滤波 + 求和）
+    channel_mix: Vec<f32>,
     /// 16 通道 MIDI 控制状态
     channels: [ChannelState; MAX_CHANNELS],
     limiter: VolumeLimiter,
@@ -334,6 +336,7 @@ impl GpuSynth {
             sample_offsets,
             voices: Vec::new(),
             states_buf: Vec::new(),
+            channel_mix: Vec::new(),
             channels: [ChannelState::new(sample_rate); MAX_CHANNELS],
             limiter: VolumeLimiter::new(2),
             limiter_enabled: true,
@@ -497,9 +500,13 @@ impl GpuSynth {
         if !self.voices.is_empty() {
             self.states_buf.clear();
             self.states_buf.extend(self.voices.iter().map(|v| v.state));
-            // 直接写入 output，避免中间 Vec 分配；渲染后读回滤波器 IIR 状态
-            self.renderer
-                .render_into(&mut self.states_buf, output, self.sample_rate);
+            // per-channel 混音：16 通道 × frames × 2，读回后 CPU 滤波 + 求和
+            self.channel_mix.resize(MAX_CHANNELS * frames * 2, 0.0);
+            self.renderer.render_channel_mix(
+                &mut self.states_buf,
+                &mut self.channel_mix,
+                self.sample_rate,
+            );
             for (i, v) in self.voices.iter_mut().enumerate() {
                 v.state.flt_x1 = self.states_buf[i].flt_x1;
                 v.state.flt_x2 = self.states_buf[i].flt_x2;
@@ -509,6 +516,14 @@ impl GpuSynth {
                 v.state.flt_x2r = self.states_buf[i].flt_x2r;
                 v.state.flt_y1r = self.states_buf[i].flt_y1r;
                 v.state.flt_y2r = self.states_buf[i].flt_y2r;
+            }
+            // 各通道求和（CC74 通道滤波在 apply_channel_effects 中于求和前完成）
+            output.fill(0.0);
+            for ch in 0..MAX_CHANNELS {
+                let base = ch * frames * 2;
+                for (i, o) in output.iter_mut().enumerate() {
+                    *o += self.channel_mix[base + i];
+                }
             }
         }
 
@@ -641,6 +656,8 @@ impl GpuSynth {
                 base_gain: info.volume,
                 time: 0.0,
                 start_offset: offset_in_block,
+                // 取模后的通道号（与 ChannelState 索引/pass2 归约一致）
+                channel: channel as u32 % MAX_CHANNELS as u32,
                 envelope: info.ampeg_start,
                 env_stage: 0,
                 stage_progress: 0.0,
