@@ -169,8 +169,11 @@ pub fn derive_theme(base: crate::base::BaseColors) -> Theme {
     let mix_track = mix(bg, Color32::BLACK, 0.20);
     // 线条统一色：egui 原生描边/分割条/网格/滑块
     let mix_line = mix(bg, text, 0.15);
-    // 条纹着色行：比 app_bg 更黑一档（bg-15% = ×85%）
-    let mix_stripe = mix(bg, Color32::BLACK, 0.15);
+    // 条纹着色行：比 app_bg 更黑。暗色主题暗 15%；亮色主题只暗 8%——
+    // 人眼感知绝对色差，固定比例在亮色背景下会过重（成熟主题系统
+    // 的做法：亮暗主题分别定义对比度 token）
+    let stripe_t = if luminance(bg) <= 0.5 { 0.15 } else { 0.08 };
+    let mix_stripe = mix(bg, Color32::BLACK, stripe_t);
     let mix_measure_label = shade(text, 0.77);
 
     // 危险系：危险色与文字/对比色混合得到浅红/暗红档位（同色相）
