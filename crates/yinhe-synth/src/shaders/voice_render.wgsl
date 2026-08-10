@@ -24,7 +24,7 @@ struct VoiceState {
     base_gain: f32,
     time: f32,
     start_offset: u32,
-    // MIDI 通道（0..15，pass2 按通道归约到 channel_mix）
+    // MIDI 通道（0..31，pass2 按通道归约到 channel_mix）
     channel: u32,
     // Envelope state at start of block
     envelope: f32,
@@ -330,7 +330,7 @@ fn vs_main(@builtin(workgroup_id) wid: vec3<u32>,
     }
 }
 
-/// Pass 2：每帧一个 workgroup；256 线程 = 16 通道 × 16 槽位，
+/// Pass 2：每帧一个 workgroup；256 线程 = 32 通道 × 8 槽位，
 /// 把 pass1 的 per-voice partial 按通道归约到 channel_mix[ch][frame][2]。
 @compute @workgroup_size(256)
 fn mix_main(@builtin(workgroup_id) wid: vec3<u32>,
@@ -338,13 +338,13 @@ fn mix_main(@builtin(workgroup_id) wid: vec3<u32>,
     let fi = wid.x;
     let fc = params.frame_count;
     if fi >= fc { return; }
-    // 线程布局：ch = lid/16，slot = lid%16；每个 slot 扫 stride 16 的 voice。
-    // 16 通道 × 16 槽位 = 256 线程，覆盖 voice_count ≤ 256 的槽位空间。
-    let ch = lid.x / 16u;
-    let s = lid.x % 16u;
+    // 线程布局：ch = lid/8，slot = lid%8；每个 slot 扫 stride 8 的 voice。
+    // 32 通道 × 8 槽位 = 256 线程，所有 vid 恰好被一个线程扫描（vid ≡ s mod 8）。
+    let ch = lid.x / 8u;
+    let s = lid.x % 8u;
     var sum_l = 0.0;
     var sum_r = 0.0;
-    for (var vid = s; vid < params.voice_count; vid += 16u) {
+    for (var vid = s; vid < params.voice_count; vid += 8u) {
         if voice_states[vid].channel == ch {
             let base = vid * fc * 2u + fi * 2u;
             sum_l += partial[base];
@@ -356,8 +356,8 @@ fn mix_main(@builtin(workgroup_id) wid: vec3<u32>,
     shared_r[lid.x] = sum_r;
     workgroupBarrier();
 
-    // 组内（16 槽位）树归约
-    var stride = 8u;
+    // 组内（8 槽位）树归约
+    var stride = 4u;
     while stride > 0u {
         if s < stride {
             shared_l[lid.x] += shared_l[lid.x + stride];
@@ -369,7 +369,7 @@ fn mix_main(@builtin(workgroup_id) wid: vec3<u32>,
 
     if s == 0u {
         let base = (ch * fc + fi) * 2u;
-        channel_mix[base] = shared_l[ch * 16u];
-        channel_mix[base + 1u] = shared_r[ch * 16u];
+        channel_mix[base] = shared_l[ch * 8u];
+        channel_mix[base + 1u] = shared_r[ch * 8u];
     }
 }

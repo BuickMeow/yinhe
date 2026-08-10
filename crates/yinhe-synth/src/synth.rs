@@ -9,8 +9,8 @@ use wgpu::util::DeviceExt;
 const MAX_CHUNKS: usize = 5;
 const CHUNK_SIZE: usize = 30_000_000; // 30M f32 = 120MB per chunk
 const WORKGROUP_SIZE: u32 = 256;
-/// MIDI 通道数（与 shader pass2 的 16 通道归约布局对齐）。
-const CHANNEL_COUNT: usize = 16;
+/// MIDI 通道数（与 shader pass2 的 32 通道归约布局对齐；dense = port×16+ch，支持 2 端口）。
+const CHANNEL_COUNT: usize = 32;
 
 /// Per-voice state that is uploaded to the GPU each block.
 /// 布局必须与 WGSL 的 VoiceState 结构体严格对应。
@@ -24,7 +24,7 @@ pub struct GpuVoiceState {
     pub base_gain: f32,
     pub time: f32,
     pub start_offset: u32, // 块内起始帧偏移
-    /// MIDI 通道（0..15），pass2 按通道归约到 channel_mix。
+    /// MIDI 通道（0..31），pass2 按通道归约到 channel_mix。
     pub channel: u32,
     // Envelope state at start of block
     pub envelope: f32,       // 当前 envelope 值
@@ -282,7 +282,7 @@ struct GpuBuffers {
     chunk_count: u32,
     voice_state_buf: wgpu::Buffer,
     max_voices: u32,
-    /// per-channel 混音输出（16 通道 × frames × 2 f32），pass2 写入
+    /// per-channel 混音输出（32 通道 × frames × 2 f32），pass2 写入
     channel_mix_buf: wgpu::Buffer,
     params_buf: wgpu::Buffer,
     /// pass1 每 voice 每帧输出（voices × frames × 2 f32）
@@ -324,7 +324,7 @@ impl GpuAudioRenderer {
         // 10-binding layout:
         // 0: params (uniform)
         // 1: voice_states (storage read_write，滤波器状态跨 block 写回)
-        // 2: channel_mix (storage read_write，16 通道 × frames × 2)
+        // 2: channel_mix (storage read_write，32 通道 × frames × 2)
         // 3-7: 5 sample chunks (storage read)
         // 8: chunk_offsets (uniform, separate)
         // 9: partial（pass1 每 voice 输出，read_write）
@@ -534,7 +534,7 @@ impl GpuAudioRenderer {
         // 其他持久 buffer（用 rounded_voices 分配，和 max_voices 一致）
         let voice_state_size =
             (rounded_voices as usize * std::mem::size_of::<GpuVoiceState>()) as u64;
-        // per-channel 混音：16 通道 × frames × 2
+        // per-channel 混音：32 通道 × frames × 2
         let channel_mix_size =
             (CHANNEL_COUNT * frame_count.max(1) as usize * 2 * std::mem::size_of::<f32>()) as u64;
         // pass1 每 voice 每帧输出（按分配的最大 voice 数）

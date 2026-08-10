@@ -16,8 +16,8 @@ use crate::sfz_parser;
 use crate::synth::{GpuAudioRenderer, GpuVoiceState, advance_voices};
 use crate::wgpu;
 
-/// MIDI 通道数（标准 16 通道）。
-pub const MAX_CHANNELS: usize = 16;
+/// MIDI 通道数（dense 通道 = port×16+ch，支持 2 端口 32 通道）。
+pub const MAX_CHANNELS: usize = 32;
 
 /// 合成器事件（sample 域，按 sample 排序后由 `load_events` 加载）。
 #[derive(Clone, Copy, Debug)]
@@ -394,9 +394,9 @@ pub struct GpuSynth {
     voices: Vec<Voice>,
     /// 预分配的 voice states 缓冲区，避免每帧分配
     states_buf: Vec<GpuVoiceState>,
-    /// 16 通道混音缓冲（GPU 输出读回，CPU 通道滤波 + 求和）
+    /// 32 通道混音缓冲（GPU 输出读回，CPU 通道滤波 + 求和）
     channel_mix: Vec<f32>,
-    /// 16 通道 MIDI 控制状态
+    /// 32 通道 MIDI 控制状态
     channels: [ChannelState; MAX_CHANNELS],
     limiter: VolumeLimiter,
     /// 渲染后是否应用限幅器（默认开；对比测试可关闭）
@@ -627,7 +627,7 @@ impl GpuSynth {
         if !self.voices.is_empty() {
             self.states_buf.clear();
             self.states_buf.extend(self.voices.iter().map(|v| v.state));
-            // per-channel 混音：16 通道 × frames × 2，读回后 CPU 滤波 + 求和
+            // per-channel 混音：32 通道 × frames × 2，读回后 CPU 滤波 + 求和
             self.channel_mix.resize(MAX_CHANNELS * frames * 2, 0.0);
             self.renderer.render_channel_mix(
                 &mut self.states_buf,
@@ -721,7 +721,7 @@ impl GpuSynth {
     /// 与 note_on 快照、shader 逐帧推进三方一致（无事件区间线性，事件边界重对齐）。
     fn sync_channel_state(&mut self) {
         for v in &mut self.voices {
-            // dense 通道号可能超过 15（多端口 MIDI：port×16+ch），取模折叠到 16 通道状态
+            // dense 通道号可能超过 31（多端口 MIDI：port×16+ch），取模折叠到 32 通道状态
             let ch = self.channels[v.channel as usize % MAX_CHANNELS];
             v.state.speed = v.base_speed * ch.pitch_multiplier();
             v.state.ch_vol = ch.volume.current;
