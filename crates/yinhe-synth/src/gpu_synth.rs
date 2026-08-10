@@ -908,12 +908,15 @@ impl GpuSynth {
         });
     }
 
-    /// NoteOff — 释放该 (channel, key) 最老的未释放 voice（与 xsynth 一致）。
+    /// NoteOff — 释放该 (channel, key) 最老的未释放 voice（与 xsynth `release_next_voice` 一致：
+    /// 同 key 多次按下的 voice 逐个释放，后按的 voice 继续响）。
     /// 延音踏板踩着时只标记 held，不释放。
     pub fn note_off(&mut self, channel: u8, key: u8) {
         let damper = self.channels[channel as usize % MAX_CHANNELS].damper;
         for v in self.voices.iter_mut() {
-            if v.channel == channel && v.key == key && v.state.env_stage < 5 {
+            // 跳过已 held 的 voice（xsynth damper 分支只匹配 "isn't being held" 的
+            // voice：否则同 key 多个 off 会重复匹配同一个 held voice，其余 voice 永不释放）
+            if v.channel == channel && v.key == key && v.state.env_stage < 5 && !v.held_by_damper {
                 if damper {
                     v.held_by_damper = true;
                 } else {

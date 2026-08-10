@@ -47,6 +47,11 @@ fn note_plan() -> Vec<(u64, u8, u8, u64)> {
     plan.push((2400, 48, 100, 600));
     plan.push((2400, 84, 70, 600));
     plan.push((3200, 55, 55, 500));
+    // 回归：damper 踩下期间 off（4000 踩，5000 off → held，7000 松），验证不重复匹配同一 voice
+    plan.push((4500, 60, 90, 1500));
+    // 回归：同 key 双 voice 同时按下，验证各自独立释放
+    plan.push((8000, 60, 90, 500));
+    plan.push((8000, 60, 80, 500));
     plan
 }
 
@@ -224,6 +229,9 @@ fn cc_plan() -> Vec<(u64, u8, u8)> {
         (1250, 71, 100), // CC71 resonance：Q ≈ 3.98（通道滤波器谐振）
         (1200, 72, 100), // CC72 attack：加速 attack
         (1200, 73, 100), // CC73 release：加速 release
+        // 回归：长踩 damper（note 在踩下期间 off → held，松开时释放）
+        (4000, 64, 127),
+        (7000, 64, 0),
     ]
 }
 
