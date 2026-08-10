@@ -364,9 +364,22 @@ fn show_language_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
             ui.label(t!("settings.language").as_ref());
             let locales = [
                 ("zh-CN", "简体中文"),
+                ("zh-HK", "繁體中文（香港）"),
+                ("zh-TW", "繁體中文（台灣）"),
                 ("en-US", "English"),
                 ("ja-JP", "日本語"),
                 ("ko-KR", "한국어"),
+                ("de-DE", "Deutsch"),
+                ("es-ES", "Español"),
+                ("fr-FR", "Français"),
+                ("it-IT", "Italiano"),
+                ("pl-PL", "Polski"),
+                ("pt-PT", "Português"),
+                ("ru-RU", "Русский"),
+                ("id-ID", "Bahasa Indonesia"),
+                ("ms-MY", "Bahasa Melayu"),
+                ("th-TH", "ไทย"),
+                ("vi-VN", "Tiếng Việt"),
             ];
             let current = locales
                 .iter()
