@@ -259,8 +259,11 @@ impl eframe::App for App {
             // 弹窗/面板背景色统一为程序背景色（egui 默认 gray(27) 与主题不符）
             visuals.window_fill = crate::theme::app_bg();
             visuals.panel_fill = crate::theme::app_bg();
-            // 选中高亮色统一为 ROW_SELECTED_BG
+            // 选中高亮色统一为 ROW_SELECTED_BG；勾选描边（Checkbox 对勾）用主文字色
             visuals.selection.bg_fill = crate::theme::selected_bg();
+            visuals.selection.stroke = egui::Stroke::new(1.5, crate::theme::text_primary());
+            // 输入框/TextEdit 背景呼应主题（egui 默认灰色与主题不搭）
+            visuals.extreme_bg_color = crate::theme::control_bg();
             // egui 原生控件（Button/ComboBox/Slider/Checkbox 等）三态统一：
             // inactive = btn_bg，hover/active 用统一增益；描边统一 line_fg
             let btn = crate::theme::btn_bg();
