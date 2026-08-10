@@ -34,7 +34,7 @@ pub struct AudioSettings {
     /// GPU 裁剪适合音符量极大的场景，但有同屏 800 万音符上限；
     /// CPU 构建无上限，但缩到最小时每帧重建开销大。
     pub use_gpu_cull: bool,
-    /// UI 语言代码，如 "zh-CN"、"en"、"ja"、"ko"。
+    /// UI 语言代码，如 "zh-CN"、"en-US"、"ja-JP"、"ko-KR"。
     pub locale: String,
     /// 主题标准色（用户可调，全局生效）。
     pub theme_base: yinhe_theme::base::BaseColors,

@@ -49,6 +49,17 @@ pub(crate) fn discover_sample_rates() -> (u32, Vec<u32>) {
 /// Load AudioSettings and populate device lists from the system.
 pub(crate) fn load_audio_settings() -> AudioSettings {
     let mut settings = AudioSettings::load();
+    // locale 名迁移：旧的非区域代码（en/ja/ko）统一为新格式，避免回退到中文。
+    let legacy = match settings.locale.as_str() {
+        "en" => Some("en-US"),
+        "ja" => Some("ja-JP"),
+        "ko" => Some("ko-KR"),
+        _ => None,
+    };
+    if let Some(code) = legacy {
+        settings.locale = code.to_string();
+        settings.save();
+    }
     let devices = list_output_devices();
     let (default_rate, rates) = discover_sample_rates();
     // 上次选的设备不在当前设备列表里（耳机拔了/换了电脑）→ 回退到系统默认
