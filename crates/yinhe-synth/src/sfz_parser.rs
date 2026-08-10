@@ -165,11 +165,9 @@ fn build_key_map_from_sfz(sfz_path: &Path, sample_rate: u32) -> Result<Vec<Vec<K
                 let out = if src_sr == sample_rate {
                     Arc::<[f32]>::from(raw)
                 } else {
-                    xsynth_soundfonts::resample::resample_vec(
-                        raw,
-                        src_sr as f32,
-                        sample_rate as f32,
-                    )
+                    // 重采样前必须分声道解交错：resample_vec 是单声道序列插值，
+                    // 直接对 LRLR 交错数据重采样会把左右声道混在一起（波形错乱）
+                    resample_interleaved(raw, src_sr, sample_rate)
                 };
                 wav_cache.insert(
                     region.sample_path.clone(),
@@ -368,6 +366,21 @@ fn convert_loop_mode(mode: xsynth_soundfonts::LoopMode) -> LoopMode {
         xsynth_soundfonts::LoopMode::LoopSustain => LoopMode::LoopSustain,
         xsynth_soundfonts::LoopMode::OneShot => LoopMode::OneShot,
     }
+}
+
+/// 对交错立体声数据重采样：先按声道解交错，逐声道重采样后再交错。
+fn resample_interleaved(raw: Vec<f32>, src_sr: u32, dst_sr: u32) -> Arc<[f32]> {
+    let left: Vec<f32> = raw.iter().step_by(2).copied().collect();
+    let right: Vec<f32> = raw.iter().skip(1).step_by(2).copied().collect();
+    let left = xsynth_soundfonts::resample::resample_vec(left, src_sr as f32, dst_sr as f32);
+    let right = xsynth_soundfonts::resample::resample_vec(right, src_sr as f32, dst_sr as f32);
+    let len = left.len().min(right.len());
+    let mut out = Vec::with_capacity(len * 2);
+    for i in 0..len {
+        out.push(left[i]);
+        out.push(right[i]);
+    }
+    Arc::from(out)
 }
 
 /// Load a WAV file as f32 samples.

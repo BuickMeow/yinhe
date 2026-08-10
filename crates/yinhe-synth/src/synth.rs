@@ -231,6 +231,8 @@ pub fn advance_voices(voices: &mut [GpuVoiceState], frame_count: u32) {
                     }
                 }
                 4 => {
+                    // Sustain: envelope 恒为 sus（与 GPU 逐帧推进一致）
+                    voice.envelope = sus;
                     remaining = 0.0;
                 } // Sustain: 无限
                 5 => {
@@ -747,7 +749,8 @@ impl GpuAudioRenderer {
         );
         self.queue.submit(std::iter::once(encoder.finish()));
 
-        let buffer_slice = buf.staging[idx].slice(..);
+        // 只 map 本次实际渲染的帧数（staging 可能比本次 block 大）
+        let buffer_slice = buf.staging[idx].slice(..final_output_size);
         let (sender, receiver) = std::sync::mpsc::channel();
         buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
             let _ = sender.send(result);
@@ -1109,6 +1112,7 @@ mod tests {
                 GpuVoiceState {
                     sample_offset: 0,
                     sample_length: sample_len,
+                    speed: 1.0,
                     gain: 0.4,
                     env_stage: stage,
                     env_level: 1.0,
@@ -1159,6 +1163,7 @@ mod tests {
                 GpuVoiceState {
                     sample_offset: 0,
                     sample_length: sample_len,
+                    speed: 1.0,
                     gain: 0.2,
                     start_offset: 13,
                     env_stage: stage,
@@ -1231,5 +1236,107 @@ mod tests {
         assert!((b1 - (1.0 - omega.cos()) / a0).abs() < 1e-6);
         assert!((a1 - (-2.0 * omega.cos()) / a0).abs() < 1e-6);
         assert!((a2 - (1.0 - alpha) / a0).abs() < 1e-6);
+    }
+
+    /// GPU 滤波器 vs biquad crate（权威参照）：系数直接用 biquad crate 生成，
+    /// 排除系数计算差异，验证 DF1 状态方程、包络推进与跨 block 状态传递。
+    #[test]
+    fn gpu_filter_matches_biquad_crate() {
+        use biquad::Biquad as _;
+        use biquad::frequency::ToHertz;
+
+        let (mut renderer, _) = match setup_gpu() {
+            Some(r) => r,
+            None => {
+                eprintln!("No GPU");
+                return;
+            }
+        };
+        let sr = 44100.0f32;
+        // 扫频样本（覆盖滤波频段，频谱丰富）
+        let sample_len = 8192u32;
+        let samples: Vec<f32> = (0..sample_len as usize)
+            .map(|i| {
+                let t = i as f32 / sr;
+                (2.0 * std::f32::consts::PI * (200.0 + 8000.0 * t / 0.2) * t).sin()
+            })
+            .collect();
+        renderer.upload_samples(&samples);
+        renderer.buffers = None;
+
+        // 用 biquad crate 生成系数（权威来源）
+        let cutoff = 1195.0f32;
+        let q = 0.7071f32;
+        let coeffs = biquad::Coefficients::<f32>::from_params(
+            biquad::Type::LowPass,
+            sr.hz(),
+            cutoff.hz(),
+            q,
+        )
+        .unwrap();
+
+        let make_voice = |with_filter: bool| GpuVoiceState {
+            sample_length: sample_len,
+            speed: 1.0,
+            gain: 0.5,
+            env_stage: 4,
+            env_level: 1.0,
+            sustain_level: 1.0,
+            pan_left: 1.0,
+            pan_right: 1.0,
+            cutoff: if with_filter { cutoff } else { 0.0 },
+            resonance: q,
+            filter_type: 0,
+            flt_b0: coeffs.b0,
+            flt_b1: coeffs.b1,
+            flt_b2: coeffs.b2,
+            flt_a1: coeffs.a1,
+            flt_a2: coeffs.a2,
+            ..Default::default()
+        };
+
+        // 对照组：无滤波（cutoff=0）——验证采样读取与 envelope 通路
+        let frame_count = 512u32;
+        {
+            let mut voices = vec![make_voice(false)];
+            let mut out = vec![0.0f32; frame_count as usize * 2];
+            renderer.render_into(&mut voices, &mut out, sr as u32);
+            advance_voices(&mut voices, frame_count);
+            for fi in 0..8 {
+                let expected = samples[fi] * 0.5; // sustain env=1.0, gain=0.5, mono, pan=1
+                assert!(
+                    (out[fi * 2] - expected).abs() < 1e-4,
+                    "nofilter frame {fi}: gpu={} expected={}",
+                    out[fi * 2],
+                    expected
+                );
+            }
+        }
+
+        // 滤波路径：4 个连续 block，验证跨 block IIR 状态传递
+        let mut gpu_voices = vec![make_voice(true)];
+        let mut cpu_filters = [
+            biquad::DirectForm1::<f32>::new(coeffs),
+            biquad::DirectForm1::<f32>::new(coeffs),
+        ];
+
+        for block in 0..4 {
+            let mut out_gpu = vec![0.0f32; frame_count as usize * 2];
+            renderer.render_into(&mut gpu_voices, &mut out_gpu, sr as u32);
+            advance_voices(&mut gpu_voices, frame_count);
+
+            // 参照：逐帧 biquad crate 滤波（单声道，左右同值）
+            let start = block as usize * frame_count as usize;
+            for fi in 0..frame_count as usize {
+                let input = samples[start + fi] * 0.5;
+                let out = cpu_filters[0].run(input);
+                assert!(
+                    (out_gpu[fi * 2] - out).abs() < 1e-3,
+                    "block {block} frame {fi}: gpu={} biquad={}",
+                    out_gpu[fi * 2],
+                    out
+                );
+            }
+        }
     }
 }

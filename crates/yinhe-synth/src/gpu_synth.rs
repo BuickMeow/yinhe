@@ -48,6 +48,8 @@ pub struct GpuSynth {
     /// 预分配的 voice states 缓冲区，避免每帧分配
     states_buf: Vec<GpuVoiceState>,
     limiter: VolumeLimiter,
+    /// 渲染后是否应用限幅器（默认开；对比测试可关闭）
+    limiter_enabled: bool,
     sample_rate: u32,
     /// 排序好的事件列表（导出/Seek 用）
     events: Vec<SynthEvent>,
@@ -108,6 +110,7 @@ impl GpuSynth {
             voices: Vec::new(),
             states_buf: Vec::new(),
             limiter: VolumeLimiter::new(2),
+            limiter_enabled: true,
             sample_rate,
             events: Vec::new(),
             event_cursor: 0,
@@ -115,11 +118,12 @@ impl GpuSynth {
         })
     }
 
-    /// 批量加载排序好的事件列表（导出/Seek 用）。
+    /// 批量加载排序好的事件列表（导出/Seek 用）。重置渲染位置到 0。
     pub fn load_events(&mut self, events: Vec<SynthEvent>) {
         self.events = events;
         self.event_cursor = 0;
         self.voices.clear();
+        self.sample_position = 0;
     }
 
     /// 当前渲染位置
@@ -130,6 +134,11 @@ impl GpuSynth {
     /// 当前活跃 voice 数量（含 release 阶段）。导出余韵循环用它早退。
     pub fn voice_count(&self) -> usize {
         self.voices.len()
+    }
+
+    /// 开关渲染后的限幅器（默认开）。对比测试用于排除限幅差异。
+    pub fn set_limiter_enabled(&mut self, enabled: bool) {
+        self.limiter_enabled = enabled;
     }
 
     /// Seek 到指定位置
@@ -194,8 +203,10 @@ impl GpuSynth {
         // 清理已结束的 voice
         self.voices.retain(|v| v.state.env_stage < 6);
 
-        // 限幅
-        self.limiter.limit(output);
+        // 限幅（真实路径保留；对比测试可关闭）
+        if self.limiter_enabled {
+            self.limiter.limit(output);
+        }
 
         self.sample_position = block_end;
     }
@@ -221,6 +232,11 @@ impl GpuSynth {
         // 声像：等功率法则（xsynth stereo spawner 公式，左右各 1.42 补偿）
         let angle = info.pan * std::f32::consts::FRAC_PI_2;
         let (pan_l, pan_r) = ((angle.cos() * 1.42).min(1.0), (angle.sin() * 1.42).min(1.0));
+        // channel 层默认中置 pan（xsynth 默认 0.5 → 左右 0.707），P3 做 CC 时改为实时控制
+        let (pan_l, pan_r) = (
+            pan_l * std::f32::consts::FRAC_1_SQRT_2,
+            pan_r * std::f32::consts::FRAC_1_SQRT_2,
+        );
 
         // per-voice biquad 系数（RBJ cookbook，与 xsynth 一致）；cutoff=0 时无滤波器
         let (flt_b0, flt_b1, flt_b2, flt_a1, flt_a2) = if info.cutoff > 0.0 {
@@ -247,7 +263,8 @@ impl GpuSynth {
                 envelope: info.ampeg_start,
                 env_stage: 0,
                 stage_progress: 0.0,
-                env_level: info.volume,
+                // envelope 归一化 0..1，增益由 gain 单独乘（xsynth 语义）
+                env_level: 1.0,
                 sustain_level: info.ampeg_sustain,
                 env_start: info.ampeg_start,
                 delay_frames: info.ampeg_delay * sr,

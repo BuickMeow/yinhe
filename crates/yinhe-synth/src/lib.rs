@@ -12,5 +12,7 @@ pub mod synth;
 
 pub use gpu_synth::{GpuSynth, SynthEvent};
 pub use sfz_parser::{KeyInfo, LoopMode, build_key_map, load_wav_as_f32, select_key_info};
-pub use synth::{GpuAudioRenderer, GpuVoiceState, RenderParams, advance_voices, cpu_render_voices};
+pub use synth::{
+    GpuAudioRenderer, GpuVoiceState, RenderParams, advance_voices, biquad_coeffs, cpu_render_voices,
+};
 pub use wgpu;
