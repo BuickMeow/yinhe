@@ -3,6 +3,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+#[cfg(feature = "gpu")]
+use xsynth_core::channel::ControlEvent;
 use xsynth_core::effects::VolumeLimiter;
 use yinhe_core::YinModel;
 

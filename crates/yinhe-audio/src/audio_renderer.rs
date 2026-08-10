@@ -4,6 +4,8 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use crossbeam_channel::{Receiver, Sender, TryRecvError};
+#[cfg(feature = "gpu")]
+use xsynth_core::channel::ControlEvent;
 use xsynth_core::effects::VolumeLimiter;
 
 use crate::audio_ring::AudioRingProducer;
