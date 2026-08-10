@@ -327,40 +327,8 @@ pub fn export_wav_gpu(
     let layout = crate::spawn::channels_for_model(&model);
 
     let mut events: Vec<yinhe_synth::SynthEvent> = Vec::new();
-    for key in 0..128usize {
-        for note in model.notes[key].iter() {
-            if note.velocity <= 1 {
-                continue;
-            }
-            let track = note.track as usize;
-            if track < skip_tracks.len() && skip_tracks[track] {
-                continue;
-            }
-            let ch = audio_model.track_channel(track) as usize;
-            let dense = layout.dense_for(ch);
-            if dense == u32::MAX {
-                continue;
-            }
-
-            let start_sample =
-                crate::audio_model::tick_to_sample(note.start_tick, segments, tpb, sr);
-            let end_sample = crate::audio_model::tick_to_sample(note.end_tick, segments, tpb, sr);
-
-            events.push(yinhe_synth::SynthEvent::NoteOn {
-                sample: start_sample,
-                channel: dense as u8,
-                key: key as u8,
-                velocity: note.velocity,
-            });
-            events.push(yinhe_synth::SynthEvent::NoteOff {
-                sample: end_sample,
-                channel: dense as u8,
-                key: key as u8,
-            });
-        }
-    }
-
-    // CC 事件（与播放路径一致的自动化展平；density=1 最平滑）
+    // CC 事件（与播放路径一致的自动化展平；density=1 最平滑）。
+    // 放在音符事件之前：同 sample 时 CC 先于 note 处理（与 CPU dispatch 一致）。
     let cc_events = crate::audio_model::flatten_automation_to_cc_events(&model, 1);
     for cc in cc_events.iter() {
         if (cc.track as usize) < skip_tracks.len() && skip_tracks[cc.track as usize] {
@@ -396,6 +364,39 @@ pub fn export_wav_gpu(
             channel: dense as u8,
             event,
         });
+    }
+
+    for key in 0..128usize {
+        for note in model.notes[key].iter() {
+            if note.velocity <= 1 {
+                continue;
+            }
+            let track = note.track as usize;
+            if track < skip_tracks.len() && skip_tracks[track] {
+                continue;
+            }
+            let ch = audio_model.track_channel(track) as usize;
+            let dense = layout.dense_for(ch);
+            if dense == u32::MAX {
+                continue;
+            }
+
+            let start_sample =
+                crate::audio_model::tick_to_sample(note.start_tick, segments, tpb, sr);
+            let end_sample = crate::audio_model::tick_to_sample(note.end_tick, segments, tpb, sr);
+
+            events.push(yinhe_synth::SynthEvent::NoteOn {
+                sample: start_sample,
+                channel: dense as u8,
+                key: key as u8,
+                velocity: note.velocity,
+            });
+            events.push(yinhe_synth::SynthEvent::NoteOff {
+                sample: end_sample,
+                channel: dense as u8,
+                key: key as u8,
+            });
+        }
     }
     events.sort_by_key(|e| e.sample());
     eprintln!(

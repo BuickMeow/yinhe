@@ -53,9 +53,13 @@ fn main() {
         .sum();
     println!("[cmp] cc64 events = {cc64_count}");
 
+    let stem = midi_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("midi");
     let tmp = std::env::temp_dir();
-    let cpu_wav = tmp.join("yinhe_cmp_cpu.wav");
-    let gpu_wav = tmp.join("yinhe_cmp_gpu.wav");
+    let cpu_wav = tmp.join(format!("yinhe_cmp_{stem}_cpu.wav"));
+    let gpu_wav = tmp.join(format!("yinhe_cmp_{stem}_gpu.wav"));
     let _ = std::fs::remove_file(&cpu_wav);
     let _ = std::fs::remove_file(&gpu_wav);
 
@@ -179,9 +183,19 @@ fn main() {
         SoundfontInitOptions::default(),
     )
     .expect("sfz load");
+    // 构建事件（dense 映射 + tick_to_sample，与 GPU 一致）
+    // 注意顺序：AudioEngine 的 dispatch 在同一 tick 上 CC 先于 note（cc_cursor
+    // 循环在 note 循环之前），这里先 push CC 再 push note，stable sort 后同 sample 时
+    // CC 在前，与 AudioEngine 一致。
+    let layout2 = yinhe_audio::spawn::channels_for_model(&model);
     let cfg = ChannelGroupConfig {
-        channel_init_options: Default::default(),
-        format: SynthFormat::Custom { channels: 1 },
+        // 与 AudioEngine 配置一致：fade_out_killing=true + compacted_channels
+        channel_init_options: xsynth_core::channel::ChannelInitOptions {
+            fade_out_killing: true,
+        },
+        format: SynthFormat::Custom {
+            channels: layout2.compacted_channels(),
+        },
         audio_params: stream_params,
         parallelism: xsynth_core::channel_group::ParallelismOptions {
             channel: xsynth_core::channel_group::ThreadCount::None,
@@ -189,13 +203,161 @@ fn main() {
         },
     };
     let mut cg = ChannelGroup::new(cfg);
+    cg.send_event(XSynthEvent::AllChannels(ChannelEvent::Config(
+        ChannelConfigEvent::SetLayerCount(None),
+    )));
     cg.send_event(XSynthEvent::Channel(
         0,
         ChannelEvent::Config(ChannelConfigEvent::SetSoundfonts(vec![Arc::new(sf)])),
     ));
-    // 构建事件（dense 映射 + tick_to_sample，与 GPU 一致）
-    let layout2 = yinhe_audio::spawn::channels_for_model(&model);
     let mut xev: Vec<(u64, XSynthEvent)> = Vec::new();
+    // ── CC/PB/RPN 事件（同 sample 时先于 note 处理）──
+    // 通道控制事件（与 CPU/GPU 路径同一语义：CC/PB/RPN 映射见 emit_automation_event）
+    for t in model.tracks.iter() {
+        let dense = layout2.dense_for(t.global_channel() as usize);
+        if dense == u32::MAX {
+            continue;
+        }
+        for lane in &t.automation_lanes {
+            let evs: Vec<XSynthEvent> = match lane.target {
+                yinhe_types::AutomationTarget::CC { controller } => lane
+                    .events
+                    .iter()
+                    .map(|e| {
+                        XSynthEvent::Channel(
+                            dense,
+                            ChannelEvent::Audio(ChannelAudioEvent::Control(
+                                xsynth_core::channel::ControlEvent::Raw(
+                                    controller,
+                                    e.value.round().clamp(0.0, 127.0) as u8,
+                                ),
+                            )),
+                        )
+                    })
+                    .collect(),
+                yinhe_types::AutomationTarget::PitchBend => lane
+                    .events
+                    .iter()
+                    .map(|e| {
+                        XSynthEvent::Channel(
+                            dense,
+                            ChannelEvent::Audio(ChannelAudioEvent::Control(
+                                xsynth_core::channel::ControlEvent::PitchBendValue(
+                                    (e.value - 8192.0) / 8192.0,
+                                ),
+                            )),
+                        )
+                    })
+                    .collect(),
+                yinhe_types::AutomationTarget::Rpn { parameter } => {
+                    let mut out = Vec::new();
+                    for e in &lane.events {
+                        match parameter {
+                            0 => out.push(XSynthEvent::Channel(
+                                dense,
+                                ChannelEvent::Audio(ChannelAudioEvent::Control(
+                                    xsynth_core::channel::ControlEvent::PitchBendSensitivity(
+                                        e.value,
+                                    ),
+                                )),
+                            )),
+                            1 => out.push(XSynthEvent::Channel(
+                                dense,
+                                ChannelEvent::Audio(ChannelAudioEvent::Control(
+                                    xsynth_core::channel::ControlEvent::FineTune(
+                                        (e.value - 8192.0) / 8192.0 * 100.0,
+                                    ),
+                                )),
+                            )),
+                            2 => out.push(XSynthEvent::Channel(
+                                dense,
+                                ChannelEvent::Audio(ChannelAudioEvent::Control(
+                                    xsynth_core::channel::ControlEvent::CoarseTune(e.value - 64.0),
+                                )),
+                            )),
+                            _ => {
+                                let msb = ((parameter >> 8) & 0x7F) as u8;
+                                let lsb = (parameter & 0x7F) as u8;
+                                let v = e.value.round().clamp(0.0, 16383.0) as u16;
+                                let dmsb = ((v >> 7) & 0x7F) as u8;
+                                let dlsb = (v & 0x7F) as u8;
+                                out.push(XSynthEvent::Channel(
+                                    dense,
+                                    ChannelEvent::Audio(ChannelAudioEvent::Control(
+                                        xsynth_core::channel::ControlEvent::Raw(101, msb),
+                                    )),
+                                ));
+                                out.push(XSynthEvent::Channel(
+                                    dense,
+                                    ChannelEvent::Audio(ChannelAudioEvent::Control(
+                                        xsynth_core::channel::ControlEvent::Raw(100, lsb),
+                                    )),
+                                ));
+                                out.push(XSynthEvent::Channel(
+                                    dense,
+                                    ChannelEvent::Audio(ChannelAudioEvent::Control(
+                                        xsynth_core::channel::ControlEvent::Raw(6, dmsb),
+                                    )),
+                                ));
+                                if dlsb != 0 {
+                                    out.push(XSynthEvent::Channel(
+                                        dense,
+                                        ChannelEvent::Audio(ChannelAudioEvent::Control(
+                                            xsynth_core::channel::ControlEvent::Raw(38, dlsb),
+                                        )),
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                    out
+                }
+                yinhe_types::AutomationTarget::Nrpn { parameter } => {
+                    let mut out = Vec::new();
+                    for e in &lane.events {
+                        let msb = ((parameter >> 8) & 0x7F) as u8;
+                        let lsb = (parameter & 0x7F) as u8;
+                        let v = e.value.round().clamp(0.0, 16383.0) as u16;
+                        let dmsb = ((v >> 7) & 0x7F) as u8;
+                        let dlsb = (v & 0x7F) as u8;
+                        out.push(XSynthEvent::Channel(
+                            dense,
+                            ChannelEvent::Audio(ChannelAudioEvent::Control(
+                                xsynth_core::channel::ControlEvent::Raw(99, msb),
+                            )),
+                        ));
+                        out.push(XSynthEvent::Channel(
+                            dense,
+                            ChannelEvent::Audio(ChannelAudioEvent::Control(
+                                xsynth_core::channel::ControlEvent::Raw(98, lsb),
+                            )),
+                        ));
+                        out.push(XSynthEvent::Channel(
+                            dense,
+                            ChannelEvent::Audio(ChannelAudioEvent::Control(
+                                xsynth_core::channel::ControlEvent::Raw(6, dmsb),
+                            )),
+                        ));
+                        if dlsb != 0 {
+                            out.push(XSynthEvent::Channel(
+                                dense,
+                                ChannelEvent::Audio(ChannelAudioEvent::Control(
+                                    xsynth_core::channel::ControlEvent::Raw(38, dlsb),
+                                )),
+                            ));
+                        }
+                    }
+                    out
+                }
+                yinhe_types::AutomationTarget::Tempo => Vec::new(),
+            };
+            for (e, ev) in lane.events.iter().zip(evs) {
+                xev.push((to_sample(e.tick), ev));
+            }
+        }
+    }
+
+    // ── note 事件（放在 CC 之后，同 sample 时 CC 先处理，与 AudioEngine dispatch 一致）──
     for key in 0..128usize {
         for note in model.notes[key].iter() {
             if note.velocity <= 1 {
@@ -233,6 +395,12 @@ fn main() {
     let t0 = std::time::Instant::now();
     let mut xout: Vec<f32> = Vec::with_capacity(xdur as usize * 2);
     let mut chunk = vec![0.0f32; 512 * 2];
+    // 直连渲染也过限幅（与 CPU/GPU 路径对称：低峰值时等价 ÷2）。
+    // 注意粒度：CPU 导出路径的 limiter 按 1024 帧块调用（export_wav 的
+    // RENDER_CHUNK_FRAMES），这里必须同样按 1024 帧 limit——按事件段 limit
+    // 会让 loudness 状态轨迹不同，低峰值段输出出现 2 倍关系以外的偏差。
+    let mut limiter = yinhe_synth::limiter::VolumeLimiter::new(2);
+    let mut acc: Vec<f32> = Vec::with_capacity(1024 * 2);
     let mut cursor = 0usize;
     let mut rendered = 0u64;
     while rendered < xdur {
@@ -247,10 +415,20 @@ fn main() {
             let n = (frames - done).min(512);
             let buf = &mut chunk[..n * 2];
             cg.read_samples(buf);
-            xout.extend_from_slice(buf);
+            acc.extend_from_slice(buf);
+            if acc.len() == 1024 * 2 {
+                limiter.limit(&mut acc);
+                xout.extend_from_slice(&acc);
+                acc.clear();
+            }
             done += n;
         }
         rendered = seg_end;
+    }
+    // 尾部不足一块的部分同样 limit（与 CPU 导出最后一块一致）
+    if !acc.is_empty() {
+        limiter.limit(&mut acc);
+        xout.extend_from_slice(&acc);
     }
     println!("[cmp] xsynth 直连: {:.2?}", t0.elapsed());
     let xrms = (xout.iter().map(|v| (v * v) as f64).sum::<f64>() / xout.len().max(1) as f64).sqrt();
@@ -325,6 +503,46 @@ fn main() {
         gpu_frames,
         gpu_frames as f64 / SR as f64
     );
+
+    // 直连分 10s 段对比 CPU/GPU
+    let xf = xout.len() / 2;
+    let segs = (cpu_frames.min(gpu_frames).min(xf) as u64 / (SEG_SECS * SR as u64)).max(1);
+    for seg in 0..segs {
+        let start = (seg * SEG_SECS * SR as u64) as usize * 2;
+        let end = (((seg + 1) * SEG_SECS * SR as u64) as usize * 2)
+            .min(xout.len())
+            .min(cpu.len());
+        let mut sxc = 0.0f64;
+        let mut sc = 0.0f64;
+        let mut sxg = 0.0f64;
+        let mut sg = 0.0f64;
+        let mut sxc_r = 0.0f64;
+        let mut sc_r = 0.0f64;
+        let mut sxg_r = 0.0f64;
+        let mut sg_r = 0.0f64;
+        for i in (start..end).step_by(2) {
+            let dxc = (xout[i] - cpu[i]) as f64;
+            sxc += dxc * dxc;
+            sc += cpu[i] as f64 * cpu[i] as f64;
+            let dxg = (xout[i] - gpu[i]) as f64;
+            sxg += dxg * dxg;
+            sg += gpu[i] as f64 * gpu[i] as f64;
+            let dxc_r = (xout[i + 1] - cpu[i + 1]) as f64;
+            sxc_r += dxc_r * dxc_r;
+            sc_r += cpu[i + 1] as f64 * cpu[i + 1] as f64;
+            let dxg_r = (xout[i + 1] - gpu[i + 1]) as f64;
+            sxg_r += dxg_r * dxg_r;
+            sg_r += gpu[i + 1] as f64 * gpu[i + 1] as f64;
+        }
+        println!(
+            "[cmp] xseg {:>3}s: L x-vs-cpu={:.3} x-vs-gpu={:.3} | R x-vs-cpu={:.3} x-vs-gpu={:.3}",
+            seg * SEG_SECS,
+            (sxc / sc.max(1e-9)).sqrt(),
+            (sxg / sg.max(1e-9)).sqrt(),
+            (sxc_r / sc_r.max(1e-9)).sqrt(),
+            (sxg_r / sg_r.max(1e-9)).sqrt()
+        );
+    }
 
     let cmp_frames = match limit_secs {
         Some(s) => (s * SR as u64) as usize,
