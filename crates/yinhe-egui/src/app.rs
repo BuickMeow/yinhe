@@ -200,6 +200,56 @@ impl App {
                 .or_default();
             mono.insert(0, "Pretendard".to_owned());
             mono.insert(1, "MiSans".to_owned());
+
+            // 其余语言字体（MiSans Global 系列，按回退优先级排在 Pretendard/MiSans 之后）：
+            // 繁体中文、泰文、天城文（印地语）、高棉文、老挝文、缅文、藏文。
+            const EXTRA_FONTS: [(&str, &[u8]); 7] = [
+                ("MiSans-TC", include_bytes!("../../../assets/MiSans-TC.otf")),
+                (
+                    "MiSans-Thai",
+                    include_bytes!("../../../assets/MiSans-Thai.otf"),
+                ),
+                (
+                    "MiSans-Devanagari",
+                    include_bytes!("../../../assets/MiSans-Devanagari.otf"),
+                ),
+                (
+                    "MiSans-Khmer",
+                    include_bytes!("../../../assets/MiSans-Khmer.otf"),
+                ),
+                (
+                    "MiSans-Lao",
+                    include_bytes!("../../../assets/MiSans-Lao.otf"),
+                ),
+                (
+                    "MiSans-Myanmar",
+                    include_bytes!("../../../assets/MiSans-Myanmar.ttf"),
+                ),
+                (
+                    "MiSans-Tibetan",
+                    include_bytes!("../../../assets/MiSans-Tibetan.ttf"),
+                ),
+            ];
+            for (name, data) in EXTRA_FONTS {
+                fonts
+                    .font_data
+                    .insert(name.to_owned(), egui::FontData::from_static(data).into());
+            }
+            // 插到 Pretendard、MiSans 之后，egui 默认字体之前。
+            // 循环内重新取 entry，避免与上面的 props/mono 借用冲突。
+            for (i, (name, _)) in EXTRA_FONTS.iter().enumerate() {
+                let pos = 2 + i;
+                fonts
+                    .families
+                    .entry(egui::FontFamily::Proportional)
+                    .or_default()
+                    .insert(pos, name.to_string());
+                fonts
+                    .families
+                    .entry(egui::FontFamily::Monospace)
+                    .or_default()
+                    .insert(pos, name.to_string());
+            }
             cc.egui_ctx.set_fonts(fonts);
 
             // Initialize Material Icons font with adjusted metrics
