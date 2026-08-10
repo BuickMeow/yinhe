@@ -42,7 +42,8 @@ struct Voice {
 pub struct GpuSynth {
     renderer: GpuAudioRenderer,
     key_map: Vec<Vec<sfz_parser::KeyInfo>>,
-    sample_offsets: HashMap<String, (u32, u32)>,
+    /// 采样数据在 GPU 上传块中的 (offset, len)，按 Arc 身份（指针 as usize）去重
+    sample_offsets: HashMap<usize, (u32, u32)>,
     voices: Vec<Voice>,
     /// 预分配的 voice states 缓冲区，避免每帧分配
     states_buf: Vec<GpuVoiceState>,
@@ -80,66 +81,21 @@ impl GpuSynth {
         soundfont_path: &std::path::Path,
         sample_rate: u32,
     ) -> Result<Self, String> {
-        let key_map = sfz_parser::build_key_map(soundfont_path)?;
+        // key_map 已按 (key, vel) 展开且采样已重采样到目标采样率
+        let key_map = sfz_parser::build_key_map(soundfont_path, sample_rate)?;
 
-        // 加载采样数据（按路径/数据去重）
+        // 采样数据按 Arc 身份去重后拼成大块上传 GPU（同一采样被多层共享，零拷贝）
         let mut sample_data: Vec<f32> = Vec::new();
-        let mut sample_offsets: HashMap<String, (u32, u32)> = HashMap::new();
-
+        let mut sample_offsets: HashMap<usize, (u32, u32)> = HashMap::new();
         for key_layers in &key_map {
             for info in key_layers {
-                let dedup_key = if let Some(ref path) = info.sample_path {
-                    path.to_string_lossy().to_string()
-                } else if let Some(ref data) = info.sample_data {
-                    format!("sf2_{:p}_{}", data.as_ptr(), data.len())
-                } else {
-                    continue;
-                };
-                if sample_offsets.contains_key(&dedup_key) {
+                let ptr = info.sample_data.as_ptr() as usize;
+                if sample_offsets.contains_key(&ptr) {
                     continue;
                 }
-
-                if let Some(ref data) = info.sample_data {
-                    let offset = sample_data.len() as u32;
-                    // data 是 Arc<[f32]>，sample_rate 匹配时零拷贝共享
-                    let samples: Arc<[f32]> = if info.sample_rate != sample_rate {
-                        xsynth_soundfonts::resample::resample_vec(
-                            data.to_vec(),
-                            info.sample_rate as f32,
-                            sample_rate as f32,
-                        )
-                    } else {
-                        Arc::clone(data)
-                    };
-                    let len = samples.len() as u32;
-                    sample_data.extend_from_slice(&samples);
-                    sample_offsets.insert(dedup_key, (offset, len));
-                } else if let Some(ref path) = info.sample_path {
-                    if path.to_string_lossy() == "missing" {
-                        continue;
-                    }
-                    let offset = sample_data.len() as u32;
-                    match sfz_parser::load_wav_as_f32(path) {
-                        Ok((samples, src_sr)) => {
-                            let samples = if src_sr != sample_rate {
-                                xsynth_soundfonts::resample::resample_vec(
-                                    samples,
-                                    src_sr as f32,
-                                    sample_rate as f32,
-                                )
-                                .to_vec()
-                            } else {
-                                samples
-                            };
-                            let len = samples.len() as u32;
-                            sample_data.extend_from_slice(&samples);
-                            sample_offsets.insert(dedup_key, (offset, len));
-                        }
-                        Err(e) => {
-                            eprintln!("[gpu-synth] Warning: failed to load {:?}: {}", path, e);
-                        }
-                    }
-                }
+                let offset = sample_data.len() as u32;
+                sample_data.extend_from_slice(&info.sample_data);
+                sample_offsets.insert(ptr, (offset, info.sample_data.len() as u32));
             }
         }
 
@@ -234,20 +190,17 @@ impl GpuSynth {
         self.sample_position = block_end;
     }
 
-    /// NoteOn（块内偏移由 offset_in_block 指定）
+    /// NoteOn（块内偏移由 offset_in_block 指定）。
+    /// key_map 已按 (key, vel) 展开为最终参数快照，这里零公式计算直接消费。
     pub fn note_on(&mut self, key: u8, vel: u8, offset_in_block: u32) {
         let info = match sfz_parser::select_key_info(&self.key_map, key, vel) {
             Some(i) => i,
             None => return,
         };
-        let dedup_key = if let Some(ref path) = info.sample_path {
-            path.to_string_lossy().to_string()
-        } else if let Some(ref data) = info.sample_data {
-            format!("sf2_{:p}_{}", data.as_ptr(), data.len())
-        } else {
-            return;
-        };
-        let (offset, length) = match self.sample_offsets.get(&dedup_key) {
+        let (offset, length) = match self
+            .sample_offsets
+            .get(&(info.sample_data.as_ptr() as usize))
+        {
             Some(&v) => v,
             None => return,
         };
@@ -255,23 +208,9 @@ impl GpuSynth {
             return;
         }
 
-        let pitch_semitones = (key as f32 - info.pitch_keycenter as f32) + info.tune as f32 / 100.0;
-        let speed = 2.0f32.powf(pitch_semitones / 12.0);
-
-        let vel_norm = vel as f32 / 127.0;
-        let vel_gain = if info.amp_veltrack >= 100.0 {
-            vel_norm
-        } else {
-            vel_norm.powf(100.0 / info.amp_veltrack.max(1.0))
-        };
-        let gain = vel_gain * info.volume;
-
-        let (pan_l, pan_r) = if info.pan == 0.0 {
-            (1.0, 1.0)
-        } else {
-            let angle = info.pan * std::f32::consts::FRAC_PI_4;
-            (angle.cos(), angle.sin())
-        };
+        // 声像：等功率法则（xsynth stereo spawner 公式，左右各 1.42 补偿）
+        let angle = info.pan * std::f32::consts::FRAC_PI_2;
+        let (pan_l, pan_r) = ((angle.cos() * 1.42).min(1.0), (angle.sin() * 1.42).min(1.0));
 
         let sr = self.sample_rate as f32;
         self.voices.push(Voice {
@@ -279,14 +218,14 @@ impl GpuSynth {
             state: GpuVoiceState {
                 sample_offset: offset + info.offset,
                 sample_length: length - info.offset.min(length),
-                speed,
-                gain,
+                speed: info.speed_mult,
+                gain: info.volume,
                 time: 0.0,
                 start_offset: offset_in_block,
                 envelope: info.ampeg_start,
                 env_stage: 0,
                 stage_progress: 0.0,
-                env_level: gain,
+                env_level: info.volume,
                 sustain_level: info.ampeg_sustain,
                 env_start: info.ampeg_start,
                 delay_frames: info.ampeg_delay * sr,
