@@ -532,7 +532,8 @@ impl GpuSynth {
     /// 与 note_on 快照、shader 逐帧推进三方一致（无事件区间线性，事件边界重对齐）。
     fn sync_channel_state(&mut self) {
         for v in &mut self.voices {
-            let ch = self.channels[v.channel as usize];
+            // dense 通道号可能超过 15（多端口 MIDI：port×16+ch），取模折叠到 16 通道状态
+            let ch = self.channels[v.channel as usize % MAX_CHANNELS];
             v.state.speed = v.base_speed * ch.pitch_multiplier();
             v.state.ch_vol = ch.volume.current;
             v.state.ch_vol_step = ch.volume.step;
