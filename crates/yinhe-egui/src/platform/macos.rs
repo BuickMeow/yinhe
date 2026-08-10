@@ -11,6 +11,7 @@ use muda::{
 };
 use objc2::runtime::{AnyClass, AnyObject};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+use rust_i18n::t;
 
 use super::MenuAction;
 
@@ -136,181 +137,201 @@ thread_local! {
     static NATIVE_MENU: OnceLock<NativeMenu> = const { OnceLock::new() };
 }
 
+/// 可在运行时更新文本的原生菜单项。
+/// `muda::IsMenuItem` trait 上没有 `set_text`（那是具体类型的方法），
+/// 这里扩展统一入口，语言切换时可以逐个刷新 NSMenuItem 标题。
+trait MenuText: IsMenuItem {
+    fn set_text(&self, text: &str);
+}
+
+impl MenuText for MenuItem {
+    fn set_text(&self, text: &str) {
+        // 全限定调用固有方法，避免与 trait 方法同名递归
+        MenuItem::set_text(self, text);
+    }
+}
+
+impl MenuText for Submenu {
+    fn set_text(&self, text: &str) {
+        Submenu::set_text(self, text);
+    }
+}
+
 /// 持有菜单栏所有 Rust 对象，保持底层 NSMenu/NSMenuItem 存活。
 struct NativeMenu {
     _menu: Menu,
-    _items: Vec<Box<dyn IsMenuItem>>,
+    /// 按创建顺序保存 (翻译 key, 菜单项)：key 用于语言切换时重新取文本，
+    /// 对象本身同时承担保活职责（drop 会导致底层 NSMenuItem 被释放）。
+    _items: Vec<(&'static str, Box<dyn MenuText>)>,
 }
 
 /// 初始化原生 macOS 菜单栏，使用 `muda` crate。
 /// 在 `MenuBarInner::new()` 中调用，此时 NSApplication 已就绪。
 fn init_native_menu() -> muda::Result<()> {
     let mut map = HashMap::new();
-    let mut items: Vec<Box<dyn IsMenuItem>> = Vec::new();
+    let mut items: Vec<(&'static str, Box<dyn MenuText>)> = Vec::new();
     let cmd = Modifiers::SUPER;
 
     // ── 文件菜单 ──
     let new_item = Box::new(MenuItem::new(
-        "新建",
+        t!("menu.new"),
         true,
         Some(Accelerator::new(Some(cmd), Code::KeyN)),
     ));
     map.insert(new_item.id().clone(), MenuAction::NewProject);
 
     let open_item = Box::new(MenuItem::new(
-        "打开…",
+        t!("menu.open"),
         true,
         Some(Accelerator::new(Some(cmd), Code::KeyO)),
     ));
     map.insert(open_item.id().clone(), MenuAction::Open);
 
     let save_item = Box::new(MenuItem::new(
-        "保存",
+        t!("menu.save"),
         true,
         Some(Accelerator::new(Some(cmd), Code::KeyS)),
     ));
     map.insert(save_item.id().clone(), MenuAction::Save);
 
     let save_as_item = Box::new(MenuItem::new(
-        "另存为…",
+        t!("menu.save_as"),
         true,
         Some(Accelerator::new(Some(cmd | Modifiers::SHIFT), Code::KeyS)),
     ));
     map.insert(save_as_item.id().clone(), MenuAction::SaveAs);
 
     let close_item = Box::new(MenuItem::new(
-        "关闭",
+        t!("menu.close"),
         true,
         Some(Accelerator::new(Some(cmd), Code::KeyW)),
     ));
     map.insert(close_item.id().clone(), MenuAction::CloseDocument);
 
-    let file_menu = Submenu::with_items(
-        "文件",
-        true,
-        &[
-            new_item.as_ref(),
-            open_item.as_ref(),
-            &PredefinedMenuItem::separator(),
-            save_item.as_ref(),
-            save_as_item.as_ref(),
-            &PredefinedMenuItem::separator(),
-            close_item.as_ref(),
-        ],
-    )?;
+    // `&dyn MenuText` 通过 trait upcasting 协变到 `&dyn IsMenuItem`（rustc 1.86+）
+    let sep = PredefinedMenuItem::separator();
+    let file_items: Vec<&dyn IsMenuItem> = vec![
+        new_item.as_ref(),
+        open_item.as_ref(),
+        &sep,
+        save_item.as_ref(),
+        save_as_item.as_ref(),
+        &sep,
+        close_item.as_ref(),
+    ];
+    let file_menu = Submenu::with_items(t!("menu.file"), true, &file_items)?;
 
     // ── 编辑菜单 ──
     let undo_item = Box::new(MenuItem::new(
-        "撤销",
+        t!("menu.undo"),
         true,
         Some(Accelerator::new(Some(cmd), Code::KeyZ)),
     ));
     map.insert(undo_item.id().clone(), MenuAction::Undo);
 
     let redo_item = Box::new(MenuItem::new(
-        "重做",
+        t!("menu.redo"),
         true,
         Some(Accelerator::new(Some(cmd | Modifiers::SHIFT), Code::KeyZ)),
     ));
     map.insert(redo_item.id().clone(), MenuAction::Redo);
 
     let cut_item = Box::new(MenuItem::new(
-        "剪切",
+        t!("menu.cut"),
         true,
         Some(Accelerator::new(Some(cmd), Code::KeyX)),
     ));
     map.insert(cut_item.id().clone(), MenuAction::Cut);
 
     let copy_item = Box::new(MenuItem::new(
-        "拷贝",
+        t!("menu.copy"),
         true,
         Some(Accelerator::new(Some(cmd), Code::KeyC)),
     ));
     map.insert(copy_item.id().clone(), MenuAction::Copy);
 
     let paste_item = Box::new(MenuItem::new(
-        "粘贴",
+        t!("menu.paste"),
         true,
         Some(Accelerator::new(Some(cmd), Code::KeyV)),
     ));
     map.insert(paste_item.id().clone(), MenuAction::Paste);
 
     let select_all_item = Box::new(MenuItem::new(
-        "全选",
+        t!("menu.select_all"),
         true,
         Some(Accelerator::new(Some(cmd), Code::KeyA)),
     ));
     map.insert(select_all_item.id().clone(), MenuAction::SelectAll);
 
     let duplicate_item = Box::new(MenuItem::new(
-        "重复",
+        t!("menu.duplicate"),
         true,
         Some(Accelerator::new(Some(cmd), Code::KeyD)),
     ));
     map.insert(duplicate_item.id().clone(), MenuAction::Duplicate);
 
     let delete_item = Box::new(MenuItem::new(
-        "删除",
+        t!("menu.delete"),
         true,
         Some(Accelerator::new(None, Code::Delete)),
     ));
     map.insert(delete_item.id().clone(), MenuAction::Delete);
 
     let transpose_up_item = Box::new(MenuItem::new(
-        "升八度",
+        t!("menu.octave_up"),
         true,
         Some(Accelerator::new(Some(Modifiers::SHIFT), Code::ArrowUp)),
     ));
     map.insert(transpose_up_item.id().clone(), MenuAction::TransposeUp);
 
     let transpose_down_item = Box::new(MenuItem::new(
-        "降八度",
+        t!("menu.octave_down"),
         true,
         Some(Accelerator::new(Some(Modifiers::SHIFT), Code::ArrowDown)),
     ));
     map.insert(transpose_down_item.id().clone(), MenuAction::TransposeDown);
 
-    let edit_menu = Submenu::with_items(
-        "编辑",
-        true,
-        &[
-            undo_item.as_ref(),
-            redo_item.as_ref(),
-            &PredefinedMenuItem::separator(),
-            cut_item.as_ref(),
-            copy_item.as_ref(),
-            paste_item.as_ref(),
-            &PredefinedMenuItem::separator(),
-            select_all_item.as_ref(),
-            duplicate_item.as_ref(),
-            delete_item.as_ref(),
-            &PredefinedMenuItem::separator(),
-            transpose_up_item.as_ref(),
-            transpose_down_item.as_ref(),
-        ],
-    )?;
+    let sep = PredefinedMenuItem::separator();
+    let edit_items: Vec<&dyn IsMenuItem> = vec![
+        undo_item.as_ref(),
+        redo_item.as_ref(),
+        &sep,
+        cut_item.as_ref(),
+        copy_item.as_ref(),
+        paste_item.as_ref(),
+        &sep,
+        select_all_item.as_ref(),
+        duplicate_item.as_ref(),
+        delete_item.as_ref(),
+        &sep,
+        transpose_up_item.as_ref(),
+        transpose_down_item.as_ref(),
+    ];
+    let edit_menu = Submenu::with_items(t!("menu.edit"), true, &edit_items)?;
 
-    let menu = Menu::with_items(&[&file_menu, &edit_menu])?;
+    let menu_items: Vec<&dyn IsMenuItem> = vec![&file_menu, &edit_menu];
+    let menu = Menu::with_items(&menu_items)?;
     menu.init_for_nsapp();
 
-    // 收集所有 items 保持存活
-    items.push(new_item);
-    items.push(open_item);
-    items.push(save_item);
-    items.push(save_as_item);
-    items.push(close_item);
-    items.push(undo_item);
-    items.push(redo_item);
-    items.push(cut_item);
-    items.push(copy_item);
-    items.push(paste_item);
-    items.push(select_all_item);
-    items.push(duplicate_item);
-    items.push(delete_item);
-    items.push(transpose_up_item);
-    items.push(transpose_down_item);
-    items.push(Box::new(file_menu));
-    items.push(Box::new(edit_menu));
+    // 收集所有 items 保持存活（翻译 key 用于语言切换时刷新文本）
+    items.push(("menu.new", new_item));
+    items.push(("menu.open", open_item));
+    items.push(("menu.save", save_item));
+    items.push(("menu.save_as", save_as_item));
+    items.push(("menu.close", close_item));
+    items.push(("menu.undo", undo_item));
+    items.push(("menu.redo", redo_item));
+    items.push(("menu.cut", cut_item));
+    items.push(("menu.copy", copy_item));
+    items.push(("menu.paste", paste_item));
+    items.push(("menu.select_all", select_all_item));
+    items.push(("menu.duplicate", duplicate_item));
+    items.push(("menu.delete", delete_item));
+    items.push(("menu.octave_up", transpose_up_item));
+    items.push(("menu.octave_down", transpose_down_item));
+    items.push(("menu.file", Box::new(file_menu)));
+    items.push(("menu.edit", Box::new(edit_menu)));
 
     let _ = MENU_MAP.set(map);
 
@@ -336,9 +357,24 @@ fn init_native_menu() -> muda::Result<()> {
     Ok(())
 }
 
+/// 用当前 locale 刷新全部原生菜单文本。
+/// 由 `MenuBarInner::poll` 在检测到语言切换后调用。
+fn refresh_native_menu_texts() {
+    NATIVE_MENU.with(|cell| {
+        if let Some(native) = cell.get() {
+            for (key, item) in &native._items {
+                let key = *key;
+                item.set_text(&t!(key));
+            }
+        }
+    });
+}
+
 pub(crate) struct MenuBarInner {
     rx: mpsc::Receiver<MenuAction>,
     open_files_rx: mpsc::Receiver<String>,
+    /// 上次应用到原生菜单的 locale，变化时刷新菜单文本。
+    last_locale: String,
 }
 
 impl MenuBarInner {
@@ -349,10 +385,21 @@ impl MenuBarInner {
         if let Err(e) = init_native_menu() {
             tracing::error!("Failed to init macOS menu bar: {e:?}");
         }
-        Self { rx, open_files_rx }
+        Self {
+            rx,
+            open_files_rx,
+            last_locale: rust_i18n::locale().to_string(),
+        }
     }
 
     pub fn poll(&mut self) -> Vec<MenuAction> {
+        // 应用内语言切换（设置对话框）时原生菜单文本不会自动更新，
+        // 检测 locale 变化后逐个刷新标题（setText 走主线程，poll 在 UI 帧内调用）。
+        let locale = rust_i18n::locale();
+        if *locale != self.last_locale {
+            self.last_locale = locale.to_string();
+            refresh_native_menu_texts();
+        }
         std::iter::from_fn(|| self.rx.try_recv().ok()).collect()
     }
 
