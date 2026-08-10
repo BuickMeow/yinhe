@@ -544,17 +544,10 @@ impl GpuSynth {
                 }
                 match ev {
                     SynthEvent::Control { channel, event, .. } => {
-                        eprintln!(
-                            "[dbg] control@{} ch={} align_before={}",
-                            seg_end,
-                            channel,
-                            self.channels[channel as usize % MAX_CHANNELS].cutoff_align
-                        );
                         self.process_control(channel, event);
                         // xsynth 每个事件位置都重置 read 块边界（cutoff set_end 的
                         // 512 帧对齐基准随之重排），跨 render block 保持
                         self.channels[channel as usize % MAX_CHANNELS].cutoff_align = seg_end;
-                        eprintln!("[dbg]   align_after={}", seg_end);
                     }
                     SynthEvent::NoteOn {
                         channel,
@@ -843,6 +836,7 @@ impl GpuSynth {
         // 通道渐变快照：note 起点处（seg_start + offset）的通道值 + 剩余渐变帧数。
         // shader 内 voice 与通道以相同步长逐帧推进，事件边界由 sync_channel_voices 重新对齐。
         let offset_f = offset_in_block as f32;
+
         self.voices.push(Voice {
             key,
             channel,

@@ -118,6 +118,8 @@ fn main() {
         (1500, 7, 60),
         (2600, 64, 127),
         (2800, 64, 0),
+        (1200, 74, 20),
+        (1250, 71, 100),
     ] {
         events.push((
             s(ms),
@@ -162,6 +164,8 @@ fn main() {
         (1500, 7, 60),
         (2600, 64, 127),
         (2800, 64, 0),
+        (1200, 74, 20),
+        (1250, 71, 100),
     ] {
         gpu_events.push(yinhe_synth::SynthEvent::Control {
             sample: s(ms),
@@ -190,9 +194,14 @@ fn main() {
         let i = (ms as usize - 100) * SR as usize / 1000 * 2;
         eprintln!("t={ms}ms: cpu={:.6} gpu={:.6}", cpu[i], gpu[i]);
     }
-    for ms in 1490..1530 {
+    // 对比渐变区域（注意：索引基准是 100ms，标签 t=ms 实际是音频 ms-100 处）
+    for ms in 1290..1360 {
         let i = (ms as usize - 100) * SR as usize / 1000 * 2;
-        eprintln!("t={ms}ms: cpu={:.6} gpu={:.6}", cpu[i], gpu[i]);
+        eprintln!("t={}ms: cpu={:.6} gpu={:.6}", ms - 100, cpu[i], gpu[i]);
+    }
+    for ms in 2515..2545 {
+        let i = (ms as usize - 100) * SR as usize / 1000 * 2;
+        eprintln!("t={}ms: cpu={:.6} gpu={:.6}", ms - 100, cpu[i], gpu[i]);
     }
     for ms in 2790..3020 {
         let i = (ms as usize - 100) * SR as usize / 1000 * 2;
