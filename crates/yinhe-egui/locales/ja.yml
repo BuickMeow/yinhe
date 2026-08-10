@@ -95,7 +95,7 @@ menu.quit: "Yinheを終了"
 
 # ── 設定ダイアログ ──
 settings.title: "設定"
-settings.search_hint: "設定を検索…"
+settings.search_hint: "設定を検索…（ローマ字対応）"
 settings.search_clear: "クリア"
 settings.search_results: "検索結果"
 settings.search_none: "一致する設定がありません"

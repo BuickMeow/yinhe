@@ -85,14 +85,22 @@ pub struct Theme {
 }
 
 impl Theme {
-    /// 统一悬浮色：基色向主文字混入 12%（暗色主题变亮、亮色主题变暗，方向自动）。
+    /// 统一悬浮色：暗色主题向主文字混 12%（提亮）；亮色主题向黑混 6%（压暗）。
     pub fn hovered(&self, base: Color32) -> Color32 {
-        mix(base, self.text_primary, 0.12)
+        if self.dark_mode {
+            mix(base, self.text_primary, 0.12)
+        } else {
+            mix(base, Color32::BLACK, 0.06)
+        }
     }
 
-    /// 统一按下色：基色向主文字混入 24%（比悬浮更重一档）。
+    /// 统一按下色：暗色主题向主文字混 24%；亮色主题向黑混 10%。
     pub fn pressed(&self, base: Color32) -> Color32 {
-        mix(base, self.text_primary, 0.24)
+        if self.dark_mode {
+            mix(base, self.text_primary, 0.24)
+        } else {
+            mix(base, Color32::BLACK, 0.10)
+        }
     }
 }
 
@@ -142,6 +150,7 @@ pub fn derive_theme(base: crate::base::BaseColors) -> Theme {
     let warning = base.warning.to_color32();
     let contrast = contrast_text(bg);
     let gray128 = shade(text, 0.58); // text_label
+    let dark = luminance(bg) <= 0.5;
 
     // 文字灰阶：主文字 × 亮度系数（保 alpha）
     let text_primary = text;
@@ -157,23 +166,34 @@ pub fn derive_theme(base: crate::base::BaseColors) -> Theme {
     let text_label_dim = shade(text, 0.41);
     let text_disabled = shade(text, 0.36);
 
-    // 面板底色：背景与文字按比例混合（暗主题提亮、亮主题压暗，方向自动正确）
-    let mix_control = mix(bg, text, 0.05);
-    let mix_control_selected = mix(bg, text, 0.15);
-    let mix_btn_bg = mix(bg, text, 0.10);
+    // ── 表面层级：两套 token（暗色提亮、亮色压暗，幅度各自感知校准）──
+    // 暗色主题在深底上用"提亮"表达层级；亮色主题在浅底上用"压暗"表达层级。
+    // 亮色压暗幅度刻意小于暗色提亮幅度：人眼感知绝对色差，亮底上的大色差
+    // 比暗底上更刺眼（成熟主题系统两套 token 的做法，方向各自独立）。
+    let mix_surface = |t: f32| {
+        if dark {
+            mix(bg, text, t)
+        } else {
+            mix(bg, Color32::BLACK, t)
+        }
+    };
+    let mix_darken = |t: f32| mix(bg, Color32::BLACK, t);
+    // (control, control_selected, btn, line, sub_beat, tick, track, stripe)
+    let (t_control, t_ctl_sel, t_btn, t_line, t_sub, t_tick, t_track, t_stripe) = if dark {
+        (0.05, 0.15, 0.10, 0.15, 0.08, 0.03, 0.20, 0.15)
+    } else {
+        (0.03, 0.08, 0.05, 0.07, 0.04, 0.02, 0.12, 0.06)
+    };
+    let mix_control = mix_surface(t_control);
+    let mix_control_selected = mix_surface(t_ctl_sel);
+    let mix_btn_bg = mix_surface(t_btn);
+    let mix_line = mix_surface(t_line);
+    let mix_grid_sub_beat = mix_surface(t_sub);
+    let mix_grid_tick = mix_surface(t_tick);
+    // 条纹/轨道恒为"比背景更黑"（亮暗都压暗，幅度分表）
+    let mix_track = mix_darken(t_track);
+    let mix_stripe = mix_darken(t_stripe);
     let mix_tick_label = mix(bg, text, 0.22);
-    let mix_grid_sub_beat = mix(bg, text, 0.08);
-    // 网格 1tick 最浅档（bg+3%）
-    let mix_grid_tick = mix(bg, text, 0.03);
-    // 标尺/滚动条轨道底色：比 app_bg 暗 20%（bg-20%，最初 RULER_BG）
-    let mix_track = mix(bg, Color32::BLACK, 0.20);
-    // 线条统一色：egui 原生描边/分割条/网格/滑块
-    let mix_line = mix(bg, text, 0.15);
-    // 条纹着色行：比 app_bg 更黑。暗色主题暗 15%；亮色主题只暗 8%——
-    // 人眼感知绝对色差，固定比例在亮色背景下会过重（成熟主题系统
-    // 的做法：亮暗主题分别定义对比度 token）
-    let stripe_t = if luminance(bg) <= 0.5 { 0.15 } else { 0.08 };
-    let mix_stripe = mix(bg, Color32::BLACK, stripe_t);
     let mix_measure_label = shade(text, 0.77);
 
     // 危险系：危险色与文字/对比色混合得到浅红/暗红档位（同色相）
@@ -230,7 +250,7 @@ pub fn derive_theme(base: crate::base::BaseColors) -> Theme {
         marquee_fill_alpha: 0.15,
         marquee_stroke_alpha: 0.40,
         // 与 contrast_text 同一把尺子：背景偏亮 → 亮基底（egui Visuals::light）
-        dark_mode: luminance(bg) <= 0.5,
+        dark_mode: dark,
     }
 }
 
@@ -271,6 +291,41 @@ mod tests {
         assert!(t.line_fg.r() < t.app_bg.r());
         let dark = derive_theme(crate::base::BaseColors::DARK);
         assert!(dark.line_fg.r() > dark.app_bg.r());
+    }
+
+    /// 两套 token：亮/暗各自的表面层级阶梯单调（无交叉、无反转）。
+    #[test]
+    fn derive_surface_ladder_monotonic() {
+        let lum = |c: Color32| c.r() as i32; // 无彩色系下 r 即亮度
+        let dark = derive_theme(crate::base::BaseColors::DARK);
+        // 暗色：压暗两档 < 基底 < 提亮梯度（3/5/8/10/15% 单调）
+        let d = [
+            dark.track_bg,
+            dark.stripe_bg,
+            dark.app_bg,
+            dark.grid_tick,
+            dark.control_bg,
+            dark.grid_sub_beat,
+            dark.btn_bg,
+            dark.line_fg,
+        ];
+        assert!(d.windows(2).all(|w| lum(w[0]) <= lum(w[1])));
+        assert_eq!(dark.control_selected_bg, dark.line_fg);
+
+        let light = derive_theme(crate::base::BaseColors::LIGHT);
+        // 亮色：全部压暗，幅度阶梯单调（2/3/4/5/6/7/8/12% 单调）
+        let l = [
+            light.track_bg,
+            light.control_selected_bg,
+            light.line_fg,
+            light.stripe_bg,
+            light.btn_bg,
+            light.grid_sub_beat,
+            light.control_bg,
+            light.grid_tick,
+            light.app_bg,
+        ];
+        assert!(l.windows(2).all(|w| lum(w[0]) <= lum(w[1])));
     }
 
     /// 新增的亮色预设：亮基底、深对比字、网格线压暗方向全部正确。

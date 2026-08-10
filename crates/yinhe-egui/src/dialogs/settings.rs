@@ -17,93 +17,228 @@ const CATEGORY_KEYS: [&str; 7] = [
     "settings.cat.general",
 ];
 
-/// 设置项注册表（供搜索）：(分类索引, 中文, English, 日本語, 한국어)。
-/// 搜索词匹配任意语言的名称（不区分大小写）。
-const SETTING_ITEMS: &[(usize, &str, &str, &str, &str)] = &[
-    (
-        0,
-        "主题预设",
-        "Theme preset",
-        "テーマプリセット",
-        "테마 프리셋",
-    ),
-    (0, "背景", "Background color", "背景色", "배경색"),
-    (0, "主文字", "Text color", "テキスト色", "텍스트 색"),
-    (0, "强调色", "Accent color", "アクセント色", "강조색"),
-    (0, "危险色", "Danger color", "危険色", "위험 색"),
-    (0, "警告色", "Warning color", "警告色", "경고 색"),
-    (1, "语言", "Language", "言語", "언어"),
-    (2, "输出设备", "Output device", "出力デバイス", "출력 장치"),
-    (2, "采样率", "Sample rate", "サンプルレート", "샘플 레이트"),
-    (
-        2,
-        "缓冲区大小",
-        "Buffer size",
-        "バッファサイズ",
-        "버퍼 크기",
-    ),
-    (
-        2,
-        "合成器层数",
-        "Synth layers",
-        "シンセレイヤー",
-        "신스 레이어",
-    ),
-    (2, "合成引擎", "Synth engine", "シンセエンジン", "신스 엔진"),
-    (
-        3,
-        "滚动模式",
-        "Scroll mode",
-        "スクロールモード",
-        "스크롤 모드",
-    ),
-    (
-        3,
-        "自动化密度",
-        "Automation density",
-        "オートメーション密度",
-        "자동화 밀도",
-    ),
-    (3, "音符描边", "Note outline", "ノート枠線", "노트 외곽선"),
-    (
-        3,
-        "最小边框宽度",
-        "Min border width",
-        "最小枠線幅",
-        "최소 테두리 폭",
-    ),
-    (3, "GPU 裁剪", "GPU culling", "GPU カリング", "GPU 컬링"),
-    (
-        4,
-        "MIDI 导入编码",
-        "MIDI import encoding",
-        "MIDI インポートエンコーディング",
-        "MIDI 가져오기 인코딩",
-    ),
-    (5, "界面缩放", "UI scale", "UI スケール", "UI 배율"),
-    (
-        6,
-        "刷新设备列表",
-        "Refresh devices",
-        "デバイス更新",
-        "장치 새로고침",
-    ),
-    (
-        6,
-        "恢复出厂设置",
-        "Factory reset",
-        "工場出荷時リセット",
-        "공장 초기화",
-    ),
+/// 设置项注册表（供搜索）。
+/// `pinyin` / `romaji` 是中文、日语在 IME 中的拉丁转写（小写、无空格），
+/// 让用户输拼音或罗马音也能搜到对应设置项。
+struct SettingItem {
+    cat: usize,
+    zh: &'static str,
+    en: &'static str,
+    ja: &'static str,
+    ko: &'static str,
+    pinyin: &'static str,
+    romaji: &'static str,
+}
+
+const SETTING_ITEMS: &[SettingItem] = &[
+    SettingItem {
+        cat: 0,
+        zh: "主题预设",
+        en: "Theme preset",
+        ja: "テーマプリセット",
+        ko: "테마 프리셋",
+        pinyin: "zhutiyushe",
+        romaji: "teemapurisetto",
+    },
+    SettingItem {
+        cat: 0,
+        zh: "背景",
+        en: "Background color",
+        ja: "背景色",
+        ko: "배경색",
+        pinyin: "beijing",
+        romaji: "haikeishoku",
+    },
+    SettingItem {
+        cat: 0,
+        zh: "主文字",
+        en: "Text color",
+        ja: "テキスト色",
+        ko: "텍스트 색",
+        pinyin: "zhuwenzi",
+        romaji: "tekisutoshoku",
+    },
+    SettingItem {
+        cat: 0,
+        zh: "强调色",
+        en: "Accent color",
+        ja: "アクセント色",
+        ko: "강조색",
+        pinyin: "qiangdiaose",
+        romaji: "akusentoshoku",
+    },
+    SettingItem {
+        cat: 0,
+        zh: "危险色",
+        en: "Danger color",
+        ja: "危険色",
+        ko: "위험 색",
+        pinyin: "weixianse",
+        romaji: "kikenshoku",
+    },
+    SettingItem {
+        cat: 0,
+        zh: "警告色",
+        en: "Warning color",
+        ja: "警告色",
+        ko: "경고 색",
+        pinyin: "jinggaose",
+        romaji: "keikokushoku",
+    },
+    SettingItem {
+        cat: 1,
+        zh: "语言",
+        en: "Language",
+        ja: "言語",
+        ko: "언어",
+        pinyin: "yuyan",
+        romaji: "gengo",
+    },
+    SettingItem {
+        cat: 2,
+        zh: "输出设备",
+        en: "Output device",
+        ja: "出力デバイス",
+        ko: "출력 장치",
+        pinyin: "shuchushebei",
+        romaji: "shutsuryokudebaisu",
+    },
+    SettingItem {
+        cat: 2,
+        zh: "采样率",
+        en: "Sample rate",
+        ja: "サンプルレート",
+        ko: "샘플 레이트",
+        pinyin: "caiyanglv",
+        romaji: "sanpurureeto",
+    },
+    SettingItem {
+        cat: 2,
+        zh: "缓冲区大小",
+        en: "Buffer size",
+        ja: "バッファサイズ",
+        ko: "버퍼 크기",
+        pinyin: "huanchongqudaxiao",
+        romaji: "baffasaizu",
+    },
+    SettingItem {
+        cat: 2,
+        zh: "合成器层数",
+        en: "Synth layers",
+        ja: "シンセレイヤー",
+        ko: "신스 레이어",
+        pinyin: "hechengqicengshu",
+        romaji: "shinsereiyaa",
+    },
+    SettingItem {
+        cat: 2,
+        zh: "合成引擎",
+        en: "Synth engine",
+        ja: "シンセエンジン",
+        ko: "신스 엔진",
+        pinyin: "hechengyinqing",
+        romaji: "shinseenjin",
+    },
+    SettingItem {
+        cat: 3,
+        zh: "滚动模式",
+        en: "Scroll mode",
+        ja: "スクロールモード",
+        ko: "스크롤 모드",
+        pinyin: "gundongmoshi",
+        romaji: "sukuroorumoodo",
+    },
+    SettingItem {
+        cat: 3,
+        zh: "自动化密度",
+        en: "Automation density",
+        ja: "オートメーション密度",
+        ko: "자동화 밀도",
+        pinyin: "zidonghuamidu",
+        romaji: "ootomeeshonmitsudo",
+    },
+    SettingItem {
+        cat: 3,
+        zh: "音符描边",
+        en: "Note outline",
+        ja: "ノート枠線",
+        ko: "노트 외곽선",
+        pinyin: "yinfumiaobian",
+        romaji: "nootowakusen",
+    },
+    SettingItem {
+        cat: 3,
+        zh: "最小边框宽度",
+        en: "Min border width",
+        ja: "最小枠線幅",
+        ko: "최소 테두리 폭",
+        pinyin: "zuixiaobiankuangkuandu",
+        romaji: "saishouwakusenhaba",
+    },
+    SettingItem {
+        cat: 3,
+        zh: "GPU 裁剪",
+        en: "GPU culling",
+        ja: "GPU カリング",
+        ko: "GPU 컬링",
+        pinyin: "caijian",
+        romaji: "karingu",
+    },
+    SettingItem {
+        cat: 4,
+        zh: "MIDI 导入编码",
+        en: "MIDI import encoding",
+        ja: "MIDI インポートエンコーディング",
+        ko: "MIDI 가져오기 인코딩",
+        pinyin: "daorubianma",
+        romaji: "inpootoenkoodingu",
+    },
+    SettingItem {
+        cat: 5,
+        zh: "界面缩放",
+        en: "UI scale",
+        ja: "UI スケール",
+        ko: "UI 배율",
+        pinyin: "jiemiansuofang",
+        romaji: "sukeeru",
+    },
+    SettingItem {
+        cat: 6,
+        zh: "刷新设备列表",
+        en: "Refresh devices",
+        ja: "デバイス更新",
+        ko: "장치 새로고침",
+        pinyin: "shuaxinshebiliebiao",
+        romaji: "debaisukoushin",
+    },
+    SettingItem {
+        cat: 6,
+        zh: "恢复出厂设置",
+        en: "Factory reset",
+        ja: "工場出荷時リセット",
+        ko: "공장 초기화",
+        pinyin: "huifuchuchangshezhi",
+        romaji: "koujoushutsukajirisetto",
+    },
 ];
 
-/// 搜索词是否匹配设置项（任意语言名称，不区分大小写）。
-fn item_matches(item: &(usize, &str, &str, &str, &str), query: &str) -> bool {
-    let q = query.to_lowercase();
-    item.1.to_lowercase().contains(&q)
-        || item.2.to_lowercase().contains(&q)
-        || item.3.to_lowercase().contains(&q)
-        || item.4.to_lowercase().contains(&q)
+/// 归一化：小写并去掉所有空白，使拼音/罗马音的带空格输入也能匹配。
+fn norm(s: &str) -> String {
+    s.to_lowercase()
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect()
+}
+
+/// 搜索词是否匹配设置项（任意语言名称、拼音或罗马音，不区分大小写和空格）。
+fn item_matches(item: &SettingItem, query: &str) -> bool {
+    let q = norm(query);
+    norm(item.zh).contains(&q)
+        || norm(item.en).contains(&q)
+        || norm(item.ja).contains(&q)
+        || norm(item.ko).contains(&q)
+        || item.pinyin.contains(&q)
+        || item.romaji.contains(&q)
 }
 
 /// 右侧内容：有搜索词时显示跨分类搜索结果，否则显示当前分类。
@@ -133,10 +268,10 @@ fn show_search_results(
             continue;
         }
         matched += 1;
-        let cat = item.0;
+        let cat = item.cat;
         let cat_name = t!(CATEGORY_KEYS[cat]).to_string();
         if ui
-            .selectable_label(false, format!("{}  ·  {}", cat_name, item.1))
+            .selectable_label(false, format!("{}  ·  {}", cat_name, item.zh))
             .clicked()
         {
             settings.settings_tab = cat;

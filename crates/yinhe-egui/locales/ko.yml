@@ -95,7 +95,7 @@ menu.quit: "Yinhe 종료"
 
 # ── 설정 대화상자 ──
 settings.title: "설정"
-settings.search_hint: "설정 검색…"
+settings.search_hint: "설정 검색…（병음/로마자 지원）"
 settings.search_clear: "지우기"
 settings.search_results: "검색 결과"
 settings.search_none: "일치하는 설정이 없습니다"
