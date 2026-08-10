@@ -95,7 +95,7 @@ menu.quit: "退出 Yinhe"
 
 # ── 设置对话框 ──
 settings.title: "设置"
-settings.search_hint: "搜索设置…（支持拼音/罗马音）"
+settings.search_hint: "搜索设置…"
 settings.search_clear: "清除"
 settings.search_results: "搜索结果"
 settings.search_none: "无匹配的设置项"

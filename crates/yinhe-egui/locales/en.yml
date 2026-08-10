@@ -95,7 +95,7 @@ menu.quit: "Quit Yinhe"
 
 # ── Settings dialog ──
 settings.title: "Settings"
-settings.search_hint: "Search settings… (pinyin / romaji)"
+settings.search_hint: "Search settings…"
 settings.search_clear: "Clear"
 settings.search_results: "Search results"
 settings.search_none: "No matching settings"

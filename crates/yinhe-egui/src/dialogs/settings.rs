@@ -1,4 +1,6 @@
+use deunicode::deunicode_char;
 use eframe::egui;
+use pinyin::ToPinyin;
 use rust_i18n::t;
 
 use yinhe_theme::base::{BaseColors, Rgba};
@@ -17,17 +19,14 @@ const CATEGORY_KEYS: [&str; 7] = [
     "settings.cat.general",
 ];
 
-/// 设置项注册表（供搜索）。
-/// `pinyin` / `romaji` 是中文、日语在 IME 中的拉丁转写（小写、无空格），
-/// 让用户输拼音或罗马音也能搜到对应设置项。
+/// 设置项注册表（供搜索）：各语言名称均可直接检索。
+/// 中文额外支持拼音（由 `to_search_keys` 运行时折叠，无需手写转写）。
 struct SettingItem {
     cat: usize,
     zh: &'static str,
     en: &'static str,
     ja: &'static str,
     ko: &'static str,
-    pinyin: &'static str,
-    romaji: &'static str,
 }
 
 const SETTING_ITEMS: &[SettingItem] = &[
@@ -37,8 +36,6 @@ const SETTING_ITEMS: &[SettingItem] = &[
         en: "Theme preset",
         ja: "テーマプリセット",
         ko: "테마 프리셋",
-        pinyin: "zhutiyushe",
-        romaji: "teemapurisetto",
     },
     SettingItem {
         cat: 0,
@@ -46,8 +43,6 @@ const SETTING_ITEMS: &[SettingItem] = &[
         en: "Background color",
         ja: "背景色",
         ko: "배경색",
-        pinyin: "beijing",
-        romaji: "haikeishoku",
     },
     SettingItem {
         cat: 0,
@@ -55,8 +50,6 @@ const SETTING_ITEMS: &[SettingItem] = &[
         en: "Text color",
         ja: "テキスト色",
         ko: "텍스트 색",
-        pinyin: "zhuwenzi",
-        romaji: "tekisutoshoku",
     },
     SettingItem {
         cat: 0,
@@ -64,8 +57,6 @@ const SETTING_ITEMS: &[SettingItem] = &[
         en: "Accent color",
         ja: "アクセント色",
         ko: "강조색",
-        pinyin: "qiangdiaose",
-        romaji: "akusentoshoku",
     },
     SettingItem {
         cat: 0,
@@ -73,8 +64,6 @@ const SETTING_ITEMS: &[SettingItem] = &[
         en: "Danger color",
         ja: "危険色",
         ko: "위험 색",
-        pinyin: "weixianse",
-        romaji: "kikenshoku",
     },
     SettingItem {
         cat: 0,
@@ -82,8 +71,6 @@ const SETTING_ITEMS: &[SettingItem] = &[
         en: "Warning color",
         ja: "警告色",
         ko: "경고 색",
-        pinyin: "jinggaose",
-        romaji: "keikokushoku",
     },
     SettingItem {
         cat: 1,
@@ -91,8 +78,6 @@ const SETTING_ITEMS: &[SettingItem] = &[
         en: "Language",
         ja: "言語",
         ko: "언어",
-        pinyin: "yuyan",
-        romaji: "gengo",
     },
     SettingItem {
         cat: 2,
@@ -100,8 +85,6 @@ const SETTING_ITEMS: &[SettingItem] = &[
         en: "Output device",
         ja: "出力デバイス",
         ko: "출력 장치",
-        pinyin: "shuchushebei",
-        romaji: "shutsuryokudebaisu",
     },
     SettingItem {
         cat: 2,
@@ -109,8 +92,6 @@ const SETTING_ITEMS: &[SettingItem] = &[
         en: "Sample rate",
         ja: "サンプルレート",
         ko: "샘플 레이트",
-        pinyin: "caiyanglv",
-        romaji: "sanpurureeto",
     },
     SettingItem {
         cat: 2,
@@ -118,8 +99,6 @@ const SETTING_ITEMS: &[SettingItem] = &[
         en: "Buffer size",
         ja: "バッファサイズ",
         ko: "버퍼 크기",
-        pinyin: "huanchongqudaxiao",
-        romaji: "baffasaizu",
     },
     SettingItem {
         cat: 2,
@@ -127,8 +106,6 @@ const SETTING_ITEMS: &[SettingItem] = &[
         en: "Synth layers",
         ja: "シンセレイヤー",
         ko: "신스 레이어",
-        pinyin: "hechengqicengshu",
-        romaji: "shinsereiyaa",
     },
     SettingItem {
         cat: 2,
@@ -136,8 +113,6 @@ const SETTING_ITEMS: &[SettingItem] = &[
         en: "Synth engine",
         ja: "シンセエンジン",
         ko: "신스 엔진",
-        pinyin: "hechengyinqing",
-        romaji: "shinseenjin",
     },
     SettingItem {
         cat: 3,
@@ -145,8 +120,6 @@ const SETTING_ITEMS: &[SettingItem] = &[
         en: "Scroll mode",
         ja: "スクロールモード",
         ko: "스크롤 모드",
-        pinyin: "gundongmoshi",
-        romaji: "sukuroorumoodo",
     },
     SettingItem {
         cat: 3,
@@ -154,8 +127,6 @@ const SETTING_ITEMS: &[SettingItem] = &[
         en: "Automation density",
         ja: "オートメーション密度",
         ko: "자동화 밀도",
-        pinyin: "zidonghuamidu",
-        romaji: "ootomeeshonmitsudo",
     },
     SettingItem {
         cat: 3,
@@ -163,8 +134,6 @@ const SETTING_ITEMS: &[SettingItem] = &[
         en: "Note outline",
         ja: "ノート枠線",
         ko: "노트 외곽선",
-        pinyin: "yinfumiaobian",
-        romaji: "nootowakusen",
     },
     SettingItem {
         cat: 3,
@@ -172,8 +141,6 @@ const SETTING_ITEMS: &[SettingItem] = &[
         en: "Min border width",
         ja: "最小枠線幅",
         ko: "최소 테두리 폭",
-        pinyin: "zuixiaobiankuangkuandu",
-        romaji: "saishouwakusenhaba",
     },
     SettingItem {
         cat: 3,
@@ -181,8 +148,6 @@ const SETTING_ITEMS: &[SettingItem] = &[
         en: "GPU culling",
         ja: "GPU カリング",
         ko: "GPU 컬링",
-        pinyin: "caijian",
-        romaji: "karingu",
     },
     SettingItem {
         cat: 4,
@@ -190,8 +155,6 @@ const SETTING_ITEMS: &[SettingItem] = &[
         en: "MIDI import encoding",
         ja: "MIDI インポートエンコーディング",
         ko: "MIDI 가져오기 인코딩",
-        pinyin: "daorubianma",
-        romaji: "inpootoenkoodingu",
     },
     SettingItem {
         cat: 5,
@@ -199,8 +162,6 @@ const SETTING_ITEMS: &[SettingItem] = &[
         en: "UI scale",
         ja: "UI スケール",
         ko: "UI 배율",
-        pinyin: "jiemiansuofang",
-        romaji: "sukeeru",
     },
     SettingItem {
         cat: 6,
@@ -208,8 +169,6 @@ const SETTING_ITEMS: &[SettingItem] = &[
         en: "Refresh devices",
         ja: "デバイス更新",
         ko: "장치 새로고침",
-        pinyin: "shuaxinshebiliebiao",
-        romaji: "debaisukoushin",
     },
     SettingItem {
         cat: 6,
@@ -217,12 +176,10 @@ const SETTING_ITEMS: &[SettingItem] = &[
         en: "Factory reset",
         ja: "工場出荷時リセット",
         ko: "공장 초기화",
-        pinyin: "huifuchuchangshezhi",
-        romaji: "koujoushutsukajirisetto",
     },
 ];
 
-/// 归一化：小写并去掉所有空白，使拼音/罗马音的带空格输入也能匹配。
+/// 归一化：小写并去掉所有空白（拼音/罗马音的带空格输入也能匹配）。
 fn norm(s: &str) -> String {
     s.to_lowercase()
         .chars()
@@ -230,15 +187,34 @@ fn norm(s: &str) -> String {
         .collect()
 }
 
-/// 搜索词是否匹配设置项（任意语言名称、拼音或罗马音，不区分大小写和空格）。
+/// 把任意语言文本折叠成检索键：`(全拼/原文, 汉字拼音首字母缩写)`。
+/// - 汉字逐字转拼音（常见读音；ü 折叠成 v，兼容键盘 lv 输入），
+///   并收集首字母供缩写搜索（如 zt→主题）；
+/// - 其余字符经 deunicode 折叠（é→e、假名→罗马音等，为未来多语言做准备）。
+fn to_search_keys(s: &str) -> (String, String) {
+    let mut full = String::new();
+    let mut initials = String::new();
+    for c in s.chars() {
+        if let Some(py) = c.to_pinyin() {
+            full.push_str(&py.plain().replace('ü', "v"));
+            initials.push_str(py.first_letter());
+        } else if let Some(lat) = deunicode_char(c) {
+            full.push_str(lat);
+        } else if !c.is_whitespace() {
+            full.push(c);
+        }
+    }
+    (norm(&full), initials)
+}
+
+/// 搜索词是否匹配设置项：任意语言名称原文、中文拼音或其首字母缩写。
 fn item_matches(item: &SettingItem, query: &str) -> bool {
     let q = norm(query);
-    norm(item.zh).contains(&q)
-        || norm(item.en).contains(&q)
-        || norm(item.ja).contains(&q)
-        || norm(item.ko).contains(&q)
-        || item.pinyin.contains(&q)
-        || item.romaji.contains(&q)
+    let qf = to_search_keys(query).0;
+    [item.zh, item.en, item.ja, item.ko].iter().any(|name| {
+        let (full, initials) = to_search_keys(name);
+        full.contains(&qf) || (!initials.is_empty() && initials.contains(&q))
+    })
 }
 
 /// 右侧内容：有搜索词时显示跨分类搜索结果，否则显示当前分类。
@@ -862,5 +838,41 @@ pub(crate) fn show_viewport(
         !settings.show_settings
     } else {
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn item(zh: &str) -> &'static SettingItem {
+        SETTING_ITEMS
+            .iter()
+            .find(|i| i.zh == zh)
+            .expect("settings item exists")
+    }
+
+    #[test]
+    fn search_matches_original_names_of_all_languages() {
+        assert!(item_matches(item("主题预设"), "主题"));
+        assert!(item_matches(item("主题预设"), "Theme"));
+        assert!(item_matches(item("主题预设"), "プリセット"));
+        assert!(item_matches(item("主题预设"), "프리셋"));
+        assert!(item_matches(item("背景"), "배경"));
+    }
+
+    #[test]
+    fn search_matches_pinyin_and_initials() {
+        assert!(item_matches(item("主题预设"), "zhuti"));
+        assert!(item_matches(item("主题预设"), "zhu ti"));
+        assert!(item_matches(item("主题预设"), "zt"));
+        assert!(item_matches(item("缓冲区大小"), "huanchongqu"));
+        assert!(!item_matches(item("主题预设"), "xyz"));
+    }
+
+    #[test]
+    fn search_is_case_insensitive() {
+        assert!(item_matches(item("采样率"), "SAMPLE"));
+        assert!(item_matches(item("采样率"), "caiyanglv"));
     }
 }

@@ -38,6 +38,8 @@ egui_material_icons = { workspace = true }
 image = { workspace = true }
 bytemuck = { workspace = true }
 rust-i18n = { workspace = true }
+pinyin = "0.11.0"
+deunicode = "1.6.2"
 
 [dev-dependencies]
 yinhe-test-helpers = { path = "../yinhe-test-helpers" }
