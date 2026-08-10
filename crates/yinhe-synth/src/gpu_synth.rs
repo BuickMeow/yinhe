@@ -118,6 +118,20 @@ impl ValueLerp {
     }
 }
 
+/// 通道级低通滤波器状态（CC74 cutoff + CC71 resonance 的 DF1，每声道独立）。
+/// 状态跨 block 保留；系数变化（cutoff 渐变）时 DF1 状态保留（biquad DF1 在线重调）。
+#[derive(Clone, Copy, Debug, Default)]
+struct ChannelFltState {
+    x1l: f32,
+    x2l: f32,
+    y1l: f32,
+    y2l: f32,
+    x1r: f32,
+    x2r: f32,
+    y1r: f32,
+    y2r: f32,
+}
+
 /// 单通道 MIDI 控制状态（默认值与 xsynth `ControlEventData::new_defaults` 对齐）。
 #[derive(Clone, Copy, Debug)]
 struct ChannelState {
@@ -139,6 +153,21 @@ struct ChannelState {
     rpn_lsb: i8,
     /// 渐变长度基准（CC79 重置时需要重建 ValueLerp）
     sample_rate: u32,
+    /// 通道级低通（CC74 目标频率；None = 旁路，DF1 状态保留）
+    cutoff: Option<f32>,
+    /// 通道滤波器 Q（CC71；None = Butterworth 0.7071），仅 cutoff 开启时生效
+    resonance: Option<f32>,
+    /// 截止频率渐变（初始 sr/2 = 全通，与 xsynth MultiChannelBiQuad 一致）
+    cutoff_lerp: ValueLerp,
+    /// set_end 的 512 帧对齐基准（= 最近一次 CC 事件位置；xsynth 每个 read 块
+    /// 末 set_end，块从事件位置重新 512 对齐，跨 render block 保持）
+    cutoff_align: u64,
+    /// DF1 状态（每声道，跨 block 保留）
+    flt: ChannelFltState,
+    /// CC73 attack 时长倍率（u8，None = 用 region 原始值）
+    env_attack: Option<u8>,
+    /// CC72 release 时长倍率（u8，None = 用 region 原始值）
+    env_release: Option<u8>,
 }
 
 impl ChannelState {
@@ -160,6 +189,14 @@ impl ChannelState {
             rpn_msb: -1,
             rpn_lsb: -1,
             sample_rate,
+            cutoff: None,
+            resonance: None,
+            // 初始频率 = sr/2（≈全通），与 xsynth MultiChannelBiQuad 构造一致
+            cutoff_lerp: ValueLerp::new(sample_rate as f32 / 2.0, sample_rate),
+            cutoff_align: 0,
+            flt: ChannelFltState::default(),
+            env_attack: None,
+            env_release: None,
         }
     }
 
@@ -214,6 +251,27 @@ impl ChannelState {
                 0x07 => self.volume.set_end(value as f32 / 128.0),
                 0x0A | 0x08 => self.pan.set_end(value as f32 / 128.0),
                 0x0B => self.expression.set_end(value as f32 / 128.0),
+                0x47 if value > 64 => {
+                    // CC71 resonance：线性 Q = db_to_amp((v-64)/2.4) × Butterworth 基准
+                    let db = (value as f32 - 64.0) / 2.4;
+                    self.resonance =
+                        Some(10.0f32.powf(db / 20.0) * std::f32::consts::FRAC_1_SQRT_2);
+                }
+                0x47 => self.resonance = None,
+                0x48 => self.env_release = Some(value),
+                0x49 => self.env_attack = Some(value),
+                0x4A if value < 64 => {
+                    // CC74 cutoff：键频表 FREQS[value+64] = 2^((key-69)/12)×440，
+                    // 超 7000Hz 的部分 ×2.36 抬升（与 xsynth 一致）
+                    let key = value as f32 + 64.0;
+                    let mut freq = 2.0f32.powf((key - 69.0) / 12.0) * 440.0;
+                    if freq > 7000.0 {
+                        let mult = freq / 7000.0 - 1.0;
+                        freq = (mult * 2.36 + 1.0) * 7000.0;
+                    }
+                    self.cutoff = Some(freq);
+                }
+                0x4A => self.cutoff = None,
                 0x40 => {
                     let damper = value >= 64;
                     let released = self.damper && !damper;
@@ -225,7 +283,7 @@ impl ChannelState {
                     return false; // 由调用方处理
                 }
                 0x79 if value == 0 => {
-                    // Reset All Controllers
+                    // Reset All Controllers（含 cutoff 旁路；DF1 状态保留，与 xsynth 一致）
                     *self = ChannelState::new(self.sample_rate);
                     return true; // damper 松开语义
                 }
@@ -243,6 +301,69 @@ impl ChannelState {
         }
         false
     }
+
+    /// 通道级低通滤波（CC74 开启时）：混音后最后一步，作用于该通道的立体声混音。
+    /// 与 xsynth `MultiChannelBiQuad` 对齐：
+    /// - 每声道一个 DF1 biquad，系数按 RBJ LowPass cookbook（与 per-voice 同源）
+    /// - 截止频率 ValueLerp 渐变；每 2 sample（声道对起点）取一次渐变值并更新系数
+    /// - set_end 按 512 帧块边界执行（xsynth 每 read 块末 set_end，从当前值重算 step），
+    ///   块从最近事件位置（`cutoff_align`）重新对齐并跨 render block 保持——
+    ///   xsynth 的块只被事件位置切断，不会被 render 的 512 帧 block 边界切断
+    /// - Q = CC71 线性 Q，未设置时 Butterworth（0.7071）
+    /// - 旁路（cutoff None）时不处理，DF1 状态保留（无 click）
+    fn apply_cutoff_filter(&mut self, mix: &mut [f32], sample_rate: u32, seg_start: u64) {
+        let Some(cutoff) = self.cutoff else {
+            return;
+        };
+        let q = self.resonance.unwrap_or(std::f32::consts::FRAC_1_SQRT_2);
+        let mut pair = 0u64;
+        while (pair as usize) * 2 + 1 < mix.len() {
+            // 音频帧位置（pair = 帧索引；每帧 = L+R 两个 sample）。
+            // set_end 每 512 帧一次（xsynth 每 read 块一次，块 = 事件位置起 512 帧对齐）。
+            let frame = seg_start + pair;
+            if frame >= self.cutoff_align && (frame - self.cutoff_align).is_multiple_of(512) {
+                self.cutoff_lerp.set_end(cutoff);
+            }
+            self.cutoff_lerp.advance(1.0);
+            let freq = self.cutoff_lerp.current;
+            let (b0, b1, b2, a1, a2) = crate::synth::biquad_coeffs(0, freq, q, sample_rate as f32);
+            // 左声道
+            let x = mix[pair as usize * 2];
+            let y = b0 * x + b1 * self.flt.x1l + b2 * self.flt.x2l
+                - a1 * self.flt.y1l
+                - a2 * self.flt.y2l;
+            self.flt.x2l = self.flt.x1l;
+            self.flt.x1l = x;
+            self.flt.y2l = self.flt.y1l;
+            self.flt.y1l = y;
+            mix[pair as usize * 2] = y;
+            // 右声道
+            let x = mix[pair as usize * 2 + 1];
+            let y = b0 * x + b1 * self.flt.x1r + b2 * self.flt.x2r
+                - a1 * self.flt.y1r
+                - a2 * self.flt.y2r;
+            self.flt.x2r = self.flt.x1r;
+            self.flt.x1r = x;
+            self.flt.y2r = self.flt.y1r;
+            self.flt.y1r = y;
+            mix[pair as usize * 2 + 1] = y;
+            pair += 1;
+        }
+    }
+}
+
+/// xsynth `calculate_curve`：CC72/73 值缩放 region 原始时长（秒）。
+/// v<=64: (v/64)^5 × dur；v>64: dur + ((v-64)/64)^3 × 15
+/// release 有 0.02s 下限；attack 无下限。返回帧数。
+fn env_curve_frames(value: u8, orig_frames: f32, sample_rate: u32, is_release: bool) -> f32 {
+    let dur = orig_frames / sample_rate as f32;
+    let curve = if value <= 64 {
+        (value as f32 / 64.0).powi(5) * dur
+    } else {
+        dur + ((value as f32 - 64.0) / 64.0).powi(3) * 15.0
+    };
+    let secs = if is_release { curve.max(0.02) } else { curve };
+    secs * sample_rate as f32
 }
 
 /// voice + MIDI key + 所属通道 + 通道无关的基础参数。
@@ -253,6 +374,9 @@ struct Voice {
     channel: u8,
     /// 音色库基础播放倍率（不含弯音）。
     base_speed: f32,
+    /// region 原始 attack/release 帧数（CC72/73 重算的基准，多次 CC 不累积）
+    orig_attack_frames: f32,
+    orig_release_frames: f32,
     /// 是否被延音踏板保持（CC64 踩着时 note_off 只标记不释放）。
     held_by_damper: bool,
 }
@@ -420,7 +544,17 @@ impl GpuSynth {
                 }
                 match ev {
                     SynthEvent::Control { channel, event, .. } => {
+                        eprintln!(
+                            "[dbg] control@{} ch={} align_before={}",
+                            seg_end,
+                            channel,
+                            self.channels[channel as usize % MAX_CHANNELS].cutoff_align
+                        );
                         self.process_control(channel, event);
+                        // xsynth 每个事件位置都重置 read 块边界（cutoff set_end 的
+                        // 512 帧对齐基准随之重排），跨 render block 保持
+                        self.channels[channel as usize % MAX_CHANNELS].cutoff_align = seg_end;
+                        eprintln!("[dbg]   align_after={}", seg_end);
                     }
                     SynthEvent::NoteOn {
                         channel,
@@ -517,13 +651,19 @@ impl GpuSynth {
                 v.state.flt_y1r = self.states_buf[i].flt_y1r;
                 v.state.flt_y2r = self.states_buf[i].flt_y2r;
             }
-            // 各通道求和（CC74 通道滤波在 apply_channel_effects 中于求和前完成）
-            output.fill(0.0);
-            for ch in 0..MAX_CHANNELS {
-                let base = ch * frames * 2;
-                for (i, o) in output.iter_mut().enumerate() {
-                    *o += self.channel_mix[base + i];
-                }
+        } else {
+            self.channel_mix.resize(MAX_CHANNELS * frames * 2, 0.0);
+        }
+        // 各通道：CC74 通道滤波（若开启）→ 求和（xsynth 顺序：vol/pan → cutoff → sum）。
+        // 无论有无 voice 都执行：cutoff 渐变与 DF1 状态照常推进（xsynth 的
+        // apply_channel_effects 每块无条件调用，对空信号滤波时 lerp 不中断）。
+        output.fill(0.0);
+        for (ch_idx, ch) in self.channels.iter_mut().enumerate() {
+            let base = ch_idx * frames * 2;
+            let ch_mix = &mut self.channel_mix[base..base + frames * 2];
+            ch.apply_cutoff_filter(ch_mix, self.sample_rate, seg_start);
+            for (i, o) in output.iter_mut().enumerate() {
+                *o += ch_mix[i];
             }
         }
 
@@ -540,6 +680,47 @@ impl GpuSynth {
             ch.volume.advance(frames as f32);
             ch.expression.advance(frames as f32);
             ch.pan.advance(frames as f32);
+        }
+    }
+
+    /// CC72/73（及 CC121 重置）后重算该通道所有活跃 voice 的 attack/release 时长：
+    /// 基于 region 原始值重算（多次 CC 不累积），并从当前 amp 重走当前阶段
+    /// （与 xsynth `modify_envelope` + `update_stage` 一致）。
+    fn propagate_env_controls(&mut self, ch_idx: usize) {
+        let ch = self.channels[ch_idx];
+        for v in &mut self.voices {
+            if v.channel as usize != ch_idx || v.state.env_stage >= 6 {
+                continue;
+            }
+            if let Some(cc) = ch.env_attack {
+                v.state.attack_frames =
+                    env_curve_frames(cc, v.orig_attack_frames, self.sample_rate, false);
+            }
+            if let Some(cc) = ch.env_release {
+                v.state.release_frames =
+                    env_curve_frames(cc, v.orig_release_frames, self.sample_rate, true);
+            }
+            // 重走当前阶段：进度清零，阶段起点 = 当前 amp（xsynth update_stage 语义）
+            match v.state.env_stage {
+                0 => v.state.stage_progress = 0.0, // Delay 重走（时长不变）
+                1 => {
+                    // Attack 从当前 amp 到 peak
+                    v.state.env_start = v.state.envelope;
+                    v.state.stage_progress = 0.0;
+                }
+                2 => v.state.stage_progress = 0.0, // Hold 重走（时长不变）
+                3 => {
+                    // Decay 从当前 amp 到 sustain
+                    v.state.decay_start = v.state.envelope;
+                    v.state.stage_progress = 0.0;
+                }
+                5 => {
+                    // Release 从当前 amp 到 0
+                    v.state.env_start = v.state.envelope;
+                    v.state.stage_progress = 0.0;
+                }
+                _ => {}
+            }
         }
     }
 
@@ -601,6 +782,13 @@ impl GpuSynth {
                 }
             }
         }
+        // CC72/73 修改包络时长、CC121 重置包络：传播到该通道活跃 voice
+        if matches!(
+            event,
+            ControlEvent::Raw(0x48 | 0x49, _) | ControlEvent::Raw(0x79, 0)
+        ) {
+            self.propagate_env_controls(ch_idx);
+        }
         // 弯音/渐变在下一段起点由 sync_channel_state 统一应用
     }
 
@@ -641,6 +829,17 @@ impl GpuSynth {
 
         let ch = self.channels[channel as usize % MAX_CHANNELS];
         let sr = self.sample_rate as f32;
+        // CC72/73：用通道当前值缩放 region 原始时长（多次 CC 不累积）
+        let orig_attack_frames = info.ampeg_attack * sr;
+        let orig_release_frames = info.ampeg_release * sr;
+        let attack_frames = match ch.env_attack {
+            Some(cc) => env_curve_frames(cc, orig_attack_frames, self.sample_rate, false),
+            None => orig_attack_frames,
+        };
+        let release_frames = match ch.env_release {
+            Some(cc) => env_curve_frames(cc, orig_release_frames, self.sample_rate, true),
+            None => orig_release_frames,
+        };
         // 通道渐变快照：note 起点处（seg_start + offset）的通道值 + 剩余渐变帧数。
         // shader 内 voice 与通道以相同步长逐帧推进，事件边界由 sync_channel_voices 重新对齐。
         let offset_f = offset_in_block as f32;
@@ -648,6 +847,8 @@ impl GpuSynth {
             key,
             channel,
             base_speed: info.speed_mult,
+            orig_attack_frames,
+            orig_release_frames,
             held_by_damper: false,
             state: GpuVoiceState {
                 sample_offset: offset + info.offset,
@@ -665,11 +866,12 @@ impl GpuSynth {
                 env_level: 1.0,
                 sustain_level: info.ampeg_sustain,
                 env_start: info.ampeg_start,
+                decay_start: info.ampeg_start,
                 delay_frames: info.ampeg_delay * sr,
-                attack_frames: info.ampeg_attack * sr,
+                attack_frames,
                 hold_frames: info.ampeg_hold * sr,
                 decay_frames: info.ampeg_decay * sr,
-                release_frames: info.ampeg_release * sr,
+                release_frames,
                 base_pan_l,
                 base_pan_r,
                 ch_vol: ch.volume.value_at(offset_f),

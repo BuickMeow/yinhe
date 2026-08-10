@@ -34,6 +34,8 @@ pub struct GpuVoiceState {
     pub env_level: f32,     // peak = gain
     pub sustain_level: f32, // 0..1
     pub env_start: f32,     // attack 起点 / release 起始值
+    /// Decay 阶段起点 amp（正常 = peak；CC72/73 重走 Decay 时 = 当前 amp）
+    pub decay_start: f32,
     // Stage durations (frames)
     pub delay_frames: f32,
     pub attack_frames: f32,
@@ -224,17 +226,18 @@ pub fn advance_voices(voices: &mut [GpuVoiceState], frame_count: u32) {
                         voice.stage_progress += remaining;
                         remaining = 0.0;
                     } else {
+                        voice.decay_start = voice.envelope; // 进入 Decay 的起点 = 当前 amp
                         remaining -= dur;
                         voice.env_stage = 3;
                         voice.stage_progress = 0.0;
                     }
                 }
                 3 => {
-                    // Decay: 指数 (1-t)^8
+                    // Decay: 指数 (1-t)^8，从 decay_start 到 sustain
                     let dur = voice.decay_frames - voice.stage_progress;
                     if remaining < dur {
                         let t = (voice.stage_progress + remaining) / voice.decay_frames;
-                        voice.envelope = sus + (peak - sus) * (1.0 - t).powi(8);
+                        voice.envelope = sus + (voice.decay_start - sus) * (1.0 - t).powi(8);
                         voice.stage_progress += remaining;
                         remaining = 0.0;
                     } else {
@@ -533,8 +536,7 @@ impl GpuAudioRenderer {
             (rounded_voices as usize * std::mem::size_of::<GpuVoiceState>()) as u64;
         // per-channel 混音：16 通道 × frames × 2
         let channel_mix_size =
-            (CHANNEL_COUNT as usize * frame_count.max(1) as usize * 2 * std::mem::size_of::<f32>())
-                as u64;
+            (CHANNEL_COUNT * frame_count.max(1) as usize * 2 * std::mem::size_of::<f32>()) as u64;
         // pass1 每 voice 每帧输出（按分配的最大 voice 数）
         let partial_size = (rounded_voices as usize
             * frame_count.max(1) as usize
@@ -751,7 +753,7 @@ impl GpuAudioRenderer {
             cpass.dispatch_workgroups(frame_count, 1, 1);
         }
 
-        let mix_size = (channel_mix.len() * std::mem::size_of::<f32>()) as u64;
+        let mix_size = std::mem::size_of_val(channel_mix) as u64;
         encoder.copy_buffer_to_buffer(&buf.channel_mix_buf, 0, &buf.staging[idx], 0, mix_size);
         // 读回 voice 状态（滤波器 IIR 状态，供下一 block 上传）
         let voice_state_size = buf.voice_state_buf.size();
@@ -994,6 +996,7 @@ fn advance_env_cpu(v: &mut GpuVoiceState) {
         2 => {
             // Hold
             if v.stage_progress + 1.0 >= v.hold_frames {
+                v.decay_start = v.envelope; // 进入 Decay 的起点 = 当前 amp
                 v.env_stage = 3;
                 v.stage_progress = 0.0;
             } else {
@@ -1001,7 +1004,7 @@ fn advance_env_cpu(v: &mut GpuVoiceState) {
             }
         }
         3 => {
-            // Decay: 指数 (1-t)^8
+            // Decay: 指数 (1-t)^8，从 decay_start 到 sustain
             let n = v.stage_progress + 1.0;
             if n >= v.decay_frames {
                 v.envelope = sus;
@@ -1009,7 +1012,7 @@ fn advance_env_cpu(v: &mut GpuVoiceState) {
                 v.stage_progress = 0.0;
             } else {
                 let t = n / v.decay_frames;
-                v.envelope = sus + (peak - sus) * (1.0 - t).powi(8);
+                v.envelope = sus + (v.decay_start - sus) * (1.0 - t).powi(8);
                 v.stage_progress = n;
             }
         }

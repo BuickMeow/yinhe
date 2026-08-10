@@ -34,6 +34,8 @@ struct VoiceState {
     env_level: f32,
     sustain_level: f32,
     env_start: f32,
+    // Decay 阶段起点 amp（正常 = peak；CC72/73 重走 Decay 时 = 当前 amp）
+    decay_start: f32,
     // Stage durations (frames)
     delay_frames: f32,
     attack_frames: f32,
@@ -163,12 +165,13 @@ fn advance_env(st: VoiceState) -> VoiceState {
         case 2u: { // Hold
             if s.stage_progress + 1.0 >= s.hold_frames {
                 s.env_stage = 3u;
+                s.decay_start = s.envelope; // 进入 Decay 的起点 = 当前 amp（= peak）
                 s.stage_progress = 0.0;
             } else {
                 s.stage_progress += 1.0;
             }
         }
-        case 3u: { // Decay: 指数 (1-t)^8
+        case 3u: { // Decay: 指数 (1-t)^8，从 decay_start 到 sustain
             let n = s.stage_progress + 1.0;
             if n >= s.decay_frames {
                 s.envelope = sus;
@@ -176,7 +179,7 @@ fn advance_env(st: VoiceState) -> VoiceState {
                 s.stage_progress = 0.0;
             } else {
                 let t = n / s.decay_frames;
-                s.envelope = sus + (peak - sus) * pow(1.0 - t, 8.0);
+                s.envelope = sus + (s.decay_start - sus) * pow(1.0 - t, 8.0);
                 s.stage_progress = n;
             }
         }
