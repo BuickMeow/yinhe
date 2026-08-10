@@ -445,7 +445,8 @@ impl AudioRenderer {
         }
     }
 
-    /// 从 engine 的当前 audible_notes 构建 SynthEvent 列表（GPU 路径）
+    /// 从 engine 的当前 audible_notes + cc_events 构建 SynthEvent 列表（GPU 路径）
+    /// 音符事件 + 通道控制事件（CC/pitch bend/RPN）统一转 sample 域并排序。
     #[cfg(feature = "gpu")]
     fn build_gpu_synth_events(&self) -> Vec<yinhe_synth::SynthEvent> {
         let audio_model = match self.engine.model.as_ref() {
@@ -454,6 +455,8 @@ impl AudioRenderer {
         };
 
         let mut events: Vec<yinhe_synth::SynthEvent> = Vec::new();
+
+        // ── 音符事件（带 dense channel）──
         for key in 0..128usize {
             for note in self.engine.audible_notes[key].iter() {
                 let track = note.track as usize;
@@ -461,25 +464,70 @@ impl AudioRenderer {
                     continue;
                 }
                 let ch = audio_model.track_channel(track) as usize;
-                if self.engine.channel_layout.dense_for(ch) == u32::MAX {
+                let dense = self.engine.channel_layout.dense_for(ch);
+                if dense == u32::MAX {
                     continue;
                 }
 
-                events.push(yinhe_synth::SynthEvent {
+                events.push(yinhe_synth::SynthEvent::NoteOn {
                     sample: self.engine.tick_to_sample(note.start_tick),
+                    channel: dense as u8,
                     key: key as u8,
                     velocity: note.velocity,
-                    is_on: true,
                 });
-                events.push(yinhe_synth::SynthEvent {
+                events.push(yinhe_synth::SynthEvent::NoteOff {
                     sample: self.engine.tick_to_sample(note.end_tick),
+                    channel: dense as u8,
                     key: key as u8,
-                    velocity: 0,
-                    is_on: false,
                 });
             }
         }
-        events.sort_by_key(|e| e.sample);
+
+        // ── 通道控制事件（CC/pitch bend/RPN），tick 域转 sample 域 ──
+        for cc in self.engine.cc_events.iter() {
+            // mute 的音轨：跳过其自动化事件（与 CPU 路径 dispatch 一致）
+            if self
+                .engine
+                .skip_track
+                .get(cc.track as usize)
+                .copied()
+                .unwrap_or(false)
+            {
+                continue;
+            }
+            let dense = self.engine.channel_layout.dense_for(cc.channel as usize);
+            if dense == u32::MAX {
+                continue;
+            }
+            let event = match cc.event {
+                xsynth_core::channel::ChannelAudioEvent::Control(ControlEvent::Raw(c, v)) => {
+                    yinhe_synth::ControlEvent::Raw(c, v)
+                }
+                xsynth_core::channel::ChannelAudioEvent::Control(ControlEvent::PitchBendValue(
+                    v,
+                )) => yinhe_synth::ControlEvent::PitchBend(v),
+                xsynth_core::channel::ChannelAudioEvent::Control(
+                    ControlEvent::PitchBendSensitivity(v),
+                ) => yinhe_synth::ControlEvent::PitchBendSensitivity(v),
+                xsynth_core::channel::ChannelAudioEvent::Control(ControlEvent::FineTune(v)) => {
+                    yinhe_synth::ControlEvent::FineTune(v)
+                }
+                xsynth_core::channel::ChannelAudioEvent::Control(ControlEvent::CoarseTune(v)) => {
+                    yinhe_synth::ControlEvent::CoarseTune(v)
+                }
+                xsynth_core::channel::ChannelAudioEvent::ProgramChange(p) => {
+                    yinhe_synth::ControlEvent::ProgramChange(p)
+                }
+                _ => continue,
+            };
+            events.push(yinhe_synth::SynthEvent::Control {
+                sample: self.engine.tick_to_sample(cc.tick),
+                channel: dense as u8,
+                event,
+            });
+        }
+
+        events.sort_by_key(|e| e.sample());
         events
     }
 

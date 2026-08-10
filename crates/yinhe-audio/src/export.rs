@@ -335,7 +335,8 @@ pub fn export_wav_gpu(
                 continue;
             }
             let ch = audio_model.track_channel(track) as usize;
-            if layout.dense_for(ch) == u32::MAX {
+            let dense = layout.dense_for(ch);
+            if dense == u32::MAX {
                 continue;
             }
 
@@ -343,21 +344,58 @@ pub fn export_wav_gpu(
                 crate::audio_model::tick_to_sample(note.start_tick, segments, tpb, sr);
             let end_sample = crate::audio_model::tick_to_sample(note.end_tick, segments, tpb, sr);
 
-            events.push(yinhe_synth::SynthEvent {
+            events.push(yinhe_synth::SynthEvent::NoteOn {
                 sample: start_sample,
+                channel: dense as u8,
                 key: key as u8,
                 velocity: note.velocity,
-                is_on: true,
             });
-            events.push(yinhe_synth::SynthEvent {
+            events.push(yinhe_synth::SynthEvent::NoteOff {
                 sample: end_sample,
+                channel: dense as u8,
                 key: key as u8,
-                velocity: 0,
-                is_on: false,
             });
         }
     }
-    events.sort_by_key(|e| e.sample);
+
+    // CC 事件（与播放路径一致的自动化展平；density=1 最平滑）
+    let cc_events = crate::audio_model::flatten_automation_to_cc_events(&model, 1);
+    for cc in cc_events.iter() {
+        if (cc.track as usize) < skip_tracks.len() && skip_tracks[cc.track as usize] {
+            continue;
+        }
+        let dense = layout.dense_for(cc.channel as usize);
+        if dense == u32::MAX {
+            continue;
+        }
+        let event = match cc.event {
+            xsynth_core::channel::ChannelAudioEvent::Control(ControlEvent::Raw(c, v)) => {
+                yinhe_synth::ControlEvent::Raw(c, v)
+            }
+            xsynth_core::channel::ChannelAudioEvent::Control(ControlEvent::PitchBendValue(v)) => {
+                yinhe_synth::ControlEvent::PitchBend(v)
+            }
+            xsynth_core::channel::ChannelAudioEvent::Control(
+                ControlEvent::PitchBendSensitivity(v),
+            ) => yinhe_synth::ControlEvent::PitchBendSensitivity(v),
+            xsynth_core::channel::ChannelAudioEvent::Control(ControlEvent::FineTune(v)) => {
+                yinhe_synth::ControlEvent::FineTune(v)
+            }
+            xsynth_core::channel::ChannelAudioEvent::Control(ControlEvent::CoarseTune(v)) => {
+                yinhe_synth::ControlEvent::CoarseTune(v)
+            }
+            xsynth_core::channel::ChannelAudioEvent::ProgramChange(p) => {
+                yinhe_synth::ControlEvent::ProgramChange(p)
+            }
+            _ => continue,
+        };
+        events.push(yinhe_synth::SynthEvent::Control {
+            sample: crate::audio_model::tick_to_sample(cc.tick, segments, tpb, sr),
+            channel: dense as u8,
+            event,
+        });
+    }
+    events.sort_by_key(|e| e.sample());
     eprintln!(
         "[gpu-export] Built {} events in {:.2?}",
         events.len(),

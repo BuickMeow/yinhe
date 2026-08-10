@@ -19,7 +19,7 @@ pub struct GpuVoiceState {
     pub sample_offset: u32,
     pub sample_length: u32,
     pub speed: f32,
-    pub gain: f32,
+    pub base_gain: f32,
     pub time: f32,
     pub start_offset: u32, // 块内起始帧偏移
     // Envelope state at start of block
@@ -36,9 +36,19 @@ pub struct GpuVoiceState {
     pub hold_frames: f32,
     pub decay_frames: f32,
     pub release_frames: f32,
-    // Pan
-    pub pan_left: f32,
-    pub pan_right: f32,
+    // 声像：音色库基础声像（通道 pan 渐变在 shader 内逐帧计算，见 ch_pan）
+    pub base_pan_l: f32,
+    pub base_pan_r: f32,
+    // 通道渐变状态（xsynth ValueLerp：CC7/10/11 10ms 线性渐变，shader 逐帧推进）
+    pub ch_vol: f32,
+    pub ch_vol_step: f32,
+    pub ch_vol_frames: u32,
+    pub ch_expr: f32,
+    pub ch_expr_step: f32,
+    pub ch_expr_frames: u32,
+    pub ch_pan: f32,
+    pub ch_pan_step: f32,
+    pub ch_pan_frames: u32,
     // Loop
     pub loop_start: u32,
     pub loop_end: u32,
@@ -828,6 +838,25 @@ pub fn cpu_render_voices(
             }
             let frame_in_voice = fi - voice.start_offset as usize;
 
+            // 通道渐变逐帧推进（与 shader/xsynth ValueLerp 一致）
+            if voice.ch_vol_frames > 0 {
+                voice.ch_vol += voice.ch_vol_step;
+                voice.ch_vol_frames -= 1;
+            }
+            if voice.ch_expr_frames > 0 {
+                voice.ch_expr += voice.ch_expr_step;
+                voice.ch_expr_frames -= 1;
+            }
+            if voice.ch_pan_frames > 0 {
+                voice.ch_pan += voice.ch_pan_step;
+                voice.ch_pan_frames -= 1;
+            }
+            let ch_vol = voice.ch_vol * voice.ch_expr;
+            let ch_gain = voice.base_gain * ch_vol * ch_vol;
+            let ch_ang = voice.ch_pan * std::f32::consts::FRAC_PI_2;
+            let ch_pan_l = voice.base_pan_l * ch_ang.cos();
+            let ch_pan_r = voice.base_pan_r * ch_ang.sin();
+
             let t = voice.time + frame_in_voice as f32 * voice.speed;
             let mut idx = t as u32;
             let frac = t - idx as f32;
@@ -863,8 +892,8 @@ pub fn cpu_render_voices(
                     r0 += (r1 - r0) * frac;
                 }
 
-                let mut s_l = l0 * voice.gain * voice.envelope;
-                let mut s_r = r0 * voice.gain * voice.envelope;
+                let mut s_l = l0 * ch_gain * voice.envelope;
+                let mut s_r = r0 * ch_gain * voice.envelope;
                 if voice.cutoff > 0.0 {
                     // 单声道样本只用一组滤波器，右声道复用左声道输出（与 shader/xsynth 一致）
                     let (x1, x2, y1, y2) = (voice.flt_x1, voice.flt_x2, voice.flt_y1, voice.flt_y2);
@@ -891,8 +920,8 @@ pub fn cpu_render_voices(
                         s_r = s_l;
                     }
                 }
-                output[fi * 2] += s_l * voice.pan_left;
-                output[fi * 2 + 1] += s_r * voice.pan_right;
+                output[fi * 2] += s_l * ch_pan_l;
+                output[fi * 2 + 1] += s_r * ch_pan_r;
             }
             advance_env_cpu(voice);
         }
@@ -991,12 +1020,15 @@ mod tests {
                 sample_offset: (i % 4) * sample_len,
                 sample_length: sample_len,
                 speed,
-                gain: 0.5,
+                base_gain: 0.5,
                 env_stage: 4,
                 env_level: 1.0,
                 sustain_level: 1.0,
-                pan_left: 1.0,
-                pan_right: 1.0,
+                base_pan_l: 1.0,
+                base_pan_r: 1.0,
+                ch_vol: 1.0,
+                ch_expr: 1.0,
+                ch_pan: 0.5,
                 ..Default::default()
             })
             .collect()
@@ -1113,7 +1145,7 @@ mod tests {
                     sample_offset: 0,
                     sample_length: sample_len,
                     speed: 1.0,
-                    gain: 0.4,
+                    base_gain: 0.4,
                     env_stage: stage,
                     env_level: 1.0,
                     sustain_level: 0.3,
@@ -1122,8 +1154,11 @@ mod tests {
                     hold_frames: 120.0,
                     decay_frames: 400.0,
                     release_frames: 500.0,
-                    pan_left: 0.8,
-                    pan_right: 0.6,
+                    base_pan_l: 0.8,
+                    base_pan_r: 0.6,
+                    ch_vol: 1.0,
+                    ch_expr: 1.0,
+                    ch_pan: 0.5,
                     is_stereo: 1,
                     interp: 0,
                     cutoff: 1800.0,
@@ -1141,7 +1176,7 @@ mod tests {
                     sample_offset: 0,
                     sample_length: sample_len,
                     speed: 0.7,
-                    gain: 0.3,
+                    base_gain: 0.3,
                     env_stage: stage,
                     env_level: 1.0,
                     sustain_level: 0.6,
@@ -1150,8 +1185,11 @@ mod tests {
                     hold_frames: 120.0,
                     decay_frames: 400.0,
                     release_frames: 500.0,
-                    pan_left: 0.5,
-                    pan_right: 1.0,
+                    base_pan_l: 0.5,
+                    base_pan_r: 1.0,
+                    ch_vol: 1.0,
+                    ch_expr: 1.0,
+                    ch_pan: 0.5,
                     loop_mode: 1,
                     loop_start: 100,
                     loop_end: 2048,
@@ -1164,7 +1202,7 @@ mod tests {
                     sample_offset: 0,
                     sample_length: sample_len,
                     speed: 1.0,
-                    gain: 0.2,
+                    base_gain: 0.2,
                     start_offset: 13,
                     env_stage: stage,
                     env_level: 1.0,
@@ -1174,8 +1212,11 @@ mod tests {
                     hold_frames: 120.0,
                     decay_frames: 400.0,
                     release_frames: 500.0,
-                    pan_left: 1.0,
-                    pan_right: 0.3,
+                    base_pan_l: 1.0,
+                    base_pan_r: 0.3,
+                    ch_vol: 1.0,
+                    ch_expr: 1.0,
+                    ch_pan: 0.5,
                     is_stereo: 1,
                     cutoff: 4000.0,
                     resonance: 3.0,
@@ -1228,7 +1269,7 @@ mod tests {
     #[test]
     fn biquad_coeffs_reference() {
         // LowPass 1kHz Q=1（RBJ cookbook 已知值）
-        let (b0, b1, b2, a1, a2) = biquad_coeffs(0, 1000.0, 1.0, 44100.0);
+        let (b0, b1, _b2, a1, a2) = biquad_coeffs(0, 1000.0, 1.0, 44100.0);
         let omega = 2.0 * std::f32::consts::PI * 1000.0 / 44100.0;
         let alpha = omega.sin() / (2.0 * 1.0);
         let a0 = 1.0 + alpha;
@@ -1266,7 +1307,7 @@ mod tests {
 
         // 用 biquad crate 生成系数（权威来源）
         let cutoff = 1195.0f32;
-        let q = 0.7071f32;
+        let q = std::f32::consts::FRAC_1_SQRT_2;
         let coeffs = biquad::Coefficients::<f32>::from_params(
             biquad::Type::LowPass,
             sr.hz(),
@@ -1278,12 +1319,16 @@ mod tests {
         let make_voice = |with_filter: bool| GpuVoiceState {
             sample_length: sample_len,
             speed: 1.0,
-            gain: 0.5,
+            base_gain: 0.5,
             env_stage: 4,
             env_level: 1.0,
             sustain_level: 1.0,
-            pan_left: 1.0,
-            pan_right: 1.0,
+            base_pan_l: 1.0,
+            base_pan_r: 1.0,
+            // ch_pan=0 → cos(0)=1，左声道无衰减（与下方 expected 一致）
+            ch_vol: 1.0,
+            ch_expr: 1.0,
+            ch_pan: 0.0,
             cutoff: if with_filter { cutoff } else { 0.0 },
             resonance: q,
             filter_type: 0,
@@ -1303,7 +1348,7 @@ mod tests {
             renderer.render_into(&mut voices, &mut out, sr as u32);
             advance_voices(&mut voices, frame_count);
             for fi in 0..8 {
-                let expected = samples[fi] * 0.5; // sustain env=1.0, gain=0.5, mono, pan=1
+                let expected = samples[fi] * 0.5; // sustain env=1.0, base_gain=0.5, mono, ch_pan=0 → cos=1
                 assert!(
                     (out[fi * 2] - expected).abs() < 1e-4,
                     "nofilter frame {fi}: gpu={} expected={}",

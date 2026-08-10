@@ -9,9 +9,9 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use xsynth_core::channel::{ChannelAudioEvent, ChannelConfigEvent, ChannelEvent};
+use xsynth_core::channel::{ChannelAudioEvent, ChannelConfigEvent, ChannelEvent, ControlEvent};
 use xsynth_core::channel_group::{ChannelGroup, ChannelGroupConfig, SynthEvent, SynthFormat};
-use xsynth_core::soundfont::{SampleSoundfont, SoundfontBase, SoundfontInitOptions};
+use xsynth_core::soundfont::{SampleSoundfont, SoundfontInitOptions};
 use xsynth_core::{AudioPipe, AudioStreamParams, ChannelCount};
 
 use yinhe_synth::GpuSynth;
@@ -107,6 +107,29 @@ fn cpu_render(sfz: &Path) -> Vec<f32> {
             ),
         ));
     }
+    // CC 事件（volume/sustain 踏板）与弯音
+    for (ms, controller, value) in cc_plan() {
+        events.push((
+            ms * SR as u64 / 1000,
+            SynthEvent::Channel(
+                0,
+                ChannelEvent::Audio(ChannelAudioEvent::Control(ControlEvent::Raw(
+                    controller, value,
+                ))),
+            ),
+        ));
+    }
+    for (ms, value) in bend_plan() {
+        events.push((
+            ms * SR as u64 / 1000,
+            SynthEvent::Channel(
+                0,
+                ChannelEvent::Audio(ChannelAudioEvent::Control(ControlEvent::PitchBendValue(
+                    value,
+                ))),
+            ),
+        ));
+    }
     events.sort_by_key(|(s, _)| *s);
 
     let mut out = Vec::with_capacity(total_frames as usize * 2);
@@ -149,20 +172,34 @@ fn gpu_render(sfz: &Path) -> Vec<f32> {
     let total_frames = total_duration_ms(&plan) * SR as u64 / 1000;
     let mut events = Vec::new();
     for (start, key, vel, dur) in &plan {
-        events.push(yinhe_synth::SynthEvent {
+        events.push(yinhe_synth::SynthEvent::NoteOn {
             sample: start * SR as u64 / 1000,
+            channel: 0,
             key: *key,
             velocity: *vel,
-            is_on: true,
         });
-        events.push(yinhe_synth::SynthEvent {
+        events.push(yinhe_synth::SynthEvent::NoteOff {
             sample: (start + dur) * SR as u64 / 1000,
+            channel: 0,
             key: *key,
-            velocity: 0,
-            is_on: false,
         });
     }
-    events.sort_by_key(|e| e.sample);
+    // CC 事件（volume/sustain 踏板）与弯音
+    for (ms, controller, value) in cc_plan() {
+        events.push(yinhe_synth::SynthEvent::Control {
+            sample: ms * SR as u64 / 1000,
+            channel: 0,
+            event: yinhe_synth::ControlEvent::Raw(controller, value),
+        });
+    }
+    for (ms, value) in bend_plan() {
+        events.push(yinhe_synth::SynthEvent::Control {
+            sample: ms * SR as u64 / 1000,
+            channel: 0,
+            event: yinhe_synth::ControlEvent::PitchBend(value),
+        });
+    }
+    events.sort_by_key(|e| e.sample());
     synth.load_events(events);
 
     let mut out = Vec::with_capacity(total_frames as usize * 2);
@@ -174,6 +211,21 @@ fn gpu_render(sfz: &Path) -> Vec<f32> {
         out.extend_from_slice(buf);
     }
     out
+}
+
+/// 通道控制事件计划：(ms, controller, value)
+fn cc_plan() -> Vec<(u64, u8, u8)> {
+    vec![
+        (1000, 7, 100),  // 音量 0.78
+        (1500, 7, 60),   // 音量 0.47（进行中音符音量变化）
+        (2600, 64, 127), // 延音踏板踩下
+        (2800, 64, 0),   // 延音踏板松开（held 音符一起 release）
+    ]
+}
+
+/// 弯音计划：(ms, bend -1..1)
+fn bend_plan() -> Vec<(u64, f32)> {
+    vec![(3000, 0.5)] // 升 1 半音（默认灵敏度 2）
 }
 
 #[test]
