@@ -9,13 +9,11 @@ use crate::audio_settings::AudioSettings;
 
 // ── 设置分类（左侧导航，顺序即 settings_tab 索引） ──
 
-const CATEGORY_KEYS: [&str; 7] = [
+const CATEGORY_KEYS: [&str; 5] = [
     "settings.cat.theme",
     "settings.cat.language",
     "settings.cat.audio",
     "settings.cat.render",
-    "settings.cat.midi",
-    "settings.cat.display",
     "settings.cat.general",
 ];
 
@@ -150,28 +148,28 @@ const SETTING_ITEMS: &[SettingItem] = &[
         ko: "GPU 컬링",
     },
     SettingItem {
-        cat: 4,
+        cat: 1,
         zh: "MIDI 导入编码",
         en: "MIDI import encoding",
         ja: "MIDI インポートエンコーディング",
         ko: "MIDI 가져오기 인코딩",
     },
     SettingItem {
-        cat: 5,
+        cat: 0,
         zh: "界面缩放",
         en: "UI scale",
         ja: "UI スケール",
         ko: "UI 배율",
     },
     SettingItem {
-        cat: 6,
+        cat: 2,
         zh: "刷新设备列表",
         en: "Refresh devices",
         ja: "デバイス更新",
         ko: "장치 새로고침",
     },
     SettingItem {
-        cat: 6,
+        cat: 4,
         zh: "恢复出厂设置",
         en: "Factory reset",
         ja: "工場出荷時リセット",
@@ -226,12 +224,10 @@ fn show_search_results(
     let query = settings.settings_search.trim().to_string();
     if query.is_empty() {
         return match settings.settings_tab {
-            0 => show_theme_tab(ui, settings),
+            0 => show_theme_tab(ui, settings, main_ctx),
             1 => show_language_tab(ui, settings),
             2 => show_audio_tab(ui, settings),
             3 => show_render_tab(ui, settings),
-            4 => show_midi_tab(ui, settings),
-            5 => show_display_tab(ui, settings, main_ctx),
             _ => show_general_tab(ui, settings),
         };
     }
@@ -276,7 +272,11 @@ fn edit_std_color(ui: &mut egui::Ui, label: &str, rgba: &mut Rgba) -> bool {
 
 // ── 各分类内容 ──
 
-fn show_theme_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
+fn show_theme_tab(
+    ui: &mut egui::Ui,
+    settings: &mut AudioSettings,
+    main_ctx: &egui::Context,
+) -> bool {
     let mut changed = false;
 
     ui.heading(t!("settings.theme.heading").as_ref());
@@ -350,6 +350,38 @@ fn show_theme_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
         crate::theme::set_theme(base);
         changed = true;
     }
+
+    // 界面缩放：拖动中不缩放（缩放会让滑条自身位置来回跑），松手才应用
+    egui::Grid::new("theme_scale_grid")
+        .num_columns(2)
+        .spacing([12.0, 6.0])
+        .show(ui, |ui| {
+            ui.label(t!("settings.theme.ui_scale").as_ref());
+            ui.horizontal(|ui| {
+                let mut scale = settings.ui_scale;
+                let resp = ui.add(
+                    egui::Slider::new(&mut scale, 0.75..=2.0)
+                        .step_by(0.05)
+                        .show_value(true),
+                );
+                if resp.changed() {
+                    settings.ui_scale = scale;
+                    changed = true;
+                }
+                if resp.drag_stopped() {
+                    main_ctx.set_zoom_factor(settings.ui_scale);
+                }
+                if ui
+                    .button(t!("settings.theme.reset_scale").as_ref())
+                    .clicked()
+                {
+                    settings.ui_scale = 1.0;
+                    main_ctx.set_zoom_factor(1.0);
+                    changed = true;
+                }
+            });
+            ui.end_row();
+        });
     changed
 }
 
@@ -403,6 +435,21 @@ fn show_language_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
                         if ui.selectable_label(selected, name).clicked() {
                             settings.locale = code.to_string();
                             rust_i18n::set_locale(code);
+                            changed = true;
+                        }
+                    }
+                });
+            ui.end_row();
+
+            // 音轨名编码（MIDI 文件内文本的语言编码，归类到语言设置）
+            ui.label(t!("settings.midi_import.encoding").as_ref());
+            egui::ComboBox::from_id_salt("midi_import_encoding")
+                .selected_text(settings.midi_import_encoding.label())
+                .show_ui(ui, |ui| {
+                    for &enc in yinhe_mid2::MidiImportEncoding::ALL {
+                        let selected = settings.midi_import_encoding == enc;
+                        if ui.selectable_label(selected, enc.label()).clicked() {
+                            settings.midi_import_encoding = enc;
                             changed = true;
                         }
                     }
@@ -546,6 +593,14 @@ fn show_audio_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
                 });
             ui.end_row();
         });
+
+    // 设备列表变更（热插拔等）后手动刷新
+    if ui.button(t!("settings.refresh_devices").as_ref()).clicked() {
+        let devices = crate::audio_settings::list_output_devices();
+        let (default_rate, rates) = crate::audio_settings::discover_sample_rates();
+        settings.refresh_devices(devices, rates, default_rate);
+        changed = true;
+    }
     changed
 }
 
@@ -626,79 +681,10 @@ fn show_render_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
     changed
 }
 
-fn show_midi_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
-    let mut changed = false;
-    ui.heading(t!("settings.midi_import.heading").as_ref());
-    ui.add_space(8.0);
-    egui::Grid::new("midi_import_grid")
-        .num_columns(2)
-        .spacing([12.0, 8.0])
-        .show(ui, |ui| {
-            ui.label(t!("settings.midi_import.encoding").as_ref());
-            egui::ComboBox::from_id_salt("midi_import_encoding")
-                .selected_text(settings.midi_import_encoding.label())
-                .show_ui(ui, |ui| {
-                    for &enc in yinhe_mid2::MidiImportEncoding::ALL {
-                        let selected = settings.midi_import_encoding == enc;
-                        if ui.selectable_label(selected, enc.label()).clicked() {
-                            settings.midi_import_encoding = enc;
-                            changed = true;
-                        }
-                    }
-                });
-            ui.end_row();
-        });
-    changed
-}
-
-fn show_display_tab(
-    ui: &mut egui::Ui,
-    settings: &mut AudioSettings,
-    main_ctx: &egui::Context,
-) -> bool {
-    let mut changed = false;
-    ui.heading(t!("settings.display.heading").as_ref());
-    ui.add_space(8.0);
-
-    egui::Grid::new("display_settings_grid")
-        .num_columns(2)
-        .spacing([12.0, 8.0])
-        .show(ui, |ui| {
-            ui.label(t!("settings.display.ui_scale").as_ref());
-            ui.horizontal(|ui| {
-                let mut scale = settings.ui_scale;
-                if ui
-                    .add(egui::Slider::new(&mut scale, 0.75..=2.0).step_by(0.05))
-                    .changed()
-                {
-                    settings.ui_scale = scale;
-                    main_ctx.set_zoom_factor(scale);
-                    changed = true;
-                }
-                if ui
-                    .button(t!("settings.display.reset_scale").as_ref())
-                    .clicked()
-                {
-                    settings.ui_scale = 1.0;
-                    main_ctx.set_zoom_factor(1.0);
-                    changed = true;
-                }
-            });
-            ui.end_row();
-        });
-    changed
-}
-
 fn show_general_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
     let mut changed = false;
     ui.heading(t!("settings.general.heading").as_ref());
     ui.add_space(8.0);
-
-    if ui.button(t!("settings.refresh_devices").as_ref()).clicked() {
-        let devices = crate::audio_settings::list_output_devices();
-        let (default_rate, rates) = crate::audio_settings::discover_sample_rates();
-        settings.refresh_devices(devices, rates, default_rate);
-    }
 
     ui.add_space(16.0);
     ui.separator();
