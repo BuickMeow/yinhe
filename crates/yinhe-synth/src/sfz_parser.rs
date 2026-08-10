@@ -26,8 +26,13 @@ const Q_BUTTERWORTH: f32 = std::f32::consts::FRAC_1_SQRT_2;
 #[derive(Clone, Debug)]
 pub struct KeyInfo {
     /// 重采样到目标采样率后的采样数据（Arc 共享，clone 零拷贝）。
+    /// 立体声样本为 LRLR 交错存储，`is_stereo` 标记布局。
     pub sample_data: Arc<[f32]>,
     pub sample_rate: u32,
+    /// 采样是否为交错立体声（false = 单声道）。
+    pub is_stereo: bool,
+    /// 插值器：0=Nearest, 1=Linear（默认 0，与 xsynth `SoundfontInitOptions` 默认一致）。
+    pub interp: u32,
 
     /// 采样播放倍率（键位频率比 × 调音音分，等价 xsynth `get_speed_mult_from_keys` × `cents_factor`）。
     pub speed_mult: f32,
@@ -76,6 +81,8 @@ impl Default for KeyInfo {
         Self {
             sample_data: Arc::from([]),
             sample_rate: 0,
+            is_stereo: false,
+            interp: 0,
             speed_mult: 1.0,
             volume: 1.0,
             pan: 0.5,
@@ -141,14 +148,14 @@ fn build_key_map_from_sfz(sfz_path: &Path, sample_rate: u32) -> Result<Vec<Vec<K
     let mut key_map: Vec<Vec<KeyInfo>> = vec![Vec::new(); 128];
 
     // wav 按路径去重加载并重采样到目标采样率（同一文件被多个 region 引用）
-    let mut wav_cache: HashMap<PathBuf, (Arc<[f32]>, u32)> = HashMap::new();
+    let mut wav_cache: HashMap<PathBuf, (Arc<[f32]>, u32, bool)> = HashMap::new();
 
     for region in &regions {
         // 采样加载失败只跳过该 region（损坏/缺失的 wav 不应拖垮整个音色库）
-        let (samples, src_sr) = match wav_cache.get(&region.sample_path) {
+        let (samples, src_sr, is_stereo) = match wav_cache.get(&region.sample_path) {
             Some(entry) => entry.clone(),
             None => {
-                let Ok((raw, src_sr)) = load_wav_as_f32(&region.sample_path) else {
+                let Ok((raw, src_sr, raw_stereo)) = load_wav_as_f32(&region.sample_path) else {
                     eprintln!(
                         "[yinhe-synth] Warning: failed to load {:?}",
                         region.sample_path
@@ -164,8 +171,11 @@ fn build_key_map_from_sfz(sfz_path: &Path, sample_rate: u32) -> Result<Vec<Vec<K
                         sample_rate as f32,
                     )
                 };
-                wav_cache.insert(region.sample_path.clone(), (out.clone(), src_sr));
-                (out, src_sr)
+                wav_cache.insert(
+                    region.sample_path.clone(),
+                    (out.clone(), src_sr, raw_stereo),
+                );
+                (out, src_sr, raw_stereo)
             }
         };
 
@@ -224,6 +234,8 @@ fn build_key_map_from_sfz(sfz_path: &Path, sample_rate: u32) -> Result<Vec<Vec<K
                 key_map[key as usize].push(KeyInfo {
                     sample_data: samples.clone(),
                     sample_rate,
+                    is_stereo,
+                    interp: 0,
                     speed_mult,
                     volume,
                     pan,
@@ -267,14 +279,19 @@ fn build_key_map_from_sf2(sf2_path: &Path, sample_rate: u32) -> Result<Vec<Vec<K
     let preset = presets.first().ok_or("SF2: no presets found")?;
 
     for region in &preset.regions {
-        // 采样数据（单声道共享零拷贝；立体声暂取左右平均，等立体声渲染落地）
-        let sample_data: Arc<[f32]> = if region.sample.len() == 2 {
+        // 采样数据：单声道 Arc 共享零拷贝；立体声交错存储（左右声道各一个 Arc）
+        let (sample_data, is_stereo): (Arc<[f32]>, bool) = if region.sample.len() == 2 {
             let left = &region.sample[0];
             let right = &region.sample[1];
             let len = left.len().min(right.len());
-            (0..len).map(|i| (left[i] + right[i]) * 0.5).collect()
+            let mut interleaved = Vec::with_capacity(len * 2);
+            for i in 0..len {
+                interleaved.push(left[i]);
+                interleaved.push(right[i]);
+            }
+            (Arc::from(interleaved), true)
         } else if region.sample.len() == 1 {
-            Arc::clone(&region.sample[0])
+            (Arc::clone(&region.sample[0]), false)
         } else {
             continue;
         };
@@ -310,6 +327,8 @@ fn build_key_map_from_sf2(sf2_path: &Path, sample_rate: u32) -> Result<Vec<Vec<K
                 key_map[key as usize].push(KeyInfo {
                     sample_data: sample_data.clone(),
                     sample_rate,
+                    is_stereo,
+                    interp: 0,
                     speed_mult,
                     volume: np.volume,
                     pan,
@@ -351,9 +370,10 @@ fn convert_loop_mode(mode: xsynth_soundfonts::LoopMode) -> LoopMode {
     }
 }
 
-/// Load a WAV file as f32 samples (mono, normalized to -1..1).
-/// 返回 (samples, sample_rate)。
-pub fn load_wav_as_f32(path: &Path) -> Result<(Vec<f32>, u32), String> {
+/// Load a WAV file as f32 samples.
+/// 立体声返回 LRLR 交错数据（不再平均成单声道），单声道返回原样。
+/// 返回 (samples, sample_rate, is_stereo)。
+pub fn load_wav_as_f32(path: &Path) -> Result<(Vec<f32>, u32, bool), String> {
     let mut reader = hound::WavReader::open(path)
         .map_err(|e| format!("Failed to open WAV {:?}: {}", path, e))?;
 
@@ -379,20 +399,16 @@ pub fn load_wav_as_f32(path: &Path) -> Result<(Vec<f32>, u32), String> {
         _ => return Err(format!("Unsupported bit depth: {}", spec.bits_per_sample)),
     };
 
-    let mono: Vec<f32> = if spec.channels == 2 {
-        samples
-            .chunks(2)
-            .map(|pair| {
-                if pair.len() == 2 {
-                    (pair[0] + pair[1]) * 0.5
-                } else {
-                    pair[0]
-                }
-            })
-            .collect()
-    } else {
-        samples
-    };
-
-    Ok((mono, spec.sample_rate))
+    // 声道数：1=单声道，2=立体声（已是 LRLR 交错），>2 取前两声道
+    match spec.channels {
+        1 => Ok((samples, spec.sample_rate, false)),
+        2 => Ok((samples, spec.sample_rate, true)),
+        n => {
+            let stereo: Vec<f32> = samples
+                .chunks(n as usize)
+                .flat_map(|ch| [ch[0], ch[1]])
+                .collect();
+            Ok((stereo, spec.sample_rate, true))
+        }
+    }
 }

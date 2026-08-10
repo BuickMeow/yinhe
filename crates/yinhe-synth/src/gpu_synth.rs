@@ -171,9 +171,19 @@ impl GpuSynth {
         if !self.voices.is_empty() {
             self.states_buf.clear();
             self.states_buf.extend(self.voices.iter().map(|v| v.state));
-            // 直接写入 output，避免中间 Vec 分配
+            // 直接写入 output，避免中间 Vec 分配；渲染后读回滤波器 IIR 状态
             self.renderer
-                .render_into(&self.states_buf, output, self.sample_rate);
+                .render_into(&mut self.states_buf, output, self.sample_rate);
+            for (i, v) in self.voices.iter_mut().enumerate() {
+                v.state.flt_x1 = self.states_buf[i].flt_x1;
+                v.state.flt_x2 = self.states_buf[i].flt_x2;
+                v.state.flt_y1 = self.states_buf[i].flt_y1;
+                v.state.flt_y2 = self.states_buf[i].flt_y2;
+                v.state.flt_x1r = self.states_buf[i].flt_x1r;
+                v.state.flt_x2r = self.states_buf[i].flt_x2r;
+                v.state.flt_y1r = self.states_buf[i].flt_y1r;
+                v.state.flt_y2r = self.states_buf[i].flt_y2r;
+            }
         }
 
         // 原地推进 voice 状态
@@ -212,6 +222,18 @@ impl GpuSynth {
         let angle = info.pan * std::f32::consts::FRAC_PI_2;
         let (pan_l, pan_r) = ((angle.cos() * 1.42).min(1.0), (angle.sin() * 1.42).min(1.0));
 
+        // per-voice biquad 系数（RBJ cookbook，与 xsynth 一致）；cutoff=0 时无滤波器
+        let (flt_b0, flt_b1, flt_b2, flt_a1, flt_a2) = if info.cutoff > 0.0 {
+            crate::synth::biquad_coeffs(
+                filter_type_to_u32(info.filter_type),
+                info.cutoff,
+                info.resonance,
+                self.sample_rate as f32,
+            )
+        } else {
+            (0.0, 0.0, 0.0, 0.0, 0.0)
+        };
+
         let sr = self.sample_rate as f32;
         self.voices.push(Voice {
             key,
@@ -238,6 +260,24 @@ impl GpuSynth {
                 loop_start: info.loop_start,
                 loop_end: info.loop_end,
                 loop_mode: info.loop_mode as u32,
+                is_stereo: info.is_stereo as u32,
+                interp: info.interp,
+                cutoff: info.cutoff,
+                resonance: info.resonance,
+                filter_type: filter_type_to_u32(info.filter_type),
+                flt_b0,
+                flt_b1,
+                flt_b2,
+                flt_a1,
+                flt_a2,
+                flt_x1: 0.0,
+                flt_x2: 0.0,
+                flt_y1: 0.0,
+                flt_y2: 0.0,
+                flt_x1r: 0.0,
+                flt_x2r: 0.0,
+                flt_y1r: 0.0,
+                flt_y2r: 0.0,
             },
         });
     }
@@ -252,5 +292,15 @@ impl GpuSynth {
                 break;
             }
         }
+    }
+}
+
+/// xsynth FilterType → shader 滤波器类型编号（与 voice_render.wgsl 一致）
+fn filter_type_to_u32(ft: xsynth_soundfonts::FilterType) -> u32 {
+    match ft {
+        xsynth_soundfonts::FilterType::LowPass => 0,
+        xsynth_soundfonts::FilterType::HighPass => 1,
+        xsynth_soundfonts::FilterType::BandPass => 2,
+        xsynth_soundfonts::FilterType::LowPassPole => 3,
     }
 }

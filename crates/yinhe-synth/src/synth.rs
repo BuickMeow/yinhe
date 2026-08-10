@@ -8,6 +8,7 @@ use wgpu::util::DeviceExt;
 
 const MAX_CHUNKS: usize = 5;
 const CHUNK_SIZE: usize = 30_000_000; // 30M f32 = 120MB per chunk
+const WORKGROUP_SIZE: u32 = 256;
 
 /// Per-voice state that is uploaded to the GPU each block.
 /// 布局必须与 WGSL 的 VoiceState 结构体严格对应。
@@ -28,7 +29,7 @@ pub struct GpuVoiceState {
     // Envelope parameters
     pub env_level: f32,     // peak = gain
     pub sustain_level: f32, // 0..1
-    pub env_start: f32,     // ampeg_start (0..1)
+    pub env_start: f32,     // attack 起点 / release 起始值
     // Stage durations (frames)
     pub delay_frames: f32,
     pub attack_frames: f32,
@@ -42,6 +43,28 @@ pub struct GpuVoiceState {
     pub loop_start: u32,
     pub loop_end: u32,
     pub loop_mode: u32, // 0=NoLoop, 1=LoopContinuous, 2=LoopSustain, 3=OneShot
+    // 采样布局与插值（与 xsynth 默认对齐：interp=0 Nearest）
+    pub is_stereo: u32, // 0=单声道样本, 1=交错立体声
+    pub interp: u32,    // 0=Nearest, 1=Linear
+    // per-voice biquad（cutoff > 0 启用）
+    pub cutoff: f32,      // Hz
+    pub resonance: f32,   // 线性 Q（保留字段，系数已由 CPU 预计算）
+    pub filter_type: u32, // 0=LowPass, 1=HighPass, 2=BandPass, 3=SinglePoleLowPass
+    pub flt_b0: f32,
+    pub flt_b1: f32,
+    pub flt_b2: f32,
+    pub flt_a1: f32,
+    pub flt_a2: f32,
+    // DirectForm1 状态（左声道；跨 block 由 GPU 写回）
+    pub flt_x1: f32,
+    pub flt_x2: f32,
+    pub flt_y1: f32,
+    pub flt_y2: f32,
+    // DirectForm1 状态（右声道，仅立体声样本使用）
+    pub flt_x1r: f32,
+    pub flt_x2r: f32,
+    pub flt_y1r: f32,
+    pub flt_y2r: f32,
 }
 
 /// Uniform buffer for render parameters.
@@ -52,6 +75,78 @@ pub struct RenderParams {
     pub voice_count: u32,
     pub sample_rate: u32,
     pub sample_chunk_count: u32,
+    pub voice_wg_count: u32, // pass1 workgroup 数 = ceil(voice_count / 256)
+}
+
+/// RBJ cookbook biquad 系数（与 xsynth 的 biquad crate 完全一致）。
+/// 返回 (b0, b1, b2, a1, a2)，用于 DirectForm1：
+/// y = b0*x + b1*x1 + b2*x2 - a1*y1 - a2*y2
+pub fn biquad_coeffs(
+    filter_type: u32,
+    cutoff: f32,
+    resonance: f32,
+    sample_rate: f32,
+) -> (f32, f32, f32, f32, f32) {
+    let omega = 2.0 * std::f32::consts::PI * cutoff / sample_rate;
+    let q = if resonance > 0.0 {
+        resonance
+    } else {
+        std::f32::consts::FRAC_1_SQRT_2
+    };
+    match filter_type {
+        3 => {
+            // SinglePoleLowPass
+            let omega_t = (omega / 2.0).tan();
+            let a0 = 1.0 + omega_t;
+            let b0 = omega_t / a0;
+            ((b0), (b0), 0.0, (omega_t - 1.0) / a0, 0.0)
+        }
+        1 => {
+            // HighPass
+            let omega_s = omega.sin();
+            let omega_c = omega.cos();
+            let alpha = omega_s / (2.0 * q);
+            let b0 = (1.0 + omega_c) * 0.5;
+            let a0 = 1.0 + alpha;
+            (
+                b0 / a0,
+                -b0 * 2.0 / a0,
+                b0 / a0,
+                -2.0 * omega_c / a0,
+                (1.0 - alpha) / a0,
+            )
+        }
+        2 => {
+            // BandPass
+            let omega_s = omega.sin();
+            let omega_c = omega.cos();
+            let alpha = omega_s / (2.0 * q);
+            let a0 = 1.0 + alpha;
+            let div = 1.0 / a0;
+            (
+                omega_s / 2.0 * div,
+                0.0,
+                -omega_s / 2.0 * div,
+                -2.0 * omega_c * div,
+                (1.0 - alpha) * div,
+            )
+        }
+        _ => {
+            // LowPass
+            let omega_s = omega.sin();
+            let omega_c = omega.cos();
+            let alpha = omega_s / (2.0 * q);
+            let b0 = (1.0 - omega_c) * 0.5;
+            let a0 = 1.0 + alpha;
+            (
+                b0 / a0,
+                2.0 * b0 / a0,
+                b0 / a0,
+                -2.0 * omega_c / a0,
+                (1.0 - alpha) / a0,
+            )
+        }
+    }
 }
 
 /// CPU 端推进 voice 状态：用解析公式直接计算，不逐帧迭代。
@@ -170,7 +265,12 @@ struct GpuBuffers {
     max_voices: u32,
     final_output_buf: wgpu::Buffer,
     params_buf: wgpu::Buffer,
+    /// pass1 归约中间结果（voice_workgroups × frames × 2 f32）
+    #[allow(dead_code)] // 经 bind_groups 使用
+    partial_buf: wgpu::Buffer,
     staging: [wgpu::Buffer; 2],
+    /// 读回 voice 状态（滤波器 IIR 状态跨 block 持久）
+    staging_voice: [wgpu::Buffer; 2],
     staging_idx: usize,
     bind_groups: [wgpu::BindGroup; 2],
 }
@@ -179,7 +279,8 @@ struct GpuBuffers {
 pub struct GpuAudioRenderer {
     device: Arc<wgpu::Device>,
     queue: Arc<wgpu::Queue>,
-    pipeline: wgpu::ComputePipeline,
+    pipeline: wgpu::ComputePipeline,     // pass1: 每 voice 串行帧
+    mix_pipeline: wgpu::ComputePipeline, // pass2: 归约 partial
     #[allow(dead_code)]
     pipeline_layout: wgpu::PipelineLayout,
     bind_group_layout: wgpu::BindGroupLayout,
@@ -198,13 +299,14 @@ impl GpuAudioRenderer {
             source: wgpu::ShaderSource::Wgsl(shader_source.into()),
         });
 
-        // 9-binding layout (max 8 storage buffers):
-        // 0: params+chunk_offsets (uniform)
-        // 1: voice_states (storage read_write)
+        // 10-binding layout:
+        // 0: params (uniform)
+        // 1: voice_states (storage read_write，滤波器状态跨 block 写回)
         // 2: final_output (storage read_write)
         // 3-7: 5 sample chunks (storage read)
         // 8: chunk_offsets (uniform, separate)
-        let mut entries = Vec::with_capacity(9);
+        // 9: partial（pass1 归约中间结果，read_write）
+        let mut entries = Vec::with_capacity(10);
         entries.push(wgpu::BindGroupLayoutEntry {
             binding: 0,
             visibility: wgpu::ShaderStages::COMPUTE,
@@ -219,7 +321,7 @@ impl GpuAudioRenderer {
             binding: 1,
             visibility: wgpu::ShaderStages::COMPUTE,
             ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Storage { read_only: true },
+                ty: wgpu::BufferBindingType::Storage { read_only: false },
                 has_dynamic_offset: false,
                 min_binding_size: None,
             },
@@ -258,6 +360,17 @@ impl GpuAudioRenderer {
             },
             count: None,
         });
+        // partial buffer (binding 9)
+        entries.push(wgpu::BindGroupLayoutEntry {
+            binding: 9,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only: false },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        });
 
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("audio_render_bgl"),
@@ -278,6 +391,14 @@ impl GpuAudioRenderer {
             compilation_options: Default::default(),
             cache: None,
         });
+        let mix_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("audio_mix_pipeline"),
+            layout: Some(&pipeline_layout),
+            module: &shader_module,
+            entry_point: Some("mix_main"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
 
         // Dummy 1-element buffer for unused sample chunks
         let dummy_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -290,6 +411,7 @@ impl GpuAudioRenderer {
             device,
             queue,
             pipeline,
+            mix_pipeline,
             pipeline_layout,
             bind_group_layout,
             dummy_buf,
@@ -390,12 +512,27 @@ impl GpuAudioRenderer {
             (rounded_voices as usize * std::mem::size_of::<GpuVoiceState>()) as u64;
         let final_output_size =
             (frame_count.max(1) as usize * 2 * std::mem::size_of::<f32>()) as u64;
+        // pass1 workgroup 数（按分配的最大 voice 数向上取整）
+        let alloc_wg_count = rounded_voices.div_ceil(WORKGROUP_SIZE);
+        let partial_size = (alloc_wg_count as usize
+            * frame_count.max(1) as usize
+            * 2
+            * std::mem::size_of::<f32>()) as u64;
         let params_size = std::mem::size_of::<RenderParams>() as u64;
 
         let voice_state_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("gpu_voice_states"),
             size: voice_state_size,
-            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            // read_write：pass1 块末写回滤波器 IIR 状态
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::COPY_SRC,
+            mapped_at_creation: false,
+        });
+        let partial_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("gpu_partial"),
+            size: partial_size,
+            usage: wgpu::BufferUsages::STORAGE,
             mapped_at_creation: false,
         });
         let final_output_buf = device.create_buffer(&wgpu::BufferDescriptor {
@@ -422,6 +559,19 @@ impl GpuAudioRenderer {
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        // voice 状态读回（滤波器 IIR 状态）
+        let staging_voice0 = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("staging_voice_0"),
+            size: voice_state_size,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let staging_voice1 = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("staging_voice_1"),
+            size: voice_state_size,
+            usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
 
         // Build bind group entries
         let make_bg = |p: &wgpu::Buffer,
@@ -429,7 +579,8 @@ impl GpuAudioRenderer {
                        f: &wgpu::Buffer,
                        co: &wgpu::Buffer,
                        sc: &[wgpu::Buffer],
-                       db: &wgpu::Buffer| {
+                       db: &wgpu::Buffer,
+                       pt: &wgpu::Buffer| {
             let mut bg_entries = vec![
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -462,6 +613,10 @@ impl GpuAudioRenderer {
                 binding: 8,
                 resource: co.as_entire_binding(),
             });
+            bg_entries.push(wgpu::BindGroupEntry {
+                binding: 9,
+                resource: pt.as_entire_binding(),
+            });
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("audio_bg"),
                 layout: &self.bind_group_layout,
@@ -478,6 +633,7 @@ impl GpuAudioRenderer {
                     &chunk_offsets_buf,
                     &sample_chunks,
                     &self.dummy_buf,
+                    &partial_buf,
                 ),
                 make_bg(
                     &params_buf,
@@ -486,6 +642,7 @@ impl GpuAudioRenderer {
                     &chunk_offsets_buf,
                     &sample_chunks,
                     &self.dummy_buf,
+                    &partial_buf,
                 ),
             ],
             sample_chunks,
@@ -495,7 +652,9 @@ impl GpuAudioRenderer {
             max_voices: rounded_voices,
             final_output_buf,
             params_buf,
+            partial_buf,
             staging: [staging0, staging1],
+            staging_voice: [staging_voice0, staging_voice1],
             staging_idx: 0,
         });
         self.frame_count = frame_count;
@@ -503,10 +662,11 @@ impl GpuAudioRenderer {
 
     /// Render a block of audio using the GPU.
     /// 渲染一块音频。输出写入 `output`（长度 = frame_count * 2，立体声交错）。
+    /// `voices` 会被更新：读回 GPU 端推进的滤波器 IIR 状态（跨 block 持久）。
     /// 返回实际 voice 数量（0 表示静音）。
     pub fn render_into(
         &mut self,
-        voices: &[GpuVoiceState],
+        voices: &mut [GpuVoiceState],
         output: &mut [f32],
         sample_rate: u32,
     ) -> u32 {
@@ -527,6 +687,7 @@ impl GpuAudioRenderer {
             }
         };
 
+        let voice_wg_count = voice_count.div_ceil(WORKGROUP_SIZE);
         self.queue
             .write_buffer(&buf.voice_state_buf, 0, bytemuck::cast_slice(voices));
         let params = RenderParams {
@@ -534,6 +695,7 @@ impl GpuAudioRenderer {
             voice_count,
             sample_rate,
             sample_chunk_count: buf.chunk_count,
+            voice_wg_count,
         };
         self.queue
             .write_buffer(&buf.params_buf, 0, bytemuck::bytes_of(&params));
@@ -545,12 +707,23 @@ impl GpuAudioRenderer {
                 label: Some("audio_render"),
             });
 
+        // pass1：每 voice 串行渲染 block 内所有帧（含逐帧包络推进与 per-voice 滤波）
         {
             let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("voice_pass"),
                 ..Default::default()
             });
             cpass.set_pipeline(&self.pipeline);
+            cpass.set_bind_group(0, &buf.bind_groups[idx], &[]);
+            cpass.dispatch_workgroups(voice_wg_count, 1, 1);
+        }
+        // pass2：归约 partial 到最终输出
+        {
+            let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("mix_pass"),
+                ..Default::default()
+            });
+            cpass.set_pipeline(&self.mix_pipeline);
             cpass.set_bind_group(0, &buf.bind_groups[idx], &[]);
             cpass.dispatch_workgroups(frame_count, 1, 1);
         }
@@ -563,6 +736,15 @@ impl GpuAudioRenderer {
             0,
             final_output_size,
         );
+        // 读回 voice 状态（滤波器 IIR 状态，供下一 block 上传）
+        let voice_state_size = buf.voice_state_buf.size();
+        encoder.copy_buffer_to_buffer(
+            &buf.voice_state_buf,
+            0,
+            &buf.staging_voice[idx],
+            0,
+            voice_state_size,
+        );
         self.queue.submit(std::iter::once(encoder.finish()));
 
         let buffer_slice = buf.staging[idx].slice(..);
@@ -570,12 +752,17 @@ impl GpuAudioRenderer {
         buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
             let _ = sender.send(result);
         });
+        let voice_slice = buf.staging_voice[idx].slice(..);
+        let (vsender, vreceiver) = std::sync::mpsc::channel();
+        voice_slice.map_async(wgpu::MapMode::Read, move |result| {
+            let _ = vsender.send(result);
+        });
         let _ = self.device.poll(wgpu::PollType::Wait {
             submission_index: None,
             timeout: None,
         });
         // map 失败（如设备丢失）：输出静音，不 unwrap 保命
-        if !matches!(receiver.recv(), Ok(Ok(()))) {
+        if !matches!(receiver.recv(), Ok(Ok(()))) || !matches!(vreceiver.recv(), Ok(Ok(()))) {
             output.fill(0.0);
             return 0;
         }
@@ -585,6 +772,22 @@ impl GpuAudioRenderer {
         output[..gpu_output.len()].copy_from_slice(gpu_output);
         drop(data);
         buf.staging[idx].unmap();
+
+        // 读回滤波器状态（其余字段由 CPU advance_voices 推进）
+        let vdata = voice_slice.get_mapped_range();
+        let gpu_voices: &[GpuVoiceState] = bytemuck::cast_slice(&vdata);
+        for (i, v) in voices.iter_mut().enumerate() {
+            v.flt_x1 = gpu_voices[i].flt_x1;
+            v.flt_x2 = gpu_voices[i].flt_x2;
+            v.flt_y1 = gpu_voices[i].flt_y1;
+            v.flt_y2 = gpu_voices[i].flt_y2;
+            v.flt_x1r = gpu_voices[i].flt_x1r;
+            v.flt_x2r = gpu_voices[i].flt_x2r;
+            v.flt_y1r = gpu_voices[i].flt_y1r;
+            v.flt_y2r = gpu_voices[i].flt_y2r;
+        }
+        drop(vdata);
+        buf.staging_voice[idx].unmap();
         buf.staging_idx = 1 - buf.staging_idx;
 
         voice_count
@@ -593,7 +796,7 @@ impl GpuAudioRenderer {
     /// 渲染一块音频（返回新分配的 Vec，兼容旧接口）。
     pub fn render_block(
         &mut self,
-        voices: &[GpuVoiceState],
+        voices: &mut [GpuVoiceState],
         frame_count: u32,
         sample_rate: u32,
     ) -> Vec<f32> {
@@ -603,8 +806,9 @@ impl GpuAudioRenderer {
     }
 }
 
-/// CPU reference implementation (与 GPU shader 逻辑完全对应).
+/// CPU reference implementation (与 GPU shader pass1 逐帧逻辑完全对应).
 /// 7 阶段: 0=Delay, 1=Attack, 2=Hold, 3=Decay, 4=Sustain, 5=Release, 6=Finished
+/// 立体声采样 + 插值 + per-voice biquad 滤波均与 shader 一致，用于对比测试。
 pub fn cpu_render_voices(
     sample_data: &[f32],
     voices: &mut [GpuVoiceState],
@@ -614,51 +818,12 @@ pub fn cpu_render_voices(
     for voice in voices.iter_mut() {
         for fi in 0..frame_count as usize {
             if voice.env_stage >= 6 {
-                continue;
+                break;
             }
             if fi < voice.start_offset as usize {
                 continue;
             }
             let frame_in_voice = fi - voice.start_offset as usize;
-
-            let peak = voice.env_level;
-            let sus = voice.sustain_level * peak;
-            let progress = voice.stage_progress + frame_in_voice as f32;
-
-            // 解析计算 envelope
-            let env = match voice.env_stage {
-                0 => voice.env_start, // Delay
-                1 => {
-                    // Attack: 线性
-                    let t = if voice.attack_frames > 0.0 {
-                        (progress / voice.attack_frames).min(1.0)
-                    } else {
-                        1.0
-                    };
-                    voice.env_start + (peak - voice.env_start) * t
-                }
-                2 => peak, // Hold
-                3 => {
-                    // Decay: 指数 (1-t)^8
-                    let t = if voice.decay_frames > 0.0 {
-                        (progress / voice.decay_frames).min(1.0)
-                    } else {
-                        1.0
-                    };
-                    sus + (peak - sus) * (1.0 - t).powi(8)
-                }
-                4 => sus, // Sustain
-                5 => {
-                    // Release: 指数 (1-t)^8
-                    let t = if voice.release_frames > 0.0 {
-                        (progress / voice.release_frames).min(1.0)
-                    } else {
-                        1.0
-                    };
-                    voice.env_start * (1.0 - t).powi(8)
-                }
-                _ => 0.0,
-            };
 
             let t = voice.time + frame_in_voice as f32 * voice.speed;
             let mut idx = t as u32;
@@ -674,25 +839,137 @@ pub fn cpu_render_voices(
                 }
             }
 
-            if idx >= voice.sample_length {
-                continue;
+            if idx < voice.sample_length {
+                let scale = 1 + voice.is_stereo as usize;
+                let i = voice.sample_offset as usize + idx as usize * scale;
+                let (mut l0, mut r0) = if voice.is_stereo == 1 {
+                    (sample_data[i], sample_data[i + 1])
+                } else {
+                    let s = sample_data[i];
+                    (s, s)
+                };
+                if voice.interp == 1 && idx < max_idx {
+                    let j = i + scale;
+                    let (l1, r1) = if voice.is_stereo == 1 {
+                        (sample_data[j], sample_data[j + 1])
+                    } else {
+                        let s = sample_data[j];
+                        (s, s)
+                    };
+                    l0 += (l1 - l0) * frac;
+                    r0 += (r1 - r0) * frac;
+                }
+
+                let mut s_l = l0 * voice.gain * voice.envelope;
+                let mut s_r = r0 * voice.gain * voice.envelope;
+                if voice.cutoff > 0.0 {
+                    // 单声道样本只用一组滤波器，右声道复用左声道输出（与 shader/xsynth 一致）
+                    let (x1, x2, y1, y2) = (voice.flt_x1, voice.flt_x2, voice.flt_y1, voice.flt_y2);
+                    let out_l = voice.flt_b0 * s_l + voice.flt_b1 * x1 + voice.flt_b2 * x2
+                        - voice.flt_a1 * y1
+                        - voice.flt_a2 * y2;
+                    voice.flt_x1 = s_l;
+                    voice.flt_x2 = x1;
+                    voice.flt_y1 = out_l;
+                    voice.flt_y2 = y1;
+                    s_l = out_l;
+                    if voice.is_stereo == 1 {
+                        let (x1r, x2r, y1r, y2r) =
+                            (voice.flt_x1r, voice.flt_x2r, voice.flt_y1r, voice.flt_y2r);
+                        let out_r = voice.flt_b0 * s_r + voice.flt_b1 * x1r + voice.flt_b2 * x2r
+                            - voice.flt_a1 * y1r
+                            - voice.flt_a2 * y2r;
+                        voice.flt_x1r = s_r;
+                        voice.flt_x2r = x1r;
+                        voice.flt_y1r = out_r;
+                        voice.flt_y2r = y1r;
+                        s_r = out_r;
+                    } else {
+                        s_r = s_l;
+                    }
+                }
+                output[fi * 2] += s_l * voice.pan_left;
+                output[fi * 2 + 1] += s_r * voice.pan_right;
             }
-            let a =
-                sample_data[voice.sample_offset as usize + (idx as usize).min(max_idx as usize)];
-            let b = sample_data
-                [voice.sample_offset as usize + ((idx + 1) as usize).min(max_idx as usize)];
-            let sample = a + (b - a) * frac;
-            let out = sample * voice.gain * env;
-            output[fi * 2] += out * voice.pan_left;
-            output[fi * 2 + 1] += out * voice.pan_right;
+            advance_env_cpu(voice);
         }
         let active_frames = frame_count.saturating_sub(voice.start_offset);
         voice.time += voice.speed * active_frames as f32;
         voice.start_offset = 0;
     }
-    // advance_voices handles the state progression
-    advance_voices(voices, frame_count);
     output
+}
+
+/// 逐帧推进 envelope（与 shader `advance_env` 完全对应）。
+fn advance_env_cpu(v: &mut GpuVoiceState) {
+    if v.env_stage >= 6 {
+        return;
+    }
+    let peak = v.env_level;
+    let sus = v.sustain_level * peak;
+    match v.env_stage {
+        0 => {
+            // Delay
+            if v.stage_progress + 1.0 >= v.delay_frames {
+                v.env_stage = 1;
+                v.stage_progress = 0.0;
+            } else {
+                v.stage_progress += 1.0;
+            }
+        }
+        1 => {
+            // Attack: 线性
+            let n = v.stage_progress + 1.0;
+            if n >= v.attack_frames {
+                v.envelope = peak;
+                v.env_stage = 2;
+                v.stage_progress = 0.0;
+            } else {
+                v.envelope = v.env_start + (peak - v.env_start) * (n / v.attack_frames);
+                v.stage_progress = n;
+            }
+        }
+        2 => {
+            // Hold
+            if v.stage_progress + 1.0 >= v.hold_frames {
+                v.env_stage = 3;
+                v.stage_progress = 0.0;
+            } else {
+                v.stage_progress += 1.0;
+            }
+        }
+        3 => {
+            // Decay: 指数 (1-t)^8
+            let n = v.stage_progress + 1.0;
+            if n >= v.decay_frames {
+                v.envelope = sus;
+                v.env_stage = 4;
+                v.stage_progress = 0.0;
+            } else {
+                let t = n / v.decay_frames;
+                v.envelope = sus + (peak - sus) * (1.0 - t).powi(8);
+                v.stage_progress = n;
+            }
+        }
+        4 => {
+            // Sustain
+            v.envelope = sus;
+        }
+        5 => {
+            // Release: 指数 (1-t)^8
+            let n = v.stage_progress + 1.0;
+            if n >= v.release_frames {
+                v.envelope = 0.0;
+                v.env_stage = 6;
+                v.stage_progress = 0.0;
+            } else {
+                let t = n / v.release_frames;
+                v.envelope = v.env_start * (1.0 - t).powi(8);
+                v.stage_progress = n;
+            }
+        }
+        _ => {}
+    }
 }
 
 #[cfg(test)]
@@ -712,24 +989,12 @@ mod tests {
                 sample_length: sample_len,
                 speed,
                 gain: 0.5,
-                time: 0.0,
-                start_offset: 0,
-                envelope: 0.0,
                 env_stage: 4,
-                stage_progress: 0.0,
                 env_level: 1.0,
                 sustain_level: 1.0,
-                env_start: 0.0,
-                delay_frames: 0.0,
-                attack_frames: 1.0,
-                hold_frames: 0.0,
-                decay_frames: 1.0,
-                release_frames: 1.0,
                 pan_left: 1.0,
                 pan_right: 1.0,
-                loop_start: 0,
-                loop_end: 0,
-                loop_mode: 0,
+                ..Default::default()
             })
             .collect()
     }
@@ -768,8 +1033,8 @@ mod tests {
                 return;
             }
         };
-        let voices = make_voices(4096, 16, 1.0);
-        let result = renderer.render_block(&voices, 1024, 44100);
+        let mut voices = make_voices(4096, 16, 1.0);
+        let result = renderer.render_block(&mut voices, 1024, 44100);
         assert_eq!(result.len(), 1024 * 2);
         assert!(result.iter().fold(0.0f32, |m, &s| m.max(s.abs())) > 0.0);
     }
@@ -788,14 +1053,14 @@ mod tests {
         let frame_count = 1024u32;
 
         for &vc in &[4, 16, 64, 256, 1024, 4096, 15000] {
-            let voices = make_voices(sample_len, vc, 1.0);
+            let mut voices = make_voices(sample_len, vc, 1.0);
             for _ in 0..3 {
-                let _ = renderer.render_block(&voices, frame_count, 44100);
+                let _ = renderer.render_block(&mut voices, frame_count, 44100);
             }
             let n = 10;
             let gpu_start = std::time::Instant::now();
             for _ in 0..n {
-                let _ = renderer.render_block(&voices, frame_count, 44100);
+                let _ = renderer.render_block(&mut voices, frame_count, 44100);
             }
             let gpu_per_block = gpu_start.elapsed() / n;
             let cpu_start = std::time::Instant::now();
@@ -809,5 +1074,162 @@ mod tests {
                 "Voices={vc:>6}: CPU={cpu_per_block:>8.2?} GPU={gpu_per_block:>8.2?} speedup={speedup:.2}x"
             );
         }
+    }
+
+    /// 立体声交错样本（LRLR）
+    fn make_stereo_samples(len: usize, freq: f32, sr: f32) -> Vec<f32> {
+        let l: Vec<f32> = (0..len)
+            .map(|i| 0.8 * (2.0 * std::f32::consts::PI * freq * i as f32 / sr).sin())
+            .collect();
+        let r: Vec<f32> = (0..len)
+            .map(|i| 0.6 * (2.0 * std::f32::consts::PI * freq * 1.5 * i as f32 / sr).sin())
+            .collect();
+        l.into_iter().zip(r).flat_map(|(l, r)| [l, r]).collect()
+    }
+
+    /// GPU 与 CPU 参考实现逐 block 对比（含立体声、滤波器、跨 block IIR 状态、全 7 阶段包络）
+    #[test]
+    fn gpu_vs_cpu_correctness() {
+        let (mut renderer, _) = match setup_gpu() {
+            Some(r) => r,
+            None => {
+                eprintln!("No GPU");
+                return;
+            }
+        };
+
+        let sample_len = 4096u32; // 帧数
+        let samples = make_stereo_samples(sample_len as usize, 220.0, 44100.0);
+        renderer.upload_samples(&samples);
+        renderer.buffers = None;
+
+        let make_test_voices = |stage: u32| {
+            vec![
+                // 立体声 + LowPass 滤波器 + Nearest
+                GpuVoiceState {
+                    sample_offset: 0,
+                    sample_length: sample_len,
+                    gain: 0.4,
+                    env_stage: stage,
+                    env_level: 1.0,
+                    sustain_level: 0.3,
+                    delay_frames: 40.0,
+                    attack_frames: 300.0,
+                    hold_frames: 120.0,
+                    decay_frames: 400.0,
+                    release_frames: 500.0,
+                    pan_left: 0.8,
+                    pan_right: 0.6,
+                    is_stereo: 1,
+                    interp: 0,
+                    cutoff: 1800.0,
+                    resonance: 2.0,
+                    filter_type: 0,
+                    flt_b0: biquad_coeffs(0, 1800.0, 2.0, 44100.0).0,
+                    flt_b1: biquad_coeffs(0, 1800.0, 2.0, 44100.0).1,
+                    flt_b2: biquad_coeffs(0, 1800.0, 2.0, 44100.0).2,
+                    flt_a1: biquad_coeffs(0, 1800.0, 2.0, 44100.0).3,
+                    flt_a2: biquad_coeffs(0, 1800.0, 2.0, 44100.0).4,
+                    ..Default::default()
+                },
+                // 单声道 + 无滤波器 + Linear 插值 + 循环
+                GpuVoiceState {
+                    sample_offset: 0,
+                    sample_length: sample_len,
+                    speed: 0.7,
+                    gain: 0.3,
+                    env_stage: stage,
+                    env_level: 1.0,
+                    sustain_level: 0.6,
+                    delay_frames: 40.0,
+                    attack_frames: 300.0,
+                    hold_frames: 120.0,
+                    decay_frames: 400.0,
+                    release_frames: 500.0,
+                    pan_left: 0.5,
+                    pan_right: 1.0,
+                    loop_mode: 1,
+                    loop_start: 100,
+                    loop_end: 2048,
+                    is_stereo: 0,
+                    interp: 1,
+                    ..Default::default()
+                },
+                // 立体声 + HighPass + 偏移起始
+                GpuVoiceState {
+                    sample_offset: 0,
+                    sample_length: sample_len,
+                    gain: 0.2,
+                    start_offset: 13,
+                    env_stage: stage,
+                    env_level: 1.0,
+                    sustain_level: 0.9,
+                    delay_frames: 40.0,
+                    attack_frames: 300.0,
+                    hold_frames: 120.0,
+                    decay_frames: 400.0,
+                    release_frames: 500.0,
+                    pan_left: 1.0,
+                    pan_right: 0.3,
+                    is_stereo: 1,
+                    cutoff: 4000.0,
+                    resonance: 3.0,
+                    filter_type: 1,
+                    flt_b0: biquad_coeffs(1, 4000.0, 3.0, 44100.0).0,
+                    flt_b1: biquad_coeffs(1, 4000.0, 3.0, 44100.0).1,
+                    flt_b2: biquad_coeffs(1, 4000.0, 3.0, 44100.0).2,
+                    flt_a1: biquad_coeffs(1, 4000.0, 3.0, 44100.0).3,
+                    flt_a2: biquad_coeffs(1, 4000.0, 3.0, 44100.0).4,
+                    ..Default::default()
+                },
+            ]
+        };
+
+        let frame_count = 512u32;
+        // 从 Delay 起步连续渲染 6 个 block：覆盖 attack/hold/decay 阶段切换 + 跨 block 滤波器状态
+        let mut gpu_voices = make_test_voices(0);
+        let mut cpu_voices = gpu_voices.clone();
+        for block in 0..6 {
+            let mut out_gpu = vec![0.0f32; frame_count as usize * 2];
+            renderer.render_into(&mut gpu_voices, &mut out_gpu, 44100);
+            // 真实路径在渲染后推进 time/env（与 GpuSynth::render 一致）
+            advance_voices(&mut gpu_voices, frame_count);
+            let out_cpu = cpu_render_voices(&samples, &mut cpu_voices, frame_count);
+
+            let mut max_diff = 0.0f32;
+            for (a, b) in out_gpu.iter().zip(&out_cpu) {
+                max_diff = max_diff.max((a - b).abs());
+            }
+            assert!(
+                max_diff < 1e-3,
+                "block {block}: max diff {max_diff} (gpu[0]={} cpu[0]={})",
+                out_gpu[0],
+                out_cpu[0]
+            );
+            // 滤波器 IIR 状态跨 block 一致
+            for (g, c) in gpu_voices.iter().zip(&cpu_voices) {
+                assert!(
+                    (g.flt_y1 - c.flt_y1).abs() < 1e-3
+                        && (g.flt_y2 - c.flt_y2).abs() < 1e-3
+                        && (g.flt_x1 - c.flt_x1).abs() < 1e-3
+                        && (g.flt_x2 - c.flt_x2).abs() < 1e-3,
+                    "block {block}: filter state mismatch"
+                );
+            }
+        }
+    }
+
+    /// biquad 系数在 CPU 与 GPU 同源（测试防线）
+    #[test]
+    fn biquad_coeffs_reference() {
+        // LowPass 1kHz Q=1（RBJ cookbook 已知值）
+        let (b0, b1, b2, a1, a2) = biquad_coeffs(0, 1000.0, 1.0, 44100.0);
+        let omega = 2.0 * std::f32::consts::PI * 1000.0 / 44100.0;
+        let alpha = omega.sin() / (2.0 * 1.0);
+        let a0 = 1.0 + alpha;
+        assert!((b0 - ((1.0 - omega.cos()) * 0.5) / a0).abs() < 1e-6);
+        assert!((b1 - (1.0 - omega.cos()) / a0).abs() < 1e-6);
+        assert!((a1 - (-2.0 * omega.cos()) / a0).abs() < 1e-6);
+        assert!((a2 - (1.0 - alpha) / a0).abs() < 1e-6);
     }
 }
