@@ -31,6 +31,13 @@ cargo bundle --release --format osx -p yinhe-egui
   -c "Set :CFBundleDevelopmentRegion zh-Hans" \
   "$APP/Contents/Info.plist"
 
+# 1.5) .lproj 兜底：部分系统组件只认 Resources 下的 .lproj 目录，
+#     目录存在即可让 CFBundle 的 knownLocalizations 包含该语言。
+for lang in zh-Hans en ja ko; do
+  mkdir -p "$APP/Contents/Resources/$lang.lproj"
+  touch "$APP/Contents/Resources/$lang.lproj/InfoPlist.strings"
+done
+
 # 2) 整体重签名（--force 覆盖链接器的部分签名，--deep 递归签嵌套内容），
 #    seal 上 Info.plist 和 Resources，使 codesign --verify 通过。
 codesign --force --deep --sign - "$APP"
