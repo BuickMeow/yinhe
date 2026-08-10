@@ -85,6 +85,14 @@ menu.delete: "削除"
 menu.octave_up: "1オクターブ上へ"
 menu.octave_down: "1オクターブ下へ"
 
+# ── macOSアプリメニュー ──
+menu.about: "Yinheについて"
+menu.settings: "設定…"
+menu.hide: "Yinheを隠す"
+menu.hide_others: "ほかを隠す"
+menu.show_all: "すべてを表示"
+menu.quit: "Yinheを終了"
+
 # ── 設定ダイアログ ──
 settings.title: "設定"
 settings.search_hint: "設定を検索…"

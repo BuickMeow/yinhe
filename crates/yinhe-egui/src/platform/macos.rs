@@ -123,6 +123,41 @@ pub(crate) fn set_app_nap_enabled(enabled: bool) {
     }
 }
 
+// ── App 菜单系统级动作 ────────────────────────────────────────────────
+
+/// NSApplication 单例（进程生命周期内恒定有效）。
+fn ns_app() -> Option<&'static AnyObject> {
+    let class = cls(cstr!("NSApplication"))?;
+    Some(unsafe { objc2::msg_send![class, sharedApplication] })
+}
+
+/// 弹出系统「关于」面板（显示 bundle 中的应用名/版本/版权）。
+fn show_about_panel() {
+    let Some(app) = ns_app() else { return };
+    let _: () = unsafe {
+        objc2::msg_send![app, orderFrontStandardAboutPanel: std::ptr::null_mut::<AnyObject>()]
+    };
+}
+
+/// 隐藏应用（⌘H）。
+fn hide_app() {
+    let Some(app) = ns_app() else { return };
+    let _: () = unsafe { objc2::msg_send![app, hide: std::ptr::null_mut::<AnyObject>()] };
+}
+
+/// 隐藏其他应用（⌥⌘H）。
+fn hide_others() {
+    let Some(app) = ns_app() else { return };
+    let _: () =
+        unsafe { objc2::msg_send![app, hideOtherApplications: std::ptr::null_mut::<AnyObject>()] };
+}
+
+/// 显示全部应用。
+fn show_all_apps() {
+    let Some(app) = ns_app() else { return };
+    let _: () = unsafe { objc2::msg_send![app, unhideAllApplications] };
+}
+
 // ── Menu Bar ───────────────────────────────────────────────────────────────
 
 /// Global channel for menu actions. The muda event handler writes here.
@@ -171,6 +206,57 @@ fn init_native_menu() -> muda::Result<()> {
     let mut map = HashMap::new();
     let mut items: Vec<(&'static str, Box<dyn MenuText>)> = Vec::new();
     let cmd = Modifiers::SUPER;
+
+    // ── App 菜单（第一个菜单，标题由系统显示为应用名）──
+    // macOS 惯例：About / 设置… / 隐藏类 / 退出 都放在这里。
+    // About/Hide 等系统级动作由事件处理器就地执行，不经过主线程通道。
+    let about_item = Box::new(MenuItem::new(t!("menu.about"), true, None));
+    map.insert(about_item.id().clone(), MenuAction::About);
+
+    let settings_item = Box::new(MenuItem::new(
+        t!("menu.settings"),
+        true,
+        Some(Accelerator::new(Some(cmd), Code::Comma)),
+    ));
+    map.insert(settings_item.id().clone(), MenuAction::Settings);
+
+    let hide_item = Box::new(MenuItem::new(
+        t!("menu.hide"),
+        true,
+        Some(Accelerator::new(Some(cmd), Code::KeyH)),
+    ));
+    map.insert(hide_item.id().clone(), MenuAction::Hide);
+
+    let hide_others_item = Box::new(MenuItem::new(
+        t!("menu.hide_others"),
+        true,
+        Some(Accelerator::new(Some(cmd | Modifiers::SHIFT), Code::KeyH)),
+    ));
+    map.insert(hide_others_item.id().clone(), MenuAction::HideOthers);
+
+    let show_all_item = Box::new(MenuItem::new(t!("menu.show_all"), true, None));
+    map.insert(show_all_item.id().clone(), MenuAction::ShowAll);
+
+    let quit_item = Box::new(MenuItem::new(
+        t!("menu.quit"),
+        true,
+        Some(Accelerator::new(Some(cmd), Code::KeyQ)),
+    ));
+    map.insert(quit_item.id().clone(), MenuAction::Exit);
+
+    let sep = PredefinedMenuItem::separator();
+    let app_items: Vec<&dyn IsMenuItem> = vec![
+        about_item.as_ref(),
+        &sep,
+        settings_item.as_ref(),
+        &sep,
+        hide_item.as_ref(),
+        hide_others_item.as_ref(),
+        show_all_item.as_ref(),
+        &sep,
+        quit_item.as_ref(),
+    ];
+    let app_menu = Submenu::with_items("Yinhe", true, &app_items)?;
 
     // ── 文件菜单 ──
     let new_item = Box::new(MenuItem::new(
@@ -310,7 +396,7 @@ fn init_native_menu() -> muda::Result<()> {
     ];
     let edit_menu = Submenu::with_items(t!("menu.edit"), true, &edit_items)?;
 
-    let menu_items: Vec<&dyn IsMenuItem> = vec![&file_menu, &edit_menu];
+    let menu_items: Vec<&dyn IsMenuItem> = vec![&app_menu, &file_menu, &edit_menu];
     let menu = Menu::with_items(&menu_items)?;
     menu.init_for_nsapp();
 
@@ -330,8 +416,15 @@ fn init_native_menu() -> muda::Result<()> {
     items.push(("menu.delete", delete_item));
     items.push(("menu.octave_up", transpose_up_item));
     items.push(("menu.octave_down", transpose_down_item));
+    items.push(("menu.about", about_item));
+    items.push(("menu.settings", settings_item));
+    items.push(("menu.hide", hide_item));
+    items.push(("menu.hide_others", hide_others_item));
+    items.push(("menu.show_all", show_all_item));
+    items.push(("menu.quit", quit_item));
     items.push(("menu.file", Box::new(file_menu)));
     items.push(("menu.edit", Box::new(edit_menu)));
+    items.push(("menu.app", Box::new(app_menu)));
 
     let _ = MENU_MAP.set(map);
 
@@ -346,10 +439,21 @@ fn init_native_menu() -> muda::Result<()> {
         let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             if let Some(map) = MENU_MAP.get()
                 && let Some(action) = map.get(event.id())
-                && let Ok(sender_guard) = MENU_SENDER.lock()
-                && let Some(tx) = sender_guard.as_ref()
             {
-                let _ = tx.send(action.clone());
+                // App 菜单的系统级动作就地执行（主线程回调，无需经过通道）
+                match action {
+                    MenuAction::About => show_about_panel(),
+                    MenuAction::Hide => hide_app(),
+                    MenuAction::HideOthers => hide_others(),
+                    MenuAction::ShowAll => show_all_apps(),
+                    other => {
+                        if let Ok(sender_guard) = MENU_SENDER.lock()
+                            && let Some(tx) = sender_guard.as_ref()
+                        {
+                            let _ = tx.send(other.clone());
+                        }
+                    }
+                }
             }
         }));
     }));

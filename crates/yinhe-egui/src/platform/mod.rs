@@ -24,6 +24,15 @@ pub enum MenuAction {
     Delete,
     TransposeUp,
     TransposeDown,
+    /// App 菜单「设置…」（⌘,），打开应用设置对话框。
+    Settings,
+    /// App 菜单「退出」（⌘Q），走未保存检查流程。
+    Exit,
+    /// 系统级动作：由平台层就地执行，不经过主线程通道。
+    About,
+    Hide,
+    HideOthers,
+    ShowAll,
 }
 
 /// Handle to the native menu bar and its action receiver.

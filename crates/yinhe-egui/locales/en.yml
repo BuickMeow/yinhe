@@ -85,6 +85,14 @@ menu.delete: "Delete"
 menu.octave_up: "Octave Up"
 menu.octave_down: "Octave Down"
 
+# ── macOS app menu ──
+menu.about: "About Yinhe"
+menu.settings: "Settings…"
+menu.hide: "Hide Yinhe"
+menu.hide_others: "Hide Others"
+menu.show_all: "Show All"
+menu.quit: "Quit Yinhe"
+
 # ── Settings dialog ──
 settings.title: "Settings"
 settings.search_hint: "Search settings…"

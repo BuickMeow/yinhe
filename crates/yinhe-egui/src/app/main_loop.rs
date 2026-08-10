@@ -191,6 +191,20 @@ impl eframe::App for App {
                     self.transpose_selected_notes(-12);
                     continue;
                 }
+                MenuAction::Settings => {
+                    self.audio_settings.show_settings = true;
+                    crate::chrome::dialog::raise_viewport(
+                        ui.ctx(),
+                        egui::ViewportId::from_hash_of("settings_dialog"),
+                    );
+                    continue;
+                }
+                MenuAction::Exit => transport_bar::FileAction::Exit,
+                // 系统级动作（About/Hide 等）已在平台层就地处理，不会到达这里
+                MenuAction::About
+                | MenuAction::Hide
+                | MenuAction::HideOthers
+                | MenuAction::ShowAll => continue,
             };
             self.handle_file_action(file_action, ui.ctx());
         }

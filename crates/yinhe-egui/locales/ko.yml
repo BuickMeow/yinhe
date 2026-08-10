@@ -85,6 +85,14 @@ menu.delete: "삭제"
 menu.octave_up: "옥타브 올리기"
 menu.octave_down: "옥타브 내리기"
 
+# ── macOS 앱 메뉴 ──
+menu.about: "Yinhe 정보"
+menu.settings: "설정…"
+menu.hide: "Yinhe 숨기기"
+menu.hide_others: "다른 앱 숨기기"
+menu.show_all: "모두 표시"
+menu.quit: "Yinhe 종료"
+
 # ── 설정 대화상자 ──
 settings.title: "설정"
 settings.search_hint: "설정 검색…"

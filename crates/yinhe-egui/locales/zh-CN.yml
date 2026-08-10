@@ -85,6 +85,14 @@ menu.delete: "删除"
 menu.octave_up: "升八度"
 menu.octave_down: "降八度"
 
+# ── macOS App 菜单 ──
+menu.about: "关于 Yinhe"
+menu.settings: "设置…"
+menu.hide: "隐藏 Yinhe"
+menu.hide_others: "隐藏其他"
+menu.show_all: "全部显示"
+menu.quit: "退出 Yinhe"
+
 # ── 设置对话框 ──
 settings.title: "设置"
 settings.search_hint: "搜索设置…"
