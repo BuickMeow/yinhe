@@ -80,8 +80,6 @@ pub struct Theme {
     // ── 光标 / 选框 ──
     pub marquee_fill_alpha: f32,
     pub marquee_stroke_alpha: f32,
-    /// 时间码等"信息凹槽"底色（背景深一档，明暗主题方向自动正确）。
-    pub inset_bg: Color32,
     /// 背景偏亮时（浅色主题）为 true（egui Visuals 选 light）。
     pub dark_mode: bool,
 }
@@ -184,8 +182,6 @@ pub fn derive_theme(base: crate::base::BaseColors) -> Theme {
 
     // 色系设计：选中底 = 强调色混背景（暗主题深蓝、亮主题中浅蓝，同色相）
     let selected_bg = mix(bg, accent, 0.30);
-    // 凹槽底：比 app_bg 暗一档（bg-15%），亮色背景同样生效
-    let inset_bg = mix(bg, Color32::BLACK, 0.15);
 
     Theme {
         app_bg: bg,
@@ -230,7 +226,6 @@ pub fn derive_theme(base: crate::base::BaseColors) -> Theme {
         line_fg: mix_line,
         marquee_fill_alpha: 0.15,
         marquee_stroke_alpha: 0.40,
-        inset_bg,
         // 与 contrast_text 同一把尺子：背景偏亮 → 亮基底（egui Visuals::light）
         dark_mode: luminance(bg) <= 0.5,
     }
@@ -253,8 +248,6 @@ mod tests {
         assert_eq!(t.danger, Color32::from_rgb(232, 17, 35));
         // 线条统一色 = 背景混主文字 15%：25 + (220-25)×0.15 ≈ 54
         assert_eq!(t.line_fg, Color32::from_rgb(54, 54, 56));
-        // 凹槽底 = 背景暗 15%：25×0.85 ≈ 21
-        assert_eq!(t.inset_bg, Color32::from_rgb(21, 21, 23));
         // hover/选中文字在暗底上应为白
         assert_eq!(t.contrast_fg, Color32::WHITE);
         assert_eq!(t.text_selected, Color32::WHITE);

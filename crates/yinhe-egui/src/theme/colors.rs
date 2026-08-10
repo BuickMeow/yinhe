@@ -87,7 +87,6 @@ theme_getters! {
     track_bg => track_bg,
     stripe_bg => stripe_bg,
     line_fg => line_fg,
-    inset_bg => inset_bg,
 }
 
 pub fn marquee_fill_alpha() -> f32 {
