@@ -228,13 +228,13 @@ pub fn advance_voices(voices: &mut [GpuVoiceState], frame_count: u32) {
         }
         voice.time += voice.speed * active_frames as f32;
 
-        // 循环回绕
+        // 循环回绕（与 shader/xsynth 一致：> loop_end，loop 区间含 end）
         let has_loop = voice.loop_mode > 0 && voice.loop_end > voice.loop_start;
-        if has_loop && voice.time >= voice.loop_end as f32 {
+        if has_loop && voice.time > voice.loop_end as f32 {
             let loop_len = (voice.loop_end - voice.loop_start) as f32;
             if loop_len > 0.0 {
-                voice.time =
-                    voice.loop_start as f32 + ((voice.time - voice.loop_start as f32) % loop_len);
+                let off = (voice.time - voice.loop_end as f32 - 1.0).max(0.0);
+                voice.time = voice.loop_start as f32 + off % loop_len;
             }
         }
 
@@ -1320,12 +1320,12 @@ pub fn cpu_render_voices(
             let frac = t - idx as f32;
             let max_idx = voice.sample_length.saturating_sub(1);
 
-            // 循环回绕
+            // 循环回绕（与 shader/xsynth 一致：> loop_end，loop 区间含 end）
             let has_loop = voice.loop_mode > 0 && voice.loop_end > voice.loop_start;
-            if has_loop && idx >= voice.loop_end {
+            if has_loop && idx > voice.loop_end {
                 let loop_len = voice.loop_end - voice.loop_start;
                 if loop_len > 0 {
-                    idx = voice.loop_start + ((idx - voice.loop_start) % loop_len);
+                    idx = (idx - voice.loop_end - 1) % loop_len + voice.loop_start;
                 }
             }
 

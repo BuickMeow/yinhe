@@ -114,6 +114,8 @@ fn vs_main(
         let ppu = u.pixels_per_tick;
         let x_offset = u.keyboard_width - u.scroll_x;
         pixel_x = x_offset + start_tick * ppu;
+        // 视口左边界 = keyboard_width（见 note_geometry 同注释）。
+        pixel_x = max(pixel_x, u.keyboard_width);
         pixel_w = max(x_offset + end_tick * ppu - pixel_x, 2.0);
         let bottom = 128.0 * u.key_height - u.scroll_y;
         pixel_y = bottom - (key + 1.0) * u.key_height;
@@ -127,6 +129,8 @@ fn vs_main(
         let ppu = u.pixels_per_tick;
         let x_offset = u.keyboard_width - u.scroll_x;
         pixel_x = x_offset + start_tick * ppu;
+        // 视口左边界 = keyboard_width（见 note_geometry 同注释）。
+        pixel_x = max(pixel_x, u.keyboard_width);
         pixel_w = max(x_offset + end_tick * ppu - pixel_x, 2.0);
     }
 
@@ -249,6 +253,9 @@ fn note_geometry(
     // 与相邻音符的边界岔开 1px（tick 越大 pixel_w 的 ULP 越大越容易触发）。
     var pixel_x = x_offset + f32(start_tick) * ppu;
     var right = x_offset + f32(end_tick) * ppu;
+    // 视口左边界 = keyboard_width（键盘列/轨道面板列由 egui 层绘制，
+    // 音符左端 clamp 到其右缘，长音符从左侧进入时显示为被左列"切"掉）。
+    pixel_x = max(pixel_x, u.keyboard_width);
     var pixel_w = max(right - pixel_x, 2.0);
     var pixel_y: f32;
     var pixel_h: f32;
@@ -376,6 +383,9 @@ fn vs_main_velocity(
     // 杜绝 1px 缝隙（链式 pixel_x + pixel_w 的取整/舍入误差见 note_geometry）。
     var pixel_x = x_offset + f32(tick) * ppu;
     var right = x_offset + f32(tick + length) * ppu;
+    // 视口左边界 = keyboard_width（AM 面板的 combo 列宽 = keyboard_width，
+    // 力度条左端 clamp 到网格区左缘，与右侧在面板右缘被裁对称）。
+    pixel_x = max(pixel_x, u.keyboard_width);
     var pixel_w = max(right - pixel_x, 2.0);
 
     // Y from velocity: 126 级映射（vel=1 已由构建过滤，不显示）。

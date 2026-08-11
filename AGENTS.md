@@ -26,7 +26,7 @@
 12. 既有的编译错误、警告以及测试错误请务必告诉我，哪怕和你的修复无关。我会考虑修复。
 13. /Users/jieneng/Music/MIDIs 是我们常见的MIDI测试用例目录。/Users/jieneng/Music/Soundfonts/Starry Studio Grand v2.7~/Presets/A_Standard/Studio Grand - Standard (No Hammer).sfz 是我们常用的音色库。如果需要进行实际测试，一般使用这两个目录。
 14. 如果要查找库，请优先查找本地。其次是网络。
-15. 每次修改代码后，顺便编译出release，这样方便用户在会话结束后直接开始测试功能。
+15. 每次修改代码后，顺便编译出release，这样方便用户在会话结束后直接开始测试功能。（不是fast release！）
 16. Windows主线程栈是1MB，macOS是8MB。因为要满足多平台，所以不要让主线程栈超过1MB。
 17. 千万不要在生产环境中写unwrap()。没保存工程就完蛋了。
 18. 如果哪里屡次容易出bug，就针对这个bug加个测试。
@@ -36,3 +36,4 @@
 22. 我叫节能降耗，小末是我的开发者朋友，经常会给我提意见，如果看到这两个人名，就知道我们是在讨论关于代码的问题。鹅是一位AI机器人，会利用自己的知识分析代码。
 23. 验证时不要跑整个 workspace 的测试/clippy（太慢）。默认只跑本次修改涉及的 crate 及其下游依赖：`cargo test -p <crate>`、`cargo clippy -p <crate>`。只有改动跨 crate 公共接口（如 serde 派生、类型定义、公共 API 签名）时才把下游 crate 一起跑。全量测试留给 CI 或大改动前。
 24. 请多多使用两个及以上的子Agent来进行多项互不冲突的任务，效率会高不少
+25. 全程必须使用中文思考

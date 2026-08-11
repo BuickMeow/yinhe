@@ -190,11 +190,14 @@ impl KeyBucketIndex {
 /// the same f32 math as `cull.wgsl` (x_offset + tick * ppu) plus a margin of
 /// one pixel + 2 ticks, so f32 rounding near the viewport edges never drops
 /// a bucket that the exact shader test could still pass.
+///
+/// 左边界 = keyboard_width 像素（cull.wgsl 的 `pixel_right >= keyboard_width`），
+/// 即键盘列/轨道面板列之下的音符不参与渲染，chunk 调度范围随之左移。
 fn visible_tick_range(uniforms: &Uniforms) -> (u32, u32) {
     let ppu = uniforms.pixels_per_tick;
     let x_offset = uniforms.keyboard_width - uniforms.scroll_x;
     let pad = (1.0 / ppu).ceil() as i64 + 2;
-    let ts = (((-x_offset) / ppu).floor() as i64 - pad)
+    let ts = (((uniforms.keyboard_width - x_offset) / ppu).floor() as i64 - pad)
         .max(0)
         .min(u32::MAX as i64);
     let te = (((uniforms.width - x_offset) / ppu).ceil() as i64 + pad)
@@ -1321,10 +1324,11 @@ mod tests {
             mode: 1,
             ..Default::default()
         };
-        // x_offset = 60 - 100 = -40; visible ticks ≈ [(0+40)/0.1, (800+40)/0.1]
-        // = [400, 8400], with margin → starts before 400, ends after 8400.
+        // x_offset = 60 - 100 = -40; visible ticks ≈ [(60+40)/0.1, (800+40)/0.1]
+        // = [1000, 8400]，左边界是 keyboard_width 像素（音符右端 ≥ 键盘列右缘），
+        // 带 margin → starts before 1000, ends after 8400.
         let (ts, te) = visible_tick_range(&u);
-        assert!(ts <= 390 && te >= 8410, "ts={ts} te={te}");
+        assert!(ts <= 990 && te >= 8410, "ts={ts} te={te}");
     }
 
     /// 端到端：黑乐谱风格构造数据（128 keys × 8192 音符 + 每 key 长音符），
@@ -1716,9 +1720,12 @@ mod tests {
             let mut notes = Vec::new();
             for i in 0..20_000 {
                 // 均匀 10-tick 网格会让 c1/c2 两个视口恰好容纳相同数量音符
-                // （c1==c2，滚动是否更新无从分辨）。在 [50000, 80000) 挖一个
-                // 空洞，让三个视口的音符数各不相同。
-                let start = (i as u32) * 10 + if i >= 5000 { 30_000 } else { 0 };
+                // （c1==c2，滚动是否更新无从分辨）。在 [50000, 82000) 挖一个
+                // 空洞（第二块从 82000 开始），让三个视口的音符数各不相同。
+                // 空洞右缘需避开新视口左边界（keyboard_width=60px=600 tick）：
+                // c1 可见 [40000, 47412] 落在第一块尾部，c2 可见 [80000, 87412]
+                // 只覆盖空洞右缘之后 540 个，两视口数量必然不同。
+                let start = (i as u32) * 10 + if i >= 5000 { 32_000 } else { 0 };
                 notes.push(NoteInstance {
                     start_tick: start,
                     end_tick: start + 5,
@@ -2069,7 +2076,8 @@ mod tests {
                         if n.end_tick > n.start_tick {
                             let px = x_offset + n.start_tick as f32 * ppu;
                             let pr = x_offset + n.end_tick as f32 * ppu;
-                            if pr >= 0.0 && px <= w {
+                            // 与 cull.wgsl 一致：左边界 = keyboard_width（键盘列下不画）
+                            if pr >= kb_w && px <= w {
                                 let k = (n.packed & 0xFF) as f32;
                                 let pb = bottom_y - k * kh;
                                 let py = bottom_y - (k + 1.0) * kh;
@@ -2246,7 +2254,8 @@ mod tests {
                         if n.end_tick > n.start_tick {
                             let px = xo + n.start_tick as f32 * ppu;
                             let pr = xo + n.end_tick as f32 * ppu;
-                            if pr >= 0.0 && px <= w {
+                            // 与 cull.wgsl 一致：左边界 = keyboard_width（键盘列下不画）
+                            if pr >= kb_w && px <= w {
                                 let k = (n.packed & 0xFF) as f32;
                                 let pb = bottom_y - k * kh;
                                 let py = bottom_y - (k + 1.0) * kh;
@@ -2517,7 +2526,8 @@ mod tests {
                     {
                         let px = xo + n.start_tick as f32 * ppu;
                         let pr = xo + n.end_tick as f32 * ppu;
-                        if pr >= 0.0 && px <= w {
+                        // 与 cull.wgsl 一致：左边界 = keyboard_width（键盘列下不画）
+                        if pr >= kb_w && px <= w {
                             let k = key as f32;
                             let pb = bottom_y - k * kh;
                             let py = bottom_y - (k + 1.0) * kh;
@@ -4216,7 +4226,8 @@ mod tests {
             let x_offset = kb_w - scroll_x;
             let pixel_x = x_offset + n.start_tick as f32 * ppu;
             let pixel_right = x_offset + n.end_tick as f32 * ppu;
-            if pixel_right >= 0.0 && pixel_x <= w {
+            // 与 cull.wgsl 一致：左边界 = keyboard_width（轨道面板列下不画）
+            if pixel_right >= kb_w && pixel_x <= w {
                 let lh_per_key = lh / 128.0;
                 let pixel_bottom = -scroll_y + lh - key * lh_per_key + track * lh;
                 let pixel_y = -scroll_y + lh - (key + 1.0) * lh_per_key + track * lh;

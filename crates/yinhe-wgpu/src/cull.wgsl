@@ -123,11 +123,12 @@ fn main(
             let ppu = u.pixels_per_tick;
             let x_offset = u.keyboard_width - u.scroll_x;
 
-            // X bounds in pixels
+            // X bounds in pixels. 视口左边界 = keyboard_width（键盘列/轨道面板列
+            // 由 egui 层绘制，音符不画到其下方，避免浪费填充率）。
             let pixel_x = x_offset + f32(start_tick) * ppu;
             let pixel_right = x_offset + f32(end_tick) * ppu;
 
-            if pixel_right >= 0.0 && pixel_x <= u.width {
+            if pixel_right >= u.keyboard_width && pixel_x <= u.width {
                 // Y bounds in pixels
                 var pixel_y: f32;
                 var pixel_bottom: f32;
