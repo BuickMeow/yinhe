@@ -41,7 +41,6 @@ pub const CURSOR_WIDTH: f32 = 2.0;
 
 // ── Right panel ──
 pub const RIGHT_PANEL_MIN_WIDTH: f32 = 160.0;
-pub const RIGHT_PANEL_DEFAULT_WIDTH: f32 = 320.0;
 
 // ── Automation panel ──
 pub const AUTO_PANEL_SPLIT_H: f32 = SPLIT_HANDLE_W;
