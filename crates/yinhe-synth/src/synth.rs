@@ -1804,6 +1804,71 @@ mod tests {
         }
     }
 
+    /// 回归：loop_mode 语义与 xsynth 一致——OneShot/NoLoop 不循环（播完结束 voice），
+    /// LoopContinuous 恒循环；LoopSustain 仅未 release 时循环（release 后播到尾结束）。
+    #[test]
+    fn loop_mode_semantics_match_xsynth() {
+        let sr = 44100u32;
+        let frame_count = 256u32;
+        let samples: Vec<f32> = make_sine_samples(frame_count as usize, 440.0, sr as f32);
+        let mut renderer = GpuAudioRenderer::new_default().expect("renderer init failed");
+        renderer.upload_samples(&samples);
+
+        let peak_of = |o: &[f32]| o.iter().fold(0.0f32, |m, &s| m.max(s.abs()));
+
+        // OneShot：loop 区间 [0,128)，播到 256 帧末尾即结束（不循环）
+        let mut v = make_voices(samples.len() as u32, 1, 1.0).remove(0);
+        v.sample_length = frame_count;
+        v.loop_mode = 3; // OneShot
+        v.loop_start = 0;
+        v.loop_end = 128;
+        let mut voices = vec![v];
+        let mut out = vec![0.0f32; frame_count as usize * 2];
+        renderer.render_into(&mut voices, &mut out, sr);
+        let peak_oneshot_first = peak_of(&out);
+        // 第二块：采样已播完 → 静音 + voice 结束
+        renderer.render_into(&mut voices, &mut out, sr);
+        let peak_oneshot_second = peak_of(&out);
+        assert!(
+            peak_oneshot_first > 0.1,
+            "one_shot first block silent: {peak_oneshot_first}"
+        );
+        assert_eq!(
+            peak_oneshot_second, 0.0,
+            "one_shot should be silent after sample end"
+        );
+        assert_eq!(voices[0].env_stage, 6, "one_shot voice should end");
+
+        // LoopContinuous：恒循环（第二块仍有声，voice 不结束）
+        let mut v = make_voices(samples.len() as u32, 1, 1.0).remove(0);
+        v.sample_length = frame_count;
+        v.loop_mode = 1; // LoopContinuous
+        v.loop_start = 0;
+        v.loop_end = 128;
+        let mut voices = vec![v];
+        renderer.render_into(&mut voices, &mut out, sr);
+        renderer.render_into(&mut voices, &mut out, sr);
+        assert!(peak_of(&out) > 0.1, "loop_continuous should keep sounding");
+        assert!(voices[0].env_stage < 6, "loop_continuous voice stays");
+
+        // LoopSustain：sustain 阶段循环；release 后不循环（播到尾结束）
+        let mut v = make_voices(samples.len() as u32, 1, 1.0).remove(0);
+        v.sample_length = frame_count;
+        v.loop_mode = 2; // LoopSustain
+        v.loop_start = 0;
+        v.loop_end = 128;
+        let mut voices = vec![v];
+        renderer.render_into(&mut voices, &mut out, sr);
+        assert!(peak_of(&out) > 0.1, "loop_sustain should loop in sustain");
+        // 释放（模拟 note_off 后）：从当前位置继续播到尾，不再循环
+        voices[0].env_stage = 5;
+        voices[0].env_start = voices[0].envelope;
+        voices[0].stage_progress = 0.0;
+        renderer.render_into(&mut voices, &mut out, sr);
+        renderer.render_into(&mut voices, &mut out, sr);
+        assert_eq!(voices[0].env_stage, 6, "loop_sustain ends after release");
+    }
+
     /// 回归：块内段边界（ch_updates）后创建的新 voice 必须正常出声。
     /// 段边界把通道音量改为 0.5，新 voice 在段边界创建（start_offset=68）。
     #[test]

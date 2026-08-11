@@ -380,8 +380,14 @@ fn vs_main(@builtin(workgroup_id) wid: vec3<u32>,
             let frac = t - f32(idx);
             let max_idx = st.sample_length - 1u;
 
-            // 循环处理
-            let has_loop = st.loop_mode > 0u && st.loop_end > st.loop_start;
+            // 循环处理（与 xsynth 一致）——loop_mode：0=NoLoop, 1=LoopContinuous,
+            // 2=LoopSustain, 3=OneShot：
+            // - Continuous：恒循环；Sustain：仅未 release（env_stage < 5）时循环，
+            //   release 后从当前位置继续播到尾；NoLoop/OneShot：不循环，播完即结束
+            let released = st.env_stage >= 5u;
+            let loop_cont = st.loop_mode == 1u;
+            let loop_sus = st.loop_mode == 2u && !released;
+            let has_loop = (loop_cont || loop_sus) && st.loop_end > st.loop_start;
             if has_loop && idx >= st.loop_end {
                 let loop_len = st.loop_end - st.loop_start;
                 if loop_len > 0u {
@@ -441,6 +447,10 @@ fn vs_main(@builtin(workgroup_id) wid: vec3<u32>,
                 }
                 my_l = s_l * ch_pan_l;
                 my_r = s_r * ch_pan_r;
+            } else if !loop_cont {
+                // 采样播完（NoLoop/OneShot/LoopSustain release 后）：结束 voice。
+                // 与 xsynth `is_past_end` 一致（Continuous 恒循环，永不因采样结束）。
+                st.env_stage = 6u;
             }
             let prev_stage = st.env_stage;
             st = advance_env(st);
