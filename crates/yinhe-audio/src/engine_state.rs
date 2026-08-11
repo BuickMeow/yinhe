@@ -132,10 +132,12 @@ impl AudioEngine {
                 ChannelEvent::Config(ChannelConfigEvent::SetPercussionMode(true)),
             ));
         }
-        // Honour CC0 (Bank Select MSB) values >= 120 as percussion-mode toggle,
-        // matching the legacy MidiFile path.
-        for (track_idx, cc0_values) in model.track_cc0.iter().enumerate() {
-            if cc0_values.is_empty() {
+        // Honour Bank Select MSB declarations (>= 120 = drum kit, GS/XG
+        // convention): standalone CC0 automation lanes and CC0 folded into
+        // PcEvent.bank_msb, merged per track in tick order. Last declaration
+        // per channel wins, matching the legacy MidiFile path.
+        for (track_idx, banks) in model.track_banks.iter().enumerate() {
+            if banks.is_empty() {
                 continue;
             }
             let src_ch = model.track_channel(track_idx) as usize;
@@ -146,7 +148,7 @@ impl AudioEngine {
             if dense == u32::MAX {
                 continue;
             }
-            for &value in cc0_values {
+            for &(_, value) in banks {
                 self.channel_group.send_event(SynthEvent::Channel(
                     dense,
                     ChannelEvent::Config(ChannelConfigEvent::SetPercussionMode(value >= 120)),

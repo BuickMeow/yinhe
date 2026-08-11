@@ -92,38 +92,48 @@ pub(crate) struct PreparedModel {
 pub(crate) struct AudioModel {
     /// `track_channels[i]` = global channel `(port<<4)|channel` for track `i`.
     pub track_channels: Vec<u8>,
-    /// CC0 (Bank Select MSB) values per track, for percussion-mode detection.
-    /// Empty Vec for tracks with no CC0.
-    pub track_cc0: Vec<Vec<u8>>,
+    /// Bank Select MSB declarations per track, for percussion-mode detection.
+    /// `(tick, value)` pairs merged from standalone CC0 automation lanes and
+    /// CC0 values folded into `PcEvent.bank_msb` (same-tick CC0+PC), sorted by
+    /// tick. Values >= 120 select a drum kit (GS/XG convention), values < 120
+    /// select a melodic bank. Empty Vec for tracks with no bank declaration.
+    pub track_banks: Vec<Vec<(u32, u8)>>,
 }
 
 impl AudioModel {
     pub(crate) fn from_model(model: &YinModel) -> Self {
         let track_channels: Vec<u8> = model.tracks.iter().map(|t| t.global_channel()).collect();
-        let track_cc0: Vec<Vec<u8>> = model
+        let track_banks: Vec<Vec<(u32, u8)>> = model
             .tracks
             .iter()
             .map(|t| {
-                t.automation_lanes
-                    .iter()
-                    .find(|l| {
-                        matches!(
-                            l.target,
-                            yinhe_types::AutomationTarget::CC { controller: 0 }
-                        )
-                    })
-                    .map(|lane| {
+                let mut banks: Vec<(u32, u8)> = Vec::new();
+                // 独立 CC0 自动化事件（未被同 tick PC 折叠）。
+                if let Some(lane) = t.automation_lanes.iter().find(|l| {
+                    matches!(
+                        l.target,
+                        yinhe_types::AutomationTarget::CC { controller: 0 }
+                    )
+                }) {
+                    banks.extend(
                         lane.events
                             .iter()
-                            .map(|e| e.value.round().clamp(0.0, 127.0) as u8)
-                            .collect()
-                    })
-                    .unwrap_or_default()
+                            .map(|e| (e.tick, e.value.round().clamp(0.0, 127.0) as u8)),
+                    );
+                }
+                // 同 tick 被 PC 折叠的 CC0（PcEvent.bank_msb）——否则声明会被丢掉。
+                banks.extend(
+                    t.program_change
+                        .iter()
+                        .filter_map(|pc| (pc.bank_msb != 0xFF).then_some((pc.tick, pc.bank_msb))),
+                );
+                banks.sort_by_key(|&(tick, _)| tick);
+                banks
             })
             .collect();
         Self {
             track_channels,
-            track_cc0,
+            track_banks,
         }
     }
 
@@ -495,6 +505,48 @@ mod tests {
         F: Fn(&ChannelAudioEvent) -> bool,
     {
         events.iter().position(|e| pred(&e.event))
+    }
+
+    /// 回归测试：bank 声明（独立 CC0 自动化 + 被 PC 折叠的 CC0）必须全部进入
+    /// track_banks，供鼓/乐器模式检测使用——否则 10 通道用 CC0<120 声明为乐器
+    /// 时会被当作默认鼓通道（事件丢失 bug）。
+    #[test]
+    fn track_banks_merge_cc0_lane_and_folded_pc_bank() {
+        use yinhe_types::PcEvent;
+
+        let mut model = model_with_lanes(vec![AutomationLane {
+            target: AutomationTarget::CC { controller: 0 },
+            track: 0,
+            events: vec![AutomationEvent {
+                tick: 100,
+                value: 0.0, // 乐器 bank
+                shape: SegmentShape::Step,
+            }],
+        }]);
+        // 轨道 2：同 tick CC0+PC 被折叠进 PcEvent.bank_msb（独立 lane 不存在）。
+        let mut t2 = TrackData::new(0, 9);
+        t2.program_change = vec![
+            PcEvent {
+                tick: 200,
+                program: 0,
+                bank_msb: 0, // 乐器 bank（XG 风格声明）
+                bank_lsb: 0,
+            },
+            PcEvent {
+                tick: 400,
+                program: 0,
+                bank_msb: 121, // 鼓 bank
+                bank_lsb: 0xFF,
+            },
+        ];
+        model.tracks.push(Arc::new(t2));
+        // 轨道 3：无任何 bank 声明。
+        model.tracks.push(Arc::new(TrackData::new(0, 3)));
+
+        let audio = AudioModel::from_model(&model);
+        assert_eq!(audio.track_banks[0], vec![(100, 0)]);
+        assert_eq!(audio.track_banks[1], vec![(200, 0), (400, 121)]);
+        assert!(audio.track_banks[2].is_empty());
     }
 
     /// 回归测试：同 tick 上 RPN 0 (PBS) 必须排在 PitchBend 之前。
