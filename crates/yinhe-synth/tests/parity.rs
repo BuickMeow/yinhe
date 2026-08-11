@@ -65,12 +65,13 @@ fn cpu_render(sfz: &Path) -> Vec<f32> {
         channels: ChannelCount::Stereo,
         sample_rate: SR,
     };
-    let sf = SampleSoundfont::new_sfz(
+    // 按扩展名分派（SFZ/SF2 都支持；SF2 的 preset 与 GPU 路径同源）
+    let sf = SampleSoundfont::new(
         sfz.to_path_buf(),
         stream_params,
         SoundfontInitOptions::default(),
     )
-    .expect("SFZ load failed");
+    .expect("soundfont load failed");
 
     let config = ChannelGroupConfig {
         channel_init_options: Default::default(),
@@ -288,12 +289,12 @@ fn multi_port_channels_do_not_fold() {
         channels: ChannelCount::Stereo,
         sample_rate: SR,
     };
-    let sf = SampleSoundfont::new_sfz(
+    let sf = SampleSoundfont::new(
         sfz.to_path_buf(),
         stream_params,
         SoundfontInitOptions::default(),
     )
-    .expect("SFZ load failed");
+    .expect("soundfont load failed");
     let config = ChannelGroupConfig {
         channel_init_options: Default::default(),
         format: SynthFormat::Custom { channels: 32 },
@@ -397,6 +398,190 @@ fn multi_port_channels_do_not_fold() {
         rel_rms < 0.05,
         "多端口通道折叠：ch16 的 CC7 污染了 ch0 状态（rel_rms={rel_rms:.3}）"
     );
+}
+
+/// ProgramChange 切换 (bank, preset) 音色库条目（与 xsynth rebuild_matrix 同语义）。
+///
+/// 用多 preset 音色库（如 GeneralUser-GS.sf2：PC0=大钢琴、PC24=尼龙吉他）对比
+/// GPU 与 CPU 直连波形；单条目 SFZ 下两段 PC 都选 (0,0)，测试平凡通过（不误报）。
+/// 选不到条目时静音（xsynth 缺失 preset 语义）由两段波形的能量差覆盖。
+#[test]
+fn program_change_selects_preset() {
+    let Some(sfz) = test_sfz() else { return };
+    let sr = SR as u64;
+
+    let mut gpu_events: Vec<yinhe_synth::SynthEvent> = vec![
+        yinhe_synth::SynthEvent::Control {
+            sample: 0,
+            channel: 0,
+            event: yinhe_synth::ControlEvent::ProgramChange(0),
+        },
+        yinhe_synth::SynthEvent::NoteOn {
+            sample: 100 * sr / 1000,
+            channel: 0,
+            key: 60,
+            velocity: 100,
+        },
+        yinhe_synth::SynthEvent::NoteOff {
+            sample: 800 * sr / 1000,
+            channel: 0,
+            key: 60,
+        },
+        yinhe_synth::SynthEvent::Control {
+            sample: 900 * sr / 1000,
+            channel: 0,
+            event: yinhe_synth::ControlEvent::ProgramChange(24),
+        },
+        yinhe_synth::SynthEvent::NoteOn {
+            sample: 1000 * sr / 1000,
+            channel: 0,
+            key: 64,
+            velocity: 100,
+        },
+        yinhe_synth::SynthEvent::NoteOff {
+            sample: 1800 * sr / 1000,
+            channel: 0,
+            key: 64,
+        },
+    ];
+    gpu_events.sort_by_key(|e| e.sample());
+
+    let mut gpu = GpuSynth::new_default(SR).expect("GpuSynth init failed");
+    gpu.load_port_soundfonts(0, &[0], std::slice::from_ref(&sfz))
+        .expect("soundfont load failed");
+    gpu.set_limiter_enabled(false);
+    gpu.load_events(gpu_events.clone());
+    let total_frames = 2100 * sr / 1000;
+    let mut gpu_out = Vec::with_capacity(total_frames as usize * 2);
+    let mut chunk = vec![0.0f32; FRAMES as usize * 2];
+    while gpu.sample_position() < total_frames {
+        let frames = ((total_frames - gpu.sample_position()) as usize).min(FRAMES as usize);
+        gpu.render(&mut chunk[..frames * 2]);
+        gpu_out.extend_from_slice(&chunk[..frames * 2]);
+    }
+
+    // 直连（32 通道 ChannelGroup + SetSoundfonts + PC 事件）
+    let stream_params = AudioStreamParams {
+        channels: ChannelCount::Stereo,
+        sample_rate: SR,
+    };
+    let sf = Arc::new(
+        SampleSoundfont::new(sfz.clone(), stream_params, SoundfontInitOptions::default())
+            .expect("soundfont load failed"),
+    );
+    let config = ChannelGroupConfig {
+        channel_init_options: Default::default(),
+        format: SynthFormat::Custom { channels: 32 },
+        audio_params: stream_params,
+        parallelism: xsynth_core::channel_group::ParallelismOptions {
+            channel: xsynth_core::channel_group::ThreadCount::None,
+            key: xsynth_core::channel_group::ThreadCount::None,
+        },
+    };
+    let mut cg = ChannelGroup::new(config);
+    cg.send_event(SynthEvent::Channel(
+        0,
+        ChannelEvent::Config(ChannelConfigEvent::SetSoundfonts(vec![sf])),
+    ));
+    // 事件按 sample 位置逐步派发（与 multi_port 测试一致）
+    let xev: Vec<(u64, SynthEvent)> = gpu_events
+        .iter()
+        .map(|e| {
+            let (sample, event) = match e {
+                yinhe_synth::SynthEvent::NoteOn {
+                    sample,
+                    channel,
+                    key,
+                    velocity,
+                } => (
+                    *sample,
+                    SynthEvent::Channel(
+                        *channel as u32,
+                        ChannelEvent::Audio(ChannelAudioEvent::NoteOn {
+                            key: *key,
+                            vel: *velocity,
+                        }),
+                    ),
+                ),
+                yinhe_synth::SynthEvent::NoteOff {
+                    sample,
+                    channel,
+                    key,
+                    ..
+                } => (
+                    *sample,
+                    SynthEvent::Channel(
+                        *channel as u32,
+                        ChannelEvent::Audio(ChannelAudioEvent::NoteOff { key: *key }),
+                    ),
+                ),
+                yinhe_synth::SynthEvent::Control {
+                    sample,
+                    channel,
+                    event,
+                } => (
+                    *sample,
+                    SynthEvent::Channel(
+                        *channel as u32,
+                        ChannelEvent::Audio(match event {
+                            yinhe_synth::ControlEvent::Raw(c, v) => {
+                                ChannelAudioEvent::Control(ControlEvent::Raw(*c, *v))
+                            }
+                            yinhe_synth::ControlEvent::ProgramChange(p) => {
+                                ChannelAudioEvent::ProgramChange(*p)
+                            }
+                            _ => panic!("unexpected control"),
+                        }),
+                    ),
+                ),
+            };
+            (sample, event)
+        })
+        .collect();
+    let mut xout = Vec::with_capacity(total_frames as usize * 2);
+    let mut cursor = 0usize;
+    let mut rendered = 0u64;
+    while rendered < total_frames {
+        while cursor < xev.len() && xev[cursor].0 <= rendered {
+            cg.send_event(xev[cursor].1.clone());
+            cursor += 1;
+        }
+        let seg_end = xev
+            .get(cursor)
+            .map(|(s, _)| (*s).min(total_frames))
+            .unwrap_or(total_frames);
+        let frames = (seg_end - rendered) as usize;
+        let mut done = 0usize;
+        while done < frames {
+            let n = (frames - done).min(FRAMES as usize);
+            cg.read_samples(&mut chunk[..n * 2]);
+            xout.extend_from_slice(&chunk[..n * 2]);
+            done += n;
+        }
+        rendered = seg_end;
+    }
+
+    let n = gpu_out.len().min(xout.len());
+    let mut sse = 0.0f64;
+    let mut s_ref = 0.0f64;
+    for i in 0..n {
+        let d = (gpu_out[i] - xout[i]) as f64;
+        sse += d * d;
+        s_ref += xout[i] as f64 * xout[i] as f64;
+    }
+    let rel_rms = (sse / s_ref.max(1e-9)).sqrt();
+    assert!(
+        rel_rms < 0.05,
+        "ProgramChange 选择音色库与 xsynth 不一致（rel_rms={rel_rms:.3}）"
+    );
+    // 第二段（PC24 后）必须有能量：两个 PC 都用同一 (0,0) 条目时也成立
+    let seg_start = (1000 * sr / 1000) as usize * 2;
+    let seg_end = (1800 * sr / 1000) as usize * 2;
+    let seg_energy: f64 = gpu_out[seg_start..seg_end]
+        .iter()
+        .map(|s| (s * s) as f64)
+        .sum();
+    assert!(seg_energy > 1e-6, "PC24 段无能量（音色库条目选择异常）");
 }
 
 /// 通道控制事件计划：(ms, controller, value)

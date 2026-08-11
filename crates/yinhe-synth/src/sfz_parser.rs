@@ -42,6 +42,9 @@ pub struct KeyInfo {
     pub pan: f32,
     /// 采样起始偏移（帧，已按目标采样率换算）。
     pub offset: u32,
+    /// 采样结束位置（帧，已换算；SF2 的 sample_end，等价 xsynth LoopParams.stop；
+    /// SFZ 无此概念为 None）。播放长度 = min(采样长度, stop) - offset。
+    pub stop: Option<u32>,
 
     // ── ADSR 包络（秒；攻击/释放已有 0.001s 下限防除零）──
     pub ampeg_start: f32, // 0..1
@@ -87,6 +90,7 @@ impl Default for KeyInfo {
             volume: 1.0,
             pan: 0.5,
             offset: 0,
+            stop: None,
             ampeg_start: 0.0,
             ampeg_delay: 0.0,
             ampeg_attack: 0.001,
@@ -286,6 +290,7 @@ fn build_key_map_from_sfz(sfz_path: &Path, sample_rate: u32) -> Result<Vec<Vec<K
                     volume,
                     pan,
                     offset: (region.offset as f32 * factor) as u32,
+                    stop: None,
                     ampeg_start: ampeg.ampeg_start / 100.0,
                     ampeg_delay: ampeg.ampeg_delay,
                     ampeg_attack: ampeg.ampeg_attack.max(0.001),
@@ -395,6 +400,7 @@ fn build_key_maps_from_sf2(sf2_path: &Path, sample_rate: u32) -> Result<Vec<KeyM
                         loop_mode,
                         loop_start: region.loop_start,
                         loop_end: region.loop_end,
+                        stop: Some(region.sample_end),
                         cutoff,
                         resonance: 10.0f32.powf(np.resonance / 20.0) * Q_BUTTERWORTH,
                         filter_type: FilterType::LowPass,

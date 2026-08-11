@@ -1034,6 +1034,13 @@ impl GpuSynth {
         let angle = info.pan * std::f32::consts::FRAC_PI_2;
         let (base_pan_l, base_pan_r) =
             ((angle.cos() * 1.42).min(1.0), (angle.sin() * 1.42).min(1.0));
+        // 播放长度：SF2 的 sample_end（xsynth LoopParams.stop）封顶，SFZ 到采样末尾
+        let sample_length = match info.stop {
+            Some(stop) => stop
+                .saturating_sub(info.offset)
+                .min(length.saturating_sub(info.offset)),
+            None => length.saturating_sub(info.offset),
+        };
 
         // per-voice biquad 系数（RBJ cookbook，与 xsynth 一致）；cutoff=0 时无滤波器
         let (flt_b0, flt_b1, flt_b2, flt_a1, flt_a2) = if info.cutoff > 0.0 {
@@ -1073,7 +1080,7 @@ impl GpuSynth {
             release_pending: false,
             state: GpuVoiceState {
                 sample_offset: offset + info.offset,
-                sample_length: length - info.offset.min(length),
+                sample_length,
                 speed: info.speed_mult * ch.pitch_multiplier(),
                 base_speed: info.speed_mult,
                 base_gain: info.volume,

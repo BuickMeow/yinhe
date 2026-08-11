@@ -233,8 +233,11 @@ pub fn advance_voices(voices: &mut [GpuVoiceState], frame_count: u32) {
         if has_loop && voice.time > voice.loop_end as f32 {
             let loop_len = (voice.loop_end - voice.loop_start) as f32;
             if loop_len > 0.0 {
-                let off = (voice.time - voice.loop_end as f32 - 1.0).max(0.0);
-                voice.time = voice.loop_start as f32 + off % loop_len;
+                // 回绕到回绕区 [end+1, end+len]（不落回恒等区 [start, end]）：
+                // xsynth 原始位置永不回绕，回绕环 = len 样本（不含 end）；
+                // 落回恒等区会让下一段相位漂移（多播 end，循环周期变 len+1）。
+                let off = (voice.time - voice.loop_end as f32 - 1.0) % loop_len;
+                voice.time = voice.loop_end as f32 + 1.0 + off;
             }
         }
 

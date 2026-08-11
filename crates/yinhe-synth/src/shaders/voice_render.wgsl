@@ -490,9 +490,12 @@ fn vs_main(@builtin(workgroup_id) wid: vec3<u32>,
                     && st.loop_end > st.loop_start;
                 if looped && st.time > f32(st.loop_end) {
                     let loop_len = f32(st.loop_end - st.loop_start);
-                    // (t - end - 1) % len 可能为负（f32 % 保留符号），clamp 到 0
-                    let off = max(st.time - f32(st.loop_end) - 1.0, 0.0);
-                    st.time = f32(st.loop_start) + off % loop_len;
+                    // 回绕到回绕区 [end+1, end+len]（不落回恒等区 [start, end]）：
+                    // xsynth 的原始位置永不回绕，回绕环 = len 样本（不含 end，恒等区
+                    // 只在第一遍出现）；若回绕进恒等区，块边界后相位会漂移
+                    // （多播 end 一次，循环周期变 len+1，长音符逐步失同步）。
+                    let off = (st.time - f32(st.loop_end) - 1.0) % loop_len;
+                    st.time = f32(st.loop_end) + 1.0 + off;
                 }
             }
         } else {
