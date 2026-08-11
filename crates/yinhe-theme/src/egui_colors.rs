@@ -35,20 +35,12 @@ pub struct Theme {
     // ── 文字灰阶（从 text 标准色派生） ──
     pub text_primary: Color32,
     pub text_bright: Color32,
-    pub text_medium: Color32,
     pub text_secondary: Color32,
     pub tab_dirty_dot: Color32,
     pub text_muted: Color32,
-    pub text_faint: Color32,
     pub text_label: Color32,
-    pub text_dim: Color32,
-    pub text_dimmer: Color32,
-    pub text_hint: Color32,
-    pub text_label_dim: Color32,
     pub text_disabled: Color32,
     pub mode_bar_text: Color32,
-    pub text_selected: Color32,
-    pub tooltip_text: Color32,
     // ── 强调 / 选中 / hover ──
     pub accent_active: Color32,
     pub selected_bg: Color32,
@@ -59,15 +51,12 @@ pub struct Theme {
     pub danger: Color32,
     pub danger_text: Color32,
     pub danger_text_bright: Color32,
-    pub error_text: Color32,
     pub danger_hover: Color32,
     pub warning_gold: Color32,
     pub mute_active: Color32,
     pub solo_active: Color32,
     // ── 标尺 / 网格线 ──
     pub measure_label: Color32,
-    pub beat_label: Color32,
-    pub sub_beat_label: Color32,
     pub tick_label: Color32,
     pub grid_sub_beat: Color32,
     /// 网格 1tick 最浅档（bg+3%）。
@@ -166,15 +155,9 @@ pub fn derive_theme(base: crate::base::BaseColors) -> Theme {
     // 文字灰阶两套 token（暗色乘法衰减；亮色向背景插值变浅，避免坍缩成黑）
     let text_primary = text;
     let text_bright = gray_tone(text, bg, dark, if dark { 0.90 } else { 0.06 });
-    let text_medium = gray_tone(text, bg, dark, if dark { 0.86 } else { 0.10 });
     let text_secondary = gray_tone(text, bg, dark, if dark { 0.82 } else { 0.14 });
     let text_muted = gray_tone(text, bg, dark, if dark { 0.73 } else { 0.22 });
-    let text_faint = gray_tone(text, bg, dark, if dark { 0.64 } else { 0.30 });
     let text_label = gray_tone(text, bg, dark, if dark { 0.58 } else { 0.36 });
-    let text_dim = gray_tone(text, bg, dark, if dark { 0.55 } else { 0.40 });
-    let text_dimmer = gray_tone(text, bg, dark, if dark { 0.50 } else { 0.46 });
-    let text_hint = gray_tone(text, bg, dark, if dark { 0.45 } else { 0.52 });
-    let text_label_dim = gray_tone(text, bg, dark, if dark { 0.41 } else { 0.58 });
     let text_disabled = gray_tone(text, bg, dark, if dark { 0.36 } else { 0.66 });
 
     // ── 表面层级：两套 token（暗色提亮、亮色压暗，幅度各自感知校准）──
@@ -210,7 +193,6 @@ pub fn derive_theme(base: crate::base::BaseColors) -> Theme {
     // 危险系：危险色与文字/对比色混合得到浅红/暗红档位（同色相）
     let danger_text = mix(danger, text, 0.28);
     let danger_text_bright = mix(danger, contrast, 0.30);
-    let error_text = mix(danger, text, 0.32);
     let danger_hover = mix(danger, text_label, 0.30);
     let warning_gold = mix(warning, text, 0.25);
 
@@ -223,20 +205,12 @@ pub fn derive_theme(base: crate::base::BaseColors) -> Theme {
         control_selected_bg: mix_control_selected,
         text_primary,
         text_bright,
-        text_medium,
         text_secondary,
         tab_dirty_dot: text_bright,
         text_muted,
-        text_faint,
         text_label,
-        text_dim,
-        text_dimmer,
-        text_hint,
-        text_label_dim,
         text_disabled,
         mode_bar_text: text_label,
-        text_selected: contrast_text(selected_bg),
-        tooltip_text: contrast,
         accent_active: accent,
         selected_bg,
         contrast_fg: contrast,
@@ -244,14 +218,11 @@ pub fn derive_theme(base: crate::base::BaseColors) -> Theme {
         danger,
         danger_text,
         danger_text_bright,
-        error_text,
         danger_hover,
         warning_gold,
         mute_active: warning,
         solo_active: danger_text,
         measure_label: mix_measure_label,
-        beat_label: text_dim,
-        sub_beat_label: text_label_dim,
         tick_label: mix_tick_label,
         grid_sub_beat: mix_grid_sub_beat,
         grid_tick: mix_grid_tick,
@@ -284,7 +255,6 @@ mod tests {
         assert_eq!(t.line_fg, Color32::from_rgb(54, 54, 56));
         // hover/选中文字在暗底上应为白
         assert_eq!(t.contrast_fg, Color32::WHITE);
-        assert_eq!(t.text_selected, Color32::WHITE);
         assert!(t.dark_mode);
     }
 
@@ -295,10 +265,9 @@ mod tests {
         assert!(!t.dark_mode);
         // 亮底上的对比文字应为深色
         assert_eq!(t.contrast_fg, Color32::from_gray(20));
-        assert_eq!(t.text_selected, Color32::from_gray(20));
         // 灰阶比主文字浅（亮色主题灰阶 = 主文字向背景插值，而非乘法变暗）
-        assert!(t.text_dim.r() > t.text_primary.r());
-        assert!(t.text_disabled.r() > t.text_dim.r());
+        assert!(t.text_label.r() > t.text_primary.r());
+        assert!(t.text_disabled.r() > t.text_label.r());
         // 线条色比背景亮/暗方向随主题（亮色主题线条比背景暗）
         assert!(t.line_fg.r() < t.app_bg.r());
         let dark = derive_theme(crate::base::BaseColors::DARK);
@@ -318,15 +287,9 @@ mod tests {
             let ladder = [
                 t.text_primary,
                 t.text_bright,
-                t.text_medium,
                 t.text_secondary,
                 t.text_muted,
-                t.text_faint,
                 t.text_label,
-                t.text_dim,
-                t.text_dimmer,
-                t.text_hint,
-                t.text_label_dim,
                 t.text_disabled,
             ];
             assert!(
@@ -335,7 +298,7 @@ mod tests {
                 ladder
             );
             // 最弱档与主文字拉开足够差距（>= 40 级），否则亮色下灰字≈黑字
-            assert!(lum(ladder[11]) - lum(ladder[0]) >= 40);
+            assert!(lum(ladder[5]) - lum(ladder[0]) >= 40);
         }
     }
 

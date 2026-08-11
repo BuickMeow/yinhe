@@ -410,7 +410,7 @@ pub(super) fn show_track_info(
         let mute_color = if muted {
             crate::theme::mute_active()
         } else {
-            crate::theme::text_faint()
+            crate::theme::text_label()
         };
         let r1 = ui.add(
             egui::Button::new(crate::widgets::icon_text::icon_text(
@@ -428,7 +428,7 @@ pub(super) fn show_track_info(
         let solo_color = if soloed {
             crate::theme::solo_active()
         } else {
-            crate::theme::text_faint()
+            crate::theme::text_label()
         };
         let r2 = ui.add(
             egui::Button::new(crate::widgets::icon_text::icon_text(

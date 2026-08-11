@@ -1,8 +1,9 @@
 //! 主题标准色（用户可调）与派生主题。
 //!
 //! 设计目标：用户只改 7 个标准色（`BaseColors`），`derive_theme` 纯函数
-//! 计算全部 ~60 个派生色，即可得到一套完整主题（见 `egui_colors::Theme`）。
-//! 无 egui feature 时只提供纯数据（`Rgba`/`BaseColors`，供设置持久化）。
+//! 计算全部派生色（文字灰阶 6 档 + 状态/语义色），即可得到一套完整主题
+//! （见 `egui_colors::Theme`）。无 egui feature 时只提供纯数据
+//! （`Rgba`/`BaseColors`，供设置持久化）。
 
 use serde::{Deserialize, Serialize};
 

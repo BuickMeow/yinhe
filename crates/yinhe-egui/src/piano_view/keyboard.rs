@@ -52,7 +52,7 @@ pub fn paint(
                 egui::Align2::LEFT_CENTER,
                 label,
                 egui::FontId::proportional((kh * 0.5).clamp(8.0, 14.0)),
-                crate::theme::text_label_dim(),
+                crate::theme::text_disabled(),
             );
         }
     }

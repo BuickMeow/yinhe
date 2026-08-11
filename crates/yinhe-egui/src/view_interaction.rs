@@ -357,7 +357,7 @@ pub(crate) fn draw_hover_tooltip(ctx: &egui::Context, lines: &[String], x: f32, 
     let line_h = 16.0;
     for line in lines {
         let galley =
-            painter.layout_no_wrap(line.clone(), font_id.clone(), crate::theme::tooltip_text());
+            painter.layout_no_wrap(line.clone(), font_id.clone(), crate::theme::contrast_fg());
         max_w = max_w.max(galley.rect.width());
     }
     let total_h = line_h * lines.len() as f32;
@@ -374,7 +374,7 @@ pub(crate) fn draw_hover_tooltip(ctx: &egui::Context, lines: &[String], x: f32, 
             egui::Align2::LEFT_TOP,
             line,
             font_id.clone(),
-            crate::theme::tooltip_text(),
+            crate::theme::contrast_fg(),
         );
         ly += line_h;
     }

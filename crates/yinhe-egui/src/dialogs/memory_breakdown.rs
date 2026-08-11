@@ -59,7 +59,7 @@ pub(crate) fn show_viewport(ctx: &egui::Context, open: &mut bool, mem_mb: f64, m
                                             egui::RichText::new(
                                                 t!("dialog.memory.not_enabled").as_ref(),
                                             )
-                                            .color(crate::theme::text_faint()),
+                                            .color(crate::theme::text_label()),
                                         );
                                     }
                                     ui.label(

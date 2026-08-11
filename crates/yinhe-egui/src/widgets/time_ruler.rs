@@ -271,7 +271,7 @@ fn paint_labels(
                 } else if is_beat && show_beat {
                     let bar = bar_offset + (local / ticks_per_measure) + 1;
                     let beat = (local % ticks_per_measure) / ticks_per_beat + 1;
-                    (format!("{}.{}", bar, beat), theme::beat_label())
+                    (format!("{}.{}", bar, beat), theme::text_label())
                 } else if show_sub {
                     let bar = bar_offset + (local / ticks_per_measure) + 1;
                     let beat = (local % ticks_per_measure) / ticks_per_beat + 1;
@@ -283,7 +283,7 @@ fn paint_labels(
                         )
                     } else {
                         let sub = (local % ticks_per_beat) / ticks_per_sub;
-                        (format!("{}.{}.{}", bar, beat, sub), theme::sub_beat_label())
+                        (format!("{}.{}.{}", bar, beat, sub), theme::text_disabled())
                     }
                 } else {
                     tick += main_step;

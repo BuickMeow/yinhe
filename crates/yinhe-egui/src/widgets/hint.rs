@@ -6,7 +6,7 @@ pub(crate) fn empty_hint(ui: &mut egui::Ui, text: &str) {
     ui.add_space(8.0);
     ui.label(
         egui::RichText::new(text)
-            .color(crate::theme::text_hint())
+            .color(crate::theme::text_disabled())
             .size(crate::theme::BODY_FONT),
     );
 }

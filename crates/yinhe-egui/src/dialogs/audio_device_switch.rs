@@ -112,7 +112,7 @@ pub(crate) fn show_viewport(
                                                             t!("dialog.audio_switch.no_devices")
                                                                 .as_ref(),
                                                         )
-                                                        .color(crate::theme::text_faint()),
+                                                        .color(crate::theme::text_label()),
                                                     );
                                                 });
                                             }

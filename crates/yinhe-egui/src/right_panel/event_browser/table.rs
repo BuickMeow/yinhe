@@ -173,7 +173,7 @@ pub(super) fn cell_row_header(
     row.col(|ui| {
         let is_selected = state.selected_ticks.contains(&tick);
         let label_color = if is_selected {
-            crate::theme::text_selected()
+            crate::theme::contrast_fg()
         } else {
             crate::theme::text_secondary()
         };
@@ -305,7 +305,7 @@ pub(super) fn empty_state_add_button(ui: &mut egui::Ui, id_salt: &str) -> bool {
         ui.label(
             egui::RichText::new("点击新建第一个事件")
                 .size(crate::theme::SMALL_FONT)
-                .color(crate::theme::text_faint()),
+                .color(crate::theme::text_label()),
         );
     });
     if clicked {
@@ -484,7 +484,7 @@ pub(super) fn render_pager(ui: &mut egui::Ui, page: usize, total_pages: usize) -
         ui.label(
             egui::RichText::new(format!("/ {}", total_pages))
                 .size(crate::theme::SMALL_FONT)
-                .color(crate::theme::text_faint()),
+                .color(crate::theme::text_label()),
         );
         let buf: String = ui.memory(|m| {
             m.data

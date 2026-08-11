@@ -70,12 +70,12 @@ pub(crate) fn show_viewport(ctx: &egui::Context, progress: SharedProgress) -> bo
                                         ui.label(
                                             egui::RichText::new(&stage.label)
                                                 .size(crate::theme::BODY_FONT)
-                                                .color(crate::theme::text_dim()),
+                                                .color(crate::theme::text_label()),
                                         );
                                         ui.label(
                                             egui::RichText::new(t!("dialog.loading.waiting"))
                                                 .size(crate::theme::SMALL_LABEL_FONT)
-                                                .color(crate::theme::text_dim()),
+                                                .color(crate::theme::text_label()),
                                         );
                                     } else {
                                         ui.add(

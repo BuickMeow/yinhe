@@ -382,7 +382,7 @@ fn paint_window_buttons(
     let x_color = if close_hover {
         crate::theme::contrast_fg()
     } else {
-        crate::theme::text_dim()
+        crate::theme::text_label()
     };
     let cx = close_rect.center();
     let x_size = 8.0;
@@ -409,7 +409,7 @@ fn paint_window_buttons(
     let max_color = if max_hover {
         crate::theme::contrast_fg()
     } else {
-        crate::theme::text_dim()
+        crate::theme::text_label()
     };
     let mcx = maximize_rect.center();
     let m_size = 9.0;
@@ -444,7 +444,7 @@ fn paint_window_buttons(
     let min_color = if min_hover {
         crate::theme::contrast_fg()
     } else {
-        crate::theme::text_dim()
+        crate::theme::text_label()
     };
     let mn_cx = minimize_rect.center();
     let line_y = mn_cx.y;

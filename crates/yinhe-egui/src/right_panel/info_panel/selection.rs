@@ -430,7 +430,7 @@ fn field_row(
             ui.label(
                 egui::RichText::new(s)
                     .size(crate::theme::SMALL_FONT)
-                    .color(crate::theme::text_faint()),
+                    .color(crate::theme::text_label()),
             );
         }
         ui.ctx().data_mut(|d| d.insert_temp(buf_id, text.clone()));

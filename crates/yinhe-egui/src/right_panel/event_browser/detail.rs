@@ -1041,24 +1041,27 @@ pub(super) fn show_overview(ui: &mut egui::Ui, model: &yinhe_core::YinModel) {
     } else {
         &model.meta.artist
     };
-    ui.colored_label(crate::theme::text_dim(), format!("名称: {}", name));
-    ui.colored_label(crate::theme::text_dim(), format!("作者: {}", artist));
-    ui.colored_label(crate::theme::text_dim(), format!("PPQ: {}", model.meta.ppq));
+    ui.colored_label(crate::theme::text_label(), format!("名称: {}", name));
+    ui.colored_label(crate::theme::text_label(), format!("作者: {}", artist));
     ui.colored_label(
-        crate::theme::text_dim(),
+        crate::theme::text_label(),
+        format!("PPQ: {}", model.meta.ppq),
+    );
+    ui.colored_label(
+        crate::theme::text_label(),
         format!("zstd 等级: {}", model.meta.compression_level),
     );
     let groups = super::group_tracks_by_port_channel(model, None);
     ui.colored_label(
-        crate::theme::text_dim(),
+        crate::theme::text_label(),
         format!("活跃 port 数: {}", groups.len()),
     );
     ui.colored_label(
-        crate::theme::text_dim(),
+        crate::theme::text_label(),
         format!("轨道: {} 个", model.tracks.len()),
     );
     ui.colored_label(
-        crate::theme::text_dim(),
+        crate::theme::text_label(),
         format!("音符: {} 个", model.note_count),
     );
     let mut cc = 0usize;
@@ -1074,31 +1077,31 @@ pub(super) fn show_overview(ui: &mut egui::Ui, model: &yinhe_core::YinModel) {
         }
         pc += t.program_change.len();
     }
-    ui.colored_label(crate::theme::text_dim(), format!("CC: {} 个", cc));
-    ui.colored_label(crate::theme::text_dim(), format!("弯音: {} 个", pb));
-    ui.colored_label(crate::theme::text_dim(), format!("音色变更: {} 个", pc));
+    ui.colored_label(crate::theme::text_label(), format!("CC: {} 个", cc));
+    ui.colored_label(crate::theme::text_label(), format!("弯音: {} 个", pb));
+    ui.colored_label(crate::theme::text_label(), format!("音色变更: {} 个", pc));
     ui.colored_label(
-        crate::theme::text_dim(),
+        crate::theme::text_label(),
         format!("Tempo: {} 个", model.conductor.tempo.events.len()),
     );
     ui.colored_label(
-        crate::theme::text_dim(),
+        crate::theme::text_label(),
         format!("拍号: {} 个", model.conductor.time_sig.len()),
     );
     if !model.conductor.key_sig.is_empty() {
         ui.colored_label(
-            crate::theme::text_dim(),
+            crate::theme::text_label(),
             format!("调号: {} 个", model.conductor.key_sig.len()),
         );
     }
     if !model.conductor.markers.is_empty() {
         ui.colored_label(
-            crate::theme::text_dim(),
+            crate::theme::text_label(),
             format!("标记: {} 个", model.conductor.markers.len()),
         );
     }
     ui.add_space(8.0);
-    ui.colored_label(crate::theme::text_hint(), "← 点击左侧条目查看详情");
+    ui.colored_label(crate::theme::text_disabled(), "← 点击左侧条目查看详情");
 }
 
 pub(super) fn show_track_detail(

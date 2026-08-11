@@ -70,7 +70,7 @@ pub fn show(
     if settings.global_sf_config.global_enabled {
         ui.label(
             egui::RichText::new(t!("soundfont.global_hint").as_ref())
-                .color(crate::theme::text_faint())
+                .color(crate::theme::text_label())
                 .size(crate::theme::BODY_FONT),
         );
         ui.add_space(4.0);
