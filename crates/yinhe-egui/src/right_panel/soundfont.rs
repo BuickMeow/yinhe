@@ -146,12 +146,10 @@ pub fn show(
 fn global_panel(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
     let mut changed = false;
 
-    // SF list — always edit ports[0]
-    let entries = &mut settings.global_sf_config.ports[0];
-    changed |= super::sf_list::sf_list(ui, entries, "global");
-
-    // Toolbar
+    // Toolbar 必须在列表上方：sf_list 的 ScrollArea 占满全部可用高度，
+    // 放在后面的按钮会被挤出可视区（空列表时无法添加第一个音色库）。
     ui.horizontal(|ui| {
+        let entries = &mut settings.global_sf_config.ports[0];
         if ui.button(add_button_text()).clicked()
             && let Some(paths) = rfd::FileDialog::new()
                 .add_filter("SoundFont", &["sf2", "sf3", "sfz"])
@@ -176,6 +174,11 @@ fn global_panel(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
             changed = true;
         }
     });
+    ui.add_space(4.0);
+
+    // SF list — always edit ports[0]
+    let entries = &mut settings.global_sf_config.ports[0];
+    changed |= super::sf_list::sf_list(ui, entries, "global");
 
     changed
 }
@@ -227,8 +230,9 @@ fn project_panel(ui: &mut egui::Ui, doc: &mut Document) -> bool {
         .position(|(p, _)| *p == port)
     {
         let entries = &mut doc.edit.project_sf.overrides[idx].1;
-        changed |= super::sf_list::sf_list(ui, entries, &format!("port_{port}"));
 
+        // Toolbar 必须在列表上方（sf_list 的 ScrollArea 占满剩余高度，
+        // 后面的按钮会被挤出可视区，空列表时无法添加第一个音色库）。
         ui.horizontal(|ui| {
             if ui.button(add_button_text()).clicked()
                 && let Some(paths) = rfd::FileDialog::new()
@@ -249,12 +253,14 @@ fn project_panel(ui: &mut egui::Ui, doc: &mut Document) -> bool {
                 }
                 changed = true;
             }
+            if ui.button(t!("soundfont.clear_port").as_ref()).clicked() {
+                entries.clear();
+                changed = true;
+            }
         });
+        ui.add_space(4.0);
 
-        if ui.button(t!("soundfont.clear_port").as_ref()).clicked() {
-            doc.edit.project_sf.overrides[idx].1.clear();
-            changed = true;
-        }
+        changed |= super::sf_list::sf_list(ui, entries, &format!("port_{port}"));
     } else {
         crate::widgets::hint::empty_hint(ui, t!("soundfont.not_configured").as_ref());
         if ui.button(t!("soundfont.add_for_port").as_ref()).clicked() {
