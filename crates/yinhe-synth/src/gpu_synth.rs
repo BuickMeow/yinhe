@@ -312,11 +312,19 @@ impl ChannelState {
     ///   xsynth 的块只被事件位置切断，不会被 render 的 512 帧 block 边界切断
     /// - Q = CC71 线性 Q，未设置时 Butterworth（0.7071）
     /// - 旁路（cutoff None）时不处理，DF1 状态保留（无 click）
-    fn apply_cutoff_filter(&mut self, mix: &mut [f32], sample_rate: u32, seg_start: u64) {
-        let Some(cutoff) = self.cutoff else {
+    /// - cutoff/resonance 为**段起点生效值**（xsynth 在事件帧切换，不是整块提前生效）
+    fn apply_cutoff_filter(
+        &mut self,
+        mix: &mut [f32],
+        sample_rate: u32,
+        seg_start: u64,
+        cutoff: Option<f32>,
+        resonance: Option<f32>,
+    ) {
+        let Some(cutoff) = cutoff else {
             return;
         };
-        let q = self.resonance.unwrap_or(std::f32::consts::FRAC_1_SQRT_2);
+        let q = resonance.unwrap_or(std::f32::consts::FRAC_1_SQRT_2);
         let mut pair = 0u64;
         while (pair as usize) * 2 + 1 < mix.len() {
             // 音频帧位置（pair = 帧索引；每帧 = L+R 两个 sample）。
@@ -537,6 +545,14 @@ impl GpuSynth {
         let mut ch_updates: Vec<ChState> = Vec::new();
         let mut releases: Vec<ReleaseCmd> = Vec::new();
         let mut env_cmds: Vec<EnvUpdateCmd> = Vec::new();
+        // 段边界通道效果快照（frame, ch, cutoff, resonance）：滤波按段切换，
+        // 与 xsynth 一致（CC71 Q/CC74 cutoff 在事件帧生效，不提前到块起点）
+        let mut seg_effects: Vec<(u32, usize, Option<f32>, Option<f32>)> = Vec::new();
+        let block_effects: Vec<(Option<f32>, Option<f32>)> = self
+            .channels
+            .iter()
+            .map(|c| (c.cutoff, c.resonance))
+            .collect();
         self.collect_block(
             block_start,
             block_end,
@@ -544,6 +560,7 @@ impl GpuSynth {
             &mut ch_updates,
             &mut releases,
             &mut env_cmds,
+            &mut seg_effects,
         );
 
         // 上传块起点 voice 状态（含块内新增）→ 一次提交 → 全字段读回
@@ -570,10 +587,40 @@ impl GpuSynth {
         // 无论有无 voice 都执行：cutoff 渐变与 DF1 状态照常推进（xsynth 的
         // apply_channel_effects 每块无条件调用，对空信号滤波时 lerp 不中断）。
         output.fill(0.0);
+        // 各通道：CC74 通道滤波（按段切换 cutoff/resonance，与 xsynth 事件级一致）
+        // → 求和（xsynth 顺序：vol/pan → cutoff → sum）。
+        // 无论有无 voice 都执行：cutoff 渐变与 DF1 状态照常推进（xsynth 的
+        // apply_channel_effects 每块无条件调用，对空信号滤波时 lerp 不中断）。
+        output.fill(0.0);
         for (ch_idx, ch) in self.channels.iter_mut().enumerate() {
             let base = ch_idx * frames * 2;
             let ch_mix = &mut self.channel_mix[base..base + frames * 2];
-            ch.apply_cutoff_filter(ch_mix, self.sample_rate, block_start);
+            let mut prev = 0u32;
+            let mut cut = block_effects[ch_idx].0;
+            let mut res = block_effects[ch_idx].1;
+            for &(f, c, cut2, res2) in &seg_effects {
+                if c != ch_idx {
+                    continue;
+                }
+                if f > prev {
+                    let seg = &mut ch_mix[prev as usize * 2..f as usize * 2];
+                    ch.apply_cutoff_filter(
+                        seg,
+                        self.sample_rate,
+                        block_start + prev as u64,
+                        cut,
+                        res,
+                    );
+                }
+                // 同一帧多条 CC（f == prev）：只更新状态，不重复滤波
+                cut = cut2;
+                res = res2;
+                prev = f;
+            }
+            if (frames as u32) > prev {
+                let seg = &mut ch_mix[prev as usize * 2..];
+                ch.apply_cutoff_filter(seg, self.sample_rate, block_start + prev as u64, cut, res);
+            }
             for (i, o) in output.iter_mut().enumerate() {
                 *o += ch_mix[i];
             }
@@ -609,6 +656,7 @@ impl GpuSynth {
     /// - note_on 创建 voice（块内帧偏移）；note_off 发 release 指令（帧 + vid）
     /// - CC72/73/121 发 env 指令；damper 松开/AllNotesOff 发 release/kill 指令
     /// - CPU 通道状态按段推进（与 shader 逐帧推进线性一致）
+    #[allow(clippy::too_many_arguments)] // 块内事件收集的上下文透传
     fn collect_block(
         &mut self,
         block_start: u64,
@@ -617,12 +665,23 @@ impl GpuSynth {
         ch_updates: &mut Vec<ChState>,
         releases: &mut Vec<ReleaseCmd>,
         env_cmds: &mut Vec<EnvUpdateCmd>,
+        seg_effects: &mut Vec<(u32, usize, Option<f32>, Option<f32>)>,
     ) {
         // 块起点：所有 voice 对齐通道状态（speed/ch_vol/expr/pan）。
         // 块起点若有 CC 事件（sample == block_start），其更新记录在段 0，
         // 由 shader 在初始化时应用——段 0 渲染起点值 = 这里的 sync 值（与现状一致）。
         self.sync_channel_state();
 
+        // 段 0 恒为空：块起点无事件时 shader 循环外应用它 = 无操作；
+        // 块起点有 CC 时其更新在段 1（start_frame=0），fi=0 即应用。
+        // 段 i（i>=1）的 start_frame = 该段边界 CC 的块内帧位置，
+        // 保证 CC 更新在**事件帧**生效而不是提前到块起点。
+        segs.push(SegInfo {
+            start_frame: 0,
+            ch_off: 0,
+            ch_count: 0,
+            _pad: 0,
+        });
         let mut seg_start = block_start;
         let mut seg_frame = 0u32;
         let mut seg_ch_off = 0usize;
@@ -669,11 +728,18 @@ impl GpuSynth {
             }
             let frame = (cc_sample - block_start) as u32;
             let seg_ch_off_before = seg_ch_off;
-            self.process_events_at(cc_sample, frame, ch_updates, releases, env_cmds);
+            self.process_events_at(
+                cc_sample,
+                frame,
+                ch_updates,
+                releases,
+                env_cmds,
+                seg_effects,
+            );
             let ch_count = ch_updates.len() - seg_ch_off_before;
 
             segs.push(SegInfo {
-                start_frame: seg_frame,
+                start_frame: frame,
                 ch_off: seg_ch_off_before as u32,
                 ch_count: ch_count as u32,
                 _pad: 0,
@@ -707,6 +773,7 @@ impl GpuSynth {
         ch_updates: &mut Vec<ChState>,
         releases: &mut Vec<ReleaseCmd>,
         env_cmds: &mut Vec<EnvUpdateCmd>,
+        seg_effects: &mut Vec<(u32, usize, Option<f32>, Option<f32>)>,
     ) {
         while self.event_cursor < self.events.len() {
             let ev = self.events[self.event_cursor];
@@ -801,6 +868,8 @@ impl GpuSynth {
                                 ch_pan_step: ch.pan.step,
                                 ch_pan_frames: ch.pan.frames_after(0.0),
                             });
+                            // 段边界的通道效果快照（滤波按段切换，事件帧生效）
+                            seg_effects.push((frame, ch_idx, ch.cutoff, ch.resonance));
                         }
                     }
                 }
@@ -810,7 +879,9 @@ impl GpuSynth {
     }
 
     /// CC72/73（及 CC121 重置）后重算该通道所有活跃 voice 的 attack/release 时长：
-    /// 基于 region 原始值重算（多次 CC 不累积），shader 从当前 amp 重走当前阶段。
+    /// 基于 region 原始值重算（多次 CC 不累积），shader 在指令帧应用并重走当前阶段。
+    /// **不**同步修改 voice state：若提前更新，shader 在指令帧之前就用新时长推进
+    /// （与 xsynth 事件帧才更新 params 不一致，release 起点 env 会偏差）。
     fn propagate_env_controls_to_cmds(
         &mut self,
         ch_idx: usize,
@@ -830,8 +901,6 @@ impl GpuSynth {
                 Some(cc) => env_curve_frames(cc, v.orig_release_frames, self.sample_rate, true),
                 None => v.state.release_frames,
             };
-            v.state.attack_frames = attack_frames;
-            v.state.release_frames = release_frames;
             env_cmds.push(EnvUpdateCmd {
                 frame,
                 vid: i as u32,

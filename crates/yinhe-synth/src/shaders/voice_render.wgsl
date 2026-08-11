@@ -302,7 +302,15 @@ fn vs_main(@builtin(workgroup_id) wid: vec3<u32>,
                 for (var ui: u32 = off; ui < off + cnt; ui++) {
                     let cu = ch_updates[ui];
                     if cu.ch == st.channel {
+                        let old_speed = st.speed;
                         st.speed = st.base_speed * cu.speed_mult;
+                        // speed 跳变（弯音/调音）时修正 time，保持采样位置连续：
+                        // 解析式 t = time + fi*speed 在段边界处产生 fi*(new-old) 的
+                        // 位置跳变，回退到上一帧末的连续位置（fi 帧从旧速度末尾接新速度）
+                        if fi > 0u {
+                            st.time += f32(fi) * (old_speed - st.speed)
+                                - (old_speed - st.speed);
+                        }
                         st.ch_vol = cu.ch_vol;
                         st.ch_vol_step = cu.ch_vol_step;
                         st.ch_vol_frames = cu.ch_vol_frames;
@@ -384,14 +392,16 @@ fn vs_main(@builtin(workgroup_id) wid: vec3<u32>,
             // 2=LoopSustain, 3=OneShot：
             // - Continuous：恒循环；Sustain：仅未 release（env_stage < 5）时循环，
             //   release 后从当前位置继续播到尾；NoLoop/OneShot：不循环，播完即结束
+            // - 回绕公式与 xsynth 一致：idx > loop_end 才回绕（loop 区间含 end），
+            //   (idx - end - 1) % len + start（不能 >=，否则差一个采样位置）
             let released = st.env_stage >= 5u;
             let loop_cont = st.loop_mode == 1u;
             let loop_sus = st.loop_mode == 2u && !released;
             let has_loop = (loop_cont || loop_sus) && st.loop_end > st.loop_start;
-            if has_loop && idx >= st.loop_end {
+            if has_loop && idx > st.loop_end {
                 let loop_len = st.loop_end - st.loop_start;
                 if loop_len > 0u {
-                    idx = st.loop_start + ((idx - st.loop_start) % loop_len);
+                    idx = (idx - st.loop_end - 1u) % loop_len + st.loop_start;
                 }
             }
 
@@ -472,6 +482,18 @@ fn vs_main(@builtin(workgroup_id) wid: vec3<u32>,
             st.start_offset = 0u;
             if st.env_stage < 6u {
                 st.time += st.speed * f32(act_frames);
+                // 跨块推进后回绕（与 xsynth 同一点：> loop_end），避免 f32 time
+                // 无限增长（2^24 采样 ≈ 6 分钟后丢精度，黑乐谱长曲必须回绕）。
+                // LoopSustain release 后不回绕：从当前位置继续播到尾。
+                let looped = (st.loop_mode == 1u
+                    || (st.loop_mode == 2u && st.env_stage < 5u))
+                    && st.loop_end > st.loop_start;
+                if looped && st.time > f32(st.loop_end) {
+                    let loop_len = f32(st.loop_end - st.loop_start);
+                    // (t - end - 1) % len 可能为负（f32 % 保留符号），clamp 到 0
+                    let off = max(st.time - f32(st.loop_end) - 1.0, 0.0);
+                    st.time = f32(st.loop_start) + off % loop_len;
+                }
             }
         } else {
             st.start_offset = 0u;
