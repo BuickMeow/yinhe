@@ -334,6 +334,11 @@ struct GpuBuffers {
     chunk_count: u32,
     voice_state_buf: wgpu::Buffer,
     max_voices: u32,
+    /// 段/指令缓冲的容量（按块内实际需求幂等增长）
+    segs_cap: usize,
+    ch_updates_cap: usize,
+    releases_cap: usize,
+    env_cmds_cap: usize,
     /// per-channel 混音输出（32 通道 × frames × 2 f32），pass2 写入
     channel_mix_buf: wgpu::Buffer,
     params_buf: wgpu::Buffer,
@@ -554,14 +559,41 @@ impl GpuAudioRenderer {
         self.buffers = None;
     }
 
-    fn ensure_buffers(&mut self, voice_count: u32, frame_count: u32) {
+    fn ensure_buffers(
+        &mut self,
+        voice_count: u32,
+        frame_count: u32,
+        segs_len: usize,
+        ch_updates_len: usize,
+        releases_len: usize,
+        env_cmds_len: usize,
+    ) {
         // 幂增长策略：向上取整到 2 的幂次，避免每个 block 都重建缓冲区
         let rounded_voices = voice_count.max(64).next_power_of_two();
+        // 指令/段缓冲按实际需求（块内事件数 × voice 数）分配，与 voice/帧数无关：
+        // 密集 CC（每帧多事件 × 每通道多活跃 voice）可远超 voice 数，固定上界会越界。
+        let segs_cap = (frame_count as usize + 1).max(segs_len).next_power_of_two();
+        let ch_updates_cap = (frame_count as usize * CHANNEL_COUNT)
+            .max(ch_updates_len)
+            .next_power_of_two();
+        let releases_cap = (rounded_voices as usize)
+            .max(releases_len)
+            .next_power_of_two();
+        let env_cmds_cap = (rounded_voices as usize)
+            .max(env_cmds_len)
+            .next_power_of_two();
         let needs_recreate = if self.sample_chunks.is_empty() {
             return;
         } else {
             match &self.buffers {
-                Some(b) => b.max_voices < rounded_voices || self.frame_count < frame_count,
+                Some(b) => {
+                    b.max_voices < rounded_voices
+                        || self.frame_count < frame_count
+                        || b.segs_cap < segs_cap
+                        || b.ch_updates_cap < ch_updates_cap
+                        || b.releases_cap < releases_cap
+                        || b.env_cmds_cap < env_cmds_cap
+                }
                 None => true,
             }
         };
@@ -616,16 +648,13 @@ impl GpuAudioRenderer {
             * 2
             * std::mem::size_of::<f32>()) as u64;
         let params_size = std::mem::size_of::<RenderParams>() as u64;
-        // 块内段结构：上界 = 每帧一段 × 每段 32 通道更新
-        let segs_size = (frame_count.max(1) as usize * std::mem::size_of::<SegInfo>()) as u64;
-        let ch_updates_size = (frame_count.max(1) as usize
-            * crate::gpu_synth::MAX_CHANNELS
-            * std::mem::size_of::<ChState>()) as u64;
+        // 块内段/指令结构：按实际需求容量（幂等增长）分配
+        let segs_size = (segs_cap * std::mem::size_of::<SegInfo>()) as u64;
+        let ch_updates_size = (ch_updates_cap * std::mem::size_of::<ChState>()) as u64;
         let release_by_frame_size =
             ((frame_count.max(1) as usize + 2) * std::mem::size_of::<u32>()) as u64;
-        let release_cmds_size =
-            (rounded_voices as usize * std::mem::size_of::<ReleaseCmd>()) as u64;
-        let env_cmds_size = (rounded_voices as usize * std::mem::size_of::<EnvUpdateCmd>()) as u64;
+        let release_cmds_size = (releases_cap * std::mem::size_of::<ReleaseCmd>()) as u64;
+        let env_cmds_size = (env_cmds_cap * std::mem::size_of::<EnvUpdateCmd>()) as u64;
 
         let voice_state_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("gpu_voice_states"),
@@ -823,6 +852,10 @@ impl GpuAudioRenderer {
             chunk_count,
             voice_state_buf,
             max_voices: rounded_voices,
+            segs_cap,
+            ch_updates_cap,
+            releases_cap,
+            env_cmds_cap,
             channel_mix_buf,
             params_buf,
             partial_buf,
@@ -863,7 +896,14 @@ impl GpuAudioRenderer {
             return 0;
         }
 
-        self.ensure_buffers(voice_count, frame_count);
+        self.ensure_buffers(
+            voice_count,
+            frame_count,
+            segs.len(),
+            ch_updates.len(),
+            releases.len(),
+            env_cmds.len(),
+        );
         // 未 upload 采样时（音色库为空）直接输出静音，绝不 panic
         let buf = match self.buffers.as_mut() {
             Some(b) => b,

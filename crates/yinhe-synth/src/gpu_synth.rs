@@ -403,6 +403,9 @@ pub struct GpuSynth {
     channel_mix: Vec<f32>,
     /// 32 通道 MIDI 控制状态
     channels: [ChannelState; MAX_CHANNELS],
+    /// 全局 voice 上限（黑乐谱长 sustain/无 note_off 的 voice 会累积，
+    /// 超限时淘汰最老的 release 中 voice，否则最老的 active——与 xsynth voice 限制同思路）
+    max_voices: usize,
     limiter: VolumeLimiter,
     /// 渲染后是否应用限幅器（默认开；对比测试可关闭）
     limiter_enabled: bool,
@@ -467,6 +470,7 @@ impl GpuSynth {
             states_buf: Vec::new(),
             channel_mix: Vec::new(),
             channels: [ChannelState::new(sample_rate); MAX_CHANNELS],
+            max_voices: 8192,
             limiter: VolumeLimiter::new(2),
             limiter_enabled: true,
             sample_rate,
@@ -498,6 +502,11 @@ impl GpuSynth {
     /// 开关渲染后的限幅器（默认开）。对比测试用于排除限幅差异。
     pub fn set_limiter_enabled(&mut self, enabled: bool) {
         self.limiter_enabled = enabled;
+    }
+
+    /// 设置全局 voice 上限（默认 8192）。超过时淘汰最老的 release 中 voice。
+    pub fn set_max_voices(&mut self, max: usize) {
+        self.max_voices = max;
     }
 
     /// Seek 到指定位置
@@ -636,7 +645,9 @@ impl GpuSynth {
                             key,
                             velocity,
                             ..
-                        } => self.note_on(channel, key, velocity, block_frame, seg_offset),
+                        } => {
+                            self.note_on(channel, key, velocity, block_frame, seg_offset, releases)
+                        }
                         SynthEvent::NoteOff { channel, key, .. } => {
                             self.note_off_to_cmd(channel, key, block_frame, releases);
                         }
@@ -708,7 +719,7 @@ impl GpuSynth {
                     key,
                     velocity,
                     ..
-                } => self.note_on(channel, key, velocity, frame, 0),
+                } => self.note_on(channel, key, velocity, frame, 0, releases),
                 SynthEvent::NoteOff { channel, key, .. } => {
                     self.note_off_to_cmd(channel, key, frame, releases);
                 }
@@ -851,7 +862,16 @@ impl GpuSynth {
 
     /// NoteOn（block_frame = 块内起始帧；seg_offset = 段内偏移，用于通道值快照）。
     /// key_map 已按 (key, vel) 展开为最终参数快照，这里零公式计算直接消费。
-    pub fn note_on(&mut self, channel: u8, key: u8, vel: u8, block_frame: u32, seg_offset: u32) {
+    /// 超 voice 上限时淘汰最老的 voice（发 kill 指令，不 remove——索引保持稳定）。
+    pub fn note_on(
+        &mut self,
+        channel: u8,
+        key: u8,
+        vel: u8,
+        block_frame: u32,
+        seg_offset: u32,
+        releases: &mut Vec<ReleaseCmd>,
+    ) {
         let info = match sfz_parser::select_key_info(&self.key_map, key, vel) {
             Some(i) => i,
             None => return,
@@ -966,6 +986,29 @@ impl GpuSynth {
                 flt_y2r: 0.0,
             },
         });
+
+        // 超限淘汰：优先杀最老的 release 中 voice（听感最弱），否则杀最老的 active。
+        // 只预置 stage 6 + 发 kill 指令，不 remove——本块已生成的指令索引保持稳定。
+        while self.voices.len() > self.max_voices {
+            let idx = self
+                .voices
+                .iter()
+                .position(|v| v.state.env_stage == 5)
+                .unwrap_or(0);
+            let v = &mut self.voices[idx];
+            if v.state.env_stage < 6 {
+                v.state.env_stage = 6;
+                v.held_by_damper = false;
+                releases.push(ReleaseCmd {
+                    frame: block_frame,
+                    vid: idx as u32,
+                    mode: 6,
+                    _pad: 0,
+                });
+            } else {
+                break; // 其余已被淘汰（块末统一清理），不再继续
+            }
+        }
     }
 
     /// NoteOff — 释放该 (channel, key) 最老的未释放 voice（与 xsynth `release_next_voice` 一致：

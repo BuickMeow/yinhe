@@ -87,6 +87,9 @@ impl From<hound::Error> for ExportError {
 
 const STEREO_CHANNELS: usize = 2;
 const RENDER_CHUNK_FRAMES: usize = 1024;
+/// GPU 路径块大小：比 CPU 大 4 倍，减少每块的 write_buffer/提交/同步等待开销。
+/// partial 缓冲 = voices × frames × 2 线性增长，可承受。
+const GPU_RENDER_CHUNK_FRAMES: usize = 4096;
 /// Safety limit: stop rendering tails after this many seconds even if voices
 /// are still active (prevents infinite loop on stuck voices).
 const MAX_TAIL_SECONDS: f64 = 30.0;
@@ -447,11 +450,11 @@ pub fn export_wav_gpu(
     // ── 6. 渲染循环 ──
     progress(0.06, "GPU 渲染中...");
     let _t_render = Instant::now();
-    let mut chunk = vec![0.0f32; RENDER_CHUNK_FRAMES * STEREO_CHANNELS];
+    let mut chunk = vec![0.0f32; GPU_RENDER_CHUNK_FRAMES * STEREO_CHANNELS];
     let mut rendered: u64 = 0;
 
     while rendered < main_duration {
-        let frames = ((main_duration - rendered) as usize).min(RENDER_CHUNK_FRAMES);
+        let frames = ((main_duration - rendered) as usize).min(GPU_RENDER_CHUNK_FRAMES);
         let buf = &mut chunk[..frames * STEREO_CHANNELS];
         synth.render(buf);
         // GpuSynth::render 内部已经做了限幅
@@ -459,7 +462,7 @@ pub fn export_wav_gpu(
 
         rendered = synth.sample_position();
         let pct = 0.06 + (rendered as f32 / main_duration as f32) * 0.90;
-        if rendered % (RENDER_CHUNK_FRAMES as u64 * 50) < RENDER_CHUNK_FRAMES as u64 {
+        if rendered % (GPU_RENDER_CHUNK_FRAMES as u64 * 50) < GPU_RENDER_CHUNK_FRAMES as u64 {
             progress(pct, &format!("GPU 渲染中 {:.0}%", pct * 100.0));
         }
     }
@@ -471,7 +474,7 @@ pub fn export_wav_gpu(
     let mut tail_rendered: u64 = 0;
 
     loop {
-        let frames = RENDER_CHUNK_FRAMES.min((max_tail_samples - tail_rendered) as usize);
+        let frames = GPU_RENDER_CHUNK_FRAMES.min((max_tail_samples - tail_rendered) as usize);
         if frames == 0 {
             break;
         }
