@@ -215,6 +215,9 @@ pub struct GpuUploadState<'a> {
     pub last_hidden_hash: &'a mut u64,
     /// 跨帧缓存：上次 track_visible hash（track_mask 变化检测）。
     pub last_tv_hash: &'a mut u64,
+    /// 跨帧缓存：上次上传时 hidden_notes 的 key 位图（hidden 增量重建的
+    /// 受影响 key 判定：当前 ∪ 上次 = 需重建的 key 并集）。
+    pub last_hidden_keys: &'a mut u128,
     /// 跨帧：track 显隐后台重建状态机（None = 无进行中的重建）。
     pub rebuild: &'a mut Option<CullRebuild>,
 }
@@ -233,6 +236,7 @@ pub fn upload(state: GpuUploadState) {
         last_cull_revision_only,
         last_hidden_hash,
         last_tv_hash,
+        last_hidden_keys,
         rebuild,
     } = state;
 
@@ -272,6 +276,7 @@ pub fn upload(state: GpuUploadState) {
                         *last_cull_revision = note_key.value();
                         *last_cull_revision_only = revision;
                         *last_hidden_hash = hidden_hash;
+                        *last_hidden_keys = hidden_key_mask(hidden_notes);
                         return;
                     }
                     // 重建数据基于旧 tv（期间切过轨）：GPU 已被旧 tv 数据
@@ -293,7 +298,10 @@ pub fn upload(state: GpuUploadState) {
     if !cull_was_ready {
         *last_cull_revision = 0;
     }
-    if note_key.value() == *last_cull_revision {
+    // cull 未 ready 时即使 note_key == 0（初始 last_cull_revision）也绝不早退：
+    // hash_bools([true]) == 1 时单轨首帧 note_key = revision(1) ^ 1 ^ 0 = 0，
+    // 0 == 0 碰撞会把「强制失效」抵消掉，导致首帧跳过全量上传而空屏。
+    if cull_was_ready && note_key.value() == *last_cull_revision {
         return;
     }
 
@@ -301,6 +309,7 @@ pub fn upload(state: GpuUploadState) {
         *last_cull_revision = note_key.value();
         *last_cull_revision_only = revision;
         *last_hidden_hash = hidden_hash;
+        *last_hidden_keys = hidden_key_mask(hidden_notes);
         return;
     };
 
@@ -314,10 +323,35 @@ pub fn upload(state: GpuUploadState) {
         let hidden_changed = hidden_hash != *last_hidden_hash;
 
         if hidden_changed && !revision_changed {
-            // Only hidden_notes changed → must full upload
-            let (all_notes, offsets) =
-                yinhe_wgpu::build_all_notes(midi_src, hidden_notes, track_visible);
-            pianoroll.upload_all_notes_for_cull(&all_notes, &offsets, note_revisions);
+            // Only hidden_notes changed → rebuild only the affected keys.
+            // 受影响 key = 当前 hidden ∪ 上次 hidden 的 key 并集：并集外的
+            // key 在两种 hidden 下的过滤输出逐字节相同，无需重建。
+            // （拖拽按下/取消时 hidden 变化但 revision 不动，旧实现会同步
+            // 全量重建——亿级音符下数百 ms 冻结；这里降到 O(受影响 key)。）
+            let affected = hidden_key_mask(hidden_notes) | *last_hidden_keys;
+            let mut all_ok = true;
+            for key in 0u8..128 {
+                if affected & (1u128 << key) == 0 {
+                    continue;
+                }
+                let key_notes =
+                    yinhe_wgpu::build_key_notes(midi_src, key, hidden_notes, track_visible);
+                if !pianoroll.try_incremental_key_upload(
+                    key,
+                    &key_notes,
+                    note_revisions[key as usize],
+                ) {
+                    all_ok = false;
+                    break;
+                }
+            }
+
+            if !all_ok {
+                // Fallback: full upload (some key's buffer was never created).
+                let (all_notes, offsets) =
+                    yinhe_wgpu::build_all_notes(midi_src, hidden_notes, track_visible);
+                pianoroll.upload_all_notes_for_cull(&all_notes, &offsets, note_revisions);
+            }
         } else if revision_changed {
             // Revision changed → try incremental per-key upload
             let uploaded = pianoroll.uploaded_key_revisions();
@@ -378,6 +412,17 @@ pub fn upload(state: GpuUploadState) {
     *last_cull_revision = note_key.value();
     *last_cull_revision_only = revision;
     *last_hidden_hash = hidden_hash;
+    *last_hidden_keys = hidden_key_mask(hidden_notes);
+}
+
+/// hidden_notes 集合的 key 位图（bit k = key k 有 hidden 音符）。
+/// 用于 hidden 增量重建的受影响 key 判定；u128 覆盖 128 个 key，零堆分配。
+fn hidden_key_mask(hidden_notes: &std::collections::HashSet<(u16, u32, u8)>) -> u128 {
+    let mut mask = 0u128;
+    for &(_, _, key) in hidden_notes {
+        mask |= 1u128 << key;
+    }
+    mask
 }
 
 #[cfg(test)]
@@ -551,6 +596,7 @@ mod tests {
         let mut last_cull_revision_only = 0u64;
         let mut last_hidden_hash = 0u64;
         let mut last_tv_hash = 0u64;
+        let mut last_hidden_keys = 0u128;
         let mut rebuild: Option<CullRebuild> = None;
 
         // 首帧：只显示 track 0（模拟打开 Master 轨）。
@@ -567,6 +613,7 @@ mod tests {
             last_cull_revision_only: &mut last_cull_revision_only,
             last_hidden_hash: &mut last_hidden_hash,
             last_tv_hash: &mut last_tv_hash,
+            last_hidden_keys: &mut last_hidden_keys,
             rebuild: &mut rebuild,
         });
         let px0 = render_pixel_count(
@@ -597,6 +644,7 @@ mod tests {
             last_cull_revision_only: &mut last_cull_revision_only,
             last_hidden_hash: &mut last_hidden_hash,
             last_tv_hash: &mut last_tv_hash,
+            last_hidden_keys: &mut last_hidden_keys,
             rebuild: &mut rebuild,
         });
         let px1 = render_pixel_count(
@@ -628,6 +676,7 @@ mod tests {
                 last_cull_revision_only: &mut last_cull_revision_only,
                 last_hidden_hash: &mut last_hidden_hash,
                 last_tv_hash: &mut last_tv_hash,
+                last_hidden_keys: &mut last_hidden_keys,
                 rebuild: &mut rebuild,
             });
         }
@@ -658,6 +707,7 @@ mod tests {
             last_cull_revision_only: &mut last_cull_revision_only,
             last_hidden_hash: &mut last_hidden_hash,
             last_tv_hash: &mut last_tv_hash,
+            last_hidden_keys: &mut last_hidden_keys,
             rebuild: &mut rebuild,
         });
         let mut reds = Vec::new();
@@ -674,6 +724,7 @@ mod tests {
                 last_cull_revision_only: &mut last_cull_revision_only,
                 last_hidden_hash: &mut last_hidden_hash,
                 last_tv_hash: &mut last_tv_hash,
+                last_hidden_keys: &mut last_hidden_keys,
                 rebuild: &mut rebuild,
             });
             reds.push(
@@ -709,6 +760,7 @@ mod tests {
                 last_cull_revision_only: &mut last_cull_revision_only,
                 last_hidden_hash: &mut last_hidden_hash,
                 last_tv_hash: &mut last_tv_hash,
+                last_hidden_keys: &mut last_hidden_keys,
                 rebuild: &mut rebuild,
             });
             guard += 1;
@@ -794,5 +846,187 @@ mod tests {
         assert_eq!(done_tv, 99);
         // 所有 key 都已按构建时数据重新上传。
         assert_eq!(*renderer.uploaded_key_revisions(), revisions);
+    }
+
+    /// hidden 变化（拖拽按下/取消）走按 key 增量重建：受影响 key 的音符
+    /// 立即隐藏、取消后逐像素恢复（与首帧全量上传一致）；未受影响 key 的
+    /// GPU 数据保持不变（否则恢复帧不会逐像素相等）。
+    #[test]
+    fn hidden_change_incremental_rebuild() {
+        let Some((device, queue)) = (|| {
+            let instance = wgpu::Instance::default();
+            let adapter = pollster::block_on(instance.request_adapter(&Default::default())).ok()?;
+            let (device, queue) =
+                pollster::block_on(adapter.request_device(&Default::default())).ok()?;
+            Some((device, queue))
+        })() else {
+            return;
+        };
+        let mut renderer = InstanceRenderer::new(
+            device.clone(),
+            queue.clone(),
+            wgpu::TextureFormat::Rgba8UnormSrgb,
+        );
+        let pw = 800u32;
+        let ph = 600u32;
+        let target = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("hidden_target"),
+            size: wgpu::Extent3d {
+                width: pw,
+                height: ph,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let target_view = target.create_view(&Default::default());
+
+        // 单轨模型：key = n % 128，start_tick = n * 120。视口显示 key 0..27，
+        // key 10 在视口内（8 个音符）。
+        let model = Arc::new(make_stress_model(1, 1000));
+        let note_revisions = model.note_revisions;
+        let tv = vec![true];
+
+        let mut last_cull_revision = 0u64;
+        let mut last_cull_revision_only = 0u64;
+        let mut last_hidden_hash = 0u64;
+        let mut last_tv_hash = 0u64;
+        let mut last_hidden_keys = 0u128;
+        let mut rebuild: Option<CullRebuild> = None;
+
+        // 首帧：hidden 为空 → 全量上传，全部音符可见。
+        let empty = HashSet::new();
+        upload(GpuUploadState {
+            pianoroll: &mut renderer,
+            midi: Some(model.as_ref() as &dyn NoteSource),
+            midi_arc: Some(&model),
+            revision: 1,
+            note_revisions: &note_revisions,
+            track_visible: &tv,
+            hidden_notes: &empty,
+            last_cull_revision: &mut last_cull_revision,
+            last_cull_revision_only: &mut last_cull_revision_only,
+            last_hidden_hash: &mut last_hidden_hash,
+            last_tv_hash: &mut last_tv_hash,
+            last_hidden_keys: &mut last_hidden_keys,
+            rebuild: &mut rebuild,
+        });
+        let px0 = render_pixel_count(
+            &mut renderer,
+            &device,
+            &queue,
+            &target,
+            &target_view,
+            pw,
+            ph,
+        );
+        assert!(px0.0 > 0, "首帧应显示音符: {px0:?}");
+
+        // 按下帧：hidden key 10 的全部音符（拖拽开始，revision 不动）→
+        // 增量重建 key 10，其余 key 不动。
+        let mut hidden = HashSet::new();
+        for n in (0..1000u32).filter(|n| n % 128 == 10) {
+            hidden.insert((0, n * 120, 10));
+        }
+        upload(GpuUploadState {
+            pianoroll: &mut renderer,
+            midi: Some(model.as_ref() as &dyn NoteSource),
+            midi_arc: Some(&model),
+            revision: 1,
+            note_revisions: &note_revisions,
+            track_visible: &tv,
+            hidden_notes: &hidden,
+            last_cull_revision: &mut last_cull_revision,
+            last_cull_revision_only: &mut last_cull_revision_only,
+            last_hidden_hash: &mut last_hidden_hash,
+            last_tv_hash: &mut last_tv_hash,
+            last_hidden_keys: &mut last_hidden_keys,
+            rebuild: &mut rebuild,
+        });
+        let px1 = render_pixel_count(
+            &mut renderer,
+            &device,
+            &queue,
+            &target,
+            &target_view,
+            pw,
+            ph,
+        );
+        assert!(
+            px1.0 < px0.0,
+            "hidden 的音符应从显示中消失: {px1:?} vs {px0:?}"
+        );
+
+        // 取消帧：hidden 清空（拖拽取消，revision 不动）→ 受影响 key 恢复，
+        // 与首帧全量上传逐像素一致（cull 输出顺序确定）。
+        upload(GpuUploadState {
+            pianoroll: &mut renderer,
+            midi: Some(model.as_ref() as &dyn NoteSource),
+            midi_arc: Some(&model),
+            revision: 1,
+            note_revisions: &note_revisions,
+            track_visible: &tv,
+            hidden_notes: &empty,
+            last_cull_revision: &mut last_cull_revision,
+            last_cull_revision_only: &mut last_cull_revision_only,
+            last_hidden_hash: &mut last_hidden_hash,
+            last_tv_hash: &mut last_tv_hash,
+            last_hidden_keys: &mut last_hidden_keys,
+            rebuild: &mut rebuild,
+        });
+        let px2 = render_pixel_count(
+            &mut renderer,
+            &device,
+            &queue,
+            &target,
+            &target_view,
+            pw,
+            ph,
+        );
+        assert_eq!(
+            px2, px0,
+            "取消拖拽后应逐像素恢复（增量重建遗漏 key 会暴露在这里）: {px2:?}"
+        );
+    }
+
+    /// 受影响 key（当前 hidden ∪ 上次 hidden 的 key 并集）的增量重建结果
+    /// 与全量构建逐 key 一致；并集外 key 的重建结果与无 hidden 时不变。
+    #[test]
+    fn affected_key_rebuild_matches_full_build() {
+        let model = Arc::new(make_stress_model(2, 500));
+        let tv = vec![true, true];
+        let hidden: HashSet<(u16, u32, u8)> = [(0, 120, 1), (1, 600, 5), (0, 840, 7)]
+            .into_iter()
+            .collect();
+
+        // hidden 的 key 位图 = {1, 5, 7}。
+        assert_eq!(
+            hidden_key_mask(&hidden),
+            (1u128 << 1) | (1u128 << 5) | (1u128 << 7)
+        );
+
+        let (full, offsets) = yinhe_wgpu::build_all_notes(model.as_ref(), &hidden, &tv);
+        for &key in &[1u8, 5, 7] {
+            let key_notes = yinhe_wgpu::build_key_notes(model.as_ref(), key, &hidden, &tv);
+            let start = offsets[key as usize] as usize;
+            let end = offsets[key as usize + 1] as usize;
+            assert_eq!(
+                key_notes,
+                full[start..end],
+                "受影响 key {key} 的增量重建必须与全量构建一致"
+            );
+        }
+
+        // 并集外 key：hidden 在其中的投影为空，重建结果与无 hidden 时逐字节相同。
+        let (full_empty, offsets_empty) =
+            yinhe_wgpu::build_all_notes(model.as_ref(), &HashSet::new(), &tv);
+        let key_notes = yinhe_wgpu::build_key_notes(model.as_ref(), 100, &hidden, &tv);
+        let start = offsets_empty[100] as usize;
+        let end = offsets_empty[101] as usize;
+        assert_eq!(key_notes, full_empty[start..end]);
     }
 }

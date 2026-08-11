@@ -37,6 +37,8 @@ pub struct App {
     pub(crate) last_cull_revision_only: u64, // last revision (for incremental detection)
     pub(crate) last_hidden_hash: u64,   // last hidden_hash (for incremental detection)
     pub(crate) last_tv_hash: u64,       // last track_visible hash (track_mask 变化检测)
+    /// 上次上传时 hidden_notes 的 key 位图（hidden 增量重建的受影响 key 判定）。
+    pub(crate) last_hidden_keys: u128,
     /// Track 显隐后台重建状态机（见 gpu_upload::CullRebuild）。
     pub(crate) cull_rebuild: Option<crate::piano_view::gpu_upload::CullRebuild>,
 
@@ -289,6 +291,7 @@ impl App {
             last_cull_revision_only: 0,
             last_hidden_hash: 0,
             last_tv_hash: 0,
+            last_hidden_keys: 0,
             cull_rebuild: None,
 
             arr_render_ctx,
@@ -432,6 +435,7 @@ impl App {
         self.last_cull_revision_only = 0;
         self.last_hidden_hash = 0;
         self.last_tv_hash = 0;
+        self.last_hidden_keys = 0;
     }
 
     /// 判断打开 MIDI/.yin 时是否应替换当前标签页而非另开一个。

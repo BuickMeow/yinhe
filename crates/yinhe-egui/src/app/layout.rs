@@ -513,6 +513,7 @@ impl App {
                     &mut self.last_cull_revision_only,
                     &mut self.last_hidden_hash,
                     &mut self.last_tv_hash,
+                    &mut self.last_hidden_keys,
                     &mut self.cull_rebuild,
                     midi_source,
                     Some(&doc.data.model),
