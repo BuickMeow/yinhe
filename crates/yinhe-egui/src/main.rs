@@ -109,6 +109,8 @@ fn main() {
                             & wgpu::Features::INDIRECT_FIRST_INSTANCE,
                         required_limits: wgpu::Limits {
                             max_texture_dimension_2d: 8192,
+                            // GPU 合成器需要 13 个 storage buffer（采样块 + 段结构 + 指令）
+                            max_storage_buffers_per_shader_stage: 16,
                             ..base_limits
                         },
                         ..Default::default()

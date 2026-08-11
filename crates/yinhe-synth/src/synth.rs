@@ -845,6 +845,7 @@ impl GpuAudioRenderer {
     /// `voices`（时间/包络/滤波均由 GPU 推进，CPU 不再 advance）。
     /// 通道滤波（CC74/71）与通道求和由调用方（GpuSynth）在 CPU 完成。
     /// 返回实际 voice 数量（0 表示静音）。
+    #[allow(clippy::too_many_arguments)]
     pub fn render_block(
         &mut self,
         voices: &mut [GpuVoiceState],
@@ -1041,6 +1042,199 @@ impl GpuAudioRenderer {
         self.render_into(voices, &mut output, sample_rate);
         output
     }
+}
+
+/// 最小复现：sustain 阶段 voice + frame=0 release 指令，验证 release 推进正确
+#[test]
+fn release_cmd_advances_envelope() {
+    let mut renderer = GpuAudioRenderer::new_default().expect("renderer");
+    renderer.upload_samples(&[0.5f32; 4096]);
+
+    let voice = GpuVoiceState {
+        sample_offset: 0,
+        sample_length: 4096,
+        speed: 1.0,
+        base_speed: 1.0,
+        base_gain: 1.0,
+        time: 0.0,
+        start_offset: 0,
+        channel: 0,
+        envelope: 0.7,
+        env_stage: 4, // Sustain
+        stage_progress: 0.0,
+        env_level: 1.0,
+        sustain_level: 0.7,
+        env_start: 0.7,
+        decay_start: 0.7,
+        delay_frames: 0.0,
+        attack_frames: 0.0,
+        hold_frames: 0.0,
+        decay_frames: 0.0,
+        release_frames: 39690.0,
+        base_pan_l: 1.0,
+        base_pan_r: 1.0,
+        ch_vol: 1.0,
+        ch_vol_step: 0.0,
+        ch_vol_frames: 0,
+        ch_expr: 1.0,
+        ch_expr_step: 0.0,
+        ch_expr_frames: 0,
+        ch_pan: 0.5,
+        ch_pan_step: 0.0,
+        ch_pan_frames: 0,
+        loop_start: 0,
+        loop_end: 0,
+        loop_mode: 0,
+        is_stereo: 0,
+        interp: 0,
+        cutoff: 0.0,
+        resonance: 0.0,
+        filter_type: 0,
+        flt_b0: 0.0,
+        flt_b1: 0.0,
+        flt_b2: 0.0,
+        flt_a1: 0.0,
+        flt_a2: 0.0,
+        flt_x1: 0.0,
+        flt_x2: 0.0,
+        flt_y1: 0.0,
+        flt_y2: 0.0,
+        flt_x1r: 0.0,
+        flt_x2r: 0.0,
+        flt_y1r: 0.0,
+        flt_y2r: 0.0,
+    };
+    let releases = [ReleaseCmd {
+        frame: 0,
+        vid: 0,
+        mode: 5,
+        _pad: 0,
+    }];
+    let mut mix = vec![0.0f32; 32 * 1024 * 2];
+    let mut voices = vec![voice];
+    renderer.render_block(&mut voices, &mut mix, &[], &[], &releases, &[], 44100);
+    let voice = &voices[0];
+    let t = 1024.0f32 / 39690.0;
+    let expected_env = 0.7 * (1.0 - t).powi(8);
+    eprintln!(
+        "release test: stage={} env={:.6} expected_env={:.6} progress={} ch_pan={} mix_peak={}",
+        voice.env_stage,
+        voice.envelope,
+        expected_env,
+        voice.stage_progress,
+        voice.ch_pan,
+        mix.iter().fold(0.0f32, |m, &s| m.max(s.abs()))
+    );
+    assert_eq!(voice.env_stage, 5, "voice should be in release");
+    assert!(
+        (voice.envelope - expected_env).abs() < 1e-4,
+        "env {} vs expected {}",
+        voice.envelope,
+        expected_env
+    );
+}
+
+/// 多块渲染：release 指令只应在指定帧应用一次，prog 每块 +1024（块大小）。
+#[test]
+fn release_progress_advances_full_block() {
+    let mut renderer = GpuAudioRenderer::new_default().expect("renderer");
+    renderer.upload_samples(&[0.5f32; 4096]);
+
+    let make_voice = |vid: u32| GpuVoiceState {
+        sample_offset: 0,
+        sample_length: 4096,
+        speed: 1.0,
+        base_speed: 1.0,
+        base_gain: 1.0,
+        time: 0.0,
+        start_offset: 0,
+        channel: vid,
+        envelope: 0.7,
+        env_stage: 4,
+        stage_progress: 0.0,
+        env_level: 1.0,
+        sustain_level: 0.7,
+        env_start: 0.7,
+        decay_start: 0.7,
+        delay_frames: 0.0,
+        attack_frames: 0.0,
+        hold_frames: 0.0,
+        decay_frames: 0.0,
+        release_frames: 100000.0,
+        base_pan_l: 1.0,
+        base_pan_r: 1.0,
+        ch_vol: 1.0,
+        ch_vol_step: 0.0,
+        ch_vol_frames: 0,
+        ch_expr: 1.0,
+        ch_expr_step: 0.0,
+        ch_expr_frames: 0,
+        ch_pan: 0.5,
+        ch_pan_step: 0.0,
+        ch_pan_frames: 0,
+        loop_start: 0,
+        loop_end: 0,
+        loop_mode: 0,
+        is_stereo: 0,
+        interp: 0,
+        cutoff: 0.0,
+        resonance: 0.0,
+        filter_type: 0,
+        flt_b0: 0.0,
+        flt_b1: 0.0,
+        flt_b2: 0.0,
+        flt_a1: 0.0,
+        flt_a2: 0.0,
+        flt_x1: 0.0,
+        flt_x2: 0.0,
+        flt_y1: 0.0,
+        flt_y2: 0.0,
+        flt_x1r: 0.0,
+        flt_x2r: 0.0,
+        flt_y1r: 0.0,
+        flt_y2r: 0.0,
+    };
+    let mut voices = vec![make_voice(0), make_voice(1)];
+    // 第一块：两个 release 指令（frame 100 / 500）
+    let releases = [
+        ReleaseCmd {
+            frame: 100,
+            vid: 0,
+            mode: 5,
+            _pad: 0,
+        },
+        ReleaseCmd {
+            frame: 500,
+            vid: 1,
+            mode: 5,
+            _pad: 0,
+        },
+    ];
+    let mut mix = vec![0.0f32; 32 * 1024 * 2];
+    renderer.render_block(&mut voices, &mut mix, &[], &[], &releases, &[], 44100);
+    eprintln!(
+        "block1: v0 stage={} prog={:.0} | v1 stage={} prog={:.0}",
+        voices[0].env_stage,
+        voices[0].stage_progress,
+        voices[1].env_stage,
+        voices[1].stage_progress
+    );
+    assert_eq!(voices[0].env_stage, 5);
+    assert_eq!(voices[0].stage_progress, 924.0); // 1024-100
+    assert_eq!(voices[1].env_stage, 5);
+    assert_eq!(voices[1].stage_progress, 524.0); // 1024-500
+
+    // 第二块：无 release，prog 应该 +1024
+    renderer.render_block(&mut voices, &mut mix, &[], &[], &[], &[], 44100);
+    eprintln!(
+        "block2: v0 stage={} prog={:.0} | v1 stage={} prog={:.0}",
+        voices[0].env_stage,
+        voices[0].stage_progress,
+        voices[1].env_stage,
+        voices[1].stage_progress
+    );
+    assert_eq!(voices[0].stage_progress, 1948.0);
+    assert_eq!(voices[1].stage_progress, 1548.0);
 }
 
 /// CPU reference implementation (与 GPU shader pass1 逐帧逻辑完全对应).
@@ -1245,6 +1439,7 @@ mod tests {
                 sample_offset: (i % 4) * sample_len,
                 sample_length: sample_len,
                 speed,
+                base_speed: speed,
                 base_gain: 0.5,
                 env_stage: 4,
                 env_level: 1.0,
@@ -1607,5 +1802,82 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// 回归：块内段边界（ch_updates）后创建的新 voice 必须正常出声。
+    /// 段边界把通道音量改为 0.5，新 voice 在段边界创建（start_offset=68）。
+    #[test]
+    fn new_voice_after_seg_boundary_sounds() {
+        let sr = 44100u32;
+        let frame_count = 512u32;
+        let samples: Vec<f32> = (0..frame_count as usize * 8)
+            .map(|i| ((i as f32) * 0.01).sin() * 0.5)
+            .collect();
+        let mut renderer = GpuAudioRenderer::new_default().expect("renderer init failed");
+        renderer.upload_samples(&samples);
+
+        let mut v = make_voices(samples.len() as u32, 1, 1.0).remove(0);
+        // 块内 68 帧处创建（段边界位置）
+        v.start_offset = 68;
+        v.time = 0.0;
+        let mut voices = vec![v];
+        let mut mix = vec![0.0f32; CHANNEL_COUNT * frame_count as usize * 2];
+        let mut out = vec![0.0f32; frame_count as usize * 2];
+        // 段边界：帧 68 处 ch0 音量设为 0.5
+        let segs = [SegInfo {
+            start_frame: 0,
+            ch_off: 0,
+            ch_count: 1,
+            _pad: 0,
+        }];
+        let ch_updates = [ChState {
+            ch: 0,
+            speed_mult: 1.0,
+            ch_vol: 0.5,
+            ch_vol_step: 0.0,
+            ch_vol_frames: 0,
+            ch_expr: 1.0,
+            ch_expr_step: 0.0,
+            ch_expr_frames: 0,
+            ch_pan: 0.5,
+            ch_pan_step: 0.0,
+            ch_pan_frames: 0,
+        }];
+        renderer.render_block(&mut voices, &mut mix, &segs, &ch_updates, &[], &[], sr);
+        for i in 0..out.len() {
+            for ch in 0..CHANNEL_COUNT {
+                out[i] += mix[ch * frame_count as usize * 2 + i];
+            }
+        }
+        let peak_of = |o: &[f32]| o.iter().fold(0.0f32, |m, &s| m.max(s.abs()));
+        let any = peak_of(&out);
+        assert!(
+            any > 0.04,
+            "new voice after seg boundary silent: peak={any}",
+        );
+
+        // 真实路径复现：旧 voice（stage 5, env≈0）+ 新 voice（start_offset=68）+ 段边界
+        let mut mix2 = vec![0.0f32; CHANNEL_COUNT * frame_count as usize * 2];
+        let mut voices2 = make_voices(samples.len() as u32, 1, 1.0);
+        voices2[0].env_stage = 5;
+        voices2[0].envelope = 0.0;
+        voices2[0].env_start = 0.0;
+        voices2[0].start_offset = 0;
+        let mut newv = make_voices(samples.len() as u32, 1, 1.0).remove(0);
+        newv.start_offset = 68;
+        newv.time = 0.0;
+        voices2.push(newv);
+        renderer.render_block(&mut voices2, &mut mix2, &segs, &ch_updates, &[], &[], sr);
+        let out2: Vec<f32> = (0..out.len())
+            .map(|i| {
+                (0..CHANNEL_COUNT)
+                    .map(|ch| mix2[ch * frame_count as usize * 2 + i])
+                    .sum()
+            })
+            .collect();
+        assert!(
+            peak_of(&out2) > 0.04,
+            "new voice silent with old voice present"
+        );
     }
 }

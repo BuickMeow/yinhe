@@ -14,6 +14,9 @@ struct RenderParams {
     sample_rate: u32,
     sample_chunk_count: u32,
     voice_wg_count: u32, // pass1 workgroup 数 = ceil(voice_count / 256)
+    seg_count: u32,      // 块内段数（段边界 = CC 事件位置）
+    release_count: u32,  // release/kill 指令总数
+    env_update_count: u32, // CC72/73/121 包络更新指令总数
 };
 
 struct VoiceState {
@@ -21,6 +24,8 @@ struct VoiceState {
     sample_offset: u32,
     sample_length: u32,
     speed: f32,
+    /// 音色库基础播放倍率（段边界按通道 pitch_multiplier 重算 speed = base × mult）
+    base_speed: f32,
     base_gain: f32,
     time: f32,
     start_offset: u32,
@@ -83,6 +88,46 @@ struct VoiceState {
     flt_y2r: f32,
 };
 
+/// 段信息：块内段边界（第 0 段恒从帧 0 开始，最后一段到 frame_count）。
+/// ch_off/ch_count 指向 ch_updates 中本段的通道更新区间。
+struct SegInfo {
+    start_frame: u32,
+    ch_off: u32,
+    ch_count: u32,
+    _pad: u32,
+};
+
+/// 段边界处某通道的新状态（CC 事件后）。voice 在跨段时同步。
+struct ChState {
+    ch: u32,
+    speed_mult: f32,
+    ch_vol: f32,
+    ch_vol_step: f32,
+    ch_vol_frames: u32,
+    ch_expr: f32,
+    ch_expr_step: f32,
+    ch_expr_frames: u32,
+    ch_pan: f32,
+    ch_pan_step: f32,
+    ch_pan_frames: u32,
+};
+
+/// release/kill 指令：在 frame 帧对 vid 应用（mode 5=release，6=kill）。
+struct ReleaseCmd {
+    frame: u32,
+    vid: u32,
+    mode: u32,
+    _pad: u32,
+};
+
+/// CC72/73/121 包络更新指令：frame 帧对 vid 重算 attack/release 时长。
+struct EnvUpdateCmd {
+    frame: u32,
+    vid: u32,
+    attack_frames: f32,
+    release_frames: f32,
+};
+
 @group(0) @binding(0) var<uniform> params: RenderParams;
 @group(0) @binding(1) var<storage, read_write> voice_states: array<VoiceState>;
 @group(0) @binding(2) var<storage, read_write> channel_mix: array<f32>;
@@ -92,6 +137,11 @@ struct VoiceState {
 @group(0) @binding(6) var<storage, read> chunk_3: array<f32>;
 @group(0) @binding(7) var<storage, read> chunk_4: array<f32>;
 @group(0) @binding(9) var<storage, read_write> partial: array<f32>;
+@group(0) @binding(10) var<storage, read> segs: array<SegInfo>;
+@group(0) @binding(11) var<storage, read> ch_updates: array<ChState>;
+@group(0) @binding(12) var<storage, read> release_by_frame: array<u32>;
+@group(0) @binding(13) var<storage, read> release_cmds: array<ReleaseCmd>;
+@group(0) @binding(14) var<storage, read> env_cmds: array<EnvUpdateCmd>;
 
 struct ChunkOffsets {
     o0: u32, o1: u32, o2: u32, o3: u32, o4: u32, total: u32,
@@ -205,6 +255,9 @@ fn advance_env(st: VoiceState) -> VoiceState {
 
 /// Pass 1：每线程一个 voice，串行推进 block 内所有帧，每帧结果直写
 /// `partial[vid][frame]`（无 workgroup 归约，避免每帧 barrier）。
+///
+/// 块内按段推进：段边界（CC 事件位置）应用通道状态更新（ch_updates）与
+/// release/env 指令；voice 状态在块末全字段写回 voice_states（CPU 读回为下块起点）。
 @compute @workgroup_size(256)
 fn vs_main(@builtin(workgroup_id) wid: vec3<u32>,
            @builtin(local_invocation_id) lid: vec3<u32>) {
@@ -216,8 +269,88 @@ fn vs_main(@builtin(workgroup_id) wid: vec3<u32>,
     if is_active {
         st = voice_states[vid];
     }
+    // 段 0 的通道更新（块起点 CC 事件）在初始化时应用
+    if is_active && params.seg_count > 0u {
+        let off = segs[0].ch_off;
+        let cnt = segs[0].ch_count;
+        for (var ui: u32 = off; ui < off + cnt; ui++) {
+            let cu = ch_updates[ui];
+            if cu.ch == st.channel {
+                st.speed = st.base_speed * cu.speed_mult;
+                st.ch_vol = cu.ch_vol;
+                st.ch_vol_step = cu.ch_vol_step;
+                st.ch_vol_frames = cu.ch_vol_frames;
+                st.ch_expr = cu.ch_expr;
+                st.ch_expr_step = cu.ch_expr_step;
+                st.ch_expr_frames = cu.ch_expr_frames;
+                st.ch_pan = cu.ch_pan;
+                st.ch_pan_step = cu.ch_pan_step;
+                st.ch_pan_frames = cu.ch_pan_frames;
+            }
+        }
+    }
+    var seg_idx = 0u;
+    var ended_this_block = 0u;
 
     for (var fi: u32 = 0u; fi < fc; fi++) {
+        // 跨段：应用该段边界的通道状态更新
+        while seg_idx + 1u < params.seg_count && fi >= segs[seg_idx + 1u].start_frame {
+            seg_idx += 1u;
+            if is_active {
+                let off = segs[seg_idx].ch_off;
+                let cnt = segs[seg_idx].ch_count;
+                for (var ui: u32 = off; ui < off + cnt; ui++) {
+                    let cu = ch_updates[ui];
+                    if cu.ch == st.channel {
+                        st.speed = st.base_speed * cu.speed_mult;
+                        st.ch_vol = cu.ch_vol;
+                        st.ch_vol_step = cu.ch_vol_step;
+                        st.ch_vol_frames = cu.ch_vol_frames;
+                        st.ch_expr = cu.ch_expr;
+                        st.ch_expr_step = cu.ch_expr_step;
+                        st.ch_expr_frames = cu.ch_expr_frames;
+                        st.ch_pan = cu.ch_pan;
+                        st.ch_pan_step = cu.ch_pan_step;
+                        st.ch_pan_frames = cu.ch_pan_frames;
+                    }
+                }
+            }
+        }
+
+        if is_active {
+            // release/kill 指令（该帧）
+            for (var ri: u32 = release_by_frame[fi]; ri < release_by_frame[fi + 1u]; ri++) {
+                let rc = release_cmds[ri];
+                if rc.vid == vid {
+                    st.env_start = st.envelope;
+                    st.env_stage = rc.mode;
+                    st.stage_progress = 0.0;
+                }
+            }
+            // CC72/73 包络更新指令（该帧）：重算时长并从当前 amp 重走当前阶段
+            for (var ei: u32 = 0u; ei < params.env_update_count; ei++) {
+                let ec = env_cmds[ei];
+                if ec.frame == fi && ec.vid == vid {
+                    st.attack_frames = ec.attack_frames;
+                    st.release_frames = ec.release_frames;
+                    if st.env_stage == 0u {
+                        st.stage_progress = 0.0;
+                    } else if st.env_stage == 1u {
+                        st.env_start = st.envelope;
+                        st.stage_progress = 0.0;
+                    } else if st.env_stage == 2u {
+                        st.stage_progress = 0.0;
+                    } else if st.env_stage == 3u {
+                        st.decay_start = st.envelope;
+                        st.stage_progress = 0.0;
+                    } else if st.env_stage == 5u {
+                        st.env_start = st.envelope;
+                        st.stage_progress = 0.0;
+                    }
+                }
+            }
+        }
+
         var my_l = 0.0;
         var my_r = 0.0;
         if is_active && st.env_stage < 6u && fi >= st.start_offset {
@@ -309,7 +442,11 @@ fn vs_main(@builtin(workgroup_id) wid: vec3<u32>,
                 my_l = s_l * ch_pan_l;
                 my_r = s_r * ch_pan_r;
             }
+            let prev_stage = st.env_stage;
             st = advance_env(st);
+            if is_active && prev_stage < 6u && st.env_stage == 6u {
+                ended_this_block = 1u;
+            }
         }
 
         // 直写自己的 slot（pass2 按通道归约；无 workgroup 同步）
@@ -317,16 +454,19 @@ fn vs_main(@builtin(workgroup_id) wid: vec3<u32>,
         partial[vid * fc * 2u + fi * 2u + 1u] = my_r;
     }
 
-    // 写回滤波器状态（跨 block 持久；其余字段由 CPU advance_voices 推进）
+    // 全字段写回（CPU 读回为下一块起点状态；flt_* 亦在其中）。
+    // 与 CPU advance_voices 一致：消耗一次性 start_offset、推进 time。
     if is_active {
-        voice_states[vid].flt_x1 = st.flt_x1;
-        voice_states[vid].flt_x2 = st.flt_x2;
-        voice_states[vid].flt_y1 = st.flt_y1;
-        voice_states[vid].flt_y2 = st.flt_y2;
-        voice_states[vid].flt_x1r = st.flt_x1r;
-        voice_states[vid].flt_x2r = st.flt_x2r;
-        voice_states[vid].flt_y1r = st.flt_y1r;
-        voice_states[vid].flt_y2r = st.flt_y2r;
+        if fc > st.start_offset {
+            let act_frames = fc - st.start_offset;
+            st.start_offset = 0u;
+            if st.env_stage < 6u {
+                st.time += st.speed * f32(act_frames);
+            }
+        } else {
+            st.start_offset = 0u;
+        }
+        voice_states[vid] = st;
     }
 }
 

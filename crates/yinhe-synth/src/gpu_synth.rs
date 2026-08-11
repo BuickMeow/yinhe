@@ -13,7 +13,8 @@ use std::sync::Arc;
 
 use crate::limiter::VolumeLimiter;
 use crate::sfz_parser;
-use crate::synth::{GpuAudioRenderer, GpuVoiceState, advance_voices};
+use crate::synth::GpuAudioRenderer;
+use crate::synth::{ChState, EnvUpdateCmd, GpuVoiceState, ReleaseCmd, SegInfo};
 use crate::wgpu;
 
 /// MIDI 通道数（dense 通道 = port×16+ch，支持 2 端口 32 通道）。
@@ -379,6 +380,10 @@ struct Voice {
     orig_release_frames: f32,
     /// 是否被延音踏板保持（CC64 踩着时 note_off 只标记不释放）。
     held_by_damper: bool,
+    /// 已发 release 指令等待 shader 在指令帧应用（防止同 key 重复匹配）。
+    /// 不预置 env_stage：预置会让 shader 在指令应用前就按 release 阶段推进
+    /// （旧 env_start=0 会把 envelope 清零）。
+    release_pending: bool,
 }
 
 /// GPU 合成器 — 封装 GPU 渲染器 + voice 管理 + 通道状态 + 事件调度 + 限幅。
@@ -506,9 +511,8 @@ impl GpuSynth {
 
     /// 渲染一块音频到 output（output.len() = frames * 2，立体声交错）。
     ///
-    /// block 内按 CC 事件位置分段渲染：音符事件支持块内偏移，
-    /// CC 事件在事件位置生效（与 CPU 路径的事件级时序对齐），
-    /// 每段一次 GPU 提交。无 CC 的 block 仍是单段单次提交。
+    /// 块内事件（CC 段边界、note on/off、release/env 指令）在 CPU 收集为段结构，
+    /// **一次 GPU 提交**渲染整块；voice 状态在 GPU 内逐帧推进（块末全字段读回）。
     pub fn render(&mut self, output: &mut [f32]) {
         let frames = output.len() / 2;
         if frames == 0 {
@@ -519,51 +523,55 @@ impl GpuSynth {
         let block_end = block_start + frames as u64;
         output.fill(0.0);
 
-        let mut seg_start = block_start;
-        let mut out_off = 0usize;
-        loop {
-            // 段边界 = block 内下一个 CC 事件位置（事件级时序）
-            let next_cc = self.next_cc_in_block(seg_start, block_end);
-            let seg_end = next_cc.unwrap_or(block_end);
-            let seg_frames = (seg_end - seg_start) as usize;
-            let out = &mut output[out_off * 2..(out_off + seg_frames) * 2];
-            self.render_segment(out, seg_start, seg_end);
-            out_off += seg_frames;
-            seg_start = seg_end;
+        // 收集块内事件为段结构（同时创建 voice、发 release/env 指令、推进 CPU 通道状态）
+        let mut segs: Vec<SegInfo> = Vec::new();
+        let mut ch_updates: Vec<ChState> = Vec::new();
+        let mut releases: Vec<ReleaseCmd> = Vec::new();
+        let mut env_cmds: Vec<EnvUpdateCmd> = Vec::new();
+        self.collect_block(
+            block_start,
+            block_end,
+            &mut segs,
+            &mut ch_updates,
+            &mut releases,
+            &mut env_cmds,
+        );
 
-            if seg_end >= block_end {
-                break;
-            }
-
-            // 段边界处处理该位置的所有事件（Control 更新通道状态；
-            // 音符事件以 offset=0 分发——段边界即段开头）
-            while self.event_cursor < self.events.len() {
-                let ev = self.events[self.event_cursor];
-                if ev.sample() != seg_end {
-                    break;
-                }
-                match ev {
-                    SynthEvent::Control { channel, event, .. } => {
-                        self.process_control(channel, event);
-                        // xsynth 每个事件位置都重置 read 块边界（cutoff set_end 的
-                        // 512 帧对齐基准随之重排），跨 render block 保持
-                        self.channels[channel as usize % MAX_CHANNELS].cutoff_align = seg_end;
-                    }
-                    SynthEvent::NoteOn {
-                        channel,
-                        key,
-                        velocity,
-                        ..
-                    } => {
-                        self.note_on(channel, key, velocity, 0);
-                    }
-                    SynthEvent::NoteOff { channel, key, .. } => {
-                        self.note_off(channel, key);
-                    }
-                }
-                self.event_cursor += 1;
+        // 上传块起点 voice 状态（含块内新增）→ 一次提交 → 全字段读回
+        self.states_buf.clear();
+        self.states_buf.extend(self.voices.iter().map(|v| v.state));
+        self.channel_mix.resize(MAX_CHANNELS * frames * 2, 0.0);
+        if !self.states_buf.is_empty() {
+            self.renderer.render_block(
+                &mut self.states_buf,
+                &mut self.channel_mix,
+                &segs,
+                &ch_updates,
+                &releases,
+                &env_cmds,
+                self.sample_rate,
+            );
+            // 读回 GPU 推进后的全字段状态（下块起点 = 本块末）
+            for (v, st) in self.voices.iter_mut().zip(&self.states_buf) {
+                v.state = *st;
             }
         }
+
+        // 各通道：CC74 通道滤波（若开启）→ 求和（xsynth 顺序：vol/pan → cutoff → sum）。
+        // 无论有无 voice 都执行：cutoff 渐变与 DF1 状态照常推进（xsynth 的
+        // apply_channel_effects 每块无条件调用，对空信号滤波时 lerp 不中断）。
+        output.fill(0.0);
+        for (ch_idx, ch) in self.channels.iter_mut().enumerate() {
+            let base = ch_idx * frames * 2;
+            let ch_mix = &mut self.channel_mix[base..base + frames * 2];
+            ch.apply_cutoff_filter(ch_mix, self.sample_rate, block_start);
+            for (i, o) in output.iter_mut().enumerate() {
+                *o += ch_mix[i];
+            }
+        }
+
+        // 清理已结束的 voice（GPU 推进后的 env_stage）
+        self.voices.retain(|v| v.state.env_stage < 6);
 
         // 限幅（真实路径保留；对比测试可关闭）
         if self.limiter_enabled {
@@ -587,133 +595,238 @@ impl GpuSynth {
         None
     }
 
-    /// 渲染一段音频 [seg_start, seg_end)（段内分发音符事件，段内无 CC）。
-    fn render_segment(&mut self, output: &mut [f32], seg_start: u64, seg_end: u64) {
-        let frames = output.len() / 2;
-        if frames == 0 {
-            return;
-        }
-
-        // 段起点对齐所有 voice 的通道状态：弯音倍率 + 渐变当前值/步长/剩余帧数。
-        // CPU 通道状态按段批量推进，与 shader 逐帧推进在无事件区间线性一致，
-        // 因此段起点处两者相等；事件（含 CC 渐变变更）在段边界处理后在此生效。
+    /// 收集块内事件为段结构：
+    /// - 段边界 = CC 事件位置（ch_updates 记录受影响通道的状态快照）
+    /// - note_on 创建 voice（块内帧偏移）；note_off 发 release 指令（帧 + vid）
+    /// - CC72/73/121 发 env 指令；damper 松开/AllNotesOff 发 release/kill 指令
+    /// - CPU 通道状态按段推进（与 shader 逐帧推进线性一致）
+    fn collect_block(
+        &mut self,
+        block_start: u64,
+        block_end: u64,
+        segs: &mut Vec<SegInfo>,
+        ch_updates: &mut Vec<ChState>,
+        releases: &mut Vec<ReleaseCmd>,
+        env_cmds: &mut Vec<EnvUpdateCmd>,
+    ) {
+        // 块起点：所有 voice 对齐通道状态（speed/ch_vol/expr/pan）。
+        // 块起点若有 CC 事件（sample == block_start），其更新记录在段 0，
+        // 由 shader 在初始化时应用——段 0 渲染起点值 = 这里的 sync 值（与现状一致）。
         self.sync_channel_state();
 
-        // 段内分发音符事件（CC 事件 sample >= seg_end 由主循环处理）
+        let mut seg_start = block_start;
+        let mut seg_frame = 0u32;
+        let mut seg_ch_off = 0usize;
+
+        loop {
+            let next_cc = self.next_cc_in_block(seg_start, block_end);
+
+            // 段 [seg_start, next_cc) 内的音符事件（sample == next_cc 的留给段边界）
+            while self.event_cursor < self.events.len() {
+                let ev = self.events[self.event_cursor];
+                if ev.sample() >= next_cc.unwrap_or(block_end) || ev.sample() >= block_end {
+                    break;
+                }
+                if ev.sample() >= seg_start {
+                    let seg_offset = (ev.sample() - seg_start) as u32;
+                    let block_frame = seg_frame + seg_offset;
+                    match ev {
+                        SynthEvent::NoteOn {
+                            channel,
+                            key,
+                            velocity,
+                            ..
+                        } => self.note_on(channel, key, velocity, block_frame, seg_offset),
+                        SynthEvent::NoteOff { channel, key, .. } => {
+                            self.note_off_to_cmd(channel, key, block_frame, releases);
+                        }
+                        SynthEvent::Control { .. } => unreachable!("CC 由段边界处理"),
+                    }
+                }
+                self.event_cursor += 1;
+            }
+
+            // 段边界（CC 事件位置）：推进通道 → 处理该位置所有事件（CC + 音符）
+            let Some(cc_sample) = next_cc.filter(|&s| s < block_end) else {
+                break;
+            };
+            let seg_len = (cc_sample - seg_start) as f32;
+            for ch in &mut self.channels {
+                ch.volume.advance(seg_len);
+                ch.expression.advance(seg_len);
+                ch.pan.advance(seg_len);
+            }
+            let frame = (cc_sample - block_start) as u32;
+            let seg_ch_off_before = seg_ch_off;
+            self.process_events_at(cc_sample, frame, ch_updates, releases, env_cmds);
+            let ch_count = ch_updates.len() - seg_ch_off_before;
+
+            segs.push(SegInfo {
+                start_frame: seg_frame,
+                ch_off: seg_ch_off_before as u32,
+                ch_count: ch_count as u32,
+                _pad: 0,
+            });
+            seg_frame = frame;
+            seg_ch_off = ch_updates.len();
+            seg_start = cc_sample;
+        }
+
+        // 最后一段 [seg_start, block_end)
+        let last_len = (block_end - seg_start) as f32;
+        for ch in &mut self.channels {
+            ch.volume.advance(last_len);
+            ch.expression.advance(last_len);
+            ch.pan.advance(last_len);
+        }
+        segs.push(SegInfo {
+            start_frame: seg_frame,
+            ch_off: seg_ch_off as u32,
+            ch_count: (ch_updates.len() - seg_ch_off) as u32,
+            _pad: 0,
+        });
+    }
+
+    /// 处理段边界（同一 sample 位置）的所有事件：CC 更新通道状态并记录 ch_updates、
+    /// 音符按偏移 0 分发（note_on 用段边界通道值快照）；damper 释放 / env 指令同发。
+    fn process_events_at(
+        &mut self,
+        sample: u64,
+        frame: u32,
+        ch_updates: &mut Vec<ChState>,
+        releases: &mut Vec<ReleaseCmd>,
+        env_cmds: &mut Vec<EnvUpdateCmd>,
+    ) {
         while self.event_cursor < self.events.len() {
             let ev = self.events[self.event_cursor];
-            if ev.sample() >= seg_end {
+            if ev.sample() != sample {
                 break;
             }
-            if ev.sample() >= seg_start {
-                let offset = (ev.sample() - seg_start) as u32;
-                match ev {
-                    SynthEvent::NoteOn {
-                        channel,
-                        key,
-                        velocity,
-                        ..
-                    } => self.note_on(channel, key, velocity, offset),
-                    SynthEvent::NoteOff { channel, key, .. } => {
-                        self.note_off(channel, key);
+            match ev {
+                SynthEvent::NoteOn {
+                    channel,
+                    key,
+                    velocity,
+                    ..
+                } => self.note_on(channel, key, velocity, frame, 0),
+                SynthEvent::NoteOff { channel, key, .. } => {
+                    self.note_off_to_cmd(channel, key, frame, releases);
+                }
+                SynthEvent::Control { channel, event, .. } => {
+                    let ch_idx = channel as usize % MAX_CHANNELS;
+                    match event {
+                        ControlEvent::Raw(0x78, 0) => {
+                            // All Sounds Off：kill 所有 voice
+                            for (i, v) in self.voices.iter_mut().enumerate() {
+                                if v.state.env_stage < 6 {
+                                    v.state.env_stage = 6;
+                                    releases.push(ReleaseCmd {
+                                        frame,
+                                        vid: i as u32,
+                                        mode: 6,
+                                        _pad: 0,
+                                    });
+                                }
+                            }
+                        }
+                        ControlEvent::Raw(0x7B, 0) => {
+                            // All Notes Off：kill 所有非 held voice（held 等待 damper 松开）
+                            for (i, v) in self.voices.iter_mut().enumerate() {
+                                if v.state.env_stage < 6 && !v.held_by_damper {
+                                    v.state.env_stage = 6;
+                                    releases.push(ReleaseCmd {
+                                        frame,
+                                        vid: i as u32,
+                                        mode: 6,
+                                        _pad: 0,
+                                    });
+                                }
+                            }
+                        }
+                        _ => {
+                            let damper_released = self.channels[ch_idx].process_control(event);
+                            if damper_released {
+                                // 松开延音踏板：释放该通道所有被保持的 voice
+                                for (i, v) in self.voices.iter_mut().enumerate() {
+                                    if v.channel == channel {
+                                        if v.held_by_damper
+                                            && v.state.env_stage < 5
+                                            && !v.release_pending
+                                        {
+                                            v.release_pending = true;
+                                            releases.push(ReleaseCmd {
+                                                frame,
+                                                vid: i as u32,
+                                                mode: 5,
+                                                _pad: 0,
+                                            });
+                                        }
+                                        v.held_by_damper = false;
+                                    }
+                                }
+                            }
+                            // CC72/73 修改包络时长、CC121 重置包络：传播到该通道活跃 voice
+                            if matches!(
+                                event,
+                                ControlEvent::Raw(0x48 | 0x49, _) | ControlEvent::Raw(0x79, 0)
+                            ) {
+                                self.propagate_env_controls_to_cmds(ch_idx, frame, env_cmds);
+                            }
+                            // 记录该通道的状态快照（shader 段边界应用）
+                            let ch = self.channels[ch_idx];
+                            // xsynth 每个事件位置都重置 read 块边界（cutoff set_end 的
+                            // 512 帧对齐基准随之重排），跨 render block 保持
+                            self.channels[ch_idx].cutoff_align = sample;
+                            ch_updates.push(ChState {
+                                ch: ch_idx as u32,
+                                speed_mult: ch.pitch_multiplier(),
+                                ch_vol: ch.volume.current,
+                                ch_vol_step: ch.volume.step,
+                                ch_vol_frames: ch.volume.frames_after(0.0),
+                                ch_expr: ch.expression.current,
+                                ch_expr_step: ch.expression.step,
+                                ch_expr_frames: ch.expression.frames_after(0.0),
+                                ch_pan: ch.pan.current,
+                                ch_pan_step: ch.pan.step,
+                                ch_pan_frames: ch.pan.frames_after(0.0),
+                            });
+                        }
                     }
-                    SynthEvent::Control { .. } => unreachable!("CC 由主循环在段边界处理"),
                 }
             }
             self.event_cursor += 1;
         }
-
-        // GPU 渲染：提取 voice states 到预分配缓冲区，零额外堆分配
-        if !self.voices.is_empty() {
-            self.states_buf.clear();
-            self.states_buf.extend(self.voices.iter().map(|v| v.state));
-            // per-channel 混音：32 通道 × frames × 2，读回后 CPU 滤波 + 求和
-            self.channel_mix.resize(MAX_CHANNELS * frames * 2, 0.0);
-            self.renderer.render_channel_mix(
-                &mut self.states_buf,
-                &mut self.channel_mix,
-                self.sample_rate,
-            );
-            for (i, v) in self.voices.iter_mut().enumerate() {
-                v.state.flt_x1 = self.states_buf[i].flt_x1;
-                v.state.flt_x2 = self.states_buf[i].flt_x2;
-                v.state.flt_y1 = self.states_buf[i].flt_y1;
-                v.state.flt_y2 = self.states_buf[i].flt_y2;
-                v.state.flt_x1r = self.states_buf[i].flt_x1r;
-                v.state.flt_x2r = self.states_buf[i].flt_x2r;
-                v.state.flt_y1r = self.states_buf[i].flt_y1r;
-                v.state.flt_y2r = self.states_buf[i].flt_y2r;
-            }
-        } else {
-            self.channel_mix.resize(MAX_CHANNELS * frames * 2, 0.0);
-        }
-        // 各通道：CC74 通道滤波（若开启）→ 求和（xsynth 顺序：vol/pan → cutoff → sum）。
-        // 无论有无 voice 都执行：cutoff 渐变与 DF1 状态照常推进（xsynth 的
-        // apply_channel_effects 每块无条件调用，对空信号滤波时 lerp 不中断）。
-        output.fill(0.0);
-        for (ch_idx, ch) in self.channels.iter_mut().enumerate() {
-            let base = ch_idx * frames * 2;
-            let ch_mix = &mut self.channel_mix[base..base + frames * 2];
-            ch.apply_cutoff_filter(ch_mix, self.sample_rate, seg_start);
-            for (i, o) in output.iter_mut().enumerate() {
-                *o += ch_mix[i];
-            }
-        }
-
-        // 原地推进 voice 状态
-        for v in &mut self.voices {
-            advance_voices(std::slice::from_mut(&mut v.state), frames as u32);
-        }
-
-        // 清理已结束的 voice
-        self.voices.retain(|v| v.state.env_stage < 6);
-
-        // 推进通道渐变状态（与 xsynth 逐样本推进对齐；voice 侧由 shader 逐帧推进）
-        for ch in &mut self.channels {
-            ch.volume.advance(frames as f32);
-            ch.expression.advance(frames as f32);
-            ch.pan.advance(frames as f32);
-        }
     }
 
     /// CC72/73（及 CC121 重置）后重算该通道所有活跃 voice 的 attack/release 时长：
-    /// 基于 region 原始值重算（多次 CC 不累积），并从当前 amp 重走当前阶段
-    /// （与 xsynth `modify_envelope` + `update_stage` 一致）。
-    fn propagate_env_controls(&mut self, ch_idx: usize) {
+    /// 基于 region 原始值重算（多次 CC 不累积），shader 从当前 amp 重走当前阶段。
+    fn propagate_env_controls_to_cmds(
+        &mut self,
+        ch_idx: usize,
+        frame: u32,
+        env_cmds: &mut Vec<EnvUpdateCmd>,
+    ) {
         let ch = self.channels[ch_idx];
-        for v in &mut self.voices {
+        for (i, v) in self.voices.iter_mut().enumerate() {
             if v.channel as usize != ch_idx || v.state.env_stage >= 6 {
                 continue;
             }
-            if let Some(cc) = ch.env_attack {
-                v.state.attack_frames =
-                    env_curve_frames(cc, v.orig_attack_frames, self.sample_rate, false);
-            }
-            if let Some(cc) = ch.env_release {
-                v.state.release_frames =
-                    env_curve_frames(cc, v.orig_release_frames, self.sample_rate, true);
-            }
-            // 重走当前阶段：进度清零，阶段起点 = 当前 amp（xsynth update_stage 语义）
-            match v.state.env_stage {
-                0 => v.state.stage_progress = 0.0, // Delay 重走（时长不变）
-                1 => {
-                    // Attack 从当前 amp 到 peak
-                    v.state.env_start = v.state.envelope;
-                    v.state.stage_progress = 0.0;
-                }
-                2 => v.state.stage_progress = 0.0, // Hold 重走（时长不变）
-                3 => {
-                    // Decay 从当前 amp 到 sustain
-                    v.state.decay_start = v.state.envelope;
-                    v.state.stage_progress = 0.0;
-                }
-                5 => {
-                    // Release 从当前 amp 到 0
-                    v.state.env_start = v.state.envelope;
-                    v.state.stage_progress = 0.0;
-                }
-                _ => {}
-            }
+            let attack_frames = match ch.env_attack {
+                Some(cc) => env_curve_frames(cc, v.orig_attack_frames, self.sample_rate, false),
+                None => v.state.attack_frames,
+            };
+            let release_frames = match ch.env_release {
+                Some(cc) => env_curve_frames(cc, v.orig_release_frames, self.sample_rate, true),
+                None => v.state.release_frames,
+            };
+            v.state.attack_frames = attack_frames;
+            v.state.release_frames = release_frames;
+            env_cmds.push(EnvUpdateCmd {
+                frame,
+                vid: i as u32,
+                attack_frames,
+                release_frames,
+            });
         }
     }
 
@@ -736,58 +849,9 @@ impl GpuSynth {
         }
     }
 
-    /// 处理一个通道控制事件（含 damper 松开时释放 held voices）。
-    fn process_control(&mut self, channel: u8, event: ControlEvent) {
-        let ch_idx = channel as usize % MAX_CHANNELS;
-        match event {
-            ControlEvent::Raw(0x78, 0) => {
-                // All Sounds Off：立即结束所有 voice
-                for v in &mut self.voices {
-                    v.state.env_stage = 6;
-                }
-                return;
-            }
-            ControlEvent::Raw(0x7B, 0) => {
-                // All Notes Off：释放该通道所有非 held voice（held 等待 damper 松开）
-                for v in &mut self.voices {
-                    if v.channel == channel && !v.held_by_damper && v.state.env_stage < 5 {
-                        v.state.env_start = v.state.envelope;
-                        v.state.env_stage = 5;
-                        v.state.stage_progress = 0.0;
-                    }
-                }
-                return;
-            }
-            _ => {}
-        }
-        let ch = &mut self.channels[ch_idx];
-        let damper_released = ch.process_control(event);
-        if damper_released {
-            // 松开延音踏板：释放该通道所有被保持的 voice
-            for v in &mut self.voices {
-                if v.channel == channel {
-                    if v.held_by_damper && v.state.env_stage < 5 {
-                        v.state.env_start = v.state.envelope;
-                        v.state.env_stage = 5;
-                        v.state.stage_progress = 0.0;
-                    }
-                    v.held_by_damper = false;
-                }
-            }
-        }
-        // CC72/73 修改包络时长、CC121 重置包络：传播到该通道活跃 voice
-        if matches!(
-            event,
-            ControlEvent::Raw(0x48 | 0x49, _) | ControlEvent::Raw(0x79, 0)
-        ) {
-            self.propagate_env_controls(ch_idx);
-        }
-        // 弯音/渐变在下一段起点由 sync_channel_state 统一应用
-    }
-
-    /// NoteOn（块内偏移由 offset_in_block 指定）。
+    /// NoteOn（block_frame = 块内起始帧；seg_offset = 段内偏移，用于通道值快照）。
     /// key_map 已按 (key, vel) 展开为最终参数快照，这里零公式计算直接消费。
-    pub fn note_on(&mut self, channel: u8, key: u8, vel: u8, offset_in_block: u32) {
+    pub fn note_on(&mut self, channel: u8, key: u8, vel: u8, block_frame: u32, seg_offset: u32) {
         let info = match sfz_parser::select_key_info(&self.key_map, key, vel) {
             Some(i) => i,
             None => return,
@@ -833,9 +897,9 @@ impl GpuSynth {
             Some(cc) => env_curve_frames(cc, orig_release_frames, self.sample_rate, true),
             None => orig_release_frames,
         };
-        // 通道渐变快照：note 起点处（seg_start + offset）的通道值 + 剩余渐变帧数。
-        // shader 内 voice 与通道以相同步长逐帧推进，事件边界由 sync_channel_voices 重新对齐。
-        let offset_f = offset_in_block as f32;
+        // 通道渐变快照：note 起点处（段起点 + seg_offset）的通道值 + 剩余渐变帧数。
+        // shader 内 voice 与通道以相同步长逐帧推进，段边界由 ChState 重新对齐。
+        let offset_f = seg_offset as f32;
 
         self.voices.push(Voice {
             key,
@@ -844,13 +908,15 @@ impl GpuSynth {
             orig_attack_frames,
             orig_release_frames,
             held_by_damper: false,
+            release_pending: false,
             state: GpuVoiceState {
                 sample_offset: offset + info.offset,
                 sample_length: length - info.offset.min(length),
                 speed: info.speed_mult * ch.pitch_multiplier(),
+                base_speed: info.speed_mult,
                 base_gain: info.volume,
                 time: 0.0,
-                start_offset: offset_in_block,
+                start_offset: block_frame,
                 // 取模后的通道号（与 ChannelState 索引/pass2 归约一致）
                 channel: channel as u32 % MAX_CHANNELS as u32,
                 envelope: info.ampeg_start,
@@ -905,18 +971,34 @@ impl GpuSynth {
     /// NoteOff — 释放该 (channel, key) 最老的未释放 voice（与 xsynth `release_next_voice` 一致：
     /// 同 key 多次按下的 voice 逐个释放，后按的 voice 继续响）。
     /// 延音踏板踩着时只标记 held，不释放。
-    pub fn note_off(&mut self, channel: u8, key: u8) {
+    /// 实际释放由 shader 在 frame 帧应用 release 指令完成。
+    pub fn note_off_to_cmd(
+        &mut self,
+        channel: u8,
+        key: u8,
+        frame: u32,
+        releases: &mut Vec<ReleaseCmd>,
+    ) {
         let damper = self.channels[channel as usize % MAX_CHANNELS].damper;
-        for v in self.voices.iter_mut() {
+        for (i, v) in self.voices.iter_mut().enumerate() {
             // 跳过已 held 的 voice（xsynth damper 分支只匹配 "isn't being held" 的
             // voice：否则同 key 多个 off 会重复匹配同一个 held voice，其余 voice 永不释放）
-            if v.channel == channel && v.key == key && v.state.env_stage < 5 && !v.held_by_damper {
+            if v.channel == channel
+                && v.key == key
+                && v.state.env_stage < 5
+                && !v.held_by_damper
+                && !v.release_pending
+            {
                 if damper {
                     v.held_by_damper = true;
                 } else {
-                    v.state.env_start = v.state.envelope;
-                    v.state.env_stage = 5;
-                    v.state.stage_progress = 0.0;
+                    v.release_pending = true;
+                    releases.push(ReleaseCmd {
+                        frame,
+                        vid: i as u32,
+                        mode: 5,
+                        _pad: 0,
+                    });
                 }
                 break;
             }
