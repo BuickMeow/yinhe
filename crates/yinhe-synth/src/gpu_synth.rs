@@ -414,6 +414,8 @@ pub struct GpuSynth {
     /// 全局 voice 上限（黑乐谱长 sustain/无 note_off 的 voice 会累积，
     /// 超限时淘汰最老的 release 中 voice，否则最老的 active——与 xsynth voice 限制同思路）
     max_voices: usize,
+    /// 峰值 voice 数统计（诊断用）
+    peak_voices: usize,
     limiter: VolumeLimiter,
     /// 渲染后是否应用限幅器（默认开；对比测试可关闭）
     limiter_enabled: bool,
@@ -479,6 +481,7 @@ impl GpuSynth {
             channel_mix: Vec::new(),
             channels: [ChannelState::new(sample_rate); MAX_CHANNELS],
             max_voices: 8192,
+            peak_voices: 0,
             limiter: VolumeLimiter::new(2),
             limiter_enabled: true,
             sample_rate,
@@ -515,6 +518,11 @@ impl GpuSynth {
     /// 设置全局 voice 上限（默认 8192）。超过时淘汰最老的 release 中 voice。
     pub fn set_max_voices(&mut self, max: usize) {
         self.max_voices = max;
+    }
+
+    /// 渲染期间的峰值 voice 数（诊断用）
+    pub fn peak_voices(&self) -> usize {
+        self.peak_voices
     }
 
     /// Seek 到指定位置
@@ -628,6 +636,7 @@ impl GpuSynth {
 
         // 清理已结束的 voice（GPU 推进后的 env_stage）
         self.voices.retain(|v| v.state.env_stage < 6);
+        self.peak_voices = self.peak_voices.max(self.voices.len());
 
         // 限幅（真实路径保留；对比测试可关闭）
         if self.limiter_enabled {

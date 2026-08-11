@@ -498,8 +498,11 @@ pub fn export_wav_gpu(
     let total = t_start.elapsed();
     let rtf = audio_secs / total.as_secs_f64();
     eprintln!(
-        "[gpu-export] Done: {:.2?} (rtf={:.1}x, audio={:.1}s)",
-        total, rtf, audio_secs
+        "[gpu-export] Done: {:.2?} (rtf={:.1}x, audio={:.1}s, peak_voices={})",
+        total,
+        rtf,
+        audio_secs,
+        synth.peak_voices()
     );
     progress(1.0, "导出完成");
 

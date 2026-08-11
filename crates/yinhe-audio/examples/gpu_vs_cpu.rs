@@ -209,10 +209,14 @@ fn main() {
     cg.send_event(XSynthEvent::AllChannels(ChannelEvent::Config(
         ChannelConfigEvent::SetLayerCount(None),
     )));
-    cg.send_event(XSynthEvent::Channel(
-        0,
-        ChannelEvent::Config(ChannelConfigEvent::SetSoundfonts(vec![Arc::new(sf)])),
-    ));
+    // 所有 dense 通道设置音色库（只设 ch0 时多通道曲子的其他通道静音，参考失效）
+    let sf = Arc::new(sf);
+    for ch in 0..layout2.compacted_channels() {
+        cg.send_event(XSynthEvent::Channel(
+            ch,
+            ChannelEvent::Config(ChannelConfigEvent::SetSoundfonts(vec![sf.clone()])),
+        ));
+    }
     let mut xev: Vec<(u64, XSynthEvent)> = Vec::new();
     // ── CC/PB/RPN 事件（同 sample 时先于 note 处理）──
     // 通道控制事件（与 CPU/GPU 路径同一语义：CC/PB/RPN 映射见 emit_automation_event）
