@@ -166,8 +166,12 @@ fn render_track_row(ui: &mut egui::Ui, model: &YinModel, idx: u16, state: &mut E
         pc_count
     );
 
+    // Frame.show 之前判定 hover，选中态优先于 hover 底色
+    let hovered = ui.rect_contains_pointer(ui.available_rect_before_wrap());
     let row_bg = if is_selected {
         crate::theme::selected_bg()
+    } else if hovered {
+        crate::theme::hover_color(crate::theme::app_bg())
     } else {
         egui::Color32::TRANSPARENT
     };
@@ -193,7 +197,7 @@ fn render_track_row(ui: &mut egui::Ui, model: &YinModel, idx: u16, state: &mut E
                         egui::Label::new(
                             chev.rich_text()
                                 .size(crate::theme::SUB_TITLE_FONT)
-                                .color(crate::theme::text_medium()),
+                                .color(crate::theme::text_secondary()),
                         )
                         .sense(egui::Sense::click()),
                     )
@@ -208,7 +212,7 @@ fn render_track_row(ui: &mut egui::Ui, model: &YinModel, idx: u16, state: &mut E
                             .rich_text()
                             .size(crate::theme::BODY_FONT)
                             .color(if is_selected {
-                                crate::theme::text_selected()
+                                crate::theme::contrast_fg()
                             } else {
                                 crate::theme::text_muted()
                             }),
@@ -222,7 +226,7 @@ fn render_track_row(ui: &mut egui::Ui, model: &YinModel, idx: u16, state: &mut E
                             .size(crate::theme::SMALL_FONT)
                             .monospace()
                             .color(if is_selected {
-                                crate::theme::text_selected()
+                                crate::theme::contrast_fg()
                             } else {
                                 crate::theme::text_primary()
                             }),
@@ -238,7 +242,11 @@ fn render_track_row(ui: &mut egui::Ui, model: &YinModel, idx: u16, state: &mut E
                     egui::Label::new(
                         egui::RichText::new(format!("[{}]", summary))
                             .size(crate::theme::SMALL_LABEL_FONT)
-                            .color(crate::theme::text_dimmer()),
+                            .color(if is_selected {
+                                crate::theme::contrast_fg()
+                            } else {
+                                crate::theme::text_label()
+                            }),
                     )
                     .selectable(false),
                 );
@@ -325,7 +333,15 @@ fn render_dir_row(
     child_count: usize,
 ) -> bool {
     let mut toggled = false;
+    // 目录行无选中态，仅 hover 时给底色反馈
+    let hovered = ui.rect_contains_pointer(ui.available_rect_before_wrap());
+    let row_bg = if hovered {
+        crate::theme::hover_color(crate::theme::app_bg())
+    } else {
+        egui::Color32::TRANSPARENT
+    };
     egui::Frame::NONE
+        .fill(row_bg)
         .inner_margin(egui::Margin::symmetric(2, 1))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
@@ -341,7 +357,7 @@ fn render_dir_row(
                         egui::Label::new(
                             chev.rich_text()
                                 .size(crate::theme::SUB_TITLE_FONT)
-                                .color(crate::theme::text_medium()),
+                                .color(crate::theme::text_secondary()),
                         )
                         .sense(egui::Sense::click()),
                     )
@@ -380,7 +396,7 @@ fn render_dir_row(
                     egui::Label::new(
                         egui::RichText::new(format!("({})", child_count))
                             .size(crate::theme::SMALL_LABEL_FONT)
-                            .color(crate::theme::text_dimmer()),
+                            .color(crate::theme::text_label()),
                     )
                     .selectable(false),
                 );
@@ -398,13 +414,17 @@ fn render_leaf_item(
     state: &mut EventBrowserState,
 ) {
     let is_selected = state.selected_item.as_ref() == Some(&item);
-    let bg = if is_selected {
+    // Frame.show 之前判定 hover，选中态优先于 hover 底色
+    let hovered = ui.rect_contains_pointer(ui.available_rect_before_wrap());
+    let row_bg = if is_selected {
         crate::theme::selected_bg()
+    } else if hovered {
+        crate::theme::hover_color(crate::theme::app_bg())
     } else {
         egui::Color32::TRANSPARENT
     };
     let frame_r = egui::Frame::NONE
-        .fill(bg)
+        .fill(row_bg)
         .inner_margin(egui::Margin::symmetric(2, 1))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
@@ -414,7 +434,7 @@ fn render_leaf_item(
                 ui.add(
                     egui::Label::new(icon.rich_text().size(crate::theme::BODY_FONT).color(
                         if is_selected {
-                            crate::theme::text_selected()
+                            crate::theme::contrast_fg()
                         } else {
                             crate::theme::text_muted()
                         },
@@ -427,7 +447,7 @@ fn render_leaf_item(
                             .size(crate::theme::SMALL_FONT)
                             .monospace()
                             .color(if is_selected {
-                                crate::theme::text_selected()
+                                crate::theme::contrast_fg()
                             } else {
                                 crate::theme::text_bright()
                             }),

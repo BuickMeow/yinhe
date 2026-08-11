@@ -142,7 +142,8 @@ pub(super) fn show_anchor_info(
         );
         let is_step = matches!(shape, SegmentShape::Step);
         let mut discrete = is_step;
-        let resp = ui.checkbox(&mut discrete, t!("anchor.discrete").as_ref());
+        let resp =
+            crate::widgets::checkbox::checkbox(ui, &mut discrete, t!("anchor.discrete").as_ref());
         if resp.changed() {
             let before = doc.capture_snapshot();
             let actions =
@@ -333,7 +334,7 @@ pub(super) fn show_anchor_info(
     ui.label(
         egui::RichText::new(shape_desc.as_ref())
             .size(crate::theme::SMALL_LABEL_FONT)
-            .color(crate::theme::text_faint()),
+            .color(crate::theme::text_label()),
     );
 
     ui.add_space(8.0);

@@ -88,7 +88,8 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                     egui::Button::new(
                         ICON_DESCRIPTION
                             .rich_text()
-                            .size(crate::theme::TRANSPORT_BTN_FONT),
+                            .size(crate::theme::TRANSPORT_BTN_FONT)
+                            .color(crate::theme::text_primary()),
                     )
                     .min_size(btn_size)
                     .corner_radius(btn_rounding),
@@ -118,7 +119,8 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                                 ICON_PLAY_ARROW
                             })
                             .rich_text()
-                            .size(crate::theme::TRANSPORT_BTN_FONT),
+                            .size(crate::theme::TRANSPORT_BTN_FONT)
+                            .color(crate::theme::text_primary()),
                         )
                         .min_size(btn_size)
                         .corner_radius(btn_rounding),
@@ -136,7 +138,10 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
 
                     let stop_resp = ui.add(
                         egui::Button::new(
-                            ICON_STOP.rich_text().size(crate::theme::TRANSPORT_BTN_FONT),
+                            ICON_STOP
+                                .rich_text()
+                                .size(crate::theme::TRANSPORT_BTN_FONT)
+                                .color(crate::theme::text_primary()),
                         )
                         .min_size(btn_size)
                         .corner_radius(btn_rounding),
@@ -154,7 +159,8 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                             ctx.follow_mode
                                 .icon()
                                 .rich_text()
-                                .size(crate::theme::TRANSPORT_BTN_FONT),
+                                .size(crate::theme::TRANSPORT_BTN_FONT)
+                                .color(crate::theme::text_primary()),
                         )
                         .min_size(btn_size)
                         .corner_radius(btn_rounding),

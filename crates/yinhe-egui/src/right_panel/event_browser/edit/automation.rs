@@ -201,7 +201,11 @@ fn show_auto_shape_popup(
 
                 let mut is_step = matches!(work_shape, SegmentShape::Step);
                 let was_step = is_step;
-                ui.checkbox(&mut is_step, t!("event_browser.shape_step").as_ref());
+                crate::widgets::checkbox::checkbox(
+                    ui,
+                    &mut is_step,
+                    t!("event_browser.shape_step").as_ref(),
+                );
                 // 用直接比较替代 checkbox.changed()——Area 中 response 标记不可靠
                 // 只更新 pending（work_id），不调 doc.set_automation_shape
                 if is_step != was_step {

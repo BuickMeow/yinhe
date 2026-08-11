@@ -252,7 +252,7 @@ fn show_search_results(
     }
     if matched == 0 {
         ui.colored_label(
-            crate::theme::text_hint(),
+            crate::theme::text_disabled(),
             t!("settings.search_none").as_ref(),
         );
     }
@@ -648,7 +648,7 @@ fn show_render_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
             ui.end_row();
 
             ui.label(t!("settings.render.note_outline").as_ref());
-            if ui.checkbox(&mut settings.note_outline, "").changed() {
+            if crate::widgets::checkbox::checkbox(ui, &mut settings.note_outline, "").changed() {
                 changed = true;
             }
             ui.end_row();
@@ -673,7 +673,7 @@ fn show_render_tab(ui: &mut egui::Ui, settings: &mut AudioSettings) -> bool {
             ui.end_row();
 
             ui.label(t!("settings.render.gpu_cull").as_ref());
-            if ui.checkbox(&mut settings.use_gpu_cull, "").changed() {
+            if crate::widgets::checkbox::checkbox(ui, &mut settings.use_gpu_cull, "").changed() {
                 changed = true;
             }
             ui.end_row();
