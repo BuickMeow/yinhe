@@ -141,6 +141,18 @@ fn shade(c: Color32, f: f32) -> Color32 {
     )
 }
 
+/// 文字灰阶两套 token：暗色 = 主文字 × 系数（变暗）；
+/// 亮色 = 主文字向背景插值（变浅）。
+/// 亮色不能用乘法：主文字本身是深色，乘系数会坍缩成黑，灰阶失去层次
+/// （与主文字几乎无法区分）。亮色系数语义 = 向背景靠拢的比例。
+fn gray_tone(text: Color32, bg: Color32, dark: bool, f: f32) -> Color32 {
+    if dark {
+        shade(text, f)
+    } else {
+        mix(text, bg, f)
+    }
+}
+
 /// 从 7 个标准色计算完整主题。纯函数：相同输入 → 相同输出。
 pub fn derive_theme(base: crate::base::BaseColors) -> Theme {
     let bg = base.bg.to_color32();
@@ -149,22 +161,21 @@ pub fn derive_theme(base: crate::base::BaseColors) -> Theme {
     let danger = base.danger.to_color32();
     let warning = base.warning.to_color32();
     let contrast = contrast_text(bg);
-    let gray128 = shade(text, 0.58); // text_label
     let dark = luminance(bg) <= 0.5;
 
-    // 文字灰阶：主文字 × 亮度系数（保 alpha）
+    // 文字灰阶两套 token（暗色乘法衰减；亮色向背景插值变浅，避免坍缩成黑）
     let text_primary = text;
-    let text_bright = shade(text, 0.90);
-    let text_medium = shade(text, 0.86);
-    let text_secondary = shade(text, 0.82);
-    let text_muted = shade(text, 0.73);
-    let text_faint = shade(text, 0.64);
-    let text_label = gray128;
-    let text_dim = shade(text, 0.55);
-    let text_dimmer = shade(text, 0.50);
-    let text_hint = shade(text, 0.45);
-    let text_label_dim = shade(text, 0.41);
-    let text_disabled = shade(text, 0.36);
+    let text_bright = gray_tone(text, bg, dark, if dark { 0.90 } else { 0.06 });
+    let text_medium = gray_tone(text, bg, dark, if dark { 0.86 } else { 0.10 });
+    let text_secondary = gray_tone(text, bg, dark, if dark { 0.82 } else { 0.14 });
+    let text_muted = gray_tone(text, bg, dark, if dark { 0.73 } else { 0.22 });
+    let text_faint = gray_tone(text, bg, dark, if dark { 0.64 } else { 0.30 });
+    let text_label = gray_tone(text, bg, dark, if dark { 0.58 } else { 0.36 });
+    let text_dim = gray_tone(text, bg, dark, if dark { 0.55 } else { 0.40 });
+    let text_dimmer = gray_tone(text, bg, dark, if dark { 0.50 } else { 0.46 });
+    let text_hint = gray_tone(text, bg, dark, if dark { 0.45 } else { 0.52 });
+    let text_label_dim = gray_tone(text, bg, dark, if dark { 0.41 } else { 0.58 });
+    let text_disabled = gray_tone(text, bg, dark, if dark { 0.36 } else { 0.66 });
 
     // ── 表面层级：两套 token（暗色提亮、亮色压暗，幅度各自感知校准）──
     // 暗色主题在深底上用"提亮"表达层级；亮色主题在浅底上用"压暗"表达层级。
@@ -194,13 +205,13 @@ pub fn derive_theme(base: crate::base::BaseColors) -> Theme {
     let mix_track = mix_darken(t_track);
     let mix_stripe = mix_darken(t_stripe);
     let mix_tick_label = mix(bg, text, 0.22);
-    let mix_measure_label = shade(text, 0.77);
+    let mix_measure_label = gray_tone(text, bg, dark, if dark { 0.77 } else { 0.12 });
 
     // 危险系：危险色与文字/对比色混合得到浅红/暗红档位（同色相）
     let danger_text = mix(danger, text, 0.28);
     let danger_text_bright = mix(danger, contrast, 0.30);
     let error_text = mix(danger, text, 0.32);
-    let danger_hover = mix(danger, gray128, 0.30);
+    let danger_hover = mix(danger, text_label, 0.30);
     let warning_gold = mix(warning, text, 0.25);
 
     // 色系设计：选中底 = 强调色混背景（暗主题深蓝、亮主题中浅蓝，同色相）
@@ -285,12 +296,47 @@ mod tests {
         // 亮底上的对比文字应为深色
         assert_eq!(t.contrast_fg, Color32::from_gray(20));
         assert_eq!(t.text_selected, Color32::from_gray(20));
-        // 灰阶比主文字暗
-        assert!(t.text_dim.r() < t.text_primary.r());
+        // 灰阶比主文字浅（亮色主题灰阶 = 主文字向背景插值，而非乘法变暗）
+        assert!(t.text_dim.r() > t.text_primary.r());
+        assert!(t.text_disabled.r() > t.text_dim.r());
         // 线条色比背景亮/暗方向随主题（亮色主题线条比背景暗）
         assert!(t.line_fg.r() < t.app_bg.r());
         let dark = derive_theme(crate::base::BaseColors::DARK);
         assert!(dark.line_fg.r() > dark.app_bg.r());
+    }
+
+    /// 亮色灰阶单调：主文字 → disabled 逐档变浅（与主文字拉开层次，不坍缩成黑）。
+    #[test]
+    fn derive_light_gray_ladder_monotonic() {
+        let lum = |c: Color32| c.r() as i32; // 无彩色系下 r 即亮度
+        for base in [
+            crate::base::BaseColors::LIGHT,
+            crate::base::BaseColors::LIGHT_COOL,
+            crate::base::BaseColors::LIGHT_WARM,
+        ] {
+            let t = derive_theme(base);
+            let ladder = [
+                t.text_primary,
+                t.text_bright,
+                t.text_medium,
+                t.text_secondary,
+                t.text_muted,
+                t.text_faint,
+                t.text_label,
+                t.text_dim,
+                t.text_dimmer,
+                t.text_hint,
+                t.text_label_dim,
+                t.text_disabled,
+            ];
+            assert!(
+                ladder.windows(2).all(|w| lum(w[0]) <= lum(w[1])),
+                "亮色灰阶应单调变浅: {:?}",
+                ladder
+            );
+            // 最弱档与主文字拉开足够差距（>= 40 级），否则亮色下灰字≈黑字
+            assert!(lum(ladder[11]) - lum(ladder[0]) >= 40);
+        }
     }
 
     /// 两套 token：亮/暗各自的表面层级阶梯单调（无交叉、无反转）。
