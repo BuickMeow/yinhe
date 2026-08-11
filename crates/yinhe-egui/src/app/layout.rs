@@ -184,6 +184,7 @@ impl App {
                     remaining: layout.remaining,
                     arr_h: layout.arr_h,
                     transport_panel_width: &mut self.transport_panel_width,
+                    drag_ended: &mut self.layout_needs_save,
                 },
                 &mut self.arr_renderer,
                 &mut self.arr_render_ctx,
@@ -367,6 +368,9 @@ impl App {
                 let delta = h_split_resp.drag_delta().y;
                 self.arr_split = ((layout.arr_h + delta) / total_y)
                     .clamp(crate::theme::SPLIT_CLAMP_MIN, crate::theme::SPLIT_CLAMP_MAX);
+            }
+            if h_split_resp.drag_stopped() {
+                self.layout_needs_save = true;
             }
         }
 
@@ -791,7 +795,7 @@ impl App {
                 egui::vec2(layout.right_panel_total_w, layout.remaining.height()),
             );
             let doc = self.active_doc.and_then(|idx| self.documents.get_mut(idx));
-            let (changed, jump_request) = crate::right_panel::show(
+            let (changed, jump_request, width_drag_ended) = crate::right_panel::show(
                 ui,
                 right_rect,
                 &mut self.right_panel_width,
@@ -806,6 +810,9 @@ impl App {
             );
             if changed {
                 self.teardown_audio();
+            }
+            if width_drag_ended {
+                self.layout_needs_save = true;
             }
             if let Some(req) = jump_request {
                 self.handle_jump_request(req, layout);
@@ -831,6 +838,20 @@ impl App {
         let occluded = ui.ctx().input(|i| i.viewport().occluded == Some(true));
         if playing && !occluded {
             ui.ctx().request_repaint();
+        }
+    }
+
+    /// 帧末：把当前布局值同步进设置（内存），拖拽结束/切换帧写盘一次。
+    /// 拖拽过程中值每帧变化但不置标志，避免拖拽时每帧刷盘。
+    pub(in crate::app) fn sync_layout_settings(&mut self) {
+        let l = &mut self.audio_settings.layout;
+        l.right_panel_width = self.right_panel_width;
+        l.arr_split = self.arr_split;
+        l.transport_panel_width = self.transport_panel_width;
+        l.show_pianoroll_in_arrange = self.show_pianoroll_in_arrange;
+        if self.layout_needs_save {
+            self.audio_settings.save();
+            self.layout_needs_save = false;
         }
     }
 }

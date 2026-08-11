@@ -5,6 +5,32 @@ use serde::{Deserialize, Serialize};
 use crate::config::GlobalSfConfig;
 use yinhe_mid2::MidiImportEncoding;
 
+/// 用户可拖拽调整的布局状态（跨会话持久化）。
+/// 默认值与 yinhe-egui 的渲染逻辑一致（clamp 由渲染侧 theme 常量负责）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LayoutSettings {
+    /// 右侧栏宽度（px）。
+    pub right_panel_width: f32,
+    /// AR/PR 竖向分割比例（0~1，AR 占比）。
+    pub arr_split: f32,
+    /// AR 视图内 transport（轨道）面板宽度（px）。
+    pub transport_panel_width: f32,
+    /// Arrange 模式下是否同时显示钢琴卷帘。
+    pub show_pianoroll_in_arrange: bool,
+}
+
+impl Default for LayoutSettings {
+    fn default() -> Self {
+        Self {
+            right_panel_width: 320.0,
+            arr_split: 0.3,
+            transport_panel_width: 200.0,
+            show_pianoroll_in_arrange: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AudioSettings {
@@ -44,6 +70,8 @@ pub struct AudioSettings {
     pub ui_scale: f32,
     /// 内容层背景/条纹不透明度（PR/AM 背景、AR 条纹；1.0 = 不透明，0.0 = 全透明）。
     pub content_opacity: f32,
+    /// 用户可拖拽调整的布局状态（分割线宽度/比例、PR 显示开关）。
+    pub layout: LayoutSettings,
     #[serde(skip)]
     pub show_settings: bool,
     /// 设置页当前选中的分类（左侧导航）。
@@ -79,6 +107,7 @@ impl Default for AudioSettings {
             theme_preset: "dark".to_string(),
             ui_scale: 1.0, // UI 缩放（egui zoom_factor，1.0 = 100%）
             content_opacity: 0.7,
+            layout: LayoutSettings::default(),
             show_settings: false,
             settings_tab: 0,
             settings_search: String::new(),

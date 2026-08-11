@@ -476,6 +476,10 @@ impl eframe::App for App {
             &mut self.show_mem_breakdown,
             &self.status_hint,
         );
+        // PR 显示切换 → 布局设置写盘（帧末 sync_layout_settings 统一落盘）
+        if self.show_pianoroll_in_arrange != self.audio_settings.layout.show_pianoroll_in_arrange {
+            self.layout_needs_save = true;
+        }
 
         // ── Main content area ──
         let layout = self.compute_layout(ui);
@@ -483,6 +487,9 @@ impl eframe::App for App {
         self.show_panels_and_overlays(ui, &layout);
         self.show_dialogs(ui);
         self.show_load_error_modal(ui);
+
+        // ── 布局设置持久化（拖拽结束帧才写盘）──
+        self.sync_layout_settings();
         self.sync_automation_density();
 
         if let Some(t0) = _ui_total_start {

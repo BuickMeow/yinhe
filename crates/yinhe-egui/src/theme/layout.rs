@@ -29,7 +29,6 @@ pub const TIMECODE_FONT: f32 = 12.0;
 pub const FILE_MENU_FONT: f32 = 14.0;
 
 // ── Layout defaults ──
-pub const DEFAULT_ARR_SPLIT: f32 = 0.3;
 pub const MIN_ARR_HEIGHT: f32 = 60.0;
 pub const SPLIT_CLAMP_MIN: f32 = 0.1;
 pub const SPLIT_CLAMP_MAX: f32 = 0.7;
@@ -41,7 +40,6 @@ pub const CURSOR_WIDTH: f32 = 2.0;
 
 // ── Right panel ──
 pub const RIGHT_PANEL_MIN_WIDTH: f32 = 160.0;
-pub const RIGHT_PANEL_DEFAULT_WIDTH: f32 = 320.0;
 
 // ── Automation panel ──
 pub const AUTO_PANEL_SPLIT_H: f32 = SPLIT_HANDLE_W;

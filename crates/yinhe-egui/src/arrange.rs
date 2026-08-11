@@ -61,6 +61,8 @@ pub(crate) struct ArrangeLayout<'a> {
     pub remaining: egui::Rect,
     pub arr_h: f32,
     pub transport_panel_width: &'a mut f32,
+    /// 分割线拖拽刚结束（本帧释放），调用方据此持久化布局设置。
+    pub drag_ended: &'a mut bool,
 }
 
 /// Returns `Some(new_preset)` if the user picked a new quantize preset
@@ -537,6 +539,9 @@ pub fn show(
     if v_resp.dragged() {
         *layout.transport_panel_width =
             (*layout.transport_panel_width + v_resp.drag_delta().x).clamp(60.0, arr_total_w - 60.0);
+    }
+    if v_resp.drag_stopped() {
+        *layout.drag_ended = true;
     }
 
     // ── 状态栏讲解行：走带悬停提示（位置 + 音轨号；有选框时优先显示选框统计）──

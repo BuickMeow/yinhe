@@ -128,6 +128,8 @@ pub struct App {
 
     // ── Settings ──
     pub(crate) audio_settings: crate::audio_settings::AudioSettings,
+    /// 布局拖拽结束帧置位，帧末统一写盘（拖拽中不写，避免每帧刷盘）。
+    pub(crate) layout_needs_save: bool,
     /// Tracks the last applied MIDI encoding to detect changes.
     pub(crate) last_midi_encoding: yinhe_mid2::MidiImportEncoding,
     /// Tracks the last applied automation density to detect changes.
@@ -297,7 +299,7 @@ impl App {
             arr_render_ctx,
             arr_renderer: yinhe_wgpu::InstanceRenderer::new(device, queue, format),
             arrange_view: ArrangementView::default(),
-            arr_split: crate::theme::DEFAULT_ARR_SPLIT,
+            arr_split: audio_settings.layout.arr_split,
 
             controller_renderers: Vec::new(),
 
@@ -305,7 +307,7 @@ impl App {
             active_doc: Some(0),
             prev_active_doc: Some(0),
 
-            transport_panel_width: 200.0,
+            transport_panel_width: audio_settings.layout.transport_panel_width,
             load_progress: load_progress.clone(),
             file_loader: FileLoader::new(load_progress.clone()),
             load_error: None,
@@ -318,10 +320,10 @@ impl App {
             rescale: rescale_state::RescaleState::new(),
 
             view_mode: ViewMode::Arrange,
-            show_pianoroll_in_arrange: false,
+            show_pianoroll_in_arrange: audio_settings.layout.show_pianoroll_in_arrange,
             track_selection_anchor: None,
 
-            right_panel_width: crate::theme::RIGHT_PANEL_DEFAULT_WIDTH,
+            right_panel_width: audio_settings.layout.right_panel_width,
             right_tab: None,
             info_content: None,
             automation_drag_ghost: None,
@@ -345,6 +347,7 @@ impl App {
             audio_state: audio_state::AudioState::new(),
 
             audio_settings,
+            layout_needs_save: false,
             last_midi_encoding: yinhe_mid2::MidiImportEncoding::Utf8,
             last_automation_density,
 
