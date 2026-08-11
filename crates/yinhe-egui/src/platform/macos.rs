@@ -9,7 +9,7 @@ use muda::{
     IsMenuItem, Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem, Submenu,
     accelerator::{Accelerator, Code, Modifiers},
 };
-use objc2::runtime::{AnyClass, AnyObject};
+use objc2::runtime::{AnyClass, AnyObject, Sel};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use rust_i18n::t;
 
@@ -27,18 +27,154 @@ macro_rules! cstr {
     };
 }
 
-// ── Finder 打开文件（预留通道）────────────────────────────────────────
+// ── Finder 打开文件（application:openFiles: / openURLs:）──────────────
 
 /// Finder/桌面"打开方式"传入的文件路径发送端。
-/// 目前 Finder 打开功能在实验分支（feat/finder-open-experiment）开发中，
-/// 这里只保留通道，避免残留任何会在启动期执行的 ObjC 注册。
 static OPEN_FILES_SENDER: Mutex<Option<mpsc::Sender<String>>> = Mutex::new(None);
 
-/// 创建 Finder 打开文件的通道。返回接收端，由调用方在主线程轮询。
+/// 创建 Finder 打开文件的通道，并把文档打开方法装到 winit 的 delegate 类上。
+/// 返回接收端，由调用方在主线程轮询。
 fn register_open_files_handler() -> mpsc::Receiver<String> {
     let (tx, rx) = mpsc::channel();
     *OPEN_FILES_SENDER.lock().unwrap() = Some(tx);
+    install_open_files_methods();
     rx
+}
+
+/// 给 winit 的 NSApplicationDelegate 类动态添加 `application:openFiles:` 和
+/// `application:openURLs:`（winit 未实现这两个方法）。
+/// AppKit 收到 Finder 的 odoc 事件后默认路由到 delegate 的这两个方法；
+/// 用 class_addMethod 直接加到既有类上，不需要子类化或替换 isa。
+/// 时序：本函数在 App::new（winit 的 applicationDidFinishLaunching: 内）调用，
+/// 而 odoc 事件在 didFinishLaunching 返回后才派发，所以冷启动也来得及。
+fn install_open_files_methods() {
+    let Some(ns_app_class) = cls(cstr!("NSApplication")) else {
+        return;
+    };
+    unsafe {
+        let app: *mut AnyObject = objc2::msg_send![ns_app_class, sharedApplication];
+        let delegate: *mut AnyObject = objc2::msg_send![app, delegate];
+        if delegate.is_null() {
+            return;
+        }
+        let delegate_class: *mut AnyClass = objc2::msg_send![delegate, class];
+        if delegate_class.is_null() {
+            return;
+        }
+        // v@:@@ = void (id self, SEL _cmd, id sender, id files/urls)
+        let types = c"v@:@@".as_ptr();
+        let open_files: objc2::runtime::Imp = std::mem::transmute(
+            handle_open_files
+                as unsafe extern "C-unwind" fn(&AnyObject, Sel, &AnyObject, *mut AnyObject),
+        );
+        let open_urls: objc2::runtime::Imp = std::mem::transmute(
+            handle_open_urls
+                as unsafe extern "C-unwind" fn(&AnyObject, Sel, &AnyObject, *mut AnyObject),
+        );
+        objc2::ffi::class_addMethod(
+            delegate_class,
+            objc2::sel!(application:openFiles:),
+            open_files,
+            types,
+        );
+        objc2::ffi::class_addMethod(
+            delegate_class,
+            objc2::sel!(application:openURLs:),
+            open_urls,
+            types,
+        );
+    }
+}
+
+/// `application:openFiles:` 回调：files 是文件路径字符串数组（NSString*）。
+extern "C-unwind" fn handle_open_files(
+    _this: &AnyObject,
+    _sel: Sel,
+    _sender: &AnyObject,
+    files: *mut AnyObject,
+) {
+    if files.is_null() {
+        return;
+    }
+    // 回调中不 panic（ObjC 边界），用 catch_unwind 包一层。
+    let paths = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut paths = Vec::new();
+        unsafe {
+            let count: isize = objc2::msg_send![files, count];
+            for i in 0..count {
+                let item: *mut AnyObject = objc2::msg_send![files, objectAtIndex: i];
+                if item.is_null() {
+                    continue;
+                }
+                let cstr_ptr: *const std::ffi::c_char = objc2::msg_send![item, UTF8String];
+                if cstr_ptr.is_null() {
+                    continue;
+                }
+                paths.push(
+                    std::ffi::CStr::from_ptr(cstr_ptr)
+                        .to_string_lossy()
+                        .into_owned(),
+                );
+            }
+        }
+        paths
+    }));
+    if let Ok(paths) = paths {
+        send_paths(paths);
+    }
+}
+
+/// `application:openURLs:` 回调：urls 是 NSArray<NSURL>，提取每个 URL 的路径。
+extern "C-unwind" fn handle_open_urls(
+    _this: &AnyObject,
+    _sel: Sel,
+    _sender: &AnyObject,
+    urls: *mut AnyObject,
+) {
+    if urls.is_null() {
+        return;
+    }
+    // 回调中不 panic（ObjC 边界），用 catch_unwind 包一层。
+    let paths = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut paths = Vec::new();
+        unsafe {
+            let count: isize = objc2::msg_send![urls, count];
+            for i in 0..count {
+                let item: *mut AnyObject = objc2::msg_send![urls, objectAtIndex: i];
+                if item.is_null() {
+                    continue;
+                }
+                let ns_path: *mut AnyObject = objc2::msg_send![item, path];
+                if ns_path.is_null() {
+                    continue;
+                }
+                let cstr_ptr: *const std::ffi::c_char = objc2::msg_send![ns_path, UTF8String];
+                if cstr_ptr.is_null() {
+                    continue;
+                }
+                paths.push(
+                    std::ffi::CStr::from_ptr(cstr_ptr)
+                        .to_string_lossy()
+                        .into_owned(),
+                );
+            }
+        }
+        paths
+    }));
+    if let Ok(paths) = paths {
+        send_paths(paths);
+    }
+}
+
+/// 把提取到的路径发送到 UI 线程通道。
+fn send_paths(paths: Vec<String>) {
+    if let Ok(sender_guard) = OPEN_FILES_SENDER.lock()
+        && let Some(tx) = sender_guard.as_ref()
+    {
+        for path in paths {
+            let _ = tx.send(path);
+        }
+    }
 }
 
 // ── Dock icon bounce ───────────────────────────────────────────────────────

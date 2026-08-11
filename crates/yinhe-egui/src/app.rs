@@ -380,6 +380,20 @@ impl App {
             app.render_thread = Some(handle);
         }
 
+        // 命令行传入的文件路径（Windows 文件关联双击、各平台终端启动）。
+        // 取第一个真实存在的文件；macOS 由 Finder 启动时系统注入的 -psn_xxx
+        // 等参数会被 is_file 自然过滤。file_loader 同时只支持一个待加载项，
+        // 所以只取第一个。
+        let cli_file = std::env::args_os()
+            .skip(1)
+            .find(|a| std::path::Path::new(a).is_file());
+        if let Some(path) = cli_file
+            && let Some(s) = path.to_str()
+        {
+            app.file_loader
+                .load_path(s.to_string(), app.audio_settings.midi_import_encoding);
+        }
+
         app
     }
 

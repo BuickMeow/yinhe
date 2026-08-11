@@ -38,6 +38,42 @@ for lang in zh-Hans en ja ko; do
   touch "$APP/Contents/Resources/$lang.lproj/InfoPlist.strings"
 done
 
+# 1.6) 声明可打开的文档类型：.yin 工程（自有 UTI，Owner）与 .mid/.midi
+#     （系统 UTI public.midi-audio，Alternate——出现在"打开方式"但不抢占默认）。
+#     没有 CFBundleDocumentTypes，LaunchServices 不会把文件路由给本应用，
+#     Finder 的"打开方式"列表里也不会出现 Yinhe，运行时 delegate 收不到任何事件。
+#     用 plutil -insert -json：PlistBuddy 批量 -c 指令会 Abort trap。
+plutil -insert CFBundleDocumentTypes -json '[
+  {
+    "CFBundleTypeName": "Yinhe Project",
+    "CFBundleTypeRole": "Editor",
+    "LSHandlerRank": "Owner",
+    "CFBundleTypeIconFile": "yinhe",
+    "LSItemContentTypes": ["com.jieneng.yinhe.project"]
+  },
+  {
+    "CFBundleTypeName": "MIDI File",
+    "CFBundleTypeRole": "Editor",
+    "LSHandlerRank": "Alternate",
+    "CFBundleTypeIconFile": "yinhe",
+    "LSItemContentTypes": ["public.midi-audio"]
+  }
+]' "$APP/Contents/Info.plist"
+
+# 1.7) 导出 .yin 的 UTI 声明（压缩容器，conformsTo public.data），
+#     让 LaunchServices 把 .yin 扩展名关联到 com.jieneng.yinhe.project。
+plutil -insert UTExportedTypeDeclarations -json '[
+  {
+    "UTTypeIdentifier": "com.jieneng.yinhe.project",
+    "UTTypeDescription": "Yinhe Project",
+    "UTTypeIconFile": "yinhe",
+    "UTTypeConformsTo": ["public.data"],
+    "UTTypeTagSpecification": {
+      "public.filename-extension": ["yin"]
+    }
+  }
+]' "$APP/Contents/Info.plist"
+
 # 2) 整体重签名（--force 覆盖链接器的部分签名，--deep 递归签嵌套内容），
 #    seal 上 Info.plist 和 Resources，使 codesign --verify 通过。
 codesign --force --deep --sign - "$APP"
