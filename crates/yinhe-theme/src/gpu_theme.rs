@@ -34,10 +34,9 @@ impl GpuTheme {
                 bg[2] + (text[2] - bg[2]) * t,
             )
         };
-        // 键盘两套 token：白键/黑键在 [暗端, 亮端] 区间的位置比例在亮暗主题间
-        // 保持一致（白键取亮端 78%、黑键取暗端 8%）。暗色：暗端=bg、亮端=text；
-        // 亮色反过来。这样两个主题的键盘观感对称：暗色柔和（178/41），
-        // 亮色同样柔和（194/47），不会出现纯黑纯白刺眼对比。
+        // 键盘两套 token：暗色保持柔和基线（白键=亮端 78%、黑键=暗端 8%）；
+        // 亮色下白键贴近背景（亮端 97%，与周围一样亮）、黑键明显提浅
+        // （暗端 20% 处，中深灰）——亮色不刺眼、白键不显脏。
         let dark = (bg[0] + bg[1] + bg[2]) / 3.0 <= 0.5;
         let dark_end = if dark { bg } else { text };
         let light_end = if dark { text } else { bg };
@@ -49,8 +48,8 @@ impl GpuTheme {
             )
         };
         Self {
-            key_white: tone(0.78),
-            key_black: tone(0.08),
+            key_white: if dark { tone(0.78) } else { tone(0.97) },
+            key_black: if dark { tone(0.08) } else { tone(0.20) },
             center_line: (mix(0.28).0, mix(0.28).1, mix(0.28).2, 0.6),
         }
     }
@@ -123,6 +122,21 @@ mod tests {
                 base,
                 t.key_black
             );
+            // 亮色下白键应与背景几乎同亮（不显脏）；暗色白键远离背景是设计如此
+            let bg = (
+                base.bg.r as f32 / 255.0,
+                base.bg.g as f32 / 255.0,
+                base.bg.b as f32 / 255.0,
+            );
+            let bg_lum = lum(bg);
+            if bg_lum > 1.5 {
+                assert!(
+                    bg_lum - lum(t.key_white) < 0.3,
+                    "{:?} 下亮色白键应接近背景: white={:?}",
+                    base,
+                    t.key_white
+                );
+            }
         }
     }
 }
