@@ -140,6 +140,16 @@ impl App {
 
     /// Show the main content area: arrangement view, pianoroll, and note drag handling.
     pub(in crate::app) fn show_main_content(&mut self, ui: &mut egui::Ui, layout: &LayoutInfo) {
+        // MIX 模式（无 AR/PR 视图）主区域空荡荡：铺一张轨道底色背景
+        let has_view = self.view_mode.show_transport()
+            || self
+                .view_mode
+                .show_pianoroll(self.show_pianoroll_in_arrange);
+        if !has_view {
+            ui.painter()
+                .rect_filled(layout.remaining, 0.0, crate::theme::track_bg());
+            return;
+        }
         let Some(idx) = self.active_doc else {
             return;
         };
