@@ -15,6 +15,7 @@ pub(in crate::app) struct LayoutInfo {
     pub remaining: egui::Rect,
     pub arr_h: f32,
     pub bottom_y: f32,
+    pub right_panel_total_w: f32,
 }
 
 /// 讲解行的选框统计（layout.rs 每帧计算，视图命中选框后显示）。
@@ -91,16 +92,25 @@ impl App {
     }
 
     /// Compute layout geometry for the current frame.
-    /// Must run after [`Self::show_right_panel`] so the right panel is already
-    /// excluded from the remaining area.
     pub(in crate::app) fn compute_layout(&mut self, ui: &mut egui::Ui) -> LayoutInfo {
-        let remaining = ui.available_rect_before_wrap();
+        let mut remaining = ui.available_rect_before_wrap();
 
         let has_arr = self.view_mode.show_transport() && self.active_doc.is_some();
         let has_piano = self
             .view_mode
             .show_pianoroll(self.show_pianoroll_in_arrange)
             && self.active_doc.is_some();
+
+        let right_panel_total_w = if self.right_tab.is_some() {
+            let max_w = (remaining.width() - 60.0).max(crate::theme::RIGHT_PANEL_MIN_WIDTH + 4.0);
+            let pw = (self.right_panel_width + 4.0)
+                .clamp(crate::theme::RIGHT_PANEL_MIN_WIDTH + 4.0, max_w);
+            self.right_panel_width = (pw - 4.0).max(crate::theme::RIGHT_PANEL_MIN_WIDTH);
+            pw
+        } else {
+            0.0
+        };
+        remaining.max.x -= right_panel_total_w;
 
         let total = remaining.size();
         let arr_h = if has_arr {
@@ -124,6 +134,7 @@ impl App {
             remaining,
             arr_h,
             bottom_y,
+            right_panel_total_w,
         }
     }
 
@@ -653,7 +664,7 @@ impl App {
     /// Handle note drag — called once on release.
     /// 处理事件浏览器的跳转请求：设置 cursor_tick、切到 piano roll 视图、
     /// 切 editing_track（音符/automation 事件）、滚动到中心。
-    pub(in crate::app) fn handle_jump_request(
+    fn handle_jump_request(
         &mut self,
         req: crate::right_panel::event_browser::JumpRequest,
         layout: &LayoutInfo,
@@ -682,7 +693,7 @@ impl App {
 
         // 4. 滚动到中心（参考 follow.rs Page 模式公式）
         let view = &mut self.pianoroll_view;
-        let viewport_w = layout.remaining.width();
+        let viewport_w = layout.remaining.width() - layout.right_panel_total_w;
         let content_w = viewport_w - view.base.left_panel_width;
         let target_x = req.tick as f32 * view.base.pixels_per_tick;
         view.base.scroll_x = (target_x - content_w * 0.5).max(0.0);
@@ -767,53 +778,40 @@ impl App {
         }
     }
 
-    /// Show the right panel as a native resizable `egui::Panel::right`.
-    ///
-    /// Must run before [`Self::compute_layout`]: the panel allocates its width
-    /// from the remaining area, so `available_rect_before_wrap` afterwards
-    /// automatically excludes it. The native panel owns the resize handle and
-    /// width state (egui memory, persisted across sessions).
-    /// Returns the event-browser jump request; handle it after layout is computed.
-    pub(in crate::app) fn show_right_panel(
+    /// Show right panel, and request repaint if playing.
+    pub(in crate::app) fn show_panels_and_overlays(
         &mut self,
         ui: &mut egui::Ui,
-    ) -> Option<crate::right_panel::event_browser::JumpRequest> {
-        let mut changed = false;
-        let mut jump_request = None;
+        layout: &LayoutInfo,
+    ) {
+        // Right panel
         if self.right_tab.is_some() {
-            egui::Panel::right("right_panel")
-                .resizable(true)
-                .min_size(crate::theme::RIGHT_PANEL_MIN_WIDTH)
-                .frame(egui::Frame {
-                    inner_margin: egui::Margin::symmetric(8, 0),
-                    fill: crate::theme::app_bg(),
-                    ..Default::default()
-                })
-                .show(ui, |ui| {
-                    let doc = self.active_doc.and_then(|idx| self.documents.get_mut(idx));
-                    let (ch, jump) = crate::right_panel::show(
-                        ui,
-                        &mut self.right_tab,
-                        &mut self.audio_settings,
-                        doc,
-                        self.audio_state.handle.as_ref(),
-                        &mut self.event_browser_state,
-                        &mut self.info_content,
-                        self.automation_drag_ghost,
-                        &mut self.status_hint,
-                    );
-                    changed = ch;
-                    jump_request = jump;
-                });
+            let right_rect = egui::Rect::from_min_size(
+                egui::pos2(layout.remaining.max.x, layout.remaining.min.y),
+                egui::vec2(layout.right_panel_total_w, layout.remaining.height()),
+            );
+            let doc = self.active_doc.and_then(|idx| self.documents.get_mut(idx));
+            let (changed, jump_request) = crate::right_panel::show(
+                ui,
+                right_rect,
+                &mut self.right_panel_width,
+                &mut self.right_tab,
+                &mut self.audio_settings,
+                doc,
+                self.audio_state.handle.as_ref(),
+                &mut self.event_browser_state,
+                &mut self.info_content,
+                self.automation_drag_ghost,
+                &mut self.status_hint,
+            );
+            if changed {
+                self.teardown_audio();
+            }
+            if let Some(req) = jump_request {
+                self.handle_jump_request(req, layout);
+            }
         }
-        if changed {
-            self.teardown_audio();
-        }
-        jump_request
-    }
 
-    /// Request repaint during playback (or while waiting for audio thread to start).
-    pub(in crate::app) fn show_panels_and_overlays(&mut self, ui: &mut egui::Ui) {
         // Request repaint during playback (or while waiting for audio thread to start)
         let is_audio_playing = self
             .audio_state

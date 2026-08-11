@@ -77,6 +77,7 @@ pub struct App {
     pub(crate) view_mode: ViewMode,
 
     // ── Right panel ──
+    pub(crate) right_panel_width: f32,
     pub(crate) right_tab: Option<crate::right_panel::RightTab>,
     pub(crate) info_content: Option<crate::right_panel::InfoContent>,
     /// 拖拽锚点时的 ghost 值（tick, value），供信息面板实时显示
@@ -320,6 +321,7 @@ impl App {
             show_pianoroll_in_arrange: false,
             track_selection_anchor: None,
 
+            right_panel_width: crate::theme::RIGHT_PANEL_DEFAULT_WIDTH,
             right_tab: None,
             info_content: None,
             automation_drag_ghost: None,

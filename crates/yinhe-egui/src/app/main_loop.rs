@@ -477,18 +477,10 @@ impl eframe::App for App {
             &self.status_hint,
         );
 
-        // ── Right panel (native Panel::right) ──
-        // 先行占用右侧区域，compute_layout 的 available_rect 自动排除它。
-        // jump_request 在 layout 算好后处理（滚动 PR 需要 viewport 宽度）。
-        let jump_request = self.show_right_panel(ui);
-
         // ── Main content area ──
         let layout = self.compute_layout(ui);
         self.show_main_content(ui, &layout);
-        if let Some(req) = jump_request {
-            self.handle_jump_request(req, &layout);
-        }
-        self.show_panels_and_overlays(ui);
+        self.show_panels_and_overlays(ui, &layout);
         self.show_dialogs(ui);
         self.show_load_error_modal(ui);
         self.sync_automation_density();
