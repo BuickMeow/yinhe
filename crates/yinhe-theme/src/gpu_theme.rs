@@ -34,15 +34,23 @@ impl GpuTheme {
                 bg[2] + (text[2] - bg[2]) * t,
             )
         };
-        // 键盘两套 token：白键永远取亮的一端、黑键永远取暗的一端。
-        // 暗色下 text 是亮色（白键 = text×0.81，黑键 = 背景向文字 8%）；
-        // 亮色下 text 是深色，两套正好对调——否则白键变黑、黑键变白（单套逻辑的坑）。
+        // 键盘两套 token：白键/黑键在 [暗端, 亮端] 区间的位置比例在亮暗主题间
+        // 保持一致（白键取亮端 78%、黑键取暗端 8%）。暗色：暗端=bg、亮端=text；
+        // 亮色反过来。这样两个主题的键盘观感对称：暗色柔和（178/41），
+        // 亮色同样柔和（194/47），不会出现纯黑纯白刺眼对比。
         let dark = (bg[0] + bg[1] + bg[2]) / 3.0 <= 0.5;
-        let bright_key = (text[0] * 0.81, text[1] * 0.81, text[2] * 0.81);
-        let dark_key = mix(0.08);
+        let dark_end = if dark { bg } else { text };
+        let light_end = if dark { text } else { bg };
+        let tone = |t: f32| {
+            (
+                dark_end[0] + (light_end[0] - dark_end[0]) * t,
+                dark_end[1] + (light_end[1] - dark_end[1]) * t,
+                dark_end[2] + (light_end[2] - dark_end[2]) * t,
+            )
+        };
         Self {
-            key_white: if dark { bright_key } else { dark_key },
-            key_black: if dark { dark_key } else { bright_key },
+            key_white: tone(0.78),
+            key_black: tone(0.08),
             center_line: (mix(0.28).0, mix(0.28).1, mix(0.28).2, 0.6),
         }
     }
@@ -89,7 +97,8 @@ mod tests {
     use super::*;
 
     /// 回归测试：所有预设下白键必须比黑键亮（亮色主题曾因单套派生逻辑
-    /// 把白键算成深色、黑键算成浅色，黑白颠倒）。
+    /// 把白键算成深色、黑键算成浅色，黑白颠倒），且黑键不能接近纯黑
+    /// （亮色下曾对调到 text×0.81 ≈ 24，纯黑刺眼）。
     #[test]
     fn key_colors_white_always_lighter_than_black() {
         let lum = |c: (f32, f32, f32)| c.0 + c.1 + c.2;
@@ -105,6 +114,13 @@ mod tests {
                 "{:?} 下白键应亮于黑键: white={:?} black={:?}",
                 base,
                 t.key_white,
+                t.key_black
+            );
+            // 黑键亮度 >= 0.4（三通道和）：柔和深灰而非纯黑，亮色主题不刺眼
+            assert!(
+                lum(t.key_black) >= 0.4,
+                "{:?} 下黑键不应接近纯黑: {:?}",
+                base,
                 t.key_black
             );
         }
