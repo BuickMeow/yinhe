@@ -184,6 +184,7 @@ fn show_automation_detail(
             ],
             page_items.len(),
             |i, row, click_key| {
+                row.set_selected(state.selected_ticks.contains(&page_ticks[i]));
                 let e = &page_items[i];
                 cell_row_header(
                     row,
@@ -306,6 +307,7 @@ fn show_timesig_detail(
             ],
             page_items.len(),
             |i, row, click_key| {
+                row.set_selected(state.selected_ticks.contains(&page_ticks[i]));
                 let e = &page_items[i];
                 let denom = 1u32 << e.denominator as u32;
                 cell_row_header(
@@ -405,6 +407,7 @@ fn show_keysig_detail(
             ],
             page_items.len(),
             |i, row, click_key| {
+                row.set_selected(state.selected_ticks.contains(&page_ticks[i]));
                 let e = &page_items[i];
                 cell_row_header(
                     row,
@@ -556,6 +559,7 @@ fn show_text_events_detail(
             ],
             page_items.len(),
             |i, row, click_key| {
+                row.set_selected(state.selected_ticks.contains(&page_ticks[i]));
                 let (tick, text) = &page_items[i];
                 cell_row_header(
                     row,
@@ -680,6 +684,7 @@ fn show_notes_detail(
             ],
             page_notes.len(),
             |i, row, click_key| {
+                row.set_selected(state.selected_ticks.contains(&page_ticks[i]));
                 let (n, _key, _trk) = &page_notes[i];
                 let note_ref = NoteRef {
                     id: n.id,
@@ -834,6 +839,7 @@ fn show_pc_detail(
             ],
             page_items.len(),
             |i, row, click_key| {
+                row.set_selected(state.selected_ticks.contains(&page_ticks[i]));
                 let e = page_items[i];
                 cell_row_header(
                     row,
