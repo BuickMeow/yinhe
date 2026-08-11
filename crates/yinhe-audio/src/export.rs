@@ -406,7 +406,6 @@ pub fn export_wav_gpu(
             if dense == u32::MAX {
                 continue;
             }
-
             let start_sample =
                 crate::audio_model::tick_to_sample(note.start_tick, segments, tpb, sr);
             let end_sample = crate::audio_model::tick_to_sample(note.end_tick, segments, tpb, sr);

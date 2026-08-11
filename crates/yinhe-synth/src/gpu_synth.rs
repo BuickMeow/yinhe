@@ -666,7 +666,6 @@ impl GpuSynth {
         // → 求和（xsynth 顺序：vol/pan → cutoff → sum）。
         // 无论有无 voice 都执行：cutoff 渐变与 DF1 状态照常推进（xsynth 的
         // apply_channel_effects 每块无条件调用，对空信号滤波时 lerp 不中断）。
-        output.fill(0.0);
         for (ch_idx, ch) in self.channels.iter_mut().enumerate() {
             let base = ch_idx * frames * 2;
             let ch_mix = &mut self.channel_mix[base..base + frames * 2];

@@ -223,6 +223,11 @@ impl AudioRenderer {
                         }
                         AudioCommand::SkipTracks { skip } => {
                             self.engine.skip_track = skip;
+                            // mute/solo 状态变了：旧 skip mask 的异步 chase 结果必须作废
+                            //（递增 generation），否则快速连续切换时旧结果可能晚到并
+                            // 覆盖新状态——GPU 路径的通道状态依赖 chase 恢复，影响更大。
+                            self.engine.chase_generation =
+                                self.engine.chase_generation.wrapping_add(1);
                             // GPU 路径：事件列表按新 skip mask 重建（mute/solo 即时生效，
                             // 不再需要重启引擎）；重建会 seek 到当前位置并清掉旧 voice。
                             #[cfg(feature = "gpu")]

@@ -149,12 +149,18 @@ pub struct EnvUpdateCmd {
 /// RBJ cookbook biquad 系数（与 xsynth 的 biquad crate 完全一致）。
 /// 返回 (b0, b1, b2, a1, a2)，用于 DirectForm1：
 /// y = b0*x + b1*x1 + b2*x2 - a1*y1 - a2*y2
+///
+/// cutoff 先按 xsynth `sanitize_freq` clamp 到 [1, Nyquist-1]：
+/// 通道级 CC74 的 FREQS 表在极端值时（如 127）会算出远超 Nyquist 的
+/// 频率，未 clamp 的系数会让 DF1 数值不稳定产生自激振荡（啸叫）。
 pub fn biquad_coeffs(
     filter_type: u32,
     cutoff: f32,
     resonance: f32,
     sample_rate: f32,
 ) -> (f32, f32, f32, f32, f32) {
+    let nyquist = (sample_rate * 0.5).max(1.0);
+    let cutoff = cutoff.clamp(1.0, (nyquist - 1.0).max(1.0));
     let omega = 2.0 * std::f32::consts::PI * cutoff / sample_rate;
     let q = if resonance > 0.0 {
         resonance

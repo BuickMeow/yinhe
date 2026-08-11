@@ -399,6 +399,11 @@ fn main() {
     }
     xev.sort_by_key(|(s, _)| *s);
     let xdur = xev.last().map(|(s, _)| *s).unwrap_or(0) + SR as u64;
+    // limit 参数也限制直连参考（与 CPU/GPU 导出一致）
+    let xdur = match limit_secs {
+        Some(secs) => xdur.min(secs * SR as u64),
+        None => xdur,
+    };
     let t0 = std::time::Instant::now();
     let mut xout: Vec<f32> = Vec::with_capacity(xdur as usize * 2);
     let mut chunk = vec![0.0f32; 512 * 2];
@@ -626,68 +631,76 @@ fn main() {
     let win_start = SR as usize * 15 / ds;
     let win_end = cmp_frames.min(SR as usize * 19) / ds;
     let n2 = win_end.saturating_sub(win_start);
-    let search = SR as usize / 5 / ds;
-    let x: Vec<f64> = (0..n2)
-        .map(|i| cpu[(win_start + i) * ds * 2] as f64)
-        .collect();
-    let y: Vec<f64> = (0..n2)
-        .map(|i| gpu[(win_start + i) * ds * 2] as f64)
-        .collect();
-    let xm: f64 = x.iter().sum::<f64>() / n2 as f64;
-    let ym: f64 = y.iter().sum::<f64>() / n2 as f64;
-    let mut best = (0i64, 0.0f64);
-    for lag in -(search as i64)..(search as i64) {
-        let mut s = 0.0f64;
-        if lag < 0 {
-            for i in (-lag as usize)..n2 {
-                s += (x[i] - xm) * (y[(i as i64 + lag) as usize] - ym);
+    if n2 > 0 {
+        let search = SR as usize / 5 / ds;
+        let x: Vec<f64> = (0..n2)
+            .map(|i| cpu[(win_start + i) * ds * 2] as f64)
+            .collect();
+        let y: Vec<f64> = (0..n2)
+            .map(|i| gpu[(win_start + i) * ds * 2] as f64)
+            .collect();
+        let xm: f64 = x.iter().sum::<f64>() / n2 as f64;
+        let ym: f64 = y.iter().sum::<f64>() / n2 as f64;
+        let mut best = (0i64, 0.0f64);
+        for lag in -(search as i64)..(search as i64) {
+            let mut s = 0.0f64;
+            if lag < 0 {
+                for i in (-lag as usize)..n2 {
+                    s += (x[i] - xm) * (y[(i as i64 + lag) as usize] - ym);
+                }
+            } else {
+                for i in 0..(n2 - lag as usize) {
+                    s += (x[i] - xm) * (y[i + lag as usize] - ym);
+                }
             }
+            if s.abs() > best.1.abs() {
+                best = (lag, s);
+            }
+        }
+        let nx = (x.iter().map(|v| (v - xm).powi(2)).sum::<f64>()).sqrt();
+        let ny = (y.iter().map(|v| (v - ym).powi(2)).sum::<f64>()).sqrt();
+        let lag = best.0;
+        let lag_frames = lag * ds as i64;
+        println!(
+            "[cmp] 互相关(前2s): lag={} frames ({:.1}ms) corr={:.4}",
+            lag_frames,
+            lag_frames as f64 / SR as f64 * 1000.0,
+            if nx > 0.0 && ny > 0.0 {
+                best.1 / (nx * ny)
+            } else {
+                0.0
+            }
+        );
+        // 对齐后的振幅比（同相位窗口）
+        let (mut c0, mut d0): (Vec<f64>, Vec<f64>) = if lag_frames >= 0 {
+            (
+                x[lag_frames as usize..].to_vec(),
+                y[..n2 - lag_frames as usize].to_vec(),
+            )
         } else {
-            for i in 0..(n2 - lag as usize) {
-                s += (x[i] - xm) * (y[i + lag as usize] - ym);
-            }
-        }
-        if s.abs() > best.1.abs() {
-            best = (lag, s);
-        }
-    }
-    let nx = (x.iter().map(|v| (v - xm).powi(2)).sum::<f64>()).sqrt();
-    let ny = (y.iter().map(|v| (v - ym).powi(2)).sum::<f64>()).sqrt();
-    let lag = best.0;
-    let lag_frames = lag * ds as i64;
-    println!(
-        "[cmp] 互相关(前2s): lag={} frames ({:.1}ms) corr={:.4}",
-        lag_frames,
-        lag_frames as f64 / SR as f64 * 1000.0,
-        best.1 / (nx * ny)
-    );
-    // 对齐后的振幅比（同相位窗口）
-    let (mut c0, mut d0): (Vec<f64>, Vec<f64>) = if lag_frames >= 0 {
-        (
-            x[lag_frames as usize..].to_vec(),
-            y[..n2 - lag_frames as usize].to_vec(),
-        )
+            (
+                x[..(n2 as i64 + lag_frames) as usize].to_vec(),
+                y[(-lag_frames) as usize..].to_vec(),
+            )
+        };
+        let m = c0.len().min(d0.len());
+        c0.truncate(m);
+        d0.truncate(m);
+        let k = c0.iter().zip(&d0).map(|(c, d)| c * d).sum::<f64>()
+            / (c0.iter().map(|c| c * c).sum::<f64>() + 1e-30);
+        let resid = (d0
+            .iter()
+            .zip(&c0)
+            .map(|(d, c)| (d - k * c).powi(2))
+            .sum::<f64>()
+            / m as f64)
+            .sqrt();
+        let c_rms = (c0.iter().map(|c| c * c).sum::<f64>() / m as f64).sqrt();
+        println!(
+            "[cmp] 对齐后: gpu = {k:.4}×cpu，残差RMS={resid:.5}（=cpu RMS 的 {:.1}%）",
+            resid / c_rms.max(1e-9) * 100.0
+        );
     } else {
-        (
-            x[..(n2 as i64 + lag_frames) as usize].to_vec(),
-            y[(-lag_frames) as usize..].to_vec(),
-        )
-    };
-    let m = c0.len().min(d0.len());
-    c0.truncate(m);
-    d0.truncate(m);
-    let k = c0.iter().zip(&d0).map(|(c, d)| c * d).sum::<f64>()
-        / (c0.iter().map(|c| c * c).sum::<f64>() + 1e-30);
-    let resid = (d0
-        .iter()
-        .zip(&c0)
-        .map(|(d, c)| (d - k * c).powi(2))
-        .sum::<f64>()
-        / m as f64)
-        .sqrt();
-    let c_rms = (c0.iter().map(|c| c * c).sum::<f64>() / m as f64).sqrt();
-    println!(
-        "[cmp] 对齐后: gpu = {k:.4}×cpu，残差RMS={resid:.5}（=cpu RMS 的 {:.1}%）",
-        resid / c_rms.max(1e-9) * 100.0
-    );
+        println!("[cmp] 互相关: 时长过短，跳过");
+    }
 }
