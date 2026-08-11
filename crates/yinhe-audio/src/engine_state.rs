@@ -109,7 +109,7 @@ impl AudioEngine {
         skip
     }
 
-    pub(crate) fn apply_chase_result(&mut self, states: Box<[ChannelState; 256]>) {
+    pub(crate) fn apply_chase_result(&mut self, states: &[ChannelState; 256]) {
         let skip = self.chase_skip();
         for ch in 0..256u32 {
             let dense = self.channel_layout.dense_for(ch as usize);

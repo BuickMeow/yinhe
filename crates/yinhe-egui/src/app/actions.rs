@@ -555,14 +555,11 @@ impl App {
         let gpu_device = std::sync::Arc::new(self.render_ctx.device().clone());
         #[cfg(feature = "gpu")]
         let gpu_queue = std::sync::Arc::new(self.render_ctx.queue().clone());
-        // Extract SFZ path from port_sf for GPU export.
+        // Extract SFZ paths per port for GPU export.
         #[cfg(feature = "gpu")]
-        let gpu_sfz = port_sf
-            .first()
-            .and_then(|(_, paths)| paths.first())
-            .cloned();
+        let gpu_port_sf = port_sf.clone();
         #[cfg(feature = "gpu")]
-        eprintln!("[export] gpu_sfz = {:?}", gpu_sfz);
+        eprintln!("[export] gpu port_sf = {:?}", gpu_port_sf);
         #[cfg(not(feature = "gpu"))]
         eprintln!("[export] GPU feature NOT enabled");
 
@@ -571,12 +568,12 @@ impl App {
             // 根据设置选择导出引擎：GPU 还是 CPU
             #[cfg(feature = "gpu")]
             let result = if use_gpu_synth {
-                if let Some(ref sfz) = gpu_sfz {
-                    eprintln!("[export] Using GPU path (GpuSynth), SFZ: {}", sfz);
+                if !gpu_port_sf.is_empty() {
+                    eprintln!("[export] Using GPU path (GpuSynth)");
                     yinhe_audio::export::export_wav_gpu(
                         model,
                         sr,
-                        std::path::Path::new(sfz),
+                        &gpu_port_sf,
                         &skip,
                         std::path::Path::new(&path_str),
                         bit_depth,

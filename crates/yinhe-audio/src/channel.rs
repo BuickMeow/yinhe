@@ -205,7 +205,11 @@ impl ChannelState {
 
     /// 计算 chase 应用时要发送的事件列表；`skip` 中标记的控制器跳过。
     /// 独立为纯函数，便于单元测试直接观察跳过行为。
-    fn events_to_send(&self, channel: usize, skip: &ChaseSkip) -> Vec<ChannelAudioEvent> {
+    pub(crate) fn events_to_send(
+        &self,
+        channel: usize,
+        skip: &ChaseSkip,
+    ) -> Vec<ChannelAudioEvent> {
         let mut out = Vec::with_capacity(24);
         let mut push_raw = |cc: u8, val: u8| {
             if skip.cc_mask[channel] & (1u128 << cc) == 0 {

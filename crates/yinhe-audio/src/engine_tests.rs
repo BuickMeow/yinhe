@@ -1281,7 +1281,7 @@ fn test_chase_after_seek_skips_dispatched_controllers() {
     );
 
     // 应用 chase 结果（跳过逻辑的行为由 events_to_send 单测覆盖）
-    engine.apply_chase_result(states);
+    engine.apply_chase_result(&states);
     // seek 后继续渲染不应 panic，且后续事件照常 dispatch
     engine.dispatch_and_find_next(768 + 512, 768 + 2048);
 }

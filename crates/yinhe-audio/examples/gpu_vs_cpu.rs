@@ -156,7 +156,7 @@ fn main() {
     export_wav_gpu(
         Arc::clone(&model),
         SR,
-        sfz_path,
+        &[(0, vec![sfz_path.to_string_lossy().into_owned()])],
         &[],
         &gpu_wav,
         // Bit24 与 CPU 路径对称（两侧都带限幅 + 相同量化）

@@ -3,8 +3,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-#[cfg(feature = "gpu")]
-use xsynth_core::channel::ControlEvent;
 use xsynth_core::effects::VolumeLimiter;
 use yinhe_core::YinModel;
 
@@ -301,7 +299,7 @@ pub fn export_wav(
 pub fn export_wav_gpu(
     model: Arc<YinModel>,
     sample_rate: u32,
-    sfz_path: &Path,
+    port_soundfonts: &[(u8, Vec<String>)],
     skip_tracks: &[bool],
     path: &Path,
     bit_depth: WavBitDepth,
@@ -310,11 +308,20 @@ pub fn export_wav_gpu(
     queue: Arc<yinhe_synth::wgpu::Queue>,
 ) -> Result<(), ExportError> {
     let t_start = Instant::now();
+    let layout = crate::spawn::channels_for_model(&model);
 
     // ── 1. 初始化 GpuSynth ──
     progress(0.0, "初始化 GPU 合成器...");
-    let mut synth = yinhe_synth::GpuSynth::new(device, queue, sfz_path, sample_rate)
+    let mut synth = yinhe_synth::GpuSynth::new(device, queue, sample_rate)
         .map_err(|e| ExportError::Render(format!("GpuSynth 初始化失败: {}", e)))?;
+    // 逐 port 加载音色库（多文件 = 多 (bank, preset) 条目，PC 切换选择）
+    for (port, paths) in port_soundfonts {
+        let dense = layout.dense_channels_for_port(*port);
+        let paths: Vec<std::path::PathBuf> = paths.iter().map(std::path::PathBuf::from).collect();
+        synth
+            .load_port_soundfonts(*port, &dense, &paths)
+            .map_err(|e| ExportError::Render(format!("音色库加载失败: {}", e)))?;
+    }
     eprintln!(
         "[gpu-export] GpuSynth initialized: {:.2?}",
         t_start.elapsed()
@@ -327,9 +334,43 @@ pub fn export_wav_gpu(
     let segments = &model.tempo_map.tempo_segments;
     let tpb = model.tempo_map.ticks_per_beat;
     let sr = sample_rate as f64;
-    let layout = crate::spawn::channels_for_model(&model);
 
     let mut events: Vec<yinhe_synth::SynthEvent> = Vec::new();
+
+    // 鼓组/乐器模式初始状态（与播放路径 build_gpu_synth_events 同序：
+    // 先每 port 的 GM 9 通道，再模型 bank 声明，后者覆盖前者）
+    for p in 0..16u8 {
+        let src = p as usize * 16 + 9;
+        let dense = layout.dense_for(src);
+        if dense != u32::MAX {
+            events.push(yinhe_synth::SynthEvent::Control {
+                sample: 0,
+                channel: dense as u8,
+                event: yinhe_synth::ControlEvent::PercussionMode(true),
+            });
+        }
+    }
+    for (track_idx, banks) in audio_model.track_banks.iter().enumerate() {
+        if banks.is_empty() {
+            continue;
+        }
+        let src = audio_model.track_channel(track_idx) as usize;
+        if src >= 256 {
+            continue;
+        }
+        let dense = layout.dense_for(src);
+        if dense == u32::MAX {
+            continue;
+        }
+        for &(_, value) in banks {
+            events.push(yinhe_synth::SynthEvent::Control {
+                sample: 0,
+                channel: dense as u8,
+                event: yinhe_synth::ControlEvent::PercussionMode(value >= 120),
+            });
+        }
+    }
+
     // CC 事件（与播放路径一致的自动化展平；density=1 最平滑）。
     // 放在音符事件之前：同 sample 时 CC 先于 note 处理（与 CPU dispatch 一致）。
     let cc_events = crate::audio_model::flatten_automation_to_cc_events(&model, 1);
@@ -341,26 +382,8 @@ pub fn export_wav_gpu(
         if dense == u32::MAX {
             continue;
         }
-        let event = match cc.event {
-            xsynth_core::channel::ChannelAudioEvent::Control(ControlEvent::Raw(c, v)) => {
-                yinhe_synth::ControlEvent::Raw(c, v)
-            }
-            xsynth_core::channel::ChannelAudioEvent::Control(ControlEvent::PitchBendValue(v)) => {
-                yinhe_synth::ControlEvent::PitchBend(v)
-            }
-            xsynth_core::channel::ChannelAudioEvent::Control(
-                ControlEvent::PitchBendSensitivity(v),
-            ) => yinhe_synth::ControlEvent::PitchBendSensitivity(v),
-            xsynth_core::channel::ChannelAudioEvent::Control(ControlEvent::FineTune(v)) => {
-                yinhe_synth::ControlEvent::FineTune(v)
-            }
-            xsynth_core::channel::ChannelAudioEvent::Control(ControlEvent::CoarseTune(v)) => {
-                yinhe_synth::ControlEvent::CoarseTune(v)
-            }
-            xsynth_core::channel::ChannelAudioEvent::ProgramChange(p) => {
-                yinhe_synth::ControlEvent::ProgramChange(p)
-            }
-            _ => continue,
+        let Some(event) = crate::audio_renderer::to_gpu_control_event(&cc.event) else {
+            continue;
         };
         events.push(yinhe_synth::SynthEvent::Control {
             sample: crate::audio_model::tick_to_sample(cc.tick, segments, tpb, sr),
