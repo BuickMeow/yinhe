@@ -107,10 +107,14 @@ pub(crate) fn handle_input(
     quantize: Option<(QuantizePreset, u32)>,
     bar_line_data: Option<(u32, u8, u8, &[TimeSigEvent])>,
     existing_resp: Option<&egui::Response>,
+    // 命中区域（鼠标 containment / 自建 interact 的范围），None = rect。
+    // AR 全宽纹理下 rect 含左列（轨道面板），交互必须限制在音乐区。
+    hit_rect: Option<egui::Rect>,
     is_playing: bool,
     follow_mode: &mut FollowMode,
     active_tool: &Tool,
 ) {
+    let hit_rect = hit_rect.unwrap_or(rect);
     // Use caller-supplied response when painter and interact rect are the
     // same; otherwise create a dedicated click_and_drag interact.
     let owned_resp;
@@ -118,7 +122,7 @@ pub(crate) fn handle_input(
         resp
     } else {
         owned_resp = ui.interact(
-            rect,
+            hit_rect,
             ui.id().with("__content_drag__"),
             egui::Sense::click_and_drag(),
         );
@@ -130,7 +134,7 @@ pub(crate) fn handle_input(
     // blocks egui-level hover for child interacts, so we test containment
     // directly.  Drag/click/double-click go through content_resp and are
     // unaffected.
-    let pointer_in_rect = ui.input(|i| i.pointer.hover_pos().is_some_and(|p| rect.contains(p)));
+    let pointer_in_rect = ui.input(|i| i.pointer.hover_pos().is_some_and(|p| hit_rect.contains(p)));
 
     if pointer_in_rect {
         let pointer_pos = ui.input(|i| i.pointer.hover_pos().unwrap_or_default());

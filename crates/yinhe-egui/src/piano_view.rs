@@ -398,6 +398,7 @@ pub fn show(
         Some((quantize, ppq)),
         bar_line_data,
         None,
+        None, // 命中区域 = content_rect（PR 无左列外区域）
         is_playing,
         follow_mode,
         active_tool,

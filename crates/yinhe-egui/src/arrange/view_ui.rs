@@ -36,7 +36,7 @@ pub fn show(
     } else {
         None
     };
-    let (resp, painter) = ui.allocate_painter(available, egui::Sense::click_and_drag());
+    let (resp, painter) = ui.allocate_painter(available, egui::Sense::hover());
     let rect = resp.rect;
     let ppp = ui.ctx().pixels_per_point();
     let w = rect.width() as u32;
@@ -47,6 +47,12 @@ pub fn show(
     if w == 0 || h == 0 {
         return;
     }
+
+    // 纹理为全宽（含轨道面板列），left_panel_width = 面板宽 + 分屏条宽；
+    // 所有绘制 clip 到音乐区，轨道面板/分屏条仍由 arrange.rs 的 egui 层绘制。
+    let lp = view.base.left_panel_width;
+    let music_rect = egui::Rect::from_min_max(egui::pos2(rect.min.x + lp, rect.min.y), rect.max);
+    ui.set_clip_rect(music_rect.intersect(ui.clip_rect()));
 
     render_ctx.ensure_size(pw, ph);
 
@@ -114,7 +120,7 @@ pub fn show(
     let (mut ghost_notes, hidden_notes, drag_rect) =
         if *cfg.active_tool == Tool::Select || *cfg.active_tool == Tool::SelectVertical {
             let vertical = *cfg.active_tool == Tool::SelectVertical;
-            sel_drag_frame_arrange(ui, rect, view, &data, edit, vertical)
+            sel_drag_frame_arrange(ui, rect, music_rect, view, &data, edit, vertical)
         } else {
             (Vec::new(), HashSet::new(), None)
         };
@@ -256,7 +262,7 @@ pub fn show(
 
     // ── Eraser tool dispatch (after GPU texture, before eraser marquee drawing) ──
     if *cfg.active_tool == Tool::Eraser {
-        eraser_drag_frame_arrange(ui, rect, view, &data, edit);
+        eraser_drag_frame_arrange(ui, rect, music_rect, view, &data, edit);
     }
 
     // Draw persisted selection rects (remains after mouse release, 支持多选框).
@@ -316,7 +322,9 @@ pub fn show(
         0.0,
         Some((data.quantize, data.ppq)),
         data.bar_line_data,
-        Some(&resp),
+        None,
+        // 全宽 rect 含轨道面板列，交互命中限制在音乐区
+        Some(music_rect),
         cfg.is_playing,
         cfg.follow_mode,
         cfg.active_tool,
@@ -341,6 +349,7 @@ pub fn show(
 fn sel_drag_frame_arrange(
     ui: &mut egui::Ui,
     content_rect: egui::Rect,
+    hit_rect: egui::Rect,
     view: &mut ArrangementView,
     data: &super::ArrangeData<'_>,
     edit: &mut super::ArrangeEdit<'_>,
@@ -419,7 +428,7 @@ fn sel_drag_frame_arrange(
     // ── Primary press handling ──
     if pointer.primary_pressed()
         && let Some(pos) = pointer.hover_pos()
-        && content_rect.contains(pos)
+        && hit_rect.contains(pos)
     {
         let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
         let click_tick = view.x_to_tick(local.x);
@@ -458,13 +467,14 @@ fn sel_drag_frame_arrange(
 
         // Auto-scroll when dragging near the edge
         let lh = view.lane_height();
+        let full_w = content_rect.width();
         crate::selection::drag::auto_scroll_on_drag(
             ui,
             &mut view.base,
-            content_rect,
+            hit_rect,
             pos,
-            |base, w, h| {
-                base.clamp_scroll_x(w, data.total_ticks);
+            |base, _, h| {
+                base.clamp_scroll_x(full_w, data.total_ticks);
                 let max_scroll_y = (data.num_tracks as f32 * lh - h).max(0.0);
                 base.scroll_y = base.scroll_y.clamp(0.0, max_scroll_y);
             },
@@ -590,7 +600,7 @@ fn sel_drag_frame_arrange(
             && !pointer.primary_pressed()
             && let Some(pos) = pointer.hover_pos()
         {
-            let clamped = pos.clamp(content_rect.min, content_rect.max);
+            let clamped = pos.clamp(hit_rect.min, hit_rect.max);
             let local = egui::pos2(
                 clamped.x - content_rect.min.x,
                 clamped.y - content_rect.min.y,
@@ -598,13 +608,14 @@ fn sel_drag_frame_arrange(
             drag = Some((start_music, local));
 
             let lh = view.lane_height();
+            let full_w = content_rect.width();
             crate::selection::drag::auto_scroll_on_drag(
                 ui,
                 &mut view.base,
-                content_rect,
+                hit_rect,
                 pos,
-                |base, w, h| {
-                    base.clamp_scroll_x(w, data.total_ticks);
+                |base, _, h| {
+                    base.clamp_scroll_x(full_w, data.total_ticks);
                     let max_scroll_y = (data.num_tracks as f32 * lh - h).max(0.0);
                     base.scroll_y = base.scroll_y.clamp(0.0, max_scroll_y);
                 },
@@ -697,6 +708,7 @@ fn sel_drag_frame_arrange(
 fn eraser_drag_frame_arrange(
     ui: &mut egui::Ui,
     content_rect: egui::Rect,
+    hit_rect: egui::Rect,
     view: &mut ArrangementView,
     data: &super::ArrangeData<'_>,
     edit: &mut super::ArrangeEdit<'_>,
@@ -720,7 +732,7 @@ fn eraser_drag_frame_arrange(
     // Press → start drag (store music coordinates: (tick, track_f))
     if pointer.primary_pressed()
         && let Some(pos) = pointer.hover_pos()
-        && content_rect.contains(pos)
+        && hit_rect.contains(pos)
     {
         let local = egui::pos2(pos.x - content_rect.min.x, pos.y - content_rect.min.y);
         let start_tick = view.x_to_tick(local.x);
@@ -735,7 +747,7 @@ fn eraser_drag_frame_arrange(
             && !pointer.primary_pressed()
             && let Some(pos) = pointer.hover_pos()
         {
-            let clamped = pos.clamp(content_rect.min, content_rect.max);
+            let clamped = pos.clamp(hit_rect.min, hit_rect.max);
             let local = egui::pos2(
                 clamped.x - content_rect.min.x,
                 clamped.y - content_rect.min.y,
@@ -743,13 +755,14 @@ fn eraser_drag_frame_arrange(
             drag = Some((start_music, local));
 
             let lh = view.lane_height();
+            let full_w = content_rect.width();
             crate::selection::drag::auto_scroll_on_drag(
                 ui,
                 &mut view.base,
-                content_rect,
+                hit_rect,
                 pos,
-                |base, w, h| {
-                    base.clamp_scroll_x(w, data.total_ticks);
+                |base, _, h| {
+                    base.clamp_scroll_x(full_w, data.total_ticks);
                     let max_scroll_y = (data.num_tracks as f32 * lh - h).max(0.0);
                     base.scroll_y = base.scroll_y.clamp(0.0, max_scroll_y);
                 },

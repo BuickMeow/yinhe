@@ -119,18 +119,29 @@ pub fn show(
         ),
     );
 
-    // ── GPU area: shifted down by RULER_H, shifted up by SCROLLBAR_H,
-    //    shifted left by SCROLLBAR_W to leave room for the vertical scrollbar ──
+    // ── GPU area: 全宽纹理（含轨道面板列，left_panel_width 同步为面板宽 +
+    //    分屏条宽，音符坐标以全宽左缘为原点，视口左边界由 shader clamp 排除）。
+    //    y 方向：shifted down by RULER_H, shifted up by SCROLLBAR_H,
+    //    x 方向：shifted left by SCROLLBAR_W to leave room for the vertical scrollbar ──
     let gpu_rect = egui::Rect::from_min_max(
-        egui::pos2(
-            arr_rect.min.x + tp_w + crate::theme::SPLIT_HANDLE_W,
-            arr_rect.min.y + RULER_H,
-        ),
+        egui::pos2(arr_rect.min.x, arr_rect.min.y + RULER_H),
         egui::pos2(
             arr_rect.max.x - crate::widgets::scrollbar::SCROLLBAR_W,
             arr_rect.max.y - crate::widgets::scrollbar::SCROLLBAR_H,
         ),
     );
+    // 音乐区（旧 gpu_rect）：纹理内的可见区域，交互命中与绘制 clip 都限制在这里。
+    let music_rect = egui::Rect::from_min_max(
+        egui::pos2(
+            arr_rect.min.x + tp_w + crate::theme::SPLIT_HANDLE_W,
+            arr_rect.min.y + RULER_H,
+        ),
+        gpu_rect.max,
+    );
+
+    // 轨道面板宽度同步进视图坐标模型：left_panel_width = 面板宽 + 分屏条宽
+    // （纹理左缘到音乐区左缘的距离），tick_to_x/x_to_tick/clamp_scroll 全部基于它。
+    arr_view.base.left_panel_width = tp_w + crate::theme::SPLIT_HANDLE_W;
 
     // Clamp scroll BEFORE drawing the ruler, so the ruler and GPU content
     // always see the same (clamped) scroll_x.  Otherwise when scroll_x is
@@ -572,7 +583,7 @@ pub fn show(
         } else {
             None
         };
-        if gpu_rect.contains(pos) {
+        if music_rect.contains(pos) {
             let tick = arr_view.x_to_tick(pos.x - gpu_rect.min.x).max(0.0);
             let track = hover_track(pos.y);
             let pos_str =
