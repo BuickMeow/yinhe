@@ -25,13 +25,7 @@ impl NoteBufferKey {
         hidden_notes: &HashSet<(u16, u32, u8)>,
     ) -> Self {
         let tv_hash = hash_bools(track_visible);
-        let hidden_hash = hidden_notes.iter().fold(0u64, |acc, &(trk, tick, key)| {
-            acc.wrapping_add(trk as u64)
-                .wrapping_mul(6364136223846793005)
-                .wrapping_add(tick as u64)
-                .wrapping_mul(6364136223846793005)
-                .wrapping_add(key as u64)
-        });
+        let hidden_hash = hash_hidden(hidden_notes);
         Self(revision ^ tv_hash ^ hidden_hash)
     }
 
