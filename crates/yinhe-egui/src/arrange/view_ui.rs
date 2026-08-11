@@ -36,6 +36,18 @@ pub fn show(
     } else {
         None
     };
+
+    // 纹理为全宽（含轨道面板列），left_panel_width = 面板宽 + 分屏条宽；
+    // 所有绘制 clip 到音乐区，轨道面板/分屏条仍由 arrange.rs 的 egui 层绘制。
+    // 必须在 allocate_painter 之前设置：painter 的 clip_rect 在分配时快照。
+    let full_rect = ui.max_rect();
+    let lp = view.base.left_panel_width;
+    let music_rect = egui::Rect::from_min_max(
+        egui::pos2(full_rect.min.x + lp, full_rect.min.y),
+        full_rect.max,
+    );
+    ui.set_clip_rect(ui.clip_rect().intersect(music_rect));
+
     let (resp, painter) = ui.allocate_painter(available, egui::Sense::hover());
     let rect = resp.rect;
     let ppp = ui.ctx().pixels_per_point();
@@ -47,12 +59,6 @@ pub fn show(
     if w == 0 || h == 0 {
         return;
     }
-
-    // 纹理为全宽（含轨道面板列），left_panel_width = 面板宽 + 分屏条宽；
-    // 所有绘制 clip 到音乐区，轨道面板/分屏条仍由 arrange.rs 的 egui 层绘制。
-    let lp = view.base.left_panel_width;
-    let music_rect = egui::Rect::from_min_max(egui::pos2(rect.min.x + lp, rect.min.y), rect.max);
-    ui.set_clip_rect(music_rect.intersect(ui.clip_rect()));
 
     render_ctx.ensure_size(pw, ph);
 

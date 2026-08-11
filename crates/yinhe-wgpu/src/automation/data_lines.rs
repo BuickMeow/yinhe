@@ -112,14 +112,16 @@ fn collect_segments(
     }
 
     // 事件段：prev → cur（prev 从虚拟 chase 段尾端开始，每次迭代后 prev = evt）
-    let mut prev_x = first_x;
+    // x 坐标 clamp 到 [grid_left_x, w]：combo 列（面板左侧选择器）由 egui 层
+    // 绘制，曲线段/锚点不画到其下方（与 PR 音符在键盘列不绘制的规则一致）。
+    let mut prev_x = first_x.clamp(grid_left_x, w);
     let mut prev_y = chase_y;
     let mut prev_shape = SegmentShape::Step;
     let mut prev_tick: u32 = 0;
     let mut prev_value = chase_val;
 
     for evt in visible_events {
-        let x2 = x_offset + evt.tick as f32 * ppu;
+        let x2 = (x_offset + evt.tick as f32 * ppu).clamp(grid_left_x, w);
         let y2 = view.value_to_y(evt.value, max_val);
         segs.push(SegSpan {
             x1: prev_x,
@@ -143,7 +145,7 @@ fn collect_segments(
     let last_visible_tick = visible_events[visible_events.len() - 1].tick;
     let next_idx = lane.events.partition_point(|e| e.tick <= last_visible_tick);
     let right_bound = if next_idx < lane.events.len() {
-        x_offset + lane.events[next_idx].tick as f32 * ppu
+        (x_offset + lane.events[next_idx].tick as f32 * ppu).clamp(grid_left_x, w)
     } else {
         w
     };
@@ -236,7 +238,8 @@ pub fn build_data_lines(
             let visible_events = lane.events_in_range(pad_start, pad_end);
             // 锚点形状按 shape 分派：Step → 方形，Curve → 圆形
             for evt in visible_events {
-                let x = x_offset + evt.tick as f32 * ppu;
+                // clamp 到 [grid_left_x, w]：锚点不画到 combo 列下方
+                let x = (x_offset + evt.tick as f32 * ppu).clamp(grid_left_x, w);
                 let y = view.value_to_y(evt.value, max_val);
                 // 选中锚点渲染为白色高亮
                 let anchor_color = if highlight_ticks.contains(&evt.tick) {
@@ -262,6 +265,8 @@ pub fn build_data_lines(
                 max_val,
                 x_offset,
                 ppu,
+                grid_left_x,
+                w,
                 color,
             );
         }
@@ -306,7 +311,8 @@ pub(crate) fn build_lane_instances(
     if show_anchors {
         let visible_events = lane.events_in_range(pad_start, pad_end);
         for evt in visible_events {
-            let x = x_offset + evt.tick as f32 * ppu;
+            // clamp 到 [grid_left_x, w]：锚点不画到 combo 列下方
+            let x = (x_offset + evt.tick as f32 * ppu).clamp(grid_left_x, w);
             let y = view.value_to_y(evt.value, max_val);
             let anchor_color = [color[0], color[1], color[2], 1.0];
             match evt.shape {
@@ -326,6 +332,8 @@ pub(crate) fn build_lane_instances(
             max_val,
             x_offset,
             ppu,
+            grid_left_x,
+            w,
             color,
         );
     }
@@ -348,6 +356,8 @@ fn push_curve_control_points(
     max_val: f32,
     x_offset: f32,
     ppu: f32,
+    grid_left_x: f32,
+    w: f32,
     color: [f32; 3],
 ) {
     let ctrl_color = [color[0], color[1], color[2], 1.0];
@@ -365,15 +375,16 @@ fn push_curve_control_points(
             && let SegmentShape::Curve { x1, y1, x2, y2 } = p.shape
             && !p.shape.is_linear()
         {
-            // 段 p → evt：P0=p, P3=evt
-            let px0 = x_offset + p.tick as f32 * ppu;
+            // 段 p → evt：P0=p, P3=evt。端点 clamp 到 [grid_left_x, w]
+            // （控制点/手柄不画到 combo 列下方）。
+            let px0 = (x_offset + p.tick as f32 * ppu).clamp(grid_left_x, w);
             let py0 = view.value_to_y(p.value, max_val);
-            let px3 = x_offset + evt.tick as f32 * ppu;
+            let px3 = (x_offset + evt.tick as f32 * ppu).clamp(grid_left_x, w);
             let py3 = view.value_to_y(evt.value, max_val);
             // 两个控制点屏幕坐标（偏移量 *4 放大）
-            let c1x = px0 + (px3 - px0) * x1 * 4.0;
+            let c1x = (px0 + (px3 - px0) * x1 * 4.0).clamp(grid_left_x, w);
             let c1y = py0 + (py3 - py0) * y1 * 4.0;
-            let c2x = px3 + (px3 - px0) * x2 * 4.0;
+            let c2x = (px3 + (px3 - px0) * x2 * 4.0).clamp(grid_left_x, w);
             let c2y = py3 + (py3 - py0) * y2 * 4.0;
             // 锚点 → 控制点的连线（handle）
             out.push(CurveInstance::line(
