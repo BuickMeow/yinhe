@@ -408,10 +408,11 @@ impl CullState {
         yinhe_memtrace::add_gpu_resource(track_mask_size);
         {
             let words = vec![u32::MAX; crate::vertex::MAX_TRACKS / 32];
-            track_mask_buffer
-                .slice(..)
-                .get_mapped_range_mut()
-                .copy_from_slice(bytemuck::cast_slice(&words));
+            let Ok(mut mapped) = track_mask_buffer.slice(..).get_mapped_range_mut() else {
+                // mapped_at_creation buffer 映射失败 = 设备不可用，无法继续渲染
+                panic!("track_mask buffer not mappable at creation");
+            };
+            mapped.copy_from_slice(bytemuck::cast_slice(&words));
         }
         track_mask_buffer.unmap();
 
@@ -837,7 +838,10 @@ impl CullState {
                 .poll(wgpu::PollType::wait_indefinitely())
                 .expect("diag poll failed");
             assert!(done.load(std::sync::atomic::Ordering::SeqCst));
-            let view = readback.slice(..).get_mapped_range();
+            let view = readback
+                .slice(..)
+                .get_mapped_range()
+                .expect("diag readback map");
             let args: &[u32] = bytemuck::cast_slice(&view);
             for c in 0..chunk_count {
                 total += args[c * 5 + 1] as u64; // instance_count @ offset 4
@@ -1005,7 +1009,10 @@ mod tests {
             .poll(wgpu::PollType::wait_indefinitely())
             .expect("poll failed");
         assert!(done.load(Ordering::SeqCst), "map_async callback not fired");
-        let view = args_readback.slice(..).get_mapped_range();
+        let view = args_readback
+            .slice(..)
+            .get_mapped_range()
+            .expect("readback map");
         let args: &[u32] = bytemuck::cast_slice(&view);
         // DrawIndexedIndirectArgs: [index_count=6, instance_count, first_index=0,
         // base_vertex=0, first_instance=0] — chunk 0 starts at sparse slot 0.
@@ -1079,7 +1086,10 @@ mod tests {
                 .poll(wgpu::PollType::wait_indefinitely())
                 .expect("poll failed");
             assert!(done.load(Ordering::SeqCst));
-            let view = readback.slice(..).get_mapped_range();
+            let view = readback
+                .slice(..)
+                .get_mapped_range()
+                .expect("diag readback map");
             let idx: &[u32] = bytemuck::cast_slice(&view);
             let out = idx[..30].to_vec();
             drop(view);
@@ -1165,7 +1175,10 @@ mod tests {
                 .poll(wgpu::PollType::wait_indefinitely())
                 .expect("poll failed");
             assert!(done.load(Ordering::SeqCst));
-            let view = readback.slice(..).get_mapped_range();
+            let view = readback
+                .slice(..)
+                .get_mapped_range()
+                .expect("diag readback map");
             let idx: &[u32] = bytemuck::cast_slice(&view);
             let out: Vec<u32> = idx[..1000].to_vec();
             drop(view);
@@ -1485,7 +1498,7 @@ mod tests {
                 .poll(wgpu::PollType::wait_indefinitely())
                 .expect("poll failed");
             assert!(done.load(Ordering::SeqCst));
-            let view = readback.slice(..).get_mapped_range();
+            let view = readback.slice(..).get_mapped_range().expect("readback map");
             let args: &[u32] = bytemuck::cast_slice(&view);
             let count = args[1];
             drop(view);
@@ -1634,7 +1647,7 @@ mod tests {
                     .poll(wgpu::PollType::wait_indefinitely())
                     .expect("poll failed");
                 assert!(done.load(Ordering::SeqCst));
-                let view = readback.slice(..).get_mapped_range();
+                let view = readback.slice(..).get_mapped_range().expect("readback map");
                 let args: &[u32] = bytemuck::cast_slice(&view);
                 let mut key_total: u64 = 0;
                 for c in 0..chunk_count as usize {
@@ -1770,7 +1783,7 @@ mod tests {
                     .poll(wgpu::PollType::wait_indefinitely())
                     .expect("poll failed");
                 assert!(done.load(Ordering::SeqCst));
-                let view = readback.slice(..).get_mapped_range();
+                let view = readback.slice(..).get_mapped_range().expect("readback map");
                 let args: &[u32] = bytemuck::cast_slice(&view);
                 for c in 0..chunk_count {
                     total += args[c * 5 + 1] as u64;
@@ -1924,7 +1937,7 @@ mod tests {
                         .poll(wgpu::PollType::wait_indefinitely())
                         .expect("poll failed");
                     assert!(done.load(Ordering::SeqCst));
-                    let view = readback.slice(..).get_mapped_range();
+                    let view = readback.slice(..).get_mapped_range().expect("readback map");
                     let args: &[u32] = bytemuck::cast_slice(&view);
                     for c in 0..chunk_count {
                         total += args[c * 5 + 1] as u64;
@@ -2098,7 +2111,7 @@ mod tests {
                             .poll(wgpu::PollType::wait_indefinitely())
                             .expect("poll failed");
                         assert!(done.load(Ordering::SeqCst));
-                        let view = readback.slice(..).get_mapped_range();
+                        let view = readback.slice(..).get_mapped_range().expect("readback map");
                         let args: &[u32] = bytemuck::cast_slice(&view);
                         for c in 0..chunk_count {
                             gpu += args[c * 5 + 1] as u64;
@@ -2275,7 +2288,7 @@ mod tests {
                             .poll(wgpu::PollType::wait_indefinitely())
                             .expect("poll failed");
                         assert!(done.load(Ordering::SeqCst));
-                        let view = readback.slice(..).get_mapped_range();
+                        let view = readback.slice(..).get_mapped_range().expect("readback map");
                         let args: &[u32] = bytemuck::cast_slice(&view);
                         for c in 0..chunk_count {
                             gpu += args[c * 5 + 1] as u64;
@@ -2540,7 +2553,7 @@ mod tests {
                         .poll(wgpu::PollType::wait_indefinitely())
                         .expect("poll failed");
                     assert!(done.load(Ordering::SeqCst));
-                    let view = readback.slice(..).get_mapped_range();
+                    let view = readback.slice(..).get_mapped_range().expect("readback map");
                     let args: &[u32] = bytemuck::cast_slice(&view);
                     for c in 0..chunk_count {
                         gpu += args[c * 5 + 1] as u64;
@@ -2802,7 +2815,7 @@ mod tests {
                 .poll(wgpu::PollType::wait_indefinitely())
                 .expect("poll failed");
             assert!(done.load(std::sync::atomic::Ordering::SeqCst));
-            let mapped = buffer.slice(..).get_mapped_range();
+            let mapped = buffer.slice(..).get_mapped_range().expect("readback map");
             let mut note_pixels = 0u64;
             for row in 0..ph {
                 let start = (row as usize) * aligned_row as usize;
@@ -2936,7 +2949,7 @@ mod tests {
                     .poll(wgpu::PollType::wait_indefinitely())
                     .expect("poll failed");
                 assert!(done.load(std::sync::atomic::Ordering::SeqCst));
-                let mapped = buffer.slice(..).get_mapped_range();
+                let mapped = buffer.slice(..).get_mapped_range().expect("readback map");
                 // 每 key 一行（kh 像素），统计该行非黑像素数
                 let mut key_px = [0u32; 128];
                 let mut min_x = pw;
@@ -3118,7 +3131,7 @@ mod tests {
                 .poll(wgpu::PollType::wait_indefinitely())
                 .expect("poll failed");
             assert!(done.load(Ordering::SeqCst));
-            let view = readback.slice(..).get_mapped_range();
+            let view = readback.slice(..).get_mapped_range().expect("readback map");
             let args: &[u32] = bytemuck::cast_slice(&view);
             let mut nonempty_chunks = 0u32;
             for c in 0..chunk_count {
@@ -3158,7 +3171,10 @@ mod tests {
                 .poll(wgpu::PollType::wait_indefinitely())
                 .expect("poll failed");
             assert!(done.load(Ordering::SeqCst));
-            let v2 = readback2.slice(..).get_mapped_range();
+            let v2 = readback2
+                .slice(..)
+                .get_mapped_range()
+                .expect("readback map");
             let args2: &[u32] = bytemuck::cast_slice(&v2);
             for c in 0..chunk_count {
                 if args2[c * 4 + 1] > 0 {
@@ -3204,7 +3220,7 @@ mod tests {
                     .poll(wgpu::PollType::wait_indefinitely())
                     .expect("poll failed");
                 assert!(done.load(Ordering::SeqCst));
-                let v = rb.slice(..).get_mapped_range();
+                let v = rb.slice(..).get_mapped_range().expect("readback map");
                 let idx: &[u32] = bytemuck::cast_slice(&v);
                 // 索引是 per-key 本地位置 → 加 offsets[key] 才是全局 all_notes 位置。
                 let base = offsets[key as usize] as usize;
@@ -3330,7 +3346,7 @@ mod tests {
                         .poll(wgpu::PollType::wait_indefinitely())
                         .expect("poll failed");
                     assert!(done.load(Ordering::SeqCst));
-                    let v = rb.slice(..).get_mapped_range();
+                    let v = rb.slice(..).get_mapped_range().expect("readback map");
                     let a: &[u32] = bytemuck::cast_slice(&v);
                     let c_lo = renderer.cull.bucket_indexes[60]
                         .as_ref()
@@ -3383,7 +3399,7 @@ mod tests {
                     .poll(wgpu::PollType::wait_indefinitely())
                     .expect("poll failed");
                 assert!(done.load(std::sync::atomic::Ordering::SeqCst));
-                let mapped = buffer.slice(..).get_mapped_range();
+                let mapped = buffer.slice(..).get_mapped_range().expect("readback map");
                 let mut px = 0u64;
                 for row in 0..ph {
                     let start = (row as usize) * aligned_row as usize;
@@ -3421,7 +3437,7 @@ mod tests {
                         .poll(wgpu::PollType::wait_indefinitely())
                         .expect("poll failed");
                     assert!(done.load(Ordering::SeqCst));
-                    let v2 = rb2.slice(..).get_mapped_range();
+                    let v2 = rb2.slice(..).get_mapped_range().expect("readback map");
                     let idx: &[u32] = bytemuck::cast_slice(&v2);
                     println!(
                         "  槽位 c_lo*256 起 8 个索引: {:?}",
@@ -3582,7 +3598,7 @@ mod tests {
                 .poll(wgpu::PollType::wait_indefinitely())
                 .expect("poll failed");
             assert!(done.load(std::sync::atomic::Ordering::SeqCst));
-            let mapped = buffer.slice(..).get_mapped_range();
+            let mapped = buffer.slice(..).get_mapped_range().expect("readback map");
             let (mut left, mut right) = (0u64, 0u64);
             for row in 0..ph {
                 let start = (row as usize) * aligned_row as usize;
@@ -3794,7 +3810,7 @@ mod tests {
                 .poll(wgpu::PollType::wait_indefinitely())
                 .expect("poll failed");
             assert!(done.load(std::sync::atomic::Ordering::SeqCst));
-            let mapped = buffer.slice(..).get_mapped_range();
+            let mapped = buffer.slice(..).get_mapped_range().expect("readback map");
 
             // 扫描 key 60 行的中间一行（y=320）：非空列必须连续（无缝隙）。
             let row = 320usize;
@@ -4176,7 +4192,7 @@ mod tests {
                 .poll(wgpu::PollType::wait_indefinitely())
                 .expect("poll failed");
             assert!(done.load(Ordering::SeqCst));
-            let view = readback.slice(..).get_mapped_range();
+            let view = readback.slice(..).get_mapped_range().expect("readback map");
             let args: &[u32] = bytemuck::cast_slice(&view);
             for c in 0..chunk_count as usize {
                 gpu_total += args[c * 5 + 1] as u64;

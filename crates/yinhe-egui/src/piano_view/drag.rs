@@ -1149,31 +1149,34 @@ mod tests {
             Vec<crate::piano_view::PreviewReq>,
             Option<yinhe_types::PencilNoteDrag>,
         ) = (None, Vec::new(), None);
-        let _ = ctx.run_ui(raw, |ui| {
-            let (_, _, previews, note_event, pencil_drag) = sel_drag_frame(
-                ui,
-                content(),
-                content(),
-                view,
-                Some(midi),
-                selected,
-                QuantizePreset::Fraction(1, 16),
-                480,
-                None,
-                10000.0,
-                cursor_tick,
-                note_drag_delta,
-                note_resize_delta,
-                sel_rect,
-                &[[0.5, 0.5, 0.5, 1.0]],
-                &[true],
-                &std::collections::HashSet::new(),
-                editing_track,
-                None,
-                false,
-            );
-            out = (note_event, previews, pencil_drag);
-        });
+        let _ = ctx
+            .run_ui(raw, |ui| {
+                let (_, _, previews, note_event, pencil_drag) = sel_drag_frame(
+                    ui,
+                    content(),
+                    content(),
+                    view,
+                    Some(midi),
+                    selected,
+                    QuantizePreset::Fraction(1, 16),
+                    480,
+                    None,
+                    10000.0,
+                    cursor_tick,
+                    note_drag_delta,
+                    note_resize_delta,
+                    sel_rect,
+                    &[[0.5, 0.5, 0.5, 1.0]],
+                    &[true],
+                    &std::collections::HashSet::new(),
+                    editing_track,
+                    None,
+                    false,
+                );
+                out = (note_event, previews, pencil_drag);
+            })
+            .textures_delta
+            .clear();
         out
     }
 

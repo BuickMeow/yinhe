@@ -41,9 +41,11 @@ mod tests {
         dirty: &mut bool,
     ) -> f32 {
         let mut out = 0.0f32;
-        let _ = ctx.run_ui(raw, |ui| {
+        ctx.run_ui(raw, |ui| {
             out = show(ui, rect, 300.0, scroll_x, ppt, 1000.0, dirty);
-        });
+        })
+        .textures_delta
+        .clear();
         out
     }
 

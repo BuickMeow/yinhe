@@ -140,10 +140,11 @@ impl RenderPipelineState {
         yinhe_memtrace::add_gpu_resource(6 * std::mem::size_of::<u32>() as u64);
         {
             let idx: [u32; 6] = [0, 1, 2, 1, 3, 2];
-            index_buffer
-                .slice(..)
-                .get_mapped_range_mut()
-                .copy_from_slice(bytemuck::cast_slice(&idx));
+            let Ok(mut mapped) = index_buffer.slice(..).get_mapped_range_mut() else {
+                // mapped_at_creation buffer 映射失败 = 设备不可用，无法继续渲染
+                panic!("index buffer not mappable at creation");
+            };
+            mapped.copy_from_slice(bytemuck::cast_slice(&idx));
         }
         index_buffer.unmap();
 
@@ -170,14 +171,14 @@ impl RenderPipelineState {
             vertex: VertexState {
                 module: render_shader,
                 entry_point: Some("vs_main"),
-                buffers: &[VertexBufferLayout {
+                buffers: &[Some(VertexBufferLayout {
                     array_stride: std::mem::size_of::<DrawInstance>() as u64,
                     step_mode: VertexStepMode::Instance,
                     attributes: &vertex_attr_array![
                         0 => Float32x4,
                         1 => Uint32x4,
                     ],
-                }],
+                })],
                 compilation_options: PipelineCompilationOptions::default(),
             },
             fragment: Some(FragmentState {
@@ -208,11 +209,11 @@ impl RenderPipelineState {
             vertex: VertexState {
                 module: render_shader,
                 entry_point: Some("vs_main_note"),
-                buffers: &[VertexBufferLayout {
+                buffers: &[Some(VertexBufferLayout {
                     array_stride: std::mem::size_of::<u32>() as u64,
                     step_mode: VertexStepMode::Instance,
                     attributes: &vertex_attr_array![0 => Uint32],
-                }],
+                })],
                 compilation_options: PipelineCompilationOptions::default(),
             },
             fragment: Some(FragmentState {
@@ -243,13 +244,13 @@ impl RenderPipelineState {
             vertex: VertexState {
                 module: render_shader,
                 entry_point: Some("vs_main_note_direct"),
-                buffers: &[VertexBufferLayout {
+                buffers: &[Some(VertexBufferLayout {
                     array_stride: std::mem::size_of::<NoteInstance>() as u64,
                     step_mode: VertexStepMode::Instance,
                     attributes: &vertex_attr_array![
                         0 => Uint32x3,
                     ],
-                }],
+                })],
                 compilation_options: PipelineCompilationOptions::default(),
             },
             fragment: Some(FragmentState {
@@ -281,7 +282,7 @@ impl RenderPipelineState {
             vertex: VertexState {
                 module: render_shader,
                 entry_point: Some("vs_main_curve"),
-                buffers: &[VertexBufferLayout {
+                buffers: &[Some(VertexBufferLayout {
                     array_stride: std::mem::size_of::<CurveInstance>() as u64,
                     step_mode: VertexStepMode::Instance,
                     attributes: &vertex_attr_array![
@@ -290,7 +291,7 @@ impl RenderPipelineState {
                         2 => Uint32,     // rgba_packed @ offset 20
                         3 => Uint32,     // shape @ offset 24
                     ],
-                }],
+                })],
                 compilation_options: PipelineCompilationOptions::default(),
             },
             fragment: Some(FragmentState {
@@ -321,13 +322,13 @@ impl RenderPipelineState {
             vertex: VertexState {
                 module: render_shader,
                 entry_point: Some("vs_main_velocity"),
-                buffers: &[VertexBufferLayout {
+                buffers: &[Some(VertexBufferLayout {
                     array_stride: std::mem::size_of::<VelocityBarInstance>() as u64,
                     step_mode: VertexStepMode::Instance,
                     attributes: &vertex_attr_array![
                         0 => Uint32x4,
                     ],
-                }],
+                })],
                 compilation_options: PipelineCompilationOptions::default(),
             },
             fragment: Some(FragmentState {

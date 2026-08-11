@@ -21,6 +21,8 @@ pub struct GpuVoiceState {
     pub sample_offset: u32,
     pub sample_length: u32,
     pub speed: f32,
+    /// 音色库基础播放倍率（段边界按通道 pitch_multiplier 重算 speed = base × mult）
+    pub base_speed: f32,
     pub base_gain: f32,
     pub time: f32,
     pub start_offset: u32, // 块内起始帧偏移
@@ -91,7 +93,57 @@ pub struct RenderParams {
     pub voice_count: u32,
     pub sample_rate: u32,
     pub sample_chunk_count: u32,
-    pub voice_wg_count: u32, // pass1 workgroup 数 = ceil(voice_count / 256)
+    pub voice_wg_count: u32,   // pass1 workgroup 数 = ceil(voice_count / 256)
+    pub seg_count: u32,        // 块内段数（段边界 = CC 事件位置）
+    pub release_count: u32,    // release/kill 指令总数
+    pub env_update_count: u32, // CC72/73/121 包络更新指令总数
+}
+
+/// 段信息：块内段边界（与 WGSL `SegInfo` 对应）。
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct SegInfo {
+    pub start_frame: u32,
+    pub ch_off: u32,
+    pub ch_count: u32,
+    pub _pad: u32,
+}
+
+/// 段边界处某通道的新状态（CC 事件后；与 WGSL `ChState` 对应）。
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct ChState {
+    pub ch: u32,
+    pub speed_mult: f32,
+    pub ch_vol: f32,
+    pub ch_vol_step: f32,
+    pub ch_vol_frames: u32,
+    pub ch_expr: f32,
+    pub ch_expr_step: f32,
+    pub ch_expr_frames: u32,
+    pub ch_pan: f32,
+    pub ch_pan_step: f32,
+    pub ch_pan_frames: u32,
+}
+
+/// release/kill 指令（与 WGSL `ReleaseCmd` 对应；mode 5=release，6=kill）。
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct ReleaseCmd {
+    pub frame: u32,
+    pub vid: u32,
+    pub mode: u32,
+    pub _pad: u32,
+}
+
+/// CC72/73/121 包络更新指令（与 WGSL `EnvUpdateCmd` 对应）。
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct EnvUpdateCmd {
+    pub frame: u32,
+    pub vid: u32,
+    pub attack_frames: f32,
+    pub release_frames: f32,
 }
 
 /// RBJ cookbook biquad 系数（与 xsynth 的 biquad crate 完全一致）。
@@ -288,8 +340,13 @@ struct GpuBuffers {
     /// pass1 每 voice 每帧输出（voices × frames × 2 f32）
     #[allow(dead_code)] // 经 bind_groups 使用
     partial_buf: wgpu::Buffer,
+    segs_buf: wgpu::Buffer,
+    ch_updates_buf: wgpu::Buffer,
+    release_by_frame_buf: wgpu::Buffer,
+    release_cmds_buf: wgpu::Buffer,
+    env_cmds_buf: wgpu::Buffer,
     staging: [wgpu::Buffer; 2],
-    /// 读回 voice 状态（滤波器 IIR 状态跨 block 持久）
+    /// 读回 voice 状态（块末全字段，作为下一块起点）
     staging_voice: [wgpu::Buffer; 2],
     staging_idx: usize,
     bind_groups: [wgpu::BindGroup; 2],
@@ -393,6 +450,19 @@ impl GpuAudioRenderer {
             },
             count: None,
         });
+        // 块内段结构（binding 10-14，全部 storage read）
+        for binding in 10..15u32 {
+            entries.push(wgpu::BindGroupLayoutEntry {
+                binding,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Storage { read_only: true },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            });
+        }
 
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("audio_render_bgl"),
@@ -457,6 +527,7 @@ impl GpuAudioRenderer {
             power_preference: wgpu::PowerPreference::HighPerformance,
             compatible_surface: None,
             force_fallback_adapter: false,
+            apply_limit_buckets: false,
         }))
         .map_err(|_| "No GPU adapter found")?;
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
@@ -465,6 +536,8 @@ impl GpuAudioRenderer {
             required_limits: wgpu::Limits {
                 max_storage_buffer_binding_size: 512 * 1024 * 1024,
                 max_buffer_size: 512 * 1024 * 1024,
+                // GPU 合成器需要 13 个 storage buffer（采样块 + 段结构 + 指令）
+                max_storage_buffers_per_shader_stage: 16,
                 ..wgpu::Limits::default()
             },
             memory_hints: wgpu::MemoryHints::default(),
@@ -543,6 +616,16 @@ impl GpuAudioRenderer {
             * 2
             * std::mem::size_of::<f32>()) as u64;
         let params_size = std::mem::size_of::<RenderParams>() as u64;
+        // 块内段结构：上界 = 每帧一段 × 每段 32 通道更新
+        let segs_size = (frame_count.max(1) as usize * std::mem::size_of::<SegInfo>()) as u64;
+        let ch_updates_size = (frame_count.max(1) as usize
+            * crate::gpu_synth::MAX_CHANNELS
+            * std::mem::size_of::<ChState>()) as u64;
+        let release_by_frame_size =
+            ((frame_count.max(1) as usize + 2) * std::mem::size_of::<u32>()) as u64;
+        let release_cmds_size =
+            (rounded_voices as usize * std::mem::size_of::<ReleaseCmd>()) as u64;
+        let env_cmds_size = (rounded_voices as usize * std::mem::size_of::<EnvUpdateCmd>()) as u64;
 
         let voice_state_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("gpu_voice_states"),
@@ -583,7 +666,7 @@ impl GpuAudioRenderer {
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        // voice 状态读回（滤波器 IIR 状态）
+        // voice 状态读回（块末全字段，作为下一块起点）
         let staging_voice0 = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("staging_voice_0"),
             size: voice_state_size,
@@ -596,6 +679,37 @@ impl GpuAudioRenderer {
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        // 块内段结构与指令缓冲（每块 write_buffer 覆盖）
+        let segs_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("gpu_segs"),
+            size: segs_size,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let ch_updates_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("gpu_ch_updates"),
+            size: ch_updates_size,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let release_by_frame_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("gpu_release_by_frame"),
+            size: release_by_frame_size,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let release_cmds_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("gpu_release_cmds"),
+            size: release_cmds_size,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let env_cmds_buf = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("gpu_env_cmds"),
+            size: env_cmds_size,
+            usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
 
         // Build bind group entries
         let make_bg = |p: &wgpu::Buffer,
@@ -604,7 +718,12 @@ impl GpuAudioRenderer {
                        co: &wgpu::Buffer,
                        sc: &[wgpu::Buffer],
                        db: &wgpu::Buffer,
-                       pt: &wgpu::Buffer| {
+                       pt: &wgpu::Buffer,
+                       sg: &wgpu::Buffer,
+                       cu: &wgpu::Buffer,
+                       rbf: &wgpu::Buffer,
+                       rc: &wgpu::Buffer,
+                       ec: &wgpu::Buffer| {
             let mut bg_entries = vec![
                 wgpu::BindGroupEntry {
                     binding: 0,
@@ -641,6 +760,26 @@ impl GpuAudioRenderer {
                 binding: 9,
                 resource: pt.as_entire_binding(),
             });
+            bg_entries.push(wgpu::BindGroupEntry {
+                binding: 10,
+                resource: sg.as_entire_binding(),
+            });
+            bg_entries.push(wgpu::BindGroupEntry {
+                binding: 11,
+                resource: cu.as_entire_binding(),
+            });
+            bg_entries.push(wgpu::BindGroupEntry {
+                binding: 12,
+                resource: rbf.as_entire_binding(),
+            });
+            bg_entries.push(wgpu::BindGroupEntry {
+                binding: 13,
+                resource: rc.as_entire_binding(),
+            });
+            bg_entries.push(wgpu::BindGroupEntry {
+                binding: 14,
+                resource: ec.as_entire_binding(),
+            });
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("audio_bg"),
                 layout: &self.bind_group_layout,
@@ -658,6 +797,11 @@ impl GpuAudioRenderer {
                     &sample_chunks,
                     &self.dummy_buf,
                     &partial_buf,
+                    &segs_buf,
+                    &ch_updates_buf,
+                    &release_by_frame_buf,
+                    &release_cmds_buf,
+                    &env_cmds_buf,
                 ),
                 make_bg(
                     &params_buf,
@@ -667,6 +811,11 @@ impl GpuAudioRenderer {
                     &sample_chunks,
                     &self.dummy_buf,
                     &partial_buf,
+                    &segs_buf,
+                    &ch_updates_buf,
+                    &release_by_frame_buf,
+                    &release_cmds_buf,
+                    &env_cmds_buf,
                 ),
             ],
             sample_chunks,
@@ -677,6 +826,11 @@ impl GpuAudioRenderer {
             channel_mix_buf,
             params_buf,
             partial_buf,
+            segs_buf,
+            ch_updates_buf,
+            release_by_frame_buf,
+            release_cmds_buf,
+            env_cmds_buf,
             staging: [staging0, staging1],
             staging_voice: [staging_voice0, staging_voice1],
             staging_idx: 0,
@@ -684,14 +838,21 @@ impl GpuAudioRenderer {
         self.frame_count = frame_count;
     }
 
-    /// 渲染一块音频的 per-channel 混音（16 通道 × frames × 2 f32，立体声交错）。
-    /// `voices` 会被更新：读回 GPU 端推进的滤波器 IIR 状态（跨 block 持久）。
+    /// 渲染一块音频的 per-channel 混音（32 通道 × frames × 2 f32，立体声交错）。
+    ///
+    /// 块内按段渲染（段边界 = CC 事件位置）：段结构与通道状态更新、release/env
+    /// 指令作为数据上传，shader 在对应帧应用；voice 状态在块末**全字段**写回
+    /// `voices`（时间/包络/滤波均由 GPU 推进，CPU 不再 advance）。
     /// 通道滤波（CC74/71）与通道求和由调用方（GpuSynth）在 CPU 完成。
     /// 返回实际 voice 数量（0 表示静音）。
-    pub fn render_channel_mix(
+    pub fn render_block(
         &mut self,
         voices: &mut [GpuVoiceState],
         channel_mix: &mut [f32],
+        segs: &[SegInfo],
+        ch_updates: &[ChState],
+        releases: &[ReleaseCmd],
+        env_cmds: &[EnvUpdateCmd],
         sample_rate: u32,
     ) -> u32 {
         let frame_count = (channel_mix.len() / 2 / CHANNEL_COUNT) as u32;
@@ -714,12 +875,36 @@ impl GpuAudioRenderer {
         let voice_wg_count = voice_count.div_ceil(WORKGROUP_SIZE);
         self.queue
             .write_buffer(&buf.voice_state_buf, 0, bytemuck::cast_slice(voices));
+        // 段结构与指令（release 按帧前缀和构建 release_by_frame）
+        let mut release_by_frame = vec![0u32; frame_count as usize + 2];
+        for r in releases {
+            release_by_frame[r.frame as usize + 1] += 1;
+        }
+        for i in 1..release_by_frame.len() {
+            release_by_frame[i] += release_by_frame[i - 1];
+        }
+        self.queue
+            .write_buffer(&buf.segs_buf, 0, bytemuck::cast_slice(segs));
+        self.queue
+            .write_buffer(&buf.ch_updates_buf, 0, bytemuck::cast_slice(ch_updates));
+        self.queue.write_buffer(
+            &buf.release_by_frame_buf,
+            0,
+            bytemuck::cast_slice(&release_by_frame),
+        );
+        self.queue
+            .write_buffer(&buf.release_cmds_buf, 0, bytemuck::cast_slice(releases));
+        self.queue
+            .write_buffer(&buf.env_cmds_buf, 0, bytemuck::cast_slice(env_cmds));
         let params = RenderParams {
             frame_count,
             voice_count,
             sample_rate,
             sample_chunk_count: buf.chunk_count,
             voice_wg_count,
+            seg_count: segs.len() as u32,
+            release_count: releases.len() as u32,
+            env_update_count: env_cmds.len() as u32,
         };
         self.queue
             .write_buffer(&buf.params_buf, 0, bytemuck::bytes_of(&params));
@@ -787,24 +972,30 @@ impl GpuAudioRenderer {
             return 0;
         }
 
-        let data = buffer_slice.get_mapped_range();
+        // 读回失败（如设备丢失）：输出静音，不 unwrap 保命
+        let data = match buffer_slice.get_mapped_range() {
+            Ok(d) => d,
+            Err(_) => {
+                channel_mix.fill(0.0);
+                return 0;
+            }
+        };
         let gpu_mix: &[f32] = bytemuck::cast_slice(&data);
         channel_mix[..gpu_mix.len()].copy_from_slice(gpu_mix);
         drop(data);
         buf.staging[idx].unmap();
 
-        // 读回滤波器状态（其余字段由 CPU advance_voices 推进）
-        let vdata = voice_slice.get_mapped_range();
+        // 读回滤波器与包络状态（GPU 全字段推进，CPU 读回为下一块起点）
+        let vdata = match voice_slice.get_mapped_range() {
+            Ok(d) => d,
+            Err(_) => {
+                channel_mix.fill(0.0);
+                return 0;
+            }
+        };
         let gpu_voices: &[GpuVoiceState] = bytemuck::cast_slice(&vdata);
         for (i, v) in voices.iter_mut().enumerate() {
-            v.flt_x1 = gpu_voices[i].flt_x1;
-            v.flt_x2 = gpu_voices[i].flt_x2;
-            v.flt_y1 = gpu_voices[i].flt_y1;
-            v.flt_y2 = gpu_voices[i].flt_y2;
-            v.flt_x1r = gpu_voices[i].flt_x1r;
-            v.flt_x2r = gpu_voices[i].flt_x2r;
-            v.flt_y1r = gpu_voices[i].flt_y1r;
-            v.flt_y2r = gpu_voices[i].flt_y2r;
+            *v = gpu_voices[i];
         }
         drop(vdata);
         buf.staging_voice[idx].unmap();
@@ -815,7 +1006,8 @@ impl GpuAudioRenderer {
 
     /// Render a block of audio using the GPU.
     /// 渲染一块音频（frames × 2 立体声交错）：per-channel 混音求和，无通道滤波。
-    /// `voices` 会被更新：读回 GPU 端推进的滤波器 IIR 状态（跨 block 持久）。
+    /// `voices` 会被更新：读回 GPU 端推进的**全字段**状态（时间/包络/滤波）。
+    /// 调用方**不应再**调用 advance_voices（GPU 已推进）。
     /// 返回实际 voice 数量（0 表示静音）。
     pub fn render_into(
         &mut self,
@@ -826,7 +1018,7 @@ impl GpuAudioRenderer {
         let frames = output.len() / 2;
         let mut scratch = std::mem::take(&mut self.mix_scratch);
         scratch.resize(CHANNEL_COUNT * frames * 2, 0.0);
-        let n = self.render_channel_mix(voices, &mut scratch, sample_rate);
+        let n = self.render_block(voices, &mut scratch, &[], &[], &[], &[], sample_rate);
         self.mix_scratch = scratch;
         output.fill(0.0);
         for ch in 0..CHANNEL_COUNT {
@@ -838,8 +1030,8 @@ impl GpuAudioRenderer {
         n
     }
 
-    /// 渲染一块音频（返回新分配的 Vec，兼容旧接口）。
-    pub fn render_block(
+    /// 渲染一块音频（返回新分配的 Vec，辅助测试用）。
+    pub fn render_block_alloc(
         &mut self,
         voices: &mut [GpuVoiceState],
         frame_count: u32,
@@ -1102,7 +1294,7 @@ mod tests {
             }
         };
         let mut voices = make_voices(4096, 16, 1.0);
-        let result = renderer.render_block(&mut voices, 1024, 44100);
+        let result = renderer.render_block_alloc(&mut voices, 1024, 44100);
         assert_eq!(result.len(), 1024 * 2);
         assert!(result.iter().fold(0.0f32, |m, &s| m.max(s.abs())) > 0.0);
     }
@@ -1123,12 +1315,12 @@ mod tests {
         for &vc in &[4, 16, 64, 256, 1024, 4096, 15000] {
             let mut voices = make_voices(sample_len, vc, 1.0);
             for _ in 0..3 {
-                let _ = renderer.render_block(&mut voices, frame_count, 44100);
+                let _ = renderer.render_block_alloc(&mut voices, frame_count, 44100);
             }
             let n = 10;
             let gpu_start = std::time::Instant::now();
             for _ in 0..n {
-                let _ = renderer.render_block(&mut voices, frame_count, 44100);
+                let _ = renderer.render_block_alloc(&mut voices, frame_count, 44100);
             }
             let gpu_per_block = gpu_start.elapsed() / n;
             let cpu_start = std::time::Instant::now();
@@ -1270,9 +1462,8 @@ mod tests {
         let mut cpu_voices = gpu_voices.clone();
         for block in 0..6 {
             let mut out_gpu = vec![0.0f32; frame_count as usize * 2];
+            // render_into 已由 GPU 全字段推进（time/env/滤波），调用方不再 advance
             renderer.render_into(&mut gpu_voices, &mut out_gpu, 44100);
-            // 真实路径在渲染后推进 time/env（与 GpuSynth::render 一致）
-            advance_voices(&mut gpu_voices, frame_count);
             let out_cpu = cpu_render_voices(&samples, &mut cpu_voices, frame_count);
 
             let mut max_diff = 0.0f32;
@@ -1378,8 +1569,8 @@ mod tests {
         {
             let mut voices = vec![make_voice(false)];
             let mut out = vec![0.0f32; frame_count as usize * 2];
+            // render_into 已由 GPU 全字段推进（time/env/滤波）
             renderer.render_into(&mut voices, &mut out, sr as u32);
-            advance_voices(&mut voices, frame_count);
             for fi in 0..8 {
                 let expected = samples[fi] * 0.5; // sustain env=1.0, base_gain=0.5, mono, ch_pan=0 → cos=1
                 assert!(
@@ -1400,8 +1591,8 @@ mod tests {
 
         for block in 0..4 {
             let mut out_gpu = vec![0.0f32; frame_count as usize * 2];
+            // render_into 已由 GPU 全字段推进（time/env/滤波）
             renderer.render_into(&mut gpu_voices, &mut out_gpu, sr as u32);
-            advance_voices(&mut gpu_voices, frame_count);
 
             // 参照：逐帧 biquad crate 滤波（单声道，左右同值）
             let start = block as usize * frame_count as usize;

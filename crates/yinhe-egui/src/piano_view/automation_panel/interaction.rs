@@ -1461,7 +1461,7 @@ mod tests {
         lane: &AutomationLane,
     ) -> Vec<AutomationEdit> {
         let mut edits = Vec::new();
-        let _ = ctx.run_ui(raw, |ui| {
+        ctx.run_ui(raw, |ui| {
             let mut info: Option<InfoContent> = None;
             let mut right_tab: Option<RightTab> = None;
             edits = handle_automation_interaction(
@@ -1479,7 +1479,9 @@ mod tests {
                 &mut right_tab,
             )
             .0;
-        });
+        })
+        .textures_delta
+        .clear();
         edits
     }
 

@@ -350,7 +350,7 @@ mod tests {
         on_bar: bool,
     ) -> Option<MarqueeDragResult> {
         let mut out = None;
-        let _ = ctx.run_ui(raw, |ui| {
+        ctx.run_ui(raw, |ui| {
             out = marquee_drag_frame(
                 ui,
                 content(),
@@ -363,7 +363,9 @@ mod tests {
                 "sel_drag",
                 on_bar,
             );
-        });
+        })
+        .textures_delta
+        .clear();
         out
     }
 

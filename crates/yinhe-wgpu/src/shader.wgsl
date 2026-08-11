@@ -68,7 +68,7 @@ struct CurveOutput {
     @location(2) p3: vec2<f32>,
     @location(3) thickness: f32,
     @location(4) color: vec4<f32>,
-    @location(5) shape: u32,
+    @location(5) @interpolate(flat) shape: u32,
 }
 
 struct VertexOutput {

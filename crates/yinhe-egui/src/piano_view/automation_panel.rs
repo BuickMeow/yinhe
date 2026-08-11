@@ -1474,7 +1474,7 @@ mod tests {
         active_track: Option<u16>,
     ) -> Vec<AutomationEdit> {
         let mut edits = Vec::new();
-        let _ = ctx.run_ui(raw, |ui| {
+        ctx.run_ui(raw, |ui| {
             let edit_ctx = AutomationEditCtx {
                 active_tool: Tool::Pencil,
                 active_track,
@@ -1500,7 +1500,9 @@ mod tests {
                 &mut right_tab,
             )
             .automation_edits;
-        });
+        })
+        .textures_delta
+        .clear();
         edits
     }
 

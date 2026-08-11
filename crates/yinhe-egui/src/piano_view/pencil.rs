@@ -641,7 +641,7 @@ mod tests {
         midi: &MockNotes,
     ) -> (Option<yinhe_core::NoteEvent>, Option<PreviewReq>) {
         let mut out = (None, None);
-        let _ = ctx.run_ui(raw, |ui| {
+        ctx.run_ui(raw, |ui| {
             let r = pencil_frame(
                 ui,
                 frame_rect(),
@@ -658,7 +658,9 @@ mod tests {
                 1000.0,
             );
             out = (r.0, r.4);
-        });
+        })
+        .textures_delta
+        .clear();
         out
     }
 

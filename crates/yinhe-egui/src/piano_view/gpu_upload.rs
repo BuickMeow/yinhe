@@ -529,7 +529,7 @@ mod tests {
             .poll(wgpu::PollType::wait_indefinitely())
             .expect("poll failed");
         assert!(done.load(Ordering::SeqCst));
-        let mapped = buffer.slice(..).get_mapped_range();
+        let mapped = buffer.slice(..).get_mapped_range().expect("readback map");
         let mut blue = 0u64;
         let mut red = 0u64;
         for row in 0..ph {
