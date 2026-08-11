@@ -108,6 +108,10 @@ pub fn show(
             .clamp(theme::SPLIT_CLAMP_MIN, theme::SPLIT_CLAMP_MAX);
         state.split_ratio = new_ratio;
     }
+    if resp.double_clicked() {
+        // 双击分割线 → 还原事件浏览器默认分割比例
+        state.split_ratio = EventBrowserState::default().split_ratio;
+    }
 
     let mut jump_request: Option<JumpRequest> = None;
     ui.scope_builder(egui::UiBuilder::new().max_rect(bot_rect), |ui| {

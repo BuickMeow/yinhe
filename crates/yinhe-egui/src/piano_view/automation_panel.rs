@@ -757,6 +757,12 @@ fn handle_split_drag(
         panel.dirty = true;
         ui.ctx().request_repaint();
     }
+    if handle_resp.double_clicked() {
+        // 双击分割线 → 还原面板默认高度
+        panel.panel_height = yinhe_types::automation_panel_view::DEFAULT_PANEL_HEIGHT;
+        panel.dirty = true;
+        ui.ctx().request_repaint();
+    }
 }
 
 /// 面板的滚动/缩放交互。

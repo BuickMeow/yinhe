@@ -9,6 +9,7 @@ use yinhe_types::time_format::format_tick_bar_beat_with_time_sig;
 
 use crate::render_context::RenderContext;
 use crate::widgets::tools_panel::Tool;
+use yinhe_editor_core::audio_settings::LayoutSettings;
 use yinhe_editor_core::document::Document;
 use yinhe_editor_core::quantize::QuantizePreset;
 
@@ -540,7 +541,11 @@ pub fn show(
         *layout.transport_panel_width =
             (*layout.transport_panel_width + v_resp.drag_delta().x).clamp(60.0, arr_total_w - 60.0);
     }
-    if v_resp.drag_stopped() {
+    if v_resp.double_clicked() {
+        // 双击分割线 → 还原走带面板默认宽度
+        *layout.transport_panel_width = LayoutSettings::default().transport_panel_width;
+    }
+    if v_resp.drag_stopped() || v_resp.double_clicked() {
         *layout.drag_ended = true;
     }
 

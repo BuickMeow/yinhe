@@ -8,6 +8,7 @@ pub mod soundfont;
 use eframe::egui;
 
 use crate::audio_settings::AudioSettings;
+use yinhe_editor_core::audio_settings::LayoutSettings;
 use yinhe_editor_core::document::Document;
 use yinhe_types::AutomationTarget;
 
@@ -75,12 +76,16 @@ pub fn show(
         egui::pos2(rect.min.x + crate::theme::SPLIT_HANDLE_W, rect.max.y),
     );
     let resp = crate::widgets::split_handle::vertical(ui, "__right_split__", handle_rect);
-    let width_drag_ended = resp.drag_stopped();
+    let width_drag_ended = resp.drag_stopped() || resp.double_clicked();
     if resp.dragged() {
         // Handle is at the left edge of a right-aligned panel.
         // Dragging right → panel narrows (width decreases).
         *right_panel_width = (*right_panel_width - resp.drag_delta().x)
             .clamp(theme, max_w - crate::theme::SPLIT_HANDLE_W);
+    }
+    if resp.double_clicked() {
+        // 双击分割线 → 还原右侧栏默认宽度
+        *right_panel_width = LayoutSettings::default().right_panel_width;
     }
 
     // ── Panel content area: full width after the split handle ──

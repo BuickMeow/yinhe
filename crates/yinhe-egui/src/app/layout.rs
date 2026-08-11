@@ -6,6 +6,7 @@ use crate::arrange;
 use crate::piano_view;
 use crate::right_panel::automation_undo::push_automation_actions;
 use crate::right_panel::info_panel::selection::selected_am_events;
+use yinhe_editor_core::audio_settings::LayoutSettings;
 use yinhe_editor_core::batch_ops::summarize_selected;
 use yinhe_types::AnchorSelRect;
 use yinhe_types::time_format::format_tick_bar_beat_with_time_sig;
@@ -379,7 +380,11 @@ impl App {
                 self.arr_split = ((layout.arr_h + delta) / total_y)
                     .clamp(crate::theme::SPLIT_CLAMP_MIN, crate::theme::SPLIT_CLAMP_MAX);
             }
-            if h_split_resp.drag_stopped() {
+            if h_split_resp.double_clicked() {
+                // 双击分割线 → 还原 AR/PR 默认分割比例
+                self.arr_split = LayoutSettings::default().arr_split;
+            }
+            if h_split_resp.drag_stopped() || h_split_resp.double_clicked() {
                 self.layout_needs_save = true;
             }
         }
