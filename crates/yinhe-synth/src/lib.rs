@@ -12,8 +12,11 @@ pub mod limiter;
 pub mod sfz_parser;
 pub mod synth;
 
-pub use gpu_synth::{ControlEvent, GpuSynth, MAX_CHANNELS, SynthEvent};
-pub use sfz_parser::{KeyInfo, LoopMode, build_key_map, load_wav_as_f32, select_key_info};
+pub use gpu_synth::{ChaseSkip, ControlEvent, GpuSynth, MAX_CHANNELS, SynthEvent};
+pub use sfz_parser::{
+    KeyInfo, KeyMapEntry, LoopMode, build_key_maps, load_wav_as_f32, select_key_info,
+    select_key_info_multi,
+};
 pub use synth::{
     GpuAudioRenderer, GpuVoiceState, RenderParams, advance_voices, biquad_coeffs, cpu_render_voices,
 };

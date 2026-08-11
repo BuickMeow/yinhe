@@ -106,18 +106,66 @@ impl Default for KeyInfo {
     }
 }
 
-/// 根据文件扩展名自动检测格式并构建 key map。
+/// 一个音色库文件中的一个（bank, preset）条目及其 key map。
+///
+/// 语义与 xsynth `SoundfontInstrument` 对齐：SFZ 无 preset 概念，整个文件是
+/// (0, 0) 一个条目（等价 xsynth `SoundfontInitOptions` 默认）；SF2 每个 preset
+/// 一个条目。program（bank, preset）选择条目，选不到则静音。
+#[derive(Clone, Debug)]
+pub struct KeyMapEntry {
+    pub bank: u8,
+    pub preset: u8,
+    /// (key, vel) 展开后的参数快照（与 xsynth `spawner_params_list` 等价）。
+    pub map: Vec<Vec<KeyInfo>>,
+}
+
+/// 根据文件扩展名自动检测格式并构建 key map 条目列表。
 /// `sample_rate` 为目标采样率：SFZ 的 wav 与 SF2 都在此采样率下加载/重采样一次。
-pub fn build_key_map(path: &Path, sample_rate: u32) -> Result<Vec<Vec<KeyInfo>>, String> {
+pub fn build_key_maps(path: &Path, sample_rate: u32) -> Result<Vec<KeyMapEntry>, String> {
     let ext = path
         .extension()
         .and_then(|e| e.to_str())
         .map(|e| e.to_lowercase());
     match ext.as_deref() {
-        Some("sfz") => build_key_map_from_sfz(path, sample_rate),
-        Some("sf2") => build_key_map_from_sf2(path, sample_rate),
+        Some("sfz") => Ok(vec![KeyMapEntry {
+            bank: 0,
+            preset: 0,
+            map: build_key_map_from_sfz(path, sample_rate)?,
+        }]),
+        Some("sf2") => build_key_maps_from_sf2(path, sample_rate),
         _ => Err(format!("Unsupported soundfont format: {:?}", path)),
     }
+}
+
+/// 多音色库 + program 选择（与 xsynth `ChannelSoundfont::rebuild_matrix` 一致）：
+/// 1. 主选：按文件顺序找 (bank, preset) 匹配且该 (key, vel) 有 region 的条目；
+/// 2. 兜底：全部主选落空后，鼓组（bank==128）找 (128, 0)，旋律找 (0, preset)；
+/// 3. 都落空 → 静音（与 xsynth 缺失 preset 静音一致）。
+pub fn select_key_info_multi(
+    entries: &[KeyMapEntry],
+    bank: u8,
+    preset: u8,
+    key: u8,
+    velocity: u8,
+) -> Option<&KeyInfo> {
+    for e in entries {
+        if e.bank == bank
+            && e.preset == preset
+            && let Some(info) = select_key_info(&e.map, key, velocity)
+        {
+            return Some(info);
+        }
+    }
+    let (rb, rp) = if bank == 128 { (128, 0) } else { (0, preset) };
+    for e in entries {
+        if e.bank == rb
+            && e.preset == rp
+            && let Some(info) = select_key_info(&e.map, key, velocity)
+        {
+            return Some(info);
+        }
+    }
+    None
 }
 
 /// 根据 key 和 velocity 选择对应的 KeyInfo（力度分层）。
@@ -266,95 +314,105 @@ fn build_key_map_from_sfz(sfz_path: &Path, sample_rate: u32) -> Result<Vec<Vec<K
 
 // ── SF2 ──
 
-fn build_key_map_from_sf2(sf2_path: &Path, sample_rate: u32) -> Result<Vec<Vec<KeyInfo>>, String> {
+fn build_key_maps_from_sf2(sf2_path: &Path, sample_rate: u32) -> Result<Vec<KeyMapEntry>, String> {
     // 直接以目标采样率加载，一次重采样到位（避免先转 44100 再转目标的双重重采样）
     let presets = xsynth_soundfonts::sf2::load_soundfont(sf2_path, sample_rate)
         .map_err(|e| format!("SF2 parse error: {}", e))?;
+    if presets.is_empty() {
+        return Err("SF2: no presets found".to_string());
+    }
 
-    let mut key_map: Vec<Vec<KeyInfo>> = vec![Vec::new(); 128];
+    // 每个 preset 一个条目（bank, preset）→ key map，program 切换直接索引。
+    // preset 间采样数据 Arc 共享，上传 GPU 时按 Arc 身份去重，无重复拷贝。
+    let mut entries = Vec::with_capacity(presets.len());
+    for preset in &presets {
+        let mut key_map: Vec<Vec<KeyInfo>> = vec![Vec::new(); 128];
+        for region in &preset.regions {
+            // 采样数据：单声道 Arc 共享零拷贝；立体声交错存储（左右声道各一个 Arc）
+            let (sample_data, is_stereo): (Arc<[f32]>, bool) = if region.sample.len() == 2 {
+                let left = &region.sample[0];
+                let right = &region.sample[1];
+                let len = left.len().min(right.len());
+                let mut interleaved = Vec::with_capacity(len * 2);
+                for i in 0..len {
+                    interleaved.push(left[i]);
+                    interleaved.push(right[i]);
+                }
+                (Arc::from(interleaved), true)
+            } else if region.sample.len() == 1 {
+                (Arc::clone(&region.sample[0]), false)
+            } else {
+                continue;
+            };
 
-    // 取第一个 preset（后续可扩展为用户选择 preset）
-    let preset = presets.first().ok_or("SF2: no presets found")?;
+            for key in region.keyrange.clone() {
+                let key_f = key as f32;
+                for vel in *region.velrange.start()..=*region.velrange.end() {
+                    // note_params 展开 SF2 modulator 系统（vel 曲线、包络 keytrack 等）
+                    let np = region.note_params(key, vel);
+                    let ampeg = np.ampeg_envelope;
 
-    for region in &preset.regions {
-        // 采样数据：单声道 Arc 共享零拷贝；立体声交错存储（左右声道各一个 Arc）
-        let (sample_data, is_stereo): (Arc<[f32]>, bool) = if region.sample.len() == 2 {
-            let left = &region.sample[0];
-            let right = &region.sample[1];
-            let len = left.len().min(right.len());
-            let mut interleaved = Vec::with_capacity(len * 2);
-            for i in 0..len {
-                interleaved.push(left[i]);
-                interleaved.push(right[i]);
-            }
-            (Arc::from(interleaved), true)
-        } else if region.sample.len() == 1 {
-            (Arc::clone(&region.sample[0]), false)
-        } else {
-            continue;
-        };
+                    // 播放倍率（xsynth new_sf2: scale_tuning + fine/coarse tune + modulator）
+                    let tuned_key_cents =
+                        (key_f - region.root_key as f32) * region.scale_tuning as f32;
+                    let speed_mult = 2.0f32.powf(
+                        (tuned_key_cents
+                            + region.fine_tune as f32
+                            + region.coarse_tune as f32 * 100.0
+                            + np.tune_cents)
+                            / 1200.0,
+                    );
 
-        for key in region.keyrange.clone() {
-            let key_f = key as f32;
-            for vel in *region.velrange.start()..=*region.velrange.end() {
-                // note_params 展开 SF2 modulator 系统（vel 曲线、包络 keytrack 等）
-                let np = region.note_params(key, vel);
-                let ampeg = np.ampeg_envelope;
+                    let cutoff = np
+                        .cutoff
+                        .map(|c| c.clamp(1.0, sample_rate as f32 / 2.0 - 100.0))
+                        .unwrap_or(0.0);
+                    let pan = ((np.pan as f32 / 500.0) + 1.0) / 2.0;
+                    let loop_mode = if region.loop_start == region.loop_end {
+                        LoopMode::NoLoop
+                    } else {
+                        convert_loop_mode(region.loop_mode)
+                    };
 
-                // 播放倍率（xsynth new_sf2: scale_tuning + fine/coarse tune + modulator）
-                let tuned_key_cents = (key_f - region.root_key as f32) * region.scale_tuning as f32;
-                let speed_mult = 2.0f32.powf(
-                    (tuned_key_cents
-                        + region.fine_tune as f32
-                        + region.coarse_tune as f32 * 100.0
-                        + np.tune_cents)
-                        / 1200.0,
-                );
-
-                let cutoff = np
-                    .cutoff
-                    .map(|c| c.clamp(1.0, sample_rate as f32 / 2.0 - 100.0))
-                    .unwrap_or(0.0);
-                let pan = ((np.pan as f32 / 500.0) + 1.0) / 2.0;
-                let loop_mode = if region.loop_start == region.loop_end {
-                    LoopMode::NoLoop
-                } else {
-                    convert_loop_mode(region.loop_mode)
-                };
-
-                key_map[key as usize].push(KeyInfo {
-                    sample_data: sample_data.clone(),
-                    sample_rate,
-                    is_stereo,
-                    interp: 0,
-                    speed_mult,
-                    volume: np.volume,
-                    pan,
-                    offset: region.offset,
-                    ampeg_start: ampeg.ampeg_start / 100.0,
-                    ampeg_delay: ampeg.ampeg_delay,
-                    ampeg_attack: ampeg.ampeg_attack.max(0.001),
-                    ampeg_hold: ampeg.ampeg_hold,
-                    ampeg_decay: ampeg.ampeg_decay.max(0.001),
-                    ampeg_sustain: (ampeg.ampeg_sustain / 100.0).clamp(0.0, 1.0),
-                    ampeg_release: ampeg.ampeg_release.max(0.001),
-                    lovel: vel,
-                    hivel: vel,
-                    loop_mode,
-                    loop_start: region.loop_start,
-                    loop_end: region.loop_end,
-                    cutoff,
-                    resonance: 10.0f32.powf(np.resonance / 20.0) * Q_BUTTERWORTH,
-                    filter_type: FilterType::LowPass,
-                });
+                    key_map[key as usize].push(KeyInfo {
+                        sample_data: sample_data.clone(),
+                        sample_rate,
+                        is_stereo,
+                        interp: 0,
+                        speed_mult,
+                        volume: np.volume,
+                        pan,
+                        offset: region.offset,
+                        ampeg_start: ampeg.ampeg_start / 100.0,
+                        ampeg_delay: ampeg.ampeg_delay,
+                        ampeg_attack: ampeg.ampeg_attack.max(0.001),
+                        ampeg_hold: ampeg.ampeg_hold,
+                        ampeg_decay: ampeg.ampeg_decay.max(0.001),
+                        ampeg_sustain: (ampeg.ampeg_sustain / 100.0).clamp(0.0, 1.0),
+                        ampeg_release: ampeg.ampeg_release.max(0.001),
+                        lovel: vel,
+                        hivel: vel,
+                        loop_mode,
+                        loop_start: region.loop_start,
+                        loop_end: region.loop_end,
+                        cutoff,
+                        resonance: 10.0f32.powf(np.resonance / 20.0) * Q_BUTTERWORTH,
+                        filter_type: FilterType::LowPass,
+                    });
+                }
             }
         }
-    }
 
-    for layers in key_map.iter_mut() {
-        layers.sort_by_key(|info| info.lovel);
+        for layers in key_map.iter_mut() {
+            layers.sort_by_key(|info| info.lovel);
+        }
+        entries.push(KeyMapEntry {
+            bank: preset.bank as u8,
+            preset: preset.preset as u8,
+            map: key_map,
+        });
     }
-    Ok(key_map)
+    Ok(entries)
 }
 
 // ── 工具函数 ──

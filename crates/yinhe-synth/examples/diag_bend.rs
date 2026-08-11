@@ -75,7 +75,10 @@ fn main() {
         SampleSoundfont::new_sfz(sfz.clone(), stream_params, SoundfontInitOptions::default())
             .unwrap(),
     ) as Arc<dyn SoundfontBase>;
-    let mut synth = yinhe_synth::GpuSynth::new_default(&sfz, SR).unwrap();
+    let mut synth = yinhe_synth::GpuSynth::new_default(SR).unwrap();
+    synth
+        .load_port_soundfonts(0, &[0], std::slice::from_ref(&sfz))
+        .unwrap();
     synth.set_limiter_enabled(false);
 
     // 场景：parity 完整音符计划 + 完整 CC 计划

@@ -169,7 +169,10 @@ fn cpu_render(sfz: &Path) -> Vec<f32> {
 
 /// GPU 路径：GpuSynth（同一音符序列）
 fn gpu_render(sfz: &Path) -> Vec<f32> {
-    let mut synth = GpuSynth::new_default(sfz, SR).expect("GpuSynth init failed");
+    let mut synth = GpuSynth::new_default(SR).expect("GpuSynth init failed");
+    synth
+        .load_port_soundfonts(0, &[0], &[sfz.to_path_buf()])
+        .expect("soundfont load failed");
     // 对比测试排除限幅器（CPU 路径无限幅）
     synth.set_limiter_enabled(false);
 
@@ -264,7 +267,11 @@ fn multi_port_channels_do_not_fold() {
     ];
     gpu_events.sort_by_key(|e| e.sample());
 
-    let mut gpu = GpuSynth::new_default(&sfz, SR).expect("GpuSynth init failed");
+    let mut gpu = GpuSynth::new_default(SR).expect("GpuSynth init failed");
+    gpu.load_port_soundfonts(0, &[0], std::slice::from_ref(&sfz))
+        .expect("port 0 soundfont load failed");
+    gpu.load_port_soundfonts(1, &[16], std::slice::from_ref(&sfz))
+        .expect("port 1 soundfont load failed");
     gpu.set_limiter_enabled(false);
     gpu.load_events(gpu_events.clone());
     let total_frames = 1100 * sr / 1000;

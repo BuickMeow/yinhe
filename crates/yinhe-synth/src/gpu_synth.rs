@@ -64,8 +64,11 @@ pub enum ControlEvent {
     FineTune(f32),
     /// 粗调（半音）。
     CoarseTune(f32),
-    /// 音色更换（单音色库下仅记录，无行为）。
+    /// 音色更换：选择该通道的音色库条目（bank, preset 语义见 `PercussionMode`）。
     ProgramChange(u8),
+    /// 鼓组模式（等价 xsynth `SetPercussionMode` 配置）：true 置 bank=128，false 置 bank=0。
+    /// 由 yinhe-audio 在模型加载/seek 时根据通道声明注入，后续 CC0 不能改鼓组 bank。
+    PercussionMode(bool),
 }
 
 /// 通道渐变值（与 xsynth `ValueLerp` 语义对齐）：CC7/10/11 的值在
@@ -149,6 +152,9 @@ struct ChannelState {
     fine_tune_lsb: u8,           // RPN1 data lsb（CC38）
     coarse_tune: f32,            // 半音（RPN2）
     program: u8,
+    /// 音色库 bank（xsynth `ProgramDescriptor.bank` 语义）：CC0 设置（鼓组 128 锁定），
+    /// `PercussionMode` 直接置 128/0。note_on 时与 program 一起选择音色库条目。
+    bank: u8,
     // RPN 选择器状态（CC100/101）
     rpn_msb: i8,
     rpn_lsb: i8,
@@ -187,6 +193,7 @@ impl ChannelState {
             fine_tune_lsb: 0,
             coarse_tune: 0.0,
             program: 0,
+            bank: 0,
             rpn_msb: -1,
             rpn_lsb: -1,
             sample_rate,
@@ -214,7 +221,12 @@ impl ChannelState {
     fn process_control(&mut self, event: ControlEvent) -> bool {
         match event {
             ControlEvent::Raw(controller, value) => match controller {
-                0x00 => { /* Bank select：单音色库忽略 */ }
+                0x00 => {
+                    // Bank select MSB：鼓组通道（bank==128）锁定不变（xsynth set_bank）
+                    if self.bank != 128 {
+                        self.bank = value;
+                    }
+                }
                 0x64 => self.rpn_lsb = value as i8,
                 0x65 => self.rpn_msb = value as i8,
                 0x06 | 0x26 => {
@@ -284,8 +296,11 @@ impl ChannelState {
                     return false; // 由调用方处理
                 }
                 0x79 if value == 0 => {
-                    // Reset All Controllers（含 cutoff 旁路；DF1 状态保留，与 xsynth 一致）
+                    // Reset All Controllers（含 cutoff 旁路；DF1 状态保留，与 xsynth 一致）。
+                    // xsynth 的 reset_control 不重置 program.bank，这里保留 bank。
+                    let bank = self.bank;
                     *self = ChannelState::new(self.sample_rate);
+                    self.bank = bank;
                     return true; // damper 松开语义
                 }
                 0x7B if value == 0 => {
@@ -299,6 +314,7 @@ impl ChannelState {
             ControlEvent::FineTune(value) => self.fine_tune = value,
             ControlEvent::CoarseTune(value) => self.coarse_tune = value,
             ControlEvent::ProgramChange(value) => self.program = value,
+            ControlEvent::PercussionMode(set) => self.bank = if set { 128 } else { 0 },
         }
         false
     }
@@ -361,6 +377,20 @@ impl ChannelState {
     }
 }
 
+/// chase 应用时的跳过信息（与 yinhe-audio `crate::channel::ChaseSkip` 同语义，
+/// 按 dense 通道 % 32 索引）：seek 后已被实时事件处理过的控制器，异步 chase
+/// 到达时跳过，避免 seek 前旧值覆盖 seek 后已生效的新值。
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ChaseSkip {
+    /// 每通道 128 bit：bit cc = 该 Raw CC 已被处理。
+    pub cc_mask: [u128; MAX_CHANNELS],
+    pub pitch_bend: [bool; MAX_CHANNELS],
+    pub pbs: [bool; MAX_CHANNELS],
+    pub fine_tune: [bool; MAX_CHANNELS],
+    pub coarse_tune: [bool; MAX_CHANNELS],
+    pub program: [bool; MAX_CHANNELS],
+}
+
 /// xsynth `calculate_curve`：CC72/73 值缩放 region 原始时长（秒）。
 /// v<=64: (v/64)^5 × dur；v>64: dur + ((v-64)/64)^3 × 15
 /// release 有 0.02s 下限；attack 无下限。返回帧数。
@@ -401,7 +431,12 @@ struct Voice {
 /// - 通道状态机处理 CC7/10/11/64/100/101/6/38 + pitch bend + RPN
 pub struct GpuSynth {
     renderer: GpuAudioRenderer,
-    key_map: Vec<Vec<sfz_parser::KeyInfo>>,
+    /// 每 port 的音色库条目列表（bank/preset → key map），`channel_port` 决定通道用哪个 port。
+    port_key_maps: Vec<Vec<sfz_parser::KeyMapEntry>>,
+    /// dense 通道 → port 映射（由 `load_port_soundfonts` 按 layout 填表）。
+    channel_port: [u8; MAX_CHANNELS],
+    /// 累积的采样数据（全部 port 拼接；port 加载时全量重传 GPU）。
+    sample_data: Vec<f32>,
     /// 采样数据在 GPU 上传块中的 (offset, len)，按 Arc 身份（指针 as usize）去重
     sample_offsets: HashMap<usize, (u32, u32)>,
     voices: Vec<Voice>,
@@ -425,57 +460,38 @@ pub struct GpuSynth {
     event_cursor: usize,
     /// 当前渲染位置
     sample_position: u64,
+    /// 最近一次 seek 时的 event_cursor：`chase_skip` 用它计算"seek 后已处理
+    /// 的控制事件区间"，chase 应用时跳过这些控制器（与 yinhe-audio 的
+    /// `chase_cc_base` 对称，避免异步 chase 覆盖 seek 后已生效的新值）。
+    chase_base: usize,
 }
 
 impl GpuSynth {
-    /// 创建合成器（自动创建 wgpu device/queue）
-    pub fn new_default(soundfont_path: &std::path::Path, sample_rate: u32) -> Result<Self, String> {
+    /// 创建合成器（自动创建 wgpu device/queue）。音色库稍后按 port 加载。
+    pub fn new_default(sample_rate: u32) -> Result<Self, String> {
         let renderer = GpuAudioRenderer::new_default()
             .map_err(|e| format!("GPU renderer init failed: {}", e))?;
-        Self::from_renderer(renderer, soundfont_path, sample_rate)
+        Self::from_renderer(renderer, sample_rate)
     }
 
-    /// 创建合成器（使用指定的 wgpu device/queue）
+    /// 创建合成器（使用指定的 wgpu device/queue）。音色库稍后按 port 加载。
     pub fn new(
         device: Arc<wgpu::Device>,
         queue: Arc<wgpu::Queue>,
-        soundfont_path: &std::path::Path,
         sample_rate: u32,
     ) -> Result<Self, String> {
         let renderer = GpuAudioRenderer::new(device, queue)
             .map_err(|e| format!("GPU renderer init failed: {}", e))?;
-        Self::from_renderer(renderer, soundfont_path, sample_rate)
+        Self::from_renderer(renderer, sample_rate)
     }
 
-    fn from_renderer(
-        mut renderer: GpuAudioRenderer,
-        soundfont_path: &std::path::Path,
-        sample_rate: u32,
-    ) -> Result<Self, String> {
-        // key_map 已按 (key, vel) 展开且采样已重采样到目标采样率
-        let key_map = sfz_parser::build_key_map(soundfont_path, sample_rate)?;
-
-        // 采样数据按 Arc 身份去重后拼成大块上传 GPU（同一采样被多层共享，零拷贝）
-        let mut sample_data: Vec<f32> = Vec::new();
-        let mut sample_offsets: HashMap<usize, (u32, u32)> = HashMap::new();
-        for key_layers in &key_map {
-            for info in key_layers {
-                let ptr = info.sample_data.as_ptr() as usize;
-                if sample_offsets.contains_key(&ptr) {
-                    continue;
-                }
-                let offset = sample_data.len() as u32;
-                sample_data.extend_from_slice(&info.sample_data);
-                sample_offsets.insert(ptr, (offset, info.sample_data.len() as u32));
-            }
-        }
-
-        renderer.upload_samples(&sample_data);
-
+    fn from_renderer(renderer: GpuAudioRenderer, sample_rate: u32) -> Result<Self, String> {
         Ok(Self {
             renderer,
-            key_map,
-            sample_offsets,
+            port_key_maps: vec![Vec::new(); 16],
+            channel_port: [0; MAX_CHANNELS],
+            sample_data: Vec::new(),
+            sample_offsets: HashMap::new(),
             voices: Vec::new(),
             states_buf: Vec::new(),
             channel_mix: Vec::new(),
@@ -488,7 +504,55 @@ impl GpuSynth {
             events: Vec::new(),
             event_cursor: 0,
             sample_position: 0,
+            chase_base: 0,
         })
+    }
+
+    /// 加载一个 port 的音色库列表（多文件 = 多个 (bank, preset) 条目，
+    /// ProgramChange 在它们之间切换）。`dense_channels` 记录该 port 的
+    /// dense 通道号（来自 yinhe-audio 的 ChannelLayout），用于通道 → port 映射。
+    /// 可多次调用（不同 port / 重新加载）。
+    pub fn load_port_soundfonts(
+        &mut self,
+        port: u8,
+        dense_channels: &[u32],
+        paths: &[std::path::PathBuf],
+    ) -> Result<(), String> {
+        let mut entries: Vec<sfz_parser::KeyMapEntry> = Vec::new();
+        for path in paths {
+            entries.extend(sfz_parser::build_key_maps(path, self.sample_rate)?);
+        }
+        for &dense in dense_channels {
+            self.channel_port[dense as usize % MAX_CHANNELS] = port;
+        }
+        self.port_key_maps[port as usize] = entries;
+        self.rebuild_sample_upload();
+        Ok(())
+    }
+
+    /// 把所有 port 的采样按 Arc 身份去重后拼成大块上传 GPU（增量 port 加载时
+    /// 全量重传：port 加载只发生在一首歌的加载阶段，重传成本可接受）。
+    fn rebuild_sample_upload(&mut self) {
+        let mut data: Vec<f32> = Vec::new();
+        let mut offsets: HashMap<usize, (u32, u32)> = HashMap::new();
+        for entries in &self.port_key_maps {
+            for entry in entries {
+                for key_layers in &entry.map {
+                    for info in key_layers {
+                        let ptr = info.sample_data.as_ptr() as usize;
+                        if offsets.contains_key(&ptr) {
+                            continue;
+                        }
+                        let offset = data.len() as u32;
+                        data.extend_from_slice(&info.sample_data);
+                        offsets.insert(ptr, (offset, info.sample_data.len() as u32));
+                    }
+                }
+            }
+        }
+        self.sample_data = data;
+        self.sample_offsets = offsets;
+        self.renderer.upload_samples(&self.sample_data);
     }
 
     /// 批量加载排序好的事件列表（导出/Seek 用）。重置渲染位置到 0。
@@ -498,6 +562,7 @@ impl GpuSynth {
         self.voices.clear();
         self.channels = [ChannelState::new(self.sample_rate); MAX_CHANNELS];
         self.sample_position = 0;
+        self.chase_base = 0;
     }
 
     /// 当前渲染位置
@@ -529,6 +594,8 @@ impl GpuSynth {
     pub fn seek(&mut self, sample: u64) {
         self.sample_position = sample;
         self.event_cursor = self.events.partition_point(|e| e.sample() < sample);
+        // 记录 seek 点，供 chase_skip 计算"seek 后已处理的控制事件区间"。
+        self.chase_base = self.event_cursor;
         self.voices.clear();
         // 通道状态在 seek 时重置（chase 由 yinhe-audio 的 cc_events 重建保证）
         self.channels = [ChannelState::new(self.sample_rate); MAX_CHANNELS];
@@ -902,14 +969,7 @@ impl GpuSynth {
             if v.channel as usize != ch_idx || v.state.env_stage >= 6 {
                 continue;
             }
-            let attack_frames = match ch.env_attack {
-                Some(cc) => env_curve_frames(cc, v.orig_attack_frames, self.sample_rate, false),
-                None => v.state.attack_frames,
-            };
-            let release_frames = match ch.env_release {
-                Some(cc) => env_curve_frames(cc, v.orig_release_frames, self.sample_rate, true),
-                None => v.state.release_frames,
-            };
+            let (attack_frames, release_frames) = Self::env_frames_for(&ch, v, self.sample_rate);
             env_cmds.push(EnvUpdateCmd {
                 frame,
                 vid: i as u32,
@@ -950,7 +1010,12 @@ impl GpuSynth {
         seg_offset: u32,
         releases: &mut Vec<ReleaseCmd>,
     ) {
-        let info = match sfz_parser::select_key_info(&self.key_map, key, vel) {
+        // 音色库选择：dense 通道 → port → (bank, preset) 条目（与 xsynth
+        // ChannelSoundfont::rebuild_matrix 一致：主选 + 兜底，落空静音）。
+        let ch_idx = channel as usize % MAX_CHANNELS;
+        let ch = self.channels[ch_idx];
+        let entries = &self.port_key_maps[self.channel_port[ch_idx] as usize];
+        let info = match sfz_parser::select_key_info_multi(entries, ch.bank, ch.program, key, vel) {
             Some(i) => i,
             None => return,
         };
@@ -982,9 +1047,8 @@ impl GpuSynth {
             (0.0, 0.0, 0.0, 0.0, 0.0)
         };
 
-        let ch = self.channels[channel as usize % MAX_CHANNELS];
-        let sr = self.sample_rate as f32;
         // CC72/73：用通道当前值缩放 region 原始时长（多次 CC 不累积）
+        let sr = self.sample_rate as f32;
         let orig_attack_frames = info.ampeg_attack * sr;
         let orig_release_frames = info.ampeg_release * sr;
         let attack_frames = match ch.env_attack {
@@ -1122,6 +1186,97 @@ impl GpuSynth {
                     });
                 }
                 break;
+            }
+        }
+    }
+
+    /// CC72/73 重算单个 voice 的 attack/release 帧数（基于 region 原始值，多次 CC 不累积）。
+    fn env_frames_for(ch: &ChannelState, v: &Voice, sample_rate: u32) -> (f32, f32) {
+        let attack_frames = match ch.env_attack {
+            Some(cc) => env_curve_frames(cc, v.orig_attack_frames, sample_rate, false),
+            None => v.state.attack_frames,
+        };
+        let release_frames = match ch.env_release {
+            Some(cc) => env_curve_frames(cc, v.orig_release_frames, sample_rate, true),
+            None => v.state.release_frames,
+        };
+        (attack_frames, release_frames)
+    }
+
+    /// 计算 seek 后已处理的控制事件跳过掩码（事件区间 [chase_base, event_cursor)）。
+    /// 由 yinhe-audio 在 `ChaseResult` 到达时调用，跳过的控制器不再被 chase 覆盖。
+    pub fn chase_skip(&self) -> ChaseSkip {
+        let mut skip = ChaseSkip::default();
+        for ev in &self.events[self.chase_base..self.event_cursor] {
+            let SynthEvent::Control { channel, event, .. } = ev else {
+                continue;
+            };
+            let ch = *channel as usize % MAX_CHANNELS;
+            match event {
+                ControlEvent::Raw(cc, _) => skip.cc_mask[ch] |= 1u128 << cc,
+                ControlEvent::PitchBend(_) => skip.pitch_bend[ch] = true,
+                ControlEvent::PitchBendSensitivity(_) => skip.pbs[ch] = true,
+                ControlEvent::FineTune(_) => skip.fine_tune[ch] = true,
+                ControlEvent::CoarseTune(_) => skip.coarse_tune[ch] = true,
+                ControlEvent::ProgramChange(_) => skip.program[ch] = true,
+                ControlEvent::PercussionMode(_) => {}
+            }
+        }
+        skip
+    }
+
+    /// 应用 chase 通道状态快照（yinhe-audio 在 `ChaseResult` 到达时调用）。
+    /// 与 CPU 路径 `channel_group.send_event` 对等：逐事件走通道状态机；
+    /// damper 松开 / CC72/73 传播到当前活跃 voice（seek 后复活音符）。
+    pub fn apply_chase(&mut self, dense: u32, events: &[ControlEvent]) {
+        let ch_idx = dense as usize % MAX_CHANNELS;
+        for &ev in events {
+            let damper_released = self.channels[ch_idx].process_control(ev);
+            if damper_released {
+                // 松开延音踏板：释放该通道所有被保持的 voice（与 shader release 指令同语义）
+                for v in self.voices.iter_mut() {
+                    if v.channel == dense as u8
+                        && v.held_by_damper
+                        && v.state.env_stage < 5
+                        && !v.release_pending
+                    {
+                        v.release_pending = true;
+                        v.state.env_start = v.state.envelope;
+                        v.state.env_stage = 5;
+                        v.state.stage_progress = 0.0;
+                    }
+                    v.held_by_damper = false;
+                }
+            }
+            // CC72/73 修改包络时长、CC121 重置包络：直接写 voice 状态
+            //（chase 不在渲染块内，无法发指令；块边界写入与指令帧效果一致）
+            if matches!(
+                ev,
+                ControlEvent::Raw(0x48 | 0x49, _) | ControlEvent::Raw(0x79, 0)
+            ) {
+                let ch = self.channels[ch_idx];
+                for v in self.voices.iter_mut() {
+                    if v.channel as usize != ch_idx || v.state.env_stage >= 6 {
+                        continue;
+                    }
+                    let (attack_frames, release_frames) =
+                        Self::env_frames_for(&ch, v, self.sample_rate);
+                    v.state.attack_frames = attack_frames;
+                    v.state.release_frames = release_frames;
+                    // 与 shader EnvUpdateCmd 的阶段重走规则一致
+                    match v.state.env_stage {
+                        0 | 2 => v.state.stage_progress = 0.0,
+                        1 | 5 => {
+                            v.state.env_start = v.state.envelope;
+                            v.state.stage_progress = 0.0;
+                        }
+                        3 => {
+                            v.state.decay_start = v.state.envelope;
+                            v.state.stage_progress = 0.0;
+                        }
+                        _ => {}
+                    }
+                }
             }
         }
     }
