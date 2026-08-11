@@ -34,9 +34,15 @@ impl GpuTheme {
                 bg[2] + (text[2] - bg[2]) * t,
             )
         };
+        // 键盘两套 token：白键永远取亮的一端、黑键永远取暗的一端。
+        // 暗色下 text 是亮色（白键 = text×0.81，黑键 = 背景向文字 8%）；
+        // 亮色下 text 是深色，两套正好对调——否则白键变黑、黑键变白（单套逻辑的坑）。
+        let dark = (bg[0] + bg[1] + bg[2]) / 3.0 <= 0.5;
+        let bright_key = (text[0] * 0.81, text[1] * 0.81, text[2] * 0.81);
+        let dark_key = mix(0.08);
         Self {
-            key_white: (text[0] * 0.81, text[1] * 0.81, text[2] * 0.81),
-            key_black: mix(0.08),
+            key_white: if dark { bright_key } else { dark_key },
+            key_black: if dark { dark_key } else { bright_key },
             center_line: (mix(0.28).0, mix(0.28).1, mix(0.28).2, 0.6),
         }
     }
@@ -75,5 +81,32 @@ pub fn current_gpu_theme() -> GpuTheme {
             .map(|t| t.clone())
             .unwrap_or_else(|_| GpuTheme::default()),
         None => GpuTheme::default(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 回归测试：所有预设下白键必须比黑键亮（亮色主题曾因单套派生逻辑
+    /// 把白键算成深色、黑键算成浅色，黑白颠倒）。
+    #[test]
+    fn key_colors_white_always_lighter_than_black() {
+        let lum = |c: (f32, f32, f32)| c.0 + c.1 + c.2;
+        for base in [
+            crate::base::BaseColors::DARK,
+            crate::base::BaseColors::LIGHT,
+            crate::base::BaseColors::LIGHT_COOL,
+            crate::base::BaseColors::LIGHT_WARM,
+        ] {
+            let t = GpuTheme::from_base(base);
+            assert!(
+                lum(t.key_white) > lum(t.key_black),
+                "{:?} 下白键应亮于黑键: white={:?} black={:?}",
+                base,
+                t.key_white,
+                t.key_black
+            );
+        }
     }
 }
