@@ -300,26 +300,19 @@ impl eframe::App for App {
             &mut self.title_bar_press_pos,
             &mut self.tab_scroll_offset,
             &mut self.status_hint,
-            &self.audio_settings.pinned_file_actions,
         );
-        match title_bar_action {
-            Some(title_bar::TitleBarAction::CloseDocument(idx)) => {
-                if self.documents.get(idx).is_some_and(|d| d.is_dirty()) {
-                    self.pending_unsaved = Some(PendingFileAction::CloseDocument(idx));
-                    // 把 unsaved 弹窗拉到主窗口前台（用户点击 tab 关闭按钮是主动
-                    // 操作，应该立刻看到弹窗）
-                    crate::chrome::dialog::raise_viewport(
-                        ui.ctx(),
-                        egui::ViewportId::from_hash_of("unsaved_dialog"),
-                    );
-                } else {
-                    self.close_document(idx);
-                }
+        if let Some(title_bar::TitleBarAction::CloseDocument(idx)) = title_bar_action {
+            if self.documents.get(idx).is_some_and(|d| d.is_dirty()) {
+                self.pending_unsaved = Some(PendingFileAction::CloseDocument(idx));
+                // 把 unsaved 弹窗拉到主窗口前台（用户点击 tab 关闭按钮是主动
+                // 操作，应该立刻看到弹窗）
+                crate::chrome::dialog::raise_viewport(
+                    ui.ctx(),
+                    egui::ViewportId::from_hash_of("unsaved_dialog"),
+                );
+            } else {
+                self.close_document(idx);
             }
-            Some(title_bar::TitleBarAction::RunFileAction(action)) => {
-                self.handle_file_action(action, ui.ctx());
-            }
-            None => {}
         }
 
         // ── Defensive: ensure active_doc is always in bounds ──

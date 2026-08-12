@@ -1,7 +1,5 @@
 use eframe::egui;
-use rust_i18n::t;
 
-use crate::chrome::transport_bar::FileAction;
 use yinhe_editor_core::document::Document;
 
 /// Height of the custom title bar.
@@ -10,14 +8,7 @@ pub(crate) const TITLE_BAR_HEIGHT: f32 = crate::theme::TITLE_BAR_H;
 /// Action to be performed by the caller after title bar rendering.
 pub(crate) enum TitleBarAction {
     CloseDocument(usize),
-    /// 点击了图钉固定到标题栏的文件动作按钮。
-    RunFileAction(FileAction),
 }
-
-/// 标题栏右侧图钉按钮尺寸。
-pub(crate) const PINNED_BTN_W: f32 = 24.0;
-pub(crate) const PINNED_BTN_GAP: f32 = 2.0;
-pub(crate) const PINNED_BTN_H: f32 = 22.0;
 
 /// Draw the custom title bar at the top of the window.
 /// Returns an optional action for the caller to perform (e.g. close a document).
@@ -28,7 +19,6 @@ pub(crate) fn show(
     title_bar_press_pos: &mut Option<egui::Pos2>,
     tab_scroll_offset: &mut f32,
     status_hint: &mut Option<String>,
-    pinned: &[bool; 9],
 ) -> Option<TitleBarAction> {
     let mut action = None;
     egui::Panel::top("title_bar")
@@ -257,48 +247,6 @@ pub(crate) fn show(
                 (c, mx, mn)
             };
 
-            // ── 图钉固定的文件动作按钮（右侧从右往左排）──
-            // 只读绘制 + 手动点击检测；被排除在拖拽区/双击最大化区之外。
-            let mut pinned_rects: Vec<(FileAction, egui::Rect)> = Vec::new();
-            let drag_right = if cfg!(target_os = "macos") {
-                bar_rect.max.x
-            } else {
-                bar_rect.max.x - 138.0
-            };
-            {
-                let btn_y = bar_rect.center().y - PINNED_BTN_H / 2.0;
-                let mut x = drag_right - PINNED_BTN_W;
-                for (i, &is_pinned) in pinned.iter().enumerate() {
-                    if !is_pinned {
-                        continue;
-                    }
-                    let action = FileAction::ALL[i];
-                    let rect = egui::Rect::from_min_size(
-                        egui::pos2(x, btn_y),
-                        egui::vec2(PINNED_BTN_W, PINNED_BTN_H),
-                    );
-                    let is_hovered = rect.contains(hover_pos);
-                    if is_hovered {
-                        painter.rect_filled(
-                            rect,
-                            4.0,
-                            crate::theme::hover_color(crate::theme::control_bg()),
-                        );
-                        *status_hint = Some(t!(action.label_key()).to_string());
-                    }
-                    let icon = action.icon();
-                    painter.text(
-                        rect.center(),
-                        egui::Align2::CENTER_CENTER,
-                        icon.codepoint,
-                        egui::FontId::new(crate::theme::TRANSPORT_BTN_FONT, icon.font_family()),
-                        crate::theme::accent_active(),
-                    );
-                    pinned_rects.push((action, rect));
-                    x -= PINNED_BTN_W + PINNED_BTN_GAP;
-                }
-            }
-
             // ── Manual click detection (avoid egui interaction system quirks in Panel::top) ──
             if ui.input(|i| i.pointer.button_pressed(egui::PointerButton::Primary)) {
                 *title_bar_press_pos = ui.input(|i| i.pointer.interact_pos());
@@ -324,14 +272,6 @@ pub(crate) fn show(
                         }
                         if tab_rect.contains(press) && tab_rect.contains(release) {
                             *active_doc = Some(idx);
-                            break;
-                        }
-                    }
-
-                    // Check pinned file-action buttons
-                    for &(file_action, rect) in &pinned_rects {
-                        if rect.contains(press) && rect.contains(release) {
-                            action = Some(TitleBarAction::RunFileAction(file_action));
                             break;
                         }
                     }
@@ -373,13 +313,11 @@ pub(crate) fn show(
                 );
             }
 
-            // ── Window drag region (after the tabs, excluding window buttons
-            //    and pinned file-action buttons) ──
-            let pinned_total_w = pinned_rects.len() as f32 * (PINNED_BTN_W + PINNED_BTN_GAP);
+            // ── Window drag region (after the tabs, excluding window buttons) ──
             let drag_right = if cfg!(target_os = "macos") {
-                bar_rect.max.x - pinned_total_w
+                bar_rect.max.x
             } else {
-                bar_rect.max.x - 138.0 - pinned_total_w
+                bar_rect.max.x - 138.0
             };
             let drag_rect_left = tab_x.max(bar_rect.min.x + left_padding);
             let drag_rect = egui::Rect::from_min_max(

@@ -179,6 +179,36 @@ pub fn show(ui: &mut egui::Ui, ctx: &mut TransportContext<'_>) -> TransportRespo
                     &mut pending_file_action,
                 );
 
+                // ── 图钉固定的文件动作（顺序 = 菜单顺序）：作为独立按钮
+                //    紧跟在文件按钮右侧，全部钉上时就是一整行图标 ──
+                for (i, action) in FileAction::ALL.iter().enumerate() {
+                    if !ctx.settings.pinned_file_actions[i] {
+                        continue;
+                    }
+                    let enabled = action.is_enabled(has_active, ctx.file_loader.is_loading());
+                    let icon = action.icon();
+                    let pin_resp = ui.add_enabled(
+                        enabled,
+                        egui::Button::new(
+                            icon.rich_text()
+                                .size(crate::theme::TRANSPORT_BTN_FONT)
+                                .color(if enabled {
+                                    crate::theme::text_primary()
+                                } else {
+                                    crate::theme::text_disabled()
+                                }),
+                        )
+                        .min_size(btn_size)
+                        .corner_radius(btn_rounding),
+                    );
+                    if pin_resp.clicked() {
+                        pending_file_action = Some(*action);
+                    }
+                    if pin_resp.hovered() {
+                        hovered_hint = Some(t!(action.label_key()).to_string());
+                    }
+                }
+
                 if has_active {
                     let is_playing = ctx
                         .doc
@@ -394,16 +424,16 @@ fn show_file_menu(
                 settings: &mut AudioSettings,
                 pending_action: &mut Option<FileAction>,
             ) {
-                // 所有菜单项等宽铺满整行：短文字（如"退出"）也有整行的
-                // 点击/悬停区域；右侧留出图钉按钮宽度。
+                // 每行绝对定位（ui.put）固定尺寸：主按钮 + 右侧图钉，
+                // 行宽恰好等于菜单内容宽，不参与 popup 宽度反馈；
+                // 无快捷键的项用空 shortcut_text 保持左对齐（grow 占中间）。
                 const PIN_W: f32 = 26.0;
+                const MAIN_PIN_GAP: f32 = 2.0;
+                let row_h = ui.spacing().interact_size.y;
                 for &action in actions {
                     let enabled = action.is_enabled(has_active, loading);
                     let pinned = settings.pinned_file_actions[action.pinned_index()];
-                    // 图钉启用时整行文字用强调色（与 mode bar 的激活态一致）
-                    let icon_color = if pinned {
-                        crate::theme::accent_active()
-                    } else if enabled {
+                    let icon_color = if enabled {
                         crate::theme::text_bright()
                     } else {
                         crate::theme::text_disabled()
@@ -413,65 +443,65 @@ fn show_file_menu(
                         .get(action.action_id())
                         .map(|c| crate::shortcuts::display_combo(&c));
 
-                    ui.horizontal(|ui| {
-                        // 主按钮用 add_sized 锁定精确宽度：
-                        // shortcut_text 内部的 grow atom 会试图填满整行（把图钉挤出、
-                        // 行宽超出 popup 宽度 → 每帧变宽的正反馈），固定宽度可避免；
-                        // 同时扣除 item_spacing 保证行总宽恰好等于菜单内容宽。
-                        let main_w =
-                            (ui.available_width() - ui.spacing().item_spacing.x - PIN_W).max(0.0);
-                        let btn_h = ui.spacing().interact_size.y;
-                        let mut main_btn = egui::Button::selectable(
-                            false,
-                            crate::widgets::icon_text::icon_text(
-                                action.icon(),
-                                &t!(action.label_key()),
-                                crate::theme::FILE_MENU_FONT,
-                                icon_color,
-                            ),
-                        );
-                        if let Some(sc) = &shortcut {
-                            main_btn = main_btn.shortcut_text(egui::RichText::new(sc));
-                        }
-                        let main_resp = ui
-                            .add_enabled_ui(enabled, |ui| ui.add_sized([main_w, btn_h], main_btn))
-                            .inner;
+                    let row_w = ui.available_width();
+                    let (row_rect, _) =
+                        ui.allocate_exact_size(egui::vec2(row_w, row_h), egui::Sense::hover());
+                    let main_rect = egui::Rect::from_min_size(
+                        row_rect.min,
+                        egui::vec2(row_w - PIN_W - MAIN_PIN_GAP, row_h),
+                    );
+                    let pin_rect = egui::Rect::from_min_size(
+                        egui::pos2(row_rect.max.x - PIN_W, row_rect.min.y),
+                        egui::vec2(PIN_W, row_h),
+                    );
 
-                        let pin_color = if pinned {
-                            crate::theme::accent_active()
-                        } else {
-                            crate::theme::text_disabled()
-                        };
-                        let pin_resp = ui.add(
-                            egui::Button::new(
-                                ICON_KEEP
-                                    .rich_text()
-                                    .size(crate::theme::FILE_MENU_FONT)
-                                    .color(pin_color),
-                            )
-                            .frame(false)
-                            .min_size(egui::vec2(PIN_W, 0.0)),
-                        );
-                        // 无边框按钮 hover 时补背景反馈，提示可点击
-                        if pin_resp.hovered() {
-                            ui.painter().rect_filled(
-                                pin_resp.rect,
-                                4.0,
-                                crate::theme::hover_color(crate::theme::app_bg()),
-                            );
-                        }
+                    let main_btn = egui::Button::selectable(
+                        false,
+                        crate::widgets::icon_text::icon_text(
+                            action.icon(),
+                            &t!(action.label_key()),
+                            crate::theme::FILE_MENU_FONT,
+                            icon_color,
+                        ),
+                    )
+                    .wrap_mode(egui::TextWrapMode::Truncate)
+                    .shortcut_text(shortcut.as_deref().unwrap_or(""));
+                    let main_resp = ui
+                        .add_enabled_ui(enabled, |ui| ui.put(main_rect, main_btn))
+                        .inner;
 
-                        if main_resp.clicked() {
-                            *pending_action = Some(action);
-                            ui.close();
-                        }
-                        if pin_resp.clicked() {
-                            // 图钉只切换固定状态，不关闭菜单
-                            let idx = action.pinned_index();
-                            settings.pinned_file_actions[idx] = !settings.pinned_file_actions[idx];
-                            settings.save();
-                        }
-                    });
+                    let pin_color = if pinned {
+                        crate::theme::accent_active()
+                    } else {
+                        crate::theme::text_disabled()
+                    };
+                    let pin_btn = egui::Button::new(
+                        ICON_KEEP
+                            .rich_text()
+                            .size(crate::theme::FILE_MENU_FONT)
+                            .color(pin_color),
+                    )
+                    .frame(false);
+                    let pin_resp = ui.put(pin_rect, pin_btn);
+                    // 无边框按钮 hover 时补背景反馈，提示可点击
+                    if pin_resp.hovered() {
+                        ui.painter().rect_filled(
+                            pin_rect,
+                            4.0,
+                            crate::theme::hover_color(crate::theme::app_bg()),
+                        );
+                    }
+
+                    if main_resp.clicked() {
+                        *pending_action = Some(action);
+                        ui.close();
+                    }
+                    if pin_resp.clicked() {
+                        // 图钉只切换固定状态，不关闭菜单
+                        let idx = action.pinned_index();
+                        settings.pinned_file_actions[idx] = !settings.pinned_file_actions[idx];
+                        settings.save();
+                    }
                 }
             }
 
