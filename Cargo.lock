@@ -7198,6 +7198,7 @@ dependencies = [
  "serde_json",
  "tracing",
  "uuid",
+ "yinhe-archive",
  "yinhe-core",
  "yinhe-memtrace",
  "yinhe-mid2",

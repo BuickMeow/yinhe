@@ -18,7 +18,10 @@ pub(crate) enum ArchivePickerState {
     Opening {
         path: String,
         rx: mpsc::Receiver<
-            Result<(yinhe_archive::Archive, Vec<yinhe_archive::ArchiveEntry>), String>,
+            Result<
+                (yinhe_archive::Archive, Vec<yinhe_archive::ArchiveEntry>),
+                yinhe_archive::ArchiveError,
+            >,
         >,
     },
     /// Archive is open and ready for selection.
@@ -87,15 +90,6 @@ pub(crate) fn show(
         ArchivePickerState::Opening { path, rx } => {
             match rx.try_recv() {
                 Ok(Ok((archive, entries))) => {
-                    if entries.is_empty() {
-                        return ArchivePickerAction::Error(
-                            t!("dialog.archive.no_midi").to_string(),
-                        );
-                    }
-                    if entries.len() == 1 {
-                        let entry = entries[0].clone();
-                        return ArchivePickerAction::LoadFile { archive, entry };
-                    }
                     let mut picker = ArchivePicker {
                         path: path.clone(),
                         archive,

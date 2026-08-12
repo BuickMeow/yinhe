@@ -122,6 +122,9 @@ impl App {
             LoadResult::ArchiveError(msg) => {
                 self.load_error = Some(msg);
             }
+            // UI 层 poll_loading 已把这两个变体转换为弹框状态（返回 NotReady），
+            // 这里实际不会收到，空分支只是保证 match 穷尽。
+            LoadResult::ArchivePickerNeeded { .. } | LoadResult::PasswordNeeded { .. } => {}
             LoadResult::NotReady => {}
         }
 
