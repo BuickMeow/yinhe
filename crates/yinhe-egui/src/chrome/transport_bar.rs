@@ -464,6 +464,9 @@ fn show_file_menu(
                             icon_color,
                         ),
                     )
+                    // 去掉边框：egui 按钮 inactive 无边框、hover 时 1px 边框从无到有，
+                    // 视觉上像文字位移；stroke NONE 后 hover 只剩背景色变化
+                    .stroke(egui::Stroke::NONE)
                     .wrap_mode(egui::TextWrapMode::Truncate)
                     .shortcut_text(shortcut.as_deref().unwrap_or(""));
                     let main_resp = ui
