@@ -901,7 +901,7 @@ pub fn show_content(
     let mut changed = false;
 
     ui.horizontal(|ui| {
-        // ── 左侧：搜索框 + 分类导航（窄） ──
+        // ── 左侧：搜索框 + 分类导航（窄，固定不滚动） ──
         ui.vertical(|ui| {
             ui.set_width(132.0);
 
@@ -919,9 +919,17 @@ pub fn show_content(
             }
             ui.add_space(6.0);
 
+            // 分类导航：与菜单项同款（铺满整行 + 无边框，选中项高亮）
             for (i, key) in CATEGORY_KEYS.iter().enumerate() {
                 let selected = settings.settings_tab == i;
-                if ui.selectable_label(selected, t!(*key).as_ref()).clicked() {
+                if ui
+                    .add(crate::widgets::menu::menu_item_button(
+                        ui,
+                        selected,
+                        t!(*key),
+                    ))
+                    .clicked()
+                {
                     settings.settings_tab = i;
                 }
             }
@@ -931,10 +939,14 @@ pub fn show_content(
         ui.separator();
         ui.add_space(8.0);
 
-        // ── 右侧：搜索结果（搜索中）或当前分类内容（宽） ──
+        // ── 右侧：搜索结果（搜索中）或当前分类内容（宽，独立滚动） ──
         ui.vertical(|ui| {
             ui.set_width(ui.available_width());
-            changed |= show_search_results(ui, settings, main_ctx);
+            eframe::egui::ScrollArea::vertical()
+                .auto_shrink([false; 2])
+                .show(ui, |ui| {
+                    changed |= show_search_results(ui, settings, main_ctx);
+                });
         });
     });
 
@@ -990,14 +1002,10 @@ pub(crate) fn show_viewport(
                                 bottom: 12,
                             })
                             .show(ui, |ui| {
-                                eframe::egui::ScrollArea::vertical()
-                                    .auto_shrink([false; 2])
-                                    .show(ui, |ui| {
-                                        let changed = show_content(ui, s, &main_ctx);
-                                        if changed {
-                                            s.save();
-                                        }
-                                    });
+                                let changed = show_content(ui, s, &main_ctx);
+                                if changed {
+                                    s.save();
+                                }
                             });
                     });
                 if close {
