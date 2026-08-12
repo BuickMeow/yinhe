@@ -445,6 +445,14 @@ fn show_file_menu(
                             .frame(false)
                             .min_size(egui::vec2(PIN_W, 0.0)),
                         );
+                        // 无边框按钮 hover 时补背景反馈，提示可点击
+                        if pin_resp.hovered() {
+                            ui.painter().rect_filled(
+                                pin_resp.rect,
+                                4.0,
+                                crate::theme::hover_color(crate::theme::app_bg()),
+                            );
+                        }
 
                         if main_resp.clicked() {
                             *pending_action = Some(action);
