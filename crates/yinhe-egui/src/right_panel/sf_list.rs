@@ -158,11 +158,13 @@ pub fn sf_list(ui: &mut egui::Ui, entries: &mut Vec<SfEntry>, salt: &str) -> boo
                 let mut action: Option<SfAction> = None;
                 resp.context_menu(|ui| {
                     ui.set_min_width(100.0);
+                    ui.set_max_width(100.0);
                     if i > 0
                         && ui
                             .add(
                                 egui::Button::new(t!("sf_list.move_up").as_ref())
-                                    .min_size(egui::vec2(ui.available_width(), 0.0)),
+                                    .min_size(egui::vec2(ui.available_width(), 0.0))
+                                    .stroke(egui::Stroke::NONE),
                             )
                             .clicked()
                     {
@@ -173,7 +175,8 @@ pub fn sf_list(ui: &mut egui::Ui, entries: &mut Vec<SfEntry>, salt: &str) -> boo
                         && ui
                             .add(
                                 egui::Button::new(t!("sf_list.move_down").as_ref())
-                                    .min_size(egui::vec2(ui.available_width(), 0.0)),
+                                    .min_size(egui::vec2(ui.available_width(), 0.0))
+                                    .stroke(egui::Stroke::NONE),
                             )
                             .clicked()
                     {
@@ -184,7 +187,8 @@ pub fn sf_list(ui: &mut egui::Ui, entries: &mut Vec<SfEntry>, salt: &str) -> boo
                     if ui
                         .add(
                             egui::Button::new(t!("sf_list.delete").as_ref())
-                                .min_size(egui::vec2(ui.available_width(), 0.0)),
+                                .min_size(egui::vec2(ui.available_width(), 0.0))
+                                .stroke(egui::Stroke::NONE),
                         )
                         .clicked()
                     {

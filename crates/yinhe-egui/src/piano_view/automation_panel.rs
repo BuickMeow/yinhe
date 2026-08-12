@@ -1225,7 +1225,8 @@ fn show_target_combo(
                     .fixed_pos(popup_pos)
                     .show(ui.ctx(), |ui| {
                         egui::Frame::menu(ui.style()).show(ui, |ui| {
-                            ui.set_min_width(120.0);
+                            ui.set_min_width(140.0);
+                            ui.set_max_width(140.0);
                             // Conductor 下只可编辑 Tempo：Velocity / 其他 target / 自定义 CC 都不提供。
                             if !editing_is_conductor {
                                 // Velocity (special: not an AutomationTarget, renders from notes)
@@ -1236,7 +1237,8 @@ fn show_target_combo(
                                             vel_selected,
                                             t!("automation.velocity").as_ref(),
                                         )
-                                        .min_size(egui::vec2(ui.available_width(), 0.0)),
+                                        .min_size(egui::vec2(ui.available_width(), 0.0))
+                                        .stroke(egui::Stroke::NONE),
                                     )
                                     .clicked()
                                 {
@@ -1257,7 +1259,8 @@ fn show_target_combo(
                                 if ui
                                     .add(
                                         egui::Button::selectable(selected, &name)
-                                            .min_size(egui::vec2(ui.available_width(), 0.0)),
+                                            .min_size(egui::vec2(ui.available_width(), 0.0))
+                                            .stroke(egui::Stroke::NONE),
                                     )
                                     .clicked()
                                 {

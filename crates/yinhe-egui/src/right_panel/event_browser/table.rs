@@ -205,9 +205,12 @@ pub(super) fn cell_row_header(
         let edit_key = egui::Id::new((id_salt, "edit"));
         resp.context_menu(|ui| {
             ui.set_min_width(160.0);
+            ui.set_max_width(160.0);
             if ui
                 .add(
-                    egui::Button::new("在上方插入").min_size(egui::vec2(ui.available_width(), 0.0)),
+                    egui::Button::new("在上方插入")
+                        .min_size(egui::vec2(ui.available_width(), 0.0))
+                        .stroke(egui::Stroke::NONE),
                 )
                 .clicked()
             {
@@ -219,7 +222,9 @@ pub(super) fn cell_row_header(
             }
             if ui
                 .add(
-                    egui::Button::new("在下方插入").min_size(egui::vec2(ui.available_width(), 0.0)),
+                    egui::Button::new("在下方插入")
+                        .min_size(egui::vec2(ui.available_width(), 0.0))
+                        .stroke(egui::Stroke::NONE),
                 )
                 .clicked()
             {
@@ -231,7 +236,11 @@ pub(super) fn cell_row_header(
             }
             ui.separator();
             if ui
-                .add(egui::Button::new("删除").min_size(egui::vec2(ui.available_width(), 0.0)))
+                .add(
+                    egui::Button::new("删除")
+                        .min_size(egui::vec2(ui.available_width(), 0.0))
+                        .stroke(egui::Stroke::NONE),
+                )
                 .clicked()
             {
                 ui.ctx().memory_mut(|m| {

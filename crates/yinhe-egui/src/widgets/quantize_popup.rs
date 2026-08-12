@@ -10,12 +10,14 @@ pub fn show(
     current: QuantizePreset,
     pending: &mut Option<QuantizePreset>,
 ) {
-    ui.set_min_width(120.0);
+    ui.set_min_width(200.0);
+    ui.set_max_width(200.0);
     for preset in QuantizePreset::ALL {
         if ui
             .add(
                 egui::Button::selectable(*preset == current, preset.display_item(ppq))
-                    .min_size(egui::vec2(ui.available_width(), 0.0)),
+                    .min_size(egui::vec2(ui.available_width(), 0.0))
+                    .stroke(egui::Stroke::NONE),
             )
             .clicked()
         {
@@ -30,7 +32,8 @@ pub fn show(
     if ui
         .add(
             egui::Button::selectable(is_frac, t!("quantize.custom_fraction").as_ref())
-                .min_size(egui::vec2(ui.available_width(), 0.0)),
+                .min_size(egui::vec2(ui.available_width(), 0.0))
+                .stroke(egui::Stroke::NONE),
         )
         .clicked()
     {
@@ -72,7 +75,8 @@ pub fn show(
     if ui
         .add(
             egui::Button::selectable(is_abs, t!("quantize.custom_tick").as_ref())
-                .min_size(egui::vec2(ui.available_width(), 0.0)),
+                .min_size(egui::vec2(ui.available_width(), 0.0))
+                .stroke(egui::Stroke::NONE),
         )
         .clicked()
     {

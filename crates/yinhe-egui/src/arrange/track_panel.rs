@@ -358,6 +358,7 @@ pub(crate) fn show(
 
     resp.context_menu(|ui| {
         ui.set_min_width(160.0);
+        ui.set_max_width(160.0);
         let idx = ui
             .ctx()
             .data(|d| d.get_temp::<usize>(ctx_menu_idx_id))
@@ -369,7 +370,8 @@ pub(crate) fn show(
             if ui
                 .add(
                     egui::Button::new(t!("arrange.add_below").as_ref())
-                        .min_size(egui::vec2(ui.available_width(), 0.0)),
+                        .min_size(egui::vec2(ui.available_width(), 0.0))
+                        .stroke(egui::Stroke::NONE),
                 )
                 .clicked()
             {
@@ -381,7 +383,8 @@ pub(crate) fn show(
             if ui
                 .add(
                     egui::Button::new(t!("arrange.add_above").as_ref())
-                        .min_size(egui::vec2(ui.available_width(), 0.0)),
+                        .min_size(egui::vec2(ui.available_width(), 0.0))
+                        .stroke(egui::Stroke::NONE),
                 )
                 .clicked()
             {
@@ -396,7 +399,8 @@ pub(crate) fn show(
                 && ui
                     .add(
                         egui::Button::new(t!("arrange.move_up").as_ref())
-                            .min_size(egui::vec2(ui.available_width(), 0.0)),
+                            .min_size(egui::vec2(ui.available_width(), 0.0))
+                            .stroke(egui::Stroke::NONE),
                     )
                     .clicked()
             {
@@ -407,7 +411,8 @@ pub(crate) fn show(
                 && ui
                     .add(
                         egui::Button::new(t!("arrange.move_down").as_ref())
-                            .min_size(egui::vec2(ui.available_width(), 0.0)),
+                            .min_size(egui::vec2(ui.available_width(), 0.0))
+                            .stroke(egui::Stroke::NONE),
                     )
                     .clicked()
             {
@@ -418,7 +423,8 @@ pub(crate) fn show(
             if ui
                 .add(
                     egui::Button::new(t!("arrange.delete_track").as_ref())
-                        .min_size(egui::vec2(ui.available_width(), 0.0)),
+                        .min_size(egui::vec2(ui.available_width(), 0.0))
+                        .stroke(egui::Stroke::NONE),
                 )
                 .clicked()
             {
@@ -430,7 +436,8 @@ pub(crate) fn show(
             if ui
                 .add(
                     egui::Button::new(t!("arrange.add_below").as_ref())
-                        .min_size(egui::vec2(ui.available_width(), 0.0)),
+                        .min_size(egui::vec2(ui.available_width(), 0.0))
+                        .stroke(egui::Stroke::NONE),
                 )
                 .clicked()
             {
